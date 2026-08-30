@@ -189,11 +189,13 @@ export function useDeleteMutation({
   resource,
 }: {
   resource: string;
-}): UseMutationResult<void, unknown, { id: string }> {
+}): UseMutationResult<void, unknown, { id: string; query?: Record<string, string> }> {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ id }) => {
-      await apiClient.delete(`/${resource}/${id}`);
+    mutationFn: async ({ id, query }) => {
+      // Optional query string (e.g. domains: ?delete_files=true, GH #1382).
+      const qs = query ? `?${new URLSearchParams(query).toString()}` : "";
+      await apiClient.delete(`/${resource}/${id}${qs}`);
     },
     onSuccess: async (_data, { id }) => {
       await Promise.all([

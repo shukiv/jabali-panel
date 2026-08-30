@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -1181,6 +1182,33 @@ func (h *domainHandler) delete(c *gin.Context) {
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
+	}
+
+	// GH #1382: opt-in "also delete the domain's files". Runs ONLY on this
+	// explicit, human-approved HTTP delete — never inside userops.DeleteDomain,
+	// so the user-delete cascade and billing-cancel teardown paths can't destroy
+	// a customer's site implicitly. Best-effort AFTER a successful delete: done
+	// ONCE here (not tombstone-retried, so a retry can never delete files a
+	// re-added domain recreated), fired async so a large docroot can't stall the
+	// response past a proxy timeout, and on any failure the files simply remain
+	// (the pre-#1382 behavior). The agent removes the docroot AS THE TENANT UID.
+	if c.Query("delete_files") == "true" && domain.DocRoot != "" {
+		if owner, uerr := h.cfg.Users.FindByID(ctx, domain.UserID); uerr == nil &&
+			owner != nil && owner.Username != nil && *owner.Username != "" {
+			username, docroot, dname := *owner.Username, domain.DocRoot, domain.Name
+			ag := h.cfg.Agent
+			go func() {
+				dctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+				defer cancel()
+				if _, aerr := ag.Call(dctx, "domain.docroot.delete", map[string]string{
+					"username": username,
+					"docroot":  docroot,
+				}); aerr != nil {
+					slog.Warn("domain delete: docroot cleanup failed; files left in place",
+						"domain", dname, "error", aerr)
+				}
+			}()
+		}
 	}
 
 	c.Status(http.StatusNoContent)

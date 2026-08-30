@@ -3,7 +3,7 @@
 // "..." overflow with Info/Redirects/Index/Settings/Caching/Toggle/Delete.
 import { useTranslation } from "react-i18next";
 import { useState } from "react";
-import { Button, Card, Dropdown, Space, Table, Tag, Tooltip, Typography } from "antd";
+import { Button, Card, Checkbox, Dropdown, Space, Table, Tag, Tooltip, Typography } from "antd";
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import {
   DeleteOutlined,
@@ -440,15 +440,30 @@ export const DomainList = () => {
                               icon: <DeleteOutlined />,
                               label: "Delete",
                               danger: true,
-                              onClick: () =>
+                              onClick: () => {
+                                // GH #1382: opt-in "also delete the files"
+                                // (removed as the domain's owner). Default off.
+                                let deleteFiles = false;
                                 feedback.modal.confirm({
                                   title: `Delete domain "${r.name}"?`,
+                                  content: (
+                                    <div>
+                                      <p>This removes the domain, its DNS and its web config. This cannot be undone.</p>
+                                      <Checkbox onChange={(e) => { deleteFiles = e.target.checked; }}>
+                                        Also permanently delete the owner&apos;s files for this domain (document root). This cannot be undone.
+                                      </Checkbox>
+                                    </div>
+                                  ),
                                   okText: "Delete",
                                   okButtonProps: { danger: true },
                                   onOk: async () => {
-                                    await deleteMutation.mutateAsync({ id: r.id });
+                                    await deleteMutation.mutateAsync({
+                                      id: r.id,
+                                      query: deleteFiles ? { delete_files: "true" } : undefined,
+                                    });
                                   },
-                                }),
+                                });
+                              },
                             },
                           ]),
                     ],

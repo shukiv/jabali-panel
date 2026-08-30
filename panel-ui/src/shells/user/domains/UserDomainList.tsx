@@ -18,7 +18,7 @@ import {
   ToolOutlined,
   FolderOutlined,
 } from "@icons";
-import { Button, Card, Dropdown, Space, Table, Tag, Tooltip, Typography } from "antd";
+import { Button, Card, Checkbox, Dropdown, Space, Table, Tag, Tooltip, Typography } from "antd";
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { useState } from "react";
 import { useNavigate } from "react-router";
@@ -429,16 +429,30 @@ export const UserDomainList = () => {
                         label: "Delete",
                         icon: <DeleteOutlined />,
                         danger: true,
-                        onClick: () =>
+                        onClick: () => {
+                          // GH #1382: opt-in "also delete the files". Uncontrolled
+                          // checkbox → closure flag read in onOk (default off).
+                          let deleteFiles = false;
                           feedback.modal.confirm({
                             title: `Delete domain "${r.name}"?`,
-                            content: "This cannot be undone.",
+                            content: (
+                              <div>
+                                <p>This removes the domain, its DNS and its web config. This cannot be undone.</p>
+                                <Checkbox onChange={(e) => { deleteFiles = e.target.checked; }}>
+                                  Also permanently delete the domain&apos;s files (document root). This cannot be undone.
+                                </Checkbox>
+                              </div>
+                            ),
                             okText: "Delete",
                             okType: "danger",
                             onOk: async () => {
-                              await deleteMutation.mutateAsync({ id: r.id });
+                              await deleteMutation.mutateAsync({
+                                id: r.id,
+                                query: deleteFiles ? { delete_files: "true" } : undefined,
+                              });
                             },
-                          }),
+                          });
+                        },
                       },
                     ],
                   }}
