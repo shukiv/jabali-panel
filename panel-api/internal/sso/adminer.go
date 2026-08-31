@@ -122,6 +122,9 @@ func (s *AdminerService) EnsurePgShadow(ctx context.Context, userID string) erro
 	// after the first open are picked up. Non-fatal — a failure here must not
 	// block the Adminer session.
 	s.syncPgShadowMembers(ctx, userID, *user.Username)
+	// GH #1406 (round 2): membership isn't enough for the postgres-owned `public`
+	// schema — also grant pgadmin per-DB schema access so it can CREATE/SELECT.
+	s.syncPgShadowSchema(ctx, userID, *user.Username)
 	return nil
 }
 
@@ -149,6 +152,38 @@ func (s *AdminerService) syncPgShadowMembers(ctx context.Context, userID, panelU
 	if _, err := s.base.agent.Call(ctx, "db.postgres.shadowadmin.grant_members",
 		map[string]interface{}{"panel_username": panelUsername, "member_roles": roles}); err != nil {
 		s.base.log.WarnContext(ctx, "pg shadow: grant_members failed",
+			"err", err, "user_id", userID)
+	}
+}
+
+// syncPgShadowSchema grants <user>_pgadmin the public-schema privileges it needs
+// in EACH of the tenant's PostgreSQL databases (GH #1406). Jabali creates those
+// DBs OWNER postgres, so — with PG15+ locking the `public` schema — membership
+// alone doesn't let pgadmin CREATE tables or read postgres-owned ones; the
+// per-DB schema grant does. The DB NAMES are the explicit control-plane list
+// (scoped by user_id), never a pattern — a sibling tenant's DB must never be
+// handed over. Runs on every Adminer open (idempotent); non-fatal.
+func (s *AdminerService) syncPgShadowSchema(ctx context.Context, userID, panelUsername string) {
+	var rows []models.Database
+	if err := s.base.db.WithContext(ctx).
+		Where("user_id = ? AND engine = ?", userID, "postgres").
+		Find(&rows).Error; err != nil {
+		s.base.log.WarnContext(ctx, "pg shadow: list databases failed",
+			"err", err, "user_id", userID)
+		return
+	}
+	names := make([]string, 0, len(rows))
+	for _, d := range rows {
+		if d.Name != "" {
+			names = append(names, d.Name)
+		}
+	}
+	if len(names) == 0 {
+		return // no PG databases yet — nothing to grant
+	}
+	if _, err := s.base.agent.Call(ctx, "db.postgres.shadowadmin.grant_schema",
+		map[string]interface{}{"panel_username": panelUsername, "db_names": names}); err != nil {
+		s.base.log.WarnContext(ctx, "pg shadow: grant_schema failed",
 			"err", err, "user_id", userID)
 	}
 }

@@ -210,7 +210,73 @@ END$$;`,
 	return dbPgCreateResponse{OK: true}, nil
 }
 
+// db.postgres.shadowadmin.grant_schema — GH #1406 (round 2).
+//
+// Membership (grant_members) lets pgadmin INHERIT privileges on objects the
+// tenant's db-user roles OWN. But a Jabali PostgreSQL database is created
+// OWNER postgres (dbops.go), so its `public` schema is owned by
+// pg_database_owner = postgres, and — since PostgreSQL 15 revoked the default
+// PUBLIC CREATE on `public` — a tenant role can neither CREATE in `public`
+// ("permission denied for schema public") nor SELECT postgres-owned tables in
+// it ("permission denied for table"). Reproduced on PG16 + PG18.
+//
+// So on every Adminer open, grant <user>_pgadmin the schema-level privileges it
+// needs, PER DATABASE (schema grants only affect the connected DB, so this
+// connects to each): ALL ON SCHEMA public (CREATE+USAGE), ALL on existing
+// TABLES/SEQUENCES (covers postgres-owned + restored objects that membership
+// can't reach), and default privileges so future objects stay accessible.
+//
+// SECURITY: db_names is an EXPLICIT list of the tenant's OWN databases from the
+// control-plane (scoped by user_id), never a name pattern — a `datname LIKE
+// '<user>\_%'` would also match a sibling tenant's DB (panel usernames allow
+// '_') and hand pgadmin full table access to another tenant's data. Every name
+// is pgValidIdent-checked. Idempotent + fail-soft per DB.
+type dbPostgresGrantSchemaParams struct {
+	PanelUsername string   `json:"panel_username"`
+	DBNames       []string `json:"db_names"`
+}
+
+func dbPostgresShadowadminGrantSchemaHandler(ctx context.Context, params json.RawMessage) (any, error) {
+	var p dbPostgresGrantSchemaParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: fmt.Sprintf("failed to parse params: %v", err)}
+	}
+	if !panelUsernameRegex.MatchString(p.PanelUsername) {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "invalid panel username"}
+	}
+	roleName := p.PanelUsername + "_pgadmin"
+	pgIdent := func(s string) string { return `"` + strings.ReplaceAll(s, `"`, `""`) + `"` }
+
+	// Grant statements run against EACH DB (schema/object grants are per-DB).
+	// pgadmin is validated; the DB name is validated + passed via -d, never
+	// interpolated into SQL.
+	roleQ := pgIdent(roleName)
+	grantSQL := strings.Join([]string{
+		"GRANT ALL ON SCHEMA public TO " + roleQ,
+		"GRANT ALL ON ALL TABLES IN SCHEMA public TO " + roleQ,
+		"GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO " + roleQ,
+		"ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO " + roleQ,
+		"ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO " + roleQ,
+	}, "; ") + ";"
+
+	for _, db := range p.DBNames {
+		if !pgValidIdent(db) {
+			continue // skip an unexpected name; never block Adminer login
+		}
+		// -d <db> selects the target database; run as postgres (peer auth).
+		cmd := execCommandContext(ctx, "sudo", "-u", "postgres", "psql",
+			"-v", "ON_ERROR_STOP=1", "-XAtq", "-d", db, "-c", grantSQL)
+		if _, err := cmd.CombinedOutput(); err != nil {
+			// Fail-soft: a dropped/renamed DB or a transient error must not block
+			// the Adminer session or the other DBs.
+			continue
+		}
+	}
+	return dbPgCreateResponse{OK: true}, nil
+}
+
 func init() {
 	Default.Register("db.postgres.shadowadmin.ensure", dbPostgresShadowadminEnsureHandler)
 	Default.Register("db.postgres.shadowadmin.grant_members", dbPostgresShadowadminGrantMembersHandler)
+	Default.Register("db.postgres.shadowadmin.grant_schema", dbPostgresShadowadminGrantSchemaHandler)
 }
