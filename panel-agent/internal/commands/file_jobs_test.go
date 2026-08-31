@@ -35,9 +35,11 @@ func TestFileJobs_OwnershipAndLifecycle(t *testing.T) {
 	if s := j.snapshot(); s.Total != 10 || s.Done != 3 || s.Status != fileJobRunning || s.JobID != j.id {
 		t.Fatalf("running snapshot = %+v", s)
 	}
-	// Finish carries the result and pins done to extracted+skipped.
-	j.finish(filesExtractResult{Extracted: 8, Skipped: 2})
-	if s := j.snapshot(); s.Status != fileJobDone || s.Done != 10 || s.Result.Extracted != 8 || s.Result.Skipped != 2 {
+	// Finish carries the op-specific result and the final done value.
+	j.finish(10, filesExtractResult{Extracted: 8, Skipped: 2})
+	s := j.snapshot()
+	res, ok := s.Result.(filesExtractResult)
+	if s.Status != fileJobDone || s.Done != 10 || !ok || res.Extracted != 8 || res.Skipped != 2 {
 		t.Fatalf("done snapshot = %+v", s)
 	}
 }
@@ -73,7 +75,7 @@ func TestFileJobs_PerUserCap(t *testing.T) {
 			done := j.status == fileJobRunning
 			j.mu.Unlock()
 			if done {
-				j.finish(filesExtractResult{})
+				j.finish(0, filesExtractResult{})
 				break
 			}
 		}
@@ -87,7 +89,7 @@ func TestFileJobs_PerUserCap(t *testing.T) {
 func TestFileJobs_ReapFinished(t *testing.T) {
 	resetFileJobs()
 	j, _ := newFileJob("reap", "extract")
-	j.finish(filesExtractResult{})
+	j.finish(0, filesExtractResult{})
 	j.mu.Lock()
 	j.startedAt = time.Now().Add(-fileJobTTL - time.Minute)
 	j.mu.Unlock()

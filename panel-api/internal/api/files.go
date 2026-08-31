@@ -1324,6 +1324,20 @@ func (h *filesHandler) copy(c *gin.Context) {
 	if h.rejectAdminWriteOutOfScope(c, req.Path, dst) {
 		return
 	}
+	// GH #1392: ?async=1 runs the copy as a background job and returns a job id
+	// immediately (202), so a large tree doesn't block the request past a proxy
+	// timeout and the UI can poll GET /files/jobs/:id for a byte-percentage bar.
+	if c.Query("async") == "1" {
+		raw, err := h.cfg.Agent.Call(c.Request.Context(), "files.copy.start", filesCopyAgentParams{
+			UserID: userID, Username: username, AdminRoot: h.adminRoot(c), SrcPath: req.Path, DstPath: dst,
+		})
+		if err != nil {
+			respondAgentError(c, err)
+			return
+		}
+		c.Data(http.StatusAccepted, "application/json", raw)
+		return
+	}
 	_, err := h.cfg.Agent.Call(c.Request.Context(), "files.copy", filesCopyAgentParams{
 		UserID: userID, Username: username, AdminRoot: h.adminRoot(c), SrcPath: req.Path, DstPath: dst,
 	})
