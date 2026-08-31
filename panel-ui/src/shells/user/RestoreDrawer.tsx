@@ -185,6 +185,42 @@ export const RestoreDrawer = ({ backupId, open, onClose }: RestoreDrawerProps) =
             restorable here.
           </Typography.Paragraph>
 
+          {/* GH #1363: one click to select every resource in the backup, so a
+              user doesn't have to tick each one. Home already includes every
+              ~/domains/<d> docroot, so "Domain files" is left unticked to avoid
+              a redundant second apply of the same files. */}
+          {(hasHome ||
+            databases.length > 0 ||
+            mailboxes.length > 0 ||
+            dnsDomains.length > 0) && (
+            <Space>
+              <Button
+                size="small"
+                onClick={() => {
+                  setRestoreHome(hasHome);
+                  setSelected([...databases]);
+                  setSelectedMb([...mailboxes]);
+                  setSelectedDns([...dnsDomains]);
+                  setSelectedDomainFiles([]);
+                }}
+              >
+                Select all
+              </Button>
+              <Button
+                size="small"
+                onClick={() => {
+                  setRestoreHome(false);
+                  setSelected([]);
+                  setSelectedMb([]);
+                  setSelectedDns([]);
+                  setSelectedDomainFiles([]);
+                }}
+              >
+                Clear
+              </Button>
+            </Space>
+          )}
+
           {hasHome && (
             <Checkbox
               checked={restoreHome}
