@@ -246,11 +246,12 @@ func (h *backupHandler) restoreUploadApply(c *gin.Context) {
 	if !ok {
 		return
 	}
-	// Destructive admin action → recent-auth (MFA step-up), same bar as the
-	// admin File Manager's sensitive operations.
-	if !requireRecentAuth(c, h.cfg.KratosClient, stepUpWindow) {
-		return
-	}
+	// GH #1408 (reporter feedback): NO step-up for an account restore. It's
+	// already admin-only (RequireAdmin), and a recent-auth gate here bounced the
+	// admin to re-login mid-apply — a full-page redirect that lost the flow and
+	// left the restore un-run with no feedback. Step-up belongs on the (not-yet-
+	// built) SYSTEM restore, which changes server config; an account restore is
+	// ordinary admin work.
 	var req restoreUploadApplyRequest
 	if err := c.ShouldBindJSON(&req); err != nil || !uploadIDRE.MatchString(req.UploadID) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request"})
