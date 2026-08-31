@@ -15,6 +15,7 @@ import {
   Spin,
   Table,
   Tag,
+  Tooltip,
   Typography,
   type TableColumnsType,
 } from "antd";
@@ -105,7 +106,9 @@ export function MailDomainsPage() {
       sorter: (a, b) => Number(a.email_enabled) - Number(b.email_enabled),
       render: (_v, row) =>
         row.is_quota_suspended ? (
-          <Tag color="red">Suspended</Tag>
+          <Tooltip title="Suspended by bandwidth quota — this is the domain's state, not its mail setting">
+            <Tag color="red">Suspended</Tag>
+          </Tooltip>
         ) : row.email_enabled ? (
           <Tag color="green">Enabled</Tag>
         ) : (
