@@ -64,7 +64,7 @@ func (s *AdminerService) EnsurePgShadow(ctx context.Context, userID string) erro
 		return errors.New("user has no username")
 	}
 
-	return s.base.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	if err := s.base.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var current models.User
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			First(&current, "id = ?", userID).Error; err != nil {
@@ -110,7 +110,47 @@ func (s *AdminerService) EnsurePgShadow(ctx context.Context, userID string) erro
 		return tx.Model(&models.User{}).
 			Where("id = ?", userID).
 			Updates(updates).Error
-	})
+	}); err != nil {
+		return err
+	}
+
+	// GH #1406: keep pgadmin's role membership in sync on every Adminer open.
+	// The one-time provisioning above only mints the role + database CONNECT
+	// grant; without membership in the tenant's db-user roles, Adminer can see
+	// the schema but not the table data. Running this every open (not just at
+	// first provision) means existing accounts self-heal and db-users created
+	// after the first open are picked up. Non-fatal — a failure here must not
+	// block the Adminer session.
+	s.syncPgShadowMembers(ctx, userID, *user.Username)
+	return nil
+}
+
+// syncPgShadowMembers grants <user>_pgadmin membership in the tenant's own
+// postgres db-user roles so it inherits their table privileges (GH #1406). The
+// role list is read from the control-plane DB (the source of truth) and passed
+// EXPLICITLY to the agent — never derived from a name pattern, since panel
+// usernames may contain '_' and a pattern could match a sibling tenant.
+func (s *AdminerService) syncPgShadowMembers(ctx context.Context, userID, panelUsername string) {
+	var rows []models.DatabaseUser
+	if err := s.base.db.WithContext(ctx).
+		Where("user_id = ? AND engine = ?", userID, "postgres").
+		Find(&rows).Error; err != nil {
+		s.base.log.WarnContext(ctx, "pg shadow: list db-users failed",
+			"err", err, "user_id", userID)
+		return
+	}
+	roles := make([]string, 0, len(rows))
+	for _, du := range rows {
+		roles = append(roles, du.Username)
+	}
+	if len(roles) == 0 {
+		return // no db-users yet — nothing to grant
+	}
+	if _, err := s.base.agent.Call(ctx, "db.postgres.shadowadmin.grant_members",
+		map[string]interface{}{"panel_username": panelUsername, "member_roles": roles}); err != nil {
+		s.base.log.WarnContext(ctx, "pg shadow: grant_members failed",
+			"err", err, "user_id", userID)
+	}
 }
 
 // MintAdminerToken issues a fresh single-use token bound to the
