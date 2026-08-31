@@ -2,6 +2,8 @@ package filesafe
 
 import (
 	"context"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
@@ -124,6 +126,31 @@ func TestCopyProgress_SingleFile(t *testing.T) {
 	}
 	if ticked != 10 {
 		t.Fatalf("ticks = %d, want 10", ticked)
+	}
+}
+
+// GH #1392: a copy whose destination already exists must fail with an error
+// that errors.Is(err, fs.ErrExist) — the async copy's rollback relies on this
+// to know the copy created NOTHING and must NOT delete the pre-existing dst.
+func TestCopyTree_ExistingDst_IsErrExist(t *testing.T) {
+	scope, docroot := funcScope(t)
+	src := filepath.Join(docroot, "src")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "f.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dst := filepath.Join(docroot, "dst")
+	if err := os.MkdirAll(dst, 0o755); err != nil { // dst already present
+		t.Fatal(err)
+	}
+	_, err := scope.CopyTreeInScope(context.Background(), src, dst, os.Getuid(), os.Getgid())
+	if err == nil {
+		t.Fatal("copy into an existing dst must fail")
+	}
+	if !errors.Is(err, fs.ErrExist) {
+		t.Fatalf("err = %v, want errors.Is fs.ErrExist (the rollback guard depends on it)", err)
 	}
 }
 

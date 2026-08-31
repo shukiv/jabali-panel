@@ -3,7 +3,9 @@ package commands
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
@@ -119,7 +121,13 @@ func filesCopyHandler(ctx context.Context, params json.RawMessage) (any, error) 
 
 	bytes, err := scope.CopyTreeInScope(ctx, srcClean, dstClean, uid, gid)
 	if err != nil {
-		// Attempt rollback — copy may have left a partial tree behind.
+		// EEXIST is always the very first dst-side write (Mkdirat / O_EXCL open /
+		// Symlinkat) — the copy created NOTHING, so a dst appeared in the race
+		// window since validation. Never RemoveAll it: that would delete whatever
+		// the other writer just put there. Only roll back a partial tree WE built.
+		if errors.Is(err, fs.ErrExist) {
+			return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "target path already exists"}
+		}
 		_ = scope.RemoveAllInScope(context.Background(), dstClean)
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,
@@ -169,7 +177,14 @@ func filesCopyStartHandler(_ context.Context, params json.RawMessage) (any, erro
 			job.tick(done)
 		})
 		if cerr != nil {
-			// Roll back the partial tree, same as the sync copy.
+			// EEXIST = a dst appeared during the count window (this async path's
+			// count walk widens that window to seconds on the big trees this
+			// targets). The copy created nothing, so never RemoveAll someone
+			// else's dst — only roll back a partial tree WE built.
+			if errors.Is(cerr, fs.ErrExist) {
+				job.fail("target path already exists")
+				return
+			}
 			_ = scope.RemoveAllInScope(context.Background(), dstClean)
 			job.fail(fmt.Sprintf("copy: %v", cerr))
 			return

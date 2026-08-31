@@ -1163,11 +1163,11 @@ export const FileManagerPage = ({ api = tenantFilesApi, rootPath: rootPathProp }
           total: s.total,
         });
         if (s.status === "done") {
-          const skippedN = s.result.skipped ?? 0;
+          const skippedN = s.result?.skipped ?? 0;
           const skipped =
             skippedN > 0 ? `, ${skippedN} unsafe entr(y/ies) skipped` : "";
           feedback.message.success(
-            `Extracted ${s.result.extracted ?? 0} file(s)${skipped}`,
+            `Extracted ${s.result?.extracted ?? 0} file(s)${skipped}`,
           );
           void reloadList(dir);
           setTimeout(() => setExtractJob(null), 500);

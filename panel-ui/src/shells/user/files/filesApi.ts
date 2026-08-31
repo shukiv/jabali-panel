@@ -263,7 +263,9 @@ export interface FilesJobStatus {
   // 0 = unknown → indeterminate. Extract counts entries; a streamed tar reports
   // 0. Copy counts bytes; done/total is a byte fraction.
   total: number;
-  result: FilesJobResult;
+  // Omitted by the agent (omitempty) until the job seals — only a done job
+  // carries a result — so treat it as optional at every read.
+  result?: FilesJobResult;
   error?: string;
   started_at: string;
 }
