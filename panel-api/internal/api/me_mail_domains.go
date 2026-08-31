@@ -17,7 +17,10 @@ import (
 // me_mail_domains.go — GH #1387 Mail Domains summary (Mail → Mail Domains →
 // accounts entry point).
 //
-// Read-only, owner-scoped. The DB stats (domains via ListByUserID, mailbox
+// Owner-scoped. Lists ALL of the caller's domains (GH #1387 follow-up — not
+// just mail-enabled ones) so the UI can show a mail Status and offer Enable/
+// Disable per row; the toggle itself reuses POST/DELETE /domains/:id/email.
+// The DB stats (domains via ListByUserID, mailbox
 // count/storage via ListByOwnerWithDomain, 30-day sent/received via
 // MailStatsRepository.DomainSeriesForUser) are always present. The current mail
 // queue (v2) is a best-effort per-domain count derived from the server queue
@@ -50,6 +53,18 @@ type mailDomainRow struct {
 	MailBytes    int64  `json:"mail_bytes"`
 	Sent30d      int64  `json:"sent_30d"`
 	Received30d  int64  `json:"received_30d"`
+	// EmailEnabled drives the Status column and the Enable/Disable row action
+	// (GH #1387 follow-up). The list now includes mail-DISABLED owned domains
+	// too, so a tenant can turn mail ON for a domain from here — a mail-off row
+	// simply carries email_enabled=false and (usually) zero counts.
+	EmailEnabled bool `json:"email_enabled"`
+	// SSLState is the domain's computed cert state (off/pending/active_le/
+	// self_signed/failed — DomainRepository.computeSSLState), surfaced for the
+	// SSL column. Omitted when empty so the UI renders "Off".
+	SSLState string `json:"ssl_state,omitempty"`
+	// IsQuotaSuspended marks a bandwidth-suspended domain; the Status column
+	// shows "Suspended" for it regardless of the mail flag.
+	IsQuotaSuspended bool `json:"is_quota_suspended"`
 	// Queue is the count of queued messages touching this domain (as sender or
 	// recipient). nil = unknown (agent unavailable) — omitted from JSON so the
 	// UI shows "—" instead of a misleading 0.
@@ -108,21 +123,24 @@ func (h *meMailDomainsHandler) list(c *gin.Context) {
 		}
 	}
 
+	// GH #1387 follow-up: list ALL owned domains, not just mail-enabled ones, so
+	// the Status column reads Enabled/Disabled and the Enable action has a row to
+	// act on. Counts/traffic for a mail-off domain are naturally zero.
 	out := []mailDomainRow{}
 	for i := range domains {
 		d := &domains[i]
-		if !d.EmailEnabled {
-			continue
-		}
 		a := byDomainID[d.ID]
 		t := byName[d.Name]
 		out = append(out, mailDomainRow{
-			ID:           d.ID,
-			Name:         d.Name,
-			MailboxCount: a.count,
-			MailBytes:    a.bytes,
-			Sent30d:      t.sent,
-			Received30d:  t.received,
+			ID:               d.ID,
+			Name:             d.Name,
+			MailboxCount:     a.count,
+			MailBytes:        a.bytes,
+			Sent30d:          t.sent,
+			Received30d:      t.received,
+			EmailEnabled:     d.EmailEnabled,
+			SSLState:         d.SSLState,
+			IsQuotaSuspended: d.IsQuotaSuspended,
 		})
 	}
 

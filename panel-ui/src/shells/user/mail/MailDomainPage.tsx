@@ -4,8 +4,8 @@
 // error, never another tenant's data). The account/domain tabs reuse the mail
 // tab components in their single-domain mode. Logs + Statistics scoping and the
 // retirement of the flat Mail page are a follow-up (PR-B).
-import { Alert, Button, Card, Skeleton, Space, Typography } from "antd";
-import { ArrowLeftOutlined, MailOutlined, PlusOutlined } from "@icons";
+import { Alert, Breadcrumb, Button, Card, Skeleton, Space, Typography } from "antd";
+import { MailOutlined, PlusOutlined } from "@icons";
 import { useState } from "react";
 import { useNavigate, useParams } from "react-router";
 
@@ -109,11 +109,19 @@ export const MailDomainPage = () => {
 
   return (
     <div style={{ padding: "20px" }}>
-      <Space wrap align="center" style={{ marginBottom: 8 }}>
-        <Button type="text" icon={<ArrowLeftOutlined />} onClick={back}>
-          Mail Domains
-        </Button>
-      </Space>
+      {/* GH #1387 follow-up: 3-level trail Dashboard / Mail Domains / <domain>. */}
+      <Breadcrumb
+        style={{ marginBottom: 8 }}
+        items={[
+          {
+            title: <a onClick={() => navigate("/jabali-panel/dashboard")}>Dashboard</a>,
+          },
+          {
+            title: <a onClick={back}>Mail Domains</a>,
+          },
+          { title: domain.name },
+        ]}
+      />
       <Space
         wrap
         align="center"

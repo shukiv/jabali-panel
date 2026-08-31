@@ -83,17 +83,19 @@ func setupMailDomainsRouter(t *testing.T, userID string, cfg MeMailDomainsConfig
 
 func TestMailDomains_AggregatesAndScopes(t *testing.T) {
 	// u1 owns a.test (mail on) + b.test (mail OFF). u2 owns c.test (mail on).
+	// GH #1387 follow-up: a mail-OFF domain is now LISTED too (email_enabled=false)
+	// so the Status column + Enable action have a row to act on.
 	cfg := MeMailDomainsConfig{
 		Domains: mdDomainRepo{ds: []models.Domain{
-			{ID: "da", UserID: "u1", Name: "a.test", EmailEnabled: true},
-			{ID: "db", UserID: "u1", Name: "b.test", EmailEnabled: false},
+			{ID: "da", UserID: "u1", Name: "a.test", EmailEnabled: true, SSLState: "active_le"},
+			{ID: "db", UserID: "u1", Name: "b.test", EmailEnabled: false, IsQuotaSuspended: true},
 			{ID: "dc", UserID: "u2", Name: "c.test", EmailEnabled: true},
 		}},
 		Mailboxes: mdMailboxRepo{mbs: []repository.MailboxWithDomain{
 			mb("da", "u1", false, 1000), // real
 			mb("da", "u1", false, 500),  // real
 			mb("da", "u1", true, 999),   // system relay → excluded
-			mb("db", "u1", false, 42),   // b.test mail off → domain filtered out
+			mb("db", "u1", false, 42),   // b.test still counts what it has
 			mb("dc", "u2", false, 7),    // u2's — must not appear for u1
 		}},
 		MailStats: mdStatsRepo{byUser: map[string][]repository.DomainStatSample{
@@ -117,24 +119,44 @@ func TestMailDomains_AggregatesAndScopes(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(resp.Data) != 1 || resp.Total != 1 {
-		t.Fatalf("want exactly a.test (b.test mail-off filtered), got %+v", resp.Data)
+	if len(resp.Data) != 2 || resp.Total != 2 {
+		t.Fatalf("want both a.test + b.test (mail-off now listed), got %+v", resp.Data)
 	}
-	row := resp.Data[0]
-	if row.Name != "a.test" {
-		t.Fatalf("want a.test, got %q", row.Name)
+	byName := map[string]mailDomainRow{}
+	for _, r := range resp.Data {
+		byName[r.Name] = r
 	}
-	if row.MailboxCount != 2 {
-		t.Fatalf("mailbox_count = %d, want 2 (system relay excluded)", row.MailboxCount)
+	a, ok := byName["a.test"]
+	if !ok {
+		t.Fatalf("a.test missing: %+v", resp.Data)
 	}
-	if row.MailBytes != 1500 {
-		t.Fatalf("mail_bytes = %d, want 1500 (system relay's 999 excluded)", row.MailBytes)
+	if !a.EmailEnabled {
+		t.Fatalf("a.test email_enabled = false, want true")
 	}
-	if row.Sent30d != 7 {
-		t.Fatalf("sent_30d = %d, want 7 (5+2)", row.Sent30d)
+	if a.SSLState != "active_le" {
+		t.Fatalf("a.test ssl_state = %q, want active_le", a.SSLState)
 	}
-	if row.Received30d != 3 {
-		t.Fatalf("received_30d = %d, want 3", row.Received30d)
+	if a.MailboxCount != 2 {
+		t.Fatalf("mailbox_count = %d, want 2 (system relay excluded)", a.MailboxCount)
+	}
+	if a.MailBytes != 1500 {
+		t.Fatalf("mail_bytes = %d, want 1500 (system relay's 999 excluded)", a.MailBytes)
+	}
+	if a.Sent30d != 7 {
+		t.Fatalf("sent_30d = %d, want 7 (5+2)", a.Sent30d)
+	}
+	if a.Received30d != 3 {
+		t.Fatalf("received_30d = %d, want 3", a.Received30d)
+	}
+	b, ok := byName["b.test"]
+	if !ok {
+		t.Fatalf("b.test (mail-off) must be listed now: %+v", resp.Data)
+	}
+	if b.EmailEnabled {
+		t.Fatalf("b.test email_enabled = true, want false")
+	}
+	if !b.IsQuotaSuspended {
+		t.Fatalf("b.test is_quota_suspended = false, want true")
 	}
 }
 

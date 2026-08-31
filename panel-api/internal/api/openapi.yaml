@@ -3741,7 +3741,7 @@ paths:
   /me/mail-domains:
     get:
       tags: [Me]
-      summary: List the caller's mail-enabled domains with a per-domain mail summary
+      summary: List the caller's domains with a per-domain mail summary and status
       security: [ { KratosSession: [] } ]
       responses: { "200": { description: OK } }
 
