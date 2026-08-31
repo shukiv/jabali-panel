@@ -42,6 +42,10 @@ func runSSHLogin(ctx context.Context, d Deps) {
 	// login bursts collapse into counted summaries instead of one notification
 	// per login (the "drfeed spam"). A ticker flushes quiet/rolling summaries.
 	gr := newSSHLoginGrouper(d.Now)
+	// GH #1310-adjacent: per-account ignore list (the "drfeed spam" — a DR feed's
+	// SSH pull loop). Ignored accounts are dropped before the grouper, so they
+	// produce neither an immediate notification nor a digest.
+	ig := newSSHIgnoreCache(d.ServerSettings, d.Now)
 	go func() {
 		t := time.NewTicker(sshFlushInterval)
 		defer t.Stop()
@@ -70,7 +74,7 @@ func runSSHLogin(ctx context.Context, d Deps) {
 		if err := ctx.Err(); err != nil {
 			return
 		}
-		if err := tailSSHJournal(ctx, d, gr); err != nil && ctx.Err() == nil {
+		if err := tailSSHJournal(ctx, d, gr, ig); err != nil && ctx.Err() == nil {
 			// SIGTERM to the journalctl child races our ctx propagation
 			// at shutdown — the child returns "signal: terminated" before
 			// our ctx.Done() fires. Treat that as graceful and exit silently
@@ -100,7 +104,7 @@ func runSSHLogin(ctx context.Context, d Deps) {
 // tailSSHJournal runs journalctl in JSON-follow mode until ctx is
 // cancelled or the process exits. Each Accepted line is parsed and
 // published as ssh.login.
-func tailSSHJournal(ctx context.Context, d Deps, gr *sshLoginGrouper) error {
+func tailSSHJournal(ctx context.Context, d Deps, gr *sshLoginGrouper, ig *sshIgnoreCache) error {
 	cmd := exec.CommandContext(ctx,
 		"journalctl",
 		// Match the systemd unit rather than the syslog identifier:
@@ -133,7 +137,7 @@ func tailSSHJournal(ctx context.Context, d Deps, gr *sshLoginGrouper) error {
 		if err := json.Unmarshal(sc.Bytes(), &entry); err != nil {
 			continue
 		}
-		processSSHJournalEntry(ctx, d, gr, entry)
+		processSSHJournalEntry(ctx, d, gr, ig, entry)
 	}
 	// Wait so we collect the exit error if the scanner ended on a
 	// process death rather than ctx cancellation.
@@ -161,7 +165,7 @@ type journalEntry struct {
 // worker (`_COMM=sshd-session`) rather than the listener; older Debians
 // still use `sshd`. Accept both, plus any sshd-* prefix to cover the
 // privsep variants without listing every name explicitly.
-func processSSHJournalEntry(ctx context.Context, d Deps, gr *sshLoginGrouper, entry journalEntry) {
+func processSSHJournalEntry(ctx context.Context, d Deps, gr *sshLoginGrouper, ig *sshIgnoreCache, entry journalEntry) {
 	if entry.Comm != "sshd" && !strings.HasPrefix(entry.Comm, "sshd-") {
 		return
 	}
@@ -170,6 +174,11 @@ func processSSHJournalEntry(ctx context.Context, d Deps, gr *sshLoginGrouper, en
 	}
 	user, ip, method := parseAcceptedLine(entry.Message)
 	if user == "" {
+		return
+	}
+	// GH #1310-adjacent: drop logins by an ignored account (e.g. a DR feed's SSH
+	// pull loop) before they reach the grouper — no immediate, no digest.
+	if ig.ignored(ctx, user) {
 		return
 	}
 	// Smart grouping: a new (user, IP, method) fires immediately; repeats within

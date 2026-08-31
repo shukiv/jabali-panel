@@ -29,6 +29,7 @@ import { ReloadOutlined, SearchOutlined } from "@icons";
 
 import { apiClient } from "../../../apiClient";
 import { groupEventsByCategory } from "./eventCategories";
+import { SSHLoginIgnoreEditor } from "./SSHLoginIgnoreEditor";
 
 type Severity = "info" | "warning" | "error" | "critical";
 
@@ -445,6 +446,7 @@ export const EventsTab = () => {
         >
           {e.description}
         </Typography.Paragraph>
+        {e.kind === "ssh.login" && <SSHLoginIgnoreEditor />}
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 14, flex: "none" }}>
         <Tag color={severityColor[e.severity] ?? "default"} style={{ marginInlineEnd: 0 }}>

@@ -4957,6 +4957,18 @@ paths:
       parameters: [ { in: path, name: kind, required: true, schema: { type: string } } ]
       responses: { "200": { description: OK } }
 
+  /admin/settings/ssh-login-ignore:
+    get:
+      tags: [Settings]
+      summary: List SSH-login ignored accounts
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+    put:
+      tags: [Settings]
+      summary: Set SSH-login ignored accounts
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
   /admin/settings/page-templates:
     get:
       tags: [Settings]

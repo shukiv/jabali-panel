@@ -1019,6 +1019,13 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Log:  deps.Log,
 			})
 		}
+		// GH #1310-adjacent ("drfeed spam"): per-account ssh.login ignore list.
+		if deps.ServerSettings != nil {
+			api.RegisterSSHLoginIgnoreRoutes(v1, api.SSHLoginIgnoreHandlerConfig{
+				Settings: deps.ServerSettings,
+				Log:      deps.Log,
+			})
+		}
 		// M6.4 Settings → Email: read-only panel-primary domain card.
 		if deps.Domains != nil {
 			api.RegisterSettingsEmailRoutes(v1, api.SettingsEmailHandlerConfig{

@@ -430,6 +430,14 @@ type ServerSettings struct {
 	StalwartWebadminAllowCIDRs    string `gorm:"column:stalwart_webadmin_allow_cidrs;type:varchar(512);not null;default:''" json:"stalwart_webadmin_allow_cidrs"`
 	PostgresMaxConnectionsPerUser uint16 `gorm:"column:postgres_max_connections_per_user;type:smallint unsigned;not null;default:25" json:"postgres_max_connections_per_user"`
 
+	// SSHLoginIgnoreAccounts — GH #1310-adjacent ("drfeed spam"). A
+	// newline/comma-separated list of SSH usernames whose successful logins are
+	// dropped before they ever notify (no immediate, no digest). Lets a noisy
+	// service account — a DR feed's SSH pull loop, a backup rsync — be silenced
+	// without disabling ssh.login for everyone. TEXT (off-page): the row is near
+	// the MariaDB row-size ceiling.
+	SSHLoginIgnoreAccounts string `gorm:"column:ssh_login_ignore_accounts;type:text;not null;default:''" json:"ssh_login_ignore_accounts"`
+
 	// MigrationAllowPrivateHosts — ADR-0095 decision 8. When TRUE the
 	// SSRF guard for /admin/migrations outbound dials permits RFC1918
 	// targets (10/8, 172.16/12, 192.168/16) as well as IPv6 ULA. DNS
