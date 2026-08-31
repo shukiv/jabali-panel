@@ -75,5 +75,18 @@ check('failed new token -> null', $c === null);
 $c = req([]);
 check('failed new token dropped cached identity', $c === null);
 
+// 7. GH #1406: the admin all-databases handoff returns an EMPTY db. The plugin
+//    must NOT pin the view/dropdown to it, or Adminer shows no database list.
+$TD = str_repeat('d', 44);
+StubSSO::$map[$TD] = ['driver'=>'pgsql','server'=>'/run/postgresql','username'=>'postgres','password'=>'pp','db'=>''];
+$_GET = ['token'=>$TD]; $_POST = [];
+$admin = new StubSSO('/run/jabali-panel/api.sock');
+check('admin all-DBs: database() not pinned (null)', $admin->database() === null);
+check('admin all-DBs: databases() lists all (null, not [""])', $admin->databases() === null);
+// A normal per-DB tenant handoff still pins to its one database.
+$_GET = ['token'=>$TA]; $_POST = [];
+$tenant = new StubSSO('/run/jabali-panel/api.sock');
+check('tenant: databases() still pinned to its db', $tenant->databases() === ['alice_db']);
+
 echo ($fail === 0 ? "ALL SSO SESSION CHECKS PASSED\n" : "FAILURES: $fail\n");
 exit($fail === 0 ? 0 : 1);
