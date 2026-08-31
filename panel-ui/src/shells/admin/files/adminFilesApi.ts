@@ -64,6 +64,14 @@ export const adminFilesApi: FilesApi = {
   copy: async (path, destDir) => {
     await apiClient.post(`${BASE}/copy`, { path, dest_dir: destDir });
   },
+  copyStart: async (path, destDir) =>
+    (
+      await apiClient.post<{ job_id: string }>(
+        `${BASE}/copy`,
+        { path, dest_dir: destDir },
+        { params: { async: 1 } },
+      )
+    ).data,
   archive: async (paths) =>
     (await apiClient.post<Blob>(`${BASE}/archive`, { paths }, { responseType: "blob" })).data,
   delete: async (path, recursive = false) => {

@@ -244,12 +244,28 @@ export async function filesExtractStart(
   return data;
 }
 
+// Per-op completion payload carried under `result`. Extract fills
+// extracted/skipped/dest; copy (GH #1392) fills bytes/src_path/dst_path. All
+// optional so one shape covers both job kinds.
+export interface FilesJobResult {
+  dest?: string;
+  extracted?: number;
+  skipped?: number;
+  bytes?: number;
+  src_path?: string;
+  dst_path?: string;
+}
+
 export interface FilesJobStatus {
   job_id: string;
   status: "running" | "done" | "error";
   done: number;
-  total: number; // 0 = unknown (streamed tar) → indeterminate progress
-  result: FilesExtractResult;
+  // 0 = unknown → indeterminate. Extract counts entries; a streamed tar reports
+  // 0. Copy counts bytes; done/total is a byte fraction.
+  total: number;
+  // Omitted by the agent (omitempty) until the job seals — only a done job
+  // carries a result — so treat it as optional at every read.
+  result?: FilesJobResult;
   error?: string;
   started_at: string;
 }
@@ -291,6 +307,22 @@ export async function filesChmod(path: string, mode: string): Promise<void> {
 // destination path.
 export async function filesCopy(path: string, destDir: string): Promise<void> {
   await apiClient.post("/files/copy", { path, dest_dir: destDir });
+}
+
+// GH #1392: async copy. filesCopyStart kicks off the recursive copy as a
+// background job on the agent and returns immediately with a job id (HTTP 202);
+// the caller polls filesJobStatus for a byte-percentage progress bar. Same
+// escape-proof copy core + validation as the blocking filesCopy.
+export async function filesCopyStart(
+  path: string,
+  destDir: string,
+): Promise<{ job_id: string }> {
+  const { data } = await apiClient.post<{ job_id: string }>(
+    "/files/copy",
+    { path, dest_dir: destDir },
+    { params: { async: 1 } },
+  );
+  return data;
 }
 
 // filesArchive posts the selection and streams back a tar.gz download.
@@ -357,6 +389,7 @@ export type FilesApi = {
   move: typeof filesMove;
   chmod: typeof filesChmod;
   copy: typeof filesCopy;
+  copyStart: typeof filesCopyStart;
   archive: typeof filesArchive;
   delete: typeof filesDelete;
   du: typeof filesDu;
@@ -379,6 +412,7 @@ export const tenantFilesApi: FilesApi = {
   move: filesMove,
   chmod: filesChmod,
   copy: filesCopy,
+  copyStart: filesCopyStart,
   archive: filesArchive,
   delete: filesDelete,
   du: filesDu,

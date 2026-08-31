@@ -42,19 +42,24 @@ type fileJob struct {
 	mu     sync.Mutex
 	status string
 	done   int64
-	total  int64 // 0 = unknown (streamed tar) → indeterminate
-	result filesExtractResult
+	total  int64 // 0 = unknown (streamed tar / uncounted) → indeterminate
+	// result is the op-specific completion payload (filesExtractResult for
+	// extract, filesCopyJobResult for copy, GH #1392); serialized as-is under
+	// "result" in the snapshot.
+	result any
 	errMsg string
 }
 
 func (j *fileJob) setTotal(n int64) { j.mu.Lock(); j.total = n; j.mu.Unlock() }
 func (j *fileJob) tick(done int64)  { j.mu.Lock(); j.done = done; j.mu.Unlock() }
 
-func (j *fileJob) finish(res filesExtractResult) {
+// finish seals a job: the caller passes the final done value (so the bar can
+// read 100%) and the op-specific result payload.
+func (j *fileJob) finish(done int64, result any) {
 	j.mu.Lock()
 	j.status = fileJobDone
-	j.result = res
-	j.done = int64(res.Extracted + res.Skipped)
+	j.result = result
+	j.done = done
 	j.mu.Unlock()
 }
 
@@ -67,13 +72,13 @@ func (j *fileJob) fail(msg string) {
 
 // fileJobSnapshot is the wire shape returned by files.job.status.
 type fileJobSnapshot struct {
-	JobID     string             `json:"job_id"`
-	Status    string             `json:"status"`
-	Done      int64              `json:"done"`
-	Total     int64              `json:"total"`
-	Result    filesExtractResult `json:"result"`
-	Error     string             `json:"error,omitempty"`
-	StartedAt string             `json:"started_at"`
+	JobID     string `json:"job_id"`
+	Status    string `json:"status"`
+	Done      int64  `json:"done"`
+	Total     int64  `json:"total"`
+	Result    any    `json:"result,omitempty"`
+	Error     string `json:"error,omitempty"`
+	StartedAt string `json:"started_at"`
 }
 
 func (j *fileJob) snapshot() fileJobSnapshot {

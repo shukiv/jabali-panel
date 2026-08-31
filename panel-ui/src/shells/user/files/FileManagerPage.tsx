@@ -410,11 +410,25 @@ export const FileManagerPage = ({ api = tenantFilesApi, rootPath: rootPathProp }
     done: number;
     total: number;
   } | null>(null);
+  // GH #1392: async copy (paste) progress. Non-null while a paste runs; the
+  // clipboard can hold several items, so the modal shows "item i/N" plus that
+  // item's byte-percentage bar. `total === 0` means the byte count isn't in yet
+  // (or was uncountable) → indeterminate for that moment.
+  const [copyJob, setCopyJob] = useState<{
+    name: string;
+    index: number;
+    count: number;
+    status: "running" | "done" | "error";
+    done: number;
+    total: number;
+  } | null>(null);
   // Flips true on unmount so an in-flight poll loop stops touching state.
   const extractCancelRef = useRef(false);
+  const copyCancelRef = useRef(false);
   useEffect(() => {
     return () => {
       extractCancelRef.current = true;
+      copyCancelRef.current = true;
     };
   }, []);
 
@@ -979,11 +993,78 @@ export const FileManagerPage = ({ api = tenantFilesApi, rootPath: rootPathProp }
     setSelectedNames([]);
   }, [selectedPaths]);
 
+  // handlePaste (GH #1392) copies each clipboard item as a background job and
+  // polls its byte-progress so paste shows a real progress bar instead of a
+  // frozen menu. Items run ONE AT A TIME: a single in-flight job stays under the
+  // agent's per-user job cap, and the modal reports "item i/N". A large tree no
+  // longer blocks the request past a proxy timeout. If the agent restarts
+  // mid-copy the poll 404s — we stop that item's bar and move on.
   const handlePaste = useCallback(async () => {
     if (!currentPath || clipboard.length === 0) return;
-    await runBulk("Pasted", clipboard, (p) => api.copy(p, currentPath));
+    const dir = currentPath;
+    const items = clipboard;
+    copyCancelRef.current = false;
+    let ok = 0;
+    let failed = 0;
+    for (let idx = 0; idx < items.length; idx++) {
+      if (copyCancelRef.current) return;
+      const src = items[idx];
+      const name = src.split("/").filter(Boolean).pop() || src;
+      setCopyJob({ name, index: idx + 1, count: items.length, status: "running", done: 0, total: 0 });
+      try {
+        const { job_id } = await api.copyStart(src, dir);
+        let terminal = false;
+        // 1.5s cadence + ~1200-iteration cap mirrors the extract poller (well
+        // under the agent's 10-min job TTL and any flood threshold).
+        for (let i = 0; i < 1200 && !terminal; i++) {
+          await new Promise((r) => setTimeout(r, 1500));
+          if (copyCancelRef.current) return;
+          let s: Awaited<ReturnType<typeof api.jobStatus>>;
+          try {
+            s = await api.jobStatus(job_id);
+          } catch {
+            // Unknown/foreign id or agent restart — this item's job is gone.
+            feedback.message.warning(
+              "Copy status is no longer available — refreshing folder",
+            );
+            failed++;
+            terminal = true;
+            break;
+          }
+          if (copyCancelRef.current) return;
+          setCopyJob({
+            name,
+            index: idx + 1,
+            count: items.length,
+            status: s.status,
+            done: s.done,
+            total: s.total,
+          });
+          if (s.status === "done") {
+            ok++;
+            terminal = true;
+          } else if (s.status === "error") {
+            feedback.message.error(`Copy failed for ${name}: ${s.error || "unknown error"}`);
+            failed++;
+            terminal = true;
+          }
+        }
+      } catch (err) {
+        feedback.message.error(`Copy failed for ${name}: ${errMessage(err)}`);
+        failed++;
+      }
+    }
+    setCopyJob(null);
     setClipboard([]);
-  }, [clipboard, currentPath, runBulk]);
+    if (failed === 0) {
+      feedback.message.success(`Pasted ${ok} item${ok === 1 ? "" : "s"}`);
+    } else if (ok === 0) {
+      feedback.message.error(`Paste failed for all ${failed} item${failed === 1 ? "" : "s"}`);
+    } else {
+      feedback.message.warning(`Pasted ${ok}/${items.length} — ${failed} failed`);
+    }
+    void reloadList(dir);
+  }, [clipboard, currentPath, api, reloadList]);
 
   const handleMove = useCallback(
     async (srcPath: string, destDir: string) => {
@@ -1082,12 +1163,11 @@ export const FileManagerPage = ({ api = tenantFilesApi, rootPath: rootPathProp }
           total: s.total,
         });
         if (s.status === "done") {
+          const skippedN = s.result?.skipped ?? 0;
           const skipped =
-            s.result.skipped > 0
-              ? `, ${s.result.skipped} unsafe entr(y/ies) skipped`
-              : "";
+            skippedN > 0 ? `, ${skippedN} unsafe entr(y/ies) skipped` : "";
           feedback.message.success(
-            `Extracted ${s.result.extracted} file(s)${skipped}`,
+            `Extracted ${s.result?.extracted ?? 0} file(s)${skipped}`,
           );
           void reloadList(dir);
           setTimeout(() => setExtractJob(null), 500);
@@ -1905,6 +1985,50 @@ export const FileManagerPage = ({ api = tenantFilesApi, rootPath: rootPathProp }
               <Spin />
               <span>
                 Extracting {extractJob.done > 0 ? `${extractJob.done} file(s)` : ""}…
+              </span>
+            </Space>
+          ))}
+      </Modal>
+
+      {/* GH #1392: async copy (paste) progress. Byte-percentage per item, with
+          "item i/N" when the clipboard holds several. Non-dismissable while
+          running so a second paste can't stack over the first. */}
+      <Modal
+        title={
+          copyJob
+            ? `Copying ${copyJob.name}${copyJob.count > 1 ? ` (${copyJob.index}/${copyJob.count})` : ""}`
+            : "Copying"
+        }
+        open={copyJob !== null}
+        footer={null}
+        closable={false}
+        maskClosable={false}
+        destroyOnHidden
+      >
+        {copyJob &&
+          (copyJob.total > 0 ? (
+            <Progress
+              percent={
+                copyJob.status === "done"
+                  ? 100
+                  : Math.min(
+                      99, // clamp <100 until done: the tree can drift between count and copy
+                      Math.floor((copyJob.done / copyJob.total) * 100),
+                    )
+              }
+              status={
+                copyJob.status === "error"
+                  ? "exception"
+                  : copyJob.status === "done"
+                    ? "success"
+                    : "active"
+              }
+            />
+          ) : (
+            <Space>
+              <Spin />
+              <span>
+                Copying {copyJob.done > 0 ? `${formatBytes(copyJob.done)} ` : ""}…
               </span>
             </Space>
           ))}

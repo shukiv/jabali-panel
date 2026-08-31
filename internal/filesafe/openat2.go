@@ -452,6 +452,15 @@ func removeAllAt(ctx context.Context, dirFd int, name string) error {
 // target string is data, not followed). Each created file/dir is chowned to
 // uid:gid. Returns total bytes of regular-file content copied.
 func (s *Scope) CopyTreeInScope(ctx context.Context, srcPath, dstPath string, uid, gid int) (int64, error) {
+	return s.CopyTreeInScopeProgress(ctx, srcPath, dstPath, uid, gid, nil)
+}
+
+// CopyTreeInScopeProgress is CopyTreeInScope with an optional onBytes callback,
+// invoked with the byte delta after each chunk of regular-file data is written,
+// so a caller (GH #1392 async copy) can drive a progress bar. onBytes may be
+// nil. The callback only ever sees a byte count — it touches no fds or paths,
+// so it cannot weaken the escape-proof O_NOFOLLOW descent.
+func (s *Scope) CopyTreeInScopeProgress(ctx context.Context, srcPath, dstPath string, uid, gid int, onBytes func(int64)) (int64, error) {
 	srcInfo, err := s.StatInScope(srcPath)
 	if err != nil {
 		return 0, err
@@ -500,7 +509,7 @@ func (s *Scope) CopyTreeInScope(ctx context.Context, srcPath, dstPath string, ui
 			unix.Close(dfd)
 			return 0, fmt.Errorf("chown copied dir: %w", chErr) // GH #662
 		}
-		n, cerr := copyDirContents(ctx, int(sfd.Fd()), dfd, uid, gid)
+		n, cerr := copyDirContents(ctx, int(sfd.Fd()), dfd, uid, gid, onBytes)
 		unix.Close(dfd)
 		return n, cerr
 
@@ -521,7 +530,7 @@ func (s *Scope) CopyTreeInScope(ctx context.Context, srcPath, dstPath string, ui
 			_ = out.Close()
 			return 0, fmt.Errorf("chown copied file %q: %w", dstLeaf, chErr)
 		}
-		n, cerr := io.Copy(out, in)
+		n, cerr := io.Copy(progressDst(out, onBytes), in)
 		if closeErr := out.Close(); cerr == nil {
 			cerr = closeErr
 		}
@@ -534,7 +543,7 @@ func (s *Scope) CopyTreeInScope(ctx context.Context, srcPath, dstPath string, ui
 
 // copyDirContents copies every entry under srcFd into dstFd (both open dir fds),
 // recursing with O_NOFOLLOW so neither side can be redirected mid-walk.
-func copyDirContents(ctx context.Context, srcFd, dstFd, uid, gid int) (int64, error) {
+func copyDirContents(ctx context.Context, srcFd, dstFd, uid, gid int, onBytes func(int64)) (int64, error) {
 	dup, err := unix.Dup(srcFd)
 	if err != nil {
 		return 0, err
@@ -556,7 +565,7 @@ func copyDirContents(ctx context.Context, srcFd, dstFd, uid, gid int) (int64, er
 			continue
 		}
 		li := statToLeaf(name, &st)
-		n, err := copyEntryAt(ctx, srcFd, dstFd, name, li, uid, gid)
+		n, err := copyEntryAt(ctx, srcFd, dstFd, name, li, uid, gid, onBytes)
 		if err != nil {
 			return total, err
 		}
@@ -566,7 +575,7 @@ func copyDirContents(ctx context.Context, srcFd, dstFd, uid, gid int) (int64, er
 }
 
 // copyEntryAt copies a single entry `name` from srcFd to dstFd.
-func copyEntryAt(ctx context.Context, srcFd, dstFd int, name string, li LeafInfo, uid, gid int) (int64, error) {
+func copyEntryAt(ctx context.Context, srcFd, dstFd int, name string, li LeafInfo, uid, gid int, onBytes func(int64)) (int64, error) {
 	switch {
 	case li.IsSymlink:
 		target, err := readlinkat(srcFd, name)
@@ -599,19 +608,19 @@ func copyEntryAt(ctx context.Context, srcFd, dstFd int, name string, li LeafInfo
 			unix.Close(ndst)
 			return 0, err
 		}
-		n, cerr := copyDirContents(ctx, nsrc, ndst, uid, gid)
+		n, cerr := copyDirContents(ctx, nsrc, ndst, uid, gid, onBytes)
 		unix.Close(nsrc)
 		unix.Close(ndst)
 		return n, cerr
 	case li.Mode.IsRegular():
-		return copyRegularAt(srcFd, dstFd, name, li.Mode.Perm(), uid, gid)
+		return copyRegularAt(srcFd, dstFd, name, li.Mode.Perm(), uid, gid, onBytes)
 	default:
 		return 0, nil // skip devices/sockets/fifos
 	}
 }
 
 // copyRegularAt copies a regular file `name` from srcFd to dstFd via openat.
-func copyRegularAt(srcFd, dstFd int, name string, perm os.FileMode, uid, gid int) (int64, error) {
+func copyRegularAt(srcFd, dstFd int, name string, perm os.FileMode, uid, gid int, onBytes func(int64)) (int64, error) {
 	ifd, err := unix.Openat(srcFd, name, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return 0, err
@@ -628,11 +637,110 @@ func copyRegularAt(srcFd, dstFd int, name string, perm os.FileMode, uid, gid int
 		_ = out.Close()
 		return 0, fmt.Errorf("chown copied file %q: %w", name, chErr)
 	}
-	n, cerr := io.Copy(out, in)
+	n, cerr := io.Copy(progressDst(out, onBytes), in)
 	if closeErr := out.Close(); cerr == nil {
 		cerr = closeErr
 	}
 	return n, cerr
+}
+
+// progressWriter wraps a writer, invoking cb with the byte count after each
+// successful write. Used to drive an async copy's progress bar (GH #1392). It
+// carries no fd/path state, so it cannot affect the escape-proof copy descent.
+type progressWriter struct {
+	w  io.Writer
+	cb func(int64)
+}
+
+func (p *progressWriter) Write(b []byte) (int, error) {
+	n, err := p.w.Write(b)
+	if n > 0 {
+		p.cb(int64(n))
+	}
+	return n, err
+}
+
+// progressDst returns w wrapped to report bytes to onBytes, or w unchanged when
+// onBytes is nil (the synchronous copy path pays nothing).
+func progressDst(w io.Writer, onBytes func(int64)) io.Writer {
+	if onBytes == nil {
+		return w
+	}
+	return &progressWriter{w: w, cb: onBytes}
+}
+
+// CountTreeBytesInScope sums the regular-file bytes under srcPath using the same
+// fd-based O_NOFOLLOW descent as the copy, so a symlink can never redirect the
+// walk out of the scope or inflate the total from outside the jail (GH #1392).
+// Symlinks and directory entries contribute 0 — it mirrors what the byte-
+// progress copy will actually write. Best-effort for a progress denominator: it
+// returns whatever it counted alongside any error.
+func (s *Scope) CountTreeBytesInScope(ctx context.Context, srcPath string) (int64, error) {
+	info, err := s.StatInScope(srcPath)
+	if err != nil {
+		return 0, err
+	}
+	switch {
+	case info.IsSymlink:
+		return 0, nil
+	case info.IsDir:
+		sfd, err := s.OpenDirInScope(srcPath)
+		if err != nil {
+			return 0, err
+		}
+		defer sfd.Close()
+		return countDirBytes(ctx, int(sfd.Fd()))
+	case info.Mode.IsRegular():
+		return info.Size, nil
+	default:
+		return 0, nil
+	}
+}
+
+// countDirBytes recurses srcFd counting regular-file bytes, O_NOFOLLOW at every
+// level so it cannot be redirected outside the scope. Unreadable entries are
+// skipped (same tolerance as the copy walk), so the total is a best-effort
+// denominator, never a hard failure.
+func countDirBytes(ctx context.Context, srcFd int) (int64, error) {
+	dup, err := unix.Dup(srcFd)
+	if err != nil {
+		return 0, err
+	}
+	sdir := os.NewFile(uintptr(dup), ".")
+	names, err := sdir.Readdirnames(-1)
+	sdir.Close()
+	if err != nil {
+		return 0, err
+	}
+	var total int64
+	for _, name := range names {
+		if err := ctx.Err(); err != nil {
+			return total, err
+		}
+		var st unix.Stat_t
+		if err := unix.Fstatat(srcFd, name, &st, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+			continue
+		}
+		li := statToLeaf(name, &st)
+		switch {
+		case li.IsSymlink:
+			// counts as 0, like the copy
+		case li.IsDir:
+			nsrc, err := unix.Openat(srcFd, name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+			if err != nil {
+				continue
+			}
+			n, cerr := countDirBytes(ctx, nsrc)
+			unix.Close(nsrc)
+			if cerr != nil {
+				return total + n, cerr
+			}
+			total += n
+		case li.Mode.IsRegular():
+			total += li.Size
+		}
+	}
+	return total, nil
 }
 
 // ReadlinkInScope reads the symlink target at pathStr fd-safely: the parent is

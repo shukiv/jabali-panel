@@ -5,7 +5,7 @@ vi.mock("../../../apiClient", () => ({
 }));
 
 import { apiClient } from "../../../apiClient";
-import { filesExtractStart, filesJobStatus } from "./filesApi";
+import { filesCopyStart, filesExtractStart, filesJobStatus } from "./filesApi";
 
 const mocked = apiClient as unknown as {
   get: ReturnType<typeof vi.fn>;
@@ -26,6 +26,24 @@ describe("filesExtractStart", () => {
     expect(mocked.post).toHaveBeenCalledWith(
       "/files/extract",
       { path: "/home/u/big.zip", dest: undefined },
+      { params: { async: 1 } },
+    );
+  });
+});
+
+describe("filesCopyStart", () => {
+  beforeEach(() => {
+    mocked.get.mockReset();
+    mocked.post.mockReset();
+  });
+
+  it("posts the copy with async=1 and returns the job id", async () => {
+    mocked.post.mockResolvedValue({ data: { job_id: "cp1" } });
+    const out = await filesCopyStart("/home/u/site", "/home/u/backup");
+    expect(out).toEqual({ job_id: "cp1" });
+    expect(mocked.post).toHaveBeenCalledWith(
+      "/files/copy",
+      { path: "/home/u/site", dest_dir: "/home/u/backup" },
       { params: { async: 1 } },
     );
   });

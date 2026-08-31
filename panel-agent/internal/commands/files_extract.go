@@ -445,7 +445,7 @@ func filesExtractStartHandler(_ context.Context, params json.RawMessage) (any, e
 			return
 		}
 		r, _ := res.(filesExtractResult)
-		job.finish(r)
+		job.finish(int64(r.Extracted+r.Skipped), r)
 	}()
 	return map[string]string{"job_id": job.id}, nil
 }
