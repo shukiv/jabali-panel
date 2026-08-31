@@ -160,6 +160,31 @@ func TestProbeIMAPAuthFailed(t *testing.T) {
 	}
 }
 
+// GH #1429: a connect failure is classified into an actionable, SAFE hint and a
+// stable code — and the raw error / remote address never reaches the client.
+func TestProbeIMAPClassifiesConnectError(t *testing.T) {
+	orig := imapProbeFn
+	defer func() { imapProbeFn = orig }()
+	imapProbeFn = func(_ context.Context, _ imap.ProbeConfig) (*imap.ProbeResult, error) {
+		return nil, errors.New("imap: connect h:143: ssrf: 10.0.0.5 private range rejected")
+	}
+	h, _ := newIMAPHandler(fakeIMAPAgent{})
+	w := postJSON(h.probeIMAP, `{"host":"h","user":"u","password":"pw"}`)
+	if w.Code != http.StatusBadGateway {
+		t.Fatalf("code = %d, want 502; body=%s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "blocked_host") {
+		t.Errorf("want error code blocked_host: %s", body)
+	}
+	if !strings.Contains(body, "Allow private/LAN host") {
+		t.Errorf("want an actionable hint: %s", body)
+	}
+	if strings.Contains(body, "ssrf:") || strings.Contains(body, "10.0.0.5") {
+		t.Errorf("response leaks raw error text: %s", body)
+	}
+}
+
 func TestProbeIMAPValidation(t *testing.T) {
 	h, _ := newIMAPHandler(fakeIMAPAgent{})
 	w := postJSON(h.probeIMAP, `{"host":"h"}`) // missing user + password

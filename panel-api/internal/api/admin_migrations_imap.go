@@ -20,7 +20,7 @@ package api
 
 import (
 	"context"
-	"errors"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -79,11 +79,18 @@ func (h *adminMigrationsHandler) probeIMAP(c *gin.Context) {
 
 	res, err := imapProbeFn(ctx, req.probeConfig())
 	if err != nil {
-		if errors.Is(err, imap.ErrAuth) {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "auth_failed", "detail": "the remote server rejected the credentials"})
-			return
+		code, hint := imap.Classify(err)
+		// GH #1429: log the REAL error server-side (never the password) so the
+		// operator can actually diagnose a failed probe. The client only ever
+		// sees the safe hint + code — the remote banner is never echoed.
+		slog.WarnContext(ctx, "imap migration probe failed",
+			"host", req.Host, "port", req.Port, "starttls", req.STARTTLS,
+			"user", req.User, "code", code, "err", err)
+		status := http.StatusBadGateway
+		if code == "auth_failed" {
+			status = http.StatusUnauthorized
 		}
-		c.JSON(http.StatusBadGateway, gin.H{"error": "probe_failed", "detail": "could not enumerate the remote account"})
+		c.JSON(status, gin.H{"error": code, "detail": hint})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"folders": res.Folders, "total": len(res.Folders)})

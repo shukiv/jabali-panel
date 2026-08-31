@@ -75,8 +75,14 @@ export function MigrateImapDrawer({ open, onClose }: Props) {
       setFolders(f);
       feedback.message.success(`Found ${f.length} folder(s) on the remote account`);
     },
-    onError: (err: AxiosError<{ error?: string }>) => {
-      if (err.response?.status === 401) {
+    onError: (err: AxiosError<{ error?: string; detail?: string }>) => {
+      // GH #1429: the API now returns a safe, actionable hint (wrong port /
+      // STARTTLS mismatch / DNS / private host blocked / timeout / bad cert /
+      // auth) in `detail`. Prefer it; fall back to the old generic strings.
+      const hint = err.response?.data?.detail;
+      if (hint) {
+        feedback.message.error(hint);
+      } else if (err.response?.status === 401) {
         feedback.message.error("The remote server rejected the credentials — check the app-password.");
       } else {
         feedback.message.error("Could not connect to the remote IMAP account.");
