@@ -1196,13 +1196,14 @@ func (h *domainHandler) delete(c *gin.Context) {
 		if owner, uerr := h.cfg.Users.FindByID(ctx, domain.UserID); uerr == nil &&
 			owner != nil && owner.Username != nil && *owner.Username != "" {
 			username, docroot, dname := *owner.Username, domain.DocRoot, domain.Name
+			target := domainDeleteFilesTarget(username, dname, docroot)
 			ag := h.cfg.Agent
 			go func() {
 				dctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 				defer cancel()
 				if _, aerr := ag.Call(dctx, "domain.docroot.delete", map[string]string{
 					"username": username,
-					"docroot":  docroot,
+					"docroot":  target,
 				}); aerr != nil {
 					slog.Warn("domain delete: docroot cleanup failed; files left in place",
 						"domain", dname, "error", aerr)
@@ -1212,6 +1213,22 @@ func (h *domainHandler) delete(c *gin.Context) {
 	}
 
 	c.Status(http.StatusNoContent)
+}
+
+// domainDeleteFilesTarget picks what "also delete the files" removes (GH #1382
+// follow-up). It returns the whole per-domain folder
+// (/home/<user>/domains/<domain>) when the docroot lives inside it — which is
+// the normal layout, and where GH #526 confines any custom docroot too — so the
+// domain's public_html, logs and siblings all go, not just public_html. If the
+// docroot sits OUTSIDE that folder (e.g. a legacy/primary domain served from
+// ~/public_html) it returns the docroot unchanged, so we never remove an
+// unrelated or shared directory. The agent re-validates whatever we send.
+func domainDeleteFilesTarget(username, domainName, docroot string) string {
+	domainDir := "/home/" + username + "/domains/" + domainName
+	if strings.HasPrefix(docroot, domainDir+"/") {
+		return domainDir
+	}
+	return docroot
 }
 
 // allowedNginxDirectives is a per-line allowlist of nginx directives that users
