@@ -126,6 +126,11 @@ func RegisterBackupRoutes(rg *gin.RouterGroup, cfg BackupHandlerConfig) {
 	admin.POST("/backups/:job_id/cancel", h.cancel)
 	admin.GET("/backups/:job_id/logs", h.logs)
 	admin.POST("/backups/restore", h.restore)
+	// GH #1408: restore from an uploaded backup archive (DR / migration).
+	admin.POST("/backups/restore-upload", h.restoreUploadChunk)
+	admin.POST("/backups/restore-upload/inspect", h.restoreUploadInspect)
+	admin.POST("/backups/restore-upload/apply", h.restoreUploadApply)
+	admin.GET("/backups/restore-upload/status", h.restoreUploadStatus)
 	admin.GET("/backup-runs", h.listRuns)
 	admin.GET("/backup-runs/:run_id/jobs", h.listRunJobs)
 	admin.DELETE("/backup-runs/:run_id/jobs", h.deleteRunJobs)

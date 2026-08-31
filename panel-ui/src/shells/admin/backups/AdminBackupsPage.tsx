@@ -38,6 +38,7 @@ const isRestoreKind = (kind: string): boolean =>
   kind === "account_restore" || kind === "system_restore";
 import { BackupSettingsTab } from "./BackupSettingsTab";
 import { CreateBackupDrawer } from "./CreateBackupDrawer";
+import { RestoreFromUploadDrawer } from "./RestoreFromUploadDrawer";
 import { DestinationsTab } from "./DestinationsTab";
 import { EncryptionKeyCard } from "./EncryptionKeyCard";
 import { SchedulesTab } from "./SchedulesTab";
@@ -145,6 +146,7 @@ const RunStatusSummary = ({ run }: { run: BackupRun }) => {
 
 export const AdminBackupsPage = () => {
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [uploadRestoreOpen, setUploadRestoreOpen] = useState(false);
   const [logJob, setLogJob] = useState<BackupJob | null>(null);
   const [activeTab, setActiveTab] = useTabParam<TabKey>("backups");
   const [runs, setRuns] = useState<BackupRun[]>([]);
@@ -451,13 +453,21 @@ export const AdminBackupsPage = () => {
           <SaveOutlined style={{ marginRight: 8 }} />
           Backups
         </Typography.Title>
-        <Button
-          type="primary"
-          icon={<PlusOutlined />}
-          onClick={() => setDrawerOpen(true)}
-        >
-          Create Backup
-        </Button>
+        <Space>
+          <Button
+            icon={<HardDriveUploadOutlined />}
+            onClick={() => setUploadRestoreOpen(true)}
+          >
+            Restore from Upload
+          </Button>
+          <Button
+            type="primary"
+            icon={<PlusOutlined />}
+            onClick={() => setDrawerOpen(true)}
+          >
+            Create Backup
+          </Button>
+        </Space>
       </Space>
 
       <Card
@@ -697,6 +707,11 @@ export const AdminBackupsPage = () => {
       <BackupLogModal
         job={logJob}
         onClose={() => setLogJob(null)}
+      />
+
+      <RestoreFromUploadDrawer
+        open={uploadRestoreOpen}
+        onClose={() => setUploadRestoreOpen(false)}
       />
     </div>
   );

@@ -2408,6 +2408,34 @@ paths:
       security: [ { KratosSession: [] } ]
       responses: { "200": { description: OK } }
 
+  /admin/backups/restore-upload:
+    post:
+      tags: [Backups]
+      summary: Upload a backup archive chunk to restore from (GH #1408)
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/backups/restore-upload/inspect:
+    post:
+      tags: [Backups]
+      summary: Inspect an uploaded backup archive (user + restorable components)
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/backups/restore-upload/apply:
+    post:
+      tags: [Backups]
+      summary: Restore an uploaded backup archive into an existing user (step-up)
+      security: [ { KratosSession: [] } ]
+      responses: { "202": { description: Accepted } }
+
+  /admin/backups/restore-upload/status:
+    get:
+      tags: [Backups]
+      summary: Poll the status of an uploaded-archive restore
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
   /admin/backups/{job_id}:
     delete:
       tags: [Backups]
