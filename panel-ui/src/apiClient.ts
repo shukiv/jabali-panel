@@ -537,16 +537,46 @@ export interface UploadedBackupRestoreResult {
   metadata_errors?: string[] | null;
 }
 
+// applyUploadedBackupRestore kicks off the restore (202) and polls the status
+// marker until it seals — the apply runs detached server-side so a minutes-long
+// account restore doesn't span a proxy timeout (same shape as the DB restore).
 export async function applyUploadedBackupRestore(
   uploadId: string,
   targetUsername: string,
   components: string[],
 ): Promise<UploadedBackupRestoreResult> {
-  const { data } = await apiClient.post<UploadedBackupRestoreResult>(
+  await apiClient.post(
     "/admin/backups/restore-upload/apply",
     { upload_id: uploadId, target_username: targetUsername, components },
   );
-  return data;
+  const deadline = Date.now() + 65 * 60 * 1000; // matches the server's 60-min cap
+  for (;;) {
+    await new Promise((r) => setTimeout(r, 2500));
+    let s: RestoreUploadStatus | null = null;
+    try {
+      const resp = await apiClient.get<RestoreUploadStatus>(
+        "/admin/backups/restore-upload/status",
+        { params: { upload_id: uploadId } },
+      );
+      s = resp.data;
+    } catch {
+      // transient poll error — keep trying until the deadline
+    }
+    if (s?.status === "done") {
+      return { status: "ok", applied: s.applied, warnings: s.warnings };
+    }
+    if (s?.status === "failed") {
+      throw new Error(s.error || "restore_failed");
+    }
+    if (Date.now() > deadline) throw new Error("restore_timeout");
+  }
+}
+
+interface RestoreUploadStatus {
+  status: string;
+  applied?: string[];
+  warnings?: string[];
+  error?: string;
 }
 
 // === PHP Settings API ===

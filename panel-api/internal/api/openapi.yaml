@@ -2427,6 +2427,13 @@ paths:
       tags: [Backups]
       summary: Restore an uploaded backup archive into an existing user (step-up)
       security: [ { KratosSession: [] } ]
+      responses: { "202": { description: Accepted } }
+
+  /admin/backups/restore-upload/status:
+    get:
+      tags: [Backups]
+      summary: Poll the status of an uploaded-archive restore
+      security: [ { KratosSession: [] } ]
       responses: { "200": { description: OK } }
 
   /admin/backups/{job_id}:

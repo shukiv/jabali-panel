@@ -130,6 +130,7 @@ func RegisterBackupRoutes(rg *gin.RouterGroup, cfg BackupHandlerConfig) {
 	admin.POST("/backups/restore-upload", h.restoreUploadChunk)
 	admin.POST("/backups/restore-upload/inspect", h.restoreUploadInspect)
 	admin.POST("/backups/restore-upload/apply", h.restoreUploadApply)
+	admin.GET("/backups/restore-upload/status", h.restoreUploadStatus)
 	admin.GET("/backup-runs", h.listRuns)
 	admin.GET("/backup-runs/:run_id/jobs", h.listRunJobs)
 	admin.DELETE("/backup-runs/:run_id/jobs", h.deleteRunJobs)
