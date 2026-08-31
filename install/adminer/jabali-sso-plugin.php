@@ -1,6 +1,13 @@
 <?php
 /**
- * Jabali Adminer SSO plugin (M37 Phase 4).
+ * Jabali Adminer SSO plugin.
+ *
+ * Ported to the Adminer 6 plugin API (GH #1405): plugins live in the
+ * `Adminer\` namespace and are registered via a global adminer_object()
+ * that returns an Adminer\Plugins instance (see index.php). The dispatcher
+ * calls each hook a plugin defines and takes the first non-null result,
+ * falling back to Adminer's own default — so returning null here lets
+ * Adminer render its standard login form when a token is missing/expired.
  *
  * Token flow:
  *   1. Browser hits /jabali-adminer/?token=<base64url>&engine=<eng>&db=<name>
@@ -12,15 +19,18 @@
  *      navigates inside its UI via more requests; without the cache
  *      the token would be replay-rejected on the very next click).
  *   4. Plugin auto-submits the Adminer login form with the cached
- *      creds via a small <form> + JS so the user lands directly on
- *      the database view.
+ *      creds so the user lands directly on the database view.
  *
- * Engine driver mapping:
+ * Engine driver mapping (unchanged in Adminer 6 — verified against the
+ * 6.0.1 driver tables):
  *   - mariadb  → driver "server"  (Adminer's MySQLi/PDO_MySQL backend)
  *   - postgres → driver "pgsql"   (libpq via pg_connect)
  *
  * @see panel-api/internal/api/sso_adminer_validate.go
  */
+
+namespace Adminer;
+
 class JabaliAdminerSSO {
     /** @var string Path to the panel-api Unix socket. */
     private $socket_path;
@@ -130,14 +140,14 @@ class JabaliAdminerSSO {
 
     /**
      * Replace Adminer's login form with a hidden auto-submitting
-     * form. Returning truthy stops Adminer from rendering its own
-     * form below. When there are no creds to inject, return falsy
-     * so Adminer's standard form renders and the user can see
-     * what failed.
+     * form. Returning truthy stops Adminer (and later plugins) from
+     * rendering the default form below. When there are no creds to
+     * inject, return null so Adminer's standard form renders and the
+     * user can see what failed.
      */
     public function loginForm() {
         $c = $this->fetchCreds();
-        if ($c === null) return;
+        if ($c === null) return null;
 
         $h = function ($v) {
             return htmlspecialchars((string)$v, ENT_QUOTES);
@@ -145,9 +155,8 @@ class JabaliAdminerSSO {
 
         // Adminer wraps loginForm() output inside its own <form
         // action="" method="post">. HTML forbids nested forms, so
-        // browsers strip the inner one — getElementById then returns
-        // null and the auto-submit script crashes. Output hidden
-        // <input>s directly into the parent form and submit it.
+        // browsers strip the inner one — output hidden <input>s
+        // directly into the parent form and submit it.
         echo '<input type="hidden" name="auth[driver]"   value="' . $h($c['driver']) . '">';
         echo '<input type="hidden" name="auth[server]"   value="' . $h($c['server']) . '">';
         echo '<input type="hidden" name="auth[username]" value="' . $h($c['username']) . '">';
@@ -156,11 +165,9 @@ class JabaliAdminerSSO {
         echo '<noscript><button type="submit">Continue</button></noscript>';
         echo '<p style="text-align:center;padding:2rem">Signing into Adminer via Jabali SSO…</p>';
         // Adminer ships a strict CSP (script-src ... nonce-... strict-dynamic).
-        // Inline scripts WITHOUT the matching nonce are blocked. Use
-        // Adminer's nonce() helper which returns the full attribute
-        // string (` nonce="..."`).
-        $nonceAttr = function_exists("nonce") ? nonce() : "";
-        echo '<script' . $nonceAttr . '>(document.querySelector("form[method=post]")||document.forms[0]).submit();</script>';
+        // Use Adminer\script(), which emits a <script> carrying the request
+        // nonce, so the inline auto-submit isn't blocked (Adminer 6 helper).
+        echo script('(document.querySelector("form[method=post]")||document.forms[0]).submit();');
         return true;
     }
 
@@ -199,10 +206,5 @@ class JabaliAdminerSSO {
         $c = $this->fetchCreds();
         if ($c === null) return null;
         return [$c['db']];
-    }
-
-    /** No persistent cookie — every fresh entry uses a one-shot token. */
-    public function permanentLogin($create = false) {
-        return false;
     }
 }

@@ -44,7 +44,7 @@ Version pins shown are the values in `install.sh` at the time of writing. Run `j
 | Component | Version | Role |
 |---|---|---|
 | **phpMyAdmin** | 5.2.3 | MariaDB web UI with single-use SSO (`sso.php`) |
-| **Adminer** | 4.8.1 | Lighter DB web UI + `jabali-sso-plugin.php` |
+| **Adminer** | 6.0.1 | Lighter DB web UI + `jabali-sso-plugin.php` |
 | **WP-CLI** | 2.12.0 | WordPress automation |
 | **GoAccess** | Debian | nginx log analyzer |
 | **Roundcube** | Debian + install snippet | Webmail (served by Bulwark vhost) |

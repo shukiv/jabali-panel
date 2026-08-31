@@ -35,7 +35,7 @@ the string to bump it.
 |---|---|---|---|
 | MariaDB | distro 11.x | apt | panel DB + tenant DBs (M7). Reserved-word trap on 11.4+ documented in `feedback_mariadb_reserved_words` |
 | Redis | distro | apt | M14 notifications stream + SSO session store |
-| Adminer | `4.8.1` | `github.com/vrana/adminer` release | M37 DB UI |
+| Adminer | `6.0.1` | `github.com/vrana/adminer` release | M37 DB UI |
 | phpMyAdmin | `5.2.3` | phpmyadmin.net tarball | M7 |
 
 ## DNS

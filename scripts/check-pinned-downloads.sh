@@ -93,7 +93,7 @@ check_gh  "bulwark-webmail $BW_V" "bulwarkmail/webmail"  "${BW_V}"   # no v-pref
 KR_V="$(pin 'kratos_version="[0-9.]+"')"
 check_url "kratos $KR_V"      "https://github.com/ory/kratos/releases/download/v${KR_V}/kratos_${KR_V}-linux_64bit.tar.gz"
 
-check_url "adminer 4.8.1"     "https://github.com/vrana/adminer/releases/download/v4.8.1/adminer-4.8.1.php"
+check_url "adminer 6.0.1"     "https://github.com/vrana/adminer/releases/download/v6.0.1/adminer-6.0.1.php"
 
 echo ""
 if [[ $fail -eq 0 ]]; then

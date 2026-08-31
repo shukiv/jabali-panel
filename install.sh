@@ -8021,10 +8021,10 @@ install_adminer() {
   # other install.sh pin (phpMyAdmin, Stalwart, Kratos, …). Bump this one line,
   # then `scripts/deps-check.sh --refresh-sha adminer_version` to re-capture the
   # checksum.
-  local adminer_version="4.8.1"
+  local adminer_version="6.0.1"
   local adminer_dir="/var/www/jabali-adminer"
   local adminer_url="https://github.com/vrana/adminer/releases/download/v${adminer_version}/adminer-${adminer_version}.php"
-  local adminer_plugin_url="https://raw.githubusercontent.com/vrana/adminer/v${adminer_version}/plugins/plugin.php"
+  local adminer_stamp="${adminer_dir}/.adminer-version"
 
   mkdir -p "${adminer_dir}"
 
@@ -8038,8 +8038,15 @@ install_adminer() {
   # with the operator's DB credentials — and nothing in install or CI would
   # notice. Download to a temp path first so a mismatch can never leave a
   # partially-verified file in the docroot.
-  if [[ ! -f "${adminer_dir}/adminer.php" ]]; then
-    _log "downloading adminer.php"
+  #
+  # Re-download whenever the on-disk build is not the pinned version: a plain
+  # `[[ ! -f ]]` gate would freeze every existing box at whatever it first
+  # installed, so a bump (e.g. 4.8.1 -> 6.0.1) would never roll out on
+  # `jabali update`. The .adminer-version stamp records the last verified build.
+  local adminer_have=""
+  [[ -f "${adminer_stamp}" ]] && adminer_have="$(cat "${adminer_stamp}" 2>/dev/null)"
+  if [[ ! -f "${adminer_dir}/adminer.php" || "${adminer_have}" != "${adminer_version}" ]]; then
+    _log "downloading adminer.php (${adminer_version})"
     local adminer_tmp
     adminer_tmp="$(mktemp)"
     if ! curl -fsSL --retry 4 --retry-delay 2 --retry-connrefused -o "$adminer_tmp" "${adminer_url}"; then
@@ -8055,41 +8062,20 @@ install_adminer() {
       _err "adminer checksum mismatch: expected ${adminer_expected:-<missing pin>}, got $adminer_actual"
       return 1
     fi
+    # Atomic swap: the old adminer.php stays in place until the verified new one
+    # is moved over it, then stamp the version so we don't re-download next tick.
     mv "$adminer_tmp" "${adminer_dir}/adminer.php"
-    _ok "adminer.php checksum verified"
+    echo "${adminer_version}" > "${adminer_stamp}"
+    _ok "adminer.php ${adminer_version} checksum verified"
   else
-    _ok "adminer.php already present"
+    _ok "adminer.php ${adminer_version} already present"
   fi
 
-  # Adminer's plugin loader (separate from the main file). Checksum-verified
-  # too: it is loaded by adminer.php, so it executes with the same privileges.
-  if [[ ! -f "${adminer_dir}/plugin.php" ]]; then
-    _log "downloading Adminer plugin loader"
-    local plugin_tmp
-    plugin_tmp="$(mktemp)"
-    if ! curl -fsSL --retry 4 --retry-delay 2 --retry-connrefused -o "$plugin_tmp" "${adminer_plugin_url}"; then
-      # Non-fatal: the plugin loader only enhances Adminer (jabali-sso plugin).
-      # A transient GitHub-raw hiccup shouldn't brick the whole install; the DB
-      # admin tool still works, and `jabali update` / repair can refetch it.
-      rm -f "$plugin_tmp"
-      _warn "failed to download adminer plugin loader (non-fatal) — Adminer SSO plugin disabled until next update"
-    else
-      local plugin_expected plugin_actual
-      plugin_expected="$(grep -v '^#' "${REPO_DIR}/install/adminer-plugin.sha256" | awk '{print $1}')"
-      plugin_actual="$(sha256sum "$plugin_tmp" | awk '{print $1}')"
-      if [[ -z "$plugin_expected" || "$plugin_expected" != "$plugin_actual" ]]; then
-        # A MISMATCH is not the same as a failed download: the file served is
-        # not the pinned one, so refuse it rather than degrade quietly.
-        rm -f "$plugin_tmp"
-        _warn "adminer plugin loader checksum mismatch (expected ${plugin_expected:-<missing pin>}, got $plugin_actual) — refusing it; SSO plugin disabled"
-      else
-        mv "$plugin_tmp" "${adminer_dir}/plugin.php"
-        _ok "adminer plugin loader checksum verified"
-      fi
-    fi
-  else
-    _ok "adminer plugin loader already present"
-  fi
+  # Adminer 6 bundles its plugin loader inside adminer.php; the 4.x
+  # plugins/plugin.php file is gone (our index.php registers the SSO plugin via
+  # a global adminer_object() instead). Remove any stale copy a prior 4.x
+  # install left so no dead upstream PHP lingers in the www-data docroot.
+  rm -f "${adminer_dir}/plugin.php"
 
   # Drop our index.php + jabali-sso plugin from the repo.
   install -m 0644 "${REPO_DIR}/install/adminer/index.php"            "${adminer_dir}/index.php"
