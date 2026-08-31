@@ -189,10 +189,14 @@ export const CreateCronModal = ({
           rules={[
             { required: true, message: "Please enter a command" },
           ]}
+          extra="One wp/php command per line — they run in order and stop at the first failure. Use --path=<docroot> instead of cd."
         >
           <Input.TextArea
-            placeholder="wp cron event run --path=/home/user/example.com/public_html"
-            rows={3}
+            placeholder={
+              "wp --path=/home/user/example.com/public_html keyhook-properties generate-xml --file=/home/user/example.com/public_html/props.xml\n" +
+              "wp --path=/home/user/example.com/public_html all-import run 1 --force-run"
+            }
+            rows={4}
             style={{ fontFamily: "monospace" }}
           />
         </Form.Item>

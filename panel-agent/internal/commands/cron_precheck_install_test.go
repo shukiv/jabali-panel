@@ -24,7 +24,7 @@ func TestGeneratedUnitLibexecHelpersAreShipped(t *testing.T) {
 	if err != nil {
 		t.Fatalf("validate: %v", err)
 	}
-	svc := buildCronServiceContent("job1", "test", cmd, "u", []string{"/home/u/public_html"})
+	svc := buildCronServiceContent("job1", "test", []*cronvalidate.Command{cmd}, "u", []string{"/home/u/public_html"})
 
 	refs := libexecRefRe.FindAllStringSubmatch(svc, -1)
 	if len(refs) == 0 {

@@ -92,7 +92,7 @@ func cronApplyHandler(ctx context.Context, params json.RawMessage) (any, error) 
 	// ValidateAny routes curl/wget self-domain crons (GH #400 Part B) to the
 	// http-trigger validator (gated on OwnedDomains); everything else stays
 	// the wp/php closed set (gated on OwnedDocroots).
-	cmd, err := cronvalidate.ValidateAny(p.Command, p.OwnedDocroots, p.OwnedDomains)
+	cmds, err := cronvalidate.ValidateAnyMulti(p.Command, p.OwnedDocroots, p.OwnedDomains)
 	if err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInvalidArgument,
@@ -186,7 +186,7 @@ func cronApplyHandler(ctx context.Context, params json.RawMessage) (any, error) 
 	timerPath := filepath.Join(unitsDir, fmt.Sprintf("jabali-cron-%s.timer", p.JobID))
 
 	// Generate unit file content
-	serviceContent := buildCronServiceContent(p.JobID, p.Name, cmd, p.Username, p.OwnedDocroots)
+	serviceContent := buildCronServiceContent(p.JobID, p.Name, cmds, p.Username, p.OwnedDocroots)
 	timerContent, tcErr := buildCronTimerContent(p.JobID, p.Schedule)
 	if tcErr != nil {
 		return nil, &agentwire.AgentError{
@@ -241,34 +241,57 @@ func cronApplyHandler(ctx context.Context, params json.RawMessage) (any, error) 
 	}, nil
 }
 
-// buildCronServiceContent generates the systemd service unit content.
-func buildCronServiceContent(jobID, name string, cmd *cronvalidate.Command, username string, ownedDocroots []string) string {
-	// Build ExecStart with single-quoted tokens (systemd parses whitespace to argv)
-	execStart := "ExecStart="
-	for i, token := range cmd.Argv {
-		if i > 0 {
-			execStart += " "
+// buildCronServiceContent generates the systemd service unit content. GH #1435:
+// a job may carry several validated commands; each renders as its own ExecStart=
+// line. Type=oneshot runs them in order and stops at the first failure — so a
+// tenant can run an ordered sequence (generate then import) in one unit.
+func buildCronServiceContent(jobID, name string, cmds []*cronvalidate.Command, username string, ownedDocroots []string) string {
+	// One ExecStart= per command; systemd parses whitespace-separated,
+	// single-quoted tokens into argv. A newline never appears inside a token
+	// (cronvalidate rejects control chars per line), so no ExecStart= line can
+	// be broken to inject unit directives.
+	var execLines []string
+	// Gate the unit on every distinct owned docroot referenced across the
+	// commands existing (GH #403), so a missing docroot skips the whole job
+	// cleanly with no audited shell exec.
+	seenDoc := map[string]bool{}
+	var condDocroots []string
+	for _, cmd := range cmds {
+		var b strings.Builder
+		b.WriteString("ExecStart=")
+		for i, token := range cmd.Argv {
+			if i > 0 {
+				b.WriteByte(' ')
+			}
+			b.WriteString(singleQuote(token))
 		}
-		execStart += singleQuote(token)
-	}
+		execLines = append(execLines, b.String())
 
-	// For ExecStartPre, determine the docroot to validate
-	// We use the first argument that starts with / and is in an owned docroot
-	docroot := ""
-	for _, arg := range cmd.Argv[1:] {
-		if strings.HasPrefix(arg, "/") {
-			// Check if it's in an owned docroot
+		for i, arg := range cmd.Argv[1:] {
+			// Consider bare /-paths (php script arg, two-token `--path <dir>`) and
+			// the glued `--path=<dir>` form (the common wp shape) — so a deleted
+			// docroot skips the whole job cleanly (GH #403) rather than erroring.
+			cand := ""
+			switch {
+			case strings.HasPrefix(arg, "/"):
+				cand = arg
+			case strings.HasPrefix(arg, "--path="):
+				cand = strings.TrimPrefix(arg, "--path=")
+			case arg == "--path" && i+2 < len(cmd.Argv):
+				cand = cmd.Argv[i+2] // i is index within Argv[1:]; +2 hits the value in Argv
+			}
+			if cand == "" {
+				continue
+			}
 			for _, od := range ownedDocroots {
-				if arg == od || strings.HasPrefix(arg, od+"/") {
-					docroot = od
-					break
+				if (cand == od || strings.HasPrefix(cand, od+"/")) && !seenDoc[od] {
+					seenDoc[od] = true
+					condDocroots = append(condDocroots, od)
 				}
 			}
-			if docroot != "" {
-				break
-			}
 		}
 	}
+	execStart := strings.Join(execLines, "\n")
 
 	// If we have a docroot, gate the whole unit on it existing via a
 	// systemd [Unit] condition (GH #403). This REPLACES the former
@@ -281,8 +304,8 @@ func buildCronServiceContent(jobID, name string, cmd *cronvalidate.Command, user
 	// systemd manager (no exec): a missing docroot skips the unit cleanly,
 	// same outcome as the precheck's exit 1, without an audited shell.
 	condDocroot := ""
-	if docroot != "" {
-		condDocroot = "ConditionPathIsDirectory=" + docroot + "\n"
+	for _, od := range condDocroots {
+		condDocroot += "ConditionPathIsDirectory=" + od + "\n"
 	}
 
 	// ExecSearchPath puts the per-user wrapper dir FIRST in systemd's binary
@@ -523,6 +546,18 @@ func applyRootCron(ctx context.Context, p cronApplyParams) (any, error) {
 //     /var/log/jabali/cron/root/<jobid>.log (kept in sync with
 //     the per-user layout under /var/log/jabali/cron/<user>/).
 func buildRootCronServiceContent(jobID, name, command string) string {
+	// GH #1435: one ExecStart per command line (Type=oneshot runs them in order,
+	// stops at the first failure). Each line was validated by the panel; splitting
+	// here keeps a newline out of any single ExecStart= value.
+	var execLines []string
+	for _, line := range strings.Split(command, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		execLines = append(execLines, "ExecStart=/bin/sh -c "+singleQuote(line))
+	}
+	execStart := strings.Join(execLines, "\n")
 	return fmt.Sprintf(`[Unit]
 Description=Jabali root cron: %s
 After=network-online.target
@@ -530,7 +565,7 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/bin/sh -c %s
+%s
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
@@ -541,7 +576,7 @@ StandardError=append:/var/log/jabali/cron/root/%s.log
 
 [Install]
 WantedBy=multi-user.target
-`, name, singleQuote(command), jobID, jobID)
+`, name, execStart, jobID, jobID)
 }
 
 func init() {

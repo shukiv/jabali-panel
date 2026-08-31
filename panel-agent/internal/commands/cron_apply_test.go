@@ -247,7 +247,7 @@ func TestBuildCronServiceContent(t *testing.T) {
 	}
 	ownedDocroots := []string{"/var/www/site1"}
 
-	content := buildCronServiceContent("job1", "Test Job", cmd, "testuser", ownedDocroots)
+	content := buildCronServiceContent("job1", "Test Job", []*cronvalidate.Command{cmd}, "testuser", ownedDocroots)
 
 	// Verify structure
 	if !contains(content, "[Unit]") {
@@ -305,7 +305,7 @@ func TestBuildCronServiceContent(t *testing.T) {
 // the system dirs must follow.
 func TestCronExecSearchPathIncludesSystemDirs(t *testing.T) {
 	cmd := &cronvalidate.Command{Argv: []string{"wp", "cron", "event", "run", "--due-now"}}
-	content := buildCronServiceContent("job1", "Nightly", cmd, "testuser", []string{"/var/www/site1"})
+	content := buildCronServiceContent("job1", "Nightly", []*cronvalidate.Command{cmd}, "testuser", []string{"/var/www/site1"})
 
 	searchPath := unitDirectiveValue(content, "ExecSearchPath")
 	if searchPath == "" {
@@ -424,7 +424,7 @@ func TestBuildCronServiceContent_HTTPTrigger(t *testing.T) {
 		URL:  "https://own.example.com/wp-cron.php?doing_wp_cron",
 		Argv: []string{"/usr/local/bin/jabali", "cron", "http-trigger", "https://own.example.com/wp-cron.php?doing_wp_cron"},
 	}
-	content := buildCronServiceContent("job1", "Trigger", cmd, "testuser", nil)
+	content := buildCronServiceContent("job1", "Trigger", []*cronvalidate.Command{cmd}, "testuser", nil)
 
 	if !contains(content, "ExecStart='/usr/local/bin/jabali' 'cron' 'http-trigger' 'https://own.example.com/wp-cron.php?doing_wp_cron'") {
 		t.Errorf("ExecStart not the wrapper invocation:\n%s", content)
@@ -441,7 +441,7 @@ func TestBuildCronServiceContent_HTTPTrigger(t *testing.T) {
 func TestBuildCronServiceContent_DocrootCondition(t *testing.T) {
 	dr := "/home/alice/domains/a.example.com/public_html"
 	cmd := &cronvalidate.Command{Argv: []string{"php", dr + "/wp-cron.php"}}
-	content := buildCronServiceContent("job9", "WP cron", cmd, "alice", []string{dr})
+	content := buildCronServiceContent("job9", "WP cron", []*cronvalidate.Command{cmd}, "alice", []string{dr})
 
 	if !contains(content, "ConditionPathIsDirectory="+dr) {
 		t.Errorf("expected ConditionPathIsDirectory for the docroot:\n%s", content)

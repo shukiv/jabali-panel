@@ -212,7 +212,7 @@ func Create(ctx context.Context, d Deps, in CreateInput) (*models.CronJob, error
 	if err != nil {
 		return nil, err
 	}
-	if _, err := cronvalidate.ValidateAny(in.Command, docroots, domains); err != nil {
+	if _, err := cronvalidate.ValidateAnyMulti(in.Command, docroots, domains); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrCommandInvalid, err)
 	}
 
@@ -220,7 +220,7 @@ func Create(ctx context.Context, d Deps, in CreateInput) (*models.CronJob, error
 		ID:        ids.NewULID(),
 		UserID:    in.UserID,
 		Name:      in.Name,
-		Command:   in.Command,
+		Command:   cronvalidate.NormalizeMultiCommand(in.Command),
 		Schedule:  in.Schedule,
 		Enabled:   in.Enabled,
 		RunAsRoot: in.RunAsRoot,
@@ -272,10 +272,10 @@ func Update(ctx context.Context, d Deps, jobID string, patch UpdatePatch) (*mode
 		job.Name = *patch.Name
 	}
 	if patch.Command != nil {
-		if _, err := cronvalidate.ValidateAny(*patch.Command, docroots, domains); err != nil {
+		if _, err := cronvalidate.ValidateAnyMulti(*patch.Command, docroots, domains); err != nil {
 			return nil, fmt.Errorf("%w: %v", ErrCommandInvalid, err)
 		}
-		job.Command = *patch.Command
+		job.Command = cronvalidate.NormalizeMultiCommand(*patch.Command)
 	}
 	if patch.Schedule != nil {
 		if err := cronvalidate.ValidateSchedule(*patch.Schedule); err != nil {

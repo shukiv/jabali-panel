@@ -66,8 +66,8 @@ func cronRunNowHandler(ctx context.Context, params json.RawMessage) (any, error)
 
 	// Defense-in-depth: re-validate the command against the user's owned
 	// docroots (same gate as cron.apply) before executing it. Never trust
-	// the stored command blindly.
-	validated, vErr := cronvalidate.ValidateAny(p.Command, p.OwnedDocroots, p.OwnedDomains)
+	// the stored command blindly. GH #1435: a job may hold several commands.
+	validatedCmds, vErr := cronvalidate.ValidateAnyMulti(p.Command, p.OwnedDocroots, p.OwnedDomains)
 	if vErr != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInvalidArgument,
@@ -97,27 +97,38 @@ func cronRunNowHandler(ctx context.Context, params json.RawMessage) (any, error)
 	if home == "" {
 		home = "/home/" + p.Username
 	}
-	args := append([]string{"-u", p.Username, "--"}, validated.Argv...)
-	cmd := execCommandContext(ctx, "runuser", args...)
-	cmd.Dir = home
-	cmd.Env = []string{
+	env := []string{
 		"HOME=" + home,
 		"USER=" + p.Username,
 		"LOGNAME=" + p.Username,
 		"PATH=" + home + "/.jabali/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin",
 	}
 
+	// Run each command in order, exactly like the Type=oneshot timer: stop at
+	// the first non-zero exit and report it, so "Run now" mirrors a scheduled run.
 	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	runErr := cmd.Run()
-
 	exitCode := 0
-	if runErr != nil {
-		if exitErr, ok := runErr.(*exec.ExitError); ok {
-			exitCode = exitErr.ExitCode()
-		} else {
-			exitCode = 1
+	multi := len(validatedCmds) > 1
+	for i, vc := range validatedCmds {
+		if multi {
+			// Label each step so the operator can see which command ran.
+			fmt.Fprintf(&stdout, "$ %s\n", strings.Join(vc.Argv, " "))
+		}
+		args := append([]string{"-u", p.Username, "--"}, vc.Argv...)
+		cmd := execCommandContext(ctx, "runuser", args...)
+		cmd.Dir = home
+		cmd.Env = env
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		runErr := cmd.Run()
+		if runErr != nil {
+			if exitErr, ok := runErr.(*exec.ExitError); ok {
+				exitCode = exitErr.ExitCode()
+			} else {
+				exitCode = 1
+			}
+			fmt.Fprintf(&stderr, "(stopped: command %d exited %d)\n", i+1, exitCode)
+			break
 		}
 	}
 
