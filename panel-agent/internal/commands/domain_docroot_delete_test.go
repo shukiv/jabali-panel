@@ -15,6 +15,7 @@ func TestDocrootUnderHome(t *testing.T) {
 	}{
 		{"depth-2 public_html/domain", "/home/alice/public_html/example.com", false},
 		{"depth-3 domains/domain/public_html", "/home/alice/domains/example.com/public_html", false},
+		{"depth-2 domains/domain (whole domain folder, GH #1382)", "/home/alice/domains/example.com", false},
 		{"home itself", "/home/alice", true},
 		{"bare public_html", "/home/alice/public_html", true},
 		{"bare domains", "/home/alice/domains", true},
