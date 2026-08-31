@@ -244,6 +244,10 @@ class JabaliAdminerSSO {
     public function database() {
         $c = $this->fetchCreds();
         if ($c === null) return null;
+        // GH #1406: the admin all-databases handoff (postgres superuser) returns
+        // an EMPTY db on purpose. Don't pin the view to it — return null so
+        // Adminer opens on the server, not a blank database with no list.
+        if (empty($c['db'])) return null;
         return $c['db'];
     }
 
@@ -251,6 +255,10 @@ class JabaliAdminerSSO {
     public function databases($flush = true) {
         $c = $this->fetchCreds();
         if ($c === null) return null;
+        // Empty db = the admin all-databases handoff: return null so Adminer
+        // lists EVERY database instead of restricting the dropdown to one
+        // (which, with an empty name, showed nothing — GH #1406).
+        if (empty($c['db'])) return null;
         return [$c['db']];
     }
 }
