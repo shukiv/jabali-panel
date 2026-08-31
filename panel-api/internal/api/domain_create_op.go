@@ -73,6 +73,17 @@ func (e *createDomainError) Error() string { return e.Code }
 // against the handler's deps. On success it returns the created domain (with
 // any in-place mutations from shared-cert attach / inline email). On failure it
 // returns a createDomainError the caller renders verbatim.
+// mailProviderForServer coerces "jabali" to "none" when the mail module isn't
+// installed on this server (GH #1409) — Jabali Mail can't be hosted without it,
+// so a domain must not be created with email_enabled=true. Every other provider
+// (none / external m365 / google) is untouched.
+func mailProviderForServer(provider string, mailModuleEnabled bool) string {
+	if provider == models.MailProviderJabali && !mailModuleEnabled {
+		return models.MailProviderNone
+	}
+	return provider
+}
+
 func createDomainOp(ctx context.Context, h *domainHandler, in createDomainInput) (*models.Domain, *createDomainError) {
 	// SECURITY: validate domain name (XSS / path traversal). Name is assumed
 	// already normalized + HTML-stripped by the caller.
@@ -137,6 +148,19 @@ func createDomainOp(ctx context.Context, h *domainHandler, in createDomainInput)
 	if !models.ValidMailProvider(mailProvider) {
 		return nil, &createDomainError{http.StatusBadRequest, "invalid_mail_provider", ""}
 	}
+	// GH #1409: never enable Jabali mail on a domain when the mail module isn't
+	// installed — coerce to "none" so we don't provision mail that can't run.
+	// The GUI already defaults to None; this guards API / automation callers
+	// (and the "" → jabali default above) so email_enabled is never set on a
+	// mail-less server. Fail-open (assume installed) if server_settings is
+	// unreadable — never block domain creation on this check.
+	mailModuleEnabled := true
+	if h.cfg.ServerSettings != nil {
+		if st, sErr := h.cfg.ServerSettings.Get(ctx); sErr == nil && st != nil {
+			mailModuleEnabled = st.MailEnabled
+		}
+	}
+	mailProvider = mailProviderForServer(mailProvider, mailModuleEnabled)
 	m365Tenant, err := dnscompile.NormaliseM365Onmicrosoft(in.M365Onmicrosoft)
 	if err != nil {
 		return nil, &createDomainError{http.StatusBadRequest, "invalid_m365_onmicrosoft", err.Error()}
