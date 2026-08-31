@@ -58,31 +58,82 @@ class JabaliAdminerSSO {
             session_name('jabali_adminer_sid');
             @session_start();
         }
+
+        // GH #1406: Adminer's Logout ($_POST['logout']) clears Adminer's own
+        // auth but NOT our cached SSO creds — so the plugin would re-authenticate
+        // on the post-logout redirect and Logout would appear to do nothing.
+        // Drop our creds (and the validated-token marker) here, before Adminer
+        // runs, so Logout actually ends the session.
+        if (!empty($_POST['logout'])) {
+            unset($_SESSION['jabali_adminer_creds'], $_SESSION['jabali_adminer_token']);
+        }
     }
 
     /**
-     * Lazy fetch — first checks $_SESSION, then mints a new validation
-     * call when a fresh `?token=` is in the URL. Returns null when
-     * neither path yields creds (Adminer falls through to its
-     * default form so the failure surface is visible).
+     * Lazy fetch of the SSO creds for this request.
+     *
+     * GH #1406 — fresh-token-wins. A `?token=` that is NOT the one already
+     * validated for this session is a NEW SSO entry: it is always re-validated
+     * and REPLACES any cached identity. This is what stops a second panel user
+     * (or a tenant opening Adminer in a browser that previously opened the admin
+     * all-DBs view, which caches the `postgres` superuser) from silently landing
+     * in the PREVIOUS user's session. Adminer's own auto-submit re-POSTs the
+     * SAME (already-consumed) token, so only a *different* token counts as a new
+     * entry — the consumed one is served from cache, never re-validated.
+     *
+     * A new token that FAILS validation drops the cached creds and returns null,
+     * so a failed entry never continues as the previously cached identity.
+     * With no token at all, the session cache is reused (Adminer's in-UI
+     * navigation). Returns null when nothing yields creds, so Adminer falls
+     * through to its default form and the failure is visible.
      */
     private function fetchCreds() {
         if ($this->creds !== null) {
             return $this->creds === false ? null : $this->creds;
         }
+        $token = isset($_GET['token']) ? $_GET['token'] : '';
+        $tokenValid = ($token !== '' && preg_match('/^[A-Za-z0-9_-]{40,200}$/', $token));
+
+        if ($tokenValid &&
+            (empty($_SESSION['jabali_adminer_token']) || $_SESSION['jabali_adminer_token'] !== $token)) {
+            $creds = $this->validateToken($token);
+            if ($creds === null) {
+                // A new token that fails MUST NOT fall back to stale creds.
+                unset($_SESSION['jabali_adminer_creds'], $_SESSION['jabali_adminer_token']);
+                $this->creds = false;
+                return null;
+            }
+            // New identity — rotate the session id so it can't be fixated to the
+            // prior user's, then replace the cached creds + validated-token marker.
+            @session_regenerate_id(true);
+            $_SESSION['jabali_adminer_creds'] = $creds;
+            $_SESSION['jabali_adminer_token'] = $token;
+            $this->creds = $creds;
+            return $creds;
+        }
+
+        // No new token: reuse the session-cached creds (Adminer navigates its UI
+        // with more requests, and the auto-submit POST re-includes the already-
+        // validated token — neither should burn or re-validate a token).
         if (!empty($_SESSION['jabali_adminer_creds'])) {
             $this->creds = $_SESSION['jabali_adminer_creds'];
             return $this->creds;
         }
-        $token = isset($_GET['token']) ? $_GET['token'] : '';
-        if ($token === '' || !preg_match('/^[A-Za-z0-9_-]{40,200}$/', $token)) {
-            $this->creds = false;
-            return null;
-        }
+        $this->creds = false;
+        return null;
+    }
+
+    /**
+     * validateToken POSTs the single-use token to the panel over the Unix
+     * socket; the server consumes it (FOR UPDATE + DELETE) and returns
+     * {driver, server, username, password, db}. Returns the creds array, or
+     * null on any transport/format/HTTP failure. Marked protected so a test can
+     * stub the socket hop. Does NOT touch $_SESSION — the caller owns caching.
+     */
+    protected function validateToken($token) {
         $body = json_encode(['token' => $token]);
         $fp = @stream_socket_client('unix://' . $this->socket_path, $errno, $errstr, 5);
         if (!$fp) {
-            $this->creds = false;
             return null;
         }
         $req = "POST /sso/adminer/validate HTTP/1.1\r\n"
@@ -99,13 +150,11 @@ class JabaliAdminerSSO {
         fclose($fp);
         $sep = strpos($resp, "\r\n\r\n");
         if ($sep === false) {
-            $this->creds = false;
             return null;
         }
         $headers = substr($resp, 0, $sep);
         $payload = substr($resp, $sep + 4);
         if (!preg_match('#^HTTP/1\\.\\d\\s+200\\b#', $headers)) {
-            $this->creds = false;
             return null;
         }
         if (stripos($headers, 'Transfer-Encoding: chunked') !== false) {
@@ -114,11 +163,8 @@ class JabaliAdminerSSO {
         $j = json_decode($payload, true);
         if (!is_array($j) || !isset($j['driver']) || !isset($j['username']) ||
             !isset($j['password']) || !isset($j['db'])) {
-            $this->creds = false;
             return null;
         }
-        $this->creds = $j;
-        $_SESSION['jabali_adminer_creds'] = $j;
         return $j;
     }
 
