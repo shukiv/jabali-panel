@@ -23,6 +23,7 @@ import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { useState } from "react";
 import { useNavigate } from "react-router";
 import { sorterToParams } from "../../../utils/tableSorter";
+import { getSSLTagColor, getSSLTagLabel } from "../../../utils/sslState";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { DomainDocRootModal } from "./DomainDocRootModal";
@@ -67,68 +68,11 @@ const renderDomainCell = (name: string, docRoot: string) => (
   </div>
 );
 
-// SSL state values come from panel-api/internal/repository/
-// domain_repository.go computeSSLState: "active_le" (valid LE
-// cert), "self_signed", "pending", "issuing", "renewing",
-// "pending_acme_retry", "failed", "revoked", "off".
-//
-// Mirrors admin DomainList renderSSL (DomainList.tsx 66-80) so
-// user + admin shells render identically.
-const getSSLTagColor = (state?: string): string => {
-  switch (state) {
-    case "active_le":
-      return "gold"; // Let's Encrypt rendered yellow per operator request
-    case "active":
-      return "green";
-    case "provisioning":
-      return "orange";
-    case "self_signed":
-      return "orange";
-    case "pending":
-    case "issuing":
-    case "renewing":
-    case "pending_acme_retry":
-      return "green";
-    case "failed":
-    case "error":
-    case "revoked":
-      return "red";
-    default:
-      return "default";
-  }
-};
+// SSL badge rendering moved to utils/sslState.ts (shared with the Mail
+// Domains list, GH #1387). Still mirrors admin DomainList renderSSL so user
+// + admin shells render identically.
 
-const getSSLTagLabel = (state?: string): string => {
-  switch (state) {
-    case "active_le":
-      return "Let's Encrypt";
-    case "active":
-      return "Active";
-    case "none":
-      return "None";
-    case "provisioning":
-      return "Self-signed…";
-    case "self_signed":
-      return "Self-signed";
-    case "pending":
-    case "issuing":
-    case "renewing":
-    case "pending_acme_retry":
-      return "Issuing…";
-    case "failed":
-    case "error":
-      return "Failed";
-    case "revoked":
-      return "Revoked";
-    case "":
-    case undefined:
-      return "Off";
-    default:
-      return state;
-  }
-};
-
-const renderRedirect = (d: { redirect_all_to?: string | null; redirect_all_type?: string | null; page_redirects?: { source: string; destination: string; type: string }[] | null }) => {
+const renderRedirect =(d: { redirect_all_to?: string | null; redirect_all_type?: string | null; page_redirects?: { source: string; destination: string; type: string }[] | null }) => {
   if (d.redirect_all_to) {
     const t = d.redirect_all_type || "301";
     return (
