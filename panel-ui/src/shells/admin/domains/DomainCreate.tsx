@@ -7,10 +7,12 @@ import { useTranslation } from "react-i18next";
 import { Button, Card, Checkbox, Form, Input, Select, Typography } from "antd";
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { useQuery } from "@tanstack/react-query";
+import { useEffect } from "react";
 import { apiClient } from "../../../apiClient";
 import { useNavigate } from "react-router";
 
 import { useCreateMutation } from "../../../hooks/useQueries";
+import { useServerCapabilities } from "../../../hooks/useServerCapabilities";
 
 export type DomainCreateInput = {
   name: string;
@@ -33,10 +35,23 @@ export const DomainCreate = () => {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const [form] = Form.useForm<DomainCreateInput>();
-  const mailProvider = Form.useWatch("mail_provider", form) ?? "jabali";
+  // GH #1409: default Mail to None (and disable Jabali Mail) when the mail
+  // module isn't installed. `!== false` treats the brief pre-load state as
+  // installed so a mail-enabled server never flickers to None.
+  const { data: caps } = useServerCapabilities();
+  const mailInstalled = caps?.mail_enabled !== false;
+  const mailProvider =
+    Form.useWatch("mail_provider", form) ?? (mailInstalled ? "jabali" : "none");
   const createMutation = useCreateMutation<DomainCreated, DomainCreateInput>({
     resource: "domains",
   });
+  // Once we learn the module is absent, drop the static Jabali-Mail default —
+  // but never override an admin's explicit choice.
+  useEffect(() => {
+    if (!mailInstalled && form.getFieldValue("mail_provider") === "jabali") {
+      form.setFieldValue("mail_provider", "none");
+    }
+  }, [mailInstalled, form]);
   const usersQ = useQuery({
     queryKey: ["admin-users-for-domain-create"],
     queryFn: async () => {
@@ -128,7 +143,13 @@ export const DomainCreate = () => {
         >
           <Select
             options={[
-              { value: "jabali", label: "Jabali mail (this server)" },
+              {
+                value: "jabali",
+                label: mailInstalled
+                  ? "Jabali mail (this server)"
+                  : "Jabali mail (not installed)",
+                disabled: !mailInstalled,
+              },
               { value: "none", label: "No mail" },
               { value: "m365", label: "Microsoft 365" },
               { value: "google", label: "Google Workspace" },
