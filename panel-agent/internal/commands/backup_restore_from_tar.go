@@ -237,6 +237,55 @@ func stageMaterializedInTar(staging, name string) bool {
 	return err == nil && fi.IsDir()
 }
 
+// backup.inspect_uploaded_tar — GH #1408. Read ONLY the manifest from an
+// uploaded archive (no full extraction) so the panel can show what the backup
+// contains + which components can be restored, before the admin commits to the
+// destructive apply. Cheap: it streams the zstd tar and stops at the manifest.
+type backupInspectUploadedTarParams struct {
+	TarPath string `json:"tar_path"`
+}
+
+type backupInspectUploadedTarResult struct {
+	User       backup.ManifestUser `json:"user"`
+	Components []string            `json:"components"`
+}
+
+func backupInspectUploadedTarHandler(ctx context.Context, raw json.RawMessage) (any, error) {
+	var p backupInspectUploadedTarParams
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return nil, bkInvalidArg(fmt.Sprintf("invalid params: %v", err))
+	}
+	tarClean := filepath.Clean(p.TarPath)
+	if tarClean != p.TarPath || !strings.HasPrefix(tarClean, restoreUploadsRoot+"/") {
+		return nil, bkInvalidArg("tar_path must be a clean path under " + restoreUploadsRoot)
+	}
+	if fi, err := os.Lstat(tarClean); err != nil || !fi.Mode().IsRegular() {
+		return nil, bkInvalidArg("tar_path is not a regular file")
+	}
+
+	manifestBytes, err := readManifestFromZstdTar(ctx, tarClean)
+	if err != nil {
+		return nil, bkInvalidArg("archive inspect failed: " + err.Error())
+	}
+	manifest, err := backup.AccountManifestFromBytes(manifestBytes)
+	if err != nil {
+		return nil, bkInvalidArg("manifest parse failed: " + err.Error())
+	}
+	// Components the UI can offer = the distinct restorable stage names in the
+	// manifest (manifest/meta are internal). Apply re-gates on actual presence.
+	comps := make([]string, 0, len(manifest.Stages))
+	seen := map[string]bool{}
+	for _, st := range manifest.Stages {
+		if st.Name == "" || st.Name == "manifest" || st.Name == "meta" || seen[st.Name] {
+			continue
+		}
+		comps = append(comps, st.Name)
+		seen[st.Name] = true
+	}
+	return backupInspectUploadedTarResult{User: manifest.User, Components: comps}, nil
+}
+
 func init() {
 	Default.Register("backup.restore_from_tar", backupRestoreFromTarHandler)
+	Default.Register("backup.inspect_uploaded_tar", backupInspectUploadedTarHandler)
 }

@@ -462,6 +462,93 @@ export async function restoreDatabaseUploadAuto(
   return restoreDatabaseUpload(databaseId, file, onProgress);
 }
 
+// === GH #1408: restore from an uploaded backup archive (admin) ===
+
+export interface UploadedBackupInfo {
+  user: { id: string; username: string; email?: string; is_admin?: boolean };
+  components: string[];
+}
+
+// uploadBackupArchiveChunked streams a downloaded account backup .tar to the
+// panel in chunks (reusing the DB-restore chunk transport so a hundreds-of-MB
+// archive isn't rejected by a proxy body cap), and returns the upload_id to
+// inspect + apply. No server-side resume — a failed upload just restarts.
+export async function uploadBackupArchiveChunked(
+  file: File,
+  onProgress?: (p: RestoreUploadProgress) => void,
+): Promise<string> {
+  const chunkSize = RESTORE_CHUNK_SIZE;
+  const totalChunks = Math.max(1, Math.ceil(file.size / chunkSize));
+  const uploadId =
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const started = Date.now();
+  const report = (loaded: number) => {
+    if (!onProgress) return;
+    const elapsed = (Date.now() - started) / 1000;
+    const rate = elapsed > 0 ? loaded / elapsed : undefined;
+    onProgress({
+      frac: file.size > 0 ? Math.min(1, loaded / file.size) : 1,
+      loaded: Math.min(loaded, file.size),
+      total: file.size,
+      rate,
+      estimated: rate && rate > 0 ? (file.size - loaded) / rate : undefined,
+    });
+  };
+  for (let i = 0; i < totalChunks; i++) {
+    const start = i * chunkSize;
+    const end = Math.min(start + chunkSize, file.size);
+    const isLast = i === totalChunks - 1;
+    const params = new URLSearchParams({
+      upload_id: uploadId,
+      offset: String(start),
+      ...(isLast ? { final: "1" } : {}),
+    });
+    await apiClient.post(
+      `/admin/backups/restore-upload?${params.toString()}`,
+      file.slice(start, end),
+      {
+        headers: { "Content-Type": "application/octet-stream" },
+        timeout: 0,
+        onUploadProgress: (e) => report(start + (e.loaded ?? 0)),
+      },
+    );
+    report(end);
+  }
+  report(file.size);
+  return uploadId;
+}
+
+export async function inspectUploadedBackup(
+  uploadId: string,
+): Promise<UploadedBackupInfo> {
+  const { data } = await apiClient.post<UploadedBackupInfo>(
+    "/admin/backups/restore-upload/inspect",
+    { upload_id: uploadId },
+  );
+  return data;
+}
+
+export interface UploadedBackupRestoreResult {
+  status: string;
+  applied?: string[] | null;
+  warnings?: string[] | null;
+  metadata_errors?: string[] | null;
+}
+
+export async function applyUploadedBackupRestore(
+  uploadId: string,
+  targetUsername: string,
+  components: string[],
+): Promise<UploadedBackupRestoreResult> {
+  const { data } = await apiClient.post<UploadedBackupRestoreResult>(
+    "/admin/backups/restore-upload/apply",
+    { upload_id: uploadId, target_username: targetUsername, components },
+  );
+  return data;
+}
+
 // === PHP Settings API ===
 
 export interface DomainPHPSettings {

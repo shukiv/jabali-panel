@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -59,7 +58,7 @@ func safeExtractZstdTar(ctx context.Context, srcPath, destRoot string) (int64, e
 		return 0, fmt.Errorf("destRoot must be an absolute clean path")
 	}
 	// Decompress through the zstd CLI; srcPath is our own staging path.
-	zstd := exec.CommandContext(ctx, "zstd", "-dc", srcPath)
+	zstd := execCommandContext(ctx, "zstd", "-dc", srcPath)
 	stdout, err := zstd.StdoutPipe()
 	if err != nil {
 		return 0, fmt.Errorf("zstd pipe: %w", err)
@@ -147,6 +146,52 @@ func extractTarStream(r io.Reader, destRoot string) (int64, error) {
 		}
 	}
 	return written, nil
+}
+
+// readManifestFromZstdTar streams the zstd tar read-only (writes NOTHING) and
+// returns the account manifest bytes (<job-id>/manifest/manifest.json). Used by
+// the inspect step to show what a backup holds before the destructive apply. It
+// stops as soon as the manifest is found.
+func readManifestFromZstdTar(ctx context.Context, srcPath string) ([]byte, error) {
+	zstd := execCommandContext(ctx, "zstd", "-dc", srcPath)
+	stdout, err := zstd.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	zstd.Stderr = io.Discard
+	if err := zstd.Start(); err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = stdout.Close()
+		_ = zstd.Wait()
+	}()
+
+	tr := tar.NewReader(stdout)
+	entries := 0
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("read tar: %w", err)
+		}
+		entries++
+		if entries > safeTarMaxEntries {
+			break
+		}
+		rel, rerr := safeRelPath(hdr.Name)
+		if rerr != nil || rel == "" {
+			continue
+		}
+		parts := strings.Split(rel, string(filepath.Separator))
+		if len(parts) >= 3 && parts[1] == "manifest" &&
+			parts[len(parts)-1] == "manifest.json" && hdr.Typeflag == tar.TypeReg {
+			return io.ReadAll(io.LimitReader(tr, 8<<20)) // 8 MiB cap — a manifest is tiny
+		}
+	}
+	return nil, fmt.Errorf("no manifest/manifest.json in archive")
 }
 
 // safeRelPath normalizes a tar member name to a relative path under the root, or
