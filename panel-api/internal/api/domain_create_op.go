@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dnscompile"
@@ -41,6 +42,15 @@ type createDomainInput struct {
 	OwnerID         string
 	Name            string
 	DocRoot         string // "" → derived under /home/<user>/domains/<name>/public_html
+	// ActorIsAdmin is the CALLER's privilege (not the owner's). It selects
+	// the document-root confinement: an admin actor may point the docroot
+	// anywhere under the owner's home (validateDocumentRoot), while a
+	// non-admin actor — a tenant creating their own domain, including via
+	// the Add-domain drawer (GH #1413) — is held to the domain's OWN tree
+	// (validateTenantDocumentRoot), the same rule the edit path enforces
+	// (GH #526). Zero value is false = strict = fail-closed, so callers that
+	// never set a custom docroot (automation) need not set it.
+	ActorIsAdmin bool
 	MailProvider    string // "" → jabali
 	M365Onmicrosoft string
 	GoogleDKIM      string
@@ -130,12 +140,21 @@ func createDomainOp(ctx context.Context, h *domainHandler, in createDomainInput)
 		}
 	}
 
-	// SECURITY: validate custom document root path.
-	if err := validateDocumentRoot(in.DocRoot, *user.Username, in.Name); err != nil {
-		return nil, &createDomainError{http.StatusBadRequest, "invalid_document_root", err.Error()}
+	// SECURITY: validate the custom document root, trimming first so a pasted
+	// path with surrounding whitespace doesn't fail the prefix check with an
+	// unhelpful error (matches the edit path's TrimSpace). A non-admin actor
+	// is confined to the domain's own tree; an admin may use anywhere under
+	// the owner's home. See createDomainInput.ActorIsAdmin.
+	docRoot := strings.TrimSpace(in.DocRoot)
+	if in.ActorIsAdmin {
+		if err := validateDocumentRoot(docRoot, *user.Username, in.Name); err != nil {
+			return nil, &createDomainError{http.StatusBadRequest, "invalid_document_root", err.Error()}
+		}
+	} else {
+		if err := validateTenantDocumentRoot(docRoot, *user.Username, in.Name); err != nil {
+			return nil, &createDomainError{http.StatusBadRequest, "invalid_document_root", err.Error()}
+		}
 	}
-
-	docRoot := in.DocRoot
 	if docRoot == "" {
 		docRoot = "/home/" + *user.Username + "/domains/" + in.Name + "/public_html"
 	}

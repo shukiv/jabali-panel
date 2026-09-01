@@ -685,6 +685,7 @@ func (h *domainHandler) create(c *gin.Context) {
 		OwnerID:          targetUserID,
 		Name:             req.Name,
 		DocRoot:          req.DocRoot,
+		ActorIsAdmin:     claims.IsAdmin,
 		MailProvider:     req.MailProvider,
 		M365Onmicrosoft:  req.M365Onmicrosoft,
 		GoogleDKIM:       req.GoogleDKIM,

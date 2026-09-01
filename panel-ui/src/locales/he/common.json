@@ -590,7 +590,9 @@
   },
   "userdomaindrawer": {
     "add_domain": "הוספת דומיין",
-    "domain_name": "שם דומיין"
+    "domain_name": "שם דומיין",
+    "document_root": "תיקיית השורש",
+    "document_root_hint": "המיקום שממנו מוגשים הקבצים של הדומיין הזה. השאירו ריק לערך ברירת המחדל. הנתיב חייב להישאר בתוך התיקייה של הדומיין עצמו."
   },
   "userdomainlist": {
     "actions": "פעולות",

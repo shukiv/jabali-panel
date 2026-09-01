@@ -10,6 +10,10 @@ import { useServerCapabilities } from "../../../hooks/useServerCapabilities";
 
 type UserDomainCreateInput = {
   name: string;
+  // GH #1413: optional custom document root at create time (handy for
+  // subdomains). Blank = the default …/domains/<name>/public_html. The
+  // server confines a tenant's docroot to this domain's own tree.
+  doc_root?: string;
   mail_provider?: string;
   m365_onmicrosoft?: string;
   google_dkim?: string;
@@ -58,7 +62,11 @@ export const UserDomainDrawer = ({ open, onClose }: UserDomainDrawerProps) => {
 
   const handleFinish = async (values: UserDomainCreateInput) => {
     try {
-      const created = await createMutation.mutateAsync(values);
+      // A reverse-proxy domain has no document root; drop any value the field
+      // may have kept (antd preserves unmounted field values by default) so we
+      // never send a docroot the server would validate but never use.
+      const payload = values.reverse_proxy ? { ...values, doc_root: undefined } : values;
+      const created = await createMutation.mutateAsync(payload);
       feedback.message.success("Domain added");
       // GH #1175: the assigned loopback port is the one piece of info the user
       // must act on (bind their app to it), so surface it in a modal that
@@ -103,6 +111,20 @@ export const UserDomainDrawer = ({ open, onClose }: UserDomainDrawerProps) => {
         >
           <Input placeholder="e.g., example.com" />
         </Form.Item>
+
+        {/* GH #1413: custom document root. Hidden for reverse-proxy domains
+            (they have no docroot). The server confines a tenant's path to this
+            domain's own tree, so pointing at another domain or elsewhere in the
+            home is rejected. */}
+        {!reverseProxy && (
+          <Form.Item
+            label={t("userdomaindrawer.document_root")}
+            name="doc_root"
+            tooltip={t("userdomaindrawer.document_root_hint")}
+          >
+            <Input placeholder="Leave blank for the default (…/public_html)" />
+          </Form.Item>
+        )}
 
         <Form.Item
           label={t("userdomaindrawer.mail")}

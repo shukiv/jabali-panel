@@ -572,7 +572,9 @@
   },
   "userdomaindrawer": {
     "add_domain": "添加域名",
-    "domain_name": "域名"
+    "domain_name": "域名",
+    "document_root": "文档根目录",
+    "document_root_hint": "该域名文件的服务目录。留空则使用默认路径。必须位于该域名自身的目录内。"
   },
   "userdomainlist": {
     "actions": "操作",

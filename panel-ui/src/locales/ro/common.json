@@ -1399,6 +1399,8 @@
     "add_domain": "Adaugă domeniu",
     "adds_a_www_cname_pointing_at_the_domain_apex": "",
     "domain_name": "Nume de domeniu",
+    "document_root": "Rădăcina documentului",
+    "document_root_hint": "De unde sunt servite fișierele acestui domeniu. Lăsați gol pentru calea implicită. Trebuie să rămână în folderul propriu al acestui domeniu.",
     "google_dkim_value": "",
     "let_s_encrypt_issues_a_free_trusted_certific": "",
     "mail": "",

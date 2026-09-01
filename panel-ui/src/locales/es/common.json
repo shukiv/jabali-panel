@@ -603,7 +603,9 @@
   },
   "userdomaindrawer": {
     "add_domain": "Añadir dominio",
-    "domain_name": "Nombre de dominio"
+    "domain_name": "Nombre de dominio",
+    "document_root": "Raíz del documento",
+    "document_root_hint": "Desde dónde se sirven los archivos de este dominio. Déjalo en blanco para la ruta predeterminada. Debe permanecer dentro de la carpeta propia de este dominio."
   },
   "userdomainlist": {
     "actions": "Acciones",

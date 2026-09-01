@@ -573,7 +573,9 @@
   },
   "userdomaindrawer": {
     "add_domain": "Domain hinzufügen",
-    "domain_name": "Domainname"
+    "domain_name": "Domainname",
+    "document_root": "Dokumentstamm",
+    "document_root_hint": "Von wo die Dateien dieser Domain ausgeliefert werden. Leer lassen für den Standardpfad. Muss innerhalb des eigenen Ordners dieser Domain bleiben."
   },
   "userdomainlist": {
     "actions": "Aktionen",
