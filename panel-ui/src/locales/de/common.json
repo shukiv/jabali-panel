@@ -76,6 +76,7 @@
     "flowError": "Der Anmeldevorgang konnte nicht gestartet werden. Stellen Sie sicher, dass der Identitätsdienst läuft, und laden Sie die Seite neu.",
     "hostnameWarningTitle": "Melden Sie sich über den Hostnamen an, nicht über die IP",
     "hostnameWarningDescription": "Der Identitätsanbieter ist an den Hostnamen des Panels gebunden, daher funktioniert die Anmeldung über die Server-IP-Adresse nicht. Öffnen Sie das Panel über seinen Hostnamen (die nach der Installation angezeigte URL) und versuchen Sie es erneut.",
+    "hostnameWarningOpenLink": "Panel unter {{hostname}} öffnen",
     "noCredentialMethod": "Für Ihr Konto ist derzeit keine Anmeldemethode konfiguriert. Wenden Sie sich an einen Administrator.",
     "fieldRequired": "Erforderlich",
     "identifierHint": "Verwenden Sie Ihren Benutzernamen, nicht Ihre E-Mail-Adresse.",

@@ -76,6 +76,7 @@
     "flowError": "Impossibile avviare la procedura di accesso. Verifica che il servizio di identità sia in esecuzione e ricarica la pagina.",
     "hostnameWarningTitle": "Accedi usando il nome host, non l'IP",
     "hostnameWarningDescription": "Il provider di identità è associato al nome host del pannello, quindi l'accesso tramite l'indirizzo IP del server non funzionerà. Apri il pannello tramite il suo nome host (l'URL mostrato dopo l'installazione) e riprova.",
+    "hostnameWarningOpenLink": "Apri il pannello su {{hostname}}",
     "noCredentialMethod": "Al momento non è configurato alcun metodo di credenziali per il tuo account. Contatta un amministratore.",
     "fieldRequired": "Obbligatorio",
     "identifierHint": "Usa il tuo nome utente, non la tua email.",

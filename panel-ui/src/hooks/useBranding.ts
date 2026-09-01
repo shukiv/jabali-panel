@@ -27,6 +27,10 @@ type BrandingInfo = {
   panel_dark_text_color: string;
   has_logo_light: boolean;
   has_logo_dark: boolean;
+  // Operator-configured panel hostname (GH #1411). "" when unset
+  // (IP-only install). The login page uses it to detect wrong-host
+  // access. May be absent on an older panel-api that predates the field.
+  panel_hostname?: string;
 };
 
 const BRANDING_KEY = ["branding", "public"] as const;
@@ -69,6 +73,9 @@ export function useBranding() {
   };
   const hasLogoLight = d?.has_logo_light ?? false;
   const hasLogoDark = d?.has_logo_dark ?? false;
+  // undefined until the query settles; "" when settled with no hostname
+  // configured. The login page relies on that distinction (GH #1411).
+  const panelHostname = d?.panel_hostname;
 
   return {
     brandText,
@@ -77,6 +84,7 @@ export function useBranding() {
     chrome,
     hasLogoLight,
     hasLogoDark,
+    panelHostname,
     isLoading: query.isLoading,
   };
 }
