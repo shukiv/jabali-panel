@@ -1,7 +1,8 @@
 // RestoreFromUploadDrawer — GH #1408. Admin restore from an uploaded backup
 // archive (DR / cross-server migration): upload the .tar downloaded earlier,
 // inspect it, pick components + a target user, and restore. The apply is
-// step-up gated server-side; a stepup_required response bounces to re-auth.
+// admin-only. The restore runs in the background (202 + status poll), so the
+// drawer shows a clear "running in the background" state until it seals.
 import { useState } from "react";
 import {
   Alert,
@@ -19,7 +20,6 @@ import { feedback } from "../../../lib/feedback";
 import {
   applyUploadedBackupRestore,
   inspectUploadedBackup,
-  stepUpRedirect,
   uploadBackupArchiveChunked,
   type UploadedBackupInfo,
   type UploadedBackupRestoreResult,
@@ -91,6 +91,10 @@ export function RestoreFromUploadDrawer({ open, onClose }: Props) {
   const apply = async () => {
     if (!uploadId || !targetUser || selected.length === 0) return;
     setPhase("applying");
+    // The restore is accepted immediately and runs in the background; the call
+    // below polls its status until it seals. Tell the admin it's running so an
+    // empty "applying" state doesn't look like nothing happened (GH #1408).
+    feedback.message.info("Restore started — running in the background");
     try {
       const r = await applyUploadedBackupRestore(uploadId, targetUser, selected);
       setResult(r);
@@ -99,13 +103,6 @@ export function RestoreFromUploadDrawer({ open, onClose }: Props) {
       if (n > 0) feedback.message.success(`Restored ${n} item(s) into ${targetUser}`);
       else feedback.message.warning("Nothing was applied — see details");
     } catch (err) {
-      // Step-up: the server demands recent auth for this destructive action.
-      const e = err as { response?: { status?: number; data?: { error?: string } } };
-      if (e?.response?.status === 401 && e.response.data?.error === "stepup_required") {
-        feedback.message.info("Please re-authenticate to run a restore");
-        stepUpRedirect();
-        return;
-      }
       feedback.message.error(extractApiError(err, "Restore failed"));
       setPhase("ready");
     }
@@ -206,15 +203,23 @@ export function RestoreFromUploadDrawer({ open, onClose }: Props) {
               message="This overwrites the target user's selected data"
               description="Restoring the home directory and databases replaces the live contents with the backup. This cannot be undone."
             />
+            {phase === "applying" && (
+              <Alert
+                type="info"
+                showIcon
+                message={`Restoring ${info.user.username} in the background`}
+                description="This can take several minutes for large backups. Keep this drawer open to see the result, or come back later — the restore keeps running on the server."
+              />
+            )}
             {phase !== "done" && (
               <Button
                 type="primary"
                 danger
                 loading={phase === "applying"}
-                disabled={!targetUser || selected.length === 0}
+                disabled={phase === "applying" || !targetUser || selected.length === 0}
                 onClick={apply}
               >
-                Restore into {targetUser || "user"}
+                {phase === "applying" ? "Restoring…" : `Restore into ${targetUser || "user"}`}
               </Button>
             )}
           </>
