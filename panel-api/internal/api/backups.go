@@ -136,6 +136,10 @@ func RegisterBackupRoutes(rg *gin.RouterGroup, cfg BackupHandlerConfig) {
 	admin.DELETE("/backup-runs/:run_id/jobs", h.deleteRunJobs)
 	admin.POST("/system/backups", h.systemCreate)
 	admin.GET("/system/backups", h.systemList)
+	// GH #1408: package a Full Server backup run into one downloadable container.
+	admin.POST("/system/full-backup/:run_id/package", h.fullBackupPackage)
+	admin.GET("/system/full-backup/:run_id/package-status", h.fullBackupPackageStatus)
+	admin.GET("/system/full-backup/:run_id/download", h.fullBackupDownload)
 	admin.POST("/system/backups/:job_id/cancel", h.systemCancel)
 	admin.GET("/system/backups/:job_id/logs", h.logs)
 }

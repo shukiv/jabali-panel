@@ -39,6 +39,7 @@ const isRestoreKind = (kind: string): boolean =>
 import { BackupSettingsTab } from "./BackupSettingsTab";
 import { CreateBackupDrawer } from "./CreateBackupDrawer";
 import { RestoreFromUploadDrawer } from "./RestoreFromUploadDrawer";
+import { FullServerPackageModal } from "./FullServerPackageModal";
 import { DestinationsTab } from "./DestinationsTab";
 import { EncryptionKeyCard } from "./EncryptionKeyCard";
 import { SchedulesTab } from "./SchedulesTab";
@@ -147,6 +148,7 @@ const RunStatusSummary = ({ run }: { run: BackupRun }) => {
 export const AdminBackupsPage = () => {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [uploadRestoreOpen, setUploadRestoreOpen] = useState(false);
+  const [packageRunId, setPackageRunId] = useState<string | null>(null);
   const [logJob, setLogJob] = useState<BackupJob | null>(null);
   const [activeTab, setActiveTab] = useTabParam<TabKey>("backups");
   const [runs, setRuns] = useState<BackupRun[]>([]);
@@ -652,6 +654,15 @@ export const AdminBackupsPage = () => {
                       </Typography.Link>
                       <RowActions
                         actions={[
+                          // GH #1408: a Full Server run (has account jobs) can be
+                          // packaged into ONE downloadable container.
+                          {
+                            key: "package-full",
+                            label: "Package & download",
+                            icon: <DownloadOutlined />,
+                            hidden: !row.run.has_accounts,
+                            onClick: () => setPackageRunId(row.run.run_id),
+                          },
                           {
                             key: "delete-all",
                             label: "Delete all jobs",
@@ -712,6 +723,12 @@ export const AdminBackupsPage = () => {
       <RestoreFromUploadDrawer
         open={uploadRestoreOpen}
         onClose={() => setUploadRestoreOpen(false)}
+      />
+
+      <FullServerPackageModal
+        runId={packageRunId}
+        open={packageRunId !== null}
+        onClose={() => setPackageRunId(null)}
       />
     </div>
   );
