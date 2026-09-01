@@ -210,3 +210,137 @@ func (h *backupHandler) fullBackupDownload(c *gin.Context) {
 		h.cfg.Log.Warn("full-backup stream failed", "err", err, "run_id", runID)
 	}
 }
+
+// --- Restore from an uploaded full-server container (phase 2) ---
+//
+// The container is uploaded via the existing chunked endpoint
+// (POST /admin/backups/restore-upload), so it reassembles at the same
+// restoreUploadPath. These endpoints inspect it and fan the restore out over the
+// selected users, reusing the per-account restore engine.
+
+func fullRestoreMarkerPath(adminID, uploadID string) string {
+	return filepath.Join(restoreUploadDir, "fullrst-"+restoreUploadAdminTag(adminID)+"-"+uploadID+".json")
+}
+
+type fullRestoreInspectRequest struct {
+	UploadID string `json:"upload_id"`
+}
+
+// fullRestoreInspect handles POST /admin/system/full-restore-upload/inspect.
+func (h *backupHandler) fullRestoreInspect(c *gin.Context) {
+	adminID, ok := h.restoreUploadAdminID(c)
+	if !ok {
+		return
+	}
+	var req fullRestoreInspectRequest
+	if err := c.ShouldBindJSON(&req); err != nil || !uploadIDRE.MatchString(req.UploadID) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request"})
+		return
+	}
+	path := restoreUploadPath(adminID, req.UploadID)
+	if fi, err := os.Stat(path); err != nil || !fi.Mode().IsRegular() {
+		c.JSON(http.StatusNotFound, gin.H{"error": "upload_not_found"})
+		return
+	}
+	if h.cfg.Agent == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "agent_unavailable"})
+		return
+	}
+	raw, err := h.cfg.Agent.Call(c.Request.Context(), "system.fullbackup.inspect_uploaded",
+		map[string]string{"tar_path": path})
+	if err != nil {
+		respondAgentError(c, err)
+		return
+	}
+	c.Data(http.StatusOK, "application/json", raw)
+}
+
+type fullRestoreApplyRequest struct {
+	UploadID      string   `json:"upload_id"`
+	Usernames     []string `json:"usernames"`
+	IncludeSystem bool     `json:"include_system"`
+}
+
+// fullRestoreApply handles POST /admin/system/full-restore-upload/apply — restores
+// the selected users from the uploaded container. Detached job (it can restore
+// many accounts) → 202 + status poll.
+func (h *backupHandler) fullRestoreApply(c *gin.Context) {
+	adminID, ok := h.restoreUploadAdminID(c)
+	if !ok {
+		return
+	}
+	var req fullRestoreApplyRequest
+	if err := c.ShouldBindJSON(&req); err != nil || !uploadIDRE.MatchString(req.UploadID) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request"})
+		return
+	}
+	path := restoreUploadPath(adminID, req.UploadID)
+	if fi, err := os.Stat(path); err != nil || !fi.Mode().IsRegular() {
+		c.JSON(http.StatusNotFound, gin.H{"error": "upload_not_found"})
+		return
+	}
+	if h.cfg.Agent == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "agent_unavailable"})
+		return
+	}
+	c.Set("audit_target", req.UploadID)
+	c.Set("audit_target_type", "backup_run")
+
+	marker := fullRestoreMarkerPath(adminID, req.UploadID)
+	writeFullBackupOutcome(marker, fullBackupOutcome{Status: "restoring"})
+
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Minute)
+		defer cancel()
+		raw, cerr := h.cfg.Agent.Call(ctx, "system.fullbackup.restore_uploaded", map[string]any{
+			"tar_path":       path,
+			"usernames":      req.Usernames,
+			"include_system": req.IncludeSystem,
+		})
+		if cerr != nil {
+			writeFullBackupOutcome(marker, fullBackupOutcome{Status: "failed", Error: restoreFailureDetail(cerr)})
+			return
+		}
+		// The container is consumed — drop it.
+		_ = os.Remove(path)
+		var res struct {
+			Users []struct {
+				Username string   `json:"username"`
+				Applied  []string `json:"applied"`
+				Error    string   `json:"error"`
+			} `json:"users"`
+			Skipped []string `json:"skipped"`
+		}
+		_ = json.Unmarshal(raw, &res)
+		packed := make([]string, 0, len(res.Users))
+		for _, u := range res.Users {
+			if u.Error != "" {
+				packed = append(packed, u.Username+": "+u.Error)
+			} else {
+				packed = append(packed, u.Username+": restored "+strconv.Itoa(len(u.Applied))+" item(s)")
+			}
+		}
+		writeFullBackupOutcome(marker, fullBackupOutcome{Status: "done", Packed: packed, Skipped: res.Skipped})
+	}()
+
+	c.JSON(http.StatusAccepted, gin.H{"status": "restoring", "upload_id": req.UploadID})
+}
+
+// fullRestoreStatus handles GET /admin/system/full-restore-upload/status?upload_id=…
+func (h *backupHandler) fullRestoreStatus(c *gin.Context) {
+	adminID, ok := h.restoreUploadAdminID(c)
+	if !ok {
+		return
+	}
+	uploadID := c.Query("upload_id")
+	if !uploadIDRE.MatchString(uploadID) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_upload_id"})
+		return
+	}
+	b, err := os.ReadFile(fullRestoreMarkerPath(adminID, uploadID))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
+		return
+	}
+	c.Data(http.StatusOK, "application/json", b)
+}

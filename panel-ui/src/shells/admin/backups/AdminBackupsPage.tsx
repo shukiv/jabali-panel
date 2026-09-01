@@ -40,6 +40,7 @@ import { BackupSettingsTab } from "./BackupSettingsTab";
 import { CreateBackupDrawer } from "./CreateBackupDrawer";
 import { RestoreFromUploadDrawer } from "./RestoreFromUploadDrawer";
 import { FullServerPackageModal } from "./FullServerPackageModal";
+import { RestoreFullServerDrawer } from "./RestoreFullServerDrawer";
 import { DestinationsTab } from "./DestinationsTab";
 import { EncryptionKeyCard } from "./EncryptionKeyCard";
 import { SchedulesTab } from "./SchedulesTab";
@@ -149,6 +150,7 @@ export const AdminBackupsPage = () => {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [uploadRestoreOpen, setUploadRestoreOpen] = useState(false);
   const [packageRunId, setPackageRunId] = useState<string | null>(null);
+  const [fullRestoreOpen, setFullRestoreOpen] = useState(false);
   const [logJob, setLogJob] = useState<BackupJob | null>(null);
   const [activeTab, setActiveTab] = useTabParam<TabKey>("backups");
   const [runs, setRuns] = useState<BackupRun[]>([]);
@@ -463,6 +465,12 @@ export const AdminBackupsPage = () => {
             Restore from Upload
           </Button>
           <Button
+            icon={<HardDriveUploadOutlined />}
+            onClick={() => setFullRestoreOpen(true)}
+          >
+            Restore Full Server
+          </Button>
+          <Button
             type="primary"
             icon={<PlusOutlined />}
             onClick={() => setDrawerOpen(true)}
@@ -729,6 +737,11 @@ export const AdminBackupsPage = () => {
         runId={packageRunId}
         open={packageRunId !== null}
         onClose={() => setPackageRunId(null)}
+      />
+
+      <RestoreFullServerDrawer
+        open={fullRestoreOpen}
+        onClose={() => setFullRestoreOpen(false)}
       />
     </div>
   );

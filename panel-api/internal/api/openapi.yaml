@@ -2450,6 +2450,27 @@ paths:
       security: [ { KratosSession: [] } ]
       responses: { "200": { description: OK } }
 
+  /admin/system/full-restore-upload/inspect:
+    post:
+      tags: [Backups]
+      summary: Inspect an uploaded Full Server backup container (users + system)
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/system/full-restore-upload/apply:
+    post:
+      tags: [Backups]
+      summary: Restore selected users from an uploaded Full Server container
+      security: [ { KratosSession: [] } ]
+      responses: { "202": { description: Accepted } }
+
+  /admin/system/full-restore-upload/status:
+    get:
+      tags: [Backups]
+      summary: Poll the status of a Full Server container restore
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
   /admin/backups/restore-upload/status:
     get:
       tags: [Backups]

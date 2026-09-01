@@ -148,6 +148,50 @@ func extractTarStream(r io.Reader, destRoot string) (int64, error) {
 	return written, nil
 }
 
+// safeExtractPlainTar extracts an UNTRUSTED plain (uncompressed) tar with the
+// same allowlist as safeExtractZstdTar. Used for the full-server container,
+// whose members are already-zstd inner archives (GH #1408) — the outer tar adds
+// no compression, so it's read directly.
+func safeExtractPlainTar(srcPath, destRoot string) (int64, error) {
+	if !filepath.IsAbs(destRoot) || destRoot != filepath.Clean(destRoot) {
+		return 0, fmt.Errorf("destRoot must be an absolute clean path")
+	}
+	f, err := os.Open(srcPath)
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close()
+	return extractTarStream(f, destRoot)
+}
+
+// readFileFromPlainTar returns the bytes of a named member (e.g. "manifest.json")
+// from a plain tar, read-only, or an error if it's absent. Bounded to 8 MiB.
+func readFileFromPlainTar(srcPath, name string) ([]byte, error) {
+	f, err := os.Open(srcPath)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	tr := tar.NewReader(f)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("read tar: %w", err)
+		}
+		rel, rerr := safeRelPath(hdr.Name)
+		if rerr != nil || rel == "" {
+			continue
+		}
+		if rel == name && hdr.Typeflag == tar.TypeReg {
+			return io.ReadAll(io.LimitReader(tr, 8<<20))
+		}
+	}
+	return nil, fmt.Errorf("%s not found in container", name)
+}
+
 // readManifestFromZstdTar streams the zstd tar read-only (writes NOTHING) and
 // returns the account manifest bytes (<job-id>/manifest/manifest.json). Used by
 // the inspect step to show what a backup holds before the destructive apply. It

@@ -579,6 +579,62 @@ interface RestoreUploadStatus {
   error?: string;
 }
 
+// === GH #1408 phase 2: restore from an uploaded full-server container ===
+
+export interface FullContainerInfo {
+  run_id: string;
+  users: string[];
+  has_system: boolean;
+}
+
+export async function inspectFullServerContainer(
+  uploadId: string,
+): Promise<FullContainerInfo> {
+  const { data } = await apiClient.post<FullContainerInfo>(
+    "/admin/system/full-restore-upload/inspect",
+    { upload_id: uploadId },
+  );
+  return data;
+}
+
+export interface FullRestoreResult {
+  status: string;
+  packed?: string[]; // "<user>: restored N item(s)" or "<user>: <error>"
+  skipped?: string[];
+  error?: string;
+}
+
+// applyFullServerRestore kicks off the (detached) container restore and polls
+// its status until it seals.
+export async function applyFullServerRestore(
+  uploadId: string,
+  usernames: string[],
+  includeSystem: boolean,
+): Promise<FullRestoreResult> {
+  await apiClient.post("/admin/system/full-restore-upload/apply", {
+    upload_id: uploadId,
+    usernames,
+    include_system: includeSystem,
+  });
+  const deadline = Date.now() + 65 * 60 * 1000;
+  for (;;) {
+    await new Promise((r) => setTimeout(r, 3000));
+    let s: FullRestoreResult | null = null;
+    try {
+      const { data } = await apiClient.get<FullRestoreResult>(
+        "/admin/system/full-restore-upload/status",
+        { params: { upload_id: uploadId } },
+      );
+      s = data;
+    } catch {
+      // transient — keep polling
+    }
+    if (s?.status === "done") return s;
+    if (s?.status === "failed") throw new Error(s.error || "restore_failed");
+    if (Date.now() > deadline) throw new Error("restore_timeout");
+  }
+}
+
 // === PHP Settings API ===
 
 export interface DomainPHPSettings {

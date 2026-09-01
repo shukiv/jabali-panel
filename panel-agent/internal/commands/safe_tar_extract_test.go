@@ -161,6 +161,45 @@ func TestWriteRegularNoFollow_BudgetGuard(t *testing.T) {
 	}
 }
 
+// GH #1408 phase 2: the full-server container is a PLAIN tar of already-zstd
+// inners — safeExtractPlainTar extracts it with the same allowlist, and
+// readFileFromPlainTar reads its manifest without extracting.
+func TestPlainTarHelpers(t *testing.T) {
+	root := t.TempDir()
+	container := filepath.Join(root, "container.tar")
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	write := func(name, body string) {
+		_ = tw.WriteHeader(&tar.Header{Typeflag: tar.TypeReg, Name: name, Mode: 0o644, Size: int64(len(body))})
+		_, _ = tw.Write([]byte(body))
+	}
+	write("manifest.json", `{"run_id":"R","entries":[]}`)
+	write("users/alice.tar.zst", "ZSTDINNER")
+	_ = tw.Close()
+	if err := os.WriteFile(container, buf.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	mb, err := readFileFromPlainTar(container, "manifest.json")
+	if err != nil || string(mb) != `{"run_id":"R","entries":[]}` {
+		t.Fatalf("readFileFromPlainTar manifest = %q err=%v", mb, err)
+	}
+	if _, err := readFileFromPlainTar(container, "nope.json"); err == nil {
+		t.Fatal("missing member must error")
+	}
+
+	dst := filepath.Join(root, "out")
+	if err := os.MkdirAll(dst, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := safeExtractPlainTar(container, dst); err != nil {
+		t.Fatalf("safeExtractPlainTar: %v", err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dst, "users", "alice.tar.zst")); string(b) != "ZSTDINNER" {
+		t.Fatalf("inner not extracted verbatim")
+	}
+}
+
 func TestSafeRelPath(t *testing.T) {
 	ok := map[string]string{
 		"home/a.txt": "home/a.txt",
