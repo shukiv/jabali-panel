@@ -2,7 +2,7 @@ slug: n8n
 popularity: 88
 name: n8n
 tags: ["Automation", "Developer tools"]
-version: "2.34.4"
+version: "2.38.1"
 description: |
   Workflow automation tool. Build, run, and share workflows that
   connect APIs, databases, and services. Self-hosted, single
@@ -11,7 +11,7 @@ icon: icon.svg
 upstream: https://github.com/n8n-io/n8n
 documentation: https://docs.n8n.io/
 
-image_channel: n8nio/n8n:2.34.4@sha256:f69bad7a699300702af665b9f13fc67455b93c9fb9174bca6c37f3d4a47b8583
+image_channel: n8nio/n8n:2.38.1@sha256:9f21fbf422982bbdddc31085c180bef82d59cc608ba16dfec4fc48611d0b51b8
 update_mode: manual
 
 # The image runs as node (uid 1000); without volume_owner the bind-mounted

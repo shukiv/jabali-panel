@@ -3,7 +3,7 @@ popularity: 75
 tenant_installable: true
 name: Paperless-ngx
 tags: ["Document management", "File sharing"]
-version: "3.0.5"
+version: "3.1.1"
 description: |
   Self-hosted document management — scan + tag + full-text search.
   Four services: web (gunicorn), broker (Redis), database (PostgreSQL),
@@ -13,7 +13,7 @@ icon: icon.svg
 upstream: https://github.com/paperless-ngx/paperless-ngx
 documentation: https://docs.paperless-ngx.com/
 
-image_channel: paperlessngx/paperless-ngx:3.0.5@sha256:65a4cabf0169ea7fbd90ab7bb28ba3f8b5909613635acda1a03ad606f34b456b
+image_channel: paperlessngx/paperless-ngx:3.1.1@sha256:73a1d0bcc5b50cb501f084da795722aa5e2988c6bc9b26ca1ae493a57a490c06
 update_mode: manual
 
 resources:

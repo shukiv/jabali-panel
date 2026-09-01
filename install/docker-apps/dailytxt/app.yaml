@@ -2,7 +2,7 @@ slug: dailytxt
 tenant_installable: true
 name: DailyTxt
 tags: ["Productivity"]
-version: "2.6.2"
+version: "2.6.3"
 description: |
   Self-hosted, end-to-end encrypted diary application. Plain text +
   attachments, fully encrypted client-side. Single container with
@@ -11,7 +11,7 @@ icon: icon.svg
 upstream: https://github.com/PhiTux/DailyTxt
 documentation: https://github.com/PhiTux/DailyTxt#readme
 
-image_channel: phitux/dailytxt:2.6.2@sha256:9cf5b72e510737ecc71c5c736f321ef0e1d8b31247ded846836f073c6e2f757f
+image_channel: phitux/dailytxt:2.6.3@sha256:87f023301497aefd2432449aa3f4ece9c4e98a466d17f423ce0cfd1fc964aca9
 update_mode: manual
 
 resources:

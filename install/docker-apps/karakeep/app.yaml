@@ -1,7 +1,7 @@
 slug: karakeep
 name: Karakeep
 tags: ["Productivity", "Library"]
-version: "0.33.1"
+version: "0.33.2"
 description: |
   Self-hosted bookmark and read-it-later app (formerly Hoarder). Saves
   links, notes and images with full-text search (Meilisearch) and
@@ -11,7 +11,7 @@ icon: icon.svg
 upstream: https://github.com/karakeep-app/karakeep
 documentation: https://docs.karakeep.app
 
-image_channel: ghcr.io/karakeep-app/karakeep:0.33.1@sha256:5467873df817ab3aa837f2b06bd7f2b0974132ba1ae5bce0b7e2fd134abc269b
+image_channel: ghcr.io/karakeep-app/karakeep:0.33.2@sha256:b069e4307dec06ea06d16989c6861c30a1ff208568be44ed5fb5d422cd3e950c
 update_mode: manual
 
 resources:

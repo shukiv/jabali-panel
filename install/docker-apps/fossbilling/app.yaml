@@ -1,7 +1,7 @@
 slug: fossbilling
 name: FOSSBilling
 tags: ["Billing", "CRM"]
-version: "0.8.5"
+version: "0.8.7"
 description: |
   Open-source billing and client management — invoices, orders, support
   tickets, and a product catalog with hosting & domain integrations.
@@ -15,7 +15,7 @@ icon: icon.svg
 upstream: https://github.com/FOSSBilling/FOSSBilling
 documentation: https://fossbilling.org/docs
 
-image_channel: fossbilling/fossbilling:0.8.5@sha256:81eea9624261050b3c0da8fc94a4742044bda94aa06226da48e26fe22992f78f
+image_channel: fossbilling/fossbilling:0.8.7@sha256:8be0acd484a04f8c7b961bc6858ccc098057487982d333945c63334850cdf5c3
 update_mode: manual
 
 resources:

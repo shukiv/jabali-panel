@@ -1,7 +1,7 @@
 slug: bigcapital
 name: Bigcapital
 tags: ["Accounting", "ERP"]
-version: "0.25.26"
+version: "0.25.36"
 description: |
   Open-source accounting and financial management — invoicing, expenses,
   banking, inventory, and financial reports for small businesses. A
@@ -18,7 +18,7 @@ documentation: https://docs.bigcapital.app
 # Primary image (drives the server + migration services). The webapp,
 # envoy, mariadb, redis, minio and gotenberg images are pinned in the
 # compose template; keep the webapp tag in sync with this version on bump.
-image_channel: bigcapitalhq/server:v0.25.26@sha256:06199a9829f0511b40f0931772dd8448783f6b462804da24f6e172c61d724206
+image_channel: bigcapitalhq/server:v0.25.36@sha256:182befdb8970ea949ce9cc6cd7522dcf7f07486adb97aa11236c085311b537b2
 update_mode: manual
 
 resources:

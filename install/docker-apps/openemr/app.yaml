@@ -9,7 +9,7 @@ icon: icon.svg
 upstream: https://github.com/openemr/openemr
 documentation: https://www.open-emr.org/wiki/index.php/OpenEMR_Wiki_Home_Page
 
-image_channel: openemr/openemr:8.0.0.3@sha256:612fb8574bc81f50fc877354b5687d3c03338cedb5a82cb600245407ea86940c
+image_channel: openemr/openemr:8.0.0.3@sha256:c6bfd86bacf74ebd80a8161124bbcf594add73b676e06abf801cbb835bde5394
 update_mode: manual
 
 resources:

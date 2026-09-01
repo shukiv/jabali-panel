@@ -11,7 +11,7 @@ icon: icon.svg
 upstream: https://github.com/Chocobozzz/PeerTube
 documentation: https://docs.joinpeertube.org/
 
-image_channel: chocobozzz/peertube:v8.2.4-trixie@sha256:f7a3e82f9fe7f97fc672d5f3e7c951fc5fd300e9c06cf806b503dcf1d66388f9
+image_channel: chocobozzz/peertube:v8.2.4-trixie@sha256:c648409f0669b0a461b5517f2e9e53b931c20fdd1e9bcd4457e7caffc42b0760
 update_mode: manual
 
 resources:

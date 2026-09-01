@@ -12,7 +12,7 @@ icon: icon.svg
 upstream: https://github.com/owncloud/core
 documentation: https://doc.owncloud.com/server/10.16/
 
-image_channel: owncloud/server:11.0.0@sha256:f6823fe815a6e3f78239e5d1db840081b095e3153f0dbec724ba154079e479a6
+image_channel: owncloud/server:11.0.0@sha256:667c772de235e23f49f064eddefaaab2bc1c18beeea8506c1ad24f4a3a931738
 update_mode: manual
 
 resources:

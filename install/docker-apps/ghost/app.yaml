@@ -2,7 +2,7 @@ slug: ghost
 popularity: 80
 name: Ghost
 tags: ["Blog", "CMS"]
-version: "6.57.0"
+version: "6.61.0"
 description: |
   Modern publishing platform. SQLite by default; the operator can
   switch to MySQL by editing the compose post-install. Single
@@ -11,7 +11,7 @@ icon: icon.png
 upstream: https://github.com/TryGhost/Ghost
 documentation: https://ghost.org/docs/
 
-image_channel: ghost:6-alpine@sha256:a8d293f62c23fefdd2b71f26f631aad7c83891be45f946fcab9b6b881761160c
+image_channel: ghost:6-alpine@sha256:80e33b2c20aabb96e379ae26508f75f2b561cffbc24d081713ee96a7eb3b3c80
 update_mode: manual
 tenant_installable: true
 

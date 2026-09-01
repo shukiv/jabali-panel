@@ -1,7 +1,7 @@
 slug: erpnext
 name: ERPNext
 tags: ["ERP", "CRM", "Accounting"]
-version: "16.31.1"
+version: "16.33.0"
 description: >-
   Full open-source ERP: accounting, inventory, manufacturing, HR, CRM, projects
   and a website/e-commerce builder, built on the Frappe framework. This is a
@@ -16,7 +16,7 @@ icon: icon.svg
 upstream: https://github.com/frappe/erpnext
 documentation: https://docs.frappe.io/erpnext
 
-image_channel: frappe/erpnext:v16.31.1@sha256:dba34b89f11e22e14cfc05f6846ff39a223187bf7dfc63266565d646f1569674
+image_channel: frappe/erpnext:v16.33.0@sha256:493cecf82c92c828bf0d0c57df60694e07dc61671e374ac93a070d1cc86df1bd
 update_mode: manual
 
 resources:
