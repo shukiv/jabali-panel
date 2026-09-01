@@ -572,7 +572,9 @@
   },
   "userdomaindrawer": {
     "add_domain": "Adicionar domínio",
-    "domain_name": "Nome do domínio"
+    "domain_name": "Nome do domínio",
+    "document_root": "Raiz do documento",
+    "document_root_hint": "De onde os arquivos deste domínio são servidos. Deixe em branco para o caminho padrão. Deve permanecer dentro da própria pasta deste domínio."
   },
   "userdomainlist": {
     "actions": "Ações",

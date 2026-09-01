@@ -572,7 +572,9 @@
   },
   "userdomaindrawer": {
     "add_domain": "ドメインを追加",
-    "domain_name": "ドメイン名"
+    "domain_name": "ドメイン名",
+    "document_root": "ドキュメントルート",
+    "document_root_hint": "このドメインのファイルを配信する場所です。空欄にすると既定のパスを使用します。このドメイン自身のフォルダー内に収める必要があります。"
   },
   "userdomainlist": {
     "actions": "操作",

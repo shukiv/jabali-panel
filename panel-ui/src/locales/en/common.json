@@ -1500,6 +1500,8 @@
     "add_domain": "Add domain",
     "adds_a_www_cname_pointing_at_the_domain_apex": "Adds a www CNAME pointing at the domain apex. Off by default — leave unchecked for subdomains or domains that don't serve a www host.",
     "domain_name": "Domain Name",
+    "document_root": "Document root",
+    "document_root_hint": "Where this domain's files are served from. Leave blank for the default. It must stay inside this domain's own folder.",
     "google_dkim_value": "Google DKIM value",
     "let_s_encrypt_issues_a_free_trusted_certific": "Let's Encrypt issues a free trusted certificate automatically (recommended). Self-signed works without DNS/ACME but browsers warn. None serves over HTTP only.",
     "mail": "Mail",

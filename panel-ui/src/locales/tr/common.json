@@ -572,7 +572,9 @@
   },
   "userdomaindrawer": {
     "add_domain": "Alan adı ekle",
-    "domain_name": "Alan adı"
+    "domain_name": "Alan adı",
+    "document_root": "Belge kökü",
+    "document_root_hint": "Bu alan adının dosyalarının sunulduğu yer. Varsayılan yol için boş bırakın. Bu alan adının kendi klasörünün içinde kalmalıdır."
   },
   "userdomainlist": {
     "actions": "İşlemler",

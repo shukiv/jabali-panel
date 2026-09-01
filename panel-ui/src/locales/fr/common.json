@@ -572,7 +572,9 @@
   },
   "userdomaindrawer": {
     "add_domain": "Ajouter un domaine",
-    "domain_name": "Nom de domaine"
+    "domain_name": "Nom de domaine",
+    "document_root": "Racine du document",
+    "document_root_hint": "Emplacement d'où sont servis les fichiers de ce domaine. Laissez vide pour le chemin par défaut. Doit rester dans le dossier propre à ce domaine."
   },
   "userdomainlist": {
     "actions": "Actions",
