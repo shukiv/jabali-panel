@@ -2425,9 +2425,30 @@ paths:
   /admin/backups/restore-upload/apply:
     post:
       tags: [Backups]
-      summary: Restore an uploaded backup archive into an existing user (step-up)
+      summary: Restore an uploaded backup archive into an existing user
       security: [ { KratosSession: [] } ]
       responses: { "202": { description: Accepted } }
+
+  /admin/system/full-backup/{run_id}/package:
+    post:
+      tags: [Backups]
+      summary: Package a Full Server backup run into one downloadable container (GH #1408)
+      security: [ { KratosSession: [] } ]
+      responses: { "202": { description: Accepted } }
+
+  /admin/system/full-backup/{run_id}/package-status:
+    get:
+      tags: [Backups]
+      summary: Poll the status of a Full Server backup packaging job
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/system/full-backup/{run_id}/download:
+    get:
+      tags: [Backups]
+      summary: Download the packaged Full Server backup container
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
 
   /admin/backups/restore-upload/status:
     get:
