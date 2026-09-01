@@ -90,6 +90,10 @@ export async function filesUpload(
   if (opts?.name) q.set("name", opts.name);
   await apiClient.post(`${base}/upload?${q.toString()}`, fd, {
     headers: { "Content-Type": "multipart/form-data" },
+    // GH #1410: an upload is bounded by its own progress, not the client's
+    // default request timeout — a large file (or a slow uplink) legitimately
+    // takes longer than 60s and was failing with "timeout of 15000ms exceeded".
+    timeout: 0,
     onUploadProgress: (e) => {
       if (!onProgress) return;
       const total = e.total ?? file.size;
@@ -111,7 +115,10 @@ export async function filesUpload(
 export async function filesUploadChunked(
   dirPath: string,
   file: File,
-  chunkSize = 10 * 1024 * 1024,
+  // GH #1410: 25 MB chunks (was 10) — a quarter the requests for a big upload,
+  // still well under the ~100 MB proxy/Cloudflare request cap chunking exists to
+  // dodge. Each chunk opts out of the client timeout (progress-bounded).
+  chunkSize = 25 * 1024 * 1024,
   onProgress?: (frac: number) => void,
   opts?: UploadOpts,
   base = "/files",
@@ -163,6 +170,7 @@ export async function filesUploadChunked(
     });
     await apiClient.post(`${base}/upload-chunk?${params.toString()}`, blob, {
       headers: { "Content-Type": "application/octet-stream" },
+      timeout: 0, // GH #1410: a slow chunk mustn't hit the client request timeout
     });
     if (onProgress) onProgress((i + 1) / totalChunks);
   }
