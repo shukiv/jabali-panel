@@ -60,17 +60,27 @@ func backupRestoreFromTarHandler(ctx context.Context, raw json.RawMessage) (any,
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return nil, bkInvalidArg(fmt.Sprintf("invalid params: %v", err))
 	}
-	if !jobIDRE.MatchString(p.JobID) {
+	apply := true
+	if p.ApplyStaged != nil {
+		apply = *p.ApplyStaged
+	}
+	return restoreAccountFromTar(ctx, p.JobID, p.TarPath, p.TargetUsername, p.Components, apply)
+}
+
+// restoreAccountFromTar is the reusable core: extract an untrusted account backup
+// tar and apply it to targetUsername. Shared by the single-upload restore handler
+// and the full-server container restore (which calls it once per inner user tar).
+func restoreAccountFromTar(ctx context.Context, jobID, tarPath, targetUsername string, components []string, apply bool) (*backupRestoreFromTarResult, error) {
+	if !jobIDRE.MatchString(jobID) {
 		return nil, bkInvalidArg("job_id must be a 26-char ULID")
 	}
-	if !backupUsernameRE.MatchString(p.TargetUsername) {
+	if !backupUsernameRE.MatchString(targetUsername) {
 		return nil, bkInvalidArg("target_username must match ^[a-z][a-z0-9_-]{0,31}$")
 	}
-	// The tar path is provided by the panel (the reassembled chunked upload). It
-	// MUST live under the uploads handoff dir and contain no traversal — never
-	// let the caller point the extractor at an arbitrary file.
-	tarClean := filepath.Clean(p.TarPath)
-	if tarClean != p.TarPath || !strings.HasPrefix(tarClean, restoreUploadsRoot+"/") {
+	// The tar path MUST live under the uploads handoff dir and contain no
+	// traversal — never let the caller point the extractor at an arbitrary file.
+	tarClean := filepath.Clean(tarPath)
+	if tarClean != tarPath || !strings.HasPrefix(tarClean, restoreUploadsRoot+"/") {
 		return nil, bkInvalidArg("tar_path must be a clean path under " + restoreUploadsRoot)
 	}
 	if fi, err := os.Lstat(tarClean); err != nil || !fi.Mode().IsRegular() {
@@ -86,7 +96,7 @@ func backupRestoreFromTarHandler(ctx context.Context, raw json.RawMessage) (any,
 		}
 	}
 
-	staging := filepath.Join("/var/lib/jabali-backups/restore-staging", p.JobID+"-upload")
+	staging := filepath.Join("/var/lib/jabali-backups/restore-staging", jobID+"-upload")
 	_ = os.RemoveAll(staging)
 	if err := os.MkdirAll(staging, 0o750); err != nil {
 		return nil, bkInternal("mkdir staging", err)
@@ -120,17 +130,17 @@ func backupRestoreFromTarHandler(ctx context.Context, raw json.RawMessage) (any,
 		return nil, bkInvalidArg("manifest parse failed: " + err.Error())
 	}
 
-	out := backupRestoreFromTarResult{JobID: p.JobID, User: manifest.User, BytesExtracted: written}
+	out := backupRestoreFromTarResult{JobID: jobID, User: manifest.User, BytesExtracted: written}
 
 	// v1 restores into the SAME username the backup was taken from — the home
 	// tree inside the archive is /home/<backup-user> and applyAccountRestore
 	// keys the source path by the target name, so a mismatch silently leaves
 	// home unrestored. The panel sets target = the manifest's username; warn if
 	// a caller passes something else (renaming on restore is a follow-up).
-	if p.TargetUsername != manifest.User.Username {
+	if targetUsername != manifest.User.Username {
 		out.Warnings = append(out.Warnings, fmt.Sprintf(
 			"target_username %q differs from the backup's user %q; the home stage will be skipped (restore into the same username)",
-			p.TargetUsername, manifest.User.Username))
+			targetUsername, manifest.User.Username))
 	}
 
 	// Best-effort metadata (FTP subaccount hashes etc.) from the meta stage.
@@ -142,7 +152,7 @@ func backupRestoreFromTarHandler(ctx context.Context, raw json.RawMessage) (any,
 	// (no component filter, or the filter selected it). Aligned by manifest-stage
 	// index — same discipline as backup.restore (docker/db fan out same-named
 	// stages, so a name-keyed gate would collapse them, GH #1360).
-	want := componentFilter(p.Components)
+	want := componentFilter(components)
 	stageResults := make([]backupRestoreStage, len(manifest.Stages))
 	for i, st := range manifest.Stages {
 		res := backupRestoreStage{Name: st.Name, Status: backup.StageStatusSkipped}
@@ -154,17 +164,13 @@ func backupRestoreFromTarHandler(ctx context.Context, raw json.RawMessage) (any,
 	}
 	out.Stages = stageResults
 
-	apply := true
-	if p.ApplyStaged != nil {
-		apply = *p.ApplyStaged
-	}
 	if !apply {
 		out.Warnings = append(out.Warnings, "apply_staged=false — extracted to "+staging+"; nothing applied")
 		out.StagingCleanup = "kept (recon mode)"
-		return out, nil
+		return &out, nil
 	}
 
-	applied, warnings := applyAccountRestore(ctx, root, p.TargetUsername, manifest.User, manifest.Stages, stageResults)
+	applied, warnings := applyAccountRestore(ctx, root, targetUsername, manifest.User, manifest.Stages, stageResults)
 	out.Applied = applied
 	out.Warnings = append(out.Warnings, warnings...)
 
@@ -178,7 +184,7 @@ func backupRestoreFromTarHandler(ctx context.Context, raw json.RawMessage) (any,
 	} else {
 		out.StagingCleanup = "kept (no stages applied)"
 	}
-	return out, nil
+	return &out, nil
 }
 
 // componentFilter builds a set of stage names to apply, or nil to apply all.

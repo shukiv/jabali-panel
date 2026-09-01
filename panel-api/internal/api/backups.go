@@ -140,6 +140,10 @@ func RegisterBackupRoutes(rg *gin.RouterGroup, cfg BackupHandlerConfig) {
 	admin.POST("/system/full-backup/:run_id/package", h.fullBackupPackage)
 	admin.GET("/system/full-backup/:run_id/package-status", h.fullBackupPackageStatus)
 	admin.GET("/system/full-backup/:run_id/download", h.fullBackupDownload)
+	// GH #1408 phase 2: restore from an uploaded full-server container.
+	admin.POST("/system/full-restore-upload/inspect", h.fullRestoreInspect)
+	admin.POST("/system/full-restore-upload/apply", h.fullRestoreApply)
+	admin.GET("/system/full-restore-upload/status", h.fullRestoreStatus)
 	admin.POST("/system/backups/:job_id/cancel", h.systemCancel)
 	admin.GET("/system/backups/:job_id/logs", h.logs)
 }
