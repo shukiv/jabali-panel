@@ -178,11 +178,44 @@ func dbPgGrantHandler(ctx context.Context, params json.RawMessage) (any, error) 
 	if !pgValidIdent(p.DBName) || !pgValidIdent(p.Role) {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "invalid name"}
 	}
+	// Database-level grant (CONNECT/CREATE/TEMP) — run against the maintenance DB.
 	sql := fmt.Sprintf(`GRANT ALL PRIVILEGES ON DATABASE "%s" TO "%s"`, p.DBName, p.Role)
 	if err := pgRunSQL(ctx, sql); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "grant: " + err.Error()}
 	}
+	// GH #1406: DATABASE-level alone is NOT usable — a Jabali PG database is owned
+	// by postgres, and since PG15 revoked the default PUBLIC CREATE on `public`,
+	// a "Full Access" db-user still gets "permission denied for schema public".
+	// Grant the role full schema-level access on the target DB too (schema grants
+	// only affect the connected DB, so this runs with -d <db>): CREATE+USAGE on
+	// public, ALL on existing tables/sequences (postgres-owned + others), and
+	// default privileges so future objects stay accessible. Same as the pgadmin
+	// shadow fix (db.postgres.shadowadmin.grant_schema).
+	role := `"` + strings.ReplaceAll(p.Role, `"`, `""`) + `"`
+	schemaSQL := strings.Join([]string{
+		"GRANT ALL ON SCHEMA public TO " + role,
+		"GRANT ALL ON ALL TABLES IN SCHEMA public TO " + role,
+		"GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO " + role,
+		"ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO " + role,
+		"ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO " + role,
+	}, "; ") + ";"
+	if err := pgRunSQLOnDB(ctx, p.DBName, schemaSQL); err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "grant schema: " + err.Error()}
+	}
 	return dbPgCreateResponse{OK: true}, nil
+}
+
+// pgRunSQLOnDB runs SQL against a SPECIFIC database (schema/object grants only
+// affect the connected DB). dbName is pgValidIdent-checked by the caller and
+// passed via -d, never interpolated into SQL.
+func pgRunSQLOnDB(ctx context.Context, dbName, sql string) error {
+	cmd := execCommandContext(ctx, "sudo", "-u", "postgres", "psql",
+		"-v", "ON_ERROR_STOP=1", "-XAtq", "-d", dbName, "-c", sql)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("psql -d %s: %w (%s)", dbName, err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 // ---- db.postgres.revoke ----
