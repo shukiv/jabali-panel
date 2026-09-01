@@ -16,11 +16,13 @@ const API_BASE = "/api/v1";
 export const apiClient = axios.create({
   baseURL: API_BASE,
   withCredentials: true, // send the Kratos session cookie
-  // 15s hard ceiling — without a timeout, any network hang (proxy, dropped
-  // connection, Firefox's Opaque-Response-Blocking cache caught mid-flight)
-  // freezes <Authenticated>'s check() indefinitely and the SPA renders
-  // blank. Anything legitimate on this API completes in <1s.
-  timeout: 15000,
+  // Default network-hang guard so a dropped proxy/connection can't freeze
+  // <Authenticated>'s check() forever and blank the SPA. GH #1410: 15s was too
+  // tight — synchronous agent operations (adding a domain, etc.) legitimately
+  // run longer and were failing with "timeout of 15000ms exceeded". 60s keeps
+  // the guard while covering those; genuinely long-running work (uploads,
+  // restores) opts out per-request with `timeout: 0` and its own progress/poll.
+  timeout: 60000,
 });
 
 // ADR-0128 — inject the admin act-as grant id on every request when one is
