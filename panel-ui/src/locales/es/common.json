@@ -76,6 +76,7 @@
     "flowError": "No se ha podido iniciar el proceso de acceso. Comprueba que el servicio de identidad esté en marcha y recarga la página.",
     "hostnameWarningTitle": "Accede con el nombre de host, no con la IP",
     "hostnameWarningDescription": "El proveedor de identidad está vinculado al nombre de host del panel, así que iniciar sesión mediante la dirección IP del servidor no funcionará. Abre el panel por su nombre de host (la URL que se muestra tras la instalación) e inténtalo de nuevo.",
+    "hostnameWarningOpenLink": "Abrir el panel en {{hostname}}",
     "noCredentialMethod": "Tu cuenta no tiene configurado ningún método de credenciales. Ponte en contacto con un administrador.",
     "fieldRequired": "Obligatorio",
     "identifierHint": "Usa tu nombre de usuario, no tu correo electrónico.",

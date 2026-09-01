@@ -95,6 +95,15 @@ type brandingInfoResponse struct {
 	PanelDarkTextColor       string `json:"panel_dark_text_color"`
 	HasLogoLight             bool   `json:"has_logo_light"`
 	HasLogoDark              bool   `json:"has_logo_dark"`
+	// PanelHostname is the operator-configured panel hostname (from
+	// server_settings). The login page compares it to the browser's
+	// current host so it can tell when the panel is being reached over
+	// the raw server IP (or a stale FQDN) — where Kratos's same-origin
+	// login cookies can't complete — and offer a one-click link to the
+	// correct host (GH #1411). Public on purpose: the hostname is already
+	// disclosed in the TLS cert SANs the server presents and in DNS.
+	// Empty when the operator hasn't set one (IP-only install).
+	PanelHostname string `json:"panel_hostname"`
 }
 
 func (h *brandingHandler) publicInfo(c *gin.Context) {
@@ -127,6 +136,10 @@ func (h *brandingHandler) publicInfo(c *gin.Context) {
 		PanelDarkTextColor:       s.PanelDarkTextColor,
 		HasLogoLight:             s.LogoLightPath != "" && fileExists(s.LogoLightPath),
 		HasLogoDark:              s.LogoDarkPath != "" && fileExists(s.LogoDarkPath),
+		// Normalise the same way models.EffectivePreviewBase does
+		// (lowercase, drop a trailing FQDN dot) so the SPA's
+		// case-insensitive host compare is exact.
+		PanelHostname: strings.TrimSuffix(strings.ToLower(strings.TrimSpace(s.Hostname)), "."),
 	})
 }
 

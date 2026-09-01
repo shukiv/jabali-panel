@@ -59,6 +59,8 @@ import {
   webauthn2faLoginFields,
   webauthnSupported,
 } from "../webauthn";
+import { useBranding } from "../hooks/useBranding";
+import { loginHostHint } from "./loginHostHint";
 
 // JAB-159: demo-only quick-enter buttons. VITE_DEMO is a build-time
 // constant, so a non-demo build dead-code-eliminates the import() and
@@ -84,14 +86,23 @@ export const LoginPage = () => {
   const [initError, setInitError] = useState<string | null>(null);
   const [passkeyBusy, setPasskeyBusy] = useState(false);
 
-  // GH#177: Kratos is same-origin — login cookies, CSRF tokens, and allowed
-  // return URLs are all bound to the panel hostname. Signing in over the raw
-  // server IP can't complete the flow and surfaces a generic
-  // "could not reach identity service". Detect IP-host access and steer the
-  // operator to the hostname.
-  const isIPHost =
-    /^\d{1,3}(\.\d{1,3}){3}$/.test(window.location.hostname) ||
-    window.location.hostname.includes(":");
+  // GH#177 / GH#1411: Kratos is same-origin — login cookies, CSRF tokens
+  // and allowed return URLs are all bound to the panel hostname. Reaching
+  // the panel over the raw server IP (or a stale FQDN after a rename)
+  // can't complete the flow and surfaces a generic "could not reach
+  // identity service" after a slow hang. The public /branding response
+  // tells us the configured hostname, so we can warn precisely on a real
+  // host mismatch and hand the operator a one-click link to the right
+  // host — falling back to a bare-IP heuristic only when the hostname is
+  // unknown. We never hide the form: IP access is the recovery path when
+  // DNS is broken, and it works for an IP-only install.
+  const { panelHostname, isLoading: brandingLoading } = useBranding();
+  const hostHint = loginHostHint({
+    configuredHostname: panelHostname,
+    brandingSettled: !brandingLoading,
+    currentHostname: window.location.hostname,
+    currentHref: window.location.href,
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -286,12 +297,25 @@ export const LoginPage = () => {
             </Typography.Title>
           </div>
 
-          {isIPHost && (
+          {hostHint.show && (
             <Alert
               type="warning"
               showIcon
               message={t("login.hostnameWarningTitle")}
-              description={t("login.hostnameWarningDescription")}
+              description={
+                hostHint.kind === "mismatch" ? (
+                  <>
+                    {t("login.hostnameWarningDescription")}{" "}
+                    <Typography.Link href={hostHint.targetHref}>
+                      {t("login.hostnameWarningOpenLink", {
+                        hostname: hostHint.hostname,
+                      })}
+                    </Typography.Link>
+                  </>
+                ) : (
+                  t("login.hostnameWarningDescription")
+                )
+              }
             />
           )}
 

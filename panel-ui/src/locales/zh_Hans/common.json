@@ -76,6 +76,7 @@
     "flowError": "无法启动登录流程。请确认身份服务正在运行，然后刷新页面。",
     "hostnameWarningTitle": "请使用主机名登录，而不是 IP",
     "hostnameWarningDescription": "身份提供程序绑定到面板的主机名，因此通过服务器 IP 地址登录将无法使用。请通过主机名（安装后显示的网址）打开面板，然后重试。",
+    "hostnameWarningOpenLink": "在 {{hostname}} 打开面板",
     "noCredentialMethod": "当前未为您的账户配置任何凭据方式。请联系管理员。",
     "fieldRequired": "必填",
     "identifierHint": "请使用用户名，而不是电子邮箱。",

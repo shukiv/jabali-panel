@@ -80,6 +80,7 @@
     "flowError": "Could not start the sign-in flow. Check that the identity service is running and refresh the page.",
     "hostnameWarningTitle": "Log in using your hostname, not the IP",
     "hostnameWarningDescription": "The identity provider is bound to the panel hostname, so signing in over the server IP address won't work. Open the panel by its hostname (the URL shown after install) and try again.",
+    "hostnameWarningOpenLink": "Open the panel at {{hostname}}",
     "noCredentialMethod": "No credential method is currently configured for your account. Contact an administrator.",
     "fieldRequired": "Required",
     "identifierHint": "Use your username, not your email.",

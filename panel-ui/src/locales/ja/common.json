@@ -76,6 +76,7 @@
     "flowError": "サインインの処理を開始できませんでした。ID サービスが稼働していることを確認し、ページを再読み込みしてください。",
     "hostnameWarningTitle": "IP ではなくホスト名でログインしてください",
     "hostnameWarningDescription": "ID プロバイダーはパネルのホスト名に紐づいているため、サーバーの IP アドレスでのサインインは機能しません。ホスト名（インストール後に表示された URL）でパネルを開いて、もう一度お試しください。",
+    "hostnameWarningOpenLink": "{{hostname}} でパネルを開く",
     "noCredentialMethod": "現在、お使いのアカウントには認証方法が設定されていません。管理者にお問い合わせください。",
     "fieldRequired": "必須",
     "identifierHint": "メールアドレスではなくユーザー名を使用してください。",

@@ -76,6 +76,7 @@
     "flowError": "Impossible de démarrer la procédure de connexion. Vérifiez que le service d'identité est en cours d'exécution et actualisez la page.",
     "hostnameWarningTitle": "Connectez-vous avec le nom d'hôte, pas avec l'IP",
     "hostnameWarningDescription": "Le fournisseur d'identité est lié au nom d'hôte du panneau ; se connecter via l'adresse IP du serveur ne fonctionnera donc pas. Ouvrez le panneau par son nom d'hôte (l'URL affichée après l'installation) et réessayez.",
+    "hostnameWarningOpenLink": "Ouvrir le panneau sur {{hostname}}",
     "noCredentialMethod": "Aucune méthode d'authentification n'est actuellement configurée pour votre compte. Contactez un administrateur.",
     "fieldRequired": "Obligatoire",
     "identifierHint": "Utilisez votre nom d'utilisateur, pas votre adresse e-mail.",

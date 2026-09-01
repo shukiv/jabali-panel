@@ -76,6 +76,7 @@
     "flowError": "Não foi possível iniciar o fluxo de login. Verifique se o serviço de identidade está em execução e recarregue a página.",
     "hostnameWarningTitle": "Faça login usando o nome do host, não o IP",
     "hostnameWarningDescription": "O provedor de identidade está vinculado ao nome do host do painel, portanto fazer login pelo endereço IP do servidor não funcionará. Abra o painel pelo nome do host (a URL exibida após a instalação) e tente novamente.",
+    "hostnameWarningOpenLink": "Abrir o painel em {{hostname}}",
     "noCredentialMethod": "Nenhum método de credencial está configurado no momento para a sua conta. Entre em contato com um administrador.",
     "fieldRequired": "Obrigatório",
     "identifierHint": "Use seu nome de usuário, não seu e-mail.",

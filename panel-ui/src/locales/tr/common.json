@@ -76,6 +76,7 @@
     "flowError": "Oturum açma işlemi başlatılamadı. Kimlik hizmetinin çalıştığından emin olun ve sayfayı yenileyin.",
     "hostnameWarningTitle": "IP ile değil, ana bilgisayar adıyla oturum açın",
     "hostnameWarningDescription": "Kimlik sağlayıcısı panelin ana bilgisayar adına bağlıdır; bu nedenle sunucu IP adresi üzerinden oturum açmak çalışmaz. Paneli ana bilgisayar adıyla (kurulumdan sonra gösterilen URL) açın ve tekrar deneyin.",
+    "hostnameWarningOpenLink": "Paneli {{hostname}} adresinde aç",
     "noCredentialMethod": "Hesabınız için şu anda yapılandırılmış bir kimlik bilgisi yöntemi yok. Bir yöneticiyle iletişime geçin.",
     "fieldRequired": "Zorunlu",
     "identifierHint": "E-posta adresinizi değil, kullanıcı adınızı kullanın.",
