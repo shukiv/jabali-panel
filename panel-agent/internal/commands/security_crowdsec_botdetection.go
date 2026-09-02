@@ -71,24 +71,54 @@ func botCollectionsForMode(mode string) []string {
 	}
 }
 
-// readBotDetectionMode parses the `# jabali-bot-detection:` marker written
-// into jabali-appsec.yaml. Missing file / marker → "off".
+// readBotDetectionMode reports the applied bot-detection mode. It prefers the
+// `# jabali-bot-detection:` marker in jabali-appsec.yaml, but falls back to
+// SNIFFING THE ACQUIS when the marker is missing or off — because the acquis
+// is the applied truth: a stale panel binary running the old `render-config`
+// rewrites jabali-appsec.yaml without the marker (the header ages out at the
+// deploy-panel-api-too boundary) while install.sh's plural-guard keeps the
+// composed acquis. Without the fallback the agent's readback would then lie
+// "off" while crowdsec is actively challenging. The threshold is recovered
+// from the scoring config the acquis lists.
 func readBotDetectionMode() string {
-	body, err := os.ReadFile(appsecRulePath)
+	if body, err := os.ReadFile(appsecRulePath); err == nil {
+		for _, line := range strings.Split(string(body), "\n") {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "# jabali-bot-detection:") {
+				m := strings.TrimSpace(strings.TrimPrefix(line, "# jabali-bot-detection:"))
+				if _, ok := csBotDetectionModes[m]; ok && m != "off" {
+					return m
+				}
+				break // header present but off/unknown → sniff the acquis
+			}
+		}
+	}
+	return sniffBotModeFromAcquis()
+}
+
+// sniffBotModeFromAcquis derives the mode from the AppSec acquisition: a
+// plural `appsec_configs:` list means bot detection is on, and the presence
+// of the permissive scoring config distinguishes the threshold. Singular /
+// absent acquis → off.
+func sniffBotModeFromAcquis() string {
+	body, err := os.ReadFile(appsecAcquisPath)
 	if err != nil {
 		return "off"
 	}
-	for _, line := range strings.Split(string(body), "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "# jabali-bot-detection:") {
-			m := strings.TrimSpace(strings.TrimPrefix(line, "# jabali-bot-detection:"))
-			if _, ok := csBotDetectionModes[m]; ok {
-				return m
-			}
-			return "off"
-		}
+	return botModeFromAcquisBody(string(body))
+}
+
+// botModeFromAcquisBody is the pure core of sniffBotModeFromAcquis: a plural
+// `appsec_configs:` list ⇒ on, and the permissive scoring config ⇒ the
+// permissive threshold. Singular / absent ⇒ off.
+func botModeFromAcquisBody(s string) string {
+	if !strings.Contains(s, "appsec_configs:") {
+		return "off"
 	}
-	return "off"
+	if strings.Contains(s, "scoring-permissive") {
+		return "permissive"
+	}
+	return "balanced"
 }
 
 // readGeoblockState parses the geoblock mode + countries back out of the

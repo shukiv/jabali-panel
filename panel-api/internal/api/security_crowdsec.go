@@ -23,6 +23,15 @@ import (
 
 const csCallTimeout = 10 * time.Second
 
+// csBotDetectionTimeout is the wider ceiling for the bot-detection apply,
+// which does far more than the 10s render+SIGHUP the other verbs assume:
+// a hub collection install (download), a full `crowdsec -t` parse, and a
+// crowdsec RESTART (5-10s alone on a 2GB fleet box). Too tight and the
+// panel times out while the agent finishes anyway — the DB never persists
+// (Upsert runs after the Call) and the state drifts, the exact failure the
+// agent-first ordering exists to avoid (#1323 class).
+const csBotDetectionTimeout = 120 * time.Second
+
 // csMetricsTimeout is the wider ceiling for /metrics specifically.
 // cscli metrics fans out three sub-calls (metrics + decisions list +
 // alerts list); decisions list scans the LAPI's decision table which
@@ -644,7 +653,7 @@ func RegisterSecurityAppSecRoutes(rg *gin.RouterGroup, cli agent.AgentInterface,
 			})
 			return
 		}
-		ctx, cancel := context.WithTimeout(c.Request.Context(), csCallTimeout)
+		ctx, cancel := context.WithTimeout(c.Request.Context(), csBotDetectionTimeout)
 		defer cancel()
 		if _, err := cli.Call(ctx, "security.crowdsec.appsec.botdetection.set", map[string]any{
 			"mode": body.Mode,

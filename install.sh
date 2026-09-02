@@ -9861,19 +9861,21 @@ install_crowdsec_appsec() {
   local acquis_dir="/etc/crowdsec/acquis.d"
   install -d -m 0755 "$acquis_dir"
   local acquis_file="$acquis_dir/jabali-appsec.yaml"
-  if [[ ! -f "$_appsec_cfg" ]]; then
-    _warn "appsec config not present yet (binary not built — fresh install); skipping AppSec acquis. 'jabali update' will wire it after the build."
-    rm -f "$acquis_file"   # drop any stale acquis from a prior partial run
-  else
   # AppSec bot detection (CrowdSec 1.8) composes extra appsec-configs into
   # this acquis via the plural `appsec_configs:` key — written by the agent
-  # (security.crowdsec.appsec.botdetection.set) and owned by it while on. The
-  # singular heredoc below would clobber that composition back to OFF on every
-  # `jabali update`, silently disabling bot detection. So leave the acquis
-  # untouched whenever it is already in the plural (bot-detection-on) form;
-  # the agent rewrites it to the singular form when the operator turns it off.
+  # (security.crowdsec.appsec.botdetection.set) and owned by it while on.
+  # This plural-check MUST come first — before both the singular heredoc AND
+  # the fresh-install `rm -f` below. The singular heredoc would clobber the
+  # composition back to OFF on every `jabali update`; the `rm -f` (reachable
+  # via `jabali repair` / a half-failed update / a hand-deleted config) would
+  # delete the acquis entirely, leaving a bot-on box with NO AppSec listener
+  # after the next crowdsec restart. So on a plural acquis: touch nothing. The
+  # agent rewrites it to the singular form when the operator turns it off.
   if [[ -f "$acquis_file" ]] && grep -qE '^appsec_configs:' "$acquis_file"; then
     _log "AppSec acquis is in bot-detection composition mode (agent-managed) — leaving it intact"
+  elif [[ ! -f "$_appsec_cfg" ]]; then
+    _warn "appsec config not present yet (binary not built — fresh install); skipping AppSec acquis. 'jabali update' will wire it after the build."
+    rm -f "$acquis_file"   # drop any stale singular acquis from a prior partial run
   else
   local desired_acquis=$'# Managed by jabali install.sh — M27 AppSec geoblock.\n# TCP loopback listener. crowdsec-nginx-bouncer dials this via\n# APPSEC_URL=http://127.0.0.1:7422. Not exposed outside the host.\nappsec_config: crowdsecurity/jabali-appsec\nlabels:\n  type: appsec\nlisten_addr: 127.0.0.1:7422\nsource: appsec\n'
   if [[ ! -f "$acquis_file" ]] || ! cmp -s <(printf '%s' "$desired_acquis") "$acquis_file"; then
@@ -9883,7 +9885,6 @@ install_crowdsec_appsec() {
     printf '%s' "$desired_acquis" >"$tmp"
     install -m 0644 -o root -g root "$tmp" "$acquis_file"
     rm -f "$tmp"
-  fi
   fi
   fi
 
