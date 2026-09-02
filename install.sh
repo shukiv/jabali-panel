@@ -9865,6 +9865,16 @@ install_crowdsec_appsec() {
     _warn "appsec config not present yet (binary not built — fresh install); skipping AppSec acquis. 'jabali update' will wire it after the build."
     rm -f "$acquis_file"   # drop any stale acquis from a prior partial run
   else
+  # AppSec bot detection (CrowdSec 1.8) composes extra appsec-configs into
+  # this acquis via the plural `appsec_configs:` key — written by the agent
+  # (security.crowdsec.appsec.botdetection.set) and owned by it while on. The
+  # singular heredoc below would clobber that composition back to OFF on every
+  # `jabali update`, silently disabling bot detection. So leave the acquis
+  # untouched whenever it is already in the plural (bot-detection-on) form;
+  # the agent rewrites it to the singular form when the operator turns it off.
+  if [[ -f "$acquis_file" ]] && grep -qE '^appsec_configs:' "$acquis_file"; then
+    _log "AppSec acquis is in bot-detection composition mode (agent-managed) — leaving it intact"
+  else
   local desired_acquis=$'# Managed by jabali install.sh — M27 AppSec geoblock.\n# TCP loopback listener. crowdsec-nginx-bouncer dials this via\n# APPSEC_URL=http://127.0.0.1:7422. Not exposed outside the host.\nappsec_config: crowdsecurity/jabali-appsec\nlabels:\n  type: appsec\nlisten_addr: 127.0.0.1:7422\nsource: appsec\n'
   if [[ ! -f "$acquis_file" ]] || ! cmp -s <(printf '%s' "$desired_acquis") "$acquis_file"; then
     _log "writing $acquis_file"
@@ -9873,6 +9883,7 @@ install_crowdsec_appsec() {
     printf '%s' "$desired_acquis" >"$tmp"
     install -m 0644 -o root -g root "$tmp" "$acquis_file"
     rm -f "$tmp"
+  fi
   fi
   fi
 

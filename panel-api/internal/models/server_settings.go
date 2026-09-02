@@ -220,6 +220,20 @@ type ServerSettings struct {
 	AppSecGeoblockMode      string `gorm:"column:appsec_geoblock_mode;type:varchar(10);not null;default:'off'"    json:"appsec_geoblock_mode"`
 	AppSecGeoblockCountries string `gorm:"column:appsec_geoblock_countries;type:varchar(1000);not null;default:''" json:"appsec_geoblock_countries"`
 
+	// AppSecBotDetection (CrowdSec 1.8, migration 000286). Server-wide
+	// AppSec bot-detection challenge mode ∈ {"off","balanced","permissive"}:
+	//   off        — no challenge
+	//   balanced   — reject at fingerprint score >= 75
+	//   permissive — reject at >= 100
+	// Applied by the agent (security.crowdsec.appsec.botdetection.set), which
+	// composes the upstream appsec-bot-challenge configs into the AppSec
+	// acquisition and serves a self-contained JS/proof-of-work challenge via
+	// the nginx bouncer. Default "off" — this is tenant-facing (challenges
+	// suspected bots across every hosted site) and needs CrowdSec engine
+	// >= 1.8 + bouncer >= 1.2.2, which the agent version-gates. TEXT column,
+	// off-page (server_settings row-size ceiling).
+	AppSecBotDetection string `gorm:"column:appsec_bot_detection;type:text;not null;default:'off'" json:"appsec_bot_detection"`
+
 	// Country ban exemption (ADR-0166, migration 000262). Countries whose
 	// IPs must never be blocked by CrowdSec from any decision source
 	// (scenario bans, AppSec inband, CAPI/console blocklists, captchas).

@@ -39,7 +39,7 @@ func TestReadOperatorHeader(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			mode, countries := readOperatorHeader(path)
+			mode, countries, _ := readOperatorHeader(path)
 			if mode != c.wantMode {
 				t.Errorf("mode = %q, want %q", mode, c.wantMode)
 			}
@@ -47,6 +47,29 @@ func TestReadOperatorHeader(t *testing.T) {
 				t.Errorf("countries = %v, want %v", countries, c.wantCountries)
 			}
 		})
+	}
+}
+
+func TestReadOperatorHeader_BotDetection(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "jabali-appsec.yaml")
+	body := "# jabali-mode: off\n# jabali-countries: \n# jabali-bot-detection: balanced\nname: crowdsecurity/jabali-appsec\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mode, _, botMode := readOperatorHeader(path)
+	if mode != "off" {
+		t.Errorf("mode = %q, want off", mode)
+	}
+	if botMode != "balanced" {
+		t.Errorf("botMode = %q, want balanced", botMode)
+	}
+	// Missing marker → "" (caller defaults to off).
+	p2 := filepath.Join(t.TempDir(), "no-bot.yaml")
+	if err := os.WriteFile(p2, []byte("# jabali-mode: off\nname: x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, bm := readOperatorHeader(p2); bm != "" {
+		t.Errorf("missing bot marker → %q, want empty", bm)
 	}
 }
 

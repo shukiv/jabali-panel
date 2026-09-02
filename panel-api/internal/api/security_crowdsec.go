@@ -613,6 +613,63 @@ func RegisterSecurityAppSecRoutes(rg *gin.RouterGroup, cli agent.AgentInterface,
 		c.JSON(http.StatusOK, appsecGeoblockResponse(s))
 	})
 
+	// CrowdSec 1.8 AppSec bot detection. Same shape as geoblock: DB is the
+	// source of truth, the agent composes the bot-challenge configs into the
+	// AppSec acquisition and restarts crowdsec. Agent dispatched FIRST so a
+	// version-gate rejection (engine < 1.8 / bouncer < 1.2.2) or a config
+	// validation failure never leaves the DB drifted from the host.
+	g.GET("/bot-detection", func(c *gin.Context) {
+		s, err := settings.Get(c.Request.Context())
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"status": "error", "error": "settings_read", "detail": err.Error(),
+			})
+			return
+		}
+		c.JSON(http.StatusOK, appsecBotDetectionResponse(s))
+	})
+
+	g.PUT("/bot-detection", func(c *gin.Context) {
+		var body struct {
+			Mode string `json:"mode"`
+		}
+		if err := c.ShouldBindJSON(&body); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid_json"})
+			return
+		}
+		if _, ok := appsecBotDetectionModes[body.Mode]; !ok {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status": "error", "error": "invalid_mode",
+				"detail": "mode must be off|balanced|permissive",
+			})
+			return
+		}
+		ctx, cancel := context.WithTimeout(c.Request.Context(), csCallTimeout)
+		defer cancel()
+		if _, err := cli.Call(ctx, "security.crowdsec.appsec.botdetection.set", map[string]any{
+			"mode": body.Mode,
+		}); err != nil {
+			status, errBody := translateAgentError(err)
+			c.JSON(status, errBody)
+			return
+		}
+		s, err := settings.Get(c.Request.Context())
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"status": "error", "error": "settings_read", "detail": err.Error(),
+			})
+			return
+		}
+		s.AppSecBotDetection = body.Mode
+		if err := settings.Upsert(c.Request.Context(), s); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"status": "error", "error": "settings_write", "detail": err.Error(),
+			})
+			return
+		}
+		c.JSON(http.StatusOK, appsecBotDetectionResponse(s))
+	})
+
 	// ADR-0166 — country ban exemption. State lives in server_settings;
 	// the agent renders the s02-enrich GeoIP parser whitelist, and a
 	// background sync (countryexempt) keeps the jabali-country-allowlist
@@ -720,6 +777,20 @@ func appsecGeoblockResponse(s *models.ServerSettings) gin.H {
 		"mode":      s.AppSecGeoblockMode,
 		"countries": countries,
 	}
+}
+
+// appsecBotDetectionModes mirrors the agent's csBotDetectionModes, duplicated
+// at the API edge so bad input gets a 400 without an agent round-trip.
+var appsecBotDetectionModes = map[string]struct{}{
+	"off": {}, "balanced": {}, "permissive": {},
+}
+
+func appsecBotDetectionResponse(s *models.ServerSettings) gin.H {
+	mode := s.AppSecBotDetection
+	if _, ok := appsecBotDetectionModes[mode]; !ok {
+		mode = "off" // empty / legacy row → off
+	}
+	return gin.H{"mode": mode}
 }
 
 // countryExemptResponse renders the ADR-0166 state. Empty selection is
