@@ -10078,7 +10078,19 @@ install_crowdsec_nginx_bouncer() {
     _spin "apt install crowdsec-nginx-bouncer" \
       apt-get install -y -qq --no-install-recommends crowdsec-nginx-bouncer
   else
-    _log "crowdsec-nginx-bouncer already installed"
+    # Install-only-if-absent freezes existing boxes at whatever bouncer
+    # version first landed (the Adminer-freeze shape,
+    # feedback_install_download_gate_freezes_version). AppSec bot detection
+    # (CrowdSec 1.8) needs the challenge remediation, which the bouncer only
+    # learned to serve in 1.2.x (challenge.lua) — so a fleet box stuck on
+    # 1.1.6 could never enforce it. Pull the packagecloud candidate on every
+    # run. --only-upgrade is a no-op when already current; confold keeps our
+    # managed conf (the jabali-nginx key + APPSEC_URL below are rewritten
+    # regardless), and the new documented default lands as .dpkg-dist.
+    _spin "apt upgrade crowdsec-nginx-bouncer (packagecloud candidate)" \
+      apt-get install -y -qq --only-upgrade \
+        -o Dpkg::Options::=--force-confold -o Dpkg::Options::=--force-confdef \
+        crowdsec-nginx-bouncer
   fi
 
   local bouncer_conf="/etc/crowdsec/bouncers/crowdsec-nginx-bouncer.conf"
