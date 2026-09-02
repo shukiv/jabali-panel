@@ -155,6 +155,28 @@ if [[ -n "$sigbase_cur" ]]; then
   fi
 fi
 
+# ---- apt / packagecloud deps ---------------------------------------------
+# CrowdSec (engine) and the crowdsec-nginx-bouncer are installed from the
+# upstream packagecloud apt repo (add_crowdsec_apt_source in install.sh),
+# NOT pinned as an install.sh VAR — apt tracks the packagecloud `any main`
+# candidate, so both the off-the-shelf bots and the VAR-based MANIFEST loop
+# above miss them. Report the upstream GitHub release so a new minor/major
+# (e.g. CrowdSec 1.8's AppSec bot-detection) surfaces in the monthly issue
+# instead of being discovered by accident from a blog post.
+#
+# Report-only, no current-vs-latest diff: "current" is whatever each box's
+# apt resolved at install/update time (`cscli version` on the box), not a
+# value in the repo — so there's nothing here to compare against. A human
+# reviews the changelog and bumps on a box.
+declare -a APT_ROWS_OUT   # "name|latest|repo"
+for aptrow in \
+  "crowdsec|crowdsecurity/crowdsec|v" \
+  "crowdsec-nginx-bouncer|crowdsecurity/cs-nginx-bouncer|v"; do
+  IFS='|' read -r aname arepo aprefix <<<"$aptrow"
+  alat="$(latest_release "$arepo" "$aprefix")"; [[ -z "$alat" ]] && alat="(fetch failed)"
+  APT_ROWS_OUT+=("$aname|$alat|$arepo")
+done
+
 # ---- go.mod --------------------------------------------------------------
 go_report() {
   command -v go >/dev/null 2>&1 || { echo "_(go not installed — skipped)_"; return; }
@@ -195,6 +217,17 @@ if [[ "$MODE" == "markdown" ]]; then
   echo "## npm (\`panel-ui\`)"
   echo '```'; npm_report; echo '```'
   echo
+  echo "## apt / packagecloud (unpinned — review upstream)"
+  echo
+  echo "| dependency | current | upstream latest | repo |"
+  echo "|---|---|---|---|"
+  for r in "${APT_ROWS_OUT[@]}"; do
+    IFS='|' read -r n l repo <<<"$r"
+    echo "| \`$n\` | apt (packagecloud) — \`cscli version\` on a box | $l | [$repo](https://github.com/$repo/releases/latest) |"
+  done
+  echo
+  echo "> CrowdSec and its nginx bouncer come from the upstream packagecloud repo (unpinned), so they aren't in the pin table above. Compare the upstream release against \`cscli version\` on a box; a bump can carry AppSec/config changes (e.g. 1.8's bot-detection needs a newer \`crowdsec-nginx-bouncer\` **and** appsec config), so read the changelog and E2E on a box before rolling to the fleet."
+  echo
   echo "> Bump an install.sh pin, then \`scripts/deps-check.sh --refresh-sha <VAR>\` to re-capture its \`.sha256\`. Framework bumps (Stalwart, Bulwark, Kratos) need an E2E on a box before merge."
 else
   printf '%-14s %-14s %-14s %s\n' "DEP" "CURRENT" "LATEST" "STATUS"
@@ -204,5 +237,10 @@ else
   done
   echo; echo "== Go (direct, outdated) =="; go_report
   echo; echo "== npm (panel-ui, outdated) =="; npm_report
+  echo; echo "== apt/packagecloud (unpinned, upstream latest — check 'cscli version' on a box) =="
+  for r in "${APT_ROWS_OUT[@]}"; do
+    IFS='|' read -r n l repo <<<"$r"
+    printf '%-26s %s\n' "$n" "$l"
+  done
   echo; echo "install.sh pins needing upgrade: $outdated"
 fi
