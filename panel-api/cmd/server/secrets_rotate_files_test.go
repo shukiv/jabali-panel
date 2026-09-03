@@ -70,6 +70,34 @@ func TestDSNReplacePassword_Malformed(t *testing.T) {
 	}
 }
 
+func TestACLReplacePanelToken(t *testing.T) {
+	in := "user default off\n" +
+		"user jabali_panel on >oldtok ~jabali:* ~automation:* resetchannels +@all -@dangerous +acl +@connection\n" +
+		"user wp_alice on >alicepw ~wp:alice:* +@read\n"
+	out, ok := aclReplacePanelToken(in, "NEWTOK")
+	if !ok {
+		t.Fatal("jabali_panel line not found")
+	}
+	if !strings.Contains(out, "user jabali_panel on >NEWTOK ~jabali:* ~automation:* resetchannels +@all -@dangerous +acl +@connection") {
+		t.Errorf("jabali_panel line wrong:\n%s", out)
+	}
+	if strings.Contains(out, ">oldtok") {
+		t.Error("old token still present")
+	}
+	// default + tenant lines preserved verbatim.
+	for _, keep := range []string{"user default off", "user wp_alice on >alicepw ~wp:alice:* +@read"} {
+		if !strings.Contains(out, keep) {
+			t.Errorf("dropped line %q", keep)
+		}
+	}
+}
+
+func TestACLReplacePanelToken_Absent(t *testing.T) {
+	if _, ok := aclReplacePanelToken("user default off\n", "x"); ok {
+		t.Error("reported found with no jabali_panel line")
+	}
+}
+
 func TestAtomicRewritePreserving_KeepsModeAndReplaces(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "secret")

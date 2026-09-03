@@ -40,13 +40,30 @@ func setupRotateFixture(t *testing.T) (envPath, pwPath string) {
 	return
 }
 
+const testACLContent = "user default off\n" +
+	"user jabali_panel on >tok ~jabali:* ~automation:* resetchannels +@all -@dangerous +acl +@connection\n" +
+	"user wp_alice on >alicepw ~wp:alice:* +@read\n"
+
+// setupRedisFixture adds an aclfile fixture alongside the panel.env one and
+// points the resolver at it. Call after setupRotateFixture.
+func setupRedisFixture(t *testing.T) (aclPath string) {
+	t.Helper()
+	aclPath = filepath.Join(t.TempDir(), "users.acl")
+	if err := os.WriteFile(aclPath, []byte(testACLContent), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.Chmod(aclPath, 0o640)
+	t.Setenv("JABALI_REDIS_ACL_FILE", aclPath)
+	return
+}
+
 func saveRotateSeams(t *testing.T) {
 	t.Helper()
 	sql, restart, probe := rotateRunSQL, rotateRestartService, rotateProbeDBAppUser
-	health := rotateProbePanelHealthy
+	health, redis := rotateProbePanelHealthy, rotateRedisSetPassword
 	t.Cleanup(func() {
 		rotateRunSQL, rotateRestartService, rotateProbeDBAppUser = sql, restart, probe
-		rotateProbePanelHealthy = health
+		rotateProbePanelHealthy, rotateRedisSetPassword = health, redis
 	})
 }
 
@@ -193,6 +210,150 @@ func TestRotateJWT_UnhealthyRollsBack(t *testing.T) {
 	}
 	if _, err := os.Stat(envPath + bakSuffix); !os.IsNotExist(err) {
 		t.Error(".bak lingering after rollback")
+	}
+}
+
+func TestRotateRedisPanelToken_HappyPath(t *testing.T) {
+	saveRotateSeams(t)
+	envPath, _ := setupRotateFixture(t)
+	aclPath := setupRedisFixture(t)
+
+	var events []string
+	var redisCalls [][2]string // (authToken, newToken) per call
+	rotateRedisSetPassword = func(_ context.Context, auth, newTok string) error {
+		redisCalls = append(redisCalls, [2]string{auth, newTok})
+		events = append(events, "redis")
+		return nil
+	}
+	rotateRestartService = func(_ context.Context, _ string) error { events = append(events, "restart"); return nil }
+	rotateProbePanelHealthy = func(_ context.Context) error { events = append(events, "probe"); return nil }
+
+	var out bytes.Buffer
+	if err := rotateRedisPanelToken(context.Background(), &out, false); err != nil {
+		t.Fatal(err)
+	}
+	env, _ := os.ReadFile(envPath)
+	if strings.Contains(string(env), "JABALI_REDIS_PANEL_TOKEN=tok\n") {
+		t.Error("token not rotated in panel.env")
+	}
+	newTok := redisCalls[0][1]
+	acl, _ := os.ReadFile(aclPath)
+	if !strings.Contains(string(acl), "user jabali_panel on >"+newTok+" ") {
+		t.Errorf("aclfile token not updated:\n%s", acl)
+	}
+	for _, keep := range []string{"user default off", "user wp_alice on >alicepw"} {
+		if !strings.Contains(string(acl), keep) {
+			t.Errorf("aclfile dropped %q", keep)
+		}
+	}
+	// Live change authed with OLD token, set NEW.
+	if redisCalls[0][0] != "tok" {
+		t.Errorf("forward redis auth = %q, want old token 'tok'", redisCalls[0][0])
+	}
+	// order: redis(live) -> restart -> probe
+	if got := strings.Join(events, ","); got != "redis,restart,probe" {
+		t.Errorf("event order = %q, want redis,restart,probe", got)
+	}
+	if _, err := os.Stat(aclPath + bakSuffix); !os.IsNotExist(err) {
+		t.Error("acl .bak not purged")
+	}
+}
+
+func TestRotateRedisPanelToken_UnhealthyRollsBackLiveAndFiles(t *testing.T) {
+	saveRotateSeams(t)
+	envPath, _ := setupRotateFixture(t)
+	aclPath := setupRedisFixture(t)
+
+	var redisCalls [][2]string
+	rotateRedisSetPassword = func(_ context.Context, auth, newTok string) error {
+		redisCalls = append(redisCalls, [2]string{auth, newTok})
+		return nil
+	}
+	rotateRestartService = func(_ context.Context, _ string) error { return nil }
+	rotateProbePanelHealthy = func(_ context.Context) error { return errors.New("panel down") }
+
+	var out bytes.Buffer
+	if err := rotateRedisPanelToken(context.Background(), &out, false); err == nil {
+		t.Fatal("expected error on unhealthy panel")
+	}
+	// Files restored to the old token.
+	env, _ := os.ReadFile(envPath)
+	if !strings.Contains(string(env), "JABALI_REDIS_PANEL_TOKEN=tok") {
+		t.Errorf("panel.env token not restored:\n%s", env)
+	}
+	acl, _ := os.ReadFile(aclPath)
+	if !strings.Contains(string(acl), "user jabali_panel on >tok ") {
+		t.Errorf("aclfile token not restored:\n%s", acl)
+	}
+	// Two live calls: forward (old->new) then rollback (new->old).
+	if len(redisCalls) != 2 {
+		t.Fatalf("expected 2 redis calls, got %d: %v", len(redisCalls), redisCalls)
+	}
+	fwdNew := redisCalls[0][1]
+	if redisCalls[1][0] != fwdNew || redisCalls[1][1] != "tok" {
+		t.Errorf("rollback redis call = %v, want auth=%q set=tok", redisCalls[1], fwdNew)
+	}
+}
+
+func TestRotateAll_HappyPathRunsEveryStepInOrder(t *testing.T) {
+	saveRotateSeams(t)
+	envPath, pwPath := setupRotateFixture(t)
+	aclPath := setupRedisFixture(t)
+
+	var order []string
+	rotateRunSQL = func(_ context.Context, _ string) error { order = append(order, "sql"); return nil }
+	rotateRedisSetPassword = func(_ context.Context, _, _ string) error { order = append(order, "redis"); return nil }
+	rotateRestartService = func(_ context.Context, _ string) error { return nil }
+	rotateProbeDBAppUser = func(_ context.Context, _ string) error { return nil }
+	rotateProbePanelHealthy = func(_ context.Context) error { return nil }
+
+	var out bytes.Buffer
+	if err := rotateAll(context.Background(), &out, false); err != nil {
+		t.Fatal(err)
+	}
+	// db-app-user (sql) before redis-panel-token (redis).
+	if got := strings.Join(order, ","); got != "sql,redis" {
+		t.Errorf("privileged-step order = %q, want sql,redis", got)
+	}
+	for _, banner := range []string{"== db-app-user ==", "== redis-panel-token ==", "== jwt =="} {
+		if !strings.Contains(out.String(), banner) {
+			t.Errorf("missing step banner %q", banner)
+		}
+	}
+	// Every secret actually rotated.
+	pw, _ := os.ReadFile(pwPath)
+	if strings.TrimSpace(string(pw)) == testOldPw {
+		t.Error("db-app-user not rotated")
+	}
+	acl, _ := os.ReadFile(aclPath)
+	if strings.Contains(string(acl), ">tok ") {
+		t.Error("redis token not rotated")
+	}
+	env, _ := os.ReadFile(envPath)
+	if strings.Contains(string(env), "JWT_SECRET=jwtval") {
+		t.Error("jwt not rotated")
+	}
+}
+
+func TestRotateAll_StopsAtFirstFailure(t *testing.T) {
+	saveRotateSeams(t)
+	setupRotateFixture(t)
+	setupRedisFixture(t)
+
+	rotateRunSQL = func(_ context.Context, _ string) error { return errors.New("db unreachable") }
+	redisCalled := false
+	rotateRedisSetPassword = func(_ context.Context, _, _ string) error { redisCalled = true; return nil }
+	rotateRestartService = func(_ context.Context, _ string) error { return nil }
+	rotateProbeDBAppUser = func(_ context.Context, _ string) error { return nil }
+	rotateProbePanelHealthy = func(_ context.Context) error { return nil }
+
+	var out bytes.Buffer
+	err := rotateAll(context.Background(), &out, false)
+	if err == nil || !strings.Contains(err.Error(), "db-app-user") {
+		t.Fatalf("expected failure naming db-app-user, got %v", err)
+	}
+	if redisCalled {
+		t.Error("orchestrator continued past a failed step")
 	}
 }
 

@@ -4673,6 +4673,70 @@ jabali retention-sweep [flags]
 
 - `--dry-run` — count would-delete rows without removing them
 
+### `jabali secrets`
+
+Rotate panel secrets after remediation (JAB-357; operator ceremony, run as root)
+
+```
+jabali secrets
+```
+
+#### `jabali secrets rotate`
+
+Rotate an exposed secret (see docs/secret-rotation.md)
+
+```
+jabali secrets rotate
+```
+
+##### `jabali secrets rotate all`
+
+Rotate every built panel secret in a lockout-safe order
+
+```
+jabali secrets rotate all [flags]
+```
+
+**Flags:**
+
+- `--dry-run` — print the plan and touch nothing
+
+##### `jabali secrets rotate db-app-user`
+
+Rotate the panel DB app-user (jabali_panel_app) password + DATABASE_URL
+
+```
+jabali secrets rotate db-app-user [flags]
+```
+
+**Flags:**
+
+- `--dry-run` — print the plan and touch nothing
+
+##### `jabali secrets rotate jwt`
+
+Rotate JWT_SECRET in panel.env (vestigial post-M20; safe near-noop)
+
+```
+jabali secrets rotate jwt [flags]
+```
+
+**Flags:**
+
+- `--dry-run` — print the plan and touch nothing
+
+##### `jabali secrets rotate redis-panel-token`
+
+Rotate JABALI_REDIS_PANEL_TOKEN (panel.env + redis aclfile, live ACL SETUSER)
+
+```
+jabali secrets rotate redis-panel-token [flags]
+```
+
+**Flags:**
+
+- `--dry-run` — print the plan and touch nothing
+
 ### `jabali serve`
 
 Start the Jabali Panel HTTP(S) server

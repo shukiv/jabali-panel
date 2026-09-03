@@ -151,6 +151,43 @@ func envReplaceKey(content, key, newVal string) (string, bool) {
 	return content, false
 }
 
+// aclReplacePanelToken rewrites the `user jabali_panel …` line in a Redis ACL
+// file so jabali_panel has exactly one password: newToken. Every other line —
+// the locked `default` user and any runtime-persisted tenant `user wp_*` lines
+// (appended by panel-api via ACL SETUSER) — is preserved verbatim. Redis ACL
+// password fields are the space-separated tokens beginning with '>' (plaintext)
+// or '#' (sha256); we drop them all and insert the single new one right after
+// the on/off state so the rest of the rule order is unchanged.
+func aclReplacePanelToken(content, newToken string) (string, bool) {
+	lines := strings.Split(content, "\n")
+	for i, ln := range lines {
+		if !strings.HasPrefix(ln, "user jabali_panel ") {
+			continue
+		}
+		fields := strings.Fields(ln)
+		out := make([]string, 0, len(fields)+1)
+		inserted := false
+		for _, f := range fields {
+			if strings.HasPrefix(f, ">") || strings.HasPrefix(f, "#") {
+				continue // drop every existing password (plaintext or hashed)
+			}
+			out = append(out, f)
+			if !inserted && (f == "on" || f == "off") {
+				out = append(out, ">"+newToken)
+				inserted = true
+			}
+		}
+		if !inserted && len(out) >= 2 {
+			// No explicit on/off token (unusual) — insert after the username.
+			rest := append([]string{">" + newToken}, out[2:]...)
+			out = append(out[:2], rest...)
+		}
+		lines[i] = strings.Join(out, " ")
+		return strings.Join(lines, "\n"), true
+	}
+	return content, false
+}
+
 // dsnReplacePassword swaps the password in a go-sql-driver DSN of the form
 // user:password@network(addr)/db?params. It replaces only the segment between
 // the first ':' and the '@' that introduces the network, leaving user, host,

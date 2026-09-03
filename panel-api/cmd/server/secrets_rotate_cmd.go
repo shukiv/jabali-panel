@@ -44,6 +44,20 @@ func secretDBPasswordPath() string {
 	return "/etc/jabali/db-password"
 }
 
+func secretRedisACLPath() string {
+	if v := os.Getenv("JABALI_REDIS_ACL_FILE"); v != "" {
+		return v
+	}
+	return "/etc/redis/users.acl"
+}
+
+func redisSocketPath() string {
+	if v := os.Getenv("JABALI_REDIS_SOCKET"); v != "" {
+		return v
+	}
+	return "/run/redis/redis.sock"
+}
+
 // ---- privileged seams (overridden in tests) --------------------------------
 
 // rotateRunSQL runs one root MariaDB statement over the unix socket.
@@ -64,6 +78,27 @@ var rotateProbeDBAppUser = func(ctx context.Context, password string) error {
 	cmd := exec.CommandContext(ctx, "mysql", "-u", "jabali_panel_app", "--protocol=socket", "jabali_panel", "-e", "SELECT 1")
 	cmd.Env = append(os.Environ(), "MYSQL_PWD="+password)
 	return cmd.Run()
+}
+
+// rotateRedisSetPassword rotates the jabali_panel Redis ACL user's password on
+// the RUNNING server, authenticating as jabali_panel with authToken. It uses
+// `ACL SETUSER … resetpass >new` (replace the password in place) and never
+// `ACL LOAD` / a Redis restart — those would drop the runtime `wp_<osuser>`
+// tenant ACL users the panel appended, until the reconciler recreates them.
+var rotateRedisSetPassword = func(ctx context.Context, authToken, newToken string) error {
+	cmd := exec.CommandContext(ctx, "redis-cli", "-s", redisSocketPath(), "--user", "jabali_panel",
+		"--no-auth-warning", "ACL", "SETUSER", "jabali_panel", "resetpass", ">"+newToken)
+	cmd.Env = append(os.Environ(), "REDISCLI_AUTH="+authToken)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("redis-cli ACL SETUSER: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	// redis-cli prints command errors to stdout with exit 0; treat anything
+	// that is not an OK/empty acknowledgement as a failure.
+	if o := strings.TrimSpace(string(out)); o != "" && o != "OK" {
+		return fmt.Errorf("redis ACL SETUSER returned: %s", o)
+	}
+	return nil
 }
 
 // rotateProbePanelHealthy verifies jabali-panel is running after a rotation of
@@ -94,8 +129,168 @@ func newSecretsRotateCmd() *cobra.Command {
 		Use:   "rotate",
 		Short: "Rotate an exposed secret (see docs/secret-rotation.md)",
 	}
-	cmd.AddCommand(newRotateDBAppUserCmd(), newRotateJWTCmd())
+	cmd.AddCommand(newRotateDBAppUserCmd(), newRotateJWTCmd(), newRotateRedisPanelTokenCmd(), newRotateAllCmd())
 	return cmd
+}
+
+func newRotateAllCmd() *cobra.Command {
+	var dryRun bool
+	cmd := &cobra.Command{
+		Use:   "all",
+		Short: "Rotate every built panel secret in a lockout-safe order",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Minute)
+			defer cancel()
+			return rotateAll(ctx, cmd.OutOrStdout(), dryRun)
+		},
+	}
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "print the plan and touch nothing")
+	return cmd
+}
+
+// rotateAll runs the built rotations in a lockout-safe order, each with its own
+// verify+rollback, and stops at the first failure (already-rotated secrets stay
+// rotated — every step is independently valid, so the operator re-runs the
+// remainder). It does NOT cover postgres/mariadb root, panel/mail TLS reissue,
+// pdns, or the deferred wp-cache-hmac — those are separate per the runbook.
+func rotateAll(ctx context.Context, out io.Writer, dryRun bool) error {
+	steps := []struct {
+		name string
+		fn   func(context.Context, io.Writer, bool) error
+	}{
+		{"db-app-user", rotateDBAppUser},
+		{"redis-panel-token", rotateRedisPanelToken},
+		{"jwt", func(c context.Context, w io.Writer, d bool) error {
+			return rotateSingleEnvKey(c, w, d, "JWT_SECRET", "secrets.rotate.jwt")
+		}},
+	}
+	for _, s := range steps {
+		fmt.Fprintf(out, "== %s ==\n", s.name)
+		if err := s.fn(ctx, out, dryRun); err != nil {
+			return fmt.Errorf("rotate all stopped at %s: %w", s.name, err)
+		}
+	}
+	fmt.Fprintf(out, "All built rotations complete. postgres/mariadb root, panel/mail TLS, pdns and the deferred wp-cache-hmac are handled separately — see docs/secret-rotation.md.\n")
+	return nil
+}
+
+func newRotateRedisPanelTokenCmd() *cobra.Command {
+	var dryRun bool
+	cmd := &cobra.Command{
+		Use:   "redis-panel-token",
+		Short: "Rotate JABALI_REDIS_PANEL_TOKEN (panel.env + redis aclfile, live ACL SETUSER)",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			ctx, cancel := context.WithTimeout(cmd.Context(), 2*time.Minute)
+			defer cancel()
+			return rotateRedisPanelToken(ctx, cmd.OutOrStdout(), dryRun)
+		},
+	}
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "print the plan and touch nothing")
+	return cmd
+}
+
+// rotateRedisPanelToken rotates the panel's Redis credential. It changes the
+// password LIVE on the running Redis (so no ACL LOAD / restart wipes tenant
+// ACLs), rewrites both JABALI_REDIS_PANEL_TOKEN in panel.env and the
+// jabali_panel line in the aclfile (for persistence across a future Redis
+// restart), restarts the panel to reconnect, and rolls everything back —
+// including the live Redis password — if the panel comes up unhealthy.
+func rotateRedisPanelToken(ctx context.Context, out io.Writer, dryRun bool) error {
+	envPath := secretEnvPath()
+	aclPath := secretRedisACLPath()
+
+	envData, err := os.ReadFile(envPath)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", envPath, err)
+	}
+	oldToken, ok := envGet(string(envData), "JABALI_REDIS_PANEL_TOKEN")
+	if !ok {
+		return fmt.Errorf("no JABALI_REDIS_PANEL_TOKEN in %s", envPath)
+	}
+	aclData, err := os.ReadFile(aclPath)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", aclPath, err)
+	}
+	newToken := ids.NewSecret()
+	newEnv, ok := envReplaceKey(string(envData), "JABALI_REDIS_PANEL_TOKEN", newToken)
+	if !ok {
+		return fmt.Errorf("JABALI_REDIS_PANEL_TOKEN vanished from %s mid-rotation", envPath)
+	}
+	newACL, ok := aclReplacePanelToken(string(aclData), newToken)
+	if !ok {
+		return fmt.Errorf("no `user jabali_panel` line in %s", aclPath)
+	}
+
+	if dryRun {
+		fmt.Fprintf(out, "DRY RUN — panel Redis token rotation would:\n")
+		fmt.Fprintf(out, "  1. redis-cli ACL SETUSER jabali_panel resetpass ><new> (LIVE, no ACL LOAD)\n")
+		fmt.Fprintf(out, "  2. rewrite JABALI_REDIS_PANEL_TOKEN in %s\n", envPath)
+		fmt.Fprintf(out, "  3. rewrite the jabali_panel line in %s (default + tenant users preserved)\n", aclPath)
+		fmt.Fprintf(out, "  4. systemctl restart jabali-panel\n")
+		fmt.Fprintf(out, "  5. verify healthy; roll back (incl. the live Redis password) on failure\n")
+		return nil
+	}
+
+	// 1. Change the password on the running Redis first (auth with the old
+	//    token, which is still valid at this point).
+	if err := rotateRedisSetPassword(ctx, oldToken, newToken); err != nil {
+		cliAuditErr(ctx, "secrets.rotate.redis_panel_token", "secret", "redis-panel-token", nil)
+		return fmt.Errorf("live Redis password change: %w", err)
+	}
+
+	// 2. Snapshot both files.
+	bakEnv, err := backupToBak(envPath)
+	if err != nil {
+		_ = rotateRedisSetPassword(ctx, newToken, oldToken) // undo the live change
+		return fmt.Errorf("backup %s: %w", envPath, err)
+	}
+	bakACL, err := backupToBak(aclPath)
+	if err != nil {
+		_ = rotateRedisSetPassword(ctx, newToken, oldToken)
+		_ = purgeBak(bakEnv)
+		return fmt.Errorf("backup %s: %w", aclPath, err)
+	}
+
+	rollback := func() {
+		_ = rotateRedisSetPassword(ctx, newToken, oldToken) // new token is live now
+		_ = restoreFromBak(envPath, bakEnv)
+		_ = restoreFromBak(aclPath, bakACL)
+	}
+
+	// 3. Persist the new token to both files.
+	writeErr := atomicRewritePreserving(envPath, newEnv)
+	if writeErr == nil {
+		writeErr = atomicRewritePreserving(aclPath, newACL)
+	}
+	if writeErr != nil {
+		rollback()
+		cliAuditErr(ctx, "secrets.rotate.redis_panel_token", "secret", "redis-panel-token", nil)
+		return fmt.Errorf("rewrite secret files (rolled back): %w", writeErr)
+	}
+
+	// 4. Restart the panel so it reconnects with the new token.
+	if err := rotateRestartService(ctx, "jabali-panel"); err != nil {
+		rollback()
+		_ = rotateRestartService(ctx, "jabali-panel")
+		cliAuditErr(ctx, "secrets.rotate.redis_panel_token", "secret", "redis-panel-token", nil)
+		return fmt.Errorf("restart jabali-panel (rolled back): %w", err)
+	}
+
+	// 5. Verify.
+	if err := rotateProbePanelHealthy(ctx); err != nil {
+		rollback()
+		_ = rotateRestartService(ctx, "jabali-panel")
+		cliAuditErr(ctx, "secrets.rotate.redis_panel_token", "secret", "redis-panel-token", nil)
+		return fmt.Errorf("panel unhealthy after rotation (rolled back): %w", err)
+	}
+
+	_ = purgeBak(bakEnv)
+	_ = purgeBak(bakACL)
+	cliAuditOK(ctx, "secrets.rotate.redis_panel_token", "secret", "redis-panel-token", nil)
+	fmt.Fprintf(out, "Rotated Redis panel token (live + panel.env + aclfile); restarted jabali-panel and verified.\n")
+	return nil
 }
 
 func newRotateJWTCmd() *cobra.Command {

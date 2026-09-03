@@ -31,7 +31,7 @@ JAB-351 proved `jabali-webmail` (broad `jabali` group) could read `0640 root:jab
 | MariaDB root password | `jabali db root-password --engine mariadb` (existing) | Break-glass root credential; socket auth preserved (ADR-0097). |
 | Panel TLS key (`/etc/jabali/tls/panel.key`) | `jabali panel-cert …` reissue (existing) | Regenerate/reissue the panel cert; verify `/login` 200 after. |
 | Panel-mail TLS key (`/etc/jabali/tls/panel-mail.key`) | `jabali mail-cert …` reissue (existing) | Reconciler-managed (ADR-0105); reissue and let the mail-cert cascade settle. |
-| `JABALI_REDIS_PANEL_TOKEN` (`panel.env` + redis aclfile) | **planned** `jabali secrets rotate redis-panel-token` | Must rotate **live**: `ACL SETUSER jabali_panel resetpass >…` on the running Redis, then rewrite `panel.env` + the aclfile `user jabali_panel` line, then restart panel. **Never `ACL LOAD` / restart Redis** — that wipes the runtime `wp_<osuser>` tenant ACL users until the reconciler recreates them. |
+| `JABALI_REDIS_PANEL_TOKEN` (`panel.env` + redis aclfile) | `jabali secrets rotate redis-panel-token` ✅ | Rotates **live**: `ACL SETUSER jabali_panel resetpass >…` on the running Redis (authing as jabali_panel with the old token), then rewrites `panel.env` + the aclfile `user jabali_panel` line (default + tenant `wp_*` lines preserved), then restarts panel and verifies. **Never `ACL LOAD` / restart Redis** — that wipes the runtime `wp_<osuser>` tenant ACL users until the reconciler recreates them. Rolls back the live password too on failure. |
 | `PDNS_DB_PASSWORD` (`pdns.env`) | **planned** `jabali secrets rotate pdns` | Rotate the `jabali_pdns` DB user + rewrite `pdns.env` (gmysql backend) + restart PowerDNS. Only if PowerDNS is installed. |
 | `migration-secrets/<job>.env` | **purge, don't rotate** | Transient Plesk/cPanel/SSH **source-host** credentials. Any file lingering from before the fix exposed a third party's password — delete lingering files; the operator re-enters source credentials on the next migration. Not our secret to rotate. |
 | `JABALI_WP_CACHE_HMAC_SECRET` (`panel.env`) | **deferred** (documented risk) | See below. |
@@ -47,6 +47,8 @@ Kratos session/cookie/`cipher` secrets (not `jabali`-group-readable — under Kr
 > Before the first live rotation on a host, confirm this by checking that the Kratos secrets file is not group-`jabali`-readable. If it is, it enters scope and needs a separate multi-secret Kratos rotation (new secret first, old retained, cipher re-encrypt) — a migration, not a swap.
 
 ## Recommended order (per host)
+
+`jabali secrets rotate all` runs the built rotations (`db-app-user` → `redis-panel-token` → `jwt`) in this lockout-safe order, each with its own verify+rollback, stopping at the first failure (already-rotated secrets stay rotated; re-run to continue). The remaining items below are run individually.
 
 1. `db-app-user` — highest value; verify `/login` still works after.
 2. `postgres` / MariaDB root — if those engines are present.
