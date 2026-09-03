@@ -25,6 +25,7 @@ const CATALOG_KINDS = [
   "service.down",
   "crowdsec.ban.spike",
   "backup.fail",
+  "backup.retention.fail",
   "backup.success",
   "backup.limit.reached",
   "dr.sync.stalled",

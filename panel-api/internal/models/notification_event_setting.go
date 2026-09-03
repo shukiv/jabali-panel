@@ -136,6 +136,13 @@ var AllNotificationEventKinds = []NotificationEventKindMeta{
 		DefaultOn:   false,
 	},
 	{
+		Kind:        "backup.retention.fail",
+		Label:       "Backup retention failed",
+		Description: "The nightly restic forget/prune retention sweep failed for one or more backup destinations (a stale repository lock is the usual cause). Snapshots accumulate unpruned until fixed, growing the offsite repo toward disk-full (JAB-392).",
+		Severity:    "error",
+		DefaultOn:   true,
+	},
+	{
 		Kind:        "backup.limit.reached",
 		Label:       "Tenant backup limit reached",
 		Description: "A tenant hit their package's max_backups cap. Depending on the package retention policy the backup was blocked (reject) or the oldest was auto-pruned (prune). Notifies the tenant and admins (GH #454).",

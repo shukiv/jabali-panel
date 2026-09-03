@@ -11,12 +11,15 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -24,6 +27,7 @@ import (
 	internalbackup "git.jabali-panel.com/shukivaknin/jabali2/internal/backup"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/backupwrapperhelpers"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/notifications"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
@@ -118,6 +122,10 @@ by install_backup_foundation in install.sh.`,
 			// Track which destinations had any forget run against them so
 			// we only invoke prune where it would have work to do.
 			pruneDests := map[string]*models.BackupDestination{}
+			// JAB-392: accumulate every forget/prune failure so the sweep exits
+			// non-zero AND fires ONE aggregate admin alert, instead of printing
+			// to a journal nobody reads and exiting 0 (it did that for 52 days).
+			var failures []string
 			for _, s := range scheds {
 				if !s.Enabled {
 					continue
@@ -141,6 +149,7 @@ by install_backup_foundation in install.sh.`,
 					if err := forgetForSchedule(ctx, cmd, s, d, dryRun); err != nil {
 						fmt.Fprintf(cmd.ErrOrStderr(),
 							"schedule %s dest %s forget failed: %v\n", s.ID, d.ID, err)
+						failures = append(failures, fmt.Sprintf("schedule %s dest %s (%s) forget: %v", s.ID, d.ID, d.Name, err))
 						continue
 					}
 					pruneDests[d.ID] = d
@@ -160,7 +169,15 @@ by install_backup_foundation in install.sh.`,
 				if err := pruneOneDestination(ctx, cmd, d, dryRun); err != nil {
 					fmt.Fprintf(cmd.ErrOrStderr(),
 						"prune dest %s failed: %v\n", d.ID, err)
+					failures = append(failures, fmt.Sprintf("prune dest %s (%s): %v", d.ID, d.Name, err))
 				}
+			}
+			if len(failures) > 0 {
+				// Alert (best-effort) + exit non-zero. The notification is the
+				// operator-visible signal; the exit code makes `systemctl status`
+				// and any OnFailure= truthful even when Redis is down (JAB-392).
+				publishBackupRetentionFailure(ctx, cmd, failures)
+				return fmt.Errorf("retention sweep completed with %d failure(s): %s", len(failures), strings.Join(failures, "; "))
 			}
 			return nil
 		},
@@ -168,6 +185,83 @@ by install_backup_foundation in install.sh.`,
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false,
 		"Pass restic --dry-run to forget+prune (lists what would be removed; no destructive ops)")
 	return cmd
+}
+
+// retentionExec is the exec seam for the retention sweep's restic invocations,
+// so tests can drive the JAB-392 stale-lock recovery without spawning restic.
+// Production wiring is exec.CommandContext.
+var retentionExec = func(ctx context.Context, env []string, stdout, stderr io.Writer, name string, args ...string) error {
+	c := exec.CommandContext(ctx, name, args...)
+	c.Env = env
+	c.Stdout, c.Stderr = stdout, stderr
+	return c.Run()
+}
+
+// resticRepoArgs is the shared global-flag prefix every retention restic call
+// needs: the repo URL, the password file, and the destination's -o options.
+func resticRepoArgs(d *models.BackupDestination) []string {
+	args := []string{"--repo", d.URL, "--password-file", resticPasswordFile}
+	for _, opt := range backupwrapperhelpers.ResticOptionsFor(d) {
+		if opt == "" {
+			continue
+		}
+		args = append(args, "-o", opt)
+	}
+	return args
+}
+
+// runResticWithLockRecovery runs a retention restic command against d and
+// recovers from a stale repository lock (JAB-392).
+//
+// A crashed or OOM-killed `restic prune`/`forget` leaves an exclusive lock that
+// restic will NOT auto-remove when it is from the same host and it cannot prove
+// the PID is dead (PID reuse) — so ONE dead prune wedges every future
+// forget/prune forever. Found live on production: 52 days of silently-failed
+// retention, the repo grown to 7,318 snapshots. On the "repository is already
+// locked" error we clear STALE locks with `restic unlock` (NEVER --remove-all —
+// that would also drop a live concurrent backup's lock and let prune race a
+// running backup) and retry the command once. A lock held by a live backup
+// survives the stale-only unlock, so the retry fails again and the caller
+// reports the failure instead of pruning underneath a running backup.
+func runResticWithLockRecovery(ctx context.Context, cmd *cobra.Command, d *models.BackupDestination, args []string) error {
+	env := append(os.Environ(), destEnv(d)...)
+	var errBuf bytes.Buffer
+	err := retentionExec(ctx, env, cmd.OutOrStdout(), io.MultiWriter(cmd.ErrOrStderr(), &errBuf), "restic", args...)
+	if err == nil {
+		return nil
+	}
+	if !strings.Contains(errBuf.String(), "already locked") && !strings.Contains(err.Error(), "already locked") {
+		return err
+	}
+	fmt.Fprintf(cmd.ErrOrStderr(),
+		"restic reports the repository already locked (dest %s / %s) — clearing stale locks with `restic unlock` and retrying once (JAB-392)\n",
+		d.ID, d.Name)
+	unlockArgs := append(resticRepoArgs(d), "unlock")
+	if uerr := retentionExec(ctx, env, cmd.OutOrStdout(), cmd.ErrOrStderr(), "restic", unlockArgs...); uerr != nil {
+		return fmt.Errorf("repository was locked and `restic unlock` failed: %w (original error: %v)", uerr, err)
+	}
+	return retentionExec(ctx, env, cmd.OutOrStdout(), cmd.ErrOrStderr(), "restic", args...)
+}
+
+// publishBackupRetentionFailure fires the JAB-392 admin alert (backup.retention.fail)
+// so a wedged sweep is visible instead of silently bloating the offsite repo.
+// Best-effort: if Redis is down the sweep's non-zero exit is still the truth signal.
+func publishBackupRetentionFailure(ctx context.Context, cmd *cobra.Command, failures []string) {
+	if requireRedis(cmd, nil) != nil || sharedRedis == nil {
+		return
+	}
+	body := fmt.Sprintf(
+		"The nightly backup retention sweep failed for %d (schedule, destination) pair(s); snapshots accumulate unpruned until fixed. A stale restic repository lock is the usual cause — `restic unlock` on the destination clears it. Details:\n  %s",
+		len(failures), strings.Join(failures, "\n  "))
+	if _, err := notifications.NewQueue(sharedRedis).Publish(ctx, notifications.Envelope{
+		EventKind: "backup.retention.fail",
+		Severity:  "error",
+		Title:     "Backup retention sweep failed",
+		Body:      body,
+		Deeplink:  "/jabali-admin/backups",
+	}); err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: failed to publish backup.retention.fail notification: %v\n", err)
+	}
 }
 
 func forgetForSchedule(ctx context.Context, cmd *cobra.Command, s models.BackupSchedule, d *models.BackupDestination, dryRun bool) error {
@@ -204,11 +298,7 @@ func forgetForSchedule(ctx context.Context, cmd *cobra.Command, s models.BackupS
 		"schedule %s dest %s (%s): restic forget --tag schedule-id=%s daily=%s weekly=%s monthly=%s\n",
 		s.ID, d.ID, d.Name, s.ID,
 		intPtrStr(s.KeepDaily), intPtrStr(s.KeepWeekly), intPtrStr(s.KeepMonthly))
-	c := exec.CommandContext(ctx, "restic", args...)
-	c.Env = append(os.Environ(), destEnv(d)...)
-	c.Stdout = cmd.OutOrStdout()
-	c.Stderr = cmd.ErrOrStderr()
-	return c.Run()
+	return runResticWithLockRecovery(ctx, cmd, d, args)
 }
 
 func pruneOneDestination(ctx context.Context, cmd *cobra.Command, d *models.BackupDestination, dryRun bool) error {
@@ -227,11 +317,7 @@ func pruneOneDestination(ctx context.Context, cmd *cobra.Command, d *models.Back
 		args = append(args, "--dry-run")
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "running: restic prune (dest %s / %s)\n", d.ID, d.Name)
-	c := exec.CommandContext(ctx, "restic", args...)
-	c.Env = append(os.Environ(), destEnv(d)...)
-	c.Stdout = cmd.OutOrStdout()
-	c.Stderr = cmd.ErrOrStderr()
-	return c.Run()
+	return runResticWithLockRecovery(ctx, cmd, d, args)
 }
 
 func destEnv(d *models.BackupDestination) []string {
