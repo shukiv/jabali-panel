@@ -6,12 +6,18 @@
 // earlier "show every owned domain + a Status column + Enable action" is
 // reverted). Enabling mail on a domain is a Domains-page action; creating a
 // mailbox happens inside a domain's drill-down, not here. Disable reuses the
-// existing owner-scoped DELETE /domains/:id/email endpoint.
+// existing owner-scoped DELETE /domains/:id/email endpoint. Delete is the
+// destructive mail-only teardown (POST /domains/:id/email/purge) — it removes
+// mailboxes + mail certs + mail DNS but keeps the website + DNS zone.
 import {
+  Alert,
   Button,
   Card,
   Empty,
+  Input,
+  Modal,
   Popconfirm,
+  Space,
   Spin,
   Table,
   Tag,
@@ -49,6 +55,10 @@ const numOrNull = (n: number | null | undefined): number =>
 export function MailDomainsPage() {
   const navigate = useNavigate();
   const [busyId, setBusyId] = useState<string | null>(null);
+  // Delete (mail purge) is type-to-confirm: the row being deleted + the typed
+  // domain name that must match before the destructive button enables.
+  const [deleteRow, setDeleteRow] = useState<MailDomainRow | null>(null);
+  const [confirmText, setConfirmText] = useState("");
   const query = useListQuery<MailDomainRow>({ resource: "me/mail-domains" });
   const rows = query.items;
 
@@ -64,6 +74,30 @@ export function MailDomainsPage() {
     } catch (err) {
       feedback.message.error(
         err instanceof Error ? err.message : "Could not disable mail",
+      );
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  // Delete = the destructive mail-only teardown (POST /domains/:id/email/purge).
+  // The server also requires confirm_domain to equal the name, so a stray call
+  // can't wipe a domain's mail.
+  const purgeMail = async (row: MailDomainRow) => {
+    setBusyId(row.id);
+    try {
+      const resp = await apiClient.post<{ warnings?: string[] }>(
+        `/domains/${row.id}/email/purge`,
+        { confirm_domain: row.name },
+      );
+      feedback.message.success(`Mail deleted for ${row.name}`);
+      (resp.data?.warnings ?? []).forEach((w) => feedback.message.warning(w));
+      setDeleteRow(null);
+      setConfirmText("");
+      await query.refetch();
+    } catch (err) {
+      feedback.message.error(
+        err instanceof Error ? err.message : "Could not delete mail",
       );
     } finally {
       setBusyId(null);
@@ -136,17 +170,29 @@ export function MailDomainsPage() {
       title: "Actions",
       key: "actions",
       render: (_v, row) => (
-        <Popconfirm
-          title={`Disable mail for ${row.name}?`}
-          description="Incoming mail stops and the managed mail DNS records are removed. Mailboxes are kept — re-enabling from the Domains page restores service."
-          okText="Disable"
-          okButtonProps={{ danger: true }}
-          onConfirm={() => disableMail(row)}
-        >
-          <Button size="small" danger loading={busyId === row.id}>
-            Disable
+        <Space size="small">
+          <Popconfirm
+            title={`Disable mail for ${row.name}?`}
+            description="Incoming mail stops and the managed mail DNS records are removed. Mailboxes are kept — re-enabling from the Domains page restores service."
+            okText="Disable"
+            okButtonProps={{ danger: true }}
+            onConfirm={() => disableMail(row)}
+          >
+            <Button size="small" danger loading={busyId === row.id}>
+              Disable
+            </Button>
+          </Popconfirm>
+          <Button
+            size="small"
+            danger
+            onClick={() => {
+              setConfirmText("");
+              setDeleteRow(row);
+            }}
+          >
+            Delete
           </Button>
-        </Popconfirm>
+        </Space>
       ),
     },
   ];
@@ -173,6 +219,47 @@ export function MailDomainsPage() {
           scroll={{ x: "max-content" }}
         />
       )}
+
+      <Modal
+        open={!!deleteRow}
+        title={deleteRow ? `Delete mail for ${deleteRow.name}?` : "Delete mail"}
+        okText="Delete mail"
+        okButtonProps={{
+          danger: true,
+          loading: busyId === deleteRow?.id,
+          disabled: !deleteRow || confirmText.trim() !== deleteRow.name,
+        }}
+        onOk={() => deleteRow && purgeMail(deleteRow)}
+        onCancel={() => setDeleteRow(null)}
+        destroyOnClose
+      >
+        <Alert
+          type="error"
+          showIcon
+          style={{ marginBottom: 12 }}
+          message="This permanently deletes the mail service for this domain"
+          description={
+            <ul style={{ margin: "8px 0 0", paddingLeft: 18 }}>
+              <li>All mailboxes in this domain and the mail they store</li>
+              <li>The mail TLS certificate (mail, autodiscover, autoconfig)</li>
+              <li>The managed mail DNS records (MX, SPF, DKIM, autodiscover…)</li>
+            </ul>
+          }
+        />
+        <Typography.Paragraph style={{ marginBottom: 8 }}>
+          The website, its DNS zone, and its certificate are kept. Type{" "}
+          <Typography.Text code>{deleteRow?.name}</Typography.Text> to confirm.
+        </Typography.Paragraph>
+        <Input
+          autoFocus
+          placeholder={deleteRow?.name}
+          value={confirmText}
+          onChange={(e) => setConfirmText(e.target.value)}
+          onPressEnter={() => {
+            if (deleteRow && confirmText.trim() === deleteRow.name) purgeMail(deleteRow);
+          }}
+        />
+      </Modal>
     </Card>
   );
 }

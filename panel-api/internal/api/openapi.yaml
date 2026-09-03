@@ -3081,6 +3081,14 @@ paths:
       parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
       responses: { "200": { description: OK } }
 
+  /domains/{id}/email/purge:
+    post:
+      tags: [Email]
+      summary: Delete the mail service for a domain (GH #1387; keeps the web domain + DNS zone)
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
 
   # --- Files (auto) ---
 

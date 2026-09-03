@@ -811,6 +811,17 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				SSLCerts:       deps.SSLCerts,
 				SSLReconciler:  deps.Reconciler,
 			})
+			// GH #1387: mail-only domain delete (destructive teardown that keeps
+			// the web domain + DNS zone). Distinct route from the soft disable.
+			api.RegisterDomainMailPurgeRoutes(mailGroup, api.DomainMailPurgeHandlerConfig{
+				Domains:        deps.Domains,
+				Mailboxes:      deps.Mailboxes,
+				MailCerts:      deps.MailCerts,
+				Agent:          deps.Agent,
+				DNSZones:       deps.DNSZones,
+				DNSRecords:     deps.DNSRecords,
+				ServerSettings: deps.ServerSettings,
+			})
 		}
 		// M6.5 Email features: forwarders, autoresponders, catch-all, disclaimer,
 		// shared folders, logs. All sub-routes live in routes_m65.go and are
