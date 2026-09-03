@@ -102,6 +102,7 @@ export const EVENT_KIND_CATEGORY: Record<string, EventCategoryId> = {
 
   // Backups
   "backup.fail": "backups",
+  "backup.retention.fail": "backups",
   "backup.success": "backups",
   "backup.limit.reached": "backups",
   "dr.sync.stalled": "backups",
