@@ -137,7 +137,6 @@ export function UserPHPSettingsPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const qc = useQueryClient();
-  const [opcacheResetting, setOpcacheResetting] = useState(false);
   const [, setMe] = useState<Identity | null>(null);
   const [domains, setDomains] = useState<Domain[]>([]);
   const [selectedDomain, setSelectedDomain] = useState<string | null>(null);
@@ -374,25 +373,6 @@ export function UserPHPSettingsPage() {
     </Space>
   );
 
-  // GH #1332 item 10: reset OPcache for the selected domain's PHP version.
-  // OPcache is shared per FPM pool (per version), so this affects every site
-  // the account runs on that version — stated in the confirm copy.
-  const onResetOpcache = async () => {
-    setOpcacheResetting(true);
-    try {
-      await apiClient.post("/me/php-opcache/reset", {
-        php_version: phpSettings?.php_version ?? undefined,
-      });
-      feedback.message.success("OPcache reset (FPM restarted for this PHP version)");
-    } catch (err) {
-      const e = err as { response?: { data?: { detail?: string; error?: string } } };
-      feedback.message.error(
-        e.response?.data?.detail ?? e.response?.data?.error ?? "Failed to reset OPcache",
-      );
-    } finally {
-      setOpcacheResetting(false);
-    }
-  };
 
   return (
     // GH #1332 item 1: the page was clamped to 800px and centred, unlike every
@@ -507,14 +487,11 @@ export function UserPHPSettingsPage() {
                     />
                   </Form.Item>
 
-                  {/* GH #1332 items 7, 10, 15: quick actions for the selected domain. */}
+                  {/* GH #1332 items 7, 15: quick actions for the selected domain.
+                      Reset OPcache lives on the OPcache & JIT tab now (it is
+                      per-version / shared-pool, not per-domain) — removed here to
+                      avoid the same control in two places (lxsdevcode). */}
                   <Space wrap style={{ marginBottom: 8 }}>
-                    <Button
-                      loading={opcacheResetting}
-                      onClick={onResetOpcache}
-                    >
-                      Reset OPcache
-                    </Button>
                     <Button
                       type="link"
                       style={{ paddingInline: 0 }}
@@ -532,13 +509,6 @@ export function UserPHPSettingsPage() {
                       Scheduled tasks (Cron)
                     </Button>
                   </Space>
-                  <Typography.Paragraph
-                    type="secondary"
-                    style={{ fontSize: 12, marginTop: -4 }}
-                  >
-                    Resetting OPcache restarts PHP-FPM for this version and
-                    affects all your sites running it — handy after a deploy.
-                  </Typography.Paragraph>
 
                   <Typography.Title level={5} style={{ marginBottom: 0 }}>
                     Resource Limits
