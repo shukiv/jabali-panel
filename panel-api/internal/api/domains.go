@@ -222,6 +222,11 @@ type updateDomainRequest struct {
 	WebmailEnabled        *bool                    `json:"webmail_enabled,omitempty"`
 	// TempURLEnabled toggles the preview URL vhost block. Owner or admin.
 	TempURLEnabled *bool `json:"temp_url_enabled,omitempty"`
+	// BotChallengeExempt — per-domain opt-out from the server-wide AppSec
+	// bot-detection challenge. ADMIN-ONLY: a tenant must not be able to weaken
+	// the operator's security posture on their own domain. Silently ignored
+	// for a non-admin PATCH (pointer pattern), never 403.
+	BotChallengeExempt *bool `json:"bot_challenge_exempt,omitempty"`
 	// GH #648 (DMARCbis): per-domain settable np (non-existent subdomain
 	// policy) + t=y testing tag, folded into the canonical _dmarc record.
 	DmarcNP      *string `json:"dmarc_np,omitempty"`
@@ -787,6 +792,13 @@ func (h *domainHandler) update(c *gin.Context) {
 				return
 			}
 			domain.NginxCustomDirectives = req.NginxCustomDirectives
+		}
+
+		// Per-domain bot-detection opt-out (admin-only). The reconciler picks
+		// up the flag on its next pass, writes the exempt-hosts state file, and
+		// (while bot detection is on) has the agent re-render jabali-bot-exempt.
+		if req.BotChallengeExempt != nil {
+			domain.BotChallengeExempt = *req.BotChallengeExempt
 		}
 
 		if req.NginxRules != nil {

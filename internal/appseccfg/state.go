@@ -32,11 +32,45 @@ import (
 // const, so both writer + readers follow the move.
 const WebmailHostsPath = "/var/lib/jabali-panel/webmail-hosts.list"
 
+// BotExemptHostsPath is the state file listing the FQDNs whose domains the
+// operator has marked exempt from the AppSec bot-detection challenge
+// (per-domain opt-out). Written by the panel reconciler (write-on-diff each
+// pass) and read by RenderBotExempt so those Hosts get an ExemptFromChallenge
+// pre_eval alongside the built-in exemptions. Same location + safe-default
+// semantics as WebmailHostsPath. Missing/empty → no per-domain exemptions.
+const BotExemptHostsPath = "/var/lib/jabali-panel/bot-exempt-hosts.list"
+
+// LoadBotExemptHosts reads + sanitizes the per-domain bot-challenge exempt
+// list. Missing file is not an error (nil, nil) — the safe default is "no
+// per-domain exemptions", exactly like LoadWebmailHosts.
+func LoadBotExemptHosts(path string) ([]string, error) {
+	return loadHostList(path)
+}
+
+// WriteBotExemptHosts writes the sanitized, sorted exempt-host list atomically.
+// Returns (changed, error); write-on-diff so a caller can gate a reload.
+func WriteBotExemptHosts(path string, hosts []string) (changed bool, err error) {
+	return writeHostList(
+		path,
+		"# Managed by jabali-panel reconciler — DO NOT hand-edit.\n"+
+			"# FQDNs exempt from the AppSec bot-detection challenge (per-domain\n"+
+			"# opt-out). Read by internal/appseccfg.RenderBotExempt. One FQDN per line.\n",
+		hosts,
+	)
+}
+
 // LoadWebmailHosts reads and sanitizes the state file at the given
 // path. Missing file is NOT an error (returns nil, nil) — fresh
 // installs before the first reconciler pass have no allowlist, which
 // is the right safe default. Anything failing sanitize is dropped.
 func LoadWebmailHosts(path string) ([]string, error) {
+	return loadHostList(path)
+}
+
+// loadHostList reads a one-FQDN-per-line state file, ignoring blanks and
+// comments, and returns the sanitized list. Missing file → (nil, nil): the
+// safe default for every AppSec host-list feature.
+func loadHostList(path string) ([]string, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
@@ -66,12 +100,24 @@ func LoadWebmailHosts(path string) ([]string, error) {
 // already matches what would be written, this is a no-op and changed
 // is false — callers can gate a downstream reload on changed=true.
 func WriteWebmailHosts(path string, hosts []string) (changed bool, err error) {
+	return writeHostList(
+		path,
+		"# Managed by jabali-panel reconciler — DO NOT hand-edit.\n"+
+			"# Source of truth for the CrowdSec AppSec webmail-vhost allowlist\n"+
+			"# (internal/appseccfg.Render). Re-rendered every reconciler pass\n"+
+			"# from the domain repo + panel-primary row. One FQDN per line.\n",
+		hosts,
+	)
+}
+
+// writeHostList writes a sanitized, sorted host list atomically (tmp+rename)
+// with the given managed-by header. Returns (changed, error); a no-op with
+// changed=false when the on-disk content already matches, so callers can gate
+// a downstream reload on changed=true.
+func writeHostList(path, header string, hosts []string) (changed bool, err error) {
 	clean := sanitizeWebmailHosts(hosts)
 	var b strings.Builder
-	b.WriteString("# Managed by jabali-panel reconciler — DO NOT hand-edit.\n")
-	b.WriteString("# Source of truth for the CrowdSec AppSec webmail-vhost allowlist\n")
-	b.WriteString("# (internal/appseccfg.Render). Re-rendered every reconciler pass\n")
-	b.WriteString("# from the domain repo + panel-primary row. One FQDN per line.\n")
+	b.WriteString(header)
 	for _, h := range clean {
 		b.WriteString(h + "\n")
 	}

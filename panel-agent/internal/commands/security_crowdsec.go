@@ -1999,6 +1999,7 @@ func init() {
 	Default.Register("security.crowdsec.appsec.geoblock.set", csAppSecGeoblockSetHandler)
 	Default.Register("security.crowdsec.appsec.botdetection.get", csBotDetectionGetHandler)
 	Default.Register("security.crowdsec.appsec.botdetection.set", csBotDetectionSetHandler)
+	Default.Register("security.crowdsec.appsec.botdetection.refresh_exempt", csBotDetectionRefreshExemptHandler)
 	Default.Register("security.crowdsec.allowlists.list", csAllowlistsListHandler)
 	Default.Register("security.crowdsec.allowlists.add", csAllowlistsAddHandler)
 	Default.Register("security.crowdsec.allowlists.remove", csAllowlistsRemoveHandler)

@@ -65,6 +65,12 @@ type Opts struct {
 	// only when BotDetection != "off". A collection NAME here would FATAL the
 	// engine ("no appsec-config found"); pass leaf CONFIG names only.
 	BotConfigs []string
+	// BotExemptHosts is the operator's per-domain opt-out list: FQDNs whose
+	// domains should NOT be bot-challenged even when the server-wide mode is
+	// on (e.g. an API/webhook-heavy site). Consumed by RenderBotExempt as an
+	// additional Host-equality ExemptFromChallenge, sanitised like WebmailHosts.
+	// The caller expands www.<domain>; this only renders what it is given.
+	BotExemptHosts []string
 }
 
 // AppsecListenAddr is the TCP loopback the AppSec engine listens on; the
@@ -554,6 +560,21 @@ func RenderBotExempt(o Opts) string {
 		b.WriteString("    - filter: " + strings.Join(parts, " || ") + "\n")
 		b.WriteString("      apply:\n")
 		b.WriteString(`        - ExemptFromChallenge("jabali-webmail")` + "\n")
+	}
+
+	// Per-domain opt-out (GH bot-detection per-domain). Distinct label so the
+	// "Exempt" metric separates operator domain opt-outs from the built-in
+	// exemptions above. Same sanitiser + explicit host equality (req.Host is a
+	// client-controlled header — never a prefix).
+	optout := sanitizeWebmailHosts(o.BotExemptHosts)
+	if len(optout) > 0 {
+		parts := make([]string, len(optout))
+		for i, h := range optout {
+			parts[i] = `req.Host == "` + h + `"`
+		}
+		b.WriteString("    - filter: " + strings.Join(parts, " || ") + "\n")
+		b.WriteString("      apply:\n")
+		b.WriteString(`        - ExemptFromChallenge("jabali-domain-optout")` + "\n")
 	}
 	return b.String()
 }

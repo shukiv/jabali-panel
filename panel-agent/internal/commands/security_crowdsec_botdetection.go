@@ -268,12 +268,47 @@ func botDetectionApplyOff(ctx context.Context, geoMode string, countries []strin
 	return csBotDetectionResponse{Mode: "off"}, nil
 }
 
-// botExemptOpts feeds RenderBotExempt the same panel host + webmail allowlist
-// that jabali-appsec uses, so the challenge exemptions match the on_match
-// allowlist exactly.
+// botExemptOpts feeds RenderBotExempt the panel host + webmail allowlist that
+// jabali-appsec uses (so the built-in exemptions match the on_match allowlist)
+// PLUS the operator's per-domain opt-out list (both from the panel reconciler's
+// state files; missing → the safe default of no exemption).
 func botExemptOpts() appseccfg.Opts {
 	webmailHosts, _ := appseccfg.LoadWebmailHosts(appseccfg.WebmailHostsPath)
-	return appseccfg.Opts{PanelHost: appsecPanelHost(), WebmailHosts: webmailHosts}
+	exemptHosts, _ := appseccfg.LoadBotExemptHosts(appseccfg.BotExemptHostsPath)
+	return appseccfg.Opts{
+		PanelHost:      appsecPanelHost(),
+		WebmailHosts:   webmailHosts,
+		BotExemptHosts: exemptHosts,
+	}
+}
+
+// csBotDetectionRefreshExemptHandler re-renders jabali-bot-exempt.yaml from the
+// current per-domain opt-out state file and reloads crowdsec on a real change.
+// The panel reconciler calls this EVERY pass while bot detection is on (a
+// per-tick idempotent loop, not a change-triggered one — a single failed call
+// must never leave the exemptions stale: write-on-diff makes the steady state a
+// cheap render+memcmp, and convergence is guaranteed).
+//
+// A change here is to an appsec-config's CONTENT, not the acquisition's
+// datasource list, so SIGHUP (reload) is enough — same as geoblock. Bot
+// detection off ⇒ the exempt config isn't composed into the acquis, so there is
+// nothing to reload; the next botdetection.set renders it fresh.
+func csBotDetectionRefreshExemptHandler(ctx context.Context, _ json.RawMessage) (any, error) {
+	mode := readBotDetectionMode()
+	if mode == "off" {
+		return map[string]any{"mode": "off", "reloaded": false}, nil
+	}
+	body := appseccfg.RenderBotExempt(botExemptOpts())
+	if existing, err := os.ReadFile(botExemptConfigPath); err == nil && string(existing) == body {
+		return map[string]any{"mode": mode, "reloaded": false}, nil
+	}
+	if err := writeAppsecFile(botExemptConfigPath, body); err != nil {
+		return nil, err
+	}
+	if err := reloadCrowdsec(ctx); err != nil {
+		return nil, err
+	}
+	return map[string]any{"mode": mode, "reloaded": true}, nil
 }
 
 func installBotCollections(ctx context.Context, mode string) error {

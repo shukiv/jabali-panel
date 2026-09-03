@@ -32,6 +32,7 @@ export type DomainEditInput = {
   is_enabled?: boolean;
   doc_root?: string;
   temp_url_enabled?: boolean;
+  bot_challenge_exempt?: boolean;
 };
 
 export const DomainEdit = () => {
@@ -62,6 +63,7 @@ export const DomainEdit = () => {
         is_enabled: domain.is_enabled,
         doc_root: domain.doc_root,
         temp_url_enabled: domain.temp_url_enabled,
+        bot_challenge_exempt: domain.bot_challenge_exempt,
       });
     }
   }, [domain, form]);
@@ -143,6 +145,24 @@ export const DomainEdit = () => {
         </Form.Item>
         <Typography.Text>
           Preview URL (&lt;slug&gt;.preview.&lt;panel-hostname&gt; serves this docroot)
+        </Typography.Text>
+      </div>
+
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 24 }}>
+        <Form.Item name="bot_challenge_exempt" valuePropName="checked" noStyle>
+          <Switch
+            checkedChildren={<CheckOutlined />}
+            unCheckedChildren={<CloseOutlined />}
+          />
+        </Form.Item>
+        <Typography.Text>
+          Exempt from bot-detection challenge
+          <Typography.Text type="secondary" style={{ display: "block", fontSize: 12 }}>
+            Skip the server-wide AppSec bot challenge on this site — for
+            API/webhook-heavy domains whose non-browser clients can&apos;t solve
+            it. Also covers www.&lt;domain&gt;. No effect unless bot detection is
+            on server-wide (Security → CrowdSec → Bot Detection).
+          </Typography.Text>
         </Typography.Text>
       </div>
 

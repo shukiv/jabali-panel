@@ -501,6 +501,16 @@ type Domain struct {
 	// from the scar list cannot bite).
 	TempURLEnabled bool `gorm:"column:temp_url_enabled;type:tinyint(1);not null" json:"temp_url_enabled"`
 
+	// BotChallengeExempt (migration 000287) — per-domain opt-out from the
+	// server-wide AppSec bot-detection challenge. Admin-only: when set, this
+	// domain (and www.<domain>) is exempted from the JS/proof-of-work challenge
+	// even while server-wide bot detection is on — for API/webhook-heavy sites
+	// whose non-browser clients can't solve it. The panel reconciler writes the
+	// exempt FQDNs to appseccfg.BotExemptHostsPath; the agent renders them into
+	// jabali-bot-exempt. Opt-in (default 0 — zero value, no GORM default-tag
+	// insert trap).
+	BotChallengeExempt bool `gorm:"column:bot_challenge_exempt;type:tinyint(1);not null" json:"bot_challenge_exempt"`
+
 	CreatedAt time.Time `gorm:"type:datetime(6);not null" json:"created_at"`
 	UpdatedAt time.Time `gorm:"type:datetime(6);not null" json:"updated_at"`
 }
