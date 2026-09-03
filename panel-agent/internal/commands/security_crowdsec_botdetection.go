@@ -153,7 +153,7 @@ func readGeoblockState() (string, []string) {
 // both the geoblock and bot-detection handlers, so neither resets the
 // other's header marker. Webmail allowlist comes from the panel reconciler's
 // state file (missing → no webmail filter, the safe default).
-func renderJabaliAppsec(geoMode string, countries []string, botMode string) string {
+func renderJabaliAppsec(geoMode string, countries []string, botMode, botScope string) string {
 	webmailHosts, _ := appseccfg.LoadWebmailHosts(appseccfg.WebmailHostsPath)
 	return appseccfg.Render(appseccfg.Opts{
 		Mode:      geoMode,
@@ -167,7 +167,33 @@ func renderJabaliAppsec(geoMode string, countries []string, botMode string) stri
 		PanelHost:      appsecPanelHost(),
 		WebmailHosts:   webmailHosts,
 		BotDetection:   botMode,
+		BotScope:       botScope,
 	})
+}
+
+// readBotScope reports the applied challenge scope ("all"|"selected"),
+// preferring the jabali-appsec header and falling back to sniffing the
+// jabali-bot-exempt content (the selected-mode labels appear only in that
+// scope) — same stale-binary resilience as readBotDetectionMode.
+func readBotScope() string {
+	if body, err := os.ReadFile(appsecRulePath); err == nil {
+		for _, line := range strings.Split(string(body), "\n") {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "# jabali-bot-detection-scope:") {
+				if strings.TrimSpace(strings.TrimPrefix(line, "# jabali-bot-detection-scope:")) == "selected" {
+					return "selected"
+				}
+				return "all"
+			}
+		}
+	}
+	if body, err := os.ReadFile(botExemptConfigPath); err == nil {
+		s := string(body)
+		if strings.Contains(s, "jabali-selected-exclude") || strings.Contains(s, "jabali-selected-none") {
+			return "selected"
+		}
+	}
+	return "all"
 }
 
 func csBotDetectionGetHandler(_ context.Context, _ json.RawMessage) (any, error) {
@@ -176,13 +202,22 @@ func csBotDetectionGetHandler(_ context.Context, _ json.RawMessage) (any, error)
 
 func csBotDetectionSetHandler(ctx context.Context, params json.RawMessage) (any, error) {
 	var p struct {
-		Mode string `json:"mode"`
+		Mode  string `json:"mode"`
+		Scope string `json:"scope"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, csInvalidArg(fmt.Sprintf("parse params: %v", err))
 	}
 	if _, ok := csBotDetectionModes[p.Mode]; !ok {
 		return nil, csInvalidArg("mode must be off|balanced|permissive")
+	}
+	// Scope defaults to "all" (challenge every site) — matches the pre-scope
+	// behaviour, so an old panel that omits the field never lands in "selected".
+	scope := "all"
+	if p.Scope == "selected" {
+		scope = "selected"
+	} else if p.Scope != "" && p.Scope != "all" {
+		return nil, csInvalidArg("scope must be all|selected")
 	}
 	geoMode, countries := readGeoblockState()
 	if p.Mode == "off" {
@@ -191,13 +226,13 @@ func csBotDetectionSetHandler(ctx context.Context, params json.RawMessage) (any,
 	if err := requireBotDetectionSupport(ctx); err != nil {
 		return nil, err
 	}
-	return botDetectionApplyOn(ctx, p.Mode, geoMode, countries)
+	return botDetectionApplyOn(ctx, p.Mode, scope, geoMode, countries)
 }
 
 // botDetectionApplyOn installs the collections, composes the acquis, and
 // restarts — validating with `crowdsec -t` before the restart and rolling
 // the files back on failure so a bad config can never take AppSec down.
-func botDetectionApplyOn(ctx context.Context, mode, geoMode string, countries []string) (any, error) {
+func botDetectionApplyOn(ctx context.Context, mode, scope, geoMode string, countries []string) (any, error) {
 	if err := installBotCollections(ctx, mode); err != nil {
 		return nil, err
 	}
@@ -218,10 +253,10 @@ func botDetectionApplyOn(ctx context.Context, mode, geoMode string, countries []
 	prevAppsec, hadAppsec := readFileOK(appsecRulePath)
 	_, hadExempt := readFileOK(botExemptConfigPath)
 
-	if err := writeAppsecFile(botExemptConfigPath, appseccfg.RenderBotExempt(botExemptOpts())); err != nil {
+	if err := writeAppsecFile(botExemptConfigPath, appseccfg.RenderBotExempt(botExemptOpts(scope))); err != nil {
 		return nil, err
 	}
-	if err := writeAppsecFile(appsecRulePath, renderJabaliAppsec(geoMode, countries, mode)); err != nil {
+	if err := writeAppsecFile(appsecRulePath, renderJabaliAppsec(geoMode, countries, mode, scope)); err != nil {
 		return nil, err
 	}
 	acquis := appseccfg.RenderAcquis(appseccfg.Opts{BotDetection: mode, BotConfigs: leaves})
@@ -249,7 +284,7 @@ func botDetectionApplyOff(ctx context.Context, geoMode string, countries []strin
 	prevAcquis, hadAcquis := readFileOK(appsecAcquisPath)
 	prevAppsec, hadAppsec := readFileOK(appsecRulePath)
 
-	if err := writeAppsecFile(appsecRulePath, renderJabaliAppsec(geoMode, countries, "off")); err != nil {
+	if err := writeAppsecFile(appsecRulePath, renderJabaliAppsec(geoMode, countries, "off", "all")); err != nil {
 		return nil, err
 	}
 	if err := writeAppsecFile(appsecAcquisPath, appseccfg.RenderAcquis(appseccfg.Opts{BotDetection: "off"})); err != nil {
@@ -272,13 +307,16 @@ func botDetectionApplyOff(ctx context.Context, geoMode string, countries []strin
 // jabali-appsec uses (so the built-in exemptions match the on_match allowlist)
 // PLUS the operator's per-domain opt-out list (both from the panel reconciler's
 // state files; missing → the safe default of no exemption).
-func botExemptOpts() appseccfg.Opts {
+func botExemptOpts(scope string) appseccfg.Opts {
 	webmailHosts, _ := appseccfg.LoadWebmailHosts(appseccfg.WebmailHostsPath)
 	exemptHosts, _ := appseccfg.LoadBotExemptHosts(appseccfg.BotExemptHostsPath)
+	includeHosts, _ := appseccfg.LoadBotIncludeHosts(appseccfg.BotIncludeHostsPath)
 	return appseccfg.Opts{
-		PanelHost:      appsecPanelHost(),
-		WebmailHosts:   webmailHosts,
-		BotExemptHosts: exemptHosts,
+		PanelHost:       appsecPanelHost(),
+		WebmailHosts:    webmailHosts,
+		BotScope:        scope,
+		BotExemptHosts:  exemptHosts,
+		BotIncludeHosts: includeHosts,
 	}
 }
 
@@ -298,7 +336,7 @@ func csBotDetectionRefreshExemptHandler(ctx context.Context, _ json.RawMessage) 
 	if mode == "off" {
 		return map[string]any{"mode": "off", "reloaded": false}, nil
 	}
-	body := appseccfg.RenderBotExempt(botExemptOpts())
+	body := appseccfg.RenderBotExempt(botExemptOpts(readBotScope()))
 	if existing, err := os.ReadFile(botExemptConfigPath); err == nil && string(existing) == body {
 		return map[string]any{"mode": mode, "reloaded": false}, nil
 	}

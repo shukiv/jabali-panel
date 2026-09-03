@@ -60,6 +60,7 @@ import {
   useUpdateCrowdsecProfiles,
   type AppSecGeoblockMode,
   type AppSecBotDetectionMode,
+  type AppSecBotDetectionScope,
   type CrowdsecAlert,
   type CrowdsecAllowlistEntry,
   type CrowdsecCaptchaProvider,
@@ -620,22 +621,26 @@ const AppSecBotDetectionCard = () => {
   const updateBot = useUpdateAppSecBotDetection();
 
   const [mode, setMode] = useState<AppSecBotDetectionMode>("off");
+  const [scope, setScope] = useState<AppSecBotDetectionScope>("all");
 
   useEffect(() => {
     if (bot.data) {
       setMode(bot.data.mode);
+      setScope(bot.data.scope ?? "all");
     }
   }, [bot.data]);
 
-  const dirty = bot.data !== undefined && mode !== bot.data.mode;
+  const dirty =
+    bot.data !== undefined &&
+    (mode !== bot.data.mode || scope !== (bot.data.scope ?? "all"));
 
   const apply = async () => {
     try {
-      await updateBot.mutateAsync({ mode });
+      await updateBot.mutateAsync({ mode, scope });
       feedback.message.success(
         mode === "off"
           ? "Bot detection disabled — crowdsec restarted"
-          : `Bot detection set to ${mode} — crowdsec restarted`,
+          : `Bot detection set to ${mode} (${scope === "selected" ? "selected domains" : "all sites"}) — crowdsec restarted`,
       );
     } catch (e: unknown) {
       feedback.message.error(
@@ -679,6 +684,44 @@ const AppSecBotDetectionCard = () => {
             ]}
           />
         </div>
+        {mode !== "off" && (
+          <div>
+            <Typography.Text strong>Applies to: </Typography.Text>
+            <Segmented
+              value={scope}
+              onChange={(v) => setScope(v as AppSecBotDetectionScope)}
+              options={[
+                { label: "All sites", value: "all" },
+                { label: "Selected domains", value: "selected" },
+              ]}
+            />
+          </div>
+        )}
+        {mode !== "off" && scope === "selected" && (
+          <Alert
+            type="info"
+            showIcon
+            message="Only the domains you mark are challenged"
+            description={
+              "In Selected mode, only domains flagged “Include in bot-detection " +
+              "challenge” (in each domain's settings) get the challenge — every " +
+              "other site is left alone. If no domain is flagged, nothing is " +
+              "challenged."
+            }
+          />
+        )}
+        {mode !== "off" && scope === "all" && (
+          <Alert
+            type="info"
+            showIcon
+            message="Every site is challenged"
+            description={
+              "In All-sites mode, every hosted domain is challenged. Exempt " +
+              "individual sites with “Exempt from bot-detection challenge” in " +
+              "each domain's settings."
+            }
+          />
+        )}
         <Space>
           <Popconfirm
             title="Apply bot detection?"

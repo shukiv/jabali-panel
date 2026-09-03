@@ -47,6 +47,31 @@ func LoadBotExemptHosts(path string) ([]string, error) {
 	return loadHostList(path)
 }
 
+// BotIncludeHostsPath is the state file listing the FQDNs whose domains the
+// operator has opted IN to the bot-detection challenge (used only when the
+// server-wide scope is "selected"). Written by the panel reconciler, read by
+// RenderBotExempt to build the `req.Host not in [...]` exemption. Missing/empty
+// in selected scope → challenge nothing (the safe default: never silently
+// challenge sites the operator didn't pick).
+const BotIncludeHostsPath = "/var/lib/jabali-panel/bot-include-hosts.list"
+
+// LoadBotIncludeHosts reads + sanitizes the per-domain opt-in list.
+func LoadBotIncludeHosts(path string) ([]string, error) {
+	return loadHostList(path)
+}
+
+// WriteBotIncludeHosts writes the sanitized, sorted opt-in list atomically.
+func WriteBotIncludeHosts(path string, hosts []string) (changed bool, err error) {
+	return writeHostList(
+		path,
+		"# Managed by jabali-panel reconciler — DO NOT hand-edit.\n"+
+			"# FQDNs opted IN to the AppSec bot-detection challenge (used only\n"+
+			"# when the server-wide scope is 'selected'). Read by\n"+
+			"# internal/appseccfg.RenderBotExempt. One FQDN per line.\n",
+		hosts,
+	)
+}
+
 // WriteBotExemptHosts writes the sanitized, sorted exempt-host list atomically.
 // Returns (changed, error); write-on-diff so a caller can gate a reload.
 func WriteBotExemptHosts(path string, hosts []string) (changed bool, err error) {

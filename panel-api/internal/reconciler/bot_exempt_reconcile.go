@@ -30,17 +30,22 @@ func (r *Reconciler) reconcileBotChallengeExempt(ctx context.Context) {
 		r.log.Warn("bot-exempt reconcile: list domains", "err", err)
 		return
 	}
-	var hosts []string
+	var exempt, include []string
 	for i := range domains {
-		if !domains[i].BotChallengeExempt {
-			continue
-		}
 		n := domains[i].Name
-		hosts = append(hosts, n, "www."+n)
+		if domains[i].BotChallengeExempt {
+			exempt = append(exempt, n, "www."+n)
+		}
+		if domains[i].BotChallengeInclude {
+			include = append(include, n, "www."+n)
+		}
 	}
-	if _, err := appseccfg.WriteBotExemptHosts(appseccfg.BotExemptHostsPath, hosts); err != nil {
-		r.log.Warn("bot-exempt reconcile: write state file", "err", err)
+	if _, err := appseccfg.WriteBotExemptHosts(appseccfg.BotExemptHostsPath, exempt); err != nil {
+		r.log.Warn("bot-exempt reconcile: write exempt state file", "err", err)
 		// fall through: still try to refresh from whatever is on disk.
+	}
+	if _, err := appseccfg.WriteBotIncludeHosts(appseccfg.BotIncludeHostsPath, include); err != nil {
+		r.log.Warn("bot-exempt reconcile: write include state file", "err", err)
 	}
 
 	if r.serverSettings == nil {

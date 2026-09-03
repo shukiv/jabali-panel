@@ -274,8 +274,15 @@ export function useUpdateAppSecGeoblock() {
 // acquisition and restarts crowdsec. Needs CrowdSec engine >= 1.8 + bouncer
 // >= 1.2.2 (the agent version-gates and returns a 400 otherwise).
 export type AppSecBotDetectionMode = "off" | "balanced" | "permissive";
+export type AppSecBotDetectionScope = "all" | "selected";
 
-export type AppSecBotDetection = { mode: AppSecBotDetectionMode };
+export type AppSecBotDetection = {
+  mode: AppSecBotDetectionMode;
+  // "all" = challenge every site (carve exceptions per-domain); "selected" =
+  // challenge only domains flagged bot_challenge_include. Absent on an older
+  // panel-api → treated as "all".
+  scope?: AppSecBotDetectionScope;
+};
 
 export function useAppSecBotDetection() {
   return useQuery({

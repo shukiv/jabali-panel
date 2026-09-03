@@ -234,6 +234,12 @@ type ServerSettings struct {
 	// off-page (server_settings row-size ceiling).
 	AppSecBotDetection string `gorm:"column:appsec_bot_detection;type:text;not null;default:'off'" json:"appsec_bot_detection"`
 
+	// AppSecBotDetectionScope (migration 000288) — which sites the bot-detection
+	// challenge applies to when it is on: "all" (default — challenge every site,
+	// carve exceptions via domains.bot_challenge_exempt) or "selected" (challenge
+	// ONLY domains flagged bot_challenge_include). TEXT off-page (row ceiling).
+	AppSecBotDetectionScope string `gorm:"column:appsec_bot_detection_scope;type:text;not null;default:'all'" json:"appsec_bot_detection_scope"`
+
 	// Country ban exemption (ADR-0166, migration 000262). Countries whose
 	// IPs must never be blocked by CrowdSec from any decision source
 	// (scenario bans, AppSec inband, CAPI/console blocklists, captchas).

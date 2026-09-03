@@ -227,6 +227,10 @@ type updateDomainRequest struct {
 	// the operator's security posture on their own domain. Silently ignored
 	// for a non-admin PATCH (pointer pattern), never 403.
 	BotChallengeExempt *bool `json:"bot_challenge_exempt,omitempty"`
+	// BotChallengeInclude — per-domain opt-IN, effective only when the
+	// server-wide bot-detection scope is "selected". Admin-only (same reasoning;
+	// the switch lives in admin DomainEdit).
+	BotChallengeInclude *bool `json:"bot_challenge_include,omitempty"`
 	// GH #648 (DMARCbis): per-domain settable np (non-existent subdomain
 	// policy) + t=y testing tag, folded into the canonical _dmarc record.
 	DmarcNP      *string `json:"dmarc_np,omitempty"`
@@ -799,6 +803,9 @@ func (h *domainHandler) update(c *gin.Context) {
 		// (while bot detection is on) has the agent re-render jabali-bot-exempt.
 		if req.BotChallengeExempt != nil {
 			domain.BotChallengeExempt = *req.BotChallengeExempt
+		}
+		if req.BotChallengeInclude != nil {
+			domain.BotChallengeInclude = *req.BotChallengeInclude
 		}
 
 		if req.NginxRules != nil {

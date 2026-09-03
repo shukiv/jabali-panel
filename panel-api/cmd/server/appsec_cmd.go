@@ -32,6 +32,7 @@ const (
 	appsecModeHeader    = "# jabali-mode:"
 	appsecCountriesHead = "# jabali-countries:"
 	appsecBotDetectHead = "# jabali-bot-detection:"
+	appsecBotScopeHead  = "# jabali-bot-detection-scope:"
 )
 
 // newAppSecRenderConfigCmd is the canonical writer of
@@ -77,15 +78,19 @@ gate a 'systemctl reload crowdsec' on real diffs.`,
 
 			mode := "off"
 			botMode := "off"
+			botScope := "all"
 			var countries []string
 			if reconcile {
-				m, c, bm := readOperatorHeader(appsecConfigPath)
+				m, c, bm, bs := readOperatorHeader(appsecConfigPath)
 				if m != "" {
 					mode = m
 				}
 				countries = c
 				if bm != "" {
 					botMode = bm
+				}
+				if bs != "" {
+					botScope = bs
 				}
 			}
 			inband := detectInbandRules(appsecRulesDir)
@@ -113,6 +118,9 @@ gate a 'systemctl reload crowdsec' on real diffs.`,
 				// (singular, OFF state) and the agent (plural, ON state); this
 				// command only keeps the jabali-appsec header honest.
 				BotDetection: botMode,
+				// Preserve scope too — a reset from "selected" to "all" would
+				// challenge every hosted site at once.
+				BotScope: botScope,
 			})
 
 			// Write-on-diff: cheap before any nginx/crowdsec reload
@@ -140,10 +148,10 @@ gate a 'systemctl reload crowdsec' on real diffs.`,
 // lines from the existing file. Both writers (this subcommand + the agent
 // geoblock handler) emit those lines so the operator state survives every
 // re-render. Missing file → ("", nil) which the caller maps to defaults.
-func readOperatorHeader(path string) (mode string, countries []string, botMode string) {
+func readOperatorHeader(path string) (mode string, countries []string, botMode, botScope string) {
 	f, err := os.Open(path)
 	if err != nil {
-		return "", nil, ""
+		return "", nil, "", ""
 	}
 	defer f.Close()
 	sc := bufio.NewScanner(f)
@@ -164,11 +172,13 @@ func readOperatorHeader(path string) (mode string, countries []string, botMode s
 					countries = append(countries, c)
 				}
 			}
+		case strings.HasPrefix(line, appsecBotScopeHead):
+			botScope = strings.TrimSpace(strings.TrimPrefix(line, appsecBotScopeHead))
 		case strings.HasPrefix(line, appsecBotDetectHead):
 			botMode = strings.TrimSpace(strings.TrimPrefix(line, appsecBotDetectHead))
 		}
 	}
-	return mode, countries, botMode
+	return mode, countries, botMode, botScope
 }
 
 // detectInbandRules stats the appsec-rules dir and returns the list of

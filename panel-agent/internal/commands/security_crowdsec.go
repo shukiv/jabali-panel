@@ -1004,7 +1004,7 @@ func renderAppSecGeoblockRule(mode string, countries []string) string {
 	// of email_enabled changing, so any gap is brief.
 	// Delegate to the shared renderer, preserving the current bot-detection
 	// header marker so toggling geoblock never resets it (and vice-versa).
-	return renderJabaliAppsec(mode, countries, readBotDetectionMode())
+	return renderJabaliAppsec(mode, countries, readBotDetectionMode(), readBotScope())
 }
 
 // ---- M27 Step 2: security.crowdsec.allowlists.{list,add,remove} -----------

@@ -640,7 +640,8 @@ func RegisterSecurityAppSecRoutes(rg *gin.RouterGroup, cli agent.AgentInterface,
 
 	g.PUT("/bot-detection", func(c *gin.Context) {
 		var body struct {
-			Mode string `json:"mode"`
+			Mode  string `json:"mode"`
+			Scope string `json:"scope"`
 		}
 		if err := c.ShouldBindJSON(&body); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid_json"})
@@ -653,10 +654,23 @@ func RegisterSecurityAppSecRoutes(rg *gin.RouterGroup, cli agent.AgentInterface,
 			})
 			return
 		}
+		// Scope defaults to "all" (challenge every site) when omitted.
+		scope := body.Scope
+		if scope == "" {
+			scope = "all"
+		}
+		if _, ok := appsecBotDetectionScopes[scope]; !ok {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status": "error", "error": "invalid_scope",
+				"detail": "scope must be all|selected",
+			})
+			return
+		}
 		ctx, cancel := context.WithTimeout(c.Request.Context(), csBotDetectionTimeout)
 		defer cancel()
 		if _, err := cli.Call(ctx, "security.crowdsec.appsec.botdetection.set", map[string]any{
-			"mode": body.Mode,
+			"mode":  body.Mode,
+			"scope": scope,
 		}); err != nil {
 			status, errBody := translateAgentError(err)
 			c.JSON(status, errBody)
@@ -670,6 +684,7 @@ func RegisterSecurityAppSecRoutes(rg *gin.RouterGroup, cli agent.AgentInterface,
 			return
 		}
 		s.AppSecBotDetection = body.Mode
+		s.AppSecBotDetectionScope = scope
 		if err := settings.Upsert(c.Request.Context(), s); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{
 				"status": "error", "error": "settings_write", "detail": err.Error(),
@@ -794,12 +809,20 @@ var appsecBotDetectionModes = map[string]struct{}{
 	"off": {}, "balanced": {}, "permissive": {},
 }
 
+var appsecBotDetectionScopes = map[string]struct{}{
+	"all": {}, "selected": {},
+}
+
 func appsecBotDetectionResponse(s *models.ServerSettings) gin.H {
 	mode := s.AppSecBotDetection
 	if _, ok := appsecBotDetectionModes[mode]; !ok {
 		mode = "off" // empty / legacy row → off
 	}
-	return gin.H{"mode": mode}
+	scope := s.AppSecBotDetectionScope
+	if _, ok := appsecBotDetectionScopes[scope]; !ok {
+		scope = "all" // empty / legacy row → all
+	}
+	return gin.H{"mode": mode, "scope": scope}
 }
 
 // countryExemptResponse renders the ADR-0166 state. Empty selection is
