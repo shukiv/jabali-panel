@@ -4,7 +4,7 @@
 // no override (server default), On/Off (or a size) writes one. Saving restarts
 // the version's FPM master so the change takes effect (a graceful reload keeps
 // the old SHM), so Reset lives here too.
-import { Alert, Button, Card, Select, Space, Spin, Typography } from "antd";
+import { Alert, Button, Card, Col, Row, Select, Space, Spin, Typography } from "antd";
 import { feedback } from "../../../lib/feedback";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
@@ -98,13 +98,18 @@ export const UserPHPOpcacheCard = () => {
     }
   };
 
-  const Row = ({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) => (
-    <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 240 }}>
+  // GH #1332 (lxsdevcode): lay the controls out in a responsive grid like the
+  // Resource Limits section — 3 per row on desktop, collapsing to 2 / 1 columns
+  // on narrower screens — instead of one scattered wrapping flex row.
+  const Field = ({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) => (
+    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
       <Typography.Text strong>{label}</Typography.Text>
       {children}
       {hint && <Typography.Text type="secondary" style={{ fontSize: 12 }}>{hint}</Typography.Text>}
     </div>
   );
+  const col = { xs: 24, sm: 12, lg: 8 };
+  const sel = { width: "100%" as const };
 
   return (
     <Card title="OPcache & JIT" size="small">
@@ -132,29 +137,43 @@ export const UserPHPOpcacheCard = () => {
           <Spin />
         ) : (
           <>
-            <Space wrap size="large" align="start">
-              <Row label="OPcache">
-                <Select style={{ width: 160 }} value={fromBool(form.enable)} onChange={(v) => patch({ enable: toBool(v) })} options={boolOpts} />
-              </Row>
-              <Row label="JIT">
-                <Select style={{ width: 160 }} value={fromBool(form.jit_enabled)} onChange={(v) => patch({ jit_enabled: toBool(v) })} options={boolOpts} />
-              </Row>
-              <Row label="JIT buffer size">
-                <Select style={{ width: 160 }} value={fromNum(form.jit_buffer_size_mb)} onChange={(v) => patch({ jit_buffer_size_mb: toNum(v) })} options={numOpts([8, 16, 32, 64, 128, 256], " MB")} />
-              </Row>
-              <Row label="Memory">
-                <Select style={{ width: 160 }} value={fromNum(form.memory_consumption_mb)} onChange={(v) => patch({ memory_consumption_mb: toNum(v) })} options={numOpts([64, 128, 192, 256, 512], " MB")} />
-              </Row>
-              <Row label="Max accelerated files">
-                <Select style={{ width: 160 }} value={fromNum(form.max_accelerated_files)} onChange={(v) => patch({ max_accelerated_files: toNum(v) })} options={numOpts([10000, 20000, 50000, 100000])} />
-              </Row>
-              <Row label="Revalidate freq" hint="How often OPcache checks files for changes (with timestamp validation on).">
-                <Select style={{ width: 160 }} value={fromNum(form.revalidate_freq)} onChange={(v) => patch({ revalidate_freq: toNum(v) })} options={numOpts([0, 2, 5, 30, 60], " s")} />
-              </Row>
-              <Row label="Validate timestamps">
-                <Select style={{ width: 160 }} value={fromBool(form.validate_timestamps)} onChange={(v) => patch({ validate_timestamps: toBool(v) })} options={boolOpts} />
-              </Row>
-            </Space>
+            <Row gutter={[16, 16]}>
+              <Col {...col}>
+                <Field label="OPcache">
+                  <Select style={sel} value={fromBool(form.enable)} onChange={(v) => patch({ enable: toBool(v) })} options={boolOpts} />
+                </Field>
+              </Col>
+              <Col {...col}>
+                <Field label="JIT">
+                  <Select style={sel} value={fromBool(form.jit_enabled)} onChange={(v) => patch({ jit_enabled: toBool(v) })} options={boolOpts} />
+                </Field>
+              </Col>
+              <Col {...col}>
+                <Field label="JIT buffer size">
+                  <Select style={sel} value={fromNum(form.jit_buffer_size_mb)} onChange={(v) => patch({ jit_buffer_size_mb: toNum(v) })} options={numOpts([8, 16, 32, 64, 128, 256], " MB")} />
+                </Field>
+              </Col>
+              <Col {...col}>
+                <Field label="Memory">
+                  <Select style={sel} value={fromNum(form.memory_consumption_mb)} onChange={(v) => patch({ memory_consumption_mb: toNum(v) })} options={numOpts([64, 128, 192, 256, 512], " MB")} />
+                </Field>
+              </Col>
+              <Col {...col}>
+                <Field label="Max accelerated files">
+                  <Select style={sel} value={fromNum(form.max_accelerated_files)} onChange={(v) => patch({ max_accelerated_files: toNum(v) })} options={numOpts([10000, 20000, 50000, 100000])} />
+                </Field>
+              </Col>
+              <Col {...col}>
+                <Field label="Validate timestamps">
+                  <Select style={sel} value={fromBool(form.validate_timestamps)} onChange={(v) => patch({ validate_timestamps: toBool(v) })} options={boolOpts} />
+                </Field>
+              </Col>
+              <Col {...col}>
+                <Field label="Revalidate freq" hint="How often OPcache checks files for changes (with timestamp validation on).">
+                  <Select style={sel} value={fromNum(form.revalidate_freq)} onChange={(v) => patch({ revalidate_freq: toNum(v) })} options={numOpts([0, 2, 5, 30, 60], " s")} />
+                </Field>
+              </Col>
+            </Row>
 
             {form.validate_timestamps === false && (
               <Alert
