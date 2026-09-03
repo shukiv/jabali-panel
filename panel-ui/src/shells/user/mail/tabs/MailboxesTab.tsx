@@ -26,17 +26,17 @@ import { useForwarders } from "../../../../hooks/useForwarders";
 import { apiClient } from "../../../../apiClient";
 import {
   useDeleteMailbox,
-  useRotateMailboxPassword,
   type Mailbox,
 } from "../../../../hooks/useMailboxes";
 import {
+  MailboxPasswordRevealModal,
   renderMailboxQuota,
   renderMailboxStatus,
+  useMailboxPasswordReset,
   useMailboxWebmail,
 } from "../../../../components/mail/mailboxInventory";
 import { useListQuery } from "../../../../hooks/useQueries";
 import type { Domain } from "../../domains/UserDomainList";
-import { DatabaseUserPasswordModal } from "../../../../components/DatabaseUserPasswordModal";
 import { PasswordInput } from "../../../../components/PasswordInput";
 import { EditMailboxModal } from "../../../../components/mail/EditMailboxModal";
 import { MailSyncInfoModal } from "../../../../components/mail/MailSyncInfoModal";
@@ -157,12 +157,6 @@ export const MailboxesTab = ({ domainId }: { domainId?: string } = {}) => {
   }, [forwarders]);
 
 
-  const [passwordModal, setPasswordModal] = useState<{
-    email: string;
-    password: string;
-    title: string;
-  } | null>(null);
-  const [rotatingId, setRotatingId] = useState<string | null>(null);
   const [resetTarget, setResetTarget] = useState<MailboxRow | null>(null);
   const [editTarget, setEditTarget] = useState<MailboxRow | null>(null);
   const [arTarget, setArTarget] = useState<MailboxRow | null>(null);
@@ -170,7 +164,7 @@ export const MailboxesTab = ({ domainId }: { domainId?: string } = {}) => {
   const [resetForm] = Form.useForm<{ password?: string }>();
 
   const deleteMutation = useDeleteMailbox();
-  const rotateMutation = useRotateMailboxPassword();
+  const { rotate: rotatePassword, rotatingId, reveal, clearReveal } = useMailboxPasswordReset();
   const webmail = useMailboxWebmail();
 
   const openReset = (row: MailboxRow) => {
@@ -178,35 +172,19 @@ export const MailboxesTab = ({ domainId }: { domainId?: string } = {}) => {
     setResetTarget(row);
   };
 
+  // Tenant cross-domain: a form modal collecting an OPTIONAL custom password.
+  // The rotate → reveal-once (when the server generates one) → error handling is
+  // the shared hook; this adapter only owns the form trigger.
   const submitReset = async () => {
     if (!resetTarget) return;
     const values = await resetForm.validateFields();
-    const custom = (values.password ?? "").trim();
-    setRotatingId(resetTarget.id);
-    try {
-      const resp = await rotateMutation.mutateAsync({
-        id: resetTarget.id,
-        new_password: custom || undefined,
-      });
-      setResetTarget(null);
-      if (resp.password) {
-        // No custom password supplied -> server generated one; reveal once.
-        setPasswordModal({
-          email: resetTarget.email,
-          password: resp.password,
-          title: "New mailbox password (auto-generated)",
-        });
-      } else {
-        feedback.message.success("Password updated");
-      }
-    } catch (err) {
-      const msg =
-        (err as { response?: { data?: { error?: string } } })?.response?.data?.error ??
-        "Failed to reset password";
-      feedback.message.error(msg);
-    } finally {
-      setRotatingId(null);
-    }
+    const ok = await rotatePassword({
+      id: resetTarget.id,
+      email: resetTarget.email,
+      newPassword: values.password,
+      title: "New mailbox password (auto-generated)",
+    });
+    if (ok) setResetTarget(null);
   };
 
   const loading = loadingDomains || mailboxResults.some((r) => r.isLoading);
@@ -489,15 +467,7 @@ export const MailboxesTab = ({ domainId }: { domainId?: string } = {}) => {
         </Form>
       </Modal>
 
-      {passwordModal && (
-        <DatabaseUserPasswordModal
-          open={true}
-          username={passwordModal.email}
-          password={passwordModal.password}
-          title={passwordModal.title}
-          onClose={() => setPasswordModal(null)}
-        />
-      )}
+      <MailboxPasswordRevealModal reveal={reveal} onClose={clearReveal} />
     </>
   );
 };

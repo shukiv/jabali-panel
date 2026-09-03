@@ -17,11 +17,12 @@ import {
   PlusOutlined,
 } from "@icons";
 
-import { DatabaseUserPasswordModal } from "../../../components/DatabaseUserPasswordModal";
 import { PasswordInput } from "../../../components/PasswordInput";
 import {
+  MailboxPasswordRevealModal,
   renderMailboxQuota,
   renderMailboxStatus,
+  useMailboxPasswordReset,
   useMailboxWebmail,
 } from "../../../components/mail/mailboxInventory";
 import {
@@ -30,7 +31,6 @@ import {
   useDomainEmail,
   useEnableDomainEmail,
   useMailboxes,
-  useRotateMailboxPassword,
   type Mailbox,
 } from "../../../hooks/useMailboxes";
 
@@ -80,7 +80,8 @@ export const DomainMailboxesSection = ({
 
   const createMutation = useCreateMailbox();
   const deleteMutation = useDeleteMailbox();
-  const rotateMutation = useRotateMailboxPassword();
+  const { rotate: rotatePassword, rotatingId, reveal, clearReveal, revealPassword } =
+    useMailboxPasswordReset();
   const webmail = useMailboxWebmail();
   // enableMutation is only used when the section lands in the
   // disabled state (auto-enable failed at domain.create time, or an
@@ -89,12 +90,6 @@ export const DomainMailboxesSection = ({
   const enableMutation = useEnableDomainEmail();
 
   const [createOpen, setCreateOpen] = useState(false);
-  const [passwordModal, setPasswordModal] = useState<{
-    email: string;
-    password: string;
-    title: string;
-  } | null>(null);
-  const [rotatingId, setRotatingId] = useState<string | null>(null);
   const [form] = Form.useForm<{
     domain_id: string;
     local_part: string;
@@ -154,28 +149,14 @@ export const DomainMailboxesSection = ({
     );
   }
 
-  const rotate = async (row: Mailbox) => {
-    setRotatingId(row.id);
-    try {
-      const resp = await rotateMutation.mutateAsync({ id: row.id });
-      if (resp.password) {
-        setPasswordModal({
-          email: row.email,
-          password: resp.password,
-          title: "New mailbox password (rotation)",
-        });
-      } else {
-        feedback.message.success("Password rotated");
-      }
-    } catch (err) {
-      const msg =
-        (err as { response?: { data?: { error?: string } } })?.response?.data?.error ??
-        "Failed to rotate password";
-      feedback.message.error(msg);
-    } finally {
-      setRotatingId(null);
-    }
-  };
+  // Per-domain: one-click rotation (no custom-password form). The reveal-once /
+  // toast / error handling lives in the shared hook.
+  const rotate = (row: Mailbox) =>
+    rotatePassword({
+      id: row.id,
+      email: row.email,
+      title: "New mailbox password (rotation)",
+    });
 
   const onCreate = async () => {
     const values = await form.validateFields();
@@ -201,7 +182,7 @@ export const DomainMailboxesSection = ({
         onDomainCreated?.(targetDomainId);
       }
       if (resp.password) {
-        setPasswordModal({
+        revealPassword({
           email: resp.email,
           password: resp.password,
           title: "New mailbox password",
@@ -408,13 +389,7 @@ export const DomainMailboxesSection = ({
         </Form>
       </Modal>
 
-      <DatabaseUserPasswordModal
-        open={passwordModal !== null}
-        username={passwordModal?.email ?? ""}
-        password={passwordModal?.password ?? ""}
-        title={passwordModal?.title}
-        onClose={() => setPasswordModal(null)}
-      />
+      <MailboxPasswordRevealModal reveal={reveal} onClose={clearReveal} />
     </>
   );
 };

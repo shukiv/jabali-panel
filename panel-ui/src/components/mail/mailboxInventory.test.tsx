@@ -20,11 +20,16 @@ vi.mock("../../lib/feedback", () => ({
 
 import { apiClient } from "../../apiClient";
 import { feedback } from "../../lib/feedback";
-import { formatMailboxBytes, useMailboxWebmail } from "./mailboxInventory";
+import {
+  formatMailboxBytes,
+  useMailboxPasswordReset,
+  useMailboxWebmail,
+} from "./mailboxInventory";
 
 const post = apiClient.post as unknown as ReturnType<typeof vi.fn>;
 const warn = feedback.message.warning as unknown as ReturnType<typeof vi.fn>;
 const err = feedback.message.error as unknown as ReturnType<typeof vi.fn>;
+const success = feedback.message.success as unknown as ReturnType<typeof vi.fn>;
 
 function makeWrapper() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -124,6 +129,69 @@ describe("useMailboxWebmail", () => {
 
     await waitFor(() => expect(err).toHaveBeenCalledWith("boom"));
     openSpy.mockRestore();
+  });
+});
+
+describe("useMailboxPasswordReset", () => {
+  beforeEach(() => success.mockReset());
+
+  it("reveals a SERVER-GENERATED password exactly once (no toast)", async () => {
+    // No custom password → server returns one to reveal.
+    post.mockResolvedValue({ data: { password: "GEN-pw-123" } });
+    const { wrapper } = makeWrapper();
+    const { result } = renderHook(() => useMailboxPasswordReset(), { wrapper });
+
+    let ok: boolean | undefined;
+    await act(async () => {
+      ok = await result.current.rotate({ id: "mb-1", email: "a@ex.com", title: "T" });
+    });
+
+    expect(ok).toBe(true);
+    expect(result.current.reveal).toEqual({ email: "a@ex.com", password: "GEN-pw-123", title: "T" });
+    // A revealed one-shot password must NOT also fire a toast (it would imply
+    // the caller can ignore the modal).
+    expect(success).not.toHaveBeenCalled();
+    expect(post).toHaveBeenCalledWith("/mailboxes/mb-1/rotate-password", { new_password: "" });
+  });
+
+  it("does NOT reveal when a custom password was accepted (toast only)", async () => {
+    post.mockResolvedValue({ data: {} }); // custom pw → nothing to reveal
+    const { wrapper } = makeWrapper();
+    const { result } = renderHook(() => useMailboxPasswordReset(), { wrapper });
+
+    await act(async () => {
+      await result.current.rotate({ id: "mb-1", email: "a@ex.com", newPassword: "hunter2" });
+    });
+
+    expect(result.current.reveal).toBeNull();
+    expect(success).toHaveBeenCalledTimes(1);
+    expect(post).toHaveBeenCalledWith("/mailboxes/mb-1/rotate-password", { new_password: "hunter2" });
+  });
+
+  it("surfaces the server error and returns false on failure (no reveal)", async () => {
+    post.mockRejectedValue({ response: { data: { error: "rate limited" } } });
+    const { wrapper } = makeWrapper();
+    const { result } = renderHook(() => useMailboxPasswordReset(), { wrapper });
+
+    let ok: boolean | undefined;
+    await act(async () => {
+      ok = await result.current.rotate({ id: "mb-1", email: "a@ex.com" });
+    });
+
+    expect(ok).toBe(false);
+    expect(result.current.reveal).toBeNull();
+    expect(err).toHaveBeenCalledWith("rate limited");
+  });
+
+  it("revealPassword feeds another action (create) into the same modal", async () => {
+    const { wrapper } = makeWrapper();
+    const { result } = renderHook(() => useMailboxPasswordReset(), { wrapper });
+
+    act(() => result.current.revealPassword({ email: "new@ex.com", password: "P", title: "New" }));
+    expect(result.current.reveal).toEqual({ email: "new@ex.com", password: "P", title: "New" });
+
+    act(() => result.current.clearReveal());
+    expect(result.current.reveal).toBeNull();
   });
 });
 
