@@ -1,8 +1,11 @@
 // me_disk_usage.go — per-user disk-usage breakdown (cPanel-style), for the
 // tenant panel. Aggregates the three storage areas a hosting user occupies:
 //
-//   - Files     — the home directory, via the POSIX quota report
-//     (`user.limits.report`). Web content, logs, etc.
+//   - Files     — the home directory, via an actual `du` of /home/<user>
+//     (`files.du`), the same figure the FilesTree shows. Falls back to the
+//     POSIX quota report (`user.limits.report`) if du can't run. Web content,
+//     logs, etc. (The quota "used" counts every block the UID owns across the
+//     whole device, so it over-reports the home dir — GH #1439 — hence du.)
 //
 //   - Email     — sum of the user's mailboxes' last sampled usage
 //     (`mailboxes.last_usage_bytes`, kept fresh by the reconciler;
@@ -86,10 +89,11 @@ type DiskUsageItem = diskUsageItem
 type DiskUsageCategory = diskUsageCategory
 type DiskUsageResult = diskUsageResponse
 
-// ComputeDiskUsage runs the live per-user breakdown (home quota + cached
-// mailbox usage + db.size), the exact path POST /me/disk-usage/refresh uses.
+// ComputeDiskUsage runs the live per-user breakdown (home du + cached mailbox
+// usage + db.size), the exact path POST /me/disk-usage/refresh uses.
 func ComputeDiskUsage(ctx context.Context, cfg DiskUsageConfig, userID string) (DiskUsageResult, error) {
-	return (&meDiskUsageHandler{cfg: cfg}).compute(ctx, userID)
+	res, _, err := (&meDiskUsageHandler{cfg: cfg}).compute(ctx, userID)
+	return res, err
 }
 
 // diskUsageListLimit bounds the per-category enumeration. A single hosting
@@ -131,10 +135,23 @@ func (h *meDiskUsageHandler) refresh(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 		return
 	}
-	resp, err := h.compute(ctx, claims.UserID)
+	resp, homeMeasured, err := h.compute(ctx, claims.UserID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "user_not_found"})
 		return
+	}
+	// Never overwrite a real Files figure with 0 because BOTH the du and the
+	// quota calls failed this pass (agent hiccup). Keep the last known Files
+	// (and its Total contribution). A legitimately-empty home reports du=0 with
+	// homeMeasured=true, so it is NOT preserved — only the un-measured case is.
+	if !homeMeasured && h.cfg.Snapshots != nil {
+		if prev, perr := h.cfg.Snapshots.Get(ctx, claims.UserID); perr == nil && prev != nil {
+			var pr diskUsageResponse
+			if json.Unmarshal([]byte(prev.Payload), &pr) == nil && pr.Files.Bytes > 0 {
+				resp.Files = pr.Files
+				resp.TotalBytes = resp.Files.Bytes + resp.Email.Bytes + resp.Databases.Bytes
+			}
+		}
 	}
 	now := time.Now()
 	resp.ComputedAt = &now
@@ -146,11 +163,15 @@ func (h *meDiskUsageHandler) refresh(c *gin.Context) {
 	c.JSON(http.StatusOK, resp)
 }
 
-// compute runs the live aggregation. Extracted from the old GET handler.
-func (h *meDiskUsageHandler) compute(ctx context.Context, userID string) (diskUsageResponse, error) {
+// compute runs the live aggregation. Extracted from the old GET handler. The
+// second return reports whether the home-directory figure was actually
+// measured this pass (either du or the quota report answered) — false means
+// both agent calls failed, and the caller must NOT persist a 0 over a real
+// prior value.
+func (h *meDiskUsageHandler) compute(ctx context.Context, userID string) (diskUsageResponse, bool, error) {
 	user, err := h.cfg.Users.FindByID(ctx, userID)
 	if err != nil || user == nil {
-		return diskUsageResponse{}, err
+		return diskUsageResponse{}, false, err
 	}
 	opts := repository.ListOptions{Limit: diskUsageListLimit}
 
@@ -160,12 +181,31 @@ func (h *meDiskUsageHandler) compute(ctx context.Context, userID string) (diskUs
 		Databases: diskUsageCategory{Items: []diskUsageItem{}},
 	}
 
-	// --- Files: home-directory quota report (admins have no Linux account) ---
-	if user.Username != nil && *user.Username != "" && h.cfg.Agent != nil && h.cfg.QuotaMount != "" {
-		used, limit := h.homeUsage(ctx, *user.Username)
-		resp.Files.Bytes = used
+	// --- Files: ACTUAL home-directory usage via du (admins have no Linux
+	// account, so the whole block is skipped for them → homeMeasured stays
+	// true, correctly reporting an empty Files). du is scoped to /home/<user>
+	// and matches both the "Home directory" label and the FilesTree beside it.
+	// The POSIX quota report counts every block the UID owns across the whole
+	// device — which over-reports the home dir (GH #1439: quota 484 MB vs du
+	// 354 MB on a real account) — so it is now only the FALLBACK when du can't
+	// run. QuotaBytes still comes from the quota report: it is the limit, the
+	// only source for it.
+	homeMeasured := true
+	if user.Username != nil && *user.Username != "" && h.cfg.Agent != nil {
+		quotaUsed, limit, quotaOK := h.homeUsage(ctx, *user.Username)
 		resp.QuotaBytes = limit
-		resp.Files.Items = append(resp.Files.Items, diskUsageItem{Name: "Home directory", Bytes: used})
+		du, duOK := h.homeDuBytes(ctx, userID, *user.Username)
+		var filesBytes uint64
+		switch {
+		case duOK:
+			filesBytes = du // primary: accurate home-subtree usage
+		case quotaOK:
+			filesBytes = quotaUsed // fallback: du timed out on a huge home
+		default:
+			homeMeasured = false // both failed — don't clobber the last value
+		}
+		resp.Files.Bytes = filesBytes
+		resp.Files.Items = append(resp.Files.Items, diskUsageItem{Name: "Home directory", Bytes: filesBytes})
 	}
 
 	// --- Email: sum cached mailbox usage across the user's domains ---
@@ -208,7 +248,7 @@ func (h *meDiskUsageHandler) compute(ctx context.Context, userID string) (diskUs
 	}
 
 	resp.TotalBytes = resp.Files.Bytes + resp.Email.Bytes + resp.Databases.Bytes
-	return resp, nil
+	return resp, homeMeasured, nil
 }
 
 // homeUsage returns (usedBytes, limitBytes) from the agent's quota report.
@@ -262,7 +302,14 @@ func (h *meDiskUsageHandler) filesTree(c *gin.Context) {
 	c.JSON(http.StatusOK, v)
 }
 
-func (h *meDiskUsageHandler) homeUsage(ctx context.Context, username string) (uint64, uint64) {
+// homeUsage returns (usedBytes, limitBytes, ok) from the agent's quota report.
+// ok is false on any agent/parse failure (or when QuotaMount is unset). The
+// used figure is now only the fallback for Files; limitBytes is the quota
+// limit (the sole source for QuotaBytes).
+func (h *meDiskUsageHandler) homeUsage(ctx context.Context, username string) (uint64, uint64, bool) {
+	if h.cfg.QuotaMount == "" {
+		return 0, 0, false
+	}
 	cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	raw, err := h.cfg.Agent.Call(cctx, "user.limits.report", map[string]any{
@@ -270,7 +317,7 @@ func (h *meDiskUsageHandler) homeUsage(ctx context.Context, username string) (ui
 		"quota_mount": h.cfg.QuotaMount,
 	})
 	if err != nil {
-		return 0, 0
+		return 0, 0, false
 	}
 	var v struct {
 		Disk struct {
@@ -279,9 +326,36 @@ func (h *meDiskUsageHandler) homeUsage(ctx context.Context, username string) (ui
 		} `json:"disk"`
 	}
 	if json.Unmarshal(raw, &v) != nil {
-		return 0, 0
+		return 0, 0, false
 	}
-	return v.Disk.UsedKB * 1024, v.Disk.LimitKB * 1024
+	return v.Disk.UsedKB * 1024, v.Disk.LimitKB * 1024, true
+}
+
+// homeDuBytes returns (bytes, ok): the ACTUAL recursive disk usage of
+// /home/<user> via the same files.du (`du -B1 --max-depth=1`, GH #657-bounded)
+// the FilesTree uses, so the summary and the tree agree by construction. A
+// larger timeout than homeUsage (a full-home du can be slow); the refresh
+// endpoint is explicit and the CLI grants 90s, so 45s fits inside the 60s
+// axios ceiling (#1410). ok=false on timeout/error → the caller falls back to
+// the quota report.
+func (h *meDiskUsageHandler) homeDuBytes(ctx context.Context, userID, username string) (uint64, bool) {
+	cctx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	defer cancel()
+	raw, err := h.cfg.Agent.Call(cctx, "files.du", map[string]any{
+		"user_id":  userID,
+		"username": username,
+		"path":     "/home/" + username,
+	})
+	if err != nil {
+		return 0, false
+	}
+	var v struct {
+		Total int64 `json:"total"`
+	}
+	if json.Unmarshal(raw, &v) != nil || v.Total < 0 {
+		return 0, false
+	}
+	return uint64(v.Total), true
 }
 
 // dbSize returns a database's size in bytes (0 on any error).

@@ -474,7 +474,8 @@ export function DiskUsagePage() {
       </Row>
 
       <Typography.Text type="secondary" style={{ fontSize: 12, display: "block", marginTop: 12 }}>
-        Email usage is sampled periodically. PostgreSQL database sizes are not yet reported.
+        Email usage is sampled periodically; file and database sizes (both
+        MariaDB and PostgreSQL) are recomputed when you click Refresh.
       </Typography.Text>
     </div>
   );
