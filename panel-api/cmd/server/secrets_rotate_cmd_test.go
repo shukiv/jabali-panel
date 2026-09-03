@@ -88,6 +88,7 @@ func TestRotateDBAppUser_HappyPath(t *testing.T) {
 		events = append(events, "restart:"+unit)
 		return nil
 	}
+	rotateProbePanelHealthy = func(_ context.Context) error { return nil }
 	rotateProbeDBAppUser = func(_ context.Context, _ string) error {
 		events = append(events, "probe")
 		return nil
@@ -134,6 +135,7 @@ func TestRotateDBAppUser_ProbeFailureRollsBack(t *testing.T) {
 	rotateRunSQL = func(_ context.Context, sql string) error { sqls = append(sqls, sql); return nil }
 	restarts := 0
 	rotateRestartService = func(_ context.Context, _ string) error { restarts++; return nil }
+	rotateProbePanelHealthy = func(_ context.Context) error { return nil }
 	rotateProbeDBAppUser = func(_ context.Context, _ string) error { return errors.New("cannot authenticate") }
 
 	var out bytes.Buffer

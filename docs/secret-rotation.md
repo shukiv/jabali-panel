@@ -61,7 +61,7 @@ Kratos session/cookie/`cipher` secrets (not `jabali`-group-readable — under Kr
 
 ## Verify after each rotation
 
-- Panel: `systemctl is-active jabali-panel` and `curl -sk https://<host>/login -o /dev/null -w '%{http_code}'` → 200.
+- Panel: `systemctl is-active jabali-panel` and `curl -sk https://<host>/login -o /dev/null -w '%{http_code}'` → 200. **Allow a few seconds after the restart:** the panel is marked `active` within ~1s but takes a moment to bind its socket, so an immediate curl can return a transient **502** that self-clears (observed on the .60 drill). The rotate command itself waits for a stable-active panel before reporting success, so trust its exit status; if you poll manually, retry for ~10s before treating a 502 as a failure.
 - Dispatcher/Redis: the panel's Redis-backed queues still process (no ACL errors in `journalctl -u jabali-panel`).
 - Mail (after TLS): send a test message.
 

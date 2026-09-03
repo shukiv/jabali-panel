@@ -101,11 +101,33 @@ var rotateRedisSetPassword = func(ctx context.Context, authToken, newToken strin
 	return nil
 }
 
-// rotateProbePanelHealthy verifies jabali-panel is running after a rotation of
-// a secret it consumes. `is-active` returns non-zero unless the unit is fully
-// active, so a start-up crash (e.g. bad secret) is caught and rolled back.
+// rotateProbePanelHealthy verifies jabali-panel comes back and STAYS up after a
+// rotation of a secret it consumes. A single `is-active` check is not enough:
+// the .60 drill showed systemd reports active within ~1s of restart while the
+// panel is still binding its socket (a transient nginx 502), and conversely a
+// panel that can't use the new secret crash-loops (active→failed). So poll for
+// a STABLE active state — several consecutive successes — within a timeout, and
+// only then declare healthy; otherwise the caller rolls the rotation back.
 var rotateProbePanelHealthy = func(ctx context.Context) error {
-	return exec.CommandContext(ctx, "systemctl", "is-active", "--quiet", "jabali-panel").Run()
+	deadline := time.Now().Add(20 * time.Second)
+	stable := 0
+	for {
+		if err := exec.CommandContext(ctx, "systemctl", "is-active", "--quiet", "jabali-panel").Run(); err == nil {
+			if stable++; stable >= 3 { // ~3 consecutive active checks
+				return nil
+			}
+		} else {
+			stable = 0 // flapped: reset, keep watching for a crash-loop
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("jabali-panel did not reach a stable active state within timeout")
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(1 * time.Second):
+		}
+	}
 }
 
 // sqlSingleQuote renders a value as a MariaDB string literal body. The DB
@@ -448,12 +470,19 @@ func rotateDBAppUser(ctx context.Context, out io.Writer, dryRun bool) error {
 		return fmt.Errorf("restart jabali-panel (rolled back): %w", err)
 	}
 
-	// 5. Verify the new credential actually works.
+	// 5. Verify the panel came back and stays up (catches a crash-loop on the
+	//    new config), then that the new credential itself authenticates.
+	if err := rotateProbePanelHealthy(ctx); err != nil {
+		rotateRollbackDBAppUser(ctx, pwPath, envPath, bakPw, bakEnv)
+		_ = rotateRestartService(ctx, "jabali-panel")
+		cliAuditErr(ctx, "secrets.rotate.db_app_user", "secret", "db-app-user", nil)
+		return fmt.Errorf("panel unhealthy after rotation (rolled back): %w", err)
+	}
 	if err := rotateProbeDBAppUser(ctx, newPw); err != nil {
 		rotateRollbackDBAppUser(ctx, pwPath, envPath, bakPw, bakEnv)
 		_ = rotateRestartService(ctx, "jabali-panel")
 		cliAuditErr(ctx, "secrets.rotate.db_app_user", "secret", "db-app-user", nil)
-		return fmt.Errorf("post-rotation health probe failed (rolled back): %w", err)
+		return fmt.Errorf("post-rotation credential probe failed (rolled back): %w", err)
 	}
 
 	// 6. Verified — purge the rollback snapshots (they hold the old password).
