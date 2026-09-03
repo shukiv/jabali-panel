@@ -58,6 +58,20 @@ func redisSocketPath() string {
 	return "/run/redis/redis.sock"
 }
 
+func secretPdnsEnvPath() string {
+	if v := os.Getenv("JABALI_PDNS_ENV_FILE"); v != "" {
+		return v
+	}
+	return "/etc/jabali-panel/pdns.env"
+}
+
+func secretPdnsBackendConfPath() string {
+	if v := os.Getenv("JABALI_PDNS_BACKEND_CONF"); v != "" {
+		return v
+	}
+	return "/etc/powerdns/pdns.d/01-jabali-mysql.conf"
+}
+
 // ---- privileged seams (overridden in tests) --------------------------------
 
 // rotateRunSQL runs one root MariaDB statement over the unix socket.
@@ -101,18 +115,17 @@ var rotateRedisSetPassword = func(ctx context.Context, authToken, newToken strin
 	return nil
 }
 
-// rotateProbePanelHealthy verifies jabali-panel comes back and STAYS up after a
-// rotation of a secret it consumes. A single `is-active` check is not enough:
-// the .60 drill showed systemd reports active within ~1s of restart while the
-// panel is still binding its socket (a transient nginx 502), and conversely a
-// panel that can't use the new secret crash-loops (active→failed). So poll for
-// a STABLE active state — several consecutive successes — within a timeout, and
-// only then declare healthy; otherwise the caller rolls the rotation back.
-var rotateProbePanelHealthy = func(ctx context.Context) error {
+// pollUnitStableActive waits for a systemd unit to come back and STAY up. A
+// single `is-active` check is not enough: the .60 drill showed systemd reports
+// active within ~1s of restart while the service is still binding its socket (a
+// transient nginx 502), and conversely a service that can't use the new secret
+// crash-loops (active→failed). So require a STABLE active state — several
+// consecutive successes — within a timeout; otherwise the caller rolls back.
+func pollUnitStableActive(ctx context.Context, unit string) error {
 	deadline := time.Now().Add(20 * time.Second)
 	stable := 0
 	for {
-		if err := exec.CommandContext(ctx, "systemctl", "is-active", "--quiet", "jabali-panel").Run(); err == nil {
+		if err := exec.CommandContext(ctx, "systemctl", "is-active", "--quiet", unit).Run(); err == nil {
 			if stable++; stable >= 3 { // ~3 consecutive active checks
 				return nil
 			}
@@ -120,7 +133,7 @@ var rotateProbePanelHealthy = func(ctx context.Context) error {
 			stable = 0 // flapped: reset, keep watching for a crash-loop
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("jabali-panel did not reach a stable active state within timeout")
+			return fmt.Errorf("%s did not reach a stable active state within timeout", unit)
 		}
 		select {
 		case <-ctx.Done():
@@ -128,6 +141,22 @@ var rotateProbePanelHealthy = func(ctx context.Context) error {
 		case <-time.After(1 * time.Second):
 		}
 	}
+}
+
+// rotateProbePanelHealthy verifies jabali-panel comes back and stays up.
+var rotateProbePanelHealthy = func(ctx context.Context) error {
+	return pollUnitStableActive(ctx, "jabali-panel")
+}
+
+// rotateProbePdnsHealthy verifies PowerDNS came back and that the jabali_pdns DB
+// user authenticates with the new password. Password via MYSQL_PWD, not argv.
+var rotateProbePdnsHealthy = func(ctx context.Context, password string) error {
+	if err := pollUnitStableActive(ctx, "pdns"); err != nil {
+		return err
+	}
+	cmd := exec.CommandContext(ctx, "mysql", "-u", "jabali_pdns", "--protocol=socket", "jabali_pdns", "-e", "SELECT 1")
+	cmd.Env = append(os.Environ(), "MYSQL_PWD="+password)
+	return cmd.Run()
 }
 
 // sqlSingleQuote renders a value as a MariaDB string literal body: backslash
@@ -156,8 +185,128 @@ func newSecretsRotateCmd() *cobra.Command {
 		Use:   "rotate",
 		Short: "Rotate an exposed secret (see docs/secret-rotation.md)",
 	}
-	cmd.AddCommand(newRotateDBAppUserCmd(), newRotateJWTCmd(), newRotateRedisPanelTokenCmd(), newRotateAllCmd())
+	cmd.AddCommand(newRotateDBAppUserCmd(), newRotateJWTCmd(), newRotateRedisPanelTokenCmd(), newRotatePdnsCmd(), newRotateAllCmd())
 	return cmd
+}
+
+func newRotatePdnsCmd() *cobra.Command {
+	var dryRun bool
+	cmd := &cobra.Command{
+		Use:   "pdns",
+		Short: "Rotate the PowerDNS DB user password (pdns.env + gmysql backend conf)",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			ctx, cancel := context.WithTimeout(cmd.Context(), 2*time.Minute)
+			defer cancel()
+			return rotatePdns(ctx, cmd.OutOrStdout(), dryRun)
+		},
+	}
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "print the plan and touch nothing")
+	return cmd
+}
+
+// rotatePdns rotates the jabali_pdns MariaDB user password. Unlike the panel DB
+// user, PowerDNS reads its own password from a backend conf file
+// (gmysql-password in 01-jabali-mysql.conf) AND the panel-agent reads it from
+// pdns.env — so both are rewritten. No live-ACL split like Redis: it is a plain
+// DB user, so rollback is ALTER-back + restore both files + restart pdns.
+// PowerDNS is optional; an absent pdns.env means the host has no PowerDNS.
+func rotatePdns(ctx context.Context, out io.Writer, dryRun bool) error {
+	envPath := secretPdnsEnvPath()
+	confPath := secretPdnsBackendConfPath()
+
+	envData, err := os.ReadFile(envPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("PowerDNS not provisioned on this host (%s absent) — nothing to rotate", envPath)
+		}
+		return fmt.Errorf("read %s: %w", envPath, err)
+	}
+	oldPw, ok := envGet(string(envData), "PDNS_DB_PASSWORD")
+	if !ok {
+		return fmt.Errorf("no PDNS_DB_PASSWORD in %s", envPath)
+	}
+	confData, err := os.ReadFile(confPath)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", confPath, err)
+	}
+	newPw := ids.NewSecret()
+	newEnv, ok := envReplaceKey(string(envData), "PDNS_DB_PASSWORD", newPw)
+	if !ok {
+		return fmt.Errorf("PDNS_DB_PASSWORD vanished from %s mid-rotation", envPath)
+	}
+	newConf, ok := envReplaceKey(string(confData), "gmysql-password", newPw)
+	if !ok {
+		return fmt.Errorf("no gmysql-password line in %s", confPath)
+	}
+
+	if dryRun {
+		fmt.Fprintf(out, "DRY RUN — PowerDNS DB password rotation would:\n")
+		fmt.Fprintf(out, "  1. ALTER USER 'jabali_pdns'@'localhost' IDENTIFIED BY <new>\n")
+		fmt.Fprintf(out, "  2. rewrite PDNS_DB_PASSWORD in %s\n", envPath)
+		fmt.Fprintf(out, "  3. rewrite gmysql-password in %s\n", confPath)
+		fmt.Fprintf(out, "  4. systemctl restart pdns\n")
+		fmt.Fprintf(out, "  5. verify pdns healthy + jabali_pdns authenticates; roll back on failure\n")
+		return nil
+	}
+
+	// 1. Snapshot both files FIRST (read-only on live; root .bak).
+	bakEnv, err := backupToBak(envPath)
+	if err != nil {
+		return fmt.Errorf("backup %s: %w", envPath, err)
+	}
+	bakConf, err := backupToBak(confPath)
+	if err != nil {
+		_ = purgeBak(bakEnv)
+		return fmt.Errorf("backup %s: %w", confPath, err)
+	}
+
+	// 2. Apply the new password. Nothing on disk changed yet on failure.
+	if err := rotateRunSQL(ctx, "ALTER USER 'jabali_pdns'@'localhost' IDENTIFIED BY '"+sqlSingleQuote(newPw)+"'"); err != nil {
+		_ = purgeBak(bakEnv)
+		_ = purgeBak(bakConf)
+		cliAuditErr(ctx, "secrets.rotate.pdns", "secret", "pdns", nil)
+		return fmt.Errorf("ALTER USER jabali_pdns: %w", err)
+	}
+
+	rollback := func() {
+		_ = restoreFromBak(envPath, bakEnv)
+		_ = restoreFromBak(confPath, bakConf)
+		_ = rotateRunSQL(ctx, "ALTER USER 'jabali_pdns'@'localhost' IDENTIFIED BY '"+sqlSingleQuote(oldPw)+"'")
+	}
+
+	// 3. Rewrite both files.
+	writeErr := atomicRewritePreserving(envPath, newEnv)
+	if writeErr == nil {
+		writeErr = atomicRewritePreserving(confPath, newConf)
+	}
+	if writeErr != nil {
+		rollback()
+		cliAuditErr(ctx, "secrets.rotate.pdns", "secret", "pdns", nil)
+		return fmt.Errorf("rewrite secret files (rolled back): %w", writeErr)
+	}
+
+	// 4. Restart PowerDNS so it reconnects with the new password.
+	if err := rotateRestartService(ctx, "pdns"); err != nil {
+		rollback()
+		_ = rotateRestartService(ctx, "pdns")
+		cliAuditErr(ctx, "secrets.rotate.pdns", "secret", "pdns", nil)
+		return fmt.Errorf("restart pdns (rolled back): %w", err)
+	}
+
+	// 5. Verify pdns is up and the new credential authenticates.
+	if err := rotateProbePdnsHealthy(ctx, newPw); err != nil {
+		rollback()
+		_ = rotateRestartService(ctx, "pdns")
+		cliAuditErr(ctx, "secrets.rotate.pdns", "secret", "pdns", nil)
+		return fmt.Errorf("pdns unhealthy after rotation (rolled back): %w", err)
+	}
+
+	_ = purgeBak(bakEnv)
+	_ = purgeBak(bakConf)
+	cliAuditOK(ctx, "secrets.rotate.pdns", "secret", "pdns", nil)
+	fmt.Fprintf(out, "Rotated PowerDNS DB password (pdns.env + gmysql conf); restarted pdns and verified.\n")
+	return nil
 }
 
 func newRotateAllCmd() *cobra.Command {

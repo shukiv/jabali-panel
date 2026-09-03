@@ -4725,6 +4725,18 @@ jabali secrets rotate jwt [flags]
 
 - `--dry-run` — print the plan and touch nothing
 
+##### `jabali secrets rotate pdns`
+
+Rotate the PowerDNS DB user password (pdns.env + gmysql backend conf)
+
+```
+jabali secrets rotate pdns [flags]
+```
+
+**Flags:**
+
+- `--dry-run` — print the plan and touch nothing
+
 ##### `jabali secrets rotate redis-panel-token`
 
 Rotate JABALI_REDIS_PANEL_TOKEN (panel.env + redis aclfile, live ACL SETUSER)

@@ -60,10 +60,10 @@ func setupRedisFixture(t *testing.T) (aclPath string) {
 func saveRotateSeams(t *testing.T) {
 	t.Helper()
 	sql, restart, probe := rotateRunSQL, rotateRestartService, rotateProbeDBAppUser
-	health, redis := rotateProbePanelHealthy, rotateRedisSetPassword
+	health, redis, pdns := rotateProbePanelHealthy, rotateRedisSetPassword, rotateProbePdnsHealthy
 	t.Cleanup(func() {
 		rotateRunSQL, rotateRestartService, rotateProbeDBAppUser = sql, restart, probe
-		rotateProbePanelHealthy, rotateRedisSetPassword = health, redis
+		rotateProbePanelHealthy, rotateRedisSetPassword, rotateProbePdnsHealthy = health, redis, pdns
 	})
 }
 
@@ -394,6 +394,106 @@ func TestRotateRedisPanelToken_FailedLiveRevertKeepsFilesAtNewToken(t *testing.T
 	acl, _ := os.ReadFile(aclPath)
 	if !strings.Contains(string(acl), ">"+newTok+" ") {
 		t.Errorf("aclfile not left at new token:\n%s", acl)
+	}
+}
+
+const testPdnsEnv = "PDNS_DB_NAME=jabali_pdns\nPDNS_DB_USER=jabali_pdns\nPDNS_DB_PASSWORD=oldpdnspw\n"
+const testPdnsConf = "launch=gmysql\ngmysql-host=localhost\ngmysql-user=jabali_pdns\ngmysql-password=oldpdnspw\ngmysql-dbname=jabali_pdns\n"
+
+func setupPdnsFixture(t *testing.T) (envPath, confPath string) {
+	t.Helper()
+	dir := t.TempDir()
+	envPath = filepath.Join(dir, "pdns.env")
+	confPath = filepath.Join(dir, "01-jabali-mysql.conf")
+	if err := os.WriteFile(envPath, []byte(testPdnsEnv), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(confPath, []byte(testPdnsConf), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.Chmod(envPath, 0o640)
+	_ = os.Chmod(confPath, 0o640)
+	t.Setenv("JABALI_PDNS_ENV_FILE", envPath)
+	t.Setenv("JABALI_PDNS_BACKEND_CONF", confPath)
+	return
+}
+
+func TestRotatePdns_HappyPath(t *testing.T) {
+	saveRotateSeams(t)
+	envPath, confPath := setupPdnsFixture(t)
+
+	var order []string
+	rotateRunSQL = func(_ context.Context, sql string) error {
+		if strings.HasPrefix(sql, "ALTER USER") {
+			b, _ := os.ReadFile(envPath) // still old at ALTER time
+			if !strings.Contains(string(b), "PDNS_DB_PASSWORD=oldpdnspw") {
+				t.Errorf("pdns.env rewritten before ALTER: %q", b)
+			}
+		}
+		order = append(order, "sql")
+		return nil
+	}
+	rotateRestartService = func(_ context.Context, unit string) error { order = append(order, "restart:"+unit); return nil }
+	rotateProbePdnsHealthy = func(_ context.Context, _ string) error { order = append(order, "probe"); return nil }
+
+	var out bytes.Buffer
+	if err := rotatePdns(context.Background(), &out, false); err != nil {
+		t.Fatal(err)
+	}
+	env, _ := os.ReadFile(envPath)
+	conf, _ := os.ReadFile(confPath)
+	if strings.Contains(string(env), "oldpdnspw") || strings.Contains(string(conf), "oldpdnspw") {
+		t.Error("old pdns password still present")
+	}
+	// Both files carry the SAME new password.
+	newPwEnv, _ := envGet(string(env), "PDNS_DB_PASSWORD")
+	newPwConf, _ := envGet(string(conf), "gmysql-password")
+	if newPwEnv == "" || newPwEnv != newPwConf {
+		t.Errorf("pdns.env pw %q != conf pw %q", newPwEnv, newPwConf)
+	}
+	// Sibling conf lines preserved.
+	if !strings.Contains(string(conf), "launch=gmysql") || !strings.Contains(string(conf), "gmysql-dbname=jabali_pdns") {
+		t.Errorf("conf siblings dropped:\n%s", conf)
+	}
+	if got := strings.Join(order, ","); got != "sql,restart:pdns,probe" {
+		t.Errorf("order = %q, want sql,restart:pdns,probe", got)
+	}
+	if _, err := os.Stat(envPath + bakSuffix); !os.IsNotExist(err) {
+		t.Error("pdns.env .bak not purged")
+	}
+}
+
+func TestRotatePdns_UnhealthyRollsBack(t *testing.T) {
+	saveRotateSeams(t)
+	envPath, confPath := setupPdnsFixture(t)
+
+	var sqls []string
+	rotateRunSQL = func(_ context.Context, sql string) error { sqls = append(sqls, sql); return nil }
+	rotateRestartService = func(_ context.Context, _ string) error { return nil }
+	rotateProbePdnsHealthy = func(_ context.Context, _ string) error { return errors.New("pdns down") }
+
+	var out bytes.Buffer
+	if err := rotatePdns(context.Background(), &out, false); err == nil {
+		t.Fatal("expected error when pdns is unhealthy")
+	}
+	env, _ := os.ReadFile(envPath)
+	conf, _ := os.ReadFile(confPath)
+	if !strings.Contains(string(env), "PDNS_DB_PASSWORD=oldpdnspw") || !strings.Contains(string(conf), "gmysql-password=oldpdnspw") {
+		t.Errorf("files not restored:\nenv=%s\nconf=%s", env, conf)
+	}
+	if len(sqls) != 2 || !strings.Contains(sqls[1], "'oldpdnspw'") {
+		t.Errorf("rollback ALTER did not restore old pw: %v", sqls)
+	}
+}
+
+func TestRotatePdns_NotProvisioned(t *testing.T) {
+	saveRotateSeams(t)
+	t.Setenv("JABALI_PDNS_ENV_FILE", filepath.Join(t.TempDir(), "absent-pdns.env"))
+	t.Setenv("JABALI_PDNS_BACKEND_CONF", filepath.Join(t.TempDir(), "absent.conf"))
+	var out bytes.Buffer
+	err := rotatePdns(context.Background(), &out, false)
+	if err == nil || !strings.Contains(err.Error(), "not provisioned") {
+		t.Fatalf("expected a clean not-provisioned error, got %v", err)
 	}
 }
 
