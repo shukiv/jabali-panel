@@ -3,7 +3,7 @@
 // expandable to per-user children). Manual creates render flat.
 import { Badge, Button, Card, Space, Table, Tag, Tooltip, Typography } from "antd";
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
-import { downloadUrl } from "../../../utils/download";
+import { useBackupDownloadPrepare } from "../../../utils/backupDownload";
 import { backupTypeColor, backupTypeLabel, runScopeSummary } from "../../../utils/backupType";
 import { shortDateTime } from "../../../utils/datetime";
 import { useTabParam } from "../../../hooks/useTabParam";
@@ -147,6 +147,7 @@ const RunStatusSummary = ({ run }: { run: BackupRun }) => {
 };
 
 export const AdminBackupsPage = () => {
+  const dl = useBackupDownloadPrepare("admin"); // GH #1408: prepare-then-download
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [uploadRestoreOpen, setUploadRestoreOpen] = useState(false);
   const [packageRunId, setPackageRunId] = useState<string | null>(null);
@@ -283,9 +284,9 @@ export const AdminBackupsPage = () => {
       feedback.message.warning("Backup must complete before download");
       return;
     }
-    // GH #462: anchor-download, not window.location.href — navigating aborts the
-    // in-flight backups poll and shows a spurious "Network Failed" toast.
-    downloadUrl(`/api/v1/admin/backups/${row.id}/download`);
+    // GH #1408: prepare in the background (restic materialize takes minutes)
+    // then trigger the download, so the button isn't dead in the meantime.
+    dl.start(row.id);
   };
 
   const handleCancel = async (row: BackupJob) => {
@@ -417,7 +418,7 @@ export const AdminBackupsPage = () => {
                 // GH #502: Download is the most common action after a backup completes —
                 // make it the primary (first, visible) action; Log + the rest collapse
                 // into the overflow menu.
-                { key: "download", label: "Download", icon: <DownloadOutlined />, hidden: isRestoreKind(row.kind) || (row.status !== "succeeded" && row.status !== "partial"), onClick: () => handleDownload(row) },
+                { key: "download", label: dl.preparingId === row.id ? "Preparing…" : "Download", icon: <DownloadOutlined />, loading: dl.preparingId === row.id, disabled: dl.preparingId === row.id, hidden: isRestoreKind(row.kind) || (row.status !== "succeeded" && row.status !== "partial"), onClick: () => handleDownload(row) },
                 { key: "log", label: "Log", icon: <FileTextOutlined />, onClick: () => setLogJob(row) },
                 {
                   key: "restore",

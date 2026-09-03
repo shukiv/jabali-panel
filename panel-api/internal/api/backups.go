@@ -123,6 +123,10 @@ func RegisterBackupRoutes(rg *gin.RouterGroup, cfg BackupHandlerConfig) {
 	admin.DELETE("/backups/:job_id", h.delete)
 	admin.GET("/backups/:job_id/status", h.status)
 	admin.GET("/backups/:job_id/download", h.download)
+	// GH #1408: background prepare so the Download button isn't dead during the
+	// restic materialize.
+	admin.POST("/backups/:job_id/download/prepare", h.downloadPrepare)
+	admin.GET("/backups/:job_id/download/prepare-status", h.downloadPrepareStatus)
 	admin.POST("/backups/:job_id/cancel", h.cancel)
 	admin.GET("/backups/:job_id/logs", h.logs)
 	admin.POST("/backups/restore", h.restore)
@@ -865,42 +869,49 @@ func streamBackupArtifact(c *gin.Context, ag agent.AgentInterface, job *models.B
 	// deadlines just keeps the default.
 	_ = http.NewResponseController(c.Writer).SetWriteDeadline(time.Time{})
 
-	matCtx, matCancel := context.WithTimeout(c.Request.Context(), 30*time.Minute)
-	defer matCancel()
-	// The snapshot lives in the job's DESTINATION repo. Forward repo_url +
-	// credentials so the agent opens that repo, not the local default at
-	// /var/lib/jabali-backups/repo (which has no snapshots and 404s with
-	// "no snapshots for job" — GH #462). destParams is nil for a truly-local
-	// backup, in which case the agent keeps its local default.
-	params := map[string]any{
-		"job_id":      job.ID,
-		"snapshot_id": job.SnapshotID,
-	}
-	for k, v := range destParams {
-		params[k] = v
-	}
-	raw, err := ag.Call(matCtx, "backup.materialize", params)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"status": "error", "error": "restic_restore_failed", "detail": err.Error(),
-		})
-		return
-	}
-	var mat struct {
-		Path string `json:"path"`
-	}
-	if err := json.Unmarshal(raw, &mat); err != nil || mat.Path == "" {
-		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "agent_reply_parse"})
-		return
-	}
+	// The materialized dir is cleaned up once the stream ends — whether we
+	// restored it inline below or a GH #1408 prepare-job warmed it first.
 	defer func() {
-		// Best-effort cleanup; a stale dir is recovered by the next
-		// download (handler RemoveAll's before re-restoring) or by a
-		// future cron sweeper.
 		cleanCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		_, _ = ag.Call(cleanCtx, "backup.materialize_cleanup", map[string]string{"job_id": job.ID})
 	}()
+
+	// GH #1408: reuse a prepare-job's already-restored dir so the download
+	// doesn't re-run the minutes-long restic materialize (which is what made the
+	// Download button look dead). Falls back to an inline materialize otherwise.
+	matPath := consumePreparedDir(job.ID)
+	if matPath == "" {
+		matCtx, matCancel := context.WithTimeout(c.Request.Context(), 30*time.Minute)
+		defer matCancel()
+		// The snapshot lives in the job's DESTINATION repo. Forward repo_url +
+		// credentials so the agent opens that repo, not the local default at
+		// /var/lib/jabali-backups/repo (which has no snapshots and 404s with
+		// "no snapshots for job" — GH #462). destParams is nil for a truly-local
+		// backup, in which case the agent keeps its local default.
+		params := map[string]any{
+			"job_id":      job.ID,
+			"snapshot_id": job.SnapshotID,
+		}
+		for k, v := range destParams {
+			params[k] = v
+		}
+		raw, err := ag.Call(matCtx, "backup.materialize", params)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"status": "error", "error": "restic_restore_failed", "detail": err.Error(),
+			})
+			return
+		}
+		var mat struct {
+			Path string `json:"path"`
+		}
+		if err := json.Unmarshal(raw, &mat); err != nil || mat.Path == "" {
+			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "agent_reply_parse"})
+			return
+		}
+		matPath = mat.Path
+	}
 
 	// GH #462: choose the compressor by what's actually installed. A box that
 	// lacks the zstd binary (installed before zstd became a dependency, then
@@ -919,7 +930,7 @@ func streamBackupArtifact(c *gin.Context, ag agent.AgentInterface, job *models.B
 	// so under enforce the download died with "zstd: Cannot exec". Two direct
 	// execs stay on the profile's tar + zstd allowlist and never touch a shell.
 	tarCmd := exec.CommandContext(c.Request.Context(), "tar", "-cf", "-",
-		"-C", filepath.Dir(mat.Path), filepath.Base(mat.Path))
+		"-C", filepath.Dir(matPath), filepath.Base(matPath))
 	var tarErr, zstdErr bytes.Buffer
 	tarCmd.Stderr = &tarErr
 
@@ -1559,6 +1570,10 @@ func RegisterMeBackupRoutes(rg *gin.RouterGroup, cfg MeBackupsHandlerConfig) {
 	g.POST("", h.create)
 	g.GET("", h.list)
 	g.GET("/:id/download", h.download)
+	// GH #1408: background prepare (owner-scoped) so the Download button isn't
+	// dead during the restic materialize.
+	g.POST("/:id/download/prepare", h.downloadPrepare)
+	g.GET("/:id/download/prepare-status", h.downloadPrepareStatus)
 	g.DELETE("/:id", h.delete)
 	g.GET("/:id/manifest", h.manifest)
 	g.POST("/:id/restore", h.restoreSelective)

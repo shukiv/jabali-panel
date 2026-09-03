@@ -2523,6 +2523,22 @@ paths:
       parameters: [ { in: path, name: job_id, required: true, schema: { type: string } } ]
       responses: { "200": { description: OK } }
 
+  /admin/backups/{job_id}/download/prepare:
+    post:
+      tags: [Backups]
+      summary: Prepare a backup download in the background (GH #1408)
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: job_id, required: true, schema: { type: string } } ]
+      responses: { "202": { description: Accepted } }
+
+  /admin/backups/{job_id}/download/prepare-status:
+    get:
+      tags: [Backups]
+      summary: Poll a backup download prepare job (GH #1408)
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: job_id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
   /admin/backups/{job_id}/logs:
     get:
       tags: [Backups]
@@ -3810,6 +3826,22 @@ paths:
     get:
       tags: [Me]
       summary: Download backups
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /me/backups/{id}/download/prepare:
+    post:
+      tags: [Me]
+      summary: Prepare a backup download in the background (GH #1408)
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "202": { description: Accepted } }
+
+  /me/backups/{id}/download/prepare-status:
+    get:
+      tags: [Me]
+      summary: Poll a backup download prepare job (GH #1408)
       security: [ { KratosSession: [] } ]
       parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
       responses: { "200": { description: OK } }
