@@ -6,6 +6,7 @@ import { useTranslation } from "react-i18next";
 import {
   PlusSquareOutlined,
   EyeOutlined,
+  SafetyOutlined,
   GlobalOutlined,
   MoreOutlined,
   SwapOutlined,
@@ -102,6 +103,7 @@ export type Domain = {
   is_enabled: boolean;
   temp_url_enabled?: boolean;
   temp_url?: string | null;
+  bot_challenge_include?: boolean;
   // GH #1175: >0 marks a reverse-proxy domain forwarding to this loopback port.
   reverse_proxy_port?: number;
   nginx_custom_directives: string;
@@ -343,6 +345,29 @@ export const UserDomainList = () => {
                           } catch (err) {
                             const e = err as { response?: { data?: { detail?: string; error?: string } } };
                             feedback.message.error(`Failed to toggle preview URL: ${e.response?.data?.detail ?? e.response?.data?.error ?? (err as Error).message}`);
+                          }
+                        },
+                      },
+                      {
+                        key: "bot-challenge",
+                        label: r.bot_challenge_include
+                          ? "Disable bot-detection challenge"
+                          : "Enable bot-detection challenge",
+                        icon: <SafetyOutlined />,
+                        onClick: async () => {
+                          try {
+                            await apiClient.patch(`/domains/${r.id}`, {
+                              bot_challenge_include: !r.bot_challenge_include,
+                            });
+                            feedback.message.success(
+                              r.bot_challenge_include
+                                ? "Bot-detection challenge disabled for this site"
+                                : "Bot-detection challenge enabled — active within a minute if the server is in Selected-domains mode",
+                            );
+                            qc.invalidateQueries({ queryKey: ["list", "domains"] });
+                          } catch (err) {
+                            const e = err as { response?: { data?: { detail?: string; error?: string } } };
+                            feedback.message.error(`Failed to toggle bot challenge: ${e.response?.data?.detail ?? e.response?.data?.error ?? (err as Error).message}`);
                           }
                         },
                       },
