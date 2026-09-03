@@ -42,6 +42,14 @@ type backupRestoreFromTarParams struct {
 	// ApplyStaged=false stages the extracted tree without touching the live
 	// system (recon), mirroring backup.restore.
 	ApplyStaged *bool `json:"apply_staged,omitempty"`
+	// GH #1408 tenant self-restore: when Mode=="tenant" the uploaded tar is
+	// untrusted, so the panel supplies the caller's OWNED resources and the
+	// agent skips anything else. AllowedDBNames / AllowedMailDomains: nil =
+	// unrestricted (admin); non-nil (even empty) = enforce. Mode=="tenant"
+	// REQUIRES both lists (fail-closed) and additionally drops docker.
+	Mode               string   `json:"mode,omitempty"`
+	AllowedDBNames     []string `json:"allowed_db_names,omitempty"`
+	AllowedMailDomains []string `json:"allowed_mail_domains,omitempty"`
 }
 
 type backupRestoreFromTarResult struct {
@@ -53,6 +61,11 @@ type backupRestoreFromTarResult struct {
 	Metadata       json.RawMessage      `json:"metadata,omitempty"`
 	StagingCleanup string               `json:"staging_cleanup,omitempty"`
 	BytesExtracted int64                `json:"bytes_extracted"`
+	// GH #1408 fail-closed ack: a tenant restore's panel handler REQUIRES these
+	// to be true. An agent predating the allowlist feature never sets them, so
+	// the panel rejects the restore rather than running it unrestricted.
+	DBAllowlistEnforced   bool `json:"db_allowlist_enforced"`
+	MailAllowlistEnforced bool `json:"mail_allowlist_enforced"`
 }
 
 func backupRestoreFromTarHandler(ctx context.Context, raw json.RawMessage) (any, error) {
@@ -64,15 +77,38 @@ func backupRestoreFromTarHandler(ctx context.Context, raw json.RawMessage) (any,
 	if p.ApplyStaged != nil {
 		apply = *p.ApplyStaged
 	}
-	return restoreAccountFromTar(ctx, p.JobID, p.TarPath, p.TargetUsername, p.Components, apply)
+	enf := restoreEnforcement{
+		Mode:               p.Mode,
+		AllowedDBNames:     p.AllowedDBNames,
+		AllowedMailDomains: p.AllowedMailDomains,
+	}
+	// Belt-and-suspenders: a tenant restore MUST carry both allowlists (a nil
+	// list means "unrestricted", so a caller that forgot one would restore
+	// wide-open). Refuse rather than run partially-gated.
+	if enf.Mode == "tenant" && (enf.AllowedDBNames == nil || enf.AllowedMailDomains == nil) {
+		return nil, bkInvalidArg("mode=tenant requires allowed_db_names and allowed_mail_domains (may be empty, not null)")
+	}
+	return restoreAccountFromTar(ctx, p.JobID, p.TarPath, p.TargetUsername, p.Components, apply, enf)
 }
 
 // restoreAccountFromTar is the reusable core: extract an untrusted account backup
 // tar and apply it to targetUsername. Shared by the single-upload restore handler
 // and the full-server container restore (which calls it once per inner user tar).
-func restoreAccountFromTar(ctx context.Context, jobID, tarPath, targetUsername string, components []string, apply bool) (*backupRestoreFromTarResult, error) {
+func restoreAccountFromTar(ctx context.Context, jobID, tarPath, targetUsername string, components []string, apply bool, enf restoreEnforcement) (*backupRestoreFromTarResult, error) {
 	if !jobIDRE.MatchString(jobID) {
 		return nil, bkInvalidArg("job_id must be a 26-char ULID")
+	}
+	// GH #1408: a tenant self-restore is limited to the audited-safe components;
+	// docker/dns are never applied from an untrusted self-service upload.
+	if enf.Mode == "tenant" {
+		components = intersectComponents(components, []string{"home", "db", "mail"})
+		if len(components) == 0 {
+			// The caller asked only for components a self-service restore can't
+			// apply. An EMPTY list means "all" downstream (componentFilter), so
+			// substitute a sentinel that matches no stage — apply nothing rather
+			// than fall open to a full restore.
+			components = []string{"__none__"}
+		}
 	}
 	if !backupUsernameRE.MatchString(targetUsername) {
 		return nil, bkInvalidArg("target_username must match ^[a-z][a-z0-9_-]{0,31}$")
@@ -131,6 +167,10 @@ func restoreAccountFromTar(ctx context.Context, jobID, tarPath, targetUsername s
 	}
 
 	out := backupRestoreFromTarResult{JobID: jobID, User: manifest.User, BytesExtracted: written}
+	// Echo which allowlists this agent enforced so the panel's tenant handler can
+	// fail closed against an agent that predates the feature (it never sets these).
+	out.DBAllowlistEnforced = enf.enforceDB()
+	out.MailAllowlistEnforced = enf.enforceMail()
 
 	// v1 restores into the SAME username the backup was taken from — the home
 	// tree inside the archive is /home/<backup-user> and applyAccountRestore
@@ -170,7 +210,7 @@ func restoreAccountFromTar(ctx context.Context, jobID, tarPath, targetUsername s
 		return &out, nil
 	}
 
-	applied, warnings := applyAccountRestore(ctx, root, targetUsername, manifest.User, manifest.Stages, stageResults)
+	applied, warnings := applyAccountRestore(ctx, root, targetUsername, manifest.User, manifest.Stages, stageResults, enf)
 	out.Applied = applied
 	out.Warnings = append(out.Warnings, warnings...)
 
@@ -202,6 +242,27 @@ func componentFilter(components []string) map[string]bool {
 		return nil
 	}
 	return m
+}
+
+// intersectComponents restricts a requested component set to an allowed set. An
+// EMPTY request means "all", so it becomes exactly the allowed set (not empty) —
+// this is what keeps a tenant restore that asked for nothing-in-particular from
+// falling through to an unrestricted all-stages apply. GH #1408.
+func intersectComponents(requested, allowed []string) []string {
+	if len(requested) == 0 {
+		return allowed
+	}
+	allow := make(map[string]bool, len(allowed))
+	for _, a := range allowed {
+		allow[a] = true
+	}
+	out := make([]string, 0, len(requested))
+	for _, r := range requested {
+		if allow[strings.TrimSpace(r)] {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // resolveExtractedRoot returns the per-stage staging root inside the extracted
@@ -254,6 +315,10 @@ type backupInspectUploadedTarParams struct {
 type backupInspectUploadedTarResult struct {
 	User       backup.ManifestUser `json:"user"`
 	Components []string            `json:"components"`
+	// AllowlistSupported is always true on an agent that has the GH #1408 tenant
+	// enforcement. The tenant restore handler gates on it BEFORE applying, so an
+	// older agent (which never sets it) can't run an unrestricted tenant restore.
+	AllowlistSupported bool `json:"allowlist_supported"`
 }
 
 func backupInspectUploadedTarHandler(ctx context.Context, raw json.RawMessage) (any, error) {
@@ -288,7 +353,7 @@ func backupInspectUploadedTarHandler(ctx context.Context, raw json.RawMessage) (
 		comps = append(comps, st.Name)
 		seen[st.Name] = true
 	}
-	return backupInspectUploadedTarResult{User: manifest.User, Components: comps}, nil
+	return backupInspectUploadedTarResult{User: manifest.User, Components: comps, AllowlistSupported: true}, nil
 }
 
 func init() {

@@ -30,6 +30,7 @@ var bodyLimitExemptRoutes = map[string]struct{}{
 	// The chunked backup-archive upload sends multi-MB chunks; without this the
 	// 1 MB global cap 413s every chunk before the handler's own LimitReader runs.
 	"POST /api/v1/admin/backups/restore-upload": {},
+	"POST /api/v1/me/backups/restore-upload":    {},
 	// GH #1184 admin File Manager — the SAME handlers as the tenant /files
 	// mount (which is exempt above), re-mounted under /admin/files, so they
 	// carry the same own caps and need the same exemptions (GH #1044).

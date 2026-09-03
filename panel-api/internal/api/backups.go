@@ -1574,6 +1574,12 @@ func RegisterMeBackupRoutes(rg *gin.RouterGroup, cfg MeBackupsHandlerConfig) {
 	// dead during the restic materialize.
 	g.POST("/:id/download/prepare", h.downloadPrepare)
 	g.GET("/:id/download/prepare-status", h.downloadPrepareStatus)
+	// GH #1408: tenant self-service Restore-from-Upload (own account, untrusted
+	// tar → owned-DB/domain allowlists enforced by the agent).
+	g.POST("/restore-upload", h.restoreUploadChunk)
+	g.POST("/restore-upload/inspect", h.restoreUploadInspect)
+	g.POST("/restore-upload/apply", h.restoreUploadApply)
+	g.GET("/restore-upload/status", h.restoreUploadStatus)
 	g.DELETE("/:id", h.delete)
 	g.GET("/:id/manifest", h.manifest)
 	g.POST("/:id/restore", h.restoreSelective)

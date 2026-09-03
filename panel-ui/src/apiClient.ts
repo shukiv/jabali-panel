@@ -490,6 +490,7 @@ export interface UploadedBackupInfo {
 export async function uploadBackupArchiveChunked(
   file: File,
   onProgress?: (p: RestoreUploadProgress) => void,
+  base = "/admin/backups", // GH #1408: "/me/backups" for tenant self-service restore
 ): Promise<string> {
   const chunkSize = RESTORE_CHUNK_SIZE;
   const totalChunks = Math.max(1, Math.ceil(file.size / chunkSize));
@@ -520,7 +521,7 @@ export async function uploadBackupArchiveChunked(
       ...(isLast ? { final: "1" } : {}),
     });
     await apiClient.post(
-      `/admin/backups/restore-upload?${params.toString()}`,
+      `${base}/restore-upload?${params.toString()}`,
       file.slice(start, end),
       {
         headers: { "Content-Type": "application/octet-stream" },
@@ -536,9 +537,10 @@ export async function uploadBackupArchiveChunked(
 
 export async function inspectUploadedBackup(
   uploadId: string,
+  base = "/admin/backups",
 ): Promise<UploadedBackupInfo> {
   const { data } = await apiClient.post<UploadedBackupInfo>(
-    "/admin/backups/restore-upload/inspect",
+    `${base}/restore-upload/inspect`,
     { upload_id: uploadId },
   );
   return data;
@@ -558,9 +560,10 @@ export async function applyUploadedBackupRestore(
   uploadId: string,
   targetUsername: string,
   components: string[],
+  base = "/admin/backups", // GH #1408: "/me/backups" forces target = the caller
 ): Promise<UploadedBackupRestoreResult> {
   await apiClient.post(
-    "/admin/backups/restore-upload/apply",
+    `${base}/restore-upload/apply`,
     { upload_id: uploadId, target_username: targetUsername, components },
   );
   const deadline = Date.now() + 65 * 60 * 1000; // matches the server's 60-min cap
@@ -569,7 +572,7 @@ export async function applyUploadedBackupRestore(
     let s: RestoreUploadStatus | null = null;
     try {
       const resp = await apiClient.get<RestoreUploadStatus>(
-        "/admin/backups/restore-upload/status",
+        `${base}/restore-upload/status`,
         { params: { upload_id: uploadId } },
       );
       s = resp.data;

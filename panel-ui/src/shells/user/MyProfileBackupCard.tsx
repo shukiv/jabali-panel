@@ -9,6 +9,7 @@ import { feedback } from "../../lib/feedback"; // GH #970: themed toasts
 import { shortDateTime } from "../../utils/datetime";
 import { backupTypeColor, backupTypeLabel } from "../../utils/backupType";
 import { RowActions } from "../../components/RowActions";
+import { RestoreFromUploadDrawer } from "../admin/backups/RestoreFromUploadDrawer";
 import { DeleteOutlined, DownloadOutlined, ReloadOutlined, SaveOutlined, WarningOutlined } from "@icons";
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -54,6 +55,7 @@ const statusColor = (status: string): string => {
 export const MyProfileBackupCard = () => {
   const { t } = useTranslation();
   const dl = useBackupDownloadPrepare("me"); // GH #1408: prepare-then-download
+  const [restoreUploadOpen, setRestoreUploadOpen] = useState(false); // GH #1408
   const screens = Grid.useBreakpoint();
   const [submitting, setSubmitting] = useState(false);
   const [restoreId, setRestoreId] = useState<string | null>(null);
@@ -165,6 +167,9 @@ export const MyProfileBackupCard = () => {
               options={destOptions}
             />
           )}
+          <Button onClick={() => setRestoreUploadOpen(true)}>
+            Restore from upload
+          </Button>
           <Button
             type="primary"
             loading={submitting}
@@ -318,6 +323,13 @@ export const MyProfileBackupCard = () => {
         open={restoreId !== null}
         onClose={() => setRestoreId(null)}
       />
+      {restoreUploadOpen && (
+        <RestoreFromUploadDrawer
+          ownerMode
+          open={restoreUploadOpen}
+          onClose={() => setRestoreUploadOpen(false)}
+        />
+      )}
     </Card>
   );
 };
