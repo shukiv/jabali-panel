@@ -158,6 +158,7 @@ func newRootCmd() *cobra.Command {
 		newServiceCmd(),
 		newMailAdminCmd(),
 		newDRCmd(),
+		newSecretsCmd(),
 	)
 	rejectUnknownSubcommands(cmd)
 
