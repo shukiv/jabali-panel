@@ -172,7 +172,7 @@ func systemFullbackupRestoreUploadedHandler(ctx context.Context, raw json.RawMes
 			out.Users = append(out.Users, fullRestoreUserResult{Username: e.Username, Error: "inner archive missing from container"})
 			continue
 		}
-		res, rerr := restoreAccountFromTar(ctx, randomULID(), inner, e.Username, nil, true)
+		res, rerr := restoreAccountFromTar(ctx, randomULID(), inner, e.Username, nil, true, restoreEnforcement{})
 		if rerr != nil {
 			msg := rerr.Error()
 			if ae, ok := rerr.(*agentwire.AgentError); ok && ae.Message != "" {

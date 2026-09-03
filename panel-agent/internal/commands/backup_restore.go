@@ -37,6 +37,46 @@ const restoreLockPath = "/var/lib/jabali-backups/.restore.lock"
 // (Gitea #463).
 var restoreDBNameRe = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_-]{0,63}$`)
 
+// restoreEnforcement gates which manifest-named resources an account restore may
+// touch. It exists for the TENANT self-service restore (GH #1408), where the
+// uploaded tar is untrusted: the panel passes the caller's OWNED database names
+// and mail domains, and the agent skips any db/mail stage naming something the
+// caller doesn't own — a crafted tar can't `mariadb jabali_panel < …` or inject
+// into another tenant's mailbox. Admin restores pass the zero value (Mode="",
+// nil lists) and stay unrestricted.
+//
+// Semantics of the lists: nil = unrestricted; non-nil (EVEN EMPTY) = enforce
+// (empty → every stage of that kind is skipped). Mode=="tenant" additionally
+// drops docker (not gateable per-account here) and is the flag the panel keys
+// its fail-closed version check on.
+type restoreEnforcement struct {
+	Mode               string
+	AllowedDBNames     []string
+	AllowedMailDomains []string
+}
+
+func (e restoreEnforcement) enforceDB() bool   { return e.AllowedDBNames != nil }
+func (e restoreEnforcement) enforceMail() bool { return e.AllowedMailDomains != nil }
+
+func (e restoreEnforcement) dbAllowed(name string) bool {
+	for _, d := range e.AllowedDBNames {
+		if d == name { // exact — DB names are case-sensitive on Linux MariaDB/PG
+			return true
+		}
+	}
+	return false
+}
+
+func (e restoreEnforcement) mailDomainAllowed(domain string) bool {
+	domain = strings.ToLower(domain)
+	for _, d := range e.AllowedMailDomains {
+		if strings.ToLower(d) == domain {
+			return true
+		}
+	}
+	return false
+}
+
 type backupRestoreParams struct {
 	JobID              string `json:"job_id"`
 	ManifestSnapshotID string `json:"manifest_snapshot_id"`
@@ -203,7 +243,7 @@ func backupRestoreHandler(ctx context.Context, raw json.RawMessage) (any, error)
 	}
 	if apply {
 		stagingRoot := filepath.Join("/var/lib/jabali-backups/restore-staging", req.JobID)
-		applied, warnings := applyAccountRestore(ctx, stagingRoot, req.TargetUsername, manifest.User, manifest.Stages, out.Stages)
+		applied, warnings := applyAccountRestore(ctx, stagingRoot, req.TargetUsername, manifest.User, manifest.Stages, out.Stages, restoreEnforcement{})
 		out.Applied = applied
 		out.Warnings = warnings
 		// GH #1361: stage each FTP subaccount's captured /etc/shadow hash for
@@ -290,6 +330,7 @@ func applyAccountRestore(
 	manifestUser backup.ManifestUser,
 	manifestStages []backup.ManifestStage,
 	stageResults []backupRestoreStage,
+	enf restoreEnforcement,
 ) ([]string, []string) {
 	// Per-stage materialization gate, indexed — NOT keyed by stage Name.
 	// Docker and DB fan out one ManifestStage per app / per database, and
@@ -414,6 +455,14 @@ func applyAccountRestore(
 			applied = append(applied, fmt.Sprintf("home → /home/%s", username))
 
 		case backup.StageDocker:
+			// GH #1408: docker data lands in a GLOBAL docker-apps/<slug> dir keyed
+			// by the (untrusted) manifest slug, which we can't cheaply scope to the
+			// caller — so a tenant self-restore never applies docker (cut from
+			// tenant v1). Admin restores are unaffected (Mode="").
+			if enf.Mode == "tenant" {
+				warnings = append(warnings, "docker: not restored from a self-service upload (restore Docker apps via an admin)")
+				continue
+			}
 			if len(st.Items) == 0 {
 				warnings = append(warnings, "docker: manifest stage missing items[0] app slug")
 				continue
@@ -467,6 +516,15 @@ func applyAccountRestore(
 			if !restoreDBNameRe.MatchString(db) {
 				warnings = append(warnings,
 					fmt.Sprintf("db: manifest name %q rejected (not a valid identifier)", db))
+				continue
+			}
+			// GH #1408: a tenant self-restore may only load databases the caller
+			// owns — the untrusted manifest name is otherwise a global handle
+			// (`otheruser_db`, or even `jabali_panel`). Skip anything not on the
+			// panel-supplied owned list.
+			if enf.enforceDB() && !enf.dbAllowed(db) {
+				warnings = append(warnings,
+					fmt.Sprintf("db %q: not one of your databases — skipped (create it first, then restore)", db))
 				continue
 			}
 			// PG dump first — backup_databases.go writes "<db>.pgdump"
@@ -596,6 +654,24 @@ func applyAccountRestore(
 			if entries, err := os.ReadDir(mailTree); err != nil || len(entries) == 0 {
 				warnings = append(warnings, "mail: no message tree in snapshot — skip")
 				continue
+			}
+			// GH #1408: a tenant self-restore may only replay mailboxes for
+			// domains the caller owns. The tree is keyed <domain>/<local>, so drop
+			// every non-owned <domain> subdir from the (agent-owned) staging before
+			// import — a crafted tar otherwise injects messages into another
+			// tenant's mailbox via JMAP Email/import.
+			if enf.enforceMail() {
+				dirs, _ := os.ReadDir(mailTree)
+				for _, e := range dirs {
+					if e.IsDir() && !enf.mailDomainAllowed(e.Name()) {
+						_ = os.RemoveAll(filepath.Join(mailTree, e.Name()))
+						warnings = append(warnings, fmt.Sprintf("mail: domain %q is not yours — skipped", e.Name()))
+					}
+				}
+				if left, _ := os.ReadDir(mailTree); len(left) == 0 {
+					warnings = append(warnings, "mail: no mailboxes for your domains in this archive — skip")
+					continue
+				}
 			}
 			if !stalwartActive(ctx) {
 				warnings = append(warnings, "mail: Stalwart inactive — message import skipped")

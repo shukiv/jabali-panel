@@ -3846,6 +3846,34 @@ paths:
       parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
       responses: { "200": { description: OK } }
 
+  /me/backups/restore-upload:
+    post:
+      tags: [Me]
+      summary: Upload a backup archive chunk to restore into your own account (GH #1408)
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /me/backups/restore-upload/inspect:
+    post:
+      tags: [Me]
+      summary: Inspect an uploaded backup archive before restore (GH #1408)
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /me/backups/restore-upload/apply:
+    post:
+      tags: [Me]
+      summary: Restore an uploaded archive into your own account (GH #1408)
+      security: [ { KratosSession: [] } ]
+      responses: { "202": { description: Accepted } }
+
+  /me/backups/restore-upload/status:
+    get:
+      tags: [Me]
+      summary: Poll a self-service restore-from-upload (GH #1408)
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
   /me/backups/{id}/manifest:
     get:
       tags: [Me]
