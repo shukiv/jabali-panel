@@ -74,6 +74,20 @@ export interface UploadOpts {
   // name overrides the destination filename (used for "keep both" auto-rename
   // on a collision). Defaults to the File's own name.
   name?: string;
+  // GH #1410: abort an in-flight upload (Cancel button). Forwarded to axios;
+  // aborting throws a CanceledError the caller treats as "cancelled".
+  signal?: AbortSignal;
+}
+
+// GH #1410: is the panel being reached by a bare IP rather than a domain? Then
+// there's no Cloudflare/reverse-proxy body cap in the path (CF can't be reached
+// without an SNI hostname), so a big upload can go as one direct request instead
+// of being chunked to dodge a cap that isn't there. Strips IPv6 brackets first.
+export function isIPHost(hostname: string): boolean {
+  const h = hostname.replace(/^\[|\]$/g, "");
+  if (h === "localhost") return true;
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(h)) return true; // IPv4
+  return h.includes(":"); // bracket-stripped IPv6 literal
 }
 
 export async function filesUpload(
@@ -94,6 +108,7 @@ export async function filesUpload(
     // default request timeout — a large file (or a slow uplink) legitimately
     // takes longer than 60s and was failing with "timeout of 15000ms exceeded".
     timeout: 0,
+    signal: opts?.signal,
     onUploadProgress: (e) => {
       if (!onProgress) return;
       const total = e.total ?? file.size;
@@ -179,13 +194,26 @@ export async function filesUploadChunked(
       ...(isLast ? { final: "1" } : {}),
       ...(isLast && opts?.overwrite ? { overwrite: "true" } : {}),
     });
+    const chunkStart = offset;
     await apiClient.post(`${base}/upload-chunk?${params.toString()}`, blob, {
       headers: { "Content-Type": "application/octet-stream" },
       timeout: 0, // GH #1410: a slow chunk mustn't hit the client request timeout
+      signal: opts?.signal,
+      // GH #1410: report progress WITHIN the chunk, not just at its boundary —
+      // at 80 MB chunks a boundary-only bar jumps ~13% at a time and the speed
+      // read-out would only refresh every several seconds.
+      onUploadProgress: (e) => {
+        if (onProgress && file.size > 0) {
+          onProgress(Math.min(1, (chunkStart + e.loaded) / file.size));
+        }
+      },
     });
     offset = end;
-    if (onProgress) onProgress(file.size > 0 ? offset / file.size : 1);
   } while (offset < file.size);
+  // The within-chunk onUploadProgress above drives the live bar + speed; one
+  // final tick guarantees 100% (and covers a zero-byte file, which fires no
+  // upload-progress events) without a per-boundary sample dragging the EMA down.
+  if (onProgress) onProgress(1);
   // Success — forget the resume key.
   clearResumeId(resumeKey);
 }

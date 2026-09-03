@@ -5,7 +5,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 import { apiClient, UPLOAD_CHUNK_BYTES, UPLOAD_SINGLE_SHOT_MAX } from "../../../apiClient";
-import { filesUploadChunked } from "./filesApi";
+import { filesUploadChunked, isIPHost } from "./filesApi";
 
 type Sent = { offset: number; final: boolean; len: number };
 
@@ -38,6 +38,15 @@ describe("GH #1410 — File Manager upload chunking", () => {
   it("uses the same 80 MB chunk size as the DB restore", () => {
     expect(UPLOAD_CHUNK_BYTES).toBe(80 * 1024 * 1024);
     expect(UPLOAD_SINGLE_SHOT_MAX).toBe(90 * 1024 * 1024);
+  });
+
+  it("isIPHost detects bare IPs (direct upload) vs domains (chunked)", () => {
+    expect(isIPHost("1.2.3.4")).toBe(true);
+    expect(isIPHost("127.0.0.1")).toBe(true);
+    expect(isIPHost("[2001:db8::1]")).toBe(true); // location.hostname brackets IPv6
+    expect(isIPHost("localhost")).toBe(true);
+    expect(isIPHost("example.com")).toBe(false);
+    expect(isIPHost("panel.example.com")).toBe(false);
   });
 
   it("splits a file into contiguous chunks, flagging only the last final", async () => {
@@ -74,6 +83,44 @@ describe("GH #1410 — File Manager upload chunking", () => {
     // Starts clean from 0, does not send a bad offset.
     expect(sent.map((s) => s.offset)).toEqual([0, 4, 8]);
     expect(localStorage.getItem("jabali:upload:/home/a|f.bin|10|1")).not.toBe("stale-uuid");
+  });
+
+  it("stops the chunk loop when the abort signal is already fired", async () => {
+    let posts = 0;
+    vi.spyOn(apiClient, "post").mockImplementation((async (_u: string, _b: unknown, cfg: { signal?: AbortSignal }) => {
+      if (cfg?.signal?.aborted) {
+        const e = new Error("canceled") as Error & { code?: string };
+        e.code = "ERR_CANCELED";
+        throw e;
+      }
+      posts++;
+      return { data: {} };
+    }) as never);
+    const ctrl = new AbortController();
+    ctrl.abort();
+    await expect(
+      filesUploadChunked("/home/a", mkFile(10), 4, undefined, { signal: ctrl.signal }),
+    ).rejects.toMatchObject({ code: "ERR_CANCELED" });
+    expect(posts).toBe(0);
+  });
+
+  it("stops after the in-flight chunk when aborted mid-upload", async () => {
+    let posts = 0;
+    const ctrl = new AbortController();
+    vi.spyOn(apiClient, "post").mockImplementation((async (_u: string, _b: unknown, cfg: { signal?: AbortSignal }) => {
+      if (cfg?.signal?.aborted) {
+        const e = new Error("canceled") as Error & { code?: string };
+        e.code = "ERR_CANCELED";
+        throw e;
+      }
+      posts++;
+      if (posts === 1) ctrl.abort(); // cancel after the first chunk lands
+      return { data: {} };
+    }) as never);
+    await expect(
+      filesUploadChunked("/home/a", mkFile(10), 4, undefined, { signal: ctrl.signal }),
+    ).rejects.toMatchObject({ code: "ERR_CANCELED" });
+    expect(posts).toBe(1); // only the first of three chunks went out
   });
 
   it("finalises a fully-staged resume by sending the final marker", async () => {
