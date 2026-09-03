@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
-	"git.jabali-panel.com/shukivaknin/jabali2/internal/appseccfg"
 )
 
 // M26 Step 2 (ADR-0053). CrowdSec LAPI surface for the admin Security
@@ -1003,19 +1002,9 @@ func renderAppSecGeoblockRule(mode string, countries []string) string {
 	// allowlist that the panel last wrote. Missing file → nil → no
 	// webmail filter; the panel reconciler writes it within ~60s
 	// of email_enabled changing, so any gap is brief.
-	webmailHosts, _ := appseccfg.LoadWebmailHosts(appseccfg.WebmailHostsPath)
-	return appseccfg.Render(appseccfg.Opts{
-		Mode:      mode,
-		Countries: countries,
-		Inband: []string{
-			"crowdsecurity/base-config",
-			"crowdsecurity/vpatch-*",
-			"crowdsecurity/generic-*",
-		},
-		AdminAllowlist: true,
-		PanelHost:      appsecPanelHost(),
-		WebmailHosts:   webmailHosts,
-	})
+	// Delegate to the shared renderer, preserving the current bot-detection
+	// header marker so toggling geoblock never resets it (and vice-versa).
+	return renderJabaliAppsec(mode, countries, readBotDetectionMode())
 }
 
 // ---- M27 Step 2: security.crowdsec.allowlists.{list,add,remove} -----------
@@ -2008,6 +1997,8 @@ func init() {
 	Default.Register("security.crowdsec.hub.remove", csHubRemoveHandler)
 	Default.Register("security.crowdsec.appsec.geoblock.get", csAppSecGeoblockGetHandler)
 	Default.Register("security.crowdsec.appsec.geoblock.set", csAppSecGeoblockSetHandler)
+	Default.Register("security.crowdsec.appsec.botdetection.get", csBotDetectionGetHandler)
+	Default.Register("security.crowdsec.appsec.botdetection.set", csBotDetectionSetHandler)
 	Default.Register("security.crowdsec.allowlists.list", csAllowlistsListHandler)
 	Default.Register("security.crowdsec.allowlists.add", csAllowlistsAddHandler)
 	Default.Register("security.crowdsec.allowlists.remove", csAllowlistsRemoveHandler)

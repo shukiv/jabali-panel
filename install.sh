@@ -9861,9 +9861,21 @@ install_crowdsec_appsec() {
   local acquis_dir="/etc/crowdsec/acquis.d"
   install -d -m 0755 "$acquis_dir"
   local acquis_file="$acquis_dir/jabali-appsec.yaml"
-  if [[ ! -f "$_appsec_cfg" ]]; then
+  # AppSec bot detection (CrowdSec 1.8) composes extra appsec-configs into
+  # this acquis via the plural `appsec_configs:` key — written by the agent
+  # (security.crowdsec.appsec.botdetection.set) and owned by it while on.
+  # This plural-check MUST come first — before both the singular heredoc AND
+  # the fresh-install `rm -f` below. The singular heredoc would clobber the
+  # composition back to OFF on every `jabali update`; the `rm -f` (reachable
+  # via `jabali repair` / a half-failed update / a hand-deleted config) would
+  # delete the acquis entirely, leaving a bot-on box with NO AppSec listener
+  # after the next crowdsec restart. So on a plural acquis: touch nothing. The
+  # agent rewrites it to the singular form when the operator turns it off.
+  if [[ -f "$acquis_file" ]] && grep -qE '^appsec_configs:' "$acquis_file"; then
+    _log "AppSec acquis is in bot-detection composition mode (agent-managed) — leaving it intact"
+  elif [[ ! -f "$_appsec_cfg" ]]; then
     _warn "appsec config not present yet (binary not built — fresh install); skipping AppSec acquis. 'jabali update' will wire it after the build."
-    rm -f "$acquis_file"   # drop any stale acquis from a prior partial run
+    rm -f "$acquis_file"   # drop any stale singular acquis from a prior partial run
   else
   local desired_acquis=$'# Managed by jabali install.sh — M27 AppSec geoblock.\n# TCP loopback listener. crowdsec-nginx-bouncer dials this via\n# APPSEC_URL=http://127.0.0.1:7422. Not exposed outside the host.\nappsec_config: crowdsecurity/jabali-appsec\nlabels:\n  type: appsec\nlisten_addr: 127.0.0.1:7422\nsource: appsec\n'
   if [[ ! -f "$acquis_file" ]] || ! cmp -s <(printf '%s' "$desired_acquis") "$acquis_file"; then
@@ -10078,7 +10090,19 @@ install_crowdsec_nginx_bouncer() {
     _spin "apt install crowdsec-nginx-bouncer" \
       apt-get install -y -qq --no-install-recommends crowdsec-nginx-bouncer
   else
-    _log "crowdsec-nginx-bouncer already installed"
+    # Install-only-if-absent freezes existing boxes at whatever bouncer
+    # version first landed (the Adminer-freeze shape,
+    # feedback_install_download_gate_freezes_version). AppSec bot detection
+    # (CrowdSec 1.8) needs the challenge remediation, which the bouncer only
+    # learned to serve in 1.2.x (challenge.lua) — so a fleet box stuck on
+    # 1.1.6 could never enforce it. Pull the packagecloud candidate on every
+    # run. --only-upgrade is a no-op when already current; confold keeps our
+    # managed conf (the jabali-nginx key + APPSEC_URL below are rewritten
+    # regardless), and the new documented default lands as .dpkg-dist.
+    _spin "apt upgrade crowdsec-nginx-bouncer (packagecloud candidate)" \
+      apt-get install -y -qq --only-upgrade \
+        -o Dpkg::Options::=--force-confold -o Dpkg::Options::=--force-confdef \
+        crowdsec-nginx-bouncer
   fi
 
   local bouncer_conf="/etc/crowdsec/bouncers/crowdsec-nginx-bouncer.conf"

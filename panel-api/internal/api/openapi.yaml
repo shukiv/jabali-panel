@@ -1998,6 +1998,19 @@ paths:
       requestBody: { content: { application/json: { schema: { type: object } } } }
       responses: { "200": { description: OK } }
 
+  /admin/security/crowdsec/appsec/bot-detection:
+    get:
+      tags: [CrowdSec]
+      summary: Get AppSec bot-detection mode
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+    put:
+      tags: [CrowdSec]
+      summary: Update AppSec bot-detection mode (off|balanced|permissive)
+      security: [ { KratosSession: [] } ]
+      requestBody: { content: { application/json: { schema: { type: object } } } }
+      responses: { "200": { description: OK } }
+
   /admin/security/crowdsec/country-exemption:
     get:
       tags: [CrowdSec]
