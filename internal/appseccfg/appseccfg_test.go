@@ -229,6 +229,22 @@ func TestRenderBotExempt_PanelHostScopesPanelPathsButNotAcme(t *testing.T) {
 	}
 }
 
+func TestRenderBotExempt_PerDomainOptOut(t *testing.T) {
+	out := RenderBotExempt(Opts{
+		BotExemptHosts: []string{"Api.Example.com", "www.api.example.com", "api.example.com"},
+	})
+	mustContain(t, out, `req.Host == "api.example.com" || req.Host == "www.api.example.com"`, "sorted, deduped opt-out hosts")
+	mustContain(t, out, `ExemptFromChallenge("jabali-domain-optout")`, "distinct opt-out label")
+	// ACME + panel exemptions always present alongside.
+	mustContain(t, out, `ExemptFromChallenge("jabali-acme-http01")`, "acme still exempt")
+	mustNotContain(t, out, `startsWith "api."`, "host equality, never prefix")
+}
+
+func TestRenderBotExempt_NoOptOutWhenListEmpty(t *testing.T) {
+	out := RenderBotExempt(Opts{})
+	mustNotContain(t, out, "jabali-domain-optout", "no opt-out filter when list empty")
+}
+
 func TestRenderBotExempt_WebmailHostEqualityNeverPrefix(t *testing.T) {
 	out := RenderBotExempt(Opts{WebmailHosts: []string{"Mail.Foo.com", "mail.foo.com", "mail.bar.com"}})
 	mustContain(t, out, `req.Host == "mail.bar.com" || req.Host == "mail.foo.com"`, "sorted, deduped host equality")

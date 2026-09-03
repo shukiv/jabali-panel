@@ -1054,6 +1054,7 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 	// domains.email_enabled. Self-scoping — no-op when sslCerts isn't
 	// wired; per-domain errors don't abort the sweep.
 	r.reconcileWebmailVhosts(ctx)
+	r.reconcileBotChallengeExempt(ctx)
 
 	r.reconcileCronJobs(ctx)
 	// Reconcile cron jobs: apply enabled jobs, remove disabled jobs, cleanup orphans.
