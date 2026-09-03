@@ -762,6 +762,16 @@ func (h *domainHandler) update(c *gin.Context) {
 		domain.IsEnabled = *req.IsEnabled
 	}
 
+	// Bot-detection opt-IN — OWNER or admin (self-service). A tenant opting
+	// their own site INTO the challenge only adds protection, so unlike the
+	// opt-out (bot_challenge_exempt, admin-only above) it is safe for the owner
+	// to set. Ownership is already enforced by the forbidden gate above, so a
+	// tenant can only flip this on domains they own. Effective only in the
+	// server-wide "selected" scope; inert otherwise.
+	if req.BotChallengeInclude != nil {
+		domain.BotChallengeInclude = *req.BotChallengeInclude
+	}
+
 	// Preview URL toggle — owner or admin. Enabling re-checks the slug
 	// collision (see previewSlugConflict).
 	if req.TempURLEnabled != nil && *req.TempURLEnabled != domain.TempURLEnabled {
@@ -803,9 +813,6 @@ func (h *domainHandler) update(c *gin.Context) {
 		// (while bot detection is on) has the agent re-render jabali-bot-exempt.
 		if req.BotChallengeExempt != nil {
 			domain.BotChallengeExempt = *req.BotChallengeExempt
-		}
-		if req.BotChallengeInclude != nil {
-			domain.BotChallengeInclude = *req.BotChallengeInclude
 		}
 
 		if req.NginxRules != nil {
