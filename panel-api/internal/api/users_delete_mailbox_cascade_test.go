@@ -155,3 +155,7 @@ func TestUserDelete_DestroysStalwartAccounts(t *testing.T) {
 	}
 	t.Errorf("expected mail.domain.purge_accounts for victim.example.com; calls=%v", ag.calls)
 }
+
+
+// ListByDomainIDs added for the JAB-374 batch interface method.
+func (m *udMailboxRepo) ListByDomainIDs(context.Context, []string) ([]models.Mailbox, error) { return nil, nil }

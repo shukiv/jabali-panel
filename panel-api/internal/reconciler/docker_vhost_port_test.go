@@ -51,3 +51,4 @@ func TestDockerAppOwnsUpstreamPort(t *testing.T) {
 		t.Error("missing DockerAppID must fail closed")
 	}
 }
+

@@ -21,8 +21,14 @@ func (s *stubDockerRepo) ListByUserID(context.Context, string) ([]*models.Docker
 	return s.byUser, nil
 }
 func (s *stubDockerRepo) ListAll(context.Context) ([]*models.DockerApp, error) { return s.all, nil }
-func (s *stubDockerRepo) ListPortsForApp(context.Context, string) ([]*models.DockerAppPublishedPort, error) {
+func (s *stubDockerRepo) ListPortsForApps(context.Context, []string) ([]*models.DockerAppPublishedPort, error) {
 	return nil, nil
+}
+
+// ListPortsForApp must NOT be reached — Build batches ports via ListPortsForApps
+// now (JAB-374); a per-app call is a regression.
+func (s *stubDockerRepo) ListPortsForApp(context.Context, string) ([]*models.DockerAppPublishedPort, error) {
+	panic("Build must batch docker ports via ListPortsForApps (JAB-374), not per-app ListPortsForApp")
 }
 
 func ptr(s string) *string { return &s }

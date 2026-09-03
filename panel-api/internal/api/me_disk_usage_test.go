@@ -230,3 +230,7 @@ func TestMeDiskUsage_PreservePriorWhenBothFail(t *testing.T) {
 		t.Errorf("both-fail must preserve prior Files (7 MiB), got %d", resp.Files.Bytes)
 	}
 }
+
+
+// ListByDomainIDs added for the JAB-374 batch interface method.
+func (m *duMailboxRepo) ListByDomainIDs(context.Context, []string) ([]models.Mailbox, error) { return nil, nil }

@@ -562,3 +562,7 @@ func (r *fakeDomainRepo) RewriteDocRootPrefix(context.Context, string, string, s
 	return 0, nil
 }
 func (r *fakeDomainRepo) TransferOwner(context.Context, string, string, string) error { return nil }
+
+
+// ListByZoneIDs added for the JAB-374 batch interface method.
+func (m *fakeDNSRecordRepo) ListByZoneIDs(context.Context, []string) ([]models.DNSRecord, error) { return nil, nil }

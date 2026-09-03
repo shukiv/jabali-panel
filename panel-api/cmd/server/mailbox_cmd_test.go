@@ -566,3 +566,7 @@ func TestRotatePassword_NotFound(t *testing.T) {
 		t.Fatalf("expected not-found error, got %v", err)
 	}
 }
+
+
+// ListByDomainIDs added for the JAB-374 batch interface method.
+func (m *fakeMailboxRepo) ListByDomainIDs(context.Context, []string) ([]models.Mailbox, error) { return nil, nil }
