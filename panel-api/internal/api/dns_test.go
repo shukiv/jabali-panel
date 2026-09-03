@@ -1271,3 +1271,7 @@ func (r *mockDomainRepo) RewriteDocRootPrefix(context.Context, string, string, s
 	return 0, nil
 }
 func (r *mockDomainRepo) TransferOwner(context.Context, string, string, string) error { return nil }
+
+
+// ListByZoneIDs added for the JAB-374 batch interface method.
+func (m *mockDNSRecordRepo) ListByZoneIDs(context.Context, []string) ([]models.DNSRecord, error) { return nil, nil }

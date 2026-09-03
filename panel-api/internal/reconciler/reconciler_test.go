@@ -2453,3 +2453,7 @@ func (r *fakeDomainRepo) TransferOwner(context.Context, string, string, string) 
 func (f *fakeUserRepo) UpdateShadowDBUsernames(context.Context, string, *string, *string) error {
 	return nil
 }
+
+
+// ListByZoneIDs added for the JAB-374 batch interface method.
+func (m *fakeDNSRecordRepo) ListByZoneIDs(context.Context, []string) ([]models.DNSRecord, error) { return nil, nil }

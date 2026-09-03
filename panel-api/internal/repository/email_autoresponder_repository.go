@@ -15,6 +15,8 @@ import (
 // Jabali is truth; reconciler converges to Stalwart (ADR-0051).
 type EmailAutoresponderRepository interface {
 	FindByMailboxID(ctx context.Context, mailboxID string) (*models.EmailAutoresponder, error)
+	// ListByMailboxIDs batch-loads autoresponders for many mailboxes (JAB-374).
+	ListByMailboxIDs(ctx context.Context, mailboxIDs []string) ([]models.EmailAutoresponder, error)
 	Update(ctx context.Context, autoresponder *models.EmailAutoresponder) error
 	Delete(ctx context.Context, mailboxID string) error
 
@@ -46,6 +48,21 @@ func (r *emailAutoresponderRepo) FindByMailboxID(ctx context.Context, mailboxID 
 		return nil, err
 	}
 	return &ar, nil
+}
+
+// ListByMailboxIDs batch-loads autoresponders for a set of mailboxes in one
+// query (JAB-374). Autoresponders are 1:1 with a mailbox; ordered by mailbox_id
+// for deterministic grouping.
+func (r *emailAutoresponderRepo) ListByMailboxIDs(ctx context.Context, mailboxIDs []string) ([]models.EmailAutoresponder, error) {
+	if len(mailboxIDs) == 0 {
+		return nil, nil
+	}
+	var rows []models.EmailAutoresponder
+	if err := r.db.WithContext(ctx).Where("mailbox_id IN ?", mailboxIDs).
+		Order("mailbox_id").Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
 }
 
 func (r *emailAutoresponderRepo) Update(ctx context.Context, autoresponder *models.EmailAutoresponder) error {

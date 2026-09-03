@@ -253,3 +253,7 @@ func TestPreviewStateCacheTTL(t *testing.T) {
 		t.Errorf("expired cache must re-read settings incl. preview_base, got %q", st3.base)
 	}
 }
+
+
+// ListByZoneIDs added for the JAB-374 batch interface method.
+func (m *fakePreviewRecordRepo) ListByZoneIDs(context.Context, []string) ([]models.DNSRecord, error) { return nil, nil }

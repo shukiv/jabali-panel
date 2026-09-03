@@ -23,6 +23,10 @@ type MailboxRepository interface {
 	FindByIDs(ctx context.Context, ids []string) ([]models.Mailbox, error)
 	FindByEmail(ctx context.Context, email string) (*models.Mailbox, error)
 	ListByDomainID(ctx context.Context, domainID string, opts ListOptions) ([]models.Mailbox, int64, error)
+	// ListByDomainIDs batch-loads mailboxes for many domains in one query
+	// (JAB-374), ordered domain_id, created_at DESC to match the per-domain
+	// ListByDomainID default order so grouped output stays golden-identical.
+	ListByDomainIDs(ctx context.Context, domainIDs []string) ([]models.Mailbox, error)
 	ListAllWithDomain(ctx context.Context) ([]MailboxWithDomain, error)
 	// CountAll counts mailboxes without loading rows (see implementation).
 	CountAll(ctx context.Context) (int64, error)
@@ -115,6 +119,23 @@ func (r *mailboxRepo) ListByDomainID(ctx context.Context, domainID string, opts 
 		return nil, 0, err
 	}
 	return rows, total, nil
+}
+
+// ListByDomainIDs batch-loads mailboxes for a set of domains in a single query
+// (JAB-374). Ordered to reproduce the per-domain ListByDomainID default order
+// (created_at DESC) within each domain, so the snapshot builder's grouped output
+// is byte-identical to the old per-domain loop. System mailboxes are included
+// (the builder never excluded them).
+func (r *mailboxRepo) ListByDomainIDs(ctx context.Context, domainIDs []string) ([]models.Mailbox, error) {
+	if len(domainIDs) == 0 {
+		return nil, nil
+	}
+	var rows []models.Mailbox
+	if err := r.db.WithContext(ctx).Where("domain_id IN ?", domainIDs).
+		Order("domain_id, created_at DESC").Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
 }
 
 // MailboxWithDomain is a mailbox joined with its domain + owner, for the

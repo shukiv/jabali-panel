@@ -96,3 +96,8 @@ func TestDNSSECUpdate_OkReply_FlipsFlag(t *testing.T) {
 		t.Error("dnssec_enabled must be true after a clean ok=true reply")
 	}
 }
+
+// ListByDomainIDs added for the JAB-374 batch interface method.
+func (dnssecFakeKeys) ListByDomainIDs(context.Context, []string) ([]models.DomainDNSSECKey, error) {
+	return nil, nil
+}

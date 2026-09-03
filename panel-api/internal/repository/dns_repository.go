@@ -35,6 +35,9 @@ type DNSRecordRepository interface {
 	Delete(ctx context.Context, id string) error
 	FindByID(ctx context.Context, id string) (*models.DNSRecord, error)
 	ListByZoneID(ctx context.Context, zoneID string) ([]models.DNSRecord, error)
+	// ListByZoneIDs batch-loads records for many zones (JAB-374), ordered
+	// zone_id, type, name, id to match ListByZoneID within a zone.
+	ListByZoneIDs(ctx context.Context, zoneIDs []string) ([]models.DNSRecord, error)
 	// CountByZoneIDs returns the user-record count per zone in one aggregate
 	// query (COUNT(*) GROUP BY zone_id) — the DNS Zone inventory's record-count
 	// column without loading a single record payload (JAB-377). Zones with no
@@ -160,6 +163,21 @@ func (r *dnsRecordRepo) ListByZoneID(ctx context.Context, zoneID string) ([]mode
 		Order("type, name, id").
 		Find(&recs).Error
 	if err != nil {
+		return nil, err
+	}
+	return recs, nil
+}
+
+// ListByZoneIDs batch-loads records for a set of zones in one query (JAB-374).
+// ORDER BY reproduces ListByZoneID's type, name, id within each zone so grouped
+// output is golden-identical.
+func (r *dnsRecordRepo) ListByZoneIDs(ctx context.Context, zoneIDs []string) ([]models.DNSRecord, error) {
+	if len(zoneIDs) == 0 {
+		return nil, nil
+	}
+	var recs []models.DNSRecord
+	if err := r.db.WithContext(ctx).Where("zone_id IN ?", zoneIDs).
+		Order("zone_id, type, name, id").Find(&recs).Error; err != nil {
 		return nil, err
 	}
 	return recs, nil

@@ -50,6 +50,8 @@ type DockerAppRepository interface {
 	// --- docker_app_published_ports --------------------------------------
 	CreatePort(ctx context.Context, p *models.DockerAppPublishedPort) error
 	ListPortsForApp(ctx context.Context, appID string) ([]*models.DockerAppPublishedPort, error)
+	// ListPortsForApps batch-loads published ports for many docker apps (JAB-374).
+	ListPortsForApps(ctx context.Context, appIDs []string) ([]*models.DockerAppPublishedPort, error)
 	DeletePort(ctx context.Context, id string) error
 
 	// FindFreeHostPort scans the 10000..19999 pool and returns the lowest
@@ -253,6 +255,20 @@ func (r *dockerAppRepo) ListPortsForApp(ctx context.Context, appID string) ([]*m
 		Where("app_id = ?", appID).
 		Order("port_name ASC").
 		Find(&ports).Error; err != nil {
+		return nil, err
+	}
+	return ports, nil
+}
+
+// ListPortsForApps batch-loads published ports for a set of docker apps in one
+// query (JAB-374). ORDER BY reproduces ListPortsForApp's port_name within each app.
+func (r *dockerAppRepo) ListPortsForApps(ctx context.Context, appIDs []string) ([]*models.DockerAppPublishedPort, error) {
+	if len(appIDs) == 0 {
+		return nil, nil
+	}
+	var ports []*models.DockerAppPublishedPort
+	if err := r.db.WithContext(ctx).Where("app_id IN ?", appIDs).
+		Order("app_id, port_name ASC").Find(&ports).Error; err != nil {
 		return nil, err
 	}
 	return ports, nil
