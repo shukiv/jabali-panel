@@ -23,7 +23,6 @@ import { DeleteOutlined, EditOutlined, KeyOutlined, MailOutlined, PlusOutlined }
 import {
   useAdminMailboxes,
   useDeleteMailbox,
-  useRotateMailboxPassword,
   type AdminMailbox,
 } from "../../../hooks/useMailboxes";
 import { useListQuery, useOneQuery } from "../../../hooks/useQueries";
@@ -33,14 +32,15 @@ import { ownerResourceCrumbs, ownerLabel, adminLinks } from "../../../components
 import type { Domain } from "../../user/domains/UserDomainList";
 import { EditMailboxModal } from "../../../components/mail/EditMailboxModal";
 import {
+  MailboxPasswordRevealModal,
   renderMailboxQuota,
   renderMailboxStatus,
+  useMailboxPasswordReset,
   useMailboxWebmail,
 } from "../../../components/mail/mailboxInventory";
 import { AdminGroupsTab } from "./AdminGroupsTab";
 import { MailStatsTab } from "./MailStatsTab";
 import { CreateMailboxWizardModal } from "../../user/mail/CreateMailboxWizardModal";
-import { DatabaseUserPasswordModal } from "../../../components/DatabaseUserPasswordModal";
 import { PasswordInput } from "../../../components/PasswordInput";
 import { RowActions } from "../../../components/RowActions";
 
@@ -70,7 +70,8 @@ export function AdminMailPage() {
   );
 
   const deleteMutation = useDeleteMailbox();
-  const rotate = useRotateMailboxPassword();
+  const { rotate: rotatePassword, rotateMutation, reveal, clearReveal, revealPassword } =
+    useMailboxPasswordReset();
   const webmail = useMailboxWebmail();
 
   const [tab, setTab] = useTabParam<string>("mailboxes");
@@ -78,7 +79,6 @@ export function AdminMailPage() {
   const [editTarget, setEditTarget] = useState<AdminMailbox | null>(null);
   const [resetTarget, setResetTarget] = useState<AdminMailbox | null>(null);
   const [resetForm] = Form.useForm<{ password?: string }>();
-  const [revealed, setRevealed] = useState<{ email: string; password: string } | null>(null);
   const [search, setSearch] = useState("");
 
   const filtered = useMemo(() => {
@@ -95,25 +95,18 @@ export function AdminMailPage() {
     );
   }, [rows, search, ownerId]);
 
+  // Server-wide admin: a form modal collecting an OPTIONAL custom password. The
+  // rotate → reveal-once → error core is the shared hook.
   const submitReset = async () => {
     if (!resetTarget) return;
     const v = await resetForm.validateFields();
-    const custom = (v.password ?? "").trim();
-    try {
-      const resp = await rotate.mutateAsync({
-        id: resetTarget.id,
-        new_password: custom || undefined,
-      });
-      const target = resetTarget;
-      setResetTarget(null);
-      if (resp.password) {
-        setRevealed({ email: target.email, password: resp.password });
-      } else {
-        message.success("Password updated");
-      }
-    } catch {
-      message.error("Failed to reset password");
-    }
+    const ok = await rotatePassword({
+      id: resetTarget.id,
+      email: resetTarget.email,
+      newPassword: v.password,
+      title: t("adminmailpage.mailbox_password"),
+    });
+    if (ok) setResetTarget(null);
   };
 
   useSetBreadcrumbs(
@@ -277,7 +270,11 @@ export function AdminMailPage() {
         onCreated={(resp) => {
           setCreateOpen(false);
           if (resp.password) {
-            setRevealed({ email: resp.email, password: resp.password });
+            revealPassword({
+              email: resp.email,
+              password: resp.password,
+              title: t("adminmailpage.mailbox_password"),
+            });
           } else {
             message.success("Mailbox created");
           }
@@ -294,7 +291,7 @@ export function AdminMailPage() {
         open={resetTarget !== null}
         title={resetTarget ? `Reset password — ${resetTarget.email}` : "Reset password"}
         okText={t("adminmailpage.set_password")}
-        confirmLoading={rotate.isPending}
+        confirmLoading={rotateMutation.isPending}
         onOk={submitReset}
         onCancel={() => setResetTarget(null)}
         destroyOnClose
@@ -310,15 +307,7 @@ export function AdminMailPage() {
         </Form>
       </Modal>
 
-      {revealed && (
-        <DatabaseUserPasswordModal
-          open
-          username={revealed.email}
-          password={revealed.password}
-          title={t("adminmailpage.mailbox_password")}
-          onClose={() => setRevealed(null)}
-        />
-      )}
+      <MailboxPasswordRevealModal reveal={reveal} onClose={clearReveal} />
     </>
   );
 }

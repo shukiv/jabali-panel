@@ -5,15 +5,21 @@
 //   - user/mail/tabs/MailboxesTab.tsx       (tenant, cross-domain)
 //   - admin/domains/DomainMailboxesSection.tsx (per-domain)
 //
-// Adapters still own their data source and their role-specific columns/actions
-// (admin owner filter, tenant groups + autoresponders, domain enable-email +
-// create wizard). This module owns only what MUST stay identical: the quota /
-// status presentation and the safe webmail launcher (JAB-354).
+// Adapters still own their data source and their role-specific columns and the
+// SHAPE of the trigger (admin owner filter, tenant groups + autoresponders,
+// domain enable-email + create wizard; a one-click rotate button vs a form
+// modal with an optional custom password). This module owns what MUST stay
+// identical: the quota / status presentation, the safe webmail launcher
+// (JAB-354), and the password reset → reveal-once → toast/error core
+// (useMailboxPasswordReset), so a one-shot generated password is surfaced
+// through a single tested path no matter which surface produced it.
 
+import { useCallback, useState } from "react";
 import { Progress, Tag, Tooltip } from "antd";
 
-import { useMintMailboxSSO } from "../../hooks/useMailboxes";
+import { useMintMailboxSSO, useRotateMailboxPassword } from "../../hooks/useMailboxes";
 import { feedback } from "../../lib/feedback";
+import { DatabaseUserPasswordModal } from "../DatabaseUserPasswordModal";
 
 // ---- byte formatting ----------------------------------------------------
 
@@ -138,4 +144,104 @@ export function useMailboxWebmail() {
     // Per-row pending flag for the action's spinner.
     isLaunching: (id: string) => sso.isPending && sso.variables?.id === id,
   };
+}
+
+// ---- password reset action (JAB-333) ------------------------------------
+//
+// The three inventories each copied the same rotate flow: call the rotate
+// mutation, and if the server GENERATED the password (no custom one supplied)
+// reveal it exactly once via DatabaseUserPasswordModal, otherwise a success
+// toast. The trigger differs by surface and STAYS adapter-owned — a one-click
+// button (per-domain) or a form modal collecting an optional custom password
+// (admin, tenant) — but the reveal/toast/error core must stay identical: a
+// one-shot generated password dropped silently is a real support incident, and
+// that's exactly the kind of invariant that drifts across hand-copied screens.
+// Each surface calls `rotate(...)` and renders <MailboxPasswordRevealModal>.
+
+export interface MailboxReveal {
+  email: string;
+  password: string;
+  title: string;
+}
+
+// TODO(i18n): the success/error toast strings below are hardcoded English,
+// matching the (already-untranslated) strings this replaced across the three
+// surfaces. A future i18n sweep should route them through `t(...)`.
+export function useMailboxPasswordReset() {
+  const rotateMutation = useRotateMailboxPassword();
+  const [rotatingId, setRotatingId] = useState<string | null>(null);
+  const [reveal, setReveal] = useState<MailboxReveal | null>(null);
+
+  const rotate = useCallback(
+    async (args: {
+      id: string;
+      email: string;
+      newPassword?: string;
+      title?: string;
+    }): Promise<boolean> => {
+      setRotatingId(args.id);
+      try {
+        const resp = await rotateMutation.mutateAsync({
+          id: args.id,
+          new_password: args.newPassword?.trim() || undefined,
+        });
+        if (resp.password) {
+          setReveal({
+            email: args.email,
+            password: resp.password,
+            title: args.title ?? "New mailbox password",
+          });
+        } else {
+          // Custom password accepted — nothing to reveal.
+          feedback.message.success("Password rotated");
+        }
+        return true;
+      } catch (err) {
+        feedback.message.error(
+          (err as { response?: { data?: { error?: string } } })?.response?.data?.error ??
+            "Failed to rotate password",
+        );
+        return false;
+      } finally {
+        setRotatingId(null);
+      }
+    },
+    [rotateMutation],
+  );
+
+  return {
+    rotate,
+    // Per-row pending flag for the trigger's spinner.
+    rotatingId,
+    // The pending mutation itself, for callers wanting `.isPending` on a form.
+    rotateMutation,
+    // The reveal-once state + its modal.
+    reveal,
+    clearReveal: useCallback(() => setReveal(null), []),
+    // Feed a server-generated password from ANOTHER action (e.g. the create
+    // wizard) into the same reveal-once modal, so a one-shot password is shown
+    // through one code path regardless of which action produced it.
+    revealPassword: useCallback((r: MailboxReveal) => setReveal(r), []),
+  };
+}
+
+// MailboxPasswordRevealModal renders the shared reveal-once modal from the
+// hook's `reveal` state. Render it once per surface; it is inert until a
+// generated password is captured.
+export function MailboxPasswordRevealModal({
+  reveal,
+  onClose,
+}: {
+  reveal: MailboxReveal | null;
+  onClose: () => void;
+}) {
+  return (
+    <DatabaseUserPasswordModal
+      open={reveal !== null}
+      username={reveal?.email ?? ""}
+      password={reveal?.password ?? ""}
+      title={reveal?.title}
+      onClose={onClose}
+    />
+  );
 }
