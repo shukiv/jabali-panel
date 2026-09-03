@@ -130,10 +130,15 @@ var rotateProbePanelHealthy = func(ctx context.Context) error {
 	}
 }
 
-// sqlSingleQuote renders a value as a MariaDB string literal body. The DB
-// password is base64url (ids.NewSecret) so it never contains a quote or
-// backslash, but double any quote defensively.
-func sqlSingleQuote(v string) string { return strings.ReplaceAll(v, "'", "''") }
+// sqlSingleQuote renders a value as a MariaDB string literal body: backslash
+// first (MariaDB treats '\' as an escape unless NO_BACKSLASH_ESCAPES), then
+// single quotes doubled. Today's inputs are base64url (ids.NewSecret) and the
+// old value read back from db-password (openssl rand -hex), neither of which
+// contains these — but escape defensively so the function is safe for any value.
+func sqlSingleQuote(v string) string {
+	v = strings.ReplaceAll(v, `\`, `\\`)
+	return strings.ReplaceAll(v, "'", "''")
+}
 
 // ---- command group ---------------------------------------------------------
 
@@ -255,30 +260,52 @@ func rotateRedisPanelToken(ctx context.Context, out io.Writer, dryRun bool) erro
 		return nil
 	}
 
-	// 1. Change the password on the running Redis first (auth with the old
-	//    token, which is still valid at this point).
-	if err := rotateRedisSetPassword(ctx, oldToken, newToken); err != nil {
-		cliAuditErr(ctx, "secrets.rotate.redis_panel_token", "secret", "redis-panel-token", nil)
-		return fmt.Errorf("live Redis password change: %w", err)
-	}
-
-	// 2. Snapshot both files.
+	// 1. Snapshot both files FIRST (read-only on live state; root-only .bak),
+	//    so a backup-write failure is caught before we touch the live Redis
+	//    password.
 	bakEnv, err := backupToBak(envPath)
 	if err != nil {
-		_ = rotateRedisSetPassword(ctx, newToken, oldToken) // undo the live change
 		return fmt.Errorf("backup %s: %w", envPath, err)
 	}
 	bakACL, err := backupToBak(aclPath)
 	if err != nil {
-		_ = rotateRedisSetPassword(ctx, newToken, oldToken)
 		_ = purgeBak(bakEnv)
 		return fmt.Errorf("backup %s: %w", aclPath, err)
 	}
 
-	rollback := func() {
-		_ = rotateRedisSetPassword(ctx, newToken, oldToken) // new token is live now
+	// 2. Change the password on the running Redis (auth with the old token,
+	//    still valid). On failure nothing on disk changed — purge and stop.
+	if err := rotateRedisSetPassword(ctx, oldToken, newToken); err != nil {
+		_ = purgeBak(bakEnv)
+		_ = purgeBak(bakACL)
+		cliAuditErr(ctx, "secrets.rotate.redis_panel_token", "secret", "redis-panel-token", nil)
+		return fmt.Errorf("live Redis password change: %w", err)
+	}
+
+	// rollback reverts the live Redis password to the old token and, ONLY if
+	// that succeeds, restores the files. If the live revert fails, Redis still
+	// accepts only the new token, so the files MUST stay at the new token to
+	// match it — restoring them to the old value would wedge the dispatcher
+	// (panel.env ≠ live Redis) with no way back. So on a failed revert we leave
+	// the files at the new token and surface the split loudly.
+	rollback := func() error {
+		if err := rotateRedisSetPassword(ctx, newToken, oldToken); err != nil {
+			return fmt.Errorf("live Redis revert FAILED — panel.env/aclfile left at the NEW token to match Redis, NOT restored: %w", err)
+		}
 		_ = restoreFromBak(envPath, bakEnv)
 		_ = restoreFromBak(aclPath, bakACL)
+		return nil
+	}
+	// fail rolls back, restarts the panel to match whatever token the files now
+	// hold, and composes the error (flagging an incomplete rollback loudly).
+	fail := func(stage string, cause error) error {
+		rbErr := rollback()
+		_ = rotateRestartService(ctx, "jabali-panel")
+		cliAuditErr(ctx, "secrets.rotate.redis_panel_token", "secret", "redis-panel-token", nil)
+		if rbErr != nil {
+			return fmt.Errorf("%s: %w; ROLLBACK INCOMPLETE: %v", stage, cause, rbErr)
+		}
+		return fmt.Errorf("%s (rolled back): %w", stage, cause)
 	}
 
 	// 3. Persist the new token to both files.
@@ -287,25 +314,17 @@ func rotateRedisPanelToken(ctx context.Context, out io.Writer, dryRun bool) erro
 		writeErr = atomicRewritePreserving(aclPath, newACL)
 	}
 	if writeErr != nil {
-		rollback()
-		cliAuditErr(ctx, "secrets.rotate.redis_panel_token", "secret", "redis-panel-token", nil)
-		return fmt.Errorf("rewrite secret files (rolled back): %w", writeErr)
+		return fail("rewrite secret files", writeErr)
 	}
 
 	// 4. Restart the panel so it reconnects with the new token.
 	if err := rotateRestartService(ctx, "jabali-panel"); err != nil {
-		rollback()
-		_ = rotateRestartService(ctx, "jabali-panel")
-		cliAuditErr(ctx, "secrets.rotate.redis_panel_token", "secret", "redis-panel-token", nil)
-		return fmt.Errorf("restart jabali-panel (rolled back): %w", err)
+		return fail("restart jabali-panel", err)
 	}
 
-	// 5. Verify.
+	// 5. Verify the panel comes back and stays up.
 	if err := rotateProbePanelHealthy(ctx); err != nil {
-		rollback()
-		_ = rotateRestartService(ctx, "jabali-panel")
-		cliAuditErr(ctx, "secrets.rotate.redis_panel_token", "secret", "redis-panel-token", nil)
-		return fmt.Errorf("panel unhealthy after rotation (rolled back): %w", err)
+		return fail("panel unhealthy after rotation", err)
 	}
 
 	_ = purgeBak(bakEnv)
@@ -433,14 +452,11 @@ func rotateDBAppUser(ctx context.Context, out io.Writer, dryRun bool) error {
 		return nil
 	}
 
-	// 1. Apply the new password FIRST, so config only ever points at a
-	//    credential the DB already accepts.
-	if err := rotateRunSQL(ctx, "ALTER USER 'jabali_panel_app'@'localhost' IDENTIFIED BY '"+sqlSingleQuote(newPw)+"'"); err != nil {
-		cliAuditErr(ctx, "secrets.rotate.db_app_user", "secret", "db-app-user", nil)
-		return fmt.Errorf("ALTER USER jabali_panel_app: %w", err)
-	}
-
-	// 2. Snapshot the old on-disk secrets for rollback.
+	// 1. Snapshot the on-disk secrets FIRST. These only read the live files
+	//    and write a root-only .bak — no live effect — so a backup-write
+	//    failure (disk full, /etc read-only) is caught BEFORE we change the DB
+	//    password and can't strand a DB whose credential we already rotated
+	//    against files that still say the old one.
 	bakPw, err := backupToBak(pwPath)
 	if err != nil {
 		return fmt.Errorf("backup %s: %w", pwPath, err)
@@ -449,6 +465,15 @@ func rotateDBAppUser(ctx context.Context, out io.Writer, dryRun bool) error {
 	if err != nil {
 		_ = purgeBak(bakPw)
 		return fmt.Errorf("backup %s: %w", envPath, err)
+	}
+
+	// 2. Apply the new password. On failure nothing on disk changed — purge
+	//    the snapshots and stop.
+	if err := rotateRunSQL(ctx, "ALTER USER 'jabali_panel_app'@'localhost' IDENTIFIED BY '"+sqlSingleQuote(newPw)+"'"); err != nil {
+		_ = purgeBak(bakPw)
+		_ = purgeBak(bakEnv)
+		cliAuditErr(ctx, "secrets.rotate.db_app_user", "secret", "db-app-user", nil)
+		return fmt.Errorf("ALTER USER jabali_panel_app: %w", err)
 	}
 
 	// 3. Rewrite the files atomically (owner+mode preserved).

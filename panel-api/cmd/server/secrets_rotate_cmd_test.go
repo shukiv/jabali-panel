@@ -359,6 +359,44 @@ func TestRotateAll_StopsAtFirstFailure(t *testing.T) {
 	}
 }
 
+func TestRotateRedisPanelToken_FailedLiveRevertKeepsFilesAtNewToken(t *testing.T) {
+	saveRotateSeams(t)
+	envPath, _ := setupRotateFixture(t)
+	aclPath := setupRedisFixture(t)
+
+	call := 0
+	var newTok string
+	rotateRedisSetPassword = func(_ context.Context, _, setTok string) error {
+		call++
+		if call == 1 { // forward old->new succeeds
+			newTok = setTok
+			return nil
+		}
+		return errors.New("redis unreachable during revert") // revert fails
+	}
+	rotateRestartService = func(_ context.Context, _ string) error { return nil }
+	rotateProbePanelHealthy = func(_ context.Context) error { return errors.New("panel down") } // force rollback
+
+	var out bytes.Buffer
+	err := rotateRedisPanelToken(context.Background(), &out, false)
+	if err == nil || !strings.Contains(err.Error(), "ROLLBACK INCOMPLETE") {
+		t.Fatalf("expected a loud ROLLBACK INCOMPLETE error, got %v", err)
+	}
+	// Files MUST be left at the new token (matching live Redis, which only
+	// accepts new), NOT restored to the old value.
+	env, _ := os.ReadFile(envPath)
+	if !strings.Contains(string(env), "JABALI_REDIS_PANEL_TOKEN="+newTok) {
+		t.Errorf("panel.env not left at new token:\n%s", env)
+	}
+	if strings.Contains(string(env), "JABALI_REDIS_PANEL_TOKEN=tok\n") {
+		t.Error("panel.env wrongly restored to old token while Redis accepts only the new one")
+	}
+	acl, _ := os.ReadFile(aclPath)
+	if !strings.Contains(string(acl), ">"+newTok+" ") {
+		t.Errorf("aclfile not left at new token:\n%s", acl)
+	}
+}
+
 func TestRotateDBAppUser_DryRunTouchesNothing(t *testing.T) {
 	saveRotateSeams(t)
 	envPath, pwPath := setupRotateFixture(t)
