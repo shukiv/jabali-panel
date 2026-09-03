@@ -8,14 +8,18 @@
 // render — an 80-row page issued 80 agent round-trips and the table never
 // held the numbers it would have needed to order by.
 //
-// It deliberately reuses the same `user.limits.report` agent call that the
-// per-user endpoint makes, rather than measuring independently, so the
-// sorted column and the detail view can never disagree about a user.
+// Since JAB-376 a sweep is ONE host quota inventory (`system.quota_inventory`,
+// a single `repquota` for the mount) plus one batched persist, instead of a
+// `user.limits.report` per account. The per-user `du` fallback survives for
+// accounts the inventory reports as 0 (empty homes / files created before
+// quotaon — GH #1242), so the sorted column and the detail view still agree;
+// that fallback is paced and bounded to the empty minority so it can't
+// reintroduce the du storm the per-user loop risked. When the inventory is
+// unavailable (quota disabled, agent down) every account falls back to the
+// per-user path — correctness over speed during an outage.
 //
-// Cadence is minutes, not seconds: the figure comes from `quota` (or a
-// `du -sk` fallback), which is already minutes-stale at the kernel level.
-// The sweep is spread one user at a time — a burst of concurrent `du` over
-// every account on the box is a good way to make a busy disk worse.
+// Cadence is minutes, not seconds: the figure comes from `quota` accounting,
+// already minutes-stale at the kernel level.
 package diskusagesweeper
 
 import (
@@ -39,10 +43,15 @@ const Interval = 15 * time.Minute
 // finite, because one slow account must not stall the whole sweep.
 const PerUserTimeout = 30 * time.Second
 
-// InterUserDelay paces the sweep. Measuring every account back-to-back can
-// pin a disk that tenants are actively serving from; a short gap turns the
-// sweep into background noise.
+// InterUserDelay paces the per-user du FALLBACK path. Since JAB-376 the quota
+// inventory is a single call, so this only gates the du walks for empty /
+// quota-0 homes — measuring those back-to-back can still pin a busy disk.
 const InterUserDelay = 250 * time.Millisecond
+
+// InventoryTimeout bounds the one host quota inventory call. repquota reads the
+// kernel quota state (fast) but the agent round-trip + a very large user table
+// warrant headroom.
+const InventoryTimeout = 60 * time.Second
 
 // maxUsersPerSweep caps one pass. A host with more accounts than this
 // simply takes several passes to come round — far better than one sweep
@@ -59,6 +68,9 @@ const maxUsersPerSweep = 5000
 type UserStore interface {
 	List(ctx context.Context, opts repository.ListOptions) ([]models.User, int64, error)
 	UpdateDiskUsage(ctx context.Context, id string, usedKB, limitKB uint64, checkedAt time.Time) error
+	// BatchUpdateDiskUsage persists a whole sweep in bounded chunks instead of
+	// one statement per account (JAB-376). It must NOT touch users.updated_at.
+	BatchUpdateDiskUsage(ctx context.Context, rows []repository.DiskUsageRow, checkedAt time.Time) error
 }
 
 // Deps is the dependency bundle. Users + Agent are required; a nil Agent
@@ -117,7 +129,14 @@ func (s *Sweeper) SweepOnce(ctx context.Context) {
 		s.deps.Log.Error("disk usage sweep: list users failed", "err", err)
 		return
 	}
-	var swept, skipped int
+	// One privileged host quota inventory read for the whole mount (JAB-376),
+	// replacing the per-user quota fan-out. On failure (quota disabled, agent
+	// down) inv is empty and every account falls to the per-user du path below —
+	// the pre-JAB-376 behaviour: slower, but correct.
+	inv, invPartial := s.observeQuota(ctx)
+
+	batch := make([]repository.DiskUsageRow, 0, len(users))
+	var fromInventory, fromDu, skipped int
 	for i := range users {
 		if ctx.Err() != nil {
 			return
@@ -128,25 +147,88 @@ func (s *Sweeper) SweepOnce(ctx context.Context) {
 		if u.Username == nil || *u.Username == "" {
 			continue
 		}
+		if e, ok := inv[*u.Username]; ok && (e.UsedKB > 0 || e.LimitKB > 0) {
+			// Quota gave an authoritative answer: either real usage, or a real
+			// hard limit with 0 used (a packaged-but-empty account — quota
+			// accounting is on for them, so 0 is true, not "unmeasured"). The
+			// fast path for the vast majority; no per-user agent call.
+			batch = append(batch, repository.DiskUsageRow{UserID: u.ID, UsedKB: e.UsedKB, LimitKB: e.LimitKB})
+			fromInventory++
+			continue
+		}
+		// Truly quota-less (no usage AND no limit) or absent from the inventory:
+		// fall back to the per-user du walk (GH #1242 — a quota-less home can
+		// still hold files). Bounded to that minority and paced so a box full of
+		// empty homes can't du-storm.
 		used, limit, ok := s.reportOne(ctx, *u.Username)
 		if !ok {
 			skipped++
-			continue
+			continue // keep last-good
 		}
-		if err := s.deps.Users.UpdateDiskUsage(ctx, u.ID, used, limit, time.Now().UTC()); err != nil {
-			s.deps.Log.Warn("disk usage sweep: persist failed",
-				"user_id", u.ID, "username", *u.Username, "err", err)
-			skipped++
-			continue
-		}
-		swept++
+		batch = append(batch, repository.DiskUsageRow{UserID: u.ID, UsedKB: used, LimitKB: limit})
+		fromDu++
 		select {
 		case <-ctx.Done():
 			return
 		case <-time.After(InterUserDelay):
 		}
 	}
-	s.deps.Log.Info("disk usage sweep done", "swept", swept, "skipped", skipped)
+
+	// One observation time, captured AFTER measurement, so disk_checked_at
+	// reflects when the snapshot was actually taken (the du-fallback loop can
+	// take minutes on a box of empty homes).
+	checkedAt := time.Now().UTC()
+	if len(batch) > 0 {
+		if err := s.deps.Users.BatchUpdateDiskUsage(ctx, batch, checkedAt); err != nil {
+			s.deps.Log.Error("disk usage sweep: batch persist failed", "rows", len(batch), "err", err)
+			return
+		}
+	}
+	s.deps.Log.Info("disk usage sweep done",
+		"from_inventory", fromInventory, "from_du", fromDu, "skipped", skipped,
+		"inventory_partial", invPartial)
+}
+
+// quotaEntry mirrors the agent's system.quota_inventory entry.
+type quotaEntry struct {
+	Username string `json:"username"`
+	UsedKB   uint64 `json:"used_kb"`
+	LimitKB  uint64 `json:"limit_kb"`
+}
+
+// observeQuota calls the agent's one-shot host quota inventory and returns a
+// username→entry map + whether the inventory was partial. A failure (quota
+// disabled on the mount, empty mount, agent down, or a parse error) returns an
+// empty map so every account falls back to the per-user du path — correctness
+// over speed during an outage, never a fleet-wide "0 used" that clears real
+// quota alerts.
+func (s *Sweeper) observeQuota(ctx context.Context) (map[string]quotaEntry, bool) {
+	if s.deps.QuotaMount == "" {
+		return map[string]quotaEntry{}, false // nothing to inventory
+	}
+	callCtx, cancel := context.WithTimeout(ctx, InventoryTimeout)
+	defer cancel()
+	raw, err := s.deps.Agent.Call(callCtx, "system.quota_inventory", map[string]any{
+		"mount": s.deps.QuotaMount,
+	})
+	if err != nil {
+		s.deps.Log.Warn("disk usage sweep: quota inventory failed, falling back to per-user du",
+			"mount", s.deps.QuotaMount, "err", err)
+		return map[string]quotaEntry{}, false
+	}
+	var resp struct {
+		Entries []quotaEntry `json:"entries"`
+		Partial bool         `json:"partial"`
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		s.deps.Log.Warn("disk usage sweep: quota inventory parse failed", "err", err)
+		return map[string]quotaEntry{}, false
+	}
+	m := make(map[string]quotaEntry, len(resp.Entries))
+	for _, e := range resp.Entries {
+		m[e.Username] = e // repquota emits one row per user; last wins defensively
+	}
+	return m, resp.Partial
 }
 
 // reportOne asks the agent for one account's disk figures. Returns ok=false
