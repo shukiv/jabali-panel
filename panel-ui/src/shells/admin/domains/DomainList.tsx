@@ -156,6 +156,7 @@ export type Domain = {
   temp_url_enabled?: boolean;
   temp_url?: string | null;
   bot_challenge_exempt?: boolean;
+  bot_challenge_include?: boolean;
   nginx_custom_directives: string;
   redirect_all_to?: string | null;
   redirect_all_type?: string | null;

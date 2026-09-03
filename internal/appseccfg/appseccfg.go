@@ -71,6 +71,26 @@ type Opts struct {
 	// additional Host-equality ExemptFromChallenge, sanitised like WebmailHosts.
 	// The caller expands www.<domain>; this only renders what it is given.
 	BotExemptHosts []string
+	// BotScope selects which sites the challenge applies to when BotDetection
+	// is on: "all" (default — challenge every site, carve exceptions via
+	// BotExemptHosts) or "selected" (challenge ONLY BotIncludeHosts; every
+	// other Host is exempted). Unknown → "all" (fail-safe: never silently
+	// un-challenge the whole box).
+	BotScope string
+	// BotIncludeHosts is the per-domain opt-IN list, used only when
+	// BotScope=="selected": these Hosts are challenged and all others exempted.
+	// Empty in selected mode means "challenge nothing" (rendered explicitly as
+	// an unconditional exemption, not left to `not in []` edge semantics).
+	// Caller expands www.<domain>; sanitised like the other host lists.
+	BotIncludeHosts []string
+}
+
+// botScope normalises Opts.BotScope to "all" (default) or "selected".
+func botScope(o Opts) string {
+	if o.BotScope == "selected" {
+		return "selected"
+	}
+	return "all"
 }
 
 // AppsecListenAddr is the TCP loopback the AppSec engine listens on; the
@@ -379,6 +399,10 @@ func Render(o Opts) string {
 	// This config is unchanged by the mode — bot-challenge composition lives
 	// in RenderAcquis + RenderBotExempt — but the header is the state anchor.
 	b.WriteString("# jabali-bot-detection: " + botDetectionMode(o) + "\n")
+	// Scope round-trips alongside the mode so --reconcile / the agent readback
+	// preserve "selected" across re-renders (a reset to "all" would challenge
+	// every site on the box at once).
+	b.WriteString("# jabali-bot-detection-scope: " + botScope(o) + "\n")
 	b.WriteString("name: " + JabaliAppsecConfigName + "\n")
 	b.WriteString("default_remediation: ban\n")
 
@@ -562,19 +586,42 @@ func RenderBotExempt(o Opts) string {
 		b.WriteString(`        - ExemptFromChallenge("jabali-webmail")` + "\n")
 	}
 
-	// Per-domain opt-out (GH bot-detection per-domain). Distinct label so the
-	// "Exempt" metric separates operator domain opt-outs from the built-in
-	// exemptions above. Same sanitiser + explicit host equality (req.Host is a
-	// client-controlled header — never a prefix).
-	optout := sanitizeWebmailHosts(o.BotExemptHosts)
-	if len(optout) > 0 {
-		parts := make([]string, len(optout))
-		for i, h := range optout {
-			parts[i] = `req.Host == "` + h + `"`
+	// Per-domain scoping (after the built-in exemptions above, which always win
+	// so ACME / panel / webmail are never challenged in either scope).
+	switch botScope(o) {
+	case "selected":
+		// Opt-in: challenge ONLY the listed hosts — exempt everything else.
+		include := sanitizeWebmailHosts(o.BotIncludeHosts)
+		if len(include) == 0 {
+			// No domains selected ⇒ challenge nothing. Render it explicitly
+			// (an unconditional exempt) rather than relying on `not in []`.
+			b.WriteString("    - filter: true\n")
+			b.WriteString("      apply:\n")
+			b.WriteString(`        - ExemptFromChallenge("jabali-selected-none")` + "\n")
+		} else {
+			parts := make([]string, len(include))
+			for i, h := range include {
+				parts[i] = `"` + h + `"`
+			}
+			b.WriteString("    - filter: req.Host not in [" + strings.Join(parts, ", ") + "]\n")
+			b.WriteString("      apply:\n")
+			b.WriteString(`        - ExemptFromChallenge("jabali-selected-exclude")` + "\n")
 		}
-		b.WriteString("    - filter: " + strings.Join(parts, " || ") + "\n")
-		b.WriteString("      apply:\n")
-		b.WriteString(`        - ExemptFromChallenge("jabali-domain-optout")` + "\n")
+	default: // "all"
+		// Opt-out: challenge everything, exempt the listed hosts. Distinct label
+		// so the "Exempt" metric separates operator domain opt-outs from the
+		// built-in exemptions. Explicit host equality (req.Host is a
+		// client-controlled header — never a prefix).
+		optout := sanitizeWebmailHosts(o.BotExemptHosts)
+		if len(optout) > 0 {
+			parts := make([]string, len(optout))
+			for i, h := range optout {
+				parts[i] = `req.Host == "` + h + `"`
+			}
+			b.WriteString("    - filter: " + strings.Join(parts, " || ") + "\n")
+			b.WriteString("      apply:\n")
+			b.WriteString(`        - ExemptFromChallenge("jabali-domain-optout")` + "\n")
+		}
 	}
 	return b.String()
 }

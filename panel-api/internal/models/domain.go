@@ -511,6 +511,12 @@ type Domain struct {
 	// insert trap).
 	BotChallengeExempt bool `gorm:"column:bot_challenge_exempt;type:tinyint(1);not null" json:"bot_challenge_exempt"`
 
+	// BotChallengeInclude (migration 000288) — per-domain opt-IN, used only when
+	// the server-wide AppSec bot-detection scope is "selected": these domains
+	// (and www.<domain>) ARE challenged and every other site is exempt.
+	// Admin-only, opt-in (default 0). Inert in scope "all".
+	BotChallengeInclude bool `gorm:"column:bot_challenge_include;type:tinyint(1);not null" json:"bot_challenge_include"`
+
 	CreatedAt time.Time `gorm:"type:datetime(6);not null" json:"created_at"`
 	UpdatedAt time.Time `gorm:"type:datetime(6);not null" json:"updated_at"`
 }

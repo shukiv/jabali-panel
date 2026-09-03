@@ -33,6 +33,7 @@ export type DomainEditInput = {
   doc_root?: string;
   temp_url_enabled?: boolean;
   bot_challenge_exempt?: boolean;
+  bot_challenge_include?: boolean;
 };
 
 export const DomainEdit = () => {
@@ -64,6 +65,7 @@ export const DomainEdit = () => {
         doc_root: domain.doc_root,
         temp_url_enabled: domain.temp_url_enabled,
         bot_challenge_exempt: domain.bot_challenge_exempt,
+        bot_challenge_include: domain.bot_challenge_include,
       });
     }
   }, [domain, form]);
@@ -160,8 +162,27 @@ export const DomainEdit = () => {
           <Typography.Text type="secondary" style={{ display: "block", fontSize: 12 }}>
             Skip the server-wide AppSec bot challenge on this site — for
             API/webhook-heavy domains whose non-browser clients can&apos;t solve
-            it. Also covers www.&lt;domain&gt;. No effect unless bot detection is
-            on server-wide (Security → CrowdSec → Bot Detection).
+            it. Also covers www.&lt;domain&gt;. Effective when bot detection is on
+            server-wide in <b>All sites</b> mode (Security → CrowdSec → Bot
+            Detection).
+          </Typography.Text>
+        </Typography.Text>
+      </div>
+
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 24 }}>
+        <Form.Item name="bot_challenge_include" valuePropName="checked" noStyle>
+          <Switch
+            checkedChildren={<CheckOutlined />}
+            unCheckedChildren={<CloseOutlined />}
+          />
+        </Form.Item>
+        <Typography.Text>
+          Include in bot-detection challenge
+          <Typography.Text type="secondary" style={{ display: "block", fontSize: 12 }}>
+            Challenge suspected bots on this site (and www.&lt;domain&gt;).
+            Effective only when bot detection is on server-wide in{" "}
+            <b>Selected domains</b> mode; in that mode, sites not marked here are
+            left alone.
           </Typography.Text>
         </Typography.Text>
       </div>

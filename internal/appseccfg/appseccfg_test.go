@@ -243,6 +243,47 @@ func TestRenderBotExempt_PerDomainOptOut(t *testing.T) {
 func TestRenderBotExempt_NoOptOutWhenListEmpty(t *testing.T) {
 	out := RenderBotExempt(Opts{})
 	mustNotContain(t, out, "jabali-domain-optout", "no opt-out filter when list empty")
+	// Default scope is "all" — never the selected-mode exemptions.
+	mustNotContain(t, out, "jabali-selected", "default scope=all emits no selected-mode exempt")
+}
+
+func TestRender_BotScopeHeaderRoundTrips(t *testing.T) {
+	all := Render(Opts{Mode: "off", Inband: []string{"x"}, BotDetection: "balanced"})
+	mustContain(t, all, "# jabali-bot-detection-scope: all", "default scope header")
+	sel := Render(Opts{Mode: "off", Inband: []string{"x"}, BotDetection: "balanced", BotScope: "selected"})
+	mustContain(t, sel, "# jabali-bot-detection-scope: selected", "selected scope header")
+	weird := Render(Opts{Mode: "off", Inband: []string{"x"}, BotScope: "bogus"})
+	mustContain(t, weird, "# jabali-bot-detection-scope: all", "unknown scope → all")
+}
+
+func TestRenderBotExempt_SelectedChallengesOnlyIncluded(t *testing.T) {
+	out := RenderBotExempt(Opts{
+		BotScope:        "selected",
+		BotIncludeHosts: []string{"Shop.example.com", "www.shop.example.com", "shop.example.com"},
+	})
+	// Exempt everyone NOT in the include set → only included hosts are challenged.
+	mustContain(t, out, `req.Host not in ["shop.example.com", "www.shop.example.com"]`, "sorted, deduped include set, negated")
+	mustContain(t, out, `ExemptFromChallenge("jabali-selected-exclude")`, "selected-exclude label")
+	mustNotContain(t, out, "jabali-domain-optout", "opt-out block not emitted in selected scope")
+	// ACME still always exempt.
+	mustContain(t, out, `ExemptFromChallenge("jabali-acme-http01")`, "acme still exempt in selected scope")
+}
+
+func TestRenderBotExempt_SelectedEmptyChallengesNothing(t *testing.T) {
+	out := RenderBotExempt(Opts{BotScope: "selected"})
+	mustContain(t, out, "- filter: true\n", "unconditional exempt when nothing selected")
+	mustContain(t, out, `ExemptFromChallenge("jabali-selected-none")`, "selected-none label")
+}
+
+func TestRenderBotExempt_ExemptListIgnoredInSelectedScope(t *testing.T) {
+	// A stale opt-out list must not leak challenges through in selected mode.
+	out := RenderBotExempt(Opts{
+		BotScope:        "selected",
+		BotIncludeHosts: []string{"a.com"},
+		BotExemptHosts:  []string{"b.com"},
+	})
+	mustNotContain(t, out, `req.Host == "b.com"`, "exempt list is inert in selected scope")
+	mustContain(t, out, `req.Host not in ["a.com"]`, "only the include set drives selected scope")
 }
 
 func TestRenderBotExempt_WebmailHostEqualityNeverPrefix(t *testing.T) {
