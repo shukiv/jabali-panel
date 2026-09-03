@@ -4,11 +4,12 @@
 // error, never another tenant's data). The account/domain tabs reuse the mail
 // tab components in their single-domain mode. Logs + Statistics scoping and the
 // retirement of the flat Mail page are a follow-up (PR-B).
-import { Alert, Breadcrumb, Button, Card, Skeleton, Space, Typography } from "antd";
+import { Alert, Button, Card, Skeleton, Space, Typography } from "antd";
 import { MailOutlined, PlusOutlined } from "@icons";
 import { useState } from "react";
 import { useNavigate, useParams } from "react-router";
 
+import { useSetBreadcrumbs } from "../../../components/admin/BreadcrumbContext";
 import { useOneQuery } from "../../../hooks/useQueries";
 import type { Domain } from "../domains/UserDomainList";
 import { MailboxesTab } from "./tabs/MailboxesTab";
@@ -57,6 +58,21 @@ export const MailDomainPage = () => {
   const activeKey: TabKey = (TAB_KEYS as readonly string[]).includes(tab ?? "")
     ? (tab as TabKey)
     : DEFAULT_TAB;
+
+  // GH #1387 (johnnyq): the shell already renders ONE breadcrumb (RouteBreadcrumb,
+  // GH #455). Override it with the 3-level entity trail instead of rendering a
+  // second inline <Breadcrumb> — the drill used to show two trails with two
+  // different last crumbs (the raw :domainId vs the domain name).
+  const domainName = domainQ.data?.name;
+  useSetBreadcrumbs(
+    domainName
+      ? [
+          { title: "Dashboard", href: "/jabali-panel/dashboard" },
+          { title: "Mail Domains", href: "/jabali-panel/mail-domains" },
+          { title: domainName },
+        ]
+      : null,
+  );
 
   const back = () => navigate("/jabali-panel/mail-domains");
 
@@ -109,19 +125,6 @@ export const MailDomainPage = () => {
 
   return (
     <div style={{ padding: "20px" }}>
-      {/* GH #1387 follow-up: 3-level trail Dashboard / Mail Domains / <domain>. */}
-      <Breadcrumb
-        style={{ marginBottom: 8 }}
-        items={[
-          {
-            title: <a onClick={() => navigate("/jabali-panel/dashboard")}>Dashboard</a>,
-          },
-          {
-            title: <a onClick={back}>Mail Domains</a>,
-          },
-          { title: domain.name },
-        ]}
-      />
       <Space
         wrap
         align="center"
@@ -130,9 +133,13 @@ export const MailDomainPage = () => {
         <Typography.Title level={3} style={{ margin: 0 }}>
           <MailOutlined /> {domain.name}
         </Typography.Title>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => setShowCreateMailbox(true)}>
-          New Mailbox
-        </Button>
+        {/* GH #1387 (johnnyq): New Mailbox belongs to the Accounts (mailboxes)
+            view only — not the Mail Domains list, and not the settings tabs. */}
+        {activeKey === "mailboxes" && (
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => setShowCreateMailbox(true)}>
+            New Mailbox
+          </Button>
+        )}
       </Space>
 
       <Card
@@ -147,6 +154,7 @@ export const MailDomainPage = () => {
         <CreateMailboxWizardModal
           open={showCreateMailbox}
           domains={[{ id: domain.id, name: domain.name }]}
+          lockDomain
           onCancel={() => setShowCreateMailbox(false)}
           onCreated={() => setShowCreateMailbox(false)}
         />

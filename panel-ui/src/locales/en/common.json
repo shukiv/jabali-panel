@@ -1546,6 +1546,7 @@
   "createmailboxwizardmodal": {
     "a_send_only_mailbox_can_authenticate_for_smt": "A send-only mailbox can authenticate for SMTP submission (sending) but never receives or stores mail — inbound is rejected. Ideal for per-service or per-appliance notification credentials, so each system has its own account to revoke or rotate.",
     "add_to_groups": "Add to groups",
+    "adding_to_domain": "Adding a mailbox to",
     "aliases_optional": "Aliases (optional)",
     "alice_smith": "Alice Smith",
     "create_mailbox": "Create mailbox",
