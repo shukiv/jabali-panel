@@ -1155,6 +1155,10 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				CronJobs:       deps.CronJobs,
 				FtpAccounts:    deps.FtpAccounts,
 				LimitOverrides: deps.LimitOverrides,
+				// JAB-359: the last two schema-v2 sections; without them the admin
+				// manual backup bundle omitted egress policies/requests.
+				EgressPolicies: deps.UserEgressPolicies,
+				EgressRequests: deps.UserEgressRequests,
 				KratosClient:   deps.KratosClient,
 				Log:            deps.Log,
 				SSOKey:         deps.SSOKey,
@@ -1176,6 +1180,22 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				FtpAccounts:    deps.FtpAccounts,
 				DNSZones:       deps.DNSZones,
 				DNSRecords:     deps.DNSRecords,
+				// JAB-359: /me manual self-backup had the same schema-v2 wiring gap
+				// as the admin handler — a tenant's manual backup produced an
+				// incomplete bundle. Wire the full metadata repo set the builder
+				// consumes (matches BackupHandlerConfig + the scheduler).
+				SSLCerts:       deps.SSLCerts,
+				PHPPools:       deps.PHPPools,
+				PHPPoolIni:     deps.PHPPoolIniOverrides,
+				Forwarders:     deps.Forwarders,
+				Autoresponders: deps.Autoresponders,
+				MailboxShares:  deps.MailboxShares,
+				DNSSECKeys:     deps.DNSSECKeys,
+				SSHKeys:        deps.SSHKeys,
+				CronJobs:       deps.CronJobs,
+				LimitOverrides: deps.LimitOverrides,
+				EgressPolicies: deps.UserEgressPolicies,
+				EgressRequests: deps.UserEgressRequests,
 				// GH #454 Step 4: tenant scheduled-backup card. Schedules +
 				// Settings (the admin-owned cron time) gate the /me/backup-schedule
 				// routes; absent, the card's endpoints simply aren't mounted.
