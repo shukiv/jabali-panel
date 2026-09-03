@@ -3913,6 +3913,19 @@ paths:
       security: [ { KratosSession: [] } ]
       responses: { "200": { description: OK } }
 
+  /me/php-opcache:
+    get:
+      tags: [Me]
+      summary: Get OPcache/JIT settings for a PHP version
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+    put:
+      tags: [Me]
+      summary: Set OPcache/JIT settings for a PHP version (restarts that pool's FPM master)
+      security: [ { KratosSession: [] } ]
+      requestBody: { content: { application/json: { schema: { type: object } } } }
+      responses: { "200": { description: OK } }
+
   /me/php-extensions:
     get:
       tags: [Me]

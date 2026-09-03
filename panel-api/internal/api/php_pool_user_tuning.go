@@ -61,6 +61,9 @@ func RegisterPHPUserTuningRoutes(g *gin.RouterGroup, cfg PHPUserTuningHandlerCon
 	g.PUT("/me/php-pool-tuning", h.setTuning)
 	// GH #1332 item 10: reset a version's OPcache (restarts that pool's master).
 	g.POST("/me/php-opcache/reset", h.resetOpcache)
+	// GH #1332 OPcache / JIT per-version controls.
+	g.GET("/me/php-opcache", h.getOpcache)
+	g.PUT("/me/php-opcache", h.setOpcache)
 }
 
 // poolTuningRow is one of the caller's PHP pools, with its current per-version
