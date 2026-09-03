@@ -31,6 +31,7 @@ import type { UploadProps } from "antd";
 import { AxiosError } from "axios";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { getIdentity } from "../../../identity";
+import { UPLOAD_CHUNK_BYTES, UPLOAD_SINGLE_SHOT_MAX } from "../../../apiClient";
 import { tenantFilesApi, type FilesApi } from "./filesApi";
 import type { UploadOpts } from "./filesApi";
 
@@ -66,8 +67,12 @@ interface UploadDrawerProps {
   api?: FilesApi;
 }
 
-const SINGLE_MULTIPART_CEILING = 100 * 1024 * 1024;
-const CHUNK_SIZE = 10 * 1024 * 1024;
+// GH #1410: match the DB restore upload — files up to UPLOAD_SINGLE_SHOT_MAX go
+// as one request, larger ones chunk at UPLOAD_CHUNK_BYTES (80 MB). This is the
+// bump the earlier fix missed: it changed filesApi's default but this call site
+// still passed 10 MB, so uploads stayed on 10 MB chunks.
+const SINGLE_MULTIPART_CEILING = UPLOAD_SINGLE_SHOT_MAX;
+const CHUNK_SIZE = UPLOAD_CHUNK_BYTES;
 const HARD_CEILING = 1024 * 1024 * 1024;
 
 function formatBytes(n: number): string {
@@ -345,8 +350,8 @@ export const UploadDrawer = forwardRef<UploadDrawerHandle, UploadDrawerProps>(fu
             Click or drag files here to upload
           </p>
           <p className="ant-upload-hint">
-            Multiple files supported. Files &gt; 100 MB use chunked upload
-            with resume on disconnect.
+            Multiple files supported. Files over {formatBytes(SINGLE_MULTIPART_CEILING)} use
+            chunked upload with resume on disconnect.
           </p>
         </Upload.Dragger>
 

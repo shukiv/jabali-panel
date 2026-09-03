@@ -1,5 +1,5 @@
 // filesApi.ts — typed wrappers around the /api/v1/files endpoints.
-import { apiClient } from "../../../apiClient";
+import { apiClient, UPLOAD_CHUNK_BYTES } from "../../../apiClient";
 import { getActAs } from "../../../impersonation";
 
 export type FileEntry = {
@@ -115,37 +115,45 @@ export async function filesUpload(
 export async function filesUploadChunked(
   dirPath: string,
   file: File,
-  // GH #1410: 25 MB chunks (was 10) — a quarter the requests for a big upload,
-  // still well under the ~100 MB proxy/Cloudflare request cap chunking exists to
-  // dodge. Each chunk opts out of the client timeout (progress-bounded).
-  chunkSize = 25 * 1024 * 1024,
+  // GH #1410: 80 MB chunks, the same size as the DB restore upload — ~8x fewer
+  // requests for a big file, still under the ~100 MB proxy/Cloudflare request
+  // cap chunking exists to dodge. Each chunk opts out of the client timeout
+  // (progress-bounded).
+  chunkSize = UPLOAD_CHUNK_BYTES,
   onProgress?: (frac: number) => void,
   opts?: UploadOpts,
   base = "/files",
 ): Promise<void> {
   const destName = opts?.name ?? file.name;
-  const totalChunks = Math.max(1, Math.ceil(file.size / chunkSize));
   const resumeKey = `jabali:upload:${dirPath}|${destName}|${file.size}|${file.lastModified}`;
   let uploadId = readResumeId(resumeKey);
-  let startChunk = 0;
+  // Resume by BYTE OFFSET (the server's current staging size), not by chunk
+  // index. The server appends only at offset == current size (else 409
+  // bad_offset), so resuming at exactly `written` is safe for ANY chunk size —
+  // a partial upload started under a different chunk size (e.g. an older build)
+  // still resumes cleanly instead of 409-looping. GH #1410.
+  let offset = 0;
   if (uploadId) {
-    // See how much the server has already. If 404, the /tmp file is
+    // See how much the server has already. If 404, the staging file is
     // gone (panel restart, cleanup job) and we start fresh.
     try {
       const r = await apiClient.get<{ written: number }>(
         `${base}/upload-chunk-status`,
         { params: { upload_id: uploadId } },
       );
-      const written = r.data.written || 0;
-      // Resume at the start of the first not-yet-complete chunk. Round
-      // DOWN so a partial chunk is re-uploaded in full — the server
-      // seeks to the offset before writing, so re-sending is safe.
-      startChunk = Math.floor(written / chunkSize);
+      offset = r.data.written || 0;
     } catch {
       // Stale or missing — drop the key and regenerate.
       uploadId = null;
       clearResumeId(resumeKey);
     }
+  }
+  // A staged size past the file is corrupt or a foreign upload_id collision —
+  // drop it and start fresh under a new id (a new staging file) rather than send
+  // a bad offset that would 409-loop against the mismatched staging file.
+  if (uploadId && offset > file.size) {
+    clearResumeId(resumeKey);
+    uploadId = null;
   }
   if (!uploadId) {
     uploadId =
@@ -153,16 +161,19 @@ export async function filesUploadChunked(
         ? crypto.randomUUID()
         : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     writeResumeId(resumeKey, uploadId);
+    offset = 0;
   }
-  if (onProgress) onProgress(startChunk / totalChunks);
-  for (let i = startChunk; i < totalChunks; i++) {
-    const start = i * chunkSize;
-    const end = Math.min(start + chunkSize, file.size);
-    const blob = file.slice(start, end);
-    const isLast = i === totalChunks - 1;
+  if (onProgress) onProgress(file.size > 0 ? offset / file.size : 0);
+  // do/while so a zero-byte file (and a resume where every byte already landed
+  // but the final marker never did) still sends one final chunk to finalise —
+  // moving the staging file into scope.
+  do {
+    const end = Math.min(offset + chunkSize, file.size);
+    const blob = file.slice(offset, end);
+    const isLast = end >= file.size;
     const params = new URLSearchParams({
       upload_id: uploadId,
-      offset: String(start),
+      offset: String(offset),
       path: dirPath,
       name: destName,
       ...(isLast ? { final: "1" } : {}),
@@ -172,8 +183,9 @@ export async function filesUploadChunked(
       headers: { "Content-Type": "application/octet-stream" },
       timeout: 0, // GH #1410: a slow chunk mustn't hit the client request timeout
     });
-    if (onProgress) onProgress((i + 1) / totalChunks);
-  }
+    offset = end;
+    if (onProgress) onProgress(file.size > 0 ? offset / file.size : 1);
+  } while (offset < file.size);
   // Success — forget the resume key.
   clearResumeId(resumeKey);
 }

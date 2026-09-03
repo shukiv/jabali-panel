@@ -314,8 +314,20 @@ export async function restoreDatabaseUpload(
 // (a 2.7 GB dump drops from ~270 requests to ~34), which matters a lot on fast
 // links where per-request latency dominated. Note it stays below the 90 MB
 // single-shot threshold, which already sends bigger single requests via CF.
-const RESTORE_CHUNK_SIZE = 80 * 1024 * 1024;
-const RESTORE_CHUNK_THRESHOLD = 90 * 1024 * 1024;
+// GH #1410: one upload chunk size across the whole panel. The File Manager
+// upload and the DB restore both send 80 MB chunks so a big upload uses ~8x
+// fewer requests (a 600 MB file → ~8 chunks, not 60) while staying under the
+// ~100 MB Cloudflare/proxy body cap that chunking exists to dodge. Exported so
+// UploadDrawer / filesApi use the exact same value — the reporter's "same limit
+// everywhere", and a single lever so the two paths can never drift again.
+export const UPLOAD_CHUNK_BYTES = 80 * 1024 * 1024;
+// Files at or below this upload as one request; above it they chunk. 90 MB keeps
+// a single-shot POST safely under the CF cap (a ~100 MB multipart would exceed
+// it once boundary overhead is added).
+export const UPLOAD_SINGLE_SHOT_MAX = 90 * 1024 * 1024;
+
+const RESTORE_CHUNK_SIZE = UPLOAD_CHUNK_BYTES;
+const RESTORE_CHUNK_THRESHOLD = UPLOAD_SINGLE_SHOT_MAX;
 
 function lsGet(k: string): string | null {
   try {
