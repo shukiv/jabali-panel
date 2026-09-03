@@ -24,14 +24,9 @@ import { useTableURL } from "../../../hooks/useTableURL";
 import { sorterToParams } from "../../../utils/tableSorter";
 import { EngineTag } from "../../../components/EngineTag";
 import { DatabaseUserDrawer } from "./DatabaseUserDrawer";
+import { grantLabel, type Grant } from "./grantLabel";
 
-export type Grant = {
-  id: string;
-  database_id: string;
-  database_name: string;
-  grant_level: "rw" | "ro" | "custom";
-  privileges?: string;
-};
+export type { Grant };
 
 export type DatabaseUser = {
   id: string;
@@ -54,23 +49,6 @@ function placeholderForRotateBody(): string {
   let out = "";
   for (const b of bytes) out += alphabet[b % alphabet.length];
   return out;
-}
-
-function grantLabel(grant: Grant): string {
-  switch (grant.grant_level) {
-    case "rw":
-      return "Full Access";
-    case "ro":
-      return "Read only";
-    case "custom":
-      if (grant.privileges) {
-        const privs = grant.privileges.split(",").map((p) => p.trim());
-        return privs.length > 2 ? `${privs.slice(0, 2).join(", ")}…` : privs.join(", ");
-      }
-      return "Custom";
-    default:
-      return "Unknown";
-  }
 }
 
 export const DatabaseUsersList = () => {
