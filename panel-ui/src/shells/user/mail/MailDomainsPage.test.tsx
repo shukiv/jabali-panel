@@ -118,4 +118,31 @@ describe("GH #1387 — MailDomainsPage (mail-active only)", () => {
     );
     expect(mocked.post).not.toHaveBeenCalled();
   });
+
+  it("deletes mail only after type-to-confirm → POST /domains/:id/email/purge", async () => {
+    renderPage();
+    const onRow = (await screen.findByText("on.test")).closest("tr") as HTMLElement;
+    fireEvent.click(within(onRow).getByRole("button", { name: "Delete" }));
+
+    // Modal opens; the destructive confirm is disabled until the name matches.
+    const okBtn = await screen.findByRole("button", { name: /Delete mail/i });
+    expect(okBtn).toBeDisabled();
+
+    const input = screen.getByPlaceholderText("on.test");
+    fireEvent.change(input, { target: { value: "wrong" } });
+    expect(screen.getByRole("button", { name: /Delete mail/i })).toBeDisabled();
+
+    fireEvent.change(input, { target: { value: "on.test" } });
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /Delete mail/i })).toBeEnabled(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Delete mail/i }));
+
+    await waitFor(() =>
+      expect(mocked.post).toHaveBeenCalledWith("/domains/d-on/email/purge", {
+        confirm_domain: "on.test",
+      }),
+    );
+    expect(mocked.delete).not.toHaveBeenCalled();
+  });
 });
