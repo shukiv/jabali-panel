@@ -13,17 +13,17 @@ import {
   Alert,
   Button,
   Card,
+  Dropdown,
   Empty,
   Input,
   Modal,
-  Popconfirm,
-  Space,
   Spin,
   Table,
   Tag,
   Typography,
   type TableColumnsType,
 } from "antd";
+import { DeleteOutlined, MoreOutlined, PoweroffOutlined } from "@icons";
 import { useState } from "react";
 import { useNavigate } from "react-router";
 import { useListQuery } from "../../../hooks/useQueries";
@@ -78,6 +78,17 @@ export function MailDomainsPage() {
     } finally {
       setBusyId(null);
     }
+  };
+
+  const confirmDisable = (row: MailDomainRow) => {
+    feedback.modal.confirm({
+      title: `Disable mail for ${row.name}?`,
+      content:
+        "Incoming mail stops and the managed mail DNS records are removed. Mailboxes are kept — re-enabling from the Domains page restores service.",
+      okText: "Disable",
+      okButtonProps: { danger: true },
+      onOk: () => disableMail(row),
+    });
   };
 
   // Delete = the destructive mail-only teardown (POST /domains/:id/email/purge).
@@ -169,30 +180,41 @@ export function MailDomainsPage() {
     {
       title: "Actions",
       key: "actions",
+      // GH #1387 (johnnyq): collapse Disable + Delete into one "⋯" menu so the
+      // row stays compact. Disable confirms via a modal (a Popconfirm can't
+      // anchor cleanly inside a dropdown); Delete opens the type-to-confirm modal.
       render: (_v, row) => (
-        <Space size="small">
-          <Popconfirm
-            title={`Disable mail for ${row.name}?`}
-            description="Incoming mail stops and the managed mail DNS records are removed. Mailboxes are kept — re-enabling from the Domains page restores service."
-            okText="Disable"
-            okButtonProps={{ danger: true }}
-            onConfirm={() => disableMail(row)}
-          >
-            <Button size="small" danger loading={busyId === row.id}>
-              Disable
-            </Button>
-          </Popconfirm>
+        <Dropdown
+          trigger={["click"]}
+          menu={{
+            items: [
+              {
+                key: "disable",
+                icon: <PoweroffOutlined />,
+                danger: true,
+                label: "Disable",
+                onClick: () => confirmDisable(row),
+              },
+              {
+                key: "delete",
+                icon: <DeleteOutlined />,
+                danger: true,
+                label: "Delete",
+                onClick: () => {
+                  setConfirmText("");
+                  setDeleteRow(row);
+                },
+              },
+            ],
+          }}
+        >
           <Button
             size="small"
-            danger
-            onClick={() => {
-              setConfirmText("");
-              setDeleteRow(row);
-            }}
-          >
-            Delete
-          </Button>
-        </Space>
+            icon={<MoreOutlined />}
+            loading={busyId === row.id}
+            aria-label={`Actions for ${row.name}`}
+          />
+        </Dropdown>
       ),
     },
   ];

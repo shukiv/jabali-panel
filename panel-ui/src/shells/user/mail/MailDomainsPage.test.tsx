@@ -71,17 +71,11 @@ function renderPage() {
   );
 }
 
-// The row trigger and the Popconfirm OK share the same label. Open the confirm
-// from the given (row-scoped) trigger, then click the OK — it's portaled to
-// document.body, so it's the LAST button carrying that label in DOM order.
-async function openAndConfirm(trigger: HTMLElement, label: string) {
-  const before = screen.getAllByRole("button", { name: label }).length;
-  fireEvent.click(trigger);
-  await waitFor(() =>
-    expect(screen.getAllByRole("button", { name: label }).length).toBe(before + 1),
-  );
-  const all = screen.getAllByRole("button", { name: label });
-  fireEvent.click(all[all.length - 1]);
+// GH #1387: actions live behind a per-row "⋯" dropdown. Open it and click the
+// named menu item.
+async function openRowMenu(onRow: HTMLElement, item: string) {
+  fireEvent.click(within(onRow).getByRole("button", { name: /Actions for/i }));
+  fireEvent.click(await screen.findByRole("menuitem", { name: item }));
 }
 
 beforeEach(() => {
@@ -108,21 +102,31 @@ describe("GH #1387 — MailDomainsPage (mail-active only)", () => {
     expect(screen.queryByRole("button", { name: /New Mailbox/i })).not.toBeInTheDocument();
   });
 
-  it("disables mail on a domain via DELETE /domains/:id/email", async () => {
+  it("actions collapse into a ⋯ menu (no inline Disable/Delete buttons)", async () => {
     renderPage();
     const onRow = (await screen.findByText("on.test")).closest("tr") as HTMLElement;
-    const disableBtn = within(onRow).getByRole("button", { name: "Disable" });
-    await openAndConfirm(disableBtn, "Disable");
+    // No visible action buttons in the row until the menu is opened.
+    expect(within(onRow).queryByRole("button", { name: "Disable" })).not.toBeInTheDocument();
+    expect(within(onRow).queryByRole("button", { name: "Delete" })).not.toBeInTheDocument();
+    within(onRow).getByRole("button", { name: /Actions for/i }); // the ⋯ trigger exists
+  });
+
+  it("disables mail via the ⋯ menu → confirm → DELETE /domains/:id/email", async () => {
+    renderPage();
+    const onRow = (await screen.findByText("on.test")).closest("tr") as HTMLElement;
+    await openRowMenu(onRow, "Disable");
+    // A confirm modal pops (okText "Disable"); confirm it.
+    fireEvent.click(await screen.findByRole("button", { name: "Disable" }));
     await waitFor(() =>
       expect(mocked.delete).toHaveBeenCalledWith("/domains/d-on/email"),
     );
     expect(mocked.post).not.toHaveBeenCalled();
   });
 
-  it("deletes mail only after type-to-confirm → POST /domains/:id/email/purge", async () => {
+  it("deletes mail via the ⋯ menu → type-to-confirm → POST /domains/:id/email/purge", async () => {
     renderPage();
     const onRow = (await screen.findByText("on.test")).closest("tr") as HTMLElement;
-    fireEvent.click(within(onRow).getByRole("button", { name: "Delete" }));
+    await openRowMenu(onRow, "Delete");
 
     // Modal opens; the destructive confirm is disabled until the name matches.
     const okBtn = await screen.findByRole("button", { name: /Delete mail/i });
