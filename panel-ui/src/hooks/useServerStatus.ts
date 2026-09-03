@@ -170,3 +170,31 @@ export function useServerStatus(opts?: { enabled?: boolean; refetchInterval?: nu
     refetchIntervalInBackground: false,
   });
 }
+
+// useServerHealth — the light Health projection (JAB-373) for the admin
+// header badge. Hits /admin/server-status?view=health, which skips the three
+// expensive agent slices the header never renders (system.processes walks
+// every PID with a 200ms sample; software inventory; per-user cgroup slices).
+// The synthesized `alerts` — the only field the badge reads — derive solely
+// from host/services/apparmor/nginx, so the badge is byte-identical to the
+// full envelope for its purpose while costing a fraction of the agent work on
+// EVERY admin page it mounts on.
+//
+// A distinct query key (NOT the shared ["admin","server-status"]) is
+// deliberate: the Dashboard and Server Status page need the full envelope, so
+// they keep their own key. When both are mounted, the server's per-slice cache
+// (JAB-373 #1272 singleflight+TTL) already has host/services/etc warm from the
+// 5s full poll, so this projection returns them from cache and adds only one
+// light round-trip — never a second fan-out of the expensive slices.
+export function useServerHealth(opts?: { enabled?: boolean; refetchInterval?: number }) {
+  return useQuery<ServerStatusEnvelope>({
+    queryKey: ["admin", "server-health"],
+    queryFn: async () => {
+      const r = await apiClient.get<ServerStatusEnvelope>("/admin/server-status?view=health");
+      return r.data;
+    },
+    enabled: opts?.enabled ?? true,
+    refetchInterval: opts?.refetchInterval ?? 30000,
+    refetchIntervalInBackground: false,
+  });
+}

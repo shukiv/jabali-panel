@@ -98,7 +98,7 @@ test.describe("admin server status page", () => {
   test("renders all sections from one envelope", async ({ page }) => {
     await mockApi(page, { me: admin });
 
-    await page.route("**/api/v1/admin/server-status", (route) =>
+    await page.route("**/api/v1/admin/server-status*", (route) =>
       route.fulfill({
         status: 200,
         contentType: "application/json",
@@ -141,7 +141,7 @@ test.describe("admin server status page", () => {
 
   test("dashboard deep-links into server status", async ({ page }) => {
     await mockApi(page, { me: admin });
-    await page.route("**/api/v1/admin/server-status", (route) =>
+    await page.route("**/api/v1/admin/server-status*", (route) =>
       route.fulfill({
         status: 200,
         contentType: "application/json",

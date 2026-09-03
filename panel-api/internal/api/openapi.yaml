@@ -4937,7 +4937,13 @@ paths:
     get:
       tags: [Server Status]
       summary: List server status
+      description: >-
+        view=health returns the light projection for the admin header badge:
+        it omits the expensive processes / software / user_slices slices while
+        keeping the synthesized alerts and the cheap host/services/network
+        slices those alerts derive from.
       security: [ { KratosSession: [] } ]
+      parameters: [ { in: query, name: view, required: false, schema: { type: string, enum: [health] } } ]
       responses: { "200": { description: OK } }
 
 

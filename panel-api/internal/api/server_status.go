@@ -106,6 +106,15 @@ type ServerStatusAlert struct {
 func (h *adminServerStatusHandler) get(c *gin.Context) {
 	ctx := c.Request.Context()
 	now := time.Now().UTC()
+	// JAB-373: the fixed Health projection. The admin header (mounted on EVERY
+	// admin page, polling every 30s) renders only the synthesized alerts, which
+	// derive solely from host/services/apparmor/nginx — NOT processes, software,
+	// or user_slices. `?view=health` skips those three expensive slices
+	// (system.processes walks every PID with a 200ms sample; software; user
+	// slices), so the header never pays for data it doesn't show. Full Adapters
+	// (Dashboard, Server Status page) omit the param and get everything; the
+	// per-slice cache dedupes the shared slices across both.
+	health := c.Query("view") == "health"
 
 	type slot struct {
 		name string
@@ -158,10 +167,14 @@ func (h *adminServerStatusHandler) get(c *gin.Context) {
 	call("host", "system.info", nil, ttlHost)
 	call("cpu", "system.cpu_usage", nil, ttlCPU)
 	call("network", "system.network", nil, ttlNetwork)
-	call("processes", "system.processes", nil, ttlProcesses)
+	if !health {
+		call("processes", "system.processes", nil, ttlProcesses)
+	}
 	call("services", "system.service_details", nil, ttlServices)
-	call("user_slices", "system.user_slices", nil, ttlUserSlices)
-	call("software", "system.software", nil, ttlSoftware)
+	if !health {
+		call("user_slices", "system.user_slices", nil, ttlUserSlices)
+		call("software", "system.software", nil, ttlSoftware)
+	}
 	// nginx.status, NOT nginx.test: this envelope is polled every few
 	// seconds from any open admin tab, and `nginx -t` recompiles every
 	// vhost plus the whole CrowdSec AppSec/CRS rule set (~19s at >60% CPU
@@ -307,6 +320,14 @@ func (h *adminServerStatusHandler) get(c *gin.Context) {
 // Threshold rules are intentionally conservative — Step 1 ships a
 // minimum that catches obvious failures; Step 4 will extend with
 // service-specific rules and a link to the relevant remediation page.
+//
+// INVARIANT (JAB-373 Health projection): alerts must derive ONLY from the
+// host, services, apparmor and nginx slices. The admin header badge fetches
+// `?view=health`, which OMITS the processes, software and user_slices slices
+// to stay cheap on every admin page. If you add an alert sourced from one of
+// those three (e.g. a zombie-process or pending-update alert), the header will
+// silently never show it — add it to the Health projection's slice set in
+// get() (server_status.go) too, or the badge and the full-page banner diverge.
 func synthesizeAlerts(results map[string]json.RawMessage, errMap map[string]string) []ServerStatusAlert {
 	// Init non-nil: a HEALTHY server produces no alerts, and a nil slice marshals
 	// as JSON `null`, not `[]` (feedback_go_nil_slice_json_null_spa_crash). The SPA
