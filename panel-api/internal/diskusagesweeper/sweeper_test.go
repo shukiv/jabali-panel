@@ -1,10 +1,10 @@
 package diskusagesweeper
 
-// The sweeper exists so users.disk_used_kb is a real column the list query
-// can ORDER BY. The behaviours worth pinning are the ones that decide
-// whether the sorted column tells the truth: a failed measurement must
-// leave the previous snapshot alone rather than writing a zero, and a
-// user with no linux account must not be measured at all.
+// The sweeper keeps users.disk_used_kb a real column the list query can ORDER
+// BY. Behaviours worth pinning: a failed measurement leaves the previous
+// snapshot alone (never a zero), a user with no linux account is not measured,
+// and — since JAB-376 — one host quota inventory replaces the per-user quota
+// fan-out while the du-fallback for empty/quota-0 homes (GH #1242) survives.
 
 import (
 	"context"
@@ -25,17 +25,33 @@ func quietLogger() *slog.Logger {
 }
 
 type stubAgent struct {
-	mu             sync.Mutex
-	calls          []string
+	mu sync.Mutex
+	// user.limits.report (the per-user du path)
+	reportCalls    []string
 	reply          string
-	err            error
 	replyFor       map[string]string
 	sawMeasureDisk bool
+	// system.quota_inventory (the one-shot batch path)
+	inventoryCalls int
+	inventoryReply string // "" => empty inventory
+	// err fails every call (whole agent down)
+	err error
 }
 
 func (a *stubAgent) Call(_ context.Context, cmd string, params any) (json.RawMessage, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	if cmd == "system.quota_inventory" {
+		a.inventoryCalls++
+		if a.err != nil {
+			return nil, a.err
+		}
+		if a.inventoryReply == "" {
+			return json.RawMessage(`{"entries":[],"partial":false}`), nil
+		}
+		return json.RawMessage(a.inventoryReply), nil
+	}
+	// user.limits.report
 	name := ""
 	if m, ok := params.(map[string]any); ok {
 		name, _ = m["username"].(string)
@@ -43,7 +59,7 @@ func (a *stubAgent) Call(_ context.Context, cmd string, params any) (json.RawMes
 			a.sawMeasureDisk = true
 		}
 	}
-	a.calls = append(a.calls, cmd+":"+name)
+	a.reportCalls = append(a.reportCalls, name)
 	if a.err != nil {
 		return nil, a.err
 	}
@@ -53,10 +69,15 @@ func (a *stubAgent) Call(_ context.Context, cmd string, params any) (json.RawMes
 	return json.RawMessage(a.reply), nil
 }
 
-func (a *stubAgent) callCount() int {
+func (a *stubAgent) reportCallCount() int {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return len(a.calls)
+	return len(a.reportCalls)
+}
+func (a *stubAgent) inventoryCallCount() int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.inventoryCalls
 }
 
 type persisted struct {
@@ -68,9 +89,10 @@ type stubUserRepo struct {
 	rows    []models.User
 	listErr error
 
-	mu       sync.Mutex
-	written  map[string]persisted
-	writeErr error
+	mu         sync.Mutex
+	written    map[string]persisted
+	batchCalls int
+	writeErr   error
 }
 
 func (r *stubUserRepo) List(_ context.Context, _ repository.ListOptions) ([]models.User, int64, error) {
@@ -93,6 +115,25 @@ func (r *stubUserRepo) UpdateDiskUsage(_ context.Context, id string, used, limit
 	return nil
 }
 
+// BatchUpdateDiskUsage records into the SAME map so the persist assertions read
+// the batch, and counts the calls so a test can prove the whole sweep is one
+// bounded persist, not one statement per account.
+func (r *stubUserRepo) BatchUpdateDiskUsage(_ context.Context, rows []repository.DiskUsageRow, _ time.Time) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.writeErr != nil {
+		return r.writeErr
+	}
+	r.batchCalls++
+	if r.written == nil {
+		r.written = map[string]persisted{}
+	}
+	for _, row := range rows {
+		r.written[row.UserID] = persisted{used: row.UsedKB, limit: row.LimitKB}
+	}
+	return nil
+}
+
 func (r *stubUserRepo) writeCount() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -108,20 +149,97 @@ func userWith(id, username string) models.User {
 	return u
 }
 
-// Speed the paced sweep up for tests — the delay exists to be kind to the
-// disk in production, not to make the suite slow.
 func newTestSweeper(t *testing.T, repo *stubUserRepo, ag *stubAgent) *Sweeper {
 	t.Helper()
-	s := New(Deps{Users: repo, Agent: ag, QuotaMount: "/home", Log: quietLogger()})
+	s := New(Deps{Users: repo, Agent: ag, QuotaMount: "/", Log: quietLogger()})
 	if s == nil {
 		t.Fatal("New returned nil with all deps supplied")
 	}
 	return s
 }
 
+// JAB-376 fast path: a user whose quota the inventory already measured is
+// persisted WITHOUT a per-user agent call.
+func TestSweepOnce_InventoryFastPathSkipsPerUserCall(t *testing.T) {
+	repo := &stubUserRepo{rows: []models.User{userWith("u1", "alice")}}
+	ag := &stubAgent{inventoryReply: `{"entries":[{"username":"alice","used_kb":999,"limit_kb":5000}]}`}
+
+	newTestSweeper(t, repo, ag).SweepOnce(context.Background())
+
+	if ag.reportCallCount() != 0 {
+		t.Errorf("inventory covered alice — no per-user user.limits.report should be made, got %d", ag.reportCallCount())
+	}
+	if ag.inventoryCallCount() != 1 {
+		t.Errorf("expected exactly one inventory read, got %d", ag.inventoryCallCount())
+	}
+	if got := repo.written["u1"]; got.used != 999 || got.limit != 5000 {
+		t.Errorf("persisted %+v, want used=999 limit=5000 from the inventory", got)
+	}
+	if repo.batchCalls != 1 {
+		t.Errorf("expected one batch persist, got %d", repo.batchCalls)
+	}
+}
+
+// A packaged-but-empty account (real hard limit, 0 used) is authoritative from
+// the inventory — no du walk needed, even though used is 0.
+func TestSweepOnce_InventoryLimitOnlyIsAuthoritative(t *testing.T) {
+	repo := &stubUserRepo{rows: []models.User{userWith("u1", "newbie")}}
+	ag := &stubAgent{inventoryReply: `{"entries":[{"username":"newbie","used_kb":0,"limit_kb":5000000}]}`}
+
+	newTestSweeper(t, repo, ag).SweepOnce(context.Background())
+
+	if ag.reportCallCount() != 0 {
+		t.Errorf("a limit-set 0-used account is authoritative — no du fallback, got %d calls", ag.reportCallCount())
+	}
+	if got := repo.written["u1"]; got.used != 0 || got.limit != 5000000 {
+		t.Errorf("persisted %+v, want used=0 limit=5000000 from the inventory", got)
+	}
+}
+
+// A single inventory read + one batch persist covers N accounts.
+func TestSweepOnce_OneInventoryAndOneBatchForManyUsers(t *testing.T) {
+	repo := &stubUserRepo{rows: []models.User{
+		userWith("u1", "alice"), userWith("u2", "bob"), userWith("u3", "carol"),
+	}}
+	ag := &stubAgent{inventoryReply: `{"entries":[
+		{"username":"alice","used_kb":10,"limit_kb":100},
+		{"username":"bob","used_kb":20,"limit_kb":200},
+		{"username":"carol","used_kb":30,"limit_kb":300}]}`}
+
+	newTestSweeper(t, repo, ag).SweepOnce(context.Background())
+
+	if ag.inventoryCallCount() != 1 || ag.reportCallCount() != 0 {
+		t.Errorf("want 1 inventory + 0 per-user calls, got inv=%d report=%d", ag.inventoryCallCount(), ag.reportCallCount())
+	}
+	if repo.batchCalls != 1 || repo.writeCount() != 3 {
+		t.Errorf("want one batch persisting 3 rows, got batchCalls=%d rows=%d", repo.batchCalls, repo.writeCount())
+	}
+}
+
+// GH #1242 preserved: an account the inventory reports as 0 (empty / pre-quotaon
+// files) falls back to the per-user du walk so its cell isn't a false 0.
+func TestSweepOnce_InventoryZeroFallsToDuFallback(t *testing.T) {
+	repo := &stubUserRepo{rows: []models.User{userWith("u1", "alice")}}
+	ag := &stubAgent{
+		inventoryReply: `{"entries":[{"username":"alice","used_kb":0,"limit_kb":0}]}`,
+		reply:          `{"disk":{"used_kb":4200,"limit_kb":0}}`,
+	}
+
+	newTestSweeper(t, repo, ag).SweepOnce(context.Background())
+
+	if !ag.sawMeasureDisk {
+		t.Fatal("a quota-0 account must fall back to du (measure_disk=true, GH #1242)")
+	}
+	if got := repo.written["u1"]; got.used != 4200 {
+		t.Fatalf("persisted %+v, want du value 4200 for the quota-0 account", got)
+	}
+}
+
+// The whole sweep persists via one bounded batch, exercising the du path for a
+// user absent from the inventory.
 func TestSweepOnce_PersistsReportedUsage(t *testing.T) {
 	repo := &stubUserRepo{rows: []models.User{userWith("u1", "alice")}}
-	ag := &stubAgent{reply: `{"disk":{"used_kb":1800000,"limit_kb":51200000}}`}
+	ag := &stubAgent{reply: `{"disk":{"used_kb":1800000,"limit_kb":51200000}}`} // empty inventory → du path
 
 	newTestSweeper(t, repo, ag).SweepOnce(context.Background())
 
@@ -134,26 +252,8 @@ func TestSweepOnce_PersistsReportedUsage(t *testing.T) {
 	}
 }
 
-// GH #1242: the sweep must request the du-fallback so a user with no hosting
-// package (hence no quota) still gets a real disk number instead of a blank cell.
-func TestSweepOnce_RequestsDuFallback(t *testing.T) {
-	repo := &stubUserRepo{rows: []models.User{userWith("u1", "alice")}}
-	ag := &stubAgent{reply: `{"disk":{"used_kb":4200,"limit_kb":0}}`}
-
-	newTestSweeper(t, repo, ag).SweepOnce(context.Background())
-
-	if !ag.sawMeasureDisk {
-		t.Fatal("sweep must call user.limits.report with measure_disk=true (GH #1242)")
-	}
-	// A quota-less user (limit 0) with real bytes still persists its usage.
-	if got := repo.written["u1"]; got.used != 4200 {
-		t.Fatalf("persisted %+v, want used=4200 for the no-package user", got)
-	}
-}
-
-// A failed agent call must leave the previous snapshot in place. Writing a
-// zero would show every account as empty the moment the agent hiccups, and
-// a sort by disk usage would then be actively misleading.
+// A whole-agent failure (inventory AND du both down) must leave the previous
+// snapshot alone — never a fleet-wide zero the moment the agent hiccups.
 func TestSweepOnce_AgentFailureLeavesSnapshotAlone(t *testing.T) {
 	repo := &stubUserRepo{rows: []models.User{userWith("u1", "alice")}}
 	ag := &stubAgent{err: errors.New("agent socket down")}
@@ -165,11 +265,10 @@ func TestSweepOnce_AgentFailureLeavesSnapshotAlone(t *testing.T) {
 	}
 }
 
-// Same reasoning: a report that came back without a disk section is not a
-// measurement of zero.
+// A du-fallback report with no disk section is not a measurement of zero.
 func TestSweepOnce_MissingDiskSectionIsNotZero(t *testing.T) {
 	repo := &stubUserRepo{rows: []models.User{userWith("u1", "alice")}}
-	ag := &stubAgent{reply: `{"memory":{"current_bytes":1}}`}
+	ag := &stubAgent{reply: `{"memory":{"current_bytes":1}}`} // empty inventory → du → no disk section
 
 	newTestSweeper(t, repo, ag).SweepOnce(context.Background())
 
@@ -178,20 +277,19 @@ func TestSweepOnce_MissingDiskSectionIsNotZero(t *testing.T) {
 	}
 }
 
-// Admins and not-yet-provisioned rows have no linux account, so there is no
-// home and no quota entry to measure. Calling the agent for them wastes a
-// fork per sweep and logs a failure every time.
+// Admins / not-yet-provisioned rows have no linux account — not measured, and
+// the inventory (one call) covers the whole box regardless.
 func TestSweepOnce_SkipsUsersWithoutLinuxAccount(t *testing.T) {
 	repo := &stubUserRepo{rows: []models.User{
 		userWith("admin1", ""),
 		userWith("u1", "alice"),
 	}}
-	ag := &stubAgent{reply: `{"disk":{"used_kb":10,"limit_kb":100}}`}
+	ag := &stubAgent{reply: `{"disk":{"used_kb":10,"limit_kb":100}}`} // empty inventory → alice du path
 
 	newTestSweeper(t, repo, ag).SweepOnce(context.Background())
 
-	if ag.callCount() != 1 {
-		t.Fatalf("agent called %d times; the account-less row should be skipped entirely", ag.callCount())
+	if ag.reportCallCount() != 1 {
+		t.Fatalf("per-user reports = %d; the account-less row should be skipped entirely", ag.reportCallCount())
 	}
 	if _, ok := repo.written["admin1"]; ok {
 		t.Error("persisted a snapshot for a user with no linux account")
@@ -206,10 +304,8 @@ func TestSweepOnce_OneUserFailingDoesNotStopTheSweep(t *testing.T) {
 		userWith("u3", "carol"),
 	}}
 	ag := &stubAgent{
-		reply: `{"disk":{"used_kb":5,"limit_kb":50}}`,
-		replyFor: map[string]string{
-			"bob": `{"not":"a disk report"}`,
-		},
+		reply:    `{"disk":{"used_kb":5,"limit_kb":50}}`,
+		replyFor: map[string]string{"bob": `{"not":"a disk report"}`},
 	}
 
 	newTestSweeper(t, repo, ag).SweepOnce(context.Background())
@@ -228,13 +324,12 @@ func TestSweepOnce_ListFailureIsNotFatal(t *testing.T) {
 
 	newTestSweeper(t, repo, ag).SweepOnce(context.Background())
 
-	if ag.callCount() != 0 {
+	if ag.inventoryCallCount() != 0 || ag.reportCallCount() != 0 {
 		t.Error("measured users despite failing to list them")
 	}
 }
 
-// A cancelled context must stop the sweep promptly rather than walking
-// every remaining account on a shutting-down panel.
+// A cancelled context stops the sweep promptly.
 func TestSweepOnce_HonoursContextCancellation(t *testing.T) {
 	rows := make([]models.User, 0, 50)
 	for i := 0; i < 50; i++ {
