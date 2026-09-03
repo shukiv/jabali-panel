@@ -3,10 +3,9 @@
 // when a row is succeeded. Mirrors AdminBackupsPage data shape but
 // scoped via /me/backups (auth-gated to caller's user_id).
 import { useTranslation } from "react-i18next";
-import { downloadUrl } from "../../utils/download";
+import { useBackupDownloadPrepare } from "../../utils/backupDownload";
 import { Button, Card, Grid, Input, Select, Space, Table, Tag, Tooltip, Typography } from "antd";
 import { feedback } from "../../lib/feedback"; // GH #970: themed toasts
-import { getActAs } from "../../impersonation";
 import { shortDateTime } from "../../utils/datetime";
 import { backupTypeColor, backupTypeLabel } from "../../utils/backupType";
 import { RowActions } from "../../components/RowActions";
@@ -54,6 +53,7 @@ const statusColor = (status: string): string => {
 
 export const MyProfileBackupCard = () => {
   const { t } = useTranslation();
+  const dl = useBackupDownloadPrepare("me"); // GH #1408: prepare-then-download
   const screens = Grid.useBreakpoint();
   const [submitting, setSubmitting] = useState(false);
   const [restoreId, setRestoreId] = useState<string | null>(null);
@@ -259,7 +259,7 @@ export const MyProfileBackupCard = () => {
                   // succeeded-only (a partial account backup is not a safe restore
                   // source).
                   ...(!isRestoreRow(row) && (row.status === "succeeded" || row.status === "partial")
-                    ? [{ key: "download", label: "Download", icon: <DownloadOutlined />, onClick: () => { const act = getActAs(); downloadUrl(`/api/v1/me/backups/${row.id}/download${act ? `?act_as=${encodeURIComponent(act.id)}` : ""}`); } }]
+                    ? [{ key: "download", label: dl.preparingId === row.id ? "Preparing…" : "Download", icon: <DownloadOutlined />, loading: dl.preparingId === row.id, disabled: dl.preparingId === row.id, onClick: () => dl.start(row.id) }]
                     : []),
                   ...(!isRestoreRow(row) && row.status === "succeeded"
                     ? [{ key: "restore", label: "Restore", icon: <ReloadOutlined />, onClick: () => setRestoreId(row.id) }]
