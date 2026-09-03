@@ -6,6 +6,7 @@ import { useNavigate } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { CodeOutlined } from "@icons";
 import { UserPHPPerformanceCard } from "./UserPHPPerformanceCard";
+import { UserPHPOpcacheCard } from "./UserPHPOpcacheCard";
 import { DomainEnvVarsCard } from "./DomainEnvVarsCard";
 import { PHPExtensionsCard } from "./PHPExtensionsCard";
 import { PHPXdebugCard } from "./PHPXdebugCard";
@@ -747,6 +748,11 @@ export function UserPHPSettingsPage() {
               key: "perf",
               label: "Performance",
               children: <UserPHPPerformanceCard />,
+            },
+            {
+              key: "opcache",
+              label: "OPcache & JIT",
+              children: <UserPHPOpcacheCard />,
             },
             {
               key: "env",
