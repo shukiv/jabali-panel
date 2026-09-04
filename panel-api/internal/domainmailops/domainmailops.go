@@ -19,11 +19,16 @@
 // *models.Domain and mutates it in place on a successful enable so the caller
 // can echo the new state without re-fetching.
 //
+// RotateDKIM (JAB-286) shares the DKIM-rotation lifecycle the REST handler and
+// operator CLI both drove: agent domain.email_dkim_rotate → persist the new
+// public key → wipe + republish the M6-managed DNS.
+//
 // Not yet routed through here: the reconciler's per-tick provisioning
 // (internal/reconciler/panel_primary_dkim.go — ensurePanelPrimaryDKIM /
-// ensureTenantEmailEnabled), which carries its own reserved-TLD and
-// already-provisioned guards and a distinct panel-cert lineage. JAB-288 stays a
-// module-parent until that fourth caller is migrated.
+// ensureTenantEmailEnabled + its own managed-DNS convergence), which carries
+// its own reserved-TLD and already-provisioned guards and a distinct panel-cert
+// lineage. JAB-288 and JAB-286 stay module-parents until that fourth caller is
+// migrated.
 package domainmailops
 
 import (
@@ -45,6 +50,14 @@ import (
 // Ed25519 DKIM keypair — all fast. 30s is generous. Matches the value the REST
 // handler and reconciler used before extraction.
 const agentTimeout = 30 * time.Second
+
+// rotateTimeout bounds the agent budget for domain.email_dkim_rotate. Longer
+// than agentTimeout: rotation generates a fresh Ed25519 keypair, snapshots the
+// old private key to disk, and reloads Stalwart — heavier than a plain enable.
+// Matches the 60s the CLI already wrapped its rotate call in; the REST rotate
+// had no cap at all, so routing through here adds a benign upper bound on the
+// request path.
+const rotateTimeout = 60 * time.Second
 
 // CallFunc runs one agent command. Both adapters' agent callers already have
 // this exact signature (agent.AgentInterface.Call and the CLI's agentCaller),
@@ -82,6 +95,12 @@ var (
 	ErrAgentUnconfigured = errors.New("domainmailops: agent unconfigured")
 	ErrAgentFailed       = errors.New("domainmailops: agent call failed")
 	ErrAgentBadResponse  = errors.New("domainmailops: agent returned bad response")
+	// ErrEmailNotEnabled is returned by RotateDKIM when the domain has no
+	// email enabled — there is no existing key to rotate.
+	ErrEmailNotEnabled = errors.New("domainmailops: email not enabled")
+	// ErrPersistFailed wraps a repository failure while writing the rotated
+	// key, so the adapter can tell a persistence fault from an agent one.
+	ErrPersistFailed = errors.New("domainmailops: persist new dkim key failed")
 )
 
 // Enable runs the shared "flip email on for this domain" flow: invokes
@@ -190,6 +209,95 @@ func Disable(ctx context.Context, d Deps, dom *models.Domain) error {
 	dom.EmailEnabled = false
 	dom.EmailEnabledAt = nil
 	return nil
+}
+
+// RotateResult carries the agent's DKIM rotation output for the adapter to
+// echo. Selector is the stable "jabali" selector; the old public key + backup
+// path are informational (the operator removes the .old key after DNS
+// propagation).
+type RotateResult struct {
+	Selector         string
+	OldDKIMPublicKey string
+	NewDKIMPublicKey string
+	OldKeyBackupPath string
+}
+
+// RotateDKIM rotates the domain's DKIM keypair (ADR-0043 §"Rotation";
+// operator-driven, not automatic). The agent generates a fresh Ed25519 key,
+// snapshots the old private key, and reloads Stalwart; we persist the new
+// public key under the stable "jabali" selector, then wipe + republish the
+// M6-managed DNS so the new DKIM TXT replaces the old at
+// jabali._domainkey.<domain>. The reconciler re-converges on its next tick too,
+// so the immediate republish is a belt-and-suspenders UI refresh.
+//
+// Ordering mirrors Enable and is the whole point of the guard sequence: agent
+// first (a failed rotate or an incomplete response leaves the DB row and DNS
+// untouched — the last usable key stays authoritative), then persist, then
+// best-effort DNS. On nil err the passed dom is mutated (selector + public key)
+// so the caller can echo the new state without re-fetching.
+//
+// The persist step writes the domain's *existing* email_enabled_at back
+// unchanged: UpdateEmailState always assigns that column from the struct, so a
+// zero value would NULL it on every rotation even though email stays enabled.
+// Rotation is timestamp-neutral.
+//
+// Wrapped errors: ErrEmailNotEnabled, ErrAgentUnconfigured, ErrAgentFailed,
+// ErrAgentBadResponse, ErrPersistFailed. DNS conflict / missing-zone stay
+// best-effort []string warnings (same contract as Enable).
+func RotateDKIM(ctx context.Context, d Deps, dom *models.Domain) (RotateResult, []string, error) {
+	if !dom.EmailEnabled {
+		return RotateResult{}, nil, ErrEmailNotEnabled
+	}
+	if d.Call == nil {
+		return RotateResult{}, nil, ErrAgentUnconfigured
+	}
+	agentCtx, cancel := context.WithTimeout(ctx, rotateTimeout)
+	defer cancel()
+	raw, err := d.Call(agentCtx, "domain.email_dkim_rotate", map[string]any{
+		"domain_name": dom.Name,
+	})
+	if err != nil {
+		return RotateResult{}, nil, fmt.Errorf("%w: %v", ErrAgentFailed, err)
+	}
+	var resp struct {
+		OldDKIMPublicKey string `json:"old_dkim_public_key"`
+		NewDKIMPublicKey string `json:"new_dkim_public_key"`
+		OldKeyBackupPath string `json:"old_key_backup_path"`
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return RotateResult{}, nil, fmt.Errorf("%w: unmarshal: %v", ErrAgentBadResponse, err)
+	}
+	if resp.NewDKIMPublicKey == "" {
+		// Incomplete response — never overwrite the last usable key.
+		return RotateResult{}, nil, fmt.Errorf("%w: no new dkim public key", ErrAgentBadResponse)
+	}
+
+	selector := dnscompile.EmailRecordsSelector
+	pubKey := resp.NewDKIMPublicKey
+	if err := d.Domains.UpdateEmailState(ctx, dom.ID, repository.DomainEmailState{
+		Enabled:        true,
+		DkimSelector:   &selector,
+		DkimPublicKey:  &pubKey,
+		EmailEnabledAt: dom.EmailEnabledAt, // preserve — see doc comment
+	}); err != nil {
+		return RotateResult{}, nil, fmt.Errorf("%w: %v", ErrPersistFailed, err)
+	}
+
+	// Mutate caller's struct so the response reflects the rotated key.
+	dom.DkimSelector = &selector
+	dom.DkimPublicKey = &pubKey
+
+	// Wipe the old M6-managed records + republish so the new DKIM TXT replaces
+	// the old one immediately (reconciler re-converges on its next tick too).
+	DeleteManagedDNSOnDisable(ctx, d, dom.ID)
+	warnings := SyncManagedDNSOnEnable(ctx, d, dom.ID, selector, pubKey)
+
+	return RotateResult{
+		Selector:         selector,
+		OldDKIMPublicKey: resp.OldDKIMPublicKey,
+		NewDKIMPublicKey: pubKey,
+		OldKeyBackupPath: resp.OldKeyBackupPath,
+	}, warnings, nil
 }
 
 // SyncManagedDNSOnEnable publishes the M6 DNS record set (DKIM TXT, autoconfig/

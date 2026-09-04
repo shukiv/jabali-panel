@@ -522,3 +522,101 @@ func TestDomains_Create_AutoEnableFailureStillReturns201(t *testing.T) {
 	require.Nil(t, resp.DkimSelector, "no DKIM material when agent never ran")
 	require.Nil(t, resp.EmailEnabledAt, "email_enabled_at unset when agent never ran")
 }
+
+// --- DKIM rotation (JAB-286) — the rotate handler had no tests before the
+// lifecycle moved into internal/domainmailops; these pin the six-code error
+// contract + the 200 shape the module's typed results map onto. ---
+
+// dkimRotateRouter wires the domain-email routes with one pre-seeded domain
+// owned by user1. withAgent controls whether an agent is present (so the
+// nil-agent 503 path is reachable); emailEnabled seeds the rotate guard.
+func dkimRotateRouter(t *testing.T, ma *mockAgent, withAgent, emailEnabled bool) (*gin.Engine, *mockDomainRepo) {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	v1 := r.Group("/api/v1")
+	v1.Use(func(c *gin.Context) {
+		ginctx.SetClaims(c, &auth.AccessClaims{UserID: "user1", IsAdmin: false})
+		c.Next()
+	})
+	domains := newMockDomainRepo()
+	domains.domains["dom1"] = &models.Domain{ID: "dom1", UserID: "user1", Name: "example.com", EmailEnabled: emailEnabled}
+	cfg := DomainEmailHandlerConfig{Domains: domains}
+	if withAgent {
+		cfg.Agent = ma
+	}
+	RegisterDomainEmailRoutes(v1, cfg)
+	return r, domains
+}
+
+func doRotate(t *testing.T, r *gin.Engine) *httptest.ResponseRecorder {
+	t.Helper()
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/v1/domains/dom1/email/dkim-rotate", nil))
+	return w
+}
+
+func TestDomainEmail_RotateDKIM_Success(t *testing.T) {
+	ma := &mockAgent{callFn: func(_ context.Context, cmd string, _ any) (json.RawMessage, error) {
+		require.Equal(t, "domain.email_dkim_rotate", cmd)
+		return json.RawMessage(`{"old_dkim_public_key":"p=OLD","new_dkim_public_key":"p=NEW","old_key_backup_path":"/etc/x.old"}`), nil
+	}}
+	r, _ := dkimRotateRouter(t, ma, true, true)
+	w := doRotate(t, r)
+	require.Equal(t, http.StatusOK, w.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	require.Equal(t, "jabali", body["dkim_selector"])
+	require.Equal(t, "p=NEW", body["new_dkim_public_key"])
+	require.Equal(t, "p=OLD", body["old_dkim_public_key"])
+	require.Equal(t, "/etc/x.old", body["old_key_backup_path"])
+	require.Equal(t, 1, ma.callCount)
+}
+
+func TestDomainEmail_RotateDKIM_NotEnabled_409(t *testing.T) {
+	ma := &mockAgent{callFn: func(context.Context, string, any) (json.RawMessage, error) {
+		t.Fatal("agent must not be called when email is disabled")
+		return nil, nil
+	}}
+	r, _ := dkimRotateRouter(t, ma, true, false)
+	w := doRotate(t, r)
+	require.Equal(t, http.StatusConflict, w.Code)
+	require.Contains(t, w.Body.String(), "email_not_enabled")
+	require.Equal(t, 0, ma.callCount)
+}
+
+func TestDomainEmail_RotateDKIM_AgentUnconfigured_503(t *testing.T) {
+	r, _ := dkimRotateRouter(t, nil, false, true)
+	w := doRotate(t, r)
+	require.Equal(t, http.StatusServiceUnavailable, w.Code)
+	require.Contains(t, w.Body.String(), "agent_unconfigured")
+}
+
+func TestDomainEmail_RotateDKIM_AgentFailed_502(t *testing.T) {
+	ma := &mockAgent{callErr: errors.New("dial: connection refused")}
+	r, _ := dkimRotateRouter(t, ma, true, true)
+	w := doRotate(t, r)
+	require.Equal(t, http.StatusBadGateway, w.Code)
+	require.Contains(t, w.Body.String(), "agent_rotate_failed")
+}
+
+func TestDomainEmail_RotateDKIM_BadResponse_502(t *testing.T) {
+	ma := &mockAgent{callFn: func(context.Context, string, any) (json.RawMessage, error) {
+		return json.RawMessage(`{"old_dkim_public_key":"p=OLD","new_dkim_public_key":""}`), nil
+	}}
+	r, _ := dkimRotateRouter(t, ma, true, true)
+	w := doRotate(t, r)
+	require.Equal(t, http.StatusBadGateway, w.Code)
+	require.Contains(t, w.Body.String(), "agent_bad_response")
+}
+
+func TestDomainEmail_RotateDKIM_PersistFailed_500(t *testing.T) {
+	ma := &mockAgent{callFn: func(context.Context, string, any) (json.RawMessage, error) {
+		return json.RawMessage(`{"new_dkim_public_key":"p=NEW"}`), nil
+	}}
+	r, domains := dkimRotateRouter(t, ma, true, true)
+	domains.emailStateErr = errors.New("db down")
+	w := doRotate(t, r)
+	require.Equal(t, http.StatusInternalServerError, w.Code)
+	require.Contains(t, w.Body.String(), "persist_failed")
+}

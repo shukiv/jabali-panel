@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"time"
@@ -107,48 +106,36 @@ func (h *domainEmailHandler) rotateDKIM(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 		return
 	}
-	if !dom.EmailEnabled {
-		c.JSON(http.StatusConflict, gin.H{"error": "email_not_enabled", "detail": "enable email on this domain before rotating DKIM"})
-		return
-	}
-	if h.cfg.Agent == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "agent_unconfigured"})
-		return
-	}
-	raw, err := h.cfg.Agent.Call(ctx, "domain.email_dkim_rotate", map[string]any{"domain_name": dom.Name})
+	// The rotation lifecycle (email-enabled guard, agent call, new-key
+	// validation, persistence, wipe + republish of the M6-managed DNS) lives in
+	// internal/domainmailops (JAB-286); this handler only maps the typed result
+	// onto the REST contract. h.deps() wires the same DNS repos the enable path
+	// uses, and agentCall is nil when the agent is unconfigured (→ 503).
+	res, warnings, err := domainmailops.RotateDKIM(ctx, h.deps(), dom)
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_rotate_failed", "detail": firstLineString(err.Error())})
+		switch {
+		case errors.Is(err, domainmailops.ErrEmailNotEnabled):
+			c.JSON(http.StatusConflict, gin.H{"error": "email_not_enabled", "detail": "enable email on this domain before rotating DKIM"})
+		case errors.Is(err, domainmailops.ErrAgentUnconfigured):
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "agent_unconfigured"})
+		case errors.Is(err, domainmailops.ErrAgentFailed):
+			c.JSON(http.StatusBadGateway, gin.H{"error": "agent_rotate_failed", "detail": firstLineString(err.Error())})
+		case errors.Is(err, domainmailops.ErrAgentBadResponse):
+			c.JSON(http.StatusBadGateway, gin.H{"error": "agent_bad_response", "detail": "agent returned no new DKIM key"})
+		case errors.Is(err, domainmailops.ErrPersistFailed):
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "persist_failed", "detail": firstLineString(err.Error())})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		}
 		return
 	}
-	var resp struct {
-		OldDKIMPublicKey string `json:"old_dkim_public_key"`
-		NewDKIMPublicKey string `json:"new_dkim_public_key"`
-		OldKeyBackupPath string `json:"old_key_backup_path"`
-	}
-	if jerr := json.Unmarshal(raw, &resp); jerr != nil || resp.NewDKIMPublicKey == "" {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_bad_response", "detail": "agent returned no new DKIM key"})
-		return
-	}
-	selector := "jabali" // EmailRecordsSelector — stable across rotations
-	if uerr := h.cfg.Domains.UpdateEmailState(ctx, dom.ID, repository.DomainEmailState{
-		Enabled:       true,
-		DkimSelector:  &selector,
-		DkimPublicKey: &resp.NewDKIMPublicKey,
-	}); uerr != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "persist_failed", "detail": firstLineString(uerr.Error())})
-		return
-	}
-	// Wipe the old M6-managed records + republish so the new DKIM TXT replaces
-	// the old one immediately (reconciler re-converges on its next tick too).
-	h.deleteEmailDNSOnDisable(ctx, dom.ID)
-	warnings := h.syncEmailDNSOnEnable(ctx, dom.ID, selector, resp.NewDKIMPublicKey)
 	c.JSON(http.StatusOK, gin.H{
 		"domain_id":           dom.ID,
 		"domain_name":         dom.Name,
-		"dkim_selector":       selector,
-		"old_dkim_public_key": resp.OldDKIMPublicKey,
-		"new_dkim_public_key": resp.NewDKIMPublicKey,
-		"old_key_backup_path": resp.OldKeyBackupPath,
+		"dkim_selector":       res.Selector,
+		"old_dkim_public_key": res.OldDKIMPublicKey,
+		"new_dkim_public_key": res.NewDKIMPublicKey,
+		"old_key_backup_path": res.OldKeyBackupPath,
 		"warnings":            warnings,
 	})
 }
@@ -317,25 +304,6 @@ func (h *domainEmailHandler) disable(c *gin.Context) {
 		return
 	}
 	c.Status(http.StatusNoContent)
-}
-
-// syncEmailDNSOnEnableInline is the free-function form of the M6 DNS
-// sync. Shared by the email-enable HTTP handler and the auto-enable
-// path in domain.create. Best-effort: returns a slice of human-
-// readable warning messages (conflicts, hard errors) for the UI to
-// surface. Never returns an error — the email_enable flip has already
-// succeeded by the time we get here, and the mailbox system stays
-// usable without the convenience records.
-// syncEmailDNSOnEnable + deleteEmailDNSOnDisable are thin method-form
-// wrappers so the DKIM-rotate path (which wipes then republishes) reads
-// naturally; the M6 DNS logic itself lives in internal/domainmailops so the
-// enable/disable and rotate paths share one implementation.
-func (h *domainEmailHandler) syncEmailDNSOnEnable(ctx context.Context, domainID, selector, dkimPub string) []string {
-	return domainmailops.SyncManagedDNSOnEnable(ctx, h.deps(), domainID, selector, dkimPub)
-}
-
-func (h *domainEmailHandler) deleteEmailDNSOnDisable(ctx context.Context, domainID string) {
-	domainmailops.DeleteManagedDNSOnDisable(ctx, h.deps(), domainID)
 }
 
 // buildHintsWithStatus projects the authoritative M6 record set onto

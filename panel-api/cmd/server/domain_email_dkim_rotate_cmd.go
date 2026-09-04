@@ -5,37 +5,24 @@
 //   - Periodic rotation policy (3-12 months recommended)
 //   - Post-incident credential rotation
 //
-// Pipeline mirrors domain.email_enable's DNS publish path:
-//  1. Resolve domain by name or ID
-//  2. agent.domain.email_dkim_rotate — generates fresh keypair,
-//     snapshots old key to <domain>.key.old, reloads Stalwart
-//  3. UpdateEmailState writes the new dkim_public_key into
-//     domains row
-//  4. Wipe old M6-managed DNS records + republish so the new
-//     DKIM TXT lands at jabali._domainkey.<domain>
-//
-// On agent failure: bail before DB + DNS writes (no partial state).
-// On DB / DNS failure post-agent-success: surface as warning + leave
-// keys + DB drifted; operator can re-run to converge.
+// The rotation lifecycle (agent domain.email_dkim_rotate → persist the
+// new public key → wipe + republish the M6-managed DNS) lives in
+// internal/domainmailops.RotateDKIM (JAB-286), shared with the REST
+// handler so the two adapters can't drift on ordering or key handling.
+// This command owns only argument parsing, the operator-friendly
+// "not enabled" hint, and output shaping.
 package main
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/domainmailops"
-	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
-
-type domainEmailDKIMRotateResponse struct {
-	OldDKIMPublicKey string `json:"old_dkim_public_key,omitempty"`
-	NewDKIMPublicKey string `json:"new_dkim_public_key"`
-	OldKeyBackupPath string `json:"old_key_backup_path,omitempty"`
-}
 
 func newDomainEmailDKIMRotateCmd() *cobra.Command {
 	return &cobra.Command{
@@ -62,57 +49,34 @@ to rotate). Run domain email-enable first if needed.`,
 			if err != nil {
 				return err
 			}
-			if !dom.EmailEnabled {
-				return fmt.Errorf("email not enabled for %s — run 'jabali domain email-enable %s' first", dom.Name, dom.Name)
-			}
 
-			// Agent rotation — generates fresh key, snapshots old.
-			raw, err := deps.Call(ctx, "domain.email_dkim_rotate", map[string]any{
-				"domain_name": dom.Name,
-			})
+			res, warnings, err := domainmailops.RotateDKIM(ctx, deps, dom)
 			if err != nil {
-				return fmt.Errorf("agent domain.email_dkim_rotate: %w", err)
+				// Keep the operator-friendly hint for the common "not enabled"
+				// case; the other sentinels carry enough detail on their own.
+				if errors.Is(err, domainmailops.ErrEmailNotEnabled) {
+					return fmt.Errorf("email not enabled for %s — run 'jabali domain email-enable %s' first", dom.Name, dom.Name)
+				}
+				return err
 			}
-			var resp domainEmailDKIMRotateResponse
-			if err := json.Unmarshal(raw, &resp); err != nil {
-				return fmt.Errorf("agent bad response: %w", err)
-			}
-			if resp.NewDKIMPublicKey == "" {
-				return fmt.Errorf("agent returned empty new DKIM public key")
-			}
-
-			// Persist new pubkey in domains row.
-			selector := "jabali" // EmailRecordsSelector — kept stable across rotations
-			if err := deps.Domains.UpdateEmailState(ctx, dom.ID, repository.DomainEmailState{
-				Enabled:       true,
-				DkimSelector:  &selector,
-				DkimPublicKey: &resp.NewDKIMPublicKey,
-			}); err != nil {
-				return fmt.Errorf("update domains row with new dkim_public_key: %w", err)
-			}
-
-			// Wipe old M6-managed DNS records + republish so the
-			// new DKIM TXT lands at jabali._domainkey.<domain>.
-			domainmailops.DeleteManagedDNSOnDisable(ctx, deps, dom.ID)
-			warnings := domainmailops.SyncManagedDNSOnEnable(ctx, deps, dom.ID, selector, resp.NewDKIMPublicKey)
 
 			if jsonOutput {
 				return printJSON(map[string]any{
 					"domain_name":         dom.Name,
-					"old_dkim_public_key": resp.OldDKIMPublicKey,
-					"new_dkim_public_key": resp.NewDKIMPublicKey,
-					"old_key_backup_path": resp.OldKeyBackupPath,
+					"old_dkim_public_key": res.OldDKIMPublicKey,
+					"new_dkim_public_key": res.NewDKIMPublicKey,
+					"old_key_backup_path": res.OldKeyBackupPath,
 					"warnings":            warnings,
 				})
 			}
 			cliAuditOK(ctx, "domain.email_dkim_rotate", "domain", dom.Name, &dom.UserID)
 			fmt.Printf("DKIM rotated for %s\n", dom.Name)
-			if resp.OldDKIMPublicKey != "" {
-				fmt.Printf("Old DKIM TXT: %s\n", resp.OldDKIMPublicKey)
+			if res.OldDKIMPublicKey != "" {
+				fmt.Printf("Old DKIM TXT: %s\n", res.OldDKIMPublicKey)
 			}
-			fmt.Printf("New DKIM TXT: %s\n", resp.NewDKIMPublicKey)
-			if resp.OldKeyBackupPath != "" {
-				fmt.Printf("Old key backup: %s (rm after DNS propagation confirmed)\n", resp.OldKeyBackupPath)
+			fmt.Printf("New DKIM TXT: %s\n", res.NewDKIMPublicKey)
+			if res.OldKeyBackupPath != "" {
+				fmt.Printf("Old key backup: %s (rm after DNS propagation confirmed)\n", res.OldKeyBackupPath)
 			}
 			for _, w := range warnings {
 				fmt.Printf("warning: %s\n", w)

@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -353,4 +355,154 @@ func TestDisable_UpdateStateError_NoDNSDelete(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "update email_enabled row")
 	require.False(t, records.deleted, "DNS cleanup only runs after the state flip persists")
+}
+
+// --- RotateDKIM (JAB-286) ---
+
+// rotateReply is a well-formed domain.email_dkim_rotate response.
+func rotateReply(newKey string) json.RawMessage {
+	return json.RawMessage(`{"old_dkim_public_key":"v=DKIM1; k=ed25519; p=OLD","new_dkim_public_key":"` +
+		newKey + `","old_key_backup_path":"/etc/jabali-panel/dkim/example.com.key.old"}`)
+}
+
+// enabledDomain is a domain with email already on and a known enabled-at
+// timestamp, so a rotation test can assert the timestamp is preserved.
+func enabledDomain() (*models.Domain, time.Time) {
+	at := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	d := newDomain()
+	d.EmailEnabled = true
+	d.EmailEnabledAt = &at
+	sel := "jabali"
+	old := "v=DKIM1; k=ed25519; p=OLD"
+	d.DkimSelector = &sel
+	d.DkimPublicKey = &old
+	return d, at
+}
+
+func TestRotateDKIM_HappyPath_PersistsPair_RepublishesDNS_PreservesEnabledAt(t *testing.T) {
+	domains, _, records, d := baseDeps()
+	d.Call = func(_ context.Context, cmd string, _ any) (json.RawMessage, error) {
+		require.Equal(t, "domain.email_dkim_rotate", cmd)
+		return rotateReply("v=DKIM1; k=ed25519; p=NEW"), nil
+	}
+	dom, enabledAt := enabledDomain()
+
+	res, warnings, err := RotateDKIM(context.Background(), d, dom)
+	require.NoError(t, err)
+	require.Empty(t, warnings, "clean zone → no warnings")
+	require.Equal(t, "jabali", res.Selector)
+	require.Equal(t, "v=DKIM1; k=ed25519; p=NEW", res.NewDKIMPublicKey)
+	require.Equal(t, "v=DKIM1; k=ed25519; p=OLD", res.OldDKIMPublicKey)
+	require.Equal(t, "/etc/jabali-panel/dkim/example.com.key.old", res.OldKeyBackupPath)
+
+	// One selector/public-key pair persisted (AC1).
+	require.NotNil(t, domains.updated)
+	require.True(t, domains.updated.Enabled)
+	require.NotNil(t, domains.updated.DkimSelector)
+	require.Equal(t, "jabali", *domains.updated.DkimSelector)
+	require.NotNil(t, domains.updated.DkimPublicKey)
+	require.Equal(t, "v=DKIM1; k=ed25519; p=NEW", *domains.updated.DkimPublicKey)
+
+	// email_enabled_at preserved, not NULLed (the latent-bug fix).
+	require.NotNil(t, domains.updated.EmailEnabledAt)
+	require.Equal(t, enabledAt, *domains.updated.EmailEnabledAt)
+
+	// Old M6 records wiped, then the exact new pair republished (AC1).
+	require.True(t, records.deleted)
+	require.Equal(t, dnscompile.EmailRecordsManagedBy, records.deletedManagedBy)
+	require.GreaterOrEqual(t, m6Count(records.created), 1)
+	var sawDKIM bool
+	for _, r := range records.created {
+		if r.Type == "TXT" && strings.Contains(r.Name, "_domainkey") {
+			sawDKIM = true
+			require.Contains(t, r.Content, "p=NEW", "republished DKIM TXT must carry the NEW key")
+		}
+	}
+	require.True(t, sawDKIM, "a DKIM TXT record must be republished")
+
+	// Caller struct mutated so the adapter can echo without re-fetching.
+	require.NotNil(t, dom.DkimPublicKey)
+	require.Equal(t, "v=DKIM1; k=ed25519; p=NEW", *dom.DkimPublicKey)
+}
+
+func TestRotateDKIM_NotEnabled_NothingCalled(t *testing.T) {
+	domains, _, records, d := baseDeps()
+	called := false
+	d.Call = func(context.Context, string, any) (json.RawMessage, error) { called = true; return nil, nil }
+	dom := newDomain() // EmailEnabled = false
+
+	_, _, err := RotateDKIM(context.Background(), d, dom)
+	require.ErrorIs(t, err, ErrEmailNotEnabled)
+	require.False(t, called, "agent must not be called for a mail-off domain")
+	require.Nil(t, domains.updated)
+	require.False(t, records.deleted)
+}
+
+func TestRotateDKIM_AgentUnconfigured_NoPersist(t *testing.T) {
+	domains, _, records, d := baseDeps()
+	d.Call = nil
+	dom, _ := enabledDomain()
+
+	_, _, err := RotateDKIM(context.Background(), d, dom)
+	require.ErrorIs(t, err, ErrAgentUnconfigured)
+	require.Nil(t, domains.updated)
+	require.False(t, records.deleted)
+}
+
+func TestRotateDKIM_AgentFailed_NoPersist_NoWipe(t *testing.T) {
+	domains, _, records, d := baseDeps()
+	d.Call = func(context.Context, string, any) (json.RawMessage, error) {
+		return nil, errors.New("dial: connection refused")
+	}
+	dom, _ := enabledDomain()
+
+	_, _, err := RotateDKIM(context.Background(), d, dom)
+	require.ErrorIs(t, err, ErrAgentFailed)
+	require.Contains(t, err.Error(), "connection refused")
+	require.Nil(t, domains.updated, "last usable key stays authoritative")
+	require.False(t, records.deleted, "no DNS wipe when the agent fails")
+}
+
+// AC2: an incomplete agent response (missing new key) must never overwrite the
+// last usable state — no persist, no DNS wipe.
+func TestRotateDKIM_EmptyNewKey_NoPersist_NoWipe(t *testing.T) {
+	domains, _, records, d := baseDeps()
+	d.Call = func(context.Context, string, any) (json.RawMessage, error) {
+		return json.RawMessage(`{"old_dkim_public_key":"v=DKIM1; k=ed25519; p=OLD","new_dkim_public_key":""}`), nil
+	}
+	dom, _ := enabledDomain()
+
+	_, _, err := RotateDKIM(context.Background(), d, dom)
+	require.ErrorIs(t, err, ErrAgentBadResponse)
+	require.Nil(t, domains.updated, "empty new key must not overwrite the last usable key")
+	require.False(t, records.deleted, "and must not wipe DNS")
+}
+
+func TestRotateDKIM_Malformed_NoPersist(t *testing.T) {
+	domains, _, records, d := baseDeps()
+	d.Call = func(context.Context, string, any) (json.RawMessage, error) {
+		return json.RawMessage(`not-json`), nil
+	}
+	dom, _ := enabledDomain()
+
+	_, _, err := RotateDKIM(context.Background(), d, dom)
+	require.ErrorIs(t, err, ErrAgentBadResponse)
+	require.Nil(t, domains.updated)
+	require.False(t, records.deleted)
+}
+
+// AC3: persistence failure is an explicit typed result, and the DNS wipe only
+// runs after the row persists.
+func TestRotateDKIM_PersistError_Typed_NoWipe(t *testing.T) {
+	domains, _, records, d := baseDeps()
+	domains.updateErr = errors.New("db down")
+	d.Call = func(context.Context, string, any) (json.RawMessage, error) {
+		return rotateReply("v=DKIM1; k=ed25519; p=NEW"), nil
+	}
+	dom, _ := enabledDomain()
+
+	_, _, err := RotateDKIM(context.Background(), d, dom)
+	require.ErrorIs(t, err, ErrPersistFailed)
+	require.Contains(t, err.Error(), "db down")
+	require.False(t, records.deleted, "DNS wipe only runs after the new key persists")
 }

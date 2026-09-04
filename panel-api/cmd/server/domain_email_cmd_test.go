@@ -49,3 +49,24 @@ func TestDomainEmailCLI_NoSSLScheduleWired(t *testing.T) {
 		t.Error("CLI deps must not wire SSL flip (see file header); that is a box-verified behavior change")
 	}
 }
+
+// TestDKIMRotateCLI_RoutesThroughSharedModule pins the DKIM-rotate command to
+// the shared lifecycle (JAB-286): the former inline agent-call / unmarshal /
+// UpdateEmailState copy is gone, and the behavioral matrix now lives once in
+// internal/domainmailops/domainmailops_test.go. cmd/server has no seeded-DB
+// fixture, so this follows the repo's source-pin precedent.
+func TestDKIMRotateCLI_RoutesThroughSharedModule(t *testing.T) {
+	src, err := os.ReadFile("domain_email_dkim_rotate_cmd.go")
+	if err != nil {
+		t.Fatalf("read domain_email_dkim_rotate_cmd.go: %v", err)
+	}
+	s := string(src)
+	if !strings.Contains(s, "domainmailops.RotateDKIM(") {
+		t.Error("email-dkim-rotate must route through domainmailops.RotateDKIM")
+	}
+	// Direct persistence must not have crept back in — the module owns the
+	// UpdateEmailState write (the doc comment may still name the agent verb).
+	if strings.Contains(s, "UpdateEmailState(") {
+		t.Error("DKIM-rotate persistence must live in the shared module, not inline in the CLI")
+	}
+}
