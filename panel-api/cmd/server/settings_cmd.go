@@ -113,9 +113,8 @@ func runSettingsSet(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("load settings: %w", err)
 	}
 
-	// Snapshot the fields whose change drives a host side effect, plus a full
-	// pre-mutation copy so settingsops can classify the nginx effect.
-	prev := sideEffectSnapshot(s)
+	// Full pre-mutation snapshot. settingsops derives every host side effect
+	// (optional modules + nginx) by diffing it against the merged settings.
 	before := *s
 
 	// Apply each key=value. Unknown key / bad value → hard error (criterion #4).
@@ -140,7 +139,7 @@ func runSettingsSet(cmd *cobra.Command, args []string) error {
 	}
 
 	// REST precondition: tenant Docker requires the marketplace engine.
-	if s.DockerAppsForUsersEnabled && !prev.dockerForUsers && !s.DockerMarketplaceEnabled {
+	if s.DockerAppsForUsersEnabled && !before.DockerAppsForUsersEnabled && !s.DockerMarketplaceEnabled {
 		return fmt.Errorf("docker_apps_for_users_enabled requires docker_marketplace_enabled (enable the Docker marketplace first)")
 	}
 
@@ -151,7 +150,7 @@ func runSettingsSet(cmd *cobra.Command, args []string) error {
 	// Side effects, synchronous, in the REST order. A failure here means the DB
 	// is updated but the host apply failed — report it explicitly (no silent
 	// drift) and exit non-zero.
-	if applyErr := applySettingsSideEffects(ctx, cmd, repo, s, before, prev); applyErr != nil {
+	if applyErr := applySettingsSideEffects(ctx, cmd, repo, s, before); applyErr != nil {
 		cliAuditErr(ctx, "server_settings.update", "server_settings", "1", nil)
 		return applyErr
 	}
@@ -164,30 +163,11 @@ func runSettingsSet(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// sideEffectState captures the pre-change values that decide which host side
-// effects fire (mirrors the REST handler's prev* locals).
-type sideEffectState struct {
-	hostname       string
-	postgres       bool
-	dockerMarket   bool
-	dockerForUsers bool
-	python         bool
-}
-
-func sideEffectSnapshot(s *models.ServerSettings) sideEffectState {
-	return sideEffectState{
-		hostname:       s.Hostname,
-		postgres:       s.PostgresEnabled,
-		dockerMarket:   s.DockerMarketplaceEnabled,
-		dockerForUsers: s.DockerAppsForUsersEnabled,
-		python:         s.PythonAppsEnabled,
-	}
-}
-
 // applySettingsSideEffects dispatches the agent calls the REST PATCH would,
 // synchronously, with the REST per-operation timeouts. Returns the first
-// failure (the DB is already persisted at this point).
-func applySettingsSideEffects(ctx context.Context, cmd *cobra.Command, repo repository.ServerSettingsRepository, s *models.ServerSettings, before models.ServerSettings, prev sideEffectState) error {
+// failure (the DB is already persisted at this point). `before` is the full
+// pre-change snapshot; settingsops derives every transition from it.
+func applySettingsSideEffects(ctx context.Context, cmd *cobra.Command, repo repository.ServerSettingsRepository, s *models.ServerSettings, before models.ServerSettings) error {
 	out := cmd.OutOrStdout()
 
 	// Hostname → apply to the OS. Mirrors the REST PATCH, which dispatches
@@ -195,57 +175,61 @@ func applySettingsSideEffects(ctx context.Context, cmd *cobra.Command, repo repo
 	// goroutine; here synchronous like the rest of this command so the operator
 	// sees the result inline). The panel-cert reconciler reissues the panel
 	// certificate for the new name on its next pass — same as the UI flow.
-	if s.Hostname != prev.hostname {
+	if s.Hostname != before.Hostname {
 		fmt.Fprintf(out, "Applying hostname change (system.set_hostname %s)…\n", s.Hostname)
 		if err := callAgentTimeout(ctx, 30*time.Second, "system.set_hostname", map[string]any{"hostname": s.Hostname}); err != nil {
 			return fmt.Errorf("DB updated, but system.set_hostname failed: %w", err)
 		}
 	}
 
-	if s.PostgresEnabled != prev.postgres {
-		method := "db.postgres.disable"
-		if s.PostgresEnabled {
-			method = "db.postgres.install"
-		}
-		fmt.Fprintf(out, "Applying Postgres change (%s) — this may take several minutes…\n", method)
-		if err := callAgentTimeout(ctx, 5*time.Minute, method, map[string]any{}); err != nil {
-			return fmt.Errorf("DB updated, but %s failed: %w", method, err)
+	// Optional-module lifecycle. settingsops.ModuleEffects owns every verb, its
+	// params, timeout, and the failed-enable rollback decision (JAB-294), shared
+	// with the REST PATCH. The CLI dispatches the subset it has setters for —
+	// postgres, docker marketplace, tenant docker, python — synchronously (unlike
+	// REST's best-effort goroutines) so the operator sees each result inline; the
+	// execution policy stays this adapter's. The dns/mail/quota/security/ftp module
+	// loop and FTP config-reapply are REST-only: there are no CLI setters for those
+	// flags, so those effects are always no-ops here (like nginx cache in JAB-290).
+	// The module still owns them; the CLI simply does not consume them.
+	plan := settingsops.ModuleEffects(&before, s)
+
+	if call := plan.Postgres.Call; call != nil {
+		fmt.Fprintf(out, "Applying Postgres change (%s) — this may take several minutes…\n", call.Method)
+		if err := dispatchSettingsAgentCall(ctx, *call); err != nil {
+			return fmt.Errorf("DB updated, but %s failed: %w", call.Method, err)
 		}
 	}
 
-	if s.DockerMarketplaceEnabled != prev.dockerMarket {
-		method := "docker.disable"
-		if s.DockerMarketplaceEnabled {
-			method = "docker.install"
-		}
-		fmt.Fprintf(out, "Applying Docker marketplace change (%s) — this may take several minutes…\n", method)
-		if err := callAgentTimeout(ctx, 10*time.Minute, method, map[string]any{}); err != nil {
-			return fmt.Errorf("DB updated, but %s failed: %w", method, err)
+	if call := plan.Docker.Call; call != nil {
+		fmt.Fprintf(out, "Applying Docker marketplace change (%s) — this may take several minutes…\n", call.Method)
+		if err := dispatchSettingsAgentCall(ctx, *call); err != nil {
+			return fmt.Errorf("DB updated, but %s failed: %w", call.Method, err)
 		}
 	}
 
-	if s.DockerAppsForUsersEnabled != prev.dockerForUsers {
-		fmt.Fprintf(out, "Applying tenant Docker change (docker.tenant_set enabled=%v) — this may take several minutes…\n", s.DockerAppsForUsersEnabled)
-		if err := callAgentTimeout(ctx, 12*time.Minute, "docker.tenant_set", map[string]any{"enabled": s.DockerAppsForUsersEnabled}); err != nil {
-			// On a failed ENABLE, revert the flag so the UI/DB reflects that the
-			// host setup did not happen (mirrors the REST revert).
-			if s.DockerAppsForUsersEnabled {
+	if call := plan.DockerTenant.Call; call != nil {
+		fmt.Fprintf(out, "Applying tenant Docker change (%s enabled=%v) — this may take several minutes…\n", call.Method, s.DockerAppsForUsersEnabled)
+		if err := dispatchSettingsAgentCall(ctx, *call); err != nil {
+			// On a failed ENABLE, revert the flag so the DB reflects that host setup
+			// did not happen. settingsops owns the decision (RevertOnEnableFailure);
+			// the repo write is this adapter's (mirrors the REST revert).
+			if plan.DockerTenant.RevertOnEnableFailure {
 				rctx, rcancel := context.WithTimeout(context.Background(), 15*time.Second)
 				if cur, gerr := repo.Get(rctx); gerr == nil && cur != nil {
 					cur.DockerAppsForUsersEnabled = false
 					_ = repo.Upsert(rctx, cur)
 				}
 				rcancel()
+				return fmt.Errorf("DB updated, but %s failed (flag reverted): %w", call.Method, err)
 			}
-			return fmt.Errorf("DB updated, but docker.tenant_set failed (flag reverted): %w", err)
+			return fmt.Errorf("DB updated, but %s failed: %w", call.Method, err)
 		}
 	}
 
-	// Python: install runtime on enable only (disable leaves packages).
-	if s.PythonAppsEnabled != prev.python && s.PythonAppsEnabled {
+	if call := plan.Python.Call; call != nil {
 		fmt.Fprintln(out, "Installing Python app runtime — this may take several minutes…")
-		if err := callAgentTimeout(ctx, 10*time.Minute, "app.python.install_runtime", map[string]any{}); err != nil {
-			return fmt.Errorf("DB updated, but app.python.install_runtime failed: %w", err)
+		if err := dispatchSettingsAgentCall(ctx, *call); err != nil {
+			return fmt.Errorf("DB updated, but %s failed: %w", call.Method, err)
 		}
 	}
 
@@ -254,8 +238,8 @@ func applySettingsSideEffects(ctx context.Context, cmd *cobra.Command, repo repo
 	// Cache stays false; nginxDirty is the touched signal. Dispatch is
 	// synchronous (unlike REST's best-effort goroutine) so the operator sees the
 	// result inline — the CLI's execution policy stays in this adapter.
-	plan := settingsops.NginxEffects(&before, s, settingsops.NginxTouched{Tunables: nginxDirty})
-	if call := plan.Tunables.Call; call != nil {
+	nginxPlan := settingsops.NginxEffects(&before, s, settingsops.NginxTouched{Tunables: nginxDirty})
+	if call := nginxPlan.Tunables.Call; call != nil {
 		fmt.Fprintln(out, "Applying nginx tunables (validated with nginx -t)…")
 		if err := dispatchSettingsAgentCall(ctx, *call); err != nil {
 			return fmt.Errorf("DB updated, but %s failed: %w", call.Method, err)
