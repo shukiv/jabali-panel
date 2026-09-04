@@ -110,11 +110,11 @@ func TestSettingsHostnameParity(t *testing.T) {
 
 	t.Run("change is detectable for the side effect", func(t *testing.T) {
 		s := &models.ServerSettings{ID: 1, SSHPort: 22, Hostname: "mx.jabali-panel.com"}
-		prev := sideEffectSnapshot(s)
+		before := *s
 		if err := def.apply(s, "182-54-236-60-b.jabalihosted.com"); err != nil {
 			t.Fatal(err)
 		}
-		if s.Hostname == prev.hostname {
+		if s.Hostname == before.Hostname {
 			t.Fatal("hostname change not detectable — system.set_hostname would not fire")
 		}
 	})

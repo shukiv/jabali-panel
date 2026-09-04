@@ -43,10 +43,18 @@ type AgentCall struct {
 // compensating call if the apply fails; nil for nginx (the agent's own `nginx -t`
 // gate reverts a bad config, so there is no panel-side rollback). The field is
 // the seam JAB-295 (SSH) will populate.
+//
+// RevertOnEnableFailure marks an ENABLE transition whose persisted flag must be
+// cleared if Call fails (tenant Docker on unprivileged LXC — GH #272). The
+// module owns the decision (which module reverts, and only on the enable
+// direction); the adapter owns the execution — reverting the flag is a
+// persistence write against the adapter's own repo handle, not an agent call, so
+// it cannot be expressed as Rollback. Only DockerTenant sets this today.
 type Effect struct {
-	Kind     Kind
-	Call     *AgentCall
-	Rollback *AgentCall
+	Kind                  Kind
+	Call                  *AgentCall
+	Rollback              *AgentCall
+	RevertOnEnableFailure bool
 }
 
 // NginxTouched reports which nginx field families the adapter merged this
