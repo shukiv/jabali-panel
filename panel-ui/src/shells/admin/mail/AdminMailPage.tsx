@@ -1,6 +1,12 @@
 // AdminMailPage — server-wide mailbox management (admin). Lists every mailbox
 // across all domains with add / edit / reset-password / delete. Reuses the
 // per-domain create wizard + the shared EditMailboxModal (GH #197 companion).
+//
+// JAB-370: the directory is server-paginated / -searched / -sorted via
+// useTableURL({ resource: "admin/mailboxes" }) + SearchableTableStringQ. The
+// old client-side "load every mailbox then filter/sort/paginate in the browser"
+// path did not scale past a few thousand mailboxes (one unbounded query + a
+// large payload). Owner scope (?user_id, #483) is forwarded as an extra param.
 import { useTranslation } from "react-i18next";
 import { useMemo, useState } from "react";
 import { useTabParam } from "../../../hooks/useTabParam";
@@ -9,23 +15,20 @@ import {
   Button,
   Empty,
   Form,
-  Input,
   Modal,
   Card,
-  Skeleton,
   Space,
   Table,
   Tag,
   Typography,
 } from "antd";
+import type { TableProps } from "antd";
 import { DeleteOutlined, EditOutlined, KeyOutlined, MailOutlined, PlusOutlined } from "@icons";
 
-import {
-  useAdminMailboxes,
-  useDeleteMailbox,
-  type AdminMailbox,
-} from "../../../hooks/useMailboxes";
+import { useDeleteMailbox, type AdminMailbox } from "../../../hooks/useMailboxes";
 import { useListQuery, useOneQuery } from "../../../hooks/useQueries";
+import { useTableURL } from "../../../hooks/useTableURL";
+import { SearchableTableStringQ } from "../../../components/SearchableTable";
 import { useSearchParams, Link } from "react-router";
 import { useSetBreadcrumbs } from "../../../components/admin/BreadcrumbContext";
 import { ownerResourceCrumbs, ownerLabel, adminLinks } from "../../../components/admin/entityLinks";
@@ -47,9 +50,20 @@ import { RowActions } from "../../../components/RowActions";
 export function AdminMailPage() {
   const { t } = useTranslation();
   const { message } = App.useApp();
-  const { data: rows, isLoading } = useAdminMailboxes();
   const [searchParams, setSearchParams] = useSearchParams();
   const ownerId = searchParams.get("user_id") ?? undefined;
+
+  // Server-paginated directory. The owner filter is forwarded as an extra
+  // param (not URL-backed by useTableURL — the URL's ?user_id is owned by the
+  // owner-tag flow below), so switching owners re-keys the query and refetches.
+  const query = useTableURL<AdminMailbox>({
+    resource: "admin/mailboxes",
+    defaultSort: "email",
+    defaultOrder: "asc",
+    defaultPageSize: 25,
+    extraParams: ownerId ? { user_id: ownerId } : undefined,
+  });
+
   const ownerQ = useOneQuery<{ id: string; username?: string | null }>({
     resource: "users",
     id: ownerId,
@@ -79,21 +93,6 @@ export function AdminMailPage() {
   const [editTarget, setEditTarget] = useState<AdminMailbox | null>(null);
   const [resetTarget, setResetTarget] = useState<AdminMailbox | null>(null);
   const [resetForm] = Form.useForm<{ password?: string }>();
-  const [search, setSearch] = useState("");
-
-  const filtered = useMemo(() => {
-    let list = rows ?? [];
-    if (ownerId) list = list.filter((m) => m.owner_user_id === ownerId);
-    if (!search.trim()) return list;
-    const q = search.toLowerCase();
-    return list.filter(
-      (m) =>
-        m.email.toLowerCase().includes(q) ||
-        (m.display_name ?? "").toLowerCase().includes(q) ||
-        m.domain_name.toLowerCase().includes(q) ||
-        (m.user_username ?? "").toLowerCase().includes(q),
-    );
-  }, [rows, search, ownerId]);
 
   // Server-wide admin: a form modal collecting an OPTIONAL custom password. The
   // rotate → reveal-once → error core is the shared hook.
@@ -115,9 +114,26 @@ export function AdminMailPage() {
       : null,
   );
 
-  if (isLoading && !rows) return <Skeleton active paragraph={{ rows: 6 }} />;
-
   const ownerRef = ownerId ? { id: ownerId, username: ownerQ.data?.username } : undefined;
+
+  // Map AntD's per-column sort event onto the server sort/order params. Columns
+  // set `sorter: true` (no local comparator) so sorting is authoritative across
+  // ALL pages, not just the visible one; the repo whitelists the sort key.
+  const sortOrderFor = (key: string): "ascend" | "descend" | null =>
+    query.params.sort === key ? (query.params.order === "asc" ? "ascend" : "descend") : null;
+
+  const handleTableChange: TableProps<AdminMailbox>["onChange"] = (pag, _filters, sorter, extra) => {
+    if (extra.action === "sort") {
+      const s = Array.isArray(sorter) ? sorter[0] : sorter;
+      if (s?.order && s.columnKey) {
+        query.setParams({ sort: String(s.columnKey), order: s.order === "ascend" ? "asc" : "desc", page: 1 });
+      } else {
+        query.setParams({ sort: undefined, order: undefined, page: 1 });
+      }
+    } else if (extra.action === "paginate" && pag) {
+      query.setParams({ page: pag.current, pageSize: pag.pageSize });
+    }
+  };
 
   return (
     <>
@@ -161,105 +177,112 @@ export function AdminMailPage() {
       {tab === "groups" && <AdminGroupsTab />}
       {tab === "stats" && <MailStatsTab />}
       {tab === "mailboxes" && (
-      <>
-        <Space style={{ width: "100%", justifyContent: "flex-start", marginBottom: 16 }} wrap>
-          <Input.Search
-            placeholder={t("adminmailpage.search_email_name_domain_owner")}
-            allowClear
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            style={{ maxWidth: 320 }}
-          />
-        </Space>
-
-        <Table<AdminMailbox>
-          scroll={{ x: "max-content" }}
+        <SearchableTableStringQ<AdminMailbox>
           rowKey="id"
-          dataSource={filtered}
-          loading={isLoading}
-          pagination={{ defaultPageSize: 25, showSizeChanger: true }}
+          loading={query.isLoading}
+          dataSource={query.items}
+          initialSearch={query.params.q}
+          searchPlaceholder={t("adminmailpage.search_email_name_domain_owner")}
+          onSearchChange={(q) => query.setParams({ q, page: 1 })}
+          onChange={handleTableChange}
+          pagination={{
+            current: query.params.page,
+            pageSize: query.params.pageSize,
+            total: query.total,
+            showSizeChanger: true,
+          }}
           locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("adminmailpage.no_mailboxes")} /> }}
-          columns={[
-            {
-              title: "Email",
-              dataIndex: "email",
-              defaultSortOrder: "ascend",
-              sorter: (a, b) => a.email.localeCompare(b.email),
-              render: (v: string) => (
-                <Typography.Text style={{ fontFamily: "monospace" }}>{v}</Typography.Text>
-              ),
-            },
-            {
-              title: "Name",
-              dataIndex: "display_name",
-              ellipsis: true,
-              sorter: (a, b) => (a.display_name ?? "").localeCompare(b.display_name ?? ""),
-              render: (v: string) =>
-                v ? v : <Typography.Text type="secondary">—</Typography.Text>,
-            },
-            {
-              title: "Domain",
-              dataIndex: "domain_name",
-              sorter: (a, b) => a.domain_name.localeCompare(b.domain_name),
-            },
-            {
-              title: "Owner",
-              dataIndex: "user_username",
-              sorter: (a, b) => (a.user_username ?? "").localeCompare(b.user_username ?? ""),
-              render: (v: string, row) =>
-                v ? (
-                  <Link to={adminLinks.user(row.owner_user_id)}>{v}</Link>
-                ) : (
-                  <Typography.Text type="secondary">—</Typography.Text>
-                ),
-            },
-            {
-              title: "Usage / Quota",
-              dataIndex: "quota_bytes",
-              width: 200,
-              // GH #1358: sort by space USED (what the column shows), not the
-              // quota limit — the old sorter made "sort by usage" a no-op.
-              sorter: (a, b) => (a.last_usage_bytes ?? 0) - (b.last_usage_bytes ?? 0),
-              render: (_quota: number, row) => renderMailboxQuota(row),
-            },
-            {
-              title: "Status",
-              dataIndex: "is_disabled",
-              width: 100,
-              sorter: (a, b) => Number(a.is_disabled) - Number(b.is_disabled),
-              render: (disabled: boolean) => renderMailboxStatus(disabled),
-            },
-            {
-              title: "Actions",
-              key: "actions",
-              render: (_, row) => (
-                <RowActions
-                  actions={[
-                    { key: "webmail", label: "Open webmail", icon: <MailOutlined />, loading: webmail.isLaunching(row.id), onClick: () => webmail.launch(row.id) },
-                    { key: "edit", label: "Edit mailbox", icon: <EditOutlined />, onClick: () => setEditTarget(row) },
-                    { key: "reset", label: "Reset password", icon: <KeyOutlined />, onClick: () => { resetForm.resetFields(); setResetTarget(row); } },
-                    {
-                      key: "delete",
-                      label: "Delete",
-                      icon: <DeleteOutlined />,
-                      danger: true,
-                      onClick: async () => {
-                        try {
-                          await deleteMutation.mutateAsync({ id: row.id, domainId: row.domain_id });
-                          message.success("Mailbox deleted");
-                        } catch {
-                          message.error("Failed to delete");
-                        }
-                      },
-                      confirm: { title: `Delete ${row.email}?`, description: "All mail in this mailbox will be removed. This cannot be undone.", okText: "Delete" },
+        >
+          <Table.Column<AdminMailbox>
+            title="Email"
+            dataIndex="email"
+            key="email"
+            sorter
+            sortOrder={sortOrderFor("email")}
+            render={(v: string) => (
+              <Typography.Text style={{ fontFamily: "monospace" }}>{v}</Typography.Text>
+            )}
+          />
+          <Table.Column<AdminMailbox>
+            title="Name"
+            dataIndex="display_name"
+            key="name"
+            ellipsis
+            sorter
+            sortOrder={sortOrderFor("name")}
+            render={(v: string) =>
+              v ? v : <Typography.Text type="secondary">—</Typography.Text>
+            }
+          />
+          <Table.Column<AdminMailbox>
+            title="Domain"
+            dataIndex="domain_name"
+            key="domain"
+            sorter
+            sortOrder={sortOrderFor("domain")}
+          />
+          <Table.Column<AdminMailbox>
+            title="Owner"
+            dataIndex="user_username"
+            key="owner"
+            sorter
+            sortOrder={sortOrderFor("owner")}
+            render={(v: string, row: AdminMailbox) =>
+              v ? (
+                <Link to={adminLinks.user(row.owner_user_id)}>{v}</Link>
+              ) : (
+                <Typography.Text type="secondary">—</Typography.Text>
+              )
+            }
+          />
+          <Table.Column<AdminMailbox>
+            title="Usage / Quota"
+            key="usage"
+            width={200}
+            // GH #1358: sort by space USED (what the column shows), not the
+            // quota limit — server sort maps "usage" → m.last_usage_bytes.
+            sorter
+            sortOrder={sortOrderFor("usage")}
+            render={(_: unknown, row: AdminMailbox) => renderMailboxQuota(row)}
+          />
+          <Table.Column<AdminMailbox>
+            title="Status"
+            dataIndex="is_disabled"
+            key="status"
+            width={100}
+            sorter
+            sortOrder={sortOrderFor("status")}
+            render={(disabled: boolean) => renderMailboxStatus(disabled)}
+          />
+          <Table.Column<AdminMailbox>
+            title="Actions"
+            key="actions"
+            render={(_: unknown, row: AdminMailbox) => (
+              <RowActions
+                actions={[
+                  { key: "webmail", label: "Open webmail", icon: <MailOutlined />, loading: webmail.isLaunching(row.id), onClick: () => webmail.launch(row.id) },
+                  { key: "edit", label: "Edit mailbox", icon: <EditOutlined />, onClick: () => setEditTarget(row) },
+                  { key: "reset", label: "Reset password", icon: <KeyOutlined />, onClick: () => { resetForm.resetFields(); setResetTarget(row); } },
+                  {
+                    key: "delete",
+                    label: "Delete",
+                    icon: <DeleteOutlined />,
+                    danger: true,
+                    onClick: async () => {
+                      try {
+                        await deleteMutation.mutateAsync({ id: row.id, domainId: row.domain_id });
+                        message.success("Mailbox deleted");
+                      } catch {
+                        message.error("Failed to delete");
+                      }
                     },
-                  ]}
-                />
-              ),
-            },
-          ]}
-        />
-      </>
+                    confirm: { title: `Delete ${row.email}?`, description: "All mail in this mailbox will be removed. This cannot be undone.", okText: "Delete" },
+                  },
+                ]}
+              />
+            )}
+          />
+        </SearchableTableStringQ>
       )}
       </Card>
 

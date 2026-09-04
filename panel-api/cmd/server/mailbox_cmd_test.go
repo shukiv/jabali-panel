@@ -156,6 +156,9 @@ func (f *fakeMailboxRepo) ListAllWithDomain(_ context.Context) ([]repository.Mai
 func (f *fakeMailboxRepo) ListByOwnerWithDomain(_ context.Context, _ string) ([]repository.MailboxWithDomain, error) {
 	return nil, nil
 }
+func (f *fakeMailboxRepo) ListDirectoryPage(_ context.Context, _ repository.ListOptions, _ string) ([]repository.MailboxWithDomain, int64, error) {
+	return nil, 0, nil
+}
 
 func (f *fakeMailboxRepo) UpdateUsage(_ context.Context, _ string, _ uint64, _ time.Time) error {
 	return nil
