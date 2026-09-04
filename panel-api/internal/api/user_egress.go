@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/json"
 	"errors"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"net"
@@ -9,7 +8,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/gin-gonic/gin"
 
@@ -19,12 +17,6 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
-
-// maxAllowedExtras caps the per-user override list size. Hard ceiling
-// rather than a per-row vs per-user limit — the nft renderer emits one
-// rule per entry, and a runaway list would inflate the rule file
-// without bound.
-const maxAllowedExtras = 50
 
 // UserEgressHandlerConfig wires the M34 admin + user-facing egress
 // endpoints. All four repos are required; if any are nil the routes
@@ -134,23 +126,6 @@ func (h *userEgressHandler) adminPut(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_body", "detail": err.Error()})
 		return
 	}
-	if !validEgressState(body.State) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_state"})
-		return
-	}
-	if len(body.AllowedExtra) > maxAllowedExtras {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "too_many_extras", "max": maxAllowedExtras})
-		return
-	}
-	for i := range body.AllowedExtra {
-		if err := validateExtra(&body.AllowedExtra[i]); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_destination", "detail": err.Error(), "index": i})
-			return
-		}
-	}
-
-	extras := convertExtras(body.AllowedExtra)
-	jsonExtras, _ := json.Marshal(extras)
 	claims := ginctx.Claims(c)
 	var updatedBy *string
 	if claims != nil && claims.UserID != "" {
@@ -158,14 +133,27 @@ func (h *userEgressHandler) adminPut(c *gin.Context) {
 		updatedBy = &uid
 	}
 
-	policy := &models.UserEgressPolicy{
+	// SetPolicy owns the canonical validate-and-persist matrix shared with the
+	// CLI; map its typed errors back onto the wire codes this endpoint has
+	// always returned.
+	err := egressops.SetPolicy(c.Request.Context(), h.cfg.Policies, egressops.SetPolicyInput{
 		UserID:       userID,
 		State:        body.State,
-		AllowedExtra: jsonExtras,
+		AllowedExtra: convertExtras(body.AllowedExtra),
 		UpdatedBy:    updatedBy,
-	}
-	if err := h.cfg.Policies.Upsert(c.Request.Context(), policy); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "upsert", "detail": err.Error()})
+	})
+	if err != nil {
+		var de *egressops.DestinationError
+		switch {
+		case errors.Is(err, egressops.ErrInvalidState):
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_state"})
+		case errors.Is(err, egressops.ErrTooManyExtras):
+			c.JSON(http.StatusBadRequest, gin.H{"error": "too_many_extras", "max": egressops.MaxAllowedExtras})
+		case errors.As(err, &de):
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_destination", "detail": de.Err.Error(), "index": de.Index})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "upsert", "detail": err.Error()})
+		}
 		return
 	}
 	row, err := h.cfg.Policies.Get(c.Request.Context(), userID)
@@ -386,42 +374,8 @@ func (h *userEgressHandler) policyView(row *models.UserEgressPolicy) gin.H {
 	}
 }
 
-func validEgressState(s string) bool {
-	return s == models.UserEgressStateOff ||
-		s == models.UserEgressStateLearning ||
-		s == models.UserEgressStateEnforced
-}
-
-func validateExtra(e *egressDestinationInput) error {
-	if _, _, err := net.ParseCIDR(e.CIDR); err != nil {
-		return errors.New("cidr: " + err.Error())
-	}
-	if e.Port != nil && (*e.Port < 1 || *e.Port > 65535) {
-		return errors.New("port out of range")
-	}
-	if e.Protocol == "" {
-		e.Protocol = models.UserEgressProtocolTCP
-	}
-	if e.Protocol != models.UserEgressProtocolTCP && e.Protocol != models.UserEgressProtocolUDP {
-		return errors.New("protocol must be tcp or udp")
-	}
-	if len(e.Comment) > 200 {
-		return errors.New("comment too long")
-	}
-	// The comment is rendered into /etc/nftables.d/jabali-per-user-egress.nft,
-	// which is loaded by `nft -f` as root. A newline would inject arbitrary
-	// nftables lines; a control character can make the file unparseable, which
-	// fails the whole ruleset closed-to-absent (the egress policy silently stops
-	// applying box-wide). The agent sanitises again at render time — this is the
-	// boundary half of that pair.
-	if i := strings.IndexFunc(e.Comment, func(r rune) bool {
-		return r == '\n' || r == '\r' || r == 0 || unicode.IsControl(r)
-	}); i >= 0 {
-		return errors.New("comment must not contain newlines or control characters")
-	}
-	return nil
-}
-
+// convertExtras maps the request-body destination shape onto the neutral model
+// type consumed by egressops.SetPolicy (which validates each entry).
 func convertExtras(in []egressDestinationInput) []models.EgressDestination {
 	out := make([]models.EgressDestination, 0, len(in))
 	for _, e := range in {

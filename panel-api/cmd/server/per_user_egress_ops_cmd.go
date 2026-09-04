@@ -9,10 +9,8 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -25,9 +23,6 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
-
-// maxCLIEgressExtras mirrors maxAllowedExtras in internal/api/user_egress.go.
-const maxCLIEgressExtras = 50
 
 func egressReqRepo() repository.UserEgressRequestRepository {
 	return repository.NewUserEgressRequestRepository(sharedDB)
@@ -207,11 +202,10 @@ func newPerUserEgressSetPolicyCmd() *cobra.Command {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Second)
 			defer cancel()
 
-			if !validCLIEgressState(state) {
+			// Fail fast on a bad --state before touching the DB; the same
+			// egressops.ValidState is the authoritative guard inside SetPolicy.
+			if !egressops.ValidState(state) {
 				return fmt.Errorf("--state must be one of off|learning|enforced (got %q)", state)
-			}
-			if len(allows) > maxCLIEgressExtras {
-				return fmt.Errorf("too many --allow entries (%d, max %d)", len(allows), maxCLIEgressExtras)
 			}
 			extras := make([]models.EgressDestination, 0, len(allows))
 			for i, a := range allows {
@@ -227,14 +221,28 @@ func newPerUserEgressSetPolicyCmd() *cobra.Command {
 				return fmt.Errorf("user %q not found", args[0])
 			}
 
-			jsonExtras, _ := json.Marshal(extras)
-			policy := &models.UserEgressPolicy{
+			// UpdatedBy is nil by design: the operator CLI has no interactive user
+			// session. The cliAuditOK row below is the CLI provenance record.
+			// SetPolicy runs the canonical validate-and-persist matrix shared with
+			// PUT /users/:id/egress, so both adapters accept/reject the same set and
+			// schedule exactly one policy write (the reconciler converges on its tick).
+			if err := egressops.SetPolicy(ctx, egressPolicyRepo(), egressops.SetPolicyInput{
 				UserID:       u.ID,
 				State:        state,
-				AllowedExtra: jsonExtras,
-			}
-			if err := egressPolicyRepo().Upsert(ctx, policy); err != nil {
-				return fmt.Errorf("upsert policy: %w", err)
+				AllowedExtra: extras,
+				UpdatedBy:    nil,
+			}); err != nil {
+				var de *egressops.DestinationError
+				switch {
+				case errors.Is(err, egressops.ErrInvalidState):
+					return fmt.Errorf("--state must be one of off|learning|enforced (got %q)", state)
+				case errors.Is(err, egressops.ErrTooManyExtras):
+					return fmt.Errorf("too many --allow entries (%d, max %d)", len(extras), egressops.MaxAllowedExtras)
+				case errors.As(err, &de):
+					return fmt.Errorf("--allow index %d: %w", de.Index, de.Err)
+				default:
+					return fmt.Errorf("upsert policy: %w", err)
+				}
 			}
 			cliAuditOK(ctx, "egress.policy.set", "user", u.ID, &u.ID)
 			fmt.Printf("set %s egress policy: state=%s, %d allowed destination(s) (reconciler will re-render nftables)\n",
@@ -249,39 +257,29 @@ func newPerUserEgressSetPolicyCmd() *cobra.Command {
 	return cmd
 }
 
-func validCLIEgressState(s string) bool {
-	return s == models.UserEgressStateOff ||
-		s == models.UserEgressStateLearning ||
-		s == models.UserEgressStateEnforced
-}
-
-// parseCLIAllow parses a CIDR[,PORT[,PROTO]] token into a validated
-// EgressDestination. Mirrors validateExtra in internal/api/user_egress.go.
+// parseCLIAllow splits a CIDR[,PORT[,PROTO]] flag token into an
+// EgressDestination. It only handles the CLI string format — the field split,
+// the numeric coercion of PORT, and lower-casing PROTO. The semantic checks
+// (valid CIDR, port range, known protocol, comment safety) and the empty-proto
+// default all live in egressops.ValidateDestination, which egressops.SetPolicy
+// runs on every entry — so the CLI and PUT /users/:id/egress reject the exact
+// same canonical matrix and cannot drift.
 func parseCLIAllow(s string) (models.EgressDestination, error) {
 	var dest models.EgressDestination
 	parts := strings.Split(s, ",")
-	cidr := strings.TrimSpace(parts[0])
-	if _, _, err := net.ParseCIDR(cidr); err != nil {
-		return dest, fmt.Errorf("cidr: %v", err)
+	if len(parts) > 3 {
+		return dest, fmt.Errorf("too many fields (want CIDR[,PORT[,PROTO]])")
 	}
-	dest.CIDR = cidr
+	dest.CIDR = strings.TrimSpace(parts[0])
 	if len(parts) >= 2 && strings.TrimSpace(parts[1]) != "" {
 		p, err := strconv.Atoi(strings.TrimSpace(parts[1]))
-		if err != nil || p < 1 || p > 65535 {
-			return dest, fmt.Errorf("port must be 1..65535")
+		if err != nil {
+			return dest, fmt.Errorf("port must be a number")
 		}
 		dest.Port = &p
 	}
-	proto := models.UserEgressProtocolTCP
 	if len(parts) >= 3 && strings.TrimSpace(parts[2]) != "" {
-		proto = strings.ToLower(strings.TrimSpace(parts[2]))
-	}
-	if proto != models.UserEgressProtocolTCP && proto != models.UserEgressProtocolUDP {
-		return dest, fmt.Errorf("protocol must be tcp or udp")
-	}
-	dest.Protocol = proto
-	if len(parts) > 3 {
-		return dest, fmt.Errorf("too many fields (want CIDR[,PORT[,PROTO]])")
+		dest.Protocol = strings.ToLower(strings.TrimSpace(parts[2]))
 	}
 	return dest, nil
 }
