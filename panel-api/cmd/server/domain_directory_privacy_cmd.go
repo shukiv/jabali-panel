@@ -1,82 +1,65 @@
 // domain_directory_privacy_cmd.go — JAB-130: CLI for Directory Privacy
 // (auth_basic protected directories + their credentials). Mirrors the
-// /domains/:id/directory-privacy REST surface (domain_directory_privacy.go)
-// direct-DB; the running reconciler writes the htpasswd file + nginx location
-// and reloads within a tick, same as the web path.
+// /domains/:id/directory-privacy REST surface (domain_directory_privacy.go).
+//
+// The rule/credential mutation lifecycle — validation, bcrypt-at-write,
+// cross-rule containment, converge-schedule — lives in internal/dirprivops, the
+// same module the HTTP handler calls, so the two adapters cannot drift. This
+// file owns CLI concerns only: flag parsing, --password-stdin handling, the
+// read/list commands, and mapping the ops' typed errors onto operator messages.
+//
+// The CLI passes no reconcile Schedule (Deps.Schedule is nil): the running
+// reconciler writes the htpasswd file + nginx location and reloads within a
+// tick, same as before. A CLI-built reconciler would render the vhost without
+// the auth_basic blocks (see internal/dirprivops.Deps.Schedule), so immediate
+// convergence stays the daemon's job.
 
 package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
-	"regexp"
-	"strings"
 	"text/tabwriter"
 	"time"
 
 	"github.com/spf13/cobra"
 
-	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/auth"
-	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dirprivops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
-var (
-	cliPrivacyPathRE = regexp.MustCompile(`^/[A-Za-z0-9_./-]*$`)
-	cliPrivacyUserRE = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
-)
-
-// cliValidatePrivacyPath mirrors validatePrivacyPath in the API package.
-func cliValidatePrivacyPath(in string) (string, error) {
-	p := strings.TrimSpace(in)
-	if p == "" {
-		return "", fmt.Errorf("--path required")
-	}
-	if len(p) > 255 {
-		return "", fmt.Errorf("--path too long (max 255)")
-	}
-	if p == "/" {
-		return "/", nil
-	}
-	if !cliPrivacyPathRE.MatchString(p) {
-		return "", fmt.Errorf("--path must start with / and contain only [A-Za-z0-9_./-]")
-	}
-	if strings.Contains(p, "//") {
-		return "", fmt.Errorf("--path must not contain //")
-	}
-	for _, seg := range strings.Split(p, "/") {
-		if seg == ".." {
-			return "", fmt.Errorf("--path must not contain ..")
-		}
-	}
-	if len(p) > 1 {
-		p = strings.TrimRight(p, "/")
-		if p == "" {
-			p = "/"
-		}
-	}
-	return p, nil
+func dirPrivacyRepo() repository.DomainDirectoryPrivacyRepository {
+	return repository.NewDomainDirectoryPrivacyRepository(sharedDB)
 }
 
-func cliValidatePrivacyRealm(in string) (string, error) {
-	r := strings.TrimSpace(in)
-	if r == "" {
-		r = "Restricted"
+// cliDirPrivacyDeps builds the shared-module deps for the CLI. Schedule is nil
+// by design (see the file header + internal/dirprivops.Deps.Schedule).
+func cliDirPrivacyDeps() dirprivops.Deps {
+	return dirprivops.Deps{Privacy: dirPrivacyRepo()}
+}
+
+// mapDirPrivacyErr turns an ops error into an operator-facing message: a
+// validation failure names the offending flag, the containment sentinels get a
+// friendly message, and anything else is wrapped with the attempted action.
+func mapDirPrivacyErr(action string, err error, ruleID, credID string) error {
+	var ve *dirprivops.ValidationError
+	switch {
+	case errors.As(err, &ve):
+		return fmt.Errorf("--%s: %s", ve.Field, ve.Msg)
+	case errors.Is(err, dirprivops.ErrRuleNotFound):
+		return fmt.Errorf("rule %q not found on this domain", ruleID)
+	case errors.Is(err, dirprivops.ErrCredentialNotFound):
+		return fmt.Errorf("credential %q does not belong to rule %q", credID, ruleID)
+	default:
+		return fmt.Errorf("%s: %w", action, err)
 	}
-	if len(r) > 255 {
-		return "", fmt.Errorf("--realm too long (max 255)")
-	}
-	for _, c := range r {
-		if c < 0x20 || c > 0x7e || c == '"' || c == '\\' {
-			return "", fmt.Errorf(`--realm must be printable ASCII without " or \`)
-		}
-	}
-	return r, nil
 }
 
 // resolvePrivacyRule loads a rule by id and confirms it belongs to the domain.
+// Used by the read commands (cred-list); mutations resolve inside dirprivops.
 func resolvePrivacyRule(ctx context.Context, repo repository.DomainDirectoryPrivacyRepository, domainID, ruleID string) (*models.DomainDirectoryPrivacyRule, error) {
 	rules, err := repo.ListRulesByDomain(ctx, domainID)
 	if err != nil {
@@ -123,8 +106,7 @@ func newDirPrivacyListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			repo := repository.NewDomainDirectoryPrivacyRepository(sharedDB)
-			rules, err := repo.ListRulesByDomain(ctx, dom.ID)
+			rules, err := dirPrivacyRepo().ListRulesByDomain(ctx, dom.ID)
 			if err != nil {
 				return fmt.Errorf("list rules: %w", err)
 			}
@@ -155,23 +137,15 @@ func newDirPrivacyAddCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 15*time.Second)
 			defer cancel()
-			cleanPath, err := cliValidatePrivacyPath(path)
-			if err != nil {
-				return err
-			}
-			cleanRealm, err := cliValidatePrivacyRealm(realm)
-			if err != nil {
-				return err
-			}
 			dom, err := resolveDomainSpec(ctx, domainRepoFromDB(), args[0])
 			if err != nil {
 				return err
 			}
-			row := &models.DomainDirectoryPrivacyRule{ID: ids.NewULID(), DomainID: dom.ID, Path: cleanPath, Realm: cleanRealm}
-			if err := repository.NewDomainDirectoryPrivacyRepository(sharedDB).CreateRule(ctx, row); err != nil {
-				return fmt.Errorf("create rule: %w", err)
+			row, err := dirprivops.CreateRule(ctx, cliDirPrivacyDeps(), dom.ID, path, realm)
+			if err != nil {
+				return mapDirPrivacyErr("create rule", err, "", "")
 			}
-			fmt.Printf("protected %s%s (rule %s); add a credential with `dir-privacy cred-add`\n", dom.Name, cleanPath, row.ID)
+			fmt.Printf("protected %s%s (rule %s); add a credential with `dir-privacy cred-add`\n", dom.Name, row.Path, row.ID)
 			return nil
 		},
 	}
@@ -193,12 +167,8 @@ func newDirPrivacyRemoveCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			repo := repository.NewDomainDirectoryPrivacyRepository(sharedDB)
-			if _, err := resolvePrivacyRule(ctx, repo, dom.ID, args[1]); err != nil {
-				return err
-			}
-			if err := repo.DeleteRule(ctx, args[1]); err != nil {
-				return fmt.Errorf("delete rule: %w", err)
+			if err := dirprivops.DeleteRule(ctx, cliDirPrivacyDeps(), dom.ID, args[1]); err != nil {
+				return mapDirPrivacyErr("delete rule", err, args[1], "")
 			}
 			fmt.Printf("removed rule %s from %s\n", args[1], dom.Name)
 			return nil
@@ -219,7 +189,7 @@ func newDirPrivacyCredListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			repo := repository.NewDomainDirectoryPrivacyRepository(sharedDB)
+			repo := dirPrivacyRepo()
 			if _, err := resolvePrivacyRule(ctx, repo, dom.ID, args[1]); err != nil {
 				return err
 			}
@@ -259,9 +229,6 @@ func newDirPrivacyCredAddCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 15*time.Second)
 			defer cancel()
-			if !cliPrivacyUserRE.MatchString(username) {
-				return fmt.Errorf("--user must match [A-Za-z0-9._-] (1-64 chars)")
-			}
 			if password != "" && viaStdin {
 				return fmt.Errorf("--password and --password-stdin are mutually exclusive")
 			}
@@ -272,24 +239,18 @@ func newDirPrivacyCredAddCmd() *cobra.Command {
 				}
 				password = p
 			}
-			if len(password) < 8 || len(password) > 128 {
-				return fmt.Errorf("password must be 8-128 characters")
-			}
 			dom, err := resolveDomainSpec(ctx, domainRepoFromDB(), args[0])
 			if err != nil {
 				return err
 			}
-			repo := repository.NewDomainDirectoryPrivacyRepository(sharedDB)
-			if _, err := resolvePrivacyRule(ctx, repo, dom.ID, args[1]); err != nil {
-				return err
-			}
-			hash, err := auth.HashPassword(password, 0)
+			row, err := dirprivops.CreateCredential(ctx, cliDirPrivacyDeps(), dom.ID, args[1], username, password)
 			if err != nil {
-				return fmt.Errorf("hash password: %w", err)
-			}
-			row := &models.DomainDirectoryPrivacyCredential{ID: ids.NewULID(), RuleID: args[1], Username: username, PasswordHash: hash}
-			if err := repo.CreateCredential(ctx, row); err != nil {
-				return fmt.Errorf("create credential: %w", err)
+				// Present username/password validation as the flag that carries it.
+				var ve *dirprivops.ValidationError
+				if errors.As(err, &ve) && ve.Field == "username" {
+					return fmt.Errorf("--user: %s", ve.Msg)
+				}
+				return mapDirPrivacyErr("create credential", err, args[1], "")
 			}
 			fmt.Printf("added credential %q (id %s) to rule %s\n", username, row.ID, args[1])
 			return nil
@@ -314,26 +275,11 @@ func newDirPrivacyCredRemoveCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			repo := repository.NewDomainDirectoryPrivacyRepository(sharedDB)
-			rule, err := resolvePrivacyRule(ctx, repo, dom.ID, args[1])
-			if err != nil {
-				return err
-			}
-			// JAB-316: verify the credential belongs to THIS rule before deleting
-			// it. Without this containment check the CLI deletes any credential ID
-			// under the guise of an unrelated rule the operator names — a
-			// cross-rule credential deletion. The HTTP adapter already enforces
-			// cred.RuleID == rule.ID; fail closed (never delete) on a mismatch or
-			// a missing credential.
-			cred, err := repo.FindCredentialByID(ctx, args[2])
-			if err != nil {
-				return fmt.Errorf("credential %s not found", args[2])
-			}
-			if cred.RuleID != rule.ID {
-				return fmt.Errorf("credential %s does not belong to rule %s", args[2], rule.ID)
-			}
-			if err := repo.DeleteCredential(ctx, args[2]); err != nil {
-				return fmt.Errorf("delete credential: %w", err)
+			// dirprivops.DeleteCredential enforces cross-rule containment
+			// (cred.RuleID == rule.ID) before deleting — the JAB-316 guard,
+			// failing closed on a mismatch or a missing credential.
+			if err := dirprivops.DeleteCredential(ctx, cliDirPrivacyDeps(), dom.ID, args[1], args[2]); err != nil {
+				return mapDirPrivacyErr("delete credential", err, args[1], args[2])
 			}
 			fmt.Printf("removed credential %s\n", args[2])
 			return nil

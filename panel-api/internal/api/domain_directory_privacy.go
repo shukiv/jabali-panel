@@ -14,21 +14,24 @@
 // Cross-tenant access returns 404 (not 403) to avoid leaking domain
 // existence. Mirrors M36 IP ACL handler shape so the two surfaces stay
 // in lockstep.
+//
+// The rule/credential mutation lifecycle (validation, bcrypt-at-write,
+// cross-rule containment, converge-schedule) lives in internal/dirprivops so
+// this handler and the CLI (cmd/server/domain_directory_privacy_cmd.go) share
+// one implementation. This file owns HTTP concerns only: domain authz, request
+// binding, read endpoints, and mapping the ops' typed errors onto the wire.
 package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
-	"regexp"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"golang.org/x/crypto/bcrypt"
 
-	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/auth"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dirprivops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
-	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
@@ -49,9 +52,6 @@ func RegisterDomainDirectoryPrivacyRoutes(g *gin.RouterGroup, cfg DomainDirector
 	if cfg.Domains == nil || cfg.Privacy == nil {
 		return
 	}
-	if cfg.BcryptCost == 0 {
-		cfg.BcryptCost = bcrypt.DefaultCost
-	}
 	h := &domainDirectoryPrivacyHandler{cfg: cfg}
 	rg := g.Group("/domains/:id/directory-privacy")
 	rg.GET("", h.listRules)
@@ -65,6 +65,34 @@ func RegisterDomainDirectoryPrivacyRoutes(g *gin.RouterGroup, cfg DomainDirector
 
 type domainDirectoryPrivacyHandler struct {
 	cfg DomainDirectoryPrivacyHandlerConfig
+}
+
+// deps builds the shared-module dependencies from the handler config. The
+// Reconcile hook is the immediate-converge Schedule; BcryptCost 0 → default.
+func (h *domainDirectoryPrivacyHandler) deps() dirprivops.Deps {
+	return dirprivops.Deps{
+		Privacy:    h.cfg.Privacy,
+		Schedule:   h.cfg.Reconcile,
+		BcryptCost: h.cfg.BcryptCost,
+	}
+}
+
+// abortPrivacyErr maps an ops error onto the wire codes this endpoint has
+// always returned: a validation failure → 400 with the bare message, the
+// containment/not-found sentinels → 404, anything else (a repository failure)
+// → 500 with the handler's action prefix.
+func abortPrivacyErr(c *gin.Context, err error, repoPrefix string) {
+	var ve *dirprivops.ValidationError
+	switch {
+	case errors.As(err, &ve):
+		c.JSON(http.StatusBadRequest, gin.H{"error": ve.Msg})
+	case errors.Is(err, dirprivops.ErrRuleNotFound):
+		c.JSON(http.StatusNotFound, gin.H{"error": "rule_not_found"})
+	case errors.Is(err, dirprivops.ErrCredentialNotFound):
+		c.JSON(http.StatusNotFound, gin.H{"error": "credential_not_found"})
+	default:
+		c.JSON(http.StatusInternalServerError, gin.H{"error": repoPrefix + err.Error()})
+	}
 }
 
 type createRuleRequest struct {
@@ -109,30 +137,12 @@ func (h *domainDirectoryPrivacyHandler) createRule(c *gin.Context) {
 		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "validation_failed", "detail": err.Error()})
 		return
 	}
-	path, err := validatePrivacyPath(req.Path)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	realm, err := validatePrivacyRealm(req.Realm)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	row := &models.DomainDirectoryPrivacyRule{
-		ID:       ids.NewULID(),
-		DomainID: dom.ID,
-		Path:     path,
-		Realm:    realm,
-	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
-	if err := h.cfg.Privacy.CreateRule(ctx, row); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "create: " + err.Error()})
+	row, err := dirprivops.CreateRule(ctx, h.deps(), dom.ID, req.Path, req.Realm)
+	if err != nil {
+		abortPrivacyErr(c, err, "create: ")
 		return
-	}
-	if h.cfg.Reconcile != nil {
-		h.cfg.Reconcile(dom.ID)
 	}
 	c.JSON(http.StatusCreated, row)
 }
@@ -142,29 +152,17 @@ func (h *domainDirectoryPrivacyHandler) updateRule(c *gin.Context) {
 	if !ok {
 		return
 	}
-	rule, ok := h.resolveRule(c, dom.ID)
-	if !ok {
-		return
-	}
 	var req updateRuleRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "validation_failed", "detail": err.Error()})
 		return
 	}
-	realm, err := validatePrivacyRealm(req.Realm)
+	row, err := dirprivops.UpdateRule(c.Request.Context(), h.deps(), dom.ID, c.Param("rule_id"), req.Realm)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		abortPrivacyErr(c, err, "update: ")
 		return
 	}
-	if err := h.cfg.Privacy.UpdateRule(c.Request.Context(), rule.ID, realm); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "update: " + err.Error()})
-		return
-	}
-	if h.cfg.Reconcile != nil {
-		h.cfg.Reconcile(dom.ID)
-	}
-	rule.Realm = realm
-	c.JSON(http.StatusOK, rule)
+	c.JSON(http.StatusOK, row)
 }
 
 func (h *domainDirectoryPrivacyHandler) deleteRule(c *gin.Context) {
@@ -172,18 +170,12 @@ func (h *domainDirectoryPrivacyHandler) deleteRule(c *gin.Context) {
 	if !ok {
 		return
 	}
-	rule, ok := h.resolveRule(c, dom.ID)
-	if !ok {
+	ruleID := c.Param("rule_id")
+	if err := dirprivops.DeleteRule(c.Request.Context(), h.deps(), dom.ID, ruleID); err != nil {
+		abortPrivacyErr(c, err, "delete: ")
 		return
 	}
-	if err := h.cfg.Privacy.DeleteRule(c.Request.Context(), rule.ID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "delete: " + err.Error()})
-		return
-	}
-	if h.cfg.Reconcile != nil {
-		h.cfg.Reconcile(dom.ID)
-	}
-	c.JSON(http.StatusOK, gin.H{"id": rule.ID, "deleted": true})
+	c.JSON(http.StatusOK, gin.H{"id": ruleID, "deleted": true})
 }
 
 // --- credentials ---
@@ -213,42 +205,17 @@ func (h *domainDirectoryPrivacyHandler) createCredential(c *gin.Context) {
 	if !ok {
 		return
 	}
-	rule, ok := h.resolveRule(c, dom.ID)
-	if !ok {
-		return
-	}
 	var req createCredentialRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "validation_failed", "detail": err.Error()})
 		return
 	}
-	if err := validatePrivacyUsername(req.Username); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	if err := validatePrivacyPassword(req.Password); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	hash, err := auth.HashPassword(req.Password, h.cfg.BcryptCost)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "hash: " + err.Error()})
-		return
-	}
-	row := &models.DomainDirectoryPrivacyCredential{
-		ID:           ids.NewULID(),
-		RuleID:       rule.ID,
-		Username:     req.Username,
-		PasswordHash: hash,
-	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
-	if err := h.cfg.Privacy.CreateCredential(ctx, row); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "create: " + err.Error()})
+	row, err := dirprivops.CreateCredential(ctx, h.deps(), dom.ID, c.Param("rule_id"), req.Username, req.Password)
+	if err != nil {
+		abortPrivacyErr(c, err, "create: ")
 		return
-	}
-	if h.cfg.Reconcile != nil {
-		h.cfg.Reconcile(dom.ID)
 	}
 	c.JSON(http.StatusCreated, row)
 }
@@ -258,30 +225,10 @@ func (h *domainDirectoryPrivacyHandler) deleteCredential(c *gin.Context) {
 	if !ok {
 		return
 	}
-	rule, ok := h.resolveRule(c, dom.ID)
-	if !ok {
-		return
-	}
 	credID := c.Param("cred_id")
-	cred, err := h.cfg.Privacy.FindCredentialByID(c.Request.Context(), credID)
-	if err != nil {
-		if isNotFound(err) {
-			c.JSON(http.StatusNotFound, gin.H{"error": "credential_not_found"})
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+	if err := dirprivops.DeleteCredential(c.Request.Context(), h.deps(), dom.ID, c.Param("rule_id"), credID); err != nil {
+		abortPrivacyErr(c, err, "delete: ")
 		return
-	}
-	if cred.RuleID != rule.ID {
-		c.JSON(http.StatusNotFound, gin.H{"error": "credential_not_found"})
-		return
-	}
-	if err := h.cfg.Privacy.DeleteCredential(c.Request.Context(), credID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "delete: " + err.Error()})
-		return
-	}
-	if h.cfg.Reconcile != nil {
-		h.cfg.Reconcile(dom.ID)
 	}
 	c.JSON(http.StatusOK, gin.H{"id": credID, "deleted": true})
 }
@@ -310,6 +257,9 @@ func (h *domainDirectoryPrivacyHandler) resolveDomain(c *gin.Context) (*models.D
 	return dom, true
 }
 
+// resolveRule loads a rule for the read endpoints (listCredentials) and
+// confirms it belongs to the domain. The mutation paths resolve inside
+// internal/dirprivops instead.
 func (h *domainDirectoryPrivacyHandler) resolveRule(c *gin.Context, domainID string) (*models.DomainDirectoryPrivacyRule, bool) {
 	ruleID := c.Param("rule_id")
 	rule, err := h.cfg.Privacy.FindRuleByID(c.Request.Context(), ruleID)
@@ -326,79 +276,4 @@ func (h *domainDirectoryPrivacyHandler) resolveRule(c *gin.Context, domainID str
 		return nil, false
 	}
 	return rule, true
-}
-
-// --- validators ---
-
-var privacyPathRE = regexp.MustCompile(`^/[A-Za-z0-9_./-]+$`)
-
-func validatePrivacyPath(in string) (string, error) {
-	p := strings.TrimSpace(in)
-	if p == "" {
-		return "", errBadField("path required")
-	}
-	if len(p) > 255 {
-		return "", errBadField("path too long (max 255)")
-	}
-	if p == "/" {
-		return "/", nil
-	}
-	if !privacyPathRE.MatchString(p) {
-		return "", errBadField("path must start with / and contain only [A-Za-z0-9_./-]")
-	}
-	if strings.Contains(p, "//") {
-		return "", errBadField("path must not contain //")
-	}
-	for _, seg := range strings.Split(p, "/") {
-		if seg == ".." {
-			return "", errBadField("path must not contain ..")
-		}
-	}
-	// Strip trailing slash for consistent storage; agent re-adds when
-	// emitting `location ^~ <path>/`.
-	if len(p) > 1 {
-		p = strings.TrimRight(p, "/")
-		if p == "" {
-			p = "/"
-		}
-	}
-	return p, nil
-}
-
-func validatePrivacyRealm(in string) (string, error) {
-	r := strings.TrimSpace(in)
-	if r == "" {
-		r = "Restricted"
-	}
-	if len(r) > 255 {
-		return "", errBadField("realm too long (max 255)")
-	}
-	for _, c := range r {
-		if c < 0x20 || c > 0x7e {
-			return "", errBadField("realm must be printable ASCII")
-		}
-		if c == '"' || c == '\\' {
-			return "", errBadField(`realm must not contain " or \`)
-		}
-	}
-	return r, nil
-}
-
-var privacyUsernameRE = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
-
-func validatePrivacyUsername(in string) error {
-	if !privacyUsernameRE.MatchString(in) {
-		return errBadField("username must match [A-Za-z0-9._-] (1-64 chars)")
-	}
-	return nil
-}
-
-func validatePrivacyPassword(in string) error {
-	if len(in) < 8 {
-		return errBadField("password must be at least 8 characters")
-	}
-	if len(in) > 128 {
-		return errBadField("password too long (max 128)")
-	}
-	return nil
 }
