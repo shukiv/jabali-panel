@@ -2423,10 +2423,22 @@ func (r *Reconciler) reconcileDNSZone(ctx context.Context, domain *models.Domain
 	zone.Serial = now.Unix()
 	_ = r.dnsZones.Update(ctx, zone)
 
+	// GH #1459: PowerDNS's domains.name column is latin1; the agent
+	// connects charset=utf8mb4, so a raw-IDN zone name would fail the
+	// domains INSERT with MySQL 1366 and roll back the WHOLE atomic
+	// dns.zone.upsert — the zone silently never lands. Send the same
+	// punycode-normalized apex the compiled records already use.
+	// Identity for ordinary ASCII zones.
+	pushZoneName, ok := dnscompile.NormalizeName(zone.Name)
+	if !ok {
+		r.log.Error("dns.zone.upsert skipped: zone name not encodable", "zone", zone.Name)
+		return
+	}
+
 	pushCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	if _, err := r.agent.Call(pushCtx, "dns.zone.upsert", map[string]any{
-		"zone":            zone.Name,
+		"zone":            pushZoneName,
 		"records":         compiled,
 		"allow_axfr_from": allowAXFR,
 		"also_notify":     alsoNotify,
