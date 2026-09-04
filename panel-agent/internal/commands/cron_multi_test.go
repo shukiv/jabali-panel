@@ -13,7 +13,7 @@ func TestBuildCronServiceContent_MultiCommand(t *testing.T) {
 	dr := "/home/u/domains/x/public_html"
 	raw := "wp --path=" + dr + " keyhook-properties generate-xml --file=" + dr + "/props.xml\n" +
 		"wp --path=" + dr + " all-import run 1 --force-run"
-	cmds, err := cronvalidate.ValidateAnyMulti(raw, []string{dr}, nil)
+	cmds, err := cronvalidate.ValidateAnyMulti(raw, []string{dr}, nil, "")
 	if err != nil {
 		t.Fatalf("validate: %v", err)
 	}
@@ -42,7 +42,7 @@ func TestBuildCronServiceContent_MultiCommand(t *testing.T) {
 // from the glued `--path=<dir>` form).
 func TestBuildCronServiceContent_TwoTokenPathGates(t *testing.T) {
 	dr := "/home/u/domains/x/public_html"
-	cmds, err := cronvalidate.ValidateAnyMulti("wp --path "+dr+" plugin list", []string{dr}, nil)
+	cmds, err := cronvalidate.ValidateAnyMulti("wp --path "+dr+" plugin list", []string{dr}, nil, "")
 	if err != nil {
 		t.Fatalf("validate: %v", err)
 	}

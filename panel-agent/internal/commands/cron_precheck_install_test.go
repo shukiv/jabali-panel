@@ -20,7 +20,7 @@ var libexecRefRe = regexp.MustCompile(`/usr/local/libexec/jabali/([A-Za-z0-9._-]
 // jabali/<name> in a rendered cron service unit, assert install/systemd/
 // <name> exists in the repo AND install.sh installs it.
 func TestGeneratedUnitLibexecHelpersAreShipped(t *testing.T) {
-	cmd, err := cronvalidate.ValidateCommand("php /home/u/public_html/wp-cron.php", []string{"/home/u/public_html"})
+	cmd, err := cronvalidate.ValidateCommand("php /home/u/public_html/wp-cron.php", []string{"/home/u/public_html"}, "")
 	if err != nil {
 		t.Fatalf("validate: %v", err)
 	}

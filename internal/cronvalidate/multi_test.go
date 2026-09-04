@@ -13,7 +13,7 @@ func TestValidateAnyMulti_OrderedWPSequence(t *testing.T) {
 		"\n" + // blank line tolerated
 		"# import step\n" +
 		"wp --path=/home/u/domains/x/public_html all-import run 1 --force-run\n"
-	cmds, err := ValidateAnyMulti(raw, testDocroots, nil)
+	cmds, err := ValidateAnyMulti(raw, testDocroots, nil, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -29,7 +29,7 @@ func TestValidateAnyMulti_OrderedWPSequence(t *testing.T) {
 }
 
 func TestValidateAnyMulti_SingleLineBackCompat(t *testing.T) {
-	cmds, err := ValidateAnyMulti("wp --path=/home/u/domains/x/public_html cron event run --due-now", testDocroots, nil)
+	cmds, err := ValidateAnyMulti("wp --path=/home/u/domains/x/public_html cron event run --due-now", testDocroots, nil, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -42,7 +42,7 @@ func TestValidateAnyMulti_RejectsBadLineWithLineNumber(t *testing.T) {
 	// line 2 tries to escape the allow-list.
 	raw := "wp --path=/home/u/domains/x/public_html cron event run\n" +
 		"cd /etc && cat shadow"
-	_, err := ValidateAnyMulti(raw, testDocroots, nil)
+	_, err := ValidateAnyMulti(raw, testDocroots, nil, "")
 	if err == nil {
 		t.Fatal("expected rejection of the shell line")
 	}
@@ -54,13 +54,13 @@ func TestValidateAnyMulti_RejectsBadLineWithLineNumber(t *testing.T) {
 func TestValidateAnyMulti_MetacharOnAnyLineRejected(t *testing.T) {
 	raw := "wp --path=/home/u/domains/x/public_html cron event run\n" +
 		"php /home/u/domains/x/public_html/a.php; rm -rf /"
-	if _, err := ValidateAnyMulti(raw, testDocroots, nil); err == nil {
+	if _, err := ValidateAnyMulti(raw, testDocroots, nil, ""); err == nil {
 		t.Fatal("a metachar on any line must reject the whole job")
 	}
 }
 
 func TestValidateAnyMulti_EmptyAfterSkips(t *testing.T) {
-	if _, err := ValidateAnyMulti("#!/bin/bash\n\n# only comments\n", testDocroots, nil); err == nil {
+	if _, err := ValidateAnyMulti("#!/bin/bash\n\n# only comments\n", testDocroots, nil, ""); err == nil {
 		t.Fatal("a command with no executable lines must be rejected")
 	}
 }
@@ -69,7 +69,7 @@ func TestValidateAnyMulti_PathStillEnforcedPerLine(t *testing.T) {
 	// second line's --path points outside the owned docroot.
 	raw := "wp --path=/home/u/domains/x/public_html cron event run\n" +
 		"wp --path=/home/other/domains/y/public_html plugin list"
-	if _, err := ValidateAnyMulti(raw, testDocroots, nil); err == nil {
+	if _, err := ValidateAnyMulti(raw, testDocroots, nil, ""); err == nil {
 		t.Fatal("a --path outside owned docroots must reject the job")
 	}
 }
@@ -79,7 +79,7 @@ func TestValidateAnyMulti_TooMany(t *testing.T) {
 	for i := 0; i < maxCronCommands+1; i++ {
 		b.WriteString("wp --path=/home/u/domains/x/public_html cron event run\n")
 	}
-	if _, err := ValidateAnyMulti(b.String(), testDocroots, nil); err == nil {
+	if _, err := ValidateAnyMulti(b.String(), testDocroots, nil, ""); err == nil {
 		t.Fatalf("more than %d commands must be rejected", maxCronCommands)
 	}
 }

@@ -786,7 +786,7 @@ func TestAppCronSpecs(t *testing.T) {
 			if err := cronvalidate.ValidateCronName(c.name); err != nil {
 				t.Errorf("%s: bad cron name %q: %v", app, c.name, err)
 			}
-			if _, err := cronvalidate.ValidateCommand(c.command, owned); err != nil {
+			if _, err := cronvalidate.ValidateCommand(c.command, owned, ""); err != nil {
 				t.Errorf("%s: command rejected by allowlist %q: %v", app, c.command, err)
 			}
 		}

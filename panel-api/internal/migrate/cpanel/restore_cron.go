@@ -161,7 +161,7 @@ func ImportCron(ctx context.Context, repo repository.CronJobRepository, parsed *
 				// Defense-in-depth: never trust the rewrite — re-run it
 				// through the same validator the REST handler uses, now
 				// with the account's real docroots so the php path passes.
-				if _, vErr := cronvalidate.ValidateCommand(rewritten, ownedDocroots); vErr != nil {
+				if _, vErr := cronvalidate.ValidateCommand(rewritten, ownedDocroots, "/home/"+targetUsername); vErr != nil {
 					res.Skipped = append(res.Skipped, fmt.Sprintf(
 						"%s:%d cron_disabled_import (rewrite_revalidate_failed: %s): %s",
 						cronPath, lineNum, vErr.Error(), origCommand))
@@ -182,7 +182,7 @@ func ImportCron(ctx context.Context, repo repository.CronJobRepository, parsed *
 
 			// Non-curl/wget: validate against the account's docroots.
 			// Pass → row. Fail → disabled-import (preserve original + note).
-			if _, vErr := cronvalidate.ValidateCommand(command, ownedDocroots); vErr != nil {
+			if _, vErr := cronvalidate.ValidateCommand(command, ownedDocroots, "/home/"+targetUsername); vErr != nil {
 				res.Skipped = append(res.Skipped, fmt.Sprintf(
 					"%s:%d cron_disabled_import (command: %s): %s",
 					cronPath, lineNum, vErr.Error(), origCommand))

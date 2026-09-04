@@ -19,15 +19,35 @@ Both are owned by you. The first time you add a cron job, systemd lingering is e
 
 ## Command allowlist
 
-The panel does not allow arbitrary shell commands. The allowlist includes:
+The panel does not allow arbitrary shell commands, and cron jobs run **outside**
+the SSH shell sandbox as your user — so the command must be one of a fixed set
+of interpreters running a file you own, with no shell features (no `cd`, `$HOME`,
+`|`, `;`, `&&`, backticks, redirects, or globbing). Use **absolute paths**
+instead of `cd`/`$HOME`.
 
-- `php` (with any args)
-- `wp` (WP-CLI; with any args)
-- `python` / `python3`
-- `node`
-- `curl` (limited to your domains)
+The allowlist:
 
-The allowlist is configurable by the operator; ask if you need a command not currently listed.
+- **`wp`** (WP-CLI) — requires `--path=<absolute-docroot>` instead of `cd`.
+  Example: `wp --path=/home/USER/domains/example.com/public_html cron event run --due-now`
+- **`php`** (or a pinned version, e.g. `php8.3`) — runs an **absolute `.php` file
+  inside one of your docroots**. Inline code (`-r`, `-R`, `-B`, `-E`) is not allowed.
+- **`python`** / **`python3`** / a pinned version (e.g. `python3.11`), or the
+  absolute path to a **virtualenv** interpreter — runs an **absolute `.py` file
+  inside your account** (home or a docroot). Inline/module execution (`-c`, `-m`,
+  reading from stdin) is not allowed. Django example:
+  `python3 /home/USER/site/manage.py runjobs` or, with a venv,
+  `/home/USER/venv/bin/python /home/USER/site/manage.py migrate` — note there is
+  no `cd`; give `manage.py`'s absolute path.
+- **`node`** / **`nodejs`** (or an absolute path to one, e.g. an nvm build) — runs
+  an **absolute `.js` / `.mjs` / `.cjs` file inside your account**. Inline code
+  (`-e`, `--eval`, `-p`, `--print`) is not allowed.
+- **`curl`** / **`wget`** — a plain GET to one of **your own domains** (a
+  self-domain HTTP trigger; the panel pins the target and hardens the request).
+
+A job may hold **several commands, one per line** — they run in order and stop
+if one fails. Blank lines and `#` comments (including a `#!/bin/bash` shebang
+line) are ignored, so you can paste a script's body, but every executable line
+must still match the allowlist above.
 
 ## Why systemd-user, not crontab
 

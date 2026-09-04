@@ -32,7 +32,7 @@ const (
 // (starting with '#') are skipped, so a pasted script's `#!/bin/bash` header is
 // tolerated — but every executable line must still pass the closed allow-list.
 // A single-line command yields a one-element slice (back-compatible).
-func ValidateAnyMulti(raw string, ownedDocroots, ownedDomains []string) ([]*Command, error) {
+func ValidateAnyMulti(raw string, ownedDocroots, ownedDomains []string, ownedHome string) ([]*Command, error) {
 	if len(raw) > maxMultiCommandBytes {
 		return nil, &ValidationError{
 			Code:   ErrCodeTooLong,
@@ -52,7 +52,7 @@ func ValidateAnyMulti(raw string, ownedDocroots, ownedDomains []string) ([]*Comm
 				Detail: fmt.Sprintf("too many commands (max %d)", maxCronCommands),
 			}
 		}
-		c, err := ValidateAny(trimmed, ownedDocroots, ownedDomains)
+		c, err := ValidateAny(trimmed, ownedDocroots, ownedDomains, ownedHome)
 		if err != nil {
 			// Prefix the failing line number so the operator can fix the right line.
 			if ve, ok := err.(*ValidationError); ok {
