@@ -9,7 +9,7 @@
 // render as static instructions (empty `status` column).
 import { useTranslation } from "react-i18next";
 import { useState } from "react";
-import { Alert, Button, Popconfirm, Card, Select, Skeleton, Space, Switch, Table, Tag, Typography } from "antd";
+import { Alert, Button, Popconfirm, Card, Input, Select, Skeleton, Space, Switch, Table, Tag, Typography } from "antd";
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { CopyOutlined } from "@icons";
 
@@ -47,6 +47,8 @@ export const DomainEmailSection = ({ domainId }: Props) => {
     webmail_enabled: boolean;
     dmarc_np?: string;
     dmarc_testing?: boolean;
+    caldav_host?: string;
+    carddav_host?: string;
   }>({
     resource: "domains",
     id: domainId,
@@ -94,6 +96,23 @@ export const DomainEmailSection = ({ domainId }: Props) => {
       feedback.message.error(resp?.detail ?? resp?.error ?? "Failed to save DMARC settings");
     } finally {
       setDmarcSaving(false);
+    }
+  };
+
+  // GH #1462: per-domain CalDAV/CardDAV server override. Saved on blur only
+  // when the value actually changed, so tabbing through doesn't PATCH.
+  const [davSaving, setDavSaving] = useState(false);
+  const saveDav = async (patch: { caldav_host?: string; carddav_host?: string }) => {
+    setDavSaving(true);
+    try {
+      await apiClient.patch(`/domains/${domainId}`, patch);
+      qc.invalidateQueries({ queryKey: ["one", "domains", domainId] });
+      feedback.message.success("CalDAV/CardDAV settings saved");
+    } catch (err) {
+      const resp = (err as { response?: { data?: { detail?: string; error?: string } } })?.response?.data;
+      feedback.message.error(resp?.detail ?? resp?.error ?? "Failed to save CalDAV/CardDAV settings");
+    } finally {
+      setDavSaving(false);
     }
   };
 
@@ -189,6 +208,49 @@ export const DomainEmailSection = ({ domainId }: Props) => {
               Applies to the panel-managed <Typography.Text code>_dmarc</Typography.Text> record; a
               hand-edited DMARC record is left untouched.
             </Typography.Text>
+          </Space>
+        </Card>
+      )}
+
+      {enabled && (
+        <Card size="small" title="CalDAV / CardDAV server (GH #1462)">
+          <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              Point calendars and contacts at an external server (e.g. Nextcloud) while mail stays on
+              this server. Leave blank to use <Typography.Text code>mail.{data.domain_name}</Typography.Text>.
+              Enter a hostname, optionally <Typography.Text code>host:port</Typography.Text> (default
+              443). This repoints the <Typography.Text code>_caldavs._tcp</Typography.Text> /{" "}
+              <Typography.Text code>_carddavs._tcp</Typography.Text> SRV records that Thunderbird and
+              Apple Mail use to discover DAV.
+            </Typography.Text>
+            <Space align="center" wrap>
+              <span style={{ minWidth: 130, display: "inline-block" }}>CalDAV host:</span>
+              <Input
+                style={{ minWidth: 300 }}
+                placeholder={`Default: mail.${data.domain_name}`}
+                disabled={davSaving}
+                defaultValue={domain?.caldav_host ?? ""}
+                key={`caldav-${domain?.caldav_host ?? ""}`}
+                onBlur={(e) => {
+                  const v = e.target.value.trim();
+                  if (v !== (domain?.caldav_host ?? "")) void saveDav({ caldav_host: v });
+                }}
+              />
+            </Space>
+            <Space align="center" wrap>
+              <span style={{ minWidth: 130, display: "inline-block" }}>CardDAV host:</span>
+              <Input
+                style={{ minWidth: 300 }}
+                placeholder={`Default: mail.${data.domain_name}`}
+                disabled={davSaving}
+                defaultValue={domain?.carddav_host ?? ""}
+                key={`carddav-${domain?.carddav_host ?? ""}`}
+                onBlur={(e) => {
+                  const v = e.target.value.trim();
+                  if (v !== (domain?.carddav_host ?? "")) void saveDav({ carddav_host: v });
+                }}
+              />
+            </Space>
           </Space>
         </Card>
       )}

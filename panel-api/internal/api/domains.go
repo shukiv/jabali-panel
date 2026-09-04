@@ -259,6 +259,43 @@ type updateDomainRequest struct {
 	// SSLMode (GH #246) — switch TLS mode. 'custom' is set only via
 	// PUT /domains/:id/ssl/custom (needs the cert), not here.
 	SSLMode *string `json:"ssl_mode,omitempty"`
+	// GH #1462: per-domain CalDAV/CardDAV server override (hostname, optional
+	// host:port). Empty string clears it (DAV points back at mail.<domain>);
+	// absent leaves it untouched. Repoints the _caldavs/_carddavs SRV records.
+	CalDAVHost  *string `json:"caldav_host,omitempty"`
+	CardDAVHost *string `json:"carddav_host,omitempty"`
+}
+
+// davHostRe validates a CalDAV/CardDAV override: a DNS hostname (lower/mixed
+// case) with an optional :port. It is interpolated UNQUOTED into space-
+// separated SRV record content ("weight port target"), so anything but a bare
+// hostname[:port] — a space, control char, path, scheme — must be rejected
+// before it can corrupt the record or point discovery somewhere unintended.
+var davHostRe = regexp.MustCompile(`^([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+(:[0-9]{1,5})?$`)
+
+// validateDAVHost accepts an empty string (clears the override) or a
+// hostname[:port] that matches davHostRe with the host <=253 octets and any
+// port in 1..65535.
+func validateDAVHost(v string) error {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return nil
+	}
+	host := v
+	if i := strings.LastIndexByte(v, ':'); i > 0 {
+		port, err := strconv.Atoi(v[i+1:])
+		if err != nil || port < 1 || port > 65535 {
+			return errors.New("port must be 1-65535")
+		}
+		host = v[:i]
+	}
+	if len(host) > 253 {
+		return errors.New("host exceeds 253 characters")
+	}
+	if !davHostRe.MatchString(v) {
+		return errors.New("must be a hostname, optionally host:port (e.g. dav.example.com or dav.example.com:8443)")
+	}
+	return nil
 }
 
 // nullableUint64 is the M24 wrapper that lets a PATCH body distinguish
@@ -929,6 +966,23 @@ func (h *domainHandler) update(c *gin.Context) {
 	}
 	if req.DmarcTesting != nil {
 		domain.DmarcTesting = *req.DmarcTesting
+	}
+	// GH #1462: per-domain CalDAV/CardDAV override (hostname[:port]; empty clears).
+	if req.CalDAVHost != nil {
+		v := strings.TrimSpace(*req.CalDAVHost)
+		if err := validateDAVHost(v); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_caldav_host", "detail": err.Error()})
+			return
+		}
+		domain.CalDAVHost = v
+	}
+	if req.CardDAVHost != nil {
+		v := strings.TrimSpace(*req.CardDAVHost)
+		if err := validateDAVHost(v); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_carddav_host", "detail": err.Error()})
+			return
+		}
+		domain.CardDAVHost = v
 	}
 
 	if req.RedirectAllType != nil {
