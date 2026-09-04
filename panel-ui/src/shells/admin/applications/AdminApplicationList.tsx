@@ -3,8 +3,9 @@
 // Admins modify installs by opening the relevant user's panel directly
 // in their own browser tab — no in-panel impersonation after M20.
 //
-// Status badge styling is inlined from UserApplicationList to keep
-// coupling low and avoid tight dependency on that component.
+// Status badge metadata + the transitional-poll rule are shared with the
+// tenant list via utils/applicationStatus (JAB-334) — a neutral module, so
+// neither shell depends on the other.
 import { useTranslation } from "react-i18next";
 import { useEffect, useState } from "react";
 import { shortDateTime } from "../../../utils/datetime";
@@ -13,9 +14,6 @@ import { Card, Input, Space, Table, Tag, Tooltip, Typography } from "antd";
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import {
   AppstoreOutlined,
-  LoadingOutlined,
-  CheckCircleOutlined,
-  ExclamationCircleOutlined,
   DeleteOutlined,
   LoginOutlined,
   SearchOutlined,
@@ -28,6 +26,11 @@ import { useTableURL } from "../../../hooks/useTableURL";
 import { useMagicLink } from "../../../hooks/useMagicLink";
 import { apiClient } from "../../../apiClient";
 import { CmsIcon } from "../../user/applications/CmsIcon";
+import {
+  applicationStatusMeta,
+  anyTransitional,
+  type ApplicationStatus,
+} from "../../../utils/applicationStatus";
 
 type ApplicationInstall = {
   id: string;
@@ -41,37 +44,12 @@ type ApplicationInstall = {
   owner_username?: string;
   locale: string;
   subdirectory: string;
-  status:
-    | "pending"
-    | "installing"
-    | "cloning"
-    | "deleting"
-    | "ready"
-    | "failed";
+  status: ApplicationStatus;
   version: string | null;
   last_error: string;
   created_at: string;
   updated_at: string;
 };
-
-const STATUS_META: Record<
-  ApplicationInstall["status"],
-  { color: string; icon: React.ReactNode; label: string; spinning: boolean }
-> = {
-  pending:    { color: "default",    icon: <LoadingOutlined spin />,      label: "Pending",    spinning: true  },
-  installing: { color: "processing", icon: <LoadingOutlined spin />,      label: "Installing", spinning: true  },
-  cloning:    { color: "processing", icon: <LoadingOutlined spin />,      label: "Cloning",    spinning: true  },
-  deleting:   { color: "warning",    icon: <LoadingOutlined spin />,      label: "Deleting",   spinning: true  },
-  ready:      { color: "success",    icon: <CheckCircleOutlined />,       label: "Ready",      spinning: false },
-  failed:     { color: "error",      icon: <ExclamationCircleOutlined />, label: "Failed",     spinning: false },
-};
-
-const TRANSITIONAL = new Set<ApplicationInstall["status"]>([
-  "pending",
-  "installing",
-  "cloning",
-  "deleting",
-]);
 
 interface AdminActionsCellProps {
   record: ApplicationInstall;
@@ -147,9 +125,7 @@ export const AdminApplicationList = () => {
   // Poll while any row is transitional — same cadence as the
   // user-shell list. Cheaper than running a second useQuery with
   // its own subscription.
-  const hasTransitional = query.items.some((r) =>
-    TRANSITIONAL.has(r.status),
-  );
+  const hasTransitional = anyTransitional(query.items);
   useEffect(() => {
     if (!hasTransitional) return;
     const h = setInterval(() => query.refetch(), 5000);
@@ -287,7 +263,7 @@ export const AdminApplicationList = () => {
             dataIndex="status"
             title={t("adminapplicationlist.status")}
             render={(status: ApplicationInstall["status"], record) => {
-              const meta = STATUS_META[status] ?? STATUS_META.pending;
+              const meta = applicationStatusMeta(status);
               const tag = (
                 <Tag color={meta.color} icon={meta.icon}>
                   {meta.label}

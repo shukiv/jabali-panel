@@ -13,7 +13,6 @@ import {
   AppstoreOutlined,
   PlusSquareOutlined,
   ImportOutlined,
-  LoadingOutlined,
   CheckCircleOutlined,
   ExclamationCircleOutlined,
   SyncOutlined,
@@ -25,6 +24,12 @@ import {
   SettingOutlined,
 } from "@icons";
 import { useQueryClient } from "@tanstack/react-query";
+import {
+  applicationStatusMeta,
+  anyTransitional,
+  isTransitionalStatus,
+  type ApplicationStatus,
+} from "../../../utils/applicationStatus";
 import { sorterToParams } from "../../../utils/tableSorter";
 
 import { columnSearchProps } from "../../../components/columnSearch";
@@ -53,38 +58,13 @@ type ApplicationInstall = {
   admin_email: string;
   locale: string;
   subdirectory: string;
-  status:
-    | "pending"
-    | "installing"
-    | "cloning"
-    | "deleting"
-    | "ready"
-    | "failed";
+  status: ApplicationStatus;
   version: string | null;
   last_error: string;
   cache_enabled?: boolean;
   created_at: string;
   updated_at: string;
 };
-
-const STATUS_META: Record<
-  ApplicationInstall["status"],
-  { color: string; icon: React.ReactNode; label: string; spinning: boolean }
-> = {
-  pending:    { color: "default",    icon: <LoadingOutlined spin />,      label: "Pending",    spinning: true  },
-  installing: { color: "processing", icon: <LoadingOutlined spin />,      label: "Installing", spinning: true  },
-  cloning:    { color: "processing", icon: <LoadingOutlined spin />,      label: "Cloning",    spinning: true  },
-  deleting:   { color: "warning",    icon: <LoadingOutlined spin />,      label: "Deleting",   spinning: true  },
-  ready:      { color: "success",    icon: <CheckCircleOutlined />,       label: "Ready",      spinning: false },
-  failed:     { color: "error",      icon: <ExclamationCircleOutlined />, label: "Failed",     spinning: false },
-};
-
-const TRANSITIONAL = new Set<ApplicationInstall["status"]>([
-  "pending",
-  "installing",
-  "cloning",
-  "deleting",
-]);
 
 interface ActionsCellProps {
   record: ApplicationInstall;
@@ -278,9 +258,7 @@ export const UserApplicationList = () => {
   // cloning/deleting). Five-second cadence matches what Refine's old
   // refetchInterval returned. refetch identity is stable, so only
   // `active` triggers re-installing the timer.
-  const hasTransitional = tableQuery.items.some((r) =>
-    TRANSITIONAL.has(r.status),
-  );
+  const hasTransitional = anyTransitional(tableQuery.items);
   useEffect(() => {
     if (!hasTransitional) return;
     const h = setInterval(() => {
@@ -446,7 +424,7 @@ export const UserApplicationList = () => {
                   const rows = tableQuery.items;
                   const installedCount = tableQuery.total;
                   const readyCount = rows.filter((r) => r.status === "ready").length;
-                  const inProgressCount = rows.filter((r) => TRANSITIONAL.has(r.status)).length;
+                  const inProgressCount = rows.filter((r) => isTransitionalStatus(r.status)).length;
                   const failedCount = rows.filter((r) => r.status === "failed").length;
                   const catalogCount = registry.data?.length ?? 0;
                   const pct = (n: number) =>
@@ -530,7 +508,7 @@ export const UserApplicationList = () => {
               const label = `${base}${path}`;
               const isLink = record.status === "ready" && !!domainName;
               const appKey = record.app_type || "wordpress";
-              const meta = STATUS_META[record.status] ?? STATUS_META.pending;
+              const meta = applicationStatusMeta(record.status);
               const statusTag = (
                 <Tag color={meta.color} icon={meta.icon}>
                   {meta.label}
