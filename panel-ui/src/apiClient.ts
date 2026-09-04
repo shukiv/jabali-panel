@@ -481,6 +481,11 @@ export async function restoreDatabaseUploadAuto(
 export interface UploadedBackupInfo {
   user: { id: string; username: string; email?: string; is_admin?: boolean };
   components: string[];
+  // GH #1408 create-from-manifest: target_exists is false when the bundle's own
+  // user isn't on this box yet (fresh-box DR); create_supported is true when the
+  // server can create it (Packages wired). Both optional for old responses.
+  target_exists?: boolean;
+  create_supported?: boolean;
 }
 
 // uploadBackupArchiveChunked streams a downloaded account backup .tar to the
@@ -561,10 +566,18 @@ export async function applyUploadedBackupRestore(
   targetUsername: string,
   components: string[],
   base = "/admin/backups", // GH #1408: "/me/backups" forces target = the caller
+  // GH #1408 create-from-manifest: when the target user doesn't exist yet,
+  // createUser creates it from the bundle (admin only) with the chosen package.
+  opts?: { createUser?: boolean; packageId?: string | null },
 ): Promise<UploadedBackupRestoreResult> {
   await apiClient.post(
     `${base}/restore-upload/apply`,
-    { upload_id: uploadId, target_username: targetUsername, components },
+    {
+      upload_id: uploadId,
+      target_username: targetUsername,
+      components,
+      ...(opts?.createUser ? { create_user: true, package_id: opts.packageId ?? null } : {}),
+    },
   );
   const deadline = Date.now() + 65 * 60 * 1000; // matches the server's 60-min cap
   for (;;) {

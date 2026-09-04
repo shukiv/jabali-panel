@@ -1145,6 +1145,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Jobs:           deps.BackupJobs,
 				Destinations:   deps.BackupDestinations,
 				Users:          deps.Users,
+				Packages:       deps.Packages, // GH #1408 create-from-manifest
 				Databases:      deps.Databases,
 				DatabaseUsers:  deps.DatabaseUsers,
 				DatabaseGrants: deps.DatabaseUserGrants,

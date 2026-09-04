@@ -41,6 +41,11 @@ type BackupHandlerConfig struct {
 	Jobs           repository.BackupJobRepository
 	Destinations   repository.BackupDestinationRepository
 	Users          repository.UserRepository
+	// Packages backs create-from-manifest (GH #1408): when a restore-from-
+	// upload targets a user that doesn't exist yet, the account is created via
+	// userops.Create with the admin-chosen package. Optional: nil disables the
+	// create path (the restore then 404s "create the user first").
+	Packages       repository.PackageRepository
 	Databases      repository.DatabaseRepository
 	DatabaseUsers  repository.DatabaseUserRepository
 	DatabaseGrants repository.DatabaseUserGrantRepository

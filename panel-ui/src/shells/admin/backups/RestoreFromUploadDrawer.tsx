@@ -11,6 +11,7 @@ import {
   Drawer,
   Input,
   Progress,
+  Select,
   Space,
   Typography,
   Upload,
@@ -24,6 +25,7 @@ import {
   type UploadedBackupInfo,
   type UploadedBackupRestoreResult,
 } from "../../../apiClient";
+import { useListQuery } from "../../../hooks/useQueries";
 import { extractApiError } from "../../../apiErrors";
 
 const COMPONENT_LABELS: Record<string, string> = {
@@ -57,6 +59,10 @@ export function RestoreFromUploadDrawer({ open, onClose, ownerMode }: Props) {
   const [selected, setSelected] = useState<string[]>([]);
   const [targetUser, setTargetUser] = useState("");
   const [result, setResult] = useState<UploadedBackupRestoreResult | null>(null);
+  // GH #1408 create-from-manifest: when the bundle's user isn't on this box yet.
+  const [createUser, setCreateUser] = useState(false);
+  const [packageId, setPackageId] = useState<string | null>(null);
+  const { items: packages } = useListQuery<{ id: string; name: string }>({ resource: "packages" });
 
   const reset = () => {
     setFile(null);
@@ -67,6 +73,8 @@ export function RestoreFromUploadDrawer({ open, onClose, ownerMode }: Props) {
     setSelected([]);
     setTargetUser("");
     setResult(null);
+    setCreateUser(false);
+    setPackageId(null);
   };
 
   const close = () => {
@@ -94,7 +102,9 @@ export function RestoreFromUploadDrawer({ open, onClose, ownerMode }: Props) {
         ? meta.components.filter((c) => OWNER_COMPONENTS.includes(c))
         : meta.components;
       setSelected(offered);
-      setTargetUser(meta.user.username); // v1: restore into the same username
+      setTargetUser(meta.user.username); // restore into the same username (home is name-keyed)
+      // GH #1408: offer create-from-backup when the bundle's user isn't here yet.
+      setCreateUser(!ownerMode && meta.target_exists === false && meta.create_supported === true);
       setPhase("ready");
     } catch (err) {
       feedback.message.error(extractApiError(err, "Upload / inspect failed"));
@@ -110,7 +120,13 @@ export function RestoreFromUploadDrawer({ open, onClose, ownerMode }: Props) {
     // empty "applying" state doesn't look like nothing happened (GH #1408).
     feedback.message.info("Restore started — running in the background");
     try {
-      const r = await applyUploadedBackupRestore(uploadId, targetUser, selected, base);
+      const r = await applyUploadedBackupRestore(
+        uploadId,
+        targetUser,
+        selected,
+        base,
+        createUser ? { createUser: true, packageId } : undefined,
+      );
       setResult(r);
       setPhase("done");
       const n = r.applied?.length ?? 0;
@@ -142,9 +158,9 @@ export function RestoreFromUploadDrawer({ open, onClose, ownerMode }: Props) {
           ) : (
             <>
               Upload a backup archive you downloaded earlier (the per-account{" "}
-              <code>.tar</code>) and restore it into an existing user — useful for
-              disaster recovery or moving a user to a new server. Create the target
-              user first if it doesn&apos;t exist yet.
+              <code>.tar</code>) and restore it — useful for disaster recovery or
+              moving a user to a new server. If the user doesn&apos;t exist yet,
+              the panel can create it from the backup.
             </>
           )}
         </Typography.Paragraph>
@@ -196,7 +212,41 @@ export function RestoreFromUploadDrawer({ open, onClose, ownerMode }: Props) {
               message={`Backup of ${info.user.username}`}
               description={info.user.email || undefined}
             />
-            {!ownerMode && (
+            {!ownerMode && info.target_exists === false ? (
+              info.create_supported ? (
+                // GH #1408 create-from-manifest: the bundle's user isn't here yet.
+                <div>
+                  <Alert
+                    type="info"
+                    showIcon
+                    message={`User "${info.user.username}" doesn't exist yet — it will be created from this backup`}
+                    description="A new non-admin account is created with this username and email, then the backup is restored into it. Its password is regenerated (not restored) — send the user a recovery link after the restore."
+                  />
+                  <div style={{ marginTop: 8 }}>
+                    <Typography.Text strong>Package</Typography.Text>
+                    <Select
+                      allowClear
+                      value={packageId ?? undefined}
+                      onChange={(v) => setPackageId(v ?? null)}
+                      placeholder="No package (unrestricted limits)"
+                      style={{ width: "100%", marginTop: 4 }}
+                      disabled={phase !== "ready"}
+                      options={(packages ?? []).map((p) => ({ label: p.name, value: p.id }))}
+                    />
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      No package = unrestricted resource limits. Pick a package to cap the new account.
+                    </Typography.Text>
+                  </div>
+                </div>
+              ) : (
+                <Alert
+                  type="warning"
+                  showIcon
+                  message={`User "${info.user.username}" doesn't exist`}
+                  description="This server can't create it from the backup — create the user manually first, then re-run the restore."
+                />
+              )
+            ) : !ownerMode ? (
               <div>
                 <Typography.Text strong>Restore into user</Typography.Text>
                 <Input
@@ -207,11 +257,10 @@ export function RestoreFromUploadDrawer({ open, onClose, ownerMode }: Props) {
                   disabled={phase !== "ready"}
                 />
                 <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                  Must be an existing user. Restore into the same username the
-                  backup came from.
+                  Restore into the same username the backup came from.
                 </Typography.Text>
               </div>
-            )}
+            ) : null}
             <div>
               <Typography.Text strong>Components</Typography.Text>
               <Checkbox.Group
@@ -246,14 +295,22 @@ export function RestoreFromUploadDrawer({ open, onClose, ownerMode }: Props) {
                 type="primary"
                 danger
                 loading={phase === "applying"}
-                disabled={phase === "applying" || !targetUser || selected.length === 0}
+                disabled={
+                  phase === "applying" ||
+                  !targetUser ||
+                  selected.length === 0 ||
+                  // create needed but this server can't create the user
+                  (!ownerMode && info.target_exists === false && !info.create_supported)
+                }
                 onClick={apply}
               >
                 {phase === "applying"
                   ? "Restoring…"
                   : ownerMode
                     ? "Restore into my account"
-                    : `Restore into ${targetUser || "user"}`}
+                    : createUser
+                      ? `Create ${targetUser} & restore`
+                      : `Restore into ${targetUser || "user"}`}
               </Button>
             )}
           </>
