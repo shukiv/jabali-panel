@@ -28,6 +28,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/backupmetadata"
 	ginctx "git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
@@ -243,9 +244,14 @@ func (h *meBackupHandler) restoreUploadApply(c *gin.Context) {
 	}
 
 	// Owned resources → allowlists (ALWAYS non-nil; an empty present list means
-	// "enforce, owns none" — the agent skips every db/mail stage).
-	allowedDBs := append([]string{}, h.cfg.allUserDatabases(ctx, userID)...)
-	allowedDBs = append(allowedDBs, h.cfg.allUserPostgresDatabases(ctx, userID)...)
+	// "enforce, owns none" — the agent skips every db/mail stage). The DB
+	// allowlist reuses the shared backup content selection (JAB-324): a lookup
+	// failure leaves the allowlist empty (fail-closed — the restore rejects the
+	// DB components) and is logged, never silently swallowed.
+	sel, warns := backupmetadata.SelectAll(ctx, h.cfg.metadataDeps(), userID, false)
+	backupmetadata.LogWarnings(h.cfg.Log, warns)
+	allowedDBs := append([]string{}, sel.MariaDB...)
+	allowedDBs = append(allowedDBs, sel.Postgres...)
 	allowedDomains := h.cfg.allUserDomainNames(ctx, userID)
 	components := intersectRestoreComponents(req.Components, []string{"home", "db", "mail"})
 
