@@ -494,21 +494,27 @@ func (h *backupHandler) createForUser(c *gin.Context) {
 	}
 
 	if h.cfg.Agent != nil {
-		// Fall back to "every database / mailbox the user owns" when
-		// the operator submits empty arrays — that's what the admin
-		// "Create backup" button does. Empty arrays leaving DBs and
-		// mail untouched would silently produce home-only backups.
+		// Resolve the account's full content selection once (JAB-324): the
+		// same producer the tenant path and scheduler use, with one
+		// lookup-failure classification — a partial result that is logged,
+		// never a silent empty the agent would skip as "the account owns none".
+		sel, warns := backupmetadata.SelectAll(c.Request.Context(), h.cfg.metadataDeps(), user.ID, user.IsAdmin)
+		backupmetadata.LogWarnings(h.cfg.Log, warns)
+		// Fall back to "every database / mailbox the user owns" when the
+		// operator submits empty arrays — that's what the admin "Create
+		// backup" button does. Empty arrays leaving DBs and mail untouched
+		// would silently produce home-only backups.
 		dbs := req.Databases
 		if len(dbs) == 0 {
-			dbs = h.allUserDatabases(c.Request.Context(), user.ID)
+			dbs = sel.MariaDB
 		}
 		mbs := req.Mailboxes
 		if len(mbs) == 0 {
-			mbs = h.allUserMailboxes(c.Request.Context(), user.ID)
+			mbs = sel.Mailboxes
 		}
-		// M37: split mariadb and postgres dbs so the agent dispatches
-		// the right dump tool per engine.
-		pgDbs := h.cfg.allUserPostgresDatabases(c.Request.Context(), user.ID)
+		// M37: mariadb and postgres stay in parallel wire fields so the
+		// agent dispatches the right dump tool per engine.
+		pgDbs := sel.Postgres
 		dbs, mbs, pgDbs = applyBackupContent(req.Content, dbs, mbs, pgDbs)
 		params := map[string]any{
 			"job_id":             job.ID,
@@ -519,7 +525,7 @@ func (h *backupHandler) createForUser(c *gin.Context) {
 			"databases":          dbs,
 			"databases_postgres": pgDbs,
 			"mailboxes":          mbs,
-			"docker_apps":        h.cfg.allUserDockerApps(c.Request.Context(), user.ID, user.IsAdmin),
+			"docker_apps":        sel.DockerApps,
 			"content":            req.Content,
 			"folders":            req.Folders,
 			"compression":        req.Compression,
@@ -1246,11 +1252,13 @@ func (cfg MeBackupsHandlerConfig) logErr(msg string, err error, kv ...any) {
 	cfg.Log.Warn(msg, args...)
 }
 
-// buildAccountMetadata delegates to the shared producer in
-// panel-api/internal/backupmetadata so the admin and user-shell
-// handlers stay in lockstep with the scheduler on schema changes.
-func (cfg BackupHandlerConfig) buildAccountMetadata(ctx context.Context, user *models.User) *internalbackup.AccountMetadata {
-	return backupmetadata.Build(ctx, user, backupmetadata.Deps{
+// metadataDeps bundles the repos the two backupmetadata producers read —
+// Build (schema-v2 account metadata) and SelectAll (backup content selection,
+// JAB-324). Building it once means the two producers can never drift on which
+// repos they see, and the admin / tenant / scheduler adapters share one
+// content-selection code path instead of three divergent copies.
+func (cfg BackupHandlerConfig) metadataDeps() backupmetadata.Deps {
+	return backupmetadata.Deps{
 		Databases: cfg.Databases, DatabaseUsers: cfg.DatabaseUsers, DatabaseGrants: cfg.DatabaseGrants,
 		Domains: cfg.Domains, Mailboxes: cfg.Mailboxes, AppInstalls: cfg.AppInstalls, DockerApps: cfg.DockerApps,
 		SSLCerts: cfg.SSLCerts, PHPPools: cfg.PHPPools, PHPPoolIni: cfg.PHPPoolIni,
@@ -1258,147 +1266,14 @@ func (cfg BackupHandlerConfig) buildAccountMetadata(ctx context.Context, user *m
 		DNSSECKeys: cfg.DNSSECKeys, DNSZones: cfg.DNSZones, DNSRecords: cfg.DNSRecords, SSHKeys: cfg.SSHKeys, CronJobs: cfg.CronJobs, FtpAccounts: cfg.FtpAccounts,
 		LimitOverrides: cfg.LimitOverrides, EgressPolicies: cfg.EgressPolicies, EgressRequests: cfg.EgressRequests,
 		Log: cfg.Log,
-	})
+	}
 }
 
-// allUserDatabases returns every MariaDB database name owned by a user.
-// Used by manual + self-shell backup paths to default to "everything"
-// when the operator submits an empty list. Errors are logged + an
-// empty slice returned so a transient repo failure doesn't fall
-// through into a "the agent backed up nothing" silent failure.
-//
-// M37: filters to engine='mariadb' so the legacy `databases` param on
-// the agent's backup.create call only carries MariaDB names — PG
-// names go in the parallel databases_postgres slice.
-func (cfg BackupHandlerConfig) allUserDatabases(ctx context.Context, userID string) []string {
-	return cfg.allUserDatabasesByEngine(ctx, userID, "mariadb")
-}
-
-// allUserPostgresDatabases — M37 sibling. Returns every PostgreSQL
-// database name owned by a user. Backup orchestrator passes this
-// to backup.create as databases_postgres alongside the mariadb list.
-func (cfg BackupHandlerConfig) allUserPostgresDatabases(ctx context.Context, userID string) []string {
-	return cfg.allUserDatabasesByEngine(ctx, userID, "postgres")
-}
-
-func (cfg BackupHandlerConfig) allUserDatabasesByEngine(ctx context.Context, userID, engine string) []string {
-	if cfg.Databases == nil {
-		return nil
-	}
-	rows, _, err := cfg.Databases.ListByUserID(ctx, userID, repository.ListOptions{Limit: 10000})
-	if err != nil {
-		cfg.logErr("list databases for backup", err, "user_id", userID, "engine", engine)
-		return nil
-	}
-	out := make([]string, 0, len(rows))
-	for _, r := range rows {
-		if r.Engine == engine || (engine == "mariadb" && r.Engine == "") {
-			out = append(out, r.Name)
-		}
-	}
-	return out
-}
-
-// allUserDockerApps returns the slugs of every docker app the user owns.
-// Their data trees live at /var/lib/jabali/docker-apps/<slug> — outside
-// the home — so the agent has to be told about them explicitly or the
-// backup silently omits the app (GH #954).
-//
-// Nil repo (older wiring, or a deployment without the docker surface)
-// yields no slugs and the stage records "no docker apps", which is the
-// same outcome as an account that has none.
-func (cfg BackupHandlerConfig) allUserDockerApps(ctx context.Context, userID string, isAdmin bool) []string {
-	if cfg.DockerApps == nil {
-		return nil
-	}
-	rows, err := cfg.DockerApps.ListByUserID(ctx, userID)
-	if err != nil {
-		cfg.logErr("list docker apps for backup", err, "user_id", userID)
-		return nil
-	}
-	out := make([]string, 0, len(rows))
-	for _, r := range rows {
-		if r == nil {
-			continue
-		}
-		// EffectiveSlug, NOT Slug: the data tree is
-		// /var/lib/jabali/docker-apps/<effective-slug>, and a second
-		// instance of a catalog app carries an InstanceSlug that differs
-		// from the catalog slug. Using Slug backs up the wrong path (or
-		// the first instance twice).
-		slug := r.EffectiveSlug()
-		if slug == "" {
-			continue
-		}
-		out = append(out, slug)
-	}
-	// GH #1360: an admin account also carries the server-level docker apps
-	// (UserID NULL) so their data trees ride the stage=docker snapshot.
-	if isAdmin {
-		if extra, serr := serverLevelDockerSlugs(ctx, cfg.DockerApps); serr != nil {
-			cfg.logErr("list server-level docker apps for backup", serr)
-		} else {
-			out = append(out, extra...)
-		}
-	}
-	return out
-}
-
-// serverLevelDockerSlugs returns the EffectiveSlug of every live admin /
-// server-level docker app (models.DockerApp.UserID NULL, M48). Derived from
-// ListAll + filter so the repo interface (and its mocks) stays put.
-func serverLevelDockerSlugs(ctx context.Context, repo repository.DockerAppRepository) ([]string, error) {
-	all, err := repo.ListAll(ctx)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]string, 0)
-	for _, r := range all {
-		if r == nil || r.UserID != nil || r.Status == models.DockerAppStatusDeleted {
-			continue
-		}
-		if slug := r.EffectiveSlug(); slug != "" {
-			out = append(out, slug)
-		}
-	}
-	return out, nil
-}
-
-// allUserMailboxes returns every mailbox EmailCached for a user, by
-// joining domains.list_by_user → mailboxes.list_by_domain. Errors
-// per-domain are tolerated (warn + skip) so one bad domain doesn't
-// hide the rest of the user's mail.
-func (cfg BackupHandlerConfig) allUserMailboxes(ctx context.Context, userID string) []string {
-	if cfg.Domains == nil || cfg.Mailboxes == nil {
-		return nil
-	}
-	doms, _, err := cfg.Domains.ListByUserID(ctx, userID, repository.ListOptions{Limit: 10000})
-	if err != nil {
-		cfg.logErr("list domains for backup", err, "user_id", userID)
-		return nil
-	}
-	var out []string
-	for _, d := range doms {
-		mbs, _, err := cfg.Mailboxes.ListByDomainID(ctx, d.ID, repository.ListOptions{Limit: 10000})
-		if err != nil {
-			cfg.logErr("list mailboxes for backup", err, "domain_id", d.ID)
-			continue
-		}
-		for _, m := range mbs {
-			out = append(out, m.EmailCached)
-		}
-	}
-	return out
-}
-
-// allUserDatabases shadow that the user-shell handler reaches via h.cfg
-// since it lives on the same config bundle. Same for mailboxes.
-func (h *backupHandler) allUserDatabases(ctx context.Context, userID string) []string {
-	return h.cfg.allUserDatabases(ctx, userID)
-}
-
-func (h *backupHandler) allUserMailboxes(ctx context.Context, userID string) []string {
-	return h.cfg.allUserMailboxes(ctx, userID)
+// buildAccountMetadata delegates to the shared producer in
+// panel-api/internal/backupmetadata so the admin and user-shell
+// handlers stay in lockstep with the scheduler on schema changes.
+func (cfg BackupHandlerConfig) buildAccountMetadata(ctx context.Context, user *models.User) *internalbackup.AccountMetadata {
+	return backupmetadata.Build(ctx, user, cfg.metadataDeps())
 }
 
 // MeBackupsHandlerConfig wires the user-shell endpoints. Auth check
@@ -1459,49 +1334,13 @@ type MeBackupsHandlerConfig struct {
 	Log *slog.Logger
 }
 
-// allUserDockerApps mirrors BackupHandlerConfig.allUserDockerApps for the
-// tenant's own backup path.
-func (cfg MeBackupsHandlerConfig) allUserDockerApps(ctx context.Context, userID string, isAdmin bool) []string {
-	if cfg.DockerApps == nil {
-		return nil
-	}
-	rows, err := cfg.DockerApps.ListByUserID(ctx, userID)
-	if err != nil {
-		cfg.logErr("list docker apps for backup", err, "user_id", userID)
-		return nil
-	}
-	out := make([]string, 0, len(rows))
-	for _, r := range rows {
-		if r == nil {
-			continue
-		}
-		// EffectiveSlug, NOT Slug: the data tree is
-		// /var/lib/jabali/docker-apps/<effective-slug>, and a second
-		// instance of a catalog app carries an InstanceSlug that differs
-		// from the catalog slug. Using Slug backs up the wrong path (or
-		// the first instance twice).
-		slug := r.EffectiveSlug()
-		if slug == "" {
-			continue
-		}
-		out = append(out, slug)
-	}
-	// GH #1360: an admin using the self-backup path also carries the
-	// server-level docker apps (UserID NULL) — see BackupHandlerConfig.
-	if isAdmin {
-		if extra, serr := serverLevelDockerSlugs(ctx, cfg.DockerApps); serr != nil {
-			cfg.logErr("list server-level docker apps for backup", serr)
-		} else {
-			out = append(out, extra...)
-		}
-	}
-	return out
-}
-
-// buildAccountMetadata projects MeBackupsHandlerConfig into the shared
-// metadataDeps consumer. Same schema-v2 producer as BackupHandlerConfig.
-func (cfg MeBackupsHandlerConfig) buildAccountMetadata(ctx context.Context, user *models.User) *internalbackup.AccountMetadata {
-	return backupmetadata.Build(ctx, user, backupmetadata.Deps{
+// metadataDeps bundles the repos the two backupmetadata producers read for the
+// tenant self-shell path — Build (schema-v2 metadata) and SelectAll (backup
+// content selection, JAB-324) — so the tenant path uses the exact same
+// selection code (and the same non-silent lookup-failure classification) as the
+// admin handler and the scheduler.
+func (cfg MeBackupsHandlerConfig) metadataDeps() backupmetadata.Deps {
+	return backupmetadata.Deps{
 		Databases: cfg.Databases, DatabaseUsers: cfg.DatabaseUsers, DatabaseGrants: cfg.DatabaseGrants,
 		Domains: cfg.Domains, Mailboxes: cfg.Mailboxes, AppInstalls: cfg.AppInstalls, DockerApps: cfg.DockerApps,
 		SSLCerts: cfg.SSLCerts, PHPPools: cfg.PHPPools, PHPPoolIni: cfg.PHPPoolIni,
@@ -1509,53 +1348,13 @@ func (cfg MeBackupsHandlerConfig) buildAccountMetadata(ctx context.Context, user
 		DNSSECKeys: cfg.DNSSECKeys, DNSZones: cfg.DNSZones, DNSRecords: cfg.DNSRecords, SSHKeys: cfg.SSHKeys, CronJobs: cfg.CronJobs, FtpAccounts: cfg.FtpAccounts,
 		LimitOverrides: cfg.LimitOverrides, EgressPolicies: cfg.EgressPolicies, EgressRequests: cfg.EgressRequests,
 		Log: cfg.Log,
-	})
+	}
 }
 
-func (cfg MeBackupsHandlerConfig) allUserDatabases(ctx context.Context, userID string) []string {
-	return cfg.allUserDatabasesByEngine(ctx, userID, "mariadb")
-}
-
-func (cfg MeBackupsHandlerConfig) allUserPostgresDatabases(ctx context.Context, userID string) []string {
-	return cfg.allUserDatabasesByEngine(ctx, userID, "postgres")
-}
-
-func (cfg MeBackupsHandlerConfig) allUserDatabasesByEngine(ctx context.Context, userID, engine string) []string {
-	if cfg.Databases == nil {
-		return nil
-	}
-	rows, _, err := cfg.Databases.ListByUserID(ctx, userID, repository.ListOptions{Limit: 10000})
-	if err != nil {
-		return nil
-	}
-	out := make([]string, 0, len(rows))
-	for _, r := range rows {
-		if r.Engine == engine || (engine == "mariadb" && r.Engine == "") {
-			out = append(out, r.Name)
-		}
-	}
-	return out
-}
-
-func (cfg MeBackupsHandlerConfig) allUserMailboxes(ctx context.Context, userID string) []string {
-	if cfg.Domains == nil || cfg.Mailboxes == nil {
-		return nil
-	}
-	doms, _, err := cfg.Domains.ListByUserID(ctx, userID, repository.ListOptions{Limit: 10000})
-	if err != nil {
-		return nil
-	}
-	var out []string
-	for _, d := range doms {
-		mbs, _, err := cfg.Mailboxes.ListByDomainID(ctx, d.ID, repository.ListOptions{Limit: 10000})
-		if err != nil {
-			continue
-		}
-		for _, m := range mbs {
-			out = append(out, m.EmailCached)
-		}
-	}
-	return out
+// buildAccountMetadata projects MeBackupsHandlerConfig into the shared
+// metadataDeps consumer. Same schema-v2 producer as BackupHandlerConfig.
+func (cfg MeBackupsHandlerConfig) buildAccountMetadata(ctx context.Context, user *models.User) *internalbackup.AccountMetadata {
+	return backupmetadata.Build(ctx, user, cfg.metadataDeps())
 }
 
 // RegisterMeBackupRoutes mounts the user-shell self-backup endpoints
@@ -1932,10 +1731,14 @@ func (h *meBackupHandler) create(c *gin.Context) {
 	if h.cfg.Agent != nil {
 		ctx, cancel := context.WithTimeout(c.Request.Context(), backupCallTimeout)
 		defer cancel()
-		dbs, mbs, pgDbs := applyBackupContent(req.Content,
-			h.cfg.allUserDatabases(c.Request.Context(), user.ID),
-			h.cfg.allUserMailboxes(c.Request.Context(), user.ID),
-			h.cfg.allUserPostgresDatabases(c.Request.Context(), user.ID))
+		// Resolve the tenant's full content selection through the shared
+		// producer (JAB-324). This path previously used a copy that swallowed
+		// lookup failures silently — a transient DB-list error dropped the
+		// tenant's databases from their own backup with no trace. Now the
+		// failure is a logged Warning and whatever resolved is still backed up.
+		sel, warns := backupmetadata.SelectAll(c.Request.Context(), h.cfg.metadataDeps(), user.ID, user.IsAdmin)
+		backupmetadata.LogWarnings(h.cfg.Log, warns)
+		dbs, mbs, pgDbs := applyBackupContent(req.Content, sel.MariaDB, sel.Mailboxes, sel.Postgres)
 		params := map[string]any{
 			"job_id":             job.ID,
 			"user_id":            user.ID,
@@ -1945,7 +1748,7 @@ func (h *meBackupHandler) create(c *gin.Context) {
 			"databases":          dbs,
 			"databases_postgres": pgDbs,
 			"mailboxes":          mbs,
-			"docker_apps":        h.cfg.allUserDockerApps(c.Request.Context(), user.ID, user.IsAdmin),
+			"docker_apps":        sel.DockerApps,
 			"content":            req.Content,
 			"folders":            req.Folders,
 			"compression":        req.Compression,
