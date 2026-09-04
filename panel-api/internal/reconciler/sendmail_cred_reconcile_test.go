@@ -112,7 +112,7 @@ func sendmailTestReconciler(agent *fakeSendmailAgent, mailboxes *fakeSendmailMai
 			// has no OS counterpart (testserver E2E found the warn-loop).
 			"u3": {ID: "u3", Username: strPtr("user_01krhrna2zmp"), IsAdmin: true},
 		}},
-		serverSettings: &fakeSettingsRepo{srv: &models.ServerSettings{Hostname: "panel.example.tld"}},
+		serverSettings: &fakeSettingsRepo{srv: &models.ServerSettings{Hostname: "panel.example.tld", MailEnabled: true}},
 		agent:          agent,
 		mailboxes:      mailboxes,
 		sendmailSSOKey: &key,
@@ -318,6 +318,31 @@ func TestReconcileSendmailCreds_BothNamesHumanSkips(t *testing.T) {
 	r.reconcileSendmailCreds(ctx)
 	if len(agent.calls) != 0 {
 		t.Fatal("skipped domain must stay quiet on later ticks")
+	}
+}
+
+func TestReconcileSendmailCreds_SkippedWhenMailModuleDisabled(t *testing.T) {
+	// GH #1417: with the mail module off there is no Stalwart to authenticate
+	// against, so the reconciler must create no noreply@ relay mailboxes (they
+	// would otherwise surface under Email in Disk Usage and link to a page the
+	// tenant can't reach).
+	agent := &fakeSendmailAgent{}
+	mailboxes := &fakeSendmailMailboxRepo{
+		byEmail:     map[string]*models.Mailbox{},
+		domainNames: map[string]string{"d1": "site.tld"},
+	}
+	r := sendmailTestReconciler(agent, mailboxes, []models.Domain{
+		{ID: "d1", Name: "site.tld", UserID: "u1", EmailEnabled: true},
+	})
+	r.serverSettings = &fakeSettingsRepo{srv: &models.ServerSettings{Hostname: "panel.example.tld", MailEnabled: false}}
+
+	r.reconcileSendmailCreds(context.Background())
+
+	if len(mailboxes.created) != 0 {
+		t.Fatalf("mail module disabled: no relay mailbox may be created (created=%d)", len(mailboxes.created))
+	}
+	if len(agent.calls) != 0 {
+		t.Fatalf("mail module disabled: no agent calls expected, got %v", agent.calls)
 	}
 }
 

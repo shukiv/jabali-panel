@@ -14,6 +14,7 @@ import { DatabaseOutlined, ExportOutlined, FileOutlined, FolderOutlined, MailOut
 
 import { apiClient } from "../../../apiClient";
 import { StatCard } from "../../../components/StatCard";
+import { useServerCapabilities } from "../../../hooks/useServerCapabilities";
 
 interface UsageItem {
   name: string;
@@ -168,6 +169,11 @@ export function DiskUsagePage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const qc = useQueryClient();
+  // GH #1417: hide the Email stat card + Mailboxes breakdown (and its "View all
+  // mailboxes" link, which would 403-redirect) when the mail module is off.
+  // Default-on while the capability loads, matching the sidebar's mail gate.
+  const { data: caps } = useServerCapabilities();
+  const mailEnabled = caps?.mail_enabled !== false;
   const { data, isLoading, error } = useQuery<DiskUsage>({
     queryKey: ["me-disk-usage"],
     queryFn: async () => {
@@ -224,13 +230,17 @@ export function DiskUsagePage() {
       iconColor: COLORS.blue,
       icon: <FileOutlined />,
     },
-    {
-      label: "Email",
-      value: fmtBytes(data.email.bytes),
-      subtitle: pctOf(data.email.bytes),
-      iconColor: COLORS.green,
-      icon: <MailOutlined />,
-    },
+    ...(mailEnabled
+      ? [
+          {
+            label: "Email",
+            value: fmtBytes(data.email.bytes),
+            subtitle: pctOf(data.email.bytes),
+            iconColor: COLORS.green,
+            icon: <MailOutlined />,
+          },
+        ]
+      : []),
     {
       label: "Databases",
       value: fmtBytes(data.databases.bytes),
@@ -289,17 +299,21 @@ export function DiskUsagePage() {
       emptyText: "No files",
       viewAll: { label: "View all files", to: "/jabali-panel/files" },
     },
-    {
-      key: "email",
-      title: "Email Mailboxes",
-      icon: <MailOutlined />,
-      iconColor: COLORS.green,
-      cat: data.email,
-      cols: emailCols,
-      emptyText: "No email usage yet",
-      emptyHint: "Your mailboxes are currently empty.",
-      viewAll: { label: "View all mailboxes", to: "/jabali-panel/mail/mailboxes" },
-    },
+    ...(mailEnabled
+      ? [
+          {
+            key: "email",
+            title: "Email Mailboxes",
+            icon: <MailOutlined />,
+            iconColor: COLORS.green,
+            cat: data.email,
+            cols: emailCols,
+            emptyText: "No email usage yet",
+            emptyHint: "Your mailboxes are currently empty.",
+            viewAll: { label: "View all mailboxes", to: "/jabali-panel/mail/mailboxes" },
+          },
+        ]
+      : []),
     {
       key: "databases",
       title: "Databases",
