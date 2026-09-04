@@ -10980,8 +10980,8 @@ install_malware_stack() {
   # YARA-X (the `yr` binary) — Rust rewrite of YARA, full module support
   # including the `hash` module that libclamav YARA can't load. maldet
   # 2.0.1+ prefers `yr` over libyara when both are present.
-  local YARAX_VERSION="1.19.0"
-  local YARAX_SHA256="a97d78189e3548797ac45b7b4a5fd8975783861875c594f772ec9b8bb5fa4d72"
+  local YARAX_VERSION="1.20.0"
+  local YARAX_SHA256="cabb8df46492fff59c51261302c71ed9cb2cef393d3f0ca560801a34a8e24cbe"
   if ! command -v yr >/dev/null 2>&1 || \
      [[ "$(yr --version 2>/dev/null | awk '{print $2}')" != "$YARAX_VERSION" ]]; then
     local tmp_yrx
@@ -11127,7 +11127,7 @@ YARA_EX
   # scripts/deps-check.sh in the monthly deps issue). signature-base has
   # no tagged releases, so the pin is a commit SHA. Pin bumps require a
   # PR review, same as LMD_VERSION/LMD_SHA256.
-  local SIGBASE_COMMIT="e737ebd96c27a52ee99485d4d3e02e9c256d1d3a" # 2026-08-03 "fix: FPs"
+  local SIGBASE_COMMIT="278165d7845decece517f756cf92ff4a41938d1e" # 2026-08-31 "rules for Virtualizor compromise"
   #
   # Custom YARA scanner picks up rules via the maldet 2.0.1 drop-in dir
   # at /usr/local/maldetect/sigs/custom.yara.d/. We symlink:
