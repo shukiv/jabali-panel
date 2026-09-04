@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"text/tabwriter"
 	"time"
@@ -34,7 +35,13 @@ func dbopsDeps() dbops.Deps {
 		Packages:       repository.NewPackageRepository(sharedDB),
 		Databases:      repository.NewDatabaseRepository(sharedDB),
 		ServerSettings: repository.NewServerSettingsRepository(sharedDB),
+		// Delete-path collaborators (JAB-275) — the CLI delete now runs the
+		// same attachment refusal + grant teardown the REST handler does.
+		DatabaseGrants: repository.NewDatabaseUserGrantRepository(sharedDB),
+		DatabaseUsers:  repository.NewDatabaseUserRepository(sharedDB),
+		Installs:       repository.NewApplicationInstallRepository(sharedDB),
 		Agent:          sharedAgent,
+		Log:            slog.Default(),
 	}
 }
 
@@ -178,6 +185,12 @@ func mapDBopsErr(err error) error {
 		return err
 	case errors.Is(err, dbops.ErrNotFound):
 		return fmt.Errorf("database not found")
+	case errors.Is(err, dbops.ErrAttached):
+		var attached *dbops.AttachedError
+		if errors.As(err, &attached) {
+			return fmt.Errorf("database is attached to application install %s — delete the app first", attached.InstallID)
+		}
+		return fmt.Errorf("database is attached to an application install — delete the app first")
 	default:
 		return err
 	}
