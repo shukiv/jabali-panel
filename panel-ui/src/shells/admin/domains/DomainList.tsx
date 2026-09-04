@@ -38,6 +38,7 @@ import { DomainRedirectsButton } from "../../DomainRedirectsButton";
 import { DomainCacheButton } from "../../../components/DomainCacheButton";
 import { DomainIndexButton } from "../../DomainIndexButton";
 import { DomainInfoButton } from "../../DomainInfoButton";
+import { useServerCapabilities } from "../../../hooks/useServerCapabilities";
 
 type ActiveModal = {
   domain: Domain;
@@ -185,6 +186,9 @@ export const DomainList = () => {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const qc = useQueryClient();
+  // GH #1419: hide the DNS row action when the DNS module is off (the page only
+  // 403s). Default-on while caps load, matching the sidebar's dns gate.
+  const { data: caps } = useServerCapabilities();
   const [activeModal, setActiveModal] = useState<ActiveModal>(null);
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
@@ -389,12 +393,16 @@ export const DomainList = () => {
                         label: "Edit",
                         onClick: () => navigate(`/jabali-admin/domains/edit/${r.id}`),
                       },
-                      {
-                        key: "dns",
-                        icon: <GlobalOutlined />,
-                        label: "DNS",
-                        onClick: () => navigate(`/jabali-admin/domains/${r.id}/dns`),
-                      },
+                      ...(caps?.dns_enabled !== false
+                        ? [
+                            {
+                              key: "dns",
+                              icon: <GlobalOutlined />,
+                              label: "DNS",
+                              onClick: () => navigate(`/jabali-admin/domains/${r.id}/dns`),
+                            },
+                          ]
+                        : []),
                       {
                         key: "info",
                         icon: <InfoCircleOutlined />,
