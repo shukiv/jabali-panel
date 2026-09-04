@@ -24,7 +24,7 @@ import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { useState } from "react";
 import { useNavigate } from "react-router";
 import { sorterToParams } from "../../../utils/tableSorter";
-import { getSSLTagColor, getSSLTagLabel } from "../../../utils/sslState";
+import { getSSLTag } from "../../../utils/sslState";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { DomainDocRootModal } from "./DomainDocRootModal";
@@ -248,9 +248,12 @@ export const UserDomainList = () => {
           <Table.Column<Domain>
             dataIndex="ssl_state"
             title={t("userdomainlist.ssl")}
-            render={(state?: string) => (
-              <Tag color={getSSLTagColor(state)}>{getSSLTagLabel(state)}</Tag>
-            )}
+            render={(state?: string) => {
+              // JAB-300: shared matrix entry point — same getSSLTag the admin
+              // list renders through, so the two screens stay identical.
+              const { color, label } = getSSLTag(state);
+              return <Tag color={color}>{label}</Tag>;
+            }}
           />
           <Table.Column<Domain>
             title={t("userdomainlist.redirect")}
