@@ -40,7 +40,7 @@ import { DomainRedirectsButton } from "../../DomainRedirectsButton";
 import { TenantNginxRulesButton } from "../../DomainSettingsButton";
 import { DomainCacheButton } from "../../../components/DomainCacheButton";
 import { DomainIndexButton } from "../../DomainIndexButton";
-import { UserDomainDrawer } from "./UserDomainDrawer";
+import { UserDomainDrawer, type DomainDrawerMode } from "./UserDomainDrawer";
 import { DomainNginxOptionsModal } from "../../../components/DomainNginxOptionsModal";
 import { useServerCapabilities } from "../../../hooks/useServerCapabilities";
 
@@ -121,9 +121,30 @@ export type Domain = {
     | null;
   ssl_state?: string;
   email_enabled?: boolean;
+  // GH #1449: independent services. web_disabled = docroot-less (DNS-only /
+  // mail-only); dns_disabled = the panel doesn't host this domain's DNS.
+  web_disabled?: boolean;
+  dns_disabled?: boolean;
   bytes_30d?: number;
   created_at: string;
   updated_at: string;
+};
+
+// GH #1449: a short badge for a domain that isn't a plain full-service web
+// site, so the three row kinds are distinguishable in the list. Returns null
+// for an ordinary web domain (the common case — no badge noise).
+export const serviceBadge = (
+  d: Pick<Domain, "web_disabled" | "dns_disabled" | "email_enabled">,
+): { label: string; color: string } | null => {
+  if (d.web_disabled) {
+    return d.email_enabled
+      ? { label: "Mail only", color: "purple" }
+      : { label: "DNS only", color: "blue" };
+  }
+  if (d.dns_disabled) {
+    return { label: "External DNS", color: "default" };
+  }
+  return null;
 };
 
 type ActiveModal = { domainId: string; type: "redirects" | "index" | "directory-privacy" | "caching" | "nginx-options" | "rewrite-rules" | "document-root" } | null;
@@ -136,6 +157,12 @@ export const UserDomainList = () => {
   const { data: caps } = useServerCapabilities();
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  // GH #1449: the same drawer serves three add-flows (web / dns-only / mail-only).
+  const [drawerMode, setDrawerMode] = useState<DomainDrawerMode>("web");
+  const openDrawer = (mode: DomainDrawerMode) => {
+    setDrawerMode(mode);
+    setDrawerOpen(true);
+  };
   const query = useTableURL<Domain>({
     resource: "domains",
     defaultSort: "name",
@@ -171,13 +198,28 @@ export const UserDomainList = () => {
         <Typography.Title level={3} style={{ margin: 0 }}>
           <GlobalOutlined /> Domains
         </Typography.Title>
-        <Button
-          type="primary"
-          icon={<PlusSquareOutlined />}
-          onClick={() => setDrawerOpen(true)}
+        {/* GH #1449: Web / DNS / Mail are independent services — offer each as
+            its own add-flow. "Web Domain" keeps the full form (with Mail + DNS
+            opt-outs); the other two add a docroot-less DNS-only zone or a
+            mail-only domain. */}
+        <Dropdown
+          trigger={["click"]}
+          menu={{
+            // GH #1449 + #1417/#1419: only offer a service the server actually
+            // runs — hide "DNS Zone" when the DNS module is off, "Mail Domain"
+            // when mail is off (`!== false` treats the pre-load state as on).
+            items: [
+              { key: "web", label: "Web Domain" },
+              ...(caps?.dns_enabled !== false ? [{ key: "dns", label: "DNS Zone" }] : []),
+              ...(caps?.mail_enabled !== false ? [{ key: "mail", label: "Mail Domain" }] : []),
+            ],
+            onClick: ({ key }) => openDrawer(key as DomainDrawerMode),
+          }}
         >
-          Add Domain
-        </Button>
+          <Button type="primary" icon={<PlusSquareOutlined />}>
+            Add
+          </Button>
+        </Dropdown>
       </Space>
 
       <Card>
@@ -206,9 +248,18 @@ export const UserDomainList = () => {
               currentQ: query.params.q,
               onSearch: (v) => query.setParams({ q: v, page: 1 }),
             })}
-            render={(name: string, record: Domain) => (
+            render={(name: string, record: Domain) => {
+              const svc = serviceBadge(record);
+              return (
               <>
                 {renderDomainCell(name, record.doc_root)}
+                {svc && (
+                  <div>
+                    <Tag color={svc.color} style={{ fontSize: 12 }}>
+                      {svc.label}
+                    </Tag>
+                  </div>
+                )}
                 {record.reverse_proxy_port ? (
                   <div>
                     <Tooltip title={`Reverse proxy — run your app on 127.0.0.1:${record.reverse_proxy_port}`}>
@@ -232,7 +283,8 @@ export const UserDomainList = () => {
                   </div>
                 )}
               </>
-            )}
+              );
+            }}
           />
           <Table.Column<Domain>
             dataIndex="is_enabled"
@@ -496,7 +548,7 @@ export const UserDomainList = () => {
           />
         </SearchableTableStringQ>
       </Card>
-      <UserDomainDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} />
+      <UserDomainDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} mode={drawerMode} />
     </div>
   );
 };

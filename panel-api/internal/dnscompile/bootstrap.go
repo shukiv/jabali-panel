@@ -32,7 +32,14 @@ import (
 //     sent from the apex IP (not just from the mail host's A record)
 //     still passes SPF checks — e.g. panel-local scripts sending via
 //     the local stalwart over the apex bind.
-func BootstrapRecords(zoneID, zoneName string, srv *models.ServerSettings, idNew func() string, includeMail, includeWWW bool) []models.DNSRecord {
+//
+// includeApex (GH #1449) seeds the apex A/AAAA at this server's public IP.
+// A web-off domain (DNS-only zone / mail-only domain) passes false: its apex
+// points wherever the tenant's real web host is, so the panel must NOT seed —
+// or later re-assert (convergeApexAddrRecords is likewise web-gated) — an apex
+// pointing at this box. mail A/AAAA (includeMail) and www (includeWWW) are
+// independent.
+func BootstrapRecords(zoneID, zoneName string, srv *models.ServerSettings, idNew func() string, includeApex, includeMail, includeWWW bool) []models.DNSRecord {
 	now := time.Now().UTC()
 	// GH #527: honor server_settings.default_dns_ttl for bootstrap records
 	// instead of a hardcoded value, so the operator's configured default
@@ -58,15 +65,22 @@ func BootstrapRecords(zoneID, zoneName string, srv *models.ServerSettings, idNew
 		return out
 	}
 
-	// Apex + mail host IPs. www is added as a CNAME below.
+	// Apex + mail host IPs. www is added as a CNAME below. The apex A/AAAA
+	// is seeded only for a web-enabled domain (includeApex) — a DNS-only or
+	// mail-only zone leaves the apex for the tenant to point at their own web
+	// host. mail A/AAAA is independent (includeMail).
 	if srv.PublicIPv4 != "" {
-		out = append(out, mk("@", "A", srv.PublicIPv4, 0))
+		if includeApex {
+			out = append(out, mk("@", "A", srv.PublicIPv4, 0))
+		}
 		if includeMail {
 			out = append(out, mk("mail", "A", srv.PublicIPv4, 0))
 		}
 	}
 	if srv.PublicIPv6 != "" {
-		out = append(out, mk("@", "AAAA", srv.PublicIPv6, 0))
+		if includeApex {
+			out = append(out, mk("@", "AAAA", srv.PublicIPv6, 0))
+		}
 		if includeMail {
 			out = append(out, mk("mail", "AAAA", srv.PublicIPv6, 0))
 		}
