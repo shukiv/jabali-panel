@@ -2406,6 +2406,11 @@ func (r *Reconciler) reconcileDNSZone(ctx context.Context, domain *models.Domain
 	// MX/SPF/autodiscover (or none) get pushed to PowerDNS this pass.
 	r.reconcileMailProviderRecords(ctx, zone, domain, srv)
 
+	// GH #1462: repoint the CalDAV/CardDAV SRV records at the domain's
+	// per-domain override host (or restore the mail.<domain> default),
+	// after the provider reconcile has settled the rest of the mail DNS.
+	r.reconcileDAVOverrideRecords(ctx, zone, domain, srv)
+
 	records, err := r.dnsRecords.ListByZoneID(ctx, zone.ID)
 	if err != nil {
 		r.log.Error("list records failed", "zone", zone.Name, "err", err)

@@ -408,6 +408,16 @@ type Domain struct {
 	// UNIQUE (see migration 000057 for the reasoning).
 	IsPanelPrimary bool `gorm:"type:tinyint(1);not null;default:0;index:ix_domains_panel_primary" json:"is_panel_primary"`
 
+	// GH #1462: per-mail-domain CalDAV / CardDAV server override. Empty =
+	// default (the _caldavs._tcp / _carddavs._tcp SRV records point at
+	// mail.<domain>, i.e. Stalwart). Set to a hostname (optionally host:port)
+	// to repoint DAV autodiscovery at an external server (e.g. Nextcloud)
+	// while mail stays on Stalwart. Validated as a hostname[:port] at the API
+	// boundary before it reaches SRV record content. The reconciler converges
+	// the DAV SRV rows to match (reconcileDAVOverrideRecords).
+	CalDAVHost  string `gorm:"column:caldav_host;type:varchar(255);not null;default:''" json:"caldav_host"`
+	CardDAVHost string `gorm:"column:carddav_host;type:varchar(255);not null;default:''" json:"carddav_host"`
+
 	// M6.5 Email Features: Catch-All, Disclaimer (per-domain fields).
 	// CatchallTarget is the email address that receives unmatched domain mail.
 	// Stalwart integration: x:Domain.catchAllAddress (ADR-0051).
