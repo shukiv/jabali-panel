@@ -94,6 +94,11 @@ func newDomainCreateCmd() *cobra.Command {
 	var name, userID, docRoot string
 	var reverseProxy bool
 	var reverseProxyPort int
+	// GH #1449: independent Web / Mail / DNS services. Web + DNS default ON so
+	// the historic full-service behaviour is unchanged; set false to opt out.
+	var webEnabled = true
+	var manageDNS = true
+	var mailProvider string
 
 	cmd := &cobra.Command{
 		Use:   "create",
@@ -121,6 +126,9 @@ no IP literals). Bare hostnames like 'invalid' are rejected.`,
 				DocRoot:          docRoot,
 				ReverseProxy:     reverseProxy,
 				ReverseProxyPort: reverseProxyPort,
+				WebDisabled:      !webEnabled,
+				DNSDisabled:      !manageDNS,
+				MailProvider:     mailProvider,
 			})
 			if err != nil {
 				return err
@@ -157,6 +165,10 @@ no IP literals). Bare hostnames like 'invalid' are rejected.`,
 	cmd.Flags().StringVar(&docRoot, "doc-root", "", "Document root (optional, auto-generated if not provided)")
 	cmd.Flags().BoolVar(&reverseProxy, "reverse-proxy", false, "Make this a reverse-proxy domain: allocate a loopback port and proxy '/' to it (GH #1175)")
 	cmd.Flags().IntVar(&reverseProxyPort, "reverse-proxy-port", 0, "Reverse-proxy to this specific loopback port (GH #1401); 0 = auto-assign from the pool")
+	// GH #1449: independent Web / Mail / DNS services.
+	cmd.Flags().BoolVar(&webEnabled, "web-enabled", true, "Host a website for this domain (vhost + docroot). --web-enabled=false makes a docroot-less DNS-only zone or mail-only domain")
+	cmd.Flags().BoolVar(&manageDNS, "manage-dns", true, "Host this domain's DNS zone on this server. --manage-dns=false when DNS lives elsewhere (external DNS)")
+	cmd.Flags().StringVar(&mailProvider, "mail", "jabali", "Mail provider: jabali | none | m365 | google. 'none' for a web/DNS-only domain")
 	return cmd
 }
 

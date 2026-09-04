@@ -1948,10 +1948,13 @@ jabali domain create [flags]
 **Flags:**
 
 - `--doc-root` — Document root (optional, auto-generated if not provided)
+- `--mail` — Mail provider: jabali | none | m365 | google. 'none' for a web/DNS-only domain (default `jabali`)
+- `--manage-dns` — Host this domain's DNS zone on this server. --manage-dns=false when DNS lives elsewhere (external DNS) (default `true`)
 - `--name` — Domain name (required)
 - `--reverse-proxy` — Make this a reverse-proxy domain: allocate a loopback port and proxy '/' to it (GH #1175)
 - `--reverse-proxy-port` — Reverse-proxy to this specific loopback port (GH #1401); 0 = auto-assign from the pool (default `0`)
 - `--user` — User email, username, or ULID (required)
+- `--web-enabled` — Host a website for this domain (vhost + docroot). --web-enabled=false makes a docroot-less DNS-only zone or mail-only domain (default `true`)
 
 #### `jabali domain delete`
 
