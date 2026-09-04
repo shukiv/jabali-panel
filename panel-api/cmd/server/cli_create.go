@@ -217,6 +217,15 @@ type cliDomainInput struct {
 	// ReverseProxyPort (GH #1401): a specific loopback port to proxy to; 0 =
 	// auto-assign from the pool. Validated the same as the HTTP path.
 	ReverseProxyPort int
+	// GH #1449: independent services. WebDisabled → docroot-less (DNS-only /
+	// mail-only), DNSDisabled → external DNS. INVERTED so the zero value keeps
+	// the historic full-service behaviour for any caller that doesn't set them.
+	WebDisabled bool
+	DNSDisabled bool
+	// MailProvider (GH#181) — jabali (default) | none | m365 | google. Empty =
+	// jabali. Lets the CLI create a DNS-only zone (--mail none) or a mail-only
+	// domain (--web-enabled=false, mail jabali).
+	MailProvider string
 }
 
 // createDomainDirect replicates the non-auth side of internal/api/domains.go
@@ -276,21 +285,57 @@ func createDomainDirect(ctx context.Context, in cliDomainInput) (*models.Domain,
 		}
 	}
 
+	// GH #1449: resolve the web / mail / dns service matrix before building the
+	// row, mirroring the HTTP createDomainOp.
+	webEnabled := !in.WebDisabled
+	dnsEnabled := !in.DNSDisabled
+	mailProvider := in.MailProvider
+	if mailProvider == "" {
+		mailProvider = models.MailProviderJabali
+	}
+	if !models.ValidMailProvider(mailProvider) {
+		return nil, nil, fmt.Errorf("invalid --mail %q (want jabali|none|m365|google)", mailProvider)
+	}
+	mailEnabled, mailSkipSAN := models.DeriveMailFlags(mailProvider)
+	if !webEnabled && !dnsEnabled && !mailEnabled {
+		return nil, nil, fmt.Errorf("select at least one service: web hosting (--web-enabled), DNS (--manage-dns), or mail (--mail)")
+	}
+
 	docRoot := in.DocRoot
-	if docRoot == "" {
+	if !webEnabled {
+		if in.ReverseProxy {
+			return nil, nil, fmt.Errorf("a reverse-proxy domain requires web hosting")
+		}
+		if strings.TrimSpace(docRoot) != "" {
+			return nil, nil, fmt.Errorf("a web-disabled domain has no document root")
+		}
+		docRoot = "" // docroot-less (DNS-only zone / mail-only domain)
+	} else if docRoot == "" {
 		docRoot = "/home/" + *owner.Username + "/domains/" + in.Name + "/public_html"
+	}
+
+	// DNS-only (web off + no Jabali mail) has nothing to serve over TLS.
+	sslMode := models.SSLModeLE
+	if !webEnabled && !mailEnabled {
+		sslMode = models.SSLModeNone
 	}
 
 	now := time.Now().UTC()
 	d := &models.Domain{
-		ID:         ids.NewULID(),
-		UserID:     ownerID,
-		Name:       in.Name,
-		DocRoot:    docRoot,
-		IsEnabled:  true,
-		SSLEnabled: true,
-		CreatedAt:  now,
-		UpdatedAt:  now,
+		ID:           ids.NewULID(),
+		UserID:       ownerID,
+		Name:         in.Name,
+		DocRoot:      docRoot,
+		IsEnabled:    true,
+		WebDisabled:  in.WebDisabled,
+		DNSDisabled:  in.DNSDisabled,
+		MailProvider: mailProvider,
+		EmailEnabled: mailEnabled,
+		SkipAutoSAN:  mailSkipSAN,
+		SSLMode:      sslMode,
+		SSLEnabled:   models.SSLEnabledForMode(sslMode),
+		CreatedAt:    now,
+		UpdatedAt:    now,
 	}
 	// GH #1175: reverse-proxy domains draw a loopback port from the shared
 	// allocator BEFORE the insert (owner_id = the ULID above), released if the
@@ -344,7 +389,11 @@ func createDomainDirect(ctx context.Context, in cliDomainInput) (*models.Domain,
 	// and the operator can retry via `jabali domain email-enable <name>`
 	// or the Email tab in the UI.
 	var warnings []string
-	if err := initAgent(); err != nil {
+	if mailProvider != models.MailProviderJabali {
+		// External (m365/google) or no mail — nothing to register on Stalwart;
+		// the reconciler publishes the provider's own DNS (or none). A DNS-only
+		// zone (--mail none) must not auto-enable Jabali mail.
+	} else if err := initAgent(); err != nil {
 		warnings = append(warnings, fmt.Sprintf("email auto-enable skipped: agent unavailable (%v)", err))
 	} else {
 		deps := newDomainEmailDepsFromGlobals()
