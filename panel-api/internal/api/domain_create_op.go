@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dnscompile"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/domainmailops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
@@ -24,9 +25,10 @@ import (
 //
 // It stays in the api package (not a standalone domainops package) because it
 // depends on a cluster of api-package helpers — validateDomainName,
-// validateDocumentRoot, EnableDomainEmailInline, and the domainHandler methods
+// validateDocumentRoot, agentCall, and the domainHandler methods
 // findCoveringSharedCert / previewSlugConflict — and the only new caller
-// (automation) also lives in this package. Reuse, not packaging, was the goal.
+// (automation) also lives in this package. The shared email-enable step now
+// lives in internal/domainmailops (JAB-288). Reuse, not packaging, was the goal.
 
 // reverseProxyTenantUIDFloor mirrors the agent's minTenantUID (GH #1401): a
 // loopback listener owned by a uid below this is a system/service process, not
@@ -39,9 +41,9 @@ const reverseProxyTenantUIDFloor = 1000
 // matching the create() source of truth.
 
 type createDomainInput struct {
-	OwnerID         string
-	Name            string
-	DocRoot         string // "" → derived under /home/<user>/domains/<name>/public_html
+	OwnerID string
+	Name    string
+	DocRoot string // "" → derived under /home/<user>/domains/<name>/public_html
 	// ActorIsAdmin is the CALLER's privilege (not the owner's). It selects
 	// the document-root confinement: an admin actor may point the docroot
 	// anywhere under the owner's home (validateDocumentRoot), while a
@@ -50,7 +52,7 @@ type createDomainInput struct {
 	// (validateTenantDocumentRoot), the same rule the edit path enforces
 	// (GH #526). Zero value is false = strict = fail-closed, so callers that
 	// never set a custom docroot (automation) need not set it.
-	ActorIsAdmin bool
+	ActorIsAdmin    bool
 	MailProvider    string // "" → jabali
 	M365Onmicrosoft string
 	GoogleDKIM      string
@@ -325,8 +327,8 @@ func createDomainOp(ctx context.Context, h *domainHandler, in createDomainInput)
 	// Auto-enable email (best-effort, ADR-0013). A failure degrades to
 	// email_enabled=0 + the UI retry switch; not returned in the response.
 	if mailProvider == models.MailProviderJabali && h.cfg.Agent != nil && h.cfg.DNSZones != nil && h.cfg.DNSRecords != nil {
-		if _, _, warnings, err := EnableDomainEmailInline(ctx, enableDomainEmailDeps{
-			Agent:          h.cfg.Agent,
+		if _, _, warnings, err := domainmailops.Enable(ctx, domainmailops.Deps{
+			Call:           agentCall(h.cfg.Agent),
 			Domains:        h.cfg.Domains,
 			DNSZones:       h.cfg.DNSZones,
 			DNSRecords:     h.cfg.DNSRecords,
