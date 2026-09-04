@@ -20,6 +20,8 @@ import { BreadcrumbProvider } from "../components/admin/BreadcrumbContext";
 import { RouteBreadcrumb } from "../components/admin/RouteBreadcrumb";
 import { useThemeMode } from "../theme/ThemeModeContext";
 import { useServerCapabilities } from "../hooks/useServerCapabilities";
+import { useNavCounts, navCountForKey } from "../hooks/useNavCounts";
+import { navLabelWithBadge } from "./navBadge";
 import { QuickStartModal } from "./user/QuickStartModal";
 
 const { Sider, Content } = Layout;
@@ -41,6 +43,8 @@ export function UserLayout() {
   // hide its sidebar entry until an admin enables it (GH #229). The same
   // cached capability gates the route itself (CapabilityRoute, gap-audit #1).
   const { data: caps } = useServerCapabilities();
+  // GH #1478: side-nav badge counts (tenant scope).
+  const { data: navCounts } = useNavCounts("me");
   // nav.label holds an i18n key (see src/locales/en/common.json).
   const { t } = useTranslation();
   const visibleNav = userNav.filter((n) => {
@@ -95,7 +99,7 @@ export function UserLayout() {
         items={visibleNav.map((n) => ({
           key: n.key,
           icon: n.icon,
-          label: t(n.label),
+          label: navLabelWithBadge(t(n.label), navCountForKey(navCounts, n.key)),
           onClick: () => {
             navigate(n.path);
             setDrawerOpen(false);

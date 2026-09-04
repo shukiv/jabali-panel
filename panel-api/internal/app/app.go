@@ -598,6 +598,11 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			MailStats: repository.NewMailStatsRepository(deps.DB),
 			Agent:     deps.Agent,
 		})
+		// GH #1478: side-nav badge counts — GET /me/nav-counts (tenant) +
+		// GET /admin/nav-counts (admin). One aggregate call per side.
+		api.RegisterNavCountsRoutes(v1, api.NavCountsConfig{
+			Counts: repository.NewNavCountsRepository(deps.DB),
+		})
 		// JAB-171 phase 3b — tenant-facing notification channels + routing.
 		// Gated behind ServerSettings.TenantNotificationsEnabled (default OFF,
 		// no admin toggle until phase 4 lands the SSRF guard + email-verify),
