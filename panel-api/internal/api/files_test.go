@@ -15,6 +15,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/auth"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/filesops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 )
@@ -74,9 +75,9 @@ func agentFail(err error) *mockAgent {
 // ------------- GET /files (list) -------------
 
 func TestFilesList_HappyPath(t *testing.T) {
-	agent := agentReply(filesListAgentResult{
+	agent := agentReply(filesops.ListResult{
 		Path: "/home/alice",
-		Entries: []filesListEntry{
+		Entries: []filesops.ListEntry{
 			{Name: "public_html", IsDir: true},
 			{Name: "notes.txt", IsDir: false, Size: 42},
 		},
@@ -90,7 +91,7 @@ func TestFilesList_HappyPath(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status: got %d want 200, body=%s", w.Code, w.Body.String())
 	}
-	var got filesListAgentResult
+	var got filesops.ListResult
 	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
@@ -160,9 +161,9 @@ func TestFilesList_AgentErrorStatusMapping(t *testing.T) {
 // ------------- GET /files/tree -------------
 
 func TestFilesTree_FiltersToDirsOnly(t *testing.T) {
-	agent := agentReply(filesListAgentResult{
+	agent := agentReply(filesops.ListResult{
 		Path: "/home/alice",
-		Entries: []filesListEntry{
+		Entries: []filesops.ListEntry{
 			{Name: "public_html", IsDir: true},
 			{Name: "notes.txt", IsDir: false},
 			{Name: "link-to-elsewhere", IsDir: true, IsSymlink: true}, // filtered out
@@ -176,7 +177,7 @@ func TestFilesTree_FiltersToDirsOnly(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status: got %d want 200", w.Code)
 	}
-	var got filesListAgentResult
+	var got filesops.ListResult
 	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
@@ -193,7 +194,7 @@ func TestFilesTree_FiltersToDirsOnly(t *testing.T) {
 // ------------- GET /files/download -------------
 
 func TestFilesDownload_SetsAttachmentHeaders(t *testing.T) {
-	agent := agentReply(filesReadAgentResult{
+	agent := agentReply(filesops.ReadResult{
 		Path:    "/home/alice/notes.txt",
 		Content: "hello world",
 		Size:    11,
@@ -219,7 +220,7 @@ func TestFilesDownload_SetsAttachmentHeaders(t *testing.T) {
 // ------------- GET /files/preview -------------
 
 func TestFilesPreview_ReturnsJSONEnvelope(t *testing.T) {
-	agent := agentReply(filesReadAgentResult{
+	agent := agentReply(filesops.ReadResult{
 		Path:    "/home/alice/notes.txt",
 		Content: "hello",
 		Size:    5,
@@ -340,10 +341,10 @@ func TestFilesMkdir_MissingPath(t *testing.T) {
 // ------------- POST /files/rename -------------
 
 func TestFilesRename_HappyPath(t *testing.T) {
-	var gotParams filesRenameAgentParams
+	var gotParams filesops.RenameParams
 	agent := &mockAgent{
 		callFn: func(_ context.Context, _ string, params any) (json.RawMessage, error) {
-			if p, ok := params.(filesRenameAgentParams); ok {
+			if p, ok := params.(filesops.RenameParams); ok {
 				gotParams = p
 			}
 			return json.RawMessage(`{}`), nil
@@ -382,10 +383,10 @@ func TestFilesRename_RejectsSlashInNewName(t *testing.T) {
 // ------------- DELETE /files -------------
 
 func TestFilesDelete_HappyPath(t *testing.T) {
-	var gotParams filesDeleteAgentParams
+	var gotParams filesops.DeleteParams
 	agent := &mockAgent{
 		callFn: func(_ context.Context, _ string, params any) (json.RawMessage, error) {
-			if p, ok := params.(filesDeleteAgentParams); ok {
+			if p, ok := params.(filesops.DeleteParams); ok {
 				gotParams = p
 			}
 			return json.RawMessage(`{}`), nil
@@ -404,10 +405,10 @@ func TestFilesDelete_HappyPath(t *testing.T) {
 }
 
 func TestFilesDelete_RecursiveFlag(t *testing.T) {
-	var gotParams filesDeleteAgentParams
+	var gotParams filesops.DeleteParams
 	agent := &mockAgent{
 		callFn: func(_ context.Context, _ string, params any) (json.RawMessage, error) {
-			if p, ok := params.(filesDeleteAgentParams); ok {
+			if p, ok := params.(filesops.DeleteParams); ok {
 				gotParams = p
 			}
 			return json.RawMessage(`{}`), nil

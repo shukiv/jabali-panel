@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/filesops"
 )
 
 // TestFilesDownload_FolderFallsBackToArchive is the GH #756 regression: hitting
@@ -29,7 +31,7 @@ func TestFilesDownload_FolderFallsBackToArchive(t *testing.T) {
 			// Mirror the agent's typed directory error.
 			return nil, errors.New("agent: failed_precondition: path is a directory")
 		case "files.archive":
-			b, _ := json.Marshal(filesArchiveAgentResult{ArchivePath: scratch, Size: 16})
+			b, _ := json.Marshal(filesops.ArchiveResult{ArchivePath: scratch, Size: 16})
 			return b, nil
 		default:
 			return nil, errors.New("unexpected command " + cmd)
@@ -61,7 +63,7 @@ func TestFilesDownload_FolderFallsBackToArchive(t *testing.T) {
 
 // TestFilesDownload_RealFileStillWorks: a plain file download is unaffected.
 func TestFilesDownload_RealFileStillWorks(t *testing.T) {
-	agent := agentReply(filesReadAgentResult{Path: "/home/alice/notes.txt", Content: "hi", Size: 2})
+	agent := agentReply(filesops.ReadResult{Path: "/home/alice/notes.txt", Content: "hi", Size: 2})
 	r := setupFilesRouter(t, "user1", agent)
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/files/download?path=/home/alice/notes.txt", nil)
