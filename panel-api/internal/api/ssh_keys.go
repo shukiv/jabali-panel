@@ -10,9 +10,8 @@ import (
 	"github.com/gin-gonic/gin"
 
 	ginctx "git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
-	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
-	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/sshkeyops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/sshkeys"
 )
 
@@ -38,6 +37,38 @@ func RegisterSSHKeysRoutes(g *gin.RouterGroup, cfg SSHKeysHandlerConfig) {
 }
 
 type sshKeysHandler struct{ cfg SSHKeysHandlerConfig }
+
+// sshKeyScheduler adapts the handler's in-process reconciler to
+// sshkeyops.Scheduler. It preserves the pre-extraction convergence contract:
+// an async, detached 30s reconcile (a client disconnect must not cancel the
+// authorized_keys write), warn-logged on error. Nil reconciler → no-op.
+type sshKeyScheduler struct {
+	reconciler interface {
+		ReconcileSSHKeysForUser(ctx context.Context, userID string) error
+	}
+	logger *slog.Logger
+}
+
+func (s sshKeyScheduler) ScheduleUser(userID string) {
+	if s.reconciler == nil {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := s.reconciler.ReconcileSSHKeysForUser(ctx, userID); err != nil && s.logger != nil {
+			s.logger.WarnContext(ctx, "ssh key: reconcile user", "user_id", userID, "error", err)
+		}
+	}()
+}
+
+// deps builds the shared-lifecycle dependencies for this request.
+func (h *sshKeysHandler) deps() sshkeyops.Deps {
+	return sshkeyops.Deps{
+		Keys:      h.cfg.SSHKeys,
+		Scheduler: sshKeyScheduler{reconciler: h.cfg.Reconciler, logger: h.cfg.Logger},
+	}
+}
 
 // createSSHKeyRequest is the body for POST /api/v1/ssh-keys.
 type createSSHKeyRequest struct {
@@ -76,62 +107,37 @@ func (h *sshKeysHandler) create(c *gin.Context) {
 	}
 
 	ctx := c.Request.Context()
-	userID := claims.UserID
 
-	// Validate and parse the public key
-	normalizedKey, fingerprint, err := sshkeys.ParseAndFingerprint(req.PublicKey)
+	// Validation, fingerprinting, duplicate detection, persistence, and the
+	// per-user reconcile schedule all live in internal/sshkeyops (ADR-0083);
+	// this handler maps the transport in and the typed result out. The
+	// scheduler adapter preserves the async, detached convergence behavior.
+	key, err := sshkeyops.Add(ctx, h.deps(), sshkeyops.AddRequest{
+		UserID:    claims.UserID,
+		Name:      req.Name,
+		PublicKey: req.PublicKey,
+	})
 	if err != nil {
-		if errors.Is(err, sshkeys.ErrInvalidKeyFormat) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_key"})
-			return
-		}
-		if errors.Is(err, sshkeys.ErrRSATooWeak) {
+		switch {
+		case errors.Is(err, sshkeys.ErrRSATooWeak):
 			c.JSON(http.StatusBadRequest, gin.H{"error": "rsa_too_weak"})
-			return
-		}
-		if errors.Is(err, sshkeys.ErrUnsupportedType) {
+		case errors.Is(err, sshkeys.ErrUnsupportedType):
 			c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported_key_type"})
-			return
-		}
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_key"})
-		return
-	}
-
-	// Create the SSH key
-	key := &models.SSHKey{
-		ID:          ids.NewULID(),
-		UserID:      userID,
-		Name:        req.Name,
-		PublicKey:   normalizedKey,
-		Fingerprint: fingerprint,
-	}
-
-	if err := h.cfg.SSHKeys.Create(ctx, key); err != nil {
-		if errors.Is(err, repository.ErrConflict) {
+		case errors.Is(err, sshkeys.ErrInvalidKeyFormat):
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_key"})
+		case errors.Is(err, sshkeyops.ErrDuplicate):
 			c.JSON(http.StatusConflict, gin.H{"error": "duplicate_key"})
-			return
+		default:
+			h.cfg.Logger.ErrorContext(ctx, "create ssh key: store key", "error", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed_to_store_key"})
 		}
-		h.cfg.Logger.ErrorContext(ctx, "create ssh key: store key", "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed_to_store_key"})
 		return
-	}
-
-	// Trigger per-user SSH keys reconciliation asynchronously
-	if h.cfg.Reconciler != nil {
-		go func() {
-			reconcileCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			if err := h.cfg.Reconciler.ReconcileSSHKeysForUser(reconcileCtx, userID); err != nil {
-				h.cfg.Logger.WarnContext(reconcileCtx, "create ssh key: reconcile user",
-					"user_id", userID, "key_id", key.ID, "error", err)
-			}
-		}()
 	}
 
 	c.JSON(http.StatusCreated, sshKeyResponse{
 		ID:          key.ID,
 		Name:        key.Name,
-		Fingerprint: fingerprint,
+		Fingerprint: key.Fingerprint,
 		CreatedAt:   key.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 	})
 }
@@ -183,10 +189,13 @@ func (h *sshKeysHandler) delete(c *gin.Context) {
 	userID := claims.UserID
 	keyID := c.Param("id")
 
-	// Verify ownership
-	_, err := h.cfg.SSHKeys.FindByIDAndUserID(ctx, keyID, userID)
+	// Owner-scoped lookup (ErrNotFound collapses missing + not-owned so a
+	// caller can't probe another user's key IDs), then delete + schedule the
+	// per-user reconcile — both in internal/sshkeyops (ADR-0083). The two-step
+	// keeps the handler's distinct 404 / verify-500 / delete-500 codes.
+	key, err := sshkeyops.Find(ctx, h.deps(), sshkeyops.FindRequest{KeyID: keyID, OwnerID: userID})
 	if err != nil {
-		if errors.Is(err, repository.ErrNotFound) {
+		if errors.Is(err, sshkeyops.ErrNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "key_not_found"})
 			return
 		}
@@ -196,24 +205,11 @@ func (h *sshKeysHandler) delete(c *gin.Context) {
 		return
 	}
 
-	// Delete the key
-	if err := h.cfg.SSHKeys.Delete(ctx, keyID); err != nil {
+	if err := sshkeyops.RemoveKey(ctx, h.deps(), key); err != nil {
 		h.cfg.Logger.ErrorContext(ctx, "delete ssh key: delete key",
 			"key_id", keyID, "user_id", userID, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed_to_delete_key"})
 		return
-	}
-
-	// Trigger per-user SSH keys reconciliation asynchronously
-	if h.cfg.Reconciler != nil {
-		go func() {
-			reconcileCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			if err := h.cfg.Reconciler.ReconcileSSHKeysForUser(reconcileCtx, userID); err != nil {
-				h.cfg.Logger.WarnContext(reconcileCtx, "delete ssh key: reconcile user",
-					"user_id", userID, "key_id", keyID, "error", err)
-			}
-		}()
 	}
 
 	c.Status(http.StatusNoContent)
