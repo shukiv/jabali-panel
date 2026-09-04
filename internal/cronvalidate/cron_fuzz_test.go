@@ -24,7 +24,7 @@ func FuzzValidateCommand(f *testing.F) {
 
 	f.Fuzz(func(t *testing.T, input string) {
 		// Call the validator - must not panic
-		cmd, err := ValidateCommand(input, ownedDocroots)
+		cmd, err := ValidateCommand(input, ownedDocroots, "")
 
 		// If we get an error, it must have a code
 		if err != nil {

@@ -131,7 +131,7 @@ func hasUnquotedMetachar(s string) bool {
 // All shell metacharacters are rejected unless inside quotes (and glob chars
 // are still rejected in pre-shlex scan). Returns a Command with parsed argv
 // on success, or a ValidationError with a code suitable for API responses.
-func ValidateCommand(raw string, ownedDocroots []string) (*Command, error) {
+func ValidateCommand(raw string, ownedDocroots []string, ownedHome string) (*Command, error) {
 	// Empty or whitespace-only
 	if strings.TrimSpace(raw) == "" {
 		return nil, &ValidationError{
@@ -209,15 +209,40 @@ func ValidateCommand(raw string, ownedDocroots []string) (*Command, error) {
 		// installed version never needs a path, and isVersionedPHP requires the
 		// token to start with "php", so a slash-bearing path never matches.
 		return validatePHPCommand(argv, ownedDocroots)
+	case isPythonBinary(binary):
+		// GH #1435: python / python3 / python<X.Y> (bare) or an absolute path to
+		// one (a virtualenv's bin/python, a pyenv build). Must run an absolute
+		// .py file the tenant owns — no `-c`/`-m` arbitrary code.
+		return validatePythonCommand(argv, scriptRoots(ownedDocroots, ownedHome))
+	case isNodeBinary(binary):
+		// GH #1435: node / nodejs (bare) or an absolute path to one. Must run an
+		// absolute .js/.mjs/.cjs file the tenant owns — no `-e`/`-p` inline code.
+		return validateNodeCommand(argv, scriptRoots(ownedDocroots, ownedHome))
 	default:
 		return nil, &ValidationError{
 			Code: ErrCodeBinaryNotAllowed,
 			Detail: fmt.Sprintf(
-				"first token must be 'wp', 'php', or 'php<X.Y>', got %q",
+				"first token must be 'wp', 'php', 'php<X.Y>', 'python[3][.Y]', or 'node', got %q",
 				binary,
 			),
 		}
 	}
+}
+
+// scriptRoots is the containment set for python/node scripts: the account's
+// docroots PLUS its home directory. Unlike wp/php (docroot-only), a Python or
+// Node project's entry file (manage.py, a script) usually lives under the home
+// but outside any web docroot, so the home is the right ownership boundary.
+// ownedHome may be "" (e.g. a context with no resolved account) — then only the
+// docroots apply.
+func scriptRoots(ownedDocroots []string, ownedHome string) []string {
+	if ownedHome == "" {
+		return ownedDocroots
+	}
+	roots := make([]string, 0, len(ownedDocroots)+1)
+	roots = append(roots, ownedDocroots...)
+	roots = append(roots, ownedHome)
+	return roots
 }
 
 // isVersionedPHP reports whether name is a versioned PHP CLI binary like
@@ -247,6 +272,184 @@ func isAllDigits(s string) bool {
 		}
 	}
 	return true
+}
+
+// baseName returns the last path element of name (the interpreter basename),
+// so an absolute interpreter path (a virtualenv's bin/python) is matched by the
+// same rules as a bare name.
+func baseName(name string) string {
+	if i := strings.LastIndexByte(name, '/'); i >= 0 {
+		return name[i+1:]
+	}
+	return name
+}
+
+// isPythonBinary reports whether name is an allowed Python interpreter:
+// bare `python`, `python3`, or versioned `python<X>`/`python<X.Y>` (e.g.
+// python3.11), or an absolute path whose basename is one of those (a
+// virtualenv or pyenv interpreter — GH #1435). This mirrors php's acceptance
+// of both a bare name and an absolute `/…/php` path.
+func isPythonBinary(name string) bool {
+	base := baseName(name)
+	return base == "python" || isVersionedPython(base)
+}
+
+// isVersionedPython reports whether name is `python<version>` where version is
+// digits with at most one dot (python3, python3.11, python2.7). Bare "python"
+// is handled separately by isPythonBinary.
+func isVersionedPython(name string) bool {
+	rest, ok := strings.CutPrefix(name, "python")
+	if !ok || rest == "" {
+		return false
+	}
+	if dot := strings.IndexByte(rest, '.'); dot >= 0 {
+		return dot > 0 && dot < len(rest)-1 && isAllDigits(rest[:dot]) && isAllDigits(rest[dot+1:])
+	}
+	return isAllDigits(rest)
+}
+
+// isNodeBinary reports whether name is `node` or `nodejs`, bare or as an
+// absolute path's basename (GH #1435).
+func isNodeBinary(name string) bool {
+	base := baseName(name)
+	return base == "node" || base == "nodejs"
+}
+
+// pythonStandaloneFlags are introspection-only Python flags that need no script.
+var pythonStandaloneFlags = map[string]bool{
+	"-V": true, "--version": true,
+	"-h": true, "--help": true,
+}
+
+// isInlineCodePythonFlag reports whether a token makes Python run code that is
+// not an owned script file: `-c` (run code string), `-m` (run an installed
+// module, not a file), and `-` (read the program from stdin). Glued forms like
+// `-cCODE` are covered by the prefix check. Blocking these keeps a Python cron
+// to "an absolute .py file the tenant owns", the same model as php (GH #1435).
+func isInlineCodePythonFlag(a string) bool {
+	return a == "-" || a == "-c" || strings.HasPrefix(a, "-c") ||
+		a == "-m" || strings.HasPrefix(a, "-m")
+}
+
+// validatePythonCommand requires an absolute .py file inside the account's
+// docroots or home, and rejects inline-code / module-exec flags.
+func validatePythonCommand(argv []string, scriptRoots []string) (*Command, error) {
+	if len(argv) < 2 {
+		return nil, &ValidationError{
+			Code:   ErrCodeBadPathArg,
+			Detail: "python command requires an argument (an absolute .py file)",
+		}
+	}
+	for _, a := range argv[1:] {
+		if isInlineCodePythonFlag(a) {
+			return nil, &ValidationError{
+				Code:   ErrCodeBinaryNotAllowed,
+				Detail: "python inline-code flags (-c/-m/-) are not allowed; a cron command must run an absolute .py file inside your account",
+			}
+		}
+	}
+	if pythonStandaloneFlags[argv[1]] {
+		return &Command{Argv: argv}, nil
+	}
+	pathArg, ok := firstNonFlagArg(argv)
+	if !ok {
+		return &Command{Argv: argv}, nil
+	}
+	if err := validateScriptFile(pathArg, ".py", "python", scriptRoots); err != nil {
+		return nil, err
+	}
+	return &Command{Argv: argv}, nil
+}
+
+// nodeStandaloneFlags are introspection-only Node flags that need no script.
+var nodeStandaloneFlags = map[string]bool{
+	"-v": true, "--version": true,
+	"-h": true, "--help": true,
+}
+
+// isInlineCodeNodeFlag reports whether a token makes Node run inline code
+// instead of a script file: `-e`/`--eval` (evaluate) and `-p`/`--print`
+// (evaluate + print), including glued `-eCODE` (GH #1435).
+func isInlineCodeNodeFlag(a string) bool {
+	for _, f := range []string{"-e", "--eval", "-p", "--print"} {
+		if a == f || strings.HasPrefix(a, f) {
+			return true
+		}
+	}
+	return false
+}
+
+var nodeScriptExts = []string{".js", ".mjs", ".cjs"}
+
+// validateNodeCommand requires an absolute .js/.mjs/.cjs file inside the
+// account's docroots or home, and rejects inline-code flags.
+func validateNodeCommand(argv []string, scriptRoots []string) (*Command, error) {
+	if len(argv) < 2 {
+		return nil, &ValidationError{
+			Code:   ErrCodeBadPathArg,
+			Detail: "node command requires an argument (an absolute .js file)",
+		}
+	}
+	for _, a := range argv[1:] {
+		if isInlineCodeNodeFlag(a) {
+			return nil, &ValidationError{
+				Code:   ErrCodeBinaryNotAllowed,
+				Detail: "node inline-code flags (-e/--eval/-p/--print) are not allowed; a cron command must run an absolute .js file inside your account",
+			}
+		}
+	}
+	if nodeStandaloneFlags[argv[1]] {
+		return &Command{Argv: argv}, nil
+	}
+	pathArg, ok := firstNonFlagArg(argv)
+	if !ok {
+		return &Command{Argv: argv}, nil
+	}
+	if err := validateScriptFileMultiExt(pathArg, nodeScriptExts, "node", scriptRoots); err != nil {
+		return nil, err
+	}
+	return &Command{Argv: argv}, nil
+}
+
+// firstNonFlagArg returns the first argv element after argv[0] that is not a
+// -flag, and whether one was found.
+func firstNonFlagArg(argv []string) (string, bool) {
+	for i := 1; i < len(argv); i++ {
+		if strings.HasPrefix(argv[i], "-") {
+			continue
+		}
+		return argv[i], true
+	}
+	return "", false
+}
+
+// validateScriptFile checks pathArg is an absolute path with the given
+// extension, inside one of scriptRoots. label names the interpreter for errors.
+func validateScriptFile(pathArg, ext, label string, scriptRoots []string) error {
+	return validateScriptFileMultiExt(pathArg, []string{ext}, label, scriptRoots)
+}
+
+func validateScriptFileMultiExt(pathArg string, exts []string, label string, scriptRoots []string) error {
+	if !filepath.IsAbs(pathArg) {
+		return &ValidationError{
+			Code:   ErrCodeBadPathArg,
+			Detail: fmt.Sprintf("%s script path must be absolute, got %q", label, pathArg),
+		}
+	}
+	okExt := false
+	for _, e := range exts {
+		if strings.HasSuffix(pathArg, e) {
+			okExt = true
+			break
+		}
+	}
+	if !okExt {
+		return &ValidationError{
+			Code:   ErrCodeBadPathArg,
+			Detail: fmt.Sprintf("%s script path must end in %s, got %q", label, strings.Join(exts, "/"), pathArg),
+		}
+	}
+	return validatePathArg(pathArg, scriptRoots)
 }
 
 // validateWPCommand checks a wp command has required --path=<docroot> argument.

@@ -30,6 +30,17 @@ type cronApplyParams struct {
 	RunAsRoot     bool     `json:"run_as_root,omitempty"`
 }
 
+// cronHomeForUser is the account's home directory — the containment root for
+// python/node cron scripts (GH #1435). Tenant homes are /home/<username>; the
+// root cron account is /root. Mirrors the panel-side derivation so the
+// pre-accept gate and this defense-in-depth re-check agree.
+func cronHomeForUser(username string) string {
+	if username == "root" {
+		return "/root"
+	}
+	return "/home/" + username
+}
+
 // cronApplyResponse is the output from cron.apply.
 type cronApplyResponse struct {
 	ServicePath string `json:"service_path"`
@@ -92,7 +103,7 @@ func cronApplyHandler(ctx context.Context, params json.RawMessage) (any, error) 
 	// ValidateAny routes curl/wget self-domain crons (GH #400 Part B) to the
 	// http-trigger validator (gated on OwnedDomains); everything else stays
 	// the wp/php closed set (gated on OwnedDocroots).
-	cmds, err := cronvalidate.ValidateAnyMulti(p.Command, p.OwnedDocroots, p.OwnedDomains)
+	cmds, err := cronvalidate.ValidateAnyMulti(p.Command, p.OwnedDocroots, p.OwnedDomains, cronHomeForUser(p.Username))
 	if err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInvalidArgument,

@@ -169,6 +169,16 @@ func ownedTargets(ctx context.Context, d Deps, userID string) (docroots, domains
 	return docroots, domains, nil
 }
 
+// homeForUser is the account's home directory, the containment root for
+// python/node cron scripts (GH #1435). Tenant homes are /home/<username>; the
+// root cron account is /root.
+func homeForUser(username string) string {
+	if username == "root" {
+		return "/root"
+	}
+	return "/home/" + username
+}
+
 func apply(ctx context.Context, d Deps, job *models.CronJob, username string, docroots, domains []string) error {
 	actx, cancel := context.WithTimeout(ctx, agentTimeout)
 	defer cancel()
@@ -212,7 +222,7 @@ func Create(ctx context.Context, d Deps, in CreateInput) (*models.CronJob, error
 	if err != nil {
 		return nil, err
 	}
-	if _, err := cronvalidate.ValidateAnyMulti(in.Command, docroots, domains); err != nil {
+	if _, err := cronvalidate.ValidateAnyMulti(in.Command, docroots, domains, homeForUser(username)); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrCommandInvalid, err)
 	}
 
@@ -272,7 +282,7 @@ func Update(ctx context.Context, d Deps, jobID string, patch UpdatePatch) (*mode
 		job.Name = *patch.Name
 	}
 	if patch.Command != nil {
-		if _, err := cronvalidate.ValidateAnyMulti(*patch.Command, docroots, domains); err != nil {
+		if _, err := cronvalidate.ValidateAnyMulti(*patch.Command, docroots, domains, homeForUser(username)); err != nil {
 			return nil, fmt.Errorf("%w: %v", ErrCommandInvalid, err)
 		}
 		job.Command = cronvalidate.NormalizeMultiCommand(*patch.Command)

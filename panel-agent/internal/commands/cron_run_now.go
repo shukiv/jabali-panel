@@ -67,7 +67,7 @@ func cronRunNowHandler(ctx context.Context, params json.RawMessage) (any, error)
 	// Defense-in-depth: re-validate the command against the user's owned
 	// docroots (same gate as cron.apply) before executing it. Never trust
 	// the stored command blindly. GH #1435: a job may hold several commands.
-	validatedCmds, vErr := cronvalidate.ValidateAnyMulti(p.Command, p.OwnedDocroots, p.OwnedDomains)
+	validatedCmds, vErr := cronvalidate.ValidateAnyMulti(p.Command, p.OwnedDocroots, p.OwnedDomains, cronHomeForUser(p.Username))
 	if vErr != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInvalidArgument,

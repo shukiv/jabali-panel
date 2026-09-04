@@ -334,7 +334,7 @@ func TestValidateCommand(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cmd, err := ValidateCommand(tt.raw, tt.docroots)
+			cmd, err := ValidateCommand(tt.raw, tt.docroots, "")
 
 			if tt.wantErr == "" {
 				require.NoError(t, err, tt.desc)
@@ -670,7 +670,7 @@ func BenchmarkValidateCommand(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = ValidateCommand(cmd, ownedDocroots)
+		_, _ = ValidateCommand(cmd, ownedDocroots, "")
 	}
 }
 
