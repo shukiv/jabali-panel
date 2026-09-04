@@ -554,7 +554,17 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 	// so the operator gets a definitive login status instead of a swallowed
 	// warning, and a fresh (password-less) identity is minted when none
 	// exists so a recovery link can actually be issued.
-	if d.KratosClient != nil && m.User.Email != "" {
+	//
+	// SECURITY (GH #1408): gated on `created`. The email + is_admin + password
+	// hash read here are bundle-controlled, and the restore-from-UPLOAD path
+	// remaps only user.id — not the email — into an EXISTING target user
+	// (created=false). Ungated, an uploaded tar carrying an attacker's email +
+	// is_admin=true + a known hash would MINT a matching (admin) Kratos identity
+	// on this box: privilege escalation. We only ever mint/verify for a user we
+	// just created this run (a trusted same-box snapshot or a sanitized
+	// create-from-manifest, both non-admin per applyUser); an
+	// upload-into-existing-user restore never touches Kratos here.
+	if created && d.KratosClient != nil && m.User.Email != "" {
 		username := ""
 		if m.User.Username != nil {
 			username = *m.User.Username
@@ -608,6 +618,16 @@ func applyUser(ctx context.Context, m *internalbackup.AccountMetadata, d Deps, n
 		return false, nil
 	} else if err != nil && !errors.Is(err, repository.ErrNotFound) {
 		return false, fmt.Errorf("lookup: %w", err)
+	}
+	// SECURITY (GH #1408): refuse to CREATE an admin user from a backup bundle.
+	// An account backup is only ever a non-admin tenant (admins host nothing and
+	// are never account-backed-up), so is_admin=true here is a malformed or
+	// crafted bundle — and creating an admin from an attacker-controllable
+	// uploaded tar is a privilege-escalation. The row is only reached on the
+	// CREATE path (an existing user no-ops above), so a legitimate
+	// same-box/#954 restore of a non-admin is unaffected.
+	if m.User.IsAdmin {
+		return false, errors.New("refusing to create an admin user from a backup bundle")
 	}
 	pwd := m.User.PasswordHash
 	if pwd == "" {
