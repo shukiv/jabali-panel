@@ -4,10 +4,12 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"path/filepath"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -61,8 +63,19 @@ func roundTrip(t *testing.T, sock string, req agentwire.Request) agentwire.Respo
 
 	b, err := json.Marshal(req)
 	require.NoError(t, err)
-	_, err = conn.Write(append(b, '\n'))
-	require.NoError(t, err)
+	// A server that rejects on connect — the SO_PEERCRED UID gate — sends its
+	// permission-denied envelope and closes the connection immediately, so this
+	// write can lose the race with that close and return EPIPE/ECONNRESET. That
+	// is NOT a test failure: the rejection is already buffered and the scan
+	// below still returns it. Fail only on an unexpected write error. (Without
+	// this, TestServer_UIDGate_RejectsUnauthorizedUID flaked under -race with
+	// "write: broken pipe".)
+	if _, werr := conn.Write(append(b, '\n')); werr != nil &&
+		!errors.Is(werr, syscall.EPIPE) &&
+		!errors.Is(werr, syscall.ECONNRESET) &&
+		!errors.Is(werr, net.ErrClosed) {
+		require.NoError(t, werr)
+	}
 	// half-close write so server stops reading
 	if uc, ok := conn.(interface{ CloseWrite() error }); ok {
 		_ = uc.CloseWrite()
