@@ -9,7 +9,22 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/net/idna"
+
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
+)
+
+// dnsNameIDNA is a lenient IDNA profile used ONLY to punycode-encode
+// labels that actually contain non-ASCII runes. Unlike idna.Lookup
+// (which mailaddr uses for e-mail domains) it does NOT enforce STD3
+// rules, because DNS record names legitimately carry underscores
+// (_dmarc, _domainkey, _acme-challenge, SRV _service._proto) and the
+// wildcard label "*". We never feed it an ASCII label, so its sole job
+// is Unicode→ASCII on genuine IDN labels.
+var dnsNameIDNA = idna.New(
+	idna.MapForLookup(),
+	idna.Transitional(false),
+	idna.StrictDomainName(false),
 )
 
 // Record is the wire shape the agent expects in dns.zone.upsert.
@@ -34,6 +49,13 @@ func SystemRecords(zone *models.DNSZone, srv *models.ServerSettings) []Record {
 		return nil
 	}
 	zoneName := strings.TrimSuffix(zone.Name, ".")
+	// GH #1459: punycode a raw-IDN apex so the SOA/NS/apex-A record
+	// names match the (also-normalized) domains.name the reconciler
+	// pushes, and stay latin1-safe for PowerDNS's records.name column.
+	// Identity for ordinary ASCII zones — no output change, no hash churn.
+	if nz, ok := NormalizeName(zoneName); ok {
+		zoneName = nz
+	}
 	// GH #527: apex SOA + NS TTLs follow the operator default like every other
 	// record (the SOA content refresh/retry/expire/minimum timers are unchanged).
 	sysTTL := models.EffectiveDNSTTL(srv)
@@ -80,6 +102,9 @@ func SystemRecords(zone *models.DNSZone, srv *models.ServerSettings) []Record {
 // from UpdatedAt — bumping it on every push is PowerDNS convention.
 func Compile(zone *models.DNSZone, records []models.DNSRecord, srv *models.ServerSettings) []Record {
 	zoneName := strings.TrimSuffix(zone.Name, ".")
+	if nz, ok := NormalizeName(zoneName); ok {
+		zoneName = nz // keep expandName's suffix in sync with the apex above
+	}
 	out := SystemRecords(zone, srv)
 
 	// Operator-editable records.
@@ -90,7 +115,15 @@ func Compile(zone *models.DNSZone, records []models.DNSRecord, srv *models.Serve
 		if r.Type == "NS" && r.Managed {
 			continue // Managed NS — regenerated above.
 		}
-		name := expandName(r.Name, zoneName)
+		name, ok := NormalizeName(expandName(r.Name, zoneName))
+		if !ok {
+			// GH #1459: a name we can't store (non-encodable IDN /
+			// over-length / malformed) would fail the latin1 records.name
+			// INSERT and roll back the ENTIRE dns.zone.upsert transaction,
+			// silently dropping the whole zone from PowerDNS. Skip just
+			// this one record so the rest of the zone still provisions.
+			continue
+		}
 		out = append(out, Record{
 			Name:     name,
 			Type:     r.Type,
@@ -102,6 +135,58 @@ func Compile(zone *models.DNSZone, records []models.DNSRecord, srv *models.Serve
 	}
 
 	return out
+}
+
+// NormalizeName renders a DNS name into the ASCII, latin1-safe form
+// PowerDNS's records.name / domains.name columns require, punycode-
+// encoding any label that carries non-ASCII runes and leaving every
+// ASCII label byte-for-byte intact (so _dmarc/_domainkey/SRV
+// underscores, the wildcard "*", hyphens and existing case are
+// preserved, and ordinary zones compile identically — no zone-cache /
+// push-hash churn).
+//
+// It returns (encoded, true) for a name that fits DNS limits (≤253
+// octets overall, each label 1..63 octets) and ("", false) for one that
+// is empty, has an empty/over-long label, or contains an IDN label that
+// cannot be encoded. A false result is the caller's cue to SKIP that
+// record rather than let it fail the atomic zone INSERT (GH #1459).
+func NormalizeName(name string) (string, bool) {
+	name = strings.TrimSuffix(strings.TrimSpace(name), ".")
+	if name == "" {
+		return "", false
+	}
+	labels := strings.Split(name, ".")
+	for i, label := range labels {
+		if label == "" {
+			return "", false // empty label, e.g. "a..b"
+		}
+		if isASCIIStr(label) {
+			if len(label) > 63 {
+				return "", false
+			}
+			continue // ASCII label — preserve verbatim (case, "_", "*", "-")
+		}
+		enc, err := dnsNameIDNA.ToASCII(label)
+		if err != nil || enc == "" || len(enc) > 63 {
+			return "", false
+		}
+		labels[i] = enc
+	}
+	out := strings.Join(labels, ".")
+	if len(out) > 253 {
+		return "", false
+	}
+	return out, true
+}
+
+// isASCIIStr reports whether s is pure 7-bit ASCII.
+func isASCIIStr(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 0x80 {
+			return false
+		}
+	}
+	return true
 }
 
 // expandName converts panel-side names (@, short labels, FQDN) to the

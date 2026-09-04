@@ -4390,6 +4390,13 @@ SQL
     _log "PowerDNS schema already present in jabali_pdns — skipping reload"
   fi
 
+  # GH #1459: the stock schema just loaded creates records.content as
+  # latin1, which fails the INSERT (MariaDB 1366) for any UTF-8 TXT / IDN
+  # record and rolls back the whole atomic zone upsert. Widen it here too,
+  # so fresh installs are correct out of the box (the same converger also
+  # runs on `jabali update` for the existing fleet). Idempotent + gated.
+  ensure_pdns_records_utf8mb4
+
   # Write pdns.conf. Single file, minimal surface.
   #
   # Idempotency (M6.3): render to $pdns_conf.new first; if byte-identical
@@ -5919,6 +5926,54 @@ AXFRDENY
       || _warn "pdns restart failed after AXFR config — new setting applies on next pdns restart"
   else
     _log "pdns not active — AXFR ACL staged in $conf for next start"
+  fi
+}
+
+# GH #1459: widen jabali_pdns.records.content to utf8mb4 on EXISTING boxes.
+#
+# The stock PowerDNS schema (install_powerdns loads it from
+# schema.mysql.sql) creates the whole `records` table as latin1, even
+# though the jabali_pdns DATABASE default is utf8mb4. The agent connects
+# charset=utf8mb4 (pdns.ReadEnvAndConnect), so a record whose content
+# carries a code point outside latin1 — a UTF-8 TXT value, an IDN target —
+# fails the INSERT with MariaDB error 1366 ("Incorrect string value"). And
+# because dns.zone.upsert wraps the domains INSERT + every record INSERT in
+# ONE transaction, that single failure rolls back the WHOLE zone: the
+# domain silently never appears in pdns (dig returns nothing) while the
+# panel still shows the zone "provisioned" (that status is the dns_zones
+# row, not pdns). Reporter hit exactly this on a HestiaCP migration.
+#
+# install_powerdns does NOT run on `jabali update`, so this converger
+# carries the widening to the fleet (same lesson as ensure_pdns_zone_cache
+# / ensure_pdns_axfr_deny above).
+#
+# Only `content` moves — and to TEXT, because utf8mb4 caps VARCHAR at
+# ~16k chars while the current column is varchar(64000); TEXT holds 65535
+# bytes so no existing value can be truncated by the conversion. content
+# is unindexed, so there is no index key-length concern. `name` stays
+# latin1 on purpose: the panel punycode/length-validates every record and
+# zone name at compile (dnscompile.NormalizeName), so names are always
+# ASCII and latin1-safe — and the `nametype_index (name,type)` key stays
+# a cheap latin1 index. `ordername` (latin1_bin, DNSSEC canonical order)
+# is left untouched. Idempotent + gated on the current charset so a
+# converged box no-ops after the one-time ALTER.
+ensure_pdns_records_utf8mb4() {
+  # No jabali_pdns.records on a box where the DNS module was never installed.
+  local have
+  have="$(mariadb -uroot -Ns -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='jabali_pdns' AND table_name='records';" 2>/dev/null || echo 0)"
+  [[ "$have" == "1" ]] || return 0
+
+  local cur
+  cur="$(mariadb -uroot -Ns -e "SELECT CHARACTER_SET_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='jabali_pdns' AND TABLE_NAME='records' AND COLUMN_NAME='content';" 2>/dev/null)"
+  if [[ "$cur" == "utf8mb4" ]]; then
+    return 0  # already widened — no-op
+  fi
+
+  _log "widening jabali_pdns.records.content to utf8mb4 (GH #1459 — UTF-8 TXT / IDN records were rolling back whole zones on migration)"
+  if mariadb -uroot jabali_pdns -e "ALTER TABLE records MODIFY content TEXT CHARACTER SET utf8mb4 DEFAULT NULL;"; then
+    _ok "jabali_pdns.records.content widened to utf8mb4 (was ${cur:-latin1}) — UTF-8 record content now stores instead of failing the atomic zone upsert"
+  else
+    _warn "failed to widen jabali_pdns.records.content to utf8mb4 — UTF-8 TXT / IDN records may still fail to provision (GH #1459)"
   fi
 }
 
@@ -15453,6 +15508,11 @@ provision_new_software() {
   # JAB-350: same reasoning — pin the global AXFR ACL to loopback on update so a
   # permissive global on an existing host stops leaving zones internet-transferable.
   ensure_pdns_axfr_deny
+  # GH #1459: same reasoning — widen jabali_pdns.records.content to utf8mb4 on
+  # update so a UTF-8 TXT / IDN record stops rolling back the whole zone's
+  # atomic upsert (the stock pdns schema is latin1; install_powerdns, which
+  # would fix it, does not run on this path).
+  ensure_pdns_records_utf8mb4
   # JAB-352: same reasoning — carry the SSH forwarding-lockdown drop-in to boxes
   # that only ever update (install_sftp_sshd_config runs on fresh install only),
   # so an existing tenant key can't tunnel into loopback-only services.
