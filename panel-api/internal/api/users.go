@@ -21,7 +21,6 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/middleware"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
-	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/reconciler"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/userops"
 )
@@ -29,6 +28,16 @@ import (
 // UserHandlerConfig plugs the users resource handlers into the router. Repo
 // is the only required field; BcryptCost defaults to bcrypt.DefaultCost;
 // Agent is optional and used for best-effort OS user provisioning.
+
+// userReconciler is the reconciler surface the users handlers need: the limits
+// reconcile after a package change (this satisfies userops.LimitsReconciler, so
+// it can be handed straight to SetPackage) and the SSH-key reconcile after a
+// forwarding toggle. An interface so a nil is a genuine nil and tests can fake it.
+type userReconciler interface {
+	ReconcileUserLimits(ctx context.Context)
+	ReconcileSSHKeysForUser(ctx context.Context, userID string) error
+}
+
 type UserHandlerConfig struct {
 	Repo            repository.UserRepository
 	BcryptCost      int
@@ -58,8 +67,13 @@ type UserHandlerConfig struct {
 	// DomainTeardowns persists the JAB-236 tombstones that make the
 	// cascade's domain teardown durable across panel restarts.
 	DomainTeardowns repository.DomainTeardownRepository
-	Reconciler      *reconciler.Reconciler
-	Log             *slog.Logger
+	// Reconciler is the reconciler surface the user handlers dispatch to: the
+	// limits reconcile after an admin package change (via userops.SetPackage,
+	// which it satisfies) and the SSH-key reconcile after a forwarding toggle.
+	// Typed as an interface (JAB-283) so tests can inject a fake and an unset
+	// field is a genuine nil; prod passes the real *reconciler.Reconciler.
+	Reconciler userReconciler
+	Log        *slog.Logger
 	// AuditEvents records the admin SSH-forwarding toggle (GH #1229), a
 	// hardening-relaxation control. Optional; nil skips the audit write.
 	AuditEvents repository.AuditEventRepository
@@ -396,13 +410,6 @@ func (h *userHandler) update(c *gin.Context) {
 		return
 	}
 
-	// Snapshot pre-update package assignment so the trailing
-	// reconcile-limits dispatch only fires on actual changes.
-	prevPackageID := ""
-	if existing.PackageID != nil {
-		prevPackageID = *existing.PackageID
-	}
-
 	// Refuse demoting the last admin — otherwise a careless PATCH locks
 	// everyone out. Check BEFORE mutating anything.
 	if req.IsAdmin != nil && existing.IsAdmin && !*req.IsAdmin {
@@ -427,60 +434,35 @@ func (h *userHandler) update(c *gin.Context) {
 	if req.NameLast != nil {
 		existing.NameLast = *req.NameLast
 	}
-	// Validate and apply package_id if provided (including clearing it with empty
-	// string). Admin-only (GH #481): package assignment controls quotas/feature
-	// limits, so a non-admin owner cannot move themselves between packages — the
-	// field is silently ignored for non-admins (the owner UI never sends it).
-	if req.PackageID != nil && claims.IsAdmin {
-		if *req.PackageID != "" {
-			if h.cfg.Packages == nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
-				return
-			}
-			// Shared validation with the automation API (ADR-0164).
-			if err := userops.ValidatePackage(ctx, h.userOpsDeps(), *req.PackageID); err != nil {
-				if errors.Is(err, userops.ErrInvalidPackage) {
-					c.JSON(http.StatusBadRequest, gin.H{
-						"error":  "invalid_package_id",
-						"detail": "hosting package not found",
-					})
-					return
-				}
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
-				return
-			}
-			existing.PackageID = req.PackageID
-		} else {
-			// Empty string means clear the package assignment
-			existing.PackageID = nil
-		}
-	}
-
 	// Per-user webmail toggle (GH #316): admin-only, like package_id. The owner
 	// UI never sends it, so silently ignore for non-admins.
 	if req.WebmailEnabled != nil && claims.IsAdmin {
 		existing.WebmailEnabled = *req.WebmailEnabled
 	}
 
-	if err := h.cfg.Repo.Update(ctx, existing); err != nil {
+	// Persist. When an admin assigns/replaces/clears the package (admin-only,
+	// GH #481 — the owner UI never sends the field), route through the User
+	// Account Lifecycle operation (JAB-283) instead of writing the field and
+	// dispatching the reconcile inline: SetPackage validates the package BEFORE
+	// persisting, persists the whole row (including the field updates above),
+	// and schedules the limits reconcile exactly once on an actual change — the
+	// same operation the automation billing API already uses. Every other
+	// update persists directly.
+	if req.PackageID != nil && claims.IsAdmin {
+		if err := userops.SetPackage(ctx, h.userOpsDeps(), existing, req.PackageID, h.cfg.Reconciler); err != nil {
+			if errors.Is(err, userops.ErrInvalidPackage) {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"error":  "invalid_package_id",
+					"detail": "hosting package not found",
+				})
+				return
+			}
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+			return
+		}
+	} else if err := h.cfg.Repo.Update(ctx, existing); err != nil {
 		h.translateErr(c, err)
 		return
-	}
-
-	// If the package assignment actually changed, kick the limits
-	// reconciler immediately so POSIX quota + cgroup drop-ins land
-	// without waiting for the next 60s ReconcileAll tick. Background
-	// goroutine — PATCH responds as soon as the DB row is durable.
-	newPackageID := ""
-	if existing.PackageID != nil {
-		newPackageID = *existing.PackageID
-	}
-	if newPackageID != prevPackageID && h.cfg.Reconciler != nil {
-		go func() {
-			bgCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			h.cfg.Reconciler.ReconcileUserLimits(bgCtx)
-		}()
 	}
 
 	// Flip is_admin in its own call so the repo's privilege-safe Update
