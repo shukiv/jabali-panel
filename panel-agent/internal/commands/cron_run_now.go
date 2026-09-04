@@ -114,7 +114,14 @@ func cronRunNowHandler(ctx context.Context, params json.RawMessage) (any, error)
 			// Label each step so the operator can see which command ran.
 			fmt.Fprintf(&stdout, "$ %s\n", strings.Join(vc.Argv, " "))
 		}
-		args := append([]string{"-u", p.Username, "--"}, vc.Argv...)
+		// GH #1458: run the command inside the per-user SSH sandbox (matching the
+		// scheduled timer), so "Run now" can't shell out of the jail either. Root
+		// (admin) crons stay unsandboxed, same as the timer path.
+		args := []string{"-u", p.Username, "--"}
+		if p.Username != "root" && vc.Kind != cronvalidate.KindHTTPTrigger {
+			args = append(args, cronSandboxWrapper, "--exec")
+		}
+		args = append(args, vc.Argv...)
 		cmd := execCommandContext(ctx, "runuser", args...)
 		cmd.Dir = home
 		cmd.Env = env

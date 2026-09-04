@@ -30,6 +30,12 @@ type cronApplyParams struct {
 	RunAsRoot     bool     `json:"run_as_root,omitempty"`
 }
 
+// cronSandboxWrapper runs a tenant cron command inside the same per-user
+// bubblewrap/nspawn jail as SSH (GH #1458). Without it a cron that shells out
+// (php passthru, python os.system, node child_process, wp eval) would reach an
+// unsandboxed shell as the tenant uid, defeating the SSH sandbox's isolation.
+const cronSandboxWrapper = "/usr/local/bin/jabali-ssh-shell"
+
 // cronHomeForUser is the account's home directory — the containment root for
 // python/node cron scripts (GH #1435). Tenant homes are /home/<username>; the
 // root cron account is /root. Mirrors the panel-side derivation so the
@@ -270,6 +276,17 @@ func buildCronServiceContent(jobID, name string, cmds []*cronvalidate.Command, u
 	for _, cmd := range cmds {
 		var b strings.Builder
 		b.WriteString("ExecStart=")
+		// GH #1458: tenant INTERPRETER crons (wp/php/python/node) run inside the
+		// per-user SSH sandbox via `jabali-ssh-shell --exec <argv>`, so a command
+		// that shells out (php passthru, python os.system, wp eval) stays
+		// confined. Skipped for: root crons (admin — the sandbox never jails
+		// uid 0, GH #658), and the curl/wget http-trigger (a trusted
+		// `jabali cron http-trigger` GET, not tenant code, and it needs host
+		// config the jail hides).
+		if username != "root" && cmd.Kind != cronvalidate.KindHTTPTrigger {
+			b.WriteString(cronSandboxWrapper)
+			b.WriteString(" --exec ")
+		}
 		for i, token := range cmd.Argv {
 			if i > 0 {
 				b.WriteByte(' ')

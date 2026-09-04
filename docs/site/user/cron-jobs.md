@@ -49,6 +49,15 @@ if one fails. Blank lines and `#` comments (including a `#!/bin/bash` shebang
 line) are ignored, so you can paste a script's body, but every executable line
 must still match the allowlist above.
 
+## Sandboxing
+
+Cron commands run inside the **same per-user sandbox as your SSH shell** — a
+read-only system, an isolated process view, and only your own home and docroots
+visible. Your scripts run normally (your files, your database, the network all
+work); what's hidden is the host's internals (other tenants, server config),
+which a cron never needs. This is why a script can't reach outside your account
+even if it shells out.
+
 ## Why systemd-user, not crontab
 
 - Per-job journal logs (`journalctl --user -u jabali-cron-<id>`).
