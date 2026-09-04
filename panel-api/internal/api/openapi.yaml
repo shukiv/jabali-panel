@@ -3896,6 +3896,20 @@ paths:
       security: [ { KratosSession: [] } ]
       responses: { "200": { description: OK } }
 
+  /me/nav-counts:
+    get:
+      tags: [Me]
+      summary: Resource counts for the caller's side-nav badges (GH #1478)
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/nav-counts:
+    get:
+      tags: [Admin]
+      summary: Fleet-wide resource counts for the admin side-nav badges (GH #1478)
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
   /me/disk-usage/files:
     get:
       tags: [Me]
