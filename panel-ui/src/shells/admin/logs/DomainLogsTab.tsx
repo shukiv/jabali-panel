@@ -13,7 +13,7 @@ import {
 } from "@ant-design/icons";
 import { useQuery } from "@tanstack/react-query";
 import { apiClient } from "../../../apiClient";
-import { LogStreamModal } from "./LogStreamModal";
+import { LogStreamModal } from "../../../components/LogStreamModal";
 
 const { Text } = Typography;
 

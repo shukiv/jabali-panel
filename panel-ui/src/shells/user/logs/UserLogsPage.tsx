@@ -10,7 +10,7 @@ import {
 } from "@ant-design/icons";
 import { useQuery } from "@tanstack/react-query";
 import { apiClient } from "../../../apiClient";
-import { LogStreamModal } from "../../admin/logs/LogStreamModal";
+import { LogStreamModal } from "../../../components/LogStreamModal";
 import { AccountActivity } from "../activity/AccountActivity";
 import { useSearchParams } from "react-router";
 
