@@ -15,6 +15,11 @@ const sampleMultiRcpt = `2026-06-19T23:00:00Z INFO Queued message for delivery (
 
 const sampleCompleted = `2026-06-19T22:11:43Z INFO Delivery completed (delivery.completed) queueId = 313790779361329152, queueName = "local", from = "probe7@jabali.site", to = ["shuki@jabali.site"], size = 1662, total = 1, elapsed = 0ms`
 
+// sampleAuthQueued is a tenant SEND — an authenticated submission, which fires
+// queue.authenticated-message-queued (verified against Stalwart 0.16.15), not
+// the plain queue.message-queued an inbound relay produces (GH #1416).
+const sampleAuthQueued = `2026-09-04T01:12:00Z INFO Queued message for delivery (queue.authenticated-message-queued) listenerId = "smtp", localPort = 587, remoteIp = 127.0.0.1, queueId = 327583827553682432, from = "u@jabali.site", to = ["ext@remote.example"], size = 900`
+
 func TestParseMailLogLine_Queued(t *testing.T) {
 	pl, ok := parseMailLogLine(sampleQueued)
 	if !ok {
@@ -34,6 +39,30 @@ func TestParseMailLogLine_Queued(t *testing.T) {
 	}
 	if len(pl.recipients) != 1 || pl.recipients[0] != "shuki@jabali.site" {
 		t.Errorf("recipients = %v", pl.recipients)
+	}
+}
+
+func TestParseMailLogLine_AuthenticatedQueued(t *testing.T) {
+	// GH #1416: the authenticated-submission event must parse as a queued line
+	// so a tenant's outbound shows in Mail > Logs and feeds per-domain "Sent".
+	pl, ok := parseMailLogLine(sampleAuthQueued)
+	if !ok {
+		t.Fatal("expected queue.authenticated-message-queued line to parse")
+	}
+	if !pl.queued {
+		t.Error("authenticated queued line must report queued=true")
+	}
+	if pl.rank != 0 {
+		t.Errorf("rank = %d, want 0 (queued)", pl.rank)
+	}
+	if pl.entry.From != "u@jabali.site" {
+		t.Errorf("from = %q", pl.entry.From)
+	}
+	if len(pl.recipients) != 1 || pl.recipients[0] != "ext@remote.example" {
+		t.Errorf("recipients = %v", pl.recipients)
+	}
+	if pl.queueID != "327583827553682432" {
+		t.Errorf("queueID = %q", pl.queueID)
 	}
 }
 
