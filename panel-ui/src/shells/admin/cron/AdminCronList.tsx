@@ -32,17 +32,9 @@ import { CronLogDrawer } from "../../user/cron/CronLogDrawer";
 import { RunNowResultModal } from "../../user/cron/RunNowResultModal";
 import { AdminCreateCronModal } from "./AdminCreateCronModal";
 import { EmptyWithCTA } from "../../../components/EmptyWithCTA";
+import { humanizeSchedule } from "../../../utils/cronSchedule";
 
 dayjs.extend(relativeTime);
-
-const SCHEDULE_PRESETS: Record<string, string> = {
-  "* * * * *": "Every minute",
-  "0 * * * *": "Hourly",
-  "0 3 * * *": "Daily at 3 AM",
-  "0 3 * * 0": "Weekly (Sun 3 AM)",
-  "0 3 1 * *": "Monthly (1st 3 AM)",
-};
-const humanizeSchedule = (s: string): string => SCHEDULE_PRESETS[s] || s;
 
 export const AdminCronList = () => {
   const { t } = useTranslation();

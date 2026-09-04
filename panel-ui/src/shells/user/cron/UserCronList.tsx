@@ -36,20 +36,9 @@ import {
 import { CreateCronModal } from "./CreateCronModal";
 import { CronLogDrawer } from "./CronLogDrawer";
 import { RunNowResultModal } from "./RunNowResultModal";
+import { humanizeSchedule } from "../../../utils/cronSchedule";
 
 dayjs.extend(relativeTime);
-
-const SCHEDULE_PRESETS: Record<string, string> = {
-  "* * * * *": "Every minute",
-  "0 * * * *": "Hourly",
-  "0 3 * * *": "Daily at 3 AM",
-  "0 3 * * 0": "Weekly (Sun 3 AM)",
-  "0 3 1 * *": "Monthly (1st 3 AM)",
-};
-
-const humanizeSchedule = (schedule: string): string => {
-  return SCHEDULE_PRESETS[schedule] || schedule;
-};
 
 export const UserCronList = () => {
   const { t } = useTranslation();

@@ -17,15 +17,7 @@ import {
   updateCronJob,
   type CronJob,
 } from "../../../apiClient";
-
-const SCHEDULE_PRESETS = [
-  { label: "Every minute", value: "* * * * *" },
-  { label: "Hourly", value: "0 * * * *" },
-  { label: "Daily at 3 AM", value: "0 3 * * *" },
-  { label: "Weekly (Sun 3 AM)", value: "0 3 * * 0" },
-  { label: "Monthly (1st 3 AM)", value: "0 3 1 * *" },
-  { label: "Advanced", value: "advanced" },
-];
+import { CRON_SCHEDULE_OPTIONS } from "../../../utils/cronSchedule";
 
 interface CreateCronModalProps {
   open: boolean;
@@ -55,7 +47,7 @@ export const CreateCronModal = ({
   useEffect(() => {
     if (!open) return;
     if (initial) {
-      const isPreset = SCHEDULE_PRESETS.some((p) => p.value === initial.schedule);
+      const isPreset = CRON_SCHEDULE_OPTIONS.some((p) => p.value === initial.schedule);
       setScheduleMode(isPreset ? initial.schedule : "advanced");
       setCustomSchedule(isPreset ? "" : initial.schedule);
     } else {
@@ -219,7 +211,7 @@ export const CreateCronModal = ({
             value={scheduleMode}
             onChange={(e) => setScheduleMode(e.target.value)}
           >
-            {SCHEDULE_PRESETS.map((preset) => (
+            {CRON_SCHEDULE_OPTIONS.map((preset) => (
               <Radio key={preset.value} value={preset.value}>
                 {preset.label}
               </Radio>
