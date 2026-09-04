@@ -273,12 +273,18 @@ export const UserDomainList = () => {
                   trigger={["click"]}
                   menu={{
                     items: [
-                      {
-                        key: "dns",
-                        label: "DNS",
-                        icon: <GlobalOutlined />,
-                        onClick: () => navigate(`/jabali-panel/domains/${r.id}/dns`),
-                      },
+                      // GH #1419: hide DNS when the DNS module is off — the page
+                      // only 403s. Default-on while caps load (sidebar gate).
+                      ...(caps?.dns_enabled !== false
+                        ? [
+                            {
+                              key: "dns",
+                              label: "DNS",
+                              icon: <GlobalOutlined />,
+                              onClick: () => navigate(`/jabali-panel/domains/${r.id}/dns`),
+                            },
+                          ]
+                        : []),
                       {
                         key: "redirects",
                         label: "Redirects",
