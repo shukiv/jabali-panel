@@ -3,6 +3,7 @@ package egressops
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -166,5 +167,168 @@ func TestDecideRequest_NotFound(t *testing.T) {
 		"NOPE", models.UserEgressRequestStatusApproved, "")
 	if err != repository.ErrNotFound {
 		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+}
+
+// --- SetPolicy / ValidateDestination contract (JAB-341) --------------------
+//
+// These lock the canonical accept/reject matrix that both adapters share
+// (PUT /users/:id/egress and the CLI per-user-egress set-policy). A regression
+// in either adapter now fails here, not silently in production nft rendering.
+
+func iptr(v int) *int       { return &v }
+func sptr(s string) *string { return &s }
+
+func TestValidState(t *testing.T) {
+	for _, s := range []string{"off", "learning", "enforced"} {
+		if !ValidState(s) {
+			t.Errorf("%q should be valid", s)
+		}
+	}
+	for _, s := range []string{"", "ENFORCED", "on", "block"} {
+		if ValidState(s) {
+			t.Errorf("%q should be invalid", s)
+		}
+	}
+}
+
+func TestValidateDestination_Matrix(t *testing.T) {
+	ok := []models.EgressDestination{
+		{CIDR: "10.0.0.0/8"},
+		{CIDR: "1.2.3.4/32", Port: iptr(443)},
+		{CIDR: "1.2.3.4/32", Port: iptr(53), Protocol: "udp"},
+		{CIDR: "1.2.3.4/32", Comment: "ok comment"},
+	}
+	for _, d := range ok {
+		dd := d
+		if err := ValidateDestination(&dd); err != nil {
+			t.Errorf("%+v: unexpected error %v", d, err)
+		}
+	}
+
+	bad := []models.EgressDestination{
+		{CIDR: "not-a-cidr"},
+		{CIDR: "1.2.3.4"},                         // no mask
+		{CIDR: "1.2.3.4/32", Port: iptr(0)},       // port 0
+		{CIDR: "1.2.3.4/32", Port: iptr(99999)},   // port out of range
+		{CIDR: "1.2.3.4/32", Protocol: "sctp"},    // unknown protocol
+		{CIDR: "1.2.3.4/32", Comment: "a\nnft x"}, // newline injection
+		{CIDR: "1.2.3.4/32", Comment: "a\rb"},     // carriage return
+		{CIDR: "1.2.3.4/32", Comment: "a\x00b"},   // NUL
+		{CIDR: "1.2.3.4/32", Comment: "a\tb"},     // control char (tab)
+	}
+	for _, d := range bad {
+		dd := d
+		if err := ValidateDestination(&dd); err == nil {
+			t.Errorf("%+v: expected error, got nil", d)
+		}
+	}
+}
+
+func TestValidateDestination_DefaultsProtocol(t *testing.T) {
+	d := models.EgressDestination{CIDR: "1.2.3.4/32"}
+	if err := ValidateDestination(&d); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if d.Protocol != models.UserEgressProtocolTCP {
+		t.Errorf("empty protocol should default to tcp, got %q", d.Protocol)
+	}
+}
+
+func TestSetPolicy_PersistsOnceAndCanonicalizes(t *testing.T) {
+	pols := &fakePolicyRepo{}
+	err := SetPolicy(context.Background(), pols, SetPolicyInput{
+		UserID: "U1",
+		State:  models.UserEgressStateEnforced,
+		AllowedExtra: []models.EgressDestination{
+			{CIDR: "1.2.3.4/32", Port: iptr(443)}, // proto omitted -> tcp
+		},
+		UpdatedBy: sptr("admin1"),
+	})
+	if err != nil {
+		t.Fatalf("SetPolicy: %v", err)
+	}
+	// AC5: exactly one policy write scheduled.
+	if pols.upsertCalls != 1 {
+		t.Fatalf("expected exactly one upsert, got %d", pols.upsertCalls)
+	}
+	if pols.upserted.State != models.UserEgressStateEnforced {
+		t.Errorf("state = %q", pols.upserted.State)
+	}
+	// AC4: provenance recorded.
+	if pols.upserted.UpdatedBy == nil || *pols.upserted.UpdatedBy != "admin1" {
+		t.Errorf("updated_by = %v, want admin1", pols.upserted.UpdatedBy)
+	}
+	var extras []models.EgressDestination
+	if err := json.Unmarshal(pols.upserted.AllowedExtra, &extras); err != nil {
+		t.Fatalf("decode allowed_extra: %v", err)
+	}
+	if len(extras) != 1 || extras[0].Protocol != models.UserEgressProtocolTCP {
+		t.Errorf("destination not canonicalized: %+v", extras)
+	}
+}
+
+func TestSetPolicy_CLIProvenanceNil(t *testing.T) {
+	pols := &fakePolicyRepo{}
+	if err := SetPolicy(context.Background(), pols, SetPolicyInput{
+		UserID: "U1", State: models.UserEgressStateOff, UpdatedBy: nil,
+	}); err != nil {
+		t.Fatalf("SetPolicy: %v", err)
+	}
+	if pols.upserted.UpdatedBy != nil {
+		t.Errorf("CLI actor should leave updated_by nil, got %v", *pols.upserted.UpdatedBy)
+	}
+	// Empty list must serialize as [] (not null) so the not-null column is clean.
+	if string(pols.upserted.AllowedExtra) != "[]" {
+		t.Errorf("empty allow list = %q, want []", pols.upserted.AllowedExtra)
+	}
+}
+
+func TestSetPolicy_RejectsInvalidState(t *testing.T) {
+	pols := &fakePolicyRepo{}
+	err := SetPolicy(context.Background(), pols, SetPolicyInput{UserID: "U1", State: "block"})
+	if !errors.Is(err, ErrInvalidState) {
+		t.Fatalf("expected ErrInvalidState, got %v", err)
+	}
+	if pols.upsertCalls != 0 {
+		t.Errorf("invalid state must not persist, got %d upserts", pols.upsertCalls)
+	}
+}
+
+func TestSetPolicy_RejectsTooManyExtras(t *testing.T) {
+	pols := &fakePolicyRepo{}
+	extras := make([]models.EgressDestination, MaxAllowedExtras+1)
+	for i := range extras {
+		extras[i] = models.EgressDestination{CIDR: "1.2.3.4/32"}
+	}
+	err := SetPolicy(context.Background(), pols, SetPolicyInput{
+		UserID: "U1", State: models.UserEgressStateEnforced, AllowedExtra: extras,
+	})
+	if !errors.Is(err, ErrTooManyExtras) {
+		t.Fatalf("expected ErrTooManyExtras, got %v", err)
+	}
+	if pols.upsertCalls != 0 {
+		t.Errorf("over-limit list must not persist, got %d upserts", pols.upsertCalls)
+	}
+}
+
+func TestSetPolicy_RejectsBadDestinationWithIndex(t *testing.T) {
+	pols := &fakePolicyRepo{}
+	err := SetPolicy(context.Background(), pols, SetPolicyInput{
+		UserID: "U1", State: models.UserEgressStateEnforced,
+		AllowedExtra: []models.EgressDestination{
+			{CIDR: "1.2.3.4/32"},                      // index 0 ok
+			{CIDR: "1.2.3.4/32", Comment: "x\nnft y"}, // index 1 injection
+		},
+	})
+	var de *DestinationError
+	if !errors.As(err, &de) {
+		t.Fatalf("expected *DestinationError, got %v", err)
+	}
+	if de.Index != 1 {
+		t.Errorf("DestinationError.Index = %d, want 1", de.Index)
+	}
+	if pols.upsertCalls != 0 {
+		t.Errorf("unsafe destination must not persist, got %d upserts", pols.upsertCalls)
 	}
 }

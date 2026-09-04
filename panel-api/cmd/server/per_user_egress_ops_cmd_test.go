@@ -2,15 +2,22 @@ package main
 
 import "testing"
 
+// parseCLIAllow now only handles the CLI string format: the field split, the
+// numeric coercion of PORT, and lower-casing PROTO. The semantic accept/reject
+// matrix (valid CIDR, port range, known protocol, comment safety) and the
+// empty-proto default moved to egressops.ValidateDestination / SetPolicy, which
+// the CLI and PUT /users/:id/egress both call — see
+// internal/egressops.TestValidateDestination_Matrix and TestSetPolicy_* for the
+// canonical-matrix coverage shared by both adapters.
 func TestParseCLIAllow(t *testing.T) {
 	ok := []struct {
 		in       string
 		cidr     string
-		port     int // -1 = nil
-		protocol string
+		port     int    // -1 = nil
+		protocol string // "" = not supplied (SetPolicy defaults it to tcp)
 	}{
-		{"10.0.0.0/8", "10.0.0.0/8", -1, "tcp"},
-		{"1.2.3.4/32,443", "1.2.3.4/32", 443, "tcp"},
+		{"10.0.0.0/8", "10.0.0.0/8", -1, ""},
+		{"1.2.3.4/32,443", "1.2.3.4/32", 443, ""},
 		{"1.2.3.4/32,53,udp", "1.2.3.4/32", 53, "udp"},
 		{"1.2.3.4/32,,udp", "1.2.3.4/32", -1, "udp"},
 		{" 10.0.0.0/8 , 80 , TCP ", "10.0.0.0/8", 80, "tcp"},
@@ -32,31 +39,16 @@ func TestParseCLIAllow(t *testing.T) {
 		}
 	}
 
+	// Only the CLI-string-format errors surface here; a non-numeric port and
+	// too-many-fields. Bad CIDR / port range / bad protocol are rejected later
+	// by egressops.ValidateDestination, not by the parser.
 	bad := []string{
-		"",                     // empty
-		"not-a-cidr",           // bare token
-		"1.2.3.4",              // IP without mask (ParseCIDR requires /n)
-		"1.2.3.4/32,99999",     // port out of range
-		"1.2.3.4/32,0",         // port 0
-		"1.2.3.4/32,443,sctp",  // bad protocol
+		"1.2.3.4/32,abc",       // non-numeric port
 		"1.2.3.4/32,443,tcp,x", // too many fields
 	}
 	for _, b := range bad {
 		if _, err := parseCLIAllow(b); err == nil {
 			t.Errorf("%q: expected error, got nil", b)
-		}
-	}
-}
-
-func TestValidCLIEgressState(t *testing.T) {
-	for _, s := range []string{"off", "learning", "enforced"} {
-		if !validCLIEgressState(s) {
-			t.Errorf("%q should be valid", s)
-		}
-	}
-	for _, s := range []string{"", "ENFORCED", "on", "block"} {
-		if validCLIEgressState(s) {
-			t.Errorf("%q should be invalid", s)
 		}
 	}
 }
