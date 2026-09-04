@@ -13,6 +13,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/kratosclient"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/domainmailops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
@@ -347,7 +348,7 @@ func createDomainDirect(ctx context.Context, in cliDomainInput) (*models.Domain,
 		warnings = append(warnings, fmt.Sprintf("email auto-enable skipped: agent unavailable (%v)", err))
 	} else {
 		deps := newDomainEmailDepsFromGlobals()
-		_, dnsWarnings, err := enableDomainEmailDirect(ctx, deps, d)
+		_, _, dnsWarnings, err := domainmailops.Enable(ctx, deps, d)
 		if err != nil {
 			warnings = append(warnings,
 				fmt.Sprintf("email auto-enable failed (can retry with `jabali domain email-enable %s`): %v", d.Name, err))

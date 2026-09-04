@@ -27,6 +27,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/domainmailops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
@@ -57,7 +58,7 @@ to rotate). Run domain email-enable first if needed.`,
 			ctx, cancel := context.WithTimeout(cmd.Context(), 60*time.Second)
 			defer cancel()
 			deps := newDomainEmailDepsFromGlobals()
-			dom, err := resolveDomainSpec(ctx, deps.domains, args[0])
+			dom, err := resolveDomainSpec(ctx, deps.Domains, args[0])
 			if err != nil {
 				return err
 			}
@@ -66,7 +67,7 @@ to rotate). Run domain email-enable first if needed.`,
 			}
 
 			// Agent rotation — generates fresh key, snapshots old.
-			raw, err := deps.call(ctx, "domain.email_dkim_rotate", map[string]any{
+			raw, err := deps.Call(ctx, "domain.email_dkim_rotate", map[string]any{
 				"domain_name": dom.Name,
 			})
 			if err != nil {
@@ -82,7 +83,7 @@ to rotate). Run domain email-enable first if needed.`,
 
 			// Persist new pubkey in domains row.
 			selector := "jabali" // EmailRecordsSelector — kept stable across rotations
-			if err := deps.domains.UpdateEmailState(ctx, dom.ID, repository.DomainEmailState{
+			if err := deps.Domains.UpdateEmailState(ctx, dom.ID, repository.DomainEmailState{
 				Enabled:       true,
 				DkimSelector:  &selector,
 				DkimPublicKey: &resp.NewDKIMPublicKey,
@@ -92,8 +93,8 @@ to rotate). Run domain email-enable first if needed.`,
 
 			// Wipe old M6-managed DNS records + republish so the
 			// new DKIM TXT lands at jabali._domainkey.<domain>.
-			deleteEmailDNSOnDisableDirect(ctx, deps, dom.ID)
-			warnings := syncEmailDNSOnEnableDirect(ctx, deps, dom.ID, selector, resp.NewDKIMPublicKey)
+			domainmailops.DeleteManagedDNSOnDisable(ctx, deps, dom.ID)
+			warnings := domainmailops.SyncManagedDNSOnEnable(ctx, deps, dom.ID, selector, resp.NewDKIMPublicKey)
 
 			if jsonOutput {
 				return printJSON(map[string]any{
