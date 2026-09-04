@@ -13,6 +13,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/phppoolops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
@@ -20,70 +21,25 @@ import (
 // Resource caps (GH #339 security): pm_max_children + idle timeout are
 // tenant-settable, so they MUST be bounded — an unbounded value is a
 // resource-exhaustion DoS on the shared host.
+// Resource caps + the FPM tuning validators now live in internal/phppoolops so
+// the HTTP handlers and the operator CLI share one authority (JAB-360). These
+// package-local aliases keep the existing api call sites (packages.go,
+// php_performance_modes.go, php_pool_user_tuning.go, the update handler)
+// unchanged.
 const (
-	phpPoolUserMaxChildrenCap  = 100
-	phpPoolAdminMaxChildrenCap = 2000
-	phpPoolMaxIdleTimeoutSec   = 86400
-	phpPoolMaxRequestsCap      = 100000 // worker recycle bound (0 = disabled)
-	phpPoolMaxTerminateSec     = 3600   // request_terminate_timeout ceiling (0 = disabled)
+	phpPoolUserMaxChildrenCap  = phppoolops.UserMaxChildrenCap
+	phpPoolAdminMaxChildrenCap = phppoolops.AdminMaxChildrenCap
+	phpPoolMaxIdleTimeoutSec   = phppoolops.MaxIdleTimeoutSec
+	phpPoolMaxRequestsCap      = phppoolops.MaxRequestsCap
+	phpPoolMaxTerminateSec     = phppoolops.MaxTerminateSec
 )
 
-// clampToPackageCap bounds pm_max_children (and dependent spare/start servers)
-// to a hosting package's fpm_max_children_cap, then re-runs the FPM dynamic
-// constraint via resolvePMTuning. Load-bearing safety for the L1/L2 user tiers
-// (GH #339 phase 2): whatever a non-admin produces can never exceed the cap.
 func clampToPackageCap(cap uint32, mode string, maxChildren, start, minSpare, maxSpare, maxReq, terminate *uint32) (string, bool) {
-	if cap > 0 && *maxChildren > cap {
-		*maxChildren = cap
-	}
-	if *start > *maxChildren {
-		*start = *maxChildren
-	}
-	if *maxSpare > *maxChildren {
-		*maxSpare = *maxChildren
-	}
-	return resolvePMTuning(mode, *maxChildren, start, minSpare, maxSpare, maxReq, terminate)
+	return phppoolops.ClampToPackageCap(cap, mode, maxChildren, start, minSpare, maxSpare, maxReq, terminate)
 }
 
-// resolvePMTuning applies defaults, caps, and the FPM dynamic-mode constraint
-// (min_spare <= start <= max_spare <= max_children) to the extended pm.* fields
-// (GH #339). It MUTATES the pointed-to values (fills dynamic defaults clamped to
-// max_children) and returns a client error + false when invalid. start/spare are
-// ignored by FPM outside dynamic mode, so they are only constrained there.
 func resolvePMTuning(mode string, maxChildren uint32, start, minSpare, maxSpare, maxReq, terminate *uint32) (string, bool) {
-	if *maxReq > phpPoolMaxRequestsCap {
-		return fmt.Sprintf("pm_max_requests must be <= %d", phpPoolMaxRequestsCap), false
-	}
-	if *terminate > phpPoolMaxTerminateSec {
-		return fmt.Sprintf("request_terminate_timeout_seconds must be <= %d", phpPoolMaxTerminateSec), false
-	}
-	if mode != "dynamic" {
-		return "", true
-	}
-	if *maxSpare == 0 {
-		if maxChildren < 3 {
-			*maxSpare = maxChildren
-		} else {
-			*maxSpare = 3
-		}
-	}
-	if *start == 0 {
-		if *maxSpare < 2 {
-			*start = *maxSpare
-		} else {
-			*start = 2
-		}
-	}
-	if *minSpare == 0 {
-		*minSpare = 1
-		if *minSpare > *start {
-			*minSpare = *start
-		}
-	}
-	if !(*minSpare <= *start && *start <= *maxSpare && *maxSpare <= maxChildren) {
-		return "dynamic pm requires pm_min_spare_servers <= pm_start_servers <= pm_max_spare_servers <= pm_max_children", false
-	}
-	return "", true
+	return phppoolops.ResolvePMTuning(mode, maxChildren, start, minSpare, maxSpare, maxReq, terminate)
 }
 
 type PHPPoolHandlerConfig struct {
@@ -309,53 +265,32 @@ func (h *phpPoolHandler) create(c *gin.Context) {
 		return
 	}
 
-	// Validate pm_mode
-	validPmModes := map[string]bool{"static": true, "ondemand": true, "dynamic": true}
-	if req.PmMode == "" {
-		req.PmMode = "ondemand" // default
-	} else if !validPmModes[req.PmMode] {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":  "invalid_pm_mode",
-			"detail": "pm_mode must be static, ondemand, or dynamic",
-		})
+	// JAB-360: one shared create-side validator (mode + defaults + admin/user
+	// pm_max_children cap + idle ceiling + FPM dynamic constraint) so the
+	// operator CLI create can't drift from this handler. The returned field key
+	// maps 1:1 onto the error codes this endpoint has always returned.
+	tuning, msg, field, ok := phppoolops.ResolveCreateTuning(claims.IsAdmin, phppoolops.CreateTuning{
+		PmMode:                         req.PmMode,
+		PmMaxChildren:                  req.PmMaxChildren,
+		ProcessIdleTimeoutSeconds:      req.ProcessIdleTimeoutSeconds,
+		PmStartServers:                 req.PmStartServers,
+		PmMinSpareServers:              req.PmMinSpareServers,
+		PmMaxSpareServers:              req.PmMaxSpareServers,
+		PmMaxRequests:                  req.PmMaxRequests,
+		RequestTerminateTimeoutSeconds: req.RequestTerminateTimeoutSeconds,
+	})
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": field, "detail": msg})
 		return
 	}
-
-	// Validate pm_max_children (GH #339 security: bound it — see the cap consts).
-	if req.PmMaxChildren == 0 {
-		req.PmMaxChildren = 20 // default
-	}
-	maxChildren := uint32(phpPoolUserMaxChildrenCap)
-	if claims.IsAdmin {
-		maxChildren = phpPoolAdminMaxChildrenCap
-	}
-	if req.PmMaxChildren > maxChildren {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":  "pm_max_children_too_high",
-			"detail": fmt.Sprintf("pm_max_children must be <= %d", maxChildren),
-		})
-		return
-	}
-
-	// Validate process_idle_timeout_seconds.
-	if req.ProcessIdleTimeoutSeconds == 0 {
-		req.ProcessIdleTimeoutSeconds = 60 // default
-	}
-	if req.ProcessIdleTimeoutSeconds > phpPoolMaxIdleTimeoutSec {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":  "process_idle_timeout_too_high",
-			"detail": fmt.Sprintf("process_idle_timeout_seconds must be <= %d", phpPoolMaxIdleTimeoutSec),
-		})
-		return
-	}
-
-	// GH #339: defaults + caps + FPM dynamic constraint for the fuller pm.* set.
-	if msg, ok := resolvePMTuning(req.PmMode, req.PmMaxChildren,
-		&req.PmStartServers, &req.PmMinSpareServers, &req.PmMaxSpareServers,
-		&req.PmMaxRequests, &req.RequestTerminateTimeoutSeconds); !ok {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "pm_tuning_invalid", "detail": msg})
-		return
-	}
+	req.PmMode = tuning.PmMode
+	req.PmMaxChildren = tuning.PmMaxChildren
+	req.ProcessIdleTimeoutSeconds = tuning.ProcessIdleTimeoutSeconds
+	req.PmStartServers = tuning.PmStartServers
+	req.PmMinSpareServers = tuning.PmMinSpareServers
+	req.PmMaxSpareServers = tuning.PmMaxSpareServers
+	req.PmMaxRequests = tuning.PmMaxRequests
+	req.RequestTerminateTimeoutSeconds = tuning.RequestTerminateTimeoutSeconds
 
 	// Check if user already has a pool (MVP constraint: one pool per user)
 	existingPool, err := h.cfg.PHPPools.FindByUserID(ctx, targetUserID)
@@ -404,7 +339,7 @@ func (h *phpPoolHandler) create(c *gin.Context) {
 	slog.InfoContext(ctx, "php_pool.created", "user_id", pool.UserID, "pool_id", pool.ID, "php_version", pool.PHPVersion, "pm_mode", pool.PmMode)
 
 	// Trigger agent to reconcile the pool asynchronously (fire-and-forget)
-	go h.reconcilePoolAsync(pool)
+	go h.reconcilePoolAsync(*pool)
 
 	c.JSON(http.StatusCreated, pool)
 }
@@ -533,7 +468,7 @@ func (h *phpPoolHandler) update(c *gin.Context) {
 	slog.InfoContext(ctx, "php_pool.updated", "user_id", pool.UserID, "pool_id", pool.ID, "old_pm_mode", oldPmMode, "new_pm_mode", pool.PmMode, "old_pm_max_children", oldPmMaxChildren, "new_pm_max_children", pool.PmMaxChildren)
 
 	// Trigger agent to re-reconcile the pool asynchronously (fire-and-forget)
-	go h.reconcilePoolAsync(pool)
+	go h.reconcilePoolAsync(*pool)
 
 	c.JSON(http.StatusOK, pool)
 }
@@ -774,7 +709,7 @@ func (h *phpPoolHandler) createIniOverride(c *gin.Context) {
 	_ = h.cfg.PHPPools.Update(ctx, pool)
 
 	// Trigger agent to re-reconcile the pool
-	go h.reconcilePoolAsync(pool)
+	go h.reconcilePoolAsync(*pool)
 
 	c.JSON(http.StatusCreated, override)
 }
@@ -855,7 +790,7 @@ func (h *phpPoolHandler) updateIniOverride(c *gin.Context) {
 	_ = h.cfg.PHPPools.Update(ctx, pool)
 
 	// Trigger agent to re-reconcile the pool
-	go h.reconcilePoolAsync(pool)
+	go h.reconcilePoolAsync(*pool)
 
 	c.JSON(http.StatusOK, override)
 }
@@ -923,7 +858,7 @@ func (h *phpPoolHandler) deleteIniOverride(c *gin.Context) {
 	_ = h.cfg.PHPPools.Update(ctx, pool)
 
 	// Trigger agent to re-reconcile the pool
-	go h.reconcilePoolAsync(pool)
+	go h.reconcilePoolAsync(*pool)
 
 	c.JSON(http.StatusNoContent, nil)
 }
@@ -933,6 +868,6 @@ func (h *phpPoolHandler) deleteIniOverride(c *gin.Context) {
 // reconcilePoolAsync triggers a pool reconciliation in the background.
 // Implementation lives in php_pool_reconcile.go so the user-driven
 // /domains/:id/php-pool path can share it without depending on phpPoolHandler.
-func (h *phpPoolHandler) reconcilePoolAsync(pool *models.PHPPool) {
+func (h *phpPoolHandler) reconcilePoolAsync(pool models.PHPPool) {
 	reconcilePHPPoolViaAgent(h.cfg.Agent, h.cfg.Users, h.cfg.PHPPoolIniOverrides, h.cfg.PHPPools, pool)
 }
