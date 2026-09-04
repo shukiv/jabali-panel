@@ -46,6 +46,14 @@ func (r *Reconciler) reconcileSendmailCreds(ctx context.Context) {
 	if err != nil || srv == nil || srv.Hostname == "" {
 		return
 	}
+	// GH #1417: the noreply@ relay mailbox is a mail-module artifact. When the
+	// mail module is disabled there is no Stalwart to authenticate against, and
+	// the mailbox only causes confusion — it surfaces under Email in Disk Usage
+	// and links to a mailbox page the tenant can't reach. Skip creating it so a
+	// mail-less install grows no system mailboxes.
+	if !srv.MailEnabled {
+		return
+	}
 	mailHost := models.PanelMailHostname(srv.Hostname)
 
 	domains, _, err := r.domains.List(ctx, repository.ListOptions{Limit: 10000})
