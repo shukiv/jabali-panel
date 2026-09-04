@@ -69,6 +69,14 @@ type createDomainInput struct {
 	// the automation path lets the first reconciler tick bootstrap the cert,
 	// exactly like the `jabali domain create` CLI. GUI create leaves it false.
 	SkipInlineSSL bool
+	// WebDisabled / DNSDisabled (GH #1449) opt the domain OUT of a service.
+	// INVERTED on purpose: the zero value (false) means the service is ON, so
+	// every existing caller (GUI create, automation) keeps creating a
+	// full-service web+dns domain without changing a line. WebDisabled=true →
+	// docroot-less (no vhost/PHP/web-SSL): a DNS-only zone or a mail-only
+	// domain. DNSDisabled=true → the panel does not host DNS (external DNS).
+	WebDisabled bool
+	DNSDisabled bool
 }
 
 // createDomainError carries the exact HTTP shape the inline create() used, so
@@ -105,6 +113,24 @@ func createDomainOp(ctx context.Context, h *domainHandler, in createDomainInput)
 
 	if in.OwnerID == "" {
 		return nil, &createDomainError{http.StatusBadRequest, "user_id is required", ""}
+	}
+
+	// GH #1449: Web / DNS are independent services. Both default ON (the
+	// inverted *Disabled inputs are zero=false for every existing caller). A
+	// web-off domain is docroot-less (DNS-only zone / mail-only domain) and so
+	// cannot be a reverse-proxy, carry a preview URL, or have a document root.
+	webEnabled := !in.WebDisabled
+	dnsEnabled := !in.DNSDisabled
+	if !webEnabled {
+		if in.ReverseProxy {
+			return nil, &createDomainError{http.StatusBadRequest, "web_disabled_no_reverse_proxy", "a reverse-proxy domain requires web hosting"}
+		}
+		if in.TempURLEnabled {
+			return nil, &createDomainError{http.StatusBadRequest, "web_disabled_no_temp_url", "a preview URL requires web hosting"}
+		}
+		if strings.TrimSpace(in.DocRoot) != "" {
+			return nil, &createDomainError{http.StatusBadRequest, "web_disabled_no_docroot", "a web-disabled domain has no document root"}
+		}
 	}
 
 	user, err := h.cfg.Users.FindByID(ctx, in.OwnerID)
@@ -148,7 +174,11 @@ func createDomainOp(ctx context.Context, h *domainHandler, in createDomainInput)
 	// is confined to the domain's own tree; an admin may use anywhere under
 	// the owner's home. See createDomainInput.ActorIsAdmin.
 	docRoot := strings.TrimSpace(in.DocRoot)
-	if in.ActorIsAdmin {
+	if !webEnabled {
+		// GH #1449: web-off domain — no document root at all (validated empty
+		// above). Leave DocRoot="" so no vhost is ever rendered for it.
+		docRoot = ""
+	} else if in.ActorIsAdmin {
 		if err := validateDocumentRoot(docRoot, *user.Username, in.Name); err != nil {
 			return nil, &createDomainError{http.StatusBadRequest, "invalid_document_root", err.Error()}
 		}
@@ -157,7 +187,7 @@ func createDomainOp(ctx context.Context, h *domainHandler, in createDomainInput)
 			return nil, &createDomainError{http.StatusBadRequest, "invalid_document_root", err.Error()}
 		}
 	}
-	if docRoot == "" {
+	if webEnabled && docRoot == "" {
 		docRoot = "/home/" + *user.Username + "/domains/" + in.Name + "/public_html"
 	}
 
@@ -209,6 +239,20 @@ func createDomainOp(ctx context.Context, h *domainHandler, in createDomainInput)
 	if sslMode == models.SSLModeNone && mailEnabled {
 		return nil, &createDomainError{http.StatusBadRequest, "ssl_none_with_email", "a mail-enabled domain needs TLS; choose le/self or set mail provider to none"}
 	}
+	// GH #1449: a domain must host at least ONE Jabali service. Web off + DNS
+	// off + no Jabali mail leaves nothing for the panel to do (external mail
+	// without our DNS publishes no records here either).
+	if !webEnabled && !dnsEnabled && !mailEnabled {
+		return nil, &createDomainError{http.StatusBadRequest, "no_service_selected", "select at least one service: web hosting, DNS, or mail"}
+	}
+	// GH #1449: a DNS-only domain (web off + no Jabali mail) has nothing to
+	// serve over TLS — force ssl_mode=none so the reconciler never tries to
+	// issue a cert for a name whose web and mail both live elsewhere. A
+	// mail-only domain (web off, mail on) keeps its le/self mode for the
+	// mail-support SANs.
+	if !webEnabled && !mailEnabled {
+		sslMode = models.SSLModeNone
+	}
 
 	now := time.Now().UTC()
 	domain := &models.Domain{
@@ -226,8 +270,12 @@ func createDomainOp(ctx context.Context, h *domainHandler, in createDomainInput)
 		SkipAutoSAN:     mailSkipSAN,
 		CreateWWW:       in.CreateWWW,
 		TempURLEnabled:  in.TempURLEnabled,
-		CreatedAt:       now,
-		UpdatedAt:       now,
+		// GH #1449: inverted storage — disabled is the non-zero (always-
+		// written) state, so a full-service create leaves both zero.
+		WebDisabled: in.WebDisabled,
+		DNSDisabled: in.DNSDisabled,
+		CreatedAt:   now,
+		UpdatedAt:   now,
 	}
 
 	// GH #1175: a reverse-proxy domain draws a loopback port from the shared
@@ -301,8 +349,11 @@ func createDomainOp(ctx context.Context, h *domainHandler, in createDomainInput)
 
 	// JAB-170 phase 5: auto-attach a covering shared cert (HTTPS instantly, no
 	// ACME) and skip the inline ACME below.
+	// GH #1449: shared-cert auto-attach + inline SSL are web-cert fast paths.
+	// A web-off domain has no web cert (DNS-only → ssl none; mail-only → the
+	// reconciler issues its mail-support SANs on the next tick), so skip both.
 	attachedShared := false
-	if h.cfg.SharedCerts != nil {
+	if webEnabled && h.cfg.SharedCerts != nil {
 		if cert := h.findCoveringSharedCert(ctx, domain.Name, domain.UserID); cert != nil {
 			if err := h.cfg.Domains.SetSharedCertificate(ctx, domain.ID, &cert.ID, models.SSLModeShared); err == nil {
 				domain.SSLMode = models.SSLModeShared
@@ -318,7 +369,7 @@ func createDomainOp(ctx context.Context, h *domainHandler, in createDomainInput)
 	// Inline SSL (30s): ACME with self-signed fallback. Never errors — cert
 	// state is already in DB. JAB-233: automation skips this (SkipInlineSSL);
 	// the first reconciler tick bootstraps the cert instead.
-	if !attachedShared && !in.SkipInlineSSL && h.cfg.Reconciler != nil {
+	if webEnabled && !attachedShared && !in.SkipInlineSSL && h.cfg.Reconciler != nil {
 		inlineCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		h.cfg.Reconciler.ReconcileSSLInline(inlineCtx, domain)
 		cancel()

@@ -221,6 +221,23 @@ type Domain struct {
 	// sites-enabled. Disabled domains still have their config on disk.
 	IsEnabled bool `gorm:"type:tinyint(1);not null;default:1" json:"is_enabled"`
 
+	// GH #1449: Web / Mail / DNS are independent services on a domain row.
+	//   WebDisabled=true → docroot-less: no vhost, no PHP, no web SSL, no
+	//     apex-A convergence (a DNS-only zone or a mail-only domain).
+	//   DNSDisabled=true → the reconciler does NOT create/converge a
+	//     PowerDNS zone (tenant runs DNS elsewhere).
+	// Mail is toggled by MailProvider (none = off), unchanged.
+	//
+	// Stored INVERTED (disabled, DB DEFAULT 0) so the zero value = service ON:
+	// the whole existing fleet + every in-memory test fixture stays
+	// full-service untouched, and the non-default (disabled) is a NON-zero
+	// value that GORM always writes — no email_enabled zero-value scar
+	// (models/domain.go EmailEnabled note, migration 000123), no need to set
+	// the flag on every create. The API/UI speak positive ("web_enabled" /
+	// "manage_dns" checkboxes on create; enabled = !web_disabled on read).
+	WebDisabled bool `gorm:"column:web_disabled;type:tinyint(1);not null;default:0" json:"web_disabled"`
+	DNSDisabled bool `gorm:"column:dns_disabled;type:tinyint(1);not null;default:0" json:"dns_disabled"`
+
 	// IsQuotaSuspended marks domains the M13.1.1 bandwidth reconciler
 	// disabled because their owning user crossed BandwidthQuotaMB.
 	// Disambiguates panel-driven disables from manual operator

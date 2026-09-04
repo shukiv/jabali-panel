@@ -118,6 +118,14 @@ type createDomainRequest struct {
 	// it needs a cert upload, set via PUT /domains/:id/ssl/custom after create.
 	// Empty defaults to 'le'.
 	SSLMode string `json:"ssl_mode"`
+	// WebEnabled / ManageDNS (GH #1449) are the "Add Web Domain" service
+	// checkboxes: both default ON (nil == checked == current behaviour), so a
+	// caller only sends false to OPT OUT. WebEnabled=false → no vhost/docroot/
+	// PHP (a mail-only or DNS-only entry); ManageDNS=false → the panel does not
+	// host DNS for this domain (external DNS). Pointers so an absent field is
+	// the default-on, distinct from an explicit false.
+	WebEnabled *bool `json:"web_enabled"`
+	ManageDNS  *bool `json:"manage_dns"`
 }
 
 // normalizeDomainName canonicalizes a domain for storage (GH #884): trim
@@ -703,6 +711,9 @@ func (h *domainHandler) create(c *gin.Context) {
 		TempURLEnabled:   req.TempURLEnabled,
 		ReverseProxy:     req.ReverseProxy,
 		ReverseProxyPort: req.ReverseProxyPort,
+		// GH #1449: both default ON — only an explicit false opts out.
+		WebDisabled: req.WebEnabled != nil && !*req.WebEnabled,
+		DNSDisabled: req.ManageDNS != nil && !*req.ManageDNS,
 	})
 	if oerr != nil {
 		body := gin.H{"error": oerr.Code}

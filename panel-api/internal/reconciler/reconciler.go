@@ -1767,6 +1767,14 @@ func (r *Reconciler) effectiveInterceptErrors(ctx context.Context, domain *model
 // pool-regeneration pass, which must re-dispatch regardless of the cache
 // (a pool config change is out-of-band to the per-domain payload hash).
 func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Domain, force bool) {
+	if domain.WebDisabled {
+		// GH #1449: a web-off domain (DNS-only zone / mail-only domain) has
+		// no docroot and no HTTP vhost — skip the web render entirely. Its
+		// DNS zone and mail (MX/DKIM/mail-cert SANs) still converge via the
+		// dedicated paths in reconcileEnabledDomain. Mirrors the docroot-less
+		// IsPanelPrimary / docker_app rows.
+		return
+	}
 	user, err := r.users.FindByID(ctx, domain.UserID)
 	if err != nil {
 		r.log.Error("failed to fetch user for domain", "domain_id", domain.ID, "user_id", domain.UserID, "err", err)
@@ -2321,6 +2329,15 @@ func (r *Reconciler) reconcileDNSZone(ctx context.Context, domain *models.Domain
 	if r.dnsZones == nil {
 		return // DNS feature not wired — skip
 	}
+	if domain.DNSDisabled {
+		// GH #1449: the tenant runs DNS elsewhere — never create or
+		// converge a PowerDNS zone for this domain. Placed BEFORE the
+		// find/auto-create below so a disabled zone can't resurrect every
+		// tick. (Tearing down a zone already in pdns when DNS is turned
+		// OFF later is a separate follow-up; the dns.zone.delete verb
+		// exists for it.)
+		return
+	}
 
 	zone, err := r.dnsZones.FindByDomainID(ctx, domain.ID)
 	if err != nil {
@@ -2349,7 +2366,11 @@ func (r *Reconciler) reconcileDNSZone(ctx context.Context, domain *models.Domain
 			// their mail rows. GH #189: a "No mail" domain never even briefly
 			// has mail DNS.
 			includeMail := domain.MailProvider == "" || domain.MailProvider == models.MailProviderJabali
-			boots := dnscompile.BootstrapRecords(zone.ID, zone.Name, srv, ids.NewULID, includeMail, domain.CreateWWW)
+			// GH #1449: a web-off domain (DNS-only / mail-only) doesn't seed an
+			// apex A or a www CNAME pointing at this box — its web lives elsewhere.
+			includeApex := !domain.WebDisabled
+			includeWWW := !domain.WebDisabled && domain.CreateWWW
+			boots := dnscompile.BootstrapRecords(zone.ID, zone.Name, srv, ids.NewULID, includeApex, includeMail, includeWWW)
 			for i := range boots {
 				if err := r.dnsRecords.Create(ctx, &boots[i]); err != nil {
 					r.log.Error("bootstrap record failed", "err", err)
@@ -3269,6 +3290,13 @@ func (r *Reconciler) convergeApexAddrRecords(ctx context.Context, zone *models.D
 	if r.dnsRecords == nil || zone == nil || domain == nil {
 		return
 	}
+	if domain.WebDisabled {
+		// GH #1449: a web-off domain's apex points at the tenant's real web
+		// host, not this box — never assert/re-assert an apex A/AAAA here
+		// (the bootstrap seed is likewise web-gated). The tenant edits the
+		// apex freely in the DNS zone.
+		return
+	}
 	// Without the IP pool we have no source of truth for what the
 	// effective addresses should be. Skipping is safe because the
 	// pre-M24 BootstrapRecords already wrote the server-primary
@@ -3621,7 +3649,7 @@ func (r *Reconciler) reconcileEnabledDomain(ctx context.Context, name string, do
 	// reconciler tick was pure spam ("puzzle.linux-hosting.net"
 	// loop). Only log for real tenant domains where the missing
 	// state is actionable.
-	if !agentSites[name] && !domain.IsPanelPrimary {
+	if !agentSites[name] && !domain.IsPanelPrimary && !domain.WebDisabled {
 		r.log.Info("reconcile: creating missing domain", "domain", name)
 	}
 	r.reconcileDNSZone(ctx, domain)
@@ -3641,6 +3669,28 @@ func (r *Reconciler) reconcileEnabledDomain(ctx context.Context, name string, do
 	if domain.IsPanelPrimary {
 		r.reconcileRecursorForward(ctx, name)
 		r.ensurePanelPrimaryDKIM(ctx, domain)
+		return
+	}
+
+	// GH #1449: a web-off tenant domain (DNS-only zone or mail-only domain)
+	// has no docroot / vhost / PHP. Converge only its DNS (above), SSL
+	// (mail-support SANs via reachableSANs — a no-op for a DNS-only zone on
+	// ssl_mode='none'), MTA-STS, mail provisioning, and M6.5 email features.
+	// Skips ensureDomainPHPBinding + createDomainOnAgent. Mirrors the
+	// docroot-less IsPanelPrimary mail-only path, for tenants.
+	if domain.WebDisabled {
+		sslCtx, sslCancel := context.WithTimeout(ctx, 2*time.Minute)
+		r.reconcileSSLForDomain(sslCtx, domain)
+		sslCancel()
+		r.reconcileMTAStsForDomain(ctx, domain)
+		r.ensureTenantEmailEnabled(ctx, domain)
+		r.ensureTenantDKIMRecords(ctx, domain)
+		if !domain.DNSDisabled {
+			r.reconcileRecursorForward(ctx, name)
+		}
+		if err := phases.ReconcileDomainAll(ctx, domain, nil); err != nil {
+			r.log.Error("reconcile: M6.5 phase domain reconciliation failed (web-off)", "domain", name, "err", err)
+		}
 		return
 	}
 
@@ -3676,7 +3726,12 @@ func (r *Reconciler) reconcileEnabledDomain(ctx context.Context, name string, do
 	r.createDomainOnAgent(ctx, domain, false)
 	// M6.3: ensure the recursor has a forwarder for this zone so
 	// local resolution hits pdns-server on loopback :5300. Idempotent.
-	r.reconcileRecursorForward(ctx, name)
+	// GH #1449: only when we actually host the zone — a domain on external
+	// DNS must resolve via public recursion, not be pinned to our (empty)
+	// pdns for its own name.
+	if !domain.DNSDisabled {
+		r.reconcileRecursorForward(ctx, name)
+	}
 
 	// M6.5: Email features (forwarders, autoresponders, catch-all, disclaimer,
 	// shared folders, logs). Each feature is registered as a Phase during init(),
