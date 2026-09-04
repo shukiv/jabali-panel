@@ -9,6 +9,8 @@ import { Drawer, Grid, Layout, Menu, Tooltip, theme } from "antd";
 import { Outlet, useLocation, useNavigate } from "react-router";
 
 import { useServerCapabilities } from "../hooks/useServerCapabilities";
+import { useNavCounts, navCountForKey } from "../hooks/useNavCounts";
+import { navLabelWithBadge } from "./navBadge";
 import { DRStandbyBanner } from "../components/DRStandbyBanner";
 import { JabaliFooter } from "../components/JabaliFooter";
 import { JabaliHeader } from "../components/JabaliHeader";
@@ -40,6 +42,8 @@ export function AdminLayout() {
   // via Server Settings -> Apps. /me/server-capabilities is cached
   // per-session; UI ergonomics outweigh staleness here.
   const { data: caps } = useServerCapabilities();
+  // GH #1478: side-nav badge counts (fleet-wide / admin scope).
+  const { data: navCounts } = useNavCounts("admin");
   // M353 Phase 1 (GH #353): hide a module's nav entry when it's disabled.
   // Module flags default on (undefined/loading = shown) so an upgraded install
   // and the brief pre-caps render never flash-hide a real feature.
@@ -85,12 +89,15 @@ export function AdminLayout() {
         // when an item has no description. DESKTOP ONLY (GH #1066): on touch the
         // tooltip swallows the first tap — the user has to tap twice to navigate.
         // The mobile Drawer shows full labels, so the tooltip adds nothing there.
-        label: isDesktop && n.description ? (
-          <Tooltip title={t(n.description)} placement="right" mouseEnterDelay={0.4}>
-            <span>{t(n.label)}</span>
-          </Tooltip>
-        ) : (
-          t(n.label)
+        label: navLabelWithBadge(
+          isDesktop && n.description ? (
+            <Tooltip title={t(n.description)} placement="right" mouseEnterDelay={0.4}>
+              <span>{t(n.label)}</span>
+            </Tooltip>
+          ) : (
+            t(n.label)
+          ),
+          navCountForKey(navCounts, n.key),
         ),
         onClick: () => {
           navigate(n.path);
