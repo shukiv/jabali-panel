@@ -9,15 +9,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import { apiClient, createCronJob } from "../../../apiClient";
-
-const SCHEDULE_PRESETS = [
-  { label: "Every minute", value: "* * * * *" },
-  { label: "Hourly", value: "0 * * * *" },
-  { label: "Daily at 3 AM", value: "0 3 * * *" },
-  { label: "Weekly (Sun 3 AM)", value: "0 3 * * 0" },
-  { label: "Monthly (1st 3 AM)", value: "0 3 1 * *" },
-  { label: "Advanced", value: "advanced" },
-];
+import { CRON_SCHEDULE_OPTIONS } from "../../../utils/cronSchedule";
 
 interface TargetUser {
   id: string;
@@ -180,7 +172,7 @@ export const AdminCreateCronModal = ({ open, onClose, onSuccess }: Props) => {
         <Form.Item label={t("admincreatecronmodal.schedule")} name="preset">
           <Radio.Group>
             <Space direction="vertical" size="small" style={{ width: "100%" }}>
-              {SCHEDULE_PRESETS.map((p) => (
+              {CRON_SCHEDULE_OPTIONS.map((p) => (
                 <Radio key={p.value} value={p.value}>
                   {p.label}
                   {p.value !== "advanced" && (
