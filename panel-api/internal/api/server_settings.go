@@ -6,9 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net"
 	"net/http"
-	"net/mail"
 	"regexp"
 	"strings"
 	"time"
@@ -21,6 +19,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/middleware"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/settingsops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ssokey"
 )
 
@@ -733,6 +732,10 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 		req.NginxProxyReadTimeout != nil || req.NginxProxySendTimeout != nil ||
 		req.NginxWorkerProcesses != nil || req.NginxWorkerConnections != nil ||
 		req.NginxCustomHTTP != nil
+	// Snapshot the pre-merge nginx values so settingsops can classify the effect
+	// (changed vs explicit re-apply). The dispatch decision below stays keyed on
+	// nginxTouched/cacheCapTouched, preserving the original re-sync semantics.
+	beforeNginx := *current
 	if req.NginxClientMaxBodySize != nil {
 		current.NginxClientMaxBodySize = strings.TrimSpace(*req.NginxClientMaxBodySize)
 	}
@@ -783,7 +786,7 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 	}
 
 	// Validate — reject obviously bad input so we don't persist garbage.
-	if err := ValidateServerSettings(current); err != nil {
+	if err := settingsops.Validate(current); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_settings", "detail": err.Error()})
 		return
 	}
@@ -1095,42 +1098,23 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 	// lines whenever the operator touched the Nginx form. Background dispatch
 	// (atomic-write + nginx -t gate + reload happen agent-side). Re-sync
 	// semantics: re-saving the form always re-applies, healing on-disk drift.
-	if nginxTouched && h.cfg.Agent != nil {
-		go func(s models.ServerSettings) {
-			bgCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-			defer cancel()
-			if _, err := h.cfg.Agent.Call(bgCtx, "nginx.tunables.apply", map[string]any{
-				"client_max_body_size":  s.NginxClientMaxBodySize,
-				"keepalive_timeout":     s.NginxKeepaliveTimeout,
-				"server_tokens":         s.NginxServerTokens,
-				"gzip":                  s.NginxGzip,
-				"client_body_timeout":   s.NginxClientBodyTimeout,
-				"client_header_timeout": s.NginxClientHeaderTimeout,
-				"send_timeout":          s.NginxSendTimeout,
-				"proxy_connect_timeout": s.NginxProxyConnectTimeout,
-				"proxy_read_timeout":    s.NginxProxyReadTimeout,
-				"proxy_send_timeout":    s.NginxProxySendTimeout,
-				"worker_processes":      s.NginxWorkerProcesses,
-				"worker_connections":    s.NginxWorkerConnections,
-				"custom_http":           s.NginxCustomHTTP,
-			}); err != nil {
-				h.cfg.Log.Error("agent nginx tunables apply failed", "err", err)
-			}
-		}(*current)
-	}
-	// GH #634: apply the FastCGI cache capacity when it changed.
-	if cacheCapTouched && h.cfg.Agent != nil {
-		go func(s models.ServerSettings) {
-			bgCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-			defer cancel()
-			if _, err := h.cfg.Agent.Call(bgCtx, "nginx.cache.capacity_apply", map[string]any{
-				"max_size_gb":  s.NginxCacheMaxSizeGB,
-				"keyzone_mb":   s.NginxCacheKeyzoneMB,
-				"inactive_min": s.NginxCacheInactiveMin,
-			}); err != nil {
-				h.cfg.Log.Error("agent nginx cache capacity apply failed", "err", err)
-			}
-		}(*current)
+	// M55/GH #634: derive the nginx settings effect plan (tunables + FastCGI
+	// cache capacity) in settingsops — the single owner of the agent wire,
+	// shared with the CLI (JAB-290) — and dispatch each touched verb the REST
+	// way: async, detached, best-effort (the DB already holds the truth; a later
+	// reconcile syncs on failure). Dispatch stays keyed on Touched, so the
+	// re-sync semantics are unchanged.
+	nginxPlan := settingsops.NginxEffects(&beforeNginx, current, settingsops.NginxTouched{
+		Tunables: nginxTouched,
+		Cache:    cacheCapTouched,
+	})
+	if h.cfg.Agent != nil {
+		if call := nginxPlan.Tunables.Call; call != nil {
+			go h.dispatchNginx(*call, "agent nginx tunables apply failed")
+		}
+		if call := nginxPlan.Cache.Call; call != nil {
+			go h.dispatchNginx(*call, "agent nginx cache capacity apply failed")
+		}
 	}
 
 	h.cfg.Log.Info("event=audit kind=server_settings_updated actor_id=" + claims.UserID)
@@ -1149,118 +1133,23 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 	c.JSON(http.StatusOK, current)
 }
 
-// ValidateServerSettings does lenient input validation matching the installer.
-// Exported so the `jabali settings` CLI applies the same rules as the REST PATCH
-// (Gitea #539).
-func ValidateServerSettings(s *models.ServerSettings) error {
-	if s.Hostname != "" && !isValidHostname(s.Hostname) {
-		return fmt.Errorf("invalid hostname")
+// dispatchNginx executes one settingsops nginx AgentCall the REST way: detached
+// from the request (a client disconnect must not cancel the apply), bounded by
+// the call's own timeout, best-effort (failure is logged, not surfaced — the DB
+// already holds the truth and a later reconcile syncs). Run it in a goroutine.
+func (h *serverSettingsHandler) dispatchNginx(call settingsops.AgentCall, logMsg string) {
+	bgCtx, cancel := context.WithTimeout(context.Background(), call.Timeout)
+	defer cancel()
+	if _, err := h.cfg.Agent.Call(bgCtx, call.Method, call.Params); err != nil {
+		h.cfg.Log.Error(logMsg, "err", err)
 	}
-	// GH #836: preview base must be a bare hostname (the wildcard label
-	// is implied; NormalizePreviewBase already stripped "*." and case).
-	if s.PreviewBase != "" && !isValidHostname(s.PreviewBase) {
-		return fmt.Errorf("preview_base: invalid hostname")
-	}
-	// IPv4
-	for label, v := range map[string]string{"public_ipv4": s.PublicIPv4, "ns1_ipv4": s.NS1IPv4, "ns2_ipv4": s.NS2IPv4} {
-		if v == "" {
-			continue
-		}
-		if net.ParseIP(v) == nil || net.ParseIP(v).To4() == nil {
-			return fmt.Errorf("%s: not a valid IPv4", label)
-		}
-	}
-	// IPv6 (optional)
-	if s.PublicIPv6 != "" {
-		ip := net.ParseIP(s.PublicIPv6)
-		if ip == nil || ip.To4() != nil {
-			return fmt.Errorf("public_ipv6: not a valid IPv6")
-		}
-	}
-	// NS names
-	for label, v := range map[string]string{"ns1_name": s.NS1Name, "ns2_name": s.NS2Name} {
-		if v == "" {
-			continue
-		}
-		if !isValidHostname(v) {
-			return fmt.Errorf("%s: invalid hostname", label)
-		}
-	}
-	// Admin email
-	if s.AdminEmail != "" {
-		if _, err := mail.ParseAddress(s.AdminEmail); err != nil {
-			return fmt.Errorf("admin_email: invalid")
-		}
-	}
-	// Timezone (optional, empty means "use OS default")
-	if s.Timezone != "" && !isValidTimezone(s.Timezone) {
-		return fmt.Errorf("timezone: invalid format")
-	}
-	// SSH port
-	if s.SSHPort < 1 || s.SSHPort > 65535 {
-		return fmt.Errorf("ssh_port: must be between 1 and 65535")
-	}
-	if s.DefaultDNSTTL != 0 && (s.DefaultDNSTTL < 60 || s.DefaultDNSTTL > 86400) {
-		return fmt.Errorf("default_dns_ttl must be 60–86400 seconds (or 0 to use built-in fallback)")
-	}
-	// Panel brand text: free-form but capped at 60 chars.
-	if len(s.PanelBrandText) > 60 {
-		return fmt.Errorf("panel_brand_text: must be <= 60 chars")
-	}
-	// Upload cap. 0 == "use compile-time default (1 GB)"; otherwise
-	// 1 MB minimum and 10 GB ceiling (matches the practical browser-
-	// upload limit and the nginx vhost client_max_body_size; admins
-	// wanting bigger should use SFTP/SCP).
-	if s.UploadMaxSizeMB != 0 && (s.UploadMaxSizeMB < 1 || s.UploadMaxSizeMB > 10240) {
-		return fmt.Errorf("upload_max_size_mb: must be 0 or between 1 and 10240")
-	}
-	// M13 SSH sandbox.
-	if s.SSHSandboxMode != "" && s.SSHSandboxMode != "bubblewrap" && s.SSHSandboxMode != "nspawn" {
-		return fmt.Errorf("ssh_sandbox_mode: must be 'bubblewrap' or 'nspawn'")
-	}
-	if s.DefaultNspawnImageVersion != "" && !isImageNamePattern(s.DefaultNspawnImageVersion) {
-		return fmt.Errorf("default_nspawn_image_version: must match [a-z0-9-]+")
-	}
-	// WorkingFolder must be absolute. install.sh ensures /var/lib/
-	// jabali exists at first boot; operator who points elsewhere is
-	// responsible for pre-creating + ACLing that dir.
-	if s.WorkingFolder != "" {
-		if !strings.HasPrefix(s.WorkingFolder, "/") {
-			return fmt.Errorf("working_folder: must be an absolute path")
-		}
-		if strings.Contains(s.WorkingFolder, "..") {
-			return fmt.Errorf("working_folder: must not contain '..'")
-		}
-	}
-	// M55 nginx tunables. Sizes/timeouts go verbatim into a config file,
-	// so reject anything not matching nginx's value grammar.
-	if s.NginxClientMaxBodySize != "" && !nginxSizeRE.MatchString(s.NginxClientMaxBodySize) {
-		return fmt.Errorf("nginx_client_max_body_size: invalid nginx size (e.g. 50m)")
-	}
-	for label, v := range map[string]string{
-		"nginx_keepalive_timeout":     s.NginxKeepaliveTimeout,
-		"nginx_client_body_timeout":   s.NginxClientBodyTimeout,
-		"nginx_client_header_timeout": s.NginxClientHeaderTimeout,
-		"nginx_send_timeout":          s.NginxSendTimeout,
-		"nginx_proxy_connect_timeout": s.NginxProxyConnectTimeout,
-		"nginx_proxy_read_timeout":    s.NginxProxyReadTimeout,
-		"nginx_proxy_send_timeout":    s.NginxProxySendTimeout,
-	} {
-		if v != "" && !nginxTimeRE.MatchString(v) {
-			return fmt.Errorf("%s: invalid nginx time (e.g. 300s)", label)
-		}
-	}
-	if s.NginxWorkerProcesses != "" && !nginxWorkerProcRE.MatchString(s.NginxWorkerProcesses) {
-		return fmt.Errorf("nginx_worker_processes: must be 'auto' or 1-99")
-	}
-	if s.NginxWorkerConnections > 1048576 {
-		return fmt.Errorf("nginx_worker_connections: must be <= 1048576")
-	}
-	if len(s.NginxCustomHTTP) > 4000 {
-		return fmt.Errorf("nginx_custom_http: must be <= 4000 chars")
-	}
-	return nil
 }
+
+// hostnameRE validates a bare hostname/IP charset. Server-settings validation
+// moved to internal/settingsops (JAB-290), but this handler still uses the
+// pattern directly for the FTP passive-address field (which lands verbatim in a
+// root-rendered config file), so the regex stays local to the api package.
+var hostnameRE = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$`)
 
 // isImageNamePattern matches the [a-z0-9-]+ shape used everywhere
 // from agent helpers to wrapper scripts. Kept inline here so the
@@ -1279,36 +1168,6 @@ func isImageNamePattern(s string) bool {
 		}
 	}
 	return true
-}
-
-var (
-	hostnameRE = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$`)
-	timezoneRE = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_+-]*(/[A-Za-z0-9_+-]+)*$`)
-
-	// M55 nginx tunable value grammars.
-	nginxSizeRE       = regexp.MustCompile(`^[0-9]+[kKmMgG]?$`)
-	nginxTimeRE       = regexp.MustCompile(`^[0-9]+(ms|s|m|h)?$`)
-	nginxWorkerProcRE = regexp.MustCompile(`^(auto|[1-9][0-9]?)$`)
-)
-
-func isValidHostname(s string) bool {
-	if len(s) > 253 {
-		return false
-	}
-	return hostnameRE.MatchString(s)
-}
-
-func isValidTimezone(s string) bool {
-	if len(s) > 64 {
-		return false
-	}
-	if strings.Contains(s, "..") {
-		return false
-	}
-	if strings.HasPrefix(s, "/") {
-		return false
-	}
-	return timezoneRE.MatchString(s)
 }
 
 // pythonRuntimeStatus reports whether the Python app runtime prerequisites
