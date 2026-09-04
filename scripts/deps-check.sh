@@ -90,6 +90,38 @@ latest_release() {
   printf '%s' "$tag"
 }
 
+# release_body repo -> the /releases/latest notes (markdown), truncated so the
+# monthly issue stays readable. Surfaces WHAT a bump brings — new features to
+# consider adopting into jabali, not just a version number (GH #1456). gh
+# locally; curl + REST on the self-hosted runner. Empty on failure.
+RELEASE_NOTES_MAX_LINES="${RELEASE_NOTES_MAX_LINES:-40}"
+release_body() {
+  local repo="$1" body=""
+  if command -v gh >/dev/null 2>&1; then
+    body="$(gh api "repos/${repo}/releases/latest" --jq '.body' 2>/dev/null)"
+  fi
+  if [[ -z "$body" ]]; then
+    local tok="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
+    local -a auth=(); [[ -n "$tok" ]] && auth=(-H "Authorization: Bearer ${tok}")
+    # The self-hosted CI runner has no gh and no jq — only python3 — so decode
+    # the JSON-escaped .body with python3 (same tool the workflow uses to build
+    # the issue payload). jq is used only if python3 is somehow absent.
+    local json
+    json="$(curl -fsSL "${auth[@]}" -H "Accept: application/vnd.github+json" \
+      "https://api.github.com/repos/${repo}/releases/latest" 2>/dev/null)"
+    if [[ -n "$json" ]]; then
+      if command -v python3 >/dev/null 2>&1; then
+        body="$(printf '%s' "$json" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("body") or "")' 2>/dev/null)"
+      elif command -v jq >/dev/null 2>&1; then
+        body="$(printf '%s' "$json" | jq -r '.body // ""')"
+      fi
+    fi
+  fi
+  [[ -z "$body" ]] && return 0
+  # Normalise CRLF, drop the boilerplate contributor/checksum tail, truncate.
+  printf '%s' "$body" | tr -d '\r' | sed -E 's/[[:space:]]+$//' | head -n "$RELEASE_NOTES_MAX_LINES"
+}
+
 # ---- --refresh-sha --------------------------------------------------------
 if [[ "$MODE" == "refresh" ]]; then
   [[ -z "$REFRESH_VAR" ]] && { echo "--refresh-sha needs a VAR name" >&2; exit 2; }
@@ -228,6 +260,37 @@ if [[ "$MODE" == "markdown" ]]; then
   echo
   echo "> CrowdSec and its nginx bouncer come from the upstream packagecloud repo (unpinned), so they aren't in the pin table above. Compare the upstream release against \`cscli version\` on a box; a bump can carry AppSec/config changes (e.g. 1.8's bot-detection needs a newer \`crowdsec-nginx-bouncer\` **and** appsec config), so read the changelog and E2E on a box before rolling to the fleet."
   echo
+  # ---- what's new: the upstream release notes for each upgrade, inline, so a
+  # maintainer can spot features worth adopting into jabali without opening ten
+  # tabs (GH #1456). install.sh pin upgrades + the always-report crowdsec rows.
+  echo "## What's new upstream (features to consider adopting)"
+  echo
+  any_notes=0
+  for r in "${ROWS_OUT[@]}"; do
+    IFS='|' read -r n c l s repo <<<"$r"
+    [[ "$s" != "UPGRADE" ]] && continue
+    [[ "$n" == "signature-base" ]] && continue # rolling rule commits, not feature releases
+    notes="$(release_body "$repo")"
+    echo "<details><summary><code>$n</code> $c → $l — <a href=\"https://github.com/$repo/releases/latest\">full notes</a></summary>"
+    echo
+    if [[ -n "$notes" ]]; then echo "$notes"; else echo "_(release notes not fetched — open the link)_"; fi
+    echo
+    echo "</details>"
+    echo
+    any_notes=1
+  done
+  for r in "${APT_ROWS_OUT[@]}"; do
+    IFS='|' read -r n l repo <<<"$r"
+    notes="$(release_body "$repo")"
+    echo "<details><summary><code>$n</code> — upstream latest $l — <a href=\"https://github.com/$repo/releases/latest\">full notes</a></summary>"
+    echo
+    if [[ -n "$notes" ]]; then echo "$notes"; else echo "_(release notes not fetched — open the link)_"; fi
+    echo
+    echo "</details>"
+    echo
+    any_notes=1
+  done
+  [[ "$any_notes" == 0 ]] && { echo "_No upstream upgrades to review this month._"; echo; }
   echo "> Bump an install.sh pin, then \`scripts/deps-check.sh --refresh-sha <VAR>\` to re-capture its \`.sha256\`. Framework bumps (Stalwart, Bulwark, Kratos) need an E2E on a box before merge."
 else
   printf '%-14s %-14s %-14s %s\n' "DEP" "CURRENT" "LATEST" "STATUS"
