@@ -25,7 +25,7 @@ var ITFlow = App{
 	Tags:                 []string{"CRM", "Project management"},
 	DefaultSubdirectory:  "",
 	RequiresDB:           true,
-	InstallNotice:        "ITFlow uses PHP exec functions (proc_open / shell_exec) for its in-app updater and domain-expiry lookups, which the in-app cron runs under PHP-FPM. By default FPM blocks those functions. To enable them, an admin assigns this site's owner a hosting package with 'Allow PHP exec functions' turned on (Admin → Packages); without it, the base install still works but the updater / expiry lookups will not.",
+	InstallNotice:        "ITFlow's in-app updater runs git via PHP exec functions (exec / shell_exec), which PHP-FPM blocks by default. The base install and its domain-expiry lookups work fully without them — as of the 2026-09 stable, expiry uses RDAP + native DNS, no exec. Only the in-app updater is affected, and it now degrades gracefully: it shows the installed version from the local .git and reports that updates can't be fetched, instead of erroring. To enable in-app updates, an admin assigns this site's owner a hosting package with 'Allow PHP exec functions' turned on (Admin → Packages).",
 	EmailLogin:           true,
 	RootOnly:             true,
 	SupportedPHPVersions: nil,
