@@ -27,6 +27,7 @@ import { apiClient } from "../../../apiClient";
 import { columnSearchProps } from "../../../components/columnSearch";
 import { RowActionButton } from "../../../components/RowActionButton";
 import { humanBytes } from "../../../utils/bytes";
+import { getSSLTag } from "../../../utils/sslState";
 import { SearchableTableStringQ } from "../../../components/SearchableTable";
 import { EmptyWithCTA } from "../../../components/EmptyWithCTA";
 import { useDeleteMutation, useOneQuery } from "../../../hooks/useQueries";
@@ -114,29 +115,15 @@ const renderRedirect = (d: Domain) => {
   return <span style={{ color: "#bbb" }}>—</span>;
 };
 
+// JAB-300: the admin list renders the SSL badge through the shared
+// utils/sslState matrix (getSSLTag) — the same one the tenant + Mail Domains
+// lists use — so the two screens can't drift. This folds the nested admin wire
+// (`ssl: { status: "issued", issuer }`) onto the canonical flat `ssl_state`
+// vocabulary; a valid Let's Encrypt cert now renders gold (matching the tenant
+// list + the operator's colour request) instead of the old admin-only green.
 const renderSSL = (ssl: SSLBadge | null | undefined) => {
-  if (!ssl) return <Tag>Off</Tag>;
-  switch (ssl.status) {
-    case "issued":
-      return <Tag color="green">{ssl.issuer || "Let's Encrypt"}</Tag>;
-    case "none":
-      return <Tag>None</Tag>;
-    case "provisioning":
-      return <Tag color="orange">Self-signed…</Tag>;
-    case "self_signed":
-      return <Tag color="orange">Self-signed</Tag>;
-    case "pending":
-    case "issuing":
-    case "renewing":
-    case "pending_acme_retry":
-      return <Tag color="green">Issuing…</Tag>;
-    case "failed":
-      return <Tag color="red">Failed</Tag>;
-    case "revoked":
-      return <Tag color="red">Revoked</Tag>;
-    default:
-      return <Tag>Off</Tag>;
-  }
+  const { color, label } = getSSLTag(ssl);
+  return <Tag color={color}>{label}</Tag>;
 };
 
 export type Domain = {
