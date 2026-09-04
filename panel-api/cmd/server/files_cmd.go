@@ -14,7 +14,6 @@ package main
 import (
 	"context"
 	"crypto/rand"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -26,6 +25,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/filesops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
@@ -100,10 +100,17 @@ func resolveFilesUser(ctx context.Context, ref string) (*models.User, error) {
 	return u, nil
 }
 
-func filesAgentCall(ctx context.Context, verb string, params map[string]any) (json.RawMessage, error) {
+func filesAgentCall(ctx context.Context, verb string, params any) (json.RawMessage, error) {
 	cctx, cancel := context.WithTimeout(ctx, filesAgentTimeout)
 	defer cancel()
 	return sharedAgent.Call(cctx, verb, params)
+}
+
+// cliScope builds the filesops.Scope for a resolved tenant user. The CLI is
+// always tenant-scoped, so AdminRoot stays false — the admin File Manager
+// (GH #1184) is a REST-only surface.
+func cliScope(u *models.User) filesops.Scope {
+	return filesops.Scope{UserID: u.ID, Username: *u.Username}
 }
 
 func newFilesCmd() *cobra.Command {
@@ -135,63 +142,59 @@ func newFilesListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			raw, err := filesAgentCall(ctx, "files.list", map[string]any{"user_id": u.ID, "username": *u.Username, "path": args[0]})
+			raw, err := filesAgentCall(ctx, filesops.MethodList, filesops.List(cliScope(u), args[0]))
 			if err != nil {
 				return err
 			}
-			var res struct {
-				Path    string `json:"path"`
-				Entries []struct {
-					Name  string `json:"name"`
-					IsDir bool   `json:"is_dir"`
-					Size  int64  `json:"size"`
-					Mode  string `json:"mode"`
-				} `json:"entries"`
-			}
-			_ = json.Unmarshal(raw, &res)
-			if jsonOutput {
-				return printJSON(res)
-			}
-			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(w, "MODE\tSIZE\tTYPE\tNAME")
-			for _, e := range res.Entries {
-				t := "file"
-				if e.IsDir {
-					t = "dir"
-				}
-				fmt.Fprintf(w, "%s\t%d\t%s\t%s\n", e.Mode, e.Size, t, e.Name)
-			}
-			return w.Flush()
+			return renderFilesList(raw, jsonOutput)
 		},
 	}
 	addUserFlag(cmd, &user)
 	return cmd
 }
 
+// renderFilesList decodes a files.list reply and writes it to stdout. Decoding
+// through filesops fails closed: a malformed agent reply is an error, never an
+// empty listing printed as success (JAB-340 — the old CLI `_ = json.Unmarshal`
+// swallowed it). Split out from the command's RunE so that fail-closed contract
+// is covered by a test without standing up DB-backed user resolution.
+func renderFilesList(raw json.RawMessage, jsonOut bool) error {
+	res, err := filesops.DecodeList(raw)
+	if err != nil {
+		return err
+	}
+	if jsonOut {
+		return printJSON(res)
+	}
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "MODE\tSIZE\tTYPE\tNAME")
+	for _, e := range res.Entries {
+		t := "file"
+		if e.IsDir {
+			t = "dir"
+		}
+		fmt.Fprintf(w, "%s\t%d\t%s\t%s\n", e.Mode, e.Size, t, e.Name)
+	}
+	return w.Flush()
+}
+
 // readContent calls files.read and returns the decoded bytes.
 func readContent(ctx context.Context, u *models.User, path string, limit int64) ([]byte, error) {
-	raw, err := filesAgentCall(ctx, "files.read", map[string]any{"user_id": u.ID, "username": *u.Username, "path": path, "limit": limit})
+	raw, err := filesAgentCall(ctx, filesops.MethodRead, filesops.Read(cliScope(u), path, limit))
 	if err != nil {
 		return nil, err
 	}
-	var res struct {
-		Content    string `json:"content"`
-		ContentB64 string `json:"content_b64"`
-		Truncated  bool   `json:"truncated"`
-	}
-	if uerr := json.Unmarshal(raw, &res); uerr != nil {
-		return nil, uerr
+	res, err := filesops.DecodeRead(raw)
+	if err != nil {
+		return nil, err
 	}
 	// GH #660: the agent hard-caps reads (100 MiB). Never write a partial file
-	// as a success — fail loudly so support/migration workflows don't silently
-	// produce corrupt local copies.
-	if res.Truncated {
-		return nil, fmt.Errorf("file exceeds the read limit and was truncated by the agent; fetch it over SFTP/SSH instead")
+	// as a success — fail loudly (the shared RequireComplete rule, JAB-340) so
+	// support/migration workflows don't silently produce corrupt local copies.
+	if err := res.RequireComplete(); err != nil {
+		return nil, err
 	}
-	if res.ContentB64 != "" {
-		return base64.StdEncoding.DecodeString(res.ContentB64)
-	}
-	return []byte(res.Content), nil
+	return res.Bytes()
 }
 
 func newFilesReadCmd() *cobra.Command {
@@ -252,7 +255,7 @@ func newFilesStatCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			raw, err := filesAgentCall(c.Context(), "files.stat", map[string]any{"user_id": u.ID, "username": *u.Username, "path": args[0]})
+			raw, err := filesAgentCall(c.Context(), filesops.MethodStat, filesops.Stat(cliScope(u), args[0]))
 			if err != nil {
 				return err
 			}
@@ -274,7 +277,7 @@ func newFilesMkdirCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if _, err := filesAgentCall(c.Context(), "files.mkdir", map[string]any{"user_id": u.ID, "username": *u.Username, "path": args[0]}); err != nil {
+			if _, err := filesAgentCall(c.Context(), filesops.MethodMkdir, filesops.Mkdir(cliScope(u), args[0])); err != nil {
 				cliAuditErr(c.Context(), "files.mkdir", "user", u.ID, &u.ID)
 				return err
 			}
@@ -306,7 +309,7 @@ func newFilesWriteCmd() *cobra.Command {
 			} else if !c.Flags().Changed("content") {
 				return fmt.Errorf("provide --content or --from <local-file>")
 			}
-			if _, err := filesAgentCall(c.Context(), "files.write", map[string]any{"user_id": u.ID, "username": *u.Username, "path": args[0], "content": body}); err != nil {
+			if _, err := filesAgentCall(c.Context(), filesops.MethodWrite, filesops.Write(cliScope(u), args[0], body)); err != nil {
 				cliAuditErr(c.Context(), "files.write", "user", u.ID, &u.ID)
 				return err
 			}
@@ -326,15 +329,18 @@ func newFilesRenameCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use: "rename <path> <new-name>", Short: "Rename within the same directory", Args: cobra.ExactArgs(2), PreRunE: requireDBAndAgent,
 		RunE: func(c *cobra.Command, args []string) error {
-			if strings.ContainsRune(args[1], '/') {
-				return fmt.Errorf("new-name must be a bare name, not a path")
+			// JAB-340: shared with the REST handler via filesops — validates the
+			// bare-name rule (now also rejecting "\", "." and "..", which this CLI
+			// check missed) and derives new_path.
+			newPath, err := filesops.RenameTarget(args[0], args[1])
+			if err != nil {
+				return err
 			}
 			u, err := resolveFilesUser(c.Context(), user)
 			if err != nil {
 				return err
 			}
-			newPath := filepath.Join(filepath.Dir(args[0]), args[1])
-			if _, err := filesAgentCall(c.Context(), "files.rename", map[string]any{"user_id": u.ID, "username": *u.Username, "old_path": args[0], "new_path": newPath}); err != nil {
+			if _, err := filesAgentCall(c.Context(), filesops.MethodRename, filesops.Rename(cliScope(u), args[0], newPath)); err != nil {
 				cliAuditErr(c.Context(), "files.rename", "user", u.ID, &u.ID)
 				return err
 			}
@@ -347,18 +353,35 @@ func newFilesRenameCmd() *cobra.Command {
 	return cmd
 }
 
-// moveOrCopy mirrors the handler: reject "..", dest = Join(destDir, Base(path)).
-func moveOrCopy(c *cobra.Command, user, verb, srcKey, dstKey, path, destDir string) error {
-	if strings.Contains(destDir, "..") {
-		return fmt.Errorf("destination must not contain '..'")
-	}
+// moveOrCopy runs a scoped move or copy. The destination rule (reject "..",
+// dest = Join(destDir, Base(path))) and the typed params are shared with the
+// REST handler through filesops (JAB-340).
+func moveOrCopy(c *cobra.Command, user, verb, path, destDir string) error {
 	u, err := resolveFilesUser(c.Context(), user)
 	if err != nil {
 		return err
 	}
-	dest := filepath.Join(destDir, filepath.Base(path))
+	var (
+		method string
+		params any
+		dest   string
+	)
+	switch verb {
+	case "move":
+		if dest, err = filesops.MoveTarget(path, destDir); err != nil {
+			return err
+		}
+		method, params = filesops.MethodMove, filesops.Move(cliScope(u), path, dest)
+	case "copy":
+		if dest, err = filesops.CopyTarget(path, destDir); err != nil {
+			return err
+		}
+		method, params = filesops.MethodCopy, filesops.Copy(cliScope(u), path, dest)
+	default:
+		return fmt.Errorf("unknown move/copy verb %q", verb)
+	}
 	action := "files." + verb
-	if _, err := filesAgentCall(c.Context(), action, map[string]any{"user_id": u.ID, "username": *u.Username, srcKey: path, dstKey: dest}); err != nil {
+	if _, err := filesAgentCall(c.Context(), method, params); err != nil {
 		cliAuditErr(c.Context(), action, "user", u.ID, &u.ID)
 		return err
 	}
@@ -375,7 +398,7 @@ func newFilesMoveCmd() *cobra.Command {
 			if to == "" {
 				return fmt.Errorf("--to <dest-dir> is required")
 			}
-			return moveOrCopy(c, user, "move", "old_path", "new_path", args[0], to)
+			return moveOrCopy(c, user, "move", args[0], to)
 		},
 	}
 	addUserFlag(cmd, &user)
@@ -391,7 +414,7 @@ func newFilesCopyCmd() *cobra.Command {
 			if to == "" {
 				return fmt.Errorf("--to <dest-dir> is required")
 			}
-			return moveOrCopy(c, user, "copy", "src_path", "dst_path", args[0], to)
+			return moveOrCopy(c, user, "copy", args[0], to)
 		},
 	}
 	addUserFlag(cmd, &user)
@@ -408,7 +431,7 @@ func newFilesChmodCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if _, err := filesAgentCall(c.Context(), "files.chmod", map[string]any{"user_id": u.ID, "username": *u.Username, "path": args[0], "mode": args[1]}); err != nil {
+			if _, err := filesAgentCall(c.Context(), filesops.MethodChmod, filesops.Chmod(cliScope(u), args[0], args[1])); err != nil {
 				cliAuditErr(c.Context(), "files.chmod", "user", u.ID, &u.ID)
 				return err
 			}
@@ -434,7 +457,7 @@ func newFilesDeleteCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if _, err := filesAgentCall(c.Context(), "files.delete", map[string]any{"user_id": u.ID, "username": *u.Username, "path": args[0], "recursive": recursive}); err != nil {
+			if _, err := filesAgentCall(c.Context(), filesops.MethodDelete, filesops.Delete(cliScope(u), args[0], recursive)); err != nil {
 				cliAuditErr(c.Context(), "files.delete", "user", u.ID, &u.ID)
 				return err
 			}
@@ -461,17 +484,16 @@ func newFilesArchiveCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			raw, err := filesAgentCall(c.Context(), "files.archive", map[string]any{"user_id": u.ID, "username": *u.Username, "paths": args})
+			raw, err := filesAgentCall(c.Context(), filesops.MethodArchive, filesops.Archive(cliScope(u), args))
 			if err != nil {
 				cliAuditErr(c.Context(), "files.archive", "user", u.ID, &u.ID)
 				return err
 			}
-			var res struct {
-				ArchivePath string `json:"archive_path"`
-				Size        int64  `json:"size"`
-			}
-			if uerr := json.Unmarshal(raw, &res); uerr != nil || res.ArchivePath == "" {
-				return fmt.Errorf("agent did not return an archive path")
+			// JAB-340: DecodeArchive fails closed on a malformed reply or an empty
+			// archive_path (ErrNoArchivePath), shared with the REST handler.
+			res, err := filesops.DecodeArchive(raw)
+			if err != nil {
+				return err
 			}
 			defer os.Remove(res.ArchivePath)
 			b, rerr := os.ReadFile(res.ArchivePath)
@@ -500,11 +522,7 @@ func newFilesExtractCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			params := map[string]any{"user_id": u.ID, "username": *u.Username, "path": args[0]}
-			if dest != "" {
-				params["dest"] = dest
-			}
-			if _, err := filesAgentCall(c.Context(), "files.extract", params); err != nil {
+			if _, err := filesAgentCall(c.Context(), filesops.MethodExtract, filesops.Extract(cliScope(u), args[0], dest)); err != nil {
 				cliAuditErr(c.Context(), "files.extract", "user", u.ID, &u.ID)
 				return err
 			}
