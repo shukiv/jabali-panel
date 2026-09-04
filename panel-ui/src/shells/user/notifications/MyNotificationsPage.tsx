@@ -17,7 +17,7 @@ import type { AxiosError } from "axios";
 import { DeleteOutlined, EditOutlined, PlusOutlined, SendOutlined } from "@icons";
 import { apiClient } from "../../../apiClient";
 import { useDeleteMutation, useUpdateMutation } from "../../../hooks/useQueries";
-import { kindColors, kindLabels, type ChannelKind } from "../../admin/notifications/channelKindConfig";
+import { kindColors, kindLabels, type ChannelKind } from "../../../utils/channelKindConfig";
 import { MyChannelDrawer, TENANT_KINDS, type MyChannel } from "./MyChannelDrawer";
 
 const CH_RESOURCE = "me/notifications/channels";
