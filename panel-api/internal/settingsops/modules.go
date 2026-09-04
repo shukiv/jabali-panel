@@ -135,16 +135,16 @@ func moduleLoopEffect(key string, before, after bool) Effect {
 }
 
 // dockerTenantEffect toggles tenant Docker via docker.tenant_set{enabled}. On the
-// enable direction the effect is flagged RevertOnEnableFailure so the adapter
-// clears the persisted flag if the host setup fails (GH #272 — unprivileged LXC).
+// enable direction the effect is flagged RevertOnFailure so the adapter clears the
+// persisted flag if the host setup fails (GH #272 — unprivileged LXC).
 func dockerTenantEffect(before, after bool) Effect {
 	if before == after {
 		return Effect{Kind: NoOp}
 	}
 	return Effect{
-		Kind:                  Changed,
-		Call:                  &AgentCall{Method: "docker.tenant_set", Params: map[string]any{"enabled": after}, Timeout: dockerTenantTimeout},
-		RevertOnEnableFailure: after, // revert only on a failed ENABLE
+		Kind:            Changed,
+		Call:            &AgentCall{Method: "docker.tenant_set", Params: map[string]any{"enabled": after}, Timeout: dockerTenantTimeout},
+		RevertOnFailure: after, // revert only on a failed ENABLE
 	}
 }
 

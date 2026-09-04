@@ -211,9 +211,9 @@ func applySettingsSideEffects(ctx context.Context, cmd *cobra.Command, repo repo
 		fmt.Fprintf(out, "Applying tenant Docker change (%s enabled=%v) — this may take several minutes…\n", call.Method, s.DockerAppsForUsersEnabled)
 		if err := dispatchSettingsAgentCall(ctx, *call); err != nil {
 			// On a failed ENABLE, revert the flag so the DB reflects that host setup
-			// did not happen. settingsops owns the decision (RevertOnEnableFailure);
+			// did not happen. settingsops owns the decision (RevertOnFailure);
 			// the repo write is this adapter's (mirrors the REST revert).
-			if plan.DockerTenant.RevertOnEnableFailure {
+			if plan.DockerTenant.RevertOnFailure {
 				rctx, rcancel := context.WithTimeout(context.Background(), 15*time.Second)
 				if cur, gerr := repo.Get(rctx); gerr == nil && cur != nil {
 					cur.DockerAppsForUsersEnabled = false

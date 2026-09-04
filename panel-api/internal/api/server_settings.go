@@ -319,21 +319,18 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 
 	// Optional-module transitions (postgres, docker marketplace + tenant, python,
 	// and the dns/mail/quota/security/ftp loop) are detected from `before` by
-	// settingsops.ModuleEffects below — no per-flag prev* locals needed here.
+	// settingsops.ModuleEffects below; the SSH config + sandbox transitions are
+	// detected from `before` by settingsops.SSHEffects — no per-flag prev* locals
+	// needed for either family.
 	prevHostname := current.Hostname
 	prevPanelBrandText := current.PanelBrandText
 	prevWebadminEnabled := current.StalwartWebadminEnabled
 	prevWebadminCIDRs := current.StalwartWebadminAllowCIDRs
 	prevTimezone := current.Timezone
-	prevSSHPort := current.SSHPort
-	prevSSHPasswordAuth := current.SSHPasswordAuth
-	prevSSHUserPasswordAuth := current.SSHUserPasswordAuth
-	prevSSHSandboxMode := current.SSHSandboxMode
 	prevCrowdsecSensitivity := current.CrowdsecSensitivity
 	prevCrowdsecBouncerMode := current.CrowdsecBouncerMode
 	prevCrowdsecLoginAllowlistEnabled := current.CrowdsecLoginAllowlistEnabled
 	prevCrowdsecLoginAllowlistTTLHours := current.CrowdsecLoginAllowlistTTLHours
-	prevDefaultNspawnImageVersion := current.DefaultNspawnImageVersion
 
 	if req.Hostname != nil {
 		current.Hostname = strings.TrimSpace(*req.Hostname)
@@ -873,15 +870,19 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 	// Optional-module lifecycle, continued: docker marketplace, tenant Docker, and
 	// the Python runtime — the same settingsops plan. Tenant Docker additionally
 	// reverts its persisted flag if an ENABLE fails (GH #272 — unprivileged LXC):
-	// the module flags the decision (RevertOnEnableFailure), this adapter runs the
-	// Repo write (dispatchDockerTenant). Python installs on enable only; disable
-	// leaves packages, which the module encodes as a no-op.
+	// the module flags the decision (RevertOnFailure), this adapter runs the Repo
+	// write via the shared dispatchReverting. Python installs on enable only;
+	// disable leaves packages, which the module encodes as a no-op.
 	if h.cfg.Agent != nil {
 		if call := modulePlan.Docker.Call; call != nil {
 			go h.dispatchSettingsCall(*call, "agent docker lifecycle failed")
 		}
 		if call := modulePlan.DockerTenant.Call; call != nil {
-			go h.dispatchDockerTenant(*call, modulePlan.DockerTenant.RevertOnEnableFailure)
+			var revert func(*models.ServerSettings)
+			if modulePlan.DockerTenant.RevertOnFailure {
+				revert = func(cur *models.ServerSettings) { cur.DockerAppsForUsersEnabled = false }
+			}
+			go h.dispatchReverting(*call, "agent docker.tenant_set failed", revert)
 		}
 		if call := modulePlan.Python.Call; call != nil {
 			go h.dispatchSettingsCall(*call, "agent python runtime install failed")
@@ -901,51 +902,49 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 		}()
 	}
 
-	// Apply SSH config to the OS via agent if any SSH-affecting field changed.
-	// The agent rewrites both /etc/ssh/sshd_config.d/jabali-sshd.conf (global,
-	// affects root/admin) and /etc/ssh/sshd_config.d/jabali-sftp.conf (M12
-	// Match Group block, affects hosting users), validates with sshd -t,
-	// and reloads sshd. See ADR-0028 for the M12 jabali-sftp design.
-	// Re-apply when ANY SSH-section field is in the request, even if
-	// its value matches the DB row. Without this an operator hitting a
-	// drifted file (DB=1, file=no) couldn't fix it by re-submitting —
-	// `current==prev` short-circuited the agent.Call. With this,
-	// re-saving Server Settings always re-syncs the file. The startup
-	// reconcile in serve.go handles the boot-time case; this handles
-	// the operator-driven re-sync without forcing a toggle off→on.
-	sshFieldTouched := req.SSHPort != nil || req.SSHPasswordAuth != nil || req.SSHUserPasswordAuth != nil
-	if (sshFieldTouched ||
-		current.SSHPort != prevSSHPort ||
-		current.SSHPasswordAuth != prevSSHPasswordAuth ||
-		current.SSHUserPasswordAuth != prevSSHUserPasswordAuth) && h.cfg.Agent != nil {
-		go func() {
-			bgCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			if _, err := h.cfg.Agent.Call(bgCtx, "system.set_ssh_config", map[string]any{
-				"port":               current.SSHPort,
-				"password_auth":      current.SSHPasswordAuth,
-				"user_password_auth": current.SSHUserPasswordAuth,
-			}); err != nil {
-				h.cfg.Log.Error("agent set_ssh_config failed", "err", err)
+	// SSH config + sandbox transitions (JAB-295). settingsops.SSHEffects is the
+	// single owner of both agent verbs, their params, timeouts, and the two
+	// distinct detection semantics:
+	//   - system.set_ssh_config rewrites /etc/ssh/sshd_config.d/jabali-sshd.conf
+	//     (global, affects root/admin) + jabali-sftp.conf (M12 Match Group, hosting
+	//     users), validates with `sshd -t`, and reloads (ADR-0028). It is
+	//     touched-based: re-saving ANY ssh field re-syncs the file even when the
+	//     value is unchanged, so an operator can heal a drifted file (DB=1, file=no)
+	//     by re-submitting. The startup reconcile in serve.go covers boot; this
+	//     covers the operator-driven re-sync.
+	//   - system.set_ssh_sandbox_mode writes the mode + default-image files the
+	//     connect wrapper reads on every exec (no reload). It is value-diff: it
+	//     fires only on a genuine change.
+	// AC5: a real change (Kind == Changed) is flagged RevertOnFailure, so a failed
+	// apply reverts the persisted SSH fields to their pre-merge values — the agent
+	// rolls the file back on `sshd -t` failure, and this keeps the DB from claiming
+	// a security state the host never accepted. The revert body is this adapter's
+	// (a repo write against its own handle), driven by the module's decision.
+	sshPlan := settingsops.SSHEffects(&before, current, settingsops.SSHTouched{
+		Config: req.SSHPort != nil || req.SSHPasswordAuth != nil || req.SSHUserPasswordAuth != nil,
+	})
+	if h.cfg.Agent != nil {
+		if call := sshPlan.Config.Call; call != nil {
+			var revert func(*models.ServerSettings)
+			if sshPlan.Config.RevertOnFailure {
+				revert = func(cur *models.ServerSettings) {
+					cur.SSHPort = before.SSHPort
+					cur.SSHPasswordAuth = before.SSHPasswordAuth
+					cur.SSHUserPasswordAuth = before.SSHUserPasswordAuth
+				}
 			}
-		}()
-	}
-
-	// Sandbox mode + default-image flips: write the matching files on
-	// disk so the wrapper picks them up on the next connect. No sshd
-	// reload needed (wrapper reads on every exec).
-	if (current.SSHSandboxMode != prevSSHSandboxMode ||
-		current.DefaultNspawnImageVersion != prevDefaultNspawnImageVersion) && h.cfg.Agent != nil {
-		go func() {
-			bgCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			if _, err := h.cfg.Agent.Call(bgCtx, "system.set_ssh_sandbox_mode", map[string]any{
-				"mode":          current.SSHSandboxMode,
-				"default_image": current.DefaultNspawnImageVersion,
-			}); err != nil {
-				h.cfg.Log.Error("agent set_ssh_sandbox_mode failed", "err", err)
+			go h.dispatchReverting(*call, "agent set_ssh_config failed", revert)
+		}
+		if call := sshPlan.Sandbox.Call; call != nil {
+			var revert func(*models.ServerSettings)
+			if sshPlan.Sandbox.RevertOnFailure {
+				revert = func(cur *models.ServerSettings) {
+					cur.SSHSandboxMode = before.SSHSandboxMode
+					cur.DefaultNspawnImageVersion = before.DefaultNspawnImageVersion
+				}
 			}
-		}()
+			go h.dispatchReverting(*call, "agent set_ssh_sandbox_mode failed", revert)
+		}
 	}
 
 	// CrowdSec sensitivity preset: re-apply when either the operator
@@ -1065,27 +1064,30 @@ func (h *serverSettingsHandler) dispatchSettingsCall(call settingsops.AgentCall,
 	}
 }
 
-// dispatchDockerTenant runs the tenant-Docker toggle detached, and — when the
-// module flagged this as an ENABLE that must not leave a false "enabling…" state
-// on failure (GH #272, unprivileged LXC) — reverts the persisted flag so the UI
-// reflects that host setup did not happen. settingsops owns the decision
-// (revertOnFailure); the revert itself (Repo.Get→clear→Upsert) is persistence and
-// stays this adapter's job because it needs the handler's own repo handle. Run
-// it in a goroutine.
-func (h *serverSettingsHandler) dispatchDockerTenant(call settingsops.AgentCall, revertOnFailure bool) {
+// dispatchReverting runs a settings AgentCall detached (like dispatchSettingsCall)
+// and, when revert is non-nil and the call fails, rolls the persisted row back so
+// the DB never claims a state the host rejected. The module owns the decision
+// (whether an effect reverts and in which direction — Effect.RevertOnFailure); the
+// caller supplies revert, which mutates the freshly-read row in place with the
+// fields this effect owns. The revert is a persistence write against the handler's
+// own repo handle, so it cannot be an agent Rollback. Used by tenant Docker
+// (GH #272) and the SSH config + sandbox verbs (JAB-295, AC5). Run in a goroutine;
+// the revert uses its own short-lived context so a call-timeout failure can still
+// persist the rollback.
+func (h *serverSettingsHandler) dispatchReverting(call settingsops.AgentCall, logMsg string, revert func(*models.ServerSettings)) {
 	bgCtx, cancel := context.WithTimeout(context.Background(), call.Timeout)
 	defer cancel()
 	if _, err := h.cfg.Agent.Call(bgCtx, call.Method, call.Params); err != nil {
-		h.cfg.Log.Error("agent docker.tenant_set failed", "params", call.Params, "err", err)
-		if !revertOnFailure {
+		h.cfg.Log.Error(logMsg, "params", call.Params, "err", err)
+		if revert == nil {
 			return
 		}
 		rctx, rcancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer rcancel()
 		if cur, gerr := h.cfg.Repo.Get(rctx); gerr == nil && cur != nil {
-			cur.DockerAppsForUsersEnabled = false
+			revert(cur)
 			if uerr := h.cfg.Repo.Upsert(rctx, cur); uerr != nil {
-				h.cfg.Log.Error("revert docker_apps_for_users after failed enable", "err", uerr)
+				h.cfg.Log.Error("revert settings after failed apply", "method", call.Method, "err", uerr)
 			}
 		}
 	}
