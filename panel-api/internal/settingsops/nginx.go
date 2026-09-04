@@ -41,20 +41,25 @@ type AgentCall struct {
 // Effect is one settings side effect. Call is non-nil iff Kind != NoOp; an
 // adapter dispatches Call under its own execution policy. Rollback is the
 // compensating call if the apply fails; nil for nginx (the agent's own `nginx -t`
-// gate reverts a bad config, so there is no panel-side rollback). The field is
-// the seam JAB-295 (SSH) will populate.
+// gate reverts a bad config, so there is no panel-side rollback) and nil for SSH
+// too — SSH's compensation is a persisted-row revert (see RevertOnFailure), not an
+// agent call, so the field stays unused (kept for a future verb whose rollback is
+// genuinely a second agent call).
 //
-// RevertOnEnableFailure marks an ENABLE transition whose persisted flag must be
-// cleared if Call fails (tenant Docker on unprivileged LXC — GH #272). The
-// module owns the decision (which module reverts, and only on the enable
-// direction); the adapter owns the execution — reverting the flag is a
-// persistence write against the adapter's own repo handle, not an agent call, so
-// it cannot be expressed as Rollback. Only DockerTenant sets this today.
+// RevertOnFailure marks a transition whose persisted state must be rolled back if
+// Call fails, so the DB never claims a state the host rejected. The module owns
+// the decision (which effects revert, and in which direction); the adapter owns
+// the execution — reverting is a persistence write against the adapter's own repo
+// handle, not an agent call, so it cannot be expressed as Rollback. Tenant Docker
+// sets it on the enable direction (GH #272); SSH config + sandbox set it on any
+// value change (JAB-295, AC5) so a failed apply cannot leave the row claiming an
+// unapplied security state (the agent rolls the file back on `sshd -t` failure,
+// but the panel DB would otherwise keep the new value).
 type Effect struct {
-	Kind                  Kind
-	Call                  *AgentCall
-	Rollback              *AgentCall
-	RevertOnEnableFailure bool
+	Kind            Kind
+	Call            *AgentCall
+	Rollback        *AgentCall
+	RevertOnFailure bool
 }
 
 // NginxTouched reports which nginx field families the adapter merged this
@@ -79,16 +84,18 @@ type NginxPlan struct {
 func NginxEffects(before, after *models.ServerSettings, touched NginxTouched) NginxPlan {
 	return NginxPlan{
 		Tunables: effect(touched.Tunables, "nginx.tunables.apply",
-			nginxTunablesParams(before), nginxTunablesParams(after)),
+			nginxTunablesParams(before), nginxTunablesParams(after), nginxApplyTimeout),
 		Cache: effect(touched.Cache, "nginx.cache.capacity_apply",
-			nginxCacheParams(before), nginxCacheParams(after)),
+			nginxCacheParams(before), nginxCacheParams(after), nginxApplyTimeout),
 	}
 }
 
-// effect builds one Effect: NoOp when the family was not touched, otherwise an
-// AgentCall with the after-params, classified Changed vs Reapply by comparing
-// before/after.
-func effect(touched bool, method string, beforeParams, afterParams map[string]any) Effect {
+// effect builds a touched-based Effect (the nginx / ssh-config re-sync semantics):
+// NoOp when the family was not touched, otherwise an AgentCall with the
+// after-params, classified Changed vs Reapply by comparing before/after. A
+// touched-but-unchanged family is a Reapply — still dispatched, so a re-save
+// re-syncs a drifted file.
+func effect(touched bool, method string, beforeParams, afterParams map[string]any, timeout time.Duration) Effect {
 	if !touched {
 		return Effect{Kind: NoOp}
 	}
@@ -98,7 +105,21 @@ func effect(touched bool, method string, beforeParams, afterParams map[string]an
 	}
 	return Effect{
 		Kind: kind,
-		Call: &AgentCall{Method: method, Params: afterParams, Timeout: nginxApplyTimeout},
+		Call: &AgentCall{Method: method, Params: afterParams, Timeout: timeout},
+	}
+}
+
+// diffEffect builds a value-diff Effect (no touched signal, no re-sync): NoOp iff
+// before == after, otherwise Changed. Used where the adapter has no touched flag
+// and only a genuine value change should dispatch (SSH sandbox mode). There is no
+// Reapply case — an unchanged value simply does not fire.
+func diffEffect(method string, beforeParams, afterParams map[string]any, timeout time.Duration) Effect {
+	if reflect.DeepEqual(beforeParams, afterParams) {
+		return Effect{Kind: NoOp}
+	}
+	return Effect{
+		Kind: Changed,
+		Call: &AgentCall{Method: method, Params: afterParams, Timeout: timeout},
 	}
 }
 

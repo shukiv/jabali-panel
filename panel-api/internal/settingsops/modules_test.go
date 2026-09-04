@@ -44,15 +44,15 @@ func TestModuleEffects_DockerMarketplace(t *testing.T) {
 func TestModuleEffects_DockerTenant_RevertOnlyOnEnable(t *testing.T) {
 	enable := ModuleEffects(&models.ServerSettings{}, &models.ServerSettings{DockerAppsForUsersEnabled: true})
 	require.Equal(t, &AgentCall{Method: "docker.tenant_set", Params: map[string]any{"enabled": true}, Timeout: 12 * time.Minute}, enable.DockerTenant.Call)
-	require.True(t, enable.DockerTenant.RevertOnEnableFailure, "failed ENABLE must revert the persisted flag")
+	require.True(t, enable.DockerTenant.RevertOnFailure, "failed ENABLE must revert the persisted flag")
 
 	disable := ModuleEffects(&models.ServerSettings{DockerAppsForUsersEnabled: true}, &models.ServerSettings{})
 	require.Equal(t, map[string]any{"enabled": false}, disable.DockerTenant.Call.Params)
-	require.False(t, disable.DockerTenant.RevertOnEnableFailure, "disable must not revert")
+	require.False(t, disable.DockerTenant.RevertOnFailure, "disable must not revert")
 
 	noop := ModuleEffects(&models.ServerSettings{}, &models.ServerSettings{})
 	require.Equal(t, NoOp, noop.DockerTenant.Kind)
-	require.False(t, noop.DockerTenant.RevertOnEnableFailure)
+	require.False(t, noop.DockerTenant.RevertOnFailure)
 }
 
 func TestModuleEffects_Python_EnableOnly(t *testing.T) {

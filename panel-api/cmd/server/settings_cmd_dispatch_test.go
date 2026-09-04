@@ -182,7 +182,7 @@ func TestApplySideEffects_PythonDisableNoDispatch(t *testing.T) {
 
 // TestApplySideEffects_DockerTenantRevertOnFailedEnable proves the CLI reverts
 // the persisted flag when a tenant-Docker ENABLE fails — settingsops flags the
-// decision (RevertOnEnableFailure), this adapter runs the repo write.
+// decision (RevertOnFailure), this adapter runs the repo write.
 func TestApplySideEffects_DockerTenantRevertOnFailedEnable(t *testing.T) {
 	stubSettingsDispatch(t, errors.New("unprivileged LXC: userns-remap unavailable"))
 	repo := &recordingRepo{current: &models.ServerSettings{DockerMarketplaceEnabled: true, DockerAppsForUsersEnabled: true}}
