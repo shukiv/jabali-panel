@@ -73,7 +73,7 @@ func TestBindDataFD_DeliversContentThenEOF(t *testing.T) {
 
 func TestBuildBwrapArgv_ForwardsCommandAndIsolates(t *testing.T) {
 	// interactive
-	argv := buildBwrapArgv("alice", "/home/alice", 7, 8, "/bin/bash", nil)
+	argv := buildBwrapArgv("alice", "/home/alice", 7, 8, "/bin/bash", interactiveInner("/bin/bash", nil))
 	joined := strings.Join(argv, " ")
 	for _, must := range []string{
 		"--bind /home/alice /home/alice",
@@ -92,10 +92,24 @@ func TestBuildBwrapArgv_ForwardsCommandAndIsolates(t *testing.T) {
 		t.Errorf("interactive should end in `bash -l`, got %v", argv[len(argv)-2:])
 	}
 	// command mode (scp/git/ssh host cmd)
-	argv2 := buildBwrapArgv("alice", "/home/alice", 7, 8, "/bin/bash", []string{"-c", "scp -t /home/alice"})
+	argv2 := buildBwrapArgv("alice", "/home/alice", 7, 8, "/bin/bash", interactiveInner("/bin/bash", []string{"-c", "scp -t /home/alice"}))
 	tail := argv2[len(argv2)-3:]
 	if tail[0] != "/bin/bash" || tail[1] != "-c" || tail[2] != "scp -t /home/alice" {
 		t.Errorf("command mode should forward `-c`, got %v", tail)
+	}
+	// GH #1458: --exec mode runs the cron argv DIRECTLY inside the jail — no
+	// shell, no `-c` — so the same isolation flags wrap a python/php/node cron.
+	execInner := []string{"python3", "/home/alice/site/manage.py", "migrate"}
+	argv3 := buildBwrapArgv("alice", "/home/alice", 7, 8, "/bin/bash", execInner)
+	if !strings.Contains(strings.Join(argv3, " "), "--unshare-all") {
+		t.Error("exec mode must still carry the isolation flags")
+	}
+	tail3 := argv3[len(argv3)-3:]
+	if tail3[0] != "python3" || tail3[1] != "/home/alice/site/manage.py" || tail3[2] != "migrate" {
+		t.Errorf("exec mode should run the argv directly, got %v", tail3)
+	}
+	if argv3[len(argv3)-4] != "--" {
+		t.Errorf("exec argv must sit directly after bwrap `--`, got %v", argv3[len(argv3)-4:])
 	}
 }
 

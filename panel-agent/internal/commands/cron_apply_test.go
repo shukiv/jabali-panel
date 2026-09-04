@@ -438,6 +438,32 @@ func TestBuildCronServiceContent_HTTPTrigger(t *testing.T) {
 // GH #403: a cron whose command targets a docroot gates the unit on
 // ConditionPathIsDirectory (systemd-native, no exec) instead of the former
 // cron-precheck bash ExecStartPre that tripped the M33 suspicious-exec burst.
+func TestBuildCronServiceContent_SandboxesTenantInterpreters(t *testing.T) {
+	// GH #1458: a tenant php/python cron must run inside the per-user SSH
+	// sandbox (jabali-ssh-shell --exec), so a command that shells out can't
+	// escape the jail. Root crons and http-triggers are not wrapped.
+	php := &cronvalidate.Command{Argv: []string{"php", "/home/alice/domains/x/public_html/task.php"}}
+
+	tenant := buildCronServiceContent("job1", "task", []*cronvalidate.Command{php}, "alice", []string{"/home/alice/domains/x/public_html"})
+	if !contains(tenant, "ExecStart=/usr/local/bin/jabali-ssh-shell --exec 'php' '/home/alice/domains/x/public_html/task.php'") {
+		t.Errorf("tenant php cron must be sandboxed:\n%s", tenant)
+	}
+
+	root := buildCronServiceContent("job1", "task", []*cronvalidate.Command{php}, "root", []string{"/home/alice/domains/x/public_html"})
+	if contains(root, "jabali-ssh-shell") {
+		t.Errorf("root cron must NOT be sandboxed:\n%s", root)
+	}
+	if !contains(root, "ExecStart='php' '/home/alice/domains/x/public_html/task.php'") {
+		t.Errorf("root cron must keep the raw argv:\n%s", root)
+	}
+
+	py := &cronvalidate.Command{Argv: []string{"python3", "/home/alice/site/manage.py", "migrate"}}
+	django := buildCronServiceContent("job2", "django", []*cronvalidate.Command{py}, "alice", nil)
+	if !contains(django, "ExecStart=/usr/local/bin/jabali-ssh-shell --exec 'python3' '/home/alice/site/manage.py' 'migrate'") {
+		t.Errorf("tenant python cron must be sandboxed:\n%s", django)
+	}
+}
+
 func TestBuildCronServiceContent_DocrootCondition(t *testing.T) {
 	dr := "/home/alice/domains/a.example.com/public_html"
 	cmd := &cronvalidate.Command{Argv: []string{"php", dr + "/wp-cron.php"}}

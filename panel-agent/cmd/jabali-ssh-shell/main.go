@@ -57,12 +57,26 @@ func main() {
 }
 
 func run() error {
+	// GH #1458: cron and run-now invoke `jabali-ssh-shell --exec <argv...>` to
+	// run one validated command inside the SAME per-user sandbox as SSH, so a
+	// cron that shells out (php passthru, python os.system, node child_process,
+	// wp eval) stays confined instead of escaping to an unsandboxed shell as the
+	// tenant uid. Non-interactive: no login shell, no bash re-parse.
+	var execArgv []string
+	if len(os.Args) >= 3 && os.Args[1] == "--exec" {
+		execArgv = os.Args[2:]
+	}
+
 	// GH #658: uid 0 (root) must never be trapped in the tenant sandbox. If
 	// this wrapper is ever root's login shell — e.g. a mis-created "root"
 	// panel user (GH #429) chsh'd root here — hand root a real login shell
 	// instead of the sandbox/nologin path, so a chsh mistake can't lock the
-	// operator out of SSH. The sandbox is only ever for hosting tenants.
+	// operator out of SSH. The sandbox is only ever for hosting tenants; a root
+	// cron (admin, RunAsRoot) runs its command directly, unsandboxed by design.
 	if os.Getuid() == 0 {
+		if execArgv != nil {
+			return execArgvDirect(execArgv)
+		}
 		return execRootLoginShell()
 	}
 	mode, err := readMode()
@@ -71,13 +85,27 @@ func run() error {
 	}
 	switch mode {
 	case modeBubblewrap:
-		return dispatchBubblewrap()
+		return dispatchBubblewrap(execArgv)
 	case modeNspawn:
-		return dispatchNspawn()
+		return dispatchNspawn(execArgv)
 	default:
 		return execNologin(fmt.Sprintf("unrecognised mode %q in %s (allowed: %s, %s)",
 			mode, modeFile, modeBubblewrap, modeNspawn))
 	}
+}
+
+// execArgvDirect resolves argv[0] on PATH and execs it (root --exec cron path,
+// unsandboxed by design). Returns an error only if the binary can't be found.
+func execArgvDirect(argv []string) error {
+	bin := argv[0]
+	if !strings.Contains(bin, "/") {
+		resolved, err := exec.LookPath(bin)
+		if err != nil {
+			return fmt.Errorf("exec %q: %w", bin, err)
+		}
+		bin = resolved
+	}
+	return syscall.Exec(bin, argv, os.Environ())
 }
 
 // readMode pulls the single-line mode from /etc/jabali/ssh-sandbox-mode.
@@ -109,7 +137,10 @@ func readMode() (string, error) {
 // /etc/ssh, every other tenant's /home, and every host Unix socket
 // (/run is a fresh tmpfs). On any setup error we fall back to nologin —
 // never an unsandboxed shell.
-func dispatchBubblewrap() error {
+// dispatchBubblewrap builds the per-user jail and execs into it. execArgv is
+// nil for an SSH login (interactive shell or an sshd `-c` command); for a cron
+// / run-now invocation (GH #1458) it is the validated command run directly.
+func dispatchBubblewrap(execArgv []string) error {
 	bwrap, err := exec.LookPath("bwrap")
 	if err != nil {
 		return execNologin(fmt.Sprintf("bwrap not found in PATH (apt install bubblewrap): %v", err))
@@ -154,7 +185,11 @@ func dispatchBubblewrap() error {
 	keepAlive := []*os.File{f1, f2}
 
 	shell := pickShell()
-	argv := buildBwrapArgv(name, home, passwdFD, groupFD, shell, os.Args[1:])
+	inner := execArgv
+	if inner == nil {
+		inner = interactiveInner(shell, os.Args[1:])
+	}
+	argv := buildBwrapArgv(name, home, passwdFD, groupFD, shell, inner)
 
 	err = syscall.Exec(bwrap, argv, sandboxBwrapEnv())
 	// Exec only returns on failure. Reference keepAlive past the exec so
@@ -163,12 +198,12 @@ func dispatchBubblewrap() error {
 	return execNologin(fmt.Sprintf("exec bwrap: %v", err))
 }
 
-// buildBwrapArgv assembles the bwrap command line. When the wrapper was
-// invoked as `jabali-ssh-shell -c "<cmd>"` (sshd's non-interactive form,
-// used by scp/rsync/git-over-ssh and `ssh host cmd`), the command is
-// forwarded into the sandbox as `<shell> -c "<cmd>"`. Otherwise a login
-// shell. invokedArgs is os.Args[1:].
-func buildBwrapArgv(name, home string, passwdFD, groupFD uintptr, shell string, invokedArgs []string) []string {
+// buildBwrapArgv assembles the bwrap command line. `inner` is the command to
+// run inside the jail after bwrap's `--`: a login shell (`<shell> -l`), an
+// sshd-forwarded command (`<shell> -c "<cmd>"`), or — for a cron/run-now
+// invocation (GH #1458) — the validated cron argv run directly with no shell.
+// The caller computes `inner`; buildBwrapArgv only assembles the jail around it.
+func buildBwrapArgv(name, home string, passwdFD, groupFD uintptr, shell string, inner []string) []string {
 	argv := []string{
 		"bwrap",
 		"--ro-bind", "/usr", "/usr",
@@ -254,13 +289,19 @@ func buildBwrapArgv(name, home string, passwdFD, groupFD uintptr, shell string, 
 		argv = append(argv, "--setenv", "LANG", lang)
 	}
 	argv = append(argv, "--")
-	// Forward an SSH-supplied command, else an interactive login shell.
-	if len(invokedArgs) >= 2 && invokedArgs[0] == "-c" {
-		argv = append(argv, shell, "-c", invokedArgs[1])
-	} else {
-		argv = append(argv, shell, "-l")
-	}
+	argv = append(argv, inner...)
 	return argv
+}
+
+// interactiveInner returns the post-`--` command for an SSH login: an
+// sshd-forwarded command (`<shell> -c "<cmd>"`, used by scp/rsync/git-over-ssh
+// and `ssh host cmd`) when invoked as `-c "<cmd>"`, else an interactive login
+// shell. invokedArgs is os.Args[1:].
+func interactiveInner(shell string, invokedArgs []string) []string {
+	if len(invokedArgs) >= 2 && invokedArgs[0] == "-c" {
+		return []string{shell, "-c", invokedArgs[1]}
+	}
+	return []string{shell, "-l"}
 }
 
 // filterPasswd returns /etc/passwd reduced to system accounts (uid <
@@ -394,7 +435,7 @@ func runtimeKeepAlive(files []*os.File) {
 // dispatchNspawn will read /etc/jabali/users/<username>/nspawn-
 // image (per-user image pin) and sudo into the M13-shipped
 // jabali-nspawn-enter helper. Step 3 follow-up.
-func dispatchNspawn() error {
+func dispatchNspawn(_ []string) error {
 	if _, err := exec.LookPath("systemd-nspawn"); err != nil {
 		return execNologin(fmt.Sprintf("systemd-nspawn not found (apt install systemd-container): %v", err))
 	}
