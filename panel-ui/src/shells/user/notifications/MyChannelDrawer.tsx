@@ -15,7 +15,7 @@ import {
   kindLabels,
   type ChannelFormConfig,
   type ChannelKind,
-} from "../../admin/notifications/channelKindConfig";
+} from "../../../utils/channelKindConfig";
 
 // TENANT_KINDS — the safe default server allowlist, used as a fallback only
 // (first paint / older API). JAB-326: the real list of creatable kinds comes

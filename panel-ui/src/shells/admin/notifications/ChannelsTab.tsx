@@ -19,7 +19,7 @@ import {
 } from "../../../hooks/useQueries";
 import { useTableURL } from "../../../hooks/useTableURL";
 import { AdminChannelDrawer, type NotificationChannel } from "./AdminChannelDrawer";
-import { kindColors, kindLabels } from "./channelKindConfig";
+import { kindColors, kindLabels } from "../../../utils/channelKindConfig";
 
 const RESOURCE = "admin/notifications/channels";
 

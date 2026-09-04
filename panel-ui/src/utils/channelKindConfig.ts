@@ -1,7 +1,9 @@
-// channelKindConfig.tsx — per-kind form fields + palette for the M14
-// notification channel drawer. Keeps the dynamic form code in
-// AdminChannelDrawer.tsx short; adding a new channel kind is a diff to
-// this file only.
+// channelKindConfig.ts — per-kind form fields + palette for the M14
+// notification channel drawers. A neutral util (JAB-336): the admin drawer,
+// the tenant drawer, the channels tab and the tenant-notifications card all
+// read from it, so it no longer lives under the admin shell with the tenant
+// reaching into it. Pure data/types (no JSX). Adding a new channel kind is a
+// diff to this file only.
 
 export type ChannelKind =
   | "email"

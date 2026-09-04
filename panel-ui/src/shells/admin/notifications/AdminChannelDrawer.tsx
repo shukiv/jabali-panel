@@ -15,7 +15,7 @@ import {
   kindLabels,
   type ChannelFormConfig,
   type ChannelKind,
-} from "./channelKindConfig";
+} from "../../../utils/channelKindConfig";
 
 export type NotificationChannel = {
   id: string;
