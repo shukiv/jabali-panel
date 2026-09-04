@@ -1,8 +1,14 @@
 import { useTranslation } from "react-i18next";
 import { useState, useEffect, useRef } from "react";
 import { Modal, Typography, Button, Space, Spin, theme } from "antd";
-import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
+import { feedback } from "../lib/feedback"; // GH #970: themed toasts
 import { PauseOutlined, PlayCircleOutlined, ClearOutlined } from "@ant-design/icons";
+import {
+  MAX_LOG_LINES,
+  capLogLines,
+  stripTrailingNewline,
+  buildGoAccessHttpUrl,
+} from "../utils/logStream";
 
 const { Text } = Typography;
 
@@ -14,50 +20,9 @@ interface LogStreamModalProps {
   logType: "access" | "error" | "goaccess";
 }
 
-// Trim a single trailing CR/LF (or both) — accommodates servers that
-// send "line\n", "line\r\n", or "line" interchangeably. Keeps inner
-// newlines untouched in case a single frame carries a multi-line block.
-// The stream is "recent lines", not an archive: without a ceiling every frame
-// appended to React state and each render re-joined the WHOLE array, so cost
-// grew quadratically over the stream's lifetime. On a moderately busy domain
-// (~10 lines/s) a 15-minute stream reaches ~9k lines and the tab janks within
-// minutes while memory keeps climbing. Keep the newest MAX_LOG_LINES, which is
-// far more than fits on screen and matches what the feature advertises.
-const MAX_LOG_LINES = 2000;
-
-function capLogLines(lines: string[]): string[] {
-  return lines.length > MAX_LOG_LINES ? lines.slice(-MAX_LOG_LINES) : lines;
-}
-
-const stripTrailingNewline = (s: string): string => {
-  if (typeof s !== "string") return s;
-  if (s.endsWith("\r\n")) return s.slice(0, -2);
-  if (s.endsWith("\n") || s.endsWith("\r")) return s.slice(0, -1);
-  return s;
-};
-
-// Convert the WebSocket stream URL (ws[s]://host/api/v1/logs/stream/<key>)
-// into the HTTP goaccess render URL. The HTTP route serves the GoAccess
-// HTML snapshot with its own relaxed CSP (script-src 'self' 'unsafe-inline'
-// 'unsafe-eval'), which the previous srcdoc-via-WS path could not — srcdoc
-// inherits the panel's strict parent CSP and meta CSP can only tighten.
-//
-// Returns null if streamUrl can't be parsed into the expected shape (caller
-// then shows a "no stream" placeholder instead of crashing).
-const buildGoAccessHttpUrl = (streamUrl: string): string | null => {
-  try {
-    const u = new URL(streamUrl);
-    if (u.protocol === "ws:") u.protocol = "http:";
-    else if (u.protocol === "wss:") u.protocol = "https:";
-    // Append /goaccess.html if not already present (some callers may pre-build).
-    if (!u.pathname.endsWith("/goaccess.html")) {
-      u.pathname = u.pathname.replace(/\/+$/, "") + "/goaccess.html";
-    }
-    return u.toString();
-  } catch {
-    return null;
-  }
-};
+// The stream lifecycle stays in this component; the pure pieces it relies on
+// (MAX_LOG_LINES cap, newline trim, GoAccess URL derivation) live in
+// ../utils/logStream so they can be unit-tested (JAB-296).
 
 export const LogStreamModal = ({ visible, onClose, streamUrl, title, logType }: LogStreamModalProps) => {
   const { t } = useTranslation();
