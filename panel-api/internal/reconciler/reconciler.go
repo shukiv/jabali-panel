@@ -2859,6 +2859,19 @@ func (r *Reconciler) tryACMEOrFallback(ctx context.Context, domain *models.Domai
 		staging = r.cfg.ACME.StagingOnly
 	}
 
+	// GH #1449: a web-off domain (mail-only) has NO webroot — DocRoot is ""
+	// and we serve no apex vhost — so an HTTP-01 attempt is guaranteed to
+	// fail on the empty webroot AND its apex points at the tenant's real web
+	// host, not us. Both would just burn Let's Encrypt's failed-auth quota.
+	// Issue the mail-support cert via DNS-01 when we host the zone (the TXT
+	// validates the apex + mail SANs regardless of where the A record points),
+	// otherwise park with a clear reason — never HTTP-01. The self-signed
+	// bootstrap above already keeps Stalwart/webmail serving TLS meanwhile.
+	if domain.WebDisabled {
+		r.tryDNS01OrPark(ctx, domain, cert, srv, staging)
+		return
+	}
+
 	{
 		preCtx, preCancel := context.WithTimeout(ctx, 6*time.Second)
 		addrs, queried := r.dnsPreflight(preCtx, domain.Name)

@@ -205,10 +205,13 @@ export const UserDomainList = () => {
         <Dropdown
           trigger={["click"]}
           menu={{
+            // GH #1449 + #1417/#1419: only offer a service the server actually
+            // runs — hide "DNS Zone" when the DNS module is off, "Mail Domain"
+            // when mail is off (`!== false` treats the pre-load state as on).
             items: [
               { key: "web", label: "Web Domain" },
-              { key: "dns", label: "DNS Zone" },
-              { key: "mail", label: "Mail Domain" },
+              ...(caps?.dns_enabled !== false ? [{ key: "dns", label: "DNS Zone" }] : []),
+              ...(caps?.mail_enabled !== false ? [{ key: "mail", label: "Mail Domain" }] : []),
             ],
             onClick: ({ key }) => openDrawer(key as DomainDrawerMode),
           }}
