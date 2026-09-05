@@ -59,10 +59,13 @@ export interface DnsZoneInventoryAudience {
     message: string;
     description: string;
   };
-  // header is the page title strip (icon + text).
+  // header is the page title strip (icon + text). `extra` is an optional action
+  // rendered opposite the title — the tenant supplies an "Add DNS Zone" button
+  // (GH #1541); the admin adapter omits it (zones there are created via domains).
   header: {
     icon: React.ReactNode;
     title: string;
+    extra?: React.ReactNode;
   };
 }
 
@@ -225,9 +228,21 @@ export const DnsZoneInventory = ({ audience }: { audience: DnsZoneInventoryAudie
   const [activeTab, setActiveTab] = useTabParam<"zones" | "dnssec">("zones");
   return (
     <div>
-      <Typography.Title level={3} style={{ marginTop: 0, marginBottom: 16 }}>
-        {audience.header.icon} {audience.header.title}
-      </Typography.Title>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          marginBottom: 16,
+          flexWrap: "wrap",
+          rowGap: 8,
+        }}
+      >
+        <Typography.Title level={3} style={{ margin: 0 }}>
+          {audience.header.icon} {audience.header.title}
+        </Typography.Title>
+        {audience.header.extra}
+      </div>
       <Card
         tabList={[
           { key: "zones", tab: "Zones" },

@@ -93,3 +93,21 @@ describe("UserDomainList DNS action gating (GH #1419)", () => {
     expect(screen.queryByText("DNS")).not.toBeInTheDocument();
   });
 });
+
+// GH #1541: the old "Add" split (Web / DNS / Mail) is replaced by a single
+// "Add Web Domain" button that opens the drawer in web mode.
+describe("UserDomainList Add Web Domain button (GH #1541)", () => {
+  it("shows a single Add Web Domain button that opens the web drawer", async () => {
+    render(
+      <MemoryRouter>
+        <App>
+          <UserDomainList />
+        </App>
+      </MemoryRouter>,
+    );
+    const btn = await screen.findByRole("button", { name: /add web domain/i });
+    fireEvent.click(btn);
+    // The drawer opened in web mode — its domain-name input appears.
+    expect(await screen.findByPlaceholderText("e.g., example.com")).toBeInTheDocument();
+  });
+});

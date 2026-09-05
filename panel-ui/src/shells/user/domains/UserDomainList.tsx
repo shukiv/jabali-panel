@@ -1,26 +1,22 @@
 // UserDomainList — tenant view of the domains they own. JAB-300: a thin
 // adapter over the shared <DomainInventory> module. This shell owns only the
-// tenant-specific header: the title and the "Add" split (Web / DNS Zone /
-// Mail Domain) that opens the UserDomainDrawer. The table, columns, row
-// actions and lifecycle live in the module, shared byte-for-byte with the
-// admin list.
+// tenant-specific header: the title and the "Add Web Domain" button that opens
+// the UserDomainDrawer. The table, columns, row actions and lifecycle live in
+// the module, shared byte-for-byte with the admin list.
+//
+// GH #1541 (johnnyq): the old "Add" split (Web / DNS Zone / Mail Domain) is
+// gone. Adding a website is the primary action, so it's a single "Add Web
+// Domain" button; mail and DNS are opted into from inside that flow (checkboxes
+// in the drawer) or added later from the Mail Domains / DNS Zones pages.
 import { PlusSquareOutlined, GlobalOutlined } from "@icons";
-import { Button, Card, Dropdown, Space, Typography } from "antd";
+import { Button, Card, Space, Typography } from "antd";
 import { useState } from "react";
 
 import { DomainInventory } from "../../../components/domains/DomainInventory";
-import { UserDomainDrawer, type DomainDrawerMode } from "./UserDomainDrawer";
-import { useServerCapabilities } from "../../../hooks/useServerCapabilities";
+import { UserDomainDrawer } from "./UserDomainDrawer";
 
 export const UserDomainList = () => {
-  const { data: caps } = useServerCapabilities();
   const [drawerOpen, setDrawerOpen] = useState(false);
-  // GH #1449: the same drawer serves three add-flows (web / dns-only / mail-only).
-  const [drawerMode, setDrawerMode] = useState<DomainDrawerMode>("web");
-  const openDrawer = (mode: DomainDrawerMode) => {
-    setDrawerMode(mode);
-    setDrawerOpen(true);
-  };
 
   return (
     <div>
@@ -36,34 +32,19 @@ export const UserDomainList = () => {
         <Typography.Title level={3} style={{ margin: 0 }}>
           <GlobalOutlined /> Domains
         </Typography.Title>
-        {/* GH #1449: Web / DNS / Mail are independent services — offer each as
-            its own add-flow. "Web Domain" keeps the full form (with Mail + DNS
-            opt-outs); the other two add a docroot-less DNS-only zone or a
-            mail-only domain. */}
-        <Dropdown
-          trigger={["click"]}
-          menu={{
-            // GH #1449 + #1417/#1419: only offer a service the server actually
-            // runs — hide "DNS Zone" when the DNS module is off, "Mail Domain"
-            // when mail is off (`!== false` treats the pre-load state as on).
-            items: [
-              { key: "web", label: "Web Domain" },
-              ...(caps?.dns_enabled !== false ? [{ key: "dns", label: "DNS Zone" }] : []),
-              ...(caps?.mail_enabled !== false ? [{ key: "mail", label: "Mail Domain" }] : []),
-            ],
-            onClick: ({ key }) => openDrawer(key as DomainDrawerMode),
-          }}
+        <Button
+          type="primary"
+          icon={<PlusSquareOutlined />}
+          onClick={() => setDrawerOpen(true)}
         >
-          <Button type="primary" icon={<PlusSquareOutlined />}>
-            Add
-          </Button>
-        </Dropdown>
+          Add Web Domain
+        </Button>
       </Space>
 
       <Card>
         <DomainInventory audience={{ kind: "tenant" }} />
       </Card>
-      <UserDomainDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} mode={drawerMode} />
+      <UserDomainDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} mode="web" />
     </div>
   );
 };
