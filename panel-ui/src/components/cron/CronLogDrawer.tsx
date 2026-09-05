@@ -1,13 +1,13 @@
 import { useTranslation } from "react-i18next";
 import { useState } from "react";
 import { Drawer, Button, Space, Card, Select, Spin } from "antd";
-import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
+import { feedback } from "../../lib/feedback"; // GH #970: themed toasts
 import {
   CopyOutlined,
   ReloadOutlined,
 } from "@icons";
 import { useQuery } from "@tanstack/react-query";
-import { getCronJobLog } from "../../../apiClient";
+import { getCronJobLog } from "../../apiClient";
 
 interface CronLogDrawerProps {
   open: boolean;
