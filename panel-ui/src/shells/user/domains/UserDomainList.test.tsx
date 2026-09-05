@@ -1,11 +1,12 @@
-// UserDomainList.test.tsx — GH #1419. The Domains list Actions menu showed a
-// "DNS" entry even when the DNS module is off, leading to a page that only
-// redirects + 403s. It must be hidden, gated on the shared server-capabilities
-// dns flag (the same signal the sidebar uses). Real AntD table + dropdown run.
+// UserDomainList.test.tsx — GH #1543 + #1541. The tenant Domains list: the
+// domain name links to its own Web Domain page, and a single "Add Web Domain"
+// button opens the create drawer. DNS gating moved off the row menu (which is
+// now just Enable/Delete) onto the Web Domain page's DNS tab — see
+// WebDomainPage.test for the relocated GH #1419 coverage.
 import { App } from "antd";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { UserDomainList } from "./UserDomainList";
 
@@ -51,49 +52,9 @@ vi.mock("../../../hooks/useTableURL", () => ({
   }),
 }));
 
-let dnsEnabled = true;
 vi.mock("../../../hooks/useServerCapabilities", () => ({
-  useServerCapabilities: () => ({ data: { dns_enabled: dnsEnabled } }),
+  useServerCapabilities: () => ({ data: { dns_enabled: true } }),
 }));
-
-const openRowMenu = async () => {
-  const moreBtn = await screen.findByRole("button", { name: /more/i }, { timeout: 5000 });
-  fireEvent.click(moreBtn);
-};
-
-beforeEach(() => {
-  dnsEnabled = true;
-});
-
-describe("UserDomainList DNS action gating (GH #1419)", () => {
-  it("shows the DNS action when the DNS module is enabled", async () => {
-    render(
-      <MemoryRouter>
-        <App>
-          <UserDomainList />
-        </App>
-      </MemoryRouter>,
-    );
-    await openRowMenu();
-    expect(await screen.findByText("DNS")).toBeInTheDocument();
-  });
-
-  it("hides the DNS action when the DNS module is disabled", async () => {
-    dnsEnabled = false;
-    render(
-      <MemoryRouter>
-        <App>
-          <UserDomainList />
-        </App>
-      </MemoryRouter>,
-    );
-    await openRowMenu();
-    // Another always-present action confirms the menu opened. GH #1543 stripped
-    // the tenant menu to DNS + Enable/Delete, so Delete is the stable anchor.
-    expect(await screen.findByText("Delete")).toBeInTheDocument();
-    expect(screen.queryByText("DNS")).not.toBeInTheDocument();
-  });
-});
 
 // GH #1543: on the tenant list the domain name links to its own Web Domain
 // page (not the live site); a separate launch icon still opens the live site.
