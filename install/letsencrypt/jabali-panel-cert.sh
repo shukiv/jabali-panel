@@ -129,6 +129,14 @@ case "$kind" in
   *)
     install -m 0640 -o root -g jabali "$src/fullchain.pem" "$dst_dir/panel.crt"
     install -m 0640 -o root -g jabali "$src/privkey.pem"   "$dst_dir/panel.key"
+    # GH #1507: a CA (Let's Encrypt) cert is now on :8443 — enable HSTS. The vhost
+    # includes this snippet; install.sh writes it OFF while self-signed. The ON
+    # body is byte-identical to install.sh's _write_panel_hsts_snippet (drift test).
+    install -d -m 0755 /etc/nginx/snippets
+    cat > /etc/nginx/snippets/jabali-panel-hsts.conf <<'HSTS_ON'
+# GH #1507: panel serves a CA-issued cert — HSTS enabled.
+add_header Strict-Transport-Security "max-age=31536000" always;
+HSTS_ON
     systemctl reload nginx           || echo "jabali-panel-cert.sh: nginx reload failed (continuing)" >&2
     # --no-block on jabali-panel: this hook is invoked synchronously by
     # the panel-agent ssl.panel.issue command, whose CALLER is

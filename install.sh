@@ -7510,6 +7510,37 @@ _nginx_http2_form() {
   return 0
 }
 
+# GH #1507: the panel :8443 vhost serves its HSTS header via an include snippet
+# whose content depends on the cert kind. Strict-Transport-Security over a
+# SELF-SIGNED cert hard-blocks the browser with no exception path (and a compliant
+# browser discards STS received over an unauthenticated connection per RFC 6797,
+# so it protects nothing there) — so the header is OMITTED until a CA cert is
+# deployed. jabali-panel-cert.sh writes it ON at LE deploy; the ssl.panel.selfsign
+# agent verb writes it OFF on a self-signed regen. Fail-safe: any inspection error
+# resolves to OFF — a missing header is harmless, a wrong ON is the lockout this
+# fixes. The ON body is kept byte-identical to jabali-panel-cert.sh (drift test).
+_write_panel_hsts_snippet() {
+  local cert_file="${1:-/etc/jabali/tls/panel.crt}"
+  local snippet="/etc/nginx/snippets/jabali-panel-hsts.conf"
+  install -d -m 0755 /etc/nginx/snippets
+  local issuer_o=""
+  if [[ -f "$cert_file" ]]; then
+    issuer_o="$(openssl x509 -in "$cert_file" -noout -issuer 2>/dev/null \
+      | sed -n 's/.*O *= *\([^,/]*\).*/\1/p' | sed 's/[[:space:]]*$//')"
+  fi
+  if [[ -n "$issuer_o" && "$issuer_o" != "Jabali Panel" ]]; then
+    cat > "$snippet" <<'HSTS_ON'
+# GH #1507: panel serves a CA-issued cert — HSTS enabled.
+add_header Strict-Transport-Security "max-age=31536000" always;
+HSTS_ON
+  else
+    cat > "$snippet" <<'HSTS_OFF'
+# GH #1507: HSTS omitted — the panel is serving a self-signed cert. It hard-blocks
+# the browser over an untrusted cert; enabled automatically once a CA cert deploys.
+HSTS_OFF
+  fi
+}
+
 install_nginx_panel_vhost() {
   _log "installing nginx panel vhost (M25 Step 4 — TLS terminator on :8443)"
 
@@ -7586,6 +7617,10 @@ d}" "$panel_vhost_file"
   mkdir -p /etc/nginx/sites-available/includes /etc/nginx/snippets
   [[ -f /etc/nginx/sites-available/includes/phpmyadmin.conf ]] || : > /etc/nginx/sites-available/includes/phpmyadmin.conf
   [[ -f /etc/nginx/snippets/jabali-adminer.conf ]] || : > /etc/nginx/snippets/jabali-adminer.conf
+  # GH #1507: the vhost `include`s the HSTS snippet — it MUST exist before the
+  # nginx -t below or the whole panel vhost fails validation. Content is keyed on
+  # the live cert kind (self-signed → empty header; CA → HSTS on).
+  _write_panel_hsts_snippet "$tls_cert"
 
   # GH #1146: the panel vhost's /dav/ location references limit_req zone
   # `jabali_webdav`, which is declared at http{} scope — install it into conf.d
