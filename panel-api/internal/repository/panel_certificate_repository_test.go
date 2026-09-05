@@ -73,6 +73,46 @@ func TestPanelCert_EnsureDefault_CreatesBothKinds(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestPanelCert_EnsureDefault_DoesNotRenameMailRow is the JAB-389 guard:
+// when the panel hostname changes and both rows already exist, the hostname
+// row is re-synced to the new FQDN (so the panel cert follows) but the mail
+// row is left exactly as seeded — no silent cascade to mail.<new-fqdn>.
+//
+// The assertion is structural: sqlmock runs in strict-ordered mode, so the
+// only writes it tolerates are the hostname row's re-sync. If ensureOne ever
+// renamed the mail row, its SELECT+UPDATE would have no matching expectation
+// and the test fails. Reverting the renameOnDrift guard reds this test.
+func TestPanelCert_EnsureDefault_DoesNotRenameMailRow(t *testing.T) {
+	t.Parallel()
+	gdb, mock, raw := newMockDB(t)
+	defer raw.Close()
+	repo := repository.NewPanelCertificateRepository(gdb)
+
+	hostRow := func() *sqlmock.Rows {
+		return sqlmock.NewRows([]string{"kind", "id", "hostname", "status", "cert_pem_path"}).
+			AddRow("hostname", 1, "old.example.com", "issued", "/etc/jabali/tls/panel.crt")
+	}
+
+	// hostname kind exists at the OLD name -> drift -> re-synced to the new FQDN.
+	mock.ExpectQuery(pcSelect).WithArgs("hostname", 1).WillReturnRows(hostRow())
+	// Upsert re-reads the row, then updates it.
+	mock.ExpectQuery(pcSelect).WithArgs("hostname", 1).WillReturnRows(hostRow())
+	mock.ExpectBegin()
+	mock.ExpectExec(`UPDATE .panel_certificate. SET .* WHERE kind = ?`).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	// mail kind exists at the ORIGINAL mail name. No UPDATE is expected: the
+	// derived mail.new.example.com differs, but the mail row is never renamed.
+	mock.ExpectQuery(pcSelect).WithArgs("mail", 1).WillReturnRows(
+		sqlmock.NewRows([]string{"kind", "id", "hostname", "status", "cert_pem_path"}).
+			AddRow("mail", 1, "mail.old.example.com", "issued", "/etc/jabali/tls/panel-mail.crt"))
+
+	host, err := repo.EnsureDefault(context.Background(), "new.example.com")
+	require.NoError(t, err)
+	assert.Equal(t, "new.example.com", host.Hostname, "hostname row must follow the FQDN change")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestPanelCert_ListAll(t *testing.T) {
 	t.Parallel()
 	gdb, mock, raw := newMockDB(t)
