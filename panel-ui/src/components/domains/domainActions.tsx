@@ -5,23 +5,23 @@
 // discriminant selects the item set. Every mutation and modal-open is a
 // callback DomainInventory supplies, so the builder stays a pure list producer
 // that unit tests can exercise per audience.
+//
+// GH #1543: the tenant per-domain actions moved onto the dedicated Web Domain
+// page (row-click → tabs). The tenant menu is now just DNS + Disable/Delete —
+// DNS stays until it too is folded into a tab. The admin list is unchanged; it
+// keeps its full modal-driven menu (admin has no per-domain page).
 import {
   DeleteOutlined,
   EditOutlined,
-  EyeOutlined,
   FileTextOutlined,
-  FolderOutlined,
   GlobalOutlined,
   InfoCircleOutlined,
-  LockOutlined,
   PauseCircleOutlined,
   PlayCircleOutlined,
-  SafetyOutlined,
   SettingOutlined,
   SwapOutlined,
   TeamOutlined,
   ThunderboltOutlined,
-  ToolOutlined,
 } from "@icons";
 import type { MenuProps } from "antd";
 import type { DomainInventoryAudience } from "./domainColumns";
@@ -33,10 +33,6 @@ export type DomainModalType =
   | "settings"
   | "info"
   | "caching"
-  | "directory-privacy"
-  | "nginx-options"
-  | "rewrite-rules"
-  | "document-root"
   | "chown";
 
 export type DomainMenuCaps =
@@ -155,77 +151,10 @@ export function buildDomainMenuItems(r: Domain, ctx: DomainMenuCtx): MenuProps["
     ];
   }
 
-  // Tenant.
-  const optionItems = caps?.tenant_domain_options_enabled
-    ? [
-        {
-          key: "nginx-options",
-          icon: <ThunderboltOutlined />,
-          label: "Domain options",
-          onClick: () => onOpenModal(r.id, "nginx-options"),
-        },
-        {
-          key: "rewrite-rules",
-          icon: <ToolOutlined />,
-          label: "Rewrite rules",
-          onClick: () => onOpenModal(r.id, "rewrite-rules"),
-        },
-      ]
-    : [];
-  const docRootItem = caps?.tenant_docroot_editable
-    ? [
-        {
-          key: "document-root",
-          icon: <FolderOutlined />,
-          label: "Document root",
-          onClick: () => onOpenModal(r.id, "document-root"),
-        },
-      ]
-    : [];
-
-  return [
-    ...dnsItem,
-    {
-      key: "redirects",
-      icon: <SwapOutlined />,
-      label: "Redirects",
-      onClick: () => onOpenModal(r.id, "redirects"),
-    },
-    {
-      key: "index",
-      icon: <FileTextOutlined />,
-      label: "Index",
-      onClick: () => onOpenModal(r.id, "index"),
-    },
-    {
-      key: "directory-privacy",
-      icon: <LockOutlined />,
-      label: "Directory Privacy",
-      onClick: () => onOpenModal(r.id, "directory-privacy"),
-    },
-    {
-      key: "caching",
-      icon: <ThunderboltOutlined />,
-      label: "Caching",
-      onClick: () => onOpenModal(r.id, "caching"),
-    },
-    ...optionItems,
-    ...docRootItem,
-    {
-      key: "preview-url",
-      icon: <EyeOutlined />,
-      label: r.temp_url_enabled ? "Disable preview URL" : "Enable preview URL",
-      onClick: () => ctx.onTogglePreview(r),
-    },
-    {
-      key: "bot-challenge",
-      icon: <SafetyOutlined />,
-      label: r.bot_challenge_include
-        ? "Disable bot-detection challenge"
-        : "Enable bot-detection challenge",
-      onClick: () => ctx.onToggleBot(r),
-    },
-    toggleItem,
-    ...deleteItems,
-  ];
+  // Tenant. Every per-domain editor (Redirects, Index, Caching, Directory
+  // Privacy, Domain options, Rewrite rules, Document root) and the preview-URL /
+  // bot-challenge toggles now live on the dedicated Web Domain page, reached by
+  // clicking the domain name. The row menu keeps only DNS (until it too becomes
+  // a tab) and the Enable/Disable + Delete lifecycle. GH #1543.
+  return [...dnsItem, toggleItem, ...deleteItems];
 }
