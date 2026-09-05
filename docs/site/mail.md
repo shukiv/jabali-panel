@@ -1,26 +1,41 @@
 # Mail
 
-Jabali's mail stack is [**Stalwart**](https://stalw.art) (SMTP submission + MTA + JMAP + IMAP, single process) + **Bulwark** (rate-limit / spam policy bridge) + **Roundcube** webmail.
+Jabali's mail stack is [**Stalwart**](https://stalw.art) (SMTP submission + MTA + JMAP + IMAP, single process) + **Bulwark**, a Next.js JMAP webmail served per-tenant on `mail.<domain>`.
 
 ## Per-mailbox
 
 - Authentication: per-mailbox Argon2id-hashed password stored by Stalwart.
 - Quota: per-mailbox MiB, enforced by Stalwart.
-- Webmail: `https://<primary-mail-domain>/mail/` (Roundcube). SSO bridge in `/jabali-panel/mail/mailboxes` (M6.2 — uses the M22 self-deleting `jabali-sso-*.php` file, not the failed M22 magic-link/mu-plugin path).
+- Webmail: **Bulwark** at `https://mail.<domain>/`. One-click SSO from `/jabali-panel/mail/mailboxes` uses the M22 self-deleting `jabali-sso-*.php` file (not the failed M22 magic-link/mu-plugin path).
 - IMAP / SMTP submission: `imap.<panel-hostname>:993` (TLS), `smtp.<panel-hostname>:465` (TLS) or `:587` (STARTTLS).
 - Autoconfig / autodiscover: Apple `mobileconfig`, Thunderbird `autoconfig.xml`, Outlook `autodiscover.xml` (see [platform/mail-autoconfig.md](./platform/mail-autoconfig.md)).
+- Calendars + contacts: per-mailbox **CalDAV / CardDAV** URLs are surfaced for manual client setup (GH #1039), and the mail vhost routes CalDAV/CardDAV so clients auto-mount.
 
-## Per-domain mail features (M6.5)
+## Mail Domains (GH #1387)
 
-Mail tabs (`/jabali-panel/mail/<tab>`):
+Mail is organised **per domain**, not as one flat page. `/jabali-panel/mail`
+lists your **Mail Domains** — sortable, with SSL + Status columns, a live queue
+count, per-domain Enable / Disable, breadcrumbs, and a **Create Mail Domain**
+button (GH #1479). Click a domain to drill into its accounts and settings.
+
+Per-domain tabs:
 
 - **Mailboxes** — create, change password, set quota, delete.
 - **Forwarders** — forward `alice@example.com` to one or more external addresses.
 - **Autoresponders** — vacation responder per mailbox, with start/end window and subject template.
 - **Catch-all** — send unmatched recipients to a chosen mailbox or `:drop` / `:reject`.
-- **Disclaimer** — append HTML / plaintext disclaimer server-side to outbound mail per domain (HTML coverage validation pending on test VM, ADR-0052).
+- **Disclaimer** — append HTML / plaintext disclaimer server-side to outbound mail per domain (ADR-0052).
 - **Shared Folders** — create IMAP shared folders for the team; manage ACLs.
-- **Logs** — live tail of in / out deliveries for the domain.
+- **CalDAV / CardDAV override** — repoint a domain's calendar + contacts SRV
+  records at an external server instead of the built-in Stalwart DAV (GH #1462).
+- **Logs** and **Statistics** — scoped to the selected domain (sortable Mail Logs
+  columns, GH #1365); the old flat Mail page is retired.
+
+### Mail-only delete
+
+A domain can have **just its mail torn down while the web domain stays** (GH
+#1387) — deletes mailboxes, forwarders, DKIM, and the Stalwart domain entry
+without removing the vhost or DNS zone.
 
 ## Per-domain deliverability (admin)
 

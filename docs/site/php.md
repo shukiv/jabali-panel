@@ -41,9 +41,43 @@ Each Domain row has a `php_pool_id` foreign key into `php_pools`. The vhost `fas
 
 The package the user is on caps each of these to a maximum the admin chose. Attempts to exceed the cap are clamped on save with a UI warning.
 
-## OpCache + JIT
+### Performance presets (GH #1332)
 
-Recent PHP versions (8.3+) ship JIT. Jabali leaves JIT off by default (silent CPU spikes on some shared workloads) — re-enable per-user in the PHP Settings tab if you know your app benefits.
+PHP Settings offers **per-version Performance tuning presets** — pick a profile
+(e.g. balanced / high-traffic) and the Advanced view shows exactly what each
+preset applies plus a live preview before you save, so a preset is never a black
+box. Domain-scoped limits are labelled as such.
+
+### Per-domain overrides (GH #1332)
+
+Some values are set **per domain** rather than per user, with an **override
+badge** on any domain that differs from the account default:
+
+- `display_errors`, `error_reporting`, and `date.timezone` per domain (GH #1332).
+- Per-domain environment variables passed to the FPM pool.
+- Per-domain log + cron shortcuts and an **OPcache reset** button.
+
+## OPcache + JIT (GH #1332)
+
+Recent PHP versions (8.3+) ship JIT. Jabali leaves JIT off by default (silent CPU
+spikes on some shared workloads). PHP Settings gives **per-version OPcache / JIT
+controls** so you can enable JIT and tune OPcache only on the versions where your
+app benefits, plus a one-click **OPcache reset**.
+
+## Xdebug, Composer, extra extensions (GH #1332)
+
+- **Per-version Xdebug toggle** with safe modes — turn Xdebug on for a single PHP
+  version without slowing every pool (Xdebug is a Zend extension loaded per-slug
+  via a scan dir).
+- **Per-user Composer version selector** — choose which Composer major version
+  the account uses.
+- **Per-version opt-in extra extensions** — a tenant can opt a version into an
+  allow-listed set of extra extensions beyond the server-wide defaults.
+
+## FPM slow log (GH #1332)
+
+Each pool can emit a **per-pool FPM slow log** for requests over a threshold, so a
+slow endpoint is traceable per account without touching the global config.
 
 ## Snuffleupagus
 

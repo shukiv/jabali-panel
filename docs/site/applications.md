@@ -52,6 +52,19 @@ Every app uses the same 6-step pipeline:
 - "Clone" → currently WP-only, others on the roadmap.
 - "Delete" → destructive teardown.
 
+## Python apps — media directory
+
+A Python app can serve a per-app **media directory straight from nginx** (GH
+#878), parallel to the static-files mapping: `media_url` → `media_root` gets its
+own nginx `alias` rule (1-hour cache, vs 30-day for static assets), so
+user-uploaded media is served without going through the WSGI/ASGI worker.
+
+## Database admin tooling
+
+MariaDB databases open in **phpMyAdmin**; PostgreSQL databases open in
+**Adminer** (upgraded to 6.0.1 with a ported single-sign-on plugin, GH #1405).
+See [Databases](./databases.md).
+
 ## CLI
 
 ```bash

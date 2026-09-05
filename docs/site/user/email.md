@@ -14,7 +14,7 @@
 
 ## Webmail
 
-`https://<primary-mail-domain>/mail/` provides Roundcube webmail. The Mailboxes tab has a one-click **Open Webmail** button per mailbox that authenticates you via a single-use self-deleting SSO file (M22 pattern; ADR-0040).
+`https://mail.<domain>/` provides **Bulwark** (Next.js JMAP) webmail. The Mailboxes tab has a one-click **Open Webmail** button per mailbox that authenticates you via a single-use self-deleting SSO file (M22 pattern; ADR-0040).
 
 ## IMAP and SMTP submission
 

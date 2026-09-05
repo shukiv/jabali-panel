@@ -68,7 +68,7 @@ Causes, in rough order of likelihood:
 
 1. The mailbox's password changed in the panel but the user is using the old one — reset under Mail → Mailboxes.
 2. Stalwart is down — `systemctl status stalwart-mail`.
-3. The Roundcube SSO bridge clock-skewed (SSO file TTL is 60 s) — sync NTP.
+3. The webmail SSO file expired before it was hit (TTL is 60 s) — sync NTP if the host clock is skewed.
 4. AppArmor in `enforce` blocked something — `journalctl -k | grep DENIED`.
 
 ### SSL cert doesn't issue

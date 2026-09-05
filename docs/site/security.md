@@ -26,13 +26,33 @@ ADR-0060. ModSecurity is **removed** (M27 cleanup_modsecurity purges packages + 
 - Rule packs from `hub.crowdsec.net/author/crowdsecurity` (vpatch family for CVE virtual-patching).
 - AppSec install path is **flat** (`/etc/crowdsec/appsec-rules/`) — no `crowdsecurity/` subdir (the install-path scar that purged + reinstalled 170 vpatch rules every update, fixed in PR #69).
 
+### AppSec bot detection (CrowdSec 1.8)
+
+A CrowdSec 1.8 AppSec **bot-detection challenge** is available, **off by default**
+(per-server). It is opt-in and layered:
+
+- **Per-server**: admins enable it under `/jabali-admin/security` → CrowdSec /
+  AppSec (default **OFF**).
+- **Per-domain opt-in** (`scope=selected`): turn the challenge on for chosen
+  domains only.
+- **Per-domain opt-out**: exclude a specific domain from the challenge.
+- **Tenant self-service**: a tenant can toggle bot detection on **their own**
+  domains without an admin.
+
+Because it is default-off and per-domain scoped, enabling it never silently
+challenges traffic on a domain the operator didn't choose.
+
 ## AppArmor
 
 `/jabali-admin/security` → AppArmor — per-profile status (enforce / complain / **missing**).
 
 Jabali ships and manages these daemon profiles: `jabali-panel` (panel API), `jabali-agent`, `jabali-bulwark` (webmail), `stalwart-mail`, and `jabali-fpm-app` (GH #690 — the per-user PHP-FPM/WordPress workload profile, attached to fpm-exec; ships complain-first for the soak, flip to enforce per-host after soak-readiness shows 0 would-deny). A profile that fails to load or is purged is reported as **missing** (red) rather than silently omitted — an absent profile means an unconfined daemon.
 
-New profiles ship in **complain** mode for a 7-day burn-in soak; each profile shows a **soak-readiness** indicator (complain-mode profiles with zero would-deny events are ready to flip to enforce). Complain-mode `apparmor="ALLOWED"` would-deny events are surfaced alongside enforce-mode `DENIED` denials, so a complain-mode profile actively logging violations is not mistaken for a clean state.
+New profiles ship in **complain** mode for a 7-day burn-in soak; each profile shows a **soak-readiness** indicator (complain-mode profiles with zero would-deny events are ready to flip to enforce). Complain-mode `apparmor="ALLOWED"` would-deny events are surfaced alongside enforce-mode `DENIED` denials, so a complain-mode profile actively logging violations is not mistaken for a clean state. A daily timer **auto-promotes** a soak-clean profile from complain to enforce (JAB-349), so hardening advances without a manual flip on every host.
+
+A **degraded-AppArmor** condition (a managed profile that should be enforcing but
+isn't) raises a dashboard alert plus a runtime confinement smoke test (JAB-379),
+so a silently-unconfined daemon is caught rather than assumed safe.
 
 On kernels with broken unix-socket mediation (missing `/sys/kernel/security/apparmor/features/unix`), Jabali deliberately does **not** load the daemon profiles — on fresh install and on `jabali update` alike.
 
@@ -84,6 +104,31 @@ Admin overrides per-user under Users → Edit → Egress.
 - **YARA** — only the `php.yar` rule (clamscan rejects PMF whitelists/* due to libclamav YARA subset restrictions).
 - **Tetragon** — eBPF tripwires; suspicious exec events ingested via `sessionwatcher` → M14 (`file_hit` + quarantine events).
 - **M33.2 mail-yara-async** (ADR-0079) — async post-delivery JMAP-poll YARA scan; NOT MtaHook/MtaMilter.
+- **Quarantine-rate circuit breaker** (JAB-248) — the scanner trips a breaker if the quarantine rate spikes, so a bad signature can't quarantine a tenant's whole tree in a runaway loop.
+
+## Additional hardening
+
+- **Step-up auth for high-risk admin tools** (JAB-380) — the admin File Manager
+  and Root Terminal require a fresh (recent-auth / MFA) re-authentication before
+  they open, so a stolen session alone can't reach a root shell or the whole
+  filesystem.
+- **API-side write allow-list for the admin File Manager** (JAB-367) — writes are
+  checked against an allow-list on the API, not just the UI, so a crafted request
+  can't write outside the permitted paths.
+- **CrowdSec pprof/metrics locked down** (JAB-368) — tenant-uid processes are
+  blocked from CrowdSec's unauthenticated `:6060` pprof / metrics endpoint.
+- **Package disk quota on tenant database storage** (JAB-243) — a tenant's DB
+  storage counts against the hosting-package disk quota, so databases can't be
+  used to bypass the account quota.
+- **Country exemption from local MaxMind** (PR #1083) — country-based
+  allow/exempt CIDRs are derived from a local MaxMind mmdb plus supplemental
+  CIDRs, with no external lookup at request time.
+- **Secret-rotation tooling** (JAB-357) — `jabali secrets rotate <name>`
+  (operator-only) rolls the panel DB app-user password, the Redis panel token,
+  and the PowerDNS DB password live (each with its own verify + rollback), plus
+  the now-vestigial `JWT_SECRET`, so a leaked credential can be rolled without a
+  reinstall. Transient migration source-host credentials are **purged, not
+  rotated**. See [../secret-rotation.md](../secret-rotation.md).
 
 ## CrowdSec test-IP card
 

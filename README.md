@@ -124,7 +124,11 @@ operators can recover via `jabali` CLI without losing in-flight state.
 ## Highlights
 
 - Per-user Linux accounts with per-user PHP-FPM master + cgroup v2 + POSIX quota
-- SSH shell access via nspawn containers with auto-start and idle timeout
+- SSH shell access always inside a mandatory sandbox — default `bubblewrap`
+  (namespace + bind-mount jail; hides other tenants, sockets, and PIDs);
+  fail-closed to `nologin`, never a bare host shell
+- FTP/SFTP subaccounts (opt-in) with same-uid or true separate-uid isolation,
+  per-subaccount WebDAV, and an opt-in PAM-gated vsftpd FTP(S) module
 - Root agent for SSL, mail, DNS, backups, migrations — fronted by a typed
   NDJSON RPC contract over `/run/jabali-agent/agent.sock` (no shelling out
   from the panel)
@@ -146,7 +150,12 @@ operators can recover via `jabali` CLI without losing in-flight state.
 - Per-domain opt-in nginx FastCGI micro-cache with safe-bypass for cart /
   admin / authenticated cookies
 - Restic backups (account_full + system_backup) with encryption, dedup,
-  SFTP / S3 destinations, scheduled + on-demand
+  SFTP / S3 / B2 / Azure / GCS / REST destinations, scheduled + on-demand,
+  per-destination slot cap + circuit breaker, opt-in auto daily backups
+- Portable Full Server container backup + restore-from-upload, tenant
+  self-service restore (files / DB / mail), single-domain docroot restore,
+  and per-database Download + Restore-from-file for MariaDB **and**
+  PostgreSQL (chunked async upload; pgAdmin custom/tar formats accepted)
 - WordPress 1-click install / delete / clone (M10) — 15-app catalogue (M19)
   incl. Moodle / Joomla / NextCloud / OpenCart / Mautic / Drupal
 - Per-user resource limits: cgroups v2 slice drop-in, nginx limit_req,
@@ -155,6 +164,10 @@ operators can recover via `jabali` CLI without losing in-flight state.
   egress firewall (nftables + cgroupv2-vmap) + ModSecurity replaced by
   CrowdSec AppSec (ADR-0060) + LMD + ClamAV-on-demand + YARA + Tetragon
   for malware detection + jabali quarantine + M14 notifications dispatch
+- CrowdSec 1.8 AppSec bot-detection challenge (default OFF; per-domain
+  opt-in / opt-out; tenant self-service on own domains), step-up (MFA)
+  auth for the admin File Manager + Root Terminal, and secret-rotation
+  tooling (DB app-user / JWT / foundation)
 - 6-channel notifications: Discord, ntfy, Web Push (VAPID), SMS,
   Email, Webhook, Slack, in-app bell — 4 event sources incl. cert renew,
   disk full, service down, CrowdSec spike
@@ -169,7 +182,8 @@ operators can recover via `jabali` CLI without losing in-flight state.
 ### Admin Panel
 
 - Dashboard with stats, health, recent activity, notifications bell
-- User management with suspension, packages, quotas, impersonation
+- User management with suspension, packages, quotas, impersonation,
+  in-place username rename, at-a-glance resource + bandwidth counts
 - Server settings (hostname, nameservers, public IPs, panel cert)
 - Service manager for systemd services + start/stop/restart
 - PHP version and per-user pool management (server-wide extensions tab)
@@ -180,33 +194,42 @@ operators can recover via `jabali` CLI without losing in-flight state.
   schedules, encrypted destinations
 - Migrations (cPanel restore, WHM downloads, IMAP sync)
 - Security: CrowdSec allowlists / alerts / console / captcha + UFW + AppSec
-  geoblock + per-user egress firewall + malware quarantine
+  geoblock + AppSec bot-detection (default OFF, per-domain scoped) + per-user
+  egress firewall + malware quarantine + secret-rotation tooling
 - Updates + Support tabs: live `jabali update` with transient systemd units,
   enclosed-encrypted diagnostic sharing to webmaster
 - Server status (CPU / mem / disk / queues / 5s polling)
 - Database admin ops (curated tuner, root password, processlist,
   pmaAdmin SSO)
 - Email queue, throttles, MTA-STS, outbound reports
-- Audit logs, notifications dispatcher, jabali-isolator events
+- Audit logs, notifications dispatcher, malware / quarantine events
 - Notification channel admin (test-send, scopes, throttles)
 
 ### User Panel
 
-- Domains, redirects, custom nginx rules, listen-IP, FastCGI micro-cache
+- Domains with independent Web / Mail / DNS service flags, redirects,
+  custom nginx rules, listen-IP, FastCGI micro-cache, reverse-proxy mode,
+  per-domain environment variables, custom document root
 - DNS records editor with conflict detection (CNAME exclusivity per
   RFC 1034 §3.6.2) and dedup
-- Mail: domains, mailboxes, forwarders, autoresponders, catch-all,
-  disclaimers (HTML), shared folders, mail logs
+- Mail Domains drill-down: mailboxes, forwarders, autoresponders,
+  catch-all, disclaimers (HTML), shared folders, CalDAV/CardDAV (with
+  per-domain server override), per-domain logs + statistics, mail-only delete
 - IMAP sync (single + bulk)
 - Webmail SSO (Bulwark, Next.js JMAP)
 - WordPress (install, update, scan, SSO) + 14 other 1-click apps
-- File manager (AntD-native) + SFTP + SSH keys
-- SSH shell access via nspawn containers (idle timeout)
-- Databases (MariaDB + Postgres in tabbed view) with phpMyAdmin SSO
-- PHP settings per account
-- SSL management
-- Cron jobs (systemd-user timers + allowlist)
-- Backups + restore (account_full)
+- File manager (AntD-native, chunked upload with cancel + live speed,
+  async copy/move/extract progress) + SFTP + SSH keys
+- SSH shell access inside a mandatory bubblewrap sandbox
+- FTP/SFTP subaccounts (opt-in) + WebDAV
+- Databases (MariaDB + Postgres, tabbed) with phpMyAdmin (MariaDB) /
+  Adminer (Postgres) SSO + per-database Download + Restore-from-file
+- PHP settings per account + per-domain (OPcache/JIT, Xdebug, Composer,
+  extra extensions, env vars)
+- SSL management (Let's Encrypt + custom certificates)
+- Cron jobs (systemd-user timers + allowlist: php / wp / python / node)
+- Backups + restore (account_full) + restore-from-upload
+- Tenant-owned notification channels (when enabled by the admin)
 - Logs, statistics, bandwidth usage (daily nginx-log sync)
 - Support access link generator (one-time IP-bound tokens)
 - Notification preferences (Discord, ntfy, Web Push, SMS, Email)
@@ -222,6 +245,10 @@ operators can recover via `jabali` CLI without losing in-flight state.
 - Redis (Unix socket, ACL-scoped) for cache, sessions, notifications
   dispatcher streams
 - Per-domain opt-in FastCGI micro-cache + manual purge
+- Opt-in read-only Automation API on :443 for firewalled billing hosts
+- Disaster-recovery standby sync + promote (status card, stall alerts)
+- Zabbix 7 monitoring template; OS security auto-updates on by default
+- Side-nav badge counts (tenant + admin); admin header Health badge
 - Multi-language UI (en default; i18n harness ready)
 
 ## Architecture
@@ -242,8 +269,9 @@ operators can recover via `jabali` CLI without losing in-flight state.
   runtime on the host
 - **Webmail**: Bulwark (Next.js JMAP) at `/opt/jabali-webmail`, served on
   `mail.<tenant>` per-domain via nginx → Unix socket
-- **SSH shell**: nspawn containers (debian-13-v1 image) for SSH access
-  isolation; jabali-isolator handles container lifecycle
+- **SSH shell**: mandatory sandbox per login — default `bubblewrap`
+  (namespace + bind-mount jail via setuid `bwrap`); an `nspawn` mode is
+  selectable but not yet wired. Fail-closed to `nologin`, never a bare shell
 - **Security**: CrowdSec parsers + AppSec (nginx-bouncer Lua, WAF) +
   per-user egress firewall (nftables + cgroupv2-vmap, ADR-0084) + LMD +
   ClamAV-on-demand + YARA + Tetragon
@@ -267,7 +295,6 @@ Service stack (single-node default):
 - **Kratos** (Unix socket admin + public, sole auth source — M20)
 - **CrowdSec** (LAPI socket + AppSec :7422 + nginx-bouncer Lua)
 - **Restic** (encrypted, dedup, backup destinations)
-- **jabali-isolator** (nspawn container lifecycle)
 - **systemd-user** (cron jobs as user-scope timers)
 
 ## Requirements
@@ -312,7 +339,7 @@ See [`docs/adr/`](docs/adr/) for the full architectural-decision record
   tick; operator hand-edits to nginx vhosts are lost-by-design
 - CSP, HSTS, SameSite cookies, X-Forwarded-Proto handled by nginx
 - Migrations are schema-only (no app-populated tables seeded by SQL)
-- Audit log on every admin write + impersonation start/stop
+- Audit log on every privileged mutation; actions performed while impersonating are attributed to the target user
 - Pre-commit + CI gates: `go vet`, `go test -race ./...`, `npx tsc -b`,
   `bash -n install.sh`, Playwright E2E, AppSec geoblock golden tests
 
@@ -366,8 +393,16 @@ jabali repair      --diagnose|--auto|--all
 jabali panel-primary set|show                 # ADR-0048 primary mail domain
 jabali nspawn      list|build|update|delete
 jabali malware-purge                          # M33 retention sweep
+jabali ftp         list|create|delete|reset   # FTP/SFTP subaccounts (GH #1053)
+jabali notification channels|routing|test     # server-wide + tenant-owned
 jabali update      [--force]
 ```
+
+`jabali domain create` takes `--web-enabled` / `--manage-dns` / `--mail`
+(independent per-domain services), and `jabali system restore --from-tar`
+restores a whole server from a Full Server container archive. The complete,
+generated flag reference lives in
+[`docs/site/platform/cli-reference.md`](docs/site/platform/cli-reference.md).
 
 See [`docs/CONVENTIONS.md`](docs/CONVENTIONS.md) for the full repo-wide
 patterns (route families, SearchableTable, Drawer-for-CRUD, list envelope,
@@ -506,9 +541,11 @@ See the [`docs/`](docs/) directory for detailed guides:
   limits) + anti-patterns learnt the hard way
 - [Blueprint](docs/BLUEPRINT.md) — full feature map + milestone roadmap
 - [ADRs](docs/adr/) — every load-bearing architectural decision (110+)
+- [User & admin guides](docs/site/) — per-feature docs (domains, mail,
+  databases, backups, security, PHP, cron, files, SFTP/FTP, and more)
 - [Plans](plans/) — per-milestone implementation blueprints
-- [Runbooks](plans/) — operational guides for SSL, mail, M16 rollback,
-  M22 SSO rework, M27 CrowdSec extensions, M30/M30.1 backups
+- [Runbooks](docs/runbooks/) — operational guides (SSL, mail, backups,
+  secondary nameserver, DNS, applications)
 - [Known Issues](docs/KNOWN_ISSUES.md) — caveats + workarounds
 - [Contributing](docs/CONTRIBUTING.md) — feature development workflow
 - [Translations](https://translate.jabali-panel.com/) — Weblate instance; English

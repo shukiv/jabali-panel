@@ -1,10 +1,17 @@
 # Automation API
 
-`/jabali-admin/automation`. Scoped API tokens for the future Automation API.
+`/jabali-admin/automation`. Scoped API tokens for the Automation API.
 
 ## Current status
 
-The UI for minting and revoking scoped tokens is shipped. The public Automation API surface itself is rolling out incrementally — read endpoints first, then write endpoints, then bulk operations. Until the surface is GA, prefer the CLI for unattended automation.
+The whole Automation API is **opt-in** and **off by default** (GH #1161) — an
+admin enables it under Server Settings, and it can additionally listen on `:443`
+for **firewalled billing hosts** that can't reach the Unix socket. The UI for
+minting and revoking scoped tokens is shipped, and the **read-only** endpoints
+(domains, mailboxes, databases, mail forwarders / domain-forwarders / groups /
+autoresponders, and the fleet-monitor `server-status`) are live (JAB-74, JAB-76).
+Write and bulk endpoints are still rolling out — until they're GA, prefer the CLI
+for unattended mutation.
 
 ## Token shape
 

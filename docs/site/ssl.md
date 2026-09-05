@@ -23,9 +23,23 @@ The panel itself runs on a Let's Encrypt cert for the **Panel Hostname** (Server
 
 If issuance fails, the panel falls back to a self-signed cert so the UI stays reachable; the SSL card in Server Settings shows the failure reason. Hit "Retry" or wait for the next reconciler tick.
 
-## Cross-user view (admin)
+## Custom certificates
 
-`/jabali-admin/ssl` lists every cert known to the panel, expiry, last issuance result. Per-row "Retry" forces a fresh attempt.
+Besides Let's Encrypt, a domain can use an **uploaded custom certificate**
+(cert + key + chain). The **Domain Certificate Lifecycle** op (JAB-345) manages
+install / replace / removal with a forward-recovery finalize, and de-tracks the
+Let's Encrypt lineage first so a custom cert doesn't clobber it (or vice-versa on
+removal).
+
+## Cross-user view (admin) — Certificate console
+
+`/jabali-admin/ssl` is the **Certificate console** (redesigned, GH #1355): every
+cert known to the panel with issuer, expiry (Issued + Last-check folded into the
+**Expires** column, GH #1271) and last issuance result. Per row:
+
+- **View Certificate** — inspect the certificate's subject, SANs, issuer, and
+  validity dates (GH #1355).
+- **Retry** — force a fresh issuance attempt.
 
 ## Common failure modes
 

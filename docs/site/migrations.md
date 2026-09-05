@@ -4,16 +4,24 @@
 
 ## Supported sources
 
+A source can be ingested from an **uploaded archive** or, for the control-panel
+sources, pulled **live over SSH** (the panel reads the source with the vendor's
+own read-only CLI, then rebuilds destination-side).
+
 | Source | Format | Status |
 |---|---|---|
-| **cPanel** | `cpmove-<user>.tar.gz` | ✅ — preserves MySQL users + bcrypt password hashes (so migrated apps keep working); see "preserve cpanel MySQL users + password hashes" commit. |
-| **DirectAdmin** | DA backup tarball | ✅ — see `docs/user/directadmin-migration.astro` (legacy) for source-side prep notes. |
-| **Hestia** | Hestia `v-backup-user` tarball (`<user>.<ts>.tar[.gz]`) | ✅ — files, DBs, DNS (incl. SRV + CAA), and apps (e.g. Nextcloud) restore end-to-end; the account Contact Name (FNAME/LNAME) carries onto the user. Mail is the Exim→Stalwart subset (see below). |
+| **cPanel** | `cpmove-<user>.tar.gz` or live SSH | ✅ — preserves MySQL users + bcrypt password hashes (so migrated apps keep working); see "preserve cpanel MySQL users + password hashes" commit. |
+| **DirectAdmin** | DA backup tarball or live SSH | ✅ — see `docs/user/directadmin-migration.astro` (legacy) for source-side prep notes. |
+| **Hestia** | Hestia `v-backup-user` tarball (`<user>.<ts>.tar[.gz]`) or live SSH | ✅ — files, DBs, DNS (incl. SRV + CAA), and apps (e.g. Nextcloud) restore end-to-end; the account Contact Name (FNAME/LNAME) carries onto the user. Mail is the Exim→Stalwart subset (see below). |
 | **WHM** | WHM-level dump (multiple `cpmove`s in one) | 🟡 — same caveats as cPanel per-user. |
+| **Plesk** | live SSH (subscriptions) | ✅ (GH #429) — reads databases, DNS, and reseller customers + service plans via `plesk bin` / wp-toolkit read-only CLI, then rebuilds destination-side. |
+| **CloudPanel** | live SSH (site users) | ✅ |
+| **CyberPanel** | live SSH (websites) | ✅ |
+| **Jabali → Jabali** | live SSH (accounts) | ✅ — move accounts between Jabali servers. |
 
 ## Workflow
 
-1. Upload archive to `/jabali-admin/migrations` (or `scp` to `/var/lib/jabali/migrations/incoming/`).
+1. Either upload an archive to `/jabali-admin/migrations` (or `scp` to `/var/lib/jabali/migrations/incoming/`), **or** point the wizard at a **live SSH source** (host, port, credentials) for the control-panel importers.
 2. The pipeline runs four phases:
    - **Analyze** — inspect the archive, list users / domains / DBs / mailboxes / DNS zones / cron jobs.
    - **Fix-perms** — apply chown / chmod normalisations expected by Jabali's per-user pool layout.
@@ -60,6 +68,7 @@ jabali migrate restore --hestiacp --file /path/<user>.<ts>.tar --source-user <us
 
 ## Limitations
 
-- **No live migration**. Each pipeline is "stop-the-world" for the destination user.
-- **No backup-restore from Plesk** (Plesk's backup format isn't supported yet).
+- Each pipeline is **"stop-the-world" for the destination user** while it runs.
+- **Plesk / CloudPanel / CyberPanel / Jabali** are live-SSH-only — the panel
+  reads the source over SSH; there is no offline backup-archive import for them.
 - **No CSF/LFS rule translation**. CrowdSec is the IP-trust source on Jabali; carry over allowlists manually.

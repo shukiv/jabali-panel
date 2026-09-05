@@ -13,8 +13,11 @@ Filter by kind, by subject (for `account_full`), by date range.
 Pick a snapshot, then choose:
 
 - **Target user** — restore to the same user (overwrite), to a new user (preserve original), or to an existing different user (uncommon; usually for forensic investigation).
-- **Components** — restore everything, or pick subsets (files only, databases only, mailboxes only, DNS only).
+- **Components** — restore everything (a **Select all** toggle) or pick subsets (files, databases, mailboxes, DNS, FTP subaccounts). FTP/SFTP subaccounts are rebuilt with their original login password (GH #1361); MariaDB **and** PostgreSQL databases are covered.
 - **Dry run** — see what would be touched without writing.
+
+A single domain's document root can be restored on its own (GH #1359) without
+touching the rest of the account.
 
 The agent restores in the same per-stage order the backup ran: files first, databases second, mailboxes third, DNS records last. Each stage is idempotent at the file or row level.
 
@@ -35,6 +38,19 @@ System restores are typically performed on a freshly-bootstrapped panel host. Se
 5. After completion, run `jabali repair --diagnose` to surface any drift between restored state and the fresh host (typically only IP-related mismatches if the new host has a different IP).
 
 Round-trip restore was live-verified on 192.168.100.150.
+
+## Restore from an uploaded archive
+
+Besides restic destinations, both account and full-server restores accept a
+backup **archive you upload** directly (GH #1408) — the portable path for moving
+to a host that shares no restic destination with the source:
+
+- **Account** — upload an account backup and restore selected legs. Tenants can
+  do this for their own account (self-service restore-from-upload).
+- **Full server** — `jabali system restore --from-tar <file>` rebuilds the system
+  leg and every account from a Full Server container, **creating missing OS
+  users** and even restoring an account into a user that doesn't yet exist
+  (create-from-manifest).
 
 ## Operator-only safety rails
 

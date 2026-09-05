@@ -24,16 +24,28 @@ Click **Create database**, supply:
 
 The database count is checked against your package's `max_databases`.
 
-## phpMyAdmin / pgAdmin SSO
+## phpMyAdmin / Adminer SSO
 
-Each row has an **Open phpMyAdmin** (MariaDB) or **Open pgAdmin** (PostgreSQL) button. Clicking it:
+Each row has an **Open phpMyAdmin** (MariaDB) or **Open Adminer** (PostgreSQL) button. Clicking it:
 
 1. Issues a single-use, short-TTL **SSO token** (panel-internal).
 2. Redirects to the web admin URL with the token.
 3. The web admin authenticates as the corresponding **shadow account** (CONTEXT.md: SSO Token Resolution).
 4. The token is consumed and cannot be reused.
 
-You arrive already logged in to phpMyAdmin / pgAdmin with the DB user's privileges.
+You arrive already logged in to phpMyAdmin (MariaDB) / Adminer (PostgreSQL) with the DB user's privileges.
+
+## Download + Restore from file
+
+Each row also has **Download backup** and **Restore from file** (both engines):
+
+- **Download** streams a dump of that one database.
+- **Restore from file** uploads a dump and replaces the whole database. The
+  upload is chunked and async (it beats Cloudflare's ~100 MB origin limit), with
+  a progress modal. PostgreSQL accepts plain-SQL **and** pgAdmin's custom / tar
+  archive formats and shows the real error on failure. Uploaded dumps run through
+  a non-superuser scoped loader into a staging database and only swap onto the
+  live name on success, so a bad upload never wipes your database.
 
 ## Connecting from an application
 
@@ -59,7 +71,7 @@ PHP applications use the same socket path implicitly when host is set to `localh
 
 ## Backups
 
-Database content is included in `account_full` backups. To export ad hoc, use phpMyAdmin's **Export** feature (or `pg_dump` for PostgreSQL via pgAdmin's **Backup** tool).
+Database content is included in `account_full` backups. For a single database, use the per-row **Download backup** / **Restore from file** actions above, or phpMyAdmin's / Adminer's own **Export** feature.
 
 ## Deleting a database
 
