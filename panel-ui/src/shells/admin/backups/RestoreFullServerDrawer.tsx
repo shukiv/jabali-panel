@@ -160,7 +160,19 @@ export function RestoreFullServerDrawer({ open, onClose }: Props) {
               type="success"
               showIcon
               message={`Full server backup — ${info.users.length} user(s)`}
-              description={info.has_system ? "Includes a system backup (restored via the CLI, not here)." : undefined}
+              description={
+                info.has_system ? (
+                  <>
+                    Includes a system backup (panel DB / config / TLS). Restore it
+                    over SSH with{" "}
+                    <Typography.Text code>
+                      jabali system restore --from-tar &lt;container.tar&gt;
+                    </Typography.Text>{" "}
+                    — not from here, because a system restore replaces the login
+                    (Kratos) database and would sign you out mid-restore.
+                  </>
+                ) : undefined
+              }
             />
             <div>
               <Typography.Text strong>Restore these users</Typography.Text>
