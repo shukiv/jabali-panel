@@ -68,8 +68,12 @@ server {
   access_log /var/log/nginx/jabali-panel.access.log;
   error_log  /var/log/nginx/jabali-panel.error.log;
 
-  # Security headers
-  add_header Strict-Transport-Security "max-age=31536000" always;
+  # Security headers.
+  # HSTS is toggled by cert kind (GH #1507): the snippet is empty while the panel
+  # serves a self-signed cert (Strict-Transport over an untrusted cert hard-blocks
+  # the browser with no exception path), and carries the header once a CA cert is
+  # deployed. install_nginx_panel_vhost writes it; jabali-panel-cert.sh flips it on.
+  include /etc/nginx/snippets/jabali-panel-hsts.conf;
   add_header X-Frame-Options "DENY" always;
   add_header X-Content-Type-Options "nosniff" always;
   add_header X-XSS-Protection "1; mode=block" always;
@@ -141,7 +145,7 @@ server {
     proxy_send_timeout 3600s;
     # Re-declared security headers (parent's not inherited because of
     # the per-location CSP override below).
-    add_header Strict-Transport-Security "max-age=31536000" always;
+    include /etc/nginx/snippets/jabali-panel-hsts.conf;
     add_header X-Content-Type-Options "nosniff" always;
     add_header X-XSS-Protection "1; mode=block" always;
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
@@ -167,7 +171,7 @@ server {
     root ${PANEL_DIST_DIR};
     try_files $uri @panel_assets_embed;
     add_header Cache-Control "public, max-age=31536000, immutable" always;
-    add_header Strict-Transport-Security "max-age=31536000" always;
+    include /etc/nginx/snippets/jabali-panel-hsts.conf;
     add_header X-Content-Type-Options "nosniff" always;
     add_header X-Frame-Options "DENY" always;
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
@@ -186,7 +190,7 @@ server {
     proxy_http_version 1.1;
     proxy_hide_header Cache-Control;
     add_header Cache-Control "public, max-age=31536000, immutable" always;
-    add_header Strict-Transport-Security "max-age=31536000" always;
+    include /etc/nginx/snippets/jabali-panel-hsts.conf;
     add_header X-Content-Type-Options "nosniff" always;
     add_header X-Frame-Options "DENY" always;
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;

@@ -12,9 +12,65 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
+
+// seamHSTSSnippet points panelHSTSSnippetPath at a temp file pre-seeded with the
+// HSTS-ON header, and restores it. Returns the temp path.
+func seamHSTSSnippet(t *testing.T) string {
+	t.Helper()
+	snip := filepath.Join(t.TempDir(), "jabali-panel-hsts.conf")
+	if err := os.WriteFile(snip, []byte("add_header Strict-Transport-Security \"max-age=31536000\" always;\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	old := panelHSTSSnippetPath
+	panelHSTSSnippetPath = snip
+	t.Cleanup(func() { panelHSTSSnippetPath = old })
+	return snip
+}
+
+// GH #1507: regenerating a self-signed cert must clear the HSTS snippet — HSTS
+// over an untrusted cert hard-blocks the browser with no exception path.
+func TestPanelSelfSign_WritesHSTSOffOnRegen(t *testing.T) {
+	certPath, _, _ := setupPanelSelfSign(t)
+	snip := seamHSTSSnippet(t)
+	_ = os.Remove(certPath) // no cert on disk → force a self-signed regen
+
+	resp, err := callPanelSelfSign(t, "box.example.com", "")
+	if err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	if !resp.Regenerated {
+		t.Fatalf("expected a self-signed regen, got %+v", resp)
+	}
+	got, _ := os.ReadFile(snip)
+	if strings.Contains(string(got), "Strict-Transport-Security") {
+		t.Errorf("HSTS snippet must be OFF after a self-signed regen, got:\n%s", got)
+	}
+}
+
+// Preserving a real CA cert must NOT touch the HSTS snippet (it stays ON).
+func TestPanelSelfSign_LeavesHSTSWhenPreservingCACert(t *testing.T) {
+	certPath, keyPath, _ := setupPanelSelfSign(t)
+	writeTestCert(t, certPath, keyPath, "Let's Encrypt", "box.example.com",
+		[]string{"box.example.com", "mail.box.example.com"}, time.Now().AddDate(0, 3, 0))
+	snip := seamHSTSSnippet(t)
+	before, _ := os.ReadFile(snip)
+
+	resp, err := callPanelSelfSign(t, "box.example.com", "")
+	if err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	if resp.Regenerated {
+		t.Fatalf("CA cert must be preserved, not regenerated")
+	}
+	after, _ := os.ReadFile(snip)
+	if string(before) != string(after) {
+		t.Errorf("HSTS snippet must be untouched when a CA cert is preserved")
+	}
+}
 
 // writeTestCert writes a self-signed cert+key with the given issuer/subject
 // Organization, CN, and DNS SANs — a test double for "a cert already on
