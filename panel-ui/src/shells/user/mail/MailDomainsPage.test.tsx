@@ -12,7 +12,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MailDomainsPage } from "./MailDomainsPage";
 
 vi.mock("../../../apiClient", () => ({
-  apiClient: { get: vi.fn(), post: vi.fn(), delete: vi.fn() },
+  apiClient: { get: vi.fn(), post: vi.fn(), patch: vi.fn(), delete: vi.fn() },
 }));
 
 import { apiClient } from "../../../apiClient";
@@ -20,6 +20,7 @@ import { apiClient } from "../../../apiClient";
 const mocked = apiClient as unknown as {
   get: ReturnType<typeof vi.fn>;
   post: ReturnType<typeof vi.fn>;
+  patch: ReturnType<typeof vi.fn>;
   delete: ReturnType<typeof vi.fn>;
 };
 
@@ -148,5 +149,62 @@ describe("GH #1387 — MailDomainsPage (mail-active only)", () => {
       }),
     );
     expect(mocked.delete).not.toHaveBeenCalled();
+  });
+
+  // GH #1479 (johnnyq): a Create Mail Domain button opens the Add-domain drawer
+  // in mail mode, exposing the requested knobs — TLS (incl. None), Enable
+  // webmail, Create DNS mail records.
+  it("Create Mail Domain button opens the mail drawer with TLS/webmail/DNS fields", async () => {
+    renderPage();
+    await screen.findByText("on.test");
+
+    fireEvent.click(screen.getByRole("button", { name: /Create Mail Domain/i }));
+
+    // The shared Add-domain drawer opens in mail mode.
+    expect(await screen.findByText("Add Mail Domain")).toBeInTheDocument();
+    // #1479 knobs are present.
+    expect(screen.getByRole("checkbox", { name: /Enable webmail/i })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /Create DNS mail records/i })).toBeChecked();
+    // Domain-name field is there to type into.
+    expect(screen.getByPlaceholderText(/example\.com/i)).toBeInTheDocument();
+  });
+
+  // GH #1479: the mail-mode create posts the right domain shape (web off, mail on
+  // Jabali, ssl le, DNS on), and webmail-OFF fires a follow-up PATCH.
+  it("submits a mail domain: POST /domains (web off, jabali mail) + webmail-off PATCH", async () => {
+    mocked.post.mockReset().mockResolvedValue({ data: { id: "d-new" } });
+    mocked.patch.mockReset().mockResolvedValue({ data: {} });
+    renderPage();
+    await screen.findByText("on.test");
+
+    fireEvent.click(screen.getByRole("button", { name: /Create Mail Domain/i }));
+    await screen.findByText("Add Mail Domain");
+
+    fireEvent.change(screen.getByPlaceholderText(/example\.com/i), {
+      target: { value: "new.test" },
+    });
+    // Turn webmail OFF so the follow-up PATCH fires.
+    fireEvent.click(screen.getByRole("checkbox", { name: /Enable webmail/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^Add$/ }));
+
+    await waitFor(() =>
+      expect(mocked.post).toHaveBeenCalledWith(
+        "/domains",
+        expect.objectContaining({
+          name: "new.test",
+          web_enabled: false,
+          mail_provider: "jabali",
+          ssl_mode: "le",
+          manage_dns: true,
+        }),
+      ),
+    );
+    // enable_webmail is a drawer-only field — it must NOT be in the create body.
+    expect(mocked.post.mock.calls[0][1]).not.toHaveProperty("enable_webmail");
+    await waitFor(() =>
+      expect(mocked.patch).toHaveBeenCalledWith("/domains/d-new", {
+        webmail_enabled: false,
+      }),
+    );
   });
 });

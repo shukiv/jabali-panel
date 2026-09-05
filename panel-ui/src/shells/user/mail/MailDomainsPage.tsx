@@ -23,7 +23,7 @@ import {
   Typography,
   type TableColumnsType,
 } from "antd";
-import { DeleteOutlined, MoreOutlined, PoweroffOutlined } from "@icons";
+import { DeleteOutlined, MoreOutlined, PlusOutlined, PoweroffOutlined } from "@icons";
 import { useState } from "react";
 import { useNavigate } from "react-router";
 import { useListQuery } from "../../../hooks/useQueries";
@@ -31,6 +31,7 @@ import { humanBytes } from "../../../utils/bytes";
 import { getSSLTagColor, getSSLTagLabel } from "../../../utils/sslState";
 import { apiClient } from "../../../apiClient";
 import { feedback } from "../../../lib/feedback";
+import { UserDomainDrawer } from "../domains/UserDomainDrawer";
 
 interface MailDomainRow {
   id: string;
@@ -59,6 +60,9 @@ export function MailDomainsPage() {
   // domain name that must match before the destructive button enables.
   const [deleteRow, setDeleteRow] = useState<MailDomainRow | null>(null);
   const [confirmText, setConfirmText] = useState("");
+  // GH #1479: Create Mail Domain drawer (reuses the tenant Add-domain drawer in
+  // its mail mode — web-off, mail on, TLS/webmail/DNS-records options).
+  const [createOpen, setCreateOpen] = useState(false);
   const query = useListQuery<MailDomainRow>({ resource: "me/mail-domains" });
   const rows = query.items;
 
@@ -220,7 +224,18 @@ export function MailDomainsPage() {
   ];
 
   return (
-    <Card title="Mail Domains">
+    <Card
+      title="Mail Domains"
+      extra={
+        <Button
+          type="primary"
+          icon={<PlusOutlined />}
+          onClick={() => setCreateOpen(true)}
+        >
+          Create Mail Domain
+        </Button>
+      }
+    >
       <Typography.Paragraph type="secondary" style={{ marginBottom: 16 }}>
         Domains with mail active, at a glance. Select a domain to manage its
         accounts and add mailboxes.
@@ -230,8 +245,12 @@ export function MailDomainsPage() {
       ) : rows.length === 0 ? (
         <Empty
           image={Empty.PRESENTED_IMAGE_SIMPLE}
-          description="No domains have mail active yet. Enable mail on a domain from the Domains page."
-        />
+          description="No domains have mail active yet. Create a mail domain here, or enable mail on an existing domain from the Domains page."
+        >
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
+            Create Mail Domain
+          </Button>
+        </Empty>
       ) : (
         <Table<MailDomainRow>
           rowKey="id"
@@ -282,6 +301,17 @@ export function MailDomainsPage() {
           }}
         />
       </Modal>
+
+      <UserDomainDrawer
+        open={createOpen}
+        mode="mail"
+        onClose={() => {
+          setCreateOpen(false);
+          // The drawer creates via the "domains" resource; this page lists
+          // "me/mail-domains", so refetch to show the new mail domain.
+          void query.refetch?.();
+        }}
+      />
     </Card>
   );
 }

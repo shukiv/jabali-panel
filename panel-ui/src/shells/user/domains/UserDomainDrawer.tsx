@@ -5,6 +5,7 @@ import { Button, Checkbox, Drawer, Form, Grid, Input, InputNumber, Select, Space
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { useEffect } from "react";
 
+import { apiClient } from "../../../apiClient";
 import { useCreateMutation } from "../../../hooks/useQueries";
 import { useServerCapabilities } from "../../../hooks/useServerCapabilities";
 
@@ -32,6 +33,11 @@ type UserDomainCreateInput = {
   // DNS-only zone or mail-only domain; manage_dns=false → external DNS.
   web_enabled?: boolean;
   manage_dns?: boolean;
+  // GH #1479: mail-domain webmail toggle. NOT a create-request field (the model
+  // defaults webmail_enabled ON); the drawer only acts on the OFF case, via a
+  // follow-up PATCH — setting the tinyint false at create hits GORM's
+  // zero-value-omit trap, but the update path persists it explicitly.
+  enable_webmail?: boolean;
 };
 type DomainCreated = { id: string; reverse_proxy_port?: number };
 
@@ -77,12 +83,15 @@ export const UserDomainDrawer = ({ open, onClose, mode = "web" }: UserDomainDraw
 
   const handleFinish = async (values: UserDomainCreateInput) => {
     try {
+      // GH #1479: enable_webmail is a drawer-only field, never a create-request
+      // field — carve it out so it never reaches POST /domains.
+      const { enable_webmail: wantWebmail, ...rest } = values;
       // A reverse-proxy domain has no document root; drop any value the field
       // may have kept (antd preserves unmounted field values by default) so we
       // never send a docroot the server would validate but never use.
-      let payload: UserDomainCreateInput = values.reverse_proxy
-        ? { ...values, doc_root: undefined }
-        : values;
+      let payload: UserDomainCreateInput = rest.reverse_proxy
+        ? { ...rest, doc_root: undefined }
+        : rest;
       // GH #1449: a web-off entry (DNS-only zone / mail-only domain) must not
       // carry web-only fields antd may have kept for hidden inputs.
       if (!isWeb) {
@@ -97,6 +106,18 @@ export const UserDomainDrawer = ({ open, onClose, mode = "web" }: UserDomainDraw
         };
       }
       const created = await createMutation.mutateAsync(payload);
+      // GH #1479: webmail defaults ON at the model, so only the OFF case needs a
+      // write — done as a PATCH (not at create) to sidestep GORM's tinyint
+      // zero-value-omit trap. Best-effort: the domain is already created.
+      if (isMail && wantWebmail === false && created?.id) {
+        try {
+          await apiClient.patch(`/domains/${created.id}`, { webmail_enabled: false });
+        } catch {
+          feedback.message.warning(
+            "Mail domain added, but disabling webmail failed — turn it off from the domain's settings.",
+          );
+        }
+      }
       feedback.message.success(
         isDNS ? "DNS zone added" : isMail ? "Mail domain added" : "Domain added",
       );
@@ -213,10 +234,27 @@ export const UserDomainDrawer = ({ open, onClose, mode = "web" }: UserDomainDraw
             options={[
               { value: "le", label: "Let's Encrypt (recommended)" },
               { value: "self", label: "Self-signed" },
+              // GH #1479: 'None' is offered for WEB only. A mail domain needs a
+              // real cert on mail.<domain> for IMAPS/SMTPS/autoconfig + webmail,
+              // and the server rejects ssl_mode=none while mail is on
+              // (ssl_none_with_email), so mail mode shows LE / Self-signed only.
               ...(isWeb ? [{ value: "none", label: "None (HTTP only)" }] : []),
             ]}
           />
         </Form.Item>
+        )}
+
+        {/* GH #1479: webmail toggle for mail domains. Default ON (matches the
+            model default); unchecking issues a follow-up PATCH after create. */}
+        {isMail && (
+          <Form.Item
+            name="enable_webmail"
+            valuePropName="checked"
+            initialValue={true}
+            tooltip="Serve the Jabali webmail app at this domain (webmail.<domain>). Uncheck if your users only use their own mail clients."
+          >
+            <Checkbox>Enable webmail</Checkbox>
+          </Form.Item>
         )}
 
         {/* GH #1449: opt out of Jabali DNS (run DNS elsewhere). Not shown for
@@ -226,9 +264,13 @@ export const UserDomainDrawer = ({ open, onClose, mode = "web" }: UserDomainDraw
             name="manage_dns"
             valuePropName="checked"
             initialValue={true}
-            tooltip="Host this domain's DNS zone on this server. Uncheck if your DNS is managed elsewhere (e.g. your registrar or Cloudflare)."
+            tooltip={
+              isMail
+                ? "Create this domain's mail DNS records (MX, SPF, DKIM, autodiscover) on this server's DNS. Uncheck if you manage DNS elsewhere — then point MX/SPF/DKIM at this server yourself."
+                : "Host this domain's DNS zone on this server. Uncheck if your DNS is managed elsewhere (e.g. your registrar or Cloudflare)."
+            }
           >
-            <Checkbox>Manage DNS here</Checkbox>
+            <Checkbox>{isMail ? "Create DNS mail records" : "Manage DNS here"}</Checkbox>
           </Form.Item>
         )}
 
