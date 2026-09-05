@@ -7817,6 +7817,10 @@ server {
     listen [::]:443 ssl${_NGX_H2_PARAM};
     listen ${JABALI_SRV_IPV4}:443 ssl${_NGX_H2_PARAM};
     ${_NGX_H2_DIR}
+    # JAB-389: the nginx.panel_landing_rehost agent verb re-points this
+    # server_name on a live panel hostname change. It matches a single-value
+    # `server_name <host>;` on this line — keep it one host, no www. alias, the
+    # semicolon on the same line, or the verb silently no-ops on every rename.
     server_name ${JABALI_SRV_HOSTNAME};
 
     ssl_certificate     ${tls_cert};
