@@ -6,6 +6,7 @@
 import { useTranslation } from "react-i18next";
 import { useMemo, useState } from "react";
 import { Button, Empty, Form, Modal, Skeleton, Space, Tag, Tooltip, Typography } from "antd";
+import type { TableProps } from "antd";
 import { feedback } from "../../../../lib/feedback"; // GH #970: themed toasts
 import { RowActions } from "../../../../components/RowActions";
 import { SearchableTableStringQ } from "../../../../components/SearchableTable";
@@ -36,6 +37,7 @@ import {
   useMailboxWebmail,
 } from "../../../../components/mail/mailboxInventory";
 import { useListQuery } from "../../../../hooks/useQueries";
+import { useTableURL } from "../../../../hooks/useTableURL";
 import type { Domain } from "../../../../components/domains/types";
 import { PasswordInput } from "../../../../components/PasswordInput";
 import { EditMailboxModal } from "../../../../components/mail/EditMailboxModal";
@@ -53,7 +55,7 @@ type GroupMembership = {
 // cross-domain view (unchanged).
 export const MailboxesTab = ({ domainId }: { domainId?: string } = {}) => {
   const { t } = useTranslation();
-  const { items: domains, isLoading: loadingDomains } = useListQuery<Domain>({
+  const { items: domains } = useListQuery<Domain>({
     resource: "domains",
     params: { page: 1, pageSize: 200, sort: "name", order: "asc" },
   });
@@ -63,16 +65,18 @@ export const MailboxesTab = ({ domainId }: { domainId?: string } = {}) => {
     [domains, domainId],
   );
 
-  const mailboxResults = useQueries({
-    queries: emailEnabledDomains.map((d) => ({
-      queryKey: ["list", "mailboxes", d.id, { page: 1, pageSize: 200 }],
-      queryFn: async () => {
-        const { data } = await apiClient.get<{ data: Mailbox[]; total: number }>(
-          `/domains/${d.id}/mailboxes?page=1&page_size=200&sort=local_part&order=asc`,
-        );
-        return { items: data.data ?? [], domain: d };
-      },
-    })),
+  // JAB-370 Workspace: the mailbox rows come from ONE owner-scoped,
+  // server-paginated query — GET /me/mailboxes spanning every domain the caller
+  // owns (cross-domain view), or the per-domain endpoint when this tab is
+  // embedded in the Mail Domains drill-down (domainId set). This replaces the
+  // one-request-per-domain fan-out that capped each domain at 200 rows and never
+  // paginated across domains. Search/sort/pagination are all server-authoritative.
+  const resource = domainId ? `domains/${domainId}/mailboxes` : "me/mailboxes";
+  const query = useTableURL<Mailbox & { domain_name?: string }>({
+    resource,
+    defaultSort: "email",
+    defaultOrder: "asc",
+    defaultPageSize: 20,
   });
 
   const membershipResults = useQueries({
@@ -99,16 +103,22 @@ export const MailboxesTab = ({ domainId }: { domainId?: string } = {}) => {
   }, [membershipResults]);
 
 
-  const rows: MailboxRow[] = useMemo(() => {
-    const out: MailboxRow[] = [];
-    for (const r of mailboxResults) {
-      if (!r.data) continue;
-      for (const mb of r.data.items) {
-        out.push({ ...mb, domain_name: r.data.domain.name });
-      }
-    }
-    return out;
-  }, [mailboxResults]);
+  // The per-domain endpoint returns rows without a domain_name (that column is
+  // hidden in the drill-down anyway); backfill it from the domains list so the
+  // Calendar/contacts modal still has a domain to build DAV URLs from.
+  const domainNameById = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (const d of domains) m[d.id] = d.name;
+    return m;
+  }, [domains]);
+  const rows: MailboxRow[] = useMemo(
+    () =>
+      query.items.map((r) => ({
+        ...r,
+        domain_name: r.domain_name ?? domainNameById[r.domain_id] ?? "",
+      })),
+    [query.items, domainNameById],
+  );
 
   // Per-mailbox automatic-replies (autoresponder) fanout — one GET each,
   // shares the cache with useAutoresponder via the matching query key.
@@ -187,24 +197,28 @@ export const MailboxesTab = ({ domainId }: { domainId?: string } = {}) => {
     if (ok) setResetTarget(null);
   };
 
-  const loading = loadingDomains || mailboxResults.some((r) => r.isLoading);
-  const [search, setSearch] = useState("");
-  const filteredRows = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return rows;
-    return rows.filter(
-      (r) =>
-        r.email.toLowerCase().includes(q) ||
-        (r.domain_name ?? "").toLowerCase().includes(q),
-    );
-  }, [rows, search]);
+  const loading = query.isLoading;
+
+  // Map AntD's per-column sort event onto the server sort/order params. Sortable
+  // columns set `sorter: true` (no local comparator) so sorting is authoritative
+  // across ALL pages, not just the visible one; the repo whitelists the key.
+  const sortOrderFor = (key: string): "ascend" | "descend" | null =>
+    query.params.sort === key ? (query.params.order === "asc" ? "ascend" : "descend") : null;
+  const handleTableChange: TableProps<MailboxRow>["onChange"] = (pag, _filters, sorter, extra) => {
+    if (extra.action === "sort") {
+      const s = Array.isArray(sorter) ? sorter[0] : sorter;
+      if (s?.order && s.columnKey) {
+        query.setParams({ sort: String(s.columnKey), order: s.order === "ascend" ? "asc" : "desc", page: 1 });
+      } else {
+        query.setParams({ sort: undefined, order: undefined, page: 1 });
+      }
+    } else if (extra.action === "paginate" && pag) {
+      query.setParams({ page: pag.current, pageSize: pag.pageSize });
+    }
+  };
 
   if (loading && rows.length === 0) {
     return <Skeleton active paragraph={{ rows: 4 }} />;
-  }
-
-  if (rows.length === 0) {
-    return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("mailboxestab.no_mailboxes_yet")} />;
   }
 
   return (
@@ -212,19 +226,27 @@ export const MailboxesTab = ({ domainId }: { domainId?: string } = {}) => {
       <SearchableTableStringQ<MailboxRow>
         scroll={{ x: "max-content" }}
         rowKey="id"
-        loading={loading && rows.length === 0}
-        dataSource={filteredRows}
+        loading={loading}
+        dataSource={rows}
         searchPlaceholder="Search email, name, domain…"
-        initialSearch={search}
-        onSearchChange={setSearch}
-        pagination={{ defaultPageSize: 20 }}
+        initialSearch={query.params.q}
+        onSearchChange={(q) => query.setParams({ q, page: 1 })}
+        onChange={handleTableChange}
+        pagination={{
+          current: query.params.page,
+          pageSize: query.params.pageSize,
+          total: query.total,
+          showSizeChanger: true,
+        }}
         locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("mailboxestab.no_mailboxes")} /> }}
         columns={[
           {
             title: "Mailbox",
             dataIndex: "email",
+            key: "email",
             ellipsis: true,
-            sorter: (a, b) => a.email.localeCompare(b.email),
+            sorter: true,
+            sortOrder: sortOrderFor("email"),
             render: (v: string, record: MailboxRow) => {
               const fwd = fwdByMailbox[record.id];
               return (
@@ -265,8 +287,9 @@ export const MailboxesTab = ({ domainId }: { domainId?: string } = {}) => {
                 {
                   title: "Domain",
                   dataIndex: "domain_name",
-                  sorter: (a: MailboxRow, b: MailboxRow) =>
-                    a.domain_name.localeCompare(b.domain_name),
+                  key: "domain",
+                  sorter: true,
+                  sortOrder: sortOrderFor("domain"),
                   width: 220,
                 },
               ]),
@@ -332,17 +355,22 @@ export const MailboxesTab = ({ domainId }: { domainId?: string } = {}) => {
           {
             title: "Usage / Quota",
             dataIndex: "quota_bytes",
+            key: "usage",
             // GH #1358: the column shows space USED (used / quota + fill bar), so
-            // sort by used bytes — not the quota limit, which made the header
-            // arrow a no-op for "sort by usage".
-            sorter: (a, b) => (a.last_usage_bytes ?? 0) - (b.last_usage_bytes ?? 0),
+            // sort by used bytes — not the quota limit. The server "usage" sort
+            // key maps to m.last_usage_bytes (mailboxDirectorySortKeys).
+            sorter: true,
+            sortOrder: sortOrderFor("usage"),
             width: 220,
             render: (_quota: number, row) => renderMailboxQuota(row),
           },
           {
             title: "Last usage",
             dataIndex: "last_usage_at",
-            sorter: (a, b) => (a.last_usage_at ? +new Date(a.last_usage_at) : 0) - (b.last_usage_at ? +new Date(b.last_usage_at) : 0),
+            // Not a server-side sort key (the directory projection sorts by
+            // usage bytes, not last-usage timestamp), so this column is not
+            // sortable under server pagination — a client comparator would only
+            // reorder the visible page and mislead.
             width: 160,
             render: (v: string | null | undefined) =>
               v ? (
@@ -354,7 +382,9 @@ export const MailboxesTab = ({ domainId }: { domainId?: string } = {}) => {
           {
             title: "Status",
             dataIndex: "is_disabled",
-            sorter: (a, b) => Number(a.is_disabled) - Number(b.is_disabled),
+            key: "status",
+            sorter: true,
+            sortOrder: sortOrderFor("status"),
             width: 100,
             render: (disabled: boolean) => renderMailboxStatus(disabled),
           },

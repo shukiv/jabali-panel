@@ -3896,6 +3896,13 @@ paths:
       security: [ { KratosSession: [] } ]
       responses: { "200": { description: OK } }
 
+  /me/mailboxes:
+    get:
+      tags: [Me]
+      summary: List the caller's own mailboxes across every domain, server-paginated (JAB-370)
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
   /me/nav-counts:
     get:
       tags: [Me]
