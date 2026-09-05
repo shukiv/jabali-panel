@@ -43,8 +43,11 @@ type Config struct {
 	PerRequestTimeout time.Duration
 
 	// AllowedUIDs lists the Unix UIDs permitted to connect. If empty, any
-	// UID is allowed (for testing). Production should set this to the
-	// panel-api user's UID + root (0).
+	// UID is allowed — this tolerance is for the server package's own tests,
+	// which construct a socket without a gate. The PRODUCTION policy lives at
+	// the composition root (cmd/jabali-agent decideUIDGate, JAB-357): the
+	// binary refuses to start with an empty/mangled allow-list unless
+	// explicitly opted out, so an empty list never reaches here in production.
 	AllowedUIDs []uint32
 
 	// MaxRequestBytes caps a single NDJSON request line. A misbehaving or

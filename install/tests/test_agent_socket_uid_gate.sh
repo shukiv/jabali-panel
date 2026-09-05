@@ -47,5 +47,14 @@ if ! grep -qE '\[\[ -n "\$panel_uid" \]\] \|\| _die' install.sh; then
   fail=1
 fi
 
+# JAB-357 fail-open hardening: the production agent unit must NEVER carry the
+# -insecure-allow-any-uid opt-out. That flag disables the SO_PEERCRED gate; it
+# exists only for out-of-systemd test runs. Its presence in install.sh would
+# reopen the exact root trust-boundary hole the gate closes.
+if grep -qE 'insecure-allow-any-uid' install.sh; then
+  echo "FAIL: install.sh passes -insecure-allow-any-uid — this disables the agent SO_PEERCRED gate (JAB-357)"
+  fail=1
+fi
+
 if [[ "$fail" -ne 0 ]]; then exit 1; fi
 echo "PASS: agent socket SO_PEERCRED UID gate is wired to panel_uid,0 (JAB-366/357)"
