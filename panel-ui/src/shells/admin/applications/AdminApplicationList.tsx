@@ -3,113 +3,51 @@
 // Admins modify installs by opening the relevant user's panel directly
 // in their own browser tab — no in-panel impersonation after M20.
 //
-// Status badge metadata + the transitional-poll rule are shared with the
-// tenant list via utils/applicationStatus (JAB-334) — a neutral module, so
-// neither shell depends on the other.
+// The install row, status badge, domain cell, transitional-poll rule, login
+// capability, and delete + invalidation are shared with the tenant list via
+// components/applications (JAB-334) — a neutral module, so neither shell
+// depends on the other. This adapter keeps the admin deltas: the owner column,
+// the created_at-desc default sort, and a read-only action set (login + delete).
 import { useTranslation } from "react-i18next";
-import { useEffect, useState } from "react";
 import { shortDateTime } from "../../../utils/datetime";
-import { useQueryClient } from "@tanstack/react-query";
-import { Card, Input, Space, Table, Tag, Tooltip, Typography } from "antd";
-import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
-import {
-  AppstoreOutlined,
-  DeleteOutlined,
-  LoginOutlined,
-  SearchOutlined,
-} from "@icons";
+import { Card, Input, Space, Table, Typography } from "antd";
+import { AppstoreOutlined, SearchOutlined } from "@icons";
 import { RowActions } from "../../../components/RowActions";
 import { sorterToParams } from "../../../utils/tableSorter";
 
 import { SearchableTableStringQ } from "../../../components/SearchableTable";
 import { useTableURL } from "../../../hooks/useTableURL";
 import { useMagicLink } from "../../../hooks/useMagicLink";
-import { apiClient } from "../../../apiClient";
-import { CmsIcon } from "../../user/applications/CmsIcon";
+import { ApplicationDomainCell } from "../../../components/applications/ApplicationDomainCell";
+import { ApplicationStatusTag } from "../../../components/applications/ApplicationStatusTag";
+import { buildApplicationActions } from "../../../components/applications/buildApplicationActions";
+import { useTransitionalPoll } from "../../../components/applications/useTransitionalPoll";
+import { useDeleteApplication } from "../../../components/applications/useDeleteApplication";
 import {
-  applicationStatusMeta,
-  anyTransitional,
-  type ApplicationStatus,
-} from "../../../utils/applicationStatus";
-
-type ApplicationInstall = {
-  id: string;
-  app_type?: string;
-  domain_id: string;
-  domain_name: string;
-  db_id: string;
-  admin_username: string;
-  admin_email: string;
-  owner_email: string;
-  owner_username?: string;
-  locale: string;
-  subdirectory: string;
-  status: ApplicationStatus;
-  version: string | null;
-  last_error: string;
-  created_at: string;
-  updated_at: string;
-};
+  canApplicationLogin,
+  openApplicationLogin,
+  type ApplicationInstall,
+} from "../../../components/applications/applicationInventory";
 
 interface AdminActionsCellProps {
   record: ApplicationInstall;
   canLogin: boolean;
 }
 
-const AdminActionsCell = ({
-  record,
-  canLogin,
-}: AdminActionsCellProps) => {
-  const qc = useQueryClient();
-  const [deleting, setDeleting] = useState(false);
-  const { mint: mintMagicLink, loading: magicLinkLoading, error: magicLinkError } = useMagicLink(record.id);
-
-  const handleDelete = async () => {
-    setDeleting(true);
-    try {
-      await apiClient.delete(`/applications/${record.id}`);
-      feedback.message.success(
-        `Deleting ${record.domain_name || record.domain_id}\u2026`,
-      );
-      qc.invalidateQueries({ queryKey: ["list", "applications"] });
-      qc.invalidateQueries({ queryKey: ["list", "databases"] });
-    } catch (err) {
-      feedback.message.error(
-        (err as Error)?.message ?? "Failed to delete application",
-      );
-    } finally {
-      setDeleting(false);
-    }
-  };
-
-  const handleMagicLink = async () => {
-    try {
-      const response = await mintMagicLink();
-      window.open(
-        response.url,
-        "_blank",
-        "noopener,noreferrer"
-      );
-      feedback.message.success("Admin login link opened");
-    } catch {
-      feedback.message.error(magicLinkError || "Failed to generate admin login link");
-    }
-  };
+const AdminActionsCell = ({ record, canLogin }: AdminActionsCellProps) => {
+  const { mint, loading: loginLoading, error: loginError } = useMagicLink(record.id);
+  const { deletingId, deleteApplication } = useDeleteApplication();
 
   return (
     <RowActions
-      actions={[
-        { key: "login", label: "Log in to admin", icon: <LoginOutlined />, loading: magicLinkLoading, onClick: handleMagicLink, tooltip: "Log in to the admin dashboard", hidden: !canLogin },
-        {
-          key: "delete",
-          label: "Delete",
-          icon: <DeleteOutlined />,
-          danger: true,
-          loading: deleting,
-          onClick: handleDelete,
-          confirm: { title: "Delete this application?", description: `Permanently removes ${record.domain_name || record.domain_id} and its data. This cannot be undone.`, okText: "Delete" },
-        },
-      ]}
+      actions={buildApplicationActions({
+        canLogin,
+        onLogin: () => openApplicationLogin(mint, loginError),
+        loginLoading,
+        onDelete: () => deleteApplication(record),
+        deleting: deletingId === record.id,
+        deleteDescription: `Permanently removes ${record.domain_name || record.domain_id} and its data. This cannot be undone.`,
+      })}
     />
   );
 };
@@ -122,16 +60,8 @@ export const AdminApplicationList = () => {
     defaultOrder: "desc",
   });
 
-  // Poll while any row is transitional — same cadence as the
-  // user-shell list. Cheaper than running a second useQuery with
-  // its own subscription.
-  const hasTransitional = anyTransitional(query.items);
-  useEffect(() => {
-    if (!hasTransitional) return;
-    const h = setInterval(() => query.refetch(), 5000);
-    return () => clearInterval(h);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasTransitional]);
+  // Poll while any row is transitional — same rule as the tenant list.
+  useTransitionalPoll(query.items, query.refetch);
 
   const handleTableChange: React.ComponentProps<
     typeof Table<ApplicationInstall>
@@ -201,33 +131,9 @@ export const AdminApplicationList = () => {
                 />
               </div>
             )}
-            render={(domainName: string, record) => {
-              const base = domainName || record.domain_id;
-              const path = record.subdirectory
-                ? `/${record.subdirectory}/`
-                : "/";
-              const label = `${base}${path}`;
-              const isLink = record.status === "ready" && !!domainName;
-              const appKey = record.app_type || "wordpress";
-              return (
-                <div
-                  style={{ display: "flex", alignItems: "center", gap: 8 }}
-                >
-                  <CmsIcon appType={appKey} />
-                  {isLink ? (
-                    <a
-                      href={`https://${domainName}${path}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                    >
-                      {label}
-                    </a>
-                  ) : (
-                    <span>{label}</span>
-                  )}
-                </div>
-              );
-            }}
+            render={(_domainName: string, record) => (
+              <ApplicationDomainCell record={record} />
+            )}
           />
           <Table.Column<ApplicationInstall>
             dataIndex="owner_email"
@@ -262,18 +168,9 @@ export const AdminApplicationList = () => {
           <Table.Column<ApplicationInstall>
             dataIndex="status"
             title={t("adminapplicationlist.status")}
-            render={(status: ApplicationInstall["status"], record) => {
-              const meta = applicationStatusMeta(status);
-              const tag = (
-                <Tag color={meta.color} icon={meta.icon}>
-                  {meta.label}
-                </Tag>
-              );
-              if (status === "failed" && record.last_error) {
-                return <Tooltip title={record.last_error}>{tag}</Tooltip>;
-              }
-              return tag;
-            }}
+            render={(status: ApplicationInstall["status"], record) => (
+              <ApplicationStatusTag status={status} lastError={record.last_error} />
+            )}
           />
           <Table.Column<ApplicationInstall>
             dataIndex="created_at"
@@ -286,21 +183,9 @@ export const AdminApplicationList = () => {
           <Table.Column<ApplicationInstall>
             title={t("adminapplicationlist.actions")}
             dataIndex="actions"
-            render={(_, r) => {
-              const appType = r.app_type ?? "wordpress";
-              // Admin login is implemented for WordPress, Drupal, and
-              // Joomla — matches panel-api ssoAgentCommandFor.
-              const canLogin =
-                r.status === "ready" &&
-                (appType === "wordpress" || appType === "drupal" || appType === "joomla");
-
-              return (
-                <AdminActionsCell
-                  record={r}
-                  canLogin={canLogin}
-                />
-              );
-            }}
+            render={(_, r) => (
+              <AdminActionsCell record={r} canLogin={canApplicationLogin(r)} />
+            )}
           />
         </SearchableTableStringQ>
       </Card>
