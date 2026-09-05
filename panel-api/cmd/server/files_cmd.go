@@ -259,6 +259,13 @@ func newFilesStatCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// Validate the reply fails-closed before printing it: a malformed or
+			// empty stat body must be an error, not an exit-0 pass-through of the
+			// raw bytes. On success we print the original raw JSON so operator
+			// output stays byte-for-byte stable.
+			if _, err := filesops.DecodeStat(raw); err != nil {
+				return err
+			}
 			os.Stdout.Write(raw)
 			fmt.Println()
 			return nil

@@ -47,6 +47,16 @@ type ArchiveResult struct {
 	Size        int64  `json:"size"`
 }
 
+// StatResult is a decoded files.stat reply. Mirrors the agent's stat output.
+type StatResult struct {
+	Path      string `json:"path"`
+	Size      int64  `json:"size"`
+	Mode      string `json:"mode"`
+	IsDir     bool   `json:"is_dir"`
+	ModTime   string `json:"mod_time"`
+	IsSymlink bool   `json:"is_symlink"`
+}
+
 // ErrTruncated reports that a full-content read came back truncated because the
 // file exceeds the agent's read cap. Callers that need the whole file (download,
 // CLI read/download) turn this into a failure so a partial file is never written
@@ -57,6 +67,15 @@ var ErrTruncated = errors.New("file exceeds the read limit and was truncated by 
 // ErrNoArchivePath reports that a files.archive reply decoded cleanly but named
 // no archive — an empty archive_path, which cannot be streamed back.
 var ErrNoArchivePath = errors.New("agent did not return an archive path")
+
+// ErrNoStatMode reports that a files.stat reply decoded cleanly but carried no
+// file mode. Mode is the field a successful stat can never omit: the agent sets
+// it from FileInfo.Mode().String(), which is never the empty string for a real
+// file. An empty mode therefore means the body was not a stat result at all — an
+// agent error blob, or a JSON null, decoding into a zero-valued struct. (Path is
+// only a normalized echo of the caller's input, so it is the weaker identity
+// field to hang this check on.)
+var ErrNoStatMode = errors.New("agent did not return a file mode for the stat")
 
 // DecodeList decodes a files.list reply, failing closed on a malformed body.
 func DecodeList(raw []byte) (ListResult, error) {
@@ -87,6 +106,19 @@ func DecodeArchive(raw []byte) (ArchiveResult, error) {
 	}
 	if r.ArchivePath == "" {
 		return ArchiveResult{}, ErrNoArchivePath
+	}
+	return r, nil
+}
+
+// DecodeStat decodes a files.stat reply, failing closed on a malformed body or a
+// reply that carries no file mode (see ErrNoStatMode).
+func DecodeStat(raw []byte) (StatResult, error) {
+	var r StatResult
+	if err := json.Unmarshal(raw, &r); err != nil {
+		return StatResult{}, fmt.Errorf("decode files.stat reply: %w", err)
+	}
+	if r.Mode == "" {
+		return StatResult{}, ErrNoStatMode
 	}
 	return r, nil
 }
