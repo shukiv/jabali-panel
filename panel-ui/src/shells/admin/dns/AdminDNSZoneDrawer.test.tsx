@@ -7,7 +7,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mutate = vi.hoisted(() => vi.fn());
 vi.mock("../../../hooks/useServerCapabilities", () => ({
-  useServerCapabilities: () => ({ data: { public_ipv4: "192.0.2.1" } }),
+  useServerCapabilities: () => ({
+    data: { public_ipv4: "192.0.2.1", public_ipv6: "2001:db8::1" },
+  }),
 }));
 vi.mock("../../../hooks/useQueries", () => ({
   useCreateMutation: () => ({ mutateAsync: mutate, isPending: false }),
@@ -75,6 +77,7 @@ describe("AdminDNSZoneDrawer (GH #1540)", () => {
     expect(body.manage_dns).toBe(true);
     expect(body.ssl_mode).toBe("none");
     expect(body.ip_address).toBe("192.0.2.1");
+    expect(body.ip6_address).toBe("2001:db8::1");
     expect(body.mail_provider).toBe("none");
   });
 });

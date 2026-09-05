@@ -85,6 +85,10 @@ type createDomainInput struct {
 	// panel-managed). Validated in createDomainOp (must be a bare IPv4, web off,
 	// DNS on).
 	DNSApexIPv4 string
+	// DNSApexIPv6 (GH #1540 follow-up) is the optional apex IPv6 (AAAA) for a
+	// DNS-only zone. Same web-off/DNS-on gate as DNSApexIPv4; must be a bare IPv6
+	// (not an IPv4 or IPv4-mapped address). Empty when the zone has no v6 apex.
+	DNSApexIPv6 string
 }
 
 // createDomainError carries the exact HTTP shape the inline create() used, so
@@ -142,23 +146,40 @@ func createDomainOp(ctx context.Context, h *domainHandler, in createDomainInput)
 	}
 
 	// GH #1540: a DNS-only zone may carry a tenant-chosen apex IP (the "pointed
-	// IP"). It is only meaningful for a web-off zone whose DNS the panel hosts:
-	// a web domain's apex is panel-managed (convergeApexAddrRecords re-asserts
-	// it), and an external-DNS domain (dns off) publishes nothing here. Must be
-	// a bare IPv4 — no CIDR, no port, no IPv6 (the apex A row is IPv4).
-	var dnsApexIPv4 string
-	if raw := strings.TrimSpace(in.DNSApexIPv4); raw != "" {
+	// IP") — an IPv4 (A) and/or an optional IPv6 (AAAA). Only meaningful for a
+	// web-off zone whose DNS the panel hosts: a web domain's apex is
+	// panel-managed (convergeApexAddrRecords re-asserts it), and an external-DNS
+	// domain (dns off) publishes nothing here. The web-off / DNS-on gate is
+	// shared by both families; each is then parsed as a BARE address of its own
+	// family — an IPv4 or IPv4-mapped value in the v6 field is rejected (an AAAA
+	// holding a mapped-v4 is nonsense) and vice versa. ip.String() canonicalises
+	// so a zone stores one row shape per address.
+	var dnsApexIPv4, dnsApexIPv6 string
+	raw4 := strings.TrimSpace(in.DNSApexIPv4)
+	raw6 := strings.TrimSpace(in.DNSApexIPv6)
+	if raw4 != "" || raw6 != "" {
 		if webEnabled {
 			return nil, &createDomainError{http.StatusBadRequest, "web_enabled_apex_ip", "a web domain's apex IP is managed by the panel — set an apex IP only on a DNS-only zone"}
 		}
 		if !dnsEnabled {
 			return nil, &createDomainError{http.StatusBadRequest, "dns_disabled_apex_ip", "an apex IP requires the panel to host DNS for this domain"}
 		}
-		ip := net.ParseIP(raw)
-		if ip == nil || ip.To4() == nil {
-			return nil, &createDomainError{http.StatusBadRequest, "invalid_apex_ip", "apex IP must be a valid IPv4 address"}
+		if raw4 != "" {
+			ip := net.ParseIP(raw4)
+			if ip == nil || ip.To4() == nil {
+				return nil, &createDomainError{http.StatusBadRequest, "invalid_apex_ip", "apex IP must be a valid IPv4 address"}
+			}
+			dnsApexIPv4 = ip.String()
 		}
-		dnsApexIPv4 = ip.String()
+		if raw6 != "" {
+			ip := net.ParseIP(raw6)
+			// To4() != nil means it parsed as IPv4 (or IPv4-mapped) — not a bare
+			// IPv6, so reject it for the AAAA field.
+			if ip == nil || ip.To4() != nil {
+				return nil, &createDomainError{http.StatusBadRequest, "invalid_apex_ipv6", "apex IPv6 must be a valid IPv6 address"}
+			}
+			dnsApexIPv6 = ip.String()
+		}
 	}
 
 	user, err := h.cfg.Users.FindByID(ctx, in.OwnerID)
@@ -302,8 +323,9 @@ func createDomainOp(ctx context.Context, h *domainHandler, in createDomainInput)
 		// written) state, so a full-service create leaves both zero.
 		WebDisabled: in.WebDisabled,
 		DNSDisabled: in.DNSDisabled,
-		// GH #1540: apex IP for a DNS-only zone (nil for web/mail domains).
+		// GH #1540: apex IP(s) for a DNS-only zone (nil for web/mail domains).
 		DNSApexIPv4: strPtrOrNil(dnsApexIPv4),
+		DNSApexIPv6: strPtrOrNil(dnsApexIPv6),
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}

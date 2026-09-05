@@ -131,4 +131,89 @@ func TestCreateDomainOp_ApexIP(t *testing.T) {
 			t.Fatalf("want invalid_apex_ip, got %v", oerr)
 		}
 	})
+
+	// GH #1540 follow-up: optional apex IPv6 (AAAA).
+	t.Run("DNS-only with an IPv4 and IPv6 apex persists both (v6 canonicalised)", func(t *testing.T) {
+		h, _ := newH()
+		d, oerr := createDomainOp(context.Background(), h, createDomainInput{
+			OwnerID:      owner.ID,
+			Name:         "dual.example.com",
+			MailProvider: models.MailProviderNone,
+			WebDisabled:  true,
+			DNSApexIPv4:  "203.0.113.10",
+			DNSApexIPv6:  "2001:DB8:0:0::1",
+		})
+		if oerr != nil {
+			t.Fatalf("unexpected error: %v", oerr)
+		}
+		if d.DNSApexIPv4 == nil || *d.DNSApexIPv4 != "203.0.113.10" {
+			t.Fatalf("DNSApexIPv4 should be 203.0.113.10, got %v", d.DNSApexIPv4)
+		}
+		// net.IP.String() canonicalises the v6 (lowercase, :: collapse).
+		if d.DNSApexIPv6 == nil || *d.DNSApexIPv6 != "2001:db8::1" {
+			t.Fatalf("DNSApexIPv6 should canonicalise to 2001:db8::1, got %v", d.DNSApexIPv6)
+		}
+	})
+
+	t.Run("IPv6-only on a web domain is rejected (shared web-off gate)", func(t *testing.T) {
+		h, _ := newH()
+		_, oerr := createDomainOp(context.Background(), h, createDomainInput{
+			OwnerID:      owner.ID,
+			Name:         "webv6.example.com",
+			MailProvider: models.MailProviderNone,
+			SSLMode:      models.SSLModeNone,
+			DNSApexIPv6:  "2001:db8::1",
+		})
+		if oerr == nil || oerr.Code != "web_enabled_apex_ip" {
+			t.Fatalf("want web_enabled_apex_ip, got %v", oerr)
+		}
+	})
+
+	t.Run("an IPv4 value in the IPv6 field is rejected", func(t *testing.T) {
+		h, _ := newH()
+		_, oerr := createDomainOp(context.Background(), h, createDomainInput{
+			OwnerID:      owner.ID,
+			Name:         "v4inv6.example.com",
+			MailProvider: models.MailProviderNone,
+			WebDisabled:  true,
+			DNSApexIPv6:  "1.2.3.4",
+		})
+		if oerr == nil || oerr.Code != "invalid_apex_ipv6" {
+			t.Fatalf("want invalid_apex_ipv6, got %v", oerr)
+		}
+	})
+
+	t.Run("an IPv4-mapped IPv6 in the IPv6 field is rejected", func(t *testing.T) {
+		h, _ := newH()
+		_, oerr := createDomainOp(context.Background(), h, createDomainInput{
+			OwnerID:      owner.ID,
+			Name:         "mapped.example.com",
+			MailProvider: models.MailProviderNone,
+			WebDisabled:  true,
+			DNSApexIPv6:  "::ffff:203.0.113.10",
+		})
+		if oerr == nil || oerr.Code != "invalid_apex_ipv6" {
+			t.Fatalf("want invalid_apex_ipv6, got %v", oerr)
+		}
+	})
+
+	t.Run("IPv6-only DNS-only zone persists just the AAAA apex", func(t *testing.T) {
+		h, _ := newH()
+		d, oerr := createDomainOp(context.Background(), h, createDomainInput{
+			OwnerID:      owner.ID,
+			Name:         "v6only.example.com",
+			MailProvider: models.MailProviderNone,
+			WebDisabled:  true,
+			DNSApexIPv6:  "2001:db8::1",
+		})
+		if oerr != nil {
+			t.Fatalf("unexpected error: %v", oerr)
+		}
+		if d.DNSApexIPv4 != nil {
+			t.Fatalf("DNSApexIPv4 should be nil, got %q", *d.DNSApexIPv4)
+		}
+		if d.DNSApexIPv6 == nil || *d.DNSApexIPv6 != "2001:db8::1" {
+			t.Fatalf("DNSApexIPv6 should be 2001:db8::1, got %v", d.DNSApexIPv6)
+		}
+	})
 }

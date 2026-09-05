@@ -33,6 +33,8 @@ type UserDomainCreateInput = {
   google_dkim?: string;
   // GH #1540: apex IP for a DNS-only zone (dns mode only) — the "pointed IP".
   ip_address?: string;
+  // GH #1540 follow-up: optional apex IPv6 (AAAA) for a DNS-only zone.
+  ip6_address?: string;
   // GH #1541: create_www is no longer a checkbox — it's derived from the domain
   // (apex ⇒ true, subdomain ⇒ false) and sent as a plain flag.
   create_www?: boolean;
@@ -158,6 +160,7 @@ export const UserDomainDrawer = ({ open, onClose, mode = "web" }: UserDomainDraw
           ...(isDNS
             ? {
                 ip_address: values.ip_address,
+                ip6_address: values.ip6_address,
                 m365_onmicrosoft: values.m365_onmicrosoft,
                 google_dkim: values.google_dkim,
               }
@@ -227,7 +230,9 @@ export const UserDomainDrawer = ({ open, onClose, mode = "web" }: UserDomainDraw
         {/* GH #1540: DNS-only zone — the apex IP (prefilled with this server's
             IP) and a DNS Template (Default / Microsoft 365 / Google Workspace).
             Shared with the admin Add DNS Zone drawer. */}
-        {isDNS && <DnsZoneFields publicIP={caps?.public_ipv4} />}
+        {isDNS && (
+          <DnsZoneFields publicIP={caps?.public_ipv4} publicIPv6={caps?.public_ipv6} />
+        )}
 
         {(isWeb || isMail) && (
           <Form.Item

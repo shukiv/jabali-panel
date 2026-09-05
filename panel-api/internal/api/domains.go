@@ -151,6 +151,9 @@ type createDomainRequest struct {
 	// (validated in createDomainOp as a bare IPv4). Empty/absent for web and
 	// mail domains, whose apex is panel-managed.
 	IPAddress string `json:"ip_address"`
+	// IPv6Address (GH #1540 follow-up) is the optional apex IPv6 (AAAA) of a
+	// DNS-only zone. Same gate as IPAddress; validated as a bare IPv6.
+	IPv6Address string `json:"ip6_address"`
 }
 
 // normalizeDomainName canonicalizes a domain for storage (GH #884): trim
@@ -776,8 +779,9 @@ func (h *domainHandler) create(c *gin.Context) {
 		// GH #1449: both default ON — only an explicit false opts out.
 		WebDisabled: req.WebEnabled != nil && !*req.WebEnabled,
 		DNSDisabled: req.ManageDNS != nil && !*req.ManageDNS,
-		// GH #1540: apex IP for a DNS-only zone (validated web-off + IPv4 in op).
+		// GH #1540: apex IP(s) for a DNS-only zone (validated web-off + family in op).
 		DNSApexIPv4: req.IPAddress,
+		DNSApexIPv6: req.IPv6Address,
 	})
 	if oerr != nil {
 		body := gin.H{"error": oerr.Code}
