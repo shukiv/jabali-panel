@@ -80,3 +80,29 @@ func TestDecodeArchive(t *testing.T) {
 		t.Fatalf("DecodeArchive decoded wrong: %+v", got)
 	}
 }
+
+func TestDecodeStat(t *testing.T) {
+	// Malformed body fails closed with a decode error, never a zero success.
+	if _, err := DecodeStat([]byte(`{`)); err == nil {
+		t.Fatal("DecodeStat(malformed) = nil error, want a decode error")
+	}
+	// AC2, load-bearing: an agent error blob is valid JSON but not a stat — it
+	// decodes to a zero-valued struct with an empty mode and must fail closed.
+	if _, err := DecodeStat([]byte(`{"error":"boom"}`)); !errors.Is(err, ErrNoStatMode) {
+		t.Fatalf("DecodeStat(error blob) = %v, want ErrNoStatMode", err)
+	}
+	// JSON null Unmarshals into a struct without error, leaving a zero value.
+	// The mode guard — not Unmarshal — is what rejects it, so this row proves
+	// the guard is load-bearing.
+	if _, err := DecodeStat([]byte(`null`)); !errors.Is(err, ErrNoStatMode) {
+		t.Fatalf("DecodeStat(null) = %v, want ErrNoStatMode", err)
+	}
+	got, err := DecodeStat([]byte(`{"path":"/home/shuki/f.txt","size":7,"mode":"-rw-r--r--","is_dir":false,"mod_time":"2026-01-02T03:04:05Z","is_symlink":true}`))
+	if err != nil {
+		t.Fatalf("DecodeStat(valid): %v", err)
+	}
+	if got.Path != "/home/shuki/f.txt" || got.Size != 7 || got.Mode != "-rw-r--r--" ||
+		got.IsDir || got.ModTime != "2026-01-02T03:04:05Z" || !got.IsSymlink {
+		t.Fatalf("DecodeStat decoded wrong: %+v", got)
+	}
+}
