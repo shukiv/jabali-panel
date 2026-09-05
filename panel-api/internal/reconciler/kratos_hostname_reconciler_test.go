@@ -68,6 +68,26 @@ func TestReconcileKratosHostname_NoDriftNoDispatch(t *testing.T) {
 	}
 }
 
+func TestReconcileKratosHostname_RetriesWhilePriorErrorPending(t *testing.T) {
+	// File already on the current hostname, but a prior dispatch is unresolved
+	// (its restart failed). The reconciler must still re-dispatch so the verb's
+	// inactive-Kratos restart is retried; a converged file alone must not
+	// short-circuit the recovery. On success it clears the pending error.
+	a := &fakeKratosRehostAgent{}
+	r := newKratosRehostReconciler("new.host.com",
+		func(string) ([]byte, error) { return kratosReconcilerFixture("new.host.com"), nil }, a)
+	r.kratosRehostLastErr = "kratos.config.rehost dispatch failed: restart jabali-kratos: timeout"
+
+	r.reconcileKratosHostname(context.Background())
+
+	if len(a.calls) != 1 {
+		t.Fatalf("calls = %d, want 1 (retry while a prior error is pending)", len(a.calls))
+	}
+	if r.kratosRehostLastErr != "" {
+		t.Fatalf("pending error = %q, want cleared after a successful retry", r.kratosRehostLastErr)
+	}
+}
+
 func TestReconcileKratosHostname_UnreadableNoDispatch(t *testing.T) {
 	a := &fakeKratosRehostAgent{}
 	r := newKratosRehostReconciler("new.host.com",

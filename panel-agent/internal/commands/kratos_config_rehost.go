@@ -58,6 +58,9 @@ var (
 	// kratosRehostReloadFn restarts jabali-kratos after a rewrite. Seam so
 	// unit tests don't spawn systemctl.
 	kratosRehostReloadFn = defaultKratosRehostReload
+	// kratosServiceActiveFn reports whether jabali-kratos is running. Seam so
+	// unit tests don't spawn systemctl.
+	kratosServiceActiveFn = defaultKratosServiceActive
 )
 
 // kratosBaseURLHostRE captures the panel host from the serve.public base_url
@@ -82,6 +85,16 @@ func defaultKratosRehostReload(_ context.Context) error {
 	bg, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	return execCommandContext(bg, "systemctl", "restart", "jabali-kratos").Run()
+}
+
+// defaultKratosServiceActive reports whether jabali-kratos is active. Used on
+// the no-churn path to recover a box where the file already converged but a
+// prior restart failed to bring Kratos up (`is-active --quiet` exits 0 when the
+// service is active).
+func defaultKratosServiceActive() bool {
+	bg, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return execCommandContext(bg, "systemctl", "is-active", "--quiet", "jabali-kratos").Run() == nil
 }
 
 func kratosConfigRehostHandler(ctx context.Context, params json.RawMessage) (any, error) {
@@ -116,9 +129,25 @@ func kratosConfigRehostHandler(ctx context.Context, params json.RawMessage) (any
 		}
 	}
 	if strings.EqualFold(current, target) {
-		// Idempotent no-churn: config already on the current hostname. No
-		// rewrite, no restart.
-		return kratosConfigRehostResponse{Rewritten: false, Reason: "already current"}, nil
+		// The file is already on the target hostname, so there is nothing to
+		// rewrite. But a converged file does not prove Kratos is running that
+		// config: a previous rewrite whose restart failed leaves the file
+		// correct on disk while Kratos is down (or never picked it up). The
+		// reconciler re-dispatches while its last attempt is unresolved, and if
+		// this path just returned "already current" the restart would never be
+		// retried — Kratos would stay down and the login lockout would persist.
+		// So when the service is not active, restart it here; otherwise it is
+		// already serving the current config and there is genuinely no churn.
+		if kratosServiceActiveFn() {
+			return kratosConfigRehostResponse{Rewritten: false, Reason: "already current"}, nil
+		}
+		if err := kratosRehostReloadFn(ctx); err != nil {
+			return nil, &agentwire.AgentError{
+				Code:    agentwire.CodeInternal,
+				Message: fmt.Sprintf("restart jabali-kratos: %v", err),
+			}
+		}
+		return kratosConfigRehostResponse{Rewritten: false, Reason: "restarted inactive jabali-kratos"}, nil
 	}
 
 	rewritten, n := rewriteKratosHost(data, current, target)

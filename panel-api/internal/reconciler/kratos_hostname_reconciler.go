@@ -44,8 +44,13 @@ func (r *Reconciler) reconcileKratosHostname(ctx context.Context) {
 		return
 	}
 	current := string(m[1])
-	if strings.EqualFold(current, settings.Hostname) {
-		r.kratosRehostLastErr = ""
+	// Dispatch on drift. Also dispatch when a prior attempt is still unresolved
+	// (r.kratosRehostLastErr set) even though the file already matches: a rewrite
+	// whose restart failed leaves the file converged but Kratos down, and the
+	// verb's no-churn path restarts an inactive Kratos. Short-circuiting on the
+	// converged file alone would never retry that restart, so the login lockout
+	// would persist until an unrelated restart.
+	if strings.EqualFold(current, settings.Hostname) && r.kratosRehostLastErr == "" {
 		return
 	}
 	if _, err := r.agent.Call(ctx, "kratos.config.rehost", map[string]any{

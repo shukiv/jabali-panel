@@ -144,7 +144,9 @@ func TestRewriteKratosHost(t *testing.T) {
 }
 
 // withKratosRehostSeams points the verb at a temp kratos.yml and a recording
-// reload fn for the duration of one (non-parallel) test.
+// reload fn for the duration of one (non-parallel) test. Kratos is reported
+// active by default; tests exercising the inactive-recovery path override
+// kratosServiceActiveFn after calling this (the cleanup restores it).
 func withKratosRehostSeams(t *testing.T, contents string, reloadErr error) (path string, restarts *int) {
 	t.Helper()
 	dir := t.TempDir()
@@ -155,10 +157,15 @@ func withKratosRehostSeams(t *testing.T, contents string, reloadErr error) (path
 		}
 	}
 	n := 0
-	prevPath, prevReload := kratosConfigPath, kratosRehostReloadFn
+	prevPath, prevReload, prevActive := kratosConfigPath, kratosRehostReloadFn, kratosServiceActiveFn
 	kratosConfigPath = path
 	kratosRehostReloadFn = func(context.Context) error { n++; return reloadErr }
-	t.Cleanup(func() { kratosConfigPath = prevPath; kratosRehostReloadFn = prevReload })
+	kratosServiceActiveFn = func() bool { return true }
+	t.Cleanup(func() {
+		kratosConfigPath = prevPath
+		kratosRehostReloadFn = prevReload
+		kratosServiceActiveFn = prevActive
+	})
 	return path, &n
 }
 
@@ -214,6 +221,32 @@ func TestKratosConfigRehostHandler_NoChurnWhenCurrent(t *testing.T) {
 	}
 	if *restarts != 0 {
 		t.Fatalf("restarts = %d, want 0 (no churn)", *restarts)
+	}
+}
+
+func TestKratosConfigRehostHandler_NoChurnRestartsInactiveKratos(t *testing.T) {
+	// The file already carries the target hostname, so there is nothing to
+	// rewrite — but Kratos is down (a prior rewrite's restart failed). The verb
+	// must restart it so the reconciler's retry actually recovers the lockout,
+	// rather than reporting "already current" and leaving Kratos down forever.
+	path, restarts := withKratosRehostSeams(t, kratosFixture(kratosFixtureHost), nil)
+	kratosServiceActiveFn = func() bool { return false }
+	before, _ := os.ReadFile(path)
+
+	resp, err := callRehost(t, kratosFixtureHost) // same host as the file
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	if resp.Rewritten {
+		t.Fatalf("expected no rewrite (file already current), got %+v", resp)
+	}
+	if *restarts != 1 {
+		t.Fatalf("restarts = %d, want 1 (inactive Kratos must be restarted)", *restarts)
+	}
+	// The file must be left byte-for-byte — no rewrite happened.
+	after, _ := os.ReadFile(path)
+	if string(before) != string(after) {
+		t.Fatal("file mutated on the no-churn recovery path")
 	}
 }
 
