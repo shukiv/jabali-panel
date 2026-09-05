@@ -247,6 +247,12 @@ type Domain struct {
 	// domain (apex is panel-managed) and every legacy row.
 	DNSApexIPv4 *string `gorm:"column:dns_apex_ipv4;type:varchar(45)" json:"dns_apex_ipv4,omitempty"`
 
+	// DNSApexIPv6 (GH #1540 follow-up) is the optional apex IPv6 (AAAA) for a
+	// DNS-only zone, seeded alongside DNSApexIPv4 with the same read-once
+	// semantics. NULL when the zone has no IPv6 apex (the common case) and for
+	// every web/mail domain and legacy row.
+	DNSApexIPv6 *string `gorm:"column:dns_apex_ipv6;type:varchar(45)" json:"dns_apex_ipv6,omitempty"`
+
 	// IsQuotaSuspended marks domains the M13.1.1 bandwidth reconciler
 	// disabled because their owning user crossed BandwidthQuotaMB.
 	// Disambiguates panel-driven disables from manual operator

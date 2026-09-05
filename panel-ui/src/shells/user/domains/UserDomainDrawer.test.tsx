@@ -6,11 +6,16 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const caps = vi.hoisted(() => ({ mail: false, dns: true, ipv4: "192.0.2.1" }));
+const caps = vi.hoisted(() => ({ mail: false, dns: true, ipv4: "192.0.2.1", ipv6: "2001:db8::1" }));
 const mutate = vi.hoisted(() => vi.fn());
 vi.mock("../../../hooks/useServerCapabilities", () => ({
   useServerCapabilities: () => ({
-    data: { mail_enabled: caps.mail, dns_enabled: caps.dns, public_ipv4: caps.ipv4 },
+    data: {
+      mail_enabled: caps.mail,
+      dns_enabled: caps.dns,
+      public_ipv4: caps.ipv4,
+      public_ipv6: caps.ipv6,
+    },
   }),
 }));
 vi.mock("../../../hooks/useQueries", () => ({
@@ -46,6 +51,7 @@ beforeEach(() => {
   caps.mail = false;
   caps.dns = true;
   caps.ipv4 = "192.0.2.1";
+  caps.ipv6 = "2001:db8::1";
   mutate.mockReset();
   mutate.mockResolvedValue({ id: "d1" });
 });
@@ -141,11 +147,14 @@ describe("UserDomainDrawer web create payload (GH #1541)", () => {
 });
 
 describe("UserDomainDrawer dns mode — Add DNS Zone (GH #1540)", () => {
-  it("prefills the apex IP with the panel IP and sends a web-off DNS-only payload", async () => {
+  it("prefills the apex IPv4 + IPv6 with the panel IPs and sends a web-off DNS-only payload", async () => {
     renderDrawer("dns");
     // IP Address is prefilled with the panel's public IPv4.
     const ip = (await screen.findByPlaceholderText("e.g., 203.0.113.10")) as HTMLInputElement;
     expect(ip.value).toBe("192.0.2.1");
+    // The optional IPv6 field is prefilled with the panel's public IPv6.
+    const ip6 = (await screen.findByPlaceholderText("e.g., 2001:db8::1")) as HTMLInputElement;
+    expect(ip6.value).toBe("2001:db8::1");
     await typeName("zone.example.com");
     submit();
     await waitFor(() => expect(mutate).toHaveBeenCalled());
@@ -154,8 +163,32 @@ describe("UserDomainDrawer dns mode — Add DNS Zone (GH #1540)", () => {
     expect(body.manage_dns).toBe(true);
     expect(body.ssl_mode).toBe("none");
     expect(body.ip_address).toBe("192.0.2.1");
+    expect(body.ip6_address).toBe("2001:db8::1");
     // Default template ⇒ no mail records.
     expect(body.mail_provider).toBe("none");
+  });
+
+  it("leaves the AAAA out when the server has no IPv6 and the field is blank", async () => {
+    caps.ipv6 = "";
+    renderDrawer("dns");
+    const ip6 = (await screen.findByPlaceholderText("e.g., 2001:db8::1")) as HTMLInputElement;
+    expect(ip6.value).toBe("");
+    await typeName("zone.example.com");
+    submit();
+    await waitFor(() => expect(mutate).toHaveBeenCalled());
+    const body = mutate.mock.calls[0][0];
+    expect(body.ip_address).toBe("192.0.2.1");
+    expect(body.ip6_address).toBeFalsy();
+  });
+
+  it("blocks submit on an invalid apex IPv6", async () => {
+    renderDrawer("dns");
+    const ip6 = await screen.findByPlaceholderText("e.g., 2001:db8::1");
+    fireEvent.change(ip6, { target: { value: "1.2.3.4" } });
+    await typeName("zone.example.com");
+    submit();
+    await screen.findByText("Enter a valid IPv6 address (e.g. 2001:db8::1)");
+    expect(mutate).not.toHaveBeenCalled();
   });
 
   it("Template Microsoft 365 maps to mail_provider m365 with the tenant helper", async () => {
@@ -193,6 +226,8 @@ describe("UserDomainDrawer dns mode — Add DNS Zone (GH #1540)", () => {
     rerender(wrap(true));
     const ip = (await screen.findByPlaceholderText("e.g., 203.0.113.10")) as HTMLInputElement;
     expect(ip.value).toBe("192.0.2.1");
+    const ip6 = (await screen.findByPlaceholderText("e.g., 2001:db8::1")) as HTMLInputElement;
+    expect(ip6.value).toBe("2001:db8::1");
   });
 
   it("blocks submit on an invalid apex IP", async () => {

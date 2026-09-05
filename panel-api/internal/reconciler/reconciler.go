@@ -2380,36 +2380,47 @@ func (r *Reconciler) resolveListenIPAddress(ctx context.Context, id *uint64, fam
 	return row.Address
 }
 
-// dnsOnlyApexSeed builds the single apex A record for a web-off DNS zone that
-// was created with a tenant-chosen apex IP (GH #1540). A web-off zone's apex is
+// dnsOnlyApexSeeds builds the apex records for a web-off DNS zone that was
+// created with a tenant-chosen apex IP (GH #1540): an A for DNSApexIPv4 and/or
+// an AAAA for DNSApexIPv6, each seeded independently. A web-off zone's apex is
 // deliberately left unseeded by dnscompile.BootstrapRecords (includeApex=false)
-// and is never re-asserted by convergeApexAddrRecords (web-gated), so this row
-// is seeded ONCE at zone bootstrap and then owned by the tenant. Managed=false
-// (the panel does not reconcile it — an honest flag, no false "managed" badge),
-// ManagedBy nil. Returns ok=false unless the domain is a web-off zone carrying a
-// non-empty apex IP, so callers can seed unconditionally.
-func dnsOnlyApexSeed(domain *models.Domain, zoneID string, srv *models.ServerSettings, idNew func() string) (models.DNSRecord, bool) {
-	if domain == nil || !domain.WebDisabled || domain.DNSApexIPv4 == nil {
-		return models.DNSRecord{}, false
-	}
-	ip := strings.TrimSpace(*domain.DNSApexIPv4)
-	if ip == "" {
-		return models.DNSRecord{}, false
+// and is never re-asserted by convergeApexAddrRecords (web-gated), so these rows
+// are seeded ONCE at zone bootstrap and then owned by the tenant. Managed=false
+// (the panel does not reconcile them — an honest flag, no false "managed"
+// badge), ManagedBy nil. Returns nil for a web-on domain or one with no apex IP.
+func dnsOnlyApexSeeds(domain *models.Domain, zoneID string, srv *models.ServerSettings, idNew func() string) []models.DNSRecord {
+	if domain == nil || !domain.WebDisabled {
+		return nil
 	}
 	now := time.Now().UTC()
-	return models.DNSRecord{
-		ID:        idNew(),
-		ZoneID:    zoneID,
-		Name:      "@",
-		Type:      "A",
-		Content:   ip,
-		TTL:       models.EffectiveDNSTTL(srv),
-		Priority:  0,
-		Managed:   false,
-		IsEnabled: true,
-		CreatedAt: now,
-		UpdatedAt: now,
-	}, true
+	ttl := models.EffectiveDNSTTL(srv)
+	mk := func(typ, content string) models.DNSRecord {
+		return models.DNSRecord{
+			ID:        idNew(),
+			ZoneID:    zoneID,
+			Name:      "@",
+			Type:      typ,
+			Content:   content,
+			TTL:       ttl,
+			Priority:  0,
+			Managed:   false,
+			IsEnabled: true,
+			CreatedAt: now,
+			UpdatedAt: now,
+		}
+	}
+	var out []models.DNSRecord
+	if domain.DNSApexIPv4 != nil {
+		if ip := strings.TrimSpace(*domain.DNSApexIPv4); ip != "" {
+			out = append(out, mk("A", ip))
+		}
+	}
+	if domain.DNSApexIPv6 != nil {
+		if ip := strings.TrimSpace(*domain.DNSApexIPv6); ip != "" {
+			out = append(out, mk("AAAA", ip))
+		}
+	}
+	return out
 }
 
 // reconcileDNSZone ensures a domain's DNS zone and records are provisioned
@@ -2468,10 +2479,12 @@ func (r *Reconciler) reconcileDNSZone(ctx context.Context, domain *models.Domain
 				}
 			}
 			// GH #1540: a DNS-only zone created with a tenant-chosen apex IP
-			// seeds its single "@ A <ip>" here — BootstrapRecords skips the apex
-			// for a web-off zone. Tenant-owned (Managed=false), never re-asserted.
-			if seed, ok := dnsOnlyApexSeed(domain, zone.ID, srv, ids.NewULID); ok {
-				if err := r.dnsRecords.Create(ctx, &seed); err != nil {
+			// seeds its "@ A <ipv4>" and/or "@ AAAA <ipv6>" here —
+			// BootstrapRecords skips the apex for a web-off zone. Tenant-owned
+			// (Managed=false), never re-asserted.
+			seeds := dnsOnlyApexSeeds(domain, zone.ID, srv, ids.NewULID)
+			for i := range seeds {
+				if err := r.dnsRecords.Create(ctx, &seeds[i]); err != nil {
 					r.log.Error("dns-only apex seed failed", "zone", zone.Name, "err", err)
 					return
 				}

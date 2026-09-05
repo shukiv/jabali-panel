@@ -5,9 +5,9 @@
 // so the two lists offer the same simple form johnnyq asked for.
 //
 // It reads the surrounding <Form> via Form.useFormInstance(), so a parent just
-// drops <DnsZoneFields publicIP={caps?.public_ipv4} /> inside its <Form> — the
-// field names (ip_address, mail_provider, m365_onmicrosoft, google_dkim) match
-// the POST /domains body verbatim.
+// drops <DnsZoneFields publicIP={caps?.public_ipv4} publicIPv6={caps?.public_ipv6} />
+// inside its <Form> — the field names (ip_address, ip6_address, mail_provider,
+// m365_onmicrosoft, google_dkim) match the POST /domains body verbatim.
 import { useEffect } from "react";
 import { Form, Input, Select } from "antd";
 
@@ -20,24 +20,40 @@ const isIPv4 = (value: string): boolean => {
   return parts.every((p) => /^\d{1,3}$/.test(p) && Number(p) >= 0 && Number(p) <= 255);
 };
 
+// isIPv6 is deliberately permissive (hex + colons, must contain a colon) and
+// rejects an IPv4 / IPv4-mapped value so the user puts those in the v4 field.
+// The backend (net.ParseIP + To4()==nil) is the authority.
+const isIPv6 = (value: string): boolean => {
+  const v = value.trim();
+  if (!v.includes(":")) return false;
+  if (/^::ffff:\d+\.\d+\.\d+\.\d+$/i.test(v)) return false; // IPv4-mapped → use the v4 field
+  return /^[0-9a-f:]+$/i.test(v);
+};
+
 export interface DnsZoneFieldsProps {
   // The panel's public IPv4, prefilled into the apex IP field so the common
   // case ("point it at this server") is one click. The user can overwrite it.
   publicIP?: string;
+  // The panel's public IPv6, prefilled into the optional AAAA field. Empty when
+  // the server has no IPv6 — the field then renders blank and stays optional.
+  publicIPv6?: string;
 }
 
-export const DnsZoneFields = ({ publicIP }: DnsZoneFieldsProps) => {
+export const DnsZoneFields = ({ publicIP, publicIPv6 }: DnsZoneFieldsProps) => {
   const form = Form.useFormInstance();
   const template = Form.useWatch("mail_provider", form) ?? "none";
 
-  // Prefill the apex IP with the panel's IP once, and never clobber a value the
-  // user already typed (or one restored on a remount). destroyOnClose remounts
-  // the drawer per open, so this re-runs with an empty field each open.
+  // Prefill the apex IPs with the panel's IPs once, and never clobber a value
+  // the user already typed (or one restored on a remount). destroyOnClose
+  // remounts the drawer per open, so this re-runs with an empty field each open.
   useEffect(() => {
     if (publicIP && !form.getFieldValue("ip_address")) {
       form.setFieldValue("ip_address", publicIP);
     }
-  }, [publicIP, form]);
+    if (publicIPv6 && !form.getFieldValue("ip6_address")) {
+      form.setFieldValue("ip6_address", publicIPv6);
+    }
+  }, [publicIP, publicIPv6, form]);
 
   return (
     <>
@@ -61,6 +77,25 @@ export const DnsZoneFields = ({ publicIP }: DnsZoneFieldsProps) => {
         ]}
       >
         <Input placeholder="e.g., 203.0.113.10" />
+      </Form.Item>
+
+      {/* GH #1540 follow-up: optional apex IPv6 (AAAA). Prefilled with the
+          server's IPv6 when it has one; left blank (and optional) otherwise. */}
+      <Form.Item
+        label="IPv6 Address (optional)"
+        name="ip6_address"
+        initialValue={publicIPv6}
+        tooltip="Optional — the IPv6 address for the apex AAAA record. Prefilled with this server's IPv6 if it has one. Leave blank for no AAAA."
+        rules={[
+          {
+            validator: (_, v) =>
+              !v || isIPv6(v)
+                ? Promise.resolve()
+                : Promise.reject(new Error("Enter a valid IPv6 address (e.g. 2001:db8::1)")),
+          },
+        ]}
+      >
+        <Input placeholder="e.g., 2001:db8::1" />
       </Form.Item>
 
       {/* GH #1540: "Template" — Default seeds no mail records (just the apex the

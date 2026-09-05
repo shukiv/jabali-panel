@@ -20,6 +20,7 @@ type AdminDNSZoneInput = {
   name: string;
   user_id: string;
   ip_address?: string;
+  ip6_address?: string;
   mail_provider?: string;
   m365_onmicrosoft?: string;
   google_dkim?: string;
@@ -66,6 +67,7 @@ export const AdminDNSZoneDrawer = ({ open, onClose }: AdminDNSZoneDrawerProps) =
         manage_dns: true,
         ssl_mode: "none",
         ip_address: values.ip_address,
+        ip6_address: values.ip6_address,
         mail_provider: values.mail_provider ?? "none",
         m365_onmicrosoft: values.m365_onmicrosoft,
         google_dkim: values.google_dkim,
@@ -122,7 +124,7 @@ export const AdminDNSZoneDrawer = ({ open, onClose }: AdminDNSZoneDrawerProps) =
           <Input placeholder="e.g., example.com" />
         </Form.Item>
 
-        <DnsZoneFields publicIP={caps?.public_ipv4} />
+        <DnsZoneFields publicIP={caps?.public_ipv4} publicIPv6={caps?.public_ipv6} />
 
         <Form.Item>
           <Space>
