@@ -11,10 +11,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"git.jabali-panel.com/shukivaknin/jabali2/internal/limits"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/middleware"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/packageops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
@@ -241,7 +241,7 @@ func (h *packageHandler) create(c *gin.Context) {
 		pkg.NspawnImageVersion = &v
 	}
 
-	if err := validatePackageLimits(pkg); err != nil {
+	if err := packageops.Validate(pkg); err != nil {
 		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "validation_failed", "detail": err.Error()})
 		return
 	}
@@ -255,22 +255,6 @@ func (h *packageHandler) create(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusCreated, pkg)
-}
-
-// validatePackageLimits enforces the bounds from internal/limits on the
-// M18 resource-limit fields before write. Runs at both create and
-// update — the agent validates again as defense-in-depth, but returning
-// a clean 422 here is much better UX than a 502-agent-error later.
-func validatePackageLimits(pkg *models.HostingPackage) error {
-	e := limits.EffectiveLimits{
-		DiskQuotaMB:     pkg.DiskQuotaMB,
-		CPUQuotaPercent: pkg.CPUQuotaPercent,
-		MemoryLimitMB:   pkg.MemoryLimitMB,
-		IOReadMbps:      pkg.IOReadMbps,
-		IOWriteMbps:     pkg.IOWriteMbps,
-		MaxTasks:        pkg.MaxTasks,
-	}
-	return e.Validate()
 }
 
 func (h *packageHandler) get(c *gin.Context) {
@@ -435,7 +419,7 @@ func (h *packageHandler) update(c *gin.Context) {
 	}
 	pkg.UpdatedAt = time.Now().UTC()
 
-	if err := validatePackageLimits(pkg); err != nil {
+	if err := packageops.Validate(pkg); err != nil {
 		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "validation_failed", "detail": err.Error()})
 		return
 	}
