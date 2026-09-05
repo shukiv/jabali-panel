@@ -5,14 +5,14 @@
 //   - user/mail/tabs/MailboxesTab.tsx       (tenant, cross-domain)
 //   - admin/domains/DomainMailboxesSection.tsx (per-domain)
 //
-// Adapters still own their data source and their role-specific columns and the
-// SHAPE of the trigger (admin owner filter, tenant groups + autoresponders,
-// domain enable-email + create wizard; a one-click rotate button vs a form
-// modal with an optional custom password). This module owns what MUST stay
-// identical: the quota / status presentation, the safe webmail launcher
-// (JAB-354), and the password reset → reveal-once → toast/error core
-// (useMailboxPasswordReset), so a one-shot generated password is surfaced
-// through a single tested path no matter which surface produced it.
+// Adapters still own their data source and their role-specific columns (admin
+// owner filter, tenant groups + autoresponders, domain enable-email + create
+// wizard). This module owns what MUST stay identical: the quota / status
+// presentation, the safe webmail launcher (JAB-354), and the password rotate →
+// reveal-once → toast/error core (useMailboxPasswordReset). All three surfaces
+// now trigger a rotate the same way — a one-click action that auto-generates
+// and reveals the new password exactly once — so a one-shot generated password
+// is surfaced through a single tested path no matter which surface produced it.
 
 import { useCallback, useState } from "react";
 import { Progress, Tag, Tooltip } from "antd";
@@ -146,17 +146,18 @@ export function useMailboxWebmail() {
   };
 }
 
-// ---- password reset action (JAB-333) ------------------------------------
+// ---- password rotate action (JAB-333) -----------------------------------
 //
 // The three inventories each copied the same rotate flow: call the rotate
-// mutation, and if the server GENERATED the password (no custom one supplied)
-// reveal it exactly once via DatabaseUserPasswordModal, otherwise a success
-// toast. The trigger differs by surface and STAYS adapter-owned — a one-click
-// button (per-domain) or a form modal collecting an optional custom password
-// (admin, tenant) — but the reveal/toast/error core must stay identical: a
-// one-shot generated password dropped silently is a real support incident, and
-// that's exactly the kind of invariant that drifts across hand-copied screens.
-// Each surface calls `rotate(...)` and renders <MailboxPasswordRevealModal>.
+// mutation and, since no UI supplies a custom password, reveal the
+// server-generated one exactly once via DatabaseUserPasswordModal. All three
+// surfaces trigger it the same way now — a one-click action, no form — but the
+// reveal/toast/error core must stay identical: a one-shot generated password
+// dropped silently is a real support incident, and that's exactly the kind of
+// invariant that drifts across hand-copied screens. Each surface calls
+// `rotate(...)` and renders <MailboxPasswordRevealModal>. `newPassword` stays
+// on rotate() for API/CLI parity (the endpoint still accepts a custom password)
+// even though no surface passes it today.
 
 export interface MailboxReveal {
   email: string;
