@@ -311,12 +311,19 @@ func (h *userDockerAppHandler) lifecycle(statusOnSuccess string, composeArgs ...
 			defer cancel()
 			params := map[string]any{"slug": app.EffectiveSlug()}
 			// Bring-up lifecycle (start/restart) re-runs `compose up` from the
-			// on-disk compose — make the agent re-validate the tenant gate first
-			// (Gitea #513), the same as install/update/restore.
+			// on-disk compose — make the agent re-validate the tenant safety
+			// profile first (Gitea #513), the SAME as install/update/restore.
+			// Route through the shared helper so tenant_cgroup (the exact owner
+			// slice) is included: passing only tenant_validate/tenant_caps here
+			// silently dropped the Gitea #525 cross-tenant-slice check to the weak
+			// generic-pattern match, so a tampered on-disk compose declaring
+			// ANOTHER tenant's slice would have passed on start/restart (JAB-364).
+			// Fail closed if the safety profile can't be resolved — never bring an
+			// app up unvalidated (Gitea #529).
 			if statusOnSuccess == models.DockerAppStatusRunning {
-				if entry, ok := h.cfg.Catalog.Get(app.Slug); ok {
-					params["tenant_validate"] = true
-					params["tenant_caps"] = dockerapp.TenantCapAllowlist(entry.TenantCaps)
+				if err := h.admin.applyTenantValidateParams(ctx, app, params); err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "tenant_validation_unavailable", "detail": firstLineString(err.Error())})
+					return
 				}
 			}
 			if _, err := h.cfg.Agent.Call(ctx, "docker_app."+composeArgs[0], params); err != nil {
@@ -634,9 +641,16 @@ func (h *userDockerAppHandler) install(c *gin.Context) {
 			"volume_owner":                entry.VolumeOwner,
 			"wait_healthy":                true,
 			"healthcheck_timeout_seconds": 300,
-			// M49: agent safety gate before `up`.
-			"tenant_validate": true,
-			"tenant_caps":     dockerapp.TenantCapAllowlist(entry.TenantCaps),
+		}
+		// M49 + Gitea #525: agent safety gate before `up`. The shared helper adds
+		// tenant_validate/tenant_caps AND tenant_cgroup (the exact owner slice), so
+		// the strict cross-tenant-slice check is armed on install too — not only
+		// the weak generic-pattern match (JAB-364). Fail closed if the profile
+		// can't be resolved (Gitea #529): drop the just-created row and refuse.
+		if err := h.admin.applyTenantValidateParams(ctx, app, installParams); err != nil {
+			_ = h.cfg.Repo.Delete(ctx, app.ID)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "tenant_validation_unavailable", "detail": firstLineString(err.Error())})
+			return
 		}
 		appID := app.ID
 		go func() {
