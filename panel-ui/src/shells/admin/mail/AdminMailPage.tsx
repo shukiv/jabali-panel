@@ -14,8 +14,6 @@ import {
   App,
   Button,
   Empty,
-  Form,
-  Modal,
   Card,
   Space,
   Table,
@@ -44,7 +42,6 @@ import {
 import { AdminGroupsTab } from "./AdminGroupsTab";
 import { MailStatsTab } from "./MailStatsTab";
 import { CreateMailboxWizardModal } from "../../user/mail/CreateMailboxWizardModal";
-import { PasswordInput } from "../../../components/PasswordInput";
 import { RowActions } from "../../../components/RowActions";
 
 export function AdminMailPage() {
@@ -84,29 +81,13 @@ export function AdminMailPage() {
   );
 
   const deleteMutation = useDeleteMailbox();
-  const { rotate: rotatePassword, rotateMutation, reveal, clearReveal, revealPassword } =
+  const { rotate: rotatePassword, rotatingId, reveal, clearReveal, revealPassword } =
     useMailboxPasswordReset();
   const webmail = useMailboxWebmail();
 
   const [tab, setTab] = useTabParam<string>("mailboxes");
   const [createOpen, setCreateOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<AdminMailbox | null>(null);
-  const [resetTarget, setResetTarget] = useState<AdminMailbox | null>(null);
-  const [resetForm] = Form.useForm<{ password?: string }>();
-
-  // Server-wide admin: a form modal collecting an OPTIONAL custom password. The
-  // rotate → reveal-once → error core is the shared hook.
-  const submitReset = async () => {
-    if (!resetTarget) return;
-    const v = await resetForm.validateFields();
-    const ok = await rotatePassword({
-      id: resetTarget.id,
-      email: resetTarget.email,
-      newPassword: v.password,
-      title: t("adminmailpage.mailbox_password"),
-    });
-    if (ok) setResetTarget(null);
-  };
 
   useSetBreadcrumbs(
     ownerId
@@ -262,7 +243,7 @@ export function AdminMailPage() {
                 actions={[
                   { key: "webmail", label: "Open webmail", icon: <MailOutlined />, loading: webmail.isLaunching(row.id), onClick: () => webmail.launch(row.id) },
                   { key: "edit", label: "Edit mailbox", icon: <EditOutlined />, onClick: () => setEditTarget(row) },
-                  { key: "reset", label: "Reset password", icon: <KeyOutlined />, onClick: () => { resetForm.resetFields(); setResetTarget(row); } },
+                  { key: "rotate", label: "Rotate password", icon: <KeyOutlined />, loading: rotatingId === row.id, onClick: () => rotatePassword({ id: row.id, email: row.email, title: t("adminmailpage.mailbox_password") }) },
                   {
                     key: "delete",
                     label: "Delete",
@@ -309,26 +290,6 @@ export function AdminMailPage() {
         mailbox={editTarget}
         onClose={() => setEditTarget(null)}
       />
-
-      <Modal
-        open={resetTarget !== null}
-        title={resetTarget ? `Reset password — ${resetTarget.email}` : "Reset password"}
-        okText={t("adminmailpage.set_password")}
-        confirmLoading={rotateMutation.isPending}
-        onOk={submitReset}
-        onCancel={() => setResetTarget(null)}
-        destroyOnClose
-      >
-        <Form form={resetForm} layout="vertical" requiredMark={false}>
-          <Form.Item
-            label={t("adminmailpage.new_password")}
-            name="password"
-            tooltip={t("adminmailpage.leave_blank_to_auto_generate_auto_generated")}
-          >
-            <PasswordInput autoComplete="new-password" placeholder="(leave blank to auto-generate)" />
-          </Form.Item>
-        </Form>
-      </Modal>
 
       <MailboxPasswordRevealModal reveal={reveal} onClose={clearReveal} />
     </>

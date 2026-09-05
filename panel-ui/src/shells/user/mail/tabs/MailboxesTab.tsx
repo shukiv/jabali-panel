@@ -5,7 +5,7 @@
 // client-side and provides password rotation, SSO mint, and delete actions.
 import { useTranslation } from "react-i18next";
 import { useMemo, useState } from "react";
-import { Button, Empty, Form, Modal, Skeleton, Space, Tag, Tooltip, Typography } from "antd";
+import { Button, Empty, Skeleton, Space, Tag, Tooltip, Typography } from "antd";
 import type { TableProps } from "antd";
 import { feedback } from "../../../../lib/feedback"; // GH #970: themed toasts
 import { RowActions } from "../../../../components/RowActions";
@@ -39,7 +39,6 @@ import {
 import { useListQuery } from "../../../../hooks/useQueries";
 import { useTableURL } from "../../../../hooks/useTableURL";
 import type { Domain } from "../../../../components/domains/types";
-import { PasswordInput } from "../../../../components/PasswordInput";
 import { EditMailboxModal } from "../../../../components/mail/EditMailboxModal";
 import { MailSyncInfoModal } from "../../../../components/mail/MailSyncInfoModal";
 
@@ -167,35 +166,13 @@ export const MailboxesTab = ({ domainId }: { domainId?: string } = {}) => {
   }, [forwarders]);
 
 
-  const [resetTarget, setResetTarget] = useState<MailboxRow | null>(null);
   const [editTarget, setEditTarget] = useState<MailboxRow | null>(null);
   const [arTarget, setArTarget] = useState<MailboxRow | null>(null);
   const [syncTarget, setSyncTarget] = useState<MailboxRow | null>(null);
-  const [resetForm] = Form.useForm<{ password?: string }>();
 
   const deleteMutation = useDeleteMailbox();
   const { rotate: rotatePassword, rotatingId, reveal, clearReveal } = useMailboxPasswordReset();
   const webmail = useMailboxWebmail();
-
-  const openReset = (row: MailboxRow) => {
-    resetForm.resetFields();
-    setResetTarget(row);
-  };
-
-  // Tenant cross-domain: a form modal collecting an OPTIONAL custom password.
-  // The rotate → reveal-once (when the server generates one) → error handling is
-  // the shared hook; this adapter only owns the form trigger.
-  const submitReset = async () => {
-    if (!resetTarget) return;
-    const values = await resetForm.validateFields();
-    const ok = await rotatePassword({
-      id: resetTarget.id,
-      email: resetTarget.email,
-      newPassword: values.password,
-      title: "New mailbox password (auto-generated)",
-    });
-    if (ok) setResetTarget(null);
-  };
 
   const loading = query.isLoading;
 
@@ -416,32 +393,27 @@ export const MailboxesTab = ({ domainId }: { domainId?: string } = {}) => {
                         },
                       ]
                     : []),
-                  { key: "resetpw", label: "Reset password", icon: <KeyOutlined />, onClick: () => openReset(row) },
+                  { key: "resetpw", label: "Rotate password", icon: <KeyOutlined />, loading: rotatingId === row.id, onClick: () => rotatePassword({ id: row.id, email: row.email, title: "New mailbox password" }) },
                   { key: "autoreply", label: "Automatic replies", icon: <ClockCircleOutlined />, onClick: () => setArTarget(row) },
                   {
                     key: "remove",
                     label: "Remove",
                     icon: <DeleteOutlined />,
                     danger: true,
-                    onClick: () => {
-                      feedback.modal.confirm({
-                        title: `Delete ${row.email}?`,
-                        content: "All mail in this mailbox will be removed. This cannot be undone.",
-                        okText: "Delete",
-                        okType: "danger",
-                        onOk: async () => {
-                          try {
-                            await deleteMutation.mutateAsync({ id: row.id, domainId: row.domain_id });
-                            feedback.message.success("Mailbox deleted");
-                          } catch (err) {
-                            const msg =
-                              (err as { response?: { data?: { detail?: string } } })?.response?.data
-                                ?.detail ?? "Failed to delete";
-                            feedback.message.error(msg);
-                          }
-                        },
-                      });
+                    // Shared RowActions confirm modal (the other two inventories
+                    // use the same declarative prop) — no hand-rolled modal here.
+                    onClick: async () => {
+                      try {
+                        await deleteMutation.mutateAsync({ id: row.id, domainId: row.domain_id });
+                        feedback.message.success("Mailbox deleted");
+                      } catch (err) {
+                        const msg =
+                          (err as { response?: { data?: { detail?: string } } })?.response?.data
+                            ?.detail ?? "Failed to delete";
+                        feedback.message.error(msg);
+                      }
                     },
+                    confirm: { title: `Delete ${row.email}?`, description: "All mail in this mailbox will be removed. This cannot be undone.", okText: "Delete" },
                   },
                 ]}
               />
@@ -470,32 +442,6 @@ export const MailboxesTab = ({ domainId }: { domainId?: string } = {}) => {
         domain={syncTarget?.domain_name ?? ""}
         onClose={() => setSyncTarget(null)}
       />
-
-      <Modal
-        open={resetTarget !== null}
-        title={resetTarget ? `Reset password — ${resetTarget.email}` : "Reset password"}
-        okText={t("mailboxestab.set_password")}
-        confirmLoading={resetTarget ? rotatingId === resetTarget.id : false}
-        onOk={submitReset}
-        onCancel={() => setResetTarget(null)}
-        destroyOnClose
-      >
-        <Form form={resetForm} layout="vertical" requiredMark={false}>
-          <Form.Item
-            label={t("mailboxestab.new_password")}
-            name="password"
-            tooltip={t("mailboxestab.leave_blank_to_auto_generate_auto_generated")}
-          >
-            <PasswordInput
-              autoComplete="new-password"
-              placeholder="(leave blank to auto-generate)"
-            />
-          </Form.Item>
-          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            Use the dice button to generate a strong password, or type your own.
-          </Typography.Text>
-        </Form>
-      </Modal>
 
       <MailboxPasswordRevealModal reveal={reveal} onClose={clearReveal} />
     </>
