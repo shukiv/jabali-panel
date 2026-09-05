@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { serviceBadge } from "./UserDomainList";
+import { serviceBadge } from "../../../components/domains/types";
 
 // GH #1449: the list badge distinguishes the three row kinds and stays silent
 // for an ordinary full-service web domain.

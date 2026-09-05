@@ -11,7 +11,7 @@ import { useQueries } from "@tanstack/react-query";
 import { apiClient } from "../../../../apiClient";
 import { useListQuery } from "../../../../hooks/useQueries";
 import { useUpdateDisclaimer, type Disclaimer } from "../../../../hooks/useDisclaimer";
-import type { Domain } from "../../domains/UserDomainList";
+import type { Domain } from "../../../../components/domains/types";
 
 interface FormValues {
   enabled: boolean;

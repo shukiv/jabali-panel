@@ -19,7 +19,7 @@ import {
 import { DeleteOutlined, EditOutlined, PlusOutlined, UsergroupAddOutlined } from "@icons";
 
 import { useListQuery } from "../../../hooks/useQueries";
-import type { Domain } from "../../user/domains/UserDomainList";
+import type { Domain } from "../../../components/domains/types";
 import {
   useAdminMailGroups,
   useDeleteMailGroup,

@@ -5,10 +5,10 @@
 // has enabled tenant domain options; the backend re-validates regardless.
 import { useState } from "react";
 import { Modal, Form, Input, Typography } from "antd";
-import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
+import { feedback } from "../../lib/feedback"; // GH #970: themed toasts
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
-import { apiClient } from "../../../apiClient";
+import { apiClient } from "../../apiClient";
 
 interface DomainDocRootModalProps {
   domainId: string;

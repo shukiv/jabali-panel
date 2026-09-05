@@ -36,7 +36,7 @@ import {
   useMailboxWebmail,
 } from "../../../../components/mail/mailboxInventory";
 import { useListQuery } from "../../../../hooks/useQueries";
-import type { Domain } from "../../domains/UserDomainList";
+import type { Domain } from "../../../../components/domains/types";
 import { PasswordInput } from "../../../../components/PasswordInput";
 import { EditMailboxModal } from "../../../../components/mail/EditMailboxModal";
 import { MailSyncInfoModal } from "../../../../components/mail/MailSyncInfoModal";

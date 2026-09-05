@@ -11,7 +11,7 @@ import { useNavigate, useParams } from "react-router";
 
 import { useSetBreadcrumbs } from "../../../components/admin/BreadcrumbContext";
 import { useOneQuery } from "../../../hooks/useQueries";
-import type { Domain } from "../domains/UserDomainList";
+import type { Domain } from "../../../components/domains/types";
 import { MailboxesTab } from "./tabs/MailboxesTab";
 import { GroupsTab } from "./tabs/GroupsTab";
 import { ForwardersTab } from "./tabs/ForwardersTab";
