@@ -34,9 +34,14 @@ Result: the panel does not act as an OIDC provider. If a third-party app needs S
 
 (ADR-0036 was superseded by ADR-0038; ADR-0040 covers the M22 rework.)
 
-### In-panel admin → user impersonation
+### In-panel admin → user impersonation — **restored**
 
-Removed with the M20 Kratos migration. The audit emitter (`AppendImpersonationStart` / `Stop`) is still in `panel-api/internal/audit/events.go` and ADR-0106 reserves the `audit_show_impersonation` server-setting toggle, but **no UI / handler currently mints an admin → user session**. Adding it requires a clean Kratos session-handoff path (so the user sees the impersonation row in their own activity log).
+This was removed with the M20 Kratos migration, but has since been **re-added**.
+Admins can impersonate a tenant through the `/admin/impersonation` routes
+(admin-gated), which mint a scoped, time-bounded impersonation grant; the target
+user sees the impersonation in their own activity log (ADR-0106
+`audit_show_impersonation`). It is no longer a removed feature — this entry is
+kept only to correct earlier docs that listed it as gone.
 
 To act on a user's behalf today, an admin uses the user's own login (or resets the password if needed).
 

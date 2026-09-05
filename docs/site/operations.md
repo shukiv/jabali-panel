@@ -51,13 +51,11 @@ Audited (success + failure), announced via M14.
 
 ### Move a domain between users
 
-Not a first-class operation in the UI. The supported path:
-
-1. Backup the old user's `account_full`.
-2. Restore into the new user under a fresh domain name (or temp domain).
-3. Adjust DNS.
-
-(Or: contact upstream — this is on the roadmap.)
+A first-class **Change owner** action reassigns a domain to a different user (GH
+#1238); the vhost, DNS, and mail follow the new owner on the next reconcile. The
+admin can also **rename a tenant's username in place** (GH #1238) — the panel
+re-prefixes that user's MariaDB databases, DB users, and PostgreSQL shadow roles
+to match.
 
 ### Add a new IPv4 to the pool
 
