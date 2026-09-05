@@ -27,6 +27,7 @@ const domainQ = vi.hoisted(() => ({
   },
 }));
 const patch = vi.hoisted(() => vi.fn());
+const caps = vi.hoisted(() => ({ value: { tenant_domain_options_enabled: false, tenant_docroot_editable: false } }));
 
 vi.mock("react-router", async () => {
   const actual = await vi.importActual<typeof import("react-router")>("react-router");
@@ -37,6 +38,18 @@ vi.mock("../../../components/admin/BreadcrumbContext", () => ({
 }));
 vi.mock("../../../hooks/useQueries", () => ({
   useOneQuery: () => domainQ.value,
+}));
+vi.mock("../../../hooks/useServerCapabilities", () => ({
+  useServerCapabilities: () => ({ data: caps.value }),
+}));
+vi.mock("../../../components/DomainNginxOptionsPanel", () => ({
+  DomainNginxOptionsPanel: ({ domainId }: { domainId: string }) => <div>options-pane:{domainId}</div>,
+}));
+vi.mock("../../DomainSettingsButton", () => ({
+  TenantNginxRulesPanel: ({ domain }: { domain: { id: string } }) => <div>rewrite-pane:{domain.id}</div>,
+}));
+vi.mock("../../../components/domains/DomainDocRootPanel", () => ({
+  DomainDocRootPanel: ({ domainId }: { domainId: string }) => <div>docroot-pane:{domainId}</div>,
 }));
 vi.mock("../../../components/DomainCacheSection", () => ({
   DomainCacheSection: ({ domainId }: { domainId: string }) => <div>caching-pane:{domainId}</div>,
@@ -72,6 +85,7 @@ beforeEach(() => {
   setBreadcrumbs.mockReset();
   patch.mockReset();
   patch.mockResolvedValue({});
+  caps.value = { tenant_domain_options_enabled: false, tenant_docroot_editable: false };
   domainQ.value = {
     data: {
       id: "d1",
@@ -103,6 +117,16 @@ describe("WebDomainPage (GH #1543)", () => {
     expect(await screen.findByText("Preview URL")).toBeInTheDocument();
   });
 
+  it("renders the Index pane when :tab=index and saves the chosen priority", async () => {
+    renderAt("/jabali-panel/domains/d1/index");
+    expect(await screen.findByText("Directory Index Priority")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("PHP first (index.php, then index.html)"));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await vi.waitFor(() =>
+      expect(patch).toHaveBeenCalledWith("/domains/d1", { index_priority: "php_first" }),
+    );
+  });
+
   it("renders the Caching pane when :tab=caching", async () => {
     renderAt("/jabali-panel/domains/d1/caching");
     expect(await screen.findByText("caching-pane:d1")).toBeInTheDocument();
@@ -132,6 +156,33 @@ describe("WebDomainPage (GH #1543)", () => {
     await vi.waitFor(() =>
       expect(patch).toHaveBeenCalledWith("/domains/d1", { temp_url_enabled: true }),
     );
+  });
+
+  it("hides the cap-gated tabs when the caps are off", async () => {
+    renderAt("/jabali-panel/domains/d1");
+    await screen.findByText("Preview URL");
+    expect(screen.getByText("Index Files")).toBeInTheDocument();
+    expect(screen.queryByText("Domain options")).not.toBeInTheDocument();
+    expect(screen.queryByText("Rewrite rules")).not.toBeInTheDocument();
+    // "Document root" also labels an Overview fact, so assert the pane itself
+    // (its stub marker) is absent rather than the ambiguous tab text.
+    expect(screen.queryByText("docroot-pane:d1")).not.toBeInTheDocument();
+  });
+
+  it("shows the cap-gated tabs and renders their panes when the caps are on", async () => {
+    caps.value = { tenant_domain_options_enabled: true, tenant_docroot_editable: true };
+    renderAt("/jabali-panel/domains/d1/domain-options");
+    expect(await screen.findByText("options-pane:d1")).toBeInTheDocument();
+    // The other gated tabs are present in the strip.
+    expect(screen.getByText("Rewrite rules")).toBeInTheDocument();
+    expect(screen.getByText("Document root")).toBeInTheDocument();
+  });
+
+  it("falls back to Overview when a URL targets a cap-gated tab that is off", async () => {
+    // options off (default) → /domain-options is not a visible tab.
+    renderAt("/jabali-panel/domains/d1/domain-options");
+    expect(await screen.findByText("Preview URL")).toBeInTheDocument();
+    expect(screen.queryByText("options-pane:d1")).not.toBeInTheDocument();
   });
 
   it("surfaces an error when the domain can't be loaded", async () => {
