@@ -103,6 +103,16 @@ describe("WebDomainPage (GH #1543)", () => {
     expect(await screen.findByText("Preview URL")).toBeInTheDocument();
   });
 
+  it("renders the Index pane when :tab=index and saves the chosen priority", async () => {
+    renderAt("/jabali-panel/domains/d1/index");
+    expect(await screen.findByText("Directory Index Priority")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("PHP first (index.php, then index.html)"));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await vi.waitFor(() =>
+      expect(patch).toHaveBeenCalledWith("/domains/d1", { index_priority: "php_first" }),
+    );
+  });
+
   it("renders the Caching pane when :tab=caching", async () => {
     renderAt("/jabali-panel/domains/d1/caching");
     expect(await screen.findByText("caching-pane:d1")).toBeInTheDocument();

@@ -19,14 +19,16 @@ import { useOneQuery } from "../../../hooks/useQueries";
 import type { Domain } from "../../../components/domains/types";
 import { DomainCacheSection } from "../../../components/DomainCacheSection";
 import { DomainDirectoryPrivacySection } from "../../admin/domains/DomainDirectoryPrivacySection";
+import { DomainIndexPanel } from "../../DomainIndexPanel";
 import { OverviewTab } from "./tabs/OverviewTab";
 
-const TAB_KEYS = ["overview", "caching", "directory-privacy"] as const;
+const TAB_KEYS = ["overview", "index", "caching", "directory-privacy"] as const;
 type TabKey = (typeof TAB_KEYS)[number];
 const DEFAULT_TAB: TabKey = "overview";
 
 const TAB_LABELS: Record<TabKey, string> = {
   overview: "Overview",
+  index: "Index Files",
   caching: "Caching",
   "directory-privacy": "Directory Privacy",
 };
@@ -86,6 +88,8 @@ export const WebDomainPage = () => {
     switch (activeKey) {
       case "overview":
         return <OverviewTab domain={domain} />;
+      case "index":
+        return <DomainIndexPanel domain={domain} />;
       case "caching":
         return <DomainCacheSection domainId={domain.id} />;
       case "directory-privacy":
