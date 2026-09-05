@@ -46,7 +46,8 @@ A **Package** carries:
 - `cpu_pct`
 - `tasks_max`
 - `req_per_sec`, `req_burst`
-- `max_domains`, `max_mailboxes`, `max_databases`
+- `max_domains`, `max_mailboxes`, `max_databases`, `max_database_users` (JAB-329)
+- `max_ftp_accounts` (FTP/SFTP subaccount cap, when the module is enabled)
 - PHP-INI overrides (`memory_limit`, `upload_max_filesize`, etc.)
 
 Edit packages: `/jabali-admin/packages`. Users on a package get the new limits applied on the next reconciler tick.

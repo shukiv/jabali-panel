@@ -37,7 +37,7 @@ Jabali is an open-source Linux web-hosting control panel. Go agent + React UI, M
 - Notifications: in-app bell, email, Slack, Telegram, Discord, ntfy.sh, Web Push (VAPID), SMS, webhook — server-wide and opt-in tenant-owned channels.
 - Server Status dashboard with service controls.
 - One-click `jabali update` from the panel, encrypted diag bundle for support.
-- Migration ingest from cPanel (`.tar.gz`/`cpmove`), DirectAdmin, Hestia, WHM.
+- Migration ingest from cPanel (`.tar.gz`/`cpmove`), DirectAdmin, Hestia, WHM (archive or live SSH), plus live-SSH import from Plesk, CloudPanel, CyberPanel, and Jabali → Jabali.
 
 ## How it's built
 
