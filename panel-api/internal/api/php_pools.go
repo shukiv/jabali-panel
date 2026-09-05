@@ -869,5 +869,5 @@ func (h *phpPoolHandler) deleteIniOverride(c *gin.Context) {
 // Implementation lives in php_pool_reconcile.go so the user-driven
 // /domains/:id/php-pool path can share it without depending on phpPoolHandler.
 func (h *phpPoolHandler) reconcilePoolAsync(pool models.PHPPool) {
-	reconcilePHPPoolViaAgent(h.cfg.Agent, h.cfg.Users, h.cfg.PHPPoolIniOverrides, h.cfg.PHPPools, pool)
+	reconcilePHPPoolViaAgent(h.cfg.Agent, h.cfg.Users, h.cfg.PHPPoolIniOverrides, h.cfg.PHPPools, h.cfg.Packages, pool)
 }

@@ -24,6 +24,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/nginxrules"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/notifications"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/phppoolops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/pyframeworks"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/reconciler/phases"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/redirects"
@@ -55,6 +56,15 @@ type Reconciler struct {
 	dbAdmin      repository.DBAdminRepository
 	log          *slog.Logger
 	interval     time.Duration
+
+	// phpPoolIniOverrides backs the GH #1422 package-flip fan-out. When set,
+	// ReapplyPHPPoolForUser routes every pool through phppoolops.ReconcileViaAgent
+	// (the same override-aware apply the settings/version-save path already uses),
+	// so a flip of php_exec_enabled carries BOTH the tenant's php_admin_value
+	// overrides AND the GH #402 disable_functions opt-out. Nil = the fan-out is a
+	// fail-closed no-op (pools converge on the next settings-save) rather than an
+	// override-blind re-render that would wipe those overrides.
+	phpPoolIniOverrides repository.PHPPoolIniOverrideRepository
 
 	// JAB-235 DNS-01 routing state — see dns01_routing.go.
 	dns01State
@@ -464,6 +474,15 @@ func (r *Reconciler) WithSSLCerts(sslCerts repository.SSLCertificateRepository) 
 // Call this before using PHP pool reconciliation.
 func (r *Reconciler) WithPHPPools(phpPools repository.PHPPoolRepository) *Reconciler {
 	r.phpPools = phpPools
+	return r
+}
+
+// WithPHPPoolIniOverrides injects the per-pool ini-override repository so the
+// GH #1422 package-flip fan-out (ReapplyPHPPoolForUser) can re-render pools
+// through the override-aware phppoolops.ReconcileViaAgent path. Optional: nil
+// leaves the fan-out a fail-closed no-op rather than an override-blind wipe.
+func (r *Reconciler) WithPHPPoolIniOverrides(overrides repository.PHPPoolIniOverrideRepository) *Reconciler {
+	r.phpPoolIniOverrides = overrides
 	return r
 }
 
@@ -1545,30 +1564,57 @@ func (r *Reconciler) reconcileMysqlAdminShadow(ctx context.Context) {
 	}
 }
 
-// ReapplyPHPPoolForUser re-renders a single user's pool from the current
-// template + package state (GH #402 per-package disable_functions opt-out).
-// Used by the package-update fan-out so an admin flipping php_exec_enabled
-// takes effect immediately instead of waiting for the next sweep. No-op when
-// the user has no pool. Implements api.PackagePHPPoolReconciler.
+// ReapplyPHPPoolForUser re-renders ALL of a user's PHP pools from current
+// template + package state (GH #402 per-package disable_functions opt-out, GH
+// #1422). Used by the package-update fan-out so an admin flipping
+// php_exec_enabled takes effect immediately — on every pool, including a domain
+// pinned to a non-default PHP version — instead of waiting for the next sweep
+// (which skips a healthy pool). Each pool is re-applied through the same
+// override-aware phppoolops.ReconcileViaAgent the settings/version-save path
+// uses, so tenant php_admin_value overrides survive the flip. No-op when the
+// user has no pool. Implements api.PackagePHPPoolReconciler.
 func (r *Reconciler) ReapplyPHPPoolForUser(ctx context.Context, userID string) error {
 	if r.phpPools == nil || r.users == nil {
 		return nil
 	}
-	user, err := r.users.FindByID(ctx, userID)
-	if err != nil || user == nil {
-		return err
+	// GH #1422: route the fan-out through phppoolops.ReconcileViaAgent — the
+	// override-aware apply the settings/version-save path already uses. It carries
+	// the tenant's php_admin_value overrides alongside the GH #402
+	// disable_functions opt-out. Fail-closed: without the overrides repo we do NOT
+	// fall back to the override-blind applyPHPPool (that re-renders a pool with no
+	// php_admin_value lines and would wipe a versioned pool's overrides on a flag
+	// flip); the pool instead converges on the user's next PHP-settings save, which
+	// routes through this same override-aware path.
+	if r.phpPoolIniOverrides == nil {
+		r.log.Warn("ReapplyPHPPoolForUser: ini-override repo not wired; skipping fan-out (pools converge on next settings save)", "user_id", userID)
+		return nil
 	}
-	pool, err := r.phpPools.FindByUserID(ctx, userID)
+	// Re-render EVERY pool, not just the default: a flip of php_exec_enabled must
+	// reach a domain pinned to a non-default PHP version too, and the periodic
+	// sweep skips a healthy pool. ReconcileViaAgent loads the user and derives each
+	// pool's isDefault itself (list[0] by created_at ASC), so no bookkeeping here.
+	pools, err := r.phpPools.ListByUserID(ctx, userID)
 	if err != nil {
 		if err == repository.ErrNotFound {
 			return nil
 		}
 		return err
 	}
-	if pool == nil {
-		return nil
+	deps := phppoolops.ReconcileDeps{
+		Agent:     r.agent,
+		Users:     r.users,
+		Overrides: r.phpPoolIniOverrides,
+		Pools:     r.phpPools,
+		Packages:  r.packages,
 	}
-	r.applyPHPPool(ctx, user, pool, true)
+	for i := range pools {
+		if aerr := phppoolops.ReconcileViaAgent(deps, pools[i]); aerr != nil {
+			// Continue on a per-pool failure so a sibling pool is not abandoned;
+			// ReconcileViaAgent has already persisted this pool's error status.
+			r.log.Error("ReapplyPHPPoolForUser: pool re-apply failed",
+				"user_id", userID, "pool_id", pools[i].ID, "err", aerr)
+		}
+	}
 	return nil
 }
 

@@ -32,6 +32,9 @@ func phpPoolReconcileDeps() phppoolops.ReconcileDeps {
 		Users:     repository.NewUserRepository(sharedDB),
 		Overrides: repository.NewPHPPoolIniOverrideRepository(sharedDB),
 		Pools:     repository.NewPHPPoolRepository(sharedDB),
+		// GH #1422: carry the package exec-functions opt-out so a CLI pool
+		// reconcile matches the HTTP path and doesn't re-lock disable_functions.
+		Packages: repository.NewPackageRepository(sharedDB),
 	}
 }
 

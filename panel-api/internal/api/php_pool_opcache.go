@@ -195,7 +195,7 @@ func (h *phpUserTuningHandler) setOpcache(c *gin.Context) {
 	// conf is on disk before the restart below re-reads it.
 	pool.Status = "pending"
 	_ = h.cfg.PHPPools.Update(c.Request.Context(), pool)
-	reconcilePHPPoolViaAgent(h.cfg.Agent, h.cfg.Users, h.cfg.PHPPoolIniOverrides, h.cfg.PHPPools, *pool)
+	reconcilePHPPoolViaAgent(h.cfg.Agent, h.cfg.Users, h.cfg.PHPPoolIniOverrides, h.cfg.PHPPools, h.cfg.Packages, *pool)
 	if fresh, err := h.cfg.PHPPools.FindByID(c.Request.Context(), pool.ID); err == nil && fresh != nil && fresh.Status == "error" {
 		detail := ""
 		if fresh.LastError != nil {

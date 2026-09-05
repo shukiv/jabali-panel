@@ -165,7 +165,73 @@ func (f *fakePools) Update(_ context.Context, p *models.PHPPool) error {
 	return nil
 }
 
+type fakePackages struct {
+	repository.PackageRepository
+	pkg *models.HostingPackage
+}
+
+func (f *fakePackages) FindByID(_ context.Context, _ string) (*models.HostingPackage, error) {
+	return f.pkg, nil
+}
+
 func username(s string) *string { return &s }
+
+func pkgID(s string) *string { return &s }
+
+// GH #1422: the settings/version reconcile path must carry the GH #402 exec
+// opt-out. An exec-enabled package sends disable_functions=""; anything else
+// (flag off, no package, or — the fail-closed case — no Packages wiring) MUST
+// leave the key ABSENT so the agent keeps the #401 command-exec lockdown.
+func TestReconcileViaAgent_DisableFunctionsByPackage(t *testing.T) {
+	pool := models.PHPPool{ID: "P1", UserID: "U1", PHPVersion: "8.3", PmMode: "ondemand"}
+	pkgRef := "pkg-1"
+	execUser := func() *models.User {
+		return &models.User{ID: "U1", Username: username("alice"), PackageID: pkgID(pkgRef)}
+	}
+
+	t.Run("exec-enabled package sends empty opt-out", func(t *testing.T) {
+		ag := &fakeAgent{}
+		err := phppoolops.ReconcileViaAgent(phppoolops.ReconcileDeps{
+			Agent:     ag,
+			Users:     &fakeUsers{user: execUser()},
+			Overrides: &fakeOverrides{},
+			Pools:     &fakePools{list: []models.PHPPool{pool}},
+			Packages:  &fakePackages{pkg: &models.HostingPackage{ID: pkgRef, PHPExecEnabled: true}},
+		}, pool)
+		require.NoError(t, err)
+		v, ok := ag.params["disable_functions"]
+		require.True(t, ok, "exec-enabled package must send the disable_functions key")
+		assert.Equal(t, "", v, "exec-enabled package opts out with an empty value")
+	})
+
+	t.Run("non-exec package omits the key", func(t *testing.T) {
+		ag := &fakeAgent{}
+		err := phppoolops.ReconcileViaAgent(phppoolops.ReconcileDeps{
+			Agent:     ag,
+			Users:     &fakeUsers{user: execUser()},
+			Overrides: &fakeOverrides{},
+			Pools:     &fakePools{list: []models.PHPPool{pool}},
+			Packages:  &fakePackages{pkg: &models.HostingPackage{ID: pkgRef, PHPExecEnabled: false}},
+		}, pool)
+		require.NoError(t, err)
+		_, ok := ag.params["disable_functions"]
+		assert.False(t, ok, "a non-exec package must NOT send the key (agent applies its safe default)")
+	})
+
+	t.Run("nil Packages is fail-closed", func(t *testing.T) {
+		ag := &fakeAgent{}
+		err := phppoolops.ReconcileViaAgent(phppoolops.ReconcileDeps{
+			Agent:     ag,
+			Users:     &fakeUsers{user: execUser()}, // package set, but no repo to resolve it
+			Overrides: &fakeOverrides{},
+			Pools:     &fakePools{list: []models.PHPPool{pool}},
+			// Packages omitted on purpose.
+		}, pool)
+		require.NoError(t, err)
+		_, ok := ag.params["disable_functions"]
+		assert.False(t, ok, "missing Packages wiring must never lift the lockdown")
+	})
+}
 
 func TestReconcileViaAgent_DefaultPool_UsesBareUsernameSlug(t *testing.T) {
 	ag := &fakeAgent{}
