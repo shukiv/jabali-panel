@@ -611,10 +611,19 @@ interface RestoreUploadStatus {
 
 // === GH #1408 phase 2: restore from an uploaded full-server container ===
 
+export interface FullContainerUserStatus {
+  username: string;
+  exists: boolean;
+}
+
 export interface FullContainerInfo {
   run_id: string;
   users: string[];
   has_system: boolean;
+  // GH #1408 slice 2: per-user existence + whether the server can create the
+  // missing ones (Packages wired). Older panels omit these.
+  user_status?: FullContainerUserStatus[];
+  create_supported?: boolean;
 }
 
 export async function inspectFullServerContainer(
@@ -640,11 +649,16 @@ export async function applyFullServerRestore(
   uploadId: string,
   usernames: string[],
   includeSystem: boolean,
+  // GH #1408 slice 2: create the container's missing users before restoring
+  // (non-admin bundles only), optionally onto a chosen package.
+  opts?: { createMissing?: boolean; packageId?: string | null },
 ): Promise<FullRestoreResult> {
   await apiClient.post("/admin/system/full-restore-upload/apply", {
     upload_id: uploadId,
     usernames,
     include_system: includeSystem,
+    create_missing: opts?.createMissing ?? false,
+    package_id: opts?.packageId ?? null,
   });
   const deadline = Date.now() + 65 * 60 * 1000;
   for (;;) {
