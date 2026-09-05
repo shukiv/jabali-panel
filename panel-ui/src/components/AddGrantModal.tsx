@@ -48,6 +48,11 @@ export function AddGrantModal({
   const [form] = Form.useForm<AddGrantInput>();
   const [submitting, setSubmitting] = useState(false);
   const grantType = Form.useWatch("grantType", form);
+  // GH #1415: PostgreSQL grants are always full-access on the target database
+  // (ADR-0091 / GH #1406) — the agent runs GRANT ALL regardless of level, so
+  // read-only and per-privilege selections are inert. Hide those controls and
+  // send a fixed rw level rather than offering a choice that isn't honoured.
+  const isPostgres = userEngine === "postgres";
 
   // Fresh list of databases each open — 200 is plenty for a
   // single-tenant panel; large installs can move to an async select.
@@ -81,7 +86,11 @@ export function AddGrantModal({
         database_id: values.database_id,
       };
 
-      if (values.grantType === "custom" && values.privileges && values.privileges.length > 0) {
+      if (isPostgres) {
+        // Grant controls are hidden for postgres; the agent grants full access
+        // regardless, so send a fixed rw level.
+        payload.grant_level = "rw";
+      } else if (values.grantType === "custom" && values.privileges && values.privileges.length > 0) {
         payload.privileges = values.privileges;
       } else {
         payload.grant_level = values.grant_level || "rw";
@@ -142,32 +151,43 @@ export function AddGrantModal({
           />
         </Form.Item>
 
-        <Form.Item label="Grant Type" name="grantType" rules={[{ required: true }]}>
-          <Radio.Group>
-            <Space direction="vertical" style={{ width: "100%" }}>
-              <Radio value="preset">Preset Privileges</Radio>
-              <Radio value="custom">Custom Privileges</Radio>
-            </Space>
-          </Radio.Group>
-        </Form.Item>
+        {isPostgres ? (
+          <Alert
+            type="info"
+            showIcon
+            title="Full access grant"
+            description="PostgreSQL grants full access to the selected database. Read-only and per-privilege grants aren't supported yet."
+          />
+        ) : (
+          <>
+            <Form.Item label="Grant Type" name="grantType" rules={[{ required: true }]}>
+              <Radio.Group>
+                <Space direction="vertical" style={{ width: "100%" }}>
+                  <Radio value="preset">Preset Privileges</Radio>
+                  <Radio value="custom">Custom Privileges</Radio>
+                </Space>
+              </Radio.Group>
+            </Form.Item>
 
-        {grantType === "preset" && (
-          <Form.Item label="Privilege Level" name="grant_level" rules={[{ required: true }]}>
-            <Radio.Group>
-              <Space direction="vertical">
-                <Radio value="rw">Full Access (all privileges)</Radio>
-                <Radio value="ro">Read Only (SELECT only)</Radio>
-              </Space>
-            </Radio.Group>
-          </Form.Item>
-        )}
+            {grantType === "preset" && (
+              <Form.Item label="Privilege Level" name="grant_level" rules={[{ required: true }]}>
+                <Radio.Group>
+                  <Space direction="vertical">
+                    <Radio value="rw">Full Access (all privileges)</Radio>
+                    <Radio value="ro">Read Only (SELECT only)</Radio>
+                  </Space>
+                </Radio.Group>
+              </Form.Item>
+            )}
 
-        {grantType === "custom" && (
-          <Form.Item label="Custom Privileges" name="privileges">
-            <Checkbox.Group
-              options={AVAILABLE_PRIVILEGES.map((p) => ({ label: p, value: p }))}
-            />
-          </Form.Item>
+            {grantType === "custom" && (
+              <Form.Item label="Custom Privileges" name="privileges">
+                <Checkbox.Group
+                  options={AVAILABLE_PRIVILEGES.map((p) => ({ label: p, value: p }))}
+                />
+              </Form.Item>
+            )}
+          </>
         )}
       </Form>
     </Modal>
