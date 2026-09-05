@@ -99,7 +99,10 @@ export const UserDomainDrawer = ({ open, onClose, mode = "web" }: UserDomainDraw
           name: values.name,
           web_enabled: false,
           manage_dns: isDNS ? true : values.manage_dns,
-          mail_provider: isDNS ? "none" : values.mail_provider,
+          // GH #1479: the non-web branch is either a DNS-only zone (no mail) or
+          // a mail domain (always Jabali mail — the provider select is hidden in
+          // mail mode, so values.mail_provider isn't registered).
+          mail_provider: isDNS ? "none" : "jabali",
           m365_onmicrosoft: values.m365_onmicrosoft,
           google_dkim: values.google_dkim,
           ssl_mode: isDNS ? "none" : values.ssl_mode,
@@ -179,7 +182,12 @@ export const UserDomainDrawer = ({ open, onClose, mode = "web" }: UserDomainDraw
           </Form.Item>
         )}
 
-        {(isWeb || isMail) && (
+        {/* GH #1479 (johnnyq follow-up): the mail-provider select is web-only.
+            On the Create Mail Domain flow it's redundant and self-contradictory
+            (picking "No mail" / an external provider in a "create mail domain"
+            drawer), so mail mode hides it and always provisions Jabali mail —
+            handleFinish forces mail_provider="jabali" for the non-web branch. */}
+        {isWeb && (
         <Form.Item
           label={t("userdomaindrawer.mail")}
           name="mail_provider"
