@@ -28,7 +28,7 @@ The resulting archive lands under `/backup/<user>.<timestamp>.tar`.
 ## What requires manual work
 
 - **Exim ACL rules** — HestiaCP often carries non-trivial Exim acl_smtp_data / acl_check_recipient rules. These do not translate directly to Stalwart's expression filter syntax; rewrite under [Server Settings](./server-settings.md) → Mail → Stalwart expressions.
-- **Per-domain Roundcube identities** — Roundcube installations on the source are not migrated; the destination ships its own Roundcube.
+- **Per-domain webmail identities** — Roundcube identities on the HestiaCP source are not migrated; the destination serves its own **Bulwark** webmail instead.
 - **Spamassassin / rspamd thresholds** — Stalwart spam scoring is independent; recalibrate if your Hestia setup had custom thresholds.
 
 ## Operator workflow

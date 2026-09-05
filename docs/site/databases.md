@@ -1,6 +1,6 @@
 # Databases
 
-MariaDB and PostgreSQL, per-user databases and DB-users, with SSO into phpMyAdmin / pgAdmin.
+MariaDB and PostgreSQL, per-user databases and DB-users, with SSO into phpMyAdmin (MariaDB) / Adminer (PostgreSQL).
 
 ## Engines
 

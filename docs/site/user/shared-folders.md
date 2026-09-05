@@ -38,7 +38,7 @@ IMAP shared folders work in clients that implement RFC 4314 ACLs and the `Shared
 - Thunderbird: Tools → Account Settings → Server Settings → Advanced → "Show only subscribed folders" off → "Subscribe" the shared folder.
 - Apple Mail: Mailbox → Subscribe and pick the shared folder.
 - Outlook (desktop): supports via the IMAP namespace; older Outlook versions are inconsistent.
-- Roundcube webmail: supported natively when the operator enables the shared-folders plugin.
+- Bulwark webmail: shared folders appear over JMAP once you're subscribed to them.
 
 ## What is and is not shared
 

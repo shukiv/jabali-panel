@@ -47,7 +47,7 @@ Version pins shown are the values in `install.sh` at the time of writing. Run `j
 | **Adminer** | 6.0.1 | Lighter DB web UI + `jabali-sso-plugin.php` |
 | **WP-CLI** | 2.12.0 | WordPress automation |
 | **GoAccess** | Debian | nginx log analyzer |
-| **Roundcube** | Debian + install snippet | Webmail (served by Bulwark vhost) |
+| **Bulwark** | pinned SHA (vendored) | Next.js JMAP webmail, served per-tenant on `mail.<domain>` |
 | **restic** | Debian | Backup engine (deduplicated, encrypted, multi-destination) |
 | **Go toolchain** | 1.25.1 | Build agent + panel-api |
 | **Node.js** | NodeSource current LTS | Bulwark runtime + UI build |
@@ -82,7 +82,7 @@ Test-only: `DATA-DOG/go-sqlmock`, `alicebob/miniredis/v2`, `stretchr/testify`.
 
 ## In-house patterns shipped under `install/`
 
-- **`jabali-sso-<43-char-nonce>.php`** — self-deleting magic SSO file (M22, ADR-0040; Installatron / Softaculous style). Used by Roundcube webmail and every application install for one-click admin sign-in. 60 s TTL; 256-bit nonce filename; `flock` + `unlink` on first hit.
+- **`jabali-sso-<43-char-nonce>.php`** — self-deleting magic SSO file (M22, ADR-0040; Installatron / Softaculous style). Used by Bulwark webmail and every application install for one-click admin sign-in. 60 s TTL; 256-bit nonce filename; `flock` + `unlink` on first hit.
 - **phpMyAdmin `sso.php`** and **Adminer `jabali-sso-plugin.php`** — adapt the magic-file pattern to the two DB web UIs.
 - **`install/snuffleupagus/rules/`** — server-wide Snuffleupagus baseline rules.
 - **`install/wp-cli.sha256`** / **`install/phpmyadmin.sha256`** — checksum-pinned upstream tarballs.
