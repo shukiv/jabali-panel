@@ -8,7 +8,7 @@ A **Cron Job** is:
 
 - 5-field cron schedule (`min hour day month dow`).
 - An owner user (must have a Linux account).
-- A command from the **allowlist** (`php`, `wp`, plus a curated set per-app).
+- A command from the **allowlist** (`php`, `wp`, `python`, `node`, plus a curated set per-app), or an **ordered sequence** of `wp` / `php` commands run one after another in a single job (GH #1435, #1437).
 - An optional name (display label).
 
 Internally each cron row becomes:
@@ -29,7 +29,7 @@ systemd-user timers give:
 
 ## Command allowlist
 
-Only commands the admin has marked allowed can be scheduled. The default allowlist (`/internal/cronvalidate/`) is the shared validator used by both the REST API and the CLI (`Cron Job Intake` — the single ingest path, per CONTEXT.md). Custom shell scripts are not allowed by default — admins can extend the allowlist.
+Only commands the admin has marked allowed can be scheduled. The default allowlist (`/internal/cronvalidate/`) is the shared validator used by both the REST API and the CLI (`Cron Job Intake` — the single ingest path, per CONTEXT.md). Alongside `php` and `wp`, the validator accepts **`python` and `node`** scripts located under the owner's home (GH #1435), and an **ordered sequence** of `wp`/`php` steps in one job (GH #1437). Custom shell scripts are not allowed by default — admins can extend the allowlist.
 
 ## CLI
 
