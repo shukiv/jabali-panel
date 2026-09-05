@@ -1,14 +1,9 @@
 import { useTranslation } from "react-i18next";
-import { useState, useEffect, useRef } from "react";
+import { useEffect, useRef } from "react";
 import { Modal, Typography, Button, Space, Spin, theme } from "antd";
-import { feedback } from "../lib/feedback"; // GH #970: themed toasts
 import { PauseOutlined, PlayCircleOutlined, ClearOutlined } from "@ant-design/icons";
-import {
-  MAX_LOG_LINES,
-  capLogLines,
-  stripTrailingNewline,
-  buildGoAccessHttpUrl,
-} from "../utils/logStream";
+import { buildGoAccessHttpUrl } from "../utils/logStream";
+import { useLogStream } from "./logs/useLogStream";
 
 const { Text } = Typography;
 
@@ -20,168 +15,49 @@ interface LogStreamModalProps {
   logType: "access" | "error" | "goaccess";
 }
 
-// The stream lifecycle stays in this component; the pure pieces it relies on
-// (MAX_LOG_LINES cap, newline trim, GoAccess URL derivation) live in
-// ../utils/logStream so they can be unit-tested (JAB-296).
+// The stream lifecycle (WebSocket connect/close, pause/resume buffering, the
+// ring-buffer cap, and GoAccess polling) lives in ./logs/useLogStream so it can
+// be unit-tested with a fake socket and fake timers (JAB-296, AC5). This
+// component owns only the DOM: auto-scroll for text logs, and the GoAccess
+// iframe plus its scroll preservation across the 10s auto-refresh.
 
 export const LogStreamModal = ({ visible, onClose, streamUrl, title, logType }: LogStreamModalProps) => {
   const { t } = useTranslation();
   const { token } = theme.useToken();
-  const [logs, setLogs] = useState<string[]>([]);
-  const [connected, setConnected] = useState(false);
-  const [paused, setPaused] = useState(false);
-  const [connecting, setConnecting] = useState(false);
-  // GoAccess polling cache-buster: refresh the iframe by mutating ?t=<ts>
-  // every 10s. Same cadence as the prior WS-driven render — operators see
-  // identical update latency.
-  const [goaccessTick, setGoaccessTick] = useState(() => Date.now());
-  const wsRef = useRef<WebSocket | null>(null);
+
   const logsEndRef = useRef<HTMLDivElement>(null);
-  const pausedLogsRef = useRef<string[]>([]);
   const goAccessFrameRef = useRef<HTMLIFrameElement>(null);
   const scrollPosRef = useRef<{ top: number; left: number }>({ top: 0, left: 0 });
+
+  // Snapshot the iframe scroll before each GoAccess poll swaps the src, so the
+  // onLoad handler below can restore it after the reload.
+  const saveGoAccessScroll = () => {
+    const el = goAccessFrameRef.current?.contentDocument?.scrollingElement;
+    if (el) {
+      scrollPosRef.current = { top: el.scrollTop, left: el.scrollLeft };
+    }
+  };
+
+  const stream = useLogStream({
+    streamUrl,
+    logType,
+    active: visible,
+    onBeforeGoAccessRefresh: saveGoAccessScroll,
+  });
 
   const scrollToBottom = () => {
     logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
   useEffect(() => {
-    // GoAccess uses the HTTP-render route (URL-loaded iframe) so the
-    // browser fetches a fresh response with its own relaxed CSP. WS is
-    // for text streaming (access/error) only.
-    if (logType === "goaccess") {
-      return;
-    }
-    if (visible && streamUrl && !wsRef.current) {
-      connectWebSocket();
-    }
-
-    return () => {
-      if (wsRef.current) {
-        wsRef.current.close();
-        wsRef.current = null;
-      }
-    };
-  }, [visible, streamUrl, logType]);
-
-  // GoAccess polling effect: while the modal is open, bump goaccessTick
-  // every 10s so the iframe's src changes and the browser re-fetches.
-  // No-op when modal hidden or stream URL missing.
-  useEffect(() => {
-    if (logType !== "goaccess" || !visible || !streamUrl) return;
-    const id = setInterval(() => {
-      // Save scroll before refresh so onLoad can restore it.
-      const iframe = goAccessFrameRef.current;
-      const el = iframe?.contentDocument?.scrollingElement;
-      if (el) {
-        scrollPosRef.current = { top: el.scrollTop, left: el.scrollLeft };
-      }
-      setGoaccessTick(Date.now());
-    }, 10000);
-    return () => clearInterval(id);
-  }, [logType, visible, streamUrl]);
-
-  useEffect(() => {
-    if (!paused) {
+    if (!stream.paused) {
       scrollToBottom();
     }
-  }, [logs, paused]);
-
-  // GoAccess iframe content is set declaratively via srcDoc on the
-  // iframe element below — no imperative doc.write needed (the
-  // sandbox="allow-scripts" attribute makes the iframe a unique
-  // origin, which blocks parent contentDocument access).
-
-  const connectWebSocket = () => {
-    if (!streamUrl) return;
-
-    setConnecting(true);
-    const ws = new WebSocket(streamUrl);
-
-    ws.onopen = () => {
-      setConnected(true);
-      setConnecting(false);
-      feedback.message.success("Connected to log stream");
-      console.log("WebSocket connected");
-    };
-
-    ws.onmessage = (event) => {
-      if (!paused) {
-        // For goaccess, only keep the latest HTML message — the
-        // iframe rerenders via srcDoc on the last entry, so growing
-        // the array unbounded would just leak memory.
-        const logLine = event.data;
-        if (logType === "goaccess") {
-          // Save scroll position before triggering the srcDoc update so
-          // the onLoad handler can restore it after the iframe reloads.
-          const iframe = goAccessFrameRef.current;
-          const el = iframe?.contentDocument?.scrollingElement;
-          if (el) {
-            scrollPosRef.current = { top: el.scrollTop, left: el.scrollLeft };
-          }
-          setLogs([logLine]);
-        } else {
-          // Strip trailing CR/LF so the render-time join("\n") doesn't
-          // double-space lines that arrived with their own newline.
-          setLogs(prev => capLogLines([...prev, stripTrailingNewline(logLine)]));
-        }
-      } else {
-        pausedLogsRef.current.push(stripTrailingNewline(event.data));
-        // The paused buffer needs the same ceiling: a stream paused on a busy
-        // log otherwise grows unbounded in memory and then floods the view in
-        // one go when the operator resumes.
-        if (pausedLogsRef.current.length > MAX_LOG_LINES) {
-          pausedLogsRef.current = pausedLogsRef.current.slice(-MAX_LOG_LINES);
-        }
-      }
-    };
-
-    ws.onclose = (event) => {
-      setConnected(false);
-      setConnecting(false);
-      if (event.code === 1000) {
-        feedback.message.info("Log stream ended");
-      } else {
-        feedback.message.error("Connection lost");
-      }
-      console.log("WebSocket closed", event.code, event.reason);
-    };
-
-    ws.onerror = (error) => {
-      setConnecting(false);
-      feedback.message.error("WebSocket connection error");
-      console.error("WebSocket error:", error);
-    };
-
-    wsRef.current = ws;
-  };
+  }, [stream.logs, stream.paused]);
 
   const handleClose = () => {
-    if (wsRef.current) {
-      wsRef.current.close();
-      wsRef.current = null;
-    }
-    setLogs([]);
-    setConnected(false);
-    setPaused(false);
-    pausedLogsRef.current = [];
+    stream.reset();
     onClose();
-  };
-
-  const handlePauseToggle = () => {
-    const newPaused = !paused;
-    setPaused(newPaused);
-
-    if (!newPaused && pausedLogsRef.current.length > 0) {
-      // Resume: add paused logs to display
-      setLogs(prev => capLogLines([...prev, ...pausedLogsRef.current]));
-      pausedLogsRef.current = [];
-    }
-  };
-
-  const handleClearLogs = () => {
-    setLogs([]);
-    pausedLogsRef.current = [];
   };
 
   const renderLogContent = () => {
@@ -189,8 +65,8 @@ export const LogStreamModal = ({ visible, onClose, streamUrl, title, logType }: 
       // GoAccess iframe loaded via URL (not srcdoc) so the response's
       // own relaxed CSP applies — srcdoc inherits parent CSP which
       // forbids 'unsafe-eval' that GoAccess's templating requires.
-      // Cache-busted by goaccessTick (refreshed every 10s by the
-      // polling effect above); same cadence as the prior WS path.
+      // Cache-busted by goAccessTick (refreshed every 10s by the
+      // polling in useLogStream); same cadence as the prior WS path.
       const httpUrl = streamUrl ? buildGoAccessHttpUrl(streamUrl) : null;
       if (!httpUrl) {
         return (
@@ -206,7 +82,7 @@ export const LogStreamModal = ({ visible, onClose, streamUrl, title, logType }: 
         );
       }
       const sep = httpUrl.includes("?") ? "&" : "?";
-      const src = `${httpUrl}${sep}t=${goaccessTick}`;
+      const src = `${httpUrl}${sep}t=${stream.goAccessTick}`;
       return (
         <div style={{ width: "100%", height: "100%", position: "relative" }}>
           <iframe
@@ -221,8 +97,7 @@ export const LogStreamModal = ({ visible, onClose, streamUrl, title, logType }: 
             title={t("logstreammodal.goaccess_dashboard")}
             sandbox="allow-scripts allow-same-origin"
             onLoad={() => {
-              const iframe = goAccessFrameRef.current;
-              const el = iframe?.contentDocument?.scrollingElement;
+              const el = goAccessFrameRef.current?.contentDocument?.scrollingElement;
               if (el && scrollPosRef.current.top > 0) {
                 el.scrollTop = scrollPosRef.current.top;
                 el.scrollLeft = scrollPosRef.current.left;
@@ -248,17 +123,17 @@ export const LogStreamModal = ({ visible, onClose, streamUrl, title, logType }: 
           borderRadius: "4px"
         }}
       >
-        {logs.length === 0 ? (
+        {stream.logs.length === 0 ? (
           <div style={{ textAlign: "center", padding: "20px", color: "#888" }}>
-            <Spin spinning={connecting}>
+            <Spin spinning={stream.connecting}>
               <div>
-                {connecting ? "Connecting to log stream..." : "Waiting for log data..."}
+                {stream.connecting ? "Connecting to log stream..." : "Waiting for log data..."}
               </div>
             </Spin>
           </div>
         ) : (
           <pre style={{ margin: 0, whiteSpace: "pre-wrap", wordWrap: "break-word" }}>
-            {logs.join("\n")}
+            {stream.logs.join("\n")}
             <div ref={logsEndRef} />
           </pre>
         )}
@@ -290,26 +165,26 @@ export const LogStreamModal = ({ visible, onClose, streamUrl, title, logType }: 
         <Space direction="vertical" size="middle" style={{ width: "100%" }}>
           <Space>
             <Button
-              type={paused ? "primary" : "default"}
-              icon={paused ? <PlayCircleOutlined /> : <PauseOutlined />}
-              onClick={handlePauseToggle}
-              disabled={!connected}
+              type={stream.paused ? "primary" : "default"}
+              icon={stream.paused ? <PlayCircleOutlined /> : <PauseOutlined />}
+              onClick={stream.togglePause}
+              disabled={!stream.connected}
             >
-              {paused ? "Resume" : "Pause"}
+              {stream.paused ? "Resume" : "Pause"}
             </Button>
             <Button
               icon={<ClearOutlined />}
-              onClick={handleClearLogs}
+              onClick={stream.clear}
             >
               Clear
             </Button>
-            <Text type={connected ? "success" : "secondary"}>
-              Status: {connecting ? "Connecting..." : connected ? "Connected" : "Disconnected"}
+            <Text type={stream.connected ? "success" : "secondary"}>
+              Status: {stream.connecting ? "Connecting..." : stream.connected ? "Connected" : "Disconnected"}
             </Text>
-            {logs.length > 0 && (
+            {stream.logs.length > 0 && (
               <Text type="secondary">
-                {logs.length} lines {paused && pausedLogsRef.current.length > 0 &&
-                  `(+${pausedLogsRef.current.length} paused)`}
+                {stream.logs.length} lines {stream.paused && stream.bufferedCount > 0 &&
+                  `(+${stream.bufferedCount} paused)`}
               </Text>
             )}
           </Space>
