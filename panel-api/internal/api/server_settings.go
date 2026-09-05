@@ -809,6 +809,21 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 				h.cfg.Log.Error("agent set_hostname failed", "err", err)
 			}
 		}()
+		// JAB-389: the GH#135 dedicated :443 landing vhost keeps its server_name
+		// on the old FQDN after a rename (install.sh renders it; nothing
+		// re-renders it live), so https://<new-fqdn>/ falls to the return-444
+		// default block. Re-point it to the new hostname. Dispatched
+		// independently of set_hostname — the DB row is the truth, so the
+		// landing vhost should track it even if hostnamectl failed.
+		go func() {
+			bgCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if _, err := h.cfg.Agent.Call(bgCtx, "nginx.panel_landing_rehost", map[string]any{
+				"hostname": current.Hostname,
+			}); err != nil {
+				h.cfg.Log.Error("agent nginx.panel_landing_rehost failed", "err", err)
+			}
+		}()
 	}
 
 	// Optional-module lifecycle (JAB-294). settingsops.ModuleEffects is the single
