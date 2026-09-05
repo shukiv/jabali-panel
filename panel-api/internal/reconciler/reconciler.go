@@ -107,6 +107,13 @@ type Reconciler struct {
 	// warnings so a mid-rollout agent (missing ssl.panel.selfsign) does not
 	// log at Warn every tick.
 	panelSelfSignLastErr string
+	// readKratosConfigFile reads kratos.yml for the JAB-393 hostname drift
+	// check. Mockable for tests (default os.ReadFile).
+	readKratosConfigFile func(string) ([]byte, error)
+	// kratosRehostLastErr debounces JAB-393 rehost dispatch/read warnings so a
+	// mid-rollout agent (missing kratos.config.rehost) or an unreadable config
+	// does not log at Warn every tick.
+	kratosRehostLastErr string
 	// paused is an atomic flag to pause reconciliation (for SSO key rotation)
 	paused atomic.Bool
 
@@ -527,6 +534,7 @@ func New(domains repository.DomainRepository, users repository.UserRepository, a
 	r.socketReady = r.waitSocketReady
 	// JAB-389: default cert reader for the panel self-signed drift check.
 	r.readCertFile = os.ReadFile
+	r.readKratosConfigFile = os.ReadFile
 	return r
 }
 
@@ -790,6 +798,10 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 	// before the rest of the loop touches the agent. Cheap noop when
 	// use_le=0 or routability gate fails.
 	r.reconcilePanelCertificate(ctx)
+	// JAB-393: converge kratos.yml's panel hostname to server_settings.hostname
+	// so a panel FQDN change doesn't leave the identity service on the old
+	// origin (a CORS-blocked full login lockout). Cheap noop when they match.
+	r.reconcileKratosHostname(ctx)
 	// JAB-391: converge Stalwart outbound TLS strategies to dane=disable.
 	r.reconcileOutboundMailTLS(ctx)
 	r.reconcileUpdateRuns(ctx)
