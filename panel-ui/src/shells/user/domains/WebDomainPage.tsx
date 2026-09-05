@@ -4,12 +4,12 @@
 // modal launchers. The tab lives in the URL (:tab), so a tab is linkable and
 // the browser Back button walks the tabs.
 //
-// Tabs here: Overview (facts + the preview-URL / bot-challenge toggles), Index
-// Files, Caching and Directory Privacy, plus three tabs gated on the same caps
-// as the row menu — Domain options and Rewrite rules (tenant_domain_options_
-// enabled) and Document root (tenant_docroot_editable). Redirects and folding
-// DNS in move here in a follow-up, which also strips the row menu down to
-// Disable/Delete.
+// Tabs here: Overview (facts + the preview-URL / bot-challenge toggles),
+// Redirects, Index Files, Caching and Directory Privacy, plus three tabs gated
+// on the same caps as the row menu — Domain options and Rewrite rules
+// (tenant_domain_options_enabled) and Document root (tenant_docroot_editable).
+// Folding DNS in and stripping the row menu down to Disable/Delete move here in
+// follow-up slices.
 import type { ReactNode } from "react";
 import { Alert, Button, Card, Skeleton, Space, Typography } from "antd";
 import { GlobalOutlined } from "@icons";
@@ -22,6 +22,7 @@ import type { Domain } from "../../../components/domains/types";
 import { DomainCacheSection } from "../../../components/DomainCacheSection";
 import { DomainDirectoryPrivacySection } from "../../admin/domains/DomainDirectoryPrivacySection";
 import { DomainIndexPanel } from "../../DomainIndexPanel";
+import { DomainRedirectsPanel } from "../../DomainRedirectsPanel";
 import { DomainNginxOptionsPanel } from "../../../components/DomainNginxOptionsPanel";
 import { TenantNginxRulesPanel } from "../../DomainSettingsButton";
 import { DomainDocRootPanel } from "../../../components/domains/DomainDocRootPanel";
@@ -84,6 +85,7 @@ export const WebDomainPage = () => {
 
   const tabs: { key: string; label: string; node: ReactNode }[] = [
     { key: "overview", label: "Overview", node: <OverviewTab domain={domain} /> },
+    { key: "redirects", label: "Redirects", node: <DomainRedirectsPanel domain={domain} /> },
     { key: "index", label: "Index Files", node: <DomainIndexPanel domain={domain} /> },
     { key: "caching", label: "Caching", node: <DomainCacheSection domainId={domain.id} /> },
     {

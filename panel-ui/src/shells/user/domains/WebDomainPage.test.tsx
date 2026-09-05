@@ -127,6 +127,21 @@ describe("WebDomainPage (GH #1543)", () => {
     );
   });
 
+  it("renders the Redirects pane when :tab=redirects and saves", async () => {
+    renderAt("/jabali-panel/domains/d1/redirects");
+    expect(await screen.findByText("Redirect Entire Domain")).toBeInTheDocument();
+    // Whole-domain toggle starts OFF (fixture has no redirect_all_to). Saving
+    // sends empty strings, not null — the GH #717 clear semantics.
+    fireEvent.click(screen.getByRole("button", { name: "Save Redirects" }));
+    await vi.waitFor(() =>
+      expect(patch).toHaveBeenCalledWith("/domains/d1", {
+        redirect_all_to: "",
+        redirect_all_type: "",
+        page_redirects: [],
+      }),
+    );
+  });
+
   it("renders the Caching pane when :tab=caching", async () => {
     renderAt("/jabali-panel/domains/d1/caching");
     expect(await screen.findByText("caching-pane:d1")).toBeInTheDocument();
