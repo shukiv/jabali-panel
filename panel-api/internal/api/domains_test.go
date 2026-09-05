@@ -275,15 +275,15 @@ func TestValidateNginxDirectives(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validateNginxDirectives(tt.input)
+			err := ValidateNginxDirectives(tt.input)
 			if (err != "") != tt.wantError {
-				t.Errorf("validateNginxDirectives() error = %q, wantError %v", err, tt.wantError)
+				t.Errorf("ValidateNginxDirectives() error = %q, wantError %v", err, tt.wantError)
 				return
 			}
 			if tt.wantError && tt.errMsg != "" && err != tt.errMsg {
 				// Check if the expected message is a substring (for some error messages)
 				if !contains(err, tt.errMsg) {
-					t.Errorf("validateNginxDirectives() error = %q, want substring %q", err, tt.errMsg)
+					t.Errorf("ValidateNginxDirectives() error = %q, want substring %q", err, tt.errMsg)
 				}
 			}
 		})

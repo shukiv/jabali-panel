@@ -20,6 +20,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/api"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
@@ -160,6 +161,68 @@ func newDomainIPACLDeleteCmd() *cobra.Command {
 // (nginx re-render/reload, SSL re-issue, mta-sts DNS publish) within ~60s — same
 // end-state as the GUI (feedback_cli_reconcile_apply).
 
+// validateDomainSetInput enforces on the CLI `domain set` path the SAME field
+// validation the HTTP PATCH handler applies (JAB-318 parity): the admin nginx
+// directive allowlist (api.ValidateNginxDirectives), the redirect destination
+// scheme/host check (api.ValidateRedirectURL) and the index-priority enum
+// (api.IsValidIndexPriority). It also normalises the redirect type to the
+// numeric nginx return code the renderer emits — redirects.Compile writes
+// `return <type> <url>;` verbatim, so only 301|302|307|308 (or the friendly
+// aliases permanent=301 / temporary=302) produce valid nginx. Each pointer is
+// nil when its flag was not set, so an unchanged field is never validated.
+// Pure (no DB, no cobra) so it is unit-testable directly.
+func validateDomainSetInput(nginxDirs, redirectTo, redirectType, indexPriority *string) (normRedirectType string, err error) {
+	if nginxDirs != nil {
+		if msg := api.ValidateNginxDirectives(*nginxDirs); msg != "" {
+			return "", fmt.Errorf("--nginx-directives: %s", msg)
+		}
+	}
+	if redirectTo != nil {
+		// Empty clears the redirect (mirrors the HTTP handler); only a
+		// non-empty destination is scheme/host-validated.
+		if trimmed := strings.TrimSpace(*redirectTo); trimmed != "" {
+			if verr := api.ValidateRedirectURL(trimmed); verr != nil {
+				return "", fmt.Errorf("--redirect-all-to: %w", verr)
+			}
+		}
+	}
+	if indexPriority != nil {
+		if p := strings.TrimSpace(*indexPriority); !api.IsValidIndexPriority(p) {
+			return "", fmt.Errorf("--index-priority: invalid value %q", p)
+		}
+	}
+	if redirectType != nil {
+		norm, ok := normalizeRedirectType(*redirectType)
+		if !ok {
+			return "", fmt.Errorf("--redirect-type must be one of 301|302|307|308 (or permanent|temporary)")
+		}
+		normRedirectType = norm
+	}
+	return normRedirectType, nil
+}
+
+// normalizeRedirectType maps the redirect-type flag to the numeric nginx return
+// code redirects.Compile emits. The friendly aliases permanent/temporary (the
+// only values the CLI historically accepted — and which the renderer then
+// rejected as invalid nginx) map to their canonical codes; a numeric code is
+// accepted as-is when it is one the HTTP handler allows.
+func normalizeRedirectType(s string) (string, bool) {
+	t := strings.TrimSpace(s)
+	if t == "" {
+		return "", true // empty clears the redirect type (mirrors HTTP → nil)
+	}
+	switch strings.ToLower(t) {
+	case "permanent":
+		return "301", true
+	case "temporary":
+		return "302", true
+	}
+	if api.IsValidRedirectType(t) {
+		return t, true
+	}
+	return "", false
+}
+
 func newDomainSetCmd() *cobra.Command {
 	var (
 		redirectTo    string
@@ -181,21 +244,56 @@ func newDomainSetCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// JAB-318: apply the SAME field validation the HTTP PATCH handler
+			// enforces (parity) BEFORE persisting. The general Update allowlist
+			// carries nginx_custom_directives / redirect_all_to / redirect_all_type /
+			// index_priority, so an unsafe value set here is written verbatim: an
+			// unbalanced brace or a directive outside the admin allowlist bricks
+			// nginx reload for every vhost on the box, and a non-numeric redirect
+			// type makes redirects.Compile emit `return permanent <url>;` — invalid
+			// nginx. The old CLI validated none of these (it only checked
+			// permanent|temporary, which the renderer then rejected anyway).
+			var nginxPtr, redirToPtr, redirTypePtr, indexPtr *string
+			if cmd.Flags().Changed("nginx-directives") {
+				nginxPtr = &nginxDirs
+			}
+			if cmd.Flags().Changed("redirect-all-to") {
+				redirToPtr = &redirectTo
+			}
+			if cmd.Flags().Changed("redirect-type") {
+				redirTypePtr = &redirectType
+			}
+			if cmd.Flags().Changed("index-priority") {
+				indexPtr = &indexPriority
+			}
+			normRedirectType, verr := validateDomainSetInput(nginxPtr, redirToPtr, redirTypePtr, indexPtr)
+			if verr != nil {
+				return verr
+			}
+
 			changed := false
 			if cmd.Flags().Changed("redirect-all-to") {
-				v := strings.TrimSpace(redirectTo)
-				d.RedirectAllTo = &v
+				// Mirror the HTTP handler: an empty destination clears the redirect
+				// (nil), it is not stored as an empty string.
+				if trimmed := strings.TrimSpace(redirectTo); trimmed == "" {
+					d.RedirectAllTo = nil
+				} else {
+					d.RedirectAllTo = &trimmed
+				}
 				changed = true
 			}
 			if cmd.Flags().Changed("redirect-type") {
-				if redirectType != "permanent" && redirectType != "temporary" {
-					return fmt.Errorf("--redirect-type must be permanent|temporary")
+				// Empty clears the type (mirrors the HTTP handler → nil); a set
+				// value is the normalised numeric nginx code.
+				if normRedirectType == "" {
+					d.RedirectAllType = nil
+				} else {
+					d.RedirectAllType = &normRedirectType
 				}
-				d.RedirectAllType = &redirectType
 				changed = true
 			}
 			if cmd.Flags().Changed("index-priority") {
-				d.IndexPriority = indexPriority
+				d.IndexPriority = strings.TrimSpace(indexPriority)
 				changed = true
 			}
 			if cmd.Flags().Changed("nginx-directives") {
@@ -255,7 +353,7 @@ func newDomainSetCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&redirectTo, "redirect-all-to", "", "redirect the whole domain to this URL ('' clears)")
-	cmd.Flags().StringVar(&redirectType, "redirect-type", "", "permanent|temporary")
+	cmd.Flags().StringVar(&redirectType, "redirect-type", "", "301|302|307|308 (permanent=301, temporary=302)")
 	cmd.Flags().StringVar(&indexPriority, "index-priority", "", "directory index priority (e.g. html_first, php_first)")
 	cmd.Flags().StringVar(&nginxDirs, "nginx-directives", "", "raw custom nginx directives for the server block")
 	cmd.Flags().StringVar(&sslMode, "ssl-mode", "", "le|self|none (custom = install a cert)")

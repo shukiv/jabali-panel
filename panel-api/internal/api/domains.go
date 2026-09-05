@@ -869,7 +869,7 @@ func (h *domainHandler) update(c *gin.Context) {
 	// is_enabled. Admin role bypasses the gate.
 	if claims.IsAdmin {
 		if req.NginxCustomDirectives != nil {
-			if msg := validateNginxDirectives(*req.NginxCustomDirectives); msg != "" {
+			if msg := ValidateNginxDirectives(*req.NginxCustomDirectives); msg != "" {
 				c.JSON(http.StatusBadRequest, gin.H{"error": msg})
 				return
 			}
@@ -967,7 +967,7 @@ func (h *domainHandler) update(c *gin.Context) {
 		if trimmed == "" {
 			domain.RedirectAllTo = nil
 		} else {
-			if err := validateRedirectURL(trimmed); err != nil {
+			if err := ValidateRedirectURL(trimmed); err != nil {
 				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 				return
 			}
@@ -1009,7 +1009,7 @@ func (h *domainHandler) update(c *gin.Context) {
 		trimmed := strings.TrimSpace(*req.RedirectAllType)
 		if trimmed == "" {
 			domain.RedirectAllType = nil
-		} else if !isValidRedirectType(trimmed) {
+		} else if !IsValidRedirectType(trimmed) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid redirect type"})
 			return
 		} else {
@@ -1030,7 +1030,7 @@ func (h *domainHandler) update(c *gin.Context) {
 	}
 	if req.IndexPriority != nil {
 		p := strings.TrimSpace(*req.IndexPriority)
-		if !isValidIndexPriority(p) {
+		if !IsValidIndexPriority(p) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_index_priority"})
 			return
 		}
@@ -1429,7 +1429,7 @@ var allowedNginxDirectives = map[string]struct{}{
 	"open_file_cache_errors":   {},
 }
 
-func validateNginxDirectives(directives string) string {
+func ValidateNginxDirectives(directives string) string {
 	// Reject if input contains null bytes (binary/injection attempt).
 	if strings.ContainsRune(directives, '\x00') {
 		return "forbidden directive: null byte detected"
@@ -1560,7 +1560,7 @@ func extractDirective(line string) string {
 	return fields[0]
 }
 
-func validateRedirectURL(s string) error {
+func ValidateRedirectURL(s string) error {
 	u, err := url.Parse(s)
 	if err != nil {
 		return fmt.Errorf("invalid destination URL: %w", err)
@@ -1574,7 +1574,7 @@ func validateRedirectURL(s string) error {
 	return nil
 }
 
-func isValidRedirectType(s string) bool {
+func IsValidRedirectType(s string) bool {
 	switch s {
 	case "301", "302", "307", "308":
 		return true
@@ -1594,10 +1594,10 @@ func validatePageRedirects(prs models.PageRedirects) error {
 		if strings.ContainsAny(pr.Source, "\n\x00") {
 			return fmt.Errorf("entry %d: source contains invalid chars", i)
 		}
-		if err := validateRedirectURL(pr.Destination); err != nil {
+		if err := ValidateRedirectURL(pr.Destination); err != nil {
 			return fmt.Errorf("entry %d: invalid page redirect destination: %w", i, err)
 		}
-		if !isValidRedirectType(pr.Type) {
+		if !IsValidRedirectType(pr.Type) {
 			return fmt.Errorf("entry %d: invalid type for page redirect: %s", i, pr.Type)
 		}
 		// Wildcard only supports 301 and 302
@@ -1819,7 +1819,7 @@ func validateTenantNginxRules(rules models.NginxRules) error {
 	return validateNginxRules(rules)
 }
 
-func isValidIndexPriority(s string) bool {
+func IsValidIndexPriority(s string) bool {
 	switch s {
 	case "html_first", "php_first", "html_only", "php_only", "full":
 		return true

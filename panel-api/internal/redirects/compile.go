@@ -27,6 +27,25 @@ func isActive(pr models.PageRedirect) bool {
 	return pr.Active == nil || *pr.Active
 }
 
+// redirectAllCode maps a stored redirect_all_type to the numeric nginx return
+// code emitted in `return <code> <url>;`. The value should already be numeric
+// (the HTTP handler and, since JAB-318, the CLI store 301|302|307|308), but the
+// old `jabali domain set` CLI persisted the literals "permanent"/"temporary" —
+// neither a valid nginx code — so `return permanent …;` failed nginx -t and
+// broke reload. Heal those existing rows (and any restored from a backup that
+// carried the bad value) at render time rather than with a data migration; an
+// already-numeric or unknown value passes through unchanged (unknown still fails
+// nginx -t, but that is a value neither writer can produce).
+func redirectAllCode(t string) string {
+	switch strings.ToLower(strings.TrimSpace(t)) {
+	case "permanent":
+		return "301"
+	case "temporary":
+		return "302"
+	}
+	return t
+}
+
 func Compile(d *models.Domain) string {
 	if d == nil {
 		return ""
@@ -35,7 +54,7 @@ func Compile(d *models.Domain) string {
 	if d.RedirectAllTo != nil && *d.RedirectAllTo != "" {
 		code := "301"
 		if d.RedirectAllType != nil {
-			code = *d.RedirectAllType
+			code = redirectAllCode(*d.RedirectAllType)
 		}
 		fmt.Fprintf(&b, "    return %s %s;\n", code, quoteNginxURL(*d.RedirectAllTo))
 		return b.String()

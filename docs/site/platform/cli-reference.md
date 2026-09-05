@@ -2279,7 +2279,7 @@ jabali domain set <domain-name|domain-id> [flags]
 - `--index-priority` — directory index priority (e.g. html_first, php_first)
 - `--nginx-directives` — raw custom nginx directives for the server block
 - `--redirect-all-to` — redirect the whole domain to this URL ('' clears)
-- `--redirect-type` — permanent|temporary
+- `--redirect-type` — 301|302|307|308 (permanent=301, temporary=302)
 - `--ssl-mode` — le|self|none (custom = install a cert)
 
 #### `jabali domain show`
