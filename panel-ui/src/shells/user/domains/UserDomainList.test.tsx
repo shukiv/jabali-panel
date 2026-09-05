@@ -94,6 +94,22 @@ describe("UserDomainList DNS action gating (GH #1419)", () => {
   });
 });
 
+// GH #1543: on the tenant list the domain name links to its own Web Domain
+// page (not the live site); a separate launch icon still opens the live site.
+describe("UserDomainList domain name link (GH #1543)", () => {
+  it("links the domain name to its Web Domain page", async () => {
+    render(
+      <MemoryRouter>
+        <App>
+          <UserDomainList />
+        </App>
+      </MemoryRouter>,
+    );
+    const nameLink = await screen.findByRole("link", { name: "site.tld" });
+    expect(nameLink).toHaveAttribute("href", "/jabali-panel/domains/d1");
+  });
+});
+
 // GH #1541: the old "Add" split (Web / DNS / Mail) is replaced by a single
 // "Add Web Domain" button that opens the drawer in web mode.
 describe("UserDomainList Add Web Domain button (GH #1541)", () => {
