@@ -56,6 +56,9 @@ vi.mock("../../../components/domains/DomainDocRootPanel", () => ({
 vi.mock("../../dns/DNSRecordsPage", () => ({
   DNSRecordsPanel: ({ domainId }: { domainId: string }) => <div>dns-pane:{domainId}</div>,
 }));
+vi.mock("../../../components/logs/DomainLogsPanel", () => ({
+  DomainLogsPanel: ({ domainId }: { domainId: string }) => <div>logs-pane:{domainId}</div>,
+}));
 vi.mock("../../../components/DomainCacheSection", () => ({
   DomainCacheSection: ({ domainId }: { domainId: string }) => <div>caching-pane:{domainId}</div>,
 }));
@@ -157,6 +160,11 @@ describe("WebDomainPage (GH #1543)", () => {
     renderAt("/jabali-panel/domains/d1/dns");
     expect(await screen.findByText("Preview URL")).toBeInTheDocument();
     expect(screen.queryByText("dns-pane:d1")).not.toBeInTheDocument();
+  });
+
+  it("renders the Logs pane when :tab=logs (GH #1543)", async () => {
+    renderAt("/jabali-panel/domains/d1/logs");
+    expect(await screen.findByText("logs-pane:d1")).toBeInTheDocument();
   });
 
   it("renders the Caching pane when :tab=caching", async () => {
