@@ -576,7 +576,9 @@ func (f *fakeUserRepo) Update(ctx context.Context, u *models.User) error {
 	return nil
 }
 
-func (f *fakeUserRepo) UpdateComposerChannel(ctx context.Context, id string, channel *string) error { return nil }
+func (f *fakeUserRepo) UpdateComposerChannel(ctx context.Context, id string, channel *string) error {
+	return nil
+}
 
 func (f *fakeUserRepo) UpdateCLIPHPVersion(context.Context, string, *string) error { return nil }
 
@@ -2240,6 +2242,17 @@ func (f *fakePackageRepoMin) Update(context.Context, *models.HostingPackage) err
 func (f *fakePackageRepoMin) Delete(context.Context, string) error                 { return nil }
 func (f *fakePackageRepoMin) EnsureDefaults(context.Context) error                 { return nil }
 
+// fakeIniOverrideRepo is a minimal PHPPoolIniOverrideRepository that serves
+// per-pool overrides from a map; ReconcileViaAgent only calls ListByPool.
+type fakeIniOverrideRepo struct {
+	repository.PHPPoolIniOverrideRepository
+	byPool map[string][]models.PHPPoolIniOverride
+}
+
+func (f *fakeIniOverrideRepo) ListByPool(_ context.Context, poolID string) ([]models.PHPPoolIniOverride, error) {
+	return f.byPool[poolID], nil
+}
+
 func applyCallParams(t *testing.T, agent *fakeAgent) map[string]any {
 	t.Helper()
 	for _, call := range agent.calls {
@@ -2265,6 +2278,10 @@ func newPoolReconcilerWithPkg(pkg *models.HostingPackage, packageID *string) (*R
 	phpPoolRepo.pools["pool-1"] = &models.PHPPool{ID: "pool-1", UserID: "user-1", PHPVersion: "8.4", PmMode: "ondemand", Status: "pending"}
 	r := New(&fakeDomainRepo{domains: make(map[string]*models.Domain)}, userRepo, agent, log, Config{Interval: time.Second}).
 		WithPHPPools(phpPoolRepo)
+	// Wire an empty ini-override repo so the GH #1422 fan-out routes through the
+	// override-aware ReconcileViaAgent (a nil repo makes it a fail-closed no-op).
+	// applyPHPPool-driven tests ignore overrides, so an empty repo is harmless.
+	r.WithPHPPoolIniOverrides(&fakeIniOverrideRepo{byPool: map[string][]models.PHPPoolIniOverride{}})
 	if pkg != nil {
 		r.WithPackages(&fakePackageRepoMin{pkgs: map[string]*models.HostingPackage{pkg.ID: pkg}})
 	}
@@ -2291,6 +2308,57 @@ func TestApplyPHPPool_DisableFunctionsByPackage(t *testing.T) {
 	p2 := applyCallParams(t, agent2)
 	_, ok2 := p2["disable_functions"]
 	require.False(t, ok2, "default package must NOT send disable_functions (agent uses safe default)")
+}
+
+// GH #1422: flipping php_exec_enabled must reach a domain pinned to a
+// non-default PHP version. The fan-out (ReapplyPHPPoolForUser) used to touch
+// only the default pool, so a versioned pool never got the opt-out — and the
+// periodic sweep skips a healthy pool, so it never self-healed either. Assert
+// EVERY pool the user has is re-applied with disable_functions="".
+func TestReapplyPHPPoolForUser_AllPoolsGetExecOptOut(t *testing.T) {
+	pkgID := "pkg-1"
+	r, agent, poolRepo := newPoolReconcilerWithPkg(
+		&models.HostingPackage{ID: pkgID, Name: "exec", PHPExecEnabled: true}, &pkgID)
+
+	// Default pool (pool-1) is seeded by the harness at zero-time. Add a
+	// versioned pool created later so ListByUserID orders it after the default.
+	poolRepo.pools["pool-1"].CreatedAt = time.Unix(1000, 0)
+	poolRepo.pools["pool-2"] = &models.PHPPool{
+		ID: "pool-2", UserID: "user-1", PHPVersion: "8.2", PmMode: "ondemand",
+		Status: "active", CreatedAt: time.Unix(2000, 0),
+	}
+
+	// Regression teeth (GH #1422): the versioned pool carries a tenant
+	// php_admin_value override. Routing the fan-out through the override-aware
+	// ReconcileViaAgent must preserve it — the old override-blind applyPHPPool
+	// re-rendered the pool with no php_admin_value lines and wiped it on a flip.
+	r.WithPHPPoolIniOverrides(&fakeIniOverrideRepo{byPool: map[string][]models.PHPPoolIniOverride{
+		"pool-2": {{Directive: "memory_limit", Value: "512M", Kind: "value"}},
+	}})
+
+	require.NoError(t, r.ReapplyPHPPoolForUser(context.Background(), "user-1"))
+
+	applies := filterCallsByPrefix(agent.calls, "php.pool.apply")
+	require.Len(t, applies, 2, "both the default and the versioned pool must be re-applied")
+
+	byVersion := map[string]map[string]any{}
+	for _, call := range applies {
+		p, ok := call.params.(map[string]any)
+		require.True(t, ok)
+		// Every pool in the fan-out carries the exec opt-out.
+		v, has := p["disable_functions"]
+		require.True(t, has, "every pool in the fan-out must carry the opt-out key; params=%v", p)
+		require.Equal(t, "", v, "exec-enabled package opts every pool out")
+		byVersion[p["php_version"].(string)] = p
+	}
+	require.Contains(t, byVersion, "8.4", "default pool (8.4) re-applied")
+	require.Contains(t, byVersion, "8.2", "versioned pool (8.2) re-applied")
+
+	// The versioned pool's override survives the flip (no wipe); the default
+	// pool, which has no override, carries none (per-pool targeting).
+	require.Equal(t, []map[string]string{{"name": "memory_limit", "value": "512M"}},
+		byVersion["8.2"]["admin_values"], "versioned pool's php_admin_value override must survive the flip")
+	require.Empty(t, byVersion["8.4"]["admin_values"], "default pool has no override; none should be sent")
 }
 
 // TestReconcileVersionedPHPPools verifies GH #329: a versioned pool with a
@@ -2454,6 +2522,7 @@ func (f *fakeUserRepo) UpdateShadowDBUsernames(context.Context, string, *string,
 	return nil
 }
 
-
 // ListByZoneIDs added for the JAB-374 batch interface method.
-func (m *fakeDNSRecordRepo) ListByZoneIDs(context.Context, []string) ([]models.DNSRecord, error) { return nil, nil }
+func (m *fakeDNSRecordRepo) ListByZoneIDs(context.Context, []string) ([]models.DNSRecord, error) {
+	return nil, nil
+}

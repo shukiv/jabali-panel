@@ -25,6 +25,7 @@ func reconcilePHPPoolViaAgent(
 	users repository.UserRepository,
 	overrides repository.PHPPoolIniOverrideRepository,
 	pools repository.PHPPoolRepository,
+	packages repository.PackageRepository,
 	pool models.PHPPool,
 ) {
 	_ = phppoolops.ReconcileViaAgent(phppoolops.ReconcileDeps{
@@ -32,5 +33,8 @@ func reconcilePHPPoolViaAgent(
 		Users:     users,
 		Overrides: overrides,
 		Pools:     pools,
+		// GH #1422: carry the package exec-functions opt-out so a settings/
+		// version reconcile doesn't re-lock disable_functions.
+		Packages: packages,
 	}, pool)
 }

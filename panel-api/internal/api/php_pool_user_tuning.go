@@ -341,6 +341,6 @@ func (h *phpUserTuningHandler) applyToPool(c *gin.Context, pool *models.PHPPool,
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
-	go reconcilePHPPoolViaAgent(h.cfg.Agent, h.cfg.Users, h.cfg.PHPPoolIniOverrides, h.cfg.PHPPools, *pool)
+	go reconcilePHPPoolViaAgent(h.cfg.Agent, h.cfg.Users, h.cfg.PHPPoolIniOverrides, h.cfg.PHPPools, h.cfg.Packages, *pool)
 	c.JSON(http.StatusOK, gin.H{"data": pool})
 }

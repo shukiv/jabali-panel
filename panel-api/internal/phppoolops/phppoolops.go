@@ -161,6 +161,12 @@ type ReconcileDeps struct {
 	Users     repository.UserRepository
 	Overrides repository.PHPPoolIniOverrideRepository
 	Pools     repository.PHPPoolRepository
+	// Packages resolves the user's hosting package so this reconcile can carry
+	// the GH #402 per-package disable_functions opt-out (GH #1422). Optional: a
+	// nil repo (or a user with no package / a package without the flag) leaves
+	// the key off, so the agent applies its #401 command-exec lockdown default.
+	// Fail-closed — a missing wiring can only keep the lockdown, never lift it.
+	Packages repository.PackageRepository
 }
 
 // ReconcileViaAgent fires php.pool.apply for pool, then writes the resulting
@@ -215,7 +221,7 @@ func ReconcileViaAgent(deps ReconcileDeps, pool models.PHPPool) error {
 	}
 	slug := models.PoolSlug(username, pool.PHPVersion, isDefault)
 
-	_, aerr := deps.Agent.Call(ctx, "php.pool.apply", map[string]any{
+	params := map[string]any{
 		"username":                          username,
 		"slug":                              slug,
 		"additive":                          !isDefault,
@@ -233,7 +239,22 @@ func ReconcileViaAgent(deps ReconcileDeps, pool models.PHPPool) error {
 		"admin_flags":                       adminFlags,
 		"extra_extensions":                  []string(pool.ExtraExtensions),
 		"xdebug_enabled":                    pool.XdebugEnabled,
-	})
+	}
+
+	// GH #1422: carry the GH #402 per-package disable_functions opt-out on this
+	// path too. Without it, any pool reconcile driven from here (a PHP settings
+	// save, a version assign, an Xdebug/extension/tuning change) re-applied the
+	// #401 command-exec lockdown and silently re-broke shell_exec/proc_open for
+	// an exec-enabled package. Mirror reconciler.applyPHPPool: send "" only when
+	// the user's package opts out; omit the key otherwise so the agent keeps its
+	// safe default. Fail-closed — nil Packages / no package / flag off => no key.
+	if deps.Packages != nil && user != nil && user.PackageID != nil && *user.PackageID != "" {
+		if pkg, perr := deps.Packages.FindByID(ctx, *user.PackageID); perr == nil && pkg != nil && pkg.PHPExecEnabled {
+			params["disable_functions"] = ""
+		}
+	}
+
+	_, aerr := deps.Agent.Call(ctx, "php.pool.apply", params)
 	if aerr != nil {
 		pool.Status = "error"
 		msg := fmt.Sprintf("agent failed: %v", aerr)
