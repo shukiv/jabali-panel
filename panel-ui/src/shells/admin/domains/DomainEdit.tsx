@@ -13,7 +13,7 @@ import { Link, useNavigate, useParams } from "react-router";
 import { useOneQuery, useUpdateMutation } from "../../../hooks/useQueries";
 import { useSetBreadcrumbs } from "../../../components/admin/BreadcrumbContext";
 import { ownerResourceCrumbs, adminLinks, ownerLabel } from "../../../components/admin/entityLinks";
-import type { Domain } from "./DomainList";
+import type { Domain } from "../../../components/domains/types";
 import { DomainEmailSection } from "./DomainEmailSection";
 import { DomainMailProviderSection } from "./DomainMailProviderSection";
 import { DomainIPACLSection } from "./DomainIPACLSection";

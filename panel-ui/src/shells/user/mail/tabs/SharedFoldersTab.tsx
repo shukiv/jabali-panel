@@ -17,7 +17,7 @@ import {
   useDeleteShare,
   type Rights,
 } from "../../../../hooks/useSharedFolders";
-import type { Domain } from "../../domains/UserDomainList";
+import type { Domain } from "../../../../components/domains/types";
 
 interface Mailbox {
   id: string;

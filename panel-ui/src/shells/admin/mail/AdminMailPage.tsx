@@ -32,7 +32,7 @@ import { SearchableTableStringQ } from "../../../components/SearchableTable";
 import { useSearchParams, Link } from "react-router";
 import { useSetBreadcrumbs } from "../../../components/admin/BreadcrumbContext";
 import { ownerResourceCrumbs, ownerLabel, adminLinks } from "../../../components/admin/entityLinks";
-import type { Domain } from "../../user/domains/UserDomainList";
+import type { Domain } from "../../../components/domains/types";
 import { EditMailboxModal } from "../../../components/mail/EditMailboxModal";
 import {
   MailboxPasswordRevealModal,

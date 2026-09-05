@@ -13,7 +13,7 @@ import { apiClient } from "../../../../apiClient";
 import { useListQuery } from "../../../../hooks/useQueries";
 import { SearchableTableStringQ } from "../../../../components/SearchableTable";
 import { RowActions } from "../../../../components/RowActions";
-import type { Domain } from "../../domains/UserDomainList";
+import type { Domain } from "../../../../components/domains/types";
 import type { Mailbox } from "../../../../hooks/useMailboxes";
 import {
   fetchSharedResourceDetail,
