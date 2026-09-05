@@ -8,7 +8,7 @@
 import { Link } from "react-router";
 import { Tag, Tooltip, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { GlobalOutlined } from "@icons";
+import { GlobalOutlined, ExportOutlined } from "@icons";
 import { columnSearchProps } from "../columnSearch";
 import { humanBytes } from "../../utils/bytes";
 import { getSSLTag } from "../../utils/sslState";
@@ -31,18 +31,37 @@ const stripHomePrefix = (path: string): string => {
 
 // The name/docroot cell. The unified docroot line uses the admin list's
 // ellipsis + maxWidth so a long path can't stretch the column on either screen.
+// GH #1543: on the tenant list the name opens the domain's own Web Domain page
+// (an internal Link), with a separate launch icon still opening the live site;
+// the admin name keeps opening the live site directly, since admin edits a
+// domain from its own Edit page via the row menu.
 const renderDomainCell = (record: Domain, audience: DomainInventoryAudience) => (
   <div>
     <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
       <GlobalOutlined />
-      <Typography.Link
-        href={`https://${record.name}/`}
-        target="_blank"
-        rel="noopener noreferrer"
-        title={`Open https://${record.name}/ in a new tab`}
-      >
-        {record.name}
-      </Typography.Link>
+      {audience.kind === "tenant" ? (
+        <>
+          <Link to={`/jabali-panel/domains/${record.id}`}>{record.name}</Link>
+          <Typography.Link
+            href={`https://${record.name}/`}
+            target="_blank"
+            rel="noopener noreferrer"
+            title={`Open https://${record.name}/ in a new tab`}
+            aria-label={`Open https://${record.name}/ in a new tab`}
+          >
+            <ExportOutlined />
+          </Typography.Link>
+        </>
+      ) : (
+        <Typography.Link
+          href={`https://${record.name}/`}
+          target="_blank"
+          rel="noopener noreferrer"
+          title={`Open https://${record.name}/ in a new tab`}
+        >
+          {record.name}
+        </Typography.Link>
+      )}
       {audience.kind === "admin" && record.is_panel_primary && <Tag color="purple">System</Tag>}
       {audience.kind === "admin" && record.is_quota_suspended && (
         <Tag color="orange">Suspended (quota)</Tag>

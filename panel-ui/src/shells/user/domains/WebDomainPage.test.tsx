@@ -1,0 +1,142 @@
+// WebDomainPage.test — GH #1543. The tenant Web Domain page: the URL :tab picks
+// the active pane, an unknown/absent tab falls back to Overview, the breadcrumb
+// trail ends at the domain name, a tab click navigates to that tab's URL, and a
+// domain the caller can't load surfaces an error (never a blank scoped view).
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { MemoryRouter, Route, Routes } from "react-router";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const navigate = vi.hoisted(() => vi.fn());
+const setBreadcrumbs = vi.hoisted(() => vi.fn());
+const domainQ = vi.hoisted(() => ({
+  value: {
+    data: {
+      id: "d1",
+      name: "site.tld",
+      doc_root: "/home/alice/site.tld/public_html",
+      ssl_state: "active",
+      is_enabled: true,
+      temp_url_enabled: false,
+      temp_url: "",
+      bot_challenge_include: false,
+      reverse_proxy_port: null,
+    } as Record<string, unknown> | undefined,
+    isLoading: false,
+    isError: false,
+  },
+}));
+const patch = vi.hoisted(() => vi.fn());
+
+vi.mock("react-router", async () => {
+  const actual = await vi.importActual<typeof import("react-router")>("react-router");
+  return { ...actual, useNavigate: () => navigate };
+});
+vi.mock("../../../components/admin/BreadcrumbContext", () => ({
+  useSetBreadcrumbs: (c: unknown) => setBreadcrumbs(c),
+}));
+vi.mock("../../../hooks/useQueries", () => ({
+  useOneQuery: () => domainQ.value,
+}));
+vi.mock("../../../components/DomainCacheSection", () => ({
+  DomainCacheSection: ({ domainId }: { domainId: string }) => <div>caching-pane:{domainId}</div>,
+}));
+vi.mock("../../admin/domains/DomainDirectoryPrivacySection", () => ({
+  DomainDirectoryPrivacySection: ({ domainId }: { domainId: string }) => (
+    <div>dirpriv-pane:{domainId}</div>
+  ),
+}));
+vi.mock("../../../apiClient", () => ({ apiClient: { patch } }));
+vi.mock("../../../lib/feedback", () => ({
+  feedback: { message: { success: vi.fn(), error: vi.fn() } },
+}));
+
+import { WebDomainPage } from "./WebDomainPage";
+
+function renderAt(path: string) {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter initialEntries={[path]}>
+        <Routes>
+          <Route path="/jabali-panel/domains/:id" element={<WebDomainPage />} />
+          <Route path="/jabali-panel/domains/:id/:tab" element={<WebDomainPage />} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+beforeEach(() => {
+  navigate.mockReset();
+  setBreadcrumbs.mockReset();
+  patch.mockReset();
+  patch.mockResolvedValue({});
+  domainQ.value = {
+    data: {
+      id: "d1",
+      name: "site.tld",
+      doc_root: "/home/alice/site.tld/public_html",
+      ssl_state: "active",
+      is_enabled: true,
+      temp_url_enabled: false,
+      temp_url: "",
+      bot_challenge_include: false,
+      reverse_proxy_port: null,
+    },
+    isLoading: false,
+    isError: false,
+  };
+});
+
+describe("WebDomainPage (GH #1543)", () => {
+  it("defaults to the Overview pane with the domain facts and the two toggles", async () => {
+    renderAt("/jabali-panel/domains/d1");
+    expect(await screen.findByText("Preview URL")).toBeInTheDocument();
+    expect(screen.getByText("Bot-detection challenge")).toBeInTheDocument();
+    // Facts: the docroot is shown home-stripped.
+    expect(screen.getByText("site.tld/public_html")).toBeInTheDocument();
+  });
+
+  it("falls back to Overview for an unknown tab", async () => {
+    renderAt("/jabali-panel/domains/d1/bogus");
+    expect(await screen.findByText("Preview URL")).toBeInTheDocument();
+  });
+
+  it("renders the Caching pane when :tab=caching", async () => {
+    renderAt("/jabali-panel/domains/d1/caching");
+    expect(await screen.findByText("caching-pane:d1")).toBeInTheDocument();
+  });
+
+  it("renders the Directory Privacy pane when :tab=directory-privacy", async () => {
+    renderAt("/jabali-panel/domains/d1/directory-privacy");
+    expect(await screen.findByText("dirpriv-pane:d1")).toBeInTheDocument();
+  });
+
+  it("sets the breadcrumb trail ending at the domain name", async () => {
+    renderAt("/jabali-panel/domains/d1");
+    await screen.findByText("Preview URL");
+    const crumbs = setBreadcrumbs.mock.calls.at(-1)?.[0] as { title: string }[];
+    expect(crumbs.map((c) => c.title)).toEqual(["Dashboard", "Web Domains", "site.tld"]);
+  });
+
+  it("navigates to the tab URL when a tab is clicked", async () => {
+    renderAt("/jabali-panel/domains/d1");
+    fireEvent.click(await screen.findByText("Caching"));
+    expect(navigate).toHaveBeenCalledWith("/jabali-panel/domains/d1/caching");
+  });
+
+  it("toggling Preview URL PATCHes the domain", async () => {
+    renderAt("/jabali-panel/domains/d1");
+    fireEvent.click(await screen.findByLabelText("Preview URL"));
+    await vi.waitFor(() =>
+      expect(patch).toHaveBeenCalledWith("/domains/d1", { temp_url_enabled: true }),
+    );
+  });
+
+  it("surfaces an error when the domain can't be loaded", async () => {
+    domainQ.value = { data: undefined, isLoading: false, isError: true };
+    renderAt("/jabali-panel/domains/d1");
+    expect(await screen.findByText("Domain not available")).toBeInTheDocument();
+  });
+});
