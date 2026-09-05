@@ -83,6 +83,11 @@ func RegisterMailboxRoutes(g *gin.RouterGroup, cfg MailboxHandlerConfig) {
 
 	g.GET("/admin/mailboxes", middleware.RequireAdmin(), h.listAllAdmin)
 
+	// JAB-370 Workspace projection: the caller's own mailboxes across all their
+	// domains in one owner-scoped, server-paginated query — replacing the
+	// per-domain page_size=200 fan-out the tenant Mailboxes tab used to do.
+	g.GET("/me/mailboxes", h.listWorkspace)
+
 	mbox := g.Group("/mailboxes")
 	mbox.GET("/:mbid", h.get)
 	mbox.PATCH("/:mbid", h.update)
@@ -657,6 +662,62 @@ func (h *mailboxHandler) listAllAdmin(c *gin.Context) {
 		resp["page_size"] = pageSize
 	}
 	c.JSON(http.StatusOK, resp)
+}
+
+// workspaceMailboxResponse is a directory row for the tenant Workspace. It is
+// the admin row minus the owner columns — every row belongs to the caller, so
+// owner_user_id / user_username would be redundant (and the caller's own id has
+// no place being echoed back on a self-scoped list).
+type workspaceMailboxResponse struct {
+	mailboxResponse
+	DomainName string `json:"domain_name"`
+}
+
+// listWorkspace serves GET /api/v1/me/mailboxes — the caller's own mailboxes
+// across every domain they own, server-paginated (JAB-370 Workspace
+// projection). It replaces the tenant Mailboxes tab's per-domain
+// page_size=200 fan-out (one request per domain, silently truncating any domain
+// past 200) with one owner-scoped constant query.
+//
+// Isolation-critical: the owner scope is taken from the Kratos session, never
+// from a request parameter. Unlike listAllAdmin there is NO ?user_id — a tenant
+// cannot widen the query to another user's mailboxes. Always paginated (the tab
+// is the only consumer), so page/page_size always ride the envelope.
+func (h *mailboxHandler) listWorkspace(c *gin.Context) {
+	ctx := c.Request.Context()
+
+	claims := ginctx.Claims(c)
+	if claims == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	page, pageSize, opts := parseListOptions(c, defaultMailboxesPageSize, maxMailboxesPageSize)
+
+	rows, total, err := h.cfg.Mailboxes.ListDirectoryPage(ctx, opts, claims.UserID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	out := make([]workspaceMailboxResponse, 0, len(rows))
+	for _, r := range rows {
+		// System rows are already excluded in SQL; the guard stays as a
+		// defence-in-depth belt in case the projection ever changes.
+		if r.Mailbox.System {
+			continue
+		}
+		out = append(out, workspaceMailboxResponse{
+			mailboxResponse: toMailboxResponse(r.Mailbox),
+			DomainName:      r.DomainName,
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"data":      out,
+		"total":     total,
+		"page":      page,
+		"page_size": pageSize,
+	})
 }
 
 func toMailboxResponse(mb models.Mailbox) mailboxResponse {

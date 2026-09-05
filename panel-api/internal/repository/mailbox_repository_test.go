@@ -183,6 +183,52 @@ func TestMailboxRepository_ListByDomainID(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestMailboxRepository_ListByDomainID_TranslatesFriendlySort proves the
+// per-domain drill-down understands the SAME clean sort keys the directory does
+// (JAB-370): a shared front-end sends ?sort=email|name|usage|status and the
+// endpoint orders on the matching bare column instead of silently falling back
+// to created_at (the regression this guards). Falsify by deleting the
+// mailboxListSortKeys lookup in ListByDomainID → "email" no longer whitelists,
+// pickSort drops to DefaultSort, and the email/status expectations redden.
+func TestMailboxRepository_ListByDomainID_TranslatesFriendlySort(t *testing.T) {
+	cols := []string{"id", "domain_id", "local_part", "email_cached", "password_hash",
+		"quota_bytes", "is_disabled", "last_usage_bytes", "last_usage_at", "created_at", "updated_at"}
+	now := time.Now()
+
+	cases := []struct {
+		name    string
+		sort    string
+		orderBy string // the column the ORDER BY must carry
+	}{
+		{"email clean key", "email", "email_cached"},
+		{"name clean key", "name", "display_name"},
+		{"usage clean key", "usage", "last_usage_bytes"},
+		{"status clean key", "status", "is_disabled"},
+		{"raw column passes through", "quota_bytes", "quota_bytes"},
+		{"unknown directory-only key falls back", "domain", "created_at"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			db, mock, raw := newMockDB(t)
+			defer raw.Close()
+			repo := NewMailboxRepository(db)
+
+			mock.ExpectQuery("SELECT count.* FROM `mailboxes`.*WHERE domain_id = \\?").
+				WillReturnRows(sqlmock.NewRows([]string{"count(*)"}).AddRow(1))
+			mock.ExpectQuery("SELECT .* FROM `mailboxes`.*WHERE domain_id = \\?.*ORDER BY " + tc.orderBy + " ASC").
+				WillReturnRows(sqlmock.NewRows(cols).
+					AddRow("mb1", "dom1", "alice", "alice@example.com", "h1", uint64(1<<30), false, uint64(0), nil, now, now),
+				)
+
+			rows, total, err := repo.ListByDomainID(context.Background(), "dom1", ListOptions{Sort: tc.sort, Order: "asc"})
+			require.NoError(t, err)
+			require.Equal(t, int64(1), total)
+			require.Len(t, rows, 1)
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
 // TestMailboxRepository_ListByDomainID_ExcludeSystem verifies that the
 // GH #1056 opt filters the JAB-230 relay out of BOTH the count and the row
 // query — otherwise the paginated list would show N-1 rows against a total of

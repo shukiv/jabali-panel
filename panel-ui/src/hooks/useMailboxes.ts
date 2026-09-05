@@ -235,6 +235,11 @@ export function useCreateMailbox(): UseMutationResult<
       // "admin/mailboxes", …params]. Prefix-invalidate that so an edit /
       // delete / create refreshes the visible page.
       qc.invalidateQueries({ queryKey: ["list", "admin/mailboxes"] });
+      // JAB-370 Workspace: the tenant Mailboxes tab is now server-paginated via
+      // useTableURL({ resource: "me/mailboxes" }), keyed ["list", "me/mailboxes",
+      // …params]. Prefix-invalidate it so a create/edit/delete refreshes the
+      // visible page instead of leaving a stale (or ghost) row.
+      qc.invalidateQueries({ queryKey: ["list", "me/mailboxes"] });
     },
   });
 }
@@ -256,6 +261,11 @@ export function useDeleteMailbox(): UseMutationResult<
       // "admin/mailboxes", …params]. Prefix-invalidate that so an edit /
       // delete / create refreshes the visible page.
       qc.invalidateQueries({ queryKey: ["list", "admin/mailboxes"] });
+      // JAB-370 Workspace: the tenant Mailboxes tab is now server-paginated via
+      // useTableURL({ resource: "me/mailboxes" }), keyed ["list", "me/mailboxes",
+      // …params]. Prefix-invalidate it so a create/edit/delete refreshes the
+      // visible page instead of leaving a stale (or ghost) row.
+      qc.invalidateQueries({ queryKey: ["list", "me/mailboxes"] });
       // JAB-333: a deleted mailbox also disappears from the tenant screen's
       // group-membership and autoresponder panels — invalidate those shared
       // keys so they don't render a ghost row until the next refetch.
@@ -329,6 +339,11 @@ export function useUpdateMailbox(): UseMutationResult<
       // "admin/mailboxes", …params]. Prefix-invalidate that so an edit /
       // delete / create refreshes the visible page.
       qc.invalidateQueries({ queryKey: ["list", "admin/mailboxes"] });
+      // JAB-370 Workspace: the tenant Mailboxes tab is now server-paginated via
+      // useTableURL({ resource: "me/mailboxes" }), keyed ["list", "me/mailboxes",
+      // …params]. Prefix-invalidate it so a create/edit/delete refreshes the
+      // visible page instead of leaving a stale (or ghost) row.
+      qc.invalidateQueries({ queryKey: ["list", "me/mailboxes"] });
     },
   });
 }

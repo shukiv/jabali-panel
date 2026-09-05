@@ -97,10 +97,35 @@ func (r *mailboxRepo) FindByEmail(ctx context.Context, email string) (*models.Ma
 
 // mailboxListCols — free-text search matches local_part and the cached
 // full address so a query for "alice" or "alice@example.com" both hit.
+// Sort accepts both the bare table columns (raw callers: CLI, MCP
+// list_mailboxes) and — after mailboxListSortKeys translates them — the same
+// clean keys the directory speaks, so a shared front-end can drive either
+// endpoint (JAB-370). display_name and is_disabled are the two columns the
+// clean keys need that the raw list never sorted on.
 var mailboxListCols = ListCols{
 	Search:      []string{"local_part", "email_cached"},
-	Sort:        []string{"local_part", "email_cached", "created_at", "quota_bytes", "last_usage_bytes"},
+	Sort:        []string{"local_part", "email_cached", "display_name", "created_at", "quota_bytes", "last_usage_bytes", "is_disabled"},
 	DefaultSort: "created_at",
+}
+
+// mailboxListSortKeys is the single-table twin of mailboxDirectorySortKeys: it
+// maps the clean API sort keys the mailbox front-end sends
+// (?sort=email|name|usage|status|created_at) to the BARE mailboxes columns
+// ListByDomainID orders on — this endpoint is one table, so no qualification is
+// needed. "usage" maps to last_usage_bytes to match the directory's meaning of
+// the key (the Usage column) even though the same table also carries
+// quota_bytes. Keys that only exist on the directory JOIN (domain, owner) are
+// absent, so pickSort falls back to the default order for them — harmless here
+// since the drill-down hides the Domain column anyway. Unlike the directory
+// (which REPLACES opts.Sort), this is a PASS-THROUGH: a raw column a CLI/MCP
+// caller sends (created_at, quota_bytes, local_part) is left untouched and
+// re-validated by the allowlist, so no existing caller changes behaviour.
+var mailboxListSortKeys = map[string]string{
+	"email":      "email_cached",
+	"name":       "display_name",
+	"usage":      "last_usage_bytes",
+	"status":     "is_disabled",
+	"created_at": "created_at",
 }
 
 func (r *mailboxRepo) ListByDomainID(ctx context.Context, domainID string, opts ListOptions) ([]models.Mailbox, int64, error) {
@@ -119,6 +144,9 @@ func (r *mailboxRepo) ListByDomainID(ctx context.Context, domainID string, opts 
 	}
 	if opts.Sort == "" && opts.Order == "" {
 		opts.Order = "desc"
+	}
+	if col, ok := mailboxListSortKeys[strings.ToLower(strings.TrimSpace(opts.Sort))]; ok {
+		opts.Sort = col // clean key → bare column; a raw column is left as-is
 	}
 	q := applyListOptions(base.Session(&gorm.Session{}), opts, mailboxListCols)
 	if err := q.Find(&rows).Error; err != nil {
