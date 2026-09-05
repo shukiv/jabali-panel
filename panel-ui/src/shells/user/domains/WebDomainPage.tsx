@@ -4,35 +4,30 @@
 // modal launchers. The tab lives in the URL (:tab), so a tab is linkable and
 // the browser Back button walks the tabs.
 //
-// Slice A (this PR) lands the shell + row-click navigation + breadcrumbs and
-// three panes that need no extraction: Overview (facts + the preview-URL /
-// bot-challenge toggles), Caching and Directory Privacy (both already shared
-// Section components). The remaining actions (Redirects, Index, Domain options,
-// Rewrite rules, Document root) and folding DNS in move here in a follow-up,
-// which also strips the row menu down to Disable/Delete.
+// Tabs here: Overview (facts + the preview-URL / bot-challenge toggles), Index
+// Files, Caching and Directory Privacy, plus three tabs gated on the same caps
+// as the row menu — Domain options and Rewrite rules (tenant_domain_options_
+// enabled) and Document root (tenant_docroot_editable). Redirects and folding
+// DNS in move here in a follow-up, which also strips the row menu down to
+// Disable/Delete.
+import type { ReactNode } from "react";
 import { Alert, Button, Card, Skeleton, Space, Typography } from "antd";
 import { GlobalOutlined } from "@icons";
 import { useNavigate, useParams } from "react-router";
 
 import { useSetBreadcrumbs } from "../../../components/admin/BreadcrumbContext";
 import { useOneQuery } from "../../../hooks/useQueries";
+import { useServerCapabilities } from "../../../hooks/useServerCapabilities";
 import type { Domain } from "../../../components/domains/types";
 import { DomainCacheSection } from "../../../components/DomainCacheSection";
 import { DomainDirectoryPrivacySection } from "../../admin/domains/DomainDirectoryPrivacySection";
 import { DomainIndexPanel } from "../../DomainIndexPanel";
+import { DomainNginxOptionsPanel } from "../../../components/DomainNginxOptionsPanel";
+import { TenantNginxRulesPanel } from "../../DomainSettingsButton";
+import { DomainDocRootPanel } from "../../../components/domains/DomainDocRootPanel";
 import { OverviewTab } from "./tabs/OverviewTab";
 
-const TAB_KEYS = ["overview", "index", "caching", "directory-privacy"] as const;
-type TabKey = (typeof TAB_KEYS)[number];
-const DEFAULT_TAB: TabKey = "overview";
-
-const TAB_LABELS: Record<TabKey, string> = {
-  overview: "Overview",
-  index: "Index Files",
-  caching: "Caching",
-  "directory-privacy": "Directory Privacy",
-};
-
+const DEFAULT_TAB = "overview";
 const LIST_PATH = "/jabali-panel/domains";
 
 export const WebDomainPage = () => {
@@ -40,9 +35,7 @@ export const WebDomainPage = () => {
   const navigate = useNavigate();
 
   const domainQ = useOneQuery<Domain>({ resource: "domains", id });
-  const activeKey: TabKey = (TAB_KEYS as readonly string[]).includes(tab ?? "")
-    ? (tab as TabKey)
-    : DEFAULT_TAB;
+  const { data: caps } = useServerCapabilities();
 
   // The shell already renders ONE breadcrumb (RouteBreadcrumb, GH #455). Override
   // it with the entity trail so the last crumb is the domain name, not the raw
@@ -84,18 +77,53 @@ export const WebDomainPage = () => {
   }
   const domain = domainQ.data;
 
-  const renderTab = () => {
-    switch (activeKey) {
-      case "overview":
-        return <OverviewTab domain={domain} />;
-      case "index":
-        return <DomainIndexPanel domain={domain} />;
-      case "caching":
-        return <DomainCacheSection domainId={domain.id} />;
-      case "directory-privacy":
-        return <DomainDirectoryPrivacySection domainId={domain.id} domainName={domain.name} />;
-    }
-  };
+  // The cap-gated tabs mirror the row menu exactly: a tenant without the cap
+  // sees neither the menu item nor the tab (never a disabled stub).
+  const optionsOn = caps?.tenant_domain_options_enabled === true;
+  const docrootOn = caps?.tenant_docroot_editable === true;
+
+  const tabs: { key: string; label: string; node: ReactNode }[] = [
+    { key: "overview", label: "Overview", node: <OverviewTab domain={domain} /> },
+    { key: "index", label: "Index Files", node: <DomainIndexPanel domain={domain} /> },
+    { key: "caching", label: "Caching", node: <DomainCacheSection domainId={domain.id} /> },
+    {
+      key: "directory-privacy",
+      label: "Directory Privacy",
+      node: <DomainDirectoryPrivacySection domainId={domain.id} domainName={domain.name} />,
+    },
+    ...(optionsOn
+      ? [
+          {
+            key: "domain-options",
+            label: "Domain options",
+            node: <DomainNginxOptionsPanel domainId={domain.id} />,
+          },
+          {
+            key: "rewrite-rules",
+            label: "Rewrite rules",
+            node: <TenantNginxRulesPanel domain={domain} />,
+          },
+        ]
+      : []),
+    ...(docrootOn
+      ? [
+          {
+            key: "document-root",
+            label: "Document root",
+            node: (
+              <DomainDocRootPanel
+                domainId={domain.id}
+                domainName={domain.name}
+                currentDocRoot={domain.doc_root}
+              />
+            ),
+          },
+        ]
+      : []),
+  ];
+
+  const activeKey = tabs.some((tdef) => tdef.key === tab) ? (tab as string) : DEFAULT_TAB;
+  const active = tabs.find((tdef) => tdef.key === activeKey) ?? tabs[0];
 
   return (
     <div style={{ padding: "20px" }}>
@@ -110,11 +138,11 @@ export const WebDomainPage = () => {
       </Space>
 
       <Card
-        tabList={TAB_KEYS.map((k) => ({ key: k, tab: TAB_LABELS[k] }))}
+        tabList={tabs.map((tdef) => ({ key: tdef.key, tab: tdef.label }))}
         activeTabKey={activeKey}
         onTabChange={(k) => navigate(`${LIST_PATH}/${domain.id}/${k}`)}
       >
-        {renderTab()}
+        {active.node}
       </Card>
     </div>
   );
