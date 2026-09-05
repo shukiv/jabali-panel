@@ -202,7 +202,7 @@ operators can recover via `jabali` CLI without losing in-flight state.
 - Database admin ops (curated tuner, root password, processlist,
   pmaAdmin SSO)
 - Email queue, throttles, MTA-STS, outbound reports
-- Audit logs, notifications dispatcher, jabali-isolator events
+- Audit logs, notifications dispatcher, malware / quarantine events
 - Notification channel admin (test-send, scopes, throttles)
 
 ### User Panel
@@ -269,8 +269,9 @@ operators can recover via `jabali` CLI without losing in-flight state.
   runtime on the host
 - **Webmail**: Bulwark (Next.js JMAP) at `/opt/jabali-webmail`, served on
   `mail.<tenant>` per-domain via nginx → Unix socket
-- **SSH shell**: nspawn containers (debian-13-v1 image) for SSH access
-  isolation; jabali-isolator handles container lifecycle
+- **SSH shell**: mandatory sandbox per login — default `bubblewrap`
+  (namespace + bind-mount jail via setuid `bwrap`); an `nspawn` mode is
+  selectable but not yet wired. Fail-closed to `nologin`, never a bare shell
 - **Security**: CrowdSec parsers + AppSec (nginx-bouncer Lua, WAF) +
   per-user egress firewall (nftables + cgroupv2-vmap, ADR-0084) + LMD +
   ClamAV-on-demand + YARA + Tetragon
@@ -294,7 +295,6 @@ Service stack (single-node default):
 - **Kratos** (Unix socket admin + public, sole auth source — M20)
 - **CrowdSec** (LAPI socket + AppSec :7422 + nginx-bouncer Lua)
 - **Restic** (encrypted, dedup, backup destinations)
-- **jabali-isolator** (nspawn container lifecycle)
 - **systemd-user** (cron jobs as user-scope timers)
 
 ## Requirements
