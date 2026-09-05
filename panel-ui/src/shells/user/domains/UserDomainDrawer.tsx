@@ -19,6 +19,7 @@ import { useEffect } from "react";
 import { apiClient } from "../../../apiClient";
 import { useCreateMutation } from "../../../hooks/useQueries";
 import { useServerCapabilities } from "../../../hooks/useServerCapabilities";
+import { DnsZoneFields } from "../../../components/dns/DnsZoneFields";
 
 type UserDomainCreateInput = {
   name: string;
@@ -30,6 +31,8 @@ type UserDomainCreateInput = {
   mail_provider?: string;
   m365_onmicrosoft?: string;
   google_dkim?: string;
+  // GH #1540: apex IP for a DNS-only zone (dns mode only) — the "pointed IP".
+  ip_address?: string;
   // GH #1541: create_www is no longer a checkbox — it's derived from the domain
   // (apex ⇒ true, subdomain ⇒ false) and sent as a plain flag.
   create_www?: boolean;
@@ -145,11 +148,20 @@ export const UserDomainDrawer = ({ open, onClose, mode = "web" }: UserDomainDraw
           name: values.name,
           web_enabled: false,
           manage_dns: isDNS ? true : values.manage_dns,
-          // GH #1479: the non-web branch is either a DNS-only zone (no mail) or a
-          // mail domain (always Jabali mail — the provider select is hidden in
-          // mail mode, so values.mail_provider isn't registered).
-          mail_provider: isDNS ? "none" : "jabali",
+          // GH #1479/#1540: mail mode is always Jabali mail (the provider select
+          // is hidden there, so values.mail_provider isn't registered). A DNS-only
+          // zone takes its provider from the DNS Template select (Default → none,
+          // or external m365/google).
+          mail_provider: isDNS ? (values.mail_provider ?? "none") : "jabali",
           ssl_mode: isDNS ? "none" : values.ssl_mode,
+          // GH #1540: the DNS-only zone's apex IP + the template's helper inputs.
+          ...(isDNS
+            ? {
+                ip_address: values.ip_address,
+                m365_onmicrosoft: values.m365_onmicrosoft,
+                google_dkim: values.google_dkim,
+              }
+            : {}),
         };
       }
       const created = await createMutation.mutateAsync(payload);
@@ -211,6 +223,11 @@ export const UserDomainDrawer = ({ open, onClose, mode = "web" }: UserDomainDraw
         >
           <Input placeholder="e.g., example.com" />
         </Form.Item>
+
+        {/* GH #1540: DNS-only zone — the apex IP (prefilled with this server's
+            IP) and a DNS Template (Default / Microsoft 365 / Google Workspace).
+            Shared with the admin Add DNS Zone drawer. */}
+        {isDNS && <DnsZoneFields publicIP={caps?.public_ipv4} />}
 
         {(isWeb || isMail) && (
           <Form.Item
@@ -280,7 +297,10 @@ export const UserDomainDrawer = ({ open, onClose, mode = "web" }: UserDomainDraw
           </Form.Item>
         )}
 
-        {mailProvider === "m365" && (
+        {/* Web/mail Template helper inputs. In dns mode these live inside
+            DnsZoneFields instead, so gate them out here to avoid a duplicate
+            registration of the same field name. */}
+        {!isDNS && mailProvider === "m365" && (
           <Form.Item
             label={t("userdomaindrawer.microsoft_365_tenant")}
             name="m365_onmicrosoft"
@@ -290,7 +310,7 @@ export const UserDomainDrawer = ({ open, onClose, mode = "web" }: UserDomainDraw
           </Form.Item>
         )}
 
-        {mailProvider === "google" && (
+        {!isDNS && mailProvider === "google" && (
           <Form.Item
             label={t("userdomaindrawer.google_dkim_value")}
             name="google_dkim"
