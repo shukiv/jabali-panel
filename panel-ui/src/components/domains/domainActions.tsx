@@ -19,6 +19,7 @@ import {
   SafetyOutlined,
   SettingOutlined,
   SwapOutlined,
+  TeamOutlined,
   ThunderboltOutlined,
   ToolOutlined,
 } from "@icons";
@@ -35,7 +36,8 @@ export type DomainModalType =
   | "directory-privacy"
   | "nginx-options"
   | "rewrite-rules"
-  | "document-root";
+  | "document-root"
+  | "chown";
 
 export type DomainMenuCaps =
   | {
@@ -139,6 +141,14 @@ export function buildDomainMenuItems(r: Domain, ctx: DomainMenuCtx): MenuProps["
         icon: <ThunderboltOutlined />,
         label: "Caching",
         onClick: () => onOpenModal(r.id, "caching"),
+      },
+      // GH #1238: reassign the domain to a new tenant. Admin-only; the modal's
+      // POST is behind the JAB-380 step-up.
+      {
+        key: "chown",
+        icon: <TeamOutlined />,
+        label: "Change owner",
+        onClick: () => onOpenModal(r.id, "chown"),
       },
       toggleItem,
       ...deleteItems,
