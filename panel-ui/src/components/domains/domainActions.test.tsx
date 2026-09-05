@@ -45,7 +45,7 @@ describe("buildDomainMenuItems — admin audience", () => {
 
   it("offers the admin item set and none of the tenant-only actions", () => {
     const k = keys(buildDomainMenuItems(row(), ctx({ audience: admin, caps: { dns_enabled: true } })));
-    expect(k).toEqual(["edit", "dns", "info", "redirects", "index", "settings", "caching", "toggle", "delete"]);
+    expect(k).toEqual(["edit", "dns", "info", "redirects", "index", "settings", "caching", "chown", "toggle", "delete"]);
     // tenant-only actions never appear on the admin list
     for (const t of ["directory-privacy", "nginx-options", "rewrite-rules", "document-root", "preview-url", "bot-challenge"]) {
       expect(k).not.toContain(t);

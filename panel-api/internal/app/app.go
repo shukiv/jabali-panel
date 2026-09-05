@@ -715,6 +715,12 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				// dropped from GET.
 				ManagedIPs:     deps.ManagedIPs,
 				ServerSettings: deps.ServerSettings,
+				// GH #1238 change-owner (admin, JAB-380 step-up): AppInstalls
+				// arms the cross-tenant-credential refusal, AuditEvents records
+				// it, KratosClient gates the step-up.
+				AppInstalls:  deps.WordPressInstalls,
+				AuditEvents:  repository.NewAuditEventRepository(deps.DB),
+				KratosClient: deps.KratosClient,
 			})
 		}
 		// M36 — per-domain IP allow/deny lists.

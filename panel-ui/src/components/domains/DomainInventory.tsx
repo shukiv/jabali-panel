@@ -31,6 +31,7 @@ import { DomainIndexButton } from "../../shells/DomainIndexButton";
 import { DomainInfoButton } from "../../shells/DomainInfoButton";
 import { DomainSettingsButton, TenantNginxRulesButton } from "../../shells/DomainSettingsButton";
 import { DomainDocRootModal } from "./DomainDocRootModal";
+import { DomainChownAction } from "../../shells/admin/domains/DomainChownAction";
 
 import { buildDomainDataColumns, type DomainInventoryAudience } from "./domainColumns";
 import { buildDomainMenuItems, type DomainModalType } from "./domainActions";
@@ -225,6 +226,9 @@ export const DomainInventory = ({ audience }: { audience: DomainInventoryAudienc
               currentDocRoot={r.doc_root}
               onClose={() => setActiveModal(null)}
             />
+          )}
+          {activeModal?.domainId === r.id && activeModal.type === "chown" && (
+            <DomainChownAction domain={r} open={true} onClose={() => setActiveModal(null)} />
           )}
         </Space>
       ),

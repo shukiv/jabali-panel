@@ -17,10 +17,12 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/kratosclient"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dnscompile"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/middleware"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/reconciler"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
@@ -61,6 +63,18 @@ type DomainHandlerConfig struct {
 	ManagedIPs repository.ManagedIPRepository
 	// ServerSettings gates the tenant-safe nginx options opt-in (GH #307).
 	ServerSettings repository.ServerSettingsRepository
+	// AppInstalls (GH #1238 chown) backs the change-owner refusal: a domain
+	// with an app install carries the current owner's DB creds in its config,
+	// so re-owning it would leak a live cross-tenant credential. REQUIRED for
+	// the chown route — a nil repo makes the handler 503 rather than silently
+	// skip the security check (fail-closed).
+	AppInstalls repository.ApplicationInstallRepository
+	// AuditEvents records the admin change-owner (GH #1238). Optional — nil
+	// in dev binaries makes the audit a no-op.
+	AuditEvents repository.AuditEventRepository
+	// KratosClient gates the change-owner route behind the JAB-380 recent-auth
+	// step-up (same as rename / the root File Manager).
+	KratosClient *kratosclient.Client
 }
 
 const (
@@ -85,6 +99,12 @@ func RegisterDomainRoutes(g *gin.RouterGroup, cfg DomainHandlerConfig) {
 	domains.PATCH("/:id", h.update)
 	domains.DELETE("/:id", h.delete)
 	domains.GET("/:id/bandwidth", h.bandwidth)
+
+	// GH #1238: reassign a domain to a new tenant (move + re-own the docroot,
+	// repoint the DB row). Admin-only AND behind the JAB-380 recent-auth
+	// step-up — it moves files and hands them to another tenant, mirroring the
+	// user-rename surface. Registered on the base group, not /domains.
+	g.POST("/admin/domains/:id/chown", middleware.RequireAdmin(), h.chown)
 }
 
 type domainHandler struct{ cfg DomainHandlerConfig }
