@@ -88,8 +88,9 @@ describe("UserDomainList DNS action gating (GH #1419)", () => {
       </MemoryRouter>,
     );
     await openRowMenu();
-    // Another always-present action confirms the menu opened.
-    expect(await screen.findByText("Redirects")).toBeInTheDocument();
+    // Another always-present action confirms the menu opened. GH #1543 stripped
+    // the tenant menu to DNS + Enable/Delete, so Delete is the stable anchor.
+    expect(await screen.findByText("Delete")).toBeInTheDocument();
     expect(screen.queryByText("DNS")).not.toBeInTheDocument();
   });
 });

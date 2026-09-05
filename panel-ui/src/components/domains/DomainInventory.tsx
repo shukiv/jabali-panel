@@ -24,13 +24,10 @@ import { useServerCapabilities } from "../../hooks/useServerCapabilities";
 import { useTranslation } from "react-i18next";
 
 import { DomainCacheButton } from "../DomainCacheButton";
-import { DomainDirectoryPrivacyModal } from "../DomainDirectoryPrivacyModal";
-import { DomainNginxOptionsModal } from "../DomainNginxOptionsModal";
 import { DomainRedirectsButton } from "../../shells/DomainRedirectsButton";
 import { DomainIndexButton } from "../../shells/DomainIndexButton";
 import { DomainInfoButton } from "../../shells/DomainInfoButton";
-import { DomainSettingsButton, TenantNginxRulesButton } from "../../shells/DomainSettingsButton";
-import { DomainDocRootModal } from "./DomainDocRootModal";
+import { DomainSettingsButton } from "../../shells/DomainSettingsButton";
 import { DomainChownAction } from "../../shells/admin/domains/DomainChownAction";
 
 import { buildDomainDataColumns, type DomainInventoryAudience } from "./domainColumns";
@@ -202,28 +199,6 @@ export const DomainInventory = ({ audience }: { audience: DomainInventoryAudienc
               domainId={r.id}
               domainName={r.name}
               open={true}
-              onClose={() => setActiveModal(null)}
-            />
-          )}
-          {activeModal?.domainId === r.id && activeModal.type === "directory-privacy" && (
-            <DomainDirectoryPrivacyModal
-              open={true}
-              domainId={r.id}
-              domainName={r.name}
-              onClose={() => setActiveModal(null)}
-            />
-          )}
-          {activeModal?.domainId === r.id && activeModal.type === "nginx-options" && (
-            <DomainNginxOptionsModal domainId={r.id} onClose={() => setActiveModal(null)} />
-          )}
-          {activeModal?.domainId === r.id && activeModal.type === "rewrite-rules" && (
-            <TenantNginxRulesButton domain={r} open={true} onClose={() => setActiveModal(null)} />
-          )}
-          {activeModal?.domainId === r.id && activeModal.type === "document-root" && (
-            <DomainDocRootModal
-              domainId={r.id}
-              domainName={r.name}
-              currentDocRoot={r.doc_root}
               onClose={() => setActiveModal(null)}
             />
           )}

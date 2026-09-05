@@ -3,6 +3,10 @@
 // drift. These tests pin each audience's item set, the capability gates, the
 // System-domain delete guard (applied universally now), and that every item
 // routes to the callback DomainInventory supplies.
+//
+// GH #1543: the tenant per-domain editors moved onto the dedicated Web Domain
+// page, so the tenant menu is now just DNS + Enable/Disable + Delete. The admin
+// list keeps its full modal-driven menu.
 import { describe, it, expect, vi } from "vitest";
 import { buildDomainMenuItems, type DomainMenuCtx } from "./domainActions";
 import type { Domain } from "./types";
@@ -74,24 +78,29 @@ describe("buildDomainMenuItems — admin audience", () => {
 });
 
 describe("buildDomainMenuItems — tenant audience", () => {
-  it("offers the tenant base set and none of the admin-only actions", () => {
+  it("is stripped to DNS + Enable/Delete — the per-domain editors moved to the Web Domain page (GH #1543)", () => {
     const k = keys(buildDomainMenuItems(row(), ctx({ caps: { dns_enabled: true } })));
-    expect(k).toEqual([
-      "dns", "redirects", "index", "directory-privacy", "caching", "preview-url", "bot-challenge", "toggle", "delete",
-    ]);
-    for (const a of ["edit", "info", "settings"]) expect(k).not.toContain(a);
+    expect(k).toEqual(["dns", "toggle", "delete"]);
+    // Everything that used to open a row modal (or toggle from the row) now
+    // lives on the page reached by clicking the domain name.
+    for (const gone of [
+      "edit", "info", "settings",
+      "redirects", "index", "directory-privacy", "caching",
+      "nginx-options", "rewrite-rules", "document-root",
+      "preview-url", "bot-challenge",
+    ]) {
+      expect(k).not.toContain(gone);
+    }
   });
 
-  it("adds the nginx option actions only when tenant_domain_options_enabled", () => {
-    expect(keys(buildDomainMenuItems(row(), ctx()))).not.toContain("nginx-options");
-    const k = keys(buildDomainMenuItems(row(), ctx({ caps: { tenant_domain_options_enabled: true } })));
-    expect(k).toContain("nginx-options");
-    expect(k).toContain("rewrite-rules");
-  });
-
-  it("adds the document-root action only when tenant_docroot_editable", () => {
-    expect(keys(buildDomainMenuItems(row(), ctx()))).not.toContain("document-root");
-    expect(keys(buildDomainMenuItems(row(), ctx({ caps: { tenant_docroot_editable: true } })))).toContain("document-root");
+  it("does not re-add the editor items even when the tenant caps are on (they moved to the page)", () => {
+    const k = keys(
+      buildDomainMenuItems(
+        row(),
+        ctx({ caps: { dns_enabled: true, tenant_domain_options_enabled: true, tenant_docroot_editable: true } }),
+      ),
+    );
+    expect(k).toEqual(["dns", "toggle", "delete"]);
   });
 
   it("DNS navigates to the tenant route prefix", () => {
@@ -103,22 +112,18 @@ describe("buildDomainMenuItems — tenant audience", () => {
 });
 
 describe("buildDomainMenuItems — shared lifecycle wiring", () => {
-  it("routes toggle / delete / preview / bot to the supplied callbacks", () => {
+  it("routes toggle / delete to the supplied callbacks", () => {
     const c = ctx();
     const r = row();
     const items = buildDomainMenuItems(r, c);
     byKey(items, "toggle")?.onClick?.();
     byKey(items, "delete")?.onClick?.();
-    byKey(items, "preview-url")?.onClick?.();
-    byKey(items, "bot-challenge")?.onClick?.();
     expect(c.onToggle).toHaveBeenCalledWith(r);
     expect(c.onDelete).toHaveBeenCalledWith(r);
-    expect(c.onTogglePreview).toHaveBeenCalledWith(r);
-    expect(c.onToggleBot).toHaveBeenCalledWith(r);
   });
 
-  it("routes every modal-opening item to onOpenModal with this row's id (AC6)", () => {
-    // Admin modal items.
+  it("routes the admin modal items to onOpenModal; the tenant menu opens none (GH #1543)", () => {
+    // Admin still drives its per-domain editors through row modals.
     const onOpenAdmin = vi.fn();
     const admin = buildDomainMenuItems(
       row({ id: "d2" }),
@@ -129,19 +134,15 @@ describe("buildDomainMenuItems — shared lifecycle wiring", () => {
       ["d2", "info"], ["d2", "redirects"], ["d2", "index"], ["d2", "settings"], ["d2", "caching"],
     ]);
 
-    // Tenant modal items (with the option + docroot caps on so all appear).
+    // The tenant menu no longer opens any modal — clicking every item it offers
+    // (dns / toggle / delete) never calls onOpenModal.
     const onOpenTenant = vi.fn();
     const tenant = buildDomainMenuItems(
       row({ id: "d2" }),
-      ctx({ caps: { tenant_domain_options_enabled: true, tenant_docroot_editable: true }, onOpenModal: onOpenTenant }),
+      ctx({ caps: { dns_enabled: true, tenant_domain_options_enabled: true, tenant_docroot_editable: true }, onOpenModal: onOpenTenant }),
     );
-    for (const k of ["redirects", "index", "directory-privacy", "caching", "nginx-options", "rewrite-rules", "document-root"]) {
-      byKey(tenant, k)?.onClick?.();
-    }
-    expect(onOpenTenant.mock.calls).toEqual([
-      ["d2", "redirects"], ["d2", "index"], ["d2", "directory-privacy"], ["d2", "caching"],
-      ["d2", "nginx-options"], ["d2", "rewrite-rules"], ["d2", "document-root"],
-    ]);
+    for (const i of asItems(tenant)) i.onClick?.();
+    expect(onOpenTenant).not.toHaveBeenCalled();
   });
 
   it("labels the toggle by enabled state and disables it while toggling", () => {

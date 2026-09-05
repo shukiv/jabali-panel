@@ -1290,37 +1290,3 @@ export const TenantNginxRulesPanel = ({
     </div>
   );
 };
-
-export const TenantNginxRulesButton = ({
-  domain,
-  open: controlledOpen,
-  onClose,
-}: {
-  domain: DomainSettingsTarget;
-  open?: boolean;
-  onClose?: () => void;
-}) => {
-  const [internalOpen, setInternalOpen] = useState(false);
-  const open = controlledOpen ?? internalOpen;
-  const close = () => (onClose ? onClose() : setInternalOpen(false));
-
-  return (
-    <>
-      {controlledOpen === undefined && (
-        <Button icon={<ToolOutlined />} onClick={() => setInternalOpen(true)}>
-          Rewrite rules
-        </Button>
-      )}
-      <Modal
-        open={open}
-        title="Rewrite & header rules"
-        onCancel={close}
-        footer={null}
-        width={720}
-        destroyOnClose
-      >
-        <TenantNginxRulesPanel domain={domain} onSaved={close} />
-      </Modal>
-    </>
-  );
-};
