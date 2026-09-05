@@ -6,6 +6,35 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 )
 
+// TestCompile_HealsLegacyRedirectType guards the JAB-318 render-time heal: the
+// old `jabali domain set` CLI persisted redirect_all_type="permanent"/"temporary"
+// (invalid nginx return codes), which this file rendered verbatim as
+// `return permanent …;` — breaking nginx -t and the reload. Compile must now map
+// them to their numeric codes so existing rows and restored backups converge
+// without a data migration. Falsify by removing the redirectAllCode switch → the
+// first two cases render `return permanent/temporary …;`.
+func TestCompile_HealsLegacyRedirectType(t *testing.T) {
+	cases := []struct{ stored, wantCode string }{
+		{"permanent", "301"},
+		{"temporary", "302"},
+		{"Permanent", "301"}, // case-insensitive
+		{"301", "301"},       // already-numeric passes through
+		{"308", "308"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.stored, func(t *testing.T) {
+			got := Compile(&models.Domain{
+				RedirectAllTo:   str("https://new.com"),
+				RedirectAllType: str(tc.stored),
+			})
+			want := "    return " + tc.wantCode + " \"https://new.com\";\n"
+			if got != want {
+				t.Errorf("Compile() = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
 func TestCompile(t *testing.T) {
 	tests := []struct {
 		name     string
