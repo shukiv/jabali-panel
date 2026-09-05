@@ -238,6 +238,15 @@ type Domain struct {
 	WebDisabled bool `gorm:"column:web_disabled;type:tinyint(1);not null;default:0" json:"web_disabled"`
 	DNSDisabled bool `gorm:"column:dns_disabled;type:tinyint(1);not null;default:0" json:"dns_disabled"`
 
+	// DNSApexIPv4 (GH #1540) is the tenant-chosen apex IP for a DNS-only zone
+	// (WebDisabled=true, DNS on). A web-off zone's apex A is not seeded by
+	// BootstrapRecords and not re-asserted by convergeApexAddrRecords (both
+	// web-gated), so this address is read ONCE by the reconciler at zone
+	// bootstrap to seed the single "@ A <ip>" row, then never written again —
+	// the tenant edits that row directly afterward. NULL for every web/mail
+	// domain (apex is panel-managed) and every legacy row.
+	DNSApexIPv4 *string `gorm:"column:dns_apex_ipv4;type:varchar(45)" json:"dns_apex_ipv4,omitempty"`
+
 	// IsQuotaSuspended marks domains the M13.1.1 bandwidth reconciler
 	// disabled because their owning user crossed BandwidthQuotaMB.
 	// Disambiguates panel-driven disables from manual operator

@@ -6,10 +6,12 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const caps = vi.hoisted(() => ({ mail: false, dns: true }));
+const caps = vi.hoisted(() => ({ mail: false, dns: true, ipv4: "192.0.2.1" }));
 const mutate = vi.hoisted(() => vi.fn());
 vi.mock("../../../hooks/useServerCapabilities", () => ({
-  useServerCapabilities: () => ({ data: { mail_enabled: caps.mail, dns_enabled: caps.dns } }),
+  useServerCapabilities: () => ({
+    data: { mail_enabled: caps.mail, dns_enabled: caps.dns, public_ipv4: caps.ipv4 },
+  }),
 }));
 vi.mock("../../../hooks/useQueries", () => ({
   useCreateMutation: () => ({ mutateAsync: mutate, isPending: false }),
@@ -43,6 +45,7 @@ const typeName = async (name: string) => {
 beforeEach(() => {
   caps.mail = false;
   caps.dns = true;
+  caps.ipv4 = "192.0.2.1";
   mutate.mockReset();
   mutate.mockResolvedValue({ id: "d1" });
 });
@@ -134,5 +137,72 @@ describe("UserDomainDrawer web create payload (GH #1541)", () => {
     submit();
     await waitFor(() => expect(mutate).toHaveBeenCalled());
     expect(mutate.mock.calls[0][0].manage_dns).toBe(false);
+  });
+});
+
+describe("UserDomainDrawer dns mode — Add DNS Zone (GH #1540)", () => {
+  it("prefills the apex IP with the panel IP and sends a web-off DNS-only payload", async () => {
+    renderDrawer("dns");
+    // IP Address is prefilled with the panel's public IPv4.
+    const ip = (await screen.findByPlaceholderText("e.g., 203.0.113.10")) as HTMLInputElement;
+    expect(ip.value).toBe("192.0.2.1");
+    await typeName("zone.example.com");
+    submit();
+    await waitFor(() => expect(mutate).toHaveBeenCalled());
+    const body = mutate.mock.calls[0][0];
+    expect(body.web_enabled).toBe(false);
+    expect(body.manage_dns).toBe(true);
+    expect(body.ssl_mode).toBe("none");
+    expect(body.ip_address).toBe("192.0.2.1");
+    // Default template ⇒ no mail records.
+    expect(body.mail_provider).toBe("none");
+  });
+
+  it("Template Microsoft 365 maps to mail_provider m365 with the tenant helper", async () => {
+    renderDrawer("dns");
+    await typeName("zone.example.com");
+    // Open the Template select and pick Microsoft 365.
+    fireEvent.mouseDown(screen.getByRole("combobox"));
+    fireEvent.click(await screen.findByText("Microsoft 365"));
+    fireEvent.change(await screen.findByPlaceholderText("contoso.onmicrosoft.com (optional)"), {
+      target: { value: "contoso.onmicrosoft.com" },
+    });
+    submit();
+    await waitFor(() => expect(mutate).toHaveBeenCalled());
+    const body = mutate.mock.calls[0][0];
+    expect(body.mail_provider).toBe("m365");
+    expect(body.m365_onmicrosoft).toBe("contoso.onmicrosoft.com");
+    expect(body.web_enabled).toBe(false);
+    expect(body.ip_address).toBe("192.0.2.1");
+  });
+
+  it("prefills the apex IP on reopen (survives the drawer's resetFields)", async () => {
+    // The real "add a second zone" flow: open → close → open. destroyOnClose
+    // remounts the form body in the same commit as the open flip, so the child
+    // prefill effect must not lose to the drawer's resetFields effect.
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const wrap = (open: boolean) => (
+      <QueryClientProvider client={qc}>
+        <UserDomainDrawer open={open} mode="dns" onClose={() => {}} />
+      </QueryClientProvider>
+    );
+    const { rerender } = render(wrap(false));
+    rerender(wrap(true));
+    await screen.findByPlaceholderText("e.g., 203.0.113.10");
+    rerender(wrap(false));
+    rerender(wrap(true));
+    const ip = (await screen.findByPlaceholderText("e.g., 203.0.113.10")) as HTMLInputElement;
+    expect(ip.value).toBe("192.0.2.1");
+  });
+
+  it("blocks submit on an invalid apex IP", async () => {
+    renderDrawer("dns");
+    const ip = await screen.findByPlaceholderText("e.g., 203.0.113.10");
+    fireEvent.change(ip, { target: { value: "not-an-ip" } });
+    await typeName("zone.example.com");
+    submit();
+    // Client-side IPv4 validation stops the create.
+    await screen.findByText("Enter a valid IPv4 address (e.g. 203.0.113.10)");
+    expect(mutate).not.toHaveBeenCalled();
   });
 });

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -77,6 +78,13 @@ type createDomainInput struct {
 	// domain. DNSDisabled=true → the panel does not host DNS (external DNS).
 	WebDisabled bool
 	DNSDisabled bool
+	// DNSApexIPv4 (GH #1540) is the apex IP for a DNS-only zone — the "pointed
+	// IP" of the Add DNS Zone flow. Only meaningful when WebDisabled=true and
+	// DNS is on: the panel seeds a single "@ A <ip>" row at zone bootstrap and
+	// leaves it tenant-editable. Empty for every web/mail create (the apex is
+	// panel-managed). Validated in createDomainOp (must be a bare IPv4, web off,
+	// DNS on).
+	DNSApexIPv4 string
 }
 
 // createDomainError carries the exact HTTP shape the inline create() used, so
@@ -131,6 +139,26 @@ func createDomainOp(ctx context.Context, h *domainHandler, in createDomainInput)
 		if strings.TrimSpace(in.DocRoot) != "" {
 			return nil, &createDomainError{http.StatusBadRequest, "web_disabled_no_docroot", "a web-disabled domain has no document root"}
 		}
+	}
+
+	// GH #1540: a DNS-only zone may carry a tenant-chosen apex IP (the "pointed
+	// IP"). It is only meaningful for a web-off zone whose DNS the panel hosts:
+	// a web domain's apex is panel-managed (convergeApexAddrRecords re-asserts
+	// it), and an external-DNS domain (dns off) publishes nothing here. Must be
+	// a bare IPv4 — no CIDR, no port, no IPv6 (the apex A row is IPv4).
+	var dnsApexIPv4 string
+	if raw := strings.TrimSpace(in.DNSApexIPv4); raw != "" {
+		if webEnabled {
+			return nil, &createDomainError{http.StatusBadRequest, "web_enabled_apex_ip", "a web domain's apex IP is managed by the panel — set an apex IP only on a DNS-only zone"}
+		}
+		if !dnsEnabled {
+			return nil, &createDomainError{http.StatusBadRequest, "dns_disabled_apex_ip", "an apex IP requires the panel to host DNS for this domain"}
+		}
+		ip := net.ParseIP(raw)
+		if ip == nil || ip.To4() == nil {
+			return nil, &createDomainError{http.StatusBadRequest, "invalid_apex_ip", "apex IP must be a valid IPv4 address"}
+		}
+		dnsApexIPv4 = ip.String()
 	}
 
 	user, err := h.cfg.Users.FindByID(ctx, in.OwnerID)
@@ -274,6 +302,8 @@ func createDomainOp(ctx context.Context, h *domainHandler, in createDomainInput)
 		// written) state, so a full-service create leaves both zero.
 		WebDisabled: in.WebDisabled,
 		DNSDisabled: in.DNSDisabled,
+		// GH #1540: apex IP for a DNS-only zone (nil for web/mail domains).
+		DNSApexIPv4: strPtrOrNil(dnsApexIPv4),
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}

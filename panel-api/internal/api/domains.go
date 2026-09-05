@@ -146,6 +146,11 @@ type createDomainRequest struct {
 	// the default-on, distinct from an explicit false.
 	WebEnabled *bool `json:"web_enabled"`
 	ManageDNS  *bool `json:"manage_dns"`
+	// IPAddress (GH #1540) is the apex IP of a DNS-only zone — the "pointed IP"
+	// of the Add DNS Zone flow. Only valid when web_enabled=false and DNS is on
+	// (validated in createDomainOp as a bare IPv4). Empty/absent for web and
+	// mail domains, whose apex is panel-managed.
+	IPAddress string `json:"ip_address"`
 }
 
 // normalizeDomainName canonicalizes a domain for storage (GH #884): trim
@@ -771,6 +776,8 @@ func (h *domainHandler) create(c *gin.Context) {
 		// GH #1449: both default ON — only an explicit false opts out.
 		WebDisabled: req.WebEnabled != nil && !*req.WebEnabled,
 		DNSDisabled: req.ManageDNS != nil && !*req.ManageDNS,
+		// GH #1540: apex IP for a DNS-only zone (validated web-off + IPv4 in op).
+		DNSApexIPv4: req.IPAddress,
 	})
 	if oerr != nil {
 		body := gin.H{"error": oerr.Code}
