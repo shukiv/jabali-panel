@@ -167,6 +167,11 @@ describe("GH #1387 — MailDomainsPage (mail-active only)", () => {
     expect(screen.getByRole("checkbox", { name: /Create DNS mail records/i })).toBeChecked();
     // Domain-name field is there to type into.
     expect(screen.getByPlaceholderText(/example\.com/i)).toBeInTheDocument();
+    // GH #1479 (johnnyq follow-up): the mail-provider select is web-only —
+    // it must NOT appear in the Create Mail Domain drawer (mail is implied).
+    expect(screen.queryByText("No mail")).not.toBeInTheDocument();
+    expect(screen.queryByText("Microsoft 365")).not.toBeInTheDocument();
+    expect(screen.queryByText("Jabali mail (this server)")).not.toBeInTheDocument();
   });
 
   // GH #1479: the mail-mode create posts the right domain shape (web off, mail on
