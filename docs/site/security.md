@@ -123,9 +123,12 @@ Admin overrides per-user under Users → Edit → Egress.
 - **Country exemption from local MaxMind** (PR #1083) — country-based
   allow/exempt CIDRs are derived from a local MaxMind mmdb plus supplemental
   CIDRs, with no external lookup at request time.
-- **Secret-rotation tooling** (JAB-357) — operator tooling to rotate the
-  database app-user password, the JWT signing secret, and the foundation secret,
-  so a leaked credential can be rolled without a reinstall.
+- **Secret-rotation tooling** (JAB-357) — `jabali secrets rotate <name>`
+  (operator-only) rolls the panel DB app-user password, the Redis panel token,
+  and the PowerDNS DB password live (each with its own verify + rollback), plus
+  the now-vestigial `JWT_SECRET`, so a leaked credential can be rolled without a
+  reinstall. Transient migration source-host credentials are **purged, not
+  rotated**. See [../secret-rotation.md](../secret-rotation.md).
 
 ## CrowdSec test-IP card
 

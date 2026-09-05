@@ -36,14 +36,16 @@ Result: the panel does not act as an OIDC provider. If a third-party app needs S
 
 ### In-panel admin → user impersonation — **restored**
 
-This was removed with the M20 Kratos migration, but has since been **re-added**.
-Admins can impersonate a tenant through the `/admin/impersonation` routes
-(admin-gated), which mint a scoped, time-bounded impersonation grant; the target
-user sees the impersonation in their own activity log (ADR-0106
-`audit_show_impersonation`). It is no longer a removed feature — this entry is
-kept only to correct earlier docs that listed it as gone.
-
-To act on a user's behalf today, an admin uses the user's own login (or resets the password if needed).
+This was removed with the M20 Kratos migration, but has since been **re-added**
+(ADR-0128, act-as; ADR-0015, the JWT claim). Admins can impersonate a tenant
+through the `/admin/impersonation` routes (admin-gated), which mint a scoped,
+**60-minute** act-as grant (server-side TTL; ended explicitly or on expiry).
+There is no dedicated impersonation start/stop audit event, but every mutating
+request made while impersonating is recorded by the unified audit log
+(ADR-0106) with the **target as the subject**, so those actions surface in the
+target's own account activity (`GET /api/v1/me/activity`, subject-scoped and
+IDOR-safe). It is no longer a removed feature — this entry is kept only to
+correct earlier docs that listed it as gone.
 
 ### Refine → TanStack Query + AntD + react-router (M21)
 

@@ -339,7 +339,7 @@ See [`docs/adr/`](docs/adr/) for the full architectural-decision record
   tick; operator hand-edits to nginx vhosts are lost-by-design
 - CSP, HSTS, SameSite cookies, X-Forwarded-Proto handled by nginx
 - Migrations are schema-only (no app-populated tables seeded by SQL)
-- Audit log on every admin write + impersonation start/stop
+- Audit log on every privileged mutation; actions performed while impersonating are attributed to the target user
 - Pre-commit + CI gates: `go vet`, `go test -race ./...`, `npx tsc -b`,
   `bash -n install.sh`, Playwright E2E, AppSec geoblock golden tests
 

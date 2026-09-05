@@ -40,8 +40,10 @@ Server-wide setting (Server Settings → SSH Access), one of:
   setuid `bwrap` binary. Lightweight, no image to build. **This is the
   shipped, working path.**
 - **`nspawn`** — an ephemeral `systemd-nspawn` container off a versioned
-  base image. *Not yet wired in this release; selecting it currently
-  falls back to no-login. Use bubblewrap.*
+  base image. *Not yet wired for login in this release — the mode can be
+  selected and persisted, but the per-user nspawn image path is still unused
+  (`install.sh`: "currently unused; Step 3 follow-up"). Use bubblewrap, the
+  shipped, supported path.*
 
 The mode is a single file, `/etc/jabali/ssh-sandbox-mode`, read fresh on
 every connect — no sshd reload needed to switch.
