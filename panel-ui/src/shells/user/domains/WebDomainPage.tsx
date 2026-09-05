@@ -25,6 +25,7 @@ import { DomainDirectoryPrivacySection } from "../../admin/domains/DomainDirecto
 import { DomainIndexPanel } from "../../DomainIndexPanel";
 import { DomainRedirectsPanel } from "../../DomainRedirectsPanel";
 import { DNSRecordsPanel } from "../../dns/DNSRecordsPage";
+import { DomainLogsPanel } from "../../../components/logs/DomainLogsPanel";
 import { DomainNginxOptionsPanel } from "../../../components/DomainNginxOptionsPanel";
 import { TenantNginxRulesPanel } from "../../DomainSettingsButton";
 import { DomainDocRootPanel } from "../../../components/domains/DomainDocRootPanel";
@@ -90,6 +91,10 @@ export const WebDomainPage = () => {
 
   const tabs: { key: string; label: string; node: ReactNode }[] = [
     { key: "overview", label: "Overview", node: <OverviewTab domain={domain} /> },
+    // Logs is a read-only diagnostic view — the most-checked thing after
+    // "is the site up" — so it sits second, before the editors. It exists for
+    // every web domain, so it is not cap-gated.
+    { key: "logs", label: "Logs", node: <DomainLogsPanel domainId={domain.id} /> },
     ...(dnsOn
       ? [{ key: "dns", label: "DNS", node: <DNSRecordsPanel domainId={domain.id} embedded /> }]
       : []),
