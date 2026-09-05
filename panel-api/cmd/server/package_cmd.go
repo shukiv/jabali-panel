@@ -12,6 +12,7 @@ import (
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/packageops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
@@ -120,6 +121,14 @@ func newPackageCreateCmd() *cobra.Command {
 				CGIEnabled:       cgiEnabled,
 				CreatedAt:        now,
 				UpdatedAt:        now,
+			}
+			// JAB-306: the operator CLI persists direct-to-DB, so it must run
+			// the same invariant check the REST handler does — otherwise an
+			// out-of-range limit the API rejects with 422 (e.g. --cpu 999999)
+			// would silently land in the row. Unset FPM/backup fields fall to
+			// their GORM column defaults at INSERT and pass.
+			if err := packageops.Validate(p); err != nil {
+				return fmt.Errorf("invalid package: %w", err)
 			}
 			if err := packageRepoFromDB().Create(ctx, p); err != nil {
 				if errors.Is(err, repository.ErrConflict) {
@@ -253,6 +262,14 @@ func newPackageEditCmd() *cobra.Command {
 				return fmt.Errorf("no changes specified")
 			}
 			p.UpdatedAt = time.Now().UTC()
+			// JAB-306: same invariant gate as create + the REST handler, so an
+			// edit can't drive a limit out of the bounds the API enforces. The
+			// loaded row already carries valid FPM/backup values, so this only
+			// rejects an operator's out-of-range edit — never "heals" untouched
+			// fields.
+			if err := packageops.Validate(p); err != nil {
+				return fmt.Errorf("invalid package: %w", err)
+			}
 			if err := repo.Update(ctx, p); err != nil {
 				return fmt.Errorf("update package: %w", err)
 			}
