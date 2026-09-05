@@ -5284,6 +5284,7 @@ jabali system restore [flags]
 - `--apply-stage` — restrict apply to named stages (repeatable). Empty = panel_db + panel_config + tls (the safe defaults) (default `[]`)
 - `--credentials-ref` — absolute path to env file with backend creds (root:root 0600)
 - `--force` — required — restore overwrites the running panel
+- `--from-tar` — restore the SYSTEM leg from a downloaded Full Server container (.tar) instead of a restic repo (GH #1408). Applies panel_db + panel_config + tls by default
 - `--include-accounts` — also restore each linked account
 - `--interactive` — force interactive prompts even when --remote-url is set
 - `--password` — restic password (literal; overrides --password-file). Avoid in shell history; prefer --interactive

@@ -22,6 +22,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -48,6 +49,7 @@ func newSystemRestoreCmd() *cobra.Command {
 		apply        bool
 		force        bool
 		interactive  bool
+		fromTar      string
 	)
 	cmd := &cobra.Command{
 		Use:   "restore",
@@ -69,6 +71,19 @@ the running panel.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx, cancel := context.WithTimeout(context.Background(), 6*time.Hour)
 			defer cancel()
+
+			// GH #1408 slice 3: restore the system leg from a downloaded Full
+			// Server container instead of a restic repo. Short-circuits the
+			// restic flow entirely (no repo URL / password / snapshot).
+			if fromTar != "" {
+				if !force {
+					return errors.New("system restore requires --force; refusing on a running panel")
+				}
+				if remoteURL != "" || snapshot != "" || includeAccts {
+					return errors.New("--from-tar restores from a local container; --remote-url/--snapshot/--include-accounts don't apply (accounts restore via the panel or restore-upload)")
+				}
+				return runSystemRestoreFromTar(ctx, cmd, fromTar, apply, applyStages)
+			}
 
 			useInteractive := interactive || (remoteURL == "" && term.IsTerminal(int(os.Stdin.Fd())))
 			if useInteractive {
@@ -183,7 +198,97 @@ the running panel.`,
 	cmd.Flags().BoolVar(&apply, "apply", true, "after staging, apply selected stages onto live host (default true)")
 	cmd.Flags().BoolVar(&force, "force", false, "required — restore overwrites the running panel")
 	cmd.Flags().BoolVar(&interactive, "interactive", false, "force interactive prompts even when --remote-url is set")
+	cmd.Flags().StringVar(&fromTar, "from-tar", "", "restore the SYSTEM leg from a downloaded Full Server container (.tar) instead of a restic repo (GH #1408). Applies panel_db + panel_config + tls by default")
 	return cmd
+}
+
+// runSystemRestoreFromTar restores the system leg (panel_db/panel_config/tls)
+// from a downloaded Full Server container, via the agent's local-tar apply
+// verb. The container is copied into the agent-readable uploads dir (the verb
+// confines its input there), the panel is stopped for the DB load, and the
+// agent — which stays up — owns the apply. See system_fullbackup_apply_system.go.
+func runSystemRestoreFromTar(ctx context.Context, cmd *cobra.Command, container string, apply bool, applyStages []string) error {
+	fi, err := os.Stat(container)
+	if err != nil || !fi.Mode().IsRegular() {
+		return fmt.Errorf("--from-tar: %q is not a readable file", container)
+	}
+
+	// The apply verb only accepts a path under /var/lib/jabali-uploads (its
+	// socket-peer confinement). Copy the operator's container there; the copy is
+	// removed on return.
+	if err := os.MkdirAll("/var/lib/jabali-uploads", 0o750); err != nil {
+		return fmt.Errorf("prepare uploads dir: %w", err)
+	}
+	staged := filepath.Join("/var/lib/jabali-uploads", "sysrestore-"+ids.NewULID()+".tar")
+	if err := copyFileTo(container, staged); err != nil {
+		return fmt.Errorf("stage container: %w", err)
+	}
+	defer os.Remove(staged)
+
+	ag := agent.NewClient(agent.Config{Timeout: 4 * time.Hour})
+	deadlineCtx, deadlineCancel := context.WithTimeout(ctx, 4*time.Hour)
+	defer deadlineCancel()
+
+	if apply {
+		fmt.Fprintln(cmd.OutOrStdout(), "stopping jabali-panel.service…")
+		_ = exec.CommandContext(ctx, "systemctl", "stop", "jabali-panel.service").Run()
+		defer restartPanelUntilActive(cmd.OutOrStdout())
+	}
+
+	fmt.Fprintf(cmd.OutOrStdout(),
+		"→ agent system.fullbackup.apply_system_from_tar apply=%v stages=%v\n", apply, applyStages)
+	raw, err := ag.Call(deadlineCtx, "system.fullbackup.apply_system_from_tar", map[string]any{
+		"container_path": staged,
+		"apply":          apply,
+		"apply_stages":   applyStages,
+	})
+	if err != nil {
+		return fmt.Errorf("agent apply_system_from_tar: %w", err)
+	}
+	fmt.Fprintln(cmd.OutOrStdout(), "✓ agent returned:")
+	pretty, _ := json.MarshalIndent(json.RawMessage(raw), "  ", "  ")
+	fmt.Fprintln(cmd.OutOrStdout(), "  "+string(pretty))
+	if !apply {
+		fmt.Fprintln(cmd.OutOrStdout(),
+			"(recon only — re-run with --apply to load panel_db/panel_config/tls)")
+	}
+	return nil
+}
+
+// copyFileTo copies src to dst (0600), overwriting. Small helper for staging a
+// container into the agent-readable dir.
+func copyFileTo(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		return err
+	}
+	return out.Close()
+}
+
+// restartPanelUntilActive restarts jabali-panel and waits for it to report
+// active (a single `systemctl start` can return 0 while still activating). Same
+// loop the restic restore path uses.
+func restartPanelUntilActive(w io.Writer) {
+	fmt.Fprintln(w, "starting jabali-panel.service…")
+	for i := 0; i < 6; i++ {
+		_ = exec.CommandContext(context.Background(), "systemctl", "start", "jabali-panel.service").Run()
+		out, _ := exec.CommandContext(context.Background(), "systemctl", "is-active", "jabali-panel.service").Output()
+		if strings.TrimSpace(string(out)) == "active" {
+			fmt.Fprintln(w, "✓ jabali-panel.service active")
+			return
+		}
+		time.Sleep(2 * time.Second)
+	}
+	fmt.Fprintln(w, "⚠ jabali-panel.service did not reach active after 6 attempts — investigate via `journalctl -u jabali-panel.service`")
 }
 
 // writeTempPassword stashes the password under a 0600 root-owned tmp
