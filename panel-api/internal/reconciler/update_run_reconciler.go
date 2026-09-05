@@ -29,6 +29,16 @@ import (
 // shorter window risks false-failing a legitimately slow run.
 const staleOrphanRunTimeout = 30 * time.Minute
 
+// maxRunningRunAge is a HARD backstop (GH #1486): any running row older than this
+// is reaped as failed regardless of unit or poll outcome. Without it a run could
+// spin "running" in the Tasks indicator forever — the per-unit poll path had no
+// timeout, so a pollable unit whose agent status call errors (unreachable/old
+// agent) or whose transient unit hangs "activating" never sealed, and the CLI
+// self-update path stamps a unit the poller doesn't recognise (jabali-autoupdate)
+// whose finish() closure is skipped if the update restarts the process. No real
+// update runs anywhere near this long.
+const maxRunningRunAge = 2 * time.Hour
+
 // statusCmdForUnit maps a run unit to its agent status command. Only the two
 // known transient units are pollable; anything else is left alone.
 func statusCmdForUnit(unit string) (string, bool) {
@@ -59,6 +69,17 @@ func (r *Reconciler) reconcileUpdateRuns(ctx context.Context) {
 	}
 	for i := range rows {
 		row := rows[i]
+		// GH #1486 hard backstop: reap any run that has spun far past the longest
+		// plausible update, no matter its unit or why the normal path didn't seal
+		// it (agent status call erroring, unit hung "activating", or an
+		// unrecognised/legacy unit). The fast paths below still seal a healthy run
+		// in one tick; this only catches the ones that would otherwise never clear.
+		if time.Since(row.StartedAt) > maxRunningRunAge {
+			if err := r.updateRunHistory.MarkFinished(ctx, row.ID, models.UpdateStatusFailed, "timed out — no completion signal within 2h", ""); err != nil {
+				r.log.Warn("update-run reconcile: reap stale run failed", "id", row.ID, "error", err)
+			}
+			continue
+		}
 		cmd, ok := statusCmdForUnit(row.Unit)
 		if !ok {
 			// No pollable unit (empty/unknown) — can't reconcile via systemd.
@@ -78,6 +99,14 @@ func (r *Reconciler) reconcileUpdateRuns(ctx context.Context) {
 		})
 		if cerr != nil {
 			r.log.Debug("update-run reconcile: status call failed", "unit", row.Unit, "error", cerr)
+			// GH #1486: a pollable unit whose status can't be read (agent down /
+			// too old to answer this verb) must not spin forever. Reap it once
+			// clearly stale, like an orphan — retry next tick below that window.
+			if time.Since(row.StartedAt) > staleOrphanRunTimeout {
+				if err := r.updateRunHistory.MarkFinished(ctx, row.ID, models.UpdateStatusFailed, "no completion signal — update status unavailable from the agent", ""); err != nil {
+					r.log.Warn("update-run reconcile: reap unpollable run failed", "id", row.ID, "error", err)
+				}
+			}
 			continue
 		}
 		var v unitStatusView
