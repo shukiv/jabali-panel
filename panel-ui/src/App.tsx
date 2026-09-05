@@ -364,10 +364,9 @@ const ThemedApp = () => {
             <Route path="domains">
               <Route index element={<UserDomainList />} />
               <Route path="create" element={<Navigate to="../domains" replace />} />
-              {/* Static :id/dns outranks the dynamic :id/:tab (GH #1543 folds DNS
-                  into a tab in a follow-up); the tabbed Web Domain page owns the
-                  rest. */}
-              <Route path=":id/dns" element={<DNSRecordsPage />} />
+              {/* GH #1543: DNS is now a tab on the Web Domain page — :id/:tab
+                  catches "dns" and WebDomainPage renders DNSRecordsPanel embedded.
+                  Admin keeps its standalone /jabali-admin/domains/:id/dns route. */}
               <Route path=":id" element={<WebDomainPage />} />
               <Route path=":id/:tab" element={<WebDomainPage />} />
             </Route>

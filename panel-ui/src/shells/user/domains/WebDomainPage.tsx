@@ -4,12 +4,13 @@
 // modal launchers. The tab lives in the URL (:tab), so a tab is linkable and
 // the browser Back button walks the tabs.
 //
-// Tabs here: Overview (facts + the preview-URL / bot-challenge toggles),
-// Redirects, Index Files, Caching and Directory Privacy, plus three tabs gated
-// on the same caps as the row menu — Domain options and Rewrite rules
-// (tenant_domain_options_enabled) and Document root (tenant_docroot_editable).
-// Folding DNS in and stripping the row menu down to Disable/Delete move here in
-// follow-up slices.
+// Tabs here: Overview (facts + the preview-URL / bot-challenge toggles), DNS
+// (gated on dns_enabled), Redirects, Index Files, Caching and Directory
+// Privacy, plus three tabs gated on the same caps as the old row menu — Domain
+// options and Rewrite rules (tenant_domain_options_enabled) and Document root
+// (tenant_docroot_editable). The tenant row menu is now just Enable/Delete; the
+// DNS records manager (DNSRecordsPanel) renders here embedded and standalone on
+// the admin route.
 import type { ReactNode } from "react";
 import { Alert, Button, Card, Skeleton, Space, Typography } from "antd";
 import { GlobalOutlined } from "@icons";
@@ -23,6 +24,7 @@ import { DomainCacheSection } from "../../../components/DomainCacheSection";
 import { DomainDirectoryPrivacySection } from "../../admin/domains/DomainDirectoryPrivacySection";
 import { DomainIndexPanel } from "../../DomainIndexPanel";
 import { DomainRedirectsPanel } from "../../DomainRedirectsPanel";
+import { DNSRecordsPanel } from "../../dns/DNSRecordsPage";
 import { DomainNginxOptionsPanel } from "../../../components/DomainNginxOptionsPanel";
 import { TenantNginxRulesPanel } from "../../DomainSettingsButton";
 import { DomainDocRootPanel } from "../../../components/domains/DomainDocRootPanel";
@@ -82,9 +84,15 @@ export const WebDomainPage = () => {
   // sees neither the menu item nor the tab (never a disabled stub).
   const optionsOn = caps?.tenant_domain_options_enabled === true;
   const docrootOn = caps?.tenant_docroot_editable === true;
+  // DNS folds in here as a tab (GH #1543). Gate on the same dns_enabled signal
+  // the sidebar and the old row-menu item used — default-on while caps load.
+  const dnsOn = caps?.dns_enabled !== false;
 
   const tabs: { key: string; label: string; node: ReactNode }[] = [
     { key: "overview", label: "Overview", node: <OverviewTab domain={domain} /> },
+    ...(dnsOn
+      ? [{ key: "dns", label: "DNS", node: <DNSRecordsPanel domainId={domain.id} embedded /> }]
+      : []),
     { key: "redirects", label: "Redirects", node: <DomainRedirectsPanel domain={domain} /> },
     { key: "index", label: "Index Files", node: <DomainIndexPanel domain={domain} /> },
     { key: "caching", label: "Caching", node: <DomainCacheSection domainId={domain.id} /> },

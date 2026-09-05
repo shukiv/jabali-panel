@@ -78,14 +78,14 @@ describe("buildDomainMenuItems — admin audience", () => {
 });
 
 describe("buildDomainMenuItems — tenant audience", () => {
-  it("is stripped to DNS + Enable/Delete — the per-domain editors moved to the Web Domain page (GH #1543)", () => {
+  it("is stripped to Enable/Delete — every per-domain surface (incl. DNS) moved to the Web Domain page (GH #1543)", () => {
     const k = keys(buildDomainMenuItems(row(), ctx({ caps: { dns_enabled: true } })));
-    expect(k).toEqual(["dns", "toggle", "delete"]);
-    // Everything that used to open a row modal (or toggle from the row) now
-    // lives on the page reached by clicking the domain name.
+    expect(k).toEqual(["toggle", "delete"]);
+    // Everything that used to open a row modal, toggle from the row, or navigate
+    // to DNS now lives on the page reached by clicking the domain name.
     for (const gone of [
       "edit", "info", "settings",
-      "redirects", "index", "directory-privacy", "caching",
+      "dns", "redirects", "index", "directory-privacy", "caching",
       "nginx-options", "rewrite-rules", "document-root",
       "preview-url", "bot-challenge",
     ]) {
@@ -100,14 +100,7 @@ describe("buildDomainMenuItems — tenant audience", () => {
         ctx({ caps: { dns_enabled: true, tenant_domain_options_enabled: true, tenant_docroot_editable: true } }),
       ),
     );
-    expect(k).toEqual(["dns", "toggle", "delete"]);
-  });
-
-  it("DNS navigates to the tenant route prefix", () => {
-    const navigate = vi.fn();
-    const items = buildDomainMenuItems(row(), ctx({ caps: { dns_enabled: true }, navigate }));
-    byKey(items, "dns")?.onClick?.();
-    expect(navigate).toHaveBeenCalledWith("/jabali-panel/domains/d1/dns");
+    expect(k).toEqual(["toggle", "delete"]);
   });
 });
 
@@ -135,7 +128,7 @@ describe("buildDomainMenuItems — shared lifecycle wiring", () => {
     ]);
 
     // The tenant menu no longer opens any modal — clicking every item it offers
-    // (dns / toggle / delete) never calls onOpenModal.
+    // (toggle / delete) never calls onOpenModal.
     const onOpenTenant = vi.fn();
     const tenant = buildDomainMenuItems(
       row({ id: "d2" }),

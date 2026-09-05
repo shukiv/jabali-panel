@@ -6,10 +6,10 @@
 // callback DomainInventory supplies, so the builder stays a pure list producer
 // that unit tests can exercise per audience.
 //
-// GH #1543: the tenant per-domain actions moved onto the dedicated Web Domain
-// page (row-click → tabs). The tenant menu is now just DNS + Disable/Delete —
-// DNS stays until it too is folded into a tab. The admin list is unchanged; it
-// keeps its full modal-driven menu (admin has no per-domain page).
+// GH #1543: the tenant per-domain actions (DNS and every editor) moved onto the
+// dedicated Web Domain page (row-click → tabs). The tenant menu is now just
+// Enable/Disable + Delete. The admin list is unchanged; it keeps its full
+// modal-driven menu, including DNS (admin has no per-domain page).
 import {
   DeleteOutlined,
   EditOutlined,
@@ -151,10 +151,10 @@ export function buildDomainMenuItems(r: Domain, ctx: DomainMenuCtx): MenuProps["
     ];
   }
 
-  // Tenant. Every per-domain editor (Redirects, Index, Caching, Directory
-  // Privacy, Domain options, Rewrite rules, Document root) and the preview-URL /
-  // bot-challenge toggles now live on the dedicated Web Domain page, reached by
-  // clicking the domain name. The row menu keeps only DNS (until it too becomes
-  // a tab) and the Enable/Disable + Delete lifecycle. GH #1543.
-  return [...dnsItem, toggleItem, ...deleteItems];
+  // Tenant. Every per-domain surface — the editors (Redirects, Index, Caching,
+  // Directory Privacy, Domain options, Rewrite rules, Document root), the
+  // preview-URL / bot-challenge toggles, and now DNS — lives on the dedicated
+  // Web Domain page, reached by clicking the domain name. The row menu keeps
+  // only the Enable/Disable + Delete lifecycle. GH #1543.
+  return [toggleItem, ...deleteItems];
 }

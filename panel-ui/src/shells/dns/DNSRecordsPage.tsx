@@ -163,9 +163,20 @@ const getPlaceholders = (
   }
 };
 
-export const DNSRecordsPage = () => {
+interface DNSRecordsPanelProps {
+  domainId: string;
+  // embedded → rendered inside the tenant Web Domain page's DNS tab, which
+  // already frames the domain name and provides navigation; suppress this
+  // component's own Back link + title. Standalone (admin route, DNS-zones
+  // drill-in) keeps them.
+  embedded?: boolean;
+}
+
+// GH #1543: the DNS records manager. Renders standalone (the admin
+// /jabali-admin/domains/:id/dns route and the tenant DNS-zones drill-in) and
+// embedded as the DNS tab on the tenant Web Domain page.
+export const DNSRecordsPanel = ({ domainId, embedded = false }: DNSRecordsPanelProps) => {
   const { t } = useTranslation();
-  const { id: domainId } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const location = useLocation();
   const { open } = useNotification();
@@ -498,14 +509,16 @@ export const DNSRecordsPage = () => {
   if (zoneNotProvisioned) {
     return (
       <div >
-        <Button
-          type="text"
-          icon={<ArrowLeftOutlined />}
-          onClick={() => navigate(dnsListPath)}
-          style={{ marginBottom: 16 }}
-        >
-          Back to DNS
-        </Button>
+        {!embedded && (
+          <Button
+            type="text"
+            icon={<ArrowLeftOutlined />}
+            onClick={() => navigate(dnsListPath)}
+            style={{ marginBottom: 16 }}
+          >
+            Back to DNS
+          </Button>
+        )}
 
         <Card
           style={{
@@ -532,25 +545,29 @@ export const DNSRecordsPage = () => {
   return (
     <div >
       {/* Header */}
-      <Button
-        type="text"
-        icon={<ArrowLeftOutlined />}
-        onClick={() => navigate(dnsListPath)}
-        style={{ marginBottom: 16 }}
-      >
-        Back to DNS
-      </Button>
+      {!embedded && (
+        <Button
+          type="text"
+          icon={<ArrowLeftOutlined />}
+          onClick={() => navigate(dnsListPath)}
+          style={{ marginBottom: 16 }}
+        >
+          Back to DNS
+        </Button>
+      )}
 
       <Flex
         wrap
         gap="middle"
-        justify="space-between"
+        justify={embedded ? "flex-end" : "space-between"}
         align="center"
         style={{ marginBottom: 16 }}
       >
-        <Typography.Title level={3} style={{ margin: 0, wordBreak: "break-word" }}>
-          DNS Records for {domain?.name}
-        </Typography.Title>
+        {!embedded && (
+          <Typography.Title level={3} style={{ margin: 0, wordBreak: "break-word" }}>
+            DNS Records for {domain?.name}
+          </Typography.Title>
+        )}
         <Tooltip title={creatableTypeOptions.length === 0 ? "Your administrator does not allow creating any DNS record types." : ""}>
           <Button
             type="primary"
@@ -959,4 +976,12 @@ export const DNSRecordsPage = () => {
       </Drawer>
     </div>
   );
+};
+
+// Standalone page wrapper: the admin /jabali-admin/domains/:id/dns route (and
+// the tenant DNS-zones drill-in, which now lands on the tenant Web Domain page's
+// DNS tab instead) read the domain id from the URL. Embedded callers pass it in.
+export const DNSRecordsPage = () => {
+  const { id } = useParams<{ id: string }>();
+  return <DNSRecordsPanel domainId={id ?? ""} />;
 };
