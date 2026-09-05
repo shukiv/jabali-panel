@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -347,18 +348,36 @@ func (h *backupHandler) restoreUploadApply(c *gin.Context) {
 // password is regenerated (the user recovers via a Kratos link — it is never
 // displayed). On any error the helper writes the HTTP response and returns
 // ok=false.
-func (h *backupHandler) createUserFromBundle(c *gin.Context, tarPath, targetUsername string, packageID *string) (*models.User, bool) {
-	ctx := c.Request.Context()
-	if h.cfg.Packages == nil {
-		c.JSON(http.StatusNotImplemented, gin.H{"error": "create_from_bundle_unavailable", "detail": "create-from-backup is not enabled on this server"})
-		return nil, false
+// createBundleError carries the HTTP shape for a create-from-bundle guard
+// failure so the gin wrapper renders it verbatim while the detached full-server
+// loop (no gin.Context) can read the reason for its per-user marker line.
+type createBundleError struct {
+	status int
+	code   string
+	detail string
+}
+
+func (e *createBundleError) Error() string {
+	if e.detail != "" {
+		return e.code + ": " + e.detail
 	}
-	// Read the bundle's own user straight from the tar — the client-supplied
-	// target is only a cross-check, never the source of the identity.
+	return e.code
+}
+
+// resolveOrCreateUserFromTar reads the bundle's OWN user straight from the tar
+// (agent inspect — never trusted from the client) and creates a NON-ADMIN
+// account for it (GH #1408 create-from-manifest). Context-free so the detached
+// full-server restore loop can call it per user. Guard failures return a
+// *createBundleError; a userops.Create failure is returned verbatim (the gin
+// wrapper maps it via userOpsRESTError). The client-supplied targetUsername is
+// only a cross-check — home is name-keyed, so it must equal the bundle username.
+func (h *backupHandler) resolveOrCreateUserFromTar(ctx context.Context, tarPath, targetUsername string, packageID *string) (*models.User, error) {
+	if h.cfg.Packages == nil {
+		return nil, &createBundleError{http.StatusNotImplemented, "create_from_bundle_unavailable", "create-from-backup is not enabled on this server"}
+	}
 	raw, err := h.cfg.Agent.Call(ctx, "backup.inspect_uploaded_tar", map[string]string{"tar_path": tarPath})
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "inspect_failed", "detail": restoreFailureDetail(err)})
-		return nil, false
+		return nil, &createBundleError{http.StatusBadGateway, "inspect_failed", restoreFailureDetail(err)}
 	}
 	var ins struct {
 		User struct {
@@ -368,41 +387,28 @@ func (h *backupHandler) createUserFromBundle(c *gin.Context, tarPath, targetUser
 		} `json:"user"`
 	}
 	if json.Unmarshal(raw, &ins) != nil || ins.User.Username == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "bundle_unreadable"})
-		return nil, false
+		return nil, &createBundleError{http.StatusBadRequest, "bundle_unreadable", ""}
 	}
-	// Home is name-keyed: the account must be the backup's OWN username, or the
-	// home-rsync fails "source missing" downstream. Rename-on-restore is a
-	// separate deferred slice.
 	if ins.User.Username != targetUsername {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "username_mismatch",
-			"detail": "restore into the backup's own username (" + ins.User.Username + ")"})
-		return nil, false
+		return nil, &createBundleError{http.StatusBadRequest, "username_mismatch", "restore into the backup's own username (" + ins.User.Username + ")"}
 	}
 	// SECURITY: never create an admin from a bundle (belt beyond the applyUser
 	// refusal — no legitimate account backup is an admin).
 	if ins.User.IsAdmin {
-		c.JSON(http.StatusForbidden, gin.H{"error": "admin_bundle_refused",
-			"detail": "refusing to create an admin account from a backup"})
-		return nil, false
+		return nil, &createBundleError{http.StatusForbidden, "admin_bundle_refused", "refusing to create an admin account from a backup"}
 	}
 	if ins.User.Email == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "bundle_no_email",
-			"detail": "the backup carries no user email — create the user manually, then restore into it"})
-		return nil, false
+		return nil, &createBundleError{http.StatusBadRequest, "bundle_no_email", "the backup carries no user email — create the user manually, then restore into it"}
 	}
 	// Don't hijack an existing identity: an email collision is the admin's to
 	// resolve (restore into the existing user, or create manually).
 	if existing, _ := h.cfg.Users.FindByEmail(ctx, ins.User.Email); existing != nil {
-		c.JSON(http.StatusConflict, gin.H{"error": "email_taken",
-			"detail": "a user with that email already exists — restore into it instead"})
-		return nil, false
+		return nil, &createBundleError{http.StatusConflict, "email_taken", "a user with that email already exists — restore into it instead"}
 	}
 
 	pw, perr := randomRestorePassword()
 	if perr != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
-		return nil, false
+		return nil, &createBundleError{http.StatusInternalServerError, "internal", ""}
 	}
 	uname := ins.User.Username
 	res, cerr := userops.Create(ctx, userops.Deps{
@@ -420,10 +426,26 @@ func (h *backupHandler) createUserFromBundle(c *gin.Context, tarPath, targetUser
 		PackageID: packageID,
 	})
 	if cerr != nil {
-		userOpsRESTError(c, cerr) // maps ErrInvalidUsername/Package/Taken/Kratos to HTTP
+		return nil, cerr
+	}
+	return res.User, nil
+}
+
+// createUserFromBundle is the gin wrapper over resolveOrCreateUserFromTar for
+// the single-account apply handler: on error it writes the HTTP response and
+// returns ok=false.
+func (h *backupHandler) createUserFromBundle(c *gin.Context, tarPath, targetUsername string, packageID *string) (*models.User, bool) {
+	u, err := h.resolveOrCreateUserFromTar(c.Request.Context(), tarPath, targetUsername, packageID)
+	if err != nil {
+		var ce *createBundleError
+		if errors.As(err, &ce) {
+			c.JSON(ce.status, gin.H{"error": ce.code, "detail": ce.detail})
+		} else {
+			userOpsRESTError(c, err) // userops sentinels → HTTP
+		}
 		return nil, false
 	}
-	return res.User, true
+	return u, true
 }
 
 // randomRestorePassword returns an unguessable password for a create-from-
