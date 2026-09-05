@@ -172,6 +172,21 @@ func CanonicalDBGrant(privileges []string, level string) (canonical, computedLev
 	return canonical, computedLevel, nil
 }
 
+// coerceEngineGrant collapses a PostgreSQL grant to full access (rw/ALL)
+// regardless of the requested level. The agent runs GRANT ALL on the target
+// database (ADR-0091 / GH #1406) — read-only and per-privilege grants aren't
+// honoured — so storing anything else would leave a label that lies about the
+// access actually held (GH #1415). The admin UI already hides those controls
+// for postgres; coercing here (rather than rejecting) keeps the stored label
+// honest for any direct API caller too, without breaking one that still passes
+// a level. MariaDB is unchanged.
+func coerceEngineGrant(engine, canonical, level string) (string, string) {
+	if engine == "postgres" {
+		return "ALL", "rw"
+	}
+	return canonical, level
+}
+
 // ---- Request/Response types ----
 
 type createDatabaseUserRequest struct {
@@ -610,6 +625,8 @@ func (h *databaseUserHandler) addGrant(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 		return
 	}
+	// A postgres grant is always full-access whatever level was requested.
+	canonicalPrivileges, computedGrantLevel = coerceEngineGrant(du.Engine, canonicalPrivileges, computedGrantLevel)
 
 	db, err := h.cfg.Databases.FindByID(ctx, req.DatabaseID)
 	if err != nil {
@@ -953,28 +970,12 @@ func (h *databaseUserHandler) updateGrant(c *gin.Context) {
 		return
 	}
 
-	// Determine privileges to use: either from privileges array or fallback to grant_level.
-	var canonicalPrivileges string
-	if len(req.Privileges) > 0 {
-		// Validate and normalize privileges.
-		var err error
-		canonicalPrivileges, err = privilegesToCanonicalString(req.Privileges)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_privileges", "detail": err.Error()})
-			return
-		}
-	} else if req.GrantLevel != "" {
-		// Legacy path: translate grant_level to privileges.
-		if req.GrantLevel == "rw" {
-			canonicalPrivileges = "ALL"
-		} else if req.GrantLevel == "ro" {
-			canonicalPrivileges = "SELECT"
-		} else {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_grant_level", "detail": "grant_level must be 'rw' or 'ro'"})
-			return
-		}
-	} else {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "missing_privileges", "detail": "either privileges or grant_level must be provided"})
+	// Canonicalise the privilege set + compute the stored grant_level via the
+	// shared helper (GH #1415) so this PATCH path validates and normalises
+	// exactly like addGrant + the operator CLI and can never drift.
+	canonicalPrivileges, computedGrantLevel, err := CanonicalDBGrant(req.Privileges, req.GrantLevel)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_grant", "detail": err.Error()})
 		return
 	}
 
@@ -1001,9 +1002,13 @@ func (h *databaseUserHandler) updateGrant(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 		return
 	}
+	// A postgres grant is always full-access whatever level was requested.
+	canonicalPrivileges, computedGrantLevel = coerceEngineGrant(du.Engine, canonicalPrivileges, computedGrantLevel)
 
-	// No-op: same privileges
-	if grant.Privileges == canonicalPrivileges {
+	// No-op only when both the privilege set AND the stored level already match
+	// — a row whose grant_level drifted from its privileges (e.g. an old
+	// custom-stamped PG grant) must fall through so UpdateLevel repairs it.
+	if grant.Privileges == canonicalPrivileges && grant.GrantLevel == computedGrantLevel {
 		c.JSON(http.StatusOK, grantResponse{
 			ID:           grant.ID,
 			DatabaseID:   grant.DatabaseID,
@@ -1039,7 +1044,10 @@ func (h *databaseUserHandler) updateGrant(c *gin.Context) {
 		_, err = h.cfg.Agent.Call(agentCtx, "db_user.revoke", map[string]any{
 			"db_name":      db.Name,
 			"db_user_name": du.Username,
-			"grant_level":  grant.GrantLevel,
+			// Revoke the OLD grant by its stored privileges. grant_level is
+			// "custom" for granular grants, which the agent's legacy fallback
+			// rejects — sending privileges mirrors addGrant (GH #1415).
+			"privileges": strings.Split(grant.Privileges, ","),
 		})
 	}
 	if err != nil {
@@ -1060,7 +1068,10 @@ func (h *databaseUserHandler) updateGrant(c *gin.Context) {
 		_, err = h.cfg.Agent.Call(agentCtx, "db_user.grant", map[string]any{
 			"db_name":      db.Name,
 			"db_user_name": du.Username,
-			"grant_level":  req.GrantLevel,
+			// Grant the canonical privilege set. req.GrantLevel is empty when
+			// the request carried a privileges array, which would send an
+			// empty grant to the agent — mirror addGrant (GH #1415).
+			"privileges": strings.Split(canonicalPrivileges, ","),
 		})
 	}
 	if err != nil {
@@ -1086,6 +1097,13 @@ func (h *databaseUserHandler) updateGrant(c *gin.Context) {
 
 	// Update privileges in database
 	if err := h.cfg.DatabaseGrants.UpdatePrivileges(ctx, grant.ID, canonicalPrivileges); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	// UpdatePrivileges hard-codes grant_level="custom"; persist the computed
+	// level so the stored label matches the privilege set (rw for ALL, ro for
+	// SELECT), instead of always reading back "custom" (GH #1415).
+	if err := h.cfg.DatabaseGrants.UpdateLevel(ctx, grant.ID, computedGrantLevel); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
