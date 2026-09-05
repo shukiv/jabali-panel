@@ -44,6 +44,7 @@ logs/
 # ...but not the panel-ui source dir that happens to be named "logs"
 !panel-ui/src/shells/admin/logs/
 !panel-ui/src/shells/user/logs/
+!panel-ui/src/components/logs/
 
 # Docker
 .docker/
