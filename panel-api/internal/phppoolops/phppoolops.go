@@ -197,16 +197,7 @@ func ReconcileViaAgent(deps ReconcileDeps, pool models.PHPPool) error {
 		return err
 	}
 
-	adminValues := []map[string]string{}
-	adminFlags := []map[string]string{}
-	for _, override := range overridesList {
-		kv := map[string]string{"name": override.Directive, "value": override.Value}
-		if override.Kind == "flag" {
-			adminFlags = append(adminFlags, kv)
-		} else {
-			adminValues = append(adminValues, kv)
-		}
-	}
+	adminValues, adminFlags := SplitIniOverrides(overridesList)
 
 	// GH #329: resolve the pool's slug so a versioned pool applies to its own
 	// socket/instance rather than the default per-user one. isDefault = the
@@ -266,4 +257,25 @@ func ReconcileViaAgent(deps ReconcileDeps, pool models.PHPPool) error {
 	pool.LastError = nil
 	_ = deps.Pools.Update(ctx, &pool)
 	return nil
+}
+
+// SplitIniOverrides partitions a pool's tenant ini overrides into the agent
+// php.pool.apply admin_values / admin_flags param shape ({name,value} maps),
+// keyed by Kind ("flag" -> admin_flags, everything else -> admin_values). Both
+// reconcile paths build the params from this one helper — ReconcileViaAgent
+// (the settings/version-save path) and reconciler.applyPHPPool (the periodic
+// sweep, GH #1550) — so a sweep re-apply can no longer drop the overrides the
+// save path carries. Returns non-nil empty slices for an empty input.
+func SplitIniOverrides(overrides []models.PHPPoolIniOverride) (adminValues, adminFlags []map[string]string) {
+	adminValues = []map[string]string{}
+	adminFlags = []map[string]string{}
+	for _, override := range overrides {
+		kv := map[string]string{"name": override.Directive, "value": override.Value}
+		if override.Kind == "flag" {
+			adminFlags = append(adminFlags, kv)
+		} else {
+			adminValues = append(adminValues, kv)
+		}
+	}
+	return adminValues, adminFlags
 }

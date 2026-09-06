@@ -329,3 +329,32 @@ func TestReconcileViaAgent_AgentError_SetsErrorStatus(t *testing.T) {
 	require.NotNil(t, pools.statuses[0].lastErr)
 	assert.Contains(t, *pools.statuses[0].lastErr, "socket down")
 }
+
+// ---- SplitIniOverrides: the single override-partition helper both the sweep
+// (reconciler.applyPHPPool) and the save path (ReconcileViaAgent) build params
+// from, so they can never drift (GH #1550). ----
+
+func TestSplitIniOverrides(t *testing.T) {
+	values, flags := phppoolops.SplitIniOverrides([]models.PHPPoolIniOverride{
+		{Directive: "memory_limit", Value: "256M", Kind: "value"},
+		{Directive: "display_errors", Value: "On", Kind: "flag"},
+		{Directive: "upload_max_filesize", Value: "64M", Kind: "value"},
+	})
+	assert.Equal(t, []map[string]string{
+		{"name": "memory_limit", "value": "256M"},
+		{"name": "upload_max_filesize", "value": "64M"},
+	}, values)
+	assert.Equal(t, []map[string]string{
+		{"name": "display_errors", "value": "On"},
+	}, flags)
+}
+
+func TestSplitIniOverrides_Empty(t *testing.T) {
+	values, flags := phppoolops.SplitIniOverrides(nil)
+	// Non-nil empty slices — the agent ranges over them, so nil would be fine
+	// too, but empty non-nil keeps the JSON shape stable ([] not null).
+	require.NotNil(t, values)
+	require.NotNil(t, flags)
+	assert.Empty(t, values)
+	assert.Empty(t, flags)
+}
