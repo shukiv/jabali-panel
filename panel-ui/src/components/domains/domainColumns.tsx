@@ -13,7 +13,7 @@ import { columnSearchProps } from "../columnSearch";
 import { humanBytes } from "../../utils/bytes";
 import { getSSLTag } from "../../utils/sslState";
 import { adminLinks } from "../admin/entityLinks";
-import { serviceBadge, type Domain } from "./types";
+import { serviceBadge, type Domain, type DomainApplicationSummary } from "./types";
 import { DomainApplicationCell } from "./DomainApplicationCell";
 
 // A discriminated union — audience policy stays internal to the module rather
@@ -122,14 +122,25 @@ const renderSSL = (record: Domain, audience: DomainInventoryAudience) => {
   return <Tag color={color}>{label}</Tag>;
 };
 
+// GH #1543 D2: the tenant Application column's inline mutations. The cell owns
+// no state — it calls back into DomainInventory, which hosts the install modal,
+// the delete confirm, and the transitional poll. Optional (admin never supplies
+// it, and the column it drives is tenant-only).
+export type DomainColumnAppActions = {
+  onInstall: (r: Domain) => void;
+  onDelete: (app: DomainApplicationSummary, r: Domain) => void;
+  deletingId: string | null;
+};
+
 type ColumnCtx = {
   t: (key: string) => string;
   query: { params: { q?: string }; setParams: (p: { q: string; page: number }) => void };
+  appActions?: DomainColumnAppActions;
 };
 
 export const buildDomainDataColumns = (
   audience: DomainInventoryAudience,
-  { t, query }: ColumnCtx,
+  { t, query, appActions }: ColumnCtx,
 ): ColumnsType<Domain> => {
   // Each screen keeps its own i18n namespace so no header text shifts.
   const title = (key: string) =>
@@ -235,7 +246,12 @@ export const buildDomainDataColumns = (
       title: "Application",
       responsive: ["md"],
       render: (_: unknown, record: Domain) => (
-        <DomainApplicationCell applications={record.applications} />
+        <DomainApplicationCell
+          applications={record.applications}
+          onInstall={appActions ? () => appActions.onInstall(record) : undefined}
+          onDelete={appActions ? (app) => appActions.onDelete(app, record) : undefined}
+          deletingId={appActions?.deletingId ?? null}
+        />
       ),
     });
   }

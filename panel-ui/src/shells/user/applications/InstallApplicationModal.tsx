@@ -39,6 +39,10 @@ type Props = {
   // a Catalog card). When provided, the in-drawer app picker is hidden and
   // the chosen app_type wins over the wordpress default.
   presetAppType?: string;
+  // presetDomainId pins the install to one domain (GH #1543: opened from the
+  // Web Domains list's Install button). When provided, the domain is seeded and
+  // its picker is locked — the caller already chose the target row.
+  presetDomainId?: string;
 };
 
 type CreatedResult = {
@@ -308,6 +312,7 @@ export const InstallApplicationModal = ({
   onSuccess,
   defaultAdminEmail,
   presetAppType,
+  presetDomainId,
 }: Props) => {
   const { t } = useTranslation();
   const [form] = Form.useForm<Record<string, unknown>>();
@@ -403,6 +408,13 @@ export const InstallApplicationModal = ({
       : (wp?.name ?? apps[0]?.name ?? "wordpress");
     form.setFieldsValue({ app_type: defaultName });
   }, [open, apps, presetAppType, form]);
+
+  // GH #1543: seed the domain when opened from a specific Web Domains row. The
+  // picker is locked (disabled below), so this is the domain the install targets.
+  useEffect(() => {
+    if (!open || !presetDomainId) return;
+    form.setFieldsValue({ domain_id: presetDomainId });
+  }, [open, presetDomainId, form]);
 
   // When the user switches App, clear every per-app field and apply
   // the new descriptor's defaults. Without this, a "site_title" left
@@ -667,6 +679,7 @@ export const InstallApplicationModal = ({
               <Select
                 placeholder={t("installapplicationmodal.select_a_domain")}
                 loading={loadingDomains}
+                disabled={!!presetDomainId}
                 options={availableDomains.map((d) => ({
                   value: d.id,
                   label: d.name,
