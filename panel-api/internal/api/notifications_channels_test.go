@@ -273,6 +273,156 @@ func TestChannels_AdminCanDisableTenantChannel(t *testing.T) {
 	require.NotNil(t, row.UserID)
 }
 
+// mapUserRepo resolves users by id (unlike the single-user fakeUserRepo), so a
+// test can prove an admin edit forces a tenant email channel to the ROW OWNER's
+// address rather than the admin caller's.
+type mapUserRepo struct {
+	repository.UserRepository
+	users map[string]*models.User
+}
+
+func (m *mapUserRepo) FindByID(_ context.Context, id string) (*models.User, error) {
+	u, ok := m.users[id]
+	if !ok {
+		return nil, nil
+	}
+	return u, nil
+}
+
+func newChannelsRouterU(t *testing.T, repo repository.NotificationChannelRepository, users repository.UserRepository, auth gin.HandlerFunc) *gin.Engine {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	g := r.Group("/api/v1")
+	if auth != nil {
+		g.Use(auth)
+	}
+	RegisterNotificationsChannelsRoutes(g, NotificationsChannelsHandlerConfig{
+		Channels: repo,
+		Users:    users,
+	})
+	return r
+}
+
+// JAB-308 AC1/AC2: an admin edit of a tenant-owned email channel must re-force
+// the own-address / local-submission invariant, so an admin can't repoint a
+// tenant's email channel at an arbitrary destination or a custom SMTP relay.
+// The forcing must target the ROW OWNER's address, not the admin caller's, and
+// must run after secret-preservation (a stored SMTP password gets cleared, not
+// re-hydrated back onto a forced-local channel).
+func TestChannels_AdminEditTenantEmail_ReforcesOwnerAddress(t *testing.T) {
+	t.Parallel()
+	uid := "u1"
+	repo := &fakeChannelsRepo{rows: map[string]*models.NotificationChannel{
+		"t": {ID: "t", Name: "TenantMail", Kind: "email", Enabled: true, UserID: &uid,
+			Config: models.NotificationChannelConfig{
+				ToEmail: "u1@example.com", FromEmail: "u1@example.com", SMTPMode: "local",
+				SMTPPassword: "old-secret", // stored secret; forcing must clear it, not preserve rehydrate it
+			}},
+	}}
+	users := &mapUserRepo{users: map[string]*models.User{
+		"u1":     {ID: "u1", Email: "u1@example.com"},
+		"admin1": {ID: "admin1", Email: "admin@example.com"},
+	}}
+	r := newChannelsRouterU(t, repo, users, newAdminCtx())
+
+	// Admin tries to repoint the tenant channel at an arbitrary destination +
+	// custom relay; omit smtp_password so PreserveEmptySecrets would re-hydrate
+	// the stored one — the forcing must still clear it (order: preserve→force).
+	rec := doNotifJSON(t, r, http.MethodPatch, "/api/v1/admin/notifications/channels/t", map[string]any{
+		"config": map[string]any{
+			"to_email":   "victim@evil.com",
+			"from_email": "spoof@evil.com",
+			"smtp_mode":  "smtp",
+			"smtp_host":  "10.0.0.1",
+			"smtp_port":  2525,
+		},
+	})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	row, err := repo.FindByID(context.Background(), "t")
+	require.NoError(t, err)
+	require.Equal(t, "u1@example.com", row.Config.ToEmail, "must force to the ROW OWNER address")
+	require.NotEqual(t, "admin@example.com", row.Config.ToEmail, "must NOT force to the admin caller's address")
+	require.Equal(t, "u1@example.com", row.Config.FromEmail)
+	require.Equal(t, "local", row.Config.SMTPMode)
+	require.Empty(t, row.Config.SMTPHost, "custom relay host must be discarded")
+	require.Empty(t, row.Config.SMTPPassword, "stored secret must be cleared by forcing, not re-hydrated")
+	require.NotContains(t, rec.Body.String(), "evil.com")
+}
+
+// A server-wide (unowned) email channel is NOT a tenant channel, so an admin
+// keeps full control of its destination and custom SMTP relay.
+func TestChannels_AdminEditServerWideEmail_KeepsCustomRelay(t *testing.T) {
+	t.Parallel()
+	repo := &fakeChannelsRepo{rows: map[string]*models.NotificationChannel{
+		"s": {ID: "s", Name: "OpsMail", Kind: "email", Enabled: true, // UserID nil = server-wide
+			Config: models.NotificationChannelConfig{ToEmail: "ops@corp.example", FromEmail: "ops@corp.example", SMTPMode: "smtp", SMTPHost: "smtp.corp.example", SMTPPort: 587}},
+	}}
+	users := &mapUserRepo{users: map[string]*models.User{}}
+	r := newChannelsRouterU(t, repo, users, newAdminCtx())
+
+	rec := doNotifJSON(t, r, http.MethodPatch, "/api/v1/admin/notifications/channels/s", map[string]any{
+		"config": map[string]any{
+			"to_email":   "ops2@corp.example",
+			"from_email": "ops2@corp.example",
+			"smtp_mode":  "smtp",
+			"smtp_host":  "smtp2.corp.example",
+			"smtp_port":  2587,
+		},
+	})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	row, err := repo.FindByID(context.Background(), "s")
+	require.NoError(t, err)
+	require.Equal(t, "ops2@corp.example", row.Config.ToEmail, "server-wide channel keeps its destination")
+	require.Equal(t, "smtp2.corp.example", row.Config.SMTPHost, "server-wide channel keeps a custom relay")
+	require.Equal(t, "smtp", row.Config.SMTPMode)
+}
+
+// A tenant email channel whose owner has no account address can't be forced to a
+// safe destination, so the edit is refused (422) rather than persisting the
+// arbitrary destination the admin supplied.
+func TestChannels_AdminEditTenantEmail_OwnerNoAddressIs422(t *testing.T) {
+	t.Parallel()
+	uid := "u1"
+	repo := &fakeChannelsRepo{rows: map[string]*models.NotificationChannel{
+		"t": {ID: "t", Name: "TenantMail", Kind: "email", Enabled: true, UserID: &uid,
+			Config: models.NotificationChannelConfig{ToEmail: "u1@example.com", FromEmail: "u1@example.com", SMTPMode: "local"}},
+	}}
+	users := &mapUserRepo{users: map[string]*models.User{"u1": {ID: "u1", Email: ""}}}
+	r := newChannelsRouterU(t, repo, users, newAdminCtx())
+
+	rec := doNotifJSON(t, r, http.MethodPatch, "/api/v1/admin/notifications/channels/t", map[string]any{
+		"config": map[string]any{"to_email": "victim@evil.com", "from_email": "victim@evil.com"},
+	})
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "no_account_email")
+	row, err := repo.FindByID(context.Background(), "t")
+	require.NoError(t, err)
+	require.Equal(t, "u1@example.com", row.Config.ToEmail, "row must not be persisted on rejection")
+}
+
+// With no Users repo wired (a deploy misconfiguration), an admin cannot resolve
+// a tenant channel's owner to re-force its address, so editing a tenant email
+// channel's config fails closed (503) rather than persisting an unforced
+// destination. Uses the pre-existing harness, which never wired Users — exactly
+// the scenario the fail-closed branch guards.
+func TestChannels_AdminEditTenantEmail_NoUsersRepoIs503(t *testing.T) {
+	t.Parallel()
+	uid := "u1"
+	repo := &fakeChannelsRepo{rows: map[string]*models.NotificationChannel{
+		"t": {ID: "t", Name: "TenantMail", Kind: "email", Enabled: true, UserID: &uid,
+			Config: models.NotificationChannelConfig{ToEmail: "u1@example.com", FromEmail: "u1@example.com", SMTPMode: "local"}},
+	}}
+	r := newChannelsRouter(t, repo, nil, newAdminCtx()) // no Users repo
+	rec := doNotifJSON(t, r, http.MethodPatch, "/api/v1/admin/notifications/channels/t", map[string]any{
+		"config": map[string]any{"to_email": "victim@evil.com", "from_email": "victim@evil.com"},
+	})
+	require.Equal(t, http.StatusServiceUnavailable, rec.Code, rec.Body.String())
+	row, err := repo.FindByID(context.Background(), "t")
+	require.NoError(t, err)
+	require.Equal(t, "u1@example.com", row.Config.ToEmail, "row must not be persisted when forcing can't run")
+}
+
 func TestChannels_Delete(t *testing.T) {
 	t.Parallel()
 	repo := &fakeChannelsRepo{rows: map[string]*models.NotificationChannel{
