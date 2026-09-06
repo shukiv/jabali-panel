@@ -1080,6 +1080,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Log:             deps.Log,
 				StrictRateLimit: rl.Strict(),
 				SSOKey:          deps.SSOKey,
+				Users:           deps.Users,
 			})
 		}
 		// M31.1 follow-up — DLQ inspector (list / replay / drop / clear).
