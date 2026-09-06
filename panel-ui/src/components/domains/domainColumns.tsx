@@ -14,6 +14,7 @@ import { humanBytes } from "../../utils/bytes";
 import { getSSLTag } from "../../utils/sslState";
 import { adminLinks } from "../admin/entityLinks";
 import { serviceBadge, type Domain } from "./types";
+import { DomainApplicationCell } from "./DomainApplicationCell";
 
 // A discriminated union — audience policy stays internal to the module rather
 // than being rebuilt as caller-supplied column/callback bags (JAB-300 AC).
@@ -221,13 +222,30 @@ export const buildDomainDataColumns = (
       title: title("redirect"),
       render: (_: unknown, record: Domain) => renderRedirect(record),
     },
-    {
-      dataIndex: "bytes_30d",
-      title: title("bw_30d"),
-      key: "bytes_30d",
-      render: (v: number | undefined) => humanBytes(v ?? 0),
-    },
   );
+
+  // GH #1543: the tenant Web Domains list gains an Application column showing
+  // this domain's primary One-Click install (badge + version/status + Login).
+  // Tenant-only: admin edits a domain from its Edit page and has its own
+  // Applications list. The literal header avoids adding an i18n key (no unused-
+  // key gate; the tenant namespace has no "application" entry).
+  if (audience.kind === "tenant") {
+    columns.push({
+      key: "application",
+      title: "Application",
+      responsive: ["md"],
+      render: (_: unknown, record: Domain) => (
+        <DomainApplicationCell applications={record.applications} />
+      ),
+    });
+  }
+
+  columns.push({
+    dataIndex: "bytes_30d",
+    title: title("bw_30d"),
+    key: "bytes_30d",
+    render: (v: number | undefined) => humanBytes(v ?? 0),
+  });
 
   return columns;
 };

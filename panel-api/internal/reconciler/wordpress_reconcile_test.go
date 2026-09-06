@@ -45,6 +45,12 @@ func (m *mockWordPressInstallRepo) FindByDomainID(ctx context.Context, domainID 
 	return nil, repository.ErrNotFound
 }
 
+// ListByDomainIDs — GH #1543 domains-list app summary. Reconciler tests don't
+// exercise it; return nothing.
+func (m *mockWordPressInstallRepo) ListByDomainIDs(_ context.Context, _ []string) ([]models.ApplicationInstall, error) {
+	return nil, nil
+}
+
 // FindByDomainAndSubdirectory — added for multi-install-per-domain
 // (migration 000045). Reconciler tests don't exercise subdir lookups;
 // return the same not-found signal as the other Find stubs.
