@@ -15,6 +15,13 @@ vi.mock("../../../apiClient", () => ({
   apiClient: { get: vi.fn(), post: vi.fn(), patch: vi.fn(), delete: vi.fn() },
 }));
 
+// GH #1479: the Create button gates on the global mail capability. Mock it so
+// the state is explicit (default: mail on).
+const caps = vi.hoisted(() => ({ value: { mail_enabled: true } as Record<string, boolean> }));
+vi.mock("../../../hooks/useServerCapabilities", () => ({
+  useServerCapabilities: () => ({ data: caps.value }),
+}));
+
 import { apiClient } from "../../../apiClient";
 
 const mocked = apiClient as unknown as {
@@ -83,6 +90,7 @@ beforeEach(() => {
   mockList();
   mocked.post.mockReset().mockResolvedValue({ data: {} });
   mocked.delete.mockReset().mockResolvedValue({ data: {} });
+  caps.value = { mail_enabled: true };
 });
 
 describe("GH #1387 — MailDomainsPage (mail-active only)", () => {
@@ -172,6 +180,26 @@ describe("GH #1387 — MailDomainsPage (mail-active only)", () => {
     expect(screen.queryByText("No mail")).not.toBeInTheDocument();
     expect(screen.queryByText("Microsoft 365")).not.toBeInTheDocument();
     expect(screen.queryByText("Jabali mail (this server)")).not.toBeInTheDocument();
+  });
+
+  // GH #1479 (johnnyq follow-up): when mail is disabled server-wide, offering to
+  // create a mail domain makes no sense — the button is gone from both the
+  // header and the empty state, and the empty state says mail is off.
+  it("hides Create Mail Domain when mail is disabled server-wide", async () => {
+    caps.value = { mail_enabled: false };
+    renderPage();
+    await screen.findByText("on.test"); // rows still load
+    expect(screen.queryByRole("button", { name: /Create Mail Domain/i })).not.toBeInTheDocument();
+  });
+
+  it("shows a mail-off empty state (no Create button) when disabled and no domains", async () => {
+    caps.value = { mail_enabled: false };
+    mocked.get
+      .mockReset()
+      .mockResolvedValue({ data: { data: [], total: 0, page: 1, page_size: 0 } });
+    renderPage();
+    expect(await screen.findByText("Mail is disabled on this server.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Create Mail Domain/i })).not.toBeInTheDocument();
   });
 
   // GH #1479: the mail-mode create posts the right domain shape (web off, mail on
