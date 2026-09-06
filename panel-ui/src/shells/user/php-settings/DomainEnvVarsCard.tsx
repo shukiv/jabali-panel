@@ -1,6 +1,8 @@
 // DomainEnvVarsCard — GH #1332 item 14. Per-domain environment variables,
-// delivered to PHP as fastcgi_param (reach getenv() + $_SERVER). Self-contained
-// (its own domain picker) so it drops into the PHP Settings tabs cleanly.
+// delivered to PHP as fastcgi_param (reach getenv() + $_SERVER). On the
+// standalone PHP Settings page it self-selects a domain (its own picker); on
+// the Web Domain page (GH #1543) the domain is fixed by the route, so passing
+// `domainId` binds it and hides the picker.
 import { useEffect, useState } from "react";
 import {
   Alert,
@@ -43,14 +45,20 @@ function keyError(key: string): string | null {
   return null;
 }
 
-export function DomainEnvVarsCard() {
+export function DomainEnvVarsCard({ domainId }: { domainId?: string } = {}) {
   const [domains, setDomains] = useState<Domain[]>([]);
   const [selectedDomain, setSelectedDomain] = useState<string | null>(null);
   const [rows, setRows] = useState<EnvVar[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
 
+  // When a domainId is supplied (GH #1543 Web Domain page) the domain is fixed:
+  // use it directly and skip the picker and its domain-list fetch.
+  const fixedDomain = domainId !== undefined;
+  const activeDomain = domainId ?? selectedDomain;
+
   useEffect(() => {
+    if (fixedDomain) return;
     (async () => {
       try {
         const resp = await apiClient.get<{ data: Domain[] }>("/domains");
@@ -59,20 +67,20 @@ export function DomainEnvVarsCard() {
         feedback.message.error("Failed to load domains");
       }
     })();
-  }, []);
+  }, [fixedDomain]);
 
   useEffect(() => {
-    if (!selectedDomain) {
+    if (!activeDomain) {
       setRows([]);
       return;
     }
     setLoading(true);
     apiClient
-      .get<{ env_vars: EnvVar[] }>(`/domains/${selectedDomain}/env-vars`)
+      .get<{ env_vars: EnvVar[] }>(`/domains/${activeDomain}/env-vars`)
       .then((resp) => setRows(resp.data.env_vars ?? []))
       .catch(() => feedback.message.error("Failed to load environment variables"))
       .finally(() => setLoading(false));
-  }, [selectedDomain]);
+  }, [activeDomain]);
 
   const setRow = (i: number, patch: Partial<EnvVar>) =>
     setRows((prev) => prev.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
@@ -95,10 +103,10 @@ export function DomainEnvVarsCard() {
     dupKeys.size > 0;
 
   const save = async () => {
-    if (!selectedDomain) return;
+    if (!activeDomain) return;
     setSaving(true);
     try {
-      await apiClient.put(`/domains/${selectedDomain}/env-vars`, {
+      await apiClient.put(`/domains/${activeDomain}/env-vars`, {
         env_vars: rows.map((r) => ({ key: r.key, value: r.value })),
       });
       feedback.message.success("Environment variables saved");
@@ -122,15 +130,17 @@ export function DomainEnvVarsCard() {
           domain&apos;s PHP requests.
         </Typography.Paragraph>
 
-        <Select
-          style={{ minWidth: 280 }}
-          placeholder="Select a domain"
-          value={selectedDomain}
-          onChange={setSelectedDomain}
-          options={domains.map((d) => ({ label: d.name, value: d.id }))}
-        />
+        {!fixedDomain && (
+          <Select
+            style={{ minWidth: 280 }}
+            placeholder="Select a domain"
+            value={selectedDomain}
+            onChange={setSelectedDomain}
+            options={domains.map((d) => ({ label: d.name, value: d.id }))}
+          />
+        )}
 
-        {selectedDomain && (
+        {activeDomain && (
           <Spin spinning={loading}>
             <Space direction="vertical" size="small" style={{ width: "100%" }}>
               {rows.length === 0 && (

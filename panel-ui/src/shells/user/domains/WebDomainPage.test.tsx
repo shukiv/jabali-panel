@@ -59,6 +59,12 @@ vi.mock("../../dns/DNSRecordsPage", () => ({
 vi.mock("../../../components/logs/DomainLogsPanel", () => ({
   DomainLogsPanel: ({ domainId }: { domainId: string }) => <div>logs-pane:{domainId}</div>,
 }));
+vi.mock("../../../components/domains/DomainPHPSettingsPanel", () => ({
+  DomainPHPSettingsPanel: ({ domainId }: { domainId: string }) => <div>php-pane:{domainId}</div>,
+}));
+vi.mock("../php-settings/DomainEnvVarsCard", () => ({
+  DomainEnvVarsCard: ({ domainId }: { domainId?: string }) => <div>env-pane:{domainId}</div>,
+}));
 vi.mock("../../../components/DomainCacheSection", () => ({
   DomainCacheSection: ({ domainId }: { domainId: string }) => <div>caching-pane:{domainId}</div>,
 }));
@@ -165,6 +171,12 @@ describe("WebDomainPage (GH #1543)", () => {
   it("renders the Logs pane when :tab=logs (GH #1543)", async () => {
     renderAt("/jabali-panel/domains/d1/logs");
     expect(await screen.findByText("logs-pane:d1")).toBeInTheDocument();
+  });
+
+  it("renders the PHP Settings pane (panel + env card) when :tab=php-settings (GH #1543)", async () => {
+    renderAt("/jabali-panel/domains/d1/php-settings");
+    expect(await screen.findByText("php-pane:d1")).toBeInTheDocument();
+    expect(screen.getByText("env-pane:d1")).toBeInTheDocument();
   });
 
   it("renders the Caching pane when :tab=caching", async () => {
