@@ -31,6 +31,7 @@ import { humanBytes } from "../../../utils/bytes";
 import { getSSLTagColor, getSSLTagLabel } from "../../../utils/sslState";
 import { apiClient } from "../../../apiClient";
 import { feedback } from "../../../lib/feedback";
+import { useServerCapabilities } from "../../../hooks/useServerCapabilities";
 import { UserDomainDrawer } from "../domains/UserDomainDrawer";
 
 interface MailDomainRow {
@@ -63,6 +64,11 @@ export function MailDomainsPage() {
   // GH #1479: Create Mail Domain drawer (reuses the tenant Add-domain drawer in
   // its mail mode — web-off, mail on, TLS/webmail/DNS-records options).
   const [createOpen, setCreateOpen] = useState(false);
+  // GH #1479 (johnnyq): don't offer "Create Mail Domain" when mail is disabled
+  // server-wide — there's nothing to provision. Default-on while caps load, so a
+  // mail-enabled server never flashes the button away. Mirrors the sidebar gate.
+  const { data: caps } = useServerCapabilities();
+  const mailEnabled = caps?.mail_enabled !== false;
   const query = useListQuery<MailDomainRow>({ resource: "me/mail-domains" });
   const rows = query.items;
 
@@ -227,13 +233,15 @@ export function MailDomainsPage() {
     <Card
       title="Mail Domains"
       extra={
-        <Button
-          type="primary"
-          icon={<PlusOutlined />}
-          onClick={() => setCreateOpen(true)}
-        >
-          Create Mail Domain
-        </Button>
+        mailEnabled ? (
+          <Button
+            type="primary"
+            icon={<PlusOutlined />}
+            onClick={() => setCreateOpen(true)}
+          >
+            Create Mail Domain
+          </Button>
+        ) : null
       }
     >
       <Typography.Paragraph type="secondary" style={{ marginBottom: 16 }}>
@@ -245,11 +253,17 @@ export function MailDomainsPage() {
       ) : rows.length === 0 ? (
         <Empty
           image={Empty.PRESENTED_IMAGE_SIMPLE}
-          description="No domains have mail active yet. Create a mail domain here, or enable mail on an existing domain from the Domains page."
+          description={
+            mailEnabled
+              ? "No domains have mail active yet. Create a mail domain here, or enable mail on an existing domain from the Domains page."
+              : "Mail is disabled on this server."
+          }
         >
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
-            Create Mail Domain
-          </Button>
+          {mailEnabled && (
+            <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
+              Create Mail Domain
+            </Button>
+          )}
         </Empty>
       ) : (
         <Table<MailDomainRow>
