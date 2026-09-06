@@ -311,3 +311,7 @@ func TestDNSCmd_Tree(t *testing.T) {
 		}
 	}
 }
+
+
+// ListByZoneIDs added for the JAB-374 batch interface method.
+func (m *memDNSRecordRepo) ListByZoneIDs(context.Context, []string) ([]models.DNSRecord, error) { return nil, nil }

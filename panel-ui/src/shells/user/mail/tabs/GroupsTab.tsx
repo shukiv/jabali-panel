@@ -30,7 +30,7 @@ import {
 
 import { useListQuery } from "../../../../hooks/useQueries";
 import { SearchableTableStringQ } from "../../../../components/SearchableTable";
-import type { Domain } from "../../domains/UserDomainList";
+import type { Domain } from "../../../../components/domains/types";
 import { useMailboxes } from "../../../../hooks/useMailboxes";
 import {
   useMailGroups,

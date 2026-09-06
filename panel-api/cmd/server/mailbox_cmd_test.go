@@ -156,6 +156,9 @@ func (f *fakeMailboxRepo) ListAllWithDomain(_ context.Context) ([]repository.Mai
 func (f *fakeMailboxRepo) ListByOwnerWithDomain(_ context.Context, _ string) ([]repository.MailboxWithDomain, error) {
 	return nil, nil
 }
+func (f *fakeMailboxRepo) ListDirectoryPage(_ context.Context, _ repository.ListOptions, _ string) ([]repository.MailboxWithDomain, int64, error) {
+	return nil, 0, nil
+}
 
 func (f *fakeMailboxRepo) UpdateUsage(_ context.Context, _ string, _ uint64, _ time.Time) error {
 	return nil
@@ -566,3 +569,7 @@ func TestRotatePassword_NotFound(t *testing.T) {
 		t.Fatalf("expected not-found error, got %v", err)
 	}
 }
+
+
+// ListByDomainIDs added for the JAB-374 batch interface method.
+func (m *fakeMailboxRepo) ListByDomainIDs(context.Context, []string) ([]models.Mailbox, error) { return nil, nil }

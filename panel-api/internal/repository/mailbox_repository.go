@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -23,10 +24,19 @@ type MailboxRepository interface {
 	FindByIDs(ctx context.Context, ids []string) ([]models.Mailbox, error)
 	FindByEmail(ctx context.Context, email string) (*models.Mailbox, error)
 	ListByDomainID(ctx context.Context, domainID string, opts ListOptions) ([]models.Mailbox, int64, error)
+	// ListByDomainIDs batch-loads mailboxes for many domains in one query
+	// (JAB-374), ordered domain_id, created_at DESC to match the per-domain
+	// ListByDomainID default order so grouped output stays golden-identical.
+	ListByDomainIDs(ctx context.Context, domainIDs []string) ([]models.Mailbox, error)
 	ListAllWithDomain(ctx context.Context) ([]MailboxWithDomain, error)
 	// CountAll counts mailboxes without loading rows (see implementation).
 	CountAll(ctx context.Context) (int64, error)
 	ListByOwnerWithDomain(ctx context.Context, userID string) ([]MailboxWithDomain, error)
+	// ListDirectoryPage is the server-paginated, searchable, sortable admin
+	// mailbox directory read (JAB-370) behind GET /admin/mailboxes. See the
+	// implementation for the ownerUserID scope and the unbounded (Limit==0)
+	// backward-compatible mode.
+	ListDirectoryPage(ctx context.Context, opts ListOptions, ownerUserID string) ([]MailboxWithDomain, int64, error)
 	CountByDomainID(ctx context.Context, domainID string) (int64, error)
 	Create(ctx context.Context, mb *models.Mailbox) error
 	Delete(ctx context.Context, id string) error
@@ -87,10 +97,35 @@ func (r *mailboxRepo) FindByEmail(ctx context.Context, email string) (*models.Ma
 
 // mailboxListCols — free-text search matches local_part and the cached
 // full address so a query for "alice" or "alice@example.com" both hit.
+// Sort accepts both the bare table columns (raw callers: CLI, MCP
+// list_mailboxes) and — after mailboxListSortKeys translates them — the same
+// clean keys the directory speaks, so a shared front-end can drive either
+// endpoint (JAB-370). display_name and is_disabled are the two columns the
+// clean keys need that the raw list never sorted on.
 var mailboxListCols = ListCols{
 	Search:      []string{"local_part", "email_cached"},
-	Sort:        []string{"local_part", "email_cached", "created_at", "quota_bytes", "last_usage_bytes"},
+	Sort:        []string{"local_part", "email_cached", "display_name", "created_at", "quota_bytes", "last_usage_bytes", "is_disabled"},
 	DefaultSort: "created_at",
+}
+
+// mailboxListSortKeys is the single-table twin of mailboxDirectorySortKeys: it
+// maps the clean API sort keys the mailbox front-end sends
+// (?sort=email|name|usage|status|created_at) to the BARE mailboxes columns
+// ListByDomainID orders on — this endpoint is one table, so no qualification is
+// needed. "usage" maps to last_usage_bytes to match the directory's meaning of
+// the key (the Usage column) even though the same table also carries
+// quota_bytes. Keys that only exist on the directory JOIN (domain, owner) are
+// absent, so pickSort falls back to the default order for them — harmless here
+// since the drill-down hides the Domain column anyway. Unlike the directory
+// (which REPLACES opts.Sort), this is a PASS-THROUGH: a raw column a CLI/MCP
+// caller sends (created_at, quota_bytes, local_part) is left untouched and
+// re-validated by the allowlist, so no existing caller changes behaviour.
+var mailboxListSortKeys = map[string]string{
+	"email":      "email_cached",
+	"name":       "display_name",
+	"usage":      "last_usage_bytes",
+	"status":     "is_disabled",
+	"created_at": "created_at",
 }
 
 func (r *mailboxRepo) ListByDomainID(ctx context.Context, domainID string, opts ListOptions) ([]models.Mailbox, int64, error) {
@@ -110,11 +145,31 @@ func (r *mailboxRepo) ListByDomainID(ctx context.Context, domainID string, opts 
 	if opts.Sort == "" && opts.Order == "" {
 		opts.Order = "desc"
 	}
+	if col, ok := mailboxListSortKeys[strings.ToLower(strings.TrimSpace(opts.Sort))]; ok {
+		opts.Sort = col // clean key → bare column; a raw column is left as-is
+	}
 	q := applyListOptions(base.Session(&gorm.Session{}), opts, mailboxListCols)
 	if err := q.Find(&rows).Error; err != nil {
 		return nil, 0, err
 	}
 	return rows, total, nil
+}
+
+// ListByDomainIDs batch-loads mailboxes for a set of domains in a single query
+// (JAB-374). Ordered to reproduce the per-domain ListByDomainID default order
+// (created_at DESC) within each domain, so the snapshot builder's grouped output
+// is byte-identical to the old per-domain loop. System mailboxes are included
+// (the builder never excluded them).
+func (r *mailboxRepo) ListByDomainIDs(ctx context.Context, domainIDs []string) ([]models.Mailbox, error) {
+	if len(domainIDs) == 0 {
+		return nil, nil
+	}
+	var rows []models.Mailbox
+	if err := r.db.WithContext(ctx).Where("domain_id IN ?", domainIDs).
+		Order("domain_id, created_at DESC").Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
 }
 
 // MailboxWithDomain is a mailbox joined with its domain + owner, for the
@@ -177,6 +232,87 @@ func (r *mailboxRepo) ListByOwnerWithDomain(ctx context.Context, userID string) 
 		Order("m.email_cached ASC").
 		Scan(&rows).Error
 	return rows, err
+}
+
+// mailboxDirectorySortKeys maps the clean API sort keys the admin directory
+// accepts (?sort=email|name|domain|owner|usage|status|created_at) to the
+// table-qualified column the JOIN'd query orders by. mailboxes, domains and
+// users all carry created_at, so a bare `ORDER BY created_at` is MariaDB 1052
+// "ambiguous" — every entry must be qualified. An unknown key maps to "" so
+// the query falls back to its default order; the caller's raw string is never
+// interpolated into SQL (the qualified value is re-validated by the allowlist).
+var mailboxDirectorySortKeys = map[string]string{
+	"email":      "m.email_cached",
+	"name":       "m.display_name",
+	"domain":     "d.name",
+	"owner":      "u.username",
+	"usage":      "m.last_usage_bytes",
+	"status":     "m.is_disabled",
+	"created_at": "m.created_at",
+}
+
+// mailboxDirectoryCols is the search/sort allowlist applyListOptions enforces
+// for the admin directory. Search spans the cached address, display name,
+// domain name and owner username — the same four fields the old client-side
+// filter matched (the "email / name / domain / owner" search box). u.username
+// is on the LEFT JOIN, so its LIKE is NULL→false for owner-less rows, which is
+// the correct "no match" in the OR chain. Sort accepts only the qualified
+// columns mailboxDirectorySortKeys can produce. DefaultSort reproduces the
+// historical email-ascending order.
+var mailboxDirectoryCols = ListCols{
+	Search:      []string{"m.email_cached", "m.display_name", "d.name", "u.username"},
+	Sort:        []string{"m.email_cached", "m.display_name", "d.name", "u.username", "m.last_usage_bytes", "m.is_disabled", "m.created_at"},
+	DefaultSort: "m.email_cached",
+}
+
+// ListDirectoryPage returns one server-paginated, searchable, sortable page of
+// the admin mailbox directory joined with domain + owner (JAB-370). It replaces
+// the unbounded ListAllWithDomain read behind GET /admin/mailboxes so the page
+// never materialises every mailbox on the server.
+//
+//   - System principals (the JAB-230 relay) are excluded in SQL, so the COUNT
+//     total and the page rows agree — the old handler dropped them post-query
+//     in Go, which would leave a server page one row short (GH #1056).
+//   - ownerUserID, when non-empty, scopes the read to one owner (the admin
+//     owner-scoped view, #483).
+//   - opts.Limit == 0 (no page/page_size on the request) returns every matching
+//     row unbounded — the historical behaviour the admin user-overview read
+//     still relies on; only a client that asks for a page gets one.
+//   - Sort is translated from the caller's clean key to a qualified column and
+//     whitelist-validated; an unknown key falls back to email ASC.
+//
+// The projection is mailboxInventorySelect — no password_hash / password_enc.
+func (r *mailboxRepo) ListDirectoryPage(ctx context.Context, opts ListOptions, ownerUserID string) ([]MailboxWithDomain, int64, error) {
+	base := r.db.WithContext(ctx).
+		Table("mailboxes m").
+		Joins("JOIN domains d ON d.id = m.domain_id").
+		Joins("LEFT JOIN users u ON u.id = d.user_id").
+		Where("m.system = 0") // GH #1056: the JAB-230 relay is infra, never a listed mailbox
+	if ownerUserID != "" {
+		base = base.Where("d.user_id = ?", ownerUserID) // #483 owner scope
+	}
+
+	var total int64
+	countQ := applyListOptions(base.Session(&gorm.Session{}), ListOptions{Search: opts.Search}, mailboxDirectoryCols)
+	if err := countQ.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	// Translate the clean API sort key to a qualified column; default the
+	// direction to ASC (email A→Z) when the caller specified neither, matching
+	// the pre-pagination ListAllWithDomain order (mirrors ListByDomainID's
+	// desc-default trick above).
+	opts.Sort = mailboxDirectorySortKeys[strings.ToLower(strings.TrimSpace(opts.Sort))]
+	if opts.Sort == "" && opts.Order == "" {
+		opts.Order = "asc"
+	}
+
+	var rows []MailboxWithDomain
+	q := applyListOptions(base.Session(&gorm.Session{}), opts, mailboxDirectoryCols).Select(mailboxInventorySelect)
+	if err := q.Scan(&rows).Error; err != nil {
+		return nil, 0, err
+	}
+	return rows, total, nil
 }
 
 func (r *mailboxRepo) CountByDomainID(ctx context.Context, domainID string) (int64, error) {

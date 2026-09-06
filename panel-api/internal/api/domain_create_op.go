@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dnscompile"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/domainmailops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
@@ -24,9 +26,10 @@ import (
 //
 // It stays in the api package (not a standalone domainops package) because it
 // depends on a cluster of api-package helpers — validateDomainName,
-// validateDocumentRoot, EnableDomainEmailInline, and the domainHandler methods
+// validateDocumentRoot, agentCall, and the domainHandler methods
 // findCoveringSharedCert / previewSlugConflict — and the only new caller
-// (automation) also lives in this package. Reuse, not packaging, was the goal.
+// (automation) also lives in this package. The shared email-enable step now
+// lives in internal/domainmailops (JAB-288). Reuse, not packaging, was the goal.
 
 // reverseProxyTenantUIDFloor mirrors the agent's minTenantUID (GH #1401): a
 // loopback listener owned by a uid below this is a system/service process, not
@@ -39,9 +42,9 @@ const reverseProxyTenantUIDFloor = 1000
 // matching the create() source of truth.
 
 type createDomainInput struct {
-	OwnerID         string
-	Name            string
-	DocRoot         string // "" → derived under /home/<user>/domains/<name>/public_html
+	OwnerID string
+	Name    string
+	DocRoot string // "" → derived under /home/<user>/domains/<name>/public_html
 	// ActorIsAdmin is the CALLER's privilege (not the owner's). It selects
 	// the document-root confinement: an admin actor may point the docroot
 	// anywhere under the owner's home (validateDocumentRoot), while a
@@ -50,7 +53,7 @@ type createDomainInput struct {
 	// (validateTenantDocumentRoot), the same rule the edit path enforces
 	// (GH #526). Zero value is false = strict = fail-closed, so callers that
 	// never set a custom docroot (automation) need not set it.
-	ActorIsAdmin bool
+	ActorIsAdmin    bool
 	MailProvider    string // "" → jabali
 	M365Onmicrosoft string
 	GoogleDKIM      string
@@ -67,6 +70,25 @@ type createDomainInput struct {
 	// the automation path lets the first reconciler tick bootstrap the cert,
 	// exactly like the `jabali domain create` CLI. GUI create leaves it false.
 	SkipInlineSSL bool
+	// WebDisabled / DNSDisabled (GH #1449) opt the domain OUT of a service.
+	// INVERTED on purpose: the zero value (false) means the service is ON, so
+	// every existing caller (GUI create, automation) keeps creating a
+	// full-service web+dns domain without changing a line. WebDisabled=true →
+	// docroot-less (no vhost/PHP/web-SSL): a DNS-only zone or a mail-only
+	// domain. DNSDisabled=true → the panel does not host DNS (external DNS).
+	WebDisabled bool
+	DNSDisabled bool
+	// DNSApexIPv4 (GH #1540) is the apex IP for a DNS-only zone — the "pointed
+	// IP" of the Add DNS Zone flow. Only meaningful when WebDisabled=true and
+	// DNS is on: the panel seeds a single "@ A <ip>" row at zone bootstrap and
+	// leaves it tenant-editable. Empty for every web/mail create (the apex is
+	// panel-managed). Validated in createDomainOp (must be a bare IPv4, web off,
+	// DNS on).
+	DNSApexIPv4 string
+	// DNSApexIPv6 (GH #1540 follow-up) is the optional apex IPv6 (AAAA) for a
+	// DNS-only zone. Same web-off/DNS-on gate as DNSApexIPv4; must be a bare IPv6
+	// (not an IPv4 or IPv4-mapped address). Empty when the zone has no v6 apex.
+	DNSApexIPv6 string
 }
 
 // createDomainError carries the exact HTTP shape the inline create() used, so
@@ -103,6 +125,61 @@ func createDomainOp(ctx context.Context, h *domainHandler, in createDomainInput)
 
 	if in.OwnerID == "" {
 		return nil, &createDomainError{http.StatusBadRequest, "user_id is required", ""}
+	}
+
+	// GH #1449: Web / DNS are independent services. Both default ON (the
+	// inverted *Disabled inputs are zero=false for every existing caller). A
+	// web-off domain is docroot-less (DNS-only zone / mail-only domain) and so
+	// cannot be a reverse-proxy, carry a preview URL, or have a document root.
+	webEnabled := !in.WebDisabled
+	dnsEnabled := !in.DNSDisabled
+	if !webEnabled {
+		if in.ReverseProxy {
+			return nil, &createDomainError{http.StatusBadRequest, "web_disabled_no_reverse_proxy", "a reverse-proxy domain requires web hosting"}
+		}
+		if in.TempURLEnabled {
+			return nil, &createDomainError{http.StatusBadRequest, "web_disabled_no_temp_url", "a preview URL requires web hosting"}
+		}
+		if strings.TrimSpace(in.DocRoot) != "" {
+			return nil, &createDomainError{http.StatusBadRequest, "web_disabled_no_docroot", "a web-disabled domain has no document root"}
+		}
+	}
+
+	// GH #1540: a DNS-only zone may carry a tenant-chosen apex IP (the "pointed
+	// IP") — an IPv4 (A) and/or an optional IPv6 (AAAA). Only meaningful for a
+	// web-off zone whose DNS the panel hosts: a web domain's apex is
+	// panel-managed (convergeApexAddrRecords re-asserts it), and an external-DNS
+	// domain (dns off) publishes nothing here. The web-off / DNS-on gate is
+	// shared by both families; each is then parsed as a BARE address of its own
+	// family — an IPv4 or IPv4-mapped value in the v6 field is rejected (an AAAA
+	// holding a mapped-v4 is nonsense) and vice versa. ip.String() canonicalises
+	// so a zone stores one row shape per address.
+	var dnsApexIPv4, dnsApexIPv6 string
+	raw4 := strings.TrimSpace(in.DNSApexIPv4)
+	raw6 := strings.TrimSpace(in.DNSApexIPv6)
+	if raw4 != "" || raw6 != "" {
+		if webEnabled {
+			return nil, &createDomainError{http.StatusBadRequest, "web_enabled_apex_ip", "a web domain's apex IP is managed by the panel — set an apex IP only on a DNS-only zone"}
+		}
+		if !dnsEnabled {
+			return nil, &createDomainError{http.StatusBadRequest, "dns_disabled_apex_ip", "an apex IP requires the panel to host DNS for this domain"}
+		}
+		if raw4 != "" {
+			ip := net.ParseIP(raw4)
+			if ip == nil || ip.To4() == nil {
+				return nil, &createDomainError{http.StatusBadRequest, "invalid_apex_ip", "apex IP must be a valid IPv4 address"}
+			}
+			dnsApexIPv4 = ip.String()
+		}
+		if raw6 != "" {
+			ip := net.ParseIP(raw6)
+			// To4() != nil means it parsed as IPv4 (or IPv4-mapped) — not a bare
+			// IPv6, so reject it for the AAAA field.
+			if ip == nil || ip.To4() != nil {
+				return nil, &createDomainError{http.StatusBadRequest, "invalid_apex_ipv6", "apex IPv6 must be a valid IPv6 address"}
+			}
+			dnsApexIPv6 = ip.String()
+		}
 	}
 
 	user, err := h.cfg.Users.FindByID(ctx, in.OwnerID)
@@ -146,7 +223,11 @@ func createDomainOp(ctx context.Context, h *domainHandler, in createDomainInput)
 	// is confined to the domain's own tree; an admin may use anywhere under
 	// the owner's home. See createDomainInput.ActorIsAdmin.
 	docRoot := strings.TrimSpace(in.DocRoot)
-	if in.ActorIsAdmin {
+	if !webEnabled {
+		// GH #1449: web-off domain — no document root at all (validated empty
+		// above). Leave DocRoot="" so no vhost is ever rendered for it.
+		docRoot = ""
+	} else if in.ActorIsAdmin {
 		if err := validateDocumentRoot(docRoot, *user.Username, in.Name); err != nil {
 			return nil, &createDomainError{http.StatusBadRequest, "invalid_document_root", err.Error()}
 		}
@@ -155,7 +236,7 @@ func createDomainOp(ctx context.Context, h *domainHandler, in createDomainInput)
 			return nil, &createDomainError{http.StatusBadRequest, "invalid_document_root", err.Error()}
 		}
 	}
-	if docRoot == "" {
+	if webEnabled && docRoot == "" {
 		docRoot = "/home/" + *user.Username + "/domains/" + in.Name + "/public_html"
 	}
 
@@ -207,6 +288,20 @@ func createDomainOp(ctx context.Context, h *domainHandler, in createDomainInput)
 	if sslMode == models.SSLModeNone && mailEnabled {
 		return nil, &createDomainError{http.StatusBadRequest, "ssl_none_with_email", "a mail-enabled domain needs TLS; choose le/self or set mail provider to none"}
 	}
+	// GH #1449: a domain must host at least ONE Jabali service. Web off + DNS
+	// off + no Jabali mail leaves nothing for the panel to do (external mail
+	// without our DNS publishes no records here either).
+	if !webEnabled && !dnsEnabled && !mailEnabled {
+		return nil, &createDomainError{http.StatusBadRequest, "no_service_selected", "select at least one service: web hosting, DNS, or mail"}
+	}
+	// GH #1449: a DNS-only domain (web off + no Jabali mail) has nothing to
+	// serve over TLS — force ssl_mode=none so the reconciler never tries to
+	// issue a cert for a name whose web and mail both live elsewhere. A
+	// mail-only domain (web off, mail on) keeps its le/self mode for the
+	// mail-support SANs.
+	if !webEnabled && !mailEnabled {
+		sslMode = models.SSLModeNone
+	}
 
 	now := time.Now().UTC()
 	domain := &models.Domain{
@@ -224,8 +319,15 @@ func createDomainOp(ctx context.Context, h *domainHandler, in createDomainInput)
 		SkipAutoSAN:     mailSkipSAN,
 		CreateWWW:       in.CreateWWW,
 		TempURLEnabled:  in.TempURLEnabled,
-		CreatedAt:       now,
-		UpdatedAt:       now,
+		// GH #1449: inverted storage — disabled is the non-zero (always-
+		// written) state, so a full-service create leaves both zero.
+		WebDisabled: in.WebDisabled,
+		DNSDisabled: in.DNSDisabled,
+		// GH #1540: apex IP(s) for a DNS-only zone (nil for web/mail domains).
+		DNSApexIPv4: strPtrOrNil(dnsApexIPv4),
+		DNSApexIPv6: strPtrOrNil(dnsApexIPv6),
+		CreatedAt:   now,
+		UpdatedAt:   now,
 	}
 
 	// GH #1175: a reverse-proxy domain draws a loopback port from the shared
@@ -299,8 +401,11 @@ func createDomainOp(ctx context.Context, h *domainHandler, in createDomainInput)
 
 	// JAB-170 phase 5: auto-attach a covering shared cert (HTTPS instantly, no
 	// ACME) and skip the inline ACME below.
+	// GH #1449: shared-cert auto-attach + inline SSL are web-cert fast paths.
+	// A web-off domain has no web cert (DNS-only → ssl none; mail-only → the
+	// reconciler issues its mail-support SANs on the next tick), so skip both.
 	attachedShared := false
-	if h.cfg.SharedCerts != nil {
+	if webEnabled && h.cfg.SharedCerts != nil {
 		if cert := h.findCoveringSharedCert(ctx, domain.Name, domain.UserID); cert != nil {
 			if err := h.cfg.Domains.SetSharedCertificate(ctx, domain.ID, &cert.ID, models.SSLModeShared); err == nil {
 				domain.SSLMode = models.SSLModeShared
@@ -316,7 +421,7 @@ func createDomainOp(ctx context.Context, h *domainHandler, in createDomainInput)
 	// Inline SSL (30s): ACME with self-signed fallback. Never errors — cert
 	// state is already in DB. JAB-233: automation skips this (SkipInlineSSL);
 	// the first reconciler tick bootstraps the cert instead.
-	if !attachedShared && !in.SkipInlineSSL && h.cfg.Reconciler != nil {
+	if webEnabled && !attachedShared && !in.SkipInlineSSL && h.cfg.Reconciler != nil {
 		inlineCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		h.cfg.Reconciler.ReconcileSSLInline(inlineCtx, domain)
 		cancel()
@@ -325,8 +430,8 @@ func createDomainOp(ctx context.Context, h *domainHandler, in createDomainInput)
 	// Auto-enable email (best-effort, ADR-0013). A failure degrades to
 	// email_enabled=0 + the UI retry switch; not returned in the response.
 	if mailProvider == models.MailProviderJabali && h.cfg.Agent != nil && h.cfg.DNSZones != nil && h.cfg.DNSRecords != nil {
-		if _, _, warnings, err := EnableDomainEmailInline(ctx, enableDomainEmailDeps{
-			Agent:          h.cfg.Agent,
+		if _, _, warnings, err := domainmailops.Enable(ctx, domainmailops.Deps{
+			Call:           agentCall(h.cfg.Agent),
 			Domains:        h.cfg.Domains,
 			DNSZones:       h.cfg.DNSZones,
 			DNSRecords:     h.cfg.DNSRecords,

@@ -369,77 +369,34 @@ func (h *databaseHandler) delete(c *gin.Context) {
 		return
 	}
 
-	// Guard: wordpress_installs.db_id is RESTRICT. Surface a 409 with
-	// the install id so the caller knows what to tear down first.
-	if h.cfg.WordPressInstalls != nil {
-		wp, wErr := h.cfg.WordPressInstalls.FindByDBID(ctx, d.ID)
-		if wErr != nil && !isNotFound(wErr) {
-			slog.ErrorContext(ctx, "databases.delete: wp in-use probe failed", "err", wErr, "db_id", d.ID)
+	// The complete deletion path — attachment refusal, engine-correct grant
+	// revoke, schema drop, and metadata teardown, all in the fail-safe phase
+	// order — lives in dbops so this handler and the `jabali db delete` CLI
+	// cannot drift (JAB-275). This handler owns only authorization (above),
+	// dependency wiring, and status-code mapping.
+	if err := dbops.Delete(ctx, dbops.Deps{
+		Databases:      h.cfg.Databases,
+		DatabaseGrants: h.cfg.DatabaseGrants,
+		DatabaseUsers:  h.cfg.DatabaseUsers,
+		Installs:       h.cfg.WordPressInstalls,
+		Agent:          h.cfg.Agent,
+		Log:            slog.Default(),
+	}, dbops.DeleteInput{ID: d.ID}); err != nil {
+		var attached *dbops.AttachedError
+		switch {
+		case errors.As(err, &attached):
+			// application_installs.db_id is ON DELETE CASCADE — dropping the
+			// database would silently delete the install row, so refuse and
+			// name the install to tear down first.
+			c.JSON(http.StatusConflict, gin.H{"error": "in_use_by_wordpress", "wordpress_id": attached.InstallID})
+		case errors.Is(err, dbops.ErrNotFound):
+			c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
+		case errors.Is(err, dbops.ErrAgentFailed):
+			respondAgentErr(c, "agent_failed", err)
+		default:
+			slog.ErrorContext(ctx, "databases.delete: dbops.Delete failed", "err", err, "db_id", d.ID)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
-			return
 		}
-		if wp != nil {
-			c.JSON(http.StatusConflict, gin.H{"error": "in_use_by_wordpress", "wordpress_id": wp.ID})
-			return
-		}
-	}
-
-	if h.cfg.Agent == nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
-		return
-	}
-
-	agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-
-	// Cascade grants: database_user_grants.database_id is RESTRICT, so the
-	// final row delete would 500 if any grant is left behind. Revoke on the
-	// MariaDB side first (idempotent since b723fe1), then drop the panel row.
-	if h.cfg.DatabaseGrants != nil {
-		grants, gErr := h.cfg.DatabaseGrants.ListByDatabaseID(ctx, d.ID)
-		if gErr != nil {
-			slog.ErrorContext(ctx, "databases.delete: list grants failed", "err", gErr, "db_id", d.ID)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
-			return
-		}
-		for _, g := range grants {
-			var username string
-			if h.cfg.DatabaseUsers != nil {
-				if u, uErr := h.cfg.DatabaseUsers.FindByID(ctx, g.DatabaseUserID); uErr == nil && u != nil {
-					username = u.Username
-				}
-			}
-			if username != "" {
-				if _, rErr := h.cfg.Agent.Call(agentCtx, "db_user.revoke", map[string]any{
-					"db_name":      d.Name,
-					"db_user_name": username,
-				}); rErr != nil {
-					slog.WarnContext(ctx, "databases.delete: revoke failed (best-effort)", "err", rErr, "db", d.Name, "user", username)
-				}
-			}
-			if dErr := h.cfg.DatabaseGrants.Delete(ctx, g.ID); dErr != nil {
-				slog.ErrorContext(ctx, "databases.delete: grant row delete failed", "err", dErr, "grant_id", g.ID)
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
-				return
-			}
-		}
-	}
-
-	// Drop the database on the engine the row was created with.
-	// d.Name is the full prefixed name.
-	dropCmd := "db.drop"
-	if d.Engine == "postgres" {
-		dropCmd = "db.postgres.drop_db"
-	}
-	if _, err := h.cfg.Agent.Call(agentCtx, dropCmd, map[string]any{"db_name": d.Name}); err != nil {
-		slog.ErrorContext(ctx, "databases.delete: agent drop failed", "err", err, "db_name", d.Name, "engine", d.Engine)
-		respondAgentErr(c, "agent_failed", err)
-		return
-	}
-
-	if err := h.cfg.Databases.Delete(ctx, d.ID); err != nil {
-		slog.ErrorContext(ctx, "databases.delete: row delete failed", "err", err, "db_id", d.ID)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
 

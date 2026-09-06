@@ -230,7 +230,16 @@ export function useCreateMailbox(): UseMutationResult<
     },
     onSuccess: (_data, { domainId }) => {
       qc.invalidateQueries({ queryKey: ["list", "mailboxes", domainId] });
-      qc.invalidateQueries({ queryKey: ["admin", "mailboxes"] });
+      // JAB-370: the admin Mail tab is now server-paginated via
+      // useTableURL({ resource: "admin/mailboxes" }), keyed ["list",
+      // "admin/mailboxes", …params]. Prefix-invalidate that so an edit /
+      // delete / create refreshes the visible page.
+      qc.invalidateQueries({ queryKey: ["list", "admin/mailboxes"] });
+      // JAB-370 Workspace: the tenant Mailboxes tab is now server-paginated via
+      // useTableURL({ resource: "me/mailboxes" }), keyed ["list", "me/mailboxes",
+      // …params]. Prefix-invalidate it so a create/edit/delete refreshes the
+      // visible page instead of leaving a stale (or ghost) row.
+      qc.invalidateQueries({ queryKey: ["list", "me/mailboxes"] });
     },
   });
 }
@@ -247,7 +256,16 @@ export function useDeleteMailbox(): UseMutationResult<
     },
     onSuccess: (_data, { domainId }) => {
       qc.invalidateQueries({ queryKey: ["list", "mailboxes", domainId] });
-      qc.invalidateQueries({ queryKey: ["admin", "mailboxes"] });
+      // JAB-370: the admin Mail tab is now server-paginated via
+      // useTableURL({ resource: "admin/mailboxes" }), keyed ["list",
+      // "admin/mailboxes", …params]. Prefix-invalidate that so an edit /
+      // delete / create refreshes the visible page.
+      qc.invalidateQueries({ queryKey: ["list", "admin/mailboxes"] });
+      // JAB-370 Workspace: the tenant Mailboxes tab is now server-paginated via
+      // useTableURL({ resource: "me/mailboxes" }), keyed ["list", "me/mailboxes",
+      // …params]. Prefix-invalidate it so a create/edit/delete refreshes the
+      // visible page instead of leaving a stale (or ghost) row.
+      qc.invalidateQueries({ queryKey: ["list", "me/mailboxes"] });
       // JAB-333: a deleted mailbox also disappears from the tenant screen's
       // group-membership and autoresponder panels — invalidate those shared
       // keys so they don't render a ghost row until the next refetch.
@@ -279,19 +297,11 @@ export interface AdminMailbox extends Mailbox {
   user_username: string;
 }
 
-// useAdminMailboxes lists every mailbox on the server (admin-only) for the
-// server-wide Mail tab.
-export function useAdminMailboxes(): UseQueryResult<AdminMailbox[]> {
-  return useQuery({
-    queryKey: ["admin", "mailboxes"],
-    queryFn: async () => {
-      const { data } = await apiClient.get<{ data?: AdminMailbox[] }>(
-        "/admin/mailboxes",
-      );
-      return data.data ?? [];
-    },
-  });
-}
+// The server-wide admin Mail tab lists mailboxes via useTableURL
+// ({ resource: "admin/mailboxes" }) so the directory is server-paginated
+// (JAB-370) — there is no bulk useAdminMailboxes hook. The AdminMailbox row
+// type below is still the shared shape for that page and the owner-scoped
+// AdminUserOverview read.
 
 // useUpdateMailbox is the general partial-update PATCH (GH #197 + admin
 // Mail tab): any provided field (display_name / quota_bytes / is_disabled)
@@ -324,7 +334,16 @@ export function useUpdateMailbox(): UseMutationResult<
         qc.invalidateQueries({ queryKey: ["list", "mailboxes", domainId] });
       }
       qc.invalidateQueries({ queryKey: ["list", "mailboxes"] });
-      qc.invalidateQueries({ queryKey: ["admin", "mailboxes"] });
+      // JAB-370: the admin Mail tab is now server-paginated via
+      // useTableURL({ resource: "admin/mailboxes" }), keyed ["list",
+      // "admin/mailboxes", …params]. Prefix-invalidate that so an edit /
+      // delete / create refreshes the visible page.
+      qc.invalidateQueries({ queryKey: ["list", "admin/mailboxes"] });
+      // JAB-370 Workspace: the tenant Mailboxes tab is now server-paginated via
+      // useTableURL({ resource: "me/mailboxes" }), keyed ["list", "me/mailboxes",
+      // …params]. Prefix-invalidate it so a create/edit/delete refreshes the
+      // visible page instead of leaving a stale (or ghost) row.
+      qc.invalidateQueries({ queryKey: ["list", "me/mailboxes"] });
     },
   });
 }

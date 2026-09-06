@@ -74,10 +74,14 @@ func (r *panelCertRepo) ListAll(ctx context.Context) ([]*models.PanelCertificate
 	return rows, nil
 }
 
-func (r *panelCertRepo) ensureOne(ctx context.Context, kind, hostname string) (*models.PanelCertificate, error) {
+// ensureOne loads (or creates) the row for kind. When the row already
+// exists and renameOnDrift is true, its hostname is re-synced to the
+// current value on drift; when renameOnDrift is false the existing
+// hostname is left exactly as seeded (JAB-389 — see EnsureDefault).
+func (r *panelCertRepo) ensureOne(ctx context.Context, kind, hostname string, renameOnDrift bool) (*models.PanelCertificate, error) {
 	existing, err := r.GetByKind(ctx, kind)
 	if err == nil {
-		if existing.Hostname != hostname && hostname != "" {
+		if renameOnDrift && existing.Hostname != hostname && hostname != "" {
 			existing.Hostname = hostname
 			if uerr := r.Upsert(ctx, existing); uerr != nil {
 				return nil, uerr
@@ -102,11 +106,20 @@ func (r *panelCertRepo) ensureOne(ctx context.Context, kind, hostname string) (*
 }
 
 func (r *panelCertRepo) EnsureDefault(ctx context.Context, hostname string) (*models.PanelCertificate, error) {
-	host, err := r.ensureOne(ctx, models.PanelCertKindHostname, hostname)
+	// The hostname cert tracks the panel FQDN: on a hostname change it must
+	// follow so the panel keeps serving a cert for the name it answers on.
+	host, err := r.ensureOne(ctx, models.PanelCertKindHostname, hostname, true)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := r.ensureOne(ctx, models.PanelCertKindMail, models.PanelMailHostname(hostname)); err != nil {
+	// JAB-389: the mail cert is SEEDED from the panel hostname at creation
+	// (mail.<hostname>) but is never renamed afterwards. Changing the panel
+	// access hostname must not silently cascade the panel mail cert to
+	// mail.<new-fqdn> and start pursuing a new Let's Encrypt cert for it —
+	// the operator may deliberately keep mail on the original name. The mail
+	// identity stays pinned to whatever it was seeded with; changing it is a
+	// separate, deliberate action (JAB-390), not a side effect of a rename.
+	if _, err := r.ensureOne(ctx, models.PanelCertKindMail, models.PanelMailHostname(hostname), false); err != nil {
 		return nil, err
 	}
 	return host, nil

@@ -13,6 +13,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/middleware"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/notifchannelops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/notifications"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/notifsecret"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
@@ -36,6 +37,11 @@ type NotificationsChannelsHandlerConfig struct {
 	// SSOKey opens sealed channel secrets for the synchronous "Send test"
 	// path (JAB-171). Nil = secrets used as stored (legacy plaintext).
 	SSOKey *ssokey.Key
+	// Users resolves the OWNER of a tenant-owned channel so an admin edit of a
+	// tenant email channel re-forces own-address delivery, the same invariant
+	// the tenant UI enforces (JAB-308 owner policy). Nil ⇒ an admin cannot
+	// change a tenant email channel's config (fail-closed 503).
+	Users repository.UserRepository
 }
 
 // redactChannelSecrets blanks every secret field on each channel's config so a
@@ -195,6 +201,28 @@ func (h *notificationsChannelsHandler) update(c *gin.Context) {
 		// passes on a preserved secret.
 		merged := *req.Config
 		notifsecret.PreserveEmptySecrets(&merged, existing.Config)
+		// A tenant-owned email channel may only deliver to its owner's own
+		// account address over local submission — the same own-address invariant
+		// the tenant handler forces on create and edit. Re-force it here too so
+		// an admin edit can't repoint a tenant email channel at an arbitrary
+		// destination or a custom SMTP relay (JAB-308: owner policy holds
+		// regardless of adapter). Runs after PreserveEmptySecrets so a preserved
+		// SMTP password is cleared by the forcing, and before validation so the
+		// forced fields are what gets validated. Server-wide channels (no owner)
+		// are untouched — an admin may point those anywhere.
+		if existing.UserID != nil && existing.Kind == models.NotificationChannelKindEmail {
+			ownerEmail, ok := h.resolveTenantOwnerEmail(c, *existing.UserID)
+			if !ok {
+				return
+			}
+			if err := notifchannelops.ForceOwnEmailConfig(ownerEmail, &merged); err != nil {
+				c.JSON(http.StatusUnprocessableEntity, gin.H{
+					"error":   "no_account_email",
+					"message": "the channel owner's account has no email address to deliver to",
+				})
+				return
+			}
+		}
 		if err := validateChannelKindAndConfig(existing.Kind, merged); err != nil {
 			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
 			return
@@ -211,6 +239,25 @@ func (h *notificationsChannelsHandler) update(c *gin.Context) {
 	}
 	notifsecret.Redact(&existing.Config)
 	c.JSON(http.StatusOK, existing)
+}
+
+// resolveTenantOwnerEmail loads the account email of a tenant-owned channel's
+// OWNER (userID is the row's UserID, not the admin caller) so an admin edit can
+// re-force own-address delivery. Mirrors the tenant handler's resolveOwnerEmail:
+// a nil users repo is fail-closed 503 (the admin cannot safely edit a tenant
+// email channel without confirming the owner address); a lookup miss returns an
+// empty string, which ForceOwnEmailConfig rejects as no_account_email rather
+// than persisting an unforced destination.
+func (h *notificationsChannelsHandler) resolveTenantOwnerEmail(c *gin.Context, userID string) (string, bool) {
+	if h.cfg.Users == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "owner lookup unavailable"})
+		return "", false
+	}
+	u, err := h.cfg.Users.FindByID(c.Request.Context(), userID)
+	if err != nil || u == nil {
+		return "", true
+	}
+	return u.Email, true
 }
 
 func (h *notificationsChannelsHandler) delete(c *gin.Context) {

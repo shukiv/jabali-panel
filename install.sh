@@ -4390,6 +4390,13 @@ SQL
     _log "PowerDNS schema already present in jabali_pdns — skipping reload"
   fi
 
+  # GH #1459: the stock schema just loaded creates records.content as
+  # latin1, which fails the INSERT (MariaDB 1366) for any UTF-8 TXT / IDN
+  # record and rolls back the whole atomic zone upsert. Widen it here too,
+  # so fresh installs are correct out of the box (the same converger also
+  # runs on `jabali update` for the existing fleet). Idempotent + gated.
+  ensure_pdns_records_utf8mb4
+
   # Write pdns.conf. Single file, minimal surface.
   #
   # Idempotency (M6.3): render to $pdns_conf.new first; if byte-identical
@@ -5919,6 +5926,54 @@ AXFRDENY
       || _warn "pdns restart failed after AXFR config — new setting applies on next pdns restart"
   else
     _log "pdns not active — AXFR ACL staged in $conf for next start"
+  fi
+}
+
+# GH #1459: widen jabali_pdns.records.content to utf8mb4 on EXISTING boxes.
+#
+# The stock PowerDNS schema (install_powerdns loads it from
+# schema.mysql.sql) creates the whole `records` table as latin1, even
+# though the jabali_pdns DATABASE default is utf8mb4. The agent connects
+# charset=utf8mb4 (pdns.ReadEnvAndConnect), so a record whose content
+# carries a code point outside latin1 — a UTF-8 TXT value, an IDN target —
+# fails the INSERT with MariaDB error 1366 ("Incorrect string value"). And
+# because dns.zone.upsert wraps the domains INSERT + every record INSERT in
+# ONE transaction, that single failure rolls back the WHOLE zone: the
+# domain silently never appears in pdns (dig returns nothing) while the
+# panel still shows the zone "provisioned" (that status is the dns_zones
+# row, not pdns). Reporter hit exactly this on a HestiaCP migration.
+#
+# install_powerdns does NOT run on `jabali update`, so this converger
+# carries the widening to the fleet (same lesson as ensure_pdns_zone_cache
+# / ensure_pdns_axfr_deny above).
+#
+# Only `content` moves — and to TEXT, because utf8mb4 caps VARCHAR at
+# ~16k chars while the current column is varchar(64000); TEXT holds 65535
+# bytes so no existing value can be truncated by the conversion. content
+# is unindexed, so there is no index key-length concern. `name` stays
+# latin1 on purpose: the panel punycode/length-validates every record and
+# zone name at compile (dnscompile.NormalizeName), so names are always
+# ASCII and latin1-safe — and the `nametype_index (name,type)` key stays
+# a cheap latin1 index. `ordername` (latin1_bin, DNSSEC canonical order)
+# is left untouched. Idempotent + gated on the current charset so a
+# converged box no-ops after the one-time ALTER.
+ensure_pdns_records_utf8mb4() {
+  # No jabali_pdns.records on a box where the DNS module was never installed.
+  local have
+  have="$(mariadb -uroot -Ns -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='jabali_pdns' AND table_name='records';" 2>/dev/null || echo 0)"
+  [[ "$have" == "1" ]] || return 0
+
+  local cur
+  cur="$(mariadb -uroot -Ns -e "SELECT CHARACTER_SET_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='jabali_pdns' AND TABLE_NAME='records' AND COLUMN_NAME='content';" 2>/dev/null)"
+  if [[ "$cur" == "utf8mb4" ]]; then
+    return 0  # already widened — no-op
+  fi
+
+  _log "widening jabali_pdns.records.content to utf8mb4 (GH #1459 — UTF-8 TXT / IDN records were rolling back whole zones on migration)"
+  if mariadb -uroot jabali_pdns -e "ALTER TABLE records MODIFY content TEXT CHARACTER SET utf8mb4 DEFAULT NULL;"; then
+    _ok "jabali_pdns.records.content widened to utf8mb4 (was ${cur:-latin1}) — UTF-8 record content now stores instead of failing the atomic zone upsert"
+  else
+    _warn "failed to widen jabali_pdns.records.content to utf8mb4 — UTF-8 TXT / IDN records may still fail to provision (GH #1459)"
   fi
 }
 
@@ -7455,6 +7510,37 @@ _nginx_http2_form() {
   return 0
 }
 
+# GH #1507: the panel :8443 vhost serves its HSTS header via an include snippet
+# whose content depends on the cert kind. Strict-Transport-Security over a
+# SELF-SIGNED cert hard-blocks the browser with no exception path (and a compliant
+# browser discards STS received over an unauthenticated connection per RFC 6797,
+# so it protects nothing there) — so the header is OMITTED until a CA cert is
+# deployed. jabali-panel-cert.sh writes it ON at LE deploy; the ssl.panel.selfsign
+# agent verb writes it OFF on a self-signed regen. Fail-safe: any inspection error
+# resolves to OFF — a missing header is harmless, a wrong ON is the lockout this
+# fixes. The ON body is kept byte-identical to jabali-panel-cert.sh (drift test).
+_write_panel_hsts_snippet() {
+  local cert_file="${1:-/etc/jabali/tls/panel.crt}"
+  local snippet="/etc/nginx/snippets/jabali-panel-hsts.conf"
+  install -d -m 0755 /etc/nginx/snippets
+  local issuer_o=""
+  if [[ -f "$cert_file" ]]; then
+    issuer_o="$(openssl x509 -in "$cert_file" -noout -issuer 2>/dev/null \
+      | sed -n 's/.*O *= *\([^,/]*\).*/\1/p' | sed 's/[[:space:]]*$//')"
+  fi
+  if [[ -n "$issuer_o" && "$issuer_o" != "Jabali Panel" ]]; then
+    cat > "$snippet" <<'HSTS_ON'
+# GH #1507: panel serves a CA-issued cert — HSTS enabled.
+add_header Strict-Transport-Security "max-age=31536000" always;
+HSTS_ON
+  else
+    cat > "$snippet" <<'HSTS_OFF'
+# GH #1507: HSTS omitted — the panel is serving a self-signed cert. It hard-blocks
+# the browser over an untrusted cert; enabled automatically once a CA cert deploys.
+HSTS_OFF
+  fi
+}
+
 install_nginx_panel_vhost() {
   _log "installing nginx panel vhost (M25 Step 4 — TLS terminator on :8443)"
 
@@ -7531,6 +7617,10 @@ d}" "$panel_vhost_file"
   mkdir -p /etc/nginx/sites-available/includes /etc/nginx/snippets
   [[ -f /etc/nginx/sites-available/includes/phpmyadmin.conf ]] || : > /etc/nginx/sites-available/includes/phpmyadmin.conf
   [[ -f /etc/nginx/snippets/jabali-adminer.conf ]] || : > /etc/nginx/snippets/jabali-adminer.conf
+  # GH #1507: the vhost `include`s the HSTS snippet — it MUST exist before the
+  # nginx -t below or the whole panel vhost fails validation. Content is keyed on
+  # the live cert kind (self-signed → empty header; CA → HSTS on).
+  _write_panel_hsts_snippet "$tls_cert"
 
   # GH #1146: the panel vhost's /dav/ location references limit_req zone
   # `jabali_webdav`, which is declared at http{} scope — install it into conf.d
@@ -7727,6 +7817,10 @@ server {
     listen [::]:443 ssl${_NGX_H2_PARAM};
     listen ${JABALI_SRV_IPV4}:443 ssl${_NGX_H2_PARAM};
     ${_NGX_H2_DIR}
+    # JAB-389: the nginx.panel_landing_rehost agent verb re-points this
+    # server_name on a live panel hostname change. It matches a single-value
+    # `server_name <host>;` on this line — keep it one host, no www. alias, the
+    # semicolon on the same line, or the verb silently no-ops on every rename.
     server_name ${JABALI_SRV_HOSTNAME};
 
     ssl_certificate     ${tls_cert};
@@ -9861,9 +9955,21 @@ install_crowdsec_appsec() {
   local acquis_dir="/etc/crowdsec/acquis.d"
   install -d -m 0755 "$acquis_dir"
   local acquis_file="$acquis_dir/jabali-appsec.yaml"
-  if [[ ! -f "$_appsec_cfg" ]]; then
+  # AppSec bot detection (CrowdSec 1.8) composes extra appsec-configs into
+  # this acquis via the plural `appsec_configs:` key — written by the agent
+  # (security.crowdsec.appsec.botdetection.set) and owned by it while on.
+  # This plural-check MUST come first — before both the singular heredoc AND
+  # the fresh-install `rm -f` below. The singular heredoc would clobber the
+  # composition back to OFF on every `jabali update`; the `rm -f` (reachable
+  # via `jabali repair` / a half-failed update / a hand-deleted config) would
+  # delete the acquis entirely, leaving a bot-on box with NO AppSec listener
+  # after the next crowdsec restart. So on a plural acquis: touch nothing. The
+  # agent rewrites it to the singular form when the operator turns it off.
+  if [[ -f "$acquis_file" ]] && grep -qE '^appsec_configs:' "$acquis_file"; then
+    _log "AppSec acquis is in bot-detection composition mode (agent-managed) — leaving it intact"
+  elif [[ ! -f "$_appsec_cfg" ]]; then
     _warn "appsec config not present yet (binary not built — fresh install); skipping AppSec acquis. 'jabali update' will wire it after the build."
-    rm -f "$acquis_file"   # drop any stale acquis from a prior partial run
+    rm -f "$acquis_file"   # drop any stale singular acquis from a prior partial run
   else
   local desired_acquis=$'# Managed by jabali install.sh — M27 AppSec geoblock.\n# TCP loopback listener. crowdsec-nginx-bouncer dials this via\n# APPSEC_URL=http://127.0.0.1:7422. Not exposed outside the host.\nappsec_config: crowdsecurity/jabali-appsec\nlabels:\n  type: appsec\nlisten_addr: 127.0.0.1:7422\nsource: appsec\n'
   if [[ ! -f "$acquis_file" ]] || ! cmp -s <(printf '%s' "$desired_acquis") "$acquis_file"; then
@@ -10078,7 +10184,19 @@ install_crowdsec_nginx_bouncer() {
     _spin "apt install crowdsec-nginx-bouncer" \
       apt-get install -y -qq --no-install-recommends crowdsec-nginx-bouncer
   else
-    _log "crowdsec-nginx-bouncer already installed"
+    # Install-only-if-absent freezes existing boxes at whatever bouncer
+    # version first landed (the Adminer-freeze shape,
+    # feedback_install_download_gate_freezes_version). AppSec bot detection
+    # (CrowdSec 1.8) needs the challenge remediation, which the bouncer only
+    # learned to serve in 1.2.x (challenge.lua) — so a fleet box stuck on
+    # 1.1.6 could never enforce it. Pull the packagecloud candidate on every
+    # run. --only-upgrade is a no-op when already current; confold keeps our
+    # managed conf (the jabali-nginx key + APPSEC_URL below are rewritten
+    # regardless), and the new documented default lands as .dpkg-dist.
+    _spin "apt upgrade crowdsec-nginx-bouncer (packagecloud candidate)" \
+      apt-get install -y -qq --only-upgrade \
+        -o Dpkg::Options::=--force-confold -o Dpkg::Options::=--force-confdef \
+        crowdsec-nginx-bouncer
   fi
 
   local bouncer_conf="/etc/crowdsec/bouncers/crowdsec-nginx-bouncer.conf"
@@ -10956,8 +11074,8 @@ install_malware_stack() {
   # YARA-X (the `yr` binary) — Rust rewrite of YARA, full module support
   # including the `hash` module that libclamav YARA can't load. maldet
   # 2.0.1+ prefers `yr` over libyara when both are present.
-  local YARAX_VERSION="1.19.0"
-  local YARAX_SHA256="a97d78189e3548797ac45b7b4a5fd8975783861875c594f772ec9b8bb5fa4d72"
+  local YARAX_VERSION="1.20.0"
+  local YARAX_SHA256="cabb8df46492fff59c51261302c71ed9cb2cef393d3f0ca560801a34a8e24cbe"
   if ! command -v yr >/dev/null 2>&1 || \
      [[ "$(yr --version 2>/dev/null | awk '{print $2}')" != "$YARAX_VERSION" ]]; then
     local tmp_yrx
@@ -11103,7 +11221,7 @@ YARA_EX
   # scripts/deps-check.sh in the monthly deps issue). signature-base has
   # no tagged releases, so the pin is a commit SHA. Pin bumps require a
   # PR review, same as LMD_VERSION/LMD_SHA256.
-  local SIGBASE_COMMIT="e737ebd96c27a52ee99485d4d3e02e9c256d1d3a" # 2026-08-03 "fix: FPs"
+  local SIGBASE_COMMIT="278165d7845decece517f756cf92ff4a41938d1e" # 2026-08-31 "rules for Virtualizor compromise"
   #
   # Custom YARA scanner picks up rules via the maldet 2.0.1 drop-in dir
   # at /usr/local/maldetect/sigs/custom.yara.d/. We symlink:
@@ -15429,6 +15547,11 @@ provision_new_software() {
   # JAB-350: same reasoning — pin the global AXFR ACL to loopback on update so a
   # permissive global on an existing host stops leaving zones internet-transferable.
   ensure_pdns_axfr_deny
+  # GH #1459: same reasoning — widen jabali_pdns.records.content to utf8mb4 on
+  # update so a UTF-8 TXT / IDN record stops rolling back the whole zone's
+  # atomic upsert (the stock pdns schema is latin1; install_powerdns, which
+  # would fix it, does not run on this path).
+  ensure_pdns_records_utf8mb4
   # JAB-352: same reasoning — carry the SSH forwarding-lockdown drop-in to boxes
   # that only ever update (install_sftp_sshd_config runs on fresh install only),
   # so an existing tenant key can't tunnel into loopback-only services.

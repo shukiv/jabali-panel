@@ -314,8 +314,20 @@ export async function restoreDatabaseUpload(
 // (a 2.7 GB dump drops from ~270 requests to ~34), which matters a lot on fast
 // links where per-request latency dominated. Note it stays below the 90 MB
 // single-shot threshold, which already sends bigger single requests via CF.
-const RESTORE_CHUNK_SIZE = 80 * 1024 * 1024;
-const RESTORE_CHUNK_THRESHOLD = 90 * 1024 * 1024;
+// GH #1410: one upload chunk size across the whole panel. The File Manager
+// upload and the DB restore both send 80 MB chunks so a big upload uses ~8x
+// fewer requests (a 600 MB file → ~8 chunks, not 60) while staying under the
+// ~100 MB Cloudflare/proxy body cap that chunking exists to dodge. Exported so
+// UploadDrawer / filesApi use the exact same value — the reporter's "same limit
+// everywhere", and a single lever so the two paths can never drift again.
+export const UPLOAD_CHUNK_BYTES = 80 * 1024 * 1024;
+// Files at or below this upload as one request; above it they chunk. 90 MB keeps
+// a single-shot POST safely under the CF cap (a ~100 MB multipart would exceed
+// it once boundary overhead is added).
+export const UPLOAD_SINGLE_SHOT_MAX = 90 * 1024 * 1024;
+
+const RESTORE_CHUNK_SIZE = UPLOAD_CHUNK_BYTES;
+const RESTORE_CHUNK_THRESHOLD = UPLOAD_SINGLE_SHOT_MAX;
 
 function lsGet(k: string): string | null {
   try {
@@ -469,6 +481,11 @@ export async function restoreDatabaseUploadAuto(
 export interface UploadedBackupInfo {
   user: { id: string; username: string; email?: string; is_admin?: boolean };
   components: string[];
+  // GH #1408 create-from-manifest: target_exists is false when the bundle's own
+  // user isn't on this box yet (fresh-box DR); create_supported is true when the
+  // server can create it (Packages wired). Both optional for old responses.
+  target_exists?: boolean;
+  create_supported?: boolean;
 }
 
 // uploadBackupArchiveChunked streams a downloaded account backup .tar to the
@@ -478,6 +495,7 @@ export interface UploadedBackupInfo {
 export async function uploadBackupArchiveChunked(
   file: File,
   onProgress?: (p: RestoreUploadProgress) => void,
+  base = "/admin/backups", // GH #1408: "/me/backups" for tenant self-service restore
 ): Promise<string> {
   const chunkSize = RESTORE_CHUNK_SIZE;
   const totalChunks = Math.max(1, Math.ceil(file.size / chunkSize));
@@ -508,7 +526,7 @@ export async function uploadBackupArchiveChunked(
       ...(isLast ? { final: "1" } : {}),
     });
     await apiClient.post(
-      `/admin/backups/restore-upload?${params.toString()}`,
+      `${base}/restore-upload?${params.toString()}`,
       file.slice(start, end),
       {
         headers: { "Content-Type": "application/octet-stream" },
@@ -524,9 +542,10 @@ export async function uploadBackupArchiveChunked(
 
 export async function inspectUploadedBackup(
   uploadId: string,
+  base = "/admin/backups",
 ): Promise<UploadedBackupInfo> {
   const { data } = await apiClient.post<UploadedBackupInfo>(
-    "/admin/backups/restore-upload/inspect",
+    `${base}/restore-upload/inspect`,
     { upload_id: uploadId },
   );
   return data;
@@ -546,10 +565,19 @@ export async function applyUploadedBackupRestore(
   uploadId: string,
   targetUsername: string,
   components: string[],
+  base = "/admin/backups", // GH #1408: "/me/backups" forces target = the caller
+  // GH #1408 create-from-manifest: when the target user doesn't exist yet,
+  // createUser creates it from the bundle (admin only) with the chosen package.
+  opts?: { createUser?: boolean; packageId?: string | null },
 ): Promise<UploadedBackupRestoreResult> {
   await apiClient.post(
-    "/admin/backups/restore-upload/apply",
-    { upload_id: uploadId, target_username: targetUsername, components },
+    `${base}/restore-upload/apply`,
+    {
+      upload_id: uploadId,
+      target_username: targetUsername,
+      components,
+      ...(opts?.createUser ? { create_user: true, package_id: opts.packageId ?? null } : {}),
+    },
   );
   const deadline = Date.now() + 65 * 60 * 1000; // matches the server's 60-min cap
   for (;;) {
@@ -557,7 +585,7 @@ export async function applyUploadedBackupRestore(
     let s: RestoreUploadStatus | null = null;
     try {
       const resp = await apiClient.get<RestoreUploadStatus>(
-        "/admin/backups/restore-upload/status",
+        `${base}/restore-upload/status`,
         { params: { upload_id: uploadId } },
       );
       s = resp.data;
@@ -583,10 +611,19 @@ interface RestoreUploadStatus {
 
 // === GH #1408 phase 2: restore from an uploaded full-server container ===
 
+export interface FullContainerUserStatus {
+  username: string;
+  exists: boolean;
+}
+
 export interface FullContainerInfo {
   run_id: string;
   users: string[];
   has_system: boolean;
+  // GH #1408 slice 2: per-user existence + whether the server can create the
+  // missing ones (Packages wired). Older panels omit these.
+  user_status?: FullContainerUserStatus[];
+  create_supported?: boolean;
 }
 
 export async function inspectFullServerContainer(
@@ -612,11 +649,16 @@ export async function applyFullServerRestore(
   uploadId: string,
   usernames: string[],
   includeSystem: boolean,
+  // GH #1408 slice 2: create the container's missing users before restoring
+  // (non-admin bundles only), optionally onto a chosen package.
+  opts?: { createMissing?: boolean; packageId?: string | null },
 ): Promise<FullRestoreResult> {
   await apiClient.post("/admin/system/full-restore-upload/apply", {
     upload_id: uploadId,
     usernames,
     include_system: includeSystem,
+    create_missing: opts?.createMissing ?? false,
+    package_id: opts?.packageId ?? null,
   });
   const deadline = Date.now() + 65 * 60 * 1000;
   for (;;) {

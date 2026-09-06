@@ -16,6 +16,11 @@ import (
 type EmailForwarderRepository interface {
 	FindByID(ctx context.Context, id string) (*models.EmailForwarder, error)
 	ListByDomainID(ctx context.Context, domainID string, opts ListOptions) ([]models.EmailForwarder, int64, error)
+	// ListByDomainIDs batch-loads ALL forwarders for many domains in one query
+	// (JAB-374). Unlike ListByUserID it does NOT filter mailbox_id IS NOT NULL, so
+	// it returns the same set as the per-domain ListByDomainID (aliases included).
+	// Ordered domain_id, created_at DESC to match ListByDomainID within a domain.
+	ListByDomainIDs(ctx context.Context, domainIDs []string) ([]models.EmailForwarder, error)
 	ListByMailboxID(ctx context.Context, mailboxID string, opts ListOptions) ([]models.EmailForwarder, int64, error)
 	ListByUserID(ctx context.Context, userID string, opts ListOptions) ([]models.EmailForwarder, int64, error)
 	ListAll(ctx context.Context, opts ListOptions) ([]models.EmailForwarder, int64, error)
@@ -65,6 +70,22 @@ func (r *emailForwarderRepo) listByField(ctx context.Context, field, value strin
 
 func (r *emailForwarderRepo) ListByDomainID(ctx context.Context, domainID string, opts ListOptions) ([]models.EmailForwarder, int64, error) {
 	return r.listByField(ctx, "domain_id", domainID, opts)
+}
+
+// ListByDomainIDs batch-loads all forwarders for a set of domains in one query
+// (JAB-374), reproducing ListByDomainID's created_at DESC order within each
+// domain. No mailbox_id filter — matches the per-domain read the snapshot
+// builder replaced (which included alias forwarders).
+func (r *emailForwarderRepo) ListByDomainIDs(ctx context.Context, domainIDs []string) ([]models.EmailForwarder, error) {
+	if len(domainIDs) == 0 {
+		return nil, nil
+	}
+	var rows []models.EmailForwarder
+	if err := r.db.WithContext(ctx).Where("domain_id IN ?", domainIDs).
+		Order("domain_id, created_at DESC").Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
 }
 
 func (r *emailForwarderRepo) ListByMailboxID(ctx context.Context, mailboxID string, opts ListOptions) ([]models.EmailForwarder, int64, error) {

@@ -46,6 +46,76 @@ type Opts struct {
 	// startsWith "mail."` is bypassable via arbitrary Host headers
 	// reaching the default_server (which serves phpMyAdmin).
 	WebmailHosts []string
+	// BotDetection selects AppSec bot-detection / challenge mode (CrowdSec
+	// 1.8): "off" (default), "balanced" (reject fingerprint score >= 75) or
+	// "permissive" (>= 100). It changes nothing in the jabali-appsec config
+	// itself — it drives RenderAcquis (which composes the bot-challenge
+	// configs via appsec_configs) and RenderBotExempt.
+	//
+	// SAFETY: emitting bot-challenge config on an engine < 1.8 FATALs
+	// crowdsec (unknown appsec funcs) → AppSec AND all scenario enforcement
+	// go down (fail-open). Callers MUST version-gate (engine >= 1.8, bouncer
+	// >= 1.2.2) BEFORE turning this on, and validate the config before reload.
+	BotDetection string
+	// BotConfigs is the enabled bot-challenge appsec-CONFIG names the caller
+	// discovered from cscli after installing the collection (e.g.
+	// crowdsecurity/appsec-bot-challenge-scoring, -scoring-balanced,
+	// -exclude-api, ...). The leaf set is version-dependent, so — like Inband
+	// — it is a parameter, not hardcoded. Consumed only by RenderAcquis, and
+	// only when BotDetection != "off". A collection NAME here would FATAL the
+	// engine ("no appsec-config found"); pass leaf CONFIG names only.
+	BotConfigs []string
+	// BotExemptHosts is the operator's per-domain opt-out list: FQDNs whose
+	// domains should NOT be bot-challenged even when the server-wide mode is
+	// on (e.g. an API/webhook-heavy site). Consumed by RenderBotExempt as an
+	// additional Host-equality ExemptFromChallenge, sanitised like WebmailHosts.
+	// The caller expands www.<domain>; this only renders what it is given.
+	BotExemptHosts []string
+	// BotScope selects which sites the challenge applies to when BotDetection
+	// is on: "all" (default — challenge every site, carve exceptions via
+	// BotExemptHosts) or "selected" (challenge ONLY BotIncludeHosts; every
+	// other Host is exempted). Unknown → "all" (fail-safe: never silently
+	// un-challenge the whole box).
+	BotScope string
+	// BotIncludeHosts is the per-domain opt-IN list, used only when
+	// BotScope=="selected": these Hosts are challenged and all others exempted.
+	// Empty in selected mode means "challenge nothing" (rendered explicitly as
+	// an unconditional exemption, not left to `not in []` edge semantics).
+	// Caller expands www.<domain>; sanitised like the other host lists.
+	BotIncludeHosts []string
+}
+
+// botScope normalises Opts.BotScope to "all" (default) or "selected".
+func botScope(o Opts) string {
+	if o.BotScope == "selected" {
+		return "selected"
+	}
+	return "all"
+}
+
+// AppsecListenAddr is the TCP loopback the AppSec engine listens on; the
+// crowdsec-nginx-bouncer dials it via APPSEC_URL=http://127.0.0.1:7422.
+const AppsecListenAddr = "127.0.0.1:7422"
+
+// JabaliAppsecConfigName / JabaliBotExemptConfigName are the appsec-config
+// `name:` values the acquisition references. The exempt config is composed
+// into the acquis (alongside the upstream bot-challenge configs) only when
+// bot detection is on.
+const (
+	JabaliAppsecConfigName    = "crowdsecurity/jabali-appsec"
+	JabaliBotExemptConfigName = "crowdsecurity/jabali-bot-exempt"
+)
+
+// botDetectionMode normalises Opts.BotDetection to one of the three valid
+// values, defaulting anything unknown to "off" (fail-safe: an unrecognised
+// mode never composes bot-challenge config into the acquis).
+func botDetectionMode(o Opts) string {
+	switch o.BotDetection {
+	case "balanced", "permissive":
+		return o.BotDetection
+	default:
+		return "off"
+	}
 }
 
 // allowExpr/denyExpr reproduce panel-agent renderAppSecGeoblockRule
@@ -324,7 +394,16 @@ func Render(o Opts) string {
 	b.WriteString("# POST /api/v1/admin/security/crowdsec/appsec/geoblock.\n")
 	b.WriteString("# jabali-mode: " + mode + "\n")
 	b.WriteString("# jabali-countries: " + csv + "\n")
-	b.WriteString("name: crowdsecurity/jabali-appsec\n")
+	// Round-trips the bot-detection mode so --reconcile preserves the
+	// operator's choice (same mechanism as jabali-mode/jabali-countries).
+	// This config is unchanged by the mode — bot-challenge composition lives
+	// in RenderAcquis + RenderBotExempt — but the header is the state anchor.
+	b.WriteString("# jabali-bot-detection: " + botDetectionMode(o) + "\n")
+	// Scope round-trips alongside the mode so --reconcile / the agent readback
+	// preserve "selected" across re-renders (a reset to "all" would challenge
+	// every site on the box at once).
+	b.WriteString("# jabali-bot-detection-scope: " + botScope(o) + "\n")
+	b.WriteString("name: " + JabaliAppsecConfigName + "\n")
 	b.WriteString("default_remediation: ban\n")
 
 	// GH #1044: the CrowdSec AppSec engine drops any request whose body
@@ -439,5 +518,147 @@ func Render(o Opts) string {
     - DropRequest("Forbidden Country (jabali deny-list)")
 `)
 	}
+	return b.String()
+}
+
+// RenderBotExempt returns the crowdsecurity/jabali-bot-exempt appsec-config:
+// the pre_eval ExemptFromChallenge twins of the jabali-appsec on_match
+// allowlist. The upstream appsec-bot-challenge scoring config calls
+// SendChallenge() in pre_eval on EVERY request, so anything that cannot
+// solve a JS / proof-of-work challenge must be exempted here or it breaks:
+//
+//   - /.well-known/acme-challenge/ — Let's Encrypt HTTP-01 validators can't
+//     run JS. Omitting this fails cert renewals SILENTLY; certs expire weeks
+//     later. Exempt on EVERY host (every tenant domain renews).
+//   - /api/v1/ + /.ory/ — the SPA control plane and the Kratos login/session
+//     XHR. Challenging these breaks panel login and every authed API call.
+//   - /phpmyadmin/, /jabali-adminer/, /dav/ — SSO/auth_request-gated tools and
+//     WebDAV clients that are not browsers and can't solve a challenge.
+//   - webmail vhosts — Bulwark/Stalwart JMAP is not browser traffic (M6.6:
+//     challenging it re-breaks webmail SSO).
+//
+// The exempt config is composed into the acquis ONLY when bot detection is on
+// (RenderAcquis), so it never loads on an engine that lacks ExemptFromChallenge.
+// This is a SEPARATE config (not folded into jabali-appsec) so the jabali-appsec
+// schema stays engine-version-agnostic — it must keep loading on fleet boxes
+// still on CrowdSec 1.7.x.
+func RenderBotExempt(o Opts) string {
+	var b strings.Builder
+	b.WriteString("# Managed by jabali — AppSec bot-detection challenge exemptions.\n")
+	b.WriteString("# DO NOT hand-edit. Written by `jabali appsec render-config`.\n")
+	b.WriteString("# Twins of the jabali-appsec on_match allowlist: SendChallenge runs in\n")
+	b.WriteString("# pre_eval on every request, so clients that cannot solve a challenge\n")
+	b.WriteString("# (ACME HTTP-01, panel API + login, DB tools, WebDAV, webmail JMAP) are\n")
+	b.WriteString("# exempted here. Composed into the AppSec acquis only when bot detection\n")
+	b.WriteString("# is on (RenderAcquis).\n")
+	b.WriteString("name: " + JabaliBotExemptConfigName + "\n")
+	b.WriteString("inband:\n")
+	b.WriteString("  pre_eval:\n")
+
+	// ACME HTTP-01 — ALWAYS exempt, on every host. Highest-severity miss if
+	// omitted: silent cert-renewal failure.
+	b.WriteString(`    - filter: req.URL.Path startsWith "/.well-known/acme-challenge/"` + "\n")
+	b.WriteString("      apply:\n")
+	b.WriteString(`        - ExemptFromChallenge("jabali-acme-http01")` + "\n")
+
+	// Panel-owned paths — twins of the ADR-0102 on_match allowlist, scoped to
+	// the panel host (when known) exactly like that allowlist, so a tenant
+	// vhost serving the same paths is still challenge-eligible. req.Host is a
+	// client-controlled header → equality, never a prefix.
+	pathExpr := `req.URL.Path startsWith "/api/v1/" || req.URL.Path startsWith "/.ory/" || req.URL.Path startsWith "/phpmyadmin/" || req.URL.Path startsWith "/jabali-adminer/" || req.URL.Path startsWith "/dav/"`
+	if o.PanelHost != "" {
+		pathExpr = "(" + pathExpr + `) && req.Host == "` + o.PanelHost + `"`
+	}
+	b.WriteString("    - filter: " + pathExpr + "\n")
+	b.WriteString("      apply:\n")
+	b.WriteString(`        - ExemptFromChallenge("jabali-panel-paths")` + "\n")
+
+	// Webmail vhosts — explicit host equality (same managed source + sanitiser
+	// as the on_match webmail allowlist).
+	hosts := sanitizeWebmailHosts(o.WebmailHosts)
+	if len(hosts) > 0 {
+		parts := make([]string, len(hosts))
+		for i, h := range hosts {
+			parts[i] = `req.Host == "` + h + `"`
+		}
+		b.WriteString("    - filter: " + strings.Join(parts, " || ") + "\n")
+		b.WriteString("      apply:\n")
+		b.WriteString(`        - ExemptFromChallenge("jabali-webmail")` + "\n")
+	}
+
+	// Per-domain scoping (after the built-in exemptions above, which always win
+	// so ACME / panel / webmail are never challenged in either scope).
+	switch botScope(o) {
+	case "selected":
+		// Opt-in: challenge ONLY the listed hosts — exempt everything else.
+		include := sanitizeWebmailHosts(o.BotIncludeHosts)
+		if len(include) == 0 {
+			// No domains selected ⇒ challenge nothing. Render it explicitly
+			// (an unconditional exempt) rather than relying on `not in []`.
+			b.WriteString("    - filter: true\n")
+			b.WriteString("      apply:\n")
+			b.WriteString(`        - ExemptFromChallenge("jabali-selected-none")` + "\n")
+		} else {
+			parts := make([]string, len(include))
+			for i, h := range include {
+				parts[i] = `"` + h + `"`
+			}
+			b.WriteString("    - filter: req.Host not in [" + strings.Join(parts, ", ") + "]\n")
+			b.WriteString("      apply:\n")
+			b.WriteString(`        - ExemptFromChallenge("jabali-selected-exclude")` + "\n")
+		}
+	default: // "all"
+		// Opt-out: challenge everything, exempt the listed hosts. Distinct label
+		// so the "Exempt" metric separates operator domain opt-outs from the
+		// built-in exemptions. Explicit host equality (req.Host is a
+		// client-controlled header — never a prefix).
+		optout := sanitizeWebmailHosts(o.BotExemptHosts)
+		if len(optout) > 0 {
+			parts := make([]string, len(optout))
+			for i, h := range optout {
+				parts[i] = `req.Host == "` + h + `"`
+			}
+			b.WriteString("    - filter: " + strings.Join(parts, " || ") + "\n")
+			b.WriteString("      apply:\n")
+			b.WriteString(`        - ExemptFromChallenge("jabali-domain-optout")` + "\n")
+		}
+	}
+	return b.String()
+}
+
+// RenderAcquis returns the AppSec acquisition file body (the datasource that
+// binds the AppSec engine to AppsecListenAddr). It is single-sourced here so
+// install.sh and the agent can't drift (the same reason Render exists) — both
+// write it via `jabali appsec render-config`.
+//
+// Off (default): the singular `appsec_config: crowdsecurity/jabali-appsec`,
+// exactly the pre-1.8 shape. On: the CrowdSec 1.8 plural `appsec_configs:`
+// list composing jabali-appsec + jabali-bot-exempt + the caller-discovered
+// bot-challenge leaf configs. BotConfigs is sorted for deterministic,
+// write-on-diff-stable output. If BotConfigs is empty the acquis stays in the
+// singular form even when the mode is set — nothing to compose, so we never
+// emit a plural list that references no bot config.
+func RenderAcquis(o Opts) string {
+	var b strings.Builder
+	b.WriteString("# Managed by jabali — AppSec acquisition (crowdsec-nginx-bouncer dials\n")
+	b.WriteString("# APPSEC_URL=http://" + AppsecListenAddr + "). Written by\n")
+	b.WriteString("# `jabali appsec render-config`; do not hand-edit.\n")
+
+	if botDetectionMode(o) != "off" && len(o.BotConfigs) > 0 {
+		cfgs := append([]string(nil), o.BotConfigs...)
+		sort.Strings(cfgs)
+		b.WriteString("appsec_configs:\n")
+		b.WriteString(" - " + JabaliAppsecConfigName + "\n")
+		b.WriteString(" - " + JabaliBotExemptConfigName + "\n")
+		for _, c := range cfgs {
+			b.WriteString(" - " + c + "\n")
+		}
+	} else {
+		b.WriteString("appsec_config: " + JabaliAppsecConfigName + "\n")
+	}
+	b.WriteString("labels:\n")
+	b.WriteString("  type: appsec\n")
+	b.WriteString("listen_addr: " + AppsecListenAddr + "\n")
+	b.WriteString("source: appsec\n")
 	return b.String()
 }

@@ -18,7 +18,7 @@ import {
   useDeleteDomainCatchAll,
   type DomainCatchAll,
 } from "../../../../hooks/useCatchAll";
-import type { Domain } from "../../domains/UserDomainList";
+import type { Domain } from "../../../../components/domains/types";
 import type { Mailbox } from "../../../../hooks/useMailboxes";
 
 interface CatchAllRow {

@@ -4,21 +4,28 @@
 // admin switch; when it's off every call returns 403 and we render a calm
 // "not enabled" state rather than an error.
 //
+// The channel list, its columns and the toggle/test/delete handlers are the
+// shared notification-channel inventory (JAB-336, ADR-0083). This page keeps its
+// own client-side table shell, supplies the tenant policy + inline row actions,
+// and owns the event-routing matrix below (tenant-only, no admin equivalent).
+//
 // Routing is a matrix: the server hands back a labelled catalog of the events
 // that fire for this user (GET .../event-catalog), and for each the tenant picks
 // which of their channels should receive it — no raw event-kind typing.
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Alert, Button, Card, Empty, Popconfirm, Select, Space, Switch, Table, Tag, Typography } from "antd";
+import { Alert, Button, Card, Empty, Popconfirm, Select, Space, Table, Tag, Typography } from "antd";
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import type { AxiosError } from "axios";
 
 import { DeleteOutlined, EditOutlined, PlusOutlined, SendOutlined } from "@icons";
 import { apiClient } from "../../../apiClient";
-import { useDeleteMutation, useUpdateMutation } from "../../../hooks/useQueries";
-import { kindColors, kindLabels, type ChannelKind } from "../../admin/notifications/channelKindConfig";
+import { type ChannelKind } from "../../../utils/channelKindConfig";
 import { MyChannelDrawer, TENANT_KINDS, type MyChannel } from "./MyChannelDrawer";
+import { tenantChannelPolicy } from "../../../components/notifications/channelPolicy";
+import { buildChannelColumns } from "../../../components/notifications/channelColumns";
+import { useChannelActions } from "../../../components/notifications/useChannelActions";
 
 const CH_RESOURCE = "me/notifications/channels";
 const RT_RESOURCE = "me/notifications/routes";
@@ -90,11 +97,20 @@ export function MyNotificationsPage(): JSX.Element {
     enabled: !disabled,
   });
 
-  const updateMutation = useUpdateMutation<MyChannel, { enabled: boolean }>({ resource: CH_RESOURCE });
-  const deleteMutation = useDeleteMutation({ resource: CH_RESOURCE });
-
   const channels = channelsQ.data?.items ?? [];
   const allowedKinds = channelsQ.data?.allowedKinds ?? TENANT_KINDS;
+
+  // Shared inventory actions. A deleted channel unpicks itself from the routing
+  // matrix, so invalidate the routes list after a delete.
+  const { toggleEnabled, deleteChannel, testChannel } = useChannelActions(
+    tenantChannelPolicy(allowedKinds),
+    { onDeleted: () => qc.invalidateQueries({ queryKey: ["list", RT_RESOURCE] }) },
+  );
+
+  const openEdit = (row: MyChannel) => {
+    setEditing(row);
+    setDrawerOpen(true);
+  };
 
   // event_kind -> [{channelId, routeId}] so the matrix can show current
   // selections and delete the right route row when a channel is unpicked.
@@ -107,33 +123,6 @@ export function MyNotificationsPage(): JSX.Element {
     }
     return m;
   }, [routesQ.data]);
-
-  const toggleEnabled = async (row: MyChannel, next: boolean) => {
-    try {
-      await updateMutation.mutateAsync({ id: row.id, input: { enabled: next } });
-    } catch (err) {
-      feedback.message.error(err instanceof Error ? err.message : "Toggle failed");
-    }
-  };
-
-  const removeChannel = async (row: MyChannel) => {
-    try {
-      await deleteMutation.mutateAsync({ id: row.id });
-      feedback.message.success(`Deleted ${row.name}`);
-      qc.invalidateQueries({ queryKey: ["list", RT_RESOURCE] });
-    } catch (err) {
-      feedback.message.error(err instanceof Error ? err.message : "Delete failed");
-    }
-  };
-
-  const testChannel = async (row: MyChannel) => {
-    try {
-      await apiClient.post(`/${CH_RESOURCE}/${row.id}/test`);
-      feedback.message.success(`Test sent to ${row.name}`);
-    } catch (err) {
-      feedback.message.error(err instanceof Error ? err.message : "Test failed");
-    }
-  };
 
   // Reconcile a row's channel multi-select against the stored routes: POST the
   // added channels, DELETE the removed ones, then refetch.
@@ -171,6 +160,26 @@ export function MyNotificationsPage(): JSX.Element {
 
   const channelOptions = channels.map((c) => ({ value: c.id, label: c.name }));
 
+  // Tenant inventory: no owner column (a tenant only sees its own rows), inline
+  // row actions with a Popconfirm delete.
+  const channelColumns = buildChannelColumns({
+    labels: { name: "Name", kind: "Kind", owner: "Owner", enabled: "Enabled", actions: "Actions" },
+    showOwnerColumn: false,
+    onOpenEdit: openEdit,
+    onToggleEnabled: toggleEnabled,
+    renderActions: (row) => (
+      <Space>
+        <Button size="small" icon={<SendOutlined />} onClick={() => testChannel(row)}>
+          Test
+        </Button>
+        <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(row)} />
+        <Popconfirm title={`Delete ${row.name}?`} onConfirm={() => deleteChannel(row)}>
+          <Button size="small" danger icon={<DeleteOutlined />} />
+        </Popconfirm>
+      </Space>
+    ),
+  });
+
   return (
     <Space direction="vertical" size="large" style={{ width: "100%" }}>
       <Card
@@ -192,63 +201,11 @@ export function MyNotificationsPage(): JSX.Element {
           rowKey="id"
           loading={channelsQ.isLoading}
           dataSource={channels}
+          columns={channelColumns}
           pagination={false}
           locale={{ emptyText: <Empty description="No channels yet — add one to get notified." /> }}
           scroll={{ x: "max-content" }}
-        >
-          <Table.Column
-            dataIndex="name"
-            title="Name"
-            render={(name: string, row: MyChannel) => (
-              <a
-                onClick={() => {
-                  setEditing(row);
-                  setDrawerOpen(true);
-                }}
-              >
-                {name}
-              </a>
-            )}
-          />
-          <Table.Column
-            dataIndex="kind"
-            title="Kind"
-            render={(k: string) => (
-              <Tag color={kindColors[k as keyof typeof kindColors]}>
-                {kindLabels[k as keyof typeof kindLabels] ?? k}
-              </Tag>
-            )}
-          />
-          <Table.Column
-            dataIndex="enabled"
-            title="Enabled"
-            render={(enabled: boolean, row: MyChannel) => (
-              <Switch checked={enabled} onChange={(next) => toggleEnabled(row, next)} />
-            )}
-          />
-          <Table.Column
-            title="Actions"
-            key="actions"
-            render={(_: unknown, row: MyChannel) => (
-              <Space>
-                <Button size="small" icon={<SendOutlined />} onClick={() => testChannel(row)}>
-                  Test
-                </Button>
-                <Button
-                  size="small"
-                  icon={<EditOutlined />}
-                  onClick={() => {
-                    setEditing(row);
-                    setDrawerOpen(true);
-                  }}
-                />
-                <Popconfirm title={`Delete ${row.name}?`} onConfirm={() => removeChannel(row)}>
-                  <Button size="small" danger icon={<DeleteOutlined />} />
-                </Popconfirm>
-              </Space>
-            )}
-          />
-        </Table>
+        />
       </Card>
 
       <Card title="Event routing">

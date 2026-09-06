@@ -24,6 +24,21 @@ The install path is **flat** (`/etc/crowdsec/appsec-rules/`). An earlier bug use
 - **Per-rule exception** — exclude a specific rule for a specific URL path or for a specific user (drop the rule from the inspector configuration).
 - **Per-domain exception** — exclude all AppSec checks for a domain (rarely useful; documented for completeness).
 
+## Bot detection (CrowdSec 1.8)
+
+A separate **bot-detection challenge** is available, **off by default**
+(per-server). Enable it under Security → AppSec. It is layered and scoped so it
+never silently challenges traffic on a domain the operator didn't choose:
+
+- **Per-server** master switch (default OFF).
+- **Per-domain opt-in** (`scope=selected`) — challenge only chosen domains.
+- **Per-domain opt-out** — exclude a specific domain.
+- **Tenant self-service** — a tenant can toggle it on their **own** domains.
+
+Oversized request bodies are inspected up to the AppSec limit and then passed
+(the `partial` body-size action) rather than dropped, so large uploads on
+`/api/v1/*` are not blocked before the panel's own allowlist runs.
+
 ## Inspecting blocks
 
 The AppSec inspector logs every blocking decision with the matched rule and the request body excerpt. Surface them in [Email Logs](./email-logs.md) under the AppSec filter, or tail directly:

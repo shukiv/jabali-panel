@@ -1,5 +1,6 @@
-// Wave D E2E for GH #466: the tenant DNS Records page must honor the admin's
-// per-type permission matrix returned by GET /dns/policy. With a locked-down
+// Wave D E2E for GH #466: the tenant DNS records manager (now the DNS tab of the
+// Web Domain page, GH #1543) must honor the admin's per-type permission matrix
+// returned by GET /dns/policy. With a locked-down
 // policy (A/AAAA/CNAME only), an MX record is read-only ("Restricted") while an
 // A record keeps its Edit/Delete actions, and the Add Record type picker offers
 // only creatable types.
@@ -104,8 +105,10 @@ test("tenant DNS page honors a locked-down record-type policy (#466)", async ({ 
   await signIn(page, user);
   await page.goto(`/jabali-panel/domains/${DOMAIN_ID}/dns`);
 
-  // Page loaded.
-  await expect(page.getByText("DNS Records for example.com")).toBeVisible();
+  // GH #1543: this URL now renders the Web Domain page with DNS as an embedded
+  // tab, so the standalone "DNS Records for …" title is suppressed. The panel's
+  // own Add Record control is the stable "records manager loaded" anchor.
+  await expect(page.getByRole("button", { name: "Add Record" }).first()).toBeVisible();
 
   // The MX row is restricted (no Edit/Delete) under locked-down policy.
   const mxRow = page.getByRole("row").filter({ hasText: "mail.example.com" });
@@ -160,6 +163,7 @@ test("tenant DNS Add button is disabled when no type is creatable (#466)", async
 
   await signIn(page, user);
   await page.goto(`/jabali-panel/domains/${DOMAIN_ID}/dns`);
-  await expect(page.getByText("DNS Records for example.com")).toBeVisible();
+  // GH #1543: DNS renders embedded in the Web Domain page's DNS tab; the
+  // Add Record button is the load anchor (and here must be disabled).
   await expect(page.getByRole("button", { name: "Add Record" }).first()).toBeDisabled();
 });

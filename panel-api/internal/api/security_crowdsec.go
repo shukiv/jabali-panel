@@ -23,6 +23,15 @@ import (
 
 const csCallTimeout = 10 * time.Second
 
+// csBotDetectionTimeout is the wider ceiling for the bot-detection apply,
+// which does far more than the 10s render+SIGHUP the other verbs assume:
+// a hub collection install (download), a full `crowdsec -t` parse, and a
+// crowdsec RESTART (5-10s alone on a 2GB fleet box). Too tight and the
+// panel times out while the agent finishes anyway — the DB never persists
+// (Upsert runs after the Call) and the state drifts, the exact failure the
+// agent-first ordering exists to avoid (#1323 class).
+const csBotDetectionTimeout = 120 * time.Second
+
 // csMetricsTimeout is the wider ceiling for /metrics specifically.
 // cscli metrics fans out three sub-calls (metrics + decisions list +
 // alerts list); decisions list scans the LAPI's decision table which
@@ -613,6 +622,78 @@ func RegisterSecurityAppSecRoutes(rg *gin.RouterGroup, cli agent.AgentInterface,
 		c.JSON(http.StatusOK, appsecGeoblockResponse(s))
 	})
 
+	// CrowdSec 1.8 AppSec bot detection. Same shape as geoblock: DB is the
+	// source of truth, the agent composes the bot-challenge configs into the
+	// AppSec acquisition and restarts crowdsec. Agent dispatched FIRST so a
+	// version-gate rejection (engine < 1.8 / bouncer < 1.2.2) or a config
+	// validation failure never leaves the DB drifted from the host.
+	g.GET("/bot-detection", func(c *gin.Context) {
+		s, err := settings.Get(c.Request.Context())
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"status": "error", "error": "settings_read", "detail": err.Error(),
+			})
+			return
+		}
+		c.JSON(http.StatusOK, appsecBotDetectionResponse(s))
+	})
+
+	g.PUT("/bot-detection", func(c *gin.Context) {
+		var body struct {
+			Mode  string `json:"mode"`
+			Scope string `json:"scope"`
+		}
+		if err := c.ShouldBindJSON(&body); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid_json"})
+			return
+		}
+		if _, ok := appsecBotDetectionModes[body.Mode]; !ok {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status": "error", "error": "invalid_mode",
+				"detail": "mode must be off|balanced|permissive",
+			})
+			return
+		}
+		// Scope defaults to "all" (challenge every site) when omitted.
+		scope := body.Scope
+		if scope == "" {
+			scope = "all"
+		}
+		if _, ok := appsecBotDetectionScopes[scope]; !ok {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status": "error", "error": "invalid_scope",
+				"detail": "scope must be all|selected",
+			})
+			return
+		}
+		ctx, cancel := context.WithTimeout(c.Request.Context(), csBotDetectionTimeout)
+		defer cancel()
+		if _, err := cli.Call(ctx, "security.crowdsec.appsec.botdetection.set", map[string]any{
+			"mode":  body.Mode,
+			"scope": scope,
+		}); err != nil {
+			status, errBody := translateAgentError(err)
+			c.JSON(status, errBody)
+			return
+		}
+		s, err := settings.Get(c.Request.Context())
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"status": "error", "error": "settings_read", "detail": err.Error(),
+			})
+			return
+		}
+		s.AppSecBotDetection = body.Mode
+		s.AppSecBotDetectionScope = scope
+		if err := settings.Upsert(c.Request.Context(), s); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"status": "error", "error": "settings_write", "detail": err.Error(),
+			})
+			return
+		}
+		c.JSON(http.StatusOK, appsecBotDetectionResponse(s))
+	})
+
 	// ADR-0166 — country ban exemption. State lives in server_settings;
 	// the agent renders the s02-enrich GeoIP parser whitelist, and a
 	// background sync (countryexempt) keeps the jabali-country-allowlist
@@ -720,6 +801,28 @@ func appsecGeoblockResponse(s *models.ServerSettings) gin.H {
 		"mode":      s.AppSecGeoblockMode,
 		"countries": countries,
 	}
+}
+
+// appsecBotDetectionModes mirrors the agent's csBotDetectionModes, duplicated
+// at the API edge so bad input gets a 400 without an agent round-trip.
+var appsecBotDetectionModes = map[string]struct{}{
+	"off": {}, "balanced": {}, "permissive": {},
+}
+
+var appsecBotDetectionScopes = map[string]struct{}{
+	"all": {}, "selected": {},
+}
+
+func appsecBotDetectionResponse(s *models.ServerSettings) gin.H {
+	mode := s.AppSecBotDetection
+	if _, ok := appsecBotDetectionModes[mode]; !ok {
+		mode = "off" // empty / legacy row → off
+	}
+	scope := s.AppSecBotDetectionScope
+	if _, ok := appsecBotDetectionScopes[scope]; !ok {
+		scope = "all" // empty / legacy row → all
+	}
+	return gin.H{"mode": mode, "scope": scope}
 }
 
 // countryExemptResponse renders the ADR-0166 state. Empty selection is

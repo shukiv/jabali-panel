@@ -2,19 +2,21 @@
 // SERVER container: upload the one-file archive produced by "Package & download",
 // pick which users to restore, and each is restored exactly like a normal
 // account restore. System restore is intentionally left to the CLI.
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   Alert,
   Button,
   Checkbox,
   Drawer,
   Progress,
+  Select,
   Space,
   Typography,
   Upload,
 } from "antd";
 import { InboxOutlined } from "@icons";
 import { feedback } from "../../../lib/feedback";
+import { useSelectQuery } from "../../../hooks/useSelectQuery";
 import {
   applyFullServerRestore,
   inspectFullServerContainer,
@@ -23,6 +25,8 @@ import {
   type FullRestoreResult,
 } from "../../../apiClient";
 import { extractApiError } from "../../../apiErrors";
+
+type HostingPackage = { id: string; name: string };
 
 interface Props {
   open: boolean;
@@ -38,7 +42,22 @@ export function RestoreFullServerDrawer({ open, onClose }: Props) {
   const [info, setInfo] = useState<FullContainerInfo | null>(null);
   const [uploadId, setUploadId] = useState<string | null>(null);
   const [users, setUsers] = useState<string[]>([]);
+  const [createMissing, setCreateMissing] = useState(false);
+  const [packageId, setPackageId] = useState<string | null>(null);
   const [result, setResult] = useState<FullRestoreResult | null>(null);
+
+  // Which container users don't yet exist on this server (from inspect). Older
+  // panels omit user_status → treat existence as unknown (no create UI).
+  const missingSet = useMemo(() => {
+    const s = new Set<string>();
+    for (const st of info?.user_status ?? []) {
+      if (!st.exists) s.add(st.username);
+    }
+    return s;
+  }, [info]);
+  // Missing users the admin actually selected — the ones that need creating.
+  const selectedMissing = users.filter((u) => missingSet.has(u));
+  const canCreate = (info?.create_supported ?? false) && selectedMissing.length > 0;
 
   const reset = () => {
     setFile(null);
@@ -47,6 +66,8 @@ export function RestoreFullServerDrawer({ open, onClose }: Props) {
     setInfo(null);
     setUploadId(null);
     setUsers([]);
+    setCreateMissing(false);
+    setPackageId(null);
     setResult(null);
   };
   const close = () => {
@@ -77,7 +98,10 @@ export function RestoreFullServerDrawer({ open, onClose }: Props) {
     setPhase("applying");
     feedback.message.info("Restore started — running in the background");
     try {
-      const r = await applyFullServerRestore(uploadId, users, false);
+      const r = await applyFullServerRestore(uploadId, users, false, {
+        createMissing: canCreate && createMissing,
+        packageId: canCreate && createMissing ? packageId : null,
+      });
       setResult(r);
       setPhase("done");
       feedback.message.success("Full server restore finished — see details");
@@ -99,7 +123,8 @@ export function RestoreFullServerDrawer({ open, onClose }: Props) {
         <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
           Upload a Full Server backup archive (from “Package &amp; download”) and
           restore the accounts it contains. Each user is restored just like a
-          normal account restore. Create any missing users first.
+          normal account restore. Accounts that don&apos;t exist yet can be
+          created for you.
         </Typography.Paragraph>
 
         {(phase === "pick" || phase === "uploading") && (
@@ -135,7 +160,19 @@ export function RestoreFullServerDrawer({ open, onClose }: Props) {
               type="success"
               showIcon
               message={`Full server backup — ${info.users.length} user(s)`}
-              description={info.has_system ? "Includes a system backup (restored via the CLI, not here)." : undefined}
+              description={
+                info.has_system ? (
+                  <>
+                    Includes a system backup (panel DB / config / TLS). Restore it
+                    over SSH with{" "}
+                    <Typography.Text code>
+                      jabali system restore --from-tar &lt;container.tar&gt;
+                    </Typography.Text>{" "}
+                    — not from here, because a system restore replaces the login
+                    (Kratos) database and would sign you out mid-restore.
+                  </>
+                ) : undefined
+              }
             />
             <div>
               <Typography.Text strong>Restore these users</Typography.Text>
@@ -143,9 +180,60 @@ export function RestoreFullServerDrawer({ open, onClose }: Props) {
                 value={users}
                 onChange={(v) => setUsers(v as string[])}
                 style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 4 }}
-                options={info.users.map((u) => ({ label: u, value: u }))}
+                options={info.users.map((u) => ({
+                  label: missingSet.has(u) ? (
+                    <span>
+                      {u}{" "}
+                      <Typography.Text type="warning" style={{ fontSize: 12 }}>
+                        (not on this server)
+                      </Typography.Text>
+                    </span>
+                  ) : (
+                    u
+                  ),
+                  value: u,
+                }))}
               />
             </div>
+
+            {canCreate && (
+              <div>
+                <Checkbox
+                  checked={createMissing}
+                  onChange={(e) => setCreateMissing(e.target.checked)}
+                  disabled={phase !== "ready"}
+                >
+                  Create the {selectedMissing.length} missing account(s):{" "}
+                  <Typography.Text code>{selectedMissing.join(", ")}</Typography.Text>
+                </Checkbox>
+                {createMissing && (
+                  <div style={{ marginTop: 8 }}>
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      Hosting package for the new accounts
+                    </Typography.Text>
+                    <PackageSelect value={packageId} onChange={setPackageId} disabled={phase !== "ready"} />
+                    <Typography.Text type="secondary" style={{ fontSize: 12, display: "block", marginTop: 4 }}>
+                      New accounts get a random password (set one afterwards) and
+                      the identity/limits from the backup are never trusted —
+                      admin accounts in the backup are refused.
+                    </Typography.Text>
+                  </div>
+                )}
+              </div>
+            )}
+            {selectedMissing.length > 0 && !createMissing && (
+              <Alert
+                type="warning"
+                showIcon
+                message="Some selected accounts don't exist yet"
+                description={
+                  info.create_supported
+                    ? "Tick “Create the missing account(s)” above, or create them first — otherwise they're skipped."
+                    : "Create them first — otherwise they're skipped."
+                }
+              />
+            )}
+
             <Alert
               type="warning"
               showIcon
@@ -198,5 +286,29 @@ export function RestoreFullServerDrawer({ open, onClose }: Props) {
         )}
       </Space>
     </Drawer>
+  );
+}
+
+function PackageSelect(props: {
+  value: string | null;
+  onChange: (v: string | null) => void;
+  disabled?: boolean;
+}) {
+  const { options, isLoading } = useSelectQuery<HostingPackage>({
+    resource: "packages",
+    labelField: "name",
+    valueField: "id",
+  });
+  return (
+    <Select
+      placeholder="Select a package (optional)"
+      allowClear
+      style={{ width: "100%", marginTop: 4 }}
+      loading={isLoading}
+      disabled={props.disabled}
+      options={[{ label: "No package", value: null }, ...options]}
+      value={props.value}
+      onChange={(v: string | null) => props.onChange(v ?? null)}
+    />
   );
 }

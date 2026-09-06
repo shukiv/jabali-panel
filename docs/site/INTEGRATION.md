@@ -261,7 +261,7 @@ The new pages land in EN first. For other languages:
 Glossary terms that **must not be translated** (keep English exact):
 
 - `Agent`, `Reconciler`, `Privileged DB Admin Action`, `Cron Job`, `Cron Job Intake`, `SSO Token`, `Shadow Account`, `SSO Token Resolution` (CONTEXT.md domain language).
-- Product names: `CrowdSec`, `AppSec`, `Stalwart`, `Bulwark`, `Kratos`, `Roundcube`, `PowerDNS`, `pdns-recursor`, `MariaDB`, `PostgreSQL`, `Snuffleupagus`, `AppArmor`, `AIDE`, `Tetragon`, `ClamAV`, `LMD`, `YARA`, `restic`.
+- Product names: `CrowdSec`, `AppSec`, `Stalwart`, `Bulwark`, `Kratos`, `Adminer`, `phpMyAdmin`, `PowerDNS`, `pdns-recursor`, `MariaDB`, `PostgreSQL`, `Snuffleupagus`, `AppArmor`, `AIDE`, `Tetragon`, `ClamAV`, `LMD`, `YARA`, `restic`.
 - CLI verbs (everything starting with `jabali …`).
 - File paths (`/etc/...`, `/var/...`, `/run/...`).
 - Service / unit names (`jabali-panel.service`, `nginx`, etc.).

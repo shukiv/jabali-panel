@@ -1998,6 +1998,19 @@ paths:
       requestBody: { content: { application/json: { schema: { type: object } } } }
       responses: { "200": { description: OK } }
 
+  /admin/security/crowdsec/appsec/bot-detection:
+    get:
+      tags: [CrowdSec]
+      summary: Get AppSec bot-detection mode
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+    put:
+      tags: [CrowdSec]
+      summary: Update AppSec bot-detection mode (off|balanced|permissive)
+      security: [ { KratosSession: [] } ]
+      requestBody: { content: { application/json: { schema: { type: object } } } }
+      responses: { "200": { description: OK } }
+
   /admin/security/crowdsec/country-exemption:
     get:
       tags: [CrowdSec]
@@ -2506,6 +2519,22 @@ paths:
     get:
       tags: [Backups]
       summary: Download backups
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: job_id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /admin/backups/{job_id}/download/prepare:
+    post:
+      tags: [Backups]
+      summary: Prepare a backup download in the background (GH #1408)
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: job_id, required: true, schema: { type: string } } ]
+      responses: { "202": { description: Accepted } }
+
+  /admin/backups/{job_id}/download/prepare-status:
+    get:
+      tags: [Backups]
+      summary: Poll a backup download prepare job (GH #1408)
       security: [ { KratosSession: [] } ]
       parameters: [ { in: path, name: job_id, required: true, schema: { type: string } } ]
       responses: { "200": { description: OK } }
@@ -3064,6 +3093,14 @@ paths:
     post:
       tags: [Email]
       summary: Dkim Rotate email
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /domains/{id}/email/purge:
+    post:
+      tags: [Email]
+      summary: Delete the mail service for a domain (GH #1387; keeps the web domain + DNS zone)
       security: [ { KratosSession: [] } ]
       parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
       responses: { "200": { description: OK } }
@@ -3793,6 +3830,50 @@ paths:
       parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
       responses: { "200": { description: OK } }
 
+  /me/backups/{id}/download/prepare:
+    post:
+      tags: [Me]
+      summary: Prepare a backup download in the background (GH #1408)
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "202": { description: Accepted } }
+
+  /me/backups/{id}/download/prepare-status:
+    get:
+      tags: [Me]
+      summary: Poll a backup download prepare job (GH #1408)
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /me/backups/restore-upload:
+    post:
+      tags: [Me]
+      summary: Upload a backup archive chunk to restore into your own account (GH #1408)
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /me/backups/restore-upload/inspect:
+    post:
+      tags: [Me]
+      summary: Inspect an uploaded backup archive before restore (GH #1408)
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /me/backups/restore-upload/apply:
+    post:
+      tags: [Me]
+      summary: Restore an uploaded archive into your own account (GH #1408)
+      security: [ { KratosSession: [] } ]
+      responses: { "202": { description: Accepted } }
+
+  /me/backups/restore-upload/status:
+    get:
+      tags: [Me]
+      summary: Poll a self-service restore-from-upload (GH #1408)
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
   /me/backups/{id}/manifest:
     get:
       tags: [Me]
@@ -3812,6 +3893,27 @@ paths:
     get:
       tags: [Me]
       summary: List the caller's domains with a per-domain mail summary and status
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /me/mailboxes:
+    get:
+      tags: [Me]
+      summary: List the caller's own mailboxes across every domain, server-paginated (JAB-370)
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /me/nav-counts:
+    get:
+      tags: [Me]
+      summary: Resource counts for the caller's side-nav badges (GH #1478)
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/nav-counts:
+    get:
+      tags: [Admin]
+      summary: Fleet-wide resource counts for the admin side-nav badges (GH #1478)
       security: [ { KratosSession: [] } ]
       responses: { "200": { description: OK } }
 
@@ -3898,6 +4000,19 @@ paths:
       tags: [Me]
       summary: Reset OPcache for a PHP version (restarts that pool's FPM master)
       security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /me/php-opcache:
+    get:
+      tags: [Me]
+      summary: Get OPcache/JIT settings for a PHP version
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+    put:
+      tags: [Me]
+      summary: Set OPcache/JIT settings for a PHP version (restarts that pool's FPM master)
+      security: [ { KratosSession: [] } ]
+      requestBody: { content: { application/json: { schema: { type: object } } } }
       responses: { "200": { description: OK } }
 
   /me/php-extensions:
@@ -4911,7 +5026,13 @@ paths:
     get:
       tags: [Server Status]
       summary: List server status
+      description: >-
+        view=health returns the light projection for the admin header badge:
+        it omits the expensive processes / software / user_slices slices while
+        keeping the synthesized alerts and the cheap host/services/network
+        slices those alerts derive from.
       security: [ { KratosSession: [] } ]
+      parameters: [ { in: query, name: view, required: false, schema: { type: string, enum: [health] } } ]
       responses: { "200": { description: OK } }
 
 
@@ -5795,6 +5916,25 @@ paths:
         "403": { description: Recent-auth step-up required (JAB-380), content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "404": { description: User not found, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "422": { description: Rename refused — invalid name, a v1 refusal (FTP subaccounts / Python apps / cross-filesystem), or the name is taken, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+
+  /admin/domains/{id}/chown:
+    post:
+      tags: [Domains]
+      summary: Reassign a domain to a new tenant in place (admin, JAB-380 step-up, GH #1238)
+      description: |
+        Moves + re-owns the docroot to the new owner and repoints the domain row.
+        The domain_id is preserved, so tombstones, the SSL lineage, the DNS zone,
+        and mailboxes stay. v1 refuses a domain that has an app install (its config
+        carries the current owner's database credentials).
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { new_owner_id: { type: string } }, required: [new_owner_id] } } } }
+      responses:
+        "200": { description: Reassigned, content: { application/json: { schema: { type: object, properties: { id: { type: string }, user_id: { type: string }, doc_root: { type: string } } } } } }
+        "403": { description: Recent-auth step-up required (JAB-380), content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "404": { description: Domain or new owner not found, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "422": { description: Change refused — new owner is not a tenant, is already the owner, the domain has an app install, or the docroot is outside the owner's home, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "503": { description: Change-owner not available (app-install repository not wired), content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
 
   /me/ssh-forwarding:
     get:

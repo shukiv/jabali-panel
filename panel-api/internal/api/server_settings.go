@@ -6,9 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net"
 	"net/http"
-	"net/mail"
 	"regexp"
 	"strings"
 	"time"
@@ -21,6 +19,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/middleware"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/settingsops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ssokey"
 )
 
@@ -313,34 +312,25 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 		return
 	}
 
+	// Full pre-merge snapshot. settingsops.ModuleEffects and NginxEffects both
+	// diff against it (nginx fields are untouched until the nginx merge far
+	// below, so this single snapshot serves both — no separate beforeNginx).
+	before := *current
+
+	// Optional-module transitions (postgres, docker marketplace + tenant, python,
+	// and the dns/mail/quota/security/ftp loop) are detected from `before` by
+	// settingsops.ModuleEffects below; the SSH config + sandbox transitions are
+	// detected from `before` by settingsops.SSHEffects — no per-flag prev* locals
+	// needed for either family.
 	prevHostname := current.Hostname
-	prevPostgresEnabled := current.PostgresEnabled
-	prevDNSEnabled := current.DNSEnabled
-	prevMailEnabled := current.MailEnabled
-	prevQuotaEnabled := current.QuotaEnabled
-	prevSecurityEnabled := current.SecurityEnabled
-	prevFTPEnabled := current.FTPEnabled
-	prevFTPAllowPlaintext := current.FTPAllowPlaintext
-	prevFTPPasvAddress := current.FTPPasvAddress
-	prevFTPMaxClients := current.FTPMaxClients
-	prevFTPMaxPerIP := current.FTPMaxPerIP
-	prevFTPLocalMaxRateKBs := current.FTPLocalMaxRateKBs
 	prevPanelBrandText := current.PanelBrandText
-	prevDockerEnabled := current.DockerMarketplaceEnabled
-	prevDockerForUsers := current.DockerAppsForUsersEnabled
-	prevPythonEnabled := current.PythonAppsEnabled
 	prevWebadminEnabled := current.StalwartWebadminEnabled
 	prevWebadminCIDRs := current.StalwartWebadminAllowCIDRs
 	prevTimezone := current.Timezone
-	prevSSHPort := current.SSHPort
-	prevSSHPasswordAuth := current.SSHPasswordAuth
-	prevSSHUserPasswordAuth := current.SSHUserPasswordAuth
-	prevSSHSandboxMode := current.SSHSandboxMode
 	prevCrowdsecSensitivity := current.CrowdsecSensitivity
 	prevCrowdsecBouncerMode := current.CrowdsecBouncerMode
 	prevCrowdsecLoginAllowlistEnabled := current.CrowdsecLoginAllowlistEnabled
 	prevCrowdsecLoginAllowlistTTLHours := current.CrowdsecLoginAllowlistTTLHours
-	prevDefaultNspawnImageVersion := current.DefaultNspawnImageVersion
 
 	if req.Hostname != nil {
 		current.Hostname = strings.TrimSpace(*req.Hostname)
@@ -733,6 +723,10 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 		req.NginxProxyReadTimeout != nil || req.NginxProxySendTimeout != nil ||
 		req.NginxWorkerProcesses != nil || req.NginxWorkerConnections != nil ||
 		req.NginxCustomHTTP != nil
+	// The pre-merge nginx values live in `before` (captured at the top, before any
+	// field merge — nginx fields are untouched until here). settingsops uses it to
+	// classify the effect (changed vs explicit re-apply). The dispatch decision
+	// below stays keyed on nginxTouched/cacheCapTouched, preserving re-sync.
 	if req.NginxClientMaxBodySize != nil {
 		current.NginxClientMaxBodySize = strings.TrimSpace(*req.NginxClientMaxBodySize)
 	}
@@ -783,7 +777,7 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 	}
 
 	// Validate — reject obviously bad input so we don't persist garbage.
-	if err := ValidateServerSettings(current); err != nil {
+	if err := settingsops.Validate(current); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_settings", "detail": err.Error()})
 		return
 	}
@@ -791,7 +785,7 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 	// Admin opt-in for tenant Docker apps. Enabling requires the engine; the
 	// host tenant setup itself is dispatched AFTER persist (below), detached
 	// from this request — see the background goroutine.
-	if current.DockerAppsForUsersEnabled != prevDockerForUsers &&
+	if current.DockerAppsForUsersEnabled != before.DockerAppsForUsersEnabled &&
 		current.DockerAppsForUsersEnabled && !current.DockerMarketplaceEnabled {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "docker_not_installed", "detail": "enable the Docker marketplace first"})
 		return
@@ -815,79 +809,61 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 				h.cfg.Log.Error("agent set_hostname failed", "err", err)
 			}
 		}()
-	}
-
-	// M37 Phase 4: Postgres opt-in. flip true → install + start;
-	// flip false → stop + disable (data preserved). Dispatch in
-	// the background — install can take up to ~60s on apt-get and
-	// the PATCH should not block the UI for that long. The DB row
-	// already reflects the operator intent; reconcile will eventually
-	// catch up on retry.
-	if current.PostgresEnabled != prevPostgresEnabled && h.cfg.Agent != nil {
-		go func(target bool) {
-			bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		// JAB-389: the GH#135 dedicated :443 landing vhost keeps its server_name
+		// on the old FQDN after a rename (install.sh renders it; nothing
+		// re-renders it live), so https://<new-fqdn>/ falls to the return-444
+		// default block. Re-point it to the new hostname. Dispatched
+		// independently of set_hostname — the DB row is the truth, so the
+		// landing vhost should track it even if hostnamectl failed.
+		go func() {
+			bgCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			method := "db.postgres.disable"
-			if target {
-				method = "db.postgres.install"
+			if _, err := h.cfg.Agent.Call(bgCtx, "nginx.panel_landing_rehost", map[string]any{
+				"hostname": current.Hostname,
+			}); err != nil {
+				h.cfg.Log.Error("agent nginx.panel_landing_rehost failed", "err", err)
 			}
-			if _, err := h.cfg.Agent.Call(bgCtx, method, map[string]any{}); err != nil {
-				h.cfg.Log.Error("agent postgres lifecycle failed",
-					"method", method, "err", err)
-			}
-		}(current.PostgresEnabled)
+		}()
 	}
 
-	// M353 module install-on-enable. Flipping an optional module On must INSTALL
-	// its packages if they're missing (not just flip the DB flag). Mirrors the
-	// postgres pattern: background dispatch of system.module.install so the PATCH
-	// doesn't block on apt. Wired only for modules install.sh supports at runtime
-	// today. On flip false→true install the module; on flip true→false stop +
-	// disable its services (system.module.disable — data preserved, guardrails
-	// like ufw/pdns-recursor left running). Transition-dispatch only, with ONE
-	// exception: for most modules there is deliberately NO auto
-	// disable-convergence (stopping a "disabled" service every tick would fight
-	// an operator troubleshooting a manual start, and is destructive when a
-	// status read is wrong — unlike install-convergence). FTP is the exception
-	// (JAB-259): it is a security shutoff, so it takes the fail-closed ftp.disable
-	// verb here AND is reconciled toward inactive+masked+ports-closed every tick
-	// (convergeFtpDisabled) — a disabled FTP that stays reachable is a security
-	// hole, not a troubleshooting convenience.
+	// Optional-module lifecycle (JAB-294). settingsops.ModuleEffects is the single
+	// owner of every optional-module transition table, agent verb/params/timeout,
+	// and the failed-enable rollback decision (postgres, docker marketplace +
+	// tenant, python, and the dns/mail/quota/security/ftp system.module.* loop).
+	// The REST handler and the CLI both execute this one plan — the CLI consuming
+	// only the subset it has setters for. This adapter dispatches each non-no-op
+	// effect the REST way: detached, best-effort, one goroutine per effect, so a
+	// slow apt install or a client disconnect never blocks or aborts the PATCH.
+	// The DB row already holds operator intent; a failed apply reconciles on the
+	// next pass. FTP disable is the fail-closed exception (JAB-259): it takes the
+	// ftp.disable verb (not the fail-soft system.module.disable) and is reconciled
+	// toward inactive+masked+ports-closed every tick by convergeFtpDisabled — a
+	// disabled FTP that stays reachable is a security hole. For most modules there
+	// is deliberately NO disable-convergence (stopping a "disabled" service every
+	// tick would fight an operator troubleshooting a manual start).
+	modulePlan := settingsops.ModuleEffects(&before, current)
 	if h.cfg.Agent != nil {
-		for _, m := range []struct {
-			key           string
-			prev, current bool
-		}{
-			{"dns", prevDNSEnabled, current.DNSEnabled},
-			{"mail", prevMailEnabled, current.MailEnabled},
-			{"quota", prevQuotaEnabled, current.QuotaEnabled},
-			{"security", prevSecurityEnabled, current.SecurityEnabled},
-			{"ftp", prevFTPEnabled, current.FTPEnabled},
-		} {
-			switch {
-			case m.current && !m.prev:
-				h.dispatchModuleInstall(m.key)
-			case !m.current && m.prev:
-				if m.key == "ftp" {
-					// JAB-259: fail-closed shutoff (stop+mask+close ports+verify),
-					// not the generic fail-soft disable.
-					h.dispatchFtpDisable()
-				} else {
-					h.dispatchModuleDisable(m.key)
-				}
-			}
+		if call := modulePlan.Postgres.Call; call != nil {
+			go h.dispatchSettingsCall(*call, "agent postgres lifecycle failed")
 		}
-		// GH #1053: vsftpd.conf is rendered from ftp_allow_plaintext +
-		// ftp_pasv_address at module-install time. When either changes while
-		// the module stays enabled, re-dispatch the (idempotent) install so
-		// the config re-renders and vsftpd restarts with the new values.
-		if current.FTPEnabled && prevFTPEnabled &&
-			(current.FTPAllowPlaintext != prevFTPAllowPlaintext ||
-				current.FTPPasvAddress != prevFTPPasvAddress ||
-				current.FTPMaxClients != prevFTPMaxClients ||
-				current.FTPMaxPerIP != prevFTPMaxPerIP ||
-				current.FTPLocalMaxRateKBs != prevFTPLocalMaxRateKBs) {
-			h.dispatchModuleInstall("ftp")
+		for _, me := range modulePlan.Modules {
+			call := me.Call
+			if call == nil {
+				continue
+			}
+			logMsg := "agent module install failed"
+			switch call.Method {
+			case "system.module.disable":
+				logMsg = "agent module disable failed"
+			case "ftp.disable":
+				logMsg = "ftp fail-closed disable failed (reconciler will retry)"
+			}
+			go h.dispatchSettingsCall(*call, logMsg)
+		}
+		// GH #1053: FTP config change while the module stays enabled re-renders
+		// vsftpd.conf via the idempotent install.
+		if call := modulePlan.FTPReapply.Call; call != nil {
+			go h.dispatchSettingsCall(*call, "agent module install failed")
 		}
 	}
 
@@ -906,66 +882,26 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 		}(current.PanelBrandText)
 	}
 
-	// M48 docker marketplace opt-in. Mirrors the postgres pattern
-	// above: flip true -> install_docker_engine; flip false -> stop
-	// + disable units, data under /var/lib/jabali/docker-apps left
-	// intact. Background dispatch so the operator's PATCH does not
-	// block on apt-get.
-	if current.DockerMarketplaceEnabled != prevDockerEnabled && h.cfg.Agent != nil {
-		go func(target bool) {
-			bgCtx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-			defer cancel()
-			method := "docker.disable"
-			if target {
-				method = "docker.install"
+	// Optional-module lifecycle, continued: docker marketplace, tenant Docker, and
+	// the Python runtime — the same settingsops plan. Tenant Docker additionally
+	// reverts its persisted flag if an ENABLE fails (GH #272 — unprivileged LXC):
+	// the module flags the decision (RevertOnFailure), this adapter runs the Repo
+	// write via the shared dispatchReverting. Python installs on enable only;
+	// disable leaves packages, which the module encodes as a no-op.
+	if h.cfg.Agent != nil {
+		if call := modulePlan.Docker.Call; call != nil {
+			go h.dispatchSettingsCall(*call, "agent docker lifecycle failed")
+		}
+		if call := modulePlan.DockerTenant.Call; call != nil {
+			var revert func(*models.ServerSettings)
+			if modulePlan.DockerTenant.RevertOnFailure {
+				revert = func(cur *models.ServerSettings) { cur.DockerAppsForUsersEnabled = false }
 			}
-			if _, err := h.cfg.Agent.Call(bgCtx, method, map[string]any{}); err != nil {
-				h.cfg.Log.Error("agent docker lifecycle failed",
-					"method", method, "err", err)
-			}
-		}(current.DockerMarketplaceEnabled)
-	}
-
-	// Tenant Docker opt-in: run the host tenant setup (userns-remap, ~minutes)
-	// or teardown DETACHED from this request, so a client disconnect can't kill
-	// a half-done docker retrofit. The host flag the agent writes is the source
-	// of truth for the docker_apps_user_enabled capability, so a failed enable
-	// simply leaves the tab hidden (no DB/host drift to reconcile).
-	if current.DockerAppsForUsersEnabled != prevDockerForUsers && h.cfg.Agent != nil {
-		go func(target bool) {
-			bgCtx, cancel := context.WithTimeout(context.Background(), 12*time.Minute)
-			defer cancel()
-			if _, err := h.cfg.Agent.Call(bgCtx, "docker.tenant_set", map[string]any{"enabled": target}); err != nil {
-				h.cfg.Log.Error("agent docker.tenant_set failed", "enabled", target, "err", err)
-				// On a failed ENABLE (e.g. unprivileged LXC — GH #272), revert the
-				// DB flag so the UI toggle reflects reality (host setup did NOT
-				// happen) instead of showing "enabling…" forever. Fresh context:
-				// bgCtx may already be exhausted from the agent call/timeout.
-				if target {
-					rctx, rcancel := context.WithTimeout(context.Background(), 15*time.Second)
-					defer rcancel()
-					if cur, gerr := h.cfg.Repo.Get(rctx); gerr == nil && cur != nil {
-						cur.DockerAppsForUsersEnabled = false
-						if uerr := h.cfg.Repo.Upsert(rctx, cur); uerr != nil {
-							h.cfg.Log.Error("revert docker_apps_for_users after failed enable", "err", uerr)
-						}
-					}
-				}
-			}
-		}(current.DockerAppsForUsersEnabled)
-	}
-
-	// ADR-0131: install the Python app runtime prerequisites on enable
-	// (mirrors the docker/postgres opt-ins). Disable leaves packages in
-	// place. Background dispatch so the PATCH does not block on apt.
-	if current.PythonAppsEnabled != prevPythonEnabled && current.PythonAppsEnabled && h.cfg.Agent != nil {
-		go func() {
-			bgCtx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-			defer cancel()
-			if _, err := h.cfg.Agent.Call(bgCtx, "app.python.install_runtime", map[string]any{}); err != nil {
-				h.cfg.Log.Error("agent python runtime install failed", "err", err)
-			}
-		}()
+			go h.dispatchReverting(*call, "agent docker.tenant_set failed", revert)
+		}
+		if call := modulePlan.Python.Call; call != nil {
+			go h.dispatchSettingsCall(*call, "agent python runtime install failed")
+		}
 	}
 
 	// Apply timezone to the OS via agent if changed and not empty.
@@ -981,51 +917,49 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 		}()
 	}
 
-	// Apply SSH config to the OS via agent if any SSH-affecting field changed.
-	// The agent rewrites both /etc/ssh/sshd_config.d/jabali-sshd.conf (global,
-	// affects root/admin) and /etc/ssh/sshd_config.d/jabali-sftp.conf (M12
-	// Match Group block, affects hosting users), validates with sshd -t,
-	// and reloads sshd. See ADR-0028 for the M12 jabali-sftp design.
-	// Re-apply when ANY SSH-section field is in the request, even if
-	// its value matches the DB row. Without this an operator hitting a
-	// drifted file (DB=1, file=no) couldn't fix it by re-submitting —
-	// `current==prev` short-circuited the agent.Call. With this,
-	// re-saving Server Settings always re-syncs the file. The startup
-	// reconcile in serve.go handles the boot-time case; this handles
-	// the operator-driven re-sync without forcing a toggle off→on.
-	sshFieldTouched := req.SSHPort != nil || req.SSHPasswordAuth != nil || req.SSHUserPasswordAuth != nil
-	if (sshFieldTouched ||
-		current.SSHPort != prevSSHPort ||
-		current.SSHPasswordAuth != prevSSHPasswordAuth ||
-		current.SSHUserPasswordAuth != prevSSHUserPasswordAuth) && h.cfg.Agent != nil {
-		go func() {
-			bgCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			if _, err := h.cfg.Agent.Call(bgCtx, "system.set_ssh_config", map[string]any{
-				"port":               current.SSHPort,
-				"password_auth":      current.SSHPasswordAuth,
-				"user_password_auth": current.SSHUserPasswordAuth,
-			}); err != nil {
-				h.cfg.Log.Error("agent set_ssh_config failed", "err", err)
+	// SSH config + sandbox transitions (JAB-295). settingsops.SSHEffects is the
+	// single owner of both agent verbs, their params, timeouts, and the two
+	// distinct detection semantics:
+	//   - system.set_ssh_config rewrites /etc/ssh/sshd_config.d/jabali-sshd.conf
+	//     (global, affects root/admin) + jabali-sftp.conf (M12 Match Group, hosting
+	//     users), validates with `sshd -t`, and reloads (ADR-0028). It is
+	//     touched-based: re-saving ANY ssh field re-syncs the file even when the
+	//     value is unchanged, so an operator can heal a drifted file (DB=1, file=no)
+	//     by re-submitting. The startup reconcile in serve.go covers boot; this
+	//     covers the operator-driven re-sync.
+	//   - system.set_ssh_sandbox_mode writes the mode + default-image files the
+	//     connect wrapper reads on every exec (no reload). It is value-diff: it
+	//     fires only on a genuine change.
+	// AC5: a real change (Kind == Changed) is flagged RevertOnFailure, so a failed
+	// apply reverts the persisted SSH fields to their pre-merge values — the agent
+	// rolls the file back on `sshd -t` failure, and this keeps the DB from claiming
+	// a security state the host never accepted. The revert body is this adapter's
+	// (a repo write against its own handle), driven by the module's decision.
+	sshPlan := settingsops.SSHEffects(&before, current, settingsops.SSHTouched{
+		Config: req.SSHPort != nil || req.SSHPasswordAuth != nil || req.SSHUserPasswordAuth != nil,
+	})
+	if h.cfg.Agent != nil {
+		if call := sshPlan.Config.Call; call != nil {
+			var revert func(*models.ServerSettings)
+			if sshPlan.Config.RevertOnFailure {
+				revert = func(cur *models.ServerSettings) {
+					cur.SSHPort = before.SSHPort
+					cur.SSHPasswordAuth = before.SSHPasswordAuth
+					cur.SSHUserPasswordAuth = before.SSHUserPasswordAuth
+				}
 			}
-		}()
-	}
-
-	// Sandbox mode + default-image flips: write the matching files on
-	// disk so the wrapper picks them up on the next connect. No sshd
-	// reload needed (wrapper reads on every exec).
-	if (current.SSHSandboxMode != prevSSHSandboxMode ||
-		current.DefaultNspawnImageVersion != prevDefaultNspawnImageVersion) && h.cfg.Agent != nil {
-		go func() {
-			bgCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			if _, err := h.cfg.Agent.Call(bgCtx, "system.set_ssh_sandbox_mode", map[string]any{
-				"mode":          current.SSHSandboxMode,
-				"default_image": current.DefaultNspawnImageVersion,
-			}); err != nil {
-				h.cfg.Log.Error("agent set_ssh_sandbox_mode failed", "err", err)
+			go h.dispatchReverting(*call, "agent set_ssh_config failed", revert)
+		}
+		if call := sshPlan.Sandbox.Call; call != nil {
+			var revert func(*models.ServerSettings)
+			if sshPlan.Sandbox.RevertOnFailure {
+				revert = func(cur *models.ServerSettings) {
+					cur.SSHSandboxMode = before.SSHSandboxMode
+					cur.DefaultNspawnImageVersion = before.DefaultNspawnImageVersion
+				}
 			}
-		}()
+			go h.dispatchReverting(*call, "agent set_ssh_sandbox_mode failed", revert)
+		}
 	}
 
 	// CrowdSec sensitivity preset: re-apply when either the operator
@@ -1095,42 +1029,23 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 	// lines whenever the operator touched the Nginx form. Background dispatch
 	// (atomic-write + nginx -t gate + reload happen agent-side). Re-sync
 	// semantics: re-saving the form always re-applies, healing on-disk drift.
-	if nginxTouched && h.cfg.Agent != nil {
-		go func(s models.ServerSettings) {
-			bgCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-			defer cancel()
-			if _, err := h.cfg.Agent.Call(bgCtx, "nginx.tunables.apply", map[string]any{
-				"client_max_body_size":  s.NginxClientMaxBodySize,
-				"keepalive_timeout":     s.NginxKeepaliveTimeout,
-				"server_tokens":         s.NginxServerTokens,
-				"gzip":                  s.NginxGzip,
-				"client_body_timeout":   s.NginxClientBodyTimeout,
-				"client_header_timeout": s.NginxClientHeaderTimeout,
-				"send_timeout":          s.NginxSendTimeout,
-				"proxy_connect_timeout": s.NginxProxyConnectTimeout,
-				"proxy_read_timeout":    s.NginxProxyReadTimeout,
-				"proxy_send_timeout":    s.NginxProxySendTimeout,
-				"worker_processes":      s.NginxWorkerProcesses,
-				"worker_connections":    s.NginxWorkerConnections,
-				"custom_http":           s.NginxCustomHTTP,
-			}); err != nil {
-				h.cfg.Log.Error("agent nginx tunables apply failed", "err", err)
-			}
-		}(*current)
-	}
-	// GH #634: apply the FastCGI cache capacity when it changed.
-	if cacheCapTouched && h.cfg.Agent != nil {
-		go func(s models.ServerSettings) {
-			bgCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-			defer cancel()
-			if _, err := h.cfg.Agent.Call(bgCtx, "nginx.cache.capacity_apply", map[string]any{
-				"max_size_gb":  s.NginxCacheMaxSizeGB,
-				"keyzone_mb":   s.NginxCacheKeyzoneMB,
-				"inactive_min": s.NginxCacheInactiveMin,
-			}); err != nil {
-				h.cfg.Log.Error("agent nginx cache capacity apply failed", "err", err)
-			}
-		}(*current)
+	// M55/GH #634: derive the nginx settings effect plan (tunables + FastCGI
+	// cache capacity) in settingsops — the single owner of the agent wire,
+	// shared with the CLI (JAB-290) — and dispatch each touched verb the REST
+	// way: async, detached, best-effort (the DB already holds the truth; a later
+	// reconcile syncs on failure). Dispatch stays keyed on Touched, so the
+	// re-sync semantics are unchanged.
+	nginxPlan := settingsops.NginxEffects(&before, current, settingsops.NginxTouched{
+		Tunables: nginxTouched,
+		Cache:    cacheCapTouched,
+	})
+	if h.cfg.Agent != nil {
+		if call := nginxPlan.Tunables.Call; call != nil {
+			go h.dispatchSettingsCall(*call, "agent nginx tunables apply failed")
+		}
+		if call := nginxPlan.Cache.Call; call != nil {
+			go h.dispatchSettingsCall(*call, "agent nginx cache capacity apply failed")
+		}
 	}
 
 	h.cfg.Log.Info("event=audit kind=server_settings_updated actor_id=" + claims.UserID)
@@ -1149,118 +1064,55 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 	c.JSON(http.StatusOK, current)
 }
 
-// ValidateServerSettings does lenient input validation matching the installer.
-// Exported so the `jabali settings` CLI applies the same rules as the REST PATCH
-// (Gitea #539).
-func ValidateServerSettings(s *models.ServerSettings) error {
-	if s.Hostname != "" && !isValidHostname(s.Hostname) {
-		return fmt.Errorf("invalid hostname")
+// dispatchSettingsCall executes one settingsops AgentCall the REST way: detached
+// from the request (a client disconnect must not cancel the apply), bounded by
+// the call's own timeout, best-effort (failure is logged, not surfaced — the DB
+// already holds the truth and a later reconcile syncs). Run it in a goroutine.
+// Shared by the nginx and optional-module dispatches (JAB-290 / JAB-294).
+func (h *serverSettingsHandler) dispatchSettingsCall(call settingsops.AgentCall, logMsg string) {
+	bgCtx, cancel := context.WithTimeout(context.Background(), call.Timeout)
+	defer cancel()
+	if _, err := h.cfg.Agent.Call(bgCtx, call.Method, call.Params); err != nil {
+		// Log method + params so the module key / postgres|docker method survives
+		// (a superset of the pre-refactor per-verb attributes).
+		h.cfg.Log.Error(logMsg, "method", call.Method, "params", call.Params, "err", err)
 	}
-	// GH #836: preview base must be a bare hostname (the wildcard label
-	// is implied; NormalizePreviewBase already stripped "*." and case).
-	if s.PreviewBase != "" && !isValidHostname(s.PreviewBase) {
-		return fmt.Errorf("preview_base: invalid hostname")
-	}
-	// IPv4
-	for label, v := range map[string]string{"public_ipv4": s.PublicIPv4, "ns1_ipv4": s.NS1IPv4, "ns2_ipv4": s.NS2IPv4} {
-		if v == "" {
-			continue
-		}
-		if net.ParseIP(v) == nil || net.ParseIP(v).To4() == nil {
-			return fmt.Errorf("%s: not a valid IPv4", label)
-		}
-	}
-	// IPv6 (optional)
-	if s.PublicIPv6 != "" {
-		ip := net.ParseIP(s.PublicIPv6)
-		if ip == nil || ip.To4() != nil {
-			return fmt.Errorf("public_ipv6: not a valid IPv6")
-		}
-	}
-	// NS names
-	for label, v := range map[string]string{"ns1_name": s.NS1Name, "ns2_name": s.NS2Name} {
-		if v == "" {
-			continue
-		}
-		if !isValidHostname(v) {
-			return fmt.Errorf("%s: invalid hostname", label)
-		}
-	}
-	// Admin email
-	if s.AdminEmail != "" {
-		if _, err := mail.ParseAddress(s.AdminEmail); err != nil {
-			return fmt.Errorf("admin_email: invalid")
-		}
-	}
-	// Timezone (optional, empty means "use OS default")
-	if s.Timezone != "" && !isValidTimezone(s.Timezone) {
-		return fmt.Errorf("timezone: invalid format")
-	}
-	// SSH port
-	if s.SSHPort < 1 || s.SSHPort > 65535 {
-		return fmt.Errorf("ssh_port: must be between 1 and 65535")
-	}
-	if s.DefaultDNSTTL != 0 && (s.DefaultDNSTTL < 60 || s.DefaultDNSTTL > 86400) {
-		return fmt.Errorf("default_dns_ttl must be 60–86400 seconds (or 0 to use built-in fallback)")
-	}
-	// Panel brand text: free-form but capped at 60 chars.
-	if len(s.PanelBrandText) > 60 {
-		return fmt.Errorf("panel_brand_text: must be <= 60 chars")
-	}
-	// Upload cap. 0 == "use compile-time default (1 GB)"; otherwise
-	// 1 MB minimum and 10 GB ceiling (matches the practical browser-
-	// upload limit and the nginx vhost client_max_body_size; admins
-	// wanting bigger should use SFTP/SCP).
-	if s.UploadMaxSizeMB != 0 && (s.UploadMaxSizeMB < 1 || s.UploadMaxSizeMB > 10240) {
-		return fmt.Errorf("upload_max_size_mb: must be 0 or between 1 and 10240")
-	}
-	// M13 SSH sandbox.
-	if s.SSHSandboxMode != "" && s.SSHSandboxMode != "bubblewrap" && s.SSHSandboxMode != "nspawn" {
-		return fmt.Errorf("ssh_sandbox_mode: must be 'bubblewrap' or 'nspawn'")
-	}
-	if s.DefaultNspawnImageVersion != "" && !isImageNamePattern(s.DefaultNspawnImageVersion) {
-		return fmt.Errorf("default_nspawn_image_version: must match [a-z0-9-]+")
-	}
-	// WorkingFolder must be absolute. install.sh ensures /var/lib/
-	// jabali exists at first boot; operator who points elsewhere is
-	// responsible for pre-creating + ACLing that dir.
-	if s.WorkingFolder != "" {
-		if !strings.HasPrefix(s.WorkingFolder, "/") {
-			return fmt.Errorf("working_folder: must be an absolute path")
-		}
-		if strings.Contains(s.WorkingFolder, "..") {
-			return fmt.Errorf("working_folder: must not contain '..'")
-		}
-	}
-	// M55 nginx tunables. Sizes/timeouts go verbatim into a config file,
-	// so reject anything not matching nginx's value grammar.
-	if s.NginxClientMaxBodySize != "" && !nginxSizeRE.MatchString(s.NginxClientMaxBodySize) {
-		return fmt.Errorf("nginx_client_max_body_size: invalid nginx size (e.g. 50m)")
-	}
-	for label, v := range map[string]string{
-		"nginx_keepalive_timeout":     s.NginxKeepaliveTimeout,
-		"nginx_client_body_timeout":   s.NginxClientBodyTimeout,
-		"nginx_client_header_timeout": s.NginxClientHeaderTimeout,
-		"nginx_send_timeout":          s.NginxSendTimeout,
-		"nginx_proxy_connect_timeout": s.NginxProxyConnectTimeout,
-		"nginx_proxy_read_timeout":    s.NginxProxyReadTimeout,
-		"nginx_proxy_send_timeout":    s.NginxProxySendTimeout,
-	} {
-		if v != "" && !nginxTimeRE.MatchString(v) {
-			return fmt.Errorf("%s: invalid nginx time (e.g. 300s)", label)
-		}
-	}
-	if s.NginxWorkerProcesses != "" && !nginxWorkerProcRE.MatchString(s.NginxWorkerProcesses) {
-		return fmt.Errorf("nginx_worker_processes: must be 'auto' or 1-99")
-	}
-	if s.NginxWorkerConnections > 1048576 {
-		return fmt.Errorf("nginx_worker_connections: must be <= 1048576")
-	}
-	if len(s.NginxCustomHTTP) > 4000 {
-		return fmt.Errorf("nginx_custom_http: must be <= 4000 chars")
-	}
-	return nil
 }
+
+// dispatchReverting runs a settings AgentCall detached (like dispatchSettingsCall)
+// and, when revert is non-nil and the call fails, rolls the persisted row back so
+// the DB never claims a state the host rejected. The module owns the decision
+// (whether an effect reverts and in which direction — Effect.RevertOnFailure); the
+// caller supplies revert, which mutates the freshly-read row in place with the
+// fields this effect owns. The revert is a persistence write against the handler's
+// own repo handle, so it cannot be an agent Rollback. Used by tenant Docker
+// (GH #272) and the SSH config + sandbox verbs (JAB-295, AC5). Run in a goroutine;
+// the revert uses its own short-lived context so a call-timeout failure can still
+// persist the rollback.
+func (h *serverSettingsHandler) dispatchReverting(call settingsops.AgentCall, logMsg string, revert func(*models.ServerSettings)) {
+	bgCtx, cancel := context.WithTimeout(context.Background(), call.Timeout)
+	defer cancel()
+	if _, err := h.cfg.Agent.Call(bgCtx, call.Method, call.Params); err != nil {
+		h.cfg.Log.Error(logMsg, "params", call.Params, "err", err)
+		if revert == nil {
+			return
+		}
+		rctx, rcancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer rcancel()
+		if cur, gerr := h.cfg.Repo.Get(rctx); gerr == nil && cur != nil {
+			revert(cur)
+			if uerr := h.cfg.Repo.Upsert(rctx, cur); uerr != nil {
+				h.cfg.Log.Error("revert settings after failed apply", "method", call.Method, "err", uerr)
+			}
+		}
+	}
+}
+
+// hostnameRE validates a bare hostname/IP charset. Server-settings validation
+// moved to internal/settingsops (JAB-290), but this handler still uses the
+// pattern directly for the FTP passive-address field (which lands verbatim in a
+// root-rendered config file), so the regex stays local to the api package.
+var hostnameRE = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$`)
 
 // isImageNamePattern matches the [a-z0-9-]+ shape used everywhere
 // from agent helpers to wrapper scripts. Kept inline here so the
@@ -1279,36 +1131,6 @@ func isImageNamePattern(s string) bool {
 		}
 	}
 	return true
-}
-
-var (
-	hostnameRE = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$`)
-	timezoneRE = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_+-]*(/[A-Za-z0-9_+-]+)*$`)
-
-	// M55 nginx tunable value grammars.
-	nginxSizeRE       = regexp.MustCompile(`^[0-9]+[kKmMgG]?$`)
-	nginxTimeRE       = regexp.MustCompile(`^[0-9]+(ms|s|m|h)?$`)
-	nginxWorkerProcRE = regexp.MustCompile(`^(auto|[1-9][0-9]?)$`)
-)
-
-func isValidHostname(s string) bool {
-	if len(s) > 253 {
-		return false
-	}
-	return hostnameRE.MatchString(s)
-}
-
-func isValidTimezone(s string) bool {
-	if len(s) > 64 {
-		return false
-	}
-	if strings.Contains(s, "..") {
-		return false
-	}
-	if strings.HasPrefix(s, "/") {
-		return false
-	}
-	return timezoneRE.MatchString(s)
 }
 
 // pythonRuntimeStatus reports whether the Python app runtime prerequisites
@@ -1444,34 +1266,10 @@ func (h *serverSettingsHandler) dispatchModuleInstall(key string) {
 	}()
 }
 
-// dispatchModuleDisable stops + disables a module's services in the background
-// when the module is turned OFF. Data is preserved (never purged), so
-// re-enabling restarts the services via the idempotent install path. Detached
-// so the PATCH returns immediately.
-func (h *serverSettingsHandler) dispatchModuleDisable(key string) {
-	go func() {
-		bgCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-		defer cancel()
-		if _, err := h.cfg.Agent.Call(bgCtx, "system.module.disable", map[string]any{"key": key}); err != nil {
-			h.cfg.Log.Error("agent module disable failed", "key", key, "err", err)
-		}
-	}()
-}
-
-// dispatchFtpDisable runs the FAIL-CLOSED FTP shutoff (JAB-259) instead of the
-// generic fail-soft system.module.disable: stop + mask vsftpd, remove its UFW
-// rules, and verify inactive+masked. Async like the other module dispatches —
-// the reconciler's convergeFtpDisabled retries until the daemon is confirmed
-// down and the ports are closed, so a failure here is logged, never lost.
-func (h *serverSettingsHandler) dispatchFtpDisable() {
-	go func() {
-		bgCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-		defer cancel()
-		if _, err := h.cfg.Agent.Call(bgCtx, "ftp.disable", map[string]any{}); err != nil {
-			h.cfg.Log.Error("ftp fail-closed disable failed (reconciler will retry)", "err", err)
-		}
-	}()
-}
+// The module-disable and fail-closed FTP-disable transitions now flow through
+// settingsops.ModuleEffects + dispatchSettingsCall (JAB-294); the standalone
+// dispatchModuleDisable / dispatchFtpDisable helpers were retired. Install still
+// has its own helper because the module status endpoint re-dispatches it.
 
 // installableModules are the module keys with a runtime install path (mirrors
 // install.sh's --install-module dispatcher + the agent allowlist). api_enabled

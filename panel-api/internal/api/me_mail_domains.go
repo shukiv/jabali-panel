@@ -53,17 +53,16 @@ type mailDomainRow struct {
 	MailBytes    int64  `json:"mail_bytes"`
 	Sent30d      int64  `json:"sent_30d"`
 	Received30d  int64  `json:"received_30d"`
-	// EmailEnabled drives the Status column and the Enable/Disable row action
-	// (GH #1387 follow-up). The list now includes mail-DISABLED owned domains
-	// too, so a tenant can turn mail ON for a domain from here — a mail-off row
-	// simply carries email_enabled=false and (usually) zero counts.
+	// EmailEnabled is always true for listed rows (GH #1387, johnnyq 2026-09-01:
+	// the list shows only mail-active domains). Kept on the wire so the UI can
+	// still reason about mail state without a second fetch.
 	EmailEnabled bool `json:"email_enabled"`
 	// SSLState is the domain's computed cert state (off/pending/active_le/
 	// self_signed/failed — DomainRepository.computeSSLState), surfaced for the
 	// SSL column. Omitted when empty so the UI renders "Off".
 	SSLState string `json:"ssl_state,omitempty"`
-	// IsQuotaSuspended marks a bandwidth-suspended domain; the Status column
-	// shows "Suspended" for it regardless of the mail flag.
+	// IsQuotaSuspended marks a bandwidth-suspended (mail-active) domain; the UI
+	// badges it "Suspended" so the tenant sees why mail may be paused.
 	IsQuotaSuspended bool `json:"is_quota_suspended"`
 	// Queue is the count of queued messages touching this domain (as sender or
 	// recipient). nil = unknown (agent unavailable) — omitted from JSON so the
@@ -123,12 +122,15 @@ func (h *meMailDomainsHandler) list(c *gin.Context) {
 		}
 	}
 
-	// GH #1387 follow-up: list ALL owned domains, not just mail-enabled ones, so
-	// the Status column reads Enabled/Disabled and the Enable action has a row to
-	// act on. Counts/traffic for a mail-off domain are naturally zero.
+	// GH #1387 (johnnyq, 2026-09-01): list ONLY domains where mail is active. A
+	// mail-off domain is a Domains-page concern (enable mail there); this page is
+	// the tenant's mailbox home and shows only domains that actually have mail.
 	out := []mailDomainRow{}
 	for i := range domains {
 		d := &domains[i]
+		if !d.EmailEnabled {
+			continue
+		}
 		a := byDomainID[d.ID]
 		t := byName[d.Name]
 		out = append(out, mailDomainRow{

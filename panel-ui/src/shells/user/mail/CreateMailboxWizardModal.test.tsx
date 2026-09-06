@@ -38,6 +38,7 @@ const DOMAINS = [
 function renderModal(opts: {
   open?: boolean;
   domains?: typeof DOMAINS;
+  lockDomain?: boolean;
   onCancel?: () => void;
   onCreated?: (resp: { id: string; email: string }) => void;
 } = {}) {
@@ -47,6 +48,7 @@ function renderModal(opts: {
       <CreateMailboxWizardModal
         open={opts.open ?? true}
         domains={opts.domains ?? DOMAINS}
+        lockDomain={opts.lockDomain}
         onCancel={opts.onCancel ?? (() => {})}
         // Lift the response type to satisfy the wizard's prop; tests
         // only verify the fields they care about.
@@ -86,6 +88,42 @@ describe("CreateMailboxWizardModal — step gating", () => {
     await screen.findByLabelText(/email address/i);
     expect(screen.getByLabelText(/^Password$/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/quota/i)).toBeInTheDocument();
+  });
+});
+
+describe("CreateMailboxWizardModal — GH #1387 lockDomain (drill-down)", () => {
+  it("hides the Domain picker, pre-fills the domain, and reveals account fields", async () => {
+    renderModal({ domains: [DOMAINS[0]], lockDomain: true });
+
+    // No Domain select — the drill already scoped to one domain.
+    expect(screen.queryByLabelText(/^Domain$/i)).toBeNull();
+    // A hint tells the user where the mailbox lands.
+    await screen.findByText(/adding a mailbox to/i);
+    // Exact match targets the hint's <strong>first.test</strong>, not the
+    // email field's "@first.test" addon.
+    expect(screen.getByText("first.test")).toBeInTheDocument();
+    // Account fields materialise immediately (step-2), no picking needed.
+    await screen.findByLabelText(/email address/i);
+  });
+
+  it("posts to the locked domain without a pick step", async () => {
+    mocked.post.mockResolvedValueOnce({
+      data: { id: "mb1", email: "bob@first.test", quota_bytes: 1 << 30 },
+    });
+    const onCreated = vi.fn();
+    renderModal({ domains: [DOMAINS[0]], lockDomain: true, onCreated });
+
+    fireEvent.change(await screen.findByLabelText(/email address/i), {
+      target: { value: "bob" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /create mailbox/i }));
+
+    await waitFor(() =>
+      expect(mocked.post).toHaveBeenCalledWith(
+        "/domains/dom1/mailboxes",
+        expect.objectContaining({ local_part: "bob" }),
+      ),
+    );
   });
 });
 

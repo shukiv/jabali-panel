@@ -11,6 +11,13 @@ Single page, 5-second polling, errgroup-aggregated.
 - **Queues card** (placeholder — defers to M31.1): mail queue depth, backup queue depth, reconciler tick lag.
 - **Recent panel-api requests**: top 10 by latency.
 
+## Health badge (JAB-373)
+
+The admin header carries a lightweight **Health** badge backed by a cheap
+`?view=health` projection of Server Status (single-flight + short TTL so the
+badge poll can't stampede the box). It gives an at-a-glance green / degraded
+signal without opening the full Server Status page.
+
 ## Per-service controls
 
 Each card has start / stop / restart buttons. Disabled by default — flip the **off-toggle** in Server Settings → General to enable for admins who want to react from the UI instead of SSH.

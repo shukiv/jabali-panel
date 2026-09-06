@@ -12,7 +12,7 @@ test.describe("admin dashboard", () => {
     await mockApi(page, { me: admin });
     // Stub the server-status envelope so the welcome card's hostname
     // line resolves to a deterministic value rather than "—".
-    await page.route("**/api/v1/admin/server-status", (route) =>
+    await page.route("**/api/v1/admin/server-status*", (route) =>
       route.fulfill({
         status: 200,
         contentType: "application/json",

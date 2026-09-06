@@ -183,6 +183,52 @@ func TestMailboxRepository_ListByDomainID(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestMailboxRepository_ListByDomainID_TranslatesFriendlySort proves the
+// per-domain drill-down understands the SAME clean sort keys the directory does
+// (JAB-370): a shared front-end sends ?sort=email|name|usage|status and the
+// endpoint orders on the matching bare column instead of silently falling back
+// to created_at (the regression this guards). Falsify by deleting the
+// mailboxListSortKeys lookup in ListByDomainID → "email" no longer whitelists,
+// pickSort drops to DefaultSort, and the email/status expectations redden.
+func TestMailboxRepository_ListByDomainID_TranslatesFriendlySort(t *testing.T) {
+	cols := []string{"id", "domain_id", "local_part", "email_cached", "password_hash",
+		"quota_bytes", "is_disabled", "last_usage_bytes", "last_usage_at", "created_at", "updated_at"}
+	now := time.Now()
+
+	cases := []struct {
+		name    string
+		sort    string
+		orderBy string // the column the ORDER BY must carry
+	}{
+		{"email clean key", "email", "email_cached"},
+		{"name clean key", "name", "display_name"},
+		{"usage clean key", "usage", "last_usage_bytes"},
+		{"status clean key", "status", "is_disabled"},
+		{"raw column passes through", "quota_bytes", "quota_bytes"},
+		{"unknown directory-only key falls back", "domain", "created_at"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			db, mock, raw := newMockDB(t)
+			defer raw.Close()
+			repo := NewMailboxRepository(db)
+
+			mock.ExpectQuery("SELECT count.* FROM `mailboxes`.*WHERE domain_id = \\?").
+				WillReturnRows(sqlmock.NewRows([]string{"count(*)"}).AddRow(1))
+			mock.ExpectQuery("SELECT .* FROM `mailboxes`.*WHERE domain_id = \\?.*ORDER BY " + tc.orderBy + " ASC").
+				WillReturnRows(sqlmock.NewRows(cols).
+					AddRow("mb1", "dom1", "alice", "alice@example.com", "h1", uint64(1<<30), false, uint64(0), nil, now, now),
+				)
+
+			rows, total, err := repo.ListByDomainID(context.Background(), "dom1", ListOptions{Sort: tc.sort, Order: "asc"})
+			require.NoError(t, err)
+			require.Equal(t, int64(1), total)
+			require.Len(t, rows, 1)
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
 // TestMailboxRepository_ListByDomainID_ExcludeSystem verifies that the
 // GH #1056 opt filters the JAB-230 relay out of BOTH the count and the row
 // query — otherwise the paginated list would show N-1 rows against a total of
@@ -210,6 +256,132 @@ func TestMailboxRepository_ListByDomainID_ExcludeSystem(t *testing.T) {
 	require.Equal(t, int64(1), total)
 	require.Len(t, rows, 1)
 	require.Equal(t, "alice@example.com", rows[0].EmailCached)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// directoryCols is the column set ListDirectoryPage's projection scans into
+// (mailboxInventorySelect + the three joined aliases). Deliberately WITHOUT
+// password_hash / password_enc — the projection must never select them.
+var directoryCols = []string{
+	"id", "domain_id", "local_part", "email_cached", "display_name",
+	"quota_bytes", "is_disabled", "send_only", "system",
+	"last_usage_bytes", "last_usage_at", "created_at", "updated_at",
+	"domain_name", "owner_user_id", "user_username",
+}
+
+// TestMailboxRepository_ListDirectoryPage_Paginated is the JAB-370 happy path:
+// a bounded page carries the system=0 predicate in BOTH count and select (so
+// the total and the page agree), orders by the qualified email column ASC by
+// default, and applies LIMIT/OFFSET. The projection is the inventory allowlist
+// (mailbox_inventory_internal_test guards it against secret columns).
+func TestMailboxRepository_ListDirectoryPage_Paginated(t *testing.T) {
+	db, mock, raw := newMockDB(t)
+	defer raw.Close()
+
+	repo := NewMailboxRepository(db)
+	now := time.Now()
+
+	mock.ExpectQuery("SELECT count.* FROM .*mailboxes.*JOIN domains d.*LEFT JOIN users u.*WHERE m\\.system = 0").
+		WillReturnRows(sqlmock.NewRows([]string{"count(*)"}).AddRow(42))
+	// Qualified projection, qualified default ORDER BY, and LIMIT — a bare
+	// `ORDER BY created_at` would be MariaDB 1052 (three joined tables carry it).
+	mock.ExpectQuery("SELECT m\\.id, m\\.domain_id.*d\\.name AS domain_name.*FROM .*mailboxes.*WHERE m\\.system = 0.*ORDER BY m\\.email_cached ASC.*LIMIT").
+		WillReturnRows(sqlmock.NewRows(directoryCols).AddRow(
+			"mb1", "dom1", "alice", "alice@example.com", "Alice",
+			uint64(1<<30), false, false, false,
+			uint64(0), nil, now, now,
+			"example.com", "usr1", "bob",
+		))
+
+	rows, total, err := repo.ListDirectoryPage(context.Background(), ListOptions{Offset: 20, Limit: 20}, "")
+	require.NoError(t, err)
+	require.Equal(t, int64(42), total)
+	require.Len(t, rows, 1)
+	require.Equal(t, "alice@example.com", rows[0].EmailCached)
+	require.Equal(t, "example.com", rows[0].DomainName)
+	require.Equal(t, "bob", rows[0].UserUsername)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// TestMailboxRepository_ListDirectoryPage_SearchAndOwner verifies the search
+// LIKE-ESCAPE chain (so "50%" isn't a wildcard) and the #483 owner scope both
+// reach the SQL, in both the count and the page query.
+func TestMailboxRepository_ListDirectoryPage_SearchAndOwner(t *testing.T) {
+	db, mock, raw := newMockDB(t)
+	defer raw.Close()
+
+	repo := NewMailboxRepository(db)
+	now := time.Now()
+
+	mock.ExpectQuery("SELECT count.* FROM .*mailboxes.*WHERE m\\.system = 0 AND d\\.user_id = \\? AND .*m\\.email_cached LIKE \\? ESCAPE.*u\\.username LIKE \\? ESCAPE.*").
+		WillReturnRows(sqlmock.NewRows([]string{"count(*)"}).AddRow(1))
+	mock.ExpectQuery("SELECT m\\.id.*FROM .*mailboxes.*WHERE m\\.system = 0 AND d\\.user_id = \\? AND .*LIKE \\? ESCAPE.*ORDER BY.*LIMIT").
+		WillReturnRows(sqlmock.NewRows(directoryCols).AddRow(
+			"mb1", "dom1", "alice", "alice@example.com", "Alice",
+			uint64(1<<30), false, false, false,
+			uint64(0), nil, now, now,
+			"example.com", "usr1", "bob",
+		))
+
+	rows, total, err := repo.ListDirectoryPage(context.Background(), ListOptions{Limit: 20, Search: "alice"}, "usr1")
+	require.NoError(t, err)
+	require.Equal(t, int64(1), total)
+	require.Len(t, rows, 1)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// TestMailboxRepository_ListDirectoryPage_BadSortFallsBack proves a hostile
+// ?sort= value is never interpolated: it is not in mailboxDirectorySortKeys,
+// so the order falls back to the qualified email column. The mock only matches
+// if the ORDER BY is exactly `m.email_cached` — an interpolated injection would
+// fail the expectation.
+func TestMailboxRepository_ListDirectoryPage_BadSortFallsBack(t *testing.T) {
+	db, mock, raw := newMockDB(t)
+	defer raw.Close()
+
+	repo := NewMailboxRepository(db)
+	now := time.Now()
+
+	mock.ExpectQuery("SELECT count.* FROM .*mailboxes.*WHERE m\\.system = 0").
+		WillReturnRows(sqlmock.NewRows([]string{"count(*)"}).AddRow(1))
+	mock.ExpectQuery("SELECT m\\.id.*WHERE m\\.system = 0.*ORDER BY m\\.email_cached (?:ASC|DESC).*LIMIT").
+		WillReturnRows(sqlmock.NewRows(directoryCols).AddRow(
+			"mb1", "dom1", "alice", "alice@example.com", "Alice",
+			uint64(1<<30), false, false, false,
+			uint64(0), nil, now, now,
+			"example.com", "usr1", "bob",
+		))
+
+	rows, _, err := repo.ListDirectoryPage(context.Background(),
+		ListOptions{Limit: 20, Sort: "email_cached); DROP TABLE mailboxes;--", Order: "asc"}, "")
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// TestMailboxRepository_ListDirectoryPage_Unbounded confirms Limit==0 (no
+// page/page_size on the request) emits no LIMIT — the historical unbounded
+// read the admin user-overview still depends on.
+func TestMailboxRepository_ListDirectoryPage_Unbounded(t *testing.T) {
+	db, mock, raw := newMockDB(t)
+	defer raw.Close()
+
+	repo := NewMailboxRepository(db)
+	now := time.Now()
+
+	mock.ExpectQuery("SELECT count.* FROM .*mailboxes.*WHERE m\\.system = 0").
+		WillReturnRows(sqlmock.NewRows([]string{"count(*)"}).AddRow(2))
+	// No LIMIT clause: sqlmock matches on a prefix, so we assert the ORDER BY
+	// is the final clause by anchoring the pattern to the end with `$`.
+	mock.ExpectQuery("ORDER BY m\\.email_cached ASC$").
+		WillReturnRows(sqlmock.NewRows(directoryCols).
+			AddRow("mb1", "dom1", "a", "a@example.com", "A", uint64(0), false, false, false, uint64(0), nil, now, now, "example.com", "u1", "x").
+			AddRow("mb2", "dom1", "b", "b@example.com", "B", uint64(0), false, false, false, uint64(0), nil, now, now, "example.com", "u1", "x"))
+
+	rows, total, err := repo.ListDirectoryPage(context.Background(), ListOptions{}, "")
+	require.NoError(t, err)
+	require.Equal(t, int64(2), total)
+	require.Len(t, rows, 2)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

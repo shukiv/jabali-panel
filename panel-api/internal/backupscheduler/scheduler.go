@@ -724,9 +724,13 @@ func (s *Scheduler) dispatchAccount(ctx context.Context, j models.BackupJob) {
 	}
 	callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	dbs := userDatabases(callCtx, s.deps, user.ID, logger)
-	pgDbs := userPostgresDatabases(callCtx, s.deps, user.ID, logger)
-	mbs := userMailboxes(callCtx, s.deps, user.ID, logger)
+	// Resolve the account's full content selection through the shared producer
+	// (JAB-324): the same code the admin and tenant handlers use, with one
+	// lookup-failure classification — a partial result that is logged, never a
+	// silent empty a transient DB hiccup would turn into "the account owns none".
+	sel, warns := backupmetadata.SelectAll(callCtx, scheduleMetaDeps(s.deps, logger), user.ID, user.IsAdmin)
+	backupmetadata.LogWarnings(logger, warns)
+	dbs, pgDbs, mbs := sel.MariaDB, sel.Postgres, sel.Mailboxes
 	// Honour the schedule's content selection (GH #454): the agent skips the
 	// home stage only for content=database but backs up whatever db/mailbox
 	// lists it is handed, so trim the lists the content excludes here and pass
@@ -747,7 +751,7 @@ func (s *Scheduler) dispatchAccount(ctx context.Context, j models.BackupJob) {
 		"databases":          dbs,
 		"databases_postgres": pgDbs,
 		"mailboxes":          mbs,
-		"docker_apps":        userDockerApps(callCtx, s.deps, user.ID, user.IsAdmin, logger),
+		"docker_apps":        sel.DockerApps,
 		"content":            content,
 		"metadata":           meta,
 		"schedule_id":        scheduleID,
@@ -843,45 +847,13 @@ func isAgentConflict(err error) bool {
 		strings.Contains(msg, "job_already_active")
 }
 
-// userDatabases returns the names of every hosted database belonging
-// to the user. Errors are logged + an empty slice returned so a
-// transient DB hiccup in the scheduler doesn't abort the whole tick.
-//
-// M37: returns mariadb-engine names only. Postgres siblings come back
-// from userPostgresDatabases() and ride backup.create as a parallel
-// `databases_postgres` field.
-func userDatabases(ctx context.Context, deps Deps, userID string, logger *slog.Logger) []string {
-	return userDatabasesByEngine(ctx, deps, userID, "mariadb", logger)
-}
-
-func userPostgresDatabases(ctx context.Context, deps Deps, userID string, logger *slog.Logger) []string {
-	return userDatabasesByEngine(ctx, deps, userID, "postgres", logger)
-}
-
-func userDatabasesByEngine(ctx context.Context, deps Deps, userID, engine string, logger *slog.Logger) []string {
-	if deps.Databases == nil {
-		return nil
-	}
-	dbs, _, err := deps.Databases.ListByUserID(ctx, userID, repository.ListOptions{Limit: 10000})
-	if err != nil {
-		logger.Warn("list databases for backup failed", "err", err, "engine", engine)
-		return nil
-	}
-	out := make([]string, 0, len(dbs))
-	for _, d := range dbs {
-		if d.Engine == engine || (engine == "mariadb" && d.Engine == "") {
-			out = append(out, d.Name)
-		}
-	}
-	return out
-}
-
-// buildScheduleMetadata is the scheduler's wrapper around the shared
-// schema-v2 producer in panel-api/internal/backupmetadata. Keeps the
-// scheduler in lockstep with the admin / user-shell handlers so every
-// backup carries the same per-user state regardless of trigger path.
-func buildScheduleMetadata(ctx context.Context, deps Deps, user *models.User, logger *slog.Logger) *internalbackup.AccountMetadata {
-	return backupmetadata.Build(ctx, user, backupmetadata.Deps{
+// scheduleMetaDeps maps the scheduler's Deps onto the backupmetadata Deps both
+// shared producers read — Build (schema-v2 metadata) and SelectAll (backup
+// content selection, JAB-324) — so a scheduled backup selects content through
+// the exact same code, and the same lookup-failure classification, as the admin
+// and tenant handlers.
+func scheduleMetaDeps(deps Deps, logger *slog.Logger) backupmetadata.Deps {
+	return backupmetadata.Deps{
 		Databases:      deps.Databases,
 		DatabaseUsers:  deps.DatabaseUsers,
 		DatabaseGrants: deps.DatabaseGrants,
@@ -905,12 +877,17 @@ func buildScheduleMetadata(ctx context.Context, deps Deps, user *models.User, lo
 		EgressPolicies: deps.EgressPolicies,
 		EgressRequests: deps.EgressRequests,
 		Log:            logger,
-	})
+	}
 }
 
-// userMailboxes returns the email addresses of every mailbox under
-// every domain owned by the user. Two-step: domain.list_by_user →
-// mailbox.list_by_domain. Errors per-domain are tolerated.
+// buildScheduleMetadata is the scheduler's wrapper around the shared schema-v2
+// producer in panel-api/internal/backupmetadata. Keeps the scheduler in
+// lockstep with the admin / user-shell handlers so every backup carries the
+// same per-user state regardless of trigger path.
+func buildScheduleMetadata(ctx context.Context, deps Deps, user *models.User, logger *slog.Logger) *internalbackup.AccountMetadata {
+	return backupmetadata.Build(ctx, user, scheduleMetaDeps(deps, logger))
+}
+
 // resolveAccountTargets resolves the users an account-backup schedule fans out
 // to. An empty explicit set = the default sweep of every TENANT (admins are
 // not hosting accounts, so a blanket schedule never touches them). An
@@ -940,78 +917,6 @@ func resolveAccountTargets(ctx context.Context, users repository.UserRepository,
 		targets = append(targets, *u)
 	}
 	return targets, nil
-}
-
-// userDockerApps returns the slugs of the account's docker apps. Their
-// data trees live outside the home, so the agent has to be told about
-// them explicitly or the scheduled backup omits the app (GH #954).
-func userDockerApps(ctx context.Context, deps Deps, userID string, isAdmin bool, logger *slog.Logger) []string {
-	if deps.DockerApps == nil {
-		return nil
-	}
-	rows, err := deps.DockerApps.ListByUserID(ctx, userID)
-	if err != nil {
-		logger.Warn("list docker apps for backup failed", "err", err)
-		return nil
-	}
-	out := make([]string, 0, len(rows))
-	for _, r := range rows {
-		if r == nil {
-			continue
-		}
-		// EffectiveSlug, NOT Slug: the data tree is
-		// /var/lib/jabali/docker-apps/<effective-slug>, and a second
-		// instance of a catalog app carries an InstanceSlug that differs
-		// from the catalog slug. Using Slug backs up the wrong path (or
-		// the first instance twice).
-		slug := r.EffectiveSlug()
-		if slug == "" {
-			continue
-		}
-		out = append(out, slug)
-	}
-	// GH #1360: a scheduled admin account backup also covers server-level
-	// docker apps (UserID NULL), whose only prior cover was a system backup.
-	if isAdmin {
-		all, aerr := deps.DockerApps.ListAll(ctx)
-		if aerr != nil {
-			logger.Warn("list server-level docker apps for backup failed", "err", aerr)
-		} else {
-			for _, r := range all {
-				if r == nil || r.UserID != nil || r.Status == models.DockerAppStatusDeleted {
-					continue
-				}
-				if slug := r.EffectiveSlug(); slug != "" {
-					out = append(out, slug)
-				}
-			}
-		}
-	}
-	return out
-}
-
-func userMailboxes(ctx context.Context, deps Deps, userID string, logger *slog.Logger) []string {
-	if deps.Domains == nil || deps.Mailboxes == nil {
-		return nil
-	}
-	doms, _, err := deps.Domains.ListByUserID(ctx, userID, repository.ListOptions{Limit: 10000})
-	if err != nil {
-		logger.Warn("list domains for backup failed", "err", err)
-		return nil
-	}
-	var out []string
-	for _, d := range doms {
-		mbs, _, err := deps.Mailboxes.ListByDomainID(ctx, d.ID, repository.ListOptions{Limit: 10000})
-		if err != nil {
-			logger.Warn("list mailboxes for backup failed",
-				"domain_id", d.ID, "err", err)
-			continue
-		}
-		for _, m := range mbs {
-			out = append(out, m.EmailCached)
-		}
-	}
-	return out
 }
 
 func strDerefOr(p *string, def string) string {

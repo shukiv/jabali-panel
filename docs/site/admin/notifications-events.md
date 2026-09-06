@@ -19,6 +19,7 @@
 | `malware_file_hit` | A M33 detector (ClamAV, LMD, YARA, Tetragon) hits on a file. |
 | `db_root_rotated` | The administrator rotates the MariaDB root password. |
 | `mail_throttle_suspended` | A sender is suspended after repeated throttle hits. |
+| `ssh_login` | A shell / SFTP login to an account. Each account owner can keep a per-account **ignore list** so logins from known hosts / users don't notify (GH #1436). |
 
 ## Stub sources
 

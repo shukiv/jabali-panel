@@ -1,48 +1,24 @@
 // DomainLogsTab — per-domain web log streams (access / error / GoAccess
-// real-time). Extracted from the old single-purpose LogsPage so it can be
-// one tab of the consolidated Logs & Statistics page.
+// real-time) for the admin. One tab of the consolidated Logs & Statistics
+// page. The stream lifecycle, request shaping, and columns are the neutral
+// Domain Log Streams module (JAB-296); this shell only adds the admin delta:
+// the "All Domains" aggregate row and its cross-domain open capability.
 import { useState } from "react";
-import { RowActions } from "../../../components/RowActions";
-import { Card, Typography, Button, Space, Table } from "antd";
-import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
-import {
-  ReloadOutlined,
-  FileTextOutlined,
-  WarningOutlined,
-  DashboardOutlined,
-} from "@ant-design/icons";
+import { Card, Button, Space, Table } from "antd";
+import { ReloadOutlined } from "@ant-design/icons";
 import { useQuery } from "@tanstack/react-query";
 import { apiClient } from "../../../apiClient";
-import { LogStreamModal } from "./LogStreamModal";
-
-const { Text } = Typography;
-
-interface Domain {
-  id: string;
-  name: string;
-  status: string;
-}
-
-type LogType = "access" | "error" | "goaccess";
-
-const titleFor: Record<LogType, string> = {
-  access: "Access Log Stream",
-  error: "Error Log Stream",
-  goaccess: "GoAccess Real-Time Dashboard",
-};
-
-const labelFor: Record<LogType, string> = {
-  access: "Access Log",
-  error: "Error Log",
-  goaccess: "Real Time",
-};
+import { LogStreamModal } from "../../../components/LogStreamModal";
+import {
+  type DomainLogRow,
+  ALL_DOMAINS_ROW,
+} from "../../../components/logs/domainLogStreams";
+import { useDomainLogStreams } from "../../../components/logs/useDomainLogStreams";
+import { buildDomainLogColumns } from "../../../components/logs/buildDomainLogColumns";
 
 export const DomainLogsTab = () => {
   const [refreshTrigger, setRefreshTrigger] = useState(0);
-  const [streamKey, setStreamKey] = useState<string | null>(null);
-  const [streamUrl, setStreamUrl] = useState<string | null>(null);
-  const [streamLogType, setStreamLogType] = useState<LogType>("access");
-  const [modalVisible, setModalVisible] = useState(false);
+  const streams = useDomainLogStreams();
 
   const { data: domainsData, isLoading } = useQuery({
     queryKey: ["domains", refreshTrigger],
@@ -52,74 +28,16 @@ export const DomainLogsTab = () => {
     },
   });
 
-  const domains: Domain[] = domainsData?.data || [];
+  const domains: DomainLogRow[] = domainsData?.data || [];
 
-  const openStream = async (logType: LogType, domainId?: string) => {
-    try {
-      const payload: { log_type: LogType; domain_id?: string } = { log_type: logType };
-      if (domainId) payload.domain_id = domainId;
-
-      const response = await apiClient.post("/logs/access", payload);
-      const { stream_key, websocket_url } = response.data;
-
-      setStreamKey(stream_key);
-      setStreamUrl(websocket_url);
-      setStreamLogType(logType);
-      setModalVisible(true);
-    } catch (error: unknown) {
-      const msg =
-        error && typeof error === "object" && "response" in error
-          ? // @ts-expect-error axios error shape
-            error.response?.data?.error
-          : undefined;
-      feedback.message.error(msg || "Failed to create log stream");
-    }
-  };
-
-  const handleStreamClose = async () => {
-    if (streamKey) {
-      try {
-        await apiClient.delete(`/logs/access/${streamKey}`);
-      } catch {
-        // Stream may have expired server-side; harmless.
-      }
-      setStreamKey(null);
-      setStreamUrl(null);
-    }
-    setModalVisible(false);
-  };
-
-  const tableData: Domain[] = [
-    { id: "", name: "All Domains", status: "system" },
-    ...domains,
-  ];
-
-  const columns = [
-    {
-      title: "Domain",
-      dataIndex: "name",
-      key: "name",
-      render: (name: string, record: Domain) => (
-        <Space>
-          <Text strong>{name}</Text>
-          <Text type="secondary">({record.status})</Text>
-        </Space>
-      ),
-    },
-    {
-      title: "Actions",
-      key: "actions",
-      render: (_: unknown, record: Domain) => (
-        <RowActions
-          actions={[
-            { key: "access", label: labelFor.access, icon: <FileTextOutlined />, onClick: () => openStream("access", record.id || undefined) },
-            { key: "error", label: labelFor.error, icon: <WarningOutlined />, onClick: () => openStream("error", record.id || undefined) },
-            { key: "goaccess", label: labelFor.goaccess, icon: <DashboardOutlined />, onClick: () => openStream("goaccess", record.id || undefined) },
-          ]}
-        />
-      ),
-    },
-  ];
+  // Admin delta: the synthetic aggregate row, and the capability to open a
+  // cross-domain stream on it. onOpenAggregate is what makes the aggregate
+  // reachable here (and, by its absence, unreachable in the tenant scope).
+  const tableData: DomainLogRow[] = [ALL_DOMAINS_ROW, ...domains];
+  const columns = buildDomainLogColumns({
+    onOpenDomain: streams.openStream,
+    onOpenAggregate: (logType) => streams.openStream(logType),
+  });
 
   return (
     <div>
@@ -144,13 +62,7 @@ export const DomainLogsTab = () => {
         />
       </Card>
 
-      <LogStreamModal
-        visible={modalVisible}
-        onClose={handleStreamClose}
-        streamUrl={streamUrl}
-        title={titleFor[streamLogType]}
-        logType={streamLogType}
-      />
+      <LogStreamModal {...streams.modalProps} />
     </div>
   );
 };

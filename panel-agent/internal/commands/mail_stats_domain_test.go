@@ -67,6 +67,38 @@ func TestMailStatsDomain_AttributesSentReceivedDeliveredFailed(t *testing.T) {
 	}
 }
 
+func TestMailStatsDomain_CountsAuthenticatedSubmissionAsSent(t *testing.T) {
+	// GH #1416: a tenant sending mail authenticates, so Stalwart emits
+	// queue.authenticated-message-queued — a DIFFERENT event from the plain
+	// queue.message-queued that inbound relay produces. The delivery tracer +
+	// parser only knew the plain event, so per-domain/per-user "Sent" never
+	// counted a single real user send (while the global prometheus "Sent" card
+	// did). These authenticated lines must be attributed exactly like a queued
+	// line: sent for a local From domain, received for a local recipient.
+	now := time.Now().UTC()
+	ts := now.Add(-1 * time.Hour)
+	lines := strings.Join([]string{
+		// authenticated outbound to remote: sent for a.test only.
+		dline(ts, "queue.authenticated-message-queued", "u@a.test", []string{"x@remote.example"}, "20"),
+		// authenticated local -> local: sent for a.test + received for b.test.
+		dline(ts, "queue.authenticated-message-queued", "u@a.test", []string{"v@b.test"}, "21"),
+	}, "\n") + "\n"
+	withMailLogDir(t, "delivery.now", lines)
+
+	got := runDomainSample(t, now.Add(-2*time.Hour), []string{"a.test", "b.test"})
+	if got["sent|a.test"] != 2 {
+		t.Errorf("sent|a.test = %d, want 2 (both authenticated submissions); all: %v", got["sent|a.test"], got)
+	}
+	if got["received|b.test"] != 1 {
+		t.Errorf("received|b.test = %d, want 1 (qid 21 local recipient); all: %v", got["received|b.test"], got)
+	}
+	for k := range got {
+		if strings.Contains(k, "remote.example") {
+			t.Errorf("remote domain leaked into counts: %s", k)
+		}
+	}
+}
+
 func TestMailStatsDomain_DedupesMultiRecipientSameDomain(t *testing.T) {
 	now := time.Now().UTC()
 	ts := now.Add(-30 * time.Minute)

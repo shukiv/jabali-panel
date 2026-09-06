@@ -71,13 +71,19 @@ export function UserDashboard() {
     resource: "domains",
     params: { pageSize: RECENT_LIMIT, sort: "created_at", order: "desc" },
   });
+  const { data: caps } = useServerCapabilities();
+  // GH #1417: with the mail module off, hide the mailbox surfaces below AND
+  // skip their per-domain fetches — a domain that kept email_enabled from
+  // before the module was disabled would otherwise 403-fan-out in the
+  // background. Default-on while caps load, matching the sidebar's mail gate.
+  const mailEnabled = caps?.mail_enabled !== false;
   const allDomainsForMail = useListQuery<DomainRow>({
     resource: "domains",
     params: { pageSize: 200, sort: "name", order: "asc" },
   });
   const emailDomains = useMemo(
-    () => allDomainsForMail.items.filter((d) => d.email_enabled),
-    [allDomainsForMail.items],
+    () => (mailEnabled ? allDomainsForMail.items.filter((d) => d.email_enabled) : []),
+    [allDomainsForMail.items, mailEnabled],
   );
   const mailboxResults = useQueries({
     queries: emailDomains.map((d) => ({
@@ -119,7 +125,6 @@ export function UserDashboard() {
     resource: "databases",
     params: { pageSize: RECENT_LIMIT, sort: "created_at", order: "desc" },
   });
-  const { data: caps } = useServerCapabilities();
 
   const items = [
     {
@@ -281,16 +286,18 @@ export function UserDashboard() {
             to="/jabali-panel/domains"
           />
         </Col>
-        <Col xs={24} sm={12} md={6}>
-          <StatCard
-            label={t("userdashboard.mailboxes")}
-            value={formatCount(mailboxTotal)}
-            icon={<MailOutlined />}
-            iconBg="rgba(250, 140, 22, 0.14)"
-            iconColor="#fa8c16"
-            to="/jabali-panel/mail/mailboxes"
-          />
-        </Col>
+        {mailEnabled && (
+          <Col xs={24} sm={12} md={6}>
+            <StatCard
+              label={t("userdashboard.mailboxes")}
+              value={formatCount(mailboxTotal)}
+              icon={<MailOutlined />}
+              iconBg="rgba(250, 140, 22, 0.14)"
+              iconColor="#fa8c16"
+              to="/jabali-panel/mail/mailboxes"
+            />
+          </Col>
+        )}
         <Col xs={24} sm={12} md={6}>
           <StatCard
             label={t("userdashboard.applications")}
@@ -322,7 +329,7 @@ export function UserDashboard() {
       <Masonry
         columns={{ xs: 1, sm: 1, md: 1, lg: 2 }}
         gutter={16}
-        items={items}
+        items={mailEnabled ? items : items.filter((it) => it.key !== "mailboxes")}
       />
     </Space>
   );

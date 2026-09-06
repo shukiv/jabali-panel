@@ -101,12 +101,12 @@ func TestValidateAny_Routing(t *testing.T) {
 	dr := []string{"/home/u/domains/own.example.com/public_html"}
 	dom := ownDomains()
 
-	cmd, err := ValidateAny("curl https://own.example.com/wp-cron.php", dr, dom)
+	cmd, err := ValidateAny("curl https://own.example.com/wp-cron.php", dr, dom, "")
 	if err != nil || cmd.Kind != KindHTTPTrigger {
 		t.Fatalf("curl should route to http-trigger: cmd=%v err=%v", cmd, err)
 	}
 
-	cmd, err = ValidateAny("php /home/u/domains/own.example.com/public_html/wp-cron.php", dr, dom)
+	cmd, err = ValidateAny("php /home/u/domains/own.example.com/public_html/wp-cron.php", dr, dom, "")
 	if err != nil {
 		t.Fatalf("php should validate via wp/php path: %v", err)
 	}
@@ -116,7 +116,7 @@ func TestValidateAny_Routing(t *testing.T) {
 
 	// A curl to a foreign host must be REJECTED, not silently accepted by
 	// the wp/php path (which would reject it for a different reason).
-	if _, err := ValidateAny("curl https://evil.com/x", dr, dom); err == nil {
+	if _, err := ValidateAny("curl https://evil.com/x", dr, dom, ""); err == nil {
 		t.Fatalf("foreign-host curl must be rejected by ValidateAny")
 	}
 }

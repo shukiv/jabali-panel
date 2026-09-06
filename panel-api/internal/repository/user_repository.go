@@ -230,6 +230,90 @@ func (r *userRepo) UpdateDiskUsage(ctx context.Context, id string, usedKB, limit
 		}).Error)
 }
 
+// DiskUsageRow is one account's measured usage for BatchUpdateDiskUsage.
+type DiskUsageRow struct {
+	UserID  string
+	UsedKB  uint64
+	LimitKB uint64
+}
+
+// diskUsageBatchChunk caps rows per UPDATE statement. 500 keeps the CASE
+// expression and the IN list well within MariaDB's max_allowed_packet /
+// statement-length limits while making a 5,000-user sweep 10 statements, not
+// 5,000.
+const diskUsageBatchChunk = 500
+
+// dedupDiskUsageRows collapses rows to one per UserID (last wins), preserving
+// first-seen order so the batch statements stay deterministic.
+func dedupDiskUsageRows(rows []DiskUsageRow) []DiskUsageRow {
+	seen := make(map[string]int, len(rows))
+	out := make([]DiskUsageRow, 0, len(rows))
+	for _, row := range rows {
+		if idx, ok := seen[row.UserID]; ok {
+			out[idx] = row
+			continue
+		}
+		seen[row.UserID] = len(out)
+		out = append(out, row)
+	}
+	return out
+}
+
+// BatchUpdateDiskUsage persists a whole disk sweep in bounded chunks (JAB-376):
+// one `UPDATE … SET col = CASE id WHEN … END … WHERE id IN (…)` per chunk
+// instead of one statement per account. Like UpdateDiskUsage it writes only the
+// three disk columns and NEVER users.updated_at — a background sweep must not
+// look like a user edit (audit noise + the server_settings-style row churn).
+//
+// The `WHERE id IN (chunk)` is load-bearing, not just a filter: a bare
+// `CASE id WHEN … END` returns NULL for any row whose id isn't listed, so
+// without the scope this would null every OTHER user's disk columns. The IN
+// list restricts the UPDATE to exactly the chunk, where the CASE always matches.
+func (r *userRepo) BatchUpdateDiskUsage(ctx context.Context, rows []DiskUsageRow, checkedAt time.Time) error {
+	// Defensive dedup, last-wins: a duplicate id inside `CASE id WHEN … END`
+	// makes MySQL silently take the FIRST match, so a data glitch (two rows for
+	// one id) would corrupt the update. Collapse to one row per id first.
+	rows = dedupDiskUsageRows(rows)
+	for start := 0; start < len(rows); start += diskUsageBatchChunk {
+		end := start + diskUsageBatchChunk
+		if end > len(rows) {
+			end = len(rows)
+		}
+		chunk := rows[start:end]
+
+		var usedCase, limitCase strings.Builder
+		usedCase.WriteString("CASE `id`")
+		limitCase.WriteString("CASE `id`")
+		usedArgs := make([]any, 0, len(chunk)*2)
+		limitArgs := make([]any, 0, len(chunk)*2)
+		ids := make([]any, 0, len(chunk))
+		for _, row := range chunk {
+			usedCase.WriteString(" WHEN ? THEN ?")
+			limitCase.WriteString(" WHEN ? THEN ?")
+			usedArgs = append(usedArgs, row.UserID, row.UsedKB)
+			limitArgs = append(limitArgs, row.UserID, row.LimitKB)
+			ids = append(ids, row.UserID)
+		}
+		usedCase.WriteString(" END")
+		limitCase.WriteString(" END")
+
+		sql := "UPDATE `users` SET `disk_used_kb` = " + usedCase.String() +
+			", `disk_limit_kb` = " + limitCase.String() +
+			", `disk_checked_at` = ? WHERE `id` IN (?" + strings.Repeat(",?", len(ids)-1) + ")"
+
+		args := make([]any, 0, len(usedArgs)+len(limitArgs)+1+len(ids))
+		args = append(args, usedArgs...)
+		args = append(args, limitArgs...)
+		args = append(args, checkedAt)
+		args = append(args, ids...)
+
+		if err := r.db.WithContext(ctx).Exec(sql, args...).Error; err != nil {
+			return translate(err)
+		}
+	}
+	return nil
+}
+
 func (r *userRepo) Update(ctx context.Context, u *models.User) error {
 	// Select columns explicitly to keep handlers from accidentally flipping
 	// is_admin via Save(). The admin-only endpoint bypasses this repo method

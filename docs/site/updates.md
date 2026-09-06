@@ -32,6 +32,21 @@ jabali update --auto         # for cron / CI; no prompts
 
 If the update fails, `jabali update` prints a hint pointing at `jabali repair --diagnose` (M33 added the hint after a string of recurring deploy scars where the operator needed to run repair next anyway).
 
+## OS security auto-updates (JAB-353)
+
+Separate from `jabali update` (which updates the panel), **OS security
+auto-updates are on by default** via `unattended-upgrades`, so security patches
+for the base system land without operator action. The Update Center reports the
+OS-update state (pending / applied) alongside the panel version.
+
+## Stuck update tasks are reaped
+
+An update run is tracked as a DB row and sealed success/failed when it finishes.
+A run whose status can't be read — the agent is down or too old to answer, or a
+transient unit hangs — is now **backstopped** so it can't spin "running" forever
+in the Tasks indicator (GH #1486): any run older than 2 h is reaped as failed,
+and a pollable run whose status call errors is reaped once clearly stale.
+
 ## What it does *not* update
 
 - The kernel, system packages outside Jabali's drop-ins (use `apt update && apt full-upgrade`).
@@ -40,4 +55,6 @@ If the update fails, `jabali update` prints a hint pointing at `jabali repair --
 
 ## Frequency
 
-There's no auto-update timer enabled by default. The admin runs it manually or sets up their own systemd timer / cron.
+There's no **panel** auto-update timer enabled by default for a self-hosted
+install — the admin runs `jabali update` manually or sets up their own systemd
+timer / cron. (OS *security* patches auto-apply as above.)

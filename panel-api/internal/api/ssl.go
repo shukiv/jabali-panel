@@ -436,7 +436,15 @@ func panelCertSyntheticRows(ctx context.Context, cfg SSLHandlerConfig) []reposit
 		}
 		domainName := primary.Name
 		if pc.Kind == models.PanelCertKindMail {
+			// Show the name the mail cert was actually pursued for. Since
+			// JAB-389 the mail row stays pinned to the hostname it was seeded
+			// with and no longer follows a panel access-hostname change, so
+			// the stored pc.Hostname — not a fresh derivation from the current
+			// panel primary — is the truthful label.
 			domainName = models.PanelMailHostname(primary.Name)
+			if pc.Hostname != "" {
+				domainName = pc.Hostname
+			}
 		}
 		out = append(out, repository.SSLCertificateWithDomain{
 			ID:           "panel-cert:" + pc.Kind,

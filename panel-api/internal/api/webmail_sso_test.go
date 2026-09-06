@@ -131,6 +131,9 @@ func (r *ssoFakeMailboxRepo) ListAllWithDomain(_ context.Context) ([]repository.
 func (r *ssoFakeMailboxRepo) ListByOwnerWithDomain(_ context.Context, _ string) ([]repository.MailboxWithDomain, error) {
 	return nil, nil
 }
+func (r *ssoFakeMailboxRepo) ListDirectoryPage(_ context.Context, _ repository.ListOptions, _ string) ([]repository.MailboxWithDomain, int64, error) {
+	return nil, 0, nil
+}
 func (r *ssoFakeMailboxRepo) UpdateDisabled(ctx context.Context, id string, disabled bool) error {
 	return nil
 }

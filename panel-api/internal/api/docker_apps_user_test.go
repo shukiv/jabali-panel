@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/auth"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dockerapp"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
@@ -413,6 +415,113 @@ func TestTenantDocker_StartUnderQuotaOK(t *testing.T) {
 	r.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("under-quota start = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// dockerCgroupCfg is the shared happy-path cfg for the tenant lifecycle
+// revalidation tests: owner "alice", package under quota, a recording agent.
+func dockerCgroupCfg(t *testing.T, mock *agent.MockClient, status string) UserDockerAppHandlerConfig {
+	t.Helper()
+	return UserDockerAppHandlerConfig{
+		Repo: &fakeDockerRepo{
+			sumBytes: 100 << 20, // under quota
+			owned:    map[string]*models.DockerApp{"a1": {ID: "a1", Slug: "tdemo", UserID: uname("u1"), Status: status}},
+		},
+		Catalog:  tenantCatalog(t),
+		Users:    &fakeUserRepo{user: &models.User{ID: "u1", Username: uname("alice"), PackageID: uname("p1")}},
+		Packages: &fakePkgRepo{pkg: &models.HostingPackage{ID: "p1", MaxDockerApps: 5, DiskQuotaMB: 1024}},
+		Domains:  &fakeDomainRepo{},
+		Agent:    mock,
+	}
+}
+
+func lastAgentParams(t *testing.T, mock *agent.MockClient, command string) map[string]any {
+	t.Helper()
+	var found *agent.MockCall
+	for i := range mock.Calls() {
+		if c := mock.Calls()[i]; c.Command == command {
+			cc := c
+			found = &cc
+		}
+	}
+	if found == nil {
+		t.Fatalf("no agent call recorded for %q; calls=%v", command, mock.Calls())
+	}
+	var p map[string]any
+	if err := json.Unmarshal(found.Params, &p); err != nil {
+		t.Fatalf("unmarshal %q params: %v", command, err)
+	}
+	return p
+}
+
+// JAB-364: tenant start/restart must re-validate the tenant safety profile with
+// the EXACT owner slice (tenant_cgroup), not just tenant_validate/tenant_caps.
+// Omitting tenant_cgroup dropped the agent's Gitea #525 cross-tenant-slice check
+// to the weak generic-pattern match on the bring-up path.
+func TestTenantDocker_BringUpPassesOwnerCgroup(t *testing.T) {
+	for _, verb := range []string{"start", "restart"} {
+		t.Run(verb, func(t *testing.T) {
+			mock := agent.NewMockClient()
+			mock.On("docker_app."+verb, map[string]any{"status": "ok"})
+			r := tenantRouter(t, dockerCgroupCfg(t, mock, models.DockerAppStatusStopped), true)
+
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/docker-apps/a1/"+verb, nil)
+			rec := httptest.NewRecorder()
+			r.ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("%s: want 200, got %d (%s)", verb, rec.Code, rec.Body.String())
+			}
+			p := lastAgentParams(t, mock, "docker_app."+verb)
+			if p["tenant_validate"] != true {
+				t.Errorf("%s: tenant_validate = %v, want true", verb, p["tenant_validate"])
+			}
+			if got := p["tenant_cgroup"]; got != "jabali-user-alice.slice" {
+				t.Errorf("%s: tenant_cgroup = %v, want jabali-user-alice.slice", verb, got)
+			}
+			if _, ok := p["tenant_caps"]; !ok {
+				t.Errorf("%s: tenant_caps missing", verb)
+			}
+		})
+	}
+}
+
+// JAB-364 / Gitea #529: if the owner slice can't be resolved (no username), the
+// bring-up must fail closed — never dispatch `compose up` unvalidated.
+func TestTenantDocker_BringUpFailsClosedWhenOwnerUnresolved(t *testing.T) {
+	mock := agent.NewMockClient()
+	mock.On("docker_app.start", map[string]any{"status": "ok"})
+	cfg := dockerCgroupCfg(t, mock, models.DockerAppStatusStopped)
+	cfg.Users = &fakeUserRepo{user: &models.User{ID: "u1", Username: nil, PackageID: uname("p1")}}
+	r := tenantRouter(t, cfg, true)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/docker-apps/a1/start", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), "tenant_validation_unavailable") {
+		t.Fatalf("want 500 tenant_validation_unavailable, got %d %s", rec.Code, rec.Body.String())
+	}
+	for _, c := range mock.Calls() {
+		if c.Command == "docker_app.start" {
+			t.Fatal("agent bring-up dispatched despite an unresolved owner slice — must fail closed")
+		}
+	}
+}
+
+// Stop is never a bring-up, so it neither validates nor needs the owner slice.
+func TestTenantDocker_StopDoesNotValidate(t *testing.T) {
+	mock := agent.NewMockClient()
+	mock.On("docker_app.stop", map[string]any{"status": "ok"})
+	r := tenantRouter(t, dockerCgroupCfg(t, mock, models.DockerAppStatusRunning), true)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/docker-apps/a1/stop", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("stop: want 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	p := lastAgentParams(t, mock, "docker_app.stop")
+	if _, ok := p["tenant_validate"]; ok {
+		t.Errorf("stop must not set tenant_validate: %v", p)
 	}
 }
 

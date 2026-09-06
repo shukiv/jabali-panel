@@ -221,6 +221,38 @@ type Domain struct {
 	// sites-enabled. Disabled domains still have their config on disk.
 	IsEnabled bool `gorm:"type:tinyint(1);not null;default:1" json:"is_enabled"`
 
+	// GH #1449: Web / Mail / DNS are independent services on a domain row.
+	//   WebDisabled=true → docroot-less: no vhost, no PHP, no web SSL, no
+	//     apex-A convergence (a DNS-only zone or a mail-only domain).
+	//   DNSDisabled=true → the reconciler does NOT create/converge a
+	//     PowerDNS zone (tenant runs DNS elsewhere).
+	// Mail is toggled by MailProvider (none = off), unchanged.
+	//
+	// Stored INVERTED (disabled, DB DEFAULT 0) so the zero value = service ON:
+	// the whole existing fleet + every in-memory test fixture stays
+	// full-service untouched, and the non-default (disabled) is a NON-zero
+	// value that GORM always writes — no email_enabled zero-value scar
+	// (models/domain.go EmailEnabled note, migration 000123), no need to set
+	// the flag on every create. The API/UI speak positive ("web_enabled" /
+	// "manage_dns" checkboxes on create; enabled = !web_disabled on read).
+	WebDisabled bool `gorm:"column:web_disabled;type:tinyint(1);not null;default:0" json:"web_disabled"`
+	DNSDisabled bool `gorm:"column:dns_disabled;type:tinyint(1);not null;default:0" json:"dns_disabled"`
+
+	// DNSApexIPv4 (GH #1540) is the tenant-chosen apex IP for a DNS-only zone
+	// (WebDisabled=true, DNS on). A web-off zone's apex A is not seeded by
+	// BootstrapRecords and not re-asserted by convergeApexAddrRecords (both
+	// web-gated), so this address is read ONCE by the reconciler at zone
+	// bootstrap to seed the single "@ A <ip>" row, then never written again —
+	// the tenant edits that row directly afterward. NULL for every web/mail
+	// domain (apex is panel-managed) and every legacy row.
+	DNSApexIPv4 *string `gorm:"column:dns_apex_ipv4;type:varchar(45)" json:"dns_apex_ipv4,omitempty"`
+
+	// DNSApexIPv6 (GH #1540 follow-up) is the optional apex IPv6 (AAAA) for a
+	// DNS-only zone, seeded alongside DNSApexIPv4 with the same read-once
+	// semantics. NULL when the zone has no IPv6 apex (the common case) and for
+	// every web/mail domain and legacy row.
+	DNSApexIPv6 *string `gorm:"column:dns_apex_ipv6;type:varchar(45)" json:"dns_apex_ipv6,omitempty"`
+
 	// IsQuotaSuspended marks domains the M13.1.1 bandwidth reconciler
 	// disabled because their owning user crossed BandwidthQuotaMB.
 	// Disambiguates panel-driven disables from manual operator
@@ -391,6 +423,16 @@ type Domain struct {
 	// UNIQUE (see migration 000057 for the reasoning).
 	IsPanelPrimary bool `gorm:"type:tinyint(1);not null;default:0;index:ix_domains_panel_primary" json:"is_panel_primary"`
 
+	// GH #1462: per-mail-domain CalDAV / CardDAV server override. Empty =
+	// default (the _caldavs._tcp / _carddavs._tcp SRV records point at
+	// mail.<domain>, i.e. Stalwart). Set to a hostname (optionally host:port)
+	// to repoint DAV autodiscovery at an external server (e.g. Nextcloud)
+	// while mail stays on Stalwart. Validated as a hostname[:port] at the API
+	// boundary before it reaches SRV record content. The reconciler converges
+	// the DAV SRV rows to match (reconcileDAVOverrideRecords).
+	CalDAVHost  string `gorm:"column:caldav_host;type:varchar(255);not null;default:''" json:"caldav_host"`
+	CardDAVHost string `gorm:"column:carddav_host;type:varchar(255);not null;default:''" json:"carddav_host"`
+
 	// M6.5 Email Features: Catch-All, Disclaimer (per-domain fields).
 	// CatchallTarget is the email address that receives unmatched domain mail.
 	// Stalwart integration: x:Domain.catchAllAddress (ADR-0051).
@@ -500,6 +542,22 @@ type Domain struct {
 	// Opt-in (default 0 — zero value, so the GORM default-tag insert trap
 	// from the scar list cannot bite).
 	TempURLEnabled bool `gorm:"column:temp_url_enabled;type:tinyint(1);not null" json:"temp_url_enabled"`
+
+	// BotChallengeExempt (migration 000287) — per-domain opt-out from the
+	// server-wide AppSec bot-detection challenge. Admin-only: when set, this
+	// domain (and www.<domain>) is exempted from the JS/proof-of-work challenge
+	// even while server-wide bot detection is on — for API/webhook-heavy sites
+	// whose non-browser clients can't solve it. The panel reconciler writes the
+	// exempt FQDNs to appseccfg.BotExemptHostsPath; the agent renders them into
+	// jabali-bot-exempt. Opt-in (default 0 — zero value, no GORM default-tag
+	// insert trap).
+	BotChallengeExempt bool `gorm:"column:bot_challenge_exempt;type:tinyint(1);not null" json:"bot_challenge_exempt"`
+
+	// BotChallengeInclude (migration 000288) — per-domain opt-IN, used only when
+	// the server-wide AppSec bot-detection scope is "selected": these domains
+	// (and www.<domain>) ARE challenged and every other site is exempt.
+	// Admin-only, opt-in (default 0). Inert in scope "all".
+	BotChallengeInclude bool `gorm:"column:bot_challenge_include;type:tinyint(1);not null" json:"bot_challenge_include"`
 
 	CreatedAt time.Time `gorm:"type:datetime(6);not null" json:"created_at"`
 	UpdatedAt time.Time `gorm:"type:datetime(6);not null" json:"updated_at"`

@@ -17,10 +17,12 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/kratosclient"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dnscompile"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/middleware"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/reconciler"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
@@ -61,6 +63,18 @@ type DomainHandlerConfig struct {
 	ManagedIPs repository.ManagedIPRepository
 	// ServerSettings gates the tenant-safe nginx options opt-in (GH #307).
 	ServerSettings repository.ServerSettingsRepository
+	// AppInstalls (GH #1238 chown) backs the change-owner refusal: a domain
+	// with an app install carries the current owner's DB creds in its config,
+	// so re-owning it would leak a live cross-tenant credential. REQUIRED for
+	// the chown route — a nil repo makes the handler 503 rather than silently
+	// skip the security check (fail-closed).
+	AppInstalls repository.ApplicationInstallRepository
+	// AuditEvents records the admin change-owner (GH #1238). Optional — nil
+	// in dev binaries makes the audit a no-op.
+	AuditEvents repository.AuditEventRepository
+	// KratosClient gates the change-owner route behind the JAB-380 recent-auth
+	// step-up (same as rename / the root File Manager).
+	KratosClient *kratosclient.Client
 }
 
 const (
@@ -85,6 +99,12 @@ func RegisterDomainRoutes(g *gin.RouterGroup, cfg DomainHandlerConfig) {
 	domains.PATCH("/:id", h.update)
 	domains.DELETE("/:id", h.delete)
 	domains.GET("/:id/bandwidth", h.bandwidth)
+
+	// GH #1238: reassign a domain to a new tenant (move + re-own the docroot,
+	// repoint the DB row). Admin-only AND behind the JAB-380 recent-auth
+	// step-up — it moves files and hands them to another tenant, mirroring the
+	// user-rename surface. Registered on the base group, not /domains.
+	g.POST("/admin/domains/:id/chown", middleware.RequireAdmin(), h.chown)
 }
 
 type domainHandler struct{ cfg DomainHandlerConfig }
@@ -118,6 +138,22 @@ type createDomainRequest struct {
 	// it needs a cert upload, set via PUT /domains/:id/ssl/custom after create.
 	// Empty defaults to 'le'.
 	SSLMode string `json:"ssl_mode"`
+	// WebEnabled / ManageDNS (GH #1449) are the "Add Web Domain" service
+	// checkboxes: both default ON (nil == checked == current behaviour), so a
+	// caller only sends false to OPT OUT. WebEnabled=false → no vhost/docroot/
+	// PHP (a mail-only or DNS-only entry); ManageDNS=false → the panel does not
+	// host DNS for this domain (external DNS). Pointers so an absent field is
+	// the default-on, distinct from an explicit false.
+	WebEnabled *bool `json:"web_enabled"`
+	ManageDNS  *bool `json:"manage_dns"`
+	// IPAddress (GH #1540) is the apex IP of a DNS-only zone — the "pointed IP"
+	// of the Add DNS Zone flow. Only valid when web_enabled=false and DNS is on
+	// (validated in createDomainOp as a bare IPv4). Empty/absent for web and
+	// mail domains, whose apex is panel-managed.
+	IPAddress string `json:"ip_address"`
+	// IPv6Address (GH #1540 follow-up) is the optional apex IPv6 (AAAA) of a
+	// DNS-only zone. Same gate as IPAddress; validated as a bare IPv6.
+	IPv6Address string `json:"ip6_address"`
 }
 
 // normalizeDomainName canonicalizes a domain for storage (GH #884): trim
@@ -222,6 +258,15 @@ type updateDomainRequest struct {
 	WebmailEnabled        *bool                    `json:"webmail_enabled,omitempty"`
 	// TempURLEnabled toggles the preview URL vhost block. Owner or admin.
 	TempURLEnabled *bool `json:"temp_url_enabled,omitempty"`
+	// BotChallengeExempt — per-domain opt-out from the server-wide AppSec
+	// bot-detection challenge. ADMIN-ONLY: a tenant must not be able to weaken
+	// the operator's security posture on their own domain. Silently ignored
+	// for a non-admin PATCH (pointer pattern), never 403.
+	BotChallengeExempt *bool `json:"bot_challenge_exempt,omitempty"`
+	// BotChallengeInclude — per-domain opt-IN, effective only when the
+	// server-wide bot-detection scope is "selected". Admin-only (same reasoning;
+	// the switch lives in admin DomainEdit).
+	BotChallengeInclude *bool `json:"bot_challenge_include,omitempty"`
 	// GH #648 (DMARCbis): per-domain settable np (non-existent subdomain
 	// policy) + t=y testing tag, folded into the canonical _dmarc record.
 	DmarcNP      *string `json:"dmarc_np,omitempty"`
@@ -242,6 +287,43 @@ type updateDomainRequest struct {
 	// SSLMode (GH #246) — switch TLS mode. 'custom' is set only via
 	// PUT /domains/:id/ssl/custom (needs the cert), not here.
 	SSLMode *string `json:"ssl_mode,omitempty"`
+	// GH #1462: per-domain CalDAV/CardDAV server override (hostname, optional
+	// host:port). Empty string clears it (DAV points back at mail.<domain>);
+	// absent leaves it untouched. Repoints the _caldavs/_carddavs SRV records.
+	CalDAVHost  *string `json:"caldav_host,omitempty"`
+	CardDAVHost *string `json:"carddav_host,omitempty"`
+}
+
+// davHostRe validates a CalDAV/CardDAV override: a DNS hostname (lower/mixed
+// case) with an optional :port. It is interpolated UNQUOTED into space-
+// separated SRV record content ("weight port target"), so anything but a bare
+// hostname[:port] — a space, control char, path, scheme — must be rejected
+// before it can corrupt the record or point discovery somewhere unintended.
+var davHostRe = regexp.MustCompile(`^([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+(:[0-9]{1,5})?$`)
+
+// validateDAVHost accepts an empty string (clears the override) or a
+// hostname[:port] that matches davHostRe with the host <=253 octets and any
+// port in 1..65535.
+func validateDAVHost(v string) error {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return nil
+	}
+	host := v
+	if i := strings.LastIndexByte(v, ':'); i > 0 {
+		port, err := strconv.Atoi(v[i+1:])
+		if err != nil || port < 1 || port > 65535 {
+			return errors.New("port must be 1-65535")
+		}
+		host = v[:i]
+	}
+	if len(host) > 253 {
+		return errors.New("host exceeds 253 characters")
+	}
+	if !davHostRe.MatchString(v) {
+		return errors.New("must be a hostname, optionally host:port (e.g. dav.example.com or dav.example.com:8443)")
+	}
+	return nil
 }
 
 // nullableUint64 is the M24 wrapper that lets a PATCH body distinguish
@@ -303,6 +385,26 @@ type domainListRow struct {
 	// TempURL is the full preview URL, populated when the domain has
 	// temp_url_enabled and a panel hostname is configured.
 	TempURL *string `json:"temp_url,omitempty"`
+	// Applications denormalizes this domain's One-Click app installs onto the
+	// row so the tenant Web Domains list can show an Application column without
+	// an N+1 (GH #1543). Ordered docroot-first; a domain may host several
+	// (/, /blog). omitempty drops both nil and an empty slice, so a domain with
+	// no apps ships no key (never a JSON null the SPA would trip on). Populated
+	// only when AppInstalls is wired; admin and tenant share this list handler,
+	// admin simply doesn't render the column.
+	Applications []domainAppSummary `json:"applications,omitempty"`
+}
+
+// domainAppSummary is the per-row app view (GH #1543): just what the Web
+// Domains Application column needs — enough to show the badge, version, live
+// status, and mint a login. The full install record stays on GET /applications.
+type domainAppSummary struct {
+	ID           string  `json:"id"`
+	AppType      string  `json:"app_type"`
+	Version      *string `json:"version"`
+	Status       string  `json:"status"`
+	LastError    string  `json:"last_error,omitempty"`
+	Subdirectory string  `json:"subdirectory"`
 }
 
 // ipSummary is the denormalized {id, address} blob the UI consumes for
@@ -491,6 +593,35 @@ func (h *domainHandler) list(c *gin.Context) {
 						}
 					}
 				}
+			}
+		}
+	}
+
+	// GH #1543: denormalize each domain's One-Click app installs onto its row
+	// so the tenant Web Domains list can render an Application column without an
+	// N+1 fetch. Single batch lookup, grouped in memory (docroot-first, as the
+	// repo orders by subdirectory); on error we drop the field rather than
+	// 500ing — the standalone Applications page is the recovery path.
+	if h.cfg.AppInstalls != nil && len(domains) > 0 {
+		domainIDs := make([]string, len(domains))
+		for i := range domains {
+			domainIDs[i] = domains[i].ID
+		}
+		if installs, appErr := h.cfg.AppInstalls.ListByDomainIDs(c.Request.Context(), domainIDs); appErr == nil {
+			appsByDomain := make(map[string][]domainAppSummary, len(installs))
+			for i := range installs {
+				a := &installs[i]
+				appsByDomain[a.DomainID] = append(appsByDomain[a.DomainID], domainAppSummary{
+					ID:           a.ID,
+					AppType:      a.AppType,
+					Version:      a.Version,
+					Status:       a.Status,
+					LastError:    a.LastError,
+					Subdirectory: a.Subdirectory,
+				})
+			}
+			for i := range rows {
+				rows[i].Applications = appsByDomain[rows[i].ID]
 			}
 		}
 	}
@@ -694,6 +825,12 @@ func (h *domainHandler) create(c *gin.Context) {
 		TempURLEnabled:   req.TempURLEnabled,
 		ReverseProxy:     req.ReverseProxy,
 		ReverseProxyPort: req.ReverseProxyPort,
+		// GH #1449: both default ON — only an explicit false opts out.
+		WebDisabled: req.WebEnabled != nil && !*req.WebEnabled,
+		DNSDisabled: req.ManageDNS != nil && !*req.ManageDNS,
+		// GH #1540: apex IP(s) for a DNS-only zone (validated web-off + family in op).
+		DNSApexIPv4: req.IPAddress,
+		DNSApexIPv6: req.IPv6Address,
 	})
 	if oerr != nil {
 		body := gin.H{"error": oerr.Code}
@@ -753,6 +890,16 @@ func (h *domainHandler) update(c *gin.Context) {
 		domain.IsEnabled = *req.IsEnabled
 	}
 
+	// Bot-detection opt-IN — OWNER or admin (self-service). A tenant opting
+	// their own site INTO the challenge only adds protection, so unlike the
+	// opt-out (bot_challenge_exempt, admin-only above) it is safe for the owner
+	// to set. Ownership is already enforced by the forbidden gate above, so a
+	// tenant can only flip this on domains they own. Effective only in the
+	// server-wide "selected" scope; inert otherwise.
+	if req.BotChallengeInclude != nil {
+		domain.BotChallengeInclude = *req.BotChallengeInclude
+	}
+
 	// Preview URL toggle — owner or admin. Enabling re-checks the slug
 	// collision (see previewSlugConflict).
 	if req.TempURLEnabled != nil && *req.TempURLEnabled != domain.TempURLEnabled {
@@ -782,11 +929,18 @@ func (h *domainHandler) update(c *gin.Context) {
 	// is_enabled. Admin role bypasses the gate.
 	if claims.IsAdmin {
 		if req.NginxCustomDirectives != nil {
-			if msg := validateNginxDirectives(*req.NginxCustomDirectives); msg != "" {
+			if msg := ValidateNginxDirectives(*req.NginxCustomDirectives); msg != "" {
 				c.JSON(http.StatusBadRequest, gin.H{"error": msg})
 				return
 			}
 			domain.NginxCustomDirectives = req.NginxCustomDirectives
+		}
+
+		// Per-domain bot-detection opt-out (admin-only). The reconciler picks
+		// up the flag on its next pass, writes the exempt-hosts state file, and
+		// (while bot detection is on) has the agent re-render jabali-bot-exempt.
+		if req.BotChallengeExempt != nil {
+			domain.BotChallengeExempt = *req.BotChallengeExempt
 		}
 
 		if req.NginxRules != nil {
@@ -873,7 +1027,7 @@ func (h *domainHandler) update(c *gin.Context) {
 		if trimmed == "" {
 			domain.RedirectAllTo = nil
 		} else {
-			if err := validateRedirectURL(trimmed); err != nil {
+			if err := ValidateRedirectURL(trimmed); err != nil {
 				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 				return
 			}
@@ -893,12 +1047,29 @@ func (h *domainHandler) update(c *gin.Context) {
 	if req.DmarcTesting != nil {
 		domain.DmarcTesting = *req.DmarcTesting
 	}
+	// GH #1462: per-domain CalDAV/CardDAV override (hostname[:port]; empty clears).
+	if req.CalDAVHost != nil {
+		v := strings.TrimSpace(*req.CalDAVHost)
+		if err := validateDAVHost(v); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_caldav_host", "detail": err.Error()})
+			return
+		}
+		domain.CalDAVHost = v
+	}
+	if req.CardDAVHost != nil {
+		v := strings.TrimSpace(*req.CardDAVHost)
+		if err := validateDAVHost(v); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_carddav_host", "detail": err.Error()})
+			return
+		}
+		domain.CardDAVHost = v
+	}
 
 	if req.RedirectAllType != nil {
 		trimmed := strings.TrimSpace(*req.RedirectAllType)
 		if trimmed == "" {
 			domain.RedirectAllType = nil
-		} else if !isValidRedirectType(trimmed) {
+		} else if !IsValidRedirectType(trimmed) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid redirect type"})
 			return
 		} else {
@@ -919,7 +1090,7 @@ func (h *domainHandler) update(c *gin.Context) {
 	}
 	if req.IndexPriority != nil {
 		p := strings.TrimSpace(*req.IndexPriority)
-		if !isValidIndexPriority(p) {
+		if !IsValidIndexPriority(p) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_index_priority"})
 			return
 		}
@@ -1318,7 +1489,7 @@ var allowedNginxDirectives = map[string]struct{}{
 	"open_file_cache_errors":   {},
 }
 
-func validateNginxDirectives(directives string) string {
+func ValidateNginxDirectives(directives string) string {
 	// Reject if input contains null bytes (binary/injection attempt).
 	if strings.ContainsRune(directives, '\x00') {
 		return "forbidden directive: null byte detected"
@@ -1449,7 +1620,7 @@ func extractDirective(line string) string {
 	return fields[0]
 }
 
-func validateRedirectURL(s string) error {
+func ValidateRedirectURL(s string) error {
 	u, err := url.Parse(s)
 	if err != nil {
 		return fmt.Errorf("invalid destination URL: %w", err)
@@ -1463,7 +1634,7 @@ func validateRedirectURL(s string) error {
 	return nil
 }
 
-func isValidRedirectType(s string) bool {
+func IsValidRedirectType(s string) bool {
 	switch s {
 	case "301", "302", "307", "308":
 		return true
@@ -1483,10 +1654,10 @@ func validatePageRedirects(prs models.PageRedirects) error {
 		if strings.ContainsAny(pr.Source, "\n\x00") {
 			return fmt.Errorf("entry %d: source contains invalid chars", i)
 		}
-		if err := validateRedirectURL(pr.Destination); err != nil {
+		if err := ValidateRedirectURL(pr.Destination); err != nil {
 			return fmt.Errorf("entry %d: invalid page redirect destination: %w", i, err)
 		}
-		if !isValidRedirectType(pr.Type) {
+		if !IsValidRedirectType(pr.Type) {
 			return fmt.Errorf("entry %d: invalid type for page redirect: %s", i, pr.Type)
 		}
 		// Wildcard only supports 301 and 302
@@ -1708,7 +1879,7 @@ func validateTenantNginxRules(rules models.NginxRules) error {
 	return validateNginxRules(rules)
 }
 
-func isValidIndexPriority(s string) bool {
+func IsValidIndexPriority(s string) bool {
 	switch s {
 	case "html_first", "php_first", "html_only", "php_only", "full":
 		return true

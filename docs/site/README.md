@@ -37,7 +37,8 @@ Comprehensive English docs for the current (Go) generation of Jabali Panel. Desi
 | [removed-features.md](./removed-features.md) | What's intentionally not here (OIDC, ModSec, filebrowser, impersonation, Refine). |
 | [platform/stack.md](./platform/stack.md) | Process / data / reconciler model. |
 | [platform/agent.md](./platform/agent.md) | Privileged-agent contract. |
-| [platform/cli.md](./platform/cli.md) | Full `jabali` CLI reference. |
+| [platform/cli.md](./platform/cli.md) | `jabali` CLI cheat-sheet — common commands, hand-written. |
+| [platform/cli-reference.md](./platform/cli-reference.md) | Full generated `jabali` command reference (every subcommand + flag). |
 | [platform/dnssec.md](./platform/dnssec.md) | DNSSEC architecture. |
 | [platform/mail-autoconfig.md](./platform/mail-autoconfig.md) | Thunderbird / Outlook / Apple autoconfig. |
 | [platform/health-monitor.md](./platform/health-monitor.md) | `/api/v1/health` + `/metrics`. |

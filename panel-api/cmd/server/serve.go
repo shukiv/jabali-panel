@@ -367,6 +367,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 		// ReconcileUserLimits and ReconcileNginxRateLimits have every
 		// dep they need. Mount path resolved below after deps are set.
 		rec.WithPackages(packageRepo)
+		// GH #1422: the package-flip fan-out re-renders pools through the
+		// override-aware ReconcileViaAgent, which needs the ini-override repo.
+		rec.WithPHPPoolIniOverrides(phpPoolIniOverrideRepo)
 		rec.WithLimitOverrides(limitOverridesRepo)
 		rec.WithDBAdmin(dbAdminRepo)
 		managedIPRepo := repository.NewManagedIPRepository(sharedDB)

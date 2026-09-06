@@ -1948,10 +1948,13 @@ jabali domain create [flags]
 **Flags:**
 
 - `--doc-root` — Document root (optional, auto-generated if not provided)
+- `--mail` — Mail provider: jabali | none | m365 | google. 'none' for a web/DNS-only domain (default `jabali`)
+- `--manage-dns` — Host this domain's DNS zone on this server. --manage-dns=false when DNS lives elsewhere (external DNS) (default `true`)
 - `--name` — Domain name (required)
 - `--reverse-proxy` — Make this a reverse-proxy domain: allocate a loopback port and proxy '/' to it (GH #1175)
 - `--reverse-proxy-port` — Reverse-proxy to this specific loopback port (GH #1401); 0 = auto-assign from the pool (default `0`)
 - `--user` — User email, username, or ULID (required)
+- `--web-enabled` — Host a website for this domain (vhost + docroot). --web-enabled=false makes a docroot-less DNS-only zone or mail-only domain (default `true`)
 
 #### `jabali domain delete`
 
@@ -2276,7 +2279,7 @@ jabali domain set <domain-name|domain-id> [flags]
 - `--index-priority` — directory index priority (e.g. html_first, php_first)
 - `--nginx-directives` — raw custom nginx directives for the server block
 - `--redirect-all-to` — redirect the whole domain to this URL ('' clears)
-- `--redirect-type` — permanent|temporary
+- `--redirect-type` — 301|302|307|308 (permanent=301, temporary=302)
 - `--ssl-mode` — le|self|none (custom = install a cert)
 
 #### `jabali domain show`
@@ -4673,6 +4676,82 @@ jabali retention-sweep [flags]
 
 - `--dry-run` — count would-delete rows without removing them
 
+### `jabali secrets`
+
+Rotate panel secrets after remediation (JAB-357; operator ceremony, run as root)
+
+```
+jabali secrets
+```
+
+#### `jabali secrets rotate`
+
+Rotate an exposed secret (see docs/secret-rotation.md)
+
+```
+jabali secrets rotate
+```
+
+##### `jabali secrets rotate all`
+
+Rotate every built panel secret in a lockout-safe order
+
+```
+jabali secrets rotate all [flags]
+```
+
+**Flags:**
+
+- `--dry-run` — print the plan and touch nothing
+
+##### `jabali secrets rotate db-app-user`
+
+Rotate the panel DB app-user (jabali_panel_app) password + DATABASE_URL
+
+```
+jabali secrets rotate db-app-user [flags]
+```
+
+**Flags:**
+
+- `--dry-run` — print the plan and touch nothing
+
+##### `jabali secrets rotate jwt`
+
+Rotate JWT_SECRET in panel.env (vestigial post-M20; safe near-noop)
+
+```
+jabali secrets rotate jwt [flags]
+```
+
+**Flags:**
+
+- `--dry-run` — print the plan and touch nothing
+
+##### `jabali secrets rotate pdns`
+
+Rotate the PowerDNS DB user password (pdns.env + gmysql backend conf)
+
+```
+jabali secrets rotate pdns [flags]
+```
+
+**Flags:**
+
+- `--dry-run` — print the plan and touch nothing
+
+##### `jabali secrets rotate redis-panel-token`
+
+Rotate JABALI_REDIS_PANEL_TOKEN (panel.env + redis aclfile, live ACL SETUSER)
+
+```
+jabali secrets rotate redis-panel-token [flags]
+```
+
+**Flags:**
+
+- `--dry-run` — print the plan and touch nothing
+
 ### `jabali serve`
 
 Start the Jabali Panel HTTP(S) server
@@ -5205,6 +5284,7 @@ jabali system restore [flags]
 - `--apply-stage` — restrict apply to named stages (repeatable). Empty = panel_db + panel_config + tls (the safe defaults) (default `[]`)
 - `--credentials-ref` — absolute path to env file with backend creds (root:root 0600)
 - `--force` — required — restore overwrites the running panel
+- `--from-tar` — restore the SYSTEM leg from a downloaded Full Server container (.tar) instead of a restic repo (GH #1408). Applies panel_db + panel_config + tls by default
 - `--include-accounts` — also restore each linked account
 - `--interactive` — force interactive prompts even when --remote-url is set
 - `--password` — restic password (literal; overrides --password-file). Avoid in shell history; prefer --interactive

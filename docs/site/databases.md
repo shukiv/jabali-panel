@@ -1,6 +1,6 @@
 # Databases
 
-MariaDB and PostgreSQL, per-user databases and DB-users, with SSO into phpMyAdmin / pgAdmin.
+MariaDB and PostgreSQL, per-user databases and DB-users, with SSO into phpMyAdmin (MariaDB) / Adminer (PostgreSQL).
 
 ## Engines
 
@@ -13,10 +13,30 @@ MariaDB and PostgreSQL, per-user databases and DB-users, with SSO into phpMyAdmi
 
 `/jabali-panel/databases`:
 
+Databases are shown in a **tabbed view** (MariaDB and PostgreSQL side by side).
+
 - **Create database** — pick the engine, name (`<user>_<suffix>` prefix enforced by `db_admin` policies), default DB user.
-- **Create DB user** — username + password (shown once). The agent provisions the user with `GRANT ALL ON <user>_*.* TO …`.
-- **phpMyAdmin SSO** — single-use, short-TTL **SSO Token** (CONTEXT.md). Click "Open phpMyAdmin" → land authenticated as the DB user.
-- **pgAdmin SSO** — same flow for PostgreSQL.
+- **Create DB user** — username + password (shown once). The agent provisions the user with `GRANT ALL ON <user>_*.* TO …`. For PostgreSQL, a DB-user granted to a database gets usable schema access, not just a bare `CONNECT` (GH #1406).
+- **phpMyAdmin SSO** (MariaDB) — single-use, short-TTL **SSO Token** (CONTEXT.md). Click "Open phpMyAdmin" → land authenticated as the DB user.
+- **Adminer SSO** (PostgreSQL) — same single-use SSO flow into **Adminer** (upgraded to 6.0.1 with a ported SSO plugin, GH #1405).
+
+### Per-database Backup / Restore (GH #1045)
+
+Each database row has **Download backup** and **Restore from file** actions, for
+**both** MariaDB and PostgreSQL:
+
+- **Download** streams a dump (`--no-owner --no-privileges` for Postgres).
+- **Restore from file** uploads a dump and replaces the whole database. The
+  upload is **chunked and async** to beat Cloudflare's ~100 MB / 524 origin
+  limits (GH #1323), with an upload-progress modal.
+- PostgreSQL restore accepts plain-SQL **and** pgAdmin's default custom / tar
+  archive formats and surfaces the real loader error, not a generic failure (GH
+  #1045). Uploaded dumps are never loaded as a superuser — they run through a
+  per-database non-superuser scoped role and are built in a throwaway staging
+  database, swapped onto the real name only on success (a bad upload never wipes
+  the live database).
+
+See [Backups](./backups.md) for account- and server-level restore.
 
 ## Admin DB Ops (M46)
 

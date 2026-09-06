@@ -267,6 +267,53 @@ export function useUpdateAppSecGeoblock() {
   });
 }
 
+// AppSec bot detection (CrowdSec 1.8) — server-wide challenge mode. Tenant-
+// facing: suspected bots get a self-contained JS / proof-of-work interstitial
+// before reaching any hosted site. server_settings is truth; the agent
+// composes the upstream appsec-bot-challenge configs into the AppSec
+// acquisition and restarts crowdsec. Needs CrowdSec engine >= 1.8 + bouncer
+// >= 1.2.2 (the agent version-gates and returns a 400 otherwise).
+export type AppSecBotDetectionMode = "off" | "balanced" | "permissive";
+export type AppSecBotDetectionScope = "all" | "selected";
+
+export type AppSecBotDetection = {
+  mode: AppSecBotDetectionMode;
+  // "all" = challenge every site (carve exceptions per-domain); "selected" =
+  // challenge only domains flagged bot_challenge_include. Absent on an older
+  // panel-api → treated as "all".
+  scope?: AppSecBotDetectionScope;
+};
+
+export function useAppSecBotDetection() {
+  return useQuery({
+    queryKey: ["security", "crowdsec", "appsec", "bot-detection"],
+    queryFn: async () => {
+      const { data } = await apiClient.get<AppSecBotDetection>(
+        `${BASE}/appsec/bot-detection`,
+      );
+      return data;
+    },
+  });
+}
+
+export function useUpdateAppSecBotDetection() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: AppSecBotDetection) => {
+      const { data } = await apiClient.put<AppSecBotDetection>(
+        `${BASE}/appsec/bot-detection`,
+        input,
+      );
+      return data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({
+        queryKey: ["security", "crowdsec", "appsec", "bot-detection"],
+      });
+    },
+  });
+}
+
 // Country ban exemption (ADR-0166) — selected countries are never blocked
 // from any CrowdSec decision source (scenario bans, AppSec inband, CAPI/
 // console blocklists, captchas). server_settings is truth; the agent renders

@@ -2,9 +2,12 @@ package api
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,9 +18,12 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"golang.org/x/crypto/bcrypt"
 
 	ginctx "git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/userops"
 )
 
 // backup_restore_upload.go — GH #1408. Admin "restore from an uploaded backup
@@ -43,8 +49,8 @@ const (
 )
 
 var (
-	uploadIDRE               = regexp.MustCompile(`^[A-Za-z0-9_-]{8,128}$`)
-	restoreTargetUsernameRE  = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
+	uploadIDRE              = regexp.MustCompile(`^[A-Za-z0-9_-]{8,128}$`)
+	restoreTargetUsernameRE = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
 )
 
 func restoreUploadAdminTag(userID string) string {
@@ -226,13 +232,41 @@ func (h *backupHandler) restoreUploadInspect(c *gin.Context) {
 		respondAgentError(c, err)
 		return
 	}
-	c.Data(http.StatusOK, "application/json", raw)
+	// GH #1408: annotate whether the bundle's own user already exists (so the UI
+	// offers restore-into-existing vs create-from-backup) and whether this
+	// server can create it (Packages wired).
+	var parsed map[string]any
+	if json.Unmarshal(raw, &parsed) == nil {
+		targetExists := false
+		if u, ok := parsed["user"].(map[string]any); ok {
+			if uname, _ := u["username"].(string); uname != "" {
+				if ex, _ := h.cfg.Users.FindByUsername(c.Request.Context(), uname); ex != nil {
+					targetExists = true
+				}
+			}
+		}
+		parsed["target_exists"] = targetExists
+		parsed["create_supported"] = h.cfg.Packages != nil
+		if out, merr := json.Marshal(parsed); merr == nil {
+			c.Data(http.StatusOK, "application/json", out)
+			return
+		}
+	}
+	c.Data(http.StatusOK, "application/json", raw) // fallback: unparseable → pass through
 }
 
 type restoreUploadApplyRequest struct {
 	UploadID       string   `json:"upload_id"`
 	TargetUsername string   `json:"target_username"`
 	Components     []string `json:"components,omitempty"`
+	// GH #1408 create-from-manifest: when the target user does not exist yet
+	// (fresh-box DR), CreateUser=true creates the account from the bundle
+	// before restoring. The username + email come from the bundle (verified
+	// against the tar, not trusted from the client); PackageID is the admin's
+	// choice (nil = no package = unrestricted resource limits). The account is
+	// always non-admin, and its password is regenerated (recover via link).
+	CreateUser bool    `json:"create_user,omitempty"`
+	PackageID  *string `json:"package_id,omitempty"`
 }
 
 // restoreUploadApply restores the uploaded archive into an EXISTING user.
@@ -261,12 +295,6 @@ func (h *backupHandler) restoreUploadApply(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_target_username"})
 		return
 	}
-	// v1: the target user must already exist (no create-from-manifest).
-	target, uerr := h.cfg.Users.FindByUsername(c.Request.Context(), req.TargetUsername)
-	if uerr != nil || target == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "target_user_not_found", "detail": "create the user first, then restore into it"})
-		return
-	}
 	path := restoreUploadPath(adminID, req.UploadID)
 	if fi, err := os.Stat(path); err != nil || !fi.Mode().IsRegular() {
 		c.JSON(http.StatusNotFound, gin.H{"error": "upload_not_found"})
@@ -275,6 +303,23 @@ func (h *backupHandler) restoreUploadApply(c *gin.Context) {
 	if h.cfg.Agent == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "agent_unavailable"})
 		return
+	}
+
+	target, uerr := h.cfg.Users.FindByUsername(c.Request.Context(), req.TargetUsername)
+	userCreated := false
+	if uerr != nil || target == nil {
+		// GH #1408 create-from-manifest: create the account from the bundle when
+		// the admin opted in (fresh-box DR), else keep the historic 404.
+		if !req.CreateUser {
+			c.JSON(http.StatusNotFound, gin.H{"error": "target_user_not_found", "detail": "user does not exist — enable 'create from backup', or create the user first"})
+			return
+		}
+		newTarget, ok := h.createUserFromBundle(c, path, req.TargetUsername, req.PackageID)
+		if !ok {
+			return // helper wrote the error response
+		}
+		target = newTarget
+		userCreated = true
 	}
 
 	c.Set("audit_target", req.TargetUsername)
@@ -289,9 +334,130 @@ func (h *backupHandler) restoreUploadApply(c *gin.Context) {
 		username:    req.TargetUsername,
 		targetID:    target.ID,
 		components:  req.Components,
+		userCreated: userCreated,
 	})
 
-	c.JSON(http.StatusAccepted, gin.H{"status": "restoring", "upload_id": req.UploadID})
+	c.JSON(http.StatusAccepted, gin.H{"status": "restoring", "upload_id": req.UploadID, "user_created": userCreated})
+}
+
+// createUserFromBundle creates the restore-target account from the uploaded
+// bundle's OWN user metadata (GH #1408 create-from-manifest) for fresh-box DR
+// where the user doesn't exist yet. The username + email are read from the tar
+// here (source of truth — never trusted from the client), the account is ALWAYS
+// non-admin, its package is the admin's choice (nil = unrestricted), and its
+// password is regenerated (the user recovers via a Kratos link — it is never
+// displayed). On any error the helper writes the HTTP response and returns
+// ok=false.
+// createBundleError carries the HTTP shape for a create-from-bundle guard
+// failure so the gin wrapper renders it verbatim while the detached full-server
+// loop (no gin.Context) can read the reason for its per-user marker line.
+type createBundleError struct {
+	status int
+	code   string
+	detail string
+}
+
+func (e *createBundleError) Error() string {
+	if e.detail != "" {
+		return e.code + ": " + e.detail
+	}
+	return e.code
+}
+
+// resolveOrCreateUserFromTar reads the bundle's OWN user straight from the tar
+// (agent inspect — never trusted from the client) and creates a NON-ADMIN
+// account for it (GH #1408 create-from-manifest). Context-free so the detached
+// full-server restore loop can call it per user. Guard failures return a
+// *createBundleError; a userops.Create failure is returned verbatim (the gin
+// wrapper maps it via userOpsRESTError). The client-supplied targetUsername is
+// only a cross-check — home is name-keyed, so it must equal the bundle username.
+func (h *backupHandler) resolveOrCreateUserFromTar(ctx context.Context, tarPath, targetUsername string, packageID *string) (*models.User, error) {
+	if h.cfg.Packages == nil {
+		return nil, &createBundleError{http.StatusNotImplemented, "create_from_bundle_unavailable", "create-from-backup is not enabled on this server"}
+	}
+	raw, err := h.cfg.Agent.Call(ctx, "backup.inspect_uploaded_tar", map[string]string{"tar_path": tarPath})
+	if err != nil {
+		return nil, &createBundleError{http.StatusBadGateway, "inspect_failed", restoreFailureDetail(err)}
+	}
+	var ins struct {
+		User struct {
+			Username string `json:"username"`
+			Email    string `json:"email"`
+			IsAdmin  bool   `json:"is_admin"`
+		} `json:"user"`
+	}
+	if json.Unmarshal(raw, &ins) != nil || ins.User.Username == "" {
+		return nil, &createBundleError{http.StatusBadRequest, "bundle_unreadable", ""}
+	}
+	if ins.User.Username != targetUsername {
+		return nil, &createBundleError{http.StatusBadRequest, "username_mismatch", "restore into the backup's own username (" + ins.User.Username + ")"}
+	}
+	// SECURITY: never create an admin from a bundle (belt beyond the applyUser
+	// refusal — no legitimate account backup is an admin).
+	if ins.User.IsAdmin {
+		return nil, &createBundleError{http.StatusForbidden, "admin_bundle_refused", "refusing to create an admin account from a backup"}
+	}
+	if ins.User.Email == "" {
+		return nil, &createBundleError{http.StatusBadRequest, "bundle_no_email", "the backup carries no user email — create the user manually, then restore into it"}
+	}
+	// Don't hijack an existing identity: an email collision is the admin's to
+	// resolve (restore into the existing user, or create manually).
+	if existing, _ := h.cfg.Users.FindByEmail(ctx, ins.User.Email); existing != nil {
+		return nil, &createBundleError{http.StatusConflict, "email_taken", "a user with that email already exists — restore into it instead"}
+	}
+
+	pw, perr := randomRestorePassword()
+	if perr != nil {
+		return nil, &createBundleError{http.StatusInternalServerError, "internal", ""}
+	}
+	uname := ins.User.Username
+	res, cerr := userops.Create(ctx, userops.Deps{
+		Users:        h.cfg.Users,
+		Packages:     h.cfg.Packages,
+		Agent:        h.cfg.Agent,
+		KratosClient: h.cfg.KratosClient,
+		BcryptCost:   bcrypt.DefaultCost,
+		Log:          h.cfg.Log,
+	}, userops.CreateInput{
+		Email:     ins.User.Email,
+		Password:  pw,
+		Username:  &uname,
+		IsAdmin:   false, // NEVER an admin from a bundle
+		PackageID: packageID,
+	})
+	if cerr != nil {
+		return nil, cerr
+	}
+	return res.User, nil
+}
+
+// createUserFromBundle is the gin wrapper over resolveOrCreateUserFromTar for
+// the single-account apply handler: on error it writes the HTTP response and
+// returns ok=false.
+func (h *backupHandler) createUserFromBundle(c *gin.Context, tarPath, targetUsername string, packageID *string) (*models.User, bool) {
+	u, err := h.resolveOrCreateUserFromTar(c.Request.Context(), tarPath, targetUsername, packageID)
+	if err != nil {
+		var ce *createBundleError
+		if errors.As(err, &ce) {
+			c.JSON(ce.status, gin.H{"error": ce.code, "detail": ce.detail})
+		} else {
+			userOpsRESTError(c, err) // userops sentinels → HTTP
+		}
+		return nil, false
+	}
+	return u, true
+}
+
+// randomRestorePassword returns an unguessable password for a create-from-
+// manifest account. It is never returned to the caller — the user signs in via
+// a Kratos recovery link. The fixed prefix guarantees the char-class mix any
+// password policy expects; the suffix is 24 random bytes.
+func randomRestorePassword() (string, error) {
+	b := make([]byte, 24)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return "Jb1!" + base64.RawURLEncoding.EncodeToString(b), nil
 }
 
 type uploadRestoreArgs struct {
@@ -299,6 +465,7 @@ type uploadRestoreArgs struct {
 	outcomePath string
 	username    string
 	targetID    string
+	userCreated bool
 	components  []string
 }
 
@@ -315,7 +482,14 @@ func (h *backupHandler) runUploadRestore(a uploadRestoreArgs) {
 		"components":      a.components,
 	})
 	if err != nil {
-		writeRestoreUploadOutcome(a.outcomePath, "failed", nil, nil, restoreFailureDetail(err))
+		detail := restoreFailureDetail(err)
+		if a.userCreated {
+			// GH #1408: the account was created before the restore ran — leave it
+			// (deleting is the destructive path). A retry re-uploads and restores
+			// into the now-existing user, no create needed.
+			detail += " — note: the account was created; re-upload and restore into the now-existing user"
+		}
+		writeRestoreUploadOutcome(a.outcomePath, "failed", nil, nil, detail)
 		_ = os.Remove(a.path) // terminal failure — don't strand a huge tar
 		return
 	}
@@ -333,6 +507,13 @@ func (h *backupHandler) runUploadRestore(a uploadRestoreArgs) {
 	// before applying — otherwise the rows attach to a non-existent user.
 	metaErrs := h.applyRestoreMetadataForUser(ctx, result.Metadata, a.targetID)
 	result.Warnings = append(result.Warnings, metaErrs...)
+
+	// GH #1408: when we created the account for this DR restore, tell the admin
+	// how the user signs in (their password was regenerated, not restored).
+	if a.userCreated {
+		result.Warnings = append(result.Warnings,
+			"Account "+a.username+" was created from the backup with a regenerated password — send a recovery link: jabali user password "+a.username+" --link")
+	}
 
 	// The archive is consumed — drop it so a downloaded backup with real data
 	// doesn't linger in the uploads dir.

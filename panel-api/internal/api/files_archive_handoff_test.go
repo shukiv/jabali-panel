@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/filesops"
 )
 
 // JAB-192. The GH #756 folder-download fix handed the archive from the agent to
@@ -40,7 +42,7 @@ func TestStreamArchive_MissingStagedFileIsNotAnOpaque500(t *testing.T) {
 		case "files.read":
 			return nil, errors.New("agent: failed_precondition: path is a directory")
 		case "files.archive":
-			b, _ := json.Marshal(filesArchiveAgentResult{ArchivePath: ghost, Size: 16})
+			b, _ := json.Marshal(filesops.ArchiveResult{ArchivePath: ghost, Size: 16})
 			return b, nil
 		default:
 			return nil, errors.New("unexpected command " + cmd)
@@ -92,7 +94,7 @@ func TestStreamArchive_SuccessPathUnchanged(t *testing.T) {
 		case "files.read":
 			return nil, errors.New("agent: failed_precondition: path is a directory")
 		case "files.archive":
-			b, _ := json.Marshal(filesArchiveAgentResult{ArchivePath: scratch, Size: 16})
+			b, _ := json.Marshal(filesops.ArchiveResult{ArchivePath: scratch, Size: 16})
 			return b, nil
 		}
 		return nil, errors.New("unexpected " + cmd)

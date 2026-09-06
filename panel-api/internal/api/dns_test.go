@@ -28,6 +28,10 @@ type mockDomainRepo struct {
 	// DDNS path which walks a user's domains). Nil keeps the historical
 	// empty-return behaviour for tests that don't exercise ListByUserID.
 	listByUserResult []models.Domain
+	// emailStateErr, when set, is returned by UpdateEmailState — lets a test
+	// exercise the persistence-failure branch (e.g. the DKIM-rotate handler's
+	// 500 persist_failed mapping).
+	emailStateErr error
 }
 
 func newMockDomainRepo() *mockDomainRepo {
@@ -123,6 +127,9 @@ func (m *mockDomainRepo) SetSharedCertificate(context.Context, string, *string, 
 }
 
 func (m *mockDomainRepo) UpdateEmailState(ctx context.Context, id string, state repository.DomainEmailState) error {
+	if m.emailStateErr != nil {
+		return m.emailStateErr
+	}
 	d, ok := m.domains[id]
 	if !ok {
 		return repository.ErrNotFound
@@ -1271,3 +1278,7 @@ func (r *mockDomainRepo) RewriteDocRootPrefix(context.Context, string, string, s
 	return 0, nil
 }
 func (r *mockDomainRepo) TransferOwner(context.Context, string, string, string) error { return nil }
+
+
+// ListByZoneIDs added for the JAB-374 batch interface method.
+func (m *mockDNSRecordRepo) ListByZoneIDs(context.Context, []string) ([]models.DNSRecord, error) { return nil, nil }

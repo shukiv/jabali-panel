@@ -22,7 +22,7 @@ func TestRejectControlCharInjection(t *testing.T) {
 		"wp cron event run --path=" + dr + " \"\n[Service]\"",
 	}
 	for _, p := range payloads {
-		if _, err := ValidateCommand(p, []string{dr}); err == nil {
+		if _, err := ValidateCommand(p, []string{dr}, ""); err == nil {
 			t.Errorf("control-char payload was ACCEPTED (injection): %q", p)
 		}
 	}
@@ -33,7 +33,7 @@ func TestRejectControlCharInjection(t *testing.T) {
 func TestTabStillAllowed(t *testing.T) {
 	dr := "/home/u/public_html"
 	// tab between args; should not be rejected for the control-char reason.
-	cmd, err := ValidateCommand("wp\tcron event run --path="+dr, []string{dr})
+	cmd, err := ValidateCommand("wp\tcron event run --path="+dr, []string{dr}, "")
 	if err != nil {
 		// It's fine if shlex/other rules reject for a different reason, but it
 		// must NOT be the control-char reject path with a real tab.

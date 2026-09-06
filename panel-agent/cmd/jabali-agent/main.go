@@ -4,15 +4,21 @@
 // connection, dispatches to a handler from the commands registry, and
 // writes a single NDJSON response.
 //
-// Access control is enforced entirely via socket permissions — agent never
-// parses credentials. Production install places the socket in a directory
-// owned root:jabali 0750 with the socket itself root:jabali 0660, so only
-// root and the jabali group (i.e. the panel-api process) can connect.
+// Access control has two layers. First, socket permissions: production
+// install places the socket in a directory owned root:jabali 0750 with the
+// socket itself root:jabali 0660, so only root and the jabali group (i.e.
+// the panel-api process) can connect. Second, an SO_PEERCRED UID allow-list
+// (JAB-366/357): the connecting peer's UID must be on the -allowed-uids list
+// (panel user + root), and the binary refuses to start without that gate
+// unless -insecure-allow-any-uid is passed. The agent never parses
+// credentials carried in the request itself.
 package main
 
 import (
 	"context"
+	"errors"
 	"flag"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -63,12 +69,21 @@ func main() {
 		// webmail) could connect and drive every privileged command. Gate by the
 		// CONNECTING UID too: only the panel-api user (jabali) + root (operator
 		// CLI) are authorised, so a group regression can never silently re-grant
-		// agent root. Empty = allow any (kept for out-of-systemd test runs);
-		// install.sh always passes the real list.
-		allowedUIDs = flag.String("allowed-uids", envOr("JABALI_AGENT_ALLOWED_UIDS", ""), "comma-separated UIDs allowed to connect to the main socket (SO_PEERCRED gate); empty = allow any (testing only)")
-		timeout     = flag.Duration("timeout", defaultTimeout, "per-request wall-clock timeout (when caller sets no deadline)")
-		logFormat   = flag.String("log-format", envOr("JABALI_AGENT_LOG_FORMAT", "json"), "json|text")
-		logLevel    = flag.String("log-level", envOr("JABALI_AGENT_LOG_LEVEL", "info"), "debug|info|warn|error")
+		// agent root. install.sh always passes the real list (panel_uid,0).
+		//
+		// JAB-357 (fail-open hardening): an empty or wholly-malformed list must
+		// NOT silently disable the gate — that is the same "config regression
+		// silently grants root" hole the gate exists to close. decideUIDGate makes
+		// it fatal at startup unless -insecure-allow-any-uid is passed explicitly.
+		allowedUIDs = flag.String("allowed-uids", envOr("JABALI_AGENT_ALLOWED_UIDS", ""), "comma-separated UIDs allowed to connect to the main socket (SO_PEERCRED gate); empty is fatal unless -insecure-allow-any-uid")
+		// insecureAllowAny is the ONLY way to run the main socket without a
+		// SO_PEERCRED allow-list. It is a CLI flag with no env fallback on purpose:
+		// an Environment= drop-in would be exactly the silent channel this hardening
+		// closes. The "insecure-" name is the documentation — no prod unit carries it.
+		insecureAllowAny = flag.Bool("insecure-allow-any-uid", false, "disable the main socket SO_PEERCRED gate (out-of-systemd test runs only; never in production)")
+		timeout          = flag.Duration("timeout", defaultTimeout, "per-request wall-clock timeout (when caller sets no deadline)")
+		logFormat        = flag.String("log-format", envOr("JABALI_AGENT_LOG_FORMAT", "json"), "json|text")
+		logLevel         = flag.String("log-level", envOr("JABALI_AGENT_LOG_LEVEL", "info"), "debug|info|warn|error")
 	)
 	flag.Parse()
 
@@ -102,11 +117,15 @@ func main() {
 		// Note: we hold the client for the process lifetime; no defer Close().
 	}
 
-	allowUID := parseUIDList(*allowedUIDs)
+	allowUID, err := decideUIDGate(*allowedUIDs, *insecureAllowAny)
+	if err != nil {
+		log.Error("agent main socket SO_PEERCRED gate misconfigured", "err", err)
+		os.Exit(2)
+	}
 	if len(allowUID) > 0 {
 		log.Info("agent main socket SO_PEERCRED gate active", "allowed_uids", allowUID)
 	} else {
-		log.Warn("agent main socket SO_PEERCRED gate DISABLED (no -allowed-uids) — any local UID with socket access may connect")
+		log.Warn("agent main socket SO_PEERCRED gate DISABLED via -insecure-allow-any-uid — any local UID with socket access may connect (test runs only)")
 	}
 
 	srv, err := server.New(server.Config{
@@ -189,10 +208,11 @@ func newLogger(format, level string) *slog.Logger {
 }
 
 // parseUIDList parses a comma-separated UID list ("1001,0") into []uint32,
-// skipping blanks and unparseable entries. An empty/blank input yields an
-// empty slice, which the server treats as "gate disabled" (allow any). Used
-// only at startup, so a bad entry logs nothing louder than being ignored —
-// install.sh builds the value from `id -u`, not user input.
+// skipping blanks and unparseable entries. Dropping a bad entry from an
+// otherwise-valid list only ever RESTRICTS who may connect (fail-closed
+// direction), so "1001,xyz" → [1001] is safe. Whether an EMPTY result is
+// tolerated is decided by decideUIDGate, not here — an all-malformed or unset
+// list must not silently open the socket.
 func parseUIDList(s string) []uint32 {
 	var out []uint32
 	for _, part := range strings.Split(s, ",") {
@@ -207,6 +227,40 @@ func parseUIDList(s string) []uint32 {
 		out = append(out, uint32(n))
 	}
 	return out
+}
+
+// decideUIDGate resolves the main socket's SO_PEERCRED policy at startup and
+// fails closed (JAB-357). It never returns an empty allow-list together with a
+// nil error unless the operator explicitly opted out with -insecure-allow-any-uid:
+//
+//   - a list that parses to one or more UIDs → gate active with those UIDs;
+//   - a NON-BLANK list that parses to zero UIDs (every entry malformed) → fatal,
+//     because the operator intended a gate and it wholly failed to parse; the
+//     opt-out does NOT rescue this, since garbage is never a deliberate "open";
+//   - a blank/unset list → fatal unless insecureAllowAny is set, in which case
+//     the gate is deliberately disabled (test runs only).
+//
+// This closes the fail-open where a mangled -allowed-uids used to silently serve
+// the root Agent socket to any local UID.
+func decideUIDGate(rawAllowed string, insecureAllowAny bool) ([]uint32, error) {
+	uids := parseUIDList(rawAllowed)
+	if len(uids) > 0 {
+		return uids, nil
+	}
+	hadToken := false
+	for _, part := range strings.Split(rawAllowed, ",") {
+		if strings.TrimSpace(part) != "" {
+			hadToken = true
+			break
+		}
+	}
+	if hadToken {
+		return nil, fmt.Errorf("-allowed-uids %q was set but no valid UID parsed; refusing to open the main socket without a SO_PEERCRED gate", rawAllowed)
+	}
+	if !insecureAllowAny {
+		return nil, errors.New("refusing to serve the main agent socket without a SO_PEERCRED allow-list; set -allowed-uids (install.sh does) or pass -insecure-allow-any-uid for out-of-systemd test runs only")
+	}
+	return nil, nil
 }
 
 // envOr returns the env var if set + non-empty, else fallback. Tiny helper

@@ -68,7 +68,24 @@ var (
 	// panelSelfSignReloadFn applies the freshly written cert to the running
 	// services. Seam so unit tests don't spawn systemctl.
 	panelSelfSignReloadFn = defaultPanelSelfSignReload
+	// panelHSTSSnippetPath is the include the panel vhost pulls the HSTS header
+	// from (GH #1507). Overridable in tests.
+	panelHSTSSnippetPath = "/etc/nginx/snippets/jabali-panel-hsts.conf"
 )
+
+// writePanelHSTSSnippetOff clears the HSTS header the panel :8443 vhost includes.
+// GH #1507: Strict-Transport-Security over a self-signed cert hard-blocks the
+// browser with no exception path, so once this verb (re)writes a self-signed cert
+// HSTS must be off. jabali-panel-cert.sh writes it back ON when a CA cert deploys.
+// Best-effort: a stale ON snippet only re-pins browsers that were already pinned
+// during a prior CA-cert period.
+func writePanelHSTSSnippetOff() {
+	_ = os.MkdirAll(filepath.Dir(panelHSTSSnippetPath), 0o755)
+	_ = os.WriteFile(panelHSTSSnippetPath,
+		[]byte("# GH #1507: HSTS omitted — the panel is serving a self-signed cert. It hard-blocks\n"+
+			"# the browser over an untrusted cert; enabled automatically once a CA cert deploys.\n"),
+		0o644)
+}
 
 // panelSelfSignOrg is the Subject/Issuer Organization stamped onto our
 // self-signed panel cert (matches install.sh's -subj "…/O=Jabali Panel").
@@ -162,6 +179,11 @@ func sslPanelSelfSignHandler(ctx context.Context, params json.RawMessage) (any, 
 	// container/CI, where the temp path used by tests needs no chown.
 	_ = os.Chmod(panelSelfSignCertPath, 0o644)
 	applyPanelKeyOwnership(panelSelfSignKeyPath)
+
+	// GH #1507: :8443 now presents a self-signed cert — HSTS must be OFF before the
+	// reload, or a browser that reaches the freshly-served cert gets a strict-
+	// transport pin over an untrusted cert (hard block, no exception).
+	writePanelHSTSSnippetOff()
 
 	panelSelfSignReloadFn(ctx)
 

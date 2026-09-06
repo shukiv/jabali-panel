@@ -17,15 +17,7 @@ import {
   updateCronJob,
   type CronJob,
 } from "../../../apiClient";
-
-const SCHEDULE_PRESETS = [
-  { label: "Every minute", value: "* * * * *" },
-  { label: "Hourly", value: "0 * * * *" },
-  { label: "Daily at 3 AM", value: "0 3 * * *" },
-  { label: "Weekly (Sun 3 AM)", value: "0 3 * * 0" },
-  { label: "Monthly (1st 3 AM)", value: "0 3 1 * *" },
-  { label: "Advanced", value: "advanced" },
-];
+import { CRON_SCHEDULE_OPTIONS } from "../../../utils/cronSchedule";
 
 interface CreateCronModalProps {
   open: boolean;
@@ -55,7 +47,7 @@ export const CreateCronModal = ({
   useEffect(() => {
     if (!open) return;
     if (initial) {
-      const isPreset = SCHEDULE_PRESETS.some((p) => p.value === initial.schedule);
+      const isPreset = CRON_SCHEDULE_OPTIONS.some((p) => p.value === initial.schedule);
       setScheduleMode(isPreset ? initial.schedule : "advanced");
       setCustomSchedule(isPreset ? "" : initial.schedule);
     } else {
@@ -119,9 +111,9 @@ export const CreateCronModal = ({
       // Stable, test-regex-matching headline per code so users see the
       // actionable summary even if the toast scrolls.
       const headlineByCode: Record<string, string> = {
-        binary_not_allowed: "Binary not allowed — command must start with wp or php",
+        binary_not_allowed: "Binary not allowed — command must start with wp, php, python, or node",
         metachar_reject: "Shell metacharacters not allowed in command",
-        bad_path_arg: "Invalid path / traversal not allowed — must be an absolute path inside an owned docroot",
+        bad_path_arg: "Invalid path / traversal not allowed — must be an absolute path inside your account",
         bad_schedule_syntax: "Invalid schedule syntax",
         schedule_too_frequent: "Schedule too frequent — minimum 1-minute step",
         invalid_name: "Invalid name — control characters or empty",
@@ -189,7 +181,7 @@ export const CreateCronModal = ({
           rules={[
             { required: true, message: "Please enter a command" },
           ]}
-          extra="One wp/php command per line — they run in order and stop at the first failure. Use --path=<docroot> instead of cd."
+          extra="One command per line (wp / php / python / node) — they run in order and stop at the first failure. Use absolute paths instead of cd/$HOME."
         >
           <Input.TextArea
             placeholder={
@@ -203,9 +195,12 @@ export const CreateCronModal = ({
 
         <Form.Item>
           <Typography.Text type="secondary">
-            Must start with <code>wp</code>, <code>php</code>, or a specific
-            version like <code>php8.5</code> (bare <code>php</code> uses your
-            assigned version). Shell operators (|, &, $, ...) are rejected.
+            Must start with <code>wp</code>, <code>php</code> (or a version like{" "}
+            <code>php8.5</code>), <code>python</code>/<code>python3</code>,{" "}
+            <code>node</code>, or <code>curl</code>. Interpreters run an absolute
+            script file inside your account (<code>.php</code> in a docroot;{" "}
+            <code>.py</code>/<code>.js</code> anywhere under your home). Inline
+            code and shell operators (|, &, $, ...) are rejected.
           </Typography.Text>
         </Form.Item>
 
@@ -216,7 +211,7 @@ export const CreateCronModal = ({
             value={scheduleMode}
             onChange={(e) => setScheduleMode(e.target.value)}
           >
-            {SCHEDULE_PRESETS.map((preset) => (
+            {CRON_SCHEDULE_OPTIONS.map((preset) => (
               <Radio key={preset.value} value={preset.value}>
                 {preset.label}
               </Radio>

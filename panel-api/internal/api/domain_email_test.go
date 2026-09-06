@@ -413,131 +413,11 @@ func TestDomainEmail_Enable_Idempotent(t *testing.T) {
 	require.Equal(t, 15, m6Count, "re-enable must not duplicate rows")
 }
 
-// TestEnableDomainEmailInline_HappyPath exercises the shared helper
-// directly (same entry point used by both the explicit POST /domains/:id/
-// email handler and the auto-enable path in domain.create). Verifies the
-// domain struct is mutated in place, DB row is flipped, and DNS records
-// are written.
-func TestEnableDomainEmailInline_HappyPath(t *testing.T) {
-	ma := &mockAgent{callFn: func(ctx context.Context, cmd string, params any) (json.RawMessage, error) {
-		if cmd != "domain.email_enable" {
-			t.Fatalf("unexpected agent command: %s", cmd)
-		}
-		return json.RawMessage(`{"ok":true,"dkim_selector":"jabali","dkim_public_key":"v=DKIM1; k=ed25519; p=AAA"}`), nil
-	}}
-	domains := newMockDomainRepo()
-	dom := &models.Domain{ID: "dom1", UserID: "user1", Name: "example.com"}
-	domains.domains["dom1"] = dom
-	zones := newMockDNSZoneRepo()
-	zones.zones["zone1"] = &models.DNSZone{ID: "zone1", DomainID: "dom1", Name: "example.com"}
-	records := newMockDNSRecordRepo()
-
-	sel, pub, warnings, err := EnableDomainEmailInline(context.Background(), enableDomainEmailDeps{
-		Agent:      ma,
-		Domains:    domains,
-		DNSZones:   zones,
-		DNSRecords: records,
-	}, dom)
-	require.NoError(t, err)
-	require.Equal(t, "jabali", sel)
-	require.Equal(t, "v=DKIM1; k=ed25519; p=AAA", pub)
-	require.Empty(t, warnings, "no conflicts expected on a clean zone")
-
-	require.True(t, dom.EmailEnabled, "helper must mutate caller's Domain struct")
-	require.NotNil(t, dom.DkimSelector)
-	require.Equal(t, "jabali", *dom.DkimSelector)
-
-	// DB row flipped too.
-	require.True(t, domains.domains["dom1"].EmailEnabled)
-
-	// DNS records inserted (MX, DKIM, autoconfig — the M6 set).
-	var m6Count int
-	for _, r := range records.records {
-		if r.ManagedBy != nil && *r.ManagedBy == "m6" {
-			m6Count++
-		}
-	}
-	require.GreaterOrEqual(t, m6Count, 1, "at least one m6-managed DNS record expected")
-}
-
-// TestEnableDomainEmailInline_AgentErrors verifies the sentinel-error
-// taxonomy. Callers use errors.Is to pick the right HTTP status without
-// string-matching the message body.
-func TestEnableDomainEmailInline_AgentErrors(t *testing.T) {
-	t.Run("agent nil → errAgentUnconfigured", func(t *testing.T) {
-		dom := &models.Domain{ID: "dom1", Name: "example.com"}
-		_, _, _, err := EnableDomainEmailInline(context.Background(), enableDomainEmailDeps{
-			Agent:   nil,
-			Domains: newMockDomainRepo(),
-		}, dom)
-		require.ErrorIs(t, err, errAgentUnconfigured)
-		require.False(t, dom.EmailEnabled, "no DB state on agent-nil error")
-	})
-
-	t.Run("agent call error → errAgentFailed", func(t *testing.T) {
-		ma := &mockAgent{callErr: errors.New("dial: connection refused")}
-		dom := &models.Domain{ID: "dom1", Name: "example.com"}
-		_, _, _, err := EnableDomainEmailInline(context.Background(), enableDomainEmailDeps{
-			Agent:   ma,
-			Domains: newMockDomainRepo(),
-		}, dom)
-		require.ErrorIs(t, err, errAgentFailed)
-		require.Contains(t, err.Error(), "connection refused")
-	})
-
-	t.Run("agent returns ok=false → errAgentBadResponse", func(t *testing.T) {
-		ma := &mockAgent{callFn: func(ctx context.Context, cmd string, params any) (json.RawMessage, error) {
-			return json.RawMessage(`{"ok":false,"dkim_selector":"","dkim_public_key":""}`), nil
-		}}
-		dom := &models.Domain{ID: "dom1", Name: "example.com"}
-		_, _, _, err := EnableDomainEmailInline(context.Background(), enableDomainEmailDeps{
-			Agent:   ma,
-			Domains: newMockDomainRepo(),
-		}, dom)
-		require.ErrorIs(t, err, errAgentBadResponse)
-	})
-
-	t.Run("agent returns malformed JSON → errAgentBadResponse", func(t *testing.T) {
-		ma := &mockAgent{callFn: func(ctx context.Context, cmd string, params any) (json.RawMessage, error) {
-			return json.RawMessage(`not-json`), nil
-		}}
-		dom := &models.Domain{ID: "dom1", Name: "example.com"}
-		_, _, _, err := EnableDomainEmailInline(context.Background(), enableDomainEmailDeps{
-			Agent:   ma,
-			Domains: newMockDomainRepo(),
-		}, dom)
-		require.ErrorIs(t, err, errAgentBadResponse)
-	})
-}
-
-// TestEnableDomainEmailInline_DNSWarningsFlowThrough — a zone-missing
-// scenario (DNSZones wired but FindByDomainID returns not-found) still
-// produces a successful enable, with a single human-readable warning.
-// This is what domain.create's best-effort auto-enable surfaces to the
-// operator when a domain is created before its DNS zone.
-func TestEnableDomainEmailInline_DNSWarningsFlowThrough(t *testing.T) {
-	ma := &mockAgent{callFn: func(ctx context.Context, cmd string, params any) (json.RawMessage, error) {
-		return json.RawMessage(`{"ok":true,"dkim_selector":"jabali","dkim_public_key":"v=DKIM1; k=ed25519; p=AAA"}`), nil
-	}}
-	domains := newMockDomainRepo()
-	dom := &models.Domain{ID: "dom1", Name: "example.com"}
-	domains.domains["dom1"] = dom
-	// DNSZones configured but with no zone for this domain — must not
-	// panic and must not fail the enable; it emits a warning instead.
-	zones := newMockDNSZoneRepo()
-	records := newMockDNSRecordRepo()
-
-	_, _, warnings, err := EnableDomainEmailInline(context.Background(), enableDomainEmailDeps{
-		Agent:      ma,
-		Domains:    domains,
-		DNSZones:   zones,
-		DNSRecords: records,
-	}, dom)
-	require.NoError(t, err, "zone-missing must NOT fail the enable")
-	require.True(t, dom.EmailEnabled, "DB flip still happens even without a zone")
-	require.Len(t, warnings, 1)
-	require.Contains(t, warnings[0], "no zone on file")
-}
+// The shared enable/disable lifecycle (EnableDomainEmailInline and its
+// sentinel-error taxonomy) moved to internal/domainmailops in JAB-288; its
+// behavioral matrix — happy path, agent-error taxonomy, DNS-warning
+// flow-through — now lives in domainmailops_test.go. The handler-level tests
+// above still exercise it end-to-end through the HTTP routes.
 
 // TestDomains_Create_AutoEnablesEmail verifies the wired-up create
 // endpoint auto-enables email on a freshly-created domain. Exercises
@@ -641,4 +521,102 @@ func TestDomains_Create_AutoEnableFailureStillReturns201(t *testing.T) {
 	require.True(t, resp.EmailEnabled, "email_enabled intent stays 1 even when provisioning failed")
 	require.Nil(t, resp.DkimSelector, "no DKIM material when agent never ran")
 	require.Nil(t, resp.EmailEnabledAt, "email_enabled_at unset when agent never ran")
+}
+
+// --- DKIM rotation (JAB-286) — the rotate handler had no tests before the
+// lifecycle moved into internal/domainmailops; these pin the six-code error
+// contract + the 200 shape the module's typed results map onto. ---
+
+// dkimRotateRouter wires the domain-email routes with one pre-seeded domain
+// owned by user1. withAgent controls whether an agent is present (so the
+// nil-agent 503 path is reachable); emailEnabled seeds the rotate guard.
+func dkimRotateRouter(t *testing.T, ma *mockAgent, withAgent, emailEnabled bool) (*gin.Engine, *mockDomainRepo) {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	v1 := r.Group("/api/v1")
+	v1.Use(func(c *gin.Context) {
+		ginctx.SetClaims(c, &auth.AccessClaims{UserID: "user1", IsAdmin: false})
+		c.Next()
+	})
+	domains := newMockDomainRepo()
+	domains.domains["dom1"] = &models.Domain{ID: "dom1", UserID: "user1", Name: "example.com", EmailEnabled: emailEnabled}
+	cfg := DomainEmailHandlerConfig{Domains: domains}
+	if withAgent {
+		cfg.Agent = ma
+	}
+	RegisterDomainEmailRoutes(v1, cfg)
+	return r, domains
+}
+
+func doRotate(t *testing.T, r *gin.Engine) *httptest.ResponseRecorder {
+	t.Helper()
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/v1/domains/dom1/email/dkim-rotate", nil))
+	return w
+}
+
+func TestDomainEmail_RotateDKIM_Success(t *testing.T) {
+	ma := &mockAgent{callFn: func(_ context.Context, cmd string, _ any) (json.RawMessage, error) {
+		require.Equal(t, "domain.email_dkim_rotate", cmd)
+		return json.RawMessage(`{"old_dkim_public_key":"p=OLD","new_dkim_public_key":"p=NEW","old_key_backup_path":"/etc/x.old"}`), nil
+	}}
+	r, _ := dkimRotateRouter(t, ma, true, true)
+	w := doRotate(t, r)
+	require.Equal(t, http.StatusOK, w.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	require.Equal(t, "jabali", body["dkim_selector"])
+	require.Equal(t, "p=NEW", body["new_dkim_public_key"])
+	require.Equal(t, "p=OLD", body["old_dkim_public_key"])
+	require.Equal(t, "/etc/x.old", body["old_key_backup_path"])
+	require.Equal(t, 1, ma.callCount)
+}
+
+func TestDomainEmail_RotateDKIM_NotEnabled_409(t *testing.T) {
+	ma := &mockAgent{callFn: func(context.Context, string, any) (json.RawMessage, error) {
+		t.Fatal("agent must not be called when email is disabled")
+		return nil, nil
+	}}
+	r, _ := dkimRotateRouter(t, ma, true, false)
+	w := doRotate(t, r)
+	require.Equal(t, http.StatusConflict, w.Code)
+	require.Contains(t, w.Body.String(), "email_not_enabled")
+	require.Equal(t, 0, ma.callCount)
+}
+
+func TestDomainEmail_RotateDKIM_AgentUnconfigured_503(t *testing.T) {
+	r, _ := dkimRotateRouter(t, nil, false, true)
+	w := doRotate(t, r)
+	require.Equal(t, http.StatusServiceUnavailable, w.Code)
+	require.Contains(t, w.Body.String(), "agent_unconfigured")
+}
+
+func TestDomainEmail_RotateDKIM_AgentFailed_502(t *testing.T) {
+	ma := &mockAgent{callErr: errors.New("dial: connection refused")}
+	r, _ := dkimRotateRouter(t, ma, true, true)
+	w := doRotate(t, r)
+	require.Equal(t, http.StatusBadGateway, w.Code)
+	require.Contains(t, w.Body.String(), "agent_rotate_failed")
+}
+
+func TestDomainEmail_RotateDKIM_BadResponse_502(t *testing.T) {
+	ma := &mockAgent{callFn: func(context.Context, string, any) (json.RawMessage, error) {
+		return json.RawMessage(`{"old_dkim_public_key":"p=OLD","new_dkim_public_key":""}`), nil
+	}}
+	r, _ := dkimRotateRouter(t, ma, true, true)
+	w := doRotate(t, r)
+	require.Equal(t, http.StatusBadGateway, w.Code)
+	require.Contains(t, w.Body.String(), "agent_bad_response")
+}
+
+func TestDomainEmail_RotateDKIM_PersistFailed_500(t *testing.T) {
+	ma := &mockAgent{callFn: func(context.Context, string, any) (json.RawMessage, error) {
+		return json.RawMessage(`{"new_dkim_public_key":"p=NEW"}`), nil
+	}}
+	r, domains := dkimRotateRouter(t, ma, true, true)
+	domains.emailStateErr = errors.New("db down")
+	w := doRotate(t, r)
+	require.Equal(t, http.StatusInternalServerError, w.Code)
+	require.Contains(t, w.Body.String(), "persist_failed")
 }

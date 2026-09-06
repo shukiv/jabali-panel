@@ -67,9 +67,16 @@ const itflowRepoURL = "https://github.com/itflow-org/itflow.git"
 // reset the working tree to this reviewed SHA at install time and verify HEAD
 // matches — installs are reproducible and never pull an unreviewed master tip.
 // Bump deliberately (code review) when adopting a newer ITFlow.
-// 2026-08 stable (GH #928): the major release that makes cron.php a
-// dispatcher (single every-minute crontab entry).
-const itflowMasterPinnedCommit = "ccaa45b0ae9900ad731a6491559f65ff8d87a8f3"
+// 2026-09-04 stable (GH #1461): develop->master release merge (upstream
+// PR #1301). Domain-expiry lookups were rewritten to RDAP + native DNS +
+// a port-43 whois socket (functions/domain.php) — no PHP exec functions.
+// The in-app updater still shells out to git (exec/shell_exec in
+// functions/app.php) but now degrades gracefully when they're disabled.
+// Focused-review at bump time: setup_cli.php CLI interface + db.sql import
+// + config.php write unchanged (our installer contract holds); getIP()
+// still defaults to REMOTE_ADDR (GH #226 — no XFF/proxy-header trust under
+// our nginx->FPM); no exec left in the expiry path.
+const itflowMasterPinnedCommit = "dbf143d771535e1a350d02b36e7559ee153b8abb"
 
 // itflowDevelopPinnedCommit pins the `develop` branch (GH #332). develop is
 // ITFlow's active dev branch  bleeding-edge and NOT security-reviewed; we pin

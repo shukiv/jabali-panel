@@ -188,7 +188,9 @@ func (m *mockUserRepo) Update(ctx context.Context, u *models.User) error {
 	return nil
 }
 
-func (m *mockUserRepo) UpdateComposerChannel(ctx context.Context, id string, channel *string) error { return nil }
+func (m *mockUserRepo) UpdateComposerChannel(ctx context.Context, id string, channel *string) error {
+	return nil
+}
 
 func (m *mockUserRepo) UpdateCLIPHPVersion(context.Context, string, *string) error { return nil }
 
@@ -323,11 +325,13 @@ func databaseRouter(userID string, isAdmin bool) (*gin.Engine, *mockDatabaseRepo
 	}
 
 	RegisterDatabaseRoutes(v1, DatabaseHandlerConfig{
-		Databases:     dbRepo,
-		DatabaseUsers: &mockDatabaseUserRepo{},
-		Users:         userRepo,
-		Packages:      pkgRepo,
-		Agent:         &mockAgent{},
+		Databases:         dbRepo,
+		DatabaseUsers:     &mockDatabaseUserRepo{},
+		DatabaseGrants:    &mockDatabaseGrantRepo{},
+		WordPressInstalls: &mockWordPressInstallRepo{},
+		Users:             userRepo,
+		Packages:          pkgRepo,
+		Agent:             &mockAgent{},
 	})
 
 	return r, dbRepo
@@ -377,11 +381,13 @@ func databaseRouterWithAgent(userID string, isAdmin bool, agent *mockAgent) (*gi
 	}
 
 	cfg := DatabaseHandlerConfig{
-		Databases:     dbRepo,
-		DatabaseUsers: &mockDatabaseUserRepo{},
-		Users:         userRepo,
-		Packages:      pkgRepo,
-		Agent:         agent,
+		Databases:         dbRepo,
+		DatabaseUsers:     &mockDatabaseUserRepo{},
+		DatabaseGrants:    &mockDatabaseGrantRepo{},
+		WordPressInstalls: &mockWordPressInstallRepo{},
+		Users:             userRepo,
+		Packages:          pkgRepo,
+		Agent:             agent,
 	}
 	RegisterDatabaseRoutes(v1, cfg)
 
@@ -700,6 +706,49 @@ func TestDatabaseDeleteAgentFailure(t *testing.T) {
 	var resp map[string]interface{}
 	json.NewDecoder(w.Body).Decode(&resp)
 	assert.Equal(t, "agent_failed", resp["error"])
+}
+
+// JAB-275: deleting a database that still backs an application install must be
+// refused with 409 in_use_by_wordpress + the install id, BEFORE any agent
+// mutation. application_installs.db_id is ON DELETE CASCADE, so a drop would
+// silently delete the install row — the attachment probe stops it at the door.
+func TestDatabaseDeleteAttachedInstallReturns409ZeroMutation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	v1 := r.Group("/api/v1")
+	v1.Use(func(c *gin.Context) {
+		ginctx.SetClaims(c, &auth.AccessClaims{UserID: "user1", IsAdmin: false})
+		c.Next()
+	})
+
+	dbRepo := &mockDatabaseRepo{databases: []models.Database{
+		{ID: "id1", UserID: "user1", Name: "alice_blog", Engine: "mariadb"},
+	}}
+	wpRepo := &mockWordPressInstallRepo{installs: map[string]*models.WordPressInstall{
+		"app1": {ID: "app1", DBID: models.DBIDPtr("id1")},
+	}}
+	agent := &mockAgent{}
+
+	RegisterDatabaseRoutes(v1, DatabaseHandlerConfig{
+		Databases:         dbRepo,
+		DatabaseUsers:     &mockDatabaseUserRepo{},
+		DatabaseGrants:    &mockDatabaseGrantRepo{},
+		WordPressInstalls: wpRepo,
+		Users:             &mockUserRepo{users: map[string]*models.User{"user1": {ID: "user1", Username: stringPtr("alice")}}},
+		Packages:          &mockPackageRepo{},
+		Agent:             agent,
+	})
+
+	req := httptest.NewRequest("DELETE", "/api/v1/databases/id1", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusConflict, w.Code)
+	var resp map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&resp)
+	assert.Equal(t, "in_use_by_wordpress", resp["error"])
+	assert.Equal(t, "app1", resp["wordpress_id"])
+	assert.Equal(t, 0, agent.callCount, "an attached database must never reach the agent")
 }
 
 func TestDatabaseDeleteUnauthenticated(t *testing.T) {

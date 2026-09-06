@@ -126,6 +126,15 @@ var adminValueAllowlist = map[string]bool{
 	"max_input_vars":      true,
 	"max_input_time":      true,
 	"date.timezone":       true,
+	// GH #1332 OPcache / JIT controls (per-pool = per-user,version). Values
+	// are clamped/validated by the panel endpoint before they reach here; this
+	// allowlist is the final gate on the directive NAMES. opcache.jit takes a
+	// CRTO string ("tracing"/"function"/"off"); the others are byte/int sizes.
+	"opcache.memory_consumption":    true,
+	"opcache.max_accelerated_files": true,
+	"opcache.revalidate_freq":       true,
+	"opcache.jit":                   true,
+	"opcache.jit_buffer_size":       true,
 }
 
 // adminFlagAllowlist is the set of allowed php_admin_flag directives.
@@ -133,6 +142,9 @@ var adminFlagAllowlist = map[string]bool{
 	"display_errors": true,
 	"log_errors":     true,
 	"file_uploads":   true,
+	// GH #1332 OPcache on/off + timestamp validation (per-pool).
+	"opcache.enable":              true,
+	"opcache.validate_timestamps": true,
 }
 
 // defaultDisableFunctions is the GH #401 command-exec lockdown: the safe,

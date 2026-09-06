@@ -3,8 +3,8 @@ package main
 import (
 	"testing"
 
-	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/api"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/settingsops"
 )
 
 // TestSettingsRegistryApply covers Gitea #539 criterion #4: unknown keys and
@@ -81,7 +81,7 @@ func TestSettingsRegistryApply(t *testing.T) {
 
 // TestSettingsHostnameParity covers the JAB-213 CLI gap: `settings set
 // hostname=` must (1) reach the same FQDN validation the REST PATCH uses via
-// api.ValidateServerSettings, and (2) be detectable as a change so the
+// settingsops.Validate, and (2) be detectable as a change so the
 // system.set_hostname side effect fires. Without a CLI writer for hostname the
 // free-hostname conversion could not be driven headlessly.
 func TestSettingsHostnameParity(t *testing.T) {
@@ -92,8 +92,8 @@ func TestSettingsHostnameParity(t *testing.T) {
 		if err := def.apply(s, "182-54-236-60-b.jabalihosted.com"); err != nil {
 			t.Fatalf("apply: %v", err)
 		}
-		if err := api.ValidateServerSettings(s); err != nil {
-			t.Fatalf("ValidateServerSettings rejected a valid fqdn: %v", err)
+		if err := settingsops.Validate(s); err != nil {
+			t.Fatalf("settingsops.Validate rejected a valid fqdn: %v", err)
 		}
 	})
 
@@ -101,20 +101,20 @@ func TestSettingsHostnameParity(t *testing.T) {
 		s := &models.ServerSettings{ID: 1, SSHPort: 22}
 		// Passes the setter's non-empty guard but must fail hostnameRE.
 		if err := def.apply(s, "bad host!name"); err != nil {
-			t.Fatalf("apply should defer format checks to ValidateServerSettings: %v", err)
+			t.Fatalf("apply should defer format checks to settingsops.Validate: %v", err)
 		}
-		if err := api.ValidateServerSettings(s); err == nil {
-			t.Fatal("ValidateServerSettings accepted an invalid hostname")
+		if err := settingsops.Validate(s); err == nil {
+			t.Fatal("settingsops.Validate accepted an invalid hostname")
 		}
 	})
 
 	t.Run("change is detectable for the side effect", func(t *testing.T) {
 		s := &models.ServerSettings{ID: 1, SSHPort: 22, Hostname: "mx.jabali-panel.com"}
-		prev := sideEffectSnapshot(s)
+		before := *s
 		if err := def.apply(s, "182-54-236-60-b.jabalihosted.com"); err != nil {
 			t.Fatal(err)
 		}
-		if s.Hostname == prev.hostname {
+		if s.Hostname == before.Hostname {
 			t.Fatal("hostname change not detectable — system.set_hostname would not fire")
 		}
 	})

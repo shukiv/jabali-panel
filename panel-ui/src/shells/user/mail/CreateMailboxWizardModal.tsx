@@ -57,6 +57,10 @@ type DomainOption = { id: string; name: string };
 type Props = {
   open: boolean;
   domains: DomainOption[];
+  // GH #1387 (johnnyq): when the wizard is opened from a single domain's
+  // Mail Domains drill-down the target is already known, so don't ask for it.
+  // lockDomain pre-fills domains[0] and hides the Domain picker.
+  lockDomain?: boolean;
   onCancel: () => void;
   onCreated: (resp: CreateMailboxResponse) => void;
 };
@@ -77,11 +81,15 @@ type FormValues = {
 export const CreateMailboxWizardModal = ({
   open,
   domains,
+  lockDomain,
   onCancel,
   onCreated,
 }: Props) => {
   const { t } = useTranslation();
   const [form] = Form.useForm<FormValues>();
+  // When locked, the domain is fixed to the only entry; it seeds the form so
+  // step-2 (account fields) materialises immediately without a picker step.
+  const lockedDomainId = lockDomain && domains.length > 0 ? domains[0].id : undefined;
   const createMutation = useCreateMailbox();
   const screens = Grid.useBreakpoint();
   const isDesktop = screens.lg ?? (typeof window !== "undefined" ? window.innerWidth >= 992 : true);
@@ -187,19 +195,33 @@ export const CreateMailboxWizardModal = ({
 
   const accountTab = (
     <>
-      <Form.Item
-        label={t("createmailboxwizardmodal.domain")}
-        name="domain_id"
-        rules={[{ required: true, message: "Pick a domain" }]}
-        tooltip={t("createmailboxwizardmodal.only_domains_with_email_enabled_appear_here")}
-      >
-        <Select
-          showSearch
-          optionFilterProp="label"
-          placeholder={t("createmailboxwizardmodal.select_a_domain")}
-          options={domains.map((d) => ({ value: d.id, label: d.name }))}
-        />
-      </Form.Item>
+      {lockDomain ? (
+        <>
+          {/* Domain already chosen by the drill-down — carry it in a hidden
+              field and just tell the user where the mailbox lands. */}
+          <Form.Item name="domain_id" hidden noStyle>
+            <Input />
+          </Form.Item>
+          <Typography.Paragraph type="secondary" style={{ marginBottom: 16 }}>
+            {t("createmailboxwizardmodal.adding_to_domain", "Adding a mailbox to")}{" "}
+            <Typography.Text strong>{domains[0]?.name}</Typography.Text>.
+          </Typography.Paragraph>
+        </>
+      ) : (
+        <Form.Item
+          label={t("createmailboxwizardmodal.domain")}
+          name="domain_id"
+          rules={[{ required: true, message: "Pick a domain" }]}
+          tooltip={t("createmailboxwizardmodal.only_domains_with_email_enabled_appear_here")}
+        >
+          <Select
+            showSearch
+            optionFilterProp="label"
+            placeholder={t("createmailboxwizardmodal.select_a_domain")}
+            options={domains.map((d) => ({ value: d.id, label: d.name }))}
+          />
+        </Form.Item>
+      )}
 
       {chosenDomain && (
         <>
@@ -358,7 +380,7 @@ export const CreateMailboxWizardModal = ({
       <Form
         form={form}
         layout="vertical"
-        initialValues={{ quota_mib: QUOTA_DEFAULT_BYTES / 1024 / 1024 }}
+        initialValues={{ quota_mib: QUOTA_DEFAULT_BYTES / 1024 / 1024, domain_id: lockedDomainId }}
       >
         <Tabs
           defaultActiveKey="account"

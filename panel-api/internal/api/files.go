@@ -5,7 +5,6 @@ package api
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -28,6 +27,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/filesafe"
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/kratosclient"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/filesops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
@@ -123,107 +123,11 @@ func singleStagingPath(userID, rnd string) string {
 	return uploadStagingPrefix() + userStagingTag(userID) + "-" + rnd
 }
 
-// Agent param struct types. JSON tags must match panel-agent/internal/commands/files_*.go
-// exactly — see files_wire_test.go for the drift-guard test.
-type filesListAgentParams struct {
-	UserID    string `json:"user_id"`
-	Username  string `json:"username"`
-	AdminRoot bool   `json:"admin_root,omitempty"`
-	Path      string `json:"path"`
-}
-
-type filesReadAgentParams struct {
-	UserID    string `json:"user_id"`
-	Username  string `json:"username"`
-	AdminRoot bool   `json:"admin_root,omitempty"`
-	Path      string `json:"path"`
-	Limit     int64  `json:"limit,omitempty"`
-}
-
-type filesWriteAgentParams struct {
-	UserID    string `json:"user_id"`
-	Username  string `json:"username"`
-	AdminRoot bool   `json:"admin_root,omitempty"`
-	Path      string `json:"path"`
-	Content   string `json:"content"`
-	Mode      string `json:"mode,omitempty"`
-}
-
-type filesDeleteAgentParams struct {
-	UserID    string `json:"user_id"`
-	Username  string `json:"username"`
-	AdminRoot bool   `json:"admin_root,omitempty"`
-	Path      string `json:"path"`
-	Recursive bool   `json:"recursive,omitempty"`
-}
-
-type filesMkdirAgentParams struct {
-	UserID    string `json:"user_id"`
-	Username  string `json:"username"`
-	AdminRoot bool   `json:"admin_root,omitempty"`
-	Path      string `json:"path"`
-	Mode      string `json:"mode,omitempty"`
-}
-
-type filesRenameAgentParams struct {
-	UserID    string `json:"user_id"`
-	Username  string `json:"username"`
-	AdminRoot bool   `json:"admin_root,omitempty"`
-	OldPath   string `json:"old_path"`
-	NewPath   string `json:"new_path"`
-}
-
-type filesMoveAgentParams struct {
-	UserID    string `json:"user_id"`
-	Username  string `json:"username"`
-	AdminRoot bool   `json:"admin_root,omitempty"`
-	OldPath   string `json:"old_path"`
-	NewPath   string `json:"new_path"`
-}
-
-type filesChmodAgentParams struct {
-	UserID    string `json:"user_id"`
-	Username  string `json:"username"`
-	AdminRoot bool   `json:"admin_root,omitempty"`
-	Path      string `json:"path"`
-	Mode      string `json:"mode"`
-}
-
-type filesArchiveAgentParams struct {
-	UserID    string   `json:"user_id"`
-	Username  string   `json:"username"`
-	AdminRoot bool     `json:"admin_root,omitempty"`
-	Paths     []string `json:"paths"`
-}
-
-type filesArchiveAgentResult struct {
-	ArchivePath string `json:"archive_path"`
-	Size        int64  `json:"size"`
-}
-
-type filesDuAgentParams struct {
-	UserID    string `json:"user_id"`
-	Username  string `json:"username"`
-	AdminRoot bool   `json:"admin_root,omitempty"`
-	Path      string `json:"path"`
-}
-
-type filesExtractAgentParams struct {
-	UserID    string `json:"user_id"`
-	Username  string `json:"username"`
-	AdminRoot bool   `json:"admin_root,omitempty"`
-	Path      string `json:"path"`
-	Dest      string `json:"dest,omitempty"`
-}
-
-type filesCopyAgentParams struct {
-	UserID    string `json:"user_id"`
-	Username  string `json:"username"`
-	AdminRoot bool   `json:"admin_root,omitempty"`
-	SrcPath   string `json:"src_path"`
-	DstPath   string `json:"dst_path"`
-}
-
+// filesIngestAgentParams is the one files.* param struct that stays adapter-side:
+// the upload/ingest path is out of the filesops module's scope (it owns local
+// staging + streaming, not a shared verb). Every other verb's request params and
+// reply result types now live in internal/filesops, where their JSON tags are
+// drift-guarded against panel-agent (filesops/params_test.go).
 type filesIngestAgentParams struct {
 	Overwrite bool   `json:"overwrite,omitempty"`
 	UserID    string `json:"user_id"`
@@ -231,13 +135,6 @@ type filesIngestAgentParams struct {
 	AdminRoot bool   `json:"admin_root,omitempty"`
 	TmpPath   string `json:"tmp_path"`
 	DestPath  string `json:"dest_path"`
-}
-
-type filesStatAgentParams struct {
-	UserID    string `json:"user_id"`
-	Username  string `json:"username"`
-	AdminRoot bool   `json:"admin_root,omitempty"`
-	Path      string `json:"path"`
 }
 
 // FilesHandlerConfig bundles dependencies for /api/v1/files.
@@ -357,9 +254,7 @@ func (h *filesHandler) du(c *gin.Context) {
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 55*time.Second)
 	defer cancel()
-	raw, err := h.cfg.Agent.Call(ctx, "files.du", filesDuAgentParams{
-		UserID: userID, Username: username, AdminRoot: h.adminRoot(c), Path: p,
-	})
+	raw, err := h.cfg.Agent.Call(ctx, filesops.MethodDu, filesops.Du(h.scope(c, userID, username), p))
 	if err != nil {
 		respondAgentError(c, err)
 		return
@@ -473,31 +368,6 @@ type writeRequest struct {
 	Content string `json:"content"`
 }
 
-type filesListEntry struct {
-	Name       string `json:"name"`
-	IsDir      bool   `json:"is_dir"`
-	Size       int64  `json:"size"`
-	Mode       string `json:"mode"`
-	ModTime    string `json:"mod_time"`
-	IsSymlink  bool   `json:"is_symlink"`
-	HasSubdirs bool   `json:"has_subdirs,omitempty"`
-}
-
-type filesListAgentResult struct {
-	Path    string           `json:"path"`
-	Entries []filesListEntry `json:"entries"`
-}
-
-type filesReadAgentResult struct {
-	Path       string `json:"path"`
-	Content    string `json:"content"`
-	ContentB64 string `json:"content_b64"`
-	IsBinary   bool   `json:"is_binary"`
-	Size       int64  `json:"size"`
-	Truncated  bool   `json:"truncated"`
-	MimeType   string `json:"mime_type"`
-}
-
 // ---- helpers ----
 
 // adminFilesCtxKey flags a request served through the GH #1184 /admin/files
@@ -506,6 +376,12 @@ type filesReadAgentResult struct {
 const adminFilesCtxKey = "jabali_admin_files"
 
 func (h *filesHandler) adminRoot(c *gin.Context) bool { return c.GetBool(adminFilesCtxKey) }
+
+// scope builds the filesops.Scope every files.* verb carries from the resolved
+// caller identity and the admin-root flag (GH #1184) for this request.
+func (h *filesHandler) scope(c *gin.Context, userID, username string) filesops.Scope {
+	return filesops.Scope{UserID: userID, Username: username, AdminRoot: h.adminRoot(c)}
+}
 
 // rejectAdminWriteOutOfScope is the API-side, defense-in-depth pre-check for the
 // GH #1184 admin File Manager (JAB-367, criterion 4). For an admin_root mutation
@@ -707,15 +583,13 @@ func (h *filesHandler) list(c *gin.Context) {
 	if !ok {
 		return
 	}
-	raw, err := h.cfg.Agent.Call(c.Request.Context(), "files.list", filesListAgentParams{
-		UserID: userID, Username: username, AdminRoot: h.adminRoot(c), Path: p,
-	})
+	raw, err := h.cfg.Agent.Call(c.Request.Context(), filesops.MethodList, filesops.List(h.scope(c, userID, username), p))
 	if err != nil {
 		respondAgentError(c, err)
 		return
 	}
-	var result filesListAgentResult
-	if err := json.Unmarshal(raw, &result); err != nil {
+	result, err := filesops.DecodeList(raw)
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error", "detail": "bad agent response"})
 		return
 	}
@@ -732,25 +606,23 @@ func (h *filesHandler) tree(c *gin.Context) {
 	if !ok {
 		return
 	}
-	raw, err := h.cfg.Agent.Call(c.Request.Context(), "files.list", filesListAgentParams{
-		UserID: userID, Username: username, AdminRoot: h.adminRoot(c), Path: p,
-	})
+	raw, err := h.cfg.Agent.Call(c.Request.Context(), filesops.MethodList, filesops.List(h.scope(c, userID, username), p))
 	if err != nil {
 		respondAgentError(c, err)
 		return
 	}
-	var result filesListAgentResult
-	if err := json.Unmarshal(raw, &result); err != nil {
+	result, err := filesops.DecodeList(raw)
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error", "detail": "bad agent response"})
 		return
 	}
-	dirs := make([]filesListEntry, 0, len(result.Entries))
+	dirs := make([]filesops.ListEntry, 0, len(result.Entries))
 	for _, e := range result.Entries {
 		if e.IsDir && !e.IsSymlink {
 			dirs = append(dirs, e)
 		}
 	}
-	c.JSON(http.StatusOK, filesListAgentResult{Path: result.Path, Entries: dirs})
+	c.JSON(http.StatusOK, filesops.ListResult{Path: result.Path, Entries: dirs})
 }
 
 // download streams file bytes back as an attachment. MVP limitation: the
@@ -765,9 +637,8 @@ func (h *filesHandler) download(c *gin.Context) {
 	if !ok {
 		return
 	}
-	raw, err := h.cfg.Agent.Call(c.Request.Context(), "files.read", filesReadAgentParams{
-		UserID: userID, Username: username, AdminRoot: h.adminRoot(c), Path: p, Limit: h.resolveMaxUploadBytes(c.Request.Context()),
-	})
+	raw, err := h.cfg.Agent.Call(c.Request.Context(), filesops.MethodRead,
+		filesops.Read(h.scope(c, userID, username), p, h.resolveMaxUploadBytes(c.Request.Context())))
 	if err != nil {
 		// GH #756: downloading a folder used to 500 (files.read can't read a
 		// directory). The agent now reports it as a precondition; transparently
@@ -780,27 +651,21 @@ func (h *filesHandler) download(c *gin.Context) {
 		respondAgentError(c, err)
 		return
 	}
-	var result filesReadAgentResult
-	if err := json.Unmarshal(raw, &result); err != nil {
+	result, err := filesops.DecodeRead(raw)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error", "detail": "bad agent response"})
+		return
+	}
+	body, err := result.Bytes()
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error", "detail": "bad agent response"})
 		return
 	}
 
-	var body []byte
-	if result.IsBinary {
-		decoded, err := base64.StdEncoding.DecodeString(result.ContentB64)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error", "detail": "bad agent response"})
-			return
-		}
-		body = decoded
-	} else {
-		body = []byte(result.Content)
-	}
-
 	// GH #657: the agent hard-caps reads (100 MiB); never return a partial file
-	// as a successful download — it looks complete but is corrupt.
-	if result.Truncated {
+	// as a successful download — it looks complete but is corrupt. RequireComplete
+	// is the shared full-read rule (JAB-340), so this can't drift from the CLI.
+	if err := result.RequireComplete(); err != nil {
 		c.JSON(http.StatusRequestEntityTooLarge, gin.H{
 			"error":  "file_too_large",
 			"detail": "file exceeds the download size limit; fetch large files over SFTP/SSH",
@@ -853,15 +718,16 @@ func (h *filesHandler) preview(c *gin.Context) {
 	if !ok {
 		return
 	}
-	raw, err := h.cfg.Agent.Call(c.Request.Context(), "files.read", filesReadAgentParams{
-		UserID: userID, Username: username, AdminRoot: h.adminRoot(c), Path: p, Limit: maxPreviewBytes,
-	})
+	raw, err := h.cfg.Agent.Call(c.Request.Context(), filesops.MethodRead,
+		filesops.Read(h.scope(c, userID, username), p, maxPreviewBytes))
 	if err != nil {
 		respondAgentError(c, err)
 		return
 	}
-	var result filesReadAgentResult
-	if err := json.Unmarshal(raw, &result); err != nil {
+	// No RequireComplete here: a preview is capped at maxPreviewBytes by design,
+	// so a truncated body is expected, not an error (unlike a full read/download).
+	result, err := filesops.DecodeRead(raw)
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error", "detail": "bad agent response"})
 		return
 	}
@@ -1024,9 +890,7 @@ func (h *filesHandler) mkdir(c *gin.Context) {
 	if h.rejectAdminWriteOutOfScope(c, req.Path) {
 		return
 	}
-	_, err := h.cfg.Agent.Call(c.Request.Context(), "files.mkdir", filesMkdirAgentParams{
-		UserID: userID, Username: username, AdminRoot: h.adminRoot(c), Path: req.Path,
-	})
+	_, err := h.cfg.Agent.Call(c.Request.Context(), filesops.MethodMkdir, filesops.Mkdir(h.scope(c, userID, username), req.Path))
 	if err != nil {
 		respondAgentError(c, err)
 		return
@@ -1063,9 +927,8 @@ func (h *filesHandler) extract(c *gin.Context) {
 	// job id immediately (202), so a large archive doesn't block the request past
 	// a proxy timeout and the UI can poll GET /files/jobs/:id for a progress bar.
 	if c.Query("async") == "1" {
-		raw, err := h.cfg.Agent.Call(c.Request.Context(), "files.extract.start", filesExtractAgentParams{
-			UserID: userID, Username: username, AdminRoot: h.adminRoot(c), Path: req.Path, Dest: req.Dest,
-		})
+		raw, err := h.cfg.Agent.Call(c.Request.Context(), filesops.MethodExtractStart,
+			filesops.Extract(h.scope(c, userID, username), req.Path, req.Dest))
 		if err != nil {
 			respondAgentError(c, err)
 			return
@@ -1073,9 +936,8 @@ func (h *filesHandler) extract(c *gin.Context) {
 		c.Data(http.StatusAccepted, "application/json", raw)
 		return
 	}
-	raw, err := h.cfg.Agent.Call(c.Request.Context(), "files.extract", filesExtractAgentParams{
-		UserID: userID, Username: username, AdminRoot: h.adminRoot(c), Path: req.Path, Dest: req.Dest,
-	})
+	raw, err := h.cfg.Agent.Call(c.Request.Context(), filesops.MethodExtract,
+		filesops.Extract(h.scope(c, userID, username), req.Path, req.Dest))
 	if err != nil {
 		respondAgentError(c, err)
 		return
@@ -1114,19 +976,19 @@ func (h *filesHandler) rename(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request", "detail": err.Error()})
 		return
 	}
-	// new_name is a single path segment — no separators, no .. escape.
-	if strings.ContainsAny(req.NewName, "/\\") || req.NewName == "." || req.NewName == ".." {
+	// new_name must be a single path segment — no separators, no "."/".." escape.
+	// The validation and the target derivation are shared with the CLI (JAB-340).
+	newPath, err := filesops.RenameTarget(req.Path, req.NewName)
+	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_new_name"})
 		return
 	}
-	newPath := filepath.Join(filepath.Dir(req.Path), req.NewName)
 	// The agent WriteScopes both the old and new paths; mirror that.
 	if h.rejectAdminWriteOutOfScope(c, req.Path, newPath) {
 		return
 	}
-	_, err := h.cfg.Agent.Call(c.Request.Context(), "files.rename", filesRenameAgentParams{
-		UserID: userID, Username: username, AdminRoot: h.adminRoot(c), OldPath: req.Path, NewPath: newPath,
-	})
+	_, err = h.cfg.Agent.Call(c.Request.Context(), filesops.MethodRename,
+		filesops.Rename(h.scope(c, userID, username), req.Path, newPath))
 	if err != nil {
 		respondAgentError(c, err)
 		return
@@ -1153,18 +1015,17 @@ func (h *filesHandler) move(c *gin.Context) {
 	// against the user's scope), never bare "..". Client should not be
 	// able to coerce us into moving into the docroot's parent by sending
 	// just "..".
-	if strings.Contains(req.DestDir, "..") {
+	newPath, err := filesops.MoveTarget(req.Path, req.DestDir)
+	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_dest_dir"})
 		return
 	}
-	newPath := filepath.Join(req.DestDir, filepath.Base(req.Path))
 	// The agent WriteScopes both the source and destination; mirror that.
 	if h.rejectAdminWriteOutOfScope(c, req.Path, newPath) {
 		return
 	}
-	_, err := h.cfg.Agent.Call(c.Request.Context(), "files.move", filesMoveAgentParams{
-		UserID: userID, Username: username, AdminRoot: h.adminRoot(c), OldPath: req.Path, NewPath: newPath,
-	})
+	_, err = h.cfg.Agent.Call(c.Request.Context(), filesops.MethodMove,
+		filesops.Move(h.scope(c, userID, username), req.Path, newPath))
 	if err != nil {
 		respondAgentError(c, err)
 		return
@@ -1192,9 +1053,8 @@ func (h *filesHandler) chmod(c *gin.Context) {
 	if h.rejectAdminWriteOutOfScope(c, req.Path) {
 		return
 	}
-	_, err := h.cfg.Agent.Call(c.Request.Context(), "files.chmod", filesChmodAgentParams{
-		UserID: userID, Username: username, AdminRoot: h.adminRoot(c), Path: req.Path, Mode: req.Mode,
-	})
+	_, err := h.cfg.Agent.Call(c.Request.Context(), filesops.MethodChmod,
+		filesops.Chmod(h.scope(c, userID, username), req.Path, req.Mode))
 	if err != nil {
 		respondAgentError(c, err)
 		return
@@ -1229,15 +1089,14 @@ func (h *filesHandler) archive(c *gin.Context) {
 // then unlinks the scratch file. Shared by the /files/archive endpoint and the
 // download handler's folder fallback (GH #756).
 func (h *filesHandler) streamArchive(c *gin.Context, userID, username string, paths []string, downloadName string) {
-	raw, err := h.cfg.Agent.Call(c.Request.Context(), "files.archive", filesArchiveAgentParams{
-		UserID: userID, Username: username, AdminRoot: h.adminRoot(c), Paths: paths,
-	})
+	raw, err := h.cfg.Agent.Call(c.Request.Context(), filesops.MethodArchive,
+		filesops.Archive(h.scope(c, userID, username), paths))
 	if err != nil {
 		respondAgentError(c, err)
 		return
 	}
-	var result filesArchiveAgentResult
-	if err := json.Unmarshal(raw, &result); err != nil {
+	result, err := filesops.DecodeArchive(raw)
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error", "detail": "bad agent response"})
 		return
 	}
@@ -1314,11 +1173,11 @@ func (h *filesHandler) copy(c *gin.Context) {
 	}
 	c.Set("audit_target", req.Path) // GH #658: audit the concrete file path
 	c.Set("audit_target_type", "file")
-	if strings.Contains(req.DestDir, "..") {
+	dst, err := filesops.CopyTarget(req.Path, req.DestDir)
+	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_dest_dir"})
 		return
 	}
-	dst := filepath.Join(req.DestDir, filepath.Base(req.Path))
 	// The agent WriteScopes both the source and destination of a copy; mirror
 	// that (an admin FM copy stays within the safe data roots on both ends).
 	if h.rejectAdminWriteOutOfScope(c, req.Path, dst) {
@@ -1328,9 +1187,8 @@ func (h *filesHandler) copy(c *gin.Context) {
 	// immediately (202), so a large tree doesn't block the request past a proxy
 	// timeout and the UI can poll GET /files/jobs/:id for a byte-percentage bar.
 	if c.Query("async") == "1" {
-		raw, err := h.cfg.Agent.Call(c.Request.Context(), "files.copy.start", filesCopyAgentParams{
-			UserID: userID, Username: username, AdminRoot: h.adminRoot(c), SrcPath: req.Path, DstPath: dst,
-		})
+		raw, err := h.cfg.Agent.Call(c.Request.Context(), filesops.MethodCopyStart,
+			filesops.Copy(h.scope(c, userID, username), req.Path, dst))
 		if err != nil {
 			respondAgentError(c, err)
 			return
@@ -1338,9 +1196,8 @@ func (h *filesHandler) copy(c *gin.Context) {
 		c.Data(http.StatusAccepted, "application/json", raw)
 		return
 	}
-	_, err := h.cfg.Agent.Call(c.Request.Context(), "files.copy", filesCopyAgentParams{
-		UserID: userID, Username: username, AdminRoot: h.adminRoot(c), SrcPath: req.Path, DstPath: dst,
-	})
+	_, err = h.cfg.Agent.Call(c.Request.Context(), filesops.MethodCopy,
+		filesops.Copy(h.scope(c, userID, username), req.Path, dst))
 	if err != nil {
 		respondAgentError(c, err)
 		return
@@ -1365,9 +1222,8 @@ func (h *filesHandler) write(c *gin.Context) {
 	if h.rejectAdminWriteOutOfScope(c, req.Path) {
 		return
 	}
-	_, err := h.cfg.Agent.Call(c.Request.Context(), "files.write", filesWriteAgentParams{
-		UserID: userID, Username: username, AdminRoot: h.adminRoot(c), Path: req.Path, Content: req.Content,
-	})
+	_, err := h.cfg.Agent.Call(c.Request.Context(), filesops.MethodWrite,
+		filesops.Write(h.scope(c, userID, username), req.Path, req.Content))
 	if err != nil {
 		respondAgentError(c, err)
 		return
@@ -1576,9 +1432,8 @@ func (h *filesHandler) delete(c *gin.Context) {
 	if h.rejectAdminWriteOutOfScope(c, p) {
 		return
 	}
-	_, err := h.cfg.Agent.Call(c.Request.Context(), "files.delete", filesDeleteAgentParams{
-		UserID: userID, Username: username, AdminRoot: h.adminRoot(c), Path: p, Recursive: recursive,
-	})
+	_, err := h.cfg.Agent.Call(c.Request.Context(), filesops.MethodDelete,
+		filesops.Delete(h.scope(c, userID, username), p, recursive))
 	if err != nil {
 		respondAgentError(c, err)
 		return

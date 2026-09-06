@@ -30,6 +30,9 @@ Built-in (M14 Step 4 and later):
 - `mail_quarantined` — Stalwart / async YARA quarantined a message.
 - `malware_file_hit` — M33 detector hit.
 - `db_root_rotated` — admin rotated DB root password.
+- `ssh_login` — a shell / SFTP login to an account. Per account, the owner can
+  keep a **per-account ignore list** so logins from known hosts / users don't
+  notify (GH #1436).
 
 Stub sources defined but not yet wired: `domain-registrar`, `backup-future-warnings`.
 

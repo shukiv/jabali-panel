@@ -17,13 +17,13 @@ func TestValidateNginxDirectives_UnsafeRemoved(t *testing.T) {
 		"proxy_pass":           "proxy_pass http://127.0.0.1:3306;",
 	}
 	for name, line := range forbidden {
-		if msg := validateNginxDirectives(line); msg == "" || !strings.Contains(msg, "forbidden directive") {
+		if msg := ValidateNginxDirectives(line); msg == "" || !strings.Contains(msg, "forbidden directive") {
 			t.Errorf("directive %s should be forbidden, got %q", name, msg)
 		}
 	}
 
 	// Sanity: a still-allowed directive passes.
-	if msg := validateNginxDirectives("proxy_set_header X-Test 1;"); msg != "" {
+	if msg := ValidateNginxDirectives("proxy_set_header X-Test 1;"); msg != "" {
 		t.Errorf("proxy_set_header should still be allowed, got %q", msg)
 	}
 }

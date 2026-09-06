@@ -104,6 +104,6 @@ func (h *phpXdebugHandler) set(c *gin.Context) {
 		return
 	}
 	c.Set("audit_target", "php_xdebug:"+pool.PHPVersion)
-	go reconcilePHPPoolViaAgent(h.cfg.Agent, h.cfg.Users, h.cfg.PHPPoolIniOverrides, h.cfg.PHPPools, pool)
+	go reconcilePHPPoolViaAgent(h.cfg.Agent, h.cfg.Users, h.cfg.PHPPoolIniOverrides, h.cfg.PHPPools, h.cfg.Packages, *pool)
 	c.JSON(http.StatusOK, gin.H{"enabled": pool.XdebugEnabled})
 }

@@ -80,7 +80,7 @@ func timeRFC(t interface{ Format(string) string }) string {
 // backup metadata shape. serverLevel is threaded from the caller — it is
 // NOT derivable from the row here (a.UserID) alone in a way Apply can trust,
 // so we record it explicitly.
-func (d Deps) metadataDockerRow(ctx context.Context, a *models.DockerApp, serverLevel bool) internalbackup.MetadataDockerApp {
+func metadataDockerRow(a *models.DockerApp, serverLevel bool, ports []*models.DockerAppPublishedPort) internalbackup.MetadataDockerApp {
 	row := internalbackup.MetadataDockerApp{
 		ID: a.ID, Slug: a.Slug, InstanceSlug: a.InstanceSlug,
 		Name: a.Name, CatalogVersion: a.CatalogVersion,
@@ -88,16 +88,12 @@ func (d Deps) metadataDockerRow(ctx context.Context, a *models.DockerApp, server
 		CPULimit: a.CPULimit, MemoryLimit: a.MemoryLimit, PIDsLimit: a.PIDsLimit,
 		CreatedAt: timeRFC(a.CreatedAt), ServerLevel: serverLevel,
 	}
-	if ports, perr := d.DockerApps.ListPortsForApp(ctx, a.ID); perr == nil {
-		for _, p := range ports {
-			row.Ports = append(row.Ports, internalbackup.MetadataDockerAppPort{
-				ID: p.ID, PortName: p.PortName, ContainerPort: p.ContainerPort,
-				BindInterface: p.BindInterface, HostPort: p.HostPort,
-				Protocol: p.Protocol, ReverseProxy: p.ReverseProxy, Enabled: p.Enabled,
-			})
-		}
-	} else {
-		d.warn("metadata: list docker app ports", perr, "app_id", a.ID)
+	for _, p := range ports {
+		row.Ports = append(row.Ports, internalbackup.MetadataDockerAppPort{
+			ID: p.ID, PortName: p.PortName, ContainerPort: p.ContainerPort,
+			BindInterface: p.BindInterface, HostPort: p.HostPort,
+			Protocol: p.Protocol, ReverseProxy: p.ReverseProxy, Enabled: p.Enabled,
+		})
 	}
 	return row
 }
@@ -168,6 +164,23 @@ func Build(ctx context.Context, user *models.User, d Deps) *internalbackup.Accou
 		if err != nil {
 			d.warn("metadata: list db users", err, "user_id", user.ID)
 		}
+		// JAB-374: batch grants for all db-users in ONE query, grouped by
+		// database_user_id, instead of a query per db-user. Same rows, same
+		// per-user order (both are unordered → InnoDB PK order).
+		grantsByUser := map[string][]models.DatabaseUserGrant{}
+		if d.DatabaseGrants != nil && len(users) > 0 {
+			ids := make([]string, len(users))
+			for i, du := range users {
+				ids[i] = du.ID
+			}
+			grants, gerr := d.DatabaseGrants.ListByDatabaseUserIDs(ctx, ids)
+			if gerr != nil {
+				d.warn("metadata: list grants (batch)", gerr, "user_id", user.ID)
+			}
+			for _, g := range grants {
+				grantsByUser[g.DatabaseUserID] = append(grantsByUser[g.DatabaseUserID], g)
+			}
+		}
 		for _, du := range users {
 			row := internalbackup.MetadataDatabaseUser{
 				ID:           du.ID,
@@ -175,19 +188,13 @@ func Build(ctx context.Context, user *models.User, d Deps) *internalbackup.Accou
 				PasswordHash: du.PasswordHash,
 				CreatedAt:    timeRFC(du.CreatedAt),
 			}
-			if d.DatabaseGrants != nil {
-				grants, gerr := d.DatabaseGrants.ListByDatabaseUserID(ctx, du.ID)
-				if gerr != nil {
-					d.warn("metadata: list grants", gerr, "database_user_id", du.ID)
-				}
-				for _, g := range grants {
-					row.Grants = append(row.Grants, internalbackup.MetadataDatabaseUserGrant{
-						ID: g.ID, DatabaseID: g.DatabaseID,
-						DatabaseName: dbName[g.DatabaseID],
-						GrantLevel:   g.GrantLevel, Privileges: g.Privileges,
-						CreatedAt: timeRFC(g.CreatedAt),
-					})
-				}
+			for _, g := range grantsByUser[du.ID] {
+				row.Grants = append(row.Grants, internalbackup.MetadataDatabaseUserGrant{
+					ID: g.ID, DatabaseID: g.DatabaseID,
+					DatabaseName: dbName[g.DatabaseID],
+					GrantLevel:   g.GrantLevel, Privileges: g.Privileges,
+					CreatedAt: timeRFC(g.CreatedAt),
+				})
 			}
 			m.DatabaseUsers = append(m.DatabaseUsers, row)
 		}
@@ -223,6 +230,118 @@ func Build(ctx context.Context, user *models.User, d Deps) *internalbackup.Accou
 		if err != nil {
 			d.warn("metadata: list domains", err, "user_id", user.ID)
 		}
+
+		// JAB-374: batch every per-domain / per-mailbox / per-zone association
+		// in a fixed number of queries (bounded by resource TYPE, not row
+		// count), grouped in memory by parent id. Order within each parent
+		// matches the old single-parent query (the batch methods ORDER BY
+		// parent_id, <the sibling's key>), so the emitted bundle is identical.
+		domIDs := make([]string, len(domains))
+		for i, dom := range domains {
+			domIDs[i] = dom.ID
+		}
+
+		certByDomain := map[string]*models.SSLCertificate{}
+		if d.SSLCerts != nil && len(domIDs) > 0 {
+			certs, cerr := d.SSLCerts.FindByDomainIDs(ctx, domIDs)
+			if cerr != nil {
+				d.warn("metadata: list ssl certs (batch)", cerr, "user_id", user.ID)
+			}
+			for i := range certs {
+				if _, ok := certByDomain[certs[i].DomainID]; !ok {
+					certByDomain[certs[i].DomainID] = &certs[i]
+				}
+			}
+		}
+
+		mailboxesByDomain := map[string][]models.Mailbox{}
+		var allMailboxIDs []string
+		if d.Mailboxes != nil && len(domIDs) > 0 {
+			mbs, merr := d.Mailboxes.ListByDomainIDs(ctx, domIDs)
+			if merr != nil {
+				d.warn("metadata: list mailboxes (batch)", merr, "user_id", user.ID)
+			}
+			for _, mb := range mbs {
+				mailboxesByDomain[mb.DomainID] = append(mailboxesByDomain[mb.DomainID], mb)
+				allMailboxIDs = append(allMailboxIDs, mb.ID)
+			}
+		}
+
+		autoByMailbox := map[string]*models.EmailAutoresponder{}
+		if d.Autoresponders != nil && len(allMailboxIDs) > 0 {
+			autos, aerr := d.Autoresponders.ListByMailboxIDs(ctx, allMailboxIDs)
+			if aerr != nil {
+				d.warn("metadata: list autoresponders (batch)", aerr, "user_id", user.ID)
+			}
+			for i := range autos {
+				if _, ok := autoByMailbox[autos[i].MailboxID]; !ok {
+					autoByMailbox[autos[i].MailboxID] = &autos[i]
+				}
+			}
+		}
+
+		sharesByMailbox := map[string][]models.MailboxShare{}
+		if d.MailboxShares != nil {
+			// No Limit: the old per-mailbox FindByOwnerID capped 1000/mailbox; an
+			// account-wide cap here could truncate a large account BELOW that, so we
+			// leave shares unlimited (opts.Limit 0). Shares are rare per account.
+			shares, _, serr := d.MailboxShares.ListByUserID(ctx, user.ID, repository.ListOptions{})
+			if serr != nil {
+				d.warn("metadata: list mailbox shares (batch)", serr, "user_id", user.ID)
+			}
+			for _, sh := range shares {
+				sharesByMailbox[sh.OwnerMailboxID] = append(sharesByMailbox[sh.OwnerMailboxID], sh)
+			}
+		}
+
+		fwdByDomain := map[string][]models.EmailForwarder{}
+		if d.Forwarders != nil && len(domIDs) > 0 {
+			fwds, ferr := d.Forwarders.ListByDomainIDs(ctx, domIDs)
+			if ferr != nil {
+				d.warn("metadata: list forwarders (batch)", ferr, "user_id", user.ID)
+			}
+			for _, fw := range fwds {
+				fwdByDomain[fw.DomainID] = append(fwdByDomain[fw.DomainID], fw)
+			}
+		}
+
+		dnssecByDomain := map[string][]models.DomainDNSSECKey{}
+		if d.DNSSECKeys != nil && len(domIDs) > 0 {
+			keys, kerr := d.DNSSECKeys.ListByDomainIDs(ctx, domIDs)
+			if kerr != nil {
+				d.warn("metadata: list dnssec keys (batch)", kerr, "user_id", user.ID)
+			}
+			for _, k := range keys {
+				dnssecByDomain[k.DomainID] = append(dnssecByDomain[k.DomainID], k)
+			}
+		}
+
+		zoneByDomain := map[string]*models.DNSZone{}
+		var allZoneIDs []string
+		if d.DNSZones != nil && len(domIDs) > 0 {
+			zones, zerr := d.DNSZones.FindByDomainIDs(ctx, domIDs)
+			if zerr != nil {
+				d.warn("metadata: list dns zones (batch)", zerr, "user_id", user.ID)
+			}
+			for i := range zones {
+				if _, ok := zoneByDomain[zones[i].DomainID]; !ok {
+					zoneByDomain[zones[i].DomainID] = &zones[i]
+					allZoneIDs = append(allZoneIDs, zones[i].ID)
+				}
+			}
+		}
+
+		recordsByZone := map[string][]models.DNSRecord{}
+		if d.DNSRecords != nil && len(allZoneIDs) > 0 {
+			recs, rerr := d.DNSRecords.ListByZoneIDs(ctx, allZoneIDs)
+			if rerr != nil {
+				d.warn("metadata: list dns records (batch)", rerr, "user_id", user.ID)
+			}
+			for _, rec := range recs {
+				recordsByZone[rec.ZoneID] = append(recordsByZone[rec.ZoneID], rec)
+			}
+		}
+
 		for _, dom := range domains {
 			dRow := internalbackup.MetadataDomain{
 				ID: dom.ID, Name: dom.Name, DocRoot: dom.DocRoot,
@@ -262,100 +381,80 @@ func Build(ctx context.Context, user *models.User, d Deps) *internalbackup.Accou
 			if nr, err := json.Marshal(dom.NginxRules); err == nil && string(nr) != "null" {
 				dRow.NginxRules = string(nr)
 			}
-			if d.SSLCerts != nil {
-				if cert, err := d.SSLCerts.FindByDomainID(ctx, dom.ID); err == nil && cert != nil {
-					sslRow := &internalbackup.MetadataSSLCert{
-						ID: cert.ID, Status: cert.Status,
-						RenewalCount: cert.RenewalCount, LastError: cert.LastError,
-						Staging: cert.Staging, CertPath: cert.CertPath, KeyPath: cert.KeyPath,
-						CreatedAt: timeRFC(cert.CreatedAt),
-					}
-					if cert.IssuedAt != nil {
-						sslRow.IssuedAt = timeRFC(*cert.IssuedAt)
-					}
-					if cert.ExpiresAt != nil {
-						sslRow.ExpiresAt = timeRFC(*cert.ExpiresAt)
-					}
-					if cert.LastRenewedAt != nil {
-						sslRow.LastRenewedAt = timeRFC(*cert.LastRenewedAt)
-					}
-					dRow.SSLCertificate = sslRow
+			if cert := certByDomain[dom.ID]; cert != nil {
+				sslRow := &internalbackup.MetadataSSLCert{
+					ID: cert.ID, Status: cert.Status,
+					RenewalCount: cert.RenewalCount, LastError: cert.LastError,
+					Staging: cert.Staging, CertPath: cert.CertPath, KeyPath: cert.KeyPath,
+					CreatedAt: timeRFC(cert.CreatedAt),
 				}
+				if cert.IssuedAt != nil {
+					sslRow.IssuedAt = timeRFC(*cert.IssuedAt)
+				}
+				if cert.ExpiresAt != nil {
+					sslRow.ExpiresAt = timeRFC(*cert.ExpiresAt)
+				}
+				if cert.LastRenewedAt != nil {
+					sslRow.LastRenewedAt = timeRFC(*cert.LastRenewedAt)
+				}
+				dRow.SSLCertificate = sslRow
 			}
-			if d.Mailboxes != nil {
-				mboxes, _, _ := d.Mailboxes.ListByDomainID(ctx, dom.ID, repository.ListOptions{Limit: 10000})
-				for _, mb := range mboxes {
-					mbRow := internalbackup.MetadataMailbox{
-						ID: mb.ID, LocalPart: mb.LocalPart, EmailCached: mb.EmailCached,
-						PasswordHash: mb.PasswordHash, PasswordEnc: mb.PasswordEnc,
-						QuotaBytes: mb.QuotaBytes, IsDisabled: mb.IsDisabled,
-						CreatedAt: timeRFC(mb.CreatedAt),
-					}
-					if d.Autoresponders != nil {
-						if auto, err := d.Autoresponders.FindByMailboxID(ctx, mb.ID); err == nil && auto != nil {
-							ar := &internalbackup.MetadataAutoresponder{
-								Enabled: auto.Enabled, Subject: auto.Subject,
-								TextBody: auto.TextBody, HTMLBody: auto.HTMLBody,
-							}
-							if auto.FromDate != nil {
-								ar.FromDate = timeRFC(*auto.FromDate)
-							}
-							if auto.ToDate != nil {
-								ar.ToDate = timeRFC(*auto.ToDate)
-							}
-							mbRow.Autoresponder = ar
-						}
-					}
-					if d.MailboxShares != nil {
-						shares, _, _ := d.MailboxShares.FindByOwnerID(ctx, mb.ID, repository.ListOptions{Limit: 1000})
-						for _, sh := range shares {
-							rights, _ := json.Marshal(sh.Rights)
-							mbRow.SharedWith = append(mbRow.SharedWith,
-								internalbackup.MetadataMailboxShare{
-									ID: sh.ID, SharedWithMailboxID: sh.SharedWithMailboxID,
-									Rights:    string(rights),
-									CreatedAt: timeRFC(sh.CreatedAt),
-								})
-						}
-					}
-					dRow.Mailboxes = append(dRow.Mailboxes, mbRow)
+			for _, mb := range mailboxesByDomain[dom.ID] {
+				mbRow := internalbackup.MetadataMailbox{
+					ID: mb.ID, LocalPart: mb.LocalPart, EmailCached: mb.EmailCached,
+					PasswordHash: mb.PasswordHash, PasswordEnc: mb.PasswordEnc,
+					QuotaBytes: mb.QuotaBytes, IsDisabled: mb.IsDisabled,
+					CreatedAt: timeRFC(mb.CreatedAt),
 				}
+				if auto := autoByMailbox[mb.ID]; auto != nil {
+					ar := &internalbackup.MetadataAutoresponder{
+						Enabled: auto.Enabled, Subject: auto.Subject,
+						TextBody: auto.TextBody, HTMLBody: auto.HTMLBody,
+					}
+					if auto.FromDate != nil {
+						ar.FromDate = timeRFC(*auto.FromDate)
+					}
+					if auto.ToDate != nil {
+						ar.ToDate = timeRFC(*auto.ToDate)
+					}
+					mbRow.Autoresponder = ar
+				}
+				for _, sh := range sharesByMailbox[mb.ID] {
+					rights, _ := json.Marshal(sh.Rights)
+					mbRow.SharedWith = append(mbRow.SharedWith,
+						internalbackup.MetadataMailboxShare{
+							ID: sh.ID, SharedWithMailboxID: sh.SharedWithMailboxID,
+							Rights:    string(rights),
+							CreatedAt: timeRFC(sh.CreatedAt),
+						})
+				}
+				dRow.Mailboxes = append(dRow.Mailboxes, mbRow)
 			}
-			if d.Forwarders != nil {
-				fwds, _, _ := d.Forwarders.ListByDomainID(ctx, dom.ID, repository.ListOptions{Limit: 10000})
-				for _, fw := range fwds {
-					dRow.Forwarders = append(dRow.Forwarders, internalbackup.MetadataForwarder{
-						ID: fw.ID, MailboxID: fw.MailboxID, Type: fw.Type,
-						LocalPart: fw.LocalPart, Target: fw.Target, Enabled: fw.Enabled,
-						CreatedAt: timeRFC(fw.CreatedAt),
-					})
-				}
+			for _, fw := range fwdByDomain[dom.ID] {
+				dRow.Forwarders = append(dRow.Forwarders, internalbackup.MetadataForwarder{
+					ID: fw.ID, MailboxID: fw.MailboxID, Type: fw.Type,
+					LocalPart: fw.LocalPart, Target: fw.Target, Enabled: fw.Enabled,
+					CreatedAt: timeRFC(fw.CreatedAt),
+				})
 			}
-			if d.DNSSECKeys != nil {
-				keys, _ := d.DNSSECKeys.ListByDomainID(ctx, dom.ID)
-				for _, k := range keys {
-					dRow.DNSSECKeys = append(dRow.DNSSECKeys, internalbackup.MetadataDNSSECKey{
-						KeyTag: k.KeyTag, KeyType: k.KeyType, Algorithm: k.Algorithm,
-						PublicKey: k.PublicKey, Active: k.Active,
-						ObservedAt: timeRFC(k.ObservedAt),
-					})
-				}
+			for _, k := range dnssecByDomain[dom.ID] {
+				dRow.DNSSECKeys = append(dRow.DNSSECKeys, internalbackup.MetadataDNSSECKey{
+					KeyTag: k.KeyTag, KeyType: k.KeyType, Algorithm: k.Algorithm,
+					PublicKey: k.PublicKey, Active: k.Active,
+					ObservedAt: timeRFC(k.ObservedAt),
+				})
 			}
 			// GH #267: capture USER (non-managed) DNS records so restore can
 			// re-insert them; managed records re-derive from domain config.
-			if d.DNSZones != nil && d.DNSRecords != nil {
-				if zone, zerr := d.DNSZones.FindByDomainID(ctx, dom.ID); zerr == nil && zone != nil {
-					if recs, rerr := d.DNSRecords.ListByZoneID(ctx, zone.ID); rerr == nil {
-						for _, rec := range recs {
-							if rec.Managed {
-								continue
-							}
-							dRow.DNSRecords = append(dRow.DNSRecords, internalbackup.MetadataDNSRecord{
-								Name: rec.Name, Type: rec.Type, Content: rec.Content,
-								TTL: rec.TTL, Priority: rec.Priority, IsEnabled: rec.IsEnabled,
-							})
-						}
+			if zone := zoneByDomain[dom.ID]; zone != nil {
+				for _, rec := range recordsByZone[zone.ID] {
+					if rec.Managed {
+						continue
 					}
+					dRow.DNSRecords = append(dRow.DNSRecords, internalbackup.MetadataDNSRecord{
+						Name: rec.Name, Type: rec.Type, Content: rec.Content,
+						TTL: rec.TTL, Priority: rec.Priority, IsEnabled: rec.IsEnabled,
+					})
 				}
 			}
 			m.Domains = append(m.Domains, dRow)
@@ -382,24 +481,44 @@ func Build(ctx context.Context, user *models.User, d Deps) *internalbackup.Accou
 	// Docker apps (GH #954): capture the tenant docker-app rows + their
 	// published ports so a restore can rebuild the panel row. The DATA tree
 	// rides the stage=docker snapshot (#1017); without this row the restored
-	// app is orphaned on disk.
+	// app is orphaned on disk. JAB-374: ports are batch-loaded for all apps
+	// (tenant + server-level) in one query, grouped by app id.
 	if d.DockerApps != nil {
 		apps, err := d.DockerApps.ListByUserID(ctx, user.ID)
 		if err != nil {
 			d.warn("metadata: list docker apps", err, "user_id", user.ID)
 		}
-		for _, a := range apps {
-			m.DockerApps = append(m.DockerApps, d.metadataDockerRow(ctx, a, false))
-		}
-		// Admin / server-level apps (models.DockerApp.UserID NULL, M48) have
-		// no tenant account, so account backups never carried them (GH #1360)
-		// — the only cover was a full system backup. Fold them into an admin
-		// account's backup so the ordinary per-account restore rebuilds them
-		// too. serverLevel=true keeps Apply from re-owning them to the admin.
+		var serverApps []*models.DockerApp
 		if user.IsAdmin {
-			for _, a := range d.serverLevelDockerApps(ctx) {
-				m.DockerApps = append(m.DockerApps, d.metadataDockerRow(ctx, a, true))
+			// Admin / server-level apps (models.DockerApp.UserID NULL, M48) have
+			// no tenant account, so account backups never carried them (GH #1360)
+			// — the only cover was a full system backup. Fold them into an admin
+			// account's backup so the ordinary per-account restore rebuilds them
+			// too. serverLevel=true keeps Apply from re-owning them to the admin.
+			serverApps = d.serverLevelDockerApps(ctx)
+		}
+		appIDs := make([]string, 0, len(apps)+len(serverApps))
+		for _, a := range apps {
+			appIDs = append(appIDs, a.ID)
+		}
+		for _, a := range serverApps {
+			appIDs = append(appIDs, a.ID)
+		}
+		portsByApp := map[string][]*models.DockerAppPublishedPort{}
+		if len(appIDs) > 0 {
+			ports, perr := d.DockerApps.ListPortsForApps(ctx, appIDs)
+			if perr != nil {
+				d.warn("metadata: list docker app ports (batch)", perr, "user_id", user.ID)
 			}
+			for _, p := range ports {
+				portsByApp[p.AppID] = append(portsByApp[p.AppID], p)
+			}
+		}
+		for _, a := range apps {
+			m.DockerApps = append(m.DockerApps, metadataDockerRow(a, false, portsByApp[a.ID]))
+		}
+		for _, a := range serverApps {
+			m.DockerApps = append(m.DockerApps, metadataDockerRow(a, true, portsByApp[a.ID]))
 		}
 	}
 
@@ -442,14 +561,7 @@ func Build(ctx context.Context, user *models.User, d Deps) *internalbackup.Accou
 		}
 	}
 	if d.LimitOverrides != nil {
-		// User-scoped lookup, not ListAll()+in-memory filter (JAB-374 AC#5):
-		// the override is one row keyed by user, but the old path read the
-		// entire user_limit_overrides table and scanned it for a match on
-		// every Build. Build runs once per account for manual, tenant, AND
-		// scheduled backups, so that whole-table scan multiplied across the
-		// fleet. FindByUserID returns ErrNotFound when the user has no
-		// override, which the guard treats as "no override" (m.LimitOverride
-		// stays nil) — identical to the old loop finding no match.
+		// User-scoped lookup, not ListAll()+in-memory filter (JAB-374 AC#5).
 		if lo, err := d.LimitOverrides.FindByUserID(ctx, user.ID); err == nil && lo != nil {
 			m.LimitOverride = &internalbackup.MetadataLimitOverride{
 				DiskQuotaMB: lo.DiskQuotaMB, CPUQuotaPercent: lo.CPUQuotaPercent,

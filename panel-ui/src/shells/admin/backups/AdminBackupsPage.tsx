@@ -3,7 +3,7 @@
 // expandable to per-user children). Manual creates render flat.
 import { Badge, Button, Card, Space, Table, Tag, Tooltip, Typography } from "antd";
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
-import { downloadUrl } from "../../../utils/download";
+import { useBackupDownloadPrepare } from "../../../utils/backupDownload";
 import { backupTypeColor, backupTypeLabel, runScopeSummary } from "../../../utils/backupType";
 import { shortDateTime } from "../../../utils/datetime";
 import { useTabParam } from "../../../hooks/useTabParam";
@@ -24,18 +24,19 @@ import {
 } from "@icons";
 import { useEffect, useRef, useState } from "react";
 
-import { BackupStatusTag } from "./BackupStatusTag";
+import { BackupStatusTag } from "../../../components/backups/BackupStatusTag";
+import {
+  backupArtifactEligibility,
+  isRestoreKind,
+  snapshotKnowledge,
+} from "../../../components/backups/backupArtifact";
+import { backupArtifactActions } from "../../../components/backups/backupArtifactActions";
 
 import { apiClient } from "../../../apiClient";
 import { extractApiError } from "../../../apiErrors";
 import { useListQuery } from "../../../hooks/useQueries";
 import { BackupLogModal } from "./BackupLogModal";
 import { BackupLogsTab } from "./BackupLogsTab";
-
-// GH #1044: restore jobs share the backup list (kind=account_restore). They own
-// no snapshot, so their size/added read 0 and Download is meaningless.
-const isRestoreKind = (kind: string): boolean =>
-  kind === "account_restore" || kind === "system_restore";
 import { BackupSettingsTab } from "./BackupSettingsTab";
 import { CreateBackupDrawer } from "./CreateBackupDrawer";
 import { RestoreFromUploadDrawer } from "./RestoreFromUploadDrawer";
@@ -147,6 +148,7 @@ const RunStatusSummary = ({ run }: { run: BackupRun }) => {
 };
 
 export const AdminBackupsPage = () => {
+  const dl = useBackupDownloadPrepare("admin"); // GH #1408: prepare-then-download
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [uploadRestoreOpen, setUploadRestoreOpen] = useState(false);
   const [packageRunId, setPackageRunId] = useState<string | null>(null);
@@ -283,9 +285,9 @@ export const AdminBackupsPage = () => {
       feedback.message.warning("Backup must complete before download");
       return;
     }
-    // GH #462: anchor-download, not window.location.href — navigating aborts the
-    // in-flight backups poll and shows a spurious "Network Failed" toast.
-    downloadUrl(`/api/v1/admin/backups/${row.id}/download`);
+    // GH #1408: prepare in the background (restic materialize takes minutes)
+    // then trigger the download, so the button isn't dead in the meantime.
+    dl.start(row.id);
   };
 
   const handleCancel = async (row: BackupJob) => {
@@ -411,36 +413,46 @@ export const AdminBackupsPage = () => {
         },
         {
           title: "Actions",
-          render: (_: unknown, row: BackupJob) => (
-            <RowActions
-              actions={[
-                // GH #502: Download is the most common action after a backup completes —
-                // make it the primary (first, visible) action; Log + the rest collapse
-                // into the overflow menu.
-                { key: "download", label: "Download", icon: <DownloadOutlined />, hidden: isRestoreKind(row.kind) || (row.status !== "succeeded" && row.status !== "partial"), onClick: () => handleDownload(row) },
-                { key: "log", label: "Log", icon: <FileTextOutlined />, onClick: () => setLogJob(row) },
-                {
-                  key: "restore",
-                  label: "Restore",
+          render: (_: unknown, row: BackupJob) => {
+            // JAB-332: Download / Restore / Delete visibility comes from the
+            // shared eligibility matrix (mirrors the panel-api gates); Log and
+            // Cancel are admin-only and stay in this adapter.
+            const shared = backupArtifactActions(
+              backupArtifactEligibility({
+                status: row.status,
+                kind: row.kind,
+                snapshot: snapshotKnowledge(row.snapshot_id),
+              }),
+              {
+                download: { preparing: dl.preparingId === row.id, onClick: () => handleDownload(row) },
+                restore: {
                   icon: <RotateCcwOutlined />,
-                  danger: true,
-                  hidden: !(row.status === "succeeded" && row.kind === "account_backup" && row.snapshot_id),
                   onClick: () => handleRestore(row),
                   confirm: { title: `Restore ${usernameById(row.user_id)}?`, description: "Overwrites the account's current files, databases, and mailboxes.", okText: "Restore" },
                 },
-                { key: "cancel", label: "Cancel", icon: <CloseOutlined />, danger: true, hidden: row.status !== "running", onClick: () => handleCancel(row) },
-                {
-                  key: "delete",
-                  label: "Delete",
+                delete: {
                   icon: <DeleteOutlined />,
-                  danger: true,
-                  hidden: row.status === "running",
+                  label: "Delete",
                   onClick: () => handleDelete(row),
                   confirm: { title: "Delete this backup?", description: "Permanently removes this run's snapshots from the repository. Cannot be undone.", okText: "Delete" },
                 },
-              ]}
-            />
-          ),
+              },
+            );
+            return (
+              <RowActions
+                actions={[
+                  // GH #502: Download is the most common action after a backup
+                  // completes — keep it primary (first, visible); Log + the rest
+                  // collapse into the overflow menu.
+                  shared.download,
+                  { key: "log", label: "Log", icon: <FileTextOutlined />, onClick: () => setLogJob(row) },
+                  shared.restore,
+                  { key: "cancel", label: "Cancel", icon: <CloseOutlined />, danger: true, hidden: row.status !== "running", onClick: () => handleCancel(row) },
+                  shared.delete,
+                ]}
+              />
+            );
+          },
         },
       ]}
     />
@@ -695,7 +707,9 @@ export const AdminBackupsPage = () => {
                           label: "Delete",
                           icon: <DeleteOutlined />,
                           danger: true,
-                          hidden: row.job.status === "running",
+                          // JAB-332: share the one canDelete gate (hidden while
+                          // running) rather than re-deriving `status === running`.
+                          hidden: !backupArtifactEligibility({ status: row.job.status }).canDelete,
                           onClick: () => handleDelete(row.job),
                           confirm: { title: "Delete this backup?", description: "Permanently removes this backup's snapshots from the repository. Cannot be undone.", okText: "Delete" },
                         },

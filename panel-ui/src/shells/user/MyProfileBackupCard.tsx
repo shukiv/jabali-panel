@@ -3,14 +3,17 @@
 // when a row is succeeded. Mirrors AdminBackupsPage data shape but
 // scoped via /me/backups (auth-gated to caller's user_id).
 import { useTranslation } from "react-i18next";
-import { downloadUrl } from "../../utils/download";
+import { useBackupDownloadPrepare } from "../../utils/backupDownload";
 import { Button, Card, Grid, Input, Select, Space, Table, Tag, Tooltip, Typography } from "antd";
 import { feedback } from "../../lib/feedback"; // GH #970: themed toasts
-import { getActAs } from "../../impersonation";
 import { shortDateTime } from "../../utils/datetime";
 import { backupTypeColor, backupTypeLabel } from "../../utils/backupType";
 import { RowActions } from "../../components/RowActions";
-import { DeleteOutlined, DownloadOutlined, ReloadOutlined, SaveOutlined, WarningOutlined } from "@icons";
+import { BackupStatusTag } from "../../components/backups/BackupStatusTag";
+import { backupArtifactEligibility, isRestoreKind } from "../../components/backups/backupArtifact";
+import { backupArtifactActions } from "../../components/backups/backupArtifactActions";
+import { RestoreFromUploadDrawer } from "../admin/backups/RestoreFromUploadDrawer";
+import { DeleteOutlined, ReloadOutlined, SaveOutlined, WarningOutlined } from "@icons";
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
@@ -33,27 +36,14 @@ type MyBackup = {
 
 // GH #1044: restore jobs share this list (kind=account_restore). A restore is
 // not a downloadable/deletable backup artifact and has no size — its row drops
-// the backup-only bits.
-const isRestoreRow = (row: MyBackup): boolean =>
-  row.kind === "account_restore" || row.kind === "system_restore";
-
-const statusColor = (status: string): string => {
-  switch (status) {
-    case "succeeded":
-      return "green";
-    case "running":
-      return "blue";
-    case "failed":
-      return "red";
-    case "partial":
-      return "gold";
-    default:
-      return "default";
-  }
-};
+// the backup-only bits. Eligibility + the restore-kind check live in the shared
+// backupArtifact module (JAB-332).
+const isRestoreRow = (row: MyBackup): boolean => isRestoreKind(row.kind);
 
 export const MyProfileBackupCard = () => {
   const { t } = useTranslation();
+  const dl = useBackupDownloadPrepare("me"); // GH #1408: prepare-then-download
+  const [restoreUploadOpen, setRestoreUploadOpen] = useState(false); // GH #1408
   const screens = Grid.useBreakpoint();
   const [submitting, setSubmitting] = useState(false);
   const [restoreId, setRestoreId] = useState<string | null>(null);
@@ -165,6 +155,9 @@ export const MyProfileBackupCard = () => {
               options={destOptions}
             />
           )}
+          <Button onClick={() => setRestoreUploadOpen(true)}>
+            Restore from upload
+          </Button>
           <Button
             type="primary"
             loading={submitting}
@@ -228,7 +221,7 @@ export const MyProfileBackupCard = () => {
             dataIndex: "status",
             render: (s: string, row: MyBackup) => (
               <Space size={4}>
-                <Tag color={statusColor(s)}>{s}</Tag>
+                <BackupStatusTag status={s} />
                 {row.error_text && (
                   <Tooltip title={row.error_text}>
                     <WarningOutlined style={{ color: "#faad14" }} />
@@ -246,39 +239,34 @@ export const MyProfileBackupCard = () => {
           {
             title: "Actions",
             key: "actions",
-            render: (_, row) => (
-              <RowActions
-                actions={[
-                  // GH #1044: Download + Restore only make sense on a backup
-                  // artifact, not a restore-history row (no snapshot to download,
-                  // not itself restorable). JAB-327: a `partial` backup has a
-                  // valid snapshot too — a non-critical stage failed but the
-                  // manifest was written — so it is DOWNLOADABLE (mirrors admin +
-                  // the backend's succeeded|partial download gate; a snapshotless
-                  // job is still hard-rejected server-side). Restore stays
-                  // succeeded-only (a partial account backup is not a safe restore
-                  // source).
-                  ...(!isRestoreRow(row) && (row.status === "succeeded" || row.status === "partial")
-                    ? [{ key: "download", label: "Download", icon: <DownloadOutlined />, onClick: () => { const act = getActAs(); downloadUrl(`/api/v1/me/backups/${row.id}/download${act ? `?act_as=${encodeURIComponent(act.id)}` : ""}`); } }]
-                    : []),
-                  ...(!isRestoreRow(row) && row.status === "succeeded"
-                    ? [{ key: "restore", label: "Restore", icon: <ReloadOutlined />, onClick: () => setRestoreId(row.id) }]
-                    : []),
-                  {
-                    key: "delete",
-                    label: isRestoreRow(row) ? "Remove" : "Delete",
+            render: (_, row) => {
+              // JAB-332: the same eligibility matrix the admin page uses. The
+              // tenant payload carries no snapshot_id, so it leaves `snapshot`
+              // at its default "unknown" — the server still hard-rejects a
+              // snapshotless job (422), so Download stays visible for a
+              // succeeded/partial row and defers that one case to the backend.
+              const restore = isRestoreRow(row);
+              const shared = backupArtifactActions(
+                // Default kind mirrors the Type column (a row may omit kind;
+                // it is an account backup). canRestore needs kind === account_backup.
+                backupArtifactEligibility({ status: row.status, kind: row.kind ?? "account_backup" }),
+                {
+                  download: { preparing: dl.preparingId === row.id, onClick: () => dl.start(row.id) },
+                  restore: { icon: <ReloadOutlined />, onClick: () => setRestoreId(row.id) },
+                  delete: {
                     icon: <DeleteOutlined />,
-                    danger: true,
+                    label: restore ? "Remove" : "Delete",
                     onClick: () => handleDelete(row.id),
                     // A restore row owns no snapshots — deleting it only clears
                     // the history entry; say that instead of the backup copy.
-                    confirm: isRestoreRow(row)
+                    confirm: restore
                       ? { title: "Remove this restore from the list?", description: "This clears the restore entry from your history. It does not undo the restore or touch any backup.", okText: "Remove" }
                       : { title: "Delete this backup?", description: "This permanently removes the backup's snapshots from the repository and cannot be undone.", okText: "Delete" },
                   },
-                ]}
-              />
-            ),
+                },
+              );
+              return <RowActions actions={[shared.download, shared.restore, shared.delete]} />;
+            },
           },
         ]}
       />
@@ -318,6 +306,13 @@ export const MyProfileBackupCard = () => {
         open={restoreId !== null}
         onClose={() => setRestoreId(null)}
       />
+      {restoreUploadOpen && (
+        <RestoreFromUploadDrawer
+          ownerMode
+          open={restoreUploadOpen}
+          onClose={() => setRestoreUploadOpen(false)}
+        />
+      )}
     </Card>
   );
 };

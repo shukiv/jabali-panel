@@ -3,7 +3,7 @@ import { Alert, Card, Select, Space, Switch, Typography } from "antd";
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 
 import { apiClient } from "../../../apiClient";
-import { kindLabels, type ChannelKind } from "../notifications/channelKindConfig";
+import { kindLabels, type ChannelKind } from "../../../utils/channelKindConfig";
 
 // TenantNotificationsCard — Server Settings → General: the master switch for the
 // tenant-facing /me/notifications surface (JAB-171) plus the admin-controlled

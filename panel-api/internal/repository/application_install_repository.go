@@ -20,6 +20,12 @@ type ApplicationInstallRepository interface {
 	FindByID(ctx context.Context, id string) (*models.ApplicationInstall, error)
 	FindByIDAndUserID(ctx context.Context, id, userID string) (*models.ApplicationInstall, error)
 	FindByDomainID(ctx context.Context, domainID string) (*models.ApplicationInstall, error)
+	// ListByDomainIDs returns every install across the given domains, ordered
+	// by (domain_id, subdirectory, created_at) so a domain's docroot install
+	// (subdirectory "") sorts first. Used to denormalize a per-domain app
+	// summary onto the domains list (GH #1543) without an N+1 per row. An
+	// empty id slice returns no rows without touching the DB.
+	ListByDomainIDs(ctx context.Context, domainIDs []string) ([]models.ApplicationInstall, error)
 	// FindByDomainAndSubdirectory enforces install uniqueness at the
 	// (domain, subdirectory) granularity that matches the on-disk install
 	// path. Empty subdirectory = docroot install. PRE-M19 callers used
@@ -126,6 +132,20 @@ func (r *applicationInstallRepo) FindByDomainID(ctx context.Context, domainID st
 		return nil, err
 	}
 	return &install, nil
+}
+
+func (r *applicationInstallRepo) ListByDomainIDs(ctx context.Context, domainIDs []string) ([]models.ApplicationInstall, error) {
+	if len(domainIDs) == 0 {
+		return nil, nil
+	}
+	var installs []models.ApplicationInstall
+	if err := r.db.WithContext(ctx).
+		Where("domain_id IN ?", domainIDs).
+		Order("domain_id, subdirectory, created_at").
+		Find(&installs).Error; err != nil {
+		return nil, err
+	}
+	return installs, nil
 }
 
 func (r *applicationInstallRepo) FindByDomainAndSubdirectory(ctx context.Context, domainID, subdirectory string) (*models.ApplicationInstall, error) {

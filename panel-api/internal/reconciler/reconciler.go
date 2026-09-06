@@ -24,6 +24,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/nginxrules"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/notifications"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/phppoolops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/pyframeworks"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/reconciler/phases"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/redirects"
@@ -55,6 +56,15 @@ type Reconciler struct {
 	dbAdmin      repository.DBAdminRepository
 	log          *slog.Logger
 	interval     time.Duration
+
+	// phpPoolIniOverrides backs the GH #1422 package-flip fan-out. When set,
+	// ReapplyPHPPoolForUser routes every pool through phppoolops.ReconcileViaAgent
+	// (the same override-aware apply the settings/version-save path already uses),
+	// so a flip of php_exec_enabled carries BOTH the tenant's php_admin_value
+	// overrides AND the GH #402 disable_functions opt-out. Nil = the fan-out is a
+	// fail-closed no-op (pools converge on the next settings-save) rather than an
+	// override-blind re-render that would wipe those overrides.
+	phpPoolIniOverrides repository.PHPPoolIniOverrideRepository
 
 	// JAB-235 DNS-01 routing state — see dns01_routing.go.
 	dns01State
@@ -97,6 +107,13 @@ type Reconciler struct {
 	// warnings so a mid-rollout agent (missing ssl.panel.selfsign) does not
 	// log at Warn every tick.
 	panelSelfSignLastErr string
+	// readKratosConfigFile reads kratos.yml for the JAB-393 hostname drift
+	// check. Mockable for tests (default os.ReadFile).
+	readKratosConfigFile func(string) ([]byte, error)
+	// kratosRehostLastErr debounces JAB-393 rehost dispatch/read warnings so a
+	// mid-rollout agent (missing kratos.config.rehost) or an unreadable config
+	// does not log at Warn every tick.
+	kratosRehostLastErr string
 	// paused is an atomic flag to pause reconciliation (for SSO key rotation)
 	paused atomic.Bool
 
@@ -467,6 +484,15 @@ func (r *Reconciler) WithPHPPools(phpPools repository.PHPPoolRepository) *Reconc
 	return r
 }
 
+// WithPHPPoolIniOverrides injects the per-pool ini-override repository so the
+// GH #1422 package-flip fan-out (ReapplyPHPPoolForUser) can re-render pools
+// through the override-aware phppoolops.ReconcileViaAgent path. Optional: nil
+// leaves the fan-out a fail-closed no-op rather than an override-blind wipe.
+func (r *Reconciler) WithPHPPoolIniOverrides(overrides repository.PHPPoolIniOverrideRepository) *Reconciler {
+	r.phpPoolIniOverrides = overrides
+	return r
+}
+
 // WithSSO injects the SSO service for mysqladmin shadow account backfill.
 // Call this before using mysqladmin reconciliation.
 func (r *Reconciler) WithSSO(sso sso.SSOInterface) *Reconciler {
@@ -508,6 +534,7 @@ func New(domains repository.DomainRepository, users repository.UserRepository, a
 	r.socketReady = r.waitSocketReady
 	// JAB-389: default cert reader for the panel self-signed drift check.
 	r.readCertFile = os.ReadFile
+	r.readKratosConfigFile = os.ReadFile
 	return r
 }
 
@@ -771,6 +798,10 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 	// before the rest of the loop touches the agent. Cheap noop when
 	// use_le=0 or routability gate fails.
 	r.reconcilePanelCertificate(ctx)
+	// JAB-393: converge kratos.yml's panel hostname to server_settings.hostname
+	// so a panel FQDN change doesn't leave the identity service on the old
+	// origin (a CORS-blocked full login lockout). Cheap noop when they match.
+	r.reconcileKratosHostname(ctx)
 	// JAB-391: converge Stalwart outbound TLS strategies to dane=disable.
 	r.reconcileOutboundMailTLS(ctx)
 	r.reconcileUpdateRuns(ctx)
@@ -1054,6 +1085,7 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 	// domains.email_enabled. Self-scoping — no-op when sslCerts isn't
 	// wired; per-domain errors don't abort the sweep.
 	r.reconcileWebmailVhosts(ctx)
+	r.reconcileBotChallengeExempt(ctx)
 
 	r.reconcileCronJobs(ctx)
 	// Reconcile cron jobs: apply enabled jobs, remove disabled jobs, cleanup orphans.
@@ -1544,30 +1576,57 @@ func (r *Reconciler) reconcileMysqlAdminShadow(ctx context.Context) {
 	}
 }
 
-// ReapplyPHPPoolForUser re-renders a single user's pool from the current
-// template + package state (GH #402 per-package disable_functions opt-out).
-// Used by the package-update fan-out so an admin flipping php_exec_enabled
-// takes effect immediately instead of waiting for the next sweep. No-op when
-// the user has no pool. Implements api.PackagePHPPoolReconciler.
+// ReapplyPHPPoolForUser re-renders ALL of a user's PHP pools from current
+// template + package state (GH #402 per-package disable_functions opt-out, GH
+// #1422). Used by the package-update fan-out so an admin flipping
+// php_exec_enabled takes effect immediately — on every pool, including a domain
+// pinned to a non-default PHP version — instead of waiting for the next sweep
+// (which skips a healthy pool). Each pool is re-applied through the same
+// override-aware phppoolops.ReconcileViaAgent the settings/version-save path
+// uses, so tenant php_admin_value overrides survive the flip. No-op when the
+// user has no pool. Implements api.PackagePHPPoolReconciler.
 func (r *Reconciler) ReapplyPHPPoolForUser(ctx context.Context, userID string) error {
 	if r.phpPools == nil || r.users == nil {
 		return nil
 	}
-	user, err := r.users.FindByID(ctx, userID)
-	if err != nil || user == nil {
-		return err
+	// GH #1422: route the fan-out through phppoolops.ReconcileViaAgent — the
+	// override-aware apply the settings/version-save path already uses. It carries
+	// the tenant's php_admin_value overrides alongside the GH #402
+	// disable_functions opt-out. Fail-closed: without the overrides repo we do NOT
+	// fall back to the override-blind applyPHPPool (that re-renders a pool with no
+	// php_admin_value lines and would wipe a versioned pool's overrides on a flag
+	// flip); the pool instead converges on the user's next PHP-settings save, which
+	// routes through this same override-aware path.
+	if r.phpPoolIniOverrides == nil {
+		r.log.Warn("ReapplyPHPPoolForUser: ini-override repo not wired; skipping fan-out (pools converge on next settings save)", "user_id", userID)
+		return nil
 	}
-	pool, err := r.phpPools.FindByUserID(ctx, userID)
+	// Re-render EVERY pool, not just the default: a flip of php_exec_enabled must
+	// reach a domain pinned to a non-default PHP version too, and the periodic
+	// sweep skips a healthy pool. ReconcileViaAgent loads the user and derives each
+	// pool's isDefault itself (list[0] by created_at ASC), so no bookkeeping here.
+	pools, err := r.phpPools.ListByUserID(ctx, userID)
 	if err != nil {
 		if err == repository.ErrNotFound {
 			return nil
 		}
 		return err
 	}
-	if pool == nil {
-		return nil
+	deps := phppoolops.ReconcileDeps{
+		Agent:     r.agent,
+		Users:     r.users,
+		Overrides: r.phpPoolIniOverrides,
+		Pools:     r.phpPools,
+		Packages:  r.packages,
 	}
-	r.applyPHPPool(ctx, user, pool, true)
+	for i := range pools {
+		if aerr := phppoolops.ReconcileViaAgent(deps, pools[i]); aerr != nil {
+			// Continue on a per-pool failure so a sibling pool is not abandoned;
+			// ReconcileViaAgent has already persisted this pool's error status.
+			r.log.Error("ReapplyPHPPoolForUser: pool re-apply failed",
+				"user_id", userID, "pool_id", pools[i].ID, "err", aerr)
+		}
+	}
 	return nil
 }
 
@@ -1609,6 +1668,27 @@ func (r *Reconciler) applyPHPPool(ctx context.Context, user *models.User, pool *
 		"slowlog_timeout_seconds":           pool.SlowlogTimeoutSeconds,
 		"extra_extensions":                  []string(pool.ExtraExtensions),
 		"xdebug_enabled":                    pool.XdebugEnabled,
+	}
+
+	// GH #1550: carry the pool's tenant php_admin_value / php_admin_flag
+	// overrides. The agent renders the whole pool conf from these params (no
+	// merge), so a sweep re-apply that omits them wipes every override the
+	// tenant set until their next PHP-settings save. Mirrors the shape
+	// phppoolops.ReconcileViaAgent (the save path) builds. Fail-closed on a
+	// read error: skip the apply and retry next tick rather than re-render the
+	// pool with no overrides. A nil repo (unwired) leaves the keys off, which
+	// the agent treats as "no overrides" — matching the prior behaviour.
+	if r.phpPoolIniOverrides != nil {
+		overrides, oerr := r.phpPoolIniOverrides.ListByPool(ctx, pool.ID)
+		if oerr != nil {
+			errMsg := fmt.Sprintf("list ini overrides: %v", oerr)
+			r.log.Error("failed to list PHP pool ini overrides", "pool_id", pool.ID, "err", oerr)
+			r.phpPools.SetStatus(ctx, pool.ID, "error", &errMsg)
+			return
+		}
+		adminValues, adminFlags := phppoolops.SplitIniOverrides(overrides)
+		params["admin_values"] = adminValues
+		params["admin_flags"] = adminFlags
 	}
 
 	// GH #402: if the user's package opts out of the #401 command-exec
@@ -1766,6 +1846,14 @@ func (r *Reconciler) effectiveInterceptErrors(ctx context.Context, domain *model
 // pool-regeneration pass, which must re-dispatch regardless of the cache
 // (a pool config change is out-of-band to the per-domain payload hash).
 func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Domain, force bool) {
+	if domain.WebDisabled {
+		// GH #1449: a web-off domain (DNS-only zone / mail-only domain) has
+		// no docroot and no HTTP vhost — skip the web render entirely. Its
+		// DNS zone and mail (MX/DKIM/mail-cert SANs) still converge via the
+		// dedicated paths in reconcileEnabledDomain. Mirrors the docroot-less
+		// IsPanelPrimary / docker_app rows.
+		return
+	}
 	user, err := r.users.FindByID(ctx, domain.UserID)
 	if err != nil {
 		r.log.Error("failed to fetch user for domain", "domain_id", domain.ID, "user_id", domain.UserID, "err", err)
@@ -2313,12 +2401,64 @@ func (r *Reconciler) resolveListenIPAddress(ctx context.Context, id *uint64, fam
 	return row.Address
 }
 
+// dnsOnlyApexSeeds builds the apex records for a web-off DNS zone that was
+// created with a tenant-chosen apex IP (GH #1540): an A for DNSApexIPv4 and/or
+// an AAAA for DNSApexIPv6, each seeded independently. A web-off zone's apex is
+// deliberately left unseeded by dnscompile.BootstrapRecords (includeApex=false)
+// and is never re-asserted by convergeApexAddrRecords (web-gated), so these rows
+// are seeded ONCE at zone bootstrap and then owned by the tenant. Managed=false
+// (the panel does not reconcile them — an honest flag, no false "managed"
+// badge), ManagedBy nil. Returns nil for a web-on domain or one with no apex IP.
+func dnsOnlyApexSeeds(domain *models.Domain, zoneID string, srv *models.ServerSettings, idNew func() string) []models.DNSRecord {
+	if domain == nil || !domain.WebDisabled {
+		return nil
+	}
+	now := time.Now().UTC()
+	ttl := models.EffectiveDNSTTL(srv)
+	mk := func(typ, content string) models.DNSRecord {
+		return models.DNSRecord{
+			ID:        idNew(),
+			ZoneID:    zoneID,
+			Name:      "@",
+			Type:      typ,
+			Content:   content,
+			TTL:       ttl,
+			Priority:  0,
+			Managed:   false,
+			IsEnabled: true,
+			CreatedAt: now,
+			UpdatedAt: now,
+		}
+	}
+	var out []models.DNSRecord
+	if domain.DNSApexIPv4 != nil {
+		if ip := strings.TrimSpace(*domain.DNSApexIPv4); ip != "" {
+			out = append(out, mk("A", ip))
+		}
+	}
+	if domain.DNSApexIPv6 != nil {
+		if ip := strings.TrimSpace(*domain.DNSApexIPv6); ip != "" {
+			out = append(out, mk("AAAA", ip))
+		}
+	}
+	return out
+}
+
 // reconcileDNSZone ensures a domain's DNS zone and records are provisioned
 // on the agent. Called during domain reconciliation to push the zone state
 // to PowerDNS via the agent.
 func (r *Reconciler) reconcileDNSZone(ctx context.Context, domain *models.Domain) {
 	if r.dnsZones == nil {
 		return // DNS feature not wired — skip
+	}
+	if domain.DNSDisabled {
+		// GH #1449: the tenant runs DNS elsewhere — never create or
+		// converge a PowerDNS zone for this domain. Placed BEFORE the
+		// find/auto-create below so a disabled zone can't resurrect every
+		// tick. (Tearing down a zone already in pdns when DNS is turned
+		// OFF later is a separate follow-up; the dns.zone.delete verb
+		// exists for it.)
+		return
 	}
 
 	zone, err := r.dnsZones.FindByDomainID(ctx, domain.ID)
@@ -2348,10 +2488,25 @@ func (r *Reconciler) reconcileDNSZone(ctx context.Context, domain *models.Domain
 			// their mail rows. GH #189: a "No mail" domain never even briefly
 			// has mail DNS.
 			includeMail := domain.MailProvider == "" || domain.MailProvider == models.MailProviderJabali
-			boots := dnscompile.BootstrapRecords(zone.ID, zone.Name, srv, ids.NewULID, includeMail, domain.CreateWWW)
+			// GH #1449: a web-off domain (DNS-only / mail-only) doesn't seed an
+			// apex A or a www CNAME pointing at this box — its web lives elsewhere.
+			includeApex := !domain.WebDisabled
+			includeWWW := !domain.WebDisabled && domain.CreateWWW
+			boots := dnscompile.BootstrapRecords(zone.ID, zone.Name, srv, ids.NewULID, includeApex, includeMail, includeWWW)
 			for i := range boots {
 				if err := r.dnsRecords.Create(ctx, &boots[i]); err != nil {
 					r.log.Error("bootstrap record failed", "err", err)
+					return
+				}
+			}
+			// GH #1540: a DNS-only zone created with a tenant-chosen apex IP
+			// seeds its "@ A <ipv4>" and/or "@ AAAA <ipv6>" here —
+			// BootstrapRecords skips the apex for a web-off zone. Tenant-owned
+			// (Managed=false), never re-asserted.
+			seeds := dnsOnlyApexSeeds(domain, zone.ID, srv, ids.NewULID)
+			for i := range seeds {
+				if err := r.dnsRecords.Create(ctx, &seeds[i]); err != nil {
+					r.log.Error("dns-only apex seed failed", "zone", zone.Name, "err", err)
 					return
 				}
 			}
@@ -2383,6 +2538,11 @@ func (r *Reconciler) reconcileDNSZone(ctx context.Context, domain *models.Domain
 	// none / m365 / google) BEFORE listing for compile, so the right
 	// MX/SPF/autodiscover (or none) get pushed to PowerDNS this pass.
 	r.reconcileMailProviderRecords(ctx, zone, domain, srv)
+
+	// GH #1462: repoint the CalDAV/CardDAV SRV records at the domain's
+	// per-domain override host (or restore the mail.<domain> default),
+	// after the provider reconcile has settled the rest of the mail DNS.
+	r.reconcileDAVOverrideRecords(ctx, zone, domain, srv)
 
 	records, err := r.dnsRecords.ListByZoneID(ctx, zone.ID)
 	if err != nil {
@@ -2422,10 +2582,22 @@ func (r *Reconciler) reconcileDNSZone(ctx context.Context, domain *models.Domain
 	zone.Serial = now.Unix()
 	_ = r.dnsZones.Update(ctx, zone)
 
+	// GH #1459: PowerDNS's domains.name column is latin1; the agent
+	// connects charset=utf8mb4, so a raw-IDN zone name would fail the
+	// domains INSERT with MySQL 1366 and roll back the WHOLE atomic
+	// dns.zone.upsert — the zone silently never lands. Send the same
+	// punycode-normalized apex the compiled records already use.
+	// Identity for ordinary ASCII zones.
+	pushZoneName, ok := dnscompile.NormalizeName(zone.Name)
+	if !ok {
+		r.log.Error("dns.zone.upsert skipped: zone name not encodable", "zone", zone.Name)
+		return
+	}
+
 	pushCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	if _, err := r.agent.Call(pushCtx, "dns.zone.upsert", map[string]any{
-		"zone":            zone.Name,
+		"zone":            pushZoneName,
 		"records":         compiled,
 		"allow_axfr_from": allowAXFR,
 		"also_notify":     alsoNotify,
@@ -2823,6 +2995,19 @@ func (r *Reconciler) tryACMEOrFallback(ctx context.Context, domain *models.Domai
 	staging := false
 	if r.cfg != nil {
 		staging = r.cfg.ACME.StagingOnly
+	}
+
+	// GH #1449: a web-off domain (mail-only) has NO webroot — DocRoot is ""
+	// and we serve no apex vhost — so an HTTP-01 attempt is guaranteed to
+	// fail on the empty webroot AND its apex points at the tenant's real web
+	// host, not us. Both would just burn Let's Encrypt's failed-auth quota.
+	// Issue the mail-support cert via DNS-01 when we host the zone (the TXT
+	// validates the apex + mail SANs regardless of where the A record points),
+	// otherwise park with a clear reason — never HTTP-01. The self-signed
+	// bootstrap above already keeps Stalwart/webmail serving TLS meanwhile.
+	if domain.WebDisabled {
+		r.tryDNS01OrPark(ctx, domain, cert, srv, staging)
+		return
 	}
 
 	{
@@ -3256,6 +3441,13 @@ func (r *Reconciler) convergeApexAddrRecords(ctx context.Context, zone *models.D
 	if r.dnsRecords == nil || zone == nil || domain == nil {
 		return
 	}
+	if domain.WebDisabled {
+		// GH #1449: a web-off domain's apex points at the tenant's real web
+		// host, not this box — never assert/re-assert an apex A/AAAA here
+		// (the bootstrap seed is likewise web-gated). The tenant edits the
+		// apex freely in the DNS zone.
+		return
+	}
 	// Without the IP pool we have no source of truth for what the
 	// effective addresses should be. Skipping is safe because the
 	// pre-M24 BootstrapRecords already wrote the server-primary
@@ -3608,7 +3800,7 @@ func (r *Reconciler) reconcileEnabledDomain(ctx context.Context, name string, do
 	// reconciler tick was pure spam ("puzzle.linux-hosting.net"
 	// loop). Only log for real tenant domains where the missing
 	// state is actionable.
-	if !agentSites[name] && !domain.IsPanelPrimary {
+	if !agentSites[name] && !domain.IsPanelPrimary && !domain.WebDisabled {
 		r.log.Info("reconcile: creating missing domain", "domain", name)
 	}
 	r.reconcileDNSZone(ctx, domain)
@@ -3628,6 +3820,28 @@ func (r *Reconciler) reconcileEnabledDomain(ctx context.Context, name string, do
 	if domain.IsPanelPrimary {
 		r.reconcileRecursorForward(ctx, name)
 		r.ensurePanelPrimaryDKIM(ctx, domain)
+		return
+	}
+
+	// GH #1449: a web-off tenant domain (DNS-only zone or mail-only domain)
+	// has no docroot / vhost / PHP. Converge only its DNS (above), SSL
+	// (mail-support SANs via reachableSANs — a no-op for a DNS-only zone on
+	// ssl_mode='none'), MTA-STS, mail provisioning, and M6.5 email features.
+	// Skips ensureDomainPHPBinding + createDomainOnAgent. Mirrors the
+	// docroot-less IsPanelPrimary mail-only path, for tenants.
+	if domain.WebDisabled {
+		sslCtx, sslCancel := context.WithTimeout(ctx, 2*time.Minute)
+		r.reconcileSSLForDomain(sslCtx, domain)
+		sslCancel()
+		r.reconcileMTAStsForDomain(ctx, domain)
+		r.ensureTenantEmailEnabled(ctx, domain)
+		r.ensureTenantDKIMRecords(ctx, domain)
+		if !domain.DNSDisabled {
+			r.reconcileRecursorForward(ctx, name)
+		}
+		if err := phases.ReconcileDomainAll(ctx, domain, nil); err != nil {
+			r.log.Error("reconcile: M6.5 phase domain reconciliation failed (web-off)", "domain", name, "err", err)
+		}
 		return
 	}
 
@@ -3663,7 +3877,12 @@ func (r *Reconciler) reconcileEnabledDomain(ctx context.Context, name string, do
 	r.createDomainOnAgent(ctx, domain, false)
 	// M6.3: ensure the recursor has a forwarder for this zone so
 	// local resolution hits pdns-server on loopback :5300. Idempotent.
-	r.reconcileRecursorForward(ctx, name)
+	// GH #1449: only when we actually host the zone — a domain on external
+	// DNS must resolve via public recursion, not be pinned to our (empty)
+	// pdns for its own name.
+	if !domain.DNSDisabled {
+		r.reconcileRecursorForward(ctx, name)
+	}
 
 	// M6.5: Email features (forwarders, autoresponders, catch-all, disclaimer,
 	// shared folders, logs). Each feature is registered as a Phase during init(),

@@ -13,14 +13,27 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/sshkeyops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/sshkeys"
 )
 
 func sshKeyRepoFromDB() repository.SSHKeyRepository {
 	return repository.NewSSHKeyRepository(sharedDB)
+}
+
+// cliSSHKeyScheduler is the operator CLI's sshkeyops.Scheduler: a no-op. A
+// short-lived CLI process has no running reconciler to schedule, so
+// authorized_keys converge on the reconciler's next ≤60s tick (the add/delete
+// output tells the operator so). Wiring it explicitly keeps the required
+// Scheduler dependency intentional rather than a nil.
+type cliSSHKeyScheduler struct{}
+
+func (cliSSHKeyScheduler) ScheduleUser(string) {}
+
+func sshKeyOpsDeps() sshkeyops.Deps {
+	return sshkeyops.Deps{Keys: sshKeyRepoFromDB(), Scheduler: cliSSHKeyScheduler{}}
 }
 
 func newSSHKeyCmd() *cobra.Command {
@@ -110,35 +123,33 @@ func newSSHKeyAddCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			normalized, fingerprint, err := sshkeys.ParseAndFingerprint(raw)
+			// Validation, fingerprinting, dedup, persistence, and scheduling
+			// all live in internal/sshkeyops (ADR-0083), shared with the REST
+			// handler. The CLI keeps its operator-friendly error strings.
+			key, err := sshkeyops.Add(ctx, sshKeyOpsDeps(), sshkeyops.AddRequest{
+				UserID:    u.ID,
+				Name:      name,
+				PublicKey: raw,
+			})
 			if err != nil {
 				switch {
 				case errors.Is(err, sshkeys.ErrRSATooWeak):
 					return fmt.Errorf("RSA key below 2048 bits — generate a stronger key")
 				case errors.Is(err, sshkeys.ErrUnsupportedType):
 					return fmt.Errorf("unsupported key type — use ed25519, ecdsa, or RSA ≥2048")
-				default:
+				case errors.Is(err, sshkeys.ErrInvalidKeyFormat):
 					return fmt.Errorf("invalid public key format")
-				}
-			}
-			key := &models.SSHKey{
-				ID:          ids.NewULID(),
-				UserID:      u.ID,
-				Name:        name,
-				PublicKey:   normalized,
-				Fingerprint: fingerprint,
-			}
-			if err := sshKeyRepoFromDB().Create(ctx, key); err != nil {
-				if errors.Is(err, repository.ErrConflict) {
+				case errors.Is(err, sshkeyops.ErrDuplicate):
 					return fmt.Errorf("a key with this fingerprint already exists for this user")
+				default:
+					return fmt.Errorf("create key: %w", err)
 				}
-				return fmt.Errorf("create key: %w", err)
 			}
 			if jsonOutput {
 				return printJSON(key)
 			}
 			cliAuditOK(ctx, "sshkey.add", "ssh_key", key.ID, &u.ID)
-			fmt.Printf("Added SSH key %s (%s) for user %s\n  fingerprint: %s\n", key.ID, key.Name, derefStr(u.Username), fingerprint)
+			fmt.Printf("Added SSH key %s (%s) for user %s\n  fingerprint: %s\n", key.ID, key.Name, derefStr(u.Username), key.Fingerprint)
 			fmt.Println("Reconciler tick (≤60s) will write authorized_keys.")
 			return nil
 		},
@@ -164,10 +175,13 @@ func newSSHKeyDeleteCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 			defer cancel()
-			repo := sshKeyRepoFromDB()
-			k, err := repo.FindByID(ctx, args[0])
+			deps := sshKeyOpsDeps()
+			// Unscoped lookup (OwnerID empty) — the operator CLI deletes any
+			// user's key by ID; the shared owner-scope guard is for the REST
+			// caller. Fetch first so the confirmation prompt can show the key.
+			k, err := sshkeyops.Find(ctx, deps, sshkeyops.FindRequest{KeyID: args[0]})
 			if err != nil {
-				if errors.Is(err, repository.ErrNotFound) {
+				if errors.Is(err, sshkeyops.ErrNotFound) {
 					return fmt.Errorf("key %q not found", args[0])
 				}
 				return fmt.Errorf("lookup key: %w", err)
@@ -181,7 +195,7 @@ func newSSHKeyDeleteCmd() *cobra.Command {
 					return nil
 				}
 			}
-			if err := repo.Delete(ctx, k.ID); err != nil {
+			if err := sshkeyops.RemoveKey(ctx, deps, k); err != nil {
 				return fmt.Errorf("delete key: %w", err)
 			}
 			if jsonOutput {

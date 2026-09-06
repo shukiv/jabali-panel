@@ -1,10 +1,11 @@
 // User-shell Applications page — lists every install (WordPress
-// today, DokuWiki/MediaWiki/etc. as M19 lands them). Post-M21:
-// useTableURL with a custom useQuery `refetchInterval` so
-// transitional statuses (pending/installing/cloning/deleting) poll
-// until ready.
+// today, DokuWiki/MediaWiki/etc. as M19 lands them). The install row,
+// status badge, domain cell, transitional-poll rule, login capability,
+// and delete + invalidation are shared with the admin list via
+// components/applications (JAB-334); this shell keeps the tenant deltas:
+// the install/scan/migrate/clone/cache actions, the StatCards, and the Tabs.
 import { useTranslation } from "react-i18next";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { shortDateTime } from "../../../utils/datetime";
 import { useTabParam } from "../../../hooks/useTabParam";
 import { Button, Tabs, Col, Empty, Row, Space, Switch, Table, Tag, Typography, Tooltip } from "antd";
@@ -13,23 +14,29 @@ import {
   AppstoreOutlined,
   PlusSquareOutlined,
   ImportOutlined,
-  LoadingOutlined,
   CheckCircleOutlined,
   ExclamationCircleOutlined,
   SyncOutlined,
-  DeleteOutlined,
-  CopyOutlined,
-  LoginOutlined,
   SearchOutlined,
-  ThunderboltOutlined,
   SettingOutlined,
 } from "@icons";
 import { useQueryClient } from "@tanstack/react-query";
+import { isTransitionalStatus } from "../../../utils/applicationStatus";
 import { sorterToParams } from "../../../utils/tableSorter";
 
 import { columnSearchProps } from "../../../components/columnSearch";
 import { RowActions } from "../../../components/RowActions";
 import { SearchableTableStringQ } from "../../../components/SearchableTable";
+import { ApplicationDomainCell } from "../../../components/applications/ApplicationDomainCell";
+import { ApplicationStatusTag } from "../../../components/applications/ApplicationStatusTag";
+import { buildApplicationActions } from "../../../components/applications/buildApplicationActions";
+import { useTransitionalPoll } from "../../../components/applications/useTransitionalPoll";
+import { useDeleteApplication } from "../../../components/applications/useDeleteApplication";
+import {
+  canApplicationLogin,
+  openApplicationLogin,
+  type ApplicationInstall,
+} from "../../../components/applications/applicationInventory";
 import { apiClient } from "../../../apiClient";
 import { useAuth } from "../../../auth/AuthContext";
 import { useTableURL } from "../../../hooks/useTableURL";
@@ -39,52 +46,9 @@ import { MigrateRemoteDrawer } from "./MigrateRemoteDrawer";
 import { CloneApplicationModal } from "./CloneApplicationModal";
 import { CacheSettingsDrawer } from "./CacheSettingsDrawer";
 import { CatalogTab } from "./CatalogTab";
-import { CmsIcon, appDisplayName } from "./CmsIcon";
+import { appDisplayName } from "./CmsIcon";
 import { useAppRegistry } from "./appRegistry";
 import { StatCard } from "../../../components/StatCard";
-
-type ApplicationInstall = {
-  id: string;
-  app_type?: string;
-  domain_id: string;
-  domain_name: string;
-  db_id: string;
-  admin_username: string;
-  admin_email: string;
-  locale: string;
-  subdirectory: string;
-  status:
-    | "pending"
-    | "installing"
-    | "cloning"
-    | "deleting"
-    | "ready"
-    | "failed";
-  version: string | null;
-  last_error: string;
-  cache_enabled?: boolean;
-  created_at: string;
-  updated_at: string;
-};
-
-const STATUS_META: Record<
-  ApplicationInstall["status"],
-  { color: string; icon: React.ReactNode; label: string; spinning: boolean }
-> = {
-  pending:    { color: "default",    icon: <LoadingOutlined spin />,      label: "Pending",    spinning: true  },
-  installing: { color: "processing", icon: <LoadingOutlined spin />,      label: "Installing", spinning: true  },
-  cloning:    { color: "processing", icon: <LoadingOutlined spin />,      label: "Cloning",    spinning: true  },
-  deleting:   { color: "warning",    icon: <LoadingOutlined spin />,      label: "Deleting",   spinning: true  },
-  ready:      { color: "success",    icon: <CheckCircleOutlined />,       label: "Ready",      spinning: false },
-  failed:     { color: "error",      icon: <ExclamationCircleOutlined />, label: "Failed",     spinning: false },
-};
-
-const TRANSITIONAL = new Set<ApplicationInstall["status"]>([
-  "pending",
-  "installing",
-  "cloning",
-  "deleting",
-]);
 
 interface ActionsCellProps {
   record: ApplicationInstall;
@@ -103,21 +67,7 @@ const ActionsCell = ({
   onClone,
   onDelete,
 }: ActionsCellProps) => {
-  const { mint: mintMagicLink, loading: magicLinkLoading, error: magicLinkError } = useMagicLink(record.id);
-
-  const handleMagicLink = async () => {
-    try {
-      const response = await mintMagicLink();
-      window.open(
-        response.url,
-        "_blank",
-        "noopener,noreferrer"
-      );
-      feedback.message.success("Admin login link opened");
-    } catch {
-      feedback.message.error(magicLinkError || "Failed to generate admin login link");
-    }
-  };
+  const { mint, loading: loginLoading, error: loginError } = useMagicLink(record.id);
 
   const [purging, setPurging] = useState(false);
   const [warming, setWarming] = useState(false);
@@ -158,54 +108,22 @@ const ActionsCell = ({
 
   return (
     <RowActions
-      actions={[
-        {
-          key: "login",
-          label: "Log in to admin",
-          icon: <LoginOutlined />,
-          onClick: handleMagicLink,
-          loading: magicLinkLoading,
-          tooltip: "Log in to the admin dashboard",
-          hidden: !canLogin,
-        },
-        {
-          key: "purge",
-          label: "Purge cache",
-          icon: <ThunderboltOutlined />,
-          onClick: handlePurge,
-          loading: purging,
-          hidden: !record.cache_enabled,
-        },
-        {
-          key: "warmup",
-          label: "Warm cache",
-          icon: <ThunderboltOutlined />,
-          onClick: handleWarmup,
-          loading: warming,
-          hidden: !record.cache_enabled,
-        },
-        {
-          key: "clone",
-          label: "Clone",
-          icon: <CopyOutlined />,
-          onClick: onClone,
-          disabled: !canClone,
-          tooltip: canClone ? undefined : "Clone is only available for healthy WordPress installs",
-        },
-        {
-          key: "delete",
-          label: "Delete",
-          icon: <DeleteOutlined />,
-          onClick: onDelete,
-          danger: true,
-          loading: isDeleting,
-          confirm: {
-            title: "Delete this application?",
-            description: "The database, files, and any associated cron jobs will be removed. This cannot be undone.",
-            okText: "Delete",
-          },
-        },
-      ]}
+      actions={buildApplicationActions({
+        canLogin,
+        onLogin: () => openApplicationLogin(mint, loginError),
+        loginLoading,
+        onDelete,
+        deleting: isDeleting,
+        deleteDescription:
+          "The database, files, and any associated cron jobs will be removed. This cannot be undone.",
+        cacheEnabled: !!record.cache_enabled,
+        onPurge: handlePurge,
+        purging,
+        onWarmup: handleWarmup,
+        warming,
+        canClone,
+        onClone,
+      })}
     />
   );
 };
@@ -228,7 +146,7 @@ export const UserApplicationList = () => {
   const [activeTab, setActiveTab] = useTabParam<string>("installed");
   const [cloneOpen, setCloneOpen] = useState(false);
   const [cloningId, setCloningId] = useState<string | null>(null);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const { deletingId, deleteApplication } = useDeleteApplication();
   const [cachingId, setCachingId] = useState<string | null>(null);
   const [cacheSettingsFor, setCacheSettingsFor] =
     useState<ApplicationInstall | null>(null);
@@ -275,43 +193,8 @@ export const UserApplicationList = () => {
   };
 
   // Poll the list while any row is transitional (pending/installing/
-  // cloning/deleting). Five-second cadence matches what Refine's old
-  // refetchInterval returned. refetch identity is stable, so only
-  // `active` triggers re-installing the timer.
-  const hasTransitional = tableQuery.items.some((r) =>
-    TRANSITIONAL.has(r.status),
-  );
-  useEffect(() => {
-    if (!hasTransitional) return;
-    const h = setInterval(() => {
-      tableQuery.refetch();
-    }, 5000);
-    return () => clearInterval(h);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasTransitional]);
-
-  const handleDelete = async (row: ApplicationInstall) => {
-    setDeletingId(row.id);
-    try {
-      await apiClient.delete(`/applications/${row.id}`);
-      feedback.message.success(`Deleting ${row.domain_name || row.domain_id}…`);
-      qc.invalidateQueries({ queryKey: ["list", "applications"] });
-      qc.invalidateQueries({ queryKey: ["list", "databases"] });
-    } catch (err) {
-      const msg =
-        (err as {
-          response?: { data?: { error?: string; detail?: string } };
-          message?: string;
-        })?.response?.data?.detail ??
-        (err as { response?: { data?: { error?: string } } })?.response?.data
-          ?.error ??
-        (err as { message?: string })?.message ??
-        "Delete failed";
-      feedback.message.error(msg);
-    } finally {
-      setDeletingId(null);
-    }
-  };
+  // cloning/deleting) — shared rule with the admin list (JAB-334 AC1).
+  useTransitionalPoll(tableQuery.items, tableQuery.refetch);
 
   // #406: single switch -> Redis object cache (jabali-wp-cache plugin) + nginx
   // page cache for the app's domain. WordPress + ready only.
@@ -446,7 +329,7 @@ export const UserApplicationList = () => {
                   const rows = tableQuery.items;
                   const installedCount = tableQuery.total;
                   const readyCount = rows.filter((r) => r.status === "ready").length;
-                  const inProgressCount = rows.filter((r) => TRANSITIONAL.has(r.status)).length;
+                  const inProgressCount = rows.filter((r) => isTransitionalStatus(r.status)).length;
                   const failedCount = rows.filter((r) => r.status === "failed").length;
                   const catalogCount = registry.data?.length ?? 0;
                   const pct = (n: number) =>
@@ -522,53 +405,17 @@ export const UserApplicationList = () => {
               currentQ: tableQuery.params.q,
               onSearch: (v) => tableQuery.setParams({ q: v, page: 1 }),
             })}
-            render={(domainName: string, record) => {
-              const base = domainName || record.domain_id;
-              const path = record.subdirectory
-                ? `/${record.subdirectory}/`
-                : "/";
-              const label = `${base}${path}`;
-              const isLink = record.status === "ready" && !!domainName;
-              const appKey = record.app_type || "wordpress";
-              const meta = STATUS_META[record.status] ?? STATUS_META.pending;
-              const statusTag = (
-                <Tag color={meta.color} icon={meta.icon}>
-                  {meta.label}
-                </Tag>
-              );
-              const statusEl =
-                record.status === "failed" && record.last_error ? (
-                  <Tooltip title={record.last_error}>{statusTag}</Tooltip>
-                ) : (
-                  statusTag
-                );
-              return (
-                <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
-                  <CmsIcon appType={appKey} />
-                  <div
-                    style={{
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: 4,
-                      alignItems: "flex-start",
-                    }}
-                  >
-                    {isLink ? (
-                      <a
-                        href={`https://${domainName}${path}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                      >
-                        {label}
-                      </a>
-                    ) : (
-                      <span>{label}</span>
-                    )}
-                    {statusEl}
-                  </div>
-                </div>
-              );
-            }}
+            render={(_domainName: string, record) => (
+              <ApplicationDomainCell
+                record={record}
+                status={
+                  <ApplicationStatusTag
+                    status={record.status}
+                    lastError={record.last_error}
+                  />
+                }
+              />
+            )}
           />
           <Table.Column<ApplicationInstall>
             dataIndex="version"
@@ -636,27 +483,19 @@ export const UserApplicationList = () => {
             render={(_, r) => {
               const isDeleting =
                 deletingId === r.id || r.status === "deleting";
-              const appType = r.app_type ?? "wordpress";
               const canClone =
-                r.status === "ready" && appType === "wordpress";
-              // Admin login is implemented for WordPress, Drupal, and
-              // Joomla — matches panel-api ssoAgentCommandFor. When
-              // adding a new CMS to the SSO-file flow, widen this list.
-              const canLogin =
-                r.status === "ready" &&
-                (appType === "wordpress" || appType === "drupal" || appType === "joomla");
-
+                r.status === "ready" && (r.app_type ?? "wordpress") === "wordpress";
               return (
                 <ActionsCell
                   record={r}
                   isDeleting={isDeleting}
                   canClone={canClone}
-                  canLogin={canLogin}
+                  canLogin={canApplicationLogin(r)}
                   onClone={() => {
                     setCloningId(r.id);
                     setCloneOpen(true);
                   }}
-                  onDelete={() => handleDelete(r)}
+                  onDelete={() => deleteApplication(r)}
                 />
               );
             }}

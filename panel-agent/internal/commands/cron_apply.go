@@ -30,6 +30,23 @@ type cronApplyParams struct {
 	RunAsRoot     bool     `json:"run_as_root,omitempty"`
 }
 
+// cronSandboxWrapper runs a tenant cron command inside the same per-user
+// bubblewrap/nspawn jail as SSH (GH #1458). Without it a cron that shells out
+// (php passthru, python os.system, node child_process, wp eval) would reach an
+// unsandboxed shell as the tenant uid, defeating the SSH sandbox's isolation.
+const cronSandboxWrapper = "/usr/local/bin/jabali-ssh-shell"
+
+// cronHomeForUser is the account's home directory — the containment root for
+// python/node cron scripts (GH #1435). Tenant homes are /home/<username>; the
+// root cron account is /root. Mirrors the panel-side derivation so the
+// pre-accept gate and this defense-in-depth re-check agree.
+func cronHomeForUser(username string) string {
+	if username == "root" {
+		return "/root"
+	}
+	return "/home/" + username
+}
+
 // cronApplyResponse is the output from cron.apply.
 type cronApplyResponse struct {
 	ServicePath string `json:"service_path"`
@@ -92,7 +109,7 @@ func cronApplyHandler(ctx context.Context, params json.RawMessage) (any, error) 
 	// ValidateAny routes curl/wget self-domain crons (GH #400 Part B) to the
 	// http-trigger validator (gated on OwnedDomains); everything else stays
 	// the wp/php closed set (gated on OwnedDocroots).
-	cmds, err := cronvalidate.ValidateAnyMulti(p.Command, p.OwnedDocroots, p.OwnedDomains)
+	cmds, err := cronvalidate.ValidateAnyMulti(p.Command, p.OwnedDocroots, p.OwnedDomains, cronHomeForUser(p.Username))
 	if err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInvalidArgument,
@@ -259,6 +276,17 @@ func buildCronServiceContent(jobID, name string, cmds []*cronvalidate.Command, u
 	for _, cmd := range cmds {
 		var b strings.Builder
 		b.WriteString("ExecStart=")
+		// GH #1458: tenant INTERPRETER crons (wp/php/python/node) run inside the
+		// per-user SSH sandbox via `jabali-ssh-shell --exec <argv>`, so a command
+		// that shells out (php passthru, python os.system, wp eval) stays
+		// confined. Skipped for: root crons (admin — the sandbox never jails
+		// uid 0, GH #658), and the curl/wget http-trigger (a trusted
+		// `jabali cron http-trigger` GET, not tenant code, and it needs host
+		// config the jail hides).
+		if username != "root" && cmd.Kind != cronvalidate.KindHTTPTrigger {
+			b.WriteString(cronSandboxWrapper)
+			b.WriteString(" --exec ")
+		}
 		for i, token := range cmd.Argv {
 			if i > 0 {
 				b.WriteByte(' ')

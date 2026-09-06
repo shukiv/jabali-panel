@@ -82,13 +82,15 @@ func setupMailDomainsRouter(t *testing.T, userID string, cfg MeMailDomainsConfig
 }
 
 func TestMailDomains_AggregatesAndScopes(t *testing.T) {
-	// u1 owns a.test (mail on) + b.test (mail OFF). u2 owns c.test (mail on).
-	// GH #1387 follow-up: a mail-OFF domain is now LISTED too (email_enabled=false)
-	// so the Status column + Enable action have a row to act on.
+	// u1 owns a.test (mail on) + b.test (mail on, quota-suspended) + off.test
+	// (mail OFF). u2 owns c.test (mail on).
+	// GH #1387 (johnnyq, 2026-09-01): the list shows ONLY domains where mail is
+	// active — a mail-OFF domain (off.test) is excluded, not shown as "Disabled".
 	cfg := MeMailDomainsConfig{
 		Domains: mdDomainRepo{ds: []models.Domain{
 			{ID: "da", UserID: "u1", Name: "a.test", EmailEnabled: true, SSLState: "active_le"},
-			{ID: "db", UserID: "u1", Name: "b.test", EmailEnabled: false, IsQuotaSuspended: true},
+			{ID: "db", UserID: "u1", Name: "b.test", EmailEnabled: true, IsQuotaSuspended: true},
+			{ID: "dd", UserID: "u1", Name: "off.test", EmailEnabled: false},
 			{ID: "dc", UserID: "u2", Name: "c.test", EmailEnabled: true},
 		}},
 		Mailboxes: mdMailboxRepo{mbs: []repository.MailboxWithDomain{
@@ -120,7 +122,7 @@ func TestMailDomains_AggregatesAndScopes(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 	if len(resp.Data) != 2 || resp.Total != 2 {
-		t.Fatalf("want both a.test + b.test (mail-off now listed), got %+v", resp.Data)
+		t.Fatalf("want only a.test + b.test (mail-active); off.test excluded, got %+v", resp.Data)
 	}
 	byName := map[string]mailDomainRow{}
 	for _, r := range resp.Data {
@@ -150,13 +152,16 @@ func TestMailDomains_AggregatesAndScopes(t *testing.T) {
 	}
 	b, ok := byName["b.test"]
 	if !ok {
-		t.Fatalf("b.test (mail-off) must be listed now: %+v", resp.Data)
+		t.Fatalf("b.test (mail on) must be listed: %+v", resp.Data)
 	}
-	if b.EmailEnabled {
-		t.Fatalf("b.test email_enabled = true, want false")
+	if !b.EmailEnabled {
+		t.Fatalf("b.test email_enabled = false, want true")
 	}
 	if !b.IsQuotaSuspended {
-		t.Fatalf("b.test is_quota_suspended = false, want true")
+		t.Fatalf("b.test is_quota_suspended = false, want true (suspended active domain still surfaces its state)")
+	}
+	if _, listed := byName["off.test"]; listed {
+		t.Fatalf("off.test (mail off) must be EXCLUDED from the mail-active list: %+v", resp.Data)
 	}
 }
 

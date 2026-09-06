@@ -598,6 +598,11 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			MailStats: repository.NewMailStatsRepository(deps.DB),
 			Agent:     deps.Agent,
 		})
+		// GH #1478: side-nav badge counts — GET /me/nav-counts (tenant) +
+		// GET /admin/nav-counts (admin). One aggregate call per side.
+		api.RegisterNavCountsRoutes(v1, api.NavCountsConfig{
+			Counts: repository.NewNavCountsRepository(deps.DB),
+		})
 		// JAB-171 phase 3b — tenant-facing notification channels + routing.
 		// Gated behind ServerSettings.TenantNotificationsEnabled (default OFF,
 		// no admin toggle until phase 4 lands the SSRF guard + email-verify),
@@ -710,6 +715,12 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				// dropped from GET.
 				ManagedIPs:     deps.ManagedIPs,
 				ServerSettings: deps.ServerSettings,
+				// GH #1238 change-owner (admin, JAB-380 step-up): AppInstalls
+				// arms the cross-tenant-credential refusal, AuditEvents records
+				// it, KratosClient gates the step-up.
+				AppInstalls:  deps.WordPressInstalls,
+				AuditEvents:  repository.NewAuditEventRepository(deps.DB),
+				KratosClient: deps.KratosClient,
 			})
 		}
 		// M36 — per-domain IP allow/deny lists.
@@ -810,6 +821,17 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				ServerSettings: deps.ServerSettings,
 				SSLCerts:       deps.SSLCerts,
 				SSLReconciler:  deps.Reconciler,
+			})
+			// GH #1387: mail-only domain delete (destructive teardown that keeps
+			// the web domain + DNS zone). Distinct route from the soft disable.
+			api.RegisterDomainMailPurgeRoutes(mailGroup, api.DomainMailPurgeHandlerConfig{
+				Domains:        deps.Domains,
+				Mailboxes:      deps.Mailboxes,
+				MailCerts:      deps.MailCerts,
+				Agent:          deps.Agent,
+				DNSZones:       deps.DNSZones,
+				DNSRecords:     deps.DNSRecords,
+				ServerSettings: deps.ServerSettings,
 			})
 		}
 		// M6.5 Email features: forwarders, autoresponders, catch-all, disclaimer,
@@ -1058,6 +1080,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Log:             deps.Log,
 				StrictRateLimit: rl.Strict(),
 				SSOKey:          deps.SSOKey,
+				Users:           deps.Users,
 			})
 		}
 		// M31.1 follow-up — DLQ inspector (list / replay / drop / clear).
@@ -1129,6 +1152,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Jobs:           deps.BackupJobs,
 				Destinations:   deps.BackupDestinations,
 				Users:          deps.Users,
+				Packages:       deps.Packages, // GH #1408 create-from-manifest
 				Databases:      deps.Databases,
 				DatabaseUsers:  deps.DatabaseUsers,
 				DatabaseGrants: deps.DatabaseUserGrants,
@@ -1155,6 +1179,10 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				CronJobs:       deps.CronJobs,
 				FtpAccounts:    deps.FtpAccounts,
 				LimitOverrides: deps.LimitOverrides,
+				// JAB-359: the last two schema-v2 sections; without them the admin
+				// manual backup bundle omitted egress policies/requests.
+				EgressPolicies: deps.UserEgressPolicies,
+				EgressRequests: deps.UserEgressRequests,
 				KratosClient:   deps.KratosClient,
 				Log:            deps.Log,
 				SSOKey:         deps.SSOKey,
@@ -1176,6 +1204,22 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				FtpAccounts:    deps.FtpAccounts,
 				DNSZones:       deps.DNSZones,
 				DNSRecords:     deps.DNSRecords,
+				// JAB-359: /me manual self-backup had the same schema-v2 wiring gap
+				// as the admin handler — a tenant's manual backup produced an
+				// incomplete bundle. Wire the full metadata repo set the builder
+				// consumes (matches BackupHandlerConfig + the scheduler).
+				SSLCerts:       deps.SSLCerts,
+				PHPPools:       deps.PHPPools,
+				PHPPoolIni:     deps.PHPPoolIniOverrides,
+				Forwarders:     deps.Forwarders,
+				Autoresponders: deps.Autoresponders,
+				MailboxShares:  deps.MailboxShares,
+				DNSSECKeys:     deps.DNSSECKeys,
+				SSHKeys:        deps.SSHKeys,
+				CronJobs:       deps.CronJobs,
+				LimitOverrides: deps.LimitOverrides,
+				EgressPolicies: deps.UserEgressPolicies,
+				EgressRequests: deps.UserEgressRequests,
 				// GH #454 Step 4: tenant scheduled-backup card. Schedules +
 				// Settings (the admin-owned cron time) gate the /me/backup-schedule
 				// routes; absent, the card's endpoints simply aren't mounted.

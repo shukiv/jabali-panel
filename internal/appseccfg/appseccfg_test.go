@@ -149,6 +149,150 @@ func TestRender_GeoExprAgentParity(t *testing.T) {
 	mustContain(t, d2, `in ["RU"]`, "deny + N")
 }
 
+// CrowdSec 1.8 AppSec bot detection (per-server, default OFF).
+
+func TestRender_BotDetectionHeaderRoundTrips(t *testing.T) {
+	off := Render(Opts{Mode: "off", Inband: []string{"x"}})
+	mustContain(t, off, "# jabali-bot-detection: off", "default off header")
+	// jabali-appsec itself must stay engine-version-agnostic: NONE of the 1.8
+	// challenge funcs may leak into it (it must keep loading on CrowdSec 1.7.x).
+	mustNotContain(t, off, "ExemptFromChallenge", "no challenge funcs in jabali-appsec")
+	mustNotContain(t, off, "SendChallenge", "no challenge funcs in jabali-appsec")
+
+	bal := Render(Opts{Mode: "off", Inband: []string{"x"}, BotDetection: "balanced"})
+	mustContain(t, bal, "# jabali-bot-detection: balanced", "balanced header")
+	mustNotContain(t, bal, "ExemptFromChallenge", "exemptions live in RenderBotExempt, never in jabali-appsec")
+
+	// Unknown mode fails safe to off.
+	weird := Render(Opts{Mode: "off", Inband: []string{"x"}, BotDetection: "aggressive"})
+	mustContain(t, weird, "# jabali-bot-detection: off", "unknown mode → off")
+}
+
+func TestRenderAcquis_OffSingular(t *testing.T) {
+	out := RenderAcquis(Opts{})
+	mustContain(t, out, "appsec_config: crowdsecurity/jabali-appsec\n", "singular form when off")
+	mustNotContain(t, out, "appsec_configs:", "no plural list when off")
+	mustContain(t, out, "listen_addr: 127.0.0.1:7422\n", "listener addr")
+	mustContain(t, out, "source: appsec\n", "appsec source")
+}
+
+func TestRenderAcquis_OnComposesSortedLeafConfigs(t *testing.T) {
+	out := RenderAcquis(Opts{
+		BotDetection: "balanced",
+		BotConfigs: []string{
+			"crowdsecurity/appsec-bot-challenge-scoring",
+			"crowdsecurity/appsec-bot-challenge-scoring-balanced",
+			"crowdsecurity/appsec-bot-challenge-exclude-api",
+		},
+	})
+	mustContain(t, out, "appsec_configs:\n", "plural composition form")
+	mustNotContain(t, out, "appsec_config: crowdsecurity", "must not also emit the singular key")
+	// jabali-appsec + jabali-bot-exempt lead, then the sorted leaf configs.
+	mustContain(t, out, ` - crowdsecurity/jabali-appsec
+ - crowdsecurity/jabali-bot-exempt
+ - crowdsecurity/appsec-bot-challenge-exclude-api
+ - crowdsecurity/appsec-bot-challenge-scoring
+ - crowdsecurity/appsec-bot-challenge-scoring-balanced
+`, "ordered: jabali configs first, then sorted leaf configs")
+}
+
+func TestRenderAcquis_ModeOnButNoConfigsStaysSingular(t *testing.T) {
+	// Belt: a mode with no discovered leaf configs must NOT emit a plural list
+	// referencing nothing (which would be a pointless/needless composition).
+	out := RenderAcquis(Opts{BotDetection: "balanced"})
+	mustContain(t, out, "appsec_config: crowdsecurity/jabali-appsec\n", "singular when no BotConfigs")
+	mustNotContain(t, out, "appsec_configs:", "no empty plural list")
+}
+
+func TestRenderBotExempt_AlwaysExemptsAcme(t *testing.T) {
+	out := RenderBotExempt(Opts{})
+	mustContain(t, out, "name: crowdsecurity/jabali-bot-exempt", "config name")
+	mustContain(t, out, "inband:\n  pre_eval:\n", "inband pre_eval hook (matches upstream exclude configs)")
+	// ACME is the highest-severity exemption: unconditional, every host.
+	mustContain(t, out, `- filter: req.URL.Path startsWith "/.well-known/acme-challenge/"`, "acme exempt filter")
+	mustContain(t, out, `ExemptFromChallenge("jabali-acme-http01")`, "acme exempt action")
+	// Panel + login + tools paths, incl. Kratos /.ory/ (the M6.6/login twin).
+	mustContain(t, out, `startsWith "/api/v1/"`, "panel api exempt")
+	mustContain(t, out, `startsWith "/.ory/"`, "kratos login exempt")
+	mustContain(t, out, `startsWith "/dav/"`, "webdav exempt")
+	mustContain(t, out, `ExemptFromChallenge("jabali-panel-paths")`, "panel paths exempt action")
+}
+
+func TestRenderBotExempt_PanelHostScopesPanelPathsButNotAcme(t *testing.T) {
+	out := RenderBotExempt(Opts{PanelHost: "panel.example.com"})
+	// Panel paths get host-scoped exactly like the on_match allowlist.
+	mustContain(t, out, `) && req.Host == "panel.example.com"`, "panel paths scoped to panel host")
+	// ...but ACME is NOT host-scoped (every tenant domain renews certs).
+	acmeLine := `    - filter: req.URL.Path startsWith "/.well-known/acme-challenge/"` + "\n"
+	if !strings.Contains(out, acmeLine) {
+		t.Fatalf("acme exemption must stay host-agnostic; got:\n%s", out)
+	}
+}
+
+func TestRenderBotExempt_PerDomainOptOut(t *testing.T) {
+	out := RenderBotExempt(Opts{
+		BotExemptHosts: []string{"Api.Example.com", "www.api.example.com", "api.example.com"},
+	})
+	mustContain(t, out, `req.Host == "api.example.com" || req.Host == "www.api.example.com"`, "sorted, deduped opt-out hosts")
+	mustContain(t, out, `ExemptFromChallenge("jabali-domain-optout")`, "distinct opt-out label")
+	// ACME + panel exemptions always present alongside.
+	mustContain(t, out, `ExemptFromChallenge("jabali-acme-http01")`, "acme still exempt")
+	mustNotContain(t, out, `startsWith "api."`, "host equality, never prefix")
+}
+
+func TestRenderBotExempt_NoOptOutWhenListEmpty(t *testing.T) {
+	out := RenderBotExempt(Opts{})
+	mustNotContain(t, out, "jabali-domain-optout", "no opt-out filter when list empty")
+	// Default scope is "all" — never the selected-mode exemptions.
+	mustNotContain(t, out, "jabali-selected", "default scope=all emits no selected-mode exempt")
+}
+
+func TestRender_BotScopeHeaderRoundTrips(t *testing.T) {
+	all := Render(Opts{Mode: "off", Inband: []string{"x"}, BotDetection: "balanced"})
+	mustContain(t, all, "# jabali-bot-detection-scope: all", "default scope header")
+	sel := Render(Opts{Mode: "off", Inband: []string{"x"}, BotDetection: "balanced", BotScope: "selected"})
+	mustContain(t, sel, "# jabali-bot-detection-scope: selected", "selected scope header")
+	weird := Render(Opts{Mode: "off", Inband: []string{"x"}, BotScope: "bogus"})
+	mustContain(t, weird, "# jabali-bot-detection-scope: all", "unknown scope → all")
+}
+
+func TestRenderBotExempt_SelectedChallengesOnlyIncluded(t *testing.T) {
+	out := RenderBotExempt(Opts{
+		BotScope:        "selected",
+		BotIncludeHosts: []string{"Shop.example.com", "www.shop.example.com", "shop.example.com"},
+	})
+	// Exempt everyone NOT in the include set → only included hosts are challenged.
+	mustContain(t, out, `req.Host not in ["shop.example.com", "www.shop.example.com"]`, "sorted, deduped include set, negated")
+	mustContain(t, out, `ExemptFromChallenge("jabali-selected-exclude")`, "selected-exclude label")
+	mustNotContain(t, out, "jabali-domain-optout", "opt-out block not emitted in selected scope")
+	// ACME still always exempt.
+	mustContain(t, out, `ExemptFromChallenge("jabali-acme-http01")`, "acme still exempt in selected scope")
+}
+
+func TestRenderBotExempt_SelectedEmptyChallengesNothing(t *testing.T) {
+	out := RenderBotExempt(Opts{BotScope: "selected"})
+	mustContain(t, out, "- filter: true\n", "unconditional exempt when nothing selected")
+	mustContain(t, out, `ExemptFromChallenge("jabali-selected-none")`, "selected-none label")
+}
+
+func TestRenderBotExempt_ExemptListIgnoredInSelectedScope(t *testing.T) {
+	// A stale opt-out list must not leak challenges through in selected mode.
+	out := RenderBotExempt(Opts{
+		BotScope:        "selected",
+		BotIncludeHosts: []string{"a.com"},
+		BotExemptHosts:  []string{"b.com"},
+	})
+	mustNotContain(t, out, `req.Host == "b.com"`, "exempt list is inert in selected scope")
+	mustContain(t, out, `req.Host not in ["a.com"]`, "only the include set drives selected scope")
+}
+
+func TestRenderBotExempt_WebmailHostEqualityNeverPrefix(t *testing.T) {
+	out := RenderBotExempt(Opts{WebmailHosts: []string{"Mail.Foo.com", "mail.foo.com", "mail.bar.com"}})
+	mustContain(t, out, `req.Host == "mail.bar.com" || req.Host == "mail.foo.com"`, "sorted, deduped host equality")
+	mustContain(t, out, `ExemptFromChallenge("jabali-webmail")`, "webmail exempt action")
+	mustNotContain(t, out, `startsWith "mail."`, "never a client-controlled Host prefix")
+}
+
 func TestSanitizeWebmailHosts(t *testing.T) {
 	in := []string{
 		"  Mail.Example.Com  ",

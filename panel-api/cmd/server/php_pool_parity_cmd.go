@@ -16,50 +16,26 @@ import (
 	"github.com/spf13/cobra"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/phppoolops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
-// reconcilePHPPoolCLI fires php.pool.apply for a pool, replicating
-// api.reconcilePHPPoolViaAgent (load user, build admin values/flags, apply,
-// persist status).
-func reconcilePHPPoolCLI(ctx context.Context, pool *models.PHPPool) error {
-	pools := repository.NewPHPPoolRepository(sharedDB)
-	user, err := repository.NewUserRepository(sharedDB).FindByID(ctx, pool.UserID)
-	if err != nil || user == nil || user.Username == nil {
-		return fmt.Errorf("resolve pool owner: %w", err)
+// phpPoolReconcileDeps builds the shared reconcile dependencies from the CLI's
+// process-wide DB handle + agent client. JAB-360: the CLI used to carry a
+// hand-copied reconcile that had drifted from the HTTP one (no versioned
+// slug/additive, no extended pm.* / slowlog / extensions / Xdebug), so a CLI
+// mutation on a non-default pool applied to the user's DEFAULT socket. Both
+// adapters now call phppoolops.ReconcileViaAgent.
+func phpPoolReconcileDeps() phppoolops.ReconcileDeps {
+	return phppoolops.ReconcileDeps{
+		Agent:     sharedAgent,
+		Users:     repository.NewUserRepository(sharedDB),
+		Overrides: repository.NewPHPPoolIniOverrideRepository(sharedDB),
+		Pools:     repository.NewPHPPoolRepository(sharedDB),
+		// GH #1422: carry the package exec-functions opt-out so a CLI pool
+		// reconcile matches the HTTP path and doesn't re-lock disable_functions.
+		Packages: repository.NewPackageRepository(sharedDB),
 	}
-	overrides, err := repository.NewPHPPoolIniOverrideRepository(sharedDB).ListByPool(ctx, pool.ID)
-	if err != nil {
-		return fmt.Errorf("list overrides: %w", err)
-	}
-	adminValues := []map[string]string{}
-	adminFlags := []map[string]string{}
-	for _, o := range overrides {
-		kv := map[string]string{"name": o.Directive, "value": o.Value}
-		if o.Kind == "flag" {
-			adminFlags = append(adminFlags, kv)
-		} else {
-			adminValues = append(adminValues, kv)
-		}
-	}
-	actx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	_, aerr := sharedAgent.Call(actx, "php.pool.apply", map[string]any{
-		"username":                     *user.Username,
-		"php_version":                  pool.PHPVersion,
-		"pm_mode":                      pool.PmMode,
-		"pm_max_children":              pool.PmMaxChildren,
-		"process_idle_timeout_seconds": pool.ProcessIdleTimeoutSeconds,
-		"admin_values":                 adminValues,
-		"admin_flags":                  adminFlags,
-	})
-	if aerr != nil {
-		msg := "agent failed: " + aerr.Error()
-		_ = pools.SetStatus(ctx, pool.ID, "error", &msg)
-		return aerr
-	}
-	_ = pools.SetStatus(ctx, pool.ID, "ready", nil)
-	return nil
 }
 
 func newPHPPoolListCmd() *cobra.Command {
@@ -105,10 +81,18 @@ func newPHPPoolCreateCmd() *cobra.Command {
 			if user == "" || version == "" {
 				return fmt.Errorf("--user and --php-version are required")
 			}
-			switch pmMode {
-			case "ondemand", "dynamic", "static":
-			default:
-				return fmt.Errorf("--pm-mode must be ondemand|dynamic|static")
+			// JAB-360: validate + clamp through the shared create-side validator
+			// (admin-scoped caps — the operator CLI is privileged) so a CLI pool
+			// can't exceed the pm_max_children cap / idle ceiling / FPM
+			// dynamic-mode invariants a tenant-facing create enforces. It also
+			// fills defaults for the extended pm.* set the CLI has no flags for.
+			tuning, msg, _, ok := phppoolops.ResolveCreateTuning(true, phppoolops.CreateTuning{
+				PmMode:                    pmMode,
+				PmMaxChildren:             maxChildren,
+				ProcessIdleTimeoutSeconds: idleTimeout,
+			})
+			if !ok {
+				return fmt.Errorf("invalid pool tuning: %s", msg)
 			}
 			ctx, cancel := context.WithTimeout(cmd.Context(), 60*time.Second)
 			defer cancel()
@@ -132,13 +116,20 @@ func newPHPPoolCreateCmd() *cobra.Command {
 			}
 			pool := &models.PHPPool{
 				ID: ulid.Make().String(), UserID: u.ID, PHPVersion: version,
-				PmMode: pmMode, PmMaxChildren: maxChildren, ProcessIdleTimeoutSeconds: idleTimeout,
-				Status: "pending",
+				PmMode:                         tuning.PmMode,
+				PmMaxChildren:                  tuning.PmMaxChildren,
+				ProcessIdleTimeoutSeconds:      tuning.ProcessIdleTimeoutSeconds,
+				PmStartServers:                 tuning.PmStartServers,
+				PmMinSpareServers:              tuning.PmMinSpareServers,
+				PmMaxSpareServers:              tuning.PmMaxSpareServers,
+				PmMaxRequests:                  tuning.PmMaxRequests,
+				RequestTerminateTimeoutSeconds: tuning.RequestTerminateTimeoutSeconds,
+				Status:                         "pending",
 			}
 			if err := repo.Create(ctx, pool); err != nil {
 				return fmt.Errorf("create pool: %w", err)
 			}
-			if err := reconcilePHPPoolCLI(ctx, pool); err != nil {
+			if err := phppoolops.ReconcileViaAgent(phpPoolReconcileDeps(), *pool); err != nil {
 				return fmt.Errorf("pool created but apply failed: %w", err)
 			}
 			cliAuditOK(ctx, "php_pool.create", "php_pool", pool.ID, &u.ID)
@@ -272,7 +263,7 @@ func newPHPPoolIniAddCmd() *cobra.Command {
 			if err := repository.NewPHPPoolIniOverrideRepository(sharedDB).Create(ctx, ov); err != nil {
 				return fmt.Errorf("create override: %w", err)
 			}
-			if err := reconcilePHPPoolCLI(ctx, pool); err != nil {
+			if err := phppoolops.ReconcileViaAgent(phpPoolReconcileDeps(), *pool); err != nil {
 				return fmt.Errorf("override saved but apply failed: %w", err)
 			}
 			cliAuditOK(ctx, "php_pool.ini_add", "php_pool_ini", ov.ID, &pool.UserID)
@@ -309,7 +300,7 @@ func newPHPPoolIniUpdateCmd() *cobra.Command {
 			if perr != nil {
 				return fmt.Errorf("load pool: %w", perr)
 			}
-			if err := reconcilePHPPoolCLI(ctx, pool); err != nil {
+			if err := phppoolops.ReconcileViaAgent(phpPoolReconcileDeps(), *pool); err != nil {
 				return fmt.Errorf("override updated but apply failed: %w", err)
 			}
 			cliAuditOK(ctx, "php_pool.ini_update", "php_pool_ini", ov.ID, &pool.UserID)
@@ -343,7 +334,7 @@ func newPHPPoolIniRemoveCmd() *cobra.Command {
 			if perr != nil {
 				return fmt.Errorf("load pool: %w", perr)
 			}
-			if err := reconcilePHPPoolCLI(ctx, pool); err != nil {
+			if err := phppoolops.ReconcileViaAgent(phpPoolReconcileDeps(), *pool); err != nil {
 				return fmt.Errorf("override removed but apply failed: %w", err)
 			}
 			cliAuditOK(ctx, "php_pool.ini_remove", "php_pool_ini", ov.ID, &pool.UserID)

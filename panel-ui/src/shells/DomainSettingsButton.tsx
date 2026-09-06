@@ -1234,26 +1234,25 @@ export const DomainNginxSection = ({ domain }: { domain: DomainSettingsTarget })
 // (caps.tenant_domain_options_enabled); the backend re-enforces the safe subset
 // (validateTenantNginxRules) so the type filter here is UX, not the security
 // boundary.
-export const TenantNginxRulesButton = ({
+// TenantNginxRulesPanel — GH #1543. The Rule Builder body, rendered both inline
+// (a tab on the tenant Web Domain page) and inside the row-menu Modal, which now
+// delegates here. Re-syncs from domain.nginx_rules when it changes underneath
+// so an inline pane that stays mounted doesn't clobber a concurrent save.
+export const TenantNginxRulesPanel = ({
   domain,
-  open: controlledOpen,
-  onClose,
+  onSaved,
 }: {
   domain: DomainSettingsTarget;
-  open?: boolean;
-  onClose?: () => void;
+  onSaved?: () => void;
 }) => {
-  const [internalOpen, setInternalOpen] = useState(false);
-  const open = controlledOpen ?? internalOpen;
-  const close = () => (onClose ? onClose() : setInternalOpen(false));
   const [rules, setRules] = useState<NginxRule[]>(domain.nginx_rules ?? []);
   const [saving, setSaving] = useState(false);
   const qc = useQueryClient();
 
   useEffect(() => {
-    if (open) setRules(domain.nginx_rules ?? []);
+    setRules(domain.nginx_rules ?? []);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, domain.id, JSON.stringify(domain.nginx_rules)]);
+  }, [domain.id, JSON.stringify(domain.nginx_rules)]);
 
   const handleSave = async () => {
     setSaving(true);
@@ -1263,7 +1262,7 @@ export const TenantNginxRulesButton = ({
       feedback.message.success("Rewrite rules saved — applied on the next reconcile");
       qc.invalidateQueries({ queryKey: ["list", "domains"] });
       qc.invalidateQueries({ queryKey: ["one", "domains", domain.id] });
-      close();
+      onSaved?.();
     } catch (err) {
       const e = err as {
         response?: { data?: { detail?: string } };
@@ -1276,33 +1275,18 @@ export const TenantNginxRulesButton = ({
   };
 
   return (
-    <>
-      {controlledOpen === undefined && (
-        <Button icon={<ToolOutlined />} onClick={() => setInternalOpen(true)}>
-          Rewrite rules
+    <div>
+      <Typography.Paragraph type="secondary">
+        Add rewrite rules and custom response headers for this domain. Rewrites
+        must point to a local path on your own site (no external URLs or
+        proxying).
+      </Typography.Paragraph>
+      <RuleBuilder rules={rules} onRulesChange={setRules} allowedTypes={["rewrite", "custom_header"]} />
+      <div style={{ marginTop: 16 }}>
+        <Button type="primary" loading={saving} onClick={handleSave}>
+          Save
         </Button>
-      )}
-      <Modal
-        open={open}
-        title="Rewrite & header rules"
-        onCancel={close}
-        onOk={handleSave}
-        okText="Save"
-        confirmLoading={saving}
-        width={720}
-        destroyOnClose
-      >
-        <Typography.Paragraph type="secondary">
-          Add rewrite rules and custom response headers for this domain. Rewrites
-          must point to a local path on your own site (no external URLs or
-          proxying).
-        </Typography.Paragraph>
-        <RuleBuilder
-          rules={rules}
-          onRulesChange={setRules}
-          allowedTypes={["rewrite", "custom_header"]}
-        />
-      </Modal>
-    </>
+      </div>
+    </div>
   );
 };

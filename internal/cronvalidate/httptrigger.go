@@ -212,13 +212,14 @@ func isHTTPTriggerBinary(raw string) bool {
 }
 
 // ValidateAny is the single command-validation entry point for callers
-// whose command may be either a wp/php exec OR a curl/wget http-trigger.
-// It dispatches on the first token: curl/wget -> ValidateHTTPTrigger
-// (gated on ownedDomains), everything else -> ValidateCommand (gated on
-// ownedDocroots, the wp/php closed set).
-func ValidateAny(raw string, ownedDocroots, ownedDomains []string) (*Command, error) {
+// whose command may be either a wp/php/python/node exec OR a curl/wget
+// http-trigger. It dispatches on the first token: curl/wget ->
+// ValidateHTTPTrigger (gated on ownedDomains), everything else ->
+// ValidateCommand (gated on ownedDocroots for wp/php, plus ownedHome for
+// python/node scripts).
+func ValidateAny(raw string, ownedDocroots, ownedDomains []string, ownedHome string) (*Command, error) {
 	if isHTTPTriggerBinary(raw) {
 		return ValidateHTTPTrigger(raw, ownedDomains)
 	}
-	return ValidateCommand(raw, ownedDocroots)
+	return ValidateCommand(raw, ownedDocroots, ownedHome)
 }

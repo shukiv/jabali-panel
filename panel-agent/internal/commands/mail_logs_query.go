@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
@@ -46,8 +47,14 @@ import (
 const (
 	mailLogPrefix         = "delivery"
 	mailLogEventQueued    = "(queue.message-queued)"
-	mailLogEventCompleted = "(delivery.completed)"
-	mailLogEventFailed    = "(delivery.failed)"
+	// mailLogEventAuthQueued is the queue event Stalwart emits for an
+	// AUTHENTICATED submission — i.e. a tenant sending mail (GH #1416).
+	// Inbound relay produces queue.message-queued; a user send produces this
+	// distinct event, so it must be treated as a queued line too or per-domain
+	// "Sent" (and the Mail > Logs outbound rows) never see a single user send.
+	mailLogEventAuthQueued = "(queue.authenticated-message-queued)"
+	mailLogEventCompleted  = "(delivery.completed)"
+	mailLogEventFailed     = "(delivery.failed)"
 	// mailLogMaxScan bounds memory: at most this many matching lines are
 	// parsed across all log files before filtering. Newest files are read
 	// first, so the cap drops only the oldest history.
@@ -109,7 +116,8 @@ type parsedMailLine struct {
 // tracer line. Returns ok=false for any non-message line (lifecycle events,
 // blank lines) so callers can skip them.
 func parseMailLogLine(line string) (parsedMailLine, bool) {
-	queued := strings.Contains(line, mailLogEventQueued)
+	queued := strings.Contains(line, mailLogEventQueued) ||
+		strings.Contains(line, mailLogEventAuthQueued)
 	if !queued &&
 		!strings.Contains(line, mailLogEventCompleted) &&
 		!strings.Contains(line, mailLogEventFailed) {
@@ -384,6 +392,26 @@ func containsDomain(addr, domain string) bool {
 // ensureDeliveryTracer creates the #jabali-delivery-log Stalwart Log tracer if
 // no tracer with prefix "delivery" exists. Mirrors install/stalwart/
 // apply-plan.json.tmpl. Idempotent + change-gated (reloads only on create).
+// deliveryTracerEvents is the include-only event set the delivery Log tracer
+// must carry. queue.message-queued is inbound relay + local delivery;
+// queue.authenticated-message-queued (GH #1416) is a tenant sending mail — a
+// distinct Stalwart event, so without it per-domain "Sent" and the Mail > Logs
+// outbound rows never see a single user send.
+func deliveryTracerEvents() map[string]any {
+	return map[string]any{
+		"queue.message-queued":               true,
+		"queue.authenticated-message-queued": true,
+		"delivery.completed":                 true,
+		"delivery.failed":                    true,
+	}
+}
+
+// deliveryTracerBackfillOnce bounds the GH #1416 event back-fill — which ends
+// in a settings reload — to a single attempt per agent process. Belt against a
+// tracer whose `events` can't be read back in the shape we expect: without it,
+// a false "missing the event" read would reload on EVERY mail.logs_query.
+var deliveryTracerBackfillOnce sync.Once
+
 func ensureDeliveryTracer(ctx context.Context) error {
 	var qr jmapQueryResult
 	if err := jmapCall(ctx, "x:Tracer/query", map[string]any{}, &qr); err != nil {
@@ -394,13 +422,31 @@ func ensureDeliveryTracer(ctx context.Context) error {
 		if err := jmapCall(ctx, "x:Tracer/get", map[string]any{"ids": qr.IDs}, &gr); err != nil {
 			return fmt.Errorf("tracer get: %w", err)
 		}
-		for _, raw := range gr.List {
+		for i, raw := range gr.List {
 			var t struct {
-				Prefix string `json:"prefix"`
+				ID     string          `json:"id"`
+				Prefix string          `json:"prefix"`
+				Events map[string]bool `json:"events"`
 			}
-			if json.Unmarshal(raw, &t) == nil && t.Prefix == "delivery" {
-				return nil // already provisioned
+			if json.Unmarshal(raw, &t) != nil || t.Prefix != "delivery" {
+				continue
 			}
+			// Already carries the authenticated-send event — nothing to do.
+			if t.Events["queue.authenticated-message-queued"] {
+				return nil
+			}
+			// GH #1416: a tracer provisioned before authenticated sends were
+			// tracked is stranded by the old "already provisioned → return" path.
+			// Patch the event set in place (once per process — see the Once).
+			id := t.ID
+			if id == "" && i < len(qr.IDs) {
+				id = qr.IDs[i]
+			}
+			var patchErr error
+			deliveryTracerBackfillOnce.Do(func() {
+				patchErr = patchDeliveryTracerEvents(ctx, id)
+			})
+			return patchErr
 		}
 	}
 	args := map[string]any{"create": map[string]any{"jabali-delivery-log": map[string]any{
@@ -408,11 +454,7 @@ func ensureDeliveryTracer(ctx context.Context) error {
 		"path": mailLogDir, "prefix": mailLogPrefix, "rotate": "daily",
 		"ansi": false, "multiline": false, "lossy": false,
 		"eventsPolicy": "include",
-		"events": map[string]any{
-			"queue.message-queued": true,
-			"delivery.completed":   true,
-			"delivery.failed":      true,
-		},
+		"events":       deliveryTracerEvents(),
 	}}}
 	var res jmapSetResult
 	if err := jmapCall(ctx, "x:Tracer/set", args, &res); err != nil {
@@ -420,6 +462,26 @@ func ensureDeliveryTracer(ctx context.Context) error {
 	}
 	if reason, bad := res.NotCreated["jabali-delivery-log"]; bad {
 		return fmt.Errorf("tracer create refused: %s", string(reason))
+	}
+	return reloadStalwartSettings(ctx)
+}
+
+// patchDeliveryTracerEvents rewrites an existing delivery tracer's include-only
+// event set to the current desired set (GH #1416 back-fill) and reloads.
+func patchDeliveryTracerEvents(ctx context.Context, id string) error {
+	if id == "" {
+		return fmt.Errorf("delivery tracer missing id, cannot patch events")
+	}
+	upd := map[string]any{"update": map[string]any{id: map[string]any{
+		"eventsPolicy": "include",
+		"events":       deliveryTracerEvents(),
+	}}}
+	var res jmapSetResult
+	if err := jmapCall(ctx, "x:Tracer/set", upd, &res); err != nil {
+		return fmt.Errorf("tracer update events: %w", err)
+	}
+	if reason, bad := res.NotUpdated[id]; bad {
+		return fmt.Errorf("tracer update refused: %s", string(reason))
 	}
 	return reloadStalwartSettings(ctx)
 }

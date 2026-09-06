@@ -53,10 +53,14 @@ import {
   useRemoveCrowdsecAllowlist,
   useSyncCountryExemption,
   useUpdateAppSecGeoblock,
+  useAppSecBotDetection,
+  useUpdateAppSecBotDetection,
   useUpdateCountryExemption,
   useUpdateCrowdsecCaptcha,
   useUpdateCrowdsecProfiles,
   type AppSecGeoblockMode,
+  type AppSecBotDetectionMode,
+  type AppSecBotDetectionScope,
   type CrowdsecAlert,
   type CrowdsecAllowlistEntry,
   type CrowdsecCaptchaProvider,
@@ -162,6 +166,7 @@ export const AdminSecurityCrowdsec = () => {
     "alerts",
     "captcha",
     "appsec",
+    "botdetection",
     "settings",
     "blocklists",
     "hub",
@@ -330,6 +335,7 @@ export const AdminSecurityCrowdsec = () => {
           { key: "alerts", label: "Alerts", children: <AlertsCard /> },
           { key: "captcha", label: "Captcha", children: <CaptchaPanel /> },
           { key: "appsec", label: "Block Country", children: <AppSecGeoblockCard /> },
+          { key: "botdetection", label: "Bot Detection", children: <AppSecBotDetectionCard /> },
           { key: "settings", label: "Settings", children: <SettingsPanel /> },
           { key: "blocklists", label: "Blocklists", children: <BlocklistsCard /> },
         ]}
@@ -590,6 +596,153 @@ const AppSecGeoblockCard = () => {
                 if (geoblock.data) {
                   setMode(geoblock.data.mode);
                   setCountries(geoblock.data.countries);
+                }
+              }}
+            >
+              Reset
+            </Button>
+          )}
+        </Space>
+      </Space>
+    </Card>
+  );
+};
+
+// AppSecBotDetectionCard — CrowdSec 1.8 AppSec bot detection (per-server,
+// default OFF). When on, the upstream appsec-bot-challenge scoring composes
+// into the AppSec engine and suspected bots get a self-contained JS /
+// proof-of-work interstitial before reaching ANY hosted site. Verified good
+// bots (search engines, AI crawlers, social, monitoring) and challenge-unsafe
+// paths (ACME HTTP-01, the panel API + login, DB tools, WebDAV, webmail) are
+// exempt automatically. Needs CrowdSec engine >= 1.8 + bouncer >= 1.2.2 — the
+// agent version-gates and surfaces a clear error otherwise.
+const AppSecBotDetectionCard = () => {
+  const bot = useAppSecBotDetection();
+  const updateBot = useUpdateAppSecBotDetection();
+
+  const [mode, setMode] = useState<AppSecBotDetectionMode>("off");
+  const [scope, setScope] = useState<AppSecBotDetectionScope>("all");
+
+  useEffect(() => {
+    if (bot.data) {
+      setMode(bot.data.mode);
+      setScope(bot.data.scope ?? "all");
+    }
+  }, [bot.data]);
+
+  const dirty =
+    bot.data !== undefined &&
+    (mode !== bot.data.mode || scope !== (bot.data.scope ?? "all"));
+
+  const apply = async () => {
+    try {
+      await updateBot.mutateAsync({ mode, scope });
+      feedback.message.success(
+        mode === "off"
+          ? "Bot detection disabled — crowdsec restarted"
+          : `Bot detection set to ${mode} (${scope === "selected" ? "selected domains" : "all sites"}) — crowdsec restarted`,
+      );
+    } catch (e: unknown) {
+      feedback.message.error(
+        e instanceof Error ? e.message : "Failed to apply bot detection",
+      );
+    }
+  };
+
+  return (
+    <Card size="small" title="AppSec bot detection (server-wide)" loading={bot.isLoading}>
+      <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+        <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
+          Challenges suspected bots with a JavaScript / proof-of-work page
+          before they reach any hosted site (CrowdSec 1.8 AppSec). Balanced
+          rejects at a fingerprint score ≥ 75, Permissive at ≥ 100. Verified
+          good bots (search engines, AI crawlers, social, monitoring) and
+          challenge-unsafe paths (Let&apos;s Encrypt validation, the panel and
+          its APIs, DB tools, WebDAV, webmail) are exempt automatically.
+        </Typography.Paragraph>
+        <Alert
+          type="warning"
+          showIcon
+          message="This affects every site on the server"
+          description={
+            "Suspected bots on ALL hosted domains get an interstitial challenge. " +
+            "Legitimate non-browser clients that can't run JavaScript (some API " +
+            "clients, uptime monitors, scripted integrations) may be blocked — the " +
+            "built-in exemptions cover common cases, but test after enabling. " +
+            "Requires CrowdSec engine ≥ 1.8 and the nginx bouncer ≥ 1.2.2."
+          }
+        />
+        <div>
+          <Typography.Text strong>Mode: </Typography.Text>
+          <Segmented
+            value={mode}
+            onChange={(v) => setMode(v as AppSecBotDetectionMode)}
+            options={[
+              { label: "Off", value: "off" },
+              { label: "Balanced", value: "balanced" },
+              { label: "Permissive", value: "permissive" },
+            ]}
+          />
+        </div>
+        {mode !== "off" && (
+          <div>
+            <Typography.Text strong>Applies to: </Typography.Text>
+            <Segmented
+              value={scope}
+              onChange={(v) => setScope(v as AppSecBotDetectionScope)}
+              options={[
+                { label: "All sites", value: "all" },
+                { label: "Selected domains", value: "selected" },
+              ]}
+            />
+          </div>
+        )}
+        {mode !== "off" && scope === "selected" && (
+          <Alert
+            type="info"
+            showIcon
+            message="Only the domains you mark are challenged"
+            description={
+              "In Selected mode, only domains flagged “Include in bot-detection " +
+              "challenge” (in each domain's settings) get the challenge — every " +
+              "other site is left alone. If no domain is flagged, nothing is " +
+              "challenged."
+            }
+          />
+        )}
+        {mode !== "off" && scope === "all" && (
+          <Alert
+            type="info"
+            showIcon
+            message="Every site is challenged"
+            description={
+              "In All-sites mode, every hosted domain is challenged. Exempt " +
+              "individual sites with “Exempt from bot-detection challenge” in " +
+              "each domain's settings."
+            }
+          />
+        )}
+        <Space>
+          <Popconfirm
+            title="Apply bot detection?"
+            description={
+              mode === "off"
+                ? "Disables the bot challenge server-wide. CrowdSec restarts (brief AppSec gap)."
+                : `${mode === "balanced" ? "Balanced" : "Permissive"} challenge mode across every hosted site. CrowdSec restarts (brief AppSec gap) — this can take up to a minute.`
+            }
+            okText="Apply"
+            onConfirm={apply}
+            disabled={!dirty || updateBot.isPending}
+          >
+            <Button type="primary" disabled={!dirty} loading={updateBot.isPending}>
+              Apply
+            </Button>
+          </Popconfirm>
+          {dirty && (
+            <Button
+              onClick={() => {
+                if (bot.data) {
+                  setMode(bot.data.mode);
                 }
               }}
             >

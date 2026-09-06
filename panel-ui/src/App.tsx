@@ -86,6 +86,7 @@ const UserDashboard = lazy(() => import("./shells/user/UserDashboard").then((m) 
 const FileManagerPage = lazy(() => import("./shells/user/files/FileManagerPage").then((m) => ({ default: m.FileManagerPage })));
 const AdminFileManagerPage = lazy(() => import("./shells/admin/files/AdminFileManagerPage").then((m) => ({ default: m.AdminFileManagerPage })));
 const UserDomainList = lazy(() => import("./shells/user/domains/UserDomainList").then((m) => ({ default: m.UserDomainList })));
+const WebDomainPage = lazy(() => import("./shells/user/domains/WebDomainPage").then((m) => ({ default: m.WebDomainPage })));
 const UserDatabasesPage = lazy(() => import("./shells/user/databases/UserDatabasesPage").then((m) => ({ default: m.UserDatabasesPage })));
 const DNSRecordsPage = lazy(() => import("./shells/dns/DNSRecordsPage").then((m) => ({ default: m.DNSRecordsPage })));
 const DNSZonesOverviewPage = lazy(() => import("./shells/admin/dns/DNSZonesOverviewPage").then((m) => ({ default: m.DNSZonesOverviewPage })));
@@ -363,7 +364,11 @@ const ThemedApp = () => {
             <Route path="domains">
               <Route index element={<UserDomainList />} />
               <Route path="create" element={<Navigate to="../domains" replace />} />
-              <Route path=":id/dns" element={<DNSRecordsPage />} />
+              {/* GH #1543: DNS is now a tab on the Web Domain page — :id/:tab
+                  catches "dns" and WebDomainPage renders DNSRecordsPanel embedded.
+                  Admin keeps its standalone /jabali-admin/domains/:id/dns route. */}
+              <Route path=":id" element={<WebDomainPage />} />
+              <Route path=":id/:tab" element={<WebDomainPage />} />
             </Route>
             <Route path="databases">
               <Route index element={<UserDatabasesPage />} />
