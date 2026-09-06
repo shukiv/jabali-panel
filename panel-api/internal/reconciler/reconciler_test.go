@@ -2247,9 +2247,15 @@ func (f *fakePackageRepoMin) EnsureDefaults(context.Context) error              
 type fakeIniOverrideRepo struct {
 	repository.PHPPoolIniOverrideRepository
 	byPool map[string][]models.PHPPoolIniOverride
+	// err, when set, makes ListByPool fail — models a DB read error so the
+	// override-aware apply paths can be tested for fail-closed behaviour.
+	err error
 }
 
 func (f *fakeIniOverrideRepo) ListByPool(_ context.Context, poolID string) ([]models.PHPPoolIniOverride, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
 	return f.byPool[poolID], nil
 }
 
@@ -2280,7 +2286,9 @@ func newPoolReconcilerWithPkg(pkg *models.HostingPackage, packageID *string) (*R
 		WithPHPPools(phpPoolRepo)
 	// Wire an empty ini-override repo so the GH #1422 fan-out routes through the
 	// override-aware ReconcileViaAgent (a nil repo makes it a fail-closed no-op).
-	// applyPHPPool-driven tests ignore overrides, so an empty repo is harmless.
+	// applyPHPPool now reads it too (GH #1550), so an empty repo means every
+	// sweep apply carries empty admin_values/admin_flags — harmless for tests
+	// that don't assert those keys.
 	r.WithPHPPoolIniOverrides(&fakeIniOverrideRepo{byPool: map[string][]models.PHPPoolIniOverride{}})
 	if pkg != nil {
 		r.WithPackages(&fakePackageRepoMin{pkgs: map[string]*models.HostingPackage{pkg.ID: pkg}})
@@ -2308,6 +2316,62 @@ func TestApplyPHPPool_DisableFunctionsByPackage(t *testing.T) {
 	p2 := applyCallParams(t, agent2)
 	_, ok2 := p2["disable_functions"]
 	require.False(t, ok2, "default package must NOT send disable_functions (agent uses safe default)")
+}
+
+// GH #1550: the periodic sweep (applyPHPPool) must carry the pool's tenant
+// php_admin_value / php_admin_flag overrides. The agent re-renders the whole
+// pool conf from these params, so a sweep re-apply that omitted them wiped
+// every override the tenant set until their next PHP-settings save. Assert the
+// sweep's apply sends admin_values / admin_flags partitioned by Kind.
+func TestApplyPHPPool_CarriesIniOverrides(t *testing.T) {
+	r, agent, _ := newPoolReconcilerWithPkg(nil, nil)
+	r.WithPHPPoolIniOverrides(&fakeIniOverrideRepo{byPool: map[string][]models.PHPPoolIniOverride{
+		"pool-1": {
+			{Directive: "memory_limit", Value: "256M", Kind: "value"},
+			{Directive: "display_errors", Value: "On", Kind: "flag"},
+		},
+	}})
+
+	r.ReconcilePHPPools(context.Background())
+
+	p := applyCallParams(t, agent)
+	require.Equal(t, []map[string]string{{"name": "memory_limit", "value": "256M"}},
+		p["admin_values"], "sweep must carry the pool's php_admin_value overrides")
+	require.Equal(t, []map[string]string{{"name": "display_errors", "value": "On"}},
+		p["admin_flags"], "sweep must carry the pool's php_admin_flag overrides")
+}
+
+// GH #1550: a DB read error while loading overrides must fail closed — skip the
+// apply and mark the pool error for a next-tick retry — rather than re-render
+// the pool with no overrides (which is the very bug this fixes, differently
+// triggered). The agent must NOT be called.
+func TestApplyPHPPool_IniOverrideListErrorFailsClosed(t *testing.T) {
+	r, agent, poolRepo := newPoolReconcilerWithPkg(nil, nil)
+	r.WithPHPPoolIniOverrides(&fakeIniOverrideRepo{err: errors.New("db down")})
+
+	r.ReconcilePHPPools(context.Background())
+
+	require.Empty(t, filterCallsByPrefix(agent.calls, "php.pool.apply"),
+		"an override-list read error must skip the apply (fail-closed)")
+	require.Equal(t, "error", poolRepo.pools["pool-1"].Status,
+		"the pool must be marked error so the next tick retries")
+}
+
+// GH #1550: an unwired (nil) override repo leaves the admin_values / admin_flags
+// keys off the params entirely, which the agent treats as "no overrides" —
+// matching the behaviour before this change. Fail-safe: a missing wiring can
+// only omit overrides, never fabricate them.
+func TestApplyPHPPool_NilIniOverrideRepoOmitsKeys(t *testing.T) {
+	r, agent, _ := newPoolReconcilerWithPkg(nil, nil)
+	r.phpPoolIniOverrides = nil
+
+	r.ReconcilePHPPools(context.Background())
+
+	p := applyCallParams(t, agent)
+	_, hasValues := p["admin_values"]
+	_, hasFlags := p["admin_flags"]
+	require.False(t, hasValues, "nil override repo must leave admin_values off the params")
+	require.False(t, hasFlags, "nil override repo must leave admin_flags off the params")
 }
 
 // GH #1422: flipping php_exec_enabled must reach a domain pinned to a

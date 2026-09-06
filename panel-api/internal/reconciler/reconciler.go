@@ -1670,6 +1670,27 @@ func (r *Reconciler) applyPHPPool(ctx context.Context, user *models.User, pool *
 		"xdebug_enabled":                    pool.XdebugEnabled,
 	}
 
+	// GH #1550: carry the pool's tenant php_admin_value / php_admin_flag
+	// overrides. The agent renders the whole pool conf from these params (no
+	// merge), so a sweep re-apply that omits them wipes every override the
+	// tenant set until their next PHP-settings save. Mirrors the shape
+	// phppoolops.ReconcileViaAgent (the save path) builds. Fail-closed on a
+	// read error: skip the apply and retry next tick rather than re-render the
+	// pool with no overrides. A nil repo (unwired) leaves the keys off, which
+	// the agent treats as "no overrides" — matching the prior behaviour.
+	if r.phpPoolIniOverrides != nil {
+		overrides, oerr := r.phpPoolIniOverrides.ListByPool(ctx, pool.ID)
+		if oerr != nil {
+			errMsg := fmt.Sprintf("list ini overrides: %v", oerr)
+			r.log.Error("failed to list PHP pool ini overrides", "pool_id", pool.ID, "err", oerr)
+			r.phpPools.SetStatus(ctx, pool.ID, "error", &errMsg)
+			return
+		}
+		adminValues, adminFlags := phppoolops.SplitIniOverrides(overrides)
+		params["admin_values"] = adminValues
+		params["admin_flags"] = adminFlags
+	}
+
 	// GH #402: if the user's package opts out of the #401 command-exec
 	// lockdown, send disable_functions="" (explicit opt-out -> agent emits no
 	// line). Omitting the key entirely (the default) lets the agent apply its
