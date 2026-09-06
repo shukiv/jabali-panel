@@ -49,3 +49,44 @@ func TestNotificationChannelTestCmd_RefusesDisabled(t *testing.T) {
 		t.Errorf("!ch.Enabled guard (idx %d) must sit between FindByID (idx %d) and the Envelope construction (idx %d)", guard, findByID, publish)
 	}
 }
+
+// TestNotificationChannelCreateCmd_EnforcesTenantOwnerPolicy pins that the
+// operator CLI `notification channels create --user <id>` runs the shared
+// notifchannelops owner policy in the same order the tenant HTTP handler does —
+// the JAB-308 AC1/AC2 fix. Without it the CLI created a tenant-owned channel
+// that skipped the kind allowlist, the own-address email forcing (anti-relay /
+// SSRF) and the per-user quota the API enforces. Order matters and is pinned:
+// CheckKindAllowed → ForceOwnEmailConfig → ValidateChannelKindConfig →
+// CheckQuota (allowlist before the owner-email lookup; forcing before per-kind
+// config validation so the forced fields are validated; quota last). Source-pin
+// because the command is direct-DB with no seam to run without a live MariaDB;
+// non-vacuous because none of the notifchannelops calls existed on main.
+// Falsify by deleting any of the four calls.
+func TestNotificationChannelCreateCmd_EnforcesTenantOwnerPolicy(t *testing.T) {
+	src, err := os.ReadFile("notification_send_cmd.go")
+	if err != nil {
+		t.Fatalf("read notification_send_cmd.go: %v", err)
+	}
+	s := string(src)
+
+	start := strings.Index(s, "func newNotificationChannelCreateCmd()")
+	if start < 0 {
+		t.Fatalf("newNotificationChannelCreateCmd not found")
+	}
+	body := s[start:]
+	if next := strings.Index(body[1:], "\nfunc "); next >= 0 {
+		body = body[:next+1]
+	}
+
+	allowlist := strings.Index(body, "notifchannelops.CheckKindAllowed(")
+	force := strings.Index(body, "notifchannelops.ForceOwnEmailConfig(")
+	kindConfig := strings.Index(body, "api.ValidateChannelKindConfig(")
+	quota := strings.Index(body, "notifchannelops.CheckQuota(")
+
+	if allowlist < 0 || force < 0 || kindConfig < 0 || quota < 0 {
+		t.Fatalf("expected CheckKindAllowed + ForceOwnEmailConfig + ValidateChannelKindConfig + CheckQuota in the create command; got allowlist=%d force=%d kindConfig=%d quota=%d", allowlist, force, kindConfig, quota)
+	}
+	if !(allowlist < force && force < kindConfig && kindConfig < quota) {
+		t.Errorf("owner-policy calls out of order: CheckKindAllowed(%d) < ForceOwnEmailConfig(%d) < ValidateChannelKindConfig(%d) < CheckQuota(%d) must hold", allowlist, force, kindConfig, quota)
+	}
+}

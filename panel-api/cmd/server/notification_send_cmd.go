@@ -21,6 +21,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/api"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/notifchannelops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/notifications"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
@@ -55,11 +56,55 @@ func newNotificationChannelCreateCmd() *cobra.Command {
 			if err := api.ValidateChannelName(name); err != nil {
 				return err
 			}
+			ctx, cancel := context.WithTimeout(c.Context(), 15*time.Second)
+			defer cancel()
+			// --user makes the channel tenant-owned (JAB-171); omit for a
+			// server-wide admin channel. A tenant-owned channel is subject to the
+			// same owner policy the tenant HTTP handler enforces: master gate +
+			// kind allowlist, then own-address email forcing (anti-relay/SSRF),
+			// then the per-user quota — so the operator CLI can't create a tenant
+			// channel the API would refuse. Order mirrors the handler: allowlist
+			// before the owner-email lookup, forcing before per-kind config
+			// validation, quota last. For a custom SMTP host, create a server-wide
+			// channel (omit --user). The users FK still rejects an unknown id.
+			uid := strings.TrimSpace(userID)
+			if uid != "" {
+				st, serr := repository.NewServerSettingsRepository(sharedDB).Get(ctx)
+				if serr != nil {
+					return fmt.Errorf("load server settings: %w", serr)
+				}
+				if err := notifchannelops.CheckKindAllowed(st, kind); err != nil {
+					return fmt.Errorf("tenant channel policy: %w", err)
+				}
+				if kind == models.NotificationChannelKindEmail {
+					// Surface a real lookup failure instead of folding it into an
+					// empty owner email, which ForceOwnEmailConfig would misreport
+					// as "owner account has no email address".
+					u, uerr := repository.NewUserRepository(sharedDB).FindByID(ctx, uid)
+					if uerr != nil {
+						return fmt.Errorf("load owner %s: %w", uid, uerr)
+					}
+					ownerEmail := ""
+					if u != nil {
+						ownerEmail = u.Email
+					}
+					if err := notifchannelops.ForceOwnEmailConfig(ownerEmail, &cfg); err != nil {
+						return fmt.Errorf("tenant channel policy: %w", err)
+					}
+				}
+			}
 			if err := api.ValidateChannelKindConfig(kind, cfg); err != nil {
 				return err
 			}
-			ctx, cancel := context.WithTimeout(c.Context(), 15*time.Second)
-			defer cancel()
+			if uid != "" {
+				existing, lerr := notificationChannelRepoFromDB().ListByUser(ctx, uid)
+				if lerr != nil {
+					return fmt.Errorf("count owner channels: %w", lerr)
+				}
+				if err := notifchannelops.CheckQuota(len(existing)); err != nil {
+					return fmt.Errorf("tenant channel policy: %w", err)
+				}
+			}
 			row := &models.NotificationChannel{
 				ID:      ids.NewULID(),
 				Name:    name,
@@ -67,9 +112,7 @@ func newNotificationChannelCreateCmd() *cobra.Command {
 				Config:  cfg,
 				Enabled: !disabled,
 			}
-			// --user makes the channel tenant-owned (JAB-171); omit for a
-			// server-wide admin channel. The users FK rejects an unknown id.
-			if uid := strings.TrimSpace(userID); uid != "" {
+			if uid != "" {
 				row.UserID = &uid
 			}
 			if err := notificationChannelRepoFromDB().Create(ctx, row); err != nil {

@@ -368,6 +368,27 @@ func TestMeNotif_EmailChannel_ForcesOwnAddressAndLocalMode(t *testing.T) {
 	require.NotContains(t, rec.Body.String(), "evil.com", "no attacker destination echoed")
 }
 
+func TestMeNotif_EmailChannel_NoAccountEmail_Is422(t *testing.T) {
+	t.Parallel()
+	settings := &mockServerSettingsRepo{getResult: &models.ServerSettings{
+		TenantNotificationsEnabled: true,
+		TenantNotificationKinds:    models.TenantNotificationKinds{"email"},
+	}}
+	// Owner exists but has no account address to force delivery to.
+	users := &fakeUserRepo{user: &models.User{ID: "u1", Email: ""}}
+	repo := &fakeChannelsRepo{}
+	r := newMeNotifRouterU(t, settings, repo, &fakeUserRoutesRepo{}, users, newUserCtxID("u1"))
+
+	rec := doNotifJSON(t, r, http.MethodPost, "/api/v1/me/notifications/channels", map[string]any{
+		"name":   "mail me",
+		"kind":   "email",
+		"config": map[string]any{},
+	})
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "no_account_email")
+	require.Empty(t, repo.rows, "no channel row must be created without an owner address")
+}
+
 func TestMeNotif_EmailChannel_UpdateCannotRepointDestination(t *testing.T) {
 	t.Parallel()
 	settings := &mockServerSettingsRepo{getResult: &models.ServerSettings{
