@@ -132,6 +132,14 @@ func newNotificationChannelTestCmd() *cobra.Command {
 			if err != nil || ch == nil {
 				return fmt.Errorf("no channel with id %q", args[0])
 			}
+			// Refuse a disabled channel at the adapter, mirroring the HTTP
+			// testChannel 409. The dispatcher already skips disabled targets
+			// (resolveTargets drops !ch.Enabled), so testing one only queued an
+			// envelope that was silently dropped while the CLI reported success.
+			if !ch.Enabled {
+				cliAuditErr(ctx, "notification_channel.test", "notification_channel", ch.ID, nil)
+				return fmt.Errorf("channel %q is disabled — enable it before testing", ch.Name)
+			}
 			env := notifications.Envelope{
 				EventKind:  "notifications.channel.test",
 				Severity:   models.NotificationSeverityInfo,
