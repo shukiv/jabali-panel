@@ -3,7 +3,7 @@
 // live status instead of a version while it settles, an em dash when empty, and
 // a "+N more" link when a domain hosts several installs.
 import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 
 vi.mock("../../hooks/useMagicLink", () => ({
@@ -53,5 +53,40 @@ describe("DomainApplicationCell (GH #1543)", () => {
     renderCell([app(), app({ id: "i2", subdirectory: "blog" })]);
     const link = screen.getByRole("link", { name: "+1 more" });
     expect(link).toHaveAttribute("href", "/jabali-panel/applications");
+  });
+
+  // D2: inline mutations, driven by callbacks the tenant grid supplies.
+  it("offers Install on an empty domain when onInstall is wired (D2)", () => {
+    const onInstall = vi.fn();
+    render(
+      <MemoryRouter>
+        <DomainApplicationCell applications={[]} onInstall={onInstall} />
+      </MemoryRouter>,
+    );
+    expect(screen.queryByText("—")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Install/ }));
+    expect(onInstall).toHaveBeenCalledTimes(1);
+  });
+
+  it("deletes the primary install when onDelete is wired (D2)", () => {
+    const onDelete = vi.fn();
+    const primary = app();
+    render(
+      <MemoryRouter>
+        <DomainApplicationCell
+          applications={[primary, app({ id: "i2", subdirectory: "blog" })]}
+          onDelete={onDelete}
+        />
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Delete app" }));
+    expect(onDelete).toHaveBeenCalledWith(primary);
+  });
+
+  it("has no Install or Delete controls without the callbacks (read-only)", () => {
+    renderCell([app()]); // no onInstall/onDelete
+    expect(screen.queryByRole("button", { name: "Delete app" })).not.toBeInTheDocument();
+    // Login still shows for a ready SSO app; Delete must not.
+    expect(screen.getByRole("button", { name: "Login" })).toBeInTheDocument();
   });
 });

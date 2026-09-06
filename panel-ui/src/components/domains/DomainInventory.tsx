@@ -32,7 +32,10 @@ import { DomainChownAction } from "../../shells/admin/domains/DomainChownAction"
 
 import { buildDomainDataColumns, type DomainInventoryAudience } from "./domainColumns";
 import { buildDomainMenuItems, type DomainModalType } from "./domainActions";
-import type { Domain } from "./types";
+import type { Domain, DomainApplicationSummary } from "./types";
+import { InstallApplicationModal } from "../../shells/user/applications/InstallApplicationModal";
+import { useDeleteApplication } from "../applications/useDeleteApplication";
+import { useTransitionalPoll } from "../applications/useTransitionalPoll";
 
 export type { DomainInventoryAudience } from "./domainColumns";
 
@@ -45,6 +48,9 @@ export const DomainInventory = ({ audience }: { audience: DomainInventoryAudienc
   const { data: caps } = useServerCapabilities();
   const [activeModal, setActiveModal] = useState<ActiveModal>(null);
   const [togglingId, setTogglingId] = useState<string | null>(null);
+  // GH #1543 D2: the domain whose Install button was clicked (opens the install
+  // modal pinned to it). Tenant-only; admin never renders the Application column.
+  const [installFor, setInstallFor] = useState<Domain | null>(null);
 
   const ownerId = audience.kind === "admin" ? audience.ownerId : undefined;
   const query = useTableURL<Domain>({
@@ -54,6 +60,15 @@ export const DomainInventory = ({ audience }: { audience: DomainInventoryAudienc
     extraParams: ownerId ? { user_id: ownerId } : undefined,
   });
   const deleteMutation = useDeleteMutation({ resource: "domains" });
+  const { deletingId: deletingAppId, deleteApplication } = useDeleteApplication();
+
+  // GH #1543 D2: while any installed app on a visible row is still settling
+  // (installing/deleting/…), poll the domains list so its status/version and
+  // the Application column catch up. Tenant-only data; admin rows carry no apps.
+  useTransitionalPoll(
+    audience.kind === "tenant" ? query.items.flatMap((d) => d.applications ?? []) : [],
+    query.refetch,
+  );
 
   // One PATCH path for every row-level flag flip (enable/disable, preview URL,
   // bot challenge). All three now invalidate both the list and the single-row
@@ -137,6 +152,26 @@ export const DomainInventory = ({ audience }: { audience: DomainInventoryAudienc
     });
   };
 
+  // GH #1543 D2: inline One-Click app actions on the tenant Application column.
+  const handleInstallApp = (r: Domain) => setInstallFor(r);
+
+  const handleDeleteApp = (app: DomainApplicationSummary, r: Domain) => {
+    feedback.modal.confirm({
+      title: `Delete the ${app.app_type} app on "${r.name}"?`,
+      content:
+        "The database, files, and any associated cron jobs will be removed. This cannot be undone.",
+      okText: "Delete",
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        // useDeleteApplication invalidates the applications query keys; the
+        // Application column lives on the domains list, so refresh that too.
+        await deleteApplication({ id: app.id, domain_name: r.name, domain_id: r.id });
+        qc.invalidateQueries({ queryKey: ["list", "domains"] });
+        query.refetch();
+      },
+    });
+  };
+
   const handleTableChange: React.ComponentProps<typeof Table<Domain>>["onChange"] = (
     pagination,
     _filters,
@@ -155,7 +190,16 @@ export const DomainInventory = ({ audience }: { audience: DomainInventoryAudienc
     audience.kind === "admin" ? t("domainlist.more_actions") : t("userdomainlist.more_actions");
 
   const columns: ColumnsType<Domain> = [
-    ...buildDomainDataColumns(audience, { t: (k: string) => t(k), query }),
+    ...buildDomainDataColumns(audience, {
+      t: (k: string) => t(k),
+      query,
+      // Tenant-only: the Application column's inline Install/Delete. Admin never
+      // renders the column, so it gets no actions.
+      appActions:
+        audience.kind === "tenant"
+          ? { onInstall: handleInstallApp, onDelete: handleDeleteApp, deletingId: deletingAppId }
+          : undefined,
+    }),
     {
       key: "actions",
       title: audience.kind === "admin" ? t("domainlist.actions") : t("userdomainlist.actions"),
@@ -211,33 +255,50 @@ export const DomainInventory = ({ audience }: { audience: DomainInventoryAudienc
   ];
 
   return (
-    <SearchableTableStringQ<Domain>
-      rowKey="id"
-      loading={query.isLoading}
-      dataSource={query.items}
-      columns={columns}
-      initialSearch={query.params.q}
-      searchPlaceholder="Search by domain name"
-      onSearchChange={(q) => query.setParams({ q, page: 1 })}
-      pagination={{
-        current: query.params.page,
-        pageSize: query.params.pageSize,
-        total: query.total,
-      }}
-      onChange={handleTableChange}
-      locale={
-        audience.kind === "admin"
-          ? {
-              emptyText: (
-                <EmptyWithCTA
-                  description={t("domainlist.no_domains_yet")}
-                  ctaLabel="Create domain"
-                  onCta={() => navigate("create")}
-                />
-              ),
-            }
-          : undefined
-      }
-    />
+    <>
+      <SearchableTableStringQ<Domain>
+        rowKey="id"
+        loading={query.isLoading}
+        dataSource={query.items}
+        columns={columns}
+        initialSearch={query.params.q}
+        searchPlaceholder="Search by domain name"
+        onSearchChange={(q) => query.setParams({ q, page: 1 })}
+        pagination={{
+          current: query.params.page,
+          pageSize: query.params.pageSize,
+          total: query.total,
+        }}
+        onChange={handleTableChange}
+        locale={
+          audience.kind === "admin"
+            ? {
+                emptyText: (
+                  <EmptyWithCTA
+                    description={t("domainlist.no_domains_yet")}
+                    ctaLabel="Create domain"
+                    onCta={() => navigate("create")}
+                  />
+                ),
+              }
+            : undefined
+        }
+      />
+      {/* GH #1543 D2: install a One-Click app pinned to the row's domain. Hosted
+          here (not in the cell) so it survives the cell unmounting on refetch,
+          and only mounted while installing so its registry/domain queries stay
+          idle otherwise. */}
+      {audience.kind === "tenant" && installFor !== null && (
+        <InstallApplicationModal
+          open
+          presetDomainId={installFor.id}
+          onClose={() => setInstallFor(null)}
+          onSuccess={() => {
+            setInstallFor(null);
+            query.refetch();
+          }}
+        />
+      )}
+    </>
   );
 };
