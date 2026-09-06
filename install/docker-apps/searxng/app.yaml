@@ -3,7 +3,7 @@ popularity: 50
 tenant_installable: true
 name: SearXNG
 tags: ["Developer tools"]
-version: "2026.8.10"
+version: "2026.8.29"
 description: |
   Privacy-respecting metasearch engine — aggregates results from 70+ search
   services with no user tracking or profiling. Single service; open it and
@@ -13,7 +13,7 @@ icon: icon.svg
 upstream: https://github.com/searxng/searxng
 documentation: https://docs.searxng.org/
 
-image_channel: docker.io/searxng/searxng:2026.8.10-0a118066d@sha256:cd22dbf7fac8b25d5e39e65af53a4b47009df5ad3162e270c477fd5b30ce03f2
+image_channel: docker.io/searxng/searxng:2026.8.29-451c46aa3@sha256:73756029b7678b1a6f928ea619099bceec944011753a968685c78b77aa13ef25
 update_mode: manual
 
 resources:

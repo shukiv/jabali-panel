@@ -2,7 +2,7 @@ slug: matomo
 popularity: 62
 name: Matomo
 tags: ["Analytics"]
-version: "5.12.0"
+version: "5.13.0"
 description: |
   Open-source web analytics platform. Privacy-focused, fully
   self-hosted. Two services: PHP-FPM + nginx app container,
@@ -11,7 +11,7 @@ icon: icon.svg
 upstream: https://github.com/matomo-org/matomo
 documentation: https://matomo.org/docs/
 
-image_channel: matomo:5-apache@sha256:85d27206a4acdd43259909aa00cab1913dec88cfba53e1ce66a51e6caa430a55
+image_channel: matomo:5-apache@sha256:8e6bdd396496a98e4011cfbdc4be996d9259cbd1f09e0651b6058bb9a5984e13
 update_mode: manual
 
 resources:

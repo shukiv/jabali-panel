@@ -3,7 +3,7 @@ popularity: 85
 tenant_installable: true
 name: Uptime Kuma
 tags: ["Monitoring"]
-version: "2.5.0"
+version: "2.5.3"
 description: |
   Self-hosted monitoring tool, single container, status pages,
   multi-protocol probes (HTTP/HTTPS, TCP, ping, DNS, push). Minimal
@@ -12,7 +12,7 @@ icon: icon.svg
 upstream: https://github.com/louislam/uptime-kuma
 documentation: https://github.com/louislam/uptime-kuma/wiki
 
-image_channel: louislam/uptime-kuma:2@sha256:a8610b3b4c38077922ba51b036691e06887d7cefd91fe620fd3d6d23d03dc240
+image_channel: louislam/uptime-kuma:2@sha256:3e24e96c89efff0e3a4b0698cbdd36c15ad3022371db57166e5588853002ee5c
 update_mode: manual
 
 resources:

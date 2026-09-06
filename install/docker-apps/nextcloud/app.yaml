@@ -2,7 +2,7 @@ slug: nextcloud
 popularity: 100
 name: Nextcloud
 tags: ["File sharing"]
-version: "34.0.2"
+version: "34.0.3"
 description: |
   Self-hosted productivity platform: file sync, calendar, contacts,
   office docs, video calls. Two services: PHP-FPM app container +
@@ -12,7 +12,7 @@ icon: icon.svg
 upstream: https://github.com/nextcloud/server
 documentation: https://docs.nextcloud.com/
 
-image_channel: nextcloud:34-apache@sha256:d7666d54d87c58d52869ddda36d1acbd4a7f53faf8ab6b91293daf204f3434e8
+image_channel: nextcloud:34-apache@sha256:0b8261f6335af6b95264ce893b4d645857638e0fa151b5ba620f25f377318ae1
 update_mode: manual
 
 resources:
