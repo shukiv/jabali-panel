@@ -38,6 +38,7 @@ import (
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/notifchannelops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/notifications"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/notifsecret"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
@@ -126,9 +127,10 @@ var tenantRelevantEventKinds = map[string]bool{
 // state; the test-send limit bounds tenant-triggerable outbound traffic (real
 // events fire from system actions, not on tenant demand, so the test endpoint is
 // the only tenant-controllable send).
+// The per-user channel quota lives in notifchannelops.MaxTenantChannelsPerUser
+// (shared with the operator CLI); this file references it there.
 const (
-	maxTenantChannelsPerUser = 10
-	tenantTestSendPerMinute  = 5
+	tenantTestSendPerMinute = 5
 )
 
 type meNotificationsHandler struct {
@@ -222,20 +224,37 @@ func (h *meNotificationsHandler) createChannel(c *gin.Context) {
 		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
 		return
 	}
-	// Admin-configurable kind allowlist (empty settings → safe default set).
-	if !st.TenantNotificationKinds.OrDefault().Allows(req.Kind) {
-		c.JSON(http.StatusUnprocessableEntity, gin.H{
-			"error":   "kind_not_allowed_for_tenant",
-			"message": "channel kind " + req.Kind + " is not permitted for tenant channels on this server",
-		})
+	// Full tenant owner policy — master gate + kind allowlist, then own-address
+	// email forcing (email kinds only), then the per-kind config validation
+	// below, then the per-user quota — lives in notifchannelops so the operator
+	// CLI enforces the identical rules. Order matters: the allowlist is checked
+	// before the owner-email lookup so a disallowed kind is rejected without
+	// touching the user repo, and forcing runs before config validation so the
+	// forced destination fields are what gets validated and persisted.
+	if perr := notifchannelops.CheckKindAllowed(st, req.Kind); perr != nil {
+		if errors.Is(perr, notifchannelops.ErrTenantNotificationsDisabled) {
+			// Unreachable here: loadSettings already enforced the master gate
+			// above. Kept fail-closed for defence in depth (and because the CLI,
+			// which has no such pre-gate, relies on CheckKindAllowed for it).
+			c.JSON(http.StatusConflict, gin.H{"error": "tenant_notifications_disabled"})
+		} else {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{
+				"error":   "kind_not_allowed_for_tenant",
+				"message": "channel kind " + req.Kind + " is not permitted for tenant channels on this server",
+			})
+		}
 		return
 	}
-	// Tenant email channels are forced to deliver only to the caller's own
-	// account address over the local submission path — no arbitrary destination
-	// (open relay) and no custom SMTP host (SSRF). Applied before validation so
-	// the forced fields satisfy the email config rules.
 	if req.Kind == models.NotificationChannelKindEmail {
-		if !h.forceOwnEmailConfig(c, claims.UserID, &req.Config) {
+		ownerEmail, ok := h.resolveOwnerEmail(c, claims.UserID)
+		if !ok {
+			return
+		}
+		if err := notifchannelops.ForceOwnEmailConfig(ownerEmail, &req.Config); err != nil {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{
+				"error":   "no_account_email",
+				"message": "your account has no email address to deliver to",
+			})
 			return
 		}
 	}
@@ -243,18 +262,17 @@ func (h *meNotificationsHandler) createChannel(c *gin.Context) {
 		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
 		return
 	}
-	// Per-user channel quota — bound how many channels one tenant can create.
 	existing, err := h.cfg.Channels.ListByUser(c.Request.Context(), claims.UserID)
 	if err != nil {
 		h.cfg.Log.Error("count own channels failed", "err", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "create_failed"})
 		return
 	}
-	if len(existing) >= maxTenantChannelsPerUser {
+	if perr := notifchannelops.CheckQuota(len(existing)); perr != nil {
 		c.JSON(http.StatusConflict, gin.H{
 			"error":   "too_many_channels",
-			"message": fmt.Sprintf("channel limit reached (%d per user)", maxTenantChannelsPerUser),
-			"max":     maxTenantChannelsPerUser,
+			"message": fmt.Sprintf("channel limit reached (%d per user)", notifchannelops.MaxTenantChannelsPerUser),
+			"max":     notifchannelops.MaxTenantChannelsPerUser,
 		})
 		return
 	}
@@ -319,7 +337,15 @@ func (h *meNotificationsHandler) updateChannel(c *gin.Context) {
 		// Re-force own-address + local mode on every email edit so a tenant can't
 		// PATCH to_email to an arbitrary destination after create (phase 4d).
 		if existing.Kind == models.NotificationChannelKindEmail {
-			if !h.forceOwnEmailConfig(c, claims.UserID, &merged) {
+			ownerEmail, ok := h.resolveOwnerEmail(c, claims.UserID)
+			if !ok {
+				return
+			}
+			if err := notifchannelops.ForceOwnEmailConfig(ownerEmail, &merged); err != nil {
+				c.JSON(http.StatusUnprocessableEntity, gin.H{
+					"error":   "no_account_email",
+					"message": "your account has no email address to deliver to",
+				})
 				return
 			}
 		}
@@ -570,36 +596,23 @@ func (h *meNotificationsHandler) eventCatalog(c *gin.Context) {
 
 // --- validation helpers ---
 
-// forceOwnEmailConfig rewrites a tenant email channel's config so it can only
-// deliver to the caller's OWN account address over the local submission path.
-// This is the phase-4d safety property: no arbitrary destination (open relay)
-// and no tenant-supplied SMTP host (SSRF). Returns false (and writes the
-// response) when the user can't be resolved. Any body-supplied to_email /
-// smtp_host / smtp_mode is discarded.
-func (h *meNotificationsHandler) forceOwnEmailConfig(c *gin.Context, userID string, cfg *models.NotificationChannelConfig) bool {
+// resolveOwnerEmail loads the owner's account email so an email channel's
+// destination can be forced to it (notifchannelops.ForceOwnEmailConfig / the
+// email branch of ValidateTenantCreate). It returns ok=false only when the
+// users repository is unavailable, having already written a 503; a missing user
+// or empty address returns ("", true) so the shared validator fails closed with
+// no_account_email. Keeping the repo/gin coupling here lets the forcing logic
+// itself stay transport-neutral in notifchannelops.
+func (h *meNotificationsHandler) resolveOwnerEmail(c *gin.Context, userID string) (string, bool) {
 	if h.cfg.Users == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "email channels unavailable"})
-		return false
+		return "", false
 	}
 	u, err := h.cfg.Users.FindByID(c.Request.Context(), userID)
-	if err != nil || u == nil || u.Email == "" {
-		c.JSON(http.StatusUnprocessableEntity, gin.H{
-			"error":   "no_account_email",
-			"message": "your account has no email address to deliver to",
-		})
-		return false
+	if err != nil || u == nil {
+		return "", true
 	}
-	// Preserve only the non-destination display/formatting fields; hard-set the
-	// destination + transport to the safe own-account/local values.
-	cfg.ToEmail = u.Email
-	cfg.FromEmail = u.Email
-	cfg.SMTPMode = "local"
-	cfg.SMTPHost = ""
-	cfg.SMTPPort = 0
-	cfg.SMTPTLS = ""
-	cfg.SMTPUsername = ""
-	cfg.SMTPPassword = ""
-	return true
+	return u.Email, true
 }
 
 // validateEventKind bounds the routed event kind. A stricter allowlist of
