@@ -3905,18 +3905,35 @@ jabali package create [flags]
 
 **Flags:**
 
+- `--backup-kinds` — CSV of allowed backup destination kinds (empty=none)
+- `--backup-retention` — retention policy at the cap: reject or prune (empty=reject)
 - `--bw-mb` — bandwidth quota in MB (0=unlimited) (default `0`)
 - `--cgi` — enable CGI
 - `--cpu` — CPU quota percent across all cores (0=unlimited) (default `0`)
 - `--databases` — max databases (0=unlimited) (default `0`)
 - `--disk-mb` — disk quota in MB (0=unlimited) (default `0`)
+- `--docker-app-slugs` — CSV allowlist of catalog slugs tenants may install (empty=server default)
 - `--domains` — max domains (0=unlimited) (default `0`)
 - `--emails` — max email accounts (0=unlimited) (default `0`)
+- `--fpm-advanced` — unlock tenant advanced FPM knobs (implies --fpm-user-can-edit)
+- `--fpm-max-children` — FPM pm.max_children cap (0=default 20) (default `0`)
+- `--fpm-user-can-edit` — let tenants pick an FPM performance mode
+- `--fpm-version-defaults` — JSON map of per-version FPM defaults (empty={})
+- `--fpm-worker-mem-mb` — FPM advisory per-worker memory budget in MB (0=default 64) (default `0`)
 - `--io-read-mbps` — disk read bandwidth limit in MB/s (0=unlimited) (default `0`)
 - `--io-write-mbps` — disk write bandwidth limit in MB/s (0=unlimited) (default `0`)
+- `--max-backup-schedules` — max tenant scheduled backups (0=default 1) (default `0`)
+- `--max-backups` — tenant backup retention cap (0=backups not included) (default `0`)
+- `--max-db-users` — max database users (0=unlimited) (default `0`)
+- `--max-docker-apps` — max tenant docker apps (0=docker apps not included) (default `0`)
+- `--max-ftp-accounts` — max tenant FTP/SFTP subaccounts (0=feature not included) (default `0`)
+- `--max-python-apps` — max tenant python apps (0=python apps not included) (default `0`)
 - `--max-tasks` — max processes/threads per user slice (0=unlimited) (default `0`)
 - `--memory-mb` — memory limit in MB (0=unlimited) (default `0`)
 - `--name` — package name (required)
+- `--nspawn-image` — pin users to an nspawn rootfs version (empty=server default)
+- `--php-exec` — opt out of the PHP command-exec lockdown (exec/proc_open work)
+- `--scheduled-backups` — allow tenant scheduled backups
 - `--ssh` — enable SSH access
 
 #### `jabali package delete`
@@ -3941,18 +3958,35 @@ jabali package edit <package-id> [flags]
 
 **Flags:**
 
+- `--backup-kinds` — CSV of allowed backup destination kinds
+- `--backup-retention` — retention policy at the cap: reject or prune
 - `--bw-mb` — bandwidth MB (default `0`)
 - `--cgi` — CGI access (true/false)
 - `--cpu` — CPU quota percent (default `0`)
 - `--databases` — max databases (default `0`)
 - `--disk-mb` — disk quota MB (default `0`)
+- `--docker-app-slugs` — CSV allowlist of catalog slugs tenants may install
 - `--domains` — max domains (default `0`)
 - `--emails` — max emails (default `0`)
+- `--fpm-advanced` — tenant advanced FPM knobs (true/false, true implies fpm-user-can-edit)
+- `--fpm-max-children` — FPM pm.max_children cap (default `0`)
+- `--fpm-user-can-edit` — tenant FPM performance mode (true/false)
+- `--fpm-version-defaults` — JSON map of per-version FPM defaults
+- `--fpm-worker-mem-mb` — FPM advisory per-worker memory budget MB (default `0`)
 - `--io-read-mbps` — io read MB/s (default `0`)
 - `--io-write-mbps` — io write MB/s (default `0`)
+- `--max-backup-schedules` — max tenant scheduled backups (default `0`)
+- `--max-backups` — tenant backup retention cap (default `0`)
+- `--max-db-users` — max database users (default `0`)
+- `--max-docker-apps` — max tenant docker apps (default `0`)
+- `--max-ftp-accounts` — max tenant FTP/SFTP subaccounts (default `0`)
+- `--max-python-apps` — max tenant python apps (default `0`)
 - `--max-tasks` — max processes/threads (default `0`)
 - `--memory-mb` — memory limit MB (default `0`)
 - `--name` — package name
+- `--nspawn-image` — pin users to an nspawn rootfs version (empty clears the pin)
+- `--php-exec` — PHP command-exec opt-out (true/false)
+- `--scheduled-backups` — tenant scheduled backups (true/false)
 - `--ssh` — SSH access (true/false)
 
 #### `jabali package list`
