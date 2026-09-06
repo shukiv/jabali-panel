@@ -29,6 +29,8 @@ import { DomainLogsPanel } from "../../../components/logs/DomainLogsPanel";
 import { DomainNginxOptionsPanel } from "../../../components/DomainNginxOptionsPanel";
 import { TenantNginxRulesPanel } from "../../DomainSettingsButton";
 import { DomainDocRootPanel } from "../../../components/domains/DomainDocRootPanel";
+import { DomainPHPSettingsPanel } from "../../../components/domains/DomainPHPSettingsPanel";
+import { DomainEnvVarsCard } from "../php-settings/DomainEnvVarsCard";
 import { OverviewTab } from "./tabs/OverviewTab";
 
 const DEFAULT_TAB = "overview";
@@ -98,6 +100,20 @@ export const WebDomainPage = () => {
     ...(dnsOn
       ? [{ key: "dns", label: "DNS", node: <DNSRecordsPanel domainId={domain.id} embedded /> }]
       : []),
+    // PHP Settings — this domain's PHP version + php.ini limit overrides and its
+    // env vars. The account/pool-level PHP tabs (Performance, OPcache,
+    // Extensions, Xdebug, CLI/Composer) are per-version-pool and stay on the
+    // standalone PHP Settings page. GH #1543.
+    {
+      key: "php-settings",
+      label: "PHP Settings",
+      node: (
+        <Space direction="vertical" size="large" style={{ width: "100%" }}>
+          <DomainPHPSettingsPanel domainId={domain.id} />
+          <DomainEnvVarsCard domainId={domain.id} />
+        </Space>
+      ),
+    },
     { key: "redirects", label: "Redirects", node: <DomainRedirectsPanel domain={domain} /> },
     { key: "index", label: "Index Files", node: <DomainIndexPanel domain={domain} /> },
     { key: "caching", label: "Caching", node: <DomainCacheSection domainId={domain.id} /> },
