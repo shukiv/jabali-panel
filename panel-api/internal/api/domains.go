@@ -385,6 +385,26 @@ type domainListRow struct {
 	// TempURL is the full preview URL, populated when the domain has
 	// temp_url_enabled and a panel hostname is configured.
 	TempURL *string `json:"temp_url,omitempty"`
+	// Applications denormalizes this domain's One-Click app installs onto the
+	// row so the tenant Web Domains list can show an Application column without
+	// an N+1 (GH #1543). Ordered docroot-first; a domain may host several
+	// (/, /blog). omitempty drops both nil and an empty slice, so a domain with
+	// no apps ships no key (never a JSON null the SPA would trip on). Populated
+	// only when AppInstalls is wired; admin and tenant share this list handler,
+	// admin simply doesn't render the column.
+	Applications []domainAppSummary `json:"applications,omitempty"`
+}
+
+// domainAppSummary is the per-row app view (GH #1543): just what the Web
+// Domains Application column needs — enough to show the badge, version, live
+// status, and mint a login. The full install record stays on GET /applications.
+type domainAppSummary struct {
+	ID           string  `json:"id"`
+	AppType      string  `json:"app_type"`
+	Version      *string `json:"version"`
+	Status       string  `json:"status"`
+	LastError    string  `json:"last_error,omitempty"`
+	Subdirectory string  `json:"subdirectory"`
 }
 
 // ipSummary is the denormalized {id, address} blob the UI consumes for
@@ -573,6 +593,35 @@ func (h *domainHandler) list(c *gin.Context) {
 						}
 					}
 				}
+			}
+		}
+	}
+
+	// GH #1543: denormalize each domain's One-Click app installs onto its row
+	// so the tenant Web Domains list can render an Application column without an
+	// N+1 fetch. Single batch lookup, grouped in memory (docroot-first, as the
+	// repo orders by subdirectory); on error we drop the field rather than
+	// 500ing — the standalone Applications page is the recovery path.
+	if h.cfg.AppInstalls != nil && len(domains) > 0 {
+		domainIDs := make([]string, len(domains))
+		for i := range domains {
+			domainIDs[i] = domains[i].ID
+		}
+		if installs, appErr := h.cfg.AppInstalls.ListByDomainIDs(c.Request.Context(), domainIDs); appErr == nil {
+			appsByDomain := make(map[string][]domainAppSummary, len(installs))
+			for i := range installs {
+				a := &installs[i]
+				appsByDomain[a.DomainID] = append(appsByDomain[a.DomainID], domainAppSummary{
+					ID:           a.ID,
+					AppType:      a.AppType,
+					Version:      a.Version,
+					Status:       a.Status,
+					LastError:    a.LastError,
+					Subdirectory: a.Subdirectory,
+				})
+			}
+			for i := range rows {
+				rows[i].Applications = appsByDomain[rows[i].ID]
 			}
 		}
 	}

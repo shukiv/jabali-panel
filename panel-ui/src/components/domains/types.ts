@@ -6,6 +6,7 @@
 // screens' wire shapes: every field that only one audience sends is optional,
 // so a row from either endpoint satisfies the type and each screen reads the
 // subset it cares about.
+import type { ApplicationStatus } from "../../utils/applicationStatus";
 
 // The nested SSL badge the admin list/get handler denormalises onto each row.
 // The tenant list sends a flat `ssl_state` string instead; both fold through
@@ -16,6 +17,21 @@ export type SSLBadge = {
   issuer?: string | null;
   issued_at?: string | null;
   expires_at?: string | null;
+};
+
+// GH #1543: the per-domain One-Click app summary the domains list handler
+// denormalises onto each row (docroot-first). Just what the tenant Web Domains
+// Application column needs — badge, version, live status, and enough to mint a
+// login; the full install record stays on GET /applications. Reuses the shared
+// ApplicationStatus vocabulary so the column and the Applications page can't
+// drift on status meaning.
+export type DomainApplicationSummary = {
+  id: string;
+  app_type: string;
+  version: string | null;
+  status: ApplicationStatus;
+  last_error?: string;
+  subdirectory: string;
 };
 
 export type Domain = {
@@ -50,6 +66,10 @@ export type Domain = {
   // mail-only); dns_disabled = the panel doesn't host this domain's DNS.
   web_disabled?: boolean;
   dns_disabled?: boolean;
+  // GH #1543: this domain's One-Click app installs, denormalised onto the row
+  // for the tenant Web Domains Application column. Absent (never null) when the
+  // domain has none or the module is unwired; ordered docroot-first.
+  applications?: DomainApplicationSummary[];
   // Shared across both audiences.
   bytes_30d?: number;
   temp_url_enabled?: boolean;

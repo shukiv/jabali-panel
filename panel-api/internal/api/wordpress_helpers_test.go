@@ -65,6 +65,28 @@ func (m *mockWordPressInstallRepo) FindByDomainID(ctx context.Context, domainID 
 	return nil, repository.ErrNotFound
 }
 
+// ListByDomainIDs — GH #1543 domains-list app summary. Returns every seeded
+// install whose domain_id is in the set, docroot-first, mirroring the repo's
+// order so the api tests that assert the summary get a stable shape.
+func (m *mockWordPressInstallRepo) ListByDomainIDs(_ context.Context, domainIDs []string) ([]models.ApplicationInstall, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	want := make(map[string]struct{}, len(domainIDs))
+	for _, id := range domainIDs {
+		want[id] = struct{}{}
+	}
+	var out []models.ApplicationInstall
+	for _, inst := range m.byDomain {
+		if inst == nil {
+			continue
+		}
+		if _, ok := want[inst.DomainID]; ok {
+			out = append(out, *inst)
+		}
+	}
+	return out, nil
+}
+
 func (m *mockWordPressInstallRepo) FindByDomainAndSubdirectory(ctx context.Context, domainID, subdirectory string) (*models.WordPressInstall, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

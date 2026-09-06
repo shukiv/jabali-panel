@@ -139,6 +139,46 @@ func TestWordPressInstallFindByID_NotFound(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestApplicationInstallListByDomainIDs_GroupsDocrootFirst(t *testing.T) {
+	db, mock, raw := newMockDB(t)
+	defer raw.Close()
+
+	repo := NewApplicationInstallRepository(db)
+	now := time.Now()
+
+	// The repo orders by (domain_id, subdirectory, created_at) so the docroot
+	// install ("") sorts before a /blog subdir install on the same domain.
+	mock.ExpectQuery("SELECT .* FROM `application_installs` WHERE domain_id IN \\(\\?,\\?\\).*ORDER BY domain_id, subdirectory, created_at").
+		WithArgs("domain1", "domain2").
+		WillReturnRows(sqlmock.NewRows(
+			[]string{"id", "user_id", "domain_id", "db_id", "version", "admin_username", "admin_email", "locale", "use_www", "subdirectory", "status", "last_error", "created_at", "updated_at", "app_type"},
+		).AddRow(
+			"i_root", "u1", "domain1", "db1", "6.5.3", "admin", "a@e.com", "en_US", false, "", "ready", "", now, now, "wordpress",
+		).AddRow(
+			"i_blog", "u1", "domain1", "db2", "6.5.3", "admin", "a@e.com", "en_US", false, "blog", "ready", "", now, now, "wordpress",
+		))
+
+	installs, err := repo.ListByDomainIDs(context.Background(), []string{"domain1", "domain2"})
+	require.NoError(t, err)
+	require.Len(t, installs, 2)
+	require.Equal(t, "", installs[0].Subdirectory)
+	require.Equal(t, "blog", installs[1].Subdirectory)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestApplicationInstallListByDomainIDs_EmptyIDsNoQuery(t *testing.T) {
+	db, mock, raw := newMockDB(t)
+	defer raw.Close()
+
+	repo := NewApplicationInstallRepository(db)
+
+	// No ids => no DB round-trip at all; any ExpectQuery would go unmet.
+	installs, err := repo.ListByDomainIDs(context.Background(), nil)
+	require.NoError(t, err)
+	require.Nil(t, installs)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestWordPressInstallFindByIDAndUserID_Found(t *testing.T) {
 	db, mock, raw := newMockDB(t)
 	defer raw.Close()
