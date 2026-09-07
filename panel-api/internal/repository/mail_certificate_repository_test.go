@@ -114,3 +114,44 @@ func TestMailCert_MarkDNSMissing_SetsHourBackoff(t *testing.T) {
 	require.NoError(t, repo.MarkDNSMissing(context.Background(), "mc-1", "no A record for mail.example.com"))
 	require.NoError(t, mock.ExpectationsWereMet())
 }
+
+// ResetForReissue (GH #1579) flips a settled row back to pending and returns the
+// rows affected. The WHERE clause is state-guarded to status IN (issued, failed,
+// dns_missing) so a disabled (opted-out) or in-flight (pending/issuing) row is
+// never reset — asserted by pinning the SQL.
+func TestMailCert_ResetForReissue_FlipsSettledToPending(t *testing.T) {
+	t.Parallel()
+	gdb, mock, raw := newMockDB(t)
+	defer raw.Close()
+	repo := repository.NewMailCertificateRepository(gdb)
+
+	mock.ExpectBegin()
+	mock.ExpectExec(`UPDATE .mail_certificate. SET.*WHERE domain_id = .? AND status IN`).
+		WillReturnResult(sqlmock.NewResult(0, 1)) // one settled row reset
+	mock.ExpectCommit()
+
+	n, err := repo.ResetForReissue(context.Background(), "dom-1")
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), n)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// A domain with no mail cert (or whose only row is disabled/in-flight) matches
+// no rows: ResetForReissue returns 0 and no error, so the rename's best-effort
+// heal is a clean no-op.
+func TestMailCert_ResetForReissue_NoMatchIsZero(t *testing.T) {
+	t.Parallel()
+	gdb, mock, raw := newMockDB(t)
+	defer raw.Close()
+	repo := repository.NewMailCertificateRepository(gdb)
+
+	mock.ExpectBegin()
+	mock.ExpectExec(`UPDATE .mail_certificate. SET.*WHERE domain_id = .? AND status IN`).
+		WillReturnResult(sqlmock.NewResult(0, 0)) // nothing matched
+	mock.ExpectCommit()
+
+	n, err := repo.ResetForReissue(context.Background(), "dom-none")
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), n)
+	require.NoError(t, mock.ExpectationsWereMet())
+}

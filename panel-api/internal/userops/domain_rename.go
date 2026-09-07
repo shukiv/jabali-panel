@@ -23,6 +23,15 @@ type AppInstallLister interface {
 	ListByDomainIDs(ctx context.Context, domainIDs []string) ([]models.ApplicationInstall, error)
 }
 
+// MailCertReissuer re-queues a domain's per-domain mail TLS certificate for
+// reissuance after a rename (GH #1579), so the reconciler reissues it for
+// mail.<new> instead of leaving the mail.<old> cert until it nears expiry.
+// Satisfied by repository.MailCertificateRepository. Optional on Deps: nil skips
+// the reset (the reconciler's renewal window eventually reissues regardless).
+type MailCertReissuer interface {
+	ResetForReissue(ctx context.Context, domainID string) (int64, error)
+}
+
 // appTypeWordPress is the ApplicationInstall.AppType whose stored site URL a
 // rename can rewrite (models.ApplicationInstall defaults app_type to this). Only
 // WordPress keeps a rewritable absolute site URL in its OWN database; other app
@@ -73,10 +82,14 @@ func renameErr(code, format string, args ...any) *RenameError {
 //   - the docroot path does not contain the old name exactly once (a custom
 //     docroot needs a manual move).
 //
-// Not carried (documented limitations, non-fatal): the per-domain mail TLS cert
-// still covers mail.<old> until reissued; a webmail send-as identity created
-// before the rename keeps the old address until re-added. The catch-all address
-// (a literal string on the Domain entity) IS rewritten by the verb, best-effort.
+// The per-domain mail TLS cert is re-queued for reissuance: its row is
+// domain_id-keyed (so it survives the rename), and RenameDomain flips it back to
+// pending so the reconciler reissues it for mail.<new> on its next tick instead
+// of serving mail.<old> until the 30-day renewal window (best-effort; a domain
+// with no mail cert simply skips). Not carried (documented limitation, non-fatal):
+// a webmail send-as identity created before the rename keeps the old address
+// until re-added. The catch-all address (a literal string on the Domain entity)
+// IS rewritten by the verb, best-effort.
 //
 // Installed apps are ALLOWED. A WordPress install's stored site URL (kept in
 // the app's OWN database, which the docroot move + DNS/SSL re-key do not touch)
@@ -107,8 +120,9 @@ func renameErr(code, format string, args ...any) *RenameError {
 //  4. tombstone the OLD name (safe only now that no live row carries it) so the
 //     reconciler durably tears down the old vhost + old PowerDNS zone; its
 //     purge_accounts step is a no-op — the Stalwart entity is already `new`;
-//  5. re-key the DNS zone row (name) + reset the SSL cert to pending, so the
-//     reconciler re-pushes the zone and reissues the cert under the NEW name;
+//  5. re-key the DNS zone row (name) + reset the web SSL cert AND the per-domain
+//     mail cert to pending, so the reconciler re-pushes the zone and reissues
+//     both certs under the NEW name;
 //  6. schedule a prompt re-render of the new name.
 //
 // Steps 3–5 are best-effort heals AFTER the rename is committed: a rare failure
@@ -280,6 +294,21 @@ func RenameDomain(ctx context.Context, d Deps, rec RenameReconciler, domain *mod
 			}
 		} else if cerr != nil && !errors.Is(cerr, repository.ErrNotFound) {
 			logRenameHeal(d.Log, "load SSL cert", oldName, newName, cerr)
+		}
+	}
+
+	// 4d. Re-queue the per-domain mail TLS cert for reissuance under the NEW name.
+	//     The row is keyed by domain_id (survives the rename) but its lineage
+	//     still covers mail.<old>; flipping a settled row back to pending makes
+	//     the reconciler reissue promptly for mail.<new> — it reads the current
+	//     domain name at dispatch — instead of serving the old cert until the
+	//     30-day renewal window. Best-effort: a domain with no mail cert (mail
+	//     off, or TLS never provisioned) resets nothing; a disabled/in-flight row
+	//     is left untouched by ResetForReissue. The old mail.<old> lineage on disk
+	//     is reaped by the old-name teardown (domain.delete).
+	if d.MailCerts != nil {
+		if _, mrerr := d.MailCerts.ResetForReissue(ctx, domain.ID); mrerr != nil {
+			logRenameHeal(d.Log, "reset mail cert", oldName, newName, mrerr)
 		}
 	}
 

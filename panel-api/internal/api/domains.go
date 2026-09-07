@@ -38,11 +38,11 @@ type DomainHandlerConfig struct {
 	Users           repository.UserRepository
 	SSLCerts        repository.SSLCertificateRepository
 	SharedCerts     repository.SharedCertificateRepository
-	// Mailboxes arms the GH #1579 rename's fail-closed mailbox gate: a rename
-	// runs the old name's durable teardown, whose first step purges every
-	// Stalwart account on the domain. REQUIRED for the rename route — nil makes
-	// the handler refuse (503) rather than risk purging retained mailboxes.
-	Mailboxes  repository.MailboxRepository
+	// MailCerts lets the GH #1579 rename re-queue the per-domain mail TLS cert
+	// for reissuance under the NEW name (its row is domain_id-keyed and survives
+	// the rename, but its lineage still covers mail.<old>). Optional — a panel
+	// without per-domain mail TLS simply skips that heal.
+	MailCerts  repository.MailCertificateRepository
 	Packages   repository.PackageRepository
 	Agent      agent.AgentInterface
 	Reconciler *reconciler.Reconciler

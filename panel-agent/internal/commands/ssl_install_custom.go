@@ -27,7 +27,10 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
 )
 
-const sslLERoot = "/etc/letsencrypt"
+// sslLERoot is the certbot config dir. A var (not const) so tests can point the
+// lineage-cleanup arms of removeDomainCertArtifacts / ssl.mail.delete at a temp
+// dir — mirrors baseSelfSignDir.
+var sslLERoot = "/etc/letsencrypt"
 
 type sslInstallCustomParams struct {
 	Domain  string `json:"domain"`

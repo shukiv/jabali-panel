@@ -57,6 +57,11 @@ type Deps struct {
 	// panel without PowerDNS / with no cert row simply skips that heal.
 	DNSZones repository.DNSZoneRepository
 	SSLCerts repository.SSLCertificateRepository
+	// MailCerts re-queues the per-domain mail TLS cert for reissuance under the
+	// NEW name on a rename (GH #1579) — the row is domain_id-keyed and survives
+	// the rename, but its lineage still covers mail.<old>. Optional: nil skips
+	// the reset (the reconciler's renewal window eventually reissues regardless).
+	MailCerts MailCertReissuer
 	// AppInstalls lets RenameDomain rewrite a WordPress install's stored site
 	// URL to the new name (GH #1579) — a WordPress install keeps an absolute
 	// site URL in its OWN database, which the docroot move + DNS/SSL re-key do
