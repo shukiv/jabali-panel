@@ -1,7 +1,8 @@
 // UserDomainDrawer — the tenant Add Web Domain flow (GH #1541), plus the mail
-// module gating (GH #1409) and the create-time document root (GH #1413), both
-// reworked by #1541: mail is now an "Add Mail Domain" checkbox and the document
-// root moved under a collapsed "Advanced" section.
+// module gating (GH #1409). #1541: mail is an "Add Mail Domain" checkbox and the
+// document root is no longer set at create time (johnnyq) — the create-time
+// docroot field (GH #1413) was dropped; only the reverse-proxy option remains
+// under "Advanced". A custom docroot is configured later from the domain page.
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -86,20 +87,18 @@ describe("UserDomainDrawer Add Mail Domain (GH #1409/#1541)", () => {
   });
 });
 
-describe("UserDomainDrawer document root under Advanced (GH #1413/#1541)", () => {
-  it("keeps Document root out of the default form, shows it under Advanced, hides it for a reverse proxy", async () => {
+describe("UserDomainDrawer create form no longer sets a document root (GH #1541)", () => {
+  it("shows no Document root field, in the simple form or under Advanced", async () => {
     caps.mail = true;
     renderDrawer();
-    // Not part of the simple form.
+    // Not in the simple form.
     expect(screen.queryByLabelText("Document root")).not.toBeInTheDocument();
-    // Expand Advanced → the field registers and renders.
+    // Expand Advanced → still no Document root; the reverse-proxy option remains.
     fireEvent.click(await screen.findByText("Advanced"));
-    await waitFor(() => expect(screen.getByLabelText("Document root")).toBeInTheDocument());
-    // A reverse-proxy domain has no docroot — toggling it removes the field.
-    fireEvent.click(screen.getByRole("checkbox", { name: /set up as a reverse proxy/i }));
     await waitFor(() =>
-      expect(screen.queryByLabelText("Document root")).not.toBeInTheDocument(),
+      expect(screen.getByRole("checkbox", { name: /set up as a reverse proxy/i })).toBeInTheDocument(),
     );
+    expect(screen.queryByLabelText("Document root")).not.toBeInTheDocument();
   });
 });
 
@@ -119,6 +118,8 @@ describe("UserDomainDrawer web create payload (GH #1541)", () => {
     expect(body).not.toHaveProperty("add_mail");
     expect(body).not.toHaveProperty("enable_webmail");
     expect(body).not.toHaveProperty("temp_url_enabled");
+    // GH #1541: document root is not set at create time.
+    expect(body).not.toHaveProperty("doc_root");
   });
 
   it("Add Mail Domain unchecked (external mail None) → no Jabali mail, and a subdomain gets no www", async () => {

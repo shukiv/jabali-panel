@@ -23,11 +23,10 @@ import { DnsZoneFields } from "../../../components/dns/DnsZoneFields";
 
 type UserDomainCreateInput = {
   name: string;
-  // GH #1413: optional custom document root at create time (handy for
-  // subdomains). Blank = the default …/domains/<name>/public_html. The
-  // server confines a tenant's docroot to this domain's own tree. GH #1541
-  // moved it under the drawer's "Advanced" section (out of the simple form).
-  doc_root?: string;
+  // GH #1541: document root is no longer set at create time (johnnyq: keep the
+  // Add Web Domain form to the bare minimum). Every new web domain gets the
+  // default …/domains/<name>/public_html; a custom docroot — or a redirect for
+  // a subdomain — is configured afterwards from the domain's Document Root tab.
   mail_provider?: string;
   m365_onmicrosoft?: string;
   google_dkim?: string;
@@ -138,10 +137,10 @@ export const UserDomainDrawer = ({ open, onClose, mode = "web" }: UserDomainDraw
           // www.<subdomain> record. create_www also drives the cert SAN, so it
           // stays independent of manage_dns.
           create_www: values.name.split(".").length === 2,
-          // Advanced: a reverse-proxy domain has no document root.
+          // Advanced: reverse proxy stays a create-time option (no later path to
+          // convert a plain web domain into one). Document root is not set here.
           reverse_proxy: isReverse,
           reverse_proxy_port: isReverse ? values.reverse_proxy_port : undefined,
-          doc_root: isReverse ? undefined : values.doc_root,
         };
       } else {
         // GH #1449: a web-off entry (DNS-only zone / mail-only domain) carries
@@ -350,11 +349,14 @@ export const UserDomainDrawer = ({ open, onClose, mode = "web" }: UserDomainDraw
           </Form.Item>
         )}
 
-        {/* GH #1541: keep the create form to the bare minimum. Document Root and
-            the reverse-proxy option are real but rarely needed at create time, so
-            they live under a collapsed "Advanced" section. Preview URL is dropped
-            entirely — it's a later, per-domain toggle. antd lazily renders the
-            panel body, so these fields register only once Advanced is expanded. */}
+        {/* GH #1541: keep the create form to the bare minimum. Document Root is
+            no longer offered at create time (johnnyq) — new domains get the
+            default docroot, and a custom docroot or a subdomain redirect is set
+            afterwards from the domain's Document Root tab. Preview URL is likewise
+            a later, per-domain toggle. The reverse-proxy option stays under
+            "Advanced" because there is no later path to convert a plain web
+            domain into a reverse proxy. antd lazily renders the panel body, so
+            these fields register only once Advanced is expanded. */}
         {isWeb && (
           <Collapse
             ghost
@@ -365,19 +367,6 @@ export const UserDomainDrawer = ({ open, onClose, mode = "web" }: UserDomainDraw
                 label: "Advanced",
                 children: (
                   <>
-                    {/* GH #1413: custom document root. Hidden for reverse-proxy
-                        domains (they have no docroot). The server confines a
-                        tenant's path to this domain's own tree. */}
-                    {!reverseProxy && (
-                      <Form.Item
-                        label={t("userdomaindrawer.document_root")}
-                        name="doc_root"
-                        tooltip={t("userdomaindrawer.document_root_hint")}
-                      >
-                        <Input placeholder="Leave blank for the default (…/public_html)" />
-                      </Form.Item>
-                    )}
-
                     {/* GH #1175: reverse-proxy option. The panel reserves a
                         conflict-free loopback port and writes the proxy_pass vhost;
                         the assigned port is shown after the domain is added. */}
