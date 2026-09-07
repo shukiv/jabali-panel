@@ -5,12 +5,16 @@
 // caches so the badge and the list stay in step, mirroring the DomainInventory
 // row handlers.
 import { useState } from "react";
-import { Descriptions, Space, Switch, Tag, Typography } from "antd";
+import { Button, Descriptions, Space, Switch, Tag, Typography } from "antd";
+import { SafetyCertificateOutlined } from "@icons";
+import { useNavigate } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { apiClient } from "../../../../apiClient";
 import { feedback } from "../../../../lib/feedback";
 import { getSSLTag } from "../../../../utils/sslState";
+import { daysUntil } from "../../../../components/ssl/sslHealth";
+import { SSLCertViewModal } from "../../../../components/ssl/SSLCertViewModal";
 import type { Domain } from "../../../../components/domains/types";
 
 const stripHomePrefix = (path: string): string => {
@@ -23,7 +27,9 @@ const stripHomePrefix = (path: string): string => {
 
 export const OverviewTab = ({ domain }: { domain: Domain }) => {
   const qc = useQueryClient();
+  const navigate = useNavigate();
   const [busy, setBusy] = useState<null | "preview" | "bot">(null);
+  const [viewCert, setViewCert] = useState(false);
 
   const patch = async (
     field: "preview" | "bot",
@@ -69,6 +75,12 @@ export const OverviewTab = ({ domain }: { domain: Domain }) => {
     );
 
   const ssl = getSSLTag(domain.ssl_state);
+  // An on-disk certificate to view/date exists only once issued — for a parked
+  // (pending_acme_retry) cert the nested expires_at is the self-signed
+  // fallback's date, so never show it as the cert's expiry (GH #1543).
+  const sslIssued = domain.ssl?.status === "issued";
+  const sslExpiryDays = sslIssued ? daysUntil(domain.ssl?.expires_at ?? null) : null;
+  const goToSSL = () => navigate(`/jabali-panel/domains/${domain.id}/ssl`);
 
   return (
     <Space direction="vertical" size="large" style={{ width: "100%" }}>
@@ -77,7 +89,22 @@ export const OverviewTab = ({ domain }: { domain: Domain }) => {
           {domain.is_enabled ? <Tag color="green">Enabled</Tag> : <Tag color="red">Disabled</Tag>}
         </Descriptions.Item>
         <Descriptions.Item label="SSL">
-          <Tag color={ssl.color}>{ssl.label}</Tag>
+          <Space wrap size="small">
+            <Tag color={ssl.color}>{ssl.label}</Tag>
+            {sslIssued && sslExpiryDays !== null ? (
+              <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+                expires in {sslExpiryDays} day{sslExpiryDays === 1 ? "" : "s"}
+              </Typography.Text>
+            ) : null}
+            {sslIssued ? (
+              <Button size="small" icon={<SafetyCertificateOutlined />} onClick={() => setViewCert(true)}>
+                View Certificate
+              </Button>
+            ) : null}
+            <Button size="small" type="link" style={{ padding: 0 }} onClick={goToSSL}>
+              SSL settings
+            </Button>
+          </Space>
         </Descriptions.Item>
         <Descriptions.Item label="Document root">
           <Typography.Text code>{stripHomePrefix(domain.doc_root)}</Typography.Text>
@@ -127,6 +154,12 @@ export const OverviewTab = ({ domain }: { domain: Domain }) => {
           </div>
         </Space>
       </Space>
+
+      <SSLCertViewModal
+        domainId={viewCert ? domain.id : null}
+        domainName={domain.name}
+        onClose={() => setViewCert(false)}
+      />
     </Space>
   );
 };

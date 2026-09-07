@@ -45,6 +45,9 @@ export type Domain = {
   is_panel_primary?: boolean;
   is_quota_suspended?: boolean;
   ssl_enabled?: boolean;
+  // Certificate mode (le/self/custom/shared/none) — the detail/list handlers
+  // send it; shown read-only on the tenant SSL tab (GH #1543).
+  ssl_mode?: string;
   mail_provider?: string;
   m365_onmicrosoft?: string;
   google_dkim?: string;

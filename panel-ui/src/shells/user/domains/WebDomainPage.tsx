@@ -4,15 +4,19 @@
 // modal launchers. The tab lives in the URL (:tab), so a tab is linkable and
 // the browser Back button walks the tabs.
 //
-// Tabs here: Overview (facts + the preview-URL / bot-challenge toggles), DNS
-// (gated on dns_enabled), Redirects, Index Files, Caching and Directory
-// Privacy, plus three tabs gated on the same caps as the old row menu — Domain
-// options and Rewrite rules (tenant_domain_options_enabled) and Document root
-// (tenant_docroot_editable). The tenant row menu is now just Enable/Delete; the
-// DNS records manager (DNSRecordsPanel) renders here embedded and standalone on
-// the admin route.
+// Tabs here: Overview (facts + the preview-URL / bot-challenge toggles), Logs,
+// SSL, DNS (gated on dns_enabled), PHP Settings, Redirects, Index Files, Caching
+// and Directory Privacy, plus three tabs gated on the same caps as the old row
+// menu — Domain options and Rewrite rules (tenant_domain_options_enabled) and
+// Document root (tenant_docroot_editable). The tenant row menu is now just
+// Enable/Delete; the DNS records manager (DNSRecordsPanel) renders here embedded
+// and standalone on the admin route.
+//
+// The tab bar stays horizontal on desktop (johnnyq's call over a vertical
+// sidebar) but collapses to a Select on narrow screens so it doesn't force
+// horizontal scrolling on mobile (lxsdevcode).
 import type { ReactNode } from "react";
-import { Alert, Button, Card, Skeleton, Space, Typography } from "antd";
+import { Alert, Button, Card, Grid, Select, Skeleton, Space, Typography } from "antd";
 import { GlobalOutlined } from "@icons";
 import { useNavigate, useParams } from "react-router";
 
@@ -33,6 +37,7 @@ import { DomainPHPSettingsPanel } from "../../../components/domains/DomainPHPSet
 import { RenameDomainButton } from "../../../components/domains/RenameDomainButton";
 import { DomainEnvVarsCard } from "../php-settings/DomainEnvVarsCard";
 import { OverviewTab } from "./tabs/OverviewTab";
+import { SSLTab } from "./tabs/SSLTab";
 
 const DEFAULT_TAB = "overview";
 const LIST_PATH = "/jabali-panel/domains";
@@ -43,6 +48,12 @@ export const WebDomainPage = () => {
 
   const domainQ = useOneQuery<Domain>({ resource: "domains", id });
   const { data: caps } = useServerCapabilities();
+  // Horizontal tabs stay on desktop; on a narrow screen the strip collapses to
+  // a Select so the tabs don't force horizontal scrolling (GH #1543). `md ===
+  // false` (never just falsy) keeps SSR / first paint / jsdom on the desktop
+  // strip — an unknown breakpoint must not flip to the mobile control.
+  const screens = Grid.useBreakpoint();
+  const mobile = screens.md === false;
 
   // The shell already renders ONE breadcrumb (RouteBreadcrumb, GH #455). Override
   // it with the entity trail so the last crumb is the domain name, not the raw
@@ -88,8 +99,10 @@ export const WebDomainPage = () => {
   // sees neither the menu item nor the tab (never a disabled stub).
   const optionsOn = caps?.tenant_domain_options_enabled === true;
   const docrootOn = caps?.tenant_docroot_editable === true;
-  // DNS folds in here as a tab (GH #1543). Gate on the same dns_enabled signal
+  // DNS renders here as a tab (GH #1543). Gate on the same dns_enabled signal
   // the sidebar and the old row-menu item used — default-on while caps load.
+  // The tenant DNS Zones overview page links straight into this tab to manage a
+  // zone's records, so this is the tenant's per-domain DNS records manager.
   const dnsOn = caps?.dns_enabled !== false;
 
   const tabs: { key: string; label: string; node: ReactNode }[] = [
@@ -98,6 +111,10 @@ export const WebDomainPage = () => {
     // "is the site up" — so it sits second, before the editors. It exists for
     // every web domain, so it is not cap-gated.
     { key: "logs", label: "Logs", node: <DomainLogsPanel domainId={domain.id} /> },
+    // SSL — this domain's certificate: status / expiry, view the issued cert,
+    // renew or retry issuance (GH #1543, lxsdevcode). Certificate mode is shown
+    // read-only; switching mode is an admin action.
+    { key: "ssl", label: "SSL", node: <SSLTab domain={domain} /> },
     ...(dnsOn
       ? [{ key: "dns", label: "DNS", node: <DNSRecordsPanel domainId={domain.id} embedded /> }]
       : []),
@@ -173,13 +190,28 @@ export const WebDomainPage = () => {
         />
       </Space>
 
-      <Card
-        tabList={tabs.map((tdef) => ({ key: tdef.key, tab: tdef.label }))}
-        activeTabKey={activeKey}
-        onTabChange={(k) => navigate(`${LIST_PATH}/${domain.id}/${k}`)}
-      >
-        {active.node}
-      </Card>
+      {mobile ? (
+        // Narrow screens: a full-width Select replaces the tab strip so tabs
+        // don't scroll horizontally. Same URL-per-tab contract.
+        <Card>
+          <Select
+            value={activeKey}
+            onChange={(k) => navigate(`${LIST_PATH}/${domain.id}/${k}`)}
+            options={tabs.map((tdef) => ({ value: tdef.key, label: tdef.label }))}
+            style={{ width: "100%", marginBottom: 16 }}
+            aria-label="Domain section"
+          />
+          {active.node}
+        </Card>
+      ) : (
+        <Card
+          tabList={tabs.map((tdef) => ({ key: tdef.key, tab: tdef.label }))}
+          activeTabKey={activeKey}
+          onTabChange={(k) => navigate(`${LIST_PATH}/${domain.id}/${k}`)}
+        >
+          {active.node}
+        </Card>
+      )}
     </div>
   );
 };
