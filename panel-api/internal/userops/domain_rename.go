@@ -32,6 +32,14 @@ type MailCertReissuer interface {
 	ResetForReissue(ctx context.Context, domainID string) (int64, error)
 }
 
+// FtpDocrootLister lists a tenant's FTP/SFTP subaccounts so a rename can refuse
+// when one is homed at (or under) the docroot the rename is about to move
+// (GH #1579). Satisfied by repository.FtpAccountRepository. Optional on Deps:
+// nil skips the check (the rename proceeds — the pre-gate behaviour).
+type FtpDocrootLister interface {
+	ListByUserID(ctx context.Context, userID string) ([]models.FtpAccount, error)
+}
+
 // appTypeWordPress is the ApplicationInstall.AppType whose stored site URL a
 // rename can rewrite (models.ApplicationInstall defaults app_type to this). Only
 // WordPress keeps a rewritable absolute site URL in its OWN database; other app
@@ -80,7 +88,10 @@ func renameErr(code, format string, args ...any) *RenameError {
 //     name and cannot be re-issued automatically for the new one);
 //   - the owner's Linux account is not provisioned yet;
 //   - the docroot path does not contain the old name exactly once (a custom
-//     docroot needs a manual move).
+//     docroot needs a manual move);
+//   - an FTP/SFTP subaccount is homed at or under the docroot being moved — its
+//     jail/chroot is not moved automatically (same posture as GH #1238), so the
+//     owner repoints or removes it first.
 //
 // The per-domain mail TLS cert is re-queued for reissuance: its row is
 // domain_id-keyed (so it survives the rename), and RenameDomain flips it back to
@@ -176,6 +187,41 @@ func RenameDomain(ctx context.Context, d Deps, rec RenameReconciler, domain *mod
 	newDocRoot, pruneOldDir, derr := renameDocRootSegment(oldDocRoot, oldName, newName)
 	if derr != nil {
 		return nil, derr
+	}
+
+	// Refuse when an FTP/SFTP subaccount is homed at (or under) the tree this
+	// rename is about to move. The reown relocates the docroot directory, but
+	// ftp_accounts.home_path is STORED (not derived from the domain), and the
+	// reconciler renders each account — an isolated GH #1145 jail bind-mount, or
+	// a shared-access chroot target — against that stored path. Left in place it
+	// would point at a directory that no longer exists. Moving an FTP jail with
+	// the docroot is out of scope here — the same reason GH #1238 user-rename
+	// refuses a tenant that still has FTP subaccounts — so fail closed and name
+	// the accounts to repoint. Gate on pruneOldDir when the nested layout's
+	// wrapper dir is emptied + pruned by the move (that dir goes too), else on
+	// the docroot itself. Match a path SEGMENT boundary so a sibling docroot
+	// (…/olddomain-other) is never falsely caught. Runs before any mutation, so a
+	// refusal leaves the domain fully intact.
+	if d.FtpAccounts != nil {
+		gateRoot := oldDocRoot
+		if pruneOldDir != "" {
+			gateRoot = pruneOldDir
+		}
+		accts, aerr := d.FtpAccounts.ListByUserID(ctx, domain.UserID)
+		if aerr != nil {
+			return nil, renameErr("ftp_check_failed", "could not check FTP subaccounts before renaming %q: %v", oldName, aerr)
+		}
+		var blocking []string
+		for _, a := range accts {
+			if a.HomePath == gateRoot || strings.HasPrefix(a.HomePath, gateRoot+"/") {
+				blocking = append(blocking, a.Username)
+			}
+		}
+		if len(blocking) > 0 {
+			return nil, renameErr("ftp_subaccounts",
+				"%q has FTP/SFTP subaccount(s) homed under its files (%s) — repoint or remove them before renaming (their jails are not moved automatically)",
+				oldName, strings.Join(blocking, ", "))
+		}
 	}
 
 	// The new name must be free. A concurrent claim between here and the write

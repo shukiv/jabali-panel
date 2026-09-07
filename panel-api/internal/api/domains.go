@@ -42,9 +42,13 @@ type DomainHandlerConfig struct {
 	// for reissuance under the NEW name (its row is domain_id-keyed and survives
 	// the rename, but its lineage still covers mail.<old>). Optional — a panel
 	// without per-domain mail TLS simply skips that heal.
-	MailCerts  repository.MailCertificateRepository
-	Packages   repository.PackageRepository
-	Agent      agent.AgentInterface
+	MailCerts repository.MailCertificateRepository
+	// FtpAccounts lets the GH #1579 rename refuse when an FTP/SFTP subaccount is
+	// homed at or under the docroot being moved — its jail/chroot is not moved
+	// automatically. Optional — nil skips the check (the rename proceeds).
+	FtpAccounts repository.FtpAccountRepository
+	Packages    repository.PackageRepository
+	Agent       agent.AgentInterface
 	Reconciler *reconciler.Reconciler
 	// PortAllocations (GH #1175): shared loopback-port pool for reverse-proxy domains.
 	PortAllocations repository.PortAllocationRepository

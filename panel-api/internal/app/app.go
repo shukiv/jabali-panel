@@ -704,6 +704,9 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				SharedCerts:     deps.SharedCerts,
 				// GH #1579 rename: re-queues the per-domain mail cert for mail.<new>.
 				MailCerts: deps.MailCerts,
+				// GH #1579 rename: refuses when an FTP/SFTP subaccount is homed
+				// under the docroot being moved (its jail/chroot is not moved).
+				FtpAccounts: deps.FtpAccounts,
 				// DNS repos feed the auto-enable-email path in create.
 				// Panel profiles without PowerDNS leave these nil and
 				// create still works — auto-enable is skipped cleanly.

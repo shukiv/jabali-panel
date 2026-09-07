@@ -82,6 +82,9 @@ func (h *domainHandler) rename(c *gin.Context) {
 		SSLCerts:    h.cfg.SSLCerts,
 		MailCerts:   h.cfg.MailCerts,
 		AppInstalls: h.cfg.AppInstalls,
+		// FtpAccounts backs the refusal when an FTP/SFTP subaccount is homed
+		// under the docroot being moved (its jail/chroot is not moved here).
+		FtpAccounts: h.cfg.FtpAccounts,
 		Log:         slog.Default(),
 	}, rec, domain, newName)
 	if err != nil {
@@ -112,11 +115,12 @@ func renameHTTPStatus(code string) int {
 	case "invalid_name", "noop", "custom_docroot", "ambiguous_docroot":
 		return http.StatusBadRequest
 	case "mail_domain_conflict", "panel_primary", "web_disabled",
-		"ssl_custom_cert", "name_taken", "owner_unprovisioned", "owner_unresolved":
+		"ssl_custom_cert", "name_taken", "owner_unprovisioned", "owner_unresolved",
+		"ftp_subaccounts":
 		return http.StatusConflict
 	case "not_found":
 		return http.StatusNotFound
-	case "unavailable":
+	case "unavailable", "ftp_check_failed":
 		return http.StatusServiceUnavailable
 	default: // persist_failed, move_failed, lookup_failed
 		return http.StatusInternalServerError
