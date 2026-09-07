@@ -688,6 +688,9 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				LimitOverrides: deps.LimitOverrides,
 				Agent:          deps.Agent,
 				QuotaMount:     deps.QuotaMount,
+				// Lets the dashboard usage card prefer the Disk Usage page's
+				// `du` figure over the POSIX quota for the disk metric (GH #1439).
+				DiskSnapshots: repository.NewDiskUsageSnapshotRepository(deps.DB),
 			})
 		}
 		if deps.Domains != nil {

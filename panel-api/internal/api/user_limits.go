@@ -68,6 +68,14 @@ type UserLimitsHandlerConfig struct {
 	// call. Empty string disables the disk half of the report (CI,
 	// dev box without quota).
 	QuotaMount string
+	// DiskSnapshots reads the last computed per-user disk-usage breakdown
+	// (the same snapshot the tenant Disk Usage page persists). Optional:
+	// nil leaves the response unchanged. When present, the usage endpoint
+	// surfaces the snapshot's home-directory `du` figure as `disk_used` so
+	// the dashboard shows the SAME number as the Disk Usage page instead of
+	// the POSIX quota, which is absent when quota isn't tracking (shown as
+	// 0 B) and over-reports the home dir when it is (GH #1439).
+	DiskSnapshots repository.DiskUsageSnapshotRepository
 }
 
 // RegisterUserLimitsRoutes mounts /users/:id/usage and /limit-overrides
@@ -116,6 +124,21 @@ type usageResponse struct {
 	Package  *limitFieldsView          `json:"package,omitempty"`
 	Override *models.UserLimitOverride `json:"override,omitempty"`
 	Current  json.RawMessage           `json:"current,omitempty"`
+	// DiskUsed is the authoritative home-directory usage sourced from the
+	// persisted Disk Usage snapshot (an actual `du`), not the POSIX quota in
+	// `current`. Present only when a snapshot exists; the UI prefers it over
+	// `current.disk.used_kb` so the dashboard matches the Disk Usage page
+	// (GH #1439). Absent (nil) → the client falls back to the quota figure.
+	DiskUsed *diskUsedView `json:"disk_used,omitempty"`
+}
+
+// diskUsedView is the snapshot-derived disk figure the dashboard prefers.
+// Source is "du" today (the only snapshot source); ComputedAt lets the UI
+// show how fresh the measurement is.
+type diskUsedView struct {
+	Bytes      uint64     `json:"bytes"`
+	Source     string     `json:"source"`
+	ComputedAt *time.Time `json:"computed_at,omitempty"`
 }
 
 func (h *userLimitsHandler) usage(c *gin.Context) {
@@ -166,6 +189,28 @@ func (h *userLimitsHandler) usage(c *gin.Context) {
 			if err == nil {
 				resp.Current = raw
 				usageReportCachePut(cacheKey, raw)
+			}
+		}
+	}
+
+	// Prefer the persisted Disk Usage snapshot's home `du` figure for the
+	// disk metric. It is the same number the Disk Usage page shows and is
+	// correct where the POSIX quota in `current` is not: quota is ABSENT
+	// (omitted → dashboard reads 0 B) when the mount has no aquota.user, and
+	// OVER-reports the home dir (every block the UID owns device-wide) when
+	// it is tracking. Read outside the 60s agent cache — snapshot freshness
+	// is its own clock. Best-effort: any miss leaves `disk_used` nil and the
+	// client falls back to the quota figure (GH #1439).
+	if h.cfg.DiskSnapshots != nil {
+		if snap, serr := h.cfg.DiskSnapshots.Get(c.Request.Context(), userID); serr == nil && snap != nil {
+			var du diskUsageResponse
+			if json.Unmarshal([]byte(snap.Payload), &du) == nil {
+				ca := snap.ComputedAt
+				resp.DiskUsed = &diskUsedView{
+					Bytes:      du.Files.Bytes,
+					Source:     "du",
+					ComputedAt: &ca,
+				}
 			}
 		}
 	}
