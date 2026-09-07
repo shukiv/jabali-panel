@@ -198,6 +198,24 @@ func (s *drSSLCerts) ResetForRetry(_ context.Context, id string, _ time.Time) er
 	return nil
 }
 
+type drMailCerts struct {
+	rec      *drRecorder
+	resetErr error
+	resetN   int64  // rows ResetForReissue reports affected
+	resetID  string // captured domain_id
+	called   bool
+}
+
+func (m *drMailCerts) ResetForReissue(_ context.Context, domainID string) (int64, error) {
+	m.called = true
+	m.resetID = domainID
+	if m.resetErr != nil {
+		return 0, m.resetErr
+	}
+	m.rec.events = append(m.rec.events, "mailcert.reset")
+	return m.resetN, nil
+}
+
 type drSched struct{ scheduled []string }
 
 func (r *drSched) Schedule(id string) { r.scheduled = append(r.scheduled, id) }
@@ -230,6 +248,7 @@ func drNewDeps(rec *drRecorder, dom *models.Domain, owner *models.User) (Deps, *
 		Agent:           ag,
 		DNSZones:        &drDNSZones{rec: rec, zone: &models.DNSZone{ID: "zone-1", DomainID: dom.ID, Name: dom.Name}},
 		SSLCerts:        &drSSLCerts{rec: rec, cert: &models.SSLCertificate{ID: "cert-1", DomainID: dom.ID}},
+		MailCerts:       &drMailCerts{rec: rec, resetN: 1},
 	}
 	return d, ag, td
 }
@@ -466,7 +485,7 @@ func TestRenameDomain_HappyPath(t *testing.T) {
 	// tombstone the now-freed old name, then heal DNS + SSL for the new name.
 	assertEvents(t, rec.events, []string{
 		evDryMail, "agent.domain.reown", evDryMail, "db.rename",
-		"tombstone.ensure", "zone.rename", "cert.reset",
+		"tombstone.ensure", "zone.rename", "cert.reset", "mailcert.reset",
 	})
 
 	// Tombstone is for the OLD name; never deleted on success.
@@ -553,7 +572,7 @@ func TestRenameDomain_HappyPath_NoZoneNoCert(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	assertEvents(t, rec.events, []string{
-		evDryMail, "agent.domain.reown", evDryMail, "db.rename", "tombstone.ensure",
+		evDryMail, "agent.domain.reown", evDryMail, "db.rename", "tombstone.ensure", "mailcert.reset",
 	})
 }
 
@@ -642,6 +661,85 @@ func TestRenameDomain_HealFailureStillSucceeds(t *testing.T) {
 	}
 }
 
+// ---- per-domain mail TLS cert reissue (GH #1579 mail-cert slice) ----
+
+// The mail cert is re-queued for reissuance after the rename: ResetForReissue is
+// called with the domain id, AFTER the DB rename (so the reconciler dispatches
+// for the NEW name), and it does not fail the rename.
+func TestRenameDomain_MailCertReissueReset(t *testing.T) {
+	rec := &drRecorder{}
+	dom := drWebDomain()
+	d, _, _ := drNewDeps(rec, dom, drHappyOwner())
+
+	if _, err := RenameDomain(context.Background(), d, &drSched{}, dom, "new.com"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	mc := d.MailCerts.(*drMailCerts)
+	if !mc.called {
+		t.Fatalf("ResetForReissue must be called on a rename")
+	}
+	if mc.resetID != "dom-1" {
+		t.Fatalf("ResetForReissue domain id = %q, want dom-1", mc.resetID)
+	}
+	// Order invariant: the reset must run AFTER db.rename — the reconciler reads
+	// the current domain name at dispatch, so a pre-commit reset would reissue for
+	// the OLD name.
+	di, mi := -1, -1
+	for i, e := range rec.events {
+		switch e {
+		case "db.rename":
+			di = i
+		case "mailcert.reset":
+			mi = i
+		}
+	}
+	if di == -1 || mi == -1 || mi < di {
+		t.Fatalf("mailcert.reset (%d) must come after db.rename (%d): %v", mi, di, rec.events)
+	}
+}
+
+// A mail-cert reset failure is a best-effort post-commit heal: it is logged, not
+// surfaced, and never fails the already-committed rename.
+func TestRenameDomain_MailCertResetFailureStillSucceeds(t *testing.T) {
+	rec := &drRecorder{}
+	dom := drWebDomain()
+	d, _, _ := drNewDeps(rec, dom, drHappyOwner())
+	d.MailCerts.(*drMailCerts).resetErr = errors.New("mail cert reset failed")
+
+	warnings, err := RenameDomain(context.Background(), d, &drSched{}, dom, "new.com")
+	if err != nil {
+		t.Fatalf("a mail-cert reset failure must not fail the rename, got %v", err)
+	}
+	if dom.Name != "new.com" {
+		t.Fatalf("row should be renamed despite the reset failure, got %q", dom.Name)
+	}
+	// A heal failure is not a user-facing warning (unlike the app-URL rewrite).
+	if len(warnings) != 0 {
+		t.Fatalf("mail-cert reset failure must not surface a warning, got %v", warnings)
+	}
+}
+
+// A panel without per-domain mail TLS wired (MailCerts nil) still renames — the
+// reset is simply skipped.
+func TestRenameDomain_NoMailCertsSkips(t *testing.T) {
+	rec := &drRecorder{}
+	dom := drWebDomain()
+	d, _, _ := drNewDeps(rec, dom, drHappyOwner())
+	d.MailCerts = nil
+
+	if _, err := RenameDomain(context.Background(), d, &drSched{}, dom, "new.com"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, e := range rec.events {
+		if e == "mailcert.reset" {
+			t.Fatalf("nil MailCerts must not run a reset, got %v", rec.events)
+		}
+	}
+	if dom.Name != "new.com" {
+		t.Fatalf("row should still be renamed, got %q", dom.Name)
+	}
+}
+
 // ---- WordPress site-URL rewrite (GH #1579 app-URL slice) ----
 
 // A WordPress install on the domain gets its stored site URL rewritten after
@@ -666,7 +764,7 @@ func TestRenameDomain_WordPressURLRewrite(t *testing.T) {
 	// The rewrite runs AFTER the DNS/SSL heals.
 	assertEvents(t, rec.events, []string{
 		evDryMail, "agent.domain.reown", evDryMail, "db.rename", "tombstone.ensure",
-		"zone.rename", "cert.reset",
+		"zone.rename", "cert.reset", "mailcert.reset",
 		"agent.migration.refresh_reconcile", "agent.migration.refresh_reconcile",
 	})
 

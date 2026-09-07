@@ -99,12 +99,20 @@ func domainDeleteHandler(ctx context.Context, params json.RawMessage) (any, erro
 }
 
 // removeDomainCertArtifacts deletes the on-disk TLS material a domain teardown
-// leaves behind: the self-signed cert directory and the certbot/LE lineage for
-// the exact name. Best-effort — a missing path is a no-op — and name-scoped, so
-// it never reaches an unrelated (e.g. shared/wildcard) certificate.
+// leaves behind: the self-signed cert directory, the web certbot/LE lineage for
+// the exact name, AND the per-domain mail lineage (mail.<domain>) that
+// ssl.mail.issue created. Best-effort — a missing path is a no-op — and
+// name-scoped, so it never reaches an unrelated (e.g. shared/wildcard)
+// certificate. Reaping the mail lineage here matters: left behind it keeps an
+// auto-renewing renewal conf pointing at a name that no longer resolves, which
+// makes `certbot renew` noisy (and, with broken live files, can abort renew
+// box-wide — the #738 scar). domain.delete is the shared teardown chokepoint, so
+// this covers both a real delete and a rename's old-name teardown; on a rename
+// the reissued cert lands under the distinct mail.<new> lineage, untouched.
 func removeDomainCertArtifacts(ctx context.Context, domain string) {
 	_ = os.RemoveAll(filepath.Join(baseSelfSignDir, domain))
 	cleanupCertbotLineage(ctx, sslLERoot, domain)
+	cleanupCertbotLineage(ctx, sslLERoot, "mail."+domain)
 }
 
 // removeMailVhostFiles reaps the per-domain mail vhost (`<domain>-mail.conf`)

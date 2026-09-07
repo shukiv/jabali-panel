@@ -33,6 +33,13 @@ type MailCertificateRepository interface {
 	// 7 days. Renewals (rows with issued_at NOT NULL) don't count
 	// against LE's new-order rate limit and are excluded.
 	CountFirstIssueAttemptsLastWeek(ctx context.Context) (int64, error)
+	// ResetForReissue re-queues a domain's mail cert for issuance under a
+	// (possibly new) name by flipping a settled row back to pending, so the
+	// reconciler reissues promptly instead of waiting for the 30-day renewal
+	// window. Used by the in-place domain rename (GH #1579): the row is
+	// domain_id-keyed and survives the rename, but its lineage still covers
+	// mail.<old>. Returns the number of rows reset (0 = no mail cert, or skipped).
+	ResetForReissue(ctx context.Context, domainID string) (int64, error)
 }
 
 type mailCertRepo struct{ db *gorm.DB }
@@ -182,6 +189,41 @@ func (r *mailCertRepo) MarkDNSMissing(ctx context.Context, id, errMsg string) er
 
 func (r *mailCertRepo) Delete(ctx context.Context, id string) error {
 	return translate(r.db.WithContext(ctx).Delete(&models.MailCertificate{}, "id = ?", id).Error)
+}
+
+// ResetForReissue flips a settled mail cert row (issued / failed / dns_missing)
+// back to pending for one domain, clearing last_error + the retry gate so the
+// reconciler dispatches ssl.mail.issue on its next tick — which reads the
+// CURRENT domain name, so the reissue covers mail.<new>. Deliberately scoped:
+//   - disabled rows (operator opted out) are left untouched — a rename must not
+//     silently re-enable mail TLS;
+//   - pending / issuing rows are left untouched — they are already converging
+//     (issuing especially: overwriting it would race the in-flight verb's own
+//     terminal write and could double-dispatch).
+//
+// issued_at is preserved, so the reconciler treats the reissue as a renewal
+// (exempt from the LE new-order soft cap) rather than a first issuance — a
+// rename should not be gated by the weekly cap for a domain that already had a
+// cert. A never-issued failed row keeps issued_at NULL and still counts as a
+// first issue. Returns rows affected (0 when the domain has no mail cert or its
+// row was in a skipped state).
+func (r *mailCertRepo) ResetForReissue(ctx context.Context, domainID string) (int64, error) {
+	res := r.db.WithContext(ctx).Model(&models.MailCertificate{}).
+		Where("domain_id = ? AND status IN ?", domainID, []string{
+			models.MailCertStatusIssued,
+			models.MailCertStatusFailed,
+			models.MailCertStatusDNSMissing,
+		}).
+		Updates(map[string]any{
+			"status":        models.MailCertStatusPending,
+			"last_error":    nil,
+			"next_retry_at": nil,
+			"updated_at":    time.Now(),
+		})
+	if res.Error != nil {
+		return 0, translate(res.Error)
+	}
+	return res.RowsAffected, nil
 }
 
 func (r *mailCertRepo) CountFirstIssueAttemptsLastWeek(ctx context.Context) (int64, error) {

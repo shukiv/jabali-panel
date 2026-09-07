@@ -16,13 +16,15 @@ type renameDomainRequest struct {
 }
 
 // rename renames an existing domain in place (GH #1579). Owner-scoped: a tenant
-// may rename their own domain, an admin any. Experimental phase 1 — web-only,
-// mail must be off. A WordPress install's stored site URL IS rewritten to the
-// new name (best-effort); any install that could not be rewritten comes back in
-// the response `warnings` (surfaced by the UI). Other apps' internal config is
+// may rename their own domain, an admin any. Experimental. Mail is CARRIED to the
+// new name (the Stalwart registry domain is renamed in place, so mailboxes,
+// stored messages, and DKIM follow) and the per-domain mail cert is re-queued for
+// mail.<new>. A WordPress install's stored site URL IS rewritten to the new name
+// (best-effort); any install that could not be rewritten comes back in the
+// response `warnings` (surfaced by the UI). Other apps' internal config is
 // unchanged. The heavy lifting (gate, tombstone the old name, rename the row,
-// move + re-own the docroot, rewrite app URLs, re-render) lives in the shared
-// userops.RenameDomain so any future CLI reuses it.
+// move + re-own the docroot, carry mail, rewrite app URLs, re-render) lives in
+// the shared userops.RenameDomain so any future CLI reuses it.
 func (h *domainHandler) rename(c *gin.Context) {
 	ctx := c.Request.Context()
 	domain, err := h.cfg.Domains.FindByID(ctx, c.Param("id"))
@@ -71,12 +73,14 @@ func (h *domainHandler) rename(c *gin.Context) {
 		DomainTeardowns: h.cfg.DomainTeardowns,
 		Users:           h.cfg.Users,
 		Agent:           h.cfg.Agent,
-		// DNSZones + SSLCerts let the rename re-key the zone + reissue the cert
-		// for the new name; AppInstalls lets it rewrite a WordPress install's
-		// stored site URL. Mail is carried by the mail.domain.rename agent verb
-		// (via h.cfg.Agent), so no mailbox repo is needed here.
+		// DNSZones + SSLCerts let the rename re-key the zone + reissue the web
+		// cert for the new name; MailCerts re-queues the per-domain mail cert for
+		// mail.<new>; AppInstalls lets it rewrite a WordPress install's stored site
+		// URL. Mail data is carried by the mail.domain.rename agent verb (via
+		// h.cfg.Agent), so no mailbox repo is needed here.
 		DNSZones:    h.cfg.DNSZones,
 		SSLCerts:    h.cfg.SSLCerts,
+		MailCerts:   h.cfg.MailCerts,
 		AppInstalls: h.cfg.AppInstalls,
 		Log:         slog.Default(),
 	}, rec, domain, newName)
