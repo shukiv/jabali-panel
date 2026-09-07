@@ -229,6 +229,24 @@ func drFtpAcct(username, homePath string) models.FtpAccount {
 	return models.FtpAccount{ID: "ftp-" + username, UserID: "user-1", Username: username, HomePath: homePath}
 }
 
+type drDMARC struct {
+	rec              *drRecorder
+	rekeyErr         error
+	rekeyN           int64
+	oldSeen, newSeen string
+	called           bool
+}
+
+func (m *drDMARC) ReKeyDomain(_ context.Context, oldDomain, newDomain string) (int64, error) {
+	m.called = true
+	m.oldSeen, m.newSeen = oldDomain, newDomain
+	if m.rekeyErr != nil {
+		return 0, m.rekeyErr
+	}
+	m.rec.events = append(m.rec.events, "dmarc.rekey")
+	return m.rekeyN, nil
+}
+
 type drSched struct{ scheduled []string }
 
 func (r *drSched) Schedule(id string) { r.scheduled = append(r.scheduled, id) }
@@ -965,6 +983,83 @@ func TestRenameDomain_WordPressURLRewrite_WWW(t *testing.T) {
 		ag.refreshCalls[0]["new_url"] != "https://www.new.com" {
 		t.Fatalf("www install must rewrite the www host, got %v -> %v",
 			ag.refreshCalls[0]["old_url"], ag.refreshCalls[0]["new_url"])
+	}
+}
+
+// ---- DMARC dashboard re-key (GH #1579 dmarc slice) ----
+
+// The domain's DMARC aggregate history is moved to the new name after the
+// rename: ReKeyDomain is called with (oldName, newName), AFTER the DB rename, and
+// never fails the rename.
+func TestRenameDomain_DMARCReKey(t *testing.T) {
+	rec := &drRecorder{}
+	dom := drWebDomain()
+	d, _, _ := drNewDeps(rec, dom, drHappyOwner())
+	dm := &drDMARC{rec: rec, rekeyN: 2}
+	d.DMARC = dm
+
+	if _, err := RenameDomain(context.Background(), d, &drSched{}, dom, "new.com"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !dm.called {
+		t.Fatalf("ReKeyDomain must be called on a rename")
+	}
+	if dm.oldSeen != "old.com" || dm.newSeen != "new.com" {
+		t.Fatalf("ReKeyDomain args = (%q,%q), want (old.com,new.com)", dm.oldSeen, dm.newSeen)
+	}
+	// The re-key runs after the DB rename (post-commit heal, ordering not
+	// load-bearing but asserted for consistency with the other heals).
+	di, ri := -1, -1
+	for i, e := range rec.events {
+		switch e {
+		case "db.rename":
+			di = i
+		case "dmarc.rekey":
+			ri = i
+		}
+	}
+	if di == -1 || ri == -1 || ri < di {
+		t.Fatalf("dmarc.rekey (%d) must come after db.rename (%d): %v", ri, di, rec.events)
+	}
+}
+
+// A DMARC re-key failure is a best-effort post-commit heal: logged, not
+// surfaced, never fails the already-committed rename.
+func TestRenameDomain_DMARCReKeyFailureStillSucceeds(t *testing.T) {
+	rec := &drRecorder{}
+	dom := drWebDomain()
+	d, _, _ := drNewDeps(rec, dom, drHappyOwner())
+	d.DMARC = &drDMARC{rec: rec, rekeyErr: errors.New("dmarc rekey failed")}
+
+	warnings, err := RenameDomain(context.Background(), d, &drSched{}, dom, "new.com")
+	if err != nil {
+		t.Fatalf("a DMARC re-key failure must not fail the rename, got %v", err)
+	}
+	if dom.Name != "new.com" {
+		t.Fatalf("row should be renamed despite the re-key failure, got %q", dom.Name)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("a DMARC re-key failure must not surface a warning, got %v", warnings)
+	}
+}
+
+// A panel without the DMARC repo wired (DMARC nil) still renames — the re-key is
+// simply skipped.
+func TestRenameDomain_NoDMARCSkips(t *testing.T) {
+	rec := &drRecorder{}
+	dom := drWebDomain()
+	d, _, _ := drNewDeps(rec, dom, drHappyOwner()) // DMARC left nil
+
+	if _, err := RenameDomain(context.Background(), d, &drSched{}, dom, "new.com"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, e := range rec.events {
+		if e == "dmarc.rekey" {
+			t.Fatalf("nil DMARC must not run a re-key, got %v", rec.events)
+		}
+	}
+	if dom.Name != "new.com" {
+		t.Fatalf("row should still be renamed, got %q", dom.Name)
 	}
 }
 

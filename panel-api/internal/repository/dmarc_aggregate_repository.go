@@ -38,6 +38,13 @@ type DMARCAggregateRepository interface {
 	// CountFailuresSince counts dkim=fail rows since the cutoff for the
 	// deliverability score widget.
 	CountFailuresSince(ctx context.Context, domain string, since time.Time) (int64, error)
+
+	// ReKeyDomain moves every aggregate row from oldDomain to newDomain so an
+	// in-place domain rename (GH #1579) keeps the DMARC dashboard's history
+	// instead of orphaning it under the old name (the dashboard reads by domain
+	// name). This is the ONLY UPDATE path on an otherwise append-only table, run
+	// once per rename. Returns the rows moved.
+	ReKeyDomain(ctx context.Context, oldDomain, newDomain string) (int64, error)
 }
 
 type dmarcRepo struct{ db *gorm.DB }
@@ -113,6 +120,19 @@ func (r *dmarcRepo) MostRecentWindowEnd(ctx context.Context) (time.Time, error) 
 		return time.Time{}, translate(err)
 	}
 	return row.WindowEnd, nil
+}
+
+func (r *dmarcRepo) ReKeyDomain(ctx context.Context, oldDomain, newDomain string) (int64, error) {
+	// No unique key spans `domain`, so moving rows onto an existing name never
+	// collides; ingest still dedupes app-side via ExistsForReport. A no-match
+	// (domain never received a DMARC report) updates zero rows — a clean no-op.
+	res := r.db.WithContext(ctx).Model(&models.DMARCAggregate{}).
+		Where("domain = ?", oldDomain).
+		Update("domain", newDomain)
+	if res.Error != nil {
+		return 0, translate(res.Error)
+	}
+	return res.RowsAffected, nil
 }
 
 func (r *dmarcRepo) CountFailuresSince(ctx context.Context, domain string, since time.Time) (int64, error) {
