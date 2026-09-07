@@ -165,12 +165,9 @@ export function RestoreFromUploadDrawer({ open, onClose, ownerMode }: Props) {
           )}
         </Typography.Paragraph>
 
-        <Alert
-          type="info"
-          showIcon
-          message="Large archives: upload directly to the server"
-          description="For very large backups, open the panel by the server's IP address rather than through a proxied domain (e.g. Cloudflare) to avoid upload-size limits."
-        />
+        {/* GH #1408: the "upload via the server's direct IP" notice was removed —
+            direct-IP panel access/login is currently broken, so the advice was
+            misleading. Restore it once direct-IP access works again. */}
 
         {(phase === "pick" || phase === "uploading") && (
           <>

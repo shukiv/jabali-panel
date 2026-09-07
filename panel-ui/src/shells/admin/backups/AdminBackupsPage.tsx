@@ -670,7 +670,7 @@ export const AdminBackupsPage = () => {
                   row.isRun ? (
                     <Space>
                       <Typography.Link style={{ fontSize: 12 }} onClick={() => toggleRowExpand(row)}>
-                        {expandedKeys.includes(row.rowKey) ? "Collapse" : "Expand to manage"}
+                        {expandedKeys.includes(row.rowKey) ? "Collapse" : "Expand"}
                       </Typography.Link>
                       <RowActions
                         actions={[
@@ -678,14 +678,14 @@ export const AdminBackupsPage = () => {
                           // packaged into ONE downloadable container.
                           {
                             key: "package-full",
-                            label: "Package & download",
+                            label: "Download",
                             icon: <DownloadOutlined />,
                             hidden: !row.run.has_accounts,
                             onClick: () => setPackageRunId(row.run.run_id),
                           },
                           {
                             key: "delete-all",
-                            label: "Delete all jobs",
+                            label: "Delete",
                             icon: <DeleteOutlined />,
                             danger: true,
                             onClick: () => handleDeleteRun(row.run.run_id),
