@@ -39,6 +39,10 @@ type UsageResponse = {
   user_id: string;
   effective: Effective;
   current?: Current;
+  // Home-directory usage from the Disk Usage snapshot (an actual `du`).
+  // Present only once a snapshot exists; preferred over current.disk.used_kb
+  // because the POSIX quota is absent (0 B) or over-reports the home dir.
+  disk_used?: { bytes: number; source: string; computed_at?: string };
 };
 
 function MetricCard({
@@ -47,12 +51,14 @@ function MetricCard({
   label,
   value,
   pct,
+  hint,
 }: {
   icon: ReactNode;
   color: string;
   label: string;
   value: string;
   pct?: number;
+  hint?: string;
 }) {
   return (
     <div>
@@ -75,7 +81,9 @@ function MetricCard({
         </div>
         <div style={{ minWidth: 0 }}>
           <div style={{ color, fontSize: 12, fontWeight: 600 }}>{label}</div>
-          <div style={{ fontSize: 15, fontWeight: 700, lineHeight: 1.2 }}>{value}</div>
+          <div style={{ fontSize: 15, fontWeight: 700, lineHeight: 1.2 }} title={hint}>
+            {value}
+          </div>
         </div>
       </div>
       {pct != null && (
@@ -130,7 +138,13 @@ export function MyProfileUsageCard({ userId }: { userId: string }) {
 
   const { effective, current } = data;
 
-  const diskUsed = (current?.disk?.used_kb ?? 0) * 1024;
+  // Prefer the Disk Usage snapshot's `du` bytes (consistent with the Disk
+  // Usage page); fall back to the live POSIX quota when no snapshot exists.
+  const diskUsed = data.disk_used ? data.disk_used.bytes : (current?.disk?.used_kb ?? 0) * 1024;
+  // The snapshot figure is as-of the last Disk Usage refresh, not live — say so.
+  const diskHint = data.disk_used?.computed_at
+    ? `Home usage measured ${new Date(data.disk_used.computed_at).toLocaleString()}`
+    : undefined;
   const diskLimitKB =
     (current?.disk?.limit_kb ?? 0) > 0 ? (current?.disk?.limit_kb ?? 0) : effective.DiskQuotaMB * 1024;
   const diskLimit = diskLimitKB * 1024;
@@ -155,7 +169,7 @@ export function MyProfileUsageCard({ userId }: { userId: string }) {
   const ioWriteValue = effective.IOWriteMbps > 0 ? `${effective.IOWriteMbps} MB/s` : "Unlimited";
 
   const metrics = [
-    { icon: <HddOutlined />, color: "#1677ff", label: "Disk", value: usedOf(diskUsed, diskLimit), pct: pctOf(diskUsed, diskLimit) },
+    { icon: <HddOutlined />, color: "#1677ff", label: "Disk", value: usedOf(diskUsed, diskLimit), pct: pctOf(diskUsed, diskLimit), hint: diskHint },
     { icon: <DatabaseOutlined />, color: "#9254de", label: "Memory", value: usedOf(memUsed, memLimit), pct: pctOf(memUsed, memLimit) },
     { icon: <ThunderboltOutlined />, color: "#52c41a", label: "CPU quota", value: cpuValue },
     { icon: <AppstoreLayoutOutlined />, color: "#fa8c16", label: "Processes", value: procValue },
