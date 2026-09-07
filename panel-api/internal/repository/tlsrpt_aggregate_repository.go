@@ -20,6 +20,13 @@ type TLSRPTAggregateRepository interface {
 	CountFailuresSince(ctx context.Context, domain string, since time.Time) (int64, error)
 	PruneOlderThan(ctx context.Context, cutoff time.Time) (int64, error)
 	MostRecentWindowEnd(ctx context.Context) (time.Time, error)
+
+	// ReKeyDomain moves every aggregate row from oldDomain to newDomain so an
+	// in-place domain rename (GH #1579) keeps the TLS-RPT dashboard's history
+	// instead of orphaning it under the old name (the dashboard reads by domain
+	// name). Sole UPDATE path on an otherwise append-only table; returns the
+	// rows moved. Mirrors the DMARC sibling.
+	ReKeyDomain(ctx context.Context, oldDomain, newDomain string) (int64, error)
 }
 
 type tlsRptRepo struct{ db *gorm.DB }
@@ -45,6 +52,19 @@ func (r *tlsRptRepo) InsertMany(ctx context.Context, rows []models.TLSRPTAggrega
 		return 0, translate(err)
 	}
 	return len(rows), nil
+}
+
+func (r *tlsRptRepo) ReKeyDomain(ctx context.Context, oldDomain, newDomain string) (int64, error) {
+	// No unique key spans `domain`, so moving rows onto an existing name never
+	// collides; ingest still dedupes app-side via ExistsForReport. A no-match
+	// (domain never received a TLS-RPT report) updates zero rows — a clean no-op.
+	res := r.db.WithContext(ctx).Model(&models.TLSRPTAggregate{}).
+		Where("domain = ?", oldDomain).
+		Update("domain", newDomain)
+	if res.Error != nil {
+		return 0, translate(res.Error)
+	}
+	return res.RowsAffected, nil
 }
 
 func (r *tlsRptRepo) ExistsForReport(ctx context.Context, reporter string, windowStart, windowEnd time.Time) (bool, error) {
