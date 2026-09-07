@@ -265,6 +265,24 @@ func (m *drTLSRPT) ReKeyDomain(_ context.Context, oldDomain, newDomain string) (
 	return m.rekeyN, nil
 }
 
+type drForwarders struct {
+	rec               *drRecorder
+	rekeyErr          error
+	rekeyN            int64
+	domSeen, nameSeen string
+	called            bool
+}
+
+func (m *drForwarders) ReKeyAliasTargets(_ context.Context, domainID, newDomain string) (int64, error) {
+	m.called = true
+	m.domSeen, m.nameSeen = domainID, newDomain
+	if m.rekeyErr != nil {
+		return 0, m.rekeyErr
+	}
+	m.rec.events = append(m.rec.events, "forwarder.rekey")
+	return m.rekeyN, nil
+}
+
 type drSched struct{ scheduled []string }
 
 func (r *drSched) Schedule(id string) { r.scheduled = append(r.scheduled, id) }
@@ -1149,6 +1167,82 @@ func TestRenameDomain_NoTLSRPTSkips(t *testing.T) {
 	for _, e := range rec.events {
 		if e == "tlsrpt.rekey" {
 			t.Fatalf("nil TLSRPT must not run a re-key, got %v", rec.events)
+		}
+	}
+	if dom.Name != "new.com" {
+		t.Fatalf("row should still be renamed, got %q", dom.Name)
+	}
+}
+
+// ---- alias forwarder target re-key (GH #1579 forwarder-target slice) ----
+
+// The domain's alias forwarder targets are rewritten to the new name after the
+// rename: ReKeyAliasTargets is called with (domain.ID, newName), AFTER the DB
+// rename, and never fails the rename.
+func TestRenameDomain_ForwarderAliasReKey(t *testing.T) {
+	rec := &drRecorder{}
+	dom := drWebDomain()
+	d, _, _ := drNewDeps(rec, dom, drHappyOwner())
+	fw := &drForwarders{rec: rec, rekeyN: 3}
+	d.Forwarders = fw
+
+	if _, err := RenameDomain(context.Background(), d, &drSched{}, dom, "new.com"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !fw.called {
+		t.Fatalf("ReKeyAliasTargets must be called on a rename")
+	}
+	// Keyed by domain_id (the rows survive the rename), with the NEW name.
+	if fw.domSeen != "dom-1" || fw.nameSeen != "new.com" {
+		t.Fatalf("ReKeyAliasTargets args = (%q,%q), want (dom-1,new.com)", fw.domSeen, fw.nameSeen)
+	}
+	di, ri := -1, -1
+	for i, e := range rec.events {
+		switch e {
+		case "db.rename":
+			di = i
+		case "forwarder.rekey":
+			ri = i
+		}
+	}
+	if di == -1 || ri == -1 || ri < di {
+		t.Fatalf("forwarder.rekey (%d) must come after db.rename (%d): %v", ri, di, rec.events)
+	}
+}
+
+// A forwarder re-key failure is a best-effort post-commit heal: logged, not
+// surfaced, never fails the already-committed rename.
+func TestRenameDomain_ForwarderReKeyFailureStillSucceeds(t *testing.T) {
+	rec := &drRecorder{}
+	dom := drWebDomain()
+	d, _, _ := drNewDeps(rec, dom, drHappyOwner())
+	d.Forwarders = &drForwarders{rec: rec, rekeyErr: errors.New("forwarder rekey failed")}
+
+	warnings, err := RenameDomain(context.Background(), d, &drSched{}, dom, "new.com")
+	if err != nil {
+		t.Fatalf("a forwarder re-key failure must not fail the rename, got %v", err)
+	}
+	if dom.Name != "new.com" {
+		t.Fatalf("row should be renamed despite the re-key failure, got %q", dom.Name)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("a forwarder re-key failure must not surface a warning, got %v", warnings)
+	}
+}
+
+// A panel without the forwarder repo wired (Forwarders nil) still renames — the
+// re-key is simply skipped.
+func TestRenameDomain_NoForwardersSkips(t *testing.T) {
+	rec := &drRecorder{}
+	dom := drWebDomain()
+	d, _, _ := drNewDeps(rec, dom, drHappyOwner()) // Forwarders left nil
+
+	if _, err := RenameDomain(context.Background(), d, &drSched{}, dom, "new.com"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, e := range rec.events {
+		if e == "forwarder.rekey" {
+			t.Fatalf("nil Forwarders must not run a re-key, got %v", rec.events)
 		}
 	}
 	if dom.Name != "new.com" {

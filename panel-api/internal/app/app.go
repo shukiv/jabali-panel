@@ -711,6 +711,8 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				// history onto the new name so those dashboards are not orphaned.
 				DMARCAggregate:  deps.DMARCAggregate,
 				TLSRPTAggregate: deps.TLSRPTAggregate,
+				// GH #1579 rename: rewrites alias forwarder targets to the new name.
+				Forwarders: deps.Forwarders,
 				// DNS repos feed the auto-enable-email path in create.
 				// Panel profiles without PowerDNS leave these nil and
 				// create still works — auto-enable is skipped cleanly.

@@ -49,6 +49,15 @@ type TLSRPTReKeyer interface {
 	ReKeyDomain(ctx context.Context, oldDomain, newDomain string) (int64, error)
 }
 
+// ForwarderAliasReKeyer rewrites the stored target of a domain's ALIAS forwarders
+// (target = local_part@domain) to track the new name on a rename (GH #1579).
+// Cosmetic — the target is unused at apply — but it backs the alias unique key
+// and the UI. Satisfied by repository.EmailForwarderRepository. Optional on Deps:
+// nil skips.
+type ForwarderAliasReKeyer interface {
+	ReKeyAliasTargets(ctx context.Context, domainID, newDomain string) (int64, error)
+}
+
 // FtpDocrootLister lists a tenant's FTP/SFTP subaccounts so a rename can refuse
 // when one is homed at (or under) the docroot the rename is about to move
 // (GH #1579). Satisfied by repository.FtpAccountRepository. Optional on Deps:
@@ -397,6 +406,18 @@ func RenameDomain(ctx context.Context, d Deps, rec RenameReconciler, domain *mod
 	if d.TLSRPT != nil {
 		if _, trerr := d.TLSRPT.ReKeyDomain(ctx, oldName, newName); trerr != nil {
 			logRenameHeal(d.Log, "rekey TLS-RPT history", oldName, newName, trerr)
+		}
+	}
+
+	// 4g. Rewrite the stored target of this domain's ALIAS forwarders to track the
+	//     new name (target = local_part@<domain>). Cosmetic — the target is unused
+	//     at apply (alias delivery is by local_part -> mailbox) — but it backs the
+	//     alias unique key and is shown in the UI, so keep it consistent. Keyed by
+	//     domain_id (the rows survive the rename). Best-effort; external forwarders
+	//     (an outside target address) are left untouched by the repo's scope.
+	if d.Forwarders != nil {
+		if _, ferr := d.Forwarders.ReKeyAliasTargets(ctx, domain.ID, newName); ferr != nil {
+			logRenameHeal(d.Log, "rekey alias forwarder targets", oldName, newName, ferr)
 		}
 	}
 

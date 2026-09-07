@@ -52,6 +52,9 @@ type DomainHandlerConfig struct {
 	// orphaned. Optional — nil skips the re-key (the rename still succeeds).
 	DMARCAggregate  repository.DMARCAggregateRepository
 	TLSRPTAggregate repository.TLSRPTAggregateRepository
+	// Forwarders lets the GH #1579 rename rewrite the domain's alias forwarder
+	// targets to the new name. Optional — nil skips (the rename still succeeds).
+	Forwarders repository.EmailForwarderRepository
 	Packages    repository.PackageRepository
 	Agent       agent.AgentInterface
 	Reconciler *reconciler.Reconciler
