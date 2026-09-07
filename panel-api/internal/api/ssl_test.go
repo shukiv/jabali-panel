@@ -163,6 +163,11 @@ func (m *MockDomainRepository) Update(ctx context.Context, domain *models.Domain
 	return args.Error(0)
 }
 
+func (m *MockDomainRepository) Rename(ctx context.Context, id, newName, newDocRoot string) error {
+	args := m.Called(ctx, id, newName, newDocRoot)
+	return args.Error(0)
+}
+
 func (m *MockDomainRepository) ListByUserID(ctx context.Context, userID string, opts repository.ListOptions) ([]models.Domain, int64, error) {
 	args := m.Called(ctx, userID, opts.Offset, opts.Limit)
 	if args.Get(0) == nil {

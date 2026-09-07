@@ -38,9 +38,14 @@ type DomainHandlerConfig struct {
 	Users           repository.UserRepository
 	SSLCerts        repository.SSLCertificateRepository
 	SharedCerts     repository.SharedCertificateRepository
-	Packages        repository.PackageRepository
-	Agent           agent.AgentInterface
-	Reconciler      *reconciler.Reconciler
+	// Mailboxes arms the GH #1579 rename's fail-closed mailbox gate: a rename
+	// runs the old name's durable teardown, whose first step purges every
+	// Stalwart account on the domain. REQUIRED for the rename route — nil makes
+	// the handler refuse (503) rather than risk purging retained mailboxes.
+	Mailboxes  repository.MailboxRepository
+	Packages   repository.PackageRepository
+	Agent      agent.AgentInterface
+	Reconciler *reconciler.Reconciler
 	// PortAllocations (GH #1175): shared loopback-port pool for reverse-proxy domains.
 	PortAllocations repository.PortAllocationRepository
 	// DNSZones + DNSRecords feed the auto-enable-email path on create.
@@ -99,6 +104,9 @@ func RegisterDomainRoutes(g *gin.RouterGroup, cfg DomainHandlerConfig) {
 	domains.PATCH("/:id", h.update)
 	domains.DELETE("/:id", h.delete)
 	domains.GET("/:id/bandwidth", h.bandwidth)
+	// GH #1579: rename a domain in place (owner-scoped; admin or the domain's
+	// own tenant). Experimental phase 1 — web-only, mail must be off.
+	domains.POST("/:id/rename", h.rename)
 
 	// GH #1238: reassign a domain to a new tenant (move + re-own the docroot,
 	// repoint the DB row). Admin-only AND behind the JAB-380 recent-auth
