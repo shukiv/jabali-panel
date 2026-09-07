@@ -1,13 +1,17 @@
 // RenameDomainButton — GH #1579. Renames an existing web domain in place
 // (POST /domains/:id/rename) instead of the create-new-and-move workaround.
 //
-// Experimental phase 1: the backend refuses when mail is active, when the domain
-// is the panel's own primary, or when it has no website. It moves the docroot,
-// tears down the old name's nginx vhost + DNS zone, and re-provisions the new
-// name (SSL is reissued by the reconciler). For a WordPress install it rewrites
-// the stored site URL to the new name (best-effort, via wp search-replace); any
-// install it could not rewrite is returned in `warnings` and surfaced here.
-// Other apps' internal configuration is not changed — the modal notes that.
+// Experimental: the backend refuses when the new name already carries mail in
+// Stalwart (mail_domain_conflict), when the domain is the panel's own primary,
+// or when it has no website. It moves the docroot, tears down the old name's
+// nginx vhost + DNS zone, and re-provisions the new name (SSL is reissued by the
+// reconciler). Mail is CARRIED to the new name — the Stalwart registry domain is
+// renamed in place, so mailboxes, stored messages, and DKIM follow; users just
+// reconfigure their mail clients to mail.<newname>. For a WordPress install it
+// rewrites the stored site URL to the new name (best-effort, via wp
+// search-replace); any install it could not rewrite — and a catch-all it could
+// not re-point — is returned in `warnings` and surfaced here. Other apps'
+// internal configuration is not changed — the modal notes that.
 import { useState } from "react";
 import { Alert, Button, Checkbox, Input, Modal, Typography } from "antd";
 import { EditOutlined } from "@icons";
@@ -105,11 +109,14 @@ export function RenameDomainButton({ domain, onRenamed }: RenameDomainButtonProp
           <li>Rebuild the web server (nginx) configuration for the new name</li>
           <li>Reissue the SSL certificate for the new name</li>
           <li>Recreate the managed DNS zone under the new name and remove the old one</li>
+          <li>Carry mail to the new name — mailboxes, stored messages, and DKIM move automatically</li>
           <li>Rewrite a WordPress install's site URL to the new name (other apps unchanged)</li>
         </ul>
         <Typography.Paragraph type="secondary" style={{ marginBottom: 4 }}>
-          Mail must be off and the domain must have no mailboxes — renaming would
-          change every mailbox address. Delete or migrate any mailboxes first.
+          Mail is carried to the new name automatically. Each mailbox keeps its
+          messages and password; after the rename, reconfigure mail clients to
+          use <Typography.Text code>mail.{normalized || "new-domain.com"}</Typography.Text> for
+          IMAP/SMTP. The per-domain mail certificate is reissued separately.
         </Typography.Paragraph>
         <Input
           autoFocus
@@ -120,8 +127,9 @@ export function RenameDomainButton({ domain, onRenamed }: RenameDomainButtonProp
           style={{ marginBottom: 12 }}
         />
         <Checkbox checked={ack} onChange={(e) => setAck(e.target.checked)}>
-          I understand this is experimental. A WordPress site URL is updated
-          automatically; other apps' internal settings are not.
+          I understand this is experimental. Mail is carried to the new name and
+          mail clients must be reconfigured to the new mail host. A WordPress
+          site URL is updated automatically; other apps' internal settings are not.
         </Checkbox>
       </Modal>
     </>

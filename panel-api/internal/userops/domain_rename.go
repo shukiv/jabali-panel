@@ -15,14 +15,6 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
-// MailboxCounter reports how many mailboxes a domain has. Satisfied by
-// repository.MailboxRepository. RenameDomain uses it as a fail-closed gate: the
-// durable teardown of the OLD name purges every Stalwart account on it, so a
-// rename is refused unless the domain has zero mailboxes.
-type MailboxCounter interface {
-	CountByDomainID(ctx context.Context, domainID string) (int64, error)
-}
-
 // AppInstallLister lists the application installs on a domain so a rename can
 // rewrite a WordPress install's stored site URL to the new name (GH #1579).
 // Satisfied by repository.ApplicationInstallRepository. Optional on Deps: nil
@@ -62,12 +54,17 @@ func renameErr(code, format string, args ...any) *RenameError {
 // the new name, and tears down the OLD name's server artifacts (nginx vhost +
 // old PowerDNS zone, via the durable JAB-236 tombstone the reconciler retries).
 //
-// Phase 1 is deliberately limited to a plain web domain. It refuses when:
-//   - the domain still has any mailbox (see below) or mail is flagged active —
-//     a rename changes every mailbox address, which is a mailbox migration, not
-//     a rename; the durable teardown of the old name would also PURGE those
-//     retained Stalwart accounts (mail-disable is soft), so this gate is
-//     fail-closed: a nil Mailboxes repo refuses too;
+// Mail is CARRIED, not refused. Stalwart keys every account on
+// (localpart, domainId) and stores its messages under that account's stable
+// internal id, so renaming the registry Domain entity in place — via the
+// mail.domain.rename agent verb, which keeps the id — carries every account,
+// its stored messages, and its DKIM signature to the new address; the DB
+// trigger resyncs mailboxes.email_cached so the SQL directory authenticates and
+// delivers at the new address. The verb runs BEFORE the DB rename so the entity
+// is named `new` before the trigger flips email_cached. It still refuses when:
+//   - the new name already carries mail in Stalwart (verb status "conflict") —
+//     carrying mail into an occupied name would collide; caught by a dry-run
+//     BEFORE any files move, and re-checked on the real run;
 //   - the domain is the panel's own primary domain (self-lockout);
 //   - the domain has no website to move (web disabled / no docroot);
 //   - the domain uses a custom or shared TLS certificate (it covers the old
@@ -75,6 +72,11 @@ func renameErr(code, format string, args ...any) *RenameError {
 //   - the owner's Linux account is not provisioned yet;
 //   - the docroot path does not contain the old name exactly once (a custom
 //     docroot needs a manual move).
+//
+// Not carried (documented limitations, non-fatal): the per-domain mail TLS cert
+// still covers mail.<old> until reissued; a webmail send-as identity created
+// before the rename keeps the old address until re-added. The catch-all address
+// (a literal string on the Domain entity) IS rewritten by the verb, best-effort.
 //
 // Installed apps are ALLOWED. A WordPress install's stored site URL (kept in
 // the app's OWN database, which the docroot move + DNS/SSL re-key do not touch)
@@ -95,13 +97,19 @@ func renameErr(code, format string, args ...any) *RenameError {
 // Ordering is chosen so the two AUTHORITATIVE mutations (move the files, then
 // rename the row) happen first and every step is idempotent, so a mid-run
 // failure is recoverable by re-running (same shape as ChangeDomainOwner):
+//  0. dry-run the mail-domain rename BEFORE anything moves, so a conflict (the
+//     new name already carries mail) fails while nothing is committed;
 //  1. move the docroot on the box (domain.reown, same owner uid — idempotent);
-//  2. rename the DB row (name + doc_root together) — the point of no return;
-//  3. tombstone the OLD name (safe only now that no live row carries it) so the
-//     reconciler durably tears down the old vhost + old PowerDNS zone;
-//  4. re-key the DNS zone row (name) + reset the SSL cert to pending, so the
+//  2. carry mail: rename the Stalwart registry Domain in place (mail.domain.rename)
+//     BEFORE the DB rename, so the entity is named `new` before the trigger flips
+//     email_cached — fail-closed (nothing persisted yet; reown is re-runnable);
+//  3. rename the DB row (name + doc_root together) — the point of no return;
+//  4. tombstone the OLD name (safe only now that no live row carries it) so the
+//     reconciler durably tears down the old vhost + old PowerDNS zone; its
+//     purge_accounts step is a no-op — the Stalwart entity is already `new`;
+//  5. re-key the DNS zone row (name) + reset the SSL cert to pending, so the
 //     reconciler re-pushes the zone and reissues the cert under the NEW name;
-//  5. schedule a prompt re-render of the new name.
+//  6. schedule a prompt re-render of the new name.
 //
 // Steps 3–5 are best-effort heals AFTER the rename is committed: a rare failure
 // there is logged, not surfaced, because the row+files (the source of truth)
@@ -124,24 +132,6 @@ func RenameDomain(ctx context.Context, d Deps, rec RenameReconciler, domain *mod
 	}
 	if newName == strings.ToLower(oldName) {
 		return nil, renameErr("noop", "the new name is the same as the current name")
-	}
-	if domain.EmailEnabled {
-		return nil, renameErr("mail_active",
-			"disable mail on %q before renaming — a rename changes every mailbox address and cannot migrate mail", oldName)
-	}
-	// Fail-closed mailbox gate. The old-name teardown's first step
-	// (mail.domain.purge_accounts) destroys every Stalwart account on the
-	// domain, and mail-disable is soft (mailboxes are retained), so
-	// EmailEnabled==false is NOT proof there is no mail to lose. Refuse when the
-	// counter is unwired (can't prove zero) or reports any mailbox.
-	if d.Mailboxes == nil {
-		return nil, renameErr("unavailable", "rename is not available (mailbox check not wired)")
-	}
-	if n, cerr := d.Mailboxes.CountByDomainID(ctx, domain.ID); cerr != nil {
-		return nil, renameErr("unavailable", "could not verify %q has no mailboxes: %v", oldName, cerr)
-	} else if n > 0 {
-		return nil, renameErr("mailboxes_present",
-			"%q still has %d mailbox(es) — delete or migrate them before renaming (a rename would change every mailbox address)", oldName, n)
 	}
 	if domain.IsPanelPrimary {
 		return nil, renameErr("panel_primary", "%q is the panel's own primary domain and cannot be renamed", oldName)
@@ -184,6 +174,18 @@ func RenameDomain(ctx context.Context, d Deps, rec RenameReconciler, domain *mod
 		return nil, renameErr("name_taken", "%q already exists", newName)
 	}
 
+	// Dry-run the mail-domain rename BEFORE moving any files, so a genuine
+	// conflict (the new name already carries mail in Stalwart) fails the rename
+	// while nothing is committed. Fail-closed: an agent error here refuses.
+	if dryRaw, aerr := d.Agent.Call(ctx, "mail.domain.rename", map[string]any{
+		"old": oldName, "new": newName, "dry_run": true,
+	}); aerr != nil {
+		return nil, renameErr("unavailable", "could not check mail before renaming %q: %v", oldName, aerr)
+	} else if st, _ := mailRenameStatus(dryRaw); st == mailRenameConflict {
+		return nil, renameErr("mail_domain_conflict",
+			"%q already has mail configured in Stalwart — delete or migrate it before renaming %q into it", newName, oldName)
+	}
+
 	// ---- orchestrate ----
 	// 1. Move the docroot tree old -> new under the SAME owner uid, BEFORE the
 	//    DB row is renamed. Idempotent agent-side (reown returns AlreadyDone
@@ -206,6 +208,24 @@ func RenameDomain(ctx context.Context, d Deps, rec RenameReconciler, domain *mod
 		return nil, renameErr("move_failed", "could not move the site files for %q: %v", oldName, aerr)
 	}
 
+	// 1b. Carry mail: rename the Stalwart registry Domain in place BEFORE the DB
+	//     rename, so the entity is named `new` before the trigger flips
+	//     email_cached to `@new`. Fail-closed: nothing is persisted yet (the DB
+	//     row still holds the old name) and reown is idempotent, so a failure here
+	//     is fully re-runnable. Statuses renamed | already | not_in_registry all
+	//     proceed; a conflict (racing another rename since the dry-run) refuses.
+	var mailWarnings []string
+	if mailRaw, aerr := d.Agent.Call(ctx, "mail.domain.rename", map[string]any{
+		"old": oldName, "new": newName,
+	}); aerr != nil {
+		return nil, renameErr("mail_rename_failed", "could not carry mail to the new name for %q: %v", oldName, aerr)
+	} else if st, w := mailRenameStatus(mailRaw); st == mailRenameConflict {
+		return nil, renameErr("mail_domain_conflict",
+			"%q already has mail configured in Stalwart — delete or migrate it before renaming %q into it", newName, oldName)
+	} else {
+		mailWarnings = w
+	}
+
 	// 2. Rename the row (name + doc_root as a unit) — the authoritative flip.
 	//    Files already moved; a failure here is re-runnable (reown -> AlreadyDone
 	//    on the retry). No tombstone exists yet, so a failure can never leave the
@@ -222,7 +242,9 @@ func RenameDomain(ctx context.Context, d Deps, rec RenameReconciler, domain *mod
 	// 3. Tombstone the OLD name so the reconciler durably tears down the old
 	//    nginx vhost + old PowerDNS zone. Safe now: no live row carries oldName,
 	//    so the sweep cannot tear down a live domain. Its purge_accounts step is
-	//    a no-op here — the mailbox gate above guarantees zero accounts.
+	//    a no-op here — the mail carry (step 1b) already renamed the Stalwart
+	//    entity to `new`, so the old name is gone from the registry and there are
+	//    no accounts under it to purge.
 	if d.DomainTeardowns != nil {
 		if terr := d.DomainTeardowns.Ensure(ctx, oldName); terr != nil {
 			logRenameHeal(d.Log, "tombstone old name", oldName, newName, terr)
@@ -266,9 +288,9 @@ func RenameDomain(ctx context.Context, d Deps, rec RenameReconciler, domain *mod
 	//     install's own database, where an absolute site URL is stored; left
 	//     stale it redirects visitors back to the old name. Best-effort per
 	//     install, surfaced as warnings (never fails the committed rename).
-	var warnings []string
+	warnings := mailWarnings
 	if d.AppInstalls != nil {
-		warnings = rewriteAppSiteURLs(ctx, d, domain, owner, oldName, newName)
+		warnings = append(warnings, rewriteAppSiteURLs(ctx, d, domain, owner, oldName, newName)...)
 	}
 
 	// 5. Force a prompt re-render + zone push + cert reissue for the new name.
@@ -276,6 +298,26 @@ func RenameDomain(ctx context.Context, d Deps, rec RenameReconciler, domain *mod
 		rec.Schedule(domain.ID)
 	}
 	return warnings, nil
+}
+
+// mail.domain.rename status values the panel branches on. Only "conflict" is a
+// refusal; renamed | already | not_in_registry all proceed.
+const mailRenameConflict = "conflict"
+
+// mailRenameStatus decodes a mail.domain.rename agent response into its status
+// and any best-effort warnings (e.g. a catch-all that could not be rewritten).
+// An undecodable body yields an empty status (treated as "proceed"): the verb is
+// a heal around an already-idempotent rename, so a malformed ack must not both
+// fail to signal conflict AND block the rename.
+func mailRenameStatus(raw json.RawMessage) (status string, warnings []string) {
+	var resp struct {
+		Status   string   `json:"status"`
+		Warnings []string `json:"warnings"`
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return "", nil
+	}
+	return resp.Status, resp.Warnings
 }
 
 // rewriteAppSiteURLs best-effort rewrites the stored site URL of every

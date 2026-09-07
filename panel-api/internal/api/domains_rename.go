@@ -71,11 +71,10 @@ func (h *domainHandler) rename(c *gin.Context) {
 		DomainTeardowns: h.cfg.DomainTeardowns,
 		Users:           h.cfg.Users,
 		Agent:           h.cfg.Agent,
-		// Mailboxes arms the fail-closed mailbox gate (a rename would purge
-		// retained Stalwart accounts on the old name). DNSZones + SSLCerts let
-		// the rename re-key the zone + reissue the cert for the new name.
-		// AppInstalls lets it rewrite a WordPress install's stored site URL.
-		Mailboxes:   h.cfg.Mailboxes,
+		// DNSZones + SSLCerts let the rename re-key the zone + reissue the cert
+		// for the new name; AppInstalls lets it rewrite a WordPress install's
+		// stored site URL. Mail is carried by the mail.domain.rename agent verb
+		// (via h.cfg.Agent), so no mailbox repo is needed here.
 		DNSZones:    h.cfg.DNSZones,
 		SSLCerts:    h.cfg.SSLCerts,
 		AppInstalls: h.cfg.AppInstalls,
@@ -108,7 +107,7 @@ func renameHTTPStatus(code string) int {
 	switch code {
 	case "invalid_name", "noop", "custom_docroot", "ambiguous_docroot":
 		return http.StatusBadRequest
-	case "mail_active", "mailboxes_present", "panel_primary", "web_disabled",
+	case "mail_domain_conflict", "panel_primary", "web_disabled",
 		"ssl_custom_cert", "name_taken", "owner_unprovisioned", "owner_unresolved":
 		return http.StatusConflict
 	case "not_found":
