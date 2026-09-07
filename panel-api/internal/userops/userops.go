@@ -70,7 +70,11 @@ type Deps struct {
 	// FtpAccounts lets RenameDomain refuse when an FTP/SFTP subaccount is homed
 	// at or under the docroot being moved (GH #1579) — its jail/chroot is not
 	// moved automatically. Optional: nil skips the check (the rename proceeds).
-	FtpAccounts  FtpDocrootLister
+	FtpAccounts FtpDocrootLister
+	// DMARC moves the domain's stored DMARC aggregate history onto the new name
+	// on a rename (GH #1579) so the DMARC dashboard is not orphaned. Optional:
+	// nil skips the re-key (the rename still succeeds).
+	DMARC        DMARCReKeyer
 	Agent        AgentCaller
 	KratosClient *kratosclient.Client
 	BcryptCost   int
