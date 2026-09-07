@@ -41,6 +41,14 @@ type DMARCReKeyer interface {
 	ReKeyDomain(ctx context.Context, oldDomain, newDomain string) (int64, error)
 }
 
+// TLSRPTReKeyer moves a domain's stored TLS-RPT aggregate history from the old
+// name to the new one on a rename (GH #1579) — same orphan-on-rename as the
+// DMARC dashboard. Satisfied by repository.TLSRPTAggregateRepository. Optional on
+// Deps: nil skips the re-key (the rename still succeeds).
+type TLSRPTReKeyer interface {
+	ReKeyDomain(ctx context.Context, oldDomain, newDomain string) (int64, error)
+}
+
 // FtpDocrootLister lists a tenant's FTP/SFTP subaccounts so a rename can refuse
 // when one is homed at (or under) the docroot the rename is about to move
 // (GH #1579). Satisfied by repository.FtpAccountRepository. Optional on Deps:
@@ -106,9 +114,10 @@ func renameErr(code, format string, args ...any) *RenameError {
 // domain_id-keyed (so it survives the rename), and RenameDomain flips it back to
 // pending so the reconciler reissues it for mail.<new> on its next tick instead
 // of serving mail.<old> until the 30-day renewal window (best-effort; a domain
-// with no mail cert simply skips). The domain's stored DMARC aggregate history
-// is moved to the new name too (best-effort) so the DMARC dashboard, which reads
-// by domain name, is not orphaned. Not carried (documented limitation, non-fatal):
+// with no mail cert simply skips). The domain's stored DMARC and TLS-RPT
+// aggregate history is moved to the new name too (best-effort) so those
+// dashboards, which read by domain name, are not orphaned. Not carried
+// (documented limitation, non-fatal):
 // a webmail send-as identity created before the rename keeps the old address
 // until re-added. The catch-all address (a literal string on the Domain entity)
 // IS rewritten by the verb, best-effort.
@@ -378,6 +387,16 @@ func RenameDomain(ctx context.Context, d Deps, rec RenameReconciler, domain *mod
 	if d.DMARC != nil {
 		if _, drerr := d.DMARC.ReKeyDomain(ctx, oldName, newName); drerr != nil {
 			logRenameHeal(d.Log, "rekey DMARC history", oldName, newName, drerr)
+		}
+	}
+
+	// 4f. Same for the domain's TLS-RPT aggregate history (SMTP TLS Reporting) —
+	//     the sibling dashboard also reads by domain name, so a rename orphans it
+	//     the same way. Best-effort; a domain that never received a TLS-RPT report
+	//     moves nothing.
+	if d.TLSRPT != nil {
+		if _, trerr := d.TLSRPT.ReKeyDomain(ctx, oldName, newName); trerr != nil {
+			logRenameHeal(d.Log, "rekey TLS-RPT history", oldName, newName, trerr)
 		}
 	}
 

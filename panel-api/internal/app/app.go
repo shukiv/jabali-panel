@@ -707,9 +707,10 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				// GH #1579 rename: refuses when an FTP/SFTP subaccount is homed
 				// under the docroot being moved (its jail/chroot is not moved).
 				FtpAccounts: deps.FtpAccounts,
-				// GH #1579 rename: moves the domain's DMARC aggregate history
-				// onto the new name so the dashboard is not orphaned.
-				DMARCAggregate: deps.DMARCAggregate,
+				// GH #1579 rename: moves the domain's DMARC + TLS-RPT report
+				// history onto the new name so those dashboards are not orphaned.
+				DMARCAggregate:  deps.DMARCAggregate,
+				TLSRPTAggregate: deps.TLSRPTAggregate,
 				// DNS repos feed the auto-enable-email path in create.
 				// Panel profiles without PowerDNS leave these nil and
 				// create still works — auto-enable is skipped cleanly.

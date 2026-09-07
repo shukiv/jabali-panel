@@ -47,10 +47,11 @@ type DomainHandlerConfig struct {
 	// homed at or under the docroot being moved — its jail/chroot is not moved
 	// automatically. Optional — nil skips the check (the rename proceeds).
 	FtpAccounts repository.FtpAccountRepository
-	// DMARCAggregate lets the GH #1579 rename move the domain's DMARC aggregate
-	// history onto the new name so the dashboard is not orphaned. Optional — nil
-	// skips the re-key (the rename still succeeds).
-	DMARCAggregate repository.DMARCAggregateRepository
+	// DMARCAggregate / TLSRPTAggregate let the GH #1579 rename move the domain's
+	// DMARC + TLS-RPT report history onto the new name so those dashboards are not
+	// orphaned. Optional — nil skips the re-key (the rename still succeeds).
+	DMARCAggregate  repository.DMARCAggregateRepository
+	TLSRPTAggregate repository.TLSRPTAggregateRepository
 	Packages    repository.PackageRepository
 	Agent       agent.AgentInterface
 	Reconciler *reconciler.Reconciler

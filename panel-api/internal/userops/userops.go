@@ -71,10 +71,11 @@ type Deps struct {
 	// at or under the docroot being moved (GH #1579) — its jail/chroot is not
 	// moved automatically. Optional: nil skips the check (the rename proceeds).
 	FtpAccounts FtpDocrootLister
-	// DMARC moves the domain's stored DMARC aggregate history onto the new name
-	// on a rename (GH #1579) so the DMARC dashboard is not orphaned. Optional:
-	// nil skips the re-key (the rename still succeeds).
+	// DMARC / TLSRPT move the domain's stored DMARC + TLS-RPT aggregate history
+	// onto the new name on a rename (GH #1579) so those dashboards are not
+	// orphaned. Optional: nil skips the re-key (the rename still succeeds).
 	DMARC        DMARCReKeyer
+	TLSRPT       TLSRPTReKeyer
 	Agent        AgentCaller
 	KratosClient *kratosclient.Client
 	BcryptCost   int

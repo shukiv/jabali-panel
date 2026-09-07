@@ -85,10 +85,11 @@ func (h *domainHandler) rename(c *gin.Context) {
 		// FtpAccounts backs the refusal when an FTP/SFTP subaccount is homed
 		// under the docroot being moved (its jail/chroot is not moved here).
 		FtpAccounts: h.cfg.FtpAccounts,
-		// DMARC moves the domain's DMARC aggregate history onto the new name so
-		// the dashboard is not orphaned.
-		DMARC: h.cfg.DMARCAggregate,
-		Log:   slog.Default(),
+		// DMARC / TLSRPT move the domain's aggregate report history onto the new
+		// name so those dashboards are not orphaned.
+		DMARC:  h.cfg.DMARCAggregate,
+		TLSRPT: h.cfg.TLSRPTAggregate,
+		Log:    slog.Default(),
 	}, rec, domain, newName)
 	if err != nil {
 		var re *userops.RenameError

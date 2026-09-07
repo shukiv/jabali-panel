@@ -247,6 +247,24 @@ func (m *drDMARC) ReKeyDomain(_ context.Context, oldDomain, newDomain string) (i
 	return m.rekeyN, nil
 }
 
+type drTLSRPT struct {
+	rec              *drRecorder
+	rekeyErr         error
+	rekeyN           int64
+	oldSeen, newSeen string
+	called           bool
+}
+
+func (m *drTLSRPT) ReKeyDomain(_ context.Context, oldDomain, newDomain string) (int64, error) {
+	m.called = true
+	m.oldSeen, m.newSeen = oldDomain, newDomain
+	if m.rekeyErr != nil {
+		return 0, m.rekeyErr
+	}
+	m.rec.events = append(m.rec.events, "tlsrpt.rekey")
+	return m.rekeyN, nil
+}
+
 type drSched struct{ scheduled []string }
 
 func (r *drSched) Schedule(id string) { r.scheduled = append(r.scheduled, id) }
@@ -1056,6 +1074,81 @@ func TestRenameDomain_NoDMARCSkips(t *testing.T) {
 	for _, e := range rec.events {
 		if e == "dmarc.rekey" {
 			t.Fatalf("nil DMARC must not run a re-key, got %v", rec.events)
+		}
+	}
+	if dom.Name != "new.com" {
+		t.Fatalf("row should still be renamed, got %q", dom.Name)
+	}
+}
+
+// ---- TLS-RPT dashboard re-key (GH #1579 tlsrpt slice) ----
+
+// The domain's TLS-RPT aggregate history is moved to the new name after the
+// rename: ReKeyDomain is called with (oldName, newName), AFTER the DB rename, and
+// never fails the rename.
+func TestRenameDomain_TLSRPTReKey(t *testing.T) {
+	rec := &drRecorder{}
+	dom := drWebDomain()
+	d, _, _ := drNewDeps(rec, dom, drHappyOwner())
+	tr := &drTLSRPT{rec: rec, rekeyN: 2}
+	d.TLSRPT = tr
+
+	if _, err := RenameDomain(context.Background(), d, &drSched{}, dom, "new.com"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !tr.called {
+		t.Fatalf("ReKeyDomain must be called on a rename")
+	}
+	if tr.oldSeen != "old.com" || tr.newSeen != "new.com" {
+		t.Fatalf("ReKeyDomain args = (%q,%q), want (old.com,new.com)", tr.oldSeen, tr.newSeen)
+	}
+	di, ri := -1, -1
+	for i, e := range rec.events {
+		switch e {
+		case "db.rename":
+			di = i
+		case "tlsrpt.rekey":
+			ri = i
+		}
+	}
+	if di == -1 || ri == -1 || ri < di {
+		t.Fatalf("tlsrpt.rekey (%d) must come after db.rename (%d): %v", ri, di, rec.events)
+	}
+}
+
+// A TLS-RPT re-key failure is a best-effort post-commit heal: logged, not
+// surfaced, never fails the already-committed rename.
+func TestRenameDomain_TLSRPTReKeyFailureStillSucceeds(t *testing.T) {
+	rec := &drRecorder{}
+	dom := drWebDomain()
+	d, _, _ := drNewDeps(rec, dom, drHappyOwner())
+	d.TLSRPT = &drTLSRPT{rec: rec, rekeyErr: errors.New("tlsrpt rekey failed")}
+
+	warnings, err := RenameDomain(context.Background(), d, &drSched{}, dom, "new.com")
+	if err != nil {
+		t.Fatalf("a TLS-RPT re-key failure must not fail the rename, got %v", err)
+	}
+	if dom.Name != "new.com" {
+		t.Fatalf("row should be renamed despite the re-key failure, got %q", dom.Name)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("a TLS-RPT re-key failure must not surface a warning, got %v", warnings)
+	}
+}
+
+// A panel without the TLS-RPT repo wired (TLSRPT nil) still renames — the re-key
+// is simply skipped.
+func TestRenameDomain_NoTLSRPTSkips(t *testing.T) {
+	rec := &drRecorder{}
+	dom := drWebDomain()
+	d, _, _ := drNewDeps(rec, dom, drHappyOwner()) // TLSRPT left nil
+
+	if _, err := RenameDomain(context.Background(), d, &drSched{}, dom, "new.com"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, e := range rec.events {
+		if e == "tlsrpt.rekey" {
+			t.Fatalf("nil TLSRPT must not run a re-key, got %v", rec.events)
 		}
 	}
 	if dom.Name != "new.com" {
