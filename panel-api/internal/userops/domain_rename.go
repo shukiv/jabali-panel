@@ -46,6 +46,8 @@ func renameErr(code, format string, args ...any) *RenameError {
 //     fail-closed: a nil Mailboxes repo refuses too;
 //   - the domain is the panel's own primary domain (self-lockout);
 //   - the domain has no website to move (web disabled / no docroot);
+//   - the domain uses a custom or shared TLS certificate (it covers the old
+//     name and cannot be re-issued automatically for the new one);
 //   - the owner's Linux account is not provisioned yet;
 //   - the docroot path does not contain the old name exactly once (a custom
 //     docroot needs a manual move).
@@ -115,6 +117,17 @@ func RenameDomain(ctx context.Context, d Deps, rec RenameReconciler, domain *mod
 	}
 	if domain.WebDisabled || oldDocRoot == "" {
 		return renameErr("web_disabled", "%q has no website to rename", oldName)
+	}
+	// A custom (operator-uploaded) or shared certificate cannot be re-issued for
+	// the new name automatically — its files/lineage cover the OLD name, and the
+	// rename's cert reset would only trigger an ACME/self-signed attempt that
+	// replaces it. Refuse (fail-closed) so a rename never silently drops a
+	// domain's real certificate; the owner switches to Let's Encrypt or
+	// self-signed first, or re-uploads for the new name after.
+	if domain.SSLMode == models.SSLModeCustom || domain.SSLMode == models.SSLModeShared {
+		return renameErr("ssl_custom_cert",
+			"%q uses a %s TLS certificate that cannot be re-issued automatically for a new name — switch it to Let's Encrypt or self-signed before renaming (you can re-apply the certificate for the new name after)",
+			oldName, domain.SSLMode)
 	}
 
 	owner, err := d.Users.FindByID(ctx, domain.UserID)

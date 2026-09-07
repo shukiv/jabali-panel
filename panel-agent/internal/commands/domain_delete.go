@@ -85,10 +85,26 @@ func domainDeleteHandler(ctx context.Context, params json.RawMessage) (any, erro
 		}
 	}
 
+	// GH #1579: a full teardown must leave no stale SSL artifacts for the name —
+	// the self-signed cert dir and any Let's Encrypt lineage. domain.delete is
+	// the shared teardown chokepoint, so this covers both a real delete and a
+	// rename's old-name teardown. Scoped strictly to p.Domain (domainRegex-
+	// validated), so a shared/wildcard cert under a different name is untouched.
+	removeDomainCertArtifacts(ctx, p.Domain)
+
 	return domainDeleteResponse{
 		Domain:  p.Domain,
 		Deleted: true,
 	}, nil
+}
+
+// removeDomainCertArtifacts deletes the on-disk TLS material a domain teardown
+// leaves behind: the self-signed cert directory and the certbot/LE lineage for
+// the exact name. Best-effort — a missing path is a no-op — and name-scoped, so
+// it never reaches an unrelated (e.g. shared/wildcard) certificate.
+func removeDomainCertArtifacts(ctx context.Context, domain string) {
+	_ = os.RemoveAll(filepath.Join(baseSelfSignDir, domain))
+	cleanupCertbotLineage(ctx, sslLERoot, domain)
 }
 
 // removeMailVhostFiles reaps the per-domain mail vhost (`<domain>-mail.conf`)

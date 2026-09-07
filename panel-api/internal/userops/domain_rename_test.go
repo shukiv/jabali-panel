@@ -203,6 +203,8 @@ func TestRenameDomain_Gates(t *testing.T) {
 		{"mail active", func(d *models.Domain) { d.EmailEnabled = true }, drHappyOwner(), "new.com", "mail_active"},
 		{"panel primary", func(d *models.Domain) { d.IsPanelPrimary = true }, drHappyOwner(), "new.com", "panel_primary"},
 		{"web disabled", func(d *models.Domain) { d.WebDisabled = true }, drHappyOwner(), "new.com", "web_disabled"},
+		{"custom cert", func(d *models.Domain) { d.SSLMode = models.SSLModeCustom }, drHappyOwner(), "new.com", "ssl_custom_cert"},
+		{"shared cert", func(d *models.Domain) { d.SSLMode = models.SSLModeShared }, drHappyOwner(), "new.com", "ssl_custom_cert"},
 		{"owner unprovisioned", nil, &models.User{ID: "user-1"}, "new.com", "owner_unprovisioned"},
 		{"custom docroot", func(d *models.Domain) { d.DocRoot = "/srv/www/site" }, drHappyOwner(), "new.com", "custom_docroot"},
 	}
