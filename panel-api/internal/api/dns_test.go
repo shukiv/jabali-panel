@@ -48,6 +48,14 @@ func (m *mockDomainRepo) Update(ctx context.Context, d *models.Domain) error {
 	return nil
 }
 
+func (m *mockDomainRepo) Rename(_ context.Context, id, newName, newDocRoot string) error {
+	if d, ok := m.domains[id]; ok {
+		d.Name = newName
+		d.DocRoot = newDocRoot
+	}
+	return nil
+}
+
 func (m *mockDomainRepo) BulkSetEnabledByUserID(_ context.Context, _ string, _ bool) (int64, error) {
 	return 0, nil
 }

@@ -30,6 +30,7 @@ import { DomainNginxOptionsPanel } from "../../../components/DomainNginxOptionsP
 import { TenantNginxRulesPanel } from "../../DomainSettingsButton";
 import { DomainDocRootPanel } from "../../../components/domains/DomainDocRootPanel";
 import { DomainPHPSettingsPanel } from "../../../components/domains/DomainPHPSettingsPanel";
+import { RenameDomainButton } from "../../../components/domains/RenameDomainButton";
 import { DomainEnvVarsCard } from "../php-settings/DomainEnvVarsCard";
 import { OverviewTab } from "./tabs/OverviewTab";
 
@@ -166,6 +167,10 @@ export const WebDomainPage = () => {
         <Typography.Title level={3} style={{ margin: 0 }}>
           <GlobalOutlined /> {domain.name}
         </Typography.Title>
+        <RenameDomainButton
+          domain={{ id: domain.id, name: domain.name }}
+          onRenamed={() => void domainQ.refetch?.()}
+        />
       </Space>
 
       <Card

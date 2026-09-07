@@ -702,6 +702,8 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Reconciler:      deps.Reconciler,
 				SSLCerts:        deps.SSLCerts,
 				SharedCerts:     deps.SharedCerts,
+				// GH #1579 rename: arms the fail-closed mailbox gate.
+				Mailboxes: deps.Mailboxes,
 				// DNS repos feed the auto-enable-email path in create.
 				// Panel profiles without PowerDNS leave these nil and
 				// create still works — auto-enable is skipped cleanly.

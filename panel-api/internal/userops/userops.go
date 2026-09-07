@@ -52,10 +52,22 @@ type Deps struct {
 	// account-cascade, and billing-cancel deletes all release without any
 	// caller having to remember to.
 	PortAllocations repository.PortAllocationRepository
-	Agent           AgentCaller
-	KratosClient    *kratosclient.Client
-	BcryptCost      int
-	Log             *slog.Logger
+	// Mailboxes gates the GH #1579 rename: a rename runs the durable teardown
+	// on the OLD name, whose first step (mail.domain.purge_accounts) destroys
+	// every Stalwart account on that domain. Mail-disable is SOFT (mailboxes
+	// are retained), so gating on EmailEnabled alone would let a rename purge
+	// retained mailboxes. RenameDomain refuses when this repo is nil
+	// (fail-closed) or reports any mailbox for the domain.
+	Mailboxes MailboxCounter
+	// DNSZones + SSLCerts let RenameDomain re-key the domain_id-scoped zone row
+	// and force an SSL reissue for the NEW name (GH #1579). Both optional: a
+	// panel without PowerDNS / with no cert row simply skips that heal.
+	DNSZones     repository.DNSZoneRepository
+	SSLCerts     repository.SSLCertificateRepository
+	Agent        AgentCaller
+	KratosClient *kratosclient.Client
+	BcryptCost   int
+	Log          *slog.Logger
 }
 
 // CreateInput is the shared input shape. Both callers (REST + the

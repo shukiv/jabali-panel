@@ -31,6 +31,13 @@ type DomainRepository interface {
 	// (GH #1238 owner-change). Dedicated method: the Update allowlist excludes
 	// user_id, so a full-model Update would silently drop the transfer.
 	TransferOwner(ctx context.Context, domainID, newUserID, newDocRoot string) error
+	// Rename changes a domain's name and doc_root together (GH #1579 domain
+	// rename). Dedicated setter: the generic Update allowlist includes name, but
+	// a rename must move name + doc_root as a unit and is only ever driven by
+	// userops.RenameDomain (which tears down the old name's artifacts + moves the
+	// files). Keeping it a distinct method means no other edit path can rename a
+	// row without that orchestration.
+	Rename(ctx context.Context, id, newName, newDocRoot string) error
 	// BulkSetEnabledByUserID flips domains.is_enabled for every row
 	// owned by the user. Returns the count of changed rows. Used by
 	// the admin user-suspend handler so a single API call takes every
@@ -595,6 +602,25 @@ func (r *domainRepo) SetSharedCertificate(ctx context.Context, id string, shared
 			"updated_at":            time.Now().UTC(),
 		})
 	if res.Error != nil {
+		return translate(res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (r *domainRepo) Rename(ctx context.Context, id, newName, newDocRoot string) error {
+	updates := map[string]interface{}{
+		"name":       newName,
+		"doc_root":   newDocRoot,
+		"updated_at": time.Now().UTC(),
+	}
+	res := r.db.WithContext(ctx).Model(&models.Domain{}).
+		Where("id = ?", id).
+		Updates(updates)
+	if res.Error != nil {
+		// The unique index on name surfaces a concurrent claim as a conflict.
 		return translate(res.Error)
 	}
 	if res.RowsAffected == 0 {

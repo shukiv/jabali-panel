@@ -128,6 +128,14 @@ func (f *fakeDomainRepo) Update(ctx context.Context, d *models.Domain) error {
 	return nil
 }
 
+func (f *fakeDomainRepo) Rename(_ context.Context, id, newName, newDocRoot string) error {
+	if d, ok := f.domains[id]; ok {
+		d.Name = newName
+		d.DocRoot = newDocRoot
+	}
+	return nil
+}
+
 func (f *fakeDomainRepo) UpdateCacheTTL(_ context.Context, _ string, _ int) error {
 	return nil
 }
