@@ -35,7 +35,7 @@ func TestComputeSSLState(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := r.computeSSLState(tc.d, tc.c); got != tc.want {
+			if got := r.ComputeSSLState(tc.d, tc.c); got != tc.want {
 				t.Errorf("computeSSLState = %q, want %q", got, tc.want)
 			}
 		})

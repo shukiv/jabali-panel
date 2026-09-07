@@ -687,6 +687,12 @@ func (h *domainHandler) enrichDomainResponse(ctx context.Context, d models.Domai
 				}
 			}
 			row.SSL = sslBadgeForDomain(&d, cert)
+			// GH #1543: FindByID returns the raw row with an empty ssl_state
+			// (omitempty → the field vanishes), so the Web Domain Overview read
+			// "Off" even with a live cert. Fill the flat state from the cert we
+			// just fetched, using the same computation the list endpoints use —
+			// no extra query.
+			row.Domain.SSLState = h.cfg.Domains.ComputeSSLState(&d, cert)
 		}
 	}
 	if h.cfg.ManagedIPs != nil {

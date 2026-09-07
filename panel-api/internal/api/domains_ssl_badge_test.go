@@ -169,6 +169,63 @@ func TestDomainList_EmbedsSSLBadge(t *testing.T) {
 	}
 }
 
+// TestDomainGet_PopulatesSSLState is the GH #1543 fix: the single-domain detail
+// endpoint (GET /domains/:id, which feeds the Web Domain Overview) must return a
+// flat ssl_state that matches the list/SSL page. FindByID returns the raw row
+// with an empty ssl_state (omitempty → absent → the Overview showed "Off" even
+// with a live cert); enrichDomainResponse now fills it from the cert it fetches.
+func TestDomainGet_PopulatesSSLState(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	lePath := "/etc/letsencrypt/live/x/fullchain.pem"
+	now := time.Now()
+
+	cases := []struct {
+		name     string
+		mode     string
+		cert     *models.SSLCertificate
+		wantSSL  string // expected flat ssl_state on the detail response
+		wantHTTP int
+	}{
+		{"active LE cert", models.SSLModeLE, &models.SSLCertificate{ID: "c", DomainID: "d1", Status: models.SSLStatusIssued, CertPath: &lePath, IssuedAt: &now}, "active_le", 200},
+		{"issued non-LE cert", models.SSLModeLE, &models.SSLCertificate{ID: "c", DomainID: "d1", Status: models.SSLStatusIssued, IssuedAt: &now}, "self_signed", 200},
+		{"LE mode, no cert yet", models.SSLModeLE, nil, "pending", 200},
+		{"None mode ignores cert", models.SSLModeNone, &models.SSLCertificate{ID: "c", DomainID: "d1", Status: models.SSLStatusIssued, CertPath: &lePath, IssuedAt: &now}, "off", 200},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := gin.New()
+			v1 := r.Group("/api/v1")
+			v1.Use(func(c *gin.Context) {
+				ginctx.SetClaims(c, &auth.AccessClaims{UserID: "u1", IsAdmin: true})
+				c.Next()
+			})
+			base := newMockDomainRepo()
+			base.Create(context.Background(), &models.Domain{ID: "d1", UserID: "u1", Name: "x.com", SSLMode: tc.mode, SSLEnabled: true})
+			certMap := map[string]*models.SSLCertificate{}
+			if tc.cert != nil {
+				certMap["d1"] = tc.cert
+			}
+			RegisterDomainRoutes(v1, DomainHandlerConfig{Domains: base, SSLCerts: &mockSSLCertsForBadge{byDomainID: certMap}})
+
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/domains/d1", nil))
+			if w.Code != tc.wantHTTP {
+				t.Fatalf("status: got %d want %d, body=%s", w.Code, tc.wantHTTP, w.Body.String())
+			}
+			var resp struct {
+				SSLState string `json:"ssl_state"`
+			}
+			if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			if resp.SSLState != tc.wantSSL {
+				t.Errorf("ssl_state: got %q want %q (body=%s)", resp.SSLState, tc.wantSSL, w.Body.String())
+			}
+		})
+	}
+}
+
 // GH #246 follow-up: the badge must reflect ssl_mode, not just the cert row —
 // a None-mode domain keeps a revoked cert; a Self/None domain with no usable
 // cert must not read as "pending".

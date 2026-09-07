@@ -99,6 +99,12 @@ func (m *mockDomainRepo) ListByUserID(ctx context.Context, userID string, opts r
 	return m.listByUserResult, int64(len(m.listByUserResult)), nil
 }
 
+// ComputeSSLState delegates to the real canonical computation so handler tests
+// exercise the actual ssl_state logic, not a stubbed copy (GH #1543).
+func (m *mockDomainRepo) ComputeSSLState(d *models.Domain, cert *models.SSLCertificate) string {
+	return repository.ComputeSSLState(d, cert)
+}
+
 func (m *mockDomainRepo) ListForRegistrarRefresh(ctx context.Context, staleBefore time.Time, limit int) ([]models.Domain, error) {
 	return nil, nil
 }
