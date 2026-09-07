@@ -28,6 +28,13 @@ type domainReownParams struct {
 	OldDocRoot string `json:"old_doc_root"`
 	NewDocRoot string `json:"new_doc_root"`
 	NewUID     int    `json:"new_uid"`
+	// PruneEmptyDir (GH #1579 rename) is an ancestor of OldDocRoot whose
+	// basename is the OLD domain name (e.g. /home/<u>/domains/<oldname> for the
+	// nested docroot layout). After the docroot leaf moves out of it, that dir
+	// is left empty; when set, prune it if — and only if — it is now empty.
+	// Optional and opt-in: chown (GH #1238) never sets it, so its behaviour is
+	// unchanged. The default docroot layout (leaf == domain name) leaves it "".
+	PruneEmptyDir string `json:"prune_empty_dir,omitempty"`
 }
 
 type domainReownResponse struct {
@@ -61,8 +68,10 @@ func domainReownHandler(ctx context.Context, raw json.RawMessage) (any, error) {
 	oldExists := oldErr == nil
 	newExists := newErr == nil
 
-	// Idempotent: already moved.
+	// Idempotent: already moved. Still attempt the empty-parent prune — a prior
+	// run may have moved the docroot but died before pruning.
 	if !oldExists && newExists {
+		pruneEmptyRenameDir(p.PruneEmptyDir, p.OldDocRoot)
 		return domainReownResponse{NewDocRoot: p.NewDocRoot, AlreadyDone: true}, nil
 	}
 	if !oldExists {
@@ -96,7 +105,44 @@ func domainReownHandler(ctx context.Context, raw json.RawMessage) (any, error) {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("set docroot mode: %v", err)}
 	}
 
+	// The docroot leaf has moved out of its old-name wrapper dir (nested layout);
+	// remove that wrapper if it is now empty. Best-effort — a non-empty dir
+	// (extra siblings the rename did not move) is left untouched.
+	pruneEmptyRenameDir(p.PruneEmptyDir, p.OldDocRoot)
+
 	return domainReownResponse{NewDocRoot: p.NewDocRoot}, nil
+}
+
+// pruneEmptyRenameDir removes dir when it is a safe, now-empty old-name wrapper
+// left behind by a rename move. It is deliberately conservative:
+//   - only acts when dir is set (the default docroot layout passes "");
+//   - refuses anything not under /home/ or not a clean absolute path;
+//   - refuses a dir that is not a strict ANCESTOR of oldDocRoot (so it can only
+//     ever be the wrapper the move emptied, never the docroot or an unrelated
+//     path);
+//   - uses os.Remove, which removes an EMPTY directory and fails (ignored) on a
+//     non-empty one — so extra sibling files the rename did not move are kept.
+func pruneEmptyRenameDir(dir, oldDocRoot string) {
+	if !shouldPruneRenameDir(dir, oldDocRoot) {
+		return
+	}
+	_ = os.Remove(dir) // rmdir; no-op (error ignored) when non-empty or absent.
+}
+
+// shouldPruneRenameDir is the pure guard for pruneEmptyRenameDir: it returns
+// true only for a set, clean, /home-rooted path that is a STRICT ANCESTOR of
+// oldDocRoot (so it can only be the wrapper the move emptied — never the docroot
+// itself, an unrelated path, or "").
+func shouldPruneRenameDir(dir, oldDocRoot string) bool {
+	if dir == "" {
+		return false
+	}
+	if !strings.HasPrefix(dir, "/home/") || filepath.Clean(dir) != dir {
+		return false
+	}
+	// Strict ancestor: oldDocRoot starts with dir + "/". Rules out dir ==
+	// oldDocRoot and any sideways path.
+	return strings.HasPrefix(oldDocRoot, dir+"/")
 }
 
 // ensureOwnedSetgidDir creates dir (if absent) and sets it to uid:gid + setgid

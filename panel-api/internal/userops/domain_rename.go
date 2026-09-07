@@ -125,7 +125,7 @@ func RenameDomain(ctx context.Context, d Deps, rec RenameReconciler, domain *mod
 		return renameErr("owner_unprovisioned", "the owner's Linux account is not fully provisioned yet")
 	}
 
-	newDocRoot, derr := renameDocRootSegment(oldDocRoot, oldName, newName)
+	newDocRoot, pruneOldDir, derr := renameDocRootSegment(oldDocRoot, oldName, newName)
 	if derr != nil {
 		return derr
 	}
@@ -146,11 +146,19 @@ func RenameDomain(ctx context.Context, d Deps, rec RenameReconciler, domain *mod
 	//    when the source is gone and the target exists), so a re-run after a
 	//    later mid-failure finishes cleanly. Nothing is persisted yet: a failure
 	//    here leaves the domain fully intact.
-	if _, aerr := d.Agent.Call(ctx, "domain.reown", map[string]any{
+	reownParams := map[string]any{
 		"old_doc_root": oldDocRoot,
 		"new_doc_root": newDocRoot,
 		"new_uid":      int(*owner.LinuxUID),
-	}); aerr != nil {
+	}
+	// Nested docroot layout (/home/<u>/domains/<name>/public_html): the leaf
+	// moves out of the old-name wrapper dir, leaving it empty — ask the agent to
+	// prune it if empty. Empty for the default layout (leaf == name), where the
+	// move renames the leaf itself and nothing is left behind.
+	if pruneOldDir != "" {
+		reownParams["prune_empty_dir"] = pruneOldDir
+	}
+	if _, aerr := d.Agent.Call(ctx, "domain.reown", reownParams); aerr != nil {
 		return renameErr("move_failed", "could not move the site files for %q: %v", oldName, aerr)
 	}
 
@@ -233,22 +241,34 @@ func logRenameHeal(log *slog.Logger, step, oldName, newName string, err error) {
 // (/home/<user>/domains/<name>/public_html). A docroot that contains the old
 // name zero times (fully custom) or more than once (ambiguous) is refused — the
 // operator moves it manually rather than the panel guessing.
-func renameDocRootSegment(docRoot, oldName, newName string) (string, *RenameError) {
+//
+// It also returns pruneOldDir: the old-name wrapper directory that the docroot
+// move empties and the agent should prune. It is the path up to and including
+// the old-name segment ONLY when that segment is not the docroot leaf (the
+// nested layout, /home/<u>/domains/<oldname>). For the default layout the
+// old-name segment IS the leaf — the move renames it in place, leaving nothing
+// behind — so pruneOldDir is "".
+func renameDocRootSegment(docRoot, oldName, newName string) (newDocRoot, pruneOldDir string, err *RenameError) {
 	segs := strings.Split(docRoot, "/")
 	idx := -1
 	for i, s := range segs {
 		if s == oldName {
 			if idx != -1 {
-				return "", renameErr("ambiguous_docroot",
+				return "", "", renameErr("ambiguous_docroot",
 					"docroot %q contains the domain name more than once — rename it manually", docRoot)
 			}
 			idx = i
 		}
 	}
 	if idx == -1 {
-		return "", renameErr("custom_docroot",
+		return "", "", renameErr("custom_docroot",
 			"docroot %q does not contain the domain name — rename it manually", docRoot)
 	}
+	if idx < len(segs)-1 {
+		// Old name is a wrapper dir, not the docroot leaf — it is emptied by the
+		// move and can be pruned.
+		pruneOldDir = strings.Join(segs[:idx+1], "/")
+	}
 	segs[idx] = newName
-	return strings.Join(segs, "/"), nil
+	return strings.Join(segs, "/"), pruneOldDir, nil
 }
