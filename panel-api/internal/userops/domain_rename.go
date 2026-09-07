@@ -2,9 +2,12 @@ package userops
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -19,6 +22,27 @@ import (
 type MailboxCounter interface {
 	CountByDomainID(ctx context.Context, domainID string) (int64, error)
 }
+
+// AppInstallLister lists the application installs on a domain so a rename can
+// rewrite a WordPress install's stored site URL to the new name (GH #1579).
+// Satisfied by repository.ApplicationInstallRepository. Optional on Deps: nil
+// skips the app-URL rewrite entirely (the rename still succeeds).
+type AppInstallLister interface {
+	ListByDomainIDs(ctx context.Context, domainIDs []string) ([]models.ApplicationInstall, error)
+}
+
+// appTypeWordPress is the ApplicationInstall.AppType whose stored site URL a
+// rename can rewrite (models.ApplicationInstall defaults app_type to this). Only
+// WordPress keeps a rewritable absolute site URL in its OWN database; other app
+// types are left untouched.
+const appTypeWordPress = "wordpress"
+
+// refreshableOSUserRE mirrors the migration.refresh_reconcile agent verb's
+// os_user constraint (panel-agent internal/commands/migration_refresh.go). It is
+// stricter than provisioning's usernameRe (it rejects '_'), so a rename whose
+// owner name falls outside it skips the WordPress URL rewrite with a warning
+// rather than sending a call the agent would reject.
+var refreshableOSUserRE = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
 
 // RenameError is a typed gate/orchestration failure so the HTTP handler can map
 // a stable code to a 4xx and any future CLI to a usage error.
@@ -52,10 +76,17 @@ func renameErr(code, format string, args ...any) *RenameError {
 //   - the docroot path does not contain the old name exactly once (a custom
 //     docroot needs a manual move).
 //
-// Installed apps are ALLOWED, but their internal configuration (e.g. a
-// WordPress siteurl stored in the app's own database) is NOT rewritten — the
-// caller warns the user. The WordPress reconciler derives its probe path from
-// the domain's current docroot, so the install itself heals to the new path.
+// Installed apps are ALLOWED. A WordPress install's stored site URL (kept in
+// the app's OWN database, which the docroot move + DNS/SSL re-key do not touch)
+// IS rewritten to the new name, best-effort, via migration.refresh_reconcile;
+// any install that could not be rewritten is reported in the returned warnings.
+// Other app types keep their own internal configuration unchanged. The
+// WordPress reconciler derives its probe path from the domain's current
+// docroot, so the install's on-disk path heals regardless.
+//
+// It returns the best-effort app-URL-rewrite warnings alongside the error: an
+// empty slice on a clean rename, one entry per install that could not be
+// rewritten (the rename itself still succeeded).
 //
 // The name is expected to be pre-normalized + format-validated by the caller
 // (the HTTP handler runs normalizeDomainName + validateDomainName, the same
@@ -75,12 +106,12 @@ func renameErr(code, format string, args ...any) *RenameError {
 // Steps 3–5 are best-effort heals AFTER the rename is committed: a rare failure
 // there is logged, not surfaced, because the row+files (the source of truth)
 // are already renamed and the periodic reconcile converges the rest.
-func RenameDomain(ctx context.Context, d Deps, rec RenameReconciler, domain *models.Domain, newName string) error {
+func RenameDomain(ctx context.Context, d Deps, rec RenameReconciler, domain *models.Domain, newName string) ([]string, error) {
 	if d.Domains == nil || d.Agent == nil || d.Users == nil {
-		return renameErr("unavailable", "rename is not available (domains/users/agent not wired)")
+		return nil, renameErr("unavailable", "rename is not available (domains/users/agent not wired)")
 	}
 	if domain == nil {
-		return renameErr("not_found", "domain not found")
+		return nil, renameErr("not_found", "domain not found")
 	}
 
 	oldName := domain.Name
@@ -89,13 +120,13 @@ func RenameDomain(ctx context.Context, d Deps, rec RenameReconciler, domain *mod
 
 	// ---- gate ----
 	if newName == "" {
-		return renameErr("invalid_name", "a new domain name is required")
+		return nil, renameErr("invalid_name", "a new domain name is required")
 	}
 	if newName == strings.ToLower(oldName) {
-		return renameErr("noop", "the new name is the same as the current name")
+		return nil, renameErr("noop", "the new name is the same as the current name")
 	}
 	if domain.EmailEnabled {
-		return renameErr("mail_active",
+		return nil, renameErr("mail_active",
 			"disable mail on %q before renaming — a rename changes every mailbox address and cannot migrate mail", oldName)
 	}
 	// Fail-closed mailbox gate. The old-name teardown's first step
@@ -104,19 +135,19 @@ func RenameDomain(ctx context.Context, d Deps, rec RenameReconciler, domain *mod
 	// EmailEnabled==false is NOT proof there is no mail to lose. Refuse when the
 	// counter is unwired (can't prove zero) or reports any mailbox.
 	if d.Mailboxes == nil {
-		return renameErr("unavailable", "rename is not available (mailbox check not wired)")
+		return nil, renameErr("unavailable", "rename is not available (mailbox check not wired)")
 	}
 	if n, cerr := d.Mailboxes.CountByDomainID(ctx, domain.ID); cerr != nil {
-		return renameErr("unavailable", "could not verify %q has no mailboxes: %v", oldName, cerr)
+		return nil, renameErr("unavailable", "could not verify %q has no mailboxes: %v", oldName, cerr)
 	} else if n > 0 {
-		return renameErr("mailboxes_present",
+		return nil, renameErr("mailboxes_present",
 			"%q still has %d mailbox(es) — delete or migrate them before renaming (a rename would change every mailbox address)", oldName, n)
 	}
 	if domain.IsPanelPrimary {
-		return renameErr("panel_primary", "%q is the panel's own primary domain and cannot be renamed", oldName)
+		return nil, renameErr("panel_primary", "%q is the panel's own primary domain and cannot be renamed", oldName)
 	}
 	if domain.WebDisabled || oldDocRoot == "" {
-		return renameErr("web_disabled", "%q has no website to rename", oldName)
+		return nil, renameErr("web_disabled", "%q has no website to rename", oldName)
 	}
 	// A custom (operator-uploaded) or shared certificate cannot be re-issued for
 	// the new name automatically — its files/lineage cover the OLD name, and the
@@ -125,32 +156,32 @@ func RenameDomain(ctx context.Context, d Deps, rec RenameReconciler, domain *mod
 	// domain's real certificate; the owner switches to Let's Encrypt or
 	// self-signed first, or re-uploads for the new name after.
 	if domain.SSLMode == models.SSLModeCustom || domain.SSLMode == models.SSLModeShared {
-		return renameErr("ssl_custom_cert",
+		return nil, renameErr("ssl_custom_cert",
 			"%q uses a %s TLS certificate that cannot be re-issued automatically for a new name — switch it to Let's Encrypt or self-signed before renaming (you can re-apply the certificate for the new name after)",
 			oldName, domain.SSLMode)
 	}
 
 	owner, err := d.Users.FindByID(ctx, domain.UserID)
 	if err != nil || owner == nil {
-		return renameErr("owner_unresolved", "could not resolve the owner of %q", oldName)
+		return nil, renameErr("owner_unresolved", "could not resolve the owner of %q", oldName)
 	}
 	if owner.LinuxUID == nil || *owner.LinuxUID == 0 {
-		return renameErr("owner_unprovisioned", "the owner's Linux account is not fully provisioned yet")
+		return nil, renameErr("owner_unprovisioned", "the owner's Linux account is not fully provisioned yet")
 	}
 
 	newDocRoot, pruneOldDir, derr := renameDocRootSegment(oldDocRoot, oldName, newName)
 	if derr != nil {
-		return derr
+		return nil, derr
 	}
 
 	// The new name must be free. A concurrent claim between here and the write
 	// is still caught by the unique index (Rename returns a conflict).
 	existing, ferr := d.Domains.FindByName(ctx, newName)
 	if ferr != nil && !errors.Is(ferr, repository.ErrNotFound) {
-		return renameErr("lookup_failed", "could not check name availability: %v", ferr)
+		return nil, renameErr("lookup_failed", "could not check name availability: %v", ferr)
 	}
 	if existing != nil {
-		return renameErr("name_taken", "%q already exists", newName)
+		return nil, renameErr("name_taken", "%q already exists", newName)
 	}
 
 	// ---- orchestrate ----
@@ -172,7 +203,7 @@ func RenameDomain(ctx context.Context, d Deps, rec RenameReconciler, domain *mod
 		reownParams["prune_empty_dir"] = pruneOldDir
 	}
 	if _, aerr := d.Agent.Call(ctx, "domain.reown", reownParams); aerr != nil {
-		return renameErr("move_failed", "could not move the site files for %q: %v", oldName, aerr)
+		return nil, renameErr("move_failed", "could not move the site files for %q: %v", oldName, aerr)
 	}
 
 	// 2. Rename the row (name + doc_root as a unit) — the authoritative flip.
@@ -181,9 +212,9 @@ func RenameDomain(ctx context.Context, d Deps, rec RenameReconciler, domain *mod
 	//    sweep tearing down a live domain.
 	if rerr := d.Domains.Rename(ctx, domain.ID, newName, newDocRoot); rerr != nil {
 		if errors.Is(rerr, repository.ErrConflict) {
-			return renameErr("name_taken", "%q already exists", newName)
+			return nil, renameErr("name_taken", "%q already exists", newName)
 		}
-		return renameErr("persist_failed", "could not rename %q: %v", oldName, rerr)
+		return nil, renameErr("persist_failed", "could not rename %q: %v", oldName, rerr)
 	}
 	domain.Name = newName
 	domain.DocRoot = newDocRoot
@@ -230,11 +261,141 @@ func RenameDomain(ctx context.Context, d Deps, rec RenameReconciler, domain *mod
 		}
 	}
 
+	// 4c. Rewrite a WordPress install's stored site URL from the old name to the
+	//     new one. The docroot move + DNS/SSL re-key do NOT touch a WordPress
+	//     install's own database, where an absolute site URL is stored; left
+	//     stale it redirects visitors back to the old name. Best-effort per
+	//     install, surfaced as warnings (never fails the committed rename).
+	var warnings []string
+	if d.AppInstalls != nil {
+		warnings = rewriteAppSiteURLs(ctx, d, domain, owner, oldName, newName)
+	}
+
 	// 5. Force a prompt re-render + zone push + cert reissue for the new name.
 	if rec != nil {
 		rec.Schedule(domain.ID)
 	}
-	return nil
+	return warnings, nil
+}
+
+// rewriteAppSiteURLs best-effort rewrites the stored site URL of every
+// WordPress install on the (already-renamed) domain from oldName to newName,
+// via the migration.refresh_reconcile agent verb (wp search-replace across all
+// tables + cache flush + FPM reload). It returns a human-readable warning for
+// each install it could not rewrite; the rename itself already succeeded, so a
+// failure here is a heal to retry, not a reason to roll back.
+//
+// Only WordPress installs are handled — other app types keep their own
+// configuration and the panel does not know how to rewrite it. A domain with no
+// WordPress install produces no warning.
+func rewriteAppSiteURLs(ctx context.Context, d Deps, domain *models.Domain, owner *models.User, oldName, newName string) []string {
+	installs, lerr := d.AppInstalls.ListByDomainIDs(ctx, []string{domain.ID})
+	if lerr != nil {
+		logRenameHeal(d.Log, "list app installs", oldName, newName, lerr)
+		return []string{fmt.Sprintf(
+			"could not check for WordPress installs to update after the rename — update any WordPress site URL manually: %v", lerr)}
+	}
+	// Only WordPress keeps a rewritable absolute site URL in its own database.
+	var wp []models.ApplicationInstall
+	for _, inst := range installs {
+		if inst.AppType == appTypeWordPress {
+			wp = append(wp, inst)
+		}
+	}
+	if len(wp) == 0 {
+		return nil
+	}
+
+	osUser := ""
+	if owner.Username != nil {
+		osUser = *owner.Username
+	}
+	// The refresh verb runs wp-cli as this OS user and validates the name against
+	// a stricter shape than provisioning (no '_'). If the owner's name is outside
+	// it, skip the rewrite with a clear warning rather than send a rejected call.
+	if !refreshableOSUserRE.MatchString(osUser) {
+		return []string{fmt.Sprintf(
+			"the WordPress site URL was not updated automatically — update it manually (change %q to %q in the site's settings)",
+			oldName, newName)}
+	}
+
+	var warnings []string
+	for _, inst := range wp {
+		installPath := filepath.Join(domain.DocRoot, inst.Subdirectory)
+		// A www-canonical install stores its site URL with the "www." host, so
+		// rewrite that host; otherwise the bare name. (The scheme-anchored
+		// old_url means neither pass matches an unrelated host.)
+		oldHost, newHost := oldName, newName
+		if inst.UseWWW {
+			oldHost, newHost = "www."+oldName, "www."+newName
+		}
+		// The stored site URL may use either scheme, and the served scheme may
+		// have changed; rewrite both. Each pass is a no-op when scheme://old is
+		// absent (wp search-replace simply matches nothing). Dedupe reasons: a
+		// broken install fails identically on both passes.
+		seen := map[string]bool{}
+		var reasons []string
+		addReason := func(r string) {
+			if r != "" && !seen[r] {
+				seen[r] = true
+				reasons = append(reasons, r)
+			}
+		}
+		for _, scheme := range []string{"https://", "http://"} {
+			raw, aerr := d.Agent.Call(ctx, "migration.refresh_reconcile", map[string]any{
+				"os_user":      osUser,
+				"install_path": installPath,
+				"domain":       newName,
+				"old_url":      scheme + oldHost,
+				"new_url":      scheme + newHost,
+			})
+			if aerr != nil {
+				addReason(aerr.Error())
+				break // a transport/validation error will recur on the next pass
+			}
+			// The verb reports a wp search-replace FAILURE inside its warnings
+			// (nil error), not as a call error — and always adds a benign
+			// page-cache note — so inspect the response and surface only genuine
+			// search-replace failures. Ignoring the response would let a failed
+			// rewrite masquerade as a clean rename.
+			for _, f := range refreshReconcileFailures(raw) {
+				addReason(f)
+			}
+		}
+		if len(reasons) > 0 {
+			logRenameHeal(d.Log, "rewrite WordPress site URL", oldName, newName, errors.New(strings.Join(reasons, "; ")))
+			warnings = append(warnings, fmt.Sprintf(
+				"could not update the WordPress site URL for the install at %q — update it manually: %s",
+				installPath, strings.Join(reasons, "; ")))
+		}
+	}
+	return warnings
+}
+
+// refreshReconcileFailures inspects a migration.refresh_reconcile response. The
+// verb reports a wp search-replace failure in its `warnings` (prefixed
+// "search-replace:") with a nil call error, and always adds a benign page-cache
+// note — so a non-nil call error is not the only failure signal, and not every
+// warning is a failure. It returns only the genuine search-replace failure
+// messages (empty when the rewrite succeeded).
+func refreshReconcileFailures(raw json.RawMessage) []string {
+	var resp struct {
+		OK       bool     `json:"ok"`
+		Warnings []string `json:"warnings"`
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return []string{"unexpected response from the update tool"}
+	}
+	var fails []string
+	for _, w := range resp.Warnings {
+		if strings.HasPrefix(w, "search-replace:") {
+			fails = append(fails, w)
+		}
+	}
+	if !resp.OK && len(fails) == 0 {
+		fails = append(fails, "the update tool reported failure")
+	}
+	return fails
 }
 
 // logRenameHeal records a best-effort post-commit heal failure without failing

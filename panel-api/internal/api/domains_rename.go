@@ -17,10 +17,12 @@ type renameDomainRequest struct {
 
 // rename renames an existing domain in place (GH #1579). Owner-scoped: a tenant
 // may rename their own domain, an admin any. Experimental phase 1 — web-only,
-// mail must be off, and the app's own internal config (e.g. a WordPress
-// siteurl) is NOT rewritten; the UI warns about that. The heavy lifting (gate,
-// tombstone the old name, rename the row, move + re-own the docroot, re-render)
-// lives in the shared userops.RenameDomain so any future CLI reuses it.
+// mail must be off. A WordPress install's stored site URL IS rewritten to the
+// new name (best-effort); any install that could not be rewritten comes back in
+// the response `warnings` (surfaced by the UI). Other apps' internal config is
+// unchanged. The heavy lifting (gate, tombstone the old name, rename the row,
+// move + re-own the docroot, rewrite app URLs, re-render) lives in the shared
+// userops.RenameDomain so any future CLI reuses it.
 func (h *domainHandler) rename(c *gin.Context) {
 	ctx := c.Request.Context()
 	domain, err := h.cfg.Domains.FindByID(ctx, c.Param("id"))
@@ -64,7 +66,7 @@ func (h *domainHandler) rename(c *gin.Context) {
 		rec = h.cfg.Reconciler
 	}
 
-	if err := userops.RenameDomain(ctx, userops.Deps{
+	warnings, err := userops.RenameDomain(ctx, userops.Deps{
 		Domains:         h.cfg.Domains,
 		DomainTeardowns: h.cfg.DomainTeardowns,
 		Users:           h.cfg.Users,
@@ -72,11 +74,14 @@ func (h *domainHandler) rename(c *gin.Context) {
 		// Mailboxes arms the fail-closed mailbox gate (a rename would purge
 		// retained Stalwart accounts on the old name). DNSZones + SSLCerts let
 		// the rename re-key the zone + reissue the cert for the new name.
-		Mailboxes: h.cfg.Mailboxes,
-		DNSZones:  h.cfg.DNSZones,
-		SSLCerts:  h.cfg.SSLCerts,
-		Log:       slog.Default(),
-	}, rec, domain, newName); err != nil {
+		// AppInstalls lets it rewrite a WordPress install's stored site URL.
+		Mailboxes:   h.cfg.Mailboxes,
+		DNSZones:    h.cfg.DNSZones,
+		SSLCerts:    h.cfg.SSLCerts,
+		AppInstalls: h.cfg.AppInstalls,
+		Log:         slog.Default(),
+	}, rec, domain, newName)
+	if err != nil {
 		var re *userops.RenameError
 		if errors.As(err, &re) {
 			c.JSON(renameHTTPStatus(re.Code), gin.H{"error": re.Code, "message": re.Message})
@@ -86,7 +91,13 @@ func (h *domainHandler) rename(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"id": domain.ID, "name": domain.Name, "doc_root": domain.DocRoot})
+	// warnings carries any best-effort app-URL rewrite that did not complete —
+	// the rename itself succeeded. Always an array (never null) so the client
+	// can render it uniformly.
+	if warnings == nil {
+		warnings = []string{}
+	}
+	c.JSON(http.StatusOK, gin.H{"id": domain.ID, "name": domain.Name, "doc_root": domain.DocRoot, "warnings": warnings})
 }
 
 // renameHTTPStatus maps a RenameError code to an HTTP status. Gate/validation

@@ -62,8 +62,13 @@ type Deps struct {
 	// DNSZones + SSLCerts let RenameDomain re-key the domain_id-scoped zone row
 	// and force an SSL reissue for the NEW name (GH #1579). Both optional: a
 	// panel without PowerDNS / with no cert row simply skips that heal.
-	DNSZones     repository.DNSZoneRepository
-	SSLCerts     repository.SSLCertificateRepository
+	DNSZones repository.DNSZoneRepository
+	SSLCerts repository.SSLCertificateRepository
+	// AppInstalls lets RenameDomain rewrite a WordPress install's stored site
+	// URL to the new name (GH #1579) — a WordPress install keeps an absolute
+	// site URL in its OWN database, which the docroot move + DNS/SSL re-key do
+	// not touch. Optional: nil skips the rewrite (the rename still succeeds).
+	AppInstalls  AppInstallLister
 	Agent        AgentCaller
 	KratosClient *kratosclient.Client
 	BcryptCost   int

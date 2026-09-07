@@ -4,9 +4,10 @@
 // Experimental phase 1: the backend refuses when mail is active, when the domain
 // is the panel's own primary, or when it has no website. It moves the docroot,
 // tears down the old name's nginx vhost + DNS zone, and re-provisions the new
-// name (SSL is reissued by the reconciler). It does NOT rewrite an installed
-// app's internal configuration (e.g. a WordPress siteurl stored in the app's
-// own database) — the modal warns about that and the user updates it in the app.
+// name (SSL is reissued by the reconciler). For a WordPress install it rewrites
+// the stored site URL to the new name (best-effort, via wp search-replace); any
+// install it could not rewrite is returned in `warnings` and surfaced here.
+// Other apps' internal configuration is not changed — the modal notes that.
 import { useState } from "react";
 import { Alert, Button, Checkbox, Input, Modal, Typography } from "antd";
 import { EditOutlined } from "@icons";
@@ -48,8 +49,14 @@ export function RenameDomainButton({ domain, onRenamed }: RenameDomainButtonProp
     if (!canSubmit) return;
     setBusy(true);
     try {
-      await apiClient.post(`/domains/${domain.id}/rename`, { name: normalized });
+      const resp = await apiClient.post<{ warnings?: string[] }>(
+        `/domains/${domain.id}/rename`,
+        { name: normalized },
+      );
       feedback.message.success(`Renamed to ${normalized}`);
+      // Best-effort app-URL rewrites that did not complete (e.g. a WordPress
+      // site URL that must be updated by hand) come back as warnings.
+      (resp.data?.warnings ?? []).forEach((w) => feedback.message.warning(w));
       close();
       onRenamed();
     } catch (err) {
@@ -87,8 +94,8 @@ export function RenameDomainButton({ domain, onRenamed }: RenameDomainButtonProp
           type="info"
           showIcon
           style={{ marginBottom: 12 }}
-          message="Your app's internal settings are not changed"
-          description="This does not change WordPress — or any other CMS/app — settings stored inside the app (for example the site URL). After renaming, update the site URL in the app itself."
+          message="WordPress site URL is updated automatically"
+          description="For a WordPress install, the site URL is rewritten to the new name automatically (via wp search-replace). Other apps' internal settings are not changed — update those in the app itself. If the automatic rewrite can't run, you'll see a warning to update it by hand."
         />
         <Typography.Paragraph style={{ marginBottom: 4 }}>
           Renaming <Typography.Text code>{domain.name}</Typography.Text> will:
@@ -98,6 +105,7 @@ export function RenameDomainButton({ domain, onRenamed }: RenameDomainButtonProp
           <li>Rebuild the web server (nginx) configuration for the new name</li>
           <li>Reissue the SSL certificate for the new name</li>
           <li>Recreate the managed DNS zone under the new name and remove the old one</li>
+          <li>Rewrite a WordPress install's site URL to the new name (other apps unchanged)</li>
         </ul>
         <Typography.Paragraph type="secondary" style={{ marginBottom: 4 }}>
           Mail must be off and the domain must have no mailboxes — renaming would
@@ -112,8 +120,8 @@ export function RenameDomainButton({ domain, onRenamed }: RenameDomainButtonProp
           style={{ marginBottom: 12 }}
         />
         <Checkbox checked={ack} onChange={(e) => setAck(e.target.checked)}>
-          I understand this is experimental and does not change my app's internal
-          settings.
+          I understand this is experimental. A WordPress site URL is updated
+          automatically; other apps' internal settings are not.
         </Checkbox>
       </Modal>
     </>
