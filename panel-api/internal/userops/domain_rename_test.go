@@ -216,6 +216,19 @@ func (m *drMailCerts) ResetForReissue(_ context.Context, domainID string) (int64
 	return m.resetN, nil
 }
 
+type drFtp struct {
+	accts []models.FtpAccount
+	err   error
+}
+
+func (f *drFtp) ListByUserID(_ context.Context, _ string) ([]models.FtpAccount, error) {
+	return f.accts, f.err
+}
+
+func drFtpAcct(username, homePath string) models.FtpAccount {
+	return models.FtpAccount{ID: "ftp-" + username, UserID: "user-1", Username: username, HomePath: homePath}
+}
+
 type drSched struct{ scheduled []string }
 
 func (r *drSched) Schedule(id string) { r.scheduled = append(r.scheduled, id) }
@@ -952,6 +965,145 @@ func TestRenameDomain_WordPressURLRewrite_WWW(t *testing.T) {
 		ag.refreshCalls[0]["new_url"] != "https://www.new.com" {
 		t.Fatalf("www install must rewrite the www host, got %v -> %v",
 			ag.refreshCalls[0]["old_url"], ag.refreshCalls[0]["new_url"])
+	}
+}
+
+// ---- FTP/SFTP subaccount refusal (GH #1579 ftp-docroot gate) ----
+
+// An FTP/SFTP subaccount homed AT the docroot being moved refuses the rename
+// fail-closed (its jail/chroot is not moved automatically), naming the account,
+// and touches nothing on the box.
+func TestRenameDomain_FtpAtDocrootRefuses(t *testing.T) {
+	rec := &drRecorder{}
+	dom := drWebDomain() // docroot /home/u1/public_html/old.com
+	d, ag, td := drNewDeps(rec, dom, drHappyOwner())
+	d.FtpAccounts = &drFtp{accts: []models.FtpAccount{
+		drFtpAcct("u1_web", "/home/u1/public_html/old.com"),
+	}}
+
+	_, err := RenameDomain(context.Background(), d, &drSched{}, dom, "new.com")
+	if got := drCodeOf(t, err); got != "ftp_subaccounts" {
+		t.Fatalf("code = %q, want ftp_subaccounts", got)
+	}
+	var re *RenameError
+	errors.As(err, &re)
+	if !strings.Contains(re.Message, "u1_web") {
+		t.Fatalf("refusal must name the offending account, got %q", re.Message)
+	}
+	// Fail-closed BEFORE any mutation: no reown, no db.rename, row unchanged.
+	if len(rec.events) != 0 {
+		t.Fatalf("ftp refusal must not run any step, got %v", rec.events)
+	}
+	if ag.reownLast != nil {
+		t.Fatalf("no file move on an ftp refusal")
+	}
+	if len(td.ensured) != 0 {
+		t.Fatalf("no tombstone on an ftp refusal, got %v", td.ensured)
+	}
+	if dom.Name != "old.com" {
+		t.Fatalf("row must be unchanged, got %q", dom.Name)
+	}
+}
+
+// A subaccount homed UNDER the docroot (a subdirectory) also refuses.
+func TestRenameDomain_FtpUnderDocrootRefuses(t *testing.T) {
+	rec := &drRecorder{}
+	dom := drWebDomain()
+	d, _, _ := drNewDeps(rec, dom, drHappyOwner())
+	d.FtpAccounts = &drFtp{accts: []models.FtpAccount{
+		drFtpAcct("u1_up", "/home/u1/public_html/old.com/uploads"),
+	}}
+
+	_, err := RenameDomain(context.Background(), d, &drSched{}, dom, "new.com")
+	if got := drCodeOf(t, err); got != "ftp_subaccounts" {
+		t.Fatalf("code = %q, want ftp_subaccounts", got)
+	}
+}
+
+// Nested/importer layout: a subaccount homed at the WRAPPER dir (the dir the
+// move empties + prunes) refuses too — the gate keys on pruneOldDir, not just
+// the docroot leaf.
+func TestRenameDomain_FtpAtNestedWrapperRefuses(t *testing.T) {
+	rec := &drRecorder{}
+	dom := drWebDomain()
+	dom.DocRoot = "/home/u1/domains/old.com/public_html"
+	d, _, _ := drNewDeps(rec, dom, drHappyOwner())
+	d.FtpAccounts = &drFtp{accts: []models.FtpAccount{
+		drFtpAcct("u1_wrap", "/home/u1/domains/old.com"),
+	}}
+
+	_, err := RenameDomain(context.Background(), d, &drSched{}, dom, "new.com")
+	if got := drCodeOf(t, err); got != "ftp_subaccounts" {
+		t.Fatalf("code = %q, want ftp_subaccounts (wrapper dir is pruned by the move)", got)
+	}
+}
+
+// A sibling docroot that merely SHARES a name prefix (…/old.com-other) is NOT a
+// match — the gate keys on a path-segment boundary, so the rename proceeds.
+func TestRenameDomain_FtpSiblingPrefixNotMatched(t *testing.T) {
+	rec := &drRecorder{}
+	dom := drWebDomain()
+	d, _, _ := drNewDeps(rec, dom, drHappyOwner())
+	d.FtpAccounts = &drFtp{accts: []models.FtpAccount{
+		drFtpAcct("u1_other", "/home/u1/public_html/old.com-other"),
+	}}
+
+	if _, err := RenameDomain(context.Background(), d, &drSched{}, dom, "new.com"); err != nil {
+		t.Fatalf("a sibling-prefix docroot must not block the rename, got %v", err)
+	}
+	if dom.Name != "new.com" {
+		t.Fatalf("row should be renamed, got %q", dom.Name)
+	}
+}
+
+// A subaccount homed at the tenant ROOT (or any path outside this domain's
+// docroot) does not block — only accounts under the moved tree matter.
+func TestRenameDomain_FtpTenantHomeNotMatched(t *testing.T) {
+	rec := &drRecorder{}
+	dom := drWebDomain()
+	d, _, _ := drNewDeps(rec, dom, drHappyOwner())
+	d.FtpAccounts = &drFtp{accts: []models.FtpAccount{
+		drFtpAcct("u1_home", "/home/u1"),
+		drFtpAcct("u1_site2", "/home/u1/public_html/other.com"),
+	}}
+
+	if _, err := RenameDomain(context.Background(), d, &drSched{}, dom, "new.com"); err != nil {
+		t.Fatalf("tenant-home / other-domain FTP accounts must not block, got %v", err)
+	}
+	if dom.Name != "new.com" {
+		t.Fatalf("row should be renamed, got %q", dom.Name)
+	}
+}
+
+// The check is fail-closed: a repo error refuses the rename (503-mapped) before
+// anything moves, rather than proceeding blind.
+func TestRenameDomain_FtpListErrorFailsClosed(t *testing.T) {
+	rec := &drRecorder{}
+	dom := drWebDomain()
+	d, ag, _ := drNewDeps(rec, dom, drHappyOwner())
+	d.FtpAccounts = &drFtp{err: errors.New("db down")}
+
+	_, err := RenameDomain(context.Background(), d, &drSched{}, dom, "new.com")
+	if got := drCodeOf(t, err); got != "ftp_check_failed" {
+		t.Fatalf("code = %q, want ftp_check_failed", got)
+	}
+	if len(rec.events) != 0 || ag.reownLast != nil {
+		t.Fatalf("ftp check error must refuse before any mutation, got %v", rec.events)
+	}
+}
+
+// A panel without the FTP repo wired (FtpAccounts nil) skips the check — the
+// rename proceeds (the pre-gate behaviour).
+func TestRenameDomain_NoFtpAccountsSkips(t *testing.T) {
+	rec := &drRecorder{}
+	dom := drWebDomain()
+	d, _, _ := drNewDeps(rec, dom, drHappyOwner()) // FtpAccounts left nil
+
+	if _, err := RenameDomain(context.Background(), d, &drSched{}, dom, "new.com"); err != nil {
+		t.Fatalf("nil FtpAccounts must skip the check, got %v", err)
+	}
+	if dom.Name != "new.com" {
+		t.Fatalf("row should be renamed, got %q", dom.Name)
 	}
 }
 

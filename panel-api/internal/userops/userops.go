@@ -66,7 +66,11 @@ type Deps struct {
 	// URL to the new name (GH #1579) — a WordPress install keeps an absolute
 	// site URL in its OWN database, which the docroot move + DNS/SSL re-key do
 	// not touch. Optional: nil skips the rewrite (the rename still succeeds).
-	AppInstalls  AppInstallLister
+	AppInstalls AppInstallLister
+	// FtpAccounts lets RenameDomain refuse when an FTP/SFTP subaccount is homed
+	// at or under the docroot being moved (GH #1579) — its jail/chroot is not
+	// moved automatically. Optional: nil skips the check (the rename proceeds).
+	FtpAccounts  FtpDocrootLister
 	Agent        AgentCaller
 	KratosClient *kratosclient.Client
 	BcryptCost   int
