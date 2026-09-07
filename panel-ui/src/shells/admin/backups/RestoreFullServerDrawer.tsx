@@ -121,8 +121,9 @@ export function RestoreFullServerDrawer({ open, onClose }: Props) {
     >
       <Space direction="vertical" size="middle" style={{ width: "100%" }}>
         <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
-          Upload a Full Server backup archive (from “Package &amp; download”) and
-          restore the accounts it contains. Each user is restored just like a
+          Upload a Full Server backup archive (from a Full Server run&apos;s{" "}
+          <strong>Download</strong> action) and restore the accounts it contains.
+          Each user is restored just like a
           normal account restore. Accounts that don&apos;t exist yet can be
           created for you.
         </Typography.Paragraph>

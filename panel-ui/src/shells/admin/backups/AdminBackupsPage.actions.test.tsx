@@ -1,7 +1,7 @@
 // JAB-332: the admin backups page drives its per-job actions from the same
 // shared eligibility matrix as the tenant card, and hits the /admin resource
 // paths. These cover the admin side of the consolidation:
-//   - the run grouping (RunRow → "Expand to manage") is unchanged            (AC3)
+//   - the run grouping (RunRow → "Expand") is unchanged            (AC3)
 //   - a standalone job's Delete is gated by the shared canDelete (running hidden)
 //   - Delete calls DELETE /admin/backups/:id                                 (AC2)
 import { App } from "antd";
@@ -111,13 +111,13 @@ describe("AdminBackupsPage per-job actions (JAB-332)", () => {
     mockData([job("m1", "succeeded")]);
     renderPage();
     // AC3: the scheduler run still rolls up under one expandable parent row.
-    expect(await screen.findByText("Expand to manage")).toBeTruthy();
+    expect(await screen.findByText("Expand")).toBeTruthy();
   });
 
   it("shows Delete for a finished standalone job but hides it while running", async () => {
     mockData([job("m1", "succeeded"), job("m2", "running")]);
     renderPage();
-    await screen.findByText("Expand to manage");
+    await screen.findByText("Expand");
     // m1 (succeeded) shows a Delete; m2 (running) hides it → exactly one exact
     // "Delete" button in the collapsed table.
     await waitFor(() => expect(screen.getAllByText("Delete")).toHaveLength(1));
