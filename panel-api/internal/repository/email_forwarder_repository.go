@@ -27,6 +27,15 @@ type EmailForwarderRepository interface {
 	Create(ctx context.Context, fwd *models.EmailForwarder) error
 	Update(ctx context.Context, fwd *models.EmailForwarder) error
 	Delete(ctx context.Context, id string) error
+
+	// ReKeyAliasTargets rewrites the stored `target` of this domain's ALIAS
+	// forwarders from <local_part>@<old> to <local_part>@<new> after an in-place
+	// rename (GH #1579). The alias target is the canonical AliasForwarderTarget
+	// (local_part@domain); it is unused at apply time (delivery is by local_part
+	// -> mailbox) but backs the uq_external_forward unique key and is shown in the
+	// UI, so it must track the current name. External forwarders (target = an
+	// outside address) are left untouched. Returns the rows rewritten.
+	ReKeyAliasTargets(ctx context.Context, domainID, newDomain string) (int64, error)
 }
 
 type emailForwarderRepo struct {
@@ -150,6 +159,21 @@ func (r *emailForwarderRepo) Create(ctx context.Context, fwd *models.EmailForwar
 func (r *emailForwarderRepo) Update(ctx context.Context, fwd *models.EmailForwarder) error {
 	fwd.UpdatedAt = time.Now().UTC()
 	return r.db.WithContext(ctx).Save(fwd).Error
+}
+
+func (r *emailForwarderRepo) ReKeyAliasTargets(ctx context.Context, domainID, newDomain string) (int64, error) {
+	// Recompute each alias target as <local_part>@<newDomain> in one statement —
+	// byte-identical to models.AliasForwarderTarget. Scoped to type='alias' with a
+	// non-null local_part, so external forwarders (target = an outside address) are
+	// never touched. No unique key can collide: alias local_parts are unique per
+	// domain, so the recomputed targets are unique too.
+	res := r.db.WithContext(ctx).Model(&models.EmailForwarder{}).
+		Where("domain_id = ? AND type = ? AND local_part IS NOT NULL", domainID, "alias").
+		Update("target", gorm.Expr("CONCAT(local_part, '@', ?)", newDomain))
+	if res.Error != nil {
+		return 0, res.Error
+	}
+	return res.RowsAffected, nil
 }
 
 func (r *emailForwarderRepo) Delete(ctx context.Context, id string) error {

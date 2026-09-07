@@ -74,8 +74,11 @@ type Deps struct {
 	// DMARC / TLSRPT move the domain's stored DMARC + TLS-RPT aggregate history
 	// onto the new name on a rename (GH #1579) so those dashboards are not
 	// orphaned. Optional: nil skips the re-key (the rename still succeeds).
-	DMARC        DMARCReKeyer
-	TLSRPT       TLSRPTReKeyer
+	DMARC  DMARCReKeyer
+	TLSRPT TLSRPTReKeyer
+	// Forwarders rewrites the domain's alias forwarder targets to the new name on
+	// a rename (GH #1579). Optional: nil skips (the rename still succeeds).
+	Forwarders   ForwarderAliasReKeyer
 	Agent        AgentCaller
 	KratosClient *kratosclient.Client
 	BcryptCost   int

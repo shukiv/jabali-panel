@@ -89,7 +89,9 @@ func (h *domainHandler) rename(c *gin.Context) {
 		// name so those dashboards are not orphaned.
 		DMARC:  h.cfg.DMARCAggregate,
 		TLSRPT: h.cfg.TLSRPTAggregate,
-		Log:    slog.Default(),
+		// Forwarders rewrites alias forwarder targets to the new name.
+		Forwarders: h.cfg.Forwarders,
+		Log:        slog.Default(),
 	}, rec, domain, newName)
 	if err != nil {
 		var re *userops.RenameError
