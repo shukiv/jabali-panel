@@ -2577,12 +2577,15 @@ paths:
         domain_id. Moves + re-owns the docroot, renames the DB row, re-keys the
         DNS zone and forces an SSL reissue for the new name, and tears down the
         old name's nginx vhost + PowerDNS zone via the durable teardown.
-        Experimental phase 1 — refuses when the domain has any mailbox (mail must
-        be off AND have no retained mailboxes), is the panel's own primary, or
-        has no website. For a WordPress install it rewrites the stored site URL
-        to the new name (best-effort); any install that could not be rewritten is
-        reported in the `warnings` array. Other apps' internal config is not
-        changed.
+        Experimental — mail is CARRIED to the new name: the Stalwart registry
+        domain is renamed in place, so every mailbox account, its stored
+        messages, and its DKIM signature follow the stable domain id. Refuses
+        when the new name already carries mail in Stalwart (mail_domain_conflict),
+        the domain is the panel's own primary, or it has no website. For a
+        WordPress install it rewrites the stored site URL to the new name
+        (best-effort); any install that could not be rewritten — and a catch-all
+        address that could not be re-pointed — is reported in the `warnings`
+        array. Other apps' internal config is not changed.
       security: [ { KratosSession: [] } ]
       parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
       requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { name: { type: string } }, required: [name] } } } }
@@ -2591,8 +2594,8 @@ paths:
         "400": { description: Invalid or ambiguous name, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "403": { description: Not the domain owner, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "404": { description: Domain not found, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
-        "409": { description: Refused — mail/mailboxes present, panel primary, web disabled, or name taken, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
-        "503": { description: Rename not available (mailbox check unwired), content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "409": { description: "Refused — mail_domain_conflict (new name already carries mail), panel primary, web disabled, custom/shared cert, or name taken", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "503": { description: Rename not available (dependencies not wired, or mail check unreachable), content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
 
 
   # --- Branding (auto) ---

@@ -611,22 +611,36 @@ func (r *domainRepo) SetSharedCertificate(ctx context.Context, id string, shared
 }
 
 func (r *domainRepo) Rename(ctx context.Context, id, newName, newDocRoot string) error {
-	updates := map[string]interface{}{
-		"name":       newName,
-		"doc_root":   newDocRoot,
-		"updated_at": time.Now().UTC(),
-	}
-	res := r.db.WithContext(ctx).Model(&models.Domain{}).
-		Where("id = ?", id).
-		Updates(updates)
-	if res.Error != nil {
-		// The unique index on name surfaces a concurrent claim as a conflict.
-		return translate(res.Error)
-	}
-	if res.RowsAffected == 0 {
-		return ErrNotFound
-	}
-	return nil
+	now := time.Now().UTC()
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		res := tx.Model(&models.Domain{}).
+			Where("id = ?", id).
+			Updates(map[string]interface{}{
+				"name":       newName,
+				"doc_root":   newDocRoot,
+				"updated_at": now,
+			})
+		if res.Error != nil {
+			// The unique index on name surfaces a concurrent claim as a conflict.
+			return translate(res.Error)
+		}
+		if res.RowsAffected == 0 {
+			return ErrNotFound
+		}
+		// Resync the denormalized email_cached on shared MAILBOX resources (M52).
+		// Unlike mailboxes / mail_groups — whose email_cached is kept current by
+		// the AFTER UPDATE domains triggers (migrations 000054 / 000170) — a shared
+		// resource's email_cached is maintained in Go (see models.SharedResource),
+		// so the domains rename does not cascade to it. Only kind='mailbox' rows
+		// carry an address. GH #1579 mail-carrying rename.
+		if err := tx.Exec(
+			"UPDATE shared_resources SET email_cached = CONCAT(local_part, '@', ?), updated_at = ? "+
+				"WHERE domain_id = ? AND kind = 'mailbox' AND local_part IS NOT NULL",
+			newName, now, id).Error; err != nil {
+			return translate(err)
+		}
+		return nil
+	})
 }
 
 func (r *domainRepo) UpdateSSLMode(ctx context.Context, id string, mode string) error {

@@ -51,24 +51,36 @@ func (u *drUsers) FindByID(_ context.Context, _ string) (*models.User, error) {
 type drAgent struct {
 	rec     *drRecorder
 	callErr error
-	// errByMethod fails only the named agent methods (checked before callErr),
-	// so a test can let domain.reown succeed while migration.refresh_reconcile
-	// fails.
+	// errByMethod fails the named agent methods (checked before callErr), so a
+	// test can let some verbs succeed while another fails.
 	errByMethod  map[string]error
 	last         map[string]any
+	reownLast    map[string]any   // captured domain.reown params (stable across later calls)
 	refreshCalls []map[string]any // migration.refresh_reconcile params, in order
-	// refreshResp, when set, is the migration.refresh_reconcile response body —
-	// so a test can simulate the verb reporting a search-replace failure (or a
-	// benign page-cache note) inside its warnings with a nil call error.
+	// refreshResp, when set, is the migration.refresh_reconcile response body.
 	refreshResp json.RawMessage
+
+	// mail.domain.rename fakes. The verb is called twice — dry_run then real.
+	mailRenameCalls  []map[string]any
+	mailDryStatus    string   // default "ok"
+	mailRealStatus   string   // default "not_in_registry"
+	mailRealWarnings []string // surfaced on the real call
+	mailRealErr      error    // fails ONLY the real (non-dry) call
 }
 
 func (a *drAgent) Call(_ context.Context, method string, params any) (json.RawMessage, error) {
 	a.rec.events = append(a.rec.events, "agent."+method)
-	if m, ok := params.(map[string]any); ok {
-		a.last = m
-		if method == "migration.refresh_reconcile" {
-			a.refreshCalls = append(a.refreshCalls, m)
+	var m map[string]any
+	if mm, ok := params.(map[string]any); ok {
+		m = mm
+		a.last = mm
+		switch method {
+		case "domain.reown":
+			a.reownLast = mm
+		case "migration.refresh_reconcile":
+			a.refreshCalls = append(a.refreshCalls, mm)
+		case "mail.domain.rename":
+			a.mailRenameCalls = append(a.mailRenameCalls, mm)
 		}
 	}
 	if a.errByMethod != nil {
@@ -79,11 +91,34 @@ func (a *drAgent) Call(_ context.Context, method string, params any) (json.RawMe
 	if a.callErr != nil {
 		return nil, a.callErr
 	}
-	if method == "migration.refresh_reconcile" {
+	switch method {
+	case "migration.refresh_reconcile":
 		if a.refreshResp != nil {
 			return a.refreshResp, nil
 		}
 		return json.RawMessage(`{"ok":true,"warnings":[]}`), nil
+	case "mail.domain.rename":
+		dry, _ := m["dry_run"].(bool)
+		if dry {
+			st := a.mailDryStatus
+			if st == "" {
+				st = "ok"
+			}
+			return json.RawMessage(`{"status":"` + st + `"}`), nil
+		}
+		if a.mailRealErr != nil {
+			return nil, a.mailRealErr
+		}
+		st := a.mailRealStatus
+		if st == "" {
+			st = "not_in_registry"
+		}
+		resp := map[string]any{"status": st}
+		if len(a.mailRealWarnings) > 0 {
+			resp["warnings"] = a.mailRealWarnings
+		}
+		b, _ := json.Marshal(resp)
+		return b, nil
 	}
 	return json.RawMessage(`{}`), nil
 }
@@ -116,15 +151,6 @@ func (t *drTeardowns) List(_ context.Context) ([]models.DomainTeardown, error) {
 	return nil, nil
 }
 func (t *drTeardowns) MarkAttempt(_ context.Context, _, _ string) error { return nil }
-
-type drMailboxes struct {
-	count int64
-	err   error
-}
-
-func (m *drMailboxes) CountByDomainID(_ context.Context, _ string) (int64, error) {
-	return m.count, m.err
-}
 
 type drDNSZones struct {
 	repository.DNSZoneRepository
@@ -191,9 +217,9 @@ func drWebDomain() *models.Domain {
 	}
 }
 
-// drNewDeps wires a fully-armed rename: zero mailboxes, a zone row on the old
-// name, and a cert row — so the happy path exercises the zone re-key + cert
-// reset heals.
+// drNewDeps wires a fully-armed rename: a zone row on the old name and a cert
+// row, so the happy path exercises the zone re-key + cert reset heals. The mail
+// carry defaults to not_in_registry (a plain web domain), so it proceeds.
 func drNewDeps(rec *drRecorder, dom *models.Domain, owner *models.User) (Deps, *drAgent, *drTeardowns) {
 	ag := &drAgent{rec: rec}
 	td := &drTeardowns{rec: rec}
@@ -202,7 +228,6 @@ func drNewDeps(rec *drRecorder, dom *models.Domain, owner *models.User) (Deps, *
 		Users:           &drUsers{user: owner},
 		DomainTeardowns: td,
 		Agent:           ag,
-		Mailboxes:       &drMailboxes{count: 0},
 		DNSZones:        &drDNSZones{rec: rec, zone: &models.DNSZone{ID: "zone-1", DomainID: dom.ID, Name: dom.Name}},
 		SSLCerts:        &drSSLCerts{rec: rec, cert: &models.SSLCertificate{ID: "cert-1", DomainID: dom.ID}},
 	}
@@ -221,6 +246,21 @@ func drCodeOf(t *testing.T, err error) string {
 	return re.Code
 }
 
+func assertEvents(t *testing.T, got, want []string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("events = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("event[%d] = %q, want %q (all: %v)", i, got[i], want[i], got)
+		}
+	}
+}
+
+// The two mail.domain.rename calls (dry-run then real) bracket the docroot move.
+const evDryMail = "agent.mail.domain.rename"
+
 // ---- gate matrix ----
 
 func TestRenameDomain_Gates(t *testing.T) {
@@ -233,7 +273,6 @@ func TestRenameDomain_Gates(t *testing.T) {
 	}{
 		{"empty name", nil, drHappyOwner(), "", "invalid_name"},
 		{"no-op same name", nil, drHappyOwner(), "OLD.com", "noop"},
-		{"mail active", func(d *models.Domain) { d.EmailEnabled = true }, drHappyOwner(), "new.com", "mail_active"},
 		{"panel primary", func(d *models.Domain) { d.IsPanelPrimary = true }, drHappyOwner(), "new.com", "panel_primary"},
 		{"web disabled", func(d *models.Domain) { d.WebDisabled = true }, drHappyOwner(), "new.com", "web_disabled"},
 		{"custom cert", func(d *models.Domain) { d.SSLMode = models.SSLModeCustom }, drHappyOwner(), "new.com", "ssl_custom_cert"},
@@ -261,47 +300,138 @@ func TestRenameDomain_Gates(t *testing.T) {
 	}
 }
 
-// ---- mailbox gate (fail-closed) ----
+// ---- mail carry (GH #1579 task b) ----
 
-func TestRenameDomain_MailboxesPresent(t *testing.T) {
+// A conflict at the DRY-RUN (the new name already carries mail) refuses BEFORE
+// any files move — only the dry-run call ran, no reown, no DB rename.
+func TestRenameDomain_MailConflictRefusesBeforeMove(t *testing.T) {
 	rec := &drRecorder{}
 	dom := drWebDomain()
-	d, _, _ := drNewDeps(rec, dom, drHappyOwner())
-	d.Mailboxes = &drMailboxes{count: 3}
+	d, ag, _ := drNewDeps(rec, dom, drHappyOwner())
+	ag.mailDryStatus = "conflict"
+
 	_, err := RenameDomain(context.Background(), d, &drSched{}, dom, "new.com")
-	if got := drCodeOf(t, err); got != "mailboxes_present" {
-		t.Fatalf("code = %q, want mailboxes_present", got)
+	if got := drCodeOf(t, err); got != "mail_domain_conflict" {
+		t.Fatalf("code = %q, want mail_domain_conflict", got)
 	}
-	if len(rec.events) != 0 {
-		t.Fatalf("mailboxes-present must refuse before any step, got %v", rec.events)
+	assertEvents(t, rec.events, []string{evDryMail})
+	if ag.reownLast != nil {
+		t.Fatalf("a dry-run conflict must refuse before the file move")
+	}
+	if dom.Name != "old.com" {
+		t.Fatalf("row must be unchanged, got %q", dom.Name)
 	}
 }
 
-func TestRenameDomain_MailboxCheckUnwired(t *testing.T) {
+// A conflict on the REAL run (raced another rename since the dry-run) refuses
+// after the move but before the DB flip; the row is unchanged.
+func TestRenameDomain_MailConflictOnRealRun(t *testing.T) {
 	rec := &drRecorder{}
 	dom := drWebDomain()
-	d, _, _ := drNewDeps(rec, dom, drHappyOwner())
-	d.Mailboxes = nil // fail-closed: cannot prove zero mailboxes
+	d, ag, td := drNewDeps(rec, dom, drHappyOwner())
+	ag.mailDryStatus = "ok"
+	ag.mailRealStatus = "conflict"
+
+	_, err := RenameDomain(context.Background(), d, &drSched{}, dom, "new.com")
+	if got := drCodeOf(t, err); got != "mail_domain_conflict" {
+		t.Fatalf("code = %q, want mail_domain_conflict", got)
+	}
+	assertEvents(t, rec.events, []string{evDryMail, "agent.domain.reown", evDryMail})
+	if dom.Name != "old.com" {
+		t.Fatalf("row must be unchanged on a real-run conflict, got %q", dom.Name)
+	}
+	if len(td.ensured) != 0 {
+		t.Fatalf("no tombstone before the DB flip, got %v", td.ensured)
+	}
+}
+
+// The dry-run mail check is fail-closed: an agent error there refuses the rename
+// before anything moves.
+func TestRenameDomain_MailDryRunErrorFailsClosed(t *testing.T) {
+	rec := &drRecorder{}
+	dom := drWebDomain()
+	d, ag, _ := drNewDeps(rec, dom, drHappyOwner())
+	ag.errByMethod = map[string]error{"mail.domain.rename": errors.New("stalwart down")}
+
 	_, err := RenameDomain(context.Background(), d, &drSched{}, dom, "new.com")
 	if got := drCodeOf(t, err); got != "unavailable" {
 		t.Fatalf("code = %q, want unavailable", got)
 	}
-	if len(rec.events) != 0 {
-		t.Fatalf("unwired mailbox check must refuse before any step, got %v", rec.events)
+	if ag.reownLast != nil {
+		t.Fatalf("a dry-run agent error must refuse before the file move")
 	}
 }
 
-func TestRenameDomain_MailboxCountError(t *testing.T) {
+// The real mail rename is fail-closed: an agent error after the move refuses,
+// and NOTHING is persisted (the DB row still holds the old name, no tombstone).
+func TestRenameDomain_MailRealRenameFailsClosed(t *testing.T) {
 	rec := &drRecorder{}
 	dom := drWebDomain()
-	d, _, _ := drNewDeps(rec, dom, drHappyOwner())
-	d.Mailboxes = &drMailboxes{err: errors.New("db down")}
+	d, ag, _ := drNewDeps(rec, dom, drHappyOwner())
+	ag.mailRealErr = errors.New("stalwart down mid-run")
+
 	_, err := RenameDomain(context.Background(), d, &drSched{}, dom, "new.com")
-	if got := drCodeOf(t, err); got != "unavailable" {
-		t.Fatalf("code = %q, want unavailable (can't verify zero mailboxes)", got)
+	if got := drCodeOf(t, err); got != "mail_rename_failed" {
+		t.Fatalf("code = %q, want mail_rename_failed", got)
 	}
-	if len(rec.events) != 0 {
-		t.Fatalf("mailbox count error must refuse before any step, got %v", rec.events)
+	if ag.reownLast == nil {
+		t.Fatalf("reown should have run before the mail rename")
+	}
+	for _, e := range rec.events {
+		if e == "db.rename" || e == "tombstone.ensure" {
+			t.Fatalf("nothing must persist on a mail-rename failure, got %v", rec.events)
+		}
+	}
+	if dom.Name != "old.com" {
+		t.Fatalf("row must be unchanged, got %q", dom.Name)
+	}
+}
+
+// A catch-all the verb could not rewrite comes back as a warning on the 200 —
+// the rename itself (mail carried) still succeeds.
+func TestRenameDomain_MailCatchallWarningSurfaced(t *testing.T) {
+	rec := &drRecorder{}
+	dom := drWebDomain()
+	d, ag, _ := drNewDeps(rec, dom, drHappyOwner())
+	ag.mailRealStatus = "renamed"
+	ag.mailRealWarnings = []string{"mail carried to the new name, but the catch-all address still points at the old name"}
+
+	warnings, err := RenameDomain(context.Background(), d, &drSched{}, dom, "new.com")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if dom.Name != "new.com" {
+		t.Fatalf("row should be renamed, got %q", dom.Name)
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "catch-all") {
+		t.Fatalf("catch-all warning must surface, got %v", warnings)
+	}
+}
+
+// The mail carry runs twice (dry then real) and brackets the docroot move; it
+// passes the OLD and NEW names to the verb.
+func TestRenameDomain_MailCarryCallShape(t *testing.T) {
+	rec := &drRecorder{}
+	dom := drWebDomain()
+	d, ag, _ := drNewDeps(rec, dom, drHappyOwner())
+
+	if _, err := RenameDomain(context.Background(), d, &drSched{}, dom, "new.com"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(ag.mailRenameCalls) != 2 {
+		t.Fatalf("want 2 mail.domain.rename calls (dry + real), got %d", len(ag.mailRenameCalls))
+	}
+	dry, real := ag.mailRenameCalls[0], ag.mailRenameCalls[1]
+	if dry["dry_run"] != true {
+		t.Fatalf("first call must be dry_run, got %v", dry)
+	}
+	if real["dry_run"] == true {
+		t.Fatalf("second call must be the real run, got %v", real)
+	}
+	for _, c := range ag.mailRenameCalls {
+		if c["old"] != "old.com" || c["new"] != "new.com" {
+			t.Fatalf("mail rename call = %v, want old.com -> new.com", c)
+		}
 	}
 }
 
@@ -331,20 +461,13 @@ func TestRenameDomain_HappyPath(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Order is load-bearing: move the files, THEN rename the row (the
-	// authoritative flip), THEN tombstone the now-freed old name, THEN heal
-	// DNS + SSL for the new name. Files-before-DB makes a mid-run failure
-	// re-runnable, and tombstoning only after the flip means the sweep can
-	// never tear down a live domain.
-	want := []string{"agent.domain.reown", "db.rename", "tombstone.ensure", "zone.rename", "cert.reset"}
-	if len(rec.events) != len(want) {
-		t.Fatalf("events = %v, want %v", rec.events, want)
-	}
-	for i := range want {
-		if rec.events[i] != want[i] {
-			t.Fatalf("event[%d] = %q, want %q (all: %v)", i, rec.events[i], want[i], rec.events)
-		}
-	}
+	// Order is load-bearing: dry-run the mail carry, move the files, carry mail
+	// (Stalwart rename in place) BEFORE the DB flip, then rename the row, then
+	// tombstone the now-freed old name, then heal DNS + SSL for the new name.
+	assertEvents(t, rec.events, []string{
+		evDryMail, "agent.domain.reown", evDryMail, "db.rename",
+		"tombstone.ensure", "zone.rename", "cert.reset",
+	})
 
 	// Tombstone is for the OLD name; never deleted on success.
 	if len(td.ensured) != 1 || td.ensured[0] != "old.com" {
@@ -355,14 +478,14 @@ func TestRenameDomain_HappyPath(t *testing.T) {
 	}
 
 	// reown moves old -> new docroot under the OWNER's uid (not a new uid).
-	if ag.last["old_doc_root"] != "/home/u1/public_html/old.com" {
-		t.Fatalf("old_doc_root = %v", ag.last["old_doc_root"])
+	if ag.reownLast["old_doc_root"] != "/home/u1/public_html/old.com" {
+		t.Fatalf("old_doc_root = %v", ag.reownLast["old_doc_root"])
 	}
-	if ag.last["new_doc_root"] != "/home/u1/public_html/new.com" {
-		t.Fatalf("new_doc_root = %v", ag.last["new_doc_root"])
+	if ag.reownLast["new_doc_root"] != "/home/u1/public_html/new.com" {
+		t.Fatalf("new_doc_root = %v", ag.reownLast["new_doc_root"])
 	}
-	if ag.last["new_uid"] != int(1001) {
-		t.Fatalf("new_uid = %v (%T), want 1001", ag.last["new_uid"], ag.last["new_uid"])
+	if ag.reownLast["new_uid"] != int(1001) {
+		t.Fatalf("new_uid = %v (%T), want 1001", ag.reownLast["new_uid"], ag.reownLast["new_uid"])
 	}
 
 	// The DNS zone row is re-keyed to the new name and the cert row reset.
@@ -391,8 +514,8 @@ func TestRenameDomain_DefaultLayoutNoPrune(t *testing.T) {
 	if _, err := RenameDomain(context.Background(), d, &drSched{}, dom, "new.com"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if _, ok := ag.last["prune_empty_dir"]; ok {
-		t.Fatalf("default layout must not set prune_empty_dir, got %v", ag.last["prune_empty_dir"])
+	if _, ok := ag.reownLast["prune_empty_dir"]; ok {
+		t.Fatalf("default layout must not set prune_empty_dir, got %v", ag.reownLast["prune_empty_dir"])
 	}
 }
 
@@ -406,11 +529,11 @@ func TestRenameDomain_NestedLayoutPrunesOldDir(t *testing.T) {
 	if _, err := RenameDomain(context.Background(), d, &drSched{}, dom, "new.com"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if ag.last["new_doc_root"] != "/home/u1/domains/new.com/public_html" {
-		t.Fatalf("new_doc_root = %v", ag.last["new_doc_root"])
+	if ag.reownLast["new_doc_root"] != "/home/u1/domains/new.com/public_html" {
+		t.Fatalf("new_doc_root = %v", ag.reownLast["new_doc_root"])
 	}
-	if ag.last["prune_empty_dir"] != "/home/u1/domains/old.com" {
-		t.Fatalf("prune_empty_dir = %v, want /home/u1/domains/old.com", ag.last["prune_empty_dir"])
+	if ag.reownLast["prune_empty_dir"] != "/home/u1/domains/old.com" {
+		t.Fatalf("prune_empty_dir = %v, want /home/u1/domains/old.com", ag.reownLast["prune_empty_dir"])
 	}
 	if dom.DocRoot != "/home/u1/domains/new.com/public_html" {
 		t.Fatalf("domain docroot not updated: %q", dom.DocRoot)
@@ -429,10 +552,9 @@ func TestRenameDomain_HappyPath_NoZoneNoCert(t *testing.T) {
 	if _, err := RenameDomain(context.Background(), d, &drSched{}, dom, "new.com"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	want := []string{"agent.domain.reown", "db.rename", "tombstone.ensure"}
-	if len(rec.events) != len(want) {
-		t.Fatalf("events = %v, want %v", rec.events, want)
-	}
+	assertEvents(t, rec.events, []string{
+		evDryMail, "agent.domain.reown", evDryMail, "db.rename", "tombstone.ensure",
+	})
 }
 
 // ---- failure handling ----
@@ -452,7 +574,7 @@ func TestRenameDomain_PersistFailureAfterMove(t *testing.T) {
 		t.Fatalf("code = %q, want persist_failed", got)
 	}
 	// Files moved (reown ran) but the row is still old.com.
-	if ag.last == nil {
+	if ag.reownLast == nil {
 		t.Fatalf("reown should have run before the DB rename")
 	}
 	if dom.Name != "old.com" {
@@ -476,13 +598,14 @@ func TestRenameDomain_PersistConflictIsNameTaken(t *testing.T) {
 	}
 }
 
-// The file move is the FIRST step; if it fails, nothing is persisted — no DB
-// rename, no tombstone, the row is untouched.
+// The file move is the first mutation; if it fails, nothing is persisted — no DB
+// rename, no tombstone, the row is untouched. (The dry-run mail check ran first
+// and passed.)
 func TestRenameDomain_MoveFailureBeforeCommit(t *testing.T) {
 	rec := &drRecorder{}
 	dom := drWebDomain()
-	d, _, td := drNewDeps(rec, dom, drHappyOwner())
-	d.Agent.(*drAgent).callErr = errors.New("agent unreachable")
+	d, ag, td := drNewDeps(rec, dom, drHappyOwner())
+	ag.errByMethod = map[string]error{"domain.reown": errors.New("agent unreachable")}
 
 	_, err := RenameDomain(context.Background(), d, &drSched{}, dom, "new.com")
 	if got := drCodeOf(t, err); got != "move_failed" {
@@ -541,18 +664,11 @@ func TestRenameDomain_WordPressURLRewrite(t *testing.T) {
 	}
 
 	// The rewrite runs AFTER the DNS/SSL heals.
-	want := []string{
-		"agent.domain.reown", "db.rename", "tombstone.ensure", "zone.rename", "cert.reset",
+	assertEvents(t, rec.events, []string{
+		evDryMail, "agent.domain.reown", evDryMail, "db.rename", "tombstone.ensure",
+		"zone.rename", "cert.reset",
 		"agent.migration.refresh_reconcile", "agent.migration.refresh_reconcile",
-	}
-	if len(rec.events) != len(want) {
-		t.Fatalf("events = %v, want %v", rec.events, want)
-	}
-	for i := range want {
-		if rec.events[i] != want[i] {
-			t.Fatalf("event[%d] = %q, want %q (all: %v)", i, rec.events[i], want[i], rec.events)
-		}
-	}
+	})
 
 	if len(ag.refreshCalls) != 2 {
 		t.Fatalf("want 2 refresh calls (https + http), got %d: %v", len(ag.refreshCalls), ag.refreshCalls)
