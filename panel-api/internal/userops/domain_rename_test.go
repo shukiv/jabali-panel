@@ -347,6 +347,41 @@ func TestRenameDomain_HappyPath(t *testing.T) {
 	}
 }
 
+// Default docroot layout (leaf == name): the move renames the leaf in place, so
+// no old-name wrapper dir is left — the reown call must NOT ask to prune one.
+func TestRenameDomain_DefaultLayoutNoPrune(t *testing.T) {
+	rec := &drRecorder{}
+	dom := drWebDomain() // /home/u1/public_html/old.com
+	d, ag, _ := drNewDeps(rec, dom, drHappyOwner())
+	if err := RenameDomain(context.Background(), d, &drSched{}, dom, "new.com"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, ok := ag.last["prune_empty_dir"]; ok {
+		t.Fatalf("default layout must not set prune_empty_dir, got %v", ag.last["prune_empty_dir"])
+	}
+}
+
+// Nested/importer docroot layout: the docroot leaf moves out of the old-name
+// wrapper dir, so the reown call must ask the agent to prune that empty wrapper.
+func TestRenameDomain_NestedLayoutPrunesOldDir(t *testing.T) {
+	rec := &drRecorder{}
+	dom := drWebDomain()
+	dom.DocRoot = "/home/u1/domains/old.com/public_html"
+	d, ag, _ := drNewDeps(rec, dom, drHappyOwner())
+	if err := RenameDomain(context.Background(), d, &drSched{}, dom, "new.com"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ag.last["new_doc_root"] != "/home/u1/domains/new.com/public_html" {
+		t.Fatalf("new_doc_root = %v", ag.last["new_doc_root"])
+	}
+	if ag.last["prune_empty_dir"] != "/home/u1/domains/old.com" {
+		t.Fatalf("prune_empty_dir = %v, want /home/u1/domains/old.com", ag.last["prune_empty_dir"])
+	}
+	if dom.DocRoot != "/home/u1/domains/new.com/public_html" {
+		t.Fatalf("domain docroot not updated: %q", dom.DocRoot)
+	}
+}
+
 // A rename with no DNS zone / no cert row (SSL never provisioned) still
 // succeeds — those heals are best-effort and skip cleanly.
 func TestRenameDomain_HappyPath_NoZoneNoCert(t *testing.T) {
@@ -453,16 +488,20 @@ func TestRenameDomain_HealFailureStillSucceeds(t *testing.T) {
 
 func TestRenameDocRootSegment(t *testing.T) {
 	tests := []struct {
-		name, docRoot, old, new, want, wantErr string
+		name, docRoot, old, new, want, wantPrune, wantErr string
 	}{
-		{"default layout", "/home/u/public_html/old.com", "old.com", "new.com", "/home/u/public_html/new.com", ""},
-		{"importer layout", "/home/u/domains/old.com/public_html", "old.com", "new.com", "/home/u/domains/new.com/public_html", ""},
-		{"custom (no name segment)", "/srv/www/site", "old.com", "new.com", "", "custom_docroot"},
-		{"ambiguous (name twice)", "/home/old.com/public_html/old.com", "old.com", "new.com", "", "ambiguous_docroot"},
+		// Default layout: the name IS the docroot leaf → move renames it in place,
+		// nothing to prune.
+		{"default layout", "/home/u/public_html/old.com", "old.com", "new.com", "/home/u/public_html/new.com", "", ""},
+		// Nested/importer layout: the name is a wrapper dir → move empties it, so
+		// it must be pruned.
+		{"importer layout", "/home/u/domains/old.com/public_html", "old.com", "new.com", "/home/u/domains/new.com/public_html", "/home/u/domains/old.com", ""},
+		{"custom (no name segment)", "/srv/www/site", "old.com", "new.com", "", "", "custom_docroot"},
+		{"ambiguous (name twice)", "/home/old.com/public_html/old.com", "old.com", "new.com", "", "", "ambiguous_docroot"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := renameDocRootSegment(tc.docRoot, tc.old, tc.new)
+			got, prune, err := renameDocRootSegment(tc.docRoot, tc.old, tc.new)
 			if tc.wantErr != "" {
 				if err == nil || err.Code != tc.wantErr {
 					t.Fatalf("err = %v, want code %q", err, tc.wantErr)
@@ -474,6 +513,9 @@ func TestRenameDocRootSegment(t *testing.T) {
 			}
 			if got != tc.want {
 				t.Fatalf("got %q, want %q", got, tc.want)
+			}
+			if prune != tc.wantPrune {
+				t.Fatalf("pruneOldDir = %q, want %q", prune, tc.wantPrune)
 			}
 		})
 	}

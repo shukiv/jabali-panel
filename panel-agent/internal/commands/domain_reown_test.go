@@ -28,3 +28,28 @@ func TestDomainReown_ValidatesInput(t *testing.T) {
 		})
 	}
 }
+
+// TestShouldPruneRenameDir covers the GH #1579 empty-old-wrapper prune guard:
+// it must fire only for a clean, /home-rooted STRICT ancestor of the old
+// docroot, so it can never remove the docroot itself or an unrelated path.
+func TestShouldPruneRenameDir(t *testing.T) {
+	cases := []struct {
+		name, dir, oldDocRoot string
+		want                  bool
+	}{
+		{"nested wrapper", "/home/u/domains/old.com", "/home/u/domains/old.com/public_html", true},
+		{"empty dir (default layout)", "", "/home/u/public_html/old.com", false},
+		{"dir equals docroot", "/home/u/domains/old.com", "/home/u/domains/old.com", false},
+		{"not under /home", "/srv/www/old.com", "/srv/www/old.com/public_html", false},
+		{"not clean", "/home/u/domains/old.com/..", "/home/u/domains/old.com/public_html", false},
+		{"sideways (not ancestor)", "/home/u/domains/other", "/home/u/domains/old.com/public_html", false},
+		{"prefix but not path-boundary", "/home/u/domains/old", "/home/u/domains/old.com/public_html", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := shouldPruneRenameDir(tc.dir, tc.oldDocRoot); got != tc.want {
+				t.Fatalf("shouldPruneRenameDir(%q, %q) = %v, want %v", tc.dir, tc.oldDocRoot, got, tc.want)
+			}
+		})
+	}
+}
