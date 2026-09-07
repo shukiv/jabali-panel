@@ -98,7 +98,7 @@ func renameHTTPStatus(code string) int {
 	case "invalid_name", "noop", "custom_docroot", "ambiguous_docroot":
 		return http.StatusBadRequest
 	case "mail_active", "mailboxes_present", "panel_primary", "web_disabled",
-		"name_taken", "owner_unprovisioned", "owner_unresolved":
+		"ssl_custom_cert", "name_taken", "owner_unprovisioned", "owner_unresolved":
 		return http.StatusConflict
 	case "not_found":
 		return http.StatusNotFound
