@@ -217,9 +217,15 @@ func migrationRefreshReconcileHandler(ctx context.Context, raw json.RawMessage) 
 	}
 	warnings := []string{}
 	// 1. Site-URL rewrite when the domain/path changed. SECURITY: OldURL/NewURL
-	// are tenant/operator-supplied; validate them as real http(s) URLs (reject
-	// any leading "-" so they can't smuggle a wp-cli flag) and pass them as
-	// POSITIONAL args after a "--" separator (argument-injection defense).
+	// are tenant/operator-supplied; validate them as real http(s) URLs and reject
+	// any leading "-" so they can't smuggle a wp-cli flag — that leading-"-"
+	// rejection IS the argument-injection defense. They are then passed as the
+	// trailing <old> <new> positionals with the flags FIRST and NO "--"
+	// separator: wp-cli's search-replace (2.12) treats a "--" token alongside
+	// --all-tables as a table filter, so the replacement URL was parsed as a
+	// non-existent table name and the rewrite always failed ("Couldn't find any
+	// tables matching: <new_url>"). Dropping "--" is safe because a value that
+	// could be mistaken for a flag is already rejected above.
 	if p.OldURL != "" && p.NewURL != "" && p.OldURL != p.NewURL {
 		for _, v := range []string{p.OldURL, p.NewURL} {
 			if strings.HasPrefix(v, "-") {
@@ -230,7 +236,7 @@ func migrationRefreshReconcileHandler(ctx context.Context, raw json.RawMessage) 
 				return nil, csInvalidArg("old_url/new_url must be valid http(s) URLs")
 			}
 		}
-		if err := runWPAsTenant(ctx, p.OSUser, p.InstallPath, "search-replace", "--all-tables", "--skip-columns=guid", "--", p.OldURL, p.NewURL); err != nil {
+		if err := runWPAsTenant(ctx, p.OSUser, p.InstallPath, "search-replace", "--all-tables", "--skip-columns=guid", p.OldURL, p.NewURL); err != nil {
 			warnings = append(warnings, "search-replace: "+err.Error())
 		}
 	}

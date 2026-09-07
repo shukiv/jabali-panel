@@ -2579,13 +2579,15 @@ paths:
         old name's nginx vhost + PowerDNS zone via the durable teardown.
         Experimental phase 1 — refuses when the domain has any mailbox (mail must
         be off AND have no retained mailboxes), is the panel's own primary, or
-        has no website. It does NOT rewrite an installed app's internal config
-        (e.g. a WordPress siteurl); the caller updates that in the app.
+        has no website. For a WordPress install it rewrites the stored site URL
+        to the new name (best-effort); any install that could not be rewritten is
+        reported in the `warnings` array. Other apps' internal config is not
+        changed.
       security: [ { KratosSession: [] } ]
       parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
       requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { name: { type: string } }, required: [name] } } } }
       responses:
-        "200": { description: Renamed, content: { application/json: { schema: { type: object, properties: { id: { type: string }, name: { type: string }, doc_root: { type: string } } } } } }
+        "200": { description: Renamed, content: { application/json: { schema: { type: object, properties: { id: { type: string }, name: { type: string }, doc_root: { type: string }, warnings: { type: array, items: { type: string }, description: "Best-effort app-URL rewrites that did not complete (empty on a clean rename)" } } } } } }
         "400": { description: Invalid or ambiguous name, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "403": { description: Not the domain owner, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "404": { description: Domain not found, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -50,18 +51,50 @@ func (u *drUsers) FindByID(_ context.Context, _ string) (*models.User, error) {
 type drAgent struct {
 	rec     *drRecorder
 	callErr error
-	last    map[string]any
+	// errByMethod fails only the named agent methods (checked before callErr),
+	// so a test can let domain.reown succeed while migration.refresh_reconcile
+	// fails.
+	errByMethod  map[string]error
+	last         map[string]any
+	refreshCalls []map[string]any // migration.refresh_reconcile params, in order
+	// refreshResp, when set, is the migration.refresh_reconcile response body —
+	// so a test can simulate the verb reporting a search-replace failure (or a
+	// benign page-cache note) inside its warnings with a nil call error.
+	refreshResp json.RawMessage
 }
 
 func (a *drAgent) Call(_ context.Context, method string, params any) (json.RawMessage, error) {
 	a.rec.events = append(a.rec.events, "agent."+method)
 	if m, ok := params.(map[string]any); ok {
 		a.last = m
+		if method == "migration.refresh_reconcile" {
+			a.refreshCalls = append(a.refreshCalls, m)
+		}
+	}
+	if a.errByMethod != nil {
+		if e, ok := a.errByMethod[method]; ok {
+			return nil, e
+		}
 	}
 	if a.callErr != nil {
 		return nil, a.callErr
 	}
+	if method == "migration.refresh_reconcile" {
+		if a.refreshResp != nil {
+			return a.refreshResp, nil
+		}
+		return json.RawMessage(`{"ok":true,"warnings":[]}`), nil
+	}
 	return json.RawMessage(`{}`), nil
+}
+
+type drAppInstalls struct {
+	installs []models.ApplicationInstall
+	err      error
+}
+
+func (a *drAppInstalls) ListByDomainIDs(_ context.Context, _ []string) ([]models.ApplicationInstall, error) {
+	return a.installs, a.err
 }
 
 type drTeardowns struct {
@@ -216,7 +249,7 @@ func TestRenameDomain_Gates(t *testing.T) {
 				tc.mutate(dom)
 			}
 			d, ag, _ := drNewDeps(rec, dom, tc.owner)
-			err := RenameDomain(context.Background(), d, &drSched{}, dom, tc.newName)
+			_, err := RenameDomain(context.Background(), d, &drSched{}, dom, tc.newName)
 			if got := drCodeOf(t, err); got != tc.want {
 				t.Fatalf("code = %q, want %q", got, tc.want)
 			}
@@ -235,7 +268,7 @@ func TestRenameDomain_MailboxesPresent(t *testing.T) {
 	dom := drWebDomain()
 	d, _, _ := drNewDeps(rec, dom, drHappyOwner())
 	d.Mailboxes = &drMailboxes{count: 3}
-	err := RenameDomain(context.Background(), d, &drSched{}, dom, "new.com")
+	_, err := RenameDomain(context.Background(), d, &drSched{}, dom, "new.com")
 	if got := drCodeOf(t, err); got != "mailboxes_present" {
 		t.Fatalf("code = %q, want mailboxes_present", got)
 	}
@@ -249,7 +282,7 @@ func TestRenameDomain_MailboxCheckUnwired(t *testing.T) {
 	dom := drWebDomain()
 	d, _, _ := drNewDeps(rec, dom, drHappyOwner())
 	d.Mailboxes = nil // fail-closed: cannot prove zero mailboxes
-	err := RenameDomain(context.Background(), d, &drSched{}, dom, "new.com")
+	_, err := RenameDomain(context.Background(), d, &drSched{}, dom, "new.com")
 	if got := drCodeOf(t, err); got != "unavailable" {
 		t.Fatalf("code = %q, want unavailable", got)
 	}
@@ -263,7 +296,7 @@ func TestRenameDomain_MailboxCountError(t *testing.T) {
 	dom := drWebDomain()
 	d, _, _ := drNewDeps(rec, dom, drHappyOwner())
 	d.Mailboxes = &drMailboxes{err: errors.New("db down")}
-	err := RenameDomain(context.Background(), d, &drSched{}, dom, "new.com")
+	_, err := RenameDomain(context.Background(), d, &drSched{}, dom, "new.com")
 	if got := drCodeOf(t, err); got != "unavailable" {
 		t.Fatalf("code = %q, want unavailable (can't verify zero mailboxes)", got)
 	}
@@ -277,7 +310,7 @@ func TestRenameDomain_NameTaken(t *testing.T) {
 	dom := drWebDomain()
 	d, _, _ := drNewDeps(rec, dom, drHappyOwner())
 	d.Domains.(*drDomains).byName["new.com"] = &models.Domain{ID: "other", Name: "new.com"}
-	err := RenameDomain(context.Background(), d, &drSched{}, dom, "new.com")
+	_, err := RenameDomain(context.Background(), d, &drSched{}, dom, "new.com")
 	if got := drCodeOf(t, err); got != "name_taken" {
 		t.Fatalf("code = %q, want name_taken", got)
 	}
@@ -294,7 +327,7 @@ func TestRenameDomain_HappyPath(t *testing.T) {
 	d, ag, td := drNewDeps(rec, dom, drHappyOwner())
 	sched := &drSched{}
 
-	if err := RenameDomain(context.Background(), d, sched, dom, "New.com"); err != nil {
+	if _, err := RenameDomain(context.Background(), d, sched, dom, "New.com"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -355,7 +388,7 @@ func TestRenameDomain_DefaultLayoutNoPrune(t *testing.T) {
 	rec := &drRecorder{}
 	dom := drWebDomain() // /home/u1/public_html/old.com
 	d, ag, _ := drNewDeps(rec, dom, drHappyOwner())
-	if err := RenameDomain(context.Background(), d, &drSched{}, dom, "new.com"); err != nil {
+	if _, err := RenameDomain(context.Background(), d, &drSched{}, dom, "new.com"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if _, ok := ag.last["prune_empty_dir"]; ok {
@@ -370,7 +403,7 @@ func TestRenameDomain_NestedLayoutPrunesOldDir(t *testing.T) {
 	dom := drWebDomain()
 	dom.DocRoot = "/home/u1/domains/old.com/public_html"
 	d, ag, _ := drNewDeps(rec, dom, drHappyOwner())
-	if err := RenameDomain(context.Background(), d, &drSched{}, dom, "new.com"); err != nil {
+	if _, err := RenameDomain(context.Background(), d, &drSched{}, dom, "new.com"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if ag.last["new_doc_root"] != "/home/u1/domains/new.com/public_html" {
@@ -393,7 +426,7 @@ func TestRenameDomain_HappyPath_NoZoneNoCert(t *testing.T) {
 	d.DNSZones.(*drDNSZones).zone = nil // FindByDomainID -> ErrNotFound
 	d.SSLCerts.(*drSSLCerts).cert = nil
 
-	if err := RenameDomain(context.Background(), d, &drSched{}, dom, "new.com"); err != nil {
+	if _, err := RenameDomain(context.Background(), d, &drSched{}, dom, "new.com"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	want := []string{"agent.domain.reown", "db.rename", "tombstone.ensure"}
@@ -414,7 +447,7 @@ func TestRenameDomain_PersistFailureAfterMove(t *testing.T) {
 	d, ag, td := drNewDeps(rec, dom, drHappyOwner())
 	d.Domains.(*drDomains).renameErr = errors.New("db down")
 
-	err := RenameDomain(context.Background(), d, &drSched{}, dom, "new.com")
+	_, err := RenameDomain(context.Background(), d, &drSched{}, dom, "new.com")
 	if got := drCodeOf(t, err); got != "persist_failed" {
 		t.Fatalf("code = %q, want persist_failed", got)
 	}
@@ -437,7 +470,7 @@ func TestRenameDomain_PersistConflictIsNameTaken(t *testing.T) {
 	d, _, _ := drNewDeps(rec, dom, drHappyOwner())
 	d.Domains.(*drDomains).renameErr = repository.ErrConflict
 
-	err := RenameDomain(context.Background(), d, &drSched{}, dom, "new.com")
+	_, err := RenameDomain(context.Background(), d, &drSched{}, dom, "new.com")
 	if got := drCodeOf(t, err); got != "name_taken" {
 		t.Fatalf("code = %q, want name_taken (conflict from unique index)", got)
 	}
@@ -451,7 +484,7 @@ func TestRenameDomain_MoveFailureBeforeCommit(t *testing.T) {
 	d, _, td := drNewDeps(rec, dom, drHappyOwner())
 	d.Agent.(*drAgent).callErr = errors.New("agent unreachable")
 
-	err := RenameDomain(context.Background(), d, &drSched{}, dom, "new.com")
+	_, err := RenameDomain(context.Background(), d, &drSched{}, dom, "new.com")
 	if got := drCodeOf(t, err); got != "move_failed" {
 		t.Fatalf("code = %q, want move_failed", got)
 	}
@@ -478,11 +511,233 @@ func TestRenameDomain_HealFailureStillSucceeds(t *testing.T) {
 	d.DNSZones.(*drDNSZones).updErr = errors.New("zone update failed")
 	d.SSLCerts.(*drSSLCerts).resetErr = errors.New("cert reset failed")
 
-	if err := RenameDomain(context.Background(), d, &drSched{}, dom, "new.com"); err != nil {
+	if _, err := RenameDomain(context.Background(), d, &drSched{}, dom, "new.com"); err != nil {
 		t.Fatalf("a post-commit heal failure must not fail the rename, got %v", err)
 	}
 	if dom.Name != "new.com" {
 		t.Fatalf("row should be renamed despite heal failure, got %q", dom.Name)
+	}
+}
+
+// ---- WordPress site-URL rewrite (GH #1579 app-URL slice) ----
+
+// A WordPress install on the domain gets its stored site URL rewritten after
+// the rename: two migration.refresh_reconcile passes (https then http) against
+// the NEW docroot + new name, after the DNS/SSL heals and before Schedule.
+func TestRenameDomain_WordPressURLRewrite(t *testing.T) {
+	rec := &drRecorder{}
+	dom := drWebDomain()
+	d, ag, _ := drNewDeps(rec, dom, drHappyOwner())
+	d.AppInstalls = &drAppInstalls{installs: []models.ApplicationInstall{
+		{ID: "app-1", DomainID: dom.ID, AppType: "wordpress", Subdirectory: ""},
+	}}
+
+	warnings, err := RenameDomain(context.Background(), d, &drSched{}, dom, "new.com")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("clean rewrite must produce no warnings, got %v", warnings)
+	}
+
+	// The rewrite runs AFTER the DNS/SSL heals.
+	want := []string{
+		"agent.domain.reown", "db.rename", "tombstone.ensure", "zone.rename", "cert.reset",
+		"agent.migration.refresh_reconcile", "agent.migration.refresh_reconcile",
+	}
+	if len(rec.events) != len(want) {
+		t.Fatalf("events = %v, want %v", rec.events, want)
+	}
+	for i := range want {
+		if rec.events[i] != want[i] {
+			t.Fatalf("event[%d] = %q, want %q (all: %v)", i, rec.events[i], want[i], rec.events)
+		}
+	}
+
+	if len(ag.refreshCalls) != 2 {
+		t.Fatalf("want 2 refresh calls (https + http), got %d: %v", len(ag.refreshCalls), ag.refreshCalls)
+	}
+	https, http := ag.refreshCalls[0], ag.refreshCalls[1]
+	if https["old_url"] != "https://old.com" || https["new_url"] != "https://new.com" {
+		t.Fatalf("https pass urls = %v -> %v", https["old_url"], https["new_url"])
+	}
+	if http["old_url"] != "http://old.com" || http["new_url"] != "http://new.com" {
+		t.Fatalf("http pass urls = %v -> %v", http["old_url"], http["new_url"])
+	}
+	// Runs as the owner, against the NEW docroot, with the NEW domain name.
+	if https["os_user"] != "u1" {
+		t.Fatalf("os_user = %v, want u1", https["os_user"])
+	}
+	if https["install_path"] != "/home/u1/public_html/new.com" {
+		t.Fatalf("install_path = %v, want the new docroot", https["install_path"])
+	}
+	if https["domain"] != "new.com" {
+		t.Fatalf("domain = %v, want new.com", https["domain"])
+	}
+}
+
+// A WordPress install in a subdirectory rewrites against docroot/<subdir>.
+func TestRenameDomain_WordPressURLRewrite_Subdirectory(t *testing.T) {
+	rec := &drRecorder{}
+	dom := drWebDomain()
+	d, ag, _ := drNewDeps(rec, dom, drHappyOwner())
+	d.AppInstalls = &drAppInstalls{installs: []models.ApplicationInstall{
+		{ID: "app-1", DomainID: dom.ID, AppType: "wordpress", Subdirectory: "blog"},
+	}}
+
+	if _, err := RenameDomain(context.Background(), d, &drSched{}, dom, "new.com"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(ag.refreshCalls) != 2 {
+		t.Fatalf("want 2 refresh calls, got %d", len(ag.refreshCalls))
+	}
+	if got := ag.refreshCalls[0]["install_path"]; got != "/home/u1/public_html/new.com/blog" {
+		t.Fatalf("install_path = %v, want .../new.com/blog", got)
+	}
+}
+
+// A non-WordPress install is never rewritten (the panel does not know its
+// internal config) and produces no warning.
+func TestRenameDomain_NonWordPressAppNoRewrite(t *testing.T) {
+	rec := &drRecorder{}
+	dom := drWebDomain()
+	d, ag, _ := drNewDeps(rec, dom, drHappyOwner())
+	d.AppInstalls = &drAppInstalls{installs: []models.ApplicationInstall{
+		{ID: "app-1", DomainID: dom.ID, AppType: "dokuwiki", Subdirectory: ""},
+	}}
+
+	warnings, err := RenameDomain(context.Background(), d, &drSched{}, dom, "new.com")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("non-WordPress app must not warn, got %v", warnings)
+	}
+	if len(ag.refreshCalls) != 0 {
+		t.Fatalf("non-WordPress app must not trigger a rewrite, got %v", ag.refreshCalls)
+	}
+}
+
+// An owner whose name is outside the refresh verb's stricter shape (underscore)
+// skips the rewrite with a warning rather than sending a rejected call.
+func TestRenameDomain_WordPressRewrite_UnderscoreOwnerWarns(t *testing.T) {
+	rec := &drRecorder{}
+	dom := drWebDomain()
+	uname := "u_1"
+	owner := &models.User{ID: "user-1", Username: &uname, LinuxUID: drUIDPtr(1001)}
+	d, ag, _ := drNewDeps(rec, dom, owner)
+	d.AppInstalls = &drAppInstalls{installs: []models.ApplicationInstall{
+		{ID: "app-1", DomainID: dom.ID, AppType: "wordpress", Subdirectory: ""},
+	}}
+
+	warnings, err := RenameDomain(context.Background(), d, &drSched{}, dom, "new.com")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(ag.refreshCalls) != 0 {
+		t.Fatalf("underscore owner must not send a refresh call, got %v", ag.refreshCalls)
+	}
+	if len(warnings) != 1 {
+		t.Fatalf("underscore owner must produce exactly one warning, got %v", warnings)
+	}
+}
+
+// A refresh-verb failure surfaces as a warning but never fails the committed
+// rename (the row + files are already renamed).
+func TestRenameDomain_WordPressRewrite_AgentErrorWarns(t *testing.T) {
+	rec := &drRecorder{}
+	dom := drWebDomain()
+	d, ag, _ := drNewDeps(rec, dom, drHappyOwner())
+	ag.errByMethod = map[string]error{"migration.refresh_reconcile": errors.New("wp-cli boom")}
+	d.AppInstalls = &drAppInstalls{installs: []models.ApplicationInstall{
+		{ID: "app-1", DomainID: dom.ID, AppType: "wordpress", Subdirectory: ""},
+	}}
+
+	warnings, err := RenameDomain(context.Background(), d, &drSched{}, dom, "new.com")
+	if err != nil {
+		t.Fatalf("a rewrite failure must not fail the rename, got %v", err)
+	}
+	if dom.Name != "new.com" {
+		t.Fatalf("row should be renamed despite rewrite failure, got %q", dom.Name)
+	}
+	if len(warnings) != 1 {
+		t.Fatalf("rewrite failure must produce one warning, got %v", warnings)
+	}
+}
+
+// The verb reports a wp search-replace failure INSIDE its warnings with a nil
+// call error — that must surface as a warning (not a silent clean rename).
+func TestRenameDomain_WordPressRewrite_SearchReplaceWarningSurfaced(t *testing.T) {
+	rec := &drRecorder{}
+	dom := drWebDomain()
+	d, ag, _ := drNewDeps(rec, dom, drHappyOwner())
+	ag.refreshResp = json.RawMessage(
+		`{"ok":true,"warnings":["search-replace: wp-cli boom","page cache purge deferred to reconcile/nginx.cache.purge"]}`)
+	d.AppInstalls = &drAppInstalls{installs: []models.ApplicationInstall{
+		{ID: "app-1", DomainID: dom.ID, AppType: "wordpress", Subdirectory: ""},
+	}}
+
+	warnings, err := RenameDomain(context.Background(), d, &drSched{}, dom, "new.com")
+	if err != nil {
+		t.Fatalf("a search-replace failure must not fail the rename, got %v", err)
+	}
+	if len(warnings) != 1 {
+		t.Fatalf("want exactly one surfaced warning, got %v", warnings)
+	}
+	if !strings.Contains(warnings[0], "search-replace: wp-cli boom") {
+		t.Fatalf("warning must carry the search-replace failure, got %q", warnings[0])
+	}
+	// The benign page-cache note must NOT be surfaced as a failure, and the
+	// dedupe must collapse the identical failure from both scheme passes.
+	if strings.Contains(warnings[0], "page cache") {
+		t.Fatalf("benign page-cache note must not surface, got %q", warnings[0])
+	}
+	if strings.Count(warnings[0], "search-replace: wp-cli boom") != 1 {
+		t.Fatalf("identical failure from both passes must be deduped, got %q", warnings[0])
+	}
+}
+
+// A response carrying ONLY the benign page-cache note (which the verb always
+// adds on a real box) is a clean success — no warning is surfaced.
+func TestRenameDomain_WordPressRewrite_BenignNoteNotSurfaced(t *testing.T) {
+	rec := &drRecorder{}
+	dom := drWebDomain()
+	d, ag, _ := drNewDeps(rec, dom, drHappyOwner())
+	ag.refreshResp = json.RawMessage(
+		`{"ok":true,"warnings":["page cache purge deferred to reconcile/nginx.cache.purge"]}`)
+	d.AppInstalls = &drAppInstalls{installs: []models.ApplicationInstall{
+		{ID: "app-1", DomainID: dom.ID, AppType: "wordpress", Subdirectory: ""},
+	}}
+
+	warnings, err := RenameDomain(context.Background(), d, &drSched{}, dom, "new.com")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("benign-only warnings must produce no surfaced warning, got %v", warnings)
+	}
+}
+
+// A www-canonical install stores its site URL with the "www." host, so the
+// rewrite must target www.old -> www.new.
+func TestRenameDomain_WordPressURLRewrite_WWW(t *testing.T) {
+	rec := &drRecorder{}
+	dom := drWebDomain()
+	d, ag, _ := drNewDeps(rec, dom, drHappyOwner())
+	d.AppInstalls = &drAppInstalls{installs: []models.ApplicationInstall{
+		{ID: "app-1", DomainID: dom.ID, AppType: "wordpress", Subdirectory: "", UseWWW: true},
+	}}
+
+	if _, err := RenameDomain(context.Background(), d, &drSched{}, dom, "new.com"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(ag.refreshCalls) != 2 {
+		t.Fatalf("want 2 refresh calls, got %d", len(ag.refreshCalls))
+	}
+	if ag.refreshCalls[0]["old_url"] != "https://www.old.com" ||
+		ag.refreshCalls[0]["new_url"] != "https://www.new.com" {
+		t.Fatalf("www install must rewrite the www host, got %v -> %v",
+			ag.refreshCalls[0]["old_url"], ag.refreshCalls[0]["new_url"])
 	}
 }
 
