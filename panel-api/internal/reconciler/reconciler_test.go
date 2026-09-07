@@ -113,6 +113,10 @@ func (f *fakeDomainRepo) List(ctx context.Context, opts repository.ListOptions) 
 	return result, int64(len(result)), nil
 }
 
+func (f *fakeDomainRepo) ComputeSSLState(d *models.Domain, cert *models.SSLCertificate) string {
+	return repository.ComputeSSLState(d, cert)
+}
+
 func (f *fakeDomainRepo) ListByUserID(ctx context.Context, userID string, opts repository.ListOptions) ([]models.Domain, int64, error) {
 	var result []models.Domain
 	for _, d := range f.domains {

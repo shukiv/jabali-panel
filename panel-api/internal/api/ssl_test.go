@@ -168,6 +168,10 @@ func (m *MockDomainRepository) Rename(ctx context.Context, id, newName, newDocRo
 	return args.Error(0)
 }
 
+func (m *MockDomainRepository) ComputeSSLState(d *models.Domain, cert *models.SSLCertificate) string {
+	return repository.ComputeSSLState(d, cert)
+}
+
 func (m *MockDomainRepository) ListByUserID(ctx context.Context, userID string, opts repository.ListOptions) ([]models.Domain, int64, error) {
 	args := m.Called(ctx, userID, opts.Offset, opts.Limit)
 	if args.Get(0) == nil {

@@ -21,6 +21,10 @@ type DomainRepository interface {
 	FindByName(ctx context.Context, name string) (*models.Domain, error)
 	List(ctx context.Context, opts ListOptions) ([]models.Domain, int64, error)
 	ListByUserID(ctx context.Context, userID string, opts ListOptions) ([]models.Domain, int64, error)
+	// ComputeSSLState resolves a domain's flat ssl_state from its cert row (the
+	// same value the list endpoints populate). Lets the single-domain detail
+	// handler fill ssl_state, which FindByID leaves empty (GH #1543).
+	ComputeSSLState(domain *models.Domain, cert *models.SSLCertificate) string
 	Update(ctx context.Context, d *models.Domain) error
 	// RewriteDocRootPrefix rewrites the leading /home/<old> of every doc_root
 	// owned by userID to /home/<new> when a user is renamed (GH #1238).
@@ -972,14 +976,23 @@ func (r *domainRepo) populateSSLStates(ctx context.Context, domains *[]models.Do
 
 	// Compute SSL state for each domain
 	for i := range *domains {
-		(*domains)[i].SSLState = r.computeSSLState(&(*domains)[i], certsByDomain[(*domains)[i].ID])
+		(*domains)[i].SSLState = ComputeSSLState(&(*domains)[i], certsByDomain[(*domains)[i].ID])
 	}
 
 	return nil
 }
 
-// computeSSLState determines the SSL certificate state for a domain
-func (r *domainRepo) computeSSLState(domain *models.Domain, cert *models.SSLCertificate) string {
+// ComputeSSLState is the interface-level wrapper so a single-domain handler
+// (the Web Domain detail / Overview, GH #1543) can set the flat ssl_state from
+// a cert it already has — matching what the list endpoints render.
+func (r *domainRepo) ComputeSSLState(domain *models.Domain, cert *models.SSLCertificate) string {
+	return ComputeSSLState(domain, cert)
+}
+
+// ComputeSSLState determines the SSL certificate state for a domain. Package
+// func (no receiver) so callers outside the repo — including test mocks — can
+// reuse the exact same canonical computation instead of duplicating it.
+func ComputeSSLState(domain *models.Domain, cert *models.SSLCertificate) string {
 	// None mode never serves TLS regardless of any lingering cert row (GH #246).
 	if domain.SSLMode == models.SSLModeNone || !domain.SSLEnabled {
 		return "off"
