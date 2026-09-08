@@ -16,8 +16,8 @@ const PREF_KEY = "quickstart_user";
 const STEPS: QuickStartStep[] = [
   {
     number: 1,
-    title: "Domains",
-    desc: "Add your first domain — Jabali provisions the vhost, DNS zone, and SSL automatically.",
+    title: "Web Domains",
+    desc: "Add your first web domain — Jabali provisions the vhost, DNS zone, and SSL automatically.",
     href: "/jabali-panel/domains",
     color: "#f59e0b", // amber
   },

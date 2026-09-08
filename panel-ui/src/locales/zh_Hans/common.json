@@ -5,8 +5,8 @@
       "dashboard_desc": "服务器概览与快速统计",
       "users": "用户",
       "users_desc": "管理面板用户、会话和身份模拟",
-      "domains": "域名",
-      "domains_desc": "所有用户的全部域名",
+      "domains": "网站域名",
+      "domains_desc": "所有用户的全部网站域名",
       "mail": "邮件",
       "mail_desc": "邮箱、转发和网页邮箱",
       "packages": "托管套餐",
@@ -54,7 +54,7 @@
     },
     "user": {
       "dashboard": "仪表盘",
-      "domains": "域名",
+      "domains": "网站域名",
       "mail": "邮件",
       "applications": "应用",
       "python-apps": "Python 应用",
@@ -94,7 +94,7 @@
   "dashboard": {
     "stats": {
       "users": "用户总数",
-      "domains": "活动域名",
+      "domains": "活动网站域名",
       "mailboxes": "邮箱"
     },
     "health": {
@@ -108,12 +108,12 @@
     "view_server_status": "查看服务器状态 →",
     "view_all": "查看全部",
     "recent_users": "最近的用户",
-    "recent_domains": "最近的域名",
+    "recent_domains": "最近的网站域名",
     "recent_apps": "最近的应用",
     "packages": "托管套餐",
     "empty": {
       "users": "暂无用户",
-      "domains": "暂无域名",
+      "domains": "暂无网站域名",
       "apps": "暂无应用",
       "packages": "暂无套餐"
     },
@@ -306,7 +306,7 @@
   "domainlist": {
     "actions": "操作",
     "domain": "域名",
-    "no_domains_yet": "暂无域名",
+    "no_domains_yet": "暂无网站域名",
     "status": "状态",
     "user": "用户"
   },
@@ -516,7 +516,7 @@
   },
   "userdashboard": {
     "databases": "数据库",
-    "domains": "域名",
+    "domains": "网站域名",
     "mailboxes": "邮箱"
   },
   "accountactivity": {

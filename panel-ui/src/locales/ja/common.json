@@ -5,8 +5,8 @@
       "dashboard_desc": "サーバーの概要とクイック統計",
       "users": "ユーザー",
       "users_desc": "パネルのユーザー、セッション、代理ログインの管理",
-      "domains": "ドメイン",
-      "domains_desc": "すべてのユーザーのすべてのドメイン",
+      "domains": "ウェブドメイン",
+      "domains_desc": "すべてのユーザーのすべてのウェブドメイン",
       "mail": "メール",
       "mail_desc": "メールボックス、転送、ウェブメール",
       "packages": "ホスティングパッケージ",
@@ -54,7 +54,7 @@
     },
     "user": {
       "dashboard": "ダッシュボード",
-      "domains": "ドメイン",
+      "domains": "ウェブドメイン",
       "mail": "メール",
       "applications": "アプリケーション",
       "python-apps": "Python アプリ",
@@ -94,7 +94,7 @@
   "dashboard": {
     "stats": {
       "users": "ユーザー総数",
-      "domains": "アクティブなドメイン",
+      "domains": "アクティブなウェブドメイン",
       "mailboxes": "メールボックス"
     },
     "health": {
@@ -108,12 +108,12 @@
     "view_server_status": "サーバーステータスを表示 →",
     "view_all": "すべて表示",
     "recent_users": "最近のユーザー",
-    "recent_domains": "最近のドメイン",
+    "recent_domains": "最近のウェブドメイン",
     "recent_apps": "最近のアプリケーション",
     "packages": "ホスティングパッケージ",
     "empty": {
       "users": "ユーザーはまだいません",
-      "domains": "ドメインはまだありません",
+      "domains": "ウェブドメインはまだありません",
       "apps": "アプリケーションはまだありません",
       "packages": "パッケージはまだありません"
     },
@@ -306,7 +306,7 @@
   "domainlist": {
     "actions": "操作",
     "domain": "ドメイン",
-    "no_domains_yet": "ドメインはまだありません",
+    "no_domains_yet": "ウェブドメインはまだありません",
     "status": "ステータス",
     "user": "ユーザー"
   },
@@ -516,7 +516,7 @@
   },
   "userdashboard": {
     "databases": "データベース",
-    "domains": "ドメイン",
+    "domains": "ウェブドメイン",
     "mailboxes": "メールボックス"
   },
   "accountactivity": {
