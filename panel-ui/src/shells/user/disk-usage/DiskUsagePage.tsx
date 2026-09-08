@@ -166,12 +166,20 @@ const COLORS = {
 } as const;
 
 // GH #1439 (lxsdevcode): a snapshot older than this (or missing) triggers an
-// automatic measure on page open, so a tenant sees the real figure without
-// having to know to click Refresh. 24h sits just above the nightly refresh-all
-// cadence (--max-age 20h), so a fleet whose daily job is running never
-// auto-measures redundantly on every visit — only when the job hasn't kept the
-// snapshot fresh (job disabled, missed, or a brand-new account).
-const AUTO_MEASURE_STALE_MS = 24 * 60 * 60 * 1000;
+// automatic measure on page open, so a tenant sees a current figure without
+// having to know to click Refresh.
+//
+// An earlier 24h window sat just ABOVE the nightly refresh-all cadence
+// (--max-age 20h) to avoid re-measuring on every visit — but that backfired:
+// the nightly job keeps every snapshot just under 24h old, so opening the page
+// never crossed the gate and the tenant always saw yesterday's number until
+// they clicked Refresh (lxsdevcode's report: "Computed 22 h ago", unchanged).
+// 1h instead means opening the page reflects near-current usage. The recompute
+// is one serial home `du` (~seconds), fires AT MOST ONCE per mount, and is
+// driven by a human opening the page (not a poll), so it can't stampede. The
+// nightly job still keeps the dashboard card — which never opens this page —
+// fresh on its own.
+const AUTO_MEASURE_STALE_MS = 60 * 60 * 1000;
 
 function isSnapshotStale(computedAt?: string | null): boolean {
   if (!computedAt) return true; // never computed

@@ -129,4 +129,17 @@ describe("DiskUsagePage auto-measure on open (GH #1439, lxsdevcode)", () => {
     renderPage();
     await waitFor(() => expect(postRefresh).toHaveBeenCalledTimes(1));
   });
+
+  // Regression guard for lxsdevcode's exact report: the nightly refresh-all
+  // keeps snapshots just under a day old ("Computed 22 h ago"), and the earlier
+  // 24h gate treated that as fresh, so the page never auto-measured on open. A
+  // snapshot a couple of hours old must now trigger a measure (threshold is 1h).
+  it("auto-measures when the snapshot is a few hours old (GH #1439 nightly-kept case)", async () => {
+    getState.resp = {
+      ...diskUsage,
+      computed_at: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+    };
+    renderPage();
+    await waitFor(() => expect(postRefresh).toHaveBeenCalledTimes(1));
+  });
 });
