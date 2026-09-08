@@ -1457,6 +1457,20 @@ Recompute a tenant's disk usage live and store the snapshot
 jabali disk-usage refresh <user-email|username|id>
 ```
 
+#### `jabali disk-usage refresh-all`
+
+Recompute the disk-usage snapshot for every tenant (serial; skips accounts refreshed within --max-age)
+
+```
+jabali disk-usage refresh-all [flags]
+```
+
+**Flags:**
+
+- `--max-age` — skip a tenant whose snapshot is younger than this (0 = always refresh) (default `20h0m0s`)
+- `--per-user-timeout` — per-tenant deadline for the live compute (default `1m30s`)
+- `--sleep` — pause between tenants to keep the sweep gentle (default `2s`)
+
 #### `jabali disk-usage show`
 
 Show a tenant's last stored disk-usage snapshot

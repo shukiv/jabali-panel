@@ -4,7 +4,7 @@
 // (which would redirect to a page the tenant can't reach). Gated on the shared
 // server-capabilities mail flag, the same signal the sidebar uses.
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -17,14 +17,27 @@ vi.mock("react-i18next", () => ({
   useTranslation: () => ({ t: (k: string) => k }),
 }));
 
+// A FRESH snapshot (computed just now) so the mail-gating tests below don't
+// trip the GH #1439 auto-measure-on-stale path — those tests are about which
+// cards render, not about measuring.
+const fresh = () => new Date().toISOString();
 const diskUsage = {
-  computed_at: "2026-09-04T00:00:00Z",
+  computed_at: fresh(),
   total_bytes: 1000,
   quota_bytes: 0,
   files: { bytes: 100, items: [] },
   email: { bytes: 50, items: [{ name: "noreply@site.tld", bytes: 50 }] },
   databases: { bytes: 200, items: [] },
 };
+
+// getState lets a test control what GET /me/disk-usage returns (e.g. a stale or
+// never-computed snapshot); postRefresh records the auto/manual refresh call.
+// Hoisted so the vi.mock factory (itself hoisted above module init) can close
+// over them without a TDZ error.
+const { getState, postRefresh } = vi.hoisted(() => ({
+  getState: { resp: null as unknown },
+  postRefresh: vi.fn(),
+}));
 
 vi.mock("../../../apiClient", () => ({
   apiClient: {
@@ -33,8 +46,9 @@ vi.mock("../../../apiClient", () => ({
       if (url.startsWith("/me/disk-usage/files")) {
         return { data: { path: "~", total: 0, entries: [] } };
       }
-      return { data: diskUsage };
+      return { data: getState.resp };
     }),
+    post: postRefresh,
   },
 }));
 
@@ -54,6 +68,9 @@ function renderPage() {
 describe("DiskUsagePage mail-module gating (GH #1417)", () => {
   beforeEach(() => {
     mailEnabled = true;
+    getState.resp = diskUsage;
+    postRefresh.mockReset();
+    postRefresh.mockResolvedValue({ data: { ...diskUsage, computed_at: fresh() } });
   });
 
   it("shows the Email Mailboxes section + View all mailboxes link when mail is enabled", async () => {
@@ -70,5 +87,46 @@ describe("DiskUsagePage mail-module gating (GH #1417)", () => {
     expect(await screen.findByText("Storage Quota Usage")).toBeInTheDocument();
     expect(screen.queryByText("Email Mailboxes")).not.toBeInTheDocument();
     expect(screen.queryByText("View all mailboxes")).not.toBeInTheDocument();
+  });
+
+  // A fresh snapshot must NOT auto-measure — otherwise every page open would
+  // recompute and defeat the whole point of the cached snapshot.
+  it("does not auto-refresh when the snapshot is fresh (GH #1439)", async () => {
+    renderPage();
+    expect(await screen.findByText("Storage Quota Usage")).toBeInTheDocument();
+    expect(postRefresh).not.toHaveBeenCalled();
+  });
+});
+
+describe("DiskUsagePage auto-measure on open (GH #1439, lxsdevcode)", () => {
+  beforeEach(() => {
+    mailEnabled = true;
+    postRefresh.mockReset();
+    postRefresh.mockResolvedValue({ data: { ...diskUsage, computed_at: fresh() } });
+  });
+
+  it("auto-measures once when there is no snapshot yet", async () => {
+    getState.resp = {
+      computed_at: null,
+      total_bytes: 0,
+      quota_bytes: 0,
+      files: { bytes: 0, items: [] },
+      email: { bytes: 0, items: [] },
+      databases: { bytes: 0, items: [] },
+    };
+    renderPage();
+    // The measure fires automatically…
+    await waitFor(() => expect(postRefresh).toHaveBeenCalledTimes(1));
+    // …and its result (a fresh snapshot) renders the real page.
+    expect(await screen.findByText("Storage Quota Usage")).toBeInTheDocument();
+  });
+
+  it("auto-measures once when the snapshot is stale (older than a day)", async () => {
+    getState.resp = {
+      ...diskUsage,
+      computed_at: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
+    };
+    renderPage();
+    await waitFor(() => expect(postRefresh).toHaveBeenCalledTimes(1));
   });
 });

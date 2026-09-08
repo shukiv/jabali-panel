@@ -29,4 +29,20 @@ if command -v jabali >/dev/null 2>&1 && [ -d /var/lib/jabali-nspawn/images ]; th
   jabali nspawn prune --yes >/dev/null 2>&1 || true
 fi
 
+# ---- GH #1439: refresh every tenant's disk-usage snapshot --------------
+# So the tenant dashboard + Disk Usage page carry a recent figure without the
+# user having to click Refresh. This recomputes each tenant's home `du` (+ mail
+# + db sizes) SERIALLY and stores the snapshot the panel reads.
+#
+# JAB-273: this is the daily du sweep whose *concurrent* ancestor wedged a
+# swapless box into a kswapd death-spiral. It is safe here precisely because it
+# is serial (one home at a time — `refresh-all` never fans out), skips accounts
+# already refreshed within --max-age (default 20h, so a tenant's own evening
+# Refresh isn't redone), pauses between tenants, and — critically — runs inside
+# jabali-maintenance.slice (MemoryMax=50%, IOSchedulingClass=idle, Nice=19) via
+# the service unit. Keep it serial; do not add a parallel flag.
+if command -v jabali >/dev/null 2>&1; then
+  jabali disk-usage refresh-all >/dev/null 2>&1 || true
+fi
+
 exit 0
