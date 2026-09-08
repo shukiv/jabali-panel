@@ -24,12 +24,15 @@ func TestValidateDomainSetInput(t *testing.T) {
 		errSub      string // substring the error must contain (when wantErr)
 		wantNormTyp string // expected normalised redirect type (when no error)
 	}{
-		// nginx directives — the admin allowlist / brace / null-byte checks.
-		{name: "nginx disallowed directive", nginx: sp("root /etc/jabali-panel;"), wantErr: true, errSub: "--nginx-directives"},
+		// nginx directives — the admin denylist / brace / null-byte checks (GH
+		// #1580: `domain set` is an operator surface, so it gets the relaxed
+		// admin validator — proxy_pass is allowed, the footguns stay blocked).
+		{name: "nginx footgun root blocked", nginx: sp("root /etc/jabali-panel;"), wantErr: true, errSub: "--nginx-directives"},
 		{name: "nginx access_log off forbidden", nginx: sp("access_log off;"), wantErr: true, errSub: "--nginx-directives"},
 		{name: "nginx unbalanced brace", nginx: sp("location / {"), wantErr: true, errSub: "--nginx-directives"},
 		{name: "nginx null byte", nginx: sp("add_header X \x00;"), wantErr: true, errSub: "--nginx-directives"},
 		{name: "nginx allowed directive ok", nginx: sp("proxy_set_header X-Test 1;")},
+		{name: "nginx proxy_pass now allowed for admin", nginx: sp("proxy_pass http://127.0.0.1:9000;")},
 		{name: "nginx empty ok", nginx: sp("")},
 
 		// redirect destination — scheme + host.

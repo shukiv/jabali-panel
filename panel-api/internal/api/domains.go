@@ -55,8 +55,8 @@ type DomainHandlerConfig struct {
 	// Forwarders lets the GH #1579 rename rewrite the domain's alias forwarder
 	// targets to the new name. Optional — nil skips (the rename still succeeds).
 	Forwarders repository.EmailForwarderRepository
-	Packages    repository.PackageRepository
-	Agent       agent.AgentInterface
+	Packages   repository.PackageRepository
+	Agent      agent.AgentInterface
 	Reconciler *reconciler.Reconciler
 	// PortAllocations (GH #1175): shared loopback-port pool for reverse-proxy domains.
 	PortAllocations repository.PortAllocationRepository
@@ -955,7 +955,11 @@ func (h *domainHandler) update(c *gin.Context) {
 	// is_enabled. Admin role bypasses the gate.
 	if claims.IsAdmin {
 		if req.NginxCustomDirectives != nil {
-			if msg := ValidateNginxDirectives(*req.NginxCustomDirectives); msg != "" {
+			// GH #1580: this field is already admin-only (the gate above), so an
+			// admin gets the relaxed validator — the full directive range minus a
+			// small denylist — instead of the tenant safe-allowlist. nginx -t at
+			// apply time is the syntactic guard.
+			if msg := ValidateNginxDirectivesAdmin(*req.NginxCustomDirectives); msg != "" {
 				c.JSON(http.StatusBadRequest, gin.H{"error": msg})
 				return
 			}
@@ -1515,7 +1519,76 @@ var allowedNginxDirectives = map[string]struct{}{
 	"open_file_cache_errors":   {},
 }
 
+// ValidateNginxDirectives is the STRICT, allowlist-based validator used for the
+// tenant/default path: only directives on allowedNginxDirectives pass. proxy_pass
+// and other raw-target directives are intentionally absent (JAB-66); tenants get
+// reverse proxying only through the SSRF-validated Rule Builder.
 func ValidateNginxDirectives(directives string) string {
+	return scanNginxDirectives(directives, func(directive, _ string) string {
+		if _, allowed := allowedNginxDirectives[directive]; !allowed {
+			return "forbidden directive: " + directive
+		}
+		return ""
+	})
+}
+
+// adminDeniedNginxDirectives is the DENYLIST for the admin path (GH #1580): an
+// administrator may use the full range of nginx directives the panel renders
+// into the server block — including proxy_pass and the rest of the reverse-proxy
+// family, which the Rule Builder's RootOverridden flow already anticipates — with
+// nginx -t as the syntactic guard at apply time. Only these few remain blocked,
+// because nginx -t does NOT catch them and they have no legitimate use in a
+// per-domain custom block:
+//
+//   - root / alias: serve arbitrary paths (e.g. `root /etc/jabali-panel/`) over
+//     HTTP — file disclosure. Admins set a custom docroot via the DocRoot field,
+//     which confines it to the owner's home.
+//   - include: pulls arbitrary files into this server block as nginx config —
+//     could splice another tenant's config or leak secrets. The panel's own
+//     per-CMS include is already in the template.
+//   - auth_basic_user_file: an arbitrary-file read / existence oracle (point it
+//     at /etc/shadow). Directory Privacy manages the htpasswd file safely.
+//   - load_module: main-context only; a paste here is a nonsense footgun.
+var adminDeniedNginxDirectives = map[string]struct{}{
+	"root":                 {},
+	"alias":                {},
+	"include":              {},
+	"auth_basic_user_file": {},
+	"load_module":          {},
+}
+
+// ValidateNginxDirectivesAdmin is the RELAXED validator for admin-authored custom
+// directives (GH #1580). It keeps every structural guard ValidateNginxDirectives
+// applies (null bytes, nesting depth, balanced braces — which also stops a paste
+// from closing the server block early and escaping into the main context), but
+// replaces the safe-directive allowlist with a small denylist of the few
+// directives nginx -t can't catch and that have no legitimate per-domain use.
+func ValidateNginxDirectivesAdmin(directives string) string {
+	return scanNginxDirectives(directives, func(directive, cleaned string) string {
+		if _, denied := adminDeniedNginxDirectives[directive]; denied {
+			return "forbidden directive: " + directive
+		}
+		// Value-blocked footguns: the "off" form suppresses security logging /
+		// strips inherited auth — neither is a syntax error, so nginx -t won't
+		// stop them. A custom log PATH or an auth realm string is fine.
+		switch directive {
+		case "access_log", "auth_basic":
+			for _, arg := range nginxDirectiveArgs(cleaned) {
+				if arg == "off" {
+					return "forbidden directive: " + directive + " off"
+				}
+			}
+		}
+		return ""
+	})
+}
+
+// scanNginxDirectives runs the structural safety checks shared by both nginx
+// validators (null-byte rejection, comment stripping, brace balance + nesting
+// cap) and calls check(directive, cleaned) for every directive line — directive
+// lowercased, cleaned = the comment-stripped, trimmed line. A non-empty return
+// from check rejects the whole input with that message.
+func scanNginxDirectives(directives string, check func(directive, cleaned string) string) string {
 	// Reject if input contains null bytes (binary/injection attempt).
 	if strings.ContainsRune(directives, '\x00') {
 		return "forbidden directive: null byte detected"
@@ -1567,10 +1640,9 @@ func ValidateNginxDirectives(directives string) string {
 			continue
 		}
 
-		// Normalize to lowercase and check against allowlist.
 		directive = strings.ToLower(directive)
-		if _, allowed := allowedNginxDirectives[directive]; !allowed {
-			return "forbidden directive: " + directive
+		if msg := check(directive, cleaned); msg != "" {
+			return msg
 		}
 	}
 
@@ -1580,6 +1652,24 @@ func ValidateNginxDirectives(directives string) string {
 	}
 
 	return ""
+}
+
+// nginxDirectiveArgs returns the lowercased argument tokens of a directive line
+// (everything after the directive name), stripped of a trailing ';' and
+// surrounding quotes — enough to spot the `off` value form of access_log /
+// auth_basic. `access_log off;` -> ["off"]; `auth_basic "realm";` -> ["realm"].
+func nginxDirectiveArgs(cleaned string) []string {
+	fields := strings.FieldsFunc(cleaned, func(r rune) bool { return r == ' ' || r == '\t' })
+	if len(fields) <= 1 {
+		return nil
+	}
+	args := make([]string, 0, len(fields)-1)
+	for _, f := range fields[1:] {
+		f = strings.TrimRight(f, ";")
+		f = strings.Trim(f, `"'`)
+		args = append(args, strings.ToLower(f))
+	}
+	return args
 }
 
 // countBraces counts opening and closing braces in a line, respecting quoted strings.

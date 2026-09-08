@@ -189,8 +189,16 @@ add_header X-Frame-Options "DENY" always;`}
         type="secondary"
         style={{ display: "block", marginTop: 8 }}
       >
-        Restricted to safe directives (rewrite, add_header, proxy_pass, etc.).
-        Dangerous directives are blocked.
+        Admin: the full range of nginx directives is available — including{" "}
+        <Typography.Text code>proxy_pass</Typography.Text> and the rest of the
+        reverse-proxy family — and is validated with{" "}
+        <Typography.Text code>nginx -t</Typography.Text> before reload. A few
+        directives stay blocked for safety:{" "}
+        <Typography.Text code>root</Typography.Text>,{" "}
+        <Typography.Text code>alias</Typography.Text>,{" "}
+        <Typography.Text code>include</Typography.Text>,{" "}
+        <Typography.Text code>auth_basic_user_file</Typography.Text>, and{" "}
+        <Typography.Text code>access_log off</Typography.Text>.
       </Typography.Text>
     </div>
   );

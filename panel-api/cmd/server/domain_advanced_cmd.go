@@ -163,17 +163,19 @@ func newDomainIPACLDeleteCmd() *cobra.Command {
 
 // validateDomainSetInput enforces on the CLI `domain set` path the SAME field
 // validation the HTTP PATCH handler applies (JAB-318 parity): the admin nginx
-// directive allowlist (api.ValidateNginxDirectives), the redirect destination
-// scheme/host check (api.ValidateRedirectURL) and the index-priority enum
-// (api.IsValidIndexPriority). It also normalises the redirect type to the
-// numeric nginx return code the renderer emits — redirects.Compile writes
-// `return <type> <url>;` verbatim, so only 301|302|307|308 (or the friendly
-// aliases permanent=301 / temporary=302) produce valid nginx. Each pointer is
-// nil when its flag was not set, so an unchanged field is never validated.
-// Pure (no DB, no cobra) so it is unit-testable directly.
+// directive validator (api.ValidateNginxDirectivesAdmin — the relaxed denylist,
+// since `jabali domain set` is an operator/admin surface, matching the panel
+// admin path per GH #1580), the redirect destination scheme/host check
+// (api.ValidateRedirectURL) and the index-priority enum (api.IsValidIndexPriority).
+// It also normalises the redirect type to the numeric nginx return code the
+// renderer emits — redirects.Compile writes `return <type> <url>;` verbatim, so
+// only 301|302|307|308 (or the friendly aliases permanent=301 / temporary=302)
+// produce valid nginx. Each pointer is nil when its flag was not set, so an
+// unchanged field is never validated. Pure (no DB, no cobra) so it is
+// unit-testable directly.
 func validateDomainSetInput(nginxDirs, redirectTo, redirectType, indexPriority *string) (normRedirectType string, err error) {
 	if nginxDirs != nil {
-		if msg := api.ValidateNginxDirectives(*nginxDirs); msg != "" {
+		if msg := api.ValidateNginxDirectivesAdmin(*nginxDirs); msg != "" {
 			return "", fmt.Errorf("--nginx-directives: %s", msg)
 		}
 	}
