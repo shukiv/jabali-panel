@@ -60,9 +60,7 @@ func phpIniDefaultsHandler(ctx context.Context, params json.RawMessage) (any, er
 	iniFile := "/etc/php/" + p.PHPVersion + "/fpm/php.ini"
 	scanDir := "/etc/php/" + p.PHPVersion + "/fpm/conf.d"
 
-	script := "$d=[];foreach(['" +
-		joinQuoted(phpIniDefaultDirectives) +
-		"] as $k){$d[$k]=(string)ini_get($k);}echo json_encode($d);"
+	script := phpIniReadScript()
 
 	cmd := execCommandContext(ctx, bin, "-c", iniFile, "-r", script)
 	// Layer conf.d exactly as FPM does. -n would drop it; instead point the scan
@@ -81,18 +79,17 @@ func phpIniDefaultsHandler(ctx context.Context, params json.RawMessage) (any, er
 	return phpIniDefaultsResponse{PHPVersion: p.PHPVersion, Defaults: defaults}, nil
 }
 
-// joinQuoted renders directive names as a PHP single-quoted, comma-separated
-// list body. The names are a fixed internal allowlist (phpIniDefaultDirectives),
-// never caller input, so there is nothing to escape.
-func joinQuoted(names []string) string {
-	out := ""
-	for i, n := range names {
-		if i > 0 {
-			out += "','"
-		}
-		out += n
-	}
-	return out
+// phpIniReadScript builds the PHP -r program that echoes json_encode of ini_get
+// for each exposed directive. The directive list is handed to PHP as a JSON
+// array literal that json_decode parses, rather than hand-glued single quotes —
+// the earlier hand-glued form dropped the final closing quote (a malformed
+// foreach list PHP rejects with a fatal parse error / exit 255) and the unit
+// test didn't catch it. The names are a fixed internal allowlist
+// (phpIniDefaultDirectives) with no quotes or backslashes, so the JSON literal
+// sits safely inside a single-quoted PHP string with nothing to escape.
+func phpIniReadScript() string {
+	namesJSON, _ := json.Marshal(phpIniDefaultDirectives) // ["memory_limit",...]
+	return "$d=[];foreach(json_decode('" + string(namesJSON) + "',true) as $k){$d[$k]=(string)ini_get($k);}echo json_encode($d);"
 }
 
 func init() {
