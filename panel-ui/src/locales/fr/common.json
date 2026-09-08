@@ -5,8 +5,8 @@
       "dashboard_desc": "Vue d'ensemble du serveur et statistiques rapides",
       "users": "Utilisateurs",
       "users_desc": "Gérer les utilisateurs du panneau, les sessions et l'usurpation d'identité",
-      "domains": "Domaines",
-      "domains_desc": "Tous les domaines de tous les utilisateurs",
+      "domains": "Domaines web",
+      "domains_desc": "Tous les domaines web de tous les utilisateurs",
       "mail": "Courrier",
       "mail_desc": "Boîtes aux lettres, redirections et webmail",
       "packages": "Offres d'hébergement",
@@ -54,7 +54,7 @@
     },
     "user": {
       "dashboard": "Tableau de bord",
-      "domains": "Domaines",
+      "domains": "Domaines web",
       "mail": "Courrier",
       "applications": "Applications",
       "python-apps": "Applications Python",
@@ -94,7 +94,7 @@
   "dashboard": {
     "stats": {
       "users": "Nombre total d'utilisateurs",
-      "domains": "Domaines actifs",
+      "domains": "Domaines web actifs",
       "mailboxes": "Boîtes aux lettres"
     },
     "health": {
@@ -108,12 +108,12 @@
     "view_server_status": "Voir l'état du serveur →",
     "view_all": "Tout voir",
     "recent_users": "Utilisateurs récents",
-    "recent_domains": "Domaines récents",
+    "recent_domains": "Domaines web récents",
     "recent_apps": "Applications récentes",
     "packages": "Offres d'hébergement",
     "empty": {
       "users": "Aucun utilisateur pour l'instant",
-      "domains": "Aucun domaine pour l'instant",
+      "domains": "Aucun domaine web pour l'instant",
       "apps": "Aucune application pour l'instant",
       "packages": "Aucune offre pour l'instant"
     },
@@ -306,7 +306,7 @@
   "domainlist": {
     "actions": "Actions",
     "domain": "Domaine",
-    "no_domains_yet": "Aucun domaine pour l'instant",
+    "no_domains_yet": "Aucun domaine web pour l'instant",
     "status": "Statut",
     "user": "Utilisateur"
   },
@@ -516,7 +516,7 @@
   },
   "userdashboard": {
     "databases": "Bases de données",
-    "domains": "Domaines",
+    "domains": "Domaines web",
     "mailboxes": "Boîtes mail"
   },
   "accountactivity": {

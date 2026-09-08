@@ -38,8 +38,8 @@ const STEPS: QuickStartStep[] = [
   },
   {
     number: 4,
-    title: "Domains",
-    desc: "Add a domain — vhost, DNS zone, and SSL provision automatically.",
+    title: "Web Domains",
+    desc: "Add a web domain — vhost, DNS zone, and SSL provision automatically.",
     href: "/jabali-admin/domains",
     color: "#f59e0b", // amber
   },

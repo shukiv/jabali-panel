@@ -5,8 +5,8 @@
       "dashboard_desc": "סקירת השרת וסטטיסטיקות מהירות",
       "users": "משתמשים",
       "users_desc": "ניהול משתמשי הפאנל, הפעלות והתחזות",
-      "domains": "דומיינים",
-      "domains_desc": "כל הדומיינים של כל המשתמשים",
+      "domains": "דומייני אתרים",
+      "domains_desc": "כל דומייני האתרים של כל המשתמשים",
       "mail": "דואר",
       "mail_desc": "תיבות דואר, העברות ודואר בדפדפן",
       "packages": "חבילות אחסון",
@@ -54,7 +54,7 @@
     },
     "user": {
       "dashboard": "לוח בקרה",
-      "domains": "דומיינים",
+      "domains": "דומייני אתרים",
       "mail": "דואר",
       "applications": "אפליקציות",
       "python-apps": "אפליקציות Python",
@@ -95,7 +95,7 @@
   "dashboard": {
     "stats": {
       "users": "סך המשתמשים",
-      "domains": "דומיינים פעילים",
+      "domains": "דומייני אתרים פעילים",
       "mailboxes": "תיבות דואר"
     },
     "health": {
@@ -111,12 +111,12 @@
     "view_server_status": "הצגת מצב השרת ←",
     "view_all": "הצג הכול",
     "recent_users": "משתמשים אחרונים",
-    "recent_domains": "דומיינים אחרונים",
+    "recent_domains": "דומייני אתרים אחרונים",
     "recent_apps": "אפליקציות אחרונות",
     "packages": "חבילות אחסון",
     "empty": {
       "users": "אין עדיין משתמשים",
-      "domains": "אין עדיין דומיינים",
+      "domains": "אין עדיין דומייני אתרים",
       "apps": "אין עדיין אפליקציות",
       "packages": "אין עדיין חבילות"
     },
@@ -324,7 +324,7 @@
   "domainlist": {
     "actions": "פעולות",
     "domain": "דומיין",
-    "no_domains_yet": "אין עדיין דומיינים",
+    "no_domains_yet": "אין עדיין דומייני אתרים",
     "status": "סטטוס",
     "user": "משתמש"
   },
@@ -534,7 +534,7 @@
   },
   "userdashboard": {
     "databases": "מסדי נתונים",
-    "domains": "דומיינים",
+    "domains": "דומייני אתרים",
     "mailboxes": "תיבות דואר"
   },
   "accountactivity": {

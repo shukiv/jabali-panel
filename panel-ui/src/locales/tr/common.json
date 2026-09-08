@@ -5,8 +5,8 @@
       "dashboard_desc": "Sunucuya genel bakış ve hızlı istatistikler",
       "users": "Kullanıcılar",
       "users_desc": "Panel kullanıcılarını, oturumları ve kimliğe bürünmeyi yönetin",
-      "domains": "Alan adları",
-      "domains_desc": "Tüm kullanıcıların tüm alan adları",
+      "domains": "Web alan adları",
+      "domains_desc": "Tüm kullanıcıların tüm web alan adları",
       "mail": "Posta",
       "mail_desc": "Posta kutuları, yönlendirmeler ve web posta",
       "packages": "Barındırma paketleri",
@@ -54,7 +54,7 @@
     },
     "user": {
       "dashboard": "Kontrol paneli",
-      "domains": "Alan adları",
+      "domains": "Web alan adları",
       "mail": "Posta",
       "applications": "Uygulamalar",
       "python-apps": "Python Uygulamaları",
@@ -94,7 +94,7 @@
   "dashboard": {
     "stats": {
       "users": "Toplam kullanıcı",
-      "domains": "Etkin alan adları",
+      "domains": "Etkin web alan adları",
       "mailboxes": "Posta kutuları"
     },
     "health": {
@@ -108,12 +108,12 @@
     "view_server_status": "Sunucu durumunu görüntüle →",
     "view_all": "Tümünü görüntüle",
     "recent_users": "Son kullanıcılar",
-    "recent_domains": "Son alan adları",
+    "recent_domains": "Son web alan adları",
     "recent_apps": "Son uygulamalar",
     "packages": "Barındırma paketleri",
     "empty": {
       "users": "Henüz kullanıcı yok",
-      "domains": "Henüz alan adı yok",
+      "domains": "Henüz web alan adı yok",
       "apps": "Henüz uygulama yok",
       "packages": "Henüz paket yok"
     },
@@ -306,7 +306,7 @@
   "domainlist": {
     "actions": "İşlemler",
     "domain": "Alan adı",
-    "no_domains_yet": "Henüz alan adı yok",
+    "no_domains_yet": "Henüz web alan adı yok",
     "status": "Durum",
     "user": "Kullanıcı"
   },
@@ -516,7 +516,7 @@
   },
   "userdashboard": {
     "databases": "Veritabanları",
-    "domains": "Alan adları",
+    "domains": "Web alan adları",
     "mailboxes": "Posta kutuları"
   },
   "accountactivity": {

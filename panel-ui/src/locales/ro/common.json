@@ -5,7 +5,7 @@
       "dashboard_desc": "",
       "users": "Utilizatori",
       "users_desc": "",
-      "domains": "Domenii",
+      "domains": "Domenii web",
       "domains_desc": "",
       "mail": "",
       "mail_desc": "",
@@ -54,7 +54,7 @@
     },
     "user": {
       "dashboard": "Tablou de bord",
-      "domains": "Domenii",
+      "domains": "Domenii web",
       "mail": "",
       "applications": "",
       "python-apps": "",
@@ -114,7 +114,7 @@
     "packages": "",
     "empty": {
       "users": "Încă nu există utilizatori",
-      "domains": "Încă nu există domenii",
+      "domains": "Încă nu există domenii web",
       "apps": "",
       "packages": ""
     },
@@ -473,7 +473,7 @@
     "bw_30d": "",
     "domain": "Domeniu",
     "more_actions": "",
-    "no_domains_yet": "Încă nu există domenii",
+    "no_domains_yet": "Încă nu există domenii web",
     "redirect": "",
     "ssl": "",
     "status": "Stare",
@@ -1250,7 +1250,7 @@
   "userdashboard": {
     "applications": "",
     "databases": "Baze de date",
-    "domains": "Domenii",
+    "domains": "Domenii web",
     "mailboxes": "Căsuțe poștale",
     "recent_applications": "",
     "recent_databases": "",

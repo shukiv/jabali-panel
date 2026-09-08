@@ -5,8 +5,8 @@
       "dashboard_desc": "Visão geral do servidor e estatísticas rápidas",
       "users": "Usuários",
       "users_desc": "Gerenciar usuários do painel, sessões e representação",
-      "domains": "Domínios",
-      "domains_desc": "Todos os domínios de todos os usuários",
+      "domains": "Domínios web",
+      "domains_desc": "Todos os domínios web de todos os usuários",
       "mail": "E-mail",
       "mail_desc": "Caixas de correio, encaminhamentos e webmail",
       "packages": "Pacotes de hospedagem",
@@ -54,7 +54,7 @@
     },
     "user": {
       "dashboard": "Painel",
-      "domains": "Domínios",
+      "domains": "Domínios web",
       "mail": "E-mail",
       "applications": "Aplicativos",
       "python-apps": "Aplicativos Python",
@@ -94,7 +94,7 @@
   "dashboard": {
     "stats": {
       "users": "Total de usuários",
-      "domains": "Domínios ativos",
+      "domains": "Domínios web ativos",
       "mailboxes": "Caixas de correio"
     },
     "health": {
@@ -108,12 +108,12 @@
     "view_server_status": "Ver status do servidor →",
     "view_all": "Ver tudo",
     "recent_users": "Usuários recentes",
-    "recent_domains": "Domínios recentes",
+    "recent_domains": "Domínios web recentes",
     "recent_apps": "Aplicativos recentes",
     "packages": "Pacotes de hospedagem",
     "empty": {
       "users": "Nenhum usuário ainda",
-      "domains": "Nenhum domínio ainda",
+      "domains": "Nenhum domínio web ainda",
       "apps": "Nenhum aplicativo ainda",
       "packages": "Nenhum pacote ainda"
     },
@@ -306,7 +306,7 @@
   "domainlist": {
     "actions": "Ações",
     "domain": "Domínio",
-    "no_domains_yet": "Ainda não há domínios",
+    "no_domains_yet": "Ainda não há domínios web",
     "status": "Status",
     "user": "Usuário"
   },
@@ -516,7 +516,7 @@
   },
   "userdashboard": {
     "databases": "Bancos de dados",
-    "domains": "Domínios",
+    "domains": "Domínios web",
     "mailboxes": "Caixas de correio"
   },
   "accountactivity": {

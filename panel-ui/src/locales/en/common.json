@@ -5,8 +5,8 @@
       "dashboard_desc": "Server overview and quick stats",
       "users": "Users",
       "users_desc": "Manage panel users, sessions, and impersonation",
-      "domains": "Domains",
-      "domains_desc": "All domains across every user",
+      "domains": "Web Domains",
+      "domains_desc": "All web domains across every user",
       "mail": "Mail",
       "mail_desc": "Mailboxes, forwarders, and webmail",
       "packages": "Hosting Packages",
@@ -56,7 +56,7 @@
     },
     "user": {
       "dashboard": "Dashboard",
-      "domains": "Domains",
+      "domains": "Web Domains",
       "mail": "Mail",
       "applications": "Applications",
       "python-apps": "Python Apps",
@@ -104,7 +104,7 @@
   "dashboard": {
     "stats": {
       "users": "Total Users",
-      "domains": "Active Domains",
+      "domains": "Active Web Domains",
       "mailboxes": "Mailboxes"
     },
     "health": {
@@ -118,12 +118,12 @@
     "view_server_status": "View server status →",
     "view_all": "View all",
     "recent_users": "Recent Users",
-    "recent_domains": "Recent Domains",
+    "recent_domains": "Recent Web Domains",
     "recent_apps": "Recent Applications",
     "packages": "Hosting Packages",
     "empty": {
       "users": "No users yet",
-      "domains": "No domains yet",
+      "domains": "No web domains yet",
       "apps": "No applications yet",
       "packages": "No packages yet"
     },
@@ -198,7 +198,7 @@
       "actions": "Actions"
     },
     "res": {
-      "domains": "Domains",
+      "domains": "Web Domains",
       "mailboxes": "Mailboxes",
       "databases": "Databases",
       "docker": "Docker apps",
@@ -506,7 +506,7 @@
     "bw_30d": "BW (30d)",
     "domain": "Domain",
     "more_actions": "More actions",
-    "no_domains_yet": "No domains yet",
+    "no_domains_yet": "No web domains yet",
     "redirect": "Redirect",
     "ssl": "SSL",
     "status": "Status",
@@ -1351,11 +1351,11 @@
   "userdashboard": {
     "applications": "Applications",
     "databases": "Databases",
-    "domains": "Domains",
+    "domains": "Web Domains",
     "mailboxes": "Mailboxes",
     "recent_applications": "Recent Applications",
     "recent_databases": "Recent Databases",
-    "recent_domains": "Recent Domains",
+    "recent_domains": "Recent Web Domains",
     "recent_mailboxes": "Recent Mailboxes"
   },
   "accountactivity": {
