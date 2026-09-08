@@ -132,6 +132,22 @@ func (a *drAppInstalls) ListByDomainIDs(_ context.Context, _ []string) ([]models
 	return a.installs, a.err
 }
 
+// drSettings is a minimal ServerSettingsRepository whose Get returns a settings
+// row with a chosen MailEnabled (or a forced error), to drive the GH #1579
+// mail-module gate on the rename's mail carry.
+type drSettings struct {
+	repository.ServerSettingsRepository
+	mailEnabled bool
+	getErr      error
+}
+
+func (s *drSettings) Get(_ context.Context) (*models.ServerSettings, error) {
+	if s.getErr != nil {
+		return nil, s.getErr
+	}
+	return &models.ServerSettings{MailEnabled: s.mailEnabled}, nil
+}
+
 type drTeardowns struct {
 	rec     *drRecorder
 	ensured []string
@@ -445,6 +461,53 @@ func TestRenameDomain_MailDryRunErrorFailsClosed(t *testing.T) {
 	}
 	if ag.reownLast != nil {
 		t.Fatalf("a dry-run agent error must refuse before the file move")
+	}
+}
+
+// GH #1579: on a server without the mail module installed, the mail.domain.rename
+// verb reads an absent Stalwart admin token and errors — which used to fail the
+// whole rename. With Settings reporting MailEnabled=false the rename skips the
+// mail carry entirely (never calls the verb) and succeeds, even when the agent
+// would error on it.
+func TestRenameDomain_MailModuleDisabledSkipsMailCarry(t *testing.T) {
+	rec := &drRecorder{}
+	dom := drWebDomain()
+	d, ag, _ := drNewDeps(rec, dom, drHappyOwner())
+	d.Settings = &drSettings{mailEnabled: false}
+	// Would fail the rename if the verb were called — proving it is skipped.
+	ag.errByMethod = map[string]error{"mail.domain.rename": errors.New("stalwart not installed")}
+
+	warnings, err := RenameDomain(context.Background(), d, &drSched{}, dom, "new.com")
+	if err != nil {
+		t.Fatalf("mail-disabled rename must succeed, got: %v", err)
+	}
+	if dom.Name != "new.com" {
+		t.Fatalf("row should be renamed, got %q", dom.Name)
+	}
+	if len(ag.mailRenameCalls) != 0 {
+		t.Fatalf("mail.domain.rename must not be called when mail is disabled, got %d calls", len(ag.mailRenameCalls))
+	}
+	for _, e := range rec.events {
+		if e == evDryMail {
+			t.Fatalf("no mail verb event expected when mail disabled, got %v", rec.events)
+		}
+	}
+	_ = warnings
+}
+
+// A Settings read error is FAIL-CLOSED: the mail carry still runs (a box that
+// actually has mail must never rename without carrying it), so the same agent
+// error that TestRenameDomain_MailDryRunErrorFailsClosed asserts still refuses.
+func TestRenameDomain_MailSettingsReadErrorFailsClosed(t *testing.T) {
+	rec := &drRecorder{}
+	dom := drWebDomain()
+	d, ag, _ := drNewDeps(rec, dom, drHappyOwner())
+	d.Settings = &drSettings{getErr: errors.New("db down")}
+	ag.errByMethod = map[string]error{"mail.domain.rename": errors.New("stalwart down")}
+
+	_, err := RenameDomain(context.Background(), d, &drSched{}, dom, "new.com")
+	if got := drCodeOf(t, err); got != "unavailable" {
+		t.Fatalf("code = %q, want unavailable (a settings read error must not skip the mail carry)", got)
 	}
 }
 

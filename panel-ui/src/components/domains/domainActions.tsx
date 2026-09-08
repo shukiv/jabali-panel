@@ -33,7 +33,8 @@ export type DomainModalType =
   | "settings"
   | "info"
   | "caching"
-  | "chown";
+  | "chown"
+  | "rename";
 
 export type DomainMenuCaps =
   | {
@@ -146,6 +147,19 @@ export function buildDomainMenuItems(r: Domain, ctx: DomainMenuCtx): MenuProps["
         label: "Change owner",
         onClick: () => onOpenModal(r.id, "chown"),
       },
+      // GH #1579: in-place rename, the same modal the tenant Web Domain page
+      // uses. Admins may rename any domain (the API is owner-scoped: admin any).
+      // Hidden for the panel's own primary domain, which the backend refuses.
+      ...(r.is_panel_primary
+        ? []
+        : [
+            {
+              key: "rename",
+              icon: <EditOutlined />,
+              label: "Rename domain",
+              onClick: () => onOpenModal(r.id, "rename"),
+            },
+          ]),
       toggleItem,
       ...deleteItems,
     ];
