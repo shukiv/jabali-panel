@@ -5839,6 +5839,17 @@ ensure_maintenance_isolation() {
       install -m 0644 -o root -g root "$src" "/etc/systemd/system/${u}.service"
     fi
   done
+  # GH #1439: the disk-maintenance SCRIPT gained a step (refresh every tenant's
+  # disk-usage snapshot). Re-copy it here too, or an updated box keeps the old
+  # script and the daily sweep never ships — the same main()-only gap this
+  # converger exists to close. Gate on the unit already existing so we never
+  # resurrect a helper for a deliberately-removed job.
+  if [[ -f /etc/systemd/system/jabali-disk-maintenance.service \
+        && -f "${REPO_DIR}/install/systemd/disk-maintenance" ]]; then
+    install -m 0755 -o root -g root \
+      "${REPO_DIR}/install/systemd/disk-maintenance" \
+      /usr/local/libexec/jabali/disk-maintenance
+  fi
   systemctl daemon-reload 2>/dev/null || true
 }
 

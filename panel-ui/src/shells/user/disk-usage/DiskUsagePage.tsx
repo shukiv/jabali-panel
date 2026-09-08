@@ -6,7 +6,7 @@ import { useTranslation } from "react-i18next";
 import { Alert, Button, Card, Col, Empty, Row, Spin, Table, Tag, Tree, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import type { DataNode } from "antd/es/tree";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
 
@@ -165,6 +165,21 @@ const COLORS = {
   gold: "#faad14",
 } as const;
 
+// GH #1439 (lxsdevcode): a snapshot older than this (or missing) triggers an
+// automatic measure on page open, so a tenant sees the real figure without
+// having to know to click Refresh. 24h sits just above the nightly refresh-all
+// cadence (--max-age 20h), so a fleet whose daily job is running never
+// auto-measures redundantly on every visit — only when the job hasn't kept the
+// snapshot fresh (job disabled, missed, or a brand-new account).
+const AUTO_MEASURE_STALE_MS = 24 * 60 * 60 * 1000;
+
+function isSnapshotStale(computedAt?: string | null): boolean {
+  if (!computedAt) return true; // never computed
+  const t = Date.parse(computedAt);
+  if (Number.isNaN(t)) return true;
+  return Date.now() - t > AUTO_MEASURE_STALE_MS;
+}
+
 export function DiskUsagePage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -191,6 +206,23 @@ export function DiskUsagePage() {
     },
     onSuccess: (d) => qc.setQueryData(["me-disk-usage"], d),
   });
+
+  // Auto-measure on open when the snapshot is missing or stale (GH #1439). Fire
+  // AT MOST ONCE per mount (autoMeasured guard) so a measure that fails — or
+  // returns a still-old figure — never loops; the manual Refresh button stays
+  // for an on-demand recompute. Backend GET stays a cheap snapshot read; the
+  // recompute is this one explicit POST, driven by the human opening the page
+  // (not a poll), so it can't stampede the way a per-poll du would.
+  const autoMeasured = useRef(false);
+  const refreshMutate = refresh.mutate;
+  useEffect(() => {
+    if (isLoading || !data) return;
+    if (autoMeasured.current) return;
+    if (isSnapshotStale(data.computed_at)) {
+      autoMeasured.current = true;
+      refreshMutate();
+    }
+  }, [isLoading, data, refreshMutate]);
 
   if (isLoading) {
     return (
@@ -343,7 +375,11 @@ export function DiskUsagePage() {
       </Typography.Title>
       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
         <Typography.Text type="secondary">
-          {computedAt ? `Computed ${relTime(computedAt)}` : "Not computed yet"}
+          {refresh.isPending
+            ? "Calculating…"
+            : computedAt
+              ? `Computed ${relTime(computedAt)}`
+              : "Not computed yet"}
         </Typography.Text>
         <Button
           icon={<ReloadOutlined />}
@@ -360,10 +396,22 @@ export function DiskUsagePage() {
     return (
       <div>
         {header}
-        <Empty
-          description={t("diskusagepage.no_disk_usage_snapshot_yet_click_refresh_to")}
-          style={{ padding: 64 }}
-        />
+        {refresh.isPending ? (
+          // First-ever open auto-measures (or the user clicked Refresh) — show a
+          // measuring state, not the "click Refresh" prompt, so the tenant isn't
+          // told to do the thing already happening.
+          <div style={{ padding: 64, textAlign: "center" }}>
+            <Spin />
+            <Typography.Paragraph type="secondary" style={{ marginTop: 16 }}>
+              Calculating your disk usage…
+            </Typography.Paragraph>
+          </div>
+        ) : (
+          <Empty
+            description={t("diskusagepage.no_disk_usage_snapshot_yet_click_refresh_to")}
+            style={{ padding: 64 }}
+          />
+        )}
       </div>
     );
   }
@@ -489,7 +537,9 @@ export function DiskUsagePage() {
 
       <Typography.Text type="secondary" style={{ fontSize: 12, display: "block", marginTop: 12 }}>
         Email usage is sampled periodically; file and database sizes (both
-        MariaDB and PostgreSQL) are recomputed when you click Refresh.
+        MariaDB and PostgreSQL) are recomputed automatically each day and when
+        you open this page with an out-of-date figure — click Refresh any time
+        for an immediate recount.
       </Typography.Text>
     </div>
   );

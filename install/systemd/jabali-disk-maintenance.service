@@ -1,5 +1,5 @@
 [Unit]
-Description=Jabali disk maintenance (prune dated Stalwart logs + stale nspawn images)
+Description=Jabali disk maintenance (prune dated Stalwart logs + stale nspawn images; refresh tenant disk-usage snapshots)
 Documentation=https://github.com/shukiv/jabali-panel/blob/main/install/systemd/disk-maintenance
 # No hard Requires=: the sweep is best-effort and each step no-ops when its
 # target is absent, so it must never fail the boot or wedge on a missing unit.
