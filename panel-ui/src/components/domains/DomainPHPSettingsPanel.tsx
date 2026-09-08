@@ -30,6 +30,11 @@ type DomainPHPSettings = {
   php_display_errors?: boolean | null;
   php_error_reporting?: number | null;
   php_timezone?: string | null;
+  // GH #1543 (johnnyq): the real value this domain inherits per directive when
+  // it sets no override (pool ini override → box php.ini baseline), keyed by
+  // php.ini directive name. Used to label each select's inherit option with the
+  // actual default, e.g. "256M (Default)". Absent → generic label.
+  pool_defaults?: Record<string, string> | null;
 };
 
 type PHPSettingsFormData = {
@@ -273,6 +278,19 @@ export function DomainPHPSettingsPanel({ domainId }: DomainPHPSettingsPanelProps
   // GH #1332 item 6: a small tag on each field showing whether it is a custom
   // override or falls back to the pool default. Reflects the last-saved state
   // (phpSettings), refreshed after every save.
+  // GH #1543: relabel the "Use pool default" (value null) option of a select
+  // with the real inherited value — "256M (Default)" — from pool_defaults. The
+  // null option is what the Select shows while a domain has no override, so this
+  // surfaces the actual default without any extra auto-select logic. Falls back
+  // to the generic label when the backend couldn't resolve a value.
+  type Opt = { label: string; value: string | number | null };
+  const withDefault = (opts: Opt[], directive: string, suffix = ""): Opt[] => {
+    const v = phpSettings?.pool_defaults?.[directive];
+    if (!v) return opts;
+    const label = `${v}${suffix} (Default)`;
+    return opts.map((o) => (o.value === null ? { ...o, label } : o));
+  };
+
   const fieldSet = (v: unknown) => v !== null && v !== undefined;
   const overrideLabel = (text: string, overridden: boolean) => (
     <Space size={6}>
@@ -361,7 +379,7 @@ export function DomainPHPSettingsPanel({ domainId }: DomainPHPSettingsPanelProps
                     <Select
                       placeholder={t("userphpsettingspage.use_pool_default")}
                       allowClear
-                      options={MEMORY_LIMIT_OPTIONS}
+                      options={withDefault(MEMORY_LIMIT_OPTIONS, "memory_limit")}
                     />
                   </Form.Item>
                 </Col>
@@ -376,7 +394,7 @@ export function DomainPHPSettingsPanel({ domainId }: DomainPHPSettingsPanelProps
                     <Select
                       placeholder={t("userphpsettingspage.use_pool_default")}
                       allowClear
-                      options={UPLOAD_MAX_OPTIONS}
+                      options={withDefault(UPLOAD_MAX_OPTIONS, "upload_max_filesize")}
                     />
                   </Form.Item>
                 </Col>
@@ -391,7 +409,7 @@ export function DomainPHPSettingsPanel({ domainId }: DomainPHPSettingsPanelProps
                     <Select
                       placeholder={t("userphpsettingspage.use_pool_default")}
                       allowClear
-                      options={POST_MAX_OPTIONS}
+                      options={withDefault(POST_MAX_OPTIONS, "post_max_size")}
                     />
                   </Form.Item>
                 </Col>
@@ -406,7 +424,7 @@ export function DomainPHPSettingsPanel({ domainId }: DomainPHPSettingsPanelProps
                     <Select
                       placeholder={t("userphpsettingspage.use_pool_default")}
                       allowClear
-                      options={MAX_INPUT_VARS_OPTIONS}
+                      options={withDefault(MAX_INPUT_VARS_OPTIONS, "max_input_vars")}
                     />
                   </Form.Item>
                 </Col>
@@ -425,7 +443,7 @@ export function DomainPHPSettingsPanel({ domainId }: DomainPHPSettingsPanelProps
                     <Select
                       placeholder={t("userphpsettingspage.use_pool_default")}
                       allowClear
-                      options={MAX_EXECUTION_TIME_OPTIONS}
+                      options={withDefault(MAX_EXECUTION_TIME_OPTIONS, "max_execution_time", "s")}
                     />
                   </Form.Item>
                 </Col>
@@ -440,7 +458,7 @@ export function DomainPHPSettingsPanel({ domainId }: DomainPHPSettingsPanelProps
                     <Select
                       placeholder={t("userphpsettingspage.use_pool_default")}
                       allowClear
-                      options={MAX_INPUT_TIME_OPTIONS}
+                      options={withDefault(MAX_INPUT_TIME_OPTIONS, "max_input_time", "s")}
                     />
                   </Form.Item>
                 </Col>

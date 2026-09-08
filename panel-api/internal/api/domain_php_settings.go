@@ -1,16 +1,21 @@
 package api
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"regexp"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	ginctx "git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
@@ -18,6 +23,12 @@ import (
 type DomainPHPSettingsHandlerConfig struct {
 	Domains  repository.DomainRepository
 	PHPPools repository.PHPPoolRepository
+	// Agent + PoolIniOverrides power the pool_defaults hint (GH #1543): the real
+	// value a domain inherits per directive, so the UI can label each dropdown's
+	// inherit option "<value> (Default)". Both optional — nil degrades the
+	// response to omit pool_defaults, and the UI falls back to a generic label.
+	Agent            agent.AgentInterface
+	PoolIniOverrides repository.PHPPoolIniOverrideRepository
 }
 
 // RegisterDomainPHPSettingsRoutes adds the PHP settings endpoints:
@@ -47,6 +58,12 @@ type getDomainPHPSettingsResponse struct {
 	PHPDisplayErrors  *bool   `json:"php_display_errors,omitempty"`
 	PHPErrorReporting *int    `json:"php_error_reporting,omitempty"`
 	PHPTimezone       *string `json:"php_timezone,omitempty"`
+	// PoolDefaults (GH #1543) is the effective value this domain INHERITS per
+	// directive when it sets no override — the pool's ini override if it has
+	// one, else the box's FPM php.ini baseline (read live via the agent). Keys
+	// are php.ini directive names (memory_limit, upload_max_filesize, …). Absent
+	// when the agent/pool can't be resolved; the UI then shows a generic label.
+	PoolDefaults map[string]string `json:"pool_defaults,omitempty"`
 }
 
 // updateDomainPHPSettingsRequest mirrors the overridable fields plus an optional
@@ -170,21 +187,106 @@ func (h *domainPHPSettingsHandler) get(c *gin.Context) {
 		PHPTimezone:          dom.PHPTimezone,
 	}
 
-	// Resolve the effective PHP version. If the domain is bound to a
-	// user pool, return that pool's version. If unbound, fall back to the
-	// user's own pool (ADR-0023: one pool per user). If neither exists,
-	// leave nil and the UI renders "Server default".
+	// Resolve the effective PHP version + the pool itself. If the domain is
+	// bound to a user pool, use that pool. If unbound, fall back to the user's
+	// own pool (ADR-0023: one pool per user). If neither exists, leave nil and
+	// the UI renders "Server default".
+	var pool *models.PHPPool
 	if dom.PHPPoolID != nil && *dom.PHPPoolID != "" {
-		if pool, perr := h.cfg.PHPPools.FindByID(ctx, *dom.PHPPoolID); perr == nil && pool != nil {
-			v := pool.PHPVersion
-			resp.PHPVersion = &v
-		}
-	} else if pool, perr := h.cfg.PHPPools.FindByUserID(ctx, dom.UserID); perr == nil && pool != nil {
+		pool, _ = h.cfg.PHPPools.FindByID(ctx, *dom.PHPPoolID)
+	} else {
+		pool, _ = h.cfg.PHPPools.FindByUserID(ctx, dom.UserID)
+	}
+	if pool != nil {
 		v := pool.PHPVersion
 		resp.PHPVersion = &v
+		// GH #1543: the value this domain inherits per directive — pool ini
+		// override if set, else the box php.ini baseline for the version. Best
+		// effort: any failure just omits pool_defaults (the UI keeps a generic
+		// "pool default" label rather than a wrong number).
+		resp.PoolDefaults = h.resolvePoolDefaults(ctx, pool)
 	}
 
 	c.JSON(http.StatusOK, resp)
+}
+
+// poolIniDefaultCacheTTL keeps the per-version agent read rare — the box
+// php.ini baseline changes only when the operator retunes it, so a short cache
+// spares an agent round-trip on every settings-page load.
+const poolIniDefaultCacheTTL = 5 * time.Minute
+
+type cachedIniDefaults struct {
+	at   time.Time
+	vals map[string]string
+}
+
+var (
+	poolIniDefaultMu    sync.Mutex
+	poolIniDefaultCache = map[string]cachedIniDefaults{}
+)
+
+// resolvePoolDefaults returns the effective inherited value per directive for a
+// pool: the box php.ini baseline for the pool's PHP version (read via the agent,
+// cached per version) with the pool's own ini overrides layered on top. Returns
+// nil on any failure so the caller omits the hint.
+func (h *domainPHPSettingsHandler) resolvePoolDefaults(ctx context.Context, pool *models.PHPPool) map[string]string {
+	if h.cfg.Agent == nil {
+		return nil
+	}
+	base := h.phpIniDefaults(ctx, pool.PHPVersion)
+	if base == nil {
+		return nil
+	}
+	// Copy the cached baseline before mutating — the cache entry is shared.
+	out := make(map[string]string, len(base))
+	for k, v := range base {
+		out[k] = v
+	}
+	// Overlay the pool's own value-kind ini overrides (a flag-kind override —
+	// on/off — is not one of these numeric/size directives).
+	if h.cfg.PoolIniOverrides != nil {
+		if ovs, err := h.cfg.PoolIniOverrides.ListByPool(ctx, pool.ID); err == nil {
+			for i := range ovs {
+				if ovs[i].Kind == "value" {
+					if _, tracked := out[ovs[i].Directive]; tracked {
+						out[ovs[i].Directive] = ovs[i].Value
+					}
+				}
+			}
+		}
+	}
+	return out
+}
+
+// phpIniDefaults reads (and caches) the box FPM php.ini baseline for a PHP
+// version via the agent's php.ini_defaults command.
+func (h *domainPHPSettingsHandler) phpIniDefaults(ctx context.Context, version string) map[string]string {
+	if version == "" {
+		return nil
+	}
+	poolIniDefaultMu.Lock()
+	if c, ok := poolIniDefaultCache[version]; ok && time.Since(c.at) < poolIniDefaultCacheTTL {
+		poolIniDefaultMu.Unlock()
+		return c.vals
+	}
+	poolIniDefaultMu.Unlock()
+
+	cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	raw, err := h.cfg.Agent.Call(cctx, "php.ini_defaults", map[string]any{"php_version": version})
+	if err != nil {
+		return nil
+	}
+	var resp struct {
+		Defaults map[string]string `json:"defaults"`
+	}
+	if json.Unmarshal(raw, &resp) != nil || resp.Defaults == nil {
+		return nil
+	}
+	poolIniDefaultMu.Lock()
+	poolIniDefaultCache[version] = cachedIniDefaults{at: time.Now(), vals: resp.Defaults}
+	poolIniDefaultMu.Unlock()
+	return resp.Defaults
 }
 
 func (h *domainPHPSettingsHandler) patch(c *gin.Context) {
