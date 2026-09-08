@@ -42,7 +42,11 @@ fi
 # jabali-maintenance.slice (MemoryMax=50%, IOSchedulingClass=idle, Nice=19) via
 # the service unit. Keep it serial; do not add a parallel flag.
 if command -v jabali >/dev/null 2>&1; then
-  jabali disk-usage refresh-all >/dev/null 2>&1 || true
+  # Let the "refreshed=N skipped=N failed=N" summary reach the journal (2>&1),
+  # so "did the nightly sweep run?" is answerable from the service logs — it
+  # wasn't while this was >/dev/null. `|| true` still keeps a hard failure from
+  # aborting the rest of the timer (this is an optional, idempotent step).
+  jabali disk-usage refresh-all 2>&1 || true
 fi
 
 exit 0
