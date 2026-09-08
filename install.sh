@@ -13644,6 +13644,54 @@ print(sql[0]["id"] if sql else "")' 2>/dev/null || true)"
     _warn "Stalwart SpamSettings update failed — spam filter will keep current settings (probably default github URL); inspect with 'stalwart-cli get x:SpamSettings --json'"
   fi
 
+  # GH #1581: lock down cross-domain principal enumeration on the default
+  # User role. Stalwart's built-in "User" role enables jmapPrincipalQuery
+  # plus the WebDAV principal-search family, so any authenticated mailbox
+  # can enumerate every account on the server across ALL domains. The
+  # Bulwark calendar/file share picker and recipient autocomplete surface
+  # this, but the leak is the JMAP/DAV endpoint itself — a user can query it
+  # directly with any JMAP client. Per-domain isolation via Stalwart tenants
+  # is Enterprise-only; on the OSS edition the lever is to disable the
+  # enumeration permissions on the User role. disabledPermissions takes
+  # precedence over enabled/inherited perms, so this fails closed. Get +
+  # GetAvailability stay enabled (they require a known principal id and so
+  # can't enumerate) to preserve self-account reads and free/busy lookups.
+  # Trade-off: in-webmail sharing-by-search stops working, since Bulwark
+  # resolves share targets through the same query — accepted, because
+  # cross-tenant enumeration is a data-isolation leak.
+  #
+  # Resolve the built-in User role by description (its id is not guaranteed
+  # stable) instead of hardcoding it. Runs on every install/update run,
+  # regardless of skip_apply, like the convergers above.
+  _log "converging Stalwart User-role principal-enumeration lockdown (GH #1581)"
+  local user_role_id
+  user_role_id="$(STALWART_URL="http://127.0.0.1:${jmap_port}" \
+    STALWART_USER="admin" \
+    STALWART_PASSWORD="$admin_token" \
+    /usr/local/bin/stalwart-cli query x:Role --json 2>/dev/null \
+    | python3 -c 'import json,sys
+# stalwart-cli emits NDJSON (one object per line). Pick the global built-in
+# "User" role: description=="User" and no tenant. Empty output => leave the
+# role untouched (fail safe — we never disable enumeration on the wrong role).
+roles = [json.loads(l) for l in sys.stdin if l.strip()]
+u = [r for r in roles if r.get("description") == "User" and not r.get("memberTenantId")]
+print(u[0]["id"] if u else "")' 2>/dev/null || true)"
+  if [[ -z "$user_role_id" ]]; then
+    _warn "could not resolve the built-in Stalwart User role — skipping principal-enumeration lockdown (GH #1581); cross-domain enumeration may persist"
+  else
+    # Object-of-bools is how Stalwart serializes a set<Permission> (see
+    # `stalwart-cli get x:Role <id> --json`); an array is rejected.
+    local princ_patch='{"disabledPermissions":{"jmapPrincipalQuery":true,"jmapPrincipalQueryChanges":true,"jmapPrincipalChanges":true,"davPrincipalList":true,"davPrincipalMatch":true,"davPrincipalSearch":true,"davPrincipalSearchPropSet":true}}'
+    if STALWART_URL="http://127.0.0.1:${jmap_port}" \
+      STALWART_USER="admin" \
+      STALWART_PASSWORD="$admin_token" \
+      /usr/local/bin/stalwart-cli update x:Role "$user_role_id" --json "$princ_patch" >/dev/null 2>&1; then
+      _ok "Stalwart User role: cross-domain principal enumeration disabled (id=${user_role_id}; GH #1581)"
+    else
+      _warn "Stalwart User-role principal lockdown failed for id ${user_role_id} — cross-domain enumeration may persist; inspect with 'stalwart-cli get x:Role ${user_role_id} --json'"
+    fi
+  fi
+
   # Delete factory NetworkListeners ([::]:8080, [::]:443) before restart.
   # stalwart-cli apply is create-only; only an explicit API delete removes
   # factory-seeded objects from RocksDB. Must happen while Stalwart is
