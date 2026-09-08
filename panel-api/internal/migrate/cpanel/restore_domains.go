@@ -116,27 +116,40 @@ func ImportDomains(
 		// ERR_CERT_COMMON_NAME_INVALID on https://www.<domain>.
 		createWWW bool
 	}
+	// Build the create list from the UNION of the source's DNS zones and its web
+	// domains, deduped by name. GH #1606: ZoneFiles and DomainNames were an
+	// either/or — ZoneFiles when present, DomainNames only as a fallback when
+	// empty — so a web domain WITHOUT a matching source zone was silently dropped
+	// whenever the account had at least one zone. (Hestia's JAB-28 zone feeding
+	// made this bite: an account with some zoned domains lost every web-only
+	// domain, e.g. a subdomain served from the web with DNS hosted off-box.)
+	// Zone-derived entries come first because they carry createWWW from the
+	// source zone; a web-only domain has no zone to read, so it stays apex-only
+	// (createWWW=false), matching the old DomainNames-branch default.
 	var entries []domainEntry
-	if len(parsed.ZoneFiles) > 0 {
-		for _, zonePath := range parsed.ZoneFiles {
-			domainName := strings.TrimSuffix(filepath.Base(zonePath), ".db")
-			if domainName == "" {
-				res.Skipped = append(res.Skipped, fmt.Sprintf("domain_skip:empty_name_from_%s", zonePath))
-				continue
-			}
-			entries = append(entries, domainEntry{
-				name:      domainName,
-				docRoot:   docRootFor(domainName),
-				createWWW: zoneHasWWWRecord(zonePath, domainName),
-			})
+	seen := map[string]bool{}
+	for _, zonePath := range parsed.ZoneFiles {
+		domainName := strings.TrimSuffix(filepath.Base(zonePath), ".db")
+		if domainName == "" {
+			res.Skipped = append(res.Skipped, fmt.Sprintf("domain_skip:empty_name_from_%s", zonePath))
+			continue
 		}
-	} else {
-		for _, name := range parsed.DomainNames {
-			if name == "" {
-				continue
-			}
-			entries = append(entries, domainEntry{name: name, docRoot: docRootFor(name)})
+		if seen[domainName] {
+			continue
 		}
+		seen[domainName] = true
+		entries = append(entries, domainEntry{
+			name:      domainName,
+			docRoot:   docRootFor(domainName),
+			createWWW: zoneHasWWWRecord(zonePath, domainName),
+		})
+	}
+	for _, name := range parsed.DomainNames {
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		entries = append(entries, domainEntry{name: name, docRoot: docRootFor(name)})
 	}
 
 	for _, e := range entries {
