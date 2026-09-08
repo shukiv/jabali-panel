@@ -1342,8 +1342,10 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		}
 		if deps.Domains != nil {
 			api.RegisterDomainPHPSettingsRoutes(v1, api.DomainPHPSettingsHandlerConfig{
-				Domains:  deps.Domains,
-				PHPPools: deps.PHPPools,
+				Domains:          deps.Domains,
+				PHPPools:         deps.PHPPools,
+				Agent:            deps.Agent,
+				PoolIniOverrides: deps.PHPPoolIniOverrides,
 			})
 			// GH #1332 item 14: per-domain env vars.
 			api.RegisterDomainEnvVarsRoutes(v1, api.DomainEnvVarsHandlerConfig{

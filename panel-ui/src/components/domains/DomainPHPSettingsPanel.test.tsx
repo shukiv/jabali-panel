@@ -81,4 +81,31 @@ describe("DomainPHPSettingsPanel (GH #1543)", () => {
       expect(mocked.delete).toHaveBeenCalledWith("/domains/d1/php-pool"),
     );
   });
+
+  // GH #1543 (johnnyq): with no per-domain override, each dropdown's inherit
+  // option shows the real inherited value labelled "(Default)", not a generic
+  // "Use pool default".
+  it("labels the inherit option with the real pool default value", async () => {
+    mocked.get.mockImplementation((url: string) => {
+      if (url === "/php/versions") return Promise.resolve({ data: { versions: ["8.3"] } });
+      if (url === "/domains/d1/php-settings")
+        return Promise.resolve({
+          data: {
+            ...SETTINGS,
+            pool_defaults: {
+              memory_limit: "256M",
+              max_execution_time: "30",
+            },
+          },
+        });
+      return Promise.resolve({ data: {} });
+    });
+    renderPanel();
+    // The memory-limit select's inherit option now reads "256M (Default)"; the
+    // execution-time one appends the unit → "30s (Default)".
+    expect(await screen.findByText("256M (Default)")).toBeInTheDocument();
+    expect(screen.getByText("30s (Default)")).toBeInTheDocument();
+    // A directive with no resolved default keeps the generic label.
+    expect(screen.getAllByText("Use pool default").length).toBeGreaterThan(0);
+  });
 });
