@@ -43,6 +43,10 @@ type DomainHandlerConfig struct {
 	// the rename, but its lineage still covers mail.<old>). Optional — a panel
 	// without per-domain mail TLS simply skips that heal.
 	MailCerts repository.MailCertificateRepository
+	// Mailboxes lets the GH #1603 facet-preserving delete purge a domain's
+	// mailbox rows when the caller opts to also delete the Mail Domain. Optional —
+	// nil skips the row cleanup (Stalwart accounts are purged regardless).
+	Mailboxes repository.MailboxRepository
 	// FtpAccounts lets the GH #1579 rename refuse when an FTP/SFTP subaccount is
 	// homed at or under the docroot being moved — its jail/chroot is not moved
 	// automatically. Optional — nil skips the check (the rename proceeds).
@@ -1359,6 +1363,35 @@ func (h *domainHandler) delete(c *gin.Context) {
 	}
 	if !claims.IsAdmin && domain.UserID != claims.UserID {
 		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		return
+	}
+
+	// GH #1603 facet-preserving delete: mail + DNS are facets of this one row, so
+	// "delete the Web Domain, keep the Mail Domain / DNS Zone" cannot delete the
+	// row. When the caller opts to keep at least one facet (delete_mail=false
+	// and/or delete_dns=false, defaults true), tear down only the web facet and
+	// KEEP the row (web-off). A facet the domain doesn't have is a no-op.
+	deleteFiles := c.Query("delete_files") == "true"
+	hasMail := domain.EmailEnabled
+	hasDNS := !domain.DNSDisabled
+	deleteMail := c.Query("delete_mail") != "false"
+	deleteDNS := c.Query("delete_dns") != "false"
+	if (hasMail && !deleteMail) || (hasDNS && !deleteDNS) {
+		// The panel's own primary domain is never facet-deleted (its web is the
+		// panel). Mirror the full-delete row-layer protection.
+		if domain.IsPanelPrimary {
+			c.JSON(http.StatusForbidden, gin.H{"error": "panel_primary_protected"})
+			return
+		}
+		warnings, ferr := h.facetPreservingWebDelete(ctx, domain, hasMail && deleteMail, hasDNS && deleteDNS, deleteFiles)
+		if ferr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"kept":     gin.H{"mail": hasMail && !deleteMail, "dns": hasDNS && !deleteDNS},
+			"warnings": warnings,
+		})
 		return
 	}
 

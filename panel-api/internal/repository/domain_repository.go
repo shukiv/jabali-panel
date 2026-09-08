@@ -128,6 +128,14 @@ type DomainRepository interface {
 	// allowlist; enabling without a timestamp or disabling without clearing
 	// the timestamp is a bug waiting to happen.
 	UpdateDNSSECEnabled(ctx context.Context, id string, enabled bool) error
+	// UpdateWebDisabled / UpdateDNSDisabled flip the facet flags for a
+	// facet-preserving delete (GH #1603): "delete the Web Domain, keep the
+	// Mail Domain / DNS Zone" removes the web (or DNS) facet while keeping the
+	// row. Dedicated setters because neither web_disabled nor dns_disabled is in
+	// Update()'s allowlist, and the flip must land BEFORE the host teardown so
+	// the reconciler does not re-render what the teardown just removed.
+	UpdateWebDisabled(ctx context.Context, id string, disabled bool) error
+	UpdateDNSDisabled(ctx context.Context, id string, disabled bool) error
 	// AttachDockerApp wires an existing (tenant-managed) domain to a
 	// docker app: rewrites nginx_rules + sets docker_app_id in one
 	// shot. Dedicated method because docker_app_id is not in
@@ -751,6 +759,31 @@ func (r *domainRepo) UpdateDNSSECEnabled(ctx context.Context, id string, enabled
 	res := r.db.WithContext(ctx).Model(&models.Domain{}).
 		Where("id = ?", id).
 		Updates(updates)
+	if res.Error != nil {
+		return translate(res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// UpdateWebDisabled flips web_disabled (GH #1603 facet-preserving delete).
+// Dedicated setter: web_disabled is not in Update()'s allowlist, and the flip
+// must precede the host web teardown so the reconciler stops rendering the vhost.
+func (r *domainRepo) UpdateWebDisabled(ctx context.Context, id string, disabled bool) error {
+	return r.updateBoolColumn(ctx, id, "web_disabled", disabled)
+}
+
+// UpdateDNSDisabled flips dns_disabled (GH #1603 facet-preserving delete).
+func (r *domainRepo) UpdateDNSDisabled(ctx context.Context, id string, disabled bool) error {
+	return r.updateBoolColumn(ctx, id, "dns_disabled", disabled)
+}
+
+func (r *domainRepo) updateBoolColumn(ctx context.Context, id, column string, val bool) error {
+	res := r.db.WithContext(ctx).Model(&models.Domain{}).
+		Where("id = ?", id).
+		Updates(map[string]any{column: val, "updated_at": time.Now().UTC()})
 	if res.Error != nil {
 		return translate(res.Error)
 	}

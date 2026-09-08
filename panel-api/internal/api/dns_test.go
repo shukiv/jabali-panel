@@ -260,6 +260,24 @@ func (m *mockDomainRepo) UpdateDNSSECEnabled(ctx context.Context, id string, ena
 	return nil
 }
 
+func (m *mockDomainRepo) UpdateWebDisabled(ctx context.Context, id string, disabled bool) error {
+	d, ok := m.domains[id]
+	if !ok {
+		return repository.ErrNotFound
+	}
+	d.WebDisabled = disabled
+	return nil
+}
+
+func (m *mockDomainRepo) UpdateDNSDisabled(ctx context.Context, id string, disabled bool) error {
+	d, ok := m.domains[id]
+	if !ok {
+		return repository.ErrNotFound
+	}
+	d.DNSDisabled = disabled
+	return nil
+}
+
 func (m *mockDomainRepo) UpdateGhostState(ctx context.Context, id, state string, checkedAt time.Time, detail *string) error {
 	d, ok := m.domains[id]
 	if !ok {
@@ -1293,6 +1311,7 @@ func (r *mockDomainRepo) RewriteDocRootPrefix(context.Context, string, string, s
 }
 func (r *mockDomainRepo) TransferOwner(context.Context, string, string, string) error { return nil }
 
-
 // ListByZoneIDs added for the JAB-374 batch interface method.
-func (m *mockDNSRecordRepo) ListByZoneIDs(context.Context, []string) ([]models.DNSRecord, error) { return nil, nil }
+func (m *mockDNSRecordRepo) ListByZoneIDs(context.Context, []string) ([]models.DNSRecord, error) {
+	return nil, nil
+}

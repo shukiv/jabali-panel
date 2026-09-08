@@ -111,6 +111,32 @@ func (h *domainMailPurgeHandler) purge(c *gin.Context) {
 		return
 	}
 
+	deleted, warnings, hardErr := purgeDomainMailService(ctx, h.cfg, dom)
+	if hardErr != nil {
+		respondAgentErr(c, "purge_accounts_failed", hardErr)
+		return
+	}
+
+	c.JSON(http.StatusOK, domainMailPurgeResponse{
+		DomainID:         dom.ID,
+		DomainName:       dom.Name,
+		MailboxesDeleted: deleted,
+		Warnings:         warnings,
+	})
+}
+
+// purgeDomainMailService tears down the MAIL facet of a domain while keeping the
+// domain row (its web + DNS). It is the shared core of the mail-only-delete
+// endpoint (GH #1387) AND the facet-preserving Web Domain delete (GH #1603), so
+// both run the exact same ordered teardown.
+//
+// hardErr is set ONLY when the purge_accounts HARD GATE fails — at that point
+// nothing DB-side has been touched, so the caller must surface it (502/idempotent
+// retry). Every later step is best-effort and comes back as a warning; the
+// reconcilers re-converge on residue. deleted is the count of user mailbox rows
+// removed. The caller must ensure the domain is still registered in Stalwart
+// (purge_accounts is the gate that runs while it is).
+func purgeDomainMailService(ctx context.Context, cfg DomainMailPurgeHandlerConfig, dom *models.Domain) (deleted int, warnings []string, hardErr error) {
 	// Once we start the teardown it must run to completion regardless of the
 	// client hanging up: purge_accounts destroys Stalwart accounts, and a
 	// cancelled ctx aborting steps 2–6 would leave email_enabled=1, half-deleted
@@ -118,18 +144,15 @@ func (h *domainMailPurgeHandler) purge(c *gin.Context) {
 	// from request cancellation (per-step timeouts below still bound it).
 	ctx = context.WithoutCancel(ctx)
 
-	var warnings []string
-
 	// 1. HARD GATE — destroy every Stalwart account under the domain, BY DOMAIN
 	//    (catches orphaned accounts a row-driven loop would miss), while the
 	//    domain is still registered in Stalwart. On failure nothing DB-side has
-	//    been touched: return 502 and let the operator retry (it is idempotent).
+	//    been touched: return the error and let the operator retry (idempotent).
 	pctx, cancel := context.WithTimeout(ctx, domainMailPurgeAgentTimeout)
-	_, perr := h.cfg.Agent.Call(pctx, "mail.domain.purge_accounts", map[string]any{"domain": dom.Name})
+	_, perr := cfg.Agent.Call(pctx, "mail.domain.purge_accounts", map[string]any{"domain": dom.Name})
 	cancel()
 	if perr != nil {
-		respondAgentErr(c, "purge_accounts_failed", perr)
-		return
+		return 0, nil, perr
 	}
 
 	// 2. Delete the USER mailbox rows. The domain row STAYS (web domain kept), so
@@ -139,14 +162,13 @@ func (h *domainMailPurgeHandler) purge(c *gin.Context) {
 	//    infra ensured per-domain regardless of email_enabled by the sendmail-
 	//    cred reconciler, which re-converges its Stalwart account on its next
 	//    tick — deleting the row here would only churn it back.
-	deleted := 0
-	if h.cfg.Mailboxes != nil {
-		rows, _, lerr := h.cfg.Mailboxes.ListByDomainID(ctx, dom.ID, repository.ListOptions{ExcludeSystem: true})
+	if cfg.Mailboxes != nil {
+		rows, _, lerr := cfg.Mailboxes.ListByDomainID(ctx, dom.ID, repository.ListOptions{ExcludeSystem: true})
 		if lerr != nil {
 			warnings = append(warnings, "could not enumerate mailboxes for row cleanup")
 		}
 		for i := range rows {
-			if derr := h.cfg.Mailboxes.Delete(ctx, rows[i].ID); derr != nil {
+			if derr := cfg.Mailboxes.Delete(ctx, rows[i].ID); derr != nil {
 				warnings = append(warnings, "mailbox row "+rows[i].LocalPart+" not removed")
 				continue
 			}
@@ -158,7 +180,7 @@ func (h *domainMailPurgeHandler) purge(c *gin.Context) {
 	//    teardown is best-effort (the reconciler re-converges), but the flag is
 	//    always cleared — the accounts are gone, so the domain no longer has mail.
 	dctx, cancel2 := context.WithTimeout(ctx, domainEmailAgentTimeout)
-	_, derr := h.cfg.Agent.Call(dctx, "domain.email_disable", map[string]any{
+	_, derr := cfg.Agent.Call(dctx, "domain.email_disable", map[string]any{
 		"domain_id":   dom.ID,
 		"domain_name": dom.Name,
 	})
@@ -166,7 +188,7 @@ func (h *domainMailPurgeHandler) purge(c *gin.Context) {
 	if derr != nil {
 		warnings = append(warnings, "Stalwart domain de-registration reported an error; the reconciler will retry")
 	}
-	if uerr := h.cfg.Domains.UpdateEmailState(ctx, dom.ID, repository.DomainEmailState{
+	if uerr := cfg.Domains.UpdateEmailState(ctx, dom.ID, repository.DomainEmailState{
 		Enabled:        false,
 		EmailEnabledAt: nil,
 	}); uerr != nil {
@@ -178,18 +200,18 @@ func (h *domainMailPurgeHandler) purge(c *gin.Context) {
 	// domain that no longer has mail. Clear the flag; the MTA-STS reconciler's
 	// disable branch (!enabled && applied_id != 0) tears the policy + DNS down.
 	if dom.MTASTSEnabled {
-		if _, mErr := h.cfg.Domains.UpdateMTASTSEnabled(ctx, dom.ID, false); mErr != nil {
+		if _, mErr := cfg.Domains.UpdateMTASTSEnabled(ctx, dom.ID, false); mErr != nil {
 			warnings = append(warnings, "MTA-STS not disabled; turn it off manually if it lingers")
 		}
 	}
 
 	// 4. Remove the managed mail DNS (M6 set + mail-specific bootstrap rows).
-	warnings = append(warnings, purgeMailDNS(ctx, h.cfg.DNSZones, h.cfg.DNSRecords, h.cfg.ServerSettings, dom.ID)...)
+	warnings = append(warnings, purgeMailDNS(ctx, cfg.DNSZones, cfg.DNSRecords, cfg.ServerSettings, dom.ID)...)
 
 	// 5. Remove the per-domain mail vhost so nginx stops referencing the mail
 	//    lineage BEFORE its files are deleted (cert/vhost delete-parity, #754).
 	vctx, cancel3 := context.WithTimeout(ctx, domainEmailAgentTimeout)
-	_, verr := h.cfg.Agent.Call(vctx, "webmail.vhost_remove", map[string]any{"domain_name": dom.Name})
+	_, verr := cfg.Agent.Call(vctx, "webmail.vhost_remove", map[string]any{"domain_name": dom.Name})
 	cancel3()
 	if verr != nil {
 		warnings = append(warnings, "mail vhost not removed; remove it manually if it lingers")
@@ -197,11 +219,11 @@ func (h *domainMailPurgeHandler) purge(c *gin.Context) {
 
 	// 6. Delete the mail TLS lineage (auto-renewing on disk) + its DB row. Skips
 	//    cleanly when the domain never opted into a mail cert.
-	if h.cfg.MailCerts != nil {
-		row, cerr := h.cfg.MailCerts.GetByDomain(ctx, dom.ID)
+	if cfg.MailCerts != nil {
+		row, cerr := cfg.MailCerts.GetByDomain(ctx, dom.ID)
 		if cerr == nil && row != nil {
 			sctx, cancel4 := context.WithTimeout(ctx, domainEmailAgentTimeout)
-			_, serr := h.cfg.Agent.Call(sctx, "ssl.mail.delete", map[string]any{
+			_, serr := cfg.Agent.Call(sctx, "ssl.mail.delete", map[string]any{
 				"domain":       dom.Name,
 				"lineage_path": row.LineagePath,
 			})
@@ -209,18 +231,13 @@ func (h *domainMailPurgeHandler) purge(c *gin.Context) {
 			if serr != nil {
 				warnings = append(warnings, "mail certificate files not removed on disk; delete the lineage manually")
 			}
-			if delErr := h.cfg.MailCerts.Delete(ctx, row.ID); delErr != nil {
+			if delErr := cfg.MailCerts.Delete(ctx, row.ID); delErr != nil {
 				warnings = append(warnings, "mail certificate record not removed")
 			}
 		}
 	}
 
-	c.JSON(http.StatusOK, domainMailPurgeResponse{
-		DomainID:         dom.ID,
-		DomainName:       dom.Name,
-		MailboxesDeleted: deleted,
-		Warnings:         warnings,
-	})
+	return deleted, warnings, nil
 }
 
 // purgeMailDNS removes the managed mail records for a domain: the M6 set

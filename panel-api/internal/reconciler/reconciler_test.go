@@ -336,6 +336,24 @@ func (f *fakeDomainRepo) UpdateDNSSECEnabled(ctx context.Context, id string, ena
 	return nil
 }
 
+func (f *fakeDomainRepo) UpdateWebDisabled(ctx context.Context, id string, disabled bool) error {
+	d, ok := f.domains[id]
+	if !ok {
+		return &notFoundErr{}
+	}
+	d.WebDisabled = disabled
+	return nil
+}
+
+func (f *fakeDomainRepo) UpdateDNSDisabled(ctx context.Context, id string, disabled bool) error {
+	d, ok := f.domains[id]
+	if !ok {
+		return &notFoundErr{}
+	}
+	d.DNSDisabled = disabled
+	return nil
+}
+
 func (f *fakeDomainRepo) UpdateGhostState(ctx context.Context, id, state string, checkedAt time.Time, detail *string) error {
 	d, ok := f.domains[id]
 	if !ok {

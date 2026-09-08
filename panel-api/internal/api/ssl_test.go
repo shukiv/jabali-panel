@@ -299,6 +299,16 @@ func (m *MockDomainRepository) UpdateDNSSECEnabled(ctx context.Context, id strin
 	return args.Error(0)
 }
 
+func (m *MockDomainRepository) UpdateWebDisabled(ctx context.Context, id string, disabled bool) error {
+	args := m.Called(ctx, id, disabled)
+	return args.Error(0)
+}
+
+func (m *MockDomainRepository) UpdateDNSDisabled(ctx context.Context, id string, disabled bool) error {
+	args := m.Called(ctx, id, disabled)
+	return args.Error(0)
+}
+
 func (m *MockDomainRepository) UpdateGhostState(ctx context.Context, id, state string, checkedAt time.Time, detail *string) error {
 	args := m.Called(ctx, id, state, checkedAt, detail)
 	return args.Error(0)
