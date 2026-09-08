@@ -2,6 +2,7 @@
 // the active pane, an unknown/absent tab falls back to Overview, the breadcrumb
 // trail ends at the domain name, a tab click navigates to that tab's URL, and a
 // domain the caller can't load surfaces an error (never a blank scoped view).
+import { Grid } from "antd";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
@@ -58,6 +59,9 @@ vi.mock("../../dns/DNSRecordsPage", () => ({
 }));
 vi.mock("../../../components/logs/DomainLogsPanel", () => ({
   DomainLogsPanel: ({ domainId }: { domainId: string }) => <div>logs-pane:{domainId}</div>,
+}));
+vi.mock("./tabs/SSLTab", () => ({
+  SSLTab: ({ domain }: { domain: { id: string } }) => <div>ssl-pane:{domain.id}</div>,
 }));
 vi.mock("../../../components/domains/DomainPHPSettingsPanel", () => ({
   DomainPHPSettingsPanel: ({ domainId }: { domainId: string }) => <div>php-pane:{domainId}</div>,
@@ -168,6 +172,11 @@ describe("WebDomainPage (GH #1543)", () => {
     expect(screen.queryByText("dns-pane:d1")).not.toBeInTheDocument();
   });
 
+  it("renders the SSL pane when :tab=ssl (GH #1543, lxsdevcode)", async () => {
+    renderAt("/jabali-panel/domains/d1/ssl");
+    expect(await screen.findByText("ssl-pane:d1")).toBeInTheDocument();
+  });
+
   it("renders the Logs pane when :tab=logs (GH #1543)", async () => {
     renderAt("/jabali-panel/domains/d1/logs");
     expect(await screen.findByText("logs-pane:d1")).toBeInTheDocument();
@@ -241,5 +250,24 @@ describe("WebDomainPage (GH #1543)", () => {
     domainQ.value = { data: undefined, isLoading: false, isError: true };
     renderAt("/jabali-panel/domains/d1");
     expect(await screen.findByText("Domain not available")).toBeInTheDocument();
+  });
+
+  it("collapses the tab strip to a Select on a narrow screen and navigates on change (GH #1543)", async () => {
+    // `md === false` is the mobile branch; the desktop tests exercise the
+    // default (unknown breakpoint) path.
+    const bp = vi.spyOn(Grid, "useBreakpoint").mockReturnValue({ md: false });
+    try {
+      renderAt("/jabali-panel/domains/d1");
+      // The Overview pane still renders under the Select.
+      const combo = await screen.findByRole("combobox");
+      expect(screen.getByText("Preview URL")).toBeInTheDocument();
+      // Opening the Select and choosing another section navigates to its URL —
+      // the same URL-per-tab contract the desktop strip uses.
+      fireEvent.mouseDown(combo);
+      fireEvent.click(await screen.findByText("Caching"));
+      expect(navigate).toHaveBeenCalledWith("/jabali-panel/domains/d1/caching");
+    } finally {
+      bp.mockRestore();
+    }
   });
 });
