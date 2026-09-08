@@ -29,6 +29,7 @@ import { DomainIndexButton } from "../../shells/DomainIndexButton";
 import { DomainInfoButton } from "../../shells/DomainInfoButton";
 import { DomainSettingsButton } from "../../shells/DomainSettingsButton";
 import { DomainChownAction } from "../../shells/admin/domains/DomainChownAction";
+import { RenameDomainDialog } from "./RenameDomainDialog";
 
 import { buildDomainDataColumns, type DomainInventoryAudience } from "./domainColumns";
 import { buildDomainMenuItems, type DomainModalType } from "./domainActions";
@@ -248,6 +249,19 @@ export const DomainInventory = ({ audience }: { audience: DomainInventoryAudienc
           )}
           {activeModal?.domainId === r.id && activeModal.type === "chown" && (
             <DomainChownAction domain={r} open={true} onClose={() => setActiveModal(null)} />
+          )}
+          {activeModal?.domainId === r.id && activeModal.type === "rename" && (
+            <RenameDomainDialog
+              domain={r}
+              open={true}
+              onClose={() => setActiveModal(null)}
+              onRenamed={() => {
+                // Same-id rename: refresh both the list and the single-row cache
+                // so the new name shows without a manual reload (GH #1579).
+                qc.invalidateQueries({ queryKey: ["list", "domains"] });
+                qc.invalidateQueries({ queryKey: ["one", "domains", r.id] });
+              }}
+            />
           )}
         </Space>
       ),

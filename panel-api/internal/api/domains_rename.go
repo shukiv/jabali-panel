@@ -91,7 +91,11 @@ func (h *domainHandler) rename(c *gin.Context) {
 		TLSRPT: h.cfg.TLSRPTAggregate,
 		// Forwarders rewrites alias forwarder targets to the new name.
 		Forwarders: h.cfg.Forwarders,
-		Log:        slog.Default(),
+		// Settings gates the mail-carry verb on ServerSettings.MailEnabled so a
+		// rename on a server without the mail module installed skips the Stalwart
+		// call instead of failing on the absent admin token (GH #1579).
+		Settings: h.cfg.ServerSettings,
+		Log:      slog.Default(),
 	}, rec, domain, newName)
 	if err != nil {
 		var re *userops.RenameError

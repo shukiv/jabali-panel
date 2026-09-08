@@ -263,16 +263,32 @@ func RenameDomain(ctx context.Context, d Deps, rec RenameReconciler, domain *mod
 		return nil, renameErr("name_taken", "%q already exists", newName)
 	}
 
+	// Is the mail module installed on this box? The mail.domain.rename verb reads
+	// the Stalwart admin token, which does not exist on a server without mail, so
+	// calling it there fails the whole rename (GH #1579). Skip the mail carry when
+	// mail is off — the same ServerSettings.MailEnabled flag middleware.ModuleMail
+	// gates every mail route on. FAIL-CLOSED: only a positive "mail disabled"
+	// reading skips it; nil Settings, a read error, or MailEnabled=true keep the
+	// verb in the flow, so a domain that has mail never renames without carrying it.
+	mailInstalled := true
+	if d.Settings != nil {
+		if s, serr := d.Settings.Get(ctx); serr == nil && s != nil {
+			mailInstalled = s.MailEnabled
+		}
+	}
+
 	// Dry-run the mail-domain rename BEFORE moving any files, so a genuine
 	// conflict (the new name already carries mail in Stalwart) fails the rename
 	// while nothing is committed. Fail-closed: an agent error here refuses.
-	if dryRaw, aerr := d.Agent.Call(ctx, "mail.domain.rename", map[string]any{
-		"old": oldName, "new": newName, "dry_run": true,
-	}); aerr != nil {
-		return nil, renameErr("unavailable", "could not check mail before renaming %q: %v", oldName, aerr)
-	} else if st, _ := mailRenameStatus(dryRaw); st == mailRenameConflict {
-		return nil, renameErr("mail_domain_conflict",
-			"%q already has mail configured in Stalwart — delete or migrate it before renaming %q into it", newName, oldName)
+	if mailInstalled {
+		if dryRaw, aerr := d.Agent.Call(ctx, "mail.domain.rename", map[string]any{
+			"old": oldName, "new": newName, "dry_run": true,
+		}); aerr != nil {
+			return nil, renameErr("unavailable", "could not check mail before renaming %q: %v", oldName, aerr)
+		} else if st, _ := mailRenameStatus(dryRaw); st == mailRenameConflict {
+			return nil, renameErr("mail_domain_conflict",
+				"%q already has mail configured in Stalwart — delete or migrate it before renaming %q into it", newName, oldName)
+		}
 	}
 
 	// ---- orchestrate ----
@@ -304,15 +320,17 @@ func RenameDomain(ctx context.Context, d Deps, rec RenameReconciler, domain *mod
 	//     is fully re-runnable. Statuses renamed | already | not_in_registry all
 	//     proceed; a conflict (racing another rename since the dry-run) refuses.
 	var mailWarnings []string
-	if mailRaw, aerr := d.Agent.Call(ctx, "mail.domain.rename", map[string]any{
-		"old": oldName, "new": newName,
-	}); aerr != nil {
-		return nil, renameErr("mail_rename_failed", "could not carry mail to the new name for %q: %v", oldName, aerr)
-	} else if st, w := mailRenameStatus(mailRaw); st == mailRenameConflict {
-		return nil, renameErr("mail_domain_conflict",
-			"%q already has mail configured in Stalwart — delete or migrate it before renaming %q into it", newName, oldName)
-	} else {
-		mailWarnings = w
+	if mailInstalled {
+		if mailRaw, aerr := d.Agent.Call(ctx, "mail.domain.rename", map[string]any{
+			"old": oldName, "new": newName,
+		}); aerr != nil {
+			return nil, renameErr("mail_rename_failed", "could not carry mail to the new name for %q: %v", oldName, aerr)
+		} else if st, w := mailRenameStatus(mailRaw); st == mailRenameConflict {
+			return nil, renameErr("mail_domain_conflict",
+				"%q already has mail configured in Stalwart — delete or migrate it before renaming %q into it", newName, oldName)
+		} else {
+			mailWarnings = w
+		}
 	}
 
 	// 2. Rename the row (name + doc_root as a unit) — the authoritative flip.

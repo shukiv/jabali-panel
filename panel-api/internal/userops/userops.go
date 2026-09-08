@@ -78,7 +78,17 @@ type Deps struct {
 	TLSRPT TLSRPTReKeyer
 	// Forwarders rewrites the domain's alias forwarder targets to the new name on
 	// a rename (GH #1579). Optional: nil skips (the rename still succeeds).
-	Forwarders   ForwarderAliasReKeyer
+	Forwarders ForwarderAliasReKeyer
+	// Settings lets RenameDomain skip the mail-carry agent verb on a server where
+	// the mail module is not installed (GH #1579): the mail.domain.rename verb
+	// reads the Stalwart admin token, which is absent on a mail-less box, so it
+	// would fail the whole rename. Gated on the same ServerSettings.MailEnabled
+	// flag that middleware.ModuleMail uses, so the rename honours the optional
+	// module exactly like every other mail surface. Optional and FAIL-CLOSED:
+	// nil, a read error, or MailEnabled=true all keep the mail verb in the flow
+	// (a domain that has mail must never rename without carrying it), so only a
+	// positive "mail module disabled" reading skips it.
+	Settings     repository.ServerSettingsRepository
 	Agent        AgentCaller
 	KratosClient *kratosclient.Client
 	BcryptCost   int

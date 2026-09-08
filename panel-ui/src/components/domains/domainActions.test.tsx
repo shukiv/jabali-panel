@@ -49,7 +49,7 @@ describe("buildDomainMenuItems — admin audience", () => {
 
   it("offers the admin item set and none of the tenant-only actions", () => {
     const k = keys(buildDomainMenuItems(row(), ctx({ audience: admin, caps: { dns_enabled: true } })));
-    expect(k).toEqual(["edit", "dns", "info", "redirects", "index", "settings", "caching", "chown", "toggle", "delete"]);
+    expect(k).toEqual(["edit", "dns", "info", "redirects", "index", "settings", "caching", "chown", "rename", "toggle", "delete"]);
     // tenant-only actions never appear on the admin list
     for (const t of ["directory-privacy", "nginx-options", "rewrite-rules", "document-root", "preview-url", "bot-challenge"]) {
       expect(k).not.toContain(t);
@@ -65,6 +65,19 @@ describe("buildDomainMenuItems — admin audience", () => {
   it("hides Delete for the System domain (is_panel_primary guard)", () => {
     const k = keys(buildDomainMenuItems(row({ is_panel_primary: true }), ctx({ audience: admin })));
     expect(k).not.toContain("delete");
+  });
+
+  it("offers Rename and opens the rename modal (GH #1579)", () => {
+    const onOpenModal = vi.fn();
+    const items = buildDomainMenuItems(row(), ctx({ audience: admin, onOpenModal }));
+    expect(keys(items)).toContain("rename");
+    byKey(items, "rename")?.onClick?.();
+    expect(onOpenModal).toHaveBeenCalledWith("d1", "rename");
+  });
+
+  it("hides Rename for the System domain (backend refuses panel_primary, GH #1579)", () => {
+    const k = keys(buildDomainMenuItems(row({ is_panel_primary: true }), ctx({ audience: admin })));
+    expect(k).not.toContain("rename");
   });
 
   it("Edit and DNS navigate to the admin route prefix", () => {
