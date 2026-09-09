@@ -69,7 +69,13 @@
       "ssl": "مدير SSL",
       "php-settings": "إعدادات PHP",
       "cron": "Cron",
-      "backups": "النسخ الاحتياطي/الاستعادة"
+      "backups": "النسخ الاحتياطي/الاستعادة",
+      "group": {
+        "hosting": "الاستضافة",
+        "services": "الخدمات",
+        "tools": "الأدوات",
+        "account": "الحساب"
+      }
     }
   },
   "login": {

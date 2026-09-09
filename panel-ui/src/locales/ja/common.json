@@ -69,7 +69,13 @@
       "ssl": "SSL マネージャー",
       "php-settings": "PHP 設定",
       "cron": "Cron",
-      "backups": "バックアップ／復元"
+      "backups": "バックアップ／復元",
+      "group": {
+        "hosting": "ホスティング",
+        "services": "サービス",
+        "tools": "ツール",
+        "account": "アカウント"
+      }
     }
   },
   "login": {

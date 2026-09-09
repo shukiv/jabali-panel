@@ -69,7 +69,13 @@
       "ssl": "מנהל SSL",
       "php-settings": "הגדרות PHP",
       "cron": "Cron",
-      "backups": "גיבוי ושחזור"
+      "backups": "גיבוי ושחזור",
+      "group": {
+        "hosting": "אחסון",
+        "services": "שירותים",
+        "tools": "כלים",
+        "account": "חשבון"
+      }
     }
   },
   "login": {

@@ -69,7 +69,13 @@
       "ssl": "Gestor de SSL",
       "php-settings": "Ajustes de PHP",
       "cron": "Cron",
-      "backups": "Copia y restauración"
+      "backups": "Copia y restauración",
+      "group": {
+        "hosting": "Alojamiento",
+        "services": "Servicios",
+        "tools": "Herramientas",
+        "account": "Cuenta"
+      }
     }
   },
   "login": {

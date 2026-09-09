@@ -40,7 +40,9 @@ import {
   ShieldCheckOutlined,
   SwapOutlined,
   TeamOutlined,
-  ContainerOutlined
+  ContainerOutlined,
+  ToolOutlined,
+  UserOutlined
 } from "@icons";
 import { createElement } from "react";
 import type { ComponentType } from "react";
@@ -399,6 +401,65 @@ export const userNav: NavItem[] = [
     path: "/jabali-panel/backups",
   },
 ];
+
+// A visual grouping of userNav leaf entries in the tenant sidebar
+// (GH #1626). The leaves themselves stay flat in `userNav` — breadcrumb,
+// header search, and selectedNavKey all consume that flat list unchanged;
+// a group only references leaves by key so grouping can never drift from
+// the routes that actually exist.
+//
+// `collapsible: false` renders as an always-open AntD `type:"group"`
+// (labelled header, items always shown) — Hosting and Services. `true`
+// renders as a collapsible SubMenu, collapsed by default, that pops its
+// children out when the sider itself is collapsed — Tools and Account;
+// those two carry an `icon` because a collapsed SubMenu shows only its
+// icon. Every userNav key except the standalone Dashboard belongs to
+// exactly one group (asserted by nav.test.ts).
+export type NavGroup = {
+  key: string;
+  /** i18n key (see src/locales/en/common.json → nav.user.group.*). */
+  label: string;
+  collapsible: boolean;
+  /** Shown when the sider collapses; required for collapsible groups. */
+  icon?: ReactNode;
+  /** userNav keys in display order. */
+  itemKeys: string[];
+};
+
+export const userNavGroups: NavGroup[] = [
+  {
+    key: "hosting",
+    label: "nav.user.group.hosting",
+    collapsible: false,
+    itemKeys: ["domains", "mail", "dns", "databases", "cron", "backups"],
+  },
+  {
+    key: "services",
+    label: "nav.user.group.services",
+    collapsible: false,
+    itemKeys: ["ftp-accounts", "docker-apps"],
+  },
+  {
+    key: "tools",
+    label: "nav.user.group.tools",
+    collapsible: true,
+    icon: navIcon(ToolOutlined),
+    itemKeys: ["files", "applications", "python-apps", "disk-usage", "ssl", "logs"],
+  },
+  {
+    key: "account",
+    label: "nav.user.group.account",
+    collapsible: true,
+    icon: navIcon(UserOutlined),
+    itemKeys: ["ssh-keys", "api-tokens", "notifications", "php-settings"],
+  },
+];
+
+/** The group that owns a userNav leaf key, or undefined for a standalone
+ * entry such as Dashboard. */
+export function navGroupForKey(key: string): NavGroup | undefined {
+  return userNavGroups.find((g) => g.itemKeys.includes(key));
+}
 
 /**
  * Pick the best-matching menu entry for the current pathname using
