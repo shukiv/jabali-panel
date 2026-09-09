@@ -6,6 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect } from "react";
 
 import { apiClient } from "../apiClient";
+import { buildPageTitle } from "../lib/pageTitle";
 
 type BrandingInfo = {
   panel_brand_text: string;
@@ -105,10 +106,13 @@ export function logoURL(variant: "light" | "dark", hasCustom: boolean): string {
 }
 
 // useApplyBrandingToTitle keeps document.title in sync with brandText.
-// Empty value falls back to "Jabali Panel".
+// It composes through buildPageTitle so the address-bar host (GH #1604)
+// stays in the tab title — this hook used to overwrite document.title with a
+// host-less string on mount, which silently defeated #1604 on every panel.
+// Empty brand falls back to the default product name.
 export function useApplyBrandingToTitle() {
   const { brandText } = useBranding();
   useEffect(() => {
-    document.title = brandText ? `${brandText} — Panel` : "Jabali Panel";
+    document.title = buildPageTitle(window.location.hostname, brandText);
   }, [brandText]);
 }
