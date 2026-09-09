@@ -11,6 +11,11 @@ import "./i18n";
 import { message, notification } from "antd";
 import App from "./App";
 import { registerServiceWorker } from "./lib/registerServiceWorker";
+import { setPageTitle } from "./lib/pageTitle";
+
+// GH #1604: tab title = "<hostname> | Jabali Panel" so multiple instances are
+// distinguishable at a glance. Set before render (independent of the React tree).
+setPageTitle();
 
 // GH #970: give the STATIC message/notification methods (still used across the
 // app) the same house style as the App-scoped config in App.tsx, so every toast
