@@ -248,6 +248,61 @@ func TestDomainEmail_Get_NotFound(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, rec.Code)
 }
 
+// TestDomainEmail_Get_IncludesMailHostAWhenServerIPKnown — GH #1612: when the
+// server's public IP is known, the mail host's A/AAAA records lead the hint
+// list. On external DNS these are the records every MX/SRV/autodiscover entry
+// points at, so without them nothing resolves. Also asserts the DKIM Value is
+// the full TXT content (v=DKIM1; …), copy-pasteable as-is.
+func TestDomainEmail_Get_IncludesMailHostAWhenServerIPKnown(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	v1 := r.Group("/api/v1")
+	v1.Use(func(c *gin.Context) {
+		ginctx.SetClaims(c, &auth.AccessClaims{UserID: "user1", IsAdmin: false})
+		c.Next()
+	})
+	domains := newMockDomainRepo()
+	// Production stores the agent's DKIM value verbatim and UNQUOTED (the zone
+	// publisher adds the quotes at wire time — email_records.go). The hint's Value
+	// is that raw string, copy-pasteable into a provider's TXT field as-is.
+	sel, key := "jabali", "v=DKIM1;k=ed25519;p=AAAA"
+	domains.domains["dom1"] = &models.Domain{
+		ID: "dom1", UserID: "user1", Name: "example.com",
+		EmailEnabled: true, DkimSelector: &sel, DkimPublicKey: &key,
+	}
+	settings := &mockServerSettingsRepo{getResult: &models.ServerSettings{
+		ID: 1, PublicIPv4: "203.0.113.9", PublicIPv6: "2001:db8::9",
+	}}
+	RegisterDomainEmailRoutes(v1, DomainEmailHandlerConfig{
+		Domains: domains, Agent: &mockAgent{}, ServerSettings: settings,
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/domains/dom1/email", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	var resp domainEmailResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+
+	require.GreaterOrEqual(t, len(resp.Records), 2)
+	require.Equal(t, "A", resp.Records[0].Type, "mail-host A leads the list")
+	require.Equal(t, "mail.example.com.", resp.Records[0].Name)
+	require.Equal(t, "203.0.113.9", resp.Records[0].Value)
+	require.Equal(t, "AAAA", resp.Records[1].Type)
+	require.Equal(t, "mail.example.com.", resp.Records[1].Name)
+	require.Equal(t, "2001:db8::9", resp.Records[1].Value)
+
+	byKey := map[string]domainEmailDNSHint{}
+	for _, h := range resp.Records {
+		byKey[h.Type+":"+h.Name] = h
+	}
+	dkim, ok := byKey["TXT:jabali._domainkey.example.com."]
+	require.True(t, ok, "DKIM hint present when enabled")
+	require.Equal(t, "v=DKIM1;k=ed25519;p=AAAA", dkim.Value,
+		"DKIM Value is the raw TXT content (unquoted), copy-pasteable as-is")
+}
+
 // ---- M6 Step 6: DNS autoconfig sync ---------------------------------
 
 // Enable with DNS repos wired must insert the three M6 records

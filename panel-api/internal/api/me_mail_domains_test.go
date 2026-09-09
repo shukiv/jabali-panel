@@ -89,7 +89,7 @@ func TestMailDomains_AggregatesAndScopes(t *testing.T) {
 	cfg := MeMailDomainsConfig{
 		Domains: mdDomainRepo{ds: []models.Domain{
 			{ID: "da", UserID: "u1", Name: "a.test", EmailEnabled: true, SSLState: "active_le"},
-			{ID: "db", UserID: "u1", Name: "b.test", EmailEnabled: true, IsQuotaSuspended: true},
+			{ID: "db", UserID: "u1", Name: "b.test", EmailEnabled: true, IsQuotaSuspended: true, DNSDisabled: true},
 			{ID: "dd", UserID: "u1", Name: "off.test", EmailEnabled: false},
 			{ID: "dc", UserID: "u2", Name: "c.test", EmailEnabled: true},
 		}},
@@ -159,6 +159,14 @@ func TestMailDomains_AggregatesAndScopes(t *testing.T) {
 	}
 	if !b.IsQuotaSuspended {
 		t.Fatalf("b.test is_quota_suspended = false, want true (suspended active domain still surfaces its state)")
+	}
+	// GH #1612: dns_disabled must reach the wire so the UI can badge "External
+	// DNS" and offer the DNS-records action. b.test has DNS off; a.test does not.
+	if !b.DNSDisabled {
+		t.Fatalf("b.test dns_disabled = false, want true (external DNS)")
+	}
+	if a.DNSDisabled {
+		t.Fatalf("a.test dns_disabled = true, want false (panel-hosted DNS)")
 	}
 	if _, listed := byName["off.test"]; listed {
 		t.Fatalf("off.test (mail off) must be EXCLUDED from the mail-active list: %+v", resp.Data)

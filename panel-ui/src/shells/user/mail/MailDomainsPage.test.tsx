@@ -202,6 +202,106 @@ describe("GH #1387 — MailDomainsPage (mail-active only)", () => {
     expect(screen.queryByRole("button", { name: /Create Mail Domain/i })).not.toBeInTheDocument();
   });
 
+  // GH #1612 (johnnyq): a mail domain whose DNS is hosted externally
+  // (dns_disabled) gets an "External DNS" tag and a "DNS records" ⋯ action; a
+  // panel-hosted domain gets neither (the panel publishes the records itself).
+  const ROWS_DNS = [
+    { ...ROWS[0], id: "d-int", name: "int.test", dns_disabled: false },
+    { ...ROWS[0], id: "d-ext", name: "ext.test", dns_disabled: true },
+  ];
+
+  function mockDnsList() {
+    mocked.get
+      .mockReset()
+      .mockResolvedValue({ data: { data: ROWS_DNS, total: 2, page: 1, page_size: 2 } });
+  }
+
+  it("GH #1612: external-DNS row is tagged and offers a DNS records action", async () => {
+    mockDnsList();
+    renderPage();
+    const extRow = (await screen.findByText("ext.test")).closest("tr") as HTMLElement;
+    const intRow = (await screen.findByText("int.test")).closest("tr") as HTMLElement;
+
+    // Tag only on the external-DNS row.
+    expect(within(extRow).getByText("External DNS")).toBeInTheDocument();
+    expect(within(intRow).queryByText("External DNS")).not.toBeInTheDocument();
+
+    // ⋯ menu offers "DNS records" on the external row.
+    fireEvent.click(within(extRow).getByRole("button", { name: /Actions for/i }));
+    expect(await screen.findByRole("menuitem", { name: "DNS records" })).toBeInTheDocument();
+  });
+
+  it("GH #1612: panel-hosted-DNS row has no DNS records action", async () => {
+    mockDnsList();
+    renderPage();
+    const intRow = (await screen.findByText("int.test")).closest("tr") as HTMLElement;
+    fireEvent.click(within(intRow).getByRole("button", { name: /Actions for/i }));
+    // Menu opened (Disable present) but no DNS-records item.
+    await screen.findByRole("menuitem", { name: "Disable" });
+    expect(screen.queryByRole("menuitem", { name: "DNS records" })).not.toBeInTheDocument();
+  });
+
+  // DKIM/SPF are stored unquoted (raw provider form); the zone-file "Copy all"
+  // must quote TXT rdata or a ";" truncates DMARC/DKIM/TLS-RPT on bulk import.
+  const EMAIL_STATE = {
+    domain_id: "d-ext",
+    domain_name: "ext.test",
+    email_enabled: true,
+    records: [
+      { purpose: "A — the mail host itself", name: "mail.ext.test.", type: "A", value: "203.0.113.9" },
+      { purpose: "MX — delivers incoming mail", name: "ext.test.", type: "MX", value: "10 mail.ext.test." },
+      { purpose: "SPF — authorises this host", name: "ext.test.", type: "TXT", value: "v=spf1 mx ~all" },
+      { purpose: "DKIM — signs outbound mail", name: "jabali._domainkey.ext.test.", type: "TXT", value: "v=DKIM1;k=ed25519;p=AAAA" },
+    ],
+    warnings: [],
+  };
+
+  function mockDnsListAndEmail() {
+    mocked.get.mockReset().mockImplementation((url: string) => {
+      if (url === "/me/mail-domains") {
+        return Promise.resolve({ data: { data: ROWS_DNS, total: 2, page: 1, page_size: 2 } });
+      }
+      if (url === "/domains/d-ext/email") return Promise.resolve({ data: EMAIL_STATE });
+      return Promise.resolve({ data: {} });
+    });
+  }
+
+  it("GH #1612: DNS records action opens a modal listing records with copy buttons", async () => {
+    mockDnsListAndEmail();
+    renderPage();
+
+    const extRow = (await screen.findByText("ext.test")).closest("tr") as HTMLElement;
+    await openRowMenu(extRow, "DNS records");
+
+    // Modal opens, titled for the domain, listing the records + a copy-all.
+    expect(await screen.findByText("DNS records for ext.test")).toBeInTheDocument();
+    // Records load async after the email GET resolves.
+    expect(await screen.findByText("203.0.113.9")).toBeInTheDocument();
+    expect(screen.getByText("10 mail.ext.test.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Copy all/i })).toBeInTheDocument();
+    // A per-value copy button exists (aria-labelled with the value).
+    expect(screen.getByRole("button", { name: "Copy 203.0.113.9" })).toBeInTheDocument();
+  });
+
+  it("GH #1612: Copy all quotes TXT rdata so DKIM/SPF survive a zone import", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    mockDnsListAndEmail();
+    renderPage();
+
+    const extRow = (await screen.findByText("ext.test")).closest("tr") as HTMLElement;
+    await openRowMenu(extRow, "DNS records");
+    await screen.findByText("203.0.113.9");
+
+    fireEvent.click(screen.getByRole("button", { name: /Copy all/i }));
+    await waitFor(() => expect(writeText).toHaveBeenCalled());
+    const copied = writeText.mock.calls[0][0] as string;
+    // TXT values are quoted; non-TXT (MX) is not.
+    expect(copied).toContain('\tTXT\t"v=DKIM1;k=ed25519;p=AAAA"');
+    expect(copied).toContain('\tTXT\t"v=spf1 mx ~all"');
+    expect(copied).toContain("\tMX\t10 mail.ext.test.");
+  });
+
   // GH #1479: the mail-mode create posts the right domain shape (web off, mail on
   // Jabali, ssl le, DNS on), and webmail-OFF fires a follow-up PATCH.
   it("submits a mail domain: POST /domains (web off, jabali mail) + webmail-off PATCH", async () => {
