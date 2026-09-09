@@ -799,6 +799,10 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Packages:          deps.Packages,
 				ServerSettings:    deps.ServerSettings,
 				Agent:             deps.Agent,
+				// GH #1609 admin database chown deps.
+				Installs:     deps.WordPressInstalls,
+				AuditEvents:  repository.NewAuditEventRepository(deps.DB),
+				KratosClient: deps.KratosClient,
 			})
 		}
 		if deps.DatabaseUsers != nil && deps.DatabaseUserGrants != nil {

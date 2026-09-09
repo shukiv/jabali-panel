@@ -66,6 +66,15 @@ func logWarn(d Deps, msg string, args ...any) {
 	}
 }
 
+// logInfo guards the optional logger. Used by the reassign path to record each
+// completed row write so an operator can finish a rare mid-flight failure by
+// hand (GH #1609).
+func logInfo(d Deps, msg string, args ...any) {
+	if d.Log != nil {
+		d.Log.Info(msg, args...)
+	}
+}
+
 // CreateInput is the shared input shape. Both callers (REST + CLI)
 // build this from their own argument parsing.
 //

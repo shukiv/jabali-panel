@@ -7,6 +7,8 @@
       "users_desc": "Manage panel users, sessions, and impersonation",
       "domains": "Web Domains",
       "domains_desc": "All web domains across every user",
+      "databases": "Databases",
+      "databases_desc": "Browse all databases and reassign their owner",
       "mail": "Mail",
       "mail_desc": "Mailboxes, forwarders, and webmail",
       "packages": "Hosting Packages",
@@ -360,6 +362,7 @@
   },
   "databaselist": {
     "actions": "Actions",
+    "change_owner": "Change owner",
     "charset": "Charset",
     "created": "Created",
     "database": "Database",

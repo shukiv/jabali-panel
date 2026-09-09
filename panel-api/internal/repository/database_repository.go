@@ -22,6 +22,11 @@ type DatabaseRepository interface {
 	// UpdateName renames the database row in place (GH #1238 DB re-prefix). The
 	// on-disk rename is done by the agent; this repoints the panel row.
 	UpdateName(ctx context.Context, id, name string) error
+	// TransferOwner repoints the database row to a new tenant AND renames it onto
+	// that owner's prefix in a single UPDATE (GH #1609 reassign). Done as one
+	// statement so a reassign never leaves a row half-moved (new name / old
+	// owner, or vice-versa). The engine-level rename is done by the agent first.
+	TransferOwner(ctx context.Context, id, newUserID, newName string) error
 	// ListAllMariaDB returns every MariaDB-engine database (id + name) for the
 	// DB-usage sweeper to map schema sizes back to rows (GH #1242).
 	ListAllMariaDB(ctx context.Context) ([]models.Database, error)
@@ -127,6 +132,12 @@ func (r *databaseRepo) Delete(ctx context.Context, id string) error {
 func (r *databaseRepo) UpdateName(ctx context.Context, id, name string) error {
 	return translate(r.db.WithContext(ctx).
 		Model(&models.Database{}).Where("id = ?", id).Update("name", name).Error)
+}
+
+func (r *databaseRepo) TransferOwner(ctx context.Context, id, newUserID, newName string) error {
+	return translate(r.db.WithContext(ctx).
+		Model(&models.Database{}).Where("id = ?", id).
+		Updates(map[string]any{"user_id": newUserID, "name": newName}).Error)
 }
 
 func (r *databaseRepo) ListAllMariaDB(ctx context.Context) ([]models.Database, error) {
