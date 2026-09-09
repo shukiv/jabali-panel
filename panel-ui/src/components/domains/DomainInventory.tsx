@@ -134,21 +134,56 @@ export const DomainInventory = ({ audience }: { audience: DomainInventoryAudienc
       audience.kind === "admin"
         ? "Also permanently delete the owner's files for this domain (document root). This cannot be undone."
         : "Also permanently delete the domain's files (document root). This cannot be undone.";
+    // GH #1603: mail + DNS are facets of this one domain. Let the operator delete
+    // the Web Domain while KEEPING the Mail Domain and/or DNS Zone — unchecking a
+    // box keeps that service and the domain entry (now web-off). Both default ON
+    // (also delete). Shown only when the facet exists ("if exists").
+    const hasMail = r.email_enabled === true;
+    const hasDNS = r.dns_disabled !== true;
+    let deleteMail = true;
+    let deleteDNS = true;
+    const keepsRow = () => (hasMail && !deleteMail) || (hasDNS && !deleteDNS);
     feedback.modal.confirm({
-      title: `Delete domain "${r.name}"?`,
+      title: `Delete web domain "${r.name}"?`,
       content: (
         <div>
-          <p>This removes the domain, its DNS and its web config. This cannot be undone.</p>
+          <p>
+            This deletes the web domain (its vhost and TLS certificate).
+            {(hasMail || hasDNS) &&
+              " Uncheck a box below to keep that service — the domain entry stays for it."}
+          </p>
+          {hasMail && (
+            <div style={{ marginBottom: 6 }}>
+              <Checkbox defaultChecked onChange={(e) => { deleteMail = e.target.checked; }}>
+                Also delete the Mail Domain (mailboxes, forwarders, and mail DNS)
+              </Checkbox>
+            </div>
+          )}
+          {hasDNS && (
+            <div style={{ marginBottom: 6 }}>
+              <Checkbox defaultChecked onChange={(e) => { deleteDNS = e.target.checked; }}>
+                Also delete the DNS Zone
+              </Checkbox>
+            </div>
+          )}
           <Checkbox onChange={(e) => { deleteFiles = e.target.checked; }}>{filesCopy}</Checkbox>
         </div>
       ),
       okText: "Delete",
       okButtonProps: { danger: true },
       onOk: async () => {
+        const query: Record<string, string> = {};
+        if (deleteFiles) query.delete_files = "true";
+        // Only send the opt-OUT — the API defaults both to true (delete).
+        if (hasMail && !deleteMail) query.delete_mail = "false";
+        if (hasDNS && !deleteDNS) query.delete_dns = "false";
         await deleteMutation.mutateAsync({
           id: r.id,
-          query: deleteFiles ? { delete_files: "true" } : undefined,
+          query: Object.keys(query).length ? query : undefined,
         });
+        feedback.message.success(
+          keepsRow() ? `Web domain removed from "${r.name}"` : `Deleted "${r.name}"`,
+        );
       },
     });
   };
