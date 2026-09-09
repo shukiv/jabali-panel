@@ -47,6 +47,15 @@ type ParsedTarball struct {
 	// default zone. Populated by per-importer adapters (DA scans
 	// <HomeDir>/domains/*; Hestia scans <HomeDir>/web/*).
 	DomainNames []string
+	// SeparateWebDNSLists tells ImportDomains that ZoneFiles and DomainNames are
+	// INDEPENDENT facet lists (web dirs vs DNS zones), not two views of the same
+	// domain set. Set by importers that enumerate web and DNS separately (Hestia:
+	// web/<d> dirs vs dns/<d>/conf/<d>.db). When true, a name only in DomainNames
+	// is created web-only (dns_disabled) and a name only in ZoneFiles is created
+	// DNS-only (web_disabled) — GH #1606. When false (cpanel/DA/CloudPanel/Plesk,
+	// where ZoneFiles or DomainNames is the authoritative domain list), every
+	// imported domain is full-facet (web + DNS), the historical behavior.
+	SeparateWebDNSLists bool
 	// DocRoots optionally overrides the default docroot for a name in
 	// DomainNames. DA: <HomeDir>/domains/<dom>/public_html on source
 	// → /home/<target>/domains/<dom>/public_html in dest. Empty map
