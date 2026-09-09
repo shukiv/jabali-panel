@@ -32,7 +32,7 @@ export const DomainList = () => {
 
   useSetBreadcrumbs(
     ownerId
-      ? ownerResourceCrumbs({ id: ownerId, username: ownerQ.data?.username }, { key: "domains", label: "Domains" })
+      ? ownerResourceCrumbs({ id: ownerId, username: ownerQ.data?.username }, { key: "domains", label: "Web Domains" })
       : null,
   );
 
@@ -47,7 +47,7 @@ export const DomainList = () => {
       >
         <Space wrap align="center">
           <Typography.Title level={3} style={{ margin: 0 }}>
-            <GlobalOutlined /> Domains
+            <GlobalOutlined /> Web Domains
           </Typography.Title>
           {ownerRef && (
             <Tag closable onClose={clearOwner} color="blue">
