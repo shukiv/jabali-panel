@@ -707,6 +707,9 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				SharedCerts:     deps.SharedCerts,
 				// GH #1579 rename: re-queues the per-domain mail cert for mail.<new>.
 				MailCerts: deps.MailCerts,
+				// GH #1603 facet-preserving delete: purge mailbox rows when the
+				// caller opts to also delete the Mail Domain.
+				Mailboxes: deps.Mailboxes,
 				// GH #1579 rename: refuses when an FTP/SFTP subaccount is homed
 				// under the docroot being moved (its jail/chroot is not moved).
 				FtpAccounts: deps.FtpAccounts,
