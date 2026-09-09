@@ -986,6 +986,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				ServerSettings: deps.ServerSettings,
 				Users:          deps.Users,
 				Reconciler:     deps.Reconciler,
+				Agent:          deps.Agent, // GH #1611: DNS-zone delete teardown
 			})
 		}
 		if deps.Domains != nil && deps.SSLCerts != nil {

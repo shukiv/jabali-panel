@@ -11,6 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dnscompile"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
@@ -33,6 +34,9 @@ type DNSHandlerConfig struct {
 	// wire as the fallback (mirrors the domains list).
 	Users      repository.UserRepository
 	Reconciler DNSScheduler
+	// Agent tears down the PowerDNS zone on a DNS-facet delete (GH #1611).
+	// Optional: nil makes DELETE /domains/:id/dns/zone return 503.
+	Agent agent.AgentInterface
 }
 
 func RegisterDNSRoutes(g *gin.RouterGroup, cfg DNSHandlerConfig) {
@@ -42,6 +46,8 @@ func RegisterDNSRoutes(g *gin.RouterGroup, cfg DNSHandlerConfig) {
 	d := g.Group("/domains/:id/dns")
 	d.GET("/zone", h.getZone)
 	d.PATCH("/zone", h.updateZone)
+	// GH #1611: drop the DNS facet (keep web + mail) — "host DNS elsewhere".
+	d.DELETE("/zone", h.deleteZone)
 	d.GET("/records", h.listRecords)
 	d.POST("/records", h.createRecord)
 	// SOA + NS are auto-generated at compile time (never stored in

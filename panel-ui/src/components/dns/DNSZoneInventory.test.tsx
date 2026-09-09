@@ -131,6 +131,18 @@ describe("DnsZoneInventory audience policy (JAB-299)", () => {
     expect(screen.getAllByText("—").length).toBeGreaterThan(0);
   });
 
+  it("shows a DNS-zone delete action gated by provisioning + DNSSEC (GH #1611)", () => {
+    renderPage(adminAudience);
+
+    // Only the provisioned row carries a delete action; the not-provisioned row
+    // (nothing to tear down) has none.
+    const del = screen.getAllByText("dnszonesoverviewpage.delete_zone");
+    expect(del.length).toBe(1);
+    // The provisioned fixture is DNSSEC-signed, so the button is disabled
+    // (unsign first) — the same refusal the backend enforces.
+    expect(del[0].closest("button")).toBeDisabled();
+  });
+
   it("DNSSEC tab receives showOwner=true for the admin audience (AC5)", () => {
     renderPage(adminAudience);
     fireEvent.click(screen.getByText("DNSSEC"));

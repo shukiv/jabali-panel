@@ -28,6 +28,7 @@ func scopeTestRouter(tok *models.UserAPIToken) *gin.Engine {
 	v1.GET("/domains/:id/dns/records", ok)
 	v1.POST("/domains/:id/dns/records", ok)
 	v1.PATCH("/dns/records/:recordId", ok)
+	v1.DELETE("/domains/:id/dns/zone", ok)    // GH #1611 destructive DNS-zone delete
 	v1.GET("/domains/:id/mail/mailboxes", ok) // unmapped
 	return r
 }
@@ -58,6 +59,8 @@ func TestEnforceUserTokenScopes(t *testing.T) {
 		{"read:dns cannot write dns", readDNS, "POST", "/api/v1/domains/d1/dns/records", http.StatusForbidden},
 		{"write:dns writes dns", writeDNS, "POST", "/api/v1/domains/d1/dns/records", http.StatusOK},
 		{"write:dns on record route", writeDNS, "PATCH", "/api/v1/dns/records/r1", http.StatusOK},
+		{"read:dns cannot delete zone", readDNS, "DELETE", "/api/v1/domains/d1/dns/zone", http.StatusForbidden},
+		{"write:dns deletes zone", writeDNS, "DELETE", "/api/v1/domains/d1/dns/zone", http.StatusOK},
 		{"dns token denied on unmapped mail", writeDNS, "GET", "/api/v1/domains/d1/mail/mailboxes", http.StatusForbidden},
 		{"ddns token denied on dns REST", ddns, "GET", "/api/v1/domains/d1/dns/records", http.StatusForbidden},
 		{"ddns token denied on unmapped", ddns, "GET", "/api/v1/domains/d1/mail/mailboxes", http.StatusForbidden},
