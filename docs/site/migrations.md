@@ -46,6 +46,7 @@ own read-only CLI, then rebuilds destination-side).
 
 - BIND zones translated to PowerDNS schema rows — A/AAAA/CNAME/MX/TXT/**SRV** (priority in the pdns prio column) / **CAA** all import; the source SOA is dropped (pdns generates its own).
 - Hestia's `web/<domain>/public_html` docroot layout is handled for both the file split and the app-config scan (differs from the native `domains/<domain>/public_html`).
+- Resource types are preserved per source facet (GH #1606): Hestia lists web dirs and DNS zones independently, so a web dir with no source zone imports as a **Web Domain only** (`dns_disabled`, no managed PowerDNS zone), a DNS zone with no web dir imports as a **DNS Zone only** (`web_disabled`, no nginx vhost/PHP), and a domain in both imports full-facet. Other importers (cPanel, DirectAdmin, Plesk, CloudPanel, CyberPanel) create every domain full-facet unchanged.
 - The account **Contact Name** (`user.conf` FNAME/LNAME) carries onto the created jabali user's name.
 - Exim → Stalwart routing rules: forwards + autoresponders ported; complex Exim ACL rules need manual re-implementation.
 

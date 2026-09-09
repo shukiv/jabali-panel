@@ -567,14 +567,20 @@ failed stage. Already-done stages are skipped.`,
 				if h, herr := hestiacp.ParseHestiaTarball(hTarPath, extractDir); herr == nil {
 					// GH #327 diag: make an empty import self-explaining.
 					fmt.Fprintf(cmd.ErrOrStderr(),
-						"hestia import: parsed %d web domain(s), %d db dump(s); tar top-level=%v\n",
-						len(h.DomainDirs), len(h.MySQLDumps), h.TopLevel)
+						"hestia import: parsed %d web domain(s), %d DNS zone(s), %d db dump(s); tar top-level=%v\n",
+						len(h.DomainDirs), len(h.ZoneFiles), len(h.MySQLDumps), h.TopLevel)
 					parsed = &cpanel.ParsedTarball{
 						ExtractDir: extractDir,
 						SourceUser: job.SourceUser,
 						HomeDir:    h.WebRoot,  // Hestia rsync target = web/<dom>/public_html/...
 						MailRoot:   h.MailRoot, // Hestia stores at mail/<dom>/<local>/Maildir
 						MySQLDumps: h.MySQLDumps,
+						// GH #1606: Hestia enumerates web dirs (DomainNames) and DNS
+						// zones (ZoneFiles) INDEPENDENTLY, so a web dir without a
+						// zone is a web-only domain and a zone without a web dir is a
+						// DNS-only zone. Tell ImportDomains to honour that split
+						// instead of creating every domain full-facet.
+						SeparateWebDNSLists: true,
 					}
 					if h.SSHKeys != "" {
 						parsed.SSHAuthorized = []string{h.SSHKeys}

@@ -126,6 +126,13 @@ func ImportDomains(
 	// Zone-derived entries come first because they carry createWWW from the
 	// source zone; a web-only domain has no zone to read, so it stays apex-only
 	// (createWWW=false), matching the old DomainNames-branch default.
+	// webNames / zoneNames record which source list each name came from, so an
+	// importer that enumerates web and DNS separately (parsed.SeparateWebDNSLists,
+	// e.g. Hestia) can be created with the right facets: a name only in the web
+	// list is web-only (dns_disabled), a name only in the zone list is DNS-only
+	// (web_disabled), a name in both is full-facet. GH #1606.
+	zoneNames := map[string]bool{}
+	webNames := map[string]bool{}
 	var entries []domainEntry
 	seen := map[string]bool{}
 	for _, zonePath := range parsed.ZoneFiles {
@@ -134,6 +141,7 @@ func ImportDomains(
 			res.Skipped = append(res.Skipped, fmt.Sprintf("domain_skip:empty_name_from_%s", zonePath))
 			continue
 		}
+		zoneNames[domainName] = true
 		if seen[domainName] {
 			continue
 		}
@@ -145,7 +153,11 @@ func ImportDomains(
 		})
 	}
 	for _, name := range parsed.DomainNames {
-		if name == "" || seen[name] {
+		if name == "" {
+			continue
+		}
+		webNames[name] = true
+		if seen[name] {
 			continue
 		}
 		seen[name] = true
@@ -159,19 +171,37 @@ func ImportDomains(
 			continue
 		}
 
+		// Facets (GH #1606): only an importer that lists web and DNS separately
+		// (parsed.SeparateWebDNSLists) downgrades a single-list name; otherwise
+		// every domain is full-facet (web + DNS), the historical behavior for
+		// cpanel/DA/CloudPanel/Plesk.
+		isWeb, isDNS := true, true
+		if parsed.SeparateWebDNSLists {
+			isWeb, isDNS = webNames[domainName], zoneNames[domainName]
+		}
+
 		domainID := ids.NewULID()
 		docRoot := e.docRoot
+		if !isWeb {
+			// A DNS-only zone is docroot-less — no vhost, no PHP, no web SSL.
+			docRoot = ""
+		}
 
-		if _, err := agentCli.Call(ctx, "domain.create", map[string]any{
-			"domain_id":      domainID,
-			"domain":         domainName,
-			"username":       targetUsername,
-			"doc_root":       docRoot,
-			"index_priority": "html_first",
-		}); err != nil {
-			res.Skipped = append(res.Skipped, fmt.Sprintf("domain_skip:agent_create_failed:%s:%v", domainName, err))
-			res.Failed = append(res.Failed, fmt.Sprintf("%s (%v)", domainName, err))
-			continue
+		// Build the web vhost ONLY for a web facet. A DNS-only zone gets no
+		// vhost; its zone is created by the ImportDNS stage and the reconciler
+		// serves DNS alone (web_disabled row).
+		if isWeb {
+			if _, err := agentCli.Call(ctx, "domain.create", map[string]any{
+				"domain_id":      domainID,
+				"domain":         domainName,
+				"username":       targetUsername,
+				"doc_root":       docRoot,
+				"index_priority": "html_first",
+			}); err != nil {
+				res.Skipped = append(res.Skipped, fmt.Sprintf("domain_skip:agent_create_failed:%s:%v", domainName, err))
+				res.Failed = append(res.Failed, fmt.Sprintf("%s (%v)", domainName, err))
+				continue
+			}
 		}
 
 		now := time.Now()
@@ -183,11 +213,18 @@ func ImportDomains(
 			IsEnabled:     true,
 			IndexPriority: "html_first",
 			GhostState:    "unchecked",
+			// GH #1606: honour the source's facets so a migration recreates the
+			// right resource TYPES — a web-only domain gets no managed DNS zone,
+			// a DNS-only zone gets no web vhost. Full-facet when both (or when the
+			// importer doesn't separate the lists).
+			WebDisabled: !isWeb,
+			DNSDisabled: !isDNS,
 			// JAB-249: carry the source's www presence so the issued LE cert
 			// covers www.<domain> (the #1069 SAN-drift reconciler adds the SAN
 			// on its next reachable-gated pass). Domains whose source has no
-			// www record stay apex-only (unchanged default).
-			CreateWWW: e.createWWW,
+			// www record stay apex-only (unchanged default). Web-off rows have no
+			// web cert, so www is moot there.
+			CreateWWW: e.createWWW && isWeb,
 			CreatedAt: now,
 			UpdatedAt: now,
 		}
@@ -209,23 +246,32 @@ func ImportDomains(
 		// into the vhost on its next tick — nginx -t gated). An absent
 		// .htaccess is the common case and is a silent no-op; unconverted
 		// lines surface as per-domain manifest warnings, never dropped quietly.
-		applyMigratedHtaccess(filepath.Join(docRoot, ".htaccess"), domainName, d, res)
+		// .htaccess conversion only applies to a web facet (a DNS-only zone has
+		// no docroot to read).
+		if isWeb {
+			applyMigratedHtaccess(filepath.Join(docRoot, ".htaccess"), domainName, d, res)
+		}
 
 		if err := domainsRepo.Create(ctx, d); err != nil {
-			// JAB-57: domain.create already built the nginx vhost (+ enabled
-			// symlink) but the panel row failed to land — an unmanaged vhost
-			// that serves traffic and collides with a retry (whose collision
-			// check keys on the domains row, now absent). Roll it back:
-			// domain.delete removes the vhost + reloads nginx. The docroot
-			// under /home is left (harmless; overwritten by the home-split
-			// rsync on retry) — only the serving/system state is reverted.
-			delCtx, dcancel := context.WithTimeout(ctx, 60*time.Second)
-			_, delErr := agentCli.Call(delCtx, "domain.delete", map[string]string{"domain": domainName})
-			dcancel()
-			if delErr != nil {
-				res.Skipped = append(res.Skipped, fmt.Sprintf("domain_skip:db_create_failed_AND_vhost_rollback_failed:%s:row=%v:delete=%v", domainName, err, delErr))
+			// JAB-57: for a web facet, domain.create already built the nginx
+			// vhost (+ enabled symlink) but the panel row failed to land — an
+			// unmanaged vhost that serves traffic and collides with a retry
+			// (whose collision check keys on the domains row, now absent). Roll
+			// it back: domain.delete removes the vhost + reloads nginx. The
+			// docroot under /home is left (harmless; overwritten by the
+			// home-split rsync on retry). A DNS-only entry built no vhost, so
+			// there is nothing to roll back.
+			if isWeb {
+				delCtx, dcancel := context.WithTimeout(ctx, 60*time.Second)
+				_, delErr := agentCli.Call(delCtx, "domain.delete", map[string]string{"domain": domainName})
+				dcancel()
+				if delErr != nil {
+					res.Skipped = append(res.Skipped, fmt.Sprintf("domain_skip:db_create_failed_AND_vhost_rollback_failed:%s:row=%v:delete=%v", domainName, err, delErr))
+				} else {
+					res.Skipped = append(res.Skipped, fmt.Sprintf("domain_skip:db_create_failed_vhost_rolled_back:%s:%v", domainName, err))
+				}
 			} else {
-				res.Skipped = append(res.Skipped, fmt.Sprintf("domain_skip:db_create_failed_vhost_rolled_back:%s:%v", domainName, err))
+				res.Skipped = append(res.Skipped, fmt.Sprintf("domain_skip:db_create_failed:%s:%v", domainName, err))
 			}
 			continue
 		}
