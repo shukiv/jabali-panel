@@ -237,6 +237,16 @@ func (h *domainEmailHandler) enable(c *gin.Context) {
 		return
 	}
 
+	// GH #1627: a domain created from a custom DNS template carries the external
+	// 'custom' mail posture. Enabling Jabali mail on it would provision a
+	// Stalwart mailbox + DKIM records beside the template's own external MX/SPF
+	// (a split, conflicting posture). Blocked in this phase — delete + recreate
+	// the domain without a template to host mail on Jabali.
+	if dom.MailProvider == models.MailProviderCustom {
+		c.JSON(http.StatusConflict, gin.H{"error": "template_posture_locked", "detail": "this domain was created from a DNS template and uses external mail; enabling Jabali mail is not supported for it"})
+		return
+	}
+
 	selector, pubKey, warnings, err := domainmailops.Enable(ctx, h.deps(), dom)
 	if err != nil {
 		// Translate the module's sentinel errors back to HTTP responses.

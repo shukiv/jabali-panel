@@ -204,6 +204,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		domainRepo := repository.NewDomainRepository(sharedDB)
 		dnsZoneRepo := repository.NewDNSZoneRepository(sharedDB)
 		dnsRecordRepo := repository.NewDNSRecordRepository(sharedDB)
+		dnsTemplateRepo := repository.NewDNSTemplateRepository(sharedDB)
 		sslCertRepo := repository.NewSSLCertificateRepository(sharedDB)
 		sharedCertRepo := repository.NewSharedCertificateRepository(sharedDB)
 		mailRBLStateRepo := repository.NewMailRBLStateRepository(sharedDB)
@@ -278,6 +279,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		deps.Users = userRepo
 		deps.Packages = packageRepo
 		deps.Domains = domainRepo
+		deps.DNSTemplates = dnsTemplateRepo // GH #1627
 		deps.DomainTeardowns = repository.NewDomainTeardownRepository(sharedDB)
 		deps.SSO = ssoService
 		// M37 Phase 4: Adminer SSO bridge — engine-aware mint + PG shadow.
@@ -347,6 +349,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		// until the operator re-saved the disclaimer.
 		phases.RegisterPhase(phases.NewDisclaimerPhase(sharedAgent))
 		rec.WithDNSRepos(dnsZoneRepo, dnsRecordRepo, serverSettingsRepo)
+		rec.WithDNSTemplates(dnsTemplateRepo) // GH #1627: seed template records at zone bootstrap
 		rec.WithSSLCerts(sslCertRepo)
 		rec.WithPHPPools(phpPoolRepo)
 		// GH #601/#616: the reconciler needs the installs repo to gather a

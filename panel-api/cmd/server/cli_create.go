@@ -296,6 +296,14 @@ func createDomainDirect(ctx context.Context, in cliDomainInput) (*models.Domain,
 	if !models.ValidMailProvider(mailProvider) {
 		return nil, nil, fmt.Errorf("invalid --mail %q (want jabali|none|m365|google)", mailProvider)
 	}
+	// GH #1627: 'custom' is the posture of a domain created from a DNS template,
+	// not a directly-selectable provider — ValidMailProvider recognises it (so a
+	// persisted row validates) but the CLI must not create a bare 'custom' domain
+	// with no template (an inert external domain with no mail records). DNS
+	// templates are not a CLI feature in this phase; reject the value at input.
+	if mailProvider == models.MailProviderCustom {
+		return nil, nil, fmt.Errorf("invalid --mail %q (custom is the posture of a domain created from a DNS template; not selectable on the CLI)", mailProvider)
+	}
 	mailEnabled, mailSkipSAN := models.DeriveMailFlags(mailProvider)
 	if !webEnabled && !dnsEnabled && !mailEnabled {
 		return nil, nil, fmt.Errorf("select at least one service: web hosting (--web-enabled), DNS (--manage-dns), or mail (--mail)")

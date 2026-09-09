@@ -35,6 +35,14 @@ func (r *Reconciler) reconcileMailProviderRecords(ctx context.Context, zone *mod
 	if provider == "" {
 		provider = models.MailProviderJabali
 	}
+	// GH #1627: a custom-template domain owns its own mail records (seeded once
+	// at zone bootstrap, tenant-editable). The reconciler asserts NOTHING for it
+	// — no build, no prune — so the template's apex MX/SPF/DKIM are never
+	// clobbered. This hand-off is the whole reason 'custom' is a distinct
+	// provider value rather than reusing 'none' (which prunes apex SPF/MX).
+	if provider == models.MailProviderCustom {
+		return
+	}
 
 	existing, err := r.dnsRecords.ListByZoneID(ctx, zone.ID)
 	if err != nil {

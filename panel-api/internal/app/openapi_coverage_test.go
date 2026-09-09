@@ -53,6 +53,7 @@ func fullDeps() Deps {
 		NotificationEventSettings: repository.NewNotificationEventSettingRepository(db),
 		DNSZones: repository.NewDNSZoneRepository(db),
 		DNSRecords: repository.NewDNSRecordRepository(db),
+		DNSTemplates: repository.NewDNSTemplateRepository(db),
 		SSLCerts: repository.NewSSLCertificateRepository(db),
 		MailRBLStates: repository.NewMailRBLStateRepository(db),
 		DMARCAggregate: repository.NewDMARCAggregateRepository(db),

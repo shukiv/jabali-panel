@@ -66,6 +66,7 @@ type Deps struct {
 	NotificationEventSettings repository.NotificationEventSettingRepository
 	DNSZones                  repository.DNSZoneRepository
 	DNSRecords                repository.DNSRecordRepository
+	DNSTemplates              repository.DNSTemplateRepository
 	SSLCerts                  repository.SSLCertificateRepository
 	SharedCerts               repository.SharedCertificateRepository
 	// MailRBLStates (M47 Wave 5) backs the curated-RBL eventsource
@@ -480,6 +481,9 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 					SharedCerts:     deps.SharedCerts,
 					DNSZones:        deps.DNSZones,
 					DNSRecords:      deps.DNSRecords,
+					// GH #1627: resolve a tenant-selected custom DNS template on
+					// the JAB-233 automation create path (same as GUI create).
+					DNSTemplates:    deps.DNSTemplates,
 					ManagedIPs:      deps.ManagedIPs,
 					ServerSettings:  deps.ServerSettings,
 					BWDaily:         deps.BWDaily,
@@ -729,7 +733,9 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				// create still works — auto-enable is skipped cleanly.
 				DNSZones:   deps.DNSZones,
 				DNSRecords: deps.DNSRecords,
-				BWDaily:    deps.BWDaily,
+				// GH #1627: resolves a tenant-selected custom DNS template at create.
+				DNSTemplates: deps.DNSTemplates,
+				BWDaily:      deps.BWDaily,
 				// M24: lets PATCH listen_ipv*_id resolve FK + family + the
 				// is_user_selectable check, and lets GET denormalize
 				// listen_ipv4 / listen_ipv6 onto each row. Optional —
@@ -1548,6 +1554,14 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Settings:     deps.ServerSettings,
 				Destinations: deps.BackupDestinations,
 			})
+		}
+		// GH #1627: custom DNS templates. Admin CRUD under the RequireAdmin
+		// group; a read-only list on the authed base group so a tenant's create
+		// form can offer the available templates (global — every tenant sees all).
+		if deps.DNSTemplates != nil {
+			adminTmpl := v1.Group("/admin", middleware.RequireAdmin())
+			api.RegisterAdminDNSTemplateRoutes(adminTmpl, api.DNSTemplateHandlerConfig{Templates: deps.DNSTemplates})
+			api.RegisterDNSTemplateRoutes(v1, api.DNSTemplateHandlerConfig{Templates: deps.DNSTemplates})
 		}
 		// M44: Automation API token management. Admin mints + revokes
 		// HMAC-signed tokens; the matching public read-only routes
