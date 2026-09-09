@@ -3069,6 +3069,17 @@ paths:
       security: [ { KratosSession: [] } ]
       parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
       responses: { "200": { description: OK } }
+    delete:
+      tags: [Dns]
+      summary: Delete the DNS zone (drop DNS, keep web + mail — GH #1611)
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses:
+        "200": { description: DNS facet removed; web + mail kept }
+        "403": { description: Forbidden or panel-primary protected }
+        "404": { description: Domain not found }
+        "409": { description: DNSSEC signed, or DNS is the domain's only facet }
+        "503": { description: DNS teardown unavailable (agent not wired) }
 
 
   # --- Dnssec (auto) ---

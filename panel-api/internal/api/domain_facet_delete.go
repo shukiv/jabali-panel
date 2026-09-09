@@ -11,7 +11,6 @@ package api
 import (
 	"context"
 	"log/slog"
-	"strings"
 	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
@@ -73,19 +72,16 @@ func (h *domainHandler) facetPreservingWebDelete(
 		warnings = append(warnings, mailWarnings...)
 	}
 
-	// 4. Delete the DNS Zone (optional) — flip dns_disabled so the reconciler
-	//    stops pushing the zone, then delete the PowerDNS zone. A box without the
-	//    DNS module has no PowerDNS backend; that is permanent, not a failure.
+	// 4. Delete the DNS Zone (optional) — shared with the GH #1611 DNS-zone
+	//    delete so the two paths tear a zone down identically: flip dns_disabled,
+	//    delete the PowerDNS zone, and clear the panel's zone + records rows so
+	//    the domain matches the ManageDNS=false shape.
 	if deleteDNS {
-		if err := h.cfg.Domains.UpdateDNSDisabled(ctx, dom.ID, true); err != nil {
+		w, flipErr := tearDownDNSFacet(ctx, h.cfg.Domains, h.cfg.DNSZones, h.cfg.DNSRecords, h.cfg.Agent, dom)
+		if flipErr != nil {
 			warnings = append(warnings, "DNS management flag not cleared in the database")
 		}
-		zctx, zcancel := context.WithTimeout(ctx, 30*time.Second)
-		_, zerr := h.cfg.Agent.Call(zctx, "dns.zone.delete", map[string]string{"zone": dom.Name})
-		zcancel()
-		if zerr != nil && !strings.Contains(zerr.Error(), "powerdns backend not available") {
-			warnings = append(warnings, "DNS zone not removed; remove it manually if it lingers")
-		}
+		warnings = append(warnings, w...)
 	}
 
 	// 5. Delete the files (optional) — same async, tenant-uid removal the full

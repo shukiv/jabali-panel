@@ -11,13 +11,15 @@
 // action, the DNSSEC owner-visibility + copy, and the page header. Everything
 // else — query state (URL-backed search/sort/page), the whole-list error
 // branch, and the common columns — is shared so the two screens cannot drift.
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Alert, Button, Card, Spin, Table, Tag, Tooltip, Typography } from "antd";
+import { Alert, Button, Card, Space, Spin, Table, Tag, Tooltip, Typography } from "antd";
 import { useNavigate } from "react-router";
 
 import { useTabParam } from "../../hooks/useTabParam";
 import { columnSearchProps } from "../columnSearch";
 import { DNSSECTable } from "../dnssec/DNSSECTable";
+import { DNSZoneDeleteAction } from "./DNSZoneDeleteAction";
 import { SearchableTableStringQ } from "../SearchableTable";
 import { useTableURL } from "../../hooks/useTableURL";
 import { sorterToParams } from "../../utils/tableSorter";
@@ -72,6 +74,9 @@ export interface DnsZoneInventoryAudience {
 const ZonesTab = ({ audience }: { audience: DnsZoneInventoryAudience }) => {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  // GH #1611: the row whose DNS zone is being deleted (null = closed). Admin +
+  // tenant both get the action; the backend enforces admin-or-owner.
+  const [deleteTarget, setDeleteTarget] = useState<DnsZoneRow | null>(null);
 
   // One batched request (JAB-377): the endpoint returns provisioning state +
   // record count + effective TTL per row, so there is no per-domain zone fetch
@@ -198,12 +203,36 @@ const ZonesTab = ({ audience }: { audience: DnsZoneInventoryAudience }) => {
           <Table.Column<DnsZoneRow>
             title={t("dnszonesoverviewpage.actions")}
             render={(_, record) => (
-              <Button type="primary" onClick={() => navigate(audience.manageRoute(record.id))}>
-                Manage Records
-              </Button>
+              <Space>
+                <Button type="primary" onClick={() => navigate(audience.manageRoute(record.id))}>
+                  Manage Records
+                </Button>
+                {/* GH #1611: delete the DNS zone (keep web + mail). Only for a
+                    panel-hosted zone; a DNSSEC-signed zone must be unsigned
+                    first (the backend refuses it too). */}
+                {record.provisioned &&
+                  (record.dnssec_enabled ? (
+                    <Tooltip title={t("dnszonesoverviewpage.delete_disabled_dnssec")}>
+                      <Button danger disabled>
+                        {t("dnszonesoverviewpage.delete_zone")}
+                      </Button>
+                    </Tooltip>
+                  ) : (
+                    <Button danger onClick={() => setDeleteTarget(record)}>
+                      {t("dnszonesoverviewpage.delete_zone")}
+                    </Button>
+                  ))}
+              </Space>
             )}
           />
         </SearchableTableStringQ>
+      )}
+      {deleteTarget && (
+        <DNSZoneDeleteAction
+          zone={deleteTarget}
+          open={deleteTarget != null}
+          onClose={() => setDeleteTarget(null)}
+        />
       )}
     </>
   );
