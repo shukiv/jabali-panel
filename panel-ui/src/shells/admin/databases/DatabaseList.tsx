@@ -1,6 +1,7 @@
 // DatabaseList — admin view. Currently unrouted (no /jabali-admin/
 // databases mount in App.tsx) but kept Refine-free so a future route
 // wire-up doesn't have to touch this file again.
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button, Card, Space, Table, Tag, Typography } from "antd";
 import { shortDateTime } from "../../../utils/datetime";
@@ -13,6 +14,7 @@ import { SearchableTableStringQ } from "../../../components/SearchableTable";
 import { EmptyWithCTA } from "../../../components/EmptyWithCTA";
 import { useDeleteMutation } from "../../../hooks/useQueries";
 import { useTableURL } from "../../../hooks/useTableURL";
+import { DatabaseChownAction } from "./DatabaseChownAction";
 
 export type Database = {
   id: string;
@@ -39,6 +41,9 @@ export const DatabaseList = () => {
     defaultOrder: "asc",
   });
   const deleteMutation = useDeleteMutation({ resource: "databases" });
+  // GH #1609: admin reassign-owner modal, controlled by the row whose owner is
+  // being changed (null = closed).
+  const [chownTarget, setChownTarget] = useState<Database | null>(null);
 
   const handleTableChange: React.ComponentProps<
     typeof Table<Database>
@@ -138,6 +143,9 @@ export const DatabaseList = () => {
             dataIndex="actions"
             render={(_, r) => (
               <Space>
+                <Button size="small" onClick={() => setChownTarget(r)}>
+                  {t("databaselist.change_owner")}
+                </Button>
                 <RowDeleteButton
                   confirmTitle={`Delete database "${r.name}"?`}
                   onConfirm={async () => {
@@ -149,6 +157,14 @@ export const DatabaseList = () => {
           />
         </SearchableTableStringQ>
       </Card>
+
+      {chownTarget && (
+        <DatabaseChownAction
+          database={chownTarget}
+          open={chownTarget != null}
+          onClose={() => setChownTarget(null)}
+        />
+      )}
     </div>
   );
 };

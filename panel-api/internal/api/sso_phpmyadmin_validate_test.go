@@ -307,7 +307,9 @@ func (m *mockUserRepoValidate) Update(ctx context.Context, u *models.User) error
 	return nil
 }
 
-func (m *mockUserRepoValidate) UpdateComposerChannel(ctx context.Context, id string, channel *string) error { return nil }
+func (m *mockUserRepoValidate) UpdateComposerChannel(ctx context.Context, id string, channel *string) error {
+	return nil
+}
 
 func (m *mockUserRepoValidate) UpdateCLIPHPVersion(context.Context, string, *string) error {
 	return nil
@@ -440,3 +442,6 @@ func (m *mockUserRepoValidate) UpdateShadowDBUsernames(context.Context, string, 
 }
 
 func (m *mockDatabaseRepoValidate) UpdateName(context.Context, string, string) error { return nil }
+func (m *mockDatabaseRepoValidate) TransferOwner(context.Context, string, string, string) error {
+	return nil
+}

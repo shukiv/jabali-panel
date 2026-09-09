@@ -79,6 +79,8 @@ const PackageList = lazy(() => import("./shells/admin/packages/PackageList").the
 const DomainCreate = lazy(() => import("./shells/admin/domains/DomainCreate").then((m) => ({ default: m.DomainCreate })));
 const DomainEdit = lazy(() => import("./shells/admin/domains/DomainEdit").then((m) => ({ default: m.DomainEdit })));
 const DomainList = lazy(() => import("./shells/admin/domains/DomainList").then((m) => ({ default: m.DomainList })));
+const AdminDatabaseList = lazy(() => import("./shells/admin/databases/DatabaseList").then((m) => ({ default: m.DatabaseList })));
+const AdminDatabaseCreate = lazy(() => import("./shells/admin/databases/DatabaseCreate").then((m) => ({ default: m.DatabaseCreate })));
 const ServerSettingsPage = lazy(() => import("./shells/admin/settings/ServerSettingsPage").then((m) => ({ default: m.ServerSettingsPage })));
 const AdminTerminal = lazy(() => import("./shells/admin/terminal/AdminTerminal").then((m) => ({ default: m.AdminTerminal })));
 const MyProfile = lazy(() => import("./shells/user/MyProfile").then((m) => ({ default: m.MyProfile })));
@@ -264,6 +266,11 @@ const ThemedApp = () => {
               <Route path="create" element={<DomainCreate />} />
               <Route path="edit/:id" element={<DomainEdit />} />
               <Route path=":id/dns" element={<DNSRecordsPage />} />
+            </Route>
+            {/* GH #1609: admin databases list — reassign a database's owner. */}
+            <Route path="databases">
+              <Route index element={<AdminDatabaseList />} />
+              <Route path="create" element={<AdminDatabaseCreate />} />
             </Route>
             <Route
               path="dns"

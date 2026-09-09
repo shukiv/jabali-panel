@@ -20,6 +20,10 @@ type DatabaseUserRepository interface {
 	UpdatePasswordHash(ctx context.Context, id string, hash string) error
 	// UpdateUsername renames the DB-user row in place (GH #1238 DB re-prefix).
 	UpdateUsername(ctx context.Context, id, username string) error
+	// TransferOwner repoints the DB-user row to a new tenant AND renames it onto
+	// that owner's prefix in a single UPDATE (GH #1609 reassign) — never a
+	// half-moved row. The engine-level RENAME USER is done by the agent first.
+	TransferOwner(ctx context.Context, id, newUserID, newUsername string) error
 	ExistsByUserAndUsername(ctx context.Context, userID string, username string) (bool, error)
 }
 
@@ -111,6 +115,11 @@ func (r *databaseUserRepo) UpdatePasswordHash(ctx context.Context, id string, ha
 
 func (r *databaseUserRepo) UpdateUsername(ctx context.Context, id, username string) error {
 	return r.db.WithContext(ctx).Model(&models.DatabaseUser{}).Where("id = ?", id).Update("username", username).Error
+}
+
+func (r *databaseUserRepo) TransferOwner(ctx context.Context, id, newUserID, newUsername string) error {
+	return r.db.WithContext(ctx).Model(&models.DatabaseUser{}).Where("id = ?", id).
+		Updates(map[string]any{"user_id": newUserID, "username": newUsername}).Error
 }
 
 func (r *databaseUserRepo) ExistsByUserAndUsername(ctx context.Context, userID string, username string) (bool, error) {

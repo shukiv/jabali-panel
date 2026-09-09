@@ -5965,6 +5965,28 @@ paths:
         "422": { description: Change refused — new owner is not a tenant, is already the owner, the domain has an app install, or the docroot is outside the owner's home, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "503": { description: Change-owner not available (app-install repository not wired), content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
 
+  /admin/databases/{id}/chown:
+    post:
+      tags: [Databases]
+      summary: Reassign a database to a new tenant in place (admin, JAB-380 step-up, GH #1609)
+      description: |
+        Renames the database and the DB users bound only to it onto the new
+        owner's prefix (db.rename_db / db.rename_user), re-points their grants,
+        and repoints the panel rows' owner. v1 (MariaDB) refuses a postgres
+        database, a database backing an app install (its config holds the current
+        owner's credentials), a DB user shared with another database, and
+        off-convention names.
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { new_owner_id: { type: string } }, required: [new_owner_id] } } } }
+      responses:
+        "200": { description: Reassigned, content: { application/json: { schema: { type: object, properties: { id: { type: string }, user_id: { type: string }, name: { type: string }, renamed_users: { type: array, items: { type: string } } } } } } }
+        "403": { description: Recent-auth step-up required (JAB-380), content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "404": { description: Database or new owner not found, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "409": { description: Database backs an application install — detach it first, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "422": { description: Change refused — new owner is not a tenant/already the owner, postgres engine, a shared DB user, a name collision, or an off-convention name, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "503": { description: Change-owner not available (app-install repository not wired), content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+
   /me/ssh-forwarding:
     get:
       tags: [Users]

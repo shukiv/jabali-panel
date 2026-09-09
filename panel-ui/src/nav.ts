@@ -105,6 +105,13 @@ export const adminNav: NavItem[] = [
     path: "/jabali-admin/domains",
   },
   {
+    key: "databases",
+    label: "nav.admin.databases",
+    description: "nav.admin.databases_desc",
+    icon: navIcon(DatabaseOutlined),
+    path: "/jabali-admin/databases",
+  },
+  {
     key: "mail",
     label: "nav.admin.mail",
     description: "nav.admin.mail_desc",

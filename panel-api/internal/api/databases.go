@@ -16,8 +16,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/kratosclient"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dbops"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/middleware"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
@@ -39,6 +41,16 @@ type DatabaseHandlerConfig struct {
 	Packages          repository.PackageRepository
 	ServerSettings    repository.ServerSettingsRepository
 	Agent             agent.AgentInterface
+	// Installs (GH #1609 chown) backs the change-owner refusal: a database that
+	// backs an application install must not move (its config holds the old
+	// owner's credentials). The chown handler 503s when nil rather than fail
+	// open. Optional for the non-chown routes.
+	Installs repository.ApplicationInstallRepository
+	// AuditEvents records the admin change-owner (GH #1609). Optional — nil skips.
+	AuditEvents repository.AuditEventRepository
+	// KratosClient gates the change-owner route behind the JAB-380 recent-auth
+	// step-up. Optional for the non-chown routes.
+	KratosClient *kratosclient.Client
 }
 
 const (
@@ -67,6 +79,11 @@ func RegisterDatabaseRoutes(g *gin.RouterGroup, cfg DatabaseHandlerConfig) {
 	databases.POST("/:id/restore-chunk", h.restoreChunk)
 	databases.GET("/:id/restore-chunk-status", h.restoreChunkStatus)
 	databases.GET("/:id/restore-status", h.restoreStatus)
+
+	// GH #1609: reassign a database (+ the DB users bound only to it) to a new
+	// tenant. Admin-only AND behind the JAB-380 recent-auth step-up (enforced in
+	// the handler), same posture as domain chown.
+	g.POST("/admin/databases/:id/chown", middleware.RequireAdmin(), h.chown)
 }
 
 type databaseHandler struct{ cfg DatabaseHandlerConfig }
