@@ -230,9 +230,91 @@ func (c *Client) UpsertZoneWithMeta(name string, records []Record, opts UpsertZo
 	return zoneID, nil
 }
 
-// DeleteZone removes the zone and all its records. Idempotent — no
-// error if the zone isn't there.
+// zoneDeleteStep is one statement in the ordered teardown of a PowerDNS zone.
+// Child tables (records, domainmetadata, comments, cryptokeys) all key on
+// domain_id and MUST be cleared before the parent `domains` row, since the
+// gmysql backend does not necessarily cascade the delete (GH #1620).
+type zoneDeleteStep struct {
+	table string
+	sql   string
+}
+
+// zoneDeletePlan returns the ordered DELETE statements for tearing down a zone
+// by name. present says which OPTIONAL child tables exist; records and
+// domainmetadata are mandatory in every gmysql schema so they always lead.
+// Every statement binds exactly one arg — the zone name. Children resolve their
+// domain_id through a subquery (defensive: sweeps every same-name `domains` row,
+// though the standard schema keeps `name` unique), and the parent `domains`
+// delete is always last since the children reference it.
+func zoneDeletePlan(present map[string]bool) []zoneDeleteStep {
+	const childWhere = ` WHERE domain_id IN (SELECT id FROM domains WHERE name = ?)`
+	steps := []zoneDeleteStep{
+		{"records", `DELETE FROM records` + childWhere},
+		{"domainmetadata", `DELETE FROM domainmetadata` + childWhere},
+	}
+	if present["comments"] {
+		steps = append(steps, zoneDeleteStep{"comments", `DELETE FROM comments` + childWhere})
+	}
+	if present["cryptokeys"] {
+		steps = append(steps, zoneDeleteStep{"cryptokeys", `DELETE FROM cryptokeys` + childWhere})
+	}
+	steps = append(steps, zoneDeleteStep{"domains", `DELETE FROM domains WHERE name = ?`})
+	return steps
+}
+
+// presentOptionalTables reports which optional PowerDNS child tables exist in
+// the connected schema. records + domainmetadata are mandatory in every gmysql
+// schema, so they are not probed. Probing up front (rather than tolerating a
+// mid-transaction "table doesn't exist") keeps DeleteZone's transaction free of
+// conditional error handling and portable to strict SQL modes.
+func (c *Client) presentOptionalTables() (map[string]bool, error) {
+	present := map[string]bool{}
+	rows, err := c.db.Query(
+		`SELECT table_name FROM information_schema.tables
+		 WHERE table_schema = DATABASE() AND table_name IN ('comments','cryptokeys')`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var t string
+		if err := rows.Scan(&t); err != nil {
+			return nil, err
+		}
+		present[t] = true
+	}
+	return present, rows.Err()
+}
+
+// DeleteZone removes a zone and every child row that keys on its domain_id —
+// records, domainmetadata, and (when present) comments and cryptokeys — then
+// the `domains` row itself, all in one transaction. The old "delete only
+// domains" left records + domainmetadata orphaned when the backend didn't
+// cascade the delete: duplicate records on re-add and continued resolution off
+// the stale rows (GH #1620). Explicit child deletes make teardown independent
+// of whether the schema enforces ON DELETE CASCADE. Idempotent — a missing zone
+// deletes nothing and returns nil.
+//
+// cryptokeys is normally managed by `pdnsutil` (see dnssec.go), not raw SQL; we
+// still sweep it here because the zone is being destroyed outright, so
+// pdnsutil's view of it is moot.
 func (c *Client) DeleteZone(name string) error {
-	_, err := c.db.Exec(`DELETE FROM domains WHERE name = ?`, name)
-	return err
+	present, err := c.presentOptionalTables()
+	if err != nil {
+		return fmt.Errorf("probe pdns tables: %w", err)
+	}
+	tx, err := c.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }() // no-op once committed
+	for _, s := range zoneDeletePlan(present) {
+		if _, err := tx.Exec(s.sql, name); err != nil {
+			return fmt.Errorf("delete %s: %w", s.table, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	return nil
 }
