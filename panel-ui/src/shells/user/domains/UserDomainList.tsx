@@ -30,7 +30,7 @@ export const UserDomainList = () => {
         }}
       >
         <Typography.Title level={3} style={{ margin: 0 }}>
-          <GlobalOutlined /> Domains
+          <GlobalOutlined /> Web Domains
         </Typography.Title>
         <Button
           type="primary"
