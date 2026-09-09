@@ -17,13 +17,21 @@ import {
   Empty,
   Input,
   Modal,
+  Space,
   Spin,
   Table,
   Tag,
   Typography,
   type TableColumnsType,
 } from "antd";
-import { DeleteOutlined, MoreOutlined, PlusOutlined, PoweroffOutlined } from "@icons";
+import {
+  DeleteOutlined,
+  FileTextOutlined,
+  GlobalOutlined,
+  MoreOutlined,
+  PlusOutlined,
+  PoweroffOutlined,
+} from "@icons";
 import { useState } from "react";
 import { useNavigate } from "react-router";
 import { useListQuery } from "../../../hooks/useQueries";
@@ -33,6 +41,7 @@ import { apiClient } from "../../../apiClient";
 import { feedback } from "../../../lib/feedback";
 import { useServerCapabilities } from "../../../hooks/useServerCapabilities";
 import { UserDomainDrawer } from "../domains/UserDomainDrawer";
+import { MailDNSRecordsModal } from "../../../components/mail/MailDNSRecordsModal";
 
 interface MailDomainRow {
   id: string;
@@ -47,6 +56,9 @@ interface MailDomainRow {
   email_enabled: boolean;
   ssl_state?: string;
   is_quota_suspended?: boolean;
+  // GH #1612: true when the panel does NOT host this domain's DNS (external DNS).
+  // Drives the "External DNS" tag + the "DNS records" action.
+  dns_disabled?: boolean;
 }
 
 const num = (n: number | null | undefined): string => (n ?? 0).toLocaleString();
@@ -69,6 +81,12 @@ export function MailDomainsPage() {
   // mail-enabled server never flashes the button away. Mirrors the sidebar gate.
   const { data: caps } = useServerCapabilities();
   const mailEnabled = caps?.mail_enabled !== false;
+  // DNS is "external" for a domain when the panel doesn't host its zone
+  // (dns_disabled) OR the server has no DNS module at all (GH #1612).
+  const dnsEnabled = caps?.dns_enabled !== false;
+  const isExternalDNS = (row: MailDomainRow) => !!row.dns_disabled || !dnsEnabled;
+  // GH #1612: the domain whose external-DNS records modal is open.
+  const [dnsRecordsRow, setDnsRecordsRow] = useState<MailDomainRow | null>(null);
   const query = useListQuery<MailDomainRow>({ resource: "me/mail-domains" });
   const rows = query.items;
 
@@ -133,7 +151,14 @@ export function MailDomainsPage() {
       sorter: (a, b) => a.name.localeCompare(b.name),
       defaultSortOrder: "ascend",
       render: (name: string, row) => (
-        <a onClick={() => navigate(`/jabali-panel/mail-domains/${row.id}`)}>{name}</a>
+        <Space size="small">
+          <a onClick={() => navigate(`/jabali-panel/mail-domains/${row.id}`)}>{name}</a>
+          {isExternalDNS(row) && (
+            <Tag icon={<GlobalOutlined />} color="blue">
+              External DNS
+            </Tag>
+          )}
+        </Space>
       ),
     },
     {
@@ -198,6 +223,18 @@ export function MailDomainsPage() {
           trigger={["click"]}
           menu={{
             items: [
+              // GH #1612: only when DNS is hosted externally — a panel-hosted
+              // zone publishes these records itself, so there's nothing to copy.
+              ...(isExternalDNS(row)
+                ? [
+                    {
+                      key: "dns-records",
+                      icon: <FileTextOutlined />,
+                      label: "DNS records",
+                      onClick: () => setDnsRecordsRow(row),
+                    },
+                  ]
+                : []),
               {
                 key: "disable",
                 icon: <PoweroffOutlined />,
@@ -315,6 +352,13 @@ export function MailDomainsPage() {
           }}
         />
       </Modal>
+
+      <MailDNSRecordsModal
+        open={!!dnsRecordsRow}
+        domainId={dnsRecordsRow?.id}
+        domainName={dnsRecordsRow?.name}
+        onClose={() => setDnsRecordsRow(null)}
+      />
 
       <UserDomainDrawer
         open={createOpen}

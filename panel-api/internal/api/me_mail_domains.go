@@ -68,6 +68,11 @@ type mailDomainRow struct {
 	// recipient). nil = unknown (agent unavailable) — omitted from JSON so the
 	// UI shows "—" instead of a misleading 0.
 	Queue *int64 `json:"queue,omitempty"`
+	// DNSDisabled marks a mail domain whose DNS the panel does NOT host (external
+	// DNS — GH #1449 create-with-DNS-off, or GH #1611 zone delete). The UI badges
+	// it "External DNS" and offers the "DNS records" action (GH #1612) so the
+	// operator can publish MX/SPF/DKIM/… at their own provider.
+	DNSDisabled bool `json:"dns_disabled"`
 }
 
 func (h *meMailDomainsHandler) list(c *gin.Context) {
@@ -143,6 +148,7 @@ func (h *meMailDomainsHandler) list(c *gin.Context) {
 			EmailEnabled:     d.EmailEnabled,
 			SSLState:         d.SSLState,
 			IsQuotaSuspended: d.IsQuotaSuspended,
+			DNSDisabled:      d.DNSDisabled,
 		})
 	}
 

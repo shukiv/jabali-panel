@@ -316,7 +316,17 @@ func (h *domainEmailHandler) disable(c *gin.Context) {
 // bare hint list with empty `Status` — the UI falls back to showing
 // them as static instructions.
 func (h *domainEmailHandler) buildHintsWithStatus(ctx context.Context, domainID, domainName, selector, pubKey string) ([]domainEmailDNSHint, []string) {
-	hints := staticEmailHints(domainName, selector, pubKey)
+	// The mail host's public IP (server_settings) leads the record set so an
+	// external-DNS operator (GH #1612) can publish mail.<domain> — every MX/SRV/
+	// autodiscover record points at it. Best-effort: an unwired/unreadable
+	// ServerSettings just omits the A/AAAA rows.
+	ip4, ip6 := "", ""
+	if h.cfg.ServerSettings != nil {
+		if s, err := h.cfg.ServerSettings.Get(ctx); err == nil && s != nil {
+			ip4, ip6 = s.PublicIPv4, s.PublicIPv6
+		}
+	}
+	hints := staticEmailHints(domainName, selector, pubKey, ip4, ip6)
 
 	if h.cfg.DNSZones == nil || h.cfg.DNSRecords == nil {
 		return hints, nil
@@ -365,8 +375,29 @@ func (h *domainEmailHandler) buildHintsWithStatus(ctx context.Context, domainID,
 // records the operator should see regardless of whether live state
 // can be read. When DKIM isn't set yet (pre-enable) the DKIM entry
 // still appears with an empty Value so the UI shows it as "pending".
-func staticEmailHints(domainName, selector, pubKey string) []domainEmailDNSHint {
-	hints := []domainEmailDNSHint{
+//
+// ip4/ip6 are the server's public addresses (server_settings). When known, the
+// mail host's own A/AAAA records lead the list: MX, every SRV, and the
+// autoconfig/autodiscover CNAMEs all point at mail.<domain>, so on EXTERNAL DNS
+// (GH #1612) this is the record without which none of the others resolve. On a
+// panel-hosted zone the M4 bootstrap already publishes it (status shows "ok"),
+// so listing it universally is honest, not redundant. Empty ip4/ip6 (server IP
+// unknown, or ServerSettings not wired) simply omits the row.
+func staticEmailHints(domainName, selector, pubKey, ip4, ip6 string) []domainEmailDNSHint {
+	hints := make([]domainEmailDNSHint, 0, 16)
+	if ip4 != "" {
+		hints = append(hints, domainEmailDNSHint{
+			Purpose: "A — the mail host itself; MX, SRV and autodiscover all point here",
+			Name:    "mail." + domainName + ".", Type: "A", Value: ip4,
+		})
+	}
+	if ip6 != "" {
+		hints = append(hints, domainEmailDNSHint{
+			Purpose: "AAAA — the mail host over IPv6",
+			Name:    "mail." + domainName + ".", Type: "AAAA", Value: ip6,
+		})
+	}
+	hints = append(hints, []domainEmailDNSHint{
 		{Purpose: "MX — delivers incoming mail to this host", Name: domainName + ".", Type: "MX", Value: "10 mail." + domainName + "."},
 		{Purpose: "SPF — authorises this host to send mail for the domain", Name: domainName + ".", Type: "TXT", Value: `v=spf1 mx ~all`},
 		{Purpose: "DMARC — tells receivers to reject unauthenticated mail", Name: "_dmarc." + domainName + ".", Type: "TXT", Value: "v=DMARC1; p=quarantine; sp=quarantine; adkim=r; aspf=r"},
@@ -380,7 +411,7 @@ func staticEmailHints(domainName, selector, pubKey string) []domainEmailDNSHint 
 		{Purpose: "TLS-RPT — receives aggregate TLS-failure reports (RFC 8460)", Name: "_smtp._tls." + domainName + ".", Type: "TXT", Value: "v=TLSRPTv1; rua=mailto:postmaster@" + domainName},
 		{Purpose: "CAA — restricts cert issuance to Let's Encrypt", Name: domainName + ".", Type: "CAA", Value: `0 issue "letsencrypt.org"`},
 		{Purpose: "CAA — incident-reporting address for cert issues", Name: domainName + ".", Type: "CAA", Value: `0 iodef "mailto:postmaster@` + domainName + `"`},
-	}
+	}...)
 	if selector != "" && pubKey != "" {
 		hints = append(hints, domainEmailDNSHint{
 			Purpose: "DKIM — signs outbound mail so receivers can verify it",
