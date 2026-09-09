@@ -53,7 +53,7 @@ const (
 // the cert already covers everything, carries a wildcard (assumed to cover the
 // helpers — never churn it), or the domain wants no extra SANs. Uses the domain
 // flags carried on the ListAll row so no per-cert domain lookup is needed here.
-func sslSANDriftMissing(row repository.SSLCertificateWithDomain, certSANs []string) []string {
+func sslSANDriftMissing(row repository.SSLCertificateWithDomain, certSANs, aliases []string) []string {
 	dom := &models.Domain{
 		Name:          row.DomainName,
 		EmailEnabled:  row.EmailEnabled,
@@ -61,7 +61,7 @@ func sslSANDriftMissing(row repository.SSLCertificateWithDomain, certSANs []stri
 		CreateWWW:     row.CreateWWW,
 		MTASTSEnabled: row.MTASTSEnabled,
 	}
-	desired := sanHostnamesForDomain(dom)
+	desired := sanHostnamesForDomain(dom, aliases)
 	if len(desired) == 0 {
 		return nil
 	}
@@ -137,7 +137,10 @@ func (r *Reconciler) ReconcileSSLSANDrift(ctx context.Context) {
 		if err != nil {
 			continue // unreadable — ssl_observe already surfaces that separately
 		}
-		missing := sslSANDriftMissing(c, certSANs)
+		// GH #1625: aliases are desired SANs too, so a resolved alias
+		// added after issuance is drift the pass must notice. Fetched
+		// per eligible cert (hourly, fail-open nil).
+		missing := sslSANDriftMissing(c, certSANs, r.aliasHostnames(ctx, c.DomainID))
 		if len(missing) == 0 {
 			continue // cert already complete (or wildcard) — cheap skip, no IO/LE
 		}
@@ -172,7 +175,7 @@ func (r *Reconciler) expandCertSANsForDrift(ctx context.Context, cert repository
 		return
 	}
 
-	desired := sanHostnamesForDomain(dom)
+	desired := sanHostnamesForDomain(dom, r.aliasHostnames(ctx, dom.ID))
 	reachable := r.resolvableSANs(ctx, desired)
 	if len(reachable) > 0 {
 		reachable = r.reachableSANs(ctx, dom.Name, reachable)

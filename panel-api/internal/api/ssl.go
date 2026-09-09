@@ -35,6 +35,10 @@ type SSLHandlerConfig struct {
 	PanelCerts     repository.PanelCertificateRepository
 	MailCerts      repository.MailCertificateRepository
 	ServerSettings repository.ServerSettingsRepository
+	// WebDomainAliases is optional (GH #1625): when set, the listed SAN
+	// policy includes a domain's aliases so the row's PendingSANs reflect
+	// them. nil → aliases omitted from the displayed SAN list only.
+	WebDomainAliases repository.WebDomainAliasRepository
 	// DNSZones is optional — required only for the ACME DNS-01 shared-cert
 	// flow; nil degrades that endpoint to 503.
 	DNSZones   repository.DNSZoneRepository
@@ -133,7 +137,7 @@ func (h *sslHandler) getSSL(c *gin.Context) {
 		Staging:       cert.Staging,
 		CertPath:      cert.CertPath,
 		KeyPath:       cert.KeyPath,
-		PendingSANs:   pendingWebSANs(cert.Status, cert.CertPath, domain.Name, webCertSANsForDomain(domain)),
+		PendingSANs:   pendingWebSANs(cert.Status, cert.CertPath, domain.Name, webCertSANsForDomain(domain, h.aliasHostnames(c.Request.Context(), domain.ID))),
 	}
 
 	c.JSON(http.StatusOK, gin.H{"ssl": resp})
@@ -597,7 +601,21 @@ func (h *sslHandler) webCertSANs(ctx context.Context, c repository.SSLCertificat
 	if err != nil || d == nil {
 		return base
 	}
-	return webCertSANsForDomain(d)
+	return webCertSANsForDomain(d, h.aliasHostnames(ctx, d.ID))
+}
+
+// aliasHostnames returns a domain's alias hostnames for the displayed
+// SAN policy, or nil when the repo is unwired or the read fails (GH
+// #1625). Best-effort: a miss only under-reports the SAN list.
+func (h *sslHandler) aliasHostnames(ctx context.Context, domainID string) []string {
+	if h.cfg.WebDomainAliases == nil {
+		return nil
+	}
+	names, err := h.cfg.WebDomainAliases.ListHostnamesByDomainID(ctx, domainID)
+	if err != nil {
+		return nil
+	}
+	return names
 }
 
 // webCertSANsForDomain is the pure policy (extracted for testing) — it
@@ -605,11 +623,16 @@ func (h *sslHandler) webCertSANs(ctx context.Context, c repository.SSLCertificat
 // www.<domain> is included ONLY when the domain opted into the www CNAME
 // (GH #895): otherwise there is no www DNS record, issuance omits it, and
 // listing it here over-reported coverage the cert never had.
-func webCertSANsForDomain(d *models.Domain) []string {
+func webCertSANsForDomain(d *models.Domain, aliases []string) []string {
 	sans := []string{d.Name}
 	if d.CreateWWW {
 		sans = append(sans, "www."+d.Name)
 	}
+	// GH #1625: explicit tenant aliases are SANs too. Appended before the
+	// SkipAutoSAN return (like opt-in www) — SkipAutoSAN opts out of the
+	// auto-derived mail helpers only, never explicit aliases. Kept in
+	// lockstep with reconciler.sanHostnamesForDomain (ADR-0070).
+	sans = append(sans, aliases...)
 	if d.SkipAutoSAN {
 		return sans
 	}

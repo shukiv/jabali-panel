@@ -123,6 +123,15 @@ func createDomainOp(ctx context.Context, h *domainHandler, in createDomainInput)
 		return nil, &createDomainError{http.StatusBadRequest, "invalid_domain_name", err.Error()}
 	}
 
+	// GH #1625: reject a name whose apex/www/mail-helper server_name is already
+	// claimed by another domain's web-domain alias. ux_domains_name only guards
+	// domain-vs-domain; the alias table introduced the cross-table collision, so
+	// this closes the reverse of validateAliasHostname's own-side check. The name
+	// is already normalized by the caller (matches the alias table's lowercasing).
+	if hit, clash := aliasCollision(ctx, h.cfg.WebDomainAliases, in.Name); clash {
+		return nil, &createDomainError{http.StatusConflict, "domain_conflicts_alias", "the name " + hit + " is already used as an alias of another domain"}
+	}
+
 	if in.OwnerID == "" {
 		return nil, &createDomainError{http.StatusBadRequest, "user_id is required", ""}
 	}

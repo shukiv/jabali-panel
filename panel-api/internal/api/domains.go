@@ -84,6 +84,11 @@ type DomainHandlerConfig struct {
 	ManagedIPs repository.ManagedIPRepository
 	// ServerSettings gates the tenant-safe nginx options opt-in (GH #307).
 	ServerSettings repository.ServerSettingsRepository
+	// WebDomainAliases (GH #1625) backs the reverse cross-tenant hijack guard:
+	// domain-create must reject a name whose apex/www/mail-helper server_name is
+	// already claimed by another domain's alias (aliasCollision). Optional — a
+	// nil repo skips the check (fail-open only when the alias feature is unwired).
+	WebDomainAliases repository.WebDomainAliasRepository
 	// AppInstalls (GH #1238 chown) backs the change-owner refusal: a domain
 	// with an app install carries the current owner's DB creds in its config,
 	// so re-owning it would leak a live cross-tenant credential. REQUIRED for

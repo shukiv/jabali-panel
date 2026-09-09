@@ -150,6 +150,14 @@ type domainCreateParams struct {
 	// inside the server block.
 	IPACLs []domainIPACLRule `json:"ip_acls,omitempty"`
 
+	// GH #1625 web domain aliases: additional hostnames added to the
+	// vhost's server_name so the domain's docroot answers on them too.
+	// The agent RE-SANITIZES every entry against domainRegex before
+	// rendering (config-injection trust boundary, like CacheBypassPaths)
+	// — a value that isn't a clean FQDN is DROPPED, never emitted raw
+	// into server_name. Empty ⇒ vhost byte-identical (feature off).
+	Aliases []string `json:"aliases,omitempty"`
+
 	// M50 per-directory password protection. Each rule produces one
 	// htpasswd file under /etc/jabali-panel/dir-privacy/<rule_id>.htpasswd
 	// and one `location ^~ <path>/ { auth_basic ...; }` block inside the
@@ -542,7 +550,7 @@ const vhostTemplate = `{{define "servebody"}}{{ if .IsEnabled }}
 {{ else }}    listen 80;
 {{ end }}{{ if .ListenIPv6 }}    listen [{{.ListenIPv6}}]:80;
 {{ else }}    listen [::]:80;
-{{ end }}    server_name {{.Domain}} www.{{.Domain}};
+{{ end }}    server_name {{.Domain}} www.{{.Domain}}{{.ExtraServerNames}};
 {{ if .IsEnabled }}
     # ACME HTTP-01 webroot. Must be a location block — a server-level
     # redirect fires in nginx SERVER_REWRITE phase BEFORE FIND_CONFIG,
@@ -601,7 +609,7 @@ server {
     # parameter on nginx <1.25.1 (where the standalone directive is an
     # unknown-directive error), the http2 on directive on >=1.25.1
     # (where the listen parameter is deprecated and warns every reload).
-    server_name {{.Domain}} www.{{.Domain}};
+    server_name {{.Domain}} www.{{.Domain}}{{.ExtraServerNames}};
     ssl_certificate {{.SSLCertPath}};
     ssl_certificate_key {{.SSLKeyPath}};
     # JAB-69: modern TLS + Mozilla-intermediate ciphers (no 3DES/RC4/CBC-weak).
@@ -690,7 +698,12 @@ server {
 {{ end }}`
 
 type vhostData struct {
-	Domain             string
+	Domain string
+	// ExtraServerNames (GH #1625) is the sanitized web-domain-alias
+	// suffix appended after "{{.Domain}} www.{{.Domain}}" in server_name
+	// — a leading-space-joined list (" a.com b.com") or "" when none.
+	// Already re-validated against domainRegex by sanitizeAliasServerNames.
+	ExtraServerNames   string
 	PreviewHost        string
 	PreviewCertPath    string
 	PreviewKeyPath     string
@@ -980,6 +993,35 @@ func sanitizeBypassPaths(paths []string) string {
 	return "|" + strings.Join(parts, "|")
 }
 
+// sanitizeAliasServerNames re-validates the panel-supplied web domain
+// aliases (GH #1625) at the agent's config-generation trust boundary and
+// returns a server_name SUFFIX (" alias1 alias2", leading space) or ""
+// when none survive. Each entry is lower-cased, trimmed, and matched
+// against domainRegex — the SAME FQDN shape used for the primary domain
+// — so a value carrying a space, semicolon, brace, or newline (which
+// would break out of the `server_name ...;` directive) is DROPPED, never
+// emitted raw. Fail-closed, de-duplicated, and skips the primary domain
+// and www.<primary> (already in the hardcoded server_name) so no name is
+// listed twice.
+func sanitizeAliasServerNames(domain string, aliases []string) string {
+	primary := strings.ToLower(strings.TrimSpace(domain))
+	skip := map[string]bool{primary: true, "www." + primary: true}
+	seen := map[string]bool{}
+	names := make([]string, 0, len(aliases))
+	for _, a := range aliases {
+		a = strings.ToLower(strings.TrimSpace(a))
+		if a == "" || skip[a] || seen[a] || !domainRegex.MatchString(a) {
+			continue
+		}
+		seen[a] = true
+		names = append(names, a)
+	}
+	if len(names) == 0 {
+		return ""
+	}
+	return " " + strings.Join(names, " ")
+}
+
 // cacheQueryParamRE bounds an allowlist entry at the agent trust boundary:
 // lower-case alnum + underscore, 1-32 chars — the same guard the panel applies,
 // re-checked here so a name can never carry regex metacharacters into the
@@ -1063,7 +1105,10 @@ func buildCacheGate(paths []string, fallback string) string {
 	return "(" + strings.Join(valid, "|") + ")"
 }
 
-func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redirectDirectives, ruleDirectives, customDirectives, rateLimitDirectives, ipACLDirectives, dirPrivacyDirectives, indexPriority string, isEnabled, hasPHP bool, sslCertPath, sslKeyPath, phpMemLimit, phpUploadMax, phpPostMax string, phpMaxInputVars, phpMaxExecTime, phpMaxInputTime int, phpDisplayErrors bool, phpErrorReporting *int, phpTimezone string, envVars []domainEnvVarParam, listenIPv4, listenIPv6 string, cacheEnabled bool, cachePath string, cachePaths []string, cacheBypassPaths []string, cacheTTLSeconds int, cacheQueryAllowlist []string, fpmSocket string, previewHost, previewCertPath, previewKeyPath string, interceptErrors, pathInfo, redirectHTTPS, serveHTTPS bool) (string, error) {
+func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redirectDirectives, ruleDirectives, customDirectives, rateLimitDirectives, ipACLDirectives, dirPrivacyDirectives, indexPriority string, isEnabled, hasPHP bool, sslCertPath, sslKeyPath, phpMemLimit, phpUploadMax, phpPostMax string, phpMaxInputVars, phpMaxExecTime, phpMaxInputTime int, phpDisplayErrors bool, phpErrorReporting *int, phpTimezone string, envVars []domainEnvVarParam, listenIPv4, listenIPv6 string, cacheEnabled bool, cachePath string, cachePaths []string, cacheBypassPaths []string, cacheTTLSeconds int, cacheQueryAllowlist []string, fpmSocket string, previewHost, previewCertPath, previewKeyPath string, interceptErrors, pathInfo, redirectHTTPS, serveHTTPS bool, aliases []string) (string, error) {
+	// GH #1625: re-sanitize the panel-supplied aliases HERE (trust
+	// boundary) into the server_name suffix — never render them raw.
+	aliasServerNames := sanitizeAliasServerNames(domain, aliases)
 	cacheGate := buildCacheGate(cachePaths, cachePath)        // GH #601: multi-path gate body ("" = whole domain)
 	cacheExtraBypass := sanitizeBypassPaths(cacheBypassPaths) // GH #616: safe "|/path" suffix
 	cacheQAllowNames := sanitizeCacheQueryAllowlist(cacheQueryAllowlist)
@@ -1151,6 +1196,7 @@ func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redi
 	h2 := nginxHTTP2()
 	vhostData := vhostData{
 		Domain:                     domain,
+		ExtraServerNames:           aliasServerNames,
 		PreviewHost:                previewHost,
 		PreviewCertPath:            previewCertPath,
 		PreviewKeyPath:             previewKeyPath,
@@ -1445,7 +1491,7 @@ func domainCreateHandler(ctx context.Context, params json.RawMessage) (any, erro
 	// panel always sends the field; writeVhost still forces it false if the
 	// cert file turns out to be missing on disk (#213).
 	redirectHTTPS, serveHTTPS := resolveHTTPSFlags(&p)
-	configPath, err := writeVhost(ctx, p.Username, p.Domain, p.DocRoot, p.PHPVersion, p.RedirectDirectives, p.RuleDirectives, p.CustomDirectives, rateLimitDirectives, ipACLDirectives, dirPrivacyDirectives, p.IndexPriority, isEnabled, p.HasPHP, p.SSLCertPath, p.SSLKeyPath, p.PHPMemoryLimit, p.PHPUploadMaxFilesize, p.PHPPostMaxSize, p.PHPMaxInputVars, p.PHPMaxExecutionTime, p.PHPMaxInputTime, p.PHPDisplayErrors, p.PHPErrorReporting, p.PHPTimezone, p.EnvVars, p.ListenIPv4, p.ListenIPv6, p.CacheEnabled, p.CachePath, p.CachePaths, p.CacheBypassPaths, p.CacheTTLSeconds, p.CacheQueryAllowlist, p.FPMSocket, p.PreviewHost, p.PreviewCertPath, p.PreviewKeyPath, p.InterceptErrors, p.PathInfo, redirectHTTPS, serveHTTPS)
+	configPath, err := writeVhost(ctx, p.Username, p.Domain, p.DocRoot, p.PHPVersion, p.RedirectDirectives, p.RuleDirectives, p.CustomDirectives, rateLimitDirectives, ipACLDirectives, dirPrivacyDirectives, p.IndexPriority, isEnabled, p.HasPHP, p.SSLCertPath, p.SSLKeyPath, p.PHPMemoryLimit, p.PHPUploadMaxFilesize, p.PHPPostMaxSize, p.PHPMaxInputVars, p.PHPMaxExecutionTime, p.PHPMaxInputTime, p.PHPDisplayErrors, p.PHPErrorReporting, p.PHPTimezone, p.EnvVars, p.ListenIPv4, p.ListenIPv6, p.CacheEnabled, p.CachePath, p.CachePaths, p.CacheBypassPaths, p.CacheTTLSeconds, p.CacheQueryAllowlist, p.FPMSocket, p.PreviewHost, p.PreviewCertPath, p.PreviewKeyPath, p.InterceptErrors, p.PathInfo, redirectHTTPS, serveHTTPS, p.Aliases)
 	if err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,

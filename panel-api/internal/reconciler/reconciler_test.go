@@ -2169,26 +2169,26 @@ func TestReconcileMysqlAdminShadow_BatchLimitOf50(t *testing.T) {
 // cert gen).
 func TestSANHostnamesForDomain(t *testing.T) {
 	t.Run("nil domain", func(t *testing.T) {
-		if got := sanHostnamesForDomain(nil); got != nil {
+		if got := sanHostnamesForDomain(nil, nil); got != nil {
 			t.Errorf("got %v, want nil", got)
 		}
 	})
 	t.Run("email disabled, www out", func(t *testing.T) {
 		d := &models.Domain{Name: "example.com", EmailEnabled: false, CreateWWW: false}
-		if got := sanHostnamesForDomain(d); got != nil {
+		if got := sanHostnamesForDomain(d, nil); got != nil {
 			t.Errorf("got %v, want nil", got)
 		}
 	})
 	t.Run("www opt-in adds www (GH #895)", func(t *testing.T) {
 		d := &models.Domain{Name: "example.com", EmailEnabled: false, CreateWWW: true}
-		got := sanHostnamesForDomain(d)
+		got := sanHostnamesForDomain(d, nil)
 		if len(got) != 1 || got[0] != "www.example.com" {
 			t.Errorf("got %v, want [www.example.com]", got)
 		}
 	})
 	t.Run("www opt-in + email keeps www first", func(t *testing.T) {
 		d := &models.Domain{Name: "example.com", EmailEnabled: true, CreateWWW: true}
-		got := sanHostnamesForDomain(d)
+		got := sanHostnamesForDomain(d, nil)
 		want := []string{"www.example.com", "mail.example.com", "autoconfig.example.com", "autodiscover.example.com"}
 		if len(got) != len(want) {
 			t.Fatalf("got %v, want %v", got, want)
@@ -2201,14 +2201,14 @@ func TestSANHostnamesForDomain(t *testing.T) {
 	})
 	t.Run("SkipAutoSAN + www opt-in keeps only www", func(t *testing.T) {
 		d := &models.Domain{Name: "example.com", EmailEnabled: true, MTASTSEnabled: true, SkipAutoSAN: true, CreateWWW: true}
-		got := sanHostnamesForDomain(d)
+		got := sanHostnamesForDomain(d, nil)
 		if len(got) != 1 || got[0] != "www.example.com" {
 			t.Errorf("got %v, want [www.example.com]", got)
 		}
 	})
 	t.Run("email enabled", func(t *testing.T) {
 		d := &models.Domain{Name: "example.com", EmailEnabled: true}
-		got := sanHostnamesForDomain(d)
+		got := sanHostnamesForDomain(d, nil)
 		want := []string{"mail.example.com", "autoconfig.example.com", "autodiscover.example.com"}
 		if len(got) != len(want) {
 			t.Fatalf("got %v, want %v", got, want)
@@ -2221,7 +2221,7 @@ func TestSANHostnamesForDomain(t *testing.T) {
 	})
 	t.Run("mta_sts only", func(t *testing.T) {
 		d := &models.Domain{Name: "example.com", MTASTSEnabled: true}
-		got := sanHostnamesForDomain(d)
+		got := sanHostnamesForDomain(d, nil)
 		want := []string{"mta-sts.example.com"}
 		if len(got) != 1 || got[0] != want[0] {
 			t.Errorf("got %v, want %v", got, want)
@@ -2229,7 +2229,7 @@ func TestSANHostnamesForDomain(t *testing.T) {
 	})
 	t.Run("email + mta_sts", func(t *testing.T) {
 		d := &models.Domain{Name: "example.com", EmailEnabled: true, MTASTSEnabled: true}
-		got := sanHostnamesForDomain(d)
+		got := sanHostnamesForDomain(d, nil)
 		want := []string{"mail.example.com", "autoconfig.example.com", "autodiscover.example.com", "mta-sts.example.com"}
 		if len(got) != len(want) {
 			t.Fatalf("got %v, want %v", got, want)
@@ -2238,6 +2238,30 @@ func TestSANHostnamesForDomain(t *testing.T) {
 			if got[i] != w {
 				t.Errorf("[%d]: got %q, want %q", i, got[i], w)
 			}
+		}
+	})
+	t.Run("aliases append after helpers (GH #1625)", func(t *testing.T) {
+		d := &models.Domain{Name: "example.com", EmailEnabled: true, CreateWWW: true}
+		got := sanHostnamesForDomain(d, []string{"shop.example.net", "www.brand.io"})
+		want := []string{
+			"www.example.com",
+			"shop.example.net", "www.brand.io",
+			"mail.example.com", "autoconfig.example.com", "autodiscover.example.com",
+		}
+		if len(got) != len(want) {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+		for i, w := range want {
+			if got[i] != w {
+				t.Errorf("[%d]: got %q, want %q", i, got[i], w)
+			}
+		}
+	})
+	t.Run("SkipAutoSAN keeps explicit aliases (GH #1625)", func(t *testing.T) {
+		d := &models.Domain{Name: "example.com", EmailEnabled: true, MTASTSEnabled: true, SkipAutoSAN: true, CreateWWW: false}
+		got := sanHostnamesForDomain(d, []string{"alias.example.net"})
+		if len(got) != 1 || got[0] != "alias.example.net" {
+			t.Errorf("got %v, want [alias.example.net]", got)
 		}
 	})
 }

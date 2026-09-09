@@ -22,37 +22,37 @@ func TestSSLSANDriftMissing(t *testing.T) {
 	row := emailRow("example.com")
 
 	// Missing autodiscover — the motivating case.
-	miss := sslSANDriftMissing(row, []string{"example.com", "mail.example.com", "autoconfig.example.com"})
+	miss := sslSANDriftMissing(row, []string{"example.com", "mail.example.com", "autoconfig.example.com"}, nil)
 	if len(miss) != 1 || miss[0] != "autodiscover.example.com" {
 		t.Fatalf("missing = %v, want [autodiscover.example.com]", miss)
 	}
 
 	// Complete cert — no drift.
-	if m := sslSANDriftMissing(row, []string{"example.com", "mail.example.com", "autoconfig.example.com", "autodiscover.example.com"}); m != nil {
+	if m := sslSANDriftMissing(row, []string{"example.com", "mail.example.com", "autoconfig.example.com", "autodiscover.example.com"}, nil); m != nil {
 		t.Errorf("complete cert flagged drift: %v", m)
 	}
 
 	// Wildcard cert — assumed to cover the helpers, never churned.
-	if m := sslSANDriftMissing(row, []string{"example.com", "*.example.com"}); m != nil {
+	if m := sslSANDriftMissing(row, []string{"example.com", "*.example.com"}, nil); m != nil {
 		t.Errorf("wildcard cert flagged drift: %v", m)
 	}
 
 	// Case-insensitive match.
-	if m := sslSANDriftMissing(row, []string{"example.com", "Mail.Example.COM", "AUTOCONFIG.example.com", "autodiscover.example.com"}); m != nil {
+	if m := sslSANDriftMissing(row, []string{"example.com", "Mail.Example.COM", "AUTOCONFIG.example.com", "autodiscover.example.com"}, nil); m != nil {
 		t.Errorf("case difference flagged drift: %v", m)
 	}
 
 	// SkipAutoSAN → no helper SANs desired → no drift.
 	skip := row
 	skip.SkipAutoSAN = true
-	if m := sslSANDriftMissing(skip, []string{"example.com"}); m != nil {
+	if m := sslSANDriftMissing(skip, []string{"example.com"}, nil); m != nil {
 		t.Errorf("SkipAutoSAN flagged drift: %v", m)
 	}
 
 	// Email disabled → no mail helpers desired → no drift even with a bare cert.
 	nomail := row
 	nomail.EmailEnabled = false
-	if m := sslSANDriftMissing(nomail, []string{"example.com"}); m != nil {
+	if m := sslSANDriftMissing(nomail, []string{"example.com"}, nil); m != nil {
 		t.Errorf("email-disabled flagged drift: %v", m)
 	}
 }

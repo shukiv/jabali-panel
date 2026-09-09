@@ -2122,6 +2122,28 @@ paths:
       parameters: [ { in: path, name: id, required: true, schema: { type: string } }, { in: path, name: acl_id, required: true, schema: { type: string } } ]
       responses: { "204": { description: OK } }
 
+  /domains/{id}/aliases:
+    get:
+      tags: [Aliases]
+      summary: List web domain aliases
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+    post:
+      tags: [Aliases]
+      summary: Add a web domain alias
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "201": { description: Created } }
+
+  /domains/{id}/aliases/{alias_id}:
+    delete:
+      tags: [Aliases]
+      summary: Delete a web domain alias
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } }, { in: path, name: alias_id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
 
   # --- Active Tasks (auto) ---
 

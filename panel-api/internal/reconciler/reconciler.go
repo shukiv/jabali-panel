@@ -259,6 +259,10 @@ type Reconciler struct {
 	// agent dispatch omits the ip_acls field (no nginx directives
 	// rendered).
 	domainIPACLs repository.DomainIPACLRepository
+	// GH #1625 — additional hostnames served from a web domain's vhost.
+	// Optional; when nil the dispatch omits the aliases field and no
+	// alias SANs are added.
+	webDomainAliases repository.WebDomainAliasRepository
 	// M50 per-directory password protection repo. When nil, agent
 	// dispatch omits directory_privacy_rules → no htpasswd files
 	// written, no auth_basic location blocks rendered.
@@ -411,6 +415,34 @@ func (r *Reconciler) WithUserEgressDropSamples(repo repository.UserEgressDropSam
 func (r *Reconciler) WithDomainIPACLs(repo repository.DomainIPACLRepository) *Reconciler {
 	r.domainIPACLs = repo
 	return r
+}
+
+// WithWebDomainAliases injects the GH #1625 alias repo. When set, the
+// reconciler threads a domain's alias hostnames into the agent's
+// domain.create server_name and into the cert SAN set on every converge.
+func (r *Reconciler) WithWebDomainAliases(repo repository.WebDomainAliasRepository) *Reconciler {
+	r.webDomainAliases = repo
+	return r
+}
+
+// aliasHostnames returns a domain's alias hostnames for this converge
+// pass, or nil when the repo is unwired or the read fails. Fail-open on
+// purpose: a repo blip must not tank a domain converge or a cert renewal
+// — nil means "no aliases this pass", the vhost params stay unchanged,
+// and the next tick retries. GH #1625.
+func (r *Reconciler) aliasHostnames(ctx context.Context, domainID string) []string {
+	if r.webDomainAliases == nil {
+		return nil
+	}
+	aliasCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	names, err := r.webDomainAliases.ListHostnamesByDomainID(aliasCtx, domainID)
+	if err != nil {
+		r.log.Warn("ssl: failed to load web domain aliases; skipping them this pass",
+			"domain_id", domainID, "err", err)
+		return nil
+	}
+	return names
 }
 
 // WithDomainDirectoryPrivacy injects the M50 per-directory password
@@ -1959,6 +1991,16 @@ func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Dom
 		}
 	}
 
+	// GH #1625 web domain aliases. UNFILTERED on purpose: every alias
+	// goes into the vhost server_name regardless of DNS (no traffic → no
+	// harm; DNS flips → served immediately, the add-then-repoint flow).
+	// Only the CERT side (sanHostnamesForDomain → resolvableSANs →
+	// reachableSANs) gates on reachability, so a not-yet-pointed alias is
+	// served over HTTP but left off the cert until it resolves here.
+	if aliases := r.aliasHostnames(ctx, domain.ID); len(aliases) > 0 {
+		params["aliases"] = aliases
+	}
+
 	// M50 per-directory password protection. Fetch rules + their
 	// credentials so the agent can write the htpasswd file and emit
 	// one `location ^~ <path>/ { auth_basic ...; }` block per rule.
@@ -2659,7 +2701,7 @@ type sslSelfSignResult struct {
 // already covers it, so Outlook's direct
 // autodiscover.<domain>/autodiscover.xml probe lands on a cert that
 // names it instead of a TLS mismatch.
-func sanHostnamesForDomain(d *models.Domain) []string {
+func sanHostnamesForDomain(d *models.Domain, aliases []string) []string {
 	if d == nil {
 		return nil
 	}
@@ -2672,9 +2714,33 @@ func sanHostnamesForDomain(d *models.Domain) []string {
 	if d.CreateWWW {
 		out = append(out, "www."+d.Name)
 	}
+	// GH #1625 web domain aliases. An alias is served from the SAME
+	// docroot as the apex (the reconciler adds it to the main vhost's
+	// server_name), so unlike the mail helpers below a forwarded HTTP-01
+	// challenge for it COULD be answered from the token dir. Even so it
+	// is left on the DIRECT-ONLY footing (reachableSANs), NOT the fronted
+	// allowance the apex/www get, ON PURPOSE:
+	//
+	// An alias is usually a FOREIGN zone, so "resolves to the apex's CDN
+	// IPs" is a weak origin signal — a same-CDN alias may route to a
+	// different origin (the tenant's old box during a migration), the
+	// challenge 404s there, and that one failure tanks the WHOLE cert,
+	// apex included (arizot-e.com's shape). The apex's own fronted
+	// allowance can never do that: if the apex isn't reachable the cert
+	// was doomed regardless. A tenant-supplied alias must not widen the
+	// blast radius past its own coverage — so a CDN-fronted alias is
+	// simply left off the cert and reported "pending" (GH #1625), which
+	// resolvableSANs + reachableSANs already enforce for any non-apex/www
+	// name. Do not "fix" this by extending webNameKeepsFrontedAllowance
+	// to aliases.
+	//
+	// Appended before the SkipAutoSAN return (like opt-in www): aliases
+	// are EXPLICIT tenant SANs, not auto-derived helpers, so SkipAutoSAN
+	// (opt-out of mail/autoconfig/mta-sts) must not drop them.
+	out = append(out, aliases...)
 	// Tenant opt-out: when SkipAutoSAN is set, panel won't add the
 	// auto-derived helper SANs (mail/autoconfig/mta-sts) — only the base
-	// name (agent-side) and www.<domain> when opted in.
+	// name (agent-side), www.<domain> when opted in, and explicit aliases.
 	if d.SkipAutoSAN {
 		return out
 	}
@@ -2892,7 +2958,7 @@ func (r *Reconciler) sslEnsureSelfSigned(ctx context.Context, domain *models.Dom
 	}
 
 	ssParams := map[string]any{"domain": domain.Name, "days": 365}
-	if extras := sanHostnamesForDomain(domain); len(extras) > 0 {
+	if extras := sanHostnamesForDomain(domain, r.aliasHostnames(ctx, domain.ID)); len(extras) > 0 {
 		sanCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		if filtered := r.resolvableSANs(sanCtx, extras); len(filtered) > 0 {
 			ssParams["hostnames"] = filtered
@@ -3052,7 +3118,7 @@ func (r *Reconciler) tryACMEOrFallback(ctx context.Context, domain *models.Domai
 		"email":   srv.AdminEmail,
 		"staging": staging,
 	}
-	if extras := sanHostnamesForDomain(domain); len(extras) > 0 {
+	if extras := sanHostnamesForDomain(domain, r.aliasHostnames(issueCtx, domain.ID)); len(extras) > 0 {
 		// Drop unresolvable SAN names — they would otherwise fail
 		// HTTP-01 and tank the whole cert. The base name +
 		// www.<name> always remain (added agent-side).
@@ -3140,7 +3206,7 @@ func (r *Reconciler) ensureSelfSignFallback(ctx context.Context, domain *models.
 		"domain": domain.Name,
 		"days":   365,
 	}
-	if extras := sanHostnamesForDomain(domain); len(extras) > 0 {
+	if extras := sanHostnamesForDomain(domain, r.aliasHostnames(selfSignCtx, domain.ID)); len(extras) > 0 {
 		// Self-sign uses the SAME SAN filter so the fallback
 		// cert covers exactly what ACME will retry next tick.
 		if filtered := r.resolvableSANs(selfSignCtx, extras); len(filtered) > 0 {
@@ -3238,7 +3304,7 @@ func (r *Reconciler) sslRenewForDomain(ctx context.Context, domain *models.Domai
 	// round trip (two hook invocations + validation poll) against this
 	// call's default budget. tryACMEOrFallback re-detects fronting and
 	// gives the DNS-01 path its 4-minute budget.
-	if len(sanHostnamesForDomain(domain)) > 0 || cert.IssueMethod == issueMethodDNS01 {
+	if len(sanHostnamesForDomain(domain, r.aliasHostnames(ctx, domain.ID))) > 0 || cert.IssueMethod == issueMethodDNS01 {
 		r.tryACMEOrFallback(ctx, domain, cert)
 		return
 	}

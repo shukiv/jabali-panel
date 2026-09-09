@@ -82,6 +82,8 @@ type Deps struct {
 	StalwartAdminThrottle api.ThrottleDispatcher
 	BWDaily               repository.BWDailyRepository
 	DomainIPACLs          repository.DomainIPACLRepository
+	// GH #1625 — additional hostnames served from a web domain's vhost.
+	WebDomainAliases repository.WebDomainAliasRepository
 	// M6.6 — per-domain mail TLS rows.
 	MailCerts              repository.MailCertificateRepository
 	DomainDirectoryPrivacy repository.DomainDirectoryPrivacyRepository
@@ -481,6 +483,9 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 					ManagedIPs:      deps.ManagedIPs,
 					ServerSettings:  deps.ServerSettings,
 					BWDaily:         deps.BWDaily,
+					// GH #1625: arms the cross-tenant hijack guard on the
+					// JAB-233 automation create path (same as the GUI create).
+					WebDomainAliases: deps.WebDomainAliases,
 				},
 			})
 		}
@@ -732,6 +737,9 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				// dropped from GET.
 				ManagedIPs:     deps.ManagedIPs,
 				ServerSettings: deps.ServerSettings,
+				// GH #1625: arms the reverse cross-tenant hijack guard so create
+				// AND rename reject a name already claimed by another domain's alias.
+				WebDomainAliases: deps.WebDomainAliases,
 				// GH #1238 change-owner (admin, JAB-380 step-up): AppInstalls
 				// arms the cross-tenant-credential refusal, AuditEvents records
 				// it, KratosClient gates the step-up.
@@ -750,6 +758,21 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			api.RegisterDomainIPACLRoutes(v1, api.DomainIPACLHandlerConfig{
 				Domains:   deps.Domains,
 				ACLs:      deps.DomainIPACLs,
+				Reconcile: schedule,
+			})
+		}
+		// GH #1625 — web domain aliases (extra server_name + cert SANs).
+		if deps.Domains != nil && deps.WebDomainAliases != nil {
+			var schedule func(string)
+			if deps.Reconciler != nil {
+				rec := deps.Reconciler
+				schedule = func(id string) { rec.Schedule(id) }
+			}
+			api.RegisterDomainAliasRoutes(v1, api.DomainAliasHandlerConfig{
+				Domains:   deps.Domains,
+				Aliases:   deps.WebDomainAliases,
+				Certs:     deps.SSLCerts,
+				Settings:  deps.ServerSettings,
 				Reconcile: schedule,
 			})
 		}
@@ -1002,9 +1025,10 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Agent:          deps.Agent,
 				PanelCerts:     deps.PanelCerts,
 				MailCerts:      deps.MailCerts,
-				ServerSettings: deps.ServerSettings,
-				Reconciler:     deps.Reconciler,
-				Config:         cfg,
+				ServerSettings:   deps.ServerSettings,
+				WebDomainAliases: deps.WebDomainAliases,
+				Reconciler:       deps.Reconciler,
+				Config:           cfg,
 			})
 		}
 		if deps.ServerSettings != nil {
@@ -1439,9 +1463,11 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Catalog:        deps.DockerCatalog,
 				ServerSettings: deps.ServerSettings,
 				Domains:        deps.Domains,
-				Agent:          deps.Agent,
-				Users:          deps.Users,
-				Log:            deps.Log,
+				// GH #1625: hijack guard on the docker-app domain auto-create path.
+				WebDomainAliases: deps.WebDomainAliases,
+				Agent:            deps.Agent,
+				Users:            deps.Users,
+				Log:              deps.Log,
 			})
 		}
 		// M49 (GH #170): tenant docker apps. Mounts /docker-apps on the

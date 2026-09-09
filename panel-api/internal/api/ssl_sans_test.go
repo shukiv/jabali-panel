@@ -9,9 +9,10 @@ import (
 
 func TestWebCertSANsForDomain(t *testing.T) {
 	cases := []struct {
-		name string
-		dom  *models.Domain
-		want []string
+		name    string
+		dom     *models.Domain
+		aliases []string
+		want    []string
 	}{
 		{
 			name: "plain, www opted out (GH #895)",
@@ -48,10 +49,29 @@ func TestWebCertSANsForDomain(t *testing.T) {
 			dom:  &models.Domain{Name: "example.com", EmailEnabled: true, MTASTSEnabled: true, SkipAutoSAN: true, CreateWWW: true},
 			want: []string{"example.com", "www.example.com"},
 		},
+		{
+			// GH #1625: explicit aliases sit after www, before the auto helpers,
+			// mirroring reconciler.sanHostnamesForDomain's position (ADR-0070).
+			name:    "aliases, www in + email",
+			dom:     &models.Domain{Name: "example.com", EmailEnabled: true, CreateWWW: true},
+			aliases: []string{"shop.example.net", "www.brand.io"},
+			want: []string{
+				"example.com", "www.example.com",
+				"shop.example.net", "www.brand.io",
+				"mail.example.com", "autoconfig.example.com", "autodiscover.example.com",
+			},
+		},
+		{
+			// SkipAutoSAN drops the auto helpers but NOT explicit aliases.
+			name:    "SkipAutoSAN keeps aliases",
+			dom:     &models.Domain{Name: "example.com", EmailEnabled: true, MTASTSEnabled: true, SkipAutoSAN: true, CreateWWW: false},
+			aliases: []string{"alias.example.net"},
+			want:    []string{"example.com", "alias.example.net"},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := webCertSANsForDomain(tc.dom); !reflect.DeepEqual(got, tc.want) {
+			if got := webCertSANsForDomain(tc.dom, tc.aliases); !reflect.DeepEqual(got, tc.want) {
 				t.Errorf("got %v want %v", got, tc.want)
 			}
 		})

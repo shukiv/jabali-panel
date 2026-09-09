@@ -59,6 +59,14 @@ func (h *domainHandler) rename(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_name", "message": verr.Error()})
 		return
 	}
+	// GH #1625: a rename assigns a new domains.name too, so it must run the same
+	// cross-tenant hijack guard create does — the new name must not claim a
+	// server_name already held by another domain's web-domain alias. (The
+	// domain's own aliases survive the rename; they are keyed by domain_id.)
+	if hit, clash := aliasCollision(ctx, h.cfg.WebDomainAliases, newName); clash {
+		c.JSON(http.StatusConflict, gin.H{"error": "domain_conflicts_alias", "message": "the name " + hit + " is already used as an alias of another domain"})
+		return
+	}
 
 	// *reconciler.Reconciler satisfies RenameReconciler, but pass it as a truly
 	// nil interface when unwired so RenameDomain's nil check holds (a typed-nil
