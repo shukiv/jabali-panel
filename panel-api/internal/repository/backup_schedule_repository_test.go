@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -10,6 +11,8 @@ import (
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 )
+
+var errFakeUserLink = errors.New("boom user link")
 
 func TestBackupSchedule_Create_StampsTimestamps(t *testing.T) {
 	db, mock, raw := newMockBackupDB(t)
@@ -72,6 +75,76 @@ func TestBackupSchedule_ReplaceDestinations_AtomicReplace(t *testing.T) {
 		"01J5SCHED0000000000000000A",
 		[]string{"01J5DEST00000000000000000A", "01J5DEST00000000000000000B"})
 	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// JAB-307: CreateWithMemberships commits the row and both membership sets in
+// ONE transaction — a single Begin, the INSERT + the delete/insert pairs, then
+// Commit.
+func TestBackupSchedule_CreateWithMemberships_CommitsRowAndLinks(t *testing.T) {
+	db, mock, raw := newMockBackupDB(t)
+	defer raw.Close()
+	repo := NewBackupScheduleRepository(db)
+
+	mock.ExpectBegin()
+	mock.ExpectExec("INSERT INTO `backup_schedules`").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec("DELETE FROM `backup_schedule_destinations` WHERE schedule_id = \\?").
+		WithArgs("01J5SCHED0000000000000000A").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("INSERT INTO `backup_schedule_destinations`").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("DELETE FROM `backup_schedule_users` WHERE schedule_id = \\?").
+		WithArgs("01J5SCHED0000000000000000A").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("INSERT INTO `backup_schedule_users`").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	s := &models.BackupSchedule{
+		ID:       "01J5SCHED0000000000000000A",
+		Kind:     models.BackupScheduleKindAccount,
+		CronExpr: "0 3 * * *",
+		Enabled:  true,
+	}
+	err := repo.CreateWithMemberships(context.Background(), s,
+		[]string{"01J5DEST00000000000000000A"},
+		[]string{"01J5USER0000000000000000001"})
+	require.NoError(t, err)
+	require.False(t, s.CreatedAt.IsZero())
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// The atomicity guarantee: a failure linking users rolls back the whole
+// transaction, so the schedule row is NOT left committed with the wrong (here,
+// empty → "all non-admins") membership. Falsify: drop the tx wrapper / commit
+// the row before the links → this expects a Rollback that never happens.
+func TestBackupSchedule_CreateWithMemberships_UserLinkFails_RollsBack(t *testing.T) {
+	db, mock, raw := newMockBackupDB(t)
+	defer raw.Close()
+	repo := NewBackupScheduleRepository(db)
+
+	mock.ExpectBegin()
+	mock.ExpectExec("INSERT INTO `backup_schedules`").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec("DELETE FROM `backup_schedule_destinations` WHERE schedule_id = \\?").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("DELETE FROM `backup_schedule_users` WHERE schedule_id = \\?").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("INSERT INTO `backup_schedule_users`").
+		WillReturnError(errFakeUserLink)
+	mock.ExpectRollback()
+
+	s := &models.BackupSchedule{
+		ID:       "01J5SCHED0000000000000000A",
+		Kind:     models.BackupScheduleKindAccount,
+		CronExpr: "0 3 * * *",
+		Enabled:  true,
+	}
+	err := repo.CreateWithMemberships(context.Background(), s,
+		nil, // no destinations → no dest INSERT
+		[]string{"01J5USER0000000000000000001"})
+	require.Error(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

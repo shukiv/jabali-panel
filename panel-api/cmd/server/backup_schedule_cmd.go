@@ -11,7 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	internalbackup "git.jabali-panel.com/shukivaknin/jabali2/internal/backup"
-	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/backupscheduleops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
@@ -168,10 +168,6 @@ func newBackupScheduleCreateCmd() *cobra.Command {
 			if cronExpr == "" {
 				return fmt.Errorf("either --cron or --preset is required")
 			}
-			next, err := internalbackup.NextFire(cronExpr, time.Now().UTC())
-			if err != nil {
-				return err
-			}
 			destIDs, err := resolveDestinationIDs(ctx, destinations)
 			if err != nil {
 				return err
@@ -180,43 +176,46 @@ func newBackupScheduleCreateCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			s := &models.BackupSchedule{
-				ID:                  ids.NewULID(),
+			enabled := !disabled
+			in := backupscheduleops.CreateInput{
 				Kind:                kind,
-				CronExpr:            cronExpr,
-				Enabled:             !disabled,
+				UserIDs:             userIDs,
 				IncludeSystemBackup: includeSystem,
-				NextRunAt:           &next,
+				CronExpr:            cronExpr,
+				Enabled:             &enabled,
+				DestinationIDs:      destIDs,
 			}
 			if cmd.Flags().Changed("keep-daily") {
-				s.KeepDaily = &keepDaily
+				in.KeepDaily = &keepDaily
 			}
 			if cmd.Flags().Changed("keep-weekly") {
-				s.KeepWeekly = &keepWeekly
+				in.KeepWeekly = &keepWeekly
 			}
 			if cmd.Flags().Changed("keep-monthly") {
-				s.KeepMonthly = &keepMonthly
+				in.KeepMonthly = &keepMonthly
 			}
-			repo := backupScheduleRepoFromDB()
-			if err := repo.Create(ctx, s); err != nil {
-				return fmt.Errorf("create schedule: %w", err)
-			}
-			if len(destIDs) > 0 {
-				if err := repo.ReplaceDestinations(ctx, s.ID, destIDs); err != nil {
-					return fmt.Errorf("link destinations: %w", err)
-				}
-			}
-			if len(userIDs) > 0 {
-				if err := repo.ReplaceUsers(ctx, s.ID, userIDs); err != nil {
-					return fmt.Errorf("link users: %w", err)
-				}
+			// One shared lifecycle: admin-target rejection, system-kind
+			// normalization, cron validation, and the transactional
+			// row+memberships commit all live in the leaf now (JAB-307), so
+			// the CLI can no longer schedule an admin account or leave a
+			// half-written schedule when a join insert fails.
+			s, err := backupscheduleops.Create(ctx, backupscheduleops.Deps{
+				Schedules: backupScheduleRepoFromDB(),
+				Users:     repository.NewUserRepository(sharedDB),
+			}, in)
+			if err != nil {
+				return mapScheduleOpErr(err)
 			}
 			if jsonOutput {
 				return printJSON(s)
 			}
 			cliAuditOK(ctx, "backup_schedule.create", "backup_schedule", s.ID, nil)
+			next := ""
+			if s.NextRunAt != nil {
+				next = s.NextRunAt.Format(time.RFC3339)
+			}
 			fmt.Printf("Created schedule %s (%s, cron=%s, next=%s)\n",
-				s.ID, s.Kind, s.CronExpr, next.Format(time.RFC3339))
+				s.ID, s.Kind, s.CronExpr, next)
 			return nil
 		},
 	}
@@ -472,4 +471,18 @@ func resolveUserIDs(ctx context.Context, items []string) ([]string, error) {
 		out = append(out, u.ID)
 	}
 	return out, nil
+}
+
+// mapScheduleOpErr turns a backupscheduleops error into a caller-friendly CLI
+// error. Every path returns a non-nil error so the command exits non-zero
+// (a silently-accepted admin target would be feedback_silent_exit0_failures).
+func mapScheduleOpErr(err error) error {
+	var ure *backupscheduleops.UserRejectedError
+	if errors.As(err, &ure) {
+		if errors.Is(err, backupscheduleops.ErrAdminUser) {
+			return fmt.Errorf("user %s is an admin account and cannot be a backup-schedule target", ure.UserID)
+		}
+		return fmt.Errorf("user %s not found", ure.UserID)
+	}
+	return err
 }

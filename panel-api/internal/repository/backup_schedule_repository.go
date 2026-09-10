@@ -18,6 +18,13 @@ import (
 
 type BackupScheduleRepository interface {
 	Create(ctx context.Context, s *models.BackupSchedule) error
+	// CreateWithMemberships commits the schedule row together with its
+	// destination and user links in ONE transaction. A join-write failure
+	// rolls the whole thing back, so a create never leaves a runnable row
+	// whose membership silently differs from what was asked (an
+	// account schedule with no users fans out to every non-admin at tick
+	// time — a partial write there broadens, not narrows, the blast radius).
+	CreateWithMemberships(ctx context.Context, s *models.BackupSchedule, destIDs, userIDs []string) error
 	Get(ctx context.Context, id string) (*models.BackupSchedule, error)
 	GetWithDestinations(ctx context.Context, id string) (*models.BackupSchedule, error)
 	List(ctx context.Context) ([]models.BackupSchedule, error)
@@ -59,6 +66,28 @@ func (r *backupScheduleRepo) Create(ctx context.Context, s *models.BackupSchedul
 		return translate(err)
 	}
 	return nil
+}
+
+func (r *backupScheduleRepo) CreateWithMemberships(ctx context.Context, s *models.BackupSchedule, destIDs, userIDs []string) error {
+	now := time.Now().UTC()
+	if s.CreatedAt.IsZero() {
+		s.CreatedAt = now
+	}
+	if s.UpdatedAt.IsZero() {
+		s.UpdatedAt = now
+	}
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(s).Error; err != nil {
+			return translate(err)
+		}
+		if err := replaceDestinationsTx(tx, s.ID, destIDs); err != nil {
+			return err
+		}
+		if err := replaceUsersTx(tx, s.ID, userIDs); err != nil {
+			return err
+		}
+		return nil
+	})
 }
 
 func (r *backupScheduleRepo) Get(ctx context.Context, id string) (*models.BackupSchedule, error) {
@@ -208,27 +237,34 @@ func (r *backupScheduleRepo) GetDestinations(ctx context.Context, scheduleID str
 
 func (r *backupScheduleRepo) ReplaceDestinations(ctx context.Context, scheduleID string, destIDs []string) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("schedule_id = ?", scheduleID).
-			Delete(&models.BackupScheduleDestination{}).Error; err != nil {
-			return translate(err)
-		}
-		if len(destIDs) == 0 {
-			return nil
-		}
-		now := time.Now().UTC()
-		rows := make([]models.BackupScheduleDestination, 0, len(destIDs))
-		for _, id := range destIDs {
-			rows = append(rows, models.BackupScheduleDestination{
-				ScheduleID:    scheduleID,
-				DestinationID: id,
-				CreatedAt:     now,
-			})
-		}
-		if err := tx.Create(&rows).Error; err != nil {
-			return translate(err)
-		}
-		return nil
+		return replaceDestinationsTx(tx, scheduleID, destIDs)
 	})
+}
+
+// replaceDestinationsTx runs the delete+insert against a caller-supplied tx so
+// it can compose into a larger transaction (CreateWithMemberships) without
+// opening a nested transaction on a different handle.
+func replaceDestinationsTx(tx *gorm.DB, scheduleID string, destIDs []string) error {
+	if err := tx.Where("schedule_id = ?", scheduleID).
+		Delete(&models.BackupScheduleDestination{}).Error; err != nil {
+		return translate(err)
+	}
+	if len(destIDs) == 0 {
+		return nil
+	}
+	now := time.Now().UTC()
+	rows := make([]models.BackupScheduleDestination, 0, len(destIDs))
+	for _, id := range destIDs {
+		rows = append(rows, models.BackupScheduleDestination{
+			ScheduleID:    scheduleID,
+			DestinationID: id,
+			CreatedAt:     now,
+		})
+	}
+	if err := tx.Create(&rows).Error; err != nil {
+		return translate(err)
+	}
+	return nil
 }
 
 func (r *backupScheduleRepo) GetUserIDs(ctx context.Context, scheduleID string) ([]string, error) {
@@ -246,25 +282,31 @@ func (r *backupScheduleRepo) GetUserIDs(ctx context.Context, scheduleID string) 
 
 func (r *backupScheduleRepo) ReplaceUsers(ctx context.Context, scheduleID string, userIDs []string) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("schedule_id = ?", scheduleID).
-			Delete(&models.BackupScheduleUser{}).Error; err != nil {
-			return translate(err)
-		}
-		if len(userIDs) == 0 {
-			return nil
-		}
-		now := time.Now().UTC()
-		rows := make([]models.BackupScheduleUser, 0, len(userIDs))
-		for _, id := range userIDs {
-			rows = append(rows, models.BackupScheduleUser{
-				ScheduleID: scheduleID,
-				UserID:     id,
-				CreatedAt:  now,
-			})
-		}
-		if err := tx.Create(&rows).Error; err != nil {
-			return translate(err)
-		}
-		return nil
+		return replaceUsersTx(tx, scheduleID, userIDs)
 	})
+}
+
+// replaceUsersTx runs the delete+insert against a caller-supplied tx so it can
+// compose into CreateWithMemberships without a nested transaction.
+func replaceUsersTx(tx *gorm.DB, scheduleID string, userIDs []string) error {
+	if err := tx.Where("schedule_id = ?", scheduleID).
+		Delete(&models.BackupScheduleUser{}).Error; err != nil {
+		return translate(err)
+	}
+	if len(userIDs) == 0 {
+		return nil
+	}
+	now := time.Now().UTC()
+	rows := make([]models.BackupScheduleUser, 0, len(userIDs))
+	for _, id := range userIDs {
+		rows = append(rows, models.BackupScheduleUser{
+			ScheduleID: scheduleID,
+			UserID:     id,
+			CreatedAt:  now,
+		})
+	}
+	if err := tx.Create(&rows).Error; err != nil {
+		return translate(err)
+	}
+	return nil
 }

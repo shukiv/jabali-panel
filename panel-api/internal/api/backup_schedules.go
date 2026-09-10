@@ -15,7 +15,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	internalbackup "git.jabali-panel.com/shukivaknin/jabali2/internal/backup"
-	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/backupscheduleops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/middleware"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
@@ -147,94 +147,50 @@ func (h *backupScheduleHandler) create(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid_body", "detail": err.Error()})
 		return
 	}
-	// Kind defaults to account_backup so the UI doesn't have to send
-	// it explicitly. system_backup kind is still accepted for direct
-	// API callers (sysadmin tooling).
-	if req.Kind == "" {
-		req.Kind = models.BackupScheduleKindAccount
-	}
-	if req.Kind != models.BackupScheduleKindAccount && req.Kind != models.BackupScheduleKindSystem {
-		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid_kind"})
-		return
-	}
-	// Normalise user_ids: drop empty strings, accept the legacy single
-	// user_id by promoting it into UserIDs.
+	// Adapter concern: promote the legacy single user_id into the
+	// multi-select UserIDs before handing resolved ids to the lifecycle.
 	if req.UserID != nil && *req.UserID != "" {
 		req.UserIDs = append(req.UserIDs, *req.UserID)
 	}
-	req.UserID = nil
-	cleanIDs := make([]string, 0, len(req.UserIDs))
-	for _, uid := range req.UserIDs {
-		if uid == "" {
-			continue
-		}
-		cleanIDs = append(cleanIDs, uid)
-	}
-	req.UserIDs = cleanIDs
-	if req.Kind == models.BackupScheduleKindAccount {
-		for _, uid := range req.UserIDs {
-			if h.cfg.Users == nil {
-				break
-			}
-			user, err := h.cfg.Users.FindByID(c.Request.Context(), uid)
-			if err != nil || user == nil {
-				c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "user_not_found", "detail": uid})
-				return
-			}
-			if user.IsAdmin {
-				c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "admin_user_not_allowed", "detail": uid})
-				return
-			}
-		}
-	} else {
-		req.UserIDs = nil
-	}
-	next, err := internalbackup.NextFire(req.CronExpr, time.Now().UTC())
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid_cron", "detail": err.Error()})
-		return
-	}
 
-	enabled := true
-	if req.Enabled != nil {
-		enabled = *req.Enabled
-	}
-	// include_system_backup is a no-op on kind=system_backup (those
-	// schedules already back up the system); silently normalise to
-	// false so the field isn't a confusing leftover after a kind flip.
-	includeSys := req.IncludeSystemBackup
-	if req.Kind == models.BackupScheduleKindSystem {
-		includeSys = false
-	}
-	s := &models.BackupSchedule{
-		ID:                  ids.NewULID(),
+	s, err := backupscheduleops.Create(c.Request.Context(), backupscheduleops.Deps{
+		Schedules: h.cfg.Schedules,
+		Users:     h.cfg.Users,
+	}, backupscheduleops.CreateInput{
 		Kind:                req.Kind,
-		UserID:              req.UserID,
-		IncludeSystemBackup: includeSys,
-		CronExpr:            strings.TrimSpace(req.CronExpr),
-		Enabled:             enabled,
+		UserIDs:             req.UserIDs,
+		IncludeSystemBackup: req.IncludeSystemBackup,
+		CronExpr:            req.CronExpr,
+		Enabled:             req.Enabled,
 		KeepDaily:           req.KeepDaily,
 		KeepWeekly:          req.KeepWeekly,
 		KeepMonthly:         req.KeepMonthly,
-		NextRunAt:           &next,
-	}
-	if err := h.cfg.Schedules.Create(c.Request.Context(), s); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "db_create"})
+		DestinationIDs:      req.DestinationIDs,
+	})
+	if err != nil {
+		writeScheduleOpError(c, err)
 		return
 	}
-	if len(req.DestinationIDs) > 0 {
-		if err := h.cfg.Schedules.ReplaceDestinations(c.Request.Context(), s.ID, req.DestinationIDs); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "db_link_destinations"})
-			return
-		}
-	}
-	if err := h.cfg.Schedules.ReplaceUsers(c.Request.Context(), s.ID, req.UserIDs); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "db_link_users"})
-		return
-	}
-	s.UserIDs = req.UserIDs
 	dests, _ := h.cfg.Schedules.GetDestinations(c.Request.Context(), s.ID)
 	c.JSON(http.StatusCreated, toScheduleDTO(s, dests))
+}
+
+// writeScheduleOpError maps a backupscheduleops error to the wire codes the
+// admin REST surface has always emitted, so the contract is unchanged.
+func writeScheduleOpError(c *gin.Context, err error) {
+	var ure *backupscheduleops.UserRejectedError
+	switch {
+	case errors.Is(err, backupscheduleops.ErrInvalidKind):
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid_kind"})
+	case errors.As(err, &ure) && errors.Is(err, backupscheduleops.ErrAdminUser):
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "admin_user_not_allowed", "detail": ure.UserID})
+	case errors.As(err, &ure):
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "user_not_found", "detail": ure.UserID})
+	case errors.Is(err, backupscheduleops.ErrInvalidCron):
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid_cron", "detail": err.Error()})
+	default:
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "db_create"})
+	}
 }
 
 type updateScheduleRequest struct {
