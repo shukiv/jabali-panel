@@ -8,7 +8,6 @@
 // (Save applies to it); the other tabs are self-contained sections that
 // persist their own changes independently.
 import { App, Button, Drawer, Form, Grid, Input, InputNumber, Space, Switch, Tabs, Typography } from "antd";
-import { useEffect } from "react";
 
 import { useUpdateMailbox, type Mailbox } from "../../hooks/useMailboxes";
 import { MailboxForwardingSection } from "./MailboxForwardingSection";
@@ -38,16 +37,19 @@ export function EditMailboxModal({ open, mailbox, onClose }: EditMailboxModalPro
   const screens = Grid.useBreakpoint();
   const isDesktop = !!screens.md;
 
-  useEffect(() => {
-    if (open && mailbox) {
-      form.setFieldsValue({
-        display_name: mailbox.display_name ?? "",
-        quota_mib: Math.round(mailbox.quota_bytes / MIB),
-        enabled: !mailbox.is_disabled,
-        send_only: mailbox.send_only ?? false,
-      });
-    }
-  }, [open, mailbox, form]);
+  // GH #1615 (reported: reopening Edit showed a blank/stale form): prefill via
+  // the Form's own initialValues, NOT a useEffect(form.setFieldsValue). antd's
+  // FAQ warns against setFieldsValue for a Form in a lazily-rendered overlay
+  // (the Drawer mounts its children only when open). initialValues is re-read
+  // on every fresh mount, and with destroyOnHidden + clearOnDestroy the Form
+  // remounts clean each open, so it always reflects the current mailbox. This
+  // matches antd's form-in-modal demo and CreateMailboxWizardModal.
+  const initialValues: FormValues = {
+    display_name: mailbox?.display_name ?? "",
+    quota_mib: mailbox ? Math.round(mailbox.quota_bytes / MIB) : QUOTA_MIN_MIB,
+    enabled: mailbox ? !mailbox.is_disabled : true,
+    send_only: mailbox?.send_only ?? false,
+  };
 
   const submit = async () => {
     if (!mailbox) return;
@@ -97,7 +99,14 @@ export function EditMailboxModal({ open, mailbox, onClose }: EditMailboxModalPro
   };
 
   const accountTab = (
-    <Form form={form} layout="vertical" requiredMark={false}>
+    <Form
+      key={mailbox?.id ?? "closed"}
+      form={form}
+      layout="vertical"
+      requiredMark={false}
+      initialValues={initialValues}
+      clearOnDestroy
+    >
       <Form.Item
         label="Display name"
         name="display_name"
@@ -163,7 +172,7 @@ export function EditMailboxModal({ open, mailbox, onClose }: EditMailboxModalPro
       onClose={onClose}
       width={isDesktop ? 520 : undefined}
       placement="right"
-      destroyOnClose
+      destroyOnHidden
       extra={
         <Space>
           <Button onClick={onClose}>Cancel</Button>
