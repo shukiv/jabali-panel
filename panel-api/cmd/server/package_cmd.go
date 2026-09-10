@@ -419,6 +419,12 @@ func newPackageEditCmd() *cobra.Command {
 				return err
 			}
 
+			// JAB-306 AC4: remember the pre-edit php_exec state so the pool
+			// re-render fans out only when the operator actually flips it (a
+			// value gate, not flag presence) — `--php-exec true` on an
+			// already-true package must not force a fleet-wide re-render.
+			prevPHPExec := p.PHPExecEnabled
+
 			didChange, err := applyPackageEditFlags(cmd.Flags().Changed, p, f)
 			if err != nil {
 				return err
@@ -437,6 +443,28 @@ func newPackageEditCmd() *cobra.Command {
 			}
 			if err := repo.Update(ctx, p); err != nil {
 				return fmt.Errorf("update package: %w", err)
+			}
+			// JAB-306 AC4/AC5: fan out a php_exec change to existing tenants
+			// AFTER the row persists. The reconciler sweep re-applies only
+			// pending/error pools, so without this a CLI php_exec flip would not
+			// reach a serving tenant until their next PHP-settings save. The CLI
+			// runs no reconciler, so the fan-out is DB-only: mark every serving
+			// pool on this package pending and let the ~60s sweep re-render it
+			// from the new package state (the same active->pending mechanism
+			// `jabali php pool reapply-all` uses). Strictly after Update — a
+			// persist failure returned above, so a failed edit fans out nothing
+			// (AC5: repository failure causes no fanout). SSH needs no
+			// equivalent: the SSH reconcile sweep re-reads the package and diffs
+			// group membership every tick (ssh_keys_reconcile.go), so a CLI
+			// ssh_enabled flip converges on its own.
+			if p.PHPExecEnabled != prevPHPExec {
+				fanCtx, fanCancel := context.WithTimeout(cmd.Context(), 2*time.Minute)
+				n, ferr := markPackagePHPPoolsPending(fanCtx, userRepo(), repository.NewPHPPoolRepository(sharedDB), p.ID)
+				fanCancel()
+				fmt.Fprintf(os.Stderr, "php_exec set to %v: marked %d serving PHP pool(s) pending; the reconciler re-renders them on its next sweep(s)\n", p.PHPExecEnabled, n)
+				if ferr != nil {
+					return fmt.Errorf("mark php pools pending after php_exec change: %w", ferr)
+				}
 			}
 			if jsonOutput {
 				return printJSON(p)
@@ -532,6 +560,68 @@ func newPackageDeleteCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&force, "force", false, "skip confirmation")
 	return cmd
+}
+
+// packageUserLister is the narrow user-repo behavior the php_exec fan-out
+// needs: enumerate users so it can find everyone on a package. Kept small so
+// markPackagePHPPoolsPending is unit-testable with a tiny fake.
+type packageUserLister interface {
+	List(ctx context.Context, opts repository.ListOptions) ([]models.User, int64, error)
+}
+
+// poolPendingMarker is the narrow pool-repo behavior the fan-out needs: read a
+// user's pools and flip a pool's status.
+type poolPendingMarker interface {
+	ListByUserID(ctx context.Context, userID string) ([]models.PHPPool, error)
+	SetStatus(ctx context.Context, id, status string, lastErr *string) error
+}
+
+// markPackagePHPPoolsPending flips every SERVING PHP pool (status active or
+// ready) of every user on packageID to "pending", so the reconciler re-renders
+// it from the current package state on its next sweep. This is the CLI
+// counterpart of the REST fanOutPHPPoolReapply (packages.go): the CLI runs no
+// reconciler, so it marks the rows DB-only and lets the ~60s sweep converge —
+// the same active->pending mechanism `jabali php pool reapply-all` uses
+// (markActivePoolsPending), extended to "ready" pools too. A settings-save
+// leaves a pool "ready" (phppoolops.ReconcileViaAgent); the sweep re-applies
+// only pending/error pools, so a serving pool in either active or ready state
+// is otherwise skipped. A php_exec tighten must reach both, so both serving
+// states are flipped. Pending/error pools are already in the sweep's work set
+// and are left as-is (re-marking an error pool would also hide its LastError).
+//
+// Users are enumerated the same bounded way as the REST fan-out (List up to
+// 10k, filter by package). Errors are collected per pool — a failed flip on one
+// tenant must not skip the others — and joined; the caller surfaces them and
+// exits non-zero so an operator sees a tighten that did not fully land.
+func markPackagePHPPoolsPending(ctx context.Context, users packageUserLister, pools poolPendingMarker, packageID string) (int, error) {
+	all, _, err := users.List(ctx, repository.ListOptions{Limit: 10000})
+	if err != nil {
+		return 0, fmt.Errorf("list users: %w", err)
+	}
+	marked := 0
+	var errs []error
+	for i := range all {
+		u := &all[i]
+		if u.PackageID == nil || *u.PackageID != packageID {
+			continue
+		}
+		userPools, perr := pools.ListByUserID(ctx, u.ID)
+		if perr != nil {
+			errs = append(errs, fmt.Errorf("user %s: list pools: %w", u.ID, perr))
+			continue
+		}
+		for j := range userPools {
+			if userPools[j].Status != "active" && userPools[j].Status != "ready" {
+				continue
+			}
+			if serr := pools.SetStatus(ctx, userPools[j].ID, "pending", nil); serr != nil {
+				errs = append(errs, fmt.Errorf("pool %s: %w", userPools[j].ID, serr))
+				continue
+			}
+			marked++
+		}
+	}
+	return marked, errors.Join(errs...)
 }
 
 // resolvePackage accepts either a package ULID or its name (operators
