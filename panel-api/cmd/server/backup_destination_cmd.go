@@ -146,24 +146,14 @@ func newBackupDestinationCreateCmd() *cobra.Command {
 				URL:     url,
 				Enabled: !disabled,
 			}
-			if len(env) > 0 {
-				if _, err := sharedAgent.Call(ctx, "backup.dest.creds_write", map[string]any{
-					"dest_id": d.ID,
-					"env":     env,
-				}); err != nil {
-					return fmt.Errorf("write credentials: %w", err)
-				}
-				ref := filepath.Join(credsDir, d.ID+".env")
-				d.CredentialsRef = &ref
-			}
-			if err := backupDestinationRepoFromDB().Create(ctx, d); err != nil {
+			// Credential-file write, persist, and compensate-on-any-failure all
+			// live in createBackupDestinationDirect so a failed create can never
+			// leak an orphaned secrets file (JAB-310 AC2).
+			if err := createBackupDestinationDirect(ctx, sharedAgent.Call, backupDestinationRepoFromDB(), d, env); err != nil {
 				if errors.Is(err, repository.ErrConflict) {
-					if d.CredentialsRef != nil {
-						_, _ = sharedAgent.Call(ctx, "backup.dest.creds_delete", map[string]any{"dest_id": d.ID})
-					}
 					return fmt.Errorf("destination name %q already exists", name)
 				}
-				return fmt.Errorf("create destination: %w", err)
+				return err
 			}
 			if jsonOutput {
 				return printJSON(d)
