@@ -19,11 +19,18 @@ type fakeBackupDestRepo struct {
 	repository.BackupDestinationRepository
 	createErr    error
 	createCalled int
+	updateErr    error
+	updateCalled int
 }
 
 func (f *fakeBackupDestRepo) Create(_ context.Context, d *models.BackupDestination) error {
 	f.createCalled++
 	return f.createErr
+}
+
+func (f *fakeBackupDestRepo) Update(_ context.Context, d *models.BackupDestination) error {
+	f.updateCalled++
+	return f.updateErr
 }
 
 // recordingAgent records each agent command (and its params), and can be told to
@@ -153,6 +160,111 @@ func TestBackupDestinationCreate_RoutesThroughCore(t *testing.T) {
 	src := readOpsSource(t, "backup_destination_cmd.go")
 	if !strings.Contains(src, "createBackupDestinationDirect(ctx, sharedAgent.Call,") {
 		t.Error("create RunE must route through createBackupDestinationDirect with the production agent caller")
+	}
+}
+
+// TestUpdateBackupDestinationDirect_CompensatesOrphanOnPersistFail is the
+// load-bearing guard: this update wrote a brand-new credential file (the row had
+// none before), and the persist failed — the orphaned secrets file must be
+// removed so it isn't left behind a NULL row.
+func TestUpdateBackupDestinationDirect_CompensatesOrphanOnPersistFail(t *testing.T) {
+	agent := &recordingAgent{}
+	repo := &fakeBackupDestRepo{updateErr: errors.New("connection reset")}
+	d := newDest()
+	ref := "/var/lib/jabali/creds/dst-1.env"
+	d.CredentialsRef = &ref // a creds_write earlier in this update set it
+
+	err := updateBackupDestinationDirect(context.Background(), agent.call, repo, d, false)
+	if err == nil {
+		t.Fatal("expected the update failure to propagate")
+	}
+	if !agent.fired("backup.dest.creds_delete") {
+		t.Fatal("newly-written credential file was NOT cleaned up on persist failure (orphan leak)")
+	}
+	if got := agent.params["backup.dest.creds_delete"]["dest_id"]; got != "dst-1" {
+		t.Fatalf("creds_delete dest_id = %v, want dst-1", got)
+	}
+}
+
+// TestUpdateBackupDestinationDirect_PreExistingRefNotDeletedOnFail is the other
+// load-bearing guard: a credential file the DB row ALREADY referenced must NOT be
+// removed on a persist failure — the surviving row still points at it, so
+// deleting it would break the live destination.
+func TestUpdateBackupDestinationDirect_PreExistingRefNotDeletedOnFail(t *testing.T) {
+	agent := &recordingAgent{}
+	repo := &fakeBackupDestRepo{updateErr: errors.New("connection reset")}
+	d := newDest()
+	ref := "/var/lib/jabali/creds/dst-1.env"
+	d.CredentialsRef = &ref
+
+	if err := updateBackupDestinationDirect(context.Background(), agent.call, repo, d, true); err == nil {
+		t.Fatal("expected the update failure to propagate")
+	}
+	if agent.fired("backup.dest.creds_delete") {
+		t.Fatal("a pre-existing credential file (still referenced by the surviving row) must NOT be deleted")
+	}
+}
+
+// TestUpdateBackupDestinationDirect_NoRefNoDelete: nothing to clean up when the
+// update wrote no credential file, even on a persist failure.
+func TestUpdateBackupDestinationDirect_NoRefNoDelete(t *testing.T) {
+	agent := &recordingAgent{}
+	repo := &fakeBackupDestRepo{updateErr: errors.New("boom")}
+	d := newDest() // CredentialsRef nil
+
+	if err := updateBackupDestinationDirect(context.Background(), agent.call, repo, d, false); err == nil {
+		t.Fatal("expected the update failure to propagate")
+	}
+	if agent.fired("backup.dest.creds_delete") {
+		t.Fatalf("no credential file was written, so nothing must be deleted, got %v", agent.cmds)
+	}
+}
+
+// TestUpdateBackupDestinationDirect_SuccessNoCompensation: a successful persist
+// touches no agent cleanup.
+func TestUpdateBackupDestinationDirect_SuccessNoCompensation(t *testing.T) {
+	agent := &recordingAgent{}
+	repo := &fakeBackupDestRepo{}
+	d := newDest()
+	ref := "/var/lib/jabali/creds/dst-1.env"
+	d.CredentialsRef = &ref
+
+	if err := updateBackupDestinationDirect(context.Background(), agent.call, repo, d, false); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if repo.updateCalled != 1 {
+		t.Fatalf("Update called %d times, want 1", repo.updateCalled)
+	}
+	if agent.fired("backup.dest.creds_delete") {
+		t.Fatal("no cleanup expected on success")
+	}
+}
+
+// TestBackupDestinationUpdate_RoutesThroughCore source-pins that the update RunE
+// hands the production agent caller to the compensating core, and that it
+// captures origHadCredsFile BEFORE the --clear-creds branch — capturing it later
+// would misread a cleared ref as "no pre-existing file" and wrongly compensate a
+// file the surviving row still references.
+func TestBackupDestinationUpdate_RoutesThroughCore(t *testing.T) {
+	src := readOpsSource(t, "backup_destination_cmd.go")
+	start := strings.Index(src, "func newBackupDestinationUpdateCmd(")
+	if start < 0 {
+		t.Fatal("update command not found")
+	}
+	body := src[start:]
+	if end := strings.Index(body, "\nfunc newBackupDestinationRotatePasswordCmd("); end > 0 {
+		body = body[:end]
+	}
+	if !strings.Contains(body, "updateBackupDestinationDirect(ctx, sharedAgent.Call,") {
+		t.Error("update RunE must route the persist through updateBackupDestinationDirect with the production agent caller")
+	}
+	capIdx := strings.Index(body, "origHadCredsFile := d.CredentialsRef != nil")
+	clearIdx := strings.Index(body, "if clearCreds {")
+	if capIdx < 0 {
+		t.Fatal("origHadCredsFile capture not found")
+	}
+	if clearIdx < 0 || capIdx > clearIdx {
+		t.Error("origHadCredsFile must be captured BEFORE the --clear-creds branch mutates CredentialsRef")
 	}
 }
 

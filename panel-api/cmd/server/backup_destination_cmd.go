@@ -214,6 +214,12 @@ func newBackupDestinationUpdateCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// Capture whether the DB row already had a credential file BEFORE any
+			// mutation. It gates the compensating cleanup at persist time: only a
+			// file this update newly wrote (row had none) may be removed on
+			// failure — a pre-existing file is still referenced by the surviving
+			// row (JAB-310).
+			origHadCredsFile := d.CredentialsRef != nil
 			changed := false
 			if cmd.Flags().Changed("name") {
 				d.Name = name
@@ -331,8 +337,11 @@ func newBackupDestinationUpdateCmd() *cobra.Command {
 			if !changed {
 				return fmt.Errorf("no changes specified")
 			}
-			if err := backupDestinationRepoFromDB().Update(ctx, d); err != nil {
-				return fmt.Errorf("update destination: %w", err)
+			// Persist and, on failure, compensate a credential file this update
+			// newly wrote so a transient DB error can't orphan a secrets file
+			// behind a NULL row (JAB-310).
+			if err := updateBackupDestinationDirect(ctx, sharedAgent.Call, backupDestinationRepoFromDB(), d, origHadCredsFile); err != nil {
+				return err
 			}
 			if jsonOutput {
 				return printJSON(d)
