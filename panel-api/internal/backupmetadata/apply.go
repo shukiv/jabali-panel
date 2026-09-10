@@ -26,6 +26,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/kratosclient"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/sshkeyops"
 )
 
 // ApplyResult counts what landed during a single Apply call.
@@ -446,8 +447,14 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 		}
 	}
 
-	// 6) SSH keys.
+	// 6) SSH keys. Persist through the shared restore operation (JAB-292 AC4) so
+	// this is no longer a direct ssh_keys writer and per-owner authorized_keys
+	// convergence has one coalescing point. Backup restore follows the
+	// reconciler-tick convergence model the rest of restored state uses (see
+	// applyRestoreMetadata), so the batch carries no Scheduler — restored keys
+	// re-converge on the next tick, not immediately.
 	if d.SSHKeys != nil {
+		batch := sshkeyops.NewRestoreBatch(sshkeyops.Deps{Keys: d.SSHKeys})
 		for _, k := range m.SSHKeys {
 			row := &models.SSHKey{
 				ID:          k.ID,
@@ -457,8 +464,8 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 				Fingerprint: k.Fingerprint,
 				CreatedAt:   now,
 			}
-			if err := d.SSHKeys.Create(ctx, row); err != nil {
-				if errors.Is(err, repository.ErrConflict) {
+			if err := batch.Restore(ctx, row); err != nil {
+				if errors.Is(err, sshkeyops.ErrDuplicate) {
 					r.Skipped++
 					continue
 				}
@@ -467,6 +474,7 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 			}
 			r.SSHKeys++
 		}
+		batch.Flush()
 	}
 
 	// 7) Cron jobs.

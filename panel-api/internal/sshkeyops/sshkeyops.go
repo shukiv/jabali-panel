@@ -15,10 +15,14 @@
 // reconciler's next ≤60s tick). Keeping scheduling behind the interface makes
 // it the single coalescing point a future restore-batch slice can reuse.
 //
-// Not yet routed through here: the restore paths that still write ssh_keys rows
-// directly (internal/backupmetadata/apply.go, internal/migrate/cpanel/
-// restore_sshkeys.go). JAB-292 stays a module-parent until those use an explicit
-// restore operation that batches scheduling per owner (AC4).
+// Restore paths use the explicit RestoreBatch operation (below): the HTTP/CLI
+// account restore (internal/backupmetadata/apply.go) is routed through it, so it
+// no longer writes ssh_keys rows directly. Still direct: the cPanel migration
+// importer (internal/migrate/cpanel/restore_sshkeys.go) — its duplicate
+// detection string-matches the raw driver error ("Duplicate entry"/"1062")
+// rather than repository.ErrConflict, so routing it through RestoreBatch (which
+// maps only ErrConflict) changes its cross-job conflict behavior and needs its
+// own pass. JAB-292 stays a module-parent until it too uses RestoreBatch (AC4).
 package sshkeyops
 
 import (
@@ -139,4 +143,57 @@ func (d Deps) schedule(userID string) {
 	if d.Scheduler != nil {
 		d.Scheduler.ScheduleUser(userID)
 	}
+}
+
+// RestoreBatch is the explicit restore operation (JAB-292 AC4): the single seam
+// a restore path uses to re-insert many SSH keys and then converge each affected
+// owner's authorized_keys exactly once.
+//
+// Unlike Add, Restore does NOT parse or re-fingerprint — it persists the row as
+// given, because a restore trusts its source (a backup manifest carries the
+// original ID + fingerprint; a migration importer has already parsed and
+// fingerprinted). Scheduling is coalesced: however many keys a single owner
+// gains, Flush schedules that owner once, and only if at least one of their rows
+// actually persisted (a batch of nothing-but-conflicts schedules nothing).
+//
+// A caller restoring under a live reconciler passes a real Scheduler for
+// immediate, batched convergence; a caller whose convergence is tick-based (the
+// backup account restore, which re-converges all restored state on the
+// reconciler's next tick) or which runs without a reconciler passes a nil
+// Scheduler and Flush is a no-op.
+type RestoreBatch struct {
+	d      Deps
+	owners map[string]struct{}
+}
+
+// NewRestoreBatch starts an empty batch bound to d. Deps.Scheduler may be nil
+// (tick-based / no reconciler), in which case Flush schedules nothing.
+func NewRestoreBatch(d Deps) *RestoreBatch {
+	return &RestoreBatch{d: d, owners: map[string]struct{}{}}
+}
+
+// Restore persists one already-built row. A repository conflict (the key already
+// exists for the owner) becomes ErrDuplicate so the caller records it as
+// already-present and keeps going; any other persistence error is returned
+// unwrapped. Only a successful persist marks the owner for convergence, so a
+// failed or duplicate row never schedules anything.
+func (b *RestoreBatch) Restore(ctx context.Context, row *models.SSHKey) error {
+	if err := b.d.Keys.Create(ctx, row); err != nil {
+		if errors.Is(err, repository.ErrConflict) {
+			return ErrDuplicate
+		}
+		return err
+	}
+	b.owners[row.UserID] = struct{}{}
+	return nil
+}
+
+// Flush schedules convergence exactly once for every owner that had at least one
+// row persisted since the last Flush, then clears the set. Idempotent: a second
+// Flush with no new successful Restore schedules nothing.
+func (b *RestoreBatch) Flush() {
+	for userID := range b.owners {
+		b.d.schedule(userID)
+	}
+	b.owners = map[string]struct{}{}
 }
