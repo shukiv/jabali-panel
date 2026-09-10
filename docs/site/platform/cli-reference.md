@@ -1167,6 +1167,18 @@ Create a backup of a database (returns the dump path)
 jabali db backup <db-id|db-name>
 ```
 
+#### `jabali db chown`
+
+Reassign a database to a different owner (GH #1609)
+
+```
+jabali db chown <database> <new-owner> [flags]
+```
+
+**Flags:**
+
+- `--yes` — skip the confirmation prompt
+
 #### `jabali db config`
 
 View / set database tuning (mariadb/postgres)
