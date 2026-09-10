@@ -49,6 +49,7 @@ const (
 	MethodArchive      = "files.archive"
 	MethodExtract      = "files.extract"
 	MethodExtractStart = "files.extract.start"
+	MethodJobStatus    = "files.job.status"
 )
 
 // Scope is the resolved target-user identity every files.* verb carries.

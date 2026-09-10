@@ -117,6 +117,16 @@ type ExtractParams struct {
 	Dest      string `json:"dest,omitempty"`
 }
 
+// JobStatusParams is the files.job.status request. Unlike every other verb it
+// carries no Scope: a background job (GH #1392) is looked up by its id plus the
+// caller's verified username — the agent returns a job ONLY to the username it
+// was started for, so one tenant can never poll another's job. There is no path
+// and no admin_root.
+type JobStatusParams struct {
+	JobID    string `json:"job_id"`
+	Username string `json:"username"`
+}
+
 // ---- builders: stamp a Scope onto the verb-specific fields ----
 //
 // Each returns the concrete params struct for its verb; the adapter passes it to
@@ -174,4 +184,10 @@ func Archive(s Scope, paths []string) ArchiveParams {
 
 func Extract(s Scope, path, dest string) ExtractParams {
 	return ExtractParams{UserID: s.UserID, Username: s.Username, AdminRoot: s.AdminRoot, Path: path, Dest: dest}
+}
+
+// JobStatus builds a files.job.status request from the caller's verified
+// username and the job id being polled.
+func JobStatus(username, jobID string) JobStatusParams {
+	return JobStatusParams{JobID: jobID, Username: username}
 }

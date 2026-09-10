@@ -49,8 +49,10 @@ func TestExtractAsync_Returns202AndStartsJob(t *testing.T) {
 }
 
 func TestExtractSync_UsesBlockingVerb(t *testing.T) {
+	// The reply carries dest (the agent always sets it) so it passes the JAB-340
+	// fail-closed decode; this test only asserts the blocking verb is chosen.
 	agent := &mockAgent{callFn: func(_ context.Context, _ string, _ any) (json.RawMessage, error) {
-		return json.RawMessage(`{"extracted":3}`), nil
+		return json.RawMessage(`{"dest":"/home/alice","extracted":3}`), nil
 	}}
 	r := setupFilesRouter(t, "user1", agent)
 

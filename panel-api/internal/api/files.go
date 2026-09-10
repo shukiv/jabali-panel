@@ -5,7 +5,6 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -257,6 +256,14 @@ func (h *filesHandler) du(c *gin.Context) {
 	raw, err := h.cfg.Agent.Call(ctx, filesops.MethodDu, filesops.Du(h.scope(c, userID, username), p))
 	if err != nil {
 		respondAgentError(c, err)
+		return
+	}
+	// JAB-340 AC2: validate the reply before forwarding it. A malformed agent
+	// success body (an error blob, a JSON null) must not reach the browser as a
+	// 200 that only fails at response.json(); fail closed here. The raw bytes are
+	// forwarded unchanged on success so the wire stays byte-identical.
+	if _, err := filesops.DecodeDu(raw); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error", "detail": "bad agent response"})
 		return
 	}
 	c.Data(http.StatusOK, "application/json", raw)
@@ -933,6 +940,12 @@ func (h *filesHandler) extract(c *gin.Context) {
 			respondAgentError(c, err)
 			return
 		}
+		// JAB-340 AC2: a malformed start reply must not look like an accepted job
+		// the UI then polls with an empty id. Validate, then forward raw.
+		if _, err := filesops.DecodeJobStart(raw); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error", "detail": "bad agent response"})
+			return
+		}
 		c.Data(http.StatusAccepted, "application/json", raw)
 		return
 	}
@@ -942,8 +955,12 @@ func (h *filesHandler) extract(c *gin.Context) {
 		respondAgentError(c, err)
 		return
 	}
-	var res json.RawMessage = raw
-	c.Data(http.StatusOK, "application/json", res)
+	// JAB-340 AC2: fail closed on a malformed extract reply rather than forward it.
+	if _, err := filesops.DecodeExtract(raw); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error", "detail": "bad agent response"})
+		return
+	}
+	c.Data(http.StatusOK, "application/json", raw)
 }
 
 // jobStatus handles GET /files/jobs/:id — the progress of an async File Manager
@@ -955,12 +972,16 @@ func (h *filesHandler) jobStatus(c *gin.Context) {
 	if !ok {
 		return
 	}
-	raw, err := h.cfg.Agent.Call(c.Request.Context(), "files.job.status", map[string]string{
-		"job_id":   c.Param("id"),
-		"username": username,
-	})
+	raw, err := h.cfg.Agent.Call(c.Request.Context(), filesops.MethodJobStatus,
+		filesops.JobStatus(username, c.Param("id")))
 	if err != nil {
 		respondAgentError(c, err)
+		return
+	}
+	// JAB-340 AC2: validate the snapshot before forwarding so a malformed reply
+	// can't reach the UI's progress poller as a 200 with no status.
+	if _, err := filesops.DecodeJobStatus(raw); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error", "detail": "bad agent response"})
 		return
 	}
 	c.Data(http.StatusOK, "application/json", raw)
@@ -1191,6 +1212,12 @@ func (h *filesHandler) copy(c *gin.Context) {
 			filesops.Copy(h.scope(c, userID, username), req.Path, dst))
 		if err != nil {
 			respondAgentError(c, err)
+			return
+		}
+		// JAB-340 AC2: validate the start reply before forwarding, so the UI never
+		// polls a job whose id came back empty from a malformed body.
+		if _, err := filesops.DecodeJobStart(raw); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error", "detail": "bad agent response"})
 			return
 		}
 		c.Data(http.StatusAccepted, "application/json", raw)

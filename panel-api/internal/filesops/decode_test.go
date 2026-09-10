@@ -106,3 +106,105 @@ func TestDecodeStat(t *testing.T) {
 		t.Fatalf("DecodeStat decoded wrong: %+v", got)
 	}
 }
+
+func TestDecodeDu(t *testing.T) {
+	// Malformed body fails closed with a decode error.
+	if _, err := DecodeDu([]byte(`{`)); err == nil {
+		t.Fatal("DecodeDu(malformed) = nil error, want a decode error")
+	}
+	// AC2, load-bearing: an agent error blob decodes into a zero struct with an
+	// empty path and must fail closed.
+	if _, err := DecodeDu([]byte(`{"error":"boom"}`)); !errors.Is(err, ErrNoDuPath) {
+		t.Fatalf("DecodeDu(error blob) = %v, want ErrNoDuPath", err)
+	}
+	// JSON null decodes without error into a zero value; the path guard rejects it.
+	if _, err := DecodeDu([]byte(`null`)); !errors.Is(err, ErrNoDuPath) {
+		t.Fatalf("DecodeDu(null) = %v, want ErrNoDuPath", err)
+	}
+	// Regression against a zero-value guard: a du of an EMPTY directory is a real
+	// success — total 0, no entries — and must decode cleanly. Guarding on total
+	// or entries instead of path would false-fail this.
+	empty, err := DecodeDu([]byte(`{"path":"/home/shuki/empty","total":0,"entries":[]}`))
+	if err != nil {
+		t.Fatalf("DecodeDu(empty dir) = %v, want nil (0 bytes is a valid du)", err)
+	}
+	if empty.Path != "/home/shuki/empty" || empty.Total != 0 || len(empty.Entries) != 0 {
+		t.Fatalf("DecodeDu(empty dir) decoded wrong: %+v", empty)
+	}
+	got, err := DecodeDu([]byte(`{"path":"/home/shuki","total":4096,"entries":[{"name":"a","is_dir":true,"size":4096,"has_subdirs":true}]}`))
+	if err != nil {
+		t.Fatalf("DecodeDu(valid): %v", err)
+	}
+	if got.Path != "/home/shuki" || got.Total != 4096 || len(got.Entries) != 1 ||
+		got.Entries[0].Name != "a" || !got.Entries[0].IsDir || got.Entries[0].Size != 4096 || !got.Entries[0].HasSubdirs {
+		t.Fatalf("DecodeDu decoded wrong: %+v", got)
+	}
+}
+
+func TestDecodeExtract(t *testing.T) {
+	// A malformed (truncated) body fails closed — the AC2 guarantee for extract.
+	if _, err := DecodeExtract([]byte(`{`)); err == nil {
+		t.Fatal("DecodeExtract(malformed) = nil error, want a decode error")
+	}
+	// Regression: a valid extract into the archive's parent carries an EMPTY dest
+	// (the agent echoes the raw, omitted dest param) and 0/0 counts for an empty
+	// archive. This must decode cleanly — a dest-presence guard would 500 the
+	// common "extract here" action in production.
+	def, err := DecodeExtract([]byte(`{"dest":"","extracted":0,"skipped":0}`))
+	if err != nil {
+		t.Fatalf("DecodeExtract(default-dest) = %v, want nil (empty dest is valid)", err)
+	}
+	if def.Dest != "" || def.Extracted != 0 || def.Skipped != 0 {
+		t.Fatalf("DecodeExtract(default-dest) decoded wrong: %+v", def)
+	}
+	got, err := DecodeExtract([]byte(`{"dest":"/home/shuki/out","extracted":3,"skipped":1}`))
+	if err != nil {
+		t.Fatalf("DecodeExtract(valid): %v", err)
+	}
+	if got.Dest != "/home/shuki/out" || got.Extracted != 3 || got.Skipped != 1 {
+		t.Fatalf("DecodeExtract decoded wrong: %+v", got)
+	}
+}
+
+func TestDecodeJobStart(t *testing.T) {
+	if _, err := DecodeJobStart([]byte(`{`)); err == nil {
+		t.Fatal("DecodeJobStart(malformed) = nil error, want a decode error")
+	}
+	// An error blob has no job_id and must fail closed, so the UI never polls an
+	// empty id as if a job had started.
+	if _, err := DecodeJobStart([]byte(`{"error":"boom"}`)); !errors.Is(err, ErrNoJobID) {
+		t.Fatalf("DecodeJobStart(error blob) = %v, want ErrNoJobID", err)
+	}
+	if _, err := DecodeJobStart([]byte(`null`)); !errors.Is(err, ErrNoJobID) {
+		t.Fatalf("DecodeJobStart(null) = %v, want ErrNoJobID", err)
+	}
+	got, err := DecodeJobStart([]byte(`{"job_id":"job-abc123"}`))
+	if err != nil {
+		t.Fatalf("DecodeJobStart(valid): %v", err)
+	}
+	if got.JobID != "job-abc123" {
+		t.Fatalf("DecodeJobStart decoded wrong: %+v", got)
+	}
+}
+
+func TestDecodeJobStatus(t *testing.T) {
+	if _, err := DecodeJobStatus([]byte(`{`)); err == nil {
+		t.Fatal("DecodeJobStatus(malformed) = nil error, want a decode error")
+	}
+	// An error blob has no status and must fail closed.
+	if _, err := DecodeJobStatus([]byte(`{"error":"boom"}`)); !errors.Is(err, ErrNoJobStatus) {
+		t.Fatalf("DecodeJobStatus(error blob) = %v, want ErrNoJobStatus", err)
+	}
+	if _, err := DecodeJobStatus([]byte(`null`)); !errors.Is(err, ErrNoJobStatus) {
+		t.Fatalf("DecodeJobStatus(null) = %v, want ErrNoJobStatus", err)
+	}
+	// A running job with 0 bytes done so far is a real success (done 0 is not the
+	// identity field — status is).
+	got, err := DecodeJobStatus([]byte(`{"job_id":"job-1","status":"running","done":0,"total":100,"started_at":"2026-01-02T03:04:05Z"}`))
+	if err != nil {
+		t.Fatalf("DecodeJobStatus(running) = %v, want nil", err)
+	}
+	if got.JobID != "job-1" || got.Status != "running" || got.Done != 0 || got.Total != 100 {
+		t.Fatalf("DecodeJobStatus decoded wrong: %+v", got)
+	}
+}
