@@ -24,4 +24,24 @@ describe("buildPageTitle (GH #1604)", () => {
     expect(buildPageTitle(null)).toBe("Jabali Panel");
     expect(buildPageTitle(undefined)).toBe("Jabali Panel");
   });
+
+  it("composes a custom brand as the suffix, keeping the host", () => {
+    expect(buildPageTitle("panel.example.com", "Acme")).toBe(
+      "panel.example.com | Acme — Panel",
+    );
+  });
+
+  it("uses the default product name when the brand is empty/whitespace", () => {
+    expect(buildPageTitle("host.local", "")).toBe("host.local | Jabali Panel");
+    expect(buildPageTitle("host.local", "   ")).toBe("host.local | Jabali Panel");
+    expect(buildPageTitle("host.local", null)).toBe("host.local | Jabali Panel");
+  });
+
+  it("drops the host prefix but keeps the brand when host is empty", () => {
+    expect(buildPageTitle("", "Acme")).toBe("Acme — Panel");
+  });
+
+  it("trims a custom brand", () => {
+    expect(buildPageTitle("host.local", "  Acme  ")).toBe("host.local | Acme — Panel");
+  });
 });
