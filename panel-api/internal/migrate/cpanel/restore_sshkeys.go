@@ -3,6 +3,7 @@ package cpanel
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/sshkeyops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/sshkeys"
 )
 
@@ -32,10 +34,15 @@ type SSHKeyImportResult struct {
 // keep the first occurrence per fingerprint and record the rest
 // as 'duplicate' in Skipped.
 //
-// Cross-job dedup (same key already in jabali ssh_keys table)
-// is the SSHKeyRepository's existing UNIQUE-by-fingerprint
-// guarantee — Create returns ErrConflict and we record it as
-// 'already_present'.
+// Cross-job dedup (same key already in jabali ssh_keys table) is
+// the SSHKeyRepository's existing UNIQUE-by-fingerprint guarantee.
+// Persistence runs through the shared sshkeyops.RestoreBatch (the
+// same lifecycle leaf REST and account restore use), so a conflict
+// surfaces as sshkeyops.ErrDuplicate and we record it as
+// 'already_present'. The batch carries a nil Scheduler because a
+// migration runs without a reconciler; per-owner authorized_keys
+// converge on the reconciler's next tick, as the rest of restored
+// state does.
 //
 // targetUserID must be the destination jabali user the restore
 // stage created moments earlier. ID is the FK target.
@@ -52,6 +59,13 @@ func ImportSSHKeys(ctx context.Context, repo repository.SSHKeyRepository, parsed
 
 	res := &SSHKeyImportResult{}
 	seen := map[string]struct{}{}
+
+	// Route persistence through the shared lifecycle leaf. A migration has no
+	// running reconciler, so the batch takes a nil Scheduler and Flush is a
+	// no-op; restored keys converge on the next reconciler tick. Deferred so an
+	// owner whose rows already persisted is still flushed if a later row aborts.
+	batch := sshkeyops.NewRestoreBatch(sshkeyops.Deps{Keys: repo})
+	defer batch.Flush()
 
 	for _, akPath := range parsed.SSHAuthorized {
 		f, err := os.Open(akPath)
@@ -101,8 +115,8 @@ func ImportSSHKeys(ctx context.Context, repo repository.SSHKeyRepository, parsed
 				Fingerprint: fp,
 				CreatedAt:   time.Now().UTC(),
 			}
-			if err := repo.Create(ctx, row); err != nil {
-				if isConflict(err) {
+			if err := batch.Restore(ctx, row); err != nil {
+				if errors.Is(err, sshkeyops.ErrDuplicate) {
 					res.Skipped = append(res.Skipped, fmt.Sprintf("%s:%d already_present (fp=%s)", akPath, lineNum, fp))
 					continue
 				}
@@ -132,17 +146,6 @@ func keyNameFromComment(normalized string) string {
 		return strings.TrimSpace(parts[2])
 	}
 	return "imported-key"
-}
-
-// isConflict matches MariaDB duplicate-key errors. Repos return
-// raw GORM errors; the wrapped UNIQUE-violation message contains
-// the "Duplicate entry" / "1062" tokens.
-func isConflict(err error) bool {
-	if err == nil {
-		return false
-	}
-	s := err.Error()
-	return strings.Contains(s, "Duplicate entry") || strings.Contains(s, "1062")
 }
 
 // ctxIsLive returns false when the caller's context is cancelled.

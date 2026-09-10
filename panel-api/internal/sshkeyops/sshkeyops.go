@@ -15,14 +15,11 @@
 // reconciler's next ≤60s tick). Keeping scheduling behind the interface makes
 // it the single coalescing point a future restore-batch slice can reuse.
 //
-// Restore paths use the explicit RestoreBatch operation (below): the HTTP/CLI
-// account restore (internal/backupmetadata/apply.go) is routed through it, so it
-// no longer writes ssh_keys rows directly. Still direct: the cPanel migration
-// importer (internal/migrate/cpanel/restore_sshkeys.go) — its duplicate
-// detection string-matches the raw driver error ("Duplicate entry"/"1062")
-// rather than repository.ErrConflict, so routing it through RestoreBatch (which
-// maps only ErrConflict) changes its cross-job conflict behavior and needs its
-// own pass. JAB-292 stays a module-parent until it too uses RestoreBatch (AC4).
+// Restore paths use the explicit RestoreBatch operation (below): both the
+// HTTP/CLI account restore (internal/backupmetadata/apply.go) and the cPanel
+// migration importer (internal/migrate/cpanel/restore_sshkeys.go) route through
+// it, so no path writes ssh_keys rows directly anymore. That closes the last
+// bypass of the lifecycle for JAB-292 AC4.
 package sshkeyops
 
 import (
