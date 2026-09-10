@@ -12,6 +12,7 @@ import (
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dnscompile"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/domainmailops"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/domainops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
@@ -205,18 +206,19 @@ func createDomainOp(ctx context.Context, h *domainHandler, in createDomainInput)
 		return nil, &createDomainError{http.StatusInternalServerError, "internal", ""}
 	}
 
-	// Admins are panel-only — no /home/<name>, so domains can't host under them.
-	if user.IsAdmin {
+	// Owner-eligibility gate (JAB-279): admins are panel-only (no /home/<name>);
+	// suspended owners must not get a live vhost while the account stays locked;
+	// a hosting user always has a username. The policy lives in domainops so the
+	// CLI runs the identical gate; the adapter maps each sentinel to the status
+	// code and body it returned before the leaf existed.
+	switch err := domainops.CheckOwnerEligible(user); {
+	case errors.Is(err, domainops.ErrAdminCannotHost):
 		return nil, &createDomainError{http.StatusBadRequest, "admin_cannot_host", "admin users are panel-only — create a regular user to host domains"}
-	}
-
-	// Suspended users can't acquire new domains — a fresh vhost would be live
-	// while the account stays locked, defeating the suspend cascade.
-	if user.Suspended {
+	case errors.Is(err, domainops.ErrOwnerSuspended):
 		return nil, &createDomainError{http.StatusConflict, "user_suspended", "user is suspended — unsuspend before adding domains"}
-	}
-
-	if user.Username == nil || *user.Username == "" {
+	case err != nil:
+		// ErrOwnerNoUsername (and ErrOwnerNil) — an inconsistent state, surfaced
+		// as the same opaque internal error the handler returned before.
 		return nil, &createDomainError{http.StatusInternalServerError, "internal", ""}
 	}
 

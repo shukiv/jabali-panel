@@ -14,6 +14,7 @@ import (
 
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/kratosclient"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/domainmailops"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/domainops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
@@ -261,11 +262,20 @@ func createDomainDirect(ctx context.Context, in cliDomainInput) (*models.Domain,
 	if err != nil {
 		return nil, nil, err
 	}
-	if owner.IsAdmin {
+	// Owner-eligibility gate (JAB-279) — the same domainops policy the REST
+	// handler runs. Routing through the leaf closes a CLI gap: the CLI never
+	// checked owner.Suspended, so a suspended owner could get a live vhost from
+	// the command line while the account stayed locked. The messages stay the
+	// CLI's own (the leaf owns the policy, each adapter owns its transport).
+	switch err := domainops.CheckOwnerEligible(owner); {
+	case errors.Is(err, domainops.ErrAdminCannotHost):
 		return nil, nil, fmt.Errorf("admin users cannot host domains — create a regular user")
-	}
-	if owner.Username == nil || *owner.Username == "" {
+	case errors.Is(err, domainops.ErrOwnerSuspended):
+		return nil, nil, fmt.Errorf("user %q is suspended — unsuspend before adding domains", owner.ID)
+	case errors.Is(err, domainops.ErrOwnerNoUsername):
 		return nil, nil, fmt.Errorf("user %q has no username — inconsistent state", owner.ID)
+	case err != nil:
+		return nil, nil, err
 	}
 
 	// All subsequent DB ops use the resolved ULID, not the free-form
