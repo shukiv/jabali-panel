@@ -32,14 +32,42 @@ type recordedCreate struct {
 	userIDs []string
 }
 
+type recordedUpdate struct {
+	s       *models.BackupSchedule
+	destIDs *[]string
+	userIDs *[]string
+}
+
 type fakeScheduleWriter struct {
-	calls []recordedCreate
-	err   error
+	calls   []recordedCreate
+	err     error
+	getRow  *models.BackupSchedule
+	getErr  error
+	updates []recordedUpdate
+	updErr  error
 }
 
 func (f *fakeScheduleWriter) CreateWithMemberships(ctx context.Context, s *models.BackupSchedule, destIDs, userIDs []string) error {
 	f.calls = append(f.calls, recordedCreate{s: s, destIDs: destIDs, userIDs: userIDs})
 	return f.err
+}
+
+func (f *fakeScheduleWriter) Get(ctx context.Context, id string) (*models.BackupSchedule, error) {
+	if f.getErr != nil {
+		return nil, f.getErr
+	}
+	return f.getRow, nil
+}
+
+func (f *fakeScheduleWriter) UpdateWithMemberships(ctx context.Context, s *models.BackupSchedule, destIDs, userIDs *[]string) error {
+	f.updates = append(f.updates, recordedUpdate{s: s, destIDs: destIDs, userIDs: userIDs})
+	return f.updErr
+}
+
+// updateDeps builds a leaf bound to a stored schedule of the given kind.
+func updateDeps(kind string, users map[string]*models.User) (Deps, *fakeScheduleWriter) {
+	w := &fakeScheduleWriter{getRow: &models.BackupSchedule{ID: "s1", Kind: kind, Enabled: true}}
+	return Deps{Schedules: w, Users: &fakeUserFinder{users: users}}, w
 }
 
 func accountDeps(users map[string]*models.User) (Deps, *fakeScheduleWriter) {
@@ -162,3 +190,109 @@ func TestCreate_WriterError_Propagates(t *testing.T) {
 	require.Nil(t, s)
 	require.ErrorIs(t, err, sentinel)
 }
+
+// --- Update ---
+
+// The load-bearing guard for this slice: the update path must refuse an admin
+// target with ZERO writes, exactly as Create does. This is what the operator
+// CLI's hand-rolled update lacked. Falsify: delete the u.IsAdmin branch in
+// Update → the writer records an update.
+func TestUpdate_AccountRejectsAdminUser_ZeroWrites(t *testing.T) {
+	d, w := updateDeps(models.BackupScheduleKindAccount, map[string]*models.User{"u1": {ID: "u1", IsAdmin: true}})
+	s, err := Update(context.Background(), d, UpdateInput{ID: "s1", UserIDs: &[]string{"u1"}})
+	require.Nil(t, s)
+	require.ErrorIs(t, err, ErrAdminUser)
+	var ure *UserRejectedError
+	require.ErrorAs(t, err, &ure)
+	require.Equal(t, "u1", ure.UserID)
+	require.Empty(t, w.updates, "no write when a target is rejected")
+}
+
+func TestUpdate_AccountRejectsMissingUser_ZeroWrites(t *testing.T) {
+	d, w := updateDeps(models.BackupScheduleKindAccount, map[string]*models.User{})
+	s, err := Update(context.Background(), d, UpdateInput{ID: "s1", UserIDs: &[]string{"ghost"}})
+	require.Nil(t, s)
+	require.ErrorIs(t, err, ErrUserNotFound)
+	require.Empty(t, w.updates)
+}
+
+// Invalid cron aborts before any write. Falsify: move NextFire below the
+// UpdateWithMemberships call → the writer records an update.
+func TestUpdate_InvalidCron_ZeroWrites(t *testing.T) {
+	d, w := updateDeps(models.BackupScheduleKindAccount, map[string]*models.User{})
+	bad := "not a cron"
+	s, err := Update(context.Background(), d, UpdateInput{ID: "s1", CronExpr: &bad})
+	require.Nil(t, s)
+	require.ErrorIs(t, err, ErrInvalidCron)
+	require.Empty(t, w.updates)
+}
+
+// A system schedule keeps no per-user membership and no include-system flag, so
+// those patch fields are ignored — and because the membership isn't touched, an
+// admin id in the patch is neither validated nor attached (no error, no write of
+// users). Falsify: drop the `s.Kind == account` gate on the user branch → the
+// admin id is validated and the call errors.
+func TestUpdate_SystemKind_IgnoresUserAndIncludeFlag(t *testing.T) {
+	d, w := updateDeps(models.BackupScheduleKindSystem, map[string]*models.User{"u1": {ID: "u1", IsAdmin: true}})
+	inc := true
+	s, err := Update(context.Background(), d, UpdateInput{ID: "s1", UserIDs: &[]string{"u1"}, IncludeSystemBackup: &inc})
+	require.NoError(t, err)
+	require.Len(t, w.updates, 1)
+	require.Nil(t, w.updates[0].userIDs, "system schedule membership left untouched")
+	require.False(t, s.IncludeSystemBackup, "include-system ignored on a system schedule")
+}
+
+// nil membership pointers leave both memberships untouched (only fields change).
+func TestUpdate_NilMembership_LeavesUntouched(t *testing.T) {
+	d, w := updateDeps(models.BackupScheduleKindAccount, nil)
+	on := true
+	s, err := Update(context.Background(), d, UpdateInput{ID: "s1", Enabled: &on})
+	require.NoError(t, err)
+	require.Len(t, w.updates, 1)
+	require.Nil(t, w.updates[0].destIDs)
+	require.Nil(t, w.updates[0].userIDs)
+	require.True(t, s.Enabled)
+}
+
+// An empty (non-nil) account user patch clears the membership → fan-out to every
+// non-admin at tick time. The distinction from nil is load-bearing.
+func TestUpdate_EmptyUserPatch_ClearsMembership(t *testing.T) {
+	d, w := updateDeps(models.BackupScheduleKindAccount, map[string]*models.User{})
+	s, err := Update(context.Background(), d, UpdateInput{ID: "s1", UserIDs: &[]string{}})
+	require.NoError(t, err)
+	require.Len(t, w.updates, 1)
+	require.NotNil(t, w.updates[0].userIDs, "empty patch still replaces (clears) the set")
+	require.Empty(t, *w.updates[0].userIDs)
+	require.Empty(t, s.UserIDs)
+}
+
+// A load error from Get propagates unchanged and nothing is written.
+func TestUpdate_GetError_Propagates(t *testing.T) {
+	sentinel := errors.New("row gone")
+	d, w := updateDeps(models.BackupScheduleKindAccount, nil)
+	w.getErr = sentinel
+	s, err := Update(context.Background(), d, UpdateInput{ID: "s1", Enabled: boolPtr(true)})
+	require.Nil(t, s)
+	require.ErrorIs(t, err, sentinel)
+	require.Empty(t, w.updates)
+}
+
+func TestUpdate_HappyPath_AppliesPatch(t *testing.T) {
+	d, w := updateDeps(models.BackupScheduleKindAccount, map[string]*models.User{"u1": {ID: "u1"}})
+	cron := "0 5 * * *"
+	off := false
+	keep := 7
+	s, err := Update(context.Background(), d, UpdateInput{
+		ID: "s1", CronExpr: &cron, Enabled: &off, KeepDaily: &keep, UserIDs: &[]string{"u1"},
+	})
+	require.NoError(t, err)
+	require.Len(t, w.updates, 1)
+	require.Equal(t, cron, s.CronExpr)
+	require.False(t, s.Enabled)
+	require.NotNil(t, s.KeepDaily)
+	require.Equal(t, 7, *s.KeepDaily)
+	require.NotNil(t, s.NextRunAt)
+	require.Equal(t, []string{"u1"}, s.UserIDs)
+}
+
+func boolPtr(b bool) *bool { return &b }
