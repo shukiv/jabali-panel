@@ -8,26 +8,23 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 
-	"git.jabali-panel.com/shukivaknin/jabali2/internal/mailaddr"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/auth"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
-	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/sharedresourceops"
 )
 
 const sharedResourceAgentTimeout = 15 * time.Second
 
-var sharedResourceKinds = map[string]bool{
-	"mailbox": true, "calendar": true, "addressbook": true, "files": true,
-}
 var sharedResourceRights = map[string]bool{
 	"read": true, "readwrite": true, "admin": true,
 }
@@ -112,55 +109,38 @@ func (h *sharedResourceHandler) create(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !dom.EmailEnabled {
-		c.JSON(http.StatusConflict, gin.H{"error": "email_not_enabled",
-			"detail": "enable email on the domain before creating shared resources"})
-		return
-	}
 	var req createSharedResourceRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request", "detail": err.Error()})
 		return
 	}
-	if !sharedResourceKinds[req.Kind] {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_kind"})
-		return
-	}
-	canonLocal, _, err := mailaddr.Canonicalise(req.Name + "@" + dom.Name)
+	// The email-enabled gate, kind allowlist, canonicalisation, duplicate-address
+	// check, trimmed display name, persist, and best-effort apply all live in
+	// sharedresourceops so the operator CLI enforces the identical policy.
+	sr, err := sharedresourceops.Create(c.Request.Context(),
+		sharedresourceops.Deps{Resources: h.cfg.Resources},
+		sharedresourceops.CreateInput{
+			Domain:      dom,
+			Kind:        req.Kind,
+			Name:        req.Name,
+			DisplayName: req.DisplayName,
+		}, h.notifyAgent)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_name", "detail": err.Error()})
+		switch {
+		case errors.Is(err, sharedresourceops.ErrEmailNotEnabled):
+			c.JSON(http.StatusConflict, gin.H{"error": "email_not_enabled",
+				"detail": "enable email on the domain before creating shared resources"})
+		case errors.Is(err, sharedresourceops.ErrInvalidKind):
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_kind"})
+		case errors.Is(err, sharedresourceops.ErrInvalidName):
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_name", "detail": err.Error()})
+		case errors.Is(err, sharedresourceops.ErrAddressTaken):
+			c.JSON(http.StatusConflict, gin.H{"error": "address_taken"})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		}
 		return
 	}
-	ctx := c.Request.Context()
-	email := canonLocal + "@" + dom.Name
-	if exists, err := h.cfg.Resources.ExistsByEmail(ctx, email); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
-		return
-	} else if exists {
-		c.JSON(http.StatusConflict, gin.H{"error": "address_taken"})
-		return
-	}
-
-	now := time.Now().UTC()
-	local := canonLocal
-	sr := &models.SharedResource{
-		ID:          ids.NewULID(),
-		DomainID:    dom.ID,
-		Kind:        req.Kind,
-		LocalPart:   &local,
-		EmailCached: &email,
-		DisplayName: strings.TrimSpace(req.DisplayName),
-		CreatedAt:   now,
-		UpdatedAt:   now,
-	}
-	if err := h.cfg.Resources.Create(ctx, sr); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
-		return
-	}
-	// Instant host provisioning (reconciler also converges).
-	h.notifyAgent(ctx, "sharedresource.apply", map[string]any{
-		"email": email, "display_name": sr.DisplayName, "kind": sr.Kind,
-	})
 	c.JSON(http.StatusCreated, sr)
 }
 
