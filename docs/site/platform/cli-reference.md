@@ -397,6 +397,7 @@ jabali appsec render-config [flags]
 **Flags:**
 
 - `--reconcile` — preserve operator jabali-mode/jabali-countries header from existing file (default true) (default `true`)
+- `--reload` — best-effort `systemctl reload crowdsec` after a real diff (default false; install.sh owns its own deferred reload, so leave off inside an update)
 
 ### `jabali audit`
 

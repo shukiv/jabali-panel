@@ -1,12 +1,19 @@
 // Boot-time apply of the jabali CRS "before" exclusion plugin (GH #594).
 //
-// CRSPluginBefore() is static, single-sourced in internal/appseccfg — the SAME
-// content the panel-api `appsec render-config` CLI writes. Running it at agent
-// boot makes a shipped CRS-exclusion change (GH #404/#594) self-heal on the
-// `jabali update` restart, FLEET-WIDE, with no per-server operator step:
+// CRSPluginBefore() is static, single-sourced in internal/appseccfg. Running it
+// at agent boot makes a shipped CRS-exclusion change (GH #404/#594) self-heal on
+// the `jabali update` restart, FLEET-WIDE, with no per-server operator step:
 // update installs the new binaries + restarts jabali-agent → the NEW agent
-// boots → re-renders before.conf. Write-on-diff (no-op on a clean boot) and
-// byte-identical to the CLI writer, so the two never oscillate.
+// boots → re-renders CRSPluginBeforePath. Write-on-diff (no-op on a clean boot).
+//
+// This writes ONLY the built-in file (CRSPluginBeforePath). The panel-api
+// `appsec render-config` CLI writes the exact same built-in content to that same
+// path — so the two writers are byte-identical there and never oscillate — plus
+// the operator-managed exclusions to a SEPARATE file (CRSPluginOperatorBeforePath),
+// which this agent never touches. The split exists because the agent has no
+// database access: when the operator exclusions shared this file, every agent
+// restart rewrote it to built-ins-only and dropped them, re-banning users until
+// the next render-config (GH #1655). Keep this writer built-ins-only.
 package commands
 
 import (

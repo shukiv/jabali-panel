@@ -70,7 +70,7 @@ func newAppSecExclusionAddCmd() *cobra.Command {
 			}
 			fmt.Fprintf(cmd.OutOrStdout(),
 				"added %s — rule %s excluded for %s%s\n"+
-					"  apply with: jabali appsec render-config --reconcile\n",
+					"  apply with: jabali appsec render-config --reconcile --reload\n",
 				row.ID, ruleID, host, uriPrefix)
 			return nil
 		},
@@ -132,7 +132,7 @@ func newAppSecExclusionRmCmd() *cobra.Command {
 				return printJSON(map[string]any{"id": args[0], "deleted": true})
 			}
 			fmt.Fprintf(cmd.OutOrStdout(),
-				"removed %s\n  apply with: jabali appsec render-config --reconcile\n", args[0])
+				"removed %s\n  apply with: jabali appsec render-config --reconcile --reload\n", args[0])
 			return nil
 		},
 	}

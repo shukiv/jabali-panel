@@ -100,6 +100,32 @@ func ValidateExclusion(e Exclusion) error {
 	return nil
 }
 
+// operatorBeforeFileHeader labels the standalone operator-managed before-plugin
+// file (CRSPluginOperatorBeforePath). Split out of jabali-before.conf (GH #1655)
+// so the agent's boot-time re-render of the built-in file — which has no
+// database access — can no longer overwrite operator exclusions.
+const operatorBeforeFileHeader = "# Managed by jabali — operator CRS \"before\" exclusions.\n" +
+	"# DO NOT hand-edit. Written by `jabali appsec render-config` from the panel\n" +
+	"# database (`jabali appsec exclusion add`/`rm`). Kept SEPARATE from\n" +
+	"# jabali-before.conf so the agent's boot re-render of the built-in file cannot\n" +
+	"# clobber these (GH #1655). Loaded before the CRS detection rules by the same\n" +
+	"# crs-plugins/*/*-before.conf glob; order relative to jabali-before.conf does\n" +
+	"# not matter (these are self-contained ctl:ruleRemoveById rules in phase 1).\n"
+
+// RenderOperatorBeforeFile returns the full body of the standalone
+// operator-managed before-plugin file, or "" when there are no operator
+// exclusions at all — the caller removes the file in that case so a
+// since-removed exclusion cannot linger live. A non-empty list always yields a
+// file, even if every entry fails validation: those render as SKIPPED comments
+// (see RenderExclusions), the breadcrumb an operator needs to see WHY a rule
+// vanished rather than debug the wrong thing.
+func RenderOperatorBeforeFile(list []Exclusion) string {
+	if len(list) == 0 {
+		return ""
+	}
+	return operatorBeforeFileHeader + RenderExclusions(list)
+}
+
 // RenderExclusions emits the operator-managed section of the before-plugin.
 //
 // Deterministic: sorted by (host, uri, rule) so an unchanged set renders

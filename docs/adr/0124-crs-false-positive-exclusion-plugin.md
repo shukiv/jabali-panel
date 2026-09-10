@@ -77,3 +77,39 @@ First rule (9599100) excludes 933120 for `ARGS:_wp_http_referer` under
 - Couples to the CRS plugin glob path; a crowdsec packaging change could
   move it. Mitigated by the render-config rewrite + reload on every
   update surfacing a load error.
+
+## Amendment — operator exclusions split to a second file (GH #1655, 2026-09-11)
+
+JAB-227 added operator-managed exclusions (`jabali appsec exclusion add`,
+DB-backed) and originally appended them to the SAME `jabali-before.conf`
+this ADR describes. That combined file has two writers: `render-config`
+(built-ins **+** operator exclusions, from the DB) and the agent's
+boot-time `ApplyAppSecBeforePlugin` (built-ins **only** — the agent has no
+DB access). Once an operator added an exclusion the two writers diverged,
+and every agent restart (`jabali update`, crash, reboot, manual) rewrote
+the file to built-ins-only, **dropping every operator exclusion** until the
+next `render-config` — silently re-banning the operator's users. This was
+the likely root of "the exclusions I added keep coming back" on GH #1641.
+
+Fix: the operator section now renders to a **separate** file,
+`crs-plugins/jabali/jabali-operator-before.conf`
+(`CRSPluginOperatorBeforePath`), written only by `render-config` and never
+touched by the agent. Both files match the same
+`crs-plugins/*/*-before.conf` glob and load before the CRS detection
+rules; order between them is irrelevant (operator rules are self-contained
+`ctl:ruleRemoveById` in phase 1). `jabali-before.conf` is now written
+byte-identical by both writers, so they can no longer clobber each other.
+When the last exclusion is removed the operator file is deleted (a stale
+file would keep a since-removed exclusion live); a transient DB outage
+leaves it untouched rather than dropping live exclusions.
+
+Reload (GH #1653): `render-config` gained an opt-in `--reload` flag
+(best-effort `systemctl reload crowdsec` on a real diff). `exclusion
+add`/`rm` now print `render-config --reconcile --reload` so a manual
+change takes effect in one step. install.sh leaves the flag **off** and
+keeps its single deferred reload at the end of crowdsec setup, so an
+update never reloads crowdsec mid-run (the GH discussion #109 fresh-install
+ordering scar).
+
+The operator id range stays **9,597,000–9,597,999**, disjoint from the
+built-in 9,599,xxx range, so the two files never collide on SecRule ids.
