@@ -131,6 +131,40 @@ func TestHelperVsWebSANDecision(t *testing.T) {
 	}
 }
 
+// GH #1625: a web domain alias is a non-apex/www name, so reachableSANs gives
+// it the DIRECT-ONLY test (apexForName == nil) — never the fronted allowance.
+// This is deliberate: an alias is usually a foreign zone, so a same-CDN match
+// with the apex is a weak origin signal, and a false positive would tank the
+// apex's own cert. See sanHostnamesForDomain's comment.
+func TestAliasSANIsDirectOnly(t *testing.T) {
+	const (
+		ourIP     = "203.0.113.10"
+		cf1       = "104.16.1.1"
+		otherHost = "198.51.100.7" // the tenant's old box, mid-migration
+		apex      = "example.com"
+	)
+	apexAddrs := []string{cf1}
+	ours := []string{ourIP}
+
+	// An alias never counts as a web name — so it does not get the apex-match.
+	if webNameKeepsFrontedAllowance("shop.example.net", apex) {
+		t.Error("an alias must NOT keep the fronted allowance")
+	}
+	// Alias pointing DIRECTLY at us: kept (this is the intended, working case).
+	if !sanReachability(ours, nil, ours) {
+		t.Error("alias resolving directly to us was dropped — it must be kept")
+	}
+	// Alias resolving to the APEX's CDN IPs: DROPPED. The decision case — a
+	// same-CDN alias may front a different origin, so it must not ride the cert.
+	if sanReachability(apexAddrs, nil, ours) {
+		t.Error("alias behind the apex CDN was kept — it must be dropped (direct-only)")
+	}
+	// Alias pointing at an unrelated host (old box during a repoint): DROPPED.
+	if sanReachability([]string{otherHost}, nil, ours) {
+		t.Error("alias resolving elsewhere was kept — it must be dropped")
+	}
+}
+
 func TestIntersects(t *testing.T) {
 	if intersects(nil, []string{"a"}) || intersects([]string{"a"}, nil) {
 		t.Error("empty input must not intersect")

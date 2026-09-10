@@ -61,7 +61,13 @@ type DockerAppHandlerConfig struct {
 	// AND issues LE through the same path as tenant domains.
 	// ADR-0116 Decision 4.
 	Domains repository.DomainRepository
-	Agent   agent.AgentInterface
+	// WebDomainAliases (GH #1625) backs the cross-tenant hijack guard on the
+	// docker-app domain auto-create path: this path builds a `domains` row
+	// directly (not through createDomainOp), so it must run the same
+	// aliasCollision check or a docker app named after a victim's alias would
+	// hijack that server_name. Optional — nil skips (fail-open only when unwired).
+	WebDomainAliases repository.WebDomainAliasRepository
+	Agent            agent.AgentInterface
 	// Users resolves a tenant app's OS username for re-render hardening
 	// (Gitea #480). Optional; required only for tenant-owned app re-renders.
 	Users repository.UserRepository
@@ -543,6 +549,15 @@ func (h *dockerAppHandler) install(c *gin.Context) {
 					return
 				}
 			} else {
+				// GH #1625: same cross-tenant hijack guard createDomainOp runs —
+				// this direct-create path must not claim a server_name already
+				// held by another domain's alias.
+				if hit, clash := aliasCollision(ctx, h.cfg.WebDomainAliases, req.Domain); clash {
+					msg := "domain auto-create failed: name " + hit + " is used as an alias of another domain"
+					_ = h.cfg.Repo.UpdateStatus(ctx, app.ID, models.DockerAppStatusFailed, &msg)
+					c.JSON(http.StatusConflict, gin.H{"error": "domain_conflicts_alias", "detail": msg, "id": app.ID})
+					return
+				}
 				dom := &models.Domain{
 					ID:          ulid.Make().String(),
 					UserID:      claims.UserID,
@@ -1182,6 +1197,10 @@ func (h *dockerAppHandler) editDomainPorts(ctx context.Context, app *models.Dock
 							return &dockerEditError{http.StatusConflict, "domain_attach_failed", aerr.Error()}
 						}
 					} else {
+						// GH #1625: cross-tenant hijack guard (see the install path).
+						if hit, clash := aliasCollision(ctx, h.cfg.WebDomainAliases, newDomain); clash {
+							return &dockerEditError{http.StatusConflict, "domain_conflicts_alias", "the name " + hit + " is already used as an alias of another domain"}
+						}
 						dom := &models.Domain{
 							ID:          ulid.Make().String(),
 							UserID:      userID,

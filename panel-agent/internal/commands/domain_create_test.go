@@ -223,6 +223,59 @@ func TestDomainCreateHandler_IsEnabledTrue(t *testing.T) {
 	}
 }
 
+// GH #1625: the "aliases" wire field unmarshals into domainCreateParams and,
+// after re-sanitization, lands in server_name of BOTH the enabled and disabled
+// server blocks — so the docroot answers on the alias whether the site is live
+// or parked.
+func TestDomainCreateHandler_AliasesInServerName(t *testing.T) {
+	t.Parallel()
+
+	var params domainCreateParams
+	if err := json.Unmarshal([]byte(`{
+		"username": "testuser",
+		"domain": "example.com",
+		"doc_root": "/home/testuser/public_html/example.com",
+		"php_version": "8.3",
+		"aliases": ["shop.example.net", "www.brand.io", "bad name;"]
+	}`), &params); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(params.Aliases) != 3 {
+		t.Fatalf("Aliases = %v, want 3 entries off the wire", params.Aliases)
+	}
+
+	suffix := sanitizeAliasServerNames(params.Domain, params.Aliases)
+	// The malformed entry is dropped; the two clean ones survive, in order.
+	if suffix != " shop.example.net www.brand.io" {
+		t.Fatalf("sanitized suffix = %q", suffix)
+	}
+
+	for _, enabled := range []bool{true, false} {
+		tmpl, _ := template.New("vhost").Parse(vhostTemplate)
+		vd := vhostData{
+			Domain:           params.Domain,
+			ExtraServerNames: suffix,
+			DocRoot:          params.DocRoot,
+			HasPHP:           true,
+			PHPVersion:       params.PHPVersion,
+			Username:         params.Username,
+			IsEnabled:        enabled,
+		}
+		var buf bytes.Buffer
+		if err := tmpl.Execute(&buf, vd); err != nil {
+			t.Fatalf("template execute (enabled=%v): %v", enabled, err)
+		}
+		out := buf.String()
+		want := "server_name example.com www.example.com shop.example.net www.brand.io;"
+		if !strings.Contains(out, want) {
+			t.Errorf("enabled=%v: server_name missing aliases; want %q in:\n%s", enabled, want, out)
+		}
+		if strings.Contains(out, "bad name;") {
+			t.Errorf("enabled=%v: malformed alias leaked into config:\n%s", enabled, out)
+		}
+	}
+}
+
 func TestDomainCreateHandler_IsEnabledFalse(t *testing.T) {
 	t.Parallel()
 
