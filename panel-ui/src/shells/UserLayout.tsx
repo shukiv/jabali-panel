@@ -5,7 +5,7 @@
 // sidebar here.
 import { useEffect, useState } from "react";
 import { LeftOutlined, RightOutlined } from "@icons";
-import { ConfigProvider, Drawer, Grid, Layout, Menu, theme } from "antd";
+import { ConfigProvider, Drawer, Grid, Layout, Menu, theme, type MenuProps } from "antd";
 import { Outlet, useLocation, useNavigate } from "react-router";
 
 import { DRStandbyBanner } from "../components/DRStandbyBanner";
@@ -15,7 +15,7 @@ import { JabaliHeader } from "../components/JabaliHeader";
 import { JabaliTitle } from "../components/JabaliTitle";
 import { useTranslation } from "react-i18next";
 
-import { selectedNavKey, userNav } from "../nav";
+import { navGroupForKey, selectedNavKey, userNav, userNavGroups, type NavItem } from "../nav";
 import { BreadcrumbProvider } from "../components/admin/BreadcrumbContext";
 import { RouteBreadcrumb } from "../components/admin/RouteBreadcrumb";
 import { useThemeMode } from "../theme/ThemeModeContext";
@@ -29,6 +29,11 @@ const { Sider, Content } = Layout;
 export function UserLayout() {
   const [collapsed, setCollapsed] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  // Which collapsible groups (Tools / Account) are expanded. Controlled so
+  // navigating into a group auto-opens it (see the effect below) while the
+  // user stays free to close it. Always-open groups (Hosting / Services)
+  // render as AntD `type:"group"` and never appear here.
+  const [openKeys, setOpenKeys] = useState<string[]>([]);
   const location = useLocation();
   const navigate = useNavigate();
   const { mode } = useThemeMode();
@@ -65,12 +70,58 @@ export function UserLayout() {
   // chrome color (GH #435) applies; muiTheme sets the light default + override.
   const siderBg = token.colorBgLayout;
 
+  // GH #1626: the sidebar is grouped (Hosting / Services / Tools / Account)
+  // rather than a flat list. The leaves still come from the flat `userNav`
+  // (via visibleNav) so capability gating and count badges are unchanged;
+  // `userNavGroups` only arranges them. An empty group (all its items gated
+  // off) drops out entirely.
+  const visibleByKey = new Map(visibleNav.map((n) => [n.key, n] as const));
+  const leafItem = (n: NavItem) => ({
+    key: n.key,
+    icon: n.icon,
+    label: navLabelWithBadge(t(n.label), navCountForKey(navCounts, n.key)),
+    onClick: () => {
+      navigate(n.path);
+      setDrawerOpen(false);
+    },
+  });
+  // Build the menu items. When the desktop sider is collapsed to the 64px
+  // icon rail, the always-open groups flatten to plain icon rows separated
+  // by dividers (a `type:"group"` header carries no icon, so it has no
+  // icon-rail form); the collapsible groups stay as SubMenus, which AntD
+  // turns into hover-popouts when collapsed. The mobile Drawer always
+  // builds in the expanded (collapsed=false) shape.
+  const buildItems = (isCollapsed: boolean): NonNullable<MenuProps["items"]> => {
+    const items: NonNullable<MenuProps["items"]> = [];
+    const dashboard = visibleByKey.get("dashboard");
+    if (dashboard) items.push(leafItem(dashboard));
+    for (const g of userNavGroups) {
+      const children = g.itemKeys
+        .map((k) => visibleByKey.get(k))
+        .filter((n): n is NavItem => !!n)
+        .map(leafItem);
+      if (children.length === 0) continue;
+      if (isCollapsed) {
+        // Icon rail: a divider fronts every section, then its icons (a
+        // collapsible group keeps its SubMenu, which pops children out).
+        items.push({ type: "divider", key: `div-${g.key}` });
+        if (g.collapsible) items.push({ key: g.key, icon: g.icon, label: t(g.label), children });
+        else items.push(...children);
+      } else if (g.collapsible) {
+        items.push({ key: g.key, icon: g.icon, label: t(g.label), children });
+      } else {
+        items.push({ type: "group", key: g.key, label: t(g.label), children });
+      }
+    }
+    return items;
+  };
+
   // User panel takes the AntD-default blue accent on the selected menu
   // row; admin keeps red (set globally in muiTheme.ts). The nested
   // ConfigProvider overlays the Menu tokens for this shell only —
   // header, footer, tabs, and buttons still read the red accent from
   // the top-level provider because they inherit outside this wrap.
-  const menu = (
+  const renderMenu = (isCollapsed: boolean) => (
     <ConfigProvider
       theme={{
         components: {
@@ -95,16 +146,17 @@ export function UserLayout() {
         mode="inline"
         theme={mode}
         selectedKeys={selected ? [selected] : []}
+        // Collapsed inline menus manage their own popup open-state; only
+        // control openKeys in the expanded rail. rc-menu also fires
+        // onOpenChange([]) as the sider collapses — ignoring events while
+        // collapsed keeps that from wiping the expanded open-state, so the
+        // active group is still open on re-expand.
+        openKeys={isCollapsed ? undefined : openKeys}
+        onOpenChange={(keys) => {
+          if (!isCollapsed) setOpenKeys(keys);
+        }}
         style={{ border: "none", background: siderBg }}
-        items={visibleNav.map((n) => ({
-          key: n.key,
-          icon: n.icon,
-          label: navLabelWithBadge(t(n.label), navCountForKey(navCounts, n.key)),
-          onClick: () => {
-            navigate(n.path);
-            setDrawerOpen(false);
-          },
-        }))}
+        items={buildItems(isCollapsed)}
       />
     </ConfigProvider>
   );
@@ -112,6 +164,23 @@ export function UserLayout() {
   useEffect(() => {
     setDrawerOpen(false);
   }, [location.pathname]);
+
+  // Auto-open the collapsible group that owns the active route so a deep
+  // link into Tools/Account lands with its group expanded. Scoped to the
+  // active group's key (not openKeys) so re-running never fights a user who
+  // just closed a different group.
+  const activeGroup = selected ? navGroupForKey(selected) : undefined;
+  const activeCollapsibleGroupKey =
+    activeGroup?.collapsible ? activeGroup.key : undefined;
+  useEffect(() => {
+    if (activeCollapsibleGroupKey) {
+      setOpenKeys((keys) =>
+        keys.includes(activeCollapsibleGroupKey)
+          ? keys
+          : [...keys, activeCollapsibleGroupKey],
+      );
+    }
+  }, [activeCollapsibleGroupKey]);
 
   return (
     <Layout style={{ minHeight: "100dvh" }}>
@@ -164,7 +233,7 @@ export function UserLayout() {
                 paddingBottom: 48,
               }}
             >
-              {menu}
+              {renderMenu(collapsed)}
             </div>
           </Sider>
         ) : drawerOpen ? (
@@ -189,7 +258,7 @@ export function UserLayout() {
               header: { background: siderBg },
             }}
           >
-            {menu}
+            {renderMenu(false)}
           </Drawer>
         ) : null}
         <Layout>

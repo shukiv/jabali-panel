@@ -69,7 +69,13 @@
       "ssl": "SSL Yöneticisi",
       "php-settings": "PHP Ayarları",
       "cron": "Cron",
-      "backups": "Yedekleme/Geri yükleme"
+      "backups": "Yedekleme/Geri yükleme",
+      "group": {
+        "hosting": "Barındırma",
+        "services": "Hizmetler",
+        "tools": "Araçlar",
+        "account": "Hesap"
+      }
     }
   },
   "login": {

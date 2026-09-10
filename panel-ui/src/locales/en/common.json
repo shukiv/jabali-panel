@@ -75,7 +75,13 @@
       "ssl": "SSL Manager",
       "php-settings": "PHP Settings",
       "cron": "Cron",
-      "backups": "Backups"
+      "backups": "Backups",
+      "group": {
+        "hosting": "Hosting",
+        "services": "Services",
+        "tools": "Tools",
+        "account": "Account"
+      }
     }
   },
   "login": {

@@ -70,7 +70,13 @@
       "ssl": "",
       "php-settings": "",
       "cron": "",
-      "backups": ""
+      "backups": "",
+      "group": {
+        "hosting": "Găzduire",
+        "services": "Servicii",
+        "tools": "Instrumente",
+        "account": "Cont"
+      }
     }
   },
   "login": {

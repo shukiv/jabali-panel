@@ -69,7 +69,13 @@
       "ssl": "SSL 管理器",
       "php-settings": "PHP 设置",
       "cron": "Cron",
-      "backups": "备份/恢复"
+      "backups": "备份/恢复",
+      "group": {
+        "hosting": "托管",
+        "services": "服务",
+        "tools": "工具",
+        "account": "账户"
+      }
     }
   },
   "login": {
