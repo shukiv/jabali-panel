@@ -57,9 +57,15 @@ type createDomainInput struct {
 	MailProvider    string // "" → jabali
 	M365Onmicrosoft string
 	GoogleDKIM      string
-	SSLMode         string // "" → le
-	CreateWWW       bool
-	TempURLEnabled  bool
+	// DNSTemplateID (GH #1627) is a custom DNS template the tenant selected at
+	// create. When set it OVERRIDES the mail posture to external ('custom') and
+	// the reconciler seeds the template's records into the fresh zone. Empty for
+	// every non-template create. Mutually exclusive with an explicit mail
+	// provider, and requires the panel to host DNS (DNSDisabled=false).
+	DNSTemplateID  string
+	SSLMode        string // "" → le
+	CreateWWW      bool
+	TempURLEnabled bool
 	// ReverseProxy (GH #1175): make this a reverse-proxy domain — the panel
 	// allocates a loopback port and the vhost proxies `/` to it. No DocRoot/PHP.
 	ReverseProxy bool
@@ -257,6 +263,36 @@ func createDomainOp(ctx context.Context, h *domainHandler, in createDomainInput)
 	if !models.ValidMailProvider(mailProvider) {
 		return nil, &createDomainError{http.StatusBadRequest, "invalid_mail_provider", ""}
 	}
+	// GH #1627: 'custom' is the posture of a template-created domain; it is set
+	// ONLY by the dns_template_id path below, never accepted as caller input
+	// (a bare 'custom' with no template would be an inert external domain).
+	if mailProvider == models.MailProviderCustom {
+		return nil, &createDomainError{http.StatusBadRequest, "mail_provider_custom_reserved", "select a DNS template via dns_template_id rather than setting mail_provider=custom directly"}
+	}
+	// GH #1627: a chosen custom DNS template overrides the mail posture to
+	// external ('custom'); its records are seeded into the zone by the reconciler
+	// at bootstrap. It is mutually exclusive with an explicit external provider,
+	// and requires the panel to host DNS (nothing to seed into otherwise).
+	var mailTemplateID *string
+	if tmplID := strings.TrimSpace(in.DNSTemplateID); tmplID != "" {
+		if h.cfg.DNSTemplates == nil {
+			return nil, &createDomainError{http.StatusServiceUnavailable, "dns_templates_unavailable", "DNS templates are not enabled on this server"}
+		}
+		if mailProvider != models.MailProviderJabali {
+			return nil, &createDomainError{http.StatusBadRequest, "template_and_provider_exclusive", "a DNS template sets the mail posture; do not also select a mail provider"}
+		}
+		if !dnsEnabled {
+			return nil, &createDomainError{http.StatusBadRequest, "template_requires_dns", "a DNS template seeds records into the panel-hosted zone; this domain has DNS hosted externally"}
+		}
+		if _, terr := h.cfg.DNSTemplates.FindByID(ctx, tmplID); terr != nil {
+			if errors.Is(terr, repository.ErrNotFound) {
+				return nil, &createDomainError{http.StatusBadRequest, "unknown_dns_template", "the selected DNS template does not exist"}
+			}
+			return nil, &createDomainError{http.StatusInternalServerError, "dns_template_lookup_failed", ""}
+		}
+		mailProvider = models.MailProviderCustom
+		mailTemplateID = &tmplID
+	}
 	// GH #1409: never enable Jabali mail on a domain when the mail module isn't
 	// installed — coerce to "none" so we don't provision mail that can't run.
 	// The GUI already defaults to None; this guards API / automation callers
@@ -324,6 +360,7 @@ func createDomainOp(ctx context.Context, h *domainHandler, in createDomainInput)
 		MailProvider:    mailProvider,
 		M365Onmicrosoft: strPtrOrNil(m365Tenant),
 		GoogleDKIM:      strPtrOrNil(googleDKIM),
+		MailTemplateID:  mailTemplateID, // GH #1627: nil unless a template was chosen
 		EmailEnabled:    mailEnabled,
 		SkipAutoSAN:     mailSkipSAN,
 		CreateWWW:       in.CreateWWW,

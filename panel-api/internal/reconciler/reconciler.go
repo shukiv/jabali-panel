@@ -42,6 +42,9 @@ type Reconciler struct {
 	users          repository.UserRepository
 	dnsZones       repository.DNSZoneRepository
 	dnsRecords     repository.DNSRecordRepository
+	// dnsTemplates (GH #1627) seeds a custom template's records into a fresh
+	// zone at bootstrap. nil-safe — an unwired panel just skips the seed.
+	dnsTemplates repository.DNSTemplateRepository
 	sslCerts       repository.SSLCertificateRepository
 	serverSettings repository.ServerSettingsRepository
 	// dnsPreflight resolves a hostname against EXTERNAL resolvers before an
@@ -2552,7 +2555,18 @@ func (r *Reconciler) reconcileDNSZone(ctx context.Context, domain *models.Domain
 					return
 				}
 			}
-			r.log.Info("bootstrapped DNS zone", "zone", zone.Name, "records", len(boots))
+			// GH #1627: a domain created from a custom DNS template seeds the
+			// template's records here — tenant-owned (Managed=false), one-shot,
+			// never re-asserted. mail_provider='custom' makes
+			// reconcileMailProviderRecords hand the zone off, so these survive.
+			tmplSeeds := r.dnsTemplateSeeds(ctx, domain, zone.ID, zone.Name)
+			for i := range tmplSeeds {
+				if err := r.dnsRecords.Create(ctx, &tmplSeeds[i]); err != nil {
+					r.log.Error("dns template seed failed", "zone", zone.Name, "err", err)
+					return
+				}
+			}
+			r.log.Info("bootstrapped DNS zone", "zone", zone.Name, "records", len(boots)+len(tmplSeeds))
 		} else {
 			r.log.Error("find zone failed", "domain", domain.Name, "err", err)
 			return

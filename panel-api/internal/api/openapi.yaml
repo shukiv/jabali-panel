@@ -983,6 +983,105 @@ paths:
                 is_admin: { type: boolean, default: false }
       responses: { "201": { description: Created } }
 
+  # ----------------------------------------------------- DNS Templates ---
+
+  /dns-templates:
+    get:
+      tags: [DNS Templates]
+      summary: List custom DNS templates (tenant-visible summaries) (GH #1627)
+      description: |
+        Returns id/name/description for every custom DNS template, so the Web
+        Domain / DNS Zone create form can offer them. Templates are global —
+        every tenant sees every template.
+      responses: { "200": { description: OK } }
+
+  /admin/dns-templates:
+    get:
+      tags: [DNS Templates]
+      summary: List custom DNS templates with their records (admin) (GH #1627)
+      responses: { "200": { description: OK } }
+    post:
+      tags: [DNS Templates]
+      summary: Create a custom DNS template (admin)
+      description: |
+        Each record is validated with the same DNS record validator the tenant
+        record API uses. The single supported substitution token is {domain},
+        replaced with the zone name when the reconciler seeds the records.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:        { type: string, maxLength: 120 }
+                description: { type: string, maxLength: 500 }
+                records:
+                  type: array
+                  items:
+                    type: object
+                    required: [name, type]
+                    properties:
+                      name:     { type: string }
+                      type:     { type: string, enum: [A, AAAA, CNAME, MX, TXT, NS, SRV, CAA] }
+                      content:  { type: string }
+                      ttl:      { type: integer }
+                      priority: { type: integer }
+      responses:
+        "201": { description: Created }
+        "400": { description: Invalid template or record }
+        "409": { description: A template with that name already exists }
+
+  /admin/dns-templates/{id}:
+    get:
+      tags: [DNS Templates]
+      summary: Get one custom DNS template with its records (admin)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: OK }
+        "404": { description: Not found }
+    put:
+      tags: [DNS Templates]
+      summary: Replace a custom DNS template's fields and records (admin)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:        { type: string, maxLength: 120 }
+                description: { type: string, maxLength: 500 }
+                records:
+                  type: array
+                  items:
+                    type: object
+                    required: [name, type]
+                    properties:
+                      name:     { type: string }
+                      type:     { type: string, enum: [A, AAAA, CNAME, MX, TXT, NS, SRV, CAA] }
+                      content:  { type: string }
+                      ttl:      { type: integer }
+                      priority: { type: integer }
+      responses:
+        "200": { description: Updated }
+        "400": { description: Invalid template or record }
+        "404": { description: Not found }
+        "409": { description: A template with that name already exists }
+    delete:
+      tags: [DNS Templates]
+      summary: Delete a custom DNS template (admin)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: Deleted }
+        "404": { description: Not found }
+
   # ----------------------------------------------- Admin: Server Settings ---
 
   /admin/settings/free-hostname/register:

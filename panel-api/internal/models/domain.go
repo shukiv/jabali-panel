@@ -405,6 +405,12 @@ type Domain struct {
 	// the provider's DKIM records are simply not published.
 	M365Onmicrosoft *string    `gorm:"column:m365_onmicrosoft;type:varchar(255)" json:"m365_onmicrosoft,omitempty"`
 	GoogleDKIM      *string    `gorm:"column:google_dkim;type:text" json:"google_dkim,omitempty"`
+	// MailTemplateID (GH #1627) records which custom DNS template this domain
+	// was created from, when MailProvider=="custom". The reconciler reads it
+	// ONCE at fresh-zone bootstrap to seed the template's records (tenant-owned,
+	// never re-asserted). Nil for every non-template domain. Not a foreign key:
+	// a later template delete leaves a harmless dangling id (seeds nothing).
+	MailTemplateID *string    `gorm:"column:mail_template_id;type:char(26)" json:"mail_template_id,omitempty"`
 	DkimSelector    *string    `gorm:"type:varchar(64)" json:"dkim_selector,omitempty"`
 	DkimPublicKey   *string    `gorm:"type:text" json:"dkim_public_key,omitempty"`
 	EmailEnabledAt  *time.Time `gorm:"type:datetime(6)" json:"email_enabled_at,omitempty"`

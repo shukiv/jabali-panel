@@ -166,6 +166,26 @@ func TestDomainEmail_Enable_ForbiddenOtherOwner(t *testing.T) {
 	require.False(t, domains.domains["dom1"].EmailEnabled)
 }
 
+// TestDomainEmail_Enable_CustomTemplatePostureLocked — GH #1627: a domain
+// created from a custom DNS template carries the external 'custom' mail
+// posture. Enabling Jabali mail on it must be refused (409) and must never
+// reach the agent, so the template's external MX/SPF is not shadowed by a
+// Jabali mailbox + DKIM.
+func TestDomainEmail_Enable_CustomTemplatePostureLocked(t *testing.T) {
+	ma := &mockAgent{}
+	r, domains := domainEmailTestRouter(t, ma, false, "user1")
+	domains.domains["dom1"].MailProvider = models.MailProviderCustom
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/domains/dom1/email", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "template_posture_locked")
+	require.Equal(t, 0, ma.callCount, "agent must not be contacted for a custom-posture domain")
+	require.False(t, domains.domains["dom1"].EmailEnabled)
+}
+
 // TestDomainEmail_Disable_KeepsDKIM — disable clears email_enabled and
 // email_enabled_at but MUST preserve dkim_selector + dkim_public_key
 // so a later re-enable doesn't roll the key (ADR-0043).

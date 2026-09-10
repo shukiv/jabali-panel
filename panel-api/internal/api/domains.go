@@ -89,6 +89,13 @@ type DomainHandlerConfig struct {
 	// already claimed by another domain's alias (aliasCollision). Optional — a
 	// nil repo skips the check (fail-open only when the alias feature is unwired).
 	WebDomainAliases repository.WebDomainAliasRepository
+	// DNSTemplates (GH #1627) resolves a tenant-selected custom DNS template at
+	// create: it validates the template exists and flips the domain to the
+	// external 'custom' mail posture + records mail_template_id, which the
+	// reconciler reads once to seed the template's records. Optional — nil makes
+	// a create that names a dns_template_id return 503 (fail-closed), never a
+	// silent skip.
+	DNSTemplates repository.DNSTemplateRepository
 	// AppInstalls (GH #1238 chown) backs the change-owner refusal: a domain
 	// with an app install carries the current owner's DB creds in its config,
 	// so re-owning it would leak a live cross-tenant credential. REQUIRED for
@@ -1197,6 +1204,21 @@ func (h *domainHandler) update(c *gin.Context) {
 		mp := *req.MailProvider
 		if !models.ValidMailProvider(mp) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_mail_provider"})
+			return
+		}
+		// GH #1627: 'custom' is the internal posture for a domain created from a
+		// DNS template — it is never a directly-selectable provider on a live
+		// switch (ValidMailProvider recognises it only so persisted rows pass),
+		// and a template domain's mail posture can't yet be switched away in
+		// this phase: doing so would strand the template's own external apex
+		// MX/SPF (unmarked, Managed=false) beside a re-asserted Jabali apex →
+		// two apex SPF = RFC 7208 permerror. Delete + recreate to change it.
+		if mp == models.MailProviderCustom {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "mail_provider_custom_reserved", "detail": "the 'custom' posture is selected by choosing a DNS template at domain creation, not via a provider switch"})
+			return
+		}
+		if domain.MailProvider == models.MailProviderCustom {
+			c.JSON(http.StatusConflict, gin.H{"error": "template_posture_locked", "detail": "this domain was created from a DNS template; switching its mail posture is not yet supported — delete and recreate the domain to change it"})
 			return
 		}
 		var m365In, gdkimIn string
