@@ -57,6 +57,54 @@ type StatResult struct {
 	IsSymlink bool   `json:"is_symlink"`
 }
 
+// DuEntry is one child of a files.du reply (a per-entry byte total).
+type DuEntry struct {
+	Name       string `json:"name"`
+	IsDir      bool   `json:"is_dir"`
+	Size       int64  `json:"size"`
+	HasSubdirs bool   `json:"has_subdirs"`
+}
+
+// DuResult is a decoded files.du reply. Mirrors the agent's filesDuResponse.
+type DuResult struct {
+	Path    string    `json:"path"`
+	Total   int64     `json:"total"`
+	Entries []DuEntry `json:"entries"`
+}
+
+// ExtractResult is a decoded synchronous files.extract reply. It has no
+// non-omittable identity field to guard on: the agent returns dest as the
+// caller's raw dest param (files_extract.go), which is empty for the common
+// "extract into the archive's parent" action, and extracted/skipped are
+// legitimately 0 for an empty archive. So DecodeExtract fails closed on a
+// malformed body only (like DecodeList), never on a field-presence check that
+// would false-fail a real default-dest extract.
+type ExtractResult struct {
+	Dest      string `json:"dest"`
+	Extracted int    `json:"extracted"`
+	Skipped   int    `json:"skipped"`
+}
+
+// JobStartResult is a decoded files.extract.start / files.copy.start reply: the
+// id of the background job the agent kicked off. Both start verbs return the
+// same {job_id} shape.
+type JobStartResult struct {
+	JobID string `json:"job_id"`
+}
+
+// JobStatusResult is a decoded files.job.status reply. Mirrors the agent's
+// fileJobSnapshot. Result carries the finished job's verb-specific payload
+// (e.g. an ExtractResult) and is left as raw JSON here.
+type JobStatusResult struct {
+	JobID     string          `json:"job_id"`
+	Status    string          `json:"status"`
+	Done      int64           `json:"done"`
+	Total     int64           `json:"total"`
+	Result    json.RawMessage `json:"result,omitempty"`
+	Error     string          `json:"error,omitempty"`
+	StartedAt string          `json:"started_at"`
+}
+
 // ErrTruncated reports that a full-content read came back truncated because the
 // file exceeds the agent's read cap. Callers that need the whole file (download,
 // CLI read/download) turn this into a failure so a partial file is never written
@@ -76,6 +124,24 @@ var ErrNoArchivePath = errors.New("agent did not return an archive path")
 // only a normalized echo of the caller's input, so it is the weaker identity
 // field to hang this check on.)
 var ErrNoStatMode = errors.New("agent did not return a file mode for the stat")
+
+// ErrNoDuPath reports that a files.du reply decoded cleanly but carried no path.
+// Path is the field a successful du can never omit: the agent sets it to the
+// resolved canonical directory it measured. Total and Entries are NOT usable as
+// the identity field — a du of an empty directory legitimately returns total 0
+// and no entries, so guarding on either would false-fail a real empty dir. An
+// empty path therefore means the body was not a du result at all (an agent error
+// blob, or a JSON null decoding into a zero-valued struct).
+var ErrNoDuPath = errors.New("agent did not return a path for the disk-usage reply")
+
+// ErrNoJobID reports that a files.extract.start / files.copy.start reply decoded
+// cleanly but carried no job id — an id the caller must have to poll the job.
+var ErrNoJobID = errors.New("agent did not return a job id")
+
+// ErrNoJobStatus reports that a files.job.status reply decoded cleanly but
+// carried no status. Every real job snapshot has a non-empty status
+// (queued/running/done/failed); an empty one means the body was not a snapshot.
+var ErrNoJobStatus = errors.New("agent did not return a status for the job")
 
 // DecodeList decodes a files.list reply, failing closed on a malformed body.
 func DecodeList(raw []byte) (ListResult, error) {
@@ -119,6 +185,56 @@ func DecodeStat(raw []byte) (StatResult, error) {
 	}
 	if r.Mode == "" {
 		return StatResult{}, ErrNoStatMode
+	}
+	return r, nil
+}
+
+// DecodeDu decodes a files.du reply, failing closed on a malformed body or a
+// reply that carries no path (see ErrNoDuPath).
+func DecodeDu(raw []byte) (DuResult, error) {
+	var r DuResult
+	if err := json.Unmarshal(raw, &r); err != nil {
+		return DuResult{}, fmt.Errorf("decode files.du reply: %w", err)
+	}
+	if r.Path == "" {
+		return DuResult{}, ErrNoDuPath
+	}
+	return r, nil
+}
+
+// DecodeExtract decodes a synchronous files.extract reply, failing closed on a
+// malformed body. See ExtractResult for why there is no field-presence guard
+// here (a valid default-dest extract carries an empty dest).
+func DecodeExtract(raw []byte) (ExtractResult, error) {
+	var r ExtractResult
+	if err := json.Unmarshal(raw, &r); err != nil {
+		return ExtractResult{}, fmt.Errorf("decode files.extract reply: %w", err)
+	}
+	return r, nil
+}
+
+// DecodeJobStart decodes a files.extract.start / files.copy.start reply, failing
+// closed on a malformed body or a missing job id (see ErrNoJobID).
+func DecodeJobStart(raw []byte) (JobStartResult, error) {
+	var r JobStartResult
+	if err := json.Unmarshal(raw, &r); err != nil {
+		return JobStartResult{}, fmt.Errorf("decode files job-start reply: %w", err)
+	}
+	if r.JobID == "" {
+		return JobStartResult{}, ErrNoJobID
+	}
+	return r, nil
+}
+
+// DecodeJobStatus decodes a files.job.status reply, failing closed on a
+// malformed body or a reply that carries no status (see ErrNoJobStatus).
+func DecodeJobStatus(raw []byte) (JobStatusResult, error) {
+	var r JobStatusResult
+	if err := json.Unmarshal(raw, &r); err != nil {
+		return JobStatusResult{}, fmt.Errorf("decode files.job.status reply: %w", err)
+	}
+	if r.Status == "" {
+		return JobStatusResult{}, ErrNoJobStatus
 	}
 	return r, nil
 }

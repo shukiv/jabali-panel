@@ -39,6 +39,7 @@ func TestWireShape(t *testing.T) {
 		{"files.archive", Archive(s, []string{"/home/shuki/a.txt", "/home/shuki/b"}), []string{"paths", "user_id", "username"}},
 		{"files.extract", Extract(s, "/home/shuki/a.tar.gz", ""), []string{"path", "user_id", "username"}},
 		{"files.extract_with_dest", Extract(s, "/home/shuki/a.tar.gz", "/home/shuki/out"), []string{"dest", "path", "user_id", "username"}},
+		{"files.job.status", JobStatus("shuki", "job-123"), []string{"job_id", "username"}},
 	}
 
 	for _, tc := range cases {
