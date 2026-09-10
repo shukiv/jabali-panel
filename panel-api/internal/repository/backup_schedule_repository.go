@@ -31,6 +31,12 @@ type BackupScheduleRepository interface {
 	ListForUser(ctx context.Context, userID string) ([]models.BackupSchedule, error)
 	ListDue(ctx context.Context, now time.Time, limit int) ([]models.BackupSchedule, error)
 	Update(ctx context.Context, s *models.BackupSchedule) error
+	// UpdateWithMemberships commits the row's field changes together with any
+	// membership replacement in ONE transaction (nil destIDs/userIDs leaves
+	// that membership untouched). Same blast-radius reasoning as
+	// CreateWithMemberships: a partial update must never leave a runnable row
+	// whose membership silently differs from what was asked.
+	UpdateWithMemberships(ctx context.Context, s *models.BackupSchedule, destIDs, userIDs *[]string) error
 	UpdateNextRun(ctx context.Context, id string, nextRunAt time.Time) error
 	MarkRan(ctx context.Context, id string, ranAt, nextRunAt time.Time) error
 	Delete(ctx context.Context, id string) error
@@ -173,6 +179,45 @@ func (r *backupScheduleRepo) Update(ctx context.Context, s *models.BackupSchedul
 		return ErrNotFound
 	}
 	return nil
+}
+
+func (r *backupScheduleRepo) UpdateWithMemberships(ctx context.Context, s *models.BackupSchedule, destIDs, userIDs *[]string) error {
+	s.UpdatedAt = time.Now().UTC()
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		res := tx.Model(&models.BackupSchedule{}).
+			Where("id = ?", s.ID).
+			Updates(map[string]any{
+				"kind":                  s.Kind,
+				"user_id":               s.UserID,
+				"include_system_backup": s.IncludeSystemBackup,
+				"cron_expr":             s.CronExpr,
+				"content":               s.Content,
+				"cadence":               s.Cadence,
+				"enabled":               s.Enabled,
+				"keep_daily":            s.KeepDaily,
+				"keep_weekly":           s.KeepWeekly,
+				"keep_monthly":          s.KeepMonthly,
+				"next_run_at":           s.NextRunAt,
+				"updated_at":            s.UpdatedAt,
+			})
+		if res.Error != nil {
+			return translate(res.Error)
+		}
+		if res.RowsAffected == 0 {
+			return ErrNotFound
+		}
+		if destIDs != nil {
+			if err := replaceDestinationsTx(tx, s.ID, *destIDs); err != nil {
+				return err
+			}
+		}
+		if userIDs != nil {
+			if err := replaceUsersTx(tx, s.ID, *userIDs); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 func (r *backupScheduleRepo) UpdateNextRun(ctx context.Context, id string, nextRunAt time.Time) error {

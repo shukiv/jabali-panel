@@ -257,15 +257,7 @@ func newBackupScheduleUpdateCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Second)
 			defer cancel()
-			repo := backupScheduleRepoFromDB()
-			s, err := repo.Get(ctx, args[0])
-			if err != nil {
-				if errors.Is(err, repository.ErrNotFound) {
-					return fmt.Errorf("schedule %q not found", args[0])
-				}
-				return fmt.Errorf("get: %w", err)
-			}
-			changed := false
+
 			if preset != "" {
 				p, ok := internalbackup.PresetCronExpr[preset]
 				if !ok {
@@ -273,75 +265,82 @@ func newBackupScheduleUpdateCmd() *cobra.Command {
 				}
 				cronExpr = p
 			}
+
+			in := backupscheduleops.UpdateInput{ID: args[0]}
 			if cronExpr != "" {
-				next, err := internalbackup.NextFire(cronExpr, time.Now().UTC())
-				if err != nil {
-					return err
-				}
-				s.CronExpr = cronExpr
-				s.NextRunAt = &next
-				changed = true
+				in.CronExpr = &cronExpr
 			}
 			if enable {
-				s.Enabled = true
-				changed = true
+				v := true
+				in.Enabled = &v
 			}
 			if disable {
-				s.Enabled = false
-				changed = true
+				v := false
+				in.Enabled = &v
 			}
-			if includeSystem == "true" {
-				s.IncludeSystemBackup = true
-				changed = true
-			} else if includeSystem == "false" {
-				s.IncludeSystemBackup = false
-				changed = true
+			switch includeSystem {
+			case "true":
+				v := true
+				in.IncludeSystemBackup = &v
+			case "false":
+				v := false
+				in.IncludeSystemBackup = &v
+			case "":
+			default:
+				return fmt.Errorf("invalid --include-system %q (want true or false)", includeSystem)
 			}
 			if cmd.Flags().Changed("keep-daily") {
-				s.KeepDaily = &keepDaily
-				changed = true
+				in.KeepDaily = &keepDaily
 			}
 			if cmd.Flags().Changed("keep-weekly") {
-				s.KeepWeekly = &keepWeekly
-				changed = true
+				in.KeepWeekly = &keepWeekly
 			}
 			if cmd.Flags().Changed("keep-monthly") {
-				s.KeepMonthly = &keepMonthly
-				changed = true
-			}
-			if changed {
-				if err := repo.Update(ctx, s); err != nil {
-					return fmt.Errorf("update schedule: %w", err)
-				}
+				in.KeepMonthly = &keepMonthly
 			}
 			if clearDests {
-				if err := repo.ReplaceDestinations(ctx, s.ID, nil); err != nil {
-					return fmt.Errorf("clear destinations: %w", err)
-				}
+				in.DestinationIDs = &[]string{}
 			} else if len(destinations) > 0 {
 				dstIDs, err := resolveDestinationIDs(ctx, destinations)
 				if err != nil {
 					return err
 				}
-				if err := repo.ReplaceDestinations(ctx, s.ID, dstIDs); err != nil {
-					return fmt.Errorf("link destinations: %w", err)
-				}
+				in.DestinationIDs = &dstIDs
 			}
 			if clearUsers {
-				if err := repo.ReplaceUsers(ctx, s.ID, nil); err != nil {
-					return fmt.Errorf("clear users: %w", err)
-				}
+				in.UserIDs = &[]string{}
 			} else if len(users) > 0 {
 				uIDs, err := resolveUserIDs(ctx, users)
 				if err != nil {
 					return err
 				}
-				if err := repo.ReplaceUsers(ctx, s.ID, uIDs); err != nil {
-					return fmt.Errorf("link users: %w", err)
-				}
+				in.UserIDs = &uIDs
 			}
-			if !changed && !clearDests && !clearUsers && len(destinations) == 0 && len(users) == 0 {
+
+			if in.CronExpr == nil && in.Enabled == nil && in.IncludeSystemBackup == nil &&
+				in.KeepDaily == nil && in.KeepWeekly == nil && in.KeepMonthly == nil &&
+				in.DestinationIDs == nil && in.UserIDs == nil {
 				return fmt.Errorf("no changes specified")
+			}
+
+			s, err := backupscheduleops.Update(ctx, backupscheduleops.Deps{
+				Schedules: backupScheduleRepoFromDB(),
+				Users:     repository.NewUserRepository(sharedDB),
+			}, in)
+			if err != nil {
+				var ure *backupscheduleops.UserRejectedError
+				switch {
+				case errors.Is(err, repository.ErrNotFound):
+					return fmt.Errorf("schedule %q not found", args[0])
+				case errors.As(err, &ure) && errors.Is(err, backupscheduleops.ErrAdminUser):
+					return fmt.Errorf("user %s is an admin account and cannot be a backup-schedule target", ure.UserID)
+				case errors.As(err, &ure):
+					return fmt.Errorf("user %s not found", ure.UserID)
+				case errors.Is(err, backupscheduleops.ErrInvalidCron):
+					return err
+				default:
+					return fmt.Errorf("update schedule: %w", err)
+				}
 			}
 			if jsonOutput {
 				return printJSON(s)

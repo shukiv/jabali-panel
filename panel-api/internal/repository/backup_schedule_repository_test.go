@@ -148,6 +148,68 @@ func TestBackupSchedule_CreateWithMemberships_UserLinkFails_RollsBack(t *testing
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// UpdateWithMemberships commits the field changes and a user-membership
+// replacement in one transaction. A nil destination pointer leaves that
+// membership untouched (no DELETE/INSERT). The UPDATE matcher requires `content`
+// in the SET clause — the same silent-drop allowlist guard as Update (GH #454).
+func TestBackupSchedule_UpdateWithMemberships_CommitsRowAndUsers(t *testing.T) {
+	db, mock, raw := newMockBackupDB(t)
+	defer raw.Close()
+	repo := NewBackupScheduleRepository(db)
+
+	mock.ExpectBegin()
+	mock.ExpectExec("UPDATE .backup_schedules. SET .*.content.=").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("DELETE FROM `backup_schedule_users` WHERE schedule_id = \\?").
+		WithArgs("01J5SCHED0000000000000000A").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("INSERT INTO `backup_schedule_users`").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	s := &models.BackupSchedule{
+		ID:       "01J5SCHED0000000000000000A",
+		Kind:     models.BackupScheduleKindAccount,
+		CronExpr: "0 3 * * *",
+		Enabled:  true,
+	}
+	users := []string{"01J5USER0000000000000000001"}
+	err := repo.UpdateWithMemberships(context.Background(), s, nil, &users)
+	require.NoError(t, err)
+	require.False(t, s.UpdatedAt.IsZero())
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// The atomicity guarantee for update: a failure replacing users rolls back the
+// field UPDATE too, so the row is never left committed with a membership that
+// silently differs from what was asked. Falsify: drop the tx wrapper → the
+// UPDATE commits and no Rollback is issued.
+func TestBackupSchedule_UpdateWithMemberships_UserLinkFails_RollsBack(t *testing.T) {
+	db, mock, raw := newMockBackupDB(t)
+	defer raw.Close()
+	repo := NewBackupScheduleRepository(db)
+
+	mock.ExpectBegin()
+	mock.ExpectExec("UPDATE .backup_schedules. SET").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("DELETE FROM `backup_schedule_users` WHERE schedule_id = \\?").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("INSERT INTO `backup_schedule_users`").
+		WillReturnError(errFakeUserLink)
+	mock.ExpectRollback()
+
+	s := &models.BackupSchedule{
+		ID:       "01J5SCHED0000000000000000A",
+		Kind:     models.BackupScheduleKindAccount,
+		CronExpr: "0 3 * * *",
+		Enabled:  true,
+	}
+	users := []string{"01J5USER0000000000000000001"}
+	err := repo.UpdateWithMemberships(context.Background(), s, nil, &users)
+	require.Error(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 // GH #454: the Update column allowlist must include `content` — it was added to
 // the model (#570) after this method was written, and an omitted column is a
 // SILENT drop (the map-based Updates only writes listed columns). Regression
