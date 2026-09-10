@@ -23,8 +23,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"git.jabali-panel.com/shukivaknin/jabali2/internal/mailaddr"
-	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
@@ -33,7 +31,6 @@ func sharedResourceRepoFromDB() repository.SharedResourceRepository {
 	return repository.NewSharedResourceRepository(sharedDB)
 }
 
-var sharedResourceKindSet = map[string]bool{"mailbox": true, "calendar": true, "addressbook": true, "files": true}
 var sharedResourceRightSet = map[string]bool{"read": true, "readwrite": true, "admin": true}
 
 func newSharedResourceCmd() *cobra.Command {
@@ -89,13 +86,10 @@ func newSharedResourceCreateCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "create",
 		Short:   "Create a shared resource",
-		PreRunE: requireDB,
+		PreRunE: requireDBAndAgent,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if domainID == "" || name == "" || kind == "" {
 				return errors.New("--domain, --name, --kind required")
-			}
-			if !sharedResourceKindSet[kind] {
-				return fmt.Errorf("invalid --kind %q (mailbox|calendar|addressbook|files)", kind)
 			}
 			ctx, cancel := context.WithTimeout(cmd.Context(), 15*time.Second)
 			defer cancel()
@@ -103,21 +97,20 @@ func newSharedResourceCreateCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("find domain %q: %w", domainID, err)
 			}
-			local, _, err := mailaddr.Canonicalise(name + "@" + dom.Name)
+			// The email-enabled gate, kind allowlist, canonicalisation,
+			// duplicate check, trimmed display name, persist, and best-effort
+			// apply are all in sharedresourceops — the same policy the REST
+			// handler runs, so the two adapters project identical state.
+			sr, err := createSharedResourceDirect(ctx, sharedResourceRepoFromDB(),
+				notifyAgentSharedResource, dom, kind, name, displayName)
 			if err != nil {
-				return fmt.Errorf("invalid name: %w", err)
-			}
-			email := local + "@" + dom.Name
-			now := time.Now().UTC()
-			sr := &models.SharedResource{
-				ID: ids.NewULID(), DomainID: dom.ID, Kind: kind,
-				LocalPart: &local, EmailCached: &email,
-				DisplayName: displayName, CreatedAt: now, UpdatedAt: now,
-			}
-			if err := sharedResourceRepoFromDB().Create(ctx, sr); err != nil {
-				return fmt.Errorf("create: %w", err)
+				return err
 			}
 			cliAuditOK(ctx, "shared_resource.create", "shared_resource", sr.ID, nil)
+			email := ""
+			if sr.EmailCached != nil {
+				email = *sr.EmailCached
+			}
 			fmt.Printf("created %s (%s) %s — converges on next reconcile pass\n", sr.ID, kind, email)
 			return nil
 		},
