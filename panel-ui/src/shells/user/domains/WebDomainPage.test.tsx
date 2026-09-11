@@ -246,6 +246,24 @@ describe("WebDomainPage (GH #1543)", () => {
     expect(screen.queryByText("options-pane:d1")).not.toBeInTheDocument();
   });
 
+  it("shows a discoverability hint on Overview when tenant domain options are off (GH #1624)", async () => {
+    // caps off (beforeEach default): the gated tabs are hidden, so the Overview
+    // pane invites the tenant to have the admin enable the feature.
+    renderAt("/jabali-panel/domains/d1");
+    expect(
+      await screen.findByText(/More domain controls are available on request/),
+    ).toBeInTheDocument();
+  });
+
+  it("hides the discoverability hint once tenant domain options are on (GH #1624)", async () => {
+    caps.value = { tenant_domain_options_enabled: true, tenant_docroot_editable: false };
+    renderAt("/jabali-panel/domains/d1");
+    await screen.findByText("Preview URL");
+    expect(
+      screen.queryByText(/More domain controls are available on request/),
+    ).not.toBeInTheDocument();
+  });
+
   it("surfaces an error when the domain can't be loaded", async () => {
     domainQ.value = { data: undefined, isLoading: false, isError: true };
     renderAt("/jabali-panel/domains/d1");

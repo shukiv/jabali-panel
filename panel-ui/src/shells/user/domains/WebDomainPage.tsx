@@ -99,6 +99,12 @@ export const WebDomainPage = () => {
   // sees neither the menu item nor the tab (never a disabled stub).
   const optionsOn = caps?.tenant_domain_options_enabled === true;
   const docrootOn = caps?.tenant_docroot_editable === true;
+  // GH #1624: with the cap off the two gated tabs are hidden (never a disabled
+  // stub — see below), so a tenant has no way to learn the feature exists. Show
+  // a small note on the Overview pane inviting them to ask the admin to enable
+  // it. Gate on an explicit `false` (not `undefined`) so it doesn't flash while
+  // capabilities are still loading.
+  const showOptionsHint = caps?.tenant_domain_options_enabled === false;
   // DNS renders here as a tab (GH #1543). Gate on the same dns_enabled signal
   // the sidebar and the old row-menu item used — default-on while caps load.
   // The tenant DNS Zones overview page links straight into this tab to manage a
@@ -106,7 +112,23 @@ export const WebDomainPage = () => {
   const dnsOn = caps?.dns_enabled !== false;
 
   const tabs: { key: string; label: string; node: ReactNode }[] = [
-    { key: "overview", label: "Overview", node: <OverviewTab domain={domain} /> },
+    {
+      key: "overview",
+      label: "Overview",
+      node: (
+        <Space direction="vertical" size="large" style={{ width: "100%" }}>
+          <OverviewTab domain={domain} />
+          {showOptionsHint && (
+            <Alert
+              type="info"
+              showIcon
+              message="More domain controls are available on request"
+              description="When your administrator enables tenant domain options for this server, you get two extra tabs on your domains: a curated set of safe nginx options (max upload size, HSTS, security headers, gzip) and a limited rewrite / custom-response-header rule builder. Raw nginx directives stay admin-only."
+            />
+          )}
+        </Space>
+      ),
+    },
     // Logs is a read-only diagnostic view — the most-checked thing after
     // "is the site up" — so it sits second, before the editors. It exists for
     // every web domain, so it is not cap-gated.

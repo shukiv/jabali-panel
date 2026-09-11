@@ -6,8 +6,9 @@ import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { apiClient } from "../../../apiClient";
 
 // TenantDomainOptionsCard — Server Settings → General: opt non-admin domain
-// owners into the curated safe nginx options (GH #307). Off by default; raw
-// nginx directives stay admin-only regardless.
+// owners into the curated safe nginx options plus the tenant-safe rewrite /
+// custom_header rule builder (GH #307, GH #1624). Off by default; raw nginx
+// directives (proxy_pass, IP access, PHP settings) stay admin-only regardless.
 export const TenantDomainOptionsCard = () => {
   const { t } = useTranslation();
   const [enabled, setEnabled] = useState(false);
@@ -66,9 +67,10 @@ export const TenantDomainOptionsCard = () => {
     <Card title={t("tenantdomainoptionscard.tenant_domain_options")} style={{ marginBottom: 16 }} loading={loading}>
       <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
         Let non-admin users set a curated, safe set of nginx options on their own
-        domains — max upload size, HSTS, security headers, and gzip. The panel
-        renders fixed directives; raw nginx directives and the rule builder stay
-        admin-only either way.
+        domains — max upload size, HSTS, security headers, and gzip — plus a
+        limited rewrite / custom-response-header rule builder. The panel validates
+        every rule and renders fixed directives; raw nginx directives, proxy_pass,
+        IP access, and PHP settings stay admin-only either way.
       </Typography.Paragraph>
       <Switch checked={enabled} loading={saving} onChange={onToggle} checkedChildren="On" unCheckedChildren="Off" />
       <Typography.Paragraph type="secondary" style={{ marginTop: 20, marginBottom: 8 }}>
