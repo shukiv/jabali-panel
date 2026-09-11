@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -21,6 +20,10 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
+// credsDir is only a hint path for operator-facing warnings (e.g. "remove X
+// manually" when Agent cleanup fails). The row's CredentialsRef is the Agent's
+// reported path, not a value computed from this const — see
+// writeBackupDestinationCreds in backup_destination_ops.go.
 const credsDir = "/etc/jabali-panel/restic-remotes"
 
 func backupDestinationRepoFromDB() repository.BackupDestinationRepository {
@@ -291,16 +294,11 @@ func newBackupDestinationUpdateCmd() *cobra.Command {
 				d.ExtraOptions = raw
 				changed = true
 				if opts.Auth == models.SFTPAuthPassword && cmd.Flags().Changed("sftp-password") {
-					if _, err := sharedAgent.Call(ctx, "backup.dest.creds_write", map[string]any{
-						"dest_id": d.ID,
-						"env":     map[string]string{"SSHPASS": sftpPass},
-					}); err != nil {
+					path, err := writeBackupDestinationCreds(ctx, sharedAgent.Call, d.ID, map[string]string{"SSHPASS": sftpPass})
+					if err != nil {
 						return fmt.Errorf("write sftp password: %w", err)
 					}
-					if d.CredentialsRef == nil {
-						ref := filepath.Join(credsDir, d.ID+".env")
-						d.CredentialsRef = &ref
-					}
+					d.CredentialsRef = &path
 				}
 			}
 			// Clear stored credential env (cloud secrets / sftp SSHPASS). Drop the
@@ -325,16 +323,11 @@ func newBackupDestinationUpdateCmd() *cobra.Command {
 					return err
 				}
 				if len(env) > 0 {
-					if _, err := sharedAgent.Call(ctx, "backup.dest.creds_write", map[string]any{
-						"dest_id": d.ID,
-						"env":     env,
-					}); err != nil {
+					path, err := writeBackupDestinationCreds(ctx, sharedAgent.Call, d.ID, env)
+					if err != nil {
 						return fmt.Errorf("write credentials: %w", err)
 					}
-					if d.CredentialsRef == nil {
-						ref := filepath.Join(credsDir, d.ID+".env")
-						d.CredentialsRef = &ref
-					}
+					d.CredentialsRef = &path
 					changed = true
 				}
 			}

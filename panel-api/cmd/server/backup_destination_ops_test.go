@@ -41,6 +41,13 @@ func (f *fakeBackupDestRepo) Delete(_ context.Context, _ string) error {
 	return f.deleteErr
 }
 
+// agentCredsPath is the on-disk path the fake Agent reports in its creds_write
+// reply. It is deliberately NOT filepath.Join(credsDir, "dst-1.env"): the core
+// must record the path the Agent returns, not one it computes locally, so a test
+// that sees this exact value proves the reply — not a local guess — set the row's
+// CredentialsRef (JAB-310 AC5).
+const agentCredsPath = "/agent/says/dst-1.env"
+
 // recordingAgent records each agent command (and its params), and can be told to
 // fail a specific command.
 type recordingAgent struct {
@@ -48,6 +55,10 @@ type recordingAgent struct {
 	params  map[string]map[string]any
 	failCmd string
 	failErr error
+	// credsWriteNoPath, when true, makes the creds_write reply omit "path"
+	// (a malformed Agent reply): the file is on disk but has no referenceable
+	// path, which the write helper must treat as a failure and compensate.
+	credsWriteNoPath bool
 }
 
 func (r *recordingAgent) call(_ context.Context, cmd string, params any) (json.RawMessage, error) {
@@ -60,6 +71,9 @@ func (r *recordingAgent) call(_ context.Context, cmd string, params any) (json.R
 	}
 	if cmd == r.failCmd {
 		return nil, r.failErr
+	}
+	if cmd == "backup.dest.creds_write" && !r.credsWriteNoPath {
+		return json.RawMessage(`{"path":"` + agentCredsPath + `"}`), nil
 	}
 	return json.RawMessage(`{}`), nil
 }
@@ -151,6 +165,79 @@ func TestCreateBackupDestinationDirect_CredsWriteFailsBeforePersist(t *testing.T
 	}
 	if agent.fired("backup.dest.creds_delete") {
 		t.Fatal("nothing was written, so nothing must be deleted")
+	}
+}
+
+// TestCreateBackupDestinationDirect_RefFromAgentReply is the discriminator for
+// this slice: the row's CredentialsRef must be the path the Agent returned in its
+// creds_write reply, not a path panel-api computed locally from credsDir. The
+// Agent owns /etc/jabali-panel/ and is authoritative for the path, so under a
+// panel/Agent binary-version skew the two must not disagree (JAB-310 AC5). The
+// fake returns a deliberately non-local path.
+func TestCreateBackupDestinationDirect_RefFromAgentReply(t *testing.T) {
+	agent := &recordingAgent{}
+	repo := &fakeBackupDestRepo{} // persist succeeds
+	d := newDest()
+
+	if err := createBackupDestinationDirect(context.Background(), agent.call, repo, d, map[string]string{"AWS_SECRET_ACCESS_KEY": "x"}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if repo.createCalled != 1 {
+		t.Fatalf("Create called %d times, want 1", repo.createCalled)
+	}
+	if d.CredentialsRef == nil {
+		t.Fatal("CredentialsRef must be set from the Agent reply")
+	}
+	if *d.CredentialsRef != agentCredsPath {
+		t.Fatalf("CredentialsRef = %q, want the Agent-reported path %q (not a locally-computed one)", *d.CredentialsRef, agentCredsPath)
+	}
+}
+
+// TestWriteBackupDestinationCreds_MissingPathCompensates is load-bearing: when the
+// Agent write succeeds but the reply carries no usable path, the file is on disk
+// yet the row can never reference it. The helper must compensate (creds_delete)
+// and return an error rather than persist a row that points nowhere — driven here
+// through the create core, which must then NOT persist.
+func TestWriteBackupDestinationCreds_MissingPathCompensates(t *testing.T) {
+	agent := &recordingAgent{credsWriteNoPath: true}
+	repo := &fakeBackupDestRepo{} // would succeed if reached
+	d := newDest()
+
+	err := createBackupDestinationDirect(context.Background(), agent.call, repo, d, map[string]string{"AWS_SECRET_ACCESS_KEY": "x"})
+	if err == nil {
+		t.Fatal("a creds_write reply with no path must return an error")
+	}
+	if !agent.fired("backup.dest.creds_delete") {
+		t.Fatal("the on-disk file left by a path-less reply was NOT compensated (orphan)")
+	}
+	if repo.createCalled != 0 {
+		t.Fatalf("row must NOT be persisted when no referenceable path came back, Create called %d", repo.createCalled)
+	}
+	if d.CredentialsRef != nil {
+		t.Fatalf("CredentialsRef must stay nil when the reply had no path, got %q", *d.CredentialsRef)
+	}
+}
+
+// TestBackupDestinationUpdate_WritesRouteThroughHelper source-pins that the update
+// RunE's two credential-write sites (sftp-password and --env) go through
+// writeBackupDestinationCreds and no longer compute the ref locally from credsDir.
+// The RunE is not unit-testable, so pin the migration by source: the local
+// filepath.Join(credsDir ... computation must be gone from the update command.
+func TestBackupDestinationUpdate_WritesRouteThroughHelper(t *testing.T) {
+	src := readOpsSource(t, "backup_destination_cmd.go")
+	start := strings.Index(src, "func newBackupDestinationUpdateCmd(")
+	if start < 0 {
+		t.Fatal("update command not found")
+	}
+	body := src[start:]
+	if end := strings.Index(body, "\nfunc newBackupDestinationRotatePasswordCmd("); end > 0 {
+		body = body[:end]
+	}
+	if !strings.Contains(body, "writeBackupDestinationCreds(ctx, sharedAgent.Call,") {
+		t.Error("update RunE credential writes must route through writeBackupDestinationCreds")
+	}
+	if strings.Contains(body, "filepath.Join(credsDir") {
+		t.Error("update RunE must not compute CredentialsRef locally from credsDir; use the Agent reply path")
 	}
 }
 
