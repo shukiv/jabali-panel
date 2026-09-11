@@ -188,7 +188,10 @@ type updateServerSettingsRequest struct {
 	TenantNotificationsEnabled   *bool   `json:"tenant_notifications_enabled,omitempty"`
 	RootTerminalEnabled          *bool   `json:"root_terminal_enabled,omitempty"`
 	BandwidthQuotaEnforceEnabled *bool   `json:"bandwidth_quota_enforce_enabled,omitempty"`
-	UploadMaxSizeMB              *uint32 `json:"upload_max_size_mb,omitempty"`
+	// DNSOrphanAutosweepEnabled (GH #1620) — opt-in hourly PowerDNS
+	// orphan-record sweep, driven by the reconciler. Off by default.
+	DNSOrphanAutosweepEnabled *bool   `json:"dns_orphan_autosweep_enabled,omitempty"`
+	UploadMaxSizeMB           *uint32 `json:"upload_max_size_mb,omitempty"`
 	// TenantBackupCron (GH #454): the admin-owned cron time tenant scheduled
 	// backups run at. Tenants choose content + destination; only the admin sets
 	// the timing. Validated server-side via internalbackup.ParseCron.
@@ -616,6 +619,9 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 	}
 	if req.BandwidthQuotaEnforceEnabled != nil {
 		current.BandwidthQuotaEnforceEnabled = *req.BandwidthQuotaEnforceEnabled
+	}
+	if req.DNSOrphanAutosweepEnabled != nil {
+		current.DNSOrphanAutosweepEnabled = *req.DNSOrphanAutosweepEnabled
 	}
 	if req.UploadMaxSizeMB != nil {
 		current.UploadMaxSizeMB = *req.UploadMaxSizeMB
