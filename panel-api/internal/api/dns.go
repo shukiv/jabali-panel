@@ -144,6 +144,14 @@ type dnsZoneInventoryRow struct {
 	EffectiveTTL       int        `json:"effective_ttl"`
 	DNSSECEnabled      bool       `json:"dnssec_enabled"`
 	RegistrarExpiresAt *time.Time `json:"registrar_expires_at,omitempty"`
+	// GH #1611: the domain's facet state, so the DNS Zone inventory can tell a
+	// deliberately-dropped zone (dns_disabled=true → offer "Enable DNS") from one
+	// the reconciler simply hasn't provisioned yet, and a DNS-only domain
+	// (web_disabled && !email_enabled → offer "Delete domain" instead of a zone
+	// delete the last-facet guard would refuse) from an ordinary multi-facet one.
+	DNSDisabled  bool `json:"dns_disabled"`
+	WebDisabled  bool `json:"web_disabled"`
+	EmailEnabled bool `json:"email_enabled"`
 }
 
 // listZoneInventory serves GET /dns/zones — the batched DNS Zone overview
@@ -199,6 +207,9 @@ func (h *dnsHandler) listZoneInventory(c *gin.Context) {
 			EffectiveTTL:       ttl,
 			DNSSECEnabled:      domains[i].DNSSECEnabled,
 			RegistrarExpiresAt: domains[i].RegistrarExpiresAt,
+			DNSDisabled:        domains[i].DNSDisabled,
+			WebDisabled:        domains[i].WebDisabled,
+			EmailEnabled:       domains[i].EmailEnabled,
 		}
 	}
 

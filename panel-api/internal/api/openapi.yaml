@@ -3197,6 +3197,7 @@ paths:
       parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
       responses:
         "200": { description: DNS re-enabled; the reconciler re-creates the zone }
+        "403": { description: Forbidden (not the domain's owner) }
         "404": { description: Domain not found }
     delete:
       tags: [Dns]

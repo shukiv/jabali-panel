@@ -17,9 +17,9 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
-// Fakes for the GH #1611 DNS-zone delete. Each embeds its repository interface so
-// only the methods deleteZone/tearDownDNSFacet touch are implemented; any other
-// call panics (guards against silent scope creep).
+// Fakes for the GH #1611 DNS-zone delete + re-enable. Each embeds its repository
+// interface so only the methods deleteZone/enableZone touch are implemented; any
+// other call panics (guards against silent scope creep).
 
 type dzDomainRepo struct {
 	repository.DomainRepository
@@ -168,7 +168,7 @@ func TestDeleteZone_NotFound(t *testing.T) {
 
 func TestDeleteZone_FlipFail_500_NoTeardown(t *testing.T) {
 	// The flip failing means dns_disabled is still 0 → the reconciler still owns
-	// the zone; tearDownDNSFacet must NOT delete it, and the caller returns 500.
+	// the zone; the teardown must NOT delete it, and the caller returns 500.
 	dom := &models.Domain{ID: "d1", Name: "ex.com", UserID: "u1", EmailEnabled: true}
 	zone := &models.DNSZone{ID: "z1", DomainID: "d1"}
 	h, dr, zr, rr, ag := dzHandler(dom, zone)
@@ -227,7 +227,7 @@ func TestDeleteZone_TenantRestrictedByPolicy(t *testing.T) {
 
 func TestDeleteZone_AlreadyDisabled_Idempotent(t *testing.T) {
 	// A retry after a partial run: dns_disabled is already true and no zone row
-	// remains. The transition guards are skipped; tearDownDNSFacet re-flips
+	// remains. The transition guards are skipped; the teardown re-flips
 	// (idempotent), still calls the agent, finds no row to clean, returns 200.
 	dom := &models.Domain{ID: "d1", Name: "ex.com", UserID: "u1", EmailEnabled: true, DNSDisabled: true}
 	h, dr, _, _, ag := dzHandler(dom, nil) // nil zone → FindByDomainID ErrNotFound
