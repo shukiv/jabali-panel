@@ -112,6 +112,38 @@ function toQueryString(params: ListParams): string {
   return s ? `?${s}` : "";
 }
 
+// GH #1615: the per-domain Mailboxes drill-down (Mail Domains → domain →
+// Mailboxes, `MailboxesTab` in per-domain mode) lists rows via
+// useTableURL({ resource: `domains/${domainId}/mailboxes` }), so its cache key
+// is ["list", `domains/${domainId}/mailboxes`, …params] — a single resource
+// string, NOT ["list","mailboxes",domainId,…]. Any mutation that changes a
+// mailbox row must invalidate this key or that list stays stale until a manual
+// page refresh. Single-source the string here so the tab and the mutations
+// can't drift apart (they did — JAB-370 re-keyed the tab, the mutations were
+// left invalidating the old key).
+export const perDomainMailboxesResource = (domainId: string): string =>
+  `domains/${domainId}/mailboxes`;
+
+// invalidateMailboxLists busts every cache key that renders a mailbox list, so
+// a create / update / delete refreshes all of them: the legacy per-domain
+// useMailboxes key, the flat ["list","mailboxes"] fallback, both server-
+// paginated useTableURL directories (admin + tenant), and the per-domain
+// drill-down (GH #1615). Callers add any resource-specific keys of their own
+// (e.g. delete also busts group-membership + autoresponder panels).
+function invalidateMailboxLists(qc: ReturnType<typeof useQueryClient>, domainId?: string): void {
+  if (domainId) {
+    qc.invalidateQueries({ queryKey: ["list", "mailboxes", domainId] });
+    qc.invalidateQueries({ queryKey: ["list", perDomainMailboxesResource(domainId)] });
+  }
+  qc.invalidateQueries({ queryKey: ["list", "mailboxes"] });
+  // JAB-370: the admin Mail tab is server-paginated via
+  // useTableURL({ resource: "admin/mailboxes" }), keyed ["list","admin/mailboxes",…].
+  qc.invalidateQueries({ queryKey: ["list", "admin/mailboxes"] });
+  // JAB-370 Workspace: the flat tenant view uses useTableURL({ resource:
+  // "me/mailboxes" }), keyed ["list","me/mailboxes",…].
+  qc.invalidateQueries({ queryKey: ["list", "me/mailboxes"] });
+}
+
 // ---------------------------------------------------------------------------
 // Domain email (enable/disable state)
 // ---------------------------------------------------------------------------
@@ -229,17 +261,9 @@ export function useCreateMailbox(): UseMutationResult<
       return data;
     },
     onSuccess: (_data, { domainId }) => {
-      qc.invalidateQueries({ queryKey: ["list", "mailboxes", domainId] });
-      // JAB-370: the admin Mail tab is now server-paginated via
-      // useTableURL({ resource: "admin/mailboxes" }), keyed ["list",
-      // "admin/mailboxes", …params]. Prefix-invalidate that so an edit /
-      // delete / create refreshes the visible page.
-      qc.invalidateQueries({ queryKey: ["list", "admin/mailboxes"] });
-      // JAB-370 Workspace: the tenant Mailboxes tab is now server-paginated via
-      // useTableURL({ resource: "me/mailboxes" }), keyed ["list", "me/mailboxes",
-      // …params]. Prefix-invalidate it so a create/edit/delete refreshes the
-      // visible page instead of leaving a stale (or ghost) row.
-      qc.invalidateQueries({ queryKey: ["list", "me/mailboxes"] });
+      // GH #1615: refresh every mailbox list, including the per-domain
+      // drill-down (a newly created mailbox otherwise never appeared there).
+      invalidateMailboxLists(qc, domainId);
     },
   });
 }
@@ -255,17 +279,9 @@ export function useDeleteMailbox(): UseMutationResult<
       await apiClient.delete(`/mailboxes/${id}`);
     },
     onSuccess: (_data, { domainId }) => {
-      qc.invalidateQueries({ queryKey: ["list", "mailboxes", domainId] });
-      // JAB-370: the admin Mail tab is now server-paginated via
-      // useTableURL({ resource: "admin/mailboxes" }), keyed ["list",
-      // "admin/mailboxes", …params]. Prefix-invalidate that so an edit /
-      // delete / create refreshes the visible page.
-      qc.invalidateQueries({ queryKey: ["list", "admin/mailboxes"] });
-      // JAB-370 Workspace: the tenant Mailboxes tab is now server-paginated via
-      // useTableURL({ resource: "me/mailboxes" }), keyed ["list", "me/mailboxes",
-      // …params]. Prefix-invalidate it so a create/edit/delete refreshes the
-      // visible page instead of leaving a stale (or ghost) row.
-      qc.invalidateQueries({ queryKey: ["list", "me/mailboxes"] });
+      // GH #1615: refresh every mailbox list, including the per-domain
+      // drill-down (a deleted mailbox otherwise lingered there until refresh).
+      invalidateMailboxLists(qc, domainId);
       // JAB-333: a deleted mailbox also disappears from the tenant screen's
       // group-membership and autoresponder panels — invalidate those shared
       // keys so they don't render a ghost row until the next refetch.
@@ -330,20 +346,9 @@ export function useUpdateMailbox(): UseMutationResult<
       return data;
     },
     onSuccess: (_data, { domainId }) => {
-      if (domainId) {
-        qc.invalidateQueries({ queryKey: ["list", "mailboxes", domainId] });
-      }
-      qc.invalidateQueries({ queryKey: ["list", "mailboxes"] });
-      // JAB-370: the admin Mail tab is now server-paginated via
-      // useTableURL({ resource: "admin/mailboxes" }), keyed ["list",
-      // "admin/mailboxes", …params]. Prefix-invalidate that so an edit /
-      // delete / create refreshes the visible page.
-      qc.invalidateQueries({ queryKey: ["list", "admin/mailboxes"] });
-      // JAB-370 Workspace: the tenant Mailboxes tab is now server-paginated via
-      // useTableURL({ resource: "me/mailboxes" }), keyed ["list", "me/mailboxes",
-      // …params]. Prefix-invalidate it so a create/edit/delete refreshes the
-      // visible page instead of leaving a stale (or ghost) row.
-      qc.invalidateQueries({ queryKey: ["list", "me/mailboxes"] });
+      // GH #1615: refresh every mailbox list, including the per-domain
+      // drill-down that was previously left stale until a manual page refresh.
+      invalidateMailboxLists(qc, domainId);
     },
   });
 }

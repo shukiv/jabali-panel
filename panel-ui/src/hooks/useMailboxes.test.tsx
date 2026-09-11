@@ -14,6 +14,7 @@ import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  perDomainMailboxesResource,
   useCreateMailbox,
   useDeleteMailbox,
   useDisableDomainEmail,
@@ -21,6 +22,7 @@ import {
   useEnableDomainEmail,
   useMailboxes,
   useRotateMailboxPassword,
+  useUpdateMailbox,
 } from "./useMailboxes";
 
 vi.mock("../apiClient", () => ({
@@ -194,6 +196,11 @@ describe("useCreateMailbox", () => {
     expect(resp?.password).toBe("gen123");
     const invalidatedKeys = invalidate.mock.calls.map((c) => c[0]?.queryKey);
     expect(invalidatedKeys).toContainEqual(["list", "mailboxes", "dom1"]);
+    // GH #1615: the per-domain Mailboxes drill-down (Mail Domains → domain →
+    // Mailboxes) is keyed ["list","domains/<id>/mailboxes",…] via useTableURL,
+    // NOT ["list","mailboxes",…] — so it must be invalidated by its own
+    // resource string or the new row never appears until a manual refresh.
+    expect(invalidatedKeys).toContainEqual(["list", perDomainMailboxesResource("dom1")]);
   });
 });
 
@@ -223,6 +230,34 @@ describe("useDeleteMailbox", () => {
       "dom1",
     ]);
     expect(invalidatedKeys).toContainEqual(["autoresponders", "by-domain", "dom1"]);
+    // GH #1615: same per-domain drill-down key as create/update — a deleted
+    // mailbox must vanish from the Mail Domains → domain → Mailboxes list too.
+    expect(invalidatedKeys).toContainEqual(["list", perDomainMailboxesResource("dom1")]);
+  });
+});
+
+describe("useUpdateMailbox", () => {
+  it("PATCHes /mailboxes/:id and invalidates every mailbox list, including the per-domain drill-down (GH #1615)", async () => {
+    mocked.patch.mockResolvedValue({
+      data: { id: "mb1", domain_id: "dom1", email: "alice@example.com", display_name: "New" },
+    });
+    const { qc, wrapper } = makeWrapper();
+    const invalidate = vi.spyOn(qc, "invalidateQueries");
+
+    const { result } = renderHook(() => useUpdateMailbox(), { wrapper });
+    await act(async () => {
+      await result.current.mutateAsync({ id: "mb1", domainId: "dom1", display_name: "New" });
+    });
+
+    expect(mocked.patch).toHaveBeenCalledWith("/mailboxes/mb1", { display_name: "New" });
+    const invalidatedKeys = invalidate.mock.calls.map((c) => c[0]?.queryKey);
+    expect(invalidatedKeys).toContainEqual(["list", "mailboxes", "dom1"]);
+    expect(invalidatedKeys).toContainEqual(["list", "admin/mailboxes"]);
+    expect(invalidatedKeys).toContainEqual(["list", "me/mailboxes"]);
+    // GH #1615 root cause: the edited mailbox never refreshed in the per-domain
+    // Mailboxes drill-down because this key was missing — the reason #1630's
+    // drawer-prefill fix couldn't work (the data feeding the form was stale).
+    expect(invalidatedKeys).toContainEqual(["list", perDomainMailboxesResource("dom1")]);
   });
 });
 
