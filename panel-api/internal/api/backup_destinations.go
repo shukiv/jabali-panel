@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -44,7 +45,7 @@ func RegisterBackupDestinationRoutes(rg *gin.RouterGroup, cfg BackupDestinations
 	if cfg.Repo == nil {
 		return
 	}
-	h := &backupDestinationHandler{repo: cfg.Repo, agent: cfg.Agent, ssoKey: cfg.SSOKey}
+	h := &backupDestinationHandler{repo: cfg.Repo, agent: cfg.Agent, ssoKey: cfg.SSOKey, log: slog.Default()}
 	admin := rg.Group("/admin", middleware.RequireAdmin())
 	admin.GET("/backup-destinations", h.list)
 	admin.GET("/backup-destinations/:id", h.get)
@@ -62,6 +63,7 @@ type backupDestinationHandler struct {
 	repo   repository.BackupDestinationRepository
 	agent  agent.AgentInterface
 	ssoKey *ssokey.Key
+	log    *slog.Logger
 }
 
 // writeCreds dispatches the env-file write to the agent (root). panel-api
@@ -86,16 +88,26 @@ func (h *backupDestinationHandler) writeCreds(ctx context.Context, destID string
 	return resp.Path, nil
 }
 
-// deleteCreds dispatches the file removal to the agent. Best-effort —
-// caller treats errors as non-fatal because the row is being deleted
-// regardless.
+// deleteCreds dispatches the file removal to the agent. The removal is
+// non-fatal to the caller (the row is being deleted or has already been
+// persisted regardless), but a failure is no longer swallowed: it leaves a
+// root:root 0600 credentials file (SSHPASS / cloud keys) on disk with no row
+// referencing it, so we log it at error level for an operator to reap. This
+// brings the REST path to the no-swallow posture the CLI cores already have.
 func (h *backupDestinationHandler) deleteCreds(ctx context.Context, destID string) {
 	if h.agent == nil {
 		return
 	}
-	_, _ = h.agent.Call(ctx, "backup.dest.creds_delete", map[string]any{
+	if _, err := h.agent.Call(ctx, "backup.dest.creds_delete", map[string]any{
 		"dest_id": destID,
-	})
+	}); err != nil {
+		lg := h.log
+		if lg == nil {
+			lg = slog.Default()
+		}
+		lg.ErrorContext(ctx, "backup dest creds_delete failed — a root:root 0600 credentials file may be left behind on disk",
+			"dest_id", destID, "err", err)
+	}
 }
 
 type backupDestinationDTO struct {
@@ -415,8 +427,8 @@ func (h *backupDestinationHandler) update(c *gin.Context) {
 		// compensates above and the CLI update path fixed under JAB-310. A PRE-EXISTING
 		// file is deliberately left in place: the surviving row still references
 		// it (the path is deterministic per id), so deleting it would break the
-		// live destination. deleteCreds is best-effort and, unlike the CLI, stays
-		// silent on a cleanup failure by existing design (a separate follow-up).
+		// live destination. deleteCreds is non-fatal here (we already return
+		// db_update) but logs at error level if the cleanup itself fails.
 		if !origHadCredsFile && d.CredentialsRef != nil {
 			h.deleteCreds(c.Request.Context(), d.ID)
 		}
