@@ -335,6 +335,11 @@ func (h *backupDestinationHandler) update(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "db_get"})
 		return
 	}
+	// origHadCredsFile records whether the DB row already had a credential file
+	// BEFORE this call. It gates the persist-failure compensation below and MUST
+	// be captured here, before the --clear-creds and creds-write blocks mutate
+	// d.CredentialsRef.
+	origHadCredsFile := d.CredentialsRef != nil
 	var req updateDestinationRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid_body", "detail": err.Error()})
@@ -403,6 +408,18 @@ func (h *backupDestinationHandler) update(c *gin.Context) {
 		d.CredentialsRef = &path
 	}
 	if err := h.repo.Update(c.Request.Context(), d); err != nil {
+		// Compensate a just-written credential file. If this update wrote a
+		// brand-new file (the row had none before) and the persist then failed,
+		// the file would otherwise be orphaned behind a row whose credentials_ref
+		// stayed NULL — the same root:root 0600 secrets leak the create handler
+		// compensates above and the CLI update path fixed under JAB-310. A PRE-EXISTING
+		// file is deliberately left in place: the surviving row still references
+		// it (the path is deterministic per id), so deleting it would break the
+		// live destination. deleteCreds is best-effort and, unlike the CLI, stays
+		// silent on a cleanup failure by existing design (a separate follow-up).
+		if !origHadCredsFile && d.CredentialsRef != nil {
+			h.deleteCreds(c.Request.Context(), d.ID)
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "db_update"})
 		return
 	}
