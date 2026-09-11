@@ -26,6 +26,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/api"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dnsops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
@@ -213,9 +214,98 @@ func newDNSCmd() *cobra.Command {
 }
 
 func newDNSZoneCmd() *cobra.Command {
-	cmd := &cobra.Command{Use: "zone", Short: "DNS zones: list / show"}
-	cmd.AddCommand(newDNSZoneListCmd(), newDNSZoneShowCmd())
+	cmd := &cobra.Command{Use: "zone", Short: "DNS zones: list / show / delete / enable"}
+	cmd.AddCommand(newDNSZoneListCmd(), newDNSZoneShowCmd(), newDNSZoneDeleteCmd(), newDNSZoneEnableCmd())
 	return cmd
+}
+
+// newDNSZoneDeleteCmd drops the DNS facet of a domain (keep web + mail) — the
+// CLI mirror of DELETE /domains/:id/dns/zone (GH #1611). It routes through the
+// same dnsops.DeleteZone leaf as the REST handler, so the panel-primary, DNSSEC,
+// and last-facet guards are enforced identically. Unlike the record commands
+// this DOES talk to the agent: the reconciler never touches a disabled zone, so
+// the PowerDNS zone is removed here, now, rather than on a later tick.
+func newDNSZoneDeleteCmd() *cobra.Command {
+	var force bool
+	cmd := &cobra.Command{
+		Use:     "delete <domain>",
+		Short:   "Drop the DNS facet of a domain (host DNS elsewhere; keeps web + mail)",
+		Args:    cobra.ExactArgs(1),
+		PreRunE: requireDBAndAgent,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if !force {
+				return fmt.Errorf("re-run with --force to drop the DNS zone for %s", args[0])
+			}
+			ctx, cancel := context.WithTimeout(cmd.Context(), 60*time.Second)
+			defer cancel()
+			dom, err := resolveDomainSpec(ctx, domainRepoFromDB(), args[0])
+			if err != nil {
+				return err
+			}
+			deps := dnsops.Deps{
+				Domains: domainRepoFromDB(),
+				Zones:   dnsZoneRepoFromDB(),
+				Records: dnsRecordRepoFromDB(),
+				Call:    sharedAgent.Call,
+			}
+			warnings, err := dnsops.DeleteZone(ctx, deps, dom)
+			if err != nil {
+				switch {
+				case errors.Is(err, dnsops.ErrLastFacet):
+					return fmt.Errorf("%s has only DNS (no web, no mail) — delete the whole domain instead: jabali domain delete %s", dom.Name, dom.Name)
+				case errors.Is(err, dnsops.ErrPanelPrimary):
+					return fmt.Errorf("%s is the panel's own primary domain and is protected", dom.Name)
+				case errors.Is(err, dnsops.ErrDNSSECEnabled):
+					return fmt.Errorf("%s is DNSSEC-signed — disable DNSSEC and remove the DS record at your registrar before deleting the zone", dom.Name)
+				default:
+					return err
+				}
+			}
+			cliAuditOK(ctx, "dns.zone.delete", "domain", dom.ID, &dom.UserID)
+			if jsonOutput {
+				return printJSON(map[string]any{"domain": dom.Name, "warnings": warnings})
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Dropped the DNS zone for %s (web + mail kept).\n", dom.Name)
+			for _, w := range warnings {
+				fmt.Fprintf(cmd.OutOrStdout(), "  warning: %s\n", w)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&force, "force", false, "confirm dropping the zone")
+	return cmd
+}
+
+// newDNSZoneEnableCmd re-enables DNS management for a domain whose DNS facet was
+// dropped — the CLI mirror of POST /domains/:id/dns/zone (GH #1611). It only
+// flips dns_disabled=false; the running reconciler re-creates the zone row,
+// bootstraps its records, and pushes the zone into PowerDNS on its next tick
+// (same tick-based model as the record commands), so no agent is needed here.
+func newDNSZoneEnableCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:     "enable <domain>",
+		Short:   "Re-enable DNS management for a domain (host DNS here again)",
+		Args:    cobra.ExactArgs(1),
+		PreRunE: requireDB,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Second)
+			defer cancel()
+			dom, err := resolveDomainSpec(ctx, domainRepoFromDB(), args[0])
+			if err != nil {
+				return err
+			}
+			if err := dnsops.EnableZone(ctx, dnsops.Deps{Domains: domainRepoFromDB()}, dom); err != nil {
+				return err
+			}
+			cliAuditOK(ctx, "dns.zone.enable", "domain", dom.ID, &dom.UserID)
+			if jsonOutput {
+				return printJSON(map[string]any{"domain": dom.Name, "dns_enabled": true})
+			}
+			fmt.Fprintf(cmd.OutOrStdout(),
+				"Re-enabled DNS for %s. The reconciler re-creates the zone and its records on its next tick.\n", dom.Name)
+			return nil
+		},
+	}
 }
 
 func newDNSZoneListCmd() *cobra.Command {

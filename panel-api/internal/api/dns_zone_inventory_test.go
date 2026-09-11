@@ -187,6 +187,32 @@ func TestZoneInventory_NotProvisioned(t *testing.T) {
 	require.EqualValues(t, 0, resp.Data[0].RecordCount)
 }
 
+// GH #1611: the facet flags project through so the DNS Zone inventory can tell a
+// deliberately-dropped zone (dns_disabled=true) from one merely pending, and a
+// DNS-only domain (web off + mail off) from a multi-facet one. A dropped zone
+// has no zone row, so it reports provisioned=false — the flags are what
+// distinguish it from a genuinely not-yet-provisioned domain.
+func TestZoneInventory_FacetFlags(t *testing.T) {
+	dr := &countingDomainRepo{domains: []models.Domain{
+		{ID: "d1", Name: "dropped.com", UserID: "u1", DNSDisabled: true, WebDisabled: true, EmailEnabled: false},
+	}}
+	zr := &noZoneRepo{}
+	h := &dnsHandler{cfg: DNSHandlerConfig{Domains: dr, Zones: zr, Records: &countingRecordRepo{}, ServerSettings: &countingSettingsRepo{}}}
+
+	w := invGet(h, "/dns/zones", "admin", true)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var resp struct {
+		Data []dnsZoneInventoryRow `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Len(t, resp.Data, 1)
+	require.False(t, resp.Data[0].Provisioned)
+	require.True(t, resp.Data[0].DNSDisabled, "dns_disabled projects through")
+	require.True(t, resp.Data[0].WebDisabled, "web_disabled projects through")
+	require.False(t, resp.Data[0].EmailEnabled, "email_enabled projects through")
+}
+
 type noZoneRepo struct {
 	repository.DNSZoneRepository
 }

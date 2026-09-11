@@ -1575,10 +1575,30 @@ jabali dns record update <domain> <record-id> [flags]
 
 #### `jabali dns zone`
 
-DNS zones: list / show
+DNS zones: list / show / delete / enable
 
 ```
 jabali dns zone
+```
+
+##### `jabali dns zone delete`
+
+Drop the DNS facet of a domain (host DNS elsewhere; keeps web + mail)
+
+```
+jabali dns zone delete <domain> [flags]
+```
+
+**Flags:**
+
+- `--force` — confirm dropping the zone
+
+##### `jabali dns zone enable`
+
+Re-enable DNS management for a domain (host DNS here again)
+
+```
+jabali dns zone enable <domain>
 ```
 
 ##### `jabali dns zone list`
