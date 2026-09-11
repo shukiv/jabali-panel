@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -38,6 +39,8 @@ type srResFake struct {
 	created    []*models.SharedResource
 	grantsSet  map[string][]models.SharedResourceGrant
 	tombstones []string
+	tombErr    error
+	deleted    []string
 	byID       map[string]*models.SharedResource
 }
 
@@ -68,9 +71,12 @@ func (f *srResFake) ReplaceGrants(_ context.Context, id string, g []models.Share
 }
 func (f *srResFake) AddTombstone(_ context.Context, e string) error {
 	f.tombstones = append(f.tombstones, e)
+	return f.tombErr
+}
+func (f *srResFake) Delete(_ context.Context, id string) error {
+	f.deleted = append(f.deleted, id)
 	return nil
 }
-func (f *srResFake) Delete(context.Context, string) error { return nil }
 
 func srRouter(t *testing.T, res *srResFake, ag *srAgentFake) *gin.Engine {
 	t.Helper()
@@ -150,6 +156,25 @@ func TestSharedResource_Delete_Tombstones(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	require.Equal(t, []string{"teamcal@example.org"}, res.tombstones)
 	require.Contains(t, ag.calls, "sharedresource.destroy")
+	require.Equal(t, []string{"res1"}, res.deleted)
+}
+
+// AC5: a tombstone that cannot be persisted must NOT delete the row — deleting
+// it would strand the Stalwart host principal with no handle for the reconciler
+// GC. Was 200 + row deleted (the swallowed-tombstone bug); now 500 + row kept.
+func TestSharedResource_Delete_TombstoneFailureKeepsRow(t *testing.T) {
+	res := &srResFake{
+		tombErr: errors.New("db down"),
+		byID: map[string]*models.SharedResource{
+			"res1": {ID: "res1", DomainID: "dom1", Kind: "calendar", EmailCached: strptr("teamcal@example.org")},
+		},
+	}
+	ag := &srAgentFake{}
+	r := srRouter(t, res, ag)
+	w := do(t, r, "DELETE", "/api/v1/shared-resources/res1", nil)
+	require.Equal(t, http.StatusInternalServerError, w.Code, w.Body.String())
+	require.Empty(t, res.deleted, "row must not be deleted when the tombstone fails")
+	require.NotContains(t, ag.calls, "sharedresource.destroy", "destroy must not fire when the tombstone fails")
 }
 
 func strptr(s string) *string { return &s }

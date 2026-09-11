@@ -242,28 +242,35 @@ func newSharedResourceRevokeCmd() *cobra.Command {
 func newSharedResourceRemoveCmd() *cobra.Command {
 	var resourceID string
 	cmd := &cobra.Command{
-		Use:     "remove",
-		Short:   "Delete a shared resource (reconciler tears down the host principal)",
-		PreRunE: requireDB,
+		Use:   "remove",
+		Short: "Delete a shared resource (reconciler tears down the host principal)",
+		// requireDBAndAgent, not requireDB: requireDB never calls initAgent, so
+		// sharedAgent stays nil and the instant host destroy never fires (the
+		// reconciler still converges from the tombstone, just not instantly).
+		// initAgent only constructs the client — a down socket does not fail the
+		// command — so this is safe. Same fix the create subcommand carries.
+		PreRunE: requireDBAndAgent,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if resourceID == "" {
 				return errors.New("--resource <id> required")
 			}
 			ctx, cancel := context.WithTimeout(cmd.Context(), 15*time.Second)
 			defer cancel()
-			repo := sharedResourceRepoFromDB()
-			// Tear down the Stalwart host principal first (mirrors the REST
-			// delete handler). The reconciler does NOT garbage-collect orphaned
-			// hosts, so the row delete alone would leave the principal behind.
-			if sr, err := repo.FindByID(ctx, resourceID); err == nil && sr.EmailCached != nil && *sr.EmailCached != "" {
-				_ = repo.AddTombstone(ctx, *sr.EmailCached) // durable backstop for the reconciler GC
-				if sharedAgent != nil {
-					if _, derr := sharedAgent.Call(ctx, "sharedresource.destroy", map[string]any{"email": *sr.EmailCached}); derr != nil {
-						fmt.Fprintf(os.Stderr, "warning: host teardown failed (%v); reconciler will retry\n", derr)
-					}
+			// Best-effort host teardown that SURFACES a failure — not the shared
+			// notifyAgentSharedResource, which swallows. An operator running a
+			// manual remove should see a destroy that did not land; the
+			// reconciler GC still retries from the durable tombstone.
+			notify := func(nctx context.Context, agentCmd string, params any) {
+				if sharedAgent == nil {
+					return
+				}
+				agentCtx, acancel := context.WithTimeout(nctx, cliSharedResourceAgentTimeout)
+				defer acancel()
+				if _, derr := sharedAgent.Call(agentCtx, agentCmd, params); derr != nil {
+					fmt.Fprintf(os.Stderr, "warning: host teardown failed (%v); reconciler will retry\n", derr)
 				}
 			}
-			if err := repo.Delete(ctx, resourceID); err != nil {
+			if err := deleteSharedResourceDirect(ctx, sharedResourceRepoFromDB(), notify, resourceID); err != nil {
 				return fmt.Errorf("delete: %w", err)
 			}
 			cliAuditOK(ctx, "shared_resource.remove", "shared_resource", resourceID, nil)

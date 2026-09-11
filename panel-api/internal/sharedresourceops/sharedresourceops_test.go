@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
 // fakeResRepo implements repository.SharedResourceRepository. Only ExistsByEmail
@@ -166,5 +167,109 @@ func TestCreate_NilNotifyDoesNotPanic(t *testing.T) {
 		Domain: emailDomain(), Kind: "files", Name: "teamfiles",
 	}, nil); err != nil {
 		t.Fatalf("nil notify happy path: %v", err)
+	}
+}
+
+// seqResRepo records the tombstone/delete call order and can force either to
+// fail. It embeds the interface so Delete's unused methods are never reached.
+type seqResRepo struct {
+	repository.SharedResourceRepository
+	ops       *[]string
+	tombErr   error
+	deleteErr error
+}
+
+func (r *seqResRepo) AddTombstone(_ context.Context, _ string) error {
+	*r.ops = append(*r.ops, "tombstone")
+	return r.tombErr
+}
+func (r *seqResRepo) Delete(_ context.Context, _ string) error {
+	*r.ops = append(*r.ops, "delete")
+	return r.deleteErr
+}
+
+func resWithEmail() *models.SharedResource {
+	e := "teamcal@example.org"
+	return &models.SharedResource{ID: "res1", EmailCached: &e}
+}
+
+// TestDelete_TombstoneFailKeepsRow is the AC5 guarantee: a tombstone that cannot
+// be persisted must NOT delete the row (that would orphan the host principal),
+// and the destroy must not fire.
+func TestDelete_TombstoneFailKeepsRow(t *testing.T) {
+	ops := []string{}
+	repo := &seqResRepo{ops: &ops, tombErr: errors.New("db down")}
+	fired := false
+	err := Delete(context.Background(), Deps{Resources: repo}, DeleteInput{Resource: resWithEmail()},
+		func(context.Context, string, any) { fired = true })
+	if !errors.Is(err, ErrInternal) {
+		t.Fatalf("want ErrInternal, got %v", err)
+	}
+	if len(ops) != 1 || ops[0] != "tombstone" {
+		t.Fatalf("row must not be deleted when the tombstone fails; ops=%v", ops)
+	}
+	if fired {
+		t.Fatal("destroy must not fire when the tombstone fails")
+	}
+}
+
+func TestDelete_HappyPathOrder(t *testing.T) {
+	ops := []string{}
+	repo := &seqResRepo{ops: &ops}
+	var gotCmd string
+	var gotParams map[string]any
+	notify := func(_ context.Context, cmd string, params any) {
+		ops = append(ops, "destroy")
+		gotCmd = cmd
+		if m, ok := params.(map[string]any); ok {
+			gotParams = m
+		}
+	}
+	if err := Delete(context.Background(), Deps{Resources: repo}, DeleteInput{Resource: resWithEmail()}, notify); err != nil {
+		t.Fatalf("happy path: %v", err)
+	}
+	if len(ops) != 3 || ops[0] != "tombstone" || ops[1] != "destroy" || ops[2] != "delete" {
+		t.Fatalf("want tombstone,destroy,delete in order; ops=%v", ops)
+	}
+	if gotCmd != "sharedresource.destroy" || gotParams["email"] != "teamcal@example.org" {
+		t.Fatalf("destroy call wrong: cmd=%q params=%#v", gotCmd, gotParams)
+	}
+}
+
+func TestDelete_NoEmailSkipsTeardown(t *testing.T) {
+	ops := []string{}
+	repo := &seqResRepo{ops: &ops}
+	fired := false
+	if err := Delete(context.Background(), Deps{Resources: repo},
+		DeleteInput{Resource: &models.SharedResource{ID: "res1"}},
+		func(context.Context, string, any) { fired = true }); err != nil {
+		t.Fatalf("no-email delete: %v", err)
+	}
+	if len(ops) != 1 || ops[0] != "delete" {
+		t.Fatalf("no cached address means no tombstone/destroy, just delete; ops=%v", ops)
+	}
+	if fired {
+		t.Fatal("destroy must not fire with no cached address")
+	}
+}
+
+func TestDelete_NilNotifyNoPanic(t *testing.T) {
+	ops := []string{}
+	repo := &seqResRepo{ops: &ops}
+	if err := Delete(context.Background(), Deps{Resources: repo}, DeleteInput{Resource: resWithEmail()}, nil); err != nil {
+		t.Fatalf("nil notify: %v", err)
+	}
+	if len(ops) != 2 || ops[0] != "tombstone" || ops[1] != "delete" {
+		t.Fatalf("nil notify: tombstone then delete; ops=%v", ops)
+	}
+}
+
+func TestDelete_NilDepsReturnsErrDeps(t *testing.T) {
+	if err := Delete(context.Background(), Deps{}, DeleteInput{Resource: resWithEmail()}, nil); !errors.Is(err, ErrDeps) {
+		t.Fatalf("nil repo: want ErrDeps, got %v", err)
+	}
+	ops := []string{}
+	if err := Delete(context.Background(), Deps{Resources: &seqResRepo{ops: &ops}}, DeleteInput{Resource: nil}, nil); !errors.Is(err, ErrDeps) {
+		t.Fatalf("nil resource: want ErrDeps, got %v", err)
 	}
 }

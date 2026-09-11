@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
@@ -22,6 +23,22 @@ func createSharedResourceDirect(ctx context.Context, repo repository.SharedResou
 		Kind:        kind,
 		Name:        name,
 		DisplayName: displayName,
+	}, sharedresourceops.NotifyFunc(notify))
+}
+
+// deleteSharedResourceDirect mirrors DELETE /shared-resources/:rid: it loads the
+// resource, then routes the durable-tombstone-before-best-effort-destroy
+// teardown through sharedresourceops.Delete so the CLI and REST tear a resource
+// down identically (JAB-339 AC5). A load error is returned rather than swallowed
+// — the old CLI skipped teardown on a FindByID error yet still deleted the row,
+// orphaning the Stalwart host principal with no tombstone for the reconciler GC.
+func deleteSharedResourceDirect(ctx context.Context, repo repository.SharedResourceRepository, notify agentNotifier, resourceID string) error {
+	sr, err := repo.FindByID(ctx, resourceID)
+	if err != nil {
+		return fmt.Errorf("load resource: %w", err)
+	}
+	return sharedresourceops.Delete(ctx, sharedresourceops.Deps{Resources: repo}, sharedresourceops.DeleteInput{
+		Resource: sr,
 	}, sharedresourceops.NotifyFunc(notify))
 }
 
