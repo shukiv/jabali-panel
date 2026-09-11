@@ -179,6 +179,47 @@ func newBackupDestinationCreateCmd() *cobra.Command {
 	return cmd
 }
 
+// buildReplacedSFTPBlock builds the full-replace SFTP block for a destination
+// update (JAB-310 AC5) purely from the supplied flag values. It consults NO
+// stored value: an omitted field is cleared, not carried over — the same
+// replace-by-contract the REST update handler enforces by rebuilding
+// models.SFTPOptions from req.SFTP. validateSFTPOpts then requires the whole
+// block (host+user+path+auth), so a partial edit is rejected rather than
+// silently merged with stale stored values (the pre-JAB-310 CLI overlay bug).
+// Returns the composed restic URL and the marshalled extra_options JSON.
+func buildReplacedSFTPBlock(host, user string, port int, path, auth, keyPath string) (string, []byte, error) {
+	opts := &models.SFTPOptions{
+		Host:    host,
+		User:    user,
+		Port:    port,
+		Path:    path,
+		Auth:    auth,
+		KeyPath: keyPath,
+	}
+	if err := validateSFTPOpts(opts); err != nil {
+		return "", nil, err
+	}
+	url := internalbackup.ComposeSFTPURL(internalbackup.SFTPInputs{Host: opts.Host, User: opts.User, Path: opts.Path})
+	raw, _ := json.Marshal(models.BackupDestinationExtraOptions{SFTP: opts})
+	return url, raw, nil
+}
+
+// sftpPasswordWriteAllowed reports whether a --sftp-password update may write the
+// SSHPASS credential for a destination of the given kind and effective auth
+// (JAB-310 AC5). The password is an independent credential write (not a
+// structural block edit), but it must only land on an sftp destination whose
+// effective auth is "password": writing an SSHPASS to a key-auth destination is
+// meaningless, so it is rejected rather than silently stored.
+func sftpPasswordWriteAllowed(kind, effectiveAuth string) error {
+	if kind != models.BackupDestinationKindSFTP {
+		return fmt.Errorf("--sftp-password only applies to sftp destinations (kind=%s)", kind)
+	}
+	if effectiveAuth != models.SFTPAuthPassword {
+		return fmt.Errorf("--sftp-password requires the destination to use password auth (current auth=%q); pass --sftp-auth password with the full sftp block to switch", effectiveAuth)
+	}
+	return nil
+}
+
 func newBackupDestinationUpdateCmd() *cobra.Command {
 	var (
 		name        string
@@ -250,56 +291,62 @@ func newBackupDestinationUpdateCmd() *cobra.Command {
 				d.Enabled = false
 				changed = true
 			}
-			// Structured SFTP field edits (host/user/port/path/auth/key-path),
-			// overlaid on the existing block so unspecified fields survive.
-			// Same validation + URL/extra_options compose as the REST handler.
-			sftpTouched := false
-			for _, f := range []string{"sftp-host", "sftp-user", "sftp-port", "sftp-path", "sftp-auth", "sftp-key-path", "sftp-password"} {
+			// Structural SFTP field edits (host/user/port/path/auth/key-path)
+			// REPLACE the stored block wholesale — the same full-block-replace
+			// contract the REST update handler enforces (JAB-310 AC5). The block
+			// is built FRESH from the flags, not overlaid on the stored block, so
+			// an omitted field is cleared (a flag left off means "empty here"),
+			// exactly as REST rebuilds models.SFTPOptions purely from req.SFTP.
+			// validateSFTPOpts then forces the caller to supply the whole block
+			// (host+user+path+auth), mirroring the REST validateSFTPInputs gate.
+			//
+			// --sftp-password is deliberately NOT a structural field: it is a
+			// credential (SSHPASS) write, handled independently below, so a
+			// password rotation stays a single-flag operation and does not force
+			// the operator to resend the entire SFTP block. This is the one
+			// intentional CLI affordance beyond the REST handler, whose SSHPASS
+			// write is coupled to a present req.SFTP block.
+			sftpStructural := false
+			for _, f := range []string{"sftp-host", "sftp-user", "sftp-port", "sftp-path", "sftp-auth", "sftp-key-path"} {
 				if cmd.Flags().Changed(f) {
-					sftpTouched = true
+					sftpStructural = true
 					break
 				}
 			}
-			if sftpTouched {
+			if sftpStructural {
 				if d.Kind != models.BackupDestinationKindSFTP {
 					return fmt.Errorf("--sftp-* flags only apply to sftp destinations (kind=%s)", d.Kind)
 				}
-				opts := d.ExtraOptionsTyped().SFTP
-				if opts == nil {
-					opts = &models.SFTPOptions{}
-				}
-				if cmd.Flags().Changed("sftp-host") {
-					opts.Host = sftpHost
-				}
-				if cmd.Flags().Changed("sftp-user") {
-					opts.User = sftpUser
-				}
-				if cmd.Flags().Changed("sftp-port") {
-					opts.Port = sftpPort
-				}
-				if cmd.Flags().Changed("sftp-path") {
-					opts.Path = sftpPath
-				}
-				if cmd.Flags().Changed("sftp-auth") {
-					opts.Auth = sftpAuth
-				}
-				if cmd.Flags().Changed("sftp-key-path") {
-					opts.KeyPath = sftpKeyPath
-				}
-				if err := validateSFTPOpts(opts); err != nil {
+				// Full-block REPLACE built purely from the flags (buildReplacedSFTPBlock
+				// consults no stored value), so an omitted field is cleared, not carried.
+				newURL, raw, err := buildReplacedSFTPBlock(sftpHost, sftpUser, sftpPort, sftpPath, sftpAuth, sftpKeyPath)
+				if err != nil {
 					return err
 				}
-				d.URL = internalbackup.ComposeSFTPURL(internalbackup.SFTPInputs{Host: opts.Host, User: opts.User, Path: opts.Path})
-				raw, _ := json.Marshal(models.BackupDestinationExtraOptions{SFTP: opts})
+				d.URL = newURL
 				d.ExtraOptions = raw
 				changed = true
-				if opts.Auth == models.SFTPAuthPassword && cmd.Flags().Changed("sftp-password") {
-					path, err := writeBackupDestinationCreds(ctx, sharedAgent.Call, d.ID, map[string]string{"SSHPASS": sftpPass})
-					if err != nil {
-						return fmt.Errorf("write sftp password: %w", err)
-					}
-					d.CredentialsRef = &path
+			}
+			// SFTP password (SSHPASS) — an independent credential write, not a
+			// structural block edit. Rotates on --sftp-password alone; the block
+			// above is left untouched. The destination's effective auth must be
+			// "password" — either just set by a full block replace in this same
+			// command (d.ExtraOptions was rewritten above) or already stored —
+			// so a password cannot be written to a key-auth destination.
+			if cmd.Flags().Changed("sftp-password") {
+				effAuth := ""
+				if s := d.ExtraOptionsTyped().SFTP; s != nil {
+					effAuth = s.Auth
 				}
+				if err := sftpPasswordWriteAllowed(d.Kind, effAuth); err != nil {
+					return err
+				}
+				path, err := writeBackupDestinationCreds(ctx, sharedAgent.Call, d.ID, map[string]string{"SSHPASS": sftpPass})
+				if err != nil {
+					return fmt.Errorf("write sftp password: %w", err)
+				}
+				d.CredentialsRef = &path
+				changed = true
 			}
 			// Clear stored credential env (cloud secrets / sftp SSHPASS). Drop the
 			// reference here, but DEFER the on-disk file removal to after the row

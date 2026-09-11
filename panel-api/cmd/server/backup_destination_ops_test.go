@@ -476,6 +476,47 @@ func TestBackupDestinationUpdate_RoutesThroughCore(t *testing.T) {
 	}
 }
 
+// TestBackupDestinationUpdate_SFTPBlockReplacesNotOverlays pins the JAB-310 AC5
+// full-block-replace WIRING in the update RunE (not unit-testable): the
+// structural SFTP edit builds a fresh block via buildReplacedSFTPBlock, never
+// overlays onto the stored block, and --sftp-password is not a structural field
+// (it is an independent credential write). Reverting to the pre-JAB-310 overlay
+// — `opts := d.ExtraOptionsTyped().SFTP` seeded from the stored row, or
+// re-adding sftp-password to the structural touch list — reddens this. The
+// behavior of the extracted helpers themselves is tested in
+// backup_destination_parity_cmd_test.go.
+func TestBackupDestinationUpdate_SFTPBlockReplacesNotOverlays(t *testing.T) {
+	src := readOpsSource(t, "backup_destination_cmd.go")
+	start := strings.Index(src, "func newBackupDestinationUpdateCmd(")
+	if start < 0 {
+		t.Fatal("update command not found")
+	}
+	body := src[start:]
+	if end := strings.Index(body, "\nfunc newBackupDestinationRotatePasswordCmd("); end > 0 {
+		body = body[:end]
+	}
+	if !strings.Contains(body, "buildReplacedSFTPBlock(sftpHost, sftpUser, sftpPort, sftpPath, sftpAuth, sftpKeyPath)") {
+		t.Error("structural SFTP edit must build a full-replace block via buildReplacedSFTPBlock (fresh from flags)")
+	}
+	// The structural branch must not seed opts from the stored block (the overlay).
+	// The password branch legitimately reads d.ExtraOptionsTyped().SFTP for its
+	// effective-auth gate (`s := d.ExtraOptionsTyped().SFTP`), so pin the exact
+	// overlay-seed spelling, not the accessor in general.
+	if strings.Contains(body, "opts := d.ExtraOptionsTyped().SFTP") {
+		t.Error("structural SFTP edit must not seed opts from the stored block (overlay); build fresh from flags")
+	}
+	// The structural touch list must exclude sftp-password.
+	tlStart := strings.Index(body, "sftpStructural := false")
+	if tlStart < 0 {
+		t.Fatal("structural touch list not found")
+	}
+	touchList := body[tlStart:]
+	touchList = touchList[:strings.Index(touchList, "}")]
+	if strings.Contains(touchList, "sftp-password") {
+		t.Error("--sftp-password must not be in the structural touch list; it is an independent credential write")
+	}
+}
+
 // TestDeleteBackupDestinationDirect_SurfacesSwallowedCleanupFailure is the
 // load-bearing guard for this slice: a failed creds_delete after the row is gone
 // must NOT vanish. The delete still succeeds (returns nil — the row is deleted),
