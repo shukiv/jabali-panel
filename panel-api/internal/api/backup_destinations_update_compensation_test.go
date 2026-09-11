@@ -49,6 +49,11 @@ type updFakeDestRepo struct {
 	repository.BackupDestinationRepository
 	getDest   *models.BackupDestination
 	updateErr error
+	// beforeUpdate, when set, runs at the instant Update is called — i.e. AFTER the
+	// handler mutated d and decided the credential file's fate but BEFORE persist
+	// returns. It lets a test snapshot agent state at persist time to prove the reap
+	// happens strictly after the row commits, not eagerly in the clear block.
+	beforeUpdate func()
 }
 
 func (r *updFakeDestRepo) Get(_ context.Context, _ string) (*models.BackupDestination, error) {
@@ -56,6 +61,9 @@ func (r *updFakeDestRepo) Get(_ context.Context, _ string) (*models.BackupDestin
 }
 
 func (r *updFakeDestRepo) Update(_ context.Context, _ *models.BackupDestination) error {
+	if r.beforeUpdate != nil {
+		r.beforeUpdate()
+	}
 	return r.updateErr
 }
 
@@ -181,5 +189,138 @@ func TestBackupDestinationUpdate_CapturesOrigRefBeforeClearCreds(t *testing.T) {
 	}
 	if capIdx > clearIdx {
 		t.Fatal("origHadCredsFile must be captured BEFORE the --clear-creds block")
+	}
+}
+
+// --clear-creds on a destination that HAS a credential file, with a persist that
+// then fails, must NOT remove the on-disk file: the surviving (unchanged) row
+// still references it, so deleting it before persist would strand the live
+// destination against a missing file — a dangling reference, the reverse of the
+// orphan leak. The removal is deferred to the post-persist reap, which never runs
+// on a failed persist. Load-bearing.
+func TestBackupDestinationUpdate_ClearCredsPreExistingNotDeletedOnFail(t *testing.T) {
+	ref := "/etc/jabali-panel/restic-remotes/dst-1.env"
+	ag := &credsRecordingAgent{}
+	repo := &updFakeDestRepo{
+		getDest:   &models.BackupDestination{ID: "dst-1", Name: "n", Kind: models.BackupDestinationKindS3, CredentialsRef: &ref},
+		updateErr: errors.New("db down"),
+	}
+	h := &backupDestinationHandler{repo: repo, agent: ag}
+
+	w := updDo(h, "dst-1", map[string]any{"clear_credentials": true})
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("code = %d, want 500", w.Code)
+	}
+	if got := ag.count("backup.dest.creds_delete"); got != 0 {
+		t.Fatalf("--clear-creds deleted the file before a failed persist (dangling reference): creds_delete fired %d times, want 0", got)
+	}
+}
+
+// --clear-creds with a successful persist reaps the file exactly once, and the
+// reap happens strictly AFTER the row commits: beforeUpdate snapshots the delete
+// count at persist time and it must still be zero there. This distinguishes the
+// deferred reap from the old eager delete-in-clear-block, which would show a count
+// of one at persist time.
+func TestBackupDestinationUpdate_ClearCredsReapedAfterPersist(t *testing.T) {
+	ref := "/etc/jabali-panel/restic-remotes/dst-1.env"
+	ag := &credsRecordingAgent{}
+	atPersist := -1
+	repo := &updFakeDestRepo{
+		getDest: &models.BackupDestination{ID: "dst-1", Name: "n", Kind: models.BackupDestinationKindS3, CredentialsRef: &ref},
+		// updateErr nil => persist succeeds
+	}
+	repo.beforeUpdate = func() { atPersist = ag.count("backup.dest.creds_delete") }
+	h := &backupDestinationHandler{repo: repo, agent: ag}
+
+	w := updDo(h, "dst-1", map[string]any{"clear_credentials": true})
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("code = %d, want 200", w.Code)
+	}
+	if atPersist != 0 {
+		t.Fatalf("credential file removed BEFORE persist (eager, not deferred): creds_delete count at persist time = %d, want 0", atPersist)
+	}
+	if got := ag.count("backup.dest.creds_delete"); got != 1 {
+		t.Fatalf("--clear-creds did not reap the file after a successful persist: creds_delete fired %d times, want 1", got)
+	}
+}
+
+// --clear-creds together with new credentials in the SAME request re-creates the
+// file (creds_write) and re-sets the reference, so the committed row points at a
+// file that must stay: no reap. The reap gate keys on d.CredentialsRef ending nil,
+// which the rewrite prevents.
+func TestBackupDestinationUpdate_ClearThenRewriteNoReap(t *testing.T) {
+	ref := "/etc/jabali-panel/restic-remotes/dst-1.env"
+	ag := &credsRecordingAgent{}
+	repo := &updFakeDestRepo{
+		getDest: &models.BackupDestination{ID: "dst-1", Name: "n", Kind: models.BackupDestinationKindS3, CredentialsRef: &ref},
+		// updateErr nil => persist succeeds
+	}
+	h := &backupDestinationHandler{repo: repo, agent: ag}
+
+	w := updDo(h, "dst-1", map[string]any{
+		"clear_credentials": true,
+		"credentials_env":   map[string]string{"AWS_SECRET_ACCESS_KEY": "x"},
+	})
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("code = %d, want 200", w.Code)
+	}
+	if wr := ag.count("backup.dest.creds_write"); wr != 1 {
+		t.Fatalf("rewrite must re-create the file: creds_write fired %d times, want 1", wr)
+	}
+	if del := ag.count("backup.dest.creds_delete"); del != 0 {
+		t.Fatalf("clear-then-rewrite must not reap the re-created file: creds_delete fired %d times, want 0", del)
+	}
+}
+
+// Source-pin: the credential WRITE must come AFTER the --clear-creds block in the
+// update handler. The persist-failure gate is deliberately left un-widened
+// (`!origHadCredsFile && d.CredentialsRef != nil`) precisely because a cleared
+// reference cannot coexist with !origHadCredsFile under this ordering. If a future
+// edit hoisted the write above the clear (the CLI adapter's shape), a
+// written-then-cleared file on a fileless destination would leak on a failed
+// persist and the gate would need widening. Pin the ordering so that regression is
+// caught here rather than in production. Scoped to the update handler body —
+// h.writeCreds also appears in create.
+func TestBackupDestinationUpdate_ClearBeforeWrite(t *testing.T) {
+	src, err := os.ReadFile("backup_destinations.go")
+	if err != nil {
+		t.Fatalf("read source: %v", err)
+	}
+	body := string(src)
+	start := strings.Index(body, "func (h *backupDestinationHandler) update(")
+	if start < 0 {
+		t.Fatal("update handler not found")
+	}
+	end := strings.Index(body[start:], "\nfunc (h *backupDestinationHandler) delete(")
+	if end < 0 {
+		t.Fatal("delete handler (update body terminator) not found")
+	}
+	updBody := body[start : start+end]
+
+	clearIdx := strings.Index(updBody, "if req.ClearCreds {")
+	if clearIdx < 0 {
+		t.Fatal("--clear-creds block not found in the update handler")
+	}
+	writeIdx := strings.Index(updBody, "h.writeCreds(")
+	if writeIdx < 0 {
+		t.Fatal("credential write not found in the update handler")
+	}
+	if clearIdx > writeIdx {
+		t.Fatal("--clear-creds block must precede the credential write; the un-widened persist-failure gate depends on this ordering")
+	}
+
+	// The clear block itself must no longer delete the file inline (the reap moved
+	// to after persist). Scope to the clear block: from `if req.ClearCreds {` up to
+	// the credsEnv assignment that follows it.
+	clearBlockEnd := strings.Index(updBody[clearIdx:], "credsEnv := req.CredentialsEnv")
+	if clearBlockEnd < 0 {
+		t.Fatal("credsEnv assignment (clear-block terminator) not found")
+	}
+	clearBlock := updBody[clearIdx : clearIdx+clearBlockEnd]
+	if strings.Contains(clearBlock, "h.deleteCreds(") {
+		t.Fatal("--clear-creds block must not delete the file inline; the removal is deferred to the post-persist reap")
 	}
 }

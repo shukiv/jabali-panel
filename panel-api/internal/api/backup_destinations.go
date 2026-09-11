@@ -397,9 +397,18 @@ func (h *backupDestinationHandler) update(c *gin.Context) {
 	if req.Enabled != nil {
 		d.Enabled = *req.Enabled
 	}
+	// Clear stored credentials. Drop the reference here, but DEFER the on-disk
+	// file removal to after the row persists (the reap below): deleting it now,
+	// before persist, would leave a surviving row (failed persist) pointing at an
+	// already-deleted file — a dangling reference, the reverse of the orphan leak
+	// (JAB-310). Credential writes come AFTER this block, so under
+	// !origHadCredsFile a cleared reference cannot occur, and the fail-branch gate
+	// below needs no widening (the CLI adapter writes --sftp-password before its
+	// clear, so its gate does).
+	clearedCredsFile := false
 	if req.ClearCreds {
 		if d.CredentialsRef != nil {
-			h.deleteCreds(c.Request.Context(), d.ID)
+			clearedCredsFile = true
 		}
 		d.CredentialsRef = nil
 	}
@@ -434,6 +443,17 @@ func (h *backupDestinationHandler) update(c *gin.Context) {
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "db_update"})
 		return
+	}
+	// --clear-creds reap. The persist succeeded and the committed row no longer
+	// references a file (d.CredentialsRef nil), so remove the on-disk file now —
+	// AFTER the row that dropped the reference committed. Doing it here rather than
+	// in the clear block above keeps a failed persist from stranding the surviving
+	// row against a deleted file. The reap is skipped when a creds_write later in
+	// the same request re-created the file and re-set the reference (--clear-creds
+	// with new credentials): the committed row points at it, so it must stay.
+	// deleteCreds is best-effort and stays silent on failure by existing design.
+	if clearedCredsFile && d.CredentialsRef == nil {
+		h.deleteCreds(c.Request.Context(), d.ID)
 	}
 	c.JSON(http.StatusOK, toDestDTO(d))
 }
