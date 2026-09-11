@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -159,23 +160,35 @@ func bkResticConfigWithPassword(repoURL, credentialsRef, passwordFile string, sf
 type repoProbeClass int
 
 const (
-	repoProbeOther      repoProbeClass = iota // unknown failure — surface raw
-	repoProbeMissing                          // no repo at the location → init
-	repoProbeUnopenable                       // repo exists but can't be decrypted/read
+	repoProbeOther             repoProbeClass = iota // unknown failure — surface raw
+	repoProbeMissing                                 // no repo at the location → init
+	repoProbeUnopenable                              // repo exists but no stored key matches the password (foreign/rotated) → GH #454
+	repoProbeKeyConfigMismatch                       // a key opened with the password but its master can't decrypt config → concurrent-init race (JAB-405) or corrupt config
 )
 
 // classifyRepoProbe maps a lowercased restic stderr to a repoProbeClass. Strings
-// are the verbatim messages restic 0.16 emits (captured against 0.16.4):
+// are the verbatim messages restic emits (captured against 0.16.4 and re-checked
+// on 0.18.0):
 //   - missing:    "unable to open config file: … no such file …" / "repository does not exist"
-//   - unopenable: "wrong password or no key found" (foreign/rotated password),
-//     "config or key <id> is damaged: ciphertext verification failed" (corrupt/foreign)
+//   - unopenable: "wrong password or no key found" — no stored key decrypts with
+//     the password (foreign/rotated password, e.g. a host reinstall).
+//   - key/config mismatch: "config or key <id> is damaged: ciphertext verification
+//     failed" — a key file DID open with the password (so the password is correct),
+//     but its master key can't decrypt `config`. That is the signature of two
+//     concurrent `restic init` on one empty repo (JAB-405), or a corrupt config —
+//     NOT a wrong password. The two never co-occur (verified: wrong-password vs an
+//     initialized repo yields the first string, the dual-key race yields the second),
+//     so they map to distinct classes and distinct recovery advice.
 //
-// Order matters: the missing case also contains "config file", so check the
-// unopenable signals (which never co-occur with a missing repo) first is not
-// required — the missing markers are specific — but we check missing explicitly.
+// Match the mismatch case on the specific "ciphertext verification failed" phrase,
+// not a bare "is damaged": restic also says "<thing> is damaged" for index/pack
+// corruption, which must keep the generic unopenable hint rather than the
+// "your password is fine, count your key files" guidance.
 func classifyRepoProbe(lowerStderr string) repoProbeClass {
+	if strings.Contains(lowerStderr, "ciphertext verification failed") {
+		return repoProbeKeyConfigMismatch
+	}
 	if strings.Contains(lowerStderr, "wrong password or no key found") ||
-		strings.Contains(lowerStderr, "ciphertext verification failed") ||
 		strings.Contains(lowerStderr, "is damaged") {
 		return repoProbeUnopenable
 	}
@@ -185,6 +198,35 @@ func classifyRepoProbe(lowerStderr string) repoProbeClass {
 		return repoProbeMissing
 	}
 	return repoProbeOther
+}
+
+// repoUnopenableMessage builds the operator-facing error for a repository that
+// EXISTS but cannot be opened. It is a single paragraph with no newlines: the
+// same text surfaces in a run-failure log AND in a short UI toast on the manual
+// "test connection" path, and a multi-line block is unreadable in the toast.
+// passwordFile is the restic password file the probe used (per-destination sealed
+// file or the shared default), named so the operator edits the right one.
+func repoUnopenableMessage(class repoProbeClass, repoURL, passwordFile, lowerStderr string) string {
+	switch class {
+	case repoProbeKeyConfigMismatch:
+		return fmt.Sprintf("backup repository at %q exists and a key file opened with the password at %s, "+
+			"so the password is CORRECT — do NOT restore or regenerate it. The failure (%s) is a key whose "+
+			"master does not match the repository config, which happens when two backups ran `restic init` on "+
+			"the same empty repository at once (leaving more than one key file and a single config), or the "+
+			"config is corrupt. To recover: if the repository's keys/ directory holds MORE THAN ONE file, move "+
+			"the key named in the error above out of keys/ and retry (restore it if that does not help); if keys/ "+
+			"holds exactly ONE file the config is corrupt — point this destination at a FRESH empty directory. "+
+			"The old snapshots stay on disk.",
+			repoURL, passwordFile, lowerStderr)
+	default: // repoProbeUnopenable
+		return fmt.Sprintf("backup repository at %q exists but this server cannot open it (%s). No stored key "+
+			"matches the password at %s — usually the server or that password file was reinstalled or regenerated "+
+			"while the repository directory was preserved, so the snapshots are sealed with a password this server "+
+			"no longer has. To recover: restore the ORIGINAL password file from before the reinstall, or point this "+
+			"destination at a FRESH empty directory to start a new repository — the old snapshots stay on disk but "+
+			"are unreadable without their original password.",
+			repoURL, lowerStderr, passwordFile)
+	}
 }
 
 // bkEnsureRepoReady probes the remote and runs mkdir -p (SFTP only) +
@@ -230,23 +272,22 @@ func bkEnsureRepoReady(ctx context.Context, repoURL, credentialsRef, destKind, p
 			return nil
 		}
 		lower := strings.ToLower(strings.TrimSpace(string(snapStderr)))
-		switch classifyRepoProbe(lower) {
-		case repoProbeUnopenable:
-			// A repository that EXISTS but cannot be opened (GH #454). Actionable
-			// message instead of the raw restic dump — see classifyRepoProbe.
-			return fmt.Errorf("backup repository at %q exists but this server cannot open it (%s).\n"+
-				"This usually means the server (or /etc/jabali-panel/restic-repo.password) was reinstalled or "+
-				"regenerated while the repository directory was preserved, so the snapshots are sealed with a "+
-				"password this server no longer has (or the repo's config/key files are corrupted). To recover: "+
-				"(a) restore the ORIGINAL /etc/jabali-panel/restic-repo.password from before the reinstall, or "+
-				"(b) point this backup destination at a FRESH empty directory to start a new repository — the old "+
-				"snapshots stay on disk but are unreadable without their original password.",
-				repoURL, lower)
+		switch cls := classifyRepoProbe(lower); cls {
+		case repoProbeMissing:
+			// Only an explicit missing-repo signal reaches `restic init` below.
+			// Fail-closed: any other class returns here, so a new class (or a
+			// dropped case) can never fall through to init an existing-but-broken
+			// repo — where "already initialized" is swallowed and the run proceeds
+			// to die later with a worse error.
 		case repoProbeOther:
 			// Not a missing-repo signal, not a known unopenable signal — surface raw.
 			return fmt.Errorf("snapshots probe: %w (stderr: %s)", snapErr, lower)
+		default:
+			// A repository that EXISTS but cannot be opened: a foreign/rotated
+			// password (GH #454) or a key/config mismatch from a concurrent-init
+			// race (JAB-405). Actionable message instead of the raw restic dump.
+			return errors.New(repoUnopenableMessage(cls, repoURL, pwFile, lower))
 		}
-		// repoProbeMissing → fall through to init below.
 		if destKind == "sftp" && sftp != nil && sftp.Host != "" {
 			if _, err := backup.MkdirRemoteSFTP(ctx, backup.SFTPInputs{
 				Host:    sftp.Host,

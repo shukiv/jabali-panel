@@ -124,16 +124,40 @@ func backupDestTestHandler(ctx context.Context, raw json.RawMessage) (any, error
 				StdoutPreview: "reachable — restic repo initialized at destination",
 			}, nil
 		}
-		return backupDestTestResult{
-			Status: "error",
-			Detail: err.Error(),
-			Stderr: stderrStr,
-		}, nil
+		// Repo exists but the probe failed for a non-missing reason. Classify it
+		// so a repo that can't be opened (foreign/rotated password, or a
+		// concurrent-init key/config mismatch — JAB-405) gets the same actionable
+		// Detail as a real backup run, not a raw restic dump the operator can't
+		// act on.
+		return backupDestTestFailureResult(p.URL, backup.DefaultPasswordFile, stderrStr, err), nil
 	}
 	return backupDestTestResult{
 		Status:        "ok",
 		StdoutPreview: firstNonEmptyLine(string(stdout)),
 	}, nil
+}
+
+// backupDestTestFailureResult maps a non-missing probe failure to a test result.
+// A repository that exists but cannot be opened (repoProbeUnopenable /
+// repoProbeKeyConfigMismatch) gets the shared actionable message in Detail; any
+// other failure surfaces the raw error. The raw restic stderr is always kept in
+// Stderr. Pure — no restic call — so it is unit-testable from stderr fixtures.
+func backupDestTestFailureResult(url, passwordFile, stderrStr string, probeErr error) backupDestTestResult {
+	lower := strings.ToLower(stderrStr)
+	switch cls := classifyRepoProbe(lower); cls {
+	case repoProbeUnopenable, repoProbeKeyConfigMismatch:
+		return backupDestTestResult{
+			Status: "error",
+			Detail: repoUnopenableMessage(cls, url, passwordFile, lower),
+			Stderr: stderrStr,
+		}
+	default:
+		return backupDestTestResult{
+			Status: "error",
+			Detail: probeErr.Error(),
+			Stderr: stderrStr,
+		}
+	}
 }
 
 func firstNonEmptyLine(s string) string {
