@@ -392,10 +392,9 @@ func newBackupDestinationDeleteCmd() *cobra.Command {
 					return nil
 				}
 			}
-			if err := backupDestinationRepoFromDB().Delete(ctx, d.ID); err != nil {
-				return fmt.Errorf("delete destination: %w", err)
+			if err := deleteBackupDestinationDirect(ctx, sharedAgent.Call, backupDestinationRepoFromDB(), d, os.Stderr); err != nil {
+				return err
 			}
-			_, _ = sharedAgent.Call(ctx, "backup.dest.creds_delete", map[string]any{"dest_id": d.ID})
 			if jsonOutput {
 				return printJSON(map[string]string{"deleted": d.ID})
 			}
