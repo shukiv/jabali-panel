@@ -20,6 +20,8 @@ import { useTabParam } from "../../hooks/useTabParam";
 import { columnSearchProps } from "../columnSearch";
 import { DNSSECTable } from "../dnssec/DNSSECTable";
 import { DNSZoneDeleteAction } from "./DNSZoneDeleteAction";
+import { DNSDomainDeleteAction } from "./DNSDomainDeleteAction";
+import { DNSZoneEnableButton } from "./DNSZoneEnableButton";
 import { SearchableTableStringQ } from "../SearchableTable";
 import { useTableURL } from "../../hooks/useTableURL";
 import { sorterToParams } from "../../utils/tableSorter";
@@ -39,6 +41,14 @@ export interface DnsZoneRow {
   effective_ttl?: number | null;
   dnssec_enabled?: boolean;
   registrar_expires_at?: string | null;
+  // GH #1611: facet state. dns_disabled distinguishes a deliberately-dropped
+  // zone ("host DNS elsewhere" → offer Enable DNS) from one the reconciler
+  // simply hasn't provisioned yet. web_disabled + email_enabled identify a
+  // DNS-only domain (both off) whose zone can't be dropped alone (last facet) —
+  // that row offers a whole-domain delete instead.
+  dns_disabled?: boolean;
+  web_disabled?: boolean;
+  email_enabled?: boolean;
 }
 
 // DnsZoneInventoryAudience is the per-screen policy. Admin passes the
@@ -77,6 +87,9 @@ const ZonesTab = ({ audience }: { audience: DnsZoneInventoryAudience }) => {
   // GH #1611: the row whose DNS zone is being deleted (null = closed). Admin +
   // tenant both get the action; the backend enforces admin-or-owner.
   const [deleteTarget, setDeleteTarget] = useState<DnsZoneRow | null>(null);
+  // GH #1611: the DNS-only row whose WHOLE domain is being deleted (its zone
+  // can't be dropped alone — DNS is the last facet).
+  const [deleteDomainTarget, setDeleteDomainTarget] = useState<DnsZoneRow | null>(null);
 
   // One batched request (JAB-377): the endpoint returns provisioning state +
   // record count + effective TTL per row, so there is no per-domain zone fetch
@@ -163,7 +176,12 @@ const ZonesTab = ({ audience }: { audience: DnsZoneInventoryAudience }) => {
           <Table.Column<DnsZoneRow>
             title={t("dnszonesoverviewpage.zone_status")}
             render={(_, record) =>
-              record.provisioned ? (
+              record.dns_disabled ? (
+                // GH #1611: DNS was deliberately dropped — distinct from a zone
+                // the reconciler simply hasn't provisioned yet, which would
+                // otherwise read as the same "Not provisioned".
+                <Tag color="orange">{t("dnszonesoverviewpage.dns_hosted_elsewhere")}</Tag>
+              ) : record.provisioned ? (
                 <Tag color="green">Provisioned</Tag>
               ) : (
                 <Tag>Not provisioned</Tag>
@@ -202,28 +220,51 @@ const ZonesTab = ({ audience }: { audience: DnsZoneInventoryAudience }) => {
           />
           <Table.Column<DnsZoneRow>
             title={t("dnszonesoverviewpage.actions")}
-            render={(_, record) => (
-              <Space>
-                <Button type="primary" onClick={() => navigate(audience.manageRoute(record.id))}>
-                  Manage Records
-                </Button>
-                {/* GH #1611: delete the DNS zone (keep web + mail). Only for a
-                    panel-hosted zone; a DNSSEC-signed zone must be unsigned
-                    first (the backend refuses it too). */}
-                {record.provisioned &&
-                  (record.dnssec_enabled ? (
-                    <Tooltip title={t("dnszonesoverviewpage.delete_disabled_dnssec")}>
-                      <Button danger disabled>
+            render={(_, record) => {
+              // GH #1611: a DNS-only domain (web off + mail off) can't drop its
+              // zone alone — DNS is the last facet — so it offers a whole-domain
+              // delete instead of the zone delete the backend would refuse.
+              const dnsOnly = record.web_disabled === true && record.email_enabled !== true;
+              return (
+                <Space>
+                  {/* Managing records is meaningless while DNS is dropped (no
+                      zone rows exist), so hide it on those rows. */}
+                  {!record.dns_disabled && (
+                    <Button
+                      type="primary"
+                      onClick={() => navigate(audience.manageRoute(record.id))}
+                    >
+                      Manage Records
+                    </Button>
+                  )}
+                  {record.dns_disabled ? (
+                    // GH #1611: DNS was dropped ("host DNS elsewhere") — offer to
+                    // host it here again. The backend re-creates the zone.
+                    <DNSZoneEnableButton zone={record} />
+                  ) : dnsOnly ? (
+                    <Button danger onClick={() => setDeleteDomainTarget(record)}>
+                      {t("dnszonesoverviewpage.delete_domain")}
+                    </Button>
+                  ) : (
+                    // Delete the DNS zone (keep web + mail). Only for a
+                    // panel-hosted zone; a DNSSEC-signed zone must be unsigned
+                    // first (the backend refuses it too).
+                    record.provisioned &&
+                    (record.dnssec_enabled ? (
+                      <Tooltip title={t("dnszonesoverviewpage.delete_disabled_dnssec")}>
+                        <Button danger disabled>
+                          {t("dnszonesoverviewpage.delete_zone")}
+                        </Button>
+                      </Tooltip>
+                    ) : (
+                      <Button danger onClick={() => setDeleteTarget(record)}>
                         {t("dnszonesoverviewpage.delete_zone")}
                       </Button>
-                    </Tooltip>
-                  ) : (
-                    <Button danger onClick={() => setDeleteTarget(record)}>
-                      {t("dnszonesoverviewpage.delete_zone")}
-                    </Button>
-                  ))}
-              </Space>
-            )}
+                    ))
+                  )}
+                </Space>
+              );
+            }}
           />
         </SearchableTableStringQ>
       )}
@@ -232,6 +273,13 @@ const ZonesTab = ({ audience }: { audience: DnsZoneInventoryAudience }) => {
           zone={deleteTarget}
           open={deleteTarget != null}
           onClose={() => setDeleteTarget(null)}
+        />
+      )}
+      {deleteDomainTarget && (
+        <DNSDomainDeleteAction
+          zone={deleteDomainTarget}
+          open={deleteDomainTarget != null}
+          onClose={() => setDeleteDomainTarget(null)}
         />
       )}
     </>

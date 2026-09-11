@@ -379,7 +379,10 @@
   "dnszonesoverviewpage": {
     "actions": "Actions",
     "delete_zone": "Delete zone",
+    "delete_domain": "Delete domain",
     "delete_disabled_dnssec": "Disable DNSSEC before deleting this zone",
+    "dns_hosted_elsewhere": "Hosted elsewhere",
+    "enable_dns": "Enable DNS",
     "dns_zones_are_provisioned_automatically_when": "DNS zones are provisioned automatically when a domain is created. Nameservers are configured in Server Settings.",
     "dnssec": "DNSSEC",
     "domain_name": "Domain Name",
