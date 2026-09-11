@@ -74,3 +74,70 @@ func TestZoneDeletePlan_OptionalTablesSkipped(t *testing.T) {
 		}
 	}
 }
+
+// TestOrphanSweepPlan_ShapeAndSafety pins the invariants of the GH #1620 sweep.
+// The single most important one: the plan must NEVER emit a `DELETE FROM
+// domains`. Orphans are defined by the absence of their parent `domains` row, so
+// the table is read-only here; a delete step would be catastrophic (it would
+// remove live zones). This is new code, so there is no "unfixed" version to fail
+// against — the test exists to guard that safety property against future edits.
+func TestOrphanSweepPlan_ShapeAndSafety(t *testing.T) {
+	all := orphanSweepPlan(map[string]bool{"comments": true, "cryptokeys": true})
+	wantTables := []string{"records", "domainmetadata", "comments", "cryptokeys"}
+	if len(all) != len(wantTables) {
+		t.Fatalf("plan len = %d, want %d: %+v", len(all), len(wantTables), all)
+	}
+	for i, w := range wantTables {
+		if all[i].table != w {
+			t.Fatalf("step %d table = %q, want %q", i, all[i].table, w)
+		}
+	}
+
+	for _, s := range all {
+		// Every step targets a CHILD table by the orphan predicate — never the
+		// parent `domains` row, and never a name-scoped delete.
+		if s.table == "domains" || strings.Contains(s.deleteSQL, "DELETE FROM domains") {
+			t.Fatalf("orphan sweep must never delete the parent domains row: %q", s.deleteSQL)
+		}
+		if !strings.Contains(s.deleteSQL, "domain_id NOT IN (SELECT id FROM domains)") {
+			t.Fatalf("step %s must scope by the orphan predicate, got %q", s.table, s.deleteSQL)
+		}
+		// The orphan predicate binds no args — it is a self-contained subquery.
+		if n := strings.Count(s.deleteSQL, "?"); n != 0 {
+			t.Fatalf("step %s must bind no args, got %d: %q", s.table, n, s.deleteSQL)
+		}
+		// The count statement counts the same table under the same predicate.
+		if !strings.HasPrefix(s.countSQL, "SELECT COUNT(*) FROM "+s.table+" ") {
+			t.Fatalf("step %s count must be COUNT(*) on the same table, got %q", s.table, s.countSQL)
+		}
+		if !strings.Contains(s.countSQL, "domain_id NOT IN (SELECT id FROM domains)") {
+			t.Fatalf("step %s count must use the orphan predicate, got %q", s.table, s.countSQL)
+		}
+	}
+}
+
+// TestOrphanSweepPlan_OptionalTablesSkipped verifies the optional tables are
+// gated exactly like zoneDeletePlan — absent tables produce no statement.
+func TestOrphanSweepPlan_OptionalTablesSkipped(t *testing.T) {
+	min := orphanSweepPlan(map[string]bool{})
+	want := []string{"records", "domainmetadata"}
+	if len(min) != len(want) {
+		t.Fatalf("minimal plan len = %d, want %d: %+v", len(min), len(want), min)
+	}
+	for i, w := range want {
+		if min[i].table != w {
+			t.Fatalf("minimal step %d = %q, want %q", i, min[i].table, w)
+		}
+	}
+
+	one := orphanSweepPlan(map[string]bool{"cryptokeys": true})
+	wantOne := []string{"records", "domainmetadata", "cryptokeys"}
+	if len(one) != len(wantOne) {
+		t.Fatalf("plan len = %d, want %d: %+v", len(one), len(wantOne), one)
+	}
+	for i, w := range wantOne {
+		if one[i].table != w {
+			t.Fatalf("step %d = %q, want %q", i, one[i].table, w)
+		}
+	}
+}
