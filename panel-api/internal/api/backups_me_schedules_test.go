@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -26,6 +27,17 @@ type schedStore struct {
 	rows  map[string]*models.BackupSchedule
 	dests map[string][]string
 	users map[string][]string
+
+	// Instrumentation for the tenant upsert-atomicity slice (JAB-307). The
+	// *Calls counters let a test prove the handler collapsed the three
+	// sequential writes into one atomic primitive; last*Dests/last*Users record
+	// the membership sets each primitive received (dests first, users second);
+	// failCWM/failUWM inject a persistence failure.
+	createCalls, updateCalls, replaceUsersCalls, replaceDestCalls int
+	cwmCalls, uwmCalls                                            int
+	lastCWMDests, lastCWMUsers                                    []string
+	lastUWMDests, lastUWMUsers                                    []string
+	failCWM, failUWM                                              error
 }
 
 func newSchedStore() *schedStore {
@@ -33,6 +45,7 @@ func newSchedStore() *schedStore {
 }
 
 func (s *schedStore) Create(_ context.Context, m *models.BackupSchedule) error {
+	s.createCalls++
 	cp := *m
 	s.rows[m.ID] = &cp
 	return nil
@@ -53,6 +66,7 @@ func (s *schedStore) ListForUser(_ context.Context, userID string) ([]models.Bac
 	return out, nil
 }
 func (s *schedStore) Update(_ context.Context, m *models.BackupSchedule) error {
+	s.updateCalls++
 	if _, ok := s.rows[m.ID]; !ok {
 		return repository.ErrNotFound
 	}
@@ -75,11 +89,53 @@ func (s *schedStore) GetDestinations(_ context.Context, id string) ([]models.Bac
 	return out, nil
 }
 func (s *schedStore) ReplaceDestinations(_ context.Context, id string, d []string) error {
+	s.replaceDestCalls++
 	s.dests[id] = d
 	return nil
 }
 func (s *schedStore) ReplaceUsers(_ context.Context, id string, u []string) error {
+	s.replaceUsersCalls++
 	s.users[id] = u
+	return nil
+}
+
+// CreateWithMemberships / UpdateWithMemberships are the atomic primitives the
+// tenant upsert handlers route through (JAB-307): row plus both membership sets
+// in one unit. destIDs is the first slot, userIDs the second.
+func (s *schedStore) CreateWithMemberships(_ context.Context, m *models.BackupSchedule, destIDs, userIDs []string) error {
+	s.cwmCalls++
+	s.lastCWMDests, s.lastCWMUsers = destIDs, userIDs
+	if s.failCWM != nil {
+		return s.failCWM
+	}
+	cp := *m
+	s.rows[m.ID] = &cp
+	s.dests[m.ID] = destIDs
+	s.users[m.ID] = userIDs
+	return nil
+}
+func (s *schedStore) UpdateWithMemberships(_ context.Context, m *models.BackupSchedule, destIDs, userIDs *[]string) error {
+	s.uwmCalls++
+	if destIDs != nil {
+		s.lastUWMDests = *destIDs
+	}
+	if userIDs != nil {
+		s.lastUWMUsers = *userIDs
+	}
+	if _, ok := s.rows[m.ID]; !ok {
+		return repository.ErrNotFound
+	}
+	if s.failUWM != nil {
+		return s.failUWM
+	}
+	cp := *m
+	s.rows[m.ID] = &cp
+	if destIDs != nil {
+		s.dests[m.ID] = *destIDs
+	}
+	if userIDs != nil {
+		s.users[m.ID] = *userIDs
+	}
 	return nil
 }
 
@@ -261,5 +317,151 @@ func TestMeSchedules_CrossTenantIsolation(t *testing.T) {
 	// The row must survive both cross-tenant attempts.
 	if _, ok := store.rows[aID]; !ok {
 		t.Error("userA's schedule was destroyed by a cross-tenant request")
+	}
+}
+
+// createSchedule must persist the row and both membership sets in ONE atomic
+// primitive, not three sequential writes (JAB-307). Also pins the (dests, users)
+// argument order: swapping the two slots reddens the slot assertions.
+func TestMeSchedules_CreateRoutesThroughAtomicMemberships(t *testing.T) {
+	store := newSchedStore()
+	users := &usersMap{m: map[string]*models.User{"userA": pkgUser("userA", "pkg1")}}
+	dest := &models.BackupDestination{ID: "d1", Kind: "local", Enabled: true}
+	h := newSchedHandler(store, users, schedTestPkg(3), dest)
+	r := newSchedRouter(h, "userA")
+
+	rec := doReq(t, r, http.MethodPost, "/me/backup-schedules", `{"enabled":true,"content":"full","cadence":"daily","destination_id":"d1"}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if store.cwmCalls != 1 {
+		t.Fatalf("CreateWithMemberships calls = %d, want 1 (must route through the atomic primitive)", store.cwmCalls)
+	}
+	if store.createCalls != 0 || store.replaceUsersCalls != 0 || store.replaceDestCalls != 0 {
+		t.Fatalf("three sequential writes not collapsed: create=%d replaceUsers=%d replaceDest=%d", store.createCalls, store.replaceUsersCalls, store.replaceDestCalls)
+	}
+	if len(store.lastCWMUsers) != 1 || store.lastCWMUsers[0] != "userA" {
+		t.Fatalf("users slot = %v, want [userA] (dests/users arg order swapped?)", store.lastCWMUsers)
+	}
+	if len(store.lastCWMDests) != 1 || store.lastCWMDests[0] != "d1" {
+		t.Fatalf("dests slot = %v, want [d1] (dests/users arg order swapped?)", store.lastCWMDests)
+	}
+}
+
+// updateSchedule must persist the field changes and both membership sets in ONE
+// atomic primitive, not three sequential writes (JAB-307). Also pins the
+// (dests, users) argument order.
+func TestMeSchedules_UpdateRoutesThroughAtomicMemberships(t *testing.T) {
+	store := newSchedStore()
+	users := &usersMap{m: map[string]*models.User{"userA": pkgUser("userA", "pkg1")}}
+	dest := &models.BackupDestination{ID: "d1", Kind: "local", Enabled: true}
+	h := newSchedHandler(store, users, schedTestPkg(3), dest)
+	r := newSchedRouter(h, "userA")
+
+	if rec := doReq(t, r, http.MethodPost, "/me/backup-schedules", `{"enabled":false,"content":"full","cadence":"daily"}`); rec.Code != http.StatusCreated {
+		t.Fatalf("seed create = %d", rec.Code)
+	}
+	var id string
+	for k := range store.rows {
+		id = k
+	}
+	// Reset counters so the update assertions are unambiguous about the PUT alone.
+	store.uwmCalls, store.updateCalls, store.replaceUsersCalls, store.replaceDestCalls = 0, 0, 0, 0
+
+	rec := doReq(t, r, http.MethodPut, "/me/backup-schedules/"+id, `{"enabled":true,"content":"database","cadence":"hourly","destination_id":"d1"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if store.uwmCalls != 1 {
+		t.Fatalf("UpdateWithMemberships calls = %d, want 1", store.uwmCalls)
+	}
+	if store.updateCalls != 0 || store.replaceUsersCalls != 0 || store.replaceDestCalls != 0 {
+		t.Fatalf("three sequential writes not collapsed: update=%d replaceUsers=%d replaceDest=%d", store.updateCalls, store.replaceUsersCalls, store.replaceDestCalls)
+	}
+	if len(store.lastUWMUsers) != 1 || store.lastUWMUsers[0] != "userA" {
+		t.Fatalf("users slot = %v, want [userA] (dests/users arg order swapped?)", store.lastUWMUsers)
+	}
+	if len(store.lastUWMDests) != 1 || store.lastUWMDests[0] != "d1" {
+		t.Fatalf("dests slot = %v, want [d1] (dests/users arg order swapped?)", store.lastUWMDests)
+	}
+}
+
+// A failed atomic persist must surface as 500 db_update and leave no separate
+// membership write to sneak in around it (JAB-307).
+func TestMeSchedules_UpdateAtomicFailReturns500(t *testing.T) {
+	store := newSchedStore()
+	users := &usersMap{m: map[string]*models.User{"userA": pkgUser("userA", "pkg1")}}
+	h := newSchedHandler(store, users, schedTestPkg(3), nil)
+	r := newSchedRouter(h, "userA")
+
+	if rec := doReq(t, r, http.MethodPost, "/me/backup-schedules", `{"enabled":false,"content":"full","cadence":"daily"}`); rec.Code != http.StatusCreated {
+		t.Fatalf("seed create = %d", rec.Code)
+	}
+	var id string
+	for k := range store.rows {
+		id = k
+	}
+	store.failUWM = repository.ErrConflict
+	store.replaceUsersCalls, store.replaceDestCalls = 0, 0
+
+	rec := doReq(t, r, http.MethodPut, "/me/backup-schedules/"+id, `{"enabled":false,"content":"database","cadence":"hourly"}`)
+	if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), "db_update") {
+		t.Fatalf("atomic persist failure must 500 db_update: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if store.replaceUsersCalls != 0 || store.replaceDestCalls != 0 {
+		t.Fatalf("partial membership writes around a failed atomic update: replaceUsers=%d replaceDest=%d", store.replaceUsersCalls, store.replaceDestCalls)
+	}
+}
+
+// A failed atomic persist on create must surface as 500 db_create, leave no
+// separate membership write around it, and store no row (JAB-307).
+func TestMeSchedules_CreateAtomicFailReturns500(t *testing.T) {
+	store := newSchedStore()
+	users := &usersMap{m: map[string]*models.User{"userA": pkgUser("userA", "pkg1")}}
+	h := newSchedHandler(store, users, schedTestPkg(3), nil)
+	r := newSchedRouter(h, "userA")
+
+	store.failCWM = repository.ErrConflict
+	rec := doReq(t, r, http.MethodPost, "/me/backup-schedules", `{"enabled":false,"content":"full","cadence":"daily"}`)
+	if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), "db_create") {
+		t.Fatalf("atomic persist failure must 500 db_create: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if store.replaceUsersCalls != 0 || store.replaceDestCalls != 0 {
+		t.Fatalf("partial membership writes around a failed atomic create: replaceUsers=%d replaceDest=%d", store.replaceUsersCalls, store.replaceDestCalls)
+	}
+	if len(store.rows) != 0 {
+		t.Fatalf("failed atomic create left %d rows", len(store.rows))
+	}
+}
+
+// Source-pin: each tenant upsert handler body routes through its atomic
+// primitive and no longer hand-rolls the three separate writes. Scoped to each
+// handler body (createSchedule still legitimately shares the file with the
+// legacy single-schedule upsert, so a file-wide check would over-reach).
+func TestMeSchedules_UpsertHandlersRouteThroughAtomicPrimitives_Source(t *testing.T) {
+	raw, err := os.ReadFile("backups.go")
+	if err != nil {
+		t.Fatalf("read source: %v", err)
+	}
+	src := string(raw)
+
+	create := scheduleFuncBody(t, src, "func (h *meBackupHandler) createSchedule(")
+	if !strings.Contains(create, "CreateWithMemberships(") {
+		t.Error("createSchedule must route through CreateWithMemberships")
+	}
+	for _, bad := range []string{"Schedules.Create(", "ReplaceUsers(", "ReplaceDestinations("} {
+		if strings.Contains(create, bad) {
+			t.Errorf("createSchedule still calls %s (must be one atomic write)", bad)
+		}
+	}
+
+	update := scheduleFuncBody(t, src, "func (h *meBackupHandler) updateSchedule(")
+	if !strings.Contains(update, "UpdateWithMemberships(") {
+		t.Error("updateSchedule must route through UpdateWithMemberships")
+	}
+	for _, bad := range []string{"Schedules.Update(", "ReplaceUsers(", "ReplaceDestinations("} {
+		if strings.Contains(update, bad) {
+			t.Errorf("updateSchedule still calls %s (must be one atomic write)", bad)
+		}
 	}
 }
