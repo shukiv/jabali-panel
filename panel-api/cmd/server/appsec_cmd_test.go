@@ -1,10 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
+
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/appseccfg"
 )
 
 func TestReadOperatorHeader(t *testing.T) {
@@ -100,4 +104,129 @@ func TestDetectInbandRules(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("after touch got %v, want %v", got, want)
 	}
+}
+
+// reconcileCRSBeforeFiles is the core of the GH #1655 fix: operator exclusions
+// go to their OWN file so the agent's boot re-render of the built-in file (which
+// has no DB access) can no longer clobber them. These cases pin the invariants a
+// future edit could quietly break.
+func TestReconcileCRSBeforeFiles(t *testing.T) {
+	sample := []appseccfg.Exclusion{{
+		Host: "forum.example.com", URIPrefix: "/api/", RuleID: "931120", Note: "sample",
+	}}
+
+	// Case 1: rows present. Built-in file is byte-identical to what the agent
+	// boot writer emits (CRSPluginBefore verbatim, NO operator content), operator
+	// file carries exactly RenderOperatorBeforeFile.
+	t.Run("rows present — files disjoint and byte-exact", func(t *testing.T) {
+		dir := t.TempDir()
+		builtin := filepath.Join(dir, "jabali-before.conf")
+		operator := filepath.Join(dir, "jabali-operator-before.conf")
+
+		changed, err := reconcileCRSBeforeFiles(&bytes.Buffer{}, builtin, operator, sample, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !changed {
+			t.Error("first write should report changed=true")
+		}
+		gotBuiltin, _ := os.ReadFile(builtin)
+		if string(gotBuiltin) != appseccfg.CRSPluginBefore() {
+			t.Error("built-in file is NOT byte-identical to CRSPluginBefore() — agent boot would clobber it (GH #1655)")
+		}
+		if strings.Contains(string(gotBuiltin), "ctl:ruleRemoveById=931120") {
+			t.Error("operator content leaked into the built-in file")
+		}
+		gotOperator, _ := os.ReadFile(operator)
+		if string(gotOperator) != appseccfg.RenderOperatorBeforeFile(sample) {
+			t.Error("operator file does not match RenderOperatorBeforeFile")
+		}
+
+		// Idempotent: a second pass writes nothing.
+		changed, err = reconcileCRSBeforeFiles(&bytes.Buffer{}, builtin, operator, sample, true)
+		if err != nil || changed {
+			t.Errorf("second pass should be a no-op, got changed=%v err=%v", changed, err)
+		}
+	})
+
+	// Case 2: last exclusion removed. A stale operator file must be deleted, not
+	// left with content that keeps a since-removed exclusion live.
+	t.Run("empty list removes a stale operator file", func(t *testing.T) {
+		dir := t.TempDir()
+		builtin := filepath.Join(dir, "jabali-before.conf")
+		operator := filepath.Join(dir, "jabali-operator-before.conf")
+		if err := os.WriteFile(builtin, []byte(appseccfg.CRSPluginBefore()), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(operator, []byte(appseccfg.RenderOperatorBeforeFile(sample)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		changed, err := reconcileCRSBeforeFiles(&bytes.Buffer{}, builtin, operator, nil, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !changed {
+			t.Error("removing the operator file should report changed=true")
+		}
+		if _, err := os.Stat(operator); !os.IsNotExist(err) {
+			t.Errorf("operator file should be gone, stat err=%v", err)
+		}
+	})
+
+	// Case 3: DB unreachable (operatorKnown=false). The operator file must be
+	// left EXACTLY as-is — a transient outage cannot drop live exclusions.
+	t.Run("db down leaves the operator file untouched", func(t *testing.T) {
+		dir := t.TempDir()
+		builtin := filepath.Join(dir, "jabali-before.conf")
+		operator := filepath.Join(dir, "jabali-operator-before.conf")
+		if err := os.WriteFile(builtin, []byte(appseccfg.CRSPluginBefore()), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		want := appseccfg.RenderOperatorBeforeFile(sample)
+		if err := os.WriteFile(operator, []byte(want), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		changed, err := reconcileCRSBeforeFiles(&bytes.Buffer{}, builtin, operator, nil, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if changed {
+			t.Error("nothing changed (built-in already current, operator left as-is) — want changed=false")
+		}
+		got, _ := os.ReadFile(operator)
+		if string(got) != want {
+			t.Error("operator file was modified while the DB was unreachable — live exclusions at risk")
+		}
+	})
+
+	// Case 4: one-time migration off the old combined file. A box whose
+	// jabali-before.conf still holds built-ins + operator (the pre-#1655 format)
+	// must end with built-ins-only there and the operator file split out.
+	t.Run("migrates the combined pre-split file", func(t *testing.T) {
+		dir := t.TempDir()
+		builtin := filepath.Join(dir, "jabali-before.conf")
+		operator := filepath.Join(dir, "jabali-operator-before.conf")
+		combined := appseccfg.CRSPluginBefore() + appseccfg.RenderExclusions(sample)
+		if err := os.WriteFile(builtin, []byte(combined), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		changed, err := reconcileCRSBeforeFiles(&bytes.Buffer{}, builtin, operator, sample, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !changed {
+			t.Error("migration should report changed=true")
+		}
+		gotBuiltin, _ := os.ReadFile(builtin)
+		if string(gotBuiltin) != appseccfg.CRSPluginBefore() {
+			t.Error("combined file was not reduced to built-ins-only")
+		}
+		gotOperator, _ := os.ReadFile(operator)
+		if string(gotOperator) != appseccfg.RenderOperatorBeforeFile(sample) {
+			t.Error("operator exclusions were not split into their own file")
+		}
+	})
 }

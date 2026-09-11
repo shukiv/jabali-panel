@@ -190,6 +190,19 @@ func sanitizeWebmailHosts(in []string) []string {
 // rewrites it on every install + `jabali update`.
 const CRSPluginBeforePath = "/var/lib/crowdsec/data/crs-plugins/jabali/jabali-before.conf"
 
+// CRSPluginOperatorBeforePath holds the operator-managed exclusions, split out
+// of CRSPluginBeforePath (GH #1655). The agent re-renders the built-in file
+// (CRSPluginBefore) at every boot from static content and has no database
+// access; when the operator section shared that file, each agent restart —
+// update, crash, reboot, manual — rewrote it to built-ins-only and dropped
+// every operator exclusion until the next `render-config`, silently re-banning
+// users. A separate file in the same hub-free jabali/ subdir — matched by the
+// same crs-plugins/*/*-before.conf glob — is written only by render-config and
+// never touched by the agent, so operator exclusions survive a restart. Order
+// relative to jabali-before.conf is irrelevant: operator rules are
+// self-contained ctl:ruleRemoveById in phase 1, with no cross-file dependency.
+const CRSPluginOperatorBeforePath = "/var/lib/crowdsec/data/crs-plugins/jabali/jabali-operator-before.conf"
+
 // CRSPluginBefore returns the body of the jabali CRS "before" plugin —
 // targeted CrowdSec AppSec / CRS false-positive exclusions that must run
 // before the detection + anomaly-scoring rules.

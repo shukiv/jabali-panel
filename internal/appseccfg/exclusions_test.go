@@ -188,6 +188,63 @@ func TestRenderExclusions_InvalidEntryIsReportedNotSwallowed(t *testing.T) {
 	}
 }
 
+// The standalone operator file (GH #1655) must be empty for an empty list — the
+// caller removes it in that case so a since-removed exclusion cannot linger live
+// — carry the SEPARATE-file header for a non-empty list, and still emit the
+// SKIPPED breadcrumb (never a bare empty file) when every entry is invalid.
+func TestRenderOperatorBeforeFile(t *testing.T) {
+	if got := RenderOperatorBeforeFile(nil); got != "" {
+		t.Errorf("empty list must render \"\" (signals file removal), got %q", got)
+	}
+
+	out := RenderOperatorBeforeFile([]Exclusion{validExclusion()})
+	if !strings.Contains(out, "Managed by jabali — operator CRS") {
+		t.Errorf("missing operator-file header:\n%s", out)
+	}
+	if !strings.Contains(out, "GH #1655") {
+		t.Errorf("header must explain the split (GH #1655):\n%s", out)
+	}
+	if !strings.Contains(out, "ctl:ruleRemoveById=931120") {
+		t.Errorf("valid exclusion not rendered into the file:\n%s", out)
+	}
+
+	// All-invalid list: still a file (header + SKIPPED breadcrumb), never "".
+	bad := validExclusion()
+	bad.RuleID = "949110" // anomaly blocker — rejected by ValidateExclusion
+	badOut := RenderOperatorBeforeFile([]Exclusion{bad})
+	if badOut == "" {
+		t.Fatal("all-invalid list rendered \"\" — would delete the file and hide the SKIPPED breadcrumb")
+	}
+	if !strings.Contains(badOut, "# SKIPPED") {
+		t.Errorf("invalid entry breadcrumb missing:\n%s", badOut)
+	}
+}
+
+// The two before-plugin files must stay disjoint: the built-in file the agent
+// re-renders at boot (CRSPluginBefore) must carry none of the operator content,
+// and the operator file none of the built-in content — otherwise the agent's
+// boot rewrite would again clobber operator rules (GH #1655), or their SecRule
+// ids would collide and CrowdSec would refuse to load.
+func TestBeforePluginFilesAreDisjoint(t *testing.T) {
+	if CRSPluginBeforePath == CRSPluginOperatorBeforePath {
+		t.Fatal("built-in and operator before-plugin files must be different paths")
+	}
+	builtin := CRSPluginBefore()
+	operator := RenderOperatorBeforeFile([]Exclusion{validExclusion()})
+
+	// Built-in file must not carry the operator id range (9,597,xxx) or header.
+	if strings.Contains(builtin, "id:"+itoa(OperatorExclusionIDBase)) {
+		t.Error("built-in file leaked an operator SecRule id — agent boot would clobber it")
+	}
+	if strings.Contains(builtin, "operator CRS \"before\" exclusions") {
+		t.Error("built-in file carries the operator section — the GH #1655 split is broken")
+	}
+	// Operator file must not carry the built-in wordpress-enable SecAction (9599000).
+	if strings.Contains(operator, "id:9599000") {
+		t.Error("operator file leaked the built-in wordpress-enable rule")
+	}
+}
+
 func itoa(n int) string {
 	if n == 0 {
 		return "0"

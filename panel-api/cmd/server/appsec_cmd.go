@@ -2,10 +2,14 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -48,6 +52,7 @@ const (
 // (mode=off, no countries) — used only on a forced reset.
 func newAppSecRenderConfigCmd() *cobra.Command {
 	var reconcile bool
+	var reload bool
 	cmd := &cobra.Command{
 		Use:   "render-config",
 		Short: "Write /etc/crowdsec/appsec-configs/jabali-appsec.yaml from internal/appseccfg.Render",
@@ -71,8 +76,10 @@ gate a 'systemctl reload crowdsec' on real diffs.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			// Targeted CRS false-positive exclusions (jabali CRS "before"
 			// plugin). Independent of the geoblock config; loaded before
-			// REQUEST-933/949. Write-on-diff; the caller reloads crowdsec.
-			if err := writeCRSPluginBefore(cmd); err != nil {
+			// REQUEST-933/949. Write-on-diff; --reload (below) or the caller
+			// reloads crowdsec.
+			crsChanged, err := writeCRSPluginBefore(cmd)
+			if err != nil {
 				return err
 			}
 
@@ -126,21 +133,39 @@ gate a 'systemctl reload crowdsec' on real diffs.`,
 			// Write-on-diff: cheap before any nginx/crowdsec reload
 			// upstream that may key off mtime or content hash.
 			existing, _ := os.ReadFile(appsecConfigPath)
-			if string(existing) == body {
+			cfgChanged := string(existing) != body
+			if cfgChanged {
+				if err := atomicWriteAppSec(appsecConfigPath, body); err != nil {
+					return fmt.Errorf("write %s: %w", appsecConfigPath, err)
+				}
+				fmt.Fprintf(cmd.OutOrStdout(),
+					"written %s (mode=%s, countries=[%s], inband=%d rules)\n",
+					appsecConfigPath, mode, strings.Join(countries, ","), len(inband))
+			} else {
+				// "unchanged" on the last line is the install.sh reload gate: it
+				// reloads crowdsec whenever render-config prints anything else,
+				// and a before-plugin write above already made stdout non-empty.
 				fmt.Fprintln(cmd.OutOrStdout(), "unchanged")
-				return nil
 			}
-			if err := atomicWriteAppSec(appsecConfigPath, body); err != nil {
-				return fmt.Errorf("write %s: %w", appsecConfigPath, err)
+
+			// --reload applies the change on this box in one step, best-effort.
+			// Off by default: install.sh calls render-config early in an update
+			// and owns a single deferred reload at the end of its crowdsec setup,
+			// so an update never reloads crowdsec mid-run (the GH discussion #109
+			// fresh-install ordering scar). The operator/UI path passes --reload
+			// so `exclusion add` + render-config takes effect without a separate
+			// `systemctl reload crowdsec` (GH #1653).
+			if reload && (crsChanged || cfgChanged) {
+				reloadCrowdsec(cmd)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(),
-				"written %s (mode=%s, countries=[%s], inband=%d rules)\n",
-				appsecConfigPath, mode, strings.Join(countries, ","), len(inband))
 			return nil
 		},
 	}
 	cmd.Flags().BoolVar(&reconcile, "reconcile", true,
 		"preserve operator jabali-mode/jabali-countries header from existing file (default true)")
+	cmd.Flags().BoolVar(&reload, "reload", false,
+		"best-effort `systemctl reload crowdsec` after a real diff (default false; "+
+			"install.sh owns its own deferred reload, so leave off inside an update)")
 	return cmd
 }
 
@@ -204,57 +229,174 @@ func detectInbandRules(dir string) []string {
 	return out
 }
 
-// writeCRSPluginBefore writes the jabali CRS "before" plugin
-// (appseccfg.CRSPluginBefore) to its CRS data path. Skips cleanly on a
-// host without crowdsec installed (CI, dev) so we never create a stray
-// /var/lib/crowdsec tree. Write-on-diff: returns without writing when
-// the content already matches.
-func writeCRSPluginBefore(cmd *cobra.Command) error {
-	if _, err := os.Stat("/var/lib/crowdsec/data"); err != nil {
-		return nil // crowdsec not installed here — nothing to manage
+// writeCRSPluginBefore reconciles the two jabali CRS "before" plugin files and
+// reports whether either changed (so --reload can gate a crowdsec reload).
+// Skips cleanly on a host without crowdsec (CI, dev) so we never create a stray
+// /var/lib/crowdsec tree.
+//
+// The two files, both matched by the crs-plugins/*/*-before.conf glob:
+//
+//   - CRSPluginBeforePath (jabali-before.conf): the built-in exclusions from
+//     appseccfg.CRSPluginBefore(). Written VERBATIM — byte-identical to what the
+//     agent's ApplyAppSecBeforePlugin writes at boot — so the two writers never
+//     diverge and never clobber each other (GH #1655).
+//   - CRSPluginOperatorBeforePath (jabali-operator-before.conf): the
+//     operator-managed exclusions from the DB. A SEPARATE file precisely because
+//     the agent — which has no DB access — re-renders the built-in file on every
+//     boot; before the split it wrote built-ins-only over the combined file and
+//     dropped every operator exclusion on each restart (GH #1655).
+//
+// render-config deliberately has no requireDB PreRunE: install.sh calls it
+// early, before the database necessarily exists, and it must still write the
+// built-in file on such a host. So the DB is opened best-effort here, and when
+// it is unreachable the operator file is left UNTOUCHED (never removed) — a
+// transient DB outage must not drop live exclusions and re-ban users, the exact
+// failure this split fixes.
+func writeCRSPluginBefore(cmd *cobra.Command) (changed bool, err error) {
+	if _, statErr := os.Stat("/var/lib/crowdsec/data"); statErr != nil {
+		return false, nil // crowdsec not installed here — nothing to manage
 	}
-	body := appseccfg.CRSPluginBefore()
 
-	// JAB-227: append operator-managed exclusions. They live in the DB rather
-	// than in this static template because only the operator can see the false
-	// positives specific to their tenants' apps. Best-effort: a DB that is not
-	// reachable must not stop the built-in exclusions being written, but the
-	// operator has to be told their entries are missing from this render rather
-	// than left assuming they applied.
-	// render-config deliberately has no requireDB PreRunE: install.sh calls it
-	// early, before the database necessarily exists, and it must still write the
-	// built-in exclusions on such a host. So open the DB best-effort here and
-	// carry on without the operator section if it is not reachable.
+	// Fetch operator exclusions best-effort. render-config has no requireDB
+	// PreRunE (install.sh calls it before the DB necessarily exists), so a
+	// missing or erroring DB must NOT block the built-in write below — and must
+	// leave the operator file UNTOUCHED (operatorKnown=false), never removed, so
+	// a transient outage cannot drop live exclusions and re-ban users.
+	var list []appseccfg.Exclusion
+	operatorKnown := false
 	if sharedDB == nil {
-		if err := initConfig(); err == nil {
+		if initErr := initConfig(); initErr == nil {
 			_ = initDB()
 		}
 	}
-	if sharedDB != nil {
-		excl, err := repository.NewCRSRuleExclusionRepository(sharedDB).List(cmd.Context())
-		if err != nil {
+	switch {
+	case sharedDB == nil:
+		fmt.Fprintf(cmd.OutOrStdout(),
+			"! operator CRS exclusions NOT reconciled (database unavailable) — %s left as-is\n",
+			appseccfg.CRSPluginOperatorBeforePath)
+	default:
+		excl, listErr := repository.NewCRSRuleExclusionRepository(sharedDB).List(cmd.Context())
+		if listErr != nil {
 			fmt.Fprintf(cmd.OutOrStdout(),
-				"! operator CRS exclusions NOT rendered (%v) — built-in exclusions written without them\n", err)
-		} else if len(excl) > 0 {
-			list := make([]appseccfg.Exclusion, 0, len(excl))
+				"! operator CRS exclusions NOT reconciled (%v) — %s left as-is\n",
+				listErr, appseccfg.CRSPluginOperatorBeforePath)
+		} else {
+			list = make([]appseccfg.Exclusion, 0, len(excl))
 			for _, e := range excl {
 				list = append(list, appseccfg.Exclusion{
 					Host: e.Host, URIPrefix: e.URIPrefix, RuleID: e.RuleID, Note: e.Note,
 				})
 			}
-			body += appseccfg.RenderExclusions(list)
+			operatorKnown = true
 		}
 	}
 
-	existing, _ := os.ReadFile(appseccfg.CRSPluginBeforePath)
+	return reconcileCRSBeforeFiles(cmd.OutOrStdout(),
+		appseccfg.CRSPluginBeforePath, appseccfg.CRSPluginOperatorBeforePath, list, operatorKnown)
+}
+
+// reconcileCRSBeforeFiles writes the built-in before-plugin file verbatim and,
+// when the operator exclusions are known (DB reachable), the operator file —
+// removing it when the list is empty so a since-removed exclusion cannot linger
+// live. When operatorKnown is false the operator file is left exactly as-is.
+// Returns whether anything on disk changed (so --reload can gate a reload).
+//
+// Split from writeCRSPluginBefore so the invariant this fix (GH #1655) rests on
+// is unit-testable without a DB or the real /var/lib/crowdsec paths: the
+// built-in file is written byte-identical to what the agent boot writer emits
+// (appseccfg.CRSPluginBefore, no operator content appended), and operator
+// content only ever lands in operatorPath.
+func reconcileCRSBeforeFiles(out io.Writer, builtinPath, operatorPath string,
+	list []appseccfg.Exclusion, operatorKnown bool) (changed bool, err error) {
+
+	// 1. Built-in exclusions → builtinPath, VERBATIM.
+	wrote, err := writeOnDiff(builtinPath, appseccfg.CRSPluginBefore())
+	if err != nil {
+		return changed, err
+	}
+	if wrote {
+		changed = true
+		fmt.Fprintf(out, "written %s (CRS before-plugin, built-in)\n", builtinPath)
+	}
+
+	if !operatorKnown {
+		return changed, nil // DB unreachable — leave the operator file untouched
+	}
+
+	// 2. Operator-managed exclusions → operatorPath.
+	body := appseccfg.RenderOperatorBeforeFile(list)
+	if body == "" {
+		// No operator exclusions: remove the file so a since-removed exclusion
+		// cannot linger live. Absent already → no-op.
+		removed, rmErr := removeIfPresent(operatorPath)
+		if rmErr != nil {
+			return changed, fmt.Errorf("remove %s: %w", operatorPath, rmErr)
+		}
+		if removed {
+			changed = true
+			fmt.Fprintf(out, "removed %s (no operator exclusions)\n", operatorPath)
+		}
+		return changed, nil
+	}
+	wrote, err = writeOnDiff(operatorPath, body)
+	if err != nil {
+		return changed, err
+	}
+	if wrote {
+		changed = true
+		fmt.Fprintf(out, "written %s (CRS before-plugin, %d operator exclusion(s))\n", operatorPath, len(list))
+	}
+	return changed, nil
+}
+
+// writeOnDiff writes body to path via atomicWriteAppSec only when the current
+// content differs. Returns whether it wrote.
+func writeOnDiff(path, body string) (bool, error) {
+	existing, _ := os.ReadFile(path)
 	if string(existing) == body {
-		return nil
+		return false, nil
 	}
-	if err := atomicWriteAppSec(appseccfg.CRSPluginBeforePath, body); err != nil {
-		return fmt.Errorf("write %s: %w", appseccfg.CRSPluginBeforePath, err)
+	if err := atomicWriteAppSec(path, body); err != nil {
+		return false, fmt.Errorf("write %s: %w", path, err)
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "written %s (CRS before-plugin)\n", appseccfg.CRSPluginBeforePath)
-	return nil
+	return true, nil
+}
+
+// removeIfPresent removes path, treating an already-absent file as success.
+// Returns whether it actually removed anything.
+func removeIfPresent(path string) (bool, error) {
+	err := os.Remove(path)
+	switch {
+	case err == nil:
+		return true, nil
+	case os.IsNotExist(err):
+		return false, nil
+	default:
+		return false, err
+	}
+}
+
+// reloadCrowdsec applies a freshly-written appsec/before-plugin change on the
+// box. Best-effort, mirroring the agent boot path (panel-agent
+// security_appsec_before.go): reload, fall back to restart, never fail the
+// command. Gated on the CRS data tree so CI/dev never shells out. Invoked only
+// under --reload; install.sh leaves the flag off and owns its own deferred
+// reload (GH #1653 / the GH discussion #109 fresh-install ordering scar).
+func reloadCrowdsec(cmd *cobra.Command) {
+	if _, err := os.Stat("/var/lib/crowdsec/data"); err != nil {
+		return // crowdsec not installed — nothing to reload
+	}
+	ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Second)
+	defer cancel()
+	if out, err := exec.CommandContext(ctx, "systemctl", "reload", "crowdsec").CombinedOutput(); err != nil {
+		if out2, err2 := exec.CommandContext(ctx, "systemctl", "restart", "crowdsec").CombinedOutput(); err2 != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(),
+				"warn: crowdsec reload+restart failed: reload=%v (%s) restart=%v (%s)\n",
+				err, strings.TrimSpace(string(out)), err2, strings.TrimSpace(string(out2)))
+			return
+		}
+	}
+	fmt.Fprintln(cmd.OutOrStdout(), "reloaded crowdsec")
 }
 
 // atomicWriteAppSec writes via tmpfile + rename in the same dir so the
