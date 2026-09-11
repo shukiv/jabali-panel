@@ -129,7 +129,32 @@ func backupDestTestHandler(ctx context.Context, raw json.RawMessage) (any, error
 		// concurrent-init key/config mismatch — JAB-405) gets the same actionable
 		// Detail as a real backup run, not a raw restic dump the operator can't
 		// act on.
-		return backupDestTestFailureResult(p.URL, backup.DefaultPasswordFile, stderrStr, err), nil
+		//
+		// For the key/config mismatch, count the key files (below restic, which
+		// can't open the repo to list them) so the operator sees the exact key to
+		// move vs "config corrupt, start fresh" (JAB-405 Part 2a). This door has no
+		// destKind field, so infer it from the request: an SFTP block → sftp, an
+		// absolute URL → a local repo path, anything else unsupported. Read-only,
+		// fail-soft — a listing failure is folded into the message, never returned
+		// in its place. The door does NOT auto-repair (that is Part 2b); it only
+		// counts.
+		var keys *repoKeyListing
+		var listErr error
+		if classifyRepoProbe(lower) == repoProbeKeyConfigMismatch {
+			kind := ""
+			switch {
+			case p.SFTP != nil && p.SFTP.Host != "":
+				kind = backup.KindSFTP
+			case strings.HasPrefix(p.URL, "/"):
+				kind = backup.KindLocal
+			}
+			if ids, lerr := listRepoKeys(ctx, kind, p.URL, p.SFTP, extraEnv); lerr != nil {
+				listErr = lerr
+			} else {
+				keys = &repoKeyListing{ids: ids, named: mismatchKeyID(lower)}
+			}
+		}
+		return backupDestTestFailureResult(p.URL, backup.DefaultPasswordFile, stderrStr, err, keys, listErr), nil
 	}
 	return backupDestTestResult{
 		Status:        "ok",
@@ -142,13 +167,13 @@ func backupDestTestHandler(ctx context.Context, raw json.RawMessage) (any, error
 // repoProbeKeyConfigMismatch) gets the shared actionable message in Detail; any
 // other failure surfaces the raw error. The raw restic stderr is always kept in
 // Stderr. Pure — no restic call — so it is unit-testable from stderr fixtures.
-func backupDestTestFailureResult(url, passwordFile, stderrStr string, probeErr error) backupDestTestResult {
+func backupDestTestFailureResult(url, passwordFile, stderrStr string, probeErr error, keys *repoKeyListing, listErr error) backupDestTestResult {
 	lower := strings.ToLower(stderrStr)
 	switch cls := classifyRepoProbe(lower); cls {
 	case repoProbeUnopenable, repoProbeKeyConfigMismatch:
 		return backupDestTestResult{
 			Status: "error",
-			Detail: repoUnopenableMessage(cls, url, passwordFile, lower),
+			Detail: repoUnopenableMessage(cls, url, passwordFile, lower, keys, listErr),
 			Stderr: stderrStr,
 		}
 	default:

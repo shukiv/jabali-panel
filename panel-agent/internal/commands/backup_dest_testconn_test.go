@@ -24,7 +24,7 @@ func TestBackupDestTestFailureResult(t *testing.T) {
 
 	t.Run("key/config mismatch gets the race message", func(t *testing.T) {
 		stderr := "Fatal: config or key abcd is damaged: ciphertext verification failed"
-		res := backupDestTestFailureResult(url, pw, stderr, errors.New("snapshots: exit status 1"))
+		res := backupDestTestFailureResult(url, pw, stderr, errors.New("snapshots: exit status 1"), nil, nil)
 		if res.Status != "error" {
 			t.Fatalf("status = %q, want error", res.Status)
 		}
@@ -43,7 +43,7 @@ func TestBackupDestTestFailureResult(t *testing.T) {
 
 	t.Run("wrong password gets the reinstall message", func(t *testing.T) {
 		stderr := "Fatal: wrong password or no key found"
-		res := backupDestTestFailureResult(url, pw, stderr, errors.New("snapshots: exit status 1"))
+		res := backupDestTestFailureResult(url, pw, stderr, errors.New("snapshots: exit status 1"), nil, nil)
 		if !strings.Contains(res.Detail, "reinstalled or regenerated") {
 			t.Errorf("Detail is not the wrong-password message: %q", res.Detail)
 		}
@@ -54,7 +54,7 @@ func TestBackupDestTestFailureResult(t *testing.T) {
 
 	t.Run("unknown failure surfaces the raw error", func(t *testing.T) {
 		stderr := "Fatal: unable to connect: connection refused"
-		res := backupDestTestFailureResult(url, pw, stderr, errors.New("snapshots: exit status 1"))
+		res := backupDestTestFailureResult(url, pw, stderr, errors.New("snapshots: exit status 1"), nil, nil)
 		if res.Detail != "snapshots: exit status 1" {
 			t.Errorf("Detail = %q, want the raw probe error for an unclassified failure", res.Detail)
 		}

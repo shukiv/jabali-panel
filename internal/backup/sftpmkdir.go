@@ -45,27 +45,9 @@ func MkdirRemoteSFTP(ctx context.Context, in SFTPInputs, extraEnv []string) ([]b
 }
 
 // buildSSHMkdirArgs assembles the argv for `[sshpass -e] ssh [-i KEY]
-// [-p PORT] [-o ...] user@host mkdir -p PATH`.
+// [-p PORT] [-o ...] user@host -- mkdir -p PATH`. The connection prefix is
+// shared with the ls builder via buildSSHConnArgs (sftpls.go);
+// TestBuildSSHMkdirArgs_Pin freezes this argv unchanged across that extraction.
 func buildSSHMkdirArgs(in SFTPInputs) []string {
-	parts := []string{}
-	if in.Auth == "password" {
-		parts = append(parts, "sshpass", "-e")
-	}
-	parts = append(parts, "ssh")
-	if in.Auth == "key" && in.KeyPath != "" {
-		parts = append(parts, "-i", in.KeyPath, "-o", "IdentitiesOnly=yes")
-	}
-	parts = append(parts, "-o", "StrictHostKeyChecking=accept-new")
-	if in.Auth == "password" {
-		parts = append(parts, "-o", "PreferredAuthentications=password",
-			"-o", "PubkeyAuthentication=no")
-	} else {
-		parts = append(parts, "-o", "BatchMode=yes")
-	}
-	if in.Port > 0 && in.Port != 22 {
-		parts = append(parts, "-p", fmt.Sprintf("%d", in.Port))
-	}
-	parts = append(parts, fmt.Sprintf("%s@%s", in.User, in.Host))
-	parts = append(parts, "--", "mkdir", "-p", in.Path)
-	return parts
+	return append(buildSSHConnArgs(in), "--", "mkdir", "-p", in.Path)
 }

@@ -83,7 +83,7 @@ func TestRepoUnopenableMessage_MismatchArm(t *testing.T) {
 	const pw = "/etc/jabali-panel/dest-7.password"
 	msg := repoUnopenableMessage(repoProbeKeyConfigMismatch,
 		"sftp:puzzle@host:/home/puzzle/jabali", pw,
-		"config or key abcd is damaged: ciphertext verification failed")
+		"config or key abcd is damaged: ciphertext verification failed", nil, nil)
 
 	for _, want := range []string{
 		pw,               // names the exact password file — do not touch it
@@ -114,7 +114,7 @@ func TestRepoUnopenableMessage_MismatchArm(t *testing.T) {
 func TestRepoUnopenableMessage_WrongPasswordArm(t *testing.T) {
 	const pw = "/etc/jabali-panel/restic-repo.password"
 	msg := repoUnopenableMessage(repoProbeUnopenable,
-		"/backups", pw, "wrong password or no key found")
+		"/backups", pw, "wrong password or no key found", nil, nil)
 
 	for _, want := range []string{
 		pw, // names the password file to restore
