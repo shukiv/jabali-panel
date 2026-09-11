@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -21,6 +22,8 @@ type fakeBackupDestRepo struct {
 	createCalled int
 	updateErr    error
 	updateCalled int
+	deleteErr    error
+	deleteCalled int
 }
 
 func (f *fakeBackupDestRepo) Create(_ context.Context, d *models.BackupDestination) error {
@@ -31,6 +34,11 @@ func (f *fakeBackupDestRepo) Create(_ context.Context, d *models.BackupDestinati
 func (f *fakeBackupDestRepo) Update(_ context.Context, d *models.BackupDestination) error {
 	f.updateCalled++
 	return f.updateErr
+}
+
+func (f *fakeBackupDestRepo) Delete(_ context.Context, _ string) error {
+	f.deleteCalled++
+	return f.deleteErr
 }
 
 // recordingAgent records each agent command (and its params), and can be told to
@@ -265,6 +273,121 @@ func TestBackupDestinationUpdate_RoutesThroughCore(t *testing.T) {
 	}
 	if clearIdx < 0 || capIdx > clearIdx {
 		t.Error("origHadCredsFile must be captured BEFORE the --clear-creds branch mutates CredentialsRef")
+	}
+}
+
+// TestDeleteBackupDestinationDirect_SurfacesSwallowedCleanupFailure is the
+// load-bearing guard for this slice: a failed creds_delete after the row is gone
+// must NOT vanish. The delete still succeeds (returns nil — the row is deleted),
+// but the leftover root:root 0600 credential file is reported on errOut with the
+// dest id and the underlying error, matching the CLI create/update cores and the
+// REST twin #1665. Before this slice the RunE did `_, _ = sharedAgent.Call(...)`.
+func TestDeleteBackupDestinationDirect_SurfacesSwallowedCleanupFailure(t *testing.T) {
+	agent := &recordingAgent{failCmd: "backup.dest.creds_delete", failErr: errors.New("agent down")}
+	repo := &fakeBackupDestRepo{}
+	d := newDest()
+	var errOut bytes.Buffer
+
+	if err := deleteBackupDestinationDirect(context.Background(), agent.call, repo, d, &errOut); err != nil {
+		t.Fatalf("a cleanup failure must stay non-fatal to the delete, got %v", err)
+	}
+	if repo.deleteCalled != 1 {
+		t.Fatalf("row must be deleted exactly once, Delete called %d", repo.deleteCalled)
+	}
+	warn := errOut.String()
+	if !strings.Contains(warn, "cleanup failed") || !strings.Contains(warn, "dst-1") || !strings.Contains(warn, "agent down") {
+		t.Fatalf("failed creds_delete must be surfaced with dest id + error, got: %q", warn)
+	}
+}
+
+// TestDeleteBackupDestinationDirect_SuccessNoWarning: a creds_delete that
+// succeeds writes nothing to errOut — we only warn when a secrets file is
+// actually left behind.
+func TestDeleteBackupDestinationDirect_SuccessNoWarning(t *testing.T) {
+	agent := &recordingAgent{}
+	repo := &fakeBackupDestRepo{}
+	d := newDest()
+	ref := "/etc/jabali-panel/restic-remotes/dst-1.env"
+	d.CredentialsRef = &ref
+	var errOut bytes.Buffer
+
+	if err := deleteBackupDestinationDirect(context.Background(), agent.call, repo, d, &errOut); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if repo.deleteCalled != 1 {
+		t.Fatalf("row must be deleted exactly once, Delete called %d", repo.deleteCalled)
+	}
+	if !agent.fired("backup.dest.creds_delete") {
+		t.Fatal("creds_delete must fire on a successful delete")
+	}
+	if errOut.Len() != 0 {
+		t.Fatalf("no warning expected on a successful cleanup, got: %q", errOut.String())
+	}
+}
+
+// TestDeleteBackupDestinationDirect_DeleteFailsNoCredsDelete pins the ordering:
+// if the row delete fails the row survives, so its credential file must be left
+// in place (never delete a file behind a surviving row). The error wraps the
+// cause, and creds_delete never fires.
+func TestDeleteBackupDestinationDirect_DeleteFailsNoCredsDelete(t *testing.T) {
+	agent := &recordingAgent{}
+	repo := &fakeBackupDestRepo{deleteErr: errors.New("connection reset")}
+	d := newDest()
+	var errOut bytes.Buffer
+
+	err := deleteBackupDestinationDirect(context.Background(), agent.call, repo, d, &errOut)
+	if err == nil || !strings.Contains(err.Error(), "delete destination") {
+		t.Fatalf("want a delete-destination error, got %v", err)
+	}
+	if repo.deleteCalled != 1 {
+		t.Fatalf("Delete must have been attempted exactly once, called %d", repo.deleteCalled)
+	}
+	if agent.fired("backup.dest.creds_delete") {
+		t.Fatal("row delete failed (row survives) — its credential file must NOT be removed")
+	}
+	if errOut.Len() != 0 {
+		t.Fatalf("no cleanup warning expected when the row delete failed, got: %q", errOut.String())
+	}
+}
+
+// TestDeleteBackupDestinationDirect_CredsDeleteUnconditional pins that the
+// creds_delete call is NOT gated on CredentialsRef: even a destination that never
+// had a credential file still fires it once (the Agent handler is idempotent), so
+// no orphaned file is missed. A future --clear-creds/guard slice would change this
+// deliberately; this keeps the current unconditional behavior explicit.
+func TestDeleteBackupDestinationDirect_CredsDeleteUnconditional(t *testing.T) {
+	agent := &recordingAgent{}
+	repo := &fakeBackupDestRepo{}
+	d := newDest() // CredentialsRef nil
+	var errOut bytes.Buffer
+
+	if err := deleteBackupDestinationDirect(context.Background(), agent.call, repo, d, &errOut); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !agent.fired("backup.dest.creds_delete") {
+		t.Fatal("creds_delete must fire unconditionally, even with no CredentialsRef")
+	}
+	if len(agent.cmds) != 1 {
+		t.Fatalf("creds_delete must fire exactly once, got %v", agent.cmds)
+	}
+	if errOut.Len() != 0 {
+		t.Fatalf("no warning expected, got: %q", errOut.String())
+	}
+}
+
+// TestBackupDestinationDelete_RoutesThroughCore source-pins that the delete RunE
+// hands the production agent caller to the core rather than swallowing the
+// creds_delete inline again (positive pin only — the create/update commands in
+// the same file legitimately call the same verbs, JAB-339 scar).
+func TestBackupDestinationDelete_RoutesThroughCore(t *testing.T) {
+	src := readOpsSource(t, "backup_destination_cmd.go")
+	start := strings.Index(src, "func newBackupDestinationDeleteCmd(")
+	if start < 0 {
+		t.Fatal("delete command not found")
+	}
+	body := src[start:]
+	if !strings.Contains(body, "deleteBackupDestinationDirect(ctx, sharedAgent.Call,") {
+		t.Error("delete RunE must route through deleteBackupDestinationDirect with the production agent caller")
 	}
 }
 

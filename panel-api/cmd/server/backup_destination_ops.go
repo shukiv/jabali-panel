@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
@@ -80,6 +81,32 @@ func updateBackupDestinationDirect(ctx context.Context, call agentCaller, repo r
 			}
 		}
 		return fmt.Errorf("update destination: %w", err)
+	}
+	return nil
+}
+
+// deleteBackupDestinationDirect is the CLI testable core for the persist step of
+// `jabali destination delete`. It removes the row, then removes the destination's
+// Agent credential file. The credential removal is best-effort — the row is gone
+// regardless — but a failed cleanup is surfaced to errOut, never silently
+// swallowed (JAB-275), so an operator isn't blind to a leaked root:root 0600
+// secrets file (SSHPASS / cloud keys). This was the last swallowed creds_delete;
+// the create/update cores in this file already surface theirs.
+//
+// The creds_delete call is unconditional, matching the pre-existing RunE: the
+// Agent handler is idempotent (os.Remove tolerates a missing file), so a
+// destination that never had a credential file produces no spurious warning.
+// errOut is injected — its sibling cores hard-code os.Stderr — because the
+// surface, the warning on a cleanup failure, is the behavior under test here.
+// call is never a nil-pointer method value: the delete RunE runs under
+// requireDBAndAgent, so sharedAgent is initialised before the core is reached.
+func deleteBackupDestinationDirect(ctx context.Context, call agentCaller, repo repository.BackupDestinationRepository, d *models.BackupDestination, errOut io.Writer) error {
+	if err := repo.Delete(ctx, d.ID); err != nil {
+		return fmt.Errorf("delete destination: %w", err)
+	}
+	if _, derr := call(ctx, "backup.dest.creds_delete", map[string]any{"dest_id": d.ID}); derr != nil {
+		fmt.Fprintf(errOut, "warning: credential file cleanup failed for destination %s (%v); remove %s manually\n",
+			d.ID, derr, filepath.Join(credsDir, d.ID+".env"))
 	}
 	return nil
 }
