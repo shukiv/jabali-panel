@@ -147,6 +147,11 @@ func backupDestTestHandler(ctx context.Context, raw json.RawMessage) (any, error
 				kind = backup.KindSFTP
 			case strings.HasPrefix(p.URL, "/"):
 				kind = backup.KindLocal
+			default:
+				// s3:/b2:/rest:… — not a listable backend. Name the URL scheme so
+				// the fail-soft note reads honestly ("… for a \"s3\" backend")
+				// instead of an empty backend name.
+				kind, _, _ = strings.Cut(p.URL, ":")
 			}
 			if ids, lerr := listRepoKeys(ctx, kind, p.URL, p.SFTP, extraEnv); lerr != nil {
 				listErr = lerr
