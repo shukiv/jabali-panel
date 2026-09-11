@@ -159,7 +159,13 @@ export const buildDomainDataColumns = (
         onSearch: (v) => query.setParams({ q: v, page: 1 }),
       }),
       render: (_name: string, record: Domain) => {
-        const svc = audience.kind === "tenant" ? serviceBadge(record) : null;
+        // GH #1606 / #1449: the service badge distinguishes DNS-only, Mail-only
+        // and External-DNS rows from ordinary full-service web domains. It is
+        // rendered for both audiences — the admin list shows every owner's
+        // domains, so an operator inspecting a Hestia/cPanel migration needs
+        // the same "DNS only" cue a tenant gets, or a docroot-less zone reads
+        // as an ordinary web domain.
+        const svc = serviceBadge(record);
         return (
           <>
             {renderDomainCell(record, audience)}
