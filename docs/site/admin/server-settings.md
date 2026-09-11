@@ -9,6 +9,8 @@
 - **Default IP pool** — the IP returned by zone creation when no per-domain override is set.
 - **Default package** — the package assigned to new users if the form is left blank.
 - **Locale** — default UI locale for new users; users may override per-account.
+- **Tenant domain options** — off by default. When on, non-admin domain owners get two extra tabs on their own domains: *Domain options* (a curated, safe set of nginx options — max upload size, HSTS, security headers, gzip — each rendered as a fixed, vetted directive) and *Rewrite rules* (structured `rewrite` and `custom_header` rules, each validated; a `rewrite` target is forced to a local path so it can't become an open redirect or proxy). Raw nginx directives, `proxy_pass`, IP access, and PHP settings stay admin-only regardless. Surfaced to tenants on the [Domains](../user/domains.md#nginx-options-and-rewrite-rules) page.
+- **Tenant document-root editing** — on by default. Lets non-admin owners repoint a domain's document root to a folder inside that domain's own tree (e.g. a framework's `public/` subdir); confined server-side so it can't escape the domain.
 
 ## Database
 

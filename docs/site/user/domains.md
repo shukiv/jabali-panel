@@ -38,6 +38,17 @@ You may change PHP version (from the subset your package allows), SSL on/off, DN
 
 The admin controls listen IP (selected from the [IP Manager](../admin/ip-addresses.md) pool), maximum domain count, and quota-related suspension. The admin may also pin SSL on or force a specific PHP version on a domain; in that case the relevant control is read-only on your side.
 
+## Nginx options and rewrite rules
+
+Two extra per-domain tabs — **Domain options** and **Rewrite rules** — appear only when your administrator has enabled *tenant domain options* for the server. Until then the tabs are hidden, and the domain's Overview shows a short note that your administrator can turn these controls on.
+
+When they are enabled you can, on your own domains:
+
+- **Domain options** — set a curated, safe set of nginx options: maximum upload size, HSTS, the common security headers (`X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`), and gzip. You supply values; each option renders to a fixed, vetted directive — never raw config.
+- **Rewrite rules** — add two kinds of structured rule. A `rewrite` rule whose target must be a local path (no scheme or host, so it can never become an open redirect or a proxy to another service), and a `custom_header` rule that adds one response header. Every rule is validated before it is applied.
+
+Raw nginx directives, reverse-proxy targets, IP access rules, and PHP settings stay admin-only whether or not tenant domain options are enabled. Your administrator turns the feature on under [Server Settings → General](../admin/server-settings.md#general).
+
 ## CLI
 
 If you have SSH access to the panel host (operators only — tenants do not have shell access), the same operations are available via `jabali domain list / create / enable / disable / delete`.
