@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
@@ -57,8 +58,15 @@ func TestBuildReplacedSFTPBlock_ReplacesFromFlagsOnly(t *testing.T) {
 // REJECTED by the full-block validator. Under the pre-JAB-310 overlay a lone
 // --sftp-host silently kept the stored user/path; now it is an error.
 func TestBuildReplacedSFTPBlock_RejectsPartialBlock(t *testing.T) {
-	if _, _, err := buildReplacedSFTPBlock("newhost.example.com", "", 0, "", "", ""); err == nil {
+	_, _, err := buildReplacedSFTPBlock("newhost.example.com", "", 0, "", "", "")
+	if err == nil {
 		t.Fatal("a block missing user+path must be rejected (full-block replace, not overlay)")
+	}
+	// The message must name the new contract — a partial edit used to work under
+	// the overlay, so the error has to explain the whole block is now required,
+	// not just echo the bare validator complaint.
+	if !strings.Contains(err.Error(), "replace the whole SFTP block") {
+		t.Errorf("partial-block error must explain the whole-block requirement, got %v", err)
 	}
 }
 

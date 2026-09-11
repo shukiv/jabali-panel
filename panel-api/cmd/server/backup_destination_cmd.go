@@ -197,7 +197,12 @@ func buildReplacedSFTPBlock(host, user string, port int, path, auth, keyPath str
 		KeyPath: keyPath,
 	}
 	if err := validateSFTPOpts(opts); err != nil {
-		return "", nil, err
+		// A partial edit lands here: the block is built only from the flags, so a
+		// missing field is an incomplete block, not a typo. Name the new contract —
+		// the bare validator message ("sftp host and user are required") gives no
+		// hint that the CLI now needs the WHOLE block passed together, where the
+		// pre-JAB-310 overlay used to fill the rest from the stored row.
+		return "", nil, fmt.Errorf("--sftp-* flags replace the whole SFTP block; pass --sftp-host, --sftp-user, --sftp-path and --sftp-auth together: %w", err)
 	}
 	url := internalbackup.ComposeSFTPURL(internalbackup.SFTPInputs{Host: opts.Host, User: opts.User, Path: opts.Path})
 	raw, _ := json.Marshal(models.BackupDestinationExtraOptions{SFTP: opts})
