@@ -149,6 +149,43 @@ func TestSharedResourceAdapters_RouteThroughLeaf(t *testing.T) {
 	}
 }
 
+// TestSharedResourceRemove_RoutesThroughLeafAndArmsAgent source-pins the remove
+// subcommand. Its behavior is not cheaply testable — sharedAgent / sharedDB are
+// concrete package globals the RunE dials directly — so the wiring is pinned at
+// the source level (same rationale as the create routing pin). Scoped to the
+// remove block so the create subcommand's own requireDBAndAgent doesn't satisfy
+// the check.
+func TestSharedResourceRemove_RoutesThroughLeafAndArmsAgent(t *testing.T) {
+	cli := mustRead(t, "shared_resource_cmd.go")
+	marker := `Use:   "remove"`
+	i := strings.Index(cli, marker)
+	if i < 0 {
+		t.Fatal("remove subcommand not found")
+	}
+	block := cli[i:]
+	if j := strings.Index(block[len(marker):], "Use:"); j >= 0 {
+		block = block[:len(marker)+j]
+	}
+	if !strings.Contains(block, "deleteSharedResourceDirect(") {
+		t.Error("CLI remove must route the teardown through deleteSharedResourceDirect")
+	}
+	// Pin the field assignment, not the bare word: the block's own comment
+	// mentions requireDBAndAgent, so a Contains on the word alone would still
+	// pass if PreRunE silently reverted to requireDB.
+	if !strings.Contains(block, "PreRunE: requireDBAndAgent") {
+		t.Error("CLI remove must use requireDBAndAgent, or the instant destroy never fires (sharedAgent stays nil)")
+	}
+	if !strings.Contains(block, "warning: host teardown failed") {
+		t.Error("CLI remove must surface a teardown failure on stderr, not swallow it")
+	}
+	// The old bypass loaded with `FindByID(...); err == nil && ...`, skipping
+	// teardown on a load error yet still deleting the row. The leaf now loads and
+	// returns the error, so this shape must be gone.
+	if strings.Contains(block, "err == nil &&") {
+		t.Error("CLI remove must not skip teardown on a FindByID error and delete the row anyway")
+	}
+}
+
 func mustRead(t *testing.T, path string) string {
 	t.Helper()
 	b, err := os.ReadFile(path)

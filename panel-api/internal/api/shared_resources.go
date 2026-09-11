@@ -239,14 +239,14 @@ func (h *sharedResourceHandler) delete(c *gin.Context) {
 	if !ok {
 		return
 	}
-	ctx := c.Request.Context()
-	if sr.EmailCached != nil && *sr.EmailCached != "" {
-		// Tombstone first (durable teardown), then best-effort instant destroy.
-		// The reconciler GC retries destroy until it succeeds, then clears it.
-		_ = h.cfg.Resources.AddTombstone(ctx, *sr.EmailCached)
-		h.notifyAgent(ctx, "sharedresource.destroy", map[string]any{"email": *sr.EmailCached})
-	}
-	if err := h.cfg.Resources.Delete(ctx, sr.ID); err != nil {
+	// The durable-tombstone-before-best-effort-destroy teardown lives in
+	// sharedresourceops so the operator CLI tears down identically (JAB-339
+	// AC5). A tombstone that cannot be persisted now keeps the row (500) rather
+	// than deleting it into a host principal the reconciler GC can never reach.
+	if err := sharedresourceops.Delete(c.Request.Context(),
+		sharedresourceops.Deps{Resources: h.cfg.Resources},
+		sharedresourceops.DeleteInput{Resource: sr},
+		h.notifyAgent); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}

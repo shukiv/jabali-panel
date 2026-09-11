@@ -131,3 +131,45 @@ func Create(ctx context.Context, d Deps, in CreateInput, notify NotifyFunc) (*mo
 	}
 	return sr, nil
 }
+
+// DeleteInput is one shared-resource deletion. The resource is pre-loaded and
+// pre-authorized by the adapter (the REST handler checks the caller's claims;
+// the operator CLI is admin-by-construction), mirroring CreateInput's
+// pre-loaded domain.
+type DeleteInput struct {
+	Resource *models.SharedResource
+}
+
+// Delete tears a shared resource down in the order AC5 requires: it records a
+// DURABLE tombstone first, then fires the best-effort agent destroy, then
+// deletes the row.
+//
+// The tombstone is the reconciler GC's only handle on the Stalwart host
+// principal — the reconciler does not scan for orphaned hosts — so if the
+// tombstone cannot be persisted the row is LEFT in place (ErrInternal) instead
+// of deleted: deleting it would strand the principal with no path to ever
+// reclaim it. This is stricter than the handlers it replaces, which swallowed
+// the tombstone error and deleted the row regardless. AddTombstone is
+// idempotent (OnConflict DoNothing), so retrying after a later failure re-adds
+// the same tombstone harmlessly.
+//
+// A resource with no cached address (EmailCached empty) has no host principal
+// to tear down, so it skips straight to the row delete.
+func Delete(ctx context.Context, d Deps, in DeleteInput, notify NotifyFunc) error {
+	if d.Resources == nil || in.Resource == nil {
+		return fmt.Errorf("%w: resources repo + resource required", ErrDeps)
+	}
+	sr := in.Resource
+	if sr.EmailCached != nil && *sr.EmailCached != "" {
+		if err := d.Resources.AddTombstone(ctx, *sr.EmailCached); err != nil {
+			return fmt.Errorf("%w: tombstone: %v", ErrInternal, err)
+		}
+		if notify != nil {
+			notify(ctx, "sharedresource.destroy", map[string]any{"email": *sr.EmailCached})
+		}
+	}
+	if err := d.Resources.Delete(ctx, sr.ID); err != nil {
+		return fmt.Errorf("%w: delete: %v", ErrInternal, err)
+	}
+	return nil
+}
