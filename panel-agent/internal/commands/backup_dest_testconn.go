@@ -77,14 +77,30 @@ func backupDestTestHandler(ctx context.Context, raw json.RawMessage) (any, error
 					}, nil
 				}
 			}
-			_, initStderr, initErr := backup.InitRemote(
-				ctx,
-				nil,
-				p.URL,
-				backup.DefaultPasswordFile,
-				extraEnv,
-				bkResticOptions(p.SFTP),
-			)
+			// Serialize this init against the scheduler's per-account init
+			// (bkEnsureRepoReady) and any concurrent test-connection on the same
+			// destination — two restic inits on one empty repo corrupt it
+			// (JAB-405). The loser sees "already initialized" below.
+			var initStderr []byte
+			var initErr error
+			if lockErr := withRepoInitLock(ctx, p.URL, func() error {
+				_, initStderr, initErr = backup.InitRemote(
+					ctx,
+					nil,
+					p.URL,
+					backup.DefaultPasswordFile,
+					extraEnv,
+					bkResticOptions(p.SFTP),
+				)
+				return initErr
+			}); lockErr != nil && initErr == nil {
+				// The lock could not be acquired, so init never ran. Surface it
+				// rather than initialise unserialized.
+				return backupDestTestResult{
+					Status: "error",
+					Detail: "init_lock_failed: " + lockErr.Error(),
+				}, nil
+			}
 			if initErr != nil {
 				initErrStr := strings.TrimSpace(string(initStderr))
 				lowerInit := strings.ToLower(initErrStr)

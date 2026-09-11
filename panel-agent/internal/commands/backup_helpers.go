@@ -2,10 +2,15 @@ package commands
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
+	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/backup"
@@ -186,6 +191,18 @@ func classifyRepoProbe(lowerStderr string) repoProbeClass {
 // `restic init` if the repo doesn't exist yet. Idempotent — succeeds
 // on already-initialized repos. Local destinations get the parent dir
 // created if missing; failures bubble up.
+//
+// The probe→init is serialized per destination via a file lock (JAB-405):
+// a schedule's first run against a brand-new destination fans out several
+// per-account jobs concurrently, and without serialization each one probes
+// the empty repo, classifies it "missing", and runs `restic init`. Two
+// simultaneous inits on the same empty repo leave two key files but a single
+// `config`, whose master key matches only one of them; a later open can pick
+// the mismatched key and fail fatally ("config or key <id> is damaged:
+// ciphertext verification failed") instead of falling through — the repo is
+// then permanently unopenable and every backup fails at "ensure repo". The
+// lock makes the loser re-probe after the winner's init and short-circuit on
+// the now-existing repo.
 func bkEnsureRepoReady(ctx context.Context, repoURL, credentialsRef, destKind, passwordFile string, sftp *backupSFTPInputs) error {
 	if repoURL == "" {
 		return nil
@@ -207,51 +224,119 @@ func bkEnsureRepoReady(ctx context.Context, repoURL, credentialsRef, destKind, p
 		}
 		extraEnv = env
 	}
-	_, snapStderr, snapErr := backup.SnapshotsRemote(ctx, nil, repoURL, pwFile, extraEnv, bkResticOptions(sftp))
-	if snapErr == nil {
-		return nil
-	}
-	lower := strings.ToLower(strings.TrimSpace(string(snapStderr)))
-	switch classifyRepoProbe(lower) {
-	case repoProbeUnopenable:
-		// A repository that EXISTS but cannot be opened (GH #454). Actionable
-		// message instead of the raw restic dump — see classifyRepoProbe.
-		return fmt.Errorf("backup repository at %q exists but this server cannot open it (%s).\n"+
-			"This usually means the server (or /etc/jabali-panel/restic-repo.password) was reinstalled or "+
-			"regenerated while the repository directory was preserved, so the snapshots are sealed with a "+
-			"password this server no longer has (or the repo's config/key files are corrupted). To recover: "+
-			"(a) restore the ORIGINAL /etc/jabali-panel/restic-repo.password from before the reinstall, or "+
-			"(b) point this backup destination at a FRESH empty directory to start a new repository — the old "+
-			"snapshots stay on disk but are unreadable without their original password.",
-			repoURL, lower)
-	case repoProbeOther:
-		// Not a missing-repo signal, not a known unopenable signal — surface raw.
-		return fmt.Errorf("snapshots probe: %w (stderr: %s)", snapErr, lower)
-	}
-	// repoProbeMissing → fall through to init below.
-	if destKind == "sftp" && sftp != nil && sftp.Host != "" {
-		if _, err := backup.MkdirRemoteSFTP(ctx, backup.SFTPInputs{
-			Host:    sftp.Host,
-			User:    sftp.User,
-			Port:    sftp.Port,
-			Path:    sftp.Path,
-			Auth:    sftp.Auth,
-			KeyPath: sftp.KeyPath,
-		}, extraEnv); err != nil {
-			return fmt.Errorf("ssh mkdir: %w", err)
-		}
-	}
-	// Init with the SAME password the probe used: a fresh repo for a
-	// destination that carries its own sealed password must be created under
-	// that password, or every later open fails.
-	_, initStderr, initErr := backup.InitRemote(ctx, nil, repoURL, pwFile, extraEnv, bkResticOptions(sftp))
-	if initErr != nil {
-		ls := strings.ToLower(strings.TrimSpace(string(initStderr)))
-		if strings.Contains(ls, "already initialized") ||
-			strings.Contains(ls, "config file already exists") {
+	return withRepoInitLock(ctx, repoURL, func() error {
+		_, snapStderr, snapErr := backup.SnapshotsRemote(ctx, nil, repoURL, pwFile, extraEnv, bkResticOptions(sftp))
+		if snapErr == nil {
 			return nil
 		}
-		return fmt.Errorf("restic init: %w (stderr: %s)", initErr, ls)
+		lower := strings.ToLower(strings.TrimSpace(string(snapStderr)))
+		switch classifyRepoProbe(lower) {
+		case repoProbeUnopenable:
+			// A repository that EXISTS but cannot be opened (GH #454). Actionable
+			// message instead of the raw restic dump — see classifyRepoProbe.
+			return fmt.Errorf("backup repository at %q exists but this server cannot open it (%s).\n"+
+				"This usually means the server (or /etc/jabali-panel/restic-repo.password) was reinstalled or "+
+				"regenerated while the repository directory was preserved, so the snapshots are sealed with a "+
+				"password this server no longer has (or the repo's config/key files are corrupted). To recover: "+
+				"(a) restore the ORIGINAL /etc/jabali-panel/restic-repo.password from before the reinstall, or "+
+				"(b) point this backup destination at a FRESH empty directory to start a new repository — the old "+
+				"snapshots stay on disk but are unreadable without their original password.",
+				repoURL, lower)
+		case repoProbeOther:
+			// Not a missing-repo signal, not a known unopenable signal — surface raw.
+			return fmt.Errorf("snapshots probe: %w (stderr: %s)", snapErr, lower)
+		}
+		// repoProbeMissing → fall through to init below.
+		if destKind == "sftp" && sftp != nil && sftp.Host != "" {
+			if _, err := backup.MkdirRemoteSFTP(ctx, backup.SFTPInputs{
+				Host:    sftp.Host,
+				User:    sftp.User,
+				Port:    sftp.Port,
+				Path:    sftp.Path,
+				Auth:    sftp.Auth,
+				KeyPath: sftp.KeyPath,
+			}, extraEnv); err != nil {
+				return fmt.Errorf("ssh mkdir: %w", err)
+			}
+		}
+		// Init with the SAME password the probe used: a fresh repo for a
+		// destination that carries its own sealed password must be created under
+		// that password, or every later open fails.
+		_, initStderr, initErr := backup.InitRemote(ctx, nil, repoURL, pwFile, extraEnv, bkResticOptions(sftp))
+		if initErr != nil {
+			ls := strings.ToLower(strings.TrimSpace(string(initStderr)))
+			if strings.Contains(ls, "already initialized") ||
+				strings.Contains(ls, "config file already exists") {
+				return nil
+			}
+			return fmt.Errorf("restic init: %w (stderr: %s)", initErr, ls)
+		}
+		return nil
+	})
+}
+
+// repoInitLockDir is the directory the per-destination repo-init locks live in.
+// It defaults to the same directory as the restore flock (which the agent
+// already mkdir's and writes to, so no new permission surface). A var, not a
+// const, so tests can redirect it to a temp dir.
+var repoInitLockDir = filepath.Dir(restoreLockPath)
+
+const (
+	// repoInitLockMaxWait bounds how long a job waits for another job's
+	// probe→init on the SAME destination. init is seconds; this is generous.
+	// Without a bound, a job could sit behind a hung SFTP init for the whole
+	// orchestrator deadline (90m account / 6h system).
+	repoInitLockMaxWait = 5 * time.Minute
+	// repoInitLockPoll is the retry interval while the lock is contended.
+	repoInitLockPoll = 200 * time.Millisecond
+)
+
+// withRepoInitLock runs fn while holding an exclusive advisory file lock scoped
+// to one destination (keyed by the repo URL), so concurrent first-run jobs
+// cannot both `restic init` the same empty repo (JAB-405). Different
+// destinations hash to different lock files and never contend; the lock is held
+// only across the short probe+init, then released.
+//
+// syscall.Flock has no context support, so a bare blocking LOCK_EX would ignore
+// the caller's deadline and could park behind a hung init. Instead this polls
+// LOCK_EX|LOCK_NB, honouring ctx and repoInitLockMaxWait, and fails loud rather
+// than proceeding without the lock — running init unserialized is exactly the
+// bug this prevents.
+func withRepoInitLock(ctx context.Context, repoURL string, fn func() error) error {
+	if err := os.MkdirAll(repoInitLockDir, 0o750); err != nil {
+		return fmt.Errorf("mkdir repo-init lock dir: %w", err)
 	}
-	return nil
+	// Key on the exact repo URL string (not a normalized form): two jobs for
+	// the same destination carry the byte-identical URL, and re-pointing a
+	// destination to a fresh directory (the JAB-405 workaround) is a different
+	// URL that correctly gets its own lock.
+	sum := sha256.Sum256([]byte(repoURL))
+	lockPath := filepath.Join(repoInitLockDir, fmt.Sprintf(".init-%x.lock", sum[:16]))
+	lf, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o640)
+	if err != nil {
+		return fmt.Errorf("open repo-init lock %q: %w", lockPath, err)
+	}
+	defer lf.Close()
+
+	deadline := time.Now().Add(repoInitLockMaxWait)
+	for {
+		flockErr := syscall.Flock(int(lf.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		if flockErr == nil {
+			break
+		}
+		if flockErr != syscall.EWOULDBLOCK {
+			return fmt.Errorf("acquire repo-init lock %q: %w", lockPath, flockErr)
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("repo-init lock %q still held by another job after %s — the holding job is probably stuck probing or initialising this destination; check its job log",
+				lockPath, repoInitLockMaxWait)
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("repo-init lock %q: %w", lockPath, ctx.Err())
+		case <-time.After(repoInitLockPoll):
+		}
+	}
+	defer syscall.Flock(int(lf.Fd()), syscall.LOCK_UN)
+	return fn()
 }
