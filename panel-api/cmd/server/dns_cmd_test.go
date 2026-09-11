@@ -140,6 +140,26 @@ func TestDNSRecordAdd_ValidDefaultsTTL(t *testing.T) {
 	}
 }
 
+// GH #1622: a disabled zone is never pushed to PowerDNS, so adding a record to
+// it would land in the DB but never resolve. The add path must refuse. Seed a
+// disabled zone; the add must error and persist nothing.
+func TestDNSRecordAdd_RefusesDisabledZone(t *testing.T) {
+	ctx := context.Background()
+	zones := newMemDNSZoneRepo(&models.DNSZone{ID: "z-disabled", DomainID: "d1", Name: "example.com", IsEnabled: false})
+	recs := newMemDNSRecordRepo()
+	_, err := dnsRecordAdd(ctx, zones, recs, "example.com",
+		dnsRecordSpec{Name: "www", Type: "A", Content: "203.0.113.10", Enabled: true})
+	if err == nil {
+		t.Fatal("expected refusal for a disabled zone, got nil")
+	}
+	if !strings.Contains(err.Error(), "disabled") {
+		t.Errorf("error should explain the zone is disabled, got: %v", err)
+	}
+	if len(recs.byID) != 0 {
+		t.Errorf("no record should be persisted for a disabled zone, got %d", len(recs.byID))
+	}
+}
+
 func TestDNSRecordAdd_RejectsUnknownZone(t *testing.T) {
 	ctx := context.Background()
 	zones := newMemDNSZoneRepo() // empty
@@ -312,6 +332,7 @@ func TestDNSCmd_Tree(t *testing.T) {
 	}
 }
 
-
 // ListByZoneIDs added for the JAB-374 batch interface method.
-func (m *memDNSRecordRepo) ListByZoneIDs(context.Context, []string) ([]models.DNSRecord, error) { return nil, nil }
+func (m *memDNSRecordRepo) ListByZoneIDs(context.Context, []string) ([]models.DNSRecord, error) {
+	return nil, nil
+}

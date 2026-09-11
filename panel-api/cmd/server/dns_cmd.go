@@ -85,6 +85,15 @@ func dnsRecordAdd(ctx context.Context, zones repository.DNSZoneRepository, recs 
 	if err != nil {
 		return nil, err
 	}
+	// GH #1622: a disabled zone is never pushed to PowerDNS by the reconciler
+	// (reconcileDNSZone returns on !zone.IsEnabled), so a record added to it
+	// lands in the DB but never resolves. Refuse rather than accept a write that
+	// will never be published. (The REST create/update handlers apply the same
+	// gate, and additionally cover the DNS-hosted-elsewhere case at the domain
+	// level.)
+	if !zone.IsEnabled {
+		return nil, fmt.Errorf("DNS zone %q is disabled, so records added to it are not published to the nameservers — enable the zone first", zone.Name)
+	}
 	rec := &models.DNSRecord{
 		ID:        ids.NewULID(),
 		ZoneID:    zone.ID,

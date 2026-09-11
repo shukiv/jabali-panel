@@ -491,7 +491,8 @@ func (h *dnsHandler) createRecord(c *gin.Context) {
 	domainID := c.Param("id")
 
 	// Load and authorize domain
-	if h.loadDomainOwned(c, domainID) == nil {
+	domain := h.loadDomainOwned(c, domainID)
+	if domain == nil {
 		return
 	}
 
@@ -526,6 +527,15 @@ func (h *dnsHandler) createRecord(c *gin.Context) {
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+
+	// GH #1622: refuse records the reconciler will never push (DNS hosted
+	// elsewhere, or a disabled zone) instead of accepting one that lands in the
+	// DB but never reaches PowerDNS — the tenant otherwise sees it "added but not
+	// resolvable."
+	if reason := dnsZoneNotServedReason(domain, zone); reason != "" {
+		c.JSON(http.StatusConflict, gin.H{"error": "dns_not_served", "detail": reason})
 		return
 	}
 
@@ -634,6 +644,14 @@ func (h *dnsHandler) updateRecord(c *gin.Context) {
 	// Check authorization
 	if !claims.IsAdmin && domain.UserID != claims.UserID {
 		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		return
+	}
+
+	// GH #1622: refuse edits the reconciler will never push (DNS hosted
+	// elsewhere, or a disabled zone), same as createRecord — an accepted edit
+	// that never reaches PowerDNS reads as "changed but not resolvable."
+	if reason := dnsZoneNotServedReason(domain, zone); reason != "" {
+		c.JSON(http.StatusConflict, gin.H{"error": "dns_not_served", "detail": reason})
 		return
 	}
 
@@ -818,6 +836,29 @@ func (h *dnsHandler) deleteRecord(c *gin.Context) {
 	h.cfg.Reconciler.Schedule(zone.DomainID)
 
 	c.Status(http.StatusNoContent)
+}
+
+// dnsZoneNotServedReason returns a human-facing reason record writes to this
+// zone will not be published, or "" when the zone is served. It mirrors the two
+// early returns in the reconciler's reconcileDNSZone: it never pushes to
+// PowerDNS when domain.DNSDisabled (DNS hosted elsewhere, GH #1449) or when
+// !zone.IsEnabled (zone disabled, GH #1611).
+//
+// GH #1622: the record create/update handlers only checked that a zone ROW
+// existed (FindByDomainID returns disabled zones, and a domain toggled DNS-off
+// keeps its zone row), so they accepted records for an unserved zone and
+// returned 201/200. The reconciler then skipped the push and the tenant saw the
+// record "added but not resolvable" — for simple and dotted names alike. The
+// panel must refuse a write it knows will never be published rather than accept
+// it silently (fail-closed).
+func dnsZoneNotServedReason(domain *models.Domain, zone *models.DNSZone) string {
+	if domain.DNSDisabled {
+		return "DNS for this domain is hosted elsewhere (Jabali DNS is disabled for it), so records added here are never published to the nameservers. Enable Jabali DNS for the domain first, or manage the record at your DNS provider."
+	}
+	if !zone.IsEnabled {
+		return "This DNS zone is disabled, so record changes are not published to the nameservers. Enable the zone first."
+	}
+	return ""
 }
 
 // Validation helpers
