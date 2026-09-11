@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -10,6 +12,49 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
+
+// writeBackupDestinationCreds dispatches the credential-file write to the Agent
+// (root) and returns the on-disk path the Agent reports in its reply. The Agent
+// is the authoritative owner of that path: panel-api runs as the jabali user and
+// cannot see /etc/jabali-panel/, so the row's CredentialsRef must record what the
+// Agent actually wrote, not a path panel-api guessed locally. This mirrors the
+// REST handler's writeCreds (internal/api/backup_destinations.go), so both callers
+// materialize the same reference under a binary-version skew between panel and
+// Agent (JAB-310 AC5).
+//
+// One step further than REST's writeCreds: when the Agent replies without a
+// usable path (unparseable reply, or an empty "path"), the file is already on
+// disk but the row can never reference it — an orphan-in-waiting. The write is
+// idempotently compensated (creds_delete, ENOENT-tolerant on the Agent) before the
+// error returns, so a malformed reply leaves no unreferenced secrets file behind.
+// A failed compensation is surfaced on stderr, never silently swallowed (JAB-275);
+// bringing REST's writeCreds to this same standard is a named follow-up.
+func writeBackupDestinationCreds(ctx context.Context, call agentCaller, destID string, env map[string]string) (string, error) {
+	raw, err := call(ctx, "backup.dest.creds_write", map[string]any{
+		"dest_id": destID,
+		"env":     env,
+	})
+	if err != nil {
+		// Treated as not written: no compensation, matching REST's writeCreds.
+		// A reply lost after the Agent already completed the write is not
+		// distinguishable from a true write failure at this layer, so a rare
+		// orphan is possible on this path; it is out of scope for this change.
+		return "", err
+	}
+	var resp struct {
+		Path string `json:"path"`
+	}
+	if perr := json.Unmarshal(raw, &resp); perr != nil || resp.Path == "" {
+		if _, derr := call(ctx, "backup.dest.creds_delete", map[string]any{"dest_id": destID}); derr != nil {
+			fmt.Fprintf(os.Stderr, "warning: credential file cleanup failed (%v); remove %s manually\n", derr, filepath.Join(credsDir, destID+".env"))
+		}
+		if perr != nil {
+			return "", fmt.Errorf("parse creds_write reply: %w", perr)
+		}
+		return "", errors.New("creds_write reply had no path")
+	}
+	return resp.Path, nil
+}
 
 // createBackupDestinationDirect is the CLI testable core for `jabali destination
 // create`. It writes the destination's Agent credential file (when the caller
@@ -24,14 +69,11 @@ import (
 // select the conflict-specific message via errors.Is(err, repository.ErrConflict).
 func createBackupDestinationDirect(ctx context.Context, call agentCaller, repo repository.BackupDestinationRepository, d *models.BackupDestination, env map[string]string) error {
 	if len(env) > 0 {
-		if _, err := call(ctx, "backup.dest.creds_write", map[string]any{
-			"dest_id": d.ID,
-			"env":     env,
-		}); err != nil {
+		path, err := writeBackupDestinationCreds(ctx, call, d.ID, env)
+		if err != nil {
 			return fmt.Errorf("write credentials: %w", err)
 		}
-		ref := filepath.Join(credsDir, d.ID+".env")
-		d.CredentialsRef = &ref
+		d.CredentialsRef = &path
 	}
 	if err := repo.Create(ctx, d); err != nil {
 		// Compensate on EVERY failure, not just a name-conflict. Best-effort, but
