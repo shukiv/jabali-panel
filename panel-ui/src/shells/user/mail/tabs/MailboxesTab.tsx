@@ -26,6 +26,7 @@ import { useForwarders } from "../../../../hooks/useForwarders";
 
 import { apiClient } from "../../../../apiClient";
 import {
+  perDomainMailboxesResource,
   useDeleteMailbox,
   type Mailbox,
 } from "../../../../hooks/useMailboxes";
@@ -70,7 +71,7 @@ export const MailboxesTab = ({ domainId }: { domainId?: string } = {}) => {
   // embedded in the Mail Domains drill-down (domainId set). This replaces the
   // one-request-per-domain fan-out that capped each domain at 200 rows and never
   // paginated across domains. Search/sort/pagination are all server-authoritative.
-  const resource = domainId ? `domains/${domainId}/mailboxes` : "me/mailboxes";
+  const resource = domainId ? perDomainMailboxesResource(domainId) : "me/mailboxes";
   const query = useTableURL<Mailbox & { domain_name?: string }>({
     resource,
     defaultSort: "email",
