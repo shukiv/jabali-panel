@@ -182,7 +182,7 @@ func TestUpdateBackupDestinationDirect_CompensatesOrphanOnPersistFail(t *testing
 	ref := "/var/lib/jabali/creds/dst-1.env"
 	d.CredentialsRef = &ref // a creds_write earlier in this update set it
 
-	err := updateBackupDestinationDirect(context.Background(), agent.call, repo, d, false)
+	err := updateBackupDestinationDirect(context.Background(), agent.call, repo, d, false, false)
 	if err == nil {
 		t.Fatal("expected the update failure to propagate")
 	}
@@ -205,7 +205,7 @@ func TestUpdateBackupDestinationDirect_PreExistingRefNotDeletedOnFail(t *testing
 	ref := "/var/lib/jabali/creds/dst-1.env"
 	d.CredentialsRef = &ref
 
-	if err := updateBackupDestinationDirect(context.Background(), agent.call, repo, d, true); err == nil {
+	if err := updateBackupDestinationDirect(context.Background(), agent.call, repo, d, true, false); err == nil {
 		t.Fatal("expected the update failure to propagate")
 	}
 	if agent.fired("backup.dest.creds_delete") {
@@ -220,7 +220,7 @@ func TestUpdateBackupDestinationDirect_NoRefNoDelete(t *testing.T) {
 	repo := &fakeBackupDestRepo{updateErr: errors.New("boom")}
 	d := newDest() // CredentialsRef nil
 
-	if err := updateBackupDestinationDirect(context.Background(), agent.call, repo, d, false); err == nil {
+	if err := updateBackupDestinationDirect(context.Background(), agent.call, repo, d, false, false); err == nil {
 		t.Fatal("expected the update failure to propagate")
 	}
 	if agent.fired("backup.dest.creds_delete") {
@@ -237,7 +237,7 @@ func TestUpdateBackupDestinationDirect_SuccessNoCompensation(t *testing.T) {
 	ref := "/var/lib/jabali/creds/dst-1.env"
 	d.CredentialsRef = &ref
 
-	if err := updateBackupDestinationDirect(context.Background(), agent.call, repo, d, false); err != nil {
+	if err := updateBackupDestinationDirect(context.Background(), agent.call, repo, d, false, false); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if repo.updateCalled != 1 {
@@ -248,11 +248,110 @@ func TestUpdateBackupDestinationDirect_SuccessNoCompensation(t *testing.T) {
 	}
 }
 
+// TestUpdateBackupDestinationDirect_ClearCredsReapDeferredNotDeletedOnFail is the
+// load-bearing guard for this slice: --clear-creds dropped the reference and the
+// persist then FAILED. The on-disk credential file must NOT be removed — the
+// surviving DB row still references it (the RunE only nil'd the in-memory copy),
+// so deleting it would leave a dangling reference (the reverse of the orphan
+// leak). Before this slice the RunE deleted the file BEFORE persisting, stranding
+// the row pointing at a missing file on exactly this path.
+func TestUpdateBackupDestinationDirect_ClearCredsReapDeferredNotDeletedOnFail(t *testing.T) {
+	agent := &recordingAgent{}
+	repo := &fakeBackupDestRepo{updateErr: errors.New("connection reset")}
+	d := newDest() // RunE nil'd CredentialsRef; the DB row still has the old file
+
+	// clearedCredsFile true (the row had a file), origHadCredsFile true (pre-existing).
+	err := updateBackupDestinationDirect(context.Background(), agent.call, repo, d, true, true)
+	if err == nil || !strings.Contains(err.Error(), "update destination") {
+		t.Fatalf("want a wrapped update-destination error, got %v", err)
+	}
+	if repo.updateCalled != 1 {
+		t.Fatalf("Update must have been attempted exactly once, called %d", repo.updateCalled)
+	}
+	if agent.fired("backup.dest.creds_delete") {
+		t.Fatal("persist failed — the file the surviving row still references must NOT be reaped (dangling ref)")
+	}
+}
+
+// TestUpdateBackupDestinationDirect_ClearCredsReapedOnSuccess: --clear-creds
+// dropped the reference and the persist SUCCEEDED — now (and only now) the on-disk
+// file is reaped, exactly once. The row that no longer references it has
+// committed, so the removal cannot strand a surviving reference.
+func TestUpdateBackupDestinationDirect_ClearCredsReapedOnSuccess(t *testing.T) {
+	agent := &recordingAgent{}
+	repo := &fakeBackupDestRepo{}
+	d := newDest() // CredentialsRef nil (RunE cleared it)
+
+	if err := updateBackupDestinationDirect(context.Background(), agent.call, repo, d, true, true); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if repo.updateCalled != 1 {
+		t.Fatalf("Update called %d times, want 1", repo.updateCalled)
+	}
+	if !agent.fired("backup.dest.creds_delete") {
+		t.Fatal("a cleared credential file must be reaped after a successful persist")
+	}
+	if len(agent.cmds) != 1 {
+		t.Fatalf("creds_delete must fire exactly once, got %v", agent.cmds)
+	}
+	if got := agent.params["backup.dest.creds_delete"]["dest_id"]; got != "dst-1" {
+		t.Fatalf("creds_delete dest_id = %v, want dst-1", got)
+	}
+}
+
+// TestUpdateBackupDestinationDirect_ClearThenRewriteNoReap: --clear-creds followed
+// by a creds_write in the SAME update (--clear-creds --env) re-creates the file at
+// the deterministic path and re-sets CredentialsRef. The reap must be skipped — the
+// committed row references the rewritten file, so removing it would break the live
+// destination. clearedCredsFile stays true, but a non-nil ref gates the reap off.
+func TestUpdateBackupDestinationDirect_ClearThenRewriteNoReap(t *testing.T) {
+	agent := &recordingAgent{}
+	repo := &fakeBackupDestRepo{}
+	d := newDest()
+	ref := "/etc/jabali-panel/restic-remotes/dst-1.env" // creds_write re-set it this update
+	d.CredentialsRef = &ref
+
+	if err := updateBackupDestinationDirect(context.Background(), agent.call, repo, d, true, true); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if agent.fired("backup.dest.creds_delete") {
+		t.Fatalf("a file re-written in the same update must NOT be reaped, got %v", agent.cmds)
+	}
+}
+
+// TestUpdateBackupDestinationDirect_WrittenThenClearedOrphanCompensatedOnFail
+// guards the interaction of the deferred reap with the orphan compensation:
+// --sftp-password/--env writes a credential file on a destination that had none
+// (origHadCredsFile false), then --clear-creds in the SAME command nil's the
+// reference (clearedCredsFile true), then the persist FAILS. The just-written
+// root:root 0600 file must still be removed — the surviving row references
+// nothing, so it is a true orphan. Deferring the reap must not open this leak;
+// the compensation gate widened to `d.CredentialsRef != nil || clearedCredsFile`
+// to cover it.
+func TestUpdateBackupDestinationDirect_WrittenThenClearedOrphanCompensatedOnFail(t *testing.T) {
+	agent := &recordingAgent{}
+	repo := &fakeBackupDestRepo{updateErr: errors.New("connection reset")}
+	d := newDest() // creds_write set a ref this call, then --clear-creds nil'd it
+
+	err := updateBackupDestinationDirect(context.Background(), agent.call, repo, d, false, true)
+	if err == nil || !strings.Contains(err.Error(), "update destination") {
+		t.Fatalf("want a wrapped update-destination error, got %v", err)
+	}
+	if !agent.fired("backup.dest.creds_delete") {
+		t.Fatal("a file written this call then cleared must be compensated on persist failure (orphan leak)")
+	}
+	if got := agent.params["backup.dest.creds_delete"]["dest_id"]; got != "dst-1" {
+		t.Fatalf("creds_delete dest_id = %v, want dst-1", got)
+	}
+}
+
 // TestBackupDestinationUpdate_RoutesThroughCore source-pins that the update RunE
-// hands the production agent caller to the compensating core, and that it
-// captures origHadCredsFile BEFORE the --clear-creds branch — capturing it later
-// would misread a cleared ref as "no pre-existing file" and wrongly compensate a
-// file the surviving row still references.
+// hands the production agent caller to the compensating core, captures
+// origHadCredsFile BEFORE the --clear-creds branch (capturing it later would
+// misread a cleared ref as "no pre-existing file" and wrongly compensate a file
+// the surviving row still references), and — for this slice — does NOT eagerly
+// delete the credential file inside the --clear-creds branch (the reap is deferred
+// to the core, post-persist).
 func TestBackupDestinationUpdate_RoutesThroughCore(t *testing.T) {
 	src := readOpsSource(t, "backup_destination_cmd.go")
 	start := strings.Index(src, "func newBackupDestinationUpdateCmd(")
@@ -273,6 +372,20 @@ func TestBackupDestinationUpdate_RoutesThroughCore(t *testing.T) {
 	}
 	if clearIdx < 0 || capIdx > clearIdx {
 		t.Error("origHadCredsFile must be captured BEFORE the --clear-creds branch mutates CredentialsRef")
+	}
+
+	// The eager creds_delete must be GONE from the --clear-creds branch: the file
+	// removal is deferred to the core, post-persist (dangling-ref reverse-class).
+	// Scope the negative to the clear block only — from `if clearCreds {` to the
+	// creds-rewrite comment — because creds_write/creds_delete verbs legitimately
+	// appear elsewhere in this RunE (JAB-339 scar: never pin a literal a sibling
+	// branch shares).
+	rewriteIdx := strings.Index(body, "// Rewrite cloud/SFTP")
+	if rewriteIdx < 0 || clearIdx > rewriteIdx {
+		t.Fatal("clear-creds block boundaries not found")
+	}
+	if strings.Contains(body[clearIdx:rewriteIdx], "backup.dest.creds_delete") {
+		t.Error("--clear-creds must NOT delete the credential file before persist; the reap is deferred to updateBackupDestinationDirect (dangling-ref reverse-class)")
 	}
 }
 

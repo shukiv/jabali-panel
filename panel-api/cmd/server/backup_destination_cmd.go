@@ -303,12 +303,16 @@ func newBackupDestinationUpdateCmd() *cobra.Command {
 					}
 				}
 			}
-			// Clear stored credential env (cloud secrets / sftp SSHPASS).
+			// Clear stored credential env (cloud secrets / sftp SSHPASS). Drop the
+			// reference here, but DEFER the on-disk file removal to after the row
+			// persists (see updateBackupDestinationDirect): deleting it now, before
+			// persist, would leave a surviving row (failed persist) pointing at an
+			// already-deleted file — a dangling reference, the reverse of the orphan
+			// leak (JAB-310).
+			clearedCredsFile := false
 			if clearCreds {
 				if d.CredentialsRef != nil {
-					if _, err := sharedAgent.Call(ctx, "backup.dest.creds_delete", map[string]any{"dest_id": d.ID}); err != nil {
-						return fmt.Errorf("clear credentials: %w", err)
-					}
+					clearedCredsFile = true
 				}
 				d.CredentialsRef = nil
 				changed = true
@@ -337,10 +341,11 @@ func newBackupDestinationUpdateCmd() *cobra.Command {
 			if !changed {
 				return fmt.Errorf("no changes specified")
 			}
-			// Persist and, on failure, compensate a credential file this update
-			// newly wrote so a transient DB error can't orphan a secrets file
-			// behind a NULL row (JAB-310).
-			if err := updateBackupDestinationDirect(ctx, sharedAgent.Call, backupDestinationRepoFromDB(), d, origHadCredsFile); err != nil {
+			// Persist, then reconcile the on-disk credential file to the committed
+			// row: on failure compensate a file this update newly wrote (orphan),
+			// and on success reap a file --clear-creds dropped the reference to
+			// (dangling-ref reverse-class) — both handled in the core (JAB-310).
+			if err := updateBackupDestinationDirect(ctx, sharedAgent.Call, backupDestinationRepoFromDB(), d, origHadCredsFile, clearedCredsFile); err != nil {
 				return err
 			}
 			if jsonOutput {

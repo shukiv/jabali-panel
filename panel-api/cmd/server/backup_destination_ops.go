@@ -48,39 +48,62 @@ func createBackupDestinationDirect(ctx context.Context, call agentCaller, repo r
 }
 
 // updateBackupDestinationDirect is the CLI testable core for the persist step of
-// `jabali destination update`. It persists the mutated row and — when this update
-// wrote a BRAND-NEW credential file — removes that just-written file on ANY
-// persistence failure, so a transient DB error can't leave an orphaned root:root
-// 0600 secrets file (SSHPASS / cloud keys) behind a row that never got the
-// reference (JAB-310).
+// `jabali destination update`. It persists the mutated row and reconciles the
+// on-disk Agent credential file to the row that actually committed (JAB-310):
 //
-// The gate rests on an invariant of the update RunE: d.CredentialsRef only goes
-// nil -> non-nil inside a creds_write branch. So origHadCredsFile == false (the
-// DB row had no credential file before this call) together with
-// d.CredentialsRef != nil means exactly "we wrote a new file this call, and the
-// row that survives the failed persist references none" — a true orphan.
+//   - orphan compensation (persist FAILS): the surviving row is the unchanged
+//     original, so the on-disk file should exist iff origHadCredsFile. When
+//     origHadCredsFile == false, any root:root 0600 secrets file (SSHPASS / cloud
+//     keys) on disk was written by THIS call — either the reference still points
+//     at it (a plain creds_write) or a later --clear-creds in the same command
+//     nil'd the reference (clearedCredsFile, e.g. --sftp-password ...
+//     --clear-creds). Both are orphans behind a row that never got the reference,
+//     and both are removed. A PRE-EXISTING file (origHadCredsFile true) is
+//     deliberately LEFT in place: the surviving row still references it
+//     (deterministic path per dest_id), so deleting it would break the
+//     destination that remains in the DB.
 //
-// A PRE-EXISTING credential file (origHadCredsFile true) is deliberately LEFT in
-// place on failure: the surviving row still references it (the path is
-// deterministic per dest_id), so deleting it would break the destination that
-// remains in the DB. That reverse case — a --clear-creds followed by a failed
-// persist, leaving the row pointing at a now-missing file — is a separate class
-// (not a leak) and out of scope here.
+//   - clear-creds reap (persist SUCCEEDS): when --clear-creds dropped the
+//     reference (clearedCredsFile == true and d.CredentialsRef ends nil), the
+//     on-disk file is removed AFTER the row that no longer references it commits.
+//     The RunE must NOT delete the file before this call: on a failed persist that
+//     would leave the surviving row pointing at an already-deleted file — a
+//     dangling reference, the reverse of the orphan leak. The reap is skipped when
+//     d.CredentialsRef is non-nil, meaning a creds_write later in the same update
+//     re-created the file at the deterministic path (--clear-creds --env): the row
+//     references it, so it must stay.
+//
+// The invariant the core holds: after it returns, the on-disk credential file
+// exists iff the PERSISTED row references it — on failure the persisted row is the
+// unchanged original (file iff origHadCredsFile), on success it is d (file iff
+// d.CredentialsRef != nil). d.CredentialsRef only goes nil -> non-nil inside a
+// creds_write branch, so under !origHadCredsFile a reference that is set OR was
+// cleared this call both imply a file this call wrote.
 //
 // sharedAgent is *agent.Client (a pointer), so the call value is safe to build
-// even on the DB-only update paths where the agent was never initialised: the
-// compensation branch is the only caller and it is reached only after a
-// creds_write this call, which required the credential agent. Cleanup is
-// best-effort but a failed cleanup is surfaced, never silently swallowed
-// (JAB-275).
-func updateBackupDestinationDirect(ctx context.Context, call agentCaller, repo repository.BackupDestinationRepository, d *models.BackupDestination, origHadCredsFile bool) error {
+// even on DB-only update paths where the agent was never initialised: both agent
+// branches are reached only after a creds_write / --clear-creds this call, which
+// required the credential agent. Both cleanups are best-effort but surfaced,
+// never silently swallowed (JAB-275), and neither is fatal to a committed update.
+func updateBackupDestinationDirect(ctx context.Context, call agentCaller, repo repository.BackupDestinationRepository, d *models.BackupDestination, origHadCredsFile, clearedCredsFile bool) error {
 	if err := repo.Update(ctx, d); err != nil {
-		if !origHadCredsFile && d.CredentialsRef != nil {
+		// Orphan compensation. Under !origHadCredsFile the surviving (unchanged)
+		// row references no file, so any credential file on disk was written by
+		// THIS call and is now an orphan — whether the reference still points at it
+		// (a plain creds_write) or a later --clear-creds in the same command nil'd
+		// the reference (clearedCredsFile: e.g. --sftp-password ... --clear-creds).
+		// Both must be removed.
+		if !origHadCredsFile && (d.CredentialsRef != nil || clearedCredsFile) {
 			if _, derr := call(ctx, "backup.dest.creds_delete", map[string]any{"dest_id": d.ID}); derr != nil {
-				fmt.Fprintf(os.Stderr, "warning: credential file cleanup failed (%v); remove %s manually\n", derr, *d.CredentialsRef)
+				fmt.Fprintf(os.Stderr, "warning: credential file cleanup failed (%v); remove %s manually\n", derr, filepath.Join(credsDir, d.ID+".env"))
 			}
 		}
 		return fmt.Errorf("update destination: %w", err)
+	}
+	if clearedCredsFile && d.CredentialsRef == nil {
+		if _, derr := call(ctx, "backup.dest.creds_delete", map[string]any{"dest_id": d.ID}); derr != nil {
+			fmt.Fprintf(os.Stderr, "warning: credential file cleanup after --clear-creds failed (%v); remove %s manually\n", derr, filepath.Join(credsDir, d.ID+".env"))
+		}
 	}
 	return nil
 }
