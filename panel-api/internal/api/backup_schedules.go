@@ -9,7 +9,6 @@ package api
 import (
 	"errors"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -168,7 +167,7 @@ func (h *backupScheduleHandler) create(c *gin.Context) {
 		DestinationIDs:      req.DestinationIDs,
 	})
 	if err != nil {
-		writeScheduleOpError(c, err)
+		writeScheduleOpError(c, err, "db_create")
 		return
 	}
 	dests, _ := h.cfg.Schedules.GetDestinations(c.Request.Context(), s.ID)
@@ -176,8 +175,12 @@ func (h *backupScheduleHandler) create(c *gin.Context) {
 }
 
 // writeScheduleOpError maps a backupscheduleops error to the wire codes the
-// admin REST surface has always emitted, so the contract is unchanged.
-func writeScheduleOpError(c *gin.Context, err error) {
+// admin REST surface has always emitted, so the contract is unchanged. The
+// policy codes are shared by every lifecycle call; dbErrCode is the generic
+// 500 string for the caller's operation ("db_create" for create, "db_update"
+// for update), since the leaf's single transactional write can't tell the row
+// change apart from the membership replacement.
+func writeScheduleOpError(c *gin.Context, err error, dbErrCode string) {
 	var ure *backupscheduleops.UserRejectedError
 	switch {
 	case errors.Is(err, backupscheduleops.ErrInvalidKind):
@@ -189,7 +192,7 @@ func writeScheduleOpError(c *gin.Context, err error) {
 	case errors.Is(err, backupscheduleops.ErrInvalidCron):
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid_cron", "detail": err.Error()})
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "db_create"})
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": dbErrCode})
 	}
 }
 
@@ -206,79 +209,50 @@ type updateScheduleRequest struct {
 
 func (h *backupScheduleHandler) update(c *gin.Context) {
 	id := c.Param("id")
-	s, err := h.cfg.Schedules.Get(c.Request.Context(), id)
-	if err != nil {
-		if errors.Is(err, repository.ErrNotFound) {
-			c.JSON(http.StatusNotFound, gin.H{"status": "error", "error": "not_found"})
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "db_get"})
-		return
-	}
 	var req updateScheduleRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid_body", "detail": err.Error()})
 		return
 	}
-	if req.CronExpr != nil {
-		next, err := internalbackup.NextFire(*req.CronExpr, time.Now().UTC())
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid_cron", "detail": err.Error()})
+	// Route the whole patch through the lifecycle leaf. It validates the
+	// change against the stored, immutable kind (on an account schedule every
+	// explicit target user must exist and must not be an admin; an invalid
+	// cron aborts) and persists the field changes plus any membership
+	// replacement in ONE transaction. The previous inline path wrote the row,
+	// destinations, and users as three separate statements, so a failure after
+	// the row committed left the schedule with a membership that silently
+	// differed from the request — and for an account schedule an empty user
+	// set fans out to every non-admin at tick time, so a partial write there
+	// broadens the blast radius. (Admin-target rejection was already enforced
+	// on this surface inline; this change is atomicity plus de-duplication of
+	// the policy the leaf already owns.)
+	s, err := backupscheduleops.Update(c.Request.Context(), backupscheduleops.Deps{
+		Schedules: h.cfg.Schedules,
+		Users:     h.cfg.Users,
+	}, backupscheduleops.UpdateInput{
+		ID:                  id,
+		CronExpr:            req.CronExpr,
+		Enabled:             req.Enabled,
+		IncludeSystemBackup: req.IncludeSystemBackup,
+		KeepDaily:           req.KeepDaily,
+		KeepWeekly:          req.KeepWeekly,
+		KeepMonthly:         req.KeepMonthly,
+		DestinationIDs:      req.DestinationIDs,
+		UserIDs:             req.UserIDs,
+	})
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"status": "error", "error": "not_found"})
 			return
 		}
-		s.CronExpr = strings.TrimSpace(*req.CronExpr)
-		s.NextRunAt = &next
-	}
-	if req.Enabled != nil {
-		s.Enabled = *req.Enabled
-	}
-	if req.IncludeSystemBackup != nil && s.Kind == models.BackupScheduleKindAccount {
-		s.IncludeSystemBackup = *req.IncludeSystemBackup
-	}
-	if req.KeepDaily != nil {
-		s.KeepDaily = req.KeepDaily
-	}
-	if req.KeepWeekly != nil {
-		s.KeepWeekly = req.KeepWeekly
-	}
-	if req.KeepMonthly != nil {
-		s.KeepMonthly = req.KeepMonthly
-	}
-	if err := h.cfg.Schedules.Update(c.Request.Context(), s); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "db_update"})
+		writeScheduleOpError(c, err, "db_update")
 		return
 	}
-	if req.DestinationIDs != nil {
-		if err := h.cfg.Schedules.ReplaceDestinations(c.Request.Context(), s.ID, *req.DestinationIDs); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "db_link_destinations"})
-			return
-		}
-	}
-	if req.UserIDs != nil && s.Kind == models.BackupScheduleKindAccount {
-		clean := make([]string, 0, len(*req.UserIDs))
-		for _, uid := range *req.UserIDs {
-			if uid == "" {
-				continue
-			}
-			if h.cfg.Users != nil {
-				user, err := h.cfg.Users.FindByID(c.Request.Context(), uid)
-				if err != nil || user == nil {
-					c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "user_not_found", "detail": uid})
-					return
-				}
-				if user.IsAdmin {
-					c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "admin_user_not_allowed", "detail": uid})
-					return
-				}
-			}
-			clean = append(clean, uid)
-		}
-		if err := h.cfg.Schedules.ReplaceUsers(c.Request.Context(), s.ID, clean); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "db_link_users"})
-			return
-		}
-		s.UserIDs = clean
-	} else {
+	// Output shaping: the leaf sets s.UserIDs only when it replaced the account
+	// membership (a non-nil, possibly-empty slice — never null). For every
+	// other case re-read the current membership so the DTO reflects what's
+	// stored, matching the shape this surface has always returned.
+	if req.UserIDs == nil || s.Kind != models.BackupScheduleKindAccount {
 		ids, _ := h.cfg.Schedules.GetUserIDs(c.Request.Context(), s.ID)
 		s.UserIDs = ids
 	}
