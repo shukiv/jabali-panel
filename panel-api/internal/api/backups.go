@@ -2257,16 +2257,14 @@ func (h *meBackupHandler) createSchedule(c *gin.Context) {
 		KeepMonthly: keepMonthly,
 		NextRunAt:   &next,
 	}
-	if err := h.cfg.Schedules.Create(c.Request.Context(), sched); err != nil {
+	// One transaction: the row and both membership sets commit together, or the
+	// whole create rolls back. The previous three sequential writes could leave a
+	// row with no or partial user/destination links if the second or third write
+	// failed (JAB-307). Same atomic repository primitive the admin and CLI paths
+	// use; the tenant surface keeps its own shape (Cadence/Content), so it calls
+	// the primitive directly rather than through the admin lifecycle leaf.
+	if err := h.cfg.Schedules.CreateWithMemberships(c.Request.Context(), sched, dests, []string{uid}); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "db_create"})
-		return
-	}
-	if err := h.cfg.Schedules.ReplaceUsers(c.Request.Context(), id, []string{uid}); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "db_link_users"})
-		return
-	}
-	if err := h.cfg.Schedules.ReplaceDestinations(c.Request.Context(), id, dests); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "db_link_destinations"})
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"status": "ok", "id": id})
@@ -2304,16 +2302,17 @@ func (h *meBackupHandler) updateSchedule(c *gin.Context) {
 	sched.Enabled = req.Enabled
 	sched.KeepDaily, sched.KeepWeekly, sched.KeepMonthly = keepDaily, keepWeekly, keepMonthly
 	sched.NextRunAt = &next
-	if err := h.cfg.Schedules.Update(c.Request.Context(), sched); err != nil {
+	// One transaction: the field changes and both membership sets commit together,
+	// or the whole update rolls back. The previous three sequential writes could
+	// leave the row on a new cadence while the destination or user set was only
+	// half-replaced (JAB-307). UpdateWithMemberships writes the same column set the
+	// old Update did, so field persistence is unchanged — it only wraps the two
+	// membership replacements into the same transaction. Same atomic repository
+	// primitive the admin and CLI paths use; called directly (not the admin
+	// lifecycle leaf) because the tenant surface keeps its own shape (Cadence/Content).
+	users := []string{uid}
+	if err := h.cfg.Schedules.UpdateWithMemberships(c.Request.Context(), sched, &dests, &users); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "db_update"})
-		return
-	}
-	if err := h.cfg.Schedules.ReplaceUsers(c.Request.Context(), sched.ID, []string{uid}); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "db_link_users"})
-		return
-	}
-	if err := h.cfg.Schedules.ReplaceDestinations(c.Request.Context(), sched.ID, dests); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "db_link_destinations"})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
