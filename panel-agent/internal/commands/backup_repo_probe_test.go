@@ -54,6 +54,8 @@ func TestClassifyRepoProbe(t *testing.T) {
 			// A bare "is damaged" without the ciphertext phrase (index/pack
 			// corruption) must NOT be mistaken for the key/config race — it keeps
 			// the generic unopenable hint, not the "count your key files" advice.
+			// (Synthetic fixture — pins classifier specificity, not a captured
+			// restic string, unlike the ciphertext case above.)
 			name:   "bare is-damaged (not ciphertext) stays unopenable",
 			stderr: "fatal: pack 1a2b3c is damaged: run `restic repair index`",
 			want:   repoProbeUnopenable,

@@ -214,7 +214,7 @@ func repoUnopenableMessage(class repoProbeClass, repoURL, passwordFile, lowerStd
 			"master does not match the repository config, which happens when two backups ran `restic init` on "+
 			"the same empty repository at once (leaving more than one key file and a single config), or the "+
 			"config is corrupt. To recover: if the repository's keys/ directory holds MORE THAN ONE file, move "+
-			"the key named in the error above out of keys/ and retry (restore it if that does not help); if keys/ "+
+			"the key restic named in the error out of keys/ and retry (restore it if that does not help); if keys/ "+
 			"holds exactly ONE file the config is corrupt — point this destination at a FRESH empty directory. "+
 			"The old snapshots stay on disk.",
 			repoURL, passwordFile, lowerStderr)
