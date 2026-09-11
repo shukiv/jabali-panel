@@ -1500,6 +1500,18 @@ DNS zones and records (dns_zones / dns_records): list / add / update / delete
 jabali dns
 ```
 
+#### `jabali dns prune-orphan-records`
+
+Remove PowerDNS backend rows left behind by a pre-#1629 zone delete (GH #1620)
+
+```
+jabali dns prune-orphan-records [flags]
+```
+
+**Flags:**
+
+- `--apply` — actually delete (default is a dry run)
+
 #### `jabali dns prune-service-records`
 
 Remove imported cPanel service subdomains (cpanel/webmail/whm/…) from DNS

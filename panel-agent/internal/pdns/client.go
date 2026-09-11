@@ -318,3 +318,135 @@ func (c *Client) DeleteZone(name string) error {
 	}
 	return nil
 }
+
+// --- Orphan sweep (GH #1620) ------------------------------------------------
+//
+// DeleteZone (the #1629 fix) tears a zone's child rows down before its `domains`
+// row, so a zone delete no longer strands children. That is forward-only: a box
+// that deleted a domain BEFORE #1629 still carries the orphaned child rows —
+// records with no parent `domains` row. They can keep being served (from the
+// backend or its caches) until removed, and collide as "duplicate records" when
+// the domain is re-added. ReapOrphans is the one-time cleanup DeleteZone does
+// not do.
+
+// orphanWhere selects child rows whose parent `domains` row is gone. A
+// self-contained subquery, no bound args. A NULL domain_id yields NULL (not
+// TRUE) under NOT IN, so a null-parented row is left untouched — the safe
+// direction. Callers MUST refuse to run this when the domains table is empty
+// (see DomainsCount): an empty subquery makes NOT IN true for EVERY row.
+const orphanWhere = ` WHERE domain_id NOT IN (SELECT id FROM domains)`
+
+// orphanSweepStep is one statement in the orphan cleanup. Both SQL strings are
+// compile-time literals (table names cannot be bound parameters); nothing here
+// is built from runtime or caller data, so there is no injection surface.
+type orphanSweepStep struct {
+	table     string
+	deleteSQL string
+	countSQL  string
+}
+
+// orphanSweepPlan is zoneDeletePlan's counterpart with two deliberate
+// differences: the predicate is the orphan subquery (not a name-scoped one),
+// and there is NO `DELETE FROM domains` step — orphans are defined by the
+// absence of that parent, so the `domains` table is only ever read, never
+// written. present gates the optional tables exactly as zoneDeletePlan does.
+func orphanSweepPlan(present map[string]bool) []orphanSweepStep {
+	steps := []orphanSweepStep{
+		{"records", `DELETE FROM records` + orphanWhere, `SELECT COUNT(*) FROM records` + orphanWhere},
+		{"domainmetadata", `DELETE FROM domainmetadata` + orphanWhere, `SELECT COUNT(*) FROM domainmetadata` + orphanWhere},
+	}
+	if present["comments"] {
+		steps = append(steps, orphanSweepStep{"comments", `DELETE FROM comments` + orphanWhere, `SELECT COUNT(*) FROM comments` + orphanWhere})
+	}
+	if present["cryptokeys"] {
+		steps = append(steps, orphanSweepStep{"cryptokeys", `DELETE FROM cryptokeys` + orphanWhere, `SELECT COUNT(*) FROM cryptokeys` + orphanWhere})
+	}
+	return steps
+}
+
+// DomainsCount returns the number of rows in the pdns `domains` table. The
+// orphan sweep refuses to run when this is zero: an empty domains table turns
+// the orphan predicate true for every record, so a misconfigured or
+// mid-provision connection could otherwise wipe an entire backend. This is the
+// DNS analogue of php.pool.reap-orphans refusing a nil keep-list.
+func (c *Client) DomainsCount() (int, error) {
+	var n int
+	if err := c.db.QueryRow(`SELECT COUNT(*) FROM domains`).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count domains: %w", err)
+	}
+	return n, nil
+}
+
+// OrphanCounts returns the number of orphan rows per child table — for the
+// dry-run report and to size a sweep before it runs. Only present tables are
+// probed.
+func (c *Client) OrphanCounts() (map[string]int, error) {
+	present, err := c.presentOptionalTables()
+	if err != nil {
+		return nil, fmt.Errorf("probe pdns tables: %w", err)
+	}
+	out := map[string]int{}
+	for _, s := range orphanSweepPlan(present) {
+		var n int
+		if err := c.db.QueryRow(s.countSQL).Scan(&n); err != nil {
+			return nil, fmt.Errorf("count orphan %s: %w", s.table, err)
+		}
+		out[s.table] = n
+	}
+	return out, nil
+}
+
+// OrphanRecordNames returns the DISTINCT names of orphan rows in `records` — the
+// names whose cached answers must be purged after a sweep. Deleting the row does
+// not evict the pdns Auth packet cache or the recursor's forward cache, which
+// would keep serving the stale answer for cache-ttl otherwise (the exact "keeps
+// resolving after delete" symptom in GH #1620). Collect these BEFORE the delete,
+// since afterwards the rows are gone.
+func (c *Client) OrphanRecordNames() ([]string, error) {
+	rows, err := c.db.Query(`SELECT DISTINCT name FROM records` + orphanWhere)
+	if err != nil {
+		return nil, fmt.Errorf("list orphan record names: %w", err)
+	}
+	defer rows.Close()
+	var names []string
+	for rows.Next() {
+		var n sql.NullString
+		if err := rows.Scan(&n); err != nil {
+			return nil, err
+		}
+		if n.Valid && n.String != "" {
+			names = append(names, n.String)
+		}
+	}
+	return names, rows.Err()
+}
+
+// ReapOrphans deletes, in one transaction, every child row whose parent
+// `domains` row no longer exists (GH #1620) and returns the rows deleted per
+// table. It does NOT enforce the domains-nonempty floor itself; the caller MUST
+// refuse when DomainsCount() is zero. Cache purge is the caller's job too, since
+// only it knows the affected names (OrphanRecordNames, collected first).
+func (c *Client) ReapOrphans() (map[string]int, error) {
+	present, err := c.presentOptionalTables()
+	if err != nil {
+		return nil, fmt.Errorf("probe pdns tables: %w", err)
+	}
+	tx, err := c.db.Begin()
+	if err != nil {
+		return nil, fmt.Errorf("begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }() // no-op once committed
+	deleted := map[string]int{}
+	for _, s := range orphanSweepPlan(present) {
+		res, err := tx.Exec(s.deleteSQL)
+		if err != nil {
+			return nil, fmt.Errorf("delete orphan %s: %w", s.table, err)
+		}
+		n, _ := res.RowsAffected()
+		deleted[s.table] = int(n)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit: %w", err)
+	}
+	return deleted, nil
+}
