@@ -389,6 +389,24 @@ SecRule REQUEST_URI "@rx ^/wp-admin/admin-ajax\.php" "id:9599230,phase:1,pass,no
 # endpoints. All other rules still inspect both args (a real attack value
 # there is still caught), and 933120 stays active everywhere else.
 SecRule REQUEST_URI "@contains wc-ajax=" "id:9599300,phase:1,pass,nolog,ctl:ruleRemoveById=933120"
+#
+# 932120 vs DokuWiki sprintdoc icons (GH #1641, docs.itflow.org). The sprintdoc
+# template serves its UI icons through lib/tpl/sprintdoc/svg.php?svg=<name>, and
+# icon names like "format-list-bulleted-square" contain "format-list" — an entry
+# in windows-powershell-commands.data — so CRS 932120 ("Windows PowerShell
+# Command Found", RCE) fires on every page that renders that icon. Observed: 40
+# blocks across 10 distinct source IPs on that one asset path — the textbook
+# shape of a false positive, and it hands legit readers a ~4h AppSec ban.
+# This is a platform default, not a per-host exclusion: Jabali installs DokuWiki
+# itself (DefaultSubdirectory "wiki"), so without it an operator installs
+# DokuWiki + the common sprintdoc template and real users get banned with no clue
+# why. Safe to ship built-in: 932120 detects *Windows* PowerShell on a Linux/PHP
+# box, the target is a static-icon handler that executes nothing, and every other
+# rule still inspects the path. Drop ONLY 932120, ONLY on sprintdoc's svg.php.
+# The optional leading segment matches both a root install (/lib/tpl/...) and the
+# default /wiki/ subdir install (/wiki/lib/tpl/...); [^/?]+ is one path segment,
+# never crossing into a deeper path or the query string.
+SecRule REQUEST_URI "@rx ^(/[^/?]+)?/lib/tpl/sprintdoc/svg\.php" "id:9599310,phase:1,pass,nolog,ctl:ruleRemoveById=932120"
 `
 }
 

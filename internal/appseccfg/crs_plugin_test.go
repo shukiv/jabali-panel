@@ -23,6 +23,13 @@ func TestCRSPluginBefore_Surgical(t *testing.T) {
 		// checkout FP was never actually fixed. ruleRemoveById is the only form
 		// that works, and "wc-ajax=" is narrow enough to contain it.
 		`ctl:ruleRemoveById=933120`,
+		// DokuWiki sprintdoc icons (GH #1641): svg.php?svg=format-list-* matches
+		// the "Format-List" cmdlet in windows-powershell-commands.data → 932120
+		// RCE FP. Built-in default (Jabali installs DokuWiki); optional leading
+		// segment covers root + the default /wiki/ subdir install.
+		`SecRule REQUEST_URI "@rx ^(/[^/?]+)?/lib/tpl/sprintdoc/svg\.php"`,
+		`id:9599310`,
+		`ctl:ruleRemoveById=932120`,
 		// text/plain must be an allowed request content type (sendBeacon
 		// default; jQuery contentType habit) — pre-seeded WITH the full CRS
 		// default list, not as a lone value, or 901162 skips its defaults and
@@ -60,6 +67,7 @@ func TestCRSPluginBefore_Surgical(t *testing.T) {
 		"911100": true, "942550": true, "932370": true,
 		"933120": true, // wp-admin referer FP + WooCommerce checkout FP
 		"942100": true, // libinjection vs wp-admin/admin-ajax.php
+		"932120": true, // DokuWiki sprintdoc svg.php icons (GH #1641): Windows-PowerShell RCE FP on a Linux static-icon path
 	}
 	// Rules whose ctl sits on a chain's second line are URI-scoped by the
 	// chain's FIRST line; track that so the scoping check below stays honest.
