@@ -284,6 +284,13 @@ type Reconciler struct {
 	dbQuotaEnforceMu      sync.Mutex
 	dbQuotaEnforceLastRun time.Time
 
+	// GH #1620 DNS orphan-record auto-sweep (dns_orphan_sweep.go). Gated
+	// on server_settings.dns_orphan_autosweep_enabled; fires the agent
+	// `dns.reap-orphans` RPC at most hourly. Same hourly-gate rationale as
+	// the two enforce sweeps above.
+	dnsSweepMu      sync.Mutex
+	dnsSweepLastRun time.Time
+
 	// sshKeysDispatchCache: per-user hash of last-applied SSH keys +
 	// timestamp. Lets ReconcileSSHKeysForUser skip the agent IPC when
 	// the desired state hasn't changed since the last dispatch. Self-
@@ -925,6 +932,12 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 
 	// JAB-243 — DB storage quota enforcement (hourly inside).
 	r.reconcileDBQuotaEnforce(ctx)
+
+	// GH #1620 — opt-in PowerDNS orphan-record sweep (hourly inside).
+	// Cheap noop when the toggle is off; the agent refuses on an empty
+	// domains table. Runs before the domain.list call below so a failing
+	// list can't starve it.
+	r.reconcileDNSOrphanSweep(ctx)
 
 	// M18 rate-limit zone fragment MUST converge BEFORE the domain loop:
 	// domain.create on the agent writes each vhost then runs `nginx -t`.

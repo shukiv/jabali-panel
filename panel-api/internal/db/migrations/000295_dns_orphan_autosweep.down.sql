@@ -1,0 +1,1 @@
+ALTER TABLE server_settings DROP COLUMN dns_orphan_autosweep_enabled;
