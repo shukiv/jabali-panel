@@ -48,6 +48,9 @@ func RegisterDNSRoutes(g *gin.RouterGroup, cfg DNSHandlerConfig) {
 	d.PATCH("/zone", h.updateZone)
 	// GH #1611: drop the DNS facet (keep web + mail) — "host DNS elsewhere".
 	d.DELETE("/zone", h.deleteZone)
+	// GH #1611: re-enable DNS management — "host DNS here again". The reconciler
+	// re-creates the zone + records on its next tick.
+	d.POST("/zone", h.enableZone)
 	d.GET("/records", h.listRecords)
 	d.POST("/records", h.createRecord)
 	// SOA + NS are auto-generated at compile time (never stored in

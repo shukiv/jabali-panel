@@ -236,3 +236,56 @@ func TestDeleteZone_AlreadyDisabled_Idempotent(t *testing.T) {
 	assert.Equal(t, 1, dr.flipCalls, "re-flip is idempotent")
 	assert.Equal(t, 1, ag.callCount, "pdns delete still attempted")
 }
+
+// --- GH #1611: re-enable DNS management (POST /domains/:id/dns/zone) ---
+
+func ezDo(h *dnsHandler, id, userID string, isAdmin bool) *httptest.ResponseRecorder {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/domains/"+id+"/dns/zone", nil)
+	c.Params = gin.Params{{Key: "id", Value: id}}
+	ginctx.SetClaims(c, &auth.AccessClaims{UserID: userID, IsAdmin: isAdmin})
+	h.enableZone(c)
+	return w
+}
+
+func TestEnableZone_Flips_And_Returns200(t *testing.T) {
+	dom := &models.Domain{ID: "d1", Name: "ex.com", UserID: "u1", DNSDisabled: true}
+	dr := &dzDomainRepo{dom: dom}
+	// No agent needed for enable — the reconciler re-creates the zone.
+	h := &dnsHandler{cfg: DNSHandlerConfig{Domains: dr}}
+
+	w := ezDo(h, "d1", "u1", false)
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Contains(t, w.Body.String(), "dns_enabled")
+	assert.Equal(t, 1, dr.flipCalls, "flipped once")
+	assert.False(t, dr.flippedTo, "flipped to enabled (dns_disabled=false)")
+}
+
+func TestEnableZone_AlreadyEnabled_Idempotent(t *testing.T) {
+	dom := &models.Domain{ID: "d1", Name: "ex.com", UserID: "u1", DNSDisabled: false}
+	dr := &dzDomainRepo{dom: dom}
+	h := &dnsHandler{cfg: DNSHandlerConfig{Domains: dr}}
+
+	w := ezDo(h, "d1", "u1", false)
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, 0, dr.flipCalls, "no write when DNS already enabled")
+}
+
+func TestEnableZone_NonOwner_Forbidden(t *testing.T) {
+	dom := &models.Domain{ID: "d1", Name: "ex.com", UserID: "owner", DNSDisabled: true}
+	dr := &dzDomainRepo{dom: dom}
+	h := &dnsHandler{cfg: DNSHandlerConfig{Domains: dr}}
+
+	w := ezDo(h, "d1", "someone-else", false)
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Equal(t, 0, dr.flipCalls, "no flip for a non-owner")
+}
+
+func TestEnableZone_NotFound(t *testing.T) {
+	dr := &dzDomainRepo{notFound: true}
+	h := &dnsHandler{cfg: DNSHandlerConfig{Domains: dr}}
+	w := ezDo(h, "nope", "u1", true)
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}

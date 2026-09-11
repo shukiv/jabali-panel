@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"time"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dnsops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 )
 
@@ -77,7 +78,11 @@ func (h *domainHandler) facetPreservingWebDelete(
 	//    delete the PowerDNS zone, and clear the panel's zone + records rows so
 	//    the domain matches the ManageDNS=false shape.
 	if deleteDNS {
-		w, flipErr := tearDownDNSFacet(ctx, h.cfg.Domains, h.cfg.DNSZones, h.cfg.DNSRecords, h.cfg.Agent, dom)
+		dnsDeps := dnsops.Deps{Domains: h.cfg.Domains, Zones: h.cfg.DNSZones, Records: h.cfg.DNSRecords}
+		if h.cfg.Agent != nil {
+			dnsDeps.Call = h.cfg.Agent.Call
+		}
+		w, flipErr := dnsops.TearDownFacet(ctx, dnsDeps, dom)
 		if flipErr != nil {
 			warnings = append(warnings, "DNS management flag not cleared in the database")
 		}
