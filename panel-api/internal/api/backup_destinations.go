@@ -413,8 +413,25 @@ func (h *backupDestinationHandler) update(c *gin.Context) {
 		d.CredentialsRef = nil
 	}
 	credsEnv := req.CredentialsEnv
-	if d.Kind == models.BackupDestinationKindSFTP && req.SFTP != nil &&
-		req.SFTP.Auth == models.SFTPAuthPassword && req.SFTPPassword != "" {
+	// SFTP password (SSHPASS) is an independent credential write, gated on the
+	// destination's EFFECTIVE kind/auth — the block being set this request if the
+	// caller sent one (d.ExtraOptions was rewritten above), else the stored block.
+	// A password-only rotation (sftp_password with no sftp block) therefore lands
+	// on an already-password-auth destination, mirroring the CLI's --sftp-password
+	// affordance (JAB-310 AC5), instead of being silently dropped with a 200. The
+	// shared gate fails loud on a key-auth or non-sftp destination — including the
+	// req.SFTP=key-auth-block + sftp_password case, which used to be silently
+	// ignored. An empty sftp_password means "absent" (omitempty), so it is skipped,
+	// leaving any stored SSHPASS untouched (an unchanged-password edit).
+	if req.SFTPPassword != "" {
+		effAuth := ""
+		if s := d.ExtraOptionsTyped().SFTP; s != nil {
+			effAuth = s.Auth
+		}
+		if err := models.SFTPPasswordWriteAllowed(d.Kind, effAuth); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "sftp_password_not_applicable", "detail": err.Error()})
+			return
+		}
 		if credsEnv == nil {
 			credsEnv = map[string]string{}
 		}

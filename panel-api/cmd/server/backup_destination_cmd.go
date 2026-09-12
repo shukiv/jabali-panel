@@ -209,22 +209,6 @@ func buildReplacedSFTPBlock(host, user string, port int, path, auth, keyPath str
 	return url, raw, nil
 }
 
-// sftpPasswordWriteAllowed reports whether a --sftp-password update may write the
-// SSHPASS credential for a destination of the given kind and effective auth
-// (JAB-310 AC5). The password is an independent credential write (not a
-// structural block edit), but it must only land on an sftp destination whose
-// effective auth is "password": writing an SSHPASS to a key-auth destination is
-// meaningless, so it is rejected rather than silently stored.
-func sftpPasswordWriteAllowed(kind, effectiveAuth string) error {
-	if kind != models.BackupDestinationKindSFTP {
-		return fmt.Errorf("--sftp-password only applies to sftp destinations (kind=%s)", kind)
-	}
-	if effectiveAuth != models.SFTPAuthPassword {
-		return fmt.Errorf("--sftp-password requires the destination to use password auth (current auth=%q); pass --sftp-auth password with the full sftp block to switch", effectiveAuth)
-	}
-	return nil
-}
-
 func newBackupDestinationUpdateCmd() *cobra.Command {
 	var (
 		name        string
@@ -343,7 +327,15 @@ func newBackupDestinationUpdateCmd() *cobra.Command {
 				if s := d.ExtraOptionsTyped().SFTP; s != nil {
 					effAuth = s.Auth
 				}
-				if err := sftpPasswordWriteAllowed(d.Kind, effAuth); err != nil {
+				if err := models.SFTPPasswordWriteAllowed(d.Kind, effAuth); err != nil {
+					// Append the CLI-specific remedy only for the auth-mismatch arm
+					// (kind is already sftp): a non-sftp kind cannot take --sftp-* at
+					// all, so "switch auth" is wrong advice there. The shared
+					// (flag-agnostic) predicate omits flag names so the REST 400 detail
+					// can surface it verbatim; the CLI adds the flag hint here.
+					if d.Kind == models.BackupDestinationKindSFTP {
+						err = fmt.Errorf("%w; pass --sftp-auth password with the full sftp block to switch", err)
+					}
 					return err
 				}
 				path, err := writeBackupDestinationCreds(ctx, sharedAgent.Call, d.ID, map[string]string{"SSHPASS": sftpPass})
