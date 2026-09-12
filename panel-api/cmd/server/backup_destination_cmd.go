@@ -328,9 +328,15 @@ func newBackupDestinationUpdateCmd() *cobra.Command {
 					effAuth = s.Auth
 				}
 				if err := models.SFTPPasswordWriteAllowed(d.Kind, effAuth); err != nil {
-					// Append the CLI-specific remedy the shared (flag-agnostic)
-					// predicate deliberately omits, so the REST 400 detail stays clean.
-					return fmt.Errorf("%w; pass --sftp-auth password with the full sftp block to switch", err)
+					// Append the CLI-specific remedy only for the auth-mismatch arm
+					// (kind is already sftp): a non-sftp kind cannot take --sftp-* at
+					// all, so "switch auth" is wrong advice there. The shared
+					// (flag-agnostic) predicate omits flag names so the REST 400 detail
+					// can surface it verbatim; the CLI adds the flag hint here.
+					if d.Kind == models.BackupDestinationKindSFTP {
+						err = fmt.Errorf("%w; pass --sftp-auth password with the full sftp block to switch", err)
+					}
+					return err
 				}
 				path, err := writeBackupDestinationCreds(ctx, sharedAgent.Call, d.ID, map[string]string{"SSHPASS": sftpPass})
 				if err != nil {
