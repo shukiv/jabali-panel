@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path"
@@ -309,6 +310,123 @@ func listRepoKeys(ctx context.Context, destKind, repoURL string, sftp *backupSFT
 	}
 }
 
+// removeID returns ids with the first exact match of id dropped. Used to build
+// the "remaining key files" listing after one key was moved aside, so the
+// sharpened race message counts what is left without a second remote listing.
+func removeID(ids []string, id string) []string {
+	out := make([]string, 0, len(ids))
+	for _, x := range ids {
+		if x != id {
+			out = append(out, x)
+		}
+	}
+	return out
+}
+
+// moveKeyAside moves a mismatched restic key file OUT of the repository's keys/
+// directory into the repository ROOT, renaming it to <id>.jabali-race-<unixnano>
+// (JAB-405 Part 2b). The destination is deliberately the repo root, not a keys/
+// sub-name: restic enumerates key candidates ONLY from keys/ on every version, so
+// a file in the root is never re-tried as a key — the surviving key becomes the
+// only one restic opens. The .jabali-race-<ts> suffix is also not a valid 64-hex
+// key id, and the nanosecond timestamp makes the destination unique. It RENAMES,
+// never deletes (os.Rename local; `ssh -- mv -n` remote), so the moved key stays
+// on disk and can be restored. Returns the destination path it moved to.
+func moveKeyAside(ctx context.Context, destKind, repoURL string, sftp *backupSFTPInputs, extraEnv []string, named string) (string, error) {
+	dstName := fmt.Sprintf("%s.jabali-race-%d", named, time.Now().UnixNano())
+	switch {
+	case destKind == backup.KindSFTP && sftp != nil && sftp.Host != "":
+		src := path.Join(sftp.Path, "keys", named)
+		dst := path.Join(sftp.Path, dstName)
+		if _, err := backup.RenameRemoteSFTP(ctx, backup.SFTPInputs{
+			Host:    sftp.Host,
+			User:    sftp.User,
+			Port:    sftp.Port,
+			Path:    sftp.Path,
+			Auth:    sftp.Auth,
+			KeyPath: sftp.KeyPath,
+		}, src, dst, extraEnv); err != nil {
+			return "", err
+		}
+		return dst, nil
+	case destKind == backup.KindLocal:
+		src := filepath.Join(repoURL, "keys", named)
+		dst := filepath.Join(repoURL, dstName)
+		if err := os.Rename(src, dst); err != nil {
+			return "", fmt.Errorf("rename %s: %w", src, err)
+		}
+		return dst, nil
+	default:
+		return "", fmt.Errorf("cannot move a key aside for a %q backend", destKind)
+	}
+}
+
+// repairKeyMismatch performs the JAB-405 Part 2b automated move-aside repair for
+// a key/config mismatch caused by the concurrent-init race. It is called ONLY when
+// the safety gate holds — the mismatch class, ≥2 key files, and the key restic
+// named is present in the listing — so it never touches keys/ on a listing that
+// does not prove the race. It moves that ONE key aside, re-probes, and:
+//
+//   - repository opens → returns nil; the backup proceeds. The move is logged.
+//   - still a mismatch on a DIFFERENT present key → the move made progress (there
+//     were ≥3 key files). Returns the sharpened race message naming the next key,
+//     built from the remaining key files (original minus the one moved). The run
+//     still fails, but the next scheduled run's auto-repair clears the next key —
+//     convergent: N key files clear over N-1 runs, one move each.
+//   - anything else (the move itself failed, a non-mismatch failure, or the SAME
+//     key is still named) → fails loud with what happened and where the key went,
+//     so the operator can investigate or restore it. There is NO revert: the named
+//     key is one restic itself proved cannot decrypt this config, so leaving it
+//     moved is never wrong, and moving it back would only re-introduce a known-bad
+//     key.
+//
+// At most ONE move per call (no retry loop). move and reprobe are injected so the
+// decision table is unit-testable without a real backend.
+func repairKeyMismatch(
+	ctx context.Context,
+	keys *repoKeyListing,
+	repoURL, passwordFile, origStderr string,
+	move func(ctx context.Context, named string) (dst string, err error),
+	reprobe func(ctx context.Context) (lowerStderr string, err error),
+) error {
+	named := keys.named
+	dst, err := move(ctx, named)
+	if err != nil {
+		// The move failed, so the repository is UNTOUCHED — surface the exact 2a
+		// race guidance (move keys/<id> manually) plus why the automatic move could
+		// not run.
+		return fmt.Errorf("automatic key-mismatch repair could not move keys/%s aside (%v) — do it manually: %s",
+			named, err, repoUnopenableMessage(repoProbeKeyConfigMismatch, repoURL, passwordFile, origStderr, keys, nil))
+	}
+
+	lower, perr := reprobe(ctx)
+	if perr == nil {
+		slog.Warn("JAB-405: auto-repaired concurrent-init key mismatch — moved key aside; repository now opens",
+			"repo", repoURL, "moved_key", named, "moved_to", dst)
+		return nil
+	}
+
+	if newNamed := mismatchKeyID(lower); classifyRepoProbe(lower) == repoProbeKeyConfigMismatch &&
+		newNamed != "" && newNamed != named {
+		// Progress: another key still mismatches (there were ≥3 key files). Build the
+		// sharpened race message from the remaining key files so the operator — and
+		// the next run's auto-repair — targets the next key.
+		remaining := &repoKeyListing{ids: removeID(keys.ids, named), named: newNamed}
+		slog.Warn("JAB-405: moved a mismatched key aside but another key still mismatches — next scheduled run will repair it",
+			"repo", repoURL, "moved_key", named, "moved_to", dst, "next_key", newNamed)
+		return errors.New(repoUnopenableMessage(repoProbeKeyConfigMismatch, repoURL, passwordFile, lower, remaining, nil))
+	}
+
+	// The move did not fix it and did not leave a clean "another key" signature: the
+	// config is genuinely corrupt, or the state is unexpected. Fail loud with the raw
+	// error and where the key went, so the operator can restore it if needed.
+	slog.Warn("JAB-405: moved a mismatched key aside but the repository still does not open — treating as corrupt",
+		"repo", repoURL, "moved_key", named, "moved_to", dst, "stderr", lower)
+	return fmt.Errorf("automatic key-mismatch repair moved keys/%s to %s but the repository still does not open (%s) — "+
+		"restore that file if needed and treat the repository as corrupt; point this destination at a FRESH empty directory (the old snapshots stay on disk)",
+		named, dst, lower)
+}
+
 // repoUnopenableMessage builds the operator-facing error for a repository that
 // EXISTS but cannot be opened. It is a single paragraph with no newlines: the
 // same text surfaces in a run-failure log AND in a short UI toast on the manual
@@ -453,6 +571,25 @@ func bkEnsureRepoReady(ctx context.Context, repoURL, credentialsRef, destKind, p
 				} else {
 					keys = &repoKeyListing{ids: ids, named: mismatchKeyID(lower)}
 				}
+			}
+			// JAB-405 Part 2b: when the listing PROVES the concurrent-init race — the
+			// mismatch class, ≥2 key files, and the key restic named is one of them —
+			// attempt the automated move-aside repair (move that key out of keys/,
+			// re-probe, proceed if the surviving key opens config). SAFETY INVARIANT:
+			// never touch keys/ unless all three hold, so a jailed/unlistable target
+			// (keys == nil) or a listing that does not match the error can never trigger
+			// a move. One move per call. This runs inside withRepoInitLock (the whole
+			// switch does), so a concurrent job cannot init or repair the same repo at
+			// once. Only the backup run repairs; the manual test-connection door counts.
+			if cls == repoProbeKeyConfigMismatch && keys != nil && len(keys.ids) >= 2 && keys.namedPresent() {
+				move := func(ctx context.Context, named string) (string, error) {
+					return moveKeyAside(ctx, destKind, repoURL, sftp, extraEnv, named)
+				}
+				reprobe := func(ctx context.Context) (string, error) {
+					_, st, e := backup.SnapshotsRemote(ctx, nil, repoURL, pwFile, extraEnv, bkResticOptions(sftp))
+					return strings.ToLower(strings.TrimSpace(string(st))), e
+				}
+				return repairKeyMismatch(ctx, keys, repoURL, pwFile, lower, move, reprobe)
 			}
 			return errors.New(repoUnopenableMessage(cls, repoURL, pwFile, lower, keys, listErr))
 		}

@@ -74,3 +74,38 @@ func ListRemoteSFTP(ctx context.Context, in SFTPInputs, remotePath string, extra
 	}
 	return out, nil
 }
+
+// buildSSHRenameArgs assembles the argv for `[conn] -- mv -n <src> <dst>`. src
+// and dst are each a single argv element (no shell), so spaces or shell
+// metacharacters in the repository path cannot split into extra arguments. -n
+// (no-clobber) is belt-and-braces: the JAB-405 caller builds dst from a
+// nanosecond timestamp, so the destination never pre-exists.
+func buildSSHRenameArgs(in SFTPInputs, src, dst string) []string {
+	return append(buildSSHConnArgs(in), "--", "mv", "-n", src, dst)
+}
+
+// RenameRemoteSFTP runs `ssh user@host -- mv -n <src> <dst>` over the same auth
+// path restic's sftp.command uses. It renames a single file within the remote
+// repository — src and dst live on the same filesystem, so `mv` is an atomic
+// rename, never a copy+unlink. The JAB-405 Part 2b move-aside repair uses it to
+// move a mismatched key file OUT of keys/ (into the repository root, which restic
+// never scans for key candidates). It NEVER deletes: `mv` only renames, so the
+// moved key stays on disk and can be restored. On error the combined output is
+// returned so the caller can surface a diagnostic.
+func RenameRemoteSFTP(ctx context.Context, in SFTPInputs, src, dst string, extraEnv []string) ([]byte, error) {
+	if in.Host == "" || in.User == "" {
+		return nil, fmt.Errorf("sftp: host+user required")
+	}
+	if src == "" || dst == "" {
+		return nil, fmt.Errorf("sftp: src+dst required")
+	}
+	args := buildSSHRenameArgs(in, src, dst)
+	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
+	cmd.Env = append(cmd.Environ(), extraEnv...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return out, fmt.Errorf("ssh mv -n %s %s: %w (output: %s)",
+			src, dst, err, strings.TrimSpace(string(out)))
+	}
+	return out, nil
+}
