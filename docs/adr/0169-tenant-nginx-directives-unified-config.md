@@ -31,7 +31,10 @@ There are **three** nginx surfaces on a domain today:
   rewrite target forced to a **local** path, stricter pattern cap) **only when the
   admin enables `TenantDomainOptionsEnabled`** (off by default).
 - **`NginxSafeOptions`** (curated toggles: max body, HSTS, security headers, gzip,
-  intercept-errors, path-info) — owner-settable.
+  intercept-errors, path-info) — admin always; a **tenant** only when the admin
+  enables `TenantDomainOptionsEnabled` (the same opt-in as `NginxRules`, off by
+  default). (An earlier draft called these plainly "owner-settable"; the code
+  gates them on the opt-in, so a plain owner cannot set them until it is on.)
 
 There is also a **reserved** strict allowlist validator `ValidateNginxDirectives`
 + `allowedNginxDirectives` — kept and unit-tested, but **not wired to any field**
@@ -139,3 +142,68 @@ arbitrary paste can be turned back into structured, editable rules.
 - **`nginx -t` remains a syntactic backstop only** — it does not, and cannot,
   enforce any of the value-grammar rules above; those are validated in the panel
   before render.
+
+## Implementation notes (as shipped)
+
+The phase plan above is the decision as recorded; a few things landed narrower or
+differently than the sketch. Kept here so the ADR and the code do not drift.
+
+- **Phase 1 — surface + document (GH #1681, merged).** As planned: made
+  `TenantDomainOptionsEnabled` discoverable (Overview hint when off) and documented
+  both surfaces. No new trust surface.
+
+- **Phase 2 — hardened the typed header set, did not widen (GH #1684).** The
+  redirects the phase named already existed (`page_redirects`, `redirect_all_to`,
+  and the tenant `rewrite` rule's local-path `redirect`/`permanent` flag), and no
+  other typed kind is tenant-safe (`proxy_pass` = SSRF; `ip_access` / `php_setting`
+  / `static_alias` are admin). So the real Phase 2 content was **constraining**
+  `custom_header`, not adding kinds: a tenant `custom_header` may no longer set a
+  panel-managed response header (`Strict-Transport-Security`, `X-Frame-Options`,
+  `X-Content-Type-Options`, `Referrer-Policy`, `Content-Length`,
+  `Transfer-Encoding`), which a server-scope `add_header` could otherwise duplicate
+  or void (e.g. HSTS `max-age=0`).
+
+- **Phase 3 — Web Templates entity was built, not pre-existing (GH #1687 backend,
+  #1689 UI).** The sketch read as though a Web Templates entity already existed to
+  "carry" presets; it did not (only DNS templates #1627 and page templates did), so
+  a new `web_templates` table + `domains.web_template_id` were added. The preset is
+  **snapshot-copied** onto `nginx_custom_directives` at create (not a live link),
+  validated by the admin denylist at both save and apply. Selection is
+  **admin-only**: because the admin denylist does not block `proxy_pass`, a
+  tenant-pickable template would be SSRF with the admin as unwitting author, so a
+  non-admin create with `web_template_id` is refused.
+
+- **Phase 4 — tenant raw subset shipped tighter than the sketch (GH #1691 backend,
+  #1692 UI).** The field is `domains.nginx_tenant_directives`, kept separate from
+  the admin `nginx_custom_directives`, behind `ValidateNginxDirectivesTenant`:
+  - **Allowlist is `add_header` / `expires` / `etag` only** — all response-shaping,
+    none routing. The sketch's `return`/`rewrite` (local-only) and `error_page`
+    (value form) were **excluded in the first cut**: raw `return` can preempt
+    `/.well-known/acme-challenge` and open-redirect via `$vars`, and `error_page` /
+    `gzip` are already emitted at server scope by the template / `NginxSafeOptions`,
+    so a tenant copy duplicates them and fails `nginx -t`. `location`, `proxy_pass`,
+    `root`, and `fastcgi_param` stay excluded as the sketch required. Widening to
+    `return`/`rewrite`/`error_page` is a documented follow-up if wanted.
+  - **Blocks (`{ }`) are rejected outright**, which resolves the sketch's open
+    "nested `location` / `add_header` inheritance" question — a tenant cannot open a
+    nested scope, so inherited-header stripping is not reachable.
+  - Structural guards the sketch did not spell out but the code needs: **one
+    statement per line** (exactly one unquoted `;`, quote-aware for CSP/`Link`
+    values) so the shared first-token scanner cannot be smuggled past, and
+    **backslashes rejected outright** (a security-review finding: naive quote
+    tracking treats `\"` as a close while nginx treats it as a literal, leaving the
+    string open to swallow following config). 8 KB / 64-line caps.
+  - Renders through the single existing `custom_directives` assembly in the
+    reconciler — **no panel-agent change** — so it inherits the per-vhost
+    `nginx -t` + revert containment.
+
+- **Phase 5 — read-only surfacing, both directions (GH #1694).** UI only; no
+  migration, no render-pipeline change (both stores already render). The tenant
+  builder view now shows the admin's `nginx_custom_directives` read-only (they were
+  already in the tenant's domain JSON, just never displayed), and — the mirror the
+  sketch did not call out — the admin Nginx section shows the tenant's
+  `nginx_tenant_directives` read-only with a **Clear** action, because disabling the
+  opt-in does not deactivate an already-stored tenant snippet (the reconciler still
+  renders the column), so an admin needs a way to null it. Neither store is
+  reverse-parsed into the other (Alternative C stays rejected). Precedence between
+  typed rules and raw directives is deliberately left unspecified.
