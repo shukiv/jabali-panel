@@ -31,6 +31,7 @@ import { DomainRedirectsPanel } from "../../DomainRedirectsPanel";
 import { DNSRecordsPanel } from "../../dns/DNSRecordsPage";
 import { DomainLogsPanel } from "../../../components/logs/DomainLogsPanel";
 import { DomainNginxOptionsPanel } from "../../../components/DomainNginxOptionsPanel";
+import { DomainAdvancedDirectivesPanel } from "../../../components/DomainAdvancedDirectivesPanel";
 import { TenantNginxRulesPanel } from "../../DomainSettingsButton";
 import { DomainDocRootPanel } from "../../../components/domains/DomainDocRootPanel";
 import { DomainPHPSettingsPanel } from "../../../components/domains/DomainPHPSettingsPanel";
@@ -123,7 +124,7 @@ export const WebDomainPage = () => {
               type="info"
               showIcon
               message="More domain controls are available on request"
-              description="When your administrator enables tenant domain options for this server, you get two extra tabs on your domains: a curated set of safe nginx options (max upload size, HSTS, security headers, gzip) and a limited rewrite / custom-response-header rule builder. Raw nginx directives stay admin-only."
+              description="When your administrator enables tenant domain options for this server, you get extra tabs on your domains: a curated set of safe nginx options (max upload size, HSTS, security headers, gzip), a limited rewrite / custom-response-header rule builder, and a small set of advanced response and caching directives (add_header, expires, etag). Routing directives like proxy_pass and root stay admin-only."
             />
           )}
         </Space>
@@ -173,6 +174,11 @@ export const WebDomainPage = () => {
             key: "rewrite-rules",
             label: "Rewrite rules",
             node: <TenantNginxRulesPanel domain={domain} />,
+          },
+          {
+            key: "advanced-directives",
+            label: "Advanced directives",
+            node: <DomainAdvancedDirectivesPanel domainId={domain.id} />,
           },
         ]
       : []),

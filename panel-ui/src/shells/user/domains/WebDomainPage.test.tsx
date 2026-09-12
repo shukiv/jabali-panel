@@ -48,6 +48,9 @@ vi.mock("../../../hooks/useServerCapabilities", () => ({
 vi.mock("../../../components/DomainNginxOptionsPanel", () => ({
   DomainNginxOptionsPanel: ({ domainId }: { domainId: string }) => <div>options-pane:{domainId}</div>,
 }));
+vi.mock("../../../components/DomainAdvancedDirectivesPanel", () => ({
+  DomainAdvancedDirectivesPanel: ({ domainId }: { domainId: string }) => <div>advanced-pane:{domainId}</div>,
+}));
 vi.mock("../../DomainSettingsButton", () => ({
   TenantNginxRulesPanel: ({ domain }: { domain: { id: string } }) => <div>rewrite-pane:{domain.id}</div>,
 }));
@@ -225,6 +228,7 @@ describe("WebDomainPage (GH #1543)", () => {
     expect(screen.getByText("Index Files")).toBeInTheDocument();
     expect(screen.queryByText("Domain options")).not.toBeInTheDocument();
     expect(screen.queryByText("Rewrite rules")).not.toBeInTheDocument();
+    expect(screen.queryByText("Advanced directives")).not.toBeInTheDocument();
     // "Document root" also labels an Overview fact, so assert the pane itself
     // (its stub marker) is absent rather than the ambiguous tab text.
     expect(screen.queryByText("docroot-pane:d1")).not.toBeInTheDocument();
@@ -236,7 +240,14 @@ describe("WebDomainPage (GH #1543)", () => {
     expect(await screen.findByText("options-pane:d1")).toBeInTheDocument();
     // The other gated tabs are present in the strip.
     expect(screen.getByText("Rewrite rules")).toBeInTheDocument();
+    expect(screen.getByText("Advanced directives")).toBeInTheDocument();
     expect(screen.getByText("Document root")).toBeInTheDocument();
+  });
+
+  it("renders the advanced-directives pane when the caps are on (GH #1624 Phase 4)", async () => {
+    caps.value = { tenant_domain_options_enabled: true, tenant_docroot_editable: false };
+    renderAt("/jabali-panel/domains/d1/advanced-directives");
+    expect(await screen.findByText("advanced-pane:d1")).toBeInTheDocument();
   });
 
   it("falls back to Overview when a URL targets a cap-gated tab that is off", async () => {
