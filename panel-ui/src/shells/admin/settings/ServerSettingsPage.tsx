@@ -71,6 +71,7 @@ import { CloudflareTokenCard } from "./CloudflareTokenCard";
 import { NspawnImagesCard } from "./NspawnImagesCard";
 import { SSOMaintenanceCard } from "./SSOMaintenanceCard";
 import { TenantDomainOptionsCard } from "./TenantDomainOptionsCard";
+import { WebTemplatesCard } from "./WebTemplatesCard";
 import { TenantNotificationsCard } from "./TenantNotificationsCard";
 import { NginxSettingsCard } from "./NginxSettingsCard";
 import { LogRetentionCard } from "./LogRetentionCard";
@@ -1071,6 +1072,7 @@ export const ServerSettingsPage = () => {
         <>
           <NginxSettingsCard />
           <TenantDomainOptionsCard />
+          <WebTemplatesCard />
         </>
       ),
     },
