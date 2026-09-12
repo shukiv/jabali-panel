@@ -67,6 +67,7 @@ type Deps struct {
 	DNSZones                  repository.DNSZoneRepository
 	DNSRecords                repository.DNSRecordRepository
 	DNSTemplates              repository.DNSTemplateRepository
+	WebTemplates              repository.WebTemplateRepository
 	SSLCerts                  repository.SSLCertificateRepository
 	SharedCerts               repository.SharedCertificateRepository
 	// MailRBLStates (M47 Wave 5) backs the curated-RBL eventsource
@@ -484,6 +485,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 					// GH #1627: resolve a tenant-selected custom DNS template on
 					// the JAB-233 automation create path (same as GUI create).
 					DNSTemplates:    deps.DNSTemplates,
+					WebTemplates:    deps.WebTemplates, // GH #1624 Phase 3 (admin-only apply at create)
 					ManagedIPs:      deps.ManagedIPs,
 					ServerSettings:  deps.ServerSettings,
 					BWDaily:         deps.BWDaily,
@@ -735,6 +737,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				DNSRecords: deps.DNSRecords,
 				// GH #1627: resolves a tenant-selected custom DNS template at create.
 				DNSTemplates: deps.DNSTemplates,
+				WebTemplates: deps.WebTemplates, // GH #1624 Phase 3 (admin-only apply at create)
 				BWDaily:      deps.BWDaily,
 				// M24: lets PATCH listen_ipv*_id resolve FK + family + the
 				// is_user_selectable check, and lets GET denormalize
@@ -1562,6 +1565,15 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			adminTmpl := v1.Group("/admin", middleware.RequireAdmin())
 			api.RegisterAdminDNSTemplateRoutes(adminTmpl, api.DNSTemplateHandlerConfig{Templates: deps.DNSTemplates})
 			api.RegisterDNSTemplateRoutes(v1, api.DNSTemplateHandlerConfig{Templates: deps.DNSTemplates})
+		}
+		// GH #1624 / ADR-0169 Phase 3: admin web (nginx) templates. Admin CRUD
+		// under the RequireAdmin group only — there is NO tenant-facing route
+		// (admin-select-only: the admin denylist does not block proxy_pass, so a
+		// tenant-pickable template would be an SSRF vector with the admin as
+		// unwitting author).
+		if deps.WebTemplates != nil {
+			adminWebTmpl := v1.Group("/admin", middleware.RequireAdmin())
+			api.RegisterAdminWebTemplateRoutes(adminWebTmpl, api.WebTemplateHandlerConfig{Templates: deps.WebTemplates})
 		}
 		// M44: Automation API token management. Admin mints + revokes
 		// HMAC-signed tokens; the matching public read-only routes

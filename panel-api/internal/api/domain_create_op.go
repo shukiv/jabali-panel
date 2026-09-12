@@ -64,6 +64,12 @@ type createDomainInput struct {
 	// every non-template create. Mutually exclusive with an explicit mail
 	// provider, and requires the panel to host DNS (DNSDisabled=false).
 	DNSTemplateID  string
+	// WebTemplateID (GH #1624 / ADR-0169 Phase 3) is an admin web (nginx)
+	// template selected at create. ADMIN-ONLY: a non-admin actor naming one is
+	// rejected (web_template_admin_only). When set, the template's directives are
+	// snapshot-copied onto the new domain's NginxCustomDirectives. Empty for every
+	// non-template create.
+	WebTemplateID  string
 	SSLMode        string // "" → le
 	CreateWWW      bool
 	TempURLEnabled bool
@@ -295,6 +301,42 @@ func createDomainOp(ctx context.Context, h *domainHandler, in createDomainInput)
 		mailProvider = models.MailProviderCustom
 		mailTemplateID = &tmplID
 	}
+
+	// GH #1624 / ADR-0169 Phase 3: an ADMIN may create a domain from a web
+	// (nginx) template — the template's raw directives are snapshot-copied onto
+	// the new domain's NginxCustomDirectives (a later template edit does NOT
+	// propagate; the admin edits the domain directly).
+	//
+	// ADMIN-ONLY: the GH #1580 admin denylist does not block proxy_pass, so
+	// letting a tenant pick a globally-visible template would let template B's
+	// `proxy_pass http://127.0.0.1:...` front a localhost service from tenant B's
+	// own domain — the ADR-0169 SSRF threat with the admin as unwitting author.
+	// A nil repo is fail-closed (503), never a silent skip. The directives are
+	// validated AGAIN here so a denylist tightened after the template was saved
+	// is enforced at apply.
+	var webTemplateID *string
+	var webTemplateDirectives string
+	if tmplID := strings.TrimSpace(in.WebTemplateID); tmplID != "" {
+		if !in.ActorIsAdmin {
+			return nil, &createDomainError{http.StatusForbidden, "web_template_admin_only", "web templates can be applied only by an administrator"}
+		}
+		if h.cfg.WebTemplates == nil {
+			return nil, &createDomainError{http.StatusServiceUnavailable, "web_templates_unavailable", "web templates are not enabled on this server"}
+		}
+		tmpl, terr := h.cfg.WebTemplates.FindByID(ctx, tmplID)
+		if terr != nil {
+			if errors.Is(terr, repository.ErrNotFound) {
+				return nil, &createDomainError{http.StatusBadRequest, "unknown_web_template", "the selected web template does not exist"}
+			}
+			return nil, &createDomainError{http.StatusInternalServerError, "web_template_lookup_failed", ""}
+		}
+		if msg := ValidateNginxDirectivesAdmin(tmpl.NginxDirectives); msg != "" {
+			return nil, &createDomainError{http.StatusBadRequest, "web_template_invalid", "web template " + tmpl.Name + ": " + msg}
+		}
+		webTemplateID = &tmplID
+		webTemplateDirectives = tmpl.NginxDirectives
+	}
+
 	// GH #1409: never enable Jabali mail on a domain when the mail module isn't
 	// installed — coerce to "none" so we don't provision mail that can't run.
 	// The GUI already defaults to None; this guards API / automation callers
@@ -363,6 +405,10 @@ func createDomainOp(ctx context.Context, h *domainHandler, in createDomainInput)
 		M365Onmicrosoft: strPtrOrNil(m365Tenant),
 		GoogleDKIM:      strPtrOrNil(googleDKIM),
 		MailTemplateID:  mailTemplateID, // GH #1627: nil unless a template was chosen
+		// GH #1624 Phase 3: nil / "" unless an admin chose a web template above,
+		// in which case its directives are snapshot-copied onto this domain.
+		WebTemplateID:         webTemplateID,
+		NginxCustomDirectives: strPtrOrNil(webTemplateDirectives),
 		EmailEnabled:    mailEnabled,
 		SkipAutoSAN:     mailSkipSAN,
 		CreateWWW:       in.CreateWWW,

@@ -205,6 +205,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		dnsZoneRepo := repository.NewDNSZoneRepository(sharedDB)
 		dnsRecordRepo := repository.NewDNSRecordRepository(sharedDB)
 		dnsTemplateRepo := repository.NewDNSTemplateRepository(sharedDB)
+		webTemplateRepo := repository.NewWebTemplateRepository(sharedDB) // GH #1624 Phase 3
 		sslCertRepo := repository.NewSSLCertificateRepository(sharedDB)
 		sharedCertRepo := repository.NewSharedCertificateRepository(sharedDB)
 		mailRBLStateRepo := repository.NewMailRBLStateRepository(sharedDB)
@@ -280,6 +281,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		deps.Packages = packageRepo
 		deps.Domains = domainRepo
 		deps.DNSTemplates = dnsTemplateRepo // GH #1627
+		deps.WebTemplates = webTemplateRepo // GH #1624 Phase 3
 		deps.DomainTeardowns = repository.NewDomainTeardownRepository(sharedDB)
 		deps.SSO = ssoService
 		// M37 Phase 4: Adminer SSO bridge — engine-aware mint + PG shadow.

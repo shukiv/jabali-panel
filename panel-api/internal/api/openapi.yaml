@@ -1082,6 +1082,75 @@ paths:
         "200": { description: Deleted }
         "404": { description: Not found }
 
+  /admin/web-templates:
+    get:
+      tags: [Web Templates]
+      summary: List admin web (nginx) templates (admin) (GH #1624)
+      responses: { "200": { description: OK } }
+    post:
+      tags: [Web Templates]
+      summary: Create an admin web (nginx) template (admin) (GH #1624)
+      description: |
+        A named preset of raw nginx directives. The directives are validated with
+        the same relaxed denylist the admin custom-directives PATCH uses
+        (ValidateNginxDirectivesAdmin). Admin-select-only: at Web Domain create an
+        ADMIN may select a template (web_template_id) to snapshot-copy its
+        directives onto the new domain — there is no tenant-facing route.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, nginx_directives]
+              properties:
+                name:             { type: string, maxLength: 120 }
+                description:      { type: string, maxLength: 500 }
+                nginx_directives: { type: string, maxLength: 16384 }
+      responses:
+        "201": { description: Created }
+        "400": { description: Invalid template or directives }
+        "409": { description: A template with that name already exists }
+
+  /admin/web-templates/{id}:
+    get:
+      tags: [Web Templates]
+      summary: Get one admin web (nginx) template (admin) (GH #1624)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: OK }
+        "404": { description: Not found }
+    put:
+      tags: [Web Templates]
+      summary: Replace an admin web (nginx) template's fields (admin) (GH #1624)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, nginx_directives]
+              properties:
+                name:             { type: string, maxLength: 120 }
+                description:      { type: string, maxLength: 500 }
+                nginx_directives: { type: string, maxLength: 16384 }
+      responses:
+        "200": { description: Updated }
+        "400": { description: Invalid template or directives }
+        "404": { description: Not found }
+        "409": { description: A template with that name already exists }
+    delete:
+      tags: [Web Templates]
+      summary: Delete an admin web (nginx) template (admin) (GH #1624)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: Deleted }
+        "404": { description: Not found }
+
   # ----------------------------------------------- Admin: Server Settings ---
 
   /admin/settings/free-hostname/register:
