@@ -2,8 +2,9 @@ package reconciler
 
 import (
 	"context"
-	"os"
+	"errors"
 	"log/slog"
+	"os"
 	"testing"
 	"time"
 
@@ -44,28 +45,46 @@ func (f *srFake) DeleteTombstone(_ context.Context, e string) error {
 type mbFake struct {
 	repository.MailboxRepository
 	byID map[string]*models.Mailbox
+	err  error // if set, every FindByID returns this (a data-access failure, not not-found)
 }
 
 func (f *mbFake) FindByID(_ context.Context, id string) (*models.Mailbox, error) {
-	return f.byID[id], nil
+	if f.err != nil {
+		return nil, f.err
+	}
+	if m, ok := f.byID[id]; ok {
+		return m, nil
+	}
+	return nil, repository.ErrNotFound // mirror the real repo (not a nil,nil)
 }
 
 type mgFake struct {
 	repository.MailGroupRepository
 	members map[string][]string
+	err     error // if set, every ListMemberEmails returns this
 }
 
 func (f *mgFake) ListMemberEmails(_ context.Context, id string) ([]string, error) {
-	return f.members[id], nil
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.members[id], nil // a missing/empty group is no rows + nil err, like the real repo
 }
 
 type domFake struct {
 	repository.DomainRepository
 	byID map[string]*models.Domain
+	err  error // if set, every FindByID returns this (a data-access failure, not not-found)
 }
 
 func (f *domFake) FindByID(_ context.Context, id string) (*models.Domain, error) {
-	return f.byID[id], nil
+	if f.err != nil {
+		return nil, f.err
+	}
+	if d, ok := f.byID[id]; ok {
+		return d, nil
+	}
+	return nil, repository.ErrNotFound // mirror the real repo
 }
 
 func sptr(s string) *string { return &s }
@@ -141,4 +160,160 @@ func TestReconcileSharedResources_TombstoneRetainedOnAgentFailure(t *testing.T) 
 	r := newSRReconciler(t, ag, sr, &mbFake{}, &mgFake{}, &domFake{})
 	r.reconcileSharedResources(context.Background())
 	require.Empty(t, sr.tombKilled, "tombstone kept when destroy fails (retry next pass)")
+}
+
+// --- JAB-339 AC3: grantee-lookup fail-closed (keep last-known shareWith) ---
+
+// calendarShareSet returns the first calendar.share_set push (nil if none).
+func calendarShareSet(ag *fakeAgent) *fakeCall {
+	for i := range ag.calls {
+		if ag.calls[i].method == "calendar.share_set" {
+			return &ag.calls[i]
+		}
+	}
+	return nil
+}
+
+// shareSetCount counts calendar.share_set pushes across all resources in a pass.
+func shareSetCount(ag *fakeAgent) int {
+	n := 0
+	for _, c := range ag.calls {
+		if c.method == "calendar.share_set" {
+			n++
+		}
+	}
+	return n
+}
+
+func calRes(id, email string) models.SharedResource {
+	return models.SharedResource{
+		ID: id, DomainID: "dom1", Kind: "calendar", EmailCached: sptr(email),
+		DisplayName: "Cal " + id, HostAccountID: "h-" + id, // non-empty: skip the apply step
+	}
+}
+
+// A genuine not-found mailbox grantee stays inert: it is dropped and the push
+// still runs for the remaining grantees (unchanged behavior, pinned).
+func TestReconcileSharedResources_MissingMailboxGranteeInert_PushProceeds(t *testing.T) {
+	sr := &srFake{
+		res: []models.SharedResource{calRes("res1", "teamcal@example.org")},
+		grants: map[string][]models.SharedResourceGrant{
+			"res1": {
+				{ResourceID: "res1", GranteeKind: "mailbox", GranteeID: "ghost", Rights: "read"},
+				{ResourceID: "res1", GranteeKind: "mailbox", GranteeID: "mb1", Rights: "readwrite"},
+			},
+		},
+	}
+	mb := &mbFake{byID: map[string]*models.Mailbox{"mb1": {ID: "mb1", LocalPart: "alice", DomainID: "dom1"}}}
+	dom := &domFake{byID: map[string]*models.Domain{"dom1": {ID: "dom1", Name: "example.org"}}}
+	ag := &fakeAgent{}
+
+	r := newSRReconciler(t, ag, sr, mb, &mgFake{}, dom)
+	r.reconcileSharedResources(context.Background())
+
+	cs := calendarShareSet(ag)
+	require.NotNil(t, cs, "missing grantee is inert — push still runs for the rest")
+	shares := cs.params.(map[string]any)["shares"].(map[string]string)
+	require.Equal(t, map[string]string{"alice@example.org": "readwrite"}, shares,
+		"missing grantee dropped; resolvable grantee still shared")
+}
+
+// A mailbox whose DomainID dangles (domain not-found) is likewise inert.
+func TestReconcileSharedResources_MissingDomainInert_PushProceeds(t *testing.T) {
+	sr := &srFake{
+		res: []models.SharedResource{calRes("res1", "teamcal@example.org")},
+		grants: map[string][]models.SharedResourceGrant{
+			"res1": {
+				{ResourceID: "res1", GranteeKind: "mailbox", GranteeID: "mb1", Rights: "read"},
+				{ResourceID: "res1", GranteeKind: "group", GranteeID: "grp1", Rights: "read"},
+			},
+		},
+	}
+	mb := &mbFake{byID: map[string]*models.Mailbox{"mb1": {ID: "mb1", LocalPart: "alice", DomainID: "dom_gone"}}}
+	mg := &mgFake{members: map[string][]string{"grp1": {"bob@example.org"}}}
+	dom := &domFake{byID: map[string]*models.Domain{}} // dom_gone absent → ErrNotFound
+
+	ag := &fakeAgent{}
+	r := newSRReconciler(t, ag, sr, mb, mg, dom)
+	r.reconcileSharedResources(context.Background())
+
+	cs := calendarShareSet(ag)
+	require.NotNil(t, cs, "dangling domain is inert — push still runs")
+	shares := cs.params.(map[string]any)["shares"].(map[string]string)
+	require.Equal(t, map[string]string{"bob@example.org": "read"}, shares,
+		"mailbox with dangling domain dropped; group grantee survives")
+}
+
+// A data-access error (NOT not-found) resolving a mailbox grantee must skip the
+// whole push, so Stalwart keeps last-known shareWith rather than losing the
+// grantee on a transient DB blip.
+func TestReconcileSharedResources_MailboxLookupDBError_SkipsPush(t *testing.T) {
+	sr := &srFake{
+		res: []models.SharedResource{calRes("res1", "teamcal@example.org")},
+		grants: map[string][]models.SharedResourceGrant{
+			"res1": {{ResourceID: "res1", GranteeKind: "mailbox", GranteeID: "mb1", Rights: "read"}},
+		},
+	}
+	ag := &fakeAgent{}
+	r := newSRReconciler(t, ag, sr, &mbFake{err: errors.New("db down")}, &mgFake{}, &domFake{})
+	r.reconcileSharedResources(context.Background())
+
+	require.Nil(t, calendarShareSet(ag),
+		"mailbox lookup DB error must skip the push (keep last-known state)")
+}
+
+func TestReconcileSharedResources_DomainLookupDBError_SkipsPush(t *testing.T) {
+	sr := &srFake{
+		res: []models.SharedResource{calRes("res1", "teamcal@example.org")},
+		grants: map[string][]models.SharedResourceGrant{
+			"res1": {{ResourceID: "res1", GranteeKind: "mailbox", GranteeID: "mb1", Rights: "read"}},
+		},
+	}
+	mb := &mbFake{byID: map[string]*models.Mailbox{"mb1": {ID: "mb1", LocalPart: "alice", DomainID: "dom1"}}}
+	ag := &fakeAgent{}
+	r := newSRReconciler(t, ag, sr, mb, &mgFake{}, &domFake{err: errors.New("db down")})
+	r.reconcileSharedResources(context.Background())
+
+	require.Nil(t, calendarShareSet(ag),
+		"domain lookup DB error must skip the push (keep last-known state)")
+}
+
+func TestReconcileSharedResources_GroupLookupDBError_SkipsPush(t *testing.T) {
+	sr := &srFake{
+		res: []models.SharedResource{calRes("res1", "teamcal@example.org")},
+		grants: map[string][]models.SharedResourceGrant{
+			"res1": {{ResourceID: "res1", GranteeKind: "group", GranteeID: "grp1", Rights: "read"}},
+		},
+	}
+	ag := &fakeAgent{}
+	r := newSRReconciler(t, ag, sr, &mbFake{}, &mgFake{err: errors.New("db down")}, &domFake{})
+	r.reconcileSharedResources(context.Background())
+
+	require.Nil(t, calendarShareSet(ag),
+		"group lookup DB error must skip the push (keep last-known state)")
+}
+
+// A DB error on one resource must not stop a sibling resource in the same pass
+// from converging — the skip is per-resource.
+func TestReconcileSharedResources_DBError_OtherResourceStillPushed(t *testing.T) {
+	sr := &srFake{
+		res: []models.SharedResource{
+			calRes("res1", "a@example.org"), // mailbox grantee → hits the failing lookup
+			calRes("res2", "b@example.org"), // group grantee → resolves
+		},
+		grants: map[string][]models.SharedResourceGrant{
+			"res1": {{ResourceID: "res1", GranteeKind: "mailbox", GranteeID: "mb1", Rights: "read"}},
+			"res2": {{ResourceID: "res2", GranteeKind: "group", GranteeID: "grp1", Rights: "read"}},
+		},
+	}
+	mb := &mbFake{err: errors.New("db down")} // fails res1's mailbox lookup only
+	mg := &mgFake{members: map[string][]string{"grp1": {"bob@example.org"}}}
+
+	ag := &fakeAgent{}
+	r := newSRReconciler(t, ag, sr, mb, mg, &domFake{})
+	r.reconcileSharedResources(context.Background())
+
+	require.Equal(t, 1, shareSetCount(ag), "res1 push skipped on DB error; res2 still pushed")
+	require.Equal(t, "b@example.org", calendarShareSet(ag).params.(map[string]any)["owner_email"],
+		"the surviving push is the healthy sibling res2")
 }

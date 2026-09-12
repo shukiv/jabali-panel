@@ -3,6 +3,7 @@ package reconciler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -132,17 +133,34 @@ func (r *Reconciler) reconcileOneSharedResource(ctx context.Context, res *models
 		case "mailbox":
 			mb, err := r.srMailboxes.FindByID(ctx, g.GranteeID)
 			if err != nil {
-				continue
+				if errors.Is(err, repository.ErrNotFound) {
+					continue // grantee gone (e.g. deleted before its grants were pruned) — inert, drop it
+				}
+				// A data-access error is NOT proof the grantee is gone. Pushing a
+				// map built from a partial lookup would wrongly revoke this grantee
+				// in Stalwart on a transient DB blip, so skip the push and keep the
+				// last-known shareWith until the next pass (same rule as the
+				// ListGrants failure above).
+				slog.WarnContext(ctx, "shared_resources: resolve mailbox grantee; skip share push to keep last-known state", "resource", res.ID, "grantee", g.GranteeID, "err", err)
+				return
 			}
 			dom, err := r.domains.FindByID(ctx, mb.DomainID)
 			if err != nil {
-				continue
+				if errors.Is(err, repository.ErrNotFound) {
+					continue // dangling domain reference — inert, drop it
+				}
+				slog.WarnContext(ctx, "shared_resources: resolve grantee domain; skip share push to keep last-known state", "resource", res.ID, "domain", mb.DomainID, "err", err)
+				return
 			}
 			shares[mb.LocalPart+"@"+dom.Name] = g.Rights
 		case "group":
 			emails, err := r.srMailGroups.ListMemberEmails(ctx, g.GranteeID)
 			if err != nil {
-				continue
+				// ListMemberEmails has no not-found case: a missing or empty group
+				// returns no rows + a nil error, so any error here is a data-access
+				// failure. Skip the push and keep last-known state, as above.
+				slog.WarnContext(ctx, "shared_resources: list group members; skip share push to keep last-known state", "resource", res.ID, "grantee", g.GranteeID, "err", err)
+				return
 			}
 			for _, e := range emails {
 				if _, exists := shares[e]; !exists {
