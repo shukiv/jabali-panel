@@ -222,8 +222,9 @@ func Delete(ctx context.Context, d Deps, in DeleteInput, notify NotifyFunc) erro
 // the whole set — ReplaceGrants is an all-or-nothing replace), but any OTHER
 // data-access error is wrapped ErrInternal and propagated, never collapsed into
 // "not found". Collapsing would let a grant slip through on a transient DB
-// blip. Kind + id are folded in here too, so both adapters stop duplicating
-// them inline and share one owner.
+// blip. Kind + id are folded in here too: the REST handler drops its inline
+// copies, while the CLI keeps its flag-specific messages first and lets this
+// re-check them harmlessly — so one owner governs the policy for both.
 //
 // Domain / tenant scoping of the grantee is deliberately NOT enforced here: a
 // cross-domain grant is a sharing-scope policy question, not a privilege
