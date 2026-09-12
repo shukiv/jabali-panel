@@ -411,6 +411,13 @@ type Domain struct {
 	// never re-asserted). Nil for every non-template domain. Not a foreign key:
 	// a later template delete leaves a harmless dangling id (seeds nothing).
 	MailTemplateID *string    `gorm:"column:mail_template_id;type:char(26)" json:"mail_template_id,omitempty"`
+	// WebTemplateID (GH #1624 / ADR-0169 Phase 3) records which admin web (nginx)
+	// template this domain was created from. Informational only: the template's
+	// directives are snapshot-copied into NginxCustomDirectives at create, so
+	// nothing reads this at reconcile. Nil for every non-template domain. Not a
+	// foreign key (mirrors MailTemplateID): a later template delete leaves a
+	// harmless dangling id.
+	WebTemplateID  *string    `gorm:"column:web_template_id;type:char(26)" json:"web_template_id,omitempty"`
 	DkimSelector    *string    `gorm:"type:varchar(64)" json:"dkim_selector,omitempty"`
 	DkimPublicKey   *string    `gorm:"type:text" json:"dkim_public_key,omitempty"`
 	EmailEnabledAt  *time.Time `gorm:"type:datetime(6)" json:"email_enabled_at,omitempty"`

@@ -96,6 +96,12 @@ type DomainHandlerConfig struct {
 	// a create that names a dns_template_id return 503 (fail-closed), never a
 	// silent skip.
 	DNSTemplates repository.DNSTemplateRepository
+	// WebTemplates (GH #1624 / ADR-0169 Phase 3) resolves an admin-selected web
+	// (nginx) template at create: it validates the template exists + its
+	// directives pass the admin denylist, then snapshot-copies them onto the new
+	// domain's nginx_custom_directives. Optional — nil makes a create that names a
+	// web_template_id return 503 (fail-closed), never a silent skip.
+	WebTemplates repository.WebTemplateRepository
 	// AppInstalls (GH #1238 chown) backs the change-owner refusal: a domain
 	// with an app install carries the current owner's DB creds in its config,
 	// so re-owning it would leak a live cross-tenant credential. REQUIRED for
@@ -174,6 +180,11 @@ type createDomainRequest struct {
 	// it needs a cert upload, set via PUT /domains/:id/ssl/custom after create.
 	// Empty defaults to 'le'.
 	SSLMode string `json:"ssl_mode"`
+	// WebTemplateID (GH #1624 / ADR-0169 Phase 3) is an admin web (nginx)
+	// template to seed this domain's nginx_custom_directives from. ADMIN-ONLY:
+	// the create op rejects it from a non-admin caller (web_template_admin_only).
+	// Empty/absent for every non-template create.
+	WebTemplateID string `json:"web_template_id"`
 	// WebEnabled / ManageDNS (GH #1449) are the "Add Web Domain" service
 	// checkboxes: both default ON (nil == checked == current behaviour), so a
 	// caller only sends false to OPT OUT. WebEnabled=false → no vhost/docroot/
@@ -863,6 +874,7 @@ func (h *domainHandler) create(c *gin.Context) {
 		M365Onmicrosoft:  req.M365Onmicrosoft,
 		GoogleDKIM:       req.GoogleDKIM,
 		SSLMode:          req.SSLMode,
+		WebTemplateID:    req.WebTemplateID, // GH #1624 Phase 3 (admin-only; enforced in the op)
 		CreateWWW:        req.CreateWWW,
 		TempURLEnabled:   req.TempURLEnabled,
 		ReverseProxy:     req.ReverseProxy,

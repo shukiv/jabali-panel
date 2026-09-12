@@ -54,6 +54,7 @@ func fullDeps() Deps {
 		DNSZones: repository.NewDNSZoneRepository(db),
 		DNSRecords: repository.NewDNSRecordRepository(db),
 		DNSTemplates: repository.NewDNSTemplateRepository(db),
+		WebTemplates: repository.NewWebTemplateRepository(db),
 		SSLCerts: repository.NewSSLCertificateRepository(db),
 		MailRBLStates: repository.NewMailRBLStateRepository(db),
 		DMARCAggregate: repository.NewDMARCAggregateRepository(db),
