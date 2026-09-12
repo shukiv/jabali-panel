@@ -273,3 +273,105 @@ func TestDelete_NilDepsReturnsErrDeps(t *testing.T) {
 		t.Fatalf("nil resource: want ErrDeps, got %v", err)
 	}
 }
+
+// lookMb / lookMg are the narrow MailboxLookup / MailGroupLookup fakes. A seeded
+// id resolves; anything else is repository.ErrNotFound; a non-nil err short-
+// circuits every lookup (to exercise the fail-closed path).
+type lookMb struct {
+	ids map[string]bool
+	err error
+}
+
+func (l *lookMb) FindByID(_ context.Context, id string) (*models.Mailbox, error) {
+	if l.err != nil {
+		return nil, l.err
+	}
+	if l.ids[id] {
+		return &models.Mailbox{ID: id}, nil
+	}
+	return nil, repository.ErrNotFound
+}
+
+type lookMg struct {
+	ids map[string]bool
+	err error
+}
+
+func (l *lookMg) FindByID(_ context.Context, id string) (*models.MailGroup, error) {
+	if l.err != nil {
+		return nil, l.err
+	}
+	if l.ids[id] {
+		return &models.MailGroup{ID: id}, nil
+	}
+	return nil, repository.ErrNotFound
+}
+
+func grant(kind, id string) []models.SharedResourceGrant {
+	return []models.SharedResourceGrant{{GranteeKind: kind, GranteeID: id, Rights: "read"}}
+}
+
+// TestValidateGrants is the JAB-339 AC4 gate table: an existing grantee passes;
+// a missing mailbox / group id, a bad kind, an empty id, and missing deps each
+// fail with their own sentinel. Message content is not asserted — only the
+// nil / sentinel outcome — so the adapters own their transport wording.
+func TestValidateGrants(t *testing.T) {
+	d := Deps{
+		Mailboxes:  &lookMb{ids: map[string]bool{"mb1": true}},
+		MailGroups: &lookMg{ids: map[string]bool{"grp1": true}},
+	}
+	cases := []struct {
+		name    string
+		grants  []models.SharedResourceGrant
+		deps    Deps
+		wantErr error // nil = must pass
+	}{
+		{"mailbox exists", grant("mailbox", "mb1"), d, nil},
+		{"group exists", grant("group", "grp1"), d, nil},
+		{"mailbox missing", grant("mailbox", "ghost"), d, ErrGranteeNotFound},
+		{"group missing", grant("group", "ghost"), d, ErrGranteeNotFound},
+		{"bad kind", grant("user", "mb1"), d, ErrGranteeInvalidKind},
+		{"empty id", grant("mailbox", ""), d, ErrGranteeMissingID},
+		{"no deps", grant("mailbox", "mb1"), Deps{}, ErrDeps},
+		{"empty set passes", nil, d, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateGrants(context.Background(), tc.deps, tc.grants)
+			if tc.wantErr == nil {
+				if err != nil {
+					t.Fatalf("want nil, got %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("want %v, got %v", tc.wantErr, err)
+			}
+		})
+	}
+}
+
+// TestValidateGrants_LookupErrorFailsClosed proves a non-not-found data-access
+// error is propagated as ErrInternal and NEVER collapsed into ErrGranteeNotFound
+// — collapsing would let a grant through on a transient DB blip (fail open).
+func TestValidateGrants_LookupErrorFailsClosed(t *testing.T) {
+	dbErr := errors.New("db down")
+	for _, tc := range []struct {
+		name  string
+		deps  Deps
+		grant []models.SharedResourceGrant
+	}{
+		{"mailbox lookup error", Deps{Mailboxes: &lookMb{err: dbErr}, MailGroups: &lookMg{}}, grant("mailbox", "mb1")},
+		{"group lookup error", Deps{Mailboxes: &lookMb{}, MailGroups: &lookMg{err: dbErr}}, grant("group", "grp1")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateGrants(context.Background(), tc.deps, tc.grant)
+			if !errors.Is(err, ErrInternal) {
+				t.Fatalf("want ErrInternal (fail closed), got %v", err)
+			}
+			if errors.Is(err, ErrGranteeNotFound) {
+				t.Fatal("a DB error must NOT be collapsed into ErrGranteeNotFound")
+			}
+		})
+	}
+}

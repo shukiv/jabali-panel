@@ -186,6 +186,37 @@ func TestSharedResourceRemove_RoutesThroughLeafAndArmsAgent(t *testing.T) {
 	}
 }
 
+// TestSharedResourceGrant_ValidatesGranteeExistence source-pins JAB-339 AC4 in
+// the CLI grant subcommand: the grantee-existence gate must run through the
+// shared sharedresourceops.ValidateGrants owner (so REST and CLI cannot drift)
+// and it must run BEFORE ReplaceGrants — ordering is the load-bearing invariant.
+// The behavior is not cheaply testable (sharedDB is a concrete package global
+// the RunE dials directly), so the wiring is pinned at the source level, scoped
+// to the grant block so the revoke subcommand can't satisfy it.
+func TestSharedResourceGrant_ValidatesGranteeExistence(t *testing.T) {
+	cli := mustRead(t, "shared_resource_cmd.go")
+	marker := `Use:     "grant"`
+	i := strings.Index(cli, marker)
+	if i < 0 {
+		t.Fatal("grant subcommand not found")
+	}
+	block := cli[i:]
+	if j := strings.Index(block[len(marker):], "Use:"); j >= 0 {
+		block = block[:len(marker)+j]
+	}
+	vg := strings.Index(block, "sharedresourceops.ValidateGrants(")
+	if vg < 0 {
+		t.Error("CLI grant must validate grantee existence through sharedresourceops.ValidateGrants")
+	}
+	rg := strings.Index(block, "ReplaceGrants(")
+	if rg < 0 {
+		t.Error("CLI grant must call ReplaceGrants")
+	}
+	if vg >= 0 && rg >= 0 && vg > rg {
+		t.Error("ValidateGrants must run BEFORE ReplaceGrants, or a dangling grantee is written first")
+	}
+}
+
 func mustRead(t *testing.T, path string) string {
 	t.Helper()
 	b, err := os.ReadFile(path)

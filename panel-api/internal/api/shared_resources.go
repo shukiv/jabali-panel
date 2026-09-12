@@ -30,9 +30,11 @@ var sharedResourceRights = map[string]bool{
 }
 
 type SharedResourceHandlerConfig struct {
-	Resources repository.SharedResourceRepository
-	Domains   repository.DomainRepository
-	Agent     agent.AgentInterface
+	Resources  repository.SharedResourceRepository
+	Domains    repository.DomainRepository
+	Mailboxes  repository.MailboxRepository
+	MailGroups repository.MailGroupRepository
+	Agent      agent.AgentInterface
 }
 
 type sharedResourceHandler struct{ cfg SharedResourceHandlerConfig }
@@ -206,14 +208,6 @@ func (h *sharedResourceHandler) setGrants(c *gin.Context) {
 	}
 	grants := make([]models.SharedResourceGrant, 0, len(req.Grants))
 	for _, g := range req.Grants {
-		if g.GranteeKind != "mailbox" && g.GranteeKind != "group" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_grantee_kind"})
-			return
-		}
-		if g.GranteeID == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "missing_grantee_id"})
-			return
-		}
 		if !sharedResourceRights[g.Rights] {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_rights"})
 			return
@@ -224,6 +218,25 @@ func (h *sharedResourceHandler) setGrants(c *gin.Context) {
 			GranteeID:   g.GranteeID,
 			Rights:      g.Rights,
 		})
+	}
+	// JAB-339 AC4: validate the grantee kind + id and reject a grant to a
+	// non-existent grantee BEFORE the write — the shared owner both the REST
+	// handler and the CLI call, so they cannot drift. A dangling grantee id
+	// would otherwise persist and be silently dropped by the reconciler on
+	// every pass.
+	grantDeps := sharedresourceops.Deps{Mailboxes: h.cfg.Mailboxes, MailGroups: h.cfg.MailGroups}
+	if err := sharedresourceops.ValidateGrants(c.Request.Context(), grantDeps, grants); err != nil {
+		switch {
+		case errors.Is(err, sharedresourceops.ErrGranteeInvalidKind):
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_grantee_kind"})
+		case errors.Is(err, sharedresourceops.ErrGranteeMissingID):
+			c.JSON(http.StatusBadRequest, gin.H{"error": "missing_grantee_id"})
+		case errors.Is(err, sharedresourceops.ErrGranteeNotFound):
+			c.JSON(http.StatusBadRequest, gin.H{"error": "grantee_not_found"})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		}
+		return
 	}
 	if err := h.cfg.Resources.ReplaceGrants(c.Request.Context(), sr.ID, grants); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
