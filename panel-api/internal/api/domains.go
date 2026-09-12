@@ -296,6 +296,10 @@ type updateDomainRequest struct {
 	// the vhost, so changing it is safe (old files are not moved).
 	DocRoot               *string                  `json:"doc_root,omitempty"`
 	NginxCustomDirectives *string                  `json:"nginx_custom_directives,omitempty"`
+	// NginxTenantDirectives (GH #1624 / ADR-0169 Phase 4) — a tenant-safe raw
+	// nginx snippet, gated on tenant_domain_options_enabled, validated with the
+	// tight tenant value-grammar. Separate from the admin-only field above.
+	NginxTenantDirectives *string                  `json:"nginx_tenant_directives,omitempty"`
 	RedirectAllTo         *string                  `json:"redirect_all_to,omitempty"`
 	RedirectAllType       *string                  `json:"redirect_all_type,omitempty"`
 	PageRedirects         *models.PageRedirects    `json:"page_redirects,omitempty"`
@@ -1177,6 +1181,33 @@ func (h *domainHandler) update(c *gin.Context) {
 		}
 	}
 
+	// GH #1624 / ADR-0169 Phase 4: a non-admin owner may set a raw "advanced
+	// directives" snippet on their own domain when the admin has opted in
+	// (tenant_domain_options_enabled), mirroring the typed Rule Builder subset
+	// and the safe-options toggle above. Unlike the admin-only
+	// nginx_custom_directives, this field is confined by the TENANT
+	// value-grammar (ValidateNginxDirectivesTenant): one statement per line, no
+	// blocks, and only add_header / expires / etag — so it cannot SSRF, disclose
+	// files, or suppress logging. The grammar is the field's invariant, so it is
+	// applied regardless of who writes it (an admin has their own raw field).
+	// Silently dropped when the opt-in is off (for a non-admin) so other fields
+	// still PATCH.
+	if req.NginxTenantDirectives != nil {
+		allowed := claims.IsAdmin
+		if !allowed && h.cfg.ServerSettings != nil {
+			if st, sErr := h.cfg.ServerSettings.Get(ctx); sErr == nil && st != nil && st.TenantDomainOptionsEnabled {
+				allowed = true
+			}
+		}
+		if allowed {
+			if msg := ValidateNginxDirectivesTenant(*req.NginxTenantDirectives); msg != "" {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_nginx_directives", "detail": msg})
+				return
+			}
+			domain.NginxTenantDirectives = req.NginxTenantDirectives
+		}
+	}
+
 	// M24: per-domain IP binding — validate FK + family + (for non-admin)
 	// is_user_selectable. We resolve and validate before issuing any DB
 	// write so a bad ipv4 doesn't half-succeed against ipv6.
@@ -1655,6 +1686,203 @@ func ValidateNginxDirectivesAdmin(directives string) string {
 	})
 }
 
+// Tenant advanced-directives grammar (GH #1624 / ADR-0169 Phase 4).
+//
+// The admin raw field (ValidateNginxDirectivesAdmin) trusts nginx -t as its
+// backstop and allows proxy_pass and the rest — safe only because an admin
+// authors it. A tenant field cannot: raw tenant nginx would mean SSRF to
+// localhost, file disclosure via root/alias, CrowdSec suppression via
+// `access_log off`, and (critically) the shared scanNginxDirectives only
+// inspects the FIRST token of each line, so `add_header X a; proxy_pass ...;`
+// on one line would slip proxy_pass past a naive allowlist. So the tenant
+// grammar is deliberately tiny and exhaustive: a single statement per line, no
+// blocks at all, and only response-shaping directives that cannot route,
+// redirect, or read files.
+const (
+	tenantDirectivesMaxBytes = 8 * 1024
+	tenantDirectivesMaxLines = 64
+)
+
+// tenantRawAllowedDirectives — the only directives a tenant may use raw. All are
+// response-shaping and non-routing: they cannot SSRF, redirect, or disclose
+// files. return/rewrite (redirects already exist as typed rules + redirect_all_to;
+// raw return can preempt /.well-known/acme-challenge and open-redirect via $vars),
+// error_page (the template already sets it at server scope — a tenant copy
+// duplicates it), gzip (NginxSafeOptions already emits it — duplicate → nginx -t
+// fails), and location/proxy_pass/root/fastcgi_param are all excluded by design.
+var tenantRawAllowedDirectives = map[string]struct{}{
+	"add_header": {},
+	"expires":    {},
+	"etag":       {},
+}
+
+// tenantHeaderNameRe — a conservative HTTP response-header field-name charset.
+var tenantHeaderNameRe = regexp.MustCompile(`^[A-Za-z0-9-]+$`)
+
+// tenantExpiresRe — nginx `expires` value forms: a (possibly negative) time with
+// an optional unit, the daily @HH[hMM][m] form, or a keyword. `modified` is
+// handled separately as an optional leading token.
+var tenantExpiresRe = regexp.MustCompile(`^(-?\d+[smhdwMy]?|@\d{1,2}(h\d{1,2}m?)?|epoch|max|off)$`)
+
+// ValidateNginxDirectivesTenant validates a tenant-authored raw nginx snippet.
+// Empty string is fine (clearing the field). Returns "" when acceptable,
+// otherwise a human-readable reason. This is intentionally strict: it is the
+// only thing standing between a tenant textarea and the server block, and a
+// PATCH that stores syntactically valid-but-broken config would surface only as
+// a later nginx -t failure that drops the tenant's own vhost.
+func ValidateNginxDirectivesTenant(directives string) string {
+	if len(directives) > tenantDirectivesMaxBytes {
+		return fmt.Sprintf("advanced directives exceed %d KB", tenantDirectivesMaxBytes/1024)
+	}
+	if strings.Count(directives, "\n")+1 > tenantDirectivesMaxLines {
+		return fmt.Sprintf("advanced directives exceed %d lines", tenantDirectivesMaxLines)
+	}
+	// Control characters: allow tab + newline (this is a multi-line field);
+	// reject everything else, including a bare \r that would be response
+	// splitting inside a quoted add_header value.
+	for _, c := range directives {
+		if c < 32 && c != '\t' && c != '\n' {
+			return "advanced directives contain invalid control characters"
+		}
+	}
+	// No blocks whatsoever. A single { or } enables location shadowing, nested
+	// add_header inheritance games, or closing the server block early to escape
+	// into the main context. add_header / expires / etag never need braces.
+	if strings.ContainsAny(directives, "{}") {
+		return "advanced directives may not contain blocks ({ })"
+	}
+	// Reject backslashes outright. Our quote tracking (countUnquotedSemicolons /
+	// splitNginxArgs) is a naive per-character toggle, but nginx's real
+	// tokenizer treats \" and \\ as escapes (mirrored by this codebase's own
+	// nginxrules.quoteNginxString). So an input like `add_header X "abc\"def;`
+	// looks string-closed to us — one trailing unquoted ';' — yet stays open in
+	// nginx, swallowing the following config (e.g. the rate-limit directives) or
+	// failing nginx -t. None of add_header / expires / etag's legitimate values
+	// need a backslash, so ban it and keep the grammar exhaustive.
+	if strings.ContainsRune(directives, '\\') {
+		return "advanced directives may not contain a backslash"
+	}
+	return scanNginxDirectives(directives, checkTenantDirective)
+}
+
+// checkTenantDirective is the per-line check for the tenant grammar. cleaned is
+// the comment-stripped, trimmed line; directive is its lowercased first token.
+func checkTenantDirective(directive, cleaned string) string {
+	// Enforce exactly one complete statement per line: one UNQUOTED ';' and it
+	// must be the final character. This is what makes the shared scanner's
+	// first-token-only check sound for the tenant path — a second statement on
+	// the same line (e.g. a hidden proxy_pass) is rejected outright. The ';'
+	// counter is quote-aware because header values legitimately contain ';'
+	// (CSP, Link).
+	semis, balanced := countUnquotedSemicolons(cleaned)
+	if !balanced {
+		return "advanced directives: unbalanced quotes"
+	}
+	if semis != 1 || !strings.HasSuffix(cleaned, ";") {
+		return "advanced directives: each line must be a single statement ending in ';'"
+	}
+	if _, ok := tenantRawAllowedDirectives[directive]; !ok {
+		return "advanced directives: '" + directive + "' is not allowed (only add_header, expires, etag)"
+	}
+	args := splitNginxArgs(cleaned) // quote-aware tokens after the directive name
+	switch directive {
+	case "add_header":
+		// add_header <name> <value> [always];
+		if len(args) < 2 {
+			return "advanced directives: add_header requires a name and a value"
+		}
+		if len(args) > 3 || (len(args) == 3 && args[2] != "always") {
+			return "advanced directives: add_header takes 'name value [always]' (quote a value with spaces)"
+		}
+		if !tenantHeaderNameRe.MatchString(args[0]) {
+			return "advanced directives: invalid header name " + strconv.Quote(args[0])
+		}
+		if _, denied := tenantManagedResponseHeaders[strings.ToLower(args[0])]; denied {
+			return "advanced directives: response header " + strconv.Quote(args[0]) + " is managed by the panel and can't be set here"
+		}
+	case "expires":
+		// expires [modified] <time|epoch|max|off>;
+		vals := args
+		if len(vals) > 0 && vals[0] == "modified" {
+			vals = vals[1:]
+		}
+		if len(vals) != 1 || !tenantExpiresRe.MatchString(vals[0]) {
+			return "advanced directives: expires takes a time (e.g. 30d, 5m, max, off)"
+		}
+	case "etag":
+		if len(args) != 1 || (args[0] != "on" && args[0] != "off") {
+			return "advanced directives: etag takes 'on' or 'off'"
+		}
+	}
+	return ""
+}
+
+// countUnquotedSemicolons counts ';' that fall outside single/double quotes and
+// reports whether the quotes in the line are balanced. Mirrors countBraces'
+// quote handling so a ';' inside a header value (CSP, Link) is not counted.
+func countUnquotedSemicolons(line string) (count int, balanced bool) {
+	inSingle, inDouble := false, false
+	for _, ch := range line {
+		switch ch {
+		case '\'':
+			if !inDouble {
+				inSingle = !inSingle
+			}
+		case '"':
+			if !inSingle {
+				inDouble = !inDouble
+			}
+		case ';':
+			if !inSingle && !inDouble {
+				count++
+			}
+		}
+	}
+	return count, !inSingle && !inDouble
+}
+
+// splitNginxArgs returns the quote-aware argument tokens of a directive line
+// (everything after the first token), with a single trailing unquoted ';'
+// dropped and surrounding quotes stripped from each token. A quoted value keeps
+// its inner spaces as one token: `add_header CSP "a b" always;` -> ["CSP", "a b",
+// "always"]. Unlike nginxDirectiveArgs it is quote-aware for spaces and does not
+// lowercase (header names/values are case-preserving).
+func splitNginxArgs(cleaned string) []string {
+	// Drop the single trailing ';' (countUnquotedSemicolons already guaranteed
+	// exactly one, unquoted, at the end).
+	s := strings.TrimSuffix(strings.TrimSpace(cleaned), ";")
+	var tokens []string
+	var cur strings.Builder
+	inSingle, inDouble, has := false, false, false
+	flush := func() {
+		if has {
+			tokens = append(tokens, cur.String())
+			cur.Reset()
+			has = false
+		}
+	}
+	for _, ch := range s {
+		switch {
+		case ch == '\'' && !inDouble:
+			inSingle = !inSingle
+			has = true
+		case ch == '"' && !inSingle:
+			inDouble = !inDouble
+			has = true
+		case (ch == ' ' || ch == '\t') && !inSingle && !inDouble:
+			flush()
+		default:
+			cur.WriteRune(ch)
+			has = true
+		}
+	}
+	flush()
+	if len(tokens) == 0 {
+		return nil
+	}
+	return tokens[1:] // drop the directive name
+}
+
 // scanNginxDirectives runs the structural safety checks shared by both nginx
 // validators (null-byte rejection, comment stripping, brace balance + nesting
 // cap) and calls check(directive, cleaned) for every directive line — directive
@@ -2062,6 +2290,11 @@ var tenantSafeNginxRuleTypes = map[string]struct{}{
 // Not denied: Set-Cookie / Content-Security-Policy / Cache-Control — the tenant's
 // own domain, the tenant's call. Names are lower-cased; header names are
 // case-insensitive, so we match case- and surrounding-whitespace-insensitively.
+//
+// Shared: both the typed custom_header path (validateTenantNginxRules, Phase 2)
+// and the raw advanced-directives path (ValidateNginxDirectivesTenant, Phase 4)
+// deny the same set — a tenant add_header must not override a panel-managed
+// header by either route.
 var tenantManagedResponseHeaders = map[string]struct{}{
 	"strict-transport-security": {},
 	"x-frame-options":           {},

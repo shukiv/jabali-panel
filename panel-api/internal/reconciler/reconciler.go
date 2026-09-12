@@ -2111,6 +2111,18 @@ func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Dom
 		}
 		cust += safe
 	}
+	// GH #1624 / ADR-0169 Phase 4: append the tenant-authored advanced
+	// directives. These are validated at write time by the tight tenant
+	// value-grammar (ValidateNginxDirectivesTenant) — one statement per line, no
+	// blocks, only add_header/expires/etag — so they carry none of the admin
+	// raw-directive surface. They render into the same server block as the
+	// admin directives and the safe options.
+	if domain.NginxTenantDirectives != nil && *domain.NginxTenantDirectives != "" {
+		if cust != "" && !strings.HasSuffix(cust, "\n") {
+			cust += "\n"
+		}
+		cust += *domain.NginxTenantDirectives
+	}
 	params["custom_directives"] = cust
 
 	// GH #879: branded 500 for app errors — location-scoped in the vhost's

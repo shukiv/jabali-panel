@@ -265,6 +265,15 @@ type Domain struct {
 	// directives (proxy_pass, lua_*) are rejected.
 	NginxCustomDirectives *string `gorm:"type:text" json:"nginx_custom_directives,omitempty"`
 
+	// NginxTenantDirectives holds a TENANT-authored raw nginx snippet, kept
+	// separate from the admin-only NginxCustomDirectives above (GH #1624 /
+	// ADR-0169 Phase 4). It is validated with the tight tenant value-grammar
+	// (ValidateNginxDirectivesTenant): one statement per line, no blocks, and
+	// only add_header / expires / etag — so a tenant cannot SSRF, disclose
+	// files, or suppress logging. Rendered into the server block alongside the
+	// admin directives and the curated safe options.
+	NginxTenantDirectives *string `gorm:"column:nginx_tenant_directives;type:text" json:"nginx_tenant_directives,omitempty"`
+
 	// RedirectAllTo, when non-nil, is a URL that every request to this
 	// domain is redirected to (whole-domain redirect). Supersedes the
 	// docroot and any PageRedirects. Must be an absolute http(s) URL.
