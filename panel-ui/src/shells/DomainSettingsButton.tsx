@@ -72,6 +72,11 @@ export type DomainSettingsTarget = {
   user_id?: string;
   php_pool_id?: string | null;
   nginx_custom_directives?: string | null;
+  // GH #1624 / ADR-0169 Phase 5: the tenant-authored raw "advanced directives"
+  // field. Surfaced read-only (with a Clear action) in the admin Nginx section
+  // so an admin can see and remove an owner's snippet — undefined until the
+  // Phase 4a backend column (#1691) lands, so the mirror stays hidden till then.
+  nginx_tenant_directives?: string | null;
   nginx_rules?: NginxRule[] | null;
 };
 
@@ -1136,6 +1141,7 @@ export const DomainNginxSection = ({ domain }: { domain: DomainSettingsTarget })
   );
   const [rules, setRules] = useState<NginxRule[]>(domain.nginx_rules ?? []);
   const [isSaving, setIsSaving] = useState(false);
+  const [clearingTenant, setClearingTenant] = useState(false);
   const qc = useQueryClient();
 
   // Re-sync from prop when the domain reloads (e.g. after a save
@@ -1164,6 +1170,29 @@ export const DomainNginxSection = ({ domain }: { domain: DomainSettingsTarget })
       feedback.message.error(`Failed to save: ${e.response?.data?.detail ?? e.message ?? "Unknown error"}`);
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  // GH #1624 / ADR-0169 Phase 5: disabling the tenant opt-in does NOT deactivate
+  // already-stored tenant directives (the reconciler still renders the column),
+  // so an admin killing an abusive owner snippet needs a way to null it. Sends
+  // "" (not null) — a Go *string can't tell JSON null from an omitted field, so
+  // null would read as "no change" and the snippet would persist (cf. #717).
+  const handleClearTenant = async () => {
+    setClearingTenant(true);
+    try {
+      await apiClient.patch(`/domains/${domain.id}`, { nginx_tenant_directives: "" });
+      feedback.message.success("Tenant advanced directives cleared");
+      qc.invalidateQueries({ queryKey: ["list", "domains"] });
+      qc.invalidateQueries({ queryKey: ["one", "domains", domain.id] });
+    } catch (err) {
+      const e = err as {
+        response?: { data?: { detail?: string } };
+        message?: string;
+      };
+      feedback.message.error(`Failed to clear: ${e.response?.data?.detail ?? e.message ?? "Unknown error"}`);
+    } finally {
+      setClearingTenant(false);
     }
   };
 
@@ -1231,6 +1260,32 @@ export const DomainNginxSection = ({ domain }: { domain: DomainSettingsTarget })
           Save
         </Button>
       </div>
+      {/* GH #1624 / ADR-0169 Phase 5 (admin mirror): show the owner's raw
+          "advanced directives" (add_header / expires / etag, Phase 4a) so an
+          admin can see what the tenant added and clear it. Hidden until the
+          #1691 column lands (field undefined) and when the owner has set none. */}
+      {domain.nginx_tenant_directives && domain.nginx_tenant_directives.trim() !== "" && (
+        <div style={{ marginTop: 24, paddingTop: 16, borderTop: "1px solid rgba(0,0,0,0.06)" }}>
+          <div style={{ marginBottom: 8 }}>
+            <Typography.Text strong>Tenant advanced directives</Typography.Text>
+          </div>
+          <Input.TextArea
+            rows={Math.min(12, Math.max(3, domain.nginx_tenant_directives.split("\n").length))}
+            value={domain.nginx_tenant_directives}
+            readOnly
+            style={{ fontFamily: "monospace", background: "rgba(0,0,0,0.03)" }}
+          />
+          <Typography.Text type="secondary" style={{ display: "block", marginTop: 4 }}>
+            Authored by the domain owner (add_header / expires / etag only). Clear
+            to remove them from the vhost.
+          </Typography.Text>
+          <div style={{ marginTop: 8 }}>
+            <Button danger loading={clearingTenant} onClick={handleClearTenant}>
+              Clear tenant directives
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -1295,6 +1350,28 @@ export const TenantNginxRulesPanel = ({
           Save
         </Button>
       </div>
+      {/* GH #1624 / ADR-0169 Phase 5: the typed Rule Builder above is the
+          rendered source of truth, but an admin may also have added raw
+          directives to this domain. Surface them read-only here ("visible, not
+          silently ignored") so nothing that shapes the vhost is invisible to
+          the owner. Not reverse-parsed into editable rules — deliberately just
+          shown. Hidden when the admin has set none. */}
+      {domain.nginx_custom_directives && domain.nginx_custom_directives.trim() !== "" && (
+        <div style={{ marginTop: 24, paddingTop: 16, borderTop: "1px solid rgba(0,0,0,0.06)" }}>
+          <div style={{ marginBottom: 8 }}>
+            <Typography.Text strong>Administrator-managed directives</Typography.Text>
+          </div>
+          <Input.TextArea
+            rows={Math.min(12, Math.max(3, domain.nginx_custom_directives.split("\n").length))}
+            value={domain.nginx_custom_directives}
+            readOnly
+            style={{ fontFamily: "monospace", background: "rgba(0,0,0,0.03)" }}
+          />
+          <Typography.Text type="secondary" style={{ display: "block", marginTop: 4 }}>
+            Applied to this domain. Only an administrator can change these.
+          </Typography.Text>
+        </div>
+      )}
     </div>
   );
 };
