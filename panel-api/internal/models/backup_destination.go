@@ -118,6 +118,26 @@ func ValidateSFTPHostUser(host, user string) error {
 	return nil
 }
 
+// SFTPPasswordWriteAllowed reports whether an sftp password (SSHPASS) write may
+// land on a destination with this effective kind and auth. An SSHPASS is only
+// meaningful for an sftp destination whose auth is "password"; writing one to a
+// key-auth or non-sftp destination is a no-op that must fail loud, never be
+// silently dropped. effectiveAuth is the auth of the block being written this
+// request if the caller supplies one, else the stored block's auth.
+//
+// The single owner of this decision so the REST and CLI update paths cannot
+// drift (JAB-310 AC5), the same reason ValidateSFTPHostUser lives here. The
+// message names no CLI flags so a REST 400 detail can surface it verbatim.
+func SFTPPasswordWriteAllowed(kind, effectiveAuth string) error {
+	if kind != BackupDestinationKindSFTP {
+		return fmt.Errorf("sftp password only applies to sftp destinations (kind=%s)", kind)
+	}
+	if effectiveAuth != SFTPAuthPassword {
+		return fmt.Errorf("sftp password requires the destination to use password auth (current auth=%q)", effectiveAuth)
+	}
+	return nil
+}
+
 type BackupDestination struct {
 	ID             string  `gorm:"type:char(26);primaryKey" json:"id"`
 	Name           string  `gorm:"type:varchar(64);not null;uniqueIndex:uniq_backup_dest_name" json:"name"`
