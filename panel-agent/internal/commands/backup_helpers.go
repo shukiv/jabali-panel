@@ -323,6 +323,21 @@ func removeID(ids []string, id string) []string {
 	return out
 }
 
+// repairGateOpen reports whether the automated move-aside repair (JAB-405 Part 2b)
+// may run. It is the safety invariant, in one place: the failure must be the
+// key/config-mismatch class, the key listing must be available (a jailed or
+// unlistable target leaves keys nil) and hold ≥2 key files, and the key restic
+// named must be one of them. Only then is the concurrent-init race PROVEN and a
+// move safe; every other shape — a foreign-password class, no listing, a single
+// key (corrupt config), or a named key absent from the listing — keeps the gate
+// shut and the repository untouched.
+func repairGateOpen(cls repoProbeClass, keys *repoKeyListing) bool {
+	return cls == repoProbeKeyConfigMismatch &&
+		keys != nil &&
+		len(keys.ids) >= 2 &&
+		keys.namedPresent()
+}
+
 // moveKeyAside moves a mismatched restic key file OUT of the repository's keys/
 // directory into the repository ROOT, renaming it to <id>.jabali-race-<unixnano>
 // (JAB-405 Part 2b). The destination is deliberately the repo root, not a keys/
@@ -333,6 +348,14 @@ func removeID(ids []string, id string) []string {
 // never deletes (os.Rename local; `ssh -- mv -n` remote), so the moved key stays
 // on disk and can be restored. Returns the destination path it moved to.
 func moveKeyAside(ctx context.Context, destKind, repoURL string, sftp *backupSFTPInputs, extraEnv []string, named string) (string, error) {
+	// Refuse anything that is not a bare 64-hex restic key id BEFORE building any
+	// path. This is a hard clamp independent of the caller's gate: an empty or
+	// traversing named would make src collapse to keys/ itself (renaming the whole
+	// key directory) or escape the repository. The move-aside primitive must never
+	// touch more than the one named key file, no matter how it is called.
+	if !resticKeyIDRE.MatchString(named) {
+		return "", fmt.Errorf("refusing to move %q aside: not a restic key id", named)
+	}
 	dstName := fmt.Sprintf("%s.jabali-race-%d", named, time.Now().UnixNano())
 	switch {
 	case destKind == backup.KindSFTP && sftp != nil && sftp.Host != "":
@@ -581,7 +604,7 @@ func bkEnsureRepoReady(ctx context.Context, repoURL, credentialsRef, destKind, p
 			// a move. One move per call. This runs inside withRepoInitLock (the whole
 			// switch does), so a concurrent job cannot init or repair the same repo at
 			// once. Only the backup run repairs; the manual test-connection door counts.
-			if cls == repoProbeKeyConfigMismatch && keys != nil && len(keys.ids) >= 2 && keys.namedPresent() {
+			if repairGateOpen(cls, keys) {
 				move := func(ctx context.Context, named string) (string, error) {
 					return moveKeyAside(ctx, destKind, repoURL, sftp, extraEnv, named)
 				}

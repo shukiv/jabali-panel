@@ -86,6 +86,66 @@ func TestMoveKeyAside_UnsupportedKind(t *testing.T) {
 	}
 }
 
+// TestMoveKeyAside_RefusesNonKeyID is the hard clamp independent of the caller's
+// gate: a named that is not a bare 64-hex key id must be refused BEFORE any path is
+// built and BEFORE any rename runs. An empty named would otherwise collapse src to
+// keys/ itself (renaming the whole key directory); a traversing named would escape
+// the repository. Nothing on disk may change.
+func TestMoveKeyAside_RefusesNonKeyID(t *testing.T) {
+	t.Parallel()
+	for _, bad := range []string{"", "../config", "not-a-key", keyA + "/../config", keyA + "x"} {
+		repo := t.TempDir()
+		keysDir := filepath.Join(repo, "keys")
+		if err := os.MkdirAll(keysDir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(keysDir, keyA), []byte("k"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		_, err := moveKeyAside(context.Background(), backup.KindLocal, repo, nil, nil, bad)
+		if err == nil || !strings.Contains(err.Error(), "not a restic key id") {
+			t.Errorf("moveKeyAside(named=%q) must refuse with a key-id error, got: %v", bad, err)
+		}
+		// keys/ is untouched, and no stray move-aside file appeared in the root.
+		if _, statErr := os.Stat(filepath.Join(keysDir, keyA)); statErr != nil {
+			t.Errorf("named=%q: keys/ was disturbed by a refused move: %v", bad, statErr)
+		}
+		entries, _ := os.ReadDir(repo)
+		for _, e := range entries {
+			if strings.Contains(e.Name(), ".jabali-race-") {
+				t.Errorf("named=%q: a refused move still created a root file %q", bad, e.Name())
+			}
+		}
+	}
+}
+
+// TestRepairGateOpen falsifies each clause of the Part 2b safety invariant: the
+// repair may run ONLY for the mismatch class, with a listing present, holding ≥2
+// key files, whose named key is among them. Deleting any one clause of
+// repairGateOpen turns one of these false cases true.
+func TestRepairGateOpen(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		cls  repoProbeClass
+		keys *repoKeyListing
+		want bool
+	}{
+		{"race proven: mismatch + 2 keys + named present", repoProbeKeyConfigMismatch, &repoKeyListing{ids: []string{keyA, keyB}, named: keyA}, true},
+		{"wrong class: unopenable never repairs", repoProbeUnopenable, &repoKeyListing{ids: []string{keyA, keyB}, named: keyA}, false},
+		{"no listing: jailed/unlistable target", repoProbeKeyConfigMismatch, nil, false},
+		{"one key: corrupt config, nothing to move", repoProbeKeyConfigMismatch, &repoKeyListing{ids: []string{keyA}, named: keyA}, false},
+		{"named absent: listing does not match the error", repoProbeKeyConfigMismatch, &repoKeyListing{ids: []string{keyA, keyB}, named: keyGhost}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := repairGateOpen(c.cls, c.keys); got != c.want {
+				t.Errorf("repairGateOpen = %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
 // TestRepairKeyMismatch exercises the decision table with injected move/reprobe
 // fakes — no real backend. Each outcome is falsifiable independently.
 func TestRepairKeyMismatch(t *testing.T) {
