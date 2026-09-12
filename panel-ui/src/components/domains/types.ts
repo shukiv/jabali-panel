@@ -79,6 +79,10 @@ export type Domain = {
   temp_url?: string | null;
   bot_challenge_include?: boolean;
   nginx_custom_directives: string;
+  // GH #1624 / ADR-0169 Phase 4a: tenant-authored raw "advanced directives".
+  // Optional — absent (omitempty) until the Phase 4a backend column (#1691)
+  // lands; the admin Nginx section surfaces it read-only in Phase 5.
+  nginx_tenant_directives?: string | null;
   redirect_all_to?: string | null;
   redirect_all_type?: string | null;
   page_redirects?:
