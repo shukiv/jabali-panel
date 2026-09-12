@@ -2,8 +2,10 @@ package api
 
 import (
 	"bytes"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/auth"
@@ -26,7 +28,10 @@ func patchNginxRules(t *testing.T, r interface {
 }
 
 func TestDomainPatch_TenantNginxRules(t *testing.T) {
-	const safeRewrite = `{"nginx_rules":[{"type":"rewrite","pattern":"^/old$","replacement":"/new","flag":"last"},{"type":"custom_header","name":"X-Frame-Options","value":"DENY"}]}`
+	// X-Robots-Tag is a benign, tenant-settable response header. (A panel-managed
+	// header like X-Frame-Options is NOT tenant-settable — see
+	// TestDomainPatch_TenantManagedHeadersDenied, ADR-0169 Phase 2.)
+	const safeRewrite = `{"nginx_rules":[{"type":"rewrite","pattern":"^/old$","replacement":"/new","flag":"last"},{"type":"custom_header","name":"X-Robots-Tag","value":"noindex"}]}`
 
 	t.Run("owner opt-in OFF: dropped", func(t *testing.T) {
 		dom := &models.Domain{ID: "d1", UserID: "u1", Name: "x.com"}
@@ -78,6 +83,63 @@ func TestDomainPatch_TenantNginxRules(t *testing.T) {
 		}
 		if len(repo.domains["d1"].NginxRules) != 1 {
 			t.Errorf("admin nginx_rules not applied: %+v", repo.domains["d1"].NginxRules)
+		}
+	})
+}
+
+// ADR-0169 Phase 2: a tenant custom_header may not set a response header the
+// panel manages — the four security headers it renders (Strict-Transport-
+// Security / X-Frame-Options / X-Content-Type-Options / Referrer-Policy), which
+// a tenant server-scope add_header would duplicate or weaken, plus the two
+// structural names (Content-Length / Transfer-Encoding) that make a malformed
+// response. Header names are case-insensitive, so each is denied in every
+// casing. The gate is tenant-only: an admin may still set these.
+func TestDomainPatch_TenantManagedHeadersDenied(t *testing.T) {
+	managed := []string{
+		"Strict-Transport-Security",
+		"X-Frame-Options",
+		"X-Content-Type-Options",
+		"Referrer-Policy",
+		"Content-Length",
+		"Transfer-Encoding",
+	}
+	for _, h := range managed {
+		for _, name := range []string{h, strings.ToLower(h), strings.ToUpper(h)} {
+			t.Run("tenant denied: "+name, func(t *testing.T) {
+				dom := &models.Domain{ID: "d1", UserID: "u1", Name: "x.com"}
+				r, repo := buildSafeOptionsRouter(&auth.AccessClaims{UserID: "u1"}, true, dom)
+				body := fmt.Sprintf(`{"nginx_rules":[{"type":"custom_header","name":%q,"value":"x"}]}`, name)
+				if code := patchNginxRules(t, r, body); code != http.StatusBadRequest {
+					t.Fatalf("managed header %q should be 400 for tenant, got %d", name, code)
+				}
+				if len(repo.domains["d1"].NginxRules) != 0 {
+					t.Errorf("managed header %q applied despite reject: %+v", name, repo.domains["d1"].NginxRules)
+				}
+			})
+		}
+	}
+
+	t.Run("tenant: benign custom header applied", func(t *testing.T) {
+		dom := &models.Domain{ID: "d1", UserID: "u1", Name: "x.com"}
+		r, repo := buildSafeOptionsRouter(&auth.AccessClaims{UserID: "u1"}, true, dom)
+		body := `{"nginx_rules":[{"type":"custom_header","name":"X-Robots-Tag","value":"noindex"}]}`
+		if code := patchNginxRules(t, r, body); code != http.StatusOK {
+			t.Fatalf("benign header status %d", code)
+		}
+		if len(repo.domains["d1"].NginxRules) != 1 {
+			t.Errorf("benign header not applied: %+v", repo.domains["d1"].NginxRules)
+		}
+	})
+
+	t.Run("admin: managed header applied (gate is tenant-only)", func(t *testing.T) {
+		dom := &models.Domain{ID: "d1", UserID: "u1", Name: "x.com"}
+		r, repo := buildSafeOptionsRouter(&auth.AccessClaims{UserID: "admin", IsAdmin: true}, true, dom)
+		body := `{"nginx_rules":[{"type":"custom_header","name":"X-Frame-Options","value":"DENY"}]}`
+		if code := patchNginxRules(t, r, body); code != http.StatusOK {
+			t.Fatalf("admin managed header status %d", code)
+		}
+		if len(repo.domains["d1"].NginxRules) != 1 {
+			t.Errorf("admin managed header not applied: %+v", repo.domains["d1"].NginxRules)
 		}
 	})
 }

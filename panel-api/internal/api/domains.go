@@ -2032,10 +2032,38 @@ var tenantSafeNginxRuleTypes = map[string]struct{}{
 	"custom_header": {},
 }
 
+// tenantManagedResponseHeaders are response-header names a tenant custom_header
+// rule may NOT set (ADR-0169 Phase 2). Both classes are a value-independent name
+// hazard, so this is a denylist on the name — not a value grammar:
+//
+//   - The four security headers the panel renders itself: NginxSafeOptions.Render
+//     (models/nginx_safe_options.go) emits them at server scope, and the agent
+//     vhost template re-declares three of them per PHP location (JAB-70, because
+//     a location's own add_header suppresses inherited server-scope ones). A
+//     tenant custom_header lands at server scope (nginxrules.Compile), so a
+//     tenant add_header here duplicates or weakens panel-managed hardening — e.g.
+//     `Strict-Transport-Security: max-age=0` voids HSTS. The panel owns these
+//     names; a tenant "strengthening" value is still wrong (duplicate headers).
+//   - Content-Length / Transfer-Encoding: add_header with either produces a
+//     malformed response nginx will still emit (request-smuggling-adjacent).
+//
+// Not denied: Set-Cookie / Content-Security-Policy / Cache-Control — the tenant's
+// own domain, the tenant's call. Names are lower-cased; header names are
+// case-insensitive, so we match case- and surrounding-whitespace-insensitively.
+var tenantManagedResponseHeaders = map[string]struct{}{
+	"strict-transport-security": {},
+	"x-frame-options":           {},
+	"x-content-type-options":    {},
+	"referrer-policy":           {},
+	"content-length":            {},
+	"transfer-encoding":         {},
+}
+
 // validateTenantNginxRules enforces the tenant-safe subset on top of the full
-// structural validateNginxRules: only rewrite + custom_header, and a rewrite
+// structural validateNginxRules: only rewrite + custom_header, a rewrite
 // replacement must be a LOCAL path (no scheme or host) so it can never become
-// an open redirect or a proxy to an internal service.
+// an open redirect or a proxy to an internal service, and a custom_header may
+// not override a panel-managed response header (ADR-0169 Phase 2).
 func validateTenantNginxRules(rules models.NginxRules) error {
 	for i, r := range rules {
 		if _, ok := tenantSafeNginxRuleTypes[r.Type]; !ok {
@@ -2049,6 +2077,12 @@ func validateTenantNginxRules(rules models.NginxRules) error {
 			// JAB-72: tenants get a stricter pattern length cap than admins.
 			if err := validateRewritePattern(r.Pattern, 128); err != nil {
 				return fmt.Errorf("rule %d: %v", i, err)
+			}
+		}
+		if r.Type == "custom_header" {
+			name := strings.ToLower(strings.TrimSpace(r.Name))
+			if _, denied := tenantManagedResponseHeaders[name]; denied {
+				return fmt.Errorf("rule %d: response header %q is managed by the panel and can't be set here", i, r.Name)
 			}
 		}
 	}
