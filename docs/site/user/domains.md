@@ -45,7 +45,7 @@ Two extra per-domain tabs — **Domain options** and **Rewrite rules** — appea
 When they are enabled you can, on your own domains:
 
 - **Domain options** — set a curated, safe set of nginx options: maximum upload size, HSTS, the common security headers (`X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`), and gzip. You supply values; each option renders to a fixed, vetted directive — never raw config.
-- **Rewrite rules** — add two kinds of structured rule. A `rewrite` rule whose target must be a local path (no scheme or host, so it can never become an open redirect or a proxy to another service), and a `custom_header` rule that adds one response header. Every rule is validated before it is applied.
+- **Rewrite rules** — add two kinds of structured rule. A `rewrite` rule whose target must be a local path (no scheme or host, so it can never become an open redirect or a proxy to another service), and a `custom_header` rule that adds one response header. Every rule is validated before it is applied. The headers the panel manages for security — `Strict-Transport-Security`, `X-Frame-Options`, `X-Content-Type-Options`, and `Referrer-Policy` — can't be set here; use **Domain options** for HSTS and the security headers instead.
 
 Raw nginx directives, reverse-proxy targets, IP access rules, and PHP settings stay admin-only whether or not tenant domain options are enabled. Your administrator turns the feature on under [Server Settings → General](../admin/server-settings.md#general).
 
