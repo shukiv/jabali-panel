@@ -275,10 +275,11 @@ func TestDelete_NilDepsReturnsErrDeps(t *testing.T) {
 }
 
 // lookMb / lookMg are the narrow MailboxLookup / MailGroupLookup fakes. A seeded
-// id resolves; anything else is repository.ErrNotFound; a non-nil err short-
-// circuits every lookup (to exercise the fail-closed path).
+// id resolves to a row carrying its DomainID (so the domain-policy check can
+// resolve the grantee's owner); anything else is repository.ErrNotFound; a
+// non-nil err short-circuits every lookup (to exercise the fail-closed path).
 type lookMb struct {
-	ids map[string]bool
+	ids map[string]string // id -> domainID
 	err error
 }
 
@@ -286,14 +287,14 @@ func (l *lookMb) FindByID(_ context.Context, id string) (*models.Mailbox, error)
 	if l.err != nil {
 		return nil, l.err
 	}
-	if l.ids[id] {
-		return &models.Mailbox{ID: id}, nil
+	if dom, ok := l.ids[id]; ok {
+		return &models.Mailbox{ID: id, DomainID: dom}, nil
 	}
 	return nil, repository.ErrNotFound
 }
 
 type lookMg struct {
-	ids map[string]bool
+	ids map[string]string // id -> domainID
 	err error
 }
 
@@ -301,8 +302,26 @@ func (l *lookMg) FindByID(_ context.Context, id string) (*models.MailGroup, erro
 	if l.err != nil {
 		return nil, l.err
 	}
-	if l.ids[id] {
-		return &models.MailGroup{ID: id}, nil
+	if dom, ok := l.ids[id]; ok {
+		return &models.MailGroup{ID: id, DomainID: dom}, nil
+	}
+	return nil, repository.ErrNotFound
+}
+
+// lookDom is the narrow DomainLookup fake. A seeded domain id resolves to a
+// domain owned by the mapped UserID; anything else is repository.ErrNotFound; a
+// non-nil err short-circuits (to exercise the owner-lookup fail-closed path).
+type lookDom struct {
+	owners map[string]string // domainID -> owner UserID
+	err    error
+}
+
+func (l *lookDom) FindByID(_ context.Context, id string) (*models.Domain, error) {
+	if l.err != nil {
+		return nil, l.err
+	}
+	if uid, ok := l.owners[id]; ok {
+		return &models.Domain{UserID: uid}, nil
 	}
 	return nil, repository.ErrNotFound
 }
@@ -311,33 +330,49 @@ func grant(kind, id string) []models.SharedResourceGrant {
 	return []models.SharedResourceGrant{{GranteeKind: kind, GranteeID: id, Rights: "read"}}
 }
 
-// TestValidateGrants is the JAB-339 AC4 gate table: an existing grantee passes;
-// a missing mailbox / group id, a bad kind, an empty id, and missing deps each
-// fail with their own sentinel. Message content is not asserted — only the
-// nil / sentinel outcome — so the adapters own their transport wording.
+// TestValidateGrants is the JAB-339 AC4 gate table covering BOTH halves of
+// "grantee existence/domain policy is explicit": an existing same-owner grantee
+// passes (including one in a DIFFERENT domain of the same owner); a missing id,
+// a CROSS-OWNER grantee, and a grantee whose domain row is gone all fail as
+// ErrGranteeNotFound (the out-of-scope case indistinguishable from missing, so
+// the error cannot enumerate another owner's rows); a bad kind, an empty id,
+// missing deps, and an empty owner fail with their own sentinel. Message content
+// is not asserted — only the nil / sentinel outcome — so the adapters own their
+// transport wording.
+//
+// Fixture: owner1 owns dom1 + dom3; owner2 owns dom2. mb1/grp1 live in dom1,
+// mb2/grp2 in dom2, mb3 in dom3, and mbGone points at a domain with no row.
 func TestValidateGrants(t *testing.T) {
 	d := Deps{
-		Mailboxes:  &lookMb{ids: map[string]bool{"mb1": true}},
-		MailGroups: &lookMg{ids: map[string]bool{"grp1": true}},
+		Mailboxes:  &lookMb{ids: map[string]string{"mb1": "dom1", "mb2": "dom2", "mb3": "dom3", "mbGone": "domGone"}},
+		MailGroups: &lookMg{ids: map[string]string{"grp1": "dom1", "grp2": "dom2"}},
+		Domains:    &lookDom{owners: map[string]string{"dom1": "owner1", "dom2": "owner2", "dom3": "owner1"}},
 	}
+	const owner = "owner1"
 	cases := []struct {
 		name    string
 		grants  []models.SharedResourceGrant
 		deps    Deps
+		owner   string
 		wantErr error // nil = must pass
 	}{
-		{"mailbox exists", grant("mailbox", "mb1"), d, nil},
-		{"group exists", grant("group", "grp1"), d, nil},
-		{"mailbox missing", grant("mailbox", "ghost"), d, ErrGranteeNotFound},
-		{"group missing", grant("group", "ghost"), d, ErrGranteeNotFound},
-		{"bad kind", grant("user", "mb1"), d, ErrGranteeInvalidKind},
-		{"empty id", grant("mailbox", ""), d, ErrGranteeMissingID},
-		{"no deps", grant("mailbox", "mb1"), Deps{}, ErrDeps},
-		{"empty set passes", nil, d, nil},
+		{"mailbox same owner", grant("mailbox", "mb1"), d, owner, nil},
+		{"group same owner", grant("group", "grp1"), d, owner, nil},
+		{"mailbox same owner other domain", grant("mailbox", "mb3"), d, owner, nil},
+		{"mailbox missing", grant("mailbox", "ghost"), d, owner, ErrGranteeNotFound},
+		{"group missing", grant("group", "ghost"), d, owner, ErrGranteeNotFound},
+		{"mailbox cross owner", grant("mailbox", "mb2"), d, owner, ErrGranteeNotFound},
+		{"group cross owner", grant("group", "grp2"), d, owner, ErrGranteeNotFound},
+		{"grantee dangling domain", grant("mailbox", "mbGone"), d, owner, ErrGranteeNotFound},
+		{"bad kind", grant("user", "mb1"), d, owner, ErrGranteeInvalidKind},
+		{"empty id", grant("mailbox", ""), d, owner, ErrGranteeMissingID},
+		{"no deps", grant("mailbox", "mb1"), Deps{}, owner, ErrDeps},
+		{"empty owner", grant("mailbox", "mb1"), d, "", ErrDeps},
+		{"empty set passes", nil, d, owner, nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := ValidateGrants(context.Background(), tc.deps, tc.grants)
+			err := ValidateGrants(context.Background(), tc.deps, tc.owner, tc.grants)
 			if tc.wantErr == nil {
 				if err != nil {
 					t.Fatalf("want nil, got %v", err)
@@ -356,16 +391,21 @@ func TestValidateGrants(t *testing.T) {
 // — collapsing would let a grant through on a transient DB blip (fail open).
 func TestValidateGrants_LookupErrorFailsClosed(t *testing.T) {
 	dbErr := errors.New("db down")
+	okDom := &lookDom{owners: map[string]string{"dom1": "owner1"}}
 	for _, tc := range []struct {
 		name  string
 		deps  Deps
 		grant []models.SharedResourceGrant
 	}{
-		{"mailbox lookup error", Deps{Mailboxes: &lookMb{err: dbErr}, MailGroups: &lookMg{}}, grant("mailbox", "mb1")},
-		{"group lookup error", Deps{Mailboxes: &lookMb{}, MailGroups: &lookMg{err: dbErr}}, grant("group", "grp1")},
+		{"mailbox lookup error", Deps{Mailboxes: &lookMb{err: dbErr}, MailGroups: &lookMg{}, Domains: okDom}, grant("mailbox", "mb1")},
+		{"group lookup error", Deps{Mailboxes: &lookMb{}, MailGroups: &lookMg{err: dbErr}, Domains: okDom}, grant("group", "grp1")},
+		// The domain (owner) lookup fails closed too: a DB blip resolving the
+		// grantee's owner must surface as ErrInternal, never collapse into
+		// ErrGranteeNotFound (which would let an out-of-scope grant through).
+		{"domain lookup error", Deps{Mailboxes: &lookMb{ids: map[string]string{"mb1": "dom1"}}, MailGroups: &lookMg{}, Domains: &lookDom{err: dbErr}}, grant("mailbox", "mb1")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			err := ValidateGrants(context.Background(), tc.deps, tc.grant)
+			err := ValidateGrants(context.Background(), tc.deps, "owner1", tc.grant)
 			if !errors.Is(err, ErrInternal) {
 				t.Fatalf("want ErrInternal (fail closed), got %v", err)
 			}

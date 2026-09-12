@@ -40,23 +40,30 @@ func ValidKind(kind string) bool { return kinds[kind] }
 type NotifyFunc func(ctx context.Context, cmd string, params any)
 
 // Deps carries the collaborators the operations need. Create and Delete use
-// Resources; ValidateGrants uses Mailboxes + MailGroups. Each operation guards
+// Resources; ValidateGrants uses Mailboxes + MailGroups + Domains (the last to
+// resolve a grantee's owner for the domain-policy check). Each operation guards
 // only the deps it needs, so an adapter wires whichever it calls.
 type Deps struct {
 	Resources  repository.SharedResourceRepository
 	Mailboxes  MailboxLookup
 	MailGroups MailGroupLookup
+	Domains    DomainLookup
 }
 
-// MailboxLookup and MailGroupLookup are the narrow existence-lookup slices of
-// the mailbox and mail-group repositories that ValidateGrants needs — declared
-// consumer-side so the fakes stay small and the module does not pull in the
-// full repository interfaces. Both concrete repositories satisfy them.
+// MailboxLookup, MailGroupLookup, and DomainLookup are the narrow lookup slices
+// of the mailbox, mail-group, and domain repositories that ValidateGrants needs
+// — declared consumer-side so the fakes stay small and the module does not pull
+// in the full repository interfaces. All three concrete repositories satisfy
+// them. A grantee row carries only a DomainID (neither Mailbox nor MailGroup
+// has an owner field), so ownership is resolved through the domain's UserID.
 type MailboxLookup interface {
 	FindByID(ctx context.Context, id string) (*models.Mailbox, error)
 }
 type MailGroupLookup interface {
 	FindByID(ctx context.Context, id string) (*models.MailGroup, error)
+}
+type DomainLookup interface {
+	FindByID(ctx context.Context, id string) (*models.Domain, error)
 }
 
 // granteeKinds is the grant GranteeKind allowlist (a grant points at a mailbox
@@ -226,17 +233,32 @@ func Delete(ctx context.Context, d Deps, in DeleteInput, notify NotifyFunc) erro
 // copies, while the CLI keeps its flag-specific messages first and lets this
 // re-check them harmlessly — so one owner governs the policy for both.
 //
-// Domain / tenant scoping of the grantee is deliberately NOT enforced here: a
-// cross-domain grant is a sharing-scope policy question, not a privilege
-// escalation (the caller can only share a resource it already owns, and the
-// grantee gains nothing on its own tenant), and which domains a grantee may
-// come from is an open product decision. When that rule lands it belongs in
-// this same validator and MUST return ErrGranteeNotFound too — a grantee that
-// exists but is out of policy must be indistinguishable from a missing one, so
-// the error can never be used to enumerate rows across a tenant boundary.
-func ValidateGrants(ctx context.Context, d Deps, grants []models.SharedResourceGrant) error {
-	if d.Mailboxes == nil || d.MailGroups == nil {
-		return fmt.Errorf("%w: mailbox + mail-group lookups required", ErrDeps)
+// Domain policy (JAB-339 AC4, the second half of "grantee existence/domain
+// policy is explicit"): the grantee must belong to the SAME OWNER as the
+// resource. ownerUserID is the resource owner (the resource's domain's UserID,
+// resolved and passed by the adapter). A grantee row carries only a DomainID,
+// so its owner is resolved through the domain's UserID and compared. A grantee
+// that exists but is out of scope returns ErrGranteeNotFound — identical to a
+// missing one — so the error can NEVER be used to enumerate mailbox / group
+// rows across an owner boundary (anti-enumeration). A grantee whose domain row
+// is itself gone is likewise unusable and returns ErrGranteeNotFound; only an
+// unexpected data-access error is ErrInternal, never collapsed into not-found.
+//
+// ownerUserID is required: an empty owner is a wiring bug (it would admit only
+// grantees whose domain has UserID == "") and fails loud as ErrDeps, alongside
+// the nil-dependency guard.
+//
+// Scope: write-time only. A pre-existing cross-owner grant already in the DB is
+// NOT swept by this check and the reconciler keeps projecting it (it never calls
+// ValidateGrants); a retroactive sweep is a separate decision, and a
+// reconciler-side filter would re-introduce the silent-Stalwart-revoke class the
+// #1690 fix just closed.
+func ValidateGrants(ctx context.Context, d Deps, ownerUserID string, grants []models.SharedResourceGrant) error {
+	if d.Mailboxes == nil || d.MailGroups == nil || d.Domains == nil {
+		return fmt.Errorf("%w: mailbox + mail-group + domain lookups required", ErrDeps)
+	}
+	if ownerUserID == "" {
+		return fmt.Errorf("%w: owner user id required", ErrDeps)
 	}
 	for _, g := range grants {
 		if !ValidGranteeKind(g.GranteeKind) {
@@ -245,21 +267,40 @@ func ValidateGrants(ctx context.Context, d Deps, grants []models.SharedResourceG
 		if g.GranteeID == "" {
 			return ErrGranteeMissingID
 		}
+		var granteeDomainID string
 		switch g.GranteeKind {
 		case "mailbox":
-			if _, err := d.Mailboxes.FindByID(ctx, g.GranteeID); err != nil {
+			mb, err := d.Mailboxes.FindByID(ctx, g.GranteeID)
+			if err != nil {
 				if errors.Is(err, repository.ErrNotFound) {
 					return fmt.Errorf("%w: mailbox %s", ErrGranteeNotFound, g.GranteeID)
 				}
 				return fmt.Errorf("%w: mailbox lookup %s: %v", ErrInternal, g.GranteeID, err)
 			}
+			granteeDomainID = mb.DomainID
 		case "group":
-			if _, err := d.MailGroups.FindByID(ctx, g.GranteeID); err != nil {
+			mg, err := d.MailGroups.FindByID(ctx, g.GranteeID)
+			if err != nil {
 				if errors.Is(err, repository.ErrNotFound) {
 					return fmt.Errorf("%w: group %s", ErrGranteeNotFound, g.GranteeID)
 				}
 				return fmt.Errorf("%w: group lookup %s: %v", ErrInternal, g.GranteeID, err)
 			}
+			granteeDomainID = mg.DomainID
+		}
+		// Same-owner domain policy. Resolve the grantee's domain owner and
+		// compare to the resource owner. Out of scope and a dangling domain
+		// both return ErrGranteeNotFound (anti-enumeration); only a real
+		// data-access failure is ErrInternal.
+		dom, err := d.Domains.FindByID(ctx, granteeDomainID)
+		if err != nil {
+			if errors.Is(err, repository.ErrNotFound) {
+				return fmt.Errorf("%w: grantee %s domain", ErrGranteeNotFound, g.GranteeID)
+			}
+			return fmt.Errorf("%w: grantee %s domain lookup: %v", ErrInternal, g.GranteeID, err)
+		}
+		if dom.UserID != ownerUserID {
+			return fmt.Errorf("%w: grantee %s out of owner scope", ErrGranteeNotFound, g.GranteeID)
 		}
 	}
 	return nil
