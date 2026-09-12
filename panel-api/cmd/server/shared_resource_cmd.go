@@ -25,6 +25,7 @@ import (
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/sharedresourceops"
 )
 
 func sharedResourceRepoFromDB() repository.SharedResourceRepository {
@@ -168,6 +169,22 @@ func newSharedResourceGrantCmd() *cobra.Command {
 			}
 			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 			defer cancel()
+			// JAB-339 AC4: reject a grant to a non-existent grantee before any
+			// write — the shared owner with the REST handler. The inline flag
+			// checks above already caught a bad kind / empty id with a
+			// flag-specific message, so only the existence check fires here.
+			grantDeps := sharedresourceops.Deps{
+				Mailboxes:  mailboxRepoFromDB(),
+				MailGroups: repository.NewMailGroupRepository(sharedDB),
+			}
+			if err := sharedresourceops.ValidateGrants(ctx, grantDeps, []models.SharedResourceGrant{
+				{ResourceID: resourceID, GranteeKind: granteeKind, GranteeID: granteeID, Rights: rights},
+			}); err != nil {
+				if errors.Is(err, sharedresourceops.ErrGranteeNotFound) {
+					return fmt.Errorf("grantee not found: %s %s", granteeKind, granteeID)
+				}
+				return fmt.Errorf("validate grantee: %w", err)
+			}
 			repo := sharedResourceRepoFromDB()
 			grants, err := repo.ListGrants(ctx, resourceID)
 			if err != nil {

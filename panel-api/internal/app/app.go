@@ -899,6 +899,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			Agent:           deps.Agent,
 			Domains:         deps.Domains,
 			Mailboxes:       deps.Mailboxes,
+			MailGroups:      deps.MailGroups,
 			Autoresponders:  deps.Autoresponders,
 			Forwarders:      deps.Forwarders,
 			MailboxShares:   deps.MailboxShares,

@@ -78,7 +78,51 @@ func (f *srResFake) Delete(_ context.Context, id string) error {
 	return nil
 }
 
+// srMbFake / srMgFake are the grantee-existence lookups the grant handler now
+// consults (JAB-339 AC4). They embed the full repository interface but only
+// implement FindByID: a seeded id resolves, anything else is ErrNotFound, and a
+// non-nil err drives the fail-closed path.
+type srMbFake struct {
+	repository.MailboxRepository
+	ids map[string]bool
+	err error
+}
+
+func (f *srMbFake) FindByID(_ context.Context, id string) (*models.Mailbox, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	if f.ids[id] {
+		return &models.Mailbox{ID: id}, nil
+	}
+	return nil, repository.ErrNotFound
+}
+
+type srMgFake struct {
+	repository.MailGroupRepository
+	ids map[string]bool
+	err error
+}
+
+func (f *srMgFake) FindByID(_ context.Context, id string) (*models.MailGroup, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	if f.ids[id] {
+		return &models.MailGroup{ID: id}, nil
+	}
+	return nil, repository.ErrNotFound
+}
+
+// srRouter wires the default grantee lookups: mailbox "mb1" and group "grp1"
+// exist. Tests that need a missing or erroring grantee use srRouterFull.
 func srRouter(t *testing.T, res *srResFake, ag *srAgentFake) *gin.Engine {
+	return srRouterFull(t, res, ag,
+		&srMbFake{ids: map[string]bool{"mb1": true}},
+		&srMgFake{ids: map[string]bool{"grp1": true}})
+}
+
+func srRouterFull(t *testing.T, res *srResFake, ag *srAgentFake, mb *srMbFake, mg *srMgFake) *gin.Engine {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
@@ -88,7 +132,9 @@ func srRouter(t *testing.T, res *srResFake, ag *srAgentFake) *gin.Engine {
 		c.Next()
 	})
 	dom := &srDomFake{dom: &models.Domain{ID: "dom1", UserID: "user1", Name: "example.org", EmailEnabled: true}}
-	RegisterSharedResourceRoutes(v1, SharedResourceHandlerConfig{Resources: res, Domains: dom, Agent: ag})
+	RegisterSharedResourceRoutes(v1, SharedResourceHandlerConfig{
+		Resources: res, Domains: dom, Mailboxes: mb, MailGroups: mg, Agent: ag,
+	})
 	return r
 }
 
@@ -144,6 +190,48 @@ func TestSharedResource_SetGrants(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	require.Len(t, res.grantsSet["res1"], 1)
 	require.Equal(t, "readwrite", res.grantsSet["res1"][0].Rights)
+}
+
+// JAB-339 AC4: a grant to a non-existent mailbox grantee is rejected 400
+// grantee_not_found BEFORE the write — the dangling reference never persists.
+func TestSharedResource_SetGrants_GranteeNotFound(t *testing.T) {
+	res := &srResFake{byID: map[string]*models.SharedResource{
+		"res1": {ID: "res1", DomainID: "dom1", Kind: "calendar"},
+	}}
+	r := srRouter(t, res, &srAgentFake{}) // seeds mb1 / grp1 only
+	w := do(t, r, "PUT", "/api/v1/shared-resources/res1/grants",
+		map[string]any{"grants": []map[string]any{{"grantee_kind": "mailbox", "grantee_id": "ghost", "rights": "read"}}})
+	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+	require.Contains(t, w.Body.String(), "grantee_not_found")
+	require.Nil(t, res.grantsSet, "ReplaceGrants must not run when a grantee is missing")
+}
+
+// A group grantee is checked against the mail-group lookup too.
+func TestSharedResource_SetGrants_GroupGranteeNotFound(t *testing.T) {
+	res := &srResFake{byID: map[string]*models.SharedResource{
+		"res1": {ID: "res1", DomainID: "dom1", Kind: "calendar"},
+	}}
+	r := srRouter(t, res, &srAgentFake{})
+	w := do(t, r, "PUT", "/api/v1/shared-resources/res1/grants",
+		map[string]any{"grants": []map[string]any{{"grantee_kind": "group", "grantee_id": "ghost", "rights": "read"}}})
+	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+	require.Contains(t, w.Body.String(), "grantee_not_found")
+	require.Nil(t, res.grantsSet)
+}
+
+// Fail-closed: a lookup that errors (not a clean not-found) is a 500, and the
+// grant is NOT written. A transient DB blip must never let a grant slip through.
+func TestSharedResource_SetGrants_LookupFailsClosed(t *testing.T) {
+	res := &srResFake{byID: map[string]*models.SharedResource{
+		"res1": {ID: "res1", DomainID: "dom1", Kind: "calendar"},
+	}}
+	r := srRouterFull(t, res, &srAgentFake{},
+		&srMbFake{err: errors.New("db down")},
+		&srMgFake{ids: map[string]bool{"grp1": true}})
+	w := do(t, r, "PUT", "/api/v1/shared-resources/res1/grants",
+		map[string]any{"grants": []map[string]any{{"grantee_kind": "mailbox", "grantee_id": "mb1", "rights": "read"}}})
+	require.Equal(t, http.StatusInternalServerError, w.Code, w.Body.String())
+	require.Nil(t, res.grantsSet, "ReplaceGrants must not run on a lookup error")
 }
 
 func TestSharedResource_Delete_Tombstones(t *testing.T) {

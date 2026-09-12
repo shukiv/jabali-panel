@@ -13,6 +13,7 @@ type M65RouteDeps struct {
 	Agent           agent.AgentInterface
 	Domains         repository.DomainRepository
 	Mailboxes       repository.MailboxRepository
+	MailGroups      repository.MailGroupRepository
 	Autoresponders  repository.EmailAutoresponderRepository
 	Forwarders      repository.EmailForwarderRepository
 	MailboxShares   repository.MailboxShareRepository
@@ -101,8 +102,10 @@ func registerMailLogRoutes(g *gin.RouterGroup, deps M65RouteDeps) {
 // M52 (ADR-0133): standalone shared resources + grants.
 func registerSharedResourceRoutes(g *gin.RouterGroup, deps M65RouteDeps) {
 	RegisterSharedResourceRoutes(g, SharedResourceHandlerConfig{
-		Resources: deps.SharedResources,
-		Domains:   deps.Domains,
-		Agent:     deps.Agent,
+		Resources:  deps.SharedResources,
+		Domains:    deps.Domains,
+		Mailboxes:  deps.Mailboxes,
+		MailGroups: deps.MailGroups,
+		Agent:      deps.Agent,
 	})
 }
