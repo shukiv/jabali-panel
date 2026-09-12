@@ -1716,24 +1716,6 @@ var tenantRawAllowedDirectives = map[string]struct{}{
 	"etag":       {},
 }
 
-// tenantManagedResponseHeaders — response headers the panel renders itself
-// (NginxSafeOptions HSTS/security headers; structural headers). A tenant
-// add_header of these would duplicate or void the panel's copy (e.g. a second
-// Strict-Transport-Security with max-age=0). Matched case-insensitively.
-//
-// NOTE: Phase 2 (PR #1684) defines an identically named map for typed
-// custom_header. They are intentionally the same name so the rebase after both
-// land fails to compile (duplicate declaration) — that is the reminder to hoist
-// this into one shared set.
-var tenantManagedResponseHeaders = map[string]struct{}{
-	"strict-transport-security": {},
-	"x-frame-options":           {},
-	"x-content-type-options":    {},
-	"referrer-policy":           {},
-	"content-length":            {},
-	"transfer-encoding":         {},
-}
-
 // tenantHeaderNameRe — a conservative HTTP response-header field-name charset.
 var tenantHeaderNameRe = regexp.MustCompile(`^[A-Za-z0-9-]+$`)
 
@@ -2308,6 +2290,11 @@ var tenantSafeNginxRuleTypes = map[string]struct{}{
 // Not denied: Set-Cookie / Content-Security-Policy / Cache-Control — the tenant's
 // own domain, the tenant's call. Names are lower-cased; header names are
 // case-insensitive, so we match case- and surrounding-whitespace-insensitively.
+//
+// Shared: both the typed custom_header path (validateTenantNginxRules, Phase 2)
+// and the raw advanced-directives path (ValidateNginxDirectivesTenant, Phase 4)
+// deny the same set — a tenant add_header must not override a panel-managed
+// header by either route.
 var tenantManagedResponseHeaders = map[string]struct{}{
 	"strict-transport-security": {},
 	"x-frame-options":           {},
