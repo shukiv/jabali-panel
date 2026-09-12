@@ -40,14 +40,17 @@ The admin controls listen IP (selected from the [IP Manager](../admin/ip-address
 
 ## Nginx options and rewrite rules
 
-Two extra per-domain tabs — **Domain options** and **Rewrite rules** — appear only when your administrator has enabled *tenant domain options* for the server. Until then the tabs are hidden, and the domain's Overview shows a short note that your administrator can turn these controls on.
+Three extra per-domain tabs — **Domain options**, **Rewrite rules**, and **Advanced directives** — appear only when your administrator has enabled *tenant domain options* for the server. Until then the tabs are hidden, and the domain's Overview shows a short note that your administrator can turn these controls on.
 
 When they are enabled you can, on your own domains:
 
 - **Domain options** — set a curated, safe set of nginx options: maximum upload size, HSTS, the common security headers (`X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`), and gzip. You supply values; each option renders to a fixed, vetted directive — never raw config.
 - **Rewrite rules** — add two kinds of structured rule. A `rewrite` rule whose target must be a local path (no scheme or host, so it can never become an open redirect or a proxy to another service), and a `custom_header` rule that adds one response header. Every rule is validated before it is applied. The headers the panel manages for security — `Strict-Transport-Security`, `X-Frame-Options`, `X-Content-Type-Options`, and `Referrer-Policy` — can't be set here; use **Domain options** for HSTS and the security headers instead.
+- **Advanced directives** — a small raw-directive box for response tuning only. Just three directives are accepted — `add_header`, `expires`, and `etag` — one statement per line, no `{ }` blocks and no backslashes. Headers the panel manages for you (HSTS, `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`, `Content-Length`, `Transfer-Encoding`) are rejected so you can't accidentally weaken them. If a line is refused you see exactly which one. Anything that routes, reads files, or proxies is not accepted here — those stay admin-only.
 
-Raw nginx directives, reverse-proxy targets, IP access rules, and PHP settings stay admin-only whether or not tenant domain options are enabled. Your administrator turns the feature on under [Server Settings → General](../admin/server-settings.md#general).
+Under **Rewrite rules**, if your administrator has added their own raw nginx directives to your domain, they are shown to you read-only as *Administrator-managed directives* — so nothing that shapes your site's config is hidden from you, even though only an administrator can change it.
+
+Reverse-proxy targets (`proxy_pass`), file paths (`root` / `alias`), `location` blocks, IP access rules, and PHP settings stay admin-only whether or not tenant domain options are enabled. Your administrator turns the feature on under [Server Settings → General](../admin/server-settings.md#general).
 
 ## CLI
 
