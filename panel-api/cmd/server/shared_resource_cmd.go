@@ -169,15 +169,34 @@ func newSharedResourceGrantCmd() *cobra.Command {
 			}
 			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 			defer cancel()
-			// JAB-339 AC4: reject a grant to a non-existent grantee before any
-			// write — the shared owner with the REST handler. The inline flag
-			// checks above already caught a bad kind / empty id with a
-			// flag-specific message, so only the existence check fires here.
+			// Load the resource and its domain first: the domain's UserID is the
+			// resource owner the same-owner domain policy compares against (a bad
+			// --resource now fails "shared resource not found" instead of an
+			// empty ListGrants later).
+			repo := sharedResourceRepoFromDB()
+			sr, err := repo.FindByID(ctx, resourceID)
+			if err != nil {
+				if errors.Is(err, repository.ErrNotFound) {
+					return fmt.Errorf("shared resource not found: %s", resourceID)
+				}
+				return fmt.Errorf("load shared resource: %w", err)
+			}
+			dom, err := domainRepoFromDB().FindByID(ctx, sr.DomainID)
+			if err != nil {
+				return fmt.Errorf("load resource domain: %w", err)
+			}
+			// JAB-339 AC4: reject a grant to a non-existent grantee, and enforce
+			// the same-owner domain policy (the grantee must belong to the
+			// resource owner, dom.UserID), before any write — the shared owner
+			// with the REST handler. The inline flag checks above already caught
+			// a bad kind / empty id with a flag-specific message, so only the
+			// existence + owner-scope checks fire here.
 			grantDeps := sharedresourceops.Deps{
 				Mailboxes:  mailboxRepoFromDB(),
 				MailGroups: repository.NewMailGroupRepository(sharedDB),
+				Domains:    domainRepoFromDB(),
 			}
-			if err := sharedresourceops.ValidateGrants(ctx, grantDeps, []models.SharedResourceGrant{
+			if err := sharedresourceops.ValidateGrants(ctx, grantDeps, dom.UserID, []models.SharedResourceGrant{
 				{ResourceID: resourceID, GranteeKind: granteeKind, GranteeID: granteeID, Rights: rights},
 			}); err != nil {
 				if errors.Is(err, sharedresourceops.ErrGranteeNotFound) {
@@ -185,7 +204,6 @@ func newSharedResourceGrantCmd() *cobra.Command {
 				}
 				return fmt.Errorf("validate grantee: %w", err)
 			}
-			repo := sharedResourceRepoFromDB()
 			grants, err := repo.ListGrants(ctx, resourceID)
 			if err != nil {
 				return fmt.Errorf("list grants: %w", err)

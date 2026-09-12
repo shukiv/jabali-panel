@@ -195,7 +195,7 @@ func (h *sharedResourceHandler) update(c *gin.Context) {
 
 func (h *sharedResourceHandler) setGrants(c *gin.Context) {
 	claims := ginctx.Claims(c)
-	sr, _, ok := h.loadResourceWithAuth(c, c.Param("rid"), claims)
+	sr, dom, ok := h.loadResourceWithAuth(c, c.Param("rid"), claims)
 	if !ok {
 		return
 	}
@@ -219,13 +219,15 @@ func (h *sharedResourceHandler) setGrants(c *gin.Context) {
 			Rights:      g.Rights,
 		})
 	}
-	// JAB-339 AC4: validate the grantee kind + id and reject a grant to a
-	// non-existent grantee BEFORE the write — the shared owner both the REST
-	// handler and the CLI call, so they cannot drift. A dangling grantee id
-	// would otherwise persist and be silently dropped by the reconciler on
-	// every pass.
-	grantDeps := sharedresourceops.Deps{Mailboxes: h.cfg.Mailboxes, MailGroups: h.cfg.MailGroups}
-	if err := sharedresourceops.ValidateGrants(c.Request.Context(), grantDeps, grants); err != nil {
+	// JAB-339 AC4: validate the grantee kind + id, reject a grant to a
+	// non-existent grantee, and enforce the same-owner domain policy (the
+	// grantee must belong to the resource owner, dom.UserID) BEFORE the write —
+	// the shared owner both the REST handler and the CLI call, so they cannot
+	// drift. A dangling grantee id would otherwise persist and be silently
+	// dropped by the reconciler on every pass; an out-of-scope grantee is
+	// rejected as grantee_not_found (indistinguishable from missing).
+	grantDeps := sharedresourceops.Deps{Mailboxes: h.cfg.Mailboxes, MailGroups: h.cfg.MailGroups, Domains: h.cfg.Domains}
+	if err := sharedresourceops.ValidateGrants(c.Request.Context(), grantDeps, dom.UserID, grants); err != nil {
 		switch {
 		case errors.Is(err, sharedresourceops.ErrGranteeInvalidKind):
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_grantee_kind"})
