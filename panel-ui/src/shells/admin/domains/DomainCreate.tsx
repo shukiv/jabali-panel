@@ -27,6 +27,9 @@ export type DomainCreateInput = {
   // GH #1175: reverse-proxy domain — the panel reserves a loopback port and
   // proxies the domain to it. The assigned port comes back on create.
   reverse_proxy?: boolean;
+  // GH #1624 / ADR-0169 Phase 3: an admin web (nginx) template to seed this
+  // domain's custom nginx directives from. Admin-only (this whole form is admin).
+  web_template_id?: string;
 };
 
 type DomainCreated = { id: string; reverse_proxy_port?: number };
@@ -59,6 +62,18 @@ export const DomainCreate = () => {
         "/users?page_size=500&is_admin=false",
       );
       return data.data ?? [];
+    },
+  });
+
+  // GH #1624 / ADR-0169 Phase 3: admin web (nginx) templates the admin may apply
+  // to seed the new domain's custom directives. Empty picker → no template.
+  const webTemplatesQ = useQuery({
+    queryKey: ["admin", "web-templates"],
+    queryFn: async () => {
+      const { data } = await apiClient.get<{ templates: { id: string; name: string; description: string }[] }>(
+        "/admin/web-templates",
+      );
+      return data.templates ?? [];
     },
   });
 
@@ -134,6 +149,27 @@ export const DomainCreate = () => {
         >
           <Input placeholder="auto-generated if empty" />
         </Form.Item>
+
+        {/* GH #1624 / ADR-0169 Phase 3: apply an admin web (nginx) template to
+            seed this domain's custom nginx directives. Only shown when at least
+            one template exists (managed under Server Settings → Nginx). */}
+        {(webTemplatesQ.data?.length ?? 0) > 0 && (
+          <Form.Item
+            label="Nginx template"
+            name="web_template_id"
+            tooltip="Optional. Seed this domain's custom nginx directives from an admin web template. You can edit them afterward under the domain's settings."
+          >
+            <Select
+              allowClear
+              placeholder="None"
+              loading={webTemplatesQ.isLoading}
+              options={(webTemplatesQ.data ?? []).map((tmpl) => ({
+                value: tmpl.id,
+                label: tmpl.description ? `${tmpl.name} — ${tmpl.description}` : tmpl.name,
+              }))}
+            />
+          </Form.Item>
+        )}
 
         <Form.Item
           label={t("domaincreate.mail")}
