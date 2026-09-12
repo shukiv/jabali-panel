@@ -76,6 +76,12 @@ func TestValidateNginxDirectivesTenant(t *testing.T) {
 		{"open brace", "add_header X-A a; {"},
 		{"no trailing semicolon", "add_header X-A a"},
 		{"unbalanced quote", `add_header X-A "unterminated;`},
+		// Backslash smuggle: our naive quote toggle sees `\"` as a close, but
+		// nginx treats it as a literal quote, so the string stays open and
+		// swallows following config. Banned outright.
+		{"escaped-quote smuggle", `add_header X "abc\"def;`},
+		{"backslash in value", `add_header X-A a\b;`},
+		{"double backslash", `add_header X-A "a\\";`},
 		{"control char", "add_header X-A \x01;"},
 		{"null byte", "add_header X-A \x00;"},
 		{"missing value", "add_header X-Foo;"},

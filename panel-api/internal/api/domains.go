@@ -1769,6 +1769,17 @@ func ValidateNginxDirectivesTenant(directives string) string {
 	if strings.ContainsAny(directives, "{}") {
 		return "advanced directives may not contain blocks ({ })"
 	}
+	// Reject backslashes outright. Our quote tracking (countUnquotedSemicolons /
+	// splitNginxArgs) is a naive per-character toggle, but nginx's real
+	// tokenizer treats \" and \\ as escapes (mirrored by this codebase's own
+	// nginxrules.quoteNginxString). So an input like `add_header X "abc\"def;`
+	// looks string-closed to us — one trailing unquoted ';' — yet stays open in
+	// nginx, swallowing the following config (e.g. the rate-limit directives) or
+	// failing nginx -t. None of add_header / expires / etag's legitimate values
+	// need a backslash, so ban it and keep the grammar exhaustive.
+	if strings.ContainsRune(directives, '\\') {
+		return "advanced directives may not contain a backslash"
+	}
 	return scanNginxDirectives(directives, checkTenantDirective)
 }
 
