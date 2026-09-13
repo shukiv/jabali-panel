@@ -118,17 +118,6 @@ func (e *createDomainError) Error() string { return e.Code }
 // against the handler's deps. On success it returns the created domain (with
 // any in-place mutations from shared-cert attach / inline email). On failure it
 // returns a createDomainError the caller renders verbatim.
-// mailProviderForServer coerces "jabali" to "none" when the mail module isn't
-// installed on this server (GH #1409) — Jabali Mail can't be hosted without it,
-// so a domain must not be created with email_enabled=true. Every other provider
-// (none / external m365 / google) is untouched.
-func mailProviderForServer(provider string, mailModuleEnabled bool) string {
-	if provider == models.MailProviderJabali && !mailModuleEnabled {
-		return models.MailProviderNone
-	}
-	return provider
-}
-
 func createDomainOp(ctx context.Context, h *domainHandler, in createDomainInput) (*models.Domain, *createDomainError) {
 	// SECURITY: validate domain name (XSS / path traversal). Name is assumed
 	// already normalized + HTML-stripped by the caller.
@@ -351,7 +340,7 @@ func createDomainOp(ctx context.Context, h *domainHandler, in createDomainInput)
 			mailModuleEnabled = st.MailEnabled
 		}
 	}
-	mailProvider = mailProviderForServer(mailProvider, mailModuleEnabled)
+	mailProvider = domainops.MailProviderForServer(mailProvider, mailModuleEnabled)
 	m365Tenant, err := dnscompile.NormaliseM365Onmicrosoft(in.M365Onmicrosoft)
 	if err != nil {
 		return nil, &createDomainError{http.StatusBadRequest, "invalid_m365_onmicrosoft", err.Error()}

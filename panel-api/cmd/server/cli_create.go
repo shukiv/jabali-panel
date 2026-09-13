@@ -369,6 +369,21 @@ func createDomainDirect(ctx context.Context, in cliDomainInput) (*models.Domain,
 		mailProvider = models.MailProviderCustom
 		mailTemplateID = &tmplID
 	}
+	// GH #1409: coerce a 'jabali' provider to 'none' when this server's mail
+	// module is switched off, through the same domainops leaf the REST create
+	// path uses (createDomainOp) — otherwise `jabali domain create` (default
+	// --mail jabali) on a mail-less server would persist EmailEnabled=true and
+	// provision Jabali mail that can't run, a different stored domain than REST
+	// stores for the same input (AC2). Runs after the DNS-template block (so a
+	// 'custom' posture is untouched) and BEFORE DeriveMailFlags, mirroring the
+	// REST ordering. Fail OPEN on an unreadable settings row (assume the module
+	// is installed): a provisioning coercion must never block a create — the
+	// same choice the REST path makes.
+	mailModuleEnabled := true
+	if st, sErr := serverSettingsRepoFromDB().Get(ctx); sErr == nil && st != nil {
+		mailModuleEnabled = st.MailEnabled
+	}
+	mailProvider = domainops.MailProviderForServer(mailProvider, mailModuleEnabled)
 	mailEnabled, mailSkipSAN := models.DeriveMailFlags(mailProvider)
 	if !webEnabled && !dnsEnabled && !mailEnabled {
 		return nil, nil, fmt.Errorf("select at least one service: web hosting (--web-enabled), DNS (--manage-dns), or mail (--mail)")
