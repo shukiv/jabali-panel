@@ -265,6 +265,23 @@ export const DNSTemplatesCard = () => {
           <Form.List name="records">
             {(fields, { add, remove: removeRow }) => (
               <div style={{ marginTop: 8 }}>
+                {fields.length > 0 && (
+                  <Space align="baseline" style={{ display: "flex", marginBottom: 4 }}>
+                    {[
+                      ["Type", 100],
+                      ["Name", 160],
+                      ["Value", 240],
+                      ["TTL", 90],
+                      ["Priority", 80],
+                    ].map(([label, w]) => (
+                      <span key={label} style={{ width: w as number, display: "inline-block" }}>
+                        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                          {label}
+                        </Typography.Text>
+                      </span>
+                    ))}
+                  </Space>
+                )}
                 {fields.map(({ key, name, ...restField }) => (
                   <Space
                     key={key}
