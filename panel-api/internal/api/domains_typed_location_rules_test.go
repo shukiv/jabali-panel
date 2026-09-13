@@ -70,7 +70,35 @@ func TestValidateNginxRules_TypedLocationRules(t *testing.T) {
 			name:      "static_cache rejects an already-template-cached extension",
 			rules:     models.NginxRules{{Type: "static_cache", Extensions: []string{"css"}, Duration: "30d"}},
 			wantError: true,
-			errSubstr: "already long-cached",
+			errSubstr: "built-in static-asset",
+		},
+		{
+			name:      "deny_paths rejects a template-cached extension (shadowed, would no-op)",
+			rules:     models.NginxRules{{Type: "deny_paths", Extensions: []string{"svg"}}},
+			wantError: true,
+			errSubstr: "built-in static-asset",
+		},
+		{
+			name:      "deny_paths rejects html (template caches it too)",
+			rules:     models.NginxRules{{Type: "deny_paths", Extensions: []string{"html"}}},
+			wantError: true,
+			errSubstr: "built-in static-asset",
+		},
+		{
+			// A non-breaking space (U+00A0) can ride in on a copy-paste of "30d".
+			// It survives a TrimSpace but must NOT survive validation, because
+			// Duration is rendered verbatim into `expires <dur>;` and would then
+			// fail nginx -t (tearing down the tenant's vhost).
+			name:      "static_cache rejects a duration with a non-breaking space",
+			rules:     models.NginxRules{{Type: "static_cache", Extensions: []string{"pdf"}, Duration: " 30d"}},
+			wantError: true,
+			errSubstr: "expires value",
+		},
+		{
+			name:      "static_cache rejects a duration with a trailing space",
+			rules:     models.NginxRules{{Type: "static_cache", Extensions: []string{"pdf"}, Duration: "30d "}},
+			wantError: true,
+			errSubstr: "expires value",
 		},
 		{
 			name:      "static_cache requires a duration",

@@ -51,7 +51,7 @@ When they are enabled you can, on your own domains:
     - **Deny paths** — block all access to files by extension (for example hide `.env`, `.sql`, `.bak`, `.log`). You supply a list of bare extensions and the panel builds the matching rule; PHP files are handled by the server and can't be blocked this way.
     - **Static cache** — set a long cache lifetime for files by extension (for example `pdf`, `mp4`). Common web assets (css, js, images, fonts) are already cached by the server, so those are declined; and PHP-family extensions are refused so a source file is never served as a static download.
 
-    Every rule is validated before it is applied.
+    Every rule is validated before it is applied. **Deny paths** and **Static cache** don't apply to a domain that is served entirely by a reverse proxy — on those, the proxy handles every request before these file rules are reached.
 - **Advanced directives** — a small raw-directive box for response tuning only. Just three directives are accepted — `add_header`, `expires`, and `etag` — one statement per line, no `{ }` blocks and no backslashes. Headers the panel manages for you (HSTS, `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`, `Content-Length`, `Transfer-Encoding`) are rejected so you can't accidentally weaken them. If a line is refused you see exactly which one. Anything that routes, reads files, or proxies is not accepted here — those stay admin-only.
 
 Under **Rewrite rules**, if your administrator has added their own raw nginx directives to your domain, they are shown to you read-only as *Administrator-managed directives* — so nothing that shapes your site's config is hidden from you, even though only an administrator can change it.

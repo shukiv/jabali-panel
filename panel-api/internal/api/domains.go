@@ -2254,6 +2254,9 @@ var phpFamilyExtensionRE = regexp.MustCompile(`^(?i:php[0-9]*|phtml|phar|pht|php
 var templateCachedExtensions = map[string]struct{}{
 	"css": {}, "js": {}, "jpg": {}, "jpeg": {}, "png": {}, "gif": {},
 	"ico": {}, "svg": {}, "webp": {}, "woff": {}, "woff2": {}, "ttf": {}, "eot": {},
+	// The template also caches HTML (`location ~* \.html?$`, 5m) in the same
+	// cache_enabled block, ahead of the tenant rules.
+	"html": {}, "htm": {},
 }
 
 // validateExtensionList checks a deny_paths / static_cache extension list.
@@ -2283,24 +2286,35 @@ func validateExtensionList(exts []string, ruleType string) error {
 			}
 			return fmt.Errorf("%s: extension %q is handled by the PHP location and can't be blocked this way", ruleType, e)
 		}
-		if ruleType == "static_cache" {
-			if _, cached := templateCachedExtensions[norm]; cached {
-				return fmt.Errorf("static_cache: %q is already long-cached by the server; only extensions outside the default set can be tuned here", e)
-			}
+		// The vhost template's own static-asset location (`location ~* \.(css|
+		// js|…|html)$`) renders BEFORE the tenant rule directives, and nginx
+		// takes the first-matching regex location — so a deny_paths OR
+		// static_cache rule for one of those extensions would never fire. Reject
+		// both rather than silently store a dead rule (a silent no-op is worst
+		// for deny_paths, where the tenant believes a file is blocked when it is
+		// not). Erring toward rejection is the safe direction; when server
+		// caching is off the template block is absent, but the validator can't
+		// see that per-domain flag, so the conservative reject stands.
+		if _, cached := templateCachedExtensions[norm]; cached {
+			return fmt.Errorf("%s: %q is served by the server's built-in static-asset handling (which is matched first), so a rule here would not take effect", ruleType, e)
 		}
 	}
 	return nil
 }
 
 // isNginxExpires reports whether s is a value the nginx `expires` directive
-// accepts: a time with an optional unit (30d, 5m, -1), the keywords epoch / max
-// / off, or the daily @HH[hMM] form, with an optional leading `modified`. Reuses
-// the same grammar as the tenant raw-directives path (tenantExpiresRe).
+// accepts: a time with an optional unit (30d, 5m, -1), or the keywords epoch /
+// max / off / the daily @HH[hMM] form. Reuses the tenant raw-directives grammar
+// (tenantExpiresRe).
+//
+// It validates the RAW string — no trimming. tenantExpiresRe is fully anchored,
+// so any surrounding whitespace (ASCII space/tab OR a Unicode space such as
+// U+00A0 NBSP that a copy-paste from a document can smuggle in) fails the match.
+// This matters because Duration is rendered VERBATIM into `expires <dur>;`
+// (unlike Extensions, which extensionAlternation re-trims at render time): a
+// value that validated-when-trimmed but rendered-raw would pass here yet break
+// `nginx -t`, and a tenant's bad vhost is torn down rather than reverted.
 func isNginxExpires(s string) bool {
-	s = strings.TrimSpace(s)
-	if rest, ok := strings.CutPrefix(s, "modified "); ok {
-		s = strings.TrimSpace(rest)
-	}
 	return tenantExpiresRe.MatchString(s)
 }
 
