@@ -319,17 +319,32 @@ func createDomainDirect(ctx context.Context, in cliDomainInput) (*models.Domain,
 		return nil, nil, fmt.Errorf("select at least one service: web hosting (--web-enabled), DNS (--manage-dns), or mail (--mail)")
 	}
 
-	docRoot := in.DocRoot
+	// Trim first (matches the REST create path, which trims before it validates
+	// and stores) so a trailing space is neither stored nor mkdir'd.
+	docRoot := strings.TrimSpace(in.DocRoot)
 	if !webEnabled {
 		if in.ReverseProxy {
 			return nil, nil, fmt.Errorf("a reverse-proxy domain requires web hosting")
 		}
-		if strings.TrimSpace(docRoot) != "" {
+		if docRoot != "" {
 			return nil, nil, fmt.Errorf("a web-disabled domain has no document root")
 		}
 		docRoot = "" // docroot-less (DNS-only zone / mail-only domain)
-	} else if docRoot == "" {
-		docRoot = "/home/" + *owner.Username + "/domains/" + in.Name + "/public_html"
+	} else {
+		// JAB-279 (AC1 module owns validate / AC2 same stored state across
+		// adapters): confine the document root to the owner's home before it is
+		// stored — the reconciler mkdir -p's the path and renders a vhost for it,
+		// so an unchecked --doc-root would stand up a site on an arbitrary path.
+		// The CLI is an operator tool, so it applies the same admin-floor rule the
+		// REST admin create path uses (domainops.ValidateDocumentRoot); a path
+		// outside /home/<user>/ or containing ".." is refused here. *owner.Username
+		// is safe: the eligibility gate above already rejected a nil/empty username.
+		if err := domainops.ValidateDocumentRoot(docRoot, *owner.Username, in.Name); err != nil {
+			return nil, nil, fmt.Errorf("invalid --doc-root: %w", err)
+		}
+		if docRoot == "" {
+			docRoot = "/home/" + *owner.Username + "/domains/" + in.Name + "/public_html"
+		}
 	}
 
 	// DNS-only (web off + no Jabali mail) has nothing to serve over TLS.

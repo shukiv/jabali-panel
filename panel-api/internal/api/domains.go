@@ -9,7 +9,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -20,6 +19,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/kratosclient"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dnscompile"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/domainops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/middleware"
@@ -250,22 +250,18 @@ func validateDomainName(s string) error {
 
 // validateDocumentRoot validates document root path to prevent path traversal
 func validateDocumentRoot(docRoot, username, domainName string) error {
-	if docRoot == "" {
-		return nil // Will use default
-	}
-
-	// Must be under user's home directory
-	expectedPrefix := "/home/" + username + "/"
-	if !strings.HasPrefix(docRoot, expectedPrefix) {
+	// The confinement rule lives in the domainops leaf (JAB-279) so the CLI
+	// create path enforces the identical check. This adapter maps the leaf's
+	// sentinels back to the exact body strings the HTTP handler returned before
+	// the extraction, so the wire is unchanged.
+	err := domainops.ValidateDocumentRoot(docRoot, username, domainName)
+	switch {
+	case errors.Is(err, domainops.ErrDocRootOutsideHome):
 		return fmt.Errorf("document root must be under user's home directory")
-	}
-
-	// Check for path traversal attempts
-	if strings.Contains(docRoot, "..") {
+	case errors.Is(err, domainops.ErrDocRootTraversal):
 		return fmt.Errorf("document root contains invalid path traversal sequences")
 	}
-
-	return nil
+	return err
 }
 
 // validateTenantDocumentRoot is the stricter confinement for a NON-admin owner
@@ -274,18 +270,17 @@ func validateDocumentRoot(docRoot, username, domainName string) error {
 // or parent dir like .../public), never another domain or elsewhere in the home.
 // Admins keep the looser validateDocumentRoot (anywhere under the owner's home).
 func validateTenantDocumentRoot(docRoot, username, domainName string) error {
-	if docRoot == "" {
-		return nil // resets to the canonical default
-	}
-	if strings.Contains(docRoot, "..") {
+	// Stricter confinement, same extraction as validateDocumentRoot: the leaf
+	// owns the rule, this adapter restores the exact wire strings (the
+	// "must be inside …" message is dynamic, so it is rebuilt here).
+	err := domainops.ValidateTenantDocumentRoot(docRoot, username, domainName)
+	switch {
+	case errors.Is(err, domainops.ErrDocRootTraversal):
 		return fmt.Errorf("document root contains invalid path traversal sequences")
-	}
-	clean := filepath.Clean(docRoot)
-	base := "/home/" + username + "/domains/" + domainName
-	if clean != base && !strings.HasPrefix(clean, base+"/") {
+	case errors.Is(err, domainops.ErrDocRootOutsideDomain):
 		return fmt.Errorf("document root must be inside /home/%s/domains/%s/", username, domainName)
 	}
-	return nil
+	return err
 }
 
 type updateDomainRequest struct {
