@@ -3399,7 +3399,7 @@ jabali malware quarantine restore <id> [flags]
 
 **Flags:**
 
-- `--reason` — why the file is being restored (required)
+- `--reason` — why the file is being restored (required, min 5 chars)
 
 #### `jabali malware scan`
 
