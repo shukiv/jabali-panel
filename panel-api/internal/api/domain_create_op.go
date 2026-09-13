@@ -141,7 +141,9 @@ func createDomainOp(ctx context.Context, h *domainHandler, in createDomainInput)
 	// domain-vs-domain; the alias table introduced the cross-table collision, so
 	// this closes the reverse of validateAliasHostname's own-side check. The name
 	// is already normalized by the caller (matches the alias table's lowercasing).
-	if hit, clash := aliasCollision(ctx, h.cfg.WebDomainAliases, in.Name); clash {
+	if hit, clash, cerr := AliasCollision(ctx, h.cfg.WebDomainAliases, in.Name); cerr != nil {
+		return nil, &createDomainError{http.StatusInternalServerError, "db_alias_lookup", "could not verify the domain name against existing aliases"}
+	} else if clash {
 		return nil, &createDomainError{http.StatusConflict, "domain_conflicts_alias", "the name " + hit + " is already used as an alias of another domain"}
 	}
 

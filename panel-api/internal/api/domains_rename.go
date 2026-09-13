@@ -63,7 +63,10 @@ func (h *domainHandler) rename(c *gin.Context) {
 	// cross-tenant hijack guard create does — the new name must not claim a
 	// server_name already held by another domain's web-domain alias. (The
 	// domain's own aliases survive the rename; they are keyed by domain_id.)
-	if hit, clash := aliasCollision(ctx, h.cfg.WebDomainAliases, newName); clash {
+	if hit, clash, cerr := AliasCollision(ctx, h.cfg.WebDomainAliases, newName); cerr != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "db_alias_lookup", "message": "could not verify the domain name against existing aliases"})
+		return
+	} else if clash {
 		c.JSON(http.StatusConflict, gin.H{"error": "domain_conflicts_alias", "message": "the name " + hit + " is already used as an alias of another domain"})
 		return
 	}
