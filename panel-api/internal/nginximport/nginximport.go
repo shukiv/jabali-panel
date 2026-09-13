@@ -81,6 +81,17 @@ func Convert(snippet string) Result {
 		if firstToken(clean) == "location" {
 			block, endIdx := collectBlock(lines, i)
 			convertLocation(&res, block, lineNo)
+			// A directive tacked onto the block's closing-brace line (e.g.
+			// `} proxy_pass ...;`) must NOT vanish: collectBlock consumed the
+			// whole closing line and convertLocation truncated the body at the
+			// last `}`, so anything after it would be dropped with no warning.
+			// Re-classify each trailing statement so it becomes at least a
+			// warning (it can still never become a rule — same guards apply).
+			for _, stmt := range strings.Split(afterLastBrace(stripComment(lines[endIdx])), ";") {
+				if s := strings.TrimSpace(stmt); s != "" {
+					convertDirective(&res, s, endIdx+1, s)
+				}
+			}
 			i = endIdx
 			continue
 		}
@@ -261,6 +272,15 @@ func stripComment(line string) string {
 		}
 	}
 	return line
+}
+
+// afterLastBrace returns the part of a line following its last `}` (empty if
+// there is none). Used to recover a directive tacked onto a block's closing line.
+func afterLastBrace(line string) string {
+	if i := strings.LastIndex(line, "}"); i >= 0 {
+		return line[i+1:]
+	}
+	return ""
 }
 
 func firstToken(s string) string {

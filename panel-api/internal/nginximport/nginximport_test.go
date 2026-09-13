@@ -127,6 +127,26 @@ rewrite ^/a$ /b
 	}
 }
 
+// A directive tacked onto a block's closing-brace line must not vanish — it
+// must surface as a (security) warning, never a rule.
+func TestConvert_TrailingDirectiveOnClosingLine(t *testing.T) {
+	res := Convert("location ~* \\.(env)$ {\n    deny all;\n} proxy_pass http://127.0.0.1:9000;\nrewrite ^/foo$ /bar last;")
+	// The deny block and the standalone rewrite still convert.
+	if types := ruleTypes(res); strings.Join(types, ",") != "deny_paths,rewrite" {
+		t.Fatalf("rule types = %v, want deny_paths,rewrite", types)
+	}
+	// The trailing proxy_pass must be flagged, not silently dropped.
+	sawSecProxy := false
+	for _, w := range res.Warnings {
+		if w.Security && strings.Contains(w.Reason, "proxy_pass") {
+			sawSecProxy = true
+		}
+	}
+	if !sawSecProxy {
+		t.Fatalf("trailing proxy_pass must produce a Security warning, got %+v", res.Warnings)
+	}
+}
+
 func TestConvert_MixedDenyExpiresSkipped(t *testing.T) {
 	res := Convert(`location ~* \.(env)$ { deny all; expires 30d; }`)
 	if len(res.Rules) != 0 {
