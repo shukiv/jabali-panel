@@ -72,6 +72,7 @@ import { NspawnImagesCard } from "./NspawnImagesCard";
 import { SSOMaintenanceCard } from "./SSOMaintenanceCard";
 import { TenantDomainOptionsCard } from "./TenantDomainOptionsCard";
 import { WebTemplatesCard } from "./WebTemplatesCard";
+import { DNSTemplatesCard } from "./DNSTemplatesCard";
 import { TenantNotificationsCard } from "./TenantNotificationsCard";
 import { NginxSettingsCard } from "./NginxSettingsCard";
 import { LogRetentionCard } from "./LogRetentionCard";
@@ -1030,7 +1031,16 @@ export const ServerSettingsPage = () => {
       ),
     },
     { key: "storage", label: tabLabel(<HddOutlined />, "Storage"), children: <StorageSettingsTab /> },
-    { key: "dns", label: tabLabel(<GlobalOutlined />, "DNS"), children: <DNSSettingsTab /> },
+    {
+      key: "dns",
+      label: tabLabel(<GlobalOutlined />, "DNS"),
+      children: (
+        <>
+          <DNSSettingsTab />
+          <DNSTemplatesCard />
+        </>
+      ),
+    },
     {
       key: "email",
       label: tabLabel(<MailOutlined />, "Email"),
