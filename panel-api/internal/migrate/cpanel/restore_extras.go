@@ -274,12 +274,45 @@ func ImportExtras(
 			}); err != nil {
 				res.Skipped = append(res.Skipped, fmt.Sprintf("php_version_install_skip:%s:%v", version, err))
 			}
-			// Ensure FPM pool exists at OS level.
+			// Ensure FPM pool exists at OS level. Send the pool row's tuning
+			// as the source of truth. The agent validates pm_mode,
+			// pm_max_children, and process_idle_timeout_seconds (and, for a
+			// dynamic row, the pm_start/min-spare/max-spare sizing) and rejects
+			// the call if any is missing or invalid. The old map sent only
+			// pm_max_children, so the agent rejected every importer pool with
+			// "invalid pm_mode" and the domain silently fell back to the box
+			// default PHP version (JAB-404). The periodic reconciler converges
+			// the rest (tenant ini overrides, package exec opt-out) on its next
+			// tick, so this only needs the sizing the validator requires.
+			//
+			// Resolve the pool's slug exactly the way phppoolops.ReconcileViaAgent
+			// does (GH #329): the user's earliest pool is the default (slug ==
+			// username, version-independent /run/php/jabali-<user> socket); every
+			// other version gets a versioned slug on its own socket. Sending an
+			// empty (default) slug for every version — as this call used to,
+			// harmlessly, because it always failed pm_mode validation first —
+			// becomes actively wrong now that it succeeds: the default slug's
+			// glob-delete removes jabali-<user>.conf from every OTHER version dir
+			// (clobbering a pre-existing box-default pool) and its socket is
+			// shared, so two imported versions would collide on one socket.
+			// Matching the reconciler keeps the importer's apply
+			// convergence-consistent; additive = !isDefault mirrors it too.
+			isDefault := true
+			if list, lerr := poolsRepo.ListByUserID(ctx, targetUserID); lerr == nil && len(list) > 0 {
+				isDefault = list[0].ID == pool.ID
+			}
+			slug := models.PoolSlug(targetUsername, version, isDefault)
 			if _, err := agentCli.Call(ctx, "php.pool.apply", map[string]any{
-				"username":        targetUsername,
-				"php_version":     version,
-				"pm_max_children": uint32(20),
-				"additive":        true, // M35.8 P6: per-domain PHP — keep other-version pools
+				"username":                     targetUsername,
+				"slug":                         slug,
+				"php_version":                  version,
+				"pm_mode":                      pool.PmMode,
+				"pm_max_children":              pool.PmMaxChildren,
+				"process_idle_timeout_seconds": pool.ProcessIdleTimeoutSeconds,
+				"pm_start_servers":             pool.PmStartServers,
+				"pm_min_spare_servers":         pool.PmMinSpareServers,
+				"pm_max_spare_servers":         pool.PmMaxSpareServers,
+				"additive":                     !isDefault, // GH #329: default pool non-additive; versioned pools keep siblings
 			}); err != nil {
 				res.Skipped = append(res.Skipped, fmt.Sprintf("php_pool_apply_skip:%s:%v", version, err))
 				continue
