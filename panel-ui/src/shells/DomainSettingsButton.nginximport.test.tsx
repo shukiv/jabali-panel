@@ -1,9 +1,10 @@
 // DomainSettingsButton.nginximport.test.tsx — GH #1624 nginx-snippet import.
 //
-// The tenant Rule Builder has an "Import from an nginx config" section that
-// POSTs to /nginx-import/preview and MERGES the returned typed rules into the
-// builder (the owner still reviews + Saves). This test drives the convert →
-// preview → add flow with a mocked endpoint.
+// The tenant Rule Builder has an "Import from nginx config" button at the top
+// (GH #1624 UX follow-up) that opens the importer in a Modal — it POSTs to
+// /nginx-import/preview and MERGES the returned typed rules into the builder
+// (the owner still reviews + Saves). This test drives open-modal → convert →
+// preview → add → modal-closes with a mocked endpoint.
 import { App } from "antd";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -42,7 +43,7 @@ describe("GH #1624 — nginx snippet import merges into the Rule Builder", () =>
     mocked.post.mockReset();
   });
 
-  it("converts a snippet and adds the returned rule to the builder", async () => {
+  it("opens the importer from a top button, converts, adds, and closes", async () => {
     mocked.post.mockResolvedValue({
       data: {
         rules: [{ type: "deny_paths", extensions: ["env"] }],
@@ -52,10 +53,14 @@ describe("GH #1624 — nginx snippet import merges into the Rule Builder", () =>
     });
     renderTenant(domain);
 
-    fireEvent.change(
-      screen.getByPlaceholderText(/paste an nginx snippet here/i),
-      { target: { value: "location ~* \\.(env)$ { deny all; }" } },
-    );
+    // The paste box is behind the top button — not rendered inline anymore.
+    expect(screen.queryByPlaceholderText(/paste an nginx snippet here/i)).toBeNull();
+
+    // Open the importer Modal from the top-of-page button.
+    fireEvent.click(screen.getByRole("button", { name: /Import from nginx config/i }));
+
+    const textarea = await screen.findByPlaceholderText(/paste an nginx snippet here/i);
+    fireEvent.change(textarea, { target: { value: "location ~* \\.(env)$ { deny all; }" } });
     fireEvent.click(screen.getByRole("button", { name: /^Convert$/i }));
 
     await waitFor(() =>
@@ -74,5 +79,8 @@ describe("GH #1624 — nginx snippet import merges into the Rule Builder", () =>
     // The merged rule now shows as a Deny Paths card in the builder.
     await waitFor(() => expect(screen.getByText("Deny Paths")).toBeInTheDocument());
     expect(screen.getByText(/deny env/i)).toBeInTheDocument();
+    // Modal close after import (onImported → setImportOpen(false)) is verified
+    // visually — jsdom does not fire the Modal's close transition, so a
+    // destroyOnHidden-unmount assertion here would be flaky (cf. GH #1630).
   });
 });
