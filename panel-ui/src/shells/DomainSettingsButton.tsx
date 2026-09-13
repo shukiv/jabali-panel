@@ -1118,6 +1118,172 @@ const HtaccessImport = ({
   );
 };
 
+// NginxImport — paste a raw nginx snippet and convert it into typed Rule Builder
+// entries via POST /domains/:id/nginx-import/preview (GH #1624). Sibling of
+// HtaccessImport for people migrating from an nginx-based panel. Only a narrow,
+// tenant-safe set is recognized (rewrite / add_header / deny + expires
+// locations); everything else is listed as a warning, never applied silently.
+const NginxImport = ({
+  domainId,
+  rules,
+  onRulesChange,
+}: {
+  domainId: string;
+  rules: NginxRule[];
+  onRulesChange: (rules: NginxRule[]) => void;
+}) => {
+  const [content, setContent] = useState("");
+  const [preview, setPreview] = useState<PreviewResponse | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const handleConvert = async () => {
+    setLoading(true);
+    setPreview(null);
+    try {
+      const res = await apiClient.post<PreviewResponse>(
+        `/domains/${domainId}/nginx-import/preview`,
+        { content },
+      );
+      setPreview({
+        rules: res.data.rules ?? [],
+        warnings: res.data.warnings ?? [],
+        notes: res.data.notes ?? [],
+      });
+    } catch (err) {
+      const e = err as {
+        response?: { data?: { error?: string } };
+        message?: string;
+      };
+      feedback.message.error(`Could not convert nginx snippet: ${e.response?.data?.error ?? e.message ?? "Unknown error"}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleAdd = () => {
+    if (!preview || preview.rules.length === 0) return;
+    onRulesChange([...rules, ...preview.rules]);
+    feedback.message.success(
+      `Added ${preview.rules.length} rule(s) to the Rule Builder: review them above, then Save.`,
+    );
+    setPreview(null);
+    setContent("");
+  };
+
+  const securityWarnings = preview?.warnings.filter((w) => w.security) ?? [];
+  const otherWarnings = preview?.warnings.filter((w) => !w.security) ?? [];
+
+  return (
+    <div>
+      <Typography.Paragraph type="secondary" style={{ marginBottom: 8 }}>
+        Paste an nginx <code>server</code>/<code>location</code> snippet to
+        convert its rewrites, response headers, extension <code>deny</code>{" "}
+        blocks and extension <code>expires</code> caches into typed Rule Builder
+        entries. Anything that routes, proxies, or reads files (
+        <code>proxy_pass</code>, <code>root</code>, <code>alias</code>,{" "}
+        <code>return</code>, prefix <code>location</code> blocks) is listed below
+        and never applied — those stay admin-only.
+      </Typography.Paragraph>
+      <Input.TextArea
+        value={content}
+        onChange={(e) => setContent(e.target.value)}
+        placeholder={"# paste an nginx snippet here\nlocation ~* \\.(env|sql|bak)$ { deny all; }"}
+        rows={10}
+        style={{ fontFamily: "monospace", marginBottom: 8 }}
+      />
+      <div style={{ marginBottom: 12 }}>
+        <Button
+          type="primary"
+          onClick={handleConvert}
+          loading={loading}
+          disabled={content.trim() === ""}
+        >
+          Convert
+        </Button>
+      </div>
+
+      {preview && (
+        <div>
+          <Alert
+            type={preview.rules.length > 0 ? "success" : "info"}
+            showIcon
+            style={{ marginBottom: 12 }}
+            message={
+              preview.rules.length > 0
+                ? `${preview.rules.length} rule(s) ready to import`
+                : "No convertible rules found"
+            }
+            action={
+              preview.rules.length > 0 ? (
+                <Button size="small" type="primary" onClick={handleAdd}>
+                  Add to Rule Builder
+                </Button>
+              ) : undefined
+            }
+          />
+
+          {securityWarnings.length > 0 && (
+            <Alert
+              type="error"
+              showIcon
+              style={{ marginBottom: 12 }}
+              message="Not converted — review manually (security relevant)"
+              description={
+                <ul style={{ margin: 0, paddingLeft: 18 }}>
+                  {securityWarnings.map((w, i) => (
+                    <li key={i}>
+                      <Tag color="red">line {w.line}</Tag> {w.reason}
+                      <br />
+                      <Typography.Text code>{w.source}</Typography.Text>
+                    </li>
+                  ))}
+                </ul>
+              }
+            />
+          )}
+
+          {otherWarnings.length > 0 && (
+            <Alert
+              type="warning"
+              showIcon
+              style={{ marginBottom: 12 }}
+              message={`${otherWarnings.length} line(s) not converted`}
+              description={
+                <ul style={{ margin: 0, paddingLeft: 18 }}>
+                  {otherWarnings.map((w, i) => (
+                    <li key={i}>
+                      <Typography.Text type="secondary">
+                        {w.line > 0 ? `line ${w.line}: ` : ""}
+                      </Typography.Text>
+                      {w.reason}
+                    </li>
+                  ))}
+                </ul>
+              }
+            />
+          )}
+
+          {preview.notes.length > 0 && (
+            <Alert
+              type="info"
+              showIcon
+              style={{ marginBottom: 12 }}
+              message="Notes"
+              description={
+                <ul style={{ margin: 0, paddingLeft: 18 }}>
+                  {preview.notes.map((n, i) => (
+                    <li key={i}>{n}</li>
+                  ))}
+                </ul>
+              }
+            />
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
 export const DomainSettingsButton = ({
   domain,
   open: controlledOpen,
@@ -1492,6 +1658,15 @@ export const TenantNginxRulesPanel = ({
         <Button type="primary" loading={saving} onClick={handleSave}>
           Save
         </Button>
+      </div>
+      {/* GH #1624: import a raw nginx snippet (migration copy-paste) into the
+          typed rules above. Converted rules are MERGED into the builder — the
+          owner still reviews + Saves, which re-runs the tenant validator. */}
+      <div style={{ marginTop: 24, paddingTop: 16, borderTop: "1px solid rgba(0,0,0,0.06)" }}>
+        <div style={{ marginBottom: 8 }}>
+          <Typography.Text strong>Import from an nginx config</Typography.Text>
+        </div>
+        <NginxImport domainId={domain.id} rules={rules} onRulesChange={setRules} />
       </div>
       {/* GH #1624 / ADR-0169 Phase 5: the typed Rule Builder above is the
           rendered source of truth, but an admin may also have added raw

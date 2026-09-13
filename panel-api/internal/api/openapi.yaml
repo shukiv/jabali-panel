@@ -3633,6 +3633,14 @@ paths:
       parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
       responses: { "200": { description: OK } }
 
+  /domains/{id}/nginx-import/preview:
+    post:
+      tags: [Domains]
+      summary: Preview nginx snippet import
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
 
   # --- Impersonation (auto) ---
 

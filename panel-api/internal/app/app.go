@@ -1399,6 +1399,11 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Domains: deps.Domains,
 			})
 		}
+		if deps.Domains != nil {
+			api.RegisterDomainNginxImportRoutes(v1, api.DomainNginxImportHandlerConfig{
+				Domains: deps.Domains,
+			})
+		}
 		if deps.WordPressInstalls != nil && deps.Databases != nil && deps.DatabaseUsers != nil &&
 			deps.DatabaseUserGrants != nil && deps.Domains != nil && deps.Users != nil && deps.Agent != nil {
 			appCfg := api.ApplicationHandlerConfig{
