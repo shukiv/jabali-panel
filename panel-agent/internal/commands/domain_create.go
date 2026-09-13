@@ -1310,9 +1310,11 @@ func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redi
 	testCmd.Stdout = &testOutput
 	testCmd.Stderr = &testOutput
 	if err := testCmd.Run(); err != nil {
-		// Clean up on test failure.
-		os.Remove(enabledPath)
-		os.Remove(configPath)
+		// nginx rejected the newly-rendered vhost. Restore the last-good config
+		// if one existed so the domain keeps serving; only tear down a brand-new
+		// vhost that has no prior config to fall back to. Either way, surface the
+		// original rejection so the bad directive is reported on every ~60s tick.
+		restoreVhostAfterFailedTest(ctx, configPath, enabledPath, existingBytes, readErr == nil, linkOK)
 		return "", nginxTestFailure("domain.vhost", testOutput.String())
 	}
 
@@ -1326,6 +1328,72 @@ func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redi
 	}
 
 	return configPath, nil
+}
+
+// restoreVhostAfterFailedTest recovers from an `nginx -t` failure inside
+// writeVhost. The reconciler calls writeVhost on every ~60s tick, so a vhost
+// whose newly-rendered content nginx rejects must NOT be deleted: nginx only
+// includes sites-enabled/*, so removing the file darkens the domain — it falls
+// through to a sibling or mail vhost on the next reboot or external reload — and
+// the failure recurs every tick while the bad value sits in the control-plane
+// DB. Instead restore the last-good config that was on disk before this pass.
+//
+//   - No prior config (hadConfig false): nothing to fall back to. Remove the
+//     brand-new vhost so a rejected first render is not left half-applied.
+//   - Prior config existed: rewrite it atomically and restore the exact prior
+//     symlink state, then re-run `nginx -t`. The old config normally passes, so
+//     the domain keeps serving last-good. If it now fails too (e.g. a cert file
+//     the old config referenced has since vanished), there is no safe state to
+//     hold — remove both, matching the pre-fix behaviour for that case.
+//
+// The caller still returns the ORIGINAL nginxTestFailure, so the tenant sees the
+// bad-directive error rather than the retest output. Runs under nginxOpMu, held
+// by the caller. Returns true when a config was left in place (last-good
+// restored), false when both files were removed.
+func restoreVhostAfterFailedTest(ctx context.Context, configPath, enabledPath string, existingBytes []byte, hadConfig, linkedBefore bool) bool {
+	if !hadConfig {
+		os.Remove(enabledPath)
+		os.Remove(configPath)
+		return false
+	}
+
+	// Restore the last-good content atomically (temp file + rename) so an
+	// external `nginx -s reload` (e.g. a certbot deploy hook) can never observe
+	// a half-written file through the restore window.
+	tmpFile := configPath + ".tmp"
+	if err := os.WriteFile(tmpFile, existingBytes, 0644); err != nil {
+		os.Remove(tmpFile)
+		os.Remove(enabledPath)
+		os.Remove(configPath)
+		return false
+	}
+	if err := os.Rename(tmpFile, configPath); err != nil {
+		os.Remove(tmpFile)
+		os.Remove(enabledPath)
+		os.Remove(configPath)
+		return false
+	}
+
+	// Restore the exact prior symlink state. If the domain was not linked before
+	// this pass, remove the symlink writeVhost created — do not "improve" state
+	// on a failure path. If it was linked, the symlink targets configPath (a
+	// path, not an inode), so the restored content is already live under it.
+	if !linkedBefore {
+		os.Remove(enabledPath)
+	}
+
+	// Re-validate the restored config. The last-good config almost always
+	// passes; if it does not, there is nothing safe to keep.
+	testCmd := execCommandContext(ctx, "nginx", "-t")
+	var discard bytes.Buffer
+	testCmd.Stdout = &discard
+	testCmd.Stderr = &discard
+	if err := testCmd.Run(); err != nil {
+		os.Remove(enabledPath)
+		os.Remove(configPath)
+		return false
+	}
+	return true
 }
 
 // resolveHTTPSFlags maps the wire params to the two vhost gates (JAB-237).
