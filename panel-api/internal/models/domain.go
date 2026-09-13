@@ -95,6 +95,19 @@ type NginxRule struct {
 
 	// max_upload_size
 	Size string `json:"size,omitempty"`
+
+	// deny_paths, static_cache (GH #1624): a list of bare file extensions
+	// (letters/digits only, no dot) the panel compiles into a single
+	// case-insensitive, end-anchored `location ~* \.(a|b)$` block. The tenant
+	// never supplies the regex — the panel builds it from this validated list,
+	// which is the regex-injection boundary.
+	Extensions []string `json:"extensions,omitempty"`
+
+	// static_cache: the cache lifetime for the matched extensions, as an nginx
+	// `expires` duration (e.g. "30d", "1h", "max"). Rendered as `expires <dur>;`
+	// only — no `add_header`, because an add_header inside a location suppresses
+	// the panel's inherited server-scope security headers (JAB-70).
+	Duration string `json:"duration,omitempty"`
 }
 
 // NginxRules implements driver.Valuer / sql.Scanner so GORM can

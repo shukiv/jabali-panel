@@ -7,6 +7,26 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 )
 
+// TestStaticCacheNoAddHeader pins the JAB-70 security property: static_cache
+// must render `expires` only. An `add_header` inside a location suppresses the
+// server-scope security headers (HSTS, X-Frame-Options, …) the panel sets, so a
+// static_cache that emitted one would silently weaken hardening on every cached
+// asset. Kept as its own test so a future "add Cache-Control immutable" change
+// trips here loudly.
+func TestStaticCacheNoAddHeader(t *testing.T) {
+	got := Compile(&models.Domain{
+		NginxRules: []models.NginxRule{
+			{Type: "static_cache", Extensions: []string{"pdf"}, Duration: "30d"},
+		},
+	})
+	if strings.Contains(got, "add_header") {
+		t.Fatalf("static_cache must not emit add_header (JAB-70 header suppression); got:\n%s", got)
+	}
+	if !strings.Contains(got, "expires 30d;") {
+		t.Fatalf("static_cache should emit `expires 30d;`; got:\n%s", got)
+	}
+}
+
 func TestCompile(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -39,6 +59,45 @@ func TestCompile(t *testing.T) {
 			},
 			want:     `add_header X-Custom "test-value";`,
 			wantBool: true,
+		},
+		{
+			name: "deny_paths compiles a case-insensitive extension deny block",
+			domain: &models.Domain{
+				NginxRules: []models.NginxRule{
+					{Type: "deny_paths", Extensions: []string{"env", "sql", "bak"}},
+				},
+			},
+			want:     "location ~* \\.(env|sql|bak)$ {\n        deny all;\n    }\n",
+			wantBool: true,
+		},
+		{
+			name: "deny_paths lowercases and de-duplicates extensions",
+			domain: &models.Domain{
+				NginxRules: []models.NginxRule{
+					{Type: "deny_paths", Extensions: []string{"ENV", "env", "Sql"}},
+				},
+			},
+			want:     "location ~* \\.(env|sql)$ {\n        deny all;\n    }\n",
+			wantBool: true,
+		},
+		{
+			name: "static_cache renders expires only (no add_header — JAB-70)",
+			domain: &models.Domain{
+				NginxRules: []models.NginxRule{
+					{Type: "static_cache", Extensions: []string{"pdf", "mp4"}, Duration: "30d"},
+				},
+			},
+			want:     "location ~* \\.(pdf|mp4)$ {\n        expires 30d;\n    }\n",
+			wantBool: true,
+		},
+		{
+			name: "static_cache with empty extensions emits nothing",
+			domain: &models.Domain{
+				NginxRules: []models.NginxRule{
+					{Type: "static_cache", Extensions: []string{}, Duration: "30d"},
+				},
+			},
+			want: "",
 		},
 		{
 			name: "custom_header with always flag true",
