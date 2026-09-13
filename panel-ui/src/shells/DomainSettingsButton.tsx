@@ -1127,10 +1127,15 @@ const NginxImport = ({
   domainId,
   rules,
   onRulesChange,
+  onImported,
 }: {
   domainId: string;
   rules: NginxRule[];
   onRulesChange: (rules: NginxRule[]) => void;
+  // Called after converted rules are merged into the builder — lets a host
+  // (e.g. the import Modal) close itself so the owner lands back on the
+  // builder with the new rules in view.
+  onImported?: () => void;
 }) => {
   const [content, setContent] = useState("");
   const [preview, setPreview] = useState<PreviewResponse | null>(null);
@@ -1164,10 +1169,11 @@ const NginxImport = ({
     if (!preview || preview.rules.length === 0) return;
     onRulesChange([...rules, ...preview.rules]);
     feedback.message.success(
-      `Added ${preview.rules.length} rule(s) to the Rule Builder: review them above, then Save.`,
+      `Added ${preview.rules.length} rule(s) to the Rule Builder: review them, then Save.`,
     );
     setPreview(null);
     setContent("");
+    onImported?.();
   };
 
   const securityWarnings = preview?.warnings.filter((w) => w.security) ?? [];
@@ -1619,6 +1625,7 @@ export const TenantNginxRulesPanel = ({
 }) => {
   const [rules, setRules] = useState<NginxRule[]>(domain.nginx_rules ?? []);
   const [saving, setSaving] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   const qc = useQueryClient();
 
   useEffect(() => {
@@ -1648,25 +1655,34 @@ export const TenantNginxRulesPanel = ({
 
   return (
     <div>
-      <Typography.Paragraph type="secondary">
-        Add rewrite rules and custom response headers for this domain. Rewrites
-        must point to a local path on your own site (no external URLs or
-        proxying).
-      </Typography.Paragraph>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "flex-start",
+          gap: 16,
+          flexWrap: "wrap",
+          marginBottom: 16,
+        }}
+      >
+        <Typography.Paragraph type="secondary" style={{ flex: 1, minWidth: 240, marginBottom: 0 }}>
+          Add rewrite rules and custom response headers for this domain. Rewrites
+          must point to a local path on your own site (no external URLs or
+          proxying).
+        </Typography.Paragraph>
+        {/* GH #1624: migration copy-paste entry point. A top-of-page button
+            (not a section far below the builder) opens the nginx-snippet
+            importer in a Modal, so it's reachable without scrolling past a long
+            rules list. */}
+        <Button icon={<ImportOutlined />} onClick={() => setImportOpen(true)}>
+          Import from nginx config
+        </Button>
+      </div>
       <RuleBuilder rules={rules} onRulesChange={setRules} allowedTypes={["rewrite", "custom_header", "deny_paths", "static_cache"]} />
       <div style={{ marginTop: 16 }}>
         <Button type="primary" loading={saving} onClick={handleSave}>
           Save
         </Button>
-      </div>
-      {/* GH #1624: import a raw nginx snippet (migration copy-paste) into the
-          typed rules above. Converted rules are MERGED into the builder — the
-          owner still reviews + Saves, which re-runs the tenant validator. */}
-      <div style={{ marginTop: 24, paddingTop: 16, borderTop: "1px solid rgba(0,0,0,0.06)" }}>
-        <div style={{ marginBottom: 8 }}>
-          <Typography.Text strong>Import from an nginx config</Typography.Text>
-        </div>
-        <NginxImport domainId={domain.id} rules={rules} onRulesChange={setRules} />
       </div>
       {/* GH #1624 / ADR-0169 Phase 5: the typed Rule Builder above is the
           rendered source of truth, but an admin may also have added raw
@@ -1690,6 +1706,28 @@ export const TenantNginxRulesPanel = ({
           </Typography.Text>
         </div>
       )}
+
+      {/* GH #1624: import a raw nginx snippet (migration copy-paste) into the
+          typed rules above. Opened from the top-of-page button so it's reachable
+          without scrolling past a long rules list. Converted rules are MERGED
+          into the builder — the owner still reviews + Saves, which re-runs the
+          tenant validator. destroyOnHidden so each open starts on a clean
+          paste/preview. */}
+      <Modal
+        title="Import from an nginx config"
+        open={importOpen}
+        onCancel={() => setImportOpen(false)}
+        footer={null}
+        destroyOnHidden
+        width={720}
+      >
+        <NginxImport
+          domainId={domain.id}
+          rules={rules}
+          onRulesChange={setRules}
+          onImported={() => setImportOpen(false)}
+        />
+      </Modal>
     </div>
   );
 };
