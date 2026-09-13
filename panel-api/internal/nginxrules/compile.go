@@ -146,6 +146,32 @@ func Compile(d *models.Domain) string {
 
 		case "max_upload_size":
 			fmt.Fprintf(&b, "    client_max_body_size %s;\n", r.Size)
+
+		case "deny_paths":
+			// Block access to files by extension (GH #1624): sensitive files a
+			// tenant migrated in — .env, .sql, .bak, .log, … The panel builds the
+			// regex from the validated extension list (validateNginxRules enforces
+			// [A-Za-z0-9]+ per extension), so there is no tenant-supplied regex to
+			// inject. End-anchored + case-insensitive so `.ENV` is caught too.
+			if alt := extensionAlternation(r.Extensions); alt != "" {
+				fmt.Fprintf(&b,
+					"    location ~* \\.(%s)$ {\n"+
+						"        deny all;\n"+
+						"    }\n", alt)
+			}
+
+		case "static_cache":
+			// Long-cache static files by extension (GH #1624). Renders `expires`
+			// ONLY: an `add_header` inside a location suppresses the server-scope
+			// security headers the panel sets (JAB-70), and `expires` already
+			// emits Cache-Control: max-age without that hazard. Same panel-built
+			// regex as deny_paths.
+			if alt := extensionAlternation(r.Extensions); alt != "" && r.Duration != "" {
+				fmt.Fprintf(&b,
+					"    location ~* \\.(%s)$ {\n"+
+						"        expires %s;\n"+
+						"    }\n", alt, r.Duration)
+			}
 		}
 	}
 	return b.String()
@@ -192,6 +218,29 @@ func reverseProxyRules(d *models.Domain) []models.NginxRule {
 func rootPath(p string) bool {
 	p = strings.TrimSpace(p)
 	return p == "/" || p == ""
+}
+
+// extensionAlternation lowercases, de-duplicates (preserving first-seen order)
+// and joins a validated extension list into an nginx regex alternation body,
+// e.g. ["ENV","sql","env"] -> "env|sql". The validator (validateNginxRules)
+// guarantees each element is [A-Za-z0-9]+, so no element needs regex escaping
+// and the result can never break out of the `\.( … )$` the caller wraps it in.
+// Returns "" for an empty list so the caller emits no location block.
+func extensionAlternation(exts []string) string {
+	seen := make(map[string]struct{}, len(exts))
+	out := make([]string, 0, len(exts))
+	for _, e := range exts {
+		e = strings.ToLower(strings.TrimSpace(e))
+		if e == "" {
+			continue
+		}
+		if _, dup := seen[e]; dup {
+			continue
+		}
+		seen[e] = struct{}{}
+		out = append(out, e)
+	}
+	return strings.Join(out, "|")
 }
 
 func quoteNginxString(s string) string {

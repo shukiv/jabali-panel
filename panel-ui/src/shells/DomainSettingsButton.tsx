@@ -62,7 +62,12 @@ export type NginxRule =
       ips: string[];
     }
   | { type: "php_setting"; name: string; value: string }
-  | { type: "max_upload_size"; size: string };
+  | { type: "max_upload_size"; size: string }
+  // GH #1624 typed location rules. The panel builds the `location ~* \.(…)$`
+  // block from `extensions` (bare, letter/digit-only tokens) — the tenant never
+  // writes the regex. deny_paths → `deny all;`, static_cache → `expires <dur>;`.
+  | { type: "deny_paths"; extensions: string[] }
+  | { type: "static_cache"; extensions: string[]; duration: string };
 
 // Minimal shape — admin and user shells have slightly different Domain
 // records but this button only cares about these fields.
@@ -140,9 +145,41 @@ const compileRules = (rules: NginxRule[]): string => {
         out.push(`    client_max_body_size ${r.size};`);
         break;
       }
+      case "deny_paths": {
+        const alt = extAlternation(r.extensions);
+        if (alt) {
+          out.push(`    location ~* \\.(${alt})$ {`);
+          out.push("        deny all;");
+          out.push("    }");
+        }
+        break;
+      }
+      case "static_cache": {
+        const alt = extAlternation(r.extensions);
+        if (alt && r.duration) {
+          out.push(`    location ~* \\.(${alt})$ {`);
+          out.push(`        expires ${r.duration};`);
+          out.push("    }");
+        }
+        break;
+      }
     }
   }
   return out.join("\n");
+};
+
+// extAlternation mirrors nginxrules.extensionAlternation (Go): lowercase,
+// de-duplicate (first-seen order), join with `|`. Keep in sync with the backend.
+const extAlternation = (exts: string[]): string => {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of exts || []) {
+    const e = raw.trim().toLowerCase();
+    if (!e || seen.has(e)) continue;
+    seen.add(e);
+    out.push(e);
+  }
+  return out.join("|");
 };
 
 // Raw Directives editor component. Shows two stacked sections:
@@ -490,6 +527,88 @@ const renderMaxUploadSizeBody = (
   </>
 );
 
+// GH #1624: shared extensions editor for deny_paths / static_cache. A tags
+// Select where each tag is one bare extension (no dot). The backend validates
+// [A-Za-z0-9]+ per tag; here we just strip a leading dot and lower-case for a
+// forgiving paste ("*.env" / ".env" / "ENV" all land as "env").
+const renderExtensionsField = (
+  extensions: string[],
+  onUpdate: (field: string, value: unknown) => void,
+) => (
+  <Col span={24}>
+    <div style={{ marginBottom: 8 }}>
+      <Typography.Text>
+        File extensions <Typography.Text type="danger">*</Typography.Text>
+      </Typography.Text>
+    </div>
+    <Select
+      mode="tags"
+      style={{ width: "100%" }}
+      value={extensions}
+      placeholder="env  sql  bak"
+      tokenSeparators={[",", " "]}
+      onChange={(vals: string[]) =>
+        onUpdate(
+          "extensions",
+          vals.map((v) => v.trim().replace(/^\*?\./, "").toLowerCase()).filter(Boolean),
+        )
+      }
+      options={[]}
+    />
+    <Typography.Text type="secondary" style={{ display: "block", marginTop: 4 }}>
+      Bare extensions, no dot — e.g. env, sql, bak. Matched case-insensitively at
+      the end of the path.
+    </Typography.Text>
+  </Col>
+);
+
+const renderDenyPathsBody = (
+  rule: Extract<NginxRule, { type: "deny_paths" }>,
+  onUpdate: (field: string, value: unknown) => void,
+) => (
+  <>
+    <Row gutter={16}>{renderExtensionsField(rule.extensions, onUpdate)}</Row>
+    <Typography.Text type="secondary" style={{ display: "block", marginTop: 8 }}>
+      Denies all access to files with these extensions (e.g. hide{" "}
+      <Typography.Text code>.env</Typography.Text>,{" "}
+      <Typography.Text code>.sql</Typography.Text>,{" "}
+      <Typography.Text code>.bak</Typography.Text>). PHP is handled separately and
+      can&apos;t be blocked here.
+    </Typography.Text>
+  </>
+);
+
+const renderStaticCacheBody = (
+  rule: Extract<NginxRule, { type: "static_cache" }>,
+  onUpdate: (field: string, value: unknown) => void,
+) => (
+  <>
+    <Row gutter={16}>{renderExtensionsField(rule.extensions, onUpdate)}</Row>
+    <Row gutter={16} style={{ marginTop: 12 }}>
+      <Col span={12}>
+        <div style={{ marginBottom: 8 }}>
+          <Typography.Text>
+            Cache duration <Typography.Text type="danger">*</Typography.Text>
+          </Typography.Text>
+        </div>
+        <Input
+          placeholder="30d"
+          value={rule.duration}
+          onChange={(e) => onUpdate("duration", e.target.value)}
+        />
+        <Typography.Text type="secondary" style={{ display: "block", marginTop: 4 }}>
+          nginx expires value — e.g. 30d, 1h, max.
+        </Typography.Text>
+      </Col>
+    </Row>
+    <Typography.Text type="secondary" style={{ display: "block", marginTop: 8 }}>
+      Sets a long cache lifetime for these files. Common web assets (css, js,
+      images, fonts) are already cached by the server and can&apos;t be re-tuned
+      here.
+    </Typography.Text>
+  </>
+);
+
 // Sortable rule card
 interface SortableRuleCardProps {
   idx: number;
@@ -526,6 +645,8 @@ const SortableRuleCard = ({
       ip_access: "IP Access",
       php_setting: "PHP Setting",
       max_upload_size: "Max Upload Size",
+      deny_paths: "Deny Paths",
+      static_cache: "Static Cache",
     };
     return labels[type];
   };
@@ -544,6 +665,10 @@ const SortableRuleCard = ({
         return `${rule.name} = ${rule.value}`;
       case "max_upload_size":
         return `Max: ${rule.size}`;
+      case "deny_paths":
+        return `deny ${(rule.extensions || []).join(", ")}`;
+      case "static_cache":
+        return `${(rule.extensions || []).join(", ")} → ${rule.duration}`;
     }
   };
 
@@ -622,6 +747,16 @@ const SortableRuleCard = ({
                 rule as Extract<NginxRule, { type: "max_upload_size" }>,
                 (field, value) => onUpdate(idx, field, value)
               )}
+            {rule.type === "deny_paths" &&
+              renderDenyPathsBody(
+                rule as Extract<NginxRule, { type: "deny_paths" }>,
+                (field, value) => onUpdate(idx, field, value)
+              )}
+            {rule.type === "static_cache" &&
+              renderStaticCacheBody(
+                rule as Extract<NginxRule, { type: "static_cache" }>,
+                (field, value) => onUpdate(idx, field, value)
+              )}
           </div>
         )}
       </Card>
@@ -682,6 +817,12 @@ const RuleBuilder = ({
       case "max_upload_size":
         newRule = { type: "max_upload_size", size: "" };
         break;
+      case "deny_paths":
+        newRule = { type: "deny_paths", extensions: [] };
+        break;
+      case "static_cache":
+        newRule = { type: "static_cache", extensions: [], duration: "30d" };
+        break;
     }
 
     const newRules = [...rules, newRule];
@@ -707,6 +848,8 @@ const RuleBuilder = ({
     { key: "ip_access", label: "IP Access", icon: <PlusOutlined /> },
     { key: "php_setting", label: "PHP Setting", icon: <PlusOutlined /> },
     { key: "max_upload_size", label: "Max Upload Size", icon: <PlusOutlined /> },
+    { key: "deny_paths", label: "Deny Paths", icon: <PlusOutlined /> },
+    { key: "static_cache", label: "Static Cache", icon: <PlusOutlined /> },
   ].filter(
     (it) => !allowedTypes || allowedTypes.includes(it.key as NginxRule["type"]),
   );
@@ -1344,7 +1487,7 @@ export const TenantNginxRulesPanel = ({
         must point to a local path on your own site (no external URLs or
         proxying).
       </Typography.Paragraph>
-      <RuleBuilder rules={rules} onRulesChange={setRules} allowedTypes={["rewrite", "custom_header"]} />
+      <RuleBuilder rules={rules} onRulesChange={setRules} allowedTypes={["rewrite", "custom_header", "deny_paths", "static_cache"]} />
       <div style={{ marginTop: 16 }}>
         <Button type="primary" loading={saving} onClick={handleSave}>
           Save

@@ -2086,7 +2086,7 @@ func validatePageRedirects(prs models.PageRedirects) error {
 
 func isValidNginxRuleType(s string) bool {
 	switch s {
-	case "custom_header", "rewrite", "proxy_pass", "ip_access", "php_setting", "max_upload_size", "static_alias", "media_alias":
+	case "custom_header", "rewrite", "proxy_pass", "ip_access", "php_setting", "max_upload_size", "static_alias", "media_alias", "deny_paths", "static_cache":
 		return true
 	}
 	return false
@@ -2186,9 +2186,29 @@ func validateNginxRules(rules models.NginxRules) error {
 			if strings.ContainsAny(r.Target, " \t\n\r;{}") {
 				return fmt.Errorf("rule %d: invalid chars in %s target", i, r.Type)
 			}
+		case "deny_paths":
+			// GH #1624: block files by extension. The panel builds the regex from
+			// this list (nginxrules.extensionAlternation), so the only thing a
+			// tenant supplies is bare extensions — validateExtensionList enforces
+			// [A-Za-z0-9]+ per extension, which is the regex-injection boundary.
+			if err := validateExtensionList(r.Extensions, r.Type); err != nil {
+				return fmt.Errorf("rule %d: %v", i, err)
+			}
+		case "static_cache":
+			// GH #1624: long-cache files by extension. Same extension boundary as
+			// deny_paths, plus an nginx `expires` duration.
+			if err := validateExtensionList(r.Extensions, r.Type); err != nil {
+				return fmt.Errorf("rule %d: %v", i, err)
+			}
+			if r.Duration == "" {
+				return fmt.Errorf("rule %d: static_cache needs a duration (e.g. \"30d\", \"1h\", \"max\")", i)
+			}
+			if !isNginxExpires(r.Duration) {
+				return fmt.Errorf("rule %d: static_cache duration must be an nginx expires value (e.g. \"30d\", \"1h\", \"max\", \"off\")", i)
+			}
 		}
 		// Forbid control characters everywhere to prevent newline injection into vhost
-		allText := r.Name + r.Value + r.Pattern + r.Replacement + r.Target + r.Path + r.Size + r.ReadTimeout
+		allText := r.Name + r.Value + r.Pattern + r.Replacement + r.Target + r.Path + r.Size + r.ReadTimeout + r.Duration + strings.Join(r.Extensions, "")
 		for _, c := range allText {
 			if c < 32 && c != '\t' {
 				return fmt.Errorf("rule %d: contains invalid control chars", i)
@@ -2201,6 +2221,87 @@ func validateNginxRules(rules models.NginxRules) error {
 		}
 	}
 	return nil
+}
+
+const (
+	// maxExtensionsPerRule / maxExtensionLen bound a deny_paths / static_cache
+	// extension list. Soft abuse limits — nginx -t on the agent is the real
+	// validator — but they also keep the compiled `\.( … )$` alternation small.
+	maxExtensionsPerRule = 32
+	maxExtensionLen      = 16
+)
+
+// extensionCharRE is the extension charset for deny_paths / static_cache. Bare
+// letters/digits only — no dot, slash, or regex metacharacter. This is the
+// regex-injection boundary: nginxrules.extensionAlternation joins these verbatim
+// into `\.( … )$`, so anything but [A-Za-z0-9] could break out of the group.
+var extensionCharRE = regexp.MustCompile(`^[A-Za-z0-9]+$`)
+
+// phpFamilyExtensionRE matches extensions nginx would otherwise hand to PHP-FPM:
+// php, php7, php8, phtml, phar, pht, phps. Rejected in BOTH new rule types.
+// static_cache: serving one of these as a static file discloses PHP source
+// (e.g. wp-config.php with DB credentials). deny_paths: the template's
+// `location ~ \.php$` (rendered earlier in the vhost) wins the first-match, so a
+// tenant deny_paths for php is a silent no-op — reject it rather than mislead.
+var phpFamilyExtensionRE = regexp.MustCompile(`^(?i:php[0-9]*|phtml|phar|pht|phps)$`)
+
+// templateCachedExtensions are the extensions the agent vhost template already
+// long-caches in its own `location ~* \.(css|js|…)$` block, which is rendered
+// BEFORE the tenant rule directives — so nginx's first-match rule means a tenant
+// static_cache for one of these never takes effect. Reject them with a clear
+// message rather than store a dead rule. Mirrors the template list in
+// panel-agent/internal/commands/domain_create.go.
+var templateCachedExtensions = map[string]struct{}{
+	"css": {}, "js": {}, "jpg": {}, "jpeg": {}, "png": {}, "gif": {},
+	"ico": {}, "svg": {}, "webp": {}, "woff": {}, "woff2": {}, "ttf": {}, "eot": {},
+}
+
+// validateExtensionList checks a deny_paths / static_cache extension list.
+// ruleType tailors the rejections (static_cache also refuses the
+// already-template-cached extensions).
+func validateExtensionList(exts []string, ruleType string) error {
+	if len(exts) == 0 {
+		return fmt.Errorf("%s needs at least one file extension", ruleType)
+	}
+	if len(exts) > maxExtensionsPerRule {
+		return fmt.Errorf("%s: too many extensions (max %d)", ruleType, maxExtensionsPerRule)
+	}
+	for _, e := range exts {
+		norm := strings.ToLower(strings.TrimSpace(e))
+		if norm == "" {
+			return fmt.Errorf("%s: empty extension", ruleType)
+		}
+		if len(norm) > maxExtensionLen {
+			return fmt.Errorf("%s: extension %q too long (max %d chars)", ruleType, e, maxExtensionLen)
+		}
+		if !extensionCharRE.MatchString(norm) {
+			return fmt.Errorf("%s: extension %q may contain only letters and digits (no dot or symbols)", ruleType, e)
+		}
+		if phpFamilyExtensionRE.MatchString(norm) {
+			if ruleType == "static_cache" {
+				return fmt.Errorf("%s: extension %q would serve PHP source as a static file — refused", ruleType, e)
+			}
+			return fmt.Errorf("%s: extension %q is handled by the PHP location and can't be blocked this way", ruleType, e)
+		}
+		if ruleType == "static_cache" {
+			if _, cached := templateCachedExtensions[norm]; cached {
+				return fmt.Errorf("static_cache: %q is already long-cached by the server; only extensions outside the default set can be tuned here", e)
+			}
+		}
+	}
+	return nil
+}
+
+// isNginxExpires reports whether s is a value the nginx `expires` directive
+// accepts: a time with an optional unit (30d, 5m, -1), the keywords epoch / max
+// / off, or the daily @HH[hMM] form, with an optional leading `modified`. Reuses
+// the same grammar as the tenant raw-directives path (tenantExpiresRe).
+func isNginxExpires(s string) bool {
+	s = strings.TrimSpace(s)
+	if rest, ok := strings.CutPrefix(s, "modified "); ok {
+		s = strings.TrimSpace(rest)
+	}
+	return tenantExpiresRe.MatchString(s)
 }
 
 // redosNestedQuantRE flags the classic catastrophic-backtracking shape: a group
@@ -2270,6 +2371,13 @@ func validateProxyPassTarget(target string) error {
 var tenantSafeNginxRuleTypes = map[string]struct{}{
 	"rewrite":       {},
 	"custom_header": {},
+	// GH #1624 typed location rules. Both are panel-rendered from a validated
+	// extension list (no tenant-supplied regex, no reverse-proxy/file-path
+	// surface), so they carry no more trust surface than the extension charset:
+	//   - deny_paths  -> location ~* \.(…)$ { deny all; }
+	//   - static_cache -> location ~* \.(…)$ { expires <dur>; }   (no add_header)
+	"deny_paths":   {},
+	"static_cache": {},
 }
 
 // tenantManagedResponseHeaders are response-header names a tenant custom_header
