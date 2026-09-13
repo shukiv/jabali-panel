@@ -16,17 +16,36 @@ package reconciler
 
 import (
 	"context"
-	"encoding/json"
 	"strings"
 	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dnscompile"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/domainmailops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
-	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
-const panelPrimaryEmailAgentTimeout = 30 * time.Second
+// mailOpsDeps builds the shared Domain Mail Lifecycle dependency set
+// (internal/domainmailops) for the reconciler's periodic enable convergence.
+//
+// SSLCerts and SSLReconciler are intentionally omitted. The reconciler
+// converges mail SANs through ReconcileSSLSANDrift on its own tick; the
+// per-tick enable path has never flipped a cert row, so wiring SSL scheduling
+// through Enable here would introduce a cert-row mutation the periodic path
+// never performed. JAB-288 requires the extraction to preserve current
+// Agent-first behavior, so SSL stays with the drift reconciler.
+//
+// Call is the agent method value — every caller guards r.agent != nil before
+// invoking Enable, so the method value is never built on a nil interface.
+func (r *Reconciler) mailOpsDeps() domainmailops.Deps {
+	return domainmailops.Deps{
+		Domains:        r.domains,
+		DNSZones:       r.dnsZones,
+		DNSRecords:     r.dnsRecords,
+		ServerSettings: r.serverSettings,
+		Call:           r.agent.Call,
+	}
+}
 
 // ensurePanelPrimaryDKIM is a reconciler-scoped mirror of the HTTP
 // email-enable handler's EnableDomainEmailInline flow. No-op if DKIM
@@ -57,69 +76,27 @@ func (r *Reconciler) ensurePanelPrimaryDKIM(ctx context.Context, domain *models.
 		return
 	}
 
-	agentCtx, cancel := context.WithTimeout(ctx, panelPrimaryEmailAgentTimeout)
-	defer cancel()
-	raw, err := r.agent.Call(agentCtx, "domain.email_enable", map[string]any{
-		"domain_id":   domain.ID,
-		"domain_name": domain.Name,
-	})
+	// JAB-286 AC4 / JAB-288 AC5: the periodic enable convergence routes through
+	// the shared domainmailops.Enable implementation — Agent provisioning
+	// (domain.email_enable → Ed25519 DKIM keypair + Stalwart add), state
+	// persistence (UpdateEmailState), and managed-only M6 DNS writes in one
+	// declared order — instead of copying the Agent→database→DNS ordering here.
+	// Enable validates a complete DKIM response and never persists on an
+	// incomplete one, so on error nothing is written and the next tick retries
+	// (email_enabled stays 1, DkimSelector stays null). Enable mutates the
+	// passed domain in place on success, so subsequent per-tick code on this
+	// pass sees the new state without a reload. SSL deps are omitted — see
+	// mailOpsDeps.
+	selector, _, warnings, err := domainmailops.Enable(ctx, r.mailOpsDeps(), domain)
 	if err != nil {
-		r.log.Error("panel-primary DKIM: agent domain.email_enable failed",
+		r.log.Error("panel-primary DKIM: enable convergence failed",
 			"domain", domain.Name, "err", err)
 		return
 	}
-
-	var resp struct {
-		Ok            bool   `json:"ok"`
-		DKIMSelector  string `json:"dkim_selector"`
-		DKIMPublicKey string `json:"dkim_public_key"`
-	}
-	if err := json.Unmarshal(raw, &resp); err != nil {
-		r.log.Error("panel-primary DKIM: agent response unmarshal",
-			"domain", domain.Name, "err", err)
-		return
-	}
-	if !resp.Ok || resp.DKIMSelector == "" || resp.DKIMPublicKey == "" {
-		r.log.Error("panel-primary DKIM: agent returned incomplete response",
-			"domain", domain.Name,
-			"ok", resp.Ok,
-			"selector", resp.DKIMSelector,
-			"pubkey_len", len(resp.DKIMPublicKey))
-		return
-	}
-
-	selector := resp.DKIMSelector
-	pubKey := resp.DKIMPublicKey
-	now := time.Now().UTC()
-	if err := r.domains.UpdateEmailState(ctx, domain.ID, repository.DomainEmailState{
-		Enabled:        true,
-		DkimSelector:   &selector,
-		DkimPublicKey:  &pubKey,
-		EmailEnabledAt: &now,
-	}); err != nil {
-		r.log.Error("panel-primary DKIM: UpdateEmailState failed",
-			"domain", domain.Name, "err", err)
-		// The agent-side keypair + Stalwart entry already exist; next
-		// tick will retry the DB write. No rollback needed — a panel-
-		// primary-only re-enable is idempotent on the agent side.
-		return
-	}
-
-	// Mutate the caller's struct so subsequent per-tick code (e.g.
-	// reconcileWebmailVhosts on the same pass) sees the up-to-date
-	// state without a reload.
-	domain.DkimSelector = &selector
-	domain.DkimPublicKey = &pubKey
-	domain.EmailEnabledAt = &now
+	logManagedDNSWarnings(r, "panel-primary DKIM", domain.Name, warnings)
 
 	r.log.Info("panel-primary DKIM: provisioned",
 		"domain", domain.Name, "selector", selector)
-
-	// Best-effort DNS sync. The apex zone was already created by
-	// bootstrap_pdns_self_zone at install time; syncPanelPrimaryEmailDNS
-	// adds MX/SPF/DKIM/DMARC inside that zone. Warnings are logged; DB
-	// state is already committed.
-	r.syncPanelPrimaryEmailDNS(ctx, domain.ID, selector, pubKey)
 }
 
 // ensureTenantEmailEnabled is the tenant-domain counterpart of
@@ -144,59 +121,33 @@ func (r *Reconciler) ensureTenantEmailEnabled(ctx context.Context, domain *model
 		return
 	}
 
-	agentCtx, cancel := context.WithTimeout(ctx, panelPrimaryEmailAgentTimeout)
-	defer cancel()
-	raw, err := r.agent.Call(agentCtx, "domain.email_enable", map[string]any{
-		"domain_id":   domain.ID,
-		"domain_name": domain.Name,
-	})
+	// JAB-286 AC4 / JAB-288 AC5: route the periodic enable convergence through
+	// the shared domainmailops.Enable (Agent provisioning → state persistence →
+	// managed DNS, one declared order; incomplete Agent responses never persist).
+	// See ensurePanelPrimaryDKIM and mailOpsDeps for the SSL-nil rationale.
+	selector, _, warnings, err := domainmailops.Enable(ctx, r.mailOpsDeps(), domain)
 	if err != nil {
-		r.log.Error("tenant email enable: agent domain.email_enable failed",
+		r.log.Error("tenant email enable: enable convergence failed",
 			"domain", domain.Name, "err", err)
 		return
 	}
-
-	var resp struct {
-		Ok            bool   `json:"ok"`
-		DKIMSelector  string `json:"dkim_selector"`
-		DKIMPublicKey string `json:"dkim_public_key"`
-	}
-	if err := json.Unmarshal(raw, &resp); err != nil {
-		r.log.Error("tenant email enable: agent response unmarshal",
-			"domain", domain.Name, "err", err)
-		return
-	}
-	if !resp.Ok || resp.DKIMSelector == "" || resp.DKIMPublicKey == "" {
-		r.log.Error("tenant email enable: agent returned incomplete response",
-			"domain", domain.Name,
-			"ok", resp.Ok,
-			"selector", resp.DKIMSelector,
-			"pubkey_len", len(resp.DKIMPublicKey))
-		return
-	}
-
-	selector := resp.DKIMSelector
-	pubKey := resp.DKIMPublicKey
-	now := time.Now().UTC()
-	if err := r.domains.UpdateEmailState(ctx, domain.ID, repository.DomainEmailState{
-		Enabled:        true,
-		DkimSelector:   &selector,
-		DkimPublicKey:  &pubKey,
-		EmailEnabledAt: &now,
-	}); err != nil {
-		r.log.Error("tenant email enable: UpdateEmailState failed",
-			"domain", domain.Name, "err", err)
-		return
-	}
-
-	domain.DkimSelector = &selector
-	domain.DkimPublicKey = &pubKey
-	domain.EmailEnabledAt = &now
+	logManagedDNSWarnings(r, "tenant email enable", domain.Name, warnings)
 
 	r.log.Info("tenant email enable: provisioned",
 		"domain", domain.Name, "selector", selector)
+}
 
-	r.syncPanelPrimaryEmailDNS(ctx, domain.ID, selector, pubKey)
+// logManagedDNSWarnings emits domainmailops.Enable's best-effort managed-DNS
+// warnings at Debug. The pre-extraction reconciler logged a user-edited M6
+// record conflict at Debug deliberately — it is the expected steady state and
+// would otherwise spam ~60 lines/hr per edited record. Enable returns that same
+// conflict as a warning string (no internal log), so logging at Debug preserves
+// the anti-spam level; genuine hard failures (missing zone, create error) are
+// already surfaced at Error from inside domainmailops.SyncManagedDNSOnEnable.
+func logManagedDNSWarnings(r *Reconciler, prefix, domainName string, warnings []string) {
+	for _, w := range warnings {
+		r.log.Debug(prefix+": managed-DNS warning", "domain", domainName, "warning", w)
+	}
 }
 
 // ensureTenantDKIMRecords back-fills the M6 DNS records (jabali._domainkey
