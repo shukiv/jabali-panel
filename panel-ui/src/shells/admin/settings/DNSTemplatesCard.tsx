@@ -265,16 +265,16 @@ export const DNSTemplatesCard = () => {
           <Form.List name="records">
             {(fields, { add, remove: removeRow }) => (
               <div style={{ marginTop: 8 }}>
-                {fields.map((field) => (
+                {fields.map(({ key, name, ...restField }) => (
                   <Space
-                    key={field.key}
+                    key={key}
                     align="baseline"
                     wrap
                     style={{ display: "flex", marginBottom: 8 }}
                   >
                     <Form.Item
-                      {...field}
-                      name={[field.name, "type"]}
+                      {...restField}
+                      name={[name, "type"]}
                       initialValue="A"
                       rules={[{ required: true, message: "Type" }]}
                       style={{ marginBottom: 0 }}
@@ -285,23 +285,23 @@ export const DNSTemplatesCard = () => {
                       />
                     </Form.Item>
                     <Form.Item
-                      {...field}
-                      name={[field.name, "name"]}
+                      {...restField}
+                      name={[name, "name"]}
                       style={{ marginBottom: 0 }}
                     >
                       <Input placeholder="@ · www · {domain}" style={{ width: 160 }} />
                     </Form.Item>
                     <Form.Item
-                      {...field}
-                      name={[field.name, "content"]}
+                      {...restField}
+                      name={[name, "content"]}
                       rules={[{ required: true, message: "Value" }]}
                       style={{ marginBottom: 0 }}
                     >
                       <Input placeholder="value (e.g. 1.2.3.4 · {domain})" style={{ width: 240 }} />
                     </Form.Item>
                     <Form.Item
-                      {...field}
-                      name={[field.name, "ttl"]}
+                      {...restField}
+                      name={[name, "ttl"]}
                       initialValue={DEFAULT_TTL}
                       rules={[{ required: true, message: "TTL" }]}
                       style={{ marginBottom: 0 }}
@@ -309,8 +309,8 @@ export const DNSTemplatesCard = () => {
                       <InputNumber min={1} placeholder="TTL" style={{ width: 90 }} />
                     </Form.Item>
                     <Form.Item
-                      {...field}
-                      name={[field.name, "priority"]}
+                      {...restField}
+                      name={[name, "priority"]}
                       initialValue={0}
                       tooltip="Used by MX and SRV records"
                       style={{ marginBottom: 0 }}
@@ -321,7 +321,7 @@ export const DNSTemplatesCard = () => {
                       type="text"
                       danger
                       icon={<DeleteOutlined />}
-                      onClick={() => removeRow(field.name)}
+                      onClick={() => removeRow(name)}
                     />
                   </Space>
                 ))}
