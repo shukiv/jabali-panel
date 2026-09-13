@@ -15,7 +15,8 @@ import { JabaliHeader } from "../components/JabaliHeader";
 import { JabaliTitle } from "../components/JabaliTitle";
 import { useTranslation } from "react-i18next";
 
-import { navGroupForKey, selectedNavKey, userNav, userNavGroups, type NavItem } from "../nav";
+import { navGroupForKey, selectedNavKey, userNav, type NavItem } from "../nav";
+import { buildUserSidebarItems } from "./userSidebarItems";
 import { BreadcrumbProvider } from "../components/admin/BreadcrumbContext";
 import { RouteBreadcrumb } from "../components/admin/RouteBreadcrumb";
 import { useThemeMode } from "../theme/ThemeModeContext";
@@ -91,30 +92,18 @@ export function UserLayout() {
   // icon-rail form); the collapsible groups stay as SubMenus, which AntD
   // turns into hover-popouts when collapsed. The mobile Drawer always
   // builds in the expanded (collapsed=false) shape.
-  const buildItems = (isCollapsed: boolean): NonNullable<MenuProps["items"]> => {
-    const items: NonNullable<MenuProps["items"]> = [];
-    const dashboard = visibleByKey.get("dashboard");
-    if (dashboard) items.push(leafItem(dashboard));
-    for (const g of userNavGroups) {
-      const children = g.itemKeys
-        .map((k) => visibleByKey.get(k))
-        .filter((n): n is NavItem => !!n)
-        .map(leafItem);
-      if (children.length === 0) continue;
-      if (isCollapsed) {
-        // Icon rail: a divider fronts every section, then its icons (a
-        // collapsible group keeps its SubMenu, which pops children out).
-        items.push({ type: "divider", key: `div-${g.key}` });
-        if (g.collapsible) items.push({ key: g.key, icon: g.icon, label: t(g.label), children });
-        else items.push(...children);
-      } else if (g.collapsible) {
-        items.push({ key: g.key, icon: g.icon, label: t(g.label), children });
-      } else {
-        items.push({ type: "group", key: g.key, label: t(g.label), children });
-      }
-    }
-    return items;
-  };
+  const buildItems = (isCollapsed: boolean): NonNullable<MenuProps["items"]> =>
+    buildUserSidebarItems({
+      isCollapsed,
+      visibleByKey,
+      selectedKey: selected,
+      leafItem,
+      t,
+      // GH #1626: the muted title color the collapsible group headers
+      // (Tools / Account) borrow so they read like the always-open group
+      // labels instead of nav items nested under Services.
+      mutedHeaderColor: token.colorTextDescription,
+    });
 
   // User panel takes the AntD-default blue accent on the selected menu
   // row; admin keeps red (set globally in muiTheme.ts). The nested
