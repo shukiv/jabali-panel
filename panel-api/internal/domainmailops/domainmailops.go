@@ -23,12 +23,16 @@
 // operator CLI both drove: agent domain.email_dkim_rotate → persist the new
 // public key → wipe + republish the M6-managed DNS.
 //
-// Not yet routed through here: the reconciler's per-tick provisioning
-// (internal/reconciler/panel_primary_dkim.go — ensurePanelPrimaryDKIM /
-// ensureTenantEmailEnabled + its own managed-DNS convergence), which carries
-// its own reserved-TLD and already-provisioned guards and a distinct panel-cert
-// lineage. JAB-288 and JAB-286 stay module-parents until that fourth caller is
-// migrated.
+// The reconciler's per-tick enable convergence now routes through Enable as
+// well (internal/reconciler/panel_primary_dkim.go — ensurePanelPrimaryDKIM /
+// ensureTenantEmailEnabled), so all four callers (REST, domain-create, CLI,
+// reconciler) share this one implementation of the agent→persist→DNS ordering
+// (JAB-288 AC5 / JAB-286 AC4). The reconciler keeps its own reserved-TLD and
+// already-provisioned guards at the call site and omits SSL scheduling —
+// ReconcileSSLSANDrift converges mail SANs on its own tick, so the periodic
+// path flips no cert row (preserving its pre-extraction behavior). It still
+// owns ensureTenantDKIMRecords, a pure DNS back-fill with no agent call that
+// sits outside the enable lifecycle this module owns.
 package domainmailops
 
 import (
