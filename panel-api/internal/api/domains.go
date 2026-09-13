@@ -203,14 +203,14 @@ type createDomainRequest struct {
 	IPv6Address string `json:"ip6_address"`
 }
 
-// normalizeDomainName canonicalizes a domain for storage (GH #884): trim
-// edge whitespace and lowercase. Domain names are case-insensitive per DNS,
-// but jabali uses the stored string verbatim for the docroot path, cert
-// lineage, DNS zone, and nginx server_name, so a mixed-case entry (mobile
-// autocorrect) yields a site that never resolves. Callers still run
+// normalizeDomainName canonicalizes a domain for storage (GH #884): trim edge
+// whitespace and lowercase. The rule lives in the domainops leaf (JAB-279) so
+// the operator CLI create path canonicalizes identically and the stored domain
+// identity cannot drift between adapters; this wrapper keeps the existing call
+// sites (create / rename / alias / automation) unchanged. Callers still run
 // validateDomainName on the result to enforce RFC shape.
 func normalizeDomainName(s string) string {
-	return strings.ToLower(strings.TrimSpace(s))
+	return domainops.NormalizeDomainName(s)
 }
 
 // validateDomainName validates domain name for security and RFC compliance
