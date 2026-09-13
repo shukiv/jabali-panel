@@ -15,6 +15,7 @@ import { feedback } from "../../../lib/feedback";
 import { useCreateMutation } from "../../../hooks/useQueries";
 import { useServerCapabilities } from "../../../hooks/useServerCapabilities";
 import { DnsZoneFields } from "../../../components/dns/DnsZoneFields";
+import { splitTemplateSelection } from "../../../components/dns/dnsTemplates";
 
 type AdminDNSZoneInput = {
   name: string;
@@ -68,7 +69,9 @@ export const AdminDNSZoneDrawer = ({ open, onClose }: AdminDNSZoneDrawerProps) =
         ssl_mode: "none",
         ip_address: values.ip_address,
         ip6_address: values.ip6_address,
-        mail_provider: values.mail_provider ?? "none",
+        // GH #1627: the Template select may carry a custom DNS template (mapped to
+        // dns_template_id with mail_provider omitted) or a provider preset.
+        ...splitTemplateSelection(values.mail_provider ?? "none"),
         m365_onmicrosoft: values.m365_onmicrosoft,
         google_dkim: values.google_dkim,
       });

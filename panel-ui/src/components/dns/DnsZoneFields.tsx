@@ -10,6 +10,7 @@
 // m365_onmicrosoft, google_dkim) match the POST /domains body verbatim.
 import { useEffect } from "react";
 import { Form, Input, Select } from "antd";
+import { templateOptionGroup, useDNSTemplates } from "./dnsTemplates";
 
 // isIPv4 accepts a dotted-quad with every octet in 0–255. The backend
 // (net.ParseIP + To4) is the authority; this only gives the user immediate,
@@ -42,6 +43,10 @@ export interface DnsZoneFieldsProps {
 export const DnsZoneFields = ({ publicIP, publicIPv6 }: DnsZoneFieldsProps) => {
   const form = Form.useFormInstance();
   const template = Form.useWatch("mail_provider", form) ?? "none";
+  // GH #1627: admin-defined custom DNS templates, appended to the provider
+  // presets below. A DNS zone always hosts its DNS here, so they are never
+  // disabled in this form (template_requires_dns is satisfied).
+  const dnsTemplates = useDNSTemplates();
 
   // Prefill the apex IPs with the panel's IPs once, and never clobber a value
   // the user already typed (or one restored on a remount). destroyOnClose
@@ -107,13 +112,14 @@ export const DnsZoneFields = ({ publicIP, publicIPv6 }: DnsZoneFieldsProps) => {
         label="Template"
         name="mail_provider"
         initialValue="none"
-        tooltip="Default creates just the domain and its pointed IP. Microsoft 365 or Google Workspace also adds that provider's mail DNS records."
+        tooltip="Default creates just the domain and its pointed IP. Microsoft 365 or Google Workspace also adds that provider's mail DNS records. A custom template (if your admin has defined any) seeds its own record set."
       >
         <Select
           options={[
             { value: "none", label: "Default (no mail records)" },
             { value: "m365", label: "Microsoft 365" },
             { value: "google", label: "Google Workspace" },
+            ...templateOptionGroup(dnsTemplates.data),
           ]}
         />
       </Form.Item>
