@@ -20,6 +20,8 @@ vi.mock("../../../apiClient", () => ({
 
 vi.mock("@tanstack/react-query", () => ({
   useQueryClient: () => ({ invalidateQueries: vi.fn() }),
+  // GH #1627: the Add-domain drawer now reads the DNS template list via useQuery.
+  useQuery: () => ({ data: [], isLoading: false }),
 }));
 
 vi.mock("../../../hooks/useQueries", () => ({

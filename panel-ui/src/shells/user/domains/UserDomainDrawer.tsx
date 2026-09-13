@@ -20,6 +20,11 @@ import { apiClient } from "../../../apiClient";
 import { useCreateMutation } from "../../../hooks/useQueries";
 import { useServerCapabilities } from "../../../hooks/useServerCapabilities";
 import { DnsZoneFields } from "../../../components/dns/DnsZoneFields";
+import {
+  splitTemplateSelection,
+  templateOptionGroup,
+  useDNSTemplates,
+} from "../../../components/dns/dnsTemplates";
 
 type UserDomainCreateInput = {
   name: string;
@@ -28,6 +33,10 @@ type UserDomainCreateInput = {
   // default …/domains/<name>/public_html; a custom docroot — or a redirect for
   // a subdomain — is configured afterwards from the domain's Document Root tab.
   mail_provider?: string;
+  // GH #1627: an admin-defined custom DNS template selected from the reused
+  // provider <Select> (value "tmpl:<id>"). Mapped to this field by the payload
+  // builder; sent instead of mail_provider (the op rejects both together).
+  dns_template_id?: string;
   m365_onmicrosoft?: string;
   google_dkim?: string;
   // GH #1540: apex IP for a DNS-only zone (dns mode only) — the "pointed IP".
@@ -92,6 +101,11 @@ export const UserDomainDrawer = ({ open, onClose, mode = "web" }: UserDomainDraw
   const mailProvider =
     Form.useWatch("mail_provider", form) ?? (mailInstalled ? "jabali" : "none");
   const reverseProxy = Form.useWatch("reverse_proxy", form) ?? false;
+  // GH #1627: admin-defined custom DNS templates for the web-mode provider
+  // select. manageDNS gates them: a template seeds records into the panel-hosted
+  // zone, so it is disabled when "Add DNS Zone" is unchecked (template_requires_dns).
+  const manageDNS = Form.useWatch("manage_dns", form) ?? true;
+  const dnsTemplates = useDNSTemplates(isWeb);
   const screens = Grid.useBreakpoint();
   const isDesktop = screens.lg ?? (typeof window !== "undefined" ? window.innerWidth >= 992 : true);
 
@@ -118,12 +132,17 @@ export const UserDomainDrawer = ({ open, onClose, mode = "web" }: UserDomainDraw
       if (isWeb) {
         const wantMail = values.add_mail ?? true;
         const isReverse = values.reverse_proxy ?? false;
+        // Add Mail Domain checked → Jabali mail on this server; unchecked → the
+        // provider select, which is either an external provider (m365/google/none)
+        // or an admin-defined custom DNS template (GH #1627). A template maps to
+        // dns_template_id with mail_provider omitted (the op rejects both together).
+        const mailSel = wantMail
+          ? { mail_provider: "jabali" }
+          : splitTemplateSelection(values.mail_provider ?? "none");
         payload = {
           name: values.name,
           ssl_mode: values.ssl_mode,
-          // Add Mail Domain checked → Jabali mail on this server; unchecked → the
-          // DNS Template select's external provider (or "none" for no mail).
-          mail_provider: wantMail ? "jabali" : (values.mail_provider ?? "none"),
+          ...mailSel,
           m365_onmicrosoft: values.m365_onmicrosoft,
           google_dkim: values.google_dkim,
           // Add DNS Zone. Forced off when the DNS module isn't running (the
@@ -145,15 +164,19 @@ export const UserDomainDrawer = ({ open, onClose, mode = "web" }: UserDomainDraw
       } else {
         // GH #1449: a web-off entry (DNS-only zone / mail-only domain) carries
         // only the fields that apply — never web-only inputs antd may have kept.
+        // GH #1479/#1540: mail mode is always Jabali mail (the provider select is
+        // hidden there, so values.mail_provider isn't registered). A DNS-only zone
+        // takes its selection from the Template select: Default → none, an external
+        // provider (m365/google), or an admin-defined custom DNS template (GH #1627,
+        // mapped to dns_template_id with mail_provider omitted).
+        const mailSel = isDNS
+          ? splitTemplateSelection(values.mail_provider ?? "none")
+          : { mail_provider: "jabali" };
         payload = {
           name: values.name,
           web_enabled: false,
           manage_dns: isDNS ? true : values.manage_dns,
-          // GH #1479/#1540: mail mode is always Jabali mail (the provider select
-          // is hidden there, so values.mail_provider isn't registered). A DNS-only
-          // zone takes its provider from the DNS Template select (Default → none,
-          // or external m365/google).
-          mail_provider: isDNS ? (values.mail_provider ?? "none") : "jabali",
+          ...mailSel,
           ssl_mode: isDNS ? "none" : values.ssl_mode,
           // GH #1540: the DNS-only zone's apex IP + the template's helper inputs.
           ...(isDNS
@@ -289,13 +312,16 @@ export const UserDomainDrawer = ({ open, onClose, mode = "web" }: UserDomainDraw
             label="DNS Template"
             name="mail_provider"
             initialValue="none"
-            tooltip="Add DNS records for external mail hosted with Microsoft 365 or Google Workspace. Leave as None if this domain has no mail."
+            tooltip="Add DNS records for external mail hosted with Microsoft 365 or Google Workspace, or apply a custom template your admin has defined. Leave as None if this domain has no mail."
           >
             <Select
               options={[
                 { value: "none", label: "None (no external mail)" },
                 { value: "m365", label: "Microsoft 365" },
                 { value: "google", label: "Google Workspace" },
+                // GH #1627: a custom template seeds records into the panel-hosted
+                // zone, so it needs "Add DNS Zone" checked (template_requires_dns).
+                ...templateOptionGroup(dnsTemplates.data, { disabled: !manageDNS }),
               ]}
             />
           </Form.Item>
