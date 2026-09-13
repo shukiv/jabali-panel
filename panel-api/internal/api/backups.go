@@ -1974,6 +1974,15 @@ func (h *meBackupHandler) putSchedule(c *gin.Context) {
 		return
 	}
 	uid := user.ID
+	// Scope the fan-out to THIS tenant only (an empty user list would fan out to
+	// every non-admin user at tick time — never for a tenant-owned schedule), and
+	// link the chosen destination (none when disabling). Both sets are handed to
+	// the atomic primitive below so the row and its links commit together.
+	users := []string{uid}
+	dests := []string{}
+	if destID != "" {
+		dests = append(dests, destID)
+	}
 	sched := h.findMeSchedule(c.Request.Context(), user.ID)
 	if sched == nil {
 		sched = &models.BackupSchedule{
@@ -1986,7 +1995,12 @@ func (h *meBackupHandler) putSchedule(c *gin.Context) {
 		sched.Enabled = req.Enabled
 		sched.KeepDaily, sched.KeepWeekly, sched.KeepMonthly = keepDaily, keepWeekly, keepMonthly
 		sched.NextRunAt = &next
-		if err := h.cfg.Schedules.Create(c.Request.Context(), sched); err != nil {
+		// One transaction: the row plus the user and destination links commit
+		// together, or the whole create rolls back. The previous three sequential
+		// writes (Create + ReplaceUsers + ReplaceDestinations) could leave a runnable
+		// row with no or partial links if the second or third write failed (JAB-307).
+		// Same atomic primitive the admin, CLI, and multi-schedule tenant paths use.
+		if err := h.cfg.Schedules.CreateWithMemberships(c.Request.Context(), sched, dests, users); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "db_create"})
 			return
 		}
@@ -1997,24 +2011,15 @@ func (h *meBackupHandler) putSchedule(c *gin.Context) {
 		sched.Enabled = req.Enabled
 		sched.KeepDaily, sched.KeepWeekly, sched.KeepMonthly = keepDaily, keepWeekly, keepMonthly
 		sched.NextRunAt = &next
-		if err := h.cfg.Schedules.Update(c.Request.Context(), sched); err != nil {
+		// One transaction: the field changes plus both membership sets commit
+		// together, or the whole update rolls back. UpdateWithMemberships writes the
+		// same column set the old Update did (cron_expr, content, enabled, keep_*,
+		// next_run_at, user_id), so field persistence is unchanged — it only wraps
+		// the two membership replacements into the same transaction (JAB-307).
+		if err := h.cfg.Schedules.UpdateWithMemberships(c.Request.Context(), sched, &dests, &users); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "db_update"})
 			return
 		}
-	}
-	// Scope the fan-out to THIS tenant only (empty user list would fan out to
-	// every non-admin user at tick time — never for a tenant-owned schedule).
-	if err := h.cfg.Schedules.ReplaceUsers(c.Request.Context(), sched.ID, []string{uid}); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "db_link_users"})
-		return
-	}
-	dests := []string{}
-	if destID != "" {
-		dests = append(dests, destID)
-	}
-	if err := h.cfg.Schedules.ReplaceDestinations(c.Request.Context(), sched.ID, dests); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "db_link_destinations"})
-		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
