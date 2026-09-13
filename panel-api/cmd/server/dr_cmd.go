@@ -282,11 +282,17 @@ func newDRFeedCmd() *cobra.Command {
 				Enabled:             true,
 				NextRunAt:           &next,
 			}
-			if err := schedRepo.Create(ctx, s); err != nil {
+			// One transaction: the row and its destination link commit together, or
+			// the whole create rolls back. A separate Create + ReplaceDestinations
+			// could leave a runnable row with zero destinations if the link write
+			// failed — and because findDRScheduleForDest matches by destination link,
+			// that orphan is invisible on retry, so the next run stacks a SECOND DR
+			// feed. A DR feed carries no explicit users, so each one fans out to every
+			// non-admin tenant plus the system backup: two of them double the whole
+			// fleet's backup load every tick (JAB-307). The empty user set is
+			// intentional (the fan-out) and is passed as nil to the atomic primitive.
+			if err := schedRepo.CreateWithMemberships(ctx, s, []string{destID}, nil); err != nil {
 				return fmt.Errorf("create DR feed schedule: %w", err)
-			}
-			if err := schedRepo.ReplaceDestinations(ctx, s.ID, []string{destID}); err != nil {
-				return fmt.Errorf("link DR feed schedule to destination: %w", err)
 			}
 			fmt.Printf("DR feed configured: schedule %s ships all tenant account backups + the system backup to %s on cron %q.\n", s.ID, dest.Name, cron)
 			fmt.Println("Pair the standby against this same destination with `jabali dr pair --destination <id>`.")
