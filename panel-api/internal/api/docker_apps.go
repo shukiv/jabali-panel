@@ -552,7 +552,12 @@ func (h *dockerAppHandler) install(c *gin.Context) {
 				// GH #1625: same cross-tenant hijack guard createDomainOp runs —
 				// this direct-create path must not claim a server_name already
 				// held by another domain's alias.
-				if hit, clash := aliasCollision(ctx, h.cfg.WebDomainAliases, req.Domain); clash {
+				if hit, clash, cerr := AliasCollision(ctx, h.cfg.WebDomainAliases, req.Domain); cerr != nil {
+					msg := "domain auto-create failed: could not verify the name against existing aliases"
+					_ = h.cfg.Repo.UpdateStatus(ctx, app.ID, models.DockerAppStatusFailed, &msg)
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "db_alias_lookup", "detail": msg, "id": app.ID})
+					return
+				} else if clash {
 					msg := "domain auto-create failed: name " + hit + " is used as an alias of another domain"
 					_ = h.cfg.Repo.UpdateStatus(ctx, app.ID, models.DockerAppStatusFailed, &msg)
 					c.JSON(http.StatusConflict, gin.H{"error": "domain_conflicts_alias", "detail": msg, "id": app.ID})
@@ -1198,7 +1203,9 @@ func (h *dockerAppHandler) editDomainPorts(ctx context.Context, app *models.Dock
 						}
 					} else {
 						// GH #1625: cross-tenant hijack guard (see the install path).
-						if hit, clash := aliasCollision(ctx, h.cfg.WebDomainAliases, newDomain); clash {
+						if hit, clash, cerr := AliasCollision(ctx, h.cfg.WebDomainAliases, newDomain); cerr != nil {
+							return &dockerEditError{http.StatusInternalServerError, "db_alias_lookup", "could not verify the domain name against existing aliases"}
+						} else if clash {
 							return &dockerEditError{http.StatusConflict, "domain_conflicts_alias", "the name " + hit + " is already used as an alias of another domain"}
 						}
 						dom := &models.Domain{

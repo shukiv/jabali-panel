@@ -19,6 +19,8 @@ package api
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -219,16 +221,25 @@ var aliasHelperPrefixes = []string{"www.", "mail.", "autoconfig.", "autodiscover
 // A domain named N claims N, www.N, and its four mail-helper server_names, so
 // all six are checked against the alias table regardless of the domain's
 // EmailEnabled: a domain can enable mail later and its helper vhost would then
-// collide. Returns the colliding hostname and true on a hit. A nil repo means
-// the feature is unwired → no collision (fail-open ONLY when unwired, never on
-// a live lookup error — FindByHostname's ErrNotFound is the only "no hit").
-func aliasCollision(ctx context.Context, aliases repository.WebDomainAliasRepository, name string) (string, bool) {
+// collide. Returns the colliding hostname and true on a hit, or a non-nil error
+// when the lookup itself failed. A nil repo means the feature is unwired → no
+// collision (fail-open ONLY when the feature is unwired). It is exported so the
+// operator CLI create path (JAB-279) enforces the identical guard the HTTP
+// create/rename and docker-app paths do, instead of duplicating the candidate
+// derivation.
+//
+// SECURITY: a live lookup error is NEVER swallowed into "no collision". Doing so
+// would fail OPEN — a create/rename would claim a server_name the check could
+// not clear, reopening the cross-tenant hijack this guard exists to close. Only
+// repository.ErrNotFound (the name is free) advances the scan; any other error
+// aborts with err != nil so every caller fails closed.
+func AliasCollision(ctx context.Context, aliases repository.WebDomainAliasRepository, name string) (string, bool, error) {
 	if aliases == nil {
-		return "", false
+		return "", false, nil
 	}
 	name = strings.ToLower(strings.TrimSpace(name))
 	if name == "" {
-		return "", false
+		return "", false, nil
 	}
 	candidates := make([]string, 0, len(aliasHelperPrefixes)+1)
 	candidates = append(candidates, name)
@@ -236,11 +247,19 @@ func aliasCollision(ctx context.Context, aliases repository.WebDomainAliasReposi
 		candidates = append(candidates, p+name)
 	}
 	for _, cand := range candidates {
-		if existing, err := aliases.FindByHostname(ctx, cand); err == nil && existing != nil {
-			return cand, true
+		existing, err := aliases.FindByHostname(ctx, cand)
+		switch {
+		case err == nil:
+			if existing != nil {
+				return cand, true, nil
+			}
+		case errors.Is(err, repository.ErrNotFound):
+			// the name is free — keep scanning the remaining candidates.
+		default:
+			return "", false, fmt.Errorf("alias lookup for %q: %w", cand, err)
 		}
 	}
-	return "", false
+	return "", false, nil
 }
 
 // validateAliasHostname normalizes + validates an alias hostname and

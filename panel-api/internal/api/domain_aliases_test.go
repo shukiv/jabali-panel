@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -149,7 +150,10 @@ func TestAliasCollision(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			hit, clash := aliasCollision(context.Background(), aliases, tc.in)
+			hit, clash, err := AliasCollision(context.Background(), aliases, tc.in)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
 			if clash != tc.clash {
 				t.Fatalf("clash = %v, want %v (hit %q)", clash, tc.clash, hit)
 			}
@@ -159,11 +163,35 @@ func TestAliasCollision(t *testing.T) {
 		})
 	}
 	// A nil repo means the feature is unwired — fail-open, never a collision.
-	if _, clash := aliasCollision(context.Background(), nil, "claimed.example.net"); clash {
-		t.Fatal("nil repo must not report a collision")
+	if _, clash, err := AliasCollision(context.Background(), nil, "claimed.example.net"); clash || err != nil {
+		t.Fatalf("nil repo must not report a collision or error (clash=%v err=%v)", clash, err)
 	}
 	// An empty name is not a lookup.
-	if _, clash := aliasCollision(context.Background(), aliases, ""); clash {
-		t.Fatal("empty name must not report a collision")
+	if _, clash, err := AliasCollision(context.Background(), aliases, ""); clash || err != nil {
+		t.Fatalf("empty name must not report a collision or error (clash=%v err=%v)", clash, err)
+	}
+}
+
+// aliasErrRepo fails every hostname lookup with a non-ErrNotFound error, standing
+// in for a live DB failure (connection lost, timeout).
+type aliasErrRepo struct {
+	repository.WebDomainAliasRepository
+}
+
+func (aliasErrRepo) FindByHostname(context.Context, string) (*models.WebDomainAlias, error) {
+	return nil, errors.New("db unavailable")
+}
+
+// SECURITY (JAB-279): a live lookup error must abort the caller (fail CLOSED),
+// never collapse into "no collision" — swallowing it would let a create/rename
+// claim a server_name the guard could not clear, reopening the cross-tenant
+// hijack. Every adapter (HTTP create/rename, docker-app, CLI) relies on this.
+func TestAliasCollision_FailsClosedOnLookupError(t *testing.T) {
+	hit, clash, err := AliasCollision(context.Background(), aliasErrRepo{}, "whatever.example.com")
+	if err == nil {
+		t.Fatal("a live lookup error must surface as err != nil, not be swallowed")
+	}
+	if clash {
+		t.Errorf("clash must be false on a lookup error (got hit %q)", hit)
 	}
 }

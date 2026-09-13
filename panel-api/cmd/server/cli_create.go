@@ -13,6 +13,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/kratosclient"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/api"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/domainmailops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/domainops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
@@ -267,6 +268,21 @@ func createDomainDirect(ctx context.Context, in cliDomainInput) (*models.Domain,
 	}
 	if err := validateDomainName(in.Name); err != nil {
 		return nil, nil, err
+	}
+
+	// Cross-tenant alias-collision guard (JAB-279 / GH #1625) — the REST create,
+	// rename, and docker-app paths reject a name whose apex / www / mail-helper
+	// server_name is already claimed by another domain's web-domain alias; the
+	// CLI ran none of them, so `jabali domain create` could stand up a domain
+	// that reopens the duplicate-server_name hijack. Route through the shared
+	// api.AliasCollision so the candidate derivation cannot drift from the HTTP
+	// path. Fail CLOSED: a lookup error aborts the create, never proceeds. Runs
+	// after validateDomainName and before any side effect, mirroring the REST
+	// create precedence (validate -> collision -> owner).
+	if hit, clash, cerr := api.AliasCollision(ctx, repository.NewWebDomainAliasRepository(sharedDB), in.Name); cerr != nil {
+		return nil, nil, fmt.Errorf("verify domain name against existing aliases: %w", cerr)
+	} else if clash {
+		return nil, nil, fmt.Errorf("the name %q is already used as an alias of another domain", hit)
 	}
 
 	domains := domainRepoFromDB()
