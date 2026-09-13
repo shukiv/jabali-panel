@@ -69,6 +69,50 @@ func TestDockerAppVhostApply_RendersProxyVhost(t *testing.T) {
 	}
 }
 
+// TestDockerAppVhostApply_GzipsProxiedResponses guards JAB-406: the proxy-only
+// vhost must compress upstream responses. gzip_proxied defaults to `off`, so
+// `gzip on;` ALONE reproduces the bug (all proxied responses skipped) — the
+// load-bearing directive is `gzip_proxied any;`. The block must live in the
+// :443 server block (which does the proxying), not the :80 redirect block.
+func TestDockerAppVhostApply_GzipsProxiedResponses(t *testing.T) {
+	av, _ := withDockerAppVhostTestDirs(t)
+
+	params, _ := json.Marshal(dockerAppVhostApplyParams{
+		DomainName:  "app.example.com",
+		Upstream:    "http://127.0.0.1:10001",
+		SSLCertPath: "/c", SSLKeyPath: "/k",
+	})
+	if _, err := dockerAppVhostApplyHandler(context.Background(), params); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	b, err := os.ReadFile(filepath.Join(av, "app.example.com-dockerapp.conf"))
+	if err != nil {
+		t.Fatalf("read conf: %v", err)
+	}
+	got := string(b)
+
+	for _, want := range []string{
+		"gzip on;",
+		"gzip_proxied any;", // load-bearing: `gzip on` alone still skips proxied responses (the JAB-406 bug)
+		"gzip_vary on;",
+		"gzip_min_length 1024;",
+		"gzip_types application/javascript text/javascript text/css application/json image/svg+xml application/manifest+json;",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("rendered vhost missing %q\n---\n%s", want, got)
+		}
+	}
+
+	// The gzip block must be in the :443 server (the one that proxies), not the
+	// :80 redirect block. The :80 block is the only one with the 301 redirect,
+	// so gzip_proxied must appear before it.
+	gz := strings.Index(got, "gzip_proxied any;")
+	redirect := strings.Index(got, "return 301 https://")
+	if gz < 0 || redirect < 0 || gz > redirect {
+		t.Errorf("gzip_proxied must render inside the :443 server block (before the :80 redirect); gz=%d redirect=%d\n---\n%s", gz, redirect, got)
+	}
+}
+
 func TestDockerAppVhostApply_NoWebsocketOmitsUpgrade(t *testing.T) {
 	av, _ := withDockerAppVhostTestDirs(t)
 	params, _ := json.Marshal(dockerAppVhostApplyParams{

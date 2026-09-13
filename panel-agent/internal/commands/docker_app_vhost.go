@@ -61,6 +61,18 @@ server {
     ssl_certificate {{.SSLCertPath}};
     ssl_certificate_key {{.SSLKeyPath}};
 
+    # JAB-406: the app's assets (JS/CSS/JSON/SVG) are served by the upstream
+    # via the proxied location / below, so nginx must compress PROXIED
+    # responses — gzip_proxied defaults to off and would skip them entirely,
+    # shipping every text asset raw (a typical SPA main bundle is ~2 MB, ~3.5x
+    # larger uncompressed). Apps that already compress their own responses are
+    # unaffected (nginx never double-gzips). Mirrors the panel vhost (JAB-142).
+    gzip on;
+    gzip_proxied any;
+    gzip_vary on;
+    gzip_min_length 1024;
+    gzip_types application/javascript text/javascript text/css application/json image/svg+xml application/manifest+json;
+
     location / {
         proxy_pass {{.Upstream}};
         proxy_set_header Host $host;
