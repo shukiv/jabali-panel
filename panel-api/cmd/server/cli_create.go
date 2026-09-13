@@ -246,6 +246,16 @@ func createDomainDirect(ctx context.Context, in cliDomainInput) (*models.Domain,
 		return nil, nil, err
 	}
 
+	// JAB-279 / GH #884: canonicalize the name (lowercase + trim) through the
+	// shared leaf BEFORE anything consumes it, mirroring the REST create path
+	// which normalizes at its source of truth. jabali stores the name verbatim
+	// for the docroot path, cert lineage, DNS zone, and nginx server_name, so a
+	// mixed-case --name would stand up a site that never resolves AND persist a
+	// different identity than REST/automation store for the same input (AC2:
+	// same input -> same stored domain across adapters). Everything below
+	// (validate, docroot default, insert) now sees the one canonical form.
+	in.Name = domainops.NormalizeDomainName(in.Name)
+
 	if in.Name == "" || in.UserID == "" {
 		return nil, nil, fmt.Errorf("--name and --user are required")
 	}
