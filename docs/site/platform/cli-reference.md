@@ -2006,6 +2006,7 @@ jabali domain create [flags]
 
 **Flags:**
 
+- `--dns-template` — Admin-defined custom DNS template ID (GH #1627): seeds the template's records into the fresh zone and sets an external mail posture. Requires --manage-dns; mutually exclusive with --mail
 - `--doc-root` — Document root (optional, auto-generated if not provided)
 - `--mail` — Mail provider: jabali | none | m365 | google. 'none' for a web/DNS-only domain (default `jabali`)
 - `--manage-dns` — Host this domain's DNS zone on this server. --manage-dns=false when DNS lives elsewhere (external DNS) (default `true`)

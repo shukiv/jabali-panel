@@ -185,6 +185,15 @@ type createDomainRequest struct {
 	// the create op rejects it from a non-admin caller (web_template_admin_only).
 	// Empty/absent for every non-template create.
 	WebTemplateID string `json:"web_template_id"`
+	// DNSTemplateID (GH #1627) is an admin-defined custom DNS template a tenant
+	// selected at create. Unlike WebTemplateID it is NOT admin-only: any caller
+	// may pick a published template. When set, the create op overrides the mail
+	// posture to external ('custom') and the reconciler seeds the template's
+	// records into the fresh zone; it is mutually exclusive with an explicit
+	// mail provider and requires the panel to host DNS (manage_dns=true). The op
+	// validates existence and the exclusivity rules. Empty/absent for every
+	// non-template create.
+	DNSTemplateID string `json:"dns_template_id"`
 	// WebEnabled / ManageDNS (GH #1449) are the "Add Web Domain" service
 	// checkboxes: both default ON (nil == checked == current behaviour), so a
 	// caller only sends false to OPT OUT. WebEnabled=false → no vhost/docroot/
@@ -873,6 +882,7 @@ func (h *domainHandler) create(c *gin.Context) {
 		M365Onmicrosoft:  req.M365Onmicrosoft,
 		GoogleDKIM:       req.GoogleDKIM,
 		SSLMode:          req.SSLMode,
+		DNSTemplateID:    req.DNSTemplateID, // GH #1627 (tenant-selectable; validated + mutually exclusive with a mail provider in the op)
 		WebTemplateID:    req.WebTemplateID, // GH #1624 Phase 3 (admin-only; enforced in the op)
 		CreateWWW:        req.CreateWWW,
 		TempURLEnabled:   req.TempURLEnabled,

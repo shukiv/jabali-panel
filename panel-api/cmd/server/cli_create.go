@@ -227,6 +227,12 @@ type cliDomainInput struct {
 	// jabali. Lets the CLI create a DNS-only zone (--mail none) or a mail-only
 	// domain (--web-enabled=false, mail jabali).
 	MailProvider string
+	// DNSTemplateID (GH #1627) is an admin-defined custom DNS template to seed
+	// this domain's fresh zone from. When set it overrides the mail posture to
+	// external ('custom'); it is mutually exclusive with an explicit --mail
+	// provider and requires the panel to host DNS (--manage-dns). Empty = no
+	// template. Mirrors the HTTP createDomainOp dns_template_id path.
+	DNSTemplateID string
 }
 
 // createDomainDirect replicates the non-auth side of internal/api/domains.go
@@ -324,6 +330,29 @@ func createDomainDirect(ctx context.Context, in cliDomainInput) (*models.Domain,
 	if mailProvider == models.MailProviderCustom {
 		return nil, nil, fmt.Errorf("invalid --mail %q (custom is the posture of a domain created from a DNS template; not selectable on the CLI)", mailProvider)
 	}
+	// GH #1627: a chosen custom DNS template overrides the mail posture to
+	// external ('custom') — the reconciler seeds its records into the fresh
+	// zone (keyed off MailTemplateID). Mutually exclusive with an explicit mail
+	// provider, and requires the panel to host DNS (nothing to seed into
+	// otherwise). Mirrors the HTTP createDomainOp dns_template_id path; resolved
+	// BEFORE DeriveMailFlags so the external posture is derived from 'custom'.
+	var mailTemplateID *string
+	if tmplID := strings.TrimSpace(in.DNSTemplateID); tmplID != "" {
+		if mailProvider != models.MailProviderJabali {
+			return nil, nil, fmt.Errorf("--dns-template sets the mail posture; do not also pass --mail %q", mailProvider)
+		}
+		if !dnsEnabled {
+			return nil, nil, fmt.Errorf("--dns-template seeds records into the panel-hosted zone; --manage-dns=false hosts DNS externally")
+		}
+		if _, terr := repository.NewDNSTemplateRepository(sharedDB).FindByID(ctx, tmplID); terr != nil {
+			if errors.Is(terr, repository.ErrNotFound) {
+				return nil, nil, fmt.Errorf("--dns-template %q does not exist", tmplID)
+			}
+			return nil, nil, fmt.Errorf("look up DNS template: %w", terr)
+		}
+		mailProvider = models.MailProviderCustom
+		mailTemplateID = &tmplID
+	}
 	mailEnabled, mailSkipSAN := models.DeriveMailFlags(mailProvider)
 	if !webEnabled && !dnsEnabled && !mailEnabled {
 		return nil, nil, fmt.Errorf("select at least one service: web hosting (--web-enabled), DNS (--manage-dns), or mail (--mail)")
@@ -372,9 +401,10 @@ func createDomainDirect(ctx context.Context, in cliDomainInput) (*models.Domain,
 		IsEnabled:    true,
 		WebDisabled:  in.WebDisabled,
 		DNSDisabled:  in.DNSDisabled,
-		MailProvider: mailProvider,
-		EmailEnabled: mailEnabled,
-		SkipAutoSAN:  mailSkipSAN,
+		MailProvider:   mailProvider,
+		MailTemplateID: mailTemplateID, // GH #1627: nil unless --dns-template was chosen
+		EmailEnabled:   mailEnabled,
+		SkipAutoSAN:    mailSkipSAN,
 		SSLMode:      sslMode,
 		SSLEnabled:   models.SSLEnabledForMode(sslMode),
 		CreatedAt:    now,

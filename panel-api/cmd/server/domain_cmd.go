@@ -99,6 +99,7 @@ func newDomainCreateCmd() *cobra.Command {
 	var webEnabled = true
 	var manageDNS = true
 	var mailProvider string
+	var dnsTemplate string
 
 	cmd := &cobra.Command{
 		Use:   "create",
@@ -129,6 +130,7 @@ no IP literals). Bare hostnames like 'invalid' are rejected.`,
 				WebDisabled:      !webEnabled,
 				DNSDisabled:      !manageDNS,
 				MailProvider:     mailProvider,
+				DNSTemplateID:    dnsTemplate,
 			})
 			if err != nil {
 				return err
@@ -169,6 +171,7 @@ no IP literals). Bare hostnames like 'invalid' are rejected.`,
 	cmd.Flags().BoolVar(&webEnabled, "web-enabled", true, "Host a website for this domain (vhost + docroot). --web-enabled=false makes a docroot-less DNS-only zone or mail-only domain")
 	cmd.Flags().BoolVar(&manageDNS, "manage-dns", true, "Host this domain's DNS zone on this server. --manage-dns=false when DNS lives elsewhere (external DNS)")
 	cmd.Flags().StringVar(&mailProvider, "mail", "jabali", "Mail provider: jabali | none | m365 | google. 'none' for a web/DNS-only domain")
+	cmd.Flags().StringVar(&dnsTemplate, "dns-template", "", "Admin-defined custom DNS template ID (GH #1627): seeds the template's records into the fresh zone and sets an external mail posture. Requires --manage-dns; mutually exclusive with --mail")
 	return cmd
 }
 
