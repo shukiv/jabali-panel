@@ -2126,7 +2126,11 @@ func validateNginxRules(rules models.NginxRules) error {
 			if r.Value == "" {
 				return fmt.Errorf("rule %d: header value required", i)
 			}
-			if strings.ContainsAny(r.Name, " \t\n\r:;") {
+			// Name renders UNQUOTED into `add_header <name> <value>;`. The
+			// separators (space/tab/CR/LF/`:`/`;`) already can't appear; also
+			// reject `{`/`}`/`#`/`"`/`\` so a name can neither open a block nor
+			// comment out the rest of the line and break `nginx -t`.
+			if strings.ContainsAny(r.Name, " \t\n\r:;{}#\"\\") {
 				return fmt.Errorf("rule %d: invalid chars in header name", i)
 			}
 		case "rewrite":
@@ -2176,6 +2180,12 @@ func validateNginxRules(rules models.NginxRules) error {
 			if r.Size == "" {
 				return fmt.Errorf("rule %d: size required", i)
 			}
+			// Size renders UNQUOTED into `client_max_body_size <size>;`. An
+			// anchored allowlist keeps a stray `;`/space out of the directive and
+			// also fails a fat-fingered value loudly instead of at `nginx -t`.
+			if !isNginxSize(r.Size) {
+				return fmt.Errorf("rule %d: size must be an nginx byte size (e.g. \"50m\", \"1g\", \"1048576\")", i)
+			}
 		case "static_alias", "media_alias":
 			// Serves a filesystem dir (Path=location, Target=alias dir). Used by
 			// framework apps (Django STATIC_ROOT / MEDIA_ROOT). Admin-only (not in
@@ -2220,8 +2230,12 @@ func validateNginxRules(rules models.NginxRules) error {
 			}
 		}
 		for _, ip := range r.IPs {
-			if strings.ContainsAny(ip, " \t\n\r") {
-				return fmt.Errorf("rule %d: invalid chars in IP %q", i, ip)
+			// Each entry renders UNQUOTED into `allow <ip>;` / `deny <ip>;`.
+			// Require a real IP or CIDR so nothing else (e.g. a value carrying a
+			// `;`) can reach the directive. The `allow all;`/`deny all;` fallback
+			// is emitted by the compiler, not taken from this list.
+			if !isValidIPOrCIDR(ip) {
+				return fmt.Errorf("rule %d: invalid IP or CIDR %q", i, ip)
 			}
 		}
 	}
@@ -2321,6 +2335,27 @@ func validateExtensionList(exts []string, ruleType string) error {
 // `nginx -t`, and a tenant's bad vhost is torn down rather than reverted.
 func isNginxExpires(s string) bool {
 	return tenantExpiresRe.MatchString(s)
+}
+
+// nginxSizeRe matches an nginx byte-size value: digits with an optional k/m/g
+// suffix (case-insensitive), e.g. "50m", "1g", "1048576". The max_upload_size
+// rule renders it UNQUOTED into `client_max_body_size <size>;`, so the anchored
+// allowlist keeps any separator out of the directive.
+var nginxSizeRe = regexp.MustCompile(`^\d+[kKmMgG]?$`)
+
+func isNginxSize(s string) bool {
+	return nginxSizeRe.MatchString(s)
+}
+
+// isValidIPOrCIDR reports whether s is a bare IP address or a CIDR network. The
+// ip_access rule renders each entry UNQUOTED into `allow <ip>;` / `deny <ip>;`,
+// so anything that is not an address is rejected at the boundary.
+func isValidIPOrCIDR(s string) bool {
+	if net.ParseIP(s) != nil {
+		return true
+	}
+	_, _, err := net.ParseCIDR(s)
+	return err == nil
 }
 
 // redosNestedQuantRE flags the classic catastrophic-backtracking shape: a group
