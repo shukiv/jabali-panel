@@ -1,7 +1,8 @@
 // DomainSettingsButton.nginximport.test.tsx — GH #1624 nginx-snippet import.
 //
-// The tenant Rule Builder has an "Import from nginx config" button at the top
-// (GH #1624 UX follow-up) that opens the importer in a Modal — it POSTs to
+// The tenant Rule Builder has a short "Import" button in the top toolbar
+// (GH #1624 UX follow-up; full meaning kept on its aria-label / Tooltip) that
+// opens the importer in a Modal — it POSTs to
 // /nginx-import/preview and MERGES the returned typed rules into the builder
 // (the owner still reviews + Saves). This test drives open-modal → convert →
 // preview → add → modal-closes with a mocked endpoint.
@@ -53,10 +54,16 @@ describe("GH #1624 — nginx snippet import merges into the Rule Builder", () =>
     });
     renderTenant(domain);
 
+    // GH #1624 UX: the button label is the short "Import"; the long form is no
+    // longer visible text (it lives on the aria-label / Tooltip).
+    expect(screen.getByText("Import")).toBeInTheDocument();
+    expect(screen.queryByText("Import from nginx config")).toBeNull();
+
     // The paste box is behind the top button — not rendered inline anymore.
     expect(screen.queryByPlaceholderText(/paste an nginx snippet here/i)).toBeNull();
 
-    // Open the importer Modal from the top-of-page button.
+    // Open the importer Modal from the top toolbar button (accessible name is
+    // the full "Import from nginx config" aria-label).
     fireEvent.click(screen.getByRole("button", { name: /Import from nginx config/i }));
 
     const textarea = await screen.findByPlaceholderText(/paste an nginx snippet here/i);

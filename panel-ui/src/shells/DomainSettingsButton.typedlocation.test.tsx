@@ -42,9 +42,12 @@ describe("GH #1624 — tenant Rule Builder typed location rules", () => {
 
   it("offers Deny Paths and Static Cache but not the admin-only kinds", async () => {
     renderTenant(domain);
-    // antd Dropdown opens on hover of the trigger button.
-    fireEvent.mouseEnter(screen.getByRole("button", { name: /Add Rule/i }));
-    await waitFor(() => expect(screen.getByText("Deny Paths")).toBeInTheDocument());
+    // GH #1624 UX: "Add Rule" opens a rule-type picker Modal on click (was a
+    // hover Dropdown pinned below the list).
+    fireEvent.click(screen.getByRole("button", { name: /Add Rule/i }));
+    // The picker is a Modal (dialog), not an inline menu.
+    await screen.findByRole("dialog");
+    expect(await screen.findByText("Deny Paths")).toBeInTheDocument();
     expect(screen.getByText("Static Cache")).toBeInTheDocument();
     expect(screen.getByText("Custom Header")).toBeInTheDocument();
     expect(screen.getByText("Rewrite")).toBeInTheDocument();
@@ -52,5 +55,20 @@ describe("GH #1624 — tenant Rule Builder typed location rules", () => {
     expect(screen.queryByText("Proxy Pass")).not.toBeInTheDocument();
     expect(screen.queryByText("IP Access")).not.toBeInTheDocument();
     expect(screen.queryByText("PHP Setting")).not.toBeInTheDocument();
+  });
+
+  it("picking a type in the Add Rule modal appends a rule card", async () => {
+    renderTenant(domain);
+    fireEvent.click(screen.getByRole("button", { name: /Add Rule/i }));
+    const denyOption = await screen.findByText("Deny Paths");
+    fireEvent.click(denyOption);
+    // The blank Deny Paths card is appended to the builder, and the toolbar
+    // "Add Rule" button is still present (picker closed).
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /Add Rule/i })).toBeInTheDocument(),
+    );
+    await waitFor(() =>
+      expect(screen.getAllByText("Deny Paths").length).toBeGreaterThan(0),
+    );
   });
 });
