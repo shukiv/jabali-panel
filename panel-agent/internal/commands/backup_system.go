@@ -68,6 +68,11 @@ type systemBackupParams struct {
 	// system backup writes to the same destinations as account backups, so
 	// it needs this too — without it a rotated destination fails outright.
 	PasswordFile string `json:"password_file,omitempty"`
+	// Compression is the restic level ("" = auto / "off" / "max", the GH #294
+	// whitelist) chosen for this System / Full Server run (GH #1646). Applied
+	// to the restic config so every system-stage snapshot honours it. Empty
+	// keeps restic's default, matching the account path.
+	Compression string `json:"compression,omitempty"`
 }
 
 type systemBackupResult struct {
@@ -98,6 +103,19 @@ func systemBackupHandler(ctx context.Context, raw json.RawMessage) (any, error) 
 	}, nil
 }
 
+// systemResticConfig builds the restic config for a system backup run and
+// applies the requested compression level (GH #1646) the same way the account
+// path (backup_create.go) does, so every system-stage snapshot honours the
+// operator's choice. Empty compression leaves restic's default (auto).
+func systemResticConfig(req systemBackupParams) (backup.ResticConfig, error) {
+	cfg, err := bkResticConfigWithPassword(req.RepoURL, req.CredentialsRef, req.PasswordFile, req.SFTP)
+	if err != nil {
+		return cfg, err
+	}
+	cfg.Compression = req.Compression
+	return cfg, nil
+}
+
 // runSystemBackupOrchestrator walks every system stage in sequence.
 func runSystemBackupOrchestrator(ctx context.Context, req systemBackupParams) error {
 	jl := backup.NewJobLogger(req.JobID)
@@ -107,7 +125,7 @@ func runSystemBackupOrchestrator(ctx context.Context, req systemBackupParams) er
 		jl.Printf("ensure_repo_failed=%v", err)
 		return fmt.Errorf("ensure repo: %w", err)
 	}
-	cfg, cerr := bkResticConfigWithPassword(req.RepoURL, req.CredentialsRef, req.PasswordFile, req.SFTP)
+	cfg, cerr := systemResticConfig(req)
 	if cerr != nil {
 		return fmt.Errorf("restic config: %w", cerr)
 	}

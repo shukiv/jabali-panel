@@ -753,6 +753,7 @@ func (s *Scheduler) dispatchAccount(ctx context.Context, j models.BackupJob) {
 		"mailboxes":          mbs,
 		"docker_apps":        sel.DockerApps,
 		"content":            content,
+		"compression":        j.Compression,
 		"metadata":           meta,
 		"schedule_id":        scheduleID,
 	}
@@ -803,6 +804,7 @@ func (s *Scheduler) dispatchSystem(ctx context.Context, j models.BackupJob) {
 	params := map[string]any{
 		"job_id":           j.ID,
 		"include_accounts": false,
+		"compression":      j.Compression,
 		"schedule_id":      scheduleID,
 	}
 	for k, v := range destWireParams(dest) {

@@ -82,6 +82,7 @@ export const CreateBackupDrawer = ({ open, onClose, onCreated }: CreateBackupDra
         await apiClient.post(`/admin/system/backups`, {
           include_accounts: full,
           destination_id: values.destination_id,
+          compression: values.compression ?? "",
         });
         feedback.message.success(full ? "Full server backup queued" : "System backup queued");
         onCreated();
@@ -174,6 +175,20 @@ export const CreateBackupDrawer = ({ open, onClose, onCreated }: CreateBackupDra
           />
         </Form.Item>
 
+        <Form.Item
+          label={t("createbackupdrawer.compression")}
+          name="compression"
+          extra="restic compression level (zstd). Auto is recommended; Max is smaller but slower; Off is fastest. Applies to a System or Full Server run too."
+        >
+          <Select
+            options={[
+              { value: "", label: "Auto (recommended)" },
+              { value: "max", label: "Max (smallest)" },
+              { value: "off", label: "Off (fastest)" },
+            ]}
+          />
+        </Form.Item>
+
         {kind === "account_backup" && (
           <>
             <Form.Item
@@ -232,19 +247,6 @@ export const CreateBackupDrawer = ({ open, onClose, onCreated }: CreateBackupDra
                 <Input placeholder="public_html, mail" />
               </Form.Item>
             )}
-            <Form.Item
-              label={t("createbackupdrawer.compression")}
-              name="compression"
-              extra="restic compression level (zstd). Auto is recommended; Max is smaller but slower; Off is fastest."
-            >
-              <Select
-                options={[
-                  { value: "", label: "Auto (recommended)" },
-                  { value: "max", label: "Max (smallest)" },
-                  { value: "off", label: "Off (fastest)" },
-                ]}
-              />
-            </Form.Item>
           </>
         )}
 

@@ -28,7 +28,7 @@ const mocked = apiClient as unknown as {
 
 // The drawer issues two list GETs on open: users + backup-destinations.
 // Route on the URL substring; envelope is the standard {data,total}.
-function mockLists() {
+function mockLists(dests: Array<{ id: string; name: string; kind: string; enabled: boolean }> = []) {
   mocked.get.mockImplementation(async (url: string) => {
     if (url.startsWith("/users")) {
       return {
@@ -42,7 +42,7 @@ function mockLists() {
       };
     }
     if (url.includes("/backup-destinations")) {
-      return { data: { data: [], total: 0 } };
+      return { data: { data: dests, total: dests.length } };
     }
     throw new Error(`unexpected GET ${url}`);
   });
@@ -85,5 +85,38 @@ describe("CreateBackupDrawer — user list wire contract (GH #182)", () => {
     // alice (non-admin) is selectable; root (is_admin) is filtered out.
     expect(await screen.findByText(/alice \(alice@example\.com\)/)).toBeInTheDocument();
     expect(screen.queryByText(/root \(root@example\.com\)/)).toBeNull();
+  });
+});
+
+describe("CreateBackupDrawer — System / Full Server compression (GH #1646)", () => {
+  it("shows the compression control for a System backup (not account-only)", async () => {
+    mockLists();
+    renderDrawer();
+
+    // Switch to System — the compression control must render for it, not just
+    // for an account backup (it lived inside the account-only block before).
+    fireEvent.click(await screen.findByText("System"));
+    expect(await screen.findByText("Compression")).toBeInTheDocument();
+  });
+
+  it("carries the compression level in the system backup POST body", async () => {
+    mockLists([{ id: "d1", name: "Local", kind: "local", enabled: true }]);
+    renderDrawer();
+
+    fireEvent.click(await screen.findByText("System"));
+
+    // Pick the (only) destination — a system create requires one.
+    fireEvent.mouseDown(await screen.findByText("Pick a destination"));
+    fireEvent.click(await screen.findByText("Local (local)"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Create backup" }));
+
+    await waitFor(() => expect(mocked.post).toHaveBeenCalled());
+    const [url, body] = mocked.post.mock.calls[0] as [string, Record<string, unknown>];
+    expect(url).toBe("/admin/system/backups");
+    // The key must be present (default "" = restic auto) so the operator's
+    // choice reaches the agent; before GH #1646 the system POST omitted it.
+    expect(body).toHaveProperty("compression");
+    expect(body).toMatchObject({ include_accounts: false });
   });
 });

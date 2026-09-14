@@ -197,6 +197,11 @@ func (h *backupHandler) listRunJobs(c *gin.Context) {
 type systemBackupRequest struct {
 	IncludeAccounts bool   `json:"include_accounts"`
 	DestinationID   string `json:"destination_id,omitempty"`
+	// Compression is the restic level ("" = auto / "off" / "max", the GH #294
+	// whitelist) for this System / Full Server run (GH #1646). It rides the
+	// system.backup call for the system job and is stamped on every fanned-out
+	// account job so the dispatcher carries it to each account's backup.create.
+	Compression string `json:"compression,omitempty"`
 }
 
 // fanOutFullServerAccounts enqueues a queued account_backup job for every
@@ -204,7 +209,7 @@ type systemBackupRequest struct {
 // dispatcher backs up each account as part of a Full Server run (GH #502).
 // Best-effort: a per-user create failure is logged and skipped, never aborting
 // the run. Content is "full" (home + databases + mailboxes) per account.
-func (h *backupHandler) fanOutFullServerAccounts(ctx context.Context, destID, runID string) {
+func (h *backupHandler) fanOutFullServerAccounts(ctx context.Context, destID, runID, compression string) {
 	if h.cfg.Users == nil || h.cfg.Jobs == nil {
 		return
 	}
@@ -224,6 +229,7 @@ func (h *backupHandler) fanOutFullServerAccounts(ctx context.Context, destID, ru
 			RunID:         &rID,
 			Kind:          models.BackupJobKindAccountBackup,
 			Content:       models.BackupContentFull,
+			Compression:   compression,
 			CreatedAt:     time.Now().UTC(),
 			Status:        models.BackupJobStatusQueued,
 		}
@@ -236,6 +242,10 @@ func (h *backupHandler) fanOutFullServerAccounts(ctx context.Context, destID, ru
 func (h *backupHandler) systemCreate(c *gin.Context) {
 	var req systemBackupRequest
 	_ = c.ShouldBindJSON(&req)
+	if !validBackupCompression(req.Compression) {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid_option", "detail": "compression must be off/auto/max"})
+		return
+	}
 	dest, derr := h.resolveDest(c, req.DestinationID)
 	if derr != nil {
 		return
@@ -248,6 +258,7 @@ func (h *backupHandler) systemCreate(c *gin.Context) {
 		DestinationID: &destID,
 		RunID:         &runID,
 		Kind:          models.BackupJobKindSystemBackup,
+		Compression:   req.Compression,
 		CreatedAt:     time.Now().UTC(),
 		Status:        models.BackupJobStatusQueued,
 	}
@@ -263,7 +274,7 @@ func (h *backupHandler) systemCreate(c *gin.Context) {
 	// state; this account fan-out was missing, so "Full Server" previously
 	// backed up System only. The queued account jobs run via the dispatcher.
 	if req.IncludeAccounts {
-		h.fanOutFullServerAccounts(c.Request.Context(), destID, runID)
+		h.fanOutFullServerAccounts(c.Request.Context(), destID, runID, req.Compression)
 	}
 	if h.cfg.Agent != nil {
 		ctx, cancel := context.WithTimeout(c.Request.Context(), backupCallTimeout)
@@ -271,6 +282,7 @@ func (h *backupHandler) systemCreate(c *gin.Context) {
 		params := map[string]any{
 			"job_id":           job.ID,
 			"include_accounts": req.IncludeAccounts,
+			"compression":      req.Compression,
 		}
 		for k, v := range destWireParams(dest) {
 			params[k] = v
