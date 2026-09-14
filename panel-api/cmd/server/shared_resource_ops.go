@@ -42,6 +42,50 @@ func deleteSharedResourceDirect(ctx context.Context, repo repository.SharedResou
 	}, sharedresourceops.NotifyFunc(notify))
 }
 
+// grantSharedResourceDirect mirrors PUT /shared-resources/:rid/grants: it lists
+// the current grant set, upserts the requested grantee into it, validates the
+// FULL resulting set through sharedresourceops.ValidateGrants — not just the new
+// delta — and only then replaces the set (JAB-339 AC3). Validating the whole
+// resulting set is exactly what the REST setGrants door does (it validates the
+// entire replacement body it receives), so a CLI grant that would leave a
+// pre-existing cross-owner or now-missing grantee in the set fails loud here too
+// instead of silently persisting it. Both doors therefore project identical
+// state from equivalent inputs.
+//
+// The old CLI validated only the single new grant, so it could upsert a valid
+// grantee onto a set that still carried a legacy invalid one and write it back —
+// the REST door, validating the full set, rejected the same operation. Revoke is
+// deliberately NOT validated the same way: it only removes access, and rejecting
+// a revoke because a *different* legacy grant is invalid would refuse to shrink
+// the set — the wrong direction for a clamp, and the escape hatch that lets an
+// operator repair a resource the tightened grant path now refuses to extend.
+func grantSharedResourceDirect(ctx context.Context, repo repository.SharedResourceRepository, grantDeps sharedresourceops.Deps, ownerUserID, resourceID, granteeKind, granteeID, rights string) error {
+	grants, err := repo.ListGrants(ctx, resourceID)
+	if err != nil {
+		return fmt.Errorf("list grants: %w", err)
+	}
+	next := make([]models.SharedResourceGrant, 0, len(grants)+1)
+	for _, g := range grants {
+		if g.GranteeKind == granteeKind && g.GranteeID == granteeID {
+			continue // replaced below
+		}
+		next = append(next, g)
+	}
+	next = append(next, models.SharedResourceGrant{
+		ResourceID: resourceID, GranteeKind: granteeKind, GranteeID: granteeID, Rights: rights,
+	})
+	// Validate the full resulting set, not just the delta. ValidateGrants wraps
+	// the offending grantee id, so the returned error names whichever grant is
+	// bad — which may be a pre-existing one, not the one just requested.
+	if err := sharedresourceops.ValidateGrants(ctx, grantDeps, ownerUserID, next); err != nil {
+		return err
+	}
+	if err := repo.ReplaceGrants(ctx, resourceID, next); err != nil {
+		return fmt.Errorf("replace grants: %w", err)
+	}
+	return nil
+}
+
 // notifyAgentSharedResource is the production agentNotifier wired off the global
 // sharedAgent. Swallows errors — ADR-0013 best-effort; the reconciler converges
 // from DB truth regardless.
