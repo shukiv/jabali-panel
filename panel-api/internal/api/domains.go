@@ -2332,10 +2332,12 @@ var redosNestedQuantRE = regexp.MustCompile(`\([^)]*[+*][^)]*\)\s*[+*]`)
 
 // validateRewritePattern guards the nginx `rewrite` pattern (JAB-72), which is
 // rendered verbatim (unquoted) into the vhost. Cap the length, reject nested
-// quantifiers (ReDoS), and reject grossly invalid regex syntax via a RE2
-// compile pre-check. RE2 is stricter than PCRE on a few constructs (named
-// groups, backreferences) which nginx rewrites almost never use in the MATCH;
-// the trade favors blocking a worker-pinning pattern over allowing exotic ones.
+// quantifiers (ReDoS), and reject grossly invalid regex syntax. nginx runs the
+// MATCH under PCRE, so the syntax check accepts the PCRE lookahead assertions
+// ((?!…), (?=…)) that Go's RE2 rejects outright — front-controller apps
+// (DokuWiki, WordPress) legitimately use negative lookahead to exclude asset
+// dirs, e.g. ^/(?!lib/)(?!_media/)(.*)$ (GH #1652) — while still rejecting
+// genuinely malformed patterns.
 func validateRewritePattern(pattern string, maxLen int) error {
 	if len(pattern) > maxLen {
 		return fmt.Errorf("rewrite pattern too long (%d > %d chars)", len(pattern), maxLen)
@@ -2343,7 +2345,17 @@ func validateRewritePattern(pattern string, maxLen int) error {
 	if redosNestedQuantRE.MatchString(pattern) {
 		return fmt.Errorf("rewrite pattern has nested quantifiers (ReDoS risk)")
 	}
-	if _, err := regexp.Compile(pattern); err != nil {
+	// Substitute the two PCRE lookahead openers with the RE2-supported
+	// non-capturing group `(?:` and compile the probe. This admits exactly
+	// lookahead assertions (which nginx's PCRE runs fine) while still
+	// syntax-checking the rest of the pattern — paren balance, quantifiers,
+	// bad escapes — through RE2. Lookbehind ((?<=), (?<!)), backreferences
+	// (\1), recursion ((?R)) and other PCRE-only constructs are left untouched
+	// and stay rejected; backreferences are the genuinely exponential case and
+	// remain blocked. A pattern that is valid PCRE but not RE2 is backstopped
+	// at apply time by a per-vhost `nginx -t` (#1702).
+	probe := strings.NewReplacer("(?!", "(?:", "(?=", "(?:").Replace(pattern)
+	if _, err := regexp.Compile(probe); err != nil {
 		return fmt.Errorf("rewrite pattern is not valid regex: %v", err)
 	}
 	return nil
