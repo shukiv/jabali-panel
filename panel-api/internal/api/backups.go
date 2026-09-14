@@ -197,6 +197,10 @@ func (h *backupHandler) listRunJobs(c *gin.Context) {
 type systemBackupRequest struct {
 	IncludeAccounts bool   `json:"include_accounts"`
 	DestinationID   string `json:"destination_id,omitempty"`
+	// Compression is the restic level ("" = auto / "off" / "max", the GH #294
+	// whitelist) for this System run (GH #1646). It rides the system.backup
+	// call so every system-stage snapshot honours the operator's choice.
+	Compression string `json:"compression,omitempty"`
 }
 
 // fanOutFullServerAccounts enqueues a queued account_backup job for every
@@ -236,6 +240,10 @@ func (h *backupHandler) fanOutFullServerAccounts(ctx context.Context, destID, ru
 func (h *backupHandler) systemCreate(c *gin.Context) {
 	var req systemBackupRequest
 	_ = c.ShouldBindJSON(&req)
+	if !validBackupCompression(req.Compression) {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid_option", "detail": "compression must be off/auto/max"})
+		return
+	}
 	dest, derr := h.resolveDest(c, req.DestinationID)
 	if derr != nil {
 		return
@@ -271,6 +279,7 @@ func (h *backupHandler) systemCreate(c *gin.Context) {
 		params := map[string]any{
 			"job_id":           job.ID,
 			"include_accounts": req.IncludeAccounts,
+			"compression":      req.Compression,
 		}
 		for k, v := range destWireParams(dest) {
 			params[k] = v
