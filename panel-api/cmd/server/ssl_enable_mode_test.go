@@ -8,29 +8,46 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 )
 
-// TestSSLEnableTargetMode_PreservesOperatorLineage guards the JAB-356 clobber
-// constraint. The legacy `ssl enable` door is "enable ACME" (GH #246), so it
-// switches to Let's Encrypt for the ACME-managed and untrusted-bootstrap modes
-// — but it must PRESERVE an operator-provided certificate lineage (`custom`
-// uploaded pair, `shared` JAB-170 cert). Forcing `le` there would kick off a
-// fresh ACME issuance over the operator's cert (the 2026-05-09 LE-clobber
-// class; see internal/reconciler/ssl_san_drift.go).
-func TestSSLEnableTargetMode_PreservesOperatorLineage(t *testing.T) {
+// TestSSLEnableIsOperatorLineage guards the JAB-356 clobber constraint. The
+// legacy `ssl enable` door is "enable ACME" (GH #246), so it switches to Let's
+// Encrypt for the ACME-managed and untrusted-bootstrap modes — but it must
+// treat an operator-provided certificate lineage (`custom` uploaded pair,
+// `shared` JAB-170 cert) as a no-op, never clobbering it with a fresh ACME
+// issuance (the 2026-05-09 LE-clobber class; see
+// internal/reconciler/ssl_san_drift.go).
+func TestSSLEnableIsOperatorLineage(t *testing.T) {
 	cases := []struct {
-		current string
-		want    string
+		mode string
+		want bool
 	}{
-		{models.SSLModeNone, models.SSLModeLE},       // enabling from off -> ACME
-		{"", models.SSLModeLE},                       // unset -> ACME
-		{models.SSLModeSelf, models.SSLModeLE},       // self-signed bootstrap is transient -> ACME
-		{models.SSLModeLE, models.SSLModeLE},         // already ACME -> ACME (idempotent mode)
-		{models.SSLModeCustom, models.SSLModeCustom}, // uploaded cert lineage preserved
-		{models.SSLModeShared, models.SSLModeShared}, // shared cert lineage preserved
+		{models.SSLModeCustom, true},  // uploaded cert lineage — preserve
+		{models.SSLModeShared, true},  // shared cert lineage — preserve
+		{models.SSLModeNone, false},   // enabling from off -> ACME
+		{"", false},                   // unset -> ACME
+		{models.SSLModeSelf, false},   // panel-generated self-signed, regenerable -> ACME
+		{models.SSLModeLE, false},     // already ACME -> ACME
 	}
 	for _, tc := range cases {
-		if got := sslEnableTargetMode(tc.current); got != tc.want {
-			t.Errorf("sslEnableTargetMode(%q) = %q, want %q", tc.current, got, tc.want)
+		if got := sslEnableIsOperatorLineage(tc.mode); got != tc.want {
+			t.Errorf("sslEnableIsOperatorLineage(%q) = %v, want %v", tc.mode, got, tc.want)
 		}
+	}
+}
+
+// TestSSLDisableRefusal_ProtectedDomains guards the JAB-356 AC2 invariant on the
+// CLI disable door. Now that `ssl disable` writes the authoritative ssl_mode=none
+// (so the reconciler revokes for real), it must refuse to strip TLS from the
+// panel hostname or a mail-enabled domain, mirroring the set-mode HTTP door
+// (internal/api/domains.go). Otherwise the CLI opens the #1507 lockout class.
+func TestSSLDisableRefusal_ProtectedDomains(t *testing.T) {
+	if err := sslDisableRefusal(&models.Domain{Name: "panel.example.com", IsPanelPrimary: true}); err == nil {
+		t.Error("disable must refuse to drop TLS on the panel-primary domain")
+	}
+	if err := sslDisableRefusal(&models.Domain{Name: "mail.example.com", EmailEnabled: true}); err == nil {
+		t.Error("disable must refuse to drop TLS on a mail-enabled domain")
+	}
+	if err := sslDisableRefusal(&models.Domain{Name: "plain.example.com"}); err != nil {
+		t.Errorf("disable must be allowed on an ordinary domain, got %v", err)
 	}
 }
 
@@ -39,19 +56,19 @@ func TestSSLEnableTargetMode_PreservesOperatorLineage(t *testing.T) {
 // so — matching the sibling JAB-313 pin (domain_advanced_cmd_ssl_mode_test.go)
 // — this asserts both doors persist the authoritative mode through the
 // dedicated UpdateSSLMode writer rather than the general Update, whose column
-// allowlist silently drops ssl_mode. HTTP enableSSL/disableSSL (ssl.go) already
-// do this; the CLI was the drifted door.
+// allowlist silently drops ssl_mode, and that each guard is wired in.
 func TestSSLEnableDisable_PersistThroughUpdateSSLMode(t *testing.T) {
 	src, err := os.ReadFile("ssl_cmd.go")
 	if err != nil {
 		t.Fatalf("read ssl_cmd.go: %v", err)
 	}
 	s := string(src)
-	if !strings.Contains(s, "mode := sslEnableTargetMode(dom.SSLMode)") ||
-		!strings.Contains(s, "UpdateSSLMode(ctx, dom.ID, mode)") {
-		t.Fatal("`ssl enable` must persist the authoritative mode through domainRepo.UpdateSSLMode via sslEnableTargetMode — the general Update allowlist drops ssl_mode, leaving ssl_enabled=true / ssl_mode=none (JAB-356)")
+	if !strings.Contains(s, "sslEnableIsOperatorLineage(dom.SSLMode)") ||
+		!strings.Contains(s, "UpdateSSLMode(ctx, dom.ID, models.SSLModeLE)") {
+		t.Fatal("`ssl enable` must skip an operator lineage (sslEnableIsOperatorLineage) then persist ssl_mode=le through domainRepo.UpdateSSLMode — the general Update allowlist drops ssl_mode (JAB-356)")
 	}
-	if !strings.Contains(s, "UpdateSSLMode(ctx, dom.ID, models.SSLModeNone)") {
-		t.Fatal("`ssl disable` must persist ssl_mode=none through domainRepo.UpdateSSLMode — the general Update allowlist drops ssl_mode, leaving the mode stale (JAB-356)")
+	if !strings.Contains(s, "sslDisableRefusal(dom)") ||
+		!strings.Contains(s, "UpdateSSLMode(ctx, dom.ID, models.SSLModeNone)") {
+		t.Fatal("`ssl disable` must enforce the protected-domain refusal (sslDisableRefusal) then persist ssl_mode=none through domainRepo.UpdateSSLMode — the general Update allowlist drops ssl_mode, so the reconciler never dropped TLS (JAB-356)")
 	}
 }
