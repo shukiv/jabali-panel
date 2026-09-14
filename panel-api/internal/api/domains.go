@@ -2072,8 +2072,19 @@ func validatePageRedirects(prs models.PageRedirects) error {
 		if !strings.HasPrefix(pr.Source, "/") {
 			return fmt.Errorf("entry %d: source must start with /", i)
 		}
-		if strings.ContainsAny(pr.Source, "\n\x00") {
-			return fmt.Errorf("entry %d: source contains invalid chars", i)
+		// Reject whitespace and control chars in the source. The wildcard branch
+		// of redirects.Compile renders the source UNQUOTED into
+		// `rewrite ^<escapeRegex(source)>/?(.*)$ ...`; a literal space lets a
+		// tenant complete a two-argument rewrite and then inject a sibling
+		// directive (e.g. proxy_pass to an internal service) inside their own
+		// location block, past validateProxyPassTarget. escapeRegex already
+		// neutralizes `{`/`}` (so no new location block can be opened) and a lone
+		// `;` only breaks `nginx -t`, so banning the whitespace an injection needs
+		// closes it at the boundary. A redirect source is a URL path prefix and
+		// never needs a literal space/tab/CR. (GH #1624 hardening, sibling of the
+		// rewrite-pattern quoting fix #1736.)
+		if strings.ContainsAny(pr.Source, " \t\r\n\x00") {
+			return fmt.Errorf("entry %d: source must not contain spaces or control characters", i)
 		}
 		if err := ValidateRedirectURL(pr.Destination); err != nil {
 			return fmt.Errorf("entry %d: invalid page redirect destination: %w", i, err)
