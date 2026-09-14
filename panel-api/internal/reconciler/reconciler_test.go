@@ -792,6 +792,28 @@ func TestReconcileAll_EnabledDomainMissing(t *testing.T) {
 	require.Equal(t, "domain.create", domainCalls[1].method)
 }
 
+// GH #1620: the recurring PowerDNS orphan sweep was removed — the one-shot
+// Repair Center action and the `jabali dns prune-orphan-records` CLI are the
+// only surfaces (johnnyq: one surface, no option fatigue). A reconcile tick
+// must never fire dns.reap-orphans on its own.
+func TestReconcileAll_NoAutomaticDNSOrphanSweep(t *testing.T) {
+	ctx := context.Background()
+	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+
+	agent := &fakeAgent{}
+	domainRepo := &fakeDomainRepo{domains: make(map[string]*models.Domain)}
+	userRepo := &fakeUserRepo{users: make(map[string]*models.User)}
+
+	r := New(domainRepo, userRepo, agent, log, Config{Interval: 1 * time.Second})
+	require.NoError(t, r.ReconcileAll(ctx))
+
+	for _, c := range agent.calls {
+		if c.method == "dns.reap-orphans" {
+			t.Fatalf("reconcile tick must not fire dns.reap-orphans (recurring sweep removed); calls: %v", agent.calls)
+		}
+	}
+}
+
 func TestReconcileAll_DisabledDomainPresent(t *testing.T) {
 	ctx := context.Background()
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
