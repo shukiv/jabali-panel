@@ -51,6 +51,11 @@ type BackupJob struct {
 	// time so the dispatcher and the history UI both read it off the job without
 	// re-loading the schedule (which may have changed or been deleted since).
 	Content        string          `gorm:"column:content;type:varchar(16);not null;default:'full'"                   json:"content"`
+	// Compression is the restic level ("" = auto / "off" / "max", GH #294
+	// whitelist) denormalised onto the job at enqueue time, mirroring Content, so
+	// the dispatcher hands it to the agent's backup.create for a Full Server
+	// fan-out (GH #1646) without re-loading. Empty = restic's default (auto).
+	Compression    string          `gorm:"column:compression;type:varchar(8);not null;default:''"                    json:"compression"`
 	Status         string          `gorm:"type:enum('queued','running','succeeded','partial','failed','cancelled');not null;default:'queued'" json:"status"`
 	SystemdUnit    string          `gorm:"type:varchar(128);not null"                                                json:"systemd_unit"`
 	SnapshotID     string          `gorm:"type:char(64);not null;default:''"                                         json:"snapshot_id"`
