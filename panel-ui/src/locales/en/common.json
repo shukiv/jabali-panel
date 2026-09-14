@@ -1274,6 +1274,9 @@
   "tenantdomainoptionscard": {
     "tenant_domain_options": "Tenant Domain Options"
   },
+  "dnsorphansweepcard": {
+    "dns_orphan_sweep": "DNS Orphan Sweep"
+  },
   "webmailtogglecard": {
     "webmail": "Webmail"
   },
