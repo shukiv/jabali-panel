@@ -2342,6 +2342,16 @@ func validateRewritePattern(pattern string, maxLen int) error {
 	if len(pattern) > maxLen {
 		return fmt.Errorf("rewrite pattern too long (%d > %d chars)", len(pattern), maxLen)
 	}
+	// Defense-in-depth (GH #1624): the pattern is rendered into the vhost as a
+	// quoted nginx token (nginxrules.Compile), which already neutralizes `;`,
+	// `{`, `}` and whitespace. We still reject raw whitespace at the boundary —
+	// a URI-matching regex never needs a literal space or tab (`\s` covers it),
+	// and a space is the separator an injection payload would rely on, so
+	// rejecting it fails such input loudly at save time rather than leaning
+	// solely on the quoting.
+	if strings.ContainsAny(pattern, " \t") {
+		return fmt.Errorf("rewrite pattern must not contain spaces or tabs")
+	}
 	if redosNestedQuantRE.MatchString(pattern) {
 		return fmt.Errorf("rewrite pattern has nested quantifiers (ReDoS risk)")
 	}

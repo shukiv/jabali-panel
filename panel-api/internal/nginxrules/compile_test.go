@@ -155,7 +155,7 @@ func TestCompile(t *testing.T) {
 					},
 				},
 			},
-			want:     `rewrite ^/old/(.*)$ "/new/$1" last;`,
+			want:     `rewrite "^/old/(.*)$" "/new/$1" last;`,
 			wantBool: true,
 		},
 		{
@@ -170,7 +170,7 @@ func TestCompile(t *testing.T) {
 					},
 				},
 			},
-			want:     `rewrite ^/old/(.*)$ "/new/$1" permanent;`,
+			want:     `rewrite "^/old/(.*)$" "/new/$1" permanent;`,
 			wantBool: true,
 		},
 		{
@@ -525,4 +525,46 @@ func TestReverseProxySynthesisEdges(t *testing.T) {
 			t.Fatalf("Compile mutated NginxRules: len=%d", len(d.NginxRules))
 		}
 	})
+}
+
+// TestCompileRewritePatternQuoted pins the GH #1624 hardening: the rewrite MATCH
+// pattern renders as a single quoted nginx token, so a tenant can't terminate
+// the directive and inject sibling directives, and so regex escapes and {n,m}
+// quantifiers survive intact.
+func TestCompileRewritePatternQuoted(t *testing.T) {
+	// A pattern carrying nginx metacharacters (`;`, spaces, a `location { … }`
+	// block) must render as exactly one `rewrite` line with the whole pattern
+	// wrapped in one double-quoted token — never as extra directives.
+	inj := &models.Domain{NginxRules: []models.NginxRule{{
+		Type:        "rewrite",
+		Pattern:     `.*$ /d; location ~ ^/z$ { return 418; } #`,
+		Replacement: "/x",
+		Flag:        "last",
+	}}}
+	got := Compile(inj)
+	want := `rewrite ".*$ /d; location ~ ^/z$ { return 418; } #" "/x" last;`
+	if !strings.Contains(got, want) {
+		t.Fatalf("injection payload must render as one quoted token, got:\n%s", got)
+	}
+	if strings.Count(strings.TrimSpace(got), "\n") != 0 {
+		t.Fatalf("must be a single rewrite line, got:\n%s", got)
+	}
+
+	// A {n,m} quantifier renders quoted — unquoted it terminates the token and
+	// fails `nginx -t`.
+	q := Compile(&models.Domain{NginxRules: []models.NginxRule{{
+		Type: "rewrite", Pattern: `^/x[0-9]{2,3}$`, Replacement: "/y", Flag: "last",
+	}}})
+	if !strings.Contains(q, `rewrite "^/x[0-9]{2,3}$" "/y" last;`) {
+		t.Fatalf("quantifier pattern should render quoted, got:\n%s", q)
+	}
+
+	// A regex escape round-trips: quoteNginxString doubles the backslash and
+	// nginx un-escapes `\\`->`\`, so PCRE still sees `\.` (verified on nginx 1.24).
+	e := Compile(&models.Domain{NginxRules: []models.NginxRule{{
+		Type: "rewrite", Pattern: `^/foo\.php$`, Replacement: "/bar", Flag: "last",
+	}}})
+	if !strings.Contains(e, `rewrite "^/foo\\.php$" "/bar" last;`) {
+		t.Fatalf("regex escape should render backslash-doubled, got:\n%s", e)
+	}
 }

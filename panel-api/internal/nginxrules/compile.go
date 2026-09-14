@@ -38,8 +38,20 @@ func Compile(d *models.Domain) string {
 			if flag == "" {
 				flag = "last"
 			}
+			// Quote the MATCH pattern, not just the replacement. The pattern
+			// is tenant-controlled and was previously rendered as a bare
+			// token, so a `;` or whitespace inside it would terminate the
+			// rewrite directive and let the remainder inject sibling
+			// directives into the vhost (e.g. a `location { proxy_pass … }`
+			// past the JAB-65 SSRF guard). Quoting makes `;`, whitespace, `{`
+			// and `}` inert inside a single token. nginx un-escapes `\\`→`\`
+			// inside the quotes, so quoteNginxString's backslash-doubling
+			// round-trips regex escapes (`\.`, `\d`) exactly (verified on
+			// nginx 1.24), and it also fixes a latent break: an unquoted
+			// `{n,m}` quantifier terminates the token and fails `nginx -t`.
+			// GH #1624 hardening.
 			fmt.Fprintf(&b, "    rewrite %s %s %s;\n",
-				r.Pattern, quoteNginxString(r.Replacement), flag)
+				quoteNginxString(r.Pattern), quoteNginxString(r.Replacement), flag)
 
 		case "proxy_pass":
 			// Prepend ^~ so this location wins over regex matchers
