@@ -1,7 +1,7 @@
 // Shared settings modal for nginx custom directives used by both admin and user domain lists.
 // Opens a modal with tabs: "Rule Builder" and "Raw Directives" (functional textarea).
 // The Rule Builder tab allows building 6 types of typed nginx rules with drag-reorder.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   SettingOutlined,
   ToolOutlined,
@@ -16,7 +16,7 @@ import {
   MenuOutlined,
   UpOutlined,
 } from "@icons";
-import { Button, Modal, Alert, Tabs, Input, Typography, Card, Select, Switch, Row, Col, Dropdown, Tag } from "antd";
+import { Button, Modal, Alert, Tabs, Input, Typography, Card, Select, Switch, Row, Col, Space, Tooltip, Tag, theme } from "antd";
 import { feedback } from "../lib/feedback"; // GH #970: themed toasts
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -630,6 +630,12 @@ const SortableRuleCard = ({
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: idx,
   });
+  const { token } = theme.useToken();
+  // GH #1624 UX: highlight the row on hover so it's obvious which rule you are
+  // about to expand, edit, or delete (the controls sit at the row's right edge,
+  // far from the label). Theme token, not a hard-coded colour, so it tracks
+  // light/dark.
+  const [hovered, setHovered] = useState(false);
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -673,8 +679,21 @@ const SortableRuleCard = ({
   };
 
   return (
-    <div ref={setNodeRef} style={style}>
-      <Card style={{ marginBottom: 12 }} bodyStyle={{ padding: 12 }}>
+    <div
+      ref={setNodeRef}
+      style={style}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      <Card
+        style={{
+          marginBottom: 12,
+          borderColor: hovered && !isDragging ? token.colorPrimary : undefined,
+          boxShadow: hovered && !isDragging ? token.boxShadowTertiary : undefined,
+          transition: "border-color 0.2s, box-shadow 0.2s",
+        }}
+        bodyStyle={{ padding: 12 }}
+      >
         <div style={{ display: "flex", alignItems: "center", marginBottom: isExpanded ? 12 : 0, gap: 8 }}>
           <button
             {...attributes}
@@ -769,14 +788,34 @@ const RuleBuilder = ({
   rules,
   onRulesChange,
   allowedTypes,
+  toolbarExtra,
 }: {
   rules: NginxRule[];
   onRulesChange: (rules: NginxRule[]) => void;
   // When set, the "Add Rule" menu is limited to these rule types (GH #307
   // tenant subset). Omitted = all types (admin).
   allowedTypes?: NginxRule["type"][];
+  // GH #1624 UX: surface-specific action rendered in the top toolbar next to
+  // "Add Rule" (e.g. the tenant "Import" button), so every entry point sits at
+  // the top instead of scattered around the list.
+  toolbarExtra?: React.ReactNode;
 }) => {
   const [expandedCards, setExpandedCards] = useState<Set<number>>(new Set());
+  // GH #1624 UX: "Add Rule" now opens a rule-type picker Modal (reachable from
+  // the top of the panel) instead of a Dropdown pinned below a long list.
+  const [pickerOpen, setPickerOpen] = useState(false);
+  // Scroll a freshly added rule into view — it appends to the bottom (nginx
+  // first-match order is significant, so never prepend), which can be off-screen
+  // on a long list.
+  const listRef = useRef<HTMLDivElement>(null);
+  const prevLenRef = useRef(rules.length);
+  useEffect(() => {
+    if (rules.length > prevLenRef.current) {
+      const el = listRef.current?.lastElementChild as HTMLElement | null;
+      el?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
+    }
+    prevLenRef.current = rules.length;
+  }, [rules.length]);
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -854,11 +893,34 @@ const RuleBuilder = ({
     (it) => !allowedTypes || allowedTypes.includes(it.key as NginxRule["type"]),
   );
 
+  // One-line "what does this do" for the rule-type picker Modal.
+  const ruleTypeDescriptions: Record<NginxRule["type"], string> = {
+    custom_header: "Add a response header (add_header).",
+    rewrite: "Rewrite or redirect a request path.",
+    proxy_pass: "Proxy a path to an upstream target.",
+    ip_access: "Allow or deny access by IP address.",
+    php_setting: "Set a PHP configuration value.",
+    max_upload_size: "Raise the maximum upload size (client_max_body_size).",
+    deny_paths: "Deny access to files by extension.",
+    static_cache: "Cache matching static files for a set duration.",
+  };
+
   return (
     <div>
       <Typography.Paragraph type="secondary" style={{ marginBottom: 16 }}>
-        Add rules using the form below. They will be converted to nginx directives automatically.
+        Add rules below. They are converted to nginx directives automatically.
       </Typography.Paragraph>
+
+      {/* GH #1624 UX: "Add Rule" and any surface-specific action (e.g. the
+          tenant Import button) live in a top toolbar, so they stay reachable
+          without scrolling past a long rules list. */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
+        <Button icon={<PlusOutlined />} onClick={() => setPickerOpen(true)}>
+          Add Rule
+        </Button>
+        <div style={{ flex: 1 }} />
+        {toolbarExtra}
+      </div>
 
       {rules.length === 0 ? (
         <div
@@ -868,11 +930,11 @@ const RuleBuilder = ({
           }}
         >
           <Typography.Text type="secondary">
-            No rules yet. Click Add Rule to get started.
+            No rules yet. Use Add Rule to get started.
           </Typography.Text>
         </div>
       ) : (
-        <div style={{ marginBottom: 16 }}>
+        <div ref={listRef} style={{ marginBottom: 16 }}>
           <DndContext
             sensors={sensors}
             collisionDetection={closestCenter}
@@ -906,20 +968,39 @@ const RuleBuilder = ({
         </div>
       )}
 
-      <div style={{ textAlign: "center", marginBottom: 16 }}>
-        <Dropdown
-          menu={{
-            items: addMenuItems.map((item) => ({
-              ...item,
-              onClick: () => addRule(item.key as NginxRule["type"]),
-            })),
-          }}
-        >
-          <Button icon={<PlusOutlined />}>
-            Add Rule <DownOutlined />
-          </Button>
-        </Dropdown>
-      </div>
+      {/* Rule-type picker. Reuses the allowedTypes-filtered list, so the tenant
+          subset (rewrite / custom_header / deny_paths / static_cache) and the
+          admin full set both flow through here. Picking a type appends a blank
+          rule and closes the Modal (the card then expands + scrolls into view).
+          destroyOnHidden so each open starts clean. */}
+      <Modal
+        title="Add a rule"
+        open={pickerOpen}
+        onCancel={() => setPickerOpen(false)}
+        footer={null}
+        destroyOnHidden
+      >
+        <Space direction="vertical" size={8} style={{ width: "100%" }}>
+          {addMenuItems.map((item) => (
+            <Card
+              key={item.key}
+              hoverable
+              size="small"
+              onClick={() => {
+                addRule(item.key as NginxRule["type"]);
+                setPickerOpen(false);
+              }}
+            >
+              <Typography.Text strong>{item.label}</Typography.Text>
+              <div>
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  {ruleTypeDescriptions[item.key as NginxRule["type"]]}
+                </Typography.Text>
+              </div>
+            </Card>
+          ))}
+        </Space>
+      </Modal>
     </div>
   );
 };
@@ -1371,7 +1452,7 @@ export const DomainSettingsButton = ({
         title={`Nginx Directives for ${domain.name}`}
         open={effectiveOpen}
         onCancel={handleCloseModal}
-        width={720}
+        width={900}
         footer={[
           <Button key="cancel" onClick={handleCloseModal}>
             Cancel
@@ -1655,30 +1736,31 @@ export const TenantNginxRulesPanel = ({
 
   return (
     <div>
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "flex-start",
-          gap: 16,
-          flexWrap: "wrap",
-          marginBottom: 16,
-        }}
-      >
-        <Typography.Paragraph type="secondary" style={{ flex: 1, minWidth: 240, marginBottom: 0 }}>
-          Add rewrite rules and custom response headers for this domain. Rewrites
-          must point to a local path on your own site (no external URLs or
-          proxying).
-        </Typography.Paragraph>
-        {/* GH #1624: migration copy-paste entry point. A top-of-page button
-            (not a section far below the builder) opens the nginx-snippet
-            importer in a Modal, so it's reachable without scrolling past a long
-            rules list. */}
-        <Button icon={<ImportOutlined />} onClick={() => setImportOpen(true)}>
-          Import from nginx config
-        </Button>
-      </div>
-      <RuleBuilder rules={rules} onRulesChange={setRules} allowedTypes={["rewrite", "custom_header", "deny_paths", "static_cache"]} />
+      <Typography.Paragraph type="secondary" style={{ marginBottom: 16 }}>
+        Add rewrite rules and custom response headers for this domain. Rewrites
+        must point to a local path on your own site (no external URLs or
+        proxying).
+      </Typography.Paragraph>
+      {/* GH #1624: migration copy-paste entry point. The importer button sits in
+          the Rule Builder's top toolbar (next to "Add Rule") via toolbarExtra,
+          so it's reachable without scrolling past a long rules list. The label
+          is short ("Import"); the Tooltip keeps the full meaning for a11y. */}
+      <RuleBuilder
+        rules={rules}
+        onRulesChange={setRules}
+        allowedTypes={["rewrite", "custom_header", "deny_paths", "static_cache"]}
+        toolbarExtra={
+          <Tooltip title="Import from an nginx config">
+            <Button
+              icon={<ImportOutlined />}
+              aria-label="Import from nginx config"
+              onClick={() => setImportOpen(true)}
+            >
+              Import
+            </Button>
+          </Tooltip>
+        }
+      />
       <div style={{ marginTop: 16 }}>
         <Button type="primary" loading={saving} onClick={handleSave}>
           Save
