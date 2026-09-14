@@ -175,21 +175,19 @@ export const CreateBackupDrawer = ({ open, onClose, onCreated }: CreateBackupDra
           />
         </Form.Item>
 
-        {kind !== "full_server" && (
-          <Form.Item
-            label={t("createbackupdrawer.compression")}
-            name="compression"
-            extra="restic compression level (zstd). Auto is recommended; Max is smaller but slower; Off is fastest. Applies to a System run too."
-          >
-            <Select
-              options={[
-                { value: "", label: "Auto (recommended)" },
-                { value: "max", label: "Max (smallest)" },
-                { value: "off", label: "Off (fastest)" },
-              ]}
-            />
-          </Form.Item>
-        )}
+        <Form.Item
+          label={t("createbackupdrawer.compression")}
+          name="compression"
+          extra="restic compression level (zstd). Auto is recommended; Max is smaller but slower; Off is fastest. Applies to a System or Full Server run too."
+        >
+          <Select
+            options={[
+              { value: "", label: "Auto (recommended)" },
+              { value: "max", label: "Max (smallest)" },
+              { value: "off", label: "Off (fastest)" },
+            ]}
+          />
+        </Form.Item>
 
         {kind === "account_backup" && (
           <>

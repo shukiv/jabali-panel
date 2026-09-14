@@ -120,3 +120,35 @@ describe("CreateBackupDrawer — System compression (GH #1646 Slice 1)", () => {
     expect(body).toMatchObject({ include_accounts: false });
   });
 });
+
+describe("CreateBackupDrawer — Full Server compression (GH #1646 Slice 2)", () => {
+  it("shows the compression control for a Full Server backup", async () => {
+    mockLists();
+    renderDrawer();
+
+    // Slice 2 extends the control to Full Server so the level propagates to the
+    // fanned-out per-account jobs, not just the system leg.
+    fireEvent.click(await screen.findByText("Full Server"));
+    expect(await screen.findByText("Compression")).toBeInTheDocument();
+  });
+
+  it("carries the compression level in the Full Server POST body", async () => {
+    mockLists([{ id: "d1", name: "Local", kind: "local", enabled: true }]);
+    renderDrawer();
+
+    fireEvent.click(await screen.findByText("Full Server"));
+
+    fireEvent.mouseDown(await screen.findByText("Pick a destination"));
+    fireEvent.click(await screen.findByText("Local (local)"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Create backup" }));
+
+    await waitFor(() => expect(mocked.post).toHaveBeenCalled());
+    const [url, body] = mocked.post.mock.calls[0] as [string, Record<string, unknown>];
+    expect(url).toBe("/admin/system/backups");
+    // include_accounts:true is what makes this a Full Server run; the
+    // compression key must ride along so the fan-out stamps it on each job.
+    expect(body).toHaveProperty("compression");
+    expect(body).toMatchObject({ include_accounts: true });
+  });
+});

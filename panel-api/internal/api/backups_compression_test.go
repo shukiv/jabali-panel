@@ -16,10 +16,11 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
-// GH #1646 (Slice 1): a System backup must honour the operator's restic
-// compression choice. The level is validated against the off/auto/max whitelist
-// and forwarded to the agent's system.backup. (The Full Server per-account
-// fan-out that carries the level onto each account job is Slice 2.)
+// GH #1646: a System / Full Server backup must honour the operator's restic
+// compression choice. The level is validated, forwarded to the agent's
+// system.backup, persisted on the system job row, and — for a Full Server run —
+// stamped on every fanned-out per-account job so the dispatcher carries it to
+// each account's backup.create.
 
 // paramCaptureAgent records the params of the last call for each command.
 type paramCaptureAgent struct {
@@ -128,6 +129,32 @@ func TestSystemCreate_CompressionReachesAgent(t *testing.T) {
 	p := ag.paramsFor("system.backup")
 	require.NotNil(t, p, "system.backup must be dispatched")
 	require.Equal(t, "max", p["compression"], "the chosen compression level must reach the agent")
+}
+
+func TestSystemCreate_FanOutStampsCompression(t *testing.T) {
+	ag := &paramCaptureAgent{}
+	jobs := &jobCaptureRepo{}
+	h := systemBackupTestHandler(ag, jobs)
+	c, rec := systemCreateCtx(t, `{"destination_id":"d1","include_accounts":true,"compression":"max"}`)
+	h.systemCreate(c)
+
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+
+	created := jobs.createdJobs()
+	var systemJobs, accountJobs int
+	for _, j := range created {
+		switch j.Kind {
+		case models.BackupJobKindSystemBackup:
+			systemJobs++
+			require.Equal(t, "max", j.Compression, "the system job row must record the compression level")
+		case models.BackupJobKindAccountBackup:
+			accountJobs++
+			require.Equal(t, "max", j.Compression,
+				"every fanned-out account job must carry the Full Server compression level so the dispatcher forwards it")
+		}
+	}
+	require.Equal(t, 1, systemJobs, "exactly one system job")
+	require.Equal(t, 2, accountJobs, "one account job per non-admin user")
 }
 
 func TestSystemCreate_InvalidCompressionRejected(t *testing.T) {
