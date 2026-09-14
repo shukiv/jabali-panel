@@ -44,6 +44,24 @@ func stubKillProcess(t *testing.T) {
 	})
 }
 
+// stubKillProcessCounter replaces killProcess with a no-op that counts
+// how many times it fires, so tests can prove the SIGHUP daemon-reload is
+// skipped on the no-change path. Mirrors stubKillProcess.
+func stubKillProcessCounter(t *testing.T) *int {
+	t.Helper()
+	var count int
+	testMutex.Lock()
+	orig := killProcess
+	killProcess = func(_ int, _ os.Signal) error { count++; return nil }
+	testMutex.Unlock()
+	t.Cleanup(func() {
+		testMutex.Lock()
+		killProcess = orig
+		testMutex.Unlock()
+	})
+	return &count
+}
+
 // stubRunCmd replaces runCmd with a recorder that records the args of
 // every invocation and returns predetermined stdout/stderr.
 func stubRunCmd(t *testing.T) *[][]string {
@@ -206,7 +224,7 @@ func TestUserLimitsApply_AllZeros_RemovesDropin(t *testing.T) {
 
 func TestUserLimitsApply_Idempotent(t *testing.T) {
 	setupTempSystemdRoot(t)
-	stubKillProcess(t)
+	killed := stubKillProcessCounter(t)
 	calls := stubRunCmd(t)
 
 	params, _ := json.Marshal(userLimitsApplyParams{
@@ -225,11 +243,21 @@ func TestUserLimitsApply_Idempotent(t *testing.T) {
 	if !r2.(*userLimitsApplyResponse).NoChange {
 		t.Error("second apply should have NoChange=true")
 	}
-	// PR perf/user-limits-apply-noop-skip: noChange now early-returns
-	// BEFORE setquota + SIGHUP. Pin the saving — only the first apply
-	// runs setquota, the second is a pure no-op.
-	if len(*calls) != 1 {
-		t.Errorf("expected exactly 1 runCmd call (setquota on the first apply only), got %d", len(*calls))
+	// GH #1660: the disk quota is idempotently re-asserted on EVERY apply,
+	// so setquota runs on both the first (changed) and second (no-change)
+	// applies. What the no-change path skips is the expensive systemd
+	// daemon-reload (SIGHUP), which fires only on the first apply.
+	setquotaCalls := 0
+	for _, c := range *calls {
+		if len(c) > 0 && c[0] == "setquota" {
+			setquotaCalls++
+		}
+	}
+	if setquotaCalls != 2 {
+		t.Errorf("expected setquota on both applies (idempotent disk re-assert), got %d", setquotaCalls)
+	}
+	if *killed != 1 {
+		t.Errorf("expected SIGHUP daemon-reload on the first (changed) apply only, got %d", *killed)
 	}
 }
 
@@ -277,5 +305,76 @@ func TestUserLimitsApply_NoQuotaMount_SkipsSetquota(t *testing.T) {
 		if len(c) > 0 && c[0] == "setquota" {
 			t.Error("setquota should not have been called without QuotaMount")
 		}
+	}
+}
+
+// TestUserLimitsApply_DiskOnlyChange_ReAppliesQuota is the GH #1660
+// regression guard. When only the disk quota changes and the cgroup
+// limits are untouched, the rendered drop-in is byte-identical to what is
+// on disk (buildLimitsDropinContent emits no disk directive), so the
+// handler takes the noChange path. The bug was that setquota sat AFTER the
+// noChange early-return, so a disk-quota raise was silently dropped and
+// the kernel kept the stale ceiling. The fix runs setquota unconditionally
+// before that return; this test fails RED on the pre-fix ordering.
+func TestUserLimitsApply_DiskOnlyChange_ReAppliesQuota(t *testing.T) {
+	root := setupTempSystemdRoot(t)
+	killed := stubKillProcessCounter(t)
+	calls := stubRunCmd(t)
+
+	// Pre-write the drop-in with the SAME cgroup values the apply renders,
+	// so the cgroup content is unchanged and the handler sees noChange.
+	effective := limits.EffectiveLimits{MemoryLimitMB: 1024}
+	dropinDir := filepath.Join(root, "jabali-user-racingtips.slice.d")
+	if err := os.MkdirAll(dropinDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dropinDir, "limits.conf"),
+		[]byte(buildLimitsDropinContent(effective)), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Apply the identical cgroup limits but a NEW disk quota (6144 MB).
+	params, _ := json.Marshal(userLimitsApplyParams{
+		Username:      "racingtips",
+		MemoryLimitMB: 1024,
+		QuotaMount:    "/",
+		DiskQuotaMB:   6144,
+	})
+	result, err := userLimitsApplyHandler(context.Background(), params)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	resp := result.(*userLimitsApplyResponse)
+	if !resp.NoChange {
+		t.Fatalf("expected NoChange=true (cgroup drop-in identical), got false — test premise broken")
+	}
+	if !resp.QuotaApplied {
+		t.Error("QuotaApplied should be true even when the cgroup drop-in is unchanged (GH #1660)")
+	}
+
+	// The optimization must survive: no SIGHUP daemon-reload on the
+	// no-change path.
+	if *killed != 0 {
+		t.Errorf("SIGHUP daemon-reload should be skipped on the no-change path, fired %d times", *killed)
+	}
+
+	// setquota MUST have run with the new ceiling (6144 MB × 1024 =
+	// 6291456 KB) on the explicit "/" mount, despite the unchanged drop-in.
+	var found bool
+	for _, c := range *calls {
+		if len(c) > 0 && c[0] == "setquota" {
+			found = true
+			args := strings.Join(c, " ")
+			if !strings.Contains(args, "6291456") {
+				t.Errorf("setquota blocks wrong: %s", args)
+			}
+			if c[len(c)-1] != "/" {
+				t.Errorf("setquota missing explicit / mount: %s", args)
+			}
+		}
+	}
+	if !found {
+		t.Error("setquota was not called on a disk-only quota change (GH #1660 regression)")
 	}
 }
