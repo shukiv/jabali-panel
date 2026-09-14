@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -135,4 +136,65 @@ func TestAdminUpdates_AptCheck_ForwardsStructuredError(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rec.Code)
 	assert.Contains(t, rec.Body.String(), `"reason":"apt_locked"`)
 	assert.Contains(t, rec.Body.String(), `"hint":`)
+}
+
+// lastAgentCallApply decodes the "apply" flag from the most recent agent call
+// so the DNS-orphan route tests can assert dry-run vs delete independently.
+func lastAgentCallApply(t *testing.T, mock *agent.MockClient) (cmd string, apply bool) {
+	t.Helper()
+	calls := mock.Calls()
+	if len(calls) == 0 {
+		t.Fatal("expected an agent call, got none")
+	}
+	last := calls[len(calls)-1]
+	var params struct {
+		Apply bool `json:"apply"`
+	}
+	if err := json.Unmarshal(last.Params, &params); err != nil {
+		t.Fatalf("decode agent params: %v", err)
+	}
+	return last.Command, params.Apply
+}
+
+// GH #1620 — the Repair Center DNS-orphan scan proxies the agent
+// dns.reap-orphans verb as a dry run (apply:false) and forwards its counts.
+func TestAdminUpdates_DNSOrphans_ScanIsDryRun(t *testing.T) {
+	mock := agent.NewMockClient().On("dns.reap-orphans", map[string]any{
+		"applied": false,
+		"counts":  map[string]int{"records": 3},
+		"deleted": map[string]int{},
+		"names":   []string{"gone.example."},
+	})
+	r := newAdminUpdatesRouter(mock, true)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/updates/repair/dns/orphans", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Contains(t, rec.Body.String(), `"records":3`)
+	cmd, apply := lastAgentCallApply(t, mock)
+	assert.Equal(t, "dns.reap-orphans", cmd)
+	assert.False(t, apply, "scan must be a dry run")
+}
+
+// GH #1620 — the prune route forces apply:true so the agent actually deletes
+// the orphaned PowerDNS rows and purges the caches.
+func TestAdminUpdates_DNSOrphansPrune_Applies(t *testing.T) {
+	mock := agent.NewMockClient().On("dns.reap-orphans", map[string]any{
+		"applied": true,
+		"counts":  map[string]int{"records": 3},
+		"deleted": map[string]int{"records": 3},
+		"names":   []string{"gone.example."},
+	})
+	r := newAdminUpdatesRouter(mock, true)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/updates/repair/dns/orphans/prune", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	cmd, apply := lastAgentCallApply(t, mock)
+	assert.Equal(t, "dns.reap-orphans", cmd)
+	assert.True(t, apply, "prune must apply")
 }

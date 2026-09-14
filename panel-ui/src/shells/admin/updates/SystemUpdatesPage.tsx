@@ -102,6 +102,7 @@ const ReleaseChannelCard = () => {
 };
 import { RepairCard } from "./RepairCard";
 import { DomainRepairCard } from "./DomainRepairCard";
+import { DNSOrphanRepairCard } from "./DNSOrphanRepairCard";
 import {
   useAptCheck,
   useAptRun,
@@ -189,6 +190,11 @@ export const SystemUpdatesPage = () => {
           </Col>
           <Col xs={24} xl={12}>
             <DomainRepairCard />
+          </Col>
+        </Row>
+        <Row gutter={[16, 16]}>
+          <Col xs={24} xl={12}>
+            <DNSOrphanRepairCard />
           </Col>
         </Row>
         <Row gutter={[16, 16]}>

@@ -508,6 +508,13 @@
   "webmailtogglecard": {
     "webmail": "דואר בדפדפן"
   },
+  "dnsorphanrepaircard": {
+    "cancel": "Cancel",
+    "delete_all_orphan_records": "Delete all orphan records?",
+    "delete_permanently": "Delete permanently",
+    "no_orphan_records_found": "No orphan PowerDNS records found.",
+    "this_is_irreversible_it_removes_the_pdns_rows": "This is irreversible — it removes the orphaned PowerDNS rows (records, DNSSEC keys, metadata) and purges the pdns caches for the affected names. Scan first and review the list."
+  },
   "domainrepaircard": {
     "cancel": "ביטול",
     "select_a_user": "בחירת משתמש"

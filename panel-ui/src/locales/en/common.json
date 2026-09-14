@@ -1287,6 +1287,13 @@
     "root_shell_every_keystroke_and_all_output_is": "ROOT SHELL — every keystroke and all output is recorded to /var/log/jabali/terminal and an alert is sent on open.",
     "root_terminal_is_disabled": "Root terminal is disabled"
   },
+  "dnsorphanrepaircard": {
+    "cancel": "Cancel",
+    "delete_all_orphan_records": "Delete all orphan records?",
+    "delete_permanently": "Delete permanently",
+    "no_orphan_records_found": "No orphan PowerDNS records found.",
+    "this_is_irreversible_it_removes_the_pdns_rows": "This is irreversible — it removes the orphaned PowerDNS rows (records, DNSSEC keys, metadata) and purges the pdns caches for the affected names. Scan first and review the list."
+  },
   "domainrepaircard": {
     "cancel": "Cancel",
     "delete_all_orphan_sites": "Delete all orphan sites?",
