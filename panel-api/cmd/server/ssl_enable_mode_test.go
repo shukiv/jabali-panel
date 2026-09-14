@@ -10,11 +10,10 @@ import (
 
 // TestSSLEnableIsOperatorLineage guards the JAB-356 clobber constraint. The
 // legacy `ssl enable` door is "enable ACME" (GH #246), so it switches to Let's
-// Encrypt for the ACME-managed and untrusted-bootstrap modes — but it must
-// treat an operator-provided certificate lineage (`custom` uploaded pair,
-// `shared` JAB-170 cert) as a no-op, never clobbering it with a fresh ACME
-// issuance (the 2026-05-09 LE-clobber class; see
-// internal/reconciler/ssl_san_drift.go).
+// Encrypt for all other modes (none / empty / self / le) — but it must treat an
+// operator-provided certificate lineage (`custom` uploaded pair, `shared`
+// JAB-170 cert) as a no-op, never clobbering it with a fresh ACME issuance (the
+// 2026-05-09 LE-clobber class; see internal/reconciler/ssl_san_drift.go).
 func TestSSLEnableIsOperatorLineage(t *testing.T) {
 	cases := []struct {
 		mode string

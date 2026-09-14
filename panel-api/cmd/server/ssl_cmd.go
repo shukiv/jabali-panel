@@ -164,9 +164,11 @@ func newSSLEnableCmd() *cobra.Command {
 						"domain":   dom.Name,
 						"ssl_mode": dom.SSLMode,
 						"detail":   "already serving an operator-provided certificate; ssl enable (ACME) is a no-op",
+						"hint":     fmt.Sprintf("to switch this domain to Let's Encrypt, run `jabali domain set %s --ssl-mode=le` first", dom.Name),
 					})
 				}
-				fmt.Printf("%s is on ssl_mode=%s (operator-provided certificate) — `ssl enable` manages Let's Encrypt and will not overwrite it.\n", dom.Name, dom.SSLMode)
+				fmt.Printf("%s is on ssl_mode=%s (operator-provided certificate) — `ssl enable` manages Let's Encrypt and will not overwrite it.\n"+
+					"To switch this domain to Let's Encrypt, run `jabali domain set %s --ssl-mode=le` first.\n", dom.Name, dom.SSLMode, dom.Name)
 				return nil
 			}
 			// Persist the authoritative TLS mode through the dedicated
