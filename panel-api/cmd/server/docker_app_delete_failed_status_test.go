@@ -10,6 +10,7 @@ package main
 import (
 	"context"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 
@@ -63,5 +64,22 @@ func TestMarkDockerAppTeardownFailed_WritesRetryableFailedState(t *testing.T) {
 	}
 	if strings.Contains(*repo.lastMsg, "stderr") {
 		t.Fatalf("status message leaked past the first line: %q", *repo.lastMsg)
+	}
+}
+
+// TestDockerAppCLIDelete_RoutesTeardownFailureThroughFailedStateHelper pins the
+// wiring half of the fix. cmd/server has no DB/agent fixture (see
+// docker_app_cmd_effectiveslug_test.go), so this source-pins that the delete
+// RunE's docker_app.delete failure branch calls markDockerAppTeardownFailed
+// rather than reverting to a bare `return err` (which would leave the row at its
+// stale prior status). The exact call-site substring below is present only at the
+// call site, not the helper definition (which reads `(ctx context.Context`).
+func TestDockerAppCLIDelete_RoutesTeardownFailureThroughFailedStateHelper(t *testing.T) {
+	src, err := os.ReadFile("docker_app_cmd.go")
+	if err != nil {
+		t.Fatalf("read docker_app_cmd.go: %v", err)
+	}
+	if !strings.Contains(string(src), "markDockerAppTeardownFailed(context.Background(), repo, app.ID,") {
+		t.Fatal("the CLI delete teardown-failure branch must route through markDockerAppTeardownFailed(context.Background(), repo, app.ID, err) — a bare `return err` leaves the row at its stale prior status (JAB-364 AC4)")
 	}
 }
