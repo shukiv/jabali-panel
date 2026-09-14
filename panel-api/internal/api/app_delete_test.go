@@ -152,3 +152,38 @@ func TestRunAppDelete_HappyPathRemovesEverything(t *testing.T) {
 		t.Error("cron teardown must run for a wordpress app — the CLI path never did this before")
 	}
 }
+
+// pgAppDB is an app-owned database whose engine is postgres, to prove the
+// teardown dispatches on the row's engine rather than hardcoding db.drop.
+type pgAppDB struct {
+	repository.DatabaseRepository
+}
+
+func (r *pgAppDB) FindByID(context.Context, string) (*models.Database, error) {
+	return &models.Database{Name: "alice_blog", Engine: "postgres"}, nil
+}
+func (r *pgAppDB) Delete(context.Context, string) error { return nil }
+
+// JAB-275 AC6 / GH #1013: application teardown must route the database drop
+// through the shared lifecycle operation, which dispatches on the row's engine.
+// A Postgres app database must get db.postgres.drop_db — the hardcoded MariaDB
+// db.drop no-ops on a name that was never there and orphans the real database.
+func TestRunAppDelete_PostgresAppDatabaseUsesPostgresDrop(t *testing.T) {
+	ag, _, _, _, _, _, deps := newAppDeleteFakes()
+	deps.Databases = &pgAppDB{}
+	if err := RunAppDelete(appDeleteArgs(), deps); err != nil {
+		t.Fatalf("want nil error, got %v", err)
+	}
+	var sawPGDrop bool
+	for _, c := range ag.calls {
+		switch c {
+		case "db.postgres.drop_db":
+			sawPGDrop = true
+		case "db.drop":
+			t.Errorf("app teardown sent MariaDB db.drop for a postgres database — orphans it (GH #1013); calls=%v", ag.calls)
+		}
+	}
+	if !sawPGDrop {
+		t.Errorf("app teardown must send db.postgres.drop_db for a postgres database; calls=%v", ag.calls)
+	}
+}

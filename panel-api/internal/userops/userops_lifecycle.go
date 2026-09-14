@@ -17,6 +17,7 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dbops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
@@ -318,9 +319,13 @@ func DeleteCascade(ctx context.Context, d Deps, dd DeleteDeps, target *models.Us
 				// panel row cascaded away behind it (GH #1013).
 				//
 				// databases.go's own delete already picks the command this way.
-				dropCmd := dbDropCmd(dbs[i].Engine)
+				// Route the drop through the one lifecycle operation so the
+				// engine dispatch is not copied here (JAB-275 AC6); dropCmd is
+				// the same command DropDatabaseHost sends, kept only to name it
+				// in the failure log.
+				dropCmd := dbops.DropDatabaseCommand(dbs[i].Engine)
 				agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-				_, dropErr := d.Agent.Call(agentCtx, dropCmd, map[string]any{"db_name": dbName})
+				dropErr := dbops.DropDatabaseHost(agentCtx, d.Agent, dbs[i].Engine, dbName)
 				cancel()
 				if dropErr != nil {
 					undropped = append(undropped, dbName)
@@ -547,15 +552,6 @@ func logError(d Deps, msg string, args ...any) {
 	if d.Log != nil {
 		d.Log.Error(msg, args...)
 	}
-}
-
-// dbDropCmd returns the agent command that drops a DATABASE for the given
-// engine. Mirrors the dispatch in api/databases.go's delete handler.
-func dbDropCmd(engine string) string {
-	if engine == "postgres" {
-		return "db.postgres.drop_db"
-	}
-	return "db.drop"
 }
 
 // dbUserDropCmd returns the agent command that drops a database login for
