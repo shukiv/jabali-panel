@@ -107,6 +107,101 @@ var (
 	ErrPersistFailed = errors.New("domainmailops: persist new dkim key failed")
 )
 
+// WarningKind classifies a single managed-DNS or SSL-SAN result surfaced by the
+// enable/rotate flow (JAB-286 AC3): DNS conflict, missing zone, a persistence
+// fault, or a retryable transient. Callers branch on Kind instead of
+// string-matching a human-readable message, and Retryable() makes the
+// retry-vs-terminal distinction an explicit property of the result.
+type WarningKind int
+
+const (
+	// WarnNoZone: the domain has no DNS zone on file, so there is nothing to
+	// publish the managed records into. Terminal until a zone exists.
+	WarnNoZone WarningKind = iota + 1
+	// WarnZoneReadFailed: a transient failure reading the domain's zone.
+	WarnZoneReadFailed
+	// WarnRecordsReadFailed: a transient failure listing the zone's records.
+	WarnRecordsReadFailed
+	// WarnConflict: a user-edited row at the same (name, type) blocks a managed
+	// record; M6 refuses to overwrite it. Needs an operator, so terminal.
+	WarnConflict
+	// WarnPublishFailed: a transient failure creating a managed record.
+	WarnPublishFailed
+	// WarnSSLLookupFailed: a transient failure looking up the SSL cert row while
+	// scheduling SAN expansion.
+	WarnSSLLookupFailed
+	// WarnSSLFlipFailed: a transient failure flipping the cert to "renewing".
+	WarnSSLFlipFailed
+)
+
+// Warning is one typed managed-DNS or SSL-SAN result from Enable / RotateDKIM /
+// SyncManagedDNSOnEnable. It replaces the former best-effort []string: Kind lets
+// a caller branch on the category and Retryable() reports whether re-running the
+// flow could clear it, while Message() reproduces the exact operator-facing text
+// the module produced before, so the REST `warnings` JSON field and the CLI
+// prints do not change. Record and RecordType are set only for the per-record
+// kinds (WarnConflict, WarnPublishFailed).
+type Warning struct {
+	Kind       WarningKind
+	Record     string
+	RecordType string
+}
+
+// Message renders the operator-facing text for this warning, byte-for-byte
+// identical to the strings the module produced before the typed refactor, so no
+// REST response body or CLI line changes.
+func (w Warning) Message() string {
+	switch w.Kind {
+	case WarnNoZone:
+		return "DNS autoconfig skipped: no zone on file for this domain."
+	case WarnZoneReadFailed:
+		return "DNS autoconfig failed to read the domain's zone."
+	case WarnRecordsReadFailed:
+		return "DNS autoconfig couldn't read existing records."
+	case WarnConflict:
+		return "A user-edited " + w.RecordType + " record at " + w.Record +
+			" is blocking the autoconfig entry. Remove it in the DNS editor or accept M6 may overwrite."
+	case WarnPublishFailed:
+		return "Failed to publish " + w.RecordType + " record at " + w.Record + "."
+	case WarnSSLLookupFailed:
+		return "SSL cert lookup failed; retry ssl reconcile manually"
+	case WarnSSLFlipFailed:
+		return "SSL cert flip-to-renewing failed; mail.<domain> may be missing from cert until manual renewal"
+	default:
+		return ""
+	}
+}
+
+// Retryable reports whether re-running the enable/rotate flow could clear this
+// warning without operator action. Transient read/write and SSL faults are
+// retryable; a missing zone or a user-edited conflict needs a precondition or an
+// operator first. Pure classification — the module wires no automatic retry off
+// it (the reconciler already re-converges on its own tick).
+func (w Warning) Retryable() bool {
+	switch w.Kind {
+	case WarnZoneReadFailed, WarnRecordsReadFailed, WarnPublishFailed,
+		WarnSSLLookupFailed, WarnSSLFlipFailed:
+		return true
+	default: // WarnNoZone, WarnConflict
+		return false
+	}
+}
+
+// WarningMessages projects typed warnings to the []string the adapters surface
+// today (the REST domainEmailResponse.Warnings field, the CLI "warning: %s"
+// prints). Returns nil for an empty input so the former nil-vs-empty slice
+// behavior — and thus the `warnings,omitempty` JSON shape — is preserved.
+func WarningMessages(ws []Warning) []string {
+	if len(ws) == 0 {
+		return nil
+	}
+	out := make([]string, len(ws))
+	for i, w := range ws {
+		out[i] = w.Message()
+	}
+	return out
+}
+
 // Enable runs the shared "flip email on for this domain" flow: invokes
 // domain.email_enable on the agent (which generates the Ed25519 DKIM keypair
 // and registers the domain in Stalwart), persists the new state via
@@ -118,7 +213,7 @@ var (
 // can echo it back without re-fetching. On non-nil err nothing has been
 // written to the DB. Wrapped errors come from ErrAgent{Unconfigured,Failed,
 // BadResponse}. Returns selector, public key, and accumulated DNS/SSL warnings.
-func Enable(ctx context.Context, d Deps, dom *models.Domain) (selector, pubKey string, warnings []string, err error) {
+func Enable(ctx context.Context, d Deps, dom *models.Domain) (selector, pubKey string, warnings []Warning, err error) {
 	if d.Call == nil {
 		return "", "", nil, ErrAgentUnconfigured
 	}
@@ -170,8 +265,8 @@ func Enable(ctx context.Context, d Deps, dom *models.Domain) (selector, pubKey s
 	// land on the cert. Best-effort — any failure is logged and added to
 	// warnings, never blocks the email_enabled flip. Skipped when SSL deps
 	// aren't wired (the CLI path; ReconcileSSLSANDrift covers it on a tick).
-	if msg := triggerSSLSANExpansion(ctx, d, dom); msg != "" {
-		warnings = append(warnings, msg)
+	if w, ok := triggerSSLSANExpansion(ctx, d, dom); ok {
+		warnings = append(warnings, w)
 	}
 
 	return selector, pubKey, warnings, nil
@@ -247,8 +342,8 @@ type RotateResult struct {
 //
 // Wrapped errors: ErrEmailNotEnabled, ErrAgentUnconfigured, ErrAgentFailed,
 // ErrAgentBadResponse, ErrPersistFailed. DNS conflict / missing-zone stay
-// best-effort []string warnings (same contract as Enable).
-func RotateDKIM(ctx context.Context, d Deps, dom *models.Domain) (RotateResult, []string, error) {
+// best-effort typed []Warning results (same contract as Enable, JAB-286 AC3).
+func RotateDKIM(ctx context.Context, d Deps, dom *models.Domain) (RotateResult, []Warning, error) {
 	if !dom.EmailEnabled {
 		return RotateResult{}, nil, ErrEmailNotEnabled
 	}
@@ -306,10 +401,11 @@ func RotateDKIM(ctx context.Context, d Deps, dom *models.Domain) (RotateResult, 
 
 // SyncManagedDNSOnEnable publishes the M6 DNS record set (DKIM TXT, autoconfig/
 // autodiscover, SRV, etc.) into the domain's zone. Best-effort: returns a slice
-// of human-readable warning messages (missing zone, user-edited conflict, hard
-// error) for the caller to surface; never returns an error. Exported so the
-// REST DKIM-rotate path can republish through the same code.
-func SyncManagedDNSOnEnable(ctx context.Context, d Deps, domainID, selector, pubKey string) []string {
+// of typed Warnings (missing zone, transient read fault, user-edited conflict,
+// publish failure — JAB-286 AC3) for the caller to surface; never returns an
+// error. Exported so the REST DKIM-rotate path can republish through the same
+// code.
+func SyncManagedDNSOnEnable(ctx context.Context, d Deps, domainID, selector, pubKey string) []Warning {
 	if d.DNSZones == nil || d.DNSRecords == nil {
 		// DNS repos not wired — panel running without PowerDNS integration.
 		return nil
@@ -317,16 +413,16 @@ func SyncManagedDNSOnEnable(ctx context.Context, d Deps, domainID, selector, pub
 	zone, err := d.DNSZones.FindByDomainID(ctx, domainID)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
-			return []string{"DNS autoconfig skipped: no zone on file for this domain."}
+			return []Warning{{Kind: WarnNoZone}}
 		}
 		slog.Error("m6 dns: load zone", "domain_id", domainID, "err", err)
-		return []string{"DNS autoconfig failed to read the domain's zone."}
+		return []Warning{{Kind: WarnZoneReadFailed}}
 	}
 
 	existing, err := d.DNSRecords.ListByZoneID(ctx, zone.ID)
 	if err != nil {
 		slog.Error("m6 dns: list records", "zone_id", zone.ID, "err", err)
-		return []string{"DNS autoconfig couldn't read existing records."}
+		return []Warning{{Kind: WarnRecordsReadFailed}}
 	}
 	var srv *models.ServerSettings
 	if d.ServerSettings != nil {
@@ -334,7 +430,7 @@ func SyncManagedDNSOnEnable(ctx context.Context, d Deps, domainID, selector, pub
 	}
 	intended := dnscompile.BuildEmailRecords(zone.ID, zone.Name, selector, pubKey, srv, ids.NewULID, time.Now().UTC())
 
-	var warnings []string
+	var warnings []Warning
 	for _, rec := range intended {
 		// Skip if we've already placed this exact M6 row on a prior enable
 		// (idempotent). Match by (name, type, managed_by).
@@ -342,15 +438,13 @@ func SyncManagedDNSOnEnable(ctx context.Context, d Deps, domainID, selector, pub
 			continue
 		}
 		if conflict := findConflict(existing, rec.Name, rec.Type); conflict != nil {
-			warnings = append(warnings,
-				"A user-edited "+rec.Type+" record at "+rec.Name+" is blocking the "+
-					"autoconfig entry. Remove it in the DNS editor or accept M6 may overwrite.")
+			warnings = append(warnings, Warning{Kind: WarnConflict, Record: rec.Name, RecordType: rec.Type})
 			continue
 		}
 		r := rec
 		if err := d.DNSRecords.Create(ctx, &r); err != nil {
 			slog.Error("m6 dns: create record", "zone_id", zone.ID, "name", rec.Name, "type", rec.Type, "err", err)
-			warnings = append(warnings, "Failed to publish "+rec.Type+" record at "+rec.Name+".")
+			warnings = append(warnings, Warning{Kind: WarnPublishFailed, Record: rec.Name, RecordType: rec.Type})
 		}
 	}
 	return warnings
@@ -377,43 +471,43 @@ func DeleteManagedDNSOnDisable(ctx context.Context, d Deps, domainID string) {
 
 // triggerSSLSANExpansion flips the existing SSL cert row for this domain to
 // status="renewing" so the reconciler re-issues with the new SANs on its next
-// tick. Returns a human-readable warning on any non-fatal failure; empty string
+// tick. Returns (Warning, true) on any non-fatal failure; (Warning{}, false)
 // on success or when there's nothing to do (no SSL deps, no cert yet, or the
 // cert is already in a transitional state).
 //
 // Only issued and self_signed certs are flipped. Other statuses (pending,
 // renewing, pending_acme_retry, failed, revoked) are left alone — they're
 // either already converging or in a state the operator must resolve manually.
-func triggerSSLSANExpansion(ctx context.Context, d Deps, dom *models.Domain) string {
+func triggerSSLSANExpansion(ctx context.Context, d Deps, dom *models.Domain) (Warning, bool) {
 	if d.SSLCerts == nil {
 		// SSL not wired (CLI path / unit tests). ReconcileSSLSANDrift adds the
 		// mail SANs on its next pass, so this is a latency skip, not a gap.
 		slog.Info("email_enable: SSL reconciliation skipped (SSLCerts not wired)", "domain", dom.Name)
-		return ""
+		return Warning{}, false
 	}
 	cert, err := d.SSLCerts.FindByDomainID(ctx, dom.ID)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			// No cert yet — the normal ssl_enabled=true flow issues one and
 			// picks up the mail SANs on first issuance.
-			return ""
+			return Warning{}, false
 		}
 		slog.Warn("email_enable: lookup SSL cert failed", "domain", dom.Name, "err", err)
-		return "SSL cert lookup failed; retry ssl reconcile manually"
+		return Warning{Kind: WarnSSLLookupFailed}, true
 	}
 	if cert.Status != models.SSLStatusIssued && cert.Status != models.SSLStatusSelfSigned {
 		// Already in a transitional state — reconciler will handle it.
-		return ""
+		return Warning{}, false
 	}
 	if err := d.SSLCerts.UpdateStatus(ctx, cert.ID, models.SSLStatusRenewing, nil); err != nil {
 		slog.Warn("email_enable: flip cert to renewing failed", "domain", dom.Name, "err", err)
-		return "SSL cert flip-to-renewing failed; mail.<domain> may be missing from cert until manual renewal"
+		return Warning{Kind: WarnSSLFlipFailed}, true
 	}
 	if d.SSLReconciler != nil {
 		d.SSLReconciler.Schedule(dom.ID)
 	}
 	slog.Info("email_enable: SSL cert flipped to renewing for SAN expansion", "domain", dom.Name)
-	return ""
+	return Warning{}, false
 }
 
 // hasExistingM6Record reports whether an M6-managed row already sits at

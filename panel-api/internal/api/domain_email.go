@@ -136,7 +136,7 @@ func (h *domainEmailHandler) rotateDKIM(c *gin.Context) {
 		"old_dkim_public_key": res.OldDKIMPublicKey,
 		"new_dkim_public_key": res.NewDKIMPublicKey,
 		"old_key_backup_path": res.OldKeyBackupPath,
-		"warnings":            warnings,
+		"warnings":            domainmailops.WarningMessages(warnings),
 	})
 }
 
@@ -272,7 +272,7 @@ func (h *domainEmailHandler) enable(c *gin.Context) {
 		DkimPublicKey:  pubKey,
 		EmailEnabledAt: dom.EmailEnabledAt,
 		Records:        hints,
-		Warnings:       append(warnings, statusWarnings...),
+		Warnings:       append(domainmailops.WarningMessages(warnings), statusWarnings...),
 	})
 }
 

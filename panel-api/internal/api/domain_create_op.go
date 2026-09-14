@@ -528,7 +528,7 @@ func createDomainOp(ctx context.Context, h *domainHandler, in createDomainInput)
 				"domain_id", domain.ID, "domain", domain.Name, "err", err)
 		} else if len(warnings) > 0 {
 			slog.Info("auto-enable email DNS autoconfig warnings",
-				"domain_id", domain.ID, "domain", domain.Name, "warnings", warnings)
+				"domain_id", domain.ID, "domain", domain.Name, "warnings", domainmailops.WarningMessages(warnings))
 		}
 	}
 

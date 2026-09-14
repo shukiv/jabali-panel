@@ -506,7 +506,7 @@ func createDomainDirect(ctx context.Context, in cliDomainInput) (*models.Domain,
 			warnings = append(warnings,
 				fmt.Sprintf("email auto-enable failed (can retry with `jabali domain email-enable %s`): %v", d.Name, err))
 		} else {
-			warnings = append(warnings, dnsWarnings...)
+			warnings = append(warnings, domainmailops.WarningMessages(dnsWarnings)...)
 		}
 	}
 

@@ -66,7 +66,7 @@ to rotate). Run domain email-enable first if needed.`,
 					"old_dkim_public_key": res.OldDKIMPublicKey,
 					"new_dkim_public_key": res.NewDKIMPublicKey,
 					"old_key_backup_path": res.OldKeyBackupPath,
-					"warnings":            warnings,
+					"warnings":            domainmailops.WarningMessages(warnings),
 				})
 			}
 			cliAuditOK(ctx, "domain.email_dkim_rotate", "domain", dom.Name, &dom.UserID)
@@ -79,7 +79,7 @@ to rotate). Run domain email-enable first if needed.`,
 				fmt.Printf("Old key backup: %s (rm after DNS propagation confirmed)\n", res.OldKeyBackupPath)
 			}
 			for _, w := range warnings {
-				fmt.Printf("warning: %s\n", w)
+				fmt.Printf("warning: %s\n", w.Message())
 			}
 			return nil
 		},

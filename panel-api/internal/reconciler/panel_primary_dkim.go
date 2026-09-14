@@ -144,9 +144,9 @@ func (r *Reconciler) ensureTenantEmailEnabled(ctx context.Context, domain *model
 // conflict as a warning string (no internal log), so logging at Debug preserves
 // the anti-spam level; genuine hard failures (missing zone, create error) are
 // already surfaced at Error from inside domainmailops.SyncManagedDNSOnEnable.
-func logManagedDNSWarnings(r *Reconciler, prefix, domainName string, warnings []string) {
+func logManagedDNSWarnings(r *Reconciler, prefix, domainName string, warnings []domainmailops.Warning) {
 	for _, w := range warnings {
-		r.log.Debug(prefix+": managed-DNS warning", "domain", domainName, "warning", w)
+		r.log.Debug(prefix+": managed-DNS warning", "domain", domainName, "warning", w.Message())
 	}
 }
 

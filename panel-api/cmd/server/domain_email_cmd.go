@@ -81,7 +81,7 @@ Idempotent — calling it twice is harmless.`,
 					"email_enabled":   true,
 					"dkim_selector":   selector,
 					"dkim_public_key": pubKey,
-					"warnings":        warnings,
+					"warnings":        domainmailops.WarningMessages(warnings),
 				})
 			}
 			cliAuditOK(ctx, "domain.email_enable", "domain", dom.ID, &dom.UserID)
@@ -89,7 +89,7 @@ Idempotent — calling it twice is harmless.`,
 			fmt.Printf("DKIM selector:   %s\n", selector)
 			fmt.Printf("DKIM public key: %s\n", pubKey)
 			for _, w := range warnings {
-				fmt.Printf("warning: %s\n", w)
+				fmt.Printf("warning: %s\n", w.Message())
 			}
 			return nil
 		},
