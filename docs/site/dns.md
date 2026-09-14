@@ -57,6 +57,7 @@ are derived from it:
 | **No mail** | — | — | none | no |
 | **Microsoft 365** | `<domain-dashed>.mail.protection.outlook.com` | `include:spf.protection.outlook.com -all` | `autodiscover → autodiscover.outlook.com`; optional `selector1/2._domainkey` CNAMEs (set the tenant's `onmicrosoft` name) | no |
 | **Google Workspace** | `smtp.google.com` | `include:_spf.google.com ~all` | optional `google._domainkey` TXT (paste from Google Admin) | no |
+| **Custom template** | defined by the template | defined by the template | any records the template holds (A/AAAA/CNAME/MX/TXT/NS/SRV/CAA), seeded once at create | no |
 
 Switching providers is reconciled like any other DNS change: the panel
 publishes the new set, prunes the previous one (scoped by `managed_by` —
@@ -67,6 +68,50 @@ Operator-authored apex mail records are replaced when a provider is selected
 (pick a preset, or pick **No mail** and hand-manage the records yourself).
 DKIM for Microsoft 365 / Google is published only when you supply the token;
 MX / SPF / autodiscover are automatic.
+
+## Custom DNS templates
+
+A **custom DNS template** is a named, admin-defined set of DNS records that is
+seeded into a new domain's zone at create time — the "come up with my standard
+records already in place" shortcut for another mail platform, a verification
+record set, or any third-party service records. It is the general form of the
+built-in mail presets above: instead of Microsoft 365 or Google Workspace, an
+admin defines the exact records once and tenants pick that template when adding
+a domain.
+
+**Defining templates (admin).** Server Settings → DNS → *DNS templates*. Each
+template has a name, an optional description, and an ordered set of records; each
+record is `Type` (A, AAAA, CNAME, MX, TXT, NS, SRV, CAA), `Name`, `Value`, `TTL`,
+and `Priority` (used by MX and SRV). A template may hold up to 100 records. Every
+record is validated on save with the **same** `ValidateDNSRecord` rules a tenant's
+own DNS records use, so a template can never carry a record the record API would
+reject; when the server rejects one, the exact reason (`record 3: …`) is shown
+inline.
+
+Use the `{domain}` token in a record's name or value and it is replaced with the
+zone's own name when the template is seeded (e.g. an MX of `mail.{domain}`, or a
+CNAME whose value is `{domain}`).
+
+**Selecting a template (tenant or admin).** When adding a **Web Domain** (with
+"Add Mail Domain" unchecked) or a **DNS Zone**, the admin-defined templates appear
+under a *Custom templates* group in the same Template / DNS Template select as the
+mail presets. Choosing one sets the domain's mail posture to **external** (like
+Microsoft 365 / Google Workspace — the template, not Jabali, owns the apex mail
+records) and records `mail_template_id` on the domain. A template requires the
+panel to host the zone, so the template options are disabled while "Add DNS Zone"
+is unchecked. Over the API this is the `dns_template_id` field on `POST /domains`;
+on the CLI it is `jabali domain create --dns-template <id>` (mutually exclusive
+with `--mail`, requires `--manage-dns`).
+
+**Seeding is once, at bootstrap.** The reconciler copies the template's records
+into the fresh zone the first time it is built, substituting `{domain}`. The
+seeded records are **tenant-owned** (`managed_by` unset) — the tenant edits or
+deletes them afterwards like any hand-added record, and the panel never
+re-asserts them. Deleting or editing the template later does not touch domains
+already created from it. Templates are **global**: every tenant sees every
+admin-defined template (a template is a convenience — a tenant can already type
+any of those records into their own zone by hand — so there is no per-package
+entitlement on it).
 
 ## Cache invalidation
 
