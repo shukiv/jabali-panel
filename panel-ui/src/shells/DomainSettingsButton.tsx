@@ -617,6 +617,10 @@ interface SortableRuleCardProps {
   onToggleExpanded: (idx: number) => void;
   onRemove: (idx: number) => void;
   onUpdate: (idx: number, field: string, value: unknown) => void;
+  // GH #1624 UX: true for a few seconds right after this rule was added via
+  // Add Rule, so the freshly appended row flashes and is easy to spot in a
+  // long list.
+  highlight?: boolean;
 }
 
 const SortableRuleCard = ({
@@ -626,6 +630,7 @@ const SortableRuleCard = ({
   onToggleExpanded,
   onRemove,
   onUpdate,
+  highlight,
 }: SortableRuleCardProps) => {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: idx,
@@ -688,9 +693,13 @@ const SortableRuleCard = ({
       <Card
         style={{
           marginBottom: 12,
-          borderColor: hovered && !isDragging ? token.colorPrimary : undefined,
+          borderColor:
+            (highlight || (hovered && !isDragging)) ? token.colorPrimary : undefined,
           boxShadow: hovered && !isDragging ? token.boxShadowTertiary : undefined,
-          transition: "border-color 0.2s, box-shadow 0.2s",
+          // GH #1624 UX: a just-added row flashes with the primary-tint
+          // background, then fades back over 0.5s once `highlight` clears.
+          background: highlight ? token.colorPrimaryBg : undefined,
+          transition: "border-color 0.2s, box-shadow 0.2s, background 0.5s",
         }}
         bodyStyle={{ padding: 12 }}
       >
@@ -710,7 +719,12 @@ const SortableRuleCard = ({
             <MenuOutlined />
           </button>
 
-          <Typography.Text strong>
+          <Typography.Text
+            strong
+            // GH #1624: keep the type label on one line and never let a long
+            // summary squeeze it into a mid-word break ("Rew\nrit\ne").
+            style={{ whiteSpace: "nowrap", flexShrink: 0 }}
+          >
             {getRuleTypeLabel(rule.type)}
           </Typography.Text>
 
@@ -804,15 +818,23 @@ const RuleBuilder = ({
   // GH #1624 UX: "Add Rule" now opens a rule-type picker Modal (reachable from
   // the top of the panel) instead of a Dropdown pinned below a long list.
   const [pickerOpen, setPickerOpen] = useState(false);
+  // GH #1624 UX: index of the rule just added via Add Rule — its row flashes for
+  // ~1.5s so the user spots it at the bottom of a long list. null = no flash.
+  const [highlightIdx, setHighlightIdx] = useState<number | null>(null);
+  const highlightTimer = useRef<ReturnType<typeof setTimeout>>();
+  useEffect(() => () => clearTimeout(highlightTimer.current), []);
   // Scroll a freshly added rule into view — it appends to the bottom (nginx
   // first-match order is significant, so never prepend), which can be off-screen
-  // on a long list.
+  // on a long list — and focus its first field so the user can type immediately.
   const listRef = useRef<HTMLDivElement>(null);
   const prevLenRef = useRef(rules.length);
   useEffect(() => {
     if (rules.length > prevLenRef.current) {
       const el = listRef.current?.lastElementChild as HTMLElement | null;
       el?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
+      // preventScroll — a bare focus() does its own instant scroll that cancels
+      // the smooth animation above and makes the row jump.
+      el?.querySelector<HTMLElement>("input, textarea")?.focus({ preventScroll: true });
     }
     prevLenRef.current = rules.length;
   }, [rules.length]);
@@ -864,10 +886,15 @@ const RuleBuilder = ({
         break;
     }
 
+    const newIdx = rules.length;
     const newRules = [...rules, newRule];
     onRulesChange(newRules);
     // Auto-expand the new card
-    setExpandedCards(new Set(expandedCards).add(rules.length));
+    setExpandedCards(new Set(expandedCards).add(newIdx));
+    // GH #1624 UX: flash the new row for ~1.5s, then clear so it fades back.
+    setHighlightIdx(newIdx);
+    clearTimeout(highlightTimer.current);
+    highlightTimer.current = setTimeout(() => setHighlightIdx(null), 1500);
   };
 
   const removeRule = (idx: number) => {
@@ -949,6 +976,7 @@ const RuleBuilder = ({
                   key={idx}
                   idx={idx}
                   rule={rule}
+                  highlight={highlightIdx === idx}
                   isExpanded={expandedCards.has(idx)}
                   onToggleExpanded={(i) => {
                     const newSet = new Set(expandedCards);
