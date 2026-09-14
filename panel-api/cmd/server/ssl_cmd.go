@@ -21,6 +21,38 @@ func sslRepoFromDB() repository.SSLCertificateRepository {
 	return repository.NewSSLCertificateRepository(sharedDB)
 }
 
+// sslEnableIsOperatorLineage reports whether a domain already serves an
+// operator-provided certificate that the legacy `ssl enable` door (GH #246,
+// "enable ACME") must not overwrite: `custom` (an uploaded cert/key pair) and
+// `shared` (a JAB-170 shared certificate). Enabling ACME on such a domain would
+// clobber the operator's certificate with a fresh issuance (the 2026-05-09
+// LE-clobber class; see internal/reconciler/ssl_san_drift.go) — and for
+// `shared`, which the reconciler routes through the `le` path, marking a cert
+// row pending would even drive certbot. So the CLI treats enable as a no-op
+// there. All other modes (none / self / le / empty) switch to Let's Encrypt.
+func sslEnableIsOperatorLineage(mode string) bool {
+	return mode == models.SSLModeCustom || mode == models.SSLModeShared
+}
+
+// sslDisableRefusal enforces the protected-domain TLS invariants on the legacy
+// `ssl disable` door, mirroring the set-mode HTTP door (internal/api/domains.go
+// UpdateSSLMode branch): the panel-primary hostname must keep TLS, and a
+// mail-enabled domain cannot drop to no-TLS. Before JAB-356 the CLI disable
+// only flipped ssl_enabled and left ssl_mode stale, and the reconciler follows
+// ssl_mode (GH #246) — so disable was a silent no-op and needed no guard. Now
+// that disable writes the authoritative ssl_mode=none and the reconciler
+// revokes for real, dropping TLS on these domains would lock them out (the
+// #1507 self-signed/HSTS lockout class), so the same invariants must gate here.
+func sslDisableRefusal(dom *models.Domain) error {
+	if dom.IsPanelPrimary {
+		return fmt.Errorf("refusing to disable TLS for %s: the panel hostname must keep TLS", dom.Name)
+	}
+	if dom.EmailEnabled {
+		return fmt.Errorf("refusing to disable TLS for %s: disable mail before removing TLS", dom.Name)
+	}
+	return nil
+}
+
 func newSSLCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "ssl",
@@ -117,10 +149,42 @@ func newSSLEnableCmd() *cobra.Command {
 			if err != nil && !errors.Is(err, repository.ErrNotFound) {
 				return fmt.Errorf("lookup cert: %w", err)
 			}
-			dom.SSLEnabled = true
-			if err := domainRepoFromDB().Update(ctx, dom); err != nil {
-				return fmt.Errorf("update domain: %w", err)
+			// JAB-356: `ssl enable` is the legacy "enable ACME" door (GH #246).
+			// A domain already on an operator-provided lineage (custom uploaded
+			// pair, shared cert) must NOT be switched to le — that would clobber
+			// its certificate with a fresh ACME issuance. Return a no-op without
+			// touching the mode or marking a cert row pending (for `shared`,
+			// which the reconciler routes through the le path, a pending row
+			// would even drive certbot), which also avoids the wait-loop below
+			// spinning for a Let's Encrypt cert that will never land.
+			if sslEnableIsOperatorLineage(dom.SSLMode) {
+				cliAuditOK(ctx, "ssl.enable", "domain", dom.ID, &dom.UserID)
+				if jsonOutput {
+					return printJSON(map[string]any{
+						"domain":   dom.Name,
+						"ssl_mode": dom.SSLMode,
+						"detail":   "already serving an operator-provided certificate; ssl enable (ACME) is a no-op",
+						"hint":     fmt.Sprintf("to switch this domain to Let's Encrypt, run `jabali domain set %s --ssl-mode=le` first", dom.Name),
+					})
+				}
+				fmt.Printf("%s is on ssl_mode=%s (operator-provided certificate) — `ssl enable` manages Let's Encrypt and will not overwrite it.\n"+
+					"To switch this domain to Let's Encrypt, run `jabali domain set %s --ssl-mode=le` first.\n", dom.Name, dom.SSLMode, dom.Name)
+				return nil
 			}
+			// Persist the authoritative TLS mode through the dedicated
+			// UpdateSSLMode writer, mirroring the HTTP enableSSL door
+			// (internal/api/ssl.go). ssl_mode is authoritative (ADR-0141) but is
+			// NOT in the general domainRepo.Update column allowlist, so the old
+			// `dom.SSLEnabled = true; Update(dom)` left ssl_mode stale: a domain
+			// at ssl_mode=none then `ssl enable` became ssl_enabled=true /
+			// ssl_mode=none — contradictory, and the reconciler follows the
+			// authoritative mode. UpdateSSLMode writes ssl_mode AND the
+			// ssl_enabled shadow (SSLEnabledForMode) atomically.
+			if err := domainRepoFromDB().UpdateSSLMode(ctx, dom.ID, models.SSLModeLE); err != nil {
+				return fmt.Errorf("update ssl mode: %w", err)
+			}
+			dom.SSLMode = models.SSLModeLE
+			dom.SSLEnabled = true
 			if cert == nil {
 				cert = &models.SSLCertificate{
 					ID:       ids.NewULID(),
@@ -213,10 +277,31 @@ func newSSLDisableCmd() *cobra.Command {
 				}
 				return fmt.Errorf("lookup domain: %w", err)
 			}
-			dom.SSLEnabled = false
-			if err := domainRepoFromDB().Update(ctx, dom); err != nil {
-				return fmt.Errorf("update domain: %w", err)
+			// JAB-356: enforce the protected-domain TLS invariants BEFORE the
+			// authoritative write (mirroring the set-mode HTTP door,
+			// internal/api/domains.go). The old disable only flipped ssl_enabled
+			// and left ssl_mode stale, so the reconciler (which follows ssl_mode,
+			// GH #246) never actually dropped TLS — disable was a silent no-op
+			// and this refusal was unnecessary. Now that disable persists
+			// ssl_mode=none and the reconciler revokes for real, dropping TLS on
+			// the panel hostname or a mail-enabled domain would lock it out
+			// (#1507 class), so the same invariants gate this door.
+			if err := sslDisableRefusal(dom); err != nil {
+				return err
 			}
+			// Drive TLS off through the authoritative UpdateSSLMode writer,
+			// mirroring the HTTP disableSSL door (internal/api/ssl.go). The
+			// general Update allowlist drops ssl_mode, so `ssl disable` used to
+			// leave the mode stale (e.g. still `le`) while only flipping
+			// ssl_enabled. `disable` means remove TLS, so the authoritative mode
+			// is `none` (UpdateSSLMode also sets ssl_enabled=false via
+			// SSLEnabledForMode). No ACME runs on this door, so there is no
+			// custom-lineage clobber.
+			if err := domainRepoFromDB().UpdateSSLMode(ctx, dom.ID, models.SSLModeNone); err != nil {
+				return fmt.Errorf("update ssl mode: %w", err)
+			}
+			dom.SSLMode = models.SSLModeNone
+			dom.SSLEnabled = false
 			if jsonOutput {
 				return printJSON(map[string]any{"domain": dom.Name, "ssl_enabled": false})
 			}
