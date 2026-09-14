@@ -2,18 +2,29 @@ package main
 
 import (
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"testing"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/sharedresourceops"
 )
 
 // fakeSRRepo implements repository.SharedResourceRepository for the CLI
-// testable-core. Only ExistsByEmail and Create carry behavior.
+// testable-core. ExistsByEmail + Create carry the create-path behavior;
+// grants (seed) + replaced/replaceCalled carry the grant-path behavior
+// (JAB-339 AC3): grants seeds ListGrants, and ReplaceGrants records the set it
+// was handed so a test can assert both the upsert shape and that a failed
+// validation writes nothing.
 type fakeSRRepo struct {
 	exists  bool
 	created []*models.SharedResource
+
+	grants        []models.SharedResourceGrant // seed for ListGrants
+	replaced      []models.SharedResourceGrant // captured ReplaceGrants arg
+	replaceCalled bool
 }
 
 func (f *fakeSRRepo) ExistsByEmail(context.Context, string) (bool, error) { return f.exists, nil }
@@ -37,12 +48,14 @@ func (f *fakeSRRepo) UpdateProjection(context.Context, string, string, string) e
 }
 func (f *fakeSRRepo) Delete(context.Context, string) error { return nil }
 func (f *fakeSRRepo) ListGrants(context.Context, string) ([]models.SharedResourceGrant, error) {
-	return nil, nil
+	return f.grants, nil
 }
 func (f *fakeSRRepo) ListAllGrants(context.Context) ([]models.SharedResourceGrant, error) {
 	return nil, nil
 }
-func (f *fakeSRRepo) ReplaceGrants(context.Context, string, []models.SharedResourceGrant) error {
+func (f *fakeSRRepo) ReplaceGrants(_ context.Context, _ string, g []models.SharedResourceGrant) error {
+	f.replaceCalled = true
+	f.replaced = g
 	return nil
 }
 func (f *fakeSRRepo) PruneGranteeGrants(context.Context, string, string) error { return nil }
@@ -186,14 +199,18 @@ func TestSharedResourceRemove_RoutesThroughLeafAndArmsAgent(t *testing.T) {
 	}
 }
 
-// TestSharedResourceGrant_ValidatesGranteeExistence source-pins JAB-339 AC4 in
-// the CLI grant subcommand: the grantee-existence gate must run through the
-// shared sharedresourceops.ValidateGrants owner (so REST and CLI cannot drift)
-// and it must run BEFORE ReplaceGrants — ordering is the load-bearing invariant.
-// The behavior is not cheaply testable (sharedDB is a concrete package global
-// the RunE dials directly), so the wiring is pinned at the source level, scoped
-// to the grant block so the revoke subcommand can't satisfy it.
-func TestSharedResourceGrant_ValidatesGranteeExistence(t *testing.T) {
+// TestSharedResourceGrant_RoutesFullSetThroughCore source-pins JAB-339 AC3 in the
+// CLI grant subcommand: the RunE must route through grantSharedResourceDirect —
+// which lists, upserts, validates the FULL resulting set, then replaces — and it
+// must hand the real resource owner (dom.UserID) as the owner arg. Pinning the
+// owner arg guards the #1696 scar: an empty owner is a wiring bug ValidateGrants
+// rejects, and a hardcoded one would defeat the same-owner policy. The old inline
+// single-delta ValidateGrants call must be gone (validating only the new grant,
+// not the set, was the AC3 gap). Full behavior is covered by the two
+// grantSharedResourceDirect tests; this pins the wiring the RunE can't test
+// cheaply (sharedDB/domainRepoFromDB are concrete globals). Scoped to the grant
+// block so the revoke subcommand can't satisfy it.
+func TestSharedResourceGrant_RoutesFullSetThroughCore(t *testing.T) {
 	cli := mustRead(t, "shared_resource_cmd.go")
 	marker := `Use:     "grant"`
 	i := strings.Index(cli, marker)
@@ -204,16 +221,105 @@ func TestSharedResourceGrant_ValidatesGranteeExistence(t *testing.T) {
 	if j := strings.Index(block[len(marker):], "Use:"); j >= 0 {
 		block = block[:len(marker)+j]
 	}
-	vg := strings.Index(block, "sharedresourceops.ValidateGrants(")
-	if vg < 0 {
-		t.Error("CLI grant must validate grantee existence through sharedresourceops.ValidateGrants")
+	if !strings.Contains(block, "grantSharedResourceDirect(ctx, repo, grantDeps, dom.UserID,") {
+		t.Error("CLI grant must route through grantSharedResourceDirect with dom.UserID as the owner (JAB-339 AC3)")
 	}
-	rg := strings.Index(block, "ReplaceGrants(")
-	if rg < 0 {
-		t.Error("CLI grant must call ReplaceGrants")
+	// The old RunE validated only the single new delta inline; the full-set
+	// validation now lives in the core, so no inline ValidateGrants may remain
+	// (it would re-introduce the delta-only gap).
+	if strings.Contains(block, "sharedresourceops.ValidateGrants(") {
+		t.Error("CLI grant must not validate a single-grant delta inline; grantSharedResourceDirect validates the full set")
 	}
-	if vg >= 0 && rg >= 0 && vg > rg {
-		t.Error("ValidateGrants must run BEFORE ReplaceGrants, or a dangling grantee is written first")
+}
+
+// Narrow lookup fakes for sharedresourceops.ValidateGrants — each satisfies one
+// consumer-side interface (MailboxLookup / MailGroupLookup / DomainLookup) with a
+// map keyed by id, returning repository.ErrNotFound for a miss so ValidateGrants
+// exercises its not-found → ErrGranteeNotFound arm.
+type fakeMailboxLookup struct{ byID map[string]*models.Mailbox }
+
+func (f fakeMailboxLookup) FindByID(_ context.Context, id string) (*models.Mailbox, error) {
+	if mb, ok := f.byID[id]; ok {
+		return mb, nil
+	}
+	return nil, repository.ErrNotFound
+}
+
+type fakeMailGroupLookup struct{ byID map[string]*models.MailGroup }
+
+func (f fakeMailGroupLookup) FindByID(_ context.Context, id string) (*models.MailGroup, error) {
+	if mg, ok := f.byID[id]; ok {
+		return mg, nil
+	}
+	return nil, repository.ErrNotFound
+}
+
+type fakeDomainLookup struct{ byID map[string]*models.Domain }
+
+func (f fakeDomainLookup) FindByID(_ context.Context, id string) (*models.Domain, error) {
+	if d, ok := f.byID[id]; ok {
+		return d, nil
+	}
+	return nil, repository.ErrNotFound
+}
+
+// grantLookups wires an in-scope mailbox "mb-good" owned by "u-owner" so a happy
+// grant passes; a test seeds fakeSRRepo.grants with whatever legacy set it needs.
+func grantLookups(owner string) sharedresourceops.Deps {
+	return sharedresourceops.Deps{
+		Mailboxes: fakeMailboxLookup{byID: map[string]*models.Mailbox{
+			"mb-good": {ID: "mb-good", DomainID: "d1"},
+			"mb1":     {ID: "mb1", DomainID: "d1"},
+		}},
+		MailGroups: fakeMailGroupLookup{byID: map[string]*models.MailGroup{}},
+		Domains: fakeDomainLookup{byID: map[string]*models.Domain{
+			"d1": {ID: "d1", UserID: owner},
+		}},
+	}
+}
+
+// TestGrantSharedResourceDirect_FailsLoudOnLegacyInvalidGrant is the JAB-339 AC3
+// guard. A resource already carrying a legacy grant to a now-missing mailbox must
+// reject a grant of an otherwise-valid grantee — the same rejection the REST
+// setGrants door gives for the equivalent full-set PUT — instead of upserting the
+// valid grantee and silently writing the bad legacy grant back. Under the old
+// delta-only validation (validate just the new grant) this passed and persisted;
+// that is the discriminator this test relies on.
+func TestGrantSharedResourceDirect_FailsLoudOnLegacyInvalidGrant(t *testing.T) {
+	const owner = "u-owner"
+	repo := &fakeSRRepo{grants: []models.SharedResourceGrant{
+		{ResourceID: "sr1", GranteeKind: "mailbox", GranteeID: "mb-legacy-gone", Rights: "read"},
+	}}
+	err := grantSharedResourceDirect(context.Background(), repo, grantLookups(owner),
+		owner, "sr1", "mailbox", "mb-good", "readwrite")
+	if !errors.Is(err, sharedresourceops.ErrGranteeNotFound) {
+		t.Fatalf("want ErrGranteeNotFound for the legacy missing grantee, got %v", err)
+	}
+	if repo.replaceCalled {
+		t.Fatal("ReplaceGrants must not run when the resulting set fails validation")
+	}
+}
+
+// TestGrantSharedResourceDirect_UpsertsAndReplacesFullSet: an in-scope grantee
+// added to a clean set validates and writes the upserted set back — an existing
+// grant for the same grantee is replaced (rights updated), not duplicated.
+func TestGrantSharedResourceDirect_UpsertsAndReplacesFullSet(t *testing.T) {
+	const owner = "u-owner"
+	repo := &fakeSRRepo{grants: []models.SharedResourceGrant{
+		{ResourceID: "sr1", GranteeKind: "mailbox", GranteeID: "mb1", Rights: "read"},
+	}}
+	if err := grantSharedResourceDirect(context.Background(), repo, grantLookups(owner),
+		owner, "sr1", "mailbox", "mb1", "readwrite"); err != nil {
+		t.Fatalf("happy upsert: %v", err)
+	}
+	if !repo.replaceCalled {
+		t.Fatal("ReplaceGrants must run on a valid set")
+	}
+	if len(repo.replaced) != 1 {
+		t.Fatalf("upsert must not duplicate mb1: want 1 grant, got %d", len(repo.replaced))
+	}
+	if g := repo.replaced[0]; g.GranteeID != "mb1" || g.Rights != "readwrite" {
+		t.Fatalf("upsert must update rights in place: got %+v", g)
 	}
 }
 

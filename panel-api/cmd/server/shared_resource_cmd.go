@@ -185,41 +185,28 @@ func newSharedResourceGrantCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("load resource domain: %w", err)
 			}
-			// JAB-339 AC4: reject a grant to a non-existent grantee, and enforce
-			// the same-owner domain policy (the grantee must belong to the
-			// resource owner, dom.UserID), before any write — the shared owner
-			// with the REST handler. The inline flag checks above already caught
-			// a bad kind / empty id with a flag-specific message, so only the
-			// existence + owner-scope checks fire here.
+			// JAB-339 AC3/AC4: validate the FULL resulting grant set (not just the
+			// single new delta) and enforce the grantee-existence + same-owner
+			// domain policy before any write — the shared owner with the REST
+			// setGrants door, which validates the entire replacement set it
+			// receives. Validating the whole set (inside grantSharedResourceDirect)
+			// means a legacy cross-owner or now-missing grantee already in the set
+			// fails loud here too, so the CLI and REST cannot drift. The inline
+			// flag checks above already caught a bad kind / empty id with a
+			// flag-specific message.
 			grantDeps := sharedresourceops.Deps{
 				Mailboxes:  mailboxRepoFromDB(),
 				MailGroups: repository.NewMailGroupRepository(sharedDB),
 				Domains:    domainRepoFromDB(),
 			}
-			if err := sharedresourceops.ValidateGrants(ctx, grantDeps, dom.UserID, []models.SharedResourceGrant{
-				{ResourceID: resourceID, GranteeKind: granteeKind, GranteeID: granteeID, Rights: rights},
-			}); err != nil {
+			if err := grantSharedResourceDirect(ctx, repo, grantDeps, dom.UserID, resourceID, granteeKind, granteeID, rights); err != nil {
 				if errors.Is(err, sharedresourceops.ErrGranteeNotFound) {
-					return fmt.Errorf("grantee not found: %s %s", granteeKind, granteeID)
+					// ValidateGrants wraps the offending grantee id (which may be a
+					// pre-existing grant, not the --grantee just requested), so
+					// surface it verbatim rather than echoing the flag values.
+					return fmt.Errorf("%w — revoke the offending grantee to make this resource editable again", err)
 				}
-				return fmt.Errorf("validate grantee: %w", err)
-			}
-			grants, err := repo.ListGrants(ctx, resourceID)
-			if err != nil {
-				return fmt.Errorf("list grants: %w", err)
-			}
-			next := make([]models.SharedResourceGrant, 0, len(grants)+1)
-			for _, g := range grants {
-				if g.GranteeKind == granteeKind && g.GranteeID == granteeID {
-					continue // replaced below
-				}
-				next = append(next, g)
-			}
-			next = append(next, models.SharedResourceGrant{
-				ResourceID: resourceID, GranteeKind: granteeKind, GranteeID: granteeID, Rights: rights,
-			})
-			if err := repo.ReplaceGrants(ctx, resourceID, next); err != nil {
-				return fmt.Errorf("replace grants: %w", err)
+				return err
 			}
 			fmt.Printf("granted %s %s = %s on %s\n", granteeKind, granteeID, rights, resourceID)
 			return nil
