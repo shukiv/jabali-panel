@@ -133,6 +133,39 @@ func (e *AttachedError) Error() string {
 func (e *AttachedError) Is(target error) bool { return target == ErrAttached }
 func (e *AttachedError) Unwrap() error        { return ErrAttached }
 
+// DropDatabaseCommand returns the Agent command that drops a DATABASE for the
+// given engine. MariaDB and PostgreSQL use distinct verbs, and getting it wrong
+// is silent: db.drop reaches MariaDB, whose DROP DATABASE IF EXISTS succeeds on
+// a name that was never there, so a Postgres database sent db.drop is orphaned
+// on the host on the happy path (GH #1013). An unknown or empty engine falls to
+// db.drop (MariaDB), preserving the historical default at every call site.
+func DropDatabaseCommand(engine string) string {
+	if engine == "postgres" {
+		return "db.postgres.drop_db"
+	}
+	return "db.drop"
+}
+
+// DropDatabaseHost drops the database named dbName on the host, dispatching the
+// correct Agent command for engine (see DropDatabaseCommand). It is the single
+// lifecycle operation that every deletion path routes its host-side DROP
+// through — REST/CLI (Delete, below), account teardown (userops delete cascade),
+// and application teardown (api/app_delete) — so the engine dispatch lives in
+// exactly one place instead of being copied per cascade (JAB-275 AC6).
+//
+// It intentionally does NOT detect attachments, revoke grants, or touch panel
+// metadata; those remain the caller's concern. An Agent failure is wrapped as
+// ErrAgentFailed so a caller can errors.Is it; best-effort callers that only
+// keep the panel row as a retry handle can simply test err != nil.
+func DropDatabaseHost(ctx context.Context, agent AgentCaller, engine, dbName string) error {
+	if _, err := agent.Call(ctx, DropDatabaseCommand(engine), map[string]any{
+		"db_name": dbName,
+	}); err != nil {
+		return fmt.Errorf("%w: %v", ErrAgentFailed, err)
+	}
+	return nil
+}
+
 // Create materialises a database and inserts the panel-side row.
 // Returns the persisted *models.Database on success.
 //
@@ -325,14 +358,8 @@ func Delete(ctx context.Context, d Deps, in DeleteInput) error {
 				"db", row.Name, "db_user", u.Username, "err", rErr)
 		}
 	}
-	cmdName := "db.drop"
-	if row.Engine == "postgres" {
-		cmdName = "db.postgres.drop_db"
-	}
-	if _, err := d.Agent.Call(agentCtx, cmdName, map[string]any{
-		"db_name": row.Name,
-	}); err != nil {
-		return fmt.Errorf("%w: %v", ErrAgentFailed, err)
+	if err := DropDatabaseHost(agentCtx, d.Agent, row.Engine, row.Name); err != nil {
+		return err
 	}
 
 	// Phase 2 — metadata cleanup, durably retryable.

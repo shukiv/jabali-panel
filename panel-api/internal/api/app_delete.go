@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dbops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
@@ -114,9 +115,13 @@ func RunAppDelete(args AppDeleteArgs, deps AppDeleteDeps) error {
 	}
 	if args.DatabaseID != "" {
 		if db, err := deps.Databases.FindByID(ctx, args.DatabaseID); err == nil && db != nil {
-			if _, aerr := deps.Agent.Call(ctx, "db.drop", map[string]any{"db_name": db.Name}); aerr != nil {
+			// Route the app's database drop through the one lifecycle operation
+			// so the engine dispatch is not hand-rolled here (JAB-275 AC6). This
+			// also dispatches on the row's engine, so a Postgres app database is
+			// no longer sent the MariaDB db.drop and silently orphaned (GH #1013).
+			if aerr := dbops.DropDatabaseHost(ctx, deps.Agent, db.Engine, db.Name); aerr != nil {
 				dropFailed = true
-				slog.ErrorContext(ctx, "app delete: db.drop failed — keeping the panel rows so the database stays visible instead of becoming an orphan",
+				slog.ErrorContext(ctx, "app delete: database drop failed — keeping the panel rows so the database stays visible instead of becoming an orphan",
 					"err", aerr, "db_id", args.DatabaseID)
 			}
 		}
