@@ -54,9 +54,13 @@ type fakeRecordRepo struct {
 	deletedManagedBy string
 	deleted          bool
 	createErr        error
+	listErr          error
 }
 
 func (f *fakeRecordRepo) ListByZoneID(_ context.Context, _ string) ([]models.DNSRecord, error) {
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
 	return f.existing, nil
 }
 
@@ -224,7 +228,8 @@ func TestEnable_DNSZoneMissing_WarnsButSucceeds(t *testing.T) {
 	require.True(t, dom.EmailEnabled)
 	require.NotNil(t, domains.updated, "DB flip still happens without a zone")
 	require.Len(t, warnings, 1)
-	require.Contains(t, warnings[0], "no zone on file")
+	require.Equal(t, WarnNoZone, warnings[0].Kind, "missing zone is a typed WarnNoZone result")
+	require.Contains(t, warnings[0].Message(), "no zone on file")
 }
 
 func TestEnable_IdempotentDNS_NoDuplicateOnReenable(t *testing.T) {
@@ -262,7 +267,10 @@ func TestEnable_UserEditedConflict_WarnsAndSkips(t *testing.T) {
 	_, _, warnings, err := Enable(context.Background(), d, newDomain())
 	require.NoError(t, err)
 	require.NotEmpty(t, warnings)
-	require.Contains(t, warnings[0], "blocking")
+	require.Equal(t, WarnConflict, warnings[0].Kind, "a user-edited row is a typed WarnConflict result")
+	require.NotEmpty(t, warnings[0].Record, "conflict carries the record name")
+	require.NotEmpty(t, warnings[0].RecordType, "conflict carries the record type")
+	require.Contains(t, warnings[0].Message(), "blocking")
 	for _, r := range records.created {
 		require.False(t, r.Name == victim.Name && r.Type == victim.Type,
 			"must not recreate the row a user edited")
@@ -505,4 +513,137 @@ func TestRotateDKIM_PersistError_Typed_NoWipe(t *testing.T) {
 	require.ErrorIs(t, err, ErrPersistFailed)
 	require.Contains(t, err.Error(), "db down")
 	require.False(t, records.deleted, "DNS wipe only runs after the new key persists")
+}
+
+// --- JAB-286 AC3: typed managed-DNS / SSL-SAN warnings ---
+
+// TestWarning_Message_Golden pins the operator-facing text for every Kind
+// byte-for-byte, so the typed refactor cannot silently change what the REST
+// `warnings` field or the CLI prints show. If a message string changes, this
+// reddens while the Kind-routing tests stay green (and vice-versa).
+func TestWarning_Message_Golden(t *testing.T) {
+	cases := []struct {
+		w    Warning
+		want string
+	}{
+		{Warning{Kind: WarnNoZone}, "DNS autoconfig skipped: no zone on file for this domain."},
+		{Warning{Kind: WarnZoneReadFailed}, "DNS autoconfig failed to read the domain's zone."},
+		{Warning{Kind: WarnRecordsReadFailed}, "DNS autoconfig couldn't read existing records."},
+		{
+			Warning{Kind: WarnConflict, Record: "autoconfig", RecordType: "CNAME"},
+			"A user-edited CNAME record at autoconfig is blocking the autoconfig entry. Remove it in the DNS editor or accept M6 may overwrite.",
+		},
+		{
+			Warning{Kind: WarnPublishFailed, Record: "jabali._domainkey", RecordType: "TXT"},
+			"Failed to publish TXT record at jabali._domainkey.",
+		},
+		{Warning{Kind: WarnSSLLookupFailed}, "SSL cert lookup failed; retry ssl reconcile manually"},
+		{Warning{Kind: WarnSSLFlipFailed}, "SSL cert flip-to-renewing failed; mail.<domain> may be missing from cert until manual renewal"},
+	}
+	for _, c := range cases {
+		require.Equal(t, c.want, c.w.Message(), "Kind %d message drifted", c.w.Kind)
+	}
+}
+
+// TestWarning_Retryable classifies each Kind's retry behavior as an explicit
+// typed property (JAB-286 AC3 "retry behavior are explicit typed results").
+// Transient read/write and SSL faults are retryable; a missing zone or a
+// user-edited conflict needs a precondition or an operator first, so terminal.
+func TestWarning_Retryable(t *testing.T) {
+	retryable := map[WarningKind]bool{
+		WarnNoZone:            false,
+		WarnZoneReadFailed:    true,
+		WarnRecordsReadFailed: true,
+		WarnConflict:          false,
+		WarnPublishFailed:     true,
+		WarnSSLLookupFailed:   true,
+		WarnSSLFlipFailed:     true,
+	}
+	for k, want := range retryable {
+		require.Equal(t, want, Warning{Kind: k}.Retryable(), "Kind %d retryable classification", k)
+	}
+}
+
+// TestWarningMessages_ProjectsAndPreservesNil proves the []string projection the
+// adapters surface: nil/empty in → nil out (so `warnings,omitempty` stays
+// omitted and no empty JSON array appears), and each entry becomes its Message().
+func TestWarningMessages_ProjectsAndPreservesNil(t *testing.T) {
+	require.Nil(t, WarningMessages(nil))
+	require.Nil(t, WarningMessages([]Warning{}))
+	got := WarningMessages([]Warning{
+		{Kind: WarnNoZone},
+		{Kind: WarnConflict, Record: "autoconfig", RecordType: "CNAME"},
+	})
+	require.Equal(t, []string{
+		"DNS autoconfig skipped: no zone on file for this domain.",
+		"A user-edited CNAME record at autoconfig is blocking the autoconfig entry. Remove it in the DNS editor or accept M6 may overwrite.",
+	}, got)
+}
+
+// TestSyncDNS_ZoneReadError_TypedZoneReadFailed: a non-ErrNotFound zone read
+// error surfaces as a distinct WarnZoneReadFailed, never conflated with the
+// terminal WarnNoZone (the missing-zone case).
+func TestSyncDNS_ZoneReadError_TypedZoneReadFailed(t *testing.T) {
+	_, zones, _, d := baseDeps()
+	zones.zone = nil
+	zones.err = errors.New("db connection lost")
+
+	warnings := SyncManagedDNSOnEnable(context.Background(), d, "dom1", "jabali", "p=AAA")
+	require.Len(t, warnings, 1)
+	require.Equal(t, WarnZoneReadFailed, warnings[0].Kind)
+	require.True(t, warnings[0].Retryable(), "a transient zone-read fault is retryable")
+}
+
+// TestSyncDNS_RecordsReadError_TypedRecordsReadFailed: a failure listing the
+// zone's existing records surfaces as WarnRecordsReadFailed.
+func TestSyncDNS_RecordsReadError_TypedRecordsReadFailed(t *testing.T) {
+	_, _, records, d := baseDeps()
+	records.listErr = errors.New("db connection lost")
+
+	warnings := SyncManagedDNSOnEnable(context.Background(), d, "dom1", "jabali", "p=AAA")
+	require.Len(t, warnings, 1)
+	require.Equal(t, WarnRecordsReadFailed, warnings[0].Kind)
+}
+
+// TestSyncDNS_PublishError_TypedPublishFailed: a Create failure surfaces as
+// WarnPublishFailed carrying the record name and type so the operator knows
+// which record to retry.
+func TestSyncDNS_PublishError_TypedPublishFailed(t *testing.T) {
+	_, _, records, d := baseDeps()
+	records.createErr = errors.New("insert failed")
+
+	warnings := SyncManagedDNSOnEnable(context.Background(), d, "dom1", "jabali", "p=AAA")
+	require.NotEmpty(t, warnings)
+	for _, w := range warnings {
+		require.Equal(t, WarnPublishFailed, w.Kind)
+		require.NotEmpty(t, w.Record, "publish failure carries the record name")
+		require.NotEmpty(t, w.RecordType, "publish failure carries the record type")
+	}
+}
+
+// TestEnable_SSLLookupError_TypedWarn: a non-ErrNotFound SSL cert lookup failure
+// surfaces as WarnSSLLookupFailed without failing the enable.
+func TestEnable_SSLLookupError_TypedWarn(t *testing.T) {
+	_, _, _, d := baseDeps()
+	d.SSLCerts = &fakeSSLRepo{findErr: errors.New("db down")}
+
+	_, _, warnings, err := Enable(context.Background(), d, newDomain())
+	require.NoError(t, err)
+	require.Len(t, warnings, 1)
+	require.Equal(t, WarnSSLLookupFailed, warnings[0].Kind)
+}
+
+// TestEnable_SSLFlipError_TypedWarn: a failure flipping the issued cert to
+// "renewing" surfaces as WarnSSLFlipFailed without failing the enable.
+func TestEnable_SSLFlipError_TypedWarn(t *testing.T) {
+	_, _, _, d := baseDeps()
+	d.SSLCerts = &fakeSSLRepo{
+		cert:      &models.SSLCertificate{ID: "cert1", Status: models.SSLStatusIssued},
+		updateErr: errors.New("db down"),
+	}
+
+	_, _, warnings, err := Enable(context.Background(), d, newDomain())
+	require.NoError(t, err)
+	require.Len(t, warnings, 1)
+	require.Equal(t, WarnSSLFlipFailed, warnings[0].Kind)
 }
