@@ -443,7 +443,12 @@ func newDockerAppDeleteCmd() *cobra.Command {
 				"slug":          app.EffectiveSlug(),
 				"purge_volumes": !keepVolumes,
 			}); err != nil {
-				return err
+				// JAB-364 AC4: a failed teardown must leave an explicit retryable
+				// panel state, not the app's stale prior status (e.g. "running"),
+				// which would read as a false-OK in `docker-app list`. Parity with
+				// the HTTP delete door (docker_apps_user.go) and the CLI install
+				// path above. The row is NOT deleted below because we return here.
+				return markDockerAppTeardownFailed(context.Background(), repo, app.ID, err)
 			}
 			// Cleanup domains + ports + the docker_apps row.
 			cleanupDockerAppDomains(ctx, repository.NewDomainRepository(sharedDB), sharedAgent, app.ID)
@@ -663,6 +668,30 @@ func firstLine(s string) string {
 		}
 	}
 	return s
+}
+
+// dockerAppStatusUpdater is the narrow slice of the docker-app repository the
+// teardown-failure path needs. Declaring it here (rather than taking the whole
+// repository.DockerAppRepository) keeps markDockerAppTeardownFailed unit-testable
+// with a tiny fake, mirroring how cleanupDockerAppDomains takes injectable deps.
+type dockerAppStatusUpdater interface {
+	UpdateStatus(ctx context.Context, id, status string, lastError *string) error
+}
+
+// markDockerAppTeardownFailed records an explicit retryable Failed panel state
+// when an agent teardown (docker_app.delete) call fails, so a later
+// `docker-app list` shows "failed" (retryable) instead of the app's stale prior
+// status — JAB-364 AC4. It mirrors the HTTP delete door's message wording
+// ("teardown failed: <first line>", docker_apps_user.go) and the CLI install
+// path's status-write mechanics (docker_app_cmd.go). The caller passes a fresh
+// context because the RunE context may already be cancelled by the failed agent
+// call, and the status write must still land. The status-write error is
+// deliberately swallowed: the agent failure is the operator-facing error, and a
+// best-effort status update must not mask it.
+func markDockerAppTeardownFailed(ctx context.Context, repo dockerAppStatusUpdater, appID string, cause error) error {
+	msg := "teardown failed: " + firstLine(cause.Error())
+	_ = repo.UpdateStatus(ctx, appID, models.DockerAppStatusFailed, &msg)
+	return fmt.Errorf("agent delete: %s", msg)
 }
 
 // rerenderInstallForCLI re-renders an install's compose from the current
