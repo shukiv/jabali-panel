@@ -72,6 +72,13 @@ func RegisterAdminUpdatesRoutes(g *gin.RouterGroup, cfg AdminUpdatesHandlerConfi
 	grp.POST("/repair/domain/fix-perms", h.repairDomainFixPerms)
 	grp.GET("/repair/domain/orphans", h.repairDomainOrphans)
 	grp.POST("/repair/domain/orphans/prune", h.repairDomainOrphansPrune)
+	// GH #1620 — PowerDNS orphan-record cleanup, surfaced from the Repair
+	// Center. #1629 stopped NEW zone deletes stranding child rows; this is the
+	// one-time cleanup for rows a pre-#1629 delete left behind. Proxies the
+	// agent `dns.reap-orphans` verb (same as `jabali dns prune-orphan-records`).
+	// Scan is dry-run; prune forces apply=true so it is never a dry-run.
+	grp.GET("/repair/dns/orphans", h.repairDNSOrphans)
+	grp.POST("/repair/dns/orphans/prune", h.repairDNSOrphansPrune)
 }
 
 type adminUpdatesHandler struct{ cfg AdminUpdatesHandlerConfig }
@@ -202,6 +209,21 @@ func (h *adminUpdatesHandler) repairDomainOrphans(c *gin.Context) {
 // the UI confirm; apply is forced true here so this route is never a dry-run.
 func (h *adminUpdatesHandler) repairDomainOrphansPrune(c *gin.Context) {
 	h.callAgent(c, "domain.repair_orphans", map[string]any{"apply": true}, 120*time.Second)
+}
+
+// repairDNSOrphans scans the PowerDNS backend for rows whose parent `domains`
+// row is gone (dry-run; nothing deleted). GH #1620. The agent refuses if the
+// domains table is empty, so a scan never mistakes a mid-provision box for one
+// full of orphans.
+func (h *adminUpdatesHandler) repairDNSOrphans(c *gin.Context) {
+	h.callAgent(c, "dns.reap-orphans", map[string]any{"apply": false}, 30*time.Second)
+}
+
+// repairDNSOrphansPrune deletes the orphaned PowerDNS rows and purges the pdns
+// caches (irreversible). Guarded by the UI confirm; apply is forced true here so
+// this route is never a dry-run.
+func (h *adminUpdatesHandler) repairDNSOrphansPrune(c *gin.Context) {
+	h.callAgent(c, "dns.reap-orphans", map[string]any{"apply": true}, 120*time.Second)
 }
 
 // --- apt -------------------------------------------------------------------
