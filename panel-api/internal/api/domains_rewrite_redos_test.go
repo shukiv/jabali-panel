@@ -104,3 +104,28 @@ func TestValidateTenantNginxRules_LookaheadRewrite(t *testing.T) {
 		t.Errorf("DokuWiki lookahead rewrite rule should pass tenant validation, got %v", err)
 	}
 }
+
+// TestValidateRewritePattern_InjectionHardening (GH #1624) pins the boundary
+// guard that complements the quoted render (nginxrules.Compile): raw whitespace
+// is rejected, while characters the quoting neutralizes ({n,m} quantifiers, a
+// literal `;`) stay accepted so legitimate patterns aren't broken.
+func TestValidateRewritePattern_InjectionHardening(t *testing.T) {
+	// Raw space / tab — the separator an injection payload relies on — rejected.
+	for _, p := range []string{`.*$ /d; return 418`, "^/a\tb$", "^/a b$"} {
+		if err := validateRewritePattern(p, 256); err == nil {
+			t.Errorf("pattern with whitespace %q must be rejected", p)
+		}
+	}
+	// {n,m} quantifiers and a literal `;` are fine — the render quotes them, and
+	// rejecting them would break legitimate regexes.
+	for _, p := range []string{`^/x[0-9]{2,3}$`, `a{2,3}`, `^/(.*);jsessionid=.*$`} {
+		if err := validateRewritePattern(p, 256); err != nil {
+			t.Errorf("pattern %q should be allowed, got %v", p, err)
+		}
+	}
+	// The #1652 lookahead pattern still passes the tenant cap (no regression).
+	doku := `^/(?!lib/)(?!_media/)(?!_detail/)(?!_export/)(.*)$`
+	if err := validateRewritePattern(doku, 128); err != nil {
+		t.Errorf("lookahead pattern must still pass the tenant cap, got %v", err)
+	}
+}
