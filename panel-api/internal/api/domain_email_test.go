@@ -648,6 +648,45 @@ func TestDomainEmail_RotateDKIM_Success(t *testing.T) {
 	require.Equal(t, 1, ma.callCount)
 }
 
+// TestDomainEmail_RotateDKIM_SurfacesTypedWarningOnWire is the api-side routing
+// proof for JAB-286 AC3: the rotate handler projects domainmailops' typed
+// Warnings through WarningMessages() into the response `warnings` field, with no
+// other warning source mixed in (unlike enable, which also folds in
+// buildHintsWithStatus and so cannot isolate this route). A user-edited row at a
+// managed slot survives the m6-scoped wipe and blocks the republish, so the
+// module returns exactly one WarnConflict; its Message() must appear on the wire
+// verbatim. Dropping the projection at the handler, or breaking WarningMessages,
+// reddens this.
+func TestDomainEmail_RotateDKIM_SurfacesTypedWarningOnWire(t *testing.T) {
+	ma := &mockAgent{callFn: func(_ context.Context, cmd string, _ any) (json.RawMessage, error) {
+		require.Equal(t, "domain.email_dkim_rotate", cmd)
+		return json.RawMessage(`{"old_dkim_public_key":"p=OLD","new_dkim_public_key":"p=NEW","old_key_backup_path":"/etc/x.old"}`), nil
+	}}
+	r, domains, _, records := domainEmailRouterWithDNS(t, ma)
+	// The rotate guard requires email already enabled with DKIM material.
+	sel, key := "jabali", "v=DKIM1;k=ed25519;p=OLD"
+	domains.domains["dom1"].EmailEnabled = true
+	domains.domains["dom1"].DkimSelector = &sel
+	domains.domains["dom1"].DkimPublicKey = &key
+	// A user-edited CNAME at the autoconfig slot: it survives the m6-scoped wipe
+	// and blocks the republish, so the module returns exactly one WarnConflict.
+	records.records["r-user-autoconfig"] = &models.DNSRecord{
+		ID: "r-user-autoconfig", ZoneID: "zone1",
+		Name: "autoconfig", Type: "CNAME", Content: "something-else",
+		Managed: false, ManagedBy: nil,
+	}
+
+	w := doRotate(t, r)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var body struct {
+		Warnings []string `json:"warnings"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	require.Contains(t, body.Warnings,
+		"A user-edited CNAME record at autoconfig is blocking the autoconfig entry. Remove it in the DNS editor or accept M6 may overwrite.",
+		"the module's typed WarnConflict must reach the rotate response verbatim; got %v", body.Warnings)
+}
+
 func TestDomainEmail_RotateDKIM_NotEnabled_409(t *testing.T) {
 	ma := &mockAgent{callFn: func(context.Context, string, any) (json.RawMessage, error) {
 		t.Fatal("agent must not be called when email is disabled")
