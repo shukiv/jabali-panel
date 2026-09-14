@@ -141,20 +141,49 @@ func userLimitsApplyHandler(ctx context.Context, params json.RawMessage) (any, e
 		}
 	}
 
-	// Skip the SIGHUP + verify + setquota dance when nothing changed —
-	// the reconciler calls this every tick (~60s) per user, so on a 3-
-	// user host the previous always-reload path fired 180 daemon-reloads
-	// + 180 setquotas per hour for steady state. The kernel still
-	// matches what we last wrote, so a no-op verify gains nothing.
-	// Drift detection still works on the next REAL change (forced via
-	// content diff). Tradeoff: external kernel forget (someone
-	// remounted -o noquota) won't auto-heal until the operator triggers
-	// a real change. Acceptable.
+	// Disk quota — applied unconditionally, before the no-change early
+	// return below. It does NOT depend on the cgroup drop-in content: a
+	// raise that touches only disk_quota_mb leaves the drop-in bytes
+	// identical (buildLimitsDropinContent renders no disk directive), so
+	// gating setquota behind the drop-in diff dropped the new ceiling on
+	// the floor (GH #1660). setquota is idempotent and cheap, so we run
+	// it every call. Skipping when no mount is supplied lets the same
+	// command work on cgroups-only hosts (early ops testing, CI).
+	var quotaApplied bool
+	if p.QuotaMount != "" {
+		// setquota expects block counts in 1KB units; disk_quota_mb is MB,
+		// so multiply by 1024. Zero → clears the quota (unlimited).
+		blocks := uint64(p.DiskQuotaMB) * 1024
+		blocksStr := fmt.Sprintf("%d", blocks)
+		if _, stderr, err := runCmdFn(ctx, "setquota",
+			"-u", p.Username,
+			blocksStr, blocksStr, "0", "0",
+			p.QuotaMount,
+		); err != nil {
+			return nil, &agentwire.AgentError{
+				Code:    agentwire.CodeInternal,
+				Message: fmt.Sprintf("setquota: %v (%s)", err, strings.TrimSpace(string(stderr))),
+			}
+		}
+		quotaApplied = true
+	}
+
+	// Skip only the SIGHUP + kernel-state verify when the cgroup drop-in
+	// is unchanged — the reconciler calls this every tick (~60s) per
+	// user, so on a 3-user host the previous always-reload path fired 180
+	// daemon-reloads per hour for steady state. The kernel still matches
+	// what we last wrote, so a no-op verify gains nothing. Drift
+	// detection still works on the next REAL cgroup change (forced via
+	// content diff). Tradeoff: external kernel forget of a *cgroup* limit
+	// (someone edited the slice by hand) won't auto-heal until the
+	// operator triggers a real change. The disk quota above is re-asserted
+	// on every call, so it does not carry that caveat.
 	if noChange {
 		return &userLimitsApplyResponse{
 			Username:      p.Username,
 			DropinPath:    dropinPath,
 			CgroupApplied: true,
+			QuotaApplied:  quotaApplied,
 			NoChange:      true,
 		}, nil
 	}
@@ -194,6 +223,7 @@ func userLimitsApplyHandler(ctx context.Context, params json.RawMessage) (any, e
 		Username:      p.Username,
 		DropinPath:    dropinPath,
 		CgroupApplied: true,
+		QuotaApplied:  quotaApplied,
 		NoChange:      noChange,
 	}
 
@@ -206,26 +236,6 @@ func userLimitsApplyHandler(ctx context.Context, params json.RawMessage) (any, e
 			resp.KernelMismatch = mismatch
 			resp.CgroupApplied = false
 		}
-	}
-
-	// Disk quota. Skipping when no mount is supplied lets the same
-	// command work on cgroups-only hosts (early ops testing, CI).
-	if p.QuotaMount != "" {
-		// setquota expects block counts in 1KB units; disk_quota_mb is MB,
-		// so multiply by 1024. Zero → clears the quota (unlimited).
-		blocks := uint64(p.DiskQuotaMB) * 1024
-		blocksStr := fmt.Sprintf("%d", blocks)
-		if _, stderr, err := runCmdFn(ctx, "setquota",
-			"-u", p.Username,
-			blocksStr, blocksStr, "0", "0",
-			p.QuotaMount,
-		); err != nil {
-			return nil, &agentwire.AgentError{
-				Code:    agentwire.CodeInternal,
-				Message: fmt.Sprintf("setquota: %v (%s)", err, strings.TrimSpace(string(stderr))),
-			}
-		}
-		resp.QuotaApplied = true
 	}
 
 	return resp, nil
