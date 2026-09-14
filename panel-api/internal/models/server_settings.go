@@ -305,14 +305,12 @@ type ServerSettings struct {
 	// bytes ≥ BandwidthQuotaMB and re-enables when ≤ 80%. Off by default.
 	BandwidthQuotaEnforceEnabled bool `gorm:"column:bandwidth_quota_enforce_enabled;type:tinyint(1);not null;default:0" json:"bandwidth_quota_enforce_enabled"`
 
-	// DNS orphan-record auto-sweep toggle (GH #1620). When true, the
-	// reconciler fires the agent RPC `dns.reap-orphans` (apply=true) at
-	// most once per hour so each box self-removes PowerDNS backend rows
-	// whose parent domain is gone. Off by default; only takes effect when
-	// DNSEnabled is also true. The agent refuses on an empty domains
-	// table, so an enabled-but-misconfigured box deletes nothing. The
-	// one-shot CLI (`jabali dns prune-orphan-records`) is unaffected.
-	DNSOrphanAutosweepEnabled bool `gorm:"column:dns_orphan_autosweep_enabled;type:tinyint(1);not null;default:0" json:"dns_orphan_autosweep_enabled"`
+	// NOTE (GH #1620): the DNS orphan-record auto-sweep toggle
+	// (dns_orphan_autosweep_enabled) was removed — the one-shot Repair
+	// Center action (dns.reap-orphans) is the single surface. The DB
+	// column is intentionally left in place (dormant, defaults 0) so a
+	// rollback to a pre-removal binary still finds it; a later migration
+	// drops it. GORM ignores the unmapped column on read.
 
 	// File-manager upload cap (MB). Enforced by panel-api at request
 	// time via http.MaxBytesReader; nginx vhost client_max_body_size

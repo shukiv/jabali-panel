@@ -73,7 +73,6 @@ import { SSOMaintenanceCard } from "./SSOMaintenanceCard";
 import { TenantDomainOptionsCard } from "./TenantDomainOptionsCard";
 import { WebTemplatesCard } from "./WebTemplatesCard";
 import { DNSTemplatesCard } from "./DNSTemplatesCard";
-import { DNSOrphanSweepCard } from "./DNSOrphanSweepCard";
 import { TenantNotificationsCard } from "./TenantNotificationsCard";
 import { NginxSettingsCard } from "./NginxSettingsCard";
 import { LogRetentionCard } from "./LogRetentionCard";
@@ -1039,7 +1038,6 @@ export const ServerSettingsPage = () => {
         <>
           <DNSSettingsTab />
           <DNSTemplatesCard />
-          <DNSOrphanSweepCard />
         </>
       ),
     },
