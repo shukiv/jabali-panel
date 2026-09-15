@@ -832,12 +832,9 @@ func (h *domainHandler) findCoveringSharedCert(ctx context.Context, host, ownerI
 	if err != nil {
 		return nil
 	}
-	for i := range certs {
-		if sharedCertCoversHost(certs[i].SANs, host) {
-			return &certs[i]
-		}
-	}
-	return nil
+	// The DB read stays adapter-side (ADR-0083); the cover decision is the
+	// shared domainops leaf, so REST and CLI create pick the same cert.
+	return domainops.CoveringSharedCert(certs, host)
 }
 
 func (h *domainHandler) create(c *gin.Context) {

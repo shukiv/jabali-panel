@@ -12,6 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/domainops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
@@ -23,42 +24,6 @@ import (
 
 func sharedCertRepoFromDB() repository.SharedCertificateRepository {
 	return repository.NewSharedCertificateRepository(sharedDB)
-}
-
-// cliHostMatchesSAN mirrors the API's wildcard-aware matcher (x509.VerifyHostname
-// semantics): exact, or a single-label wildcard.
-func cliHostMatchesSAN(san, host string) bool {
-	san = strings.ToLower(strings.TrimSpace(san))
-	host = strings.ToLower(strings.TrimSpace(host))
-	if san == "" || host == "" {
-		return false
-	}
-	if san == host {
-		return true
-	}
-	if strings.HasPrefix(san, "*.") {
-		base := san[2:]
-		if i := strings.IndexByte(host, '.'); i > 0 && host[i+1:] == base {
-			return true
-		}
-	}
-	return false
-}
-
-func cliCertCoversHost(sansJSON *string, host string) bool {
-	if sansJSON == nil {
-		return false
-	}
-	var sans []string
-	if json.Unmarshal([]byte(*sansJSON), &sans) != nil {
-		return false
-	}
-	for _, s := range sans {
-		if cliHostMatchesSAN(s, host) {
-			return true
-		}
-	}
-	return false
 }
 
 func newSSLSharedCmd() *cobra.Command {
@@ -202,7 +167,7 @@ func newSSLSharedAttachCmd() *cobra.Command {
 			if err != nil || cert == nil {
 				return fmt.Errorf("shared certificate %q not found", certID)
 			}
-			if !cliCertCoversHost(cert.SANs, dom.Name) {
+			if !domainops.SharedCertCoversHost(cert.SANs, dom.Name) {
 				return fmt.Errorf("certificate %q does not cover %s (SANs don't match)", certID, dom.Name)
 			}
 			if err := domainRepoFromDB().SetSharedCertificate(ctx, dom.ID, &certID, models.SSLModeShared); err != nil {
