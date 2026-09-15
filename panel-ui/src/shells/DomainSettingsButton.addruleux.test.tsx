@@ -59,6 +59,45 @@ describe("GH #1624 — Add Rule UX", () => {
     });
   });
 
+  it("scrolls the freshly added rule's first editable field into view (centered), not just the row", async () => {
+    // lxsdevcode follow-up: the row header could be on-screen while its input sat
+    // below the fold. The scroll target must be the first editable field itself,
+    // centered. happy-dom has no layout, so assert the call target + option, not
+    // visibility, and no scrollIntoView — stub it, capturing (el, opts). The full
+    // "field ends up in the viewport" check runs in a real browser (see PR body).
+    const seen: Array<[Element, ScrollIntoViewOptions | undefined]> = [];
+    const proto = Element.prototype as unknown as {
+      scrollIntoView?: (arg?: ScrollIntoViewOptions | boolean) => void;
+    };
+    const original = proto.scrollIntoView;
+    proto.scrollIntoView = function (
+      this: Element,
+      opts?: ScrollIntoViewOptions | boolean,
+    ) {
+      seen.push([this, typeof opts === "object" ? opts : undefined]);
+    };
+    try {
+      renderTenant(domain);
+      await addRewriteRule();
+
+      await waitFor(() => {
+        // Target is the Pattern <input> (placeholder ^/old$), centered — not the
+        // row DIV with block:"nearest", which left the field below the fold.
+        const hit = seen.some(
+          ([el, opts]) =>
+            (el as HTMLElement).tagName === "INPUT" &&
+            (el as HTMLElement).getAttribute("placeholder") === "^/old$" &&
+            opts?.block === "center",
+        );
+        expect(hit, "scrollIntoView called on the Pattern input, centered").toBe(
+          true,
+        );
+      });
+    } finally {
+      proto.scrollIntoView = original;
+    }
+  });
+
   it("flashes the freshly added rule with a highlight background", async () => {
     renderTenant(domain);
     await addRewriteRule();

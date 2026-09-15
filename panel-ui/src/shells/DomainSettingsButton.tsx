@@ -828,16 +828,54 @@ const RuleBuilder = ({
   // on a long list — and focus its first field so the user can type immediately.
   const listRef = useRef<HTMLDivElement>(null);
   const prevLenRef = useRef(rules.length);
+  const scrollFocusLastRow = () => {
+    // The new rule is the last rule *card*. Don't use listRef.lastElementChild:
+    // dnd-kit appends hidden a11y live-region <div>s as the container's trailing
+    // children, so lastElementChild is often one of those (no input inside) and
+    // the scroll/focus silently no-ops — invisible in tests (happy-dom), real in
+    // the browser.
+    const cards = listRef.current?.querySelectorAll<HTMLElement>(".ant-card");
+    const row = cards && cards.length ? cards[cards.length - 1] : null;
+    // Scroll the new rule's first editable *field* into view, not just the row
+    // header. On a long list the row can be on-screen while its input still sits
+    // below the fold (lxsdevcode, GH #1624), so `block: "nearest"` on the row
+    // stopped short of the field. Centering the field itself leaves spacing from
+    // both the sticky panel header above and the page bottom, and it generalises
+    // across rule types (the first input/textarea, whatever the type). Falls back
+    // to the row when a type's first control has no text input.
+    const field = row?.querySelector<HTMLElement>("input, textarea");
+    (field ?? row)?.scrollIntoView?.({ block: "center", behavior: "smooth" });
+    // preventScroll — a bare focus() does its own instant scroll that cancels
+    // the smooth animation above and makes the row jump.
+    field?.focus({ preventScroll: true });
+  };
+  // Scroll+focus whenever the list grows. This is what the tests exercise and the
+  // sole path for non-picker adds (e.g. the nginx-config importer merging rules);
+  // that importer is itself modal-wrapped, so it may need the same close-timing
+  // treatment as the picker below — out of scope here, not verified.
   useEffect(() => {
-    if (rules.length > prevLenRef.current) {
-      const el = listRef.current?.lastElementChild as HTMLElement | null;
-      el?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
-      // preventScroll — a bare focus() does its own instant scroll that cancels
-      // the smooth animation above and makes the row jump.
-      el?.querySelector<HTMLElement>("input, textarea")?.focus({ preventScroll: true });
-    }
+    if (rules.length > prevLenRef.current) scrollFocusLastRow();
     prevLenRef.current = rules.length;
   }, [rules.length]);
+  // Add Rule appends its row while the picker Modal is still animating closed. In
+  // a real browser the modal keeps a focus lock until it unmounts, which swallows
+  // the focus()/scroll the length effect just did and leaves the new field below
+  // the fold (lxsdevcode). Re-run it once the picker has actually left the DOM —
+  // polling per frame (no magic delay), capped so a stuck close can't loop. This
+  // is a no-op in tests, where there is no focus lock and the effect above already
+  // landed focus.
+  const afterPickerCloses = () => {
+    let frames = 0;
+    const tick = () => {
+      // Scope to the picker (className below), not any `.ant-modal-wrap`: the
+      // admin surface renders this builder inside its own settings Modal, so a
+      // generic modal check would never clear and always hit the frame cap.
+      const pickerGone = !document.querySelector(".ant-modal.nginx-rule-picker");
+      if (pickerGone || frames++ > 60) scrollFocusLastRow();
+      else requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  };
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -895,6 +933,9 @@ const RuleBuilder = ({
     setHighlightIdx(newIdx);
     clearTimeout(highlightTimer.current);
     highlightTimer.current = setTimeout(() => setHighlightIdx(null), 1500);
+    // The length effect scrolls+focuses now, but the closing picker Modal's focus
+    // lock swallows it in a real browser — re-run once the modal has left the DOM.
+    afterPickerCloses();
   };
 
   const removeRule = (idx: number) => {
@@ -1007,6 +1048,15 @@ const RuleBuilder = ({
         onCancel={() => setPickerOpen(false)}
         footer={null}
         destroyOnHidden
+        // Scoping hook for the afterPickerCloses poll above — lets it wait for
+        // *this* dialog to leave the DOM even when an outer settings Modal (the
+        // admin surface) is also open.
+        className="nginx-rule-picker"
+        // GH #1624: don't return focus to the "Add Rule" trigger on close. antd's
+        // default focus-restore runs after we focus the new field and yanks focus
+        // (and the scroll) back up to the button — which compounds the off-screen
+        // new-field problem on a long list (lxsdevcode).
+        focusable={{ focusTriggerAfterClose: false }}
       >
         <Space direction="vertical" size={8} style={{ width: "100%" }}>
           {addMenuItems.map((item) => (
