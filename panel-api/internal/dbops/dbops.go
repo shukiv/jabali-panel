@@ -166,6 +166,53 @@ func DropDatabaseHost(ctx context.Context, agent AgentCaller, engine, dbName str
 	return nil
 }
 
+// DropDatabaseUserCommand returns the Agent command that drops a database LOGIN
+// (a MariaDB user / a PostgreSQL role) for the given engine. Like the database
+// verbs, the two engines diverge and getting it wrong is silent: db_user.drop
+// reaches MariaDB, whose DROP USER IF EXISTS succeeds on a name that was never
+// there, so a Postgres role sent db_user.drop is left live on the host (GH
+// #1013). An unknown or empty engine falls to db_user.drop (MariaDB), preserving
+// the historical default at every call site.
+func DropDatabaseUserCommand(engine string) string {
+	if engine == "postgres" {
+		return "db.postgres.drop_role"
+	}
+	return "db_user.drop"
+}
+
+// dropDatabaseUserParams returns the payload the drop command expects. The key
+// differs by engine and BOTH matter: a Postgres db.postgres.drop_role reads
+// "role", while MariaDB db_user.drop reads "db_user_name". Sending the MariaDB
+// shape to Postgres is a silent no-op even when the command name is right, so
+// the picker and the payload are kept together here.
+func dropDatabaseUserParams(engine, username string) map[string]any {
+	if engine == "postgres" {
+		return map[string]any{"role": username}
+	}
+	return map[string]any{"db_user_name": username}
+}
+
+// DropDatabaseUserHost drops the database login named username on the host,
+// dispatching the correct Agent command and payload for engine (see
+// DropDatabaseUserCommand / dropDatabaseUserParams). It is the sibling of
+// DropDatabaseHost for the login half of a teardown: account teardown (userops
+// delete cascade) and application teardown (api/app_delete) route their
+// db-user/role drop through it so the engine dispatch lives in one place
+// instead of being copied per cascade (JAB-275 AC6).
+//
+// A Postgres role that still owns objects cannot be dropped, so callers that
+// tear down a paired database must drop the DATABASE first (which removes the
+// role's owned objects) and the login second — the order the cascade already
+// uses. Like DropDatabaseHost this op does not touch panel metadata; an Agent
+// failure is wrapped as ErrAgentFailed so a caller can errors.Is it, and
+// best-effort callers can simply test err != nil.
+func DropDatabaseUserHost(ctx context.Context, agent AgentCaller, engine, username string) error {
+	if _, err := agent.Call(ctx, DropDatabaseUserCommand(engine), dropDatabaseUserParams(engine, username)); err != nil {
+		return fmt.Errorf("%w: %v", ErrAgentFailed, err)
+	}
+	return nil
+}
+
 // Create materialises a database and inserts the panel-side row.
 // Returns the persisted *models.Database on success.
 //
