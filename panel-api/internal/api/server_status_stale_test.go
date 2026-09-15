@@ -87,10 +87,14 @@ func TestServerStatus_StaleSliceIsDisplayOnly_NotInAlerts(t *testing.T) {
 	}
 
 	// Expire every slice (past the 30s AppArmor TTL and 15s service TTL), then
-	// make every agent call fail so the next poll must stale-serve.
+	// make every agent call EXCEPT host fail. Host keeps succeeding, so poll 2
+	// has a POPULATED `fresh` map ({host}) sitting alongside the stale last-good
+	// bodies in `results`. That proves the fresh/results split is real — not
+	// merely "fresh happened to be empty" — so a regression that iterated
+	// `results` for services while reading `fresh` for host would still redden.
 	cl.advance(40 * time.Second)
 	for _, cmd := range []string{
-		"system.info", "system.cpu_usage", "system.network", "system.processes",
+		"system.cpu_usage", "system.network", "system.processes",
 		"system.service_details", "system.user_slices", "system.software",
 		"nginx.status", "security.apparmor.summary",
 	} {
