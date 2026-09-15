@@ -16,13 +16,25 @@ type ServerSettings struct {
 	// (preview.example.com) or a magic-DNS base (203-0-113-7.sslip.io)
 	// when the hostname does not resolve publicly.
 	PreviewBase string `gorm:"type:varchar(253);not null;default:''" json:"preview_base"`
-	PublicIPv4  string `gorm:"type:varchar(45);not null;default:''"  json:"public_ipv4"`
-	PublicIPv6  string `gorm:"type:varchar(45);not null;default:''"  json:"public_ipv6"`
-	NS1Name     string `gorm:"type:varchar(253);not null;default:''" json:"ns1_name"`
-	NS1IPv4     string `gorm:"type:varchar(45);not null;default:''"  json:"ns1_ipv4"`
-	NS2Name     string `gorm:"type:varchar(253);not null;default:''" json:"ns2_name"`
-	NS2IPv4     string `gorm:"type:varchar(45);not null;default:''"  json:"ns2_ipv4"`
-	AdminEmail  string `gorm:"type:varchar(320);not null;default:''" json:"admin_email"`
+	// MailHostname (JAB-390, migration 000300) optionally pins the panel
+	// mail hostname independent of the panel access hostname. NULL/empty =
+	// derive mail.<hostname> — resolve every read through
+	// models.EffectiveMailHostname, never off this field directly.
+	//
+	// No setter yet: the admin settings PATCH allowlist
+	// (updateServerSettingsRequest) does not carry this field, so nothing
+	// writes it and it stays NULL until the safe-switchover slice adds the
+	// setter + convergence. json:"-" keeps it out of the settings GET body
+	// until that slice deliberately exposes it. TEXT column (off-row) to
+	// stay under the server_settings row-size ceiling.
+	MailHostname *string `gorm:"column:mail_hostname;type:text" json:"-"`
+	PublicIPv4   string  `gorm:"type:varchar(45);not null;default:''"  json:"public_ipv4"`
+	PublicIPv6   string  `gorm:"type:varchar(45);not null;default:''"  json:"public_ipv6"`
+	NS1Name      string  `gorm:"type:varchar(253);not null;default:''" json:"ns1_name"`
+	NS1IPv4      string  `gorm:"type:varchar(45);not null;default:''"  json:"ns1_ipv4"`
+	NS2Name      string  `gorm:"type:varchar(253);not null;default:''" json:"ns2_name"`
+	NS2IPv4      string  `gorm:"type:varchar(45);not null;default:''"  json:"ns2_ipv4"`
+	AdminEmail   string  `gorm:"type:varchar(320);not null;default:''" json:"admin_email"`
 	// DefaultDNSTTL is the TTL (seconds) applied to newly-created DNS
 	// records when the API caller doesn't pass one. Editable via
 	// Server Settings → DNS in the admin UI. Range 60–86400 enforced

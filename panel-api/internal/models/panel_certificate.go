@@ -1,6 +1,11 @@
 package models
 
-import "time"
+import (
+	"errors"
+	"net"
+	"strings"
+	"time"
+)
 
 // Panel certificate status state machine. See ADR-0066.
 //
@@ -37,11 +42,95 @@ const (
 )
 
 // PanelMailHostname is the mail SAN derived from the panel hostname.
+// It is the derivation primitive; consumers that must honour an operator
+// override read EffectiveMailHostname, not this, directly.
 func PanelMailHostname(hostname string) string {
 	if hostname == "" {
 		return ""
 	}
 	return "mail." + hostname
+}
+
+// Mail-hostname validation sentinels (JAB-390). Each names one rejected
+// shape so a caller — and the falsification tests — can pin the exact arm.
+var (
+	ErrMailHostnameEmpty      = errors.New("mail hostname is empty")
+	ErrMailHostnameWhitespace = errors.New("mail hostname contains whitespace")
+	ErrMailHostnameNotBare    = errors.New("mail hostname must be a bare host (no scheme, path, or userinfo)")
+	ErrMailHostnameWildcard   = errors.New("mail hostname must not be a wildcard")
+	ErrMailHostnamePort       = errors.New("mail hostname must not carry a port")
+	ErrMailHostnameDot        = errors.New("mail hostname must not begin or end with a dot")
+	ErrMailHostnameNotFQDN    = errors.New("mail hostname must be a fully-qualified domain name")
+	ErrMailHostnameIP         = errors.New("mail hostname must be a name, not an IP address")
+	ErrMailHostnameTooLong    = errors.New("mail hostname exceeds 253 characters")
+	ErrMailHostnameLabel      = errors.New("mail hostname has an invalid label")
+)
+
+// ValidateMailHostname normalizes and validates a bare mail-hostname
+// FQDN (JAB-390). On success it returns the trimmed, lowercased host.
+// It rejects an empty value, internal whitespace, a scheme / path /
+// userinfo, a wildcard, a port, a leading or trailing dot, a single
+// (non-FQDN) label, an IP literal, an over-length host, and any label
+// that is empty, over 63 bytes, hyphen-bounded, or has a character
+// outside [a-z0-9-]. This is the one gate the future override setter
+// validates against, and the fail-safe read guard EffectiveMailHostname
+// applies to a stored value.
+func ValidateMailHostname(s string) (string, error) {
+	h := strings.ToLower(strings.TrimSpace(s))
+	switch {
+	case h == "":
+		return "", ErrMailHostnameEmpty
+	case strings.ContainsAny(h, " \t\r\n\v\f"):
+		// TrimSpace stripped the ends, so any survivor is internal.
+		return "", ErrMailHostnameWhitespace
+	case strings.Contains(h, "://") || strings.ContainsAny(h, "/\\?#@"):
+		return "", ErrMailHostnameNotBare
+	case strings.Contains(h, "*"):
+		return "", ErrMailHostnameWildcard
+	case strings.Contains(h, ":"):
+		return "", ErrMailHostnamePort
+	case strings.HasPrefix(h, ".") || strings.HasSuffix(h, "."):
+		return "", ErrMailHostnameDot
+	case !strings.Contains(h, "."):
+		return "", ErrMailHostnameNotFQDN
+	case net.ParseIP(h) != nil:
+		return "", ErrMailHostnameIP
+	case len(h) > 253:
+		return "", ErrMailHostnameTooLong
+	}
+	for _, label := range strings.Split(h, ".") {
+		if label == "" || len(label) > 63 ||
+			strings.HasPrefix(label, "-") || strings.HasSuffix(label, "-") {
+			return "", ErrMailHostnameLabel
+		}
+		for _, r := range label {
+			if !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-') {
+				return "", ErrMailHostnameLabel
+			}
+		}
+	}
+	return h, nil
+}
+
+// EffectiveMailHostname resolves the panel mail hostname that every
+// consumer of the panel mail identity must use (JAB-390): the operator
+// override when it is set AND passes ValidateMailHostname, otherwise the
+// derived mail.<panelHostname> (PanelMailHostname). Routing all consumers
+// through this one function is what lets a future, settable override
+// propagate from a single place.
+//
+// A stored override that fails validation is ignored in favour of the
+// derived name — a fail-safe read guard so a corrupt or hand-edited row
+// can never push a bogus host into a certificate SAN or a relay
+// credential. On success it returns the normalized (trimmed, lowercased)
+// override.
+func EffectiveMailHostname(override *string, panelHostname string) string {
+	if override != nil {
+		if norm, err := ValidateMailHostname(*override); err == nil {
+			return norm
+		}
+	}
+	return PanelMailHostname(panelHostname)
 }
 
 // PanelCertificate is the singleton (id=1) row tracking the panel
