@@ -113,6 +113,25 @@ describe("expanded rail DOM — GH #1626 header-alignment CSS contract", () => {
     );
     expect(submenuTitles.length).toBe(2);
   });
+
+  it("does not reach the collapsed icon rail (its root is not .ant-menu-inline)", () => {
+    // The collapsed rail (#1704 promised it unchanged) renders as
+    // .ant-menu-vertical + .ant-menu-inline-collapsed, so the compound
+    // .ant-menu-inline scope must NOT match it. inlineCollapsed stands in for
+    // the Sider context UserLayout gets for free. This fails if the scope drops
+    // the .ant-menu-inline qualifier.
+    const { container } = render(
+      <Menu mode="inline" inlineCollapsed className="tenant-sidebar" items={build(true)} />,
+    );
+    const root = container.querySelector(".tenant-sidebar");
+    expect(root?.classList.contains("ant-menu-inline")).toBe(false);
+    expect(root?.classList.contains("ant-menu-inline-collapsed")).toBe(true);
+    expect(
+      container.querySelectorAll(
+        ".tenant-sidebar.ant-menu-inline .ant-menu-submenu-title",
+      ).length,
+    ).toBe(0);
+  });
 });
 
 describe("buildUserSidebarItems — collapsed icon rail", () => {
