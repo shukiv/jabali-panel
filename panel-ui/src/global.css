@@ -355,8 +355,22 @@ body.imp-active .ant-drawer .ant-drawer-content {
  * padding as an inline style (a plain rule would lose the cascade). Scoped to
  * the expanded inline rail: the collapsed icon rail is .ant-menu-vertical
  * .ant-menu-inline-collapsed (no .ant-menu-inline), and hover popups portal
- * outside .tenant-sidebar, so both stay untouched. Submenu children keep
- * their own indent — only the header row moves. */
+ * outside .tenant-sidebar, so both stay untouched. */
 .tenant-sidebar.ant-menu-inline .ant-menu-submenu-title {
   padding-inline-start: 12px !important;
+}
+
+/* GH #1626 (round 2, reporter: johnnyq) — align the collapsible section
+ * children too. antd indents SubMenu children one inline level deeper than
+ * group children: a Tools/Account item lands at padding-left 48px (24px per
+ * level x 2) versus 24px for a Hosting/Services group item, so its text sits
+ * at 52px versus 28px — 24px too far right. Pull the inline submenu's item
+ * padding back to 24px so both children columns line up at 28px (24px + the
+ * 4px item margin). Group children live under .ant-menu-item-group-list (not
+ * .ant-menu-sub) so they are untouched; the collapsed rail's flyouts are
+ * .ant-menu-sub.ant-menu-vertical portaled outside .tenant-sidebar, so the
+ * .ant-menu-inline qualifier + the .tenant-sidebar scope exclude them.
+ * `!important` beats antd's inline per-level padding. */
+.tenant-sidebar.ant-menu-inline .ant-menu-sub.ant-menu-inline .ant-menu-item {
+  padding-inline-start: 24px !important;
 }

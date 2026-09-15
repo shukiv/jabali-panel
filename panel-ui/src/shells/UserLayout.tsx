@@ -134,9 +134,10 @@ export function UserLayout() {
       <Menu
         mode="inline"
         theme={mode}
-        // Scopes the GH #1626 header-alignment override in global.css to this
-        // tenant sidebar only (collapsible Tools/Account submenu titles pulled
-        // left to line up with the Hosting/Services group headers).
+        // Scopes the GH #1626 alignment overrides in global.css to this tenant
+        // sidebar only: the collapsible Tools/Account submenu titles pull left
+        // to line up with the Hosting/Services group headers, and their child
+        // items pull left to match the group children's indent.
         className="tenant-sidebar"
         selectedKeys={selected ? [selected] : []}
         // Collapsed inline menus manage their own popup open-state; only
