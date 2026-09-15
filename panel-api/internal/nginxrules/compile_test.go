@@ -568,3 +568,15 @@ func TestCompileRewritePatternQuoted(t *testing.T) {
 		t.Fatalf("regex escape should render backslash-doubled, got:\n%s", e)
 	}
 }
+
+// TestCompileLocationQuotesInjectionChars (GH #1624) pins that a location path
+// carrying `;` or `{` renders as one quoted token, so it can't terminate the
+// location line or open a block (admin-only proxy_pass/ip_access/alias Path).
+func TestCompileLocationQuotesInjectionChars(t *testing.T) {
+	got := Compile(&models.Domain{NginxRules: []models.NginxRule{{
+		Type: "proxy_pass", Path: "/a;b{", Target: "http://upstream:9000",
+	}}})
+	if !strings.Contains(got, `location ^~ "/a;b{" {`) {
+		t.Fatalf("location path with ; and { must render quoted, got:\n%s", got)
+	}
+}

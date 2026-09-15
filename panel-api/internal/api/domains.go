@@ -2445,6 +2445,15 @@ func validateProxyPassTarget(target string) error {
 	if strings.Contains(strings.ToLower(target), "unix:") {
 		return fmt.Errorf("target may not be a unix socket")
 	}
+	// The target renders UNQUOTED into `proxy_pass <target>;`. url.Parse accepts a
+	// space or `;` in the path (host stays valid), so without this an admin could
+	// smuggle a second `proxy_pass http://169.254.169.254; #` past the host checks
+	// below and reach an internal address. A real http(s) target never contains
+	// raw whitespace, `;`, `{` or `}` — they would be percent-encoded — so reject
+	// them at the boundary.
+	if strings.ContainsAny(target, " \t\r\n;{}") {
+		return fmt.Errorf("target must not contain whitespace, ';', '{' or '}'")
+	}
 	u, err := url.Parse(target)
 	if err != nil {
 		return fmt.Errorf("target is not a valid URL: %v", err)

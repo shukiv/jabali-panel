@@ -262,7 +262,10 @@ func quoteNginxString(s string) string {
 }
 
 func quoteNginxLocation(s string) string {
-	if strings.ContainsAny(s, " \t\"'\\") {
+	// Also quote on `;`, `{`, `}`: a location path carrying them would otherwise
+	// terminate the `location` line or open a block and let an (admin-only) rule
+	// inject directives. Quoting makes them a literal, inert part of the prefix.
+	if strings.ContainsAny(s, " \t\"'\\;{}") {
 		return quoteNginxString(s)
 	}
 	return s
