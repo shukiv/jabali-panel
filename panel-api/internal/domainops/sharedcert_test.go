@@ -37,9 +37,11 @@ func TestHostMatchesSAN(t *testing.T) {
 		{"wildcard does not cover apex", "*.example.com", "example.com", false},
 		{"wildcard does not cover two labels", "*.example.com", "a.b.example.com", false},
 		{"wildcard wrong base", "*.example.com", "sub.other.com", false},
+		{"exact SAN does not cover subdomain", "example.com", "sub.example.com", false},
 		{"no match", "example.com", "other.com", false},
 		{"empty san", "", "example.com", false},
 		{"empty host", "example.com", "", false},
+		{"empty leftmost label", "*.example.com", ".example.com", false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

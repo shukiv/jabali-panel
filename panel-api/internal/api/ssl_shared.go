@@ -191,15 +191,11 @@ type attachSharedRequest struct {
 	SharedCertificateID string `json:"shared_certificate_id"`
 }
 
-// hostMatchesSAN and sharedCertCoversHost delegate to the domainops leaf so the
-// REST attach/auto-attach doors, the operator CLI, and this handler all decide
-// cert coverage with one wildcard matcher (no drift on a security-adjacent
-// predicate — JAB-279). The wrappers stay so the existing package-api tests
-// pin that this door still routes through the leaf.
-func hostMatchesSAN(san, host string) bool {
-	return domainops.HostMatchesSAN(san, host)
-}
-
+// sharedCertCoversHost delegates to the domainops leaf so the REST
+// attach/auto-attach doors, the operator CLI, and this handler all decide cert
+// coverage with one wildcard matcher (no drift on a security-adjacent predicate
+// — JAB-279). The wrapper stays because attachSharedCert calls it and its
+// package-api test pins that this door still routes through the leaf.
 func sharedCertCoversHost(sansJSON *string, host string) bool {
 	return domainops.SharedCertCoversHost(sansJSON, host)
 }
