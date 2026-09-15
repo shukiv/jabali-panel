@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -223,5 +224,24 @@ func TestDisableSSL_AlreadyOffNoop(t *testing.T) {
 
 		require.Equal(t, http.StatusAccepted, c.Writer.Status())
 		require.Equal(t, []string{"domain-1"}, sched.scheduled, "shadow-drift row must proceed to disable")
+	})
+
+	t.Run("already off but cert lookup fails (not ErrNotFound) → proceeds, schedules", func(t *testing.T) {
+		// F2e discriminator: an infrastructure cert-lookup error (NOT ErrNotFound)
+		// is "unknown cert state" and must NOT no-op — fall through to the
+		// same-mode write + Schedule, which drives the tick that would catch a
+		// cert we could not read. Distinct arm from the ErrNotFound branch
+		// (F2d): certLookupOK := true reddens only this case, proving the two
+		// arms are genuinely separate. The revoke is skipped on the error path,
+		// exactly as the pre-change handler did.
+		dom := &models.Domain{ID: "domain-1", Name: "off.example.com", UserID: "u1", SSLMode: models.SSLModeNone, SSLEnabled: false}
+		h, _, mockCerts, sched := newParityHandler(dom, nil, nil)
+		mockCerts.On("FindByDomainID", mock.Anything, "domain-1").Return(nil, errors.New("db unavailable"))
+
+		c, _ := callParity(h, "DELETE", "domain-1", (*sslHandler).disableSSL)
+
+		require.Equal(t, http.StatusAccepted, c.Writer.Status())
+		require.Equal(t, []string{"domain-1"}, sched.scheduled, "unknown cert state must not no-op")
+		mockCerts.AssertNotCalled(t, "UpdateStatus", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 	})
 }
