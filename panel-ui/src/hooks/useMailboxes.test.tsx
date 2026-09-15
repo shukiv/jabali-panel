@@ -224,11 +224,10 @@ describe("useDeleteMailbox", () => {
     // JAB-333: a deleted mailbox also leaves the tenant screen's group-membership
     // and autoresponder panels — those shared keys must be invalidated too, or
     // they render a ghost row for the deleted mailbox until the next refetch.
-    expect(invalidatedKeys).toContainEqual([
-      "list",
-      "mailbox-group-memberships",
-      "dom1",
-    ]);
+    // JAB-370 Selection: the membership key is busted at the PREFIX (no domain
+    // slot) so the owner-scoped cross-domain bulk key (["list",...,"me"]) is
+    // refreshed alongside the per-domain drill-down key.
+    expect(invalidatedKeys).toContainEqual(["list", "mailbox-group-memberships"]);
     expect(invalidatedKeys).toContainEqual(["autoresponders", "by-domain", "dom1"]);
     // GH #1615: same per-domain drill-down key as create/update — a deleted
     // mailbox must vanish from the Mail Domains → domain → Mailboxes list too.

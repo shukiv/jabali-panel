@@ -2,6 +2,12 @@
 // mailbox→group edge set must invalidate the mailbox-group-memberships
 // projection (the mailbox table's group badges), or the badges go stale until
 // an unrelated refetch. Guards the whole mutation→invalidation matrix.
+//
+// JAB-370 Selection: the projection is now read through useMailboxGroupMemberships
+// — ONE owner-scoped bulk request (cross-domain Mailboxes tab) or the per-domain
+// endpoint in the drill-down, replacing the per-domain fan-out. The invalidation
+// matrix below busts the key PREFIX (no domain slot) so both the bulk key
+// (["list","mailbox-group-memberships","me"]) and the drill-down key refresh.
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
@@ -11,6 +17,7 @@ import {
   useAddMailboxToGroup,
   useCreateMailGroup,
   useDeleteMailGroup,
+  useMailboxGroupMemberships,
   useRemoveMailboxFromGroup,
   useSetMailGroupMembers,
   useUpdateMailGroup,
@@ -32,7 +39,10 @@ function makeWrapper() {
   return { qc, wrapper };
 }
 
-const MEMBERSHIPS_KEY = ["list", "mailbox-group-memberships", "dom1"];
+// JAB-370 Selection: invalidation is busted at the PREFIX (no domain slot) so the
+// owner-scoped bulk key ["list","mailbox-group-memberships","me"] refreshes
+// alongside the per-domain drill-down key.
+const MEMBERSHIPS_KEY = ["list", "mailbox-group-memberships"];
 
 function invalidatedMemberships(calls: unknown[][]): boolean {
   return calls.some(
@@ -113,5 +123,49 @@ describe("useMailGroups membership invalidation matrix (JAB-372)", () => {
     });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(invalidatedMemberships(spy.mock.calls as unknown[][])).toBe(false);
+  });
+});
+
+// JAB-370 Selection: the read side. useMailboxGroupMemberships picks the owner-
+// scoped bulk endpoint for the cross-domain tab and the per-domain endpoint in
+// the drill-down — one request either way, replacing the per-domain fan-out.
+describe("useMailboxGroupMemberships (JAB-370 Selection)", () => {
+  it("cross-domain (no domainId): ONE owner-scoped GET /mail/mailbox-group-memberships, no per-domain fan-out", async () => {
+    mocked.get.mockResolvedValue({
+      data: { data: { mb1: [{ group_id: "g1", group_name: "Team", group_email: "team@one.test" }] } },
+    });
+    const { wrapper } = makeWrapper();
+    const { result } = renderHook(() => useMailboxGroupMemberships(undefined, true), { wrapper });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    // Exactly one call, to the bulk endpoint — a regression back to the
+    // per-domain fan-out would issue one /domains/:id/... call per domain.
+    expect(mocked.get).toHaveBeenCalledTimes(1);
+    expect(mocked.get).toHaveBeenCalledWith("/mail/mailbox-group-memberships");
+    expect(
+      mocked.get.mock.calls.filter(([u]) => String(u).includes("/domains/")),
+    ).toHaveLength(0);
+    // Unwraps the {data:{...}} envelope to the mailbox->groups map.
+    expect(result.current.data?.mb1).toHaveLength(1);
+    expect(result.current.data?.mb1[0].group_email).toBe("team@one.test");
+  });
+
+  it("drill-down (domainId set): GETs the per-domain endpoint, never the bulk one", async () => {
+    mocked.get.mockResolvedValue({ data: { data: {} } });
+    const { wrapper } = makeWrapper();
+    const { result } = renderHook(() => useMailboxGroupMemberships("dom1", true), { wrapper });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(mocked.get).toHaveBeenCalledTimes(1);
+    expect(mocked.get).toHaveBeenCalledWith("/domains/dom1/mailbox-group-memberships");
+    expect(
+      mocked.get.mock.calls.filter(([u]) => String(u) === "/mail/mailbox-group-memberships"),
+    ).toHaveLength(0);
+  });
+
+  it("is disabled (no fetch) when enabled=false", () => {
+    const { wrapper } = makeWrapper();
+    renderHook(() => useMailboxGroupMemberships(undefined, false), { wrapper });
+    expect(mocked.get).not.toHaveBeenCalled();
   });
 });
