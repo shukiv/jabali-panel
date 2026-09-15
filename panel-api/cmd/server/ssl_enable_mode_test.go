@@ -4,6 +4,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 )
@@ -69,5 +70,64 @@ func TestSSLEnableDisable_PersistThroughUpdateSSLMode(t *testing.T) {
 	if !strings.Contains(s, "sslDisableRefusal(dom)") ||
 		!strings.Contains(s, "UpdateSSLMode(ctx, dom.ID, models.SSLModeNone)") {
 		t.Fatal("`ssl disable` must enforce the protected-domain refusal (sslDisableRefusal) then persist ssl_mode=none through domainRepo.UpdateSSLMode — the general Update allowlist drops ssl_mode, so the reconciler never dropped TLS (JAB-356)")
+	}
+}
+
+// TestSSLEnableAlreadyIssued guards JAB-356 AC3: enabling a domain that is
+// already on Let's Encrypt with a valid issued certificate is idempotent, so
+// the CLI must NOT reset the cert row to pending (which re-runs certbot and
+// burns LE's duplicate-certificate rate limit). The load-bearing case is
+// (none, issued, >30d) -> false: `ssl disable` writes ssl_mode=none but leaves
+// the cert row `issued` until the reconciler tick revokes it, so a guard keyed
+// on cert status alone would make the next `ssl enable` a wrong-direction no-op.
+func TestSSLEnableAlreadyIssued(t *testing.T) {
+	now := time.Date(2026, 9, 15, 0, 0, 0, 0, time.UTC)
+	future := now.Add(60 * 24 * time.Hour) // 60d — comfortably valid
+	soon := now.Add(10 * 24 * time.Hour)   // 10d — inside the 30d renewal floor
+	issuedFuture := &models.SSLCertificate{Status: models.SSLStatusIssued, ExpiresAt: &future}
+
+	cases := []struct {
+		name string
+		mode string
+		cert *models.SSLCertificate
+		want bool
+	}{
+		{"le + issued + >30d -> idempotent no-op", models.SSLModeLE, issuedFuture, true},
+		{"le + issued + <=30d -> proceed (renewal)", models.SSLModeLE, &models.SSLCertificate{Status: models.SSLStatusIssued, ExpiresAt: &soon}, false},
+		{"le + issued + nil expiry -> proceed", models.SSLModeLE, &models.SSLCertificate{Status: models.SSLStatusIssued}, false},
+		// Load-bearing: post-`ssl disable` the mode is none but the row is still
+		// issued until the tick revokes it — enabling must proceed, not no-op.
+		{"none + issued + >30d -> proceed (post-disable stale row)", models.SSLModeNone, issuedFuture, false},
+		{"self + issued + >30d -> proceed (switch to le)", models.SSLModeSelf, issuedFuture, false},
+		{"le + pending -> proceed", models.SSLModeLE, &models.SSLCertificate{Status: models.SSLStatusPending, ExpiresAt: &future}, false},
+		{"le + nil cert -> proceed", models.SSLModeLE, nil, false},
+	}
+	for _, tc := range cases {
+		if got := sslEnableAlreadyIssued(tc.mode, tc.cert, now); got != tc.want {
+			t.Errorf("%s: sslEnableAlreadyIssued(%q, ...) = %v, want %v", tc.name, tc.mode, got, tc.want)
+		}
+	}
+}
+
+// TestSSLEnable_IdempotentGuardBeforeWrite source-pins the AC3 wiring: cmd/server
+// runs on the global repo (no injection seam), so — matching the sibling pins
+// above — this asserts the enable door consults sslEnableAlreadyIssued AND that
+// the guard runs BEFORE the UpdateSSLMode(le)/pending-reset writes, so a valid
+// issued cert is never clobbered back to pending.
+func TestSSLEnable_IdempotentGuardBeforeWrite(t *testing.T) {
+	src, err := os.ReadFile("ssl_cmd.go")
+	if err != nil {
+		t.Fatalf("read ssl_cmd.go: %v", err)
+	}
+	s := string(src)
+	guard := "sslEnableAlreadyIssued(dom.SSLMode, cert, time.Now())"
+	write := "UpdateSSLMode(ctx, dom.ID, models.SSLModeLE)"
+	gi := strings.Index(s, guard)
+	wi := strings.Index(s, write)
+	if gi < 0 {
+		t.Fatal("`ssl enable` must consult sslEnableAlreadyIssued(dom.SSLMode, cert, time.Now()) so an already-issued cert is not reset to pending (JAB-356 AC3)")
+	}
+	if wi < 0 || gi > wi {
+		t.Fatal("the AC3 idempotency guard must run BEFORE UpdateSSLMode(le)/the pending reset — otherwise a valid issued cert is clobbered back to pending (re-runs certbot, burns LE's duplicate-certificate rate limit)")
 	}
 }

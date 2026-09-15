@@ -53,6 +53,32 @@ func sslDisableRefusal(dom *models.Domain) error {
 	return nil
 }
 
+// sslEnableAlreadyIssued reports whether `ssl enable` is a no-op because the
+// domain is already enabled on Let's Encrypt with a valid, comfortably
+// unexpired certificate. AC3 (JAB-356): enabling with a valid issued cert must
+// be idempotent. The old CLI unconditionally reset the cert row to pending,
+// which drives the reconciler to re-run certbot and burns Let's Encrypt's
+// duplicate-certificate rate limit for no gain.
+//
+// The mode MUST be `le`. `ssl disable` writes ssl_mode=none but leaves the cert
+// row `issued` (only the reconciler tick revokes it), so a guard keyed on the
+// cert status alone would make the next `ssl enable` a wrong-direction no-op —
+// the operator asked for TLS on, but it would stay off. `self` (a DNS-01
+// CF-Full fallback) must likewise proceed to `le`. Operator lineage
+// (custom/shared) is already no-op'd by sslEnableIsOperatorLineage above, so
+// `== le` is exactly the already-enabled steady state. The 30-day floor mirrors
+// the HTTP enableSSL guard (internal/api/ssl.go — "issued cert with >30d to
+// expiry"); hoisting this predicate into models is a follow-up.
+func sslEnableAlreadyIssued(mode string, cert *models.SSLCertificate, now time.Time) bool {
+	if mode != models.SSLModeLE || cert == nil {
+		return false
+	}
+	if cert.Status != models.SSLStatusIssued || cert.ExpiresAt == nil {
+		return false
+	}
+	return cert.ExpiresAt.Sub(now).Hours()/24 > 30
+}
+
 func newSSLCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "ssl",
@@ -169,6 +195,32 @@ func newSSLEnableCmd() *cobra.Command {
 				}
 				fmt.Printf("%s is on ssl_mode=%s (operator-provided certificate) — `ssl enable` manages Let's Encrypt and will not overwrite it.\n"+
 					"To switch this domain to Let's Encrypt, run `jabali domain set %s --ssl-mode=le` first.\n", dom.Name, dom.SSLMode, dom.Name)
+				return nil
+			}
+			// AC3 (JAB-356): enabling a domain already on Let's Encrypt with a
+			// valid issued certificate is idempotent — do NOT reset the cert row
+			// to pending (which would drive the reconciler to re-run certbot and
+			// burn LE's duplicate-certificate rate limit). Mirrors the HTTP
+			// enableSSL idempotency guard (internal/api/ssl.go). Returning here
+			// before any write also schedules no convergence for a no-op (AC4:
+			// convergence is scheduled only for a real mutation).
+			if sslEnableAlreadyIssued(dom.SSLMode, cert, time.Now()) {
+				cliAuditOK(ctx, "ssl.enable", "domain", dom.ID, &dom.UserID)
+				if jsonOutput {
+					out := map[string]any{
+						"domain":     dom.Name,
+						"ssl_mode":   dom.SSLMode,
+						"status":     models.SSLStatusIssued,
+						"expires_at": cert.ExpiresAt,
+						"detail":     "already enabled with a valid Let's Encrypt certificate; ssl enable is a no-op",
+					}
+					if cert.CertPath != nil {
+						out["cert_path"] = *cert.CertPath
+					}
+					return printJSON(out)
+				}
+				fmt.Printf("%s is already enabled with a valid Let's Encrypt certificate (expires %s) — `ssl enable` is a no-op.\n",
+					dom.Name, cert.ExpiresAt.Format("2006-01-02"))
 				return nil
 			}
 			// Persist the authoritative TLS mode through the dedicated
