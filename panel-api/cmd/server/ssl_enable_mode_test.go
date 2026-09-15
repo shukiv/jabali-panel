@@ -131,3 +131,89 @@ func TestSSLEnable_IdempotentGuardBeforeWrite(t *testing.T) {
 		t.Fatal("the AC3 idempotency guard must run BEFORE UpdateSSLMode(le)/the pending reset — otherwise a valid issued cert is clobbered back to pending (re-runs certbot, burns LE's duplicate-certificate rate limit)")
 	}
 }
+
+// TestSSLDisableAlreadyOff guards JAB-356 AC4 disable-side: `ssl disable` on a
+// domain whose TLS is already authoritatively off is a no-op, so the CLI must not
+// re-write the row. Both conjuncts of the predicate are load-bearing:
+//   - the (le, false) case is the PRE-#1740 CLI-disable residue — ssl_mode is
+//     stale `le` while ssl_enabled=false, but the reconciler follows ssl_mode so
+//     TLS is actually STILL ON; disabling must proceed, never no-op (drop the
+//     mode==none conjunct and this case wrongly goes true — TLS-direction bug).
+//   - the (none, true) case is a shadow drift the general Update allowlist can
+//     produce (ssl_enabled without ssl_mode); disabling must proceed so
+//     UpdateSSLMode repairs the shadow (drop the !ssl_enabled conjunct and this
+//     case wrongly goes true).
+//   - empty mode is NOT off — the reconciler treats "" as the ACME (le) default.
+func TestSSLDisableAlreadyOff(t *testing.T) {
+	cases := []struct {
+		name    string
+		mode    string
+		enabled bool
+		want    bool
+	}{
+		{"none + !enabled -> already off (no-op)", models.SSLModeNone, false, true},
+		// Load-bearing: shadow drift — enabled shadow disagrees with mode=none.
+		{"none + enabled -> proceed (repair shadow)", models.SSLModeNone, true, false},
+		// Load-bearing: pre-#1740 residue — mode stale le, TLS actually ON.
+		{"le + !enabled -> proceed (pre-#1740 residue, TLS still on)", models.SSLModeLE, false, false},
+		// Empty mode = ACME default at the reconciler, not off.
+		{"empty + !enabled -> proceed (empty = ACME default)", "", false, false},
+		{"le + enabled -> proceed", models.SSLModeLE, true, false},
+		{"self + !enabled -> proceed", models.SSLModeSelf, false, false},
+		{"self + enabled -> proceed", models.SSLModeSelf, true, false},
+		{"custom + !enabled -> proceed", models.SSLModeCustom, false, false},
+		{"shared + !enabled -> proceed", models.SSLModeShared, false, false},
+	}
+	for _, tc := range cases {
+		dom := &models.Domain{SSLMode: tc.mode, SSLEnabled: tc.enabled}
+		if got := sslDisableAlreadyOff(dom); got != tc.want {
+			t.Errorf("%s: sslDisableAlreadyOff({mode:%q, enabled:%v}) = %v, want %v", tc.name, tc.mode, tc.enabled, got, tc.want)
+		}
+	}
+}
+
+// TestSSLDisable_IdempotentGuardBeforeWrite source-pins the AC4 disable-side
+// wiring: cmd/server runs on the global repo (no injection seam), so — matching
+// the sibling pins above — this asserts the disable door consults
+// sslDisableAlreadyOff AND that the guard runs BEFORE the authoritative
+// UpdateSSLMode(none) write, so an already-off domain never re-writes the row.
+func TestSSLDisable_IdempotentGuardBeforeWrite(t *testing.T) {
+	src, err := os.ReadFile("ssl_cmd.go")
+	if err != nil {
+		t.Fatalf("read ssl_cmd.go: %v", err)
+	}
+	s := string(src)
+	guard := "sslDisableAlreadyOff(dom)"
+	write := "UpdateSSLMode(ctx, dom.ID, models.SSLModeNone)"
+	gi := strings.Index(s, guard)
+	wi := strings.Index(s, write)
+	if gi < 0 {
+		t.Fatal("`ssl disable` must consult sslDisableAlreadyOff(dom) so an already-off domain is not re-written (JAB-356 AC4 disable-side)")
+	}
+	if wi < 0 || gi > wi {
+		t.Fatal("the AC4 disable-side idempotency guard must run BEFORE UpdateSSLMode(none) — otherwise a no-op disable bumps updated_at and prints the misleading 'reconciler will revoke' line")
+	}
+}
+
+// TestSSLDisable_AuditBeforeJSON source-pins that the disable real-path records
+// the audit BEFORE the --json return. A disable is a security-relevant mutation;
+// the --json return previously sat above cliAuditOK, so `ssl disable --json` wrote
+// no audit row (the human-output path audited fine). cmd/server has no injection
+// seam, so this asserts on source. The real-disable --json payload is unique (the
+// idempotent no-op branch payload carries ssl_mode/detail keys), and the
+// real-path audit is the LAST ssl.disable audit in the file.
+func TestSSLDisable_AuditBeforeJSON(t *testing.T) {
+	src, err := os.ReadFile("ssl_cmd.go")
+	if err != nil {
+		t.Fatalf("read ssl_cmd.go: %v", err)
+	}
+	s := string(src)
+	auditIdx := strings.LastIndex(s, `cliAuditOK(ctx, "ssl.disable"`)
+	jsonIdx := strings.Index(s, `printJSON(map[string]any{"domain": dom.Name, "ssl_enabled": false})`)
+	if auditIdx < 0 || jsonIdx < 0 {
+		t.Fatal("expected the disable real-path to contain both cliAuditOK(ssl.disable) and the {domain, ssl_enabled:false} JSON payload")
+	}
+	if auditIdx > jsonIdx {
+		t.Fatal("`ssl disable` must call cliAuditOK BEFORE the --json return — a disable is a security-relevant mutation and must be audited in JSON mode too (JAB-356)")
+	}
+}
