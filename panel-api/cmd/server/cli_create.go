@@ -488,11 +488,40 @@ func createDomainDirect(ctx context.Context, in cliDomainInput) (*models.Domain,
 		return nil, nil, fmt.Errorf("create domain row: %w", err)
 	}
 
+	var warnings []string
+
+	// JAB-170 phase 5 / JAB-279: auto-attach a covering shared certificate so a
+	// CLI-created web domain reaches HTTPS immediately (no ACME wait), matching
+	// the REST create path (domain_create_op.go's findCoveringSharedCert +
+	// SetSharedCertificate). This is a web-cert fast path: a web-off domain
+	// (DNS-only or mail-only) has no web cert, so it is skipped.
+	//
+	// Fail-OPEN by design — a lookup or attach failure is recorded as a soft
+	// warning, never a create failure. Auto-attach is an optimisation, not an
+	// invariant; the reconciler still issues or attaches a cert on its next
+	// tick. No Reconciler.Schedule here: the CLI holds no in-process reconciler
+	// handle (the JAB-355 cross-process limitation), so convergence relies on
+	// that tick — the same accepted deviation as the rest of the CLI create
+	// path (see the reconciler note below).
+	if webEnabled {
+		if certs, err := sharedCertRepoFromDB().ListServerWideAndOwned(ctx, ownerID); err != nil {
+			warnings = append(warnings, fmt.Sprintf("shared-certificate lookup skipped: %v", err))
+		} else if cert := domainops.CoveringSharedCert(certs, d.Name); cert != nil {
+			if err := domains.SetSharedCertificate(ctx, d.ID, &cert.ID, models.SSLModeShared); err != nil {
+				warnings = append(warnings, fmt.Sprintf(
+					"shared-certificate auto-attach failed (retry with `jabali ssl shared attach --domain %s --cert-id %s`): %v",
+					d.Name, cert.ID, err))
+			} else {
+				d.SSLMode = models.SSLModeShared
+				d.SharedCertificateID = &cert.ID
+			}
+		}
+	}
+
 	// Auto-enable email. Best-effort — if the agent's down or Stalwart
 	// refuses the domain name, we record the reason as a soft warning
 	// and the operator can retry via `jabali domain email-enable <name>`
 	// or the Email tab in the UI.
-	var warnings []string
 	if mailProvider != models.MailProviderJabali {
 		// External (m365/google) or no mail — nothing to register on Stalwart;
 		// the reconciler publishes the provider's own DNS (or none). A DNS-only
