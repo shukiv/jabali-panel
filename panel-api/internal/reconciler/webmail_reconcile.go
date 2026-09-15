@@ -95,13 +95,41 @@ func (r *Reconciler) reconcileWebmailVhosts(ctx context.Context) {
 		return
 	}
 
-	// GH #316: per-user webmail toggle AND-gates ALL of a user's domains. Build a
-	// set of user IDs whose webmail is OFF; absent = ON (column default 1).
+	// GH #316 + #1628: a domain's webmail is OFF if the per-user toggle is OFF
+	// (#316) OR the user's hosting package has webmail disabled (#1628). Build
+	// one set of user IDs that are OFF for either reason; a user absent from
+	// the set = ON (column default 1).
+	//
+	// No package (PackageID nil) or a dangling package id (package deleted) →
+	// NOT in the off-package set → webmail ON. Keeping webmail on for a
+	// package-less account is a deliberate #1628 exception to #282's
+	// privileged-feature DENY default, decided in the entitlement plan
+	// (webmail is a convenience surface, not a hardening clamp).
+	//
+	// Both List calls FAIL OPEN: on error we log and treat everyone as ON,
+	// exactly like the pre-#1628 per-user gate below. A transient DB blip must
+	// never tear down every tenant's webmail vhost.
 	webmailOffUsers := map[string]bool{}
+	offPackages := map[string]bool{}
+	if r.packages != nil {
+		if pkgs, _, pErr := r.packages.List(ctx, repository.ListOptions{Limit: 100000}); pErr == nil {
+			for i := range pkgs {
+				if !pkgs[i].WebmailEnabled {
+					offPackages[pkgs[i].ID] = true
+				}
+			}
+		} else {
+			r.log.Warn("webmail reconcile: list packages for entitlement gate", "err", pErr)
+		}
+	}
 	if r.users != nil {
 		if users, _, uErr := r.users.List(ctx, repository.ListOptions{Limit: 100000}); uErr == nil {
 			for i := range users {
 				if !users[i].WebmailEnabled {
+					webmailOffUsers[users[i].ID] = true
+					continue
+				}
+				if users[i].PackageID != nil && offPackages[*users[i].PackageID] {
 					webmailOffUsers[users[i].ID] = true
 				}
 			}
@@ -164,6 +192,20 @@ func (r *Reconciler) reconcileWebmailVhosts(ctx context.Context) {
 			r.log.Warn("webmail reconcile: service.enable jabali-webmail failed", "err", err)
 		}
 	}
+}
+
+// ReconcileWebmailVhosts runs the full webmail vhost convergence sweep once.
+// Exported so the package-update handler can kick an immediate pass when an
+// admin flips a package's webmail entitlement (GH #1628), instead of waiting
+// up to a reconcile tick. It is the WHOLE sweep, not a per-user reconcile:
+// the pass owns sweep-global side effects — the AppSec webmail-allowlist file
+// (webmail-hosts.list, assembled from the full domain set) and the
+// jabali-webmail daemon start/stop — that a per-user pass can't reproduce, so
+// a per-user kick would leave a newly-gated vhost half-applied (e.g. 403'd by
+// CRS 911100 until the next tick). Idempotent + content-hash gated on the
+// agent side, so the steady-state cost of an extra pass is cheap.
+func (r *Reconciler) ReconcileWebmailVhosts(ctx context.Context) {
+	r.reconcileWebmailVhosts(ctx)
 }
 
 // panelPrimaryWebmailSSLPaths returns the cert/key for the panel-primary

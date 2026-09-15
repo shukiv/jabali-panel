@@ -29,18 +29,23 @@ type PackageReconciler interface {
 	// php_exec_enabled change (GH #402) takes effect without waiting for the
 	// periodic sweep.
 	ReapplyPHPPoolForUser(ctx context.Context, userID string) error
+	// ReconcileWebmailVhosts re-runs the whole webmail vhost sweep so a
+	// package's webmail_enabled change (GH #1628) takes effect without waiting
+	// for the periodic sweep. Whole-sweep (not per-user) because the pass owns
+	// sweep-global side effects — the AppSec webmail allowlist and the
+	// jabali-webmail daemon lifecycle.
+	ReconcileWebmailVhosts(ctx context.Context)
 }
 
 // PackageHandlerConfig plugs the hosting-package CRUD handlers into the router.
 type PackageHandlerConfig struct {
 	Repo repository.PackageRepository
 	// Users + Reconciler enable the post-update fan-out: when an admin
-	// flips a package field that affects per-user state (today only
-	// ssh_enabled, but the same hook covers future per-user-effective
-	// fields), the handler enumerates users on this package and triggers
-	// their reconciler so changes apply without waiting up to a minute
-	// for the periodic sweep — and without forcing the operator to
-	// re-save every user. Both nil-safe.
+	// flips a package field that affects per-user or per-domain state
+	// (ssh_enabled, php_exec_enabled, webmail_enabled today), the handler
+	// triggers the matching reconciler so changes apply without waiting up
+	// to a minute for the periodic sweep — and without forcing the operator
+	// to re-save every user. Both nil-safe.
 	Users      repository.UserRepository
 	Reconciler PackageReconciler
 	Log        *slog.Logger
@@ -300,6 +305,7 @@ func (h *packageHandler) update(c *gin.Context) {
 	// successfully. Read BEFORE the field copies overwrite pkg.
 	prevSSHEnabled := pkg.SSHEnabled
 	prevPHPExec := pkg.PHPExecEnabled
+	prevWebmailEnabled := pkg.WebmailEnabled // GH #1628
 
 	if req.Name != nil {
 		pkg.Name = *req.Name
@@ -459,8 +465,32 @@ func (h *packageHandler) update(c *gin.Context) {
 	if req.PHPExecEnabled != nil && *req.PHPExecEnabled != prevPHPExec {
 		h.fanOutPHPPoolReapply(pkg.ID)
 	}
+	// GH #1628: re-run the webmail vhost sweep when webmail_enabled flipped, so
+	// the entitlement change applies without waiting for the periodic sweep.
+	if req.WebmailEnabled != nil && *req.WebmailEnabled != prevWebmailEnabled {
+		h.kickWebmailReconcile()
+	}
 
 	c.JSON(http.StatusOK, pkg)
+}
+
+// kickWebmailReconcile runs the whole webmail vhost sweep once in a detached
+// goroutine so a package's webmail_enabled flip (GH #1628) applies without
+// waiting for the periodic sweep. Unlike fanOutSSHReconcile this is NOT
+// per-user: the webmail pass owns sweep-global side effects (the AppSec
+// webmail-allowlist file and the jabali-webmail daemon lifecycle) that a
+// per-user reconcile can't reproduce. Errors are logged inside the sweep —
+// the admin already has their 200 and the periodic sweep is the safety net.
+func (h *packageHandler) kickWebmailReconcile() {
+	if h.cfg.Reconciler == nil {
+		return
+	}
+	rec := h.cfg.Reconciler
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		rec.ReconcileWebmailVhosts(ctx)
+	}()
 }
 
 // fanOutSSHReconcile reconciles every user on the given package in a

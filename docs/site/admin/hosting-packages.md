@@ -18,7 +18,7 @@
 | `php_ini_overrides` | object | Caps for `memory_limit`, `upload_max_filesize`, `max_execution_time`, `post_max_size`, `max_input_vars` |
 | `apps_allowed` | list | Subset of [Applications](./applications.md) the user may install |
 | `egress_policy` | enum | `default-restricted` (allow 443 + mail) or `unrestricted` |
-| `webmail_enabled` | bool | Whether tenants on this plan get webmail (the Bulwark UI). Defaults **ON**, including the auto-assigned `default` package. GH #1628 slice 1 only stores and edits this flag — the webmail reconciler does not read it yet (that rewire, which also replaces the per-user webmail toggle, lands in a follow-up). Set it per package via the editor or `--webmail=false` on the CLI. |
+| `webmail_enabled` | bool | Whether tenants on this plan get webmail (the Bulwark UI). Defaults **ON**, including the auto-assigned `default` package. As of GH #1628 slice 2 the webmail reconciler AND-gates each `mail.<domain>` vhost by this package flag alongside the existing per-user toggle (#316): a tenant whose package has webmail off gets no mail vhost. An account with **no** package keeps webmail on (a deliberate #282 exception — webmail is a convenience surface, not a hardening clamp). Flipping this flag in the panel kicks an immediate reconcile; a CLI `--webmail` edit converges on the next periodic sweep instead (the sweep is the safety net either way). The per-user toggle is removed in a later slice, which also backfills the per-user OFF intent down to the domain rows. Set it per package via the editor or `--webmail=false` on the CLI. |
 
 ## List page
 
