@@ -2369,11 +2369,25 @@ func isValidIPOrCIDR(s string) bool {
 	return err == nil
 }
 
-// redosNestedQuantRE flags the classic catastrophic-backtracking shape: a group
-// that itself contains a + or * quantifier and is ITSELF quantified with + or *
-// — e.g. (a+)+, (.*)*, (\\d+)*. nginx uses PCRE (backtracking), so these can
-// pin a worker on every request to the vhost. Go's RE2 is linear and won't
-// "detect" ReDoS by running, so we match the shape textually.
+// redosNestedQuantRE flags the classic catastrophic-backtracking shape at save
+// time: a group that itself contains a + or * quantifier and is ITSELF quantified
+// with + or * — e.g. (a+)+, (.*)*, (\d+)*.
+//
+// This is a best-effort fail-fast, NOT the primary defense. nginx runs the
+// rewrite under PCRE with a match limit (the PCRE/PCRE2 default), so a
+// pathological pattern does NOT pin a worker: catastrophic backtracking hits the
+// limit, pcre2_match returns MATCHLIMIT (error -47), the rewrite simply doesn't
+// match, and the request continues. Verified on nginx 1.24 — a crafted
+// non-matching request against `^/(a|a)+$` stays flat at ~0.16s regardless of
+// input length (a bounded CPU amplification), not an unbounded hang. The runtime
+// already caps the damage; this regex only rejects the obvious shape early.
+//
+// It deliberately does NOT try to catch every ReDoS shape — alternation overlap
+// like (a|ab)+, or adjacent quantifiers like a*a*. A heuristic broad enough to
+// catch those also flags disjoint, perfectly safe patterns such as (en|fr|de)+,
+// the same over-strict false-reject that GH #1652 had to undo. Given the PCRE
+// match-limit backstop that trade isn't worth it. Go's RE2 is linear and won't
+// surface ReDoS by running, so textual matching is all we have here.
 var redosNestedQuantRE = regexp.MustCompile(`\([^)]*[+*][^)]*\)\s*[+*]`)
 
 // validateRewritePattern guards the nginx `rewrite` pattern (JAB-72), which is
