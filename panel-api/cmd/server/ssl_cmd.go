@@ -399,10 +399,15 @@ func newSSLDisableCmd() *cobra.Command {
 			}
 			dom.SSLMode = models.SSLModeNone
 			dom.SSLEnabled = false
+			// Audit BEFORE the output split — a disable is a security-relevant
+			// mutation, so it must be recorded whether the operator asked for JSON
+			// or human output. (The --json return used to sit above this, so a
+			// `ssl disable --json` wrote no audit row; the enable real-path already
+			// audits before its split.)
+			cliAuditOK(ctx, "ssl.disable", "domain", dom.ID, &dom.UserID)
 			if jsonOutput {
 				return printJSON(map[string]any{"domain": dom.Name, "ssl_enabled": false})
 			}
-			cliAuditOK(ctx, "ssl.disable", "domain", dom.ID, &dom.UserID)
 			fmt.Printf("SSL disabled for %s — reconciler will revoke + clean up.\n", dom.Name)
 			return nil
 		},
