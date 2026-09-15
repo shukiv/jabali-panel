@@ -5282,6 +5282,17 @@ paths:
       parameters: [ { in: query, name: view, required: false, schema: { type: string, enum: [health] } } ]
       responses: { "200": { description: OK } }
 
+  /admin/server-status/cache-metrics:
+    get:
+      tags: [Server Status]
+      summary: Server status cache metrics
+      description: >-
+        Read-only per-slice Host Observation Snapshot cache counters (hit, miss,
+        refresh, stale_serve, and refresh latency count/total/last/max). JAB-373
+        AC #7; the in-process source the TTL tuning reads.
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
 
   # --- Services (auto) ---
 
