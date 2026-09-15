@@ -113,6 +113,12 @@ func (r *fakeDBUserRepo) Delete(_ context.Context, id string) error {
 	return nil
 }
 
+// RunAppDelete resolves the engine from the row before the login drop; these
+// orphan fixtures are MariaDB, so the transcript stays db_user.drop.
+func (r *fakeDBUserRepo) FindByID(_ context.Context, _ string) (*models.DatabaseUser, error) {
+	return &models.DatabaseUser{ID: "dbuser-1", Username: "alice_wp_abc123", Engine: "mariadb"}, nil
+}
+
 func (r *fakeDBUserRepo) deleteCount() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()

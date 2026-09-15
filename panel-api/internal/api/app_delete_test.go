@@ -65,6 +65,11 @@ type adDBUsers struct {
 	deleted bool
 }
 
+// RunAppDelete looks the row up to learn the engine for the login drop; the
+// default app fixture is a MariaDB user, so the transcript stays db_user.drop.
+func (r *adDBUsers) FindByID(context.Context, string) (*models.DatabaseUser, error) {
+	return &models.DatabaseUser{Username: "alice_wp", Engine: "mariadb"}, nil
+}
 func (r *adDBUsers) Delete(context.Context, string) error { r.deleted = true; return nil }
 
 type adGrants struct {
@@ -185,5 +190,48 @@ func TestRunAppDelete_PostgresAppDatabaseUsesPostgresDrop(t *testing.T) {
 	}
 	if !sawPGDrop {
 		t.Errorf("app teardown must send db.postgres.drop_db for a postgres database; calls=%v", ag.calls)
+	}
+}
+
+// pgAppDBUser is an app db-user whose engine is postgres, to prove the login
+// teardown dispatches on the row's engine rather than hardcoding db_user.drop.
+type pgAppDBUser struct {
+	repository.DatabaseUserRepository
+}
+
+func (r *pgAppDBUser) FindByID(context.Context, string) (*models.DatabaseUser, error) {
+	return &models.DatabaseUser{Username: "alice_role", Engine: "postgres"}, nil
+}
+func (r *pgAppDBUser) Delete(context.Context, string) error { return nil }
+
+// JAB-275 AC6 / GH #1013: application teardown must route the db-user/role drop
+// through the shared lifecycle op, which dispatches on the row's engine. A
+// Postgres app role must get db.postgres.drop_role — the hardcoded MariaDB
+// db_user.drop no-ops on a name that was never there and leaves the live role
+// orphaned. It must also come AFTER the database drop, because a role that
+// still owns its database cannot be dropped (DROP ROLE fails).
+func TestRunAppDelete_PostgresAppDBUserUsesDropRole(t *testing.T) {
+	ag, _, _, _, _, _, deps := newAppDeleteFakes()
+	deps.Databases = &pgAppDB{}
+	deps.DatabaseUsers = &pgAppDBUser{}
+	if err := RunAppDelete(appDeleteArgs(), deps); err != nil {
+		t.Fatalf("want nil error, got %v", err)
+	}
+	dropRoleIdx, dropDBIdx := -1, -1
+	for i, c := range ag.calls {
+		switch c {
+		case "db.postgres.drop_role":
+			dropRoleIdx = i
+		case "db.postgres.drop_db":
+			dropDBIdx = i
+		case "db_user.drop":
+			t.Errorf("app teardown sent MariaDB db_user.drop for a postgres role — orphans it (GH #1013); calls=%v", ag.calls)
+		}
+	}
+	if dropRoleIdx == -1 {
+		t.Errorf("app teardown must send db.postgres.drop_role for a postgres db-user; calls=%v", ag.calls)
+	}
+	if dropDBIdx == -1 || dropRoleIdx == -1 || dropDBIdx > dropRoleIdx {
+		t.Errorf("database must be dropped BEFORE the role (a role owning its db can't be dropped); calls=%v", ag.calls)
 	}
 }

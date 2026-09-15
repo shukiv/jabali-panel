@@ -8,11 +8,14 @@ package userops
 // its metadata rows CASCADE away — and the real Postgres database or role
 // survives on the host with nothing left to name it (GH #1013).
 //
-// The database drop is now the shared dbops.DropDatabaseHost lifecycle
-// operation (JAB-275 AC6), so it is pinned behaviorally — the cascade must
-// send the engine-correct command through that operation — plus a source pin
-// that no engine-dispatch literal was re-inlined here. The database-LOGIN
-// dispatch still lives in userops and is pinned directly.
+// The database drop and the database-LOGIN drop are now the shared
+// dbops.DropDatabaseHost / dbops.DropDatabaseUserHost lifecycle operations
+// (JAB-275 AC6), so both are pinned behaviorally — the cascade must send the
+// engine-correct command through those operations — plus a source pin that the
+// per-engine dispatch helpers were removed from userops and not re-inlined.
+// (The per-user shadow-admin drops keep their fixed-engine db_user.drop /
+// db.postgres.drop_role literals, so the pin checks the helpers' absence, not
+// those strings.)
 
 import (
 	"context"
@@ -24,35 +27,47 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
-func TestDBUserDropCmd_DispatchesOnEngine(t *testing.T) {
-	if got := dbUserDropCmd("postgres"); got != "db.postgres.drop_role" {
-		t.Errorf("postgres login drop = %q, want db.postgres.drop_role — db_user.drop reaches MariaDB and no-ops", got)
-	}
-	for _, engine := range []string{"mariadb", "", "mysql"} {
-		if got := dbUserDropCmd(engine); got != "db_user.drop" {
-			t.Errorf("engine %q login drop = %q, want db_user.drop", engine, got)
-		}
-	}
+// cascadeDBUsers is a one-shot DatabaseUserRepository that hands the cascade a
+// fixed set of login rows to reap; only ListByUserID is exercised.
+type cascadeDBUsers struct {
+	repository.DatabaseUserRepository
+	rows []models.DatabaseUser
 }
 
-// A Postgres drop_role reads "role"; sending the MariaDB "db_user_name"
-// shape leaves the role name empty, so the command is a no-op even when
-// the command NAME is right.
-func TestDBUserDropParams_KeyDiffersByEngine(t *testing.T) {
-	pg := dbUserDropParams("postgres", "alice_app")
-	if pg["role"] != "alice_app" {
-		t.Errorf("postgres params = %#v, want role=alice_app", pg)
-	}
-	if _, ok := pg["db_user_name"]; ok {
-		t.Error("postgres params must not carry db_user_name — drop_role ignores it")
-	}
+func (r *cascadeDBUsers) ListByUserID(context.Context, string, repository.ListOptions) ([]models.DatabaseUser, int64, error) {
+	return r.rows, int64(len(r.rows)), nil
+}
 
-	my := dbUserDropParams("mariadb", "alice_app")
-	if my["db_user_name"] != "alice_app" {
-		t.Errorf("mariadb params = %#v, want db_user_name=alice_app", my)
+// GH #1013, behavioral: deleting a tenant whose account still owns a Postgres
+// ROLE must send db.postgres.drop_role with the "role" key, not the MariaDB
+// db_user.drop{db_user_name} that would no-op and leave the live role on the
+// host. This is the login half of JAB-275 AC6 — it must hold through the shared
+// dbops.DropDatabaseUserHost, so flipping either the command or the payload key
+// in dbops turns this red. (The command name AND the key differ by engine.)
+func TestDeleteCascade_DropsUserLoginWithEngineCommand(t *testing.T) {
+	cases := []struct {
+		engine  string
+		wantCmd string
+		wantKey string
+	}{
+		{"postgres", "db.postgres.drop_role", "role"},
+		{"mariadb", "db_user.drop", "db_user_name"},
 	}
-	if _, ok := my["role"]; ok {
-		t.Error("mariadb params must not carry role")
+	for _, tc := range cases {
+		ag := &recCascadeAgent{}
+		users := &fakeCascadeUsers{}
+		dbus := &cascadeDBUsers{rows: []models.DatabaseUser{{Username: "alice_app", Engine: tc.engine}}}
+		target := &models.User{ID: "u1", Username: strptr("alice")}
+
+		if err := DeleteCascade(context.Background(), Deps{Users: users, Agent: ag}, DeleteDeps{DatabaseUsers: dbus}, target, "test"); err != nil {
+			t.Fatalf("engine %q: cascade: %v", tc.engine, err)
+		}
+		if !cascadeCalledWith(ag, tc.wantCmd, tc.wantKey, "alice_app") {
+			t.Fatalf("engine %q: want %s{%s:alice_app}; calls=%v", tc.engine, tc.wantCmd, tc.wantKey, ag.callsSnapshot())
+		}
+		if users.deleted != "u1" {
+			t.Errorf("engine %q: user row should be deleted after a clean cascade, got %q", tc.engine, users.deleted)
+		}
 	}
 }
 
@@ -98,9 +113,11 @@ func TestDeleteCascade_DropsUserDatabaseWithEngineCommand(t *testing.T) {
 	}
 }
 
-// Source pin: the database-drop dispatch must stay in dbops, never re-inlined
-// as a literal here. dbUserDropCmd's "db_user.drop" / "db.postgres.drop_role"
-// are different strings and do not match these quoted literals.
+// Source pin: both the database drop and the login drop dispatch must stay in
+// dbops, never re-inlined here. The database verbs must not appear as literals;
+// the login dispatch is pinned by the ABSENCE of the old per-engine helpers,
+// because the fixed-engine shadow-admin drops legitimately keep the
+// "db_user.drop" / "db.postgres.drop_role" strings.
 func TestCascade_NoInlinedDatabaseDropLiteral(t *testing.T) {
 	src, err := os.ReadFile("userops_lifecycle.go")
 	if err != nil {
@@ -109,6 +126,11 @@ func TestCascade_NoInlinedDatabaseDropLiteral(t *testing.T) {
 	for _, lit := range []string{`"db.drop"`, `"db.postgres.drop_db"`} {
 		if strings.Contains(string(src), lit) {
 			t.Errorf("userops_lifecycle.go inlines %s — route the drop through dbops.DropDatabaseHost instead (JAB-275 AC6)", lit)
+		}
+	}
+	for _, fn := range []string{`func dbUserDropCmd(`, `func dbUserDropParams(`} {
+		if strings.Contains(string(src), fn) {
+			t.Errorf("userops_lifecycle.go still defines %s — the login dispatch moved to dbops.DropDatabaseUserHost (JAB-275 AC6); route through it instead of re-adding the helper", fn)
 		}
 	}
 }

@@ -103,16 +103,14 @@ func RunAppDelete(args AppDeleteArgs, deps AppDeleteDeps) error {
 	}
 
 	// DB-side cleanup, fail-closed. Keep the panel rows whenever the host-side
-	// drop fails so a MariaDB database/user never survives as an invisible
-	// orphan with no row to name it, absent from `db list` and from backups.
+	// drop fails so a database/user never survives as an invisible orphan with
+	// no row to name it, absent from `db list` and from backups.
+	//
+	// Order matters: drop the DATABASE before the login. A Postgres role that
+	// still owns its database cannot be dropped (DROP ROLE fails), so the
+	// database must go first — the same order the account-delete cascade uses.
+	// For MariaDB the two drops are independent, so the reorder is harmless.
 	dropFailed := false
-	if args.DBUserID != "" && args.DBUserUsername != "" {
-		if _, err := deps.Agent.Call(ctx, "db_user.drop", map[string]any{"db_user_name": args.DBUserUsername}); err != nil {
-			dropFailed = true
-			slog.ErrorContext(ctx, "app delete: db_user.drop failed — keeping the panel rows so the account stays visible instead of becoming an orphan",
-				"err", err, "db_user", args.DBUserUsername)
-		}
-	}
 	if args.DatabaseID != "" {
 		if db, err := deps.Databases.FindByID(ctx, args.DatabaseID); err == nil && db != nil {
 			// Route the app's database drop through the one lifecycle operation
@@ -124,6 +122,23 @@ func RunAppDelete(args AppDeleteArgs, deps AppDeleteDeps) error {
 				slog.ErrorContext(ctx, "app delete: database drop failed — keeping the panel rows so the database stays visible instead of becoming an orphan",
 					"err", aerr, "db_id", args.DatabaseID)
 			}
+		}
+	}
+	if args.DBUserID != "" && args.DBUserUsername != "" {
+		// Route the login drop through the same lifecycle op so the engine
+		// dispatch is not hard-coded here (JAB-275 AC6). The db-user row names
+		// the engine; if it can't be loaded, fall back to the MariaDB default,
+		// which preserves the historical behaviour (this leg used to send a bare
+		// db_user.drop). Before this, a Postgres role was sent db_user.drop and
+		// left live on the host (GH #1013).
+		userEngine := ""
+		if du, err := deps.DatabaseUsers.FindByID(ctx, args.DBUserID); err == nil && du != nil {
+			userEngine = du.Engine
+		}
+		if aerr := dbops.DropDatabaseUserHost(ctx, deps.Agent, userEngine, args.DBUserUsername); aerr != nil {
+			dropFailed = true
+			slog.ErrorContext(ctx, "app delete: database user drop failed — keeping the panel rows so the account stays visible instead of becoming an orphan",
+				"err", aerr, "db_user", args.DBUserUsername, "engine", userEngine)
 		}
 	}
 

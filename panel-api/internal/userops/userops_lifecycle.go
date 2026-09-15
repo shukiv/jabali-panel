@@ -282,15 +282,13 @@ func DeleteCascade(ctx context.Context, d Deps, dd DeleteDeps, target *models.Us
 	// exist).
 	reapTenantFtpAccounts(ctx, d, dd, id, username)
 
-	// dbUserDropCmd / dbUserDropParams mirror the canonical dispatch pair in
-	// api/database_users.go (dbUserCmd / dbUserDropParams), which is
-	// unexported and therefore unreachable from here. Two things differ per
-	// engine and BOTH matter: the command name, and the payload key.
-	//
-	// The MariaDB defaults were being used for every row, so a Postgres role
-	// survived the cascade — and because `db_user.drop` reaches MariaDB,
-	// whose DROP USER IF EXISTS succeeds on a name that was never there, the
-	// failure never surfaced (GH #1013).
+	// The database and database_user drops both dispatch per engine through
+	// dbops.DropDatabaseHost / DropDatabaseUserHost — two things differ per
+	// engine and BOTH matter: the command name, and the payload key. Before
+	// AC6 the MariaDB defaults were used for every row, so a Postgres role
+	// survived the cascade — and because `db_user.drop` reaches MariaDB, whose
+	// DROP USER IF EXISTS succeeds on a name that was never there, the failure
+	// never surfaced (GH #1013).
 
 	// Cascade-drop MariaDB schemas + grants BEFORE the panel row goes
 	// (which CASCADEs the metadata rows). A failed drop is NOT best-effort:
@@ -352,10 +350,15 @@ func DeleteCascade(ctx context.Context, d Deps, dd DeleteDeps, target *models.Us
 			for i := range dbus {
 				duName := dbus[i].Username
 				// A Postgres ROLE is not dropped by db_user.drop, and the
-				// payload key differs too — see dbUserDropCmd/Params below.
-				cmd, params := dbUserDropCmd(dbus[i].Engine), dbUserDropParams(dbus[i].Engine, duName)
+				// payload key differs too. Route the login drop through the one
+				// lifecycle operation so the engine dispatch is not copied here
+				// (JAB-275 AC6); cmd is the same command DropDatabaseUserHost
+				// sends, kept only to name it in the failure log. The databases
+				// loop above already ran, so a Postgres role no longer owns its
+				// database and DROP ROLE can succeed.
+				cmd := dbops.DropDatabaseUserCommand(dbus[i].Engine)
 				agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-				_, dropErr := d.Agent.Call(agentCtx, cmd, params)
+				dropErr := dbops.DropDatabaseUserHost(agentCtx, d.Agent, dbus[i].Engine, duName)
 				cancel()
 				if dropErr != nil {
 					undropped = append(undropped, duName)
@@ -552,24 +555,4 @@ func logError(d Deps, msg string, args ...any) {
 	if d.Log != nil {
 		d.Log.Error(msg, args...)
 	}
-}
-
-// dbUserDropCmd returns the agent command that drops a database login for
-// the given engine. Mirrors api.dbUserCmd(engine, "drop").
-func dbUserDropCmd(engine string) string {
-	if engine == "postgres" {
-		return "db.postgres.drop_role"
-	}
-	return "db_user.drop"
-}
-
-// dbUserDropParams returns the payload shape that command expects. The key
-// differs by engine — a Postgres drop_role reads "role", not
-// "db_user_name", so sending the MariaDB shape is a silent no-op even when
-// the command name is right. Mirrors api.dbUserDropParams.
-func dbUserDropParams(engine, username string) map[string]any {
-	if engine == "postgres" {
-		return map[string]any{"role": username}
-	}
-	return map[string]any{"db_user_name": username}
 }
