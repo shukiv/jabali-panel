@@ -158,6 +158,26 @@ func (h *sslHandler) enableSSL(c *gin.Context) {
 
 	ctx := c.Request.Context()
 
+	// JAB-356: this legacy endpoint is "enable ACME" (GH #246). A domain already
+	// serving an operator-provided certificate — a `custom` uploaded pair or a
+	// `shared` cert — must NOT be switched to `le`: that clobbers the custom cert
+	// with a fresh ACME issuance (the LE-clobber class), and for `shared` the
+	// reconciler routes through the `le` issuance path, so marking a pending row
+	// would drive certbot into a separate, unused per-domain cert (needless LE
+	// issuance + rate-limit exposure). Treat enable as an idempotent no-op,
+	// mirroring the CLI door (cmd/server/ssl_cmd.go sslEnableIsOperatorLineage).
+	// Placed before the admin_email gate so a custom-cert domain with no
+	// admin_email configured is not wrongly rejected. Follow-up: hoist the
+	// custom||shared predicate into models next to SSLEnabledForMode so both
+	// doors share one definition.
+	if domain.SSLMode == models.SSLModeCustom || domain.SSLMode == models.SSLModeShared {
+		c.JSON(http.StatusOK, gin.H{
+			"ssl_mode": domain.SSLMode,
+			"detail":   "already serving an operator-provided certificate; ssl enable (ACME) is a no-op",
+		})
+		return
+	}
+
 	// Check server_settings.admin_email is configured
 	settings, err := h.cfg.ServerSettings.Get(ctx)
 	if err != nil {
@@ -255,6 +275,24 @@ func (h *sslHandler) disableSSL(c *gin.Context) {
 	}
 
 	ctx := c.Request.Context()
+
+	// JAB-356: refuse to strip TLS from a protected domain BEFORE the
+	// authoritative write, mirroring the set-mode door
+	// (domains.go ssl_none_panel_primary / ssl_none_with_email) and the CLI
+	// disable door (cmd/server/ssl_cmd.go sslDisableRefusal). This endpoint
+	// drives ssl_mode to none and the reconciler revokes for real, so dropping
+	// TLS on the panel hostname (locks the admin out of :8443) or a mail-enabled
+	// domain (breaks SMTP/IMAP TLS) is the #1507 lockout class. Returning here
+	// skips the UpdateSSLMode write, the cert-revoke mark, and the reconcile
+	// schedule — nothing is mutated.
+	if domain.IsPanelPrimary {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "ssl_none_panel_primary", "detail": "the panel hostname must keep TLS"})
+		return
+	}
+	if domain.EmailEnabled {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "ssl_none_with_email", "detail": "disable mail before removing TLS"})
+		return
+	}
 
 	// Set TLS mode = none (GH #246; this legacy endpoint is "disable TLS").
 	if err := h.cfg.Domains.UpdateSSLMode(ctx, domain.ID, models.SSLModeNone); err != nil {
