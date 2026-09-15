@@ -134,6 +134,62 @@ describe("expanded rail DOM — GH #1626 header-alignment CSS contract", () => {
   });
 });
 
+// GH #1626 (johnnyq third follow-up): with the headers aligned, the Tools/Account
+// submenu CHILD items still sat one antd inline level deeper than the
+// Hosting/Services group children (measured 52px vs 28px text-left in Chromium),
+// so the sub-nav rows looked over-indented. global.css pulls
+// `.tenant-sidebar.ant-menu-inline .ant-menu-sub.ant-menu-inline .ant-menu-item`
+// back to 24px padding to line both children columns up at 28px. happy-dom has no
+// layout so the px is verified in a real browser; this locks the DOM contract the
+// override needs: submenu children ARE `.ant-menu-sub.ant-menu-inline .ant-menu-item`,
+// group children are NOT (they live under .ant-menu-item-group-list), and the
+// collapsed rail is out of scope. forceSubMenuRender puts the submenu children in
+// the DOM without an open animation.
+describe("expanded rail DOM — GH #1626 submenu-child indent CSS contract", () => {
+  it("targets submenu children but never group children", () => {
+    const { container } = render(
+      <Menu mode="inline" forceSubMenuRender className="tenant-sidebar" items={build(false)} />,
+    );
+    // The rule's selector matches the Tools/Account child items.
+    const submenuChildren = container.querySelectorAll(
+      ".tenant-sidebar.ant-menu-inline .ant-menu-sub.ant-menu-inline .ant-menu-item",
+    );
+    expect(submenuChildren.length).toBeGreaterThan(0);
+    // Group children exist (Hosting/Services items) …
+    const groupChildren = container.querySelectorAll(
+      ".ant-menu-item-group-list .ant-menu-item",
+    );
+    expect(groupChildren.length).toBeGreaterThan(0);
+    // … but none of them live under a .ant-menu-sub, so the rule can't pull them.
+    expect(
+      container.querySelectorAll(
+        ".ant-menu-item-group-list .ant-menu-sub .ant-menu-item",
+      ).length,
+    ).toBe(0);
+  });
+
+  it("does not reach the collapsed icon rail", () => {
+    const { container } = render(
+      <Menu
+        mode="inline"
+        inlineCollapsed
+        forceSubMenuRender
+        className="tenant-sidebar"
+        items={build(true)}
+      />,
+    );
+    const root = container.querySelector(".tenant-sidebar");
+    expect(root?.classList.contains("ant-menu-inline")).toBe(false);
+    // The compound .ant-menu-inline scope must not match the collapsed rail, so
+    // the child-indent rule leaves the icon rail's flyouts alone.
+    expect(
+      container.querySelectorAll(
+        ".tenant-sidebar.ant-menu-inline .ant-menu-sub.ant-menu-inline .ant-menu-item",
+      ).length,
+    ).toBe(0);
+  });
+});
+
 describe("buildUserSidebarItems — collapsed icon rail", () => {
   const items = build(true);
 
