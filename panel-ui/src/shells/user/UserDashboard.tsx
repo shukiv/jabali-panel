@@ -15,9 +15,9 @@ import {
   Table,
   Typography,
 } from "antd";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router";
-import { useQueries } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 
 import {
   GlobalOutlined,
@@ -72,50 +72,34 @@ export function UserDashboard() {
     params: { pageSize: RECENT_LIMIT, sort: "created_at", order: "desc" },
   });
   const { data: caps } = useServerCapabilities();
-  // GH #1417: with the mail module off, hide the mailbox surfaces below AND
-  // skip their per-domain fetches — a domain that kept email_enabled from
-  // before the module was disabled would otherwise 403-fan-out in the
-  // background. Default-on while caps load, matching the sidebar's mail gate.
+  // GH #1417: with the mail module off, hide the mailbox surfaces below AND skip
+  // the fetch entirely. Default-on while caps load, matching the sidebar's mail
+  // gate; `enabled: mailEnabled` keeps a mail-off tenant from calling the endpoint.
   const mailEnabled = caps?.mail_enabled !== false;
-  const allDomainsForMail = useListQuery<DomainRow>({
-    resource: "domains",
-    params: { pageSize: 200, sort: "name", order: "asc" },
+  // JAB-370 Recent projection: one owner-scoped, server-paginated request for the
+  // five most-recent mailboxes across every domain the caller owns. Replaces the
+  // per-domain fan-out that capped domains at 200 — so >200 email domains silently
+  // truncated both the list and its total — and then merged/sorted/sliced in the
+  // browser. The tenant Workspace endpoint (GET /me/mailboxes) already serves this
+  // exact shape: system rows excluded in SQL, no secret columns, authoritative
+  // COUNT across all owned domains. Recent is that projection fixed to created_at
+  // DESC, page_size=5. The query key sits under the ["list","me/mailboxes"] family
+  // that invalidateMailboxLists busts, so a mailbox create/delete now refreshes the
+  // dashboard too — the old ["dashboard",…] key was outside that family and went
+  // stale until a full reload.
+  const recentMailboxesQuery = useQuery({
+    queryKey: ["list", "me/mailboxes", { recent: RECENT_LIMIT }],
+    queryFn: async () => {
+      const { data } = await apiClient.get<{ data: MailboxRow[]; total: number }>(
+        `/me/mailboxes?page=1&page_size=${RECENT_LIMIT}&sort=created_at&order=desc`,
+      );
+      return { items: data.data ?? [], total: data.total ?? 0 };
+    },
+    enabled: mailEnabled,
   });
-  const emailDomains = useMemo(
-    () => (mailEnabled ? allDomainsForMail.items.filter((d) => d.email_enabled) : []),
-    [allDomainsForMail.items, mailEnabled],
-  );
-  const mailboxResults = useQueries({
-    queries: emailDomains.map((d) => ({
-      queryKey: ["dashboard", "mailboxes", d.id],
-      queryFn: async () => {
-        const { data } = await apiClient.get<{ data: Mailbox[]; total: number }>(
-          `/domains/${d.id}/mailboxes?page=1&page_size=${RECENT_LIMIT}&sort=created_at&order=desc`,
-        );
-        return { items: data.data ?? [], total: data.total ?? 0, domain: d };
-      },
-    })),
-  });
-  const recentMailboxes: MailboxRow[] = useMemo(() => {
-    const out: MailboxRow[] = [];
-    for (const r of mailboxResults) {
-      if (!r.data) continue;
-      for (const mb of r.data.items) {
-        out.push({ ...mb, domain_name: r.data.domain.name });
-      }
-    }
-    return out
-      .sort((a, b) => (b.created_at ?? "").localeCompare(a.created_at ?? ""))
-      .slice(0, RECENT_LIMIT);
-  }, [mailboxResults]);
-  const mailboxesLoading = mailboxResults.some((r) => r.isLoading);
-  const mailboxTotal = useMemo(() => {
-    let n = 0;
-    for (const r of mailboxResults) {
-      if (r.data) n += r.data.total;
-    }
-    return n;
-  }, [mailboxResults]);
+  const recentMailboxes: MailboxRow[] = recentMailboxesQuery.data?.items ?? [];
+  const mailboxesLoading = recentMailboxesQuery.isLoading;
+  const mailboxTotal = recentMailboxesQuery.data?.total ?? 0;
 
   const recentApps = useListQuery<ApplicationRow>({
     resource: "applications",
@@ -173,7 +157,7 @@ export function UserDashboard() {
             size="small"
             rowKey="id"
             pagination={false}
-            loading={allDomainsForMail.isLoading || mailboxesLoading}
+            loading={mailboxesLoading}
             dataSource={recentMailboxes}
             locale={{ emptyText: "No mailboxes yet" }}
             columns={[
