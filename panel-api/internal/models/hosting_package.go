@@ -80,11 +80,17 @@ type HostingPackage struct {
 	// entitlement, defaulting ON — the account-level control that will replace
 	// the per-user users.webmail_enabled kill-switch. Slice 1 only STORES this;
 	// the webmail reconciler does not read it yet (that rewire + the backfill of
-	// existing per-user "off" accounts is slice 2). Default 1 like
-	// users.webmail_enabled: a plain bool can't be omitted, so every creator
-	// sets it explicitly (or defaults it to true), and the DB column DEFAULT 1
-	// (migration 000299) covers existing rows. Mail delivery is unaffected.
-	WebmailEnabled bool `gorm:"column:webmail_enabled;type:tinyint(1);not null;default:1" json:"webmail_enabled"`
+	// existing per-user "off" accounts is slice 2). Mail delivery is unaffected.
+	//
+	// NO `default:1` GORM tag on purpose: GORM's create callback substitutes a
+	// tag default for a zero-value field AND writes it back onto the struct, so
+	// an explicit false (admin unchecking Webmail on create / `--webmail=false`)
+	// would silently persist and echo back as true (feedback_gorm_default_tag_
+	// zero_value; TestPackage_Create_PersistsExplicitWebmailFalse). Instead every
+	// creator sets this field explicitly — see the mk() seed, PlanToHostingPackage,
+	// the API create handler (nil→true), and the CLI create flag (default true) —
+	// and the DB column carries DEFAULT 1 (migration 000299) for existing rows.
+	WebmailEnabled bool `gorm:"column:webmail_enabled;type:tinyint(1);not null" json:"webmail_enabled"`
 
 	// PHPExecEnabled (GH #402) opts pools on this package OUT of the #401
 	// disable_functions command-exec lockdown — emits no disable_functions

@@ -78,7 +78,9 @@ func newPackageListCmd() *cobra.Command {
 // packageCreateFlags collects every `package create` flag so the row build is a
 // pure function of the flag values — testable without a live DB. Bool flags are
 // plain booleans here (create has no "leave unchanged" state; absence = false,
-// same as the REST create request's zero value).
+// same as the REST create request's zero value) — except --webmail, which
+// defaults true to match the entitlement's ON-by-default (GH #1628), so the
+// admin opts OUT with --webmail=false.
 type packageCreateFlags struct {
 	name string
 

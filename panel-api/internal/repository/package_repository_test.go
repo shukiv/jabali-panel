@@ -120,6 +120,26 @@ func TestPackage_Update_PersistsWebmailEnabled(t *testing.T) {
 	updatePersistsColumn(t, "webmail_enabled")
 }
 
+// GH #1628: webmail defaults ON, so the column carries DEFAULT 1. If the model
+// field also kept a `default:1` GORM tag, GORM's create callback would
+// substitute that default for an explicit false (zero value) AND write it back
+// onto the struct — an admin unchecking Webmail on Create would silently get it
+// back ON, and the 201 body would echo the wrong value (feedback_gorm_default_
+// tag_zero_value). This pins that an explicit false survives the emitted INSERT.
+func TestPackage_Create_PersistsExplicitWebmailFalse(t *testing.T) {
+	db, _, raw := newMockPackageDB(t)
+	defer raw.Close()
+	p := &models.HostingPackage{ID: "01HXPKG0000000000000000000", Name: "p", WebmailEnabled: false}
+	// DryRun builds the INSERT without executing; SkipDefaultTransaction stops the
+	// create callback from opening a transaction the sqlmock has no expectation for
+	// (which would abort before the SQL is built).
+	stmt := db.Session(&gorm.Session{DryRun: true, SkipDefaultTransaction: true}).Create(p).Statement
+	require.Contains(t, stmt.SQL.String(), "webmail_enabled",
+		"webmail_enabled must appear in the INSERT (not omitted for the DB default)")
+	require.False(t, p.WebmailEnabled,
+		"GORM must not substitute a default:1 tag for an explicit false on create")
+}
+
 // GH #454: the tenant-backup entitlement columns were added to the model + API
 // update handler but missed from the Update Select allowlist, so admins saw a
 // success toast yet the backup limits never persisted (reverted on reload) —
