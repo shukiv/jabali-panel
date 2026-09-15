@@ -121,6 +121,28 @@ describe("CreateBackupDrawer — System compression (GH #1646 Slice 1)", () => {
   });
 });
 
+describe("CreateBackupDrawer — compression default (GH #1646 follow-up)", () => {
+  it("preselects Auto in the closed compression Select on open", async () => {
+    // Reported by lxsdevcode: the compression dropdown was empty by default
+    // even though "Auto (recommended)" is the intended default. The form's
+    // initialValues omitted `compression`, so the value was undefined and the
+    // closed Select showed nothing. A default of "" preselects the Auto option
+    // (whose value is the restic auto sentinel ""), which the closed Select
+    // renders as its selection-item label — for all three backup types, since
+    // the control lives outside the account-only block.
+    mockLists();
+    renderDrawer();
+
+    // The user list GET confirms the drawer has mounted and settled.
+    await waitFor(() => expect(mocked.get).toHaveBeenCalled());
+
+    // The label only exists as the SELECTED option; the options list is not
+    // mounted until the dropdown opens, so this text is present only when a
+    // value is preselected. RED before the fix, GREEN after.
+    expect(screen.getByText("Auto (recommended)")).toBeInTheDocument();
+  });
+});
+
 describe("CreateBackupDrawer — Full Server compression (GH #1646 Slice 2)", () => {
   it("shows the compression control for a Full Server backup", async () => {
     mockLists();

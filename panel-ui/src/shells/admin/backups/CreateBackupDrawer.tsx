@@ -150,7 +150,10 @@ export const CreateBackupDrawer = ({ open, onClose, onCreated }: CreateBackupDra
         form={form}
         layout="vertical"
         onFinish={handleSubmit}
-        initialValues={{ kind: "account_backup" }}
+        // compression "" = restic auto (the "Auto (recommended)" option), so the
+        // dropdown opens preselected instead of empty — GH #1646. The submit paths
+        // already coalesce to "" anyway; this only fixes the initial display.
+        initialValues={{ kind: "account_backup", compression: "" }}
       >
         <Form.Item label={t("createbackupdrawer.type")} name="kind" rules={[{ required: true }]}>
           <Radio.Group>
