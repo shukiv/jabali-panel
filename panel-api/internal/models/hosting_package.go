@@ -76,6 +76,16 @@ type HostingPackage struct {
 	SSHEnabled bool `gorm:"type:tinyint(1);not null;default:0" json:"ssh_enabled"`
 	CGIEnabled bool `gorm:"type:tinyint(1);not null;default:0" json:"cgi_enabled"`
 
+	// WebmailEnabled (GH #1628) makes webmail (the Bulwark UI) a per-package
+	// entitlement, defaulting ON — the account-level control that will replace
+	// the per-user users.webmail_enabled kill-switch. Slice 1 only STORES this;
+	// the webmail reconciler does not read it yet (that rewire + the backfill of
+	// existing per-user "off" accounts is slice 2). Default 1 like
+	// users.webmail_enabled: a plain bool can't be omitted, so every creator
+	// sets it explicitly (or defaults it to true), and the DB column DEFAULT 1
+	// (migration 000299) covers existing rows. Mail delivery is unaffected.
+	WebmailEnabled bool `gorm:"column:webmail_enabled;type:tinyint(1);not null;default:1" json:"webmail_enabled"`
+
 	// PHPExecEnabled (GH #402) opts pools on this package OUT of the #401
 	// disable_functions command-exec lockdown — emits no disable_functions
 	// line so exec/proc_open/shell_exec/... work for apps that need them.

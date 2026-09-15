@@ -112,6 +112,14 @@ func TestPackage_Update_PersistsPHPExecEnabled(t *testing.T) {
 	updatePersistsColumn(t, "php_exec_enabled")
 }
 
+// GH #1628: webmail_enabled is added to the model + package editor + API
+// update handler; without it in the Update Select allowlist the admin's
+// webmail toggle would report success and revert on reload — the exact
+// silent-drop class as #170/#402/#454/#1053/JAB-329 above.
+func TestPackage_Update_PersistsWebmailEnabled(t *testing.T) {
+	updatePersistsColumn(t, "webmail_enabled")
+}
+
 // GH #454: the tenant-backup entitlement columns were added to the model + API
 // update handler but missed from the Update Select allowlist, so admins saw a
 // success toast yet the backup limits never persisted (reverted on reload) —

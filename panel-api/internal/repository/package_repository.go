@@ -108,6 +108,9 @@ func (r *packageRepo) Update(ctx context.Context, p *models.HostingPackage) erro
 		"cpu_quota_percent", "memory_limit_mb", "io_read_mbps", "io_write_mbps",
 		"max_tasks", "max_docker_apps", "max_python_apps", "max_ftp_accounts", "docker_app_slugs",
 		"ssh_enabled", "cgi_enabled", "php_exec_enabled",
+		// GH #1628: webmail package entitlement — must be listed or the admin's
+		// webmail toggle saves-with-success and reverts on reload.
+		"webmail_enabled",
 		// GH #339: FPM performance-policy columns were missing from the Select
 		// allowlist, so GORM silently dropped them on update and the policy never
 		// persisted (the "allowlist silent drop" scar again).
@@ -161,8 +164,11 @@ func defaultPackages(now time.Time) []models.HostingPackage {
 			MaxDatabaseUsers: dbUsers,
 			MaxDockerApps:    dockerApps,
 			SSHEnabled:       ssh,
-			CreatedAt:        now,
-			UpdatedAt:        now,
+			// GH #1628: seeded default packages ship with webmail ON (a plain
+			// bool can't fall back to the column DEFAULT, so set it explicitly).
+			WebmailEnabled: true,
+			CreatedAt:      now,
+			UpdatedAt:      now,
 		}
 	}
 	return []models.HostingPackage{

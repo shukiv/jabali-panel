@@ -3995,6 +3995,7 @@ jabali package create [flags]
 - `--php-exec` — opt out of the PHP command-exec lockdown (exec/proc_open work)
 - `--scheduled-backups` — allow tenant scheduled backups
 - `--ssh` — enable SSH access
+- `--webmail` — enable webmail (Bulwark UI) for this package (default `true`)
 
 #### `jabali package delete`
 
@@ -4048,6 +4049,7 @@ jabali package edit <package-id> [flags]
 - `--php-exec` — PHP command-exec opt-out (true/false)
 - `--scheduled-backups` — tenant scheduled backups (true/false)
 - `--ssh` — SSH access (true/false)
+- `--webmail` — webmail Bulwark UI (true/false)
 
 #### `jabali package list`
 

@@ -45,4 +45,16 @@ describe("PackageEditor renders the full entitlement set (JAB-331 AC1)", () => {
     expect(screen.getByText("Create package")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Save" })).toBeTruthy();
   });
+
+  // GH #1628: webmail is a package entitlement that defaults ON. In create mode
+  // (no record) the form seeds from PACKAGE_DEFAULTS, so the Webmail switch must
+  // render already checked — the admin has to opt OUT, not opt in.
+  it("renders the Webmail toggle defaulting ON", () => {
+    renderEditor();
+    const row = screen.getByText("Webmail Enabled").closest("div");
+    expect(row).toBeTruthy();
+    const sw = row?.querySelector('[role="switch"]');
+    expect(sw, "Webmail switch renders").toBeTruthy();
+    expect(sw?.getAttribute("aria-checked")).toBe("true");
+  });
 });

@@ -18,6 +18,7 @@
 | `php_ini_overrides` | object | Caps for `memory_limit`, `upload_max_filesize`, `max_execution_time`, `post_max_size`, `max_input_vars` |
 | `apps_allowed` | list | Subset of [Applications](./applications.md) the user may install |
 | `egress_policy` | enum | `default-restricted` (allow 443 + mail) or `unrestricted` |
+| `webmail_enabled` | bool | Whether tenants on this plan get webmail (the Bulwark UI). Defaults **ON**, including the auto-assigned `default` package. GH #1628 slice 1 only stores and edits this flag — the webmail reconciler does not read it yet (that rewire, which also replaces the per-user webmail toggle, lands in a follow-up). Set it per package via the editor or `--webmail=false` on the CLI. |
 
 ## List page
 

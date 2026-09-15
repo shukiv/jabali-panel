@@ -93,12 +93,16 @@ type createPackageRequest struct {
 	SSHEnabled                    bool   `json:"ssh_enabled"`
 	CGIEnabled                    bool   `json:"cgi_enabled"`
 	PHPExecEnabled                bool   `json:"php_exec_enabled"`
-	FpmMaxChildrenCap             uint32 `json:"fpm_max_children_cap"`
-	FpmWorkerMemMb                uint32 `json:"fpm_worker_mem_mb"`
-	FpmUserCanEdit                bool   `json:"fpm_user_can_edit"`
-	FpmAdvancedMode               bool   `json:"fpm_advanced_mode"`
-	FpmVersionDefaults            string `json:"fpm_version_defaults"`
-	DockerAppSlugs                string `json:"docker_app_slugs"`
+	// WebmailEnabled (GH #1628) is a pointer, unlike the plain-bool toggles
+	// above, because webmail defaults ON: a nil (field omitted by the client)
+	// must mean "use the ON default", which a plain bool can't express.
+	WebmailEnabled     *bool  `json:"webmail_enabled"`
+	FpmMaxChildrenCap  uint32 `json:"fpm_max_children_cap"`
+	FpmWorkerMemMb     uint32 `json:"fpm_worker_mem_mb"`
+	FpmUserCanEdit     bool   `json:"fpm_user_can_edit"`
+	FpmAdvancedMode    bool   `json:"fpm_advanced_mode"`
+	FpmVersionDefaults string `json:"fpm_version_defaults"`
+	DockerAppSlugs     string `json:"docker_app_slugs"`
 	// M13: nspawn image pin (empty = use server default).
 	NspawnImageVersion string `json:"nspawn_image_version"`
 }
@@ -128,6 +132,7 @@ type updatePackageRequest struct {
 	SSHEnabled                    *bool   `json:"ssh_enabled"`
 	CGIEnabled                    *bool   `json:"cgi_enabled"`
 	PHPExecEnabled                *bool   `json:"php_exec_enabled"`
+	WebmailEnabled                *bool   `json:"webmail_enabled"` // GH #1628
 	FpmMaxChildrenCap             *uint32 `json:"fpm_max_children_cap"`
 	FpmWorkerMemMb                *uint32 `json:"fpm_worker_mem_mb"`
 	FpmUserCanEdit                *bool   `json:"fpm_user_can_edit"`
@@ -218,9 +223,12 @@ func (h *packageHandler) create(c *gin.Context) {
 		AllowedBackupDestinationKinds: req.AllowedBackupDestinationKinds,
 		BackupRetentionPolicy:         req.BackupRetentionPolicy,
 
-		SSHEnabled:         req.SSHEnabled,
-		CGIEnabled:         req.CGIEnabled,
-		PHPExecEnabled:     req.PHPExecEnabled,
+		SSHEnabled:     req.SSHEnabled,
+		CGIEnabled:     req.CGIEnabled,
+		PHPExecEnabled: req.PHPExecEnabled,
+		// GH #1628: webmail defaults ON. nil (omitted) or explicit true -> true;
+		// only an explicit false turns it off.
+		WebmailEnabled:     req.WebmailEnabled == nil || *req.WebmailEnabled,
 		FpmMaxChildrenCap:  req.FpmMaxChildrenCap,
 		FpmWorkerMemMb:     req.FpmWorkerMemMb,
 		FpmUserCanEdit:     req.FpmUserCanEdit,
@@ -373,6 +381,9 @@ func (h *packageHandler) update(c *gin.Context) {
 	}
 	if req.CGIEnabled != nil {
 		pkg.CGIEnabled = *req.CGIEnabled
+	}
+	if req.WebmailEnabled != nil { // GH #1628
+		pkg.WebmailEnabled = *req.WebmailEnabled
 	}
 	if req.PHPExecEnabled != nil {
 		pkg.PHPExecEnabled = *req.PHPExecEnabled

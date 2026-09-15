@@ -63,12 +63,12 @@ func newPackageListCmd() *cobra.Command {
 				return nil
 			}
 			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(w, "ID\tNAME\tDISK_MB\tBW_MB\tDOMAINS\tDBS\tSSH\tCGI")
+			fmt.Fprintln(w, "ID\tNAME\tDISK_MB\tBW_MB\tDOMAINS\tDBS\tSSH\tCGI\tWEBMAIL")
 			for _, p := range pkgs {
-				fmt.Fprintf(w, "%s\t%s\t%d\t%d\t%d\t%d\t%s\t%s\n",
+				fmt.Fprintf(w, "%s\t%s\t%d\t%d\t%d\t%d\t%s\t%s\t%s\n",
 					p.ID, p.Name, p.DiskQuotaMB, p.BandwidthQuotaMB,
 					p.MaxDomains, p.MaxDatabases,
-					boolYN(p.SSHEnabled), boolYN(p.CGIEnabled))
+					boolYN(p.SSHEnabled), boolYN(p.CGIEnabled), boolYN(p.WebmailEnabled))
 			}
 			return w.Flush()
 		},
@@ -93,6 +93,7 @@ type packageCreateFlags struct {
 	backupKinds, backupRetention   string
 
 	sshEnabled, cgiEnabled, phpExec bool
+	webmailEnabled                  bool // GH #1628; defaults ON
 
 	fpmMaxChildren, fpmWorkerMemMB uint32
 	fpmUserCanEdit, fpmAdvanced    bool
@@ -136,9 +137,11 @@ func buildPackageFromCreateFlags(f packageCreateFlags) (*models.HostingPackage, 
 		AllowedBackupDestinationKinds: f.backupKinds,
 		BackupRetentionPolicy:         f.backupRetention,
 
-		SSHEnabled:         f.sshEnabled,
-		CGIEnabled:         f.cgiEnabled,
-		PHPExecEnabled:     f.phpExec,
+		SSHEnabled:     f.sshEnabled,
+		CGIEnabled:     f.cgiEnabled,
+		PHPExecEnabled: f.phpExec,
+		WebmailEnabled: f.webmailEnabled, // GH #1628
+
 		FpmMaxChildrenCap:  f.fpmMaxChildren,
 		FpmWorkerMemMb:     f.fpmWorkerMemMB,
 		FpmUserCanEdit:     f.fpmUserCanEdit,
@@ -256,6 +259,10 @@ func registerPackageCreateFlags(cmd *cobra.Command, f *packageCreateFlags) {
 	fl.BoolVar(&f.sshEnabled, "ssh", false, "enable SSH access")
 	fl.BoolVar(&f.cgiEnabled, "cgi", false, "enable CGI")
 	fl.BoolVar(&f.phpExec, "php-exec", false, "opt out of the PHP command-exec lockdown (exec/proc_open work)")
+	// GH #1628: webmail defaults ON, so this create flag defaults true (pass
+	// --webmail=false to withhold webmail from the plan). Mirrors the REST
+	// create handler's nil->true default.
+	fl.BoolVar(&f.webmailEnabled, "webmail", true, "enable webmail (Bulwark UI) for this package")
 	fl.Uint32Var(&f.fpmMaxChildren, "fpm-max-children", 0, "FPM pm.max_children cap (0=default 20)")
 	fl.Uint32Var(&f.fpmWorkerMemMB, "fpm-worker-mem-mb", 0, "FPM advisory per-worker memory budget in MB (0=default 64)")
 	fl.BoolVar(&f.fpmUserCanEdit, "fpm-user-can-edit", false, "let tenants pick an FPM performance mode")
@@ -286,6 +293,7 @@ type packageEditFlags struct {
 
 	// tri-state toggles.
 	sshEnabled, cgiEnabled, phpExec               string
+	webmailEnabled                                string // GH #1628
 	scheduledBackups, fpmUserCanEdit, fpmAdvanced string
 }
 
@@ -358,6 +366,7 @@ func applyPackageEditFlags(changed func(string) bool, p *models.HostingPackage, 
 	tri("ssh", &p.SSHEnabled, f.sshEnabled)
 	tri("cgi", &p.CGIEnabled, f.cgiEnabled)
 	tri("php-exec", &p.PHPExecEnabled, f.phpExec)
+	tri("webmail", &p.WebmailEnabled, f.webmailEnabled) // GH #1628
 	tri("scheduled-backups", &p.ScheduledBackupsEnabled, f.scheduledBackups)
 	tri("fpm-user-can-edit", &p.FpmUserCanEdit, f.fpmUserCanEdit)
 	tri("fpm-advanced", &p.FpmAdvancedMode, f.fpmAdvanced)
@@ -513,6 +522,7 @@ func registerPackageEditFlags(cmd *cobra.Command, f *packageEditFlags) {
 	fl.StringVar(&f.sshEnabled, "ssh", "", "SSH access (true/false)")
 	fl.StringVar(&f.cgiEnabled, "cgi", "", "CGI access (true/false)")
 	fl.StringVar(&f.phpExec, "php-exec", "", "PHP command-exec opt-out (true/false)")
+	fl.StringVar(&f.webmailEnabled, "webmail", "", "webmail Bulwark UI (true/false)") // GH #1628
 	fl.StringVar(&f.scheduledBackups, "scheduled-backups", "", "tenant scheduled backups (true/false)")
 	fl.StringVar(&f.fpmUserCanEdit, "fpm-user-can-edit", "", "tenant FPM performance mode (true/false)")
 	fl.StringVar(&f.fpmAdvanced, "fpm-advanced", "", "tenant advanced FPM knobs (true/false, true implies fpm-user-can-edit)")
