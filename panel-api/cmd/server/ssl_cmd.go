@@ -79,6 +79,30 @@ func sslEnableAlreadyIssued(mode string, cert *models.SSLCertificate, now time.T
 	return cert.ExpiresAt.Sub(now).Hours()/24 > 30
 }
 
+// sslDisableAlreadyOff reports whether `ssl disable` is a no-op because TLS is
+// already authoritatively off for the domain. AC4 (JAB-356): a mutation that
+// changes nothing should not re-write the row. Both conjuncts are load-bearing,
+// each guarding a distinct stale state:
+//
+//   - ssl_mode == none is the TLS-direction guard. A domain disabled by the
+//     PRE-#1740 CLI (which flipped ssl_enabled via the general Update and left
+//     ssl_mode stale, e.g. `le`) reads (le, ssl_enabled=false) — but the
+//     reconciler follows ssl_mode (GH #246), so TLS is actually STILL ON. That
+//     domain must proceed to UpdateSSLMode(none), never no-op. Keying on
+//     !ssl_enabled alone would wrongly no-op it and leave TLS serving.
+//   - !ssl_enabled is the shadow-consistency guard. The general Update column
+//     allowlist can write ssl_enabled without ssl_mode, so a drifted
+//     (none, ssl_enabled=true) row is representable; disabling it must proceed
+//     so UpdateSSLMode repairs the shadow to false. (Defensive on current main —
+//     no live writer produces this drift today — but free and correct.)
+//
+// An empty mode is deliberately NOT treated as off: the reconciler treats "" as
+// the ACME (le) default (see reconcileSSLForDomain), so an empty-mode domain is
+// being served/issued, not disabled.
+func sslDisableAlreadyOff(dom *models.Domain) bool {
+	return dom.SSLMode == models.SSLModeNone && !dom.SSLEnabled
+}
+
 func newSSLCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "ssl",
@@ -328,6 +352,27 @@ func newSSLDisableCmd() *cobra.Command {
 					return fmt.Errorf("domain %q not found", args[0])
 				}
 				return fmt.Errorf("lookup domain: %w", err)
+			}
+			// AC4 (JAB-356): `ssl disable` on a domain whose TLS is already
+			// authoritatively off is a no-op — do NOT re-write the row (a same-mode
+			// UpdateSSLMode only bumps updated_at) and do NOT print the misleading
+			// "reconciler will revoke" line when there is nothing to revoke. Mirrors
+			// the enable-side idempotency guard (sslEnableAlreadyIssued). Placed
+			// before sslDisableRefusal so an already-off protected domain reports
+			// "already disabled" rather than the (here untrue) "must keep TLS" — the
+			// security ordering still holds because a no-op mutates nothing.
+			if sslDisableAlreadyOff(dom) {
+				cliAuditOK(ctx, "ssl.disable", "domain", dom.ID, &dom.UserID)
+				if jsonOutput {
+					return printJSON(map[string]any{
+						"domain":      dom.Name,
+						"ssl_mode":    models.SSLModeNone,
+						"ssl_enabled": false,
+						"detail":      "TLS is already disabled; ssl disable is a no-op",
+					})
+				}
+				fmt.Printf("%s already has TLS disabled — `ssl disable` is a no-op.\n", dom.Name)
+				return nil
 			}
 			// JAB-356: enforce the protected-domain TLS invariants BEFORE the
 			// authoritative write (mirroring the set-mode HTTP door,
