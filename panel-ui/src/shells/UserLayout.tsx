@@ -134,6 +134,10 @@ export function UserLayout() {
       <Menu
         mode="inline"
         theme={mode}
+        // Scopes the GH #1626 header-alignment override in global.css to this
+        // tenant sidebar only (collapsible Tools/Account submenu titles pulled
+        // left to line up with the Hosting/Services group headers).
+        className="tenant-sidebar"
         selectedKeys={selected ? [selected] : []}
         // Collapsed inline menus manage their own popup open-state; only
         // control openKeys in the expanded rail. rc-menu also fires
