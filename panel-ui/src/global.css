@@ -341,3 +341,22 @@ body.imp-active .ant-drawer .ant-drawer-content {
   margin-top: var(--imp-banner-h, 40px);
   height: calc(100% - var(--imp-banner-h, 40px));
 }
+
+/* GH #1626 — tenant sidebar section-header alignment.
+ * The always-open sections (Hosting/Services) render as antd menu item
+ * groups, whose title (.ant-menu-item-group-title) text sits at 16px from
+ * the rail edge. The collapsible sections (Tools/Account) render as antd
+ * SubMenus one inline-indent level deeper: antd writes an inline
+ * `padding-left: 24px` on the submenu title and the row keeps a 4px item
+ * margin, so its text lands at 28px — 12px right of the group headers, which
+ * made Tools/Account read as indented under Services (reporter: johnnyq).
+ * Pull the submenu title's inline start padding to 12px so 4px margin + 12px
+ * = 16px, lining the two header rows up. `!important` because antd sets the
+ * padding as an inline style (a plain rule would lose the cascade). Scoped to
+ * the expanded inline rail: the collapsed icon rail is .ant-menu-vertical
+ * .ant-menu-inline-collapsed (no .ant-menu-inline), and hover popups portal
+ * outside .tenant-sidebar, so both stay untouched. Submenu children keep
+ * their own indent — only the header row moves. */
+.tenant-sidebar.ant-menu-inline .ant-menu-submenu-title {
+  padding-inline-start: 12px !important;
+}

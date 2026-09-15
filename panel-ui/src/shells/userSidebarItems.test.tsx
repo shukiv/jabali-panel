@@ -1,4 +1,6 @@
 import { isValidElement } from "react";
+import { Menu } from "antd";
+import { render } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import { userNav, type NavItem } from "../nav";
@@ -83,6 +85,33 @@ describe("buildUserSidebarItems — expanded rail", () => {
     const tools = find(activeItems, "tools");
     const el = tools.label as React.ReactElement<{ style?: React.CSSProperties }>;
     expect(el.props.style).toBeUndefined();
+  });
+});
+
+// GH #1626 (johnnyq second follow-up): the Tools/Account submenu HEADERS still
+// sat ~12px right of the Hosting/Services group headers, so they read as
+// indented. UserLayout tags the inline Menu `className="tenant-sidebar"` and
+// global.css pulls `.tenant-sidebar.ant-menu-inline .ant-menu-submenu-title`
+// left. happy-dom has no layout so the px alignment is verified in a real
+// browser, not here; this locks the DOM contract that override relies on: the
+// scope class lands on the inline-menu root, and Tools/Account really do render
+// as `.ant-menu-submenu-title` targets. If either drifts (class dropped, groups
+// re-typed), the CSS silently stops applying and this fails.
+describe("expanded rail DOM — GH #1626 header-alignment CSS contract", () => {
+  it("scope class lands on the inline menu root and targets the submenu titles", () => {
+    const { container } = render(
+      <Menu mode="inline" className="tenant-sidebar" items={build(false)} />,
+    );
+    const root = container.querySelector(".tenant-sidebar");
+    expect(root).toBeTruthy();
+    // Compound `.tenant-sidebar.ant-menu-inline` in global.css must match the
+    // same element (excludes the collapsed .ant-menu-vertical rail).
+    expect(root?.classList.contains("ant-menu-inline")).toBe(true);
+    // Tools/Account render as submenu titles — the elements the rule shifts.
+    const submenuTitles = container.querySelectorAll(
+      ".tenant-sidebar.ant-menu-inline .ant-menu-submenu-title",
+    );
+    expect(submenuTitles.length).toBe(2);
   });
 });
 
