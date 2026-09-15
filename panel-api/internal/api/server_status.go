@@ -52,6 +52,9 @@ func RegisterAdminServerStatusRoutes(g *gin.RouterGroup, cfg AdminServerStatusHa
 	grp := g.Group("/admin/server-status")
 	grp.Use(middleware.RequireAdmin())
 	grp.GET("", h.get)
+	// JAB-373 AC #7: read-only per-slice cache counters. Same admin-gated
+	// group, so it inherits RequireAdmin — no separate guard to keep in sync.
+	grp.GET("/cache-metrics", h.cacheMetrics)
 }
 
 type adminServerStatusHandler struct {
@@ -72,18 +75,32 @@ const (
 // objects are pointers so a per-call failure can serialize as null
 // rather than zero-valued (prevents the UI from rendering ghosts).
 type ServerStatusEnvelope struct {
-	AsOf       string              `json:"as_of"`
-	Host       *json.RawMessage    `json:"host,omitempty"`
-	CPU        *json.RawMessage    `json:"cpu,omitempty"`
-	Network    *json.RawMessage    `json:"network,omitempty"`
-	Services   *json.RawMessage    `json:"services,omitempty"`
-	Processes  *json.RawMessage    `json:"processes,omitempty"`
-	UserSlices *json.RawMessage    `json:"user_slices,omitempty"`
-	Software   *json.RawMessage    `json:"software,omitempty"`
-	Nginx      *json.RawMessage    `json:"nginx,omitempty"`
-	Queues     *QueuesSlice        `json:"queues,omitempty"`
-	Errors     map[string]string   `json:"errors,omitempty"`
-	Alerts     []ServerStatusAlert `json:"alerts"`
+	AsOf       string               `json:"as_of"`
+	Host       *json.RawMessage     `json:"host,omitempty"`
+	CPU        *json.RawMessage     `json:"cpu,omitempty"`
+	Network    *json.RawMessage     `json:"network,omitempty"`
+	Services   *json.RawMessage     `json:"services,omitempty"`
+	Processes  *json.RawMessage     `json:"processes,omitempty"`
+	UserSlices *json.RawMessage     `json:"user_slices,omitempty"`
+	Software   *json.RawMessage     `json:"software,omitempty"`
+	Nginx      *json.RawMessage     `json:"nginx,omitempty"`
+	Queues     *QueuesSlice         `json:"queues,omitempty"`
+	Errors     map[string]string    `json:"errors,omitempty"`
+	Meta       map[string]SliceMeta `json:"meta,omitempty"`
+	Alerts     []ServerStatusAlert  `json:"alerts"`
+}
+
+// SliceMeta is the per-slice freshness envelope (JAB-373 AC #5). ObservedAt is
+// when the served body was fetched from the agent (RFC3339). Stale is true when
+// the body is a last-good value served because the most recent refresh failed;
+// Error then carries that refresh's error. It is populated for every served
+// slice — a fresh slice reports its observed_at with stale=false, which is the
+// signal TTL tuning (migration step 5) reads. Stale bodies are display-only:
+// they never feed alert synthesis.
+type SliceMeta struct {
+	ObservedAt string `json:"observed_at"`
+	Stale      bool   `json:"stale,omitempty"`
+	Error      string `json:"error,omitempty"`
 }
 
 // QueuesSlice is the M31.1 dispatcher-queue snapshot. All counters are
@@ -131,9 +148,16 @@ func (h *adminServerStatusHandler) get(c *gin.Context) {
 	g.SetLimit(maxInFlight)
 
 	var (
-		mu      sync.Mutex
+		mu sync.Mutex
+		// results holds every displayable slice body — fresh AND stale
+		// last-good (AC #5) — and feeds the envelope's slice fields. fresh
+		// holds ONLY freshly-fetched bodies and is the map alert synthesis
+		// reads, so a stale last-good value is shown but never drives an
+		// alert. meta carries each served slice's observed_at / stale / error.
 		results = map[string]json.RawMessage{}
+		fresh   = map[string]json.RawMessage{}
 		errMap  = map[string]string{}
+		meta    = map[string]SliceMeta{}
 	)
 
 	// JAB-373: each slice goes through the process-wide per-slice TTL +
@@ -144,22 +168,42 @@ func (h *adminServerStatusHandler) get(c *gin.Context) {
 	// are blocked on — the per-call deadline still bounds it.
 	call := func(name, cmd string, params any, ttl time.Duration) {
 		g.Go(func() error {
-			raw, _, err := h.cache.get(name, ttl, func() (json.RawMessage, error) {
+			res := h.cache.get(name, ttl, func() (json.RawMessage, error) {
 				subCtx, cancel := detachedTimeout(subCallTimeout)
 				defer cancel()
 				return h.cfg.Agent.Call(subCtx, cmd, params)
 			})
 			mu.Lock()
 			defer mu.Unlock()
-			if err != nil {
-				if errors.Is(err, context.DeadlineExceeded) {
+			// Hard failure — the refresh failed AND there was no last-good
+			// value inside the stale window. Keep the pre-JAB-373 best-effort
+			// contract exactly: slice absent, error recorded, no meta.
+			if res.err != nil && !res.stale {
+				if errors.Is(res.err, context.DeadlineExceeded) {
 					errMap[name] = "timeout"
 				} else {
-					errMap[name] = err.Error()
+					errMap[name] = res.err.Error()
 				}
 				return nil
 			}
-			results[name] = raw
+			// Fresh or stale last-good: the body is displayable. A stale body
+			// ALSO keeps its error entry, so `errors` and alert synthesis
+			// behave exactly as before (the failed refresh still surfaces).
+			// Only fresh bodies go into `fresh`, which alert synthesis reads —
+			// stale data is display-only and must never invent or mask an alert.
+			m := SliceMeta{ObservedAt: res.observedAt.UTC().Format(time.RFC3339), Stale: res.stale}
+			if res.stale {
+				if errors.Is(res.err, context.DeadlineExceeded) {
+					errMap[name] = "timeout"
+				} else {
+					errMap[name] = res.err.Error()
+				}
+				m.Error = errMap[name]
+			} else {
+				fresh[name] = res.raw
+			}
+			results[name] = res.raw
+			meta[name] = m
 			return nil
 		})
 	}
@@ -240,6 +284,9 @@ func (h *adminServerStatusHandler) get(c *gin.Context) {
 	if len(errMap) > 0 {
 		env.Errors = errMap
 	}
+	if len(meta) > 0 {
+		env.Meta = meta
+	}
 	if v, ok := results["host"]; ok {
 		raw := v
 		env.Host = &raw
@@ -276,7 +323,12 @@ func (h *adminServerStatusHandler) get(c *gin.Context) {
 		env.Queues = queues
 	}
 
-	env.Alerts = synthesizeAlerts(results, errMap)
+	// AC #5 invariant: alert synthesis reads `fresh` (freshly-fetched slices),
+	// never `results` (which now also carries stale last-good bodies). Stale
+	// data is display-only — feeding it here would let a 3-minute-old snapshot
+	// raise a phantom outage or paper over a real one. The failed refresh still
+	// reaches alerts through errMap, exactly as before.
+	env.Alerts = synthesizeAlerts(fresh, errMap)
 	if queues != nil {
 		// Queue-depth alerts: a permanently-growing main stream means the
 		// dispatcher is stuck; a DLQ above zero means at least one
@@ -314,6 +366,17 @@ func (h *adminServerStatusHandler) get(c *gin.Context) {
 		}
 	}
 	c.JSON(http.StatusOK, env)
+}
+
+// cacheMetrics serves GET /admin/server-status/cache-metrics (JAB-373 AC #7):
+// a read-only snapshot of the per-slice Host Observation Snapshot cache
+// counters — hit, miss, refresh, stale_serve, and refresh latency
+// (count/total/last/max ms) per slice. This is the in-process source of truth
+// for cache behaviour and what migration step 5 tunes the TTLs from. A
+// Prometheus /metrics export is a separate maintainer decision and is not
+// built here.
+func (h *adminServerStatusHandler) cacheMetrics(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"slices": h.cache.snapshot()})
 }
 
 // synthesizeAlerts turns raw sub-results into operator-visible alerts.

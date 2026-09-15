@@ -68,3 +68,55 @@ func TestServerStatus_SecondPollWithinTTL_NoExtraAgentCalls(t *testing.T) {
 		assert.Len(t, svc.Services, 1)
 	}
 }
+
+// JAB-373 AC #7: the cache-metrics endpoint exposes per-slice counters. After a
+// poll fetches each slice once, host reports one refresh and at least one miss.
+func TestServerStatus_CacheMetricsEndpoint(t *testing.T) {
+	mock := agent.NewMockClient().
+		On("system.info", map[string]any{
+			"hostname": "t.local", "os": "Debian 13", "kernel": "6.12",
+			"cpu_count": 4, "load_avg": []float64{0.1, 0.1, 0.1},
+			"partitions": []map[string]any{}, "mem_total_kb": 1000, "mem_used_kb": 100,
+		}).
+		On("system.cpu_usage", map[string]any{"usage_percent": 10.0, "warming_up": false}).
+		On("system.network", map[string]any{"interfaces": []any{}}).
+		On("system.service_details", map[string]any{"services": []map[string]any{}}).
+		On("nginx.status", map[string]any{"active": true})
+
+	r := newServerStatusRouter(mock, true)
+
+	// A poll populates the per-slice counters.
+	pr := httptest.NewRequest(http.MethodGet, "/api/v1/admin/server-status", nil)
+	prec := httptest.NewRecorder()
+	r.ServeHTTP(prec, pr)
+	assert.Equal(t, http.StatusOK, prec.Code)
+
+	// The metrics endpoint returns them.
+	mr := httptest.NewRequest(http.MethodGet, "/api/v1/admin/server-status/cache-metrics", nil)
+	mrec := httptest.NewRecorder()
+	r.ServeHTTP(mrec, mr)
+	assert.Equal(t, http.StatusOK, mrec.Code)
+
+	var body struct {
+		Slices map[string]struct {
+			Miss    uint64 `json:"miss"`
+			Refresh uint64 `json:"refresh"`
+		} `json:"slices"`
+	}
+	assert.NoError(t, json.Unmarshal(mrec.Body.Bytes(), &body))
+	host, ok := body.Slices["host"]
+	if assert.True(t, ok, "host slice must appear in the cache metrics") {
+		assert.Equal(t, uint64(1), host.Refresh, "one poll fetches host once")
+		assert.GreaterOrEqual(t, host.Miss, uint64(1))
+	}
+}
+
+// The cache-metrics endpoint inherits the parent group's RequireAdmin: a
+// non-admin is forbidden, same as the base server-status route.
+func TestServerStatus_CacheMetrics_RBAC(t *testing.T) {
+	r := newServerStatusRouter(agent.NewMockClient(), false)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/server-status/cache-metrics", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusForbidden, rec.Code)
+}
