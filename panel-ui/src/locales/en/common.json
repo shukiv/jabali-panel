@@ -768,6 +768,7 @@
   "packagecreate": {
     "allow_cgi_scripts": "Allow CGI scripts",
     "allow_ssh_access": "Allow SSH access",
+    "allow_webmail": "Include webmail (Bulwark UI) for tenants on this plan",
     "allow_tenants_on_this_plan_to_enable_a_sched": "Allow tenants on this plan to enable a scheduled backup. The schedule time is admin-controlled.",
     "allowed_backup_destinations": "Allowed Backup Destinations",
     "also_expose_the_individual_pm_knobs_clamped": "Also expose the individual pm.* knobs (clamped to the cap). Implies the toggle above.",
@@ -804,6 +805,7 @@
   "packageedit": {
     "allow_cgi_scripts": "Allow CGI scripts",
     "allow_ssh_access": "Allow SSH access",
+    "allow_webmail": "Include webmail (Bulwark UI) for tenants on this plan",
     "allow_tenants_on_this_plan_to_enable_a_sched": "Allow tenants on this plan to enable a scheduled backup. The schedule time is admin-controlled.",
     "allowed_backup_destinations": "Allowed Backup Destinations",
     "also_expose_the_individual_pm_knobs_clamped": "Also expose the individual pm.* knobs (clamped to the cap). Implies the toggle above.",

@@ -42,6 +42,7 @@ var packageFieldFlag = map[string]string{
 	"ssh_enabled":                      "ssh",
 	"cgi_enabled":                      "cgi",
 	"php_exec_enabled":                 "php-exec",
+	"webmail_enabled":                  "webmail", // GH #1628
 	"fpm_max_children_cap":             "fpm-max-children",
 	"fpm_worker_mem_mb":                "fpm-worker-mem-mb",
 	"fpm_user_can_edit":                "fpm-user-can-edit",
@@ -91,6 +92,21 @@ func TestPackageCLI_EntitlementFlagParity(t *testing.T) {
 			t.Errorf("edit: field %q → --%s not registered", tag, flag)
 		}
 	}
+}
+
+// GH #1628: webmail defaults ON, so `package create` must default --webmail to
+// true — matching the REST create handler, which treats an omitted
+// webmail_enabled as ON. A false default here would silently withhold webmail
+// from every CLI-created package.
+func TestPackageCLI_WebmailCreateFlagDefaultsOn(t *testing.T) {
+	create := newPackageCreateCmd()
+	fl := create.Flags().Lookup("webmail")
+	require.NotNil(t, fl, "create --webmail flag must be registered")
+	require.Equal(t, "true", fl.DefValue, "create --webmail must default ON (GH #1628)")
+
+	p, err := buildPackageFromCreateFlags(packageCreateFlags{name: "x", webmailEnabled: true})
+	require.NoError(t, err)
+	require.True(t, p.WebmailEnabled, "webmailEnabled flows onto the built row")
 }
 
 // --- create builder transforms (mirror internal/api/packages.go create) ---

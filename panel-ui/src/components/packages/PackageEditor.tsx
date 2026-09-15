@@ -259,6 +259,16 @@ export const PackageEditor = ({ title, initialValue, isLoading, submitting, onSu
           <Typography.Text>CGI Enabled</Typography.Text>
         </div>
 
+        {/* GH #1628: webmail (Bulwark UI) as a package entitlement, defaulting
+            ON. Slice 1 stores the flag; the webmail reconciler starts reading
+            it in slice 2. */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 24 }}>
+          <Form.Item name="webmail_enabled" valuePropName="checked" tooltip={t("packageedit.allow_webmail")} noStyle>
+            <Switch checkedChildren={<CheckOutlined />} unCheckedChildren={<CloseOutlined />} />
+          </Form.Item>
+          <Typography.Text>Webmail Enabled</Typography.Text>
+        </div>
+
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 24 }}>
           <Form.Item
             name="php_exec_enabled"

@@ -146,6 +146,9 @@ func PlanToHostingPackage(p PleskPlan) models.HostingPackage {
 		// No Plesk equivalent → jabali-safe defaults (0 = not included).
 		MaxDockerApps: 0,
 		MaxPythonApps: 0,
+		// GH #1628: webmail defaults ON (Plesk has no per-plan webmail toggle);
+		// a plain bool can't fall back to the column DEFAULT, so set it.
+		WebmailEnabled: true,
 	}
 }
 

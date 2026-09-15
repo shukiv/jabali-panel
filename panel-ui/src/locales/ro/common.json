@@ -692,6 +692,7 @@
   "packagecreate": {
     "allow_cgi_scripts": "",
     "allow_ssh_access": "",
+    "allow_webmail": "",
     "allow_tenants_on_this_plan_to_enable_a_sched": "",
     "allowed_backup_destinations": "",
     "also_expose_the_individual_pm_knobs_clamped": "",
@@ -724,6 +725,7 @@
   "packageedit": {
     "allow_cgi_scripts": "",
     "allow_ssh_access": "",
+    "allow_webmail": "",
     "allow_tenants_on_this_plan_to_enable_a_sched": "",
     "allowed_backup_destinations": "",
     "also_expose_the_individual_pm_knobs_clamped": "",
