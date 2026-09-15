@@ -294,6 +294,56 @@ func (h *sslHandler) disableSSL(c *gin.Context) {
 		return
 	}
 
+	// JAB-356 AC4 (disable-side idempotency): if TLS is already authoritatively
+	// off and there is nothing to revoke, this is a no-op — return 200 without
+	// re-writing ssl_mode, re-marking the cert row revoked, or scheduling a
+	// convergence that has no work to do. Mirrors the CLI door
+	// (cmd/server/ssl_cmd.go sslDisableAlreadyOff) and restores disable-side
+	// parity with it (#1749). This is the AC4-meaningful half: HTTP disableSSL
+	// holds a real in-process Reconciler.Schedule, so suppressing it on a genuine
+	// no-op is the one door where "schedule convergence exactly once" is actually
+	// enforced (the CLI has no in-process reconciler handle).
+	//
+	// Both state conjuncts are load-bearing:
+	//   - ssl_mode == none is the TLS-direction guard. A pre-#1740 CLI disable
+	//     flipped ssl_enabled via the general Update and left ssl_mode stale
+	//     (e.g. le); the reconciler follows ssl_mode (GH #246), so that domain's
+	//     TLS is actually still on and it must proceed to UpdateSSLMode(none).
+	//   - !ssl_enabled is the shadow-consistency guard. The Update column
+	//     allowlist can write ssl_enabled without ssl_mode, so a drifted
+	//     (none, ssl_enabled=true) row must proceed so the write repairs it.
+	// Empty mode is deliberately NOT off: the reconciler treats "" as the ACME
+	// default, so an empty-mode domain is being served, not disabled.
+	//
+	// The cert conjunct mirrors the reconciler's own none-branch test
+	// (reconciler.go:2911): only an *issued* cert triggers a revoke, so a
+	// (none, false) domain whose cert is still issued must proceed to the eager
+	// MarkRevoked below rather than no-op past it. A found non-issued cert and a
+	// definitive "no row" (repository.ErrNotFound — the common already-off case,
+	// no cert ever created) both qualify as nothing-to-revoke. Any OTHER lookup
+	// error is "unknown" and does NOT no-op: we fall through to the (same-mode,
+	// harmless) write + Schedule, which drives the tick that would catch a cert
+	// we could not read. Follow-up: a new cert status that should trigger a
+	// revoke must be added both here and in the reconciler none-branch.
+	//
+	// Ordering: this runs AFTER the protected-domain refusals above, not before.
+	// A panel-primary or mail-enabled domain sitting at (none, false) is a broken
+	// invariant (those must never be off); the 422 signals that something is
+	// wrong, whereas a 200 "already disabled" would silently confirm the broken
+	// state. This diverges deliberately from the CLI door, which puts its no-op
+	// before its refusal for UX; on HTTP the louder signal wins.
+	cert, certErr := h.cfg.SSLCerts.FindByDomainID(ctx, domainID)
+	certLookupOK := certErr == nil || errors.Is(certErr, repository.ErrNotFound)
+	nothingToRevoke := certLookupOK && (cert == nil || cert.Status != models.SSLStatusIssued)
+	if domain.SSLMode == models.SSLModeNone && !domain.SSLEnabled && nothingToRevoke {
+		c.JSON(http.StatusOK, gin.H{
+			"ssl_mode":    models.SSLModeNone,
+			"ssl_enabled": false,
+			"detail":      "TLS is already disabled; ssl disable is a no-op",
+		})
+		return
+	}
+
 	// Set TLS mode = none (GH #246; this legacy endpoint is "disable TLS").
 	if err := h.cfg.Domains.UpdateSSLMode(ctx, domain.ID, models.SSLModeNone); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
@@ -303,8 +353,7 @@ func (h *sslHandler) disableSSL(c *gin.Context) {
 	domain.SSLEnabled = false
 
 	// Mark certificate row as revoked (if it exists)
-	cert, err := h.cfg.SSLCerts.FindByDomainID(ctx, domainID)
-	if err == nil && cert != nil {
+	if certErr == nil && cert != nil {
 		if err := h.cfg.SSLCerts.UpdateStatus(ctx, cert.ID, models.SSLStatusRevoked, nil); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 			return

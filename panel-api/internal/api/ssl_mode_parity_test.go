@@ -138,3 +138,90 @@ func TestEnableSSL_OperatorLineageNoop(t *testing.T) {
 		mockCerts.AssertCalled(t, "UpdateStatus", mock.Anything, "cert-1", models.SSLStatusPending, mock.Anything)
 	})
 }
+
+// TestDisableSSL_AlreadyOffNoop pins the JAB-356 AC4 disable-side idempotency
+// guard on the HTTP door (DELETE /domains/:id/ssl). This is the AC4-meaningful
+// half: disableSSL holds a real in-process Reconciler.Schedule, so suppressing
+// it on a genuine no-op is where "schedule convergence exactly once" is actually
+// enforced. Same downstream-spy seam as the parity tests above —
+// MockDomainRepository.UpdateSSLMode is unspied, so the guard is pinned by
+// asserting Reconciler.Schedule / SSLCerts.UpdateStatus are NOT called on the
+// no-op and ARE called on every "not genuinely off" input. Removing the guard
+// (F3) turns every no-op case red; the two state conjuncts and the cert conjunct
+// each have a discriminating case below (F2a / F2b / F2c).
+func TestDisableSSL_AlreadyOffNoop(t *testing.T) {
+	t.Run("already off, no cert row → no-op, nothing scheduled", func(t *testing.T) {
+		dom := &models.Domain{ID: "domain-1", Name: "off.example.com", UserID: "u1", SSLMode: models.SSLModeNone, SSLEnabled: false}
+		h, _, mockCerts, sched := newParityHandler(dom, nil, nil)
+		mockCerts.On("FindByDomainID", mock.Anything, "domain-1").Return(nil, repository.ErrNotFound)
+
+		c, w := callParity(h, "DELETE", "domain-1", (*sslHandler).disableSSL)
+
+		require.Equal(t, http.StatusOK, c.Writer.Status())
+		var body map[string]any
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+		require.Equal(t, models.SSLModeNone, body["ssl_mode"])
+		require.Equal(t, false, body["ssl_enabled"])
+		require.Empty(t, sched.scheduled, "an already-off no-op must not schedule a reconcile")
+		mockCerts.AssertNotCalled(t, "UpdateStatus", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	})
+
+	t.Run("already off, non-issued (pending) cert → no-op, nothing scheduled", func(t *testing.T) {
+		// A pending cert is nothing-to-revoke — the reconciler none-branch only
+		// revokes an *issued* cert. F2c: flipping the cert test to `== revoked`
+		// makes this case proceed + schedule (red).
+		dom := &models.Domain{ID: "domain-1", Name: "off.example.com", UserID: "u1", SSLMode: models.SSLModeNone, SSLEnabled: false}
+		cert := &models.SSLCertificate{ID: "cert-1", DomainID: "domain-1", Status: models.SSLStatusPending}
+		h, _, mockCerts, sched := newParityHandler(dom, nil, cert)
+
+		c, _ := callParity(h, "DELETE", "domain-1", (*sslHandler).disableSSL)
+
+		require.Equal(t, http.StatusOK, c.Writer.Status())
+		require.Empty(t, sched.scheduled, "no-op must not schedule a reconcile")
+		mockCerts.AssertNotCalled(t, "UpdateStatus", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	})
+
+	t.Run("already off but cert still issued → proceeds, eager-revokes + schedules", func(t *testing.T) {
+		// The cert conjunct discriminator: an issued cert on a (none, false)
+		// domain must NOT no-op — the eager MarkRevoked (and the tick behind it)
+		// still has real work. This is the AC4 behavioral pin the CLI side could
+		// not have (CLI never revokes eagerly and never schedules).
+		dom := &models.Domain{ID: "domain-1", Name: "off.example.com", UserID: "u1", SSLMode: models.SSLModeNone, SSLEnabled: false}
+		cert := &models.SSLCertificate{ID: "cert-1", DomainID: "domain-1", Status: models.SSLStatusIssued}
+		h, _, mockCerts, sched := newParityHandler(dom, nil, cert)
+		mockCerts.On("UpdateStatus", mock.Anything, "cert-1", models.SSLStatusRevoked, mock.Anything).Return(nil)
+
+		c, _ := callParity(h, "DELETE", "domain-1", (*sslHandler).disableSSL)
+
+		require.Equal(t, http.StatusAccepted, c.Writer.Status())
+		require.Equal(t, []string{"domain-1"}, sched.scheduled, "an issued cert must still be revoked + scheduled")
+		mockCerts.AssertCalled(t, "UpdateStatus", mock.Anything, "cert-1", models.SSLStatusRevoked, mock.Anything)
+	})
+
+	t.Run("stale le mode with ssl_enabled=false → proceeds (TLS actually still on)", func(t *testing.T) {
+		// F2a discriminator: a pre-#1740 CLI disable left ssl_mode stale (le) and
+		// only flipped ssl_enabled. The reconciler follows ssl_mode, so TLS is
+		// still on — this MUST proceed to UpdateSSLMode(none), not no-op.
+		dom := &models.Domain{ID: "domain-1", Name: "residue.example.com", UserID: "u1", SSLMode: models.SSLModeLE, SSLEnabled: false}
+		h, _, mockCerts, sched := newParityHandler(dom, nil, nil)
+		mockCerts.On("FindByDomainID", mock.Anything, "domain-1").Return(nil, repository.ErrNotFound)
+
+		c, _ := callParity(h, "DELETE", "domain-1", (*sslHandler).disableSSL)
+
+		require.Equal(t, http.StatusAccepted, c.Writer.Status())
+		require.Equal(t, []string{"domain-1"}, sched.scheduled, "stale-le residue must proceed to disable")
+	})
+
+	t.Run("none mode with ssl_enabled=true drift → proceeds (repairs shadow)", func(t *testing.T) {
+		// F2b discriminator: a drifted (none, ssl_enabled=true) row must proceed
+		// so the write repairs the shadow; no-op would leave ssl_enabled=true.
+		dom := &models.Domain{ID: "domain-1", Name: "drift.example.com", UserID: "u1", SSLMode: models.SSLModeNone, SSLEnabled: true}
+		h, _, mockCerts, sched := newParityHandler(dom, nil, nil)
+		mockCerts.On("FindByDomainID", mock.Anything, "domain-1").Return(nil, repository.ErrNotFound)
+
+		c, _ := callParity(h, "DELETE", "domain-1", (*sslHandler).disableSSL)
+
+		require.Equal(t, http.StatusAccepted, c.Writer.Status())
+		require.Equal(t, []string{"domain-1"}, sched.scheduled, "shadow-drift row must proceed to disable")
+	})
+}
