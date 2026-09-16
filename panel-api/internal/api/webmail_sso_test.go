@@ -164,6 +164,28 @@ func ssoOKUsers(userID string) *ssoFakeUserRepo {
 	}}
 }
 
+// ssoFakePackageRepo resolves the owner's hosting package for the GH #1628
+// slice-3 package-webmail gate. FindByID returns ErrNotFound for an unknown id
+// (a dangling package id ⇒ the #282 "allowed" exception in the handler).
+type ssoFakePackageRepo struct {
+	repository.PackageRepository
+	pkgs map[string]*models.HostingPackage
+}
+
+func (r *ssoFakePackageRepo) FindByID(_ context.Context, id string) (*models.HostingPackage, error) {
+	if p, ok := r.pkgs[id]; ok {
+		return p, nil
+	}
+	return nil, repository.ErrNotFound
+}
+
+// ssoOKPackages is a non-nil package repo required by the handler's config
+// guard. Owners with a nil PackageID never trigger a lookup, so an empty map is
+// enough for the common "webmail allowed" case.
+func ssoOKPackages() *ssoFakePackageRepo {
+	return &ssoFakePackageRepo{pkgs: map[string]*models.HostingPackage{}}
+}
+
 // --- helpers ---
 
 func ssoNewTestMinter(t *testing.T) *webmailsso.Minter {
@@ -231,6 +253,7 @@ func TestWebmailSSO_RedirectsToImpersonate(t *testing.T) {
 		SSOKey:    ssoFakeSSOKey(t),
 		SSOTokens: tokRepo,
 		Users:     ssoOKUsers("usr-1"),
+		Packages:  ssoOKPackages(),
 		Minter:    ssoNewTestMinter(t),
 	})
 
@@ -279,6 +302,7 @@ func TestWebmailSSO_MissingToken(t *testing.T) {
 		SSOKey:    ssoFakeSSOKey(t),
 		SSOTokens: &ssoFakeTokenRepo{},
 		Users:     ssoOKUsers("x"),
+		Packages:  ssoOKPackages(),
 		Minter:    ssoNewTestMinter(t),
 	})
 	req := httptest.NewRequest(http.MethodGet, "/sso/webmail", nil)
@@ -298,6 +322,7 @@ func TestWebmailSSO_InvalidToken(t *testing.T) {
 		SSOKey:    ssoFakeSSOKey(t),
 		SSOTokens: &ssoFakeTokenRepo{},
 		Users:     ssoOKUsers("x"),
+		Packages:  ssoOKPackages(),
 		Minter:    ssoNewTestMinter(t),
 	})
 	req := httptest.NewRequest(http.MethodGet, "/sso/webmail?token=!!!not-base64!!!", nil)
@@ -317,6 +342,7 @@ func TestWebmailSSO_UnknownToken(t *testing.T) {
 		SSOKey:    ssoFakeSSOKey(t),
 		SSOTokens: &ssoFakeTokenRepo{},
 		Users:     ssoOKUsers("x"),
+		Packages:  ssoOKPackages(),
 		Minter:    ssoNewTestMinter(t),
 	})
 	bogus := base64.RawURLEncoding.EncodeToString([]byte("garbage-but-base64-decodes-fine"))
@@ -380,12 +406,16 @@ func TestWebmailSSO_PrefetchRequestDoesNotConsumeToken(t *testing.T) {
 
 // buildWebmailSSO wires a handler + a freshly-minted token for the given
 // mailbox/domain/user state. Returns the router and the token string.
-func buildWebmailSSO(t *testing.T, mb *models.Mailbox, dom *models.Domain, usr *models.User) (*gin.Engine, string, *ssoFakeTokenRepo) {
+func buildWebmailSSO(t *testing.T, mb *models.Mailbox, dom *models.Domain, usr *models.User, pkg *models.HostingPackage) (*gin.Engine, string, *ssoFakeTokenRepo) {
 	t.Helper()
 	tokRepo := &ssoFakeTokenRepo{}
 	domRepo := newMockDomainRepo()
 	domRepo.domains[dom.ID] = dom
 	token := ssoMintTestToken(t, tokRepo, mb.ID, time.Now().Add(time.Minute))
+	pkgRepo := &ssoFakePackageRepo{pkgs: map[string]*models.HostingPackage{}}
+	if pkg != nil {
+		pkgRepo.pkgs[pkg.ID] = pkg
+	}
 	r := gin.New()
 	RegisterWebmailSSORoutes(r, WebmailSSOHandlerConfig{
 		Mailboxes: &ssoFakeMailboxRepo{mbs: map[string]*models.Mailbox{mb.ID: mb}},
@@ -393,6 +423,7 @@ func buildWebmailSSO(t *testing.T, mb *models.Mailbox, dom *models.Domain, usr *
 		SSOKey:    ssoFakeSSOKey(t),
 		SSOTokens: tokRepo,
 		Users:     &ssoFakeUserRepo{users: map[string]*models.User{usr.ID: usr}},
+		Packages:  pkgRepo,
 		Minter:    ssoNewTestMinter(t),
 	})
 	return r, token, tokRepo
@@ -404,7 +435,7 @@ func TestWebmailSSO_ConcurrentRedemptionMintsOnce(t *testing.T) {
 	mb := &models.Mailbox{ID: "mb-1", DomainID: "dom-1", EmailCached: "alice@example.com"}
 	dom := &models.Domain{ID: "dom-1", Name: "example.com", UserID: "usr-1", WebmailEnabled: true}
 	usr := &models.User{ID: "usr-1", WebmailEnabled: true}
-	r, token, _ := buildWebmailSSO(t, mb, dom, usr)
+	r, token, _ := buildWebmailSSO(t, mb, dom, usr, nil)
 
 	const n = 12
 	var wg sync.WaitGroup
@@ -444,27 +475,32 @@ func TestWebmailSSO_PolicyFreshnessBlocks(t *testing.T) {
 		mb   *models.Mailbox
 		dom  *models.Domain
 		usr  *models.User
+		pkg  *models.HostingPackage
 	}{
 		{"mailbox disabled",
 			&models.Mailbox{ID: "mb-1", DomainID: "dom-1", EmailCached: "a@example.com", IsDisabled: true},
 			&models.Domain{ID: "dom-1", Name: "example.com", UserID: "usr-1", WebmailEnabled: true},
-			&models.User{ID: "usr-1", WebmailEnabled: true}},
+			&models.User{ID: "usr-1", WebmailEnabled: true}, nil},
 		{"domain webmail disabled",
 			&models.Mailbox{ID: "mb-1", DomainID: "dom-1", EmailCached: "a@example.com"},
 			&models.Domain{ID: "dom-1", Name: "example.com", UserID: "usr-1", WebmailEnabled: false},
-			&models.User{ID: "usr-1", WebmailEnabled: true}},
-		{"user webmail disabled",
+			&models.User{ID: "usr-1", WebmailEnabled: true}, nil},
+		// GH #1628 slice 3: the per-user webmail toggle is gone; the owner's
+		// package entitlement now blocks redemption. Owner is on package p1 whose
+		// webmail is OFF.
+		{"package webmail disabled",
 			&models.Mailbox{ID: "mb-1", DomainID: "dom-1", EmailCached: "a@example.com"},
 			&models.Domain{ID: "dom-1", Name: "example.com", UserID: "usr-1", WebmailEnabled: true},
-			&models.User{ID: "usr-1", WebmailEnabled: false}},
+			&models.User{ID: "usr-1", WebmailEnabled: true, PackageID: strPtr("p1")},
+			&models.HostingPackage{ID: "p1", WebmailEnabled: false}},
 		{"user suspended",
 			&models.Mailbox{ID: "mb-1", DomainID: "dom-1", EmailCached: "a@example.com"},
 			&models.Domain{ID: "dom-1", Name: "example.com", UserID: "usr-1", WebmailEnabled: true},
-			&models.User{ID: "usr-1", WebmailEnabled: true, Suspended: true}},
+			&models.User{ID: "usr-1", WebmailEnabled: true, Suspended: true}, nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			r, token, tokRepo := buildWebmailSSO(t, tc.mb, tc.dom, tc.usr)
+			r, token, tokRepo := buildWebmailSSO(t, tc.mb, tc.dom, tc.usr, tc.pkg)
 			req := httptest.NewRequest(http.MethodGet, "/sso/webmail?token="+token, nil)
 			w := httptest.NewRecorder()
 			r.ServeHTTP(w, req)
@@ -490,8 +526,8 @@ func TestWebmailBlockReason(t *testing.T) {
 	if webmailBlockReason(false, false, true, false) != "domain_webmail_disabled" {
 		t.Error("domain_webmail_disabled")
 	}
-	if webmailBlockReason(false, true, false, false) != "user_webmail_disabled" {
-		t.Error("user_webmail_disabled")
+	if webmailBlockReason(false, true, false, false) != "package_webmail_disabled" {
+		t.Error("package_webmail_disabled")
 	}
 	if webmailBlockReason(false, true, true, true) != "user_suspended" {
 		t.Error("user_suspended")

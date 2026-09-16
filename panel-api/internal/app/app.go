@@ -374,13 +374,14 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 	// mail.<domain> (via nginx location /sso) where the SPA + Kratos
 	// prefix doesn't apply. Handler does its own token auth (consume +
 	// hash match) so no Kratos cookie is required.
-	if deps.Mailboxes != nil && deps.Domains != nil && deps.SSOKey != nil && deps.MailboxSSOTokens != nil {
+	if deps.Mailboxes != nil && deps.Domains != nil && deps.SSOKey != nil && deps.MailboxSSOTokens != nil && deps.Packages != nil {
 		api.RegisterWebmailSSORoutes(r, api.WebmailSSOHandlerConfig{
 			Mailboxes: deps.Mailboxes,
 			Domains:   deps.Domains,
 			SSOKey:    deps.SSOKey,
 			SSOTokens: deps.MailboxSSOTokens,
 			Users:     deps.Users,
+			Packages:  deps.Packages, // GH #1628 slice 3: package webmail entitlement gate
 			Minter:    deps.WebmailSSOMinter,
 			Log:       deps.Log,
 		})
