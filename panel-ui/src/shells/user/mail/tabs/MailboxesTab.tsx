@@ -23,6 +23,7 @@ import { useQueries } from "@tanstack/react-query";
 import { AutoReplyModal } from "../AutoReplyModal";
 import { type Autoresponder } from "../../../../hooks/useAutoresponders";
 import { useForwarders } from "../../../../hooks/useForwarders";
+import { useMailboxGroupMemberships } from "../../../../hooks/useMailGroups";
 
 import { apiClient } from "../../../../apiClient";
 import {
@@ -49,6 +50,10 @@ type GroupMembership = {
   group_name: string;
   group_email: string;
 };
+
+// Stable empty fallback so a loading membership query doesn't hand the Groups
+// column a fresh object identity every render.
+const EMPTY_MEMBERSHIPS: Record<string, GroupMembership[]> = {};
 
 // GH #1387: when domainId is set (the per-domain Mail Domains drill-down), the
 // tab scopes to that one domain and hides the Domain column; unset = the flat
@@ -79,28 +84,18 @@ export const MailboxesTab = ({ domainId }: { domainId?: string } = {}) => {
     defaultPageSize: 20,
   });
 
-  const membershipResults = useQueries({
-    queries: emailEnabledDomains.map((d) => ({
-      queryKey: ["list", "mailbox-group-memberships", d.id],
-      queryFn: async () => {
-        const { data } = await apiClient.get<{
-          data: Record<string, GroupMembership[]>;
-        }>(`/domains/${d.id}/mailbox-group-memberships`);
-        return data.data ?? {};
-      },
-    })),
-  });
-
-  const groupsByMailbox = useMemo(() => {
-    const out: Record<string, GroupMembership[]> = {};
-    for (const r of membershipResults) {
-      if (!r.data) continue;
-      for (const [mbID, groups] of Object.entries(r.data)) {
-        out[mbID] = groups;
-      }
-    }
-    return out;
-  }, [membershipResults]);
+  // JAB-370 Selection: the mailbox->group edges come from ONE owner-scoped
+  // request via useMailboxGroupMemberships — GET /mail/mailbox-group-memberships
+  // spanning every domain the caller owns (cross-domain view), or the per-domain
+  // endpoint when this tab is embedded in the Mail Domains drill-down (domainId
+  // set). This replaces the one-request-per-email-enabled-domain fan-out that
+  // merged the per-domain maps in the browser. Same { <mailbox_id>: [group,...] }
+  // shape either way, so the Groups column below is unchanged.
+  const membershipsQuery = useMailboxGroupMemberships(
+    domainId,
+    emailEnabledDomains.length > 0,
+  );
+  const groupsByMailbox = membershipsQuery.data ?? EMPTY_MEMBERSHIPS;
 
 
   // The per-domain endpoint returns rows without a domain_name (that column is

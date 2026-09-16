@@ -3926,6 +3926,13 @@ paths:
       parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
       responses: { "200": { description: OK } }
 
+  /mail/mailbox-group-memberships:
+    get:
+      tags: [Mailbox Group Memberships]
+      summary: Owner-scoped mailbox group memberships
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
 
   # --- Mailboxes (auto) ---
 

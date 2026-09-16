@@ -40,6 +40,12 @@ type MailGroupRepository interface {
 	// domain, joined with the group's display name + address — for the mail
 	// users "Groups" column (#238).
 	ListMembershipsByDomain(ctx context.Context, domainID string) ([]MailboxGroupMembership, error)
+
+	// ListMembershipsByUserID returns every (mailbox -> group) edge across all
+	// domains a user owns — the owner-scoped bulk projection for the tenant
+	// Mailboxes tab's cross-domain view (JAB-370 Selection). Mirrors
+	// ListMembershipsByDomain but scopes by the domain's owner, not one domain.
+	ListMembershipsByUserID(ctx context.Context, userID string) ([]MailboxGroupMembership, error)
 }
 
 // MailboxGroupMembership is one mailbox->group edge with the group's label.
@@ -256,6 +262,19 @@ func (r *mailGroupRepo) ListMembershipsByDomain(ctx context.Context, domainID st
 		Select("m.mailbox_id, g.id AS group_id, g.display_name AS group_name, g.email_cached AS group_email").
 		Joins("JOIN mail_groups g ON g.id = m.group_id").
 		Where("g.domain_id = ?", domainID).
+		Order("g.display_name ASC").
+		Scan(&rows).Error
+	return rows, err
+}
+
+func (r *mailGroupRepo) ListMembershipsByUserID(ctx context.Context, userID string) ([]MailboxGroupMembership, error) {
+	var rows []MailboxGroupMembership
+	err := r.db.WithContext(ctx).
+		Table("mail_group_members m").
+		Select("m.mailbox_id, g.id AS group_id, g.display_name AS group_name, g.email_cached AS group_email").
+		Joins("JOIN mail_groups g ON g.id = m.group_id").
+		Joins("JOIN domains d ON d.id = g.domain_id").
+		Where("d.user_id = ?", userID).
 		Order("g.display_name ASC").
 		Scan(&rows).Error
 	return rows, err
