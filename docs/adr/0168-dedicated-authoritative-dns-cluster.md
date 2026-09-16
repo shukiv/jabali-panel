@@ -1,6 +1,7 @@
-# ADR-0168: Dedicated authoritative DNS cluster (hidden primary + AXFR fan-out)
+# ADR-0168: Dedicated authoritative DNS cluster (central authoritative store + API push)
 
-**Status:** Proposed (2026-09-10) — design spike, no code. Each phase below is gated on separate approval.
+**Status:** Proposed (2026-09-10), **revised 2026-09-16** to adopt Variant B per the
+#1632 scope decision — design spike, no code. Each phase below is gated on separate approval.
 **Driven by:** GH #1632.
 **Related:** ADR-0011 (PowerDNS + MySQL backend), ADR-0076 (per-domain DNSSEC), ADR-0107 (operator edits authoritative), ADR-0150 (tenant record-type permissions). Runbook: `docs/runbooks/dns-secondary-nameserver.md`.
 
@@ -10,6 +11,20 @@
 (`ns1/ns2/ns3.domain.com`) that several Jabali panels feed, instead of each
 panel being its own authoritative nameserver at `ns1.<panel-host>`.
 
+The requester (johnnyq) confirmed the target on the issue (2026-09-10 and again
+2026-09-15, "Option B is the right direction"): a **central authoritative DNS
+tier that the panels push to over an API**, where
+
+- the dedicated cluster is the **only** authoritative, publicly-serving,
+  DNSSEC-signed infrastructure;
+- panels are **management clients** that push their DNS changes to the central
+  DNS API — they do **not** run their own authoritative nameservers and do
+  **not** require AXFR *from* the panels;
+- **DNSSEC is handled entirely by the cluster**;
+- the panel still **retains the desired-state** it needs to generate/reconcile
+  records (ACME, DKIM, the mail record set), but is no longer an authoritative
+  DNS server.
+
 What already exists today (so the ADR does not re-propose it):
 
 - **NS names are already free-form.** `server_settings.NS1Name/NS2Name` are
@@ -17,173 +32,261 @@ What already exists today (so the ADR does not re-propose it):
   `settingsops/validate.go:52`). An admin can set `ns1.domain.com` /
   `ns2.domain.com` right now; the apex NS + SOA MNAME are built from those
   values verbatim (`dnscompile/compile.go:71,90-95`).
-- **A single AXFR secondary is already supported.** The reconciler derives
-  `ALLOW-AXFR-FROM` / `ALSO-NOTIFY` from **`NS2IPv4` only**
-  (`reconciler.go:~2570`); the agent writes those as `domainmetadata` on each
-  `dns.zone.upsert`; ns2 slaves via NOTIFY→AXFR (runbook Option A/B).
-- Panel DB is the source of truth; the reconciler pushes each zone to the
-  panel-local PowerDNS.
+- **The panel already computes and pushes zone desired-state.** The reconciler
+  compiles each zone from the panel DB (source of truth) and pushes it to a
+  PowerDNS backend via the agent's `dns.zone.upsert`. Variant B keeps this
+  compile-and-push shape; it changes only *which* PowerDNS receives the push
+  (a remote cluster API instead of the panel-local instance).
+- **A single AXFR secondary is already supported** (`reconciler.go:2624-2626`,
+  `NS2IPv4` → `ALLOW-AXFR-FROM`/`ALSO-NOTIFY`). Under Variant B this AXFR
+  mechanism moves **inside the cluster** (member→member replication), not
+  panel→cluster.
 
-So the genuinely new work is **not** NS naming. It is (a) letting the panel's
-own PowerDNS be a *hidden* primary that is **not** in the delegation, (b)
-fanning AXFR/NOTIFY out to **N** cluster members rather than one ns2, and (c)
-the cross-panel trust/ownership model that lets one cluster serve many panels.
+### Desired-state caveat (must be stated, not glossed)
+
+Variant B is **not** a "stateless pass-through panel". The panel must keep
+per-zone **desired-state** because several flows regenerate records from panel
+config with no human in the loop:
+
+- **ACME DNS-01.** Every SSL issue/renew writes then deletes an
+  `_acme-challenge` TXT on the fly, waits for visibility, then completes.
+  Time-critical and automatic.
+- **The mail record set** — MX, SPF, DKIM (**the DKIM key lives in the panel**),
+  DMARC, autodiscover/autoconfig, client SRVs, TLS-RPT, CAA — is derived from
+  the mailbox/domain config (`GET /domains/:id/email` is the authoritative
+  producer). A DKIM rotation or mail-host IP change regenerates these.
+- **The reconciler self-heals** — SAN-drift reissue, the #1579 domain-rename
+  zone re-key, and per-tick convergence all *rewrite* zone records from panel
+  desired-state.
+
+So the precise model is: **panel keeps desired-state (to compute records) →
+pushes it to the central cluster's DNS API → the cluster holds the only
+authoritative, publicly-served, DNSSEC-signed copy and is the single source of
+truth for resolution.** We do not promise a stateless panel and then quietly
+need local state for SSL and DKIM anyway.
 
 ## Industry standard (how other control panels do this)
 
 Every mainstream panel converges on the same shape — **dedicated DNS-only
 nodes that receive role-based zone pushes, with a cross-server uniqueness
-guard, and AXFR as the DNSSEC-capable transport**:
+guard**:
 
-- **cPanel/WHM** — a *DNS cluster* of dedicated **cPanel DNSOnly** nodes
-  (free, DNS-only image). Web servers **push complete zone data over the WHM
-  API** (a `dns-cluster` ACL token), not by being an AXFR primary. Per-peer
-  **roles**: *Standalone* (receive only), *Synchronize* (two-way, SOA-serial
-  wins), *Write-only* (one-way push, no checks). A **reverse-trust**
-  relationship stops one web server from creating a zone another already owns
-  (their cross-panel hijack guard). No master; conflicts by SOA serial. Three
-  nodes is the common production shape.
-- **HestiaCP** (closest to Jabali — PowerDNS/BIND) — a *DNS cluster* over the
-  Hestia API (`v-add-remote-dns-host` / `v-sync-dns-cluster`) with a dedicated
-  `dns-cluster` sync user. Two modes: **Master↔Master** (API push;
-  **DNSSEC unsupported**) and **Master→Slave** (real BIND `allow-transfer` +
-  `also-notify` **AXFR**; **DNSSEC supported**) — directly corroborating the
-  DNSSEC×AXFR constraint below.
-- **DirectAdmin** — *Multi-Server Setup* pushes zones A→B on save (*Zone
-  Transfer*) with a remote-uniqueness *Domain Check* guard and a task-queue
-  retry.
-- **Plesk** — *Slave DNS Manager* pushes via `rndc addzone` to a stock-BIND
-  secondary that then pulls the zone by **AXFR**. Notably, Plesk **refuses to
-  let several masters share one secondary set** for security (a shared control
-  channel lets any master delete any master's zones) — the exact cross-panel
-  trust problem Phase 3 must solve.
+- **cPanel/WHM** — a *DNS cluster* of dedicated **cPanel DNSOnly** nodes. Web
+  servers **push complete zone data over the WHM API** (a `dns-cluster` ACL
+  token), not by being an AXFR primary. Per-peer **roles** (Standalone /
+  Synchronize / Write-only) and a **reverse-trust** relationship stop one web
+  server from creating a zone another already owns. This is API-push with a
+  central-owned backend — i.e. Variant B — and is the mainstream reference for
+  it.
+- **HestiaCP** (PowerDNS/BIND) — a *DNS cluster* over the Hestia API. Two modes:
+  **Master↔Master** (bidirectional API push; **DNSSEC unsupported**, because N
+  masters each try to sign) and **Master→Slave AXFR** (**DNSSEC supported**).
+  The DNSSEC×AXFR constraint that bit Hestia is a **two-way-signing** problem —
+  see the DNSSEC note below for why it does **not** apply to Variant B here.
+- **DirectAdmin** — *Multi-Server Setup* pushes zones on save with a
+  remote-uniqueness *Domain Check* guard and a task-queue retry.
+- **Plesk** — *Slave DNS Manager*; notably refuses to let several masters share
+  one secondary set (a shared control channel lets any master delete any
+  master's zones) — the exact cross-panel trust problem Phase 3 must solve.
 
-**Where Jabali already sits:** the agent's `dns.zone.upsert` (panel pushes
-zone data; secondary pulls via AXFR) is *already* the industry pattern for a
-single panel + one secondary. The gap to the cPanel/Hestia cluster model is
-exactly (a) a dedicated DNS-only node role, (b) N nodes not one, and (c) the
-reverse-trust / zone-ownership guard for multiple panels — i.e. the three
-items above, not a new transport.
+**Where Jabali already sits:** the panel already *compiles and pushes* zone
+data (`dns.zone.upsert`). Variant B redirects that push from the panel-local
+PowerDNS to a central cluster API and adds the ownership guard — it is the
+cPanel-DNSOnly model on Jabali's existing compile-and-push mechanics.
 
 ## Decision
 
-Adopt a **hidden-primary + AXFR fan-out** architecture, built in phases:
+Adopt **Variant B — a central authoritative DNS store fed by panel API push**,
+built in phases. Concretely:
 
-- The panel-local PowerDNS remains the authoritative primary for the zones of
-  domains hosted on that panel, but is marked **not advertised** — it never
-  appears in the apex NS set, in-zone glue, or DNS-01 "our NS" routing.
 - The advertised nameservers are the dedicated cluster members
-  (`ns1/ns2/ns3.domain.com`). Each is an AXFR secondary that slaves the zone
-  from the owning panel's hidden primary (NOTIFY-driven, superslave per the
-  runbook).
-- One domain is owned by exactly **one** panel's hidden primary at a time
-  (the zone-ownership invariant, below).
+  (`ns1/ns2/ns3.domain.com`), which run PowerDNS (Jabali already speaks
+  PowerDNS, so this is the least-new-code authoritative tier). The cluster is
+  the **sole** authoritative, publicly-served, DNSSEC-signing infrastructure.
+- **The panel runs no advertised authoritative nameserver.** It keeps
+  desired-state and pushes each zone's records to **one** cluster API endpoint;
+  its local authoritative PowerDNS is retired on migrated panels (the recursor
+  is a separate concern and is unaffected).
+- **Intra-cluster replication is the cluster's own job**, not the panel's: the
+  panel pushes to a single endpoint; cluster members replicate among themselves
+  via native PowerDNS primary→secondary AXFR/NOTIFY. This keeps a single
+  authoritative store and avoids the split-brain of the panel writing N members
+  independently. **Note this diverges from johnnyq's install sketch** (one API
+  secret per NS server: "ns1 + key, ns2 + key, ns3 + key"): a push-to-one model
+  needs **one per-panel credential to one cluster endpoint**, not a key per
+  member. Which of the two is the intended shape is called out in Open questions
+  and must be confirmed with johnnyq before Phase 3.
+- One domain is owned by exactly **one** panel at a time, enforced at the
+  cluster API layer (the zone-ownership invariant, below).
 
-This **is** the cPanel/Hestia DNS-cluster model expressed in Jabali's existing
-mechanics: a dedicated DNS-only node role (the advertised members), role-based
-distribution, and a reverse-trust guard — with **AXFR as the transport**
-because it is what Jabali already ships and, unlike Master↔Master API push, it
-keeps DNSSEC (ADR-0076) working (Hestia reaches the same conclusion). It
-reuses the shipped AXFR/NOTIFY path — the delta is a data-model change and
-generalizing single-`ns2` to a list — and introduces **no** new network
-service. A central "Jabali DNS API" push plane (the issue's literal diagram,
-and how cPanel/Hestia move the zone *data*) is Alternative B, layered on top
-only if central cross-panel management is wanted.
+### The new deployable: a Jabali DNS API in front of cluster PowerDNS
 
-### Phase 1 — N-nameserver + hidden-primary data model
+PowerDNS Authoritative's HTTP API authenticates with a **single, server-wide
+`api-key`** and has **no per-zone ACL** (confirm against the deployed PowerDNS
+version before Phase 3; this is the standard behaviour). Therefore per-panel
+credentials cannot isolate zones inside PowerDNS itself. Variant B needs a thin
+**Jabali-owned DNS API service** sitting in front of the cluster's PowerDNS:
 
-**This is the real Phase 1** (NS-name decoupling is already done). Introduce a
-dedicated `dns_nameservers` table — **not** more `server_settings` columns
-(`server_settings` is at the VARCHAR row-size ceiling; new NS3Name/NS3IPv4
-varchars are exactly how `ERROR 1118` gets tripped — see
+- Per-panel credentials — **one secret per panel to one cluster endpoint**.
+  (johnnyq's install sketch instead lists one secret per NS *server*; the two
+  models diverge — see Open questions.)
+- A **zone-owner table** mapping each zone to its owning panel. It lives on
+  **one designated cluster member** (the write endpoint), not replicated across
+  every member — a per-member owner table would itself need cross-member
+  consistency, which push-to-one exists to avoid. Writes are a SPOF on that one
+  member; reads/serving stay HA across all members via AXFR. (See Open questions.)
+- **Refuse-create-if-owned / refuse-write-if-not-owner**, failing **closed** —
+  this is the cPanel reverse-trust guard and the Plesk "don't share a secondary
+  set" lesson, enforced in Jabali code, not delegated to PowerDNS.
+- It is this service (not raw PowerDNS) that the installer's "Authoritative DNS
+  Server Only" mode installs and that mints the per-panel secret.
+
+This is the one genuinely new network service Variant B introduces, and its
+security model is the crux of the design — it is where multi-panel trust lives.
+
+### DNSSEC — why Variant B keeps it working
+
+In the Master↔Master API-push model, whoever *signs* must be a primary, so N
+masters signing fights "no authoritative copy on the panel" — that is the
+constraint that bit HestiaCP. In Variant B the **cluster is both the sole
+signer and the sole authoritative store**, so signing is centralized and the
+constraint does not apply. Consequence to design for (ADR-0076 is impacted):
+
+- Per-domain DNSSEC keys (`pdnsutil`, ADR-0076) **move to the cluster**. The
+  registrar **DS record derives from the cluster's keys**, not the panel's.
+- The panel's DNSSEC enable/rollover and DS-display flow becomes an **API
+  round-trip** to the cluster (fetch DS/DNSKEY to show the operator), rather
+  than a local `pdnsutil` call. ADR-0076 must be amended when Phase 3 lands.
+
+### Phase 1 — advertised-member data model
+
+Introduce a dedicated `dns_nameservers` table — **not** more `server_settings`
+columns (`server_settings` is at the VARCHAR row-size ceiling; new
+NS3Name/NS3IPv4 varchars are exactly how `ERROR 1118` gets tripped — see
 `feedback_server_settings_row_ceiling`). Columns: `name`, `ipv4`, **`ipv6`**
-(there is no AAAA glue at all today — add it from the start), `advertised`
-(bool; the panel-host hidden-primary row is `advertised=false`), `sort_order`.
+(there is no AAAA glue at all today — add it from the start), `sort_order`.
+Unlike the earlier hidden-primary draft, there is **no `advertised=false`
+panel-host row** — in **External DNS** mode the panel is never an advertised
+authoritative server and every row is a cluster member. (In *Local/On-Host*
+mode the rows remain the panel host's own ns1/ns2, exactly as today; the table
+replaces the fixed `server_settings` NS columns in both modes.)
 
-Every current NS1/NS2 consumer becomes a query over the advertised set. That
-list **is** the Phase-1 blast radius:
+Every current NS1/NS2 consumer becomes a query over the member set. The panel
+still *compiles* apex NS + SOA MNAME + glue from this list (the records it
+pushes to the cluster name the cluster members). Blast radius (spot-checked on
+`1ee70b5e1`; line numbers approximate — re-confirm at implementation):
 
 - `dnscompile/compile.go:71` (SOA MNAME) and `:90-95` (apex NS records)
-- `dnscompile/bootstrap.go:121-131` (in-zone `ns*.<zone>` glue seeding)
-- `reconciler.go:3681-3694` (glue A-record backfill for `ns*` labels)
-- `reconciler.go:~2570` (`ALLOW-AXFR-FROM` / `ALSO-NOTIFY` — the single→list change)
+- `dnscompile/bootstrap.go` (in-zone `ns*.<zone>` glue seeding)
+- `reconciler.go:~3772` (glue A-record backfill for `ns*` labels)
 - `reconciler/dns01_routing.go:98` (`OurNSHosts` hardcoded 2-slice)
-- `settingsops/validate.go:52`, `config/config.go:90-92`, `serve.go:733` (fillIfEmpty seed)
+- `settingsops/validate.go:52`, `config/config.go`, `serve.go` (fillIfEmpty seed)
 - `api/server_settings.go:347-354` + the panel-ui Server Settings NS fields
 
 Migration numbering trap applies when this ships (contiguous version, renumber
 at merge — the completeness test enforces it).
 
-### Phase 2 — AXFR fan-out + TSIG
+### Phase 2 — pluggable zone-push backend
 
-Generalize `ALLOW-AXFR-FROM` / `ALSO-NOTIFY` to every advertised member's IP.
-Add **TSIG**: today AXFR trust is source-IP allowlist only — acceptable for a
-single trusted ns2 on the same operator's network, **not** acceptable for a
-shared multi-panel cluster. Phase 2 gates multi-panel on writing a per-panel
-TSIG key into `TSIG-ALLOW-AXFR` domainmetadata (the agent's `dns.zone.upsert`
-writes only ALLOW-AXFR-FROM/ALSO-NOTIFY now — this is a new metadata write).
+Abstract the reconciler's zone push behind a small backend interface with two
+implementations: **local PowerDNS** (today's `dns.zone.upsert`, the default)
+and **external cluster DNS API** (the new push-to-one client). Selected by the
+DNS mode chosen at install (below). Desired-state compilation is unchanged; only
+the sink differs. This is where the durable push queue + fail-closed behaviour
+(Consequences) lives.
 
-**DNSSEC × AXFR constraint to confirm before this phase:** a live-signing
-primary (ADR-0076, `pdnsutil` per-domain keys) requires secondaries to carry
-`PRESIGNED` metadata to serve transferred RRSIGs, and the runbook's
-`launch=bind` superslave likely cannot — cluster nodes should be gmysql-backed.
-The registrar DS record still derives from the hidden primary's keys. Confirm
-against a live pair; do not assume.
+### Phase 3 — cluster deployable + cross-panel ownership + install modes
 
-### Phase 3 — cross-panel ownership + migration
+- **The Jabali DNS API service** (above): installed by the installer's
+  **"Authoritative DNS Server Only"** mode — installs PowerDNS + the Jabali DNS
+  API, generates/prints a per-panel API secret, functions as a dedicated
+  external authoritative server for one or more panels.
+- **Panel install DNS selection:** *Local/On-Host DNS* (today) vs *Jabali
+  External DNS* — the latter takes the authoritative NS FQDNs + per-server API
+  secret and installs the panel **without a local authoritative PowerDNS**.
+- **Add-more-members from the panel:** admins register additional external DNS
+  servers (`ns3.example.com` + API key) after deploy; optionally distributed to
+  all panels via Jabali Sounder as **global DNS-server config** (this is server
+  config, not zone data — see Open questions).
+- **Zone-ownership invariant:** one zone, one owning panel, enforced in the
+  Jabali DNS API's zone-owner table, fail-closed. Two panels pushing the same
+  name must be refused, not last-write-wins (same failure class as the
+  `aliasCollision` closed in #1625).
+- **Cross-panel domain move (#954)** becomes an **ownership-transfer** operation
+  on the zone-owner table (re-point the row to the new panel), not a re-pinning
+  of `domains.master` on every node as the hidden-primary/AXFR shape required.
+  This is cleaner under B and is where #954's live migration work meets this ADR.
 
-- **Zone-ownership invariant:** one domain, one owning panel. Confirm and
-  document PowerDNS behaviour: a superslave pins `domains.master` at
-  auto-create and ignores NOTIFY for an existing zone from a different source
-  IP. If that is **not** true for the chosen backend, two panels pushing the
-  same name is a last-NOTIFY-wins cross-panel hijack (same failure class as the
-  `aliasCollision` closed in #1625). Verify before enabling multi-panel.
-- **Moving a domain between panels** (the #954 Jabali→Jabali migration path)
-  requires re-pinning `domains.master` on every cluster node — a runbook step,
-  not an automatic transfer.
+### Phase 4 — on-host → external migration
 
-### Phase 4 (optional) — central Jabali DNS API (Alternative B)
-
-Only if central cross-panel visibility/management is required. Layers on
-Phases 1-3; see Alternatives.
+For panels currently running local PowerDNS: an operator-initiated **"Migrate
+to External DNS"** flow that copies all existing zones/records to the selected
+external cluster, **verifies** the copy, then disables the local authoritative
+PowerDNS and switches the panel's push backend to the cluster. The recursor is
+untouched. Verify-before-disable is mandatory — a half-migrated zone must not
+drop authoritative service.
 
 ## Alternatives considered
 
-- **B — API-push to a central DNS control plane.** Panels POST zone changes to
-  a Jabali DNS API that owns the cluster backend and replicates. This is how
-  cPanel/Hestia move the zone *data* (WHM API / Hestia API push), so it is
-  mainstream, not exotic — and it matches the issue's literal diagram plus
-  gives true central management. Not the *starting* point: it is a new
-  deployable with a new auth surface and a cross-panel conflict model, it
-  breaks DNSSEC in the bidirectional (Master↔Master) form (Hestia), and the
-  panel already exposes zone data (`GET /dns/zones`, the record API) — Option A
-  reaches the same advertised-NS-set outcome, keeps DNSSEC, and adds no
-  service. Kept as Phase 4 if central cross-panel management is the goal.
-  **Open question for #1632 (scope-defining): is the target a shared *advertised
-  NS set* where each panel still owns its own zones (Option A / cPanel
-  Synchronize model), or *central cross-panel management* — one place to
-  see/edit every zone across panels (Option B / Plesk Multi Server "Centralized
-  DNS")? That is the fork that decides whether Phase 4 is ever built.**
+- **A — hidden-primary + AXFR fan-out.** The panel-local PowerDNS stays the
+  authoritative primary but is not advertised; the cluster members are AXFR
+  secondaries slaving from the panel. This was the earlier recommendation and is
+  a **smaller step** from what ships today (reuses the AXFR path, adds no new
+  service). **Rejected as the target** because the requester explicitly does
+  **not** want the panel to remain an authoritative server or to require AXFR
+  from panels; and a shared multi-panel cluster slaving from panels would need
+  per-panel TSIG on panel→cluster AXFR anyway. Retained here only as the
+  fallback if the central-API deployable proves too heavy for a first increment.
 - **C — shared/replicated PowerDNS MySQL backend across all panels + cluster.**
   Rejected: multi-master DB coupling, split-brain, and it discards the
   panel-DB-is-truth model (ADR-0011). No isolation between panels.
 
+## Open questions
+
+- **Scope of "central management" (decides how far Phase 3/4 go).** johnnyq
+  chose Variant B for *transport* (API push to a central authoritative tier)
+  and described **per-panel** zone management ("multiple panels can manage
+  **their own** zones through the same centralized infrastructure"), reserving
+  "global" for **DNS-server configuration** via Sounder. It is **not** settled
+  whether the goal also includes a **single cross-panel console to view/edit
+  every zone across all panels** (the Plesk "Centralized DNS" surface). This
+  ADR adopts per-panel ownership; a cross-panel management console would be an
+  additional surface on top and is left open pending an explicit decision.
+- **Credential model — per-panel vs per-server (decides the Phase 3 API shape).**
+  This ADR's push-to-one model needs **one panel credential to one cluster
+  endpoint**; johnnyq's install sketch describes **one API secret per NS server**
+  ("ns1 + key, ns2 + key, ns3 + key"). Those are different write topologies —
+  push-to-one with internal AXFR vs the panel writing each member. Confirm the
+  intended shape with johnnyq before Phase 3; it also decides where the
+  zone-owner table lives (one designated member, as above, vs every member).
+- **PowerDNS API auth model** — confirm single-`api-key`/no-per-zone-ACL against
+  the deployed PowerDNS version (the premise for the Jabali DNS API service).
+- **Intra-cluster DNSSEC + replication** — confirm the primary→secondary AXFR
+  inside the cluster carries RRSIGs correctly (`PRESIGNED` vs live-sign on the
+  cluster primary) against a live pair; do not assume.
+
 ## Consequences
 
-- **Propagation lag on DNS-01.** Today ns1 is panel-local: a challenge TXT is
-  served the instant it is written. With a hidden primary, the public NS lags
-  by NOTIFY→AXFR. `OurNSHosts` still marks the zone "ours", but the CA may
-  query a cluster member before the TXT has transferred. Mitigation: gate
-  validation on polling the SOA serial on each advertised NS, or rely on the
-  existing certbot retry (DNS-01 first-try timeout → retry converges, per
-  `feedback_san_drift...`). Phase 2 must name which.
-- **NOTIFY storm on settings save.** `desiredDNSZoneHash(compiled, allowAXFR,
-  alsoNotify)` means editing the NS list re-pushes every zone; with N members
-  that is N×zones NOTIFYs per save. Acceptable, but expected.
-- **Security:** Phase 1 changes no trust boundary. Multi-panel (Phase 3) is
-  **blocked** on TSIG (Phase 2) — IP-allowlist AXFR trust does not extend to a
-  shared cluster.
+- **Write path is now a network dependency, including the time-critical ACME
+  challenge.** Today a DNS write is local and always available. Under B, cert
+  issuance depends on writing the `_acme-challenge` TXT to the cluster API and
+  waiting for it to appear on ns1/ns2/ns3 before completing. Requires: a
+  **durable panel-side push queue with retry** (an unreachable cluster API must
+  not silently drop a record or a renewal), a **propagation-wait** in the
+  DNS-01 flow (poll the TXT/SOA serial on each advertised member), and
+  **fail-closed** behaviour on the cert path. DNS here is **not** an "optional
+  component" that a tick may skip (contrast `feedback_per_tick_idempotent_loops`) —
+  a failed push is a retriable error, never a silent success.
+- **DNSSEC DS moves to the cluster** (above); ADR-0076 amended at Phase 3.
+- **Cross-panel ownership** is the security crux — enforced in the Jabali DNS
+  API, fail-closed, never delegated to PowerDNS's single-key API.
+- **New auth surface:** the Jabali DNS API's per-panel secret is a new
+  credential to issue, rotate, and revoke; treat it like the agent socket trust
+  boundary, not a convenience token.
+- **NOTIFY / re-push storm on settings save.** Editing the member list re-pushes
+  every zone; expected, bounded by the push queue.
 - **Registrar glue** for `ns1/ns2/ns3.domain.com` is an operator step, out of
   panel scope; documented in an updated runbook.
-- Backwards compatible: with a single `advertised` row = the panel host, the
-  system behaves exactly as today.
+- Backwards compatible: with the DNS mode left *Local/On-Host*, the system
+  behaves exactly as today; Variant B is opt-in per panel at install or via the
+  Phase-4 migration.
