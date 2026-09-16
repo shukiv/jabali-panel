@@ -9,12 +9,15 @@
 - [Autoresponders](./autoresponders.md) — vacation responder per mailbox with start and end window.
 - [Catch-all](./catch-all.md) — what happens to mail addressed to a recipient that does not exist.
 - [Disclaimer](./disclaimer.md) — append a server-side disclaimer to outbound mail.
+- **Settings** — per-domain mail options. Currently the webmail toggle (see below).
 - [Shared Folders](./shared-folders.md) — IMAP shared folders for team mailboxes.
 - [Email Logs](./email-logs.md) — live tail of inbound and outbound mail for your domains.
 
 ## Webmail
 
 `https://mail.<domain>/` provides **Bulwark** (Next.js JMAP) webmail. The Mailboxes tab has a one-click **Open Webmail** button per mailbox that authenticates you via a single-use self-deleting SSO file (M22 pattern; ADR-0040).
+
+The **Settings** tab has a per-domain webmail switch. Turning it off drops just the `mail.<domain>` webmail vhost for that domain — IMAP, SMTP, and mail delivery are unaffected. Webmail also has to be enabled in your hosting plan, so turning it on here has no effect while your plan has webmail off. The change applies on the next reconcile.
 
 ## IMAP and SMTP submission
 
