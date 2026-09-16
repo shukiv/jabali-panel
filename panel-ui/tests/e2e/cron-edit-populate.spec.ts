@@ -1,11 +1,12 @@
 // GH #1686 item 1: opening a tenant cron in Edit mode must populate Name and
 // Command immediately, with no browser refresh — real-browser pass.
 //
-// happy-dom cannot catch this: the bug is the antd persistent-form + preserve
-// interaction across a real create→close→edit sequence in the built SPA. Here
-// we open the Create drawer once (seeding the persistent form store with the
-// empty create defaults), cancel it, then open Edit for an existing job and
-// assert the fields carry the job's values — without reloading the page.
+// This mirrors the vitest guard (CreateCronModal.test.tsx) in Chromium against
+// the built SPA, per the .tsx real-browser rule: the same create→close→edit
+// sequence, verified in a real browser engine. We open the Create drawer once
+// (seeding the persistent form store with the empty create defaults), cancel
+// it, then open Edit for an existing job and assert the fields carry the job's
+// values — without reloading the page.
 import { mockApi, signIn, test, expect, user } from "./fixtures";
 import type { Page } from "@playwright/test";
 
