@@ -50,7 +50,7 @@ func TestWebmail_PackageEntitlementOff_RemovesVhost(t *testing.T) {
 	dr := newFakeDomainRepo()
 	dr.domains["d1"] = &models.Domain{ID: "d1", Name: "example.com", UserID: "u1", EmailEnabled: true, WebmailEnabled: true}
 	ur := &fakeUserRepo{users: map[string]*models.User{
-		"u1": {ID: "u1", WebmailEnabled: true, PackageID: wmPtr("p1")},
+		"u1": {ID: "u1", PackageID: wmPtr("p1")},
 	}}
 	pr := &webmailGatePkgRepo{pkgs: []models.HostingPackage{{ID: "p1", WebmailEnabled: false}}}
 
@@ -69,7 +69,7 @@ func TestWebmail_NoPackage_KeepsVhost(t *testing.T) {
 	dr := newFakeDomainRepo()
 	dr.domains["d1"] = &models.Domain{ID: "d1", Name: "example.com", UserID: "u1", EmailEnabled: true, WebmailEnabled: true}
 	ur := &fakeUserRepo{users: map[string]*models.User{
-		"u1": {ID: "u1", WebmailEnabled: true, PackageID: nil},
+		"u1": {ID: "u1", PackageID: nil},
 	}}
 	pr := &webmailGatePkgRepo{pkgs: []models.HostingPackage{{ID: "p1", WebmailEnabled: false}}}
 
@@ -92,7 +92,7 @@ func TestWebmail_PerUserToggleIgnored_KeepsVhost(t *testing.T) {
 	ur := &fakeUserRepo{users: map[string]*models.User{
 		// Per-user flag OFF, but on a webmail-ON package — the retired gate must
 		// no longer remove the vhost.
-		"u1": {ID: "u1", WebmailEnabled: false, PackageID: wmPtr("p1")},
+		"u1": {ID: "u1", PackageID: wmPtr("p1")},
 	}}
 	pr := &webmailGatePkgRepo{pkgs: []models.HostingPackage{{ID: "p1", WebmailEnabled: true}}}
 
@@ -110,7 +110,7 @@ func TestWebmail_PackageListError_FailsOpen(t *testing.T) {
 	dr := newFakeDomainRepo()
 	dr.domains["d1"] = &models.Domain{ID: "d1", Name: "example.com", UserID: "u1", EmailEnabled: true, WebmailEnabled: true}
 	ur := &fakeUserRepo{users: map[string]*models.User{
-		"u1": {ID: "u1", WebmailEnabled: true, PackageID: wmPtr("p1")},
+		"u1": {ID: "u1", PackageID: wmPtr("p1")},
 	}}
 	pr := &webmailGatePkgRepo{listErr: errors.New("db down")}
 

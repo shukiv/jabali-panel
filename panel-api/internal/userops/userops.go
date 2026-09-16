@@ -204,10 +204,6 @@ func Create(ctx context.Context, d Deps, in CreateInput) (*CreateResult, error) 
 		PasswordHash: string(hash),
 		IsAdmin:      in.IsAdmin,
 		PackageID:    in.PackageID,
-		// GH #316: new users default to webmail ON. The column default (1) only
-		// applies when GORM omits the column, but a plain bool can't be omitted, so
-		// set it explicitly or new users would insert webmail_enabled=false.
-		WebmailEnabled: true,
 	}
 	if err := d.Users.Create(ctx, u); err != nil {
 		return nil, mapInsertErr(err, effectiveUsername)

@@ -160,7 +160,7 @@ func (r *ssoFakeUserRepo) FindByID(_ context.Context, id string) (*models.User, 
 // ssoOKUsers returns a user repo with one active, webmail-enabled owner.
 func ssoOKUsers(userID string) *ssoFakeUserRepo {
 	return &ssoFakeUserRepo{users: map[string]*models.User{
-		userID: {ID: userID, WebmailEnabled: true, Suspended: false},
+		userID: {ID: userID, Suspended: false},
 	}}
 }
 
@@ -434,7 +434,7 @@ func TestWebmailSSO_ConcurrentRedemptionMintsOnce(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	mb := &models.Mailbox{ID: "mb-1", DomainID: "dom-1", EmailCached: "alice@example.com"}
 	dom := &models.Domain{ID: "dom-1", Name: "example.com", UserID: "usr-1", WebmailEnabled: true}
-	usr := &models.User{ID: "usr-1", WebmailEnabled: true}
+	usr := &models.User{ID: "usr-1"}
 	r, token, _ := buildWebmailSSO(t, mb, dom, usr, nil)
 
 	const n = 12
@@ -480,23 +480,23 @@ func TestWebmailSSO_PolicyFreshnessBlocks(t *testing.T) {
 		{"mailbox disabled",
 			&models.Mailbox{ID: "mb-1", DomainID: "dom-1", EmailCached: "a@example.com", IsDisabled: true},
 			&models.Domain{ID: "dom-1", Name: "example.com", UserID: "usr-1", WebmailEnabled: true},
-			&models.User{ID: "usr-1", WebmailEnabled: true}, nil},
+			&models.User{ID: "usr-1"}, nil},
 		{"domain webmail disabled",
 			&models.Mailbox{ID: "mb-1", DomainID: "dom-1", EmailCached: "a@example.com"},
 			&models.Domain{ID: "dom-1", Name: "example.com", UserID: "usr-1", WebmailEnabled: false},
-			&models.User{ID: "usr-1", WebmailEnabled: true}, nil},
+			&models.User{ID: "usr-1"}, nil},
 		// GH #1628 slice 3: the per-user webmail toggle is gone; the owner's
 		// package entitlement now blocks redemption. Owner is on package p1 whose
 		// webmail is OFF.
 		{"package webmail disabled",
 			&models.Mailbox{ID: "mb-1", DomainID: "dom-1", EmailCached: "a@example.com"},
 			&models.Domain{ID: "dom-1", Name: "example.com", UserID: "usr-1", WebmailEnabled: true},
-			&models.User{ID: "usr-1", WebmailEnabled: true, PackageID: strPtr("p1")},
+			&models.User{ID: "usr-1", PackageID: strPtr("p1")},
 			&models.HostingPackage{ID: "p1", WebmailEnabled: false}},
 		{"user suspended",
 			&models.Mailbox{ID: "mb-1", DomainID: "dom-1", EmailCached: "a@example.com"},
 			&models.Domain{ID: "dom-1", Name: "example.com", UserID: "usr-1", WebmailEnabled: true},
-			&models.User{ID: "usr-1", WebmailEnabled: true, Suspended: true}, nil},
+			&models.User{ID: "usr-1", Suspended: true}, nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
