@@ -181,6 +181,36 @@ func TestReconcileSendmailCreds_ProvisionsAndCaches(t *testing.T) {
 	}
 }
 
+// TestReconcileSendmailCreds_MailHostnameOverride pins the JAB-390 wiring:
+// a set server_settings.mail_hostname override repoints the relay identity
+// host — resolved through models.EffectiveMailHostname — independent of the
+// panel hostname. Swapping the reconciler back to PanelMailHostname(srv.Hostname)
+// yields "mail.panel.example.tld" and reddens this test.
+func TestReconcileSendmailCreds_MailHostnameOverride(t *testing.T) {
+	agent := &fakeSendmailAgent{}
+	mailboxes := &fakeSendmailMailboxRepo{
+		byEmail:     map[string]*models.Mailbox{},
+		domainNames: map[string]string{"d1": "site.tld"},
+	}
+	r := sendmailTestReconciler(agent, mailboxes, []models.Domain{
+		{ID: "d1", Name: "site.tld", UserID: "u1", EmailEnabled: true},
+	})
+	override := "mail.example.com"
+	r.serverSettings = &fakeSettingsRepo{srv: &models.ServerSettings{
+		Hostname: "panel.example.tld", MailEnabled: true, MailHostname: &override,
+	}}
+
+	r.reconcileSendmailCreds(context.Background())
+
+	ensures := agent.byMethod("sendmail.cred.ensure")
+	if len(ensures) != 1 {
+		t.Fatalf("cred.ensure calls = %d, want 1", len(ensures))
+	}
+	if got := ensures[0].params["host"]; got != "mail.example.com" {
+		t.Errorf("relay host = %v, want mail.example.com (mail_hostname override honoured)", got)
+	}
+}
+
 func TestReconcileSendmailCreds_ExistingSealedPasswordReused(t *testing.T) {
 	agent := &fakeSendmailAgent{}
 	key := ssokey.Key{}

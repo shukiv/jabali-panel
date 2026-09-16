@@ -54,7 +54,10 @@ func (r *Reconciler) reconcileSendmailCreds(ctx context.Context) {
 	if !srv.MailEnabled {
 		return
 	}
-	mailHost := models.PanelMailHostname(srv.Hostname)
+	// JAB-390: resolve through EffectiveMailHostname so a (future,
+	// settable) mail_hostname override repoints the relay identity from one
+	// place. Unset (its only state in this slice) → mail.<hostname>.
+	mailHost := models.EffectiveMailHostname(srv.MailHostname, srv.Hostname)
 
 	domains, _, err := r.domains.List(ctx, repository.ListOptions{Limit: 10000})
 	if err != nil {
