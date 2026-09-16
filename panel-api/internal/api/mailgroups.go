@@ -54,6 +54,9 @@ func RegisterMailGroupRoutes(g *gin.RouterGroup, cfg MailGroupHandlerConfig) {
 	g.GET("/domains/:id/mailgroups", h.list)
 	g.POST("/domains/:id/mailgroups", h.create)
 	g.GET("/domains/:id/mailbox-group-memberships", h.listMemberships)
+	// Owner-scoped cross-domain bulk projection (JAB-370 Selection): one call
+	// for the tenant Mailboxes tab, replacing the per-domain membership fan-out.
+	g.GET("/mail/mailbox-group-memberships", h.listMembershipsAll)
 
 	g.GET("/admin/mailgroups", middleware.RequireAdmin(), h.listAllAdmin)
 
@@ -218,6 +221,37 @@ func (h *mailGroupHandler) listMemberships(c *gin.Context) {
 		return
 	}
 	rows, err := h.cfg.Groups.ListMembershipsByDomain(c.Request.Context(), dom.ID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	out := map[string][]repository.MailboxGroupMembership{}
+	for _, r := range rows {
+		out[r.MailboxID] = append(out[r.MailboxID], r)
+	}
+	c.JSON(http.StatusOK, gin.H{"data": out})
+}
+
+// listMembershipsAll returns, per mailbox the caller OWNS, the groups it
+// belongs to — the cross-domain bulk projection for the tenant Mailboxes tab
+// (JAB-370 Selection). One owner-scoped query replaces the per-domain
+// membership fan-out (one request per email-enabled domain). Same response
+// shape as listMemberships: { data: { <mailbox_id>: [{group_id, group_name,
+// group_email}] } }.
+//
+// Isolation-critical: the owner scope is taken from the Kratos session, never
+// a request parameter. Unlike listAllAdmin there is NO ?user_id, and unlike
+// the forwarders bulk list there is NO admin cross-tenant widening — an admin
+// gets only their OWN edges, matching /me/mailboxes (the tab's mailbox
+// source), so the client-side mailbox->groups join never receives another
+// tenant's group data.
+func (h *mailGroupHandler) listMembershipsAll(c *gin.Context) {
+	claims := ginctx.Claims(c)
+	if claims == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+	rows, err := h.cfg.Groups.ListMembershipsByUserID(c.Request.Context(), claims.UserID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
