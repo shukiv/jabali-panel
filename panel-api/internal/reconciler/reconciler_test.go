@@ -132,6 +132,13 @@ func (f *fakeDomainRepo) Update(ctx context.Context, d *models.Domain) error {
 	return nil
 }
 
+// Transaction runs fn against the fake itself (no real rollback). The
+// reconciler never calls it; present to satisfy the DomainRepository interface
+// after JAB-318 added the method.
+func (f *fakeDomainRepo) Transaction(_ context.Context, fn func(repository.DomainRepository) error) error {
+	return fn(f)
+}
+
 func (f *fakeDomainRepo) Rename(_ context.Context, id, newName, newDocRoot string) error {
 	if d, ok := f.domains[id]; ok {
 		d.Name = newName

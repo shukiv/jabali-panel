@@ -110,3 +110,42 @@ func TestDomainSet_RunEWiresValidation(t *testing.T) {
 		t.Fatal("RunE must store the NORMALISED redirect type, not the raw flag — redirects.Compile emits it verbatim as the nginx return code (JAB-318)")
 	}
 }
+
+// TestDomainSet_RunEAppliesWritesAtomically source-pins the JAB-318 AC4 fix on
+// the CLI door: the general Update and the dedicated ssl_mode / cache_enabled
+// writers must run inside ONE domainRepoFromDB().Transaction, on the tx handle
+// (not fresh repo handles), so a later writer failing rolls the whole apply
+// back instead of leaving the row half-applied. cmd/server's advanced command
+// runs on the global repo with no injection seam (see the validation pin
+// above), so we assert on the RunE source — real all-or-nothing rollback is
+// covered by the repository sqlmock test. Falsify by unwrapping the writes
+// (calling domainRepoFromDB().Update/... directly): the Transaction substring
+// disappears and this reddens.
+func TestDomainSet_RunEAppliesWritesAtomically(t *testing.T) {
+	src, err := os.ReadFile("domain_advanced_cmd.go")
+	if err != nil {
+		t.Fatalf("read domain_advanced_cmd.go: %v", err)
+	}
+	s := string(src)
+
+	if !strings.Contains(s, "domainRepoFromDB().Transaction(ctx, func(tx repository.DomainRepository) error {") {
+		t.Fatal("RunE must wrap the domain-apply writes in domainRepoFromDB().Transaction — otherwise a dedicated writer failing after the general Update leaves the row half-applied (JAB-318 AC4)")
+	}
+	for _, w := range []string{
+		"tx.Update(ctx, d)",
+		"tx.UpdateSSLMode(ctx, d.ID, sslMode)",
+		"tx.UpdateCacheEnabled(ctx, d.ID, d.CacheEnabled)",
+	} {
+		if !strings.Contains(s, w) {
+			t.Fatalf("RunE must issue %q on the transaction handle (tx), not a fresh repo, so the write is part of the atomic apply (JAB-318 AC4)", w)
+		}
+	}
+	// The audit success record must be written only AFTER the transaction
+	// commits — a partial failure must never be reported as success. Pin its
+	// position after the transaction's error check.
+	txClose := strings.Index(s, "}); err != nil {")
+	auditIdx := strings.Index(s, "cliAuditOK(ctx, \"domain.settings_update\"")
+	if txClose < 0 || auditIdx < 0 || auditIdx < txClose {
+		t.Fatal("cliAuditOK(domain.settings_update) must be called AFTER the apply transaction returns nil, so a rolled-back partial apply is never audited as success (JAB-318 AC4)")
+	}
+}

@@ -32,6 +32,13 @@ type mockDomainRepo struct {
 	// exercise the persistence-failure branch (e.g. the DKIM-rotate handler's
 	// 500 persist_failed mapping).
 	emailStateErr error
+	// sslModeErr, when set, is returned by UpdateSSLMode — lets a test exercise
+	// a dedicated-writer failure inside the domain-apply transaction (JAB-318).
+	sslModeErr error
+	// txCalls counts Transaction invocations so a handler test can prove the
+	// PATCH apply routes its writes THROUGH Domains.Transaction (atomic) rather
+	// than issuing them directly (JAB-318 AC4).
+	txCalls int
 }
 
 func newMockDomainRepo() *mockDomainRepo {
@@ -135,7 +142,17 @@ func (m *mockDomainRepo) UpdateMailProvider(_ context.Context, _ string, _ repos
 	return nil
 }
 
-func (m *mockDomainRepo) UpdateSSLMode(context.Context, string, string) error { return nil }
+func (m *mockDomainRepo) UpdateSSLMode(context.Context, string, string) error { return m.sslModeErr }
+
+// Transaction runs fn against the mock itself so the closure's writes land in
+// the in-memory map exactly as sequential writes would (a fake cannot truly
+// roll back — real rollback is covered by the repository sqlmock test). The
+// txCalls counter lets a handler test prove the apply went THROUGH the
+// transaction rather than issuing writes directly (JAB-318 AC4).
+func (m *mockDomainRepo) Transaction(_ context.Context, fn func(repository.DomainRepository) error) error {
+	m.txCalls++
+	return fn(m)
+}
 func (m *mockDomainRepo) SetSharedCertificate(context.Context, string, *string, string) error {
 	return nil
 }
