@@ -38,23 +38,35 @@ export const CreateCronModal = ({
   const [scheduleMode, setScheduleMode] = useState<string>("0 * * * *");
   const [customSchedule, setCustomSchedule] = useState("");
 
-  // Sync the schedule picker every time the drawer opens (GH #854). This
-  // component stays mounted across opens, so state initializers see only the
-  // very first `initial` (null on page load) — every edit then showed the
-  // "Hourly" default no matter what the job's real schedule was, and saving
-  // silently rewrote the schedule to hourly. destroyOnClose remounts only the
-  // Drawer's children (the Form), not this component's state.
+  // Sync the whole form every time the drawer opens (GH #854 schedule picker,
+  // GH #1686 name/command). This component stays mounted across opens, so state
+  // initializers see only the very first `initial` (null on page load) — every
+  // edit then showed the "Hourly" default no matter what the job's real
+  // schedule was, and saving silently rewrote the schedule to hourly.
+  //
+  // The same class bit `name`/`command`: they populated from the Form's
+  // `initialValues`, but the `form` instance lives in this never-unmounting
+  // component with antd's default `preserve`, so once the Create form has run
+  // once (leaving name:""/command:"" in the store after resetFields),
+  // `initialValues` no longer overrides those preserved empties on the next
+  // Edit open — the fields stayed blank until a full-app refresh cleared the
+  // store, and a Save from that blank form silently wiped the job. Driving
+  // name/command from this open-effect (like the schedule picker) makes Edit
+  // populate immediately. destroyOnClose remounts only the Drawer's children
+  // (the Form), not this component's state or the persistent form store.
   useEffect(() => {
     if (!open) return;
     if (initial) {
+      form.setFieldsValue({ name: initial.name, command: initial.command });
       const isPreset = CRON_SCHEDULE_OPTIONS.some((p) => p.value === initial.schedule);
       setScheduleMode(isPreset ? initial.schedule : "advanced");
       setCustomSchedule(isPreset ? "" : initial.schedule);
     } else {
+      form.setFieldsValue({ name: "", command: "" });
       setScheduleMode("0 * * * *");
       setCustomSchedule("");
     }
-  }, [open, initial]);
+  }, [open, initial, form]);
   const { message: antMessage } = App.useApp();
   const screens = Grid.useBreakpoint();
   const isDesktop = screens.lg ?? (typeof window !== "undefined" ? window.innerWidth >= 992 : true);
