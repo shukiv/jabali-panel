@@ -920,6 +920,21 @@ func (h *domainHandler) create(c *gin.Context) {
 	c.JSON(http.StatusCreated, dom)
 }
 
+// domainPatchTxErr carries the (status, code, detail) a validation failure
+// inside the PATCH apply transaction must surface. Returning it from the
+// transaction closure rolls the whole apply back (so a rejected mail_provider
+// or ssl_mode never leaves the general Update's columns persisted) while
+// letting the handler emit the exact JSON shape the pre-JAB-318 sequential
+// handler did. A plain (non-*domainPatchTxErr) error from the closure is a
+// persistence failure and maps to 500 internal, as before.
+type domainPatchTxErr struct {
+	status int
+	code   string
+	detail string
+}
+
+func (e *domainPatchTxErr) Error() string { return e.code }
+
 func (h *domainHandler) update(c *gin.Context) {
 	claims := ginctx.Claims(c)
 	if claims == nil {
@@ -1223,117 +1238,131 @@ func (h *domainHandler) update(c *gin.Context) {
 	}
 
 	domain.UpdatedAt = time.Now().UTC()
-	if err := h.cfg.Domains.Update(ctx, domain); err != nil {
+	// JAB-318 AC4: apply the general Update and every dedicated writer
+	// (listen_ips / mail_provider / ssl_mode) as ONE transaction. Before this
+	// they ran sequentially, so a writer failing mid-sequence left the row
+	// half-patched — the general Update's nginx/redirect columns persisted
+	// while ssl_mode did not. Field validation stays inside the closure in its
+	// original order: a rejected value returns a *domainPatchTxErr, which rolls
+	// the apply back so a partial patch is never committed, and the ssl_mode
+	// invariants keep reading the mail switch's post-write email_enabled (a
+	// same-request mail-off + ssl-none must see mail already disabled). The
+	// reconcile below is scheduled only after a clean commit.
+	txErr := h.cfg.Domains.Transaction(ctx, func(tx repository.DomainRepository) error {
+		if err := tx.Update(ctx, domain); err != nil {
+			return err
+		}
+
+		// Listen IPs are written via dedicated repo method — Domain.Update's
+		// allowlist intentionally excludes listen_ipv*_id. Mirror the in-memory
+		// struct so the response reflects the new binding.
+		if listenUpd.ChangeIPv4 || listenUpd.ChangeIPv6 {
+			if err := tx.SetListenIPs(ctx, domain.ID, listenUpd); err != nil {
+				return err
+			}
+			if listenUpd.ChangeIPv4 {
+				domain.ListenIPv4ID = listenUpd.IPv4ID
+			}
+			if listenUpd.ChangeIPv6 {
+				domain.ListenIPv6ID = listenUpd.IPv6ID
+			}
+		}
+
+		// GH#181 mail provider: dedicated repo method (Domain.Update's
+		// allowlist excludes these columns). Validate, derive the two mail
+		// flags, write. A switch re-publishes DNS + reissues the cert on the
+		// next reconcile (Schedule below).
+		if req.MailProvider != nil {
+			mp := *req.MailProvider
+			if !models.ValidMailProvider(mp) {
+				return &domainPatchTxErr{http.StatusBadRequest, "invalid_mail_provider", ""}
+			}
+			// GH #1627: 'custom' is the internal posture for a domain created from a
+			// DNS template — it is never a directly-selectable provider on a live
+			// switch (ValidMailProvider recognises it only so persisted rows pass),
+			// and a template domain's mail posture can't yet be switched away in
+			// this phase: doing so would strand the template's own external apex
+			// MX/SPF (unmarked, Managed=false) beside a re-asserted Jabali apex →
+			// two apex SPF = RFC 7208 permerror. Delete + recreate to change it.
+			if mp == models.MailProviderCustom {
+				return &domainPatchTxErr{http.StatusBadRequest, "mail_provider_custom_reserved", "the 'custom' posture is selected by choosing a DNS template at domain creation, not via a provider switch"}
+			}
+			if domain.MailProvider == models.MailProviderCustom {
+				return &domainPatchTxErr{http.StatusConflict, "template_posture_locked", "this domain was created from a DNS template; switching its mail posture is not yet supported — delete and recreate the domain to change it"}
+			}
+			var m365In, gdkimIn string
+			if req.M365Onmicrosoft != nil {
+				m365In = *req.M365Onmicrosoft
+			}
+			if req.GoogleDKIM != nil {
+				gdkimIn = *req.GoogleDKIM
+			}
+			m365Tenant, err := dnscompile.NormaliseM365Onmicrosoft(m365In)
+			if err != nil {
+				return &domainPatchTxErr{http.StatusBadRequest, "invalid_m365_onmicrosoft", err.Error()}
+			}
+			gdkim, err := dnscompile.ValidateGoogleDKIM(gdkimIn)
+			if err != nil {
+				return &domainPatchTxErr{http.StatusBadRequest, "invalid_google_dkim", err.Error()}
+			}
+			emailEnabled, skipSAN := models.DeriveMailFlags(mp)
+			if err := tx.UpdateMailProvider(ctx, domain.ID, repository.DomainMailProvider{
+				Provider:        mp,
+				EmailEnabled:    emailEnabled,
+				SkipAutoSAN:     skipSAN,
+				M365Onmicrosoft: strPtrOrNil(m365Tenant),
+				GoogleDKIM:      strPtrOrNil(gdkim),
+			}); err != nil {
+				return err
+			}
+			domain.MailProvider = mp
+			domain.EmailEnabled = emailEnabled
+			domain.SkipAutoSAN = skipSAN
+			domain.M365Onmicrosoft = strPtrOrNil(m365Tenant)
+			domain.GoogleDKIM = strPtrOrNil(gdkim)
+		}
+
+		// GH #246: TLS cert mode switch. Dedicated repo method (Domain.Update's
+		// allowlist excludes ssl_mode). Invariants guarded: the panel-primary
+		// domain must keep TLS, and a mail-enabled domain can't go to 'none'.
+		if req.SSLMode != nil {
+			mode := *req.SSLMode
+			if !models.ValidSSLMode(mode) {
+				return &domainPatchTxErr{http.StatusBadRequest, "invalid_ssl_mode", ""}
+			}
+			if mode == models.SSLModeCustom {
+				return &domainPatchTxErr{http.StatusBadRequest, "ssl_mode_custom_via_upload", "upload a custom cert via the SSL settings to switch to custom"}
+			}
+			if domain.IsPanelPrimary && mode == models.SSLModeNone {
+				return &domainPatchTxErr{http.StatusUnprocessableEntity, "ssl_none_panel_primary", "the panel hostname must keep TLS"}
+			}
+			if mode == models.SSLModeNone && domain.EmailEnabled {
+				return &domainPatchTxErr{http.StatusUnprocessableEntity, "ssl_none_with_email", "disable mail before removing TLS"}
+			}
+			if err := tx.UpdateSSLMode(ctx, domain.ID, mode); err != nil {
+				return err
+			}
+			domain.SSLMode = mode
+			domain.SSLEnabled = models.SSLEnabledForMode(mode)
+		}
+		return nil
+	})
+	if txErr != nil {
+		var pe *domainPatchTxErr
+		if errors.As(txErr, &pe) {
+			resp := gin.H{"error": pe.code}
+			if pe.detail != "" {
+				resp["detail"] = pe.detail
+			}
+			c.JSON(pe.status, resp)
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
 
-	// Listen IPs are written via dedicated repo method — Domain.Update's
-	// allowlist intentionally excludes listen_ipv*_id. Mirror the in-memory
-	// struct so the response reflects the new binding.
-	if listenUpd.ChangeIPv4 || listenUpd.ChangeIPv6 {
-		if err := h.cfg.Domains.SetListenIPs(ctx, domain.ID, listenUpd); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
-			return
-		}
-		if listenUpd.ChangeIPv4 {
-			domain.ListenIPv4ID = listenUpd.IPv4ID
-		}
-		if listenUpd.ChangeIPv6 {
-			domain.ListenIPv6ID = listenUpd.IPv6ID
-		}
-	}
-
-	// GH#181 mail provider: dedicated repo method (Domain.Update's
-	// allowlist excludes these columns). Validate, derive the two mail
-	// flags, write. A switch re-publishes DNS + reissues the cert on the
-	// next reconcile (Schedule below).
-	if req.MailProvider != nil {
-		mp := *req.MailProvider
-		if !models.ValidMailProvider(mp) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_mail_provider"})
-			return
-		}
-		// GH #1627: 'custom' is the internal posture for a domain created from a
-		// DNS template — it is never a directly-selectable provider on a live
-		// switch (ValidMailProvider recognises it only so persisted rows pass),
-		// and a template domain's mail posture can't yet be switched away in
-		// this phase: doing so would strand the template's own external apex
-		// MX/SPF (unmarked, Managed=false) beside a re-asserted Jabali apex →
-		// two apex SPF = RFC 7208 permerror. Delete + recreate to change it.
-		if mp == models.MailProviderCustom {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "mail_provider_custom_reserved", "detail": "the 'custom' posture is selected by choosing a DNS template at domain creation, not via a provider switch"})
-			return
-		}
-		if domain.MailProvider == models.MailProviderCustom {
-			c.JSON(http.StatusConflict, gin.H{"error": "template_posture_locked", "detail": "this domain was created from a DNS template; switching its mail posture is not yet supported — delete and recreate the domain to change it"})
-			return
-		}
-		var m365In, gdkimIn string
-		if req.M365Onmicrosoft != nil {
-			m365In = *req.M365Onmicrosoft
-		}
-		if req.GoogleDKIM != nil {
-			gdkimIn = *req.GoogleDKIM
-		}
-		m365Tenant, err := dnscompile.NormaliseM365Onmicrosoft(m365In)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_m365_onmicrosoft", "detail": err.Error()})
-			return
-		}
-		gdkim, err := dnscompile.ValidateGoogleDKIM(gdkimIn)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_google_dkim", "detail": err.Error()})
-			return
-		}
-		emailEnabled, skipSAN := models.DeriveMailFlags(mp)
-		if err := h.cfg.Domains.UpdateMailProvider(ctx, domain.ID, repository.DomainMailProvider{
-			Provider:        mp,
-			EmailEnabled:    emailEnabled,
-			SkipAutoSAN:     skipSAN,
-			M365Onmicrosoft: strPtrOrNil(m365Tenant),
-			GoogleDKIM:      strPtrOrNil(gdkim),
-		}); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
-			return
-		}
-		domain.MailProvider = mp
-		domain.EmailEnabled = emailEnabled
-		domain.SkipAutoSAN = skipSAN
-		domain.M365Onmicrosoft = strPtrOrNil(m365Tenant)
-		domain.GoogleDKIM = strPtrOrNil(gdkim)
-	}
-
-	// GH #246: TLS cert mode switch. Dedicated repo method (Domain.Update's
-	// allowlist excludes ssl_mode). Invariants guarded: the panel-primary
-	// domain must keep TLS, and a mail-enabled domain can't go to 'none'.
-	if req.SSLMode != nil {
-		mode := *req.SSLMode
-		if !models.ValidSSLMode(mode) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_ssl_mode"})
-			return
-		}
-		if mode == models.SSLModeCustom {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "ssl_mode_custom_via_upload", "detail": "upload a custom cert via the SSL settings to switch to custom"})
-			return
-		}
-		if domain.IsPanelPrimary && mode == models.SSLModeNone {
-			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "ssl_none_panel_primary", "detail": "the panel hostname must keep TLS"})
-			return
-		}
-		if mode == models.SSLModeNone && domain.EmailEnabled {
-			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "ssl_none_with_email", "detail": "disable mail before removing TLS"})
-			return
-		}
-		if err := h.cfg.Domains.UpdateSSLMode(ctx, domain.ID, mode); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
-			return
-		}
-		domain.SSLMode = mode
-		domain.SSLEnabled = models.SSLEnabledForMode(mode)
-	}
-
-	// Schedule reconciliation to sync the domain state with the agent.
+	// Schedule reconciliation to sync the domain state with the agent — only
+	// after a clean commit, so a half-applied patch is never reconciled.
 	if h.cfg.Reconciler != nil {
 		h.cfg.Reconciler.Schedule(domain.ID)
 	}

@@ -26,6 +26,14 @@ type DomainRepository interface {
 	// handler fill ssl_state, which FindByID leaves empty (GH #1543).
 	ComputeSSLState(domain *models.Domain, cert *models.SSLCertificate) string
 	Update(ctx context.Context, d *models.Domain) error
+	// Transaction runs fn inside a single database transaction, passing a
+	// DomainRepository bound to that transaction. Every write fn issues through
+	// the passed repo commits together, or — on any error fn returns — rolls
+	// back as a unit. This is the persistence contract a multi-write domain
+	// apply relies on (JAB-318 AC4): the general Update plus the dedicated
+	// ssl_mode / cache_enabled / mail_provider / listen_ips writers can then
+	// never leave the row half-patched when a later write fails.
+	Transaction(ctx context.Context, fn func(DomainRepository) error) error
 	// RewriteDocRootPrefix rewrites the leading /home/<old> of every doc_root
 	// owned by userID to /home/<new> when a user is renamed (GH #1238).
 	// Prefix-anchored + user-scoped, so it can never touch another tenant's
@@ -415,6 +423,17 @@ func (r *domainRepo) Update(ctx context.Context, d *models.Domain) error {
 		return translate(err)
 	}
 	return nil
+}
+
+// Transaction — see interface doc. Binds a domainRepo to the gorm transaction
+// handle so every dedicated writer fn calls (Update, UpdateSSLMode,
+// UpdateCacheEnabled, UpdateMailProvider, SetListenIPs, …) executes on the same
+// *sql.Tx and commits or rolls back atomically (JAB-318 AC4). Mirrors the
+// gorm-transaction pattern already used by MarkPanelPrimary and Rename.
+func (r *domainRepo) Transaction(ctx context.Context, fn func(DomainRepository) error) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return fn(&domainRepo{db: tx})
+	})
 }
 
 func (r *domainRepo) BulkSetEnabledByUserID(ctx context.Context, userID string, enabled bool) (int64, error) {

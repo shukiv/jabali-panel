@@ -163,6 +163,13 @@ func (m *MockDomainRepository) Update(ctx context.Context, domain *models.Domain
 	return args.Error(0)
 }
 
+// Transaction runs fn against the mock itself (no real rollback). The SSL
+// handlers under test never call it; present to satisfy the DomainRepository
+// interface after JAB-318 added the method.
+func (m *MockDomainRepository) Transaction(_ context.Context, fn func(repository.DomainRepository) error) error {
+	return fn(m)
+}
+
 func (m *MockDomainRepository) Rename(ctx context.Context, id, newName, newDocRoot string) error {
 	args := m.Called(ctx, id, newName, newDocRoot)
 	return args.Error(0)
