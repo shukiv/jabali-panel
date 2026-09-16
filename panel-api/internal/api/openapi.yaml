@@ -3933,6 +3933,13 @@ paths:
       security: [ { KratosSession: [] } ]
       responses: { "200": { description: OK } }
 
+  /mail/autoresponders:
+    get:
+      tags: [Autoresponders]
+      summary: Owner-scoped mailbox autoresponders
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
 
   # --- Mailboxes (auto) ---
 

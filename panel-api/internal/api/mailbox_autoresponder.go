@@ -70,6 +70,7 @@ func RegisterMailboxAutoresponderRoutes(g *gin.RouterGroup, cfg MailboxAutorespo
 	g.PUT("/mailboxes/:mbid/autoresponder", h.put)
 	g.DELETE("/mailboxes/:mbid/autoresponder", h.del)
 	g.GET("/domains/:id/autoresponders", h.listByDomain)
+	g.GET("/mail/autoresponders", h.listAllOwner)
 }
 
 func (h *mailboxAutoresponderHandler) loadMailboxWithAuth(ctx context.Context, id string, claims *auth.AccessClaims) (*models.Mailbox, *models.Domain, error) {
@@ -107,6 +108,46 @@ func (h *mailboxAutoresponderHandler) listByDomain(c *gin.Context) {
 		return
 	}
 	rows, err := h.cfg.Autoresponders.ListByDomain(ctx, dom.ID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	out := make(map[string]autoresponderResponse, len(rows))
+	for i := range rows {
+		ar := rows[i]
+		out[ar.MailboxID] = autoresponderResponse{
+			MailboxID: ar.MailboxID,
+			Enabled:   ar.Enabled,
+			FromDate:  ar.FromDate,
+			ToDate:    ar.ToDate,
+			Subject:   ar.Subject,
+			TextBody:  ar.TextBody,
+			HTMLBody:  ar.HTMLBody,
+			UpdatedAt: ar.UpdatedAt,
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"data": out})
+}
+
+// listAllOwner returns every autoresponder for the mailboxes across all the
+// domains the caller owns, keyed by mailbox id (JAB-370 Selection). The
+// cross-domain Mailboxes tab reads this ONE owner-scoped request instead of
+// fanning out one listByDomain per email-enabled domain.
+//
+// The owner is taken from the Kratos session claims and NEVER widened — unlike
+// listByDomain there is deliberately no admin cross-tenant branch. The tab's
+// mailbox rows come from /me/mailboxes (owner-scoped for admins too), so the
+// autoresponder projection must match, or an admin's client-side
+// mailbox->autoresponder join would receive another tenant's rows. Mirrors
+// listWorkspace's isolation and the sibling mailbox-group-memberships bulk list.
+func (h *mailboxAutoresponderHandler) listAllOwner(c *gin.Context) {
+	ctx := c.Request.Context()
+	claims := ginctx.Claims(c)
+	if claims == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+	rows, err := h.cfg.Autoresponders.ListByUserID(ctx, claims.UserID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return

@@ -285,11 +285,12 @@ export function useDeleteMailbox(): UseMutationResult<
       // JAB-333: a deleted mailbox also disappears from the tenant screen's
       // group-membership and autoresponder panels — invalidate those shared
       // keys so they don't render a ghost row until the next refetch.
-      // JAB-370 Selection: bust the membership projection at the key PREFIX so
-      // the owner-scoped cross-domain bulk key (["list",...,"me"]) refreshes
-      // too, not only the per-domain drill-down key.
+      // JAB-370 Selection: bust the membership AND autoresponder projections at
+      // the key PREFIX so the owner-scoped cross-domain bulk keys
+      // (["list",...,"me"] and ["autoresponders","by-domain","me"]) refresh too,
+      // not only the per-domain drill-down keys.
       qc.invalidateQueries({ queryKey: ["list", "mailbox-group-memberships"] });
-      qc.invalidateQueries({ queryKey: ["autoresponders", "by-domain", domainId] });
+      qc.invalidateQueries({ queryKey: ["autoresponders", "by-domain"] });
     },
   });
 }

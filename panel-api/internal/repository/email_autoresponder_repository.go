@@ -25,6 +25,12 @@ type EmailAutoresponderRepository interface {
 	// out one bulk call per domain instead of one GET per mailbox).
 	ListByDomain(ctx context.Context, domainID string) ([]models.EmailAutoresponder, error)
 
+	// ListByUserID returns every autoresponder row for the mailboxes across
+	// all the domains a user owns (JAB-370 Selection — the owner-scoped bulk
+	// projection so the cross-domain Mailboxes tab issues ONE request instead
+	// of one ListByDomain per email-enabled domain).
+	ListByUserID(ctx context.Context, userID string) ([]models.EmailAutoresponder, error)
+
 	// ListAll returns every autoresponder row server-wide (JAB-76 — the
 	// read-only automation mail inventory a fleet manager reads).
 	ListAll(ctx context.Context) ([]models.EmailAutoresponder, error)
@@ -89,6 +95,22 @@ func (r *emailAutoresponderRepo) ListByDomain(ctx context.Context, domainID stri
 		Select("a.*").
 		Joins("JOIN mailboxes m ON m.id = a.mailbox_id").
 		Where("m.domain_id = ?", domainID).
+		Find(&rows).Error
+	return rows, err
+}
+
+// ListByUserID mirrors ListByDomain but widens one join further — from the
+// mailbox to its domain — and scopes by the domain owner (JAB-370 Selection).
+// Autoresponders key on mailbox_id, so the path is a->mailboxes->domains and
+// the owner filter lands on domains.user_id.
+func (r *emailAutoresponderRepo) ListByUserID(ctx context.Context, userID string) ([]models.EmailAutoresponder, error) {
+	var rows []models.EmailAutoresponder
+	err := r.db.WithContext(ctx).
+		Table("email_autoresponders a").
+		Select("a.*").
+		Joins("JOIN mailboxes m ON m.id = a.mailbox_id").
+		Joins("JOIN domains d ON d.id = m.domain_id").
+		Where("d.user_id = ?", userID).
 		Find(&rows).Error
 	return rows, err
 }
