@@ -82,7 +82,6 @@ func TestUserRepository_Update(t *testing.T) {
 	mock.ExpectExec(`UPDATE .users. SET`).
 		WithArgs(
 			u.Email, u.NameFirst, u.NameLast, u.PasswordHash, u.PackageID, u.LinuxUID,
-			u.WebmailEnabled, // GH #316 (added to the Update allowlist)
 			sqlmock.AnyArg(), // updated_at
 			u.ID,
 		).

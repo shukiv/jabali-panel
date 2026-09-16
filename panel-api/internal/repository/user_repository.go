@@ -321,7 +321,6 @@ func (r *userRepo) Update(ctx context.Context, u *models.User) error {
 	// — the M20 compensating-transaction callers use LinkKratosIdentity().
 	if err := r.db.WithContext(ctx).Model(u).Select(
 		"email", "name_first", "name_last", "password_hash", "linux_uid", "package_id",
-		"webmail_enabled",
 	).Updates(u).Error; err != nil {
 		return translate(err)
 	}

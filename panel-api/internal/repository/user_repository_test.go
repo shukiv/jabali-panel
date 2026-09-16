@@ -51,7 +51,6 @@ func TestUserRepository_Create(t *testing.T) {
 			false,            // suspended (migration 000132)
 			nil,              // suspended_at
 			"",               // suspend_reason
-			true,             // webmail_enabled (GORM default:1 promotes the zero-value bool)
 			false,            // ssh_forwarding_enabled (GH #1229; default OFF)
 			uint64(0),        // disk_used_kb (migration 000257; sweeper fills it in)
 			uint64(0),        // disk_limit_kb
