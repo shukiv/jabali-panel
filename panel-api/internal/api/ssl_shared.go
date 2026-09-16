@@ -9,6 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/domainops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
@@ -190,41 +191,13 @@ type attachSharedRequest struct {
 	SharedCertificateID string `json:"shared_certificate_id"`
 }
 
-// hostMatchesSAN reports whether a cert SAN covers host — x509.VerifyHostname
-// semantics: exact match, or a single-label wildcard (*.example.com matches
-// sub.example.com but NOT example.com or a.b.example.com).
-func hostMatchesSAN(san, host string) bool {
-	san = strings.ToLower(strings.TrimSpace(san))
-	host = strings.ToLower(strings.TrimSpace(host))
-	if san == "" || host == "" {
-		return false
-	}
-	if san == host {
-		return true
-	}
-	if strings.HasPrefix(san, "*.") {
-		base := san[2:]
-		if i := strings.IndexByte(host, '.'); i > 0 && host[i+1:] == base {
-			return true
-		}
-	}
-	return false
-}
-
+// sharedCertCoversHost delegates to the domainops leaf so the REST
+// attach/auto-attach doors, the operator CLI, and this handler all decide cert
+// coverage with one wildcard matcher (no drift on a security-adjacent predicate
+// — JAB-279). The wrapper stays because attachSharedCert calls it and its
+// package-api test pins that this door still routes through the leaf.
 func sharedCertCoversHost(sansJSON *string, host string) bool {
-	if sansJSON == nil {
-		return false
-	}
-	var sans []string
-	if json.Unmarshal([]byte(*sansJSON), &sans) != nil {
-		return false
-	}
-	for _, sn := range sans {
-		if hostMatchesSAN(sn, host) {
-			return true
-		}
-	}
-	return false
+	return domainops.SharedCertCoversHost(sansJSON, host)
 }
 
 // attachSharedCert points a domain at a shared cert (ssl_mode=shared). Ownership:
