@@ -79,6 +79,29 @@ func TestWebmail_NoPackage_KeepsVhost(t *testing.T) {
 	assert.False(t, ag.has("webmail.vhost_remove"), "no package must not remove the vhost")
 }
 
+// TestWebmail_PerUserToggleIgnored_KeepsVhost is the GH #1628 slice-3 bug-layer
+// test: the per-user webmail toggle (users.webmail_enabled, #316) is retired, so
+// a user whose per-user flag is OFF still gets a mail vhost as long as the
+// package entitlement and the domain flag are ON. Before slice 3 the reconciler
+// ANDed the per-user flag, so this user's domain was removed — RED until the
+// per-user gate is dropped.
+func TestWebmail_PerUserToggleIgnored_KeepsVhost(t *testing.T) {
+	ag := &fakeWebmailAgent{}
+	dr := newFakeDomainRepo()
+	dr.domains["d1"] = &models.Domain{ID: "d1", Name: "example.com", UserID: "u1", EmailEnabled: true, WebmailEnabled: true}
+	ur := &fakeUserRepo{users: map[string]*models.User{
+		// Per-user flag OFF, but on a webmail-ON package — the retired gate must
+		// no longer remove the vhost.
+		"u1": {ID: "u1", WebmailEnabled: false, PackageID: wmPtr("p1")},
+	}}
+	pr := &webmailGatePkgRepo{pkgs: []models.HostingPackage{{ID: "p1", WebmailEnabled: true}}}
+
+	wmGateReconciler(dr, ur, pr, ag).reconcileWebmailVhosts(context.Background())
+
+	assert.True(t, ag.has("service.start"), "retired per-user webmail flag (#1628 slice 3) → package ON keeps the vhost")
+	assert.False(t, ag.has("webmail.vhost_remove"), "the removed per-user toggle must no longer tear down the vhost")
+}
+
 // TestWebmail_PackageListError_FailsOpen: a packages.List error must fail OPEN
 // (treat everyone as ON), mirroring the pre-#1628 per-user gate — a transient
 // DB blip must never tear down every tenant's webmail vhost.

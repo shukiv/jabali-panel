@@ -106,9 +106,13 @@ func (r *Reconciler) reconcileWebmailVhosts(ctx context.Context) {
 	// privileged-feature DENY default, decided in the entitlement plan
 	// (webmail is a convenience surface, not a hardening clamp).
 	//
-	// Both List calls FAIL OPEN: on error we log and treat everyone as ON,
-	// exactly like the pre-#1628 per-user gate below. A transient DB blip must
-	// never tear down every tenant's webmail vhost.
+	// Both List calls FAIL OPEN: on error we log and treat everyone as ON. A
+	// transient DB blip must never tear down every tenant's webmail vhost.
+	//
+	// GH #1628 slice 3: the per-user webmail toggle (users.webmail_enabled, #316)
+	// is retired — this gate no longer reads it. Its OFF intent was backfilled
+	// down to domains.webmail_enabled (migration 000301), which line 145 already
+	// ANDs in. webmailOffUsers is now purely the package-entitlement set.
 	webmailOffUsers := map[string]bool{}
 	offPackages := map[string]bool{}
 	if r.packages != nil {
@@ -125,16 +129,12 @@ func (r *Reconciler) reconcileWebmailVhosts(ctx context.Context) {
 	if r.users != nil {
 		if users, _, uErr := r.users.List(ctx, repository.ListOptions{Limit: 100000}); uErr == nil {
 			for i := range users {
-				if !users[i].WebmailEnabled {
-					webmailOffUsers[users[i].ID] = true
-					continue
-				}
 				if users[i].PackageID != nil && offPackages[*users[i].PackageID] {
 					webmailOffUsers[users[i].ID] = true
 				}
 			}
 		} else {
-			r.log.Warn("webmail reconcile: list users for per-user toggle", "err", uErr)
+			r.log.Warn("webmail reconcile: list users for package entitlement gate", "err", uErr)
 		}
 	}
 

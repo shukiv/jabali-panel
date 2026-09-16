@@ -88,11 +88,17 @@ type User struct {
 	SuspendedAt   *time.Time `gorm:"column:suspended_at;type:datetime(6)"                                            json:"suspended_at,omitempty"`
 	SuspendReason string     `gorm:"column:suspend_reason;type:varchar(255);not null;default:''"                     json:"suspend_reason"`
 
-	// WebmailEnabled (GH #316) gates the Bulwark webmail vhost for ALL of this
-	// user's domains. AND-ed with global server_settings.webmail_enabled and the
-	// per-domain domains.webmail_enabled flags by the webmail reconciler. Default
-	// 1 = ON (migration 000203). Mail delivery (IMAP/SMTP/JMAP) is unaffected.
-	WebmailEnabled bool `gorm:"column:webmail_enabled;type:tinyint(1);not null;default:1" json:"webmail_enabled"`
+	// WebmailEnabled (GH #316) is DEPRECATED as of GH #1628 slice 3. The webmail
+	// entitlement moved to the hosting package (packages.webmail_enabled) plus the
+	// per-domain domains.webmail_enabled flag; neither the reconciler nor the
+	// webmail SSO gate reads this column any more. The column is KEPT (not dropped)
+	// so an older binary still reads a consistent value on rollback, and so
+	// migration 000301 could backfill its OFF intent down to domains.webmail_enabled
+	// before the readers were removed. A follow-up migration DROPs it once no
+	// deployed binary reads it (000295-dormant-column precedent). json:"-" retires
+	// it from the wire contract now; the Update allowlist still force-writes the
+	// loaded value (a harmless no-op) until the DROP.
+	WebmailEnabled bool `gorm:"column:webmail_enabled;type:tinyint(1);not null;default:1" json:"-"`
 
 	// SSHForwardingEnabled (GH #1229) opts an SSH-enabled user out of the
 	// JAB-352 forwarding lockdown into loopback-only TCP forwarding, which

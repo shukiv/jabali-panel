@@ -43,6 +43,12 @@ type WebmailSSOHandlerConfig struct {
 	// Users resolves the mailbox owner so the landing gate can enforce
 	// current suspend / webmail-disable policy at redemption time (JAB-9).
 	Users repository.UserRepository
+	// Packages resolves the owner's hosting package so the landing gate can
+	// enforce the package webmail entitlement (GH #1628 slice 3, which replaced
+	// the removed per-user webmail toggle). A nil PackageID or a dangling id ⇒
+	// allowed (the deliberate #282 exception: webmail is a convenience surface,
+	// not a hardening clamp). Required; the handler fails loud (503) when nil.
+	Packages repository.PackageRepository
 	// Minter signs the impersonation JWT. Required; the handler
 	// surfaces 503 when nil so misconfigured panels fail loud instead
 	// of redirecting users to a guaranteed-401.
@@ -98,7 +104,7 @@ func (h *webmailSSOHandler) land(c *gin.Context) {
 		c.String(http.StatusBadRequest, "missing token")
 		return
 	}
-	if h.cfg.SSOKey == nil || h.cfg.SSOTokens == nil || h.cfg.Minter == nil || h.cfg.Users == nil {
+	if h.cfg.SSOKey == nil || h.cfg.SSOTokens == nil || h.cfg.Minter == nil || h.cfg.Users == nil || h.cfg.Packages == nil {
 		c.String(http.StatusServiceUnavailable, "webmail sso is not configured on this panel")
 		return
 	}
@@ -158,11 +164,32 @@ func (h *webmailSSOHandler) land(c *gin.Context) {
 		return
 	}
 
+	// GH #1628 slice 3: the per-user webmail toggle is gone; the webmail
+	// entitlement now lives on the owner's hosting package. Resolve it so the
+	// freshness gate can refuse a session for a package with webmail off. A nil
+	// PackageID or a dangling id ⇒ allowed (the #282 convenience exception,
+	// matching the reconciler). A real lookup error fails the redemption CLOSED
+	// (500) rather than silently granting a session on this auth path.
+	packageWebmailAllowed := true
+	if usr.PackageID != nil {
+		pkg, pErr := h.cfg.Packages.FindByID(ctx, *usr.PackageID)
+		switch {
+		case pErr == nil:
+			packageWebmailAllowed = pkg.WebmailEnabled
+		case errors.Is(pErr, repository.ErrNotFound):
+			// Dangling package id — treat as no package (#282 exception).
+		default:
+			h.logErr("webmail sso: find owner package", pErr)
+			c.String(http.StatusInternalServerError, "internal error")
+			return
+		}
+	}
+
 	// JAB-9 policy-freshness gate: re-check the CURRENT state after the token
 	// is already burned. Any of these disables webmail access; refuse with the
 	// SAME generic expired page (no oracle: the browser can't tell expired /
 	// used / policy-blocked apart) while the audit log records the exact cause.
-	if reason := webmailBlockReason(mb.IsDisabled, dom.WebmailEnabled, usr.WebmailEnabled, usr.Suspended); reason != "" {
+	if reason := webmailBlockReason(mb.IsDisabled, dom.WebmailEnabled, packageWebmailAllowed, usr.Suspended); reason != "" {
 		h.cfgLog().Warn("webmail sso: redemption refused by current policy",
 			"reason", reason, "mailbox_id", mb.ID, "domain", dom.Name, "user_id", usr.ID)
 		c.Data(http.StatusForbidden, "text/html; charset=utf-8", []byte(webmailExpiredHTML))
@@ -226,14 +253,14 @@ func (h *webmailSSOHandler) logErr(msg string, err error) {
 // webmailBlockReason returns a non-empty, log-only reason string when current
 // policy forbids the webmail session, or "" when redemption may proceed. The
 // reason is for audit logs — it is never shown to the browser.
-func webmailBlockReason(mailboxDisabled, domainWebmail, userWebmail, userSuspended bool) string {
+func webmailBlockReason(mailboxDisabled, domainWebmail, packageWebmail, userSuspended bool) string {
 	switch {
 	case mailboxDisabled:
 		return "mailbox_disabled"
 	case !domainWebmail:
 		return "domain_webmail_disabled"
-	case !userWebmail:
-		return "user_webmail_disabled"
+	case !packageWebmail:
+		return "package_webmail_disabled"
 	case userSuspended:
 		return "user_suspended"
 	default:

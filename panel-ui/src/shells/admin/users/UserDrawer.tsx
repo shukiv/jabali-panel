@@ -35,7 +35,6 @@ type UserFormInput = {
   name_last?: string;
   is_admin: boolean;
   package_id?: string | null;
-  webmail_enabled?: boolean;
 };
 
 type UserRecord = UserFormInput & {
@@ -86,7 +85,7 @@ export function UserDrawer({ open, onClose, editingId }: UserDrawerProps) {
       });
     } else if (!isEdit) {
       form.resetFields();
-      form.setFieldsValue({ is_admin: false, webmail_enabled: true });
+      form.setFieldsValue({ is_admin: false });
     }
   }, [open, isEdit, existing, form]);
 
@@ -141,7 +140,7 @@ export function UserDrawer({ open, onClose, editingId }: UserDrawerProps) {
         <Form<UserFormInput>
           form={form}
           layout="vertical"
-          initialValues={{ is_admin: false, webmail_enabled: true }}
+          initialValues={{ is_admin: false }}
           onFinish={handleFinish}
         >
           <Form.Item
@@ -219,14 +218,9 @@ export function UserDrawer({ open, onClose, editingId }: UserDrawerProps) {
             <PackageSelect />
           </Form.Item>
 
-          <Form.Item
-            name="webmail_enabled"
-            label="Webmail client"
-            valuePropName="checked"
-            tooltip="Turn the Bulwark webmail UI on/off for all of this user's domains. Mail delivery (IMAP/SMTP/JMAP) is unaffected."
-          >
-            <Switch checkedChildren={<CheckOutlined />} unCheckedChildren={<CloseOutlined />} />
-          </Form.Item>
+          {/* GH #1628 slice 3: the per-user webmail toggle was removed — webmail
+              is now a hosting-package entitlement (set it on the package) plus a
+              per-domain flag. */}
 
           <Form.Item>
             <Space>
