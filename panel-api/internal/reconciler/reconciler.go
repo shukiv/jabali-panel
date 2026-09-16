@@ -745,26 +745,11 @@ func (r *Reconciler) Start(ctx context.Context) {
 			r.log.Info("reconciler stopping")
 			return
 		case <-r.wake:
-			// Pop exactly ONE key per wake and let popDirty re-signal when the
-			// set still has entries. Draining the whole set in this branch would
-			// let a large burst run many (slow, agent-bound) ReconcileOne calls
-			// back-to-back, starving the periodic ticker and ctx cancellation.
-			key, ok := r.popDirty()
-			if !ok {
-				continue
-			}
-			if r.IsPaused() {
-				// popDirty already removed the key, matching the old channel's
-				// consume-and-discard-while-paused behaviour: a paused
-				// reconciler drains the dirty set one key per wake as discards.
-				r.log.Debug("reconcile one skipped (paused)", "domain_id", key.ID)
-				continue
-			}
-			if key.Kind == KindDomain {
-				if err := r.ReconcileOne(ctx, key.ID); err != nil {
-					r.log.Error("reconcile one failed", "domain_id", key.ID, "err", err)
-				}
-			}
+			// Pop exactly ONE key per wake; popDirty re-signals while the set is
+			// non-empty, so the loop drains it one key per iteration without
+			// running a large burst of slow, agent-bound ReconcileOne calls
+			// back-to-back and starving the periodic ticker or ctx cancellation.
+			r.drainOne(ctx)
 		case <-ticker.C:
 			if r.IsPaused() {
 				r.log.Debug("periodic reconcile skipped (paused)")
@@ -877,6 +862,35 @@ func (r *Reconciler) popDirty() (ResourceKey, bool) {
 		}
 	}
 	return key, found
+}
+
+// drainOne pops one key from the dirty set and reconciles it. It returns true
+// when a key was popped (the set may still hold more) and false when the set is
+// empty. Split out of the reconcile loop's wake branch so the pop / paused /
+// dispatch logic is unit-testable; popDirty re-signals wake while keys remain,
+// so the loop calls drainOne once per wake and still drains the whole set. A
+// paused reconciler pops and discards, matching the old channel's
+// consume-and-discard-while-paused behaviour. JAB-369.
+func (r *Reconciler) drainOne(ctx context.Context) bool {
+	key, ok := r.popDirty()
+	if !ok {
+		return false
+	}
+	if r.IsPaused() {
+		r.log.Debug("reconcile one skipped (paused)", "domain_id", key.ID)
+		return true
+	}
+	switch key.Kind {
+	case KindDomain:
+		if err := r.ReconcileOne(ctx, key.ID); err != nil {
+			r.log.Error("reconcile one failed", "domain_id", key.ID, "err", err)
+		}
+	default:
+		// No silent drop: an unhandled kind means a future ResourceKind was
+		// scheduled without a dispatch arm here. Loud so it is caught in test.
+		r.log.Warn("reconcile skipped: unhandled resource kind", "kind", key.Kind, "id", key.ID)
+	}
+	return true
 }
 
 // ReconcileAll diffs the DB against the agent's filesystem state and converges them.
