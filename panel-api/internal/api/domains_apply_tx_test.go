@@ -72,3 +72,32 @@ func TestDomainPatch_Apply_WriterFailureReturns500(t *testing.T) {
 		t.Fatalf("txCalls = %d, want 1 (the apply still routed through Transaction)", repo.txCalls)
 	}
 }
+
+// TestDomainPatch_Apply_RejectedFieldRollsBackGeneralUpdate is the AC4 behaviour
+// that only the transaction wiring gives us: a PATCH mixing a VALID general
+// field (index_priority) with a REJECTED dedicated field (ssl_mode=custom)
+// applies nothing. The handler runs tx.Update (the general write) FIRST inside
+// the closure, then reaches the ssl_mode validation, which returns the typed
+// sentinel — rolling the whole apply back (the repository sqlmock test proves
+// the real rollback) and mapping to the same 400/code/detail as before. This is
+// the only test that exercises the errors.As -> 4xx status mapping path, and it
+// pins the validation INSIDE the transaction: falsify by hoisting the ssl_mode
+// validation above h.cfg.Domains.Transaction — the 400 then short-circuits
+// before the transaction opens, txCalls drops to 0, and this reddens.
+func TestDomainPatch_Apply_RejectedFieldRollsBackGeneralUpdate(t *testing.T) {
+	dom := &models.Domain{ID: "d1", UserID: "u1", Name: "example.com", MailProvider: models.MailProviderJabali}
+	r, repo := applyTxHarness(t, dom)
+
+	w := patchDomainBody(r, "d1", `{"index_priority":"php_first","ssl_mode":"custom"}`)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("code = %d, want 400: %s", w.Code, w.Body.String())
+	}
+	if !bytes.Contains(w.Body.Bytes(), []byte("ssl_mode_custom_via_upload")) {
+		t.Fatalf("body must carry the ssl_mode_custom_via_upload code, got %s", w.Body.String())
+	}
+	// txCalls==1 means the general Update ran inside the transaction that the
+	// rejected ssl_mode then rolled back — not before it, outside any tx.
+	if repo.txCalls != 1 {
+		t.Fatalf("txCalls = %d, want 1 — the general Update must run inside the apply Transaction so a later rejected field rolls it back (JAB-318 AC4)", repo.txCalls)
+	}
+}
