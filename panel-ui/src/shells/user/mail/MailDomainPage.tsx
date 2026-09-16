@@ -17,6 +17,7 @@ import { GroupsTab } from "./tabs/GroupsTab";
 import { ForwardersTab } from "./tabs/ForwardersTab";
 import { CatchAllTab } from "./tabs/CatchAllTab";
 import { DisclaimerTab } from "./tabs/DisclaimerTab";
+import { SettingsTab } from "./tabs/SettingsTab";
 import { SharedFoldersTab } from "./tabs/SharedFoldersTab";
 import { SharedResourcesTab } from "./tabs/SharedResourcesTab";
 import { LogsTab } from "./tabs/LogsTab";
@@ -31,6 +32,7 @@ const TAB_KEYS = [
   "resources",
   "catchall",
   "disclaimer",
+  "settings",
   "logs",
   "statistics",
 ] as const;
@@ -45,6 +47,7 @@ const TAB_LABELS: Record<TabKey, string> = {
   resources: "Shared Resources",
   catchall: "Catch-All",
   disclaimer: "Disclaimer",
+  settings: "Settings",
   logs: "Logs",
   statistics: "Statistics",
 };
@@ -116,6 +119,8 @@ export const MailDomainPage = () => {
         return <CatchAllTab domainId={domainId} />;
       case "disclaimer":
         return <DisclaimerTab domainId={domainId} />;
+      case "settings":
+        return <SettingsTab domainId={domainId} />;
       case "logs":
         return <LogsTab domainName={domain.name} />;
       case "statistics":

@@ -65,6 +65,10 @@ export type Domain = {
   reverse_proxy_port?: number;
   ssl_state?: string;
   email_enabled?: boolean;
+  // GH #1628: per-domain webmail (Bulwark) gate. One of three ANDed gates
+  // (server-wide, this flag, hosting-package entitlement). Detail/list handlers
+  // send it; the tenant Mail → domain → Settings tab toggles it. Absent ⇒ ON.
+  webmail_enabled?: boolean;
   // GH #1449: independent services. web_disabled = docroot-less (DNS-only /
   // mail-only); dns_disabled = the panel doesn't host this domain's DNS.
   web_disabled?: boolean;
