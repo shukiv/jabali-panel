@@ -16,7 +16,7 @@ type ServerSettings struct {
 	// (preview.example.com) or a magic-DNS base (203-0-113-7.sslip.io)
 	// when the hostname does not resolve publicly.
 	PreviewBase string `gorm:"type:varchar(253);not null;default:''" json:"preview_base"`
-	// MailHostname (JAB-390, migration 000300) optionally pins the panel
+	// MailHostname (JAB-390, migration 000301) optionally pins the panel
 	// mail hostname independent of the panel access hostname. NULL/empty =
 	// derive mail.<hostname> — resolve every read through
 	// models.EffectiveMailHostname, never off this field directly.
