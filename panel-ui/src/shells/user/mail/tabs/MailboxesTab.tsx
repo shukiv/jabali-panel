@@ -18,14 +18,14 @@ import {
   MailOutlined,
   CalendarCheckOutlined,
 } from "@icons";
-import { useQueries } from "@tanstack/react-query";
-
 import { AutoReplyModal } from "../AutoReplyModal";
-import { type Autoresponder } from "../../../../hooks/useAutoresponders";
+import {
+  type Autoresponder,
+  useMailboxAutoresponders,
+} from "../../../../hooks/useAutoresponders";
 import { useForwarders } from "../../../../hooks/useForwarders";
 import { useMailboxGroupMemberships } from "../../../../hooks/useMailGroups";
 
-import { apiClient } from "../../../../apiClient";
 import {
   perDomainMailboxesResource,
   useDeleteMailbox,
@@ -54,6 +54,8 @@ type GroupMembership = {
 // Stable empty fallback so a loading membership query doesn't hand the Groups
 // column a fresh object identity every render.
 const EMPTY_MEMBERSHIPS: Record<string, GroupMembership[]> = {};
+// Same stable-identity fallback for the autoresponder projection.
+const EMPTY_AUTORESPONDERS: Record<string, Autoresponder> = {};
 
 // GH #1387: when domainId is set (the per-domain Mail Domains drill-down), the
 // tab scopes to that one domain and hides the Domain column; unset = the flat
@@ -115,32 +117,21 @@ export const MailboxesTab = ({ domainId }: { domainId?: string } = {}) => {
     [query.items, domainNameById],
   );
 
-  // Per-mailbox automatic-replies (autoresponder) fanout — one GET each,
-  // shares the cache with useAutoresponder via the matching query key.
-  // GH #240: surfaced as a column + kebab action on this tab (the
-  // standalone Autoresponders tab was removed).
-  const arResults = useQueries({
-    queries: emailEnabledDomains.map((d) => ({
-      queryKey: ["autoresponders", "by-domain", d.id],
-      queryFn: async () => {
-        const { data } = await apiClient.get<{
-          data: Record<string, Autoresponder>;
-        }>(`/domains/${d.id}/autoresponders`);
-        return data.data ?? {};
-      },
-    })),
-  });
-
-  const arByMailbox = useMemo(() => {
-    const out: Record<string, Autoresponder> = {};
-    for (const r of arResults) {
-      if (!r.data) continue;
-      for (const [mbID, ar] of Object.entries(r.data)) {
-        out[mbID] = ar;
-      }
-    }
-    return out;
-  }, [arResults]);
+  // JAB-370 Selection: the per-mailbox automatic-replies (autoresponder) come
+  // from ONE owner-scoped request via useMailboxAutoresponders — GET
+  // /mail/autoresponders spanning every domain the caller owns (cross-domain
+  // view), or the per-domain endpoint when this tab is embedded in the Mail
+  // Domains drill-down (domainId set). This replaces the
+  // one-request-per-email-enabled-domain fan-out that merged the per-domain
+  // maps in the browser. Same { <mailbox_id>: ar } shape either way, so the
+  // Auto replies column and the kebab action below are unchanged.
+  // GH #240: surfaced as a column + kebab action on this tab (the standalone
+  // Autoresponders tab was removed).
+  const autorespondersQuery = useMailboxAutoresponders(
+    domainId,
+    emailEnabledDomains.length > 0,
+  );
+  const arByMailbox = autorespondersQuery.data ?? EMPTY_AUTORESPONDERS;
 
   // Aliases + external forwards per mailbox (GH #237). One bulk query
   // across all the caller's mailboxes; grouped client-side so each row can

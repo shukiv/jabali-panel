@@ -106,6 +106,7 @@ func TestResolveUserScope(t *testing.T) {
 		{"PATCH", "/api/v1/mailboxes/:mbid", "write:mail", true},
 		{"GET", "/api/v1/mail/forwarders", "read:mail", true},
 		{"GET", "/api/v1/mail/mailbox-group-memberships", "read:mail", true}, // JAB-370 owner-scoped bulk
+		{"GET", "/api/v1/mail/autoresponders", "read:mail", true},           // JAB-370 owner-scoped bulk
 		{"GET", "/api/v1/domains/:id/mail-certificate", "read:mail", true}, // not domains
 		{"GET", "/api/v1/domains/:id/php-settings", "read:php", true},
 		{"PATCH", "/api/v1/domains/:id/php", "write:php", true},
