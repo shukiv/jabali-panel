@@ -1406,6 +1406,45 @@ func TestPopDirty_DeletesBeforeReturn(t *testing.T) {
 	}
 }
 
+// TestDrainLoop_ReSignalDrainsAllKeys pins the loop-level contract that the
+// select branch relies on: a single buffered wake plus popDirty's re-signal
+// drains the ENTIRE dirty set one key per wake. It mirrors Start's
+// `case <-r.wake: r.drainOne(ctx)` branch exactly. The reconciler is paused so
+// drainOne discards each key without running ReconcileOne — this isolates the
+// wake/drain plumbing from convergence. Also proves loop-level coalescing:
+// "d1" scheduled twice is drained once.
+func TestDrainLoop_ReSignalDrainsAllKeys(t *testing.T) {
+	ctx := context.Background()
+	r := newScheduleTestReconciler()
+	r.Pause()
+
+	r.Schedule("d1")
+	r.Schedule("d1") // duplicate — must coalesce
+	r.Schedule("d2")
+	r.Schedule("d3")
+
+	// The wake channel is buffered 1: the four Schedules leave exactly one
+	// pending wake, and only popDirty's re-signal can drive the loop past the
+	// first key.
+	drained := 0
+	for {
+		select {
+		case <-r.wake:
+			if r.drainOne(ctx) {
+				drained++
+			}
+		default:
+			if got := dirtyLen(r); got != 0 {
+				t.Fatalf("wake exhausted but %d keys still dirty — popDirty did not re-signal the loop", got)
+			}
+			if drained != 3 {
+				t.Fatalf("drained %d keys, want 3 — one buffered wake plus re-signal must drain all distinct domains (d1 coalesced)", drained)
+			}
+			return
+		}
+	}
+}
+
 func TestLinuxUserFromEmail(t *testing.T) {
 	tests := []struct {
 		email    string
