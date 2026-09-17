@@ -1040,6 +1040,27 @@ converge_ftp_masking() {
   fi
 }
 
+# converge_vsftpd_passwd_chroot — GH #1720: carry passwd_chroot_enable=YES to
+# already-installed FTP hosts on every `jabali update`. install_vsftpd_config
+# renders the directive on a fresh module install, but the existing fleet only
+# re-renders /etc/vsftpd.conf on --install-module, so without this converger a
+# host that picks up the new agent (which writes "/./data" isolated homes) would
+# sit in a mixed state: vsftpd, not honouring the marker, would chroot into the
+# tenant-writable /data instead of the root-owned jail root — a silent downgrade
+# of the isolation boundary. Idempotent: acts only when our render marker
+# (chroot_local_user=YES) is present and the directive is missing, and restarts
+# vsftpd only when it is actually running.
+converge_vsftpd_passwd_chroot() {
+  command -v systemctl >/dev/null 2>&1 || return 0
+  [ -f /etc/vsftpd.conf ] || return 0
+  grep -q '^passwd_chroot_enable=YES' /etc/vsftpd.conf && return 0
+  grep -q '^chroot_local_user=YES' /etc/vsftpd.conf || return 0
+  sed -i '/^chroot_local_user=YES/a passwd_chroot_enable=YES' /etc/vsftpd.conf
+  if systemctl is-active --quiet vsftpd; then
+    systemctl restart vsftpd >/dev/null 2>&1 || true
+  fi
+}
+
 # seed_module_flags — M353 (GH #353). Write the per-module server_settings flags
 # to match the install selection so the panel's page-gating (serverCapabilities →
 # nav/route hide + 409 guards) reflects what was actually installed. No-op unless
@@ -15606,6 +15627,11 @@ provision_new_software() {
   # ports closed while server_settings.ftp_enabled=0; unmasked + rules
   # healed when on.
   converge_ftp_masking
+  # GH #1720: carry passwd_chroot_enable=YES to already-installed FTP hosts so a
+  # host that picks up the new agent (which writes "/./data" isolated homes)
+  # never sits in the mixed state where vsftpd chroots into tenant-writable /data
+  # instead of the root-owned jail root.
+  converge_vsftpd_passwd_chroot
   # GH #896 + PowerDNS/pdns#11416: carry zone-cache-refresh-interval=0 to
   # boxes that only ever update — install_powerdns (whose template now
   # ships it) does not run
