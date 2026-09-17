@@ -35,26 +35,53 @@ func testDSN(t *testing.T) string {
 	return dsn
 }
 
-// reset drops everything we migrate and re-runs migrations. Keeps tests
-// independent of prior runs' state.
-func resetSchema(t *testing.T, dsn string) {
+// dropAllTables drops every table in the test database, leaving it empty.
+// The whole db integration suite (this file plus the dirty-recovery tests) now
+// runs against ONE database in a single `go test` process — including in CI —
+// so a test that does not start from a clean slate would inherit whatever a
+// prior test left behind (a forced/dirty schema_migrations version, orphan
+// rows). The old reset only dropped users/refresh_tokens/schema_migrations,
+// which is a relic from when the schema was three tables; with ~140 tables it
+// left most of them (and their data) standing, so migrations replayed onto a
+// half-populated schema and failed with duplicate-column / FK errors. Drop
+// EVERYTHING with FK checks off (dependency order is then irrelevant), pinned
+// to a single connection so the session-scoped SET holds for every DROP.
+func dropAllTables(t *testing.T, dsn string) {
 	t.Helper()
 
 	gdb, err := db.Open(db.Options{DSN: dsn, Silent: true})
 	require.NoError(t, err)
-	// Drop in dependency order; IF EXISTS so the first run is fine too.
-	require.NoError(t, gdb.Exec("DROP TABLE IF EXISTS refresh_tokens").Error)
-	require.NoError(t, gdb.Exec("DROP TABLE IF EXISTS users").Error)
-	require.NoError(t, gdb.Exec("DROP TABLE IF EXISTS schema_migrations").Error)
 	sqlDB, err := gdb.DB()
 	require.NoError(t, err)
-	_ = sqlDB.Close()
+	defer func() { _ = sqlDB.Close() }()
+	sqlDB.SetMaxOpenConns(1) // keep SET FOREIGN_KEY_CHECKS + the DROPs on one session
 
+	var tables []string
+	require.NoError(t, gdb.Raw(
+		"SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE()").
+		Scan(&tables).Error)
+
+	require.NoError(t, gdb.Exec("SET FOREIGN_KEY_CHECKS = 0").Error)
+	for _, tbl := range tables {
+		require.NoError(t, gdb.Exec("DROP TABLE IF EXISTS `"+tbl+"`").Error)
+	}
+	require.NoError(t, gdb.Exec("SET FOREIGN_KEY_CHECKS = 1").Error)
+}
+
+// resetSchema returns the test database to a freshly-migrated state, so a test
+// is independent of prior runs' state.
+func resetSchema(t *testing.T, dsn string) {
+	t.Helper()
+	dropAllTables(t, dsn)
 	require.NoError(t, db.Migrate(dsn))
 }
 
 func TestIntegration_MigrateAndPing(t *testing.T) {
 	dsn := testDSN(t)
+
+	// Clean slate so this genuinely exercises a from-scratch migrate,
+	// regardless of what an earlier test in the suite left behind.
+	dropAllTables(t, dsn)
 
 	require.NoError(t, db.Migrate(dsn))
 	// Re-running Migrate is a no-op — prove it.
@@ -70,7 +97,7 @@ func TestIntegration_MigrateAndPing(t *testing.T) {
 		"SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() ORDER BY table_name").
 		Scan(&tables).Error)
 	assert.Contains(t, tables, "users")
-	assert.Contains(t, tables, "refresh_tokens")
+	assert.Contains(t, tables, "server_settings")
 	assert.Contains(t, tables, "schema_migrations")
 
 	sqlDB, err := gdb.DB()
@@ -94,8 +121,12 @@ func TestIntegration_UserCRUD(t *testing.T) {
 	repo := repository.NewUserRepository(gdb)
 	ctx := context.Background()
 
+	// username is NOT NULL + uniquely indexed since migration 000164; give the
+	// test user a unique one (a bare ULID fits varchar(32)).
+	uname := ids.NewULID()
 	u := &models.User{
 		ID:           ids.NewULID(),
+		Username:     &uname,
 		Email:        "int-" + ids.NewULID() + "@example.com",
 		PasswordHash: "$2a$12$xxxxxxxxxxxxxxxxxxxxxx",
 		NameFirst:    "Alice",
@@ -109,9 +140,12 @@ func TestIntegration_UserCRUD(t *testing.T) {
 	assert.Equal(t, u.ID, got.ID)
 	assert.Equal(t, "Alice", got.NameFirst)
 
-	// Duplicate email → ErrConflict.
+	// Duplicate username → ErrConflict. Email is intentionally non-unique since
+	// migration 000164 (login moved to username), so the uniqueness conflict is
+	// now on the username; dup keeps u's username and takes a distinct email.
 	dup := *u
 	dup.ID = ids.NewULID()
+	dup.Email = "int2-" + ids.NewULID() + "@example.com"
 	err = repo.Create(ctx, &dup)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, repository.ErrConflict)
