@@ -76,6 +76,31 @@ type DockerAppHandlerConfig struct {
 
 type dockerAppHandler struct{ cfg DockerAppHandlerConfig }
 
+// clearDockerAppCorpse removes a dead prior install of the same slug+name so a
+// reinstall can reuse the name. Both a `failed` remnant and a `deleted`
+// tombstone are corpses: the (user_id, slug, name) unique key (mig 000180)
+// would otherwise reject the new row, which is why a tenant who deleted their
+// own app could not reinstall it under the same name without admin surgery
+// (GH #1776). It drops the app's published ports, removes any
+// docker_app-managed domain within domScope still pointing at it, then
+// hard-deletes the row. domScope bounds the domain sweep to the caller's reach
+// (admin: all domains; tenant: the caller's own), so it never touches another
+// tenant's domain.
+func (h *dockerAppHandler) clearDockerAppCorpse(ctx context.Context, existing *models.DockerApp, domScope []models.Domain) error {
+	ports, _ := h.cfg.Repo.ListPortsForApp(ctx, existing.ID)
+	for _, p := range ports {
+		_ = h.cfg.Repo.DeletePort(ctx, p.ID)
+	}
+	if h.cfg.Domains != nil {
+		for _, dom := range domScope {
+			if dom.ManagedBy == models.DomainManagedByDockerApp && dom.DockerAppID != nil && *dom.DockerAppID == existing.ID {
+				_ = h.cfg.Domains.Delete(ctx, dom.ID)
+			}
+		}
+	}
+	return h.cfg.Repo.Delete(ctx, existing.ID)
+}
+
 // RegisterDockerAppRoutes mounts the admin docker-app surface.
 func RegisterDockerAppRoutes(g *gin.RouterGroup, cfg DockerAppHandlerConfig) {
 	h := &dockerAppHandler{cfg: cfg}
@@ -379,30 +404,21 @@ func (h *dockerAppHandler) install(c *gin.Context) {
 		return
 	}
 
-	// Reject duplicate slug+name. Exception: a prior install that
-	// ended in `failed` is treated as a no-op corpse — delete it and
-	// let the caller retry transparently. Without this, the only way
-	// to recover from a failed install was via DB surgery, since the
-	// install button just kept returning 409.
+	// Reject duplicate slug+name. Exception: a prior install that ended in
+	// `failed` OR one the caller already `deleted` (a tombstone kept for admin
+	// visibility) is treated as a no-op corpse — clear it and let the caller
+	// reinstall transparently (GH #1766/#1776). Without this the only way to
+	// reuse the name was DB surgery, since the row's (user_id, slug, name)
+	// unique key kept rejecting the reinstall. The agent's docker compose
+	// project may or may not exist on disk; the install verb below re-creates
+	// it idempotently.
 	if existing, _ := h.cfg.Repo.FindBySlugName(ctx, req.Slug, req.Name); existing != nil {
-		if existing.Status == models.DockerAppStatusFailed {
-			// Best-effort: drop the orphaned ports + row + any
-			// docker_app-managed domain it left behind. The agent's
-			// docker compose project may or may not exist on disk; the
-			// install verb below will re-create it idempotently.
-			ports, _ := h.cfg.Repo.ListPortsForApp(ctx, existing.ID)
-			for _, p := range ports {
-				_ = h.cfg.Repo.DeletePort(ctx, p.ID)
-			}
+		if existing.Status == models.DockerAppStatusFailed || existing.Status == models.DockerAppStatusDeleted {
+			var domScope []models.Domain
 			if h.cfg.Domains != nil {
-				domList, _, _ := h.cfg.Domains.List(ctx, repository.ListOptions{})
-				for _, dom := range domList {
-					if dom.ManagedBy == models.DomainManagedByDockerApp && dom.DockerAppID != nil && *dom.DockerAppID == existing.ID {
-						_ = h.cfg.Domains.Delete(ctx, dom.ID)
-					}
-				}
+				domScope, _, _ = h.cfg.Domains.List(ctx, repository.ListOptions{})
 			}
-			if derr := h.cfg.Repo.Delete(ctx, existing.ID); derr != nil {
+			if derr := h.clearDockerAppCorpse(ctx, existing, domScope); derr != nil {
 				c.JSON(http.StatusConflict, gin.H{"error": "already_installed", "id": existing.ID})
 				return
 			}
