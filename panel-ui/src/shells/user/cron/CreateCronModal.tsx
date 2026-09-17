@@ -38,23 +38,38 @@ export const CreateCronModal = ({
   const [scheduleMode, setScheduleMode] = useState<string>("0 * * * *");
   const [customSchedule, setCustomSchedule] = useState("");
 
-  // Sync the schedule picker every time the drawer opens (GH #854). This
-  // component stays mounted across opens, so state initializers see only the
-  // very first `initial` (null on page load) — every edit then showed the
-  // "Hourly" default no matter what the job's real schedule was, and saving
-  // silently rewrote the schedule to hourly. destroyOnClose remounts only the
-  // Drawer's children (the Form), not this component's state.
+  // Sync the whole form every time the drawer opens (GH #854 schedule picker,
+  // GH #1686 name/command). This component stays mounted across opens, so state
+  // initializers see only the very first `initial` (null on page load) — every
+  // edit then showed the "Hourly" default no matter what the job's real
+  // schedule was, and saving silently rewrote the schedule to hourly.
+  //
+  // The same class bit `name`/`command`: they populated from the Form's
+  // `initialValues`, but the `form` instance lives in this never-unmounting
+  // component with antd's default `preserve`. Opening once in Create mode seeds
+  // the store with name:""/command:"" (the create defaults); those persist, so
+  // on the next Edit open `initialValues` no longer overrides the already-set
+  // (empty) fields — they stayed blank until a full-app refresh cleared the
+  // store, and a Save from that blank form silently wiped the job. (resetFields
+  // on submit/cancel re-applies whatever `initialValues` was at that mount, so
+  // it leaves the previous open's values behind — empties after a Create open,
+  // the last job after an Edit open; the open-effect covers that path too.)
+  // Driving name/command from this open-effect (like the schedule picker) makes
+  // Edit populate immediately. destroyOnClose remounts only the Drawer's
+  // children (the Form), not this component's state or the persistent form store.
   useEffect(() => {
     if (!open) return;
     if (initial) {
+      form.setFieldsValue({ name: initial.name, command: initial.command });
       const isPreset = CRON_SCHEDULE_OPTIONS.some((p) => p.value === initial.schedule);
       setScheduleMode(isPreset ? initial.schedule : "advanced");
       setCustomSchedule(isPreset ? "" : initial.schedule);
     } else {
+      form.setFieldsValue({ name: "", command: "" });
       setScheduleMode("0 * * * *");
       setCustomSchedule("");
     }
-  }, [open, initial]);
+  }, [open, initial, form]);
   const { message: antMessage } = App.useApp();
   const screens = Grid.useBreakpoint();
   const isDesktop = screens.lg ?? (typeof window !== "undefined" ? window.innerWidth >= 992 : true);
