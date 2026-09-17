@@ -73,6 +73,20 @@ if ! awk '/^provision_new_software\(\)/{f=1} f&&/ensure_stalwart_not_in_panel_gr
   fail=1
 fi
 
+# Same for webmail (JAB-351/357): its convergence used to live only inside
+# install_bulwark, which is gated behind the mail module (run_if_mail) and is
+# NOT reached by a plain `jabali update`. It must have its own converger wired
+# into provision_new_software, exactly like Stalwart — else an upgraded webmail
+# host keeps the broad jabali group until the mail module is reinstalled.
+if ! grep -qE '^ensure_webmail_not_in_panel_group\(\)' install.sh; then
+  echo "FAIL: ensure_webmail_not_in_panel_group() converger missing — upgraded webmail hosts keep the legacy group"
+  fail=1
+fi
+if ! awk '/^provision_new_software\(\)/{f=1} f&&/ensure_webmail_not_in_panel_group/{found=1} f&&/^\}/{exit} END{exit !found}' install.sh; then
+  echo "FAIL: ensure_webmail_not_in_panel_group is not called from provision_new_software — a plain 'jabali update' never converges webmail"
+  fail=1
+fi
+
 if [[ "$fail" -ne 0 ]]; then
   echo "RESULT: FAIL"
   exit 1
