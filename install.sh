@@ -14030,17 +14030,10 @@ install_bulwark() {
   # would reach panel secrets and host root. Webmail's own secrets (session key,
   # impersonate JWT, bulwark.env) are all jabali-webmail-owned; it needs only
   # jabali-sockets (primary) + jabali-webmail. Fresh installs no longer add the
-  # membership; this converges upgraded hosts by dropping the legacy one. The
-  # unit's SupplementaryGroups=jabali-webmail is the runtime belt; this removes
-  # the /etc/group state so nothing re-leaks it.
-  if id -nG jabali-webmail 2>/dev/null | tr ' ' '\n' | grep -qx "$SERVICE_USER"; then
-    if gpasswd -d jabali-webmail "$SERVICE_USER" >/dev/null 2>&1; then
-      _ok "removed jabali-webmail from the broad $SERVICE_USER group (JAB-351/357)"
-      systemctl restart jabali-webmail.service >/dev/null 2>&1 || true
-    else
-      _warn "could not remove jabali-webmail from $SERVICE_USER — run: gpasswd -d jabali-webmail $SERVICE_USER"
-    fi
-  fi
+  # membership; the shared converger drops the legacy one on upgraded hosts.
+  # (It also runs from provision_new_software, so a plain `jabali update`
+  # self-heals even when the mail module is not reinstalled here.)
+  ensure_webmail_not_in_panel_group
 
   install -d -m 0755 -o jabali-webmail -g jabali-webmail /opt/jabali-webmail
   install -d -m 0750 -o jabali-webmail -g jabali-webmail /var/lib/jabali-webmail
@@ -15523,6 +15516,57 @@ ensure_stalwart_not_in_panel_group() {
   fi
 }
 
+# ensure_webmail_not_in_panel_group — JAB-351/357 criterion 2, webmail twin of
+# ensure_stalwart_not_in_panel_group. The Bulwark webmail server
+# (User=jabali-webmail) is internet-facing and must NOT hold the broad
+# `$SERVICE_USER` (jabali) group: that group owns the root Agent socket
+# (/run/jabali/agent.sock, srw-rw---- root:jabali) + panel secrets under
+# /etc/jabali-panel, so a webmail compromise must not reach it. Webmail's own
+# secrets (session key, impersonate JWT, bulwark.env) are all jabali-webmail-owned;
+# it needs only jabali-sockets (primary) + jabali-webmail. The agent's SO_PEERCRED
+# gate (#1565) already rejects the webmail UID; dropping the group membership
+# removes the FS-layer reach too — connect() to the jabali-group-owned socket then
+# fails with EACCES before peercred even runs (defense in depth).
+#
+# systemd.exec(5): SupplementaryGroups only ADDS groups to the service; it never
+# removes an /etc/group membership. So the `gpasswd -d` removal (+ the peercred
+# gate) is the actual clamp, not the unit's SupplementaryGroups= line. Converge
+# upgraded hosts: redeploy the corrected unit if a legacy broad group lingers,
+# strip the /etc/group membership, then try-restart so the live process sheds the
+# gid. Idempotent — no-op once converged. Runs from provision_new_software (every
+# `jabali update`) and install_bulwark, decoupled from a full mail-module install.
+ensure_webmail_not_in_panel_group() {
+  getent passwd jabali-webmail >/dev/null 2>&1 || return 0
+  local changed=0
+  local unit=/etc/systemd/system/jabali-webmail.service
+  # 1. Redeploy the unit if a legacy broad group (SupplementaryGroups=jabali or
+  #    Group=jabali) lingers — else a restart would re-add gid jabali from the
+  #    stale unit file even after the /etc/group removal below.
+  if [[ -f "$unit" ]] && grep -qxE 'SupplementaryGroups=jabali|Group=jabali' "$unit"; then
+    if [[ -f "${REPO_DIR}/install/systemd/jabali-webmail.service" ]]; then
+      install -m 0644 -o root -g root \
+        "${REPO_DIR}/install/systemd/jabali-webmail.service" "$unit"
+      systemctl daemon-reload 2>/dev/null || true
+      changed=1
+    fi
+  fi
+  # 2. Drop the legacy /etc/group membership so nothing re-leaks it.
+  if id -nG jabali-webmail 2>/dev/null | tr ' ' '\n' | grep -qx "$SERVICE_USER"; then
+    if gpasswd -d jabali-webmail "$SERVICE_USER" >/dev/null 2>&1; then
+      changed=1
+    else
+      _warn "could not remove jabali-webmail from $SERVICE_USER group — run: gpasswd -d jabali-webmail $SERVICE_USER"
+    fi
+  fi
+  # 3. try-restart so the running webmail sheds the supplementary gid. try-restart
+  #    (not restart): the unit is deliberately disabled until domain.email_enable
+  #    and must stay stopped if it was stopped.
+  if [[ "$changed" -eq 1 ]]; then
+    systemctl try-restart jabali-webmail.service >/dev/null 2>&1 || true
+    _ok "webmail dropped the broad $SERVICE_USER group (JAB-351/357)"
+  fi
+}
+
 # reap_orphan_nspawn_php_units — JAB-225 self-heal for orphaned per-user PHP
 # nspawn units. Current code never creates systemd-nspawn@<user>-php.service
 # (bubblewrap replaced per-user nspawn containers), but a box carried over from
@@ -15655,6 +15699,14 @@ provision_new_software() {
   # group is dead weight for mail and let a mail compromise reach the root Agent
   # socket at the FS layer.
   ensure_stalwart_not_in_panel_group
+
+  # JAB-351/357: same convergence for the Bulwark webmail server. Its own
+  # convergence lives inside install_bulwark, which is gated behind the mail
+  # module (run_if_mail) and does NOT run on a plain `jabali update` — so
+  # without this call an upgraded webmail host keeps the stray `jabali` group
+  # (and its FS reach to the root Agent socket) until the mail module is
+  # reinstalled. Run it here so every `jabali update` self-heals, matching mail.
+  ensure_webmail_not_in_panel_group
 
   # JAB-225: reap per-user PHP nspawn units orphaned before user.delete learned
   # to tear them down — else each fails on every boot and pads `systemctl
