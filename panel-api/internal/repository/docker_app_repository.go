@@ -25,6 +25,10 @@ type DockerAppRepository interface {
 	Create(ctx context.Context, app *models.DockerApp) error
 	FindByID(ctx context.Context, id string) (*models.DockerApp, error)
 	FindBySlugName(ctx context.Context, slug, name string) (*models.DockerApp, error)
+	// FindByOwnerSlugName resolves a single install by the (user_id, slug, name)
+	// unique key (mig 000180) — the owner-scoped lookup the tenant install path
+	// needs to spot a reusable corpse without matching another tenant's app.
+	FindByOwnerSlugName(ctx context.Context, userID, slug, name string) (*models.DockerApp, error)
 	ListAll(ctx context.Context) ([]*models.DockerApp, error)
 	ListByStatus(ctx context.Context, status string) ([]*models.DockerApp, error)
 	// --- M49 tenant scoping (GH #170) ---
@@ -97,6 +101,16 @@ func (r *dockerAppRepo) FindBySlugName(ctx context.Context, slug, name string) (
 	var a models.DockerApp
 	if err := r.db.WithContext(ctx).
 		Where("slug = ? AND name = ?", slug, name).
+		First(&a).Error; err != nil {
+		return nil, translate(err)
+	}
+	return &a, nil
+}
+
+func (r *dockerAppRepo) FindByOwnerSlugName(ctx context.Context, userID, slug, name string) (*models.DockerApp, error) {
+	var a models.DockerApp
+	if err := r.db.WithContext(ctx).
+		Where("user_id = ? AND slug = ? AND name = ?", userID, slug, name).
 		First(&a).Error; err != nil {
 		return nil, translate(err)
 	}

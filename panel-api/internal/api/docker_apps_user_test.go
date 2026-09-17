@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -60,10 +61,34 @@ func TestTenantInstallable_Filter(t *testing.T) {
 
 type fakeDockerRepo struct {
 	repository.DockerAppRepository
-	count    int64
-	sumBytes int64
-	owned    map[string]*models.DockerApp
-	updated  map[string]string
+	count           int64
+	sumBytes        int64
+	owned           map[string]*models.DockerApp
+	updated         map[string]string
+	byOwnerSlugName map[string]*models.DockerApp // key: userID|slug|name
+	deleted         map[string]bool
+	createErr       error
+}
+
+func (f *fakeDockerRepo) FindByOwnerSlugName(_ context.Context, userID, slug, name string) (*models.DockerApp, error) {
+	if a, ok := f.byOwnerSlugName[userID+"|"+slug+"|"+name]; ok {
+		return a, nil
+	}
+	return nil, gorm.ErrRecordNotFound
+}
+
+func (f *fakeDockerRepo) Create(_ context.Context, _ *models.DockerApp) error { return f.createErr }
+
+func (f *fakeDockerRepo) Delete(_ context.Context, id string) error {
+	if f.deleted == nil {
+		f.deleted = map[string]bool{}
+	}
+	f.deleted[id] = true
+	return nil
+}
+
+func (f *fakeDockerRepo) ListPortsForApp(context.Context, string) ([]*models.DockerAppPublishedPort, error) {
+	return nil, nil
 }
 
 func (f *fakeDockerRepo) UpdateStatus(_ context.Context, id, status string, _ *string) error {
@@ -257,6 +282,57 @@ func TestTenantDocker_ForeignDomain409(t *testing.T) {
 	rec := post(r, `{"slug":"tdemo","name":"x","domain":"x.example.com"}`)
 	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "domain_in_use") {
 		t.Fatalf("want 409 domain_in_use, got %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// GH #1776: a tenant who deleted their own app must be able to reinstall it
+// under the same name. The `deleted` tombstone (kept for admin visibility)
+// holds the (user_id, slug, name) unique key, so the install path must clear
+// the corpse before Create. A fake repo can't reproduce the DB unique-key
+// rejection, so the decisive assertion is that the tombstone row was deleted;
+// Create is forced to error to short-circuit before the port/agent stages.
+func TestTenantDocker_DeletedTombstoneReinstall_ClearsCorpse(t *testing.T) {
+	tomb := &models.DockerApp{ID: "old-tomb", UserID: uname("u1"), Slug: "tdemo", Name: "x", Status: models.DockerAppStatusDeleted}
+	repo := &fakeDockerRepo{
+		byOwnerSlugName: map[string]*models.DockerApp{"u1|tdemo|x": tomb},
+		createErr:       errors.New("stop-after-corpse"),
+	}
+	cfg := UserDockerAppHandlerConfig{
+		Repo:     repo,
+		Catalog:  tenantCatalog(t),
+		Users:    &fakeUserRepo{user: &models.User{ID: "u1", Username: uname("alice"), PackageID: uname("p1")}},
+		Packages: &fakePkgRepo{pkg: &models.HostingPackage{ID: "p1", MaxDockerApps: 5}},
+		Domains:  &fakeDomainRepo{},
+	}
+	r := tenantRouter(t, cfg, true)
+	rec := post(r, `{"slug":"tdemo","name":"x","domain":"x.example.com"}`)
+	if !repo.deleted["old-tomb"] {
+		t.Fatalf("deleted tombstone was not cleared before reinstall; body=%s", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "already_installed") {
+		t.Fatalf("reinstall of a deleted app must not 409 already_installed: %s", rec.Body.String())
+	}
+}
+
+// A still-live install of the same name is a genuine conflict — the corpse
+// path must NOT clear it, and the tenant gets a clean 409.
+func TestTenantDocker_LiveDuplicateReinstall_409(t *testing.T) {
+	live := &models.DockerApp{ID: "live1", UserID: uname("u1"), Slug: "tdemo", Name: "x", Status: models.DockerAppStatusRunning}
+	repo := &fakeDockerRepo{byOwnerSlugName: map[string]*models.DockerApp{"u1|tdemo|x": live}}
+	cfg := UserDockerAppHandlerConfig{
+		Repo:     repo,
+		Catalog:  tenantCatalog(t),
+		Users:    &fakeUserRepo{user: &models.User{ID: "u1", Username: uname("alice"), PackageID: uname("p1")}},
+		Packages: &fakePkgRepo{pkg: &models.HostingPackage{ID: "p1", MaxDockerApps: 5}},
+		Domains:  &fakeDomainRepo{},
+	}
+	r := tenantRouter(t, cfg, true)
+	rec := post(r, `{"slug":"tdemo","name":"x","domain":"x.example.com"}`)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "already_installed") {
+		t.Fatalf("live duplicate must 409 already_installed, got %d %s", rec.Code, rec.Body.String())
+	}
+	if repo.deleted["live1"] {
+		t.Fatal("a live install must never be cleared as a corpse")
 	}
 }
 

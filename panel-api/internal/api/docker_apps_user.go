@@ -493,6 +493,29 @@ func (h *userDockerAppHandler) install(c *gin.Context) {
 		return
 	}
 
+	// GH #1776: clear a corpse of the caller's OWN prior install of this exact
+	// (slug, name) so the tenant can reuse the name. A `deleted` tombstone (kept
+	// for admin visibility) or a `failed` remnant otherwise trips the
+	// (user_id, slug, name) unique key on Create below, and the reinstall failed
+	// with persist_failed until an admin removed the row. Scope the lookup and
+	// the domain sweep to the caller's own data — never another tenant's. A
+	// still-live install of the same name is a genuine 409.
+	if existing, _ := h.cfg.Repo.FindByOwnerSlugName(ctx, claims.UserID, req.Slug, req.Name); existing != nil {
+		if existing.Status == models.DockerAppStatusDeleted || existing.Status == models.DockerAppStatusFailed {
+			var domScope []models.Domain
+			if h.cfg.Domains != nil {
+				domScope, _, _ = h.cfg.Domains.ListByUserID(ctx, claims.UserID, repository.ListOptions{Limit: diskUsageListLimit})
+			}
+			if derr := h.admin.clearDockerAppCorpse(ctx, existing, domScope); derr != nil {
+				c.JSON(http.StatusConflict, gin.H{"error": "already_installed", "id": existing.ID})
+				return
+			}
+		} else {
+			c.JSON(http.StatusConflict, gin.H{"error": "already_installed", "id": existing.ID})
+			return
+		}
+	}
+
 	username := *user.Username
 	instanceSlug := tenantInstanceSlug(req.Slug, claims.UserID, req.Name)
 
