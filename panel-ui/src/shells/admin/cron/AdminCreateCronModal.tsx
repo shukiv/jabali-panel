@@ -10,6 +10,7 @@ import { useQuery } from "@tanstack/react-query";
 
 import { apiClient, createCronJob } from "../../../apiClient";
 import { CRON_SCHEDULE_OPTIONS } from "../../../utils/cronSchedule";
+import { CronCommandHelp } from "../../../components/cron/CronCommandHelp";
 
 interface TargetUser {
   id: string;
@@ -103,7 +104,11 @@ export const AdminCreateCronModal = ({ open, onClose, onSuccess }: Props) => {
     <Drawer
       open={open}
       onClose={onClose}
-      title={t("admincreatecronmodal.new_cron_job_as_tenant")}
+      title={
+        runAs === "root"
+          ? t("admincreatecronmodal.new_cron_job_as_root")
+          : t("admincreatecronmodal.new_cron_job_as_tenant")
+      }
       width={screens.xs ? "100%" : 560}
       destroyOnClose
       extra={
@@ -116,8 +121,19 @@ export const AdminCreateCronModal = ({ open, onClose, onSuccess }: Props) => {
       }
     >
       <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
-        Create a cron job under any tenant's account. The command runs as that
-        tenant's Linux user inside their cgroup slice.
+        {runAs === "root" ? (
+          <>
+            Create a system cron job that runs as <code>root</code> (uid 0) via a
+            system-scoped systemd timer, outside any tenant cgroup slice. The
+            same command restrictions apply as for tenant crons (see below) —
+            arbitrary shell commands such as <code>ls</code> are rejected.
+          </>
+        ) : (
+          <>
+            Create a cron job under any tenant's account. The command runs as
+            that tenant's Linux user inside their cgroup slice.
+          </>
+        )}
       </Typography.Paragraph>
       <Form
         form={form}
@@ -165,8 +181,16 @@ export const AdminCreateCronModal = ({ open, onClose, onSuccess }: Props) => {
           label={t("admincreatecronmodal.command")}
           name="command"
           rules={[{ required: true, message: "Command is required" }]}
+          extra={<CronCommandHelp />}
         >
-          <Input.TextArea placeholder="cd /home/tenant && ./run.sh" rows={3} />
+          <Input.TextArea
+            placeholder={
+              runAs === "root"
+                ? "php /root/maintenance/cleanup.php"
+                : "php /home/tenant/example.com/public_html/cron.php"
+            }
+            rows={3}
+          />
         </Form.Item>
         <Divider />
         <Form.Item label={t("admincreatecronmodal.schedule")} name="preset">

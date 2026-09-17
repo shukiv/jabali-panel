@@ -18,6 +18,7 @@ import {
   type CronJob,
 } from "../../../apiClient";
 import { CRON_SCHEDULE_OPTIONS } from "../../../utils/cronSchedule";
+import { CronCommandHelp } from "../../../components/cron/CronCommandHelp";
 
 interface CreateCronModalProps {
   open: boolean;
@@ -209,14 +210,7 @@ export const CreateCronModal = ({
         </Form.Item>
 
         <Form.Item>
-          <Typography.Text type="secondary">
-            Must start with <code>wp</code>, <code>php</code> (or a version like{" "}
-            <code>php8.5</code>), <code>python</code>/<code>python3</code>,{" "}
-            <code>node</code>, or <code>curl</code>. Interpreters run an absolute
-            script file inside your account (<code>.php</code> in a docroot;{" "}
-            <code>.py</code>/<code>.js</code> anywhere under your home). Inline
-            code and shell operators (|, &, $, ...) are rejected.
-          </Typography.Text>
+          <CronCommandHelp />
         </Form.Item>
 
         <Divider style={{ margin: "16px 0" }} />
