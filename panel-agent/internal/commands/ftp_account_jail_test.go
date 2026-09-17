@@ -61,6 +61,73 @@ func TestFtpJailPathFor(t *testing.T) {
 	}
 }
 
+// TestIsolatedPasswdHome pins the GH #1720 fix: the /etc/passwd home written
+// for an isolated subaccount must carry the literal "/./" marker so vsftpd
+// (passwd_chroot_enable=YES) chroots to the root-owned jail and lands the
+// session in the bind-mounted /data — the same start dir sshd gives. A home
+// without the marker dumps the user at the empty jail root (the locked-dir bug).
+func TestIsolatedPasswdHome(t *testing.T) {
+	t.Setenv("JABALI_FTP_JAIL_ROOT", "/var/lib/jabali-ftp-jails")
+	jail := ftpJailPathFor(testTenant(), "bob_printer")
+
+	got := isolatedPasswdHome(jail)
+	if want := jail + "/./" + ftpJailMountpoint; got != want {
+		t.Fatalf("isolatedPasswdHome=%q, want %q (the /./ marker is the fix)", got, want)
+	}
+	// The marker resolves on disk to the jail's bind-mounted data dir, proving
+	// the session lands on tenant files, not the empty root-owned jail root.
+	if want := filepath.Join(jail, ftpJailMountpoint); filepath.Clean(got) != want {
+		t.Fatalf("clean(isolatedPasswdHome)=%q, want %q", filepath.Clean(got), want)
+	}
+}
+
+// TestIsolatedHomeNeedsRehome pins the GH #1720 reconciler parity: ensure_jail
+// must re-home an isolated account whose passwd home predates the "/./" landing
+// fix (the bare jail root) and must leave a marker home untouched. Without the
+// re-home, the reporter's already-created account would keep landing at the
+// empty jail root even after the host gains passwd_chroot_enable=YES.
+func TestIsolatedHomeNeedsRehome(t *testing.T) {
+	t.Setenv("JABALI_FTP_JAIL_ROOT", "/var/lib/jabali-ftp-jails")
+	jail := ftpJailPathFor(testTenant(), "bob_printer")
+
+	// Pre-fix account: passwd home is the bare jail root → must be re-homed.
+	if want, need := isolatedHomeNeedsRehome(jail, jail); !need || want != isolatedPasswdHome(jail) {
+		t.Fatalf("bare-jail home: need=%v want=%q, expected re-home to %q", need, want, isolatedPasswdHome(jail))
+	}
+	// Post-fix account: passwd home already carries the marker → no re-home.
+	if _, need := isolatedHomeNeedsRehome(isolatedPasswdHome(jail), jail); need {
+		t.Fatal("marker home: expected no re-home, ensure_jail would churn usermod every tick")
+	}
+}
+
+// TestVsftpdHonoursPasswdChroot pins the GH #1720 fail-closed gate: the re-home
+// runs ONLY on a host whose vsftpd enables passwd_chroot_enable. A missing conf
+// or a conf without the directive must read as false, so ensure_jail leaves the
+// safe bare-jail home instead of chrooting vsftpd into the tenant-writable /data.
+func TestVsftpdHonoursPasswdChroot(t *testing.T) {
+	conf := filepath.Join(t.TempDir(), "vsftpd.conf")
+	t.Setenv("JABALI_VSFTPD_CONF", conf)
+
+	// Missing conf → fail closed.
+	if vsftpdHonoursPasswdChroot() {
+		t.Fatal("missing vsftpd.conf must fail closed (no re-home)")
+	}
+	// Present but directive absent → fail closed.
+	if err := os.WriteFile(conf, []byte("chroot_local_user=YES\nallow_writeable_chroot=YES\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if vsftpdHonoursPasswdChroot() {
+		t.Fatal("conf without passwd_chroot_enable=YES must fail closed")
+	}
+	// Directive present → honoured.
+	if err := os.WriteFile(conf, []byte("chroot_local_user=YES\npasswd_chroot_enable=YES\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !vsftpdHonoursPasswdChroot() {
+		t.Fatal("conf with passwd_chroot_enable=YES must be honoured")
+	}
+}
+
 func TestValidateIsolatedCreate(t *testing.T) {
 	t.Setenv("JABALI_FTP_JAIL_ROOT", "/var/lib/jabali-ftp-jails")
 	tenant := testTenant()

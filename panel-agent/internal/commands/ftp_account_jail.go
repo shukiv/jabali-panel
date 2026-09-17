@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -52,6 +53,57 @@ const ftpJailRootDefault = "/var/lib/jabali-ftp-jails"
 // ftpJailMountpoint is the fixed name of the bind-mount target inside each
 // jail. The session start dir is always "/<ftpJailMountpoint>".
 const ftpJailMountpoint = "data"
+
+// isolatedPasswdHome is the /etc/passwd home written for an isolated subaccount.
+// The "/./" marker (honoured by vsftpd's passwd_chroot_enable=YES, install.sh)
+// splits the string into the chroot root — the root-owned jail — and the
+// post-chroot start dir, the bind-mounted "/<ftpJailMountpoint>". This gives a
+// plain-FTP login the same landing dir sshd gives via `internal-sftp -d /data`
+// (GH #1720); vsftpd has no per-user start dir of its own and would otherwise
+// dump the user at the empty jail root. It is built literally, NOT with
+// filepath.Join, which would collapse the "/./" and destroy the marker.
+func isolatedPasswdHome(jailPath string) string {
+	return jailPath + "/./" + ftpJailMountpoint
+}
+
+// isolatedHomeNeedsRehome reports whether an isolated subaccount's current
+// /etc/passwd home must be rewritten to the GH #1720 "/./" landing form. An
+// account created before the fix carries the bare jail root and needs the
+// re-home; one already carrying the marker does not. ensure_jail runs this
+// every reconcile tick so pre-fix accounts self-heal fleet-wide.
+func isolatedHomeNeedsRehome(currentHome, jailPath string) (want string, need bool) {
+	want = isolatedPasswdHome(jailPath)
+	return want, currentHome != want
+}
+
+// vsftpdConfPath is the rendered vsftpd config, overridable in tests.
+func vsftpdConfPath() string {
+	if p := os.Getenv("JABALI_VSFTPD_CONF"); p != "" {
+		return p
+	}
+	return "/etc/vsftpd.conf"
+}
+
+// vsftpdHonoursPasswdChroot reports whether the host's vsftpd enables
+// passwd_chroot_enable — i.e. whether a "/./" marker in a passwd home is honoured
+// as a chroot split (jail root before the marker, start dir after). It gates the
+// GH #1720 re-home: when the directive is absent (a host that has not run the
+// install converge_vsftpd_passwd_chroot yet, or a hand-edited conf), re-homing an
+// isolated account to the "/./" form would instead make vsftpd chroot into the
+// tenant-writable /data — a downgrade of the isolation floor. Fail closed: any
+// read error or a missing directive returns false, leaving the safe bare-jail home.
+func vsftpdHonoursPasswdChroot() bool {
+	b, err := os.ReadFile(vsftpdConfPath())
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		if strings.TrimSpace(line) == "passwd_chroot_enable=YES" {
+			return true
+		}
+	}
+	return false
+}
 
 // ftpSubaccountUIDMin is the floor of the reserved, never-reused uid range for
 // isolated subaccounts (must match migration 000267's allocator base). 1e9 is
@@ -197,13 +249,22 @@ func provisionIsolatedJail(ctx context.Context, tenant *ftpTenant, p ftpAccountC
 	srcFd.Close()
 
 	// 3. Own-uid user (NO --non-unique), own primary group, nologin, GECOS
-	// marker, passwd home = jail (so vsftpd chroots to the jail, not a
-	// tenant-mutable path). --no-create-home: the jail already exists.
+	// marker. --no-create-home: the jail already exists.
+	//
+	// GH #1720: the passwd home carries a "/./" marker (isolatedPasswdHome) so
+	// vsftpd — with passwd_chroot_enable=YES (install.sh) — chroots to the
+	// root-owned jail root and then lands the session in the bind-mounted /data,
+	// matching the start dir sshd gives via `internal-sftp -d /data`. vsftpd has
+	// no per-user start dir of its own; without the marker it dumps the user at
+	// the empty, unwritable jail root, which reads as a locked directory. The
+	// chroot is still the root-owned jail (the marker only sets where inside it
+	// the session starts), so the "chroot for BOTH protocols is the jail" design
+	// above holds. --no-create-home means useradd never touches the path.
 	uidStr := strconv.FormatUint(uint64(p.UID), 10)
 	useraddArgs := []string{
 		"--uid", uidStr,
 		"--user-group", // own primary group — member of NO tenant group
-		"--home-dir", jail,
+		"--home-dir", isolatedPasswdHome(jail),
 		"--no-create-home",
 		"--shell", "/usr/sbin/nologin",
 		"--comment", ftpAliasGecosFor(tenant.Username),
@@ -345,6 +406,33 @@ func ftpEnsureJailHandler(ctx context.Context, params json.RawMessage) (any, err
 	}
 	if p.JailPath != ftpJailPathFor(tenant, p.Username) {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: fmt.Sprintf("jail_path %q is not the canonical jail", p.JailPath)}
+	}
+	// GH #1720: isolated accounts created before the "/./" landing fix carry a
+	// bare-jail passwd home. Once the host gains passwd_chroot_enable=YES, vsftpd
+	// finds no "/./" marker in that home and chroots to the whole jail root,
+	// dumping the session at the empty, unwritable dir (the "locked directory"
+	// the reporter saw). Re-home to the marker form so the next login lands in
+	// /data — matching what the create path now writes and what sshd already
+	// gives via `internal-sftp -d /data`. usermod -d (no -m) rewrites only the
+	// passwd home field: it never moves files, and the change takes effect on the
+	// next login, so live sessions are undisturbed. The reconciler calls this
+	// every tick, so the whole fleet self-heals. Best effort: a transient usermod
+	// failure must not block the mount reconcile below (the reboot self-heal) —
+	// the next tick retries the re-home.
+	if want, need := isolatedHomeNeedsRehome(u.HomeDir, p.JailPath); need {
+		// Fail-closed gate: only re-home to the "/./" form on a host whose vsftpd
+		// actually honours passwd_chroot_enable. Without it, the marker home makes
+		// vsftpd chroot into the tenant-writable /data instead of the root-owned
+		// jail root — an isolation-floor downgrade. The bare-jail home is the safe
+		// current state, so skipping (and retrying next tick, once `jabali update`
+		// has rendered the directive) never downgrades the boundary.
+		if !vsftpdHonoursPasswdChroot() {
+			slog.Warn("ftp: isolated subaccount needs the GH #1720 /data re-home but this host's vsftpd lacks passwd_chroot_enable=YES — leaving the bare-jail home (fail-closed; run `jabali update` to render the directive, then it self-heals next tick)",
+				"account", p.Username)
+		} else if out, err := execCommandContext(ctx, "usermod", "-d", want, p.Username).CombinedOutput(); err != nil {
+			slog.Warn("ftp: usermod -d re-home of isolated subaccount failed — session still lands at the jail root until this succeeds (GH #1720; retried next reconcile tick)",
+				"account", p.Username, "want_home", want, "err", err, "output", strings.TrimSpace(string(out)))
+		}
 	}
 	mountpoint := filepath.Join(p.JailPath, ftpJailMountpoint)
 	mounted, err := isPathMounted(mountpoint)

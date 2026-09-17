@@ -52,6 +52,24 @@ if ! grep -q 'converge_ftp_masking' <<<"$provision"; then
   fail=1
 fi
 
+# --- 2b. GH #1720: passwd_chroot converger carries the directive to existing
+# FTP hosts on update, so a new agent writing "/./data" isolated homes never
+# lands in the mixed state where vsftpd chroots into tenant-writable /data. ---
+pcconv=$(awk '/^converge_vsftpd_passwd_chroot\(\)/,/^}/' install.sh)
+if [[ -z "$pcconv" ]]; then
+  echo "FAIL: converge_vsftpd_passwd_chroot not defined"
+  fail=1
+else
+  grep -q 'sed -i .*chroot_local_user=YES.*a passwd_chroot_enable=YES' <<<"$pcconv" \
+    || { echo "FAIL: converge_vsftpd_passwd_chroot must insert passwd_chroot_enable=YES after chroot_local_user=YES"; fail=1; }
+  grep -q "grep -q '\^passwd_chroot_enable=YES'" <<<"$pcconv" \
+    || { echo "FAIL: converge_vsftpd_passwd_chroot must be idempotent (skip when the directive is already present)"; fail=1; }
+fi
+if ! grep -q 'converge_vsftpd_passwd_chroot' <<<"$provision"; then
+  echo "FAIL: provision_new_software does not call converge_vsftpd_passwd_chroot — existing FTP hosts would never gain passwd_chroot_enable and new isolated accounts would regress the chroot root (GH #1720)"
+  fail=1
+fi
+
 # --- 3. vsftpd config safety ---
 cfgfn=$(awk '/^install_vsftpd_config\(\)/,/^}/' install.sh)
 if [[ -z "$cfgfn" ]]; then
@@ -62,6 +80,12 @@ else
     || { echo "FAIL: anonymous FTP must be disabled"; fail=1; }
   grep -q 'chroot_local_user=YES' <<<"$cfgfn" \
     || { echo "FAIL: local users must be chrooted"; fail=1; }
+  # GH #1720: isolated subaccounts carry a "/./" marker in their passwd home so
+  # vsftpd chroots to the root-owned jail and lands the session in /data (the
+  # sshd `internal-sftp -d /data` parity). Without passwd_chroot_enable the
+  # marker is ignored and the user lands at the empty jail root (locked dir).
+  grep -q 'passwd_chroot_enable=YES' <<<"$cfgfn" \
+    || { echo "FAIL: isolated FTP subaccounts need passwd_chroot_enable to land in /data (GH #1720)"; fail=1; }
   grep -q 'force_local_logins_ssl=\${force_ssl}' <<<"$cfgfn" \
     || { echo "FAIL: TLS requirement must be wired to ftp_allow_plaintext"; fail=1; }
   # The no-cert + TLS-required combination must abort, not downgrade.
