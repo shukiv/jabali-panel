@@ -81,6 +81,25 @@ func TestIsolatedPasswdHome(t *testing.T) {
 	}
 }
 
+// TestIsolatedHomeNeedsRehome pins the GH #1720 reconciler parity: ensure_jail
+// must re-home an isolated account whose passwd home predates the "/./" landing
+// fix (the bare jail root) and must leave a marker home untouched. Without the
+// re-home, the reporter's already-created account would keep landing at the
+// empty jail root even after the host gains passwd_chroot_enable=YES.
+func TestIsolatedHomeNeedsRehome(t *testing.T) {
+	t.Setenv("JABALI_FTP_JAIL_ROOT", "/var/lib/jabali-ftp-jails")
+	jail := ftpJailPathFor(testTenant(), "bob_printer")
+
+	// Pre-fix account: passwd home is the bare jail root → must be re-homed.
+	if want, need := isolatedHomeNeedsRehome(jail, jail); !need || want != isolatedPasswdHome(jail) {
+		t.Fatalf("bare-jail home: need=%v want=%q, expected re-home to %q", need, want, isolatedPasswdHome(jail))
+	}
+	// Post-fix account: passwd home already carries the marker → no re-home.
+	if _, need := isolatedHomeNeedsRehome(isolatedPasswdHome(jail), jail); need {
+		t.Fatal("marker home: expected no re-home, ensure_jail would churn usermod every tick")
+	}
+}
+
 func TestValidateIsolatedCreate(t *testing.T) {
 	t.Setenv("JABALI_FTP_JAIL_ROOT", "/var/lib/jabali-ftp-jails")
 	tenant := testTenant()

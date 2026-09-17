@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -63,6 +64,16 @@ const ftpJailMountpoint = "data"
 // filepath.Join, which would collapse the "/./" and destroy the marker.
 func isolatedPasswdHome(jailPath string) string {
 	return jailPath + "/./" + ftpJailMountpoint
+}
+
+// isolatedHomeNeedsRehome reports whether an isolated subaccount's current
+// /etc/passwd home must be rewritten to the GH #1720 "/./" landing form. An
+// account created before the fix carries the bare jail root and needs the
+// re-home; one already carrying the marker does not. ensure_jail runs this
+// every reconcile tick so pre-fix accounts self-heal fleet-wide.
+func isolatedHomeNeedsRehome(currentHome, jailPath string) (want string, need bool) {
+	want = isolatedPasswdHome(jailPath)
+	return want, currentHome != want
 }
 
 // ftpSubaccountUIDMin is the floor of the reserved, never-reused uid range for
@@ -366,6 +377,24 @@ func ftpEnsureJailHandler(ctx context.Context, params json.RawMessage) (any, err
 	}
 	if p.JailPath != ftpJailPathFor(tenant, p.Username) {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: fmt.Sprintf("jail_path %q is not the canonical jail", p.JailPath)}
+	}
+	// GH #1720: isolated accounts created before the "/./" landing fix carry a
+	// bare-jail passwd home. Once the host gains passwd_chroot_enable=YES, vsftpd
+	// finds no "/./" marker in that home and chroots to the whole jail root,
+	// dumping the session at the empty, unwritable dir (the "locked directory"
+	// the reporter saw). Re-home to the marker form so the next login lands in
+	// /data — matching what the create path now writes and what sshd already
+	// gives via `internal-sftp -d /data`. usermod -d (no -m) rewrites only the
+	// passwd home field: it never moves files, and the change takes effect on the
+	// next login, so live sessions are undisturbed. The reconciler calls this
+	// every tick, so the whole fleet self-heals. Best effort: a transient usermod
+	// failure must not block the mount reconcile below (the reboot self-heal) —
+	// the next tick retries the re-home.
+	if want, need := isolatedHomeNeedsRehome(u.HomeDir, p.JailPath); need {
+		if out, err := execCommandContext(ctx, "usermod", "-d", want, p.Username).CombinedOutput(); err != nil {
+			slog.Warn("ftp: usermod -d re-home of isolated subaccount failed — session still lands at the jail root until this succeeds (GH #1720; retried next reconcile tick)",
+				"account", p.Username, "want_home", want, "err", err, "output", strings.TrimSpace(string(out)))
+		}
 	}
 	mountpoint := filepath.Join(p.JailPath, ftpJailMountpoint)
 	mounted, err := isPathMounted(mountpoint)
