@@ -126,7 +126,9 @@ export const AdminCreateCronModal = ({ open, onClose, onSuccess }: Props) => {
             Create a system cron job that runs as <code>root</code> (uid 0) via a
             system-scoped systemd timer, outside any tenant cgroup slice. The
             same command restrictions apply as for tenant crons (see below) —
-            arbitrary shell commands such as <code>ls</code> are rejected.
+            arbitrary shell commands such as <code>ls</code> are rejected — and
+            scripts must live under <code>/root</code> or in one of your own
+            account's docroots.
           </>
         ) : (
           <>

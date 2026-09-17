@@ -36,9 +36,11 @@ test.describe("GH #1686 — admin cron drawer target-aware help", () => {
     await expect(drawer.getByText(/Commands must start with/i)).toBeVisible();
     await expect(drawer.getByText(/will not work/i)).toBeVisible();
 
-    // Switch the target to root (item 4): paragraph swaps.
+    // Switch the target to root (item 4): paragraph swaps and the drawer title
+    // updates. The title asserts the root locale key resolves (the vitest can't
+    // reach this — it mocks t() to return keys).
     await drawer.getByRole("radio", { name: /root/i }).click();
     await expect(drawer.getByText(/system-scoped systemd timer/i)).toBeVisible();
-    await expect(drawer.getByText(/runs as that tenant's Linux user/i)).toHaveCount(0);
+    await expect(page.getByRole("dialog", { name: /as root/i })).toBeVisible();
   });
 });
