@@ -22,6 +22,11 @@ func (f *fakeReapFtpRepo) ListByUserID(_ context.Context, _ string) ([]models.Ft
 	return f.accts, nil
 }
 
+// List returns all FTP accounts (used by SyncFtpHostAccess).
+func (f *fakeReapFtpRepo) List(_ context.Context) ([]models.FtpAccount, error) {
+	return f.accts, nil
+}
+
 func (f *fakeReapFtpRepo) Delete(_ context.Context, id string) error {
 	f.deletedIDs = append(f.deletedIDs, id)
 	return f.delErr
@@ -82,4 +87,48 @@ func TestReapTenantFtpAccounts_Guards(t *testing.T) {
 	if countFtpDeletes(ag) != 0 {
 		t.Fatal("guarded no-op cases must not dispatch")
 	}
+}
+
+// AC4/AC5: reapTenantFtpAccounts must call SyncFtpHostAccess after deleting
+// all accounts, so the sshd drop-in no longer contains rules for the deleted
+// aliases (JAB-276).
+func TestReapTenantFtpAccounts_CallsSyncFtpHostAccess(t *testing.T) {
+	repo := &fakeReapFtpRepo{accts: []models.FtpAccount{
+		{ID: "a1", Username: "alice_deploy"},
+	}}
+	ag := &recordingAgent{}
+	reapTenantFtpAccounts(context.Background(),
+		Deps{Agent: ag, Users: &userRepoForReapTest{}},
+		DeleteDeps{FtpAccounts: repo},
+		"u1", "alice")
+
+	// Should have ftpaccount.delete, ssh.user.home_chown, and ftpaccount.sshd_sync
+	if len(ag.calls) < 3 {
+		t.Errorf("agent calls count = %d, want >= 3 (ftpaccount.delete, ssh.user.home_chown, ftpaccount.sshd_sync)",
+			len(ag.calls))
+	}
+	var hasSshd, hasSync bool
+	for _, call := range ag.calls {
+		if call.method == "ssh.user.home_chown" {
+			hasSshd = true
+		}
+		if call.method == "ftpaccount.sshd_sync" {
+			hasSync = true
+		}
+	}
+	if !hasSshd {
+		t.Error("agent calls missing ssh.user.home_chown (needed by SyncFtpHostAccess)")
+	}
+	if !hasSync {
+		t.Error("agent calls missing ftpaccount.sshd_sync (AC4/AC5 guard)")
+	}
+}
+
+// Minimal UserRepository for reap tests that need FindByID.
+type userRepoForReapTest struct {
+	repository.UserRepository
+}
+
+func (u *userRepoForReapTest) FindByID(_ context.Context, _ string) (*models.User, error) {
+	return nil, nil
 }

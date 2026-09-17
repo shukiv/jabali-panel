@@ -241,6 +241,12 @@ func (f *drFtp) ListByUserID(_ context.Context, _ string) ([]models.FtpAccount, 
 	return f.accts, f.err
 }
 
+// List satisfies ftpsync.FtpAccountLister (used by Suspend/Unsuspend
+// SyncFtpHostAccess calls).
+func (f *drFtp) List(_ context.Context) ([]models.FtpAccount, error) {
+	return f.accts, f.err
+}
+
 func drFtpAcct(username, homePath string) models.FtpAccount {
 	return models.FtpAccount{ID: "ftp-" + username, UserID: "user-1", Username: username, HomePath: homePath}
 }

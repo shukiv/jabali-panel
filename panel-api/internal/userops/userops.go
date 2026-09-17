@@ -67,9 +67,14 @@ type Deps struct {
 	// site URL in its OWN database, which the docroot move + DNS/SSL re-key do
 	// not touch. Optional: nil skips the rewrite (the rename still succeeds).
 	AppInstalls AppInstallLister
-	// FtpAccounts lets RenameDomain refuse when an FTP/SFTP subaccount is homed
-	// at or under the docroot being moved (GH #1579) — its jail/chroot is not
-	// moved automatically. Optional: nil skips the check (the rename proceeds).
+	// FtpAccounts serves two purposes: (1) RenameDomain refuses when an
+	// FTP/SFTP subaccount is homed at or under the docroot being moved
+	// (GH #1579) — its jail/chroot is not moved automatically; (2) Suspend/
+	// Unsuspend call SyncFtpHostAccess to re-render the sshd drop-in
+	// immediately (AC4/AC5). Must satisfy both FtpDocrootLister (for domain
+	// rename) and ftpsync.FtpAccountLister (for suspend/sync). Both are
+	// satisfied by repository.FtpAccountRepository. Optional: nil skips both
+	// (rename proceeds, sshd re-render deferred to reconcile).
 	FtpAccounts FtpDocrootLister
 	// DMARC / TLSRPT move the domain's stored DMARC + TLS-RPT aggregate history
 	// onto the new name on a rename (GH #1579) so those dashboards are not

@@ -18,6 +18,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dbops"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ftpsync"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
@@ -220,6 +221,10 @@ func reapTenantFtpAccounts(ctx context.Context, d Deps, dd DeleteDeps, userID, u
 				"user_id", userID, "ftp_account", a.Username, "err", err)
 		}
 	}
+	// AC4/AC5: re-render the sshd drop-in immediately after tearing down all
+	// accounts so the config no longer contains rules for deleted aliases
+	// (JAB-276). This is best-effort; reconciler converges if it fails.
+	ftpsync.SyncFtpHostAccess(ctx, d.Agent, dd.FtpAccounts, d.Users, d.Packages, d.Log, username)
 }
 
 // DeleteCascade removes EVERYTHING a user owns, then the user row, then

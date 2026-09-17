@@ -307,103 +307,11 @@ func (h *ftpAccountsHandler) agentCall(ctx context.Context, method string, param
 	return err
 }
 
-// syncHostAccess re-renders the sshd drop-in from the full desired set and
-// flips the tenant home to the M12 chroot layout. Called synchronously
+// syncHostAccess re-renders the sshd drop-in from the full desired set by
+// calling the shared ftpsync.SyncFtpHostAccess function. Called synchronously
 // after every mutation so login state matches the API response.
 func (h *ftpAccountsHandler) syncHostAccess(ctx context.Context, tenantUsername string) {
-	if h.cfg.Agent == nil {
-		return
-	}
-	if _, err := h.cfg.Agent.Call(ctx, "ssh.user.home_chown", map[string]any{
-		"username": tenantUsername, "mode": "sftp",
-	}); err != nil && h.cfg.Log != nil {
-		h.cfg.Log.Warn("ftp: home chroot flip failed (reconciler will retry)", "tenant", tenantUsername, "err", err)
-	}
-	// Stamp the generation BEFORE reading the snapshot. The agent's stale-drop
-	// gate is only sound if stamp order precedes read order: a sync that can
-	// override a revocation carries a higher generation, so it was stamped after
-	// the revocation's stamp, so — stamping before reading — it read after the
-	// revocation committed and its own snapshot already reflects the revocation.
-	// Stamping at dispatch (after the read) reopens the JAB-267 inversion.
-	gen := ftpsync.NextGeneration()
-	rows, err := h.cfg.Repo.List(ctx)
-	if err != nil {
-		return
-	}
-
-	// Group rows by tenant and resolve each owner's eligibility ONCE with the
-	// SAME shared projection the reconciler applies (JAB-276). Before this, the
-	// immediate sync filtered on each row's own IsEnabled/SFTPAccess alone —
-	// eligibility-blind — so a mutation on ANY tenant re-dispatched the whole
-	// table under a fresh (higher) generation that could re-emit the sshd Match
-	// block of a suspended / package-dropped / over-cap account the reconciler
-	// had already dropped. Clamping eligibility here keeps both dispatch sites'
-	// effective-access sets identical, so the immediate sync can never be wider
-	// than the periodic one.
-	tenantByUserID := map[string]string{}
-	rowsByTenant := map[string][]models.FtpAccount{}
-	eligByTenant := map[string]ftpsync.Eligibility{}
-	for _, a := range rows {
-		uname, seen := tenantByUserID[a.UserID]
-		if !seen {
-			u, uerr := h.cfg.Users.FindByID(ctx, a.UserID)
-			if uerr != nil || u == nil || u.Username == nil || *u.Username == "" {
-				tenantByUserID[a.UserID] = ""
-				continue
-			}
-			uname = *u.Username
-			tenantByUserID[a.UserID] = uname
-			eligByTenant[uname] = ftpsync.OwnerEligibility(ctx, h.cfg.Packages, u)
-		}
-		if uname == "" {
-			continue
-		}
-		rowsByTenant[uname] = append(rowsByTenant[uname], a)
-	}
-
-	// A cancelled request makes the owner lookups above fail closed, which would
-	// narrow the dispatched set for a reason unrelated to policy AND stamp that
-	// narrower set with a fresh generation. Bail exactly as a failed List does —
-	// never publish a snapshot shaped by cancellation; the periodic reconciler
-	// converges regardless.
-	if ctx.Err() != nil {
-		return
-	}
-
-	type syncAccount struct {
-		Username  string `json:"username"`
-		ChrootDir string `json:"chroot_dir"`
-		StartDir  string `json:"start_dir"`
-	}
-	desired := []syncAccount{}
-	for tenant, accts := range rowsByTenant {
-		eff := ftpsync.EffectiveEnabled(accts, eligByTenant[tenant])
-		for _, a := range accts {
-			if !eff[a.Username] || !a.SFTPAccess {
-				continue
-			}
-			var chroot, start string
-			if a.Isolated && a.JailPath != "" {
-				// GH #1145: isolated accounts chroot to their root-owned jail; the
-				// selected sub-tree is bind-mounted at /<mountpoint> inside it.
-				chroot = a.JailPath
-				start = "/" + ftpJailMountpoint
-			} else {
-				chroot = "/home/" + tenant
-				start = "/"
-				if rel, rerr := filepath.Rel(chroot, a.HomePath); rerr == nil && rel != "." && !strings.HasPrefix(rel, "..") {
-					start = "/" + rel
-				}
-			}
-			desired = append(desired, syncAccount{Username: a.Username, ChrootDir: chroot, StartDir: start})
-		}
-	}
-	if err := h.agentCall(ctx, "ftpaccount.sshd_sync", map[string]any{
-		"accounts":   desired,
-		"generation": gen,
-	}); err != nil && h.cfg.Log != nil {
-		h.cfg.Log.Warn("ftp: sshd_sync failed (reconciler will retry)", "err", err)
-	}
+	ftpsync.SyncFtpHostAccess(ctx, h.cfg.Agent, h.cfg.Repo, h.cfg.Users, h.cfg.Packages, h.cfg.Log, tenantUsername)
 }
 
 func (h *ftpAccountsHandler) list(c *gin.Context) {

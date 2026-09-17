@@ -38,6 +38,17 @@ func (f *fakeSuspendDomains) BulkSetEnabledByUserID(_ context.Context, _ string,
 	return f.affected, nil
 }
 
+// Import recordingAgent from purge_test (shared test helper, defined there)
+// Note: the test functions reference ag.calls which is populated by Call()
+
+type fakeFtpAccounts struct {
+	repository.FtpAccountRepository
+}
+
+func (f *fakeFtpAccounts) List(_ context.Context) ([]models.FtpAccount, error) {
+	return []models.FtpAccount{}, nil
+}
+
 func strptr(s string) *string { return &s }
 
 func TestSuspend_FullCascade(t *testing.T) {
@@ -114,5 +125,81 @@ func TestUnsuspend_ReversesCascade(t *testing.T) {
 	}
 	if len(ag.calls) != 1 || ag.calls[0].method != "user.unsuspend" {
 		t.Errorf("agent calls = %+v, want one user.unsuspend", ag.calls)
+	}
+}
+
+func TestSuspend_CallsSyncFtpHostAccess(t *testing.T) {
+	// AC4/AC5: Suspend must call SyncFtpHostAccess (which renders sshd_sync)
+	// so the suspension's eligibility clamp takes effect immediately.
+	users := &fakeSuspendUsers{}
+	ftpAccts := &fakeFtpAccounts{}
+	ag := &recordingAgent{}
+	d := Deps{Users: users, FtpAccounts: ftpAccts, Agent: ag}
+	u := &models.User{ID: "u1", Username: strptr("alice")}
+
+	res, err := Suspend(context.Background(), d, u, "test")
+	if err != nil {
+		t.Fatalf("Suspend: %v", err)
+	}
+	if res.AlreadySuspended {
+		t.Fatal("res.AlreadySuspended = true on first suspend")
+	}
+	// Should have user.suspend, ftpaccount.lock_tenant, ssh.user.home_chown, and ftpaccount.sshd_sync
+	if len(ag.calls) < 4 {
+		t.Errorf("agent calls count = %d, want >= 4 (user.suspend, ftpaccount.lock_tenant, ssh.user.home_chown, ftpaccount.sshd_sync)",
+			len(ag.calls))
+	}
+	var hasSshd, hasSync bool
+	for _, call := range ag.calls {
+		if call.method == "ssh.user.home_chown" {
+			hasSshd = true
+		}
+		if call.method == "ftpaccount.sshd_sync" {
+			hasSync = true
+		}
+	}
+	if !hasSshd {
+		t.Error("agent calls missing ssh.user.home_chown (needed by SyncFtpHostAccess)")
+	}
+	if !hasSync {
+		t.Error("agent calls missing ftpaccount.sshd_sync (AC4/AC5 guard)")
+	}
+}
+
+func TestUnsuspend_CallsSyncFtpHostAccess(t *testing.T) {
+	// AC4/AC5: Unsuspend must call SyncFtpHostAccess (which renders sshd_sync)
+	// so the unsuspension's eligibility expansion takes effect immediately.
+	users := &fakeSuspendUsers{}
+	ftpAccts := &fakeFtpAccounts{}
+	ag := &recordingAgent{}
+	d := Deps{Users: users, FtpAccounts: ftpAccts, Agent: ag}
+	u := &models.User{ID: "u1", Username: strptr("alice"), Suspended: true}
+
+	res, err := Unsuspend(context.Background(), d, u)
+	if err != nil {
+		t.Fatalf("Unsuspend: %v", err)
+	}
+	if res.AlreadyActive {
+		t.Fatal("res.AlreadyActive = true on first unsuspend")
+	}
+	// Should have user.unsuspend, ssh.user.home_chown, and ftpaccount.sshd_sync
+	if len(ag.calls) < 3 {
+		t.Errorf("agent calls count = %d, want >= 3 (user.unsuspend, ssh.user.home_chown, ftpaccount.sshd_sync)",
+			len(ag.calls))
+	}
+	var hasSshd, hasSync bool
+	for _, call := range ag.calls {
+		if call.method == "ssh.user.home_chown" {
+			hasSshd = true
+		}
+		if call.method == "ftpaccount.sshd_sync" {
+			hasSync = true
+		}
+	}
+	if !hasSshd {
+		t.Error("agent calls missing ssh.user.home_chown (needed by SyncFtpHostAccess)")
+	}
+	if !hasSync {
+		t.Error("agent calls missing ftpaccount.sshd_sync (AC4/AC5 guard)")
 	}
 }
