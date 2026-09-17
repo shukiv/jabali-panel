@@ -19,6 +19,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/config"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dbconsoleops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/sso"
@@ -86,28 +87,21 @@ func (h *ssoAdminerHandler) issueSSOToken(c *gin.Context) {
 		return
 	}
 
-	engine := strings.TrimSpace(db.Engine)
-	if engine == "" {
-		engine = "mariadb"
-	}
-	switch engine {
-	case "mariadb":
-		if err := h.cfg.SSO.EnsureShadow(ctx, claims.UserID); err != nil {
-			h.cfg.Log.ErrorContext(ctx, "ensure mariadb shadow failed", "err", err)
-			h.audit(ctx, claims.UserID, req.DatabaseID, "", engine, "ensure_shadow_fail")
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+	// Normalize engine to canonical form (empty→mariadb). All adapters use the
+	// same normalization (JAB-348).
+	engine := dbconsoleops.NormalizeEngine(db.Engine)
+
+	// Provision shadow account via the unified engine dispatch leaf (JAB-348).
+	// This ensures mariadb and postgres paths are identical across CLI and REST.
+	if err := dbconsoleops.EnsureShadowForEngine(ctx, engine, claims.UserID, h.cfg.SSO, h.cfg.Adminer); err != nil {
+		if errors.Is(err, dbconsoleops.ErrInvalidEngine) {
+			h.audit(ctx, claims.UserID, req.DatabaseID, "", engine, "unauthorized:unknown_engine")
+			c.JSON(http.StatusBadRequest, gin.H{"error": "unknown_engine"})
 			return
 		}
-	case "postgres":
-		if err := h.cfg.Adminer.EnsurePgShadow(ctx, claims.UserID); err != nil {
-			h.cfg.Log.ErrorContext(ctx, "ensure pg shadow failed", "err", err)
-			h.audit(ctx, claims.UserID, req.DatabaseID, "", engine, "ensure_shadow_fail")
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
-			return
-		}
-	default:
-		h.audit(ctx, claims.UserID, req.DatabaseID, "", engine, "unauthorized:unknown_engine")
-		c.JSON(http.StatusBadRequest, gin.H{"error": "unknown_engine"})
+		h.cfg.Log.ErrorContext(ctx, "ensure shadow failed", "err", err)
+		h.audit(ctx, claims.UserID, req.DatabaseID, "", engine, "ensure_shadow_fail")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
 
