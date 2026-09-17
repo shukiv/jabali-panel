@@ -14,51 +14,10 @@ func ftpRow(id, user string, enabled bool, created time.Time) models.FtpAccount 
 	return models.FtpAccount{ID: id, UserID: "u1", Username: user, IsEnabled: enabled, FTPAccess: true, SFTPAccess: true, CreatedAt: created}
 }
 
-// JAB-254/258: an ineligible owner (suspended, or package dropped the
-// feature) forces every alias effective-disabled regardless of its row.
-func TestFtpEffectiveEnabled_IneligibleLocksAll(t *testing.T) {
-	base := time.Now()
-	rows := []models.FtpAccount{
-		ftpRow("a", "shop_one", true, base),
-		ftpRow("b", "shop_two", true, base.Add(time.Minute)),
-	}
-	eff := ftpEffectiveEnabled(rows, ftpOwnerEligibility{eligible: false})
-	for _, a := range rows {
-		if eff[a.Username] {
-			t.Fatalf("%s enabled under ineligible owner", a.Username)
-		}
-	}
-}
-
-// JAB-258: an over-cap owner keeps only its OLDEST `cap` enabled accounts.
-func TestFtpEffectiveEnabled_OverCapLocksNewest(t *testing.T) {
-	base := time.Now()
-	rows := []models.FtpAccount{
-		ftpRow("a", "shop_old", true, base),
-		ftpRow("b", "shop_mid", true, base.Add(time.Hour)),
-		ftpRow("c", "shop_new", true, base.Add(2*time.Hour)),
-	}
-	eff := ftpEffectiveEnabled(rows, ftpOwnerEligibility{eligible: true, cap: 2})
-	if !eff["shop_old"] || !eff["shop_mid"] {
-		t.Fatalf("oldest two should stay enabled: %+v", eff)
-	}
-	if eff["shop_new"] {
-		t.Fatalf("newest (over-cap) should be disabled: %+v", eff)
-	}
-}
-
-// Eligible owner within cap: row's own IsEnabled is respected.
-func TestFtpEffectiveEnabled_EligibleRespectsRow(t *testing.T) {
-	base := time.Now()
-	rows := []models.FtpAccount{
-		ftpRow("a", "shop_on", true, base),
-		ftpRow("b", "shop_off", false, base.Add(time.Minute)),
-	}
-	eff := ftpEffectiveEnabled(rows, ftpOwnerEligibility{eligible: true, cap: 10})
-	if !eff["shop_on"] || eff["shop_off"] {
-		t.Fatalf("row flags not respected: %+v", eff)
-	}
-}
+// The pure effective-access projection tests (ineligible-locks-all, over-cap
+// oldest-first, eligible-respects-row) moved to internal/ftpsync alongside the
+// shared EffectiveEnabled / OwnerEligibility implementation (JAB-276). The
+// tests below stay here: they drive the reconciler's full pass end-to-end.
 
 // JAB-254 flow: a suspended owner's live+unlocked host alias is driven to
 // locked + FTP-degrouped by the reconcile pass.
