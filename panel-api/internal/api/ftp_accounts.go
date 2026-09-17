@@ -330,44 +330,73 @@ func (h *ftpAccountsHandler) syncHostAccess(ctx context.Context, tenantUsername 
 	if err != nil {
 		return
 	}
+
+	// Group rows by tenant and resolve each owner's eligibility ONCE with the
+	// SAME shared projection the reconciler applies (JAB-276). Before this, the
+	// immediate sync filtered on each row's own IsEnabled/SFTPAccess alone —
+	// eligibility-blind — so a mutation on ANY tenant re-dispatched the whole
+	// table under a fresh (higher) generation that could re-emit the sshd Match
+	// block of a suspended / package-dropped / over-cap account the reconciler
+	// had already dropped. Clamping eligibility here keeps both dispatch sites'
+	// effective-access sets identical, so the immediate sync can never be wider
+	// than the periodic one.
+	tenantByUserID := map[string]string{}
+	rowsByTenant := map[string][]models.FtpAccount{}
+	eligByTenant := map[string]ftpsync.Eligibility{}
+	for _, a := range rows {
+		uname, seen := tenantByUserID[a.UserID]
+		if !seen {
+			u, uerr := h.cfg.Users.FindByID(ctx, a.UserID)
+			if uerr != nil || u == nil || u.Username == nil || *u.Username == "" {
+				tenantByUserID[a.UserID] = ""
+				continue
+			}
+			uname = *u.Username
+			tenantByUserID[a.UserID] = uname
+			eligByTenant[uname] = ftpsync.OwnerEligibility(ctx, h.cfg.Packages, u)
+		}
+		if uname == "" {
+			continue
+		}
+		rowsByTenant[uname] = append(rowsByTenant[uname], a)
+	}
+
+	// A cancelled request makes the owner lookups above fail closed, which would
+	// narrow the dispatched set for a reason unrelated to policy AND stamp that
+	// narrower set with a fresh generation. Bail exactly as a failed List does —
+	// never publish a snapshot shaped by cancellation; the periodic reconciler
+	// converges regardless.
+	if ctx.Err() != nil {
+		return
+	}
+
 	type syncAccount struct {
 		Username  string `json:"username"`
 		ChrootDir string `json:"chroot_dir"`
 		StartDir  string `json:"start_dir"`
 	}
 	desired := []syncAccount{}
-	nameCache := map[string]string{}
-	for _, a := range rows {
-		if !a.IsEnabled || !a.SFTPAccess {
-			continue
-		}
-		uname, ok := nameCache[a.UserID]
-		if !ok {
-			u, uerr := h.cfg.Users.FindByID(ctx, a.UserID)
-			if uerr != nil || u == nil || u.Username == nil {
-				nameCache[a.UserID] = ""
+	for tenant, accts := range rowsByTenant {
+		eff := ftpsync.EffectiveEnabled(accts, eligByTenant[tenant])
+		for _, a := range accts {
+			if !eff[a.Username] || !a.SFTPAccess {
 				continue
 			}
-			uname = *u.Username
-			nameCache[a.UserID] = uname
-		}
-		if uname == "" {
-			continue
-		}
-		var chroot, start string
-		if a.Isolated && a.JailPath != "" {
-			// GH #1145: isolated accounts chroot to their root-owned jail; the
-			// selected sub-tree is bind-mounted at /<mountpoint> inside it.
-			chroot = a.JailPath
-			start = "/" + ftpJailMountpoint
-		} else {
-			chroot = "/home/" + uname
-			start = "/"
-			if rel, rerr := filepath.Rel(chroot, a.HomePath); rerr == nil && rel != "." && !strings.HasPrefix(rel, "..") {
-				start = "/" + rel
+			var chroot, start string
+			if a.Isolated && a.JailPath != "" {
+				// GH #1145: isolated accounts chroot to their root-owned jail; the
+				// selected sub-tree is bind-mounted at /<mountpoint> inside it.
+				chroot = a.JailPath
+				start = "/" + ftpJailMountpoint
+			} else {
+				chroot = "/home/" + tenant
+				start = "/"
+				if rel, rerr := filepath.Rel(chroot, a.HomePath); rerr == nil && rel != "." && !strings.HasPrefix(rel, "..") {
+					start = "/" + rel
+				}
 			}
+			desired = append(desired, syncAccount{Username: a.Username, ChrootDir: chroot, StartDir: start})
 		}
-		desired = append(desired, syncAccount{Username: a.Username, ChrootDir: chroot, StartDir: start})
 	}
 	if err := h.agentCall(ctx, "ftpaccount.sshd_sync", map[string]any{
 		"accounts":   desired,

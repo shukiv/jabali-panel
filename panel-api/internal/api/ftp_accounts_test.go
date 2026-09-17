@@ -625,3 +625,129 @@ func TestFtpAPICreate_IsolatedQuotaSplitExceeded(t *testing.T) {
 		t.Fatalf("expected 409 (split exceeded 900+200>1000), got %d: %s", rec.Code, rec.Body.String())
 	}
 }
+
+// ftpSyncHandler wires an ftpAccountsHandler directly so a test can drive
+// syncHostAccess with MORE than one owner (ftpTestRouter only wires a single
+// tenant "u1") — JAB-276 eligibility guards need a second, ineligible owner.
+func ftpSyncHandler(repo *fakeFtpRepo, users *usersMap, mock *agent.MockClient, pkg *models.HostingPackage) *ftpAccountsHandler {
+	return &ftpAccountsHandler{cfg: FtpAccountsHandlerConfig{
+		Repo: repo, Users: users, Packages: &fakePkgRepo{pkg: pkg}, Agent: mock, QuotaMount: "/",
+	}}
+}
+
+// sshdSyncUsernames returns every username in the single ftpaccount.sshd_sync
+// dispatch the mock recorded; it fatals if none was recorded, so a guard can
+// assert exactly which accounts the immediate sync published to the agent.
+func sshdSyncUsernames(t *testing.T, mock *agent.MockClient) []string {
+	t.Helper()
+	var out []string
+	found := false
+	for _, call := range mock.Calls() {
+		if call.Command != "ftpaccount.sshd_sync" {
+			continue
+		}
+		found = true
+		var p struct {
+			Accounts []struct {
+				Username string `json:"username"`
+			} `json:"accounts"`
+		}
+		if err := json.Unmarshal(call.Params, &p); err != nil {
+			t.Fatalf("unmarshal sshd_sync params: %v", err)
+		}
+		for _, a := range p.Accounts {
+			out = append(out, a.Username)
+		}
+	}
+	if !found {
+		t.Fatal("no ftpaccount.sshd_sync call recorded")
+	}
+	return out
+}
+
+func hasUsername(xs []string, s string) bool {
+	for _, x := range xs {
+		if x == s {
+			return true
+		}
+	}
+	return false
+}
+
+// JAB-276 GUARD A: the immediate sync must apply the SAME eligibility clamp as
+// the reconciler. A mutation that triggers syncHostAccess must NOT re-emit a
+// SUSPENDED owner's SFTP account into the sshd snapshot — while the
+// un-suspended owner's account stays. This pins the fix against re-inlining the
+// old eligibility-blind row filter: an eligibility-blind sync stamps a fresh
+// (higher) generation onto a snapshot that resurrects the suspended owner's
+// revoked Match block.
+func TestSyncHostAccess_ExcludesSuspendedOwner(t *testing.T) {
+	repo := newFakeFtpRepo()
+	repo.rows["accA"] = &models.FtpAccount{ID: "accA", UserID: "u1", Username: "shopa_data", IsEnabled: true, SFTPAccess: true, HomePath: "/home/shopa"}
+	repo.rows["accB"] = &models.FtpAccount{ID: "accB", UserID: "u2", Username: "shopb_data", IsEnabled: true, SFTPAccess: true, HomePath: "/home/shopb"}
+	unA, unB := "shopa", "shopb"
+	pid := "pkg1"
+	users := &usersMap{m: map[string]*models.User{
+		"u1": {ID: "u1", Username: &unA, PackageID: &pid},
+		"u2": {ID: "u2", Username: &unB, PackageID: &pid, Suspended: true},
+	}}
+	mock := ftpMockAgent()
+	h := ftpSyncHandler(repo, users, mock, ftpPkg(3))
+
+	h.syncHostAccess(context.Background(), unA)
+
+	got := sshdSyncUsernames(t, mock)
+	if !hasUsername(got, "shopa_data") {
+		t.Fatalf("un-suspended owner's SFTP account missing from immediate sync: %v", got)
+	}
+	if hasUsername(got, "shopb_data") {
+		t.Fatalf("suspended owner's SFTP account re-emitted by immediate sync (eligibility-blind): %v", got)
+	}
+}
+
+// JAB-276 GUARD B: an owner whose package no longer includes FTP
+// (MaxFTPAccounts==0) must be dropped from the immediate sync, exactly as the
+// reconciler drops it. Falsified by OwnerEligibility treating 0 as eligible.
+func TestSyncHostAccess_ExcludesZeroCapPackage(t *testing.T) {
+	repo := newFakeFtpRepo()
+	repo.rows["accB"] = &models.FtpAccount{ID: "accB", UserID: "u2", Username: "shopb_data", IsEnabled: true, SFTPAccess: true, HomePath: "/home/shopb"}
+	unB := "shopb"
+	pid := "pkg1"
+	users := &usersMap{m: map[string]*models.User{
+		"u2": {ID: "u2", Username: &unB, PackageID: &pid},
+	}}
+	mock := ftpMockAgent()
+	h := ftpSyncHandler(repo, users, mock, ftpPkg(0)) // package dropped the FTP feature
+
+	h.syncHostAccess(context.Background(), unB)
+
+	if got := sshdSyncUsernames(t, mock); hasUsername(got, "shopb_data") {
+		t.Fatalf("zero-cap-package owner's SFTP account re-emitted by immediate sync: %v", got)
+	}
+}
+
+// JAB-276 GUARD C: a cancelled request makes owner lookups fail closed. The
+// immediate sync must NOT publish a snapshot shaped by cancellation (and stamp
+// it with a fresh generation that could outrank a real revocation). It bails —
+// no sshd_sync dispatch — exactly as a failed List(ctx) does. (The MockClient
+// ignores ctx, so the explicit ctx.Err() gate is the sole thing under test.)
+func TestSyncHostAccess_CancelledCtxDoesNotDispatch(t *testing.T) {
+	repo := newFakeFtpRepo()
+	repo.rows["accA"] = &models.FtpAccount{ID: "accA", UserID: "u1", Username: "shopa_data", IsEnabled: true, SFTPAccess: true, HomePath: "/home/shopa"}
+	unA := "shopa"
+	pid := "pkg1"
+	users := &usersMap{m: map[string]*models.User{
+		"u1": {ID: "u1", Username: &unA, PackageID: &pid},
+	}}
+	mock := ftpMockAgent()
+	h := ftpSyncHandler(repo, users, mock, ftpPkg(3))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // client already disconnected before the sync runs
+
+	h.syncHostAccess(ctx, unA)
+
+	if n := mockCalled(mock, "ftpaccount.sshd_sync"); n != 0 {
+		t.Fatalf("immediate sync dispatched %d sshd_sync calls on a cancelled ctx — must be 0", n)
+	}
+}
