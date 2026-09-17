@@ -76,6 +76,35 @@ func isolatedHomeNeedsRehome(currentHome, jailPath string) (want string, need bo
 	return want, currentHome != want
 }
 
+// vsftpdConfPath is the rendered vsftpd config, overridable in tests.
+func vsftpdConfPath() string {
+	if p := os.Getenv("JABALI_VSFTPD_CONF"); p != "" {
+		return p
+	}
+	return "/etc/vsftpd.conf"
+}
+
+// vsftpdHonoursPasswdChroot reports whether the host's vsftpd enables
+// passwd_chroot_enable — i.e. whether a "/./" marker in a passwd home is honoured
+// as a chroot split (jail root before the marker, start dir after). It gates the
+// GH #1720 re-home: when the directive is absent (a host that has not run the
+// install converge_vsftpd_passwd_chroot yet, or a hand-edited conf), re-homing an
+// isolated account to the "/./" form would instead make vsftpd chroot into the
+// tenant-writable /data — a downgrade of the isolation floor. Fail closed: any
+// read error or a missing directive returns false, leaving the safe bare-jail home.
+func vsftpdHonoursPasswdChroot() bool {
+	b, err := os.ReadFile(vsftpdConfPath())
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		if strings.TrimSpace(line) == "passwd_chroot_enable=YES" {
+			return true
+		}
+	}
+	return false
+}
+
 // ftpSubaccountUIDMin is the floor of the reserved, never-reused uid range for
 // isolated subaccounts (must match migration 000267's allocator base). 1e9 is
 // ABOVE the rootless-container subuid delegation ceiling (SUB_UID_MAX, 6.001e8
@@ -391,7 +420,16 @@ func ftpEnsureJailHandler(ctx context.Context, params json.RawMessage) (any, err
 	// failure must not block the mount reconcile below (the reboot self-heal) —
 	// the next tick retries the re-home.
 	if want, need := isolatedHomeNeedsRehome(u.HomeDir, p.JailPath); need {
-		if out, err := execCommandContext(ctx, "usermod", "-d", want, p.Username).CombinedOutput(); err != nil {
+		// Fail-closed gate: only re-home to the "/./" form on a host whose vsftpd
+		// actually honours passwd_chroot_enable. Without it, the marker home makes
+		// vsftpd chroot into the tenant-writable /data instead of the root-owned
+		// jail root — an isolation-floor downgrade. The bare-jail home is the safe
+		// current state, so skipping (and retrying next tick, once `jabali update`
+		// has rendered the directive) never downgrades the boundary.
+		if !vsftpdHonoursPasswdChroot() {
+			slog.Warn("ftp: isolated subaccount needs the GH #1720 /data re-home but this host's vsftpd lacks passwd_chroot_enable=YES — leaving the bare-jail home (fail-closed; run `jabali update` to render the directive, then it self-heals next tick)",
+				"account", p.Username)
+		} else if out, err := execCommandContext(ctx, "usermod", "-d", want, p.Username).CombinedOutput(); err != nil {
 			slog.Warn("ftp: usermod -d re-home of isolated subaccount failed — session still lands at the jail root until this succeeds (GH #1720; retried next reconcile tick)",
 				"account", p.Username, "want_home", want, "err", err, "output", strings.TrimSpace(string(out)))
 		}

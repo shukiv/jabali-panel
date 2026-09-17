@@ -100,6 +100,34 @@ func TestIsolatedHomeNeedsRehome(t *testing.T) {
 	}
 }
 
+// TestVsftpdHonoursPasswdChroot pins the GH #1720 fail-closed gate: the re-home
+// runs ONLY on a host whose vsftpd enables passwd_chroot_enable. A missing conf
+// or a conf without the directive must read as false, so ensure_jail leaves the
+// safe bare-jail home instead of chrooting vsftpd into the tenant-writable /data.
+func TestVsftpdHonoursPasswdChroot(t *testing.T) {
+	conf := filepath.Join(t.TempDir(), "vsftpd.conf")
+	t.Setenv("JABALI_VSFTPD_CONF", conf)
+
+	// Missing conf → fail closed.
+	if vsftpdHonoursPasswdChroot() {
+		t.Fatal("missing vsftpd.conf must fail closed (no re-home)")
+	}
+	// Present but directive absent → fail closed.
+	if err := os.WriteFile(conf, []byte("chroot_local_user=YES\nallow_writeable_chroot=YES\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if vsftpdHonoursPasswdChroot() {
+		t.Fatal("conf without passwd_chroot_enable=YES must fail closed")
+	}
+	// Directive present → honoured.
+	if err := os.WriteFile(conf, []byte("chroot_local_user=YES\npasswd_chroot_enable=YES\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !vsftpdHonoursPasswdChroot() {
+		t.Fatal("conf with passwd_chroot_enable=YES must be honoured")
+	}
+}
+
 func TestValidateIsolatedCreate(t *testing.T) {
 	t.Setenv("JABALI_FTP_JAIL_ROOT", "/var/lib/jabali-ftp-jails")
 	tenant := testTenant()
