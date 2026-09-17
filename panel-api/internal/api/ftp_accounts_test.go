@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -749,5 +750,35 @@ func TestSyncHostAccess_CancelledCtxDoesNotDispatch(t *testing.T) {
 
 	if n := mockCalled(mock, "ftpaccount.sshd_sync"); n != 0 {
 		t.Fatalf("immediate sync dispatched %d sshd_sync calls on a cancelled ctx — must be 0", n)
+	}
+}
+
+// JAB-276 GUARD D: the immediate sync applies the SAME oldest-first cap
+// ordering as the reconciler. An owner on a cap-1 package with two enabled SFTP
+// accounts keeps only the OLDER one in the sshd snapshot. Pins AC3's cap clause
+// at the api layer (A/B pin suspension + package; the shared-fn N3 covers cap
+// only in ftpsync). Falsified by the EffectiveEnabled >= -> > off-by-one.
+func TestSyncHostAccess_CapOrderingOldestFirst(t *testing.T) {
+	repo := newFakeFtpRepo()
+	older := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	newer := older.Add(time.Hour)
+	repo.rows["accOld"] = &models.FtpAccount{ID: "accOld", UserID: "u1", Username: "shop_old", IsEnabled: true, SFTPAccess: true, HomePath: "/home/shop", CreatedAt: older}
+	repo.rows["accNew"] = &models.FtpAccount{ID: "accNew", UserID: "u1", Username: "shop_new", IsEnabled: true, SFTPAccess: true, HomePath: "/home/shop", CreatedAt: newer}
+	un := "shop"
+	pid := "pkg1"
+	users := &usersMap{m: map[string]*models.User{
+		"u1": {ID: "u1", Username: &un, PackageID: &pid},
+	}}
+	mock := ftpMockAgent()
+	h := ftpSyncHandler(repo, users, mock, ftpPkg(1)) // cap 1: only the oldest survives
+
+	h.syncHostAccess(context.Background(), un)
+
+	got := sshdSyncUsernames(t, mock)
+	if !hasUsername(got, "shop_old") {
+		t.Fatalf("oldest account must survive the cap-1 immediate sync: %v", got)
+	}
+	if hasUsername(got, "shop_new") {
+		t.Fatalf("newest (over-cap) account re-emitted by immediate sync: %v", got)
 	}
 }
