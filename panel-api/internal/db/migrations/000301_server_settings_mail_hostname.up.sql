@@ -10,10 +10,21 @@
 -- independent of the panel access hostname. Until that lands the column
 -- has no writer, so it stays NULL and behavior is identical.
 --
--- TEXT, not VARCHAR: the server_settings row already carries many
--- VARCHAR columns and is close to the MariaDB 65535-byte row-size
--- ceiling, where another in-row VARCHAR risks "ERROR 1118: Row size too
--- large". TEXT is stored off-row (only a small pointer in-row). See the
+-- GH #1766: the ADD COLUMN below cannot stand alone. server_settings already
+-- carries ~65 VARCHAR columns and its DEFINED in-row size is at InnoDB's
+-- 65535-byte ceiling, so at v300 `ADD COLUMN mail_hostname TEXT` fails with
+-- "ERROR 1118: Row size too large" on any innodb_strict_mode host (the whole
+-- fleet) — a genuinely broken migration, not a benign interrupt. Note the
+-- 65535 check counts the in-row VARCHARs even for an off-row TEXT column, so
+-- adding TEXT is NOT free: the ceiling has to be RELIEVED first by moving an
+-- existing wide in-row VARCHAR off-page. Converting the two 512-byte captcha
+-- columns to TEXT frees enough in-row space for the ADD to succeed (verified
+-- on a real v300 schema: 141 cols, strict mode — two conversions clear 1118).
+-- Neither captcha column is indexed and neither has a foreign key, so the
+-- VARCHAR->TEXT change is transparent (panel-api has no GORM AutoMigrate; the
+-- model struct tags are updated to type:text to match). See the
 -- feedback_server_settings_row_ceiling note. NULL default, no backfill.
 ALTER TABLE server_settings
+  MODIFY crowdsec_captcha_site_key   TEXT NOT NULL DEFAULT '',
+  MODIFY crowdsec_captcha_secret_key TEXT NOT NULL DEFAULT '',
   ADD COLUMN mail_hostname TEXT NULL;

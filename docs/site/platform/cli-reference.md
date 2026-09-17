@@ -4744,6 +4744,7 @@ jabali repair [flags]
 - `--daemon-reload` — Fix only: systemd has unloaded unit-file changes on disk
 - `--diagnose` — Report broken conditions without fixing
 - `--dirty-ftp-264` — Fix only: schema half-applied migration 264 (GH #1094 FTP row-size) — panel-api cannot start
+- `--dirty-mailhostname-301` — Fix only: schema dirty at migration 301 (GH #1766 mail_hostname, interrupted update) — panel-api cannot start
 - `--dirty-migration` — Fix only: database schema is dirty — panel-api cannot start
 - `--docroot-www-data-group` — Fix only: web docroot files not group www-data / dirs not setgid (nginx 403 on newly uploaded media)
 - `--etc-jabali-perms` — Fix only: /etc/jabali not traversable by hosting users (SSH/SFTP locked out — sandbox-mode unreadable)

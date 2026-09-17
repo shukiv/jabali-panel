@@ -297,8 +297,10 @@ type ServerSettings struct {
 	// edge — GET responses NEVER include the secret.
 	CrowdSecCaptchaEnabled   bool   `gorm:"column:crowdsec_captcha_enabled;type:boolean;not null;default:false"       json:"crowdsec_captcha_enabled"`
 	CrowdSecCaptchaProvider  string `gorm:"column:crowdsec_captcha_provider;type:varchar(32);not null;default:''"     json:"crowdsec_captcha_provider"`
-	CrowdSecCaptchaSiteKey   string `gorm:"column:crowdsec_captcha_site_key;type:varchar(512);not null;default:''"    json:"crowdsec_captcha_site_key"`
-	CrowdSecCaptchaSecretKey string `gorm:"column:crowdsec_captcha_secret_key;type:varchar(512);not null;default:''"  json:"-"`
+	// site/secret keys are TEXT, not VARCHAR: migration 000301 widened them
+	// off-page to relieve the server_settings row-size ceiling (GH #1766).
+	CrowdSecCaptchaSiteKey   string `gorm:"column:crowdsec_captcha_site_key;type:text;not null;default:''"    json:"crowdsec_captcha_site_key"`
+	CrowdSecCaptchaSecretKey string `gorm:"column:crowdsec_captcha_secret_key;type:text;not null;default:''"  json:"-"`
 
 	// Global disk-quota toggle (migration 000071). When false (default),
 	// the reconciler does not apply POSIX user quota and the Packages UI

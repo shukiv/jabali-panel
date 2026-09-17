@@ -270,6 +270,19 @@ func repairSteps() []repairStep {
 			fix:    fixBrokenFtp264,
 		},
 		{
+			// GH #1766: the original 000301 (mail_hostname) hit the same row-size
+			// ceiling as 264 and left the schema dirty at 301. The corrected 301
+			// relieves the ceiling, so this is precisely recoverable: force forward
+			// or back based on whether the column landed, then re-apply. Only
+			// mail_hostname ever occupied 301, so the version is an unambiguous
+			// fingerprint. Runs before the general detector for the same reason as
+			// 264. See detectBrokenMailHostname301.
+			id:     "dirty-mailhostname-301",
+			label:  "schema dirty at migration 301 (GH #1766 mail_hostname, interrupted update) — panel-api cannot start",
+			detect: detectBrokenMailHostname301,
+			fix:    fixBrokenMailHostname301,
+		},
+		{
 			// A dirty schema means the panel is already down, which makes every
 			// other finding secondary. (The recoverable 264 case above is caught
 			// first; anything reaching here is operator-driven.)
@@ -1574,6 +1587,48 @@ func fixBrokenFtp264(_ repairCtx) error {
 	if !recovered {
 		// Fingerprint no longer matches (e.g. already recovered) — nothing to do.
 		return nil
+	}
+	return nil
+}
+
+// detectBrokenMailHostname301 reports the GH #1766 stuck state: the schema is
+// dirty at exactly 301, the mail_hostname migration (JAB-390) interrupted mid
+// `jabali update`. Only mail_hostname ever occupied 301, so the version alone
+// is an unambiguous fingerprint; anything else falls through to
+// detectDirtyMigration. See db.IsBrokenMailHostname301.
+func detectBrokenMailHostname301(_ repairCtx) (bool, string, error) {
+	if err := initConfig(); err != nil {
+		return false, "", nil
+	}
+	cfg := sharedCfg
+	if cfg.Database.URL == "" || cfg.Database.URL == "placeholder-until-phase-3" {
+		return false, "", nil
+	}
+	broken, err := db.IsBrokenMailHostname301(cfg.Database.URL)
+	if err != nil {
+		// Unreachable DB is its own finding; don't misreport it here.
+		return false, "", nil
+	}
+	if !broken {
+		return false, "", nil
+	}
+	return true, "migration 301 (mail_hostname) interrupted mid-update; recoverable — force to the correct version based on whether the column landed", nil
+}
+
+// fixBrokenMailHostname301 clears the interrupted 000301 and brings the schema
+// to head (force forward to 301 if the column is present, else back to 300 then
+// migrate up). Gated on the fingerprint via db.RecoverBrokenMailHostname301, so
+// it is a no-op unless detectBrokenMailHostname301 matched — never a blind force.
+func fixBrokenMailHostname301(_ repairCtx) error {
+	if err := initConfig(); err != nil {
+		return fmt.Errorf("read config: %w", err)
+	}
+	cfg := sharedCfg
+	if cfg.Database.URL == "" || cfg.Database.URL == "placeholder-until-phase-3" {
+		return fmt.Errorf("database URL not configured")
+	}
+	if _, err := db.RecoverBrokenMailHostname301(cfg.Database.URL); err != nil {
+		return err
 	}
 	return nil
 }
