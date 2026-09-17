@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dbconsoleops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/sso"
 )
@@ -45,10 +47,10 @@ func newDBSSOCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("database %q not found", dbID)
 			}
-			engine := strings.TrimSpace(db.Engine)
-			if engine == "" {
-				engine = "mariadb"
-			}
+			// Normalize engine to canonical form (empty→mariadb). All adapters use
+			// the same normalization (JAB-348).
+			engine := dbconsoleops.NormalizeEngine(db.Engine)
+
 			// --engine is an optional guard: it must match the database's real
 			// engine (you can't open a postgres database in phpMyAdmin).
 			if e := strings.TrimSpace(engineFlag); e != "" && e != engine {
@@ -63,13 +65,21 @@ func newDBSSOCmd() *cobra.Command {
 				key,
 				sharedLog,
 			)
+			adminer := sso.NewAdminerService(base, repository.NewAdminerSSOTokenRepository(sharedDB))
+
+			// Provision shadow account for the database owner via the unified
+			// engine dispatch leaf (JAB-348). This ensures mariadb and postgres
+			// paths are identical across CLI and REST adapters.
+			if err := dbconsoleops.EnsureShadowForEngine(ctx, engine, db.UserID, base, adminer); err != nil {
+				if errors.Is(err, dbconsoleops.ErrInvalidEngine) {
+					return fmt.Errorf("unsupported engine %q", engine)
+				}
+				return fmt.Errorf("ensure shadow account: %w", err)
+			}
 
 			var loginURL string
 			switch engine {
 			case "mariadb":
-				if err := base.EnsureShadow(ctx, db.UserID); err != nil {
-					return fmt.Errorf("ensure phpMyAdmin shadow account: %w", err)
-				}
 				token, err := base.MintToken(ctx, db.UserID, db.ID, db.Name)
 				if err != nil {
 					return fmt.Errorf("mint token: %w", err)
@@ -79,10 +89,6 @@ func newDBSSOCmd() *cobra.Command {
 				q.Set("db", db.Name)
 				loginURL = phpMyAdminBaseURLForCLI() + "/phpmyadmin/sso.php?" + q.Encode()
 			case "postgres":
-				adminer := sso.NewAdminerService(base, repository.NewAdminerSSOTokenRepository(sharedDB))
-				if err := adminer.EnsurePgShadow(ctx, db.UserID); err != nil {
-					return fmt.Errorf("ensure Adminer PostgreSQL shadow role: %w", err)
-				}
 				token, err := adminer.MintAdminerToken(ctx, db.UserID, db.ID, "postgres")
 				if err != nil {
 					return fmt.Errorf("mint token: %w", err)
@@ -90,8 +96,6 @@ func newDBSSOCmd() *cobra.Command {
 				q := url.Values{}
 				q.Set("token", token)
 				loginURL = adminerBaseURLForCLI() + "/jabali-adminer/?" + q.Encode()
-			default:
-				return fmt.Errorf("unsupported engine %q", engine)
 			}
 
 			if jsonOutput {
