@@ -53,6 +53,18 @@ const ftpJailRootDefault = "/var/lib/jabali-ftp-jails"
 // jail. The session start dir is always "/<ftpJailMountpoint>".
 const ftpJailMountpoint = "data"
 
+// isolatedPasswdHome is the /etc/passwd home written for an isolated subaccount.
+// The "/./" marker (honoured by vsftpd's passwd_chroot_enable=YES, install.sh)
+// splits the string into the chroot root — the root-owned jail — and the
+// post-chroot start dir, the bind-mounted "/<ftpJailMountpoint>". This gives a
+// plain-FTP login the same landing dir sshd gives via `internal-sftp -d /data`
+// (GH #1720); vsftpd has no per-user start dir of its own and would otherwise
+// dump the user at the empty jail root. It is built literally, NOT with
+// filepath.Join, which would collapse the "/./" and destroy the marker.
+func isolatedPasswdHome(jailPath string) string {
+	return jailPath + "/./" + ftpJailMountpoint
+}
+
 // ftpSubaccountUIDMin is the floor of the reserved, never-reused uid range for
 // isolated subaccounts (must match migration 000267's allocator base). 1e9 is
 // ABOVE the rootless-container subuid delegation ceiling (SUB_UID_MAX, 6.001e8
@@ -197,13 +209,22 @@ func provisionIsolatedJail(ctx context.Context, tenant *ftpTenant, p ftpAccountC
 	srcFd.Close()
 
 	// 3. Own-uid user (NO --non-unique), own primary group, nologin, GECOS
-	// marker, passwd home = jail (so vsftpd chroots to the jail, not a
-	// tenant-mutable path). --no-create-home: the jail already exists.
+	// marker. --no-create-home: the jail already exists.
+	//
+	// GH #1720: the passwd home carries a "/./" marker (isolatedPasswdHome) so
+	// vsftpd — with passwd_chroot_enable=YES (install.sh) — chroots to the
+	// root-owned jail root and then lands the session in the bind-mounted /data,
+	// matching the start dir sshd gives via `internal-sftp -d /data`. vsftpd has
+	// no per-user start dir of its own; without the marker it dumps the user at
+	// the empty, unwritable jail root, which reads as a locked directory. The
+	// chroot is still the root-owned jail (the marker only sets where inside it
+	// the session starts), so the "chroot for BOTH protocols is the jail" design
+	// above holds. --no-create-home means useradd never touches the path.
 	uidStr := strconv.FormatUint(uint64(p.UID), 10)
 	useraddArgs := []string{
 		"--uid", uidStr,
 		"--user-group", // own primary group — member of NO tenant group
-		"--home-dir", jail,
+		"--home-dir", isolatedPasswdHome(jail),
 		"--no-create-home",
 		"--shell", "/usr/sbin/nologin",
 		"--comment", ftpAliasGecosFor(tenant.Username),

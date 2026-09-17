@@ -893,6 +893,14 @@ session_support=YES
 # accounts are file-transfer-only aliases, not shell users.
 chroot_local_user=YES
 allow_writeable_chroot=YES
+# GH #1720: honour a "/./" marker in the passwd home so an ISOLATED subaccount
+# chroots to its root-owned jail root and then lands in the bind-mounted /data —
+# the same start dir sshd gives via `internal-sftp -d /data`. Without this,
+# vsftpd (unlike sshd) has no per-user start dir and dumps the user at the empty,
+# unwritable jail root, which reads as a locked directory. A no-op for legacy
+# same-uid aliases: their passwd home has no "/./", so chroot_local_user still
+# jails them at the whole home exactly as before.
+passwd_chroot_enable=YES
 hide_ids=YES
 # Passive range must match install_ftp_firewall_rules + the runbook.
 pasv_enable=YES

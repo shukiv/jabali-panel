@@ -61,6 +61,26 @@ func TestFtpJailPathFor(t *testing.T) {
 	}
 }
 
+// TestIsolatedPasswdHome pins the GH #1720 fix: the /etc/passwd home written
+// for an isolated subaccount must carry the literal "/./" marker so vsftpd
+// (passwd_chroot_enable=YES) chroots to the root-owned jail and lands the
+// session in the bind-mounted /data — the same start dir sshd gives. A home
+// without the marker dumps the user at the empty jail root (the locked-dir bug).
+func TestIsolatedPasswdHome(t *testing.T) {
+	t.Setenv("JABALI_FTP_JAIL_ROOT", "/var/lib/jabali-ftp-jails")
+	jail := ftpJailPathFor(testTenant(), "bob_printer")
+
+	got := isolatedPasswdHome(jail)
+	if want := jail + "/./" + ftpJailMountpoint; got != want {
+		t.Fatalf("isolatedPasswdHome=%q, want %q (the /./ marker is the fix)", got, want)
+	}
+	// The marker resolves on disk to the jail's bind-mounted data dir, proving
+	// the session lands on tenant files, not the empty root-owned jail root.
+	if want := filepath.Join(jail, ftpJailMountpoint); filepath.Clean(got) != want {
+		t.Fatalf("clean(isolatedPasswdHome)=%q, want %q", filepath.Clean(got), want)
+	}
+}
+
 func TestValidateIsolatedCreate(t *testing.T) {
 	t.Setenv("JABALI_FTP_JAIL_ROOT", "/var/lib/jabali-ftp-jails")
 	tenant := testTenant()

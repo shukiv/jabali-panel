@@ -62,6 +62,12 @@ else
     || { echo "FAIL: anonymous FTP must be disabled"; fail=1; }
   grep -q 'chroot_local_user=YES' <<<"$cfgfn" \
     || { echo "FAIL: local users must be chrooted"; fail=1; }
+  # GH #1720: isolated subaccounts carry a "/./" marker in their passwd home so
+  # vsftpd chroots to the root-owned jail and lands the session in /data (the
+  # sshd `internal-sftp -d /data` parity). Without passwd_chroot_enable the
+  # marker is ignored and the user lands at the empty jail root (locked dir).
+  grep -q 'passwd_chroot_enable=YES' <<<"$cfgfn" \
+    || { echo "FAIL: isolated FTP subaccounts need passwd_chroot_enable to land in /data (GH #1720)"; fail=1; }
   grep -q 'force_local_logins_ssl=\${force_ssl}' <<<"$cfgfn" \
     || { echo "FAIL: TLS requirement must be wired to ftp_allow_plaintext"; fail=1; }
   # The no-cert + TLS-required combination must abort, not downgrade.
