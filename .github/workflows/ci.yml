@@ -96,6 +96,17 @@ jobs:
       - name: go test -race
         run: make test
 
+  # Apply the full embedded migration chain to a real MariaDB so a migration
+  # that only fails against a production-shaped schema (e.g. server_settings at
+  # InnoDB's 65535-byte row ceiling → ERROR 1118) goes red on the PR instead of
+  # bricking a host on boot. GH #1766 / #1773. The job body is the reusable
+  # migrations-gate workflow, shared verbatim with release.yml's pre-publish
+  # gate so the two can never drift apart.
+  migrations:
+    uses: ./.github/workflows/migrations-gate.yml
+    with:
+      go-version: "1.25.13"
+
   govulncheck:
     name: govulncheck (Go stdlib + deps)
     runs-on: ubuntu-latest

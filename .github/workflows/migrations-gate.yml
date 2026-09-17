@@ -1,0 +1,73 @@
+# Reusable migration-apply gate. Called by ci.yml (every PR) and release.yml
+# (before a release is published). It applies the FULL embedded migration chain
+# to a real MariaDB, so a migration that fails only against a production-shaped
+# schema — e.g. server_settings at InnoDB's 65535-byte row ceiling, where
+# `ADD COLUMN ... TEXT` still fails ERROR 1118 — goes red here instead of
+# bricking a host on boot (the migrate runner marks the schema dirty and refuses
+# to boot dirty). Migrations 264 and 301 both escaped because nothing applied
+# them to a DB in CI. GH #1766 / #1773.
+#
+# Single source of truth so the PR gate and the pre-publish gate can never
+# drift apart.
+name: migrations-gate
+
+on:
+  workflow_call:
+    inputs:
+      go-version:
+        description: Go toolchain version (keep in step with the callers' GO_VERSION).
+        required: false
+        type: string
+        default: "1.25.13"
+
+permissions:
+  contents: read
+
+jobs:
+  migrations:
+    name: migrations apply (MariaDB)
+    runs-on: ubuntu-latest
+    services:
+      mariadb:
+        image: mariadb:11.4
+        env:
+          MARIADB_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ inputs.go-version }}
+          cache: true
+      - name: Create the test database (production charset + collation)
+        # utf8mb4_unicode_ci matches the live jabali_panel. MariaDB 11.4's
+        # server default is utf8mb4_uca1400_ai_ci, and a collation mismatch
+        # between a parent and child table breaks foreign keys with errno 150 —
+        # which would fail migrations for the WRONG reason and mask real
+        # defects. Create the DB explicitly so the schema built here matches
+        # production, byte-for-byte.
+        run: |
+          mysql --protocol=tcp --host=127.0.0.1 --port=3306 --user=root --password=root \
+            -e "CREATE DATABASE jabali_ci_test CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+      - name: Assert strict row-size checking is on
+        # The 1118 row-size error only fires under innodb_strict_mode. It is on
+        # by default in MariaDB, but assert it so this gate can never silently
+        # stop reproducing production's row ceiling.
+        run: |
+          v=$(mysql --protocol=tcp --host=127.0.0.1 --port=3306 --user=root --password=root -N -B -e "SELECT @@innodb_strict_mode;")
+          echo "innodb_strict_mode=$v"
+          [ "$v" = "1" ] || { echo "::error::innodb_strict_mode is not 1 — this gate would not reproduce production's row ceiling"; exit 1; }
+      - name: Apply the full migration chain against MariaDB
+        env:
+          # parseTime/charset/loc match the production DATABASE_URL — db.Open
+          # passes the DSN through unchanged, so without parseTime the repo
+          # tests fail scanning DATETIME columns into time.Time.
+          JABALI_TEST_DATABASE_URL: "root:root@tcp(127.0.0.1:3306)/jabali_ci_test?parseTime=true&charset=utf8mb4&loc=UTC"
+        run: |
+          go test -tags integration -race -count=1 ./panel-api/internal/db/

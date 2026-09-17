@@ -35,8 +35,20 @@ permissions:
   contents: write
 
 jobs:
+  # Pre-publish gate: never publish a release whose migrations don't apply to a
+  # real MariaDB. Without this a broken migration that reached main (e.g. an
+  # admin-override merge that skipped PR CI) would still be built and published
+  # as the "Latest" release, and every fresh install + auto-update would brick
+  # on it — exactly what migration 301 did (GH #1766 / #1773). Shared verbatim
+  # with the ci.yml PR gate via the reusable workflow.
+  migrations:
+    uses: ./.github/workflows/migrations-gate.yml
+    with:
+      go-version: "1.25.13"
+
   release:
     name: Build + publish release tarball
+    needs: migrations
     runs-on: self-hosted
     env:
       GO_VERSION: "1.25.13"
