@@ -103,6 +103,14 @@ func runServe(cmd *cobra.Command, args []string) error {
 			} else if recovered {
 				log.Info("recovered from half-applied migration 264 (GH #1094)")
 			}
+			// GH #1766: self-heal an interrupted 000301 (mail_hostname) on boot so
+			// the panel recovers on restart without an operator step. No-op unless
+			// dirty at exactly 301.
+			if recovered, rerr := db.RecoverBrokenMailHostname301(cfg.Database.URL); rerr != nil {
+				log.Warn("dirty-301 auto-recovery attempt failed; continuing to migrate", "err", rerr)
+			} else if recovered {
+				log.Info("recovered from interrupted migration 301 (GH #1766)")
+			}
 			if err := db.Migrate(cfg.Database.URL); err != nil {
 				return err
 			}

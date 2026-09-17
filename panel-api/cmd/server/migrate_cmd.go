@@ -60,6 +60,17 @@ func newMigrateUpCmd() *cobra.Command {
 				fmt.Println("recovered from half-applied migration 264 (GH #1094)")
 			}
 
+			// GH #1766: the same self-heal for an interrupted 000301
+			// (mail_hostname) — a `jabali update` whose process died mid-DDL left
+			// the schema dirty at 301, and the binary rollback means the fix could
+			// never reach the host any other way. No-op unless dirty at exactly
+			// 301; the recovery reads the column to pick the safe direction.
+			if recovered, rerr := db.RecoverBrokenMailHostname301(cfg.Database.URL); rerr != nil {
+				fmt.Printf("warning: dirty-301 auto-recovery attempt failed; continuing to migrate: %v\n", rerr)
+			} else if recovered {
+				fmt.Println("recovered from interrupted migration 301 (GH #1766)")
+			}
+
 			if err := db.Migrate(cfg.Database.URL); err != nil {
 				return fmt.Errorf("migrate: %w", err)
 			}
