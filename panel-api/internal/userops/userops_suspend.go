@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/kratosclient"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ftpsync"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 )
 
@@ -119,6 +120,11 @@ func Suspend(ctx context.Context, d Deps, user *models.User, reason string) (Sus
 				res.OSWarning = "ftp_alias_lock_failed: " + err.Error()
 			}
 		}
+		// AC4/AC5: re-render the sshd drop-in immediately so the suspension's
+		// eligibility clamp takes effect at once instead of waiting for the
+		// next reconcile tick (JAB-276). This is best-effort; reconciler
+		// converges if it fails.
+		ftpsync.SyncFtpHostAccess(ctx, d.Agent, d.FtpAccounts, d.Users, d.Packages, d.Log, *user.Username)
 	}
 
 	return res, nil
@@ -157,6 +163,11 @@ func Unsuspend(ctx context.Context, d Deps, user *models.User) (UnsuspendResult,
 		if _, err := d.Agent.Call(ctx, "user.unsuspend", map[string]any{"username": *user.Username}); err != nil {
 			res.OSWarning = "user_os_unsuspend_failed: " + err.Error()
 		}
+		// AC4/AC5: re-render the sshd drop-in immediately so the unsuspension's
+		// eligibility expansion takes effect at once instead of waiting for the
+		// next reconcile tick (JAB-276). This is best-effort; reconciler
+		// converges if it fails.
+		ftpsync.SyncFtpHostAccess(ctx, d.Agent, d.FtpAccounts, d.Users, d.Packages, d.Log, *user.Username)
 	}
 
 	return res, nil

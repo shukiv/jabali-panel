@@ -64,6 +64,9 @@ type ForwarderAliasReKeyer interface {
 // nil skips the check (the rename proceeds — the pre-gate behaviour).
 type FtpDocrootLister interface {
 	ListByUserID(ctx context.Context, userID string) ([]models.FtpAccount, error)
+	// List returns all FTP/SFTP subaccounts (used by Suspend/Unsuspend
+	// SyncFtpHostAccess calls to re-render the sshd drop-in).
+	List(ctx context.Context) ([]models.FtpAccount, error)
 }
 
 // appTypeWordPress is the ApplicationInstall.AppType whose stored site URL a
