@@ -1336,19 +1336,113 @@ func TestReconcileOne_RateLimitZoneFragmentPrecedesDomainCreate(t *testing.T) {
 	require.Less(t, rlIdx, createIdx, "nginx.ratelimits.apply must precede domain.create — zone must be declared before vhost references it")
 }
 
-func TestSchedule_NonBlocking(t *testing.T) {
-	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+// dirtyLen returns the current size of the coalescing dirty set. Test-only
+// accessor: the field is unexported and guarded by dirtyMu.
+func dirtyLen(r *Reconciler) int {
+	r.dirtyMu.Lock()
+	defer r.dirtyMu.Unlock()
+	return len(r.dirty)
+}
 
+func newScheduleTestReconciler() *Reconciler {
+	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	agent := &fakeAgent{}
 	domainRepo := &fakeDomainRepo{domains: make(map[string]*models.Domain)}
 	userRepo := &fakeUserRepo{users: make(map[string]*models.User)}
+	return New(domainRepo, userRepo, agent, log, Config{Interval: 1 * time.Second})
+}
 
-	r := New(domainRepo, userRepo, agent, log, Config{Interval: 1 * time.Second, QueueLen: 2})
+// TestSchedule_Coalesces pins the JAB-369 coalescing guarantee: repeated
+// Schedule calls for one domain collapse to a single dirty-set entry, and
+// draining the set yields exactly one reconcile request.
+func TestSchedule_Coalesces(t *testing.T) {
+	r := newScheduleTestReconciler()
 
-	// Schedule should not block
-	r.Schedule("domain-1")
-	r.Schedule("domain-2")
-	r.Schedule("domain-3") // Should drop silently
+	for i := 0; i < 5; i++ {
+		r.Schedule("domain-1")
+	}
+	if got := dirtyLen(r); got != 1 {
+		t.Fatalf("dirty set size = %d, want 1 — five Schedules of one domain must coalesce", got)
+	}
+
+	key, ok := r.popDirty()
+	if !ok || key != (ResourceKey{Kind: KindDomain, ID: "domain-1"}) {
+		t.Fatalf("popDirty() = (%+v, %v), want ({domain domain-1}, true)", key, ok)
+	}
+	if _, ok := r.popDirty(); ok {
+		t.Fatalf("popDirty() returned a second key; the coalesced set must be empty after one drain")
+	}
+}
+
+// TestSchedule_NeverDrops pins the JAB-369 no-drop guarantee: many distinct
+// Schedule calls (well past the old channel capacity of 100) are all retained.
+// Replaces the old TestSchedule_NonBlocking, which asserted the drop-on-full
+// behaviour this slice removes.
+func TestSchedule_NeverDrops(t *testing.T) {
+	r := newScheduleTestReconciler()
+
+	const n = 1000
+	for i := 0; i < n; i++ {
+		r.Schedule(fmt.Sprintf("domain-%d", i))
+	}
+	if got := dirtyLen(r); got != n {
+		t.Fatalf("dirty set size = %d, want %d — no request may be dropped under scheduler pressure", got, n)
+	}
+}
+
+// TestPopDirty_DeletesBeforeReturn pins the ordering the mid-reconcile race
+// freedom depends on: popDirty removes the key it returns, so the loop never
+// reconciles a key that is still marked dirty.
+func TestPopDirty_DeletesBeforeReturn(t *testing.T) {
+	r := newScheduleTestReconciler()
+
+	r.markDirty(ResourceKey{Kind: KindDomain, ID: "d1"})
+	key, ok := r.popDirty()
+	if !ok || key.ID != "d1" {
+		t.Fatalf("popDirty() = (%+v, %v), want ({... d1}, true)", key, ok)
+	}
+	if got := dirtyLen(r); got != 0 {
+		t.Fatalf("dirty set size = %d after popDirty, want 0 — popDirty must delete the key it returns", got)
+	}
+}
+
+// TestDrainLoop_ReSignalDrainsAllKeys pins the loop-level contract that the
+// select branch relies on: a single buffered wake plus popDirty's re-signal
+// drains the ENTIRE dirty set one key per wake. It mirrors Start's
+// `case <-r.wake: r.drainOne(ctx)` branch exactly. The reconciler is paused so
+// drainOne discards each key without running ReconcileOne — this isolates the
+// wake/drain plumbing from convergence. Also proves loop-level coalescing:
+// "d1" scheduled twice is drained once.
+func TestDrainLoop_ReSignalDrainsAllKeys(t *testing.T) {
+	ctx := context.Background()
+	r := newScheduleTestReconciler()
+	r.Pause()
+
+	r.Schedule("d1")
+	r.Schedule("d1") // duplicate — must coalesce
+	r.Schedule("d2")
+	r.Schedule("d3")
+
+	// The wake channel is buffered 1: the four Schedules leave exactly one
+	// pending wake, and only popDirty's re-signal can drive the loop past the
+	// first key.
+	drained := 0
+	for {
+		select {
+		case <-r.wake:
+			if r.drainOne(ctx) {
+				drained++
+			}
+		default:
+			if got := dirtyLen(r); got != 0 {
+				t.Fatalf("wake exhausted but %d keys still dirty — popDirty did not re-signal the loop", got)
+			}
+			if drained != 3 {
+				t.Fatalf("drained %d keys, want 3 — one buffered wake plus re-signal must drain all distinct domains (d1 coalesced)", drained)
+			}
+			return
+		}
+	}
 }
 
 func TestLinuxUserFromEmail(t *testing.T) {
