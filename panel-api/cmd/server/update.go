@@ -2175,19 +2175,55 @@ test -x node_modules/.bin/tsc || {
 `)
 }
 
+// ensureSystemSbins guarantees the system sbin directories are on a PATH.
+//
+// The update's root steps shell out to nginx, sshd, visudo, groupadd and
+// usermod by bare name (see the "sync static assets" step and the
+// install.sh functions it sources). Those binaries live in /usr/sbin (and
+// /sbin), which a login PATH can omit — some minimal/VPS root shells ship
+// PATH=/usr/bin:/bin, and `sudo` without a full secure_path strips the sbin
+// dirs too. When they're missing, `nginx -t`/`sshd -t` exit 127 ("command
+// not found"); under the step's `set -e` that aborts the whole update BEFORE
+// the binary-swap step further down the list, silently leaving the old
+// binary running while the source tree has already moved forward (GH #1773).
+//
+// Append any missing sbin dir to the END so the operator's own precedence
+// (and the Go bin prepended by the caller) is preserved, and empty segments
+// are dropped so a stray "" never becomes a "." (current-dir) entry.
+func ensureSystemSbins(path string) string {
+	seen := map[string]bool{}
+	var parts []string
+	for _, p := range strings.Split(path, ":") {
+		if p == "" || seen[p] {
+			continue
+		}
+		seen[p] = true
+		parts = append(parts, p)
+	}
+	for _, sbin := range []string{"/usr/local/sbin", "/usr/sbin", "/sbin"} {
+		if !seen[sbin] {
+			seen[sbin] = true
+			parts = append(parts, sbin)
+		}
+	}
+	return strings.Join(parts, ":")
+}
+
 func appendGoPath(env []string) []string {
 	goRoot := os.Getenv("JABALI_GO_ROOT")
 	if goRoot == "" {
 		goRoot = defaultGoRoot
 	}
-	// Prepend Go bin to PATH so the right `go` is found.
+	// Prepend Go bin to PATH so the right `go` is found, and guarantee the
+	// system sbin dirs are present so the update's nginx/sshd/visudo steps
+	// resolve regardless of the operator's login PATH (GH #1773).
 	for i, e := range env {
 		if strings.HasPrefix(e, "PATH=") {
-			env[i] = "PATH=" + goRoot + "/bin:" + e[5:]
+			env[i] = "PATH=" + goRoot + "/bin:" + ensureSystemSbins(e[5:])
 			return env
 		}
 	}
-	return append(env, "PATH="+goRoot+"/bin:/usr/bin:/bin")
+	return append(env, "PATH="+goRoot+"/bin:"+ensureSystemSbins("/usr/bin:/bin"))
 }
 
 // gitRevParseAsUser runs `git -C repoDir rev-parse <args...>` as
