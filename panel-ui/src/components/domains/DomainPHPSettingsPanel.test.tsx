@@ -95,6 +95,11 @@ describe("DomainPHPSettingsPanel (GH #1543)", () => {
             pool_defaults: {
               memory_limit: "256M",
               max_execution_time: "30",
+              // GH #1705 edge cases: error_reporting "0" is a real default (the
+              // old !v guard dropped it), and a commented-out date.timezone
+              // reports "" whose effective zone is UTC.
+              error_reporting: "0",
+              "date.timezone": "",
             },
           },
         });
@@ -105,7 +110,47 @@ describe("DomainPHPSettingsPanel (GH #1543)", () => {
     // execution-time one appends the unit → "30s (Default)".
     expect(await screen.findByText("256M (Default)")).toBeInTheDocument();
     expect(screen.getByText("30s (Default)")).toBeInTheDocument();
+    // GH #1705: error_reporting 0 maps to the "None" preset; an empty
+    // date.timezone surfaces PHP's effective UTC fallback.
+    expect(screen.getByText("None (Default)")).toBeInTheDocument();
+    expect(screen.getByText("UTC (Default)")).toBeInTheDocument();
     // A directive with no resolved default keeps the generic label.
     expect(screen.getAllByText("Use pool default").length).toBeGreaterThan(0);
+  });
+
+  // GH #1705: error_reporting maps known bitmasks to a preset name and shows any
+  // other bitmask raw; a set date.timezone shows the zone verbatim.
+  it("maps error_reporting presets and shows a named timezone default", async () => {
+    mocked.get.mockImplementation((url: string) => {
+      if (url === "/php/versions") return Promise.resolve({ data: { versions: ["8.3"] } });
+      if (url === "/domains/d1/php-settings")
+        return Promise.resolve({
+          data: {
+            ...SETTINGS,
+            pool_defaults: {
+              error_reporting: "22527",
+              "date.timezone": "Europe/Berlin",
+            },
+          },
+        });
+      return Promise.resolve({ data: {} });
+    });
+    renderPanel();
+    expect(await screen.findByText("Production (Default)")).toBeInTheDocument();
+    expect(screen.getByText("Europe/Berlin (Default)")).toBeInTheDocument();
+  });
+
+  it("shows an unmapped error_reporting bitmask raw", async () => {
+    mocked.get.mockImplementation((url: string) => {
+      if (url === "/php/versions") return Promise.resolve({ data: { versions: ["8.3"] } });
+      if (url === "/domains/d1/php-settings")
+        return Promise.resolve({
+          data: { ...SETTINGS, pool_defaults: { error_reporting: "24575" } },
+        });
+      return Promise.resolve({ data: {} });
+    });
+    renderPanel();
+    // PHP 8.4's E_ALL & ~E_DEPRECATED (24575) isn't one of our presets → raw.
+    expect(await screen.findByText("24575 (Default)")).toBeInTheDocument();
   });
 });
