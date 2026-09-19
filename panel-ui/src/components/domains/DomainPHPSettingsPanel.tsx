@@ -284,10 +284,39 @@ export function DomainPHPSettingsPanel({ domainId }: DomainPHPSettingsPanelProps
   // surfaces the actual default without any extra auto-select logic. Falls back
   // to the generic label when the backend couldn't resolve a value.
   type Opt = { label: string; value: string | number | null };
-  const withDefault = (opts: Opt[], directive: string, suffix = ""): Opt[] => {
-    const v = phpSettings?.pool_defaults?.[directive];
-    if (!v) return opts;
-    const label = `${v}${suffix} (Default)`;
+  // A per-directive formatter turns the raw box baseline (from pool_defaults)
+  // into the "(Default)" label on the null (inherit) option. Returning null —
+  // or an absent key, meaning the agent resolved no baseline — keeps the
+  // generic "Use pool default" label.
+  type DefaultFmt = (raw: string) => string | null;
+  const sizeFmt =
+    (suffix = ""): DefaultFmt =>
+    (raw) =>
+      raw ? `${raw}${suffix}` : null;
+  // error_reporting is a bitmask (GH #1332); map the presets we offer, else show
+  // the raw value — a box/pool may carry any bitmask (e.g. PHP 8.4 ships 24575).
+  const errorReportingFmt: DefaultFmt = (raw) => {
+    if (raw === "") return null;
+    const presets: Record<string, string> = {
+      "0": "None",
+      "22527": "Production",
+      "32767": "All",
+    };
+    return presets[raw] ?? raw;
+  };
+  // A stock Debian php.ini ships date.timezone commented out → ini_get returns
+  // "" and PHP's effective zone is UTC, so surface that rather than a blank.
+  const timezoneFmt: DefaultFmt = (raw) => (raw === "" ? "UTC" : raw);
+  const withDefault = (
+    opts: Opt[],
+    directive: string,
+    fmt: DefaultFmt = sizeFmt(),
+  ): Opt[] => {
+    const raw = phpSettings?.pool_defaults?.[directive];
+    if (raw === undefined) return opts;
+    const shown = fmt(raw);
+    if (shown === null) return opts;
+    const label = `${shown} (Default)`;
     return opts.map((o) => (o.value === null ? { ...o, label } : o));
   };
 
@@ -443,7 +472,7 @@ export function DomainPHPSettingsPanel({ domainId }: DomainPHPSettingsPanelProps
                     <Select
                       placeholder={t("userphpsettingspage.use_pool_default")}
                       allowClear
-                      options={withDefault(MAX_EXECUTION_TIME_OPTIONS, "max_execution_time", "s")}
+                      options={withDefault(MAX_EXECUTION_TIME_OPTIONS, "max_execution_time", sizeFmt("s"))}
                     />
                   </Form.Item>
                 </Col>
@@ -458,7 +487,7 @@ export function DomainPHPSettingsPanel({ domainId }: DomainPHPSettingsPanelProps
                     <Select
                       placeholder={t("userphpsettingspage.use_pool_default")}
                       allowClear
-                      options={withDefault(MAX_INPUT_TIME_OPTIONS, "max_input_time", "s")}
+                      options={withDefault(MAX_INPUT_TIME_OPTIONS, "max_input_time", sizeFmt("s"))}
                     />
                   </Form.Item>
                 </Col>
@@ -500,7 +529,7 @@ export function DomainPHPSettingsPanel({ domainId }: DomainPHPSettingsPanelProps
                     <Select
                       placeholder={t("userphpsettingspage.use_pool_default")}
                       allowClear
-                      options={ERROR_REPORTING_OPTIONS}
+                      options={withDefault(ERROR_REPORTING_OPTIONS, "error_reporting", errorReportingFmt)}
                     />
                   </Form.Item>
                 </Col>
@@ -518,7 +547,7 @@ export function DomainPHPSettingsPanel({ domainId }: DomainPHPSettingsPanelProps
                       placeholder={t("userphpsettingspage.use_pool_default")}
                       allowClear
                       optionFilterProp="label"
-                      options={TIMEZONE_OPTIONS}
+                      options={withDefault(TIMEZONE_OPTIONS, "date.timezone", timezoneFmt)}
                     />
                   </Form.Item>
                 </Col>

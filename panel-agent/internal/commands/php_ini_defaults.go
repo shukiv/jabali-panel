@@ -18,8 +18,15 @@ import (
 // the box's FPM master config + conf.d resolve to, read straight from PHP so a
 // distro/operator-tuned php.ini is reflected truthfully rather than guessed.
 
-// phpIniDefaultDirectives is the fixed set the per-domain panel exposes. Kept in
-// lockstep with the panel's DomainPHPSettingsPanel selects.
+// phpIniDefaultDirectives is the fixed set of per-domain PHP directives whose
+// box baseline the panel labels as the inherited "(Default)". Kept in lockstep
+// with the panel's DomainPHPSettingsPanel selects — EXCEPT display_errors:
+// buildPHPValueParam (domain_create.go) pins display_errors=Off on every PHP
+// vhost, so a domain that "inherits" always runs with it Off regardless of the
+// box php.ini. Reporting ini_get('display_errors') here would surface php.ini's
+// value, which can differ from that effective Off and mislabel error exposure —
+// so display_errors is deliberately omitted; its select keeps its own
+// "Use pool default (off)" label (GH #1332, GH #1705).
 var phpIniDefaultDirectives = []string{
 	"memory_limit",
 	"upload_max_filesize",
@@ -27,6 +34,8 @@ var phpIniDefaultDirectives = []string{
 	"max_input_vars",
 	"max_execution_time",
 	"max_input_time",
+	"error_reporting", // GH #1332 bitmask; the panel maps it to a preset label
+	"date.timezone",   // GH #1332; "" here is PHP's effective UTC fallback
 }
 
 // phpVersionRE bounds the version to <major>.<minor> before it is spliced into a

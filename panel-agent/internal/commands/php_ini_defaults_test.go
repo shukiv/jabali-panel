@@ -74,3 +74,22 @@ func TestPHPIniDefaults_ScriptIsWellFormed(t *testing.T) {
 		t.Errorf("PHP -r program has unbalanced single quotes (%d): %q", q, script)
 	}
 }
+
+// GH #1705: the panel labels error_reporting and date.timezone with their real
+// inherited default, so the agent must report them. display_errors, by
+// contrast, is pinned Off on every vhost by buildPHPValueParam — reporting its
+// php.ini value would mislabel error exposure — so it must NOT be in the set.
+func TestPHPIniDefaults_DirectiveMembership(t *testing.T) {
+	in := map[string]bool{}
+	for _, d := range phpIniDefaultDirectives {
+		in[d] = true
+	}
+	for _, d := range []string{"error_reporting", "date.timezone"} {
+		if !in[d] {
+			t.Errorf("phpIniDefaultDirectives is missing %q (GH #1332/#1705)", d)
+		}
+	}
+	if in["display_errors"] {
+		t.Error("display_errors must NOT be reported: it is pinned Off per vhost, so ini_get would mislabel the effective value (GH #1705)")
+	}
+}
