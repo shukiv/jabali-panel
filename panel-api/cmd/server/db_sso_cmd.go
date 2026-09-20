@@ -5,12 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dbconsoleops"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/logger"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/sso"
 )
@@ -43,9 +45,15 @@ func newDBSSOCmd() *cobra.Command {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Second)
 			defer cancel()
 
+			// Audit to STDERR, never sharedLog (which is stdout): stdout carries
+			// the login URL / --json payload, and an audit line there would
+			// corrupt the machine-readable result. Same config/format as the
+			// server so the two are uniform in the journal.
+			auditLog := logger.New(sharedCfg.Log, os.Stderr)
+
 			db, err := dbRepoFromDB().FindByID(ctx, dbID)
 			if err != nil {
-				auditCLIIssuance(sharedLog, "", dbID, "", "", "db_not_found")
+				auditCLIIssuance(auditLog, "", dbID, "", "", "db_not_found")
 				return fmt.Errorf("database %q not found", dbID)
 			}
 			// Normalize engine to canonical form (empty→mariadb). All adapters use
@@ -55,7 +63,7 @@ func newDBSSOCmd() *cobra.Command {
 			// --engine is an optional guard: it must match the database's real
 			// engine (you can't open a postgres database in phpMyAdmin).
 			if e := strings.TrimSpace(engineFlag); e != "" && e != engine {
-				auditCLIIssuance(sharedLog, db.UserID, db.ID, engine, "", "engine_mismatch")
+				auditCLIIssuance(auditLog, db.UserID, db.ID, engine, "", "engine_mismatch")
 				return fmt.Errorf("database %s is %q, not %q", db.Name, engine, e)
 			}
 
@@ -74,10 +82,10 @@ func newDBSSOCmd() *cobra.Command {
 			// paths are identical across CLI and REST adapters.
 			if err := dbconsoleops.EnsureShadowForEngine(ctx, engine, db.UserID, base, adminer); err != nil {
 				if errors.Is(err, dbconsoleops.ErrInvalidEngine) {
-					auditCLIIssuance(sharedLog, db.UserID, db.ID, engine, "", "unknown_engine")
+					auditCLIIssuance(auditLog, db.UserID, db.ID, engine, "", "unknown_engine")
 					return fmt.Errorf("unsupported engine %q", engine)
 				}
-				auditCLIIssuance(sharedLog, db.UserID, db.ID, engine, "", "ensure_shadow_fail")
+				auditCLIIssuance(auditLog, db.UserID, db.ID, engine, "", "ensure_shadow_fail")
 				return fmt.Errorf("ensure shadow account: %w", err)
 			}
 
@@ -86,7 +94,7 @@ func newDBSSOCmd() *cobra.Command {
 			case "mariadb":
 				token, err := base.MintToken(ctx, db.UserID, db.ID, db.Name)
 				if err != nil {
-					auditCLIIssuance(sharedLog, db.UserID, db.ID, engine, "", "mint_fail")
+					auditCLIIssuance(auditLog, db.UserID, db.ID, engine, "", "mint_fail")
 					return fmt.Errorf("mint token: %w", err)
 				}
 				hashPrefix = dbconsoleops.TokenAuditPrefix(token)
@@ -94,7 +102,7 @@ func newDBSSOCmd() *cobra.Command {
 			case "postgres":
 				token, err := adminer.MintAdminerToken(ctx, db.UserID, db.ID, "postgres")
 				if err != nil {
-					auditCLIIssuance(sharedLog, db.UserID, db.ID, engine, "", "mint_fail")
+					auditCLIIssuance(auditLog, db.UserID, db.ID, engine, "", "mint_fail")
 					return fmt.Errorf("mint token: %w", err)
 				}
 				hashPrefix = dbconsoleops.TokenAuditPrefix(token)
@@ -105,7 +113,7 @@ func newDBSSOCmd() *cobra.Command {
 			// so a CLI-minted SSO handoff is auditable in the journal like the
 			// REST doors (JAB-348 AC5). The token still leaves via stdout; that
 			// is the deliverable, not an audit record.
-			auditCLIIssuance(sharedLog, db.UserID, db.ID, engine, hashPrefix, "issued")
+			auditCLIIssuance(auditLog, db.UserID, db.ID, engine, hashPrefix, "issued")
 
 			if jsonOutput {
 				return printJSON(map[string]string{
