@@ -23,6 +23,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/dbtuning"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/audit"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dbconsoleops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/middleware"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
@@ -443,8 +444,11 @@ func (h *databaseAdminOpsHandler) ssoPhpMyAdminAdmin(c *gin.Context) {
 		return
 	}
 	h.audit(ctx, claims.UserID, "mariadb", "sso.admin", "phpmyadmin", "ok", "scope=admin")
+	// Admin-all console: no single database in scope, so db is empty and the
+	// leaf emits a token-only URL (byte-identical to the previous inline
+	// construction). Shared with the tenant + CLI doors (JAB-348 AC1/AC3).
 	c.JSON(http.StatusOK, ssoRedirectResponse{
-		RedirectURL: panelBaseURL(c) + "/phpmyadmin/sso.php?token=" + token,
+		RedirectURL: dbconsoleops.PhpMyAdminRedirect(panelBaseURL(c), token, ""),
 	})
 }
 
@@ -648,7 +652,11 @@ func (h *databaseAdminOpsHandler) ssoAdminerAdmin(c *gin.Context) {
 		return
 	}
 	h.audit(ctx, claims.UserID, "postgres", "sso.admin", "adminer", "ok", "scope=admin")
+	// Admin-all console: no single database in scope (db empty). engine is
+	// carried through the shared leaf so the Adminer engine scope is encoded
+	// identically on every door (JAB-348 AC3); the console reads only the
+	// token, so the added engine param is cosmetic.
 	c.JSON(http.StatusOK, ssoRedirectResponse{
-		RedirectURL: panelBaseURL(c) + "/jabali-adminer/?token=" + token,
+		RedirectURL: dbconsoleops.AdminerRedirect(panelBaseURL(c), token, "", "postgres"),
 	})
 }
