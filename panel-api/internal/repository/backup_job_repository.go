@@ -273,15 +273,41 @@ func (r *backupJobRepo) HasPendingForTarget(ctx context.Context, scheduleID, des
 	return n > 0, nil
 }
 
+// countBackupRuns returns the number of grouped backup runs — DISTINCT run_id
+// among run-tagged jobs. This is the RUN denomination the Admin Backups page
+// (GET /admin/backup-runs) and its sidebar badge use: a Full-Server/scheduled
+// run fans out to one account_backup child per account, so counting the child
+// jobs would multiply a run by its account count (GH #1784). Shared with the
+// admin nav-count so the two surfaces can't drift.
+func countBackupRuns(ctx context.Context, db *gorm.DB) (int64, error) {
+	var n int64
+	if err := db.WithContext(ctx).
+		Raw(`SELECT COUNT(DISTINCT run_id) FROM backup_jobs WHERE run_id IS NOT NULL`).
+		Scan(&n).Error; err != nil {
+		return 0, translate(err)
+	}
+	return n, nil
+}
+
+// countManualBackups returns the number of manual (ungrouped) backup jobs —
+// run_id IS NULL — the other half of the Admin Backups page denomination,
+// matching ListManual's filter (GH #1784).
+func countManualBackups(ctx context.Context, db *gorm.DB) (int64, error) {
+	var n int64
+	if err := db.WithContext(ctx).Model(&models.BackupJob{}).
+		Where("run_id IS NULL").Count(&n).Error; err != nil {
+		return 0, translate(err)
+	}
+	return n, nil
+}
+
 func (r *backupJobRepo) ListRuns(ctx context.Context, limit, offset int) ([]BackupRunSummary, int64, error) {
 	if limit <= 0 {
 		limit = 50
 	}
-	var total int64
-	if err := r.db.WithContext(ctx).
-		Raw(`SELECT COUNT(DISTINCT run_id) FROM backup_jobs WHERE run_id IS NOT NULL`).
-		Scan(&total).Error; err != nil {
-		return nil, 0, translate(err)
+	total, err := countBackupRuns(ctx, r.db)
+	if err != nil {
+		return nil, 0, err
 	}
 	type row struct {
 		RunID         string
@@ -303,7 +329,7 @@ func (r *backupJobRepo) ListRuns(ctx context.Context, limit, offset int) ([]Back
 		LatestUpdated time.Time
 	}
 	var rows []row
-	err := r.db.WithContext(ctx).Raw(`
+	err = r.db.WithContext(ctx).Raw(`
 SELECT run_id                                                             AS run_id,
        MAX(schedule_id)                                                   AS schedule_id,
        MAX(kind)                                                          AS kind,
