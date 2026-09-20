@@ -124,13 +124,11 @@ func (h *ssoAdminerHandler) issueSSOToken(c *gin.Context) {
 	hashPrefix := ssoTokenHashPrefix(token)
 	h.audit(ctx, claims.UserID, req.DatabaseID, hashPrefix, engine, "issued")
 
-	baseURL := h.getAdminerBaseURL(c)
-	q := url.Values{}
-	q.Set("token", token)
-	q.Set("db", db.Name)
-	q.Set("engine", engine)
+	// Route redirect construction through the shared DB-console leaf so the
+	// database+engine scope is encoded identically to the CLI and privileged
+	// doors (JAB-348 AC1/AC3). Base-URL resolution stays adapter-local.
 	c.JSON(http.StatusOK, ssoAdminerResponse{
-		RedirectURL: baseURL + "/jabali-adminer/?" + q.Encode(),
+		RedirectURL: dbconsoleops.AdminerRedirect(h.getAdminerBaseURL(c), token, db.Name, engine),
 	})
 }
 

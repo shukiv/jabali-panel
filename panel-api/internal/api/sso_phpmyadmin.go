@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/config"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dbconsoleops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/sso"
@@ -123,12 +124,10 @@ func (h *ssoPhpMyAdminHandler) issueSSOToken(c *gin.Context) {
 	hashPrefix := ssoTokenHashPrefix(token)
 	h.auditLog(ctx, claims.UserID, req.DatabaseID, hashPrefix, "issued")
 
-	// Build redirect URL with absolute base
-	baseURL := h.getPhpMyAdminBaseURL(c)
-	query := url.Values{}
-	query.Set("token", token)
-	query.Set("db", db.Name)
-	redirectURL := baseURL + "/phpmyadmin/sso.php?" + query.Encode()
+	// Build the redirect URL through the shared DB-console leaf so the
+	// database scope is encoded identically to the CLI and privileged doors
+	// (JAB-348 AC1/AC3). Base-URL resolution stays adapter-local.
+	redirectURL := dbconsoleops.PhpMyAdminRedirect(h.getPhpMyAdminBaseURL(c), token, db.Name)
 
 	c.JSON(http.StatusOK, ssoPhpMyAdminResponse{RedirectURL: redirectURL})
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/url"
 	"strings"
 	"time"
 
@@ -84,18 +83,13 @@ func newDBSSOCmd() *cobra.Command {
 				if err != nil {
 					return fmt.Errorf("mint token: %w", err)
 				}
-				q := url.Values{}
-				q.Set("token", token)
-				q.Set("db", db.Name)
-				loginURL = phpMyAdminBaseURLForCLI() + "/phpmyadmin/sso.php?" + q.Encode()
+				loginURL = dbconsoleops.PhpMyAdminRedirect(phpMyAdminBaseURLForCLI(), token, db.Name)
 			case "postgres":
 				token, err := adminer.MintAdminerToken(ctx, db.UserID, db.ID, "postgres")
 				if err != nil {
 					return fmt.Errorf("mint token: %w", err)
 				}
-				q := url.Values{}
-				q.Set("token", token)
-				loginURL = adminerBaseURLForCLI() + "/jabali-adminer/?" + q.Encode()
+				loginURL = dbconsoleops.AdminerRedirect(adminerBaseURLForCLI(), token, db.Name, "postgres")
 			}
 
 			if jsonOutput {
