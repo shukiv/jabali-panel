@@ -83,19 +83,39 @@ func (r *navCountsRepo) compute(ctx context.Context, userID string, global bool)
 		return out, translate(err)
 	}
 
-	// Backups: retained account backups only (mirrors CountRetainedForUser —
-	// exclude failed/deleted job rows so the badge matches the Backups list).
-	bq := r.db.WithContext(ctx).Model(&models.BackupJob{}).
-		Where("kind = ? AND status IN ?", models.BackupJobKindAccountBackup,
-			[]string{
-				models.BackupJobStatusQueued, models.BackupJobStatusRunning,
-				models.BackupJobStatusSucceeded, models.BackupJobStatusPartial,
-			})
-	if !global {
-		bq = bq.Where("user_id = ?", userID)
-	}
-	if err := bq.Count(&out.Backups).Error; err != nil {
-		return out, translate(err)
+	// Backups badge: the tenant and admin surfaces denominate backups
+	// differently, so the count must too (GH #1784).
+	//   - Tenant (/me): the Backups list is a flat per-account list, so the
+	//     badge is the caller's retained account_backup jobs — matches
+	//     CountRetainedForUser and the /me/backups list.
+	//   - Admin (global): the Admin Backups page is denominated in RUNS
+	//     (DISTINCT run_id) plus manual jobs (run_id IS NULL) — the same
+	//     total + manual_total that GET /admin/backup-runs returns. A run fans
+	//     out to one account_backup child per account, so counting child jobs
+	//     multiplied the badge by the account count (7 runs x 2 accounts = 14
+	//     vs a 7-row page). Unlike the tenant count this spans all statuses,
+	//     matching the page (which lists failed/cancelled runs too).
+	if global {
+		runs, err := countBackupRuns(ctx, r.db)
+		if err != nil {
+			return out, err
+		}
+		manual, err := countManualBackups(ctx, r.db)
+		if err != nil {
+			return out, err
+		}
+		out.Backups = runs + manual
+	} else {
+		bq := r.db.WithContext(ctx).Model(&models.BackupJob{}).
+			Where("user_id = ? AND kind = ? AND status IN ?", userID,
+				models.BackupJobKindAccountBackup,
+				[]string{
+					models.BackupJobStatusQueued, models.BackupJobStatusRunning,
+					models.BackupJobStatusSucceeded, models.BackupJobStatusPartial,
+				})
+		if err := bq.Count(&out.Backups).Error; err != nil {
+			return out, translate(err)
+		}
 	}
 
 	return out, nil
