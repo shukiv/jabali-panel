@@ -146,24 +146,43 @@ func (h *ftpAccountsHandler) adminUpdate(c *gin.Context) {
 	if req.IsEnabled != nil {
 		acct.IsEnabled = *req.IsEnabled
 	}
+	// JAB-276 AC2 / JAB-269: persist the desired state BEFORE touching the host,
+	// on the REQUEST context — a pre-commit cancellation aborts here having
+	// changed nothing, and admin now shares the tenant path's mutation-order
+	// transcript (persist → detached host apply). The row is the truth the
+	// reconciler converges to, so committing first means the host can only ever
+	// LAG the DB, never run ahead of it. The old host-first admin order could
+	// mutate the host for a change the DB never recorded, or on a cancel leave a
+	// live credential the DB reports disabled.
 	ctx := c.Request.Context()
-	if err := h.agentCall(ctx, "ftpaccount.set_access", map[string]any{
-		"tenant_username": ownerName,
-		"username":        acct.Username,
-		"ftp_access":      acct.FTPAccess,
-		"webdav_access":   acct.WebDAVAccess,
-		"enabled":         acct.IsEnabled,
-	}); err != nil {
-		status, payload := h.mapAgentErr(err, "update_failed")
-		c.JSON(status, payload)
-		return
-	}
 	acct.UpdatedAt = time.Now().UTC()
 	if err := h.cfg.Repo.Update(ctx, acct); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
-	h.syncHostAccess(ctx, ownerName)
+	// The host apply runs on a context DETACHED from request cancellation: once
+	// the desired state is durable, a client disconnect must not abort the host
+	// mutation half-way. agentCall still bounds it with its own timeout.
+	hostCtx := context.WithoutCancel(ctx)
+	setErr := h.agentCall(hostCtx, "ftpaccount.set_access", map[string]any{
+		"tenant_username": ownerName,
+		"username":        acct.Username,
+		"ftp_access":      acct.FTPAccess,
+		"webdav_access":   acct.WebDAVAccess,
+		"enabled":         acct.IsEnabled,
+	})
+	// Always re-render the sshd drop-in from the now-committed DB — for a disable,
+	// the SFTP revocation IS the Match-block removal here, so it revokes even when
+	// the unix-lock above failed (defense in depth).
+	h.syncHostAccess(hostCtx, ownerName)
+	if setErr != nil {
+		// DB is committed (truth); this reports only that the immediate host apply
+		// did not complete — the reconciler converges the host to the row on its
+		// next tick. The row is deliberately NOT reverted.
+		status, payload := h.mapAgentErr(setErr, "update_failed")
+		c.JSON(status, payload)
+		return
+	}
 	c.JSON(http.StatusOK, acct)
 }
 
