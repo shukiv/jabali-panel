@@ -360,6 +360,42 @@ func TestFtpAPIAdminUpdate_HostApplyDetachedFromCancel(t *testing.T) {
 	}
 }
 
+// JAB-276 AC2 (detached-ctx discriminator): a request whose context is ALREADY
+// cancelled before the handler runs must still commit the row and apply the host
+// on the detached ctx. On the old host-first + request-ctx code, set_access ran
+// on the cancelled request ctx and was aborted (called==0, error) — this REDs
+// there, so unlike the commit-time-cancel lock above it discriminates ordering.
+func TestFtpAPIAdminUpdate_PreCancelledRequestStillApplies(t *testing.T) {
+	repo := newFakeFtpRepo()
+	repo.rows["acc1"] = &models.FtpAccount{ID: "acc1", UserID: "u1", Username: "shop_dev", IsEnabled: false, SFTPAccess: true}
+	ag := &ctxAwareAgent{}
+	uname := "shop"
+	pkgID := "pkg1"
+	users := &usersMap{m: map[string]*models.User{"u1": {ID: "u1", Username: &uname, PackageID: &pkgID}}}
+	h := &ftpAccountsHandler{cfg: FtpAccountsHandlerConfig{
+		Repo: repo, Users: users, Packages: &fakePkgRepo{pkg: ftpPkg(3)}, Agent: ag, QuotaMount: "/",
+	}}
+	r := gin.New()
+	r.Use(func(c *gin.Context) { ginctx.SetClaims(c, &auth.AccessClaims{UserID: "admin1"}); c.Next() })
+	r.PATCH("/admin/ftp-accounts/:id", h.adminUpdate)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // client already gone before the handler runs
+
+	req := httptest.NewRequest(http.MethodPatch, "/admin/ftp-accounts/acc1", strings.NewReader(`{"is_enabled":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("host apply must survive an already-cancelled request, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if ag.called("ftpaccount.set_access") != 1 {
+		t.Fatal("set_access must fire on the detached ctx even when the request ctx is already cancelled")
+	}
+}
+
 func ftpTestRouter(t *testing.T, repo *fakeFtpRepo, mock *agent.MockClient, pkg *models.HostingPackage) *gin.Engine {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
