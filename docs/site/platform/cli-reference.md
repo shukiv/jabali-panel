@@ -386,6 +386,48 @@ jabali appsec explain [flags]
 - `--json` — emit raw JSON instead of the grouped report
 - `--limit` — how many recent AppSec alerts to inspect (max 200) (default `25`)
 
+#### `jabali appsec host-mode`
+
+Manage per-host AppSec mode (detection-only)
+
+```
+jabali appsec host-mode
+```
+
+##### `jabali appsec host-mode clear`
+
+Clear a host's mode, restoring full blocking
+
+```
+jabali appsec host-mode clear [flags]
+```
+
+**Flags:**
+
+- `--host` — hostname to clear (required)
+
+##### `jabali appsec host-mode list`
+
+List per-host AppSec modes
+
+```
+jabali appsec host-mode list
+```
+
+##### `jabali appsec host-mode set`
+
+Set a host's AppSec mode (host is required; mode defaults to detect)
+
+```
+jabali appsec host-mode set [flags]
+```
+
+**Flags:**
+
+- `--host` — hostname to set the mode for (required)
+- `--mode` — AppSec mode (only 'detect' is supported) (default `detect`)
+- `--note` — why this host is in this mode
+
 #### `jabali appsec render-config`
 
 Write /etc/crowdsec/appsec-configs/jabali-appsec.yaml from internal/appseccfg.Render
