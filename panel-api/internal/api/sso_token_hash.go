@@ -1,28 +1,16 @@
 package api
 
-import (
-	"crypto/sha256"
-	"encoding/base64"
-	"encoding/hex"
-)
+import "git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dbconsoleops"
 
-// ssoTokenHashPrefix returns the audit-log prefix for an SSO handoff token.
+// ssoTokenHashPrefix returns the audit-log prefix for an SSO handoff token,
+// used by BOTH the mint and validate sides so an "issued" line and its matching
+// "validated"/"unauthorized" line share a value to grep for.
 //
-// One definition, used by BOTH the mint and validate sides, because they
-// disagreed: mint hashed the base64url STRING and logged 8 bytes, validate
-// hashed the DECODED bytes and logged 4. Two different digests at two
-// different lengths, so an "issued" line and its matching "validated" or
-// "unauthorized" line could never be correlated — the SSO audit chain was
-// silently broken precisely when you need it, during an incident.
-//
-// The token is base64url; a value that fails to decode is hashed as-is rather
-// than dropped, so a malformed token still produces a stable, greppable
-// prefix instead of an empty field.
+// The reduction now lives in the shared DB-console module
+// (dbconsoleops.TokenAuditPrefix) so every adapter — REST here and the CLI —
+// derives the prefix identically and none logs raw token material (JAB-348
+// AC5). This wrapper keeps the api call sites unchanged; its test is the
+// guard that the delegation does not drift from the validate-side digest.
 func ssoTokenHashPrefix(token string) string {
-	raw, err := base64.RawURLEncoding.DecodeString(token)
-	if err != nil {
-		raw = []byte(token)
-	}
-	sum := sha256.Sum256(raw)
-	return hex.EncodeToString(sum[:4])
+	return dbconsoleops.TokenAuditPrefix(token)
 }
