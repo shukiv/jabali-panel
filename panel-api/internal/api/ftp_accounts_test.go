@@ -601,6 +601,56 @@ func TestFtpAPICreate_Isolated(t *testing.T) {
 	}
 }
 
+// TestFtpAPI_SSHDSyncRendersIsolatedJailAndStartDir is the API-side half of the
+// JAB-276 AC3 site golden. Creating an isolated account triggers the immediate
+// syncHostAccess, whose ftpaccount.sshd_sync dispatch must render that account
+// through the shared ftpsync.RenderDesiredAccounts — chrooted to its jail with
+// StartDir "/data". Paired with the reconciler's rendering assertion, this pins
+// that BOTH dispatch sites route the jail + start-dir projection through the one
+// renderer; re-inlining a divergent copy at either site reds exactly that site.
+func TestFtpAPI_SSHDSyncRendersIsolatedJailAndStartDir(t *testing.T) {
+	repo := newFakeFtpRepo()
+	mock := ftpMockAgent()
+	pkg := ftpPkg(3)
+	pkg.DiskQuotaMB = 1000
+	r := ftpTestRouter(t, repo, mock, pkg)
+
+	rec := doReq(t, r, http.MethodPost, "/me/ftp-accounts",
+		`{"label":"printer","home_path":"/home/shop/ftp/printer","password":"longenough-pass1","isolated":true,"quota_mb":200,"ftp_access":true}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var chroot, start string
+	found := false
+	for _, call := range mock.Calls() {
+		if call.Command != "ftpaccount.sshd_sync" {
+			continue
+		}
+		var p struct {
+			Accounts []struct {
+				Username  string `json:"username"`
+				ChrootDir string `json:"chroot_dir"`
+				StartDir  string `json:"start_dir"`
+			} `json:"accounts"`
+		}
+		if err := json.Unmarshal(call.Params, &p); err != nil {
+			t.Fatalf("unmarshal sshd_sync params: %v", err)
+		}
+		for _, a := range p.Accounts {
+			if a.Username == "shop_printer" {
+				chroot, start, found = a.ChrootDir, a.StartDir, true
+			}
+		}
+	}
+	if !found {
+		t.Fatal("isolated account not present in any ftpaccount.sshd_sync dispatch")
+	}
+	if chroot != "/var/lib/jabali-ftp-jails/shop/shop_printer" || start != "/data" {
+		t.Fatalf("isolated render wrong: chroot=%q start=%q, want jail + /data", chroot, start)
+	}
+}
+
 func TestFtpAPICreate_IsolatedRequiresQuota(t *testing.T) {
 	repo := newFakeFtpRepo()
 	r := ftpTestRouter(t, repo, ftpMockAgent(), ftpPkg(3))

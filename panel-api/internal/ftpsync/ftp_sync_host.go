@@ -3,8 +3,6 @@ package ftpsync
 import (
 	"context"
 	"log/slog"
-	"path/filepath"
-	"strings"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
@@ -95,34 +93,10 @@ func SyncFtpHostAccess(
 		return
 	}
 
-	type syncAccount struct {
-		Username  string `json:"username"`
-		ChrootDir string `json:"chroot_dir"`
-		StartDir  string `json:"start_dir"`
-	}
-	desired := []syncAccount{}
-	for tenant, accts := range rowsByTenant {
-		eff := EffectiveEnabled(accts, eligByTenant[tenant])
-		for _, a := range accts {
-			if !eff[a.Username] || !a.SFTPAccess {
-				continue
-			}
-			var chroot, start string
-			if a.Isolated && a.JailPath != "" {
-				// GH #1145: isolated accounts chroot to their root-owned jail; the
-				// selected sub-tree is bind-mounted at /data inside it.
-				chroot = a.JailPath
-				start = "/data"
-			} else {
-				chroot = "/home/" + tenant
-				start = "/"
-				if rel, rerr := filepath.Rel(chroot, a.HomePath); rerr == nil && rel != "." && !strings.HasPrefix(rel, "..") {
-					start = "/" + rel
-				}
-			}
-			desired = append(desired, syncAccount{Username: a.Username, ChrootDir: chroot, StartDir: start})
-		}
-	}
+	// Render the sshd desired set through the shared projection so this immediate
+	// path and the periodic reconciler emit identical jail + start-dir entries
+	// (JAB-276 AC3 — one renderer, no per-site divergence).
+	desired := RenderDesiredAccounts(rowsByTenant, eligByTenant)
 	if _, err := ag.Call(ctx, "ftpaccount.sshd_sync", map[string]any{
 		"accounts":   desired,
 		"generation": gen,
