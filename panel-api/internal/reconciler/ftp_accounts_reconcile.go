@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -28,10 +27,6 @@ import (
 // stale drop-in all get repaired here.
 
 const ftpAccountsReDispatchInterval = 15 * time.Minute
-
-// ftpJailMountpointDir is the bind-mount subdir inside a GH #1145 isolated
-// jail. MUST match panel-agent ftpJailMountpoint and panel-api api.ftpJailMountpoint.
-const ftpJailMountpointDir = "data"
 
 type ftpDispatchState struct {
 	Hash string
@@ -170,37 +165,10 @@ func (r *Reconciler) reconcileFtpAccounts(ctx context.Context) {
 		converged = false
 	}
 
-	// Render the sshd drop-in from every enabled+sftp row (all tenants,
-	// one file). StartDir is home_path relative to the tenant home —
-	// internal-sftp resolves it inside the chroot.
-	type syncAccount struct {
-		Username  string `json:"username"`
-		ChrootDir string `json:"chroot_dir"`
-		StartDir  string `json:"start_dir"`
-	}
-	desired := []syncAccount{}
-	for tenant, accts := range rowsByTenant {
-		eff := ftpsync.EffectiveEnabled(accts, eligByTenant[tenant])
-		for _, a := range accts {
-			if !eff[a.Username] || !a.SFTPAccess {
-				continue
-			}
-			var chroot, start string
-			if a.Isolated && a.JailPath != "" {
-				// GH #1145: isolated accounts chroot to their root-owned jail;
-				// the selected sub-tree is bind-mounted at /<mountpoint>.
-				chroot = a.JailPath
-				start = "/" + ftpJailMountpointDir
-			} else {
-				chroot = "/home/" + tenant
-				start = "/"
-				if rel, rerr := filepath.Rel(chroot, a.HomePath); rerr == nil && rel != "." && !strings.HasPrefix(rel, "..") {
-					start = "/" + rel
-				}
-			}
-			desired = append(desired, syncAccount{Username: a.Username, ChrootDir: chroot, StartDir: start})
-		}
-	}
+	// Render the sshd drop-in through the shared projection so this periodic pass
+	// and the API immediate-sync emit identical jail + start-dir entries
+	// (JAB-276 AC3 — one renderer, no per-site divergence).
+	desired := ftpsync.RenderDesiredAccounts(rowsByTenant, eligByTenant)
 	if _, err := r.agent.Call(ctx, "ftpaccount.sshd_sync", map[string]any{
 		"accounts":   desired,
 		"generation": gen,

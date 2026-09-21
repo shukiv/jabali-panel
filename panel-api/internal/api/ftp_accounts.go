@@ -55,8 +55,7 @@ type FtpAccountsHandlerConfig struct {
 // (ftp_account_jail.go) and migration 000267 — the panel computes the jail
 // path + validates the uid range the agent re-checks.
 const (
-	ftpJailRoot       = "/var/lib/jabali-ftp-jails"
-	ftpJailMountpoint = "data"
+	ftpJailRoot = "/var/lib/jabali-ftp-jails"
 	// Above the rootless-container subuid ceiling — see migration 000267 + the
 	// agent's ftpSubaccountUIDMin. Must match both.
 	ftpSubaccountUIDMin = 1000000000
