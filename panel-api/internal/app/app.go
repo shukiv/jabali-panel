@@ -1491,14 +1491,15 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		// host flag (written by `jabali docker enable-tenant`).
 		if deps.DockerApps != nil && deps.DockerCatalog != nil && deps.Agent != nil {
 			api.RegisterUserDockerAppRoutes(v1, api.UserDockerAppHandlerConfig{
-				Repo:           deps.DockerApps,
-				Catalog:        deps.DockerCatalog,
-				Domains:        deps.Domains,
-				Agent:          deps.Agent,
-				Users:          deps.Users,
-				Packages:       deps.Packages,
-				ServerSettings: deps.ServerSettings,
-				Log:            deps.Log,
+				Repo:             deps.DockerApps,
+				Catalog:          deps.DockerCatalog,
+				Domains:          deps.Domains,
+				Agent:            deps.Agent,
+				Users:            deps.Users,
+				Packages:         deps.Packages,
+				ServerSettings:   deps.ServerSettings,
+				WebDomainAliases: deps.WebDomainAliases,
+				Log:              deps.Log,
 			})
 		}
 		if deps.PythonApps != nil && deps.Agent != nil && deps.Domains != nil {

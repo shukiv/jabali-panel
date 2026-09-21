@@ -55,7 +55,11 @@ type UserDockerAppHandlerConfig struct {
 	Users          repository.UserRepository
 	Packages       repository.PackageRepository
 	ServerSettings repository.ServerSettingsRepository
-	Log            *slog.Logger
+	// WebDomainAliases backs the GH #1625 alias-collision guard on the
+	// auto-create path (the GH #1789 follow-up). nil disables the check
+	// (fail-open only when the feature is unwired), matching AliasCollision.
+	WebDomainAliases repository.WebDomainAliasRepository
+	Log              *slog.Logger
 	// TenantFlagPath gates the whole surface. Empty = the production default.
 	TenantFlagPath string
 }
@@ -601,6 +605,19 @@ func (h *userDockerAppHandler) install(c *gin.Context) {
 				return
 			}
 		} else {
+			// GH #1625: reject a free name whose apex/www/mail-helper server_name
+			// is already claimed by another domain's web-domain alias — the same
+			// guard createDomainOp and the admin docker-install path run. This
+			// tenant self-service path skipped it (fixed as the GH #1789 follow-up).
+			// hit is derived from the caller's own req.Domain, so echoing it leaks
+			// nothing. Fail CLOSED on a lookup error.
+			if hit, clash, cerr := AliasCollision(ctx, h.cfg.WebDomainAliases, req.Domain); cerr != nil {
+				h.failInstall(c, app.ID, "db_alias_lookup", errors.New("could not verify the domain name against existing aliases"))
+				return
+			} else if clash {
+				h.failInstall(c, app.ID, "domain_conflicts_alias", errors.New("the name "+hit+" is already used as an alias of another domain"))
+				return
+			}
 			// GH #1789: this tenant self-service install auto-creates a domain
 			// owned by the caller, the same cross-tenant DNS subdomain-hijack door
 			// createDomainOp guards. Non-admin gate; fail CLOSED on a lookup error.

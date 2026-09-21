@@ -87,6 +87,16 @@ func (f *fakeDockerRepo) Delete(_ context.Context, id string) error {
 	return nil
 }
 
+func (f *fakeDockerRepo) CreatePort(context.Context, *models.DockerAppPublishedPort) error { return nil }
+
+func (f *fakeDockerRepo) FindFreeHostPort(context.Context, string, string) (int, error) {
+	return 10000, nil
+}
+
+func (f *fakeDockerRepo) HostPortInUse(context.Context, string, string, int, string) (bool, error) {
+	return false, nil
+}
+
 func (f *fakeDockerRepo) ListPortsForApp(context.Context, string) ([]*models.DockerAppPublishedPort, error) {
 	return nil, nil
 }
@@ -162,7 +172,11 @@ func (f *fakeDomainRepo) FindByName(_ context.Context, n string) (*models.Domain
 	if d, ok := f.byName[n]; ok {
 		return d, nil
 	}
-	return nil, gorm.ErrRecordNotFound
+	// repository.ErrNotFound (not gorm.ErrRecordNotFound) so a not-found advances
+	// CrossTenantSuffixCollision's errors.Is(err, repository.ErrNotFound) parent
+	// walk instead of tripping its fail-closed default — matches the real
+	// domainRepo.FindByName and every other fake in this package.
+	return nil, repository.ErrNotFound
 }
 
 // tenantCatalog writes a minimal tenant_installable app into a temp dir.
@@ -333,6 +347,30 @@ func TestTenantDocker_LiveDuplicateReinstall_409(t *testing.T) {
 	}
 	if repo.deleted["live1"] {
 		t.Fatal("a live install must never be cleared as a corpse")
+	}
+}
+
+// A tenant docker-app install whose auto-created domain name collides with
+// another domain's web-domain alias (server_name) must be refused — the GH #1789
+// follow-up wiring the GH #1625 AliasCollision guard into this door, which it
+// previously skipped. The install reaches the free-name create branch (empty
+// Domains), the alias table reports "x.example.com" taken, and the handler fails
+// the install 409 domain_conflicts_alias instead of persisting the hijacking row
+// (fakeDomainRepo does not implement Create, so reaching it would panic — the
+// clean 409 proves the guard fired first).
+func TestTenantDocker_Install_AliasCollision409(t *testing.T) {
+	cfg := UserDockerAppHandlerConfig{
+		Repo:             &fakeDockerRepo{},
+		Catalog:          tenantCatalog(t),
+		Users:            &fakeUserRepo{user: &models.User{ID: "u1", Username: uname("alice"), PackageID: uname("p1")}},
+		Packages:         &fakePkgRepo{pkg: &models.HostingPackage{ID: "p1", MaxDockerApps: 5}},
+		Domains:          &fakeDomainRepo{},
+		WebDomainAliases: aliasTestAliases{taken: map[string]bool{"x.example.com": true}},
+	}
+	r := tenantRouter(t, cfg, true)
+	rec := post(r, `{"slug":"tdemo","name":"x","domain":"x.example.com"}`)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "domain_conflicts_alias") {
+		t.Fatalf("alias collision must 409 domain_conflicts_alias, got %d %s", rec.Code, rec.Body.String())
 	}
 }
 
