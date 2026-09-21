@@ -72,12 +72,15 @@ func TestCrossTenantSuffixCollision(t *testing.T) {
 			wantClash: false,
 		},
 		{
+			// The hit must be the claimant's OWN name, never the conflicting
+			// subdomain — echoing subs[i].Name would leak another tenant's zone
+			// existence into the 409 body (GH #1789 leak guard).
 			name:  "child owned by another tenant clashes",
 			claim: "example.com",
 			repo: &stubDomainRepo{subs: []models.Domain{
-				{Name: "sub.example.com", UserID: other},
+				{Name: "secret-staging.example.com", UserID: other},
 			}},
-			wantHit:   "sub.example.com",
+			wantHit:   "example.com",
 			wantClash: true,
 		},
 		{

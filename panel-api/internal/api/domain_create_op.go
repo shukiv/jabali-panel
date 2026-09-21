@@ -147,10 +147,12 @@ func createDomainOp(ctx context.Context, h *domainHandler, in createDomainInput)
 	// that name. An admin actor is trusted to place legitimate cross-tenant
 	// delegations, so the gate is non-admin only. Fail CLOSED on a lookup error.
 	if !in.ActorIsAdmin {
-		if hit, clash, cerr := CrossTenantSuffixCollision(ctx, h.cfg.Domains, in.Name, in.OwnerID); cerr != nil {
+		// Deliberately generic detail: naming the conflicting domain would leak
+		// another tenant's zone/subdomain existence (GH #1789 child direction).
+		if _, clash, cerr := CrossTenantSuffixCollision(ctx, h.cfg.Domains, in.Name, in.OwnerID); cerr != nil {
 			return nil, &createDomainError{http.StatusInternalServerError, "db_suffix_lookup", "could not verify the domain name against existing domains"}
 		} else if clash {
-			return nil, &createDomainError{http.StatusConflict, "domain_conflicts_tenant", "the name conflicts with " + hit + ", a domain owned by another account"}
+			return nil, &createDomainError{http.StatusConflict, "domain_conflicts_tenant", "the name conflicts with a domain owned by another account"}
 		}
 	}
 

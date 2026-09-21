@@ -75,11 +75,13 @@ func (h *domainHandler) rename(c *gin.Context) {
 	// — rename foo.com → evil.example.com. Owner stays the domain's current owner;
 	// admins bypass (trusted delegation). Fail CLOSED on a lookup error.
 	if !claims.IsAdmin {
-		if hit, clash, cerr := CrossTenantSuffixCollision(ctx, h.cfg.Domains, newName, domain.UserID); cerr != nil {
+		// Generic detail on purpose — see the create path (GH #1789): naming the
+		// conflicting domain would leak another tenant's zone/subdomain existence.
+		if _, clash, cerr := CrossTenantSuffixCollision(ctx, h.cfg.Domains, newName, domain.UserID); cerr != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "db_suffix_lookup", "message": "could not verify the domain name against existing domains"})
 			return
 		} else if clash {
-			c.JSON(http.StatusConflict, gin.H{"error": "domain_conflicts_tenant", "message": "the name conflicts with " + hit + ", a domain owned by another account"})
+			c.JSON(http.StatusConflict, gin.H{"error": "domain_conflicts_tenant", "message": "the name conflicts with a domain owned by another account"})
 			return
 		}
 	}

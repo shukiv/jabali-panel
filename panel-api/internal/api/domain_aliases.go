@@ -317,14 +317,18 @@ func CrossTenantSuffixCollision(ctx context.Context, domains repository.DomainRe
 		}
 	}
 
-	// Child direction: does name wrap a differently-owned subdomain?
+	// Child direction: does name wrap a differently-owned subdomain? Return the
+	// CLAIMANT's own name as the hit — never subs[i].Name. The conflicting
+	// subdomain belongs to another tenant, and echoing it into the 409 body would
+	// let an attacker who claims an unowned parent enumerate other tenants'
+	// subdomains under it (the existence leak this file's header guards against).
 	subs, err := domains.FindStrictSubdomains(ctx, name)
 	if err != nil {
 		return "", false, fmt.Errorf("subdomain lookup for %q: %w", name, err)
 	}
 	for i := range subs {
 		if subs[i].UserID != ownerID {
-			return subs[i].Name, true, nil
+			return name, true, nil
 		}
 	}
 
