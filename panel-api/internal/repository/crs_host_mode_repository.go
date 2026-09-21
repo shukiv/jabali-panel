@@ -43,8 +43,19 @@ func (r *crsHostModeRepo) Upsert(ctx context.Context, m *models.CRSHostMode) err
 		Create(m).Error
 }
 
+// DeleteByHost removes the host's mode. It returns ErrNotFound when no row
+// matched, so `clear` can never print "full blocking restored" for a host that
+// was never in a mode (a hardening-restore action must not lie about success) —
+// or, worse, for a typo that left the real detect row live.
 func (r *crsHostModeRepo) DeleteByHost(ctx context.Context, host string) error {
-	return r.db.WithContext(ctx).
+	res := r.db.WithContext(ctx).
 		Where("host = ?", host).
-		Delete(&models.CRSHostMode{}).Error
+		Delete(&models.CRSHostMode{})
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
 }

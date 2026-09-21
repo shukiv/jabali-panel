@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -19,10 +21,13 @@ import (
 //
 // Per-host AppSec mode. Where `appsec exclusion` drops ONE rule for ONE path,
 // this is the coarse tool for a host that trips a rotating set of rules — a
-// Flarum forum where users legitimately paste SQL/shell into post bodies. "detect"
-// puts the host into detection-only: rules still run + score + log (explain keeps
-// working), only the anomaly-score BLOCK is suppressed; native virtual-patches
-// and the behavioural IP bouncer are unaffected. See appseccfg.RenderHostModes.
+// Flarum forum where users legitimately paste SQL/shell into post bodies.
+// "detect" puts the host into detection-only: the CRS rules still evaluate, but
+// the anomaly-score BLOCK is suppressed, so the host stops returning 403s from
+// CRS. Native virtual-patches (direct deny) and the behavioural IP bouncer are
+// unaffected. Note the trade: with no block, CrowdSec logs no AppSec event for
+// that host, so `jabali appsec explain` (which reads blocks) shows nothing for
+// it while it is in detect. See appseccfg.RenderHostModes.
 
 func crsHostModeRepo() repository.CRSHostModeRepository {
 	return repository.NewCRSHostModeRepository(sharedDB)
@@ -34,10 +39,14 @@ func newAppSecHostModeCmd() *cobra.Command {
 		Short: "Manage per-host AppSec mode (detection-only)",
 		Long: "Put a host into detection-only, for a host whose ordinary traffic trips a\n" +
 			"rotating set of CRS rules (e.g. a Flarum forum where users paste SQL/code).\n\n" +
-			"'detect' suppresses only the CRS anomaly-score BLOCK for that host: every rule\n" +
-			"still runs, scores and logs (jabali appsec explain keeps working), the native\n" +
-			"virtual-patch rules still block scanners, and the behavioural IP bouncer is\n" +
-			"untouched. It is a deliberate, host-scoped posture — not 'AppSec off'.",
+			"'detect' suppresses only the CRS anomaly-score BLOCK for that host: the CRS\n" +
+			"rules still evaluate, the native virtual-patch rules still block scanners, and\n" +
+			"the behavioural IP bouncer is untouched. It is a deliberate, host-scoped\n" +
+			"posture — not 'AppSec off'.\n\n" +
+			"Trade-off: with the block gone, CrowdSec records no AppSec event for the host,\n" +
+			"so `jabali appsec explain` (which reads blocks) shows nothing for it while it\n" +
+			"is in detect. You gain: the host stops 403-ing on CRS false positives, without\n" +
+			"losing virtual-patch protection or the IP bouncer.",
 	}
 	cmd.AddCommand(newAppSecHostModeSetCmd(), newAppSecHostModeListCmd(), newAppSecHostModeClearCmd())
 	return cmd
@@ -53,6 +62,13 @@ func newAppSecHostModeSetCmd() *cobra.Command {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 15*time.Second)
 			defer cancel()
 
+			// Normalize once, here, so the stored row, the rendered @streq host and
+			// a later `clear --host` key are byte-identical (RenderHostModes also
+			// lowercases; without this the row could store mixed case that clear
+			// then fails to match).
+			host = strings.ToLower(strings.TrimSpace(host))
+			mode = strings.TrimSpace(mode)
+
 			m := appseccfg.HostMode{Host: host, Mode: mode, Note: note}
 			if err := appseccfg.ValidateHostMode(m); err != nil {
 				return err
@@ -66,8 +82,10 @@ func newAppSecHostModeSetCmd() *cobra.Command {
 				return printJSON(map[string]any{"host": host, "mode": mode})
 			}
 			fmt.Fprintf(cmd.OutOrStdout(),
-				"set %s → %s (detection-only: rules still score + log; native virtual-patches\n"+
-					"  and the IP bouncer still block)\n"+
+				"set %s → %s (detection-only: CRS stops blocking this host; native\n"+
+					"  virtual-patches and the IP bouncer still block. Note: while in detect the\n"+
+					"  host produces no CRS block events, so `jabali appsec explain` shows nothing\n"+
+					"  for it.)\n"+
 					"  apply with: jabali appsec render-config --reconcile --reload\n",
 				host, mode)
 			return nil
@@ -119,7 +137,12 @@ func newAppSecHostModeClearCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 15*time.Second)
 			defer cancel()
+			// Same normalization as `set` so the key matches the stored/rendered host.
+			host = strings.ToLower(strings.TrimSpace(host))
 			if err := crsHostModeRepo().DeleteByHost(ctx, host); err != nil {
+				if errors.Is(err, repository.ErrNotFound) {
+					return fmt.Errorf("no AppSec mode set for host %q — nothing to clear (see `jabali appsec host-mode list`)", host)
+				}
 				return fmt.Errorf("clear host mode: %w", err)
 			}
 			cliAuditOK(ctx, "appsec.host_mode_clear", "crs_host_mode", host, nil)

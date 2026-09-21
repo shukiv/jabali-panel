@@ -18,21 +18,28 @@ import (
 // A host mode is the coarser, honest tool for that case: "detect" puts one host
 // into DETECTION-ONLY. It is NOT "AppSec off" and is deliberately not named that:
 //
-//   - Every CRS detection rule still runs and still scores, so `jabali appsec
-//     explain` keeps showing exactly what fired — the operator does not go blind.
 //   - The jabali/native virtual-patch rules (>= 9,500,000, which `deny` directly
 //     rather than via the anomaly score) still BLOCK, so a scanner hitting
 //     `.env` / `.git` on that host is still stopped.
 //   - The behavioural CrowdSec bouncer (IP reputation, brute-force scenarios) is
 //     a separate layer and is untouched.
+//   - The change is host-scoped and surgical, not an nginx-level WAF bypass, so a
+//     later audit-logging feature would still see the host's traffic.
+//
+// The trade is honest and worth stating: CrowdSec only emits an AppSec event when
+// a request is BLOCKED. Suppress the block and there is no event, so while a host
+// is in detect it goes DARK in `jabali appsec explain` (which reads blocks) — you
+// stop the 403s at the cost of that host's block visibility. This is why detect
+// is the coarse last resort after per-path exclusions, not the first reach.
 //
 // Only the CRS anomaly-SCORE blocking is suppressed, by dropping exactly the
-// three rules ValidateExclusion refuses for a per-path exclusion (949110 inbound
-// + 949111 outbound anomaly thresholds, 980170 the correlated-score blocker).
-// Dropping those per PATH is a WAF hole wearing a rule id, which is why the
-// exclusion tool refuses them; dropping them for a whole HOST is a deliberate,
-// named, operator-only posture — a separate surface with its own validator, so
-// the exclusion tool's refusal stays intact.
+// three rules ValidateExclusion refuses for a per-path exclusion: 949110 (inbound
+// anomaly-score threshold — the blocker), 949111 (inbound early-blocking
+// threshold), and 980170 (anomaly-score reporting/correlation). Dropping those
+// per PATH is a WAF hole wearing a rule id, which is why the exclusion tool
+// refuses them; dropping them for a whole HOST is a deliberate, named,
+// operator-only posture — a separate surface with its own validator, so the
+// exclusion tool's refusal stays intact.
 //
 // Mechanism parity: ctl:ruleRemoveById is the only removal construct CrowdSec's
 // Coraza engine honours (the target-scoped forms are silent no-ops, JAB-227),
@@ -111,9 +118,10 @@ func RenderHostModes(list []HostMode) string {
 	var b strings.Builder
 	b.WriteString("#\n# ---- operator-managed host modes (GH #1641) ----\n")
 	b.WriteString("# Added via `jabali appsec host-mode set`. 'detect' puts a host into\n")
-	b.WriteString("# detection-only: CRS rules still run + score + log (explain keeps working),\n")
-	b.WriteString("# only the anomaly-score BLOCK is suppressed. Native virtual-patches (>=9.5M,\n")
-	b.WriteString("# direct deny) and the behavioural IP bouncer are unaffected.\n")
+	b.WriteString("# detection-only: the CRS anomaly-score BLOCK is suppressed, so the host stops\n")
+	b.WriteString("# 403-ing on CRS. Native virtual-patches (>=9.5M, direct deny) and the\n")
+	b.WriteString("# behavioural IP bouncer are unaffected. With no block, CrowdSec logs no AppSec\n")
+	b.WriteString("# event for the host, so `jabali appsec explain` shows nothing for it.\n")
 
 	id := OperatorHostModeIDBase
 	rendered := 0
