@@ -199,7 +199,12 @@ func ImportExtras(
 						MailboxID: &mb.ID,
 						DomainID:  mb.DomainID,
 						Type:      "external",
-						LocalPart: &local,
+						// local_part stays NULL for type='external' — the source is
+						// the mailbox (MailboxID), matching api.create and the model.
+						// Setting it non-NULL wrongly consumes the uq_alias_local
+						// (domain_id, local_part) slot, which the migration reserves
+						// for aliases: two external forwards off the same source local
+						// (or a later same-local alias) then collide and get dropped.
 						Target:    target,
 						Enabled:   preserveMailRouting, // JAB-46: inert unless opted in
 						ManagedBy: "m35",
