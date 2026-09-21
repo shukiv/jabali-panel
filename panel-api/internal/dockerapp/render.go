@@ -10,6 +10,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -17,6 +18,21 @@ import (
 
 	"gopkg.in/yaml.v3"
 )
+
+// validComposeDomainRe is the RFC-1035 FQDN alphabet (letters, digits, dot,
+// hyphen). The domain is tenant-supplied free text substituted UNESCAPED into
+// compose.yml.tmpl (MAIL_DOMAIN: "{{ .Domain }}", ROOT_URL: "https://{{ .Domain
+// }}/", …) in the catalog templates, none of which apply the q helper. A value
+// carrying a YAML-significant byte — a quote, colon, newline, brace — would break
+// out of the double-quoted scalar and inject sibling keys or an entire extra
+// service into the rendered compose (GH #1790). Rejecting anything outside this
+// alphabet at Render — the one chokepoint every install / update / rename / CLI
+// door funnels through — closes that injection class regardless of which door
+// forgot to validate its own input. Empty is allowed (a domain-less render is
+// not an injection); the leading/trailing-dot and length shape is enforced by
+// the api-layer validateDomainName, which this guard deliberately does not
+// duplicate (importing api here would be a cycle).
+var validComposeDomainRe = regexp.MustCompile(`^[A-Za-z0-9.-]*$`)
 
 // RenderParams holds everything the compose template needs.
 // Field names match the template-variable contract documented in
@@ -76,6 +92,15 @@ type RuntimePort struct {
 // unrenderable template because catalog loading runs validate()
 // before exposing the entry.
 func Render(entry Entry, params RenderParams) (string, error) {
+	// SECURITY (GH #1790): reject a domain carrying any byte outside the FQDN
+	// alphabet before it reaches the template. The catalog templates substitute
+	// {{ .Domain }} unescaped inside double-quoted YAML scalars, so a quote /
+	// colon / newline would break out and inject compose keys. This is the single
+	// chokepoint every render door (HTTP install + update + rename, and the CLI)
+	// flows through, so it holds even for a door that skipped its own validation.
+	if !validComposeDomainRe.MatchString(params.Domain) {
+		return "", fmt.Errorf("invalid domain %q: only letters, digits, '.' and '-' are allowed", params.Domain)
+	}
 	// q renders a string as a YAML-safe double-quoted scalar (JSON encoding is a
 	// valid YAML scalar), so operator-supplied values with quotes/colons/#/etc.
 	// (e.g. SMTP API-key passwords) can't break the rendered compose (GH #322).
