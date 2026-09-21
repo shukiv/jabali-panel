@@ -27,6 +27,7 @@ func newAppSecCmd() *cobra.Command {
 	cmd.AddCommand(newAppSecRenderConfigCmd())
 	cmd.AddCommand(newAppSecExplainCmd())
 	cmd.AddCommand(newAppSecExclusionCmd())
+	cmd.AddCommand(newAppSecHostModeCmd())
 	return cmd
 }
 
@@ -263,6 +264,7 @@ func writeCRSPluginBefore(cmd *cobra.Command) (changed bool, err error) {
 	// leave the operator file UNTOUCHED (operatorKnown=false), never removed, so
 	// a transient outage cannot drop live exclusions and re-ban users.
 	var list []appseccfg.Exclusion
+	var modes []appseccfg.HostMode
 	operatorKnown := false
 	if sharedDB == nil {
 		if initErr := initConfig(); initErr == nil {
@@ -275,24 +277,39 @@ func writeCRSPluginBefore(cmd *cobra.Command) (changed bool, err error) {
 			"! operator CRS exclusions NOT reconciled (database unavailable) — %s left as-is\n",
 			appseccfg.CRSPluginOperatorBeforePath)
 	default:
-		excl, listErr := repository.NewCRSRuleExclusionRepository(sharedDB).List(cmd.Context())
-		if listErr != nil {
+		// Both the exclusions (JAB-227) and the host modes (GH #1641) render into
+		// the ONE operator file, so both must be known before it is safe to
+		// rewrite/remove it. If EITHER read fails, leave the file untouched
+		// (operatorKnown=false) — a partial read must not drop the other's live
+		// entries and re-ban users, the same discipline as GH #1655.
+		excl, exclErr := repository.NewCRSRuleExclusionRepository(sharedDB).List(cmd.Context())
+		hm, hmErr := repository.NewCRSHostModeRepository(sharedDB).List(cmd.Context())
+		switch {
+		case exclErr != nil:
 			fmt.Fprintf(cmd.OutOrStdout(),
-				"! operator CRS exclusions NOT reconciled (%v) — %s left as-is\n",
-				listErr, appseccfg.CRSPluginOperatorBeforePath)
-		} else {
+				"! operator CRS config NOT reconciled (%v) — %s left as-is\n",
+				exclErr, appseccfg.CRSPluginOperatorBeforePath)
+		case hmErr != nil:
+			fmt.Fprintf(cmd.OutOrStdout(),
+				"! operator CRS config NOT reconciled (%v) — %s left as-is\n",
+				hmErr, appseccfg.CRSPluginOperatorBeforePath)
+		default:
 			list = make([]appseccfg.Exclusion, 0, len(excl))
 			for _, e := range excl {
 				list = append(list, appseccfg.Exclusion{
 					Host: e.Host, URIPrefix: e.URIPrefix, RuleID: e.RuleID, Note: e.Note,
 				})
 			}
+			modes = make([]appseccfg.HostMode, 0, len(hm))
+			for _, m := range hm {
+				modes = append(modes, appseccfg.HostMode{Host: m.Host, Mode: m.Mode, Note: m.Note})
+			}
 			operatorKnown = true
 		}
 	}
 
 	return reconcileCRSBeforeFiles(cmd.OutOrStdout(),
-		appseccfg.CRSPluginBeforePath, appseccfg.CRSPluginOperatorBeforePath, list, operatorKnown)
+		appseccfg.CRSPluginBeforePath, appseccfg.CRSPluginOperatorBeforePath, list, modes, operatorKnown)
 }
 
 // reconcileCRSBeforeFiles writes the built-in before-plugin file verbatim and,
@@ -307,7 +324,7 @@ func writeCRSPluginBefore(cmd *cobra.Command) (changed bool, err error) {
 // (appseccfg.CRSPluginBefore, no operator content appended), and operator
 // content only ever lands in operatorPath.
 func reconcileCRSBeforeFiles(out io.Writer, builtinPath, operatorPath string,
-	list []appseccfg.Exclusion, operatorKnown bool) (changed bool, err error) {
+	list []appseccfg.Exclusion, modes []appseccfg.HostMode, operatorKnown bool) (changed bool, err error) {
 
 	// 1. Built-in exclusions → builtinPath, VERBATIM.
 	wrote, err := writeOnDiff(builtinPath, appseccfg.CRSPluginBefore())
@@ -323,11 +340,11 @@ func reconcileCRSBeforeFiles(out io.Writer, builtinPath, operatorPath string,
 		return changed, nil // DB unreachable — leave the operator file untouched
 	}
 
-	// 2. Operator-managed exclusions → operatorPath.
-	body := appseccfg.RenderOperatorBeforeFile(list)
+	// 2. Operator-managed exclusions + host modes → operatorPath.
+	body := appseccfg.RenderOperatorBeforeFile(list, modes)
 	if body == "" {
-		// No operator exclusions: remove the file so a since-removed exclusion
-		// cannot linger live. Absent already → no-op.
+		// No operator exclusions and no host modes: remove the file so a
+		// since-removed entry cannot linger live. Absent already → no-op.
 		removed, rmErr := removeIfPresent(operatorPath)
 		if rmErr != nil {
 			return changed, fmt.Errorf("remove %s: %w", operatorPath, rmErr)
