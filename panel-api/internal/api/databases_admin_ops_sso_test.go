@@ -117,6 +117,28 @@ func TestSSOPhpMyAdminAdmin_RedirectTokenOnly(t *testing.T) {
 	}
 }
 
+// If the privileged phpMyAdmin shadow ensure fails, the door returns 502 before
+// minting — the failure half of the audit-both-outcomes invariant for this door.
+func TestSSOPhpMyAdminAdmin_AgentDownIsBadGateway(t *testing.T) {
+	minter := &fakeAdminTokenMinter{token: "should-not-mint"}
+	h := &databaseAdminOpsHandler{cfg: DatabaseAdminOpsHandlerConfig{
+		Agent:   stubAgent{fail: true},
+		DBAdmin: &fakeDBAdmin{},
+		SSO:     minter,
+		Log:     slog.Default(),
+	}}
+
+	w, c := adminSSORequest("https://example.com")
+	h.ssoPhpMyAdminAdmin(c)
+
+	if w.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502 when the shadow ensure fails", w.Code)
+	}
+	if minter.gotDBID != "" {
+		t.Error("must not mint a token when the shadow ensure fails")
+	}
+}
+
 // A cross-origin request is refused before any token is minted.
 func TestSSOAdminerAdmin_CrossOriginRefused(t *testing.T) {
 	minter := &fakeAdminerTokenMinter{token: "should-not-mint"}
