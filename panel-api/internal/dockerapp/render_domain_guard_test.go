@@ -31,12 +31,14 @@ func TestRender_RejectsInjectionDomain(t *testing.T) {
 	bad := []struct {
 		name, domain string
 	}{
-		// The reporter's break-out payload: a quote closes the scalar, a newline
-		// starts a new mapping key.
+		// The reporter's break-out payload and a bare quote. These are also caught
+		// by the post-render yaml.v3 parse if the charset guard is removed, so they
+		// prove the pair of guards, not the chokepoint alone.
 		{"quote+newline breakout", "x\"\n    privileged: true\n    foo: \"y.example.com"},
-		// A quote with NO whitespace/HTML/path chars — forces the charset guard,
-		// not an incidental whitespace rejection.
 		{"bare quote", "evil\"x.example.com"},
+		// These render into VALID yaml (a quoted scalar / interpolation), so the
+		// yaml parse does NOT catch them — only the charset chokepoint does. They
+		// are the cases that prove the chokepoint is load-bearing.
 		{"colon", "a:b.example.com"},
 		{"braces", "x{y}.example.com"},
 		{"dollar interp", "x$FOO.example.com"},
