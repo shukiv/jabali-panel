@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/forwarderops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
@@ -140,6 +141,11 @@ func ImportExtras(
 	// asterisk = the catch-all). We only consume the catch-all row;
 	// forwarder rows are recorded as warnings (M6.5 schema needs a
 	// MailboxID which we'd have to invent here).
+	//
+	// Imported forwarders only reach Stalwart via forwarder.apply; the DB row
+	// alone does nothing (GH #1795 follow-up). Collect the mailboxes whose
+	// forwarders were created enabled and converge them after the walk.
+	convergeFwds := map[string]string{}
 	if parsed.HomeDir != "" {
 		etcDir := filepath.Join(parsed.HomeDir, "etc")
 		if doms, derr := os.ReadDir(etcDir); derr == nil {
@@ -203,9 +209,29 @@ func ImportExtras(
 						continue
 					}
 					res.ForwardersCreated++
+					if fwd.Enabled {
+						// Enabled (preserveMailRouting). Needs a Stalwart Sieve push,
+						// keyed on the MAILBOX's own canonical address (what
+						// accountIDByEmail resolves), not the alias source line.
+						email := mb.EmailCached
+						if email == "" {
+							email = srcEmail
+						}
+						convergeFwds[mb.ID] = email
+					}
 				}
 				res.Skipped = append(res.Skipped, sk...)
 			}
+		}
+	}
+
+	// Push the imported enabled forwarders to Stalwart. Best-effort: the DB row
+	// is authoritative, so a transient agent failure is recorded and the operator
+	// re-saves the forwarder to retry (GH #1795 follow-up). Converge is nil-safe
+	// (nil agent/repo → no-op), so no guard is needed here.
+	for mbID, email := range convergeFwds {
+		if cErr := forwarderops.Converge(ctx, agentCli, forwardersRepo, mbID, email); cErr != nil {
+			res.Skipped = append(res.Skipped, fmt.Sprintf("forwarder_converge:%s:%v", email, cErr))
 		}
 	}
 

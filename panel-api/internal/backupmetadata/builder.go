@@ -13,6 +13,7 @@ import (
 
 	internalbackup "git.jabali-panel.com/shukivaknin/jabali2/internal/backup"
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/kratosclient"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
@@ -59,7 +60,11 @@ type Deps struct {
 	EgressPolicies repository.UserEgressPolicyRepository
 	EgressRequests repository.UserEgressRequestRepository
 	KratosClient   KratosClient
-	Log            *slog.Logger
+	// Agent, when set, lets Apply push restored email forwarders to Stalwart
+	// (forwarder.apply). Optional: nil skips convergence, so the restored rows
+	// converge on the first later forwarder mutation instead (GH #1795 follow-up).
+	Agent agent.AgentInterface
+	Log   *slog.Logger
 }
 
 func (d Deps) warn(msg string, err error, kv ...any) {
