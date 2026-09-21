@@ -114,16 +114,18 @@ const operatorBeforeFileHeader = "# Managed by jabali — operator CRS \"before\
 
 // RenderOperatorBeforeFile returns the full body of the standalone
 // operator-managed before-plugin file, or "" when there are no operator
-// exclusions at all — the caller removes the file in that case so a
-// since-removed exclusion cannot linger live. A non-empty list always yields a
-// file, even if every entry fails validation: those render as SKIPPED comments
-// (see RenderExclusions), the breadcrumb an operator needs to see WHY a rule
-// vanished rather than debug the wrong thing.
-func RenderOperatorBeforeFile(list []Exclusion) string {
-	if len(list) == 0 {
+// exclusions AND no host modes — the caller removes the file in that case so a
+// since-removed entry cannot linger live. A non-empty set always yields a file,
+// even if every entry fails validation: those render as SKIPPED comments (see
+// RenderExclusions / RenderHostModes), the breadcrumb an operator needs to see
+// WHY a rule vanished rather than debug the wrong thing. Exclusions (GH #1655)
+// and host modes (GH #1641) share this one file: both are self-contained phase-1
+// ctl:ruleRemoveById rules, so order between the two sections does not matter.
+func RenderOperatorBeforeFile(list []Exclusion, modes []HostMode) string {
+	if len(list) == 0 && len(modes) == 0 {
 		return ""
 	}
-	return operatorBeforeFileHeader + RenderExclusions(list)
+	return operatorBeforeFileHeader + RenderExclusions(list) + RenderHostModes(modes)
 }
 
 // RenderExclusions emits the operator-managed section of the before-plugin.

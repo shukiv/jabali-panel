@@ -193,11 +193,11 @@ func TestRenderExclusions_InvalidEntryIsReportedNotSwallowed(t *testing.T) {
 // — carry the SEPARATE-file header for a non-empty list, and still emit the
 // SKIPPED breadcrumb (never a bare empty file) when every entry is invalid.
 func TestRenderOperatorBeforeFile(t *testing.T) {
-	if got := RenderOperatorBeforeFile(nil); got != "" {
+	if got := RenderOperatorBeforeFile(nil, nil); got != "" {
 		t.Errorf("empty list must render \"\" (signals file removal), got %q", got)
 	}
 
-	out := RenderOperatorBeforeFile([]Exclusion{validExclusion()})
+	out := RenderOperatorBeforeFile([]Exclusion{validExclusion()}, nil)
 	if !strings.Contains(out, "Managed by jabali — operator CRS") {
 		t.Errorf("missing operator-file header:\n%s", out)
 	}
@@ -211,7 +211,7 @@ func TestRenderOperatorBeforeFile(t *testing.T) {
 	// All-invalid list: still a file (header + SKIPPED breadcrumb), never "".
 	bad := validExclusion()
 	bad.RuleID = "949110" // anomaly blocker — rejected by ValidateExclusion
-	badOut := RenderOperatorBeforeFile([]Exclusion{bad})
+	badOut := RenderOperatorBeforeFile([]Exclusion{bad}, nil)
 	if badOut == "" {
 		t.Fatal("all-invalid list rendered \"\" — would delete the file and hide the SKIPPED breadcrumb")
 	}
@@ -230,7 +230,7 @@ func TestBeforePluginFilesAreDisjoint(t *testing.T) {
 		t.Fatal("built-in and operator before-plugin files must be different paths")
 	}
 	builtin := CRSPluginBefore()
-	operator := RenderOperatorBeforeFile([]Exclusion{validExclusion()})
+	operator := RenderOperatorBeforeFile([]Exclusion{validExclusion()}, nil)
 
 	// Built-in file must not carry the operator id range (9,597,xxx) or header.
 	if strings.Contains(builtin, "id:"+itoa(OperatorExclusionIDBase)) {

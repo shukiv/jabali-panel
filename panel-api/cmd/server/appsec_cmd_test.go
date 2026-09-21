@@ -123,7 +123,7 @@ func TestReconcileCRSBeforeFiles(t *testing.T) {
 		builtin := filepath.Join(dir, "jabali-before.conf")
 		operator := filepath.Join(dir, "jabali-operator-before.conf")
 
-		changed, err := reconcileCRSBeforeFiles(&bytes.Buffer{}, builtin, operator, sample, true)
+		changed, err := reconcileCRSBeforeFiles(&bytes.Buffer{}, builtin, operator, sample, nil, true)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -138,12 +138,12 @@ func TestReconcileCRSBeforeFiles(t *testing.T) {
 			t.Error("operator content leaked into the built-in file")
 		}
 		gotOperator, _ := os.ReadFile(operator)
-		if string(gotOperator) != appseccfg.RenderOperatorBeforeFile(sample) {
+		if string(gotOperator) != appseccfg.RenderOperatorBeforeFile(sample, nil) {
 			t.Error("operator file does not match RenderOperatorBeforeFile")
 		}
 
 		// Idempotent: a second pass writes nothing.
-		changed, err = reconcileCRSBeforeFiles(&bytes.Buffer{}, builtin, operator, sample, true)
+		changed, err = reconcileCRSBeforeFiles(&bytes.Buffer{}, builtin, operator, sample, nil, true)
 		if err != nil || changed {
 			t.Errorf("second pass should be a no-op, got changed=%v err=%v", changed, err)
 		}
@@ -158,11 +158,11 @@ func TestReconcileCRSBeforeFiles(t *testing.T) {
 		if err := os.WriteFile(builtin, []byte(appseccfg.CRSPluginBefore()), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(operator, []byte(appseccfg.RenderOperatorBeforeFile(sample)), 0o644); err != nil {
+		if err := os.WriteFile(operator, []byte(appseccfg.RenderOperatorBeforeFile(sample, nil)), 0o644); err != nil {
 			t.Fatal(err)
 		}
 
-		changed, err := reconcileCRSBeforeFiles(&bytes.Buffer{}, builtin, operator, nil, true)
+		changed, err := reconcileCRSBeforeFiles(&bytes.Buffer{}, builtin, operator, nil, nil, true)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -183,12 +183,12 @@ func TestReconcileCRSBeforeFiles(t *testing.T) {
 		if err := os.WriteFile(builtin, []byte(appseccfg.CRSPluginBefore()), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		want := appseccfg.RenderOperatorBeforeFile(sample)
+		want := appseccfg.RenderOperatorBeforeFile(sample, nil)
 		if err := os.WriteFile(operator, []byte(want), 0o644); err != nil {
 			t.Fatal(err)
 		}
 
-		changed, err := reconcileCRSBeforeFiles(&bytes.Buffer{}, builtin, operator, nil, false)
+		changed, err := reconcileCRSBeforeFiles(&bytes.Buffer{}, builtin, operator, nil, nil, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -213,7 +213,7 @@ func TestReconcileCRSBeforeFiles(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		changed, err := reconcileCRSBeforeFiles(&bytes.Buffer{}, builtin, operator, sample, true)
+		changed, err := reconcileCRSBeforeFiles(&bytes.Buffer{}, builtin, operator, sample, nil, true)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -225,7 +225,7 @@ func TestReconcileCRSBeforeFiles(t *testing.T) {
 			t.Error("combined file was not reduced to built-ins-only")
 		}
 		gotOperator, _ := os.ReadFile(operator)
-		if string(gotOperator) != appseccfg.RenderOperatorBeforeFile(sample) {
+		if string(gotOperator) != appseccfg.RenderOperatorBeforeFile(sample, nil) {
 			t.Error("operator exclusions were not split into their own file")
 		}
 	})
