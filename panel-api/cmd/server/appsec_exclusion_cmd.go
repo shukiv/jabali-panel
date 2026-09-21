@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"text/tabwriter"
@@ -125,6 +126,9 @@ func newAppSecExclusionRmCmd() *cobra.Command {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 15*time.Second)
 			defer cancel()
 			if err := crsExclRepo().DeleteByID(ctx, args[0]); err != nil {
+				if errors.Is(err, repository.ErrNotFound) {
+					return fmt.Errorf("no exclusion with id %q — nothing to remove (see `jabali appsec exclusion list`)", args[0])
+				}
 				return fmt.Errorf("delete exclusion: %w", err)
 			}
 			cliAuditOK(ctx, "appsec.exclusion_rm", "crs_rule_exclusion", args[0], nil)
