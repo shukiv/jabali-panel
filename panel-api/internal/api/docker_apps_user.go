@@ -423,8 +423,17 @@ func (h *userDockerAppHandler) install(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_name", "detail": "must match ^[a-z0-9-]{1,32}$"})
 		return
 	}
-	if strings.TrimSpace(req.Domain) == "" {
+	req.Domain = normalizeDomainName(req.Domain)
+	if req.Domain == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "domain_required", "detail": "a tenant docker app must be attached to a domain you own"})
+		return
+	}
+	// SECURITY (GH #1790): the domain is substituted into the app's compose
+	// template; validate it as a well-formed FQDN — the same syntax gate the
+	// domain-create path runs — so a value carrying YAML-significant characters
+	// (quotes, colons, newlines) can never reach the renderer.
+	if verr := validateDomainName(req.Domain); verr != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_domain", "detail": verr.Error()})
 		return
 	}
 

@@ -374,6 +374,20 @@ func TestTenantDocker_Install_AliasCollision409(t *testing.T) {
 	}
 }
 
+// A tenant docker-app install whose Domain carries a YAML-significant byte must
+// be rejected 400 invalid_domain before it can reach the compose renderer
+// (GH #1790). The payload uses a bare quote with no whitespace/HTML/path chars,
+// so it exercises validateDomainName's FQDN-regex branch — the one that actually
+// stops the injection — rather than an incidental whitespace rejection.
+func TestTenantDocker_Install_RejectsInjectionDomain400(t *testing.T) {
+	cfg := UserDockerAppHandlerConfig{Repo: &fakeDockerRepo{}, Catalog: tenantCatalog(t)}
+	r := tenantRouter(t, cfg, true)
+	rec := post(r, "{\"slug\":\"tdemo\",\"name\":\"x\",\"domain\":\"evil\\\"x.example.com\"}")
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "invalid_domain") {
+		t.Fatalf("injection domain must 400 invalid_domain, got %d %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestTenantDocker_UnknownSlug400(t *testing.T) {
 	cfg := UserDockerAppHandlerConfig{Repo: &fakeDockerRepo{}, Catalog: tenantCatalog(t)}
 	r := tenantRouter(t, cfg, true)
