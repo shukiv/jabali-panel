@@ -57,7 +57,25 @@ func forwarderApplyHandler(ctx context.Context, params json.RawMessage) (any, er
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("resolve account: %v", err)}
 	}
 	if acctID == "" {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeNotFound, Message: "mailbox not yet registered"}
+		// The Stalwart Principal is created lazily — on first auth or first
+		// inbound delivery (JIT provisioning, ADR-0045). A forwarder added to a
+		// mailbox that has done neither yet finds no accountId, and without this
+		// the whole apply used to fail CodeNotFound: the caller swallows it
+		// best-effort and there is NO periodic backstop (the reconciler
+		// forwarders phase is dormant), so the redirect Sieve is never applied and
+		// mail is delivered locally forever (GH #1795). Mirror autoresponder.set:
+		// proactively provision the Principal (idempotent — alreadyExists is
+		// success, and a missing registry Domain is created too) and retry.
+		if ensureErr := accountEnsureInRegistry(ctx, p.MailboxEmail); ensureErr != nil {
+			return nil, &agentwire.AgentError{Code: agentwire.CodeNotFound, Message: fmt.Sprintf("mailbox not registered and ensure failed: %v", ensureErr)}
+		}
+		acctID, err = accountIDByEmail(ctx, p.MailboxEmail)
+		if err != nil {
+			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("resolve account after ensure: %v", err)}
+		}
+		if acctID == "" {
+			return nil, &agentwire.AgentError{Code: agentwire.CodeNotFound, Message: "mailbox not registered with mail server"}
+		}
 	}
 
 	// Resolve the account's domain id.
