@@ -20,3 +20,24 @@ import "strings"
 func NormalizeDomainName(s string) string {
 	return strings.ToLower(strings.TrimSpace(s))
 }
+
+// AncestorDomains returns the strict parent suffixes of a canonicalized domain
+// name that are themselves registrable (>= 2 labels), most-specific first. For
+// "a.b.example.com" it yields ["b.example.com", "example.com"] — the names
+// another tenant could already own as a parent zone of this one. The single-
+// label TLD ("com") is excluded: validateDomainName rejects a bare TLD, so no
+// domain row can hold it, and treating it as an "ancestor domain" is nonsense.
+//
+// Used by the cross-tenant subdomain-hijack guard (GH #1789), which walks these
+// ancestors to find a differently-owned parent zone. The input is assumed
+// already normalized (NormalizeDomainName); this is a pure transform.
+func AncestorDomains(name string) []string {
+	labels := strings.Split(name, ".")
+	// Drop one or more leftmost labels while keeping at least two labels, so
+	// the shortest ancestor returned is a registrable second-level domain.
+	var out []string
+	for i := 1; i+1 < len(labels); i++ {
+		out = append(out, strings.Join(labels[i:], "."))
+	}
+	return out
+}

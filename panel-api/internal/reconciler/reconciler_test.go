@@ -105,6 +105,10 @@ func (f *fakeDomainRepo) FindByName(ctx context.Context, name string) (*models.D
 	return nil, repository.ErrNotFound
 }
 
+func (f *fakeDomainRepo) FindStrictSubdomains(ctx context.Context, name string) ([]models.Domain, error) {
+	return nil, nil
+}
+
 func (f *fakeDomainRepo) List(ctx context.Context, opts repository.ListOptions) ([]models.Domain, int64, error) {
 	var result []models.Domain
 	for _, d := range f.domains {

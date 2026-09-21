@@ -27,6 +27,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/domainops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
@@ -259,6 +260,74 @@ func AliasCollision(ctx context.Context, aliases repository.WebDomainAliasReposi
 			return "", false, fmt.Errorf("alias lookup for %q: %w", cand, err)
 		}
 	}
+	return "", false, nil
+}
+
+// CrossTenantSuffixCollision reports whether a tenant claiming the domain
+// `name` would land inside, or wrap around, a domain owned by a DIFFERENT
+// tenant — the cross-tenant DNS subdomain-hijack the panel otherwise allows
+// (GH #1789). It is ORTHOGONAL to AliasCollision: that guard checks the
+// web-domain alias table (nginx server_name collisions); this one compares the
+// new name against the domains table for a parent/subdomain suffix relationship,
+// which no other check performs (the only uniqueness is exact-string
+// ux_domains_name, and a subdomain string never collides with its parent).
+//
+// Two directions, both label-boundary aware so "evil.example.com" clashes with
+// "example.com" but "notexample.com" never does:
+//
+//   - Parent: walk name's registrable ancestors (domainops.AncestorDomains) and
+//     look each up by exact name. A hit owned by another tenant is a clash —
+//     the claimant would be creating a more-specific zone under someone else's
+//     domain (mail interception, phishing under a trusted name).
+//   - Child: find every existing domain that is a strict subdomain of name. A
+//     hit owned by another tenant is a clash — the claimant would be creating a
+//     parent zone that wraps another tenant's subdomain.
+//
+// Same-owner matches are ALLOWED: a tenant may freely add subdomains of (or a
+// parent over) their own domains. ownerID is the prospective owner of `name`.
+//
+// A nil repo means the feature is unwired → no collision (fail-open ONLY when
+// unwired, mirroring AliasCollision). Callers gate this on non-admin: admins are
+// trusted to resolve legitimate cross-tenant delegation.
+//
+// SECURITY: a live lookup error is NEVER swallowed into "no collision" — it
+// aborts with err != nil so every caller fails CLOSED, exactly as AliasCollision
+// does. Only repository.ErrNotFound (an ancestor is free) advances the scan.
+func CrossTenantSuffixCollision(ctx context.Context, domains repository.DomainRepository, name, ownerID string) (string, bool, error) {
+	if domains == nil {
+		return "", false, nil
+	}
+	name = domainops.NormalizeDomainName(name)
+	if name == "" {
+		return "", false, nil
+	}
+
+	// Parent direction: is name a strict subdomain of a differently-owned zone?
+	for _, anc := range domainops.AncestorDomains(name) {
+		d, err := domains.FindByName(ctx, anc)
+		switch {
+		case err == nil:
+			if d != nil && d.UserID != ownerID {
+				return anc, true, nil
+			}
+		case errors.Is(err, repository.ErrNotFound):
+			// this ancestor is unclaimed — keep walking up.
+		default:
+			return "", false, fmt.Errorf("ancestor lookup for %q: %w", anc, err)
+		}
+	}
+
+	// Child direction: does name wrap a differently-owned subdomain?
+	subs, err := domains.FindStrictSubdomains(ctx, name)
+	if err != nil {
+		return "", false, fmt.Errorf("subdomain lookup for %q: %w", name, err)
+	}
+	for i := range subs {
+		if subs[i].UserID != ownerID {
+			return subs[i].Name, true, nil
+		}
+	}
+
 	return "", false, nil
 }
 

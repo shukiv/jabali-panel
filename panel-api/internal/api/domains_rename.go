@@ -70,6 +70,19 @@ func (h *domainHandler) rename(c *gin.Context) {
 		c.JSON(http.StatusConflict, gin.H{"error": "domain_conflicts_alias", "message": "the name " + hit + " is already used as an alias of another domain"})
 		return
 	}
+	// GH #1789: an in-place rename to a subdomain of (or a parent over) another
+	// tenant's domain is the same cross-tenant DNS hijack the create path guards
+	// — rename foo.com → evil.example.com. Owner stays the domain's current owner;
+	// admins bypass (trusted delegation). Fail CLOSED on a lookup error.
+	if !claims.IsAdmin {
+		if hit, clash, cerr := CrossTenantSuffixCollision(ctx, h.cfg.Domains, newName, domain.UserID); cerr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "db_suffix_lookup", "message": "could not verify the domain name against existing domains"})
+			return
+		} else if clash {
+			c.JSON(http.StatusConflict, gin.H{"error": "domain_conflicts_tenant", "message": "the name conflicts with " + hit + ", a domain owned by another account"})
+			return
+		}
+	}
 
 	// *reconciler.Reconciler satisfies RenameReconciler, but pass it as a truly
 	// nil interface when unwired so RenameDomain's nil check holds (a typed-nil

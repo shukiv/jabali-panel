@@ -140,6 +140,20 @@ func createDomainOp(ctx context.Context, h *domainHandler, in createDomainInput)
 		return nil, &createDomainError{http.StatusBadRequest, "user_id is required", ""}
 	}
 
+	// GH #1789: reject a tenant self-service claim that lands inside, or wraps
+	// around, another tenant's domain (cross-tenant DNS subdomain hijack). The
+	// shared PowerDNS backend resolves by longest suffix, so a more-specific
+	// zone another tenant creates under example.com becomes authoritative for
+	// that name. An admin actor is trusted to place legitimate cross-tenant
+	// delegations, so the gate is non-admin only. Fail CLOSED on a lookup error.
+	if !in.ActorIsAdmin {
+		if hit, clash, cerr := CrossTenantSuffixCollision(ctx, h.cfg.Domains, in.Name, in.OwnerID); cerr != nil {
+			return nil, &createDomainError{http.StatusInternalServerError, "db_suffix_lookup", "could not verify the domain name against existing domains"}
+		} else if clash {
+			return nil, &createDomainError{http.StatusConflict, "domain_conflicts_tenant", "the name conflicts with " + hit + ", a domain owned by another account"}
+		}
+	}
+
 	// GH #1449: Web / DNS are independent services. Both default ON (the
 	// inverted *Disabled inputs are zero=false for every existing caller). A
 	// web-off domain is docroot-less (DNS-only zone / mail-only domain) and so
