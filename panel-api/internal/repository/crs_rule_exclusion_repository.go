@@ -34,8 +34,19 @@ func (r *crsRuleExclusionRepo) Create(ctx context.Context, e *models.CRSRuleExcl
 	return r.db.WithContext(ctx).Create(e).Error
 }
 
+// DeleteByID removes an exclusion by id. It returns ErrNotFound when no row
+// matched (GORM Delete reports nil for a zero-row delete), so `appsec exclusion
+// rm` cannot print "removed" — and fire a false-success audit row — for an id
+// that was never there. Mirrors the host-mode clear guard (GH #1641).
 func (r *crsRuleExclusionRepo) DeleteByID(ctx context.Context, id string) error {
-	return r.db.WithContext(ctx).
+	res := r.db.WithContext(ctx).
 		Where("id = ?", id).
-		Delete(&models.CRSRuleExclusion{}).Error
+		Delete(&models.CRSRuleExclusion{})
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
