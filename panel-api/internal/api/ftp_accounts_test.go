@@ -90,6 +90,17 @@ func (f *fakeFtpRepo) FindByIDAndUserID(_ context.Context, id, userID string) (*
 	return nil, repository.ErrNotFound
 }
 
+// FindByID backs the admin override path (adminResolveAccount loads by id across
+// any owner). Returns a copy like FindByIDAndUserID so the handler mutates a
+// detached struct and Update writes it back into rows.
+func (f *fakeFtpRepo) FindByID(_ context.Context, id string) (*models.FtpAccount, error) {
+	if r, ok := f.rows[id]; ok {
+		cp := *r
+		return &cp, nil
+	}
+	return nil, repository.ErrNotFound
+}
+
 func (f *fakeFtpRepo) ListByUserID(_ context.Context, userID string) ([]models.FtpAccount, error) {
 	out := []models.FtpAccount{}
 	for _, r := range f.rows {
@@ -238,6 +249,104 @@ func TestFtpAPIUpdate_HostApplyDetachedFromCancel(t *testing.T) {
 	repo.onUpdate = cancel // fire the "client disconnect" the instant the DB commits
 
 	req := httptest.NewRequest(http.MethodPatch, "/me/ftp-accounts/acc1", strings.NewReader(`{"is_enabled":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("host apply must survive request cancellation, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if ag.called("ftpaccount.set_access") != 1 {
+		t.Fatal("set_access must fire on the detached ctx despite the request being cancelled")
+	}
+}
+
+// adminFtpRouter wires the admin PATCH override with an admin claim. RequireAdmin
+// (the real route middleware) is intentionally omitted — adminResolveAccount does
+// no claim check itself, so this exercises the handler's mutation ordering, not
+// the auth gate.
+func adminFtpRouter(repo *fakeFtpRepo, ag agent.AgentInterface) *gin.Engine {
+	gin.SetMode(gin.TestMode)
+	uname := "shop"
+	pkgID := "pkg1"
+	users := &usersMap{m: map[string]*models.User{"u1": {ID: "u1", Username: &uname, PackageID: &pkgID}}}
+	h := &ftpAccountsHandler{cfg: FtpAccountsHandlerConfig{
+		Repo: repo, Users: users, Packages: &fakePkgRepo{pkg: ftpPkg(3)}, Agent: ag, QuotaMount: "/",
+	}}
+	r := gin.New()
+	r.Use(func(c *gin.Context) { ginctx.SetClaims(c, &auth.AccessClaims{UserID: "admin1"}); c.Next() })
+	r.PATCH("/admin/ftp-accounts/:id", h.adminUpdate)
+	return r
+}
+
+// JAB-276 AC2: the admin access-update must persist the DB FIRST, mirroring the
+// tenant path (JAB-269) so admin and tenant share the same mutation-order
+// transcript. A failed persist must not have touched the host at all — on the old
+// host-first admin code set_access fired before Update, so this REDs there.
+func TestFtpAPIAdminUpdate_DBErrorMakesNoHostCall(t *testing.T) {
+	repo := newFakeFtpRepo()
+	repo.rows["acc1"] = &models.FtpAccount{ID: "acc1", UserID: "u1", Username: "shop_dev", IsEnabled: false, SFTPAccess: true}
+	repo.updateErr = errors.New("db down")
+	mock := ftpMockAgent()
+	r := adminFtpRouter(repo, mock)
+
+	rec := doReq(t, r, http.MethodPatch, "/admin/ftp-accounts/acc1", `{"is_enabled":true}`)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("want 500 on DB failure, got %d", rec.Code)
+	}
+	for _, cmd := range []string{"ftpaccount.set_access", "ftpaccount.sshd_sync", "ssh.user.home_chown"} {
+		if mockCalled(mock, cmd) != 0 {
+			t.Fatalf("host command %s ran despite the DB write failing — admin update not DB-first", cmd)
+		}
+	}
+}
+
+// JAB-276 AC2 / JAB-269 parity: when set_access fails AFTER the admin DB commit,
+// the row keeps its new value (a recorded change must never be silently reverted)
+// AND sshd_sync still runs — it renders from the now-committed DB. On the old
+// host-first code set_access fails before Update, so the row is never written and
+// sshd_sync never runs — this REDs there.
+func TestFtpAPIAdminUpdate_HostFailureKeepsRowAndSyncs(t *testing.T) {
+	repo := newFakeFtpRepo()
+	repo.rows["acc1"] = &models.FtpAccount{ID: "acc1", UserID: "u1", Username: "shop_dev", IsEnabled: true, SFTPAccess: true}
+	mock := ftpMockAgent()
+	mock.OnError("ftpaccount.set_access", errors.New("agent boom"))
+	r := adminFtpRouter(repo, mock)
+
+	rec := doReq(t, r, http.MethodPatch, "/admin/ftp-accounts/acc1", `{"is_enabled":false}`)
+	if rec.Code == http.StatusOK {
+		t.Fatalf("a host-apply failure must surface an error, got 200")
+	}
+	if repo.rows["acc1"].IsEnabled {
+		t.Fatal("row was reverted on host failure — the recorded change must survive")
+	}
+	if mockCalled(mock, "ftpaccount.sshd_sync") != 1 {
+		t.Fatal("sshd_sync must run even when set_access fails (SFTP revocation is defense-in-depth)")
+	}
+}
+
+// JAB-276 AC2: the admin host apply runs on a context DETACHED from request
+// cancellation — a client disconnect landing at the DB commit must not abort the
+// host mutation. Mirrors the tenant JAB-269 detached-ctx test.
+func TestFtpAPIAdminUpdate_HostApplyDetachedFromCancel(t *testing.T) {
+	repo := newFakeFtpRepo()
+	repo.rows["acc1"] = &models.FtpAccount{ID: "acc1", UserID: "u1", Username: "shop_dev", IsEnabled: false, SFTPAccess: true}
+	ag := &ctxAwareAgent{}
+	uname := "shop"
+	pkgID := "pkg1"
+	users := &usersMap{m: map[string]*models.User{"u1": {ID: "u1", Username: &uname, PackageID: &pkgID}}}
+	h := &ftpAccountsHandler{cfg: FtpAccountsHandlerConfig{
+		Repo: repo, Users: users, Packages: &fakePkgRepo{pkg: ftpPkg(3)}, Agent: ag, QuotaMount: "/",
+	}}
+	r := gin.New()
+	r.Use(func(c *gin.Context) { ginctx.SetClaims(c, &auth.AccessClaims{UserID: "admin1"}); c.Next() })
+	r.PATCH("/admin/ftp-accounts/:id", h.adminUpdate)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	repo.onUpdate = cancel // fire the "client disconnect" the instant the DB commits
+
+	req := httptest.NewRequest(http.MethodPatch, "/admin/ftp-accounts/acc1", strings.NewReader(`{"is_enabled":true}`))
 	req.Header.Set("Content-Type", "application/json")
 	req = req.WithContext(ctx)
 	rec := httptest.NewRecorder()
