@@ -22,6 +22,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"log/slog"
 	"net/http"
 	"os"
@@ -600,6 +601,20 @@ func (h *userDockerAppHandler) install(c *gin.Context) {
 				return
 			}
 		} else {
+			// GH #1789: this tenant self-service install auto-creates a domain
+			// owned by the caller, the same cross-tenant DNS subdomain-hijack door
+			// createDomainOp guards. Non-admin gate; fail CLOSED on a lookup error.
+			// Generic detail (via failInstall's err) so we never leak another
+			// tenant's zone/subdomain existence.
+			if !claims.IsAdmin {
+				if _, clash, cerr := CrossTenantSuffixCollision(ctx, h.cfg.Domains, req.Domain, claims.UserID); cerr != nil {
+					h.failInstall(c, app.ID, "db_suffix_lookup", errors.New("could not verify the domain name against existing domains"))
+					return
+				} else if clash {
+					h.failInstall(c, app.ID, "domain_conflicts_tenant", errors.New("the name conflicts with a domain owned by another account"))
+					return
+				}
+			}
 			dom := &models.Domain{
 				ID: ulid.Make().String(), UserID: claims.UserID, Name: req.Domain,
 				IsEnabled: true, SSLEnabled: true, NginxRules: rules,

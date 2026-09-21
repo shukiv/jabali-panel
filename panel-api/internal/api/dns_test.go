@@ -98,6 +98,10 @@ func (m *mockDomainRepo) FindByName(ctx context.Context, name string) (*models.D
 	return nil, repository.ErrNotFound
 }
 
+func (m *mockDomainRepo) FindStrictSubdomains(ctx context.Context, name string) ([]models.Domain, error) {
+	return nil, nil
+}
+
 func (m *mockDomainRepo) List(ctx context.Context, opts repository.ListOptions) ([]models.Domain, int64, error) {
 	return nil, 0, nil
 }

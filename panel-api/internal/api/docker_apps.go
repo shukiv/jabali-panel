@@ -579,6 +579,25 @@ func (h *dockerAppHandler) install(c *gin.Context) {
 					c.JSON(http.StatusConflict, gin.H{"error": "domain_conflicts_alias", "detail": msg, "id": app.ID})
 					return
 				}
+				// GH #1789: same cross-tenant DNS subdomain-hijack guard the create
+				// path runs — auto-creating a docker-app domain that nests under (or
+				// wraps) another tenant's domain is the identical hole. Non-admin
+				// only; fail CLOSED on a lookup error.
+				if !claims.IsAdmin {
+					if _, clash, cerr := CrossTenantSuffixCollision(ctx, h.cfg.Domains, req.Domain, claims.UserID); cerr != nil {
+						msg := "domain auto-create failed: could not verify the name against existing domains"
+						_ = h.cfg.Repo.UpdateStatus(ctx, app.ID, models.DockerAppStatusFailed, &msg)
+						c.JSON(http.StatusInternalServerError, gin.H{"error": "db_suffix_lookup", "detail": msg, "id": app.ID})
+						return
+					} else if clash {
+						// Generic detail on purpose (GH #1789): naming the conflicting
+						// domain would leak another tenant's zone/subdomain existence.
+						msg := "domain auto-create failed: name conflicts with a domain owned by another account"
+						_ = h.cfg.Repo.UpdateStatus(ctx, app.ID, models.DockerAppStatusFailed, &msg)
+						c.JSON(http.StatusConflict, gin.H{"error": "domain_conflicts_tenant", "detail": msg, "id": app.ID})
+						return
+					}
+				}
 				dom := &models.Domain{
 					ID:          ulid.Make().String(),
 					UserID:      claims.UserID,
@@ -1223,6 +1242,17 @@ func (h *dockerAppHandler) editDomainPorts(ctx context.Context, app *models.Dock
 							return &dockerEditError{http.StatusInternalServerError, "db_alias_lookup", "could not verify the domain name against existing aliases"}
 						} else if clash {
 							return &dockerEditError{http.StatusConflict, "domain_conflicts_alias", "the name " + hit + " is already used as an alias of another domain"}
+						}
+						// GH #1789: cross-tenant DNS subdomain-hijack guard (see the
+						// install path). Non-admin only; fail CLOSED on a lookup error.
+						if !isAdmin {
+							// Generic detail on purpose (GH #1789): naming the
+							// conflicting domain would leak another tenant's existence.
+							if _, clash, cerr := CrossTenantSuffixCollision(ctx, h.cfg.Domains, newDomain, userID); cerr != nil {
+								return &dockerEditError{http.StatusInternalServerError, "db_suffix_lookup", "could not verify the domain name against existing domains"}
+							} else if clash {
+								return &dockerEditError{http.StatusConflict, "domain_conflicts_tenant", "the name conflicts with a domain owned by another account"}
+							}
 						}
 						dom := &models.Domain{
 							ID:          ulid.Make().String(),

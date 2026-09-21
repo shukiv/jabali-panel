@@ -200,6 +200,10 @@ func (m *MockDomainRepository) FindByName(ctx context.Context, name string) (*mo
 	return args.Get(0).(*models.Domain), args.Error(1)
 }
 
+func (m *MockDomainRepository) FindStrictSubdomains(ctx context.Context, name string) ([]models.Domain, error) {
+	return nil, nil
+}
+
 func (m *MockDomainRepository) List(ctx context.Context, opts repository.ListOptions) ([]models.Domain, int64, error) {
 	args := m.Called(ctx, opts.Offset, opts.Limit)
 	if args.Get(0) == nil {

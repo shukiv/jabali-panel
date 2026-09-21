@@ -19,6 +19,14 @@ type DomainRepository interface {
 	// N+1-free path for list handlers resolving many rows (JAB-147).
 	FindByIDs(ctx context.Context, ids []string) ([]models.Domain, error)
 	FindByName(ctx context.Context, name string) (*models.Domain, error)
+	// FindStrictSubdomains returns every domain whose name is a strict
+	// subdomain of `name` — i.e. ends in "."+name (label-boundary aware, so
+	// "evil.example.com" matches "example.com" but "notexample.com" does not).
+	// The child-direction lookup for the cross-tenant subdomain-hijack guard
+	// (GH #1789); the caller compares each row's owner against the claimant.
+	// `name` is a validated FQDN (no LIKE metacharacters), so it is safe to
+	// interpolate into the "%."+name LIKE pattern.
+	FindStrictSubdomains(ctx context.Context, name string) ([]models.Domain, error)
 	List(ctx context.Context, opts ListOptions) ([]models.Domain, int64, error)
 	ListByUserID(ctx context.Context, userID string, opts ListOptions) ([]models.Domain, int64, error)
 	// ComputeSSLState resolves a domain's flat ssl_state from its cert row (the
@@ -279,6 +287,22 @@ func (r *domainRepo) FindByName(ctx context.Context, name string) (*models.Domai
 		return nil, err
 	}
 	return &d, nil
+}
+
+// FindStrictSubdomains returns every domain that is a strict subdomain of name
+// (GH #1789 child-direction check). The "%."+name pattern matches only rows a
+// full label deeper ("evil.example.com" for "example.com") — never the name
+// itself and never a same-suffix sibling like "notexample.com". name is a
+// validated FQDN so it carries no LIKE wildcards; empty in → empty out.
+func (r *domainRepo) FindStrictSubdomains(ctx context.Context, name string) ([]models.Domain, error) {
+	if name == "" {
+		return nil, nil
+	}
+	var rows []models.Domain
+	if err := r.db.WithContext(ctx).Where("name LIKE ?", "%."+name).Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
 }
 
 // domainListCols — only the domain name is free-text searchable.

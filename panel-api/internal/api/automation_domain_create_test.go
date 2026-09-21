@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"strings"
 	"testing"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
@@ -31,6 +32,18 @@ func (r *dcDomains) FindByName(_ context.Context, name string) (*models.Domain, 
 }
 
 func (r *dcDomains) CountByUserID(_ context.Context, _ string) (int64, error) { return 0, nil }
+
+// FindStrictSubdomains backs the GH #1789 cross-tenant guard's child-direction
+// lookup: scan byName for rows a full label deeper than name.
+func (r *dcDomains) FindStrictSubdomains(_ context.Context, name string) ([]models.Domain, error) {
+	var out []models.Domain
+	for _, d := range r.byName {
+		if d.Name != name && strings.HasSuffix(d.Name, "."+name) {
+			out = append(out, *d)
+		}
+	}
+	return out, nil
+}
 
 func (r *dcDomains) Create(_ context.Context, d *models.Domain) error {
 	if r.createErr != nil {

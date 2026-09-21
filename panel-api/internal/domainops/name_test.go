@@ -1,6 +1,9 @@
 package domainops
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 // NormalizeDomainName is the one canonicalizer every create adapter routes
 // through (JAB-279 / GH #884). It must lowercase and trim edge whitespace so the
@@ -32,6 +35,36 @@ func TestNormalizeDomainName_Idempotent(t *testing.T) {
 		once := NormalizeDomainName(in)
 		if twice := NormalizeDomainName(once); twice != once {
 			t.Errorf("NormalizeDomainName not idempotent: %q -> %q -> %q", in, once, twice)
+		}
+	}
+}
+
+// AncestorDomains backs the cross-tenant subdomain-hijack guard (GH #1789): for
+// the name being claimed it yields the registrable parent zones another tenant
+// could already own. It must be label-boundary aware, most-specific first, and
+// must NOT emit the bare TLD (no domain row can hold "com") nor the name itself.
+func TestAncestorDomains(t *testing.T) {
+	cases := []struct {
+		in   string
+		want []string
+	}{
+		// Deeper name → every strict parent down to the second-level domain.
+		{"a.b.example.com", []string{"b.example.com", "example.com"}},
+		{"evil.example.com", []string{"example.com"}},
+		// A registrable second-level name has no registrable ancestor (its only
+		// parent is the bare TLD, which is excluded).
+		{"example.com", nil},
+		// Multi-label public suffixes: the helper is suffix-list-agnostic, so it
+		// still walks label boundaries (the guard compares against real rows, so
+		// a nonexistent "co.uk" row simply never matches).
+		{"shop.example.co.uk", []string{"example.co.uk", "co.uk"}},
+		// Degenerate inputs never panic and never invent a parent.
+		{"com", nil},
+		{"", nil},
+	}
+	for _, tc := range cases {
+		if got := AncestorDomains(tc.in); !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("AncestorDomains(%q) = %v, want %v", tc.in, got, tc.want)
 		}
 	}
 }
