@@ -24,6 +24,7 @@ import (
 
 	internalbackup "git.jabali-panel.com/shukivaknin/jabali2/internal/backup"
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/kratosclient"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/forwarderops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/sshkeyops"
@@ -264,6 +265,18 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 			}
 		}
 		if d.Forwarders != nil {
+			// Imported forwarders only reach Stalwart via forwarder.apply — the DB
+			// row alone does nothing (GH #1795 follow-up). Map each mailbox id to
+			// its email so an enabled restored forwarder can be converged after the
+			// loop; mailboxes with no cached email fall back to first-mutation
+			// self-heal.
+			mbEmail := map[string]string{}
+			for _, mb := range dm.Mailboxes {
+				if mb.EmailCached != "" {
+					mbEmail[mb.ID] = mb.EmailCached
+				}
+			}
+			convergeFwds := map[string]string{}
 			for _, fw := range dm.Forwarders {
 				if existing, err := d.Forwarders.FindByID(ctx, fw.ID); err == nil && existing != nil {
 					r.Skipped++
@@ -285,6 +298,20 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 					continue
 				}
 				r.Forwarders++
+				if row.Enabled && row.MailboxID != nil {
+					if email, ok := mbEmail[*row.MailboxID]; ok {
+						convergeFwds[*row.MailboxID] = email
+					}
+				}
+			}
+			// Best-effort push. nil agent (e.g. the backup scheduler) skips this;
+			// the rows converge on the first later forwarder mutation instead.
+			if d.Agent != nil {
+				for mbID, email := range convergeFwds {
+					if cErr := forwarderops.Converge(ctx, d.Agent, d.Forwarders, mbID, email); cErr != nil {
+						r.Errors = append(r.Errors, fmt.Sprintf("forwarder converge %s: %v", email, cErr))
+					}
+				}
 			}
 		}
 	}

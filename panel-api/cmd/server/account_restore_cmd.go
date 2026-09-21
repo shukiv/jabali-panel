@@ -65,6 +65,7 @@ func applyPanelMetadata(ctx context.Context, cmd *cobra.Command, raw json.RawMes
 		DNSZones:       repository.NewDNSZoneRepository(sharedDB),
 		DNSRecords:     repository.NewDNSRecordRepository(sharedDB),
 		KratosClient:   kratosclient.NewClient(sharedCfg.Auth.Kratos.PublicURL, sharedCfg.Auth.Kratos.AdminURL),
+		Agent:          sharedAgent, // push restored forwarders to Stalwart (GH #1795)
 	}
 	r := backupmetadata.Apply(ctx, &meta, deps)
 	w := cmd.OutOrStdout()

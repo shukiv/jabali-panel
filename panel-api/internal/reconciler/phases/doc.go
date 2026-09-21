@@ -18,13 +18,20 @@
 // Registration
 //
 // Each feature creates a file under this package:
-//   - m65_forwarders.go: RegisterPhase(&forwardersPhase{})
 //   - m65_autoresponders.go: RegisterPhase(&autoresppondersPhase{})
 //   - m65_catchall.go: RegisterPhase(&catchallPhase{})
 //   - etc.
 //
 // The registrar is called during each feature's init(), guaranteeing registration
 // before the main reconciler loop starts.
+//
+// NOTE (GH #1795): forwarder convergence does NOT run through this framework.
+// Email forwarders (aliases + external redirect Sieve) are converged inline by
+// api.applyForwarders on every forwarder mutation; the agent's forwarder.apply
+// self-heals the Stalwart Principal if it isn't registered yet. The former
+// forwardersPhase here was never wired (RegisterPhase / ReconcileMailboxAll have
+// no callers) and shipped a stale payload shape, so it was removed rather than
+// left as a resurrection hazard.
 //
 // ADR-0051 documents the jabali-as-truth pattern and Stalwart integration for all six features.
 package phases

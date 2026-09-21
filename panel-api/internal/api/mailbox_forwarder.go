@@ -21,6 +21,7 @@ import (
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/auth"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/forwarderops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
@@ -151,43 +152,14 @@ func (h *forwarderHandler) listAll(c *gin.Context) {
 // desired state to Stalwart via forwarder.apply. Best-effort: the DB is
 // truth, so a transient agent failure is logged and retried on the next
 // mutation. GH #237 — until this was added, forwarders were written to the
-// DB but NEVER converged: the only caller of forwarder.apply was the
-// dormant phases.forwardersPhase (registered via no init(), reached only by
-// the never-called ReconcileMailboxAll). Mirrors the inline autoresponder.set
-// dispatch.
+// DB but NEVER converged: the reconciler phase that was meant to push them
+// was never wired (removed in GH #1795 as dead code). This inline dispatch,
+// mirroring autoresponder.set, is the sole convergence path; the agent's
+// forwarder.apply self-heals the Stalwart Principal when it isn't registered
+// yet (GH #1795), so a forwarder added to a brand-new mailbox still lands.
 func (h *forwarderHandler) applyForwarders(ctx context.Context, mb *models.Mailbox, dom *models.Domain) {
-	if h.cfg.Agent == nil {
-		return
-	}
-	rows, _, err := h.cfg.Forwarders.ListByMailboxID(ctx, mb.ID, repository.ListOptions{Limit: 500})
-	if err != nil {
-		slog.Warn("forwarder.apply: list failed", "mailbox_id", mb.ID, "err", err)
-		return
-	}
-	aliases := []map[string]string{}
-	externals := []map[string]any{}
-	for _, f := range rows {
-		if !f.Enabled {
-			continue
-		}
-		switch f.Type {
-		case "alias":
-			if f.LocalPart != nil {
-				aliases = append(aliases, map[string]string{"local_part": *f.LocalPart})
-			}
-		case "external":
-			externals = append(externals, map[string]any{"target": f.Target, "keep_copy": f.KeepCopy})
-		}
-	}
-	params := map[string]any{
-		"mailbox_email": mb.LocalPart + "@" + dom.Name,
-		"aliases":       aliases,
-		"externals":     externals,
-	}
-	cctx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	defer cancel()
-	if _, err := h.cfg.Agent.Call(cctx, "forwarder.apply", params); err != nil {
-		slog.Warn("forwarder.apply: agent push failed", "mailbox_id", mb.ID, "err", err)
+	if err := forwarderops.Converge(ctx, h.cfg.Agent, h.cfg.Forwarders, mb.ID, mb.LocalPart+"@"+dom.Name); err != nil {
+		slog.Warn("forwarder.apply: convergence failed", "mailbox_id", mb.ID, "err", err)
 	}
 }
 

@@ -1238,6 +1238,7 @@ func (h *backupHandler) applyRestoreMetadata(ctx context.Context, metaRaw json.R
 		DNSZones:       h.cfg.DNSZones,
 		DNSRecords:     h.cfg.DNSRecords,
 		KratosClient:   h.cfg.KratosClient,
+		Agent:          h.cfg.Agent, // push restored forwarders to Stalwart (GH #1795)
 	})
 	return r.Errors
 }
