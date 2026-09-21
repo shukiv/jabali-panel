@@ -151,10 +151,11 @@ func (h *forwarderHandler) listAll(c *gin.Context) {
 // desired state to Stalwart via forwarder.apply. Best-effort: the DB is
 // truth, so a transient agent failure is logged and retried on the next
 // mutation. GH #237 — until this was added, forwarders were written to the
-// DB but NEVER converged: the only caller of forwarder.apply was the
-// dormant phases.forwardersPhase (registered via no init(), reached only by
-// the never-called ReconcileMailboxAll). Mirrors the inline autoresponder.set
-// dispatch.
+// DB but NEVER converged: the reconciler phase that was meant to push them
+// was never wired (removed in GH #1795 as dead code). This inline dispatch,
+// mirroring autoresponder.set, is the sole convergence path; the agent's
+// forwarder.apply self-heals the Stalwart Principal when it isn't registered
+// yet (GH #1795), so a forwarder added to a brand-new mailbox still lands.
 func (h *forwarderHandler) applyForwarders(ctx context.Context, mb *models.Mailbox, dom *models.Domain) {
 	if h.cfg.Agent == nil {
 		return
