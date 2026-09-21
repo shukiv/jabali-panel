@@ -172,7 +172,11 @@ func (f *fakeDomainRepo) FindByName(_ context.Context, n string) (*models.Domain
 	if d, ok := f.byName[n]; ok {
 		return d, nil
 	}
-	return nil, gorm.ErrRecordNotFound
+	// repository.ErrNotFound (not gorm.ErrRecordNotFound) so a not-found advances
+	// CrossTenantSuffixCollision's errors.Is(err, repository.ErrNotFound) parent
+	// walk instead of tripping its fail-closed default — matches the real
+	// domainRepo.FindByName and every other fake in this package.
+	return nil, repository.ErrNotFound
 }
 
 // tenantCatalog writes a minimal tenant_installable app into a temp dir.
