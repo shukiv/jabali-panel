@@ -121,12 +121,20 @@ export function UserLayout() {
                   darkItemSelectedColor: "#4096ff",
                   darkItemHoverBg: "#1f1f1f",
                   darkItemHoverColor: "rgba(255, 255, 255, 0.85)",
+                  // GH #1626 (johnnyq): drop antd's default shading behind a
+                  // collapsible section's open contents (Tools/Account), so the
+                  // children read like the always-open group items.
+                  darkSubMenuItemBg: "transparent",
                 }
               : {
                   itemSelectedBg: "#f3f4f6",
                   itemSelectedColor: "#1677ff",
                   itemHoverBg: "#f3f4f6",
                   itemHoverColor: "rgba(0, 0, 0, 0.88)",
+                  // GH #1626 (johnnyq): drop antd's default shading behind a
+                  // collapsible section's open contents (Tools/Account), so the
+                  // children read like the always-open group items.
+                  subMenuItemBg: "transparent",
                 },
         },
       }}
