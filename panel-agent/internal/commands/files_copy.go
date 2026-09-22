@@ -60,7 +60,7 @@ type filesCopyJobResult struct {
 // ends (confined to the admin write allow-list, JAB-358), same-path/descendant
 // refusals, and the no-clobber existence check. On success it returns the
 // write-scoped handle, the cleaned paths, and the destination owner ids.
-func resolveCopyValidated(p filesCopyParams) (*filesafe.Scope, string, string, int, int, *agentwire.AgentError) {
+func resolveCopyValidated(ctx context.Context, p filesCopyParams) (*filesafe.Scope, string, string, int, int, *agentwire.AgentError) {
 	if p.Username == "" {
 		return nil, "", "", 0, 0, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "username required"}
 	}
@@ -71,7 +71,7 @@ func resolveCopyValidated(p filesCopyParams) (*filesafe.Scope, string, string, i
 		return nil, "", "", 0, 0, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "dst_path required"}
 	}
 
-	scope, err := fileScopeFor(p.UserID, p.Username, p.AdminRoot)
+	scope, err := fileScopeFor(ctx, p.UserID, p.Username, p.AdminRoot)
 	if err != nil {
 		return nil, "", "", 0, 0, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: fmt.Sprintf("failed to create scope: %v", err)}
 	}
@@ -114,7 +114,7 @@ func filesCopyHandler(ctx context.Context, params json.RawMessage) (any, error) 
 			Message: fmt.Sprintf("failed to parse params: %v", err),
 		}
 	}
-	scope, srcClean, dstClean, uid, gid, aerr := resolveCopyValidated(p)
+	scope, srcClean, dstClean, uid, gid, aerr := resolveCopyValidated(ctx, p)
 	if aerr != nil {
 		return nil, aerr
 	}
@@ -145,14 +145,17 @@ func filesCopyHandler(ctx context.Context, params json.RawMessage) (any, error) 
 // then copies in a detached goroutine so a large tree can't block the request
 // past a proxy timeout and the UI can poll files.job.status for a byte-
 // percentage bar.
-func filesCopyStartHandler(_ context.Context, params json.RawMessage) (any, error) {
+func filesCopyStartHandler(ctx context.Context, params json.RawMessage) (any, error) {
 	var p filesCopyParams
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: fmt.Sprintf("failed to parse params: %v", err)}
 	}
 	// Validate up front so user errors are immediate 400s, not jobs that
-	// instantly fail.
-	scope, srcClean, dstClean, uid, gid, aerr := resolveCopyValidated(p)
+	// instantly fail. JAB-357 AC4: the admin_root peer-capability gate runs here
+	// too, synchronously with the request's peer identity, so an unauthorized
+	// peer gets an immediate permission_denied rather than a queued job that
+	// fails later — the detached copy below reuses this already-authorized scope.
+	scope, srcClean, dstClean, uid, gid, aerr := resolveCopyValidated(ctx, p)
 	if aerr != nil {
 		return nil, aerr
 	}

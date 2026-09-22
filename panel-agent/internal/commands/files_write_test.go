@@ -125,11 +125,19 @@ func TestFilesWriteHandler(t *testing.T) {
 		},
 	}
 
+	// JAB-357 AC4: the admin_root case below tests the JAB-358 read_only gate for
+	// an AUTHORIZED admin, which sits behind the new peer gate. Stamp an
+	// admin-capable peer identity (as the server does for an -admin-uids peer) so
+	// the case reaches the read_only gate rather than the AC4 peer gate. Tenant
+	// cases (admin_root=false) are unaffected — the peer gate only fires on
+	// admin_root=true.
+	adminCtx := WithPeerIdentity(context.Background(), 0, true, true)
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			params, _ := json.Marshal(tt.input)
 
-			_, err := filesWriteHandler(context.Background(), params)
+			_, err := filesWriteHandler(adminCtx, params)
 
 			if (err != nil) != tt.wantError {
 				t.Errorf("filesWriteHandler: expected error = %v, got %v", tt.wantError, err)

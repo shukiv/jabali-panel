@@ -69,3 +69,48 @@ func TestDecideUIDGate(t *testing.T) {
 		}
 	}
 }
+
+// JAB-357 AC4: decideAdminUIDs resolves which peers may assert admin_root. Like
+// decideUIDGate it is fatal on all-garbage (garbage is never a deliberate
+// grant), but its BLANK case defaults to the connect allow-list rather than
+// erroring — a broad allow-list already exists, so the admin File Manager keeps
+// working with no extra config. It must NOT widen the set: an explicit list is
+// honoured verbatim, and a blank list with an empty connect allow-list yields
+// the empty set (no peer may assert admin_root — fail closed).
+func TestDecideAdminUIDs(t *testing.T) {
+	cases := []struct {
+		name    string
+		raw     string
+		allowed []uint32
+		want    []uint32
+		wantErr bool
+	}{
+		// Explicit list is honoured verbatim, independent of the connect list.
+		{"explicit list", "1001", []uint32{1001, 0}, []uint32{1001}, false},
+		{"explicit narrower than connect", "1001", []uint32{1001, 0, 33}, []uint32{1001}, false},
+		{"explicit root only", "0", []uint32{1001, 0}, []uint32{0}, false},
+		// Unset defaults to the connect allow-list (panel user + root).
+		{"unset defaults to connect list", "", []uint32{1001, 0}, []uint32{1001, 0}, false},
+		{"blank defaults to connect list", "   ", []uint32{1001, 0}, []uint32{1001, 0}, false},
+		{"commas only defaults to connect list", " , , ", []uint32{1001, 0}, []uint32{1001, 0}, false},
+		// Unset AND an empty connect list (insecure-allow-any) → empty admin set:
+		// no peer may assert admin_root. Fail closed, NOT a wildcard. (Load-bearing.)
+		{"unset with empty connect list is empty set", "", nil, nil, false},
+		// A partly-junk explicit list only narrows it — the good token is kept.
+		{"partial junk stays", "1001,xyz", []uint32{1001, 0}, []uint32{1001}, false},
+		// A wholly-malformed explicit list is fatal even though a connect list
+		// exists: the operator meant to restrict admin_root and mistyped it; we
+		// refuse to silently fall back to the broad connect list. (Load-bearing.)
+		{"all junk is fatal despite connect list", "abc,xyz", []uint32{1001, 0}, nil, true},
+		{"lone bad uid is fatal", "-1", []uint32{1001, 0}, nil, true},
+	}
+	for _, c := range cases {
+		got, err := decideAdminUIDs(c.raw, c.allowed)
+		if (err != nil) != c.wantErr {
+			t.Errorf("%s: decideAdminUIDs(%q, %v) err = %v; wantErr %v", c.name, c.raw, c.allowed, err, c.wantErr)
+		}
+		if !c.wantErr && !reflect.DeepEqual(got, c.want) {
+			t.Errorf("%s: decideAdminUIDs(%q, %v) = %v; want %v", c.name, c.raw, c.allowed, got, c.want)
+		}
+	}
+}

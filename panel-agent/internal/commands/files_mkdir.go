@@ -49,7 +49,7 @@ func filesMkdirHandler(ctx context.Context, params json.RawMessage) (any, error)
 		}
 	}
 
-	scope, err := fileScopeFor(p.UserID, p.Username, p.AdminRoot)
+	scope, err := fileScopeFor(ctx, p.UserID, p.Username, p.AdminRoot)
 	if err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInvalidArgument,
