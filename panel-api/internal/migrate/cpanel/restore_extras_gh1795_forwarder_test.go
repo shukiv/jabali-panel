@@ -81,12 +81,13 @@ func TestImportExtras_ConvergesImportedForwarder(t *testing.T) {
 
 	mb := &models.Mailbox{ID: "mb-sales", EmailCached: "sales@example.com", LocalPart: "sales"}
 	ag := &fwdConvergeAgent{}
+	fwdRepo := &fwdForwarderRepo{}
 
 	_, err := ImportExtras(
 		context.Background(),
 		&bindDomainRepo{},       // domainsRepo
 		&fwdMailboxRepo{mb: mb}, // mailboxesRepo
-		&fwdForwarderRepo{},     // forwardersRepo
+		fwdRepo,                 // forwardersRepo
 		nil,                     // autoRespondersRepo
 		nil,                     // filtersRepo
 		nil,                     // poolsRepo (nil → no php.pool.apply)
@@ -103,5 +104,19 @@ func TestImportExtras_ConvergesImportedForwarder(t *testing.T) {
 	}
 	if ag.lastMailboxEmail != "sales@example.com" {
 		t.Errorf("forwarder.apply mailbox_email = %q, want sales@example.com (the mailbox, not the alias source line)", ag.lastMailboxEmail)
+	}
+
+	// GH #1795 follow-up: a type='external' forwarder must leave local_part NULL
+	// (the source is the mailbox). A non-NULL local_part wrongly occupies the
+	// uq_alias_local (domain_id, local_part) slot the schema reserves for
+	// aliases, so two external forwards off the same source local — or a later
+	// same-local alias — collide on the unique key and get silently dropped.
+	if len(fwdRepo.rows) != 1 {
+		t.Fatalf("forwarder rows created = %d, want 1", len(fwdRepo.rows))
+	}
+	if got := fwdRepo.rows[0]; got.Type != "external" {
+		t.Fatalf("forwarder type = %q, want external", got.Type)
+	} else if got.LocalPart != nil {
+		t.Errorf("external forwarder local_part = %q, want NULL (nil) — must not consume the uq_alias_local slot", *got.LocalPart)
 	}
 }
