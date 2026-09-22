@@ -40,10 +40,13 @@ func optStr(s string) *string {
 // via forwarder.apply — the same convergence the HTTP handler does. The CLI
 // previously poked domain.email_apply, which does NOT converge forwarders,
 // so CLI-created aliases/forwards never reached Stalwart (GH #237).
-func applyForwardersCLI(ctx context.Context, mbID, mailboxEmail string) {
+// applyForwardersCLI converges the mailbox's forwarders and returns the failure
+// (GH #1795) so the caller can surface it instead of a silent success — a row
+// written to the DB that never reached Stalwart is not forwarding.
+func applyForwardersCLI(ctx context.Context, mbID, mailboxEmail string) error {
 	rows, _, err := forwarderRepoFromDB().ListByMailboxID(ctx, mbID, repository.ListOptions{Limit: 500})
 	if err != nil {
-		return
+		return err
 	}
 	aliases := []map[string]string{}
 	externals := []map[string]any{}
@@ -60,7 +63,7 @@ func applyForwardersCLI(ctx context.Context, mbID, mailboxEmail string) {
 			externals = append(externals, map[string]any{"target": f.Target, "keep_copy": f.KeepCopy})
 		}
 	}
-	notifyAgentMailbox(ctx, "forwarder.apply", map[string]any{
+	return notifyAgentMailboxErr(ctx, "forwarder.apply", map[string]any{
 		"mailbox_email": mailboxEmail,
 		"aliases":       aliases,
 		"externals":     externals,
@@ -356,9 +359,14 @@ func newMailboxForwarderAddCmd() *cobra.Command {
 			if err := forwarderRepoFromDB().Create(ctx, f); err != nil {
 				return fmt.Errorf("create forwarder: %w", err)
 			}
-			applyForwardersCLI(ctx, mb.ID, mb.LocalPart+"@"+dom.Name)
+			applyErr := applyForwardersCLI(ctx, mb.ID, mb.LocalPart+"@"+dom.Name)
 			if jsonOutput {
-				return printJSON(f)
+				if perr := printJSON(f); perr != nil {
+					return perr
+				}
+				// nil on success; a convergence failure is returned so the
+				// command exits non-zero (GH #1795).
+				return applyErr
 			}
 			cliAuditOK(ctx, "mailbox.forwarder_add", "forwarder", f.ID, nil)
 			fmt.Printf("Forwarder %s added (id=%s)\n", fwdType, f.ID)
@@ -366,6 +374,12 @@ func newMailboxForwarderAddCmd() *cobra.Command {
 				fmt.Printf("  %s@%s -> %s\n", localPart, dom.Name, f.Target)
 			} else {
 				fmt.Printf("  %s -> %s\n", email, target)
+			}
+			if applyErr != nil {
+				// The row is saved (DB is truth) but Stalwart did not converge,
+				// so it is not forwarding yet. Surface loudly (GH #1795) rather
+				// than reporting a clean success; re-run to retry the apply.
+				return fmt.Errorf("saved to the database but NOT applied to the mail server (re-run to retry): %w", applyErr)
 			}
 			return nil
 		},
@@ -447,13 +461,20 @@ func newMailboxForwarderRemoveCmd() *cobra.Command {
 			if err := forwarderRepoFromDB().Delete(ctx, id); err != nil {
 				return fmt.Errorf("delete forwarder: %w", err)
 			}
+			var applyErr error
 			if f.MailboxID != nil {
 				if mb, merrr := mailboxRepoFromDB().FindByID(ctx, *f.MailboxID); merrr == nil {
-					applyForwardersCLI(ctx, mb.ID, mb.LocalPart+"@"+dom.Name)
+					applyErr = applyForwardersCLI(ctx, mb.ID, mb.LocalPart+"@"+dom.Name)
 				}
 			}
 			cliAuditOK(ctx, "mailbox.forwarder_delete", "forwarder", id, nil)
 			fmt.Printf("Forwarder %s deleted\n", id)
+			if applyErr != nil {
+				// Row removed, but the mail server still has the stale redirect
+				// until it converges — surface it (GH #1795), don't report a
+				// clean delete. Re-run any forwarder change to retry.
+				return fmt.Errorf("deleted from the database but the mail server was NOT updated (re-run to retry): %w", applyErr)
+			}
 			return nil
 		},
 	}

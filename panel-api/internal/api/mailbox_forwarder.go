@@ -47,6 +47,20 @@ type forwarderResponse struct {
 	KeepCopy     bool   `json:"keep_copy"`
 	Enabled      bool   `json:"enabled"`
 	CreatedAt    string `json:"created_at"`
+	// Warning is set (GH #1795) when the row was persisted but the follow-up
+	// forwarder.apply to Stalwart failed — the DB is truth, so the row stands,
+	// but forwarding is NOT live until it converges. Without this the endpoint
+	// returned 201 on a failed converge, so a forwarder that never actually
+	// forwards looked like a success. omitempty: absent on the normal path and
+	// on list/get (which never converge).
+	Warning *forwarderWarning `json:"warning,omitempty"`
+}
+
+// forwarderWarning describes a non-fatal convergence failure surfaced on an
+// otherwise-successful forwarder write.
+type forwarderWarning struct {
+	Code   string `json:"code"`
+	Detail string `json:"detail"`
 }
 
 type forwarderCreateRequest struct {
@@ -157,10 +171,16 @@ func (h *forwarderHandler) listAll(c *gin.Context) {
 // mirroring autoresponder.set, is the sole convergence path; the agent's
 // forwarder.apply self-heals the Stalwart Principal when it isn't registered
 // yet (GH #1795), so a forwarder added to a brand-new mailbox still lands.
-func (h *forwarderHandler) applyForwarders(ctx context.Context, mb *models.Mailbox, dom *models.Domain) {
+// applyForwarders converges the mailbox's forwarders and returns the failure
+// (also logged) so the caller can surface it — a persisted row whose apply
+// failed is not forwarding yet, and the caller must not report unqualified
+// success (GH #1795). The DB stays truth; the error is advisory.
+func (h *forwarderHandler) applyForwarders(ctx context.Context, mb *models.Mailbox, dom *models.Domain) error {
 	if err := forwarderops.Converge(ctx, h.cfg.Agent, h.cfg.Forwarders, mb.ID, mb.LocalPart+"@"+dom.Name); err != nil {
 		slog.Warn("forwarder.apply: convergence failed", "mailbox_id", mb.ID, "err", err)
+		return err
 	}
+	return nil
 }
 
 func (h *forwarderHandler) create(c *gin.Context) {
@@ -217,8 +237,15 @@ func (h *forwarderHandler) create(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
-	h.applyForwarders(ctx, mb, dom)
-	c.JSON(http.StatusCreated, h.resolve(ctx, *f, mb, dom))
+	resp := h.resolve(ctx, *f, mb, dom)
+	if err := h.applyForwarders(ctx, mb, dom); err != nil {
+		// Row persisted, but it is not forwarding until Stalwart converges.
+		// Surface it instead of a bare 201 (GH #1795): the detail is this
+		// tenant's own mailbox convergence error on an owner-scoped endpoint,
+		// so exposing it is acceptable and operationally necessary.
+		resp.Warning = &forwarderWarning{Code: "convergence_failed", Detail: err.Error()}
+	}
+	c.JSON(http.StatusCreated, resp)
 }
 
 func (h *forwarderHandler) del(c *gin.Context) {
@@ -246,7 +273,9 @@ func (h *forwarderHandler) del(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
-	h.applyForwarders(ctx, mb, dom)
+	// A failed re-converge on delete leaves a stale redirect, but 204 carries
+	// no body to surface it; the slog.Warn inside applyForwarders records it.
+	_ = h.applyForwarders(ctx, mb, dom)
 	c.JSON(http.StatusNoContent, nil)
 }
 

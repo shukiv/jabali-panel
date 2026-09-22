@@ -151,12 +151,20 @@ func rotateMailboxPasswordDirect(ctx context.Context, repo repository.MailboxRep
 // notifyAgentMailbox is the production agentNotifier wired off the
 // global sharedAgent. Swallows errors — ADR-0013 best-effort.
 func notifyAgentMailbox(ctx context.Context, cmd string, params any) {
+	_ = notifyAgentMailboxErr(ctx, cmd, params)
+}
+
+// notifyAgentMailboxErr is notifyAgentMailbox that returns the agent error so a
+// CLI caller can surface it (GH #1795) instead of silently reporting success on
+// a failed convergence. A nil sharedAgent (agent not wired) is a no-op, nil.
+func notifyAgentMailboxErr(ctx context.Context, cmd string, params any) error {
 	if sharedAgent == nil {
-		return
+		return nil
 	}
 	agentCtx, cancel := context.WithTimeout(ctx, cliMailboxAgentTimeout)
 	defer cancel()
-	_, _ = sharedAgent.Call(agentCtx, cmd, params)
+	_, err := sharedAgent.Call(agentCtx, cmd, params)
+	return err
 }
 
 // callAgentMailbox is the production agentCaller — used by delete
