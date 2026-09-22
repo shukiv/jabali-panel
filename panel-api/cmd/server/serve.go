@@ -350,7 +350,6 @@ func runServe(cmd *cobra.Command, args []string) error {
 			sharedLog,
 			reconciler.Config{
 				Interval: cfg.Agent.ReconcilerInterval,
-				QueueLen: 100,
 			},
 		)
 		// GH #233: register the disclaimer reconcile phase so the Stalwart

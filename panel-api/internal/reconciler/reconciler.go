@@ -99,8 +99,20 @@ type Reconciler struct {
 	// (or re-issued) more than once per sslSANDriftCooldown.
 	sanDriftMu      sync.Mutex
 	sanDriftAttempt map[string]time.Time
-	// queue holds domain IDs to reconcile out-of-band (non-blocking enqueue)
-	queue chan string
+	// dirtyMu guards the coalescing dirty set of out-of-band reconcile
+	// requests (JAB-369).
+	dirtyMu sync.Mutex
+	// dirty is the set of ResourceKeys awaiting out-of-band reconciliation.
+	// A map keyed by ResourceKey so repeated Schedule calls for the same
+	// resource coalesce to a single pending reconcile; unbounded except by
+	// the number of distinct resources, so a request is never dropped under
+	// scheduler pressure. Replaces the old drop-on-full `queue chan string`.
+	dirty map[ResourceKey]struct{}
+	// wake signals the reconcile loop that dirty is non-empty. Buffered 1 and
+	// written non-blocking: many Schedules collapse to one pending wake, and
+	// the loop drains the set (not one item per signal), so a single slot is
+	// enough.
+	wake chan struct{}
 	// socketReady is a function that checks if a Unix socket is ready. Mockable for testing.
 	socketReady func(ctx context.Context, socketPath string, timeout, pollInterval time.Duration) bool
 	// readCertFile reads a cert file for the JAB-389 panel self-signed drift
@@ -545,16 +557,12 @@ func (r *Reconciler) WithConfig(cfg *config.Config) *Reconciler {
 // Config bundles reconciler configuration.
 type Config struct {
 	Interval time.Duration
-	QueueLen int
 }
 
 // New creates a new Reconciler.
 func New(domains repository.DomainRepository, users repository.UserRepository, agentClient agent.AgentInterface, log *slog.Logger, cfg Config) *Reconciler {
 	if cfg.Interval <= 0 {
 		cfg.Interval = 60 * time.Second
-	}
-	if cfg.QueueLen <= 0 {
-		cfg.QueueLen = 100
 	}
 	r := &Reconciler{
 		domains:      domains,
@@ -563,7 +571,8 @@ func New(domains repository.DomainRepository, users repository.UserRepository, a
 		log:          log,
 		dnsPreflight: dnsverify.LookupHostExternalResult,
 		interval:     cfg.Interval,
-		queue:        make(chan string, cfg.QueueLen),
+		dirty:        make(map[ResourceKey]struct{}),
+		wake:         make(chan struct{}, 1),
 	}
 	// Initialize default socketReady function
 	r.socketReady = r.waitSocketReady
@@ -735,14 +744,12 @@ func (r *Reconciler) Start(ctx context.Context) {
 		case <-ctx.Done():
 			r.log.Info("reconciler stopping")
 			return
-		case domainID := <-r.queue:
-			if r.IsPaused() {
-				r.log.Debug("reconcile one skipped (paused)", "domain_id", domainID)
-				continue
-			}
-			if err := r.ReconcileOne(ctx, domainID); err != nil {
-				r.log.Error("reconcile one failed", "domain_id", domainID, "err", err)
-			}
+		case <-r.wake:
+			// Pop exactly ONE key per wake; popDirty re-signals while the set is
+			// non-empty, so the loop drains it one key per iteration without
+			// running a large burst of slow, agent-bound ReconcileOne calls
+			// back-to-back and starving the periodic ticker or ctx cancellation.
+			r.drainOne(ctx)
 		case <-ticker.C:
 			if r.IsPaused() {
 				r.log.Debug("periodic reconcile skipped (paused)")
@@ -787,14 +794,103 @@ func (r *Reconciler) Start(ctx context.Context) {
 	}
 }
 
-// Schedule enqueues a domain ID for out-of-band reconciliation. Non-blocking;
-// drops the request if the queue is full.
+// ResourceKind identifies the type of resource a ResourceKey addresses. The
+// reconciler is domain-centric today; ResourceKind is the typed-key foundation
+// for the JAB-369 planner, which will add kinds (mailbox, cert, dns-zone) as
+// the dirty set grows beyond domains.
+type ResourceKind string
+
+const (
+	// KindDomain addresses a domain by its ID.
+	KindDomain ResourceKind = "domain"
+)
+
+// ResourceKey is a typed, comparable handle to a reconcilable resource. As the
+// key of the coalescing dirty set (Reconciler.dirty), duplicate Schedule
+// requests for the same resource collapse to one pending reconcile. JAB-369.
+type ResourceKey struct {
+	Kind ResourceKind
+	ID   string
+}
+
+// Schedule requests an out-of-band reconcile of a domain. Non-blocking and
+// coalescing: repeated calls for the same domain collapse to a single pending
+// reconcile, and requests are never dropped under scheduler pressure (the dirty
+// set is bounded only by the number of distinct domains). Replaces the old
+// drop-on-full channel. JAB-369.
 func (r *Reconciler) Schedule(domainID string) {
+	r.markDirty(ResourceKey{Kind: KindDomain, ID: domainID})
+}
+
+// markDirty adds key to the coalescing dirty set and signals the reconcile
+// loop. The wake send is non-blocking: a single buffered slot suffices because
+// the loop drains the set, not one item per signal, so extra signals coalesce.
+func (r *Reconciler) markDirty(key ResourceKey) {
+	r.dirtyMu.Lock()
+	r.dirty[key] = struct{}{}
+	r.dirtyMu.Unlock()
 	select {
-	case r.queue <- domainID:
+	case r.wake <- struct{}{}:
 	default:
-		r.log.Warn("reconcile queue full, dropping request", "domain_id", domainID)
 	}
+}
+
+// popDirty removes and returns one key from the dirty set. It deletes the key
+// BEFORE returning so the loop cannot reorder the delete after ReconcileOne — a
+// Schedule arriving mid-reconcile re-adds the key and drives another pass. It
+// re-signals wake when more keys remain, so the loop drains the set one key per
+// iteration (keeping the select fair) without holding dirtyMu across the
+// agent-bound ReconcileOne call. Returns false when the set is empty. JAB-369.
+func (r *Reconciler) popDirty() (ResourceKey, bool) {
+	r.dirtyMu.Lock()
+	var key ResourceKey
+	found := false
+	for k := range r.dirty {
+		key = k
+		found = true
+		break
+	}
+	if found {
+		delete(r.dirty, key)
+	}
+	more := len(r.dirty) > 0
+	r.dirtyMu.Unlock()
+	if more {
+		select {
+		case r.wake <- struct{}{}:
+		default:
+		}
+	}
+	return key, found
+}
+
+// drainOne pops one key from the dirty set and reconciles it. It returns true
+// when a key was popped (the set may still hold more) and false when the set is
+// empty. Split out of the reconcile loop's wake branch so the pop / paused /
+// dispatch logic is unit-testable; popDirty re-signals wake while keys remain,
+// so the loop calls drainOne once per wake and still drains the whole set. A
+// paused reconciler pops and discards, matching the old channel's
+// consume-and-discard-while-paused behaviour. JAB-369.
+func (r *Reconciler) drainOne(ctx context.Context) bool {
+	key, ok := r.popDirty()
+	if !ok {
+		return false
+	}
+	if r.IsPaused() {
+		r.log.Debug("reconcile one skipped (paused)", "domain_id", key.ID)
+		return true
+	}
+	switch key.Kind {
+	case KindDomain:
+		if err := r.ReconcileOne(ctx, key.ID); err != nil {
+			r.log.Error("reconcile one failed", "domain_id", key.ID, "err", err)
+		}
+	default:
+		// No silent drop: an unhandled kind means a future ResourceKind was
+		// scheduled without a dispatch arm here. Loud so it is caught in test.
+		r.log.Warn("reconcile skipped: unhandled resource kind", "kind", key.Kind, "id", key.ID)
+	}
+	return true
 }
 
 // ReconcileAll diffs the DB against the agent's filesystem state and converges them.
