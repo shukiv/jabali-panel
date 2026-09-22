@@ -21,8 +21,16 @@ func parseListOptions(c *gin.Context, defaultPageSize, maxPageSize int) (page in
 		page = 1
 	}
 	pageSize, _ = strconv.Atoi(c.DefaultQuery("page_size", strconv.Itoa(defaultPageSize)))
-	if pageSize < 1 || pageSize > maxPageSize {
+	// A missing/invalid (<1) size falls back to the default, but an
+	// over-max request clamps DOWN to the max — it must not silently reset
+	// to the (small) default. Selectors legitimately over-request to fill a
+	// dropdown (e.g. page_size=500 vs a max of 200); resetting them to the
+	// default page (20) is why such lists showed only the first page (GH #1796).
+	if pageSize < 1 {
 		pageSize = defaultPageSize
+	}
+	if pageSize > maxPageSize {
+		pageSize = maxPageSize
 	}
 	opts = repository.ListOptions{
 		Offset: (page - 1) * pageSize,
