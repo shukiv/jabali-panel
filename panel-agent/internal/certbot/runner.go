@@ -447,6 +447,21 @@ func ParseCertValidity(pemPath string) (issuedAt, expiresAt time.Time, err error
 	return cert.NotBefore, cert.NotAfter, nil
 }
 
+// ReadLineageCert reads and parses the leaf certificate of the certbot lineage
+// at <leRoot>/live/<certName>/fullchain.pem. A read or parse error (the lineage
+// does not exist, or the PEM is unreadable) is returned as-is; callers treat
+// that as "no usable cert here", never a hard failure. Only real certbot-issued
+// certificates ever live under this path — the self-signed HTTPS fallback is
+// written elsewhere — so a parsed cert here is always a CA-issued one.
+func ReadLineageCert(leRoot, certName string) (*x509.Certificate, error) {
+	certPath := filepath.Join(leRoot, "live", certName, "fullchain.pem")
+	pemBytes, err := os.ReadFile(certPath)
+	if err != nil {
+		return nil, fmt.Errorf("read cert %s: %w", certPath, err)
+	}
+	return parsePEM(pemBytes)
+}
+
 // parsePEM extracts the first certificate from a PEM block.
 func parsePEM(pemBytes []byte) (*x509.Certificate, error) {
 	// Use Go's pem package to decode the PEM block
