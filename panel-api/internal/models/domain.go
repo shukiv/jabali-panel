@@ -251,6 +251,18 @@ type Domain struct {
 	WebDisabled bool `gorm:"column:web_disabled;type:tinyint(1);not null;default:0" json:"web_disabled"`
 	DNSDisabled bool `gorm:"column:dns_disabled;type:tinyint(1);not null;default:0" json:"dns_disabled"`
 
+	// AllowSubdomainDelegation (GH #1812, follow-up to #1789) is this domain
+	// owner's opt-in consent for OTHER tenants to self-service strict
+	// subdomains of this domain. CrossTenantSuffixCollision consults it in the
+	// parent direction only: with the flag set, a differently-owned claim of
+	// X.<this-domain> is allowed instead of blocked as a hijack. Stored on the
+	// PARENT (the consenting owner sets it on their own row); the grant is
+	// parent -> its subdomains only, never "claim a parent over my subdomain".
+	//
+	// Positive-sense but DEFAULT 0 (off): the zero value keeps #1789 fully
+	// enforced for every existing row and every owner who never opts in.
+	AllowSubdomainDelegation bool `gorm:"column:allow_subdomain_delegation;type:tinyint(1);not null;default:0" json:"allow_subdomain_delegation"`
+
 	// DNSApexIPv4 (GH #1540) is the tenant-chosen apex IP for a DNS-only zone
 	// (WebDisabled=true, DNS on). A web-off zone's apex A is not seeded by
 	// BootstrapRecords and not re-asserted by convergeApexAddrRecords (both
