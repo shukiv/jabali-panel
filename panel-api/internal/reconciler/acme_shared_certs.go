@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"strings"
 	"time"
+
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 )
 
 // ACME DNS-01 shared-certificate issuance (wildcards).
@@ -85,6 +87,7 @@ func (r *Reconciler) reconcileAcmeSharedCerts(ctx context.Context) {
 		}
 
 		issueCtx, cancel := context.WithTimeout(ctx, acmeSharedIssueTimeout)
+		attemptStart := time.Now()
 		raw, err := r.agent.Call(issueCtx, "ssl.issue_dns01", map[string]any{
 			"cert_name": cert.ACMELineageName(),
 			"sans":      sans,
@@ -93,6 +96,19 @@ func (r *Reconciler) reconcileAcmeSharedCerts(ctx context.Context) {
 		})
 		cancel()
 		if err != nil {
+			// JAB-407: certbot runs DETACHED from the request context
+			// (exec.Command, not CommandContext), so a panel→agent read timeout
+			// can hide an issuance that actually completed agent-side. Before
+			// recording a failed attempt (which backs the row off and, past the
+			// give-up window, burns toward the daily cap), re-check the lineage:
+			// a FRESH cert covering the SANs means it issued — record success.
+			// Every other outcome falls through to the unchanged failure path.
+			if isAgentDeadlineError(err) {
+				if info, ok := r.confirmDNS01IssuedAfterTimeout(cert.ACMELineageName(), sans, attemptStart); ok {
+					r.recordSharedACMEIssued(ctx, cert, info)
+					continue
+				}
+			}
 			msg := err.Error()
 			if len(msg) > 2048 {
 				msg = msg[:2048]
@@ -126,4 +142,26 @@ func (r *Reconciler) reconcileAcmeSharedCerts(ctx context.Context) {
 		}
 		r.log.Info("acme shared certs: issued", "id", cert.ID, "name", cert.Name, "expires_at", expiresAt.UTC().Format(time.RFC3339))
 	}
+}
+
+// recordSharedACMEIssued records a shared-cert issuance that the agent confirmed
+// via ssl.cert_info after the issue call timed out the panel's socket read
+// (JAB-407). It mirrors the normal success block above — UpdateACMEIssued with
+// the confirmed cert's paths and expiry — so the row lands issued with no failed
+// attempt, no backoff, and no drift toward the daily give-up cap.
+func (r *Reconciler) recordSharedACMEIssued(ctx context.Context, cert *models.SharedCertificate, info sslCertInfoResult) {
+	expiresAt := time.Now().Add(90 * 24 * time.Hour)
+	if t, perr := time.Parse(time.RFC3339, info.NotAfter); perr == nil {
+		expiresAt = t
+	}
+	sansJSON := ""
+	if cert.SANs != nil {
+		sansJSON = *cert.SANs
+	}
+	if uerr := r.sharedCerts.UpdateACMEIssued(ctx, cert.ID, info.CertPath, info.KeyPath, sansJSON, expiresAt, cert.Staging); uerr != nil {
+		r.log.Error("acme shared certs: record post-timeout issuance failed", "id", cert.ID, "err", uerr)
+		return
+	}
+	r.log.Info("acme shared certs: issued (confirmed after panel read timeout — no backoff)",
+		"id", cert.ID, "name", cert.Name, "expires_at", expiresAt.UTC().Format(time.RFC3339))
 }

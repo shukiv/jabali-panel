@@ -112,3 +112,31 @@ func TestSSLCertInfoHandler(t *testing.T) {
 		}
 	}
 }
+
+// TestSSLCertInfoHandler_WildcardSANCovered locks the property the shared-cert
+// re-check depends on (JAB-407): the caller sanitizes the wildcard lineage name
+// to a plain label ("wildcard.preview.example.com"), which passes the cert_name
+// guard, while the *SANs* it asks about still carry the raw "*." form. Those are
+// matched by exact membership against the cert's DNSNames — not re-run through
+// the no-wildcard cert_name regex — so a genuine wildcard cert reports
+// covers_sans=true. If the handler ever validated SANs like cert_name, the fix
+// would be inert on exactly the shared path it was extended to cover.
+func TestSSLCertInfoHandler_WildcardSANCovered(t *testing.T) {
+	orig := sslLERoot
+	tmp := t.TempDir()
+	sslLERoot = tmp
+	t.Cleanup(func() { sslLERoot = orig })
+	// certbot stores a wildcard lineage under the sanitized directory name.
+	writeCertLineage(t, tmp, "wildcard.preview.example.com", []string{"preview.example.com", "*.preview.example.com"})
+
+	resp, err := callCertInfo(t, `{"cert_name":"wildcard.preview.example.com","sans":["preview.example.com","*.preview.example.com"]}`)
+	if err != nil {
+		t.Fatalf("a wildcard SAN in the request must not error: %v", err)
+	}
+	if !resp.Exists {
+		t.Fatal("expected exists=true for the written wildcard lineage")
+	}
+	if !resp.CoversSANs {
+		t.Errorf("expected covers_sans=true for a wildcard cert, dns_names=%v", resp.DNSNames)
+	}
+}
