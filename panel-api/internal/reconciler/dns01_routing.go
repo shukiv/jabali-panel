@@ -3,11 +3,14 @@ package reconciler
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"os"
 	"sync"
 	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/hostedsvc"
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/dnsverify"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dns01"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ssokey"
@@ -152,17 +155,32 @@ func (r *Reconciler) tryDNS01OrPark(ctx context.Context, domain *models.Domain, 
 
 	issueCtx, cancel := context.WithTimeout(ctx, dns01IssueTimeout)
 	defer cancel()
+	sans := []string{domain.Name, "www." + domain.Name}
 	// Same lineage name as the HTTP-01 path (--cert-name <domain>), so the
 	// two methods share one certbot lineage: certbot persists the manual
 	// hooks in the renewal conf and `certbot renew` / ssl.renew keeps
 	// renewing it unattended, whichever method issued last.
+	attemptStart := time.Now()
 	raw, err := r.agent.Call(issueCtx, "ssl.issue_dns01", map[string]any{
 		"cert_name": domain.Name,
-		"sans":      []string{domain.Name, "www." + domain.Name},
+		"sans":      sans,
 		"email":     srv.AdminEmail,
 		"staging":   staging,
 	})
 	if err != nil {
+		// JAB-407: the panel→agent socket read can time out (issueCtx is capped
+		// by the 2-minute per-domain SSL budget) while certbot — which runs
+		// DETACHED from the request context (exec.Command, not CommandContext) —
+		// keeps going and finishes issuing agent-side. A read timeout is
+		// therefore not proof of failure. Re-check the lineage for a FRESH cert
+		// before spending a self-sign fallback + 5-minute backoff + an
+		// acmeMaxRetries tick on an attempt that may have succeeded.
+		if isAgentDeadlineError(err) {
+			if info, ok := r.confirmDNS01IssuedAfterTimeout(domain.Name, sans, attemptStart); ok {
+				r.recordDNS01Issued(ctx, domain, cert, route, info)
+				return
+			}
+		}
 		r.log.Warn("ssl: dns-01 issue failed", "domain", domain.Name, "provider", route.Provider, "zone", route.Zone, "err", err)
 		r.fallbackToSelfSignAndRetry(ctx, domain, cert, firstLine(err.Error()))
 		return
@@ -181,6 +199,125 @@ func (r *Reconciler) tryDNS01OrPark(ctx context.Context, domain *models.Domain, 
 	}
 	_ = r.sslCerts.SetIssueMethod(ctx, cert.ID, issueMethodDNS01)
 	r.log.Info("ssl: issued via dns-01", "domain", domain.Name, "provider", string(route.Provider), "zone", route.Zone, "expires_at", expires.Format(time.RFC3339))
+}
+
+// JAB-407 post-timeout confirmation tunables. Vars, not consts, so tests can
+// shrink the grace/poll to run instantly.
+var (
+	// dns01PostTimeoutGrace bounds how long we keep polling the agent for a cert
+	// that certbot may still be writing after the issue call timed out. certbot
+	// runs detached, so this catches a completion that lands within the grace;
+	// anything slower falls through to the normal self-sign + backoff, and the
+	// backoff retry converges as before — strictly no worse than today.
+	dns01PostTimeoutGrace = 90 * time.Second
+	// dns01PostTimeoutPoll is the gap between cert_info probes during the grace.
+	dns01PostTimeoutPoll = 10 * time.Second
+	// dns01CertInfoTimeout bounds a single ssl.cert_info call (a local file read
+	// on the agent — fast).
+	dns01CertInfoTimeout = 15 * time.Second
+)
+
+// dns01FreshnessSkew is how far before the attempt a confirmed cert's NotBefore
+// may sit and still count as "issued during this attempt". Let's Encrypt
+// backdates NotBefore by up to one hour, and the renewal path reaches the same
+// issuance code with a valid OLD cert already on the lineage (months-old
+// NotBefore); 2h cleanly separates a just-issued cert from a stale one without
+// tripping on LE's backdating.
+const dns01FreshnessSkew = 2 * time.Hour
+
+// sslCertInfoResult mirrors the agent's ssl.cert_info response.
+type sslCertInfoResult struct {
+	Exists     bool     `json:"exists"`
+	NotBefore  string   `json:"not_before"`
+	NotAfter   string   `json:"not_after"`
+	Serial     string   `json:"serial"`
+	DNSNames   []string `json:"dns_names"`
+	CoversSANs bool     `json:"covers_sans"`
+	CertPath   string   `json:"cert_path"`
+	KeyPath    string   `json:"key_path"`
+}
+
+// isAgentDeadlineError reports whether err is the panel→agent read/deadline
+// timeout (the JAB-407 case), as opposed to a real agent-side failure or a
+// reconciler shutdown. A shutdown surfaces as context.Canceled and must NOT
+// trigger the re-check.
+func isAgentDeadlineError(err error) bool {
+	if err == nil || errors.Is(err, context.Canceled) {
+		return false
+	}
+	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, os.ErrDeadlineExceeded)
+}
+
+// confirmDNS01IssuedAfterTimeout polls ssl.cert_info for a bounded grace and
+// returns the cert IFF a FRESH, valid, SAN-covering cert has appeared on the
+// lineage since attemptStart. Every other outcome — no cert yet after the
+// grace, a stale cert (a failed renewal), an agent that does not know the
+// command (version skew), any agent error, or the grace elapsing — returns
+// ok=false, so the caller falls back exactly as before and a genuine failure
+// still ticks the acmeMaxRetries cap and respects Let's Encrypt rate limits.
+//
+// The poll runs on a fresh context.Background(), NOT the reconciler tick ctx:
+// the tick's 2-minute per-domain SSL budget was already consumed by the issue
+// call that just timed out, so a poll bound to it would return instantly and
+// defeat the recovery. The wall-clock grace keeps it bounded regardless.
+func (r *Reconciler) confirmDNS01IssuedAfterTimeout(certName string, sans []string, attemptStart time.Time) (sslCertInfoResult, bool) {
+	deadline := time.Now().Add(dns01PostTimeoutGrace)
+	for {
+		cctx, cancel := context.WithTimeout(context.Background(), dns01CertInfoTimeout)
+		raw, err := r.agent.Call(cctx, "ssl.cert_info", map[string]any{"cert_name": certName, "sans": sans})
+		cancel()
+		if err != nil {
+			var ae *agent.AgentError
+			if errors.As(err, &ae) && ae.Code == agent.CodeUnknownCommand {
+				return sslCertInfoResult{}, false // old agent: can never confirm — fall back now
+			}
+			// transient/other error: keep trying within the grace.
+		} else {
+			var info sslCertInfoResult
+			if json.Unmarshal(raw, &info) == nil && r.dns01CertIsFreshlyIssued(info, attemptStart) {
+				return info, true
+			}
+		}
+		if time.Now().After(deadline) {
+			return sslCertInfoResult{}, false
+		}
+		time.Sleep(dns01PostTimeoutPoll)
+	}
+}
+
+// dns01CertIsFreshlyIssued decides whether info describes a cert this attempt
+// just issued: it exists, covers the requested SANs, is currently valid, and
+// its NotBefore is within dns01FreshnessSkew of the attempt (so a stale cert
+// left by a previous issuance is rejected).
+func (r *Reconciler) dns01CertIsFreshlyIssued(info sslCertInfoResult, attemptStart time.Time) bool {
+	if !info.Exists || !info.CoversSANs {
+		return false
+	}
+	nb, err := time.Parse(time.RFC3339, info.NotBefore)
+	if err != nil {
+		return false
+	}
+	na, err := time.Parse(time.RFC3339, info.NotAfter)
+	if err != nil {
+		return false
+	}
+	return na.After(time.Now()) && nb.After(attemptStart.Add(-dns01FreshnessSkew))
+}
+
+// recordDNS01Issued writes the ssl_certificates row to issued from a cert the
+// agent confirmed after a post-timeout re-check — mirroring the normal success
+// path (dns-01 issue) so the reconciler treats it identically: no backoff, no
+// cap tick, the right cert paths, issue method DNS-01.
+func (r *Reconciler) recordDNS01Issued(ctx context.Context, domain *models.Domain, cert *models.SSLCertificate, route dns01.Route, info sslCertInfoResult) {
+	issued, _ := time.Parse(time.RFC3339, info.NotBefore)
+	expires, _ := time.Parse(time.RFC3339, info.NotAfter)
+	if err := r.sslCerts.UpdateAfterIssuance(ctx, cert.ID, issued, expires, info.CertPath, info.KeyPath); err != nil {
+		r.log.Error("ssl: write dns-01 post-timeout issuance failed", "domain", domain.Name, "err", err)
+		return
+	}
+	_ = r.sslCerts.SetIssueMethod(ctx, cert.ID, issueMethodDNS01)
+	r.log.Info("ssl: dns-01 issue confirmed after panel read timeout — recorded without backoff",
+		"domain", domain.Name, "provider", string(route.Provider), "zone", route.Zone, "expires_at", expires.Format(time.RFC3339))
 }
 
 // dns01 routing state on the Reconciler (fields declared here to keep the
