@@ -92,6 +92,44 @@ func TestCrossTenantSuffixCollision(t *testing.T) {
 			wantClash: false,
 		},
 		{
+			// GH #1812: the differently-owned parent opted into delegation, so a
+			// tenant may self-service a subdomain of it. Without the flag this is
+			// the "parent owned by another tenant clashes" case above — so this
+			// case is RED on the pre-#1812 guard and proves the wiring.
+			name:  "delegated parent (another tenant, opt-in) is allowed",
+			claim: "sub1.example.com",
+			repo: &stubDomainRepo{byName: map[string]*models.Domain{
+				"example.com": {Name: "example.com", UserID: other, AllowSubdomainDelegation: true},
+			}},
+			wantClash: false,
+		},
+		{
+			// Every differently-owned ancestor must independently consent. The
+			// nearer ancestor delegates but the registrable root does not, so the
+			// claim still clashes on the non-delegated root — the walk does NOT
+			// short-circuit on the first delegated ancestor (GH #1812).
+			name:  "mixed chain: nearer parent delegates, root does not — still clashes on root",
+			claim: "c.b.a.com",
+			repo: &stubDomainRepo{byName: map[string]*models.Domain{
+				"b.a.com": {Name: "b.a.com", UserID: other, AllowSubdomainDelegation: true},
+				"a.com":   {Name: "a.com", UserID: other, AllowSubdomainDelegation: false},
+			}},
+			wantHit:   "a.com",
+			wantClash: true,
+		},
+		{
+			// Delegation grants nesting UNDER a domain, never the right to claim a
+			// parent zone OVER another tenant's subdomain. The child direction
+			// ignores the flag entirely, so this stays a clash (GH #1812).
+			name:  "child direction ignores delegation — claiming a parent over another's sub still clashes",
+			claim: "example.com",
+			repo: &stubDomainRepo{subs: []models.Domain{
+				{Name: "secret.example.com", UserID: other, AllowSubdomainDelegation: true},
+			}},
+			wantHit:   "example.com",
+			wantClash: true,
+		},
+		{
 			name:      "no related domains — no clash",
 			claim:     "fresh.example.net",
 			repo:      &stubDomainRepo{},

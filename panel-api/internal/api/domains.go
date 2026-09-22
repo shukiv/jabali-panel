@@ -313,6 +313,12 @@ type updateDomainRequest struct {
 	WebmailEnabled        *bool                    `json:"webmail_enabled,omitempty"`
 	// TempURLEnabled toggles the preview URL vhost block. Owner or admin.
 	TempURLEnabled *bool `json:"temp_url_enabled,omitempty"`
+	// AllowSubdomainDelegation (GH #1812) — the owner's opt-in for other tenants
+	// to self-service strict subdomains of this domain. Owner-settable on their
+	// own row (not admin-only): it only ever WIDENS access to the owner's own
+	// namespace, and CrossTenantSuffixCollision reads it in the parent direction.
+	// Pointer so an absent field leaves the stored value untouched.
+	AllowSubdomainDelegation *bool `json:"allow_subdomain_delegation,omitempty"`
 	// BotChallengeExempt — per-domain opt-out from the server-wide AppSec
 	// bot-detection challenge. ADMIN-ONLY: a tenant must not be able to weaken
 	// the operator's security posture on their own domain. Silently ignored
@@ -1166,6 +1172,12 @@ func (h *domainHandler) update(c *gin.Context) {
 
 	if req.WebmailEnabled != nil {
 		domain.WebmailEnabled = *req.WebmailEnabled
+	}
+	// GH #1812: the owner opts this domain in/out of subdomain delegation. A
+	// plain bool set on the owner's own row; the guard (CrossTenantSuffixCollision)
+	// reads it when another tenant later claims a subdomain of this domain.
+	if req.AllowSubdomainDelegation != nil {
+		domain.AllowSubdomainDelegation = *req.AllowSubdomainDelegation
 	}
 	if req.IndexPriority != nil {
 		p := strings.TrimSpace(*req.IndexPriority)

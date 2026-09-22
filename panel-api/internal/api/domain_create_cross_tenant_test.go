@@ -81,4 +81,19 @@ func TestCreateDomainOp_CrossTenantSuffix(t *testing.T) {
 			t.Fatalf("admin actor must not be gated by the cross-tenant guard, got %+v", oerr)
 		}
 	})
+
+	// GH #1812: the same non-admin claim that is refused in the parent case above
+	// is allowed once the parent's owner opts that domain into subdomain
+	// delegation. Asserts the cross-tenant guard did not trip (other create-path
+	// errors are tolerated, as in the same-owner case) — proving the create door
+	// honors the flag end-to-end, not just the leaf.
+	t.Run("non-admin claim under a DELEGATED parent passes the guard", func(t *testing.T) {
+		seed := map[string]*models.Domain{
+			"example.com": {Name: "example.com", UserID: other, AllowSubdomainDelegation: true},
+		}
+		oerr, _ := runCreate(seed, "sub1.example.com", false)
+		if oerr != nil && oerr.Code == "domain_conflicts_tenant" {
+			t.Fatalf("delegated parent must not trip the cross-tenant guard, got %+v", oerr)
+		}
+	})
 }

@@ -286,6 +286,12 @@ func AliasCollision(ctx context.Context, aliases repository.WebDomainAliasReposi
 // Same-owner matches are ALLOWED: a tenant may freely add subdomains of (or a
 // parent over) their own domains. ownerID is the prospective owner of `name`.
 //
+// Delegated matches are ALLOWED in the PARENT direction only (GH #1812): if a
+// differently-owned ancestor has AllowSubdomainDelegation set, its owner has
+// consented to other tenants nesting under it, so that ancestor is not a clash.
+// The child direction is unaffected — delegation grants nesting UNDER a domain,
+// never the right to claim a parent zone OVER someone else's subdomain.
+//
 // A nil repo means the feature is unwired → no collision (fail-open ONLY when
 // unwired, mirroring AliasCollision). Callers gate this on non-admin: admins are
 // trusted to resolve legitimate cross-tenant delegation.
@@ -307,7 +313,17 @@ func CrossTenantSuffixCollision(ctx context.Context, domains repository.DomainRe
 		d, err := domains.FindByName(ctx, anc)
 		switch {
 		case err == nil:
-			if d != nil && d.UserID != ownerID {
+			// A differently-owned ancestor is a hijack UNLESS its owner opted
+			// that domain into subdomain delegation (GH #1812). The flag lives
+			// on the ancestor row `d` — already loaded here, so no extra lookup
+			// and no new fail-open path; a delegated ancestor is simply skipped.
+			//
+			// We do NOT short-circuit the walk on the first delegated ancestor:
+			// every differently-owned ancestor must independently consent (or be
+			// the claimant's own). So c.b.a.com claimed by a third tenant, where
+			// b.a.com delegates but a.com does not, still clashes on a.com — each
+			// non-delegated ancestor stays protected exactly as #1789 enforces.
+			if d != nil && d.UserID != ownerID && !d.AllowSubdomainDelegation {
 				return anc, true, nil
 			}
 		case errors.Is(err, repository.ErrNotFound):
