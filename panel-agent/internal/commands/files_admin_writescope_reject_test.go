@@ -71,13 +71,21 @@ func TestAdminFileManager_MutatingCommandsRejectOutOfAllowList(t *testing.T) {
 		{"chmod deny-list refused", filesChmodHandler, adm(map[string]any{"path": denyPath, "mode": "0777"}), "read_only"},
 	}
 
+	// JAB-357 AC4: admin_root is now gated on the connecting peer. These cases
+	// verify the JAB-358 write-allow-list (read_only) gate, which sits BEHIND the
+	// peer gate and assumes an already-authorized admin — so stamp an admin-capable
+	// peer identity, exactly as the server does for a connection on -admin-uids.
+	// (The peer gate itself — an UNauthorized caller's admin_root is refused — is
+	// pinned in peeridentity_test.go.)
+	adminCtx := WithPeerIdentity(context.Background(), 0, true, true)
+
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			params, err := json.Marshal(c.params)
 			if err != nil {
 				t.Fatalf("marshal: %v", err)
 			}
-			_, callErr := c.handler(context.Background(), params)
+			_, callErr := c.handler(adminCtx, params)
 			if callErr == nil {
 				t.Fatalf("%s: expected the mutation to be refused, got nil error", c.name)
 			}

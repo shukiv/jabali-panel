@@ -50,6 +50,17 @@ type Config struct {
 	// explicitly opted out, so an empty list never reaches here in production.
 	AllowedUIDs []uint32
 
+	// AdminUIDs lists the Unix UIDs whose connections may assert admin_root
+	// (the root-scoped File Manager, GH #1184). JAB-357 AC4: admin_root is a
+	// capability bound to the connecting peer, not a request flag any socket
+	// caller may set — a command's admin_root=true is honoured only when the
+	// peer's SO_PEERCRED UID is on this list. Empty means NO peer may assert
+	// admin_root. The composition root (cmd/jabali-agent decideAdminUIDs)
+	// defaults this to AllowedUIDs (the panel user + root) when the operator
+	// doesn't set -admin-uids, so the panel keeps working while a stray
+	// co-located service cannot escalate.
+	AdminUIDs []uint32
+
 	// MaxRequestBytes caps a single NDJSON request line. A misbehaving or
 	// malicious client can't drain memory. Default 8 MiB.
 	MaxRequestBytes int
@@ -175,11 +186,18 @@ func (s *Server) serveConn(parent context.Context, conn net.Conn) {
 	defer s.conns.Done()
 	defer func() { _ = conn.Close() }()
 
+	// Resolve the connecting peer's UID once via SO_PEERCRED. It feeds both the
+	// connect allow-list gate below and the admin_root capability stamped onto
+	// the request context (JAB-357 AC4). Resolution failure is fatal only when a
+	// connect gate is configured; when it isn't (the server package's own tests
+	// construct a socket with no gate) the connection proceeds, but with no admin
+	// capability — peerErr != nil ⇒ adminCapable stays false, fail closed.
+	uid, peerErr := peerUID(conn)
+
 	// Peer credential check: verify the connecting process is an allowed UID.
 	if len(s.cfg.AllowedUIDs) > 0 {
-		uid, err := peerUID(conn)
-		if err != nil {
-			s.log.Warn("agent peer check failed", "err", err)
+		if peerErr != nil {
+			s.log.Warn("agent peer check failed", "err", peerErr)
 			s.writeError(conn, "", &agentwire.AgentError{
 				Code:    agentwire.CodePermissionDenied,
 				Message: "peer credential check failed",
@@ -253,6 +271,23 @@ func (s *Server) serveConn(parent context.Context, conn net.Conn) {
 		ctx, cancel = context.WithTimeout(ctx, s.cfg.PerRequestTimeout)
 		defer cancel()
 	}
+
+	// JAB-357 AC4: bind the admin_root capability to the connecting peer. A
+	// command may assert admin_root only when the peer's UID is on the agent's
+	// admin allow-list (AdminUIDs). This is defence in depth behind the panel's
+	// own admin-auth + default-off server-setting gate: even if a co-located
+	// service reached the socket after a connect-gate or unix-group regression,
+	// it cannot escalate to the root file scope by sending admin_root=true.
+	adminCapable := false
+	if peerErr == nil {
+		for _, u := range s.cfg.AdminUIDs {
+			if uid == u {
+				adminCapable = true
+				break
+			}
+		}
+	}
+	ctx = commands.WithPeerIdentity(ctx, uid, peerErr == nil, adminCapable)
 
 	data, agentErr := s.cfg.Registry.Dispatch(ctx, req.Command, req.Params)
 

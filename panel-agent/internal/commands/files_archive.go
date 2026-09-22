@@ -204,7 +204,7 @@ func filesArchiveHandler(ctx context.Context, params json.RawMessage) (any, erro
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "at least one path required"}
 	}
 
-	scope, err := fileScopeFor(p.UserID, p.Username, p.AdminRoot)
+	scope, err := fileScopeFor(ctx, p.UserID, p.Username, p.AdminRoot)
 	if err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInvalidArgument,

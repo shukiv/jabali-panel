@@ -82,7 +82,7 @@ func filesExtractHandler(ctx context.Context, params json.RawMessage) (any, erro
 // extractor reports progress into it (GH #1392 async path); nil = the sync
 // handler above.
 func runExtract(ctx context.Context, p filesExtractParams, job *fileJob) (any, error) {
-	scope, err := fileScopeFor(p.UserID, p.Username, p.AdminRoot)
+	scope, err := fileScopeFor(ctx, p.UserID, p.Username, p.AdminRoot)
 	if err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("failed to create scope: %v", err)}
 	}
@@ -114,7 +114,7 @@ func runExtract(ctx context.Context, p filesExtractParams, job *fileJob) (any, e
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "destination is not a directory"}
 	}
 
-	uid, gid := fileOwnerIDs(p.Username, p.AdminRoot)
+	uid, gid := fileOwnerIDs(ctx, p.Username, p.AdminRoot)
 
 	// SECURITY (Gitea #423 write side / #424): every extracted entry is created
 	// relative to an escape-proof destDir fd (openat/mkdirat O_NOFOLLOW per
@@ -420,7 +420,7 @@ func hostingIDs(username string) (int, int) {
 // large archive can't block the HTTP request past a proxy timeout and the UI can
 // poll files.job.status for a progress bar. Same params + defenses as the
 // synchronous files.extract.
-func filesExtractStartHandler(_ context.Context, params json.RawMessage) (any, error) {
+func filesExtractStartHandler(ctx context.Context, params json.RawMessage) (any, error) {
 	var p filesExtractParams
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: fmt.Sprintf("failed to parse params: %v", err)}
@@ -432,10 +432,17 @@ func filesExtractStartHandler(_ context.Context, params json.RawMessage) (any, e
 	if err != nil {
 		return nil, err
 	}
+	// JAB-357 AC4: extract builds its scope inside runExtract, which here runs in
+	// the detached goroutine below. Carry the connecting peer's identity onto that
+	// goroutine's context so the admin_root capability gate in fileScopeFor is
+	// evaluated with the SAME authorization the request was admitted with. We copy
+	// only the identity — not the request's deadline — onto a fresh Background so
+	// the long extraction is still not cancelled when the start call returns. An
+	// unauthorized peer that spoofs admin_root=true therefore fails the job closed
+	// (permission_denied), never silently gets the root scope.
+	jobCtx := withPeerIdentityFrom(context.Background(), ctx)
 	go func() {
-		// Detached from the request context (which ends when the start call
-		// returns): runExtract caps its own wall-clock at extractWallClockBudget.
-		res, rerr := runExtract(context.Background(), p, job)
+		res, rerr := runExtract(jobCtx, p, job)
 		if rerr != nil {
 			msg := "extract failed"
 			if ae, ok := rerr.(*agentwire.AgentError); ok && ae.Message != "" {

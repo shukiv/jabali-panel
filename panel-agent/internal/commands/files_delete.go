@@ -48,7 +48,7 @@ func filesDeleteHandler(ctx context.Context, params json.RawMessage) (any, error
 	}
 
 	// Create filesafe scope with user's home directory
-	scope, err := fileScopeFor(p.UserID, p.Username, p.AdminRoot)
+	scope, err := fileScopeFor(ctx, p.UserID, p.Username, p.AdminRoot)
 	if err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInvalidArgument,

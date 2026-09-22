@@ -81,9 +81,15 @@ func main() {
 		// an Environment= drop-in would be exactly the silent channel this hardening
 		// closes. The "insecure-" name is the documentation — no prod unit carries it.
 		insecureAllowAny = flag.Bool("insecure-allow-any-uid", false, "disable the main socket SO_PEERCRED gate (out-of-systemd test runs only; never in production)")
-		timeout          = flag.Duration("timeout", defaultTimeout, "per-request wall-clock timeout (when caller sets no deadline)")
-		logFormat        = flag.String("log-format", envOr("JABALI_AGENT_LOG_FORMAT", "json"), "json|text")
-		logLevel         = flag.String("log-level", envOr("JABALI_AGENT_LOG_LEVEL", "info"), "debug|info|warn|error")
+		// adminUIDs is the JAB-357 AC4 allow-list: which connecting peers may
+		// assert admin_root (the root-scoped File Manager). Unset defaults to the
+		// connect allow-list (-allowed-uids = panel user + root), so the admin
+		// File Manager keeps working with no extra config; a non-blank list that
+		// parses to zero UIDs is fatal (garbage is never a deliberate grant).
+		adminUIDs = flag.String("admin-uids", envOr("JABALI_AGENT_ADMIN_UIDS", ""), "comma-separated UIDs whose connections may assert admin_root (root-scoped File Manager); empty defaults to -allowed-uids")
+		timeout   = flag.Duration("timeout", defaultTimeout, "per-request wall-clock timeout (when caller sets no deadline)")
+		logFormat = flag.String("log-format", envOr("JABALI_AGENT_LOG_FORMAT", "json"), "json|text")
+		logLevel  = flag.String("log-level", envOr("JABALI_AGENT_LOG_LEVEL", "info"), "debug|info|warn|error")
 	)
 	flag.Parse()
 
@@ -128,11 +134,23 @@ func main() {
 		log.Warn("agent main socket SO_PEERCRED gate DISABLED via -insecure-allow-any-uid — any local UID with socket access may connect (test runs only)")
 	}
 
+	adminUID, err := decideAdminUIDs(*adminUIDs, allowUID)
+	if err != nil {
+		log.Error("agent admin_root peer allow-list misconfigured", "err", err)
+		os.Exit(2)
+	}
+	if len(adminUID) > 0 {
+		log.Info("agent admin_root peer allow-list active", "admin_uids", adminUID)
+	} else {
+		log.Warn("agent admin_root peer allow-list EMPTY — no connecting peer may assert admin_root; the root-scoped File Manager is disabled (set -admin-uids or -allowed-uids)")
+	}
+
 	srv, err := server.New(server.Config{
 		SocketPath:        *socketPath,
 		SocketMode:        0660,
 		SocketOwnerGID:    *socketGID,
 		AllowedUIDs:       allowUID,
+		AdminUIDs:         adminUID,
 		PerRequestTimeout: *timeout,
 		Logger:            log,
 	})
@@ -261,6 +279,36 @@ func decideUIDGate(rawAllowed string, insecureAllowAny bool) ([]uint32, error) {
 		return nil, errors.New("refusing to serve the main agent socket without a SO_PEERCRED allow-list; set -allowed-uids (install.sh does) or pass -insecure-allow-any-uid for out-of-systemd test runs only")
 	}
 	return nil, nil
+}
+
+// decideAdminUIDs resolves which connecting peers may assert admin_root (the
+// root-scoped File Manager, GH #1184) at startup (JAB-357 AC4). Like
+// decideUIDGate it fails closed on garbage, but its blank case DEFAULTS rather
+// than errors, because a broad connect allow-list already exists:
+//
+//   - a list that parses to one or more UIDs → exactly those peers;
+//   - a NON-BLANK list that parses to zero UIDs (every entry malformed) → fatal;
+//     the operator meant to restrict admin_root and mistyped it, and garbage is
+//     never a deliberate "grant these", so we refuse to guess;
+//   - a blank/unset list → default to the connect allow-list (panel user +
+//     root). When that too is empty (-insecure-allow-any-uid with no
+//     -allowed-uids) the admin set is empty and NO peer may assert admin_root —
+//     fail closed; a dev who needs the admin File Manager in that mode passes
+//     -admin-uids explicitly.
+//
+// The server enforces this per request: a command's admin_root=true is honoured
+// only when the connecting peer's SO_PEERCRED UID is in the returned set.
+func decideAdminUIDs(rawAdmin string, allowed []uint32) ([]uint32, error) {
+	uids := parseUIDList(rawAdmin)
+	if len(uids) > 0 {
+		return uids, nil
+	}
+	for _, part := range strings.Split(rawAdmin, ",") {
+		if strings.TrimSpace(part) != "" {
+			return nil, fmt.Errorf("-admin-uids %q was set but no valid UID parsed; refusing to guess which peers may assert admin_root", rawAdmin)
+		}
+	}
+	return allowed, nil
 }
 
 // envOr returns the env var if set + non-empty, else fallback. Tiny helper

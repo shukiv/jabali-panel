@@ -67,7 +67,7 @@ func filesIngestHandler(ctx context.Context, params json.RawMessage) (any, error
 		}
 	}
 
-	scope, err := fileScopeFor(p.UserID, p.Username, p.AdminRoot)
+	scope, err := fileScopeFor(ctx, p.UserID, p.Username, p.AdminRoot)
 	if err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInvalidArgument,
@@ -117,7 +117,7 @@ func filesIngestHandler(ctx context.Context, params json.RawMessage) (any, error
 		}
 	}
 
-	uid, gid := fileOwnerIDs(p.Username, p.AdminRoot)
+	uid, gid := fileOwnerIDs(ctx, p.Username, p.AdminRoot)
 
 	// Try rename first — same filesystem, atomic. The destination parent is an
 	// openat2 fd; the source is the trusted staging file (renameat AT_FDCWD).
