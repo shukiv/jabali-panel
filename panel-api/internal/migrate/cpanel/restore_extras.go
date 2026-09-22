@@ -177,6 +177,16 @@ func ImportExtras(
 				// find the source mailbox; skip the line when no
 				// matching panel mailbox exists (cpanel allows forwards
 				// without a local mailbox, jabali doesn't).
+				// A source whose target set includes its own address uses the
+				// cpanel "keep a local copy" idiom (forward out AND deliver
+				// locally). Map that to KeepCopy on the source's external rows;
+				// the self entry itself is not a forward destination.
+				keepCopyLocal := map[string]bool{}
+				for _, f := range fwds {
+					if strings.EqualFold(f.Target, f.Local+"@"+domName) {
+						keepCopyLocal[f.Local] = true
+					}
+				}
 				for _, f := range fwds {
 					if mailboxesRepo == nil || forwardersRepo == nil {
 						res.Skipped = append(res.Skipped, "forwarders_skip:repos_unwired")
@@ -188,6 +198,10 @@ func ImportExtras(
 						continue
 					}
 					srcEmail := local + "@" + domName
+					if strings.EqualFold(target, srcEmail) {
+						// keep-copy marker, folded into keepCopyLocal above.
+						continue
+					}
 					mb, mErr := mailboxesRepo.FindByEmail(ctx, srcEmail)
 					if mErr != nil || mb == nil {
 						res.ForwardersOrphaned++
@@ -206,6 +220,7 @@ func ImportExtras(
 						// for aliases: two external forwards off the same source local
 						// (or a later same-local alias) then collide and get dropped.
 						Target:    target,
+						KeepCopy:  keepCopyLocal[local],
 						Enabled:   preserveMailRouting, // JAB-46: inert unless opted in
 						ManagedBy: "m35",
 					}
@@ -711,7 +726,24 @@ func parseAliases(path string) (string, []aliasForward, []string) {
 		if at := strings.IndexByte(key, '@'); at > 0 {
 			key = key[:at]
 		}
-		forwards = append(forwards, aliasForward{Local: key, Target: val})
+		// A cpanel valias line can list several comma-separated targets:
+		//   sales: a@x.org, b@y.org
+		// Emit one forward per target so each becomes its own external row
+		// (uq_external_forward keys on target). A single combined string would
+		// otherwise be persisted as one malformed Sieve `redirect`.
+		for _, tgt := range strings.Split(val, ",") {
+			tgt = strings.Trim(strings.TrimSpace(tgt), `"'`)
+			if tgt == "" {
+				continue
+			}
+			// Skip exim pipe / `:fail:`-style directives (operator-specific);
+			// jabali only models plain address redirects.
+			if strings.HasPrefix(tgt, "|") || strings.HasPrefix(tgt, ":") {
+				warnings = append(warnings, fmt.Sprintf("exim_directive:%s:%s", key, tgt))
+				continue
+			}
+			forwards = append(forwards, aliasForward{Local: key, Target: tgt})
+		}
 	}
 	if err := sc.Err(); err != nil {
 		warnings = append(warnings, fmt.Sprintf("aliases_scan_err:%s:%v", path, err))
