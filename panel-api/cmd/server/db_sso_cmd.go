@@ -85,7 +85,7 @@ func newDBSSOCmd() *cobra.Command {
 					auditCLIIssuance(auditLog, db.UserID, db.ID, engine, "", "unknown_engine")
 					return fmt.Errorf("unsupported engine %q", engine)
 				}
-				auditCLIIssuance(auditLog, db.UserID, db.ID, engine, "", "ensure_shadow_fail")
+				auditCLIIssuance(auditLog, db.UserID, db.ID, engine, "", dbconsoleops.OutcomeEnsureShadowFail)
 				return fmt.Errorf("ensure shadow account: %w", err)
 			}
 

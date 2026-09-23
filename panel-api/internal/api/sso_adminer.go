@@ -100,7 +100,7 @@ func (h *ssoAdminerHandler) issueSSOToken(c *gin.Context) {
 			return
 		}
 		h.cfg.Log.ErrorContext(ctx, "ensure shadow failed", "err", err)
-		h.audit(ctx, claims.UserID, req.DatabaseID, "", engine, "ensure_shadow_fail")
+		h.audit(ctx, claims.UserID, req.DatabaseID, "", engine, dbconsoleops.OutcomeEnsureShadowFail)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
