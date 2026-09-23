@@ -1,0 +1,71 @@
+package dbconsoleops
+
+import "context"
+
+// Console issuance — the single place that owns "mint a single-use token, derive
+// its audit hash-prefix, and build the matching redirect URL" for a DB-console
+// SSO handoff (JAB-348 AC1/AC2). Every adapter (tenant phpMyAdmin/Adminer, the
+// privileged admin-all door, and the operator CLI) goes through these leaves, so
+// the token minter and the redirect builder can never be paired wrongly — an
+// Adminer token always gets an Adminer redirect, a phpMyAdmin token always gets a
+// phpMyAdmin redirect (the AC3 "scope encoded identically across adapters"
+// invariant). Authentication, ownership, shadow-account provisioning, and the
+// per-door audit sink stay adapter-local (ADR-0083); only the issuance tail moves
+// here.
+
+// OutcomeIssued / OutcomeMintFail / OutcomeEnsureShadowFail are the canonical
+// audit-outcome strings for a DB-console issuance. They give every adapter one
+// taxonomy to draw from for the issuance path instead of hand-typed literals
+// (JAB-348 AC1/AC5). The values are exactly the strings the Adminer and CLI doors
+// already emit, so adopting the constants changes no audit output.
+const (
+	OutcomeIssued           = "issued"
+	OutcomeMintFail         = "mint_fail"
+	OutcomeEnsureShadowFail = "ensure_shadow_fail"
+)
+
+// PhpMyAdminMinter is the minimal mint surface the phpMyAdmin console leaf needs.
+// *sso.Service satisfies it.
+type PhpMyAdminMinter interface {
+	MintToken(ctx context.Context, userID, databaseID, dbName string) (string, error)
+}
+
+// AdminerMinter is the minimal mint surface the Adminer console leaf needs.
+// *sso.AdminerService satisfies it.
+type AdminerMinter interface {
+	MintAdminerToken(ctx context.Context, userID, databaseID, engine string) (string, error)
+}
+
+// IssuePhpMyAdminLogin mints a single-use phpMyAdmin token for (userID,
+// databaseID) and returns the phpMyAdmin login URL under baseURL plus the audit
+// hash-prefix for that token. dbName is the scope label carried in the redirect
+// (empty for the admin-all door, which mints against a sentinel databaseID). On a
+// mint failure the underlying sso error is returned and loginURL/hashPrefix are
+// empty (the caller maps that to OutcomeMintFail).
+func IssuePhpMyAdminLogin(
+	ctx context.Context,
+	m PhpMyAdminMinter,
+	userID, databaseID, dbName, baseURL string,
+) (loginURL, hashPrefix string, err error) {
+	token, err := m.MintToken(ctx, userID, databaseID, dbName)
+	if err != nil {
+		return "", "", err
+	}
+	return PhpMyAdminRedirect(baseURL, token, dbName), TokenAuditPrefix(token), nil
+}
+
+// IssueAdminerLogin mints a single-use Adminer token for (userID, databaseID) on
+// the given engine and returns the Adminer login URL under baseURL plus the audit
+// hash-prefix. On a mint failure the underlying sso error is returned and
+// loginURL/hashPrefix are empty (the caller maps that to OutcomeMintFail).
+func IssueAdminerLogin(
+	ctx context.Context,
+	m AdminerMinter,
+	userID, databaseID, dbName, engine, baseURL string,
+) (loginURL, hashPrefix string, err error) {
+	token, err := m.MintAdminerToken(ctx, userID, databaseID, engine)
+	if err != nil {
+		return "", "", err
+	}
+	return AdminerRedirect(baseURL, token, dbName, engine), TokenAuditPrefix(token), nil
+}

@@ -85,35 +85,35 @@ func newDBSSOCmd() *cobra.Command {
 					auditCLIIssuance(auditLog, db.UserID, db.ID, engine, "", "unknown_engine")
 					return fmt.Errorf("unsupported engine %q", engine)
 				}
-				auditCLIIssuance(auditLog, db.UserID, db.ID, engine, "", "ensure_shadow_fail")
+				auditCLIIssuance(auditLog, db.UserID, db.ID, engine, "", dbconsoleops.OutcomeEnsureShadowFail)
 				return fmt.Errorf("ensure shadow account: %w", err)
 			}
 
+			// Route each engine to its console via the shared issuance leaves so
+			// the CLI mints and builds redirects identically to the REST doors
+			// (JAB-348 AC1/AC2/AC3): mariadb -> phpMyAdmin console, postgres ->
+			// Adminer console. The engine->console routing is the CLI's policy;
+			// the mint<->redirect pairing (and the audit hash-prefix) live in
+			// dbconsoleops so no door can drift.
 			var loginURL, hashPrefix string
 			switch engine {
 			case "mariadb":
-				token, err := base.MintToken(ctx, db.UserID, db.ID, db.Name)
-				if err != nil {
-					auditCLIIssuance(auditLog, db.UserID, db.ID, engine, "", "mint_fail")
-					return fmt.Errorf("mint token: %w", err)
-				}
-				hashPrefix = dbconsoleops.TokenAuditPrefix(token)
-				loginURL = dbconsoleops.PhpMyAdminRedirect(phpMyAdminBaseURLForCLI(), token, db.Name)
+				loginURL, hashPrefix, err = dbconsoleops.IssuePhpMyAdminLogin(
+					ctx, base, db.UserID, db.ID, db.Name, phpMyAdminBaseURLForCLI())
 			case "postgres":
-				token, err := adminer.MintAdminerToken(ctx, db.UserID, db.ID, "postgres")
-				if err != nil {
-					auditCLIIssuance(auditLog, db.UserID, db.ID, engine, "", "mint_fail")
-					return fmt.Errorf("mint token: %w", err)
-				}
-				hashPrefix = dbconsoleops.TokenAuditPrefix(token)
-				loginURL = dbconsoleops.AdminerRedirect(adminerBaseURLForCLI(), token, db.Name, "postgres")
+				loginURL, hashPrefix, err = dbconsoleops.IssueAdminerLogin(
+					ctx, adminer, db.UserID, db.ID, db.Name, "postgres", adminerBaseURLForCLI())
+			}
+			if err != nil {
+				auditCLIIssuance(auditLog, db.UserID, db.ID, engine, "", dbconsoleops.OutcomeMintFail)
+				return fmt.Errorf("mint token: %w", err)
 			}
 
 			// Audit the successful issuance — hash-prefix only, never the token —
 			// so a CLI-minted SSO handoff is auditable in the journal like the
 			// REST doors (JAB-348 AC5). The token still leaves via stdout; that
 			// is the deliverable, not an audit record.
-			auditCLIIssuance(auditLog, db.UserID, db.ID, engine, hashPrefix, "issued")
+			auditCLIIssuance(auditLog, db.UserID, db.ID, engine, hashPrefix, dbconsoleops.OutcomeIssued)
 
 			if jsonOutput {
 				return printJSON(map[string]string{

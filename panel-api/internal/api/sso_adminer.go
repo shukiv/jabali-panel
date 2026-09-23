@@ -100,36 +100,29 @@ func (h *ssoAdminerHandler) issueSSOToken(c *gin.Context) {
 			return
 		}
 		h.cfg.Log.ErrorContext(ctx, "ensure shadow failed", "err", err)
-		h.audit(ctx, claims.UserID, req.DatabaseID, "", engine, "ensure_shadow_fail")
+		h.audit(ctx, claims.UserID, req.DatabaseID, "", engine, dbconsoleops.OutcomeEnsureShadowFail)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
 
-	token, err := h.cfg.Adminer.MintAdminerToken(ctx, claims.UserID, req.DatabaseID, engine)
+	// One shared leaf owns mint -> audit hash-prefix -> redirect, so the Adminer
+	// token and the Adminer redirect can never drift apart from the phpMyAdmin,
+	// privileged, and CLI doors (JAB-348 AC1/AC2/AC3). Base-URL resolution stays
+	// adapter-local. The hash-prefix is the first 4 bytes of SHA-256 over the
+	// DECODED token bytes (dbconsoleops.TokenAuditPrefix) — the same digest the
+	// validate side derives, so "issued" and "validated"/"unauthorized" lines for
+	// one token share a value to grep for.
+	loginURL, hashPrefix, err := dbconsoleops.IssueAdminerLogin(
+		ctx, h.cfg.Adminer, claims.UserID, req.DatabaseID, db.Name, engine, h.getAdminerBaseURL(c))
 	if err != nil {
 		h.cfg.Log.ErrorContext(ctx, "mint adminer token failed", "err", err)
-		h.audit(ctx, claims.UserID, req.DatabaseID, "", engine, "mint_fail")
+		h.audit(ctx, claims.UserID, req.DatabaseID, "", engine, dbconsoleops.OutcomeMintFail)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
-	// Hash the DECODED token bytes with the same prefix length the validate
-	// handler uses, so "issued" and "validated"/"unauthorized" lines for one
-	// token share a prefix and can actually be correlated.
-	//
-	// This previously hashed the base64url STRING and logged 8 bytes, while
-	// validate hashes the raw bytes and logs 4 — a different digest at a
-	// different length, so the two halves of the SSO audit chain could never
-	// be joined. Not exploitable, but it broke the trail exactly when it
-	// matters: during an incident.
-	hashPrefix := ssoTokenHashPrefix(token)
-	h.audit(ctx, claims.UserID, req.DatabaseID, hashPrefix, engine, "issued")
+	h.audit(ctx, claims.UserID, req.DatabaseID, hashPrefix, engine, dbconsoleops.OutcomeIssued)
 
-	// Route redirect construction through the shared DB-console leaf so the
-	// database+engine scope is encoded identically to the CLI and privileged
-	// doors (JAB-348 AC1/AC3). Base-URL resolution stays adapter-local.
-	c.JSON(http.StatusOK, ssoAdminerResponse{
-		RedirectURL: dbconsoleops.AdminerRedirect(h.getAdminerBaseURL(c), token, db.Name, engine),
-	})
+	c.JSON(http.StatusOK, ssoAdminerResponse{RedirectURL: loginURL})
 }
 
 func (h *ssoAdminerHandler) getAdminerBaseURL(c *gin.Context) string {

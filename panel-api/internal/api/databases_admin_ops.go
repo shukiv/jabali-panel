@@ -437,19 +437,20 @@ func (h *databaseAdminOpsHandler) ssoPhpMyAdminAdmin(c *gin.Context) {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_failed"})
 		return
 	}
-	token, err := h.cfg.SSO.MintToken(ctx, claims.UserID, ssoAdminAllSentinel, "")
+	// Admin-all console: mint + redirect via the shared phpMyAdmin console leaf
+	// (JAB-348 AC1/AC2), with the admin-all sentinel as the database id and an
+	// empty scope label, so the leaf emits a token-only URL byte-identical to the
+	// previous inline construction. This door keeps its own audit taxonomy
+	// (ok/error + reason), distinct from the tenant issuance outcomes, so the
+	// leaf's returned hash-prefix is not used here.
+	loginURL, _, err := dbconsoleops.IssuePhpMyAdminLogin(ctx, h.cfg.SSO, claims.UserID, ssoAdminAllSentinel, "", panelBaseURL(c))
 	if err != nil {
 		h.audit(ctx, claims.UserID, "mariadb", "sso.admin", "phpmyadmin", "error", "mint failed")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
 	h.audit(ctx, claims.UserID, "mariadb", "sso.admin", "phpmyadmin", "ok", "scope=admin")
-	// Admin-all console: no single database in scope, so db is empty and the
-	// leaf emits a token-only URL (byte-identical to the previous inline
-	// construction). Shared with the tenant + CLI doors (JAB-348 AC1/AC3).
-	c.JSON(http.StatusOK, ssoRedirectResponse{
-		RedirectURL: dbconsoleops.PhpMyAdminRedirect(panelBaseURL(c), token, ""),
-	})
+	c.JSON(http.StatusOK, ssoRedirectResponse{RedirectURL: loginURL})
 }
 
 // ---- M46 Step 6: show processes + kill (ADR-0100) ----
