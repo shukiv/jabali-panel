@@ -13639,7 +13639,16 @@ print(sql[0]["id"] if sql else "")' 2>/dev/null || true)"
     # recipient/delivery lookup while queryLogin (auth) still returns them —
     # so a send-only account can submit mail but inbound gets a 550 (no valid
     # recipient) and nothing is ever stored. Same gate shape as is_disabled.
-    local query_recipient="SELECT m.email_cached, m.password_hash FROM (SELECT ? AS lookup) input JOIN mailboxes m ON m.is_disabled = 0 AND m.send_only = 0 AND (m.email_cached = input.lookup OR m.id = (SELECT f.mailbox_id FROM email_forwarders f JOIN domains d ON d.id = f.domain_id WHERE f.enabled = 1 AND f.type = 'alias' AND f.mailbox_id IS NOT NULL AND CONCAT(f.local_part, '@', d.name) = input.lookup LIMIT 1))"
+    # GH #1818: this converger is authoritative (ADR-0073 — it overwrites the
+    # x:Directory query fields on every install/update, so the apply-plan base
+    # never wins on an existing box). It previously lacked the mail_groups
+    # member-expansion that apply-plan gained in M51 (712ca9587), so a message to
+    # group@domain resolved to zero rows and Stalwart returned 550 on every
+    # installed host. Keep this byte-identical to apply-plan.json.tmpl's
+    # queryRecipient: mailboxes (is_disabled=0, send_only=0) + mail_groups
+    # member fan-out (has_mailbox=1, member not disabled/send-only) + alias
+    # forwarder resolution. GH #371 send_only=0 is preserved in both branches.
+    local query_recipient="SELECT u.email_cached, u.password_hash FROM (SELECT ? AS lookup) input JOIN (SELECT m.email_cached AS email_cached, m.password_hash AS password_hash, m.email_cached AS match_key FROM mailboxes m WHERE m.is_disabled = 0 AND m.send_only = 0 UNION ALL SELECT mb.email_cached, mb.password_hash, g.email_cached AS match_key FROM mail_groups g JOIN mail_group_members gm ON gm.group_id = g.id JOIN mailboxes mb ON mb.id = gm.mailbox_id WHERE g.has_mailbox = 1 AND mb.is_disabled = 0 AND mb.send_only = 0) u ON (u.match_key = input.lookup OR u.email_cached = (SELECT mb2.email_cached FROM email_forwarders f JOIN domains d ON d.id = f.domain_id JOIN mailboxes mb2 ON mb2.id = f.mailbox_id WHERE f.enabled = 1 AND f.type = 'alias' AND f.mailbox_id IS NOT NULL AND CONCAT(f.local_part, '@', d.name) = input.lookup LIMIT 1))"
     local query_aliases="SELECT CONCAT(f.local_part, '@', d.name) AS alias FROM email_forwarders f JOIN domains d ON d.id = f.domain_id JOIN mailboxes m ON m.id = f.mailbox_id WHERE f.enabled = 1 AND f.type = 'alias' AND m.email_cached = ?"
     local patch_json
     patch_json="$(python3 -c 'import json,sys; print(json.dumps({"queryRecipient": sys.argv[1], "queryEmailAliases": sys.argv[2]}))' "$query_recipient" "$query_aliases")"
