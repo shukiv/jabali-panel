@@ -201,9 +201,12 @@ for every served slice.
 **Invariant — stale data is display-only.** The aggregator feeds
 `synthesizeAlerts` a *fresh-only* map (freshly fetched slices), never the results
 map that now also carries stale bodies, so a stale snapshot can neither raise a
-phantom outage nor mask a real one. `errors[slice]` now means "last refresh
-failed" with the slice still present (previously an error implied the slice was
-absent); `meta[slice].stale` means "this body is last-good". The panel-ui
+phantom outage nor mask a real one. `errors[slice]` means the last refresh
+failed; the slice body is **absent** on a hard failure (no last-good value
+within the `ttl + maxStale` window, matching the pre-JAB-373 best-effort
+contract) and **present** only when `meta[slice].stale` is also set — i.e. a
+last-good body is being served. `meta[slice].stale` means "this body is
+last-good". The panel-ui
 `StaleSlicesNotice` on the Server Status page consumes `meta.stale` to name the
 slices showing last-known values (with each one's `observed_at` on hover); it is
 likewise display-only and never derives an alert.
