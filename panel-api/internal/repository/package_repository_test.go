@@ -120,6 +120,23 @@ func TestPackage_Update_PersistsWebmailEnabled(t *testing.T) {
 	updatePersistsColumn(t, "webmail_enabled")
 }
 
+// GH #1798: the per-package egress allowances go through the same Select-
+// allowlist Update. Missing from the allowlist, the admin's SSH-out / ICMP
+// toggles would save-with-success and revert on reload — the silent-drop class
+// again. Falsify by removing the column from the Update Select list in
+// package_repository.go: it vanishes from the SQL and these go RED.
+func TestPackage_Update_PersistsEgressSSHOut(t *testing.T) {
+	updatePersistsColumn(t, "egress_ssh_out")
+}
+
+func TestPackage_Update_PersistsEgressSSHOutCIDRs(t *testing.T) {
+	updatePersistsColumn(t, "egress_ssh_out_cidrs")
+}
+
+func TestPackage_Update_PersistsEgressICMP(t *testing.T) {
+	updatePersistsColumn(t, "egress_icmp")
+}
+
 // GH #1628: webmail defaults ON, so the column carries DEFAULT 1. If the model
 // field also kept a `default:1` GORM tag, GORM's create callback would
 // substitute that default for an explicit false (zero value) AND write it back

@@ -1,15 +1,15 @@
 package commands
 
 import (
-	osuser "os/user"
-	"log/slog"
-	"net"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log/slog"
+	"net"
 	"os"
+	osuser "os/user"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -45,6 +45,9 @@ type userEgressApplyUser struct {
 	Username     string                 `json:"username"`
 	State        string                 `json:"state"`
 	AllowedExtra []userEgressApplyExtra `json:"allowed_extra"`
+	// AllowPing (GH #1798) permits ICMP/ICMPv6 echo-request (ping) out for this
+	// user's enforced/learning chain. Absent/false = ping stays blocked.
+	AllowPing bool `json:"allow_ping,omitempty"`
 }
 
 type userEgressApplyExtra struct {
@@ -62,14 +65,14 @@ type userEgressApplyDefaults struct {
 }
 
 type userEgressApplyResponse struct {
-	Applied        bool   `json:"applied"`
-	UsersEmitted   int    `json:"users_emitted"`
-	UsersSkipped   int      `json:"users_skipped"`
+	Applied      bool `json:"applied"`
+	UsersEmitted int  `json:"users_emitted"`
+	UsersSkipped int  `json:"users_skipped"`
 	// GH #708: enforced users whose slice was missing -> egress NOT enforced.
-	UsersFailOpen  []string `json:"users_fail_open,omitempty"`
-	TableVersion   string `json:"table_version"`
-	NoChange       bool   `json:"no_change,omitempty"`
-	BytesWritten   int    `json:"bytes_written,omitempty"`
+	UsersFailOpen []string `json:"users_fail_open,omitempty"`
+	TableVersion  string   `json:"table_version"`
+	NoChange      bool     `json:"no_change,omitempty"`
+	BytesWritten  int      `json:"bytes_written,omitempty"`
 }
 
 func userEgressApplyHandler(ctx context.Context, params json.RawMessage) (any, error) {
@@ -147,6 +150,7 @@ func userEgressApplyHandler(ctx context.Context, params json.RawMessage) (any, e
 		}
 		users = append(users, EgressUser{
 			Username: u.Username, State: u.State, UID: uid, AllowedExtra: extras,
+			AllowPing: u.AllowPing,
 		})
 	}
 
@@ -220,8 +224,8 @@ func userEgressApplyHandler(ctx context.Context, params json.RawMessage) (any, e
 		UsersEmitted:  usersEmitted,
 		UsersSkipped:  usersSkipped,
 		UsersFailOpen: failOpen,
-		TableVersion: version,
-		BytesWritten: len(content),
+		TableVersion:  version,
+		BytesWritten:  len(content),
 	}
 	if string(existing) == content {
 		resp.Applied = true

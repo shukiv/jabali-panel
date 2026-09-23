@@ -30,6 +30,33 @@ func TestUserEgressPolicy_EnsureDefault_NoOpWhenExisting(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// GH #1798: ListAllForReconcile must LEFT JOIN hosting_packages (so a NULL-
+// package user keeps their policy row) and COALESCE the flags to the DENY
+// defaults. An INNER JOIN here would silently drop NULL-package users from the
+// reconcile list — their egress would stop being enforced (fail OPEN). This
+// pins both the LEFT JOIN and the COALESCE in the emitted SQL. Falsify by
+// switching LEFT→INNER or dropping COALESCE in user_egress_policy_repository.go.
+func TestUserEgressPolicy_ListAllForReconcile_LeftJoinsPackageCoalesced(t *testing.T) {
+	db, mock, raw := newMockBackupDB(t)
+	defer raw.Close()
+	repo := NewUserEgressPolicyRepository(db)
+
+	rows := sqlmock.NewRows([]string{
+		"user_id", "username", "uid", "state", "allowed_extra",
+		"learning_started_at", "egress_ssh_out", "egress_ssh_out_cidrs", "egress_icmp",
+	}).AddRow("u1", "alice", 1001, "enforced", []byte("null"), nil, false, "", false)
+
+	mock.ExpectQuery("(?s)COALESCE.*LEFT JOIN hosting_packages").
+		WillReturnRows(rows)
+
+	out, err := repo.ListAllForReconcile(context.Background())
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+	require.False(t, out[0].EgressSSHOut, "NULL package must deny SSH-out")
+	require.False(t, out[0].EgressICMP, "NULL package must deny ICMP")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestUserEgressPolicy_Upsert_StampsLearningStartedAt(t *testing.T) {
 	db, mock, raw := newMockBackupDB(t)
 	defer raw.Close()

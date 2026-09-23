@@ -108,6 +108,10 @@ func (r *packageRepo) Update(ctx context.Context, p *models.HostingPackage) erro
 		"cpu_quota_percent", "memory_limit_mb", "io_read_mbps", "io_write_mbps",
 		"max_tasks", "max_docker_apps", "max_python_apps", "max_ftp_accounts", "docker_app_slugs",
 		"ssh_enabled", "cgi_enabled", "php_exec_enabled",
+		// GH #1798: per-package egress allowances — must be listed or the admin's
+		// SSH-out / ICMP toggles save-with-success and revert on reload
+		// (the same allowlist silent-drop scar).
+		"egress_ssh_out", "egress_ssh_out_cidrs", "egress_icmp",
 		// GH #1628: webmail package entitlement — must be listed or the admin's
 		// webmail toggle saves-with-success and reverts on reload.
 		"webmail_enabled",

@@ -97,6 +97,10 @@ type packageCreateFlags struct {
 	sshEnabled, cgiEnabled, phpExec bool
 	webmailEnabled                  bool // GH #1628; defaults ON
 
+	// GH #1798: per-package egress allowances (default false = DENY).
+	egressSSHOut, egressICMP bool
+	egressSSHOutCIDRs        string
+
 	fpmMaxChildren, fpmWorkerMemMB uint32
 	fpmUserCanEdit, fpmAdvanced    bool
 	fpmVersionDefaults             string
@@ -144,6 +148,10 @@ func buildPackageFromCreateFlags(f packageCreateFlags) (*models.HostingPackage, 
 		PHPExecEnabled: f.phpExec,
 		WebmailEnabled: f.webmailEnabled, // GH #1628
 
+		EgressSSHOut:      f.egressSSHOut, // GH #1798
+		EgressSSHOutCIDRs: f.egressSSHOutCIDRs,
+		EgressICMP:        f.egressICMP,
+
 		FpmMaxChildrenCap:  f.fpmMaxChildren,
 		FpmWorkerMemMb:     f.fpmWorkerMemMB,
 		FpmUserCanEdit:     f.fpmUserCanEdit,
@@ -183,6 +191,13 @@ func buildPackageFromCreateFlags(f packageCreateFlags) (*models.HostingPackage, 
 	if v := strings.TrimSpace(f.nspawnImage); v != "" {
 		p.NspawnImageVersion = &v
 	}
+	// GH #1798: validate + canonicalise the SSH-out CIDR scope (mirrors
+	// packages.go). Empty stays empty (= anywhere at apply time).
+	normEgressCIDRs, egressErr := models.NormalizeEgressSSHOutCIDRs(p.EgressSSHOutCIDRs)
+	if egressErr != nil {
+		return nil, fmt.Errorf("invalid egress-ssh-out-cidrs: %w", egressErr)
+	}
+	p.EgressSSHOutCIDRs = normEgressCIDRs
 	return p, nil
 }
 
@@ -261,6 +276,9 @@ func registerPackageCreateFlags(cmd *cobra.Command, f *packageCreateFlags) {
 	fl.BoolVar(&f.sshEnabled, "ssh", false, "enable SSH access")
 	fl.BoolVar(&f.cgiEnabled, "cgi", false, "enable CGI")
 	fl.BoolVar(&f.phpExec, "php-exec", false, "opt out of the PHP command-exec lockdown (exec/proc_open work)")
+	fl.BoolVar(&f.egressSSHOut, "egress-ssh-out", false, "allow outbound SSH (:22) for enforced tenants on this package (GH #1798)")
+	fl.StringVar(&f.egressSSHOutCIDRs, "egress-ssh-out-cidrs", "", `JSON array of CIDRs scoping outbound SSH (empty=anywhere), e.g. '["140.82.112.0/20"]'`)
+	fl.BoolVar(&f.egressICMP, "egress-icmp", false, "allow outbound ICMP echo-request (ping) for enforced tenants on this package (GH #1798)")
 	// GH #1628: webmail defaults ON, so this create flag defaults true (pass
 	// --webmail=false to withhold webmail from the plan). Mirrors the REST
 	// create handler's nil->true default.
@@ -297,6 +315,10 @@ type packageEditFlags struct {
 	sshEnabled, cgiEnabled, phpExec               string
 	webmailEnabled                                string // GH #1628
 	scheduledBackups, fpmUserCanEdit, fpmAdvanced string
+	// GH #1798: per-package egress allowances. The two flags are tri-state
+	// (true/false/unset); the CIDR scope is a plain string.
+	egressSSHOut, egressICMP string
+	egressSSHOutCIDRs        string
 }
 
 // applyPackageEditFlags applies the named edit flags onto a loaded row and
@@ -368,7 +390,9 @@ func applyPackageEditFlags(changed func(string) bool, p *models.HostingPackage, 
 	tri("ssh", &p.SSHEnabled, f.sshEnabled)
 	tri("cgi", &p.CGIEnabled, f.cgiEnabled)
 	tri("php-exec", &p.PHPExecEnabled, f.phpExec)
-	tri("webmail", &p.WebmailEnabled, f.webmailEnabled) // GH #1628
+	tri("webmail", &p.WebmailEnabled, f.webmailEnabled)    // GH #1628
+	tri("egress-ssh-out", &p.EgressSSHOut, f.egressSSHOut) // GH #1798
+	tri("egress-icmp", &p.EgressICMP, f.egressICMP)        // GH #1798
 	tri("scheduled-backups", &p.ScheduledBackupsEnabled, f.scheduledBackups)
 	tri("fpm-user-can-edit", &p.FpmUserCanEdit, f.fpmUserCanEdit)
 	tri("fpm-advanced", &p.FpmAdvancedMode, f.fpmAdvanced)
@@ -398,6 +422,15 @@ func applyPackageEditFlags(changed func(string) bool, p *models.HostingPackage, 
 		} else {
 			p.NspawnImageVersion = &v
 		}
+		dirty = true
+	}
+	// GH #1798: validate + canonicalise the SSH-out CIDR scope on change.
+	if changed("egress-ssh-out-cidrs") {
+		norm, err := models.NormalizeEgressSSHOutCIDRs(f.egressSSHOutCIDRs)
+		if err != nil {
+			return false, fmt.Errorf("invalid egress-ssh-out-cidrs: %w", err)
+		}
+		p.EgressSSHOutCIDRs = norm
 		dirty = true
 	}
 	// Advanced implies can-edit — unconditional, matching packages.go:399.
@@ -525,6 +558,9 @@ func registerPackageEditFlags(cmd *cobra.Command, f *packageEditFlags) {
 	fl.StringVar(&f.cgiEnabled, "cgi", "", "CGI access (true/false)")
 	fl.StringVar(&f.phpExec, "php-exec", "", "PHP command-exec opt-out (true/false)")
 	fl.StringVar(&f.webmailEnabled, "webmail", "", "webmail Bulwark UI (true/false)") // GH #1628
+	fl.StringVar(&f.egressSSHOut, "egress-ssh-out", "", "allow outbound SSH :22 for enforced tenants (true/false) — GH #1798")
+	fl.StringVar(&f.egressICMP, "egress-icmp", "", "allow outbound ICMP ping for enforced tenants (true/false) — GH #1798")
+	fl.StringVar(&f.egressSSHOutCIDRs, "egress-ssh-out-cidrs", "", `JSON array of CIDRs scoping outbound SSH (empty=anywhere) — GH #1798`)
 	fl.StringVar(&f.scheduledBackups, "scheduled-backups", "", "tenant scheduled backups (true/false)")
 	fl.StringVar(&f.fpmUserCanEdit, "fpm-user-can-edit", "", "tenant FPM performance mode (true/false)")
 	fl.StringVar(&f.fpmAdvanced, "fpm-advanced", "", "tenant advanced FPM knobs (true/false, true implies fpm-user-can-edit)")

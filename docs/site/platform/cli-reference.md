@@ -4016,6 +4016,9 @@ jabali package create [flags]
 - `--disk-mb` — disk quota in MB (0=unlimited) (default `0`)
 - `--docker-app-slugs` — CSV allowlist of catalog slugs tenants may install (empty=server default)
 - `--domains` — max domains (0=unlimited) (default `0`)
+- `--egress-icmp` — allow outbound ICMP echo-request (ping) for enforced tenants on this package (GH #1798)
+- `--egress-ssh-out` — allow outbound SSH (:22) for enforced tenants on this package (GH #1798)
+- `--egress-ssh-out-cidrs` — JSON array of CIDRs scoping outbound SSH (empty=anywhere), e.g. '["140.82.112.0/20"]'
 - `--emails` — max email accounts (0=unlimited) (default `0`)
 - `--fpm-advanced` — unlock tenant advanced FPM knobs (implies --fpm-user-can-edit)
 - `--fpm-max-children` — FPM pm.max_children cap (0=default 20) (default `0`)
@@ -4070,6 +4073,9 @@ jabali package edit <package-id> [flags]
 - `--disk-mb` — disk quota MB (default `0`)
 - `--docker-app-slugs` — CSV allowlist of catalog slugs tenants may install
 - `--domains` — max domains (default `0`)
+- `--egress-icmp` — allow outbound ICMP ping for enforced tenants (true/false) — GH #1798
+- `--egress-ssh-out` — allow outbound SSH :22 for enforced tenants (true/false) — GH #1798
+- `--egress-ssh-out-cidrs` — JSON array of CIDRs scoping outbound SSH (empty=anywhere) — GH #1798
 - `--emails` — max emails (default `0`)
 - `--fpm-advanced` — tenant advanced FPM knobs (true/false, true implies fpm-user-can-edit)
 - `--fpm-max-children` — FPM pm.max_children cap (default `0`)
