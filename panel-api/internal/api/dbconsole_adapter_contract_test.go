@@ -238,13 +238,11 @@ func TestDBConsoleContract_EveryAdapterDelegatesEncodingToLeaf(t *testing.T) {
 		{"sso_phpmyadmin.go", []string{"dbconsoleops.IssuePhpMyAdminLogin"}},
 		// Tenant Adminer: engine normalization + full issuance leaf.
 		{"sso_adminer.go", []string{"dbconsoleops.NormalizeEngine", "dbconsoleops.IssueAdminerLogin"}},
-		// Privileged doors: phpMyAdmin uses the full leaf; Adminer admin-all still
-		// mints via MintAdminerToken and only calls AdminerRedirect (it does NOT
-		// use IssueAdminerLogin) — a residual pairing inconsistency this contract
-		// records as a finding for the AC1 unified-module follow-up. Its ENCODING
-		// is still the leaf's (asserted behaviourally above), so we pin the
-		// redirect builder it does use.
-		{"databases_admin_ops.go", []string{"dbconsoleops.IssuePhpMyAdminLogin", "dbconsoleops.AdminerRedirect"}},
+		// Privileged doors: both admin-all doors now pair mint<->redirect through
+		// the full issuance leaf (the Adminer door was unified onto
+		// IssueAdminerLogin, resolving the earlier residual inconsistency where it
+		// minted via MintAdminerToken and called AdminerRedirect separately).
+		{"databases_admin_ops.go", []string{"dbconsoleops.IssuePhpMyAdminLogin", "dbconsoleops.IssueAdminerLogin"}},
 	}
 	for _, p := range pins {
 		src, err := os.ReadFile(p.file)

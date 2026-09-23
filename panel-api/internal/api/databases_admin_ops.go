@@ -646,18 +646,18 @@ func (h *databaseAdminOpsHandler) ssoAdminerAdmin(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 		return
 	}
-	token, err := h.cfg.AdminerSSO.MintAdminerToken(ctx, claims.UserID, ssoAdminAllSentinel, "postgres")
+	// Admin-all console: mint + redirect via the shared Adminer issuance leaf
+	// (JAB-348 AC1/AC3), pairing the Adminer token with the Adminer redirect the
+	// same way the phpMyAdmin admin-all door does — no single database in scope
+	// (db empty), engine carried through so the scope is encoded identically on
+	// every door. This door keeps its own ok/error audit taxonomy, so the leaf's
+	// returned hash-prefix is not used here.
+	loginURL, _, err := dbconsoleops.IssueAdminerLogin(ctx, h.cfg.AdminerSSO, claims.UserID, ssoAdminAllSentinel, "", "postgres", panelBaseURL(c))
 	if err != nil {
 		h.audit(ctx, claims.UserID, "postgres", "sso.admin", "adminer", "error", "mint failed")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
 	h.audit(ctx, claims.UserID, "postgres", "sso.admin", "adminer", "ok", "scope=admin")
-	// Admin-all console: no single database in scope (db empty). engine is
-	// carried through the shared leaf so the Adminer engine scope is encoded
-	// identically on every door (JAB-348 AC3); the console reads only the
-	// token, so the added engine param is cosmetic.
-	c.JSON(http.StatusOK, ssoRedirectResponse{
-		RedirectURL: dbconsoleops.AdminerRedirect(panelBaseURL(c), token, "", "postgres"),
-	})
+	c.JSON(http.StatusOK, ssoRedirectResponse{RedirectURL: loginURL})
 }
