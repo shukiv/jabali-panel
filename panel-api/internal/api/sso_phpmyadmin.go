@@ -98,7 +98,7 @@ func (h *ssoPhpMyAdminHandler) issueSSOToken(c *gin.Context) {
 	// Ensure shadow account and get credentials
 	if err := h.cfg.SSO.EnsureShadow(ctx, claims.UserID); err != nil {
 		h.cfg.Log.ErrorContext(ctx, "ensure shadow account failed", "err", err)
-		h.auditLog(ctx, claims.UserID, req.DatabaseID, "", "unauthorized")
+		h.auditLog(ctx, claims.UserID, req.DatabaseID, "", dbconsoleops.OutcomeEnsureShadowFail)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
@@ -110,15 +110,15 @@ func (h *ssoPhpMyAdminHandler) issueSSOToken(c *gin.Context) {
 	// (dbconsoleops.TokenAuditPrefix) — the same digest the validate side derives,
 	// so "issued" and "validated"/"unauthorized" lines share a value to grep for.
 	//
-	// NOTE: on a mint failure this door audits "unauthorized" rather than
-	// OutcomeMintFail — a pre-existing taxonomy quirk vs the Adminer/CLI doors,
-	// preserved here to keep audit output byte-for-byte. Unifying it is a
-	// follow-up (it changes an audit string).
+	// A mint failure audits OutcomeMintFail — the same canonical taxonomy the
+	// Adminer and CLI doors emit (JAB-348 AC5). "unauthorized" is reserved for the
+	// pre-issuance authorization gates above; a failure after ownership and
+	// same-origin have passed is an issuance error, not an authorization denial.
 	loginURL, hashPrefix, err := dbconsoleops.IssuePhpMyAdminLogin(
 		ctx, h.cfg.SSO, claims.UserID, req.DatabaseID, db.Name, h.getPhpMyAdminBaseURL(c))
 	if err != nil {
 		h.cfg.Log.ErrorContext(ctx, "mint token failed", "err", err)
-		h.auditLog(ctx, claims.UserID, req.DatabaseID, "", "unauthorized")
+		h.auditLog(ctx, claims.UserID, req.DatabaseID, "", dbconsoleops.OutcomeMintFail)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
