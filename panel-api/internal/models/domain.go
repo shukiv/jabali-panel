@@ -209,6 +209,33 @@ func ValidSSLMode(s string) bool {
 // TLS is "on" for every mode except none.
 func SSLEnabledForMode(mode string) bool { return mode != SSLModeNone }
 
+// SSLModeProtectedRefusal reports the protected-domain TLS invariant that a
+// switch to `mode` would violate, or refused=false when the switch is allowed.
+//
+// Two invariants keep TLS on a domain that must not lose it: the panel-primary
+// hostname always keeps TLS (dropping it locks the admin out of :8443 — the
+// #1507 lockout class), and a mail-enabled domain must disable mail before
+// dropping TLS (else SMTP/IMAP TLS breaks). They only apply to a switch TO
+// `none`; every other mode is allowed here (mode validity and the
+// custom-via-upload rule are the caller's separate checks).
+//
+// This is the single source for the refusal so the doors that switch a domain
+// to none — the REST domain PATCH, the REST SSL-disable endpoint, and the CLI
+// `domain set --ssl-mode` — cannot drift. The returned code/detail are the exact
+// strings those doors already surface, so every adapter reports one taxonomy.
+func SSLModeProtectedRefusal(d *Domain, mode string) (code, detail string, refused bool) {
+	if d == nil || mode != SSLModeNone {
+		return "", "", false
+	}
+	if d.IsPanelPrimary {
+		return "ssl_none_panel_primary", "the panel hostname must keep TLS", true
+	}
+	if d.EmailEnabled {
+		return "ssl_none_with_email", "disable mail before removing TLS", true
+	}
+	return "", "", false
+}
+
 type Domain struct {
 	ID     string `gorm:"type:char(26);primaryKey" json:"id"`
 	UserID string `gorm:"type:char(26);not null;index:ix_domains_user_id" json:"user_id"`

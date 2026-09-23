@@ -310,6 +310,15 @@ func newDomainSetCmd() *cobra.Command {
 				if !models.ValidSSLMode(sslMode) {
 					return fmt.Errorf("--ssl-mode must be le|self|none")
 				}
+				// JAB-318 AC3: enforce the SAME protected-domain TLS invariants the
+				// HTTP PATCH and `ssl disable` doors enforce, via the shared leaf so
+				// the doors can't drift. Before this, `domain set --ssl-mode none`
+				// stranded the panel cert / mail TLS from the CLI (the HTTP door
+				// already refused). Runs before the transaction, so no audit fires
+				// on a refusal.
+				if _, detail, refused := models.SSLModeProtectedRefusal(d, sslMode); refused {
+					return fmt.Errorf("refusing to set --ssl-mode=none for %s: %s", d.Name, detail)
+				}
 				d.SSLMode = sslMode
 				d.SSLEnabled = models.SSLEnabledForMode(sslMode)
 				changed = true

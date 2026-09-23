@@ -33,3 +33,19 @@ func TestDomainAdvancedSSLMode_PersistsThroughDedicatedWriter(t *testing.T) {
 		t.Fatal("--cache must persist through domainRepo.UpdateCacheEnabled — cache_enabled is not in the Update allowlist either (JAB-313)")
 	}
 }
+
+// TestDomainSet_SSLMode_EnforcesProtectedInvariant guards JAB-318 AC3: the CLI
+// `domain set --ssl-mode` must route through models.SSLModeProtectedRefusal so a
+// switch to none on the panel-primary or a mail-enabled domain is refused,
+// exactly as the HTTP PATCH and `ssl disable` doors are. cmd/server's command
+// runs on the global repo (no injection seam), so this source-pins the shared
+// leaf call in the ssl-mode branch (same precedent as the sibling test above).
+func TestDomainSet_SSLMode_EnforcesProtectedInvariant(t *testing.T) {
+	src, err := os.ReadFile("domain_advanced_cmd.go")
+	if err != nil {
+		t.Fatalf("read domain_advanced_cmd.go: %v", err)
+	}
+	if !strings.Contains(string(src), "models.SSLModeProtectedRefusal(d, sslMode)") {
+		t.Fatal("`domain set --ssl-mode` must call models.SSLModeProtectedRefusal so the CLI enforces the panel-primary / mail-enabled TLS invariants the HTTP doors enforce (JAB-318 AC3) — without it, `domain set --ssl-mode none` strands the panel cert / mail TLS")
+	}
+}

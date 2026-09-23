@@ -285,12 +285,8 @@ func (h *sslHandler) disableSSL(c *gin.Context) {
 	// domain (breaks SMTP/IMAP TLS) is the #1507 lockout class. Returning here
 	// skips the UpdateSSLMode write, the cert-revoke mark, and the reconcile
 	// schedule — nothing is mutated.
-	if domain.IsPanelPrimary {
-		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "ssl_none_panel_primary", "detail": "the panel hostname must keep TLS"})
-		return
-	}
-	if domain.EmailEnabled {
-		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "ssl_none_with_email", "detail": "disable mail before removing TLS"})
+	if code, detail, refused := models.SSLModeProtectedRefusal(domain, models.SSLModeNone); refused {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": code, "detail": detail})
 		return
 	}
 
