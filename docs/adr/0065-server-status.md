@@ -151,3 +151,76 @@ hostname/OS/kernel/CPU/memory table with Tag chips for category),
 Reload action behind Popconfirm), `UserSlicesCard` (per-user CPU% +
 memory + tasks). `HostHeaderCard` and the heavier `ServicesGrid` were
 deleted — both were superseded.
+
+## JAB-373 addendum (in-process cache, Health/Full projections, stale-serve)
+
+The single-aggregator decision above held, but every `GET
+/admin/server-status` still fanned out all eight agent commands on every
+request. The UI polls every 5 s while a Server Status or Dashboard tab is
+foreground, and the admin header health badge mounts on *every* admin page at a
+30 s cadence, so separate tabs and operators multiplied identical host work
+(≈960 agent calls/hour per foreground header; ≈5,760 per open Server Status
+tab). JAB-373 keeps the one-envelope contract and adds a cache Seam behind it
+rather than an endpoint-per-slice or a push transport (SSE/WebSockets were
+explicitly rejected — the polling model and the single REST envelope stay).
+
+### In-process per-slice cache + singleflight (#1272)
+
+An in-process `statusCache` sits between the aggregator and the agent. Each
+slice has its own TTL; a request inside a slice's TTL serves the last snapshot
+with zero agent calls, and concurrent misses for the same slice collapse to one
+refresh (process-wide singleflight). The refresh runs on a detached background
+context bounded by its own per-call deadline, so a cancelled poller can't abort
+a refresh other pollers are blocked on. Volatile slices keep a short TTL;
+host/unit state can be longer; the software inventory keeps its five-minute
+cadence.
+
+### Fixed Health projection (#1474)
+
+`GET /admin/server-status?view=health` returns a fixed light projection that
+omits the three expensive slices the header never renders — `system.processes`
+(walks every PID with a 200 ms sample), `system.software`, and
+`system.user_slices` — while keeping the cheap host/services/network/apparmor/
+nginx slices the synthesized `alerts` derive from. The header badge uses this
+projection on a **distinct** query key (`["admin","server-health"]`), not the
+shared full key, because the Dashboard and Server Status page need the full
+envelope. When both are mounted the per-slice cache already has the cheap slices
+warm from the 5 s full poll, so the projection adds one light round-trip rather
+than a second fan-out. The module, not each adapter, owns this coherent
+observation policy — a deeper Seam than a caller-supplied include list.
+
+### Stale-serve with a display-only invariant (#1755)
+
+On a refresh failure (a superset of the AC's "timeout" — any error, including
+connection-refused during an agent restart), a slice within `ttl + maxStale`
+(`maxStale = 2m`) serves its retained last-good body flagged `stale`; beyond that
+window it is abandoned and the error surfaces as before. The envelope gains an
+additive per-slice `meta` map (`SliceMeta{observed_at, stale, error}`), populated
+for every served slice.
+
+**Invariant — stale data is display-only.** The aggregator feeds
+`synthesizeAlerts` a *fresh-only* map (freshly fetched slices), never the results
+map that now also carries stale bodies, so a stale snapshot can neither raise a
+phantom outage nor mask a real one. `errors[slice]` now means "last refresh
+failed" with the slice still present (previously an error implied the slice was
+absent); `meta[slice].stale` means "this body is last-good". The panel-ui
+`StaleSlicesNotice` on the Server Status page consumes `meta.stale` to name the
+slices showing last-known values (with each one's `observed_at` on hover); it is
+likewise display-only and never derives an alert.
+
+### Metrics (#1755)
+
+`statusCache` records per-slice counters — hit, miss, refresh, stale-serve, and
+refresh latency (count / total / last / max ms) — exposed read-only at `GET
+/admin/server-status/cache-metrics` (admin-only). Refresh latency is measured on
+an injected clock so tests are deterministic; do not "fix" it to `time.Now`, the
+seam is intentional. Demo redaction drops `meta` (fail-closed allowlist rebuild)
+by design.
+
+### Remaining
+
+- **TTL tuning from live metrics** (migration step 5) — the per-slice TTLs ship
+  at conservative defaults; tuning them wants real hit/miss/latency data from a
+  production host, so it is an operator-data step, not a code change.
+- **Prometheus `/metrics` export** of the cache counters is a separate
+  maintainer call; the JSON `cache-metrics` endpoint is the current surface.
