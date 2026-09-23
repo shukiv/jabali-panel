@@ -1342,11 +1342,12 @@ func (h *domainHandler) update(c *gin.Context) {
 			if mode == models.SSLModeCustom {
 				return &domainPatchTxErr{http.StatusBadRequest, "ssl_mode_custom_via_upload", "upload a custom cert via the SSL settings to switch to custom"}
 			}
-			if domain.IsPanelPrimary && mode == models.SSLModeNone {
-				return &domainPatchTxErr{http.StatusUnprocessableEntity, "ssl_none_panel_primary", "the panel hostname must keep TLS"}
-			}
-			if mode == models.SSLModeNone && domain.EmailEnabled {
-				return &domainPatchTxErr{http.StatusUnprocessableEntity, "ssl_none_with_email", "disable mail before removing TLS"}
+			// JAB-318 AC3: the protected-domain TLS invariants live in one leaf
+			// (models.SSLModeProtectedRefusal) shared with the SSL-disable
+			// endpoint and the CLI `domain set`, so the three doors that switch a
+			// domain to `none` cannot drift. Same code/detail/status as before.
+			if code, detail, refused := models.SSLModeProtectedRefusal(domain, mode); refused {
+				return &domainPatchTxErr{http.StatusUnprocessableEntity, code, detail}
 			}
 			if err := tx.UpdateSSLMode(ctx, domain.ID, mode); err != nil {
 				return err
