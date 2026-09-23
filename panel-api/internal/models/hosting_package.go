@@ -98,6 +98,25 @@ type HostingPackage struct {
 	// Admin-only (packages are admin-assigned); default 0 keeps the lockdown.
 	PHPExecEnabled bool `gorm:"column:php_exec_enabled;type:tinyint(1);not null;default:0" json:"php_exec_enabled"`
 
+	// Per-package egress allowances for the M34 per-user firewall (GH #1798).
+	// Both default 0 (DENY): outbound SSH and ICMP stay blocked for enforced
+	// tenants unless an admin opts the package in. A NULL-package account gets
+	// neither — the egress reconciler LEFT JOINs hosting_packages and COALESCEs
+	// a missing row to 0, matching the #282 "privileged feature → deny when no
+	// package" rule. Plain bools (not pointers) — the create handler sets them
+	// explicitly and the DB default is 0, so the GORM zero-value-default trap
+	// that bit webmail_enabled does not apply here.
+	//
+	// EgressSSHOut, when true, adds outbound TCP :22 to the allowlist of every
+	// enforced/learning user on the package. EgressSSHOutCIDRs is a JSON array
+	// of CIDRs scoping that allowance (e.g. GitHub's ranges); empty '' means
+	// anywhere — the reconciler substitutes ["0.0.0.0/0","::/0"]. EgressICMP,
+	// when true, allows ICMP echo-request (ping) out over IPv4 + IPv6 only —
+	// not the whole ICMP protocol.
+	EgressSSHOut      bool   `gorm:"column:egress_ssh_out;type:tinyint(1);not null;default:0" json:"egress_ssh_out"`
+	EgressSSHOutCIDRs string `gorm:"column:egress_ssh_out_cidrs;type:varchar(1000);not null;default:''" json:"egress_ssh_out_cidrs"`
+	EgressICMP        bool   `gorm:"column:egress_icmp;type:tinyint(1);not null;default:0" json:"egress_icmp"`
+
 	// PHP-FPM performance tiers (GH #339 phase 2). Per-package policy for the
 	// tiered pool tuning: FpmUserCanEdit gates the L1 "Performance Mode"
 	// dropdown; FpmAdvancedMode gates the L2 clamped pm.* knobs (implies

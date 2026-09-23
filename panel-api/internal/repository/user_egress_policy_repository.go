@@ -23,6 +23,13 @@ type PolicyForReconcile struct {
 	State             string
 	AllowedExtra      []models.EgressDestination
 	LearningStartedAt *time.Time
+	// Per-package egress allowances (GH #1798), folded in via a LEFT JOIN on
+	// the user's hosting_package. A NULL package (admin account, or a package
+	// row that predates migration 000304) COALESCEs to the DENY defaults —
+	// false / "" — so a missing package never grants a privileged allowance.
+	EgressSSHOut      bool
+	EgressSSHOutCIDRs string
+	EgressICMP        bool
 }
 
 // UserEgressPolicyRepository owns user_egress_policies. Admin handlers
@@ -139,8 +146,14 @@ func (r *userEgressPolicyRepo) ListAllForReconcile(ctx context.Context) ([]Polic
 		State             string
 		AllowedExtra      []byte
 		LearningStartedAt *time.Time
+		EgressSSHOut      bool
+		EgressSSHOutCIDRs string
+		EgressICMP        bool
 	}
 	var rows []joined
+	// GH #1798: LEFT JOIN the user's hosting_package for its egress allowances.
+	// LEFT (not INNER) so admin/NULL-package users keep their policy row; the
+	// COALESCEs turn a missing package into the DENY defaults (false / "").
 	err := r.db.WithContext(ctx).
 		Table("user_egress_policies AS p").
 		Select(`p.user_id,
@@ -148,8 +161,12 @@ func (r *userEgressPolicyRepo) ListAllForReconcile(ctx context.Context) ([]Polic
 			u.linux_uid AS uid,
 			p.state,
 			p.allowed_extra,
-			p.learning_started_at`).
+			p.learning_started_at,
+			COALESCE(hp.egress_ssh_out, 0) AS egress_ssh_out,
+			COALESCE(hp.egress_ssh_out_cidrs, '') AS egress_ssh_out_cidrs,
+			COALESCE(hp.egress_icmp, 0) AS egress_icmp`).
 		Joins("INNER JOIN users u ON u.id = p.user_id").
+		Joins("LEFT JOIN hosting_packages hp ON hp.id = u.package_id").
 		Order("p.user_id ASC").
 		Scan(&rows).Error
 	if err != nil {
@@ -173,6 +190,9 @@ func (r *userEgressPolicyRepo) ListAllForReconcile(ctx context.Context) ([]Polic
 			State:             r.State,
 			AllowedExtra:      extras,
 			LearningStartedAt: r.LearningStartedAt,
+			EgressSSHOut:      r.EgressSSHOut,
+			EgressSSHOutCIDRs: r.EgressSSHOutCIDRs,
+			EgressICMP:        r.EgressICMP,
 		})
 	}
 	return out, nil

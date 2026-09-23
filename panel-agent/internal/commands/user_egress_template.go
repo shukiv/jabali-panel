@@ -24,6 +24,10 @@ type EgressUser struct {
 	// can't fail open). 0 = unknown (fallback unavailable).
 	UID          int
 	AllowedExtra []EgressExtra
+	// AllowPing (GH #1798) allows outbound ICMP/ICMPv6 echo-request (ping)
+	// from this user's chain. Scoped to echo-request only — not the whole
+	// ICMP protocol — so error/redirect messages stay blocked.
+	AllowPing bool
 }
 
 // EgressExtra is one allowed-destination override for a user. Port +
@@ -317,6 +321,12 @@ func writeUserChain(b *strings.Builder, u EgressUser, d EgressDefaults) {
 
 	for _, ex := range u.AllowedExtra {
 		writeExtra(b, ex)
+	}
+
+	// GH #1798: per-package ICMP allowance — echo-request (ping) only, v4 + v6.
+	if u.AllowPing {
+		b.WriteString("    icmp type echo-request accept\n")
+		b.WriteString("    icmpv6 type echo-request accept\n")
 	}
 
 	switch u.State {

@@ -42,7 +42,10 @@ var packageFieldFlag = map[string]string{
 	"ssh_enabled":                      "ssh",
 	"cgi_enabled":                      "cgi",
 	"php_exec_enabled":                 "php-exec",
-	"webmail_enabled":                  "webmail", // GH #1628
+	"egress_ssh_out":                   "egress-ssh-out",       // GH #1798
+	"egress_ssh_out_cidrs":             "egress-ssh-out-cidrs", // GH #1798
+	"egress_icmp":                      "egress-icmp",          // GH #1798
+	"webmail_enabled":                  "webmail",              // GH #1628
 	"fpm_max_children_cap":             "fpm-max-children",
 	"fpm_worker_mem_mb":                "fpm-worker-mem-mb",
 	"fpm_user_can_edit":                "fpm-user-can-edit",
@@ -245,4 +248,67 @@ func TestApplyPackageEditFlags_TriStateGarbageIsError(t *testing.T) {
 	require.Error(t, err)
 	require.False(t, changed)
 	require.False(t, p.PHPExecEnabled, "row untouched on a bad toggle value")
+}
+
+// GH #1798: the per-package egress allowances through the CLI.
+
+func TestBuildPackageFromCreateFlags_EgressAllowances(t *testing.T) {
+	p, err := buildPackageFromCreateFlags(packageCreateFlags{
+		name:              "x",
+		webmailEnabled:    true,
+		egressSSHOut:      true,
+		egressSSHOutCIDRs: `[" 140.82.112.0/20 "]`,
+		egressICMP:        true,
+	})
+	require.NoError(t, err)
+	require.True(t, p.EgressSSHOut)
+	require.True(t, p.EgressICMP)
+	require.Equal(t, `["140.82.112.0/20"]`, p.EgressSSHOutCIDRs, "CIDRs canonicalised")
+}
+
+func TestBuildPackageFromCreateFlags_EgressBadCIDRIsError(t *testing.T) {
+	_, err := buildPackageFromCreateFlags(packageCreateFlags{
+		name: "x", egressSSHOut: true, egressSSHOutCIDRs: `["nope"]`,
+	})
+	require.Error(t, err)
+}
+
+func TestApplyPackageEditFlags_EgressTriState(t *testing.T) {
+	// Off → on for a security allowance must persist; an unset flag must not.
+	p := &models.HostingPackage{EgressSSHOut: false, EgressICMP: false}
+	changed, err := applyPackageEditFlags(
+		changedSet("egress-ssh-out", "egress-icmp"),
+		p,
+		packageEditFlags{egressSSHOut: "true", egressICMP: "true"},
+	)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.True(t, p.EgressSSHOut, "--egress-ssh-out=true enables")
+	require.True(t, p.EgressICMP, "--egress-icmp=true enables")
+
+	// Unset leaves an existing allowance untouched.
+	q := &models.HostingPackage{EgressSSHOut: true}
+	changed, err = applyPackageEditFlags(changedSet(), q, packageEditFlags{})
+	require.NoError(t, err)
+	require.False(t, changed)
+	require.True(t, q.EgressSSHOut, "omitted flag never heals the field")
+}
+
+func TestApplyPackageEditFlags_EgressBadCIDRIsError(t *testing.T) {
+	p := &models.HostingPackage{}
+	_, err := applyPackageEditFlags(
+		changedSet("egress-ssh-out-cidrs"), p,
+		packageEditFlags{egressSSHOutCIDRs: `["bad"]`},
+	)
+	require.Error(t, err)
+}
+
+func TestApplyPackageEditFlags_EgressTriStateGarbageIsError(t *testing.T) {
+	// A garbage value on a security allowance must fail loud, not silently
+	// no-op — same guard as php-exec, applied to the new egress toggle.
+	p := &models.HostingPackage{EgressSSHOut: false}
+	changed, err := applyPackageEditFlags(changedSet(), p, packageEditFlags{egressSSHOut: "yes"})
+	require.Error(t, err)
+	require.False(t, changed)
+	require.False(t, p.EgressSSHOut, "row untouched on a bad toggle value")
 }

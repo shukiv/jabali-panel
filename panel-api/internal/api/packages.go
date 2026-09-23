@@ -98,6 +98,11 @@ type createPackageRequest struct {
 	SSHEnabled                    bool   `json:"ssh_enabled"`
 	CGIEnabled                    bool   `json:"cgi_enabled"`
 	PHPExecEnabled                bool   `json:"php_exec_enabled"`
+	// Per-package egress allowances (GH #1798). Plain bools default false =
+	// DENY. EgressSSHOutCIDRs is a JSON array of CIDRs ('' = anywhere).
+	EgressSSHOut      bool   `json:"egress_ssh_out"`
+	EgressSSHOutCIDRs string `json:"egress_ssh_out_cidrs"`
+	EgressICMP        bool   `json:"egress_icmp"`
 	// WebmailEnabled (GH #1628) is a pointer, unlike the plain-bool toggles
 	// above, because webmail defaults ON: a nil (field omitted by the client)
 	// must mean "use the ON default", which a plain bool can't express.
@@ -137,14 +142,18 @@ type updatePackageRequest struct {
 	SSHEnabled                    *bool   `json:"ssh_enabled"`
 	CGIEnabled                    *bool   `json:"cgi_enabled"`
 	PHPExecEnabled                *bool   `json:"php_exec_enabled"`
-	WebmailEnabled                *bool   `json:"webmail_enabled"` // GH #1628
-	FpmMaxChildrenCap             *uint32 `json:"fpm_max_children_cap"`
-	FpmWorkerMemMb                *uint32 `json:"fpm_worker_mem_mb"`
-	FpmUserCanEdit                *bool   `json:"fpm_user_can_edit"`
-	FpmAdvancedMode               *bool   `json:"fpm_advanced_mode"`
-	FpmVersionDefaults            *string `json:"fpm_version_defaults"`
-	DockerAppSlugs                *string `json:"docker_app_slugs"`
-	NspawnImageVersion            *string `json:"nspawn_image_version"`
+	// Per-package egress allowances (GH #1798).
+	EgressSSHOut       *bool   `json:"egress_ssh_out"`
+	EgressSSHOutCIDRs  *string `json:"egress_ssh_out_cidrs"`
+	EgressICMP         *bool   `json:"egress_icmp"`
+	WebmailEnabled     *bool   `json:"webmail_enabled"` // GH #1628
+	FpmMaxChildrenCap  *uint32 `json:"fpm_max_children_cap"`
+	FpmWorkerMemMb     *uint32 `json:"fpm_worker_mem_mb"`
+	FpmUserCanEdit     *bool   `json:"fpm_user_can_edit"`
+	FpmAdvancedMode    *bool   `json:"fpm_advanced_mode"`
+	FpmVersionDefaults *string `json:"fpm_version_defaults"`
+	DockerAppSlugs     *string `json:"docker_app_slugs"`
+	NspawnImageVersion *string `json:"nspawn_image_version"`
 }
 
 // ---- handlers ----
@@ -204,6 +213,14 @@ func (h *packageHandler) create(c *gin.Context) {
 	if req.BackupRetentionPolicy == "" {
 		req.BackupRetentionPolicy = models.BackupRetentionReject
 	}
+	// GH #1798: validate + canonicalise the outbound-SSH CIDR scope before it
+	// reaches the agent's nft renderer (a malformed CIDR would break the ruleset).
+	normEgressCIDRs, egressCIDRErr := models.NormalizeEgressSSHOutCIDRs(req.EgressSSHOutCIDRs)
+	if egressCIDRErr != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_egress_ssh_out_cidrs", "detail": egressCIDRErr.Error()})
+		return
+	}
+	req.EgressSSHOutCIDRs = normEgressCIDRs
 	pkg := &models.HostingPackage{
 		ID:               ids.NewULID(),
 		Name:             req.Name,
@@ -231,6 +248,10 @@ func (h *packageHandler) create(c *gin.Context) {
 		SSHEnabled:     req.SSHEnabled,
 		CGIEnabled:     req.CGIEnabled,
 		PHPExecEnabled: req.PHPExecEnabled,
+		// GH #1798: per-package egress allowances (default false = DENY).
+		EgressSSHOut:      req.EgressSSHOut,
+		EgressSSHOutCIDRs: req.EgressSSHOutCIDRs,
+		EgressICMP:        req.EgressICMP,
 		// GH #1628: webmail defaults ON. nil (omitted) or explicit true -> true;
 		// only an explicit false turns it off.
 		WebmailEnabled:     req.WebmailEnabled == nil || *req.WebmailEnabled,
@@ -393,6 +414,21 @@ func (h *packageHandler) update(c *gin.Context) {
 	}
 	if req.PHPExecEnabled != nil {
 		pkg.PHPExecEnabled = *req.PHPExecEnabled
+	}
+	// GH #1798: per-package egress allowances.
+	if req.EgressSSHOut != nil {
+		pkg.EgressSSHOut = *req.EgressSSHOut
+	}
+	if req.EgressICMP != nil {
+		pkg.EgressICMP = *req.EgressICMP
+	}
+	if req.EgressSSHOutCIDRs != nil {
+		normCIDRs, cidrErr := models.NormalizeEgressSSHOutCIDRs(*req.EgressSSHOutCIDRs)
+		if cidrErr != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_egress_ssh_out_cidrs", "detail": cidrErr.Error()})
+			return
+		}
+		pkg.EgressSSHOutCIDRs = normCIDRs
 	}
 	if req.FpmMaxChildrenCap != nil {
 		if *req.FpmMaxChildrenCap > phpPoolAdminMaxChildrenCap {

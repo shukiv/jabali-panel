@@ -106,23 +106,15 @@ func (r *Reconciler) applyUserEgress(ctx context.Context, policies []repository.
 			p.State != models.UserEgressStateEnforced {
 			continue
 		}
-		extras := make([]map[string]any, 0, len(p.AllowedExtra))
-		for _, e := range p.AllowedExtra {
-			row := map[string]any{
-				"cidr":     e.CIDR,
-				"protocol": e.Protocol,
-				"comment":  e.Comment,
-			}
-			if e.Port != nil {
-				row["port"] = *e.Port
-			}
-			extras = append(extras, row)
+		payload, cidrErr := buildEgressUserPayload(p)
+		if cidrErr != nil {
+			// Fail CLOSED: the SSH-out extras were dropped by the builder; the
+			// user's base policy still applies. Surface why so the operator fixes
+			// the corrupt column instead of wondering why SSH-out never took.
+			r.log.Warn("user-egress: bad egress_ssh_out_cidrs — SSH-out NOT applied",
+				"user_id", p.UserID, "error", cidrErr)
 		}
-		users = append(users, map[string]any{
-			"username":      p.Username,
-			"state":         p.State,
-			"allowed_extra": extras,
-		})
+		users = append(users, payload)
 	}
 	dispatchCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -136,6 +128,55 @@ func (r *Reconciler) applyUserEgress(ctx context.Context, policies []repository.
 			"user_count", len(users))
 		return
 	}
+}
+
+// buildEgressUserPayload renders one user's slot of the user.egress.apply
+// payload from the joined policy row. Pure (no I/O) so the GH #1798 fold-in is
+// unit-testable. The base allowed_extra is copied through; the per-package
+// outbound-SSH allowance (GH #1798) is appended as :22 TCP extras, one per
+// scoped CIDR; and allow_ping carries the per-package ICMP allowance. A NULL
+// package COALESCEs to EgressSSHOut=false / EgressICMP=false upstream, so a
+// missing package grants neither. On a corrupt egress_ssh_out_cidrs the SSH-out
+// extras are DROPPED (fail closed) and the parse error is returned for the
+// caller to log — the payload is still valid and carries the base policy.
+func buildEgressUserPayload(p repository.PolicyForReconcile) (map[string]any, error) {
+	extras := make([]map[string]any, 0, len(p.AllowedExtra))
+	for _, e := range p.AllowedExtra {
+		row := map[string]any{
+			"cidr":     e.CIDR,
+			"protocol": e.Protocol,
+			"comment":  e.Comment,
+		}
+		if e.Port != nil {
+			row["port"] = *e.Port
+		}
+		extras = append(extras, row)
+	}
+	var cidrErr error
+	if p.EgressSSHOut {
+		cidrs, err := models.ParseEgressSSHOutCIDRs(p.EgressSSHOutCIDRs)
+		if err != nil {
+			cidrErr = err // fail closed — no :22 extras appended
+		} else {
+			const sshPort = 22
+			for _, cidr := range cidrs {
+				port := sshPort
+				extras = append(extras, map[string]any{
+					"cidr":     cidr,
+					"port":     port,
+					"protocol": "tcp",
+					"comment":  "package SSH-out (GH #1798)",
+				})
+			}
+		}
+	}
+	return map[string]any{
+		"username":      p.Username,
+		"state":         p.State,
+		"allowed_extra": extras,
+		// GH #1798: per-package ICMP echo-request (ping) allowance.
+		"allow_ping": p.EgressICMP,
+	}, cidrErr
 }
 
 func (r *Reconciler) readUserEgressCounters(ctx context.Context, usernameToID map[string]string) {
