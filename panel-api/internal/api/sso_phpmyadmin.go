@@ -103,33 +103,28 @@ func (h *ssoPhpMyAdminHandler) issueSSOToken(c *gin.Context) {
 		return
 	}
 
-	// Mint SSO token
-	token, err := h.cfg.SSO.MintToken(ctx, claims.UserID, req.DatabaseID, db.Name)
+	// One shared leaf owns mint -> audit hash-prefix -> redirect, so the
+	// phpMyAdmin token and its redirect can never drift apart from the Adminer,
+	// privileged, and CLI doors (JAB-348 AC1/AC2/AC3). Base-URL resolution stays
+	// adapter-local. The hash-prefix is SHA-256 over the DECODED token bytes
+	// (dbconsoleops.TokenAuditPrefix) — the same digest the validate side derives,
+	// so "issued" and "validated"/"unauthorized" lines share a value to grep for.
+	//
+	// NOTE: on a mint failure this door audits "unauthorized" rather than
+	// OutcomeMintFail — a pre-existing taxonomy quirk vs the Adminer/CLI doors,
+	// preserved here to keep audit output byte-for-byte. Unifying it is a
+	// follow-up (it changes an audit string).
+	loginURL, hashPrefix, err := dbconsoleops.IssuePhpMyAdminLogin(
+		ctx, h.cfg.SSO, claims.UserID, req.DatabaseID, db.Name, h.getPhpMyAdminBaseURL(c))
 	if err != nil {
 		h.cfg.Log.ErrorContext(ctx, "mint token failed", "err", err)
 		h.auditLog(ctx, claims.UserID, req.DatabaseID, "", "unauthorized")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
+	h.auditLog(ctx, claims.UserID, req.DatabaseID, hashPrefix, dbconsoleops.OutcomeIssued)
 
-	// Hash the DECODED token bytes with the same prefix length the validate
-	// handler uses, so "issued" and "validated"/"unauthorized" lines for one
-	// token share a prefix and can actually be correlated.
-	//
-	// This previously hashed the base64url STRING and logged 8 bytes, while
-	// validate hashes the raw bytes and logs 4 — a different digest at a
-	// different length, so the two halves of the SSO audit chain could never
-	// be joined. Not exploitable, but it broke the trail exactly when it
-	// matters: during an incident.
-	hashPrefix := ssoTokenHashPrefix(token)
-	h.auditLog(ctx, claims.UserID, req.DatabaseID, hashPrefix, "issued")
-
-	// Build the redirect URL through the shared DB-console leaf so the
-	// database scope is encoded identically to the CLI and privileged doors
-	// (JAB-348 AC1/AC3). Base-URL resolution stays adapter-local.
-	redirectURL := dbconsoleops.PhpMyAdminRedirect(h.getPhpMyAdminBaseURL(c), token, db.Name)
-
-	c.JSON(http.StatusOK, ssoPhpMyAdminResponse{RedirectURL: redirectURL})
+	c.JSON(http.StatusOK, ssoPhpMyAdminResponse{RedirectURL: loginURL})
 }
 
 // getPhpMyAdminBaseURL derives the base URL for phpMyAdmin redirects.
