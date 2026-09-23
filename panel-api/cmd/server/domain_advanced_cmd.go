@@ -308,7 +308,7 @@ func newDomainSetCmd() *cobra.Command {
 					return fmt.Errorf("--ssl-mode=custom is set by installing a custom cert, not here")
 				}
 				if !models.ValidSSLMode(sslMode) {
-					return fmt.Errorf("--ssl-mode must be le|self|none")
+					return fmt.Errorf("--ssl-mode must be le|self|none|shared")
 				}
 				// JAB-318 AC3: enforce the SAME protected-domain TLS invariants the
 				// HTTP PATCH and `ssl disable` doors enforce, via the shared leaf so
