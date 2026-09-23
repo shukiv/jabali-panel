@@ -19,7 +19,22 @@ export interface ServerStatusEnvelope {
   software: SoftwareSlice | null;
   queues: QueuesSlice | null;
   errors?: Record<string, string>;
+  // JAB-373 AC#5: per-slice freshness. Present only when the aggregator
+  // served at least one slice (fresh or stale last-good). A slice keyed here
+  // with `stale: true` is a last-good value served after a refresh timeout —
+  // display-only, and never a source of alerts. Optional because the demo
+  // redaction path drops it and older mocks omit it.
+  meta?: Record<string, SliceMeta>;
   alerts: Alert[];
+}
+
+// SliceMeta mirrors the Go api.SliceMeta envelope (server_status.go). observed_at
+// is the RFC3339 time the served body was captured; stale marks a last-good value
+// served after a failed refresh; error carries the refresh error on a stale slice.
+export interface SliceMeta {
+  observed_at: string;
+  stale?: boolean;
+  error?: string;
 }
 
 export interface QueuesSlice {

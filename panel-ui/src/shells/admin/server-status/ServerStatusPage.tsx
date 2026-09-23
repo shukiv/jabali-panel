@@ -23,6 +23,7 @@ import { ProcessesCard } from "./ProcessesCard";
 import { QueuesCard } from "./QueuesCard";
 import { ServicesSummaryCard } from "./ServicesSummaryCard";
 import { SpeedTestCard } from "./SpeedTestCard";
+import { StaleSlicesNotice } from "./StaleSlicesNotice";
 import { SystemInfoCard } from "./SystemInfoCard";
 import { UserSlicesCard } from "./UserSlicesCard";
 
@@ -65,6 +66,8 @@ export const ServerStatusPage = () => {
       </Typography.Title>
 
       <AlertsBanner alerts={env?.alerts ?? []} />
+
+      <StaleSlicesNotice meta={env?.meta} />
 
       <Masonry columns={{ xs: 1, sm: 1, md: 2, lg: 2 }} gutter={16} items={items} />
     </div>
