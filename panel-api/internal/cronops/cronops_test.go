@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"sort"
+	"strings"
 	"testing"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/cronvalidate"
@@ -142,6 +143,43 @@ func TestCreate_ValidationAndLinuxGate(t *testing.T) {
 			}
 			if ag.called {
 				t.Fatal("must not agent-apply when validation fails")
+			}
+		})
+	}
+}
+
+// TestCreate_ValidationErrorExposesCodeAndDetail locks that a name/schedule/command
+// validation failure keeps the underlying *cronvalidate.ValidationError reachable via
+// errors.As, so the API adapter (respondValidationErr) can surface the structured
+// `code` (binary_not_allowed, bad_schedule_syntax, invalid_name, …) and the clean
+// per-field Detail. Wrapping the ValidationError with %v (instead of %w) severs it
+// from the error chain: errors.As fails, the API sends no `code`, and the user sees
+// the opaque "cronops: invalid command: <code>: <detail>" blob — the exact GH #1686
+// item-5 complaint (the UI's code→message map can never fire without the code).
+func TestCreate_ValidationErrorExposesCodeAndDetail(t *testing.T) {
+	u := &models.User{ID: "u1", Username: uname("alice")}
+	for _, tc := range []struct {
+		name     string
+		in       CreateInput
+		wantCode string
+	}{
+		{"command", CreateInput{UserID: "u1", Name: "ok", Schedule: "*/5 * * * *", Command: "ls -la"}, cronvalidate.ErrCodeBinaryNotAllowed},
+		{"name", CreateInput{UserID: "u1", Name: "bad\x00", Schedule: "*/5 * * * *", Command: "/usr/bin/php -v"}, cronvalidate.ErrCodeInvalidName},
+		{"schedule", CreateInput{UserID: "u1", Name: "ok", Schedule: "nope", Command: "/usr/bin/php -v"}, cronvalidate.ErrCodeBadScheduleSyntax},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Create(context.Background(), deps(u, &fakeAgent{}, &fakeCronRepo{}), tc.in)
+			var ve *cronvalidate.ValidationError
+			if !errors.As(err, &ve) {
+				t.Fatalf("validation failure must expose *cronvalidate.ValidationError via errors.As; got %v", err)
+			}
+			if ve.Code != tc.wantCode {
+				t.Fatalf("code: got %q want %q", ve.Code, tc.wantCode)
+			}
+			// The exposed Detail must be the clean validator message, not the
+			// wrapped cronops sentinel blob the UI would otherwise render raw.
+			if strings.Contains(ve.Detail, "cronops:") {
+				t.Fatalf("Detail must be the clean validator message, got %q", ve.Detail)
 			}
 		})
 	}

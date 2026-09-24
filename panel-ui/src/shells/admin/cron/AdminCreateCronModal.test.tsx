@@ -21,6 +21,7 @@ vi.mock("react-i18next", () => ({
 }));
 
 import { AdminCreateCronModal } from "./AdminCreateCronModal";
+import { createCronJob } from "../../../apiClient";
 
 const noop = () => {};
 
@@ -59,5 +60,37 @@ describe("AdminCreateCronModal — target-aware help (GH #1686 items 3+4)", () =
     // admin can see why a plain command fails.
     expect(baseElement.textContent).toContain("Commands must start with");
     expect(baseElement.textContent).toContain("will not work");
+  });
+});
+
+describe("AdminCreateCronModal — friendly validation errors (GH #1686 item 5)", () => {
+  it("renders the shared headline for a structured cronops error, not the raw detail", async () => {
+    // Backend rejects with the structured validation_failed shape the fixed API
+    // now sends (code + clean detail). Before this slice the admin door showed
+    // data.detail verbatim; now it must render the shared friendly headline.
+    vi.mocked(createCronJob).mockRejectedValueOnce({
+      response: {
+        data: {
+          error: "validation_failed",
+          field: "command",
+          code: "binary_not_allowed",
+          detail: 'first token must be "wp", got "ls"',
+        },
+      },
+    });
+
+    const { baseElement } = renderModal();
+
+    // Root target so the (empty) tenant picker's required user_id doesn't block submit.
+    fireEvent.click(baseElement.querySelector('input[type="radio"][value="root"]')!);
+    fireEvent.change(baseElement.querySelector("#name")!, { target: { value: "nightly" } });
+    fireEvent.change(baseElement.querySelector("#command")!, { target: { value: "ls -la" } });
+    fireEvent.click(baseElement.querySelector("button.ant-btn-primary")!);
+
+    await waitFor(() => {
+      expect(baseElement.textContent).toContain("Command must start with wp, php, python, or node");
+    });
+    // The raw backend detail must never reach the user.
+    expect(baseElement.textContent).not.toContain('first token must be "wp"');
   });
 });

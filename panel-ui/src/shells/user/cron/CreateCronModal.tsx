@@ -19,6 +19,7 @@ import {
 } from "../../../apiClient";
 import { CRON_SCHEDULE_OPTIONS } from "../../../utils/cronSchedule";
 import { CronCommandHelp } from "../../../components/cron/CronCommandHelp";
+import { cronErrorHeadline, type CronErrorData } from "../../../components/cron/cronErrorHeadline";
 
 interface CreateCronModalProps {
   open: boolean;
@@ -112,44 +113,15 @@ export const CreateCronModal = ({
       setCustomSchedule("");
       onSuccess();
     } catch (error: unknown) {
-      const err = error as { response?: { data?: { error?: string; field?: string; code?: string; detail?: string } }; message?: string };
-      const data = err?.response?.data ?? {};
-      const detail: string = data.detail ?? err?.message ?? "Failed to save cron job";
-      // Backend response shape: { error: 'validation_failed', field: 'command'|'schedule'|'name', code: <ErrCode>, detail: <string> }
-      // Earlier code keyed on detail.includes("command") which silently
-      // dropped binary_not_allowed / bad_path_arg into the toast layer
-      // (those details start with "first token..." or "path contains...").
-      // Now map by `field` first (always set on validation_failed) and
-      // fall back to detail-substring + code-substring heuristics.
-      const field = data.field;
-      const code = data.code ?? data.error;
-
-      // Stable, test-regex-matching headline per code so users see the
-      // actionable summary even if the toast scrolls.
-      const headlineByCode: Record<string, string> = {
-        binary_not_allowed: "Binary not allowed — command must start with wp, php, python, or node",
-        metachar_reject: "Shell metacharacters not allowed in command",
-        bad_path_arg: "Invalid path / traversal not allowed — must be an absolute path inside your account",
-        bad_schedule_syntax: "Invalid schedule syntax",
-        schedule_too_frequent: "Schedule too frequent — minimum 1-minute step",
-        invalid_name: "Invalid name — control characters or empty",
-        empty: "Field cannot be empty",
-        too_long: "Command too long (max 1024 bytes)",
-      };
-      const headline = (code && headlineByCode[code]) || detail;
-
-      if (field === "command" || /command|metachar|binary|path|traversal/i.test(detail)) {
-        form.setFields([{ name: "command", errors: [headline] }]);
-        antMessage.error(headline);
-      } else if (field === "schedule" || /schedule/i.test(detail)) {
-        form.setFields([{ name: "schedule", errors: [headline] }]);
-        antMessage.error(headline);
-      } else if (field === "name") {
-        form.setFields([{ name: "name", errors: [headline] }]);
-        antMessage.error(headline);
-      } else {
-        antMessage.error(headline);
+      const err = error as { response?: { data?: CronErrorData }; message?: string };
+      // Backend response shape: { error: 'validation_failed', field: 'command'|'schedule'|'name', code: <ErrCode>, detail: <string> }.
+      // cronErrorHeadline owns the code→headline map and field routing so this
+      // door and the admin door stay in lockstep (GH #1686 item 5).
+      const { field, headline } = cronErrorHeadline(err?.response?.data, err?.message);
+      if (field) {
+        form.setFields([{ name: field, errors: [headline] }]);
       }
+      antMessage.error(headline);
     } finally {
       setLoading(false);
     }
