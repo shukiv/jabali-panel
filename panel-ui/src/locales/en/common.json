@@ -337,6 +337,8 @@
     "choose_tenant": "Choose tenant",
     "command": "Command",
     "custom_cron_expression": "Custom cron expression",
+    "edit_cron_job_as_root": "Edit cron job (as root)",
+    "edit_cron_job_as_tenant": "Edit cron job (as tenant)",
     "name": "Name",
     "new_cron_job_as_root": "New cron job (as root)",
     "new_cron_job_as_tenant": "New cron job (as tenant)",

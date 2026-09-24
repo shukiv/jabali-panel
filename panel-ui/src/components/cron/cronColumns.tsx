@@ -29,8 +29,8 @@ export interface CronColumnContext {
 }
 
 // Per-audience presentation for the Actions column: the run label ("Run" vs
-// "Run now"), whether an Edit action is offered (tenant only), and the delete
-// confirmation copy (each screen keeps its own wording).
+// "Run now"), whether an Edit action is offered, and the delete confirmation
+// copy (each screen keeps its own wording).
 export interface CronActionsOptions {
   runLabel: string;
   canEdit: boolean;
@@ -60,7 +60,7 @@ export function cronEnabledColumn(ctx: CronColumnContext): CronColumn {
   };
 }
 
-// The shared Actions column: Run, Log, (Edit for tenant), Delete. Run and
+// The shared Actions column: Run, Log, Edit (when offered), Delete. Run and
 // Delete share the same busy gating as the toggle; Delete carries the
 // audience's own confirmation copy.
 export function cronActionsColumn(ctx: CronColumnContext, opts: CronActionsOptions): CronColumn {
