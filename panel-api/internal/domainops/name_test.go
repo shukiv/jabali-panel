@@ -1,6 +1,7 @@
 package domainops
 
 import (
+	"errors"
 	"reflect"
 	"testing"
 )
@@ -66,5 +67,59 @@ func TestAncestorDomains(t *testing.T) {
 		if got := AncestorDomains(tc.in); !reflect.DeepEqual(got, tc.want) {
 			t.Errorf("AncestorDomains(%q) = %v, want %v", tc.in, got, tc.want)
 		}
+	}
+}
+
+// TestValidateDomainName is the shared FQDN gate every create/rename/alias
+// adapter routes through (JAB-279 AC2/AC6). Each row pins the FIRST failing
+// reason (the sentinel), so both the HTTP and CLI adapters can map a specific
+// message; a valid name returns nil. The ordering (empty, whitespace, length,
+// HTML, path, FQDN) is part of the contract — a name that trips two checks must
+// report the earlier reason on every door.
+func TestValidateDomainName(t *testing.T) {
+	over253 := ""
+	for len(over253) <= 253 {
+		over253 += "aaaaaaaaaa.example.com."
+	}
+	over253 += "example.com" // valid-charset name that is simply over the 253-char cap
+
+	cases := []struct {
+		name string
+		in   string
+		want error // nil = accepted
+	}{
+		{"valid two-label", "example.com", nil},
+		{"valid subdomain", "a.b.example.com", nil},
+		{"valid hyphen", "my-site.co.uk", nil},
+		{"empty", "", ErrDomainNameEmpty},
+		{"blank", "   ", ErrDomainNameEmpty},
+		{"space", "exa mple.com", ErrDomainNameWhitespace},
+		{"tab", "example\t.com", ErrDomainNameWhitespace},
+		{"carriage return", "example.com\r", ErrDomainNameWhitespace},
+		{"too long", over253, ErrDomainNameTooLong},
+		{"html tag", "<script>.com", ErrDomainNameHTML},
+		{"dotdot", "a..b.com", ErrDomainNameTraversal},
+		{"slash", "example.com/evil", ErrDomainNameTraversal},
+		{"backslash", "example\\com", ErrDomainNameTraversal},
+		{"bare hostname", "localhost", ErrDomainNameNotFQDN},
+		{"ip literal", "192.168.1.1", ErrDomainNameNotFQDN},
+		{"numeric tld", "example.123", ErrDomainNameNotFQDN},
+		{"single letter tld", "example.c", ErrDomainNameNotFQDN},
+		{"trailing dot", "example.com.", ErrDomainNameNotFQDN},
+		{"underscore", "ex_ample.com", ErrDomainNameNotFQDN},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ValidateDomainName(tc.in)
+			if tc.want == nil {
+				if got != nil {
+					t.Fatalf("ValidateDomainName(%q) = %v, want nil (accepted)", tc.in, got)
+				}
+				return
+			}
+			if !errors.Is(got, tc.want) {
+				t.Fatalf("ValidateDomainName(%q) = %v, want %v", tc.in, got, tc.want)
+			}
+		})
 	}
 }
