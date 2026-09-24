@@ -22,13 +22,18 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dbconsoleops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
-	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/sso"
 )
 
 type SSOAdminerHandlerConfig struct {
 	Databases repository.DatabaseRepository
-	SSO       *sso.Service
-	Adminer   *sso.AdminerService
+	// SSO/Adminer are typed as the dbconsoleops shadow+mint interfaces (not the
+	// concrete *sso.Service/*sso.AdminerService) so the door exposes a mint seam
+	// for the AC4 contract matrix. SSO provides the mariadb shadow; Adminer
+	// provides the postgres shadow + the Adminer token mint — the same base/adminer
+	// split EnsureShadowForEngine dispatches on. The concrete services satisfy both
+	// and are what the router wires in (JAB-348).
+	SSO       dbconsoleops.ShadowService
+	Adminer   dbconsoleops.AdminerConsole
 	Log       *slog.Logger
 	SSOConfig config.SSOConfig
 }

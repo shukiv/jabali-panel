@@ -36,6 +36,27 @@ type AdminerMinter interface {
 	MintAdminerToken(ctx context.Context, userID, databaseID, engine string) (string, error)
 }
 
+// PhpMyAdminConsole is the full shadow + mint surface the tenant phpMyAdmin door
+// depends on. *sso.Service satisfies it. Typing the handler config field as this
+// interface (rather than the concrete *sso.Service) lets a single fake drive the
+// phpMyAdmin door through the DB-Console SSO contract matrix — the same injection
+// seam the privileged doors already expose — so tenant, privileged, and CLI
+// adapters can be exercised against one request matrix (JAB-348 AC4).
+type PhpMyAdminConsole interface {
+	ShadowService
+	PhpMyAdminMinter
+}
+
+// AdminerConsole is the full postgres-shadow + mint surface the tenant Adminer
+// door's Adminer dependency provides. *sso.AdminerService satisfies it. Typed on
+// the handler config for the same AC4 reason as PhpMyAdminConsole. (The Adminer
+// door's mariadb shadow provisioning goes through the separate ShadowService
+// dependency, matching EnsureShadowForEngine's base/adminer split.)
+type AdminerConsole interface {
+	AdminerShadowService
+	AdminerMinter
+}
+
 // IssuePhpMyAdminLogin mints a single-use phpMyAdmin token for (userID,
 // databaseID) and returns the phpMyAdmin login URL under baseURL plus the audit
 // hash-prefix for that token. dbName is the scope label carried in the redirect
