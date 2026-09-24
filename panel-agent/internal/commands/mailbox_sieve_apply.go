@@ -225,8 +225,9 @@ func createdID(result jmapSetResult, key string) string {
 
 // sieveScriptRow is the subset of a standard SieveScript we read back.
 type sieveScriptRow struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	IsActive bool   `json:"isActive"`
 }
 
 func listSieveScripts(ctx context.Context, acctID string) ([]sieveScriptRow, error) {
@@ -266,6 +267,41 @@ func destroySieveScriptIDs(ctx context.Context, acctID string, ids []string) err
 	if err := jmapCallWith(ctx, jmapCapSieve, "SieveScript/set", map[string]any{"accountId": acctID, "destroy": ids}, &result); err != nil {
 		return fmt.Errorf("sieve destroy: %w", err)
 	}
+	// Surface a refused destroy instead of swallowing it. Stalwart refuses to
+	// destroy the ACTIVE script ("scriptIsActive") — a real failure that would
+	// silently leave the composite live after a tenant clears every rule. An
+	// already-gone id ("notFound") is fine (idempotent).
+	for id, reason := range result.NotDestroyed {
+		var r struct {
+			Type string `json:"type"`
+		}
+		_ = json.Unmarshal(reason, &r)
+		if r.Type != "notFound" {
+			return &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("sieve destroy refused for %s: %s", id, string(reason))}
+		}
+	}
+	return nil
+}
+
+// deactivateSieveScripts clears the active flag on the given scripts. Stalwart
+// 0.16.x refuses to destroy an active script, and `onSuccessActivateScript:null`
+// is a no-op there, so the only reliable deactivation is an explicit
+// isActive:false update (verified against Stalwart 0.16.15).
+func deactivateSieveScripts(ctx context.Context, acctID string, ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	update := make(map[string]any, len(ids))
+	for _, id := range ids {
+		update[id] = map[string]any{"isActive": false}
+	}
+	var result jmapSetResult
+	if err := jmapCallWith(ctx, jmapCapSieve, "SieveScript/set", map[string]any{"accountId": acctID, "update": update}, &result); err != nil {
+		return fmt.Errorf("sieve deactivate: %w", err)
+	}
+	for id, reason := range result.NotUpdated {
+		return &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("sieve deactivate refused for %s: %s", id, string(reason))}
+	}
 	return nil
 }
 
@@ -290,14 +326,25 @@ func destroyJabaliScripts(ctx context.Context, acctID, keepID string) error {
 	if err != nil {
 		return err
 	}
-	var ids []string
+	var ids, activeIDs []string
 	for _, r := range rows {
 		if r.ID == keepID {
 			continue
 		}
 		if jabaliOwnedScriptNames[r.Name] {
 			ids = append(ids, r.ID)
+			if r.IsActive {
+				activeIDs = append(activeIDs, r.ID)
+			}
 		}
+	}
+	// Stalwart refuses to destroy the active script, so deactivate first — but
+	// ONLY the jabali-owned scripts we are about to destroy. A tenant's own
+	// active script (never in this set) keeps its active state untouched. In the
+	// empty-desired-state case this leaves the account with no active script, so
+	// mail delivers straight to the inbox.
+	if err := deactivateSieveScripts(ctx, acctID, activeIDs); err != nil {
+		return err
 	}
 	return destroySieveScriptIDs(ctx, acctID, ids)
 }

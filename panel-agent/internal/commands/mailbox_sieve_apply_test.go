@@ -186,18 +186,39 @@ func (s *sieveStore) sieveSet(raw json.RawMessage) (any, *jmapFakeError) {
 			return jmapSetResult{NotUpdated: map[string]json.RawMessage{id: json.RawMessage(`{"type":"notFound"}`)}}, nil
 		}
 		var v struct {
-			BlobID string `json:"blobId"`
+			BlobID   string `json:"blobId"`
+			IsActive *bool  `json:"isActive"`
 		}
 		_ = json.Unmarshal(rawVal, &v)
 		if v.BlobID != "" {
 			rec.blobID = v.BlobID
 		}
+		if v.IsActive != nil {
+			rec.active = *v.IsActive
+		}
 		res.Updated[id] = json.RawMessage(`{}`)
 	}
+	// Stalwart 0.16.x refuses to destroy the ACTIVE script — the caller must
+	// deactivate it first (isActive:false update). Model that so a handler that
+	// forgets is caught.
+	var destroyed []string
+	notDestroyed := map[string]json.RawMessage{}
 	for _, id := range a.Destroy {
+		rec := s.scripts[id]
+		if rec == nil {
+			continue // already gone
+		}
+		if rec.active {
+			notDestroyed[id] = json.RawMessage(`{"type":"scriptIsActive","description":"Deactivate Sieve script before deletion."}`)
+			continue
+		}
 		delete(s.scripts, id)
+		destroyed = append(destroyed, id)
 	}
-	res.Destroyed = a.Destroy
+	res.Destroyed = destroyed
+	if len(notDestroyed) > 0 {
+		res.NotDestroyed = notDestroyed
+	}
 	// Activation deactivates every other script (one-active rule).
 	if activateID != "" {
 		if _, ok := s.scripts[activateID]; ok {
