@@ -12,6 +12,13 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
+// DEAD CODE — NOT registered anywhere (only NewDisclaimerPhase is). Superseded
+// by mailbox.sieve.apply / forwarderops.Converge (GH #1795): the autoresponder
+// now compiles into the single active jabali-managed standard SieveScript, NOT a
+// separate native VacationResponse. Do NOT wire this phase — pushing
+// "autoresponder.set" would recreate and activate a "vacation" script, which
+// deactivates jabali-managed and breaks external forwarding fleet-wide.
+//
 // autoresponderPhase converges jabali email_autoresponders → Stalwart
 // VacationResponse. DB is truth (ADR-0051); operator changes via Stalwart
 // admin are overwritten on next tick.

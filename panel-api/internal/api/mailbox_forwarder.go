@@ -29,10 +29,11 @@ import (
 )
 
 type MailboxForwarderHandlerConfig struct {
-	Mailboxes  repository.MailboxRepository
-	Domains    repository.DomainRepository
-	Forwarders repository.EmailForwarderRepository
-	Agent      agent.AgentInterface
+	Mailboxes      repository.MailboxRepository
+	Domains        repository.DomainRepository
+	Forwarders     repository.EmailForwarderRepository
+	Autoresponders repository.EmailAutoresponderRepository
+	Agent          agent.AgentInterface
 }
 
 type forwarderResponse struct {
@@ -176,7 +177,7 @@ func (h *forwarderHandler) listAll(c *gin.Context) {
 // failed is not forwarding yet, and the caller must not report unqualified
 // success (GH #1795). The DB stays truth; the error is advisory.
 func (h *forwarderHandler) applyForwarders(ctx context.Context, mb *models.Mailbox, dom *models.Domain) error {
-	if err := forwarderops.Converge(ctx, h.cfg.Agent, h.cfg.Forwarders, mb.ID, mb.LocalPart+"@"+dom.Name); err != nil {
+	if err := forwarderops.Converge(ctx, h.cfg.Agent, h.cfg.Forwarders, h.cfg.Autoresponders, mb.ID, mb.LocalPart+"@"+dom.Name); err != nil {
 		slog.Warn("forwarder.apply: convergence failed", "mailbox_id", mb.ID, "err", err)
 		return err
 	}

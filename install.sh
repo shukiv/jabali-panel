@@ -13682,6 +13682,27 @@ print(sql[0]["id"] if sql else "")' 2>/dev/null || true)"
     _warn "Stalwart SpamSettings update failed — spam filter will keep current settings (probably default github URL); inspect with 'stalwart-cli get x:SpamSettings --json'"
   fi
 
+  # GH #1795: raise the untrusted SieveUserInterpreter limits so a mailbox's
+  # jabali-managed Sieve (forwards + autoresponder) can emit more than one
+  # outbound message. Stalwart's defaults are maxRedirects=1 / maxOutMessages=3,
+  # which silently drop all but the first redirect on a multi-target forward.
+  # Same converger pattern + rationale as SpamSettings above: the apply-plan
+  # `update x:SieveUserInterpreter` entry only lands on a fresh instance, so on
+  # an existing box (skip_apply=1) it must be re-issued here every run. Keep the
+  # values byte-identical to install/stalwart/apply-plan.json.tmpl (CI parity
+  # guard: TestApplyPlanSieveInterpreterParity).
+  _log "converging Stalwart SieveUserInterpreter limits (maxRedirects/maxOutMessages)"
+  local sieve_interp_patch
+  sieve_interp_patch='{"maxRedirects":20,"maxOutMessages":25}'
+  if STALWART_URL="http://127.0.0.1:${jmap_port}" \
+    STALWART_USER="admin" \
+    STALWART_PASSWORD="$admin_token" \
+    /usr/local/bin/stalwart-cli update x:SieveUserInterpreter --json "$sieve_interp_patch" >/dev/null 2>&1; then
+    _ok "Stalwart SieveUserInterpreter limits converged (maxRedirects=20, maxOutMessages=25)"
+  else
+    _warn "Stalwart SieveUserInterpreter update failed — multi-target forwards may drop all but the first redirect; inspect with 'stalwart-cli get x:SieveUserInterpreter --json'"
+  fi
+
   # GH #1581: lock down cross-domain principal enumeration on the default
   # User role. Stalwart's built-in "User" role enables jmapPrincipalQuery
   # plus the WebDAV principal-search family, so any authenticated mailbox

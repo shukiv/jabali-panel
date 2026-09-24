@@ -459,6 +459,12 @@ func runServe(cmd *cobra.Command, args []string) error {
 		deps.Autoresponders = repository.NewEmailAutoresponderRepository(sharedDB)
 		deps.MailboxShares = repository.NewMailboxShareRepository(sharedDB)
 		deps.Forwarders = repository.NewEmailForwarderRepository(sharedDB)
+		// GH #1795 — backfill sweep: re-converge every mailbox's external
+		// forwarders + autoresponder into its single active standard SieveScript
+		// (the store Stalwart runs at delivery). Wired here, after both M6.5
+		// repos exist; the mailbox repo for the email lookup came in via
+		// WithSendmailCreds above.
+		rec.WithMailboxSieve(deps.Forwarders, deps.Autoresponders)
 		deps.DNSSECKeys = repository.NewDNSSECKeyRepository(sharedDB)
 		// M32 (ADR-0066): singleton panel_certificate repo + reconciler.
 		// Without this wiring, /admin/panel-certificate routes are

@@ -19,6 +19,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/autoresponderops"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/forwarderops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
@@ -44,30 +45,10 @@ func optStr(s string) *string {
 // (GH #1795) so the caller can surface it instead of a silent success — a row
 // written to the DB that never reached Stalwart is not forwarding.
 func applyForwardersCLI(ctx context.Context, mbID, mailboxEmail string) error {
-	rows, _, err := forwarderRepoFromDB().ListByMailboxID(ctx, mbID, repository.ListOptions{Limit: 500})
-	if err != nil {
-		return err
-	}
-	aliases := []map[string]string{}
-	externals := []map[string]any{}
-	for _, f := range rows {
-		if !f.Enabled {
-			continue
-		}
-		switch f.Type {
-		case "alias":
-			if f.LocalPart != nil {
-				aliases = append(aliases, map[string]string{"local_part": *f.LocalPart})
-			}
-		case "external":
-			externals = append(externals, map[string]any{"target": f.Target, "keep_copy": f.KeepCopy})
-		}
-	}
-	return notifyAgentMailboxErr(ctx, "forwarder.apply", map[string]any{
-		"mailbox_email": mailboxEmail,
-		"aliases":       aliases,
-		"externals":     externals,
-	})
+	// GH #1795: converge the mailbox's FULL Sieve state — forwards + autoresponder
+	// — as one active script, the same shared path the HTTP handler uses, so the
+	// CLI cannot drift from it. sharedAgent is the CLI's agent client.
+	return forwarderops.Converge(ctx, sharedAgent, forwarderRepoFromDB(), autoresponderRepoFromDB(), mbID, mailboxEmail)
 }
 
 func forwarderRepoFromDB() repository.EmailForwarderRepository {
@@ -163,13 +144,9 @@ func newMailboxAutoresponderSetCmd() *cobra.Command {
 			}
 			subjP, bodyP, htmlP := optStr(subject), optStr(body), optStr(htmlBody)
 
-			// callAgentMailbox returns the agent error so Set can turn a failed
-			// push into a warning while keeping the DB the desired-state truth.
-			push := func(pctx context.Context, cmd string, params map[string]any) error {
-				_, err := callAgentMailbox(pctx, cmd, params)
-				return err
-			}
-			_, warning, err := autoresponderops.Set(ctx,
+			// DB write only (nil push): the autoresponder converges into the
+			// mailbox's single active Sieve script with any forwards (GH #1795).
+			_, _, err = autoresponderops.Set(ctx,
 				autoresponderops.Deps{Autoresponders: autoresponderRepoFromDB()},
 				autoresponderops.SetInput{
 					MailboxID:    mb.ID,
@@ -180,9 +157,13 @@ func newMailboxAutoresponderSetCmd() *cobra.Command {
 					HTMLBody:     htmlP,
 					FromDate:     fromT,
 					ToDate:       toT,
-				}, push)
+				}, nil)
 			if err != nil {
 				return fmt.Errorf("set autoresponder: %w", err)
+			}
+			warning := ""
+			if cErr := applyForwardersCLI(ctx, mb.ID, mb.LocalPart+"@"+dom.Name); cErr != nil {
+				warning = cErr.Error()
 			}
 
 			if jsonOutput {
@@ -223,14 +204,14 @@ func newMailboxAutoresponderClearCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			push := func(pctx context.Context, cmd string, params map[string]any) error {
-				_, err := callAgentMailbox(pctx, cmd, params)
-				return err
-			}
 			if err := autoresponderops.Clear(ctx,
 				autoresponderops.Deps{Autoresponders: autoresponderRepoFromDB()},
-				mb.ID, mb.LocalPart+"@"+dom.Name, push); err != nil {
+				mb.ID, mb.LocalPart+"@"+dom.Name, nil); err != nil {
 				return fmt.Errorf("clear autoresponder: %w", err)
+			}
+			// Re-converge the Sieve without the cleared autoresponder (GH #1795).
+			if cErr := applyForwardersCLI(ctx, mb.ID, mb.LocalPart+"@"+dom.Name); cErr != nil {
+				fmt.Printf("Note: %s\n", cErr.Error())
 			}
 			cliAuditOK(ctx, "mailbox.autoresponder_clear", "mailbox", email, nil)
 			fmt.Printf("Autoresponder cleared for %s\n", email)

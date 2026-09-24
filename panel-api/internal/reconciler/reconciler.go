@@ -151,6 +151,17 @@ type Reconciler struct {
 	sendmailSSOKey *ssokey.Key
 	sendmailMu     sync.Mutex
 	sendmailDone   map[string]string
+	// sieveForwarders + sieveAutoresponders back the GH #1795 backfill sweep
+	// (mailbox_sieve_reconcile.go): every mailbox with an external forwarder or
+	// an autoresponder is re-converged into its single active standard
+	// SieveScript, the store Stalwart runs at delivery. sieveDone caches
+	// converged mailboxes (mailbox ID → rule-set fingerprint + when) so
+	// steady-state ticks are map lookups, with a periodic re-dispatch that
+	// self-heals out-of-band drift. Both repos nil = loop disabled.
+	sieveForwarders     repository.EmailForwarderRepository
+	sieveAutoresponders repository.EmailAutoresponderRepository
+	sieveMu             sync.Mutex
+	sieveDone           map[string]sieveDoneEntry
 	// wordPressInstalls holds reference to the WordPress installs repository
 	wordPressInstalls repository.WordPressInstallRepository
 	// sshKeys holds reference to the SSH keys repository
@@ -962,6 +973,13 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 	// cred file for the jabali-sendmail shim. Fingerprint-gated noop in
 	// steady state; doubles as the fleet backfill after `jabali update`.
 	r.reconcileSendmailCreds(ctx)
+
+	// GH #1795: every mailbox with an external forwarder or autoresponder is
+	// re-converged into its single active standard SieveScript (the store
+	// Stalwart runs at delivery). Fingerprint-gated noop in steady state;
+	// doubles as the fleet backfill for rules historically written to the
+	// never-executed x:SieveUserScript store.
+	r.reconcileMailboxSieve(ctx)
 
 	tt.mark("certs_updates_modules")
 

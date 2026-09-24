@@ -15,7 +15,7 @@ import (
 // Stalwart, and pushed for the MAILBOX's own address — not the alias source
 // line. Before the convergence wiring, ImportExtras created the DB row and never
 // called forwarder.apply, so the forwarder was inert until a UI edit (RED: 0
-// forwarder.apply calls). This asserts one call, with mailbox_email == the
+// mailbox.sieve.apply calls). This asserts one call, with mailbox_email == the
 // mailbox address (which is what accountIDByEmail resolves).
 
 type fwdConvergeAgent struct {
@@ -24,7 +24,10 @@ type fwdConvergeAgent struct {
 }
 
 func (a *fwdConvergeAgent) Call(_ context.Context, cmd string, params any) (json.RawMessage, error) {
-	if cmd == "forwarder.apply" {
+	// GH #1795: the imported forwarder is now converged via the composite
+	// mailbox.sieve.apply (standard SieveScript), not the superseded
+	// forwarder.apply (x:SieveUserScript).
+	if cmd == "mailbox.sieve.apply" {
 		a.fwApply++
 		if m, ok := params.(map[string]any); ok {
 			a.lastMailboxEmail, _ = m["mailbox_email"].(string)
@@ -100,10 +103,10 @@ func TestImportExtras_ConvergesImportedForwarder(t *testing.T) {
 		t.Fatalf("ImportExtras: %v", err)
 	}
 	if ag.fwApply != 1 {
-		t.Fatalf("forwarder.apply calls = %d, want 1 (imported forwarder must be pushed to Stalwart)", ag.fwApply)
+		t.Fatalf("mailbox.sieve.apply calls = %d, want 1 (imported forwarder must be pushed to Stalwart)", ag.fwApply)
 	}
 	if ag.lastMailboxEmail != "sales@example.com" {
-		t.Errorf("forwarder.apply mailbox_email = %q, want sales@example.com (the mailbox, not the alias source line)", ag.lastMailboxEmail)
+		t.Errorf("mailbox.sieve.apply mailbox_email = %q, want sales@example.com (the mailbox, not the alias source line)", ag.lastMailboxEmail)
 	}
 
 	// GH #1795 follow-up: a type='external' forwarder must leave local_part NULL
