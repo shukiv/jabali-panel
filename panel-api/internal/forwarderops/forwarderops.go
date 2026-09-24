@@ -15,9 +15,11 @@ package forwarderops
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
@@ -53,6 +55,14 @@ func Converge(ctx context.Context, ag agent.AgentInterface, forwarders repositor
 		}
 	}
 
+	// GH #1795 follow-up: adopt a vacation reply that was set outside jabali (the
+	// Bulwark webmail writes a native Stalwart VacationResponse) BEFORE we apply
+	// the composite. Applying jabali-managed flips the native VacationResponse
+	// off, so it must be persisted into email_autoresponders here — while it is
+	// still enabled — or a webmail-set away reply is silently lost the moment a
+	// forward exists on the mailbox.
+	adoptExternalVacation(ctx, ag, autoresponders, mailboxID, mailboxEmail)
+
 	params := map[string]any{
 		"mailbox_email": mailboxEmail,
 		"externals":     externals,
@@ -62,6 +72,62 @@ func Converge(ctx context.Context, ag agent.AgentInterface, forwarders repositor
 	defer cancel()
 	_, err = ag.Call(cctx, "mailbox.sieve.apply", params)
 	return err
+}
+
+// adoptExternalVacation persists an externally-set (Bulwark webmail) native
+// Stalwart VacationResponse into jabali's email_autoresponders when the mailbox
+// has no jabali autoresponder row yet — so a webmail-set away reply survives as
+// part of the durable composite and appears in the panel Auto Reply UI (the two
+// UIs become the same thing under the hood). Once jabali owns a row the panel is
+// the source of truth and this is a no-op, so a later panel edit is never
+// clobbered by a stale native value.
+//
+// Best-effort: any error (nil agent/repo, unregistered account, read failure)
+// leaves the state untouched and the reconcile sweep retries on its next tick.
+func adoptExternalVacation(ctx context.Context, ag agent.AgentInterface, autoresponders repository.EmailAutoresponderRepository, mailboxID, mailboxEmail string) {
+	if ag == nil || autoresponders == nil {
+		return
+	}
+	if ar, err := autoresponders.FindByMailboxID(ctx, mailboxID); err != nil || ar != nil {
+		return // jabali already owns the autoresponder (or the read failed) — do not overwrite
+	}
+	cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	raw, err := ag.Call(cctx, "mailbox.vacation.get", map[string]any{"mailbox_email": mailboxEmail})
+	if err != nil {
+		return
+	}
+	var vr struct {
+		IsEnabled bool    `json:"is_enabled"`
+		FromDate  *string `json:"from_date"`
+		ToDate    *string `json:"to_date"`
+		Subject   *string `json:"subject"`
+		TextBody  *string `json:"text_body"`
+		HTMLBody  *string `json:"html_body"`
+	}
+	if err := json.Unmarshal(raw, &vr); err != nil || !vr.IsEnabled {
+		return
+	}
+	parse := func(s *string) *time.Time {
+		if s == nil || *s == "" {
+			return nil
+		}
+		t, err := time.Parse(time.RFC3339, *s)
+		if err != nil {
+			return nil
+		}
+		return &t
+	}
+	_ = autoresponders.Update(ctx, &models.EmailAutoresponder{
+		MailboxID: mailboxID,
+		Enabled:   true,
+		FromDate:  parse(vr.FromDate),
+		ToDate:    parse(vr.ToDate),
+		Subject:   vr.Subject,
+		TextBody:  vr.TextBody,
+		HTMLBody:  vr.HTMLBody,
+		ManagedBy: "adopted",
+	})
 }
 
 // autoresponderPayload projects the mailbox's autoresponder row into the

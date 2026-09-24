@@ -12,14 +12,20 @@ import (
 )
 
 type fakeAgent struct {
-	calls      int
-	lastCmd    string
-	lastParams map[string]any
-	err        error
+	calls        int
+	lastCmd      string
+	lastParams   map[string]any // params of the last mailbox.sieve.apply
+	err          error
+	vacationResp json.RawMessage // returned for mailbox.vacation.get
+	vacationHits int
 }
 
 func (a *fakeAgent) Call(_ context.Context, cmd string, params any) (json.RawMessage, error) {
 	a.calls++
+	if cmd == "mailbox.vacation.get" {
+		a.vacationHits++
+		return a.vacationResp, nil
+	}
 	a.lastCmd = cmd
 	if m, ok := params.(map[string]any); ok {
 		a.lastParams = m
@@ -38,14 +44,23 @@ func (r *fakeFwdRepo) ListByMailboxID(_ context.Context, _ string, _ repository.
 	return r.rows, int64(len(r.rows)), nil
 }
 
-// fakeARRepo overrides only FindByMailboxID; a nil row means "no autoresponder".
+// fakeARRepo overrides FindByMailboxID + Update; a nil row means "no
+// autoresponder". Update stores the row (the adoption path upserts here) and
+// FindByMailboxID then returns it, so a Converge that adopts is observable.
 type fakeARRepo struct {
 	repository.EmailAutoresponderRepository
-	row *models.EmailAutoresponder
+	row      *models.EmailAutoresponder
+	upserted *models.EmailAutoresponder
 }
 
 func (r *fakeARRepo) FindByMailboxID(_ context.Context, _ string) (*models.EmailAutoresponder, error) {
 	return r.row, nil
+}
+
+func (r *fakeARRepo) Update(_ context.Context, ar *models.EmailAutoresponder) error {
+	r.upserted = ar
+	r.row = ar
+	return nil
 }
 
 func strp(s string) *string { return &s }
@@ -132,5 +147,78 @@ func TestConverge_NoAutoresponderRow(t *testing.T) {
 	}
 	if !strings.Contains(string(wire), `"autoresponder":null`) {
 		t.Errorf("autoresponder must serialise to null when no row; wire = %s", wire)
+	}
+}
+
+// GH #1795 follow-up: with no jabali autoresponder row, Converge adopts an
+// externally-set (Bulwark webmail) native VacationResponse into
+// email_autoresponders BEFORE applying, so it survives as part of the composite.
+func TestConverge_AdoptsExternalVacationWhenNoRow(t *testing.T) {
+	repo := &fakeFwdRepo{rows: []models.EmailForwarder{
+		{Type: "external", Target: "a@out.org", Enabled: true},
+	}}
+	ar := &fakeARRepo{row: nil}
+	ag := &fakeAgent{vacationResp: json.RawMessage(`{"is_enabled":true,"from_date":null,"to_date":null,"subject":"Away","text_body":"OOO","html_body":null}`)}
+
+	if err := Converge(context.Background(), ag, repo, ar, "mb-1", "user@example.com"); err != nil {
+		t.Fatalf("Converge: %v", err)
+	}
+	if ag.vacationHits != 1 {
+		t.Fatalf("mailbox.vacation.get calls = %d, want 1", ag.vacationHits)
+	}
+	if ar.upserted == nil {
+		t.Fatal("no autoresponder row was adopted")
+	}
+	if !ar.upserted.Enabled || ar.upserted.Subject == nil || *ar.upserted.Subject != "Away" {
+		t.Errorf("adopted row = %#v (want enabled, subject=Away)", ar.upserted)
+	}
+	if ar.upserted.ManagedBy != "adopted" {
+		t.Errorf("adopted row ManagedBy = %q, want adopted", ar.upserted.ManagedBy)
+	}
+	// The adopted vacation must be in the composite that gets applied.
+	arPayload, ok := ag.lastParams["autoresponder"].(map[string]any)
+	if !ok || arPayload["enabled"] != true || derefStr(arPayload["subject"]) != "Away" {
+		t.Errorf("applied autoresponder = %#v (want enabled Away from adoption)", ag.lastParams["autoresponder"])
+	}
+}
+
+// When jabali already owns an autoresponder row, the panel is the source of
+// truth: Converge must NOT read or overwrite it from the native value.
+func TestConverge_DoesNotAdoptWhenJabaliRowExists(t *testing.T) {
+	repo := &fakeFwdRepo{rows: []models.EmailForwarder{{Type: "external", Target: "a@out.org", Enabled: true}}}
+	existing := &models.EmailAutoresponder{MailboxID: "mb-1", Enabled: true, Subject: strp("Panel-set"), ManagedBy: "m6.5"}
+	ar := &fakeARRepo{row: existing}
+	ag := &fakeAgent{vacationResp: json.RawMessage(`{"is_enabled":true,"subject":"Webmail-set"}`)}
+
+	if err := Converge(context.Background(), ag, repo, ar, "mb-1", "user@example.com"); err != nil {
+		t.Fatalf("Converge: %v", err)
+	}
+	if ag.vacationHits != 0 {
+		t.Errorf("mailbox.vacation.get was called %d times; must not read the native value when a jabali row exists", ag.vacationHits)
+	}
+	if ar.upserted != nil {
+		t.Errorf("existing row was overwritten: %#v", ar.upserted)
+	}
+}
+
+// A disabled native VacationResponse is nothing to adopt.
+func TestConverge_DoesNotAdoptWhenNativeDisabled(t *testing.T) {
+	repo := &fakeFwdRepo{rows: []models.EmailForwarder{{Type: "external", Target: "a@out.org", Enabled: true}}}
+	ar := &fakeARRepo{row: nil}
+	ag := &fakeAgent{vacationResp: json.RawMessage(`{"is_enabled":false}`)}
+
+	if err := Converge(context.Background(), ag, repo, ar, "mb-1", "user@example.com"); err != nil {
+		t.Fatalf("Converge: %v", err)
+	}
+	if ag.vacationHits != 1 {
+		t.Fatalf("mailbox.vacation.get calls = %d, want 1", ag.vacationHits)
+	}
+	if ar.upserted != nil {
+		t.Errorf("adopted a disabled vacation: %#v", ar.upserted)
+	}
+	// autoresponderPayload returns a nil map (marshals to JSON null) when there
+	// is no row; a typed-nil map is a non-nil interface, so check its length.
+	if m, _ := ag.lastParams["autoresponder"].(map[string]any); len(m) != 0 {
+		t.Errorf("autoresponder = %#v (want empty — nothing adopted)", ag.lastParams["autoresponder"])
 	}
 }
