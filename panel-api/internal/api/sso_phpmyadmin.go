@@ -14,13 +14,15 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dbconsoleops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
-	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/sso"
 )
 
 // SSOPhpMyAdminHandlerConfig plugs the phpMyAdmin SSO handler into the router.
 type SSOPhpMyAdminHandlerConfig struct {
 	Databases repository.DatabaseRepository
-	SSO       *sso.Service
+	// SSO is typed as the dbconsoleops mint+shadow interface (not the concrete
+	// *sso.Service) so the door exposes a mint seam for the AC4 contract matrix;
+	// *sso.Service satisfies it and is what the router wires in (JAB-348).
+	SSO       dbconsoleops.PhpMyAdminConsole
 	Log       *slog.Logger
 	SSOConfig config.SSOConfig
 }
