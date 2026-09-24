@@ -1,14 +1,15 @@
 // mailbox_autoresponder.go — M6.5 Step 3 autoresponder HTTP handlers.
 //
 // Wire contract: GET/PUT/DELETE /mailboxes/:mbid/autoresponder
-// Backed by JMAP VacationResponse (RFC 8621 §8) via the reconciler
-// phase + agent autoresponder.set command.
+// The DB row is truth; the autoresponder converges into the mailbox's single
+// active Sieve script (with any forwards) via mailbox.sieve.apply (GH #1795).
 
 package api
 
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/auth"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/autoresponderops"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/forwarderops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
@@ -27,7 +29,11 @@ type MailboxAutoresponderHandlerConfig struct {
 	Mailboxes      repository.MailboxRepository
 	Domains        repository.DomainRepository
 	Autoresponders repository.EmailAutoresponderRepository
-	Agent          agent.AgentInterface
+	// Forwarders is read so the autoresponder converges into the SAME single
+	// active Sieve script as the mailbox's forwards (GH #1795 — one active
+	// script per account).
+	Forwarders repository.EmailForwarderRepository
+	Agent      agent.AgentInterface
 }
 
 // autoresponderResponse is the JSON envelope the panel UI consumes.
@@ -237,7 +243,10 @@ func (h *mailboxAutoresponderHandler) put(c *gin.Context) {
 	}
 
 	email := mb.LocalPart + "@" + mustDomainName(ctx, h.cfg.Domains, mb.DomainID)
-	ar, warning, err := autoresponderops.Set(ctx,
+	// DB write only (nil push): the autoresponder no longer has its own agent
+	// command — it converges into the mailbox's single active Sieve script
+	// alongside any forwards (GH #1795), below.
+	ar, _, err := autoresponderops.Set(ctx,
 		autoresponderops.Deps{Autoresponders: h.cfg.Autoresponders},
 		autoresponderops.SetInput{
 			MailboxID:    mb.ID,
@@ -248,7 +257,7 @@ func (h *mailboxAutoresponderHandler) put(c *gin.Context) {
 			HTMLBody:     req.HTMLBody,
 			FromDate:     req.FromDate,
 			ToDate:       req.ToDate,
-		}, h.pushAutoresponder)
+		}, nil)
 	if err != nil {
 		if errors.Is(err, autoresponderops.ErrContentRequired) || errors.Is(err, autoresponderops.ErrInvalidDateRange) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_autoresponder", "detail": err.Error()})
@@ -257,6 +266,8 @@ func (h *mailboxAutoresponderHandler) put(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
+
+	warning := h.convergeSieve(ctx, mb.ID, email)
 
 	c.JSON(http.StatusOK, autoresponderResponse{
 		MailboxID: ar.MailboxID,
@@ -271,16 +282,17 @@ func (h *mailboxAutoresponderHandler) put(c *gin.Context) {
 	})
 }
 
-// pushAutoresponder is the autoresponderops.PushFunc backed by the handler's
-// agent client — a bounded best-effort call whose error becomes a Set warning.
-func (h *mailboxAutoresponderHandler) pushAutoresponder(ctx context.Context, cmd string, params map[string]any) error {
-	if h.cfg.Agent == nil {
-		return nil
+// convergeSieve pushes the mailbox's full server-side rule state (forwards +
+// this autoresponder) to Stalwart as one active Sieve script (GH #1795). It is
+// best-effort: the DB is truth, so a convergence failure becomes a structured
+// warning the caller surfaces, never a 5xx. Returns "convergence_failed" on
+// error, "" on success.
+func (h *mailboxAutoresponderHandler) convergeSieve(ctx context.Context, mailboxID, email string) string {
+	if err := forwarderops.Converge(ctx, h.cfg.Agent, h.cfg.Forwarders, h.cfg.Autoresponders, mailboxID, email); err != nil {
+		slog.Warn("mailbox.sieve.apply: convergence failed", "mailbox_id", mailboxID, "err", err)
+		return "convergence_failed"
 	}
-	agentCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	_, err := h.cfg.Agent.Call(agentCtx, cmd, params)
-	return err
+	return ""
 }
 
 func (h *mailboxAutoresponderHandler) del(c *gin.Context) {
@@ -302,10 +314,13 @@ func (h *mailboxAutoresponderHandler) del(c *gin.Context) {
 	email := mb.LocalPart + "@" + mustDomainName(ctx, h.cfg.Domains, mb.DomainID)
 	if err := autoresponderops.Clear(ctx,
 		autoresponderops.Deps{Autoresponders: h.cfg.Autoresponders},
-		mb.ID, email, h.pushAutoresponder); err != nil {
+		mb.ID, email, nil); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
+	// Re-converge the mailbox's Sieve without the (now cleared) autoresponder,
+	// so a remaining forward stays active and the vacation block is dropped.
+	_ = h.convergeSieve(ctx, mb.ID, email)
 	c.JSON(http.StatusNoContent, nil)
 }
 

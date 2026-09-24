@@ -71,7 +71,7 @@ func TestImportExtras_MultiTargetForwarderSplits(t *testing.T) {
 		}
 	}
 	if ag.fwApply != 1 {
-		t.Errorf("forwarder.apply calls = %d, want 1 (one convergence for the mailbox)", ag.fwApply)
+		t.Errorf("mailbox.sieve.apply calls = %d, want 1 (one convergence for the mailbox)", ag.fwApply)
 	}
 }
 

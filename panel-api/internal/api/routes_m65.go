@@ -48,10 +48,11 @@ func registerSendAsRoutes(g *gin.RouterGroup, deps M65RouteDeps) {
 // Wave B: forwarders.
 func registerForwarderRoutes(g *gin.RouterGroup, deps M65RouteDeps) {
 	RegisterMailboxForwarderRoutes(g, MailboxForwarderHandlerConfig{
-		Mailboxes:  deps.Mailboxes,
-		Domains:    deps.Domains,
-		Forwarders: deps.Forwarders,
-		Agent:      deps.Agent,
+		Mailboxes:      deps.Mailboxes,
+		Domains:        deps.Domains,
+		Forwarders:     deps.Forwarders,
+		Autoresponders: deps.Autoresponders,
+		Agent:          deps.Agent,
 	})
 }
 
@@ -61,6 +62,7 @@ func registerAutoresponderRoutes(g *gin.RouterGroup, deps M65RouteDeps) {
 		Mailboxes:      deps.Mailboxes,
 		Domains:        deps.Domains,
 		Autoresponders: deps.Autoresponders,
+		Forwarders:     deps.Forwarders,
 		Agent:          deps.Agent,
 	})
 }

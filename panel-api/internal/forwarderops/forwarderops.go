@@ -1,12 +1,16 @@
 // Package forwarderops holds the single shared path that converges a mailbox's
-// email forwarders to Stalwart, so every caller — the HTTP handler, the cPanel
-// migration, and the backup restore — pushes the same desired state instead of
-// each re-implementing (or forgetting) it.
+// server-side mail rules to Stalwart, so every caller — the HTTP handlers, the
+// CLI, the cPanel migration, the backup restore, and the reconcile sweep —
+// pushes the same desired state instead of each re-implementing (or forgetting)
+// it.
 //
-// Before this, only api.applyForwarders converged forwarders, and only on a
-// forwarder mutation. The bulk import paths created email_forwarders rows
-// without ever pushing them, so a restored/migrated forwarder did not actually
-// forward until someone edited it in the UI (GH #1795 follow-up).
+// GH #1795: a mailbox's external forwards and its autoresponder both compile to
+// the account's single active standard SieveScript, which Stalwart executes at
+// delivery. They therefore cannot be applied independently (activating one
+// deactivates the other), so Converge sends the FULL composite — forwards AND
+// autoresponder — in one mailbox.sieve.apply. jabali previously wrote forwards
+// to the x:SieveUserScript store (never run at delivery) and the autoresponder
+// to a separate VacationResponse object; both are superseded here.
 package forwarderops
 
 import (
@@ -17,18 +21,21 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
-// Converge pushes a mailbox's full forwarder desired state to Stalwart via the
-// agent's forwarder.apply: type=alias entries become account aliases, type=
-// external entries become the redirect Sieve (keep_copy → `redirect :copy`).
-// The agent self-heals the Stalwart Principal if it is not registered yet
+// Converge pushes a mailbox's full server-side rule state to Stalwart via the
+// agent's mailbox.sieve.apply: type=external forwarders become the composite
+// script's redirect(s) (keep_copy → `redirect :copy`), and the autoresponder
+// row (if any) becomes the composite's vacation block. type=alias forwarders
+// are served by the SQL directory, not Sieve, so they are not sent here. The
+// agent self-heals the Stalwart Principal if it is not registered yet
 // (GH #1795), so this works even right after the mailbox was created.
 //
 // Best-effort and idempotent — the DB is truth. A nil agent or forwarders repo
 // is a no-op (returns nil), so a caller without an agent handle (e.g. the backup
-// scheduler) can pass nil safely. Only enabled forwarders are sent; a mailbox
-// with no enabled forwarders converges to an empty set, which clears any stale
-// Sieve.
-func Converge(ctx context.Context, ag agent.AgentInterface, forwarders repository.EmailForwarderRepository, mailboxID, mailboxEmail string) error {
+// scheduler) can pass nil safely. A nil autoresponders repo means "no
+// autoresponder in the composite" — the reconcile sweep, which always has both
+// repos, re-converges the complete state on its next tick, so a caller that
+// only has the forwarders repo stays eventually-consistent.
+func Converge(ctx context.Context, ag agent.AgentInterface, forwarders repository.EmailForwarderRepository, autoresponders repository.EmailAutoresponderRepository, mailboxID, mailboxEmail string) error {
 	if ag == nil || forwarders == nil {
 		return nil
 	}
@@ -36,28 +43,52 @@ func Converge(ctx context.Context, ag agent.AgentInterface, forwarders repositor
 	if err != nil {
 		return err
 	}
-	aliases := []map[string]string{}
 	externals := []map[string]any{}
 	for _, f := range rows {
 		if !f.Enabled {
 			continue
 		}
-		switch f.Type {
-		case "alias":
-			if f.LocalPart != nil {
-				aliases = append(aliases, map[string]string{"local_part": *f.LocalPart})
-			}
-		case "external":
+		if f.Type == "external" {
 			externals = append(externals, map[string]any{"target": f.Target, "keep_copy": f.KeepCopy})
 		}
 	}
+
 	params := map[string]any{
 		"mailbox_email": mailboxEmail,
-		"aliases":       aliases,
 		"externals":     externals,
+		"autoresponder": autoresponderPayload(ctx, autoresponders, mailboxID),
 	}
 	cctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	_, err = ag.Call(cctx, "forwarder.apply", params)
+	_, err = ag.Call(cctx, "mailbox.sieve.apply", params)
 	return err
+}
+
+// autoresponderPayload projects the mailbox's autoresponder row into the
+// mailbox.sieve.apply "autoresponder" sub-object, or nil when there is no repo
+// or no row. Dates are RFC 3339. A read error yields nil (the sweep re-converges
+// later) rather than failing the whole convergence.
+func autoresponderPayload(ctx context.Context, autoresponders repository.EmailAutoresponderRepository, mailboxID string) map[string]any {
+	if autoresponders == nil {
+		return nil
+	}
+	ar, err := autoresponders.FindByMailboxID(ctx, mailboxID)
+	if err != nil || ar == nil {
+		return nil
+	}
+	rfc := func(t *time.Time) *string {
+		if t == nil {
+			return nil
+		}
+		s := t.UTC().Format(time.RFC3339)
+		return &s
+	}
+	return map[string]any{
+		"enabled":   ar.Enabled,
+		"from_date": rfc(ar.FromDate),
+		"to_date":   rfc(ar.ToDate),
+		"subject":   ar.Subject,
+		"text_body": ar.TextBody,
+		"html_body": ar.HTMLBody,
+	}
 }

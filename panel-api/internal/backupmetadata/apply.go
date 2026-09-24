@@ -308,7 +308,9 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 			// the rows converge on the first later forwarder mutation instead.
 			if d.Agent != nil {
 				for mbID, email := range convergeFwds {
-					if cErr := forwarderops.Converge(ctx, d.Agent, d.Forwarders, mbID, email); cErr != nil {
+					// nil autoresponders: the reconcile sweep re-converges the full
+				// composite (forwards + autoresponder) on its next tick (GH #1795).
+				if cErr := forwarderops.Converge(ctx, d.Agent, d.Forwarders, d.Autoresponders, mbID, email); cErr != nil {
 						r.Errors = append(r.Errors, fmt.Sprintf("forwarder converge %s: %v", email, cErr))
 					}
 				}

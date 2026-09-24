@@ -250,7 +250,11 @@ func ImportExtras(
 	// re-saves the forwarder to retry (GH #1795 follow-up). Converge is nil-safe
 	// (nil agent/repo → no-op), so no guard is needed here.
 	for mbID, email := range convergeFwds {
-		if cErr := forwarderops.Converge(ctx, agentCli, forwardersRepo, mbID, email); cErr != nil {
+		// Pass the autoresponder repo so a mailbox imported with BOTH a forward
+		// and an autoresponder gets the full composite immediately, not
+		// forwards-only until the reconcile sweep catches it. Converge is
+		// nil-safe, and the sweep still re-asserts drift later (GH #1795).
+		if cErr := forwarderops.Converge(ctx, agentCli, forwardersRepo, autoRespondersRepo, mbID, email); cErr != nil {
 			res.Skipped = append(res.Skipped, fmt.Sprintf("forwarder_converge:%s:%v", email, cErr))
 		}
 	}
