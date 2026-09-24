@@ -16,7 +16,7 @@ import (
 )
 
 // fakeAdminTokenMinter / fakeAdminerTokenMinter satisfy the privileged handler's
-// adminTokenMinter / adminerTokenMinter interfaces so the admin-all SSO handoff
+// dbconsoleops.PhpMyAdminMinter / AdminerMinter seams so the admin-all SSO handoff
 // can be exercised without a real token store or database. They record what the
 // door minted with, so the tests can assert the admin-all sentinel scope.
 type fakeAdminTokenMinter struct {
