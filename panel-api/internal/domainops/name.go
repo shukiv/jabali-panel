@@ -1,6 +1,35 @@
 package domainops
 
-import "strings"
+import (
+	"errors"
+	"regexp"
+	"strings"
+)
+
+// Domain-name validation sentinels (JAB-279 AC2/AC6). ValidateDomainName is the
+// single FQDN gate the REST create/rename/alias handlers, the automation
+// account-create handler, and the operator CLI all call, so the accepted set of
+// domain names cannot drift between adapters. Each adapter maps these typed
+// reasons to its own transport-shaped message (the Module carries no HTTP or CLI
+// wording), the same adapter pattern as ValidateDocumentRoot's sentinels.
+var (
+	ErrDomainNameEmpty      = errors.New("domainops: domain name is empty")
+	ErrDomainNameWhitespace = errors.New("domainops: domain name contains whitespace")
+	ErrDomainNameTooLong    = errors.New("domainops: domain name exceeds 253 characters")
+	ErrDomainNameHTML       = errors.New("domainops: domain name contains HTML characters")
+	ErrDomainNameTraversal  = errors.New("domainops: domain name contains path characters")
+	ErrDomainNameNotFQDN    = errors.New("domainops: domain name is not a valid FQDN")
+)
+
+var (
+	// nameFQDNRe is the RFC 1035 shape: at least two labels and a 2+ letter TLD,
+	// letters/digits/hyphens only. It alone rejects HTML tags, path separators,
+	// consecutive dots, and whitespace; the explicit checks below run first only
+	// to give each reason its own sentinel (and message) instead of a blanket
+	// "not a valid FQDN".
+	nameFQDNRe    = regexp.MustCompile(`^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,63}$`)
+	nameHTMLTagRe = regexp.MustCompile(`<[^>]*>`)
+)
 
 // Domain-name canonicalization (JAB-279, GH #884). The REST create/rename/alias
 // handlers, the automation account-create handler, and the operator CLI all
@@ -40,4 +69,37 @@ func AncestorDomains(name string) []string {
 		out = append(out, strings.Join(labels[i:], "."))
 	}
 	return out
+}
+
+// ValidateDomainName enforces the RFC 1035 FQDN shape and returns a typed reason
+// on failure (nil when valid). It is a pure gate and does NOT normalize — callers
+// run NormalizeDomainName first, exactly as before, so what a door validates is
+// what it stores.
+//
+// The checks run in a fixed order so the first failing reason is deterministic
+// across adapters: empty, whitespace, over-length, HTML characters, path
+// characters, then the FQDN regex. The whitespace / HTML / path checks are
+// redundant with the regex (which rejects every one of those inputs) but run
+// first so the caller can surface a specific reason instead of a blanket
+// "not a valid FQDN".
+func ValidateDomainName(s string) error {
+	if strings.TrimSpace(s) == "" {
+		return ErrDomainNameEmpty
+	}
+	if strings.ContainsAny(s, " \t\n\r") {
+		return ErrDomainNameWhitespace
+	}
+	if len(s) > 253 {
+		return ErrDomainNameTooLong
+	}
+	if nameHTMLTagRe.MatchString(s) {
+		return ErrDomainNameHTML
+	}
+	if strings.Contains(s, "..") || strings.Contains(s, "/") || strings.Contains(s, "\\") {
+		return ErrDomainNameTraversal
+	}
+	if !nameFQDNRe.MatchString(s) {
+		return ErrDomainNameNotFQDN
+	}
+	return nil
 }

@@ -121,10 +121,11 @@ const (
 	maxDomainsPageSize     = 200
 )
 
-// Security validation patterns
+// Security validation patterns. The domain-name FQDN regex moved into the shared
+// domainops leaf (domainops.ValidateDomainName, JAB-279) so every door validates
+// the identical shape; htmlTagRe stays here because it is also used to STRIP tags
+// from raw input before validation (automation_billing.go, the create handler).
 var (
-	// Domain name validation regex - RFC 1035 compliant
-	domainNameRe = regexp.MustCompile(`^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,63}$`)
 	// HTML tag detection for XSS prevention
 	htmlTagRe = regexp.MustCompile(`<[^>]*>`)
 )
@@ -223,37 +224,26 @@ func normalizeDomainName(s string) string {
 }
 
 // validateDomainName validates domain name for security and RFC compliance
+// validateDomainName is the HTTP adapter over the shared domainops FQDN gate
+// (JAB-279 AC2/AC6). The leaf owns the rule so REST, automation, and the CLI
+// accept the identical set of names; this adapter maps each typed reason back to
+// the exact body string the handler returned before the extraction, so the wire
+// is unchanged.
 func validateDomainName(s string) error {
-	// Check for empty or whitespace
-	if strings.TrimSpace(s) == "" {
+	switch err := domainops.ValidateDomainName(s); {
+	case errors.Is(err, domainops.ErrDomainNameEmpty):
 		return fmt.Errorf("domain name cannot be empty")
-	}
-
-	// Check for whitespace (potential injection)
-	if strings.ContainsAny(s, " \t\n\r") {
+	case errors.Is(err, domainops.ErrDomainNameWhitespace):
 		return fmt.Errorf("domain name contains invalid whitespace characters")
-	}
-
-	// Check length limits per RFC 1035
-	if len(s) > 253 {
+	case errors.Is(err, domainops.ErrDomainNameTooLong):
 		return fmt.Errorf("domain name exceeds 253 character limit")
-	}
-
-	// Check for HTML tags (XSS prevention)
-	if htmlTagRe.MatchString(s) {
+	case errors.Is(err, domainops.ErrDomainNameHTML):
 		return fmt.Errorf("domain name contains invalid HTML characters")
-	}
-
-	// Check for path traversal attempts
-	if strings.Contains(s, "..") || strings.Contains(s, "/") || strings.Contains(s, "\\") {
+	case errors.Is(err, domainops.ErrDomainNameTraversal):
 		return fmt.Errorf("domain name contains invalid path characters")
-	}
-
-	// RFC 1035 compliance check
-	if !domainNameRe.MatchString(s) {
+	case errors.Is(err, domainops.ErrDomainNameNotFQDN):
 		return fmt.Errorf("domain name is not a valid FQDN (requires at least two labels and 2+ letter TLD)")
 	}
-
 	return nil
 }
 
@@ -298,8 +288,8 @@ type updateDomainRequest struct {
 	// resets to the default /home/<user>/domains/<name>/public_html. The
 	// reconciler's per-tick domain.create mkdir -p's the new path + re-renders
 	// the vhost, so changing it is safe (old files are not moved).
-	DocRoot               *string                  `json:"doc_root,omitempty"`
-	NginxCustomDirectives *string                  `json:"nginx_custom_directives,omitempty"`
+	DocRoot               *string `json:"doc_root,omitempty"`
+	NginxCustomDirectives *string `json:"nginx_custom_directives,omitempty"`
 	// NginxTenantDirectives (GH #1624 / ADR-0169 Phase 4) — a tenant-safe raw
 	// nginx snippet, gated on tenant_domain_options_enabled, validated with the
 	// tight tenant value-grammar. Separate from the admin-only field above.

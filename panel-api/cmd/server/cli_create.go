@@ -425,21 +425,21 @@ func createDomainDirect(ctx context.Context, in cliDomainInput) (*models.Domain,
 
 	now := time.Now().UTC()
 	d := &models.Domain{
-		ID:           ids.NewULID(),
-		UserID:       ownerID,
-		Name:         in.Name,
-		DocRoot:      docRoot,
-		IsEnabled:    true,
-		WebDisabled:  in.WebDisabled,
-		DNSDisabled:  in.DNSDisabled,
+		ID:             ids.NewULID(),
+		UserID:         ownerID,
+		Name:           in.Name,
+		DocRoot:        docRoot,
+		IsEnabled:      true,
+		WebDisabled:    in.WebDisabled,
+		DNSDisabled:    in.DNSDisabled,
 		MailProvider:   mailProvider,
 		MailTemplateID: mailTemplateID, // GH #1627: nil unless --dns-template was chosen
 		EmailEnabled:   mailEnabled,
 		SkipAutoSAN:    mailSkipSAN,
-		SSLMode:      sslMode,
-		SSLEnabled:   models.SSLEnabledForMode(sslMode),
-		CreatedAt:    now,
-		UpdatedAt:    now,
+		SSLMode:        sslMode,
+		SSLEnabled:     models.SSLEnabledForMode(sslMode),
+		CreatedAt:      now,
+		UpdatedAt:      now,
 	}
 	// GH #1175: reverse-proxy domains draw a loopback port from the shared
 	// allocator BEFORE the insert (owner_id = the ULID above), released if the
@@ -565,30 +565,27 @@ func cliValidEmail(s string) bool {
 	return len(s) <= 320 && cliEmailRe.MatchString(s)
 }
 
-// cliDomainNameRe enforces the structural shape of a hostable domain
-// at the CLI surface. Rules (intentionally narrower than RFC 1035):
-//
-//   - Two or more labels separated by '.', total ≤253 chars.
-//   - Each label 1..63 chars, alphanumeric + hyphen, no leading/trailing
-//     hyphen.
-//   - Final label (TLD) ≥2 chars, all letters — rejects bare hostnames
-//     ("invalid"), IP literals ("192.168.1.1"), and numeric "TLDs".
-//   - No spaces (operators forgetting to quote get a clear error
-//     instead of a silently-truncated domain row).
-//
-// Stricter validation (TLD allowlist, .local handling) lives downstream
-// in stalwart / DNS layers; this CLI gate just rejects nonsense early.
-var cliDomainNameRe = regexp.MustCompile(
-	`^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,63}$`)
-
+// validateDomainName is the CLI adapter over the shared domainops FQDN gate
+// (JAB-279 AC2/AC6). The leaf owns the rule — at least two labels and a 2+ letter
+// TLD, letters/digits/hyphens only — so `jabali domain create` accepts exactly
+// the names the REST and automation doors accept. This adapter maps each typed
+// reason to a CLI-voice message; it now distinguishes empty / HTML / path /
+// whitespace reasons like the HTTP door instead of collapsing them all into a
+// single "not a valid FQDN" (the accepted/rejected set is unchanged — the leaf's
+// regex already rejected every one of those inputs).
 func validateDomainName(s string) error {
-	if strings.ContainsAny(s, " \t\n") {
+	switch err := domainops.ValidateDomainName(s); {
+	case errors.Is(err, domainops.ErrDomainNameEmpty):
+		return fmt.Errorf("domain name cannot be empty")
+	case errors.Is(err, domainops.ErrDomainNameWhitespace):
 		return fmt.Errorf("domain %q contains whitespace — quote the value if it has special chars", s)
-	}
-	if len(s) > 253 {
+	case errors.Is(err, domainops.ErrDomainNameTooLong):
 		return fmt.Errorf("domain %q exceeds 253 chars", s)
-	}
-	if !cliDomainNameRe.MatchString(s) {
+	case errors.Is(err, domainops.ErrDomainNameHTML):
+		return fmt.Errorf("domain %q contains invalid HTML characters", s)
+	case errors.Is(err, domainops.ErrDomainNameTraversal):
+		return fmt.Errorf("domain %q contains invalid path characters", s)
+	case errors.Is(err, domainops.ErrDomainNameNotFQDN):
 		return fmt.Errorf("domain %q is not a valid FQDN (need at least two labels and a 2+ letter TLD; bare hostnames + IP addresses are rejected)", s)
 	}
 	return nil
