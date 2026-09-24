@@ -471,6 +471,57 @@ func TestDBConsoleContract_TenantEncodingAnchoredToLeaf(t *testing.T) {
 		if !base.called {
 			t.Error("mariadb engine must provision the base shadow (EnsureShadow)")
 		}
-		_ = buf
+		if logs := buf.String(); !strings.Contains(logs, dbconsoleops.OutcomeIssued) {
+			t.Errorf("issuance must audit %q; logs=%s", dbconsoleops.OutcomeIssued, logs)
+		}
+	})
+
+	// Adminer shadow-fail rows — symmetry with the phpMyAdmin shadow-fail row.
+	// A shadow-provisioning failure (not an invalid engine) must surface as
+	// OutcomeEnsureShadowFail + 500 on BOTH engine paths, proving the door takes
+	// the engine-correct shadow path and maps its failure into the issuance
+	// taxonomy rather than an authorization denial.
+	t.Run("adminer postgres shadow-ensure failure audits ensure_shadow_fail", func(t *testing.T) {
+		base := &contractTenantAdminerBase{}
+		adm := &contractTenantAdminer{token: "ADM-TOK", pgShadowErr: errors.New("boom")}
+		dbs := &mockDatabaseRepo{databases: []models.Database{{ID: "db2", Name: "pgdb", UserID: "user1", Engine: "postgres"}}}
+		buf, log := bufLogger()
+		h := &ssoAdminerHandler{cfg: SSOAdminerHandlerConfig{
+			Databases: dbs, SSO: base, Adminer: adm, Log: log,
+			SSOConfig: config.SSOConfig{AdminerBaseURL: admBase},
+		}}
+		w, c := tenantSSOContext("db2")
+		h.issueSSOToken(c)
+		if w.Code != http.StatusInternalServerError {
+			t.Fatalf("code=%d want 500 on postgres shadow-ensure failure", w.Code)
+		}
+		if !adm.pgCalled {
+			t.Error("postgres row must reach EnsurePgShadow")
+		}
+		if logs := buf.String(); !strings.Contains(logs, dbconsoleops.OutcomeEnsureShadowFail) {
+			t.Errorf("postgres shadow-ensure failure must audit %q; logs=%s", dbconsoleops.OutcomeEnsureShadowFail, logs)
+		}
+	})
+
+	t.Run("adminer mariadb shadow-ensure failure audits ensure_shadow_fail", func(t *testing.T) {
+		base := &contractTenantAdminerBase{err: errors.New("boom")}
+		adm := &contractTenantAdminer{token: "ADM-TOK"}
+		dbs := &mockDatabaseRepo{databases: []models.Database{{ID: "db3", Name: "mydb", UserID: "user1", Engine: "mariadb"}}}
+		buf, log := bufLogger()
+		h := &ssoAdminerHandler{cfg: SSOAdminerHandlerConfig{
+			Databases: dbs, SSO: base, Adminer: adm, Log: log,
+			SSOConfig: config.SSOConfig{AdminerBaseURL: admBase},
+		}}
+		w, c := tenantSSOContext("db3")
+		h.issueSSOToken(c)
+		if w.Code != http.StatusInternalServerError {
+			t.Fatalf("code=%d want 500 on mariadb shadow-ensure failure", w.Code)
+		}
+		if !base.called {
+			t.Error("mariadb row must reach the base EnsureShadow")
+		}
+		if logs := buf.String(); !strings.Contains(logs, dbconsoleops.OutcomeEnsureShadowFail) {
+			t.Errorf("mariadb shadow-ensure failure must audit %q; logs=%s", dbconsoleops.OutcomeEnsureShadowFail, logs)
+		}
 	})
 }
