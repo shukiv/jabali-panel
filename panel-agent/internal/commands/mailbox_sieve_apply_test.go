@@ -174,11 +174,13 @@ func (s *sieveStore) sieveSet(raw json.RawMessage) (any, *jmapFakeError) {
 		s.nextID++
 		id := "sv-" + strconv.Itoa(s.nextID)
 		s.scripts[id] = &sieveScriptRec{id: id, name: v.Name, blobID: v.BlobID}
-		res.Created[key] = json.RawMessage(`{"id":"` + id + `"}`)
 		// #<createKey> reference in onSuccessActivateScript resolves to this id.
-		if activateID == "#"+key {
+		activated := activateID == "#"+key
+		if activated {
 			activateID = id
 		}
+		// Match the real server shape: SieveScript/set create echoes isActive.
+		res.Created[key] = json.RawMessage(`{"id":"` + id + `","isActive":` + boolStr(activated) + `}`)
 	}
 	for id, rawVal := range a.Update {
 		rec := s.scripts[id]
