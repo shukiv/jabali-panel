@@ -388,6 +388,7 @@ These have bitten us. Don't repeat:
 | Skip the pre-merge rebase | Phantom "N ahead" reports + merge conflicts surface at push time | `feedback_fetch_rebase_before_deploy` |
 | Hand-roll a SQL query string | GORM parameters only; any `WHERE ... = '" + id + "'"` fails code review | security.md |
 | Hand an agent-written file to panel-api via a `/tmp` path | `jabali-panel` runs `PrivateTmp=yes` → the agent's `/tmp` file is invisible to it (`os.Open` ENOENT). Stage in a shared `/var/lib/jabali-*` dir (e.g. `/var/lib/jabali-uploads`) that's in panel-api's ReadWritePaths + AppArmor | `feedback_agent_panel_file_handoff_not_tmp` (GH #756) |
+| Wrap a typed error with `%v` when a caller needs `errors.As` | `fmt.Errorf("%w: %v", ErrSentinel, typedErr)` keeps `errors.Is(ErrSentinel)` working but severs `typedErr` from the chain, so `errors.As` fails silently — a structured `Code`/detail the API meant to surface is dropped and the client gets the opaque wrapped string. Use multi-`%w` (`"%w: %w"`, Go 1.20+) when both must survive | GH #1686 (cronops validation codes) |
 
 ---
 
