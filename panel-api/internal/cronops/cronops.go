@@ -203,7 +203,7 @@ func Create(ctx context.Context, d Deps, in CreateInput) (*models.CronJob, error
 		return nil, ErrDeps
 	}
 	if err := cronvalidate.ValidateCronName(in.Name); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrNameInvalid, err)
+		return nil, fmt.Errorf("%w: %w", ErrNameInvalid, err)
 	}
 	// Root crons skip the per-user linger check. The agent writes a
 	// system-scoped timer; no /run/user/<uid> dir is touched.
@@ -216,14 +216,14 @@ func Create(ctx context.Context, d Deps, in CreateInput) (*models.CronJob, error
 		}
 	}
 	if err := cronvalidate.ValidateSchedule(in.Schedule); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrScheduleInvalid, err)
+		return nil, fmt.Errorf("%w: %w", ErrScheduleInvalid, err)
 	}
 	docroots, domains, err := ownedTargets(ctx, d, in.UserID)
 	if err != nil {
 		return nil, err
 	}
 	if _, err := cronvalidate.ValidateAnyMulti(in.Command, docroots, domains, homeForUser(username)); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrCommandInvalid, err)
+		return nil, fmt.Errorf("%w: %w", ErrCommandInvalid, err)
 	}
 
 	job := &models.CronJob{
@@ -277,19 +277,19 @@ func Update(ctx context.Context, d Deps, jobID string, patch UpdatePatch) (*mode
 	}
 	if patch.Name != nil {
 		if err := cronvalidate.ValidateCronName(*patch.Name); err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrNameInvalid, err)
+			return nil, fmt.Errorf("%w: %w", ErrNameInvalid, err)
 		}
 		job.Name = *patch.Name
 	}
 	if patch.Command != nil {
 		if _, err := cronvalidate.ValidateAnyMulti(*patch.Command, docroots, domains, homeForUser(username)); err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrCommandInvalid, err)
+			return nil, fmt.Errorf("%w: %w", ErrCommandInvalid, err)
 		}
 		job.Command = cronvalidate.NormalizeMultiCommand(*patch.Command)
 	}
 	if patch.Schedule != nil {
 		if err := cronvalidate.ValidateSchedule(*patch.Schedule); err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrScheduleInvalid, err)
+			return nil, fmt.Errorf("%w: %w", ErrScheduleInvalid, err)
 		}
 		job.Schedule = *patch.Schedule
 	}

@@ -11,6 +11,7 @@ import { useQuery } from "@tanstack/react-query";
 import { apiClient, createCronJob } from "../../../apiClient";
 import { CRON_SCHEDULE_OPTIONS } from "../../../utils/cronSchedule";
 import { CronCommandHelp } from "../../../components/cron/CronCommandHelp";
+import { cronErrorHeadline, type CronErrorData } from "../../../components/cron/cronErrorHeadline";
 
 interface TargetUser {
   id: string;
@@ -90,11 +91,15 @@ export const AdminCreateCronModal = ({ open, onClose, onSuccess }: Props) => {
       message.success("Cron job created");
       onSuccess();
     } catch (err) {
-      const msg =
-        (err as { response?: { data?: { detail?: string } }; message?: string })?.response?.data?.detail ??
-        (err as { message?: string })?.message ??
-        "Failed to create cron job";
-      message.error(msg);
+      // Route the structured cronops validation error through the shared map so
+      // the admin door shows the same friendly, per-field message as the tenant
+      // door instead of the raw backend detail (GH #1686 item 5).
+      const e = err as { response?: { data?: CronErrorData }; message?: string };
+      const { field, headline } = cronErrorHeadline(e?.response?.data, e?.message ?? "Failed to create cron job");
+      if (field) {
+        form.setFields([{ name: field, errors: [headline] }]);
+      }
+      message.error(headline);
     } finally {
       setSaving(false);
     }
