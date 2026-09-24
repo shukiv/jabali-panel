@@ -48,22 +48,15 @@ type DatabaseAdminOpsHandlerConfig struct {
 	Queue *notifications.Queue
 	// SSO / AdminerSSO power the admin all-DBs handoff (ADR-0099).
 	// Optional — nil disables the corresponding admin-SSO route.
-	// Minimal interfaces so *sso.Service / *sso.AdminerService satisfy
-	// them without this package depending on their concrete shape.
-	SSO        adminTokenMinter
-	AdminerSSO adminerTokenMinter
+	// Typed on the dbconsoleops mint seam the tenant doors also use
+	// (JAB-348 AC4); *sso.Service / *sso.AdminerService satisfy them
+	// structurally, so this package never depends on their concrete shape.
+	SSO        dbconsoleops.PhpMyAdminMinter
+	AdminerSSO dbconsoleops.AdminerMinter
 	// Recorder is the M49 unified audit recorder (ADR-0106). M46
 	// db-admin ops dual-write here (fold-in); db_admin_audit stays a
 	// one-release alias-view. Optional — nil disables emission.
 	Recorder audit.Recorder
-}
-
-type adminTokenMinter interface {
-	MintToken(ctx context.Context, userID, databaseID, dbName string) (string, error)
-}
-
-type adminerTokenMinter interface {
-	MintAdminerToken(ctx context.Context, userID, databaseID, engine string) (string, error)
 }
 
 func RegisterDatabaseAdminOpsRoutes(g *gin.RouterGroup, cfg DatabaseAdminOpsHandlerConfig) {

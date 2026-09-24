@@ -47,9 +47,10 @@ import (
 // slice-1/JAB-318 bug shape, applied to scope encoding.
 //
 // COVERAGE SHAPE:
-//   - Privileged doors take the mint surface as an INTERFACE (adminTokenMinter /
-//     adminerTokenMinter) and are driven behaviourally with a recording fake
-//     minter (TestDBConsoleContract_PrivilegedEncodingAnchoredToLeaf).
+//   - Privileged doors take the mint surface as the dbconsoleops leaf
+//     interfaces (PhpMyAdminMinter / AdminerMinter) and are driven
+//     behaviourally with a recording fake minter
+//     (TestDBConsoleContract_PrivilegedEncodingAnchoredToLeaf).
 //   - Tenant doors now type their SSO/Adminer dependencies as the dbconsoleops
 //     mint+shadow interfaces (PhpMyAdminConsole / ShadowService / AdminerConsole),
 //     so a single fake drives them against the SAME matrix
