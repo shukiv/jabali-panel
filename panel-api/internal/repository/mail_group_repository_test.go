@@ -174,3 +174,23 @@ func TestMailGroup_ListAllDeliverableMembers(t *testing.T) {
 	require.Equal(t, []MailGroupMemberEmail{{GroupID: "grp1", Email: "alice@example.com"}, {GroupID: "grp2", Email: "bob@example.com"}}, got)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
+
+// The mail-group reconcile pass skips domains with mail off (GH #1818), so the
+// joined domain's email_enabled must come back on every row.
+func TestMailGroup_ListAllWithDomain_CarriesDomainEmailEnabled(t *testing.T) {
+	db, mock, raw := newMockGroupDB(t)
+	defer raw.Close()
+	repo := NewMailGroupRepository(db)
+
+	mock.ExpectQuery("d.email_enabled AS domain_email_enabled.*FROM mail_groups g JOIN domains d").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "email_cached", "group_kind", "domain_name", "domain_email_enabled"}).
+			AddRow("grp1", "sales@example.com", "distribution", "example.com", true).
+			AddRow("grp2", "team@off.example", "distribution", "off.example", false))
+
+	rows, err := repo.ListAllWithDomain(context.Background())
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+	require.True(t, rows[0].DomainEmailEnabled)
+	require.False(t, rows[1].DomainEmailEnabled)
+	require.NoError(t, mock.ExpectationsWereMet())
+}

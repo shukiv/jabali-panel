@@ -85,6 +85,9 @@ type MailGroupWithDomain struct {
 	OwnerUserID  string `gorm:"column:owner_user_id" json:"owner_user_id"`
 	UserUsername string `gorm:"column:user_username" json:"user_username"`
 	MemberCount  int64  `gorm:"column:member_count" json:"member_count"`
+	// DomainEmailEnabled is domains.email_enabled — the mail-group reconcile
+	// pass skips groups whose domain has mail turned off (GH #1818).
+	DomainEmailEnabled bool `gorm:"column:domain_email_enabled" json:"domain_email_enabled"`
 }
 
 type mailGroupRepo struct{ db *gorm.DB }
@@ -120,6 +123,7 @@ func (r *mailGroupRepo) ListAllWithDomain(ctx context.Context) ([]MailGroupWithD
 	err := r.db.WithContext(ctx).
 		Table("mail_groups g").
 		Select("g.*, d.name AS domain_name, d.user_id AS owner_user_id, COALESCE(u.username, '') AS user_username, " +
+			"d.email_enabled AS domain_email_enabled, " +
 			"(SELECT COUNT(*) FROM mail_group_members m WHERE m.group_id = g.id) AS member_count").
 		Joins("JOIN domains d ON d.id = g.domain_id").
 		Joins("LEFT JOIN users u ON u.id = d.user_id").

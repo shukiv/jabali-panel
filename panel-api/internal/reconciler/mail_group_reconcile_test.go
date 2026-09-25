@@ -37,7 +37,10 @@ func newMailGroupReconciler(t *testing.T, ag *fakeAgent, mg *mgReconcileFake, ma
 }
 
 func mgRow(id, email, kind string) repository.MailGroupWithDomain {
-	return repository.MailGroupWithDomain{MailGroup: models.MailGroup{ID: id, EmailCached: email, GroupKind: kind, DisplayName: "Team"}}
+	return repository.MailGroupWithDomain{
+		MailGroup:          models.MailGroup{ID: id, EmailCached: email, GroupKind: kind, DisplayName: "Team"},
+		DomainEmailEnabled: true,
+	}
 }
 
 func applyCalls(ag *fakeAgent) []map[string]any {
@@ -146,4 +149,18 @@ func TestReconcileMailGroups_MailDisabledSkips(t *testing.T) {
 
 	r.reconcileMailGroups(context.Background())
 	require.Empty(t, applyCalls(ag))
+}
+
+// Turning mail off for a domain (soft disable or the mail-only purge) keeps
+// its mail_groups rows. Re-applying them would re-create the Stalwart domain
+// and the list for a domain whose mail the admin just switched off.
+func TestReconcileMailGroups_SkipsDomainsWithMailOff(t *testing.T) {
+	ag := &fakeAgent{}
+	row := mgRow("g1", "sales@example.org", "distribution")
+	row.DomainEmailEnabled = false
+	mg := &mgReconcileFake{groups: []repository.MailGroupWithDomain{row}}
+	r := newMailGroupReconciler(t, ag, mg, true)
+
+	r.reconcileMailGroups(context.Background())
+	require.Empty(t, applyCalls(ag), "a domain with mail turned off must not be re-projected")
 }

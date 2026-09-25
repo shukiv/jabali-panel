@@ -23,6 +23,8 @@ import (
 //     without touching the group. Hashing the full apply payload catches all of
 //     these on the next tick.
 //
+// Groups on a domain with mail turned off are skipped.
+//
 // Resource groups are not reconciled here: their Group-account projection and
 // memberGroupIds edges are pushed by the HTTP/CLI paths (see the mailgroup.apply
 // note in shared_resource_reconcile.go).
@@ -94,6 +96,12 @@ func (r *Reconciler) reconcileMailGroups(ctx context.Context) {
 	for i := range groups {
 		g := &groups[i].MailGroup
 		if g.GroupKind != mailgroupops.KindDistribution || g.EmailCached == "" {
+			continue
+		}
+		// Mail turned off for the domain (soft disable or the mail-only purge)
+		// keeps the group rows; re-applying would re-create the Stalwart
+		// domain and list the admin just removed.
+		if !groups[i].DomainEmailEnabled {
 			continue
 		}
 		if applied >= mailGroupApplyBudgetPerTick {
