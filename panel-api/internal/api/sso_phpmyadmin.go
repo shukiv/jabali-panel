@@ -97,36 +97,53 @@ func (h *ssoPhpMyAdminHandler) issueSSOToken(c *gin.Context) {
 		return
 	}
 
-	// Ensure shadow account and get credentials
-	if err := h.cfg.SSO.EnsureShadow(ctx, claims.UserID); err != nil {
-		h.cfg.Log.ErrorContext(ctx, "ensure shadow account failed", "err", err)
-		h.auditLog(ctx, claims.UserID, req.DatabaseID, "", dbconsoleops.OutcomeEnsureShadowFail)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
-		return
-	}
-
-	// One shared leaf owns mint -> audit hash-prefix -> redirect, so the
-	// phpMyAdmin token and its redirect can never drift apart from the Adminer,
-	// privileged, and CLI doors (JAB-348 AC1/AC2/AC3). Base-URL resolution stays
-	// adapter-local. The hash-prefix is SHA-256 over the DECODED token bytes
-	// (dbconsoleops.TokenAuditPrefix) — the same digest the validate side derives,
-	// so "issued" and "validated"/"unauthorized" lines share a value to grep for.
-	//
-	// A mint failure audits OutcomeMintFail — the same canonical taxonomy the
-	// Adminer and CLI doors emit (JAB-348 AC5). "unauthorized" is reserved for the
-	// pre-issuance authorization gates above; a failure after ownership and
-	// same-origin have passed is an issuance error, not an authorization denial.
-	loginURL, hashPrefix, err := dbconsoleops.IssuePhpMyAdminLogin(
-		ctx, h.cfg.SSO, claims.UserID, req.DatabaseID, db.Name, h.getPhpMyAdminBaseURL(c))
+	// The DB Console SSO module owns the rest (JAB-348): engine scope, the
+	// console/engine rule (phpMyAdmin opens MariaDB only), the shadow account,
+	// the mint, the redirect and the audit hash-prefix. This door owns the
+	// transport: status codes and its audit labels. A failure after the
+	// authorization gates above is an issuance outcome (OutcomeEnsureShadowFail /
+	// OutcomeMintFail), not an "unauthorized" denial.
+	res, err := dbconsoleops.Issue(ctx, dbconsoleops.IssueDeps{
+		Shadow: h.cfg.SSO, PhpMyAdmin: h.cfg.SSO,
+	}, dbconsoleops.IssueRequest{
+		Scope:      dbconsoleops.ScopeDatabase,
+		UserID:     claims.UserID,
+		DatabaseID: req.DatabaseID,
+		DBName:     db.Name,
+		Engine:     db.Engine,
+		Console:    dbconsoleops.ConsolePhpMyAdmin,
+		BaseURL:    h.getPhpMyAdminBaseURL(c),
+	})
 	if err != nil {
-		h.cfg.Log.ErrorContext(ctx, "mint token failed", "err", err)
-		h.auditLog(ctx, claims.UserID, req.DatabaseID, "", dbconsoleops.OutcomeMintFail)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		status, code, outcome := ssoIssueFailure(err)
+		if status == http.StatusInternalServerError {
+			h.cfg.Log.ErrorContext(ctx, "phpmyadmin sso issuance failed", "outcome", outcome, "err", err)
+		}
+		h.auditLog(ctx, claims.UserID, req.DatabaseID, "", outcome)
+		c.JSON(status, gin.H{"error": code})
 		return
 	}
-	h.auditLog(ctx, claims.UserID, req.DatabaseID, hashPrefix, dbconsoleops.OutcomeIssued)
+	h.auditLog(ctx, claims.UserID, req.DatabaseID, res.HashPrefix, dbconsoleops.OutcomeIssued)
 
-	c.JSON(http.StatusOK, ssoPhpMyAdminResponse{RedirectURL: loginURL})
+	c.JSON(http.StatusOK, ssoPhpMyAdminResponse{RedirectURL: res.LoginURL})
+}
+
+// ssoIssueFailure maps a dbconsoleops.Issue error to the tenant doors' wire
+// shape: an engine the console cannot open is a 400 pre-issuance denial in the
+// "unauthorized:" family; a provisioning or mint failure is a 500 with its
+// canonical issuance outcome; anything else (a wiring bug) is a 500 audited as
+// an issuance failure.
+func ssoIssueFailure(err error) (status int, code, outcome string) {
+	switch {
+	case errors.Is(err, dbconsoleops.ErrInvalidEngine):
+		return http.StatusBadRequest, "unknown_engine", "unauthorized:unknown_engine"
+	case errors.Is(err, dbconsoleops.ErrConsoleEngine):
+		return http.StatusBadRequest, "unsupported_engine", "unauthorized:unsupported_engine"
+	}
+	if outcome := dbconsoleops.Outcome(err); outcome != "" {
+		return http.StatusInternalServerError, "internal", outcome
+	}
+	return http.StatusInternalServerError, "internal", "issue_fail"
 }
 
 // getPhpMyAdminBaseURL derives the base URL for phpMyAdmin redirects.

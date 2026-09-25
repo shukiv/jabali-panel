@@ -13,6 +13,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -32,12 +33,12 @@ import (
 )
 
 // ssoAdminAllSentinel is stored as the token's DatabaseID for an
-// admin-scope SSO handoff. The per-user SSO path ALWAYS carries a real
-// DatabaseID, so the validate handlers' early sentinel branch (ADR-0099)
-// cannot regress it. pmaAdminPasswordFile / pgSuperuserPasswordFile are
-// the agent-written 0640 root:jabali secret files the validator reads.
+// admin-scope SSO handoff. The DB Console SSO module owns the value
+// (dbconsoleops.AdminAllDatabaseID) and refuses it on the per-database
+// scope, so the validate handlers' early sentinel branch (ADR-0099)
+// cannot regress the per-user path.
 const (
-	ssoAdminAllSentinel = "__M46_ADMIN_ALL__"
+	ssoAdminAllSentinel = dbconsoleops.AdminAllDatabaseID
 )
 
 type DatabaseAdminOpsHandlerConfig struct {
@@ -422,28 +423,56 @@ func (h *databaseAdminOpsHandler) ssoPhpMyAdminAdmin(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "agent_unavailable"})
 		return
 	}
-	// Ensure the privileged shadow exists / rotate its password.
+	h.ssoAdminAll(c, claims.UserID, "mariadb", dbconsoleops.IssueDeps{
+		PrivilegedShadow: pmaAdminAccount{agent: h.cfg.Agent},
+		PhpMyAdmin:       h.cfg.SSO,
+	})
+}
+
+// ssoAdminAll issues an admin-all console login through the DB Console SSO
+// module (JAB-348): the module selects the privileged account for the engine,
+// encodes the admin-all scope (sentinel database id, no database name) and
+// builds the redirect. This door keeps its own db_admin_audit taxonomy
+// (ok/error + reason), distinct from the tenant issuance outcomes, so the
+// returned hash-prefix is not used here.
+func (h *databaseAdminOpsHandler) ssoAdminAll(c *gin.Context, userID, engine string, deps dbconsoleops.IssueDeps) {
+	ctx := c.Request.Context()
+	console := dbconsoleops.ConsoleFor(engine)
+	res, err := dbconsoleops.Issue(ctx, deps, dbconsoleops.IssueRequest{
+		Scope:   dbconsoleops.ScopeAdminAll,
+		UserID:  userID,
+		Engine:  engine,
+		Console: console,
+		BaseURL: panelBaseURL(c),
+	})
+	switch {
+	case err == nil:
+		h.audit(ctx, userID, engine, "sso.admin", string(console), "ok", "scope=admin")
+		c.JSON(http.StatusOK, ssoRedirectResponse{RedirectURL: res.LoginURL})
+	case errors.Is(err, dbconsoleops.ErrShadowProvisioning):
+		h.audit(ctx, userID, engine, "sso.admin", string(console), "error", "ensure failed")
+		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_failed"})
+	case errors.Is(err, dbconsoleops.ErrMint):
+		h.audit(ctx, userID, engine, "sso.admin", string(console), "error", "mint failed")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+	default:
+		h.cfg.Log.ErrorContext(ctx, "admin sso issuance failed", "engine", engine, "err", err)
+		h.audit(ctx, userID, engine, "sso.admin", string(console), "error", "issue failed")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+	}
+}
+
+// pmaAdminAccount provisions the privileged phpMyAdmin account
+// (jabali_pma_admin) through the agent — creating it or rotating its password
+// — for an admin-all MariaDB login. It is the module's PrivilegedShadow for
+// the admin door; the userID is the admin and does not change the account.
+type pmaAdminAccount struct{ agent agent.AgentInterface }
+
+func (a pmaAdminAccount) EnsureShadow(ctx context.Context, _ string) error {
 	actx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	if _, err := h.cfg.Agent.Call(actx, "db.pma_admin.ensure", map[string]any{}); err != nil {
-		h.audit(ctx, claims.UserID, "mariadb", "sso.admin", "phpmyadmin", "error", "ensure failed")
-		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_failed"})
-		return
-	}
-	// Admin-all console: mint + redirect via the shared phpMyAdmin console leaf
-	// (JAB-348 AC1/AC2), with the admin-all sentinel as the database id and an
-	// empty scope label, so the leaf emits a token-only URL byte-identical to the
-	// previous inline construction. This door keeps its own audit taxonomy
-	// (ok/error + reason), distinct from the tenant issuance outcomes, so the
-	// leaf's returned hash-prefix is not used here.
-	loginURL, _, err := dbconsoleops.IssuePhpMyAdminLogin(ctx, h.cfg.SSO, claims.UserID, ssoAdminAllSentinel, "", panelBaseURL(c))
-	if err != nil {
-		h.audit(ctx, claims.UserID, "mariadb", "sso.admin", "phpmyadmin", "error", "mint failed")
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
-		return
-	}
-	h.audit(ctx, claims.UserID, "mariadb", "sso.admin", "phpmyadmin", "ok", "scope=admin")
-	c.JSON(http.StatusOK, ssoRedirectResponse{RedirectURL: loginURL})
+	_, err := a.agent.Call(actx, "db.pma_admin.ensure", map[string]any{})
+	return err
 }
 
 // ---- M46 Step 6: show processes + kill (ADR-0100) ----
@@ -639,18 +668,7 @@ func (h *databaseAdminOpsHandler) ssoAdminerAdmin(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 		return
 	}
-	// Admin-all console: mint + redirect via the shared Adminer issuance leaf
-	// (JAB-348 AC1/AC3), pairing the Adminer token with the Adminer redirect the
-	// same way the phpMyAdmin admin-all door does — no single database in scope
-	// (db empty), engine carried through so the scope is encoded identically on
-	// every door. This door keeps its own ok/error audit taxonomy, so the leaf's
-	// returned hash-prefix is not used here.
-	loginURL, _, err := dbconsoleops.IssueAdminerLogin(ctx, h.cfg.AdminerSSO, claims.UserID, ssoAdminAllSentinel, "", "postgres", panelBaseURL(c))
-	if err != nil {
-		h.audit(ctx, claims.UserID, "postgres", "sso.admin", "adminer", "error", "mint failed")
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
-		return
-	}
-	h.audit(ctx, claims.UserID, "postgres", "sso.admin", "adminer", "ok", "scope=admin")
-	c.JSON(http.StatusOK, ssoRedirectResponse{RedirectURL: loginURL})
+	// The admin-all PostgreSQL login signs in as the installer's postgres
+	// superuser, so the module provisions nothing before the mint.
+	h.ssoAdminAll(c, claims.UserID, "postgres", dbconsoleops.IssueDeps{Adminer: h.cfg.AdminerSSO})
 }
