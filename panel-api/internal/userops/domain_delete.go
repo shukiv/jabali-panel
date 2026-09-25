@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/domainops"
 )
 
 // JAB-236 — durable domain deletion.
@@ -111,8 +111,17 @@ func DeleteDomain(ctx context.Context, d Deps, domainID, domainName string, asyn
 	// a normal docroot domain holds no allocation so this is a no-op. Placed
 	// on this single shared delete path so no caller (API, account cascade,
 	// billing cancel, sweep-driven retry) can bypass it.
+	//
+	// JAB-279 AC4: this is the port's last handle. port_allocations has no
+	// foreign key to domains and nothing sweeps orphans, so the release goes
+	// through the domain lifecycle module, which runs it detached from the
+	// caller's cancellation (a client that disconnects after the row delete
+	// must not strand the port), and a failure is logged rather than dropped.
 	if d.PortAllocations != nil {
-		_ = d.PortAllocations.Release(ctx, models.PortOwnerReverseProxy, domainID)
+		if err := domainops.ReleaseReverseProxyPort(ctx, d.PortAllocations, domainID); err != nil {
+			logWarn(d, "domain delete: reverse-proxy port release failed — the port stays reserved",
+				"domain", domainName, "domain_id", domainID, "err", err)
+		}
 	}
 
 	finish := func(ctx context.Context) bool {
