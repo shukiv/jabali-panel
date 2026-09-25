@@ -81,6 +81,9 @@ func (f *fakeAccounts) List(context.Context) ([]models.FtpAccount, error) { retu
 type fakeAgent struct {
 	log   *transcript
 	errOn map[string]error
+	// afterCall runs once a successful call is recorded, so a test can act at
+	// the instant a host mutation lands (e.g. the client disconnects).
+	afterCall func(command string)
 }
 
 func (a *fakeAgent) Call(ctx context.Context, command string, params any) (json.RawMessage, error) {
@@ -90,6 +93,9 @@ func (a *fakeAgent) Call(ctx context.Context, command string, params any) (json.
 	*a.log = append(*a.log, "agent:"+command+"["+paramKeys(params)+"]")
 	if err, ok := a.errOn[command]; ok {
 		return nil, err
+	}
+	if a.afterCall != nil {
+		a.afterCall(command)
 	}
 	return json.RawMessage(`{}`), nil
 }
@@ -229,6 +235,29 @@ func TestDelete_HostFailureKeepsRow(t *testing.T) {
 	}
 	if log.has("repo.Delete") || log.has(syncOp) {
 		t.Fatalf("a failed host delete must keep the row (the retry handle) and skip the sync; transcript = %v", log)
+	}
+}
+
+// Once the host alias is gone the row must follow it: a client disconnect at
+// that instant used to abort the row delete, leaving a row whose alias no
+// longer exists — which the reconciler then re-provisions with a throwaway
+// password, resurrecting an account the user deleted.
+func TestDelete_CancelAfterHostDeleteStillRemovesRow(t *testing.T) {
+	var log transcript
+	d, _, ag := newDeps(&log)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ag.afterCall = func(command string) {
+		if command == "ftpaccount.delete" {
+			cancel()
+		}
+	}
+
+	if err := Delete(ctx, d, testAccount(), "alice"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if !log.has("repo.Delete") || !log.has(syncOp) {
+		t.Fatalf("a post-host-delete cancellation must not strand the row or skip the re-render; transcript = %v", log)
 	}
 }
 
