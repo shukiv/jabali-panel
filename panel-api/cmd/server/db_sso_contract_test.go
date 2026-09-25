@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
-	"os"
 	"strings"
 	"testing"
 
@@ -24,27 +23,19 @@ import (
 // privileged doors run in internal/api/dbconsole_adapter_contract_test.go.
 //
 // The source pin below stays as belt-and-suspenders, matching the api side: the
-// CLI must route engine normalization, shadow dispatch, the mint<->redirect
-// pairing, and the issuance audit taxonomy through dbconsoleops — so a
-// CLI-minted handoff encodes database+engine scope identically to the REST doors
-// and audits in the same taxonomy (AC3/AC4/AC5). If the CLI grows its own inline
-// engine switch or URL builder, it drops one of these references and the pin
-// reddens.
+// CLI must issue through dbconsoleops.Issue — the one entrypoint that owns the
+// console choice, shadow selection, mint, redirect and hash-prefix — and audit
+// in the canonical taxonomy (JAB-348 AC1/AC2/AC5). If the CLI grows its own
+// shadow dispatch, minter call or URL builder, the pin reddens. It may still
+// normalize the engine: the --engine guard compares against it.
 func TestDBSSOCLI_DelegatesIssuanceToLeaf(t *testing.T) {
-	src, err := os.ReadFile("db_sso_cmd.go")
-	if err != nil {
-		t.Fatalf("read db_sso_cmd.go: %v", err)
-	}
-	s := string(src)
+	s := stripLineComments(readGoSource(t, "db_sso_cmd.go"))
 
 	needs := []struct {
 		token string
 		why   string
 	}{
-		{"dbconsoleops.NormalizeEngine", "engine scope must be normalized through the shared leaf so the CLI and REST adapters default and validate engines identically (AC3)"},
-		{"dbconsoleops.EnsureShadowForEngine", "shadow provisioning must dispatch through the shared engine leaf, not a CLI-local switch"},
-		{"dbconsoleops.IssuePhpMyAdminLogin", "the mariadb branch must mint+redirect through the phpMyAdmin issuance leaf (mint<->redirect pairing)"},
-		{"dbconsoleops.IssueAdminerLogin", "the postgres branch must mint+redirect through the Adminer issuance leaf"},
+		{"dbconsoleops.Issue(", "issuance must run through the DB Console SSO entrypoint so the CLI encodes scope identically to the REST doors (AC1/AC3)"},
 		{"dbconsoleops.OutcomeIssued", "a successful CLI issuance must audit the canonical issued outcome, matching the tenant doors (AC5)"},
 		{"dbconsoleops.OutcomeMintFail", "a CLI mint failure must audit the canonical mint_fail outcome"},
 		{"dbconsoleops.OutcomeEnsureShadowFail", "a CLI shadow-provision failure must audit the canonical ensure_shadow_fail outcome"},
@@ -52,6 +43,16 @@ func TestDBSSOCLI_DelegatesIssuanceToLeaf(t *testing.T) {
 	for _, n := range needs {
 		if !strings.Contains(s, n.token) {
 			t.Errorf("db_sso_cmd.go must reference %s — %s", n.token, n.why)
+		}
+	}
+	for _, banned := range []string{
+		"dbconsoleops.IssuePhpMyAdminLogin", "dbconsoleops.IssueAdminerLogin",
+		"dbconsoleops.EnsureShadowForEngine", "dbconsoleops.PhpMyAdminRedirect",
+		"dbconsoleops.AdminerRedirect", "dbconsoleops.TokenAuditPrefix",
+		".EnsureShadow(", ".EnsurePgShadow(", ".MintToken(", ".MintAdminerToken(",
+	} {
+		if strings.Contains(s, banned) {
+			t.Errorf("db_sso_cmd.go calls %s — issuance steps belong to dbconsoleops.Issue (JAB-348 AC2)", banned)
 		}
 	}
 }

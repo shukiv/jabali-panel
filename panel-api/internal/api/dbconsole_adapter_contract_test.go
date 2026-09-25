@@ -236,40 +236,46 @@ func TestDBConsoleContract_PrivilegedAuditsBothOutcomesInOwnTaxonomy(t *testing.
 }
 
 // TestDBConsoleContract_EveryAdapterDelegatesEncodingToLeaf is the source-level
-// belt-and-suspenders for the single-authority invariant. The tenant doors are
-// now also covered behaviourally (TestDBConsoleContract_TenantEncodingAnchoredToLeaf),
-// and the CLI is covered both ways in cmd/server/db_sso_contract_test.go. Each
-// adapter must route scope/engine/
-// redirect encoding through dbconsoleops rather than re-implementing it inline —
-// that delegation is what makes "encoded identically across every adapter" true
-// by construction. An adapter that inlines its own URL/engine handling drops the
-// leaf reference and reddens its pin.
+// belt-and-suspenders for the single-entrypoint invariant (JAB-348 AC1/AC2).
+// The doors are covered behaviourally above, and the CLI in
+// cmd/server/db_sso_contract_test.go. Every browser door must issue through
+// dbconsoleops.Issue and must not reach below it: an adapter that provisions a
+// shadow, mints a token, normalizes an engine or builds a redirect itself has
+// re-grown the duplicated issuance logic the module exists to remove.
 func TestDBConsoleContract_EveryAdapterDelegatesEncodingToLeaf(t *testing.T) {
-	pins := []struct {
-		file  string
-		needs []string
-	}{
-		// Tenant phpMyAdmin: full issuance leaf (mint<->redirect paired).
-		{"sso_phpmyadmin.go", []string{"dbconsoleops.IssuePhpMyAdminLogin"}},
-		// Tenant Adminer: engine normalization + full issuance leaf.
-		{"sso_adminer.go", []string{"dbconsoleops.NormalizeEngine", "dbconsoleops.IssueAdminerLogin"}},
-		// Privileged doors: both admin-all doors now pair mint<->redirect through
-		// the full issuance leaf (the Adminer door was unified onto
-		// IssueAdminerLogin, resolving the earlier residual inconsistency where it
-		// minted via MintAdminerToken and called AdminerRedirect separately).
-		{"databases_admin_ops.go", []string{"dbconsoleops.IssuePhpMyAdminLogin", "dbconsoleops.IssueAdminerLogin"}},
+	banned := []string{
+		"dbconsoleops.IssuePhpMyAdminLogin", "dbconsoleops.IssueAdminerLogin",
+		"dbconsoleops.EnsureShadowForEngine", "dbconsoleops.NormalizeEngine",
+		"dbconsoleops.PhpMyAdminRedirect", "dbconsoleops.AdminerRedirect",
+		"dbconsoleops.TokenAuditPrefix",
+		".EnsureShadow(", ".EnsurePgShadow(", ".MintToken(", ".MintAdminerToken(",
 	}
-	for _, p := range pins {
-		src, err := os.ReadFile(p.file)
+	for _, file := range []string{"sso_phpmyadmin.go", "sso_adminer.go", "databases_admin_ops.go"} {
+		raw, err := os.ReadFile(file)
 		if err != nil {
-			t.Fatalf("read %s: %v", p.file, err)
+			t.Fatalf("read %s: %v", file, err)
 		}
-		for _, need := range p.needs {
-			if !strings.Contains(string(src), need) {
-				t.Errorf("%s must delegate encoding to %s — inlining it lets scope/engine drift from the other adapters (JAB-348 AC3/AC4)", p.file, need)
+		src := withoutLineComments(string(raw))
+		if !strings.Contains(src, "dbconsoleops.Issue(") {
+			t.Errorf("%s must issue through dbconsoleops.Issue (JAB-348 AC1/AC2)", file)
+		}
+		for _, b := range banned {
+			if strings.Contains(src, b) {
+				t.Errorf("%s calls %s — issuance steps belong to dbconsoleops.Issue, not the door (JAB-348 AC2)", file, b)
 			}
 		}
 	}
+}
+
+// withoutLineComments drops // comments so a source pin matches code only.
+func withoutLineComments(src string) string {
+	lines := strings.Split(src, "\n")
+	for i, l := range lines {
+		if j := strings.Index(l, "//"); j >= 0 {
+			lines[i] = l[:j]
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 // --- tenant-door fakes (JAB-348 AC4) ---
@@ -282,14 +288,20 @@ func TestDBConsoleContract_EveryAdapterDelegatesEncodingToLeaf(t *testing.T) {
 
 // contractTenantPMA satisfies dbconsoleops.PhpMyAdminConsole (EnsureShadow + MintToken).
 type contractTenantPMA struct {
-	token     string
-	shadowErr error
-	gotDBID   string
-	gotDB     string
+	token        string
+	shadowErr    error
+	shadowCalled bool
+	minted       bool
+	gotDBID      string
+	gotDB        string
 }
 
-func (m *contractTenantPMA) EnsureShadow(context.Context, string) error { return m.shadowErr }
+func (m *contractTenantPMA) EnsureShadow(context.Context, string) error {
+	m.shadowCalled = true
+	return m.shadowErr
+}
 func (m *contractTenantPMA) MintToken(_ context.Context, _, databaseID, dbName string) (string, error) {
+	m.minted = true
 	m.gotDBID, m.gotDB = databaseID, dbName
 	return m.token, nil
 }
@@ -526,4 +538,35 @@ func TestDBConsoleContract_TenantEncodingAnchoredToLeaf(t *testing.T) {
 			t.Errorf("mariadb shadow-ensure failure must audit %q; logs=%s", dbconsoleops.OutcomeEnsureShadowFail, logs)
 		}
 	})
+}
+
+// TestDBConsoleContract_TenantPhpMyAdminRefusesPostgres pins the console/engine
+// rule on the tenant phpMyAdmin door: phpMyAdmin opens MariaDB only, so a
+// postgres database is refused with 400 before any shadow is provisioned or any
+// token minted, and the refusal is audited as a pre-issuance denial. The UI
+// already disables the button for postgres rows; the module now enforces it for
+// every caller (JAB-348).
+func TestDBConsoleContract_TenantPhpMyAdminRefusesPostgres(t *testing.T) {
+	minter := &contractTenantPMA{token: "PMA-TOK"}
+	dbs := &mockDatabaseRepo{databases: []models.Database{{ID: "db2", Name: "pgdb", UserID: "user1", Engine: "postgres"}}}
+	buf, log := bufLogger()
+	h := &ssoPhpMyAdminHandler{cfg: SSOPhpMyAdminHandlerConfig{
+		Databases: dbs, SSO: minter, Log: log,
+		SSOConfig: config.SSOConfig{PhpMyAdminBaseURL: "https://pma.example.com"},
+	}}
+	w, c := tenantSSOContext("db2")
+	h.issueSSOToken(c)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("code=%d want 400 for a postgres database: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `"unsupported_engine"`) {
+		t.Errorf("body=%s, want error unsupported_engine", w.Body.String())
+	}
+	if minter.shadowCalled || minter.minted {
+		t.Errorf("shadow=%v minted=%v, want neither for a refused engine", minter.shadowCalled, minter.minted)
+	}
+	if logs := buf.String(); !strings.Contains(logs, `"outcome":"unauthorized:unsupported_engine"`) {
+		t.Errorf("refusal must audit unauthorized:unsupported_engine; logs=%s", logs)
+	}
 }

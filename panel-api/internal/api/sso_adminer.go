@@ -29,8 +29,8 @@ type SSOAdminerHandlerConfig struct {
 	// SSO/Adminer are typed as the dbconsoleops shadow+mint interfaces (not the
 	// concrete *sso.Service/*sso.AdminerService) so the door exposes a mint seam
 	// for the AC4 contract matrix. SSO provides the mariadb shadow; Adminer
-	// provides the postgres shadow + the Adminer token mint — the same base/adminer
-	// split EnsureShadowForEngine dispatches on. The concrete services satisfy both
+	// provides the postgres shadow + the Adminer token mint — the Shadow/PgShadow
+	// split dbconsoleops.Issue selects between. The concrete services satisfy both
 	// and are what the router wires in (JAB-348).
 	SSO       dbconsoleops.ShadowService
 	Adminer   dbconsoleops.AdminerConsole
@@ -92,42 +92,33 @@ func (h *ssoAdminerHandler) issueSSOToken(c *gin.Context) {
 		return
 	}
 
-	// Normalize engine to canonical form (empty→mariadb). All adapters use the
-	// same normalization (JAB-348).
-	engine := dbconsoleops.NormalizeEngine(db.Engine)
-
-	// Provision shadow account via the unified engine dispatch leaf (JAB-348).
-	// This ensures mariadb and postgres paths are identical across CLI and REST.
-	if err := dbconsoleops.EnsureShadowForEngine(ctx, engine, claims.UserID, h.cfg.SSO, h.cfg.Adminer); err != nil {
-		if errors.Is(err, dbconsoleops.ErrInvalidEngine) {
-			h.audit(ctx, claims.UserID, req.DatabaseID, "", engine, "unauthorized:unknown_engine")
-			c.JSON(http.StatusBadRequest, gin.H{"error": "unknown_engine"})
-			return
-		}
-		h.cfg.Log.ErrorContext(ctx, "ensure shadow failed", "err", err)
-		h.audit(ctx, claims.UserID, req.DatabaseID, "", engine, dbconsoleops.OutcomeEnsureShadowFail)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
-		return
-	}
-
-	// One shared leaf owns mint -> audit hash-prefix -> redirect, so the Adminer
-	// token and the Adminer redirect can never drift apart from the phpMyAdmin,
-	// privileged, and CLI doors (JAB-348 AC1/AC2/AC3). Base-URL resolution stays
-	// adapter-local. The hash-prefix is the first 4 bytes of SHA-256 over the
-	// DECODED token bytes (dbconsoleops.TokenAuditPrefix) — the same digest the
-	// validate side derives, so "issued" and "validated"/"unauthorized" lines for
-	// one token share a value to grep for.
-	loginURL, hashPrefix, err := dbconsoleops.IssueAdminerLogin(
-		ctx, h.cfg.Adminer, claims.UserID, req.DatabaseID, db.Name, engine, h.getAdminerBaseURL(c))
+	// The DB Console SSO module owns the rest (JAB-348): engine normalization,
+	// the shadow account for the engine (mariadb → SSO, postgres → Adminer), the
+	// mint, the redirect and the audit hash-prefix. This door owns the transport:
+	// status codes and its audit labels (ssoIssueFailure).
+	res, err := dbconsoleops.Issue(ctx, dbconsoleops.IssueDeps{
+		Shadow: h.cfg.SSO, PgShadow: h.cfg.Adminer, Adminer: h.cfg.Adminer,
+	}, dbconsoleops.IssueRequest{
+		Scope:      dbconsoleops.ScopeDatabase,
+		UserID:     claims.UserID,
+		DatabaseID: req.DatabaseID,
+		DBName:     db.Name,
+		Engine:     db.Engine,
+		Console:    dbconsoleops.ConsoleAdminer,
+		BaseURL:    h.getAdminerBaseURL(c),
+	})
 	if err != nil {
-		h.cfg.Log.ErrorContext(ctx, "mint adminer token failed", "err", err)
-		h.audit(ctx, claims.UserID, req.DatabaseID, "", engine, dbconsoleops.OutcomeMintFail)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		status, code, outcome := ssoIssueFailure(err)
+		if status == http.StatusInternalServerError {
+			h.cfg.Log.ErrorContext(ctx, "adminer sso issuance failed", "outcome", outcome, "err", err)
+		}
+		h.audit(ctx, claims.UserID, req.DatabaseID, "", res.Engine, outcome)
+		c.JSON(status, gin.H{"error": code})
 		return
 	}
-	h.audit(ctx, claims.UserID, req.DatabaseID, hashPrefix, engine, dbconsoleops.OutcomeIssued)
+	h.audit(ctx, claims.UserID, req.DatabaseID, res.HashPrefix, res.Engine, dbconsoleops.OutcomeIssued)
 
-	c.JSON(http.StatusOK, ssoAdminerResponse{RedirectURL: loginURL})
+	c.JSON(http.StatusOK, ssoAdminerResponse{RedirectURL: res.LoginURL})
 }
 
 func (h *ssoAdminerHandler) getAdminerBaseURL(c *gin.Context) string {

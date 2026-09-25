@@ -2,16 +2,13 @@ package dbconsoleops
 
 import "context"
 
-// Console issuance — the single place that owns "mint a single-use token, derive
-// its audit hash-prefix, and build the matching redirect URL" for a DB-console
-// SSO handoff (JAB-348 AC1/AC2). Every adapter (tenant phpMyAdmin/Adminer, the
-// privileged admin-all door, and the operator CLI) goes through these leaves, so
-// the token minter and the redirect builder can never be paired wrongly — an
-// Adminer token always gets an Adminer redirect, a phpMyAdmin token always gets a
-// phpMyAdmin redirect (the AC3 "scope encoded identically across adapters"
-// invariant). Authentication, ownership, shadow-account provisioning, and the
-// per-door audit sink stay adapter-local (ADR-0083); only the issuance tail moves
-// here.
+// Console issuance tail — "mint a single-use token, derive its audit
+// hash-prefix, and build the matching redirect URL" (JAB-348). Issue
+// (console.go) is the only caller: it runs these leaves after it has selected
+// and provisioned the shadow account, so the token minter and the redirect
+// builder can never be paired wrongly — an Adminer token always gets an Adminer
+// redirect, a phpMyAdmin token always gets a phpMyAdmin redirect. Doors call
+// Issue, never these leaves.
 
 // OutcomeIssued / OutcomeMintFail / OutcomeEnsureShadowFail are the canonical
 // audit-outcome strings for a DB-console issuance. They give every adapter one
@@ -51,7 +48,7 @@ type PhpMyAdminConsole interface {
 // door's Adminer dependency provides. *sso.AdminerService satisfies it. Typed on
 // the handler config for the same AC4 reason as PhpMyAdminConsole. (The Adminer
 // door's mariadb shadow provisioning goes through the separate ShadowService
-// dependency, matching EnsureShadowForEngine's base/adminer split.)
+// dependency — IssueDeps.Shadow beside IssueDeps.PgShadow.)
 type AdminerConsole interface {
 	AdminerShadowService
 	AdminerMinter
