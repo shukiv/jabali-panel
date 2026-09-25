@@ -1487,6 +1487,10 @@ func (h *domainHandler) delete(c *gin.Context) {
 		DomainTeardowns: h.cfg.DomainTeardowns,
 		PortAllocations: h.cfg.PortAllocations,
 		Agent:           h.cfg.Agent,
+		// Log carries the failures the delete survives: a reverse-proxy port
+		// release that failed (the row was the port's last handle) and a host
+		// teardown left to the reconciler retry (JAB-279 AC4).
+		Log: slog.Default(),
 	}, domain.ID, domain.Name, true)
 	if err != nil {
 		// M6.4 (ADR-0048): the panel-primary row is delete-protected at
