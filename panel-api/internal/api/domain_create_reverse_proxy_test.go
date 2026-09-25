@@ -75,16 +75,22 @@ func (a *rpAgent) Call(_ context.Context, command string, _ any) (json.RawMessag
 	return json.RawMessage(a.resp), nil
 }
 
-// rpDomains adds List (for the preview-slug check) and a Create hook to the
-// shared dcDomains fake.
+// rpDomains adds the preview-enabled listing (for the preview-slug check) and
+// a Create hook to the shared dcDomains fake.
 type rpDomains struct {
 	*dcDomains
 	others   []models.Domain
 	onCreate func()
 }
 
-func (r *rpDomains) List(_ context.Context, _ repository.ListOptions) ([]models.Domain, int64, error) {
-	return r.others, int64(len(r.others)), nil
+func (r *rpDomains) ListPreviewEnabled(context.Context) ([]models.Domain, error) {
+	var out []models.Domain
+	for _, d := range r.others {
+		if d.TempURLEnabled {
+			out = append(out, d)
+		}
+	}
+	return out, nil
 }
 
 func (r *rpDomains) Create(ctx context.Context, d *models.Domain) error {

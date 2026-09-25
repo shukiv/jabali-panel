@@ -467,24 +467,17 @@ type ipSummary struct {
 }
 
 // previewSlugConflict reports another temp-URL-enabled domain whose
-// preview slug collides with name ("" = none). Fail-open on list errors:
-// the toggle is best-effort guarded, and nginx first-wins is the backstop.
+// preview slug collides with name ("" = none), through the domainops check
+// (JAB-279). Fail-open on a store error: the toggle is best-effort guarded,
+// and nginx first-wins is the backstop — but the skip is logged.
 func (h *domainHandler) previewSlugConflict(ctx context.Context, name, selfID string) string {
-	all, _, err := h.cfg.Domains.List(ctx, repository.ListOptions{Limit: 10000})
+	other, err := domainops.PreviewSlugConflict(ctx, h.cfg.Domains, name, selfID)
 	if err != nil {
+		slog.Warn("preview-slug collision check skipped (nginx first-wins is the backstop)",
+			"domain", name, "err", err)
 		return ""
 	}
-	slug := models.PreviewSlug(name)
-	for i := range all {
-		d := &all[i]
-		if d.ID == selfID || !d.TempURLEnabled {
-			continue
-		}
-		if models.PreviewSlug(d.Name) == slug {
-			return d.Name
-		}
-	}
-	return ""
+	return other
 }
 
 func (h *domainHandler) list(c *gin.Context) {

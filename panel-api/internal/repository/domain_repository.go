@@ -66,6 +66,11 @@ type DomainRepository interface {
 	BulkSetEnabledByUserID(ctx context.Context, userID string, enabled bool) (int64, error)
 	Delete(ctx context.Context, id string) error
 	CountByUserID(ctx context.Context, userID string) (int64, error)
+	// ListPreviewEnabled returns every domain whose preview URL is on, with
+	// only id, name, and temp_url_enabled loaded (JAB-279). It backs the
+	// preview-slug collision check, which must see all of them — not a page —
+	// and needs none of the other columns.
+	ListPreviewEnabled(ctx context.Context) ([]models.Domain, error)
 	// ListForRegistrarRefresh returns domains whose registrar expiry has never
 	// been checked or was last checked before staleBefore (GH #259), oldest
 	// first, capped at limit — the WHOIS-fetch ticker's work queue.
@@ -547,6 +552,18 @@ func (r *domainRepo) CountByUserID(ctx context.Context, userID string) (int64, e
 		return 0, err
 	}
 	return count, nil
+}
+
+func (r *domainRepo) ListPreviewEnabled(ctx context.Context) ([]models.Domain, error) {
+	var out []models.Domain
+	if err := r.db.WithContext(ctx).Model(&models.Domain{}).
+		Select("id", "name", "temp_url_enabled").
+		Where("temp_url_enabled = ?", true).
+		Order("id").
+		Find(&out).Error; err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (r *domainRepo) SetPHPPoolID(ctx context.Context, id string, poolID *string) error {
