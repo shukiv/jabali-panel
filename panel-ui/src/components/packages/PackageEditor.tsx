@@ -285,7 +285,14 @@ export const PackageEditor = ({ title, initialValue, isLoading, submitting, onSu
             ]}
             style={{ marginLeft: 52 }}
           >
-            <Select mode="tags" tokenSeparators={[",", " "]} open={false} placeholder="Any destination" style={{ width: "100%", maxWidth: 480 }} />
+            <Select
+              mode="tags"
+              tokenSeparators={[",", " "]}
+              open={false}
+              suffixIcon={null}
+              placeholder="Any destination"
+              style={{ width: "100%", maxWidth: 480 }}
+            />
           </Form.Item>
         ) : null}
 
