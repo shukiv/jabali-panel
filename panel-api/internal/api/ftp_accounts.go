@@ -14,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ftpops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ftpsync"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
@@ -146,41 +147,11 @@ func (h *ftpAccountsHandler) adminUpdate(c *gin.Context) {
 	if req.IsEnabled != nil {
 		acct.IsEnabled = *req.IsEnabled
 	}
-	// JAB-276 AC2 / JAB-269: persist the desired state BEFORE touching the host,
-	// on the REQUEST context — a pre-commit cancellation aborts here having
-	// changed nothing, and admin now shares the tenant path's mutation-order
-	// transcript (persist → detached host apply). The row is the truth the
-	// reconciler converges to, so committing first means the host can only ever
-	// LAG the DB, never run ahead of it. The old host-first admin order could
-	// mutate the host for a change the DB never recorded, or on a cancel leave a
-	// live credential the DB reports disabled.
-	ctx := c.Request.Context()
-	acct.UpdatedAt = time.Now().UTC()
-	if err := h.cfg.Repo.Update(ctx, acct); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
-		return
-	}
-	// The host apply runs on a context DETACHED from request cancellation: once
-	// the desired state is durable, a client disconnect must not abort the host
-	// mutation half-way. agentCall still bounds it with its own timeout.
-	hostCtx := context.WithoutCancel(ctx)
-	setErr := h.agentCall(hostCtx, "ftpaccount.set_access", map[string]any{
-		"tenant_username": ownerName,
-		"username":        acct.Username,
-		"ftp_access":      acct.FTPAccess,
-		"webdav_access":   acct.WebDAVAccess,
-		"enabled":         acct.IsEnabled,
-	})
-	// Always re-render the sshd drop-in from the now-committed DB — for a disable,
-	// the SFTP revocation IS the Match-block removal here, so it revokes even when
-	// the unix-lock above failed (defense in depth).
-	h.syncHostAccess(hostCtx, ownerName)
-	if setErr != nil {
-		// DB is committed (truth); this reports only that the immediate host apply
-		// did not complete — the reconciler converges the host to the row on its
-		// next tick. The row is deliberately NOT reverted.
-		status, payload := h.mapAgentErr(setErr, "update_failed")
-		c.JSON(status, payload)
+	// JAB-276: the persist → detached host apply → sshd re-render ordering lives
+	// in the shared lifecycle module, so this door and the tenant door run one
+	// implementation (identical transcripts by construction).
+	if err := ftpops.UpdateAccess(c.Request.Context(), h.ops(), acct, ownerName); err != nil {
+		h.writeOpsErr(c, err, "update_failed")
 		return
 	}
 	c.JSON(http.StatusOK, acct)
@@ -192,20 +163,10 @@ func (h *ftpAccountsHandler) adminDelete(c *gin.Context) {
 	if !ok {
 		return
 	}
-	ctx := c.Request.Context()
-	if err := h.agentCall(ctx, "ftpaccount.delete", map[string]any{
-		"tenant_username": ownerName,
-		"username":        acct.Username,
-	}); err != nil {
-		status, payload := h.mapAgentErr(err, "delete_failed")
-		c.JSON(status, payload)
+	if err := ftpops.Delete(c.Request.Context(), h.ops(), acct, ownerName); err != nil {
+		h.writeOpsErr(c, err, "delete_failed")
 		return
 	}
-	if err := h.cfg.Repo.Delete(ctx, acct.ID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
-		return
-	}
-	h.syncHostAccess(ctx, ownerName)
 	c.JSON(http.StatusOK, gin.H{"deleted": true})
 }
 
@@ -219,7 +180,7 @@ const (
 	ftpUsernameMaxLen  = 32
 	ftpPasswordMinLen  = 12
 	ftpPasswordMaxLen  = 128
-	ftpAgentTimeout    = 30 * time.Second
+	ftpAgentTimeout    = ftpops.AgentTimeout
 	ftpHomePathBadRune = " \t\r\n\"'\\:"
 )
 
@@ -323,6 +284,28 @@ func (h *ftpAccountsHandler) agentCall(ctx context.Context, method string, param
 	defer cancel()
 	_, err := h.cfg.Agent.Call(callCtx, method, params)
 	return err
+}
+
+// ops builds the FTP Account Lifecycle Module dependencies from the handler config.
+func (h *ftpAccountsHandler) ops() ftpops.Deps {
+	return ftpops.Deps{
+		Agent:    h.cfg.Agent,
+		Accounts: h.cfg.Repo,
+		Users:    h.cfg.Users,
+		Packages: h.cfg.Packages,
+		Log:      h.cfg.Log,
+	}
+}
+
+// writeOpsErr maps a lifecycle-module error to the response: a desired-state
+// write failure is internal; anything else is a host (agent) failure.
+func (h *ftpAccountsHandler) writeOpsErr(c *gin.Context, err error, fallback string) {
+	if errors.Is(err, ftpops.ErrPersist) {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	status, payload := h.mapAgentErr(err, fallback)
+	c.JSON(status, payload)
 }
 
 // syncHostAccess re-renders the sshd drop-in from the full desired set by
@@ -514,40 +497,12 @@ func (h *ftpAccountsHandler) update(c *gin.Context) {
 	if req.IsEnabled != nil {
 		acct.IsEnabled = *req.IsEnabled
 	}
-	// JAB-269: persist the desired state BEFORE touching the host, on the
-	// REQUEST context — a pre-commit cancellation aborts here having changed
-	// nothing. The row is the truth the reconciler converges to, so committing
-	// first means the host can only ever LAG the DB (more restrictive), never
-	// run ahead of it: a cancelled PATCH can no longer leave a live credential
-	// the DB reports disabled (the old host-first order did exactly that).
-	acct.UpdatedAt = time.Now().UTC()
-	if err := h.cfg.Repo.Update(ctx, acct); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
-		return
-	}
-	// The host apply runs on a context DETACHED from request cancellation: once
-	// the desired state is durable, a client disconnect must not abort the host
-	// mutation half-way. agentCall still bounds it with its own timeout.
-	hostCtx := context.WithoutCancel(ctx)
-	setErr := h.agentCall(hostCtx, "ftpaccount.set_access", map[string]any{
-		"tenant_username": *u.Username,
-		"username":        acct.Username,
-		"ftp_access":      acct.FTPAccess,
-		"webdav_access":   acct.WebDAVAccess,
-		"enabled":         acct.IsEnabled,
-	})
-	// Always re-render the sshd drop-in — for a disable, the SFTP revocation IS
-	// the Match-block removal here, rendered from the now-committed DB, so it
-	// revokes even when the unix-lock above failed (defense in depth).
-	h.syncHostAccess(hostCtx, *u.Username)
-	if setErr != nil {
-		// The DB is committed (truth); this error reports only that the
-		// immediate host apply did not complete — the reconciler converges the
-		// host to the row on its next tick. The row is deliberately NOT reverted:
-		// dropping a recorded access change on a transient agent hiccup is worse
-		// than a misleading error, and a retry is idempotent.
-		status, payload := h.mapAgentErr(setErr, "update_failed")
-		c.JSON(status, payload)
+	// JAB-269 / JAB-276: persist-first, detached host apply, and the sshd
+	// re-render run in the shared lifecycle module (same implementation as the
+	// admin door). A host failure leaves the committed row in place for the
+	// reconciler to converge to; only the error is reported.
+	if err := ftpops.UpdateAccess(ctx, h.ops(), acct, *u.Username); err != nil {
+		h.writeOpsErr(c, err, "update_failed")
 		return
 	}
 	c.JSON(http.StatusOK, acct)
@@ -607,22 +562,12 @@ func (h *ftpAccountsHandler) delete(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
-	// Host first: the row is the only handle, so it must outlive the host
-	// alias (a failed host delete keeps the row for the retry; the reverse
-	// order would strand an unaccounted host credential).
-	if err := h.agentCall(ctx, "ftpaccount.delete", map[string]any{
-		"tenant_username": *u.Username,
-		"username":        acct.Username,
-	}); err != nil {
-		status, payload := h.mapAgentErr(err, "delete_failed")
-		c.JSON(status, payload)
+	// Host first (in the shared module): the row is the only handle, so it must
+	// outlive the host alias — a failed host delete keeps the row for the retry.
+	if err := ftpops.Delete(ctx, h.ops(), acct, *u.Username); err != nil {
+		h.writeOpsErr(c, err, "delete_failed")
 		return
 	}
-	if err := h.cfg.Repo.Delete(ctx, acct.ID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
-		return
-	}
-	h.syncHostAccess(ctx, *u.Username)
 	c.JSON(http.StatusOK, gin.H{"deleted": true})
 }
 
