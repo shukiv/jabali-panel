@@ -48,12 +48,18 @@ type SharedCertDeps struct {
 // covers its name, stores ssl_mode=shared, and updates d in place. It returns
 // the attached certificate, or nil when nothing was attached.
 //
-// A web-disabled domain has no web certificate, so it is never attached. On
-// ErrSharedCertAttach the covering certificate is returned alongside the error
-// (so an adapter can name it in a retry hint) and d is left unchanged. Errors
-// print the store error alone, without the sentinel text.
+// A web-disabled domain has no web certificate, so it is never attached. Only
+// the default mode (le, or unset) is upgraded: a caller that explicitly asked
+// for self or none keeps that mode (maintainer decision, 2026-09-26) — a
+// covering shared cert must not turn a deliberately TLS-less domain into an
+// HTTPS one. On ErrSharedCertAttach the covering certificate is returned
+// alongside the error (so an adapter can name it in a retry hint) and d is left
+// unchanged. Errors print the store error alone, without the sentinel text.
 func AttachCoveringSharedCert(ctx context.Context, deps SharedCertDeps, d *models.Domain) (*models.SharedCertificate, error) {
 	if d.WebDisabled || deps.Certs == nil {
+		return nil, nil
+	}
+	if d.SSLMode != "" && d.SSLMode != models.SSLModeLE {
 		return nil, nil
 	}
 	certs, err := deps.Certs.ListServerWideAndOwned(ctx, d.UserID)
