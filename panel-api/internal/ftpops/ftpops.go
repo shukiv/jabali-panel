@@ -36,6 +36,9 @@ type Deps struct {
 	Users    repository.UserRepository
 	Packages ftpsync.PackageGetter
 	Log      *slog.Logger
+	// QuotaMount is the filesystem mount /home lives on, required for GH #1145
+	// isolated accounts (per-uid setquota); empty refuses an isolated create.
+	QuotaMount string
 }
 
 // UpdateAccess persists acct's access flags (already applied by the adapter)

@@ -44,6 +44,8 @@ type fakeAccounts struct {
 	log         *transcript
 	updateErr   error
 	deleteErr   error
+	reserveErr  error
+	allocErr    error
 	afterUpdate func()
 }
 
@@ -75,14 +77,33 @@ func (f *fakeAccounts) Delete(ctx context.Context, _ string) error {
 // List backs the sshd re-render; an empty desired set is enough to observe it.
 func (f *fakeAccounts) List(context.Context) ([]models.FtpAccount, error) { return nil, nil }
 
+func (f *fakeAccounts) ReserveWithinCap(ctx context.Context, _ *models.FtpAccount, _ int, _ uint32) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if f.reserveErr != nil {
+		return f.reserveErr
+	}
+	*f.log = append(*f.log, "repo.Reserve")
+	return nil
+}
+
+func (f *fakeAccounts) AllocateUID(context.Context) (uint32, error) {
+	if f.allocErr != nil {
+		return 0, f.allocErr
+	}
+	*f.log = append(*f.log, "repo.AllocateUID")
+	return 1000000007, nil
+}
+
 // fakeAgent records each call as "agent:<command>[keys]" and honours context
 // cancellation like the real client, so a host call made on a cancelled
 // (non-detached) context never reaches the transcript.
 type fakeAgent struct {
 	log   *transcript
 	errOn map[string]error
-	// afterCall runs once a successful call is recorded, so a test can act at
-	// the instant a host mutation lands (e.g. the client disconnects).
+	// afterCall runs once a call is recorded (whatever its outcome), so a test
+	// can act at the instant a host call lands (e.g. the client disconnects).
 	afterCall func(command string)
 }
 
@@ -91,11 +112,11 @@ func (a *fakeAgent) Call(ctx context.Context, command string, params any) (json.
 		return nil, err
 	}
 	*a.log = append(*a.log, "agent:"+command+"["+paramKeys(params)+"]")
-	if err, ok := a.errOn[command]; ok {
-		return nil, err
-	}
 	if a.afterCall != nil {
 		a.afterCall(command)
+	}
+	if err, ok := a.errOn[command]; ok {
+		return nil, err
 	}
 	return json.RawMessage(`{}`), nil
 }
@@ -306,6 +327,177 @@ func TestSetPassword_SendsLockStateInSameVerb(t *testing.T) {
 	want := "agent:ftpaccount.set_password[enabled,password,tenant_username,username]"
 	if len(log) != 1 || log[0] != want {
 		t.Fatalf("transcript = %v, want exactly %s", log, want)
+	}
+}
+
+const createOp = "agent:ftpaccount.create[ftp_access,home_path,password,tenant_username,username,webdav_access]"
+
+func createReq() CreateRequest {
+	return CreateRequest{Label: "web", HomePath: "/home/alice/public_html", Password: "correct-horse-battery", FTPAccess: true}
+}
+
+var testOwner = Owner{UserID: "user_01", Username: "alice"}
+var testPkg = &models.HostingPackage{MaxFTPAccounts: 5, DiskQuotaMB: 1024}
+
+func TestCreate_ReservesThenCreatesThenSyncs(t *testing.T) {
+	var log transcript
+	d, _, _ := newDeps(&log)
+
+	acct, err := Create(context.Background(), d, testOwner, testPkg, createReq())
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if len(log) < 3 || log[0] != "repo.Reserve" || log[1] != createOp || log[2] != syncOp {
+		t.Fatalf("transcript = %v, want repo.Reserve → %s → %s", log, createOp, syncOp)
+	}
+	if acct.Username != "alice_web" || !acct.SFTPAccess || !acct.IsEnabled || acct.UserID != "user_01" {
+		t.Errorf("created row = %+v, want alice_web, sftp default on, enabled, owned by user_01", acct)
+	}
+}
+
+// Every rejected input fails before any side effect, with the typed reason and
+// the exact detail the adapters surface.
+func TestCreate_ValidationRejectsBeforeAnySideEffect(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(*CreateRequest, *Deps)
+		reason error
+		detail string
+	}{
+		{"bad label", func(r *CreateRequest, _ *Deps) { r.Label = "Bad-Label" }, ErrInvalidLabel,
+			"label must be lowercase letters, digits, or underscores (max 20 chars)"},
+		{"weak password", func(r *CreateRequest, _ *Deps) { r.Password = "short" }, ErrWeakPassword,
+			"password must be 12-128 characters"},
+		{"relative home", func(r *CreateRequest, _ *Deps) { r.HomePath = "public_html" }, ErrInvalidHomePath,
+			"home_path must be an absolute, clean path"},
+		{"bad rune home", func(r *CreateRequest, _ *Deps) { r.HomePath = "/home/alice/a b" }, ErrInvalidHomePath,
+			"home_path must not contain whitespace, quotes, backslashes, or colons"},
+		{"home outside tenant", func(r *CreateRequest, _ *Deps) { r.HomePath = "/home/bob" }, ErrInvalidHomePath,
+			"home_path must be inside your home directory (/home/alice)"},
+		{"isolated without quota mount", func(r *CreateRequest, _ *Deps) { r.Isolated, r.QuotaMB = true, 100 }, ErrIsolationUnavailable,
+			"per-account disk quota is not configured on this host"},
+		{"isolated without quota", func(r *CreateRequest, d *Deps) { r.Isolated = true; d.QuotaMount = "/" }, ErrQuotaRequired,
+			"an isolated account requires a disk quota (quota_mb, in MB)"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var log transcript
+			d, _, _ := newDeps(&log)
+			req := createReq()
+			tc.mutate(&req, &d)
+
+			_, err := Create(context.Background(), d, testOwner, testPkg, req)
+			var ve *ValidationError
+			if !errors.As(err, &ve) || !errors.Is(err, tc.reason) {
+				t.Fatalf("err = %v, want ValidationError(%v)", err, tc.reason)
+			}
+			if ve.Detail != tc.detail {
+				t.Errorf("detail = %q, want %q", ve.Detail, tc.detail)
+			}
+			if len(log) != 0 {
+				t.Fatalf("a rejected create must have no side effects; transcript = %v", log)
+			}
+		})
+	}
+}
+
+// The 32-char cap is on the FULL account name (<tenant>_<label>): a valid
+// 20-char label still overflows under a long tenant name.
+func TestCreate_FullNameTooLong(t *testing.T) {
+	var log transcript
+	d, _, _ := newDeps(&log)
+	owner := Owner{UserID: "user_02", Username: "averylongtenant"} // 15 chars
+	req := createReq()
+	req.Label = strings.Repeat("a", 20)
+	req.HomePath = "/home/averylongtenant/public_html"
+
+	_, err := Create(context.Background(), d, owner, testPkg, req)
+	var ve *ValidationError
+	if !errors.As(err, &ve) || !errors.Is(err, ErrLabelTooLong) {
+		t.Fatalf("err = %v, want ValidationError(ErrLabelTooLong)", err)
+	}
+	want := `full account name "averylongtenant_` + req.Label + `" exceeds 32 characters`
+	if ve.Detail != want {
+		t.Errorf("detail = %q, want %q", ve.Detail, want)
+	}
+	if len(log) != 0 {
+		t.Fatalf("a rejected create must have no side effects; transcript = %v", log)
+	}
+}
+
+func TestCreate_ReserveFailureMakesNoHostCall(t *testing.T) {
+	var log transcript
+	d, accts, _ := newDeps(&log)
+	accts.reserveErr = repository.ErrFtpCapExceeded
+
+	_, err := Create(context.Background(), d, testOwner, testPkg, createReq())
+	if !errors.Is(err, ErrPersist) || !errors.Is(err, repository.ErrFtpCapExceeded) {
+		t.Fatalf("err = %v, want ErrPersist carrying ErrFtpCapExceeded", err)
+	}
+	if len(log) != 0 {
+		t.Fatalf("a failed reservation must not touch the host; transcript = %v", log)
+	}
+}
+
+// A host create failure compensates the reservation even if the client has
+// already disconnected — otherwise a slot-consuming row is stranded.
+func TestCreate_HostFailureCompensatesOnDetachedContext(t *testing.T) {
+	var log transcript
+	d, _, ag := newDeps(&log)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ag.errOn["ftpaccount.create"] = &agent.AgentError{Code: "already_exists", Message: "exists"}
+	// The client disconnects the instant the host create is attempted.
+	ag.afterCall = func(command string) {
+		if command == "ftpaccount.create" {
+			cancel()
+		}
+	}
+
+	_, err := Create(ctx, d, testOwner, testPkg, createReq())
+	var ae *agent.AgentError
+	if !errors.As(err, &ae) || errors.Is(err, ErrPersist) {
+		t.Fatalf("err = %v, want the raw agent error", err)
+	}
+	if !log.has("repo.Delete") || log.has(syncOp) {
+		t.Fatalf("the reservation must be compensated (and no sync run) despite the cancel; transcript = %v", log)
+	}
+}
+
+func TestCreate_IsolatedAllocatesUIDAndJail(t *testing.T) {
+	var log transcript
+	d, _, _ := newDeps(&log)
+	d.QuotaMount = "/"
+	req := createReq()
+	req.Isolated, req.QuotaMB = true, 256
+
+	acct, err := Create(context.Background(), d, testOwner, testPkg, req)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	isoCreate := "agent:ftpaccount.create[ftp_access,home_path,isolated,jail_path,password,quota_mb,quota_mount,tenant_username,uid,username,webdav_access]"
+	if len(log) < 4 || log[0] != "repo.AllocateUID" || log[1] != "repo.Reserve" || log[2] != isoCreate {
+		t.Fatalf("transcript = %v, want AllocateUID → Reserve → %s", log, isoCreate)
+	}
+	if acct.UID == nil || *acct.UID != 1000000007 || acct.JailPath != JailRoot+"/alice/alice_web" {
+		t.Errorf("isolated row uid=%v jail=%q", acct.UID, acct.JailPath)
+	}
+}
+
+func TestCreate_UIDAllocationFailureStopsBeforeReserve(t *testing.T) {
+	var log transcript
+	d, accts, _ := newDeps(&log)
+	d.QuotaMount = "/"
+	accts.allocErr = errors.New("allocator down")
+	req := createReq()
+	req.Isolated, req.QuotaMB = true, 256
+
+	_, err := Create(context.Background(), d, testOwner, testPkg, req)
+	if !errors.Is(err, ErrUIDAllocation) {
+		t.Fatalf("err = %v, want ErrUIDAllocation", err)
+	}
+	if len(log) != 0 {
+		t.Fatalf("a failed uid allocation must stop before the reservation; transcript = %v", log)
 	}
 }
 
