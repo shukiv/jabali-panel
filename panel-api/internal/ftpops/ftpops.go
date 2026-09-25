@@ -4,9 +4,11 @@
 // only resolve authorization (which account, which owner) and map the result to
 // their own transport (ADR-0083).
 //
-// Slice 1 covers the two operations both adapters expose — access update and
-// delete. Because both doors now call the same implementation, their
-// state-transition transcripts are identical by construction (AC1).
+// Every lifecycle operation runs here: Create, UpdateAccess, SetPassword,
+// Delete, and ReapOwner (owner cleanup). Admin and tenant doors call the same
+// implementation, so their state-transition transcripts are identical by
+// construction (AC1), and every delete path shares one host teardown
+// (deleteHostAlias) while keeping its own failure policy.
 package ftpops
 
 import (
@@ -36,6 +38,9 @@ type Deps struct {
 	Users    repository.UserRepository
 	Packages ftpsync.PackageGetter
 	Log      *slog.Logger
+	// QuotaMount is the filesystem mount /home lives on, required for GH #1145
+	// isolated accounts (per-uid setquota); empty refuses an isolated create.
+	QuotaMount string
 }
 
 // UpdateAccess persists acct's access flags (already applied by the adapter)
@@ -75,21 +80,35 @@ func UpdateAccess(ctx context.Context, d Deps, acct *models.FtpAccount, tenantUs
 //
 // Host first: the row is the only handle, so it must outlive the host alias — a
 // failed host delete keeps the row for the retry, while the reverse order would
-// strand an unaccounted host credential. Returns the raw agent error when the
-// host delete fails (row kept, no sync), or an ErrPersist-wrapped error when the
-// row delete fails (no sync).
+// strand an unaccounted host credential.
+//
+// Once the host alias is gone, the row delete and the sshd re-render run on a
+// context detached from cancellation. A client disconnect at that instant used
+// to abort the row delete, leaving a row with no alias — which the reconciler
+// re-provisions with a throwaway password, resurrecting a deleted account.
+//
+// Returns the raw agent error when the host delete fails (row kept, no sync), or
+// an ErrPersist-wrapped error when the row delete fails (no sync).
 func Delete(ctx context.Context, d Deps, acct *models.FtpAccount, tenantUsername string) error {
-	if err := agentCall(ctx, d.Agent, "ftpaccount.delete", map[string]any{
-		"tenant_username": tenantUsername,
-		"username":        acct.Username,
-	}); err != nil {
+	if err := deleteHostAlias(ctx, d, tenantUsername, acct.Username); err != nil {
 		return err
 	}
-	if err := d.Accounts.Delete(ctx, acct.ID); err != nil {
+	afterHost := context.WithoutCancel(ctx)
+	if err := d.Accounts.Delete(afterHost, acct.ID); err != nil {
 		return fmt.Errorf("%w: %w", ErrPersist, err)
 	}
-	syncHostAccess(ctx, d, tenantUsername)
+	syncHostAccess(afterHost, d, tenantUsername)
 	return nil
+}
+
+// deleteHostAlias tears down one subaccount's host alias (userdel + isolated
+// jail unmount/remove). Every delete path — the adapter doors and the owner
+// cleanup — goes through it.
+func deleteHostAlias(ctx context.Context, d Deps, tenantUsername, username string) error {
+	return agentCall(ctx, d.Agent, "ftpaccount.delete", map[string]any{
+		"tenant_username": tenantUsername,
+		"username":        username,
+	})
 }
 
 func agentCall(ctx context.Context, ag agent.AgentInterface, method string, params map[string]any) error {

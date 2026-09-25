@@ -3,13 +3,8 @@ package api
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net/http"
-	"path/filepath"
-	"regexp"
-	"strings"
-	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -17,7 +12,6 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ftpops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ftpsync"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
-	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/middleware"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
@@ -27,11 +21,13 @@ import (
 //
 // Tenant self-service under /me/ftp-accounts, capped by the hosting
 // package's max_ftp_accounts (0 = surface hidden, requests 403). Host
-// mutations run SYNCHRONOUSLY against the agent — create/delete talk to the
-// host first, the DB row second, and the sshd drop-in re-syncs before the
-// response returns, so a fresh account can log in immediately instead of
-// waiting a reconcile tick (step-3 review note). The reconciler remains the
-// drift healer behind this path.
+// mutations run SYNCHRONOUSLY against the agent and the sshd drop-in re-syncs
+// before the response returns, so a fresh account can log in immediately
+// instead of waiting a reconcile tick (step-3 review note). The reconciler
+// remains the drift healer behind this path. The mutation ordering, agent
+// calls, and compensation live in the FTP Account Lifecycle Module
+// (internal/ftpops, JAB-276); these handlers resolve authorization and map
+// its typed results to the wire.
 
 // FtpAccountsHandlerConfig wires the tenant + admin FTP account routes.
 type FtpAccountsHandlerConfig struct {
@@ -52,15 +48,11 @@ type FtpAccountsHandlerConfig struct {
 	QuotaMount string
 }
 
-// GH #1145 isolated-subaccount constants. These MUST match the panel-agent
-// (ftp_account_jail.go) and migration 000267 — the panel computes the jail
-// path + validates the uid range the agent re-checks.
-const (
-	ftpJailRoot = "/var/lib/jabali-ftp-jails"
-	// Above the rootless-container subuid ceiling — see migration 000267 + the
-	// agent's ftpSubaccountUIDMin. Must match both.
-	ftpSubaccountUIDMin = 1000000000
-)
+// ftpSubaccountUIDMin is the floor of the GH #1145 isolated-subaccount uid
+// range: above the rootless-container subuid ceiling — see migration 000267 +
+// the agent's ftpSubaccountUIDMin. Must match both. (The jail root and the
+// naming/credential policy live in internal/ftpops.)
+const ftpSubaccountUIDMin = 1000000000
 
 // RegisterFtpAccountRoutes mounts:
 //   - GET    /me/ftp-accounts               list caller's accounts
@@ -172,18 +164,6 @@ func (h *ftpAccountsHandler) adminDelete(c *gin.Context) {
 
 type ftpAccountsHandler struct{ cfg FtpAccountsHandlerConfig }
 
-// ftpLabelRE mirrors the agent's subaccount label rule — validate at the
-// panel boundary too (defense in depth; the agent re-checks).
-var ftpLabelRE = regexp.MustCompile(`^[a-z0-9][a-z0-9_]{0,19}$`)
-
-const (
-	ftpUsernameMaxLen  = 32
-	ftpPasswordMinLen  = 12
-	ftpPasswordMaxLen  = 128
-	ftpAgentTimeout    = ftpops.AgentTimeout
-	ftpHomePathBadRune = " \t\r\n\"'\\:"
-)
-
 type ftpAccountCreateRequest struct {
 	Label      string `json:"label" binding:"required"`
 	HomePath   string `json:"home_path" binding:"required"`
@@ -259,47 +239,43 @@ func (h *ftpAccountsHandler) resolveTenantForManagement(c *gin.Context) (*models
 	return u, pkg, true
 }
 
-// validateHomePath enforces the panel-side half of the home_path contract:
-// absolute, clean, safe charset, inside the tenant home. The agent
-// additionally symlink-resolves it.
-func validateHomePath(homePath, tenantHome string) error {
-	if !filepath.IsAbs(homePath) || filepath.Clean(homePath) != homePath {
-		return errors.New("home_path must be an absolute, clean path")
-	}
-	if strings.ContainsAny(homePath, ftpHomePathBadRune) {
-		return errors.New("home_path must not contain whitespace, quotes, backslashes, or colons")
-	}
-	rel, err := filepath.Rel(tenantHome, homePath)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, "../") {
-		return fmt.Errorf("home_path must be inside your home directory (%s)", tenantHome)
-	}
-	return nil
-}
-
-func (h *ftpAccountsHandler) agentCall(ctx context.Context, method string, params map[string]any) error {
-	if h.cfg.Agent == nil {
-		return errors.New("agent unavailable")
-	}
-	callCtx, cancel := context.WithTimeout(ctx, ftpAgentTimeout)
-	defer cancel()
-	_, err := h.cfg.Agent.Call(callCtx, method, params)
-	return err
-}
-
 // ops builds the FTP Account Lifecycle Module dependencies from the handler config.
 func (h *ftpAccountsHandler) ops() ftpops.Deps {
 	return ftpops.Deps{
-		Agent:    h.cfg.Agent,
-		Accounts: h.cfg.Repo,
-		Users:    h.cfg.Users,
-		Packages: h.cfg.Packages,
-		Log:      h.cfg.Log,
+		Agent:      h.cfg.Agent,
+		Accounts:   h.cfg.Repo,
+		Users:      h.cfg.Users,
+		Packages:   h.cfg.Packages,
+		Log:        h.cfg.Log,
+		QuotaMount: h.cfg.QuotaMount,
 	}
 }
 
-// writeOpsErr maps a lifecycle-module error to the response: a desired-state
-// write failure is internal; anything else is a host (agent) failure.
+// ftpValidationResponses maps each lifecycle-module validation reason to this
+// door's status and error code; the detail comes from the module verbatim.
+var ftpValidationResponses = map[error]struct {
+	status int
+	code   string
+}{
+	ftpops.ErrInvalidLabel:         {http.StatusUnprocessableEntity, "invalid_label"},
+	ftpops.ErrLabelTooLong:         {http.StatusUnprocessableEntity, "label_too_long"},
+	ftpops.ErrWeakPassword:         {http.StatusUnprocessableEntity, "weak_password"},
+	ftpops.ErrInvalidHomePath:      {http.StatusUnprocessableEntity, "invalid_home_path"},
+	ftpops.ErrQuotaRequired:        {http.StatusUnprocessableEntity, "quota_required"},
+	ftpops.ErrIsolationUnavailable: {http.StatusServiceUnavailable, "isolation_unavailable"},
+}
+
+// writeOpsErr maps a lifecycle-module error to the response: a rejected input
+// is its mapped validation code; a desired-state write failure is internal;
+// anything else is a host (agent) failure.
 func (h *ftpAccountsHandler) writeOpsErr(c *gin.Context, err error, fallback string) {
+	var ve *ftpops.ValidationError
+	if errors.As(err, &ve) {
+		if r, ok := ftpValidationResponses[ve.Reason]; ok {
+			c.JSON(r.status, gin.H{"error": r.code, "detail": ve.Detail})
+			return
+		}
+	}
 	if errors.Is(err, ftpops.ErrPersist) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
@@ -338,104 +314,23 @@ func (h *ftpAccountsHandler) create(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_body"})
 		return
 	}
-	ctx := c.Request.Context()
-	tenant := *u.Username
-
-	if !ftpLabelRE.MatchString(req.Label) {
-		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "invalid_label", "detail": "label must be lowercase letters, digits, or underscores (max 20 chars)"})
-		return
-	}
-	username := tenant + "_" + req.Label
-	if len(username) > ftpUsernameMaxLen {
-		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "label_too_long", "detail": fmt.Sprintf("full account name %q exceeds %d characters", username, ftpUsernameMaxLen)})
-		return
-	}
-	if len(req.Password) < ftpPasswordMinLen || len(req.Password) > ftpPasswordMaxLen {
-		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "weak_password", "detail": fmt.Sprintf("password must be %d-%d characters", ftpPasswordMinLen, ftpPasswordMaxLen)})
-		return
-	}
-	tenantHome := "/home/" + tenant
-	if err := validateHomePath(req.HomePath, tenantHome); err != nil {
-		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "invalid_home_path", "detail": err.Error()})
-		return
-	}
-	// JAB-262: the cap (and the isolated quota-split below) is enforced
-	// atomically in ReserveWithinCap, under a per-tenant row lock — an unlocked
-	// count-then-create let concurrent requests all pass a zero count and each
-	// create a real alias, blowing past max_ftp_accounts.
-
-	sftpAccess := true
-	if req.SFTPAccess != nil {
-		sftpAccess = *req.SFTPAccess
-	}
-
-	isolated := req.Isolated != nil && *req.Isolated
-	createParams := map[string]any{
-		"tenant_username": tenant,
-		"username":        username,
-		"home_path":       req.HomePath,
-		"password":        req.Password,
-		"ftp_access":      req.FTPAccess,
-		"webdav_access":   req.WebDAVAccess,
-	}
-	var allocUID uint32
-	var jailPath string
-	if isolated {
-		if h.cfg.QuotaMount == "" {
-			// setquota can't run without a mount → an isolated uid would be
-			// unquota'd (disk-fill). Refuse rather than ship an unenforced one.
-			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "isolation_unavailable", "detail": "per-account disk quota is not configured on this host"})
-			return
-		}
-		if req.QuotaMB == 0 {
-			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "quota_required", "detail": "an isolated account requires a disk quota (quota_mb, in MB)"})
-			return
-		}
-		// Split allocation (Σ existing isolated sub quotas + this one ≤ package
-		// quota) is enforced inside ReserveWithinCap under the same per-tenant
-		// lock as the account cap (JAB-262) — an unlocked sum-then-create let
-		// concurrent isolated creates over-allocate the package disk quota.
-		var aerr error
-		allocUID, aerr = h.cfg.Repo.AllocateUID(ctx)
-		if aerr != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "uid_alloc_failed"})
-			return
-		}
-		jailPath = ftpJailRoot + "/" + tenant + "/" + username
-		createParams["isolated"] = true
-		createParams["uid"] = allocUID
-		createParams["quota_mb"] = req.QuotaMB
-		createParams["quota_mount"] = h.cfg.QuotaMount
-		createParams["jail_path"] = jailPath
-	}
-
-	now := time.Now().UTC()
-	acct := &models.FtpAccount{
-		ID:           ids.NewULID(),
-		UserID:       u.ID,
-		Username:     username,
+	// JAB-276: validation, cap/quota reservation (JAB-262), isolated uid/jail
+	// allocation, the host create, and its compensation live in the shared
+	// lifecycle module; this door maps the typed result to its wire shape.
+	acct, err := ftpops.Create(c.Request.Context(), h.ops(), ftpops.Owner{UserID: u.ID, Username: *u.Username}, pkg, ftpops.CreateRequest{
+		Label:        req.Label,
 		HomePath:     req.HomePath,
+		Password:     req.Password,
 		FTPAccess:    req.FTPAccess,
-		SFTPAccess:   sftpAccess,
+		SFTPAccess:   req.SFTPAccess,
 		WebDAVAccess: req.WebDAVAccess,
-		IsEnabled:    true,
-		Isolated:     isolated,
+		Isolated:     req.Isolated != nil && *req.Isolated,
 		QuotaMB:      req.QuotaMB,
-		CreatedAt:    now,
-		UpdatedAt:    now,
-	}
-	if isolated {
-		acct.UID = &allocUID
-		acct.JailPath = jailPath
-	}
-
-	// JAB-262: RESERVE the row first — ReserveWithinCap atomically enforces the
-	// account cap + isolated quota-split under a per-tenant lock, so concurrent
-	// creates can never exceed the cap. Reserving before the host alias also
-	// closes the JAB-255 rowless-alias window: the row always exists before any
-	// alias does.
-	if err := h.cfg.Repo.ReserveWithinCap(ctx, acct, int(pkg.MaxFTPAccounts), pkg.DiskQuotaMB); err != nil {
+	})
+	if err != nil {
 		switch {
+		case errors.Is(err, ftpops.ErrUIDAllocation):
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "uid_alloc_failed"})
 		case errors.Is(err, repository.ErrFtpCapExceeded):
 			c.JSON(http.StatusConflict, gin.H{"error": "ftp_account_quota_exceeded", "detail": "you have reached your FTP/SFTP account limit"})
 		case errors.Is(err, repository.ErrFtpQuotaSplitExceeded):
@@ -443,25 +338,10 @@ func (h *ftpAccountsHandler) create(c *gin.Context) {
 		case errors.Is(err, repository.ErrConflict):
 			c.JSON(http.StatusConflict, gin.H{"error": "account_exists"})
 		default:
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+			h.writeOpsErr(c, err, "create_failed")
 		}
 		return
 	}
-
-	if err := h.agentCall(ctx, "ftpaccount.create", createParams); err != nil {
-		// Compensate the reservation so a rejected host-create doesn't leave a
-		// slot-consuming row. Detach from request cancellation (JAB-269 sibling):
-		// a client disconnect during the agent create must not also abort the
-		// compensating delete and strand the reserved row. If this delete itself
-		// still fails, the surviving row is a valid desired-state account the
-		// reconciler provisions on its next pass (password-reset-required) —
-		// never a phantom cap consumer.
-		_ = h.cfg.Repo.Delete(context.WithoutCancel(ctx), acct.ID)
-		status, payload := h.mapAgentErr(err, "create_failed")
-		c.JSON(status, payload)
-		return
-	}
-	h.syncHostAccess(ctx, tenant)
 	c.JSON(http.StatusCreated, acct)
 }
 
@@ -518,8 +398,10 @@ func (h *ftpAccountsHandler) setPassword(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_body"})
 		return
 	}
-	if len(req.Password) < ftpPasswordMinLen || len(req.Password) > ftpPasswordMaxLen {
-		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "weak_password", "detail": fmt.Sprintf("password must be %d-%d characters", ftpPasswordMinLen, ftpPasswordMaxLen)})
+	// Validate before the lookup so a weak password is rejected (422) even for
+	// an id the caller doesn't own — the order the door has always had.
+	if err := ftpops.ValidatePassword(req.Password); err != nil {
+		h.writeOpsErr(c, err, "password_reset_failed")
 		return
 	}
 	ctx := c.Request.Context()
@@ -532,16 +414,8 @@ func (h *ftpAccountsHandler) setPassword(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
-	if err := h.agentCall(ctx, "ftpaccount.set_password", map[string]any{
-		"tenant_username": *u.Username,
-		"username":        acct.Username,
-		"password":        req.Password,
-		// JAB-261: chpasswd drops the shadow lock; send the desired lock
-		// state so the agent re-locks a disabled account in the same verb.
-		"enabled": acct.IsEnabled,
-	}); err != nil {
-		status, payload := h.mapAgentErr(err, "password_reset_failed")
-		c.JSON(status, payload)
+	if err := ftpops.SetPassword(ctx, h.ops(), acct, *u.Username, req.Password); err != nil {
+		h.writeOpsErr(c, err, "password_reset_failed")
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"updated": true})
