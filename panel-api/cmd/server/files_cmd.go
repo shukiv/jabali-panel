@@ -13,13 +13,10 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
-	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -28,64 +25,28 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/filesops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/uploadintake"
 )
 
 const filesAgentTimeout = 2 * time.Minute
 
-// cliUploadStagingDir is the shared dir the agent reads uploads from. A var (not
-// const) only so tests can point the per-owner budget accounting at a temp dir.
-var cliUploadStagingDir = "/var/lib/jabali-uploads"
-
-// maxCLIAgentIngestBytes is the agent's single-shot files.ingest hard cap (GH
-// #660/#661). The CLI ingests in one shot, so it can never exceed this — larger
-// files use SFTP/SSH. It is the ceiling; the effective per-upload limit is the
-// admin-configured max clamped to it (see cliResolveMaxUploadBytes).
-const maxCLIAgentIngestBytes = int64(100 << 20)
-
-// maxCLIStagingMultiple bounds a single owner's in-flight staging at this
-// multiple of the upload limit, so abandoned CLI temps can't fill the service
-// partition (mirrors the GUI per-user staging budget, GH #425/#674).
-const maxCLIStagingMultiple = int64(2)
-
-// cliResolveMaxUploadBytes returns the effective single-CLI-upload ceiling
-// (JAB-337): the admin-configured server_settings.upload_max_size_mb — so the
-// CLI honours a tighter operator limit instead of always allowing the hardcoded
-// 100 MiB — clamped down to the agent's single-ingest cap. Falls back to the
-// agent cap when the setting is unset or unreadable.
-func cliResolveMaxUploadBytes(ctx context.Context) int64 {
-	var configured int64
-	if s, err := repository.NewServerSettingsRepository(sharedDB).Get(ctx); err == nil && s != nil && s.UploadMaxSizeMB > 0 {
-		configured = int64(s.UploadMaxSizeMB) * 1024 * 1024
+// cliResolveUploadLimits reads upload_max_size_mb and resolves the CLI limits.
+// An unreadable setting selects the module default, as on the File Manager.
+func cliResolveUploadLimits(ctx context.Context) uploadintake.Limits {
+	var mb uint32
+	if s, err := repository.NewServerSettingsRepository(sharedDB).Get(ctx); err == nil && s != nil {
+		mb = s.UploadMaxSizeMB
 	}
-	if configured == 0 || configured > maxCLIAgentIngestBytes {
-		return maxCLIAgentIngestBytes
-	}
-	return configured
+	return cliUploadLimits(mb)
 }
 
-// cliUploadTmpPrefix namespaces staging temps by owner (JAB-337) so one owner's
-// abandoned CLI temps count only against that owner's budget, not a global pool
-// shared across every tenant, and so session paths cannot collide across owners.
-func cliUploadTmpPrefix(userID string) string { return "jabali-upload-cli-" + userID + "-" }
-
-// cliStagingDirBytesForUser sums the regular staging files belonging to one
-// owner (by the owner-namespaced prefix).
-func cliStagingDirBytesForUser(userID string) int64 {
-	var total int64
-	entries, err := os.ReadDir(cliUploadStagingDir)
-	if err != nil {
-		return 0
-	}
-	pfx := cliUploadTmpPrefix(userID)
-	for _, e := range entries {
-		if !strings.HasPrefix(e.Name(), pfx) {
-			continue
-		}
-		if fi, iErr := e.Info(); iErr == nil && fi.Mode().IsRegular() {
-			total += fi.Size()
-		}
-	}
-	return total
+// cliUploadLimits is the CLI per-upload cap and per-owner staging budget: the
+// File Manager's, from the same Upload Intake module (JAB-365). There is no
+// 100 MiB clamp any more: it bounded the CLI's in-memory os.ReadFile (GH #661),
+// not the agent — files.ingest moves the staged file by path with no size cap —
+// and the CLI now streams the file into staging.
+func cliUploadLimits(configuredMB uint32) uploadintake.Limits {
+	return uploadintake.LimitsFor(configuredMB)
 }
 
 // resolveFilesUser resolves the target tenant and asserts a linux account.
@@ -553,41 +514,90 @@ func newFilesUploadCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			maxUpload := cliResolveMaxUploadBytes(c.Context())
-			if fi, statErr := os.Stat(args[0]); statErr != nil {
-				return statErr
-			} else if fi.Size() > maxUpload {
-				return fmt.Errorf("file is %d bytes; the configured CLI upload limit is %d — use SFTP/SSH for larger files", fi.Size(), maxUpload)
-			} else if budget := maxUpload * maxCLIStagingMultiple; cliStagingDirBytesForUser(u.ID)+fi.Size() > budget {
-				return fmt.Errorf("this owner's CLI upload staging budget is exceeded (%d in-flight for %s + %d > %d bytes) — retry after their in-flight uploads finish", cliStagingDirBytesForUser(u.ID), *u.Username, fi.Size(), budget)
-			}
-			data, rerr := os.ReadFile(args[0])
-			if rerr != nil {
-				return rerr
-			}
-			// Stage into the shared uploads dir the agent reads from, then ingest.
-			if err := os.MkdirAll(cliUploadStagingDir, 0o750); err != nil {
-				return err
-			}
-			idb := make([]byte, 16)
-			_, _ = rand.Read(idb)
-			tmpPath := filepath.Join(cliUploadStagingDir, cliUploadTmpPrefix(u.ID)+hex.EncodeToString(idb))
-			if werr := os.WriteFile(tmpPath, data, 0o640); werr != nil {
-				return werr
-			}
-			defer os.Remove(tmpPath)
-			if _, err := filesAgentCall(c.Context(), "files.ingest", map[string]any{
-				"user_id": u.ID, "username": *u.Username, "tmp_path": tmpPath, "dest_path": args[1], "overwrite": overwrite,
-			}); err != nil {
+			written, err := cliUpload(c.Context(), cliUploadDeps{
+				limits: cliResolveUploadLimits(c.Context()),
+				call:   filesAgentCall,
+			}, u.ID, *u.Username, args[0], args[1], overwrite)
+			var ingestErr *cliIngestError
+			if errors.As(err, &ingestErr) {
 				cliAuditErr(c.Context(), "files.upload", "user", u.ID, &u.ID)
+				return ingestErr.err
+			}
+			if err != nil {
 				return err
 			}
 			cliAuditOK(c.Context(), "files.upload", "user", u.ID, &u.ID)
-			fmt.Printf("uploaded %s -> %s (%d bytes)\n", args[0], args[1], len(data))
+			fmt.Printf("uploaded %s -> %s (%d bytes)\n", args[0], args[1], written)
 			return nil
 		},
 	}
 	addUserFlag(cmd, &user)
 	cmd.Flags().BoolVar(&overwrite, "overwrite", false, "overwrite if the destination exists")
 	return cmd
+}
+
+// cliUploadDeps is the injection seam for `jabali files upload` (JAB-365): the
+// resolved limits and the agent call, so tests drive cliUpload without a DB or
+// an agent.
+type cliUploadDeps struct {
+	limits uploadintake.Limits
+	call   uploadintake.CallFunc
+}
+
+// cliIngestError marks a failure of the agent ingest step — the only upload
+// failure the command audits (a refused or unstaged upload changed nothing).
+type cliIngestError struct{ err error }
+
+func (e *cliIngestError) Error() string { return e.err.Error() }
+func (e *cliIngestError) Unwrap() error { return e.err }
+
+// cliUpload streams the local file into the owner's Upload Intake staging and
+// ingests it at destPath, returning the bytes uploaded. The owner shares one
+// staging identity, in-flight cap and byte budget with their File Manager
+// uploads (JAB-365).
+func cliUpload(ctx context.Context, d cliUploadDeps, ownerID, username, localPath, destPath string, overwrite bool) (int64, error) {
+	fi, err := os.Stat(localPath)
+	if err != nil {
+		return 0, err
+	}
+	if !fi.Mode().IsRegular() {
+		return 0, fmt.Errorf("%s is not a regular file", localPath)
+	}
+	// Checked before staging so an oversized file is refused without
+	// streaming the first max+1 bytes.
+	if fi.Size() > d.limits.MaxBytes {
+		return 0, cliTooLargeError(fi.Size(), d.limits.MaxBytes)
+	}
+	f, err := os.Open(localPath)
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close()
+
+	tmpPath, written, err := uploadintake.Stage(ownerID, f, d.limits)
+	switch {
+	case errors.Is(err, uploadintake.ErrTooManyUploads):
+		return 0, fmt.Errorf("%s already has %d uploads in flight — retry after they finish", username, uploadintake.MaxInFlight)
+	case errors.Is(err, uploadintake.ErrBudgetExceeded):
+		_, staged := uploadintake.Stats(ownerID)
+		return 0, fmt.Errorf("this owner's upload staging budget is exceeded (%d bytes staged for %s, budget %d) — retry after their in-flight uploads finish", staged, username, d.limits.Budget)
+	case errors.Is(err, uploadintake.ErrTooLarge):
+		// The file grew after the size check.
+		return 0, cliTooLargeError(fi.Size(), d.limits.MaxBytes)
+	case err != nil:
+		return 0, err
+	}
+	// The agent moves the staged file on success; this also covers a
+	// success reply that left it behind.
+	defer uploadintake.Discard(tmpPath)
+	if err := uploadintake.Ingest(ctx, d.call, uploadintake.IngestParams{
+		UserID: ownerID, Username: username, TmpPath: tmpPath, DestPath: destPath, Overwrite: overwrite,
+	}); err != nil {
+		return 0, &cliIngestError{err: err}
+	}
+	return written, nil
+}
+
+func cliTooLargeError(size, max int64) error {
+	return fmt.Errorf("file is %d bytes; the configured upload limit is %d — use SFTP/SSH for larger files", size, max)
 }

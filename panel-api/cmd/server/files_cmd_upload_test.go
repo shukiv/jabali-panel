@@ -1,69 +1,31 @@
 package main
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
 
-// JAB-337: the CLI upload staging budget must be per-owner, not a single global
-// pool — otherwise one tenant's abandoned CLI temps consume the allowance for
-// every other tenant. This proves cliStagingDirBytesForUser counts only the
-// querying owner's files.
-func TestCLIStagingDirBytesForUser_IsolatesOwners(t *testing.T) {
-	dir := t.TempDir()
-	old := cliUploadStagingDir
-	cliUploadStagingDir = dir
-	defer func() { cliUploadStagingDir = old }()
-
-	write := func(name string, n int) {
-		if err := os.WriteFile(filepath.Join(dir, name), make([]byte, n), 0o640); err != nil {
-			t.Fatal(err)
+// Source-pin the upload wiring (JAB-337 → JAB-365): the CLI resolves the
+// admin-configured limits and stages + ingests through the Upload Intake module,
+// so it shares the File Manager's owner identity, in-flight cap and byte budget.
+// The per-owner isolation itself is tested in internal/uploadintake and by the
+// CLI matrix in files_upload_intake_test.go.
+func TestCLIUpload_UsesTheUploadIntakeModule(t *testing.T) {
+	s := stripLineComments(readGoSource(t, "files_cmd.go"))
+	for _, need := range []string{"cliResolveUploadLimits(c.Context())", "uploadintake.Stage(", "uploadintake.Ingest("} {
+		if !strings.Contains(s, need) {
+			t.Errorf("files_cmd.go must call %s", need)
 		}
 	}
-	write(cliUploadTmpPrefix("userA")+"aaa", 100)
-	write(cliUploadTmpPrefix("userA")+"bbb", 50)
-	write(cliUploadTmpPrefix("userB")+"ccc", 999)
-
-	if got := cliStagingDirBytesForUser("userA"); got != 150 {
-		t.Errorf("userA staging = %d, want 150 (must NOT include userB's 999-byte temp)", got)
-	}
-	if got := cliStagingDirBytesForUser("userB"); got != 999 {
-		t.Errorf("userB staging = %d, want 999", got)
-	}
-}
-
-// Owner-namespaced prefixes must be distinct and non-overlapping so one owner's
-// temps never match another's budget query.
-func TestCLIUploadTmpPrefix_PerOwner(t *testing.T) {
-	a, b := cliUploadTmpPrefix("userA"), cliUploadTmpPrefix("userB")
-	if a == b {
-		t.Fatal("per-owner prefixes must differ")
-	}
-	if !strings.HasPrefix("jabali-upload-cli-userA-xyz", a) {
-		t.Errorf("a userA temp must match userA's prefix, got prefix %q", a)
-	}
-	if strings.HasPrefix("jabali-upload-cli-userA-xyz", b) {
-		t.Error("a userA temp must NOT match userB's prefix — budgets would leak across owners")
-	}
-}
-
-// Source-pin the upload guard wiring: configured max (not hardcoded) + per-owner
-// budget, and the global-budget helper is gone.
-func TestCLIUpload_UsesConfiguredMaxAndPerOwnerBudget(t *testing.T) {
-	src, err := os.ReadFile("files_cmd.go")
-	if err != nil {
-		t.Fatalf("read files_cmd.go: %v", err)
-	}
-	s := string(src)
-	if !strings.Contains(s, "cliResolveMaxUploadBytes(c.Context())") {
-		t.Fatal("upload must enforce the admin-configured max (JAB-337), not a hardcoded 100 MiB cap")
-	}
-	if !strings.Contains(s, "cliStagingDirBytesForUser(u.ID)") {
-		t.Fatal("staging budget must be per-owner (JAB-337)")
-	}
-	if strings.Contains(s, "cliStagingDirBytes()") {
-		t.Fatal("the global (cross-owner) staging budget helper must be gone (JAB-337)")
+	for _, banned := range []string{
+		"jabali-upload-cli-",        // the old CLI-only staging identity
+		"maxCLIAgentIngestBytes",    // the old 100 MiB clamp
+		"cliStagingDirBytesForUser", // the old CLI-only budget
+		"os.ReadFile(localPath)",    // the whole-file read the clamp existed for
+		`"files.ingest"`,            // the ingest hand-off belongs to the module
+	} {
+		if strings.Contains(s, banned) {
+			t.Errorf("files_cmd.go still contains %s — upload staging belongs to internal/uploadintake", banned)
+		}
 	}
 }
