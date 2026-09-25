@@ -136,6 +136,10 @@ func (e *PreviewSlugConflictError) Unwrap() error { return ErrPreviewSlugConflic
 // caller. Name must already be normalized (NormalizeDomainName); Create
 // validates it but does not rewrite it.
 type CreateInput struct {
+	// OwnerID is the handle CreateDeps.Users resolves; the stored row carries
+	// the resolved user's id. The cross-tenant guard runs before the lookup
+	// and compares against OwnerID, so a non-admin actor must pass the owner's
+	// id itself.
 	OwnerID string
 	Name    string
 	// DocRoot "" derives /home/<user>/domains/<name>/public_html.
@@ -357,8 +361,10 @@ func Create(ctx context.Context, d CreateDeps, hooks CreateHooks, in CreateInput
 
 	now := time.Now().UTC()
 	dom := &models.Domain{
-		ID:                    ids.NewULID(),
-		UserID:                in.OwnerID,
+		ID: ids.NewULID(),
+		// The resolved owner's id: an adapter may resolve OwnerID from another
+		// handle (the CLI accepts an email or username).
+		UserID:                owner.ID,
 		Name:                  in.Name,
 		DocRoot:               docRoot,
 		IsEnabled:             true,

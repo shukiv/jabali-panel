@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"strings"
 	"testing"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/domainops"
@@ -52,36 +51,5 @@ func TestCLIDomainQuotaError_Messages(t *testing.T) {
 	other := errors.New("other")
 	if cliDomainQuotaError(other) != other {
 		t.Fatal("an unmapped error must pass through")
-	}
-}
-
-// TestCLICreateDomain_RunsDomainQuota source-pins that createDomainDirect runs
-// the shared quota check after the owner-eligibility gate and before any
-// service resolution or persistence. createDomainDirect calls initConfig /
-// initDB and is not unit-testable; the check itself is proven by
-// domainops.TestCheckDomainQuota.
-func TestCLICreateDomain_RunsDomainQuota(t *testing.T) {
-	src := stripLineComments(readGoSource(t, "cli_create.go"))
-
-	quotaIdx := strings.Index(src, "domainops.CheckDomainQuota(ctx, domainops.QuotaDeps{")
-	if quotaIdx < 0 {
-		t.Fatal("CLI create must run domainops.CheckDomainQuota")
-	}
-	if !strings.Contains(src, "Packages: packageRepoFromDB(),") {
-		t.Error("CLI create must feed the quota check the real package repository")
-	}
-	if !strings.Contains(src, "cliDomainQuotaError(err)") {
-		t.Error("CLI create must map the quota rejection through cliDomainQuotaError")
-	}
-	if i := strings.Index(src, "domainops.CheckOwnerEligible(owner)"); i < 0 || i > quotaIdx {
-		t.Error("the owner-eligibility gate must run before the quota check")
-	}
-	for _, after := range []string{"domainops.ResolveMailPosture(", "domainops.PersistDomain("} {
-		if i := strings.Index(src, after); i < 0 || i < quotaIdx {
-			t.Errorf("the quota check must run before %s", after)
-		}
-	}
-	if strings.Contains(src, ".MaxDomains") {
-		t.Error("CLI create must not compare against MaxDomains inline; domainops owns the quota")
 	}
 }

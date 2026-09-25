@@ -13,7 +13,6 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/kratosclient"
-	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/api"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/domainmailops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/domainops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
@@ -236,15 +235,15 @@ type cliDomainInput struct {
 	DNSTemplateID string
 }
 
-// createDomainDirect replicates the non-auth side of internal/api/domains.go
-// create handler: owner must exist + be non-admin + have a username + pass
-// package quota. On success the caller should trigger a reconcile tick so
-// the nginx vhost materialises.
+// createDomainDirect is the `jabali domain create` adapter over
+// domainops.Create, the one create entrypoint the REST door also runs
+// (JAB-279 AC1). The new row is converged by the reconciler's next tick.
 //
-// Second return is a slice of soft warnings (DNS autoconfig conflicts, the
-// agent being unavailable so email couldn't auto-enable, etc.) that the CLI
-// front-end prints to stderr. The domain itself is created regardless; only
-// hard errors (row insert conflict, bad input) return err != nil.
+// Second return is a slice of soft warnings (a shared-certificate lookup or
+// attach failure, DNS autoconfig conflicts, the agent being unavailable so
+// email couldn't auto-enable, etc.) that the CLI front-end prints to stderr.
+// The domain itself is created regardless; only hard errors (row insert
+// conflict, bad input) return err != nil.
 func createDomainDirect(ctx context.Context, in cliDomainInput) (*models.Domain, []string, error) {
 	if err := initConfig(); err != nil {
 		return nil, nil, err
@@ -266,234 +265,180 @@ func createDomainDirect(ctx context.Context, in cliDomainInput) (*models.Domain,
 	if in.Name == "" || in.UserID == "" {
 		return nil, nil, fmt.Errorf("--name and --user are required")
 	}
-	if err := validateDomainName(in.Name); err != nil {
-		return nil, nil, err
-	}
 
-	// Cross-tenant alias-collision guard (JAB-279 / GH #1625) — the REST create,
-	// rename, and docker-app paths reject a name whose apex / www / mail-helper
-	// server_name is already claimed by another domain's web-domain alias; the
-	// CLI ran none of them, so `jabali domain create` could stand up a domain
-	// that reopens the duplicate-server_name hijack. Route through the shared
-	// api.AliasCollision so the candidate derivation cannot drift from the HTTP
-	// path. Fail CLOSED: a lookup error aborts the create, never proceeds. Runs
-	// after validateDomainName and before any side effect, mirroring the REST
-	// create precedence (validate -> collision -> owner).
-	if hit, clash, cerr := api.AliasCollision(ctx, repository.NewWebDomainAliasRepository(sharedDB), in.Name); cerr != nil {
-		return nil, nil, fmt.Errorf("verify domain name against existing aliases: %w", cerr)
-	} else if clash {
-		return nil, nil, fmt.Errorf("the name %q is already used as an alias of another domain", hit)
-	}
-
-	domains := domainRepoFromDB()
-
-	// Accept email / username / ULID — same resolver as the other user-
-	// facing CLIs so operators don't have to copy-paste ULIDs.
-	owner, err := resolveUser(ctx, in.UserID)
-	if err != nil {
-		return nil, nil, err
-	}
-	// Owner-eligibility gate (JAB-279) — the same domainops policy the REST
-	// handler runs. Routing through the leaf closes a CLI gap: the CLI never
-	// checked owner.Suspended, so a suspended owner could get a live vhost from
-	// the command line while the account stayed locked. The messages stay the
-	// CLI's own (the leaf owns the policy, each adapter owns its transport).
-	switch err := domainops.CheckOwnerEligible(owner); {
-	case errors.Is(err, domainops.ErrAdminCannotHost):
-		return nil, nil, fmt.Errorf("admin users cannot host domains — create a regular user")
-	case errors.Is(err, domainops.ErrOwnerSuspended):
-		return nil, nil, fmt.Errorf("user %q is suspended — unsuspend before adding domains", owner.ID)
-	case errors.Is(err, domainops.ErrOwnerNoUsername):
-		return nil, nil, fmt.Errorf("user %q has no username — inconsistent state", owner.ID)
-	case err != nil:
-		return nil, nil, err
-	}
-
-	// All subsequent DB ops use the resolved ULID, not the free-form
-	// spec the operator passed — email / username lookups land here via
-	// resolveUser and d.UserID must always be the real ID.
-	ownerID := owner.ID
-
-	// Package domain quota (JAB-279) — the same domainops check the REST handler
-	// runs (409 domain_quota_exceeded there); the messages stay the CLI's own.
-	if err := domainops.CheckDomainQuota(ctx, domainops.QuotaDeps{
-		Domains:  domains,
-		Packages: packageRepoFromDB(),
-	}, owner); err != nil {
-		return nil, nil, cliDomainQuotaError(err)
-	}
-
-	// GH #1449 / GH #1627 / GH #1409: resolve the mail posture and the service
-	// matrix through the same domainops steps the REST createDomainOp runs
-	// (JAB-279), so the CLI stores what REST stores for the same input (AC2).
-	// ResolveMailPosture validates --mail, applies a --dns-template's 'custom'
-	// posture (the reconciler seeds the template's records into the fresh zone,
-	// keyed off MailTemplateID), and coerces Jabali mail to none on a server whose
-	// mail module is off — read fail-open, so an unreadable settings row never
-	// blocks a create. The CLI takes no --ssl-mode, so the matrix starts from
-	// Let's Encrypt; a DNS-only domain is forced to none.
-	webEnabled := !in.WebDisabled
-	dnsEnabled := !in.DNSDisabled
-	posture, err := domainops.ResolveMailPosture(ctx, repository.NewDNSTemplateRepository(sharedDB), domainops.MailPostureInput{
-		Provider:          in.MailProvider,
-		DNSTemplateID:     in.DNSTemplateID,
-		DNSEnabled:        dnsEnabled,
-		MailModuleEnabled: domainops.MailModuleEnabled(ctx, serverSettingsRepoFromDB()),
-	})
-	if err != nil {
-		return nil, nil, cliMailPostureError(err, in)
-	}
-	matrix, err := domainops.ResolveServiceMatrix(domainops.ServiceMatrixInput{
-		WebEnabled:   webEnabled,
-		DNSEnabled:   dnsEnabled,
-		MailProvider: posture.Provider,
-	})
-	if errors.Is(err, domainops.ErrNoServiceSelected) {
-		return nil, nil, fmt.Errorf("select at least one service: web hosting (--web-enabled), DNS (--manage-dns), or mail (--mail)")
-	} else if err != nil {
-		return nil, nil, err
-	}
-
-	// A web-off domain is docroot-less (DNS-only zone / mail-only domain).
-	switch err := domainops.CheckWebOffOptions(domainops.WebOffInput{
-		WebEnabled:   webEnabled,
-		ReverseProxy: in.ReverseProxy,
-		DocRoot:      in.DocRoot,
-	}); {
-	case errors.Is(err, domainops.ErrWebOffReverseProxy):
-		return nil, nil, fmt.Errorf("a reverse-proxy domain requires web hosting")
-	case errors.Is(err, domainops.ErrWebOffDocRoot):
-		return nil, nil, fmt.Errorf("a web-disabled domain has no document root")
-	case err != nil:
-		return nil, nil, err
-	}
-
-	// Trim first (matches the REST create path, which trims before it validates
-	// and stores) so a trailing space is neither stored nor mkdir'd. A web-off
-	// domain's trimmed document root is empty (checked above).
-	docRoot := strings.TrimSpace(in.DocRoot)
-	if webEnabled {
-		// JAB-279 (AC1 module owns validate / AC2 same stored state across
-		// adapters): confine the document root to the owner's home before it is
-		// stored — the reconciler mkdir -p's the path and renders a vhost for it,
-		// so an unchecked --doc-root would stand up a site on an arbitrary path.
-		// The CLI is an operator tool, so it applies the same admin-floor rule the
-		// REST admin create path uses (domainops.ValidateDocumentRoot); a path
-		// outside /home/<user>/ or containing ".." is refused here. *owner.Username
-		// is safe: the eligibility gate above already rejected a nil/empty username.
-		if err := domainops.ValidateDocumentRoot(docRoot, *owner.Username, in.Name); err != nil {
-			return nil, nil, fmt.Errorf("invalid --doc-root: %w", err)
-		}
-		if docRoot == "" {
-			docRoot = "/home/" + *owner.Username + "/domains/" + in.Name + "/public_html"
-		}
-	}
-
-	now := time.Now().UTC()
-	d := &models.Domain{
-		ID:             ids.NewULID(),
-		UserID:         ownerID,
-		Name:           in.Name,
-		DocRoot:        docRoot,
-		IsEnabled:      true,
-		WebDisabled:    in.WebDisabled,
-		DNSDisabled:    in.DNSDisabled,
-		MailProvider:   posture.Provider,
-		MailTemplateID: posture.TemplateID, // GH #1627: nil unless --dns-template was chosen
-		EmailEnabled:   matrix.EmailEnabled,
-		SkipAutoSAN:    matrix.SkipAutoSAN,
-		SSLMode:        matrix.SSLMode,
-		SSLEnabled:     models.SSLEnabledForMode(matrix.SSLMode),
-		CreatedAt:      now,
-		UpdatedAt:      now,
-	}
-	// GH #1175 / #1401: reverse-proxy domains draw a loopback port from the
-	// shared allocator BEFORE the insert (owner_id = the ULID above). The
-	// validate → system-uid probe → allocate sequence and the release on a
-	// failed insert are the domainops module's (JAB-279), the same code the
-	// REST create door runs; this adapter maps its sentinels to CLI messages.
-	ports := repository.NewPortAllocationRepository(sharedDB)
-	if in.ReverseProxy {
-		deps := domainops.PortDeps{Ports: ports}
-		// The probe is only needed for an explicit port. Assign the agent only
-		// when the pointer is set: a nil *agent.Client in the interface would
-		// pass the module's nil check and panic on Call.
-		if in.ReverseProxyPort != 0 && initAgent() == nil && sharedAgent != nil {
-			deps.Agent = sharedAgent
-		}
-		port, perr := domainops.ReserveReverseProxyPort(ctx, deps, d.ID, in.ReverseProxyPort)
-		switch {
-		case errors.Is(perr, domainops.ErrReverseProxyPortInvalid):
-			return nil, nil, perr // the static policy's own reason
-		case errors.Is(perr, domainops.ErrReverseProxyPortSystemBound):
-			return nil, nil, fmt.Errorf("port %d is already in use by a system service — choose another", in.ReverseProxyPort)
-		case errors.Is(perr, domainops.ErrReverseProxyPortInUse):
-			return nil, nil, fmt.Errorf("port %d is already assigned to another domain — choose another", in.ReverseProxyPort)
-		case perr != nil:
-			return nil, nil, fmt.Errorf("allocate reverse-proxy port: %w", perr)
-		}
-		d.ReverseProxyPort = uint32(port)
-	}
-
-	// PersistDomain releases the reverse-proxy port on any insert failure.
-	if err := domainops.PersistDomain(ctx, domains, ports, d); err != nil {
-		if errors.Is(err, domainops.ErrDomainExists) {
-			return nil, nil, fmt.Errorf("domain %q already exists", in.Name)
-		}
-		return nil, nil, fmt.Errorf("create domain row: %w", err)
-	}
-
-	var warnings []string
-
-	// JAB-170 phase 5 / JAB-279: auto-attach a covering shared certificate so a
-	// CLI-created web domain reaches HTTPS immediately (no ACME wait). The
-	// list → cover → attach step and its web-off skip are the domainops
-	// module's, the same code the REST create door runs.
+	// JAB-279 AC1: the create itself is domainops.Create — the same rules, in
+	// the same order, that the REST door runs — so the CLI stores what REST
+	// stores for the same input (AC2). This adapter supplies the CLI's stores,
+	// resolves --user through resolveUser (email, username or ULID), and maps
+	// each rejection to the CLI's own message.
 	//
-	// Fail-OPEN by design — a lookup or attach failure is recorded as a soft
-	// warning, never a create failure. Auto-attach is an optimisation, not an
-	// invariant; the reconciler still issues or attaches a cert on its next
-	// tick. No Reconciler.Schedule here: the CLI holds no in-process reconciler
-	// handle (the JAB-355 cross-process limitation), so convergence relies on
-	// that tick — the same accepted deviation as the rest of the CLI create
-	// path (see the reconciler note below).
-	switch cert, err := domainops.AttachCoveringSharedCert(ctx, domainops.SharedCertDeps{
-		Certs:   sharedCertRepoFromDB(),
-		Domains: domains,
-	}, d); {
-	case errors.Is(err, domainops.ErrSharedCertLookup):
-		warnings = append(warnings, fmt.Sprintf("shared-certificate lookup skipped: %v", err))
-	case errors.Is(err, domainops.ErrSharedCertAttach):
+	// The CLI is an operator tool, so it acts as an admin: the document root is
+	// held to the admin floor (anywhere under the owner's home, no ".."), and
+	// the cross-tenant suffix guard, which trusts admins to place delegations,
+	// does not run. The CLI takes no --ssl-mode, so the mode starts from Let's
+	// Encrypt; a DNS-only domain is forced to none.
+	owners := &cliOwnerFinder{}
+	deps := domainops.CreateDeps{
+		Domains:      domainRepoFromDB(),
+		Users:        owners,
+		Aliases:      repository.NewWebDomainAliasRepository(sharedDB),
+		Packages:     packageRepoFromDB(),
+		Settings:     serverSettingsRepoFromDB(),
+		DNSTemplates: repository.NewDNSTemplateRepository(sharedDB),
+		SharedCerts:  sharedCertRepoFromDB(),
+		Ports:        repository.NewPortAllocationRepository(sharedDB),
+	}
+	// The port probe is only needed for an explicit port. Assign the agent only
+	// when the pointer is set: a nil *agent.Client in the interface would pass
+	// the module's nil check and panic on Call.
+	if in.ReverseProxy && in.ReverseProxyPort != 0 && initAgent() == nil && sharedAgent != nil {
+		deps.Agent = sharedAgent
+	}
+	res, err := domainops.Create(ctx, deps, domainops.CreateHooks{
+		// No Schedule or InlineSSL: the CLI holds no in-process reconciler (the
+		// JAB-355 cross-process limitation). The reconciler picks the new row up
+		// within 60s (default interval) and bootstraps the certificate.
+		EnableMail: cliEnableMail,
+	}, cliCreateInput(in))
+	if err != nil {
+		return nil, nil, cliCreateError(err, in, owners.resolved)
+	}
+	return res.Domain, cliCreateWarnings(res), nil
+}
+
+// cliCreateInput is the create request `jabali domain create` makes. The CLI
+// acts as an admin (see createDomainDirect) and has no flag for an SSL mode, a
+// web template, a preview URL, www, apex IPs or the M365 / Google tokens, so
+// those stay at their defaults.
+func cliCreateInput(in cliDomainInput) domainops.CreateInput {
+	return domainops.CreateInput{
+		OwnerID:          in.UserID,
+		Name:             in.Name,
+		DocRoot:          in.DocRoot,
+		ActorIsAdmin:     true,
+		MailProvider:     in.MailProvider,
+		DNSTemplateID:    in.DNSTemplateID,
+		ReverseProxy:     in.ReverseProxy,
+		ReverseProxyPort: in.ReverseProxyPort,
+		WebDisabled:      in.WebDisabled,
+		DNSDisabled:      in.DNSDisabled,
+	}
+}
+
+// cliOwnerFinder resolves --user for domainops.Create through resolveUser, the
+// resolver the other user-facing CLIs share (email, username or ULID), and
+// keeps the resolved row for the adapter's messages.
+type cliOwnerFinder struct{ resolved *models.User }
+
+func (f *cliOwnerFinder) FindByID(ctx context.Context, spec string) (*models.User, error) {
+	u, err := resolveUser(ctx, spec)
+	if err == nil {
+		f.resolved = u
+	}
+	return u, err
+}
+
+// cliAgentUnavailableError marks a mail enable skipped because the agent could
+// not be reached.
+type cliAgentUnavailableError struct{ err error }
+
+func (e *cliAgentUnavailableError) Error() string { return e.err.Error() }
+func (e *cliAgentUnavailableError) Unwrap() error { return e.err }
+
+// cliEnableMail is the CLI's mail-enable hook. Best-effort: if the agent is
+// down or Stalwart refuses the domain name, the reason becomes a soft warning
+// and the operator can retry via `jabali domain email-enable <name>` or the
+// Email tab in the UI; the reconciler also finishes the enable.
+func cliEnableMail(ctx context.Context, d *models.Domain) ([]string, error) {
+	if err := initAgent(); err != nil {
+		return nil, &cliAgentUnavailableError{err: err}
+	}
+	_, _, warnings, err := domainmailops.Enable(ctx, newDomainEmailDepsFromGlobals(), d)
+	if err != nil {
+		return nil, err
+	}
+	return domainmailops.WarningMessages(warnings), nil
+}
+
+// cliCreateWarnings renders the soft results of a successful create as the
+// warnings the CLI front-end prints to stderr.
+func cliCreateWarnings(res *domainops.CreateResult) []string {
+	var warnings []string
+	d := res.Domain
+	switch {
+	case errors.Is(res.SharedCertErr, domainops.ErrSharedCertLookup):
+		warnings = append(warnings, fmt.Sprintf("shared-certificate lookup skipped: %v", res.SharedCertErr))
+	case errors.Is(res.SharedCertErr, domainops.ErrSharedCertAttach):
 		warnings = append(warnings, fmt.Sprintf(
 			"shared-certificate auto-attach failed (retry with `jabali ssl shared attach --domain %s --cert-id %s`): %v",
-			d.Name, cert.ID, err))
+			d.Name, res.SharedCert.ID, res.SharedCertErr))
 	}
-
-	// Auto-enable email. Best-effort — if the agent's down or Stalwart
-	// refuses the domain name, we record the reason as a soft warning
-	// and the operator can retry via `jabali domain email-enable <name>`
-	// or the Email tab in the UI.
-	if posture.Provider != models.MailProviderJabali {
-		// External (m365/google) or no mail — nothing to register on Stalwart;
-		// the reconciler publishes the provider's own DNS (or none). A DNS-only
-		// zone (--mail none) must not auto-enable Jabali mail.
-	} else if err := initAgent(); err != nil {
-		warnings = append(warnings, fmt.Sprintf("email auto-enable skipped: agent unavailable (%v)", err))
-	} else {
-		deps := newDomainEmailDepsFromGlobals()
-		_, _, dnsWarnings, err := domainmailops.Enable(ctx, deps, d)
-		if err != nil {
-			warnings = append(warnings,
-				fmt.Sprintf("email auto-enable failed (can retry with `jabali domain email-enable %s`): %v", d.Name, err))
-		} else {
-			warnings = append(warnings, domainmailops.WarningMessages(dnsWarnings)...)
-		}
+	var unavailable *cliAgentUnavailableError
+	switch {
+	case errors.As(res.MailErr, &unavailable):
+		warnings = append(warnings, fmt.Sprintf("email auto-enable skipped: agent unavailable (%v)", unavailable.err))
+	case res.MailErr != nil:
+		warnings = append(warnings,
+			fmt.Sprintf("email auto-enable failed (can retry with `jabali domain email-enable %s`): %v", d.Name, res.MailErr))
+	default:
+		warnings = append(warnings, res.MailWarnings...)
 	}
+	return warnings
+}
 
-	// The reconciler picks up the new row within 60s (default interval). No
-	// inline nginx call — matches the HTTP handler, keeps ADR-0013's inline
-	// best-effort pattern confined to users.
-	return d, warnings, nil
+// cliCreateError maps a domainops.Create rejection to the message `jabali
+// domain create` printed before the module owned the orchestration (JAB-279).
+// owner is the resolved --user, or nil when the lookup did not succeed.
+func cliCreateError(err error, in cliDomainInput, owner *models.User) error {
+	var (
+		aliasHit *domainops.AliasConflictError
+		docRoot  *domainops.DocRootError
+	)
+	ownerID := ""
+	if owner != nil {
+		ownerID = owner.ID
+	}
+	switch {
+	case errors.Is(err, domainops.ErrAliasLookup):
+		// Fail closed: a lookup error aborts the create, never proceeds.
+		return fmt.Errorf("verify domain name against existing aliases: %w", err)
+	case errors.As(err, &aliasHit):
+		return fmt.Errorf("the name %q is already used as an alias of another domain", aliasHit.Hostname)
+	case errors.Is(err, domainops.ErrOwnerLookup):
+		return err // resolveUser's own message
+	case errors.Is(err, domainops.ErrAdminCannotHost):
+		return fmt.Errorf("admin users cannot host domains — create a regular user")
+	case errors.Is(err, domainops.ErrOwnerSuspended):
+		return fmt.Errorf("user %q is suspended — unsuspend before adding domains", ownerID)
+	case errors.Is(err, domainops.ErrOwnerNoUsername):
+		return fmt.Errorf("user %q has no username — inconsistent state", ownerID)
+	case errors.Is(err, domainops.ErrDomainQuotaExceeded), errors.Is(err, domainops.ErrDomainCount):
+		return cliDomainQuotaError(err)
+	case errors.Is(err, domainops.ErrWebOffReverseProxy):
+		return fmt.Errorf("a reverse-proxy domain requires web hosting")
+	case errors.Is(err, domainops.ErrWebOffDocRoot):
+		return fmt.Errorf("a web-disabled domain has no document root")
+	case errors.As(err, &docRoot):
+		return fmt.Errorf("invalid --doc-root: %w", err)
+	case errors.Is(err, domainops.ErrNoServiceSelected):
+		return fmt.Errorf("select at least one service: web hosting (--web-enabled), DNS (--manage-dns), or mail (--mail)")
+	case errors.Is(err, domainops.ErrReverseProxyPortInvalid):
+		return err // the static policy's own reason
+	case errors.Is(err, domainops.ErrReverseProxyPortSystemBound):
+		return fmt.Errorf("port %d is already in use by a system service — choose another", in.ReverseProxyPort)
+	case errors.Is(err, domainops.ErrReverseProxyPortInUse):
+		return fmt.Errorf("port %d is already assigned to another domain — choose another", in.ReverseProxyPort)
+	case errors.Is(err, domainops.ErrReverseProxyUnavailable), errors.Is(err, domainops.ErrReverseProxyPortUnavailable):
+		return fmt.Errorf("allocate reverse-proxy port: %w", err)
+	case errors.Is(err, domainops.ErrDomainExists):
+		return fmt.Errorf("domain %q already exists", in.Name)
+	case errors.Is(err, domainops.ErrPersist):
+		return fmt.Errorf("create domain row: %w", err)
+	}
+	if nameErr := cliDomainNameError(err, in.Name); nameErr != nil {
+		return nameErr
+	}
+	return cliMailPostureError(err, in)
 }
 
 // ---------- local username helpers (duplicated from internal/api to avoid exporting) ----------
@@ -562,7 +507,14 @@ func cliMailPostureError(err error, in cliDomainInput) error {
 // single "not a valid FQDN" (the accepted/rejected set is unchanged — the leaf's
 // regex already rejected every one of those inputs).
 func validateDomainName(s string) error {
-	switch err := domainops.ValidateDomainName(s); {
+	return cliDomainNameError(domainops.ValidateDomainName(s), s)
+}
+
+// cliDomainNameError maps a domainops name rejection for s to the CLI's
+// message; nil and any other error map to nil. domainops.Create returns the
+// same sentinels, so the create adapter reuses it.
+func cliDomainNameError(err error, s string) error {
+	switch {
 	case errors.Is(err, domainops.ErrDomainNameEmpty):
 		return fmt.Errorf("domain name cannot be empty")
 	case errors.Is(err, domainops.ErrDomainNameWhitespace):
