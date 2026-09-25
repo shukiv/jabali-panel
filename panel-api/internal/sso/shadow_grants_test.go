@@ -8,7 +8,12 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"gorm.io/gorm"
+
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 )
+
+type gormDBHolder struct{ db *gorm.DB }
 
 // failingAgent fails every call, counting them.
 type failingAgent struct{ calls int }
@@ -176,5 +181,54 @@ func TestSyncPgShadowSchema_ListErrorAndAgentErrorFail(t *testing.T) {
 	svc2 := NewAdminerService(NewService(db2, &mockUsersForSSO{}, &mockTokensForSSO{}, failing, &key, slog.Default()), nil)
 	if err := svc2.syncPgShadowSchema(context.Background(), "user1", "alice"); err == nil {
 		t.Fatal("agent error must fail the sync")
+	}
+}
+
+func provisionedUserMock(t *testing.T, column, encColumn string) (*mockUsersForSSO, sqlmock.Sqlmock, func(), *gormDBHolder) {
+	t.Helper()
+	db, mock, raw := newMembersMockDB(t)
+	name := "alice"
+	users := &mockUsersForSSO{users: map[string]*models.User{"user1": {ID: "user1", Username: &name}}}
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT .* FROM `users`").WithArgs("user1", 1).
+		WillReturnRows(sqlmock.NewRows([]string{"id", column, encColumn}).AddRow("user1", "alice_x", []byte("enc")))
+	mock.ExpectCommit()
+	return users, mock, func() { raw.Close() }, &gormDBHolder{db: db}
+}
+
+// The open itself fails when the grant sync fails — EnsureShadow must not
+// return nil and let phpMyAdmin start with a grant that may reach another
+// tenant.
+func TestEnsureShadow_FailsWhenGrantSyncFails(t *testing.T) {
+	users, mock, done, h := provisionedUserMock(t, "mysqladmin_username", "mysqladmin_password_enc")
+	defer done()
+	mock.ExpectQuery(databasesByUserEngine).WithArgs("user1", "mariadb").WillReturnRows(dbRows("alice_shop"))
+
+	key := generateTestKey(t)
+	agent := &failingAgent{}
+	svc := NewService(h.db, users, &mockTokensForSSO{}, agent, &key, slog.Default())
+	if err := svc.EnsureShadow(context.Background(), "user1"); err == nil {
+		t.Fatal("EnsureShadow must fail when db.mysqladmin.sync_grants fails")
+	}
+	if agent.calls != 1 {
+		t.Fatalf("agent calls = %d, want 1 (the sync)", agent.calls)
+	}
+}
+
+func TestEnsurePgShadow_FailsWhenDatabaseGrantSyncFails(t *testing.T) {
+	users, mock, done, h := provisionedUserMock(t, "pgadmin_username", "pgadmin_password_enc")
+	defer done()
+	mock.ExpectQuery("SELECT .* FROM `database_users` WHERE user_id = \\? AND engine = \\?").
+		WithArgs("user1", "postgres").WillReturnRows(duRows([3]string{"du1", "alice_app", "postgres"}))
+	mock.ExpectQuery(databasesByUserEngine).WithArgs("user1", "postgres").WillReturnRows(dbRows("alice_pg"))
+
+	key := generateTestKey(t)
+	agent := &failingAgent{}
+	svc := NewAdminerService(NewService(h.db, users, &mockTokensForSSO{}, agent, &key, slog.Default()), nil)
+	if err := svc.EnsurePgShadow(context.Background(), "user1"); err == nil {
+		t.Fatal("EnsurePgShadow must fail when grant_schema fails")
+	}
+	if agent.calls != 2 {
+		t.Fatalf("agent calls = %d, want 2 (members, then schema)", agent.calls)
 	}
 }
