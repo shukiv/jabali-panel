@@ -230,7 +230,14 @@ func normalizeDomainName(s string) string {
 // the exact body string the handler returned before the extraction, so the wire
 // is unchanged.
 func validateDomainName(s string) error {
-	switch err := domainops.ValidateDomainName(s); {
+	return domainNameError(domainops.ValidateDomainName(s))
+}
+
+// domainNameError maps a domainops name rejection to the body string the
+// handler returned before the extraction; nil and any other error map to nil.
+// domainops.Create returns the same sentinels, so its REST adapter reuses this.
+func domainNameError(err error) error {
+	switch {
 	case errors.Is(err, domainops.ErrDomainNameEmpty):
 		return fmt.Errorf("domain name cannot be empty")
 	case errors.Is(err, domainops.ErrDomainNameWhitespace):
@@ -247,20 +254,33 @@ func validateDomainName(s string) error {
 	return nil
 }
 
+// isDomainNameError reports whether err is a domainops name rejection.
+func isDomainNameError(err error) bool { return domainNameError(err) != nil }
+
+// docRootError maps a domainops document-root rejection to the body string the
+// handler returned before the extraction. The admin rule yields outside-home
+// or traversal, the tenant rule traversal or outside-domain; the
+// "must be inside …" message is dynamic, so it is rebuilt from the owner and
+// domain. Any other error passes through.
+func docRootError(err error, username, domainName string) error {
+	switch {
+	case errors.Is(err, domainops.ErrDocRootOutsideHome):
+		return fmt.Errorf("document root must be under user's home directory")
+	case errors.Is(err, domainops.ErrDocRootTraversal):
+		return fmt.Errorf("document root contains invalid path traversal sequences")
+	case errors.Is(err, domainops.ErrDocRootOutsideDomain):
+		return fmt.Errorf("document root must be inside /home/%s/domains/%s/", username, domainName)
+	}
+	return err
+}
+
 // validateDocumentRoot validates document root path to prevent path traversal
 func validateDocumentRoot(docRoot, username, domainName string) error {
 	// The confinement rule lives in the domainops leaf (JAB-279) so the CLI
 	// create path enforces the identical check. This adapter maps the leaf's
 	// sentinels back to the exact body strings the HTTP handler returned before
 	// the extraction, so the wire is unchanged.
-	err := domainops.ValidateDocumentRoot(docRoot, username, domainName)
-	switch {
-	case errors.Is(err, domainops.ErrDocRootOutsideHome):
-		return fmt.Errorf("document root must be under user's home directory")
-	case errors.Is(err, domainops.ErrDocRootTraversal):
-		return fmt.Errorf("document root contains invalid path traversal sequences")
-	}
-	return err
+	return docRootError(domainops.ValidateDocumentRoot(docRoot, username, domainName), username, domainName)
 }
 
 // validateTenantDocumentRoot is the stricter confinement for a NON-admin owner
@@ -270,16 +290,8 @@ func validateDocumentRoot(docRoot, username, domainName string) error {
 // Admins keep the looser validateDocumentRoot (anywhere under the owner's home).
 func validateTenantDocumentRoot(docRoot, username, domainName string) error {
 	// Stricter confinement, same extraction as validateDocumentRoot: the leaf
-	// owns the rule, this adapter restores the exact wire strings (the
-	// "must be inside …" message is dynamic, so it is rebuilt here).
-	err := domainops.ValidateTenantDocumentRoot(docRoot, username, domainName)
-	switch {
-	case errors.Is(err, domainops.ErrDocRootTraversal):
-		return fmt.Errorf("document root contains invalid path traversal sequences")
-	case errors.Is(err, domainops.ErrDocRootOutsideDomain):
-		return fmt.Errorf("document root must be inside /home/%s/domains/%s/", username, domainName)
-	}
-	return err
+	// owns the rule, this adapter restores the exact wire strings.
+	return docRootError(domainops.ValidateTenantDocumentRoot(docRoot, username, domainName), username, domainName)
 }
 
 type updateDomainRequest struct {

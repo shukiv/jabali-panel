@@ -4,32 +4,23 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"net"
 	"net/http"
-	"strings"
 	"time"
 
-	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dnscompile"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/domainmailops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/domainops"
-	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
-	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
-// domain_create_op.go — JAB-233. The domain-creation orchestration extracted
-// from domainHandler.create so a second caller (the billing automation
-// userCreateHandler) can create a primary domain with the EXACT same GUI
-// semantics. Zero-behavior-change: domainHandler.create is now a thin wrapper
-// that binds+normalizes the request and maps createDomainError back to the
-// same HTTP status/error/detail it emitted inline before.
-//
-// It stays in the api package (not a standalone domainops package) because it
-// depends on a cluster of api-package helpers — validateDomainName,
-// validateDocumentRoot, agentCall, and the domainHandler method
-// previewSlugConflict — and the only new caller
-// (automation) also lives in this package. The shared email-enable step now
-// lives in internal/domainmailops (JAB-288). Reuse, not packaging, was the goal.
+// domain_create_op.go — the REST adapter over domainops.Create (JAB-279 AC1).
+// JAB-233 first extracted the create orchestration from domainHandler.create so
+// the billing automation (userCreateHandler) could create a primary domain with
+// the exact GUI semantics; the orchestration itself now lives in the domain
+// lifecycle module, which `jabali domain create` shares. What stays here is
+// the transport: the handler's dependencies, the post-create hooks this
+// process can run (it holds the in-process reconciler), the logging of soft
+// fast-path failures, and the mapping of every module rejection to the exact
+// HTTP status, code and detail the door has always returned.
 
 // createDomainInput is the pre-normalized, pre-validated-shape input to
 // createDomainOp. Name MUST already be normalized (normalizeDomainName) and
@@ -57,7 +48,7 @@ type createDomainInput struct {
 	// the reconciler seeds the template's records into the fresh zone. Empty for
 	// every non-template create. Mutually exclusive with an explicit mail
 	// provider, and requires the panel to host DNS (DNSDisabled=false).
-	DNSTemplateID  string
+	DNSTemplateID string
 	// WebTemplateID (GH #1624 / ADR-0169 Phase 3) is an admin web (nginx)
 	// template selected at create. ADMIN-ONLY: a non-admin actor naming one is
 	// rejected (web_template_admin_only). When set, the template's directives are
@@ -89,8 +80,8 @@ type createDomainInput struct {
 	// IP" of the Add DNS Zone flow. Only meaningful when WebDisabled=true and
 	// DNS is on: the panel seeds a single "@ A <ip>" row at zone bootstrap and
 	// leaves it tenant-editable. Empty for every web/mail create (the apex is
-	// panel-managed). Validated in createDomainOp (must be a bare IPv4, web off,
-	// DNS on).
+	// panel-managed). Validated by domainops.Create (must be a bare IPv4, web
+	// off, DNS on).
 	DNSApexIPv4 string
 	// DNSApexIPv6 (GH #1540 follow-up) is the optional apex IPv6 (AAAA) for a
 	// DNS-only zone. Same web-off/DNS-on gate as DNSApexIPv4; must be a bare IPv6
@@ -167,353 +158,177 @@ func domainPostureError(err error) *createDomainError {
 	}
 }
 
-// createDomainOp runs the full GUI domain-creation orchestration for `in`
-// against the handler's deps. On success it returns the created domain (with
-// any in-place mutations from shared-cert attach / inline email). On failure it
-// returns a createDomainError the caller renders verbatim.
-func createDomainOp(ctx context.Context, h *domainHandler, in createDomainInput) (*models.Domain, *createDomainError) {
-	// SECURITY: validate domain name (XSS / path traversal). Name is assumed
-	// already normalized + HTML-stripped by the caller.
-	if err := validateDomainName(in.Name); err != nil {
-		return nil, &createDomainError{http.StatusBadRequest, "invalid_domain_name", err.Error()}
-	}
-
-	// GH #1625: reject a name whose apex/www/mail-helper server_name is already
-	// claimed by another domain's web-domain alias. ux_domains_name only guards
-	// domain-vs-domain; the alias table introduced the cross-table collision, so
-	// this closes the reverse of validateAliasHostname's own-side check. The name
-	// is already normalized by the caller (matches the alias table's lowercasing).
-	if hit, clash, cerr := AliasCollision(ctx, h.cfg.WebDomainAliases, in.Name); cerr != nil {
-		return nil, &createDomainError{http.StatusInternalServerError, "db_alias_lookup", "could not verify the domain name against existing aliases"}
-	} else if clash {
-		return nil, &createDomainError{http.StatusConflict, "domain_conflicts_alias", "the name " + hit + " is already used as an alias of another domain"}
-	}
-
-	if in.OwnerID == "" {
-		return nil, &createDomainError{http.StatusBadRequest, "user_id is required", ""}
-	}
-
-	// GH #1789: reject a tenant self-service claim that lands inside, or wraps
-	// around, another tenant's domain (cross-tenant DNS subdomain hijack). The
-	// shared PowerDNS backend resolves by longest suffix, so a more-specific
-	// zone another tenant creates under example.com becomes authoritative for
-	// that name. An admin actor is trusted to place legitimate cross-tenant
-	// delegations, so the gate is non-admin only. Fail CLOSED on a lookup error.
-	if !in.ActorIsAdmin {
+// createDomainOpError maps a domainops.Create rejection to the status, code,
+// and detail the create door returned before the module owned the
+// orchestration (JAB-279 AC1). Anything unrecognised is an opaque 500.
+func createDomainOpError(err error) *createDomainError {
+	var (
+		aliasHit *domainops.AliasConflictError
+		docRoot  *domainops.DocRootError
+		tmpl     *domainops.WebTemplateInvalidError
+		slug     *domainops.PreviewSlugConflictError
+	)
+	switch {
+	case isDomainNameError(err):
+		return &createDomainError{http.StatusBadRequest, "invalid_domain_name", domainNameError(err).Error()}
+	case errors.Is(err, domainops.ErrAliasLookup):
+		return &createDomainError{http.StatusInternalServerError, "db_alias_lookup", "could not verify the domain name against existing aliases"}
+	case errors.As(err, &aliasHit):
+		return &createDomainError{http.StatusConflict, "domain_conflicts_alias", aliasHit.Error()}
+	case errors.Is(err, domainops.ErrOwnerRequired):
+		return &createDomainError{http.StatusBadRequest, "user_id is required", ""}
+	case errors.Is(err, domainops.ErrSuffixLookup):
+		return &createDomainError{http.StatusInternalServerError, "db_suffix_lookup", "could not verify the domain name against existing domains"}
+	case errors.Is(err, domainops.ErrDomainConflictsTenant):
 		// Deliberately generic detail: naming the conflicting domain would leak
 		// another tenant's zone/subdomain existence (GH #1789 child direction).
-		if _, clash, cerr := CrossTenantSuffixCollision(ctx, h.cfg.Domains, in.Name, in.OwnerID); cerr != nil {
-			return nil, &createDomainError{http.StatusInternalServerError, "db_suffix_lookup", "could not verify the domain name against existing domains"}
-		} else if clash {
-			return nil, &createDomainError{http.StatusConflict, "domain_conflicts_tenant", "the name conflicts with a domain owned by another account"}
-		}
-	}
-
-	// GH #1449: Web / DNS are independent services. Both default ON (the
-	// inverted *Disabled inputs are zero=false for every existing caller). A
-	// web-off domain is docroot-less (DNS-only zone / mail-only domain) and so
-	// cannot be a reverse-proxy, carry a preview URL, or have a document root.
-	webEnabled := !in.WebDisabled
-	dnsEnabled := !in.DNSDisabled
-	if err := domainops.CheckWebOffOptions(domainops.WebOffInput{
-		WebEnabled:   webEnabled,
-		ReverseProxy: in.ReverseProxy,
-		TempURL:      in.TempURLEnabled,
-		DocRoot:      in.DocRoot,
-	}); err != nil {
-		return nil, domainPostureError(err)
-	}
-
-	// GH #1540: a DNS-only zone may carry a tenant-chosen apex IP (the "pointed
-	// IP") — an IPv4 (A) and/or an optional IPv6 (AAAA). Only meaningful for a
-	// web-off zone whose DNS the panel hosts: a web domain's apex is
-	// panel-managed (convergeApexAddrRecords re-asserts it), and an external-DNS
-	// domain (dns off) publishes nothing here. The web-off / DNS-on gate is
-	// shared by both families; each is then parsed as a BARE address of its own
-	// family — an IPv4 or IPv4-mapped value in the v6 field is rejected (an AAAA
-	// holding a mapped-v4 is nonsense) and vice versa. ip.String() canonicalises
-	// so a zone stores one row shape per address.
-	var dnsApexIPv4, dnsApexIPv6 string
-	raw4 := strings.TrimSpace(in.DNSApexIPv4)
-	raw6 := strings.TrimSpace(in.DNSApexIPv6)
-	if raw4 != "" || raw6 != "" {
-		if webEnabled {
-			return nil, &createDomainError{http.StatusBadRequest, "web_enabled_apex_ip", "a web domain's apex IP is managed by the panel — set an apex IP only on a DNS-only zone"}
-		}
-		if !dnsEnabled {
-			return nil, &createDomainError{http.StatusBadRequest, "dns_disabled_apex_ip", "an apex IP requires the panel to host DNS for this domain"}
-		}
-		if raw4 != "" {
-			ip := net.ParseIP(raw4)
-			if ip == nil || ip.To4() == nil {
-				return nil, &createDomainError{http.StatusBadRequest, "invalid_apex_ip", "apex IP must be a valid IPv4 address"}
-			}
-			dnsApexIPv4 = ip.String()
-		}
-		if raw6 != "" {
-			ip := net.ParseIP(raw6)
-			// To4() != nil means it parsed as IPv4 (or IPv4-mapped) — not a bare
-			// IPv6, so reject it for the AAAA field.
-			if ip == nil || ip.To4() != nil {
-				return nil, &createDomainError{http.StatusBadRequest, "invalid_apex_ipv6", "apex IPv6 must be a valid IPv6 address"}
-			}
-			dnsApexIPv6 = ip.String()
-		}
-	}
-
-	user, err := h.cfg.Users.FindByID(ctx, in.OwnerID)
-	if err != nil {
+		return &createDomainError{http.StatusConflict, "domain_conflicts_tenant", "the name conflicts with a domain owned by another account"}
+	case errors.Is(err, domainops.ErrApexIPWithWeb):
+		return &createDomainError{http.StatusBadRequest, "web_enabled_apex_ip", "a web domain's apex IP is managed by the panel — set an apex IP only on a DNS-only zone"}
+	case errors.Is(err, domainops.ErrApexIPWithoutDNS):
+		return &createDomainError{http.StatusBadRequest, "dns_disabled_apex_ip", "an apex IP requires the panel to host DNS for this domain"}
+	case errors.Is(err, domainops.ErrApexIPv4Invalid):
+		return &createDomainError{http.StatusBadRequest, "invalid_apex_ip", "apex IP must be a valid IPv4 address"}
+	case errors.Is(err, domainops.ErrApexIPv6Invalid):
+		return &createDomainError{http.StatusBadRequest, "invalid_apex_ipv6", "apex IPv6 must be a valid IPv6 address"}
+	case errors.Is(err, domainops.ErrOwnerLookup):
 		if isNotFound(err) {
-			return nil, &createDomainError{http.StatusBadRequest, "user not found", ""}
+			return &createDomainError{http.StatusBadRequest, "user not found", ""}
 		}
-		return nil, &createDomainError{http.StatusInternalServerError, "internal", ""}
-	}
-
-	// Owner-eligibility gate (JAB-279): admins are panel-only (no /home/<name>);
-	// suspended owners must not get a live vhost while the account stays locked;
-	// a hosting user always has a username. The policy lives in domainops so the
-	// CLI runs the identical gate; the adapter maps each sentinel to the status
-	// code and body it returned before the leaf existed.
-	switch err := domainops.CheckOwnerEligible(user); {
+		return &createDomainError{http.StatusInternalServerError, "internal", ""}
 	case errors.Is(err, domainops.ErrAdminCannotHost):
-		return nil, &createDomainError{http.StatusBadRequest, "admin_cannot_host", "admin users are panel-only — create a regular user to host domains"}
+		return &createDomainError{http.StatusBadRequest, "admin_cannot_host", "admin users are panel-only — create a regular user to host domains"}
 	case errors.Is(err, domainops.ErrOwnerSuspended):
-		return nil, &createDomainError{http.StatusConflict, "user_suspended", "user is suspended — unsuspend before adding domains"}
-	case err != nil:
-		// ErrOwnerNoUsername (and ErrOwnerNil) — an inconsistent state, surfaced
-		// as the same opaque internal error the handler returned before.
-		return nil, &createDomainError{http.StatusInternalServerError, "internal", ""}
-	}
-
-	// Package domain quota (JAB-279): the policy lives in domainops so the CLI
-	// runs the identical check; the adapter maps the sentinels.
-	switch err := domainops.CheckDomainQuota(ctx, domainops.QuotaDeps{
-		Domains:  h.cfg.Domains,
-		Packages: h.cfg.Packages,
-	}, user); {
+		return &createDomainError{http.StatusConflict, "user_suspended", "user is suspended — unsuspend before adding domains"}
 	case errors.Is(err, domainops.ErrDomainQuotaExceeded):
-		return nil, &createDomainError{http.StatusConflict, "domain_quota_exceeded", ""}
-	case err != nil:
-		return nil, &createDomainError{http.StatusInternalServerError, "internal", ""}
+		return &createDomainError{http.StatusConflict, "domain_quota_exceeded", ""}
+	case errors.As(err, &docRoot):
+		return &createDomainError{http.StatusBadRequest, "invalid_document_root", docRootError(docRoot.Reason, docRoot.Username, docRoot.DomainName).Error()}
+	case errors.Is(err, domainops.ErrWebTemplateAdminOnly):
+		return &createDomainError{http.StatusForbidden, "web_template_admin_only", "web templates can be applied only by an administrator"}
+	case errors.Is(err, domainops.ErrWebTemplatesUnavailable):
+		return &createDomainError{http.StatusServiceUnavailable, "web_templates_unavailable", "web templates are not enabled on this server"}
+	case errors.Is(err, domainops.ErrWebTemplateUnknown):
+		return &createDomainError{http.StatusBadRequest, "unknown_web_template", "the selected web template does not exist"}
+	case errors.Is(err, domainops.ErrWebTemplateLookup):
+		return &createDomainError{http.StatusInternalServerError, "web_template_lookup_failed", ""}
+	case errors.As(err, &tmpl):
+		return &createDomainError{http.StatusBadRequest, "web_template_invalid", tmpl.Error()}
+	case errors.Is(err, domainops.ErrM365OnmicrosoftInvalid):
+		return &createDomainError{http.StatusBadRequest, "invalid_m365_onmicrosoft", err.Error()}
+	case errors.Is(err, domainops.ErrGoogleDKIMInvalid):
+		return &createDomainError{http.StatusBadRequest, "invalid_google_dkim", err.Error()}
+	case errors.Is(err, domainops.ErrReverseProxyUnavailable),
+		errors.Is(err, domainops.ErrReverseProxyPortInvalid),
+		errors.Is(err, domainops.ErrReverseProxyPortSystemBound),
+		errors.Is(err, domainops.ErrReverseProxyPortInUse),
+		errors.Is(err, domainops.ErrReverseProxyPortUnavailable):
+		return reverseProxyReserveError(err)
+	case errors.As(err, &slug):
+		return &createDomainError{http.StatusConflict, "temp_url_slug_conflict", slug.Error()}
+	case errors.Is(err, domainops.ErrDomainExists):
+		return &createDomainError{http.StatusConflict, "domain_already_exists", ""}
+	default:
+		// Web-off options, mail posture and the service matrix; anything else
+		// (a store error, a wiring bug) falls through to the opaque 500.
+		return domainPostureError(err)
 	}
+}
 
-	// SECURITY: validate the custom document root, trimming first so a pasted
-	// path with surrounding whitespace doesn't fail the prefix check with an
-	// unhelpful error (matches the edit path's TrimSpace). A non-admin actor
-	// is confined to the domain's own tree; an admin may use anywhere under
-	// the owner's home. See createDomainInput.ActorIsAdmin.
-	docRoot := strings.TrimSpace(in.DocRoot)
-	if !webEnabled {
-		// GH #1449: web-off domain — no document root at all (validated empty
-		// above). Leave DocRoot="" so no vhost is ever rendered for it.
-		docRoot = ""
-	} else if in.ActorIsAdmin {
-		if err := validateDocumentRoot(docRoot, *user.Username, in.Name); err != nil {
-			return nil, &createDomainError{http.StatusBadRequest, "invalid_document_root", err.Error()}
-		}
-	} else {
-		if err := validateTenantDocumentRoot(docRoot, *user.Username, in.Name); err != nil {
-			return nil, &createDomainError{http.StatusBadRequest, "invalid_document_root", err.Error()}
-		}
-	}
-	if webEnabled && docRoot == "" {
-		docRoot = "/home/" + *user.Username + "/domains/" + in.Name + "/public_html"
-	}
-
-	// GH#181 / GH #1627 / GH #1409: the mail posture — provider default and
-	// validation, a DNS template's 'custom' posture (its records are seeded into
-	// the zone by the reconciler at bootstrap), and the coercion of Jabali mail to
-	// none on a server whose mail module is off (read fail-open). The rules are
-	// the domainops module's (JAB-279); this adapter maps its sentinels.
-	posture, err := domainops.ResolveMailPosture(ctx, h.cfg.DNSTemplates, domainops.MailPostureInput{
-		Provider:          in.MailProvider,
-		DNSTemplateID:     in.DNSTemplateID,
-		DNSEnabled:        dnsEnabled,
-		MailModuleEnabled: domainops.MailModuleEnabled(ctx, h.cfg.ServerSettings),
+// createDomainOp runs domainops.Create for `in` against the handler's deps. On
+// success it returns the created domain (with any in-place update from the
+// shared-cert attach). On failure it returns a createDomainError the caller
+// renders verbatim.
+func createDomainOp(ctx context.Context, h *domainHandler, in createDomainInput) (*models.Domain, *createDomainError) {
+	res, err := domainops.Create(ctx, domainops.CreateDeps{
+		Domains:               h.cfg.Domains,
+		Users:                 h.cfg.Users,
+		Aliases:               h.cfg.WebDomainAliases,
+		Packages:              h.cfg.Packages,
+		Settings:              h.cfg.ServerSettings,
+		DNSTemplates:          h.cfg.DNSTemplates,
+		WebTemplates:          h.cfg.WebTemplates,
+		ValidateWebDirectives: ValidateNginxDirectivesAdmin,
+		SharedCerts:           h.cfg.SharedCerts,
+		Ports:                 h.cfg.PortAllocations,
+		Agent:                 h.cfg.Agent,
+	}, h.createDomainHooks(in.SkipInlineSSL), domainops.CreateInput{
+		OwnerID:          in.OwnerID,
+		Name:             in.Name,
+		DocRoot:          in.DocRoot,
+		ActorIsAdmin:     in.ActorIsAdmin,
+		MailProvider:     in.MailProvider,
+		M365Onmicrosoft:  in.M365Onmicrosoft,
+		GoogleDKIM:       in.GoogleDKIM,
+		DNSTemplateID:    in.DNSTemplateID,
+		WebTemplateID:    in.WebTemplateID,
+		SSLMode:          in.SSLMode,
+		CreateWWW:        in.CreateWWW,
+		TempURLEnabled:   in.TempURLEnabled,
+		ReverseProxy:     in.ReverseProxy,
+		ReverseProxyPort: int(in.ReverseProxyPort),
+		WebDisabled:      in.WebDisabled,
+		DNSDisabled:      in.DNSDisabled,
+		DNSApexIPv4:      in.DNSApexIPv4,
+		DNSApexIPv6:      in.DNSApexIPv6,
 	})
 	if err != nil {
-		return nil, domainPostureError(err)
+		return nil, createDomainOpError(err)
 	}
 
-	// GH #1624 / ADR-0169 Phase 3: an ADMIN may create a domain from a web
-	// (nginx) template — the template's raw directives are snapshot-copied onto
-	// the new domain's NginxCustomDirectives (a later template edit does NOT
-	// propagate; the admin edits the domain directly).
-	//
-	// ADMIN-ONLY: the GH #1580 admin denylist does not block proxy_pass, so
-	// letting a tenant pick a globally-visible template would let template B's
-	// `proxy_pass http://127.0.0.1:...` front a localhost service from tenant B's
-	// own domain — the ADR-0169 SSRF threat with the admin as unwitting author.
-	// A nil repo is fail-closed (503), never a silent skip. The directives are
-	// validated AGAIN here so a denylist tightened after the template was saved
-	// is enforced at apply.
-	var webTemplateID *string
-	var webTemplateDirectives string
-	if tmplID := strings.TrimSpace(in.WebTemplateID); tmplID != "" {
-		if !in.ActorIsAdmin {
-			return nil, &createDomainError{http.StatusForbidden, "web_template_admin_only", "web templates can be applied only by an administrator"}
-		}
-		if h.cfg.WebTemplates == nil {
-			return nil, &createDomainError{http.StatusServiceUnavailable, "web_templates_unavailable", "web templates are not enabled on this server"}
-		}
-		tmpl, terr := h.cfg.WebTemplates.FindByID(ctx, tmplID)
-		if terr != nil {
-			if errors.Is(terr, repository.ErrNotFound) {
-				return nil, &createDomainError{http.StatusBadRequest, "unknown_web_template", "the selected web template does not exist"}
-			}
-			return nil, &createDomainError{http.StatusInternalServerError, "web_template_lookup_failed", ""}
-		}
-		if msg := ValidateNginxDirectivesAdmin(tmpl.NginxDirectives); msg != "" {
-			return nil, &createDomainError{http.StatusBadRequest, "web_template_invalid", "web template " + tmpl.Name + ": " + msg}
-		}
-		webTemplateID = &tmplID
-		webTemplateDirectives = tmpl.NginxDirectives
-	}
-
-	m365Tenant, err := dnscompile.NormaliseM365Onmicrosoft(in.M365Onmicrosoft)
-	if err != nil {
-		return nil, &createDomainError{http.StatusBadRequest, "invalid_m365_onmicrosoft", err.Error()}
-	}
-	googleDKIM, err := dnscompile.ValidateGoogleDKIM(in.GoogleDKIM)
-	if err != nil {
-		return nil, &createDomainError{http.StatusBadRequest, "invalid_google_dkim", err.Error()}
-	}
-	// SSL mode + the derived mail flags + the GH #1449 service rules (at least
-	// one service; a DNS-only domain is forced to ssl none). The rules are the
-	// domainops module's (JAB-279); this adapter maps its sentinels.
-	matrix, err := domainops.ResolveServiceMatrix(domainops.ServiceMatrixInput{
-		WebEnabled:   webEnabled,
-		DNSEnabled:   dnsEnabled,
-		MailProvider: posture.Provider,
-		SSLMode:      in.SSLMode,
-	})
-	if err != nil {
-		return nil, domainPostureError(err)
-	}
-
-	now := time.Now().UTC()
-	domain := &models.Domain{
-		ID:              ids.NewULID(),
-		UserID:          in.OwnerID,
-		Name:            in.Name,
-		DocRoot:         docRoot,
-		IsEnabled:       true,
-		SSLMode:         matrix.SSLMode,
-		SSLEnabled:      models.SSLEnabledForMode(matrix.SSLMode),
-		MailProvider:    posture.Provider,
-		M365Onmicrosoft: strPtrOrNil(m365Tenant),
-		GoogleDKIM:      strPtrOrNil(googleDKIM),
-		MailTemplateID:  posture.TemplateID, // GH #1627: nil unless a template was chosen
-		// GH #1624 Phase 3: nil / "" unless an admin chose a web template above,
-		// in which case its directives are snapshot-copied onto this domain.
-		WebTemplateID:         webTemplateID,
-		NginxCustomDirectives: strPtrOrNil(webTemplateDirectives),
-		EmailEnabled:    matrix.EmailEnabled,
-		SkipAutoSAN:     matrix.SkipAutoSAN,
-		CreateWWW:       in.CreateWWW,
-		TempURLEnabled:  in.TempURLEnabled,
-		// GH #1449: inverted storage — disabled is the non-zero (always-
-		// written) state, so a full-service create leaves both zero.
-		WebDisabled: in.WebDisabled,
-		DNSDisabled: in.DNSDisabled,
-		// GH #1540: apex IP(s) for a DNS-only zone (nil for web/mail domains).
-		DNSApexIPv4: strPtrOrNil(dnsApexIPv4),
-		DNSApexIPv6: strPtrOrNil(dnsApexIPv6),
-		CreatedAt:   now,
-		UpdatedAt:   now,
-	}
-
-	// GH #1175 / #1401: a reverse-proxy domain draws a loopback port from the
-	// shared allocator BEFORE the insert (owner_id = the ULID above) so the row
-	// carries the port. The validate → system-uid probe → allocate sequence is
-	// the domainops module's (JAB-279); this adapter maps its sentinels.
-	if in.ReverseProxy {
-		port, perr := domainops.ReserveReverseProxyPort(ctx, domainops.PortDeps{
-			Ports: h.cfg.PortAllocations,
-			Agent: h.cfg.Agent,
-		}, domain.ID, int(in.ReverseProxyPort))
-		if perr != nil {
-			return nil, reverseProxyReserveError(perr)
-		}
-		domain.ReverseProxyPort = uint32(port)
-	}
-
-	// Preview-slug collision (dots→dashes is not injective): refuse the second
-	// enable of a colliding pair — first-wins would silently serve the wrong site.
-	if domain.TempURLEnabled {
-		if other := h.previewSlugConflict(ctx, domain.Name, ""); other != "" {
-			if in.ReverseProxy {
-				_ = domainops.ReleaseReverseProxyPort(ctx, h.cfg.PortAllocations, domain.ID)
-			}
-			return nil, &createDomainError{http.StatusConflict, "temp_url_slug_conflict", "preview URL would collide with " + other}
-		}
-	}
-
-	// PersistDomain releases the reverse-proxy port on any insert failure.
-	if err := domainops.PersistDomain(ctx, h.cfg.Domains, h.cfg.PortAllocations, domain); err != nil {
-		if errors.Is(err, domainops.ErrDomainExists) {
-			return nil, &createDomainError{http.StatusConflict, "domain_already_exists", ""}
-		}
-		return nil, &createDomainError{http.StatusInternalServerError, "internal", ""}
-	}
-
-	// JAB-170 phase 5: auto-attach a covering shared cert (HTTPS instantly, no
-	// ACME) and skip the inline ACME below.
-	// GH #1449: shared-cert auto-attach + inline SSL are web-cert fast paths.
-	// A web-off domain has no web cert (DNS-only → ssl none; mail-only → the
-	// reconciler issues its mail-support SANs on the next tick), so skip both.
-	// The list → cover → attach step (and its web-off skip) is the domainops
-	// module's (JAB-279); a failure is soft — the create still succeeds and the
-	// reconciler issues or attaches a cert on its next tick.
-	attachedShared := false
-	switch cert, aerr := domainops.AttachCoveringSharedCert(ctx, domainops.SharedCertDeps{
-		Certs:   h.cfg.SharedCerts,
-		Domains: h.cfg.Domains,
-	}, domain); {
-	case aerr != nil:
+	// The fast paths are soft: the create has succeeded, and the reconciler
+	// issues or attaches a certificate, and finishes a mail enable, on its next
+	// tick. They are logged, never returned in the response.
+	d := res.Domain
+	if res.SharedCertErr != nil {
 		slog.Warn("shared-certificate auto-attach skipped during domain.create (the reconciler retries)",
-			"domain_id", domain.ID, "domain", domain.Name, "err", aerr)
-	case cert != nil:
-		attachedShared = true
-		if h.cfg.Reconciler != nil {
-			h.cfg.Reconciler.Schedule(domain.ID)
+			"domain_id", d.ID, "domain", d.Name, "err", res.SharedCertErr)
+	}
+	if res.MailErr != nil {
+		slog.Warn("auto-enable email failed during domain.create (the reconciler retries; operator can also retry from UI)",
+			"domain_id", d.ID, "domain", d.Name, "err", res.MailErr)
+	} else if len(res.MailWarnings) > 0 {
+		slog.Info("auto-enable email DNS autoconfig warnings",
+			"domain_id", d.ID, "domain", d.Name, "warnings", res.MailWarnings)
+	}
+	return d, nil
+}
+
+// createDomainHooks are the post-create fast paths this process can run. The
+// reconcile schedule and the inline SSL attempt need the in-process
+// reconciler; skipInlineSSL leaves the cert to the first reconciler tick
+// (JAB-233 automation). The mail enable (ADR-0013) needs the agent and the DNS
+// stores.
+func (h *domainHandler) createDomainHooks(skipInlineSSL bool) domainops.CreateHooks {
+	var hooks domainops.CreateHooks
+	if rec := h.cfg.Reconciler; rec != nil {
+		hooks.Schedule = rec.Schedule
+		if !skipInlineSSL {
+			// Inline SSL (30s): ACME with self-signed fallback. Never errors —
+			// cert state is already in the DB.
+			hooks.InlineSSL = func(ctx context.Context, d *models.Domain) {
+				inlineCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+				defer cancel()
+				rec.ReconcileSSLInline(inlineCtx, d)
+			}
 		}
 	}
-
-	// Inline SSL (30s): ACME with self-signed fallback. Never errors — cert
-	// state is already in DB. JAB-233: automation skips this (SkipInlineSSL);
-	// the first reconciler tick bootstraps the cert instead.
-	if webEnabled && !attachedShared && !in.SkipInlineSSL && h.cfg.Reconciler != nil {
-		inlineCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		h.cfg.Reconciler.ReconcileSSLInline(inlineCtx, domain)
-		cancel()
-	}
-
-	// Auto-enable email (best-effort, ADR-0013). A failure degrades to
-	// email_enabled=0 + the UI retry switch; not returned in the response.
-	if posture.Provider == models.MailProviderJabali && h.cfg.Agent != nil && h.cfg.DNSZones != nil && h.cfg.DNSRecords != nil {
-		if _, _, warnings, err := domainmailops.Enable(ctx, domainmailops.Deps{
-			Call:           agentCall(h.cfg.Agent),
-			Domains:        h.cfg.Domains,
-			DNSZones:       h.cfg.DNSZones,
-			DNSRecords:     h.cfg.DNSRecords,
-			ServerSettings: h.cfg.ServerSettings,
-			SSLCerts:       h.cfg.SSLCerts,
-			SSLReconciler:  h.cfg.Reconciler,
-		}, domain); err != nil {
-			slog.Warn("auto-enable email failed during domain.create (operator can retry from UI)",
-				"domain_id", domain.ID, "domain", domain.Name, "err", err)
-		} else if len(warnings) > 0 {
-			slog.Info("auto-enable email DNS autoconfig warnings",
-				"domain_id", domain.ID, "domain", domain.Name, "warnings", domainmailops.WarningMessages(warnings))
+	if h.cfg.Agent != nil && h.cfg.DNSZones != nil && h.cfg.DNSRecords != nil {
+		hooks.EnableMail = func(ctx context.Context, d *models.Domain) ([]string, error) {
+			_, _, warnings, err := domainmailops.Enable(ctx, domainmailops.Deps{
+				Call:           agentCall(h.cfg.Agent),
+				Domains:        h.cfg.Domains,
+				DNSZones:       h.cfg.DNSZones,
+				DNSRecords:     h.cfg.DNSRecords,
+				ServerSettings: h.cfg.ServerSettings,
+				SSLCerts:       h.cfg.SSLCerts,
+				SSLReconciler:  h.cfg.Reconciler,
+			}, d)
+			if err != nil {
+				return nil, err
+			}
+			return domainmailops.WarningMessages(warnings), nil
 		}
 	}
-
-	// Schedule reconciliation — converges OS-level state (vhost, PHP pool, …)
-	// with DB state. Non-blocking, out-of-band.
-	if h.cfg.Reconciler != nil {
-		h.cfg.Reconciler.Schedule(domain.ID)
-	}
-
-	return domain, nil
+	return hooks
 }
