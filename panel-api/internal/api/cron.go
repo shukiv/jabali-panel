@@ -53,6 +53,11 @@ func (h *cronHandler) mapCronopsErr(c *gin.Context, err error) {
 		respondValidationErr(c, "command", err)
 	case errors.Is(err, cronops.ErrJobNotFound):
 		c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
+	case errors.Is(err, cronops.ErrRootOwnerNotAdmin):
+		c.JSON(http.StatusUnprocessableEntity, gin.H{
+			"error":  "root_cron_owner_not_admin",
+			"detail": "a root cron job must be owned by an admin account; delete it and recreate it as an admin",
+		})
 	case errors.Is(err, cronops.ErrAgentFailed):
 		respondAgentErr(c, "agent_apply_failed", err)
 	default:
@@ -101,7 +106,8 @@ type createCronRequest struct {
 	// RunAsRoot is admin-only. The cron command runs as root (uid 0)
 	// via a system-scoped systemd timer, not under the owner's
 	// per-user systemd. Tenants supplying this field have it
-	// silently dropped.
+	// silently dropped. A root job is owned by the admin who creates
+	// it: an admin combining it with another account's UserID gets 422.
 	RunAsRoot bool `json:"run_as_root,omitempty"`
 }
 
@@ -350,6 +356,17 @@ func (h *cronHandler) create(c *gin.Context) {
 	runAsRoot := false
 	if claims.IsAdmin {
 		runAsRoot = req.RunAsRoot
+	}
+	// A root job is owned by the admin who creates it. Its command is checked
+	// against the owner's docroots, so root + a tenant's user_id would have
+	// root run a script that tenant can edit. Refuse the combination loudly
+	// (cronops also enforces an admin owner for any door).
+	if runAsRoot && owner != claims.UserID {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{
+			"error":  "run_as_root_owner_mismatch",
+			"detail": "run_as_root cannot be combined with another account's user_id; a root cron job is owned by the admin who creates it",
+		})
+		return
 	}
 	job, err := cronops.Create(ctx, h.cronopsDeps(), cronops.CreateInput{
 		UserID:    owner,

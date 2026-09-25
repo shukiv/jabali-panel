@@ -363,3 +363,86 @@ func TestDelete_MetadataFailureAfterRemove(t *testing.T) {
 		t.Fatal("agent remove should have run before the row delete")
 	}
 }
+
+// A root job (RunAsRoot) must be owned by an admin account. Its command is
+// validated against the OWNER's docroots, so a tenant-owned root job would let
+// root run a script the tenant can edit — a tenant→root escalation. Create
+// refuses it before persisting or touching the agent.
+func TestCreate_RootJobRequiresAdminOwner(t *testing.T) {
+	root := CreateInput{
+		UserID: "u1", Name: "sysjob", Schedule: "0 3 * * *",
+		Command: "php /var/www/site/cron.php", Enabled: true, RunAsRoot: true,
+	}
+
+	t.Run("tenant owner is refused", func(t *testing.T) {
+		ag, cr := &fakeAgent{}, &fakeCronRepo{}
+		tenant := &models.User{ID: "u1", Username: uname("alice")}
+		_, err := Create(context.Background(), deps(tenant, ag, cr), root)
+		if !errors.Is(err, ErrRootOwnerNotAdmin) {
+			t.Fatalf("want ErrRootOwnerNotAdmin, got %v", err)
+		}
+		if cr.created != nil || ag.called {
+			t.Fatalf("refused root job must not persist or reach the agent (created=%v agent=%v)", cr.created != nil, ag.called)
+		}
+	})
+
+	t.Run("unknown owner is refused", func(t *testing.T) {
+		ag, cr := &fakeAgent{}, &fakeCronRepo{}
+		_, err := Create(context.Background(), deps(nil, ag, cr), root)
+		if !errors.Is(err, ErrUserNotFound) {
+			t.Fatalf("want ErrUserNotFound, got %v", err)
+		}
+		if cr.created != nil || ag.called {
+			t.Fatal("refused root job must not persist or reach the agent")
+		}
+	})
+
+	t.Run("admin owner is accepted", func(t *testing.T) {
+		ag, cr := &fakeAgent{}, &fakeCronRepo{}
+		admin := &models.User{ID: "u1", Username: uname("admin"), IsAdmin: true}
+		job, err := Create(context.Background(), deps(admin, ag, cr), root)
+		if err != nil {
+			t.Fatalf("create: %v", err)
+		}
+		if !job.RunAsRoot || job.UserID != "u1" {
+			t.Fatalf("want a root job owned by the admin, got %+v", job)
+		}
+		ap, ok := ag.lastParams.(applyParams)
+		if !ok || !ap.RunAsRoot || ap.Username != "root" {
+			t.Fatalf("root job must apply as root; got %+v", ag.lastParams)
+		}
+	})
+}
+
+// Update enforces the same invariant, so a pre-existing tenant-owned root row
+// (created before the Create gate) is frozen: it cannot be edited, toggled or
+// re-applied — only deleted (Delete stays ungated; it is the remedy).
+func TestUpdate_RootJobRequiresAdminOwner(t *testing.T) {
+	newName := "renamed"
+
+	t.Run("tenant-owned root row is refused", func(t *testing.T) {
+		ag, cr := &fakeAgent{}, &fakeCronRepo{}
+		seedJob(cr, &models.CronJob{ID: "j1", UserID: "u1", Name: "sysjob", Schedule: "0 * * * *", Command: "php /root/x.php", Enabled: true, RunAsRoot: true})
+		tenant := &models.User{ID: "u1", Username: uname("alice")}
+		_, err := Update(context.Background(), deps(tenant, ag, cr), "j1", UpdatePatch{Name: &newName})
+		if !errors.Is(err, ErrRootOwnerNotAdmin) {
+			t.Fatalf("want ErrRootOwnerNotAdmin, got %v", err)
+		}
+		if cr.created.Name != "sysjob" || ag.called {
+			t.Fatalf("refused update must not mutate or reach the agent (name=%q agent=%v)", cr.created.Name, ag.called)
+		}
+	})
+
+	t.Run("admin-owned root row is accepted", func(t *testing.T) {
+		ag, cr := &fakeAgent{}, &fakeCronRepo{}
+		seedJob(cr, &models.CronJob{ID: "j1", UserID: "u1", Name: "sysjob", Schedule: "0 * * * *", Command: "php /root/x.php", Enabled: true, RunAsRoot: true})
+		admin := &models.User{ID: "u1", Username: uname("admin"), IsAdmin: true}
+		job, err := Update(context.Background(), deps(admin, ag, cr), "j1", UpdatePatch{Name: &newName})
+		if err != nil {
+			t.Fatalf("update: %v", err)
+		}
+		if job.Name != newName || !ag.called {
+			t.Fatalf("admin-owned root job update must persist + apply (name=%q agent=%v)", job.Name, ag.called)
+		}
+	})
+}
