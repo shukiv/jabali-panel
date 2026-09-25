@@ -23,6 +23,7 @@ import {
   PACKAGE_LIMIT_FIELDS,
   decodePackageForm,
   encodePackagePayload,
+  looksLikeCIDR,
   type LimitFieldDef,
   type PackageFormValues,
   type PackageRecord,
@@ -74,6 +75,7 @@ export const PackageEditor = ({ title, initialValue, isLoading, submitting, onSu
   const { t } = useTranslation();
   const [form] = Form.useForm<PackageFormValues>();
   const { enabled: diskQuotaEnabled } = useDiskQuotaEnabled();
+  const egressSSHOut = Form.useWatch("egress_ssh_out", form);
 
   const [nspawnImages, setNspawnImages] = useState<NspawnImage[]>([]);
   useEffect(() => {
@@ -250,6 +252,53 @@ export const PackageEditor = ({ title, initialValue, isLoading, submitting, onSu
             <Switch checkedChildren={<CheckOutlined />} unCheckedChildren={<CloseOutlined />} />
           </Form.Item>
           <Typography.Text>SSH Enabled</Typography.Text>
+        </div>
+
+        {/* GH #1798: per-package openings in the M34 per-user outbound firewall.
+            Both default OFF and only change anything for users whose outbound
+            firewall is enforced or learning. */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+          <Form.Item
+            name="egress_ssh_out"
+            valuePropName="checked"
+            tooltip="Lets users on this package open SSH connections (TCP port 22) from their shell, e.g. git over SSH. Only affects users whose outbound firewall is enforced or learning."
+            noStyle
+          >
+            <Switch checkedChildren={<CheckOutlined />} unCheckedChildren={<CloseOutlined />} />
+          </Form.Item>
+          <Typography.Text>Allow outbound SSH (port 22)</Typography.Text>
+        </div>
+        {egressSSHOut ? (
+          <Form.Item
+            label="Outbound SSH destinations"
+            name="egress_ssh_out_cidrs"
+            extra="CIDR ranges users may SSH to, e.g. 203.0.113.0/24 or 2001:db8::/32. Leave empty to allow any destination."
+            rules={[
+              {
+                validator: (_rule, value: string[] | undefined) => {
+                  const bad = (value ?? []).map((v) => v.trim()).filter((v) => v && !looksLikeCIDR(v));
+                  return bad.length
+                    ? Promise.reject(new Error(`Not a CIDR range: ${bad.join(", ")} (use address/prefix, e.g. 203.0.113.7/32)`))
+                    : Promise.resolve();
+                },
+              },
+            ]}
+            style={{ marginLeft: 52 }}
+          >
+            <Select mode="tags" tokenSeparators={[",", " "]} open={false} placeholder="Any destination" style={{ width: "100%", maxWidth: 480 }} />
+          </Form.Item>
+        ) : null}
+
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+          <Form.Item
+            name="egress_icmp"
+            valuePropName="checked"
+            tooltip="Lets users on this package send ping (ICMP echo requests) from their shell. Only affects users whose outbound firewall is enforced or learning."
+            noStyle
+          >
+            <Switch checkedChildren={<CheckOutlined />} unCheckedChildren={<CloseOutlined />} />
+          </Form.Item>
+          <Typography.Text>Allow ping (ICMP echo)</Typography.Text>
         </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 24 }}>

@@ -7,6 +7,7 @@ import {
   SPECIAL_LIMIT_FIELDS,
   decodePackageForm,
   encodePackagePayload,
+  looksLikeCIDR,
   type PackageRecord,
 } from "./packageFields";
 
@@ -95,5 +96,47 @@ describe("Package CSV codecs round-trip (JAB-331 AC2)", () => {
     const form = decodePackageForm(record);
     expect(form.docker_app_slugs).toEqual([]);
     expect(form.allowed_backup_destination_kinds).toEqual([]);
+  });
+});
+
+describe("Package egress CIDR codec (GH #1798)", () => {
+  it("decodes the stored JSON array to a tag list and re-encodes it as a JSON array", () => {
+    const record: PackageRecord = {
+      ...PACKAGE_DEFAULTS,
+      id: "pkg-3",
+      egress_ssh_out: true,
+      egress_ssh_out_cidrs: '["203.0.113.0/24","2001:db8::/32"]',
+    };
+    const form = decodePackageForm(record);
+    expect(form.egress_ssh_out_cidrs).toEqual(["203.0.113.0/24", "2001:db8::/32"]);
+
+    const payload = encodePackagePayload(form);
+    expect(payload.egress_ssh_out_cidrs).toBe('["203.0.113.0/24","2001:db8::/32"]');
+    expect(JSON.parse(payload.egress_ssh_out_cidrs)).toEqual(["203.0.113.0/24", "2001:db8::/32"]);
+  });
+
+  it("encodes an empty tag list as an empty string (anywhere), never as CSV", () => {
+    const payload = encodePackagePayload({ ...PACKAGE_DEFAULTS });
+    expect(payload.egress_ssh_out_cidrs).toBe("");
+    expect(payload.egress_ssh_out).toBe(false);
+    expect(payload.egress_icmp).toBe(false);
+  });
+
+  it("decodes an empty or malformed stored value to an empty tag list", () => {
+    for (const stored of ["", "not json", '{"a":1}', "[1,2]"]) {
+      const form = decodePackageForm({ ...PACKAGE_DEFAULTS, id: "pkg-4", egress_ssh_out_cidrs: stored });
+      expect(form.egress_ssh_out_cidrs, `stored=${stored}`).toEqual([]);
+    }
+  });
+});
+
+describe("egress CIDR shape check (GH #1798)", () => {
+  it("accepts IPv4 and IPv6 CIDRs and rejects bare addresses and junk", () => {
+    for (const ok of ["203.0.113.0/24", "10.0.0.0/8", "0.0.0.0/0", "2001:db8::/32", "::/0"]) {
+      expect(looksLikeCIDR(ok), ok).toBe(true);
+    }
+    for (const bad of ["203.0.113.7", "10.0.0.0/33", "2001:db8::/129", "github.com", "1.2.3/24", "", "10.0.0.0/8 x"]) {
+      expect(looksLikeCIDR(bad), bad).toBe(false);
+    }
   });
 });

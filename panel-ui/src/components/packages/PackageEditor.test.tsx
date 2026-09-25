@@ -15,7 +15,7 @@ vi.mock("../../apiClient", () => ({
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (k: string) => k }) }));
 
 import { PackageEditor } from "./PackageEditor";
-import { PACKAGE_LIMIT_FIELDS } from "./packageFields";
+import { PACKAGE_DEFAULTS, PACKAGE_LIMIT_FIELDS } from "./packageFields";
 
 function renderEditor() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -56,5 +56,48 @@ describe("PackageEditor renders the full entitlement set (JAB-331 AC1)", () => {
     const sw = row?.querySelector('[role="switch"]');
     expect(sw, "Webmail switch renders").toBeTruthy();
     expect(sw?.getAttribute("aria-checked")).toBe("true");
+  });
+});
+
+// GH #1798: outbound SSH and ping for the M34 egress firewall are per-package
+// opt-ins that default OFF (the firewall stays closed unless the admin opens it).
+describe("PackageEditor egress allowances (GH #1798)", () => {
+  it("renders the outbound SSH and ping switches defaulting OFF", () => {
+    renderEditor();
+    for (const label of ["Allow outbound SSH (port 22)", "Allow ping (ICMP echo)"]) {
+      const row = screen.getByText(label).closest("div");
+      const sw = row?.querySelector('[role="switch"]');
+      expect(sw, `${label} switch renders`).toBeTruthy();
+      expect(sw?.getAttribute("aria-checked"), label).toBe("false");
+    }
+  });
+
+  it("hides the SSH destination list until outbound SSH is on", () => {
+    renderEditor();
+    expect(screen.queryByText("Outbound SSH destinations")).toBeNull();
+  });
+
+  it("loads a stored package's outbound SSH scope into the destination list (edit mode)", async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <PackageEditor
+          title="Edit package"
+          initialValue={{
+            ...PACKAGE_DEFAULTS,
+            id: "pkg-1",
+            egress_ssh_out: true,
+            egress_ssh_out_cidrs: '["203.0.113.0/24"]',
+            egress_icmp: true,
+          }}
+          submitting={false}
+          onSubmit={vi.fn()}
+        />
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByText("Outbound SSH destinations")).toBeTruthy();
+    expect(await screen.findByText("203.0.113.0/24")).toBeTruthy();
+    const ping = screen.getByText("Allow ping (ICMP echo)").closest("div")?.querySelector('[role="switch"]');
+    expect(ping?.getAttribute("aria-checked")).toBe("true");
   });
 });

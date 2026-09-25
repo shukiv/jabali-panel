@@ -82,6 +82,8 @@ export type Domain = {
   temp_url_enabled?: boolean;
   temp_url?: string | null;
   bot_challenge_include?: boolean;
+  // GH #1812: the owner lets other accounts create subdomains under this domain.
+  allow_subdomain_delegation?: boolean;
   nginx_custom_directives: string;
   // GH #1624 / ADR-0169 Phase 4a: tenant-authored raw "advanced directives".
   // Optional — absent (omitempty) until the Phase 4a backend column (#1691)
