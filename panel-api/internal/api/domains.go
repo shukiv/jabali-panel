@@ -818,21 +818,6 @@ func (h *domainHandler) get(c *gin.Context) {
 	c.JSON(http.StatusOK, h.enrichDomainResponse(c.Request.Context(), *domain))
 }
 
-// findCoveringSharedCert returns a shared cert (server-wide or owned by
-// ownerID) whose SANs cover host, or nil (JAB-170 phase 5 auto-attach).
-func (h *domainHandler) findCoveringSharedCert(ctx context.Context, host, ownerID string) *models.SharedCertificate {
-	if h.cfg.SharedCerts == nil {
-		return nil
-	}
-	certs, err := h.cfg.SharedCerts.ListServerWideAndOwned(ctx, ownerID)
-	if err != nil {
-		return nil
-	}
-	// The DB read stays adapter-side (ADR-0083); the cover decision is the
-	// shared domainops leaf, so REST and CLI create pick the same cert.
-	return domainops.CoveringSharedCert(certs, host)
-}
-
 func (h *domainHandler) create(c *gin.Context) {
 	claims := ginctx.Claims(c)
 	if claims == nil {

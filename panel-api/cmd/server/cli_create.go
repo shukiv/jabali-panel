@@ -480,10 +480,9 @@ func createDomainDirect(ctx context.Context, in cliDomainInput) (*models.Domain,
 	var warnings []string
 
 	// JAB-170 phase 5 / JAB-279: auto-attach a covering shared certificate so a
-	// CLI-created web domain reaches HTTPS immediately (no ACME wait), matching
-	// the REST create path (domain_create_op.go's findCoveringSharedCert +
-	// SetSharedCertificate). This is a web-cert fast path: a web-off domain
-	// (DNS-only or mail-only) has no web cert, so it is skipped.
+	// CLI-created web domain reaches HTTPS immediately (no ACME wait). The
+	// list → cover → attach step and its web-off skip are the domainops
+	// module's, the same code the REST create door runs.
 	//
 	// Fail-OPEN by design — a lookup or attach failure is recorded as a soft
 	// warning, never a create failure. Auto-attach is an optimisation, not an
@@ -492,19 +491,16 @@ func createDomainDirect(ctx context.Context, in cliDomainInput) (*models.Domain,
 	// handle (the JAB-355 cross-process limitation), so convergence relies on
 	// that tick — the same accepted deviation as the rest of the CLI create
 	// path (see the reconciler note below).
-	if webEnabled {
-		if certs, err := sharedCertRepoFromDB().ListServerWideAndOwned(ctx, ownerID); err != nil {
-			warnings = append(warnings, fmt.Sprintf("shared-certificate lookup skipped: %v", err))
-		} else if cert := domainops.CoveringSharedCert(certs, d.Name); cert != nil {
-			if err := domains.SetSharedCertificate(ctx, d.ID, &cert.ID, models.SSLModeShared); err != nil {
-				warnings = append(warnings, fmt.Sprintf(
-					"shared-certificate auto-attach failed (retry with `jabali ssl shared attach --domain %s --cert-id %s`): %v",
-					d.Name, cert.ID, err))
-			} else {
-				d.SSLMode = models.SSLModeShared
-				d.SharedCertificateID = &cert.ID
-			}
-		}
+	switch cert, err := domainops.AttachCoveringSharedCert(ctx, domainops.SharedCertDeps{
+		Certs:   sharedCertRepoFromDB(),
+		Domains: domains,
+	}, d); {
+	case errors.Is(err, domainops.ErrSharedCertLookup):
+		warnings = append(warnings, fmt.Sprintf("shared-certificate lookup skipped: %v", err))
+	case errors.Is(err, domainops.ErrSharedCertAttach):
+		warnings = append(warnings, fmt.Sprintf(
+			"shared-certificate auto-attach failed (retry with `jabali ssl shared attach --domain %s --cert-id %s`): %v",
+			d.Name, cert.ID, err))
 	}
 
 	// Auto-enable email. Best-effort — if the agent's down or Stalwart

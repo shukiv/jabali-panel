@@ -26,8 +26,8 @@ import (
 //
 // It stays in the api package (not a standalone domainops package) because it
 // depends on a cluster of api-package helpers — validateDomainName,
-// validateDocumentRoot, agentCall, and the domainHandler methods
-// findCoveringSharedCert / previewSlugConflict — and the only new caller
+// validateDocumentRoot, agentCall, and the domainHandler method
+// previewSlugConflict — and the only new caller
 // (automation) also lives in this package. The shared email-enable step now
 // lives in internal/domainmailops (JAB-288). Reuse, not packaging, was the goal.
 
@@ -483,17 +483,21 @@ func createDomainOp(ctx context.Context, h *domainHandler, in createDomainInput)
 	// GH #1449: shared-cert auto-attach + inline SSL are web-cert fast paths.
 	// A web-off domain has no web cert (DNS-only → ssl none; mail-only → the
 	// reconciler issues its mail-support SANs on the next tick), so skip both.
+	// The list → cover → attach step (and its web-off skip) is the domainops
+	// module's (JAB-279); a failure is soft — the create still succeeds and the
+	// reconciler issues or attaches a cert on its next tick.
 	attachedShared := false
-	if webEnabled && h.cfg.SharedCerts != nil {
-		if cert := h.findCoveringSharedCert(ctx, domain.Name, domain.UserID); cert != nil {
-			if err := h.cfg.Domains.SetSharedCertificate(ctx, domain.ID, &cert.ID, models.SSLModeShared); err == nil {
-				domain.SSLMode = models.SSLModeShared
-				domain.SharedCertificateID = &cert.ID
-				attachedShared = true
-				if h.cfg.Reconciler != nil {
-					h.cfg.Reconciler.Schedule(domain.ID)
-				}
-			}
+	switch cert, aerr := domainops.AttachCoveringSharedCert(ctx, domainops.SharedCertDeps{
+		Certs:   h.cfg.SharedCerts,
+		Domains: h.cfg.Domains,
+	}, domain); {
+	case aerr != nil:
+		slog.Warn("shared-certificate auto-attach skipped during domain.create (the reconciler retries)",
+			"domain_id", domain.ID, "domain", domain.Name, "err", aerr)
+	case cert != nil:
+		attachedShared = true
+		if h.cfg.Reconciler != nil {
+			h.cfg.Reconciler.Schedule(domain.ID)
 		}
 	}
 
