@@ -31,6 +31,34 @@ on shadow-account ensure, nginx log redaction, reconciler crash-safety, and
 key-rotation runbook. The decisions here are the design answers; the plan
 carries the implementation steps.
 
+## Amendment 2026-09-26 — exact per-database grants, not a `<user>\_%` pattern
+
+§1's pattern grant, and the claim under Risks that "a user can only ever
+reach their own databases", were wrong. Panel usernames may contain `_`, so
+`<panel_username>\_%` for tenant `alice` also matches `alice_x_shop`, a
+database of tenant `alice_x`. The shadow account had ALL privileges on the
+sibling's data. The Adminer (PostgreSQL) shadow `<user>_pgadmin` had the same
+flaw at database level (`datname LIKE '<user>\_%'`).
+
+Now:
+
+- `db.mysqladmin.ensure` creates or rotates the account and grants **no**
+  database.
+- On every phpMyAdmin open, the panel sends the explicit list of the
+  tenant's own MariaDB databases (`databases WHERE user_id = ? AND
+  engine = 'mariadb'`). `db.mysqladmin.sync_grants` makes the account's
+  `mysql.db` grants exactly that list. It revokes everything else, including
+  the old wildcard, and grants each database by name with `_` and `%`
+  escaped. A failed sync refuses the open.
+- A user rename clears the renamed account's database grants; the next open
+  re-grants the renamed databases.
+- The Adminer shadow follows the same rule through
+  `db.postgres.shadowadmin.grant_schema`.
+
+The boundary remains the MariaDB grant (§7's `only_db` stays
+defense-in-depth), but it is now the tenant's own database list from the
+control plane, never a name pattern.
+
 ## Decision
 
 ### 1. Shadow admin account per panel user
