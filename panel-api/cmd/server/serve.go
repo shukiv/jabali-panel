@@ -405,6 +405,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 		// per-collection shareWith). Grant grantees resolve via the mailbox +
 		// mail-group repos.
 		rec.WithSharedResources(repository.NewSharedResourceRepository(sharedDB), mailboxRepo, mailGroupRepo)
+		// GH #1818 — distribution mail groups are re-applied as Stalwart
+		// mailing lists (fleet conversion + heal of failed applies).
+		rec.WithMailGroups(mailGroupRepo)
 		// JAB-230 — noreply@ relay identities + shim cred files. Needs the
 		// sso.key to seal/unseal the relay passwords; nil key (fresh install
 		// mid-bootstrap) just disables the loop until the key exists.

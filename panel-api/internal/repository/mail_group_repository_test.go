@@ -139,3 +139,38 @@ func TestMailGroup_Delete_NotFound(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
+
+// GH #1818: a distribution list only fans out to members that can receive
+// mail — a disabled or send-only member must not be a list recipient.
+func TestMailGroup_ListDeliverableMemberEmails_ExcludesDisabledAndSendOnly(t *testing.T) {
+	db, mock, raw := newMockGroupDB(t)
+	defer raw.Close()
+	repo := NewMailGroupRepository(db)
+
+	mock.ExpectQuery("SELECT .mb...email_cached. FROM mail_group_members m JOIN mailboxes mb ON mb.id = m.mailbox_id " +
+		"WHERE m.group_id = . AND mb.is_disabled = . AND mb.send_only = . ORDER BY mb.email_cached ASC").
+		WithArgs("grp1", false, false).
+		WillReturnRows(sqlmock.NewRows([]string{"email_cached"}).AddRow("alice@example.com"))
+
+	got, err := repo.ListDeliverableMemberEmails(context.Background(), "grp1")
+	require.NoError(t, err)
+	require.Equal(t, []string{"alice@example.com"}, got)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestMailGroup_ListAllDeliverableMembers(t *testing.T) {
+	db, mock, raw := newMockGroupDB(t)
+	defer raw.Close()
+	repo := NewMailGroupRepository(db)
+
+	mock.ExpectQuery("SELECT m.group_id, mb.email_cached AS email FROM mail_group_members m JOIN mailboxes mb ON mb.id = m.mailbox_id " +
+		"WHERE mb.is_disabled = . AND mb.send_only = . ORDER BY m.group_id ASC, mb.email_cached ASC").
+		WithArgs(false, false).
+		WillReturnRows(sqlmock.NewRows([]string{"group_id", "email"}).
+			AddRow("grp1", "alice@example.com").AddRow("grp2", "bob@example.com"))
+
+	got, err := repo.ListAllDeliverableMembers(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, []MailGroupMemberEmail{{GroupID: "grp1", Email: "alice@example.com"}, {GroupID: "grp2", Email: "bob@example.com"}}, got)
+	require.NoError(t, mock.ExpectationsWereMet())
+}

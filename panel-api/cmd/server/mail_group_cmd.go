@@ -4,15 +4,18 @@
 //   - create: same mailaddr.Canonicalise, same group/mailbox address-collision
 //     checks, same normalizeGroupKind, same `mailgroup.apply` projection.
 //   - set-members / add / remove: resolve mailboxes, enforce same-domain, and
-//     project via `mailgroup.members_set` ONLY for resource groups (distribution
-//     groups fan out through the SQL directory, not memberGroupIds).
+//     project via `mailgroup.members_set` for resource groups. A distribution
+//     group is re-applied with its member list instead (GH #1818 — it is a
+//     Stalwart mailing list, not memberGroupIds), after the same internal-only
+//     member cap the handler enforces.
 //   - delete: agent-FIRST (`mailgroup.delete` strips the Stalwart principal)
 //     then the DB delete, matching the handler's ordering so rows never drift
 //     ahead of Stalwart.
 //
-// Mail groups are push-projected (no reconciler tick converges them — see the
-// mailgroup.apply note in shared_resource_reconcile.go), so the agent calls are
-// load-bearing, not an immediacy optimization. Mutations CLI-audited (#537).
+// Resource groups are push-projected (no reconciler tick converges them — see
+// the mailgroup.apply note in shared_resource_reconcile.go), so the agent calls
+// are load-bearing. Distribution groups are also re-applied by the mail-group
+// reconcile pass (GH #1818). Mutations CLI-audited (#537).
 package main
 
 import (
@@ -27,6 +30,7 @@ import (
 
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/mailaddr"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/mailgroupops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
@@ -228,13 +232,7 @@ func newMailGroupCreateCmd() *cobra.Command {
 			}
 			email := canonLocal + "@" + dom.Name
 			g.EmailCached = email
-			notifyAgentMailGroup(ctx, "mailgroup.apply", map[string]any{
-				"email":         email,
-				"display_name":  g.DisplayName,
-				"description":   g.Description,
-				"internal_only": g.InternalOnly,
-				"has_files":     g.HasFiles,
-			})
+			applyMailGroupCLI(ctx, g)
 			cliAuditOK(ctx, "mail_group.create", "mail_group", g.ID, nil)
 			fmt.Printf("created %s mail group %s\n", g.GroupKind, email)
 			return nil
@@ -277,13 +275,7 @@ func newMailGroupSetResourcesCmd() *cobra.Command {
 			// no reconciler re-asserts a group's resource nodes (apply is
 			// push-only, per shared_resource_reconcile.go), so the CLI could
 			// report resources that never existed on the mail server.
-			notifyAgentMailGroup(ctx, "mailgroup.apply", map[string]any{
-				"email":         g.EmailCached,
-				"display_name":  g.DisplayName,
-				"description":   g.Description,
-				"internal_only": g.InternalOnly,
-				"has_files":     g.HasFiles,
-			})
+			applyMailGroupCLI(ctx, g)
 			cliAuditOK(ctx, "mail_group.set_resources", "mail_group", g.ID, nil)
 			fmt.Printf("%s resources: mailbox=%v calendar=%v addressbook=%v files=%v\n", g.EmailCached, mbx, cal, ab, fl)
 			return nil
@@ -336,9 +328,12 @@ func resolveMembers(ctx context.Context, domainID string, refs []string) (ids []
 }
 
 // projectMembers replaces the member set and projects to Stalwart, mirroring
-// the handler: distribution groups fan out via the SQL directory (no
-// memberGroupIds projection), resource groups push members_set.
+// the handler: a distribution group is re-applied as a mailing list with its
+// member list (GH #1818), a resource group pushes members_set.
 func projectMembers(ctx context.Context, g *models.MailGroup, desiredIDs, desiredEmails []string) error {
+	if err := mailgroupops.CheckMemberCap(g.GroupKind, g.InternalOnly, len(desiredIDs)); err != nil {
+		return err
+	}
 	repo := mailGroupRepoFromDB()
 	prevEmails, err := repo.ListMemberEmails(ctx, g.ID)
 	if err != nil {
@@ -357,7 +352,9 @@ func projectMembers(ctx context.Context, g *models.MailGroup, desiredIDs, desire
 	if err := repo.SetMembers(ctx, g.ID, desiredIDs); err != nil {
 		return fmt.Errorf("set members: %w", err)
 	}
-	if g.GroupKind != "distribution" {
+	if g.GroupKind == mailgroupops.KindDistribution {
+		applyMailGroupCLI(ctx, g)
+	} else {
 		notifyAgentMailGroup(ctx, "mailgroup.members_set", map[string]any{
 			"group_email":   g.EmailCached,
 			"member_emails": desiredEmails,
@@ -516,6 +513,21 @@ func newMailGroupDeleteCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&force, "force", false, "confirm deletion")
 	return cmd
+}
+
+// applyMailGroupCLI re-applies the group's Stalwart projection from the DB
+// (the same mailgroupops payload the handler sends). The DB change is already
+// committed, so a mail-server failure is reported as a warning, not an error;
+// for a distribution group the reconcile pass retries it.
+func applyMailGroupCLI(ctx context.Context, g *models.MailGroup) {
+	if sharedAgent == nil {
+		return
+	}
+	agentCtx, cancel := context.WithTimeout(ctx, cliMailGroupAgentTimeout)
+	defer cancel()
+	if err := mailgroupops.Apply(agentCtx, sharedAgent, mailGroupRepoFromDB(), g); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: mail server not updated for %s: %v\n", g.EmailCached, err)
+	}
 }
 
 func notifyAgentMailGroup(ctx context.Context, cmd string, params any) {

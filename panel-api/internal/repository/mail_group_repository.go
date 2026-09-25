@@ -46,6 +46,21 @@ type MailGroupRepository interface {
 	// Mailboxes tab's cross-domain view (JAB-370 Selection). Mirrors
 	// ListMembershipsByDomain but scopes by the domain's owner, not one domain.
 	ListMembershipsByUserID(ctx context.Context, userID string) ([]MailboxGroupMembership, error)
+
+	// ListDeliverableMemberEmails returns the members of one group that can
+	// receive mail (not disabled, not send-only) — the recipient set of a
+	// distribution list (GH #1818). Same gate as the SQL directory's
+	// queryRecipient for a mailbox.
+	ListDeliverableMemberEmails(ctx context.Context, groupID string) ([]string, error)
+	// ListAllDeliverableMembers is ListDeliverableMemberEmails for every group
+	// in one query, for the reconcile pass.
+	ListAllDeliverableMembers(ctx context.Context) ([]MailGroupMemberEmail, error)
+}
+
+// MailGroupMemberEmail is one deliverable (group, member address) pair.
+type MailGroupMemberEmail struct {
+	GroupID string `gorm:"column:group_id"`
+	Email   string `gorm:"column:email"`
 }
 
 // MailboxGroupMembership is one mailbox->group edge with the group's label.
@@ -276,6 +291,29 @@ func (r *mailGroupRepo) ListMembershipsByUserID(ctx context.Context, userID stri
 		Joins("JOIN domains d ON d.id = g.domain_id").
 		Where("d.user_id = ?", userID).
 		Order("g.display_name ASC").
+		Scan(&rows).Error
+	return rows, err
+}
+
+func (r *mailGroupRepo) ListDeliverableMemberEmails(ctx context.Context, groupID string) ([]string, error) {
+	emails := []string{}
+	err := r.db.WithContext(ctx).
+		Table("mail_group_members m").
+		Joins("JOIN mailboxes mb ON mb.id = m.mailbox_id").
+		Where("m.group_id = ? AND mb.is_disabled = ? AND mb.send_only = ?", groupID, false, false).
+		Order("mb.email_cached ASC").
+		Pluck("mb.email_cached", &emails).Error
+	return emails, err
+}
+
+func (r *mailGroupRepo) ListAllDeliverableMembers(ctx context.Context) ([]MailGroupMemberEmail, error) {
+	var rows []MailGroupMemberEmail
+	err := r.db.WithContext(ctx).
+		Table("mail_group_members m").
+		Select("m.group_id, mb.email_cached AS email").
+		Joins("JOIN mailboxes mb ON mb.id = m.mailbox_id").
+		Where("mb.is_disabled = ? AND mb.send_only = ?", false, false).
+		Order("m.group_id ASC, mb.email_cached ASC").
 		Scan(&rows).Error
 	return rows, err
 }
