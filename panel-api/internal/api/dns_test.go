@@ -126,6 +126,12 @@ func (m *mockDomainRepo) CountByUserID(ctx context.Context, userID string) (int6
 	return 0, nil
 }
 
+// ListPreviewEnabled mirrors List above (empty): tests that need preview-slug
+// collisions use their own store.
+func (m *mockDomainRepo) ListPreviewEnabled(ctx context.Context) ([]models.Domain, error) {
+	return nil, nil
+}
+
 func (m *mockDomainRepo) SetPHPPoolID(ctx context.Context, id string, poolID *string) error {
 	return nil
 }

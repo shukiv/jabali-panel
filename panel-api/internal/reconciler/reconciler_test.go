@@ -174,6 +174,16 @@ func (f *fakeDomainRepo) ListForRegistrarRefresh(ctx context.Context, staleBefor
 func (f *fakeDomainRepo) SetRegistrarExpiry(ctx context.Context, id string, expiresAt *time.Time, checkedAt time.Time) error {
 	return nil
 }
+func (f *fakeDomainRepo) ListPreviewEnabled(ctx context.Context) ([]models.Domain, error) {
+	var result []models.Domain
+	for _, d := range f.domains {
+		if d.TempURLEnabled {
+			result = append(result, *d)
+		}
+	}
+	return result, nil
+}
+
 func (f *fakeDomainRepo) CountByUserID(ctx context.Context, userID string) (int64, error) {
 	count := 0
 	for _, d := range f.domains {
