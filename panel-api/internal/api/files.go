@@ -15,10 +15,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/hex"
-
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -31,110 +27,14 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/uploadintake"
 )
 
-// uploadStagingDir is where panel-api writes incoming uploads before
-// handing off to the agent's files.ingest. MUST stay in sync with the
-// prefix gate in panel-agent/internal/commands/files_ingest.go.
-//
-// Why /var/lib/jabali-uploads and not /tmp: both jabali-panel-api and
-// jabali-agent run with PrivateTmp=true, so each has its own per-unit
-// /tmp namespace. A file panel-api writes to /tmp is invisible to the
-// agent, breaking every upload with `open_tmp: no such file or directory`.
-// The shared dir lives outside the tmp sandbox so both services see
-// the same on-disk path. Created at install time owned jabali:jabali
-// 0750 with /var/lib/jabali-uploads in panel-api's ReadWritePaths;
-// ensureUploadStagingDir() also creates it on first upload as a
-// belt-and-braces (test environments don't run install.sh).
-// var (not const) so tests can point it at t.TempDir() — production
-// install.sh creates /var/lib/jabali-uploads at install time and
-// systemd unit ReadWritePaths grants panel-api access to that exact
-// path; rewriting it at runtime would break that grant.
-var uploadStagingDir = "/var/lib/jabali-uploads"
-
-func uploadStagingPrefix() string { return uploadStagingDir + "/jabali-upload-" }
-
-// ensureUploadStagingDir is called from upload paths before any
-// OpenFile under uploadStagingPrefix(). MkdirAll is idempotent — a
-// no-op when install.sh's install -d already created the dir.
-func ensureUploadStagingDir() error {
-	return os.MkdirAll(uploadStagingDir, 0o750)
-}
-
-// maxInFlightUploadsPerUser caps how many chunked staging files one tenant may
-// have on disk at once (Gitea #425 — a single account must not be able to fill
-// the service partition shared with MariaDB + panel state).
-const maxInFlightUploadsPerUser = 5
-
-// userStagingTag is a stable, non-secret per-user basename component that lets
-// the concurrency cap glob a single tenant's in-flight staging files without
-// any in-memory state. Distinct users -> distinct tags.
-func userStagingTag(userID string) string {
-	sum := sha256.Sum256([]byte("jabali-upload-user:" + userID))
-	return hex.EncodeToString(sum[:6])
-}
-
-// chunkStagingPath derives the chunked-upload staging path from the
-// AUTHENTICATED user plus the client upload_id. Because the path depends on the
-// server-side userID, one tenant can never compute — and therefore never write
-// into or read — another tenant's staging file even if they learn the upload_id
-// (Gitea #426). The basename stays a flat "jabali-upload-…" with no "/", so it
-// still satisfies the agent-side ingest prefix gate.
-func chunkStagingPath(userID, uploadID string) string {
-	sum := sha256.Sum256([]byte("jabali-upload:" + userID + ":" + uploadID))
-	return uploadStagingPrefix() + userStagingTag(userID) + "-" + hex.EncodeToString(sum[:])
-}
-
-// globUserStaging returns a tenant's current staging files (both chunked and
-// single-shot — both are tag-prefixed).
-func globUserStaging(userID string) []string {
-	m, _ := filepath.Glob(uploadStagingPrefix() + userStagingTag(userID) + "-*")
-	return m
-}
-
-// userStagingStats returns how many staging files the tenant currently holds and
-// their total bytes — the per-user concurrency + disk-budget basis for #425.
-// No shared state, survives restarts.
-func userStagingStats(userID string) (count int, bytes int64) {
-	for _, m := range globUserStaging(userID) {
-		if fi, err := os.Stat(m); err == nil && fi.Mode().IsRegular() {
-			count++
-			bytes += fi.Size()
-		}
-	}
-	return
-}
-
-// maxUserStagingBytesMultiple: the per-user assembled-staging ceiling is this
-// multiple of the configured single-upload cap, so a tenant can't fill the
-// service partition (shared with MariaDB + panel state) with many concurrent or
-// abandoned uploads (#425, reviewer item 3).
-const maxUserStagingBytesMultiple = 2
-
-func (h *filesHandler) userStagingBudget(ctx context.Context) int64 {
-	return maxUserStagingBytesMultiple * h.resolveMaxUploadBytes(ctx)
-}
-
-// singleStagingPath mints a user-tagged staging path for the single-shot upload
-// path so it counts against the same per-user concurrency + byte budget as the
-// chunked path (and still satisfies the agent ingest prefix gate).
-func singleStagingPath(userID, rnd string) string {
-	return uploadStagingPrefix() + userStagingTag(userID) + "-" + rnd
-}
-
-// filesIngestAgentParams is the one files.* param struct that stays adapter-side:
-// the upload/ingest path is out of the filesops module's scope (it owns local
-// staging + streaming, not a shared verb). Every other verb's request params and
-// reply result types now live in internal/filesops, where their JSON tags are
-// drift-guarded against panel-agent (filesops/params_test.go).
-type filesIngestAgentParams struct {
-	Overwrite bool   `json:"overwrite,omitempty"`
-	UserID    string `json:"user_id"`
-	Username  string `json:"username"`
-	AdminRoot bool   `json:"admin_root,omitempty"`
-	TmpPath   string `json:"tmp_path"`
-	DestPath  string `json:"dest_path"`
-}
+// Upload staging — identity, per-owner cap and budget, append rules and the
+// files.ingest hand-off — lives in the Upload Intake module
+// (internal/uploadintake, JAB-365). The upload handlers below are its HTTP
+// adapter: they authenticate, read the request and map intake errors to the
+// wire (respondIntakeError).
 
 // FilesHandlerConfig bundles dependencies for /api/v1/files.
 type FilesHandlerConfig struct {
@@ -154,23 +54,48 @@ type FilesHandlerConfig struct {
 const (
 	// Compile-time fallback if ServerSettings repo isn't wired or
 	// upload_max_size_mb is 0. Matches the historical hardcoded value.
-	defaultMaxUploadBytes int64 = 1024 * 1024 * 1024 // 1 GB
+	defaultMaxUploadBytes int64 = uploadintake.DefaultMaxBytes // 1 GB
 	maxPreviewBytes       int64 = 1 * 1024 * 1024
 )
 
-// resolveMaxUploadBytes reads the admin-configured upload cap from
-// server_settings (cached to a few hundred ns by the underlying GORM
-// query plan; the row is tiny). Falls back to defaultMaxUploadBytes
-// when the repo isn't wired or the column is unset.
+// uploadLimits resolves the per-upload cap and per-owner staging budget from
+// server_settings.upload_max_size_mb (the row is tiny). An unwired repo, a read
+// error or an unset column selects the module default.
+func (h *filesHandler) uploadLimits(ctx context.Context) uploadintake.Limits {
+	var mb uint32
+	if h.cfg.ServerSettings != nil {
+		if s, err := h.cfg.ServerSettings.Get(ctx); err == nil && s != nil {
+			mb = s.UploadMaxSizeMB
+		}
+	}
+	return uploadintake.LimitsFor(mb)
+}
+
+// resolveMaxUploadBytes is the admin-configured upload cap (#211), also the
+// body cap of /files/write and the read cap of /files/preview.
 func (h *filesHandler) resolveMaxUploadBytes(ctx context.Context) int64 {
-	if h.cfg.ServerSettings == nil {
-		return defaultMaxUploadBytes
+	return h.uploadLimits(ctx).MaxBytes
+}
+
+// respondIntakeError maps an Upload Intake error to the upload routes' wire
+// shape. A non-policy error (staging I/O) is a 500 with its detail.
+func respondIntakeError(c *gin.Context, err error) {
+	var badOffset *uploadintake.BadOffsetError
+	switch {
+	case errors.Is(err, uploadintake.ErrTooManyUploads):
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": "too_many_uploads"})
+	case errors.Is(err, uploadintake.ErrBudgetExceeded):
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "staging_budget_exceeded"})
+	case errors.Is(err, uploadintake.ErrTooLarge):
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "file_too_large"})
+	case errors.Is(err, uploadintake.ErrUploadNotFound):
+		c.JSON(http.StatusConflict, gin.H{"error": "upload_not_found"})
+	case errors.As(err, &badOffset):
+		// The client resumes from the staged size (upload-chunk-status).
+		c.JSON(http.StatusConflict, gin.H{"error": "bad_offset", "expected": badOffset.Expected})
+	default:
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error", "detail": err.Error()})
 	}
-	s, err := h.cfg.ServerSettings.Get(ctx)
-	if err != nil || s == nil || s.UploadMaxSizeMB == 0 {
-		return defaultMaxUploadBytes
-	}
-	return int64(s.UploadMaxSizeMB) * 1024 * 1024
 }
 
 // RegisterFilesRoutes mounts /files under the given group (expected /api/v1).
@@ -789,8 +714,8 @@ func (h *filesHandler) upload(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request", "detail": err.Error()})
 		return
 	}
-	maxBytes := h.resolveMaxUploadBytes(c.Request.Context())
-	if fileHeader.Size > maxBytes {
+	limits := h.uploadLimits(c.Request.Context())
+	if fileHeader.Size > limits.MaxBytes {
 		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "file_too_large"})
 		return
 	}
@@ -805,49 +730,11 @@ func (h *filesHandler) upload(c *gin.Context) {
 	}
 	defer src.Close()
 
-	// Mint a tmp path that matches the ingest tmpUploadPrefix gate.
-	idBytes := make([]byte, 16)
-	if _, err := rand.Read(idBytes); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error"})
-		return
-	}
-	if err := ensureUploadStagingDir(); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error", "detail": err.Error()})
-		return
-	}
-	// #425: single-shot staging is user-tagged so it counts against the same
-	// per-user concurrency + byte budget as the chunked path.
-	if cnt, total := userStagingStats(userID); cnt >= maxInFlightUploadsPerUser {
-		c.JSON(http.StatusTooManyRequests, gin.H{"error": "too_many_uploads"})
-		return
-	} else if total >= h.userStagingBudget(c.Request.Context()) {
-		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "staging_budget_exceeded"})
-		return
-	}
-	tmpPath := singleStagingPath(userID, hex.EncodeToString(idBytes))
-	tmpFile, err := os.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	// #425: single-shot staging is owner-tagged, so it counts against the same
+	// per-owner in-flight cap and byte budget as the chunked path.
+	tmpPath, written, err := uploadintake.Stage(userID, src, limits)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error", "detail": err.Error()})
-		return
-	}
-	written, copyErr := io.Copy(tmpFile, io.LimitReader(src, maxBytes+1))
-	if cerr := tmpFile.Close(); copyErr == nil {
-		copyErr = cerr
-	}
-	if copyErr != nil {
-		_ = os.Remove(tmpPath)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error", "detail": copyErr.Error()})
-		return
-	}
-	if written > maxBytes {
-		_ = os.Remove(tmpPath)
-		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "file_too_large"})
-		return
-	}
-	// #425: per-user staging byte budget across all in-flight uploads.
-	if _, total := userStagingStats(userID); total > h.userStagingBudget(c.Request.Context()) {
-		_ = os.Remove(tmpPath)
-		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "staging_budget_exceeded"})
+		respondIntakeError(c, err)
 		return
 	}
 
@@ -856,7 +743,7 @@ func (h *filesHandler) upload(c *gin.Context) {
 	destName := fileHeader.Filename
 	if override := c.Query("name"); override != "" {
 		if strings.ContainsAny(override, "/\\") || override == "." || override == ".." {
-			_ = os.Remove(tmpPath)
+			uploadintake.Discard(tmpPath)
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_filename"})
 			return
 		}
@@ -869,15 +756,13 @@ func (h *filesHandler) upload(c *gin.Context) {
 	c.Set("audit_target", destPath+" (upload)")
 	c.Set("audit_target_type", "file")
 	if h.rejectAdminWriteOutOfScope(c, destPath) {
-		_ = os.Remove(tmpPath) // don't leak the panel staging file on a rejected admin upload
+		uploadintake.Discard(tmpPath) // don't leak the panel staging file on a rejected admin upload
 		return
 	}
-	_, err = h.cfg.Agent.Call(c.Request.Context(), "files.ingest", filesIngestAgentParams{
+	if err := uploadintake.Ingest(c.Request.Context(), h.cfg.Agent.Call, uploadintake.IngestParams{
 		UserID: userID, Username: username, AdminRoot: h.adminRoot(c), TmpPath: tmpPath, DestPath: destPath,
 		Overwrite: c.Query("overwrite") == "true",
-	})
-	if err != nil {
-		_ = os.Remove(tmpPath)
+	}); err != nil {
 		respondAgentError(c, err)
 		return
 	}
@@ -1296,94 +1181,13 @@ func (h *filesHandler) uploadChunk(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_offset"})
 		return
 	}
-	if err := ensureUploadStagingDir(); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error", "detail": err.Error()})
-		return
-	}
-	// #426: the staging path is derived from the authenticated user, so a
-	// different tenant who learns this upload_id cannot target this file.
-	tmpPath := chunkStagingPath(userID, uploadID)
-
-	// #425: per-user concurrency + disk-budget cap, checked when a NEW upload
-	// begins (offset 0 and the staging file doesn't exist yet).
-	if offset == 0 {
-		if _, statErr := os.Stat(tmpPath); errors.Is(statErr, os.ErrNotExist) {
-			if cnt, total := userStagingStats(userID); cnt >= maxInFlightUploadsPerUser {
-				c.JSON(http.StatusTooManyRequests, gin.H{"error": "too_many_uploads"})
-				return
-			} else if total >= h.userStagingBudget(c.Request.Context()) {
-				c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "staging_budget_exceeded"})
-				return
-			}
-		}
-	}
-
-	// #426: first chunk creates O_EXCL (a fresh session); later chunks require
-	// the staging file to already exist. The offset must equal the current file
-	// size — no holes, no mid-file overwrite, no cross-session content injection.
-	openFlags := os.O_WRONLY
-	if offset == 0 {
-		openFlags |= os.O_CREATE | os.O_EXCL
-	}
-	f, err := os.OpenFile(tmpPath, openFlags, 0o600)
+	// The module owns the session (#425/#426): the path derives from the
+	// authenticated owner, a new session is admitted against the owner's
+	// in-flight cap and budget, the offset must equal the staged size, and a
+	// chunk past the admin-configured cap (#211) or the budget removes it.
+	tmpPath, written, err := uploadintake.Append(userID, uploadID, offset, c.Request.Body, h.uploadLimits(c.Request.Context()))
 	if err != nil {
-		if offset == 0 && errors.Is(err, os.ErrExist) {
-			// Idempotent retry of the first chunk after a blip: reopen and let
-			// the offset/size check below decide.
-			f, err = os.OpenFile(tmpPath, os.O_WRONLY, 0o600)
-		}
-		if err != nil {
-			if offset > 0 && errors.Is(err, os.ErrNotExist) {
-				c.JSON(http.StatusConflict, gin.H{"error": "upload_not_found"})
-				return
-			}
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error", "detail": err.Error()})
-			return
-		}
-	}
-	fi, statErr := f.Stat()
-	if statErr != nil {
-		f.Close()
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error", "detail": statErr.Error()})
-		return
-	}
-	if offset != fi.Size() {
-		// Reject holes / mid-file overwrites; client must resume from the actual
-		// size (query upload-chunk-status).
-		f.Close()
-		c.JSON(http.StatusConflict, gin.H{"error": "bad_offset", "expected": fi.Size()})
-		return
-	}
-	if _, err := f.Seek(offset, 0); err != nil {
-		f.Close()
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error", "detail": err.Error()})
-		return
-	}
-	// Cap the assembled upload at the admin-configured limit
-	// (server_settings.upload_max_size_mb; #211). Was a hardcoded 1 GB
-	// that silently overrode the setting for the chunked path (every
-	// file > 100 MB), so raising Upload max size never took effect for
-	// large uploads. Check via stat AFTER the write to keep the
-	// per-chunk hot path simple.
-	maxUploadSize := h.resolveMaxUploadBytes(c.Request.Context())
-	written, copyErr := io.Copy(f, io.LimitReader(c.Request.Body, maxUploadSize-offset+1))
-	if cerr := f.Close(); copyErr == nil {
-		copyErr = cerr
-	}
-	if copyErr != nil {
-		_ = os.Remove(tmpPath)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error", "detail": copyErr.Error()})
-		return
-	}
-	if offset+written > maxUploadSize {
-		_ = os.Remove(tmpPath)
-		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "file_too_large"})
-		return
-	}
-	// #425: enforce the per-user staging byte budget as the upload grows.
-	if _, total := userStagingStats(userID); total > h.userStagingBudget(c.Request.Context()) {
-		_ = os.Remove(tmpPath)
-		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "staging_budget_exceeded"})
+		respondIntakeError(c, err)
 		return
 	}
 
@@ -1399,15 +1203,13 @@ func (h *filesHandler) uploadChunk(c *gin.Context) {
 	c.Set("audit_target", destPath+" (chunked upload)")
 	c.Set("audit_target_type", "file")
 	if h.rejectAdminWriteOutOfScope(c, destPath) {
-		_ = os.Remove(tmpPath) // don't leak the panel staging file on a rejected admin upload
+		uploadintake.Discard(tmpPath) // don't leak the panel staging file on a rejected admin upload
 		return
 	}
-	_, err = h.cfg.Agent.Call(c.Request.Context(), "files.ingest", filesIngestAgentParams{
+	if err := uploadintake.Ingest(c.Request.Context(), h.cfg.Agent.Call, uploadintake.IngestParams{
 		UserID: userID, Username: username, AdminRoot: h.adminRoot(c), TmpPath: tmpPath, DestPath: destPath,
 		Overwrite: c.Query("overwrite") == "true",
-	})
-	if err != nil {
-		_ = os.Remove(tmpPath)
+	}); err != nil {
 		respondAgentError(c, err)
 		return
 	}
@@ -1430,18 +1232,17 @@ func (h *filesHandler) uploadChunkStatus(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_upload_id"})
 		return
 	}
-	// Per-user path (#426): a tenant can only stat their OWN staging files.
-	tmpPath := chunkStagingPath(userID, uploadID)
-	info, err := os.Stat(tmpPath)
+	// Per-owner path (#426): a tenant can only stat their OWN staging files.
+	written, err := uploadintake.Written(userID, uploadID)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
+		if errors.Is(err, uploadintake.ErrUploadNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"upload_id": uploadID, "written": info.Size()})
+	c.JSON(http.StatusOK, gin.H{"upload_id": uploadID, "written": written})
 }
 
 func (h *filesHandler) delete(c *gin.Context) {

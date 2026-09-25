@@ -4,30 +4,14 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
+
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/uploadintake"
 )
 
-// Gitea #426: the chunked-upload staging path must be a pure function of the
-// AUTHENTICATED user + upload_id, so a different tenant who learns the upload_id
-// can never compute (and so never tamper with) another's staging file.
-func TestChunkStagingPath_PerUser(t *testing.T) {
-	a := chunkStagingPath("userA", "shared-id")
-	b := chunkStagingPath("userB", "shared-id")
-	if a == b {
-		t.Fatalf("same upload_id for different users must map to different staging paths\nA=%s\nB=%s", a, b)
-	}
-	if a != chunkStagingPath("userA", "shared-id") {
-		t.Error("staging path must be deterministic for the same (user, upload_id)")
-	}
-	// Must remain a flat jabali-upload-… basename (no "/"), so the agent ingest
-	// prefix gate still accepts it.
-	rest := strings.TrimPrefix(a, uploadStagingPrefix())
-	if strings.ContainsAny(rest, "/") || !strings.HasPrefix(a, uploadStagingPrefix()) {
-		t.Errorf("staging basename %q must stay flat under the ingest prefix", a)
-	}
-}
+// The staging-path and per-owner stats rules are unit-tested in
+// internal/uploadintake; these tests drive them through the HTTP adapter.
 
 func doChunk(r http.Handler, uploadID, dir, name string, offset int, final bool, body string) *httptest.ResponseRecorder {
 	url := fmt.Sprintf("/api/v1/files/upload-chunk?upload_id=%s&offset=%d&path=%s&name=%s",
@@ -75,11 +59,11 @@ func TestUploadChunk_UnknownUploadRejected(t *testing.T) {
 	}
 }
 
-// #425: a single tenant cannot keep more than maxInFlightUploadsPerUser chunked
+// #425: a single tenant cannot keep more than uploadintake.MaxInFlight chunked
 // staging files open at once (host-disk-fill DoS cap).
 func TestUploadChunk_ConcurrencyCap(t *testing.T) {
 	r := setupFilesRouter(t, "user1", &mockAgent{})
-	for i := 0; i < maxInFlightUploadsPerUser; i++ {
+	for i := 0; i < uploadintake.MaxInFlight; i++ {
 		if w := doChunk(r, fmt.Sprintf("cap%d", i), "/home/alice", "f.txt", 0, false, "a"); w.Code != http.StatusOK {
 			t.Fatalf("in-flight upload %d should be accepted, got %d", i, w.Code)
 		}
@@ -90,31 +74,12 @@ func TestUploadChunk_ConcurrencyCap(t *testing.T) {
 	}
 }
 
-// #425: userStagingStats counts a tenant's staging files + bytes (both chunked
-// and single-shot are tag-prefixed) — the basis for the concurrency + byte cap.
-func TestUserStagingStats(t *testing.T) {
-	setupFilesRouter(t, "user1", &mockAgent{}) // points uploadStagingDir at a tmpdir
-	for i, body := range []string{"aa", "bbbb", "c"} {
-		if err := os.WriteFile(chunkStagingPath("user1", fmt.Sprintf("id%d", i)), []byte(body), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	// A different user's file must not be counted.
-	if err := os.WriteFile(chunkStagingPath("user2", "z"), []byte("zzzzz"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	cnt, bytes := userStagingStats("user1")
-	if cnt != 3 || bytes != int64(2+4+1) {
-		t.Fatalf("userStagingStats(user1) = (%d,%d), want (3,7)", cnt, bytes)
-	}
-}
-
 // #425: the single-shot /upload path shares the per-user concurrency cap (it is
-// now user-tagged), so once a tenant holds maxInFlightUploadsPerUser staging
-// files a further single-shot upload is rejected.
+// owner-tagged), so once a tenant holds uploadintake.MaxInFlight staging files a
+// further single-shot upload is rejected.
 func TestUpload_SingleShotRespectsConcurrencyCap(t *testing.T) {
 	r := setupFilesRouter(t, "user1", agentReply(map[string]any{"path": "/home/alice/x"}))
-	for i := 0; i < maxInFlightUploadsPerUser; i++ {
+	for i := 0; i < uploadintake.MaxInFlight; i++ {
 		if w := doChunk(r, fmt.Sprintf("c%d", i), "/home/alice", "f.txt", 0, false, "a"); w.Code != http.StatusOK {
 			t.Fatalf("chunked in-flight %d should be accepted, got %d", i, w.Code)
 		}
