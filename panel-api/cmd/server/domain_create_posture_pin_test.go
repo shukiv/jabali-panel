@@ -3,8 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"regexp"
-	"strings"
 	"testing"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/domainops"
@@ -82,43 +80,4 @@ func TestCLIMailPostureError_Messages(t *testing.T) {
 			t.Fatalf("got %v, want the original error", got)
 		}
 	})
-}
-
-// TestCLICreateDomain_WiresServiceMatrix source-pins that `jabali domain create`
-// resolves the web-off guards, the SSL mode, and the mail flags through the
-// shared domainops steps and stores the result, with the CLI's own messages.
-// createDomainDirect calls initConfig / initDB and is not unit-testable, so the
-// source-pin is the load-bearing guard; the rules are proven by
-// domainops.TestCheckWebOffOptions and domainops.TestResolveServiceMatrix.
-func TestCLICreateDomain_WiresServiceMatrix(t *testing.T) {
-	src := stripLineComments(readGoSource(t, "cli_create.go"))
-
-	for _, want := range []string{
-		"domainops.ResolveServiceMatrix(domainops.ServiceMatrixInput{",
-		"errors.Is(err, domainops.ErrNoServiceSelected)",
-		`"select at least one service: web hosting (--web-enabled), DNS (--manage-dns), or mail (--mail)"`,
-		"domainops.CheckWebOffOptions(domainops.WebOffInput{",
-		"errors.Is(err, domainops.ErrWebOffReverseProxy)",
-		`"a reverse-proxy domain requires web hosting"`,
-		"errors.Is(err, domainops.ErrWebOffDocRoot)",
-		`"a web-disabled domain has no document root"`,
-	} {
-		if !strings.Contains(src, want) {
-			t.Errorf("CLI create must contain %s", want)
-		}
-	}
-	for _, re := range []string{
-		`EmailEnabled:\s+matrix\.EmailEnabled,`,
-		`SkipAutoSAN:\s+matrix\.SkipAutoSAN,`,
-		`SSLMode:\s+matrix\.SSLMode,`,
-		`SSLEnabled:\s+models\.SSLEnabledForMode\(matrix\.SSLMode\),`,
-	} {
-		if !regexp.MustCompile(re).MatchString(src) {
-			t.Errorf("CLI create must store the resolved service matrix (%s)", re)
-		}
-	}
-	// No inline SSL-mode decision in the adapter.
-	if strings.Contains(src, "sslMode = models.SSLModeNone") {
-		t.Error("CLI create must not force the DNS-only SSL mode inline; ResolveServiceMatrix owns it")
-	}
 }

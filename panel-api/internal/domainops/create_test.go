@@ -255,4 +255,14 @@ func TestCreate(t *testing.T) {
 			t.Fatalf("want ErrCreateDeps, got %v", err)
 		}
 	})
+
+	t.Run("the row stores the resolved owner's id, not the handle it was resolved from", func(t *testing.T) {
+		s := newCreateStore()
+		d := CreateDeps{Domains: s, Users: createOwners{"alice@example.com": owner}}
+		in := CreateInput{OwnerID: "alice@example.com", Name: "shop.example.com", ActorIsAdmin: true}
+		res, err := Create(ctx, d, CreateHooks{}, in)
+		if err != nil || res.Domain.UserID != "u1" {
+			t.Fatalf("want UserID u1, got %v %v", err, res)
+		}
+	})
 }
