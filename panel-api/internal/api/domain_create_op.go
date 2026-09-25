@@ -285,16 +285,16 @@ func createDomainOp(ctx context.Context, h *domainHandler, in createDomainInput)
 		return nil, &createDomainError{http.StatusInternalServerError, "internal", ""}
 	}
 
-	// Quota check.
-	if user.PackageID != nil && *user.PackageID != "" {
-		count, err := h.cfg.Domains.CountByUserID(ctx, in.OwnerID)
-		if err != nil {
-			return nil, &createDomainError{http.StatusInternalServerError, "internal", ""}
-		}
-		pkg, err := h.cfg.Packages.FindByID(ctx, *user.PackageID)
-		if err == nil && pkg.MaxDomains > 0 && count >= int64(pkg.MaxDomains) {
-			return nil, &createDomainError{http.StatusConflict, "domain_quota_exceeded", ""}
-		}
+	// Package domain quota (JAB-279): the policy lives in domainops so the CLI
+	// runs the identical check; the adapter maps the sentinels.
+	switch err := domainops.CheckDomainQuota(ctx, domainops.QuotaDeps{
+		Domains:  h.cfg.Domains,
+		Packages: h.cfg.Packages,
+	}, user); {
+	case errors.Is(err, domainops.ErrDomainQuotaExceeded):
+		return nil, &createDomainError{http.StatusConflict, "domain_quota_exceeded", ""}
+	case err != nil:
+		return nil, &createDomainError{http.StatusInternalServerError, "internal", ""}
 	}
 
 	// SECURITY: validate the custom document root, trimming first so a pasted
