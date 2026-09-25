@@ -286,7 +286,6 @@ func createDomainDirect(ctx context.Context, in cliDomainInput) (*models.Domain,
 	}
 
 	domains := domainRepoFromDB()
-	packages := packageRepoFromDB()
 
 	// Accept email / username / ULID — same resolver as the other user-
 	// facing CLIs so operators don't have to copy-paste ULIDs.
@@ -315,16 +314,13 @@ func createDomainDirect(ctx context.Context, in cliDomainInput) (*models.Domain,
 	// resolveUser and d.UserID must always be the real ID.
 	ownerID := owner.ID
 
-	// Package-quota check — matches the HTTP handler (409 domain_quota_exceeded).
-	if owner.PackageID != nil && *owner.PackageID != "" {
-		count, err := domains.CountByUserID(ctx, ownerID)
-		if err != nil {
-			return nil, nil, fmt.Errorf("count existing domains: %w", err)
-		}
-		pkg, err := packages.FindByID(ctx, *owner.PackageID)
-		if err == nil && pkg.MaxDomains > 0 && count >= int64(pkg.MaxDomains) {
-			return nil, nil, fmt.Errorf("package quota exceeded: %d/%d domains", count, pkg.MaxDomains)
-		}
+	// Package domain quota (JAB-279) — the same domainops check the REST handler
+	// runs (409 domain_quota_exceeded there); the messages stay the CLI's own.
+	if err := domainops.CheckDomainQuota(ctx, domainops.QuotaDeps{
+		Domains:  domains,
+		Packages: packageRepoFromDB(),
+	}, owner); err != nil {
+		return nil, nil, cliDomainQuotaError(err)
 	}
 
 	// GH #1449 / GH #1627 / GH #1409: resolve the mail posture and the service
@@ -518,6 +514,20 @@ var cliEmailRe = regexp.MustCompile(
 
 func cliValidEmail(s string) bool {
 	return len(s) <= 320 && cliEmailRe.MatchString(s)
+}
+
+// cliDomainQuotaError maps a domainops quota rejection to the message
+// `jabali domain create` printed before the module owned the check (JAB-279).
+func cliDomainQuotaError(err error) error {
+	var quota *domainops.DomainQuotaError
+	switch {
+	case errors.As(err, &quota):
+		return fmt.Errorf("package quota exceeded: %d/%d domains", quota.Count, quota.Max)
+	case errors.Is(err, domainops.ErrDomainCount):
+		return fmt.Errorf("count existing domains: %w", err)
+	default:
+		return err
+	}
 }
 
 // cliMailPostureError maps a domainops mail-posture rejection to the message
