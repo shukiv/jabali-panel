@@ -28,12 +28,18 @@ import (
 
 // --- mailgroup.apply ---------------------------------------------------
 
+// GroupKind and MemberEmails were added for GH #1818: a "distribution" group
+// is projected by applyDistributionGroup (mailgroup_distribution.go) and needs
+// the full member list; an empty kind or "resource" keeps the Group-account
+// projection below, whose membership is set by mailgroup.members_set.
 type mailGroupApplyParams struct {
-	Email        string `json:"email"`         // group address, name@domain
-	DisplayName  string `json:"display_name"`  // drives the group's sending Identity name
-	Description  string `json:"description"`   // admin note (also stored on the principal)
-	InternalOnly bool   `json:"internal_only"` // GH #348: reject external senders
-	HasFiles     bool   `json:"has_files"`     // GH #350: name the shared file folder too
+	Email        string   `json:"email"`         // group address, name@domain
+	DisplayName  string   `json:"display_name"`  // drives the group's sending Identity name
+	Description  string   `json:"description"`   // admin note (also stored on the principal)
+	InternalOnly bool     `json:"internal_only"` // GH #348: reject external senders
+	HasFiles     bool     `json:"has_files"`     // GH #350: name the shared file folder too
+	GroupKind    string   `json:"group_kind"`
+	MemberEmails []string `json:"member_emails"`
 }
 
 func mailGroupApplyHandler(ctx context.Context, params json.RawMessage) (any, error) {
@@ -44,6 +50,13 @@ func mailGroupApplyHandler(ctx context.Context, params json.RawMessage) (any, er
 	email, err := requireEmail(p.Email)
 	if err != nil {
 		return nil, err
+	}
+	switch p.GroupKind {
+	case "", groupKindResource:
+	case groupKindDistribution:
+		return applyDistributionGroup(ctx, email, p)
+	default:
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: fmt.Sprintf("unknown group_kind %q", p.GroupKind)}
 	}
 
 	gid, err := ensureGroupInRegistry(ctx, email, p.Description)
@@ -85,14 +98,9 @@ func ensureGroupInRegistry(ctx context.Context, email, description string) (stri
 	}
 	localPart, domainName := email[:at], email[at+1:]
 
-	domainID, err := domainIDByName(ctx, domainName)
+	domainID, err := ensureRegistryDomain(ctx, domainName)
 	if err != nil {
 		return "", err
-	}
-	if domainID == "" {
-		if domainID, err = createDomain(ctx, domainName); err != nil {
-			return "", err
-		}
 	}
 
 	create := map[string]any{
@@ -229,12 +237,22 @@ func mailGroupDeleteHandler(ctx context.Context, params json.RawMessage) (any, e
 	if err != nil {
 		return nil, err
 	}
+	// GH #1818: a distribution group is projected as an x:MailingList.
+	listID, err := mailingListIDByEmail(ctx, groupEmail)
+	if err != nil {
+		return nil, err
+	}
+	if listID != "" {
+		if err := mailingListDestroy(ctx, listID); err != nil {
+			return nil, err
+		}
+	}
 	gid, err := accountIDByEmail(ctx, groupEmail)
 	if err != nil {
 		return nil, err
 	}
 	if gid == "" {
-		// Never projected — nothing to destroy.
+		// Never projected as an account — nothing more to destroy.
 		return okBody{Ok: true}, nil
 	}
 

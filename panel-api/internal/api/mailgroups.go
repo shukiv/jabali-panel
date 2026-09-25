@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/auth"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/mailgroupops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/middleware"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
@@ -333,16 +335,9 @@ func (h *mailGroupHandler) create(c *gin.Context) {
 		return
 	}
 
-	email := canonLocal + "@" + dom.Name
-	h.notifyAgent(ctx, "mailgroup.apply", map[string]any{
-		"email":         email,
-		"display_name":  g.DisplayName,
-		"description":   g.Description,
-		"internal_only": g.InternalOnly,
-		"has_files":     g.HasFiles,
-	})
+	g.EmailCached = canonLocal + "@" + dom.Name
+	h.projectGroup(ctx, g)
 
-	g.EmailCached = email
 	c.JSON(http.StatusCreated, toMailGroupResponse(*g, 0))
 }
 
@@ -395,6 +390,19 @@ func (h *mailGroupHandler) update(c *gin.Context) {
 	if !ok {
 		return
 	}
+	// GH #1818: turning internal-only on for a distribution list switches it to
+	// Sieve redirects, which cap the member count. Refuse before any write.
+	if req.InternalOnly != nil && *req.InternalOnly && !g.InternalOnly {
+		memberIDs, err := h.cfg.Groups.ListMemberMailboxIDs(ctx, g.ID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+			return
+		}
+		if err := mailgroupops.CheckMemberCap(g.GroupKind, true, len(memberIDs)); err != nil {
+			respondMemberCap(c, err)
+			return
+		}
+	}
 
 	metaChanged := false
 	if req.DisplayName != nil || req.Description != nil {
@@ -443,13 +451,7 @@ func (h *mailGroupHandler) update(c *gin.Context) {
 	// Re-project the principal description (drives the From name) when the
 	// display name / description changed. Idempotent on the agent side.
 	if metaChanged {
-		h.notifyAgent(ctx, "mailgroup.apply", map[string]any{
-			"email":         g.EmailCached,
-			"display_name":  g.DisplayName,
-			"description":   g.Description,
-			"internal_only": g.InternalOnly,
-			"has_files":     g.HasFiles,
-		})
+		h.projectGroup(ctx, g)
 	}
 	_ = dom
 	count, _ := h.cfg.Groups.ListMemberMailboxIDs(ctx, g.ID)
@@ -497,6 +499,10 @@ func (h *mailGroupHandler) setMembers(c *gin.Context) {
 		desiredIDs = append(desiredIDs, mb.ID)
 		desiredEmails = append(desiredEmails, mb.EmailCached)
 	}
+	if err := mailgroupops.CheckMemberCap(g.GroupKind, g.InternalOnly, len(desiredIDs)); err != nil {
+		respondMemberCap(c, err)
+		return
+	}
 
 	// Compute the removed set (current − desired) so the agent can unset
 	// memberGroupIds for departing members.
@@ -521,11 +527,13 @@ func (h *mailGroupHandler) setMembers(c *gin.Context) {
 		return
 	}
 
-	// Distribution groups are mailing lists — members receive mail via the
-	// SQL directory's queryRecipient fan-out (driven by the DB rows). They do
-	// NOT join memberGroupIds, so they don't get the group's shared
-	// collections. Only resource (collaboration) groups project membership.
-	if g.GroupKind != "distribution" {
+	// GH #1818: a distribution group is a mailing list — re-apply it with the
+	// new member set so the list's recipients change. Its members do NOT join
+	// memberGroupIds (no shared inbox or collections). Only resource
+	// (collaboration) groups project membership that way.
+	if g.GroupKind == mailgroupops.KindDistribution {
+		h.projectGroup(ctx, g)
+	} else {
 		h.notifyAgent(ctx, "mailgroup.members_set", map[string]any{
 			"group_email":   g.EmailCached,
 			"member_emails": desiredEmails,
@@ -559,11 +567,28 @@ func (h *mailGroupHandler) addMember(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "member_wrong_domain"})
 		return
 	}
+	if g.GroupKind == mailgroupops.KindDistribution && g.InternalOnly {
+		memberIDs, err := h.cfg.Groups.ListMemberMailboxIDs(ctx, g.ID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+			return
+		}
+		count := len(memberIDs)
+		if !slices.Contains(memberIDs, mb.ID) {
+			count++
+		}
+		if err := mailgroupops.CheckMemberCap(g.GroupKind, g.InternalOnly, count); err != nil {
+			respondMemberCap(c, err)
+			return
+		}
+	}
 	if err := h.cfg.Groups.AddMember(ctx, g.ID, mb.ID); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
-	if g.GroupKind != "distribution" {
+	if g.GroupKind == mailgroupops.KindDistribution {
+		h.projectGroup(ctx, g)
+	} else {
 		h.notifyAgent(ctx, "mailgroup.members_set", map[string]any{
 			"group_email":   g.EmailCached,
 			"member_emails": []string{mb.EmailCached},
@@ -599,7 +624,9 @@ func (h *mailGroupHandler) removeMember(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
-	if g.GroupKind != "distribution" {
+	if g.GroupKind == mailgroupops.KindDistribution {
+		h.projectGroup(ctx, g)
+	} else {
 		h.notifyAgent(ctx, "mailgroup.members_set", map[string]any{
 			"group_email":   g.EmailCached,
 			"member_emails": []string{},
@@ -648,6 +675,24 @@ func (h *mailGroupHandler) delete(c *gin.Context) {
 }
 
 // ---- helpers ----
+
+// projectGroup re-applies the group's Stalwart projection from the DB
+// (mailgroupops builds the payload; a distribution group carries its member
+// list, GH #1818). Fire-and-forget like notifyAgent: the mail-group reconcile
+// pass re-applies a distribution group whose apply failed here.
+func (h *mailGroupHandler) projectGroup(ctx context.Context, g *models.MailGroup) {
+	params, err := mailgroupops.ApplyParams(ctx, h.cfg.Groups, g)
+	if err != nil {
+		return
+	}
+	h.notifyAgent(ctx, "mailgroup.apply", params)
+}
+
+// respondMemberCap answers a change that would push an internal-only
+// distribution list past the mail server's redirect limit.
+func respondMemberCap(c *gin.Context, err error) {
+	c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "too_many_members", "detail": err.Error()})
+}
 
 func (h *mailGroupHandler) notifyAgent(ctx context.Context, command string, params any) {
 	if h.cfg.Agent == nil {

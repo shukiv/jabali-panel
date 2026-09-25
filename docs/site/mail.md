@@ -37,6 +37,17 @@ A domain can have **just its mail torn down while the web domain stays** (GH
 #1387) — deletes mailboxes, forwarders, DKIM, and the Stalwart domain entry
 without removing the vhost or DNS zone.
 
+## Mail groups (GH #1818)
+
+A mail group is an address on a domain whose members are mailboxes on the same domain. **Mail → Groups** creates one; there are two types, fixed at creation:
+
+- **Distribution list** (the default) — every member receives their own copy of each message in their own inbox. Jabali projects it as a Stalwart mailing list whose recipients are the members that can receive mail (disabled and send-only mailboxes are left out). A list with no such members has nothing at its address, so senders get a `550` instead of mail that is accepted and dropped.
+- **Shared workspace** — one shared inbox that members open in webmail (no copies are delivered), plus a shared calendar, contacts and files, and send-as the group address.
+
+**Internal delivery only** accepts mail from senders in the group's own domain and rejects everyone else. On a distribution list it is delivered through a Sieve script that redirects to each member, and Stalwart allows 20 redirects per message, so an internal-only distribution list is limited to **20 members**: adding a 21st member, or turning internal-only on for a larger list, is refused with `422 too_many_members`.
+
+Distribution lists are re-applied to Stalwart by the reconciler whenever the list or a member changes (and every 15 minutes), so a failed save heals on its own. On boxes created before GH #1818, a distribution list was stored as a shared inbox that members could not see. The first reconcile after the update converts each one. Any mail already in that inbox is copied into every member's inbox first, and the old inbox is removed only after every copy succeeded.
+
 ## Per-domain deliverability (admin)
 
 `/jabali-admin/mail/deliverability` — for every domain, shows:

@@ -162,6 +162,13 @@ type Reconciler struct {
 	sieveAutoresponders repository.EmailAutoresponderRepository
 	sieveMu             sync.Mutex
 	sieveDone           map[string]sieveDoneEntry
+	// mailGroups backs the GH #1818 distribution-group pass
+	// (mail_group_reconcile.go): each distribution group is re-applied as a
+	// Stalwart mailing list from the DB. mailGroupDone caches the last applied
+	// payload hash per group. nil = pass disabled.
+	mailGroups    repository.MailGroupRepository
+	mailGroupMu   sync.Mutex
+	mailGroupDone map[string]mailGroupDoneEntry
 	// wordPressInstalls holds reference to the WordPress installs repository
 	wordPressInstalls repository.WordPressInstallRepository
 	// sshKeys holds reference to the SSH keys repository
@@ -987,6 +994,10 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 	// two cert flows share the same admin email/public IP context.
 	r.reconcileMailCertificates(ctx)
 	r.reconcileSharedResources(ctx)
+	// GH #1818: distribution groups → Stalwart mailing lists (converts the old
+	// Group-account projection; heals failed applies). Hash-gated no-op in
+	// steady state.
+	r.reconcileMailGroups(ctx)
 
 	// M34: per-user PHP-FPM egress firewall. Cheap noop when the repo
 	// isn't wired (test fixtures) or when there are zero policies.

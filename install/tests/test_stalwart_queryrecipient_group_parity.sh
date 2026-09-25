@@ -14,6 +14,12 @@
 # worked. This guard fails if the two copies drift again, and specifically if
 # either loses the group expansion or the send_only exclusion.
 #
+# The expansion must also SKIP plain distribution lists: those are native
+# Stalwart mailing lists, and a directory match on the list address shadows the
+# list, so delivery fails with "Mailbox not found" (GH #1818, verified on
+# Stalwart 0.16.15). Only groups projected as a Group account (resource groups,
+# internal-only distribution lists) need the member rows to receive at all.
+#
 # Run from repo root:
 #     bash install/tests/test_stalwart_queryrecipient_group_parity.sh
 set -euo pipefail
@@ -50,6 +56,12 @@ for label in "install.sh:$install_q" "apply-plan:$plan_q"; do
     echo "FAIL: $name queryRecipient has no mail_group_members expansion — groups will 550 (GH #1818)"
     fail=1
   fi
+  # A plain distribution list is a Stalwart mailing list; expanding it here would
+  # shadow the list and bounce every message (GH #1818).
+  if [[ "$q" != *"(g.group_kind <> 'distribution' OR g.internal_only = 1)"* ]]; then
+    echo "FAIL: $name queryRecipient expands plain distribution lists — they must resolve as Stalwart mailing lists (GH #1818)"
+    fail=1
+  fi
   # send-only mailboxes must not be delivery recipients (GH #371), incl. as group members.
   if [[ "$q" != *"send_only = 0"* ]]; then
     echo "FAIL: $name queryRecipient dropped the send_only = 0 exclusion (GH #371)"
@@ -58,6 +70,6 @@ for label in "install.sh:$install_q" "apply-plan:$plan_q"; do
 done
 
 if [[ "$fail" -eq 0 ]]; then
-  echo "PASS: queryRecipient is identical across install.sh and apply-plan.json.tmpl, with group expansion + send_only exclusion"
+  echo "PASS: queryRecipient is identical across install.sh and apply-plan.json.tmpl, with group expansion (plain distribution lists excluded) + send_only exclusion"
 fi
 exit "$fail"
