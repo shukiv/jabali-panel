@@ -16,6 +16,13 @@ func TestMailboxInventorySelect_ExcludesSecretColumns(t *testing.T) {
 		if strings.Contains(mailboxInventorySelect, secret) {
 			t.Fatalf("mailbox inventory projection must not select %q; got %q", secret, mailboxInventorySelect)
 		}
+		// The single-table list (ListByDomainID) renders the same allowlist.
+		if strings.Contains(mailboxRowSelect, secret) {
+			t.Fatalf("mailbox list projection must not select %q; got %q", secret, mailboxRowSelect)
+		}
+	}
+	if strings.Contains(mailboxRowSelect, "*") {
+		t.Fatalf("mailbox list projection must be an explicit allowlist, not a wildcard: %q", mailboxRowSelect)
 	}
 	if strings.Contains(mailboxInventorySelect, "m.*") {
 		t.Fatalf("mailbox inventory projection must be an explicit allowlist, not a wildcard: %q", mailboxInventorySelect)

@@ -47,7 +47,7 @@ func TestMailboxRepository_FindByID_NotFound(t *testing.T) {
 
 	repo := NewMailboxRepository(db)
 
-	cols := []string{"id", "domain_id", "local_part", "email_cached", "password_hash",
+	cols := []string{"id", "domain_id", "local_part", "email_cached",
 		"quota_bytes", "is_disabled", "last_usage_bytes", "last_usage_at", "created_at", "updated_at"}
 	mock.ExpectQuery("SELECT .* FROM `mailboxes` WHERE id = \\?.*LIMIT").
 		WithArgs("mb_missing", 1).
@@ -161,7 +161,7 @@ func TestMailboxRepository_ListByDomainID(t *testing.T) {
 
 	repo := NewMailboxRepository(db)
 
-	cols := []string{"id", "domain_id", "local_part", "email_cached", "password_hash",
+	cols := []string{"id", "domain_id", "local_part", "email_cached",
 		"quota_bytes", "is_disabled", "last_usage_bytes", "last_usage_at", "created_at", "updated_at"}
 	now := time.Now()
 
@@ -170,8 +170,8 @@ func TestMailboxRepository_ListByDomainID(t *testing.T) {
 
 	mock.ExpectQuery("SELECT .* FROM `mailboxes`.*WHERE domain_id = \\?.*ORDER BY").
 		WillReturnRows(sqlmock.NewRows(cols).
-			AddRow("mb1", "dom1", "alice", "alice@example.com", "h1", uint64(1<<30), false, uint64(0), nil, now, now).
-			AddRow("mb2", "dom1", "bob", "bob@example.com", "h2", uint64(1<<30), false, uint64(0), nil, now, now),
+			AddRow("mb1", "dom1", "alice", "alice@example.com", uint64(1<<30), false, uint64(0), nil, now, now).
+			AddRow("mb2", "dom1", "bob", "bob@example.com", uint64(1<<30), false, uint64(0), nil, now, now),
 		)
 
 	rows, total, err := repo.ListByDomainID(context.Background(), "dom1", ListOptions{})
@@ -191,7 +191,7 @@ func TestMailboxRepository_ListByDomainID(t *testing.T) {
 // mailboxListSortKeys lookup in ListByDomainID → "email" no longer whitelists,
 // pickSort drops to DefaultSort, and the email/status expectations redden.
 func TestMailboxRepository_ListByDomainID_TranslatesFriendlySort(t *testing.T) {
-	cols := []string{"id", "domain_id", "local_part", "email_cached", "password_hash",
+	cols := []string{"id", "domain_id", "local_part", "email_cached",
 		"quota_bytes", "is_disabled", "last_usage_bytes", "last_usage_at", "created_at", "updated_at"}
 	now := time.Now()
 
@@ -217,7 +217,7 @@ func TestMailboxRepository_ListByDomainID_TranslatesFriendlySort(t *testing.T) {
 				WillReturnRows(sqlmock.NewRows([]string{"count(*)"}).AddRow(1))
 			mock.ExpectQuery("SELECT .* FROM `mailboxes`.*WHERE domain_id = \\?.*ORDER BY " + tc.orderBy + " ASC").
 				WillReturnRows(sqlmock.NewRows(cols).
-					AddRow("mb1", "dom1", "alice", "alice@example.com", "h1", uint64(1<<30), false, uint64(0), nil, now, now),
+					AddRow("mb1", "dom1", "alice", "alice@example.com", uint64(1<<30), false, uint64(0), nil, now, now),
 				)
 
 			rows, total, err := repo.ListByDomainID(context.Background(), "dom1", ListOptions{Sort: tc.sort, Order: "asc"})
@@ -239,7 +239,7 @@ func TestMailboxRepository_ListByDomainID_ExcludeSystem(t *testing.T) {
 
 	repo := NewMailboxRepository(db)
 
-	cols := []string{"id", "domain_id", "local_part", "email_cached", "password_hash",
+	cols := []string{"id", "domain_id", "local_part", "email_cached",
 		"quota_bytes", "is_disabled", "last_usage_bytes", "last_usage_at", "created_at", "updated_at"}
 	now := time.Now()
 
@@ -248,7 +248,7 @@ func TestMailboxRepository_ListByDomainID_ExcludeSystem(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"count(*)"}).AddRow(1))
 	mock.ExpectQuery("SELECT .* FROM `mailboxes`.*WHERE domain_id = \\? AND system = 0.*ORDER BY").
 		WillReturnRows(sqlmock.NewRows(cols).
-			AddRow("mb1", "dom1", "alice", "alice@example.com", "h1", uint64(1<<30), false, uint64(0), nil, now, now),
+			AddRow("mb1", "dom1", "alice", "alice@example.com", uint64(1<<30), false, uint64(0), nil, now, now),
 		)
 
 	rows, total, err := repo.ListByDomainID(context.Background(), "dom1", ListOptions{ExcludeSystem: true})
