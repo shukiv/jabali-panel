@@ -103,6 +103,25 @@ func TestAttachCoveringSharedCert(t *testing.T) {
 		}
 	})
 
+	for _, mode := range []string{models.SSLModeSelf, models.SSLModeNone, models.SSLModeCustom} {
+		t.Run("explicit "+mode+" is kept without a lookup", func(t *testing.T) {
+			l, s, d := &fakeCertLister{certs: certs}, &fakeCertSetter{}, newDomain()
+			d.SSLMode = mode
+			cert, err := AttachCoveringSharedCert(context.Background(), SharedCertDeps{Certs: l, Domains: s}, d)
+			if cert != nil || err != nil || l.calls != 0 || len(s.args) != 0 || d.SSLMode != mode {
+				t.Fatalf("want %s kept, got %v %v calls=%d %v %s", mode, cert, err, l.calls, s.args, d.SSLMode)
+			}
+		})
+	}
+
+	t.Run("an unset mode counts as the default", func(t *testing.T) {
+		l, s, d := &fakeCertLister{certs: certs}, &fakeCertSetter{}, newDomain()
+		d.SSLMode = ""
+		if cert, err := AttachCoveringSharedCert(context.Background(), SharedCertDeps{Certs: l, Domains: s}, d); err != nil || cert == nil {
+			t.Fatalf("want attached, got %v %v", cert, err)
+		}
+	})
+
 	t.Run("nil store is skipped", func(t *testing.T) {
 		s, d := &fakeCertSetter{}, newDomain()
 		cert, err := AttachCoveringSharedCert(context.Background(), SharedCertDeps{Domains: s}, d)

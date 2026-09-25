@@ -119,6 +119,26 @@ func TestCreateDomainOp_SharedCertAutoAttach(t *testing.T) {
 		}
 	})
 
+	// Decision 2026-09-26: an explicit self or none request wins over the
+	// auto-attach; only the default (le) is upgraded to a covering shared cert.
+	t.Run("explicit le is attached like the default", func(t *testing.T) {
+		h, dom := newH(&scCerts{certs: certs})
+		d := create(h, createDomainInput{SSLMode: models.SSLModeLE})
+		if d.SSLMode != models.SSLModeShared || len(dom.setArgs) != 1 {
+			t.Fatalf("want shared, got %s %v", d.SSLMode, dom.setArgs)
+		}
+	})
+
+	for _, mode := range []string{models.SSLModeSelf, models.SSLModeNone} {
+		t.Run("explicit "+mode+" is kept, not attached", func(t *testing.T) {
+			h, dom := newH(&scCerts{certs: certs})
+			d := create(h, createDomainInput{SSLMode: mode})
+			if d.SSLMode != mode || d.SharedCertificateID != nil || len(dom.setArgs) != 0 {
+				t.Fatalf("want %s and no attach, got %s/%v %v", mode, d.SSLMode, d.SharedCertificateID, dom.setArgs)
+			}
+		})
+	}
+
 	t.Run("no shared-cert store configured skips the attach", func(t *testing.T) {
 		h, dom := newH(nil)
 		d := create(h, createDomainInput{})
