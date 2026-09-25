@@ -51,22 +51,6 @@ func newDBSSOCmd() *cobra.Command {
 			// server so the two are uniform in the journal.
 			auditLog := logger.New(sharedCfg.Log, os.Stderr)
 
-			db, err := dbRepoFromDB().FindByID(ctx, dbID)
-			if err != nil {
-				auditCLIIssuance(auditLog, "", dbID, "", "", "db_not_found")
-				return fmt.Errorf("database %q not found", dbID)
-			}
-			// Normalize engine to canonical form (empty→mariadb). All adapters use
-			// the same normalization (JAB-348).
-			engine := dbconsoleops.NormalizeEngine(db.Engine)
-
-			// --engine is an optional guard: it must match the database's real
-			// engine (you can't open a postgres database in phpMyAdmin).
-			if e := strings.TrimSpace(engineFlag); e != "" && e != engine {
-				auditCLIIssuance(auditLog, db.UserID, db.ID, engine, "", "engine_mismatch")
-				return fmt.Errorf("database %s is %q, not %q", db.Name, engine, e)
-			}
-
 			base := sso.NewService(
 				sharedDB,
 				repository.NewUserRepository(sharedDB),
@@ -75,53 +59,25 @@ func newDBSSOCmd() *cobra.Command {
 				key,
 				sharedLog,
 			)
-			adminer := sso.NewAdminerService(base, repository.NewAdminerSSOTokenRepository(sharedDB))
-
-			// Provision shadow account for the database owner via the unified
-			// engine dispatch leaf (JAB-348). This ensures mariadb and postgres
-			// paths are identical across CLI and REST adapters.
-			if err := dbconsoleops.EnsureShadowForEngine(ctx, engine, db.UserID, base, adminer); err != nil {
-				if errors.Is(err, dbconsoleops.ErrInvalidEngine) {
-					auditCLIIssuance(auditLog, db.UserID, db.ID, engine, "", "unknown_engine")
-					return fmt.Errorf("unsupported engine %q", engine)
-				}
-				auditCLIIssuance(auditLog, db.UserID, db.ID, engine, "", dbconsoleops.OutcomeEnsureShadowFail)
-				return fmt.Errorf("ensure shadow account: %w", err)
-			}
-
-			// Route each engine to its console via the shared issuance leaves so
-			// the CLI mints and builds redirects identically to the REST doors
-			// (JAB-348 AC1/AC2/AC3): mariadb -> phpMyAdmin console, postgres ->
-			// Adminer console. The engine->console routing is the CLI's policy;
-			// the mint<->redirect pairing (and the audit hash-prefix) live in
-			// dbconsoleops so no door can drift.
-			var loginURL, hashPrefix string
-			switch engine {
-			case "mariadb":
-				loginURL, hashPrefix, err = dbconsoleops.IssuePhpMyAdminLogin(
-					ctx, base, db.UserID, db.ID, db.Name, phpMyAdminBaseURLForCLI())
-			case "postgres":
-				loginURL, hashPrefix, err = dbconsoleops.IssueAdminerLogin(
-					ctx, adminer, db.UserID, db.ID, db.Name, "postgres", adminerBaseURLForCLI())
-			}
+			res, err := dbSSOIssue(ctx, dbSSODeps{
+				databases:         dbRepoFromDB(),
+				phpMyAdmin:        base,
+				adminer:           sso.NewAdminerService(base, repository.NewAdminerSSOTokenRepository(sharedDB)),
+				phpMyAdminBaseURL: phpMyAdminBaseURLForCLI(),
+				adminerBaseURL:    adminerBaseURLForCLI(),
+				audit:             auditLog,
+			}, dbID, engineFlag)
 			if err != nil {
-				auditCLIIssuance(auditLog, db.UserID, db.ID, engine, "", dbconsoleops.OutcomeMintFail)
-				return fmt.Errorf("mint token: %w", err)
+				return err
 			}
-
-			// Audit the successful issuance — hash-prefix only, never the token —
-			// so a CLI-minted SSO handoff is auditable in the journal like the
-			// REST doors (JAB-348 AC5). The token still leaves via stdout; that
-			// is the deliverable, not an audit record.
-			auditCLIIssuance(auditLog, db.UserID, db.ID, engine, hashPrefix, dbconsoleops.OutcomeIssued)
 
 			if jsonOutput {
 				return printJSON(map[string]string{
-					"database": db.Name, "engine": engine, "login_url": loginURL,
+					"database": res.database, "engine": res.engine, "login_url": res.loginURL,
 				})
 			}
 			fmt.Printf("Single-use %s login for %s (expires in 5 minutes):\n%s\n",
-				consoleName(engine), db.Name, loginURL)
+				consoleName(res.engine), res.database, res.loginURL)
 			return nil
 		},
 	}
@@ -135,6 +91,86 @@ func consoleName(engine string) string {
 		return "Adminer"
 	}
 	return "phpMyAdmin"
+}
+
+// dbSSODeps is the injection seam for `jabali db sso` (JAB-348 AC4). The
+// command wires *sso.Service / *sso.AdminerService, which satisfy the
+// dbconsoleops console interfaces structurally; tests drive dbSSOIssue with
+// recording fakes through the same request matrix as the tenant and privileged
+// doors.
+type dbSSODeps struct {
+	databases         repository.DatabaseRepository
+	phpMyAdmin        dbconsoleops.PhpMyAdminConsole // mariadb shadow + phpMyAdmin mint
+	adminer           dbconsoleops.AdminerConsole    // postgres shadow + Adminer mint
+	phpMyAdminBaseURL string
+	adminerBaseURL    string
+	audit             *slog.Logger
+}
+
+// dbSSOResult is what the command prints: the database name, its normalized
+// engine, and the single-use login URL.
+type dbSSOResult struct {
+	database, engine, loginURL string
+}
+
+// dbSSOIssue resolves the database, applies the optional --engine guard,
+// provisions the owner's shadow account, and mints the single-use console login
+// through the shared dbconsoleops leaves, auditing every outcome.
+func dbSSOIssue(ctx context.Context, d dbSSODeps, dbID, engineFlag string) (dbSSOResult, error) {
+	db, err := d.databases.FindByID(ctx, dbID)
+	if err != nil {
+		auditCLIIssuance(d.audit, "", dbID, "", "", "db_not_found")
+		return dbSSOResult{}, fmt.Errorf("database %q not found", dbID)
+	}
+	// Normalize engine to canonical form (empty→mariadb). All adapters use
+	// the same normalization (JAB-348).
+	engine := dbconsoleops.NormalizeEngine(db.Engine)
+
+	// --engine is an optional guard: it must match the database's real
+	// engine (you can't open a postgres database in phpMyAdmin).
+	if e := strings.TrimSpace(engineFlag); e != "" && e != engine {
+		auditCLIIssuance(d.audit, db.UserID, db.ID, engine, "", "engine_mismatch")
+		return dbSSOResult{}, fmt.Errorf("database %s is %q, not %q", db.Name, engine, e)
+	}
+
+	// Provision shadow account for the database owner via the unified
+	// engine dispatch leaf (JAB-348). This ensures mariadb and postgres
+	// paths are identical across CLI and REST adapters.
+	if err := dbconsoleops.EnsureShadowForEngine(ctx, engine, db.UserID, d.phpMyAdmin, d.adminer); err != nil {
+		if errors.Is(err, dbconsoleops.ErrInvalidEngine) {
+			auditCLIIssuance(d.audit, db.UserID, db.ID, engine, "", "unknown_engine")
+			return dbSSOResult{}, fmt.Errorf("unsupported engine %q", engine)
+		}
+		auditCLIIssuance(d.audit, db.UserID, db.ID, engine, "", dbconsoleops.OutcomeEnsureShadowFail)
+		return dbSSOResult{}, fmt.Errorf("ensure shadow account: %w", err)
+	}
+
+	// Route each engine to its console via the shared issuance leaves so
+	// the CLI mints and builds redirects identically to the REST doors
+	// (JAB-348 AC1/AC2/AC3): mariadb -> phpMyAdmin console, postgres ->
+	// Adminer console. The engine->console routing is the CLI's policy;
+	// the mint<->redirect pairing (and the audit hash-prefix) live in
+	// dbconsoleops so no door can drift.
+	var loginURL, hashPrefix string
+	switch engine {
+	case "mariadb":
+		loginURL, hashPrefix, err = dbconsoleops.IssuePhpMyAdminLogin(
+			ctx, d.phpMyAdmin, db.UserID, db.ID, db.Name, d.phpMyAdminBaseURL)
+	case "postgres":
+		loginURL, hashPrefix, err = dbconsoleops.IssueAdminerLogin(
+			ctx, d.adminer, db.UserID, db.ID, db.Name, "postgres", d.adminerBaseURL)
+	}
+	if err != nil {
+		auditCLIIssuance(d.audit, db.UserID, db.ID, engine, "", dbconsoleops.OutcomeMintFail)
+		return dbSSOResult{}, fmt.Errorf("mint token: %w", err)
+	}
+
+	// Audit the successful issuance — hash-prefix only, never the token —
+	// so a CLI-minted SSO handoff is auditable in the journal like the
+	// REST doors (JAB-348 AC5). The token still leaves via stdout; that
+	// is the deliverable, not an audit record.
+	auditCLIIssuance(d.audit, db.UserID, db.ID, engine, hashPrefix, dbconsoleops.OutcomeIssued)
+	return dbSSOResult{database: db.Name, engine: engine, loginURL: loginURL}, nil
 }
 
 // auditCLIIssuance emits a structured audit line for a CLI-driven DB-console SSO
