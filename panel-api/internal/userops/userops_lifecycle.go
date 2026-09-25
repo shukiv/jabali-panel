@@ -18,7 +18,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dbops"
-	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ftpsync"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ftpops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
@@ -191,40 +191,18 @@ type DeleteDeps struct {
 }
 
 // reapTenantFtpAccounts tears down every FTP/SFTP subaccount a tenant owns as
-// part of DeleteCascade (JAB-265). The agent verb does the Unix teardown
-// (userdel + isolated-jail unmount+remove); the DB row is deleted REGARDLESS of
-// the agent result, so a failed teardown degrades to a rowless alias the
-// stray-alias reaper sweeps on its next pass — never a silent live-credential
-// orphan (the pre-fix behaviour, where the surviving row hid the alias from the
-// reaper too). Best-effort throughout: a failure is logged, never fails the
-// user delete.
+// part of DeleteCascade (JAB-265) through the FTP Account Lifecycle Module
+// (JAB-276), which shares the host teardown with the per-account delete but
+// keeps the cascade's policy: the row is deleted regardless of the host
+// result, and failures are logged, never fail the user delete.
 func reapTenantFtpAccounts(ctx context.Context, d Deps, dd DeleteDeps, userID, username string) {
-	if dd.FtpAccounts == nil || d.Agent == nil || username == "" {
-		return
-	}
-	accts, err := dd.FtpAccounts.ListByUserID(ctx, userID)
-	if err != nil {
-		logWarn(d, "cascade delete: list user ftp accounts failed", "user_id", userID, "err", err)
-		return
-	}
-	for i := range accts {
-		a := &accts[i]
-		if _, err := d.Agent.Call(ctx, "ftpaccount.delete", map[string]any{
-			"tenant_username": username,
-			"username":        a.Username,
-		}); err != nil {
-			logWarn(d, "cascade delete: ftp account agent teardown failed (row still removed; reaper backstops the alias)",
-				"user_id", userID, "ftp_account", a.Username, "err", err)
-		}
-		if err := dd.FtpAccounts.Delete(ctx, a.ID); err != nil {
-			logWarn(d, "cascade delete: ftp account DB delete failed",
-				"user_id", userID, "ftp_account", a.Username, "err", err)
-		}
-	}
-	// AC4/AC5: re-render the sshd drop-in immediately after tearing down all
-	// accounts so the config no longer contains rules for deleted aliases
-	// (JAB-276). This is best-effort; reconciler converges if it fails.
-	ftpsync.SyncFtpHostAccess(ctx, d.Agent, dd.FtpAccounts, d.Users, d.Packages, d.Log, username)
+	ftpops.ReapOwner(ctx, ftpops.Deps{
+		Agent:    d.Agent,
+		Accounts: dd.FtpAccounts,
+		Users:    d.Users,
+		Packages: d.Packages,
+		Log:      d.Log,
+	}, userID, username)
 }
 
 // DeleteCascade removes EVERYTHING a user owns, then the user row, then

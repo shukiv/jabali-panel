@@ -4,9 +4,11 @@
 // only resolve authorization (which account, which owner) and map the result to
 // their own transport (ADR-0083).
 //
-// Slice 1 covers the two operations both adapters expose — access update and
-// delete. Because both doors now call the same implementation, their
-// state-transition transcripts are identical by construction (AC1).
+// Every lifecycle operation runs here: Create, UpdateAccess, SetPassword,
+// Delete, and ReapOwner (owner cleanup). Admin and tenant doors call the same
+// implementation, so their state-transition transcripts are identical by
+// construction (AC1), and every delete path shares one host teardown
+// (deleteHostAlias) while keeping its own failure policy.
 package ftpops
 
 import (

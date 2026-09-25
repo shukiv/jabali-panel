@@ -47,6 +47,7 @@ type fakeAccounts struct {
 	reserveErr  error
 	allocErr    error
 	afterUpdate func()
+	owned       []models.FtpAccount // ListByUserID result
 }
 
 func (f *fakeAccounts) Update(ctx context.Context, _ *models.FtpAccount) error {
@@ -86,6 +87,10 @@ func (f *fakeAccounts) ReserveWithinCap(ctx context.Context, _ *models.FtpAccoun
 	}
 	*f.log = append(*f.log, "repo.Reserve")
 	return nil
+}
+
+func (f *fakeAccounts) ListByUserID(context.Context, string) ([]models.FtpAccount, error) {
+	return f.owned, nil
 }
 
 func (f *fakeAccounts) AllocateUID(context.Context) (uint32, error) {
@@ -498,6 +503,43 @@ func TestCreate_UIDAllocationFailureStopsBeforeReserve(t *testing.T) {
 	}
 	if len(log) != 0 {
 		t.Fatalf("a failed uid allocation must stop before the reservation; transcript = %v", log)
+	}
+}
+
+// Owner cleanup shares the host teardown with Delete but NOT its failure
+// policy: the owner is going away, so each row is removed even when its host
+// teardown fails (the stray-alias reaper backstops the rowless alias), and one
+// re-render runs at the end.
+func TestReapOwner_RowRemovedDespiteHostFailureThenOneSync(t *testing.T) {
+	var log transcript
+	d, accts, ag := newDeps(&log)
+	accts.owned = []models.FtpAccount{{ID: "a1", Username: "alice_web"}, {ID: "a2", Username: "alice_cam"}}
+	ag.errOn["ftpaccount.delete"] = errors.New("agent down")
+
+	ReapOwner(context.Background(), d, "user_01", "alice")
+
+	want := transcript{deleteOp, "repo.Delete", deleteOp, "repo.Delete", syncOp}
+	if len(log) < len(want) {
+		t.Fatalf("transcript = %v, want prefix %v", log, want)
+	}
+	for i, op := range want {
+		if log[i] != op {
+			t.Fatalf("transcript = %v, want prefix %v", log, want)
+		}
+	}
+}
+
+func TestReapOwner_GuardsAreNoOps(t *testing.T) {
+	var log transcript
+	d, accts, _ := newDeps(&log)
+	accts.owned = []models.FtpAccount{{ID: "a1", Username: "alice_web"}}
+
+	ReapOwner(context.Background(), d, "user_01", "") // no Linux username
+	noAgent := d
+	noAgent.Agent = nil
+	ReapOwner(context.Background(), noAgent, "user_01", "alice")
+	if len(log) != 0 {
+		t.Fatalf("guarded reaps must do nothing; transcript = %v", log)
 	}
 }
 
