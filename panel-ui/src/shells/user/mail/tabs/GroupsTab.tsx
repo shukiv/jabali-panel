@@ -238,7 +238,7 @@ export function GroupDrawer({
           : {
               name: "",
               display_name: "",
-              group_kind: "resource",
+              group_kind: "distribution",
               description: "",
               internal_only: false,
             },
@@ -308,12 +308,16 @@ export function GroupDrawer({
         <Form.Item label="Display name" name="display_name">
           <Input placeholder="Marketing" autoComplete="off" />
         </Form.Item>
-        <Form.Item label="Type" name="group_kind" tooltip="Distribution list = a mailing list (mail to the address reaches every member). Shared workspace = members also share the group's calendar, contacts and files.">
+        <Form.Item
+          label="Type"
+          name="group_kind"
+          tooltip="Distribution list: every member gets their own copy of each message in their own inbox. Shared workspace: one shared inbox that members open in webmail (no copies are delivered), plus a shared calendar, contacts and files. The type cannot be changed later."
+        >
           <Segmented
             disabled={editing}
             options={[
-              { label: "Shared workspace", value: "resource" },
               { label: "Distribution list", value: "distribution" },
+              { label: "Shared workspace", value: "resource" },
             ]}
           />
         </Form.Item>
@@ -324,15 +328,16 @@ export function GroupDrawer({
           label="Internal delivery only"
           name="internal_only"
           valuePropName="checked"
-          tooltip="When on, the group address accepts mail only from senders in its own domain; external senders are rejected (GH #348)."
+          tooltip="When on, the group address accepts mail only from senders in its own domain; external senders are rejected (GH #348). An internal-only distribution list can have at most 20 members."
         >
           <Switch />
         </Form.Item>
         <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-          <b>Shared workspace</b>: members also share the group's calendar, contacts and
-          files in webmail. <b>Distribution list</b>: mail to the address simply reaches
-          every member (a mailing list). For a single calendar, address book or file
-          folder shared with specific people, use the <b>Shared Resources</b> tab.
+          <b>Distribution list</b>: mail to the address is delivered to every member's own
+          inbox (a mailing list). <b>Shared workspace</b>: mail goes to one shared inbox that
+          members open in webmail, and members also share the group's calendar, contacts and
+          files. For a single calendar, address book or file folder shared with specific
+          people, use the <b>Shared Resources</b> tab.
         </Typography.Text>
       </Form>
     </Drawer>
@@ -362,8 +367,10 @@ export function MembersModal({ group, onClose }: { group: MailGroup; onClose: ()
       });
       message.success("Members updated");
       onClose();
-    } catch {
-      message.error("Failed to update members");
+    } catch (err) {
+      const detail = (err as { response?: { data?: { detail?: string; error?: string } } })?.response
+        ?.data;
+      message.error(detail?.detail ?? detail?.error ?? "Failed to update members");
     }
   };
 

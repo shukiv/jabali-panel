@@ -11,6 +11,7 @@
 - [Disclaimer](./disclaimer.md) — append a server-side disclaimer to outbound mail.
 - **Settings** — per-domain mail options. Currently the webmail toggle (see below).
 - [Shared Folders](./shared-folders.md) — IMAP shared folders for team mailboxes.
+- **Groups** — distribution lists (each member gets a copy) and shared workspaces (one shared inbox, calendar, contacts and files). See [Mail groups](../mail.md#mail-groups-gh-1818).
 - [Email Logs](./email-logs.md) — live tail of inbound and outbound mail for your domains.
 
 ## Webmail
