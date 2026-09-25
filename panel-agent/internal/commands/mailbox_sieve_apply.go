@@ -164,7 +164,14 @@ func resolveOrEnsureAccount(ctx context.Context, email string) (string, error) {
 // jabali owns the active slot. SieveScript is RFC 9661, so every call carries
 // jmapCapSieve (same as applyGroupInternalOnly).
 func setActiveManagedScript(ctx context.Context, acctID, blobID string) (string, error) {
-	existingID, err := managedScriptID(ctx, acctID)
+	return setActiveNamedScript(ctx, acctID, managedScriptName, blobID)
+}
+
+// setActiveNamedScript is setActiveManagedScript for any jabali-owned script
+// name. The internal-only distribution list (GH #1818) keeps its combined
+// reject + redirect script on the group account under its own name.
+func setActiveNamedScript(ctx context.Context, acctID, name, blobID string) (string, error) {
+	existingID, err := scriptIDByName(ctx, acctID, name)
 	if err != nil {
 		return "", err
 	}
@@ -185,7 +192,7 @@ func setActiveManagedScript(ctx context.Context, acctID, blobID string) (string,
 	}
 	args := map[string]any{
 		"accountId":               acctID,
-		"create":                  map[string]any{"s1": map[string]any{"name": managedScriptName, "blobId": blobID}},
+		"create":                  map[string]any{"s1": map[string]any{"name": name, "blobId": blobID}},
 		"onSuccessActivateScript": "#s1",
 	}
 	var result jmapSetResult
@@ -200,7 +207,7 @@ func setActiveManagedScript(ctx context.Context, acctID, blobID string) (string,
 		return newID, nil
 	}
 	// Fall back to a name lookup if the server did not echo the created id.
-	newID, lookupErr := managedScriptID(ctx, acctID)
+	newID, lookupErr := scriptIDByName(ctx, acctID, name)
 	if lookupErr != nil {
 		return "", lookupErr
 	}
@@ -247,12 +254,16 @@ func listSieveScripts(ctx context.Context, acctID string) ([]sieveScriptRow, err
 }
 
 func managedScriptID(ctx context.Context, acctID string) (string, error) {
+	return scriptIDByName(ctx, acctID, managedScriptName)
+}
+
+func scriptIDByName(ctx context.Context, acctID, name string) (string, error) {
 	rows, err := listSieveScripts(ctx, acctID)
 	if err != nil {
 		return "", err
 	}
 	for _, r := range rows {
-		if r.Name == managedScriptName {
+		if r.Name == name {
 			return r.ID, nil
 		}
 	}
