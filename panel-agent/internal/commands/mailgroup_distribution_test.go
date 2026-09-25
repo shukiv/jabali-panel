@@ -206,11 +206,21 @@ func (f *mgFake) dispatch(method string, raw json.RawMessage) (any, *jmapFakeErr
 	case "x:Account/query":
 		ids := []string{}
 		for id, acct := range f.accounts {
-			if acct.name == str("name") && acct.domainID == str("domainId") {
+			if len(a.Filter) == 0 || (acct.name == str("name") && acct.domainID == str("domainId")) {
 				ids = append(ids, id)
 			}
 		}
 		return jmapQueryResult{IDs: ids}, nil
+
+	case "x:Account/get":
+		list := []json.RawMessage{}
+		for _, id := range a.IDs {
+			if acct, ok := f.accounts[id]; ok {
+				row, _ := json.Marshal(map[string]any{"id": id, "domainId": acct.domainID})
+				list = append(list, row)
+			}
+		}
+		return jmapGetResult{List: list}, nil
 
 	case "x:Account/set":
 		res := newSetResult()
@@ -270,7 +280,7 @@ func (f *mgFake) dispatch(method string, raw json.RawMessage) (any, *jmapFakeErr
 	case "x:MailingList/query":
 		ids := []string{}
 		for id, l := range f.lists {
-			if strings.EqualFold(l.name, str("text")) {
+			if len(a.Filter) == 0 || strings.EqualFold(l.name, str("text")) {
 				ids = append(ids, id)
 			}
 		}
@@ -754,5 +764,35 @@ func TestMailGroupDelete_DestroysMailingList(t *testing.T) {
 	}
 	if _, ok := f.lists[other]; !ok {
 		t.Fatalf("delete removed an unrelated list")
+	}
+}
+
+// Deleting a domain (or its owner) purges every registry object under it. A
+// distribution list left behind would keep its address alive: mail to it
+// would still be accepted and fanned out, and a later tenant could not create
+// a mailbox with that address (GH #1818).
+func TestMailDomainPurge_DestroysMailingLists(t *testing.T) {
+	f := newMGFake()
+	f.domains["other.com"] = "dom2"
+	alice := f.addAccount("alice@example.com", "User")
+	f.addList("sales@example.com", "alice@example.com")
+	keep := f.addList("sales@other.com", "bob@other.com")
+	keepAcct := f.addAccount("bob@other.com", "User")
+	wireJMAP(t, f.server(t))
+
+	if _, err := mailDomainPurgeHandler(context.Background(), json.RawMessage(`{"domain":"example.com"}`)); err != nil {
+		t.Fatalf("purge: %v", err)
+	}
+	if _, ok := f.accounts[alice]; ok {
+		t.Fatalf("account in the purged domain survived")
+	}
+	if len(f.listsByEmail("sales@example.com")) != 0 {
+		t.Fatalf("mailing list in the purged domain survived")
+	}
+	if _, ok := f.lists[keep]; !ok {
+		t.Fatalf("purge removed a list in another domain")
+	}
+	if _, ok := f.accounts[keepAcct]; !ok {
+		t.Fatalf("purge removed an account in another domain")
 	}
 }

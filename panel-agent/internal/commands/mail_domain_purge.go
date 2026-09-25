@@ -14,7 +14,8 @@ type mailDomainPurgeParams struct {
 }
 
 type mailDomainPurgeResult struct {
-	Destroyed int `json:"destroyed"`
+	Destroyed      int `json:"destroyed"`
+	DestroyedLists int `json:"destroyed_lists,omitempty"`
 }
 
 // mailDomainPurgeHandler destroys EVERY Stalwart registry Account under a
@@ -91,7 +92,45 @@ func mailDomainPurgeHandler(ctx context.Context, params json.RawMessage) (any, e
 		}
 		destroyed++
 	}
-	return mailDomainPurgeResult{Destroyed: destroyed}, nil
+	lists, err := purgeDomainMailingLists(ctx, targetID)
+	if err != nil {
+		return nil, err
+	}
+	return mailDomainPurgeResult{Destroyed: destroyed, DestroyedLists: lists}, nil
+}
+
+// purgeDomainMailingLists destroys every x:MailingList under the domain — the
+// projection of a distribution mail group (GH #1818). A list left behind keeps
+// its address live: mail to it is still accepted and fanned out, and a later
+// mailbox at that address cannot be created. Same shape as the account purge:
+// unfiltered query, domainId matched client-side, best-effort per list.
+func purgeDomainMailingLists(ctx context.Context, domainID string) (int, error) {
+	var q jmapQueryResult
+	if err := jmapCall(ctx, "x:MailingList/query", map[string]any{}, &q); err != nil {
+		return 0, err
+	}
+	if len(q.IDs) == 0 {
+		return 0, nil
+	}
+	var got jmapGetResult
+	if err := jmapCall(ctx, "x:MailingList/get", map[string]any{"ids": q.IDs}, &got); err != nil {
+		return 0, err
+	}
+	destroyed := 0
+	for _, raw := range got.List {
+		var l struct {
+			ID       string `json:"id"`
+			DomainID string `json:"domainId"`
+		}
+		if jErr := json.Unmarshal(raw, &l); jErr != nil || l.DomainID != domainID {
+			continue
+		}
+		if err := mailingListDestroy(ctx, l.ID); err != nil {
+			continue
+		}
+		destroyed++
+	}
+	return destroyed, nil
 }
 
 func init() {
