@@ -327,80 +327,56 @@ func createDomainDirect(ctx context.Context, in cliDomainInput) (*models.Domain,
 		}
 	}
 
-	// GH #1449: resolve the web / mail / dns service matrix before building the
-	// row, mirroring the HTTP createDomainOp.
+	// GH #1449 / GH #1627 / GH #1409: resolve the mail posture and the service
+	// matrix through the same domainops steps the REST createDomainOp runs
+	// (JAB-279), so the CLI stores what REST stores for the same input (AC2).
+	// ResolveMailPosture validates --mail, applies a --dns-template's 'custom'
+	// posture (the reconciler seeds the template's records into the fresh zone,
+	// keyed off MailTemplateID), and coerces Jabali mail to none on a server whose
+	// mail module is off — read fail-open, so an unreadable settings row never
+	// blocks a create. The CLI takes no --ssl-mode, so the matrix starts from
+	// Let's Encrypt; a DNS-only domain is forced to none.
 	webEnabled := !in.WebDisabled
 	dnsEnabled := !in.DNSDisabled
-	mailProvider := in.MailProvider
-	if mailProvider == "" {
-		mailProvider = models.MailProviderJabali
+	posture, err := domainops.ResolveMailPosture(ctx, repository.NewDNSTemplateRepository(sharedDB), domainops.MailPostureInput{
+		Provider:          in.MailProvider,
+		DNSTemplateID:     in.DNSTemplateID,
+		DNSEnabled:        dnsEnabled,
+		MailModuleEnabled: domainops.MailModuleEnabled(ctx, serverSettingsRepoFromDB()),
+	})
+	if err != nil {
+		return nil, nil, cliMailPostureError(err, in)
 	}
-	if !models.ValidMailProvider(mailProvider) {
-		return nil, nil, fmt.Errorf("invalid --mail %q (want jabali|none|m365|google)", mailProvider)
-	}
-	// GH #1627: 'custom' is the posture of a domain created from a DNS template,
-	// not a directly-selectable provider — ValidMailProvider recognises it (so a
-	// persisted row validates) but the CLI must not create a bare 'custom' domain
-	// with no template (an inert external domain with no mail records). DNS
-	// templates are not a CLI feature in this phase; reject the value at input.
-	if mailProvider == models.MailProviderCustom {
-		return nil, nil, fmt.Errorf("invalid --mail %q (custom is the posture of a domain created from a DNS template; not selectable on the CLI)", mailProvider)
-	}
-	// GH #1627: a chosen custom DNS template overrides the mail posture to
-	// external ('custom') — the reconciler seeds its records into the fresh
-	// zone (keyed off MailTemplateID). Mutually exclusive with an explicit mail
-	// provider, and requires the panel to host DNS (nothing to seed into
-	// otherwise). Mirrors the HTTP createDomainOp dns_template_id path; resolved
-	// BEFORE DeriveMailFlags so the external posture is derived from 'custom'.
-	var mailTemplateID *string
-	if tmplID := strings.TrimSpace(in.DNSTemplateID); tmplID != "" {
-		if mailProvider != models.MailProviderJabali {
-			return nil, nil, fmt.Errorf("--dns-template sets the mail posture; do not also pass --mail %q", mailProvider)
-		}
-		if !dnsEnabled {
-			return nil, nil, fmt.Errorf("--dns-template seeds records into the panel-hosted zone; --manage-dns=false hosts DNS externally")
-		}
-		if _, terr := repository.NewDNSTemplateRepository(sharedDB).FindByID(ctx, tmplID); terr != nil {
-			if errors.Is(terr, repository.ErrNotFound) {
-				return nil, nil, fmt.Errorf("--dns-template %q does not exist", tmplID)
-			}
-			return nil, nil, fmt.Errorf("look up DNS template: %w", terr)
-		}
-		mailProvider = models.MailProviderCustom
-		mailTemplateID = &tmplID
-	}
-	// GH #1409: coerce a 'jabali' provider to 'none' when this server's mail
-	// module is switched off, through the same domainops leaf the REST create
-	// path uses (createDomainOp) — otherwise `jabali domain create` (default
-	// --mail jabali) on a mail-less server would persist EmailEnabled=true and
-	// provision Jabali mail that can't run, a different stored domain than REST
-	// stores for the same input (AC2). Runs after the DNS-template block (so a
-	// 'custom' posture is untouched) and BEFORE DeriveMailFlags, mirroring the
-	// REST ordering. Fail OPEN on an unreadable settings row (assume the module
-	// is installed): a provisioning coercion must never block a create — the
-	// same choice the REST path makes.
-	mailModuleEnabled := true
-	if st, sErr := serverSettingsRepoFromDB().Get(ctx); sErr == nil && st != nil {
-		mailModuleEnabled = st.MailEnabled
-	}
-	mailProvider = domainops.MailProviderForServer(mailProvider, mailModuleEnabled)
-	mailEnabled, mailSkipSAN := models.DeriveMailFlags(mailProvider)
-	if !webEnabled && !dnsEnabled && !mailEnabled {
+	matrix, err := domainops.ResolveServiceMatrix(domainops.ServiceMatrixInput{
+		WebEnabled:   webEnabled,
+		DNSEnabled:   dnsEnabled,
+		MailProvider: posture.Provider,
+	})
+	if errors.Is(err, domainops.ErrNoServiceSelected) {
 		return nil, nil, fmt.Errorf("select at least one service: web hosting (--web-enabled), DNS (--manage-dns), or mail (--mail)")
+	} else if err != nil {
+		return nil, nil, err
+	}
+
+	// A web-off domain is docroot-less (DNS-only zone / mail-only domain).
+	switch err := domainops.CheckWebOffOptions(domainops.WebOffInput{
+		WebEnabled:   webEnabled,
+		ReverseProxy: in.ReverseProxy,
+		DocRoot:      in.DocRoot,
+	}); {
+	case errors.Is(err, domainops.ErrWebOffReverseProxy):
+		return nil, nil, fmt.Errorf("a reverse-proxy domain requires web hosting")
+	case errors.Is(err, domainops.ErrWebOffDocRoot):
+		return nil, nil, fmt.Errorf("a web-disabled domain has no document root")
+	case err != nil:
+		return nil, nil, err
 	}
 
 	// Trim first (matches the REST create path, which trims before it validates
-	// and stores) so a trailing space is neither stored nor mkdir'd.
+	// and stores) so a trailing space is neither stored nor mkdir'd. A web-off
+	// domain's trimmed document root is empty (checked above).
 	docRoot := strings.TrimSpace(in.DocRoot)
-	if !webEnabled {
-		if in.ReverseProxy {
-			return nil, nil, fmt.Errorf("a reverse-proxy domain requires web hosting")
-		}
-		if docRoot != "" {
-			return nil, nil, fmt.Errorf("a web-disabled domain has no document root")
-		}
-		docRoot = "" // docroot-less (DNS-only zone / mail-only domain)
-	} else {
+	if webEnabled {
 		// JAB-279 (AC1 module owns validate / AC2 same stored state across
 		// adapters): confine the document root to the owner's home before it is
 		// stored — the reconciler mkdir -p's the path and renders a vhost for it,
@@ -417,12 +393,6 @@ func createDomainDirect(ctx context.Context, in cliDomainInput) (*models.Domain,
 		}
 	}
 
-	// DNS-only (web off + no Jabali mail) has nothing to serve over TLS.
-	sslMode := models.SSLModeLE
-	if !webEnabled && !mailEnabled {
-		sslMode = models.SSLModeNone
-	}
-
 	now := time.Now().UTC()
 	d := &models.Domain{
 		ID:             ids.NewULID(),
@@ -432,12 +402,12 @@ func createDomainDirect(ctx context.Context, in cliDomainInput) (*models.Domain,
 		IsEnabled:      true,
 		WebDisabled:    in.WebDisabled,
 		DNSDisabled:    in.DNSDisabled,
-		MailProvider:   mailProvider,
-		MailTemplateID: mailTemplateID, // GH #1627: nil unless --dns-template was chosen
-		EmailEnabled:   mailEnabled,
-		SkipAutoSAN:    mailSkipSAN,
-		SSLMode:        sslMode,
-		SSLEnabled:     models.SSLEnabledForMode(sslMode),
+		MailProvider:   posture.Provider,
+		MailTemplateID: posture.TemplateID, // GH #1627: nil unless --dns-template was chosen
+		EmailEnabled:   matrix.EmailEnabled,
+		SkipAutoSAN:    matrix.SkipAutoSAN,
+		SSLMode:        matrix.SSLMode,
+		SSLEnabled:     models.SSLEnabledForMode(matrix.SSLMode),
 		CreatedAt:      now,
 		UpdatedAt:      now,
 	}
@@ -507,7 +477,7 @@ func createDomainDirect(ctx context.Context, in cliDomainInput) (*models.Domain,
 	// refuses the domain name, we record the reason as a soft warning
 	// and the operator can retry via `jabali domain email-enable <name>`
 	// or the Email tab in the UI.
-	if mailProvider != models.MailProviderJabali {
+	if posture.Provider != models.MailProviderJabali {
 		// External (m365/google) or no mail — nothing to register on Stalwart;
 		// the reconciler publishes the provider's own DNS (or none). A DNS-only
 		// zone (--mail none) must not auto-enable Jabali mail.
@@ -548,6 +518,29 @@ var cliEmailRe = regexp.MustCompile(
 
 func cliValidEmail(s string) bool {
 	return len(s) <= 320 && cliEmailRe.MatchString(s)
+}
+
+// cliMailPostureError maps a domainops mail-posture rejection to the message
+// `jabali domain create` printed before the module owned the rules (JAB-279).
+// A rejected provider is never empty (empty means Jabali), so in.MailProvider is
+// the value the old inline check reported.
+func cliMailPostureError(err error, in cliDomainInput) error {
+	switch {
+	case errors.Is(err, domainops.ErrMailProviderInvalid):
+		return fmt.Errorf("invalid --mail %q (want jabali|none|m365|google)", in.MailProvider)
+	case errors.Is(err, domainops.ErrMailProviderCustomReserved):
+		return fmt.Errorf("invalid --mail %q (custom is the posture of a domain created from a DNS template; not selectable on the CLI)", in.MailProvider)
+	case errors.Is(err, domainops.ErrDNSTemplateProviderExclusive):
+		return fmt.Errorf("--dns-template sets the mail posture; do not also pass --mail %q", in.MailProvider)
+	case errors.Is(err, domainops.ErrDNSTemplateRequiresDNS):
+		return fmt.Errorf("--dns-template seeds records into the panel-hosted zone; --manage-dns=false hosts DNS externally")
+	case errors.Is(err, domainops.ErrDNSTemplateUnknown):
+		return fmt.Errorf("--dns-template %q does not exist", strings.TrimSpace(in.DNSTemplateID))
+	case errors.Is(err, domainops.ErrDNSTemplateLookup):
+		return fmt.Errorf("look up DNS template: %w", err)
+	default:
+		return err
+	}
 }
 
 // validateDomainName is the CLI adapter over the shared domainops FQDN gate

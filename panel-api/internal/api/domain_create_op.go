@@ -127,6 +127,46 @@ func reverseProxyReserveError(err error) *createDomainError {
 	}
 }
 
+// domainPostureError maps a domainops service-matrix or mail-posture rejection
+// to the status, code, and detail the create door returned before the module
+// owned the rules (JAB-279).
+func domainPostureError(err error) *createDomainError {
+	switch {
+	case errors.Is(err, domainops.ErrWebOffReverseProxy):
+		return &createDomainError{http.StatusBadRequest, "web_disabled_no_reverse_proxy", "a reverse-proxy domain requires web hosting"}
+	case errors.Is(err, domainops.ErrWebOffTempURL):
+		return &createDomainError{http.StatusBadRequest, "web_disabled_no_temp_url", "a preview URL requires web hosting"}
+	case errors.Is(err, domainops.ErrWebOffDocRoot):
+		return &createDomainError{http.StatusBadRequest, "web_disabled_no_docroot", "a web-disabled domain has no document root"}
+	case errors.Is(err, domainops.ErrMailProviderInvalid):
+		return &createDomainError{http.StatusBadRequest, "invalid_mail_provider", ""}
+	case errors.Is(err, domainops.ErrMailProviderCustomReserved):
+		return &createDomainError{http.StatusBadRequest, "mail_provider_custom_reserved", "select a DNS template via dns_template_id rather than setting mail_provider=custom directly"}
+	case errors.Is(err, domainops.ErrDNSTemplatesUnavailable):
+		return &createDomainError{http.StatusServiceUnavailable, "dns_templates_unavailable", "DNS templates are not enabled on this server"}
+	case errors.Is(err, domainops.ErrDNSTemplateProviderExclusive):
+		return &createDomainError{http.StatusBadRequest, "template_and_provider_exclusive", "a DNS template sets the mail posture; do not also select a mail provider"}
+	case errors.Is(err, domainops.ErrDNSTemplateRequiresDNS):
+		return &createDomainError{http.StatusBadRequest, "template_requires_dns", "a DNS template seeds records into the panel-hosted zone; this domain has DNS hosted externally"}
+	case errors.Is(err, domainops.ErrDNSTemplateUnknown):
+		return &createDomainError{http.StatusBadRequest, "unknown_dns_template", "the selected DNS template does not exist"}
+	case errors.Is(err, domainops.ErrDNSTemplateLookup):
+		return &createDomainError{http.StatusInternalServerError, "dns_template_lookup_failed", ""}
+	case errors.Is(err, domainops.ErrSSLModeInvalid):
+		return &createDomainError{http.StatusBadRequest, "invalid_ssl_mode", ""}
+	case errors.Is(err, domainops.ErrSSLModeCustomAtCreate):
+		return &createDomainError{http.StatusBadRequest, "ssl_mode_custom_requires_upload", "create the domain with le/self/none, then upload a custom cert via the SSL settings"}
+	case errors.Is(err, domainops.ErrSSLModeSharedAtCreate):
+		return &createDomainError{http.StatusBadRequest, "ssl_mode_shared_requires_attach", "create the domain with le/self/none, then attach a shared cert via POST /domains/:id/ssl/shared"}
+	case errors.Is(err, domainops.ErrSSLNoneWithMail):
+		return &createDomainError{http.StatusBadRequest, "ssl_none_with_email", "a mail-enabled domain needs TLS; choose le/self or set mail provider to none"}
+	case errors.Is(err, domainops.ErrNoServiceSelected):
+		return &createDomainError{http.StatusBadRequest, "no_service_selected", "select at least one service: web hosting, DNS, or mail"}
+	default:
+		return &createDomainError{http.StatusInternalServerError, "internal", ""}
+	}
+}
+
 // createDomainOp runs the full GUI domain-creation orchestration for `in`
 // against the handler's deps. On success it returns the created domain (with
 // any in-place mutations from shared-cert attach / inline email). On failure it
@@ -175,16 +215,13 @@ func createDomainOp(ctx context.Context, h *domainHandler, in createDomainInput)
 	// cannot be a reverse-proxy, carry a preview URL, or have a document root.
 	webEnabled := !in.WebDisabled
 	dnsEnabled := !in.DNSDisabled
-	if !webEnabled {
-		if in.ReverseProxy {
-			return nil, &createDomainError{http.StatusBadRequest, "web_disabled_no_reverse_proxy", "a reverse-proxy domain requires web hosting"}
-		}
-		if in.TempURLEnabled {
-			return nil, &createDomainError{http.StatusBadRequest, "web_disabled_no_temp_url", "a preview URL requires web hosting"}
-		}
-		if strings.TrimSpace(in.DocRoot) != "" {
-			return nil, &createDomainError{http.StatusBadRequest, "web_disabled_no_docroot", "a web-disabled domain has no document root"}
-		}
+	if err := domainops.CheckWebOffOptions(domainops.WebOffInput{
+		WebEnabled:   webEnabled,
+		ReverseProxy: in.ReverseProxy,
+		TempURL:      in.TempURLEnabled,
+		DocRoot:      in.DocRoot,
+	}); err != nil {
+		return nil, domainPostureError(err)
 	}
 
 	// GH #1540: a DNS-only zone may carry a tenant-chosen apex IP (the "pointed
@@ -283,43 +320,19 @@ func createDomainOp(ctx context.Context, h *domainHandler, in createDomainInput)
 		docRoot = "/home/" + *user.Username + "/domains/" + in.Name + "/public_html"
 	}
 
-	// GH#181 mail provider: default jabali; EmailEnabled/SkipAutoSAN derived.
-	mailProvider := in.MailProvider
-	if mailProvider == "" {
-		mailProvider = models.MailProviderJabali
-	}
-	if !models.ValidMailProvider(mailProvider) {
-		return nil, &createDomainError{http.StatusBadRequest, "invalid_mail_provider", ""}
-	}
-	// GH #1627: 'custom' is the posture of a template-created domain; it is set
-	// ONLY by the dns_template_id path below, never accepted as caller input
-	// (a bare 'custom' with no template would be an inert external domain).
-	if mailProvider == models.MailProviderCustom {
-		return nil, &createDomainError{http.StatusBadRequest, "mail_provider_custom_reserved", "select a DNS template via dns_template_id rather than setting mail_provider=custom directly"}
-	}
-	// GH #1627: a chosen custom DNS template overrides the mail posture to
-	// external ('custom'); its records are seeded into the zone by the reconciler
-	// at bootstrap. It is mutually exclusive with an explicit external provider,
-	// and requires the panel to host DNS (nothing to seed into otherwise).
-	var mailTemplateID *string
-	if tmplID := strings.TrimSpace(in.DNSTemplateID); tmplID != "" {
-		if h.cfg.DNSTemplates == nil {
-			return nil, &createDomainError{http.StatusServiceUnavailable, "dns_templates_unavailable", "DNS templates are not enabled on this server"}
-		}
-		if mailProvider != models.MailProviderJabali {
-			return nil, &createDomainError{http.StatusBadRequest, "template_and_provider_exclusive", "a DNS template sets the mail posture; do not also select a mail provider"}
-		}
-		if !dnsEnabled {
-			return nil, &createDomainError{http.StatusBadRequest, "template_requires_dns", "a DNS template seeds records into the panel-hosted zone; this domain has DNS hosted externally"}
-		}
-		if _, terr := h.cfg.DNSTemplates.FindByID(ctx, tmplID); terr != nil {
-			if errors.Is(terr, repository.ErrNotFound) {
-				return nil, &createDomainError{http.StatusBadRequest, "unknown_dns_template", "the selected DNS template does not exist"}
-			}
-			return nil, &createDomainError{http.StatusInternalServerError, "dns_template_lookup_failed", ""}
-		}
-		mailProvider = models.MailProviderCustom
-		mailTemplateID = &tmplID
+	// GH#181 / GH #1627 / GH #1409: the mail posture — provider default and
+	// validation, a DNS template's 'custom' posture (its records are seeded into
+	// the zone by the reconciler at bootstrap), and the coercion of Jabali mail to
+	// none on a server whose mail module is off (read fail-open). The rules are
+	// the domainops module's (JAB-279); this adapter maps its sentinels.
+	posture, err := domainops.ResolveMailPosture(ctx, h.cfg.DNSTemplates, domainops.MailPostureInput{
+		Provider:          in.MailProvider,
+		DNSTemplateID:     in.DNSTemplateID,
+		DNSEnabled:        dnsEnabled,
+		MailModuleEnabled: domainops.MailModuleEnabled(ctx, h.cfg.ServerSettings),
+	})
+	if err != nil {
+		return nil, domainPostureError(err)
 	}
 
 	// GH #1624 / ADR-0169 Phase 3: an ADMIN may create a domain from a web
@@ -357,19 +370,6 @@ func createDomainOp(ctx context.Context, h *domainHandler, in createDomainInput)
 		webTemplateDirectives = tmpl.NginxDirectives
 	}
 
-	// GH #1409: never enable Jabali mail on a domain when the mail module isn't
-	// installed — coerce to "none" so we don't provision mail that can't run.
-	// The GUI already defaults to None; this guards API / automation callers
-	// (and the "" → jabali default above) so email_enabled is never set on a
-	// mail-less server. Fail-open (assume installed) if server_settings is
-	// unreadable — never block domain creation on this check.
-	mailModuleEnabled := true
-	if h.cfg.ServerSettings != nil {
-		if st, sErr := h.cfg.ServerSettings.Get(ctx); sErr == nil && st != nil {
-			mailModuleEnabled = st.MailEnabled
-		}
-	}
-	mailProvider = domainops.MailProviderForServer(mailProvider, mailModuleEnabled)
 	m365Tenant, err := dnscompile.NormaliseM365Onmicrosoft(in.M365Onmicrosoft)
 	if err != nil {
 		return nil, &createDomainError{http.StatusBadRequest, "invalid_m365_onmicrosoft", err.Error()}
@@ -378,38 +378,17 @@ func createDomainOp(ctx context.Context, h *domainHandler, in createDomainInput)
 	if err != nil {
 		return nil, &createDomainError{http.StatusBadRequest, "invalid_google_dkim", err.Error()}
 	}
-	sslMode := in.SSLMode
-	if sslMode == "" {
-		sslMode = models.SSLModeLE
-	}
-	if !models.ValidSSLMode(sslMode) {
-		return nil, &createDomainError{http.StatusBadRequest, "invalid_ssl_mode", ""}
-	}
-	if sslMode == models.SSLModeCustom {
-		return nil, &createDomainError{http.StatusBadRequest, "ssl_mode_custom_requires_upload", "create the domain with le/self/none, then upload a custom cert via the SSL settings"}
-	}
-	if sslMode == models.SSLModeShared {
-		return nil, &createDomainError{http.StatusBadRequest, "ssl_mode_shared_requires_attach", "create the domain with le/self/none, then attach a shared cert via POST /domains/:id/ssl/shared"}
-	}
-
-	mailEnabled, mailSkipSAN := models.DeriveMailFlags(mailProvider)
-	// Email-enabled + no TLS is contradictory (MTA-STS / autoconfig need HTTPS).
-	if sslMode == models.SSLModeNone && mailEnabled {
-		return nil, &createDomainError{http.StatusBadRequest, "ssl_none_with_email", "a mail-enabled domain needs TLS; choose le/self or set mail provider to none"}
-	}
-	// GH #1449: a domain must host at least ONE Jabali service. Web off + DNS
-	// off + no Jabali mail leaves nothing for the panel to do (external mail
-	// without our DNS publishes no records here either).
-	if !webEnabled && !dnsEnabled && !mailEnabled {
-		return nil, &createDomainError{http.StatusBadRequest, "no_service_selected", "select at least one service: web hosting, DNS, or mail"}
-	}
-	// GH #1449: a DNS-only domain (web off + no Jabali mail) has nothing to
-	// serve over TLS — force ssl_mode=none so the reconciler never tries to
-	// issue a cert for a name whose web and mail both live elsewhere. A
-	// mail-only domain (web off, mail on) keeps its le/self mode for the
-	// mail-support SANs.
-	if !webEnabled && !mailEnabled {
-		sslMode = models.SSLModeNone
+	// SSL mode + the derived mail flags + the GH #1449 service rules (at least
+	// one service; a DNS-only domain is forced to ssl none). The rules are the
+	// domainops module's (JAB-279); this adapter maps its sentinels.
+	matrix, err := domainops.ResolveServiceMatrix(domainops.ServiceMatrixInput{
+		WebEnabled:   webEnabled,
+		DNSEnabled:   dnsEnabled,
+		MailProvider: posture.Provider,
+		SSLMode:      in.SSLMode,
+	})
+	if err != nil {
+		return nil, domainPostureError(err)
 	}
 
 	now := time.Now().UTC()
@@ -419,18 +398,18 @@ func createDomainOp(ctx context.Context, h *domainHandler, in createDomainInput)
 		Name:            in.Name,
 		DocRoot:         docRoot,
 		IsEnabled:       true,
-		SSLMode:         sslMode,
-		SSLEnabled:      models.SSLEnabledForMode(sslMode),
-		MailProvider:    mailProvider,
+		SSLMode:         matrix.SSLMode,
+		SSLEnabled:      models.SSLEnabledForMode(matrix.SSLMode),
+		MailProvider:    posture.Provider,
 		M365Onmicrosoft: strPtrOrNil(m365Tenant),
 		GoogleDKIM:      strPtrOrNil(googleDKIM),
-		MailTemplateID:  mailTemplateID, // GH #1627: nil unless a template was chosen
+		MailTemplateID:  posture.TemplateID, // GH #1627: nil unless a template was chosen
 		// GH #1624 Phase 3: nil / "" unless an admin chose a web template above,
 		// in which case its directives are snapshot-copied onto this domain.
 		WebTemplateID:         webTemplateID,
 		NginxCustomDirectives: strPtrOrNil(webTemplateDirectives),
-		EmailEnabled:    mailEnabled,
-		SkipAutoSAN:     mailSkipSAN,
+		EmailEnabled:    matrix.EmailEnabled,
+		SkipAutoSAN:     matrix.SkipAutoSAN,
 		CreateWWW:       in.CreateWWW,
 		TempURLEnabled:  in.TempURLEnabled,
 		// GH #1449: inverted storage — disabled is the non-zero (always-
@@ -512,7 +491,7 @@ func createDomainOp(ctx context.Context, h *domainHandler, in createDomainInput)
 
 	// Auto-enable email (best-effort, ADR-0013). A failure degrades to
 	// email_enabled=0 + the UI retry switch; not returned in the response.
-	if mailProvider == models.MailProviderJabali && h.cfg.Agent != nil && h.cfg.DNSZones != nil && h.cfg.DNSRecords != nil {
+	if posture.Provider == models.MailProviderJabali && h.cfg.Agent != nil && h.cfg.DNSZones != nil && h.cfg.DNSRecords != nil {
 		if _, _, warnings, err := domainmailops.Enable(ctx, domainmailops.Deps{
 			Call:           agentCall(h.cfg.Agent),
 			Domains:        h.cfg.Domains,
