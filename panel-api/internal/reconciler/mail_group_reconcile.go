@@ -34,7 +34,8 @@ import (
 // mailGroupReDispatchInterval (heals drift on the mail server), or when its
 // last attempt failed and mailGroupRetryInterval has passed. At most
 // mailGroupApplyBudgetPerTick groups are applied per tick; the rest follow on
-// later ticks. The cache is process-local, so a restart re-applies every group
+// later ticks; the pass also stops starting applies once mailGroupTickBudget
+// of wall time is spent. The cache is process-local, so a restart re-applies every group
 // once — each apply is idempotent on the agent side.
 
 const (
@@ -45,6 +46,11 @@ const (
 	// copies its stored mail into every member's inbox.
 	mailGroupApplyTimeout = 2 * time.Minute
 )
+
+// mailGroupTickBudget bounds one pass by wall time: once spent, no new apply
+// starts and the remaining groups follow on later ticks, so a slow conversion
+// cannot stall the rest of ReconcileAll. A var so tests can shrink it.
+var mailGroupTickBudget = 2 * time.Minute
 
 type mailGroupDoneEntry struct {
 	hash string
@@ -92,6 +98,7 @@ func (r *Reconciler) reconcileMailGroups(ctx context.Context) {
 	r.mailGroupMu.Unlock()
 
 	now := time.Now()
+	deadline := now.Add(mailGroupTickBudget)
 	applied := 0
 	for i := range groups {
 		g := &groups[i].MailGroup
@@ -104,7 +111,7 @@ func (r *Reconciler) reconcileMailGroups(ctx context.Context) {
 		if !groups[i].DomainEmailEnabled {
 			continue
 		}
-		if applied >= mailGroupApplyBudgetPerTick {
+		if applied >= mailGroupApplyBudgetPerTick || time.Now().After(deadline) {
 			return // the rest are applied on following ticks
 		}
 		params := mailgroupops.BuildApplyParams(g, byGroup[g.ID])

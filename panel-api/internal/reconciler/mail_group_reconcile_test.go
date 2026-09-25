@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"testing"
@@ -163,4 +164,43 @@ func TestReconcileMailGroups_SkipsDomainsWithMailOff(t *testing.T) {
 
 	r.reconcileMailGroups(context.Background())
 	require.Empty(t, applyCalls(ag), "a domain with mail turned off must not be re-projected")
+}
+
+type slowMailGroupAgent struct {
+	*fakeAgent
+	delay time.Duration
+}
+
+func (s slowMailGroupAgent) Call(ctx context.Context, method string, params interface{}) (json.RawMessage, error) {
+	time.Sleep(s.delay)
+	return s.fakeAgent.Call(ctx, method, params)
+}
+
+// Converting a legacy group copies its stored mail, which can be slow. The
+// pass stops starting new applies once its time budget is spent, so one slow
+// tick cannot stall the rest of ReconcileAll; the remaining groups follow on
+// later ticks.
+func TestReconcileMailGroups_TimeBudgetDefersRemainingGroups(t *testing.T) {
+	orig := mailGroupTickBudget
+	mailGroupTickBudget = 50 * time.Millisecond
+	t.Cleanup(func() { mailGroupTickBudget = orig })
+
+	inner := &fakeAgent{}
+	mg := &mgReconcileFake{}
+	for i := 0; i < 5; i++ {
+		mg.groups = append(mg.groups, mgRow(fmt.Sprintf("g%d", i), fmt.Sprintf("l%d@example.org", i), "distribution"))
+	}
+	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	r := New(&domFake{}, nil, slowMailGroupAgent{fakeAgent: inner, delay: 30 * time.Millisecond}, log, Config{Interval: time.Second}).WithMailGroups(mg)
+	r.serverSettings = &fakeServerSettingsRepo{settings: &models.ServerSettings{MailEnabled: true}}
+
+	r.reconcileMailGroups(context.Background())
+	first := len(applyCalls(inner))
+	require.Less(t, first, 5, "the pass must stop once its time budget is spent")
+	require.Greater(t, first, 0)
+
+	for i := 0; i < 5 && len(applyCalls(inner)) < 5; i++ {
+		r.reconcileMailGroups(context.Background())
+	}
+	require.Len(t, applyCalls(inner), 5, "deferred groups are applied on later ticks")
 }
