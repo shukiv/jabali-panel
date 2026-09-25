@@ -12,10 +12,10 @@ import (
 // db.postgres.shadowadmin.ensure — M37 Phase 4 Adminer SSO bridge.
 //
 // Mirror of db.mysqladmin.ensure but for PostgreSQL. Creates a ROLE
-// LOGIN named "<panel_username>_pgadmin" with a randomly-generated
-// 32-char password and CREATEDB on every database the panel user
-// owns (engine='postgres'). Idempotent: re-runs rotate the password
-// via DO $$ ... ALTER ROLE pattern.
+// LOGIN CREATEDB named "<panel_username>_pgadmin" with a randomly-generated
+// 32-char password. Idempotent: re-runs rotate the password via the
+// DO $$ ... ALTER ROLE pattern. It grants no database: grant_schema grants
+// the tenant's own databases by exact name on every Adminer open.
 //
 // All SQL flows through `sudo -u postgres psql -1 -c "..."` (peer
 // auth) — no plaintext password ever touches the wire.
@@ -89,29 +89,11 @@ END$$;`,
 		}
 	}
 
-	// GRANT ownership of every PG db the panel user already owns to
-	// the shadow role so Adminer can SELECT/INSERT after login.
-	// `<panel_username>_*` is the panel-api naming convention; we
-	// scope GRANT to that pattern. Fail-soft: if no matching DB,
-	// the GRANT is a no-op.
-	grantSQL := fmt.Sprintf(`DO $$
-DECLARE r RECORD;
-BEGIN
-  FOR r IN SELECT datname FROM pg_database
-           WHERE datname LIKE %s ESCAPE '\'
-  LOOP
-    EXECUTE format('GRANT ALL PRIVILEGES ON DATABASE %%I TO %%I', r.datname, %s);
-  END LOOP;
-END$$;`,
-		pgStr(p.PanelUsername+`\_%`),
-		pgStr(roleName),
-	)
-	cmdGrant := execCommandContext(ctx, "sudo", "-u", "postgres", "psql",
-		"-v", "ON_ERROR_STOP=1", "-XAtq", "-c", grantSQL)
-	if _, err := cmdGrant.CombinedOutput(); err != nil {
-		// Grants failing isn't fatal — first-time provision before any DB
-		// exists hits this path. Log via the response and continue.
-	}
+	// No database grant here. This used to GRANT ALL ON DATABASE to every
+	// database matching datname LIKE '<panel_username>\_%', which also matched
+	// a sibling tenant's databases (panel usernames may contain '_').
+	// grant_schema now grants the tenant's own databases from the explicit
+	// control-plane list and revokes any other database grant.
 
 	return dbPostgresShadowadminResponse{
 		Username: roleName,
@@ -226,11 +208,21 @@ END$$;`,
 // TABLES/SEQUENCES (covers postgres-owned + restored objects that membership
 // can't reach), and default privileges so future objects stay accessible.
 //
+// It also owns pgadmin's DATABASE-level privileges (CONNECT/CREATE/TEMP):
+// GRANT ALL ON DATABASE for each listed database, and REVOKE ALL ON DATABASE
+// on every other database where pgadmin holds an explicit grant, except the
+// scratch databases pgadmin itself owns (CREATEDB). The revoke removes the
+// grants the old ensure handed out by name pattern on existing boxes. An empty
+// list still runs the revoke.
+//
 // SECURITY: db_names is an EXPLICIT list of the tenant's OWN databases from the
 // control-plane (scoped by user_id), never a name pattern — a `datname LIKE
 // '<user>\_%'` would also match a sibling tenant's DB (panel usernames allow
 // '_') and hand pgadmin full table access to another tenant's data. Every name
-// is pgValidIdent-checked. Idempotent + fail-soft per DB.
+// is pgValidIdent-checked. The per-DB schema grants are fail-soft; a failure of
+// the database-level grant/revoke fails the call so the panel refuses the
+// Adminer session instead of opening it with a grant that may reach another
+// tenant.
 type dbPostgresGrantSchemaParams struct {
 	PanelUsername string   `json:"panel_username"`
 	DBNames       []string `json:"db_names"`
@@ -251,6 +243,51 @@ func dbPostgresShadowadminGrantSchemaHandler(ctx context.Context, params json.Ra
 	// pgadmin is validated; the DB name is validated + passed via -d, never
 	// interpolated into SQL.
 	roleQ := pgIdent(roleName)
+	pgStr := func(s string) string { return "'" + strings.ReplaceAll(s, "'", "''") + "'" }
+
+	dbs := make([]string, 0, len(p.DBNames))
+	quotedDBs := make([]string, 0, len(p.DBNames))
+	for _, db := range p.DBNames {
+		if !pgValidIdent(db) {
+			continue // never grant an unexpected name; the revoke still runs
+		}
+		dbs = append(dbs, db)
+		quotedDBs = append(quotedDBs, pgStr(db))
+	}
+
+	// Database-level privileges, from the maintenance DB: grant the listed
+	// databases, then revoke every other explicit grant pgadmin holds on a
+	// database it does not own.
+	dbLevelSQL := fmt.Sprintf(`DO $$
+DECLARE r RECORD;
+BEGIN
+  FOR r IN SELECT datname FROM pg_database
+           WHERE datname = ANY(ARRAY[%[1]s]::text[])
+  LOOP
+    EXECUTE format('GRANT ALL PRIVILEGES ON DATABASE %%I TO %%I', r.datname, %[2]s);
+  END LOOP;
+  FOR r IN SELECT DISTINCT d.datname
+           FROM pg_database d CROSS JOIN LATERAL aclexplode(d.datacl) a
+           WHERE d.datacl IS NOT NULL
+             AND a.grantee = (SELECT oid FROM pg_roles WHERE rolname = %[2]s)
+             AND d.datdba <> a.grantee
+             AND NOT (d.datname = ANY(ARRAY[%[1]s]::text[]))
+  LOOP
+    EXECUTE format('REVOKE ALL PRIVILEGES ON DATABASE %%I FROM %%I', r.datname, %[2]s);
+  END LOOP;
+END$$;`,
+		strings.Join(quotedDBs, ","),
+		pgStr(roleName),
+	)
+	dbLevel := execCommandContext(ctx, "sudo", "-u", "postgres", "psql",
+		"-v", "ON_ERROR_STOP=1", "-XAtq", "-c", dbLevelSQL)
+	if out, err := dbLevel.CombinedOutput(); err != nil {
+		return nil, &agentwire.AgentError{
+			Code:    agentwire.CodeInternal,
+			Message: "failed to sync pgadmin database grants: " + strings.TrimSpace(string(out)),
+		}
+	}
+
 	grantSQL := strings.Join([]string{
 		"GRANT ALL ON SCHEMA public TO " + roleQ,
 		"GRANT ALL ON ALL TABLES IN SCHEMA public TO " + roleQ,
@@ -259,10 +296,7 @@ func dbPostgresShadowadminGrantSchemaHandler(ctx context.Context, params json.Ra
 		"ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO " + roleQ,
 	}, "; ") + ";"
 
-	for _, db := range p.DBNames {
-		if !pgValidIdent(db) {
-			continue // skip an unexpected name; never block Adminer login
-		}
+	for _, db := range dbs {
 		// -d <db> selects the target database; run as postgres (peer auth).
 		cmd := execCommandContext(ctx, "sudo", "-u", "postgres", "psql",
 			"-v", "ON_ERROR_STOP=1", "-XAtq", "-d", db, "-c", grantSQL)

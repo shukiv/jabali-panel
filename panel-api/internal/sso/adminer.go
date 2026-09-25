@@ -124,8 +124,11 @@ func (s *AdminerService) EnsurePgShadow(ctx context.Context, userID string) erro
 	s.syncPgShadowMembers(ctx, userID, *user.Username)
 	// GH #1406 (round 2): membership isn't enough for the postgres-owned `public`
 	// schema — also grant pgadmin per-DB schema access so it can CREATE/SELECT.
-	s.syncPgShadowSchema(ctx, userID, *user.Username)
-	return nil
+	// The same call owns pgadmin's database-level grants (exactly the tenant's
+	// own databases; any other is revoked), so unlike the membership sync a
+	// failure fails the open: Adminer must not start with a grant that may
+	// still reach another tenant's database.
+	return s.syncPgShadowSchema(ctx, userID, *user.Username)
 }
 
 // syncPgShadowMembers grants <user>_pgadmin membership in the tenant's own
@@ -160,17 +163,18 @@ func (s *AdminerService) syncPgShadowMembers(ctx context.Context, userID, panelU
 // in EACH of the tenant's PostgreSQL databases (GH #1406). Jabali creates those
 // DBs OWNER postgres, so — with PG15+ locking the `public` schema — membership
 // alone doesn't let pgadmin CREATE tables or read postgres-owned ones; the
-// per-DB schema grant does. The DB NAMES are the explicit control-plane list
-// (scoped by user_id), never a pattern — a sibling tenant's DB must never be
-// handed over. Runs on every Adminer open (idempotent); non-fatal.
-func (s *AdminerService) syncPgShadowSchema(ctx context.Context, userID, panelUsername string) {
+// per-DB schema grant does. The agent also makes pgadmin's database-level
+// grants exactly this list and revokes any other. The DB NAMES are the explicit
+// control-plane list (scoped by user_id), never a pattern — a sibling tenant's
+// DB must never be handed over. Runs on every Adminer open (idempotent). An
+// empty list is still sent so stale grants are revoked; a failed list query
+// sends nothing (an error must never read as "no databases").
+func (s *AdminerService) syncPgShadowSchema(ctx context.Context, userID, panelUsername string) error {
 	var rows []models.Database
 	if err := s.base.db.WithContext(ctx).
 		Where("user_id = ? AND engine = ?", userID, "postgres").
 		Find(&rows).Error; err != nil {
-		s.base.log.WarnContext(ctx, "pg shadow: list databases failed",
-			"err", err, "user_id", userID)
-		return
+		return fmt.Errorf("list databases for Adminer grants: %w", err)
 	}
 	names := make([]string, 0, len(rows))
 	for _, d := range rows {
@@ -178,14 +182,11 @@ func (s *AdminerService) syncPgShadowSchema(ctx context.Context, userID, panelUs
 			names = append(names, d.Name)
 		}
 	}
-	if len(names) == 0 {
-		return // no PG databases yet — nothing to grant
-	}
 	if _, err := s.base.agent.Call(ctx, "db.postgres.shadowadmin.grant_schema",
 		map[string]interface{}{"panel_username": panelUsername, "db_names": names}); err != nil {
-		s.base.log.WarnContext(ctx, "pg shadow: grant_schema failed",
-			"err", err, "user_id", userID)
+		return fmt.Errorf("agent db.postgres.shadowadmin.grant_schema: %w", err)
 	}
+	return nil
 }
 
 // MintAdminerToken issues a fresh single-use token bound to the

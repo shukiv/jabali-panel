@@ -85,3 +85,111 @@ func TestShadowadminGrantMembers_GrantsExplicitListWithGuards(t *testing.T) {
 		}
 	}
 }
+
+// captureArgs records every psql argv (so a test can see -d <db> and -c <sql>)
+// and fails any call whose -c SQL contains failOn.
+func captureArgs(t *testing.T, failOn string) *[][]string {
+	t.Helper()
+	var calls [][]string
+	prev := execCommandContext
+	execCommandContext = func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		calls = append(calls, append([]string{name}, args...))
+		for i := 0; i < len(args)-1; i++ {
+			if args[i] == "-c" && failOn != "" && strings.Contains(args[i+1], failOn) {
+				return exec.CommandContext(ctx, "false")
+			}
+		}
+		return exec.CommandContext(ctx, "true")
+	}
+	t.Cleanup(func() { execCommandContext = prev })
+	return &calls
+}
+
+func sqlOf(call []string) string {
+	for i := 0; i < len(call)-1; i++ {
+		if call[i] == "-c" {
+			return call[i+1]
+		}
+	}
+	return ""
+}
+
+func dbOf(call []string) string {
+	for i := 0; i < len(call)-1; i++ {
+		if call[i] == "-d" {
+			return call[i+1]
+		}
+	}
+	return ""
+}
+
+// ensure no longer grants any database: the old LIKE '<user>\_%' matched a
+// sibling tenant's databases (panel usernames may contain '_').
+func TestShadowadminEnsure_GrantsNoDatabase(t *testing.T) {
+	seen := captureSQL(t)
+	if _, err := dbPostgresShadowadminEnsureHandler(context.Background(),
+		json.RawMessage(`{"panel_username":"alice"}`)); err != nil {
+		t.Fatalf("ensure: %v", err)
+	}
+	for _, sql := range *seen {
+		if strings.Contains(sql, "LIKE") || strings.Contains(sql, "ON DATABASE") {
+			t.Fatalf("ensure must not grant databases by pattern:\n%s", sql)
+		}
+	}
+}
+
+func TestShadowadminGrantSchema_DatabaseGrantsAreExactAndStaleOnesRevoked(t *testing.T) {
+	calls := captureArgs(t, "")
+	if _, err := dbPostgresShadowadminGrantSchemaHandler(context.Background(),
+		json.RawMessage(`{"panel_username":"alice","db_names":["alice_pg","bad;name"]}`)); err != nil {
+		t.Fatalf("grant_schema: %v", err)
+	}
+	if len(*calls) != 2 {
+		t.Fatalf("want 1 database-level call + 1 per-DB schema call, got %d: %v", len(*calls), *calls)
+	}
+	dbLevel := sqlOf((*calls)[0])
+	if dbOf((*calls)[0]) != "" {
+		t.Fatalf("the database-level grant runs on the maintenance DB, got -d %q", dbOf((*calls)[0]))
+	}
+	for _, want := range []string{
+		"ARRAY['alice_pg']::text[]",
+		"GRANT ALL PRIVILEGES ON DATABASE %I TO %I",
+		"REVOKE ALL PRIVILEGES ON DATABASE %I FROM %I",
+		"aclexplode(d.datacl)",
+		"d.datdba <> a.grantee",
+		"rolname = 'alice_pgadmin'",
+	} {
+		if !strings.Contains(dbLevel, want) {
+			t.Fatalf("database-level SQL missing %q:\n%s", want, dbLevel)
+		}
+	}
+	if strings.Contains(dbLevel, "LIKE") || strings.Contains(dbLevel, "bad;name") {
+		t.Fatalf("no pattern and no invalid name in the database-level SQL:\n%s", dbLevel)
+	}
+	if dbOf((*calls)[1]) != "alice_pg" || !strings.Contains(sqlOf((*calls)[1]), "GRANT ALL ON SCHEMA public") {
+		t.Fatalf("second call should be the schema grant on alice_pg: %v", (*calls)[1])
+	}
+}
+
+func TestShadowadminGrantSchema_EmptyListStillRevokes(t *testing.T) {
+	calls := captureArgs(t, "")
+	if _, err := dbPostgresShadowadminGrantSchemaHandler(context.Background(),
+		json.RawMessage(`{"panel_username":"alice","db_names":[]}`)); err != nil {
+		t.Fatalf("grant_schema: %v", err)
+	}
+	if len(*calls) != 1 {
+		t.Fatalf("want only the database-level call, got %d: %v", len(*calls), *calls)
+	}
+	sql := sqlOf((*calls)[0])
+	if !strings.Contains(sql, "ARRAY[]::text[]") || !strings.Contains(sql, "REVOKE ALL PRIVILEGES ON DATABASE") {
+		t.Fatalf("an empty list must still revoke stale database grants:\n%s", sql)
+	}
+}
+
+func TestShadowadminGrantSchema_DatabaseLevelFailureFails(t *testing.T) {
+	_ = captureArgs(t, "REVOKE ALL PRIVILEGES ON DATABASE")
+	if _, err := dbPostgresShadowadminGrantSchemaHandler(context.Background(),
+		json.RawMessage(`{"panel_username":"alice","db_names":["alice_pg"]}`)); err == nil {
+		t.Fatal("a failed database-level grant/revoke must fail the call so the panel refuses the Adminer open")
+	}
+}
