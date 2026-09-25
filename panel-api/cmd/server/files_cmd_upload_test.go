@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/uploadintake"
 )
 
 // JAB-337: the CLI upload staging budget must be per-owner, not a single global
@@ -13,9 +15,9 @@ import (
 // querying owner's files.
 func TestCLIStagingDirBytesForUser_IsolatesOwners(t *testing.T) {
 	dir := t.TempDir()
-	old := cliUploadStagingDir
-	cliUploadStagingDir = dir
-	defer func() { cliUploadStagingDir = old }()
+	old := uploadintake.Dir
+	uploadintake.Dir = dir
+	defer func() { uploadintake.Dir = old }()
 
 	write := func(name string, n int) {
 		if err := os.WriteFile(filepath.Join(dir, name), make([]byte, n), 0o640); err != nil {
@@ -57,10 +59,10 @@ func TestCLIUpload_UsesConfiguredMaxAndPerOwnerBudget(t *testing.T) {
 		t.Fatalf("read files_cmd.go: %v", err)
 	}
 	s := string(src)
-	if !strings.Contains(s, "cliResolveMaxUploadBytes(c.Context())") {
+	if !strings.Contains(s, "cliResolveUploadLimits(c.Context())") {
 		t.Fatal("upload must enforce the admin-configured max (JAB-337), not a hardcoded 100 MiB cap")
 	}
-	if !strings.Contains(s, "cliStagingDirBytesForUser(u.ID)") {
+	if !strings.Contains(s, "cliStagingDirBytesForUser(ownerID)") {
 		t.Fatal("staging budget must be per-owner (JAB-337)")
 	}
 	if strings.Contains(s, "cliStagingDirBytes()") {
