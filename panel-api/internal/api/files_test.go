@@ -24,6 +24,13 @@ import (
 // a pre-baked mockAgent. userID "" means "no claims" (tests 401).
 func setupFilesRouter(t *testing.T, userID string, agent *mockAgent) *gin.Engine {
 	t.Helper()
+	return setupFilesRouterWithSettings(t, userID, agent, nil)
+}
+
+// setupFilesRouterWithSettings is setupFilesRouter with a server_settings row, so
+// a test can set upload_max_size_mb (and so the per-owner staging budget).
+func setupFilesRouterWithSettings(t *testing.T, userID string, agent *mockAgent, settings *models.ServerSettings) *gin.Engine {
+	t.Helper()
 	// Redirect upload staging to a per-test tmpdir; the production path
 	// (/var/lib/jabali-uploads) is created by install.sh and isn't
 	// writable from `go test`.
@@ -48,11 +55,15 @@ func setupFilesRouter(t *testing.T, userID string, agent *mockAgent) *gin.Engine
 		"no-linux":    {ID: "no-linux", Username: nil},
 		"empty-linux": {ID: "empty-linux", Username: strPtrEmpty()},
 	}}
-	RegisterFilesRoutes(v1, FilesHandlerConfig{
+	cfg := FilesHandlerConfig{
 		Users:   users,
 		Domains: nil, // not exercised in these tests
 		Agent:   agent,
-	})
+	}
+	if settings != nil {
+		cfg.ServerSettings = &mockServerSettingsRepo{getResult: settings}
+	}
+	RegisterFilesRoutes(v1, cfg)
 	return r
 }
 
