@@ -69,8 +69,13 @@ func TestMailboxRepository_ListByDomainID_SelectsNoSecretColumns(t *testing.T) {
 			t.Fatalf("the per-domain mailbox list must not select %s: %s", secret, q)
 		}
 	}
+	// Check the select list alone: the WHERE clause also names columns.
+	selectList := q
+	if i := strings.Index(q, " FROM "); i >= 0 {
+		selectList = q[:i]
+	}
 	for _, col := range []string{"email_cached", "last_usage_bytes", "is_disabled", "send_only", "system"} {
-		if !strings.Contains(q, col) {
+		if !strings.Contains(selectList, col) {
 			t.Errorf("the per-domain mailbox list must still select %s: %s", col, q)
 		}
 	}
