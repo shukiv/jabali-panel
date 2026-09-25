@@ -441,48 +441,37 @@ func createDomainDirect(ctx context.Context, in cliDomainInput) (*models.Domain,
 		CreatedAt:      now,
 		UpdatedAt:      now,
 	}
-	// GH #1175: reverse-proxy domains draw a loopback port from the shared
-	// allocator BEFORE the insert (owner_id = the ULID above), released if the
-	// insert then fails so a crash can't leak the reservation. Same pool + code
-	// as the HTTP create path (repository.AllocateReverseProxy).
+	// GH #1175 / #1401: reverse-proxy domains draw a loopback port from the
+	// shared allocator BEFORE the insert (owner_id = the ULID above). The
+	// validate → system-uid probe → allocate sequence and the release on a
+	// failed insert are the domainops module's (JAB-279), the same code the
+	// REST create door runs; this adapter maps its sentinels to CLI messages.
 	ports := repository.NewPortAllocationRepository(sharedDB)
 	if in.ReverseProxy {
-		var port int
-		var aerr error
-		if in.ReverseProxyPort != 0 {
-			if verr := repository.ValidateReverseProxyPort(in.ReverseProxyPort); verr != nil {
-				return nil, nil, verr
-			}
-			// GH #1401 follow-up: same drift-proof bind check as the HTTP path —
-			// refuse a port already LISTENing on loopback under a system uid
-			// (< 1000). Fail-open on agent trouble (the constant denylist is the
-			// primary gate).
-			if initAgent() == nil && sharedAgent != nil {
-				if raw, cerr := sharedAgent.Call(ctx, "net.loopback_listener_uid", map[string]any{"port": in.ReverseProxyPort}); cerr == nil {
-					var st struct {
-						Bound bool `json:"bound"`
-						UID   int  `json:"uid"`
-					}
-					if json.Unmarshal(raw, &st) == nil && st.Bound && st.UID >= 0 && st.UID < 1000 {
-						return nil, nil, fmt.Errorf("port %d is already in use by a system service — choose another", in.ReverseProxyPort)
-					}
-				}
-			}
-			port, aerr = ports.AllocateReverseProxySpecific(ctx, d.ID, in.ReverseProxyPort)
-		} else {
-			port, aerr = ports.AllocateReverseProxy(ctx, d.ID)
+		deps := domainops.PortDeps{Ports: ports}
+		// The probe is only needed for an explicit port. Assign the agent only
+		// when the pointer is set: a nil *agent.Client in the interface would
+		// pass the module's nil check and panic on Call.
+		if in.ReverseProxyPort != 0 && initAgent() == nil && sharedAgent != nil {
+			deps.Agent = sharedAgent
 		}
-		if aerr != nil {
-			return nil, nil, fmt.Errorf("allocate reverse-proxy port: %w", aerr)
+		port, perr := domainops.ReserveReverseProxyPort(ctx, deps, d.ID, in.ReverseProxyPort)
+		switch {
+		case errors.Is(perr, domainops.ErrReverseProxyPortInvalid):
+			return nil, nil, perr // the static policy's own reason
+		case errors.Is(perr, domainops.ErrReverseProxyPortSystemBound):
+			return nil, nil, fmt.Errorf("port %d is already in use by a system service — choose another", in.ReverseProxyPort)
+		case errors.Is(perr, domainops.ErrReverseProxyPortInUse):
+			return nil, nil, fmt.Errorf("port %d is already assigned to another domain — choose another", in.ReverseProxyPort)
+		case perr != nil:
+			return nil, nil, fmt.Errorf("allocate reverse-proxy port: %w", perr)
 		}
 		d.ReverseProxyPort = uint32(port)
 	}
 
-	if err := domains.Create(ctx, d); err != nil {
-		if in.ReverseProxy {
-			_ = ports.Release(ctx, models.PortOwnerReverseProxy, d.ID)
-		}
-		if errors.Is(err, repository.ErrConflict) {
+	// PersistDomain releases the reverse-proxy port on any insert failure.
+	if err := domainops.PersistDomain(ctx, domains, ports, d); err != nil {
+		if errors.Is(err, domainops.ErrDomainExists) {
 			return nil, nil, fmt.Errorf("domain %q already exists", in.Name)
 		}
 		return nil, nil, fmt.Errorf("create domain row: %w", err)
