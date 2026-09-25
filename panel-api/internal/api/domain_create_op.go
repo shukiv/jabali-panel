@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"net"
@@ -31,11 +30,6 @@ import (
 // findCoveringSharedCert / previewSlugConflict — and the only new caller
 // (automation) also lives in this package. The shared email-enable step now
 // lives in internal/domainmailops (JAB-288). Reuse, not packaging, was the goal.
-
-// reverseProxyTenantUIDFloor mirrors the agent's minTenantUID (GH #1401): a
-// loopback listener owned by a uid below this is a system/service process, not
-// a tenant app, so a tenant's reverse-proxy target must not point at it.
-const reverseProxyTenantUIDFloor = 1000
 
 // createDomainInput is the pre-normalized, pre-validated-shape input to
 // createDomainOp. Name MUST already be normalized (normalizeDomainName) and
@@ -113,6 +107,25 @@ type createDomainError struct {
 }
 
 func (e *createDomainError) Error() string { return e.Code }
+
+// reverseProxyReserveError maps a domainops reverse-proxy reservation failure
+// to the status, code, and detail the create door returned before the module
+// owned the reservation (JAB-279 AC6).
+func reverseProxyReserveError(err error) *createDomainError {
+	var invalid *domainops.InvalidPortError
+	switch {
+	case errors.Is(err, domainops.ErrReverseProxyUnavailable):
+		return &createDomainError{http.StatusServiceUnavailable, "reverse_proxy_unavailable", "reverse-proxy domains are not enabled on this host"}
+	case errors.As(err, &invalid):
+		return &createDomainError{http.StatusBadRequest, "reverse_proxy_port_invalid", invalid.Reason.Error()}
+	case errors.Is(err, domainops.ErrReverseProxyPortSystemBound):
+		return &createDomainError{http.StatusConflict, "reverse_proxy_port_system_bound", "that port is already in use by a system service — choose another"}
+	case errors.Is(err, domainops.ErrReverseProxyPortInUse):
+		return &createDomainError{http.StatusConflict, "reverse_proxy_port_in_use", "that port is already assigned to another domain — choose another"}
+	default:
+		return &createDomainError{http.StatusServiceUnavailable, "reverse_proxy_port_unavailable", "no free reverse-proxy port available; contact the administrator"}
+	}
+}
 
 // createDomainOp runs the full GUI domain-creation orchestration for `in`
 // against the handler's deps. On success it returns the created domain (with
@@ -431,50 +444,17 @@ func createDomainOp(ctx context.Context, h *domainHandler, in createDomainInput)
 		UpdatedAt:   now,
 	}
 
-	// GH #1175: a reverse-proxy domain draws a loopback port from the shared
-	// allocator. Allocated BEFORE the insert (owner_id = the ULID above) so the
-	// row carries the port; released if the insert then fails so we don't leak.
+	// GH #1175 / #1401: a reverse-proxy domain draws a loopback port from the
+	// shared allocator BEFORE the insert (owner_id = the ULID above) so the row
+	// carries the port. The validate → system-uid probe → allocate sequence is
+	// the domainops module's (JAB-279); this adapter maps its sentinels.
 	if in.ReverseProxy {
-		if h.cfg.PortAllocations == nil {
-			return nil, &createDomainError{http.StatusServiceUnavailable, "reverse_proxy_unavailable", "reverse-proxy domains are not enabled on this host"}
-		}
-		var port int
-		var aerr error
-		if in.ReverseProxyPort != 0 {
-			// GH #1401: tenant chose a specific port — validate it can't target
-			// the panel, a system service, another tenant's allocated port, or a
-			// privileged/reserved range, then reserve that exact port.
-			if verr := repository.ValidateReverseProxyPort(int(in.ReverseProxyPort)); verr != nil {
-				return nil, &createDomainError{http.StatusBadRequest, "reverse_proxy_port_invalid", verr.Error()}
-			}
-			// GH #1401 drift-proof backstop: the constant denylist above blocks
-			// KNOWN jabali infra ports; this refuses a port already LISTENing on
-			// loopback under a system/service uid (< 1000, below the tenant floor)
-			// even if the constant list missed it — so a new infra service can't
-			// be silently proxied. Fail OPEN on any agent trouble: the constant
-			// denylist stays the primary gate, and a create shouldn't hard-fail
-			// because the agent is momentarily unreachable. A port bound by the
-			// tenant's own app (uid >= 1000), or not yet bound, passes.
-			if h.cfg.Agent != nil {
-				if raw, cerr := h.cfg.Agent.Call(ctx, "net.loopback_listener_uid", map[string]any{"port": int(in.ReverseProxyPort)}); cerr == nil {
-					var st struct {
-						Bound bool `json:"bound"`
-						UID   int  `json:"uid"`
-					}
-					if json.Unmarshal(raw, &st) == nil && st.Bound && st.UID >= 0 && st.UID < reverseProxyTenantUIDFloor {
-						return nil, &createDomainError{http.StatusConflict, "reverse_proxy_port_system_bound", "that port is already in use by a system service — choose another"}
-					}
-				}
-			}
-			port, aerr = h.cfg.PortAllocations.AllocateReverseProxySpecific(ctx, domain.ID, int(in.ReverseProxyPort))
-			if errors.Is(aerr, repository.ErrPortInUse) {
-				return nil, &createDomainError{http.StatusConflict, "reverse_proxy_port_in_use", "that port is already assigned to another domain — choose another"}
-			}
-		} else {
-			port, aerr = h.cfg.PortAllocations.AllocateReverseProxy(ctx, domain.ID)
-		}
-		if aerr != nil {
-			return nil, &createDomainError{http.StatusServiceUnavailable, "reverse_proxy_port_unavailable", "no free reverse-proxy port available; contact the administrator"}
+		port, perr := domainops.ReserveReverseProxyPort(ctx, domainops.PortDeps{
+			Ports: h.cfg.PortAllocations,
+			Agent: h.cfg.Agent,
+		}, domain.ID, int(in.ReverseProxyPort))
+		if perr != nil {
+			return nil, reverseProxyReserveError(perr)
 		}
 		domain.ReverseProxyPort = uint32(port)
 	}
@@ -483,18 +463,16 @@ func createDomainOp(ctx context.Context, h *domainHandler, in createDomainInput)
 	// enable of a colliding pair — first-wins would silently serve the wrong site.
 	if domain.TempURLEnabled {
 		if other := h.previewSlugConflict(ctx, domain.Name, ""); other != "" {
-			if in.ReverseProxy && h.cfg.PortAllocations != nil {
-				_ = h.cfg.PortAllocations.Release(ctx, models.PortOwnerReverseProxy, domain.ID)
+			if in.ReverseProxy {
+				_ = domainops.ReleaseReverseProxyPort(ctx, h.cfg.PortAllocations, domain.ID)
 			}
 			return nil, &createDomainError{http.StatusConflict, "temp_url_slug_conflict", "preview URL would collide with " + other}
 		}
 	}
 
-	if err := h.cfg.Domains.Create(ctx, domain); err != nil {
-		if in.ReverseProxy && h.cfg.PortAllocations != nil {
-			_ = h.cfg.PortAllocations.Release(ctx, models.PortOwnerReverseProxy, domain.ID)
-		}
-		if isConflict(err) {
+	// PersistDomain releases the reverse-proxy port on any insert failure.
+	if err := domainops.PersistDomain(ctx, h.cfg.Domains, h.cfg.PortAllocations, domain); err != nil {
+		if errors.Is(err, domainops.ErrDomainExists) {
 			return nil, &createDomainError{http.StatusConflict, "domain_already_exists", ""}
 		}
 		return nil, &createDomainError{http.StatusInternalServerError, "internal", ""}
