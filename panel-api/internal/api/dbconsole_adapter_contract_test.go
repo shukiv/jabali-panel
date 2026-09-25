@@ -58,11 +58,12 @@ import (
 //     concrete asymmetry that used to block a unified fake-minter matrix — and
 //     forced the tenant doors onto source-delegation pins — is resolved (JAB-348
 //     AC4).
-//   - The CLI genuinely has no injection seam (it constructs the concrete
-//     services inline), so it stays pinned to the leaf by source delegation in
-//     cmd/server/db_sso_contract_test.go, alongside the
-//     TestDBConsoleContract_EveryAdapterDelegatesEncodingToLeaf source pins that
-//     remain as belt-and-suspenders against inline re-implementation.
+//   - The CLI runs its issuance through dbSSOIssue, which takes the same
+//     dbconsoleops console interfaces (dbSSODeps), so recording fakes drive it
+//     through the same matrix in cmd/server/db_sso_contract_test.go
+//     (TestDBSSOCLI_EncodingAnchoredToLeaf). The source pins there and in
+//     TestDBConsoleContract_EveryAdapterDelegatesEncodingToLeaf remain as
+//     belt-and-suspenders against inline re-implementation.
 
 // contractAdminMinter / contractAdminerMinter satisfy the privileged doors' mint
 // interfaces, record the scope they were called with, and can be scripted to
@@ -237,8 +238,8 @@ func TestDBConsoleContract_PrivilegedAuditsBothOutcomesInOwnTaxonomy(t *testing.
 // TestDBConsoleContract_EveryAdapterDelegatesEncodingToLeaf is the source-level
 // belt-and-suspenders for the single-authority invariant. The tenant doors are
 // now also covered behaviourally (TestDBConsoleContract_TenantEncodingAnchoredToLeaf),
-// and the CLI — which has no injection seam — is pinned in
-// cmd/server/db_sso_contract_test.go. Each adapter must route scope/engine/
+// and the CLI is covered both ways in cmd/server/db_sso_contract_test.go. Each
+// adapter must route scope/engine/
 // redirect encoding through dbconsoleops rather than re-implementing it inline —
 // that delegation is what makes "encoded identically across every adapter" true
 // by construction. An adapter that inlines its own URL/engine handling drops the
@@ -347,8 +348,8 @@ func bufLogger() (*bytes.Buffer, *slog.Logger) {
 // byte-identical to the leaf builder fed the door's own base URL and minted
 // token, that the engine is normalized identically, and that the shadow path is
 // actually taken. This is the tenant half of the AC4 "same request matrix across
-// tenant, privileged, and CLI adapters" invariant (the CLI has no injection seam
-// and stays source-pinned in cmd/server/db_sso_contract_test.go).
+// tenant, privileged, and CLI adapters" invariant (the CLI half is
+// TestDBSSOCLI_EncodingAnchoredToLeaf in cmd/server/db_sso_contract_test.go).
 func TestDBConsoleContract_TenantEncodingAnchoredToLeaf(t *testing.T) {
 	const pmaBase = "https://pma.example.com"
 	const admBase = "https://adm.example.com"
