@@ -66,6 +66,13 @@ func TestChunkPath_PerOwner(t *testing.T) {
 	if OwnerTag("userA") == OwnerTag("userB") {
 		t.Fatal("distinct owners need distinct tags")
 	}
+	// The session id binds the owner too, not only the 48-bit tag, so two
+	// owners stay apart even if their tags ever collide.
+	idA := strings.TrimPrefix(a, Prefix()+OwnerTag("userA")+"-")
+	idB := strings.TrimPrefix(b, Prefix()+OwnerTag("userB")+"-")
+	if idA == idB {
+		t.Fatal("the session id must depend on the owner, not only on the upload id")
+	}
 }
 
 // #425: Stats counts only this owner's staging files, chunked and single-shot.
