@@ -83,6 +83,10 @@ var (
 	ErrCommandInvalid  = errors.New("cronops: invalid command")
 	ErrAgentFailed     = errors.New("cronops: agent dispatch failed")
 	ErrInternal        = errors.New("cronops: internal error")
+	// ErrRootOwnerNotAdmin: a root job (RunAsRoot) must be owned by an admin
+	// account. Its command is validated against the owner's docroots, so a
+	// tenant-owned root job would run a tenant-writable script as uid 0.
+	ErrRootOwnerNotAdmin = errors.New("cronops: a root cron job must be owned by an admin account")
 )
 
 const agentTimeout = 30 * time.Second
@@ -148,6 +152,26 @@ func resolveLinuxUser(ctx context.Context, d Deps, userID string) (string, error
 	return uname, nil
 }
 
+// requireAdminOwner enforces the root-job owner invariant: a RunAsRoot job
+// must be owned by an admin account. The command is validated against the
+// owner's docroots/domains, so a tenant-owned root job would have root run a
+// script the tenant can edit — and the tenant could also edit the job itself.
+// Checked on Create and Update (a pre-existing tenant-owned root row is frozen
+// until deleted); Delete stays ungated because deleting is the remedy.
+func requireAdminOwner(ctx context.Context, d Deps, userID string) error {
+	u, err := d.Users.FindByID(ctx, userID)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return ErrUserNotFound
+		}
+		return fmt.Errorf("%w: load owner: %v", ErrInternal, err)
+	}
+	if u == nil || !u.IsAdmin {
+		return ErrRootOwnerNotAdmin
+	}
+	return nil
+}
+
 // ownedTargets returns the account's docroots (wp/php --path gate) AND its
 // domain names (curl/wget http-trigger self-domain gate, GH #400) from a
 // single domains query.
@@ -208,7 +232,11 @@ func Create(ctx context.Context, d Deps, in CreateInput) (*models.CronJob, error
 	// Root crons skip the per-user linger check. The agent writes a
 	// system-scoped timer; no /run/user/<uid> dir is touched.
 	username := "root"
-	if !in.RunAsRoot {
+	if in.RunAsRoot {
+		if err := requireAdminOwner(ctx, d, in.UserID); err != nil {
+			return nil, err
+		}
+	} else {
 		var err error
 		username, err = resolveLinuxUser(ctx, d, in.UserID)
 		if err != nil {
@@ -265,7 +293,11 @@ func Update(ctx context.Context, d Deps, jobID string, patch UpdatePatch) (*mode
 	}
 	username := "root"
 	var docroots, domains []string
-	if !job.RunAsRoot {
+	if job.RunAsRoot {
+		if err := requireAdminOwner(ctx, d, job.UserID); err != nil {
+			return nil, err
+		}
+	} else {
 		username, err = resolveLinuxUser(ctx, d, job.UserID)
 		if err != nil {
 			return nil, err

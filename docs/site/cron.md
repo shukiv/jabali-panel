@@ -35,6 +35,8 @@ Only commands the admin has marked allowed can be scheduled. The default allowli
 
 **Admin → Cron Jobs** lists every tenant's jobs. From there an admin can create a job under any tenant (or as `root`), and toggle, run, view the log of, edit, or delete any job. Editing changes only the name, command and schedule. The owner and the run-as target stay fixed; to move a job to another tenant, delete it and create it again. An admin's edit is checked exactly like the tenant's own: the command must stay inside the **job owner's** directories, not the admin's (GH #1686).
 
+A `root` job is always owned by the admin who creates it. The API refuses `run_as_root` combined with another account's `user_id` (`422 run_as_root_owner_mismatch`), because a root job's command is checked against its owner's directories. A root job whose owner is not an admin, which only a raw API call could create before this check, can no longer be edited or toggled (`422 root_cron_owner_not_admin`). Delete it and create it again as an admin. To find such jobs: `SELECT c.id, c.user_id FROM cron_jobs c JOIN users u ON u.id = c.user_id WHERE c.run_as_root = 1 AND u.is_admin = 0;`
+
 ## CLI
 
 ```bash

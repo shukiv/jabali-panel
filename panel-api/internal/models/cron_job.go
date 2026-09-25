@@ -18,7 +18,8 @@ type CronJob struct {
 	// struct value is always written.
 	Enabled bool `gorm:"type:tinyint(1);not null" json:"enabled"`
 	// RunAsRoot is admin-only (gated in panel-api/internal/api/cron.go).
-	// When true, the agent writes a SYSTEM-scoped systemd timer at
+	// A root job must be owned by an admin account (cronops enforces this
+	// on Create and Update — ErrRootOwnerNotAdmin). When true, the agent writes a SYSTEM-scoped systemd timer at
 	// /etc/systemd/system/jabali-cron-<id>.timer that runs the command
 	// as uid 0 -- bypassing the per-user systemd dispatch path.
 	RunAsRoot    bool       `gorm:"column:run_as_root;type:tinyint(1);not null;default:0" json:"run_as_root"`
