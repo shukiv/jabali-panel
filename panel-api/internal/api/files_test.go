@@ -18,6 +18,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/filesops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/uploadintake"
 )
 
 // setupFilesRouter wires /files onto a throwaway gin.Engine. Caller injects
@@ -34,9 +35,9 @@ func setupFilesRouterWithSettings(t *testing.T, userID string, agent *mockAgent,
 	// Redirect upload staging to a per-test tmpdir; the production path
 	// (/var/lib/jabali-uploads) is created by install.sh and isn't
 	// writable from `go test`.
-	prev := uploadStagingDir
-	uploadStagingDir = t.TempDir()
-	t.Cleanup(func() { uploadStagingDir = prev })
+	prev := uploadintake.Dir
+	uploadintake.Dir = t.TempDir()
+	t.Cleanup(func() { uploadintake.Dir = prev })
 
 	gin.SetMode(gin.TestMode)
 	r := gin.New()

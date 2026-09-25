@@ -12,6 +12,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/auth"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/uploadintake"
 )
 
 // setupAdminFilesRouter wires /admin/files with an admin session and the admin
@@ -20,9 +21,9 @@ import (
 // pre-check refuses a mutation — callCount is the proof.
 func setupAdminFilesRouter(t *testing.T, agent *mockAgent) *gin.Engine {
 	t.Helper()
-	prev := uploadStagingDir
-	uploadStagingDir = t.TempDir()
-	t.Cleanup(func() { uploadStagingDir = prev })
+	prev := uploadintake.Dir
+	uploadintake.Dir = t.TempDir()
+	t.Cleanup(func() { uploadintake.Dir = prev })
 
 	gin.SetMode(gin.TestMode)
 	r := gin.New()

@@ -5,6 +5,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/uploadintake"
 )
 
 // TestUploadStagingDirHasAppArmorRule guards GH #355: the panel-api
@@ -16,7 +18,7 @@ import (
 // systemd path allow-listing and AppArmor file mediation are independent
 // layers — an ReadWritePaths entry without a matching profile rule fails
 // silently in complain and hard-fails in enforce. This test pins the two
-// together so a future edit to uploadStagingDir (or the profile) can't
+// together so a future edit to uploadintake.Dir (or the profile) can't
 // reopen the regression.
 func TestUploadStagingDirHasAppArmorRule(t *testing.T) {
 	const profilePath = "../../../install/apparmor/usr.local.bin.jabali-panel-api"
@@ -30,13 +32,13 @@ func TestUploadStagingDirHasAppArmorRule(t *testing.T) {
 	// Every jabali-owned ReadWritePaths dir the daemon writes in-process
 	// must also have a matching AppArmor rw rule — systemd path
 	// allow-listing and AppArmor file mediation are independent layers.
-	// - uploadStagingDir (files.go): file-manager uploads (GH #355).
+	// - uploadintake.Dir: file-manager uploads (GH #355).
 	// - /var/lib/jabali-migrations (admin_migrations.go migrationStagingDir):
 	//   offline cPanel/HestiaCP tarball upload via uploadTarball.
 	cases := []struct {
 		dir, why string
 	}{
-		{strings.TrimRight(uploadStagingDir, "/") + "/", "file-manager uploads (GH #355)"},
+		{strings.TrimRight(uploadintake.Dir, "/") + "/", "file-manager uploads (GH #355)"},
 		{"/var/lib/jabali-migrations/", "offline migration tarball upload"},
 	}
 

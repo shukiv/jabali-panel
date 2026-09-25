@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -145,5 +146,27 @@ func TestUploadIntakeHTTP_FinalChunkIngests(t *testing.T) {
 	if gotMethod != "files.ingest" || !strings.Contains(s, `"user_id":"user1"`) || !strings.Contains(s, `"username":"alice"`) ||
 		!strings.Contains(s, `"dest_path":"/home/alice/f.txt"`) || !strings.Contains(s, `"tmp_path":"`) {
 		t.Fatalf("ingest call = %s %s", gotMethod, s)
+	}
+}
+
+// The File Manager upload handlers are the Upload Intake module's HTTP adapter
+// (JAB-365 AC1): staging, the cap/budget checks and the ingest hand-off run in
+// internal/uploadintake. A handler that opens a staging file, globs the staging
+// dir or calls files.ingest itself has re-grown the parallel implementation.
+func TestUploadIntakeHTTP_HandlersDelegateToTheModule(t *testing.T) {
+	raw, err := os.ReadFile("files.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := withoutLineComments(string(raw))
+	for _, need := range []string{"uploadintake.Stage(", "uploadintake.Append(", "uploadintake.Ingest(", "uploadintake.Written("} {
+		if !strings.Contains(src, need) {
+			t.Errorf("files.go must call %s", need)
+		}
+	}
+	for _, banned := range []string{`"files.ingest"`, "O_EXCL", "filepath.Glob(", "jabali-upload-"} {
+		if strings.Contains(src, banned) {
+			t.Errorf("files.go contains %s — upload staging belongs to internal/uploadintake", banned)
+		}
 	}
 }
