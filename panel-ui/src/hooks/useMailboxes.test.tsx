@@ -229,7 +229,11 @@ describe("useDeleteMailbox", () => {
     // (["list",...,"me"] and ["autoresponders","by-domain","me"]) are refreshed
     // alongside the per-domain drill-down keys.
     expect(invalidatedKeys).toContainEqual(["list", "mailbox-group-memberships"]);
-    expect(invalidatedKeys).toContainEqual(["autoresponders", "by-domain"]);
+    // JAB-370 AC7: the canonical inventory family busts the whole autoresponders
+    // prefix (covering ["autoresponders","by-domain",…]) and the forwarder
+    // summaries, which the server cascades on delete.
+    expect(invalidatedKeys).toContainEqual(["autoresponders"]);
+    expect(invalidatedKeys).toContainEqual(["forwarders"]);
     // GH #1615: same per-domain drill-down key as create/update — a deleted
     // mailbox must vanish from the Mail Domains → domain → Mailboxes list too.
     expect(invalidatedKeys).toContainEqual(["list", perDomainMailboxesResource("dom1")]);
