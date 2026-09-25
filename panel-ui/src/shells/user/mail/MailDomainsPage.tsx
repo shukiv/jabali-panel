@@ -32,8 +32,10 @@ import {
   PlusOutlined,
   PoweroffOutlined,
 } from "@icons";
+import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { useNavigate } from "react-router";
+import { invalidateMailInventory } from "../../../hooks/useMailboxes";
 import { useListQuery } from "../../../hooks/useQueries";
 import { humanBytes } from "../../../utils/bytes";
 import { getSSLTagColor, getSSLTagLabel } from "../../../utils/sslState";
@@ -68,6 +70,7 @@ const numOrNull = (n: number | null | undefined): number =>
 
 export function MailDomainsPage() {
   const navigate = useNavigate();
+  const qc = useQueryClient();
   const [busyId, setBusyId] = useState<string | null>(null);
   // Delete (mail purge) is type-to-confirm: the row being deleted + the typed
   // domain name that must match before the destructive button enables.
@@ -131,6 +134,13 @@ export function MailDomainsPage() {
       );
       feedback.message.success(`Mail deleted for ${row.name}`);
       (resp.data?.warnings ?? []).forEach((w) => feedback.message.warning(w));
+      // JAB-370 AC7: every user mailbox on the domain is gone (forwarders and
+      // autoresponders cascade), and email_enabled is cleared — refresh the
+      // whole mail inventory family and the domain rows, not only this list.
+      invalidateMailInventory(qc, row.id);
+      qc.invalidateQueries({ queryKey: ["list", "domains"] });
+      qc.invalidateQueries({ queryKey: ["one", "domains", row.id] });
+      qc.invalidateQueries({ queryKey: ["one", "domain-email", row.id] });
       setDeleteRow(null);
       setConfirmText("");
       await query.refetch();

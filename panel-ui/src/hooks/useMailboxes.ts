@@ -144,6 +144,23 @@ function invalidateMailboxLists(qc: ReturnType<typeof useQueryClient>, domainId?
   qc.invalidateQueries({ queryKey: ["list", "me/mailboxes"] });
 }
 
+// invalidateMailInventory is the one canonical mail inventory family (JAB-370
+// AC7): every mailbox list above, plus the per-mailbox summaries the Mailboxes
+// tab enriches rows with — group memberships, autoresponders, and forwarders.
+// Use it for any mutation that removes mailboxes: the server cascades their
+// forwarders and autoresponders, and with the 30 s default staleTime a view
+// left valid keeps rendering the deleted rows from cache. Keys are prefixes,
+// so the owner-scoped bulk keys ("me") and the per-domain keys both refresh.
+export function invalidateMailInventory(
+  qc: ReturnType<typeof useQueryClient>,
+  domainId?: string,
+): void {
+  invalidateMailboxLists(qc, domainId);
+  qc.invalidateQueries({ queryKey: ["list", "mailbox-group-memberships"] });
+  qc.invalidateQueries({ queryKey: ["autoresponders"] });
+  qc.invalidateQueries({ queryKey: ["forwarders"] });
+}
+
 // ---------------------------------------------------------------------------
 // Domain email (enable/disable state)
 // ---------------------------------------------------------------------------
@@ -279,18 +296,11 @@ export function useDeleteMailbox(): UseMutationResult<
       await apiClient.delete(`/mailboxes/${id}`);
     },
     onSuccess: (_data, { domainId }) => {
-      // GH #1615: refresh every mailbox list, including the per-domain
-      // drill-down (a deleted mailbox otherwise lingered there until refresh).
-      invalidateMailboxLists(qc, domainId);
-      // JAB-333: a deleted mailbox also disappears from the tenant screen's
-      // group-membership and autoresponder panels — invalidate those shared
-      // keys so they don't render a ghost row until the next refetch.
-      // JAB-370 Selection: bust the membership AND autoresponder projections at
-      // the key PREFIX so the owner-scoped cross-domain bulk keys
-      // (["list",...,"me"] and ["autoresponders","by-domain","me"]) refresh too,
-      // not only the per-domain drill-down keys.
-      qc.invalidateQueries({ queryKey: ["list", "mailbox-group-memberships"] });
-      qc.invalidateQueries({ queryKey: ["autoresponders", "by-domain"] });
+      // GH #1615 / JAB-333 / JAB-370: a deleted mailbox leaves every mailbox
+      // list (including the per-domain drill-down) and the membership,
+      // autoresponder, and forwarder summaries — the server cascades the
+      // latter two — so refresh the whole inventory family.
+      invalidateMailInventory(qc, domainId);
     },
   });
 }
@@ -371,7 +381,8 @@ export function useUpdateMailboxQuota(): UseMutationResult<
       return data;
     },
     onSuccess: (_data, { domainId }) => {
-      qc.invalidateQueries({ queryKey: ["list", "mailboxes", domainId] });
+      // The quota shows on every mailbox list, not only the legacy key.
+      invalidateMailboxLists(qc, domainId);
     },
   });
 }

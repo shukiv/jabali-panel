@@ -4,7 +4,7 @@
 // (DELETE /domains/:id/email). Creating a mailbox happens inside a domain's
 // drill-down, so there is no New Mailbox button on this list.
 import { App } from "antd";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, type QueryKey } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -66,7 +66,7 @@ function mockList() {
     .mockResolvedValue({ data: { data: ROWS, total: ROWS.length, page: 1, page_size: ROWS.length } });
 }
 
-function renderPage() {
+function renderPage(): QueryClient {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={qc}>
@@ -77,6 +77,7 @@ function renderPage() {
       </App>
     </QueryClientProvider>,
   );
+  return qc;
 }
 
 // GH #1387: actions live behind a per-row "⋯" dropdown. Open it and click the
@@ -157,6 +158,62 @@ describe("GH #1387 — MailDomainsPage (mail-active only)", () => {
       }),
     );
     expect(mocked.delete).not.toHaveBeenCalled();
+  });
+
+  // JAB-370 AC7: the purge deletes every user mailbox on the domain (their
+  // forwarders and autoresponders cascade) and clears email_enabled. With a
+  // 30 s staleTime, any mail inventory view left valid would keep showing the
+  // deleted mailboxes from cache, so the purge must invalidate the whole
+  // inventory family plus the domain rows.
+  it("a successful purge invalidates the mail inventory family and the domain rows", async () => {
+    const qc = renderPage();
+    const family: QueryKey[] = [
+      ["list", "me/mailboxes", { page: 1 }],
+      ["list", "admin/mailboxes", { page: 1 }],
+      ["list", "domains/d-on/mailboxes", { page: 1 }],
+      ["list", "mailboxes", "d-on", { page: 1 }],
+      ["list", "mailbox-group-memberships", "me"],
+      ["autoresponders", "by-domain", "me"],
+      ["forwarders"],
+      ["list", "domains", { page: 1 }],
+      ["one", "domains", "d-on"],
+      ["one", "domain-email", "d-on"],
+    ];
+    const unrelated: QueryKey[] = [["list", "databases", { page: 1 }]];
+    for (const k of [...family, ...unrelated]) qc.setQueryData(k, { seeded: true });
+
+    const onRow = (await screen.findByText("on.test")).closest("tr") as HTMLElement;
+    await openRowMenu(onRow, "Delete");
+    fireEvent.change(await screen.findByPlaceholderText("on.test"), { target: { value: "on.test" } });
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /Delete mail/i })).toBeEnabled(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Delete mail/i }));
+    await waitFor(() => expect(mocked.post).toHaveBeenCalled());
+
+    await waitFor(() =>
+      expect(family.filter((k) => !qc.getQueryState(k)?.isInvalidated)).toEqual([]),
+    );
+    expect(unrelated.filter((k) => qc.getQueryState(k)?.isInvalidated)).toEqual([]);
+  });
+
+  it("a failed purge leaves the mail inventory family alone", async () => {
+    mocked.post.mockRejectedValue(new Error("boom"));
+    const qc = renderPage();
+    const key: QueryKey = ["list", "me/mailboxes", { page: 1 }];
+    qc.setQueryData(key, { seeded: true });
+
+    const onRow = (await screen.findByText("on.test")).closest("tr") as HTMLElement;
+    await openRowMenu(onRow, "Delete");
+    fireEvent.change(await screen.findByPlaceholderText("on.test"), { target: { value: "on.test" } });
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /Delete mail/i })).toBeEnabled(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Delete mail/i }));
+    await waitFor(() => expect(mocked.post).toHaveBeenCalled());
+    await screen.findByText("boom");
+
+    expect(qc.getQueryState(key)?.isInvalidated).toBe(false);
   });
 
   // GH #1479 (johnnyq): a Create Mail Domain button opens the Add-domain drawer
