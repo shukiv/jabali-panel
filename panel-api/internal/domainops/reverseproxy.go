@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
@@ -68,6 +67,18 @@ type InvalidPortError struct {
 func (e *InvalidPortError) Error() string   { return e.Reason.Error() }
 func (e *InvalidPortError) Unwrap() []error { return []error{ErrReverseProxyPortInvalid, e.Reason} }
 
+// kindError tags a store error with one of the sentinels above. errors.Is
+// matches both the sentinel and the store error, but Error() is the store
+// error's text alone, so an adapter that prints the error (the CLI) shows
+// what it showed before this module existed, without a "domainops:" prefix.
+type kindError struct {
+	kind  error
+	cause error
+}
+
+func (e *kindError) Error() string   { return e.cause.Error() }
+func (e *kindError) Unwrap() []error { return []error{e.kind, e.cause} }
+
 // PortDeps are the collaborators a reverse-proxy reservation needs.
 type PortDeps struct {
 	// Ports is the shared loopback-port allocator. Nil means reverse-proxy
@@ -95,7 +106,7 @@ func ReserveReverseProxyPort(ctx context.Context, d PortDeps, domainID string, r
 	if requested == 0 {
 		port, err := d.Ports.AllocateReverseProxy(ctx, domainID)
 		if err != nil {
-			return 0, fmt.Errorf("%w: %w", ErrReverseProxyPortUnavailable, err)
+			return 0, &kindError{kind: ErrReverseProxyPortUnavailable, cause: err}
 		}
 		return port, nil
 	}
@@ -108,9 +119,9 @@ func ReserveReverseProxyPort(ctx context.Context, d PortDeps, domainID string, r
 	port, err := d.Ports.AllocateReverseProxySpecific(ctx, domainID, requested)
 	switch {
 	case errors.Is(err, repository.ErrPortInUse):
-		return 0, fmt.Errorf("%w: %w", ErrReverseProxyPortInUse, err)
+		return 0, &kindError{kind: ErrReverseProxyPortInUse, cause: err}
 	case err != nil:
-		return 0, fmt.Errorf("%w: %w", ErrReverseProxyPortUnavailable, err)
+		return 0, &kindError{kind: ErrReverseProxyPortUnavailable, cause: err}
 	}
 	return port, nil
 }
@@ -165,7 +176,7 @@ func PersistDomain(ctx context.Context, domains DomainCreator, ports repository.
 		_ = ReleaseReverseProxyPort(ctx, ports, d.ID)
 	}
 	if errors.Is(err, repository.ErrConflict) {
-		return fmt.Errorf("%w: %w", ErrDomainExists, err)
+		return &kindError{kind: ErrDomainExists, cause: err}
 	}
-	return fmt.Errorf("%w: %w", ErrPersist, err)
+	return &kindError{kind: ErrPersist, cause: err}
 }

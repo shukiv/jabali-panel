@@ -263,6 +263,22 @@ func TestPersistDomain(t *testing.T) {
 	})
 }
 
+// The CLI prints these errors; they must read as the store error alone, with
+// no "domainops:" sentinel text, exactly as before the module existed.
+func TestWrappedErrorsPrintTheStoreErrorOnly(t *testing.T) {
+	p := newFakePorts()
+	p.autoErr = repository.ErrPortPoolExhausted
+	_, err := ReserveReverseProxyPort(context.Background(), PortDeps{Ports: p}, "d1", 0)
+	if err == nil || err.Error() != repository.ErrPortPoolExhausted.Error() {
+		t.Fatalf("pool exhausted: want %q, got %v", repository.ErrPortPoolExhausted, err)
+	}
+	storeErr := errors.New("Error 1205: Lock wait timeout exceeded")
+	err = PersistDomain(context.Background(), &fakeCreator{err: storeErr}, p, &models.Domain{ID: "d1"})
+	if err == nil || err.Error() != storeErr.Error() {
+		t.Fatalf("persist: want %q, got %v", storeErr, err)
+	}
+}
+
 func itoa(n int) string {
 	b, _ := json.Marshal(n)
 	return string(b)
