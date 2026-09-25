@@ -31,6 +31,10 @@ systemd-user timers give:
 
 Only commands the admin has marked allowed can be scheduled. The default allowlist (`/internal/cronvalidate/`) is the shared validator used by both the REST API and the CLI (`Cron Job Intake` — the single ingest path, per CONTEXT.md). Alongside `php` and `wp`, the validator accepts **`python` and `node`** scripts located under the owner's home (GH #1435), and an **ordered sequence** of `wp`/`php` steps in one job (GH #1437). Custom shell scripts are not allowed by default — admins can extend the allowlist.
 
+## Admin view
+
+**Admin → Cron Jobs** lists every tenant's jobs. From there an admin can create a job under any tenant (or as `root`), and toggle, run, view the log of, edit, or delete any job. Editing changes only the name, command and schedule. The owner and the run-as target stay fixed; to move a job to another tenant, delete it and create it again. An admin's edit is checked exactly like the tenant's own: the command must stay inside the **job owner's** directories, not the admin's (GH #1686).
+
 ## CLI
 
 ```bash

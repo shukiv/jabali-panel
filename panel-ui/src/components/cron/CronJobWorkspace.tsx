@@ -3,7 +3,7 @@
 // same toggle/run/delete/log orchestration, same per-row busy state, same
 // backend-detail error surfacing, and the same log + run-result overlays. They
 // differed only in list operation, owner-aware search, descriptive columns,
-// pagination, and the editor (admin creates-as-user; tenant creates + edits).
+// pagination, and the editor (admin creates-as-user + edits; tenant creates + edits).
 //
 // The Module owns everything shared — query wiring, search, the action handlers
 // with their one busy-state implementation, the New button, the editor state

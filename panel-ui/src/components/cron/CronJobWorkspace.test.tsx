@@ -38,8 +38,8 @@ vi.mock("../../lib/feedback", () => ({
 // Editors stay distinct (ticket constraint); mock each to a probe exposing the
 // open flag and the initial job id so New vs Edit wiring is assertable.
 vi.mock("../../shells/admin/cron/AdminCreateCronModal", () => ({
-  AdminCreateCronModal: ({ open }: { open: boolean }) => (
-    <div data-testid="editor" data-open={String(open)} data-initial="" />
+  AdminCreateCronModal: ({ open, initial }: { open: boolean; initial?: { id: string } | null }) => (
+    <div data-testid="editor" data-open={String(open)} data-initial={initial?.id ?? ""} />
   ),
 }));
 vi.mock("../../shells/user/cron/CreateCronModal", () => ({
@@ -100,7 +100,7 @@ interface MatrixOpts {
   runLabel: string;
   searchOwner: boolean; // admin includes the owner username in search
   paginated: boolean; // admin paginates; tenant does not
-  canEdit: boolean; // tenant offers an Edit action
+  canEdit: boolean; // offers an Edit action (both audiences since GH #1686 item 2)
 }
 
 const setList = (mock: typeof api.listCronJobs, rows: Row[]) =>
@@ -233,7 +233,7 @@ commonActionMatrix("admin", {
   runLabel: "Run",
   searchOwner: true,
   paginated: true,
-  canEdit: false,
+  canEdit: true,
 });
 
 commonActionMatrix("tenant", {

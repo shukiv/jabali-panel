@@ -2,9 +2,9 @@
 // Adapter over the shared CronJobWorkspace Module (JAB-298). It selects the
 // admin list operation, owner-aware search, the Owner sub-line, this screen's
 // column order (Enabled before the merged Last-run tag), paginated table, and
-// the admin create-as-user editor. Toggle / run / delete / log / overlays all
-// live in the Module; they authorise admins server-side via
-// fetchAndAuthorize's claims.IsAdmin bypass.
+// the admin create-as-user / edit editor (GH #1686 item 2). Toggle / run /
+// edit / delete / log / overlays all live in the Module; they authorise admins
+// server-side via fetchAndAuthorize's claims.IsAdmin bypass.
 import { useTranslation } from "react-i18next";
 import { Space, Tag, Tooltip, Typography } from "antd";
 import dayjs from "dayjs";
@@ -43,8 +43,8 @@ export const AdminCronList = () => {
         onCta={openCreate}
       />
     ),
-    renderEditor: ({ open, onClose, onSuccess }) => (
-      <AdminCreateCronModal open={open} onClose={onClose} onSuccess={onSuccess} />
+    renderEditor: ({ open, editing, onClose, onSuccess }) => (
+      <AdminCreateCronModal open={open} onClose={onClose} onSuccess={onSuccess} initial={editing} />
     ),
     buildColumns: (ctx) => [
       {
@@ -104,7 +104,7 @@ export const AdminCronList = () => {
       },
       cronActionsColumn(ctx, {
         runLabel: "Run",
-        canEdit: false,
+        canEdit: true,
         deleteConfirm: (row) => ({ title: `Delete cron job "${row.name}"?`, okText: "Delete" }),
       }),
     ],

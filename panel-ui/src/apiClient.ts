@@ -882,6 +882,8 @@ export interface CronJob {
   command: string;
   schedule: string;
   enabled: boolean;
+  /** Read-only: the job runs as root via a system-scoped systemd timer (created by an admin). */
+  run_as_root: boolean;
   last_run_at: string | null;
   last_exit_code: number | null;
   last_error: string | null;

@@ -112,6 +112,10 @@ type updateCronRequest struct {
 	Enabled  *bool   `json:"enabled"`
 }
 
+// cronJobResponse carries run_as_root so the admin editor can tell a root job
+// from a tenant job (GH #1686 item 2): a root job's user_id is the creating
+// admin's, so the owner alone can't distinguish them. It is read-only — PATCH
+// never changes it.
 type cronJobResponse struct {
 	ID           string     `json:"id"`
 	UserID       string     `json:"user_id"`
@@ -119,6 +123,7 @@ type cronJobResponse struct {
 	Command      string     `json:"command"`
 	Schedule     string     `json:"schedule"`
 	Enabled      bool       `json:"enabled"`
+	RunAsRoot    bool       `json:"run_as_root"`
 	LastRunAt    *time.Time `json:"last_run_at"`
 	LastExitCode *int       `json:"last_exit_code"`
 	LastError    *string    `json:"last_error"`
@@ -170,6 +175,7 @@ func toCronResponse(j *models.CronJob) cronJobResponse {
 		Command:      j.Command,
 		Schedule:     j.Schedule,
 		Enabled:      j.Enabled,
+		RunAsRoot:    j.RunAsRoot,
 		LastRunAt:    j.LastRunAt,
 		LastExitCode: j.LastExitCode,
 		LastError:    j.LastError,
