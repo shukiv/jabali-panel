@@ -148,7 +148,9 @@ func (r *mailboxRepo) ListByDomainID(ctx context.Context, domainID string, opts 
 	if col, ok := mailboxListSortKeys[strings.ToLower(strings.TrimSpace(opts.Sort))]; ok {
 		opts.Sort = col // clean key → bare column; a raw column is left as-is
 	}
-	q := applyListOptions(base.Session(&gorm.Session{}), opts, mailboxListCols)
+	// The row query selects the safe allowlist only (JAB-370 AC4); the count
+	// above stays a plain COUNT(*).
+	q := applyListOptions(base.Session(&gorm.Session{}), opts, mailboxListCols).Select(mailboxRowSelect)
 	if err := q.Find(&rows).Error; err != nil {
 		return nil, 0, err
 	}
@@ -193,17 +195,36 @@ func (r *mailboxRepo) CountAll(ctx context.Context) (int64, error) {
 	return n, err
 }
 
-// mailboxInventorySelect is the safe column projection for the WithDomain list
-// reads (JAB-370): every mailboxes column EXCEPT the secret-bearing
-// password_hash and the AES-encrypted password_enc. The inventory/directory
-// views never need either, and `SELECT m.*` was pulling both into memory (bcrypt
-// hash + up to 512 bytes of ciphertext per row) on admin- and fleet-polled
-// paths. An explicit allowlist also fails safe: a future secret column is not
-// materialised unless it is deliberately added here.
-const mailboxInventorySelect = "m.id, m.domain_id, m.local_part, m.email_cached, " +
-	"m.display_name, m.quota_bytes, m.is_disabled, m.send_only, m.system, " +
-	"m.last_usage_bytes, m.last_usage_at, m.created_at, m.updated_at, " +
-	"d.name AS domain_name, d.user_id AS owner_user_id, COALESCE(u.username, '') AS user_username"
+// mailboxSafeColumns is the one allowlist of mailboxes columns an inventory row
+// may carry (JAB-370): every column EXCEPT the secret-bearing password_hash and
+// the AES-encrypted password_enc. No inventory view needs either, and a
+// `SELECT *` pulls both into memory (bcrypt hash + up to 512 bytes of
+// ciphertext per row) on admin-, tenant-, and fleet-polled paths. An explicit
+// allowlist also fails safe: a future secret column is not materialised unless
+// it is deliberately added here. Callers that genuinely need the secrets (the
+// webmail SSO mint, the backup snapshot builder) read through FindByID or
+// ListByDomainIDs, which keep the full row.
+var mailboxSafeColumns = []string{
+	"id", "domain_id", "local_part", "email_cached", "display_name",
+	"quota_bytes", "is_disabled", "send_only", "system",
+	"last_usage_bytes", "last_usage_at", "created_at", "updated_at",
+}
+
+// mailboxRowSelect renders mailboxSafeColumns for the single-table list
+// (ListByDomainID).
+var mailboxRowSelect = strings.Join(mailboxSafeColumns, ", ")
+
+// mailboxInventorySelect renders mailboxSafeColumns, qualified with the m.
+// alias, plus the joined domain/owner columns for the WithDomain list reads.
+var mailboxInventorySelect = func() string {
+	cols := make([]string, 0, len(mailboxSafeColumns)+3)
+	for _, c := range mailboxSafeColumns {
+		cols = append(cols, "m."+c)
+	}
+	cols = append(cols, "d.name AS domain_name", "d.user_id AS owner_user_id",
+		"COALESCE(u.username, '') AS user_username")
+	return strings.Join(cols, ", ")
+}()
 
 // ListAllWithDomain returns every mailbox on the server joined with its
 // domain name + owning user's username, ordered by email. Admin-only path.
