@@ -178,8 +178,8 @@ var ftpLabelRE = regexp.MustCompile(`^[a-z0-9][a-z0-9_]{0,19}$`)
 
 const (
 	ftpUsernameMaxLen  = 32
-	ftpPasswordMinLen  = 12
-	ftpPasswordMaxLen  = 128
+	ftpPasswordMinLen  = ftpops.PasswordMinLen
+	ftpPasswordMaxLen  = ftpops.PasswordMaxLen
 	ftpAgentTimeout    = ftpops.AgentTimeout
 	ftpHomePathBadRune = " \t\r\n\"'\\:"
 )
@@ -297,9 +297,26 @@ func (h *ftpAccountsHandler) ops() ftpops.Deps {
 	}
 }
 
-// writeOpsErr maps a lifecycle-module error to the response: a desired-state
-// write failure is internal; anything else is a host (agent) failure.
+// ftpValidationResponses maps each lifecycle-module validation reason to this
+// door's status and error code; the detail comes from the module verbatim.
+var ftpValidationResponses = map[error]struct {
+	status int
+	code   string
+}{
+	ftpops.ErrWeakPassword: {http.StatusUnprocessableEntity, "weak_password"},
+}
+
+// writeOpsErr maps a lifecycle-module error to the response: a rejected input
+// is its mapped validation code; a desired-state write failure is internal;
+// anything else is a host (agent) failure.
 func (h *ftpAccountsHandler) writeOpsErr(c *gin.Context, err error, fallback string) {
+	var ve *ftpops.ValidationError
+	if errors.As(err, &ve) {
+		if r, ok := ftpValidationResponses[ve.Reason]; ok {
+			c.JSON(r.status, gin.H{"error": r.code, "detail": ve.Detail})
+			return
+		}
+	}
 	if errors.Is(err, ftpops.ErrPersist) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
@@ -518,8 +535,10 @@ func (h *ftpAccountsHandler) setPassword(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_body"})
 		return
 	}
-	if len(req.Password) < ftpPasswordMinLen || len(req.Password) > ftpPasswordMaxLen {
-		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "weak_password", "detail": fmt.Sprintf("password must be %d-%d characters", ftpPasswordMinLen, ftpPasswordMaxLen)})
+	// Validate before the lookup so a weak password is rejected (422) even for
+	// an id the caller doesn't own — the order the door has always had.
+	if err := ftpops.ValidatePassword(req.Password); err != nil {
+		h.writeOpsErr(c, err, "password_reset_failed")
 		return
 	}
 	ctx := c.Request.Context()
@@ -532,16 +551,8 @@ func (h *ftpAccountsHandler) setPassword(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
-	if err := h.agentCall(ctx, "ftpaccount.set_password", map[string]any{
-		"tenant_username": *u.Username,
-		"username":        acct.Username,
-		"password":        req.Password,
-		// JAB-261: chpasswd drops the shadow lock; send the desired lock
-		// state so the agent re-locks a disabled account in the same verb.
-		"enabled": acct.IsEnabled,
-	}); err != nil {
-		status, payload := h.mapAgentErr(err, "password_reset_failed")
-		c.JSON(status, payload)
+	if err := ftpops.SetPassword(ctx, h.ops(), acct, *u.Username, req.Password); err != nil {
+		h.writeOpsErr(c, err, "password_reset_failed")
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"updated": true})

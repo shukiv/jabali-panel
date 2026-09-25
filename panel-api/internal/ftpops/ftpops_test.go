@@ -275,6 +275,40 @@ func TestDelete_RowFailureAfterHostSkipsSync(t *testing.T) {
 	}
 }
 
+func TestSetPassword_WeakPasswordMakesNoHostCall(t *testing.T) {
+	var log transcript
+	d, _, _ := newDeps(&log)
+
+	for _, pw := range []string{"short", strings.Repeat("x", PasswordMaxLen+1)} {
+		err := SetPassword(context.Background(), d, testAccount(), "alice", pw)
+		var ve *ValidationError
+		if !errors.As(err, &ve) || !errors.Is(err, ErrWeakPassword) {
+			t.Fatalf("len %d: err = %v, want a ValidationError(ErrWeakPassword)", len(pw), err)
+		}
+		if ve.Detail != "password must be 12-128 characters" {
+			t.Errorf("detail = %q", ve.Detail)
+		}
+	}
+	if len(log) != 0 {
+		t.Fatalf("a rejected password must not reach the host; transcript = %v", log)
+	}
+}
+
+// JAB-261: chpasswd drops the shadow lock, so the desired lock state must ride
+// in the same verb or a disabled account is silently unlocked.
+func TestSetPassword_SendsLockStateInSameVerb(t *testing.T) {
+	var log transcript
+	d, _, _ := newDeps(&log)
+
+	if err := SetPassword(context.Background(), d, testAccount(), "alice", "correct-horse-battery"); err != nil {
+		t.Fatalf("SetPassword: %v", err)
+	}
+	want := "agent:ftpaccount.set_password[enabled,password,tenant_username,username]"
+	if len(log) != 1 || log[0] != want {
+		t.Fatalf("transcript = %v, want exactly %s", log, want)
+	}
+}
+
 func TestLifecycle_NilAgentIsUnavailable(t *testing.T) {
 	var log transcript
 	d, _, _ := newDeps(&log)
