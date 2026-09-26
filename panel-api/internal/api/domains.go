@@ -26,7 +26,6 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/reconciler"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
-	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/userops"
 )
 
 type DomainHandlerConfig struct {
@@ -1489,16 +1488,16 @@ func (h *domainHandler) delete(c *gin.Context) {
 		return
 	}
 
-	// JAB-236: durable delete via the shared userops path — tombstone
-	// BEFORE the row goes (the row is the only natural handle), Stalwart
-	// purge + vhost + pdns teardown inside the executor, retried by the
+	// JAB-236: durable delete via the domain lifecycle module (JAB-279) —
+	// tombstone BEFORE the row goes (the row is the only natural handle),
+	// Stalwart purge + vhost + pdns teardown after it, retried by the
 	// reconciler sweep if the async attempt fails or the panel restarts.
 	// The user still sees the row gone immediately (async attempt).
-	_, err = userops.DeleteDomain(ctx, userops.Deps{
-		Domains:         h.cfg.Domains,
-		DomainTeardowns: h.cfg.DomainTeardowns,
-		PortAllocations: h.cfg.PortAllocations,
-		Agent:           h.cfg.Agent,
+	_, err = domainops.Delete(ctx, domainops.DeleteDeps{
+		Domains:   h.cfg.Domains,
+		Teardowns: h.cfg.DomainTeardowns,
+		Ports:     h.cfg.PortAllocations,
+		Agent:     h.cfg.Agent,
 		// Log carries the failures the delete survives: a reverse-proxy port
 		// release that failed (the row was the port's last handle) and a host
 		// teardown left to the reconciler retry (JAB-279 AC4).
@@ -1508,7 +1507,7 @@ func (h *domainHandler) delete(c *gin.Context) {
 		// M6.4 (ADR-0048): the panel-primary row is delete-protected at
 		// the repo layer. Translate to 403 with a specific error code
 		// so the panel UI can render a tooltip instead of a generic 500.
-		// DeleteDomain guarantees NOTHING host-side ran in this case.
+		// domainops.Delete guarantees NOTHING host-side ran in this case.
 		if errors.Is(err, repository.ErrCannotDeletePanelPrimary) {
 			c.JSON(http.StatusForbidden, gin.H{"error": "panel_primary_protected"})
 			return
@@ -1518,7 +1517,7 @@ func (h *domainHandler) delete(c *gin.Context) {
 	}
 
 	// GH #1382: opt-in "also delete the domain's files". Runs ONLY on this
-	// explicit, human-approved HTTP delete — never inside userops.DeleteDomain,
+	// explicit, human-approved HTTP delete — never inside domainops.Delete,
 	// so the user-delete cascade and billing-cancel teardown paths can't destroy
 	// a customer's site implicitly. Best-effort AFTER a successful delete: done
 	// ONCE here (not tombstone-retried, so a retry can never delete files a

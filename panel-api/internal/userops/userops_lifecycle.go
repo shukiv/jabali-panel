@@ -18,6 +18,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dbops"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/domainops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ftpops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
@@ -237,12 +238,12 @@ func DeleteCascade(ctx context.Context, d Deps, dd DeleteDeps, target *models.Us
 			}
 			for i := range owned {
 				dom := &owned[i]
-				// JAB-236: the shared durable path — tombstone before the row
-				// delete, teardown (Stalwart purge + vhost + pdns zone) inside
-				// the executor, retried by the reconciler if the async attempt
-				// fails or the panel restarts mid-cascade. Per-domain failure
-				// is logged, never fails the user delete.
-				if _, err := DeleteDomain(ctx, d, dom.ID, dom.Name, true); err != nil {
+				// JAB-236: the domain lifecycle module's durable delete —
+				// tombstone before the row delete, teardown (Stalwart purge +
+				// vhost + pdns zone) after it, retried by the reconciler if the
+				// async attempt fails or the panel restarts mid-cascade.
+				// Per-domain failure is logged, never fails the user delete.
+				if _, err := domainops.Delete(ctx, domainDeleteDeps(d), dom.ID, dom.Name, true); err != nil {
 					logWarn(d, "cascade delete: domain DB delete failed",
 						"user_id", id, "domain_id", dom.ID, "domain", dom.Name, "err", err)
 				}
@@ -528,6 +529,18 @@ func PreviewDeleteCascade(ctx context.Context, d Deps, dd DeleteDeps, userID str
 }
 
 // logWarn guards the optional logger.
+// domainDeleteDeps hands the domain lifecycle module (JAB-279) the slice of
+// Deps a domain delete needs.
+func domainDeleteDeps(d Deps) domainops.DeleteDeps {
+	return domainops.DeleteDeps{
+		Domains:   d.Domains,
+		Teardowns: d.DomainTeardowns,
+		Ports:     d.PortAllocations,
+		Agent:     d.Agent,
+		Log:       d.Log,
+	}
+}
+
 func logWarn(d Deps, msg string, args ...any) {
 	if d.Log != nil {
 		d.Log.Warn(msg, args...)

@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/domainops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
-	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/userops"
 )
 
 // JAB-236 — the reconciler is the retry engine behind durable domain
@@ -62,7 +62,7 @@ func (r *Reconciler) processDomainTeardowns(ctx context.Context) map[string]bool
 			pending[name] = true
 			continue
 		}
-		if err := userops.ExecuteDomainTeardown(ctx, r.agent, name); err != nil {
+		if err := domainops.ExecuteTeardown(ctx, r.agent, name); err != nil {
 			r.log.Warn("domain teardowns: retry failed — will retry again",
 				"domain", name, "attempts", row.Attempts+1, "err", err)
 			_ = r.domainTeardowns.MarkAttempt(ctx, name, err.Error())

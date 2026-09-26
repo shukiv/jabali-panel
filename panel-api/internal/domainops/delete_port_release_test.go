@@ -1,4 +1,4 @@
-package userops
+package domainops
 
 import (
 	"bytes"
@@ -53,16 +53,16 @@ func (c *cancellingDomains) Delete(context.Context, string) error {
 	return nil
 }
 
-func TestDeleteDomain_ReleasesPortWhenCallerCancels(t *testing.T) {
+func TestDelete_ReleasesPortWhenCallerCancels(t *testing.T) {
 	for _, async := range []bool{false, true} {
 		ctx, cancel := context.WithCancel(context.Background())
 		ports := &ctxPorts{}
-		d := Deps{
-			Domains:         &cancellingDomains{cancel: cancel},
-			PortAllocations: ports,
-			Agent:           &selectiveAgent{},
+		d := DeleteDeps{
+			Domains: &cancellingDomains{cancel: cancel},
+			Ports:   ports,
+			Agent:   &selectiveAgent{},
 		}
-		if _, err := DeleteDomain(ctx, d, "dom1", "gone.example", async); err != nil {
+		if _, err := Delete(ctx, d, "dom1", "gone.example", async); err != nil {
 			t.Fatalf("async=%v: the row delete succeeded, err must be nil: %v", async, err)
 		}
 		ports.mu.Lock()
@@ -74,16 +74,16 @@ func TestDeleteDomain_ReleasesPortWhenCallerCancels(t *testing.T) {
 	}
 }
 
-func TestDeleteDomain_LogsPortReleaseFailure(t *testing.T) {
+func TestDelete_LogsPortReleaseFailure(t *testing.T) {
 	var buf bytes.Buffer
 	ports := &ctxPorts{err: errors.New("port_allocations: connection refused")}
-	d := Deps{
-		Domains:         &stubDomainsRepo{},
-		PortAllocations: ports,
-		Agent:           &selectiveAgent{},
-		Log:             slog.New(slog.NewTextHandler(&buf, nil)),
+	d := DeleteDeps{
+		Domains: &stubDomainsRepo{},
+		Ports:   ports,
+		Agent:   &selectiveAgent{},
+		Log:     slog.New(slog.NewTextHandler(&buf, nil)),
 	}
-	pending, err := DeleteDomain(context.Background(), d, "dom1", "gone.example", false)
+	pending, err := Delete(context.Background(), d, "dom1", "gone.example", false)
 	if err != nil || pending {
 		t.Fatalf("a failed port release must not fail the delete (the row is gone): pending=%v err=%v", pending, err)
 	}

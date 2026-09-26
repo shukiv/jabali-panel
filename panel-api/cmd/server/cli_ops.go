@@ -10,6 +10,7 @@ import (
 
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/kratosclient"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/api"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/domainops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/userops"
@@ -181,7 +182,7 @@ func setDomainEnabledDirect(ctx context.Context, domainID string, enabled bool) 
 
 // deleteDomainDirect deletes a domain durably (JAB-236): tombstone before
 // the row, then the SYNCHRONOUS host-side teardown (Stalwart purge, nginx
-// vhost, pdns zone) via the shared userops path. teardownPending=true means
+// vhost, pdns zone) via the domain lifecycle module (JAB-279). teardownPending=true means
 // the row is gone but the agent-side teardown failed — the tombstone stays
 // and the reconciler retries it until it succeeds. Before this, the CLI
 // deleted only the DB row and left the domain SERVING.
@@ -200,20 +201,19 @@ func deleteDomainDirect(ctx context.Context, domainID string) (d *models.Domain,
 		}
 		return nil, false, fmt.Errorf("lookup domain: %w", err)
 	}
+	deps := domainops.DeleteDeps{
+		Domains:   domains,
+		Teardowns: repository.NewDomainTeardownRepository(sharedDB),
+		Ports:     repository.NewPortAllocationRepository(sharedDB),
+		Log:       sharedLog,
+	}
 	// Agent is best-effort at init: without it the row still deletes and
-	// the tombstone carries the teardown to the reconciler.
-	var caller userops.AgentCaller
+	// the tombstone carries the teardown to the reconciler. Assign only a
+	// non-nil client — a nil *agent.Client in the interface is not nil.
 	if err := initAgent(); err == nil && sharedAgent != nil {
-		caller = sharedAgent
+		deps.Agent = sharedAgent
 	}
-	deps := userops.Deps{
-		Domains:         domains,
-		DomainTeardowns: repository.NewDomainTeardownRepository(sharedDB),
-		PortAllocations: repository.NewPortAllocationRepository(sharedDB),
-		Agent:           caller,
-		Log:             sharedLog,
-	}
-	teardownPending, err = userops.DeleteDomain(ctx, deps, domainID, d.Name, false)
+	teardownPending, err = domainops.Delete(ctx, deps, domainID, d.Name, false)
 	if err != nil {
 		return nil, false, fmt.Errorf("delete domain: %w", err)
 	}
