@@ -197,13 +197,39 @@ type membershipAdd struct {
 	group, member string
 }
 
+// installerManagedGroups are the privileged service groups whose members
+// install.sh sets and its convergers keep (JAB-357). Each one is a grant:
+//
+//	jabali          the root Agent socket (/run/jabali/agent.sock) and the
+//	                panel secrets under /etc/jabali-panel
+//	jabali-sockets  the panel-api internal sockets and the Redis socket
+//	jabali-mail     the Stalwart admin token and database password
+//	pdns            the PowerDNS config carrying its database password
+//
+// The system backup captures these groups' /etc/group lines, member lists
+// included. A restore must not re-add those members: a backup taken on a host
+// that predates the JAB-351/357 fixes still lists jabali-webmail in jabali,
+// and a tampered backup could list any local account. The target's own
+// install.sh already set the right members.
+var installerManagedGroups = map[string]struct{}{
+	"jabali":         {},
+	"jabali-sockets": {},
+	"jabali-mail":    {},
+	"pdns":           {},
+}
+
 // planMembershipRestores decides which source memberships the restore
 // re-asserts. A membership is re-asserted only when both the member and the
-// group exist locally by now.
+// group exist locally by now, and never into an installer-managed group.
 func planMembershipRestores(groups []wantedGroup, userExists, groupExists func(string) bool) (adds []membershipAdd, warnings []string) {
 	for _, g := range groups {
 		for _, m := range g.members {
 			if !userExists(m) || !groupExists(g.name) {
+				continue
+			}
+			if _, managed := installerManagedGroups[g.name]; managed {
+				warnings = append(warnings, fmt.Sprintf(
+					"os_users: membership of %q in group %q not restored — install.sh manages that group's members (JAB-357)", m, g.name))
 				continue
 			}
 			adds = append(adds, membershipAdd{group: g.name, member: m})
@@ -216,10 +242,19 @@ func planMembershipRestores(groups []wantedGroup, userExists, groupExists func(s
 // primary gid. When it may not, the warning says why and useradd creates a
 // fresh usergroup instead.
 func restorePrimaryGID(name string, gid int, groupNameByID func(gid string) (string, bool)) (keep bool, warning string) {
-	if _, ok := groupNameByID(strconv.Itoa(gid)); !ok {
+	group, ok := groupNameByID(strconv.Itoa(gid))
+	if !ok {
 		// Primary group missing (filtered out of the bundle or a collision
 		// above) — let useradd create the usergroup.
 		return false, fmt.Sprintf("os_users: user %q source gid %d absent — using a fresh usergroup", name, gid)
+	}
+	if _, managed := installerManagedGroups[group]; managed && group != name {
+		// A primary group is a membership too: a restored user whose source
+		// gid is jabali's here would reach the root Agent socket's directory.
+		// The group's own service account (user jabali-mail in group
+		// jabali-mail) is not a grant and keeps it.
+		return false, fmt.Sprintf(
+			"os_users: user %q source gid %d is group %q here — not used as a primary group (JAB-357); using a fresh usergroup", name, gid, group)
 	}
 	return true, ""
 }
