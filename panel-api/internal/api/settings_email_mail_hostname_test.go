@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -253,4 +254,18 @@ func TestSettingsEmail_GetShowsSwitchover(t *testing.T) {
 
 	f.sw.row = &models.MailHostnameSwitchover{ID: 1, Status: models.MailHostnameSwitchoverIdle}
 	assert.Nil(t, get()["switchover"], "a cancelled request is shown as none")
+}
+
+// A refused request is audited with the raw input as its target, so the
+// value is bounded, kept valid UTF-8 (the column is utf8mb4) and stripped of
+// control characters that would forge lines in a log view.
+func TestAuditTarget(t *testing.T) {
+	assert.Equal(t, "mx.example.org", auditTarget("  mx.example.org \n"))
+	assert.Equal(t, "a?b?c", auditTarget("a\nb\x1bc"))
+
+	long := strings.Repeat("a", 252) + "é" // the cut at 253 bytes splits é
+	got := auditTarget(long)
+	assert.True(t, utf8.ValidString(got), "a cut rune must not leave invalid UTF-8")
+	assert.LessOrEqual(t, len(got), 253)
+	assert.Equal(t, strings.Repeat("a", 252), got)
 }

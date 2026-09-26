@@ -70,6 +70,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/gin-gonic/gin"
 
@@ -330,11 +331,18 @@ func refusalDetail(err error) string {
 	return err.Error()
 }
 
-// auditTarget bounds a raw, possibly invalid input for the audit log.
+// auditTarget makes a raw, possibly invalid input safe to store as an audit
+// target: at most 253 bytes, valid UTF-8 (a rune split by the cut is
+// dropped), and every control character replaced by '?'.
 func auditTarget(s string) string {
 	s = strings.TrimSpace(s)
 	if len(s) > 253 {
-		s = s[:253]
+		s = strings.ToValidUTF8(s[:253], "")
 	}
-	return s
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return '?'
+		}
+		return r
+	}, s)
 }
