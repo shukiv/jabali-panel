@@ -97,6 +97,16 @@ CIDR-scoped rule (the specific DB host) over opening the port to `0.0.0.0/0`.
 
 Admin overrides per-user under Users → Edit → Egress.
 
+**SSH shells are covered too.** An SSH login does not run in the user's slice:
+logind places it in `user.slice/user-<uid>.slice/session-N.scope`. The ruleset
+therefore also matches by socket owner (`meta skuid`), after the cgroup match,
+so a shell and every command started from it goes through the same allowlist
+and the cloud-metadata floor. Only connections the tenant opens outward are
+affected; inbound SSH, SFTP, `scp` and `rsync` to the server are not. This means
+`ssh`/`git@github.com` out of a shell needs the package's **SSH out** allowance
+(`egress_ssh_out`), and `ping` needs **ICMP** (`egress_icmp`), exactly as for
+PHP. Only uids from 1000 up are matched, so system daemons are never filtered.
+
 ## Malware (M33, M33.2)
 
 - **ClamAV** — on-demand only (daemons masked); `jabali-freshclam.timer` daily for signatures (M33 on-demand mode).

@@ -185,3 +185,52 @@ VM 192.168.100.150 (Debian 13, kernel 6.12.74, nftables 1.1.3) — 2026-04-29:
    nft -j list counters table inet jabali_per_user | jq .
    # user_<U>_drops counter increments per attempt
    ```
+
+## Amendment 2026-09-27 — dispatch by socket owner as well as cgroup
+
+**Gap.** The cgroup dispatch only sees processes inside
+`jabali-user-<user>.slice`. An SSH login is placed by logind in
+`user.slice/user-<uid>.slice/session-N.scope`, so a tenant shell (and anything
+it starts) fell through to the output chain's
+`policy accept`: any port, and cloud metadata, while the same tenant's PHP was
+filtered. Observed on the test box: a drill tenant's shell ran in
+`session-19890.scope` and reached `1.1.1.1:853` with the tenant enforced.
+Moving the session into the slice from a PAM hook (as JAB-263 does for vsftpd)
+was rejected: logind owns `session-N.scope`, and moving the process out breaks
+session tracking. Matching `user.slice/user-<uid>.slice` was rejected too: the
+path exists only while the user is logged in, and nft rejects the whole file
+for a missing path.
+
+**Decision.** The output chain also dispatches by socket owner:
+
+```
+set tenant_uids { type uid; elements = { … } }            # every user, state=off included
+map uid_to_chain { type uid : verdict; elements = { <uid> : jump user_<u>_<state>, … } }
+
+chain output {
+  <slice-scoped SSRF floor>
+  meta skuid @tenant_uids ip daddr 169.254.0.0/16 … drop  # uid-scoped SSRF floor
+  meta skuid @tenant_uids ip6 daddr fe80::/10 … drop
+  socket cgroupv2 level 3 vmap @cgroup_to_chain
+  meta skuid vmap @uid_to_chain
+}
+```
+
+- The per-user chains are unchanged; only the dispatch is added. A process in
+  the slice is matched by its cgroup first, and every user chain ends in a
+  verdict, so it never reaches the uid map.
+- A map, not a rule per tenant (same reason as `cgroup_to_chain`): a packet from
+  root, nginx or MariaDB takes one lookup.
+- Accepted sockets keep the listener's uid, so sshd's own connection (root
+  listener) is not matched; outbound sockets the tenant's sshd child opens for
+  a permitted forward are.
+- Only uids `>= minTenantUID` (1000) are matched, so a panel username that
+  resolved to a system account never filters that daemon. A uid two users
+  share is rendered once (a duplicate map key would make nft reject the whole
+  file); the apply response's fail-open report uses the renderer's predicate.
+- The GH #708 missing-slice fallback is now the same map.
+
+**Consequence.** The per-package `egress_ssh_out` / `egress_icmp` allowances
+(GH #1798) now govern shells too: without them, `ssh` / `git@github.com` and
+`ping` from a shell are dropped for an enforced tenant. Learning-state tenants
+with heavy shell use will log more would-drops.
