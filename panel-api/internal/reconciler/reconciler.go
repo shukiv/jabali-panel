@@ -314,40 +314,16 @@ type Reconciler struct {
 	dbQuotaEnforceMu      sync.Mutex
 	dbQuotaEnforceLastRun time.Time
 
-	// sshKeysDispatchCache: per-user hash of last-applied SSH keys +
-	// timestamp. Lets ReconcileSSHKeysForUser skip the agent IPC when
-	// the desired state hasn't changed since the last dispatch. Self-
-	// heals every sshKeysReDispatchInterval to catch drift even when
-	// the hash matches. Keyed by user ID; value type
-	// sshKeysDispatchState. sync.Map = lock-free for the common
-	// "many readers, one writer per key" pattern.
-	sshKeysDispatchCache sync.Map
-
-	// ftpDispatchCache: single-key ("all") hash of the desired FTP
-	// subaccount state — same shape and rationale as sshKeysDispatchCache
-	// (GH #1053; steady state must not re-list passwd + re-render sshd
-	// config every tick).
-	ftpDispatchCache sync.Map
-
-	// dnsZoneDispatchCache: per-zone hash of the last-pushed record set +
-	// timestamp, same shape and rationale as sshKeysDispatchCache. Without
-	// it reconcileDNSZone rewrote the SOA serial, UPDATEd dns_zones, and
-	// pushed a full zone to the agent for EVERY enabled domain every tick —
-	// and the agent then DELETEs and re-INSERTs every record row in
-	// PowerDNS's SQL backend and shells out three times (purge auth cache,
-	// wipe recursor cache, NOTIFY slaves). Because the serial changed on
-	// every pass, the payload could never converge, so no downstream gate
-	// could ever fire. Keyed by zone ID; value type dnsZoneDispatchState.
-	dnsZoneDispatchCache sync.Map
-
-	// domainDispatchCache: per-domain hash of the last-dispatched domain.create
-	// wire payload + timestamp, same shape and rationale as the caches above
-	// (JAB-369). Without it the reconciler re-sent domain.create for EVERY
-	// enabled domain every ~60s tick — a full per-domain params assembly plus an
-	// agent round-trip (nginx -t + content compare) that no-ops when nothing
-	// changed. Keyed by domain ID; value type domainDispatchState. Process-local
-	// so a restart or DR-standby promotion re-dispatches everything.
-	domainDispatchCache sync.Map
+	// ledger records, per phase and resource, the last desired-state
+	// fingerprint the Agent accepted (JAB-369 planner, planner.go). The
+	// domain vhost, DNS zone, SSH key and FTP account passes consult it so
+	// an unchanged resource skips its Agent call until the phase's audit
+	// interval elapses. Before the ledger each pass kept its own cache;
+	// without them the reconciler re-sent every domain.create, re-pushed
+	// every zone (DELETE + re-INSERT of every PowerDNS row, three cache
+	// shell-outs) and re-synced every tenant's keys on every ~60s tick.
+	// Process-local, so a restart or DR promotion re-applies everything.
+	ledger applyLedger
 }
 
 // WithPanelCertificate injects the M32 panel-cert repo + routability
@@ -718,8 +694,9 @@ func (r *Reconciler) isStandby(ctx context.Context) bool {
 func (r *Reconciler) Start(ctx context.Context) {
 	r.log.Info("reconciler starting", "interval", r.interval)
 
-	// Run once at startup to converge any stale state
-	if err := r.ReconcileAll(ctx); err != nil {
+	// Run once at startup to converge any stale state. The ledger is empty
+	// in a fresh process, so this first normal run applies everything.
+	if _, err := r.Run(ctx, RunNormal); err != nil {
 		r.log.Error("initial reconcile failed", "err", err)
 	}
 
@@ -773,7 +750,7 @@ func (r *Reconciler) Start(ctx context.Context) {
 				r.log.Debug("periodic reconcile skipped (paused)")
 				continue
 			}
-			if err := r.ReconcileAll(ctx); err != nil {
+			if _, err := r.Run(ctx, RunNormal); err != nil {
 				r.log.Error("periodic reconcile failed", "err", err)
 			}
 		case <-sslRetryTicker.C:
@@ -929,6 +906,10 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 		r.log.Debug("reconcile all skipped — DR standby (not serving)")
 		return nil
 	}
+	// JAB-369: every pass below reads the run's mode from ctx and counts
+	// its gated phases into the run's report. A direct call (the admin
+	// endpoint, tests) gets a normal run.
+	ctx, rr := ensureRun(ctx, RunNormal)
 	// Coarse per-block timings. A tick that outruns the interval means
 	// the next ticker fire lands immediately behind it and drift repair
 	// degrades to back-to-back passes — worth a WARN that names the
@@ -936,10 +917,11 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 	tt := newTickTimings()
 	defer func() {
 		total := tt.total()
+		rep := rr.report()
 		if total > r.interval {
-			r.log.Warn("reconcile tick overran interval", "took", total.Round(time.Millisecond), "interval", r.interval, "slowest", tt.summary())
+			r.log.Warn("reconcile tick overran interval", "took", total.Round(time.Millisecond), "interval", r.interval, "slowest", tt.summary(), "mode", rep.Mode.String(), "phases", rep.String())
 		} else {
-			r.log.Debug("reconcile tick complete", "took", total.Round(time.Millisecond), "slowest", tt.summary())
+			r.log.Debug("reconcile tick complete", "took", total.Round(time.Millisecond), "slowest", tt.summary(), "mode", rep.Mode.String(), "phases", rep.String())
 		}
 	}()
 
@@ -1364,6 +1346,10 @@ func (r *Reconciler) ReconcileOne(ctx context.Context, domainID string) error {
 // regardless of their current state on the agent. Every domain gets a fresh
 // domain.create call to ensure all configurations are up-to-date.
 func (r *Reconciler) ReconcileAllForce(ctx context.Context) error {
+	// JAB-369: a force run ignores the ledger in every gated phase, so a
+	// resource this process already applied is re-applied too.
+	ctx, _ = ensureRun(ctx, RunForce)
+
 	// Rate-limit zone fragment first — same ordering rule as ReconcileAll.
 	// Vhost-side limit_req references must find their zones already
 	// declared or the agent's nginx -t will abort domain.create.
@@ -2359,7 +2345,8 @@ func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Dom
 	// within the drift-repair interval. force paths (ReconcileOne / Force /
 	// pool-regen) always dispatch. params is exactly what the agent receives.
 	hash := desiredDomainDispatchHash(params)
-	if !force && !r.domainDispatchNeeded(domain.ID, hash, time.Now()) {
+	d := r.phaseDecide(ctx, PhaseDomainVhost, domain.ID, hash, time.Now(), force)
+	if d == decisionSkip {
 		return
 	}
 
@@ -2373,9 +2360,10 @@ func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Dom
 			"domain_id", domain.ID,
 			"domain", domain.Name,
 			"err", err)
+		r.phaseFailed(ctx, PhaseDomainVhost)
 		return
 	}
-	r.domainDispatched(domain.ID, hash, time.Now())
+	r.phaseApplied(ctx, PhaseDomainVhost, domain.ID, hash, time.Now(), d)
 }
 
 // redirectHTTPSForCert decides whether the agent should render the :80→:443
@@ -2762,11 +2750,12 @@ func (r *Reconciler) reconcileDNSZone(ctx context.Context, domain *models.Domain
 	// auth cache, wipe recursor cache, NOTIFY slaves). With a slave
 	// configured that also meant NOTIFY/AXFR churn every minute, and
 	// `rec_control wipe-cache` meant recursor entries for hosted zones never
-	// outlived one tick. dnsZonePushNeeded self-heals every
-	// dnsZoneReDispatchInterval, so out-of-band pdns drift is still corrected.
+	// outlived one tick. The ledger re-pushes unchanged content every
+	// PhaseDNSZone.AuditInterval, so out-of-band pdns drift is still corrected.
 	now := time.Now().UTC()
 	hash := desiredDNSZoneHash(compiled, allowAXFR, alsoNotify)
-	if !r.dnsZonePushNeeded(zone.ID, hash, now) {
+	d := r.phaseDecide(ctx, PhaseDNSZone, zone.ID, hash, now, false)
+	if d == decisionSkip {
 		return
 	}
 
@@ -2799,9 +2788,10 @@ func (r *Reconciler) reconcileDNSZone(ctx context.Context, domain *models.Domain
 		// content, so the next tick must retry rather than believe it is
 		// converged.
 		r.log.Error("dns.zone.upsert failed", "zone", zone.Name, "err", err)
+		r.phaseFailed(ctx, PhaseDNSZone)
 		return
 	}
-	r.dnsZonePushed(zone.ID, hash, now)
+	r.phaseApplied(ctx, PhaseDNSZone, zone.ID, hash, now, d)
 }
 
 // linuxUserFromEmail derives the Linux username from an email address.

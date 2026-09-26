@@ -297,7 +297,7 @@ func TestReconcileFtpAccounts_FailureKeepsGateOpen(t *testing.T) {
 	r := ftpTestReconciler(t, agent, rows, map[string]string{"u1": "shop"})
 
 	r.reconcileFtpAccounts(context.Background())
-	if _, cached := r.ftpDispatchCache.Load("all"); cached {
+	if _, cached := r.ledger.lookup(PhaseFTPAccounts, "all"); cached {
 		t.Fatal("failed pass must not cache the hash — drift would never heal")
 	}
 }
