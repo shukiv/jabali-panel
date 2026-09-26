@@ -83,7 +83,22 @@ func dbPgCreateHandler(ctx context.Context, params json.RawMessage) (any, error)
 	if err := pgRunSQL(ctx, sql); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "create db: " + err.Error()}
 	}
+	if err := pgRunSQL(ctx, pgRevokePublicSQL(p.DBName)); err != nil {
+		// Never hand out a database every role can connect to.
+		_ = pgRunSQL(ctx, fmt.Sprintf(`DROP DATABASE IF EXISTS "%s"`, p.DBName))
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "create db: revoke public access: " + err.Error()}
+	}
 	return dbPgCreateResponse{OK: true}, nil
+}
+
+// pgRevokePublicSQL takes CONNECT and TEMPORARY on a database away from
+// PUBLIC. Postgres grants both to every role on a new database, so any
+// tenant's role could connect to any other tenant's database, read its
+// catalog (table and column names, view and function source) and create
+// temporary tables there. The owner, and roles granted on the database, keep
+// their access. db must already be validated with pgValidIdent.
+func pgRevokePublicSQL(db string) string {
+	return fmt.Sprintf(`REVOKE CONNECT, TEMPORARY ON DATABASE "%s" FROM PUBLIC`, db)
 }
 
 // ---- db.postgres.drop_db ----
@@ -302,6 +317,52 @@ func dbPgDumpHandler(ctx context.Context, params json.RawMessage) (any, error) {
 	return dbPgCreateResponse{OK: true}, nil
 }
 
+// ---- db.postgres.revoke_public_access ----
+//
+// Converts the databases created before db.postgres.create_db revoked
+// PUBLIC's CONNECT and TEMPORARY (see pgRevokePublicSQL). The maintenance
+// database postgres and the templates are left alone: clients such as the
+// database console connect to postgres first.
+
+// pgPublicAccessWhere selects the databases PUBLIC can still connect to or
+// create temporary tables in.
+const pgPublicAccessWhere = `NOT datistemplate AND datname <> 'postgres' AND ` +
+	`(has_database_privilege('public', oid, 'CONNECT') OR has_database_privilege('public', oid, 'TEMPORARY'))`
+
+type dbPgRevokePublicResponse struct {
+	Revoked []string `json:"revoked"`
+}
+
+func dbPgRevokePublicHandler(ctx context.Context, _ json.RawMessage) (any, error) {
+	out, err := execCommandContext(ctx, "sudo", "-u", "postgres", "psql", "-XAtq", "-c",
+		"SELECT datname FROM pg_database WHERE "+pgPublicAccessWhere+" ORDER BY 1").Output()
+	if err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeUnavailable, Message: "list databases: " + err.Error()}
+	}
+	resp := dbPgRevokePublicResponse{Revoked: []string{}}
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if name := strings.TrimSpace(line); name != "" {
+			resp.Revoked = append(resp.Revoked, name)
+		}
+	}
+	if len(resp.Revoked) == 0 {
+		return resp, nil
+	}
+	// format('%I') quotes each name server-side, so a database created
+	// outside the panel with an unusual name is covered too.
+	sql := `DO $$
+DECLARE r RECORD;
+BEGIN
+  FOR r IN SELECT datname FROM pg_database WHERE ` + pgPublicAccessWhere + ` LOOP
+    EXECUTE format('REVOKE CONNECT, TEMPORARY ON DATABASE %I FROM PUBLIC', r.datname);
+  END LOOP;
+END$$;`
+	if err := pgRunSQL(ctx, sql); err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "revoke public access: " + err.Error()}
+	}
+	return resp, nil
+}
+
 func init() {
 	Default.Register("db.postgres.create_db", dbPgCreateHandler)
 	Default.Register("db.postgres.drop_db", dbPgDropHandler)
@@ -311,4 +372,5 @@ func init() {
 	Default.Register("db.postgres.revoke", dbPgRevokeHandler)
 	Default.Register("db.postgres.list_dbs", dbPgListHandler)
 	Default.Register("db.postgres.dump", dbPgDumpHandler)
+	Default.Register("db.postgres.revoke_public_access", dbPgRevokePublicHandler)
 }

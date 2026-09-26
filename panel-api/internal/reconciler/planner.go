@@ -108,6 +108,10 @@ var (
 	// host; the interval catches a grant written the old way since, such as
 	// an installer re-grant.
 	PhaseDBGrantEscape = Phase{Name: "db_user.escape_legacy_grants", AuditInterval: time.Hour}
+	// PhasePGPublicAccess takes PUBLIC's CONNECT and TEMPORARY off every
+	// Postgres database. One entry for the host; the interval catches a
+	// database created outside the panel.
+	PhasePGPublicAccess = Phase{Name: "db.postgres.revoke_public_access", AuditInterval: time.Hour}
 )
 
 // runDependency is one ordering a run keeps for a domain: the Agent call

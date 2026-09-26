@@ -248,6 +248,10 @@ END $$;`, shadow, shadow, pwd, shadow, pwd)
 	if err := pgRunSQL(ctx, fmt.Sprintf(`CREATE DATABASE "%s" OWNER "%s" TEMPLATE template0`, tmpDB, shadow)); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "create staging database: " + err.Error()}
 	}
+	// The staging db becomes the tenant's database at the swap, ACL included.
+	if err := pgRunSQL(ctx, pgRevokePublicSQL(tmpDB)); err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "revoke public access on staging database: " + err.Error()}
+	}
 
 	// (3) Load the dump into the STAGING db as the shadow, unprivileged OS user,
 	// over scram TCP. A failed load (bad/truncated/-Fc dump, ctx timeout) leaves
