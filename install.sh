@@ -8752,6 +8752,22 @@ NGINXEOF
   [[ -n "$_pma_lockfd" ]] && exec {_pma_lockfd}>&- || true
 }
 
+# GH #1798: members of jabali-ping (tenants whose hosting package allows ping)
+# may open ICMP ping sockets, the only way ping works in the SSH sandbox
+# (no_new_privs ignores ping's cap_net_raw). The Agent's user.ping_access.apply
+# sets the members and writes /etc/sysctl.d/60-jabali-ping.conf
+# (net.ipv4.ping_group_range = <gid> <gid>) on the panel's first tick; the
+# installer only makes sure the group exists.
+install_ping_group() {
+  _log "creating jabali-ping system group"
+  if getent group jabali-ping >/dev/null; then
+    _ok "jabali-ping group already exists"
+  else
+    groupadd --system jabali-ping 2>/dev/null || true
+    _ok "jabali-ping system group created"
+  fi
+}
+
 install_sftp_group() {
   _log "creating jabali-sftp system group"
 
@@ -16537,6 +16553,7 @@ main() {
   install_adminer
   install_wp_cli
   install_sftp_group
+  install_ping_group
   install_sftp_sshd_config
   # JAB-352: disable SSH forwarding for hosting users so a tenant key can't
   # tunnel into loopback-only services.
@@ -16669,7 +16686,7 @@ This will remove:
   • /usr/local/libexec/jabali/
   • /etc/jabali-panel/, /etc/jabali/, /etc/stalwart/
   • /etc/profile.d/jabali-go.sh, /etc/apt/sources.list.d/sury-php.list + crowdsec.list
-  • /etc/sysctl.d/60-jabali-malware.conf, /etc/sysctl.d/60-jabali-tmp-hardening.conf, /etc/nftables.d/jabali-per-user-egress{,-boot}.nft
+  • /etc/sysctl.d/60-jabali-{malware,tmp-hardening,ping}.conf, /etc/nftables.d/jabali-per-user-egress{,-boot}.nft
   • /etc/crowdsec/acquis.d/jabali-*.yaml, /etc/crowdsec/appsec-configs/jabali-appsec.yaml
   • /etc/audit/rules.d/jabali-exec.rules
   • AppArmor profiles for jabali daemons + stalwart-mail
@@ -16878,6 +16895,7 @@ RESOLV
   rm -f  /etc/apt/keyrings/crowdsec.gpg
   rm -f  /etc/sysctl.d/60-jabali-malware.conf
   rm -f  /etc/sysctl.d/60-jabali-tmp-hardening.conf
+  rm -f  /etc/sysctl.d/60-jabali-ping.conf
   sysctl --system >/dev/null 2>&1 || true
   rm -f  /etc/nftables.d/jabali-per-user-egress.nft
   rm -f  /etc/nftables.d/jabali-per-user-egress-boot.nft
@@ -17047,7 +17065,7 @@ SQL
   # Groups (may remain if --user-group flag wasn't used, or if the user was
   # removed but the group lingered).
   local g
-  for g in jabali-ssh-sandbox jabali-sftp jabali-webmail jabali-mail jabali; do
+  for g in jabali-ssh-sandbox jabali-sftp jabali-ping jabali-webmail jabali-mail jabali; do
     getent group "$g" >/dev/null 2>&1 && { groupdel "$g" 2>/dev/null && _log "removed group $g" || true; }
   done
 

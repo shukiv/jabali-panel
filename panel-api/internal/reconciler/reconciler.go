@@ -285,6 +285,8 @@ type Reconciler struct {
 	// drop_count_24h. Both nil = pass skipped (test fixtures, hosts
 	// without nft socket cgroupv2 support).
 	userEgressPolicies repository.UserEgressPolicyRepository
+	// pingAccess lists the users whose package allows ping (GH #1798).
+	pingAccess repository.PingAccessRepository
 	// M34 deep stats — per-tick drop samples drive the 24h sparkline.
 	// Optional; nil disables sample persistence (drop_count_24h still
 	// updates on the policy row).
@@ -986,6 +988,9 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 	// M34: per-user PHP-FPM egress firewall. Cheap noop when the repo
 	// isn't wired (test fixtures) or when there are zero policies.
 	r.reconcileUserEgress(ctx)
+	// GH #1798: the jabali-ping group (who may open ICMP ping sockets) follows
+	// the package ping allowance. Ledger-gated no-op in steady state.
+	r.reconcilePingAccess(ctx)
 	// GH #1053: converge FTP/SFTP subaccounts (passwd aliases, group
 	// membership, lock state, sshd jabali-xfer drop-in). Hash-gated no-op
 	// in steady state.

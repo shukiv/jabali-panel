@@ -563,6 +563,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 		deps.UserEgressDropSamples = repository.NewUserEgressDropSampleRepository(sharedDB)
 		rec.WithUserEgressPolicies(deps.UserEgressPolicies)
 		rec.WithUserEgressDropSamples(deps.UserEgressDropSamples)
+		// GH #1798: jabali-ping group = users whose package allows ping, so
+		// ping works in the SSH sandbox (agent user.ping_access.apply).
+		rec.WithPingAccess(repository.NewPingAccessRepository(sharedDB))
 		// M36: per-domain IP allow/deny ACLs. Reconciler threads ACLs into
 		// agent's domain.create payload; agent renders nginx directives
 		// inside the server block.
