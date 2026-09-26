@@ -1,4 +1,4 @@
-package userops
+package domainops
 
 import (
 	"context"
@@ -24,6 +24,12 @@ import (
 //     the row is already gone.
 //  4. A missing PowerDNS backend (DNS module off) is a permanent
 //     condition, not a retryable failure.
+
+// recordedCall is one agent call a test agent saw.
+type recordedCall struct {
+	method string
+	params any
+}
 
 // selectiveAgent errors on the configured methods, succeeds otherwise.
 type selectiveAgent struct {
@@ -113,13 +119,13 @@ func methods(a *selectiveAgent) []string {
 	return out
 }
 
-func TestDeleteDomain_SyncHappyPath(t *testing.T) {
+func TestDelete_SyncHappyPath(t *testing.T) {
 	ag := &selectiveAgent{}
 	domains := &stubDomainsRepo{}
 	tombs := newMemTeardownRepo()
-	d := Deps{Domains: domains, DomainTeardowns: tombs, Agent: ag}
+	d := DeleteDeps{Domains: domains, Teardowns: tombs, Agent: ag}
 
-	pending, err := DeleteDomain(context.Background(), d, "dom1", "gone.example", false)
+	pending, err := Delete(context.Background(), d, "dom1", "gone.example", false)
 	if err != nil || pending {
 		t.Fatalf("pending=%v err=%v", pending, err)
 	}
@@ -136,13 +142,13 @@ func TestDeleteDomain_SyncHappyPath(t *testing.T) {
 	}
 }
 
-func TestDeleteDomain_RefusedRowDeleteRunsNothing(t *testing.T) {
+func TestDelete_RefusedRowDeleteRunsNothing(t *testing.T) {
 	ag := &selectiveAgent{}
 	domains := &stubDomainsRepo{deleteErr: repository.ErrCannotDeletePanelPrimary}
 	tombs := newMemTeardownRepo()
-	d := Deps{Domains: domains, DomainTeardowns: tombs, Agent: ag}
+	d := DeleteDeps{Domains: domains, Teardowns: tombs, Agent: ag}
 
-	_, err := DeleteDomain(context.Background(), d, "dom1", "panel.example", false)
+	_, err := Delete(context.Background(), d, "dom1", "panel.example", false)
 	if !errors.Is(err, repository.ErrCannotDeletePanelPrimary) {
 		t.Fatalf("err = %v, want panel-primary refusal passed through", err)
 	}
@@ -154,13 +160,13 @@ func TestDeleteDomain_RefusedRowDeleteRunsNothing(t *testing.T) {
 	}
 }
 
-func TestDeleteDomain_TeardownFailureKeepsTombstone(t *testing.T) {
+func TestDelete_TeardownFailureKeepsTombstone(t *testing.T) {
 	ag := &selectiveAgent{errByMethod: map[string]error{"domain.delete": errors.New("agent down")}}
 	domains := &stubDomainsRepo{}
 	tombs := newMemTeardownRepo()
-	d := Deps{Domains: domains, DomainTeardowns: tombs, Agent: ag}
+	d := DeleteDeps{Domains: domains, Teardowns: tombs, Agent: ag}
 
-	pending, err := DeleteDomain(context.Background(), d, "dom1", "gone.example", false)
+	pending, err := Delete(context.Background(), d, "dom1", "gone.example", false)
 	if err != nil {
 		t.Fatalf("row delete succeeded — err must be nil, got %v", err)
 	}
@@ -176,22 +182,22 @@ func TestDeleteDomain_TeardownFailureKeepsTombstone(t *testing.T) {
 	}
 }
 
-func TestExecuteDomainTeardown_MissingPDNSIsSuccess(t *testing.T) {
+func TestExecuteTeardown_MissingPDNSIsSuccess(t *testing.T) {
 	ag := &selectiveAgent{errByMethod: map[string]error{
 		"dns.zone.delete": errors.New("agent error (internal): powerdns backend not available"),
 	}}
-	if err := ExecuteDomainTeardown(context.Background(), ag, "gone.example"); err != nil {
+	if err := ExecuteTeardown(context.Background(), ag, "gone.example"); err != nil {
 		t.Fatalf("a box without the DNS module must not fail (and retry forever): %v", err)
 	}
 }
 
-func TestDeleteDomain_AsyncEventuallyClearsTombstone(t *testing.T) {
+func TestDelete_AsyncEventuallyClearsTombstone(t *testing.T) {
 	ag := &selectiveAgent{}
 	domains := &stubDomainsRepo{}
 	tombs := newMemTeardownRepo()
-	d := Deps{Domains: domains, DomainTeardowns: tombs, Agent: ag}
+	d := DeleteDeps{Domains: domains, Teardowns: tombs, Agent: ag}
 
-	pending, err := DeleteDomain(context.Background(), d, "dom1", "gone.example", true)
+	pending, err := Delete(context.Background(), d, "dom1", "gone.example", true)
 	if err != nil || !pending {
 		t.Fatalf("async returns pending=true immediately; got pending=%v err=%v", pending, err)
 	}
@@ -206,4 +212,61 @@ func TestDeleteDomain_AsyncEventuallyClearsTombstone(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatal("async teardown never cleared the tombstone")
+}
+
+func TestPurgeDomainMail_CallsAgentWithDomain(t *testing.T) {
+	ag := &selectiveAgent{}
+	if err := PurgeDomainMail(context.Background(), ag, "example.test"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(ag.calls) != 1 {
+		t.Fatalf("want 1 agent call, got %d", len(ag.calls))
+	}
+	if ag.calls[0].method != "mail.domain.purge_accounts" {
+		t.Errorf("method = %q, want mail.domain.purge_accounts", ag.calls[0].method)
+	}
+	p, ok := ag.calls[0].params.(map[string]any)
+	if !ok {
+		t.Fatalf("params type = %T, want map[string]any", ag.calls[0].params)
+	}
+	if p["domain"] != "example.test" {
+		t.Errorf("domain param = %v, want example.test", p["domain"])
+	}
+}
+
+func TestPurgeDomainMail_NilAgentNoop(t *testing.T) {
+	// A nil agent interface must be a no-op, not a panic.
+	if err := PurgeDomainMail(context.Background(), nil, "example.test"); err != nil {
+		t.Fatalf("nil agent should be no-op, got %v", err)
+	}
+}
+
+func TestPurgeDomainMail_EmptyDomainNoop(t *testing.T) {
+	ag := &selectiveAgent{}
+	if err := PurgeDomainMail(context.Background(), ag, ""); err != nil {
+		t.Fatalf("empty domain should be no-op, got %v", err)
+	}
+	if len(ag.calls) != 0 {
+		t.Errorf("empty domain made %d agent calls, want 0", len(ag.calls))
+	}
+}
+
+func TestPurgeDomainMail_PropagatesAgentError(t *testing.T) {
+	want := errors.New("stalwart down")
+	ag := &selectiveAgent{errByMethod: map[string]error{"mail.domain.purge_accounts": want}}
+	if err := PurgeDomainMail(context.Background(), ag, "example.test"); !errors.Is(err, want) {
+		t.Fatalf("err = %v, want %v", err, want)
+	}
+}
+
+func TestDelete_UnwiredDomainStore(t *testing.T) {
+	ag := &selectiveAgent{}
+	tombs := newMemTeardownRepo()
+	_, err := Delete(context.Background(), DeleteDeps{Teardowns: tombs, Agent: ag}, "dom1", "gone.example", false)
+	if !errors.Is(err, ErrDeleteDeps) {
+		t.Fatalf("err = %v, want ErrDeleteDeps", err)
+	}
+	if len(ag.calls) != 0 || len(tombs.rows) != 0 {
+		t.Fatalf("an unwired delete must touch nothing: calls=%v tombstones=%v", methods(ag), tombs.rows)
+	}
 }

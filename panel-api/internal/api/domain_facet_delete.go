@@ -1,7 +1,7 @@
 // Facet-preserving Web Domain delete (GH #1603, johnnyq).
 //
 // A jabali "domain" is one row carrying web + mail + DNS facets. Deleting the
-// row (userops.DeleteDomain) tears down all three. This path lets the operator
+// row (domainops.Delete) tears down all three. This path lets the operator
 // delete the WEB facet while KEEPING the Mail Domain and/or the DNS Zone: the
 // row survives (web-off), so mail keeps delivering and/or the zone keeps
 // answering. The delete handler routes here whenever at least one facet is kept;
