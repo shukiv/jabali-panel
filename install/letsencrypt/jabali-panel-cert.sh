@@ -10,7 +10,8 @@
 #   kind=hostname  → /etc/jabali/tls/panel.{crt,key};
 #                    reload nginx, restart jabali-panel + jabali-bulwark.
 #   kind=mail      → /etc/jabali/tls/panel-mail.{crt,key};
-#                    reload nginx, restart jabali-stalwart.
+#                    reload nginx, push into Stalwart, THEN restart
+#                    jabali-stalwart (it loads certs only at startup).
 #
 # Inputs:
 #   $RENEWED_LINEAGE        — LE lineage dir (certbot or ssl.panel.issue).
@@ -85,15 +86,24 @@ case "$kind" in
     # for SMTP/IMAPS. jabali-panel / jabali-bulwark use the hostname
     # cert and are deliberately NOT bounced here.
     systemctl reload nginx            || echo "jabali-panel-cert.sh: nginx reload failed (continuing)" >&2
-    systemctl restart jabali-stalwart || echo "jabali-panel-cert.sh: jabali-stalwart restart failed (continuing)" >&2
     # Push the renewed PEM into Stalwart's Certificate object so
     # IMAPS / 465 / 587 serve the LE cert instead of Stalwart's rcgen
     # self-signed fallback. Idempotent; safe to call multiple times.
-    # The script waits for Stalwart to come up after the restart above.
+    #
+    # Order matters: push FIRST, restart AFTER. Stalwart serves TLS from
+    # its x:Certificate registry and loads it only at startup — a push
+    # after the restart sits unloaded, so :993/:465 keep the PREVIOUS
+    # certificate and key until something else restarts Stalwart (seen
+    # during the JAB-357 key rotation). The mail-domain arm below has the
+    # same order. `start` first (a no-op when running) so the push can
+    # reach the management API even if Stalwart was down; the script
+    # waits for it to answer.
+    systemctl start jabali-stalwart   || echo "jabali-panel-cert.sh: jabali-stalwart start failed (continuing)" >&2
     if [[ -x /usr/local/bin/jabali-stalwart-push-cert ]]; then
       /usr/local/bin/jabali-stalwart-push-cert || \
         echo "jabali-panel-cert.sh: jabali-stalwart-push-cert non-zero (continuing)" >&2
     fi
+    systemctl restart jabali-stalwart || echo "jabali-panel-cert.sh: jabali-stalwart restart failed (continuing)" >&2
     ;;
   mail-domain)
     # M6.6: per-tenant-domain mail cert. JABALI_MAIL_DOMAIN_ID is
