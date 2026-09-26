@@ -91,6 +91,31 @@ var (
 	PhasePHPPoolGC = Phase{Name: "php.pool.gc", AuditInterval: domainReDispatchInterval}
 )
 
+// runDependency is one ordering a run keeps for a domain: the Agent call
+// that applies Before is sent ahead of the one that applies After. Steps are
+// named by their phase; "ssl" has no ledger phase, because certificate
+// issuance is a long-running workflow the planner leaves to its own pass.
+type runDependency struct {
+	Before, After string
+	Why           string
+}
+
+// runDependencies is the planner's phase dependency graph. The passes that
+// honour it are imperative code in ReconcileAll, ReconcileOne and
+// ReconcileAllForce; TestRunDependencies_* asserts every edge against the
+// Agent calls each of those entry points sends. Reordering a pass so that an
+// edge breaks fails those tests.
+var runDependencies = []runDependency{
+	{Before: PhaseNginxRateLimits.Name, After: PhaseDomainVhost.Name,
+		Why: "a vhost's limit_req must find its zone declared, or the Agent's nginx -t aborts domain.create"},
+	{Before: PhaseDNSZone.Name, After: "ssl",
+		Why: "ACME validation and DNS-01 need the zone on the authoritative server first"},
+	{Before: "ssl", After: PhaseDomainVhost.Name,
+		Why: "the vhost renders the certificate paths the SSL step just wrote"},
+	{Before: PhaseDNSZone.Name, After: PhaseDNSRecursor.Name,
+		Why: "the recursor's post-add probe needs the zone on the authoritative server (GH #896)"},
+}
+
 // fingerprint is the canonical hash of a projection's desired payload:
 // SHA-256 of its JSON encoding (encoding/json sorts map keys). It returns
 // "" when v cannot be encoded, and the ledger always applies an empty
