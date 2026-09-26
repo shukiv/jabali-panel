@@ -58,10 +58,14 @@ func TestPanelCert_EnsureDefault_CreatesBothKinds(t *testing.T) {
 	mock.ExpectBegin()
 	mock.ExpectExec(`INSERT INTO .panel_certificate.`).WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
-	// mail kind: not found -> create
+	// mail kind: not found -> seeded from the effective mail hostname; no
+	// settings row yet (fresh install) -> the derived mail.<hostname>
 	mock.ExpectQuery(pcSelect).WithArgs("mail", 1).WillReturnError(gorm.ErrRecordNotFound)
+	mock.ExpectQuery(ssMailHostnameSelect).WillReturnError(gorm.ErrRecordNotFound)
 	mock.ExpectBegin()
-	mock.ExpectExec(`INSERT INTO .panel_certificate.`).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec(`INSERT INTO .panel_certificate.`).
+		WithArgs("mail", 1, "mail.panel.example.com", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 
 	host, err := repo.EnsureDefault(context.Background(), "panel.example.com")
@@ -110,6 +114,35 @@ func TestPanelCert_EnsureDefault_DoesNotRenameMailRow(t *testing.T) {
 	host, err := repo.EnsureDefault(context.Background(), "new.example.com")
 	require.NoError(t, err)
 	assert.Equal(t, "new.example.com", host.Hostname, "hostname row must follow the FQDN change")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+const ssMailHostnameSelect = "SELECT `mail_hostname` FROM `server_settings` WHERE id = \\? LIMIT"
+
+// JAB-390: a mail row re-created after a switchover (a manual row delete)
+// must take the APPLIED mail hostname, not the derived mail.<hostname> — the
+// panel-cert reconciler would otherwise pursue a certificate for a name the
+// panel no longer serves mail on.
+func TestPanelCert_EnsureDefault_SeedsMailRowFromAppliedName(t *testing.T) {
+	t.Parallel()
+	gdb, mock, raw := newMockDB(t)
+	defer raw.Close()
+	repo := repository.NewPanelCertificateRepository(gdb)
+
+	mock.ExpectQuery(pcSelect).WithArgs("hostname", 1).WillReturnRows(
+		sqlmock.NewRows([]string{"kind", "id", "hostname", "status", "cert_pem_path"}).
+			AddRow("hostname", 1, "panel.example.com", "issued", "/etc/jabali/tls/panel.crt"))
+	mock.ExpectQuery(pcSelect).WithArgs("mail", 1).WillReturnError(gorm.ErrRecordNotFound)
+	mock.ExpectQuery(ssMailHostnameSelect).WillReturnRows(
+		sqlmock.NewRows([]string{"mail_hostname"}).AddRow("MX.Example.NET"))
+	mock.ExpectBegin()
+	mock.ExpectExec(`INSERT INTO .panel_certificate.`).
+		WithArgs("mail", 1, "mx.example.net", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+
+	_, err := repo.EnsureDefault(context.Background(), "panel.example.com")
+	require.NoError(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
