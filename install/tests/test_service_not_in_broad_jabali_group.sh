@@ -168,13 +168,15 @@ done
 
 # 6. Every membership grant the agent makes is to a reviewed group. The agent
 #    adds tenant accounts to groups at runtime (SFTP, FTP, WebDAV, SSH
-#    sandbox, Redis clients) and the system restore re-adds backed-up
+#    sandbox, Redis clients, and ping: jabali-ping grants no file or socket,
+#    only ICMP ping sockets through net.ipv4.ping_group_range, GH #1798) and
+#    the system restore re-adds backed-up
 #    memberships. A new `usermod -aG` call site fails here until it is
 #    reviewed and listed; a reviewed name must never resolve to the broad
 #    group. The restore's a.group is filtered by installerManagedGroups,
 #    which must keep "jabali" (the restore never adds members to it).
 reviewed_agent_groups=(sftpGroupName ftpGroupName webdavGroupName sandboxGroupName
-  forwardGroupName redisClientsGroup '"jabali-redis-clients"' a.group)
+  forwardGroupName redisClientsGroup '"jabali-redis-clients"' pingGroupName a.group)
 agent_src=panel-agent/internal/commands
 while IFS= read -r hit; do
   arg=$(sed -E 's/.*"usermod", "-aG", ([^,]+),.*/\1/' <<<"$hit")

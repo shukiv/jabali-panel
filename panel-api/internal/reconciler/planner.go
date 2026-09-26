@@ -93,6 +93,10 @@ var (
 	// usernames to keep, so a deleted user re-runs it at once; orphans that
 	// appear with no user change are swept within the interval.
 	PhasePHPPoolGC = Phase{Name: "php.pool.gc", AuditInterval: domainReDispatchInterval}
+	// PhasePingAccess is the jabali-ping group's member list and the
+	// ping_group_range that goes with it (GH #1798). One entry for the host;
+	// the interval repairs a group or range changed by hand.
+	PhasePingAccess = Phase{Name: "user.ping_access", AuditInterval: 15 * time.Minute}
 )
 
 // runDependency is one ordering a run keeps for a domain: the Agent call
