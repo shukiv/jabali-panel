@@ -241,10 +241,15 @@ func (h *forwarderHandler) create(c *gin.Context) {
 	resp := h.resolve(ctx, *f, mb, dom)
 	if err := h.applyForwarders(ctx, mb, dom); err != nil {
 		// Row persisted, but it is not forwarding until Stalwart converges.
-		// Surface it instead of a bare 201 (GH #1795): the detail is this
-		// tenant's own mailbox convergence error on an owner-scoped endpoint,
-		// so exposing it is acceptable and operationally necessary.
-		resp.Warning = &forwarderWarning{Code: "convergence_failed", Detail: err.Error()}
+		// Surface it instead of a bare 201 (GH #1795). The agent's error text
+		// can name panel internals (the agent socket path, Stalwart replies),
+		// so only an admin gets it to diagnose; a tenant gets a fixed detail.
+		// applyForwarders logs the full error either way.
+		detail := "saved, but the mail server did not accept it, so it is not forwarding yet"
+		if claims != nil && claims.IsAdmin {
+			detail = err.Error()
+		}
+		resp.Warning = &forwarderWarning{Code: "convergence_failed", Detail: detail}
 	}
 	c.JSON(http.StatusCreated, resp)
 }
