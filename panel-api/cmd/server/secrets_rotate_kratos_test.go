@@ -236,7 +236,8 @@ func TestRotateKratos_RevokeFailureKeepsRotation(t *testing.T) {
 	saveKratosSeams(t)
 	f := setupKratosFixture(t)
 
-	rotateRunSQL = func(context.Context, string) error { return nil }
+	var sqls []string
+	rotateRunSQL = func(_ context.Context, sql string) error { sqls = append(sqls, sql); return nil }
 	rotateRestartService = func(context.Context, string) error { return nil }
 	rotateProbeKratosHealthy = func(context.Context, string) error { return nil }
 	rotateRevokeAllKratosSessions = func(context.Context) (int, error) { return 1, errors.New("admin socket refused") }
@@ -248,6 +249,11 @@ func TestRotateKratos_RevokeFailureKeepsRotation(t *testing.T) {
 	}
 	if readTrim(t, f.pw) == kOldPw || strings.Contains(readTrim(t, f.yml), kOldCookie) {
 		t.Error("rotation was undone after a revocation failure — the exposed secrets are live again")
+	}
+	// Exactly the one forward ALTER: a second one would put the exposed
+	// password back on the DB user while the files hold the new one.
+	if len(sqls) != 1 || strings.Contains(sqls[0], kOldPw) {
+		t.Errorf("DB password touched again after revocation failed: %d statements", len(sqls))
 	}
 }
 
