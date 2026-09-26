@@ -292,6 +292,15 @@ func Create(ctx context.Context, d CreateDeps, hooks CreateHooks, in CreateInput
 		}
 	}
 
+	// JAB-390: never the panel's custom mail hostname or a parent zone of
+	// it, whoever the actor: every hosted domain is tenant-owned. Fail
+	// closed on a lookup error.
+	if clash, err := MailHostnameCollision(ctx, d.Settings, in.Name); err != nil {
+		return nil, &kindError{kind: ErrMailHostnameLookup, cause: err}
+	} else if clash {
+		return nil, ErrDomainConflictsMailHostname
+	}
+
 	webEnabled := !in.WebDisabled
 	dnsEnabled := !in.DNSDisabled
 	if err := CheckWebOffOptions(WebOffInput{

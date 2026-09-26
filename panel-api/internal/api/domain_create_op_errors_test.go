@@ -92,6 +92,24 @@ func TestCreateDomainOp_RejectionWireShape(t *testing.T) {
 			detail: "could not verify the domain name against existing domains",
 		},
 		{
+			name: "the panel's custom mail hostname zone is refused",
+			cfg: func(c *DomainHandlerConfig, _ *opErrDomains) {
+				c.ServerSettings = aliasTestSettings{hostname: "panel.host.com", mailHostname: "mx.shop.example.com"}
+			},
+			in:     createDomainInput{OwnerID: owner.ID, Name: "shop.example.com", ActorIsAdmin: true},
+			status: http.StatusConflict, code: "domain_conflicts_mail_hostname",
+			detail: "the name is, or contains, the panel's mail hostname",
+		},
+		{
+			name: "mail hostname lookup failure fails closed",
+			cfg: func(c *DomainHandlerConfig, _ *opErrDomains) {
+				c.ServerSettings = aliasTestSettings{err: errors.New("db down")}
+			},
+			in:     createDomainInput{OwnerID: owner.ID, Name: "shop.example.com"},
+			status: http.StatusInternalServerError, code: "db_mail_hostname_lookup",
+			detail: "could not verify the domain name against the panel mail hostname",
+		},
+		{
 			name:   "unknown owner",
 			in:     createDomainInput{OwnerID: "u-ghost", Name: "shop.example.com"},
 			status: http.StatusBadRequest, code: "user not found",

@@ -579,6 +579,19 @@ func (h *dockerAppHandler) install(c *gin.Context) {
 					c.JSON(http.StatusConflict, gin.H{"error": "domain_conflicts_alias", "detail": msg, "id": app.ID})
 					return
 				}
+				// JAB-390: never the panel's custom mail hostname or a parent
+				// zone of it, whoever installs. Fail CLOSED on a lookup error.
+				if clash, cerr := MailHostnameCollision(ctx, h.cfg.ServerSettings, req.Domain); cerr != nil {
+					msg := "domain auto-create failed: could not verify the name against the panel mail hostname"
+					_ = h.cfg.Repo.UpdateStatus(ctx, app.ID, models.DockerAppStatusFailed, &msg)
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "db_mail_hostname_lookup", "detail": msg, "id": app.ID})
+					return
+				} else if clash {
+					msg := "domain auto-create failed: the name is, or contains, the panel's mail hostname"
+					_ = h.cfg.Repo.UpdateStatus(ctx, app.ID, models.DockerAppStatusFailed, &msg)
+					c.JSON(http.StatusConflict, gin.H{"error": "domain_conflicts_mail_hostname", "detail": msg, "id": app.ID})
+					return
+				}
 				// GH #1789: same cross-tenant DNS subdomain-hijack guard the create
 				// path runs — auto-creating a docker-app domain that nests under (or
 				// wraps) another tenant's domain is the identical hole. Non-admin
@@ -1242,6 +1255,13 @@ func (h *dockerAppHandler) editDomainPorts(ctx context.Context, app *models.Dock
 							return &dockerEditError{http.StatusInternalServerError, "db_alias_lookup", "could not verify the domain name against existing aliases"}
 						} else if clash {
 							return &dockerEditError{http.StatusConflict, "domain_conflicts_alias", "the name " + hit + " is already used as an alias of another domain"}
+						}
+						// JAB-390: never the panel's custom mail hostname or a
+						// parent zone of it. Fail CLOSED on a lookup error.
+						if clash, cerr := MailHostnameCollision(ctx, h.cfg.ServerSettings, newDomain); cerr != nil {
+							return &dockerEditError{http.StatusInternalServerError, "db_mail_hostname_lookup", "could not verify the domain name against the panel mail hostname"}
+						} else if clash {
+							return &dockerEditError{http.StatusConflict, "domain_conflicts_mail_hostname", "the name is, or contains, the panel's mail hostname"}
 						}
 						// GH #1789: cross-tenant DNS subdomain-hijack guard (see the
 						// install path). Non-admin only; fail CLOSED on a lookup error.

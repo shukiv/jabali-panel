@@ -183,6 +183,10 @@ func createDomainOpError(err error) *createDomainError {
 		// Deliberately generic detail: naming the conflicting domain would leak
 		// another tenant's zone/subdomain existence (GH #1789 child direction).
 		return &createDomainError{http.StatusConflict, "domain_conflicts_tenant", "the name conflicts with a domain owned by another account"}
+	case errors.Is(err, domainops.ErrMailHostnameLookup):
+		return &createDomainError{http.StatusInternalServerError, "db_mail_hostname_lookup", "could not verify the domain name against the panel mail hostname"}
+	case errors.Is(err, domainops.ErrDomainConflictsMailHostname):
+		return &createDomainError{http.StatusConflict, "domain_conflicts_mail_hostname", "the name is, or contains, the panel's mail hostname"}
 	case errors.Is(err, domainops.ErrApexIPWithWeb):
 		return &createDomainError{http.StatusBadRequest, "web_enabled_apex_ip", "a web domain's apex IP is managed by the panel — set an apex IP only on a DNS-only zone"}
 	case errors.Is(err, domainops.ErrApexIPWithoutDNS):

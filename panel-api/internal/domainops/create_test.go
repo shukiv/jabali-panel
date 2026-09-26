@@ -188,6 +188,35 @@ func TestCreate(t *testing.T) {
 		}
 	})
 
+	t.Run("the panel's custom mail hostname and its zone are refused, whoever creates them", func(t *testing.T) {
+		applied := "mx.example.net"
+		for _, name := range []string{"mx.example.net", "example.net"} {
+			s := newCreateStore()
+			d := deps(s)
+			d.Settings = &fakeMailSettings{s: &models.ServerSettings{Hostname: "panel.example.com", MailHostname: &applied}}
+			in := base
+			in.Name, in.ActorIsAdmin = name, true
+			if _, err := Create(ctx, d, CreateHooks{}, in); !errors.Is(err, ErrDomainConflictsMailHostname) {
+				t.Fatalf("%s: want ErrDomainConflictsMailHostname, got %v", name, err)
+			}
+			if len(s.created) != 0 {
+				t.Fatalf("%s: a refused domain must not be stored", name)
+			}
+		}
+	})
+
+	t.Run("an unreadable mail hostname fails the create closed", func(t *testing.T) {
+		s := newCreateStore()
+		d := deps(s)
+		d.Settings = &fakeMailSettings{err: errors.New("db down")}
+		if _, err := Create(ctx, d, CreateHooks{}, base); !errors.Is(err, ErrMailHostnameLookup) {
+			t.Fatalf("want ErrMailHostnameLookup, got %v", err)
+		}
+		if len(s.created) != 0 {
+			t.Fatal("nothing may be stored when the guard could not run")
+		}
+	})
+
 	t.Run("nil hooks are skipped", func(t *testing.T) {
 		if _, err := Create(ctx, deps(newCreateStore()), CreateHooks{}, base); err != nil {
 			t.Fatalf("create: %v", err)
