@@ -9191,6 +9191,38 @@ install_retention_sweep_timer() {
   _ok "retention sweep timer enabled (daily)"
 }
 
+# ---------- panel mail cert renewal routing (JAB-389 / JAB-390) -----------
+#
+# seed_panel_mail_lineage_marker — the certbot deploy hook
+# (install/letsencrypt/jabali-panel-cert.sh) routes unattended renewals of
+# the panel mail cert by the lineage name it records at
+# /etc/jabali/tls/panel-mail.lineage. Boxes whose mail cert was deployed
+# before that record existed have none, and when their mail lineage is not
+# mail.<current-hostname> (JAB-389 keeps it pinned across a panel rename)
+# its renewals were treated as a tenant lineage and never deployed. Seed the
+# record once from the deployed cert: its CN is the lineage name when a
+# matching Let's Encrypt lineage exists. Never overwrites an existing
+# record; a self-signed mail cert (no lineage) is left alone. Arguments
+# override the directories for install/tests.
+seed_panel_mail_lineage_marker() {
+  local tls_dir="${1:-/etc/jabali/tls}" live_dir="${2:-/etc/letsencrypt/live}"
+  local marker="$tls_dir/panel-mail.lineage" crt="$tls_dir/panel-mail.crt" cn
+  if [[ -f "$marker" || ! -f "$crt" ]]; then
+    return 0
+  fi
+  cn="$(openssl x509 -in "$crt" -noout -subject -nameopt multiline 2>/dev/null \
+    | awk -F' = ' '/commonName/ {print $2; exit}')"
+  if [[ -z "$cn" || "$cn" == */* || ! -d "$live_dir/$cn" ]]; then
+    return 0
+  fi
+  printf '%s\n' "$cn" >"$marker.tmp"
+  chmod 0644 "$marker.tmp"
+  mv -f "$marker.tmp" "$marker"
+  if declare -F _ok >/dev/null; then
+    _ok "panel mail cert renewals routed by lineage $cn (JAB-389/390)"
+  fi
+}
+
 # ---------- M35 migration-secrets reaper (ADR-0094) ----------------------
 #
 # install_migration_secrets_reaper writes the daily timer + service
@@ -15752,6 +15784,9 @@ provision_new_software() {
   # not only at fresh install, so unit fixes (e.g. its ReadWritePaths)
   # reach existing boxes. Idempotent: install + daemon-reload + enable.
   install_migration_secrets_reaper
+  # Record which LE lineage is the panel mail cert so its unattended
+  # renewals keep deploying on boxes renamed since (JAB-389/390).
+  declare -f seed_panel_mail_lineage_marker >/dev/null && seed_panel_mail_lineage_marker
 
   # JAB-273: self-heal the fleet's zero-swap fragility (kswapd death-spiral that
   # locked the operator out of newaramaapp) and contain every all-tenant

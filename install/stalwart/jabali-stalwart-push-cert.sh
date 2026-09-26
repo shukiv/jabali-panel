@@ -80,7 +80,7 @@ if [[ "$ready" != "1" ]]; then
   exit 0
 fi
 
-# Delete any prior Certificate covering the SAME primary hostname so
+# Delete every prior Certificate serving ANY name the new cert covers so
 # the next create carries the fresh PEM (renewals must REPLACE, not
 # duplicate — two certs with the same SAN make Stalwart's SNI pick
 # ambiguous, and re-creating under the same name key hits a
@@ -91,10 +91,14 @@ fi
 #   {"subjectAlternativeNames":{"mail.example.com":true},"id":"<opaque>"}
 # The `id` is a Stalwart-assigned opaque handle, NOT the name we pass
 # on create — so we can't match prior certs by CERT_NAME. Match by SAN
-# instead: pull the cert's own primary CN (= the certbot primary
-# domain, e.g. mail.<d>) and delete every registry entry whose SAN set
-# contains it. This scopes the delete to THIS cert's hostname and
-# never touches the panel cert (different SAN).
+# instead: collect the names the new cert covers (its CN plus every DNS
+# SAN) and delete every registry entry whose SAN set contains any of
+# them. Matching the CN alone missed a cert whose CN is a name the
+# registry has not seen yet — a renamed or custom shared mail hostname
+# (JAB-390) whose transition cert also covers the old name — so the old
+# entry survived and Stalwart kept serving the OLD certificate. The
+# delete stays scoped to this cert's own names: the panel cert and each
+# tenant's per-domain cert never share one.
 #
 # Robust under `set -euo pipefail`: the old `jq '.[] | select(.id...)'`
 # crashed with "Cannot index string with string" because the output is
@@ -104,12 +108,21 @@ fi
 # cert never reached Stalwart).
 primary_san="$(openssl x509 -in "$CERT_PATH" -noout -subject 2>/dev/null \
   | sed -n 's/.*CN *= *\([^,]*\).*/\1/p' | head -1)"
-if [[ -n "$primary_san" ]]; then
+# DNS names compare case-insensitively: both sides are lower-cased.
+cert_names_json="$(
+  {
+    printf '%s\n' "$primary_san"
+    openssl x509 -in "$CERT_PATH" -noout -ext subjectAltName 2>/dev/null \
+      | tail -n +2 | tr ',' '\n' | sed -n 's/^[[:space:]]*DNS:[[:space:]]*//p'
+  } | tr '[:upper:]' '[:lower:]' | sed '/^[[:space:]]*$/d' | jq -Rsc 'split("\n") | map(select(length > 0)) | unique'
+)"
+if [[ "$cert_names_json" != "[]" && -n "$cert_names_json" ]]; then
   mapfile -t prior_ids < <(
     STALWART_URL="$STW_URL" STALWART_USER="$admin_user" STALWART_PASSWORD="$admin_pass" \
       "$STW_CLI" query x:Certificate --json 2>/dev/null \
-      | jq -r --arg san "$primary_san" \
-          'select(.subjectAlternativeNames[$san] == true) | .id' 2>/dev/null || true
+      | jq -r --argjson names "$cert_names_json" \
+          'select(any((.subjectAlternativeNames // {}) | keys[] | ascii_downcase; IN($names[])))
+           | .id' 2>/dev/null || true
   )
   for prior_id in "${prior_ids[@]}"; do
     [[ -n "$prior_id" ]] || continue

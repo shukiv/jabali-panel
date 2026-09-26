@@ -24,6 +24,60 @@
 # Idempotent + best-effort reloads. set -euo pipefail.
 set -euo pipefail
 
+# The kind=mail arm records here the lineage name it deployed. certbot's
+# unattended renewals carry no JABALI_PANEL_CERT_KIND, so the lineage name
+# is the only routing signal, and the panel MAIL lineage is not always
+# mail.<current-hostname>: JAB-389 pins it to the name it was seeded with
+# (it stays mail.<old-hostname> after a panel rename) and JAB-390 lets the
+# shared mail hostname be any FQDN. Without this record those renewals were
+# treated as tenant lineages and never deployed.
+PANEL_MAIL_LINEAGE_FILE="/etc/jabali/tls/panel-mail.lineage"
+
+# panel_cert_kind SRC CN — the deploy target for the lineage at SRC when no
+# explicit JABALI_PANEL_CERT_KIND was given: "hostname", "mail",
+# "mail-domain", or "" for a lineage this hook must not touch.
+panel_cert_kind() {
+  local src="$1" cn="$2" base recorded=""
+  base="$(basename "$src")"
+  # mail-domain lineages also start with `mail.` -- disambiguate via the
+  # env var ssl.mail.issue sets.
+  if [[ "$base" == mail.* && -n "${JABALI_MAIL_DOMAIN_ID:-}" ]]; then
+    echo "mail-domain"
+    return
+  fi
+  if [[ -f "$PANEL_MAIL_LINEAGE_FILE" ]]; then
+    recorded="$(head -n 1 "$PANEL_MAIL_LINEAGE_FILE" 2>/dev/null || true)"
+  fi
+  if [[ -n "$recorded" && "$base" == "$recorded" ]]; then
+    echo "mail"
+    return
+  fi
+  # No record yet (boxes before their next mail deploy): the derived name.
+  if [[ "$base" == "mail.${cn}" ]]; then
+    echo "mail"
+    return
+  fi
+  # Only the panel hostname's own lineage feeds /etc/jabali/tls/panel.*.
+  # Any other lineage here is a TENANT domain renewed by certbot's
+  # unattended timer -- its nginx vhost references the LE lineage
+  # directly, so this hook must NOT touch it. Copying it to panel.crt
+  # made the panel (:8443), Stalwart and Bulwark serve a random
+  # tenant's certificate (incident: puzzle.linux-hosting.net panel
+  # served freecrosswordpuzzleanswers.com after that domain renewed).
+  # Likewise a mail.<tenant> lineage is owned by the per-domain mail
+  # reconciler, never copied to panel-mail.crt.
+  if [[ "$base" == "$cn" ]]; then
+    echo "hostname"
+    return
+  fi
+  echo ""
+}
+
+# Library mode for install/tests: define the functions, run nothing.
+if [[ "${JABALI_PANEL_CERT_HOOK_LIB:-}" == "1" ]]; then
+  return 0
+fi
+
 cn="$(hostname -f 2>/dev/null || hostname)"
 src="${RENEWED_LINEAGE:-/etc/letsencrypt/live/${cn}}"
 
@@ -36,43 +90,13 @@ if [[ ! -f "$src/fullchain.pem" || ! -f "$src/privkey.pem" ]]; then
   exit 1
 fi
 
-# Resolve kind: explicit env wins; otherwise infer from the lineage
-# name so certbot's unattended timer routes mail.* correctly.
+# Resolve kind: explicit env wins; otherwise infer from the lineage name.
 kind="${JABALI_PANEL_CERT_KIND:-}"
 if [[ -z "$kind" ]]; then
-  case "$(basename "$src")" in
-    mail.*)
-      # mail-domain lineages also start with `mail.` -- disambiguate
-      # via the env var ssl.mail.issue sets. Absent the var, fall back
-      # to legacy 'mail' kind so existing panel-mail renewals don't
-      # silently flip to the per-domain branch.
-      if [[ -n "${JABALI_MAIL_DOMAIN_ID:-}" ]]; then
-        kind="mail-domain"
-      elif [[ "$(basename "$src")" == "mail.${cn}" ]]; then
-        kind="mail"
-      else
-        # mail.<tenant> renewed by certbot's unattended timer (no
-        # JABALI_MAIL_DOMAIN_ID). NOT the panel mail cert -- the per-domain
-        # mail reconciler owns it. Do nothing rather than clobber
-        # panel-mail.crt with a random tenant's mail cert.
-        exit 0
-      fi
-      ;;
-    *)
-      # Only the panel hostname's own lineage feeds /etc/jabali/tls/panel.*.
-      # Any other lineage here is a TENANT domain renewed by certbot's
-      # unattended timer -- its nginx vhost references the LE lineage
-      # directly, so this hook must NOT touch it. Copying it to panel.crt
-      # made the panel (:8443), Stalwart and Bulwark serve a random
-      # tenant's certificate (incident: puzzle.linux-hosting.net panel
-      # served freecrosswordpuzzleanswers.com after that domain renewed).
-      if [[ "$(basename "$src")" == "$cn" ]]; then
-        kind="hostname"
-      else
-        exit 0
-      fi
-      ;;
-  esac
+  kind="$(panel_cert_kind "$src" "$cn")"
+  if [[ -z "$kind" ]]; then
+    exit 0
+  fi
 fi
 
 dst_dir="/etc/jabali/tls"
@@ -82,6 +106,11 @@ case "$kind" in
   mail)
     install -m 0640 -o root -g jabali "$src/fullchain.pem" "$dst_dir/panel-mail.crt"
     install -m 0640 -o root -g jabali "$src/privkey.pem"   "$dst_dir/panel-mail.key"
+    # Record which lineage is the panel mail cert so certbot's unattended
+    # renewals of it route back here (see PANEL_MAIL_LINEAGE_FILE above).
+    printf '%s\n' "$(basename "$src")" >"${PANEL_MAIL_LINEAGE_FILE}.tmp"
+    chmod 0644 "${PANEL_MAIL_LINEAGE_FILE}.tmp"
+    mv -f "${PANEL_MAIL_LINEAGE_FILE}.tmp" "$PANEL_MAIL_LINEAGE_FILE"
     # nginx serves mail.<hostname> :443; Stalwart reads the mail cert
     # for SMTP/IMAPS. jabali-panel / jabali-bulwark use the hostname
     # cert and are deliberately NOT bounced here.
