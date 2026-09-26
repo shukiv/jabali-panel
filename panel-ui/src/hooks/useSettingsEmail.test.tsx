@@ -104,6 +104,68 @@ describe("useSettingsEmail", () => {
     expect(d.emailEnabledAt).toBeNull();
   });
 
+  // JAB-390: the ready body carries the effective/applied mail hostname and
+  // the switchover request in progress (null when none).
+  it("maps mail_hostname and a switchover in progress", async () => {
+    (apiClient.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      status: 200,
+      data: {
+        primary_domain_name: "mx.example.com",
+        webmail_url: "https://mail.mx.example.com/",
+        dkim_published: true,
+        email_enabled_at: null,
+        mail_hostname: { effective: "mail.mx.example.com", applied: null },
+        switchover: {
+          desired: "mx.example.net",
+          status: "failed",
+          last_error: "mx.example.net does not point at this server",
+          next_retry_at: "2026-09-27T11:00:00Z",
+          updated_at: "2026-09-27T10:50:00Z",
+        },
+      },
+    });
+
+    const { result } = renderHook(() => useSettingsEmail(), { wrapper });
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true);
+    });
+    const d = result.current.data;
+    if (!d || d.state !== "ready") {
+      throw new Error("expected ready");
+    }
+    expect(d.mailHostname).toEqual({ effective: "mail.mx.example.com", applied: null });
+    expect(d.switchover).toEqual({
+      desired: "mx.example.net",
+      status: "failed",
+      lastError: "mx.example.net does not point at this server",
+      nextRetryAt: "2026-09-27T11:00:00Z",
+      updatedAt: "2026-09-27T10:50:00Z",
+    });
+  });
+
+  it("maps an older server without mail_hostname to the webmail host and no switchover", async () => {
+    (apiClient.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      status: 200,
+      data: {
+        primary_domain_name: "mx.example.com",
+        webmail_url: "https://mail.mx.example.com/",
+        dkim_published: true,
+        email_enabled_at: null,
+      },
+    });
+
+    const { result } = renderHook(() => useSettingsEmail(), { wrapper });
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true);
+    });
+    const d = result.current.data;
+    if (!d || d.state !== "ready") {
+      throw new Error("expected ready");
+    }
+    expect(d.mailHostname).toEqual({ effective: "mail.mx.example.com", applied: null });
+    expect(d.switchover).toBeNull();
+  });
+
   it("surfaces non-2xx errors as an error state", async () => {
     const axiosErr = Object.assign(new Error("boom"), {
       isAxiosError: true,
