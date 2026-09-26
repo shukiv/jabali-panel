@@ -2,6 +2,9 @@ package reconciler
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -60,14 +63,46 @@ type Phase struct {
 	AuditInterval time.Duration
 }
 
-// The phases the ledger gates. Their intervals are the ones each pass used
-// before the ledger existed.
+// The phases the ledger gates. The first four keep the intervals each pass
+// used before the ledger existed. The rest used to re-send their projection
+// on every tick and relied on the Agent to notice nothing changed.
 var (
 	PhaseDomainVhost = Phase{Name: "domain.vhost", AuditInterval: domainReDispatchInterval}
 	PhaseDNSZone     = Phase{Name: "dns.zone", AuditInterval: dnsZoneReDispatchInterval}
 	PhaseSSHKeys     = Phase{Name: "ssh.keys", AuditInterval: sshKeysReDispatchInterval}
 	PhaseFTPAccounts = Phase{Name: "ftp.accounts", AuditInterval: ftpAccountsReDispatchInterval}
+
+	// PhaseNginxRateLimits is the shared rate-limit zone fragment.
+	PhaseNginxRateLimits = Phase{Name: "nginx.ratelimits", AuditInterval: domainReDispatchInterval}
+	// PhaseDNSRecursor is one zone's pdns-recursor forwarder, added or
+	// removed. Keyed by zone name, so an add and a removal of the same zone
+	// share one entry and each replaces the other.
+	PhaseDNSRecursor = Phase{Name: "dns.recursor", AuditInterval: dnsZoneReDispatchInterval}
+	// PhaseWebmailVhost is one domain's mail.<domain> vhost, applied or
+	// removed. Keyed by domain name, the Agent's own key for that vhost.
+	PhaseWebmailVhost = Phase{Name: "webmail.vhost", AuditInterval: domainReDispatchInterval}
+	// PhaseWebmailDaemon is the jabali-webmail unit's started-and-enabled
+	// or stopped-and-disabled state. Its interval is shorter because it is
+	// a liveness repair: it restarts a daemon someone stopped by hand.
+	PhaseWebmailDaemon = Phase{Name: "webmail.daemon", AuditInterval: 5 * time.Minute}
+	// PhasePHPPoolGC is the orphan FPM pool sweep. Its input is the set of
+	// usernames to keep, so a deleted user re-runs it at once; orphans that
+	// appear with no user change are swept within the interval.
+	PhasePHPPoolGC = Phase{Name: "php.pool.gc", AuditInterval: domainReDispatchInterval}
 )
+
+// fingerprint is the canonical hash of a projection's desired payload:
+// SHA-256 of its JSON encoding (encoding/json sorts map keys). It returns
+// "" when v cannot be encoded, and the ledger always applies an empty
+// fingerprint.
+func fingerprint(v any) string {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
+}
 
 // decision is the ledger's answer for one resource in one run.
 type decision int
@@ -281,6 +316,24 @@ func (r *Reconciler) phaseApplied(ctx context.Context, p Phase, id, hash string,
 func (r *Reconciler) phaseFailed(ctx context.Context, p Phase) {
 	_, rr := runFrom(ctx)
 	rr.add(p, func(c *PhaseCounts) { c.Failed++ })
+}
+
+// project runs one fingerprinted projection through the ledger: apply is
+// called unless the run may skip this resource, a success is stamped, and a
+// failure is counted and left dirty for the next run. force applies
+// whatever the run's mode. It reports whether apply ran and apply's error.
+func (r *Reconciler) project(ctx context.Context, p Phase, id, hash string, force bool, apply func() error) (bool, error) {
+	now := time.Now()
+	d := r.phaseDecide(ctx, p, id, hash, now, force)
+	if d == decisionSkip {
+		return false, nil
+	}
+	if err := apply(); err != nil {
+		r.phaseFailed(ctx, p)
+		return true, err
+	}
+	r.phaseApplied(ctx, p, id, hash, now, d)
+	return true, nil
 }
 
 // Run executes one planned reconcile pass in mode and reports what each

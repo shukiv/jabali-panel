@@ -399,17 +399,24 @@ func (e *notFoundErr) Is(err error) bool {
 	return ok
 }
 
-// fakeDNSZoneRepo mocks the DNS zone repository.
+// fakeDNSZoneRepo mocks the DNS zone repository. It is locked because the
+// domain loop converges domains on a worker pool (JAB-205), so a fixture
+// with more than one domain calls it concurrently.
 type fakeDNSZoneRepo struct {
+	mu    sync.Mutex
 	zones map[string]*models.DNSZone
 }
 
 func (f *fakeDNSZoneRepo) Create(ctx context.Context, zone *models.DNSZone) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.zones[zone.ID] = zone
 	return nil
 }
 
 func (f *fakeDNSZoneRepo) FindByID(ctx context.Context, id string) (*models.DNSZone, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	z, ok := f.zones[id]
 	if !ok {
 		return nil, repository.ErrNotFound
@@ -418,6 +425,8 @@ func (f *fakeDNSZoneRepo) FindByID(ctx context.Context, id string) (*models.DNSZ
 }
 
 func (f *fakeDNSZoneRepo) FindByName(ctx context.Context, name string) (*models.DNSZone, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	for _, z := range f.zones {
 		if z.Name == name {
 			return z, nil
@@ -426,7 +435,7 @@ func (f *fakeDNSZoneRepo) FindByName(ctx context.Context, name string) (*models.
 	return nil, repository.ErrNotFound
 }
 
-func (f *fakeDNSZoneRepo) FindByDomainID(ctx context.Context, domainID string) (*models.DNSZone, error) {
+func (f *fakeDNSZoneRepo) findByDomainIDLocked(domainID string) (*models.DNSZone, error) {
 	for _, z := range f.zones {
 		if z.DomainID == domainID {
 			return z, nil
@@ -435,10 +444,18 @@ func (f *fakeDNSZoneRepo) FindByDomainID(ctx context.Context, domainID string) (
 	return nil, repository.ErrNotFound
 }
 
+func (f *fakeDNSZoneRepo) FindByDomainID(ctx context.Context, domainID string) (*models.DNSZone, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.findByDomainIDLocked(domainID)
+}
+
 func (f *fakeDNSZoneRepo) FindByDomainIDs(ctx context.Context, domainIDs []string) ([]models.DNSZone, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	var out []models.DNSZone
 	for _, id := range domainIDs {
-		if z, err := f.FindByDomainID(ctx, id); err == nil && z != nil {
+		if z, err := f.findByDomainIDLocked(id); err == nil && z != nil {
 			out = append(out, *z)
 		}
 	}
@@ -446,6 +463,8 @@ func (f *fakeDNSZoneRepo) FindByDomainIDs(ctx context.Context, domainIDs []strin
 }
 
 func (f *fakeDNSZoneRepo) ListAll(ctx context.Context) ([]models.DNSZone, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	var result []models.DNSZone
 	for _, z := range f.zones {
 		result = append(result, *z)
@@ -454,26 +473,36 @@ func (f *fakeDNSZoneRepo) ListAll(ctx context.Context) ([]models.DNSZone, error)
 }
 
 func (f *fakeDNSZoneRepo) Update(ctx context.Context, zone *models.DNSZone) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.zones[zone.ID] = zone
 	return nil
 }
 
 func (f *fakeDNSZoneRepo) Delete(ctx context.Context, id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	delete(f.zones, id)
 	return nil
 }
 
-// fakeDNSRecordRepo mocks the DNS record repository.
+// fakeDNSRecordRepo mocks the DNS record repository. Locked for the same
+// reason as fakeDNSZoneRepo.
 type fakeDNSRecordRepo struct {
+	mu      sync.Mutex
 	records map[string]*models.DNSRecord
 }
 
 func (f *fakeDNSRecordRepo) Create(ctx context.Context, record *models.DNSRecord) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.records[record.ID] = record
 	return nil
 }
 
 func (f *fakeDNSRecordRepo) FindByID(ctx context.Context, id string) (*models.DNSRecord, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	r, ok := f.records[id]
 	if !ok {
 		return nil, repository.ErrNotFound
@@ -481,21 +510,28 @@ func (f *fakeDNSRecordRepo) FindByID(ctx context.Context, id string) (*models.DN
 	return r, nil
 }
 
-func (f *fakeDNSRecordRepo) ListByZoneID(ctx context.Context, zoneID string) ([]models.DNSRecord, error) {
+func (f *fakeDNSRecordRepo) listByZoneIDLocked(zoneID string) []models.DNSRecord {
 	var result []models.DNSRecord
 	for _, r := range f.records {
 		if r.ZoneID == zoneID {
 			result = append(result, *r)
 		}
 	}
-	return result, nil
+	return result
+}
+
+func (f *fakeDNSRecordRepo) ListByZoneID(ctx context.Context, zoneID string) ([]models.DNSRecord, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.listByZoneIDLocked(zoneID), nil
 }
 
 func (f *fakeDNSRecordRepo) CountByZoneIDs(ctx context.Context, zoneIDs []string) (map[string]int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	out := make(map[string]int64)
 	for _, zid := range zoneIDs {
-		recs, _ := f.ListByZoneID(ctx, zid)
-		if len(recs) > 0 {
+		if recs := f.listByZoneIDLocked(zid); len(recs) > 0 {
 			out[zid] = int64(len(recs))
 		}
 	}
@@ -503,6 +539,8 @@ func (f *fakeDNSRecordRepo) CountByZoneIDs(ctx context.Context, zoneIDs []string
 }
 
 func (f *fakeDNSRecordRepo) DeleteByZoneID(ctx context.Context, zoneID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	for id, r := range f.records {
 		if r.ZoneID == zoneID {
 			delete(f.records, id)
@@ -512,6 +550,8 @@ func (f *fakeDNSRecordRepo) DeleteByZoneID(ctx context.Context, zoneID string) e
 }
 
 func (f *fakeDNSRecordRepo) DeleteByZoneIDAndManagedBy(ctx context.Context, zoneID, managedBy string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	for id, r := range f.records {
 		if r.ZoneID != zoneID {
 			continue
@@ -525,11 +565,15 @@ func (f *fakeDNSRecordRepo) DeleteByZoneIDAndManagedBy(ctx context.Context, zone
 }
 
 func (f *fakeDNSRecordRepo) Update(ctx context.Context, record *models.DNSRecord) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.records[record.ID] = record
 	return nil
 }
 
 func (f *fakeDNSRecordRepo) Delete(ctx context.Context, id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	delete(f.records, id)
 	return nil
 }

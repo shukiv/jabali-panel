@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/limits"
@@ -178,15 +179,35 @@ func (r *Reconciler) ReconcileNginxRateLimits(ctx context.Context) {
 		})
 	}
 
-	ctxCall, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	raw, err := r.agent.Call(ctxCall, "nginx.ratelimits.apply", map[string]any{
+	// JAB-369: the fragment is a pure function of this bundle, so an
+	// unchanged bundle is skipped until the audit interval. Sorted so the
+	// fingerprint does not depend on the list order (the Agent sorts too).
+	sort.Slice(bundle, func(i, j int) bool { return bundle[i].DomainID < bundle[j].DomainID })
+	params := map[string]any{
 		"domains":      bundle,
 		"zone_size_kb": 0, // 0 -> agent default (10 MB)
+	}
+	// The two calls in one tick keep their ordering role. On 0→N the first
+	// call declares the zone before the domain loop writes a vhost that
+	// references it; it succeeds and is stamped, so the second call skips.
+	// On N→0 the first call fails: the Agent's nginx -t still sees the old
+	// vhost referencing the zone and rolls the fragment back. A failure is
+	// never stamped, so after the domain loop re-renders the vhost the
+	// second call applies again and succeeds.
+	_, _ = r.project(ctx, PhaseNginxRateLimits, "fragment", fingerprint(params), false, func() error {
+		return r.applyNginxRateLimits(ctx, params, len(bundle))
 	})
+}
+
+// applyNginxRateLimits sends the zone fragment and reloads nginx when the
+// Agent changed it.
+func (r *Reconciler) applyNginxRateLimits(ctx context.Context, params map[string]any, count int) error {
+	ctxCall, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	raw, err := r.agent.Call(ctxCall, "nginx.ratelimits.apply", params)
 	if err != nil {
-		r.log.Warn("reconcile nginx-ratelimits: apply failed", "err", err, "count", len(bundle))
-		return
+		r.log.Warn("reconcile nginx-ratelimits: apply failed", "err", err, "count", count)
+		return err
 	}
 	// Reload nginx ONLY when the agent's idempotent compare flipped
 	// the fragment. Without this gate, every tick with at least one
@@ -201,16 +222,18 @@ func (r *Reconciler) ReconcileNginxRateLimits(ctx context.Context) {
 	if jerr := json.Unmarshal(raw, &resp); jerr != nil {
 		r.log.Debug("reconcile nginx-ratelimits: missing no_change in agent response; reloading defensively", "err", jerr)
 	} else if resp.NoChange {
-		return
+		return nil
 	}
-	if len(bundle) == 0 {
-		return
+	if count == 0 {
+		return nil
 	}
 	reloadCtx, reloadCancel := context.WithTimeout(ctx, 10*time.Second)
 	defer reloadCancel()
 	if _, err := r.agent.Call(reloadCtx, "nginx.reload", nil); err != nil {
 		r.log.Warn("reconcile nginx-ratelimits: reload failed", "err", err)
+		return err
 	}
+	return nil
 }
 
 // Ensure any struct field additions here show up as compile errors
