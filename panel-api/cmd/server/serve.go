@@ -408,6 +408,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 		// GH #1818 — distribution mail groups are re-applied as Stalwart
 		// mailing lists (fleet conversion + heal of failed applies).
 		rec.WithMailGroups(mailGroupRepo)
+		// Mailbox shares → the owner Inbox's Stalwart shareWith (backfill of
+		// shares saved before the panel applied them + retry of failed applies).
+		rec.WithMailboxShares(repository.NewMailboxShareRepository(sharedDB), mailboxRepo)
 		// JAB-230 — noreply@ relay identities + shim cred files. Needs the
 		// sso.key to seal/unseal the relay passwords; nil key (fresh install
 		// mid-bootstrap) just disables the loop until the key exists.

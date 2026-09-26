@@ -2,11 +2,13 @@
 //
 // Wire contract:
 //   GET    /mailboxes/:mbid/shares              list shares owned by this mailbox
-//   POST   /mailboxes/:mbid/shares              create/replace share with target mailbox
+//   POST   /mailboxes/:mbid/shares              share the mailbox with another mailbox of the same account (409 if already shared)
 //   DELETE /mailboxes/:mbid/shares/:shareId     remove a share
 //   GET    /mail/shares                         all shares for the caller's mailboxes
 //
-// Backed by JMAP Mailbox.shareWith. Reconciler m65_mailbox_share pushes state.
+// Backed by JMAP Mailbox.shareWith. Create and delete apply the owner's share
+// list to Stalwart through mailshareops; the reconciler's mailbox-share sweep
+// retries a create whose apply failed.
 
 package api
 
@@ -20,7 +22,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/auth"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
-	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/mailshareops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
@@ -40,6 +42,9 @@ type shareResponse struct {
 	SharedWithMailboxEmail string        `json:"shared_with_mailbox_email,omitempty"`
 	Rights                 models.Rights `json:"rights"`
 	CreatedAt              string        `json:"created_at"`
+	// Warning is set when the share was saved but Stalwart did not accept it
+	// yet (code convergence_failed); the reconciler retries it.
+	Warning *forwarderWarning `json:"warning,omitempty"`
 }
 
 type shareCreateRequest struct {
@@ -155,24 +160,32 @@ func (h *shareHandler) create(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_body"})
 		return
 	}
-	// Guard: target mailbox must exist.
-	if _, err := h.cfg.Mailboxes.FindByID(ctx, req.SharedWithMailboxID); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "target_not_found"})
+	res, err := mailshareops.Create(ctx, h.deps(), owner, req.SharedWithMailboxID, req.Rights, "m6.5")
+	if err != nil {
+		switch {
+		case errors.Is(err, mailshareops.ErrTargetNotFound):
+			// Also a target in another account: the same answer as a
+			// missing one, so other tenants' mailboxes cannot be probed.
+			c.JSON(http.StatusBadRequest, gin.H{"error": "target_not_found"})
+		case errors.Is(err, mailshareops.ErrSelfShare):
+			c.JSON(http.StatusBadRequest, gin.H{"error": "cannot_share_with_self"})
+		case errors.Is(err, mailshareops.ErrNoRights):
+			c.JSON(http.StatusBadRequest, gin.H{"error": "rights_required"})
+		case errors.Is(err, mailshareops.ErrAlreadyShared):
+			c.JSON(http.StatusConflict, gin.H{"error": "already_shared"})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		}
 		return
 	}
-	s := &models.MailboxShare{
-		ID:                  ids.NewULID(),
-		OwnerMailboxID:      owner.ID,
-		SharedWithMailboxID: req.SharedWithMailboxID,
-		Rights:              req.Rights,
-		ManagedBy:           "m6.5",
+	resp := h.resolve(ctx, *res.Share)
+	if res.ApplyErr != nil {
+		// Saved, but not live on Stalwart yet; the reconciler retries it. The
+		// detail is this tenant's own mailbox convergence error on an
+		// owner-scoped endpoint (the forwarder create does the same).
+		resp.Warning = &forwarderWarning{Code: "convergence_failed", Detail: res.ApplyErr.Error()}
 	}
-	if err := h.cfg.MailboxShares.Create(ctx, s); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
-		return
-	}
-	// Reconciler picks up on next tick.
-	c.JSON(http.StatusCreated, h.resolve(ctx, *s))
+	c.JSON(http.StatusCreated, resp)
 }
 
 func (h *shareHandler) del(c *gin.Context) {
@@ -185,17 +198,33 @@ func (h *shareHandler) del(c *gin.Context) {
 	}
 	// Scope the delete to the authenticated mailbox. Authenticating :mbid and
 	// then deleting by bare :shareId let any authenticated tenant delete
-	// another tenant's share — passing their OWN mailbox as :mbid — and the
-	// reconciler would then strip that share's JMAP shareWith on Stalwart.
-	if err := h.cfg.MailboxShares.DeleteByOwner(ctx, c.Param("shareId"), mb.ID); err != nil {
-		if errors.Is(err, repository.ErrNotFound) {
+	// another tenant's share — passing their OWN mailbox as :mbid — and so
+	// strip that share's JMAP shareWith on Stalwart. mailshareops.Delete only
+	// acts on a share owned by mb.
+	//
+	// The revoke reaches Stalwart before the row goes: when Stalwart does not
+	// accept it, the answer is 502 and the row (and the live share) stay.
+	if err := mailshareops.Delete(ctx, h.deps(), mb.ID, c.Param("shareId")); err != nil {
+		switch {
+		case errors.Is(err, mailshareops.ErrNotFound):
 			c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
-			return
+		case errors.Is(err, mailshareops.ErrApply):
+			c.JSON(http.StatusBadGateway, gin.H{"error": "share_apply_failed", "detail": err.Error()})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
 	c.JSON(http.StatusNoContent, nil)
+}
+
+func (h *shareHandler) deps() mailshareops.Deps {
+	return mailshareops.Deps{
+		Agent:     h.cfg.Agent,
+		Mailboxes: h.cfg.Mailboxes,
+		Domains:   h.cfg.Domains,
+		Shares:    h.cfg.MailboxShares,
+	}
 }
 
 // shareRowMaps batch-loads every owner + shared-with mailbox for the given
