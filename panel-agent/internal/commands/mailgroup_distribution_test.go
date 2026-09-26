@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -51,6 +52,8 @@ type mgFake struct {
 	copied   map[string]map[string]bool // target account id → copied source email ids
 	scripts  map[string][]*sieveScriptRec
 	blobs    map[string]string
+	dkim     map[string]string         // signature id → domain id
+	shares   map[string]map[string]any // "acct/mailbox" → shareWith
 	calls    []string
 	failCopy bool
 	nextID   int
@@ -65,7 +68,15 @@ func newMGFake() *mgFake {
 		copied:   map[string]map[string]bool{},
 		scripts:  map[string][]*sieveScriptRec{},
 		blobs:    map[string]string{},
+		dkim:     map[string]string{},
+		shares:   map[string]map[string]any{},
 	}
+}
+
+// mgNeedsMailCap mirrors Stalwart: Mailbox/* and Email/* are refused with
+// unknownMethod unless the request's "using" carries the mail capability.
+func mgNeedsMailCap(method string) bool {
+	return strings.HasPrefix(method, "Mailbox/") || strings.HasPrefix(method, "Email/")
 }
 
 func (f *mgFake) id(prefix string) string {
@@ -157,7 +168,13 @@ func (f *mgFake) server(t *testing.T) *httptest.Server {
 			return
 		}
 		call := req.MethodCalls[0]
-		result, jmapErr := f.dispatch(call.Name, toRaw(call.Args))
+		var result any
+		var jmapErr *jmapFakeError
+		if mgNeedsMailCap(call.Name) && !slices.Contains(req.Using, jmapCapMail) {
+			jmapErr = &jmapFakeError{Type: "unknownMethod"}
+		} else {
+			result, jmapErr = f.dispatch(call.Name, toRaw(call.Args))
+		}
 		resp := jmapResponseBody{MethodResponses: make([]jmapMethodCall, 1)}
 		if jmapErr != nil {
 			resp.MethodResponses[0] = jmapMethodCall{Name: "error", Args: jmapErr, CallID: call.CallID}
@@ -210,6 +227,13 @@ func (f *mgFake) dispatch(method string, raw json.RawMessage) (any, *jmapFakeErr
 				ids = append(ids, id)
 			}
 		}
+		// Creation order (ids are acct<N>), so a test controls whether a
+		// group is listed before its members.
+		sort.Slice(ids, func(i, j int) bool {
+			ni, _ := strconv.Atoi(strings.TrimPrefix(ids[i], "acct"))
+			nj, _ := strconv.Atoi(strings.TrimPrefix(ids[j], "acct"))
+			return ni < nj
+		})
 		return jmapQueryResult{IDs: ids}, nil
 
 	case "x:Account/get":
@@ -361,6 +385,66 @@ func (f *mgFake) dispatch(method string, raw json.RawMessage) (any, *jmapFakeErr
 			return nil, &jmapFakeError{Type: "accountNotFound"}
 		}
 		return jmapQueryResult{IDs: []string{"inbox-" + a.AccountID}}, nil
+
+	case "Mailbox/set":
+		if _, ok := f.accounts[a.AccountID]; !ok {
+			return nil, &jmapFakeError{Type: "accountNotFound"}
+		}
+		res := newSetResult()
+		for mbox, patch := range a.Update {
+			if sw, ok := patch["shareWith"].(map[string]any); ok {
+				f.shares[a.AccountID+"/"+mbox] = sw
+			}
+			res.Updated[mbox] = json.RawMessage(`null`)
+		}
+		return res, nil
+
+	case "x:DkimSignature/get":
+		list := []json.RawMessage{}
+		for id, dom := range f.dkim {
+			row, _ := json.Marshal(map[string]any{"id": id, "@type": "Dkim1RsaSha256", "domainId": dom})
+			list = append(list, row)
+		}
+		return jmapGetResult{List: list}, nil
+
+	case "x:DkimSignature/set":
+		res := newSetResult()
+		for _, id := range a.Destroy {
+			if _, ok := f.dkim[id]; !ok {
+				res.NotDestroyed[id] = json.RawMessage(`{"type":"notFound"}`)
+				continue
+			}
+			delete(f.dkim, id)
+			res.Destroyed = append(res.Destroyed, id)
+		}
+		return res, nil
+
+	case "x:Domain/set":
+		res := newSetResult()
+		for _, id := range a.Destroy {
+			name := f.domainName(id)
+			if name == "" {
+				res.NotDestroyed[id] = json.RawMessage(`{"type":"notFound"}`)
+				continue
+			}
+			linked := false
+			for _, d := range f.dkim {
+				linked = linked || d == id
+			}
+			for _, acct := range f.accounts {
+				linked = linked || acct.domainID == id
+			}
+			for _, l := range f.lists {
+				linked = linked || l.domainID == id
+			}
+			if linked {
+				res.NotDestroyed[id] = json.RawMessage(`{"type":"objectIsLinked"}`)
+				continue
+			}
+			delete(f.domains, name)
+			res.Destroyed = append(res.Destroyed, id)
+		}
+		return res, nil
 
 	case "Email/copy":
 		res := newSetResult()

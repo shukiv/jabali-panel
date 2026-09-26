@@ -121,7 +121,7 @@ func mailboxShareSetHandler(ctx context.Context, params json.RawMessage) (any, e
 		},
 	}
 	var result jmapSetResult
-	if err := jmapCall(ctx, "Mailbox/set", args, &result); err != nil {
+	if err := jmapCallWith(ctx, jmapCapMail, "Mailbox/set", args, &result); err != nil {
 		return nil, err
 	}
 	if reason, ok := result.NotUpdated[inboxID]; ok {
@@ -131,6 +131,10 @@ func mailboxShareSetHandler(ctx context.Context, params json.RawMessage) (any, e
 }
 
 // inboxMailboxID resolves the owner account's INBOX Mailbox id via JMAP filter.
+//
+// Mailbox/query (like Mailbox/set above) is a mail-capability method: without
+// urn:ietf:params:jmap:mail in "using", Stalwart answers unknownMethod, so the
+// request carries jmapCapMail.
 func inboxMailboxID(ctx context.Context, accountID string) (string, error) {
 	args := map[string]any{
 		"accountId": accountID,
@@ -140,7 +144,7 @@ func inboxMailboxID(ctx context.Context, accountID string) (string, error) {
 	var result struct {
 		IDs []string `json:"ids"`
 	}
-	if err := jmapCall(ctx, "Mailbox/query", args, &result); err != nil {
+	if err := jmapCallWith(ctx, jmapCapMail, "Mailbox/query", args, &result); err != nil {
 		return "", err
 	}
 	if len(result.IDs) == 0 {

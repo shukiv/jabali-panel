@@ -11,11 +11,18 @@ import (
 // mailDomainPurgeParams is the input for mail.domain.purge_accounts.
 type mailDomainPurgeParams struct {
 	Domain string `json:"domain"`
+	// RemoveDomain, set when the domain itself is being deleted, also
+	// destroys the domain's DKIM signatures and then the Stalwart domain.
+	// Unset (a mail-only purge) keeps both so mail can be re-enabled.
+	RemoveDomain bool `json:"remove_domain,omitempty"`
 }
 
 type mailDomainPurgeResult struct {
-	Destroyed      int `json:"destroyed"`
-	DestroyedLists int `json:"destroyed_lists,omitempty"`
+	Destroyed      int    `json:"destroyed"`
+	DestroyedLists int    `json:"destroyed_lists,omitempty"`
+	DestroyedDkim  int    `json:"destroyed_dkim,omitempty"`
+	DomainRemoved  bool   `json:"domain_removed,omitempty"`
+	DomainError    string `json:"domain_error,omitempty"`
 }
 
 // mailDomainPurgeHandler destroys EVERY Stalwart registry Account under a
@@ -32,6 +39,17 @@ type mailDomainPurgeResult struct {
 // under it during that user's delete is correct — there are no other
 // tenants' accounts in the domain. Idempotent: if the domain isn't in
 // the registry (nobody ever authed) it's a no-op.
+//
+// Accounts are destroyed in passes: Stalwart refuses to destroy a Group
+// account while a member still links to it (objectIsLinked), so a group that
+// comes before its members is retried once they are gone.
+//
+// With remove_domain (the domain itself is being deleted), the domain's DKIM
+// signatures and then the Stalwart domain are destroyed too. Left behind, the
+// domain kept the old owner's settings — catch-all address, DKIM key — for
+// whoever adds the same name next. A domain that still cannot be destroyed is
+// reported in the result, not returned as an error, so a leftover Stalwart
+// object never blocks the panel's delete.
 func mailDomainPurgeHandler(ctx context.Context, params json.RawMessage) (any, error) {
 	var p mailDomainPurgeParams
 	if err := json.Unmarshal(params, &p); err != nil {
@@ -73,7 +91,7 @@ func mailDomainPurgeHandler(ctx context.Context, params json.RawMessage) (any, e
 		return nil, err
 	}
 
-	destroyed := 0
+	var pending []string
 	for _, raw := range got.List {
 		var acct struct {
 			ID       string `json:"id"`
@@ -82,21 +100,66 @@ func mailDomainPurgeHandler(ctx context.Context, params json.RawMessage) (any, e
 		if jErr := json.Unmarshal(raw, &acct); jErr != nil {
 			continue
 		}
-		if acct.DomainID != targetID {
-			continue
+		if acct.DomainID == targetID {
+			pending = append(pending, acct.ID)
 		}
-		if err := accountDestroy(ctx, acct.ID); err != nil {
-			// Best-effort: skip a failed destroy, keep going. Partial
-			// purge is non-fatal (orphan recoverable; blocked delete worse).
-			continue
-		}
-		destroyed++
 	}
+	res := mailDomainPurgeResult{Destroyed: destroyAccountsInPasses(ctx, pending)}
+
 	lists, err := purgeDomainMailingLists(ctx, targetID)
 	if err != nil {
 		return nil, err
 	}
-	return mailDomainPurgeResult{Destroyed: destroyed, DestroyedLists: lists}, nil
+	res.DestroyedLists = lists
+
+	if p.RemoveDomain {
+		res.DestroyedDkim, res.DomainRemoved, res.DomainError = removeRegistryDomain(ctx, targetID)
+	}
+	return res, nil
+}
+
+// destroyAccountsInPasses destroys each account, retrying the ones Stalwart
+// refused for as long as a pass makes progress (a Group account becomes
+// destroyable once its members are gone). Best-effort: an account that still
+// cannot be destroyed is skipped — a partial purge is recoverable, a blocked
+// delete is worse. Returns how many were destroyed.
+func destroyAccountsInPasses(ctx context.Context, ids []string) int {
+	destroyed := 0
+	for len(ids) > 0 {
+		var refused []string
+		for _, id := range ids {
+			if err := accountDestroy(ctx, id); err != nil {
+				refused = append(refused, id)
+				continue
+			}
+			destroyed++
+		}
+		if len(refused) == len(ids) {
+			break // no progress this pass
+		}
+		ids = refused
+	}
+	return destroyed
+}
+
+// removeRegistryDomain destroys the domain's DKIM signatures, then the domain
+// itself. It never returns an error: the outcome goes into the purge result.
+func removeRegistryDomain(ctx context.Context, domainID string) (dkimDestroyed int, removed bool, reason string) {
+	sigs, err := dkimSignatureIDs(ctx, domainID, "")
+	if err != nil {
+		return 0, false, "list DKIM signatures: " + err.Error()
+	}
+	if len(sigs) > 0 {
+		var result jmapSetResult
+		if err := jmapCall(ctx, "x:DkimSignature/set", map[string]any{"destroy": sigs}, &result); err != nil {
+			return 0, false, "destroy DKIM signatures: " + err.Error()
+		}
+		dkimDestroyed = len(result.Destroyed)
+	}
+	if err := domainDestroy(ctx, domainID); err != nil {
+		return dkimDestroyed, false, err.Error()
+	}
+	return dkimDestroyed, true, ""
 }
 
 // purgeDomainMailingLists destroys every x:MailingList under the domain — the
