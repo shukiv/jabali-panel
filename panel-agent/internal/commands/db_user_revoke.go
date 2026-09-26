@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
-	"strings"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
 )
@@ -77,8 +76,17 @@ func dbUserRevokeHandler(ctx context.Context, params json.RawMessage) (any, erro
 		}
 	}
 
-	// Escape database name using backticks.
-	escapedDBName, err := EscapeMariaDBIdentifier(p.DBName)
+	// A grant is held under the escaped name (db_user.grant escapes the
+	// GRANT wildcards) or, when it predates that, under the plain name.
+	// Revoke both forms; either may be absent.
+	escapedDBName, err := EscapeMariaDBGrantDB(p.DBName)
+	if err != nil {
+		return nil, &agentwire.AgentError{
+			Code:    agentwire.CodeInvalidArgument,
+			Message: "invalid database name",
+		}
+	}
+	legacyDBName, err := EscapeMariaDBIdentifier(p.DBName)
 	if err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInvalidArgument,
@@ -95,39 +103,33 @@ func dbUserRevokeHandler(ctx context.Context, params json.RawMessage) (any, erro
 		}
 	}
 
-	// Build the REVOKE command.
-	var revokeSql string
+	privClause := privStr
 	if privStr == "ALL" {
-		revokeSql = fmt.Sprintf(
-			"REVOKE ALL PRIVILEGES ON %s.* FROM %s@'localhost'",
-			escapedDBName,
-			escapedUsername,
-		)
-	} else {
-		revokeSql = fmt.Sprintf(
-			"REVOKE %s ON %s.* FROM %s@'localhost'",
-			privStr,
-			escapedDBName,
-			escapedUsername,
-		)
+		privClause = "ALL PRIVILEGES"
 	}
-
-	// Issue the REVOKE and FLUSH PRIVILEGES in one command.
-	sql := revokeSql + "; FLUSH PRIVILEGES"
-
-	cmd := execCommandContext(ctx, "mysql", "-e", sql)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		// Treat "no such grant" as idempotent success — the caller wants
-		// privileges gone, and they already are.
-		se := strings.ToLower(stderr.String())
-		if strings.Contains(se, "there is no such grant") || strings.Contains(se, "nonexistent grant") {
-			return dbUserRevokeResponse{OK: true}, nil
+	for _, dbIdent := range []string{escapedDBName, legacyDBName} {
+		// One statement per call: the client stops at the first error, and
+		// "no such grant" on one form must not skip the other.
+		revokeSql := fmt.Sprintf("REVOKE %s ON %s.* FROM %s@'localhost'", privClause, dbIdent, escapedUsername)
+		cmd := execCommandContext(ctx, "mysql", "-e", revokeSql)
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			// "No such grant" is idempotent success: the caller wants the
+			// privileges gone, and under this form they already are.
+			if isNoSuchGrant(stderr.String()) {
+				continue
+			}
+			return nil, &agentwire.AgentError{
+				Code:    agentwire.CodeInternal,
+				Message: fmt.Sprintf("failed to revoke privileges: %v; stderr=%q", err, truncateStr(stderr.String(), 300)),
+			}
 		}
+	}
+	if err := execCommandContext(ctx, "mysql", "-e", "FLUSH PRIVILEGES").Run(); err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,
-			Message: fmt.Sprintf("failed to revoke privileges: %v; stderr=%q", err, truncateStr(stderr.String(), 300)),
+			Message: fmt.Sprintf("failed to flush privileges: %v", err),
 		}
 	}
 

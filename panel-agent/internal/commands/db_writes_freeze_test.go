@@ -2,9 +2,12 @@ package commands
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -12,10 +15,13 @@ import (
 // dbwEnv points the snapshot dir at a TempDir and stubs mysqlExec with a
 // scriptable fake (GH #994: no test touches the real database).
 type fakeMySQL struct {
-	grantees   []string          // returned by the SCHEMA_PRIVILEGES query
-	showGrants map[string]string // grantee -> SHOW GRANTS output
-	execd      []string          // every SQL statement run
+	grantees        []string          // hold tenant_db under its plain name
+	escapedGrantees []string          // hold it under the escaped name tenant\_db
+	showGrants      map[string]string // grantee -> SHOW GRANTS output
+	execd           []string          // every SQL statement run
 }
+
+func hexUpper(s string) string { return strings.ToUpper(hex.EncodeToString([]byte(s))) }
 
 func dbwEnv(t *testing.T, fake *fakeMySQL) string {
 	t.Helper()
@@ -26,7 +32,14 @@ func dbwEnv(t *testing.T, fake *fakeMySQL) string {
 		fake.execd = append(fake.execd, sql)
 		switch {
 		case strings.Contains(sql, "SCHEMA_PRIVILEGES"):
-			return strings.Join(fake.grantees, "\n"), nil
+			var rows []string
+			for _, g := range fake.grantees {
+				rows = append(rows, g+"\t"+hexUpper("tenant_db"))
+			}
+			for _, g := range fake.escapedGrantees {
+				rows = append(rows, g+"\t"+hexUpper(`tenant\_db`))
+			}
+			return strings.Join(rows, "\n"), nil
 		case strings.HasPrefix(sql, "SHOW GRANTS FOR "):
 			g := strings.TrimPrefix(sql, "SHOW GRANTS FOR ")
 			return fake.showGrants[g], nil
@@ -175,5 +188,101 @@ func TestDBWrites_ReadOnlyGranteeStaysReadOnly(t *testing.T) {
 		if strings.HasPrefix(sql, "GRANT ") && (strings.Contains(sql, "INSERT") || strings.Contains(sql, "UPDATE")) {
 			t.Fatalf("read-only grantee was promoted on restore: %s", sql)
 		}
+	}
+}
+
+// A grant written by db_user.grant is held under the escaped name
+// (tenant\_db). The freeze must find it, snapshot its exact line and revoke
+// on that form; a lookup on the plain name alone froze nothing for it.
+func TestDBWrites_FreezeCoversAnEscapedGrant(t *testing.T) {
+	escapedLine := "GRANT SELECT, INSERT, UPDATE ON `tenant\\_db`.* TO `alice`@`localhost`"
+	fake := &fakeMySQL{
+		escapedGrantees: []string{"'alice'@'localhost'"},
+		showGrants:      map[string]string{"'alice'@'localhost'": "GRANT USAGE ON *.* TO `alice`@`localhost`\n" + escapedLine},
+	}
+	dir := dbwEnv(t, fake)
+	callWritesSet(t, "tenant_db", true)
+
+	var query string
+	for _, sql := range fake.execd {
+		if strings.Contains(sql, "SCHEMA_PRIVILEGES") {
+			query = sql
+		}
+	}
+	if !strings.Contains(query, "'tenant_db'") || !strings.Contains(query, `'tenant\\_db'`) {
+		t.Fatalf("grantee query must look up both names, got: %s", query)
+	}
+	body, _ := os.ReadFile(filepath.Join(dir, "tenant_db.json"))
+	var snap dbFreezeSnapshot
+	_ = json.Unmarshal(body, &snap)
+	if len(snap.Grants) != 1 {
+		t.Fatalf("snapshot = %v, want the escaped grant", snap.Grants)
+	}
+	for _, stmt := range snap.Grants {
+		if stmt != escapedLine {
+			t.Fatalf("snapshot stmt = %q, want %q", stmt, escapedLine)
+		}
+	}
+	var revoked bool
+	for _, sql := range fake.execd {
+		if strings.HasPrefix(sql, "REVOKE ") && strings.Contains(sql, "ON `tenant\\_db`.* FROM 'alice'@'localhost'") {
+			revoked = true
+		}
+	}
+	if !revoked {
+		t.Fatalf("escaped grant not revoked: %v", fake.execd)
+	}
+}
+
+// A grantee that holds both forms (an old grant plus a new one) has each
+// revoked on its own name and both lines kept for restore.
+func TestDBWrites_FreezeCoversBothFormsOfOneGrantee(t *testing.T) {
+	fake := &fakeMySQL{
+		grantees:        []string{"'alice'@'localhost'"},
+		escapedGrantees: []string{"'alice'@'localhost'"},
+		showGrants: map[string]string{"'alice'@'localhost'": "GRANT SELECT ON `tenant_db`.* TO `alice`@`localhost`\n" +
+			"GRANT INSERT ON `tenant\\_db`.* TO `alice`@`localhost`"},
+	}
+	dir := dbwEnv(t, fake)
+	callWritesSet(t, "tenant_db", true)
+	body, _ := os.ReadFile(filepath.Join(dir, "tenant_db.json"))
+	var snap dbFreezeSnapshot
+	_ = json.Unmarshal(body, &snap)
+	if len(snap.Grants) != 2 {
+		t.Fatalf("snapshot = %v, want both lines", snap.Grants)
+	}
+	var plain, escaped int
+	for _, sql := range fake.execd {
+		if !strings.HasPrefix(sql, "REVOKE ") {
+			continue
+		}
+		if strings.Contains(sql, "ON `tenant_db`.*") {
+			plain++
+		}
+		if strings.Contains(sql, "ON `tenant\\_db`.*") {
+			escaped++
+		}
+	}
+	if plain != 1 || escaped != 1 {
+		t.Fatalf("revokes plain=%d escaped=%d, want one each: %v", plain, escaped, fake.execd)
+	}
+}
+
+// The mysql client doubles every backslash in its default output. The freeze
+// replays SHOW GRANTS lines verbatim, so it must read them raw (-r): a doubled
+// `tenant\\_db` would be replayed as a different pattern.
+func TestDBWrites_MysqlExecReadsRawOutput(t *testing.T) {
+	var args []string
+	prev := execCommandContext
+	execCommandContext = func(ctx context.Context, name string, a ...string) *exec.Cmd {
+		args = append([]string{name}, a...)
+		return exec.CommandContext(ctx, "true")
+	}
+	t.Cleanup(func() { execCommandContext = prev })
+	if _, err := mysqlExec(context.Background(), "SELECT 1"); err != nil {
+		t.Fatalf("mysqlExec: %v", err)
+	}
+	if !slices.Contains(args, "-r") {
+		t.Fatalf("mysql args = %v, want -r (raw output)", args)
 	}
 }

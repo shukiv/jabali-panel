@@ -103,6 +103,11 @@ var (
 	// PhaseWebmailJMAPURL is Bulwark's JMAP URL, kept on the effective
 	// panel mail hostname (JAB-390).
 	PhaseWebmailJMAPURL = Phase{Name: "webmail.jmap_url", AuditInterval: domainReDispatchInterval}
+	// PhaseDBGrantEscape converts database-level grants that name a
+	// database with an unescaped `_` (a GRANT wildcard). One entry for the
+	// host; the interval catches a grant written the old way since, such as
+	// an installer re-grant.
+	PhaseDBGrantEscape = Phase{Name: "db_user.escape_legacy_grants", AuditInterval: time.Hour}
 )
 
 // runDependency is one ordering a run keeps for a domain: the Agent call
