@@ -220,16 +220,20 @@ func (r *Reconciler) ReconcileWebmailVhosts(ctx context.Context) {
 // to the panel hostname cert (self-signed on a .local/internal host, whose
 // SAN already covers mail.<hostname> per M6.4). Empty when neither exists.
 func panelPrimaryWebmailSSLPaths() (string, string, bool) {
-	for _, pair := range [2][2]string{
-		{"/etc/jabali/tls/panel-mail.crt", "/etc/jabali/tls/panel-mail.key"},
-		{"/etc/jabali/tls/panel.crt", "/etc/jabali/tls/panel.key"},
-	} {
+	for _, pair := range [2][2]string{panelMailCertPair, panelHostCertPair} {
 		if fileReadable(pair[0]) && fileReadable(pair[1]) {
 			return pair[0], pair[1], true
 		}
 	}
 	return "", "", false
 }
+
+// The panel mail and panel hostname certificate files (M32). Variables so
+// tests can point them at a temp dir.
+var (
+	panelMailCertPair = [2]string{"/etc/jabali/tls/panel-mail.crt", "/etc/jabali/tls/panel-mail.key"}
+	panelHostCertPair = [2]string{"/etc/jabali/tls/panel.crt", "/etc/jabali/tls/panel.key"}
+)
 
 func fileReadable(p string) bool {
 	if _, err := os.Stat(p); err != nil {
@@ -239,7 +243,18 @@ func fileReadable(p string) bool {
 }
 
 func (r *Reconciler) applyWebmailVhost(ctx context.Context, d *models.Domain) {
+	settings := r.webmailSettings(ctx)
 	certPath, keyPath, ok := r.webmailSSLPaths(ctx, d.ID)
+	if _, custom := panelPrimaryExtraMailName(settings, d); custom &&
+		fileReadable(panelMailCertPair[0]) && fileReadable(panelMailCertPair[1]) {
+		// JAB-390: this vhost also answers the applied custom mail
+		// hostname, and Bulwark's JMAP URL points at it. Only the panel
+		// mail certificate covers that name (the switchover issues it for
+		// the custom name plus mail.<hostname>), so it wins over the
+		// domain's own certificate. Without it on disk yet, keep the
+		// domain's certificate rather than serve none.
+		certPath, keyPath, ok = panelMailCertPair[0], panelMailCertPair[1], true
+	}
 	if !ok && d.IsPanelPrimary {
 		// The panel-primary domain (e.g. mx.jabali-panel.com) has no
 		// per-domain ssl_certificates row — its mail cert lives in the
@@ -285,7 +300,7 @@ func (r *Reconciler) applyWebmailVhost(ctx context.Context, d *models.Domain) {
 			params["listen_ipv6"] = v6
 		}
 	}
-	addPanelMailHostnameParams(params, r.webmailSettings(ctx), d)
+	addPanelMailHostnameParams(params, settings, d)
 	// JAB-369: gated by the webmail.vhost phase. params is exactly what the
 	// Agent receives, so any input to the vhost changes the fingerprint.
 	_, _ = r.project(ctx, PhaseWebmailVhost, d.Name, fingerprint(params), false, func() error {
@@ -360,12 +375,23 @@ func addPanelMailHostnameParams(params map[string]any, s *models.ServerSettings,
 	if h := models.EffectiveMailHostname(s.MailHostname, s.Hostname); h != "" {
 		params["panel_mail_hostname"] = h
 	}
-	if !d.IsPanelPrimary {
-		return
+	if extra, ok := panelPrimaryExtraMailName(s, d); ok {
+		params["extra_server_names"] = []string{extra}
 	}
-	if applied, ok := models.AppliedMailHostname(s.MailHostname); ok && applied != models.PanelMailHostname(d.Name) {
-		params["extra_server_names"] = []string{applied}
+}
+
+// panelPrimaryExtraMailName returns the applied custom mail hostname when d
+// is the panel-primary domain and that name is not already its
+// mail.<domain> server name — the extra name its mail vhost must answer.
+func panelPrimaryExtraMailName(s *models.ServerSettings, d *models.Domain) (string, bool) {
+	if s == nil || d == nil || !d.IsPanelPrimary {
+		return "", false
 	}
+	applied, ok := models.AppliedMailHostname(s.MailHostname)
+	if !ok || applied == models.PanelMailHostname(d.Name) {
+		return "", false
+	}
+	return applied, true
 }
 
 // webmailSSLPaths returns the cert + key paths for a domain if a usable

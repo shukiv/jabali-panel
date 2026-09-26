@@ -68,6 +68,14 @@ check "recorded custom mail lineage"    mail     "mx.example.net"
 check "hostname still hostname"         hostname "panel.example.com"
 check "tenant still ignored"            ""       "mail.tenant.com"
 
+# --- once a lineage is recorded, the derived mail.<hostname> lineage is no
+# longer the panel mail cert. After a JAB-390 switchover to mx.example.net
+# the old live/mail.<hostname> lineage still exists and certbot still renews
+# it; deploying that renewal would overwrite panel-mail.crt with a cert that
+# lacks the new name, and push-cert's SAN-overlap delete would remove the
+# transition cert from Stalwart. ---
+check "derived lineage after a switchover"  ""      "mail.panel.example.com"
+
 # --- recorded mail lineage after a panel hostname change (JAB-389) ---
 printf 'mail.old-panel.example.com\n' >"$PANEL_MAIL_LINEAGE_FILE"
 check "pinned mail lineage after rename" mail    "mail.old-panel.example.com"

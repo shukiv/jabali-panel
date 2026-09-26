@@ -70,6 +70,15 @@ func (h *domainHandler) rename(c *gin.Context) {
 		c.JSON(http.StatusConflict, gin.H{"error": "domain_conflicts_alias", "message": "the name " + hit + " is already used as an alias of another domain"})
 		return
 	}
+	// JAB-390: never the panel's custom mail hostname or a parent zone of it,
+	// whoever renames. Fail CLOSED on a lookup error.
+	if clash, cerr := MailHostnameCollision(ctx, h.cfg.ServerSettings, newName); cerr != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "db_mail_hostname_lookup", "message": "could not verify the domain name against the panel mail hostname"})
+		return
+	} else if clash {
+		c.JSON(http.StatusConflict, gin.H{"error": "domain_conflicts_mail_hostname", "message": "the name is the panel's mail hostname, a parent zone of it, or a name under it"})
+		return
+	}
 	// GH #1789: an in-place rename to a subdomain of (or a parent over) another
 	// tenant's domain is the same cross-tenant DNS hijack the create path guards
 	// — rename foo.com → evil.example.com. Owner stays the domain's current owner;

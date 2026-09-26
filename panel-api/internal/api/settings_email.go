@@ -18,13 +18,38 @@
 //	    "mail_hostname": {
 //	      "effective": "mail.jabali-panel.local",           // the name mail is served on
 //	      "applied":   null                                 // custom name in effect, or null = derived default
-//	    }
+//	    },
+//	    "switchover": null                                  // or the request in progress, see below
 //	  }
 //
 //	webmail_url is built from mail_hostname.effective. The applied value is
 //	server_settings.mail_hostname, written only by the reconciler once a
-//	switchover to that name has converged (JAB-390); desired/pending state
-//	is not part of this body yet.
+//	switchover to that name has converged (JAB-390). switchover is the
+//	request an admin made (mail_hostname_switchover), null when there is
+//	none or it was cancelled:
+//	  {
+//	    "desired":       "mx.example.net",
+//	    "status":        "pending" | "issuing" | "failed" | "done",
+//	    "last_error":    "",                                 // why the last attempt failed
+//	    "next_retry_at": "2026-09-27T11:00:00Z",             // RFC3339, or null
+//	    "updated_at":    "2026-09-27T10:50:00Z"
+//	  }
+//
+//	PUT /api/v1/admin/settings/email/mail-hostname   {"mail_hostname": "mx.example.net"}
+//	  202 {"switchover": {...}}  recorded; the reconciler applies it once the
+//	      name points at this server and its certificate is issued.
+//	  400 invalid_request | invalid_mail_hostname
+//	  409 mail_hostname_not_ready | mail_hostname_refused | switchover_in_progress
+//	  Switching back to the derived mail.<hostname> is a PUT of that name.
+//
+//	DELETE /api/v1/admin/settings/email/mail-hostname
+//	  200 {"switchover": null}  a pending or failed request was withdrawn
+//	  404 no_pending_switchover
+//	  409 switchover_in_progress  an attempt is issuing
+//
+//	Refusals carry {"error": code, "detail": reason}; the reason is safe to
+//	show. PUT and DELETE are audited (settings.mail_hostname.request /
+//	.cancel), refused or not.
 //
 //	202 Accepted — row absent (install still converging, or pathological
 //	operator SQL delete). Minimal shape, no null-filled fields:
@@ -43,10 +68,15 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
+	"unicode"
 
 	"github.com/gin-gonic/gin"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/audit"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/mailhostops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/middleware"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
@@ -56,16 +86,37 @@ import (
 type SettingsEmailHandlerConfig struct {
 	Domains        repository.DomainRepository
 	ServerSettings repository.ServerSettingsRepository
-	Log            *slog.Logger
+	// JAB-390 mail hostname switchover. With Switchover and PanelCerts set
+	// the PUT/DELETE mail-hostname routes are mounted and GET reports the
+	// request. WebDomainAliases and Recorder are optional.
+	PanelCerts       repository.PanelCertificateRepository
+	WebDomainAliases repository.WebDomainAliasRepository
+	Switchover       repository.MailHostnameSwitchoverRepository
+	Recorder         audit.Recorder
+	// StrictRateLimit, when set, bounds the PUT/DELETE mail-hostname
+	// routes. A new request resets the retry timer and starts an ACME
+	// attempt on the next tick, so an unbounded loop of requests would
+	// spend the Let's Encrypt failed-validation budget.
+	StrictRateLimit gin.HandlerFunc
+	Log             *slog.Logger
 }
 
-// RegisterSettingsEmailRoutes mounts GET /admin/settings/email under v1.
-// Must be called after v1's auth middleware is attached.
+// RegisterSettingsEmailRoutes mounts GET /admin/settings/email under v1,
+// and the mail-hostname setter when the switchover is wired. Must be called
+// after v1's auth middleware is attached.
 func RegisterSettingsEmailRoutes(g *gin.RouterGroup, cfg SettingsEmailHandlerConfig) {
 	h := &settingsEmailHandler{cfg: cfg}
 	admin := g.Group("/admin/settings/email")
 	admin.Use(middleware.RequireAdmin())
 	admin.GET("", h.get)
+	if cfg.Switchover != nil && cfg.PanelCerts != nil {
+		var limit []gin.HandlerFunc
+		if cfg.StrictRateLimit != nil {
+			limit = append(limit, cfg.StrictRateLimit)
+		}
+		admin.PUT("/mail-hostname", append(limit, h.requestMailHostname)...)
+		admin.DELETE("/mail-hostname", append(limit, h.cancelMailHostname)...)
+	}
 }
 
 type settingsEmailHandler struct {
@@ -79,11 +130,34 @@ type settingsEmailOK struct {
 	DKIMPublished     bool                      `json:"dkim_published"`
 	EmailEnabledAt    *time.Time                `json:"email_enabled_at"`
 	MailHostname      settingsEmailMailHostname `json:"mail_hostname"`
+	Switchover        *settingsEmailSwitchover  `json:"switchover"`
 }
 
 type settingsEmailMailHostname struct {
 	Effective string  `json:"effective"`
 	Applied   *string `json:"applied"`
+}
+
+// settingsEmailSwitchover is the JAB-390 switchover request's progress.
+type settingsEmailSwitchover struct {
+	Desired     *string    `json:"desired"`
+	Status      string     `json:"status"`
+	LastError   string     `json:"last_error"`
+	NextRetryAt *time.Time `json:"next_retry_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+}
+
+func switchoverView(sw *models.MailHostnameSwitchover) *settingsEmailSwitchover {
+	if sw == nil || sw.Status == models.MailHostnameSwitchoverIdle || sw.Desired == nil {
+		return nil
+	}
+	return &settingsEmailSwitchover{
+		Desired:     sw.Desired,
+		Status:      sw.Status,
+		LastError:   sw.LastError,
+		NextRetryAt: sw.NextRetryAt,
+		UpdatedAt:   sw.UpdatedAt,
+	}
 }
 
 // settingsEmailInitializing is the 202 body shape. Deliberately separate
@@ -130,6 +204,20 @@ func (h *settingsEmailHandler) get(c *gin.Context) {
 		mailHost.Applied = &applied
 	}
 
+	var switchover *settingsEmailSwitchover
+	if h.cfg.Switchover != nil {
+		sw, err := h.cfg.Switchover.Get(ctx)
+		switch {
+		case err == nil:
+			switchover = switchoverView(sw)
+		case errors.Is(err, repository.ErrNotFound):
+		default:
+			h.cfg.Log.Error("read mail hostname switchover", "err", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+			return
+		}
+	}
+
 	dkimPublished := d.DkimPublicKey != nil && *d.DkimPublicKey != ""
 	c.JSON(http.StatusOK, settingsEmailOK{
 		PrimaryDomainName: d.Name,
@@ -137,5 +225,124 @@ func (h *settingsEmailHandler) get(c *gin.Context) {
 		DKIMPublished:     dkimPublished,
 		EmailEnabledAt:    d.EmailEnabledAt,
 		MailHostname:      mailHost,
+		Switchover:        switchover,
 	})
+}
+
+func (h *settingsEmailHandler) requestDeps() mailhostops.RequestDeps {
+	deps := mailhostops.RequestDeps{
+		Settings:   h.cfg.ServerSettings,
+		PanelCerts: h.cfg.PanelCerts,
+		Domains:    h.cfg.Domains,
+		Switchover: h.cfg.Switchover,
+	}
+	if h.cfg.WebDomainAliases != nil {
+		deps.Aliases = h.cfg.WebDomainAliases
+	}
+	return deps
+}
+
+// requestMailHostname records a JAB-390 switchover request.
+func (h *settingsEmailHandler) requestMailHostname(c *gin.Context) {
+	var req struct {
+		MailHostname string `json:"mail_hostname"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request", "detail": "body must be {\"mail_hostname\": \"<host>\"}"})
+		return
+	}
+	actor := settingsEmailActor(c)
+	name, err := mailhostops.Request(c.Request.Context(), h.requestDeps(), req.MailHostname, "admin:"+actor)
+	target := name
+	if target == "" {
+		target = auditTarget(req.MailHostname)
+	}
+	var status int
+	var code string
+	switch {
+	case err == nil:
+	case errors.Is(err, mailhostops.ErrInvalidName):
+		status, code = http.StatusBadRequest, "invalid_mail_hostname"
+	case errors.Is(err, mailhostops.ErrNotReady):
+		status, code = http.StatusConflict, "mail_hostname_not_ready"
+	case errors.Is(err, mailhostops.ErrNameRefused):
+		status, code = http.StatusConflict, "mail_hostname_refused"
+	case errors.Is(err, repository.ErrSwitchoverInFlight):
+		status, code = http.StatusConflict, "switchover_in_progress"
+	default:
+		h.cfg.Log.Error("request mail hostname switchover", "err", err)
+		h.record(actor, "settings.mail_hostname.request", target, models.AuditResultError)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	if err != nil {
+		h.record(actor, "settings.mail_hostname.request", target, models.AuditResultDenied)
+		c.JSON(status, gin.H{"error": code, "detail": refusalDetail(err)})
+		return
+	}
+	h.record(actor, "settings.mail_hostname.request", target, models.AuditResultOK)
+	c.JSON(http.StatusAccepted, gin.H{"switchover": settingsEmailSwitchover{
+		Desired:   &name,
+		Status:    models.MailHostnameSwitchoverPending,
+		UpdatedAt: time.Now().UTC(),
+	}})
+}
+
+// cancelMailHostname withdraws a pending or failed switchover request.
+func (h *settingsEmailHandler) cancelMailHostname(c *gin.Context) {
+	actor := settingsEmailActor(c)
+	err := mailhostops.Cancel(c.Request.Context(), h.requestDeps())
+	switch {
+	case err == nil:
+		h.record(actor, "settings.mail_hostname.cancel", "", models.AuditResultOK)
+		c.JSON(http.StatusOK, gin.H{"switchover": nil})
+	case errors.Is(err, repository.ErrNotFound):
+		h.record(actor, "settings.mail_hostname.cancel", "", models.AuditResultDenied)
+		c.JSON(http.StatusNotFound, gin.H{"error": "no_pending_switchover", "detail": "there is no pending mail hostname change to cancel"})
+	case errors.Is(err, repository.ErrSwitchoverInFlight):
+		h.record(actor, "settings.mail_hostname.cancel", "", models.AuditResultDenied)
+		c.JSON(http.StatusConflict, gin.H{"error": "switchover_in_progress", "detail": "the certificate for the new mail hostname is being issued; try again in a few minutes"})
+	default:
+		h.cfg.Log.Error("cancel mail hostname switchover", "err", err)
+		h.record(actor, "settings.mail_hostname.cancel", "", models.AuditResultError)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+	}
+}
+
+func (h *settingsEmailHandler) record(actor, action, target, result string) {
+	if h.cfg.Recorder == nil {
+		return
+	}
+	h.cfg.Recorder.Record(audit.APIMutation(actor, models.AuditActorAdmin, "", action, "server_settings", target, result, "", ""))
+}
+
+func settingsEmailActor(c *gin.Context) string {
+	if claims := ginctx.Claims(c); claims != nil {
+		return claims.UserID
+	}
+	return ""
+}
+
+// refusalDetail is the admin-facing reason for a refused request.
+func refusalDetail(err error) string {
+	if errors.Is(err, repository.ErrSwitchoverInFlight) {
+		return "a mail hostname change is being applied; wait for it to finish"
+	}
+	return err.Error()
+}
+
+// auditTarget makes a raw, possibly invalid input safe to store as an audit
+// target: at most 253 bytes, valid UTF-8 (a rune split by the cut is
+// dropped), and every control character replaced by '?'.
+func auditTarget(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) > 253 {
+		s = strings.ToValidUTF8(s[:253], "")
+	}
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return '?'
+		}
+		return r
+	}, s)
 }

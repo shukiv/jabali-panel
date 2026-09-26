@@ -374,6 +374,29 @@ func TestTenantDocker_Install_AliasCollision409(t *testing.T) {
 	}
 }
 
+// JAB-390: a tenant docker-app install must not auto-create a domain that is,
+// or is a parent zone of, the panel's custom mail hostname. Like the alias
+// case above, reaching fakeDomainRepo.Create would panic, so a clean 409
+// proves the guard fired first.
+func TestTenantDocker_Install_MailHostnameCollision409(t *testing.T) {
+	for _, domain := range []string{"mx.example.com", "example.com"} {
+		cfg := UserDockerAppHandlerConfig{
+			Repo:             &fakeDockerRepo{},
+			Catalog:          tenantCatalog(t),
+			Users:            &fakeUserRepo{user: &models.User{ID: "u1", Username: uname("alice"), PackageID: uname("p1")}},
+			Packages:         &fakePkgRepo{pkg: &models.HostingPackage{ID: "p1", MaxDockerApps: 5}},
+			Domains:          &fakeDomainRepo{},
+			WebDomainAliases: aliasTestAliases{},
+			ServerSettings:   aliasTestSettings{hostname: "panel.host.com", mailHostname: "mx.example.com"},
+		}
+		r := tenantRouter(t, cfg, true)
+		rec := post(r, `{"slug":"tdemo","name":"x","domain":"`+domain+`"}`)
+		if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "domain_conflicts_mail_hostname") {
+			t.Fatalf("%s: want 409 domain_conflicts_mail_hostname, got %d %s", domain, rec.Code, rec.Body.String())
+		}
+	}
+}
+
 // A tenant docker-app install whose Domain carries a YAML-significant byte must
 // be rejected 400 invalid_domain before it can reach the compose renderer
 // (GH #1790). The payload uses a bare quote with no whitespace/HTML/path chars,

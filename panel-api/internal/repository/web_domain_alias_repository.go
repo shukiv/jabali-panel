@@ -28,6 +28,10 @@ type WebDomainAliasRepository interface {
 	// enforce global uniqueness before insert (the DB index is the
 	// backstop, this is the friendly 409).
 	FindByHostname(ctx context.Context, hostname string) (*models.WebDomainAlias, error)
+	// FindStrictSubdomainHostnames returns every alias hostname a full
+	// label or more under name, never name itself (JAB-390: the panel
+	// mail hostname is refused while a tenant alias sits under it).
+	FindStrictSubdomainHostnames(ctx context.Context, name string) ([]string, error)
 	Delete(ctx context.Context, id string) error
 }
 
@@ -98,6 +102,25 @@ func (r *webDomainAliasRepo) FindByHostname(ctx context.Context, hostname string
 		return nil, err
 	}
 	return &row, nil
+}
+
+// FindStrictSubdomainHostnames: "%."+name matches only hostnames at least
+// one full label deeper, and likeEscape makes every character of name match
+// literally.
+func (r *webDomainAliasRepo) FindStrictSubdomainHostnames(ctx context.Context, name string) ([]string, error) {
+	name = strings.ToLower(strings.TrimSpace(name))
+	if name == "" {
+		return nil, nil
+	}
+	var out []string
+	err := r.db.WithContext(ctx).Model(&models.WebDomainAlias{}).
+		Where("hostname LIKE ? ESCAPE '\\\\'", "%."+likeEscape(name)).
+		Order("hostname").
+		Pluck("hostname", &out).Error
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (r *webDomainAliasRepo) Delete(ctx context.Context, id string) error {

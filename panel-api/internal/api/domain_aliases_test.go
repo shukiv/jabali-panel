@@ -39,11 +39,21 @@ func (f aliasTestAliases) FindByHostname(_ context.Context, h string) (*models.W
 
 type aliasTestSettings struct {
 	repository.ServerSettingsRepository
-	hostname string
+	hostname     string
+	mailHostname string // the applied custom mail hostname; "" = derived
+	err          error
 }
 
 func (f aliasTestSettings) Get(context.Context) (*models.ServerSettings, error) {
-	return &models.ServerSettings{Hostname: f.hostname, PublicIPv4: "203.0.113.9"}, nil
+	if f.err != nil {
+		return nil, f.err
+	}
+	s := &models.ServerSettings{Hostname: f.hostname, PublicIPv4: "203.0.113.9"}
+	if f.mailHostname != "" {
+		mh := f.mailHostname
+		s.MailHostname = &mh
+	}
+	return s, nil
 }
 
 // GH #1625: validateAliasHostname is the security boundary — it must reject an
@@ -60,7 +70,7 @@ func TestValidateAliasHostname(t *testing.T) {
 			"other.com":   other,
 		}},
 		Aliases:  aliasTestAliases{taken: map[string]bool{"taken.example.net": true}},
-		Settings: aliasTestSettings{hostname: "panel.host.com"},
+		Settings: aliasTestSettings{hostname: "panel.host.com", mailHostname: "mx.mailhost.net"},
 	}}
 
 	cases := []struct {
@@ -78,6 +88,8 @@ func TestValidateAliasHostname(t *testing.T) {
 		{"another domain www helper rejected", "www.other.com", "alias_conflicts_helper"},
 		{"another domain mta-sts helper rejected", "mta-sts.other.com", "alias_conflicts_helper"},
 		{"panel FQDN rejected", "panel.host.com", "alias_reserved_panel"},
+		{"panel mail hostname rejected (JAB-390)", "MX.mailhost.net", "alias_reserved_panel"},
+		{"a name under the panel mail hostname accepted", "a.mx.mailhost.net", ""},
 		{"already-claimed alias rejected", "taken.example.net", "alias_exists"},
 		{"semicolon injection rejected", "evil.net; return 301 http://x", "invalid_hostname"},
 		{"space rejected", "a b.net", "invalid_hostname"},
@@ -122,6 +134,21 @@ func TestValidateAliasHostname_WebDisabled(t *testing.T) {
 	}
 	if status != 400 {
 		t.Errorf("status = %d, want 400", status)
+	}
+}
+
+// JAB-390: an unreadable panel mail hostname refuses the alias rather than
+// risk handing the panel's mail hostname to a tenant vhost.
+func TestValidateAliasHostname_MailHostnameLookupFailsClosed(t *testing.T) {
+	dom := &models.Domain{ID: "d1", Name: "example.com", UserID: "u1"}
+	h := &domainAliasHandler{cfg: DomainAliasHandlerConfig{
+		Domains:  aliasTestDomains{names: map[string]*models.Domain{"example.com": dom}},
+		Aliases:  aliasTestAliases{},
+		Settings: aliasTestSettings{err: errors.New("db down")},
+	}}
+	_, status, code, _ := h.validateAliasHostname(context.Background(), dom, "shop.brandy.io")
+	if code != "db_mail_hostname_lookup" || status != 500 {
+		t.Fatalf("code = %q status = %d, want db_mail_hostname_lookup 500", code, status)
 	}
 }
 

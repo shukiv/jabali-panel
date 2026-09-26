@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"gorm.io/gorm"
@@ -92,6 +93,11 @@ func (r *panelCertRepo) ensureOne(ctx context.Context, kind, hostname string, re
 	if !errors.Is(err, ErrNotFound) {
 		return nil, err
 	}
+	return r.createRow(ctx, kind, hostname)
+}
+
+// createRow inserts a fresh self-signed row for kind.
+func (r *panelCertRepo) createRow(ctx context.Context, kind, hostname string) (*models.PanelCertificate, error) {
 	row := &models.PanelCertificate{
 		Kind:        kind,
 		ID:          1,
@@ -120,19 +126,41 @@ func (r *panelCertRepo) EnsureDefault(ctx context.Context, hostname string) (*mo
 	// identity stays pinned to whatever it was seeded with; changing it is a
 	// separate, deliberate action (JAB-390), not a side effect of a rename.
 	//
-	// JAB-390 note: this seed is the authoritative first write of the mail
-	// identity. server_settings.mail_hostname is the APPLIED mail hostname,
-	// written only by the switchover pass, which owns moving this row to a
-	// new name. ensureOne only creates a missing row, and the row exists
-	// before any switchover can apply a name, so the derived name is the
-	// right seed today. A reseed after a manual row delete would take the
-	// derived name even with a custom name applied; the switchover slice
-	// must route this seed through models.EffectiveMailHostname (with a
-	// non-sqlmock seam to prove it) when it lands.
-	if _, err := r.ensureOne(ctx, models.PanelCertKindMail, models.PanelMailHostname(hostname), false); err != nil {
-		return nil, err
+	// JAB-390: server_settings.mail_hostname is the APPLIED mail hostname,
+	// and only the switchover moves this row to a new name. A missing row
+	// (first boot, or a manual delete after a switchover) is seeded from the
+	// EFFECTIVE mail hostname — the applied one when set, else
+	// mail.<hostname> — so a re-created row never pursues a certificate for a
+	// name the panel no longer serves mail on. An existing row is left as is.
+	if _, err := r.GetByKind(ctx, models.PanelCertKindMail); err != nil {
+		if !errors.Is(err, ErrNotFound) {
+			return nil, err
+		}
+		seed, err := r.effectiveMailHostname(ctx, hostname)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := r.createRow(ctx, models.PanelCertKindMail, seed); err != nil {
+			return nil, err
+		}
 	}
 	return host, nil
+}
+
+// effectiveMailHostname reads the applied mail hostname and resolves the
+// effective one. No settings row (a fresh install) means none is applied;
+// any other read error is returned, because guessing the derived name could
+// seed the wrong mail identity.
+func (r *panelCertRepo) effectiveMailHostname(ctx context.Context, hostname string) (string, error) {
+	var s models.ServerSettings
+	err := r.db.WithContext(ctx).Select("mail_hostname").Where("id = ?", 1).Take(&s).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return models.PanelMailHostname(hostname), nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("read applied mail hostname: %w", err)
+	}
+	return models.EffectiveMailHostname(s.MailHostname, hostname), nil
 }
 
 // Upsert mirrors ServerSettingsRepository.Upsert: explicit

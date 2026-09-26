@@ -5384,6 +5384,24 @@ paths:
       security: [ { KratosSession: [] } ]
       responses: { "200": { description: OK } }
 
+  /admin/settings/email/mail-hostname:
+    put:
+      tags: [Settings]
+      summary: Request a shared panel mail hostname switchover (JAB-390)
+      security: [ { KratosSession: [] } ]
+      responses:
+        "202": { description: Recorded; the reconciler applies it once the certificate is issued }
+        "400": { description: invalid_request or invalid_mail_hostname }
+        "409": { description: mail_hostname_not_ready, mail_hostname_refused or switchover_in_progress }
+    delete:
+      tags: [Settings]
+      summary: Cancel a pending or failed mail hostname switchover (JAB-390)
+      security: [ { KratosSession: [] } ]
+      responses:
+        "200": { description: Cancelled }
+        "404": { description: no_pending_switchover }
+        "409": { description: switchover_in_progress }
+
   /admin/settings/modules/install:
     post:
       tags: [Settings]

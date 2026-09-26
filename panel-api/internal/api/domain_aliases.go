@@ -19,6 +19,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -219,6 +220,17 @@ func CrossTenantSuffixCollision(ctx context.Context, domains repository.DomainRe
 	return domainops.CrossTenantSuffixCollision(ctx, domains, name, ownerID)
 }
 
+// MailHostnameCollision reports whether a domain named name would be, or be
+// a parent zone of, the panel's applied custom mail hostname (JAB-390). It
+// forwards to domainops.MailHostnameCollision; a nil settings repo is
+// unwired, and a read error is returned so the door fails closed.
+func MailHostnameCollision(ctx context.Context, settings repository.ServerSettingsRepository, name string) (bool, error) {
+	if settings == nil {
+		return false, nil
+	}
+	return domainops.MailHostnameCollision(ctx, settings, name)
+}
+
 // validateAliasHostname normalizes + validates an alias hostname and
 // enforces the collision rules. Returns (normalized, 0, "", "") on
 // success, or (_, status, code, detail) to reject. Cheap syntactic
@@ -247,6 +259,20 @@ func (h *domainAliasHandler) validateAliasHostname(ctx context.Context, dom *mod
 		if s, err := h.cfg.Settings.Get(ctx); err == nil && s != nil {
 			panelHost := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(s.Hostname), "."))
 			if panelHost != "" && host == panelHost {
+				return "", http.StatusConflict, "alias_reserved_panel", "that hostname is reserved by the panel"
+			}
+		}
+	}
+	// JAB-390: the panel's custom mail hostname — the panel's mail vhost
+	// answers it. Unlike the check above this fails closed: a hostname that
+	// could not be cleared is refused.
+	if h.cfg.Settings != nil {
+		s, err := h.cfg.Settings.Get(ctx)
+		if err != nil && !errors.Is(err, repository.ErrNotFound) {
+			return "", http.StatusInternalServerError, "db_mail_hostname_lookup", "could not verify the hostname against the panel mail hostname"
+		}
+		if s != nil {
+			if applied, ok := models.AppliedMailHostname(s.MailHostname); ok && host == applied {
 				return "", http.StatusConflict, "alias_reserved_panel", "that hostname is reserved by the panel"
 			}
 		}

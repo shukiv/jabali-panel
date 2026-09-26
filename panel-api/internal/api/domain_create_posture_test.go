@@ -37,6 +37,23 @@ func (errSettingsRepo) Get(context.Context) (*models.ServerSettings, error) {
 	return nil, errors.New("server_settings: connection refused")
 }
 
+// postureErrSettingsRepo answers the create's first settings read — the
+// JAB-390 mail hostname guard, which fails closed and runs before the
+// posture — and fails every later one, so the posture's own fail-open read
+// is what the case exercises.
+type postureErrSettingsRepo struct {
+	repository.ServerSettingsRepository
+	reads *int
+}
+
+func (f postureErrSettingsRepo) Get(context.Context) (*models.ServerSettings, error) {
+	*f.reads++
+	if *f.reads == 1 {
+		return &models.ServerSettings{}, nil
+	}
+	return nil, errors.New("server_settings: connection refused")
+}
+
 const postureTemplateID = "tmpl-posture"
 
 func postureOwner() *models.User {
@@ -258,7 +275,7 @@ func TestCreateDomainOp_PostureOutcomes(t *testing.T) {
 			c.ServerSettings = &fakeStatusSettingsRepo{s: &models.ServerSettings{MailEnabled: on}}
 		}
 	}
-	unreadableSettings := func(c *DomainHandlerConfig) { c.ServerSettings = errSettingsRepo{} }
+	unreadableSettings := func(c *DomainHandlerConfig) { c.ServerSettings = postureErrSettingsRepo{reads: new(int)} }
 
 	type want struct {
 		provider    string

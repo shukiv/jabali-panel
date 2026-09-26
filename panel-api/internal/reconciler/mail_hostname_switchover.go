@@ -1,0 +1,261 @@
+package reconciler
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"time"
+
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/mailhostops"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/services"
+)
+
+// JAB-390 switchover timings.
+const (
+	// An issuing attempt not updated for this long died with its process
+	// and may be claimed again. It matches the panel-cert pass's stale
+	// pending_acme rule.
+	mailHostSwitchoverStaleAfter = 10 * time.Minute
+	// A name that does not point at this server, or a panel that is not
+	// ready, is re-checked soon: the admin is likely fixing it right now.
+	mailHostSwitchoverNotReadyRetry = 10 * time.Minute
+	// A failed issue is not retried every tick (Let's Encrypt rate limits).
+	mailHostSwitchoverIssueRetry   = time.Hour
+	mailHostSwitchoverIssueTimeout = 3 * time.Minute
+)
+
+// reconcileMailHostnameSwitchover moves the shared panel mail hostname
+// (JAB-390) and keeps Bulwark's JMAP URL on the effective one.
+//
+// A request (mail_hostname_switchover.desired) is applied only after the
+// requested name — and mail.<hostname>, which stays served — point at this
+// server and one certificate for both is issued and deployed to Stalwart
+// and panel-mail.crt. Complete then, in one transaction, applies the name
+// (server_settings.mail_hostname), moves the mail certificate row to it and
+// marks the request done. Every failure leaves the applied name alone and
+// records the reason on the request.
+//
+// It runs right after the panel-cert pass. The run's settings snapshot is
+// not refreshed after a switchover, so later passes in the same tick (the
+// webmail vhost sweep) still see the old name; their fingerprints change
+// with the name, so the next tick converges them.
+func (r *Reconciler) reconcileMailHostnameSwitchover(ctx context.Context) {
+	if r.agent == nil || r.serverSettings == nil {
+		return
+	}
+	settings, err := r.settingsGet(ctx)
+	if err != nil || settings == nil || settings.Hostname == "" {
+		return
+	}
+	effective := models.EffectiveMailHostname(settings.MailHostname, settings.Hostname)
+	if applied, ok := r.runMailHostnameSwitchover(ctx, settings); ok {
+		effective = applied
+	}
+	r.assertWebmailJMAPURL(ctx, effective)
+}
+
+// runMailHostnameSwitchover runs one due switchover attempt. It returns the
+// newly effective mail hostname and true when the switchover completed.
+func (r *Reconciler) runMailHostnameSwitchover(ctx context.Context, s *models.ServerSettings) (string, bool) {
+	if r.mailHostSwitchover == nil || r.panelCerts == nil || r.panelCertRoutability == nil || r.domains == nil {
+		return "", false
+	}
+	sw, err := r.mailHostSwitchover.Get(ctx)
+	if err != nil {
+		if !errors.Is(err, repository.ErrNotFound) {
+			r.log.Warn("mail hostname switchover: load request", "error", err)
+		}
+		return "", false
+	}
+	if sw.Desired == nil || !mailHostSwitchoverDue(sw, time.Now()) {
+		return "", false
+	}
+	desired := *sw.Desired
+
+	hostRow, err := r.panelCerts.GetByKind(ctx, models.PanelCertKindHostname)
+	if err != nil && !errors.Is(err, repository.ErrNotFound) {
+		r.log.Warn("mail hostname switchover: load hostname cert row", "error", err)
+		return "", false
+	}
+	mailRow, err := r.panelCerts.GetByKind(ctx, models.PanelCertKindMail)
+	if err != nil {
+		r.log.Warn("mail hostname switchover: load mail cert row", "error", err)
+		return "", false
+	}
+	primary, err := r.domains.FindPanelPrimary(ctx)
+	if err != nil && !errors.Is(err, repository.ErrPanelPrimaryNotFound) {
+		r.log.Warn("mail hostname switchover: load panel-primary domain", "error", err)
+		return "", false
+	}
+	if err := mailhostops.Ready(s, hostRow, primary); err != nil {
+		r.failMailHostnameSwitchover(ctx, desired, err.Error(), mailHostSwitchoverNotReadyRetry)
+		return "", false
+	}
+	// A tenant can create a domain (or alias) after the request was made;
+	// never issue for a name a tenant answers or whose zone it controls.
+	if err := r.checkMailHostname(ctx, s, desired); err != nil {
+		r.failMailHostnameSwitchover(ctx, desired, err.Error(), mailHostSwitchoverNotReadyRetry)
+		return "", false
+	}
+	// An issue of the mail certificate may be in flight (the admin's
+	// "issue now"); wait for it, as the panel-cert pass does.
+	if mailRow.Status == models.PanelCertStatusPendingACME && time.Since(mailRow.UpdatedAt) < mailHostSwitchoverStaleAfter {
+		return "", false
+	}
+
+	// The certificate covers the old derived name too, so mail clients
+	// still configured with it keep working (dual-serve). Both names must
+	// point here, or certbot fails the whole certificate; check first so
+	// the reason names the name at fault.
+	derived := models.PanelMailHostname(s.Hostname)
+	extra := []string{}
+	if desired != derived {
+		extra = append(extra, derived)
+	}
+	for _, name := range append([]string{desired}, extra...) {
+		gate, err := r.panelCertRoutability.Check(ctx, name, s.PublicIPv4, true)
+		if err != nil {
+			r.log.Warn("mail hostname switchover: routability check", "name", name, "error", err)
+			return "", false
+		}
+		if !gate.Routable {
+			r.failMailHostnameSwitchover(ctx, desired,
+				fmt.Sprintf("%s does not point at this server (%s)", name, gate.Reason), mailHostSwitchoverNotReadyRetry)
+			return "", false
+		}
+	}
+
+	now := time.Now()
+	claimed, err := r.mailHostSwitchover.Claim(ctx, desired, now.Add(-mailHostSwitchoverStaleAfter), now)
+	if err != nil {
+		r.log.Warn("mail hostname switchover: claim", "desired", desired, "error", err)
+		return "", false
+	}
+	if !claimed {
+		return "", false
+	}
+
+	r.sslIssueMu.Lock()
+	defer r.sslIssueMu.Unlock()
+	certPath := mailRow.CertPEMPath
+	if certPath == "" {
+		certPath = "/etc/jabali/tls/panel-mail.crt"
+	}
+	callCtx, cancel := context.WithTimeout(ctx, mailHostSwitchoverIssueTimeout)
+	defer cancel()
+	// force_deploy: the lineage may already hold a valid certificate
+	// (switching back to mail.<hostname>, or a retry after an interrupted
+	// deploy); certbot keeps it, and it must still reach Stalwart and the
+	// lineage record.
+	raw, err := r.agent.Call(callCtx, "ssl.panel.issue", map[string]any{
+		"hostname":        desired,
+		"extra_hostnames": extra,
+		"email":           s.AdminEmail,
+		"staging":         mailRow.Staging,
+		"kind":            models.PanelCertKindMail,
+		"cert_pem_path":   certPath,
+		"force_deploy":    true,
+	})
+	if err != nil {
+		r.failMailHostnameSwitchover(ctx, desired, services.HumanizePanelCertError(desired, err.Error()), mailHostSwitchoverIssueRetry)
+		return "", false
+	}
+	var resp struct {
+		IssuedAt  string `json:"issued_at"`
+		ExpiresAt string `json:"expires_at"`
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		r.failMailHostnameSwitchover(ctx, desired, "agent response unmarshal: "+err.Error(), mailHostSwitchoverIssueRetry)
+		return "", false
+	}
+	issuedAt, err1 := time.Parse(time.RFC3339, resp.IssuedAt)
+	expiresAt, err2 := time.Parse(time.RFC3339, resp.ExpiresAt)
+	if err1 != nil || err2 != nil {
+		r.failMailHostnameSwitchover(ctx, desired, "agent response timestamp parse failed", mailHostSwitchoverIssueRetry)
+		return "", false
+	}
+
+	// Re-check right before applying: issuing took minutes, and a domain
+	// created meanwhile must not end up answering the applied name. The
+	// certificate still covers mail.<hostname>, so the box keeps serving.
+	if err := r.checkMailHostname(ctx, s, desired); err != nil {
+		r.failMailHostnameSwitchover(ctx, desired, err.Error(), mailHostSwitchoverNotReadyRetry)
+		return "", false
+	}
+
+	var applied *string
+	if desired != derived {
+		applied = &desired
+	}
+	if err := r.mailHostSwitchover.Complete(ctx, desired, applied, issuedAt, expiresAt, time.Now()); err != nil {
+		// The certificate is deployed but the name is not applied. A
+		// changed request is picked up next tick; any other error leaves
+		// the attempt issuing, and it is re-run once stale.
+		r.log.Warn("mail hostname switchover: complete", "desired", desired, "error", err)
+		return "", false
+	}
+	r.log.Info("mail hostname switchover complete", "mail_hostname", desired, "expires_at", expiresAt)
+	return desired, true
+}
+
+// mailHostSwitchoverDue reports whether sw has an attempt to run now:
+// pending, failed with its retry time reached, or issuing but stale. Claim
+// re-checks this atomically; this cheap check keeps a request that is not
+// due from costing DNS lookups every tick.
+func mailHostSwitchoverDue(sw *models.MailHostnameSwitchover, now time.Time) bool {
+	switch sw.Status {
+	case models.MailHostnameSwitchoverPending:
+		return true
+	case models.MailHostnameSwitchoverFailed:
+		return sw.NextRetryAt == nil || !sw.NextRetryAt.After(now)
+	case models.MailHostnameSwitchoverIssuing:
+		return now.Sub(sw.UpdatedAt) >= mailHostSwitchoverStaleAfter
+	}
+	return false
+}
+
+// checkMailHostname runs the setter's name check (mailhostops.CheckName)
+// against the current domains and web aliases.
+func (r *Reconciler) checkMailHostname(ctx context.Context, s *models.ServerSettings, desired string) error {
+	deps := mailhostops.NameDeps{Domains: r.domains}
+	if r.webDomainAliases != nil {
+		deps.Aliases = r.webDomainAliases
+	}
+	return mailhostops.CheckName(ctx, deps, s, desired)
+}
+
+func (r *Reconciler) failMailHostnameSwitchover(ctx context.Context, desired, msg string, retryIn time.Duration) {
+	now := time.Now()
+	r.log.Warn("mail hostname switchover failed", "desired", desired, "reason", msg, "retry_in", retryIn)
+	if err := r.mailHostSwitchover.Fail(ctx, desired, msg, now.Add(retryIn), now); err != nil {
+		r.log.Warn("mail hostname switchover: record failure", "desired", desired, "error", err)
+	}
+}
+
+// assertWebmailJMAPURL keeps Bulwark's JMAP_SERVER_URL on host. The Agent
+// verb is a no-op on a box without Bulwark and restarts it only on a change.
+func (r *Reconciler) assertWebmailJMAPURL(ctx context.Context, host string) {
+	if host == "" {
+		return
+	}
+	params := map[string]any{"mail_hostname": host}
+	_, err := r.project(ctx, PhaseWebmailJMAPURL, "jabali-webmail", fingerprint(params), false, func() error {
+		callCtx, cancel := context.WithTimeout(ctx, webmailAgentTimeout)
+		defer cancel()
+		_, err := r.agent.Call(callCtx, "webmail.jmap_url.apply", params)
+		return err
+	})
+	if err == nil {
+		r.webmailJMAPLastErr = ""
+		return
+	}
+	// An Agent without the verb (mid-rollout) fails every tick; warn once
+	// per distinct error.
+	if key := host + "|" + err.Error(); key != r.webmailJMAPLastErr {
+		r.webmailJMAPLastErr = key
+		r.log.Warn("webmail JMAP URL apply failed", "mail_hostname", host, "error", err)
+	}
+}

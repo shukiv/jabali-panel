@@ -1,16 +1,27 @@
-// EmailCard — Settings → Email tab body. Read-only card showing the
-// panel-primary mail domain (ADR-0048). Two states:
+// EmailCard — Settings → Email tab body. Shows the panel-primary mail
+// domain (ADR-0048). Two states:
 //   - "ready": domain exists, DKIM may or may not be published
 //   - "initializing": row absent yet (fresh-install convergence window)
 //
-// No edit affordance; the hostname comes from JABALI_SRV_HOSTNAME at
-// install time and isn't editable from the panel UI.
+// The primary mail domain is the panel hostname's domain and isn't edited
+// here. The shared mail hostname (JAB-390) is: the admin requests a change,
+// and the reconciler applies it once the name points at this server and its
+// certificate is issued. The card shows the request's progress.
 
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { MailOutlined, ReloadOutlined } from "@icons";
-import { Alert, Badge, Button, Card, Descriptions, Skeleton, Space, Typography } from "antd";
+import { Alert, Badge, Button, Card, Descriptions, Input, Skeleton, Space, Tag, Typography } from "antd";
 
-import { useSettingsEmail } from "../../../hooks/useSettingsEmail";
+import { extractApiError } from "../../../apiErrors";
+import { feedback } from "../../../lib/feedback";
+import {
+  useCancelMailHostname,
+  useRequestMailHostname,
+  useSettingsEmail,
+  type MailHostnameSwitchover,
+  type SettingsEmailReady,
+} from "../../../hooks/useSettingsEmail";
 
 export const EmailCard = () => {
   const { t } = useTranslation();
@@ -86,13 +97,144 @@ export const EmailCard = () => {
           )}
         </Descriptions.Item>
         <Descriptions.Item label={t("emailcard.enabled_at")}>{enabledAtLabel}</Descriptions.Item>
+        <Descriptions.Item label={t("emailcard.mail_hostname")}>
+          <Space>
+            <Typography.Text code>{data.mailHostname.effective}</Typography.Text>
+            {data.mailHostname.applied ? (
+              <Tag color="blue">{t("emailcard.mail_hostname_custom")}</Tag>
+            ) : (
+              <Tag>{t("emailcard.mail_hostname_default")}</Tag>
+            )}
+          </Space>
+        </Descriptions.Item>
       </Descriptions>
+      <MailHostnameChange data={data} />
       <Typography.Paragraph type="secondary" style={{ marginTop: 16, marginBottom: 0 }}>
-        Auto-registered at install time. The hostname comes from{" "}
-        <Typography.Text code>JABALI_SRV_HOSTNAME</Typography.Text> and isn't editable from
-        the panel UI. See ADR-0048 for the design decision.
+        {t("emailcard.auto_registered")}
       </Typography.Paragraph>
     </Card>
+  );
+};
+
+// MailHostnameChange requests, follows and cancels a change of the shared
+// panel mail hostname (JAB-390).
+const MailHostnameChange = ({ data }: { data: SettingsEmailReady }) => {
+  const { t } = useTranslation();
+  const [name, setName] = useState("");
+  const request = useRequestMailHostname();
+  const cancel = useCancelMailHostname();
+  const derived = `mail.${data.primaryDomainName}`;
+  const sw = data.switchover;
+  const issuing = sw?.status === "issuing";
+  const busy = request.isPending || cancel.isPending;
+
+  const submit = (value: string) => {
+    request.mutate(value.trim(), {
+      onSuccess: () => {
+        setName("");
+        feedback.message.success(t("emailcard.change_requested"));
+      },
+      onError: (e) => feedback.message.error(extractApiError(e)),
+    });
+  };
+  const withdraw = () =>
+    cancel.mutate(undefined, {
+      onSuccess: () => feedback.message.success(t("emailcard.change_cancelled")),
+      onError: (e) => feedback.message.error(extractApiError(e)),
+    });
+
+  return (
+    <div style={{ marginTop: 16 }}>
+      <Typography.Title level={5}>{t("emailcard.change_mail_hostname")}</Typography.Title>
+      {sw && sw.status !== "done" && (
+        <SwitchoverStatus sw={sw} onCancel={withdraw} cancelling={cancel.isPending} />
+      )}
+      {/* A wrapping flex row, not Space: a Space item sizes to its content,
+          so the input group could not shrink and overflowed a phone-width
+          card. */}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 8 }}>
+        <Space.Compact style={{ flex: "1 1 260px", maxWidth: 420, minWidth: 0 }}>
+          <Input
+            aria-label={t("emailcard.mail_hostname")}
+            placeholder={t("emailcard.mail_hostname_placeholder")}
+            value={name}
+            maxLength={253}
+            disabled={issuing}
+            style={{ minWidth: 0 }}
+            onChange={(e) => setName(e.target.value)}
+            onPressEnter={() => name.trim() && submit(name)}
+          />
+          <Button
+            type="primary"
+            loading={request.isPending}
+            disabled={issuing || busy || !name.trim()}
+            onClick={() => submit(name)}
+          >
+            {t("emailcard.request_change")}
+          </Button>
+        </Space.Compact>
+        {data.mailHostname.applied && (
+          <Button
+            disabled={issuing || busy}
+            style={{ maxWidth: "100%", whiteSpace: "normal", height: "auto" }}
+            onClick={() => submit(derived)}
+          >
+            {t("emailcard.switch_back_to", { name: derived })}
+          </Button>
+        )}
+      </div>
+      <Typography.Paragraph type="secondary" style={{ marginTop: 8, marginBottom: 0 }}>
+        {t("emailcard.mail_hostname_help", { derived, domain: data.primaryDomainName })}
+      </Typography.Paragraph>
+    </div>
+  );
+};
+
+const SwitchoverStatus = ({
+  sw,
+  onCancel,
+  cancelling,
+}: {
+  sw: MailHostnameSwitchover;
+  onCancel: () => void;
+  cancelling: boolean;
+}) => {
+  const { t } = useTranslation();
+  const cancelButton =
+    sw.status === "pending" || sw.status === "failed" ? (
+      <Button size="small" loading={cancelling} onClick={onCancel}>
+        {t("emailcard.cancel_change")}
+      </Button>
+    ) : undefined;
+  if (sw.status === "failed") {
+    return (
+      <Alert
+        type="warning"
+        showIcon
+        message={t("emailcard.switchover_failed", { name: sw.desired })}
+        description={
+          <>
+            <div>{sw.lastError}</div>
+            {sw.nextRetryAt && (
+              <div>{t("emailcard.switchover_retry_at", { time: new Date(sw.nextRetryAt).toLocaleString() })}</div>
+            )}
+          </>
+        }
+        action={cancelButton}
+      />
+    );
+  }
+  return (
+    <Alert
+      type="info"
+      showIcon
+      message={
+        sw.status === "issuing"
+          ? t("emailcard.switchover_issuing", { name: sw.desired })
+          : t("emailcard.switchover_pending", { name: sw.desired })
+      }
+      action={cancelButton}
+    />
   );
 };
 

@@ -629,6 +629,15 @@ func (h *userDockerAppHandler) install(c *gin.Context) {
 				h.failInstall(c, app.ID, "domain_conflicts_alias", errors.New("the name "+hit+" is already used as an alias of another domain"))
 				return
 			}
+			// JAB-390: never the panel's custom mail hostname or a parent
+			// zone of it, whoever the actor. Fail CLOSED on a lookup error.
+			if clash, cerr := MailHostnameCollision(ctx, h.cfg.ServerSettings, req.Domain); cerr != nil {
+				h.failInstall(c, app.ID, "db_mail_hostname_lookup", errors.New("could not verify the domain name against the panel mail hostname"))
+				return
+			} else if clash {
+				h.failInstall(c, app.ID, "domain_conflicts_mail_hostname", errors.New("the name is the panel's mail hostname, a parent zone of it, or a name under it"))
+				return
+			}
 			// GH #1789: this tenant self-service install auto-creates a domain
 			// owned by the caller, the same cross-tenant DNS subdomain-hijack door
 			// createDomainOp guards. Non-admin gate; fail CLOSED on a lookup error.
