@@ -63,7 +63,7 @@ func (r *Reconciler) reconcileUpdatePoll(ctx context.Context) {
 	// against development; mirror the HTTP adapter (admin_updates.jabaliCheck).
 	channel := "development"
 	if r.serverSettings != nil {
-		if s, serr := r.serverSettings.Get(ctx); serr == nil && s != nil && s.ReleaseChannel == "stable" {
+		if s, serr := r.settingsGet(ctx); serr == nil && s != nil && s.ReleaseChannel == "stable" {
 			channel = "stable"
 		}
 	}

@@ -42,7 +42,7 @@ func (r *Reconciler) reconcileBandwidthQuotaEnforce(ctx context.Context) {
 		r.bwDaily == nil || r.packages == nil {
 		return
 	}
-	srv, err := r.serverSettings.Get(ctx)
+	srv, err := r.settingsGet(ctx)
 	if err != nil || srv == nil || !srv.BandwidthQuotaEnforceEnabled {
 		return
 	}

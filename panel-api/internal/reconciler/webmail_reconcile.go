@@ -54,7 +54,7 @@ func (r *Reconciler) reconcileWebmailVhosts(ctx context.Context) {
 	// the Node process running (#760). `disable` (not just stop) so it also
 	// stays down across reboots.
 	if r.serverSettings != nil && r.agent != nil {
-		if s, sErr := r.serverSettings.Get(ctx); sErr == nil && s != nil && !s.WebmailEnabled {
+		if s, sErr := r.settingsGet(ctx); sErr == nil && s != nil && !s.WebmailEnabled {
 			if r.domains != nil {
 				if domains, err := r.listWebmailDomains(ctx); err == nil {
 					for i := range domains {
@@ -334,7 +334,7 @@ func (r *Reconciler) panelHostname(ctx context.Context) string {
 	if r.serverSettings == nil {
 		return ""
 	}
-	s, err := r.serverSettings.Get(ctx)
+	s, err := r.settingsGet(ctx)
 	if err != nil || s == nil {
 		return ""
 	}

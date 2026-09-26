@@ -35,7 +35,7 @@ func (r *Reconciler) reconcilePythonApps(ctx context.Context) {
 		return
 	}
 	if r.serverSettings != nil {
-		if s, err := r.serverSettings.Get(ctx); err == nil && s != nil && !s.PythonAppsEnabled {
+		if s, err := r.settingsGet(ctx); err == nil && s != nil && !s.PythonAppsEnabled {
 			return // feature opt-out: leave apps in their last state
 		}
 	}

@@ -41,7 +41,7 @@ func (r *Reconciler) reconcileSendmailCreds(ctx context.Context) {
 		return
 	}
 	sctx, scancel := context.WithTimeout(ctx, 5*time.Second)
-	srv, err := r.serverSettings.Get(sctx)
+	srv, err := r.settingsGet(sctx)
 	scancel()
 	if err != nil || srv == nil || srv.Hostname == "" {
 		return

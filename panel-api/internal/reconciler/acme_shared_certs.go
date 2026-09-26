@@ -54,7 +54,7 @@ func (r *Reconciler) reconcileAcmeSharedCerts(ctx context.Context) {
 	if len(due) == 0 {
 		return
 	}
-	srv, err := r.serverSettings.Get(ctx)
+	srv, err := r.settingsGet(ctx)
 	if err != nil || srv == nil || strings.TrimSpace(srv.AdminEmail) == "" {
 		r.log.Warn("acme shared certs: due rows exist but no admin email is set — cannot issue")
 		return

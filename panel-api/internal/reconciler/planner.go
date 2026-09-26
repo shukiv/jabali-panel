@@ -5,11 +5,15 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
 	"sync"
 	"time"
+
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
 // Reconciliation planner (JAB-369). The periodic tick rebuilds every
@@ -248,6 +252,7 @@ type runRecorder struct {
 	mode    RunMode
 	started time.Time
 	phases  map[string]PhaseCounts
+	memo    tickMemo
 }
 
 func newRunRecorder(mode RunMode) *runRecorder {
@@ -366,6 +371,7 @@ func (r *Reconciler) project(ctx context.Context, p Phase, id, hash string, forc
 // (ReconcileAll); RunForce runs the full re-render (ReconcileAllForce).
 func (r *Reconciler) Run(ctx context.Context, mode RunMode) (Report, error) {
 	ctx, rr := withRun(ctx, mode)
+	defer rr.finish()
 	var err error
 	if mode == RunForce {
 		err = r.ReconcileAllForce(ctx)
@@ -373,6 +379,94 @@ func (r *Reconciler) Run(ctx context.Context, mode RunMode) (Report, error) {
 		err = r.ReconcileAll(ctx)
 	}
 	return rr.report(), err
+}
+
+// tickMemo holds the global rows a run reads. They are the same for every
+// domain, so a run reads each from the database once instead of once per
+// domain (JAB-369: query counts bounded independently of unrelated resource
+// count). The memo lives only until the run finishes; after that every read
+// goes to the repository again, so a goroutine that outlives its tick never
+// works from that tick's snapshot. Errors are not memoized, except a page
+// template's not-found, which is a stable answer.
+type tickMemo struct {
+	mu        sync.Mutex
+	finished  bool
+	settings  *models.ServerSettings
+	templates map[string]*models.PageTemplate // nil value = not found
+}
+
+// finish ends the run's memo. Every entry point that runs passes calls it
+// when it returns; calling it twice is harmless.
+func (rr *runRecorder) finish() {
+	if rr == nil {
+		return
+	}
+	rr.memo.mu.Lock()
+	defer rr.memo.mu.Unlock()
+	rr.memo.finished = true
+	rr.memo.settings = nil
+	rr.memo.templates = nil
+}
+
+// settingsGet reads the server settings, once per run. Outside a run (the
+// out-of-band ReconcileOne path) it reads the repository directly. Each
+// caller gets its own copy, as it would from the repository.
+func (r *Reconciler) settingsGet(ctx context.Context) (*models.ServerSettings, error) {
+	_, rr := runFrom(ctx)
+	if rr == nil {
+		return r.serverSettings.Get(ctx)
+	}
+	m := &rr.memo
+	m.mu.Lock()
+	if m.finished {
+		m.mu.Unlock()
+		return r.serverSettings.Get(ctx)
+	}
+	defer m.mu.Unlock()
+	if m.settings == nil {
+		s, err := r.serverSettings.Get(ctx)
+		if err != nil || s == nil {
+			return s, err
+		}
+		m.settings = s
+	}
+	cp := *m.settings
+	return &cp, nil
+}
+
+// pageTemplateGet reads one page template, once per run, like settingsGet.
+func (r *Reconciler) pageTemplateGet(ctx context.Context, key string) (*models.PageTemplate, error) {
+	_, rr := runFrom(ctx)
+	if rr == nil {
+		return r.pageTemplates.Get(ctx, key)
+	}
+	m := &rr.memo
+	m.mu.Lock()
+	if m.finished {
+		m.mu.Unlock()
+		return r.pageTemplates.Get(ctx, key)
+	}
+	defer m.mu.Unlock()
+	row, seen := m.templates[key]
+	if !seen {
+		var err error
+		row, err = r.pageTemplates.Get(ctx, key)
+		switch {
+		case errors.Is(err, repository.ErrNotFound):
+			row = nil
+		case err != nil:
+			return nil, err
+		}
+		if m.templates == nil {
+			m.templates = map[string]*models.PageTemplate{}
+		}
+		m.templates[key] = row
+	}
+	if row == nil {
+		return nil, repository.ErrNotFound
+	}
+	cp := *row
+	return &cp, nil
 }
 
 // ScheduleResource requests an out-of-band reconcile of key. Like Schedule it

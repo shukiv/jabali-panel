@@ -79,7 +79,7 @@ func (r *Reconciler) ReconcileUserLimits(ctx context.Context) {
 	// mount so a stale quota can still be removed.
 	quotaEnabled := true
 	if r.serverSettings != nil {
-		if s, sErr := r.serverSettings.Get(ctx); sErr == nil && s != nil {
+		if s, sErr := r.settingsGet(ctx); sErr == nil && s != nil {
 			quotaEnabled = s.DiskQuotaEnabled
 		}
 	}

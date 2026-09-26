@@ -29,7 +29,7 @@ func (r *Reconciler) reconcileErrorPages(ctx context.Context) {
 	body := func(key string) string {
 		c, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
-		if row, err := r.pageTemplates.Get(c, key); err == nil && row != nil && row.Content != "" {
+		if row, err := r.pageTemplateGet(c, key); err == nil && row != nil && row.Content != "" {
 			return row.Content
 		}
 		// Row missing/empty — fall back to the compiled default so the
@@ -45,7 +45,7 @@ func (r *Reconciler) reconcileErrorPages(ctx context.Context) {
 	unconfiguredOn := false
 	if r.serverSettings != nil {
 		c, cancel := context.WithTimeout(ctx, 5*time.Second)
-		if s, err := r.serverSettings.Get(c); err == nil && s != nil {
+		if s, err := r.settingsGet(c); err == nil && s != nil {
 			unconfiguredOn = s.UnconfiguredPageEnabled
 		}
 		cancel()

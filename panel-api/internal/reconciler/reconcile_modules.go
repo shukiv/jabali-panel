@@ -57,7 +57,7 @@ func (r *Reconciler) reconcileModuleInstalls(ctx context.Context) {
 	if r.agent == nil || r.serverSettings == nil {
 		return
 	}
-	srv, err := r.serverSettings.Get(ctx)
+	srv, err := r.settingsGet(ctx)
 	if err != nil || srv == nil {
 		return
 	}
@@ -179,7 +179,7 @@ func (r *Reconciler) convergeFtpDisabled(ctx context.Context) {
 		// would fight install-convergence and ping-pong under toggle churn, so a
 		// stale disable must stand down. (nil serverSettings only in unit tests.)
 		if r.serverSettings != nil {
-			if srv, err := r.serverSettings.Get(dctx); err == nil && srv != nil && srv.FTPEnabled {
+			if srv, err := r.settingsGet(dctx); err == nil && srv != nil && srv.FTPEnabled {
 				return
 			}
 		}

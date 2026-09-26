@@ -51,7 +51,7 @@ func (r *Reconciler) reconcileBotChallengeExempt(ctx context.Context) {
 	if r.serverSettings == nil {
 		return
 	}
-	s, err := r.serverSettings.Get(ctx)
+	s, err := r.settingsGet(ctx)
 	if err != nil || s == nil {
 		return
 	}

@@ -366,7 +366,7 @@ func (r *Reconciler) apexFronted(ctx context.Context, name string) bool {
 	var ourAddrs []string
 	if r.serverSettings != nil {
 		srvCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		if srv, err := r.serverSettings.Get(srvCtx); err == nil && srv != nil {
+		if srv, err := r.settingsGet(srvCtx); err == nil && srv != nil {
 			if srv.PublicIPv4 != "" {
 				ourAddrs = append(ourAddrs, srv.PublicIPv4)
 			}

@@ -104,7 +104,7 @@ func (r *Reconciler) reconcileRecursorSelfZone(ctx context.Context) {
 	}
 	sctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	srv, err := r.serverSettings.Get(sctx)
+	srv, err := r.settingsGet(sctx)
 	if err != nil || srv == nil || srv.Hostname == "" {
 		return
 	}

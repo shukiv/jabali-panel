@@ -215,7 +215,7 @@ func (r *Reconciler) expandCertSANsForDrift(ctx context.Context, cert repository
 		return
 	}
 
-	srv, err := r.serverSettings.Get(ctx)
+	srv, err := r.settingsGet(ctx)
 	if err != nil || srv == nil {
 		return
 	}

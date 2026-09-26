@@ -120,7 +120,7 @@ func (r *Reconciler) reachableSANs(ctx context.Context, apex string, names []str
 
 	var ourAddrs []string
 	if r.serverSettings != nil {
-		if srv, err := r.serverSettings.Get(ctx); err == nil && srv != nil {
+		if srv, err := r.settingsGet(ctx); err == nil && srv != nil {
 			if srv.PublicIPv4 != "" {
 				ourAddrs = append(ourAddrs, srv.PublicIPv4)
 			}
