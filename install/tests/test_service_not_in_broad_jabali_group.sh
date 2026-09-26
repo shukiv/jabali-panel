@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
-# install/tests/test_service_not_in_broad_jabali_group.sh — JAB-357 criterion 2.
+# install/tests/test_service_not_in_broad_jabali_group.sh — JAB-357 criteria 1+2.
+#
+# Rules 1–3 cover the two named non-panel services and their upgrade
+# convergers. Rules 4–6 cover every other identity: no installer membership
+# command, no systemd unit, and no agent membership grant may give the broad
+# group to anyone but the panel account. The live counterpart is
+# test_agent_socket_identity_matrix_runtime.sh.
 #
 # The broad `jabali` group owns the root Agent socket (/run/jabali/agent.sock,
 # 0660 root:jabali) and panel secrets under /etc/jabali-panel. No NON-PANEL
@@ -84,6 +90,126 @@ if ! grep -qE '^ensure_webmail_not_in_panel_group\(\)' install.sh; then
 fi
 if ! awk '/^provision_new_software\(\)/{f=1} f&&/ensure_webmail_not_in_panel_group/{found=1} f&&/^\}/{exit} END{exit !found}' install.sh; then
   echo "FAIL: ensure_webmail_not_in_panel_group is not called from provision_new_software — a plain 'jabali update' never converges webmail"
+  fail=1
+fi
+
+# ---------------------------------------------------------------------------
+# Rules 4–6 widen the check from the two named services to EVERY identity
+# (JAB-357 AC1: webmail, mail, PHP, tenant, Redis-client and any other
+# service). The panel account is the only member the broad group may have.
+# $SERVICE_USER is the panel account's name in install.sh, so it counts as
+# the group name too.
+panel_group_re='^(jabali|\$SERVICE_USER|\$\{SERVICE_USER\})$'
+is_panel_group() { [[ "$1" =~ $panel_group_re ]]; }
+
+# 4. No membership command in install.sh grants the broad group to anyone:
+#    usermod -G/-aG <groups> <user>, gpasswd -a <user> <group>,
+#    adduser <user> <group>.
+while IFS= read -r hit; do
+  lineno=${hit%%:*}
+  body=${hit#*:}
+  [[ "$body" =~ ^[[:space:]]*# ]] && continue
+  read -r -a words <<<"${body//[\"\']/}"
+  groups=()
+  for ((i = 0; i < ${#words[@]}; i++)); do
+    case "${words[i]}" in
+      usermod)
+        for ((j = i + 1; j < ${#words[@]}; j++)); do
+          case "${words[j]}" in
+            -G | -aG | -Ga | --groups) IFS=, read -r -a g <<<"${words[j+1]:-}"; groups+=("${g[@]}") ;;
+          esac
+        done ;;
+      gpasswd)
+        [[ "${words[i+1]:-}" == "-a" ]] && groups+=("${words[i+3]:-}") ;;
+      adduser)
+        [[ -n "${words[i+1]:-}" && "${words[i+1]}" != -* && -n "${words[i+2]:-}" && "${words[i+2]}" != -* ]] &&
+          groups+=("${words[i+2]}") ;;
+    esac
+  done
+  for g in "${groups[@]}"; do
+    if is_panel_group "$g"; then
+      echo "FAIL: install.sh:$lineno grants the broad jabali group to an account — JAB-357 AC1"
+      echo "      $body"
+      fail=1
+    fi
+  done
+done < <(grep -nE '\b(usermod|gpasswd|adduser)\b' install.sh)
+
+# 5. No systemd unit grants the broad group to a user other than the panel
+#    account or root — both the unit files in install/systemd/ and the units
+#    install.sh writes inline. A grant is `Group=` or a bare token in
+#    `SupplementaryGroups=`; the unit's user is the nearest `User=` above it
+#    within the same unit (no `User=` means root).
+unit_grants() {
+  awk -v file="$1" '
+    /^\[Unit\]/ { user = "" }
+    /^User=/ { user = substr($0, 6); gsub(/["\047]/, "", user) }
+    /^(Group|SupplementaryGroups)=/ {
+      val = $0; sub(/^[^=]*=/, "", val); gsub(/["\047]/, "", val)
+      n = split(val, toks, /[ \t]+/)
+      for (i = 1; i <= n; i++) {
+        t = toks[i]
+        if (t == "jabali" || t == "$SERVICE_USER" || t == "${SERVICE_USER}") {
+          if (user != "" && user != "root" && user != "jabali" && user != "$SERVICE_USER" && user != "${SERVICE_USER}")
+            printf "%s:%d: User=%s %s\n", file, NR, user, $0
+        }
+      }
+    }' "$1"
+}
+for unit in install/systemd/*.service install.sh; do
+  [[ -f "$unit" ]] || continue
+  while IFS= read -r g; do
+    [[ -n "$g" ]] || continue
+    echo "FAIL: a unit grants the broad jabali group to a non-panel user — JAB-357 AC1"
+    echo "      $g"
+    fail=1
+  done < <(unit_grants "$unit")
+done
+
+# 6. Every membership grant the agent makes is to a reviewed group. The agent
+#    adds tenant accounts to groups at runtime (SFTP, FTP, WebDAV, SSH
+#    sandbox, Redis clients) and the system restore re-adds backed-up
+#    memberships. A new `usermod -aG` call site fails here until it is
+#    reviewed and listed; a reviewed name must never resolve to the broad
+#    group. The restore's a.group is filtered by installerManagedGroups,
+#    which must keep "jabali" (the restore never adds members to it).
+reviewed_agent_groups=(sftpGroupName ftpGroupName webdavGroupName sandboxGroupName
+  forwardGroupName redisClientsGroup '"jabali-redis-clients"' a.group)
+agent_src=panel-agent/internal/commands
+while IFS= read -r hit; do
+  arg=$(sed -E 's/.*"usermod", "-aG", ([^,]+),.*/\1/' <<<"$hit")
+  reviewed=0
+  for r in "${reviewed_agent_groups[@]}"; do [[ "$arg" == "$r" ]] && reviewed=1; done
+  if [[ "$reviewed" -eq 0 ]]; then
+    echo "FAIL: unreviewed agent membership grant (group arg '$arg') — review it against JAB-357 and list it here"
+    echo "      $hit"
+    fail=1
+    continue
+  fi
+  [[ "$arg" == a.group ]] && continue # data-driven; guarded by installerManagedGroups below
+  if [[ "$arg" == \"*\" ]]; then
+    value=${arg//\"/}
+  else
+    value=$(grep -hE "^[[:space:]]*(const[[:space:]]+)?${arg}[[:space:]]*=[[:space:]]*\"" "$agent_src"/*.go |
+      head -1 | sed -E 's/.*"([^"]*)".*/\1/' || true)
+  fi
+  if [[ -z "$value" ]]; then
+    echo "FAIL: cannot resolve the agent group constant $arg — a reviewed grant must name a known group"
+    echo "      $hit"
+    fail=1
+  elif [[ "$value" == "jabali" ]]; then
+    echo "FAIL: agent grants tenant accounts the broad jabali group via $arg — JAB-357 AC1"
+    echo "      $hit"
+    fail=1
+  fi
+done < <(grep -nE '"usermod", "-aG",' "$agent_src"/*.go | grep -v '_test\.go:')
+if grep -nE '"gpasswd", "-a",' "$agent_src"/*.go | grep -v '_test\.go:' | grep -q .; then
+  echo "FAIL: agent adds group members with gpasswd -a — route it through a reviewed usermod -aG call site"
+  fail=1
+fi
+restore_src="$agent_src/backup_system_os_users_apply.go"
+if ! awk '/^var installerManagedGroups = /{f=1} f&&/"jabali":/{found=1} f&&/^}/{exit} END{exit !found}' "$restore_src"; then
+  echo "FAIL: installerManagedGroups in $restore_src no longer lists \"jabali\" — a system restore could re-add members to the broad group"
   fail=1
 fi
 
