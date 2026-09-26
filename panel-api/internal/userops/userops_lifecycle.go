@@ -17,6 +17,7 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dbops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/domainops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ftpops"
@@ -189,6 +190,59 @@ type DeleteDeps struct {
 	// (GH #408 / ADR-0148). Passed as a callback so userops stays free of
 	// the redis client dependency.
 	RevokeCacheACLs func(ctx context.Context, osUser string) error
+	// SyncOSTeardown removes the OS account (agent user.delete: FPM pools,
+	// slice, account and home) before the user row, and fails the delete
+	// with *OSTeardownError when that does not happen. A short-lived caller
+	// must set it: the default runs the teardown in a goroutine after the row
+	// delete, and a process that exits right after DeleteCascade returns (the
+	// CLI) exits before that goroutine runs, leaving the tenant's
+	// login-capable account and /home on the host. The long-running panel
+	// leaves it false so a large home does not hold the HTTP request past its
+	// write timeout.
+	SyncOSTeardown bool
+}
+
+// OSTeardownError means the OS account could not be removed. It is returned
+// only with SyncOSTeardown, before the user row is deleted, so the row stays
+// and the delete can be run again.
+type OSTeardownError struct {
+	Username string
+	Err      error
+}
+
+func (e *OSTeardownError) Error() string {
+	return fmt.Sprintf("OS account %q could not be removed: %v", e.Username, e.Err)
+}
+
+func (e *OSTeardownError) Unwrap() error { return e.Err }
+
+const (
+	osTeardownBackgroundTimeout = 30 * time.Second
+	// A synchronous teardown removes the whole home before returning; give a
+	// large one time to finish instead of reporting a failure the agent then
+	// completes anyway.
+	osTeardownSyncTimeout = 10 * time.Minute
+)
+
+// removeOSAccount runs the agent's user.delete for username and then asks
+// the malware monitor to drop the home's watches. An account that does not
+// exist counts as removed.
+func removeOSAccount(ctx context.Context, a AgentCaller, username string, timeout time.Duration) error {
+	tctx, cancel := context.WithTimeout(ctx, timeout)
+	_, err := a.Call(tctx, "user.delete", map[string]any{
+		"username":    username,
+		"remove_home": true,
+	})
+	cancel()
+	var ae *agentwire.AgentError
+	if errors.As(err, &ae) && ae.Code == agentwire.CodeNotFound {
+		err = nil
+	}
+	// M33: re-evaluate maldet inotify watches after teardown. Best-effort.
+	rctx, rcancel := context.WithTimeout(ctx, 10*time.Second)
+	defer rcancel()
+	_, _ = a.Call(rctx, "security.malware.monitor.reload", map[string]any{})
+	return err
 }
 
 // reapTenantFtpAccounts tears down every FTP/SFTP subaccount a tenant owns as
@@ -208,7 +262,9 @@ func reapTenantFtpAccounts(ctx context.Context, d Deps, dd DeleteDeps, userID, u
 
 // DeleteCascade removes EVERYTHING a user owns, then the user row, then
 // the OS account — a verbatim move of the REST delete handler's cascade
-// (docs and scar-comments preserved there in spirit; see ADR-0164).
+// (docs and scar-comments preserved there in spirit; see ADR-0164). With
+// DeleteDeps.SyncOSTeardown the OS account goes before the row instead, and
+// a failure returns *OSTeardownError with the row kept.
 //
 // Caller-side protections (self-delete, last-admin, authorization) are
 // NOT here — handlers enforce them before calling. On a docker teardown
@@ -458,27 +514,29 @@ func DeleteCascade(ctx context.Context, d Deps, dd DeleteDeps, target *models.Us
 		return &DBCleanupError{Objects: undropped}
 	}
 
+	// Always-destructive OS teardown — the operator chose delete; the
+	// cascade follows. With SyncOSTeardown it runs here, before the row
+	// delete, so a failure keeps the row as the handle to run the delete
+	// again. The caller's deadline is dropped: the teardown has its own.
+	if dd.SyncOSTeardown && d.Agent != nil && username != "" {
+		if err := removeOSAccount(context.WithoutCancel(ctx), d.Agent, username, osTeardownSyncTimeout); err != nil {
+			logError(d, "cascade delete: OS account teardown failed — user row kept",
+				"user_id", id, "username", username, "err", err)
+			return &OSTeardownError{Username: username, Err: err}
+		}
+	}
+
 	if err := d.Users.Delete(ctx, id); err != nil {
 		return fmt.Errorf("%w: delete user row: %v", ErrInternal, err)
 	}
 
-	// Always-destructive OS teardown — the operator chose delete; the
-	// cascade follows. Fire-and-forget.
-	if d.Agent != nil && username != "" {
+	// Default: fire-and-forget after the row delete (see SyncOSTeardown).
+	if !dd.SyncOSTeardown && d.Agent != nil && username != "" {
 		agentRef := d.Agent
 		go func() {
-			bgCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			if _, err := agentRef.Call(bgCtx, "user.delete", map[string]any{
-				"username":    username,
-				"remove_home": true,
-			}); err != nil {
+			if err := removeOSAccount(context.Background(), agentRef, username, osTeardownBackgroundTimeout); err != nil {
 				logWarn(d, "user agent teardown failed", "user_id", id, "username", username, "err", err)
 			}
-			// M33: re-evaluate maldet inotify watches after teardown.
-			rctx, rcancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer rcancel()
-			_, _ = agentRef.Call(rctx, "security.malware.monitor.reload", map[string]any{})
 		}()
 	}
 
