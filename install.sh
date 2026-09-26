@@ -7725,6 +7725,11 @@ install_nginx_default_vhost() {
   #   - :80 force-redirects everything to https:// (panel is https-only)
   #   - :443 terminates TLS with the panel's self-signed cert and serves
   #     phpMyAdmin at /phpmyadmin/ (panel itself is on :8443, separate).
+  # /webmail redirect target: the panel mail hostname (JAB-390 — the applied
+  # custom name, else mail.<hostname>).
+  local _mail_host
+  _mail_host="$(_panel_mail_hostname "$JABALI_SRV_HOSTNAME")"
+
   _log "writing ${default_vhost_file}"
   cat > "${default_vhost_file}" << VHOSTEOF
 # Jabali default vhost. The panel is https-only — port 80 exists purely
@@ -7819,19 +7824,20 @@ server {
     include /etc/nginx/sites-available/includes/phpmyadmin.conf;
 
     # M6.4 (ADR-0048): /webmail bounces to the panel-primary domain's
-    # Bulwark instance on mail.<hostname>. Target is interpolated here
-    # at install.sh render time (heredoc expands \${JABALI_SRV_HOSTNAME});
-    # hostname changes propagate on the next install.sh run because the
-    # whole default vhost is rewritten unconditionally.
+    # Bulwark instance on the panel mail hostname (mail.<hostname>, or the
+    # custom name a JAB-390 switchover applied). Target is interpolated
+    # here at install.sh render time (_panel_mail_hostname); changes
+    # propagate on the next install.sh run because the whole default
+    # vhost is rewritten unconditionally.
     #
     # No graceful fallback on pre-convergence — the ~30s window where
     # mail.<hostname> isn't yet served is documented in ADR-0048 Decision
     # 4 as acceptable; operators who want a 503 page see M6.4.4 follow-up.
     location = /webmail {
-        return 301 https://mail.${JABALI_SRV_HOSTNAME}/;
+        return 301 https://${_mail_host}/;
     }
     location = /webmail/ {
-        return 301 https://mail.${JABALI_SRV_HOSTNAME}/;
+        return 301 https://${_mail_host}/;
     }
 
     # Everything else on an unknown host follows the catch-all mode
@@ -7881,8 +7887,8 @@ server {
     # Parity with the default block: phpMyAdmin + webmail stay reachable
     # on the panel hostname for admin use.
     include /etc/nginx/sites-available/includes/phpmyadmin.conf;
-    location = /webmail  { return 301 https://mail.${JABALI_SRV_HOSTNAME}/; }
-    location = /webmail/ { return 301 https://mail.${JABALI_SRV_HOSTNAME}/; }
+    location = /webmail  { return 301 https://${_mail_host}/; }
+    location = /webmail/ { return 301 https://${_mail_host}/; }
 
     # GH #1161: opt-in Automation API on :443. Empty by default (the API is
     # :8443-only); the agent (nginx.automation_public_set, driven by
@@ -14350,6 +14356,34 @@ PYEOF
   _ok "Libravatar webmail avatar plugin installed + pre-approved (sha256 ${hash:0:12})"
 }
 
+# _panel_mail_hostname HOST — the panel mail hostname for install-rendered
+# config (JAB-390): the custom name the reconciler's switchover applied
+# (server_settings.mail_hostname, read via `jabali settings mail-hostname
+# --applied`), else the derived mail.HOST. Without it, a re-render during
+# `jabali update` reverts the Bulwark JMAP URL and the /webmail redirects to
+# mail.<hostname> after a switchover.
+#
+# A CLI that is missing or fails (fresh install before the DB is migrated)
+# means no custom name can be applied yet: the derived name, quietly. The
+# CLI prints only validated names, but the value is interpolated into nginx
+# config and bulwark.env, so anything that is not a bare lower-case FQDN is
+# refused here too (warned, derived name used).
+_panel_mail_hostname() {
+  local host="$1" applied=""
+  if [[ -x "$BIN_PATH" ]] && applied="$("$BIN_PATH" settings mail-hostname --applied 2>/dev/null)"; then
+    applied="${applied%%$'\n'*}"
+    if [[ -n "$applied" ]]; then
+      if (( ${#applied} <= 253 )) \
+        && [[ "$applied" =~ ^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]]; then
+        printf '%s\n' "$applied"
+        return 0
+      fi
+      _warn "ignoring an applied mail hostname that is not a bare FQDN — using mail.${host}"
+    fi
+  fi
+  printf 'mail.%s\n' "$host"
+}
+
 # _install_bulwark_env renders install/bulwark/bulwark.env.tmpl into
 # /etc/jabali-panel/bulwark.env. Idempotent: writes only when the
 # rendered content's SHA-256 differs from the on-disk file. Template
@@ -14380,13 +14414,19 @@ _install_bulwark_env() {
     _die "cannot resolve panel hostname for Bulwark env — pass --hostname or ensure config.toml has 'hostname'"
   fi
 
+  # JMAP_SERVER_URL carries the panel mail hostname — the applied custom
+  # name after a JAB-390 switchover, else mail.<hostname>.
+  local _bwrk_mail_host
+  _bwrk_mail_host="$(_panel_mail_hostname "$_bwrk_host")"
+
   # Render into a tmpfile first so we can diff by hash before writing.
   # Using envsubst would pull in gettext as a dep; sed is enough for
   # the two variables this template uses.
   local tmp
   tmp=$(mktemp)
   # shellcheck disable=SC2016
-  sed "s|\${JABALI_SERVER_HOSTNAME}|${_bwrk_host}|g" "$src" >"$tmp"
+  sed -e "s|\${JABALI_SERVER_HOSTNAME}|${_bwrk_host}|g" \
+      -e "s|\${JABALI_MAIL_HOSTNAME}|${_bwrk_mail_host}|g" "$src" >"$tmp"
 
   local new_sha old_sha=""
   new_sha=$(sha256sum "$tmp" | awk '{print $1}')

@@ -32,7 +32,7 @@ func newSettingsCmd() *cobra.Command {
 		Use:   "settings",
 		Short: "Inspect and patch server settings (headless equivalent of /admin/settings)",
 	}
-	cmd.AddCommand(newSettingsGetCmd(), newSettingsSetCmd(), newSettingsKeysCmd())
+	cmd.AddCommand(newSettingsGetCmd(), newSettingsSetCmd(), newSettingsKeysCmd(), newSettingsMailHostnameCmd())
 	return cmd
 }
 
