@@ -149,14 +149,18 @@ const MailHostnameChange = ({ data }: { data: SettingsEmailReady }) => {
       {sw && sw.status !== "done" && (
         <SwitchoverStatus sw={sw} onCancel={withdraw} cancelling={cancel.isPending} />
       )}
-      <Space wrap style={{ marginTop: 8 }}>
-        <Space.Compact style={{ width: 420, maxWidth: "100%" }}>
+      {/* A wrapping flex row, not Space: a Space item sizes to its content,
+          so the input group could not shrink and overflowed a phone-width
+          card. */}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 8 }}>
+        <Space.Compact style={{ flex: "1 1 260px", maxWidth: 420, minWidth: 0 }}>
           <Input
             aria-label={t("emailcard.mail_hostname")}
             placeholder={t("emailcard.mail_hostname_placeholder")}
             value={name}
             maxLength={253}
             disabled={issuing}
+            style={{ minWidth: 0 }}
             onChange={(e) => setName(e.target.value)}
             onPressEnter={() => name.trim() && submit(name)}
           />
@@ -170,11 +174,15 @@ const MailHostnameChange = ({ data }: { data: SettingsEmailReady }) => {
           </Button>
         </Space.Compact>
         {data.mailHostname.applied && (
-          <Button disabled={issuing || busy} onClick={() => submit(derived)}>
+          <Button
+            disabled={issuing || busy}
+            style={{ maxWidth: "100%", whiteSpace: "normal", height: "auto" }}
+            onClick={() => submit(derived)}
+          >
             {t("emailcard.switch_back_to", { name: derived })}
           </Button>
         )}
-      </Space>
+      </div>
       <Typography.Paragraph type="secondary" style={{ marginTop: 8, marginBottom: 0 }}>
         {t("emailcard.mail_hostname_help", { derived, domain: data.primaryDomainName })}
       </Typography.Paragraph>
