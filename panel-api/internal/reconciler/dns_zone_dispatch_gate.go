@@ -11,14 +11,6 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dnscompile"
 )
 
-// dnsZoneDispatchState is what each zone's dnsZoneDispatchCache entry holds.
-// Hash covers the compiled record set plus the AXFR/NOTIFY lists — i.e.
-// everything the agent actually acts on. At is when we last pushed.
-type dnsZoneDispatchState struct {
-	Hash string
-	At   time.Time
-}
-
 // dnsZoneReDispatchInterval forces a push even when the hash matches, so
 // out-of-band drift in PowerDNS (operator editing the SQL backend directly,
 // a restored/rebuilt pdns database, a push that partially applied) is still
@@ -69,26 +61,16 @@ func desiredDNSZoneHash(records []dnscompile.Record, allowAXFR, alsoNotify []str
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// dnsZonePushNeeded reports whether the zone should be pushed this tick, and
-// is the single place that decides it. Returns true when the compiled content
-// changed, when this process has not pushed the zone yet (e.g. after a panel
-// restart), or when the self-heal interval has elapsed.
+// dnsZonePushNeeded reports whether a normal run would push the zone: the
+// compiled content changed, this process has not pushed the zone yet (e.g.
+// after a panel restart), or the self-heal interval elapsed. The push itself
+// goes through phaseDecide, which also honours Audit and Force runs; this is
+// the RunNormal view.
 func (r *Reconciler) dnsZonePushNeeded(zoneID, hash string, now time.Time) bool {
-	v, ok := r.dnsZoneDispatchCache.Load(zoneID)
-	if !ok {
-		return true
-	}
-	st, okT := v.(dnsZoneDispatchState)
-	if !okT {
-		return true
-	}
-	if st.Hash != hash {
-		return true
-	}
-	return now.Sub(st.At) >= dnsZoneReDispatchInterval
+	return r.ledger.decide(PhaseDNSZone, zoneID, hash, now, RunNormal) != decisionSkip
 }
 
-// dnsZonePushed records a successful push so the next tick can short-circuit.
+// dnsZonePushed records a successful push.
 func (r *Reconciler) dnsZonePushed(zoneID, hash string, now time.Time) {
-	r.dnsZoneDispatchCache.Store(zoneID, dnsZoneDispatchState{Hash: hash, At: now})
+	r.ledger.stamp(PhaseDNSZone, zoneID, hash, now)
 }

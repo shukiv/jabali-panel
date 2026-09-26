@@ -28,11 +28,6 @@ import (
 
 const ftpAccountsReDispatchInterval = 15 * time.Minute
 
-type ftpDispatchState struct {
-	Hash string
-	At   time.Time
-}
-
 // desiredFtpHash covers every reconcile input: each row's identity +
 // flags + home, and the owning tenant's username (renames change the
 // rendered config without touching ftp_accounts rows).
@@ -143,10 +138,9 @@ func (r *Reconciler) reconcileFtpAccounts(ctx context.Context) {
 	}
 
 	fullHash := desiredFtpHash(rows, tenantByUserID) + ftpEligHash(eligByTenant)
-	if v, ok := r.ftpDispatchCache.Load("all"); ok {
-		if st, okT := v.(ftpDispatchState); okT && st.Hash == fullHash && time.Since(st.At) < ftpAccountsReDispatchInterval {
-			return
-		}
+	d := r.phaseDecide(ctx, PhaseFTPAccounts, "all", fullHash, time.Now(), false)
+	if d == decisionSkip {
+		return
 	}
 
 	converged := true
@@ -178,7 +172,9 @@ func (r *Reconciler) reconcileFtpAccounts(ctx context.Context) {
 	}
 
 	if converged {
-		r.ftpDispatchCache.Store("all", ftpDispatchState{Hash: fullHash, At: time.Now()})
+		r.phaseApplied(ctx, PhaseFTPAccounts, "all", fullHash, time.Now(), d)
+	} else {
+		r.phaseFailed(ctx, PhaseFTPAccounts)
 	}
 }
 

@@ -110,7 +110,7 @@ func TestDomainDispatchNeeded(t *testing.T) {
 		t.Fatal("an empty hash must always dispatch")
 	}
 	r.domainDispatched("d2", "", now)
-	if _, ok := r.domainDispatchCache.Load("d2"); ok {
+	if _, ok := r.ledger.lookup(PhaseDomainVhost, "d2"); ok {
 		t.Fatal("an empty hash must not be recorded")
 	}
 }

@@ -7,14 +7,6 @@ import (
 	"time"
 )
 
-// domainDispatchState is what each domain's domainDispatchCache entry holds.
-// Hash covers the fully-assembled domain.create wire payload — everything the
-// agent renders the vhost from. At is when we last dispatched.
-type domainDispatchState struct {
-	Hash string
-	At   time.Time
-}
-
 // domainReDispatchInterval forces a domain.create even when the payload hash
 // matches, so out-of-band drift (an operator hand-editing the vhost, a partial
 // apply, an agent binary whose template changed without a panel restart) is
@@ -38,41 +30,17 @@ func desiredDomainDispatchHash(params map[string]any) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// domainDispatchNeeded reports whether domain.create should run this tick. True
-// when the payload changed, when this PROCESS has not dispatched the domain yet,
-// or when the self-heal interval elapsed.
-//
-// The cache is process-local (sync.Map on the Reconciler) by design: after a
-// panel restart the cache is empty, so every domain is re-dispatched and the
-// host re-converged; and a promoted DR standby can never inherit a stale
-// "already applied on this host" decision from replicated database state,
-// because that decision lives only in the previous primary's memory. An empty
-// hash (marshal failure) always dispatches.
+// domainDispatchNeeded reports whether a normal run would dispatch
+// domain.create: the payload changed, this PROCESS has not dispatched the
+// domain yet, or the drift-repair interval elapsed. An empty hash (marshal
+// failure) always dispatches. The dispatch itself goes through phaseDecide,
+// which also honours Audit and Force runs; this is the RunNormal view.
 func (r *Reconciler) domainDispatchNeeded(domainID, hash string, now time.Time) bool {
-	if hash == "" {
-		return true
-	}
-	v, ok := r.domainDispatchCache.Load(domainID)
-	if !ok {
-		return true
-	}
-	st, okT := v.(domainDispatchState)
-	if !okT {
-		return true
-	}
-	if st.Hash != hash {
-		return true
-	}
-	return now.Sub(st.At) >= domainReDispatchInterval
+	return r.ledger.decide(PhaseDomainVhost, domainID, hash, now, RunNormal) != decisionSkip
 }
 
-// domainDispatched records a SUCCESSFUL dispatch so the next tick can
-// short-circuit. A failed domain.create is never recorded — the domain stays
-// "dirty" and retries next tick, never stamped as applied. An empty hash is not
-// recorded (the caller then never short-circuits on it).
+// domainDispatched records a SUCCESSFUL dispatch. A failed domain.create is
+// never recorded, and an empty hash is never recorded.
 func (r *Reconciler) domainDispatched(domainID, hash string, now time.Time) {
-	if hash == "" {
-		return
-	}
-	r.domainDispatchCache.Store(domainID, domainDispatchState{Hash: hash, At: now})
+	r.ledger.stamp(PhaseDomainVhost, domainID, hash, now)
 }

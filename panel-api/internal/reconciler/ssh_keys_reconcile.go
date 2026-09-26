@@ -13,14 +13,6 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
-// sshKeysDispatchState is what each user's sshKeysDispatchCache entry
-// holds. Hash covers the sorted desired key set (or a sentinel for
-// "no keys"); At is when we last dispatched the agent for this user.
-type sshKeysDispatchState struct {
-	Hash string
-	At   time.Time
-}
-
 // sshKeysReDispatchInterval forces a re-dispatch even when the hash
 // matches, so any out-of-band drift in `~/.ssh/authorized_keys`
 // (operator hand-edit, agent restart partial state) is corrected on
@@ -129,16 +121,20 @@ func (r *Reconciler) ReconcileSSHKeysForUser(ctx context.Context, userID string)
 
 	fullHash := desiredSSHFullHash(*user.Username, sshEnabled, user.SSHForwardingEnabled, pinPreview, desiredLines)
 
-	// Combined-hash gate. When everything matches AND we re-dispatched
-	// within sshKeysReDispatchInterval, skip ALL six agent IPCs below.
-	// Drift heals on the next interval pass (15 min force-resync).
-	if v, ok := r.sshKeysDispatchCache.Load(userID); ok {
-		if st, okT := v.(sshKeysDispatchState); okT &&
-			st.Hash == fullHash &&
-			time.Since(st.At) < sshKeysReDispatchInterval {
-			return nil
-		}
+	// Combined-hash gate (JAB-369 ledger). When everything matches AND this
+	// process applied it within PhaseSSHKeys.AuditInterval, skip ALL six agent
+	// IPCs below. Drift heals on the next audit (15 min), and Audit / Force
+	// runs always apply.
+	d := r.phaseDecide(ctx, PhaseSSHKeys, userID, fullHash, time.Now(), false)
+	if d == decisionSkip {
+		return nil
 	}
+	applied := false
+	defer func() {
+		if !applied {
+			r.phaseFailed(ctx, PhaseSSHKeys)
+		}
+	}()
 
 	// M13: ensure the wrapper is the user's login shell. Defense-in-depth
 	// for SFTP users (ForceCommand internal-sftp wins) and the actual
@@ -282,7 +278,8 @@ func (r *Reconciler) ReconcileSSHKeysForUser(ctx context.Context, userID string)
 			"user_id", userID, "username", *user.Username)
 	}
 	// Record the successful dispatch so the next tick can short-circuit.
-	r.sshKeysDispatchCache.Store(userID, sshKeysDispatchState{Hash: fullHash, At: time.Now()})
+	applied = true
+	r.phaseApplied(ctx, PhaseSSHKeys, userID, fullHash, time.Now(), d)
 
 	return nil
 }
