@@ -96,6 +96,10 @@ var (
 	// PhaseMailboxShares is one owner mailbox's share list (its Inbox
 	// shareWith on Stalwart). Keyed by the owner mailbox ID.
 	PhaseMailboxShares = Phase{Name: "mailbox.shares", AuditInterval: 15 * time.Minute}
+	// PhasePingAccess is the jabali-ping group's member list and the
+	// ping_group_range that goes with it (GH #1798). One entry for the host;
+	// the interval repairs a group or range changed by hand.
+	PhasePingAccess = Phase{Name: "user.ping_access", AuditInterval: 15 * time.Minute}
 )
 
 // runDependency is one ordering a run keeps for a domain: the Agent call
