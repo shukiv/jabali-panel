@@ -59,15 +59,26 @@ func (a fwStubAgent) Call(context.Context, string, any) (json.RawMessage, error)
 }
 
 func postForwarder(h *forwarderHandler, body string) *httptest.ResponseRecorder {
+	return postForwarderAs(h, body, &auth.AccessClaims{UserID: "u1", IsAdmin: true})
+}
+
+func postForwarderAs(h *forwarderHandler, body string, claims *auth.AccessClaims) *httptest.ResponseRecorder {
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Params = gin.Params{{Key: "mbid", Value: "mb1"}}
 	c.Request = httptest.NewRequest(http.MethodPost, "/mailboxes/mb1/forwarders", strings.NewReader(body))
 	c.Request.Header.Set("Content-Type", "application/json")
-	ginctx.SetClaims(c, &auth.AccessClaims{UserID: "u1", IsAdmin: true})
+	ginctx.SetClaims(c, claims)
 	h.create(c)
 	return w
+}
+
+type fwWarningBody struct {
+	Warning *struct {
+		Code   string `json:"code"`
+		Detail string `json:"detail"`
+	} `json:"warning"`
 }
 
 func newForwarderHandlerFake(agentErr error) *forwarderHandler {
@@ -106,8 +117,31 @@ func TestForwarderCreate_SurfacesConvergenceFailure(t *testing.T) {
 	if resp.Warning.Code != "convergence_failed" {
 		t.Errorf("warning.code = %q, want convergence_failed", resp.Warning.Code)
 	}
-	if resp.Warning.Detail == "" {
-		t.Errorf("warning.detail is empty; the agent error must be surfaced")
+	if !strings.Contains(resp.Warning.Detail, "mailbox not registered with mail server") {
+		t.Errorf("warning.detail = %q; an admin must see the agent error", resp.Warning.Detail)
+	}
+}
+
+// A tenant still learns the forwarder is not live yet (the warning stays), but
+// not the agent's error text: it can name panel internals such as the agent
+// socket path ("dial unix /run/jabali/agent.sock: ..."). The full error goes to
+// the log, and an admin caller still gets it in the response (GH #1795).
+func TestForwarderCreate_TenantWarningHidesTheAgentError(t *testing.T) {
+	h := newForwarderHandlerFake(errors.New("agent: unavailable: dial unix /run/jabali/agent.sock: connect: permission denied"))
+	w := postForwarderAs(h, `{"type":"external","target":"out@elsewhere.com"}`, &auth.AccessClaims{UserID: "u1"})
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201", w.Code)
+	}
+	var resp fwWarningBody
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Warning == nil || resp.Warning.Code != "convergence_failed" || resp.Warning.Detail == "" {
+		t.Fatalf("tenant must still get the convergence_failed warning with a detail: %s", w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "agent.sock") || strings.Contains(w.Body.String(), "dial unix") {
+		t.Errorf("tenant response leaks the agent error: %s", w.Body.String())
 	}
 }
 
