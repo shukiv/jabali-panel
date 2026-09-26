@@ -53,7 +53,11 @@ panel_cert_kind() {
     return
   fi
   # No record yet (boxes before their next mail deploy): the derived name.
-  if [[ "$base" == "mail.${cn}" ]]; then
+  # Once a lineage is recorded it is the ONLY panel mail lineage: after a
+  # JAB-390 switchover the old live/mail.<hostname> lineage still exists and
+  # certbot still renews it, and deploying that renewal would replace the
+  # current mail cert with one that lacks the new name.
+  if [[ -z "$recorded" && "$base" == "mail.${cn}" ]]; then
     echo "mail"
     return
   fi
