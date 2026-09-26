@@ -1,9 +1,9 @@
 // OverviewTab — the landing pane of the tenant Web Domain page (GH #1543).
-// Shows the domain's key facts and the two instant per-domain toggles that
-// were previously buried in the row's "Actions" menu (preview URL, bot
-// challenge). Both PATCH /domains/:id and invalidate the single-row + list
-// caches so the badge and the list stay in step, mirroring the DomainInventory
-// row handlers.
+// Shows the domain's key facts and the instant per-domain toggles: the two
+// that were previously buried in the row's "Actions" menu (preview URL, bot
+// challenge) and subdomain delegation (GH #1812). Each PATCHes /domains/:id and
+// invalidates the single-row + list caches so the badge and the list stay in
+// step, mirroring the DomainInventory row handlers.
 import { useState } from "react";
 import { Button, Descriptions, Space, Switch, Tag, Typography } from "antd";
 import { SafetyCertificateOutlined } from "@icons";
@@ -28,11 +28,11 @@ const stripHomePrefix = (path: string): string => {
 export const OverviewTab = ({ domain }: { domain: Domain }) => {
   const qc = useQueryClient();
   const navigate = useNavigate();
-  const [busy, setBusy] = useState<null | "preview" | "bot">(null);
+  const [busy, setBusy] = useState<null | "preview" | "bot" | "delegation">(null);
   const [viewCert, setViewCert] = useState(false);
 
   const patch = async (
-    field: "preview" | "bot",
+    field: "preview" | "bot" | "delegation",
     body: Record<string, unknown>,
     success: string,
     errorPrefix: string,
@@ -72,6 +72,20 @@ export const OverviewTab = ({ domain }: { domain: Domain }) => {
         ? "Bot-detection challenge enabled — active within a minute if the server is in Selected-domains mode"
         : "Bot-detection challenge disabled for this site",
       "Failed to toggle bot challenge",
+    );
+
+  // GH #1812: the owner's consent for OTHER accounts on this server to create
+  // subdomains under this domain (the cross-tenant hijack guard otherwise
+  // refuses them). The guard is checked when a subdomain is created, so turning
+  // this off stops new ones and leaves existing subdomains in place.
+  const toggleDelegation = (next: boolean) =>
+    patch(
+      "delegation",
+      { allow_subdomain_delegation: next },
+      next
+        ? "Other accounts can now create subdomains of this domain"
+        : "Other accounts can no longer create new subdomains of this domain",
+      "Failed to change subdomain delegation",
     );
 
   const ssl = getSSLTag(domain.ssl_state);
@@ -150,6 +164,23 @@ export const OverviewTab = ({ domain }: { domain: Domain }) => {
             <Typography.Text strong>Bot-detection challenge</Typography.Text>
             <Typography.Paragraph type="secondary" style={{ margin: 0, fontSize: 13 }}>
               Challenge suspicious visitors when the server runs in Selected-domains mode.
+            </Typography.Paragraph>
+          </div>
+        </Space>
+
+        <Space align="center">
+          <Switch
+            checked={!!domain.allow_subdomain_delegation}
+            loading={busy === "delegation"}
+            onChange={toggleDelegation}
+            aria-label="Allow subdomains by other accounts"
+          />
+          <div>
+            <Typography.Text strong>Allow subdomains by other accounts</Typography.Text>
+            <Typography.Paragraph type="secondary" style={{ margin: 0, fontSize: 13 }}>
+              Other accounts on this server may create subdomains of {domain.name} (for example
+              shop.{domain.name}) without asking you. Turning this off stops new ones; subdomains
+              already created stay.
             </Typography.Paragraph>
           </div>
         </Space>

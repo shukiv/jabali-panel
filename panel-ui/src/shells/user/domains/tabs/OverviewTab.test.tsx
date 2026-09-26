@@ -75,3 +75,27 @@ describe("OverviewTab SSL row (GH #1543)", () => {
     expect(navigate).toHaveBeenCalledWith("/jabali-panel/domains/d1/ssl");
   });
 });
+
+describe("OverviewTab subdomain delegation toggle (GH #1812)", () => {
+  it("renders the delegation switch reflecting the stored flag", () => {
+    renderTab({ ...base, allow_subdomain_delegation: true } as Domain);
+    const sw = screen.getByRole("switch", { name: "Allow subdomains by other accounts" });
+    expect(sw.getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("PATCHes allow_subdomain_delegation when the owner turns it on", async () => {
+    const { apiClient } = await import("../../../../apiClient");
+    const patch = vi.mocked(apiClient.patch);
+    patch.mockClear();
+    renderTab({ ...base, allow_subdomain_delegation: false } as Domain);
+    fireEvent.click(screen.getByRole("switch", { name: "Allow subdomains by other accounts" }));
+    await vi.waitFor(() =>
+      expect(patch).toHaveBeenCalledWith("/domains/d1", { allow_subdomain_delegation: true }),
+    );
+  });
+
+  it("says turning it off does not remove subdomains other accounts already created", () => {
+    renderTab({ ...base } as Domain);
+    expect(screen.getByText(/Turning this off stops new ones/)).toBeInTheDocument();
+  });
+});

@@ -12,7 +12,8 @@
 // disk-quota toggle) and is allowlisted in SPECIAL_LIMIT_FIELDS. PACKAGE_DEFAULTS
 // is the create-mode initial values. encode/decode own the CSV round-trip for
 // the two multi-select fields (docker_app_slugs, allowed_backup_destination_kinds)
-// which are CSV strings on the wire but arrays in the Form.
+// which are CSV strings on the wire but arrays in the Form, and the JSON-array
+// round-trip for egress_ssh_out_cidrs (a JSON array string on the wire).
 
 // Mirrors models.AllBackupDestinationKinds (GH #454). Keep in sync with the
 // backend enum in backup_destination.go.
@@ -53,17 +54,25 @@ export type PackageFormValues = {
   fpm_worker_mem_mb: number;
   docker_app_slugs?: string[] | string;
   nspawn_image_version?: string | null;
+  // GH #1798: per-package allowances in the M34 per-user egress firewall. Both
+  // default OFF. egress_ssh_out_cidrs is a JSON array string on the wire
+  // ('' = anywhere); the tags Select binds an array.
+  egress_ssh_out: boolean;
+  egress_ssh_out_cidrs: string | string[];
+  egress_icmp: boolean;
 };
 
 export type PackageRecord = PackageFormValues & { id: string };
 
-// Wire payload: the two multi-select fields are CSV strings, not arrays.
+// Wire payload: the two multi-select fields are CSV strings, and the egress CIDR
+// list is a JSON array string, not arrays.
 export type PackageWirePayload = Omit<
   PackageFormValues,
-  "docker_app_slugs" | "allowed_backup_destination_kinds"
+  "docker_app_slugs" | "allowed_backup_destination_kinds" | "egress_ssh_out_cidrs"
 > & {
   docker_app_slugs: string;
   allowed_backup_destination_kinds: string;
+  egress_ssh_out_cidrs: string;
 };
 
 export type LimitFieldGroup = "resource" | "quota" | "backup" | "fpm";
@@ -282,14 +291,52 @@ export const PACKAGE_DEFAULTS: PackageFormValues = {
   scheduled_backups_enabled: false,
   allowed_backup_destination_kinds: [],
   backup_retention_policy: "reject",
+  egress_ssh_out: false,
+  egress_ssh_out_cidrs: [],
+  egress_icmp: false,
 };
 
 // --- CSV codecs (AC2). docker_app_slugs and allowed_backup_destination_kinds are
 // CSV strings on the wire but arrays in the Form. ---
 
+// --- Egress CIDR codec (GH #1798). The backend stores egress_ssh_out_cidrs as a
+// JSON array of CIDR strings and parses it with json.Unmarshal, so this field is
+// NOT CSV. An empty list encodes to "" (the canonical "anywhere" value the API
+// and CLI store); anything that does not decode to an array of strings loads as
+// an empty list. The server re-validates every CIDR (net.ParseCIDR) on write. ---
+
+function encodeCIDRList(value: string | string[] | undefined): string {
+  if (!Array.isArray(value)) return (value ?? "").trim();
+  const cidrs = value.map((c) => c.trim()).filter(Boolean);
+  return cidrs.length ? JSON.stringify(cidrs) : "";
+}
+
+function decodeCIDRList(stored: unknown): string[] {
+  if (typeof stored !== "string" || stored.trim() === "") return [];
+  try {
+    const parsed: unknown = JSON.parse(stored);
+    if (Array.isArray(parsed) && parsed.every((c) => typeof c === "string")) return parsed;
+  } catch {
+    /* malformed stored value: show an empty list */
+  }
+  return [];
+}
+
+const IPV4_CIDR = /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}\/(3[0-2]|[12]?\d)$/;
+const IPV6_CIDR = /^[0-9a-fA-F:]*:[0-9a-fA-F:.]*\/(12[0-8]|1[01]\d|[1-9]?\d)$/;
+
+// looksLikeCIDR is the form's inline shape check so a typo shows next to the
+// field instead of as a save error. It is deliberately loose for IPv6; the API
+// (models.NormalizeEgressSSHOutCIDRs) is the authority and rejects anything
+// net.ParseCIDR does not accept.
+export function looksLikeCIDR(value: string): boolean {
+  return IPV4_CIDR.test(value) || IPV6_CIDR.test(value);
+}
+
 export function encodePackagePayload(values: PackageFormValues): PackageWirePayload {
   return {
     ...values,
+    egress_ssh_out_cidrs: encodeCIDRList(values.egress_ssh_out_cidrs),
     docker_app_slugs: Array.isArray(values.docker_app_slugs)
       ? values.docker_app_slugs.join(",")
       : (values.docker_app_slugs ?? ""),
@@ -311,6 +358,9 @@ export function decodePackageForm(record: PackageRecord): PackageFormValues {
     ...rest,
     docker_app_slugs: csv ? csv.split(",").filter(Boolean) : [],
     allowed_backup_destination_kinds: bkCsv ? bkCsv.split(",").filter(Boolean) : [],
+    egress_ssh_out: !!rest.egress_ssh_out,
+    egress_ssh_out_cidrs: decodeCIDRList(rest.egress_ssh_out_cidrs),
+    egress_icmp: !!rest.egress_icmp,
   };
 }
 
