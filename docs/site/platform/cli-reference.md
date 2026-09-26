@@ -4873,6 +4873,18 @@ jabali secrets rotate jwt [flags]
 
 - `--dry-run` — print the plan and touch nothing
 
+##### `jabali secrets rotate kratos`
+
+Rotate the Kratos DB password and cookie/default secrets (signs every user out)
+
+```
+jabali secrets rotate kratos [flags]
+```
+
+**Flags:**
+
+- `--dry-run` — print the plan and touch nothing
+
 ##### `jabali secrets rotate pdns`
 
 Rotate the PowerDNS DB user password (pdns.env + gmysql backend conf)

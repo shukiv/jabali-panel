@@ -26,6 +26,7 @@ JAB-351 proved `jabali-webmail` (broad `jabali` group) could read `0640 root:jab
 | Secret | Tooling | Notes |
 |---|---|---|
 | Panel DB app-user password (`db-password` + `DATABASE_URL`) | `jabali secrets rotate db-app-user` ✅ | `jabali_panel_app@localhost` (the panel's own user, not root). ALTER USER → rewrite `db-password` + the `DATABASE_URL` line in `panel.env` → restart → verify the new credential. |
+| Kratos DB password + `secrets.cookie` / `secrets.default` (inlined in `kratos.yml`, `root:jabali 0640`) | `jabali secrets rotate kratos` ✅ | Replaces all three with no rollover (old values are exposed) and revokes every session — **signs every user out once**. See "Kratos — IN scope" below. |
 | `JWT_SECRET` (`panel.env`) | `jabali secrets rotate jwt` ✅ | Vestigial post-M20 (panel auth is Kratos; webmail SSO uses the separate `bulwark-jwt-auth.secret`). Rotating it is a safe near-noop; included only because it lived in the exposed file. |
 | `postgres.password` | `jabali db root-password --engine postgres` (existing) | Same exposure class (`root:jabali 0640`). Only if the Postgres engine is enabled on the host. |
 | MariaDB root password | `jabali db root-password --engine mariadb` (existing) | Break-glass root credential; socket auth preserved (ADR-0097). |
@@ -42,9 +43,31 @@ JAB-351 proved `jabali-webmail` (broad `jabali` group) could read `0640 root:jab
 
 ### Out of scope
 
-Kratos session/cookie/`cipher` secrets (not `jabali`-group-readable — under Kratos config, which webmail could not read), DKIM keys (`root:jabali-sftp 0600`), tenant DB passwords, tenant Let's Encrypt lineage, and the Stalwart admin token (`jabali-mail`). Because Kratos secrets are out of scope, **no fleet-wide forced logout and no `password_enc`/`secrets.cipher` re-encryption is required.**
+DKIM keys (`root:jabali-sftp 0600`), tenant DB passwords, tenant Let's Encrypt lineage, and the Stalwart admin token (`jabali-mail`).
 
-> Before the first live rotation on a host, confirm this by checking that the Kratos secrets file is not group-`jabali`-readable. If it is, it enters scope and needs a separate multi-secret Kratos rotation (new secret first, old retained, cipher re-encrypt) — a migration, not a swap.
+### Kratos — IN scope (correction, 2026-09-26)
+
+An earlier version of this runbook put Kratos out of scope because the root-only `kratos-secrets/` files are not `jabali`-readable. **That was wrong.** `/etc/jabali-panel/kratos.yml` is `root:jabali 0640` on every install — Kratos runs as `jabali` and must read it — and it inlines three secrets that webmail could therefore read before the fix:
+
+| Secret | What an attacker could do with the old value |
+|---|---|
+| Kratos DB password (`dsn`) | Read the Kratos database: identities, password hashes, TOTP secrets and **live session tokens**. |
+| `secrets.cookie` / `secrets.default` | Mint valid CSRF tokens and open captured Kratos cookies. |
+
+`jabali secrets rotate kratos` replaces all three:
+
+- It runs `ALTER USER jabali_kratos` and rewrites four files atomically: `kratos-db-password`, `kratos-secrets/{default,cookie}` and the dsn plus secrets in `kratos.yml`. The next `jabali update` re-renders from those files, so it keeps the new values.
+- It restarts `jabali-kratos` and verifies both the service and the new DB password. On failure it rolls back.
+- It then **revokes every active session**.
+
+**Old values are deliberately not kept.** Kratos's usual rollover (prepend the new secret, keep the old one for verification) would leave the exposed secret valid.
+
+- The cost: **every panel user is signed out once** and must sign in again. Run it in a maintenance window, and expect your own session to end.
+- Nothing at rest depends on these secrets, since `kratos.yml` has no `ciphers:` block, so nothing needs re-encrypting.
+- If the command reports that session revocation failed, the secrets **stay rotated**; rolling back would bring the exposed values back. Revoke the rest with `jabali session list` / `jabali session revoke-user`.
+- If it reports that `kratos.yml` does not match its source files, run `jabali update` to re-render it, then retry.
+
+**Still open after rotating Kratos.** The old DB password could have been used to copy password hashes and TOTP secrets. Rotating the password stops further reads but does not invalidate data already copied. On hosts where compromise is plausible, have administrators reset their password and re-enroll TOTP. This is an operator decision; the tool does not force it.
 
 ## Recommended order (per host)
 
@@ -56,8 +79,9 @@ Kratos session/cookie/`cipher` secrets (not `jabali`-group-readable — under Kr
 4. `pdns` — if PowerDNS present.
 5. Panel + panel-mail TLS reissue.
 6. `jwt` — cheap, do it alongside any panel restart.
-7. Purge lingering `migration-secrets/*.env`.
-8. Note the deferred WP-cache HMAC as an open item.
+7. `kratos` — last, in a maintenance window: it signs every user out. Deliberately NOT part of `rotate all`, so the forced sign-out is always an explicit choice.
+8. Purge lingering `migration-secrets/*.env` (the daily reaper now also removes orphans with no job row).
+9. Note the deferred WP-cache HMAC as an open item.
 
 ## Verify after each rotation
 
