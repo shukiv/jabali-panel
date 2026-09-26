@@ -23,6 +23,9 @@ type userDeleteParams struct {
 type userDeleteResponse struct {
 	Username    string `json:"username"`
 	RemovedHome bool   `json:"removed_home"`
+	// SliceLeftovers are per-user unit files the slice removal could not
+	// delete (path → error). The account is still removed; the files stay.
+	SliceLeftovers map[string]string `json:"slice_leftovers,omitempty"`
 }
 
 // protectedUsers is a hardcoded deny list of users that must never be deleted.
@@ -81,7 +84,7 @@ func userDeleteHandler(ctx context.Context, params json.RawMessage) (any, error)
 	// Remove the per-user slice BEFORE userdel so systemd can still resolve the UID
 	// while stopping user@<uid>.service.
 	sliceParams, _ := json.Marshal(map[string]string{"username": p.Username}) // GH #694: Marshal, not string-concat
-	_, sliceErr := userSliceRemoveHandler(ctx, sliceParams)
+	sliceResp, sliceErr := userSliceRemoveHandler(ctx, sliceParams)
 	if sliceErr != nil {
 		var ae *agentwire.AgentError
 		if ok := errors.As(sliceErr, &ae); ok {
@@ -93,7 +96,14 @@ func userDeleteHandler(ctx context.Context, params json.RawMessage) (any, error)
 		}
 		return nil, sliceErr
 	}
-	slog.InfoContext(ctx, "user slice removed successfully", "username", p.Username)
+	var sliceLeftovers map[string]string
+	if r, ok := sliceResp.(*userSliceRemoveResponse); ok && len(r.Failed) > 0 {
+		sliceLeftovers = r.Failed
+		slog.WarnContext(ctx, "user slice removed except unit files left on the host",
+			"username", p.Username, "failed", r.Failed)
+	} else {
+		slog.InfoContext(ctx, "user slice removed successfully", "username", p.Username)
+	}
 
 	// Disable systemd-user linger so userdel can clean up the user-systemd
 	// state. user.create enables linger; without disabling here, userdel
@@ -134,8 +144,9 @@ func userDeleteHandler(ctx context.Context, params json.RawMessage) (any, error)
 			slog.InfoContext(ctx, "userdel exit 12; home removed via fallback rm",
 				"username", p.Username, "home", home, "userdel_stderr", stderr.String())
 			return userDeleteResponse{
-				Username:    p.Username,
-				RemovedHome: true,
+				Username:       p.Username,
+				RemovedHome:    true,
+				SliceLeftovers: sliceLeftovers,
 			}, nil
 		}
 		return nil, &agentwire.AgentError{
@@ -145,8 +156,9 @@ func userDeleteHandler(ctx context.Context, params json.RawMessage) (any, error)
 	}
 
 	return userDeleteResponse{
-		Username:    p.Username,
-		RemovedHome: p.RemoveHome,
+		Username:       p.Username,
+		RemovedHome:    p.RemoveHome,
+		SliceLeftovers: sliceLeftovers,
 	}, nil
 }
 
