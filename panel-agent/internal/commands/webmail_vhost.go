@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"text/template"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
@@ -28,7 +30,8 @@ import (
 
 // mailVhostTemplate mirrors install/nginx/jabali-mail-vhost.conf.tmpl.
 // Go template variables: .DomainName, .SSLCertPath, .SSLKeyPath,
-// .DocRoot, .ListenIPv4, .ListenIPv6.
+// .DocRoot, .ListenIPv4, .ListenIPv6, .SubFilterHost, .ExtraServerNames
+// (the last two resolved by resolveMailHostnames, JAB-390).
 //
 // listen-line shape mirrors domain_create.go: when an explicit IPv4 or
 // IPv6 binding is set, we emit `listen <ip>:<port>` so the mail vhost
@@ -48,12 +51,12 @@ server {
 {{ end }}{{ if .ListenIPv6 }}  listen [{{.ListenIPv6}}]:443 ssl{{.HTTP2Param}};
 {{ else }}  listen [::]:443 ssl{{.HTTP2Param}};
 {{ end }}{{ if .HTTP2Directive }}  {{.HTTP2Directive}}
-{{ end }}  server_name mail.{{.DomainName}} autoconfig.{{.DomainName}} autodiscover.{{.DomainName}} mta-sts.{{.DomainName}};
+{{ end }}  server_name mail.{{.DomainName}} autoconfig.{{.DomainName}} autodiscover.{{.DomainName}} mta-sts.{{.DomainName}}{{ range .ExtraServerNames }} {{.}}{{ end }};
 
   ssl_certificate {{.SSLCertPath}};
   ssl_certificate_key {{.SSLKeyPath}};
 
-{{ if .PanelHostname }}  # Same-origin JMAP rewrite. Bulwark's /api/config returns
+{{ if .SubFilterHost }}  # Same-origin JMAP rewrite. Bulwark's /api/config returns
   # jmapServerUrl=https://{{.PanelHostname}} (the panel-wide setting in
   # /etc/jabali-panel/bulwark.env), and Stalwart's /.well-known/jmap
   # Session response advertises absolute URLs at the same host. The
@@ -69,7 +72,7 @@ server {
   # the body — sub_filter silently no-ops on gzipped payloads.
   sub_filter_types application/json;
   sub_filter_once off;
-  sub_filter "mail.{{.PanelHostname}}" $host;
+  sub_filter "{{.SubFilterHost}}" $host;
 
 {{ end }}  # Intentionally no X-Forwarded-Proto on this location — Next.js
   # middleware-rewrite uses it to build internal proxy URLs, and with
@@ -210,7 +213,7 @@ server {
 {{ else }}  listen 80;
 {{ end }}{{ if .ListenIPv6 }}  listen [{{.ListenIPv6}}]:80;
 {{ else }}  listen [::]:80;
-{{ end }}  server_name mail.{{.DomainName}} autoconfig.{{.DomainName}} autodiscover.{{.DomainName}} mta-sts.{{.DomainName}};
+{{ end }}  server_name mail.{{.DomainName}} autoconfig.{{.DomainName}} autodiscover.{{.DomainName}} mta-sts.{{.DomainName}}{{ range .ExtraServerNames }} {{.}}{{ end }};
 
   # ACME HTTP-01 webroot. Must be a location block — a server-level
   # redirect fires in nginx SERVER_REWRITE phase BEFORE FIND_CONFIG,
@@ -315,6 +318,77 @@ type webmailVhostApplyParams struct {
 	// server_name those requests fall to nginx default + return 500.
 	// M6.6 / 2026-06-01 live-smoke regression.
 	IsPanelPrimary bool `json:"is_panel_primary,omitempty"`
+	// PanelMailHostname is the panel mail hostname (JAB-390): the applied
+	// custom shared mail hostname, else mail.<PanelHostname>. It is the name
+	// Bulwark's JMAP URL carries, so it is what the sub_filter rewrites.
+	// Empty (an older panel) falls back to mail.<PanelHostname>.
+	PanelMailHostname string `json:"panel_mail_hostname,omitempty"`
+	// ExtraServerNames are further names the panel-primary mail vhost
+	// answers on :443 and :80 — the custom shared mail hostname, which is
+	// not mail.<DomainName>. Refused for any other row: a tenant's mail
+	// vhost must never claim a name outside its own domain.
+	ExtraServerNames []string `json:"extra_server_names,omitempty"`
+	// SubFilterHost is the resolved sub_filter target; set by the handler.
+	SubFilterHost string `json:"-"`
+}
+
+// vhostServerNameRe matches a lower-case DNS name of two or more labels.
+// Mail hostnames reach nginx config verbatim (server_name, sub_filter), so
+// nothing outside [a-z0-9._-] may pass.
+var vhostServerNameRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9_-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9_-]{0,61}[a-z0-9])?)+$`)
+
+// normalizeVhostServerName lower-cases s and checks it is a plain DNS name.
+func normalizeVhostServerName(field, s string) (string, error) {
+	h := strings.ToLower(s)
+	if len(h) > 253 || !vhostServerNameRe.MatchString(h) {
+		return "", &agentwire.AgentError{
+			Code:    agentwire.CodeInvalidArgument,
+			Message: fmt.Sprintf("%s is not a valid host name", field),
+		}
+	}
+	return h, nil
+}
+
+// resolveMailHostnames validates the JAB-390 mail hostname params and sets
+// SubFilterHost and the de-duplicated ExtraServerNames.
+func (p *webmailVhostApplyParams) resolveMailHostnames() error {
+	switch {
+	case p.PanelMailHostname != "":
+		h, err := normalizeVhostServerName("panel_mail_hostname", p.PanelMailHostname)
+		if err != nil {
+			return err
+		}
+		p.SubFilterHost = h
+	case p.PanelHostname != "":
+		// An older panel: the derived name, exactly as before.
+		p.SubFilterHost = "mail." + p.PanelHostname
+	}
+	if len(p.ExtraServerNames) == 0 {
+		return nil
+	}
+	if !p.IsPanelPrimary {
+		return &agentwire.AgentError{
+			Code:    agentwire.CodeInvalidArgument,
+			Message: "extra_server_names is only accepted for the panel-primary mail vhost",
+		}
+	}
+	seen := map[string]bool{}
+	for _, prefix := range []string{"mail.", "autoconfig.", "autodiscover.", "mta-sts."} {
+		seen[prefix+strings.ToLower(p.DomainName)] = true
+	}
+	names := make([]string, 0, len(p.ExtraServerNames))
+	for i, n := range p.ExtraServerNames {
+		h, err := normalizeVhostServerName(fmt.Sprintf("extra_server_names[%d]", i), n)
+		if err != nil {
+			return err
+		}
+		if !seen[h] {
+			seen[h] = true
+			names = append(names, h)
+		}
+	}
+	p.ExtraServerNames = names
+	return nil
 }
 
 type webmailVhostResponse struct {
@@ -339,6 +413,10 @@ func webmailVhostApplyHandler(ctx context.Context, params json.RawMessage) (any,
 			Code:    agentwire.CodeInvalidArgument,
 			Message: "ssl_cert_path and ssl_key_path are required",
 		}
+	}
+
+	if err := p.resolveMailHostnames(); err != nil {
+		return nil, err
 	}
 
 	h2 := nginxHTTP2()
