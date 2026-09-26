@@ -1,9 +1,11 @@
 // `jabali mailbox shares` cobra subcommands — list / add / remove
 // mailbox sharing relationships (M6.5 shared folders).
 //
-// CLI inserts / deletes rows in the mailbox_shares table; the
-// reconciler's m65_mailbox_share phase converges to Stalwart via
-// the existing mailbox.share_set agent command on its next sweep.
+// add and remove go through mailshareops, the same path as the HTTP
+// handlers: add saves the row and applies the owner's share list to
+// Stalwart (mailbox.share_set); remove applies the list without the share
+// first and deletes the row only after Stalwart accepted it. A share can only
+// target a mailbox of the same account as the owner.
 // Operator workflow:
 //
 //	jabali mailbox shares list --owner alice@example.com
@@ -29,7 +31,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/mailshareops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
@@ -98,7 +100,7 @@ func newMailboxSharesAddCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "add",
 		Short:   "Grant a target mailbox shared access to the owner's mailbox",
-		PreRunE: requireDB,
+		PreRunE: requireDBAndAgent,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if ownerEmail == "" || sharedWithEmail == "" {
 				return errors.New("--owner and --shared-with required")
@@ -107,7 +109,7 @@ func newMailboxSharesAddCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
+			ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Second)
 			defer cancel()
 			mboxRepo := mailboxRepoFromDB()
 			owner, err := mboxRepo.FindByEmail(ctx, ownerEmail)
@@ -118,20 +120,25 @@ func newMailboxSharesAddCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("find shared-with: %w", err)
 			}
-			row := &models.MailboxShare{
-				ID:                  ids.NewULID(),
-				OwnerMailboxID:      owner.ID,
-				SharedWithMailboxID: target.ID,
-				Rights:              rights,
-				ManagedBy:           "cli",
-				CreatedAt:           time.Now().UTC(),
+			res, err := mailshareops.Create(ctx, cliShareDeps(), owner, target.ID, rights, "cli")
+			if err != nil {
+				switch {
+				case errors.Is(err, mailshareops.ErrTargetNotFound):
+					return fmt.Errorf("%s is not a mailbox of the same account as %s", sharedWithEmail, ownerEmail)
+				case errors.Is(err, mailshareops.ErrAlreadyShared):
+					return fmt.Errorf("%s is already shared with %s; remove that share first to change its rights", ownerEmail, sharedWithEmail)
+				case errors.Is(err, mailshareops.ErrSelfShare):
+					return errors.New("a mailbox cannot be shared with itself")
+				}
+				return err
 			}
-			if err := mailboxShareRepoFromDB().Create(ctx, row); err != nil {
-				return fmt.Errorf("create share: %w", err)
+			cliAuditOK(ctx, "mailbox.share_add", "mailbox_share", res.Share.ID, nil)
+			fmt.Fprintf(os.Stdout, "Share added id=%s rights=%s\n", res.Share.ID, summariseRights(rights))
+			if res.ApplyErr != nil {
+				fmt.Fprintf(os.Stderr, "Warning: saved, but the mail server did not accept it yet: %v\nThe panel retries it on its next reconcile.\n", res.ApplyErr)
+				return nil
 			}
-			cliAuditOK(ctx, "mailbox.share_add", "mailbox_share", row.ID, nil)
-			fmt.Fprintf(os.Stdout, "Share added id=%s rights=%s\n", row.ID, summariseRights(rights))
-			fmt.Fprintln(os.Stdout, "Reconciler converges via mailbox.share_set on next sweep (~60s).")
+			fmt.Fprintln(os.Stdout, "Applied on the mail server.")
 			return nil
 		},
 	}
@@ -146,23 +153,45 @@ func newMailboxSharesRemoveCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "remove",
 		Short:   "Revoke a share by ID",
-		PreRunE: requireDB,
+		PreRunE: requireDBAndAgent,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if id == "" {
 				return errors.New("--id required")
 			}
-			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
+			ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Second)
 			defer cancel()
-			if err := mailboxShareRepoFromDB().Delete(ctx, id); err != nil {
-				return fmt.Errorf("delete share: %w", err)
+			share, err := mailboxShareRepoFromDB().FindByID(ctx, id)
+			if err != nil {
+				return fmt.Errorf("find share %s: %w", id, err)
+			}
+			// Revoked on the mail server first; the row goes only after that.
+			if err := mailshareops.Delete(ctx, cliShareDeps(), share.OwnerMailboxID, id); err != nil {
+				if errors.Is(err, mailshareops.ErrApply) {
+					return fmt.Errorf("share kept: %w", err)
+				}
+				return fmt.Errorf("remove share: %w", err)
 			}
 			cliAuditOK(ctx, "mailbox.share_remove", "mailbox_share", id, nil)
-			fmt.Fprintf(os.Stdout, "Share id=%s removed (reconciler converges within ~60s).\n", id)
+			fmt.Fprintf(os.Stdout, "Share id=%s removed and revoked on the mail server.\n", id)
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&id, "id", "", "Share ID (ULID, from `jabali mailbox shares list`)")
 	return cmd
+}
+
+// cliShareDeps is mailshareops.Deps over the CLI's DB and agent. A missing
+// agent stays a nil interface (not a typed nil), so mailshareops reports it.
+func cliShareDeps() mailshareops.Deps {
+	d := mailshareops.Deps{
+		Mailboxes: mailboxRepoFromDB(),
+		Domains:   domainRepoFromDB(),
+		Shares:    mailboxShareRepoFromDB(),
+	}
+	if sharedAgent != nil {
+		d.Agent = sharedAgent
+	}
+	return d
 }
 
 func rightsFromPreset(s string) (models.Rights, error) {
