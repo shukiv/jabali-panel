@@ -49,7 +49,7 @@ func (r *Reconciler) previewStateCached(ctx context.Context) previewState {
 
 	st := previewState{}
 	if r.serverSettings != nil && r.sharedCerts != nil {
-		if srv, err := r.serverSettings.Get(ctx); err == nil && srv != nil {
+		if srv, err := r.settingsGet(ctx); err == nil && srv != nil {
 			st.base = models.EffectivePreviewBase(srv)
 		}
 		if st.base != "" {
@@ -91,7 +91,7 @@ func (r *Reconciler) reconcilePreviewInfra(ctx context.Context, domains map[stri
 	if !enabled {
 		return
 	}
-	srv, err := r.serverSettings.Get(ctx)
+	srv, err := r.settingsGet(ctx)
 	if err != nil || srv == nil {
 		return
 	}

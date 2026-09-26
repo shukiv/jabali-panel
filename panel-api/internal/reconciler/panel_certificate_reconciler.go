@@ -25,7 +25,7 @@ func (r *Reconciler) reconcilePanelCertificate(ctx context.Context) {
 		return
 	}
 
-	settings, err := r.serverSettings.Get(ctx)
+	settings, err := r.settingsGet(ctx)
 	if err != nil {
 		r.log.Debug("panel-cert reconcile skipped: server_settings unavailable", "error", err)
 		return

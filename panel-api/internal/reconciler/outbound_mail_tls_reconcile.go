@@ -25,7 +25,7 @@ func (r *Reconciler) reconcileOutboundMailTLS(ctx context.Context) {
 	if r.agent == nil || r.serverSettings == nil || r.outboundTLSConverged {
 		return
 	}
-	settings, err := r.serverSettings.Get(ctx)
+	settings, err := r.settingsGet(ctx)
 	if err != nil {
 		r.log.Debug("outbound-mail-TLS reconcile skipped: server_settings unavailable", "error", err)
 		return

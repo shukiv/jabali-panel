@@ -20,7 +20,7 @@ func (r *Reconciler) reconcileAutomation443(ctx context.Context) {
 	}
 
 	c, cancel := context.WithTimeout(ctx, 5*time.Second)
-	s, err := r.serverSettings.Get(c)
+	s, err := r.settingsGet(c)
 	cancel()
 	if err != nil || s == nil {
 		return

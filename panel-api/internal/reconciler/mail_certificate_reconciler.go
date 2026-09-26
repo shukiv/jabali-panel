@@ -91,7 +91,7 @@ func (r *Reconciler) reconcileMailCertificates(ctx context.Context) {
 	if len(rows) == 0 {
 		return
 	}
-	settings, err := r.serverSettings.Get(ctx)
+	settings, err := r.settingsGet(ctx)
 	if err != nil {
 		r.log.Debug("mail-cert reconcile skipped: server_settings unavailable", "error", err)
 		return

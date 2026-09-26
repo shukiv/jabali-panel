@@ -196,7 +196,7 @@ func (r *Reconciler) syncPanelPrimaryEmailDNS(ctx context.Context, domainID, sel
 	}
 	var srv *models.ServerSettings
 	if r.serverSettings != nil {
-		srv, _ = r.serverSettings.Get(ctx)
+		srv, _ = r.settingsGet(ctx)
 	}
 	intended := dnscompile.BuildEmailRecords(zone.ID, zone.Name, selector, pubKey, srv, ids.NewULID, time.Now().UTC())
 	for i := range intended {

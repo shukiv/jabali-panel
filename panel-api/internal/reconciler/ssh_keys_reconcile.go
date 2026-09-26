@@ -111,7 +111,7 @@ func (r *Reconciler) ReconcileSSHKeysForUser(ctx context.Context, userID string)
 		pinPreview = *pkgPin
 	}
 	if sshEnabled && pinPreview == "" && r.serverSettings != nil {
-		if sset, sErr := r.serverSettings.Get(ctx); sErr == nil && sset != nil && sset.DefaultNspawnImageVersion != "" {
+		if sset, sErr := r.settingsGet(ctx); sErr == nil && sset != nil && sset.DefaultNspawnImageVersion != "" {
 			pinPreview = sset.DefaultNspawnImageVersion
 		}
 	}

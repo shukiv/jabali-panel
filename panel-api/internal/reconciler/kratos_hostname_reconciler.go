@@ -28,7 +28,7 @@ func (r *Reconciler) reconcileKratosHostname(ctx context.Context) {
 	if r.agent == nil || r.serverSettings == nil || r.readKratosConfigFile == nil {
 		return
 	}
-	settings, err := r.serverSettings.Get(ctx)
+	settings, err := r.settingsGet(ctx)
 	if err != nil || settings == nil || settings.Hostname == "" {
 		return
 	}

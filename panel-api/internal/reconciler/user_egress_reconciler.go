@@ -62,7 +62,7 @@ func (r *Reconciler) readUserEgressDefaults(ctx context.Context) map[string]any 
 	if r.serverSettings == nil {
 		return nil
 	}
-	s, err := r.serverSettings.Get(ctx)
+	s, err := r.settingsGet(ctx)
 	if err != nil || s == nil {
 		return nil
 	}

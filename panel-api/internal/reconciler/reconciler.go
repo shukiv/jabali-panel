@@ -681,7 +681,7 @@ func (r *Reconciler) isStandby(ctx context.Context) bool {
 	if !r.standbyFetched.IsZero() && time.Since(r.standbyFetched) < ttl {
 		return r.standbyCached
 	}
-	s, err := r.serverSettings.Get(ctx)
+	s, err := r.settingsGet(ctx)
 	if err != nil || s == nil {
 		return r.standbyCached // keep last-known; fail toward active primary
 	}
@@ -911,6 +911,7 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 	// its gated phases into the run's report. A direct call (the admin
 	// endpoint, tests) gets a normal run.
 	ctx, rr := ensureRun(ctx, RunNormal)
+	defer rr.finish()
 	// Coarse per-block timings. A tick that outruns the interval means
 	// the next ticker fire lands immediately behind it and drift repair
 	// degrades to back-to-back passes — worth a WARN that names the
@@ -1351,7 +1352,8 @@ func (r *Reconciler) ReconcileOne(ctx context.Context, domainID string) error {
 func (r *Reconciler) ReconcileAllForce(ctx context.Context) error {
 	// JAB-369: a force run ignores the ledger in every gated phase, so a
 	// resource this process already applied is re-applied too.
-	ctx, _ = ensureRun(ctx, RunForce)
+	ctx, rr := ensureRun(ctx, RunForce)
+	defer rr.finish()
 
 	// Rate-limit zone fragment first — same ordering rule as ReconcileAll.
 	// Vhost-side limit_req references must find their zones already
@@ -1486,7 +1488,7 @@ func (r *Reconciler) ReconcilePHPPools(ctx context.Context) {
 			defaultPHP := "8.4"
 			if r.serverSettings != nil {
 				settingsCtx, settingsCancel := context.WithTimeout(ctx, 5*time.Second)
-				if s, sErr := r.serverSettings.Get(settingsCtx); sErr == nil && s != nil && s.DefaultPHPVersion != "" {
+				if s, sErr := r.settingsGet(settingsCtx); sErr == nil && s != nil && s.DefaultPHPVersion != "" {
 					defaultPHP = s.DefaultPHPVersion
 				}
 				settingsCancel()
@@ -1986,7 +1988,7 @@ func (r *Reconciler) effectiveInterceptErrors(ctx context.Context, domain *model
 		return *o
 	}
 	if r.serverSettings != nil {
-		if s, err := r.serverSettings.Get(ctx); err == nil && s != nil {
+		if s, err := r.settingsGet(ctx); err == nil && s != nil {
 			return s.InterceptAppErrorsDefault
 		}
 	}
@@ -2274,7 +2276,7 @@ func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Dom
 	// baked-in default". Safe when pageTemplates isn't wired (tests).
 	if r.pageTemplates != nil {
 		tplCtx, tplCancel := context.WithTimeout(ctx, 5*time.Second)
-		if row, err := r.pageTemplates.Get(tplCtx, models.PageTemplateDomainDefaultIndex); err == nil && row != nil {
+		if row, err := r.pageTemplateGet(tplCtx, models.PageTemplateDomainDefaultIndex); err == nil && row != nil {
 			params["default_index_template"] = row.Content
 		}
 		tplCancel()
@@ -2659,7 +2661,7 @@ func (r *Reconciler) reconcileDNSZone(ctx context.Context, domain *models.Domain
 				r.log.Error("create zone failed", "domain", domain.Name, "err", err)
 				return
 			}
-			srv, _ := r.serverSettings.Get(ctx)
+			srv, _ := r.settingsGet(ctx)
 			// Skip Jabali mail rows when the domain opts out of Jabali mail
 			// (provider none/m365/google). Empty provider == jabali (matches
 			// reconcileMailProviderRecords), so legacy/default domains keep
@@ -2710,7 +2712,7 @@ func (r *Reconciler) reconcileDNSZone(ctx context.Context, domain *models.Domain
 		return
 	}
 
-	srv, _ := r.serverSettings.Get(ctx)
+	srv, _ := r.settingsGet(ctx)
 	// Migrate legacy M4-bootstrap rows to the current shape before we
 	// list records for compile. Safe to call every tick: idempotent by
 	// design (re-running finds no rows matching the sentinel content).
@@ -3155,7 +3157,7 @@ func (r *Reconciler) sslEnsureSelfSigned(ctx context.Context, domain *models.Dom
 // for a fallback cert and schedules ACME retry with exponential backoff.
 // Called by reconcileSSLForDomain when ACME should be attempted.
 func (r *Reconciler) tryACMEOrFallback(ctx context.Context, domain *models.Domain, cert *models.SSLCertificate) {
-	srv, err := r.serverSettings.Get(ctx)
+	srv, err := r.settingsGet(ctx)
 	if err != nil || srv == nil {
 		r.log.Error("ssl: read server_settings failed", "domain", domain.Name, "err", err)
 		return
@@ -3682,7 +3684,7 @@ func (r *Reconciler) convergeApexAddrRecords(ctx context.Context, zone *models.D
 	// hardcoded value, so operator changes to default_dns_ttl take effect.
 	var srv *models.ServerSettings
 	if r.serverSettings != nil {
-		srv, _ = r.serverSettings.Get(ctx)
+		srv, _ = r.settingsGet(ctx)
 	}
 	ttl := models.EffectiveDNSTTL(srv)
 	r.ensureApexAddrRow(ctx, zone.ID, existing, "A", v4, ttl)
