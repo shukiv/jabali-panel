@@ -154,6 +154,57 @@ func pgSuperExecInDB(ctx context.Context, db, sql string) error {
 	return nil
 }
 
+// pgRestorePostPass sets ownership and grants on the restore's staging db.
+// Everything here targets tmpDB; DATABASE grants attach to its OID and
+// survive the rename onto the tenant's name.
+//
+// The database-level grants come after the owner change. REASSIGN OWNED makes
+// ownerRole the staging db's owner, so a GRANT ON DATABASE to it at that point
+// adds nothing, and ALTER DATABASE ... OWNER TO postgres then hands the
+// owner's ACL entry to postgres. The role was left with no CONNECT of its own
+// and reached its database only through PUBLIC, which the panel revokes.
+func pgRestorePostPass(ctx context.Context, tmpDB, shadow, ownerRole string, grantRoles []string) *agentwire.AgentError {
+	ownerTarget := ownerRole
+	if ownerTarget == "" {
+		ownerTarget = "postgres"
+	}
+	if err := pgSuperExecInDB(ctx, tmpDB, fmt.Sprintf(`REASSIGN OWNED BY "%s" TO "%s"`, shadow, ownerTarget)); err != nil {
+		return &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "reassign ownership: " + err.Error()}
+	}
+	// Re-apply privileges to every role that had a grant before the restore.
+	// MariaDB's GRANT ON db.* implicitly covers every current + future table;
+	// Postgres needs table/sequence + DEFAULT PRIVILEGES stated explicitly.
+	for _, role := range grantRoles {
+		for _, stmt := range []string{
+			`GRANT ALL ON SCHEMA public TO "%s"`,
+			`GRANT ALL ON ALL TABLES IN SCHEMA public TO "%s"`,
+			`GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO "%s"`,
+			`ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO "%s"`,
+			`ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO "%s"`,
+		} {
+			if err := pgSuperExecInDB(ctx, tmpDB, fmt.Sprintf(stmt, role)); err != nil {
+				return &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "regrant objects: " + err.Error()}
+			}
+		}
+	}
+	// Match jabali's create-time model: the database itself is postgres-owned.
+	if err := pgRunSQL(ctx, fmt.Sprintf(`ALTER DATABASE "%s" OWNER TO postgres`, tmpDB)); err != nil {
+		return &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "set database owner: " + err.Error()}
+	}
+	for _, role := range grantRoles {
+		if err := pgRunSQL(ctx, fmt.Sprintf(`GRANT ALL PRIVILEGES ON DATABASE "%s" TO "%s"`, tmpDB, role)); err != nil {
+			return &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "regrant database: " + err.Error()}
+		}
+	}
+	// Drop the shadow — DROP OWNED first clears its default-privilege ACLs in the
+	// staging db (REASSIGN OWNED moved the objects, not the default-priv entries).
+	_ = pgSuperExecInDB(ctx, tmpDB, fmt.Sprintf(`DROP OWNED BY "%s"`, shadow))
+	if err := pgRunSQL(ctx, fmt.Sprintf(`DROP ROLE IF EXISTS "%s"`, shadow)); err != nil {
+		return &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "drop scoped role: " + err.Error()}
+	}
+	return nil
+}
+
 func dbPgRestoreHandler(ctx context.Context, params json.RawMessage) (any, error) {
 	var p dbPgRestoreParams
 	if err := json.Unmarshal(params, &p); err != nil {
@@ -334,43 +385,9 @@ END $$;`, shadow, shadow, pwd, shadow, pwd)
 	}
 
 	// (4) Superuser post-pass on the STAGING db — ownership + grants, none of it
-	// from dump content. Everything here targets tmpDB; DATABASE grants attach
-	// to its OID and survive the rename below.
-	ownerTarget := p.OwnerRole
-	if ownerTarget == "" {
-		ownerTarget = "postgres"
-	}
-	if err := pgSuperExecInDB(ctx, tmpDB, fmt.Sprintf(`REASSIGN OWNED BY "%s" TO "%s"`, shadow, ownerTarget)); err != nil {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "reassign ownership: " + err.Error()}
-	}
-	// Re-apply privileges to every role that had a grant before the restore.
-	// MariaDB's GRANT ON db.* implicitly covers every current + future table;
-	// Postgres needs table/sequence + DEFAULT PRIVILEGES stated explicitly.
-	for _, role := range p.GrantRoles {
-		if err := pgRunSQL(ctx, fmt.Sprintf(`GRANT ALL PRIVILEGES ON DATABASE "%s" TO "%s"`, tmpDB, role)); err != nil {
-			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "regrant database: " + err.Error()}
-		}
-		for _, stmt := range []string{
-			`GRANT ALL ON SCHEMA public TO "%s"`,
-			`GRANT ALL ON ALL TABLES IN SCHEMA public TO "%s"`,
-			`GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO "%s"`,
-			`ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO "%s"`,
-			`ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO "%s"`,
-		} {
-			if err := pgSuperExecInDB(ctx, tmpDB, fmt.Sprintf(stmt, role)); err != nil {
-				return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "regrant objects: " + err.Error()}
-			}
-		}
-	}
-	// Match jabali's create-time model: the database itself is postgres-owned.
-	if err := pgRunSQL(ctx, fmt.Sprintf(`ALTER DATABASE "%s" OWNER TO postgres`, tmpDB)); err != nil {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "set database owner: " + err.Error()}
-	}
-	// Drop the shadow — DROP OWNED first clears its default-privilege ACLs in the
-	// staging db (REASSIGN OWNED moved the objects, not the default-priv entries).
-	_ = pgSuperExecInDB(ctx, tmpDB, fmt.Sprintf(`DROP OWNED BY "%s"`, shadow))
-	if err := pgRunSQL(ctx, fmt.Sprintf(`DROP ROLE IF EXISTS "%s"`, shadow)); err != nil {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "drop scoped role: " + err.Error()}
+	// from dump content.
+	if aerr := pgRestorePostPass(ctx, tmpDB, shadow, p.OwnerRole, p.GrantRoles); aerr != nil {
+		return nil, aerr
 	}
 
 	// (5) Atomic-ish swap: only now do we touch the tenant's real db — drop it

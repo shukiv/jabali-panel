@@ -7,6 +7,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/hostreserve"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
@@ -323,23 +324,73 @@ func dbPgDumpHandler(ctx context.Context, params json.RawMessage) (any, error) {
 // PUBLIC's CONNECT and TEMPORARY (see pgRevokePublicSQL). The maintenance
 // database postgres and the templates are left alone: clients such as the
 // database console connect to postgres first.
+//
+// PUBLIC is revoked only after each database's panel-granted roles hold
+// their own database grant. A Postgres restore used to leave the tenant role
+// with no CONNECT of its own (see pgRestorePostPass), so on a database
+// restored before that fix the role reached its database through PUBLIC
+// alone; revoking PUBLIC first would lock the tenant out.
 
 // pgPublicAccessWhere selects the databases PUBLIC can still connect to or
 // create temporary tables in.
 const pgPublicAccessWhere = `NOT datistemplate AND datname <> 'postgres' AND ` +
 	`(has_database_privilege('public', oid, 'CONNECT') OR has_database_privilege('public', oid, 'TEMPORARY'))`
 
-type dbPgRevokePublicResponse struct {
-	Revoked []string `json:"revoked"`
+type dbPgRevokePublicParams struct {
+	// Grants maps a database to the roles the panel granted on it. Required
+	// (an empty map means no grants), so a caller that forgot it cannot
+	// revoke PUBLIC without re-granting first.
+	Grants *map[string][]string `json:"grants"`
 }
 
-func dbPgRevokePublicHandler(ctx context.Context, _ json.RawMessage) (any, error) {
+type dbPgRevokePublicResponse struct {
+	Regranted []string `json:"regranted"`
+	Revoked   []string `json:"revoked"`
+}
+
+func dbPgRevokePublicHandler(ctx context.Context, params json.RawMessage) (any, error) {
+	var p dbPgRevokePublicParams
+	if err := json.Unmarshal(params, &p); err != nil || p.Grants == nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "grants is required"}
+	}
+	resp := dbPgRevokePublicResponse{Regranted: []string{}, Revoked: []string{}}
+
+	// (1) Every panel-granted role gets its own database grant, the same
+	// GRANT db.postgres.grant issues. A database or role that no longer
+	// exists is skipped.
+	dbs := make([]string, 0, len(*p.Grants))
+	for db := range *p.Grants {
+		dbs = append(dbs, db)
+	}
+	sort.Strings(dbs)
+	for _, db := range dbs {
+		if !pgValidIdent(db) {
+			return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "invalid database name"}
+		}
+		for _, role := range (*p.Grants)[db] {
+			if !pgValidIdent(role) {
+				return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "invalid role name"}
+			}
+			sql := fmt.Sprintf(`DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_database WHERE datname = '%[1]s') AND EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '%[2]s') THEN
+    GRANT ALL PRIVILEGES ON DATABASE "%[1]s" TO "%[2]s";
+  END IF;
+END$$;`, db, role)
+			if err := pgRunSQL(ctx, sql); err != nil {
+				// Stop before any revoke: this role would lose its database.
+				return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("grant %s on %s: %v", role, db, err)}
+			}
+			resp.Regranted = append(resp.Regranted, role+" on "+db)
+		}
+	}
+
+	// (2) Revoke PUBLIC wherever it still has access.
 	out, err := execCommandContext(ctx, "sudo", "-u", "postgres", "psql", "-XAtq", "-c",
 		"SELECT datname FROM pg_database WHERE "+pgPublicAccessWhere+" ORDER BY 1").Output()
 	if err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeUnavailable, Message: "list databases: " + err.Error()}
 	}
-	resp := dbPgRevokePublicResponse{Revoked: []string{}}
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 		if name := strings.TrimSpace(line); name != "" {
 			resp.Revoked = append(resp.Revoked, name)

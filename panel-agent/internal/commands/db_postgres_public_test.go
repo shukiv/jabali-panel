@@ -66,7 +66,7 @@ func TestPgCreateDB_FailedRevokeDropsTheDatabase(t *testing.T) {
 // their names; the maintenance database and templates are excluded.
 func TestPgRevokePublicAccess_RevokesWhatIsStillOpen(t *testing.T) {
 	sqls := pgExecRecorder(t, "alice_shop\nbob_blog\n", "")
-	out, err := dbPgRevokePublicHandler(context.Background(), nil)
+	out, err := dbPgRevokePublicHandler(context.Background(), json.RawMessage(`{"grants":{}}`))
 	if err != nil {
 		t.Fatalf("sweep: %v", err)
 	}
@@ -89,7 +89,7 @@ func TestPgRevokePublicAccess_RevokesWhatIsStillOpen(t *testing.T) {
 // Nothing open: nothing to run.
 func TestPgRevokePublicAccess_NothingOpenRunsNothing(t *testing.T) {
 	sqls := pgExecRecorder(t, "", "")
-	if _, err := dbPgRevokePublicHandler(context.Background(), nil); err != nil {
+	if _, err := dbPgRevokePublicHandler(context.Background(), json.RawMessage(`{"grants":{}}`)); err != nil {
 		t.Fatalf("sweep: %v", err)
 	}
 	if len(*sqls) != 1 {
@@ -99,8 +99,96 @@ func TestPgRevokePublicAccess_NothingOpenRunsNothing(t *testing.T) {
 
 // A failed revoke is reported so the panel retries.
 func TestPgRevokePublicAccess_ReportsAFailedRevoke(t *testing.T) {
-	pgExecRecorder(t, "alice_shop\n", "DO $$")
-	if _, err := dbPgRevokePublicHandler(context.Background(), nil); err == nil {
+	pgExecRecorder(t, "alice_shop\n", "REVOKE CONNECT, TEMPORARY ON DATABASE %I")
+	if _, err := dbPgRevokePublicHandler(context.Background(), json.RawMessage(`{"grants":{}}`)); err == nil {
 		t.Fatal("failed revoke was swallowed")
+	}
+}
+
+// A restored database keeps its tenant roles' CONNECT. REASSIGN OWNED makes
+// the first role the staging db's owner, and ALTER DATABASE ... OWNER TO
+// postgres hands the owner's ACL entry to postgres. The database-level GRANT
+// must therefore come after the owner change; before it, the role ended up
+// with no CONNECT of its own (box-seen once PUBLIC was revoked).
+func TestPgRestorePostPass_GrantsTheDatabaseAfterTheOwnerChange(t *testing.T) {
+	sqls := pgExecRecorder(t, "", "")
+	if aerr := pgRestorePostPass(context.Background(), "jbrt_alice_shop", "jbrs_alice_shop", "alice_app", []string{"alice_app", "alice_ro"}); aerr != nil {
+		t.Fatalf("post-pass: %v", aerr)
+	}
+	ownerAt := -1
+	grantAt := map[string]int{}
+	for i, sql := range *sqls {
+		if sql == `ALTER DATABASE "jbrt_alice_shop" OWNER TO postgres` {
+			ownerAt = i
+		}
+		for _, role := range []string{"alice_app", "alice_ro"} {
+			if sql == `GRANT ALL PRIVILEGES ON DATABASE "jbrt_alice_shop" TO "`+role+`"` {
+				grantAt[role] = i
+			}
+		}
+	}
+	if ownerAt < 0 || len(grantAt) != 2 {
+		t.Fatalf("SQL = %q, want the owner change and a database grant per role", *sqls)
+	}
+	for role, at := range grantAt {
+		if at < ownerAt {
+			t.Fatalf("database grant for %s ran before the owner change (SQL = %q)", role, *sqls)
+		}
+	}
+}
+
+// Each panel-granted role gets its own database grant before PUBLIC is
+// revoked: a role that reached its database through PUBLIC alone (a restore
+// before pgRestorePostPass was fixed) must not be locked out.
+func TestPgRevokePublicAccess_RegrantsPanelRolesFirst(t *testing.T) {
+	sqls := pgExecRecorder(t, "alice_shop\n", "")
+	out, err := dbPgRevokePublicHandler(context.Background(), json.RawMessage(`{"grants":{"alice_shop":["alice_app","alice_ro"]}}`))
+	if err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if got := out.(dbPgRevokePublicResponse).Regranted; len(got) != 2 {
+		t.Fatalf("regranted = %v, want both roles", got)
+	}
+	grants, revokeAt := 0, -1
+	for i, sql := range *sqls {
+		if strings.Contains(sql, `GRANT ALL PRIVILEGES ON DATABASE "alice_shop" TO "alice_`) {
+			grants++
+			if revokeAt >= 0 {
+				t.Fatalf("a grant ran after the revoke: %q", *sqls)
+			}
+		}
+		if strings.Contains(sql, "REVOKE CONNECT, TEMPORARY ON DATABASE %I FROM PUBLIC") {
+			revokeAt = i
+		}
+	}
+	if grants != 2 || revokeAt < 0 {
+		t.Fatalf("SQL = %q, want two grants then the revoke", *sqls)
+	}
+}
+
+// A failed grant stops the sweep before any revoke.
+func TestPgRevokePublicAccess_FailedGrantRevokesNothing(t *testing.T) {
+	sqls := pgExecRecorder(t, "alice_shop\n", "GRANT ALL PRIVILEGES")
+	if _, err := dbPgRevokePublicHandler(context.Background(), json.RawMessage(`{"grants":{"alice_shop":["alice_app"]}}`)); err == nil {
+		t.Fatal("a failed grant must be reported")
+	}
+	for _, sql := range *sqls {
+		if strings.Contains(sql, "REVOKE") {
+			t.Fatalf("revoked although a grant failed: %q", *sqls)
+		}
+	}
+}
+
+// Without the grants field there is nothing to re-grant from, so nothing is
+// revoked; an invalid role name is refused before any SQL runs.
+func TestPgRevokePublicAccess_RefusesMissingGrantsAndBadNames(t *testing.T) {
+	for _, body := range []string{`{}`, `{"grants":{"alice_shop":["bad\"role"]}}`, `{"grants":{"bad;db":["alice_app"]}}`} {
+		sqls := pgExecRecorder(t, "alice_shop\n", "")
+		if _, err := dbPgRevokePublicHandler(context.Background(), json.RawMessage(body)); err == nil {
+			t.Fatalf("%s: accepted", body)
+		}
+		if len(*sqls) != 0 {
+			t.Fatalf("%s: SQL ran: %q", body, *sqls)
+		}
 	}
 }
