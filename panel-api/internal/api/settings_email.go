@@ -92,7 +92,12 @@ type SettingsEmailHandlerConfig struct {
 	WebDomainAliases repository.WebDomainAliasRepository
 	Switchover       repository.MailHostnameSwitchoverRepository
 	Recorder         audit.Recorder
-	Log              *slog.Logger
+	// StrictRateLimit, when set, bounds the PUT/DELETE mail-hostname
+	// routes. A new request resets the retry timer and starts an ACME
+	// attempt on the next tick, so an unbounded loop of requests would
+	// spend the Let's Encrypt failed-validation budget.
+	StrictRateLimit gin.HandlerFunc
+	Log             *slog.Logger
 }
 
 // RegisterSettingsEmailRoutes mounts GET /admin/settings/email under v1,
@@ -104,8 +109,12 @@ func RegisterSettingsEmailRoutes(g *gin.RouterGroup, cfg SettingsEmailHandlerCon
 	admin.Use(middleware.RequireAdmin())
 	admin.GET("", h.get)
 	if cfg.Switchover != nil && cfg.PanelCerts != nil {
-		admin.PUT("/mail-hostname", h.requestMailHostname)
-		admin.DELETE("/mail-hostname", h.cancelMailHostname)
+		var limit []gin.HandlerFunc
+		if cfg.StrictRateLimit != nil {
+			limit = append(limit, cfg.StrictRateLimit)
+		}
+		admin.PUT("/mail-hostname", append(limit, h.requestMailHostname)...)
+		admin.DELETE("/mail-hostname", append(limit, h.cancelMailHostname)...)
 	}
 }
 

@@ -1119,6 +1119,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				WebDomainAliases: deps.WebDomainAliases,
 				Switchover:       deps.MailHostSwitchover,
 				Recorder:         deps.AuditRecorder,
+				StrictRateLimit:  rl.StrictPerActor(),
 				Log:              deps.Log,
 			})
 		}

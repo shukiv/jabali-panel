@@ -84,6 +84,11 @@ type mhFixture struct {
 
 func newMailHostnameFixture(t *testing.T) *mhFixture {
 	t.Helper()
+	return newMailHostnameFixtureLimited(t, nil)
+}
+
+func newMailHostnameFixtureLimited(t *testing.T, limit gin.HandlerFunc) *mhFixture {
+	t.Helper()
 	gin.SetMode(gin.TestMode)
 	repo := newMockDomainRepo()
 	repo.domains["dom_panel"] = &models.Domain{ID: "dom_panel", Name: "panel.example.com", IsPanelPrimary: true, EmailEnabled: true, WebmailEnabled: true}
@@ -99,13 +104,29 @@ func newMailHostnameFixture(t *testing.T) *mhFixture {
 		Domains: repo,
 		ServerSettings: mhSettings{s: &models.ServerSettings{Hostname: "panel.example.com", AdminEmail: "admin@example.com",
 			WebmailEnabled: true}},
-		PanelCerts: f.certs,
-		Switchover: f.sw,
-		Recorder:   f.rec,
-		Log:        slog.Default(),
+		PanelCerts:      f.certs,
+		Switchover:      f.sw,
+		Recorder:        f.rec,
+		StrictRateLimit: limit,
+		Log:             slog.Default(),
 	})
 	f.router = r
 	return f
+}
+
+// A new request starts an ACME attempt on the next tick, so the setter
+// routes sit behind the strict limiter; GET does not.
+func TestSettingsEmailMailHostname_StrictRateLimit(t *testing.T) {
+	limit := func(c *gin.Context) { c.AbortWithStatus(http.StatusTooManyRequests) }
+	f := newMailHostnameFixtureLimited(t, limit)
+
+	assert.Equal(t, http.StatusTooManyRequests, f.do(t, http.MethodPut, `{"mail_hostname":"mx.example.org"}`).Code)
+	assert.Equal(t, http.StatusTooManyRequests, f.do(t, http.MethodDelete, "").Code)
+	assert.Empty(t, f.sw.requested, "a limited request never reaches the store")
+
+	rec := httptest.NewRecorder()
+	f.router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/admin/settings/email", nil))
+	assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 }
 
 func (f *mhFixture) do(t *testing.T, method, body string) *httptest.ResponseRecorder {
