@@ -122,8 +122,13 @@ func newMailboxSharesAddCmd() *cobra.Command {
 			}
 			res, err := mailshareops.Create(ctx, cliShareDeps(), owner, target.ID, rights, "cli")
 			if err != nil {
-				if errors.Is(err, mailshareops.ErrTargetNotFound) {
+				switch {
+				case errors.Is(err, mailshareops.ErrTargetNotFound):
 					return fmt.Errorf("%s is not a mailbox of the same account as %s", sharedWithEmail, ownerEmail)
+				case errors.Is(err, mailshareops.ErrAlreadyShared):
+					return fmt.Errorf("%s is already shared with %s; remove that share first to change its rights", ownerEmail, sharedWithEmail)
+				case errors.Is(err, mailshareops.ErrSelfShare):
+					return errors.New("a mailbox cannot be shared with itself")
 				}
 				return err
 			}

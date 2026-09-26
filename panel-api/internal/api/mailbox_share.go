@@ -15,6 +15,7 @@ package api
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -181,9 +182,10 @@ func (h *shareHandler) create(c *gin.Context) {
 	resp := h.resolve(ctx, *res.Share)
 	if res.ApplyErr != nil {
 		// Saved, but not live on Stalwart yet; the reconciler retries it. The
-		// detail is this tenant's own mailbox convergence error on an
-		// owner-scoped endpoint (the forwarder create does the same).
-		resp.Warning = &forwarderWarning{Code: "convergence_failed", Detail: res.ApplyErr.Error()}
+		// agent's error text names panel internals (socket paths, Stalwart
+		// replies), so it goes to the log and the tenant gets a fixed detail.
+		slog.Warn("mailbox-share: apply after create failed", "owner", owner.EmailCached, "share_id", res.Share.ID, "err", res.ApplyErr)
+		resp.Warning = &forwarderWarning{Code: "convergence_failed", Detail: "saved; the mail server did not accept it yet. The panel retries it."}
 	}
 	c.JSON(http.StatusCreated, resp)
 }
@@ -209,7 +211,8 @@ func (h *shareHandler) del(c *gin.Context) {
 		case errors.Is(err, mailshareops.ErrNotFound):
 			c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
 		case errors.Is(err, mailshareops.ErrApply):
-			c.JSON(http.StatusBadGateway, gin.H{"error": "share_apply_failed", "detail": err.Error()})
+			slog.Warn("mailbox-share: revoke failed; share kept", "owner", mb.EmailCached, "share_id", c.Param("shareId"), "err", err)
+			c.JSON(http.StatusBadGateway, gin.H{"error": "share_apply_failed", "detail": "the mail server did not accept the change; the share was not removed"})
 		default:
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		}

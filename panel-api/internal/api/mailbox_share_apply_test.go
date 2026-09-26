@@ -239,6 +239,11 @@ func TestShareCreate_ApplyFailureReturnsAWarning(t *testing.T) {
 	if len(s.shares) != 1 {
 		t.Errorf("rows = %d, want the share kept", len(s.shares))
 	}
+	// The agent's error text carries panel internals (socket paths, Stalwart
+	// replies); it goes to the log, never to the tenant.
+	if strings.Contains(w.Body.String(), "stalwart down") {
+		t.Errorf("body leaks the agent error: %s", w.Body.String())
+	}
 }
 
 func TestShareCreate_Rejections(t *testing.T) {
@@ -299,6 +304,9 @@ func TestShareDelete_AgentFailureKeepsTheRow(t *testing.T) {
 	}
 	if _, ok := s.shares["s1"]; !ok {
 		t.Fatal("row deleted although the revoke never reached Stalwart")
+	}
+	if strings.Contains(w.Body.String(), "stalwart down") {
+		t.Errorf("body leaks the agent error: %s", w.Body.String())
 	}
 }
 
