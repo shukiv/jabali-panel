@@ -100,6 +100,9 @@ var (
 	// ping_group_range that goes with it (GH #1798). One entry for the host;
 	// the interval repairs a group or range changed by hand.
 	PhasePingAccess = Phase{Name: "user.ping_access", AuditInterval: 15 * time.Minute}
+	// PhaseWebmailJMAPURL is Bulwark's JMAP URL, kept on the effective
+	// panel mail hostname (JAB-390).
+	PhaseWebmailJMAPURL = Phase{Name: "webmail.jmap_url", AuditInterval: domainReDispatchInterval}
 )
 
 // runDependency is one ordering a run keeps for a domain: the Agent call

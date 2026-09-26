@@ -481,6 +481,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 		panelCertRepo := repository.NewPanelCertificateRepository(sharedDB)
 		deps.PanelCerts = panelCertRepo
 		rec.WithPanelCertificate(panelCertRepo, services.NewPanelCertRoutability())
+		// JAB-390: shared panel mail hostname switchover request.
+		mailHostSwitchoverRepo := repository.NewMailHostnameSwitchoverRepository(sharedDB)
+		rec.WithMailHostnameSwitchover(mailHostSwitchoverRepo)
 		rec.WithUpdateRunHistory(updateHistoryRepo)
 		rec.WithUpdateAutoupdate(updateAutoupdateRepo)
 		rec.WithUpdateState(updateStateRepo)

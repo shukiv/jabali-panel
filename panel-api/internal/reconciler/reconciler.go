@@ -123,6 +123,13 @@ type Reconciler struct {
 	// warnings so a mid-rollout agent (missing ssl.panel.selfsign) does not
 	// log at Warn every tick.
 	panelSelfSignLastErr string
+	// mailHostSwitchover is the JAB-390 panel mail hostname switchover
+	// request. Nil disables the switchover engine (the JMAP URL assert
+	// still runs).
+	mailHostSwitchover repository.MailHostnameSwitchoverRepository
+	// webmailJMAPLastErr debounces JAB-390 JMAP URL apply warnings, like
+	// panelSelfSignLastErr.
+	webmailJMAPLastErr string
 	// readKratosConfigFile reads kratos.yml for the JAB-393 hostname drift
 	// check. Mockable for tests (default os.ReadFile).
 	readKratosConfigFile func(string) ([]byte, error)
@@ -387,6 +394,13 @@ func (r *Reconciler) checkSharedCertExpiry(ctx context.Context) {
 func (r *Reconciler) WithPanelCertificate(repo repository.PanelCertificateRepository, rout *services.PanelCertRoutability) *Reconciler {
 	r.panelCerts = repo
 	r.panelCertRoutability = rout
+	return r
+}
+
+// WithMailHostnameSwitchover injects the JAB-390 mail hostname switchover
+// request repo so ReconcileAll runs the switchover engine.
+func (r *Reconciler) WithMailHostnameSwitchover(repo repository.MailHostnameSwitchoverRepository) *Reconciler {
+	r.mailHostSwitchover = repo
 	return r
 }
 
@@ -940,6 +954,10 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 	// before the rest of the loop touches the agent. Cheap noop when
 	// use_le=0 or routability gate fails.
 	r.reconcilePanelCertificate(ctx)
+	// JAB-390: move the shared panel mail hostname once its certificate is
+	// issued, and keep Bulwark's JMAP URL on the effective name. After the
+	// panel-cert pass, which seeds the mail certificate row.
+	r.reconcileMailHostnameSwitchover(ctx)
 	// JAB-393: converge kratos.yml's panel hostname to server_settings.hostname
 	// so a panel FQDN change doesn't leave the identity service on the old
 	// origin (a CORS-blocked full login lockout). Cheap noop when they match.
