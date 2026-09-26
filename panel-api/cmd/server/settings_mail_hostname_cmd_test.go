@@ -68,11 +68,11 @@ func TestSettingsMailHostnameCmdRegistered(t *testing.T) {
 
 func TestMailHostnameCmdMode(t *testing.T) {
 	cases := []struct {
-		name                       string
-		set                        bool
+		name                        string
+		set                         bool
 		cancel, status, appliedOnly bool
-		want                       mailHostnameMode
-		wantErr                    bool
+		want                        mailHostnameMode
+		wantErr                     bool
 	}{
 		{name: "read", want: mailHostnameRead},
 		{name: "applied", appliedOnly: true, want: mailHostnameRead},
