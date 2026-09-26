@@ -15748,6 +15748,10 @@ provision_new_software() {
   # to tear them down — else each fails on every boot and pads `systemctl
   # --failed` forever.
   reap_orphan_nspawn_php_units
+  # Re-install the migration-secrets reaper unit + timer on every update,
+  # not only at fresh install, so unit fixes (e.g. its ReadWritePaths)
+  # reach existing boxes. Idempotent: install + daemon-reload + enable.
+  install_migration_secrets_reaper
 
   # JAB-273: self-heal the fleet's zero-swap fragility (kswapd death-spiral that
   # locked the operator out of newaramaapp) and contain every all-tenant

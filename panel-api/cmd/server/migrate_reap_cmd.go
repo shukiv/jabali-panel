@@ -19,6 +19,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -36,6 +37,10 @@ const (
 	// or re-attempt a manual fixup before disk goes away. Override via
 	// `--staging-max-age` flag for one-shot operator runs.
 	migrationStagingMaxAge = 7 * 24 * time.Hour
+	// orphanSecretGrace — a <job-id>.env with no job row is left alone
+	// until it is at least this old, in case its row is not committed yet.
+	// Far longer than that window, far shorter than the daily cadence.
+	orphanSecretGrace = time.Hour
 )
 
 func newMigrateReapSecretsCmd() *cobra.Command {
@@ -130,6 +135,24 @@ daily cadence; operator can also invoke directly.`,
 			// stranded ~6GB across 5 dirs and pushed / to 95% full.
 			deleted += reapOrphanStaging(migrationStagingDir, live, stagingMaxAge, dryRun, cmd.OutOrStdout(), cmd.ErrOrStderr())
 
+			// Orphan secrets: same stranding for <job-id>.env (the REST
+			// destroy path cannot unlink it — see reapOrphanSecrets). Each
+			// candidate is re-checked against the DB rather than trusting
+			// the paged snapshot above.
+			rowExists := func(id string) (bool, error) {
+				if _, ok := live[id]; ok {
+					return true, nil
+				}
+				if _, err := repo.FindByID(ctx, id); err != nil {
+					if errors.Is(err, repository.ErrNotFound) {
+						return false, nil
+					}
+					return false, err
+				}
+				return true, nil
+			}
+			deleted += reapOrphanSecrets(migrationSecretsDir, rowExists, orphanSecretGrace, dryRun, cmd.OutOrStdout(), cmd.ErrOrStderr())
+
 			fmt.Fprintf(cmd.OutOrStdout(), "scanned=%d deleted=%d (dry-run=%v)\n", scanned, deleted, dryRun)
 			// ADR-0095 decision 5 — also reap draft migration_jobs
 			// older than 24h. Drafts are created by the wizard at Step
@@ -199,6 +222,85 @@ func reapOrphanStaging(stagingDir string, live map[string]struct{}, maxAge time.
 		deleted++
 	}
 	return deleted
+}
+
+// reapOrphanSecrets removes <job-id>.env source-credential files under
+// secretsDir whose migration_jobs row no longer exists and whose mtime is
+// older than grace. Returns the number removed (or, under dryRun, that would
+// be removed). Missing secretsDir is not an error.
+//
+// Orphans come from the REST destroy path: it deletes the row first and then
+// calls migrate.WipeJobSecret, but the panel runs as the jabali user and the
+// secrets dir is root:jabali 0750, so that unlink fails silently and the
+// row-driven pass above can never see the file again. This root sweep is what
+// reclaims those credentials.
+//
+// Deliberately narrow: only regular files named <26-char job id>.env.
+// Host-key pins (.known_hosts), directories, symlinks and any other name are
+// left alone. rowExists is asked per candidate (not a paged snapshot), and a
+// lookup error keeps the file — without proof the job is gone, deleting could
+// strand a live migration mid-run. grace protects a secret written just
+// before its row is committed. Split out from the command for direct testing.
+func reapOrphanSecrets(secretsDir string, rowExists func(id string) (bool, error), grace time.Duration, dryRun bool, out, errw io.Writer) int {
+	entries, err := os.ReadDir(secretsDir)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			fmt.Fprintf(errw, "readdir %s: %v\n", secretsDir, err)
+		}
+		return 0
+	}
+	deleted := 0
+	for _, e := range entries {
+		if !e.Type().IsRegular() {
+			continue
+		}
+		id, ok := strings.CutSuffix(e.Name(), ".env")
+		if !ok || !isJobIDToken(id) {
+			continue
+		}
+		info, iErr := e.Info()
+		if iErr != nil {
+			continue
+		}
+		age := time.Since(info.ModTime())
+		if age < grace {
+			continue
+		}
+		exists, lErr := rowExists(id)
+		if lErr != nil {
+			fmt.Fprintf(errw, "look up migration job %s: %v (secret kept)\n", id, lErr)
+			continue
+		}
+		if exists {
+			continue // job row still exists — handled by the row-driven pass
+		}
+		p := filepath.Join(secretsDir, e.Name())
+		if dryRun {
+			fmt.Fprintf(out, "[dry-run] would remove %s (orphan: no job row, age=%s)\n", p, age.Truncate(time.Minute))
+			deleted++
+			continue
+		}
+		if rmErr := os.Remove(p); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
+			fmt.Fprintf(errw, "remove %s: %v\n", p, rmErr)
+			continue
+		}
+		deleted++
+	}
+	return deleted
+}
+
+// isJobIDToken accepts a 26-character alphanumeric token — the ULID shape of
+// a migration_jobs id, the same rule migrate.WipeJobSecret enforces.
+func isJobIDToken(s string) bool {
+	if len(s) != 26 {
+		return false
+	}
+	for _, r := range s {
+		if !(r >= '0' && r <= '9' || r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z') {
+			return false
+		}
+	}
+	return true
 }
 
 // secretReapDue decides whether a terminal job's source-secret env file
