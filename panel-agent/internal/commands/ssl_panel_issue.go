@@ -28,7 +28,23 @@ type sslPanelIssueParams struct {
 	// "mail" → panel-mail.{crt,key} (+ restart stalwart).
 	Kind        string `json:"kind,omitempty"`
 	CertPEMPath string `json:"cert_pem_path,omitempty"`
+	// ForceDeploy runs the deploy hook even when certbot kept the existing
+	// certificate (JAB-390). The mail-hostname switchover sets it: switching
+	// back to a name whose lineage still holds a valid certificate, or
+	// retrying a switchover whose deploy was interrupted, must still deploy
+	// that lineage (panel-mail.crt, the lineage record, Stalwart). Refused
+	// for kind=hostname, whose hook restarts jabali-panel — the caller.
+	ForceDeploy bool `json:"force_deploy,omitempty"`
 }
+
+// panelCertIssuer is the certbot call ssl.panel.issue makes; a seam so tests
+// can stand in for certbot.
+type panelCertIssuer interface {
+	Issue(domain, webroot, email string, staging bool, extraHostnames []string) (*certbot.Result, error)
+}
+
+// newPanelIssueRunner returns the certbot runner; tests replace it.
+var newPanelIssueRunner = func() panelCertIssuer { return certbot.NewRunner() }
 
 // sslPanelIssueResponse mirrors the agent's ssl.issue shape so callers
 // can treat both response types uniformly.
@@ -45,7 +61,7 @@ type sslPanelIssueResponse struct {
 // install_jabali_panel_cert_hook step creates this with mode 0750
 // owned by root:www-data so certbot (root) writes and nginx
 // (www-data) reads.
-const panelACMEWebroot = "/var/www/jabali-panel-acme"
+var panelACMEWebroot = "/var/www/jabali-panel-acme"
 
 // panelDeployHook is the certbot deploy-hook script install.sh
 // drops at /etc/letsencrypt/renewal-hooks/deploy/. The agent
@@ -106,6 +122,12 @@ func sslPanelIssueHandler(ctx context.Context, params json.RawMessage) (any, err
 			Message: fmt.Sprintf("invalid email %q", p.Email),
 		}
 	}
+	if p.ForceDeploy && p.Kind != "mail" {
+		return nil, &agentwire.AgentError{
+			Code:    agentwire.CodeInvalidArgument,
+			Message: "force_deploy is only accepted for kind=mail",
+		}
+	}
 
 	// The panel-acme webroot must exist with the right perms before
 	// certbot writes its challenge file. install.sh provisions this;
@@ -119,7 +141,7 @@ func sslPanelIssueHandler(ctx context.Context, params json.RawMessage) (any, err
 		}
 	}
 
-	runner := certbot.NewRunner()
+	runner := newPanelIssueRunner()
 	result, err := runner.Issue(p.Hostname, panelACMEWebroot, p.Email, p.Staging, p.ExtraHostnames)
 	if err != nil {
 		details, _ := json.Marshal(map[string]any{
@@ -150,8 +172,9 @@ func sslPanelIssueHandler(ctx context.Context, params json.RawMessage) (any, err
 	// called us IS jabali-panel; the restart SIGTERMs it mid-RPC so
 	// it never records status=issued, and re-dispatches forever).
 	// The reply below still carries the existing cert's dates, so the
-	// reconciler converges to issued without any restart.
-	if !result.Skipped {
+	// reconciler converges to issued without any restart. ForceDeploy
+	// (kind=mail only, JAB-390) deploys the kept cert anyway.
+	if !result.Skipped || p.ForceDeploy {
 		if err := runDeployHookFn(ctx, p.Hostname, p.Kind); err != nil {
 			return nil, &agentwire.AgentError{
 				Code:    agentwire.CodeInternal,
