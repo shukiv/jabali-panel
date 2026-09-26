@@ -232,7 +232,7 @@ func drainGroupMailToMembers(ctx context.Context, groupAcctID string, members []
 		if err != nil {
 			return err
 		}
-		inboxID, err := memberInboxID(ctx, acctID)
+		inboxID, err := inboxMailboxID(ctx, acctID)
 		if err != nil {
 			return &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("find inbox of %s: %v", m, err)}
 		}
@@ -267,20 +267,6 @@ func groupMailPage(ctx context.Context, acctID string) ([]string, uint64, error)
 		return nil, 0, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("list group mail: %v", err)}
 	}
 	return res.IDs, res.Total, nil
-}
-
-// memberInboxID resolves an account's inbox. Mailbox/query is a
-// mail-capability method, so the request carries jmapCapMail.
-func memberInboxID(ctx context.Context, acctID string) (string, error) {
-	args := map[string]any{"accountId": acctID, "filter": map[string]any{"role": "inbox"}, "limit": 1}
-	var res jmapQueryResult
-	if err := jmapCallWith(ctx, jmapCapMail, "Mailbox/query", args, &res); err != nil {
-		return "", err
-	}
-	if len(res.IDs) == 0 {
-		return "", nil
-	}
-	return res.IDs[0], nil
 }
 
 func copyEmailsTo(ctx context.Context, fromAcctID string, t drainTarget, emailIDs []string) error {

@@ -232,6 +232,11 @@ func TestPurgeDomainMail_CallsAgentWithDomain(t *testing.T) {
 	if p["domain"] != "example.test" {
 		t.Errorf("domain param = %v, want example.test", p["domain"])
 	}
+	// The domain itself is going away, so the Stalwart domain (and its DKIM
+	// signatures) must go too — not only its accounts.
+	if p["remove_domain"] != true {
+		t.Errorf("remove_domain = %v, want true", p["remove_domain"])
+	}
 }
 
 func TestPurgeDomainMail_NilAgentNoop(t *testing.T) {

@@ -61,11 +61,16 @@ func (m *mpMailCertRepo) Delete(_ context.Context, id string) error {
 // recording agent
 type mpAgent struct {
 	calls   []string
+	params  map[string]any
 	failCmd string
 }
 
-func (a *mpAgent) Call(_ context.Context, cmd string, _ any) (json.RawMessage, error) {
+func (a *mpAgent) Call(_ context.Context, cmd string, p any) (json.RawMessage, error) {
 	a.calls = append(a.calls, cmd)
+	if a.params == nil {
+		a.params = map[string]any{}
+	}
+	a.params[cmd] = p
 	if a.failCmd != "" && cmd == a.failCmd {
 		return nil, errors.New("agent boom")
 	}
@@ -216,6 +221,11 @@ func TestMailPurge_FullTeardown(t *testing.T) {
 	}
 	if ag.indexOf("mail.domain.purge_accounts") >= ag.indexOf("domain.email_disable") {
 		t.Errorf("purge_accounts must precede email_disable: %v", ag.calls)
+	}
+	// A mail-only purge keeps the web domain, so the Stalwart domain (and its
+	// DKIM signatures) must stay for a later re-enable: no remove_domain.
+	if pp, _ := ag.params["mail.domain.purge_accounts"].(map[string]any); pp["remove_domain"] != nil {
+		t.Errorf("mail-only purge must not remove the Stalwart domain: %v", pp)
 	}
 	if ag.indexOf("webmail.vhost_remove") >= ag.indexOf("ssl.mail.delete") {
 		t.Errorf("vhost_remove must precede ssl.mail.delete (cert/vhost parity): %v", ag.calls)

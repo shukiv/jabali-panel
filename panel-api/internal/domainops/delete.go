@@ -187,6 +187,13 @@ func ExecuteTeardown(ctx context.Context, ag agent.AgentInterface, name string) 
 // re-migrated address collided with the orphan:
 // {"type":"primaryKeyViolation","properties":["email"]}.
 //
+// remove_domain: this runs only when the domain itself is being deleted, so
+// the agent also destroys the domain's DKIM signatures and the Stalwart
+// domain. Left behind, the domain kept the old owner's catch-all address and
+// DKIM key for whoever adds the same name next. (The mail-only purge in
+// api/domain_mail_purge.go calls the agent without it: the web domain stays
+// and re-enabling mail reuses the Stalwart domain.)
+//
 // A nil agent or empty domain is a no-op.
 func PurgeDomainMail(ctx context.Context, ag agent.AgentInterface, domain string) error {
 	if ag == nil || domain == "" {
@@ -195,7 +202,8 @@ func PurgeDomainMail(ctx context.Context, ag agent.AgentInterface, domain string
 	mctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 	_, err := ag.Call(mctx, "mail.domain.purge_accounts", map[string]any{
-		"domain": domain,
+		"domain":        domain,
+		"remove_domain": true,
 	})
 	return err
 }

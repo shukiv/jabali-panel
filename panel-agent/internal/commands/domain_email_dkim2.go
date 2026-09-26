@@ -42,9 +42,15 @@ type dkim2SetResponse struct {
 }
 
 // dkim2SignatureIDs returns the ids of every Dkim2Ed25519Sha256 signature
-// bound to domainID. DkimSignature/get has no server-side filter for
-// domainId, so this fetches the (small) full list and filters client-side.
+// bound to domainID.
 func dkim2SignatureIDs(ctx context.Context, domainID string) ([]string, error) {
+	return dkimSignatureIDs(ctx, domainID, dkim2SignatureType)
+}
+
+// dkimSignatureIDs returns the ids of the DKIM signatures bound to domainID,
+// of type typ ("" = every type). DkimSignature/get has no server-side filter
+// for domainId, so this fetches the (small) full list and filters client-side.
+func dkimSignatureIDs(ctx context.Context, domainID, typ string) ([]string, error) {
 	var result jmapGetResult
 	if err := jmapCall(ctx, "x:DkimSignature/get", map[string]any{}, &result); err != nil {
 		return nil, err
@@ -59,7 +65,7 @@ func dkim2SignatureIDs(ctx context.Context, domainID string) ([]string, error) {
 		if err := json.Unmarshal(raw, &sig); err != nil {
 			continue
 		}
-		if sig.Type == dkim2SignatureType && sig.DomainID == domainID {
+		if (typ == "" || sig.Type == typ) && sig.DomainID == domainID {
 			ids = append(ids, sig.ID)
 		}
 	}
