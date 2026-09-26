@@ -2,6 +2,7 @@ package reconciler
 
 import (
 	"context"
+	"errors"
 	"os"
 	"time"
 
@@ -66,14 +67,7 @@ func (r *Reconciler) reconcileWebmailVhosts(ctx context.Context) {
 			if _, werr := appseccfg.WriteWebmailHosts(appseccfg.WebmailHostsPath, nil); werr != nil {
 				r.log.Warn("webmail reconcile: clear webmail-hosts.list", "err", werr)
 			}
-			stopCtx, cancel := context.WithTimeout(ctx, webmailAgentTimeout)
-			defer cancel()
-			if _, err := r.agent.Call(stopCtx, "service.stop", map[string]any{"name": "jabali-webmail"}); err != nil {
-				r.log.Warn("webmail reconcile: service.stop jabali-webmail failed", "err", err)
-			}
-			if _, err := r.agent.Call(stopCtx, "service.disable", map[string]any{"name": "jabali-webmail"}); err != nil {
-				r.log.Warn("webmail reconcile: service.disable jabali-webmail failed", "err", err)
-			}
+			r.convergeWebmailDaemon(ctx, false)
 			return
 		}
 	}
@@ -177,21 +171,32 @@ func (r *Reconciler) reconcileWebmailVhosts(ctx context.Context) {
 	// agent's service.start verb is idempotent: a no-op when the unit
 	// is already active.
 	if anyEmailEnabled {
-		startCtx, cancel := context.WithTimeout(ctx, webmailAgentTimeout)
-		defer cancel()
-		if _, err := r.agent.Call(startCtx, "service.start", map[string]any{
-			"name": "jabali-webmail",
-		}); err != nil {
-			r.log.Error("webmail reconcile: service.start jabali-webmail failed", "err", err)
-		}
-		// Enable too (idempotent) so the daemon survives a reboot — symmetric
-		// with the disable on the off-path (#760).
-		if _, err := r.agent.Call(startCtx, "service.enable", map[string]any{
-			"name": "jabali-webmail",
-		}); err != nil {
-			r.log.Warn("webmail reconcile: service.enable jabali-webmail failed", "err", err)
-		}
+		r.convergeWebmailDaemon(ctx, true)
 	}
+}
+
+// convergeWebmailDaemon starts and enables the Bulwark daemon (on) or stops
+// and disables it (off). Enable pairs with start so the daemon survives a
+// reboot, symmetric with the disable on the off path (#760). JAB-369: gated
+// by the webmail.daemon phase; the state is stamped only when both calls
+// succeed, so a half-applied transition is retried on the next tick.
+func (r *Reconciler) convergeWebmailDaemon(ctx context.Context, on bool) {
+	verbs := []string{"service.stop", "service.disable"}
+	if on {
+		verbs = []string{"service.start", "service.enable"}
+	}
+	_, _ = r.project(ctx, PhaseWebmailDaemon, "jabali-webmail", fingerprint(verbs), false, func() error {
+		callCtx, cancel := context.WithTimeout(ctx, webmailAgentTimeout)
+		defer cancel()
+		var errs []error
+		for _, verb := range verbs {
+			if _, err := r.agent.Call(callCtx, verb, map[string]any{"name": "jabali-webmail"}); err != nil {
+				r.log.Warn("webmail reconcile: "+verb+" jabali-webmail failed", "err", err)
+				errs = append(errs, err)
+			}
+		}
+		return errors.Join(errs...)
+	})
 }
 
 // ReconcileWebmailVhosts runs the full webmail vhost convergence sweep once.
@@ -252,8 +257,6 @@ func (r *Reconciler) applyWebmailVhost(ctx context.Context, d *models.Domain) {
 		return
 	}
 
-	callCtx, cancel := context.WithTimeout(ctx, webmailAgentTimeout)
-	defer cancel()
 	params := map[string]any{
 		"domain_name":   d.Name,
 		"ssl_cert_path": certPath,
@@ -285,26 +288,41 @@ func (r *Reconciler) applyWebmailVhost(ctx context.Context, d *models.Domain) {
 	if h := r.panelHostname(ctx); h != "" {
 		params["panel_hostname"] = h
 	}
-	if _, err := r.agent.Call(callCtx, "webmail.vhost_apply", params); err != nil {
-		r.log.Error("webmail reconcile: vhost_apply failed",
-			"domain_id", d.ID, "domain", d.Name, "err", err)
-	}
+	// JAB-369: gated by the webmail.vhost phase. params is exactly what the
+	// Agent receives, so any input to the vhost changes the fingerprint.
+	_, _ = r.project(ctx, PhaseWebmailVhost, d.Name, fingerprint(params), false, func() error {
+		callCtx, cancel := context.WithTimeout(ctx, webmailAgentTimeout)
+		defer cancel()
+		if _, err := r.agent.Call(callCtx, "webmail.vhost_apply", params); err != nil {
+			r.log.Error("webmail reconcile: vhost_apply failed",
+				"domain_id", d.ID, "domain", d.Name, "err", err)
+			return err
+		}
+		return nil
+	})
 }
 
+// removeWebmailVhost removes a domain's mail vhost. JAB-369: same
+// webmail.vhost ledger entry as the apply, with the removal as its
+// fingerprint, so a domain without webmail is not re-sent a removal on
+// every tick, and a later apply for it is never skipped.
 func (r *Reconciler) removeWebmailVhost(ctx context.Context, domainName string) {
 	if domainName == "" {
 		return
 	}
-	callCtx, cancel := context.WithTimeout(ctx, webmailAgentTimeout)
-	defer cancel()
-	if _, err := r.agent.Call(callCtx, "webmail.vhost_remove", map[string]any{
-		"domain_name": domainName,
-	}); err != nil {
-		// The remove path is idempotent; a failure here usually means
-		// nginx itself is down. Log and move on — next tick retries.
-		r.log.Error("webmail reconcile: vhost_remove failed",
-			"domain", domainName, "err", err)
-	}
+	params := map[string]any{"domain_name": domainName}
+	_, _ = r.project(ctx, PhaseWebmailVhost, domainName, fingerprint(map[string]any{"remove": params}), false, func() error {
+		callCtx, cancel := context.WithTimeout(ctx, webmailAgentTimeout)
+		defer cancel()
+		if _, err := r.agent.Call(callCtx, "webmail.vhost_remove", params); err != nil {
+			// The remove path is idempotent; a failure here usually means
+			// nginx itself is down. Log and move on — next tick retries.
+			r.log.Error("webmail reconcile: vhost_remove failed",
+				"domain", domainName, "err", err)
+			return err
+		}
+		return nil
+	})
 }
 
 // panelHostname returns server_settings.hostname (e.g. mx.jabali-panel.com).

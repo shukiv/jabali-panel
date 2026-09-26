@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -1307,7 +1308,9 @@ func (r *Reconciler) ReconcileOne(ctx context.Context, domainID string) error {
 	// the box's own recursor until the next full loop pass adds it — the tens of
 	// seconds johnnyq saw even after the zone existed. The forwarder add is
 	// idempotent and self-heals, so running it here + on the loop is safe.
-	r.reconcileRecursorForward(ctx, domain.Name)
+	// Forced past the JAB-369 ledger: a domain deleted and re-created under
+	// the same name must get its forwarder re-sent at once.
+	r.reconcileRecursorForward(ctx, domain.Name, true)
 
 	// Converge SSL state next so createDomainOnAgent picks up any
 	// newly-issued (or revoked) cert paths when it regenerates the vhost.
@@ -1649,22 +1652,27 @@ func (r *Reconciler) reconcileOrphanFPMPools(ctx context.Context) {
 			keep = append(keep, *users[i].Username)
 		}
 	}
+	// JAB-369: gated by the php.pool.gc phase. Sorted so the fingerprint
+	// is the set of kept users, not the order the list came back in.
+	sort.Strings(keep)
+	params := map[string]any{"keep_usernames": keep}
 
-	callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	raw, err := r.agent.Call(callCtx, "php.pool.reap-orphans", map[string]any{
-		"keep_usernames": keep,
+	_, _ = r.project(ctx, PhasePHPPoolGC, "all", fingerprint(params), false, func() error {
+		callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		raw, err := r.agent.Call(callCtx, "php.pool.reap-orphans", params)
+		if err != nil {
+			r.log.Warn("orphan FPM reap: agent call failed; will retry next tick", "err", err)
+			return err
+		}
+		var resp struct {
+			Reaped []string `json:"reaped"`
+		}
+		if json.Unmarshal(raw, &resp) == nil && len(resp.Reaped) > 0 {
+			r.log.Info("reaped orphan FPM pools", "count", len(resp.Reaped), "slugs", resp.Reaped)
+		}
+		return nil
 	})
-	if err != nil {
-		r.log.Warn("orphan FPM reap: agent call failed; will retry next tick", "err", err)
-		return
-	}
-	var resp struct {
-		Reaped []string `json:"reaped"`
-	}
-	if json.Unmarshal(raw, &resp) == nil && len(resp.Reaped) > 0 {
-		r.log.Info("reaped orphan FPM pools", "count", len(resp.Reaped), "slugs", resp.Reaped)
-	}
 }
 
 // reconcileMysqlAdminShadow ensures all active users have mysqladmin shadow accounts.
@@ -4025,7 +4033,7 @@ func (r *Reconciler) reconcileEnabledDomain(ctx context.Context, name string, do
 	// DKIM/Stalwart/DNS provisioning that the HTTP email-enable
 	// handler would normally run.
 	if domain.IsPanelPrimary {
-		r.reconcileRecursorForward(ctx, name)
+		r.reconcileRecursorForward(ctx, name, false)
 		r.ensurePanelPrimaryDKIM(ctx, domain)
 		return
 	}
@@ -4044,7 +4052,7 @@ func (r *Reconciler) reconcileEnabledDomain(ctx context.Context, name string, do
 		r.ensureTenantEmailEnabled(ctx, domain)
 		r.ensureTenantDKIMRecords(ctx, domain)
 		if !domain.DNSDisabled {
-			r.reconcileRecursorForward(ctx, name)
+			r.reconcileRecursorForward(ctx, name, false)
 		}
 		if err := phases.ReconcileDomainAll(ctx, domain, nil); err != nil {
 			r.log.Error("reconcile: M6.5 phase domain reconciliation failed (web-off)", "domain", name, "err", err)
@@ -4088,7 +4096,7 @@ func (r *Reconciler) reconcileEnabledDomain(ctx context.Context, name string, do
 	// DNS must resolve via public recursion, not be pinned to our (empty)
 	// pdns for its own name.
 	if !domain.DNSDisabled {
-		r.reconcileRecursorForward(ctx, name)
+		r.reconcileRecursorForward(ctx, name, false)
 	}
 
 	// M6.5: Email features (forwarders, autoresponders, catch-all, disclaimer,
