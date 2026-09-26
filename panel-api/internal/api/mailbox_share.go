@@ -183,9 +183,14 @@ func (h *shareHandler) create(c *gin.Context) {
 	if res.ApplyErr != nil {
 		// Saved, but not live on Stalwart yet; the reconciler retries it. The
 		// agent's error text names panel internals (socket paths, Stalwart
-		// replies), so it goes to the log and the tenant gets a fixed detail.
+		// replies), so it goes to the log and a tenant gets a fixed detail. An
+		// admin gets the error itself, as for forwarders.
 		slog.Warn("mailbox-share: apply after create failed", "owner", owner.EmailCached, "share_id", res.Share.ID, "err", res.ApplyErr)
-		resp.Warning = &forwarderWarning{Code: "convergence_failed", Detail: "saved; the mail server did not accept it yet. The panel retries it."}
+		detail := "saved; the mail server did not accept it yet. The panel retries it."
+		if claims.IsAdmin {
+			detail = res.ApplyErr.Error()
+		}
+		resp.Warning = &forwarderWarning{Code: "convergence_failed", Detail: detail}
 	}
 	c.JSON(http.StatusCreated, resp)
 }
@@ -212,7 +217,11 @@ func (h *shareHandler) del(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
 		case errors.Is(err, mailshareops.ErrApply):
 			slog.Warn("mailbox-share: revoke failed; share kept", "owner", mb.EmailCached, "share_id", c.Param("shareId"), "err", err)
-			c.JSON(http.StatusBadGateway, gin.H{"error": "share_apply_failed", "detail": "the mail server did not accept the change; the share was not removed"})
+			detail := "the mail server did not accept the change; the share was not removed"
+			if claims.IsAdmin {
+				detail = err.Error()
+			}
+			c.JSON(http.StatusBadGateway, gin.H{"error": "share_apply_failed", "detail": detail})
 		default:
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		}

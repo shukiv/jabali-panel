@@ -246,6 +246,28 @@ func TestShareCreate_ApplyFailureReturnsAWarning(t *testing.T) {
 	}
 }
 
+// An admin gets the agent error itself, so the operator sees why the share is
+// not live yet; only a tenant gets the fixed text (as for forwarders).
+func TestShareCreate_AdminWarningCarriesTheAgentError(t *testing.T) {
+	s := newShStore()
+	ag := &shAgent{err: errors.New("stalwart down")}
+	w := shareRequest(newShareHandlerFake(s, ag), http.MethodPost, "alice", "",
+		`{"shared_with_mailbox_id":"bob","rights":{"mayRead":true}}`, &auth.AccessClaims{UserID: "admin", IsAdmin: true})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status %d body %s, want 201", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Warning *struct {
+			Code   string `json:"code"`
+			Detail string `json:"detail"`
+		} `json:"warning"`
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp.Warning == nil || resp.Warning.Code != "convergence_failed" || !strings.Contains(resp.Warning.Detail, "stalwart down") {
+		t.Fatalf("body %s, want warning.detail with the agent error for an admin", w.Body.String())
+	}
+}
+
 func TestShareCreate_Rejections(t *testing.T) {
 	cases := []struct {
 		name, body string
@@ -307,6 +329,19 @@ func TestShareDelete_AgentFailureKeepsTheRow(t *testing.T) {
 	}
 	if strings.Contains(w.Body.String(), "stalwart down") {
 		t.Errorf("body leaks the agent error: %s", w.Body.String())
+	}
+}
+
+func TestShareDelete_AdminFailureCarriesTheAgentError(t *testing.T) {
+	s := newShStore()
+	s.shares["s1"] = models.MailboxShare{ID: "s1", OwnerMailboxID: "alice", SharedWithMailboxID: "bob", Rights: models.Rights{MayRead: true}}
+	ag := &shAgent{err: errors.New("stalwart down")}
+	w := shareRequest(newShareHandlerFake(s, ag), http.MethodDelete, "alice", "s1", "", &auth.AccessClaims{UserID: "admin", IsAdmin: true})
+	if w.Code != http.StatusBadGateway || !strings.Contains(w.Body.String(), "stalwart down") {
+		t.Fatalf("status %d body %s, want 502 with the agent error for an admin", w.Code, w.Body.String())
+	}
+	if _, ok := s.shares["s1"]; !ok {
+		t.Fatal("row deleted although the revoke never reached Stalwart")
 	}
 }
 
