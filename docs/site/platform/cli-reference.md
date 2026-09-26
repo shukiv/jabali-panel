@@ -5005,6 +5005,18 @@ List the settable keys for `settings set`
 jabali settings keys
 ```
 
+#### `jabali settings mail-hostname`
+
+Print the panel mail hostname in effect (read-only)
+
+```
+jabali settings mail-hostname [flags]
+```
+
+**Flags:**
+
+- `--applied` — print only a custom applied mail hostname; print nothing when mail.<hostname> is in effect
+
 #### `jabali settings set`
 
 Patch one or more server settings (same validation + side effects as the UI)
