@@ -1,13 +1,13 @@
 package userops
 
 // GH #1238 — re-prefix a tenant's DB artifacts when their username changes, so a
-// later same-name user can't inherit them (the mysqladmin GRANT is a
-// <prefix>_%.* wildcard) and a delete doesn't orphan a role.
+// later same-name user can't inherit them (grants name databases by name) and a
+// delete doesn't orphan a role.
 //
 // Order matters: databases first (the on-disk RENAME TABLE move), then DB users
 // (RENAME USER carries their grants — still on the OLD db names), then re-point
 // the per-DB grants onto the new names and REVOKE the stale ones, then the
-// mysqladmin/pgadmin shadow roles (rename + re-point the wildcard grant). Each
+// mysqladmin/pgadmin shadow roles (rename + drop the old database grants). Each
 // step skips work already done (rename verbs are idempotent), but note the
 // caller renames the OS account + panel username BEFORE this runs, so a failure
 // here leaves a partially re-prefixed tenant whose panel name is already the new
@@ -120,9 +120,12 @@ func renameUserDBArtifacts(ctx context.Context, d Deps, rd RenameDeps, target *m
 		}
 	}
 
-	// 4. Shadow admin roles: rename + re-point the <prefix>_%.* wildcard grant.
-	//    RENAME USER preserves the password hash, so the panel's stored password
-	//    stays valid — only the row's name needs repointing.
+	// 4. Shadow admin roles: rename, and drop the role's database grants (they
+	//    name the old databases; the tenant's next phpMyAdmin open re-grants the
+	//    renamed ones by exact name via db.mysqladmin.sync_grants — no wildcard,
+	//    which would also match a sibling tenant). RENAME USER preserves the
+	//    password hash, so the panel's stored password stays valid — only the
+	//    row's name needs repointing.
 	// (PG pgadmin is refused in the preflight, so only mysqladmin is handled.)
 	if target.MysqladminUsername != nil && strings.HasPrefix(*target.MysqladminUsername, oldPrefix) {
 		nn := reprefix(*target.MysqladminUsername)

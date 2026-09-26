@@ -4,14 +4,18 @@ package commands
 // user rename). RENAME USER preserves the account's grants AND its password hash,
 // so the panel's stored password stays valid.
 //
-// Optional wildcard re-grant (for the <prefix>_mysqladmin shadow role, whose
-// GRANT is a <prefix>_%.* wildcard): after the rename, REVOKE the old prefix and
-// GRANT the new one, so the role admins the tenant's moved (new-prefix) DBs and
-// no longer any old-prefix name a future same-name user could create.
+// Shadow-admin role (old_prefix/new_prefix set, for <prefix>_mysqladmin): after
+// the rename, every database-level grant of the renamed account is revoked. Its
+// grants name the tenant's databases by their OLD names (or, on a box that
+// predates db.mysqladmin.sync_grants, the old <prefix>\_% wildcard), and a
+// future user could create a database under an old name. The panel re-grants
+// the renamed databases by exact name on the tenant's next phpMyAdmin open
+// (db.mysqladmin.sync_grants). No wildcard is granted: a <prefix>\_% pattern
+// also matches a sibling tenant whose username starts with "<prefix>_".
 //
 // Idempotent: if the old account is gone (already renamed / never existed) it is
-// a no-op success; a re-grant still runs against the new name so a resumed rename
-// converges.
+// a no-op success; the grant clear-out still runs against the new name so a
+// resumed rename converges.
 
 import (
 	"context"
@@ -29,8 +33,8 @@ type dbRenameUserParams struct {
 	OldName string `json:"old_name"`
 	NewName string `json:"new_name"`
 	Host    string `json:"host"` // default 'localhost'
-	// WildcardRegrant, when both set, re-points a <old>_%.* → <new>_%.* GRANT
-	// after the rename (the shadow-admin role).
+	// When both are set the account is the shadow-admin role: its database
+	// grants are revoked after the rename (see the file comment).
 	OldPrefix string `json:"old_prefix,omitempty"`
 	NewPrefix string `json:"new_prefix,omitempty"`
 }
@@ -85,21 +89,13 @@ func dbRenameUserHandler(ctx context.Context, params json.RawMessage) (any, erro
 		}
 	}
 
-	// Optional wildcard re-grant for the shadow-admin role.
+	// Shadow-admin role: drop every database grant the renamed account holds.
 	if p.OldPrefix != "" && p.NewPrefix != "" {
 		if !dbPrefixRegex.MatchString(p.OldPrefix) || !dbPrefixRegex.MatchString(p.NewPrefix) {
 			return nil, invalidArg("invalid prefix")
 		}
-		// Backtick pattern with an escaped underscore, matching db.mysqladmin.ensure.
-		oldPat := fmt.Sprintf("`%s\\_%%`", p.OldPrefix)
-		newPat := fmt.Sprintf("`%s\\_%%`", p.NewPrefix)
-		// REVOKE may error if the old grant is absent (already re-pointed on a
-		// resume) — tolerate that; the GRANT + FLUSH are what must stick.
-		_ = execCommandContext(ctx, "mysql", "-e", fmt.Sprintf(
-			"REVOKE ALL PRIVILEGES ON %s.* FROM %s@%s", oldPat, newLit, hostLit)).Run()
-		if err := execCommandContext(ctx, "mysql", "-e", fmt.Sprintf(
-			"GRANT ALL PRIVILEGES ON %s.* TO %s@%s; FLUSH PRIVILEGES;", newPat, newLit, hostLit)).Run(); err != nil {
-			return nil, internalErr("failed to re-point shadow grant")
+		if _, _, aerr := syncMysqladminShadowGrants(ctx, newLit, hostLit, nil); aerr != nil {
+			return nil, internalErr("failed to clear shadow grants")
 		}
 	}
 

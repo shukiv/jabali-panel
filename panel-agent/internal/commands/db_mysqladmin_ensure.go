@@ -90,10 +90,7 @@ func dbMysqladminEnsureHandler(ctx context.Context, params json.RawMessage) (any
 	shadowUser := p.PanelUsername + "_mysqladmin"
 
 	// Escape the user name and password for use as single-quoted SQL
-	// literals. The DB pattern does NOT get EscapeMariaDBLiteral: MariaDB
-	// parses GRANT's schema pattern with LIKE-wildcard semantics, and we
-	// need an unquoted identifier with a literal underscore (\_) so that
-	// `alice_wp` matches but `aliceNwp` does not.
+	// literals.
 	escapedUser, err := EscapeMariaDBLiteral(shadowUser)
 	if err != nil {
 		return nil, &agentwire.AgentError{
@@ -109,21 +106,21 @@ func dbMysqladminEnsureHandler(ctx context.Context, params json.RawMessage) (any
 		}
 	}
 
-	// Database pattern: backtick-wrapped so MariaDB parses it as a pattern
-	// identifier; `\_` escapes the underscore wildcard so only DBs whose
-	// name starts with "<panel_username>_" match.
-	dbPattern := fmt.Sprintf("`%s\\_%%`", p.PanelUsername)
-
-	// Four idempotent statements. CREATE USER IF NOT EXISTS is a no-op
+	// Two idempotent statements. CREATE USER IF NOT EXISTS is a no-op
 	// on pre-existing rows; ALTER USER always rotates the password.
 	// Together they handle both the "first time" and "rotate on exist"
 	// cases in the reconciler crash-recovery path (step 7 of the plan).
+	//
+	// No database grant here. The shadow user used to get
+	// GRANT ALL ON `<panel_username>\_%`.*, but panel usernames may contain
+	// '_', so that pattern also matched a sibling tenant's databases
+	// (tenant "alice" got ALL on "alice_x_shop" of tenant "alice_x").
+	// db.mysqladmin.sync_grants now grants the tenant's own databases by
+	// exact name, from the control-plane list, on every phpMyAdmin open.
 	sql := fmt.Sprintf(
 		"CREATE USER IF NOT EXISTS %[1]s@'localhost' IDENTIFIED BY %[2]s; "+
-			"ALTER USER %[1]s@'localhost' IDENTIFIED BY %[2]s; "+
-			"GRANT ALL PRIVILEGES ON %[3]s.* TO %[1]s@'localhost'; "+
-			"FLUSH PRIVILEGES;",
-		escapedUser, escapedPassword, dbPattern,
+			"ALTER USER %[1]s@'localhost' IDENTIFIED BY %[2]s;",
+		escapedUser, escapedPassword,
 	)
 
 	cmd := execCommandContext(ctx, "mysql", "-e", sql)

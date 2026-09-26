@@ -145,8 +145,43 @@ func (s *Service) EnsureShadow(ctx context.Context, userID string) error {
 
 		return nil
 	})
+	if err != nil {
+		return err
+	}
 
-	return err
+	// Grant the shadow user exactly this tenant's own databases, and revoke any
+	// other database grant it holds, on every open. This replaces the old
+	// one-time GRANT ON `<username>\_%`.* wildcard, which also matched a
+	// sibling tenant whose username starts with "<username>_". A failure here
+	// fails the open: phpMyAdmin must not start with a grant that may still
+	// reach another tenant's databases.
+	return s.syncMysqlShadowGrants(ctx, userID, *user.Username)
+}
+
+// syncMysqlShadowGrants hands the agent the EXPLICIT list of the tenant's own
+// MariaDB databases from the control-plane DB (scoped by user_id), never a name
+// pattern. An empty list is still sent: it revokes whatever the shadow user
+// holds.
+func (s *Service) syncMysqlShadowGrants(ctx context.Context, userID, panelUsername string) error {
+	var rows []models.Database
+	if err := s.db.WithContext(ctx).
+		Where("user_id = ? AND engine = ?", userID, "mariadb").
+		Find(&rows).Error; err != nil {
+		return fmt.Errorf("list databases for phpMyAdmin grants: %w", err)
+	}
+	names := make([]string, 0, len(rows))
+	for _, d := range rows {
+		if d.Name != "" {
+			names = append(names, d.Name)
+		}
+	}
+	if _, err := s.agent.Call(ctx, "db.mysqladmin.sync_grants", map[string]interface{}{
+		"panel_username": panelUsername,
+		"db_names":       names,
+	}); err != nil {
+		return fmt.Errorf("agent db.mysqladmin.sync_grants: %w", err)
+	}
+	return nil
 }
 
 // MintToken generates a new SSO token, hashes it, and stores it in the DB.
