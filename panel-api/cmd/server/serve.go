@@ -484,6 +484,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		// JAB-390: shared panel mail hostname switchover request.
 		mailHostSwitchoverRepo := repository.NewMailHostnameSwitchoverRepository(sharedDB)
 		rec.WithMailHostnameSwitchover(mailHostSwitchoverRepo)
+		deps.MailHostSwitchover = mailHostSwitchoverRepo
 		rec.WithUpdateRunHistory(updateHistoryRepo)
 		rec.WithUpdateAutoupdate(updateAutoupdateRepo)
 		rec.WithUpdateState(updateStateRepo)

@@ -131,6 +131,10 @@ type Deps struct {
 	// registers /admin/panel-certificate when set; nil keeps the routes
 	// off (lab installs / older test wiring).
 	PanelCerts repository.PanelCertificateRepository
+	// MailHostSwitchover is the JAB-390 shared mail hostname switchover
+	// request. With PanelCerts it mounts the Settings → Email mail-hostname
+	// setter; nil keeps the setter off.
+	MailHostSwitchover repository.MailHostnameSwitchoverRepository
 	// M53 Updates Center (ADR-0118). UpdateState + UpdateHistory drive the
 	// stateful Updates page; UpdateAutoupdate is the auto-update desired
 	// state the autoupdate reconciler converges. Nil keeps the M29 thin
@@ -1109,9 +1113,13 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		// ServerSettings carries the applied mail hostname (JAB-390).
 		if deps.Domains != nil && deps.ServerSettings != nil {
 			api.RegisterSettingsEmailRoutes(v1, api.SettingsEmailHandlerConfig{
-				Domains:        deps.Domains,
-				ServerSettings: deps.ServerSettings,
-				Log:            deps.Log,
+				Domains:          deps.Domains,
+				ServerSettings:   deps.ServerSettings,
+				PanelCerts:       deps.PanelCerts,
+				WebDomainAliases: deps.WebDomainAliases,
+				Switchover:       deps.MailHostSwitchover,
+				Recorder:         deps.AuditRecorder,
+				Log:              deps.Log,
 			})
 		}
 		if deps.ManagedIPs != nil {

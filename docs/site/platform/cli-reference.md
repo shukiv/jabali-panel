@@ -5007,7 +5007,7 @@ jabali settings keys
 
 #### `jabali settings mail-hostname`
 
-Print the panel mail hostname in effect (read-only)
+Show the panel mail hostname, or request, cancel or follow a change
 
 ```
 jabali settings mail-hostname [flags]
@@ -5016,6 +5016,9 @@ jabali settings mail-hostname [flags]
 **Flags:**
 
 - `--applied` — print only a custom applied mail hostname; print nothing when mail.<hostname> is in effect
+- `--cancel` — withdraw a pending or failed mail hostname change
+- `--set` — request a change of the panel mail hostname to this name
+- `--status` — print the progress of a requested mail hostname change
 
 #### `jabali settings set`
 
