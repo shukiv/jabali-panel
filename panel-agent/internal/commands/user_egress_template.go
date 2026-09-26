@@ -19,9 +19,12 @@ import (
 type EgressUser struct {
 	Username string
 	State    string // "off" | "learning" | "enforced"
-	// UID (GH #708) is the OS uid, used for a `meta skuid` egress-enforcement
-	// fallback when the user's cgroup slice is missing (so an enforced tenant
-	// can't fail open). 0 = unknown (fallback unavailable).
+	// UID is the OS uid. The output chain dispatches the user by `meta skuid`
+	// as well as by cgroup, so a tenant process OUTSIDE its slice — an SSH
+	// shell, which logind places in user-<uid>.slice/session-N.scope — still
+	// goes through the user's chain and the SSRF floor. It is also what keeps
+	// a user whose slice is missing enforced (GH #708). 0 = unknown; a uid
+	// below minTenantUID is never matched (see tenantUID).
 	UID          int
 	AllowedExtra []EgressExtra
 	// AllowPing (GH #1798) allows outbound ICMP/ICMPv6 echo-request (ping)
@@ -109,14 +112,13 @@ func RenderEgressNFT(users []EgressUser, defaults EgressDefaults, existsFn func(
 // purpose, and silent apart from one failed unit.
 //
 // Passing an always-false existsFn is what makes this work rather than a
-// separate code path: every user then routes through the GH #708 UID fallback
-// (`meta skuid`), which is exactly the dispatch that does not need a slice.
+// separate code path: every user is then dispatched by uid only (`meta skuid`),
+// which is exactly the dispatch that does not need a slice.
 //
-// Coverage note: the SSRF floor here is emitted per known UID instead of
-// scoped to the tenant parent slice, so it covers every user with an egress
-// policy row rather than literally every tenant process. That is narrower than
-// the steady-state floor and strictly wider than what the boot unit achieved
-// before, which was nothing.
+// Coverage note: the SSRF floor here is scoped by uid instead of by the tenant
+// parent slice, so it covers every user in the payload rather than literally
+// every tenant process. That is narrower than the steady-state floor and
+// strictly wider than what the boot unit achieved before, which was nothing.
 func RenderEgressBootNFT(users []EgressUser, defaults EgressDefaults) string {
 	return renderEgress(users, defaults, func(string) bool { return false }, true)
 }
@@ -181,23 +183,18 @@ func renderEgress(users []EgressUser, defaults EgressDefaults, existsFn func(sli
 		b.WriteString("  }\n")
 	}
 
-	// In bootSafe mode the floor is scoped by UID rather than by the tenant
-	// parent slice, so collect the UIDs up front — the counter declaration
-	// below has to agree with what the output chain will reference.
-	var floorUIDs []int
-	if bootSafe {
-		for _, u := range sorted {
-			if u.State != "off" && u.UID > 0 {
-				floorUIDs = append(floorUIDs, u.UID)
-			}
-		}
-	}
+	// The SSRF floor is also scoped by uid, for every user including
+	// state=off: the floor holds regardless of egress enrollment (GH #401),
+	// as the slice-scoped floor already does. Collected up front because the
+	// counter declaration below has to agree with what the output chain will
+	// reference.
+	floorUIDs := tenantUIDs(sorted)
 
 	// Always-on SSRF floor counter (GH #401). Declared only when the floor
 	// rules themselves will be emitted, so the counter is never referenced
 	// without being declared (and never declared without being referenced,
 	// which would show up as a permanently-zero counter).
-	if (bootSafe && len(floorUIDs) > 0) || (!bootSafe && existsFn(tenantParentSlice)) {
+	if len(floorUIDs) > 0 || (!bootSafe && existsFn(tenantParentSlice)) {
 		b.WriteString("\n  counter ssrf_floor_drops {}\n")
 	}
 
@@ -211,7 +208,8 @@ func renderEgress(users []EgressUser, defaults EgressDefaults, existsFn func(sli
 		username, state string
 		uid             int
 	}
-	var uidFallback []uidRendered
+	var byUID []uidRendered
+	seenUID := map[int]string{}
 
 	for _, u := range sorted {
 		if u.State == "off" {
@@ -220,8 +218,15 @@ func renderEgress(users []EgressUser, defaults EgressDefaults, existsFn func(sli
 		}
 		slicePath := SlicePathFor(u.Username)
 		sliceMissing := !existsFn(slicePath)
-		if sliceMissing && u.UID <= 0 {
-			// Can't cgroup-match (no slice) AND can't UID-fallback (no uid).
+		// Two users resolving to one uid would put a duplicate key in
+		// uid_to_chain, and nft rejects the whole file for it — egress
+		// enforcement gone box-wide. The first user (by name) keeps the uid.
+		uidOK := tenantUID(u.UID) && seenUID[u.UID] == ""
+		if tenantUID(u.UID) && !uidOK {
+			fmt.Fprintf(&b, "\n  # %s: uid %d already dispatched to %s — not matched by uid\n", u.Username, u.UID, seenUID[u.UID])
+		}
+		if sliceMissing && !uidOK {
+			// Can't cgroup-match (no slice) AND can't match by uid.
 			// Surfaced by the apply handler's users_fail_open; skip here.
 			fmt.Fprintf(&b, "\n  # %s: slice %s missing + no uid — skipped\n", u.Username, slicePath)
 			continue
@@ -229,13 +234,19 @@ func renderEgress(users []EgressUser, defaults EgressDefaults, existsFn func(sli
 		fmt.Fprintf(&b, "\n  counter user_%s_drops {}\n", u.Username)
 		writeUserChain(&b, u, defaults)
 		if sliceMissing {
-			// GH #708: dispatch this enforced user by UID so a missing cgroup
-			// slice no longer means their traffic falls through to accept. The
-			// chain is identical; only the dispatch differs (skuid vs cgroup).
-			fmt.Fprintf(&b, "  # %s: slice missing — enforcing by uid %d instead of cgroup (GH #708)\n", u.Username, u.UID)
-			uidFallback = append(uidFallback, uidRendered{u.Username, u.State, u.UID})
+			// GH #708: a missing cgroup slice no longer means their traffic
+			// falls through to accept; the uid dispatch below still catches it.
+			fmt.Fprintf(&b, "  # %s: slice missing — enforcing by uid %d only (GH #708)\n", u.Username, u.UID)
 		} else {
 			emitted = append(emitted, rendered{u.Username, u.State})
+		}
+		if uidOK {
+			// Every user is dispatched by uid too, not only on a missing
+			// slice: an SSH shell runs outside the slice and would otherwise
+			// fall through to the policy accept. The chain is identical; only
+			// the dispatch differs (skuid vs cgroup).
+			seenUID[u.UID] = u.Username
+			byUID = append(byUID, uidRendered{u.Username, u.State, u.UID})
 		}
 	}
 
@@ -258,35 +269,107 @@ func renderEgress(users []EgressUser, defaults EgressDefaults, existsFn func(sli
 	}
 	b.WriteString("  }\n")
 
+	// uid dispatch, keyed on the socket owner. A map, like cgroup_to_chain:
+	// every packet that no slice matched — root, nginx, MariaDB — takes one
+	// lookup here instead of walking one rule per tenant.
+	if len(byUID) > 0 {
+		b.WriteString("\n  map uid_to_chain {\n")
+		b.WriteString("    type uid : verdict\n")
+		b.WriteString("    elements = {\n")
+		for i, r := range byUID {
+			sep := ","
+			if i == len(byUID)-1 {
+				sep = ""
+			}
+			fmt.Fprintf(&b, "      %d : jump user_%s_%s%s\n", r.uid, r.username, r.state, sep)
+		}
+		b.WriteString("    }\n")
+		b.WriteString("  }\n")
+	}
+	if len(floorUIDs) > 0 {
+		b.WriteString("\n  set tenant_uids {\n")
+		b.WriteString("    type uid\n")
+		fmt.Fprintf(&b, "    elements = { %s }\n", joinInts(floorUIDs, ", "))
+		b.WriteString("  }\n")
+	}
+
 	b.WriteString("\n  chain output {\n")
 	b.WriteString("    type filter hook output priority 0; policy accept;\n")
 	// GH #401 SSRF floor: no tenant process may reach link-local /
 	// cloud-metadata (169.254.0.0/16 incl. 169.254.169.254, fe80::/10),
 	// regardless of per-user egress enrollment. Runs BEFORE the per-user
-	// vmap so it is absolute. Emitted only when the tenant parent slice
-	// exists on the host (nft verifies cgroupv2 paths at load time).
-	if bootSafe {
-		// Same floor, dispatched by UID because no cgroup slice exists yet.
-		// Still ahead of the per-user dispatch, so it stays absolute.
-		for _, uid := range floorUIDs {
-			fmt.Fprintf(&b, "    meta skuid %d ip daddr 169.254.0.0/16 counter name ssrf_floor_drops drop\n", uid)
-			fmt.Fprintf(&b, "    meta skuid %d ip6 daddr fe80::/10 counter name ssrf_floor_drops drop\n", uid)
-		}
-	} else if existsFn(tenantParentSlice) {
+	// dispatch so it is absolute. The slice-scoped floor is emitted only when
+	// the tenant parent slice exists on the host (nft verifies cgroupv2 paths
+	// at load time); the uid-scoped one covers tenant processes outside any
+	// slice (SSH shells) and the boot window, when no slice exists yet.
+	if !bootSafe && existsFn(tenantParentSlice) {
 		fmt.Fprintf(&b, "    socket cgroupv2 level 2 \"%s\" ip daddr 169.254.0.0/16 counter name ssrf_floor_drops drop\n", tenantParentSlice)
 		fmt.Fprintf(&b, "    socket cgroupv2 level 2 \"%s\" ip6 daddr fe80::/10 counter name ssrf_floor_drops drop\n", tenantParentSlice)
 	}
+	if len(floorUIDs) > 0 {
+		b.WriteString("    meta skuid @tenant_uids ip daddr 169.254.0.0/16 counter name ssrf_floor_drops drop\n")
+		b.WriteString("    meta skuid @tenant_uids ip6 daddr fe80::/10 counter name ssrf_floor_drops drop\n")
+	}
+	// A process in a tenant slice is matched here; every user chain ends in
+	// a verdict, so it never reaches the uid dispatch below.
 	b.WriteString("    socket cgroupv2 level 3 vmap @cgroup_to_chain\n")
-	// GH #708: UID-based fallback for enforced users whose cgroup slice is
-	// missing — keeps the fail-closed invariant (their traffic is still forced
-	// through the per-user chain instead of the trailing policy accept).
-	for _, uf := range uidFallback {
-		fmt.Fprintf(&b, "    meta skuid %d jump user_%s_%s\n", uf.uid, uf.username, uf.state)
+	if len(byUID) > 0 {
+		b.WriteString("    meta skuid vmap @uid_to_chain\n")
 	}
 	b.WriteString("  }\n")
 	b.WriteString("}\n")
 
 	return b.String()
+}
+
+// egressCoverage counts what renderEgress will do with users: emitted
+// (dispatched by cgroup, by uid, or both), skipped (state=off, or no way to
+// match), and failOpen — the non-off users skipped because they have neither
+// a slice nor a matchable uid. It walks users in the renderer's order with
+// the renderer's duplicate-uid rule, so the counts cannot drift from the file.
+func egressCoverage(users []EgressUser, existsFn func(slicePath string) bool) (emitted, skipped int, failOpen []string) {
+	sorted := make([]EgressUser, len(users))
+	copy(sorted, users)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Username < sorted[j].Username })
+	seenUID := map[int]bool{}
+	for _, u := range sorted {
+		if u.State == "off" {
+			skipped++
+			continue
+		}
+		uidOK := tenantUID(u.UID) && !seenUID[u.UID]
+		if uidOK {
+			seenUID[u.UID] = true
+		}
+		if !uidOK && !existsFn(SlicePathFor(u.Username)) {
+			skipped++
+			failOpen = append(failOpen, u.Username)
+			continue
+		}
+		emitted++
+	}
+	return emitted, skipped, failOpen
+}
+
+// tenantUID reports whether a uid may be matched by `meta skuid`. Below
+// minTenantUID are system accounts (www-data, the mail and database daemons);
+// a panel username that resolved to one of those must never put that
+// daemon's traffic through a tenant chain.
+func tenantUID(uid int) bool { return uid >= minTenantUID }
+
+// tenantUIDs returns the distinct tenant uids of users, in first-seen order,
+// for the uid-scoped SSRF floor. A duplicate element would make nft reject
+// the whole file.
+func tenantUIDs(users []EgressUser) []int {
+	var out []int
+	seen := map[int]bool{}
+	for _, u := range users {
+		if tenantUID(u.UID) && !seen[u.UID] {
+			seen[u.UID] = true
+			out = append(out, u.UID)
+		}
+	}
+	return out
 }
 
 // SlicePathFor returns the full cgroup path under /sys/fs/cgroup that

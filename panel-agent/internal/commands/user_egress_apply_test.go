@@ -89,8 +89,9 @@ func TestRenderEgressNFT_MissingSliceUIDFallback(t *testing.T) {
 	out := RenderEgressNFT(users, CanonicalDefaults(), noneExist)
 
 	require.Contains(t, out, "counter user_eve_drops")        // chain emitted
-	require.Contains(t, out, "meta skuid 1001 jump user_eve_enforced") // uid dispatch
-	require.NotContains(t, out, "policy accept;\n  }")       // (chain still ends with accept, sanity below)
+	require.Contains(t, out, "1001 : jump user_eve_enforced") // uid dispatch
+	require.Contains(t, out, "meta skuid vmap @uid_to_chain")
+	require.NotContains(t, out, "policy accept;\n  }") // (chain still ends with accept, sanity below)
 }
 
 func TestRenderEgressNFT_AllowedExtraEmittedInChain(t *testing.T) {
