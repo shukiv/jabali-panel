@@ -34,3 +34,13 @@ func TestCLIUserDelete_RoutesThroughCascade(t *testing.T) {
 		}
 	}
 }
+
+// The CLI exits as soon as the cascade returns, so it must run the OS account
+// teardown synchronously. With the default background teardown the process
+// exited first: the row was gone, the CLI printed "OS account removed", and
+// the tenant's Linux account, keys and /home stayed on the host.
+func TestCLIUserDelete_RemovesTheOSAccountBeforeExiting(t *testing.T) {
+	if !cliDeleteDeps().SyncOSTeardown {
+		t.Fatal("`jabali user delete` must set SyncOSTeardown, or the OS account survives the delete")
+	}
+}

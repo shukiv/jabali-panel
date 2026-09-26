@@ -108,17 +108,7 @@ func deleteUserDirect(ctx context.Context, userID string, purgeHome bool) error 
 		KratosClient:    kc,
 		Log:             slog.Default(),
 	}
-	deleteDeps := userops.DeleteDeps{
-		Databases:     databaseRepoFromDB(),
-		DatabaseUsers: databaseUserRepoFromDB(),
-		FtpAccounts:   repository.NewFtpAccountRepository(sharedDB),
-		RevokeCacheACLs: func(ctx context.Context, osUser string) error {
-			if sharedRedis == nil {
-				return nil // redis not wired here; ACLs get reaped on the next cache op
-			}
-			return api.RevokeAllUserCacheACLs(ctx, sharedRedis, osUser)
-		},
-	}
+	deleteDeps := cliDeleteDeps()
 	// purgeHome is always true for `jabali user delete` (destructive by
 	// contract); DeleteCascade removes the home + OS account unconditionally.
 	_ = purgeHome
@@ -133,9 +123,32 @@ func deleteUserDirect(ctx context.Context, userID string, purgeHome bool) error 
 			return fmt.Errorf("account KEPT: MariaDB object(s) %v could not be dropped — deleting now would orphan them; retry once the agent is healthy",
 				dbe.Objects)
 		}
+		var ote *userops.OSTeardownError
+		if errors.As(err, &ote) {
+			return fmt.Errorf("user row KEPT: %v — fix that on the host, then run `jabali user delete %s` again", ote, userID)
+		}
 		return err
 	}
 	return nil
+}
+
+// cliDeleteDeps are the cascade collaborators for `jabali user delete`.
+// SyncOSTeardown is required here: the CLI process exits as soon as the
+// cascade returns, so the default background OS teardown would never run and
+// the tenant's Linux account and /home would survive the delete.
+func cliDeleteDeps() userops.DeleteDeps {
+	return userops.DeleteDeps{
+		Databases:     databaseRepoFromDB(),
+		DatabaseUsers: databaseUserRepoFromDB(),
+		FtpAccounts:   repository.NewFtpAccountRepository(sharedDB),
+		RevokeCacheACLs: func(ctx context.Context, osUser string) error {
+			if sharedRedis == nil {
+				return nil // redis not wired here; ACLs get reaped on the next cache op
+			}
+			return api.RevokeAllUserCacheACLs(ctx, sharedRedis, osUser)
+		},
+		SyncOSTeardown: true,
+	}
 }
 
 // ---------- domain ----------
