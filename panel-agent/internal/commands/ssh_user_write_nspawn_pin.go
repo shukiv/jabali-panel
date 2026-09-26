@@ -21,6 +21,9 @@ import (
 
 var nspawnImageRe = regexp.MustCompile(`^[a-z0-9-]+$`)
 
+// nspawnPinDir is a var only so tests can point it at a TempDir.
+var nspawnPinDir = "/etc/jabali/users"
+
 type sshUserWriteNspawnPinParams struct {
 	Username string `json:"username"`
 	Image    string `json:"image"` // empty string → remove pin file
@@ -42,10 +45,13 @@ func sshUserWriteNspawnPinHandler(ctx context.Context, params json.RawMessage) (
 			Message: fmt.Sprintf("failed to parse params: %v", err),
 		}
 	}
-	if !nspawnImageRe.MatchString(p.Username) {
+	// The account-name rule (user.create), not the image rule: panel
+	// usernames may contain `_`, and refusing them left those users without
+	// a pin. It admits no `/` or `.`, so the name is safe as a path element.
+	if !usernameRegex.MatchString(p.Username) {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInvalidArgument,
-			Message: "username must match [a-z0-9-]+",
+			Message: "invalid username",
 		}
 	}
 	if p.Image != "" && !nspawnImageRe.MatchString(p.Image) {
@@ -55,7 +61,7 @@ func sshUserWriteNspawnPinHandler(ctx context.Context, params json.RawMessage) (
 		}
 	}
 
-	dir := filepath.Join("/etc/jabali/users", p.Username)
+	dir := filepath.Join(nspawnPinDir, p.Username)
 	pinFile := filepath.Join(dir, "nspawn-image")
 
 	// Empty image → remove pin (user falls back to default-nspawn-image).
