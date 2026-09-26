@@ -98,10 +98,6 @@ func applyOSUsersMerge(ctx context.Context, stageDir string) ([]string, []string
 	hashes := shadowHashes(bundle.Shadow)
 
 	// Groups first — users reference their primary gid.
-	type wantedGroup struct {
-		name    string
-		members []string
-	}
 	var groups []wantedGroup
 	for _, line := range bundle.Group {
 		name, gid, members, perr := parseGroupLine(line)
@@ -154,13 +150,10 @@ func applyOSUsersMerge(ctx context.Context, stageDir string) ([]string, []string
 			"--shell", e.Shell,
 			"--comment", e.Gecos,
 		}
-		if _, gerr := user.LookupGroupId(strconv.Itoa(e.GID)); gerr == nil {
+		if keep, warn := restorePrimaryGID(e.Name, e.GID, localGroupNameByID); keep {
 			args = append(args, "--gid", strconv.Itoa(e.GID))
 		} else {
-			// Primary group missing (filtered out of the bundle or a
-			// collision above) — let useradd create the usergroup.
-			warnings = append(warnings,
-				fmt.Sprintf("os_users: user %q source gid %d absent — using a fresh usergroup", e.Name, e.GID))
+			warnings = append(warnings, warn)
 		}
 		args = append(args, e.Name)
 		if out, cerr := execCommandContext(ctx, "useradd", args...).CombinedOutput(); cerr != nil {
@@ -183,18 +176,68 @@ func applyOSUsersMerge(ctx context.Context, stageDir string) ([]string, []string
 	}
 
 	// Memberships last, additive only, both sides must exist by now.
-	for _, g := range groups {
-		for _, m := range g.members {
-			if _, uerr := user.Lookup(m); uerr != nil {
-				continue
-			}
-			if _, gerr := user.LookupGroup(g.name); gerr != nil {
-				continue
-			}
-			if out, cerr := execCommandContext(ctx, "usermod", "-aG", g.name, m).CombinedOutput(); cerr != nil {
-				warnings = append(warnings, fmt.Sprintf("os_users: usermod -aG %s %s: %v (%s)", g.name, m, cerr, strings.TrimSpace(string(out))))
-			}
+	adds, mwarn := planMembershipRestores(groups, localUserExists, localGroupExists)
+	warnings = append(warnings, mwarn...)
+	for _, a := range adds {
+		if out, cerr := execCommandContext(ctx, "usermod", "-aG", a.group, a.member).CombinedOutput(); cerr != nil {
+			warnings = append(warnings, fmt.Sprintf("os_users: usermod -aG %s %s: %v (%s)", a.group, a.member, cerr, strings.TrimSpace(string(out))))
 		}
 	}
 	return applied, warnings
+}
+
+// wantedGroup is one group line from the bundle: its name and source members.
+type wantedGroup struct {
+	name    string
+	members []string
+}
+
+// membershipAdd is one `usermod -aG group member` the restore runs.
+type membershipAdd struct {
+	group, member string
+}
+
+// planMembershipRestores decides which source memberships the restore
+// re-asserts. A membership is re-asserted only when both the member and the
+// group exist locally by now.
+func planMembershipRestores(groups []wantedGroup, userExists, groupExists func(string) bool) (adds []membershipAdd, warnings []string) {
+	for _, g := range groups {
+		for _, m := range g.members {
+			if !userExists(m) || !groupExists(g.name) {
+				continue
+			}
+			adds = append(adds, membershipAdd{group: g.name, member: m})
+		}
+	}
+	return adds, warnings
+}
+
+// restorePrimaryGID reports whether useradd may create name with its source
+// primary gid. When it may not, the warning says why and useradd creates a
+// fresh usergroup instead.
+func restorePrimaryGID(name string, gid int, groupNameByID func(gid string) (string, bool)) (keep bool, warning string) {
+	if _, ok := groupNameByID(strconv.Itoa(gid)); !ok {
+		// Primary group missing (filtered out of the bundle or a collision
+		// above) — let useradd create the usergroup.
+		return false, fmt.Sprintf("os_users: user %q source gid %d absent — using a fresh usergroup", name, gid)
+	}
+	return true, ""
+}
+
+func localUserExists(name string) bool {
+	_, err := user.Lookup(name)
+	return err == nil
+}
+
+func localGroupExists(name string) bool {
+	_, err := user.LookupGroup(name)
+	return err == nil
+}
+
+func localGroupNameByID(gid string) (string, bool) {
+	g, err := user.LookupGroupId(gid)
+	if err != nil {
+		return "", false
+	}
+	return g.Name, true
 }
