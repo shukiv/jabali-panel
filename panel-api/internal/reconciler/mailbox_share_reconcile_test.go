@@ -86,6 +86,7 @@ func newMSStore() *msStore {
 		domains: map[string]models.Domain{
 			"d1":   {ID: "d1", Name: "one.test", UserID: "u1", EmailEnabled: true},
 			"doff": {ID: "doff", Name: "off.test", UserID: "u1", EmailEnabled: false},
+			"d2":   {ID: "d2", Name: "two.test", UserID: "u2", EmailEnabled: true},
 		},
 		owned: map[string][]models.MailboxShare{},
 	}
@@ -94,6 +95,7 @@ func newMSStore() *msStore {
 		{ID: "bob", DomainID: "d1", EmailCached: "bob@one.test"},
 		{ID: "carol", DomainID: "d1", EmailCached: "carol@one.test"},
 		{ID: "dave", DomainID: "doff", EmailCached: "dave@off.test"},
+		{ID: "mallory", DomainID: "d2", EmailCached: "mallory@two.test"},
 	} {
 		s.mailboxes[mb.ID] = mb
 	}
@@ -162,6 +164,24 @@ func TestReconcileMailboxShares_PushesExistingShares(t *testing.T) {
 	}
 	if got[1]["owner_email"] != "bob@one.test" || pushedTargets(got[1])[0] != "carol@one.test" {
 		t.Errorf("bob push = %v, want carol", got[1])
+	}
+}
+
+// The backfill must not make an older cross-account row live.
+func TestReconcileMailboxShares_LeavesOutCrossAccountRows(t *testing.T) {
+	s := newMSStore()
+	s.share("s1", "alice", "bob")
+	s.share("s2", "alice", "mallory") // saved by an older panel
+	ag := &fakeAgent{}
+
+	newShareReconciler(s, ag, true).reconcileMailboxShares(context.Background())
+
+	got := sharePushes(ag)
+	if len(got) != 1 {
+		t.Fatalf("pushes = %v, want 1", got)
+	}
+	if targets := pushedTargets(got[0]); len(targets) != 1 || targets[0] != "bob@one.test" {
+		t.Errorf("pushed %v, want only bob", targets)
 	}
 }
 

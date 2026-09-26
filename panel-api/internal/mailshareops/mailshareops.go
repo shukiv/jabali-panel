@@ -62,27 +62,46 @@ type Payload struct {
 
 // Desired builds the owner's payload from its share rows, leaving out
 // excludeShareID ("" keeps every row). A row whose target mailbox no longer
-// exists is left out.
+// exists is left out, and so is a row whose target is in another account:
+// Create refuses those, but older panels saved them, and none of them was
+// ever applied. Applying them now would grant cross-account access that
+// never existed.
 func Desired(ctx context.Context, d Deps, owner *models.Mailbox, excludeShareID string) (Payload, error) {
 	rows, _, err := d.Shares.FindByOwnerID(ctx, owner.ID, repository.ListOptions{Limit: maxSharesPerOwner})
 	if err != nil {
 		return Payload{}, fmt.Errorf("list shares of %s: %w", owner.EmailCached, err)
 	}
+	p := Payload{OwnerEmail: owner.EmailCached, Shares: map[string]models.Rights{}}
+	if len(rows) == 0 {
+		return p, nil
+	}
 	targetIDs := make([]string, 0, len(rows))
 	for _, s := range rows {
 		targetIDs = append(targetIDs, s.SharedWithMailboxID)
 	}
-	byID := map[string]models.Mailbox{}
-	if len(targetIDs) > 0 {
-		targets, err := d.Mailboxes.FindByIDs(ctx, targetIDs)
-		if err != nil {
-			return Payload{}, fmt.Errorf("load share targets of %s: %w", owner.EmailCached, err)
-		}
-		for _, t := range targets {
+	targets, err := d.Mailboxes.FindByIDs(ctx, targetIDs)
+	if err != nil {
+		return Payload{}, fmt.Errorf("load share targets of %s: %w", owner.EmailCached, err)
+	}
+	domainIDs := []string{owner.DomainID}
+	for _, t := range targets {
+		domainIDs = append(domainIDs, t.DomainID)
+	}
+	doms, err := d.Domains.FindByIDs(ctx, domainIDs)
+	if err != nil {
+		return Payload{}, fmt.Errorf("load share domains of %s: %w", owner.EmailCached, err)
+	}
+	userOf := make(map[string]string, len(doms))
+	for _, dom := range doms {
+		userOf[dom.ID] = dom.UserID
+	}
+	ownerUser := userOf[owner.DomainID]
+	byID := make(map[string]models.Mailbox, len(targets))
+	for _, t := range targets {
+		if ownerUser != "" && userOf[t.DomainID] == ownerUser {
 			byID[t.ID] = t
 		}
 	}
-	p := Payload{OwnerEmail: owner.EmailCached, Shares: map[string]models.Rights{}}
 	for _, s := range rows {
 		if s.ID == excludeShareID {
 			continue

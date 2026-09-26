@@ -83,6 +83,16 @@ func (r shDomains) FindByID(_ context.Context, id string) (*models.Domain, error
 	return &d, nil
 }
 
+func (r shDomains) FindByIDs(_ context.Context, ids []string) ([]models.Domain, error) {
+	var out []models.Domain
+	for _, id := range ids {
+		if d, ok := r.s.domains[id]; ok {
+			out = append(out, d)
+		}
+	}
+	return out, nil
+}
+
 type shShares struct {
 	repository.MailboxShareRepository
 	s *shStore

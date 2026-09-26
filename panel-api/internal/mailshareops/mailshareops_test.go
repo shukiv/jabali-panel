@@ -84,6 +84,16 @@ func (r domRepo) FindByID(_ context.Context, id string) (*models.Domain, error) 
 	return &d, nil
 }
 
+func (r domRepo) FindByIDs(_ context.Context, ids []string) ([]models.Domain, error) {
+	var out []models.Domain
+	for _, id := range ids {
+		if d, ok := r.domains[id]; ok {
+			out = append(out, d)
+		}
+	}
+	return out, nil
+}
+
 type shareRepo struct {
 	repository.MailboxShareRepository
 	*store
@@ -305,5 +315,22 @@ func TestDelete_AnotherOwnersShareIsNotFound(t *testing.T) {
 	}
 	if len(ag.pushes) != 0 {
 		t.Error("a refused delete must not push anything")
+	}
+}
+
+// Older panels saved shares to another account's mailbox (the API only
+// checked that the target existed). None was ever applied; the first apply
+// must not make one live.
+func TestApply_LeavesOutAnOlderCrossAccountRow(t *testing.T) {
+	s := newStore()
+	s.shares["s1"] = models.MailboxShare{ID: "s1", OwnerMailboxID: "alice", SharedWithMailboxID: "bob", Rights: read}
+	s.shares["s2"] = models.MailboxShare{ID: "s2", OwnerMailboxID: "alice", SharedWithMailboxID: "mallory", Rights: read}
+	ag := &fakeAgent{}
+	if err := Apply(context.Background(), s.deps(ag), "alice"); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	p := ag.last(t)
+	if _, leaked := p.Shares["mallory@two.test"]; leaked || len(p.Shares) != 1 {
+		t.Errorf("pushed shares = %+v, want only bob", p.Shares)
 	}
 }
