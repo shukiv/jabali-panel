@@ -121,13 +121,14 @@ func (r *panelCertRepo) EnsureDefault(ctx context.Context, hostname string) (*mo
 	// separate, deliberate action (JAB-390), not a side effect of a rename.
 	//
 	// JAB-390 note: this seed is the authoritative first write of the mail
-	// identity. When the safe-switchover slice lands (setter +
-	// convergence + routability preflight), this derivation moves to
-	// models.EffectiveMailHostname so a stored mail_hostname override is
-	// honoured at first seed. It is deliberately left on PanelMailHostname
-	// here: the override has no writer yet, so routing it through the
-	// resolver would be a byte-identical no-op with no reachable behaviour
-	// to falsify, and the switchover slice owns this identity-write path.
+	// identity. server_settings.mail_hostname is the APPLIED mail hostname,
+	// written only by the switchover pass, which owns moving this row to a
+	// new name. ensureOne only creates a missing row, and the row exists
+	// before any switchover can apply a name, so the derived name is the
+	// right seed today. A reseed after a manual row delete would take the
+	// derived name even with a custom name applied; the switchover slice
+	// must route this seed through models.EffectiveMailHostname (with a
+	// non-sqlmock seam to prove it) when it lands.
 	if _, err := r.ensureOne(ctx, models.PanelCertKindMail, models.PanelMailHostname(hostname), false); err != nil {
 		return nil, err
 	}

@@ -137,3 +137,34 @@ Reverting M6.4 is additive-undoable:
 4. Revert panel-api + panel-ui changes
 
 No data loss risk. Mailboxes attached to the panel-primary domain survive the column drop (their `domain_id` still references a valid row, just without the marker).
+
+## Amendment — configurable shared mail hostname (JAB-390, 2026-09-26)
+
+This ADR fixed the shared mail service hostname at `mail.<panel-hostname>`. JAB-390 lets an administrator run it on another name (for example `mail.example.com` or `smtp.example.net`) while the panel stays on its own hostname. The mailbox namespace does not change: the panel-primary domain stays the panel hostname, and only the name clients connect to moves.
+
+**Compatibility default.** With no custom name applied, the effective mail hostname is still `mail.<panel-hostname>`. Upgraded and fresh installs behave exactly as before with no operator action. Changing the panel hostname still moves the derived default, and never overwrites a custom name.
+
+**One resolver.** Every consumer of the shared mail identity resolves the name through `models.EffectiveMailHostname(server_settings.mail_hostname, …)` instead of deriving `mail.` locally. A stored value that fails `ValidateMailHostname` is ignored, so the derived name is used. Per-domain `mail.<tenant-domain>` endpoints (ADR-0117) are out of scope and unchanged.
+
+**Two values: applied and desired.**
+
+- `server_settings.mail_hostname` (migration 000301) is the **applied** name, the one every consumer runs on. Only the reconciler's switchover pass writes it.
+- The administrator's **desired** name and the switchover status (pending, failed, last error) live in a separate singleton table. They are not stored as more `server_settings` columns, because that table is at the InnoDB row-size ceiling (GH #1766 left migration 301 dirty).
+
+**Switchover lifecycle.** The switchover pass promotes desired to applied only after all three of these hold:
+
+1. the new name resolves to this server
+2. the panel mail certificate for it is issued (ADR-0105 routability preflight and retry)
+3. every dependent configuration has applied: Stalwart identity and TLS, Bulwark and webmail base URL, nginx `/webmail` redirects, sendmail relay credentials, and the panel-primary MX
+
+On any failure the old applied name keeps serving, and the status records what to fix and retry. Clearing the custom name converges back to the derived default through the same pass. No admin write can point consumers at a host that is only partly provisioned.
+
+**Status as of this amendment.**
+
+- Shipped:
+  - the resolver and validator (#1754)
+  - the sendmail relay credential consumer
+  - the Settings → Email webmail URL and `mail_hostname {effective, applied}` in `GET /admin/settings/email`
+  - the Panel SSL display fallback
+- Still pending: the desired-state table, the switchover pass, the remaining dependents (the agent self-signed SAN, Bulwark `JMAP_SERVER_URL`, the install.sh webmail redirects, the Stalwart identity, the panel-primary MX), and the setter (API, CLI and UI, with audit).
+- Order: the setter ships only together with or after the switchover pass, so an administrator is never left with a desired name that nothing acts on.
