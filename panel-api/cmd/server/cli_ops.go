@@ -125,7 +125,7 @@ func deleteUserDirect(ctx context.Context, userID string, purgeHome bool) error 
 		}
 		var ote *userops.OSTeardownError
 		if errors.As(err, &ote) {
-			return fmt.Errorf("user row KEPT: %v — run `jabali user delete %s` again once the agent is healthy", ote, userID)
+			return fmt.Errorf("user row KEPT: %v — fix that on the host, then run `jabali user delete %s` again", ote, userID)
 		}
 		return err
 	}
