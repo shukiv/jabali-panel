@@ -314,15 +314,19 @@ func TestRemoveFile(t *testing.T) {
 	tmpdir := t.TempDir()
 	testFile := filepath.Join(tmpdir, "test.txt")
 
-	// File doesn't exist
-	assert.False(t, removeFile(testFile))
+	// File doesn't exist: not removed, not an error
+	removed, err := removeFile(testFile)
+	assert.False(t, removed)
+	assert.NoError(t, err)
 
 	// Create and remove
 	require.NoError(t, os.WriteFile(testFile, []byte("test"), 0644))
-	assert.True(t, removeFile(testFile))
+	removed, err = removeFile(testFile)
+	assert.True(t, removed)
+	assert.NoError(t, err)
 
 	// Verify it's gone
-	_, err := os.Stat(testFile)
+	_, err = os.Stat(testFile)
 	assert.True(t, os.IsNotExist(err))
 }
 
@@ -338,4 +342,38 @@ func TestRemoveEmptyDir(t *testing.T) {
 
 	_, err := os.Stat(testDir)
 	assert.True(t, os.IsNotExist(err))
+}
+
+// A unit file that exists but cannot be removed is reported, not hidden. The
+// handler used to discard every os.Remove error except ENOENT, so a file it
+// could not remove came back as removed=false, already_absent=true: success,
+// with the unit left on the host. The teardown still goes on (a stale unit
+// file is better than a login account left behind by an aborted user.delete),
+// but the response and the log say what stayed.
+func TestUserSliceRemove_ReportsAUnitFileItCannotRemove(t *testing.T) {
+	tmpdir := t.TempDir()
+	oldRunCmd, oldSystemdRoot := runCmd, systemdRoot
+	defer func() {
+		testMutex.Lock()
+		runCmd, systemdRoot = oldRunCmd, oldSystemdRoot
+		testMutex.Unlock()
+	}()
+	testMutex.Lock()
+	runCmd = func(context.Context, string, ...string) ([]byte, []byte, error) { return nil, nil, nil }
+	systemdRoot = func() string { return tmpdir }
+	testMutex.Unlock()
+
+	// os.Remove fails on a non-empty directory whatever the caller's uid, so
+	// this stands in for an immutable or read-only unit file.
+	stuck := filepath.Join(tmpdir, "jabali-user-alice.slice")
+	require.NoError(t, os.MkdirAll(stuck, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(stuck, "keep"), []byte("x"), 0o644))
+
+	paramsJSON, _ := json.Marshal(userSliceRemoveParams{Username: "alice"})
+	resp, err := userSliceRemoveHandler(context.Background(), paramsJSON)
+	require.NoError(t, err, "a leftover unit file must not abort the caller's teardown")
+
+	result := resp.(*userSliceRemoveResponse)
+	assert.False(t, result.AlreadyAbsent, "a file that is still there is not already absent")
+	assert.Contains(t, result.Failed, stuck, "the unit file that stayed must be reported")
 }

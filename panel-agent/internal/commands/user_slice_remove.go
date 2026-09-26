@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -22,6 +23,11 @@ type userSliceRemoveResponse struct {
 	Username      string `json:"username"`
 	Removed       bool   `json:"removed"`
 	AlreadyAbsent bool   `json:"already_absent"`
+	// Failed maps each unit file that exists but could not be removed to the
+	// error. The handler still succeeds so the caller's teardown goes on (a
+	// stale unit file is better than a login account left behind by an
+	// aborted user.delete), but the file is not reported as removed or absent.
+	Failed map[string]string `json:"failed,omitempty"`
 }
 
 func userSliceRemoveHandler(ctx context.Context, params json.RawMessage) (any, error) {
@@ -83,8 +89,19 @@ func userSliceRemoveHandler(ctx context.Context, params json.RawMessage) (any, e
 	fpmDropinDir := filepath.Join(root, fmt.Sprintf("jabali-fpm@%s.service.d", p.Username))
 	fpmDropinPath := filepath.Join(fpmDropinDir, "slice.conf")
 
-	sliceRemoved := removeFile(sliceUnitPath)
-	fpmDropinRemoved := removeFile(fpmDropinPath)
+	failed := map[string]string{}
+	remove := func(path string) bool {
+		removed, err := removeFile(path)
+		if err != nil {
+			failed[path] = err.Error()
+			slog.WarnContext(ctx, "user.slice.remove: unit file could not be removed",
+				"username", p.Username, "path", path, "err", err)
+		}
+		return removed
+	}
+
+	sliceRemoved := remove(sliceUnitPath)
+	fpmDropinRemoved := remove(fpmDropinPath)
 	if fpmDropinRemoved {
 		removeEmptyDir(fpmDropinDir)
 	}
@@ -94,7 +111,7 @@ func userSliceRemoveHandler(ctx context.Context, params json.RawMessage) (any, e
 	if uid > 0 {
 		loginDropinDir := filepath.Join(root, fmt.Sprintf("user@%d.service.d", uid))
 		loginDropinPath := filepath.Join(loginDropinDir, "jabali.conf")
-		loginDropinRemoved = removeFile(loginDropinPath)
+		loginDropinRemoved = remove(loginDropinPath)
 		if loginDropinRemoved {
 			removeEmptyDir(loginDropinDir)
 		}
@@ -106,15 +123,20 @@ func userSliceRemoveHandler(ctx context.Context, params json.RawMessage) (any, e
 	testMutex.Unlock()
 	_, _, _ = runCmdReload(ctx, "systemctl", "daemon-reload")
 
-	// Determine if anything was removed
+	// Determine if anything was removed. Nothing was absent when a file is
+	// still there because its removal failed.
 	removed := sliceRemoved || fpmDropinRemoved || loginDropinRemoved
-	alreadyAbsent := !sliceRemoved && !fpmDropinRemoved && !loginDropinRemoved
+	alreadyAbsent := !removed && len(failed) == 0
 
-	return &userSliceRemoveResponse{
+	resp := &userSliceRemoveResponse{
 		Username:      p.Username,
 		Removed:       removed,
 		AlreadyAbsent: alreadyAbsent,
-	}, nil
+	}
+	if len(failed) > 0 {
+		resp.Failed = failed
+	}
+	return resp, nil
 }
 
 // killTenantFtpSessionLeaf kills every process in ONE tenant's ftp-sessions leaf
@@ -138,17 +160,17 @@ func killTenantFtpSessionLeaf(ctx context.Context, runCmdFn func(context.Context
 }
 
 // removeFile attempts to remove a file, returning true if it existed and was removed.
-func removeFile(path string) bool {
+// removeFile removes path. A file that does not exist is not an error; any
+// other failure is returned so the caller can report the file that stayed.
+func removeFile(path string) (bool, error) {
 	err := os.Remove(path)
 	if err == nil {
-		return true
+		return true, nil
 	}
 	if os.IsNotExist(err) {
-		return false
+		return false, nil
 	}
-	// If there was an error other than ENOENT, we still return false
-	// and let the caller handle the state.
-	return false
+	return false, err
 }
 
 // removeEmptyDir attempts to remove a directory if it's empty.
