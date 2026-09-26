@@ -33,5 +33,10 @@
 // no callers) and shipped a stale payload shape, so it was removed rather than
 // left as a resurrection hazard.
 //
+// Mailbox shares likewise: the former mailboxSharePhase was never registered,
+// so nothing ever pushed a share to Stalwart. Shares are applied by
+// mailshareops (API/CLI create and delete) and by the reconciler's
+// reconcileMailboxShares sweep; the phase was removed for the same reason.
+//
 // ADR-0051 documents the jabali-as-truth pattern and Stalwart integration for all six features.
 package phases

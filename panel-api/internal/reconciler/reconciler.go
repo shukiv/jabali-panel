@@ -170,6 +170,13 @@ type Reconciler struct {
 	mailGroups    repository.MailGroupRepository
 	mailGroupMu   sync.Mutex
 	mailGroupDone map[string]mailGroupDoneEntry
+	// mailboxShares backs the mailbox-share sweep (mailbox_share_reconcile.go):
+	// every owner with share rows gets its list applied to Stalwart.
+	// mailboxShareRetryAt backs off an owner whose last apply failed.
+	// nil = pass disabled.
+	mailboxShares       repository.MailboxShareRepository
+	mailboxShareMu      sync.Mutex
+	mailboxShareRetryAt map[string]time.Time
 	// wordPressInstalls holds reference to the WordPress installs repository
 	wordPressInstalls repository.WordPressInstallRepository
 	// sshKeys holds reference to the SSH keys repository
@@ -982,6 +989,10 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 	// Group-account projection; heals failed applies). Hash-gated no-op in
 	// steady state.
 	r.reconcileMailGroups(ctx)
+	// Mailbox shares → the owner Inbox's Stalwart shareWith. Doubles as the
+	// fleet backfill: shares saved before the panel applied them were never
+	// pushed. Ledger-gated no-op in steady state.
+	r.reconcileMailboxShares(ctx)
 
 	// M34: per-user PHP-FPM egress firewall. Cheap noop when the repo
 	// isn't wired (test fixtures) or when there are zero policies.

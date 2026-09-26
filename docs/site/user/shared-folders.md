@@ -1,49 +1,70 @@
 # Shared Folders
 
-`/jabali-panel/mail/shared-folders`. IMAP shared folders for collaborative mailboxes.
+`/jabali-panel/mail-domains/<domain>/shared` — the **Shared Folders** tab of a mail domain. Give another mailbox of your account access to a mailbox's Inbox.
 
-## Use cases
+## What is shared
 
-- A team `support@` mailbox where multiple agents read and reply.
-- A read-only archive folder shared across an organisation.
-- A staging folder where the operations team triages mail before assignment.
+- Only the owner mailbox's **Inbox**. Sent, Drafts and other folders stay private.
+- The target mailbox signs in with its own password. The owner's password is never shared.
+- Both mailboxes must belong to your account. The panel refuses a target mailbox of another account.
 
-## Creating a shared folder
+A typical use: a team address such as `support@` whose Inbox several staff mailboxes can read.
 
-Click **Create shared folder**, supply:
+## Sharing a mailbox
 
-- **Folder name** — appears under the IMAP `Shared/` namespace in clients that support it.
-- **Source mailbox** — the mailbox whose folder is being shared. Most often a dedicated team mailbox.
-- **Source folder** — `INBOX`, or any subfolder.
+Click **Share folder** and fill in:
 
-The agent updates the Stalwart ACL on the source folder.
+- **Source mailbox (owner)** — the mailbox whose Inbox is shared.
+- **Target mailbox (grantee)** — the mailbox that gets access. It cannot be the owner itself.
+- **Rights** — at least one (see below).
 
-## Granting access
+Click **Share**. The panel saves the share and applies it on the mail server. The target sees the folder the next time its mail client refreshes the folder list.
 
-Per-shared-folder, add an ACL entry per recipient mailbox:
+Each owner can share with a target once. To change the rights, remove the share and add it again.
 
-- **Lookup** — folder is visible.
-- **Read** — read messages.
-- **Reply** — reply (sending from the source mailbox's identity if the client supports it).
-- **Write** — mark read/unread, flag, move messages within the folder.
-- **Delete** — delete messages.
-- **Administer** — change ACLs (rarely granted; typically only the source mailbox owner).
+If the mail server does not accept the share at that moment, the share is still saved and the panel applies it automatically on a later pass.
 
-Default for a freshly-added recipient: Lookup + Read.
+## Rights
 
-## Client support
+| Right | Mail server right | What the target can do |
+|---|---|---|
+| Read | `mayReadItems` | See the folder and read its messages. |
+| Add | `mayAddItems` | Put messages into the folder. |
+| Remove | `mayRemoveItems` | Remove messages from the folder. |
+| Create folder | `mayCreateChild` | Create subfolders under it. |
+| Rename | `mayRename` | Rename the folder. |
+| Delete | `mayDelete` | Delete the folder. |
+| Admin | `mayShare` | Change who the folder is shared with. |
+| Submit | `maySubmit` | The JMAP `maySubmit` right on the folder. |
 
-IMAP shared folders work in clients that implement RFC 4314 ACLs and the `Shared/` namespace:
+**Read** alone is read-only: the target can open and read messages, but cannot add messages, and cannot mark messages read, unread or flagged.
 
-- Thunderbird: Tools → Account Settings → Server Settings → Advanced → "Show only subscribed folders" off → "Subscribe" the shared folder.
-- Apple Mail: Mailbox → Subscribe and pick the shared folder.
-- Outlook (desktop): supports via the IMAP namespace; older Outlook versions are inconsistent.
-- Bulwark webmail: shared folders appear over JMAP once you're subscribed to them.
+The panel's share list is what the mail server keeps. Sharing changes made from a mail client (with **Admin**) are replaced the next time the panel applies the owner's list.
 
-## What is and is not shared
+## In a mail client
 
-A shared folder shares the folder's messages, not the mailbox login. Recipients use their own credentials and see the shared folder under `Shared/<owner>/<folder>`. Owner's drafts, sent items, and other folders are not shared unless explicitly added.
+Over IMAP, a share appears in the target's folder list under the `Shared Folders` namespace, named after the owner:
 
-## Revocation
+```
+Shared Folders/support@example.com/INBOX
+```
 
-Remove an ACL entry to revoke access. The recipient's client may need to unsubscribe and resubscribe to clear the cached folder listing.
+If a client shows only subscribed folders, subscribe to that folder in the client's folder settings.
+
+## Removing a share
+
+Click **Remove** on the row and confirm. The panel revokes the access on the mail server first, and removes the row only after the mail server accepted the change. The folder then leaves the target's folder list; a client can show it until it refreshes its folder list.
+
+If the mail server does not answer, nothing is removed: the row stays, the access stays, and the panel shows `share_apply_failed`. Try again later.
+
+## Command line
+
+Administrators can manage shares with the `jabali` CLI on the server:
+
+```
+jabali mailbox shares list   --owner support@example.com
+jabali mailbox shares add    --owner support@example.com --shared-with anna@example.com --rights ro
+jabali mailbox shares remove --id <share id from list>
+```
+
+`--rights` takes a preset: `ro` (Read), `rw` (Read, Add, Remove, the default) or `admin` (every right). `add` and `remove` apply the change on the mail server and print whether it was applied.

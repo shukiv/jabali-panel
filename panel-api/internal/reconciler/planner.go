@@ -93,6 +93,9 @@ var (
 	// usernames to keep, so a deleted user re-runs it at once; orphans that
 	// appear with no user change are swept within the interval.
 	PhasePHPPoolGC = Phase{Name: "php.pool.gc", AuditInterval: domainReDispatchInterval}
+	// PhaseMailboxShares is one owner mailbox's share list (its Inbox
+	// shareWith on Stalwart). Keyed by the owner mailbox ID.
+	PhaseMailboxShares = Phase{Name: "mailbox.shares", AuditInterval: 15 * time.Minute}
 )
 
 // runDependency is one ordering a run keeps for a domain: the Agent call
