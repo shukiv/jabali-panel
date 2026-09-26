@@ -14,8 +14,17 @@
 //	    "primary_domain_name": "jabali-panel.local",
 //	    "webmail_url":         "https://mail.jabali-panel.local/",
 //	    "dkim_published":      true,                        // DkimPublicKey != nil && != ""
-//	    "email_enabled_at":    "2026-04-22T18:00:00Z"       // RFC3339, or null
+//	    "email_enabled_at":    "2026-04-22T18:00:00Z",      // RFC3339, or null
+//	    "mail_hostname": {
+//	      "effective": "mail.jabali-panel.local",           // the name mail is served on
+//	      "applied":   null                                 // custom name in effect, or null = derived default
+//	    }
 //	  }
+//
+//	webmail_url is built from mail_hostname.effective. The applied value is
+//	server_settings.mail_hostname, written only by the reconciler once a
+//	switchover to that name has converged (JAB-390); desired/pending state
+//	is not part of this body yet.
 //
 //	202 Accepted — row absent (install still converging, or pathological
 //	operator SQL delete). Minimal shape, no null-filled fields:
@@ -39,13 +48,15 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/middleware"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
-// SettingsEmailHandlerConfig wires the handler to its repository + logger.
+// SettingsEmailHandlerConfig wires the handler to its repositories + logger.
 type SettingsEmailHandlerConfig struct {
-	Domains repository.DomainRepository
-	Log     *slog.Logger
+	Domains        repository.DomainRepository
+	ServerSettings repository.ServerSettingsRepository
+	Log            *slog.Logger
 }
 
 // RegisterSettingsEmailRoutes mounts GET /admin/settings/email under v1.
@@ -63,10 +74,16 @@ type settingsEmailHandler struct {
 
 // settingsEmailOK is the 200 body shape.
 type settingsEmailOK struct {
-	PrimaryDomainName string     `json:"primary_domain_name"`
-	WebmailURL        string     `json:"webmail_url"`
-	DKIMPublished     bool       `json:"dkim_published"`
-	EmailEnabledAt    *time.Time `json:"email_enabled_at"`
+	PrimaryDomainName string                    `json:"primary_domain_name"`
+	WebmailURL        string                    `json:"webmail_url"`
+	DKIMPublished     bool                      `json:"dkim_published"`
+	EmailEnabledAt    *time.Time                `json:"email_enabled_at"`
+	MailHostname      settingsEmailMailHostname `json:"mail_hostname"`
+}
+
+type settingsEmailMailHostname struct {
+	Effective string  `json:"effective"`
+	Applied   *string `json:"applied"`
 }
 
 // settingsEmailInitializing is the 202 body shape. Deliberately separate
@@ -93,11 +110,32 @@ func (h *settingsEmailHandler) get(c *gin.Context) {
 		return
 	}
 
+	// JAB-390: server_settings.mail_hostname is the APPLIED mail hostname.
+	// No settings row means none is applied. Any other read failure is a
+	// 500, not a guess: the derived default could name a host the panel no
+	// longer serves mail on.
+	var stored *string
+	srv, err := h.cfg.ServerSettings.Get(ctx)
+	switch {
+	case err == nil:
+		stored = srv.MailHostname
+	case errors.Is(err, repository.ErrNotFound):
+	default:
+		h.cfg.Log.Error("read server settings", "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	mailHost := settingsEmailMailHostname{Effective: models.EffectiveMailHostname(stored, d.Name)}
+	if applied, ok := models.AppliedMailHostname(stored); ok {
+		mailHost.Applied = &applied
+	}
+
 	dkimPublished := d.DkimPublicKey != nil && *d.DkimPublicKey != ""
 	c.JSON(http.StatusOK, settingsEmailOK{
 		PrimaryDomainName: d.Name,
-		WebmailURL:        "https://mail." + d.Name + "/",
+		WebmailURL:        "https://" + mailHost.Effective + "/",
 		DKIMPublished:     dkimPublished,
 		EmailEnabledAt:    d.EmailEnabledAt,
+		MailHostname:      mailHost,
 	})
 }

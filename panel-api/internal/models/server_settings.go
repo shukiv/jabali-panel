@@ -16,17 +16,24 @@ type ServerSettings struct {
 	// (preview.example.com) or a magic-DNS base (203-0-113-7.sslip.io)
 	// when the hostname does not resolve publicly.
 	PreviewBase string `gorm:"type:varchar(253);not null;default:''" json:"preview_base"`
-	// MailHostname (JAB-390, migration 000301) optionally pins the panel
-	// mail hostname independent of the panel access hostname. NULL/empty =
-	// derive mail.<hostname> — resolve every read through
-	// models.EffectiveMailHostname, never off this field directly.
+	// MailHostname (JAB-390, migration 000301) is the APPLIED shared mail
+	// hostname: the name the panel mail identity (mail cert, Stalwart,
+	// webmail, relay credentials, panel-primary MX) actually runs on.
+	// NULL/empty = the derived mail.<hostname>. Resolve every read through
+	// models.EffectiveMailHostname (or AppliedMailHostname to tell a custom
+	// name from the default), never off this field directly.
 	//
-	// No setter yet: the admin settings PATCH allowlist
-	// (updateServerSettingsRequest) does not carry this field, so nothing
-	// writes it and it stays NULL until the safe-switchover slice adds the
-	// setter + convergence. json:"-" keeps it out of the settings GET body
-	// until that slice deliberately exposes it. TEXT column (off-row) to
-	// stay under the server_settings row-size ceiling.
+	// Only the reconciler's switchover pass may write it, and only after
+	// the new name is routable, has usable TLS and every dependent config
+	// applied. Until then the old applied name keeps working. The admin's
+	// DESIRED name and the switchover status live apart from this row (a
+	// separate singleton, not more server_settings columns — row-size
+	// ceiling, GH #1766), so no admin write can repoint consumers to a
+	// half-provisioned host. Neither the settings PATCH allowlist
+	// (updateServerSettingsRequest) nor the CLI settableKeys carries this
+	// field. json:"-" keeps it out of the generic settings body;
+	// GET /admin/settings/email reports it. TEXT column (off-row) to stay
+	// under the server_settings row-size ceiling.
 	MailHostname *string `gorm:"column:mail_hostname;type:text" json:"-"`
 	PublicIPv4   string  `gorm:"type:varchar(45);not null;default:''"  json:"public_ipv4"`
 	PublicIPv6   string  `gorm:"type:varchar(45);not null;default:''"  json:"public_ipv6"`

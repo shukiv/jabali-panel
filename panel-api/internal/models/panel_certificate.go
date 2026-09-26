@@ -113,24 +113,39 @@ func ValidateMailHostname(s string) (string, error) {
 }
 
 // EffectiveMailHostname resolves the panel mail hostname that every
-// consumer of the panel mail identity must use (JAB-390): the operator
-// override when it is set AND passes ValidateMailHostname, otherwise the
-// derived mail.<panelHostname> (PanelMailHostname). Routing all consumers
-// through this one function is what lets a future, settable override
-// propagate from a single place.
+// consumer of the panel mail identity must use (JAB-390): the APPLIED
+// mail hostname (server_settings.mail_hostname) when it is set AND passes
+// ValidateMailHostname, otherwise the derived mail.<panelHostname>
+// (PanelMailHostname). Routing all consumers through this one function is
+// what lets a switchover propagate from a single place.
 //
-// A stored override that fails validation is ignored in favour of the
+// A stored value that fails validation is ignored in favour of the
 // derived name — a fail-safe read guard so a corrupt or hand-edited row
 // can never push a bogus host into a certificate SAN or a relay
 // credential. On success it returns the normalized (trimmed, lowercased)
-// override.
+// value.
 func EffectiveMailHostname(override *string, panelHostname string) string {
-	if override != nil {
-		if norm, err := ValidateMailHostname(*override); err == nil {
-			return norm
-		}
+	if applied, ok := AppliedMailHostname(override); ok {
+		return applied
 	}
 	return PanelMailHostname(panelHostname)
+}
+
+// AppliedMailHostname reports the custom mail hostname in effect: the
+// normalized stored value and true when it passes ValidateMailHostname.
+// NULL, empty or invalid returns ("", false), meaning the derived
+// mail.<panel-hostname> is in effect. Use it where a caller must tell a
+// custom hostname apart from the derived default (the settings view);
+// consumers that only need the name use EffectiveMailHostname.
+func AppliedMailHostname(stored *string) (string, bool) {
+	if stored == nil {
+		return "", false
+	}
+	norm, err := ValidateMailHostname(*stored)
+	if err != nil {
+		return "", false
+	}
+	return norm, true
 }
 
 // PanelCertificate is the singleton (id=1) row tracking the panel

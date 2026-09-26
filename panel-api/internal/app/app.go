@@ -1106,10 +1106,12 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			})
 		}
 		// M6.4 Settings → Email: read-only panel-primary domain card.
-		if deps.Domains != nil {
+		// ServerSettings carries the applied mail hostname (JAB-390).
+		if deps.Domains != nil && deps.ServerSettings != nil {
 			api.RegisterSettingsEmailRoutes(v1, api.SettingsEmailHandlerConfig{
-				Domains: deps.Domains,
-				Log:     deps.Log,
+				Domains:        deps.Domains,
+				ServerSettings: deps.ServerSettings,
+				Log:            deps.Log,
 			})
 		}
 		if deps.ManagedIPs != nil {

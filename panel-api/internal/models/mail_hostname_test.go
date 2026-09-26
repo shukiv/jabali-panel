@@ -96,3 +96,31 @@ func TestEffectiveMailHostname(t *testing.T) {
 		})
 	}
 }
+
+// TestAppliedMailHostname pins which stored values count as an applied mail
+// hostname: only a value that passes validation, returned normalized. Anything
+// else means the derived default is in effect (JAB-390).
+func TestAppliedMailHostname(t *testing.T) {
+	sp := func(s string) *string { return &s }
+	cases := []struct {
+		name    string
+		stored  *string
+		want    string
+		applied bool
+	}{
+		{"NULL is not applied", nil, "", false},
+		{"empty is not applied", sp(""), "", false},
+		{"invalid is not applied", sp("https://evil/x"), "", false},
+		{"IP literal is not applied", sp("192.0.2.1"), "", false},
+		{"valid is applied", sp("mx.example.net"), "mx.example.net", true},
+		{"valid is normalized", sp("  MX.Example.NET "), "mx.example.net", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := AppliedMailHostname(tc.stored)
+			if got != tc.want || ok != tc.applied {
+				t.Errorf("AppliedMailHostname(%v) = (%q, %v), want (%q, %v)", tc.stored, got, ok, tc.want, tc.applied)
+			}
+		})
+	}
+}

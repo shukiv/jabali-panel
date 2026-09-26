@@ -527,10 +527,11 @@ func panelCertSyntheticRows(ctx context.Context, cfg SSLHandlerConfig) []reposit
 			// JAB-389 the mail row stays pinned to the hostname it was seeded
 			// with and no longer follows a panel access-hostname change, so
 			// the stored pc.Hostname — not a fresh derivation from the current
-			// panel primary — is the truthful label.
-			domainName = models.PanelMailHostname(primary.Name)
-			if pc.Hostname != "" {
-				domainName = pc.Hostname
+			// panel primary — is the truthful label. Without one, fall back
+			// to the applied mail hostname (JAB-390).
+			domainName = pc.Hostname
+			if domainName == "" {
+				domainName = models.EffectiveMailHostname(appliedMailHostname(ctx, cfg.ServerSettings), primary.Name)
 			}
 		}
 		out = append(out, repository.SSLCertificateWithDomain{
@@ -547,6 +548,20 @@ func panelCertSyntheticRows(ctx context.Context, cfg SSLHandlerConfig) []reposit
 		})
 	}
 	return out
+}
+
+// appliedMailHostname returns the stored applied mail hostname, or nil when
+// settings are not wired or cannot be read. Best-effort, for the display
+// fallback only: nil resolves to the derived mail.<primary>.
+func appliedMailHostname(ctx context.Context, settings repository.ServerSettingsRepository) *string {
+	if settings == nil {
+		return nil
+	}
+	srv, err := settings.Get(ctx)
+	if err != nil || srv == nil {
+		return nil
+	}
+	return srv.MailHostname
 }
 
 func nilIfEmpty(s string) *string {

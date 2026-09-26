@@ -52,3 +52,26 @@ the existing row to `kind=hostname`).
 
 Supersedes the panel-cert portion of ADR-0066; ADR-0066 otherwise
 stands.
+
+## Amendment — mail row follows the applied mail hostname (JAB-390, 2026-09-26)
+
+The mail row is no longer tied to `mail.<hostname>`. Its name is the
+**applied** shared mail hostname,
+`models.EffectiveMailHostname(server_settings.mail_hostname, hostname)`.
+With nothing applied, that is still `mail.<hostname>` (see the ADR-0048
+amendment).
+
+- **Seeding.** `EnsureDefault` seeds the mail row with the derived name.
+  This is correct because no custom name can be applied before the row
+  exists. JAB-389 keeps the row pinned afterwards: a panel-hostname
+  change does not rename it.
+- **Switchover.** Moving the row to a new mail hostname belongs to the
+  JAB-390 switchover pass, not to a settings write. The pass runs this
+  ADR's routability preflight and issuance against the **desired** name
+  while the current mail cert keeps serving. It repoints the row, and
+  writes the applied name, only after the new cert is issued and every
+  dependent configuration has applied. A DNS or ACME failure leaves the
+  row and the applied name unchanged and records the error for retry.
+- **Display.** Panel SSL labels the mail row with its stored hostname.
+  When that is empty, it falls back to the applied mail hostname rather
+  than a fresh `mail.<primary>` derivation.
