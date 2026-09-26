@@ -185,7 +185,7 @@ func newSecretsRotateCmd() *cobra.Command {
 		Use:   "rotate",
 		Short: "Rotate an exposed secret (see docs/secret-rotation.md)",
 	}
-	cmd.AddCommand(newRotateDBAppUserCmd(), newRotateJWTCmd(), newRotateRedisPanelTokenCmd(), newRotatePdnsCmd(), newRotateAllCmd())
+	cmd.AddCommand(newRotateDBAppUserCmd(), newRotateJWTCmd(), newRotateRedisPanelTokenCmd(), newRotatePdnsCmd(), newRotateKratosCmd(), newRotateAllCmd())
 	return cmd
 }
 
