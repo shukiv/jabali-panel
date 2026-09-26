@@ -94,6 +94,12 @@ func (r *Reconciler) runMailHostnameSwitchover(ctx context.Context, s *models.Se
 		r.failMailHostnameSwitchover(ctx, desired, err.Error(), mailHostSwitchoverNotReadyRetry)
 		return "", false
 	}
+	// A tenant can create a domain (or alias) after the request was made;
+	// never issue for a name a tenant answers or whose zone it controls.
+	if err := r.checkMailHostname(ctx, s, desired); err != nil {
+		r.failMailHostnameSwitchover(ctx, desired, err.Error(), mailHostSwitchoverNotReadyRetry)
+		return "", false
+	}
 	// An issue of the mail certificate may be in flight (the admin's
 	// "issue now"); wait for it, as the panel-cert pass does.
 	if mailRow.Status == models.PanelCertStatusPendingACME && time.Since(mailRow.UpdatedAt) < mailHostSwitchoverStaleAfter {
@@ -172,6 +178,14 @@ func (r *Reconciler) runMailHostnameSwitchover(ctx context.Context, s *models.Se
 		return "", false
 	}
 
+	// Re-check right before applying: issuing took minutes, and a domain
+	// created meanwhile must not end up answering the applied name. The
+	// certificate still covers mail.<hostname>, so the box keeps serving.
+	if err := r.checkMailHostname(ctx, s, desired); err != nil {
+		r.failMailHostnameSwitchover(ctx, desired, err.Error(), mailHostSwitchoverNotReadyRetry)
+		return "", false
+	}
+
 	var applied *string
 	if desired != derived {
 		applied = &desired
@@ -201,6 +215,16 @@ func mailHostSwitchoverDue(sw *models.MailHostnameSwitchover, now time.Time) boo
 		return now.Sub(sw.UpdatedAt) >= mailHostSwitchoverStaleAfter
 	}
 	return false
+}
+
+// checkMailHostname runs the setter's name check (mailhostops.CheckName)
+// against the current domains and web aliases.
+func (r *Reconciler) checkMailHostname(ctx context.Context, s *models.ServerSettings, desired string) error {
+	deps := mailhostops.NameDeps{Domains: r.domains}
+	if r.webDomainAliases != nil {
+		deps.Aliases = r.webDomainAliases
+	}
+	return mailhostops.CheckName(ctx, deps, s, desired)
 }
 
 func (r *Reconciler) failMailHostnameSwitchover(ctx context.Context, desired, msg string, retryIn time.Duration) {

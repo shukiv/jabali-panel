@@ -1,0 +1,88 @@
+package domainops
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
+)
+
+var (
+	// ErrDomainConflictsMailHostname: the name is, or is a parent zone of,
+	// the panel's custom mail hostname (JAB-390).
+	ErrDomainConflictsMailHostname = errors.New("domainops: the name conflicts with the panel's mail hostname")
+	// ErrMailHostnameLookup wraps a settings read error (the guard fails
+	// closed).
+	ErrMailHostnameLookup = errors.New("domainops: panel mail hostname lookup failed")
+)
+
+// panelPrimaryReservedPrefixes are the panel-primary domain's server names
+// that belong to vhosts other than its mail vhost. mail.<domain> is not
+// here: it is the panel's derived mail hostname.
+var panelPrimaryReservedPrefixes = []string{"www.", "autoconfig.", "autodiscover.", "mta-sts."}
+
+// MailHostnameConflict reports whether a hosted domain would answer, or
+// control the DNS of, the panel mail hostname host (JAB-390).
+//
+// Every hosted domain but the panel-primary one is tenant-owned (admins
+// cannot host domains). A tenant domain conflicts when it is host or a parent
+// zone of host: its apex and helper vhosts answer those names, and a tenant
+// who controls the zone could repoint the name or obtain a certificate for it
+// elsewhere. Delegation (allow_subdomain_delegation) does not change this: it
+// lets other tenants nest domains, not take over the panel's mail identity.
+//
+// The panel-primary domain is admin-owned. It conflicts only when host is
+// the domain itself or one of its non-mail server names; its mail vhost
+// serves the panel mail hostname by design.
+func MailHostnameConflict(domain, host string, panelPrimary bool) bool {
+	domain, host = NormalizeDomainName(domain), NormalizeDomainName(host)
+	if domain == "" || host == "" {
+		return false
+	}
+	if host == domain {
+		return true
+	}
+	if !panelPrimary {
+		return strings.HasSuffix(host, "."+domain)
+	}
+	for _, p := range panelPrimaryReservedPrefixes {
+		if host == p+domain {
+			return true
+		}
+	}
+	return false
+}
+
+// MailHostnameCollision reports whether a tenant claiming the domain name
+// (create, rename, docker app hostname) would conflict with the panel's
+// applied custom mail hostname. The derived mail.<hostname> is not checked
+// here. A nil reader means the settings are unwired; a missing settings row
+// means nothing is applied. Any other read error is returned so the caller
+// fails closed.
+//
+// A requested but not yet applied name is protected by the switchover
+// engine, which re-checks for a conflicting domain before it issues and again
+// before it applies the name.
+func MailHostnameCollision(ctx context.Context, settings MailSettingsReader, name string) (bool, error) {
+	if settings == nil {
+		return false, nil
+	}
+	s, err := settings.Get(ctx)
+	if errors.Is(err, repository.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read panel mail hostname: %w", err)
+	}
+	if s == nil {
+		return false, nil
+	}
+	applied, ok := models.AppliedMailHostname(s.MailHostname)
+	if !ok {
+		return false, nil
+	}
+	return MailHostnameConflict(name, applied, false), nil
+}

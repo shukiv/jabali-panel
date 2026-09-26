@@ -113,6 +113,7 @@ const swIP = "203.0.113.10"
 
 type swFixture struct {
 	r        *Reconciler
+	domains  *fakeDomainRepo
 	agent    *fakeAgent
 	sw       *fakeSwitchoverRepo
 	certs    *fakePanelCertRepo
@@ -143,6 +144,7 @@ func newSwitchoverFixture(t *testing.T, desired string, status string) *swFixtur
 	}
 	dr := newFakeDomainRepo()
 	dr.domains["p1"] = f.primary
+	f.domains = dr
 	ur := &fakeUserRepo{users: map[string]*models.User{"u1": {ID: "u1"}}}
 	rout := &services.PanelCertRoutability{
 		Resolver: f.dns,
@@ -348,6 +350,55 @@ func TestMailHostnameSwitchover_DueRetryAndStaleAttemptRun(t *testing.T) {
 			assert.Len(t, f.sw.completes, 1)
 		})
 	}
+}
+
+// A tenant can create a domain after the request is made. The engine never
+// issues for, or applies, a name a tenant answers or whose zone it controls.
+func TestMailHostnameSwitchover_TenantDomainFailsBeforeIssue(t *testing.T) {
+	for _, tenant := range []string{"mx.example.net", "example.net"} {
+		t.Run(tenant, func(t *testing.T) {
+			f := newSwitchoverFixture(t, "mx.example.net", models.MailHostnameSwitchoverPending)
+			f.domains.domains["t1"] = &models.Domain{ID: "t1", Name: tenant, UserID: "u2"}
+
+			f.r.reconcileMailHostnameSwitchover(context.Background())
+
+			require.Len(t, f.sw.fails, 1)
+			assert.Contains(t, f.sw.fails[0].msg, mailhostops.ErrNameClaimedByDomain.Error())
+			assert.Empty(t, f.sw.claims)
+			assert.Empty(t, f.callsTo("ssl.panel.issue"))
+		})
+	}
+}
+
+// issueHookAgent runs onIssue when ssl.panel.issue is sent, then answers as
+// the wrapped fake does.
+type issueHookAgent struct {
+	*fakeAgent
+	onIssue func()
+}
+
+func (a *issueHookAgent) Call(ctx context.Context, method string, params interface{}) (json.RawMessage, error) {
+	if method == "ssl.panel.issue" && a.onIssue != nil {
+		a.onIssue()
+	}
+	return a.fakeAgent.Call(ctx, method, params)
+}
+
+func TestMailHostnameSwitchover_TenantDomainDuringIssueIsNotApplied(t *testing.T) {
+	f := newSwitchoverFixture(t, "mx.example.net", models.MailHostnameSwitchoverPending)
+	f.r.agent = &issueHookAgent{fakeAgent: f.agent, onIssue: func() {
+		f.domains.domains["t1"] = &models.Domain{ID: "t1", Name: "example.net", UserID: "u2"}
+	}}
+
+	f.r.reconcileMailHostnameSwitchover(context.Background())
+
+	assert.Len(t, f.callsTo("ssl.panel.issue"), 1)
+	assert.Empty(t, f.sw.completes, "a name a tenant claimed while the certificate was issued is not applied")
+	require.Len(t, f.sw.fails, 1)
+	assert.Contains(t, f.sw.fails[0].msg, mailhostops.ErrNameClaimedByDomain.Error())
+	jmap := f.callsTo("webmail.jmap_url.apply")
+	require.Len(t, jmap, 1)
+	assert.Equal(t, "mail.mx.example.com", jmap[0]["mail_hostname"])
 }
 
 // The steady assert keeps Bulwark's JMAP URL on the effective name, once
