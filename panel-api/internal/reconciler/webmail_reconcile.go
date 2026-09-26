@@ -285,9 +285,7 @@ func (r *Reconciler) applyWebmailVhost(ctx context.Context, d *models.Domain) {
 			params["listen_ipv6"] = v6
 		}
 	}
-	if h := r.panelHostname(ctx); h != "" {
-		params["panel_hostname"] = h
-	}
+	addPanelMailHostnameParams(params, r.webmailSettings(ctx), d)
 	// JAB-369: gated by the webmail.vhost phase. params is exactly what the
 	// Agent receives, so any input to the vhost changes the fingerprint.
 	_, _ = r.project(ctx, PhaseWebmailVhost, d.Name, fingerprint(params), false, func() error {
@@ -325,20 +323,49 @@ func (r *Reconciler) removeWebmailVhost(ctx context.Context, domainName string) 
 	})
 }
 
-// panelHostname returns server_settings.hostname (e.g. mx.jabali-panel.com).
-// Empty when settings aren't wired (fresh install). Used to install an
-// nginx sub_filter that keeps the Bulwark SPA same-origin against the
-// per-domain mail vhost it was loaded from — see the rendered vhost
-// template for the why.
-func (r *Reconciler) panelHostname(ctx context.Context) string {
+// webmailSettings returns the server settings row, or nil when settings
+// aren't wired (fresh install) or can't be read.
+func (r *Reconciler) webmailSettings(ctx context.Context) *models.ServerSettings {
 	if r.serverSettings == nil {
-		return ""
+		return nil
 	}
 	s, err := r.settingsGet(ctx)
-	if err != nil || s == nil {
-		return ""
+	if err != nil {
+		return nil
 	}
-	return s.Hostname
+	return s
+}
+
+// addPanelMailHostnameParams sets the panel-hostname params of a
+// webmail.vhost_apply call. They install an nginx sub_filter that keeps the
+// Bulwark SPA same-origin against the per-domain mail vhost it was loaded
+// from — see the rendered vhost template for the why.
+//
+//   - panel_hostname: server_settings.hostname (e.g. mx.jabali-panel.com).
+//   - panel_mail_hostname (JAB-390): the name Bulwark's JMAP URL carries —
+//     the applied custom shared mail hostname, else mail.<hostname> — and so
+//     the name the sub_filter rewrites.
+//   - extra_server_names, panel-primary row only: an applied custom mail
+//     hostname, which that vhost must also answer (its server_name already
+//     covers mail.<hostname>).
+//
+// Nothing is set when s is nil.
+func addPanelMailHostnameParams(params map[string]any, s *models.ServerSettings, d *models.Domain) {
+	if s == nil {
+		return
+	}
+	if s.Hostname != "" {
+		params["panel_hostname"] = s.Hostname
+	}
+	if h := models.EffectiveMailHostname(s.MailHostname, s.Hostname); h != "" {
+		params["panel_mail_hostname"] = h
+	}
+	if !d.IsPanelPrimary {
+		return
+	}
+	if applied, ok := models.AppliedMailHostname(s.MailHostname); ok && applied != models.PanelMailHostname(d.Name) {
+		params["extra_server_names"] = []string{applied}
+	}
 }
 
 // webmailSSLPaths returns the cert + key paths for a domain if a usable

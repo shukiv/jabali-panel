@@ -13,13 +13,15 @@
 
 server {
   ${LISTEN_443}
-  server_name mail.${DOMAIN} autoconfig.${DOMAIN} autodiscover.${DOMAIN} mta-sts.${DOMAIN};
+  # ${EXTRA_SERVER_NAMES}: panel-primary row only — an applied custom
+  # shared mail hostname (JAB-390). Empty for every tenant row.
+  server_name mail.${DOMAIN} autoconfig.${DOMAIN} autodiscover.${DOMAIN} mta-sts.${DOMAIN} ${EXTRA_SERVER_NAMES};
 
   ssl_certificate ${SSL_CERT_PATH};
   ssl_certificate_key ${SSL_KEY_PATH};
 
   # Same-origin JMAP rewrite. Bulwark's /api/config returns
-  # jmapServerUrl=https://${PANEL_HOSTNAME} (the panel-wide setting in
+  # jmapServerUrl=https://${PANEL_MAIL_HOSTNAME} (the panel-wide setting in
   # /etc/jabali-panel/bulwark.env), and Stalwart's /.well-known/jmap
   # Session response advertises absolute URLs at the same host. The
   # SPA then issues cross-origin preflights from mail.<tenant>, which
@@ -34,7 +36,9 @@ server {
   # the body — sub_filter silently no-ops on gzipped payloads.
   sub_filter_types application/json;
   sub_filter_once off;
-  sub_filter "${PANEL_HOSTNAME}" $host;
+  # ${PANEL_MAIL_HOSTNAME}: the applied custom shared mail hostname,
+  # else mail.<panel-hostname> (JAB-390).
+  sub_filter "${PANEL_MAIL_HOSTNAME}" $host;
 
   # M25 Step 5: Bulwark moved off TCP 127.0.0.1:3000 onto a Unix socket
   # at /run/jabali-bulwark/bulwark.sock. Form D upstream — declared in
@@ -201,7 +205,7 @@ server {
 # stuck because mail.jabali.site:80 redirected to https → 404.
 server {
   ${LISTEN_80}
-  server_name mail.${DOMAIN} autoconfig.${DOMAIN} autodiscover.${DOMAIN} mta-sts.${DOMAIN};
+  server_name mail.${DOMAIN} autoconfig.${DOMAIN} autodiscover.${DOMAIN} mta-sts.${DOMAIN} ${EXTRA_SERVER_NAMES};
 
   # Serves two webroots in priority order so BOTH the regular
   # per-domain cert (-w docroot) and the M6.6 per-domain mail cert
