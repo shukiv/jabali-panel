@@ -3,6 +3,7 @@ package mailhostops
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
@@ -19,6 +20,20 @@ type fakeDomains struct {
 	byName map[string]*models.Domain
 	errFor string
 	err    error
+	subErr error
+}
+
+func (f *fakeDomains) FindStrictSubdomains(_ context.Context, name string) ([]models.Domain, error) {
+	if f.subErr != nil {
+		return nil, f.subErr
+	}
+	var out []models.Domain
+	for n, d := range f.byName {
+		if strings.HasSuffix(n, "."+name) {
+			out = append(out, *d)
+		}
+	}
+	return out, nil
 }
 
 func (f *fakeDomains) FindByName(_ context.Context, name string) (*models.Domain, error) {
@@ -32,8 +47,22 @@ func (f *fakeDomains) FindByName(_ context.Context, name string) (*models.Domain
 }
 
 type fakeAliases struct {
-	held map[string]bool
-	err  error
+	held   map[string]bool
+	err    error
+	subErr error
+}
+
+func (f *fakeAliases) FindStrictSubdomainHostnames(_ context.Context, name string) ([]string, error) {
+	if f.subErr != nil {
+		return nil, f.subErr
+	}
+	var out []string
+	for h := range f.held {
+		if strings.HasSuffix(h, "."+name) {
+			out = append(out, h)
+		}
+	}
+	return out, nil
 }
 
 func (f *fakeAliases) FindByHostname(_ context.Context, host string) (*models.WebDomainAlias, error) {
@@ -48,10 +77,11 @@ func (f *fakeAliases) FindByHostname(_ context.Context, host string) (*models.We
 
 func nameDeps() (NameDeps, *fakeDomains, *fakeAliases) {
 	doms := &fakeDomains{byName: map[string]*models.Domain{
-		"panel.example.com": {Name: "panel.example.com", IsPanelPrimary: true},
-		"tenant.net":        {Name: "tenant.net"},
+		"panel.example.com":    {Name: "panel.example.com", IsPanelPrimary: true},
+		"tenant.net":           {Name: "tenant.net"},
+		"login.mail.other.org": {Name: "login.mail.other.org"},
 	}}
-	als := &fakeAliases{held: map[string]bool{"shop.alias.org": true}}
+	als := &fakeAliases{held: map[string]bool{"shop.alias.org": true, "x.mail.alias2.org": true}}
 	return NameDeps{Domains: doms, Aliases: als}, doms, als
 }
 
@@ -70,7 +100,13 @@ func TestCheckName(t *testing.T) {
 		{"tenant.net", ErrNameClaimedByDomain},
 		{"mail.tenant.net", ErrNameClaimedByDomain},
 		{"mx.deep.tenant.net", ErrNameClaimedByDomain},
+		{"mail.other.org", ErrNameClaimedByDomain},
+		{"other.org", ErrNameClaimedByDomain},
+		{"example.com", nil},
 		{"shop.alias.org", ErrNameIsAlias},
+		{"mail.alias2.org", ErrNameHasAliasUnder},
+		{"alias.org", ErrNameHasAliasUnder},
+		{"mx.alias2.org", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.desired, func(t *testing.T) {
@@ -99,10 +135,22 @@ func TestCheckName_LookupErrorsFailClosed(t *testing.T) {
 		t.Fatalf("an ancestor lookup error must refuse, got %v", err)
 	}
 
+	deps, doms, _ = nameDeps()
+	doms.subErr = boom
+	if err := CheckName(context.Background(), deps, s, "mx.example.org"); !errors.Is(err, boom) {
+		t.Fatalf("a lookup error for names under it must refuse, got %v", err)
+	}
+
 	deps, _, als := nameDeps()
 	als.err = boom
 	if err := CheckName(context.Background(), deps, s, "mx.example.org"); !errors.Is(err, boom) {
 		t.Fatalf("an alias lookup error must refuse, got %v", err)
+	}
+
+	deps, _, als = nameDeps()
+	als.subErr = boom
+	if err := CheckName(context.Background(), deps, s, "mx.example.org"); !errors.Is(err, boom) {
+		t.Fatalf("a lookup error for aliases under it must refuse, got %v", err)
 	}
 
 	if err := CheckName(context.Background(), NameDeps{}, s, "mx.example.org"); err == nil {

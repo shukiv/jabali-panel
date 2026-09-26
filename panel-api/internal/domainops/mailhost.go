@@ -11,8 +11,8 @@ import (
 )
 
 var (
-	// ErrDomainConflictsMailHostname: the name is, or is a parent zone of,
-	// the panel's custom mail hostname (JAB-390).
+	// ErrDomainConflictsMailHostname: the name is the panel's custom mail
+	// hostname, a parent zone of it, or a name under it (JAB-390).
 	ErrDomainConflictsMailHostname = errors.New("domainops: the name conflicts with the panel's mail hostname")
 	// ErrMailHostnameLookup wraps a settings read error (the guard fails
 	// closed).
@@ -31,8 +31,13 @@ var panelPrimaryReservedPrefixes = []string{"www.", "autoconfig.", "autodiscover
 // cannot host domains). A tenant domain conflicts when it is host or a parent
 // zone of host: its apex and helper vhosts answer those names, and a tenant
 // who controls the zone could repoint the name or obtain a certificate for it
-// elsewhere. Delegation (allow_subdomain_delegation) does not change this: it
-// lets other tenants nest domains, not take over the panel's mail identity.
+// elsewhere. It also conflicts when it is a name under host: a tenant site
+// there can set cookies scoped to host, which webmail on host would accept,
+// and can pass itself off as the panel's mail service. The derived
+// mail.<hostname> gets the same protection from CrossTenantSuffixCollision,
+// because it sits under the admin-owned panel-primary domain. Delegation
+// (allow_subdomain_delegation) does not change this: it lets other tenants
+// nest domains, not take over the panel's mail identity.
 //
 // The panel-primary domain is admin-owned. It conflicts only when host is
 // the domain itself or one of its non-mail server names; its mail vhost
@@ -46,7 +51,7 @@ func MailHostnameConflict(domain, host string, panelPrimary bool) bool {
 		return true
 	}
 	if !panelPrimary {
-		return strings.HasSuffix(host, "."+domain)
+		return strings.HasSuffix(host, "."+domain) || strings.HasSuffix(domain, "."+host)
 	}
 	for _, p := range panelPrimaryReservedPrefixes {
 		if host == p+domain {

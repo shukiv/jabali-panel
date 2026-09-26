@@ -146,6 +146,10 @@ func (cliDomains) FindByName(_ context.Context, name string) (*models.Domain, er
 	return nil, repository.ErrNotFound
 }
 
+func (cliDomains) FindStrictSubdomains(context.Context, string) ([]models.Domain, error) {
+	return nil, nil
+}
+
 func (cliDomains) FindPanelPrimary(context.Context) (*models.Domain, error) { return cliPrimary(), nil }
 
 func cliPrimary() *models.Domain {

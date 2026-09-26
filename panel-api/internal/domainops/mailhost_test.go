@@ -22,15 +22,20 @@ func TestMailHostnameConflict(t *testing.T) {
 		primary      bool
 		want         bool
 	}{
-		// Tenant domains: the name itself, anything under it.
+		// Tenant domains: the name itself, a parent zone of it, or a name
+		// under it.
 		{"mx.example.net", "mx.example.net", false, true},
 		{"example.net", "mx.example.net", false, true},
 		{"example.net", "mail.example.net", false, true},
 		{"example.net", "a.b.mx.example.net", false, true},
 		{"EXAMPLE.net", "mx.example.NET", false, true},
-		{"sub.mx.example.net", "mx.example.net", false, false},
+		{"sub.mx.example.net", "mx.example.net", false, true},
+		{"a.b.MX.example.net", "mx.example.net", false, true},
 		{"other.net", "mx.example.net", false, false},
 		{"xample.net", "mx.example.net", false, false},
+		{"xmx.example.net", "mx.example.net", false, false},
+		{"mx.example.net.evil.com", "mx.example.net", false, false},
+		{"shop.example.net", "mx.example.net", false, false},
 		// The panel-primary domain.
 		{"panel.example.com", "panel.example.com", true, true},
 		{"panel.example.com", "www.panel.example.com", true, true},
@@ -40,6 +45,8 @@ func TestMailHostnameConflict(t *testing.T) {
 		{"panel.example.com", "mail.panel.example.com", true, false},
 		{"panel.example.com", "mailtest.panel.example.com", true, false},
 		{"panel.example.com", "mx.example.com", true, false},
+		// The admin-owned panel-primary domain may sit under the name.
+		{"mx.example.com", "example.com", true, false},
 		// Empty input never conflicts.
 		{"", "mx.example.net", false, false},
 		{"example.net", "", false, false},
@@ -71,6 +78,7 @@ func TestMailHostnameCollision(t *testing.T) {
 	}{
 		{"claims the applied name", withApplied, "mx.example.net", true},
 		{"claims its zone", withApplied, "example.net", true},
+		{"claims a name under it", withApplied, "login.mx.example.net", true},
 		{"unrelated", withApplied, "shop.example.org", false},
 		{"no custom name applied", derived, "example.net", false},
 		{"unwired", nil, "mx.example.net", false},

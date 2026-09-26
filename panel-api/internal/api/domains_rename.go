@@ -76,7 +76,7 @@ func (h *domainHandler) rename(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "db_mail_hostname_lookup", "message": "could not verify the domain name against the panel mail hostname"})
 		return
 	} else if clash {
-		c.JSON(http.StatusConflict, gin.H{"error": "domain_conflicts_mail_hostname", "message": "the name is, or contains, the panel's mail hostname"})
+		c.JSON(http.StatusConflict, gin.H{"error": "domain_conflicts_mail_hostname", "message": "the name is the panel's mail hostname, a parent zone of it, or a name under it"})
 		return
 	}
 	// GH #1789: an in-place rename to a subdomain of (or a parent over) another

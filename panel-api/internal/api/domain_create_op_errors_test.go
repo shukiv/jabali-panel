@@ -98,7 +98,7 @@ func TestCreateDomainOp_RejectionWireShape(t *testing.T) {
 			},
 			in:     createDomainInput{OwnerID: owner.ID, Name: "shop.example.com", ActorIsAdmin: true},
 			status: http.StatusConflict, code: "domain_conflicts_mail_hostname",
-			detail: "the name is, or contains, the panel's mail hostname",
+			detail: "the name is the panel's mail hostname, a parent zone of it, or a name under it",
 		},
 		{
 			name: "mail hostname lookup failure fails closed",

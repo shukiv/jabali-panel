@@ -635,7 +635,7 @@ func (h *userDockerAppHandler) install(c *gin.Context) {
 				h.failInstall(c, app.ID, "db_mail_hostname_lookup", errors.New("could not verify the domain name against the panel mail hostname"))
 				return
 			} else if clash {
-				h.failInstall(c, app.ID, "domain_conflicts_mail_hostname", errors.New("the name is, or contains, the panel's mail hostname"))
+				h.failInstall(c, app.ID, "domain_conflicts_mail_hostname", errors.New("the name is the panel's mail hostname, a parent zone of it, or a name under it"))
 				return
 			}
 			// GH #1789: this tenant self-service install auto-creates a domain

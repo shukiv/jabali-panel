@@ -24,6 +24,9 @@ func (f *fakeAliasRepo) ListByDomain(context.Context, string) ([]models.WebDomai
 func (f *fakeAliasRepo) FindByHostname(context.Context, string) (*models.WebDomainAlias, error) {
 	return nil, nil
 }
+func (f *fakeAliasRepo) FindStrictSubdomainHostnames(context.Context, string) ([]string, error) {
+	return nil, nil
+}
 func (f *fakeAliasRepo) Delete(context.Context, string) error { return nil }
 
 // GH #1625: aliases must reach the agent's domain.create payload (so nginx

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"time"
 
-	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/domainops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
@@ -53,7 +52,7 @@ type RequestDeps struct {
 	Settings   SettingsReader
 	PanelCerts PanelCertReader
 	Domains    RequestDomains
-	Aliases    domainops.AliasHostnameFinder
+	Aliases    AliasFinder
 	Switchover SwitchoverStore
 	Now        func() time.Time
 }
@@ -98,7 +97,8 @@ func Request(ctx context.Context, d RequestDeps, desired, requestedBy string) (s
 		return "", &kindError{kind: ErrNameRefused, cause: ErrNameAlreadyApplied}
 	}
 	if err := CheckName(ctx, NameDeps{Domains: d.Domains, Aliases: d.Aliases}, s, norm); err != nil {
-		if errors.Is(err, ErrNameIsPanelHostname) || errors.Is(err, ErrNameClaimedByDomain) || errors.Is(err, ErrNameIsAlias) {
+		if errors.Is(err, ErrNameIsPanelHostname) || errors.Is(err, ErrNameClaimedByDomain) ||
+			errors.Is(err, ErrNameIsAlias) || errors.Is(err, ErrNameHasAliasUnder) {
 			return "", &kindError{kind: ErrNameRefused, cause: err}
 		}
 		return "", err

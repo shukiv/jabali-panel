@@ -123,6 +123,9 @@ func TestRequest_Refusals(t *testing.T) {
 		}, ErrNameRefused, ErrNameAlreadyApplied},
 		{"panel hostname", "panel.example.com", nil, ErrNameRefused, ErrNameIsPanelHostname},
 		{"tenant zone", "mx.tenant.net", nil, ErrNameRefused, ErrNameClaimedByDomain},
+		{"tenant domain under it", "mx.example.org", func(_ *fakeSettings, _ *fakeCerts, d *fakeRequestDomains, _ *fakeSwitchover) {
+			d.byName["login.mx.example.org"] = &models.Domain{Name: "login.mx.example.org"}
+		}, ErrNameRefused, ErrNameClaimedByDomain},
 		{"in flight", "mx.example.org", func(_ *fakeSettings, _ *fakeCerts, _ *fakeRequestDomains, sw *fakeSwitchover) {
 			sw.reqErr = repository.ErrSwitchoverInFlight
 		}, repository.ErrSwitchoverInFlight, repository.ErrSwitchoverInFlight},
@@ -141,6 +144,18 @@ func TestRequest_Refusals(t *testing.T) {
 				t.Fatalf("a refused request must not be recorded, got %v", sw.requested)
 			}
 		})
+	}
+}
+
+func TestRequest_AliasUnderNameIsRefused(t *testing.T) {
+	deps, _, _, _, sw := requestDeps()
+	deps.Aliases = &fakeAliases{held: map[string]bool{"login.mx.example.org": true}}
+	_, err := Request(context.Background(), deps, "mx.example.org", "admin:u1")
+	if !errors.Is(err, ErrNameRefused) || !errors.Is(err, ErrNameHasAliasUnder) {
+		t.Fatalf("Request = %v, want a refusal for the alias under the name", err)
+	}
+	if len(sw.requested) != 0 {
+		t.Fatalf("a refused request must not be recorded, got %v", sw.requested)
 	}
 }
 
