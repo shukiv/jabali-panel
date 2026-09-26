@@ -22,6 +22,9 @@ export interface MailboxShare {
   shared_with_mailbox_email?: string;
   rights: Rights;
   created_at: string;
+  // Set on create when the share was saved but the mail server did not
+  // accept it yet (the panel retries it).
+  warning?: { code: string; detail: string };
 }
 
 const QK_ALL = ["mail_shares", "all"];

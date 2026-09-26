@@ -93,7 +93,7 @@ func (h *shareHandler) list(c *gin.Context) {
 	}
 	shares, total, err := h.cfg.MailboxShares.FindByOwnerID(ctx, mb.ID, repository.ListOptions{Limit: 200})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "detail": "the server could not complete the request"})
 		return
 	}
 	mbByID, domByID := h.shareRowMaps(ctx, shares)
@@ -125,7 +125,7 @@ func (h *shareHandler) listAllForUser(c *gin.Context) {
 		shares, total, err = h.cfg.MailboxShares.ListByUserID(ctx, claims.UserID, opts)
 	}
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "detail": "the server could not complete the request"})
 		return
 	}
 	// JAB-147: batch-load owner/target mailboxes + their domains once.
@@ -158,7 +158,7 @@ func (h *shareHandler) create(c *gin.Context) {
 	}
 	var req shareCreateRequest
 	if err := c.ShouldBindJSON(&req); err != nil || req.SharedWithMailboxID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_body"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_body", "detail": "choose the mailbox to share with"})
 		return
 	}
 	res, err := mailshareops.Create(ctx, h.deps(), owner, req.SharedWithMailboxID, req.Rights, "m6.5")
@@ -167,15 +167,15 @@ func (h *shareHandler) create(c *gin.Context) {
 		case errors.Is(err, mailshareops.ErrTargetNotFound):
 			// Also a target in another account: the same answer as a
 			// missing one, so other tenants' mailboxes cannot be probed.
-			c.JSON(http.StatusBadRequest, gin.H{"error": "target_not_found"})
+			c.JSON(http.StatusBadRequest, gin.H{"error": "target_not_found", "detail": "that mailbox does not exist in this account"})
 		case errors.Is(err, mailshareops.ErrSelfShare):
-			c.JSON(http.StatusBadRequest, gin.H{"error": "cannot_share_with_self"})
+			c.JSON(http.StatusBadRequest, gin.H{"error": "cannot_share_with_self", "detail": "a mailbox cannot be shared with itself"})
 		case errors.Is(err, mailshareops.ErrNoRights):
-			c.JSON(http.StatusBadRequest, gin.H{"error": "rights_required"})
+			c.JSON(http.StatusBadRequest, gin.H{"error": "rights_required", "detail": "choose at least one right"})
 		case errors.Is(err, mailshareops.ErrAlreadyShared):
-			c.JSON(http.StatusConflict, gin.H{"error": "already_shared"})
+			c.JSON(http.StatusConflict, gin.H{"error": "already_shared", "detail": "this mailbox is already shared with that mailbox; remove that share first to change its rights"})
 		default:
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "detail": "the server could not complete the request"})
 		}
 		return
 	}
@@ -214,7 +214,7 @@ func (h *shareHandler) del(c *gin.Context) {
 	if err := mailshareops.Delete(ctx, h.deps(), mb.ID, c.Param("shareId")); err != nil {
 		switch {
 		case errors.Is(err, mailshareops.ErrNotFound):
-			c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
+			c.JSON(http.StatusNotFound, gin.H{"error": "not_found", "detail": "share not found"})
 		case errors.Is(err, mailshareops.ErrApply):
 			slog.Warn("mailbox-share: revoke failed; share kept", "owner", mb.EmailCached, "share_id", c.Param("shareId"), "err", err)
 			detail := "the mail server did not accept the change; the share was not removed"
@@ -223,7 +223,7 @@ func (h *shareHandler) del(c *gin.Context) {
 			}
 			c.JSON(http.StatusBadGateway, gin.H{"error": "share_apply_failed", "detail": detail})
 		default:
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "detail": "the server could not complete the request"})
 		}
 		return
 	}
@@ -296,12 +296,12 @@ func (h *shareHandler) resolve(ctx context.Context, s models.MailboxShare) share
 
 func (h *shareHandler) writeErr(c *gin.Context, err error) {
 	if isNotFound(err) {
-		c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
+		c.JSON(http.StatusNotFound, gin.H{"error": "not_found", "detail": "mailbox not found"})
 		return
 	}
 	if errors.Is(err, errMailboxForbidden) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden", "detail": "you do not have access to that mailbox"})
 		return
 	}
-	c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+	c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "detail": "the server could not complete the request"})
 }

@@ -125,7 +125,7 @@ func (h *forwarderHandler) listAll(c *gin.Context) {
 		fwds, total, err = h.cfg.Forwarders.ListByUserID(ctx, claims.UserID, opts)
 	}
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "detail": "the server could not complete the request"})
 		return
 	}
 	// JAB-147: batch-load the mailboxes + domains once instead of a per-row
@@ -194,15 +194,15 @@ func (h *forwarderHandler) create(c *gin.Context) {
 	}
 	var req forwarderCreateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_body"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_body", "detail": "the forwarder is incomplete"})
 		return
 	}
 	if req.Type != "alias" && req.Type != "external" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_type"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_type", "detail": "type must be alias or external"})
 		return
 	}
 	if req.Type == "alias" && req.LocalPart == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "alias_requires_local_part"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "alias_requires_local_part", "detail": "an alias needs its address"})
 		return
 	}
 	if req.Target == "" {
@@ -235,7 +235,13 @@ func (h *forwarderHandler) create(c *gin.Context) {
 		f.KeepCopy = req.KeepCopy
 	}
 	if err := h.cfg.Forwarders.Create(ctx, f); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		if isDuplicateKeyErr(err) {
+			// uq_external_forward (this mailbox already forwards there) or
+			// uq_alias_local (the alias address is taken in the domain).
+			c.JSON(http.StatusConflict, gin.H{"error": "already_exists", "detail": "that forwarder or alias address already exists"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "detail": "the server could not complete the request"})
 		return
 	}
 	resp := h.resolve(ctx, *f, mb, dom)
@@ -260,14 +266,14 @@ func (h *forwarderHandler) del(c *gin.Context) {
 	f, err := h.cfg.Forwarders.FindByID(ctx, c.Param("id"))
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
-			c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
+			c.JSON(http.StatusNotFound, gin.H{"error": "not_found", "detail": "forwarder not found"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "detail": "the server could not complete the request"})
 		return
 	}
 	if f.MailboxID == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "domain_scoped_forwarder"})
+		c.JSON(http.StatusNotFound, gin.H{"error": "domain_scoped_forwarder", "detail": "this is a domain-wide forwarder, not a mailbox forwarder"})
 		return
 	}
 	mb, dom, err := h.loadMailbox(ctx, *f.MailboxID, claims)
@@ -276,7 +282,7 @@ func (h *forwarderHandler) del(c *gin.Context) {
 		return
 	}
 	if err := h.cfg.Forwarders.Delete(ctx, f.ID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "detail": "the server could not complete the request"})
 		return
 	}
 	// A failed re-converge on delete leaves a stale redirect, but 204 carries
@@ -312,14 +318,14 @@ func (h *forwarderHandler) resolve(_ context.Context, f models.EmailForwarder, m
 
 func (h *forwarderHandler) writeErr(c *gin.Context, err error) {
 	if isNotFound(err) {
-		c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
+		c.JSON(http.StatusNotFound, gin.H{"error": "not_found", "detail": "mailbox not found"})
 		return
 	}
 	if errors.Is(err, errMailboxForbidden) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden", "detail": "you do not have access to that mailbox"})
 		return
 	}
-	c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+	c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "detail": "the server could not complete the request"})
 }
 
 // domainScopedForwarderResponse is the row shape for the NULL-
@@ -342,7 +348,7 @@ func (h *forwarderHandler) listDomainScoped(c *gin.Context) {
 	claims := ginctx.Claims(c)
 	fwds, _, err := h.cfg.Forwarders.ListAll(ctx, repository.ListOptions{Limit: 1000})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "detail": "the server could not complete the request"})
 		return
 	}
 	items := make([]domainScopedForwarderResponse, 0)
