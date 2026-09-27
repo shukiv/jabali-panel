@@ -29,7 +29,8 @@ const (
 )
 
 // reconcileMailHostnameSwitchover moves the shared panel mail hostname
-// (JAB-390) and keeps Bulwark's JMAP URL on the effective one.
+// (JAB-390) and keeps Bulwark's JMAP URL and the /webmail redirects on the
+// effective one.
 //
 // A request (mail_hostname_switchover.desired) is applied only after the
 // requested name — and mail.<hostname>, which stays served — point at this
@@ -60,6 +61,7 @@ func (r *Reconciler) reconcileMailHostnameSwitchover(ctx context.Context) {
 		effective = applied
 	}
 	r.assertWebmailJMAPURL(ctx, effective)
+	r.assertWebmailRedirect(ctx, effective)
 }
 
 // pinIssuedMailHostname keeps the mail hostname on the name the issued
@@ -289,6 +291,32 @@ func (r *Reconciler) failMailHostnameSwitchover(ctx context.Context, desired, ms
 	r.log.Warn("mail hostname switchover failed", "desired", desired, "reason", msg, "retry_in", retryIn)
 	if err := r.mailHostSwitchover.Fail(ctx, desired, msg, now.Add(retryIn), now); err != nil {
 		r.log.Warn("mail hostname switchover: record failure", "desired", desired, "error", err)
+	}
+}
+
+// assertWebmailRedirect keeps the /webmail redirects in the default vhost on
+// host. install.sh renders them only when it runs, so without this they would
+// point at the old name until the next `jabali update`. The Agent verb is a
+// no-op when the file or the redirects are absent, and reloads nginx only on
+// a change.
+func (r *Reconciler) assertWebmailRedirect(ctx context.Context, host string) {
+	if host == "" {
+		return
+	}
+	params := map[string]any{"mail_hostname": host}
+	_, err := r.project(ctx, PhaseWebmailRedirect, "jabali-default", fingerprint(params), false, func() error {
+		callCtx, cancel := context.WithTimeout(ctx, webmailAgentTimeout)
+		defer cancel()
+		_, err := r.agent.Call(callCtx, "nginx.webmail_redirect.apply", params)
+		return err
+	})
+	if err == nil {
+		r.webmailRedirectLastErr = ""
+		return
+	}
+	if key := host + "|" + err.Error(); key != r.webmailRedirectLastErr {
+		r.webmailRedirectLastErr = key
+		r.log.Warn("webmail redirect apply failed", "mail_hostname", host, "error", err)
 	}
 }
 

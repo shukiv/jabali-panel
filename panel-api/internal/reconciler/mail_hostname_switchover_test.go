@@ -1,6 +1,7 @@
 package reconciler
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -220,7 +221,11 @@ func TestMailHostnameSwitchover_IssuesBothNamesAndApplies(t *testing.T) {
 	jmap := f.callsTo("webmail.jmap_url.apply")
 	require.Len(t, jmap, 1)
 	assert.Equal(t, "mx.example.net", jmap[0]["mail_hostname"], "Bulwark follows the applied name in the same tick")
-	assert.Equal(t, []string{"ssl.panel.issue", "webmail.jmap_url.apply"}, f.methods(), "the JMAP URL moves only after the certificate is deployed")
+	redirect := f.callsTo("nginx.webmail_redirect.apply")
+	require.Len(t, redirect, 1)
+	assert.Equal(t, "mx.example.net", redirect[0]["mail_hostname"], "the /webmail redirects follow the applied name in the same tick")
+	assert.Equal(t, []string{"ssl.panel.issue", "webmail.jmap_url.apply", "nginx.webmail_redirect.apply"}, f.methods(),
+		"webmail moves only after the certificate is deployed")
 }
 
 func TestMailHostnameSwitchover_ResetToDerivedClearsApplied(t *testing.T) {
@@ -428,6 +433,39 @@ func TestMailHostnameJMAPAssert(t *testing.T) {
 	jmap := f.callsTo("webmail.jmap_url.apply")
 	require.Len(t, jmap, 1, "an unchanged name is not re-sent within the audit interval")
 	assert.Equal(t, "mx.example.net", jmap[0]["mail_hostname"])
+}
+
+// The /webmail redirects in the default vhost follow the effective name too,
+// once per change (JAB-390). Before, they moved only when `jabali update`
+// re-rendered the file.
+func TestMailHostnameWebmailRedirectAssert(t *testing.T) {
+	f := newSwitchoverFixture(t, "", "")
+	f.settings.MailHostname = wmPtr("MX.Example.NET")
+
+	f.r.reconcileMailHostnameSwitchover(context.Background())
+	f.r.reconcileMailHostnameSwitchover(context.Background())
+
+	redirect := f.callsTo("nginx.webmail_redirect.apply")
+	require.Len(t, redirect, 1, "an unchanged name is not re-sent within the audit interval")
+	assert.Equal(t, "mx.example.net", redirect[0]["mail_hostname"])
+}
+
+// A failed apply is retried every tick and warned about once per distinct
+// error, not every tick.
+func TestMailHostnameWebmailRedirectAssert_FailureIsRetried(t *testing.T) {
+	f := newSwitchoverFixture(t, "", "")
+	var logs bytes.Buffer
+	f.r.log = slog.New(slog.NewTextHandler(&logs, nil))
+	f.agent.errByMethod = map[string]error{"nginx.webmail_redirect.apply": errors.New("unknown method")}
+
+	f.r.reconcileMailHostnameSwitchover(context.Background())
+	f.r.reconcileMailHostnameSwitchover(context.Background())
+	f.agent.errByMethod = nil
+	f.r.reconcileMailHostnameSwitchover(context.Background())
+
+	assert.Len(t, f.callsTo("nginx.webmail_redirect.apply"), 3, "a failed apply is not stamped")
+	assert.Len(t, f.callsTo("webmail.jmap_url.apply"), 1, "a failed redirect apply does not hold back the JMAP URL")
+	assert.Equal(t, 1, strings.Count(logs.String(), "webmail redirect apply failed"), "one warning per distinct error")
 }
 
 func TestMailHostnameJMAPAssert_FailureIsRetried(t *testing.T) {

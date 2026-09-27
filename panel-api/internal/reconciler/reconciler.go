@@ -130,6 +130,8 @@ type Reconciler struct {
 	// webmailJMAPLastErr debounces JAB-390 JMAP URL apply warnings, like
 	// panelSelfSignLastErr.
 	webmailJMAPLastErr string
+	// webmailRedirectLastErr does the same for the /webmail redirect apply.
+	webmailRedirectLastErr string
 	// readKratosConfigFile reads kratos.yml for the JAB-393 hostname drift
 	// check. Mockable for tests (default os.ReadFile).
 	readKratosConfigFile func(string) ([]byte, error)
