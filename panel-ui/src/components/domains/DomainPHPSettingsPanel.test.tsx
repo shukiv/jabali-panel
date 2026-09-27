@@ -153,4 +153,53 @@ describe("DomainPHPSettingsPanel (GH #1543)", () => {
     // PHP 8.4's E_ALL & ~E_DEPRECATED (24575) isn't one of our presets → raw.
     expect(await screen.findByText("24575 (Default)")).toBeInTheDocument();
   });
+
+  // GH #1705 (johnnyq, latest develop): the real API OMITS every field the
+  // domain does not override (omitempty), unlike the SETTINGS fixture above.
+  // An absent field reached the Select as undefined, so the closed select
+  // showed the grey "Use pool default" placeholder, and the "(Default)" label
+  // lived only inside the dropdown.
+  const OMITTED = {
+    php_version: "8.4",
+    pool_defaults: { memory_limit: "256M", max_execution_time: "30" },
+  };
+
+  // antd v6: a select holding a value marks its content "has-value".
+  const selectedTexts = () =>
+    Array.from(document.querySelectorAll(".ant-select-content-has-value")).map((e) =>
+      e.getAttribute("title"),
+    );
+
+  it("shows the real default as the selected value when the API omits the field", async () => {
+    mocked.get.mockImplementation((url: string) => {
+      if (url === "/php/versions") return Promise.resolve({ data: { versions: ["8.4"] } });
+      if (url === "/domains/d1/php-settings") return Promise.resolve({ data: OMITTED });
+      return Promise.resolve({ data: {} });
+    });
+    renderPanel();
+    await screen.findByText("userphpsettingspage.php_version");
+    await vi.waitFor(() => {
+      expect(selectedTexts()).toContain("256M (Default)");
+      expect(selectedTexts()).toContain("30s (Default)");
+    });
+  });
+
+  it("names the default in the placeholder after the field is cleared", async () => {
+    mocked.get.mockImplementation((url: string) => {
+      if (url === "/php/versions") return Promise.resolve({ data: { versions: ["8.4"] } });
+      if (url === "/domains/d1/php-settings") return Promise.resolve({ data: OMITTED });
+      return Promise.resolve({ data: {} });
+    });
+    renderPanel();
+    await vi.waitFor(() => expect(selectedTexts()).toContain("256M (Default)"));
+    // The memory-limit select is the first one after the version select.
+    const memory = document.querySelectorAll(".ant-select")[1];
+    const clear = memory.querySelector(".ant-select-clear");
+    expect(clear).not.toBeNull();
+    fireEvent.mouseDown(clear as Element);
+    await vi.waitFor(() => {
+      expect(memory.querySelector(".ant-select-content-has-value")).toBeNull();
+      expect(memory.textContent).toContain("256M (Default)");
+    });
+  });
 });
