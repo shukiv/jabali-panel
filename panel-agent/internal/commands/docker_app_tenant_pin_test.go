@@ -3,6 +3,9 @@ package commands
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -247,5 +250,38 @@ func TestTenantPin_UpdateRequiresTheServiceSetOnlyWhenItWritesCompose(t *testing
 	_, err = dockerAppUpdateHandler(context.Background(), onDisk)
 	if strings.Contains(agentErrMessage(err), "no expected service set") {
 		t.Fatalf("an image-only update keeps the on-disk compose and must not need the set: %v", err)
+	}
+}
+
+// runTenantComposeValidation applies the service-set pin when a door passes
+// one, and only the tier A rules when it passes nil.
+func TestTenantPin_RunValidationAppliesThePassedSet(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "memos-u01-notes")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fixture := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(fixture, []byte(probedConfig), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	prev := execCommandContext
+	execCommandContext = func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+		return exec.CommandContext(ctx, "cat", fixture)
+	}
+	t.Cleanup(func() { execCommandContext = prev })
+
+	ctx := context.Background()
+	if err := runTenantComposeValidation(ctx, dir, nil, pinOwner, probedServices()); err != nil {
+		t.Fatalf("matching set must pass: %v", err)
+	}
+	other := probedServices()
+	web := other["web"]
+	web.Image = "nginx:alpine"
+	other["web"] = web
+	if err := runTenantComposeValidation(ctx, dir, nil, pinOwner, other); err == nil || !strings.Contains(err.Error(), "image") {
+		t.Fatalf("a set that does not match must be refused, got %v", err)
+	}
+	if err := runTenantComposeValidation(ctx, dir, nil, pinOwner, nil); err != nil {
+		t.Fatalf("with no set only the tier A rules apply: %v", err)
 	}
 }

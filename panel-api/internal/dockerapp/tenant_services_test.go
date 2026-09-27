@@ -153,3 +153,29 @@ func TestServicesFromCompose_RefusesWhatItCannotPin(t *testing.T) {
 		}
 	}
 }
+
+// Each tenant-supplied value is stripped from the render the set comes from:
+// a template that put name, domain, env or a port into an image would pin the
+// bare image, so the real render's image differs and the agent refuses it.
+func TestRenderTenant_StripsEveryTenantValue(t *testing.T) {
+	e := Entry{
+		Slug: "leaky",
+		composeTmpl: `services:
+  app:
+    image: "reg/n{{ .Name }}-d{{ .Domain }}-e{{ index .Env "TAG" }}-p{{ with index .Ports "http" }}{{ .HostPort }}{{ end }}:1"
+`,
+	}
+	_, want, err := RenderTenant(e, RenderParams{
+		Slug: "leaky", Name: "shop", Domain: "shop.example.com", DataRoot: "/var/lib/jabali/docker-apps/leaky",
+		Env:             map[string]string{"TAG": "evil"},
+		Ports:           map[string]RuntimePort{"http": {HostPort: 10001, ContainerPort: 80, BindInterface: "127.0.0.1", Protocol: "tcp"}},
+		TenantHardening: testHardening(),
+	})
+	if err != nil {
+		t.Fatalf("RenderTenant: %v", err)
+	}
+	// A missing port indexes to the zero RuntimePort, so its host port is 0.
+	if got := want["app"].Image; got != "reg/n-d-e-p0:1" {
+		t.Fatalf("the pinned image carries a tenant value: %q", got)
+	}
+}

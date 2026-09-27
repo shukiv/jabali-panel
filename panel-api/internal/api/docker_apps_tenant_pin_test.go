@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -134,5 +136,22 @@ func TestApplyEnv_TenantSendsPinnedServiceSet(t *testing.T) {
 	}
 	if err := tdemoServices.Check(pinnedServicesParam(t, p)); err != nil {
 		t.Fatalf("env edit sent the wrong service set: %v", err)
+	}
+}
+
+// The domain/port edit and update doors send the set too. Both run through
+// gin and a background goroutine, so pin the wiring in source.
+func TestDockerAppDoors_SendThePinnedSet(t *testing.T) {
+	b, err := os.ReadFile("docker_apps.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range []string{
+		"setTenantServices(installParams, tenantServices)",
+		"setTenantServices(updateParams, tenantServices)",
+	} {
+		if !strings.Contains(string(b), s) {
+			t.Errorf("docker_apps.go no longer calls %s", s)
+		}
 	}
 }
