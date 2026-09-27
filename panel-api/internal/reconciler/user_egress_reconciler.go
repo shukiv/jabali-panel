@@ -6,9 +6,14 @@ import (
 	"sync"
 	"time"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/egressops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
+
+// egressModePath is the mode file the seed step reads (a var so tests can
+// point it elsewhere).
+var egressModePath = egressops.DefaultModePath
 
 // userEgressLastSeen tracks the last counter value the reconciler read
 // for each user. Used to compute per-tick deltas after a `nft list
@@ -31,6 +36,7 @@ func (r *Reconciler) reconcileUserEgress(ctx context.Context) {
 	if r.userEgressPolicies == nil {
 		return
 	}
+	r.seedUserEgressPolicies(ctx)
 	policies, err := r.userEgressPolicies.ListAllForReconcile(ctx)
 	if err != nil {
 		r.log.Warn("user-egress reconcile: list policies", "error", err)
@@ -52,6 +58,29 @@ func (r *Reconciler) reconcileUserEgress(ctx context.Context) {
 		usernameToID[p.Username] = p.UserID
 	}
 	r.readUserEgressCounters(ctx, usernameToID)
+}
+
+// seedUserEgressPolicies gives every hosting user without a policy row one,
+// in the state the host's mode file names (learning on a host that predated
+// M34, enforced otherwise), before the same tick lists the policies. A user
+// without a row is not in the egress payload at all, so this is what puts
+// every tenant behind the firewall; rows used to appear only when someone
+// opened the user's Egress page. A failure is logged and the tick goes on
+// with the rows that exist.
+func (r *Reconciler) seedUserEgressPolicies(ctx context.Context) {
+	state, modeOK := egressops.SeedState(egressModePath)
+	n, err := r.userEgressPolicies.SeedMissing(ctx, state, time.Now())
+	if err != nil {
+		r.log.Warn("user-egress: seeding policies for users without one", "error", err)
+		return
+	}
+	if n > 0 {
+		attrs := []any{"count", n, "state", state}
+		if !modeOK {
+			attrs = append(attrs, "detail", "mode file "+egressModePath+" missing or unknown; seeded enforced")
+		}
+		r.log.Info("user-egress: enrolled users that had no policy", attrs...)
+	}
 }
 
 // readUserEgressDefaults loads the operator-overridden default allowlist

@@ -241,7 +241,37 @@ func foldRequestIntoPolicy(ctx context.Context, deps Deps, req *models.UserEgres
 // operator-controlled hold for hosts where the soak needs to run longer.
 // Shared by the CLI (per-user-egress flip-mature) and the admin API so the two
 // paths honor the same pin (verify_wire_contract scar).
-const DefaultPinPath = "/etc/jabali/per-user-egress.mode"
+//
+// The pin used to be the mode file (DefaultModePath). install.sh writes
+// "learning" there on every host that predates M34, so on those hosts the
+// soak never ended — a default the installer chose read as an operator hold.
+// The two are separate files now: the mode file only picks the state a new
+// policy row starts in.
+const DefaultPinPath = "/etc/jabali/per-user-egress.pin"
+
+// DefaultModePath holds the state a newly seeded policy row starts in:
+// "learning" on a host that predated M34 (install.sh), "enforced" on a fresh
+// install.
+const DefaultModePath = "/etc/jabali/per-user-egress.mode"
+
+// SeedState returns the state a new policy row starts in, read from the mode
+// file at path. Anything but "learning" — including a missing or unreadable
+// file — is enforced: a host whose mode cannot be read fails closed. ok is
+// false when the file was missing, unreadable or held an unknown value, so
+// the caller can say so.
+func SeedState(path string) (state string, ok bool) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return models.UserEgressStateEnforced, false
+	}
+	switch strings.TrimSpace(string(b)) {
+	case models.UserEgressStateLearning:
+		return models.UserEgressStateLearning, true
+	case models.UserEgressStateEnforced:
+		return models.UserEgressStateEnforced, true
+	}
+	return models.UserEgressStateEnforced, false
+}
 
 // ReadEgressPin reports whether the operator pin at path holds the LEARNING
 // hold and returns the trimmed file contents for display. A missing/unreadable
