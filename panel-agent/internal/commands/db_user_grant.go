@@ -140,8 +140,10 @@ func dbUserGrantHandler(ctx context.Context, params json.RawMessage) (any, error
 		}
 	}
 
-	// Escape database name using backticks.
-	escapedDBName, err := EscapeMariaDBIdentifier(p.DBName)
+	// Quote the database name with its GRANT wildcards (_ and %) escaped, so
+	// the grant covers this database only and not a sibling tenant's name
+	// that differs where this one has an underscore.
+	escapedDBName, err := EscapeMariaDBGrantDB(p.DBName)
 	if err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInvalidArgument,

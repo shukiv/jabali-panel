@@ -301,6 +301,8 @@ type Reconciler struct {
 	userEgressPolicies repository.UserEgressPolicyRepository
 	// pingAccess lists the users whose package allows ping (GH #1798).
 	pingAccess repository.PingAccessRepository
+	// dbGrantEscape enables the legacy MariaDB grant conversion pass.
+	dbGrantEscape bool
 	// M34 deep stats — per-tick drop samples drive the 24h sparkline.
 	// Optional; nil disables sample persistence (drop_count_24h still
 	// updates on the policy row).
@@ -1020,6 +1022,9 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 	// GH #1798: the jabali-ping group (who may open ICMP ping sockets) follows
 	// the package ping allowance. Ledger-gated no-op in steady state.
 	r.reconcilePingAccess(ctx)
+	// MariaDB grants written before db_user.grant escaped `_` cover sibling
+	// tenants' databases. Converted once, then re-checked hourly.
+	r.reconcileDBGrantEscape(ctx)
 	// GH #1053: converge FTP/SFTP subaccounts (passwd aliases, group
 	// membership, lock state, sshd jabali-xfer drop-in). Hash-gated no-op
 	// in steady state.

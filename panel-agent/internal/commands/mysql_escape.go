@@ -39,3 +39,18 @@ func EscapeMariaDBLiteral(s string) (string, error) {
 	s = strings.ReplaceAll(s, `'`, `''`)
 	return "'" + s + "'", nil
 }
+
+// EscapeMariaDBGrantDB quotes a database name for a database-level GRANT or
+// REVOKE (`ON <here>.*`). In that position MariaDB reads `_` and `%` as
+// wildcards: an unescaped alice_shop also matches aliceXshop, which can be
+// another tenant's database. The escaped form matches the one name only.
+func EscapeMariaDBGrantDB(db string) (string, error) {
+	return EscapeMariaDBIdentifier(mariaDBGrantPattern(db))
+}
+
+// isNoSuchGrant reports whether a mysql client error is MariaDB 1141 ("There
+// is no such grant defined"): the revoked grant is not held.
+func isNoSuchGrant(out string) bool {
+	se := strings.ToLower(out)
+	return strings.Contains(se, "there is no such grant") || strings.Contains(se, "nonexistent grant")
+}

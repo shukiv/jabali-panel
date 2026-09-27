@@ -102,6 +102,37 @@ func (s *definerRewritingReader) Read(p []byte) (int, error) {
 	return n, nil
 }
 
+// provisionScopedShadow creates (or re-keys) the db-scoped restore account
+// and grants it the one database.
+func provisionScopedShadow(ctx context.Context, dbName, shadow, pwd string) error {
+	// Hex-only password, regex-validated db name — the interpolated
+	// statements can't break out of their quoting. ALTER re-randomizes
+	// the password on every restore, so even a captured credential is
+	// single-use. A concurrent restore of the same database only
+	// re-randomizes the password again — already-established sessions
+	// are unaffected, so concurrent loads don't kill each other.
+	//
+	// The grant names the database with its GRANT wildcards escaped: the
+	// dump is tenant content and runs as this account, so an unescaped
+	// alice_shop (which also matches aliceXshop) would let it write into a
+	// sibling tenant's database.
+	prov := fmt.Sprintf(
+		"CREATE USER IF NOT EXISTS '%s'@'localhost' IDENTIFIED BY '%s'; "+
+			"ALTER USER '%s'@'localhost' IDENTIFIED BY '%s'; "+
+			"GRANT ALL PRIVILEGES ON `%s`.* TO '%s'@'localhost';",
+		shadow, pwd, shadow, pwd, mariaDBGrantPattern(dbName), shadow)
+	if err := mariadbRoot(ctx, prov); err != nil {
+		return fmt.Errorf("provision scoped restore account: %w", err)
+	}
+	// The account outlives each restore, so an earlier restore may have
+	// left the unescaped grant behind. Remove it before the dump runs.
+	legacy := fmt.Sprintf("REVOKE ALL PRIVILEGES ON `%s`.* FROM '%s'@'localhost'", dbName, shadow)
+	if err := mariadbRoot(ctx, legacy); err != nil && !isNoSuchGrant(err.Error()) {
+		return fmt.Errorf("remove wildcard grant of scoped restore account: %w", err)
+	}
+	return nil
+}
+
 // mariadbRoot runs a statement as root over the unix socket. Only used
 // for the static, operator-side provisioning statements — dump content
 // never passes through here.
@@ -128,19 +159,8 @@ func loadMariaDBDumpScoped(ctx context.Context, dbName string, dump io.Reader) e
 		return fmt.Errorf("mint scoped restore password: %w", err)
 	}
 	pwd := hex.EncodeToString(pb)
-	// Hex-only password, regex-validated db name — the interpolated
-	// statements can't break out of their quoting. ALTER re-randomizes
-	// the password on every restore, so even a captured credential is
-	// single-use. A concurrent restore of the same database only
-	// re-randomizes the password again — already-established sessions
-	// are unaffected, so concurrent loads don't kill each other.
-	prov := fmt.Sprintf(
-		"CREATE USER IF NOT EXISTS '%s'@'localhost' IDENTIFIED BY '%s'; "+
-			"ALTER USER '%s'@'localhost' IDENTIFIED BY '%s'; "+
-			"GRANT ALL PRIVILEGES ON `%s`.* TO '%s'@'localhost';",
-		shadow, pwd, shadow, pwd, dbName, shadow)
-	if err := mariadbRoot(ctx, prov); err != nil {
-		return fmt.Errorf("provision scoped restore account: %w", err)
+	if err := provisionScopedShadow(ctx, dbName, shadow, pwd); err != nil {
+		return err
 	}
 
 	// Resolve the unprivileged OS account the client runs as.

@@ -29,6 +29,7 @@ package commands
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -63,9 +64,11 @@ type dbFreezeSnapshot struct {
 }
 
 // mysqlExec runs mysql with the given SQL; var so tests stub it (GH #994
-// — no test touches the real database).
+// — no test touches the real database). -r keeps the output raw: without it
+// the client doubles every backslash, and a SHOW GRANTS line for an escaped
+// name (`alice\_shop`) would replay as a different pattern.
 var mysqlExec = func(ctx context.Context, sql string) (string, error) {
-	out, err := execCommandContext(ctx, "mysql", "-N", "-e", sql).CombinedOutput()
+	out, err := execCommandContext(ctx, "mysql", "-N", "-r", "-e", sql).CombinedOutput()
 	return string(out), err
 }
 
@@ -117,19 +120,19 @@ func dbWritesFreeze(ctx context.Context, dbName, snapPath string) (any, error) {
 		alreadyFrozen = true
 	}
 
-	grantees, err := dbSchemaGrantees(ctx, dbName)
+	grants, err := dbSchemaGrantees(ctx, dbName)
 	if err != nil {
 		return nil, err
 	}
 
 	if !alreadyFrozen {
 		snap := dbFreezeSnapshot{DBName: dbName, Grants: map[string]string{}}
-		for _, g := range grantees {
-			stmt, gerr := dbSchemaGrantStmt(ctx, g, dbName)
+		for _, g := range grants {
+			stmt, gerr := dbSchemaGrantStmt(ctx, g.grantee, g.schema)
 			if gerr != nil || stmt == "" {
 				continue
 			}
-			snap.Grants[g] = stmt
+			snap.Grants[g.snapshotKey(dbName)] = stmt
 		}
 		if err := os.MkdirAll(dbFreezeSnapshotDir, 0o700); err != nil {
 			return nil, dbwInternal("mkdir snapshot dir: " + err.Error())
@@ -141,12 +144,18 @@ func dbWritesFreeze(ctx context.Context, dbName, snapPath string) (any, error) {
 	}
 
 	revokeCols := strings.Join(dbWritesRevokeSet, ", ")
-	for _, g := range grantees {
+	for _, g := range grants {
 		// REVOKE of a not-held privilege is harmless in MariaDB, so this
-		// is safe to run on every grantee including read-only ones.
-		sql := fmt.Sprintf("REVOKE %s ON `%s`.* FROM %s", revokeCols, dbName, g)
+		// is safe to run on every grantee including read-only ones. It
+		// names the form the grantee holds: revoking the other form is
+		// error 1141.
+		ident, qerr := quoteMariaDBPatternIdent(g.schema)
+		if qerr != nil {
+			return nil, dbwInternal(fmt.Sprintf("revoke on %s: %v", g.grantee, qerr))
+		}
+		sql := fmt.Sprintf("REVOKE %s ON %s.* FROM %s", revokeCols, ident, g.grantee)
 		if out, rerr := mysqlExec(ctx, sql); rerr != nil {
-			return nil, dbwInternal(fmt.Sprintf("revoke on %s: %v: %s", g, rerr, strings.TrimSpace(out)))
+			return nil, dbwInternal(fmt.Sprintf("revoke on %s: %v: %s", g.grantee, rerr, strings.TrimSpace(out)))
 		}
 	}
 	if _, err := mysqlExec(ctx, "FLUSH PRIVILEGES"); err != nil {
@@ -185,34 +194,65 @@ func dbWritesRestore(ctx context.Context, dbName, snapPath string) (any, error) 
 	return dbWritesSetResponse{DBName: dbName, Frozen: false, Changed: true}, nil
 }
 
+// dbSchemaGrant is one grantee's database-level grant on the schema, under
+// the stored name it is held by: the plain name, or the name with its GRANT
+// wildcards escaped (what db_user.grant writes).
+type dbSchemaGrant struct {
+	grantee string
+	schema  string // stored mysql.db Db value, e.g. alice_shop or alice\_shop
+}
+
+// snapshotKey keys the snapshot entry. The plain form keeps the bare grantee
+// key older snapshots use; restore replays values only, so keys never need to
+// match across versions.
+func (g dbSchemaGrant) snapshotKey(dbName string) string {
+	if g.schema == dbName {
+		return g.grantee
+	}
+	return g.grantee + " " + g.schema
+}
+
 // dbSchemaGrantees lists non-system grantees with any privilege on the
-// schema.
-func dbSchemaGrantees(ctx context.Context, dbName string) ([]string, error) {
+// schema, under either stored form of its name. HEX() keeps the stored name
+// exact through the client's output.
+func dbSchemaGrantees(ctx context.Context, dbName string) ([]dbSchemaGrant, error) {
+	plainLit, err := EscapeMariaDBLiteral(dbName)
+	if err != nil {
+		return nil, mwInvalidArgDBW("invalid database name")
+	}
+	escapedLit, err := EscapeMariaDBLiteral(mariaDBGrantPattern(dbName))
+	if err != nil {
+		return nil, mwInvalidArgDBW("invalid database name")
+	}
 	out, err := mysqlExec(ctx, fmt.Sprintf(
-		"SELECT DISTINCT grantee FROM information_schema.SCHEMA_PRIVILEGES WHERE table_schema = '%s'",
-		dbName))
+		"SELECT DISTINCT grantee, HEX(table_schema) FROM information_schema.SCHEMA_PRIVILEGES WHERE table_schema IN (%s, %s)",
+		plainLit, escapedLit))
 	if err != nil {
 		return nil, dbwUnavailable("schema_privileges query: " + err.Error())
 	}
-	var out2 []string
+	var grants []dbSchemaGrant
 	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-		g := strings.TrimSpace(line)
-		if g == "" || isSystemGrantee(g) {
+		grantee, hexSchema, ok := strings.Cut(strings.TrimSpace(line), "\t")
+		if !ok || grantee == "" || isSystemGrantee(grantee) {
 			continue
 		}
-		out2 = append(out2, g)
+		schema, derr := hex.DecodeString(strings.TrimSpace(hexSchema))
+		if derr != nil {
+			return nil, dbwUnavailable("schema_privileges query: undecodable schema name")
+		}
+		grants = append(grants, dbSchemaGrant{grantee: grantee, schema: string(schema)})
 	}
-	return out2, nil
+	return grants, nil
 }
 
-// dbSchemaGrantStmt returns the grantee's GRANT statement scoped to the
-// schema, verbatim from SHOW GRANTS (the only replay-safe source).
-func dbSchemaGrantStmt(ctx context.Context, grantee, dbName string) (string, error) {
+// dbSchemaGrantStmt returns the grantee's GRANT statement for the stored
+// schema name, verbatim from SHOW GRANTS (the only replay-safe source).
+func dbSchemaGrantStmt(ctx context.Context, grantee, schema string) (string, error) {
 	out, err := mysqlExec(ctx, "SHOW GRANTS FOR "+grantee)
 	if err != nil {
 		return "", nil // grantee may have been dropped mid-sweep; skip
 	}
-	needle := "`" + dbName + "`.*"
+	needle := " ON `" + strings.ReplaceAll(schema, "`", "``") + "`.* "
 	for _, line := range strings.Split(out, "\n") {
 		line = strings.TrimSpace(line)
 		if strings.Contains(line, needle) && strings.HasPrefix(line, "GRANT ") {
