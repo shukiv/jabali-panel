@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"time"
+	"unicode/utf8"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/appseccfg"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
@@ -108,6 +109,9 @@ func AddExclusion(ctx context.Context, d Deps, in appseccfg.Exclusion) (Exclusio
 	if err := appseccfg.ValidateExclusion(e); err != nil {
 		return ExclusionView{}, appseccfg.OperatorApplyResult{}, &InvalidError{Err: err}
 	}
+	if err := checkColumnLengths(e); err != nil {
+		return ExclusionView{}, appseccfg.OperatorApplyResult{}, &InvalidError{Err: err}
+	}
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -136,6 +140,20 @@ func AddExclusion(ctx context.Context, d Deps, in appseccfg.Exclusion) (Exclusio
 		})
 	}
 	return viewOf(row), res, nil
+}
+
+// checkColumnLengths refuses what ValidateExclusion lets through but the
+// crs_rule_exclusions columns cannot hold (rule_id varchar(16), note
+// varchar(512)), so the operator gets a refusal instead of a failed insert.
+// Host and path lengths are already inside ValidateExclusion's limits.
+func checkColumnLengths(e appseccfg.Exclusion) error {
+	if len(e.RuleID) > 16 {
+		return fmt.Errorf("rule-id %q is too long", e.RuleID)
+	}
+	if utf8.RuneCountInString(e.Note) > 512 {
+		return errors.New("note is longer than 512 characters")
+	}
+	return nil
 }
 
 // RemoveExclusion deletes the exclusion with this id and applies the result.

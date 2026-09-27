@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -123,6 +124,8 @@ func TestAddExclusion_RefusesInvalidBeforeStoring(t *testing.T) {
 		"newline in note":   {Host: "blog.example.com", URIPrefix: "/x/", RuleID: "942100", Note: "a\nSecRule"},
 		"port in host":      {Host: "blog.example.com:8443", URIPrefix: "/x/", RuleID: "942100"},
 		"reserved range id": {Host: "blog.example.com", URIPrefix: "/x/", RuleID: "9597001"},
+		"padded rule id":    {Host: "blog.example.com", URIPrefix: "/x/", RuleID: "00000000000000942100"},
+		"note past column":  {Host: "blog.example.com", URIPrefix: "/x/", RuleID: "942100", Note: strings.Repeat("é", 513)},
 	}
 	for name, in := range cases {
 		t.Run(name, func(t *testing.T) {
