@@ -107,11 +107,11 @@ Newline-delimited JSON over the Unix socket, one request per connection. The env
 - Only the UIDs in `-admin-uids` may request the root-scoped File Manager. By default this is the `-allowed-uids` list.
 - No other service is a member of the `jabali` group, and a restore never adds one back (JAB-357).
 - The agent has no AppArmor profile. It was removed in M40.3 because an AppArmor 4.x complain-mode bug blocked the agent's MariaDB socket connection. See [AppArmor](../admin/apparmor.md).
-- Logs everything with structured fields (request_id, action, subject_user, target_user, result).
+- Each handled request is logged at debug level with `id`, `command` and `ok`.
 
 ## Adding a new handler
 
-1. New file `panel-agent/internal/commands/foo_bar.go` with the action name and param struct.
+1. New file `panel-agent/internal/commands/foo_bar.go` with the command name and param struct.
 2. Wire-contract golden test (mirror `security_crowdsec_geoblock_golden_test.go`).
 3. Call site on the panel side (an API handler or a reconciler).
 4. ADR if the decision is load-bearing.
