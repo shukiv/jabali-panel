@@ -89,6 +89,9 @@ func TestValidateAliasHostname(t *testing.T) {
 		{"another domain mta-sts helper rejected", "mta-sts.other.com", "alias_conflicts_helper"},
 		{"panel FQDN rejected", "panel.host.com", "alias_reserved_panel"},
 		{"panel mail hostname rejected (JAB-390)", "MX.mailhost.net", "alias_reserved_panel"},
+		// No panel-primary row here, so the helper check cannot catch it.
+		{"derived panel mail hostname rejected (JAB-390)", "Mail.Panel.host.com", "alias_reserved_panel"},
+		{"a name under the derived mail hostname accepted", "a.mail.panel.host.com", ""},
 		{"a name under the panel mail hostname accepted", "a.mx.mailhost.net", ""},
 		{"already-claimed alias rejected", "taken.example.net", "alias_exists"},
 		{"semicolon injection rejected", "evil.net; return 301 http://x", "invalid_hostname"},

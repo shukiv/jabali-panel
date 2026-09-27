@@ -205,6 +205,24 @@ func TestCreate(t *testing.T) {
 		}
 	})
 
+	t.Run("the panel hostname and mail.<hostname> are refused with no panel-primary row, whoever creates them", func(t *testing.T) {
+		for _, name := range []string{"panel.example.com", "mail.panel.example.com"} {
+			for _, admin := range []bool{false, true} {
+				s := newCreateStore()
+				d := deps(s)
+				d.Settings = &fakeMailSettings{s: &models.ServerSettings{Hostname: "panel.example.com"}}
+				in := base
+				in.Name, in.ActorIsAdmin = name, admin
+				if _, err := Create(ctx, d, CreateHooks{}, in); !errors.Is(err, ErrDomainConflictsMailHostname) {
+					t.Fatalf("%s (admin=%v): want ErrDomainConflictsMailHostname, got %v", name, admin, err)
+				}
+				if len(s.created) != 0 {
+					t.Fatalf("%s (admin=%v): a refused domain must not be stored", name, admin)
+				}
+			}
+		}
+	})
+
 	t.Run("an unreadable mail hostname fails the create closed", func(t *testing.T) {
 		s := newCreateStore()
 		d := deps(s)

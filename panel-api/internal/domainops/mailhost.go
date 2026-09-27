@@ -11,9 +11,10 @@ import (
 )
 
 var (
-	// ErrDomainConflictsMailHostname: the name is the panel's custom mail
-	// hostname, a parent zone of it, or a name under it (JAB-390).
-	ErrDomainConflictsMailHostname = errors.New("domainops: the name conflicts with the panel's mail hostname")
+	// ErrDomainConflictsMailHostname: the name is the panel hostname, the
+	// derived mail.<hostname>, or the panel's custom mail hostname, a parent
+	// zone of it, or a name under it (JAB-390).
+	ErrDomainConflictsMailHostname = errors.New("domainops: the name conflicts with the panel's hostname or mail hostname")
 	// ErrMailHostnameLookup wraps a settings read error (the guard fails
 	// closed).
 	ErrMailHostnameLookup = errors.New("domainops: panel mail hostname lookup failed")
@@ -61,12 +62,29 @@ func MailHostnameConflict(domain, host string, panelPrimary bool) bool {
 	return false
 }
 
+// PanelReservedName reports whether name is one of the panel's own names:
+// the panel hostname or the derived mail.<hostname>. Both are the panel's
+// whether or not a panel-primary domain row exists (install.sh creates that
+// row only with the dns module), and the derived name stays reserved after a
+// switchover because the old name is served alongside the new one. Only the
+// exact names are reserved: a parent zone of the panel hostname may be an
+// admin's own site hosted as a tenant.
+func PanelReservedName(name, panelHostname string) bool {
+	host := strings.TrimSuffix(NormalizeDomainName(panelHostname), ".")
+	name = strings.TrimSuffix(NormalizeDomainName(name), ".")
+	if host == "" || name == "" {
+		return false
+	}
+	return name == host || name == models.PanelMailHostname(host)
+}
+
 // MailHostnameCollision reports whether a tenant claiming the domain name
 // (create, rename, docker app hostname) would conflict with the panel's
-// applied custom mail hostname. The derived mail.<hostname> is not checked
-// here. A nil reader means the settings are unwired; a missing settings row
-// means nothing is applied. Any other read error is returned so the caller
-// fails closed.
+// names: the panel hostname or the derived mail.<hostname> exactly
+// (PanelReservedName), or the applied custom mail hostname by
+// MailHostnameConflict. A nil reader means the settings are unwired; a
+// missing settings row means nothing is set. Any other read error is
+// returned so the caller fails closed.
 //
 // A requested but not yet applied name is protected by the switchover
 // engine, which re-checks for a conflicting domain before it issues and again
@@ -84,6 +102,9 @@ func MailHostnameCollision(ctx context.Context, settings MailSettingsReader, nam
 	}
 	if s == nil {
 		return false, nil
+	}
+	if PanelReservedName(name, s.Hostname) {
+		return true, nil
 	}
 	applied, ok := models.AppliedMailHostname(s.MailHostname)
 	if !ok {

@@ -96,6 +96,51 @@ func TestMailHostnameCollision(t *testing.T) {
 	}
 }
 
+// The panel hostname and the derived mail.<hostname> are the panel's own
+// names whether or not a panel-primary domain row exists (install.sh creates
+// that row only with the dns module). The derived name stays reserved after a
+// switchover, because the old name is served alongside the new one. Only the
+// exact names are reserved: a parent zone of the panel hostname may be an
+// admin's own site hosted as a tenant, and names under it are left to the
+// cross-tenant guard.
+func TestMailHostnameCollision_PanelNames(t *testing.T) {
+	applied := "mx.example.net"
+	derived := &fakeMailSettings{s: &models.ServerSettings{Hostname: "panel.example.com"}}
+	withApplied := &fakeMailSettings{s: &models.ServerSettings{Hostname: "panel.example.com", MailHostname: &applied}}
+	untidy := &fakeMailSettings{s: &models.ServerSettings{Hostname: " Panel.Example.COM. "}}
+	noHostname := &fakeMailSettings{s: &models.ServerSettings{}}
+
+	for _, tc := range []struct {
+		name     string
+		settings MailSettingsReader
+		domain   string
+		want     bool
+	}{
+		{"the panel hostname", derived, "panel.example.com", true},
+		{"the derived mail hostname", derived, "mail.panel.example.com", true},
+		{"any case, trailing dot", derived, "MAIL.Panel.example.com.", true},
+		{"stored hostname untidy", untidy, "mail.panel.example.com", true},
+		{"panel hostname with a custom name applied", withApplied, "panel.example.com", true},
+		{"derived name still served after a switchover", withApplied, "mail.panel.example.com", true},
+		{"a parent zone of the panel hostname", derived, "example.com", false},
+		{"a name under the panel hostname", derived, "shop.panel.example.com", false},
+		{"a name under the derived name", derived, "a.mail.panel.example.com", false},
+		{"www of the panel hostname", derived, "www.panel.example.com", false},
+		{"look-alike label", derived, "mailx.panel.example.com", false},
+		{"no panel hostname set", noHostname, "mail.panel.example.com", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := MailHostnameCollision(context.Background(), tc.settings, tc.domain)
+			if err != nil {
+				t.Fatalf("err = %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("collision = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestMailHostnameCollision_LookupErrorFailsClosed(t *testing.T) {
 	boom := errors.New("db down")
 	_, err := MailHostnameCollision(context.Background(), &fakeMailSettings{err: boom}, "example.net")

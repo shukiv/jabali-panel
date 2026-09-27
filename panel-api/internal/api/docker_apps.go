@@ -587,7 +587,7 @@ func (h *dockerAppHandler) install(c *gin.Context) {
 					c.JSON(http.StatusInternalServerError, gin.H{"error": "db_mail_hostname_lookup", "detail": msg, "id": app.ID})
 					return
 				} else if clash {
-					msg := "domain auto-create failed: the name is the panel's mail hostname, a parent zone of it, or a name under it"
+					msg := "domain auto-create failed: the name conflicts with the panel's hostname or mail hostname"
 					_ = h.cfg.Repo.UpdateStatus(ctx, app.ID, models.DockerAppStatusFailed, &msg)
 					c.JSON(http.StatusConflict, gin.H{"error": "domain_conflicts_mail_hostname", "detail": msg, "id": app.ID})
 					return
@@ -1261,7 +1261,7 @@ func (h *dockerAppHandler) editDomainPorts(ctx context.Context, app *models.Dock
 						if clash, cerr := MailHostnameCollision(ctx, h.cfg.ServerSettings, newDomain); cerr != nil {
 							return &dockerEditError{http.StatusInternalServerError, "db_mail_hostname_lookup", "could not verify the domain name against the panel mail hostname"}
 						} else if clash {
-							return &dockerEditError{http.StatusConflict, "domain_conflicts_mail_hostname", "the name is the panel's mail hostname, a parent zone of it, or a name under it"}
+							return &dockerEditError{http.StatusConflict, "domain_conflicts_mail_hostname", "the name conflicts with the panel's hostname or mail hostname"}
 						}
 						// GH #1789: cross-tenant DNS subdomain-hijack guard (see the
 						// install path). Non-admin only; fail CLOSED on a lookup error.
