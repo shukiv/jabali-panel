@@ -491,10 +491,10 @@ func dirSizeBytes(ctx context.Context, dir string) (int64, error) {
 // call goes through here so it runs with COMPOSE_DISABLE_ENV_FILE set: the
 // project's .env is jabali's own store of the app's env values (written by
 // panel-api, read back by docker_app.read_env), no catalog template
-// interpolates from it, and compose's dotenv parser rejects a value that opens
-// a quote it never closes. A password starting with ' or " therefore failed
-// every compose command for the app. Compose releases without the variable
-// ignore it and keep reading .env as before.
+// interpolates from it, and compose's dotenv parser rejects some values that
+// start with a quote (an unclosed ' or ", or a closing quote followed by more
+// text). Such a password failed every compose command for the app. Compose
+// releases without the variable ignore it and keep reading .env as before.
 func composeCommand(ctx context.Context, dir string, args ...string) *exec.Cmd {
 	cmd := execCommandContext(ctx, "docker", append([]string{"compose"}, args...)...)
 	cmd.Dir = dir
