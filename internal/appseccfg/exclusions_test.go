@@ -256,3 +256,49 @@ func itoa(n int) string {
 	}
 	return string(d)
 }
+
+// injectedRule is a live seclang directive smuggled after a newline. If an
+// invalid entry's fields were echoed raw into its SKIPPED comment, the newline
+// would end the comment and this would load as a real rule — one that disables
+// anomaly blocking for every request.
+const injectedRule = "\nSecRule REQUEST_URI \"@beginsWith /\" \"id:9596999,phase:1,pass,nolog,ctl:ruleRemoveById=949110\""
+
+// assertOnlyComments fails when out holds any non-comment directive. The input
+// under test is entirely invalid, so every line it produces must be a comment.
+func assertOnlyComments(t *testing.T, out string) {
+	t.Helper()
+	for _, line := range strings.Split(out, "\n") {
+		l := strings.TrimSpace(line)
+		if l != "" && !strings.HasPrefix(l, "#") {
+			t.Errorf("an invalid entry produced a live directive %q in:\n%s", l, out)
+		}
+	}
+}
+
+// GH #1650: an invalid entry's SKIPPED breadcrumb must not let its own field
+// values escape the comment. The rows come from the panel database and, via the
+// agent apply verb, from panel-api — neither is trusted to write seclang.
+func TestRenderExclusions_SkippedEntryCannotInjectDirectives(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		mut  func(*Exclusion)
+	}{
+		{"host", func(e *Exclusion) { e.Host += injectedRule }},
+		{"uri", func(e *Exclusion) { e.URIPrefix += injectedRule }},
+		{"rule id", func(e *Exclusion) { e.RuleID += injectedRule }},
+		// Host fails validation first, so the URI and rule id are echoed
+		// alongside a host error too.
+		{"uri behind a bad host", func(e *Exclusion) { e.Host = "BAD HOST"; e.URIPrefix += injectedRule }},
+		{"rule id behind a bad host", func(e *Exclusion) { e.Host = "BAD HOST"; e.RuleID += injectedRule }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := validExclusion()
+			tc.mut(&e)
+			out := RenderExclusions([]Exclusion{e})
+			if !strings.Contains(out, "# SKIPPED") {
+				t.Fatalf("invalid entry not reported:\n%s", out)
+			}
+			assertOnlyComments(t, out)
+		})
+	}
+}
