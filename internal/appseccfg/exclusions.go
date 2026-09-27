@@ -36,12 +36,29 @@ const OperatorExclusionIDBase = 9597000
 // the operator cannot see. Exceeding it is reported, never silently truncated.
 const maxOperatorExclusions = 900
 
+// MaxOperatorExclusions is the render cap, for callers that refuse to store an
+// entry that would not render.
+const MaxOperatorExclusions = maxOperatorExclusions
+
 // Exclusion is one operator-managed rule exclusion.
 type Exclusion struct {
 	Host      string `json:"host"`
 	URIPrefix string `json:"uri_prefix"`
 	RuleID    string `json:"rule_id"`
 	Note      string `json:"note"`
+}
+
+// NormalizeExclusion returns e as it should be stored: surrounding space
+// trimmed from every field and the host lowercased. The renderer lowercases the
+// host anyway; storing it that way too lets a duplicate check compare stored
+// rows as they are. Validate the result, not the input.
+func NormalizeExclusion(e Exclusion) Exclusion {
+	return Exclusion{
+		Host:      strings.ToLower(strings.TrimSpace(e.Host)),
+		URIPrefix: strings.TrimSpace(e.URIPrefix),
+		RuleID:    strings.TrimSpace(e.RuleID),
+		Note:      strings.TrimSpace(e.Note),
+	}
 }
 
 // ValidateExclusion rejects anything that would break the seclang literal or

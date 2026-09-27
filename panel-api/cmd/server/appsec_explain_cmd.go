@@ -4,11 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
+
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/appsecops"
 )
 
 // newAppSecExplainCmd answers the question every AppSec false-positive report
@@ -24,36 +25,8 @@ import (
 //
 // The data was there the whole time, in `cscli alerts inspect -d` meta. This
 // groups it by rule + URI so the pattern behind a complaint is visible, and an
-// exclusion can be written against a rule that actually fired.
-// crsInfraRules are the CRS rules that appear on almost every block but are
-// never the thing to exclude. Naming them inline is the point of this command:
-// a raw id list like "901340, 930130, 2546897341, 980170" gives no clue that
-// only one of those actually scored.
-//
-//	901340 — enables request-body inspection. Scores nothing. ADR-0124 exists
-//	         because this id was excluded in a first triage, to no effect.
-//	949110 — the inbound anomaly threshold rule. It is what returns 403, but it
-//	         is an effect of the score, not a detection. Excluding it disables
-//	         blocking wholesale.
-//	980170 — reports the final score. Bookkeeping.
-var crsInfraRules = map[string]string{
-	"901340": "body-inspection enabler — scores nothing, never exclude this",
-	"949110": "anomaly threshold reached — the blocker, not a detection",
-	"980170": "score reporting — bookkeeping",
-}
-
-// annotateRules splits an id list into the detections worth acting on and the
-// infrastructure rules that ride along on every block.
-func annotateRules(ids []string) (detections []string, infra []string) {
-	for _, id := range ids {
-		if note, ok := crsInfraRules[id]; ok {
-			infra = append(infra, id+" ("+note+")")
-			continue
-		}
-		detections = append(detections, id)
-	}
-	return detections, infra
-}
+// exclusion can be written against a rule that actually fired. The grouping
+// lives in appsecops so the admin UI (GH #1649) shows the same patterns.
 
 // printInlineBlocks reports 403s that never became a ban.
 //
@@ -65,28 +38,14 @@ func annotateRules(ids []string) (detections []string, infra []string) {
 //
 // Kept in its own section, deliberately: presenting these next to the
 // alert-backed rows above would imply a precision they do not have.
-func printInlineBlocks(blocks []struct {
-	Timestamp string `json:"timestamp"`
-	SourceIP  string `json:"source_ip"`
-	Scores    string `json:"scores"`
-}) {
+func printInlineBlocks(blocks []appsecops.InlineBlock) {
 	if len(blocks) == 0 {
 		return
 	}
-	byIP := map[string][]string{}
-	order := []string{}
-	for _, b := range blocks {
-		if _, seen := byIP[b.SourceIP]; !seen {
-			order = append(order, b.SourceIP)
-		}
-		byIP[b.SourceIP] = append(byIP[b.SourceIP], b.Scores)
-	}
-
 	fmt.Printf("\nInline 403s with no alert (%d): these never became a ban, so cscli\n", len(blocks))
 	fmt.Println("shows nothing for them. crowdsec.log records no rule id and no URI.")
-	for _, ip := range order {
-		scores := byIP[ip]
-		fmt.Printf("  %-42s %d block(s)   last: %s\n", ip, len(scores), scores[len(scores)-1])
+	for _, g := range appsecops.GroupInlineBlocks(blocks) {
+		fmt.Printf("  %-42s %d block(s)   last: %s\n", g.SourceIP, g.Count, g.LastScores)
 	}
 	fmt.Println("\nTo get the URI for these, correlate the IP and timestamp against the")
 	fmt.Println("tenant's nginx access log (403 responses). The score family above tells")
@@ -109,38 +68,22 @@ are only correct if aimed at the rule that actually scored.
 Caution: the rule_name field reports only the FIRST matched id, which on a
 real block is routinely 901340 — the CRS body-inspection enabler, which
 contributes no score. Exclude that and nothing changes. The scoring rule is
-usually another entry in the rule id list.`,
+usually another entry in the rule id list.
+
+The same view is in the admin panel under Security → CrowdSec → WAF exclusions.`,
 		PreRunE: requireAgent,
 		RunE: func(c *cobra.Command, _ []string) error {
 			ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 			defer cancel()
 
-			raw, err := sharedAgent.Call(ctx, "security.crowdsec.appsec.events", map[string]any{
+			raw, err := sharedAgent.Call(ctx, appsecops.EventsVerb, map[string]any{
 				"limit": limit,
 			})
 			if err != nil {
 				return fmt.Errorf("query appsec events: %w", err)
 			}
 
-			var resp struct {
-				Events []struct {
-					Timestamp  string   `json:"timestamp"`
-					SourceIP   string   `json:"source_ip"`
-					TargetHost string   `json:"target_host"`
-					TargetURI  string   `json:"target_uri"`
-					Action     string   `json:"action"`
-					RuleName   string   `json:"rule_name"`
-					RuleIDs    []string `json:"rule_ids"`
-					Country    string   `json:"country"`
-					ASNOrg     string   `json:"asn_org"`
-				} `json:"events"`
-				InlineBlocks []struct {
-					Timestamp string `json:"timestamp"`
-					SourceIP  string `json:"source_ip"`
-					Scores    string `json:"scores"`
-				} `json:"inline_blocks"`
-				AlertsScanned int `json:"alerts_scanned"`
-			}
+			var resp appsecops.EventsResponse
 			if err := json.Unmarshal(raw, &resp); err != nil {
 				return fmt.Errorf("decode agent response: %w", err)
 			}
@@ -158,52 +101,22 @@ usually another entry in the rule id list.`,
 				return nil
 			}
 
-			type group struct {
-				rules  string
-				uri    string
-				host   string
-				count  int
-				ips    map[string]bool
-				sample string
-			}
-			groups := map[string]*group{}
-			for _, e := range resp.Events {
-				key := strings.Join(e.RuleIDs, ",") + "|" + e.TargetHost + "|" + e.TargetURI
-				g, ok := groups[key]
-				if !ok {
-					g = &group{
-						rules: strings.Join(e.RuleIDs, ", "),
-						uri:   e.TargetURI, host: e.TargetHost,
-						ips: map[string]bool{}, sample: e.Timestamp,
-					}
-					groups[key] = g
-				}
-				g.count++
-				g.ips[e.SourceIP] = true
-			}
-
-			ordered := make([]*group, 0, len(groups))
-			for _, g := range groups {
-				ordered = append(ordered, g)
-			}
-			sort.Slice(ordered, func(i, j int) bool { return ordered[i].count > ordered[j].count })
-
+			patterns := appsecops.GroupEvents(resp.Events)
 			fmt.Printf("AppSec blocks across the last %d alert(s) — %d event(s), %d distinct pattern(s):\n\n",
-				resp.AlertsScanned, len(resp.Events), len(ordered))
-			for _, g := range ordered {
-				det, infra := annotateRules(strings.Split(g.rules, ", "))
-				fmt.Printf("  %d block(s), %d distinct source IP(s)\n", g.count, len(g.ips))
-				if len(det) > 0 {
-					fmt.Printf("    scored by: %s   <- exclude one of THESE\n", strings.Join(det, ", "))
+				resp.AlertsScanned, len(resp.Events), len(patterns))
+			for _, p := range patterns {
+				fmt.Printf("  %d block(s), %d distinct source IP(s)\n", p.Count, p.DistinctIPs)
+				if len(p.Detections) > 0 {
+					fmt.Printf("    scored by: %s   <- exclude one of THESE\n", strings.Join(p.Detections, ", "))
 				} else {
 					fmt.Printf("    scored by: (none identified — only infrastructure rules matched)\n")
 				}
-				for _, i := range infra {
-					fmt.Printf("    also     : %s\n", i)
+				for _, i := range p.Infra {
+					fmt.Printf("    also     : %s (%s)\n", i.ID, i.Note)
 				}
-				fmt.Printf("    host     : %s\n", g.host)
-				fmt.Printf("    uri      : %s\n", g.uri)
-				fmt.Printf("    first at : %s\n\n", g.sample)
+				fmt.Printf("    host     : %s\n", p.Host)
+				fmt.Printf("    uri      : %s\n", p.URI)
+				fmt.Printf("    first at : %s\n\n", p.FirstAt)
 			}
 
 			fmt.Println("Writing an exclusion:")

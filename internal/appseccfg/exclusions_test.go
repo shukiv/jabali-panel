@@ -302,3 +302,13 @@ func TestRenderExclusions_SkippedEntryCannotInjectDirectives(t *testing.T) {
 		})
 	}
 }
+
+// GH #1649: the panel and the CLI store an exclusion in one form, so a
+// duplicate check compares stored rows as they are.
+func TestNormalizeExclusion_TrimsAndLowercasesHost(t *testing.T) {
+	got := NormalizeExclusion(Exclusion{Host: " Blog.Example.COM ", URIPrefix: " /Wp-Json/ ", RuleID: " 942100 ", Note: " n "})
+	want := Exclusion{Host: "blog.example.com", URIPrefix: "/Wp-Json/", RuleID: "942100", Note: "n"}
+	if got != want {
+		t.Errorf("NormalizeExclusion = %+v, want %+v (the path keeps its case)", got, want)
+	}
+}

@@ -55,12 +55,15 @@ func newAppSecExclusionAddCmd() *cobra.Command {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 15*time.Second)
 			defer cancel()
 
-			e := appseccfg.Exclusion{Host: host, URIPrefix: uriPrefix, RuleID: ruleID, Note: note}
+			// Stored as the panel stores it (GH #1649), so a duplicate check
+			// compares like with like.
+			e := appseccfg.NormalizeExclusion(appseccfg.Exclusion{Host: host, URIPrefix: uriPrefix, RuleID: ruleID, Note: note})
 			if err := appseccfg.ValidateExclusion(e); err != nil {
 				return err
 			}
+			host, uriPrefix, ruleID = e.Host, e.URIPrefix, e.RuleID
 			row := &models.CRSRuleExclusion{
-				ID: ids.NewULID(), Host: host, URIPrefix: uriPrefix, RuleID: ruleID, Note: note,
+				ID: ids.NewULID(), Host: e.Host, URIPrefix: e.URIPrefix, RuleID: e.RuleID, Note: e.Note,
 			}
 			if err := crsExclRepo().Create(ctx, row); err != nil {
 				return fmt.Errorf("save exclusion: %w", err)

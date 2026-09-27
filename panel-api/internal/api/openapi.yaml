@@ -2179,6 +2179,82 @@ paths:
       requestBody: { content: { application/json: { schema: { type: object } } } }
       responses: { "200": { description: OK } }
 
+  /admin/security/crowdsec/appsec/events:
+    get:
+      tags: [CrowdSec]
+      summary: Recent AppSec blocks, grouped by rules + host + URI (FP triage, GH #1649)
+      description: |
+        Inspects the most recent `limit` AppSec alerts (one `cscli alerts
+        inspect` each, so this is slow) and groups their blocks by rule list,
+        host and URI. `detections` are the rules that scored; `infra` are CRS
+        rules that ride along on every block and are never the one to exclude.
+        `inline_blocks` are 403s that never became an alert (no rule id, no URI).
+        `alerts_scanned` counts listed alerts; `events_count` the blocks read.
+      security: [ { KratosSession: [] } ]
+      parameters:
+        - in: query
+          name: limit
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 50, default: 25 }
+      responses:
+        "200": { description: Grouped patterns and inline blocks }
+        "400": { description: limit out of range }
+        "504": { description: The agent did not finish in time — lower the limit }
+
+  /admin/security/crowdsec/appsec/exclusions:
+    get:
+      tags: [CrowdSec]
+      summary: List operator CRS exclusions (GH #1649)
+      description: |
+        `{data, total}`. `managed_install_id` is set on a row the panel manages
+        for a Flarum install (GH #1650).
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+    post:
+      tags: [CrowdSec]
+      summary: Add an operator CRS exclusion and apply it to the WAF
+      description: |
+        Host and uri_prefix are both required: the exclusion drops the rule for
+        the whole matched request. If the WAF cannot be updated, the row is
+        removed again and the error says so (`rolled_back`).
+      security: [ { KratosSession: [] } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [host, uri_prefix, rule_id]
+              properties:
+                host: { type: string, example: blog.example.com }
+                uri_prefix: { type: string, example: /wp-json/x/ }
+                rule_id: { type: string, example: "942100" }
+                note: { type: string }
+      responses:
+        "201": { description: Stored and applied }
+        "400": { description: Malformed JSON }
+        "409": { description: An exclusion for this host, path and rule exists }
+        "422": { description: Invalid exclusion, or the exclusion limit is reached }
+        "502": { description: The WAF could not be updated; see detail and rolled_back }
+
+  /admin/security/crowdsec/appsec/exclusions/{id}:
+    delete:
+      tags: [CrowdSec]
+      summary: Remove an operator CRS exclusion and apply the change to the WAF
+      description: |
+        If the WAF cannot be updated, the row is stored again and the error says
+        so (`rolled_back`).
+      security: [ { KratosSession: [] } ]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: ulid }
+      responses:
+        "200": { description: Removed and applied }
+        "404": { description: No such exclusion }
+        "502": { description: The WAF could not be updated; see detail and rolled_back }
+
   /admin/security/crowdsec/country-exemption:
     get:
       tags: [CrowdSec]
