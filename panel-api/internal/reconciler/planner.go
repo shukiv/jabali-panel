@@ -103,6 +103,9 @@ var (
 	// PhaseWebmailJMAPURL is Bulwark's JMAP URL, kept on the effective
 	// panel mail hostname (JAB-390).
 	PhaseWebmailJMAPURL = Phase{Name: "webmail.jmap_url", AuditInterval: domainReDispatchInterval}
+	// PhaseWebmailRedirect is the /webmail redirects in the default vhost,
+	// kept on the effective panel mail hostname (JAB-390).
+	PhaseWebmailRedirect = Phase{Name: "nginx.webmail_redirect", AuditInterval: domainReDispatchInterval}
 	// PhaseDBGrantEscape converts database-level grants that name a
 	// database with an unescaped `_` (a GRANT wildcard). One entry for the
 	// host; the interval catches a grant written the old way since, such as
