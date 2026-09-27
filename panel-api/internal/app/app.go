@@ -1181,6 +1181,13 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			// SUPERSEDED) — CrowdSec AppSec covers the WAF role.
 			api.RegisterSecurityCrowdSecRoutes(securityGroup, deps.Agent, deps.ServerSettings)
 			api.RegisterSecurityAppSecRoutes(securityGroup, deps.Agent, deps.ServerSettings)
+			// GH #1649: AppSec FP triage + operator CRS exclusions, applied live.
+			appsecExclCfg := api.SecurityAppSecExclusionConfig{Agent: deps.Agent}
+			if deps.DB != nil {
+				appsecExclCfg.Exclusions = repository.NewCRSRuleExclusionRepository(deps.DB)
+				appsecExclCfg.HostModes = repository.NewCRSHostModeRepository(deps.DB)
+			}
+			api.RegisterSecurityAppSecExclusionRoutes(securityGroup, appsecExclCfg)
 			api.RegisterSecurityUFWRoutes(securityGroup, deps.Agent)
 			// M40 (ADR-0086) AppArmor admin status + per-profile mode flip.
 			api.RegisterSecurityAppArmorRoutes(securityGroup, deps.Agent)

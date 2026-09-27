@@ -543,3 +543,138 @@ export function useUpdateCrowdsecProfiles() {
     },
   });
 }
+
+// GH #1649 — AppSec false-positive triage + operator CRS exclusions. Wire
+// contract per panel-api/internal/api/security_appsec_exclusions.go.
+
+export type AppSecInfraRule = { id: string; note: string };
+
+/** Every recent block that shares one rule list, host and URI. */
+export type AppSecBlockPattern = {
+  rule_ids: string[];
+  /** The rules that scored — the ones an exclusion can target. */
+  detections: string[];
+  /** Rules that scored but that an exclusion cannot target (not CRS). */
+  other: AppSecInfraRule[];
+  /** CRS rules that ride along on every block; never the one to exclude. */
+  infra: AppSecInfraRule[];
+  host: string;
+  uri: string;
+  count: number;
+  distinct_ips: number;
+  first_at: string;
+  last_at: string;
+};
+
+export type AppSecInlineBlockGroup = {
+  source_ip: string;
+  count: number;
+  last_at: string;
+  last_scores: string;
+};
+
+export type AppSecEvents = {
+  patterns: AppSecBlockPattern[];
+  inline_blocks: AppSecInlineBlockGroup[];
+  alerts_scanned: number;
+  events_count: number;
+  inline_count: number;
+  limit: number;
+};
+
+export const APPSEC_EVENTS_LIMITS = [10, 25, 50] as const;
+
+/**
+ * Recent AppSec blocks. The agent inspects each alert, so this is slow: it
+ * only runs when `enabled` (an explicit Load), never on mount.
+ */
+export function useAppSecEvents(limit: number, enabled: boolean) {
+  return useQuery({
+    queryKey: ["security", "crowdsec", "appsec", "events", limit],
+    enabled,
+    staleTime: 60_000,
+    retry: false,
+    queryFn: async () => {
+      const { data } = await apiClient.get<AppSecEvents>(`${BASE}/appsec/events`, {
+        params: { limit },
+        // The server allows the agent 90s; axios defaults to 60s.
+        timeout: 100_000,
+      });
+      return data;
+    },
+  });
+}
+
+export type AppSecExclusion = {
+  id: string;
+  host: string;
+  uri_prefix: string;
+  rule_id: string;
+  note: string;
+  created_at: string;
+  updated_at: string;
+  /** Set on a row the panel manages for a Flarum install (GH #1650). */
+  managed_install_id?: string;
+};
+
+export type AppSecApplyResult = { changed?: boolean; reloaded?: boolean; skipped?: string };
+
+export type AddAppSecExclusionInput = {
+  host: string;
+  uri_prefix: string;
+  rule_id: string;
+  note: string;
+};
+
+const APPSEC_EXCLUSIONS_KEY = ["security", "crowdsec", "appsec", "exclusions"];
+
+// An add or remove applies to the WAF at once. When that fails the server
+// undoes the change and applies again, which can take two crowdsec reloads.
+const APPSEC_EXCLUSION_WRITE_TIMEOUT = 130_000;
+
+export function useAppSecExclusions() {
+  return useQuery({
+    queryKey: APPSEC_EXCLUSIONS_KEY,
+    queryFn: async () => {
+      const { data } = await apiClient.get<{ data: AppSecExclusion[]; total: number }>(
+        `${BASE}/appsec/exclusions`,
+      );
+      return data.data ?? [];
+    },
+  });
+}
+
+export function useAddAppSecExclusion() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: AddAppSecExclusionInput) => {
+      const { data } = await apiClient.post<{ exclusion: AppSecExclusion; apply: AppSecApplyResult }>(
+        `${BASE}/appsec/exclusions`,
+        input,
+        { timeout: APPSEC_EXCLUSION_WRITE_TIMEOUT },
+      );
+      return data;
+    },
+    // Settled, not success: a failed apply is undone server-side, and the
+    // list must show what is stored either way.
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: APPSEC_EXCLUSIONS_KEY });
+    },
+  });
+}
+
+export function useRemoveAppSecExclusion() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { data } = await apiClient.delete<{ status: string; apply: AppSecApplyResult }>(
+        `${BASE}/appsec/exclusions/${encodeURIComponent(id)}`,
+        { timeout: APPSEC_EXCLUSION_WRITE_TIMEOUT },
+      );
+      return data;
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: APPSEC_EXCLUSIONS_KEY });
+    },
+  });
+}
