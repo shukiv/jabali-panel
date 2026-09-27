@@ -1,6 +1,6 @@
 # Platform — Agent
 
-`jabali-agent.service`. Root-privileged process; the only thing that performs privileged host operations. Callers (the panel API, the CLI, the reconciler) reach it over `/run/jabali-agent.sock`.
+`jabali-agent.service`. Root-privileged process; the only thing that performs privileged host operations. Callers (the panel API, the CLI, the reconciler) reach it over the Unix socket `/run/jabali/agent.sock`.
 
 ## Why a separate process
 
@@ -10,17 +10,17 @@
 
 ## Wire protocol
 
-Length-prefixed JSON over UDS. Each request:
+Newline-delimited JSON over the Unix socket, one request per connection. The envelope types live in `agentwire/wire.go`. Each request:
 
 ```json
-{ "action": "domain.create", "params": { … }, "request_id": "01J..." }
+{ "id": "01J...", "command": "domain.create", "params": { … }, "deadline": "2026-09-28T12:00:00Z" }
 ```
 
-Each response:
+`deadline` is optional. Each response echoes the request `id`:
 
 ```json
-{ "request_id": "01J...", "ok": true,  "result": { … } }
-{ "request_id": "01J...", "ok": false, "error": "human-readable", "code": "STRUCTURED_CODE" }
+{ "id": "01J...", "ok": true,  "data": { … } }
+{ "id": "01J...", "ok": false, "error": { "code": "invalid_argument", "message": "human-readable" } }
 ```
 
 ## Handler catalogue (representative; see `panel-agent/internal/commands/`)
@@ -30,8 +30,15 @@ Each response:
 - `nginx.reload`, `nginx.cache.purge`, `nginx.ratelimits.apply`
 
 **SSL**
-- `ssl.issue`, `ssl.renew`, `ssl.revoke`
-- `ssl.panel.issue`, `ssl.panel.renew`
+- `ssl.issue`, `ssl.issue_dns01`, `ssl.renew`, `ssl.revoke`, `ssl.self_sign`, `ssl.cert_info`
+- `ssl.install_custom`, `ssl.install_shared`, `ssl.delete_shared`
+- `ssl.mail.issue`, `ssl.mail.delete` (per-domain `mail.<domain>` certificates)
+- `ssl.panel.issue`, `ssl.panel.selfsign` (the panel hostname and panel mail certificates)
+- `ssl.panel.mail_served` (checks that IMAPS and SMTPS serve the new mail certificate before a [mail hostname](../admin/mail-hostname.md) change is applied), `ssl.panel.lineage_delete` (removes the certbot lineage of a replaced custom mail hostname)
+
+**Webmail**
+- `webmail.vhost_apply`, `webmail.vhost_remove`, `webmail.branding.apply`
+- `webmail.jmap_url.apply`, `nginx.webmail_redirect.apply` (move webmail to the applied mail hostname)
 
 **DNS**
 - `dns.zone.upsert`, `dns.zone.delete`
@@ -94,8 +101,12 @@ Each response:
 
 ## Hardening
 
-- `AppArmor` profile (`/etc/apparmor.d/jabali-agent`) restricts which files it can touch.
-- `SupplementaryGroups=jabali-sockets` (M25.1) so the socket is reachable from the panel without giving the panel root.
+- **Two checks on every connection to the main socket:**
+  - Socket permissions. `/run/jabali/` is `root:jabali 0750` and the socket is `root:jabali 0660`, so only root and the `jabali` group can connect.
+  - Caller UID (JAB-366, JAB-357). The agent reads the connecting process's UID (`SO_PEERCRED`) and accepts only the UIDs in `-allowed-uids`. install.sh passes the panel user and root. The agent refuses to start when the list is empty or unparsable; only the test flag `-insecure-allow-any-uid` turns the check off. So a service account left in the `jabali` group by mistake still cannot drive the agent.
+- Only the UIDs in `-admin-uids` may request the root-scoped File Manager. By default this is the `-allowed-uids` list.
+- No other service is a member of the `jabali` group, and a restore never adds one back (JAB-357).
+- The agent has no AppArmor profile. It was removed in M40.3 because an AppArmor 4.x complain-mode bug blocked the agent's MariaDB socket connection. See [AppArmor](../admin/apparmor.md).
 - Logs everything with structured fields (request_id, action, subject_user, target_user, result).
 
 ## Adding a new handler

@@ -1,6 +1,6 @@
 # Panel SSL — runbook
 
-The panel hostname's TLS cert sits at `/etc/jabali/tls/panel.{crt,key}`. By default it is **self-signed**. M32 (ADR-0066) adds an opt-in flow to replace it with a Let's Encrypt cert covering `<hostname>` + `mail.<hostname>` SAN.
+The panel hostname's TLS cert sits at `/etc/jabali/tls/panel.{crt,key}`. By default it is **self-signed**. M32 (ADR-0066) adds an opt-in flow to replace it with a Let's Encrypt cert for `<hostname>`. The panel mail certificate is a separate lineage (ADR-0105); see [Panel mail certificate](#panel-mail-certificate).
 
 ## What each status means
 
@@ -46,7 +46,7 @@ mariadb -uroot jabali_panel \
 # Hand-run certbot (same args the agent uses):
 sudo certbot certonly --webroot \
   -w /var/www/jabali-panel-acme \
-  -d "$(hostname -f)" -d "mail.$(hostname -f)" \
+  -d "$(hostname -f)" \
   -m "<admin-email>" \
   --agree-tos --non-interactive --keep-until-expiring
 
@@ -83,6 +83,38 @@ sudo /usr/local/bin/jabali update -f   # provision_tls_cert re-runs
 
 The panel cert is intentionally separate from the per-domain SSL certs the reconciler manages for hosted domains. M32 only governs the panel hostname; everything else still flows through `ssl_certificates` + the M14 SSL renewal pipeline.
 
+## Panel mail certificate
+
+The panel mail certificate is its own Let's Encrypt lineage for the mail hostname, `mail.<hostname>` by default. An administrator can move mail to another name; see [Mail Hostname](../site/admin/mail-hostname.md).
+
+The deploy hook handles this lineage as kind `mail`:
+
+1. It copies the lineage to `/etc/jabali/tls/panel-mail.{crt,key}` (root:jabali 0640).
+2. It records the lineage name in `/etc/jabali/tls/panel-mail.lineage`. certbot's unattended renewals carry no kind, so the hook deploys only the recorded lineage as the panel mail certificate.
+3. It reloads nginx, pushes the certificate into Stalwart with `/usr/local/bin/jabali-stalwart-push-cert`, then restarts `jabali-stalwart`. Stalwart loads certificates only at startup, so the push must come before the restart.
+
+### Mail clients still get the old certificate
+
+Symptom: a mail hostname change fails with "the mail server does not serve the new certificate", or IMAPS/SMTPS present an old or self-signed certificate.
+
+Compare what Stalwart serves with the lineage on disk. Replace `<mail-hostname>` with the name in question:
+
+```sh
+cat /etc/jabali/tls/panel-mail.lineage
+openssl x509 -noout -fingerprint -sha256 -in /etc/letsencrypt/live/<mail-hostname>/fullchain.pem
+for port in 993 465; do
+  openssl s_client -connect 127.0.0.1:$port -servername <mail-hostname> </dev/null 2>/dev/null \
+    | openssl x509 -noout -fingerprint -sha256
+done
+```
+
+`-servername` is required: without SNI, Stalwart serves its default certificate.
+
+- The lineage record is missing or names another lineage: the deploy hook is out of date. Run `jabali update`, which reinstalls the hook and `jabali-stalwart-push-cert`.
+- The record is right but a port serves another fingerprint: run `jabali-stalwart-push-cert`, then `systemctl restart jabali-stalwart`, and compare again.
+
+A change that fails this check retries after one hour. The name in use stays until the check passes.
+
 ## Files of interest
 
 | Path | Owner | Why |
@@ -90,6 +122,9 @@ The panel cert is intentionally separate from the per-domain SSL certs the recon
 | `/etc/jabali/tls/panel.crt` | root:jabali 0640 | The actual cert nginx, panel-api, and Bulwark all read |
 | `/etc/jabali/tls/panel.key` | root:jabali 0640 | Same lifecycle |
 | `/etc/letsencrypt/live/<hostname>/` | root:root | LE lineage; deploy-hook reads from here |
+| `/etc/jabali/tls/panel-mail.{crt,key}` | root:jabali 0640 | The panel mail certificate (nginx `mail.<hostname>`, Stalwart) |
+| `/etc/jabali/tls/panel-mail.lineage` | root:root 0644 | Name of the lineage the deploy-hook deploys as the panel mail certificate |
+| `/usr/local/bin/jabali-stalwart-push-cert` | root:root | Loads the panel mail certificate into Stalwart |
 | `/etc/letsencrypt/renewal-hooks/deploy/jabali-panel-cert.sh` | root:root 0755 | Deploy-hook itself |
 | `/var/www/jabali-panel-acme/` | root:www-data 0750 | LE HTTP-01 challenge webroot |
 | nginx default `:80` server block | n/a | Has `location ^~ /.well-known/acme-challenge/ { root /var/www/jabali-panel-acme; }` |
