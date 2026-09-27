@@ -75,3 +75,12 @@ amendment).
 - **Display.** Panel SSL labels the mail row with its stored hostname.
   When that is empty, it falls back to the applied mail hostname rather
   than a fresh `mail.<primary>` derivation.
+
+## Amendment — transition certificate and rename pin (JAB-390, 2026-09-27)
+
+- **Transition certificate.**
+  - A switchover issues the mail certificate for the desired name with the derived `mail.<hostname>` as an extra SAN, so both names keep serving.
+  - The deploy hook routes it by the lineage recorded in `/etc/jabali/tls/panel-mail.lineage`.
+  - push-cert replaces every Stalwart TLS entry whose names overlap the new certificate. A certificate with a new first name therefore still replaces the old one on `:993`.
+  - Renewal needs both names to resolve here. Dropping the old name needs a reissue with only the new name, which is not built (see the ADR-0048 amendment).
+- **Rename.** A panel rename still leaves the mail row on its issued name (JAB-389). When nothing is applied and the row is a Let's Encrypt certificate that is issued, the reconciler records that name as the applied mail hostname, so the effective mail hostname cannot drift to a name no certificate covers.

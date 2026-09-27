@@ -168,3 +168,65 @@ On any failure the old applied name keeps serving, and the status records what t
   - the Panel SSL display fallback
 - Still pending: the desired-state table, the switchover pass, the remaining dependents (the agent self-signed SAN, Bulwark `JMAP_SERVER_URL`, the install.sh webmail redirects, the Stalwart identity, the panel-primary MX), and the setter (API, CLI and UI, with audit).
 - Order: the setter ships only together with or after the switchover pass, so an administrator is never left with a desired name that nothing acts on.
+
+## Amendment — shipped lifecycle and three decisions (JAB-390, 2026-09-27)
+
+This records what shipped and three maintainer decisions. Where it disagrees with the 2026-09-26 amendment above, this one wins.
+
+**Shipped.**
+
+- Slice A (#1880–#1883):
+  - the deploy hook routes the mail certificate by its recorded lineage;
+  - push-cert replaces every Stalwart TLS entry that overlaps the new certificate's names;
+  - `jabali settings mail-hostname --applied` feeds `bulwark.env` and the `/webmail` redirects on `jabali update`;
+  - webmail vhosts take the mail hostname and extra server names;
+  - agent verb `webmail.jmap_url.apply`.
+- Switchover pass, setter and UI (#1887):
+  - Setter: `PUT`/`DELETE /admin/settings/email/mail-hostname` (strict per-actor rate limit, audited), `jabali settings mail-hostname --set/--cancel/--status`, and Settings → Email.
+  - Desired name and status: singleton table `mail_hostname_switchover` (migration 000305).
+- Rename pin (#1892) and reserved names (#1894), described below.
+
+**Switchover preconditions.** A switchover runs only when all of these hold. Otherwise the request waits and retries.
+
+- the panel hostname and admin e-mail are set;
+- Let's Encrypt is on for the panel certificates (a self-signed switchover is not supported);
+- the panel-primary domain exists for the panel hostname, with email and webmail on, and webmail is on server-wide.
+
+**Switchover steps.** The pass runs these in order:
+
+1. Check that the desired name and the derived `mail.<hostname>` both resolve to this server.
+2. Issue a mail certificate for the desired name, with the derived name as an extra SAN.
+3. Re-check that no tenant domain or alias conflicts with the name.
+4. In one transaction, write the applied name, repoint the mail certificate row and mark the request done.
+
+After a switchover, every tick asserts Bulwark's JMAP URL from the effective name. Stalwart has no hostname in its configuration; its only link to the name is the TLS certificate registry.
+
+**Decision 1: the old name is served indefinitely.** After a switchover the certificate covers both names, and both keep working. Retiring the old name needs a reissue with only the new name, and is a later explicit action. It is not built. Until then, the certificate renews only while both names resolve here.
+
+**Decision 2: a panel rename keeps mail where it is.** This replaces "Changing the panel hostname still moves the derived default" above.
+
+- JAB-389 keeps the mail certificate row on the name it was issued for when the panel is renamed.
+- When no mail hostname is applied and that row is a Let's Encrypt certificate issued for a name other than `mail.<new-hostname>`, the reconciler records the row's name as the applied mail hostname (`pinIssuedMailHostname`).
+- Mail and webmail therefore stay on the name their certificate serves. Moving them to `mail.<new-hostname>` is an ordinary switchover request.
+- A self-signed mail certificate is not pinned: it is regenerated for the current hostname.
+- `server_settings.mail_hostname` therefore has two writers:
+  - the switchover pass;
+  - this pin, which writes only while the column is NULL and only a name the panel already serves.
+
+**Decision 3: the panel zone's MX stays `mail.<zone>`.** This removes "the panel-primary MX" from the switchover's dependents above. Because the old name is still served, the panel zone's MX and MTA-STS `mx:` keep pointing at the derived name.
+
+**Reserved names.**
+
+- The panel hostname and `mail.<hostname>` are never a tenant's. Every domain door refuses them for every actor, whether or not a panel-primary row exists: create, rename, Docker app hostname and web alias.
+- Only the exact names are reserved. A parent zone of the panel hostname may be the administrator's own site hosted as a tenant.
+- An applied custom name is refused more widely:
+  - by the domain doors, as the name, a parent zone of it, or a name under it;
+  - by the alias door, as the exact name;
+  - at request time, the setter refuses a name that conflicts with an existing tenant domain or alias.
+
+**Not built.**
+
+- retiring the old name, and cleaning up its certificate lineage;
+- verifying the certificate actually served after a switchover (`done` means the issuance call succeeded);
+- moving the `/webmail` redirects before the next `jabali update`;
+- showing the custom name in mailbox client settings and autoconfig.
