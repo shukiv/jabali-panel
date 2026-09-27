@@ -1,6 +1,7 @@
 package dockerapp
 
 import (
+	"fmt"
 	"net/url"
 	"regexp"
 	"strings"
@@ -12,19 +13,51 @@ import (
 // envHostile carries every byte that broke a raw {{ index .Env "X" }}
 // substitution (GH #322, GH #1790 follow-up): '$' (docker compose
 // interpolation: "p@ss$x" became "p@ss"), '"' and '\' (YAML double-quoted
-// scalar), " #" (YAML comment), '\” + '`' + "$(" (shell quoting and command
-// substitution in one-shot installer scripts) and '@' ':' '/' '%' (URL
-// userinfo). A tenant can send any of these as an install env override, since
-// validateEnvKV only rejects newlines and NUL.
+// scalar), " #" (YAML comment), a single quote, a backtick and "$(" (shell
+// quoting and command substitution in one-shot installer scripts) and '@' ':'
+// '/' '%' (URL userinfo). A tenant can send any of these as an install env
+// override, since validateEnvKV only rejects newlines and NUL.
 const envHostile = `p@ss$x"y\z #'` + "`id`$(id):/%"
 
 // envMarker tags a value with the env name it came from, so the render walk
 // can tell which catalog variable reached which compose scalar.
 func envMarker(name string) string { return "<<" + name + ">>" }
 
-// composeUnescape reverses docker compose's "$$" escape: what the container
-// actually receives for a rendered scalar.
-func composeUnescape(s string) string { return strings.ReplaceAll(s, "$$", "$") }
+// composeInterpolate applies docker compose's interpolation to a rendered
+// scalar with every variable unset, giving what the container receives: "$$"
+// is a literal '$', "$NAME" and "${...}" become "", and any other '$' is a
+// compose "invalid template" error.
+func composeInterpolate(s string) (string, error) {
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] != '$' {
+			b.WriteByte(s[i])
+			continue
+		}
+		switch {
+		case i+1 < len(s) && s[i+1] == '$':
+			b.WriteByte('$')
+			i++
+		case i+1 < len(s) && s[i+1] == '{':
+			j := strings.IndexByte(s[i:], '}')
+			if j < 0 {
+				return "", fmt.Errorf("unterminated ${ at byte %d", i)
+			}
+			i += j
+		case i+1 < len(s) && (s[i+1] == '_' || isASCIILetter(s[i+1])):
+			j := i + 1
+			for j < len(s) && (s[j] == '_' || isASCIILetter(s[j]) || (s[j] >= '0' && s[j] <= '9')) {
+				j++
+			}
+			i = j - 1
+		default:
+			return "", fmt.Errorf("invalid template: bare '$' at byte %d", i)
+		}
+	}
+	return b.String(), nil
+}
+
+func isASCIILetter(c byte) bool { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') }
 
 // hostileOverrides sets every catalog env var of e to its marker + envHostile.
 // SMTP_HOST / SMTP_PORT stay sane: they are endpoint coordinates built into
@@ -54,8 +87,8 @@ func collectScalars(n *yaml.Node, out *[]string) {
 // TestRender_AllApps_EnvValuesReachContainerVerbatim renders every catalog app
 // with a hostile value for each of its env vars (admin door and tenant door)
 // and asserts each value reaches the container exactly: the render stays valid
-// YAML, every scalar that carries a value holds it verbatim once compose
-// unescapes "$$", and a value embedded in a URL decodes back to itself.
+// YAML, every scalar that carries a value holds it verbatim after compose
+// interpolation, and a value embedded in a URL decodes back to itself.
 func TestRender_AllApps_EnvValuesReachContainerVerbatim(t *testing.T) {
 	cat, _ := LoadDir(repoCatalogDir(t))
 	if cat.Len() == 0 {
@@ -96,7 +129,13 @@ func TestRender_AllApps_EnvValuesReachContainerVerbatim(t *testing.T) {
 			var scalars []string
 			collectScalars(&doc, &scalars)
 			for _, raw := range scalars {
-				got := composeUnescape(raw)
+				got, ierr := composeInterpolate(raw)
+				if ierr != nil {
+					if strings.Contains(raw, "<<") {
+						t.Errorf("%s (%s door): compose rejects a scalar carrying an env value: %v\n  %q", e.Slug, door.name, ierr, raw)
+					}
+					continue
+				}
 				for _, ev := range e.Env {
 					m := envMarker(ev.Name)
 					if strings.Contains(got, m) && !strings.Contains(got, m+envHostile) {
