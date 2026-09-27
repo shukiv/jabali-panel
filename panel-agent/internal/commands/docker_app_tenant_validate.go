@@ -407,7 +407,7 @@ func validateTenantServices(configJSON []byte, want tenantcompose.Services) erro
 		for key, v := range svc.Deploy.Resources.Limits {
 			switch key {
 			case "cpus":
-				err = json.Unmarshal(v, &s.CPUs)
+				s.CPUs, err = resolvedFloat(v)
 			case "memory":
 				s.MemoryBytes, err = resolvedInt(v)
 			case "pids":
@@ -449,6 +449,16 @@ func resolvedInt(v json.RawMessage) (int64, error) {
 		s = unq
 	}
 	return strconv.ParseInt(s, 10, 64)
+}
+
+// resolvedFloat reads a cpus value, printed as a number by current Compose
+// and as a string ("0.5") by older v2 releases.
+func resolvedFloat(v json.RawMessage) (float64, error) {
+	s := strings.TrimSpace(string(v))
+	if unq, err := strconv.Unquote(s); err == nil {
+		s = unq
+	}
+	return strconv.ParseFloat(s, 64)
 }
 
 // resolvedUlimit reads a ulimit: a single number (soft = hard) or an object

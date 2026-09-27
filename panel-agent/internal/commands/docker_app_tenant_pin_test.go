@@ -174,6 +174,16 @@ func TestTenantPin_LegacyPidsLimit(t *testing.T) {
 	}
 }
 
+// Older Compose v2 releases print cpus as a string; the pin reads both.
+func TestTenantPin_CpusAsString(t *testing.T) {
+	j := probed(t, func(d map[string]any) {
+		svcOf(d, "web")["deploy"].(map[string]any)["resources"].(map[string]any)["limits"].(map[string]any)["cpus"] = "0.5"
+	})
+	if err := validateTenantServices(j, probedServices()); err != nil {
+		t.Fatalf("a string cpus value must still match: %v", err)
+	}
+}
+
 // GH #1903 tier B: the resolved services must be exactly the rendered set.
 func TestTenantPin_ServiceSetDrift(t *testing.T) {
 	cases := map[string]struct {
