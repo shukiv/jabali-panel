@@ -127,6 +127,13 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 	}
 
 	// 3) Domains + SSL certs.
+	// refused holds the domains CheckDomain turned down (GH #1898); none of
+	// their mailboxes, forwarders or app installs are restored either.
+	refused := map[string]bool{}
+	ownerUsername := ""
+	if m.User.Username != nil {
+		ownerUsername = *m.User.Username
+	}
 	if d.Domains != nil {
 		for _, dm := range m.Domains {
 			if existing, err := d.Domains.FindByID(ctx, dm.ID); err == nil && existing != nil {
@@ -166,6 +173,20 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 				CreatedAt:             now,
 				UpdatedAt:             now,
 			}
+			if d.CheckDomain == nil {
+				refused[dm.ID] = true
+				r.Errors = append(r.Errors, fmt.Sprintf("domain %s (%s): not restored: the restore checks are not wired", dm.ID, dm.Name))
+				continue
+			}
+			warnings, cerr := d.CheckDomain(ctx, row, ownerUsername)
+			if cerr != nil {
+				refused[dm.ID] = true
+				r.Errors = append(r.Errors, fmt.Sprintf("domain %s (%s): not restored: %v", dm.ID, dm.Name, cerr))
+				continue
+			}
+			for _, w := range warnings {
+				r.Errors = append(r.Errors, fmt.Sprintf("domain %s (%s): %s", dm.ID, dm.Name, w))
+			}
 			if err := d.Domains.Create(ctx, row); err != nil {
 				r.Errors = append(r.Errors, fmt.Sprintf("domain %s (%s): create: %v", dm.ID, dm.Name, err))
 				continue
@@ -201,6 +222,9 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 	// surfaces that as a warning.
 	for di := range m.Domains {
 		dm := m.Domains[di]
+		if refused[dm.ID] {
+			continue
+		}
 		if d.Mailboxes != nil {
 			for _, mb := range dm.Mailboxes {
 				if existing, err := d.Mailboxes.FindByID(ctx, mb.ID); err == nil && existing != nil {
@@ -404,6 +428,10 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 	// 5) App installs.
 	if d.AppInstalls != nil {
 		for _, ai := range m.AppInstalls {
+			if refused[ai.DomainID] {
+				r.Errors = append(r.Errors, fmt.Sprintf("app_install %s: not restored: its domain was refused", ai.ID))
+				continue
+			}
 			row := &models.ApplicationInstall{
 				ID:            ai.ID,
 				UserID:        m.User.ID,

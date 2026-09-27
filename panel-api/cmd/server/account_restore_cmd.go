@@ -28,6 +28,7 @@ import (
 	internalbackup "git.jabali-panel.com/shukivaknin/jabali2/internal/backup"
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/kratosclient"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/api"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/backupmetadata"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/backupwrapperhelpers"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
@@ -66,6 +67,9 @@ func applyPanelMetadata(ctx context.Context, cmd *cobra.Command, raw json.RawMes
 		DNSRecords:     repository.NewDNSRecordRepository(sharedDB),
 		KratosClient:   kratosclient.NewClient(sharedCfg.Auth.Kratos.PublicURL, sharedCfg.Auth.Kratos.AdminURL),
 		Agent:          sharedAgent, // push restored forwarders to Stalwart (GH #1795)
+		// GH #1898: a restored domain passes the create-time checks.
+		CheckDomain: api.RestoreDomainCheck(repository.NewDomainRepository(sharedDB),
+			repository.NewWebDomainAliasRepository(sharedDB), repository.NewServerSettingsRepository(sharedDB)),
 	}
 	r := backupmetadata.Apply(ctx, &meta, deps)
 	w := cmd.OutOrStdout()

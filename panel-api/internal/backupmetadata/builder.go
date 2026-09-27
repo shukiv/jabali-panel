@@ -60,6 +60,14 @@ type Deps struct {
 	EgressPolicies repository.UserEgressPolicyRepository
 	EgressRequests repository.UserEgressRequestRepository
 	KratosClient   KratosClient
+	// CheckDomain vets a domain row rebuilt from the archive before Apply
+	// stores it (GH #1898). It runs the create-time checks a domain door
+	// would, because the archive may come from an untrusted source. An error
+	// refuses the domain and every row under it. It may clear an unsafe
+	// optional field on row and report that as a warning; the domain is then
+	// stored without it. Required for restoring domains: nil refuses every
+	// domain, so no restore door can skip the checks by forgetting to wire them.
+	CheckDomain func(ctx context.Context, row *models.Domain, ownerUsername string) (warnings []string, err error)
 	// Agent, when set, lets Apply push restored email forwarders to Stalwart
 	// (forwarder.apply). Optional: nil skips convergence, so the restored rows
 	// converge on the first later forwarder mutation instead (GH #1795 follow-up).

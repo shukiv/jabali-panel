@@ -254,6 +254,63 @@ type CreateResult struct {
 	MailErr      error
 }
 
+// NameCheckDeps are the stores the create-time name guards read. A nil store
+// means that feature is unwired (see CreateDeps): its guard finds no conflict.
+type NameCheckDeps struct {
+	Domains  SuffixDomainFinder
+	Aliases  AliasHostnameFinder
+	Settings MailSettingsReader
+}
+
+// CheckName runs the create-time name guards, in this order: the name is a
+// valid domain name; no other domain's web alias holds it (GH #1625); an owner
+// is named; for a non-admin actor, it neither nests under nor wraps another
+// owner's domain (GH #1789, honouring #1812 delegation); and it is not the
+// panel's mail hostname or a parent of it (JAB-390). Every lookup error fails
+// closed.
+//
+// Create runs it for every door. Backup restore runs it with actorIsAdmin
+// false (GH #1898): the admin chose to restore, but the names come from the
+// archive.
+func CheckName(ctx context.Context, d NameCheckDeps, name, ownerID string, actorIsAdmin bool) error {
+	if err := ValidateDomainName(name); err != nil {
+		return err
+	}
+
+	// GH #1625: the name, www.<name> and the mail-helper server_names must not
+	// be held by another domain's web alias. Fail closed on a lookup error.
+	if hit, clash, err := AliasCollision(ctx, d.Aliases, name); err != nil {
+		return &kindError{kind: ErrAliasLookup, cause: err}
+	} else if clash {
+		return &AliasConflictError{Hostname: hit}
+	}
+
+	if ownerID == "" {
+		return ErrOwnerRequired
+	}
+
+	// GH #1789: a tenant must not nest under, or wrap, another tenant's
+	// domain. An admin actor is trusted to place cross-tenant delegations.
+	// Fail closed on a lookup error.
+	if !actorIsAdmin {
+		if _, clash, err := CrossTenantSuffixCollision(ctx, d.Domains, name, ownerID); err != nil {
+			return &kindError{kind: ErrSuffixLookup, cause: err}
+		} else if clash {
+			return ErrDomainConflictsTenant
+		}
+	}
+
+	// JAB-390: never the panel's custom mail hostname or a parent zone of
+	// it, whoever the actor: every hosted domain is tenant-owned. Fail
+	// closed on a lookup error.
+	if clash, err := MailHostnameCollision(ctx, d.Settings, name); err != nil {
+		return &kindError{kind: ErrMailHostnameLookup, cause: err}
+	} else if clash {
+		return ErrDomainConflictsMailHostname
+	}
+	return nil
+}
+
 // Create validates in, stores the domain, and runs the post-create hooks. See
 // the file comment for the order. On a rejection nothing is stored.
 func Create(ctx context.Context, d CreateDeps, hooks CreateHooks, in CreateInput) (*CreateResult, error) {
@@ -265,40 +322,9 @@ func Create(ctx context.Context, d CreateDeps, hooks CreateHooks, in CreateInput
 		log = slog.Default()
 	}
 
-	if err := ValidateDomainName(in.Name); err != nil {
+	if err := CheckName(ctx, NameCheckDeps{Domains: d.Domains, Aliases: d.Aliases, Settings: d.Settings},
+		in.Name, in.OwnerID, in.ActorIsAdmin); err != nil {
 		return nil, err
-	}
-
-	// GH #1625: the name, www.<name> and the mail-helper server_names must not
-	// be held by another domain's web alias. Fail closed on a lookup error.
-	if hit, clash, err := AliasCollision(ctx, d.Aliases, in.Name); err != nil {
-		return nil, &kindError{kind: ErrAliasLookup, cause: err}
-	} else if clash {
-		return nil, &AliasConflictError{Hostname: hit}
-	}
-
-	if in.OwnerID == "" {
-		return nil, ErrOwnerRequired
-	}
-
-	// GH #1789: a tenant must not nest under, or wrap, another tenant's
-	// domain. An admin actor is trusted to place cross-tenant delegations.
-	// Fail closed on a lookup error.
-	if !in.ActorIsAdmin {
-		if _, clash, err := CrossTenantSuffixCollision(ctx, d.Domains, in.Name, in.OwnerID); err != nil {
-			return nil, &kindError{kind: ErrSuffixLookup, cause: err}
-		} else if clash {
-			return nil, ErrDomainConflictsTenant
-		}
-	}
-
-	// JAB-390: never the panel's custom mail hostname or a parent zone of
-	// it, whoever the actor: every hosted domain is tenant-owned. Fail
-	// closed on a lookup error.
-	if clash, err := MailHostnameCollision(ctx, d.Settings, in.Name); err != nil {
-		return nil, &kindError{kind: ErrMailHostnameLookup, cause: err}
-	} else if clash {
-		return nil, ErrDomainConflictsMailHostname
 	}
 
 	webEnabled := !in.WebDisabled
