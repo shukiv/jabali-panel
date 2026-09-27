@@ -25,6 +25,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -329,7 +330,7 @@ func (h *adminMigrationsHandler) cancel(c *gin.Context) {
 	// Same immediate-secrets-wipe as the runner's terminal paths
 	// (ADR-0094). Best-effort: failure to wipe surfaces in the
 	// daily reaper's next sweep.
-	_ = migrate.WipeJobSecret(id)
+	h.wipeJobSecret(c.Request.Context(), id)
 	c.JSON(http.StatusOK, gin.H{"id": id, "state": models.MigrationStateCancelled})
 }
 
@@ -377,7 +378,7 @@ func (h *adminMigrationsHandler) destroy(c *gin.Context) {
 	}
 	// Filesystem side-effects best-effort. RemoveAll is OK to call
 	// on a non-existent path; doesn't error.
-	_ = migrate.WipeJobSecret(id)
+	h.wipeJobSecret(c.Request.Context(), id)
 	stagingDir := "/var/lib/jabali-migrations/" + id
 	_ = os.RemoveAll(stagingDir)
 	c.JSON(http.StatusOK, gin.H{"id": id, "destroyed": true})
@@ -622,6 +623,23 @@ func (h *adminMigrationsHandler) runImport(c *gin.Context) {
 
 // callAgent — copy of admin_updates.go pattern. Hoisted as a method
 // so both add a context-deadline + uniform error envelope.
+// wipeJobSecret removes the job's source credentials through the root Agent
+// (JAB-357). The panel runs as the jabali user and cannot unlink in the
+// root:jabali 0750 secrets directory, so migrate.WipeJobSecret fails with
+// EACCES here; it is only the fallback when the Agent is not wired.
+// Best-effort: `jabali migrate reap` removes whatever this misses.
+func (h *adminMigrationsHandler) wipeJobSecret(ctx context.Context, id string) {
+	if h.cfg.Agent == nil {
+		_ = migrate.WipeJobSecret(id)
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	if _, err := h.cfg.Agent.Call(ctx, "migration.secrets_wipe", map[string]any{"job_id": id}); err != nil {
+		slog.Warn("migration secret not wiped; the reaper will remove it", "job_id", id, "err", err)
+	}
+}
+
 func (h *adminMigrationsHandler) callAgent(c *gin.Context, cmd string, params any, timeout time.Duration) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), timeout)
 	defer cancel()
