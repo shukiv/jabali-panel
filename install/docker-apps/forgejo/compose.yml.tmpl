@@ -9,7 +9,7 @@ services:
       # (e.g. API-key passwords) can't break the rendered compose YAML.
       FORGEJO__mailer__ENABLED: "true"
       FORGEJO__mailer__SMTP_ADDR: {{ q (index .Env "SMTP_HOST") }}
-      FORGEJO__mailer__SMTP_PORT: "{{ or (index .Env "SMTP_PORT") "587" }}"
+      FORGEJO__mailer__SMTP_PORT: {{ q (or (index .Env "SMTP_PORT") "587") }}
       FORGEJO__mailer__PROTOCOL: "{{ if eq (index .Env "SMTP_PORT") "465" }}smtps{{ else }}smtp+starttls{{ end }}"
       FORGEJO__mailer__USER: {{ q (index .Env "SMTP_USER") }}
       FORGEJO__mailer__PASSWD: {{ q (index .Env "SMTP_PASSWORD") }}

@@ -125,8 +125,7 @@ func dockerAppExecHandler(ctx context.Context, params json.RawMessage) (any, err
 	}
 	args = append(args, "sh", "-c", p.Command)
 
-	cmd := execCommandContext(ctx, "docker", append([]string{"compose"}, args...)...)
-	cmd.Dir = dir
+	cmd := composeCommand(ctx, dir, args...)
 	stdout, stderr, exitCode := runWithStdoutStderr(cmd)
 	return dockerAppExecResponse{
 		Slug:     p.Slug,

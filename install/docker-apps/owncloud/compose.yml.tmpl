@@ -12,13 +12,13 @@ services:
       OWNCLOUD_DB_TYPE: "mysql"
       OWNCLOUD_DB_NAME: "owncloud"
       OWNCLOUD_DB_USERNAME: "owncloud"
-      OWNCLOUD_DB_PASSWORD: "{{ index .Env "MARIADB_PASSWORD" }}"
+      OWNCLOUD_DB_PASSWORD: {{ q (index .Env "MARIADB_PASSWORD") }}
       OWNCLOUD_DB_HOST: "db"
       OWNCLOUD_MYSQL_UTF8MB4: "true"
       OWNCLOUD_REDIS_ENABLED: "true"
       OWNCLOUD_REDIS_HOST: "redis"
-      OWNCLOUD_ADMIN_USERNAME: "{{ index .Env "OWNCLOUD_ADMIN_USERNAME" }}"
-      OWNCLOUD_ADMIN_PASSWORD: "{{ index .Env "OWNCLOUD_ADMIN_PASSWORD" }}"
+      OWNCLOUD_ADMIN_USERNAME: {{ q (index .Env "OWNCLOUD_ADMIN_USERNAME") }}
+      OWNCLOUD_ADMIN_PASSWORD: {{ q (index .Env "OWNCLOUD_ADMIN_PASSWORD") }}
     volumes:
       - {{ .DataRoot }}/files:/mnt/data
     ports:
@@ -42,10 +42,10 @@ services:
     container_name: jabali-app-{{ .Slug }}-db
     restart: unless-stopped
     environment:
-      MARIADB_ROOT_PASSWORD: "{{ index .Env "MARIADB_ROOT_PASSWORD" }}"
+      MARIADB_ROOT_PASSWORD: {{ q (index .Env "MARIADB_ROOT_PASSWORD") }}
       MARIADB_DATABASE: "owncloud"
       MARIADB_USER: "owncloud"
-      MARIADB_PASSWORD: "{{ index .Env "MARIADB_PASSWORD" }}"
+      MARIADB_PASSWORD: {{ q (index .Env "MARIADB_PASSWORD") }}
     command: ["--max-allowed-packet=128M", "--innodb-log-file-size=64M", "--innodb-use-native-aio=0"]
     volumes:
       - {{ .DataRoot }}/db:/var/lib/mysql

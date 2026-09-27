@@ -73,8 +73,8 @@ services:
     environment:
       MYSQL_DATABASE: "bigcapital_system"
       MYSQL_USER: "bigcapital"
-      MYSQL_PASSWORD: "{{ index .Env "DB_PASSWORD" }}"
-      MYSQL_ROOT_PASSWORD: "{{ index .Env "DB_ROOT_PASSWORD" }}"
+      MYSQL_PASSWORD: {{ q (index .Env "DB_PASSWORD") }}
+      MYSQL_ROOT_PASSWORD: {{ q (index .Env "DB_ROOT_PASSWORD") }}
     configs:
       - source: db_grant
         target: /docker-entrypoint-initdb.d/10-grant.sql
@@ -106,7 +106,7 @@ services:
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: "bigcapital"
-      MINIO_ROOT_PASSWORD: "{{ index .Env "MINIO_ROOT_PASSWORD" }}"
+      MINIO_ROOT_PASSWORD: {{ q (index .Env "MINIO_ROOT_PASSWORD") }}
     volumes:
       - {{ .DataRoot }}/minio:/data
     healthcheck:
@@ -122,10 +122,15 @@ services:
     depends_on:
       minio:
         condition: service_healthy
+    # The password reaches the shell as an env var instead of being spliced
+    # into the script, so any character in it stays data. "$$" is compose's
+    # escape for a literal "$".
+    environment:
+      MINIO_ROOT_PASSWORD: {{ q (index .Env "MINIO_ROOT_PASSWORD") }}
     entrypoint:
       - sh
       - -c
-      - "mc alias set bc http://minio:9000 bigcapital '{{ index .Env "MINIO_ROOT_PASSWORD" }}' && mc mb --ignore-existing bc/bigcapital && echo bucket-ready"
+      - 'mc alias set bc http://minio:9000 bigcapital "$$MINIO_ROOT_PASSWORD" && mc mb --ignore-existing bc/bigcapital && echo bucket-ready'
 
   migration:
     image: {{ .ImageChannel }}
@@ -136,7 +141,7 @@ services:
     environment:
       DB_HOST: "db"
       DB_USER: "bigcapital"
-      DB_PASSWORD: "{{ index .Env "DB_PASSWORD" }}"
+      DB_PASSWORD: {{ q (index .Env "DB_PASSWORD") }}
       DB_CHARSET: "utf8"
       SYSTEM_DB_NAME: "bigcapital_system"
       TENANT_DB_NAME_PERFIX: "bigcapital_tenant_"
@@ -158,7 +163,7 @@ services:
     environment:
       DB_HOST: "db"
       DB_USER: "bigcapital"
-      DB_PASSWORD: "{{ index .Env "DB_PASSWORD" }}"
+      DB_PASSWORD: {{ q (index .Env "DB_PASSWORD") }}
       DB_CHARSET: "utf8"
       SYSTEM_DB_NAME: "bigcapital_system"
       TENANT_DB_NAME_PERFIX: "bigcapital_tenant_"
@@ -166,7 +171,7 @@ services:
       REDIS_PORT: "6379"
       QUEUE_HOST: "redis"
       QUEUE_PORT: "6379"
-      JWT_SECRET: "{{ index .Env "JWT_SECRET" }}"
+      JWT_SECRET: {{ q (index .Env "JWT_SECRET") }}
       BASE_URL: "https://{{ .Domain }}"
       SIGNUP_DISABLED: "false"
       SIGNUP_EMAIL_CONFIRMATION: "false"
@@ -174,7 +179,7 @@ services:
       # Operator-supplied SMTP (GH #322) — values q-escaped so special chars
       # (e.g. API-key passwords) can't break the rendered compose YAML.
       MAIL_HOST: {{ q (index .Env "SMTP_HOST") }}
-      MAIL_PORT: "{{ or (index .Env "SMTP_PORT") "587" }}"
+      MAIL_PORT: {{ q (or (index .Env "SMTP_PORT") "587") }}
       MAIL_USERNAME: {{ q (index .Env "SMTP_USER") }}
       MAIL_PASSWORD: {{ q (index .Env "SMTP_PASSWORD") }}
       MAIL_SECURE: "{{ if eq (index .Env "SMTP_PORT") "465" }}true{{ else }}false{{ end }}"
@@ -187,7 +192,7 @@ services:
       S3_ENDPOINT: "http://minio:9000"
       S3_REGION: "us-east-1"
       S3_ACCESS_KEY_ID: "bigcapital"
-      S3_SECRET_ACCESS_KEY: "{{ index .Env "MINIO_ROOT_PASSWORD" }}"
+      S3_SECRET_ACCESS_KEY: {{ q (index .Env "MINIO_ROOT_PASSWORD") }}
       S3_BUCKET: "bigcapital"
       S3_FORCE_PATH_STYLE: "true"
     deploy:

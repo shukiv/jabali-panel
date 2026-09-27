@@ -53,8 +53,8 @@ services:
         --install-app erpnext
         --set-default frontend;
     environment:
-      ADMIN_PASSWORD: "{{ index .Env "ADMIN_PASSWORD" }}"
-      DB_ROOT_PASSWORD: "{{ index .Env "DB_ROOT_PASSWORD" }}"
+      ADMIN_PASSWORD: {{ q (index .Env "ADMIN_PASSWORD") }}
+      DB_ROOT_PASSWORD: {{ q (index .Env "DB_ROOT_PASSWORD") }}
     volumes:
       - {{ .DataRoot }}/sites:/home/frappe/frappe-bench/sites
       - {{ .DataRoot }}/logs:/home/frappe/frappe-bench/logs
@@ -157,8 +157,8 @@ services:
       - --collation-server=utf8mb4_unicode_ci
       - --skip-character-set-client-handshake
     environment:
-      MYSQL_ROOT_PASSWORD: "{{ index .Env "DB_ROOT_PASSWORD" }}"
-      MARIADB_ROOT_PASSWORD: "{{ index .Env "DB_ROOT_PASSWORD" }}"
+      MYSQL_ROOT_PASSWORD: {{ q (index .Env "DB_ROOT_PASSWORD") }}
+      MARIADB_ROOT_PASSWORD: {{ q (index .Env "DB_ROOT_PASSWORD") }}
     volumes:
       - {{ .DataRoot }}/db-data:/var/lib/mysql
     healthcheck:

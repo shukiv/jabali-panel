@@ -11,11 +11,11 @@ services:
       DB_HOST: "db"
       DB_NAME: "flarum"
       DB_USER: "flarum"
-      DB_PASS: "{{ index .Env "DB_PASS" }}"
-      FLARUM_ADMIN_USER: "{{ index .Env "FLARUM_ADMIN_USER" }}"
-      FLARUM_ADMIN_PASS: "{{ index .Env "FLARUM_ADMIN_PASS" }}"
+      DB_PASS: {{ q (index .Env "DB_PASS") }}
+      FLARUM_ADMIN_USER: {{ q (index .Env "FLARUM_ADMIN_USER") }}
+      FLARUM_ADMIN_PASS: {{ q (index .Env "FLARUM_ADMIN_PASS") }}
       FLARUM_ADMIN_MAIL: "admin@{{ .Domain }}"
-      FLARUM_TITLE: "{{ index .Env "FLARUM_TITLE" }}"
+      FLARUM_TITLE: {{ q (index .Env "FLARUM_TITLE") }}
     volumes:
       - {{ .DataRoot }}/assets:/flarum/app/public/assets
       - {{ .DataRoot }}/extensions:/flarum/app/extensions
@@ -44,8 +44,8 @@ services:
     environment:
       MYSQL_DATABASE: "flarum"
       MYSQL_USER: "flarum"
-      MYSQL_PASSWORD: "{{ index .Env "DB_PASS" }}"
-      MYSQL_ROOT_PASSWORD: "{{ index .Env "MYSQL_ROOT_PASSWORD" }}"
+      MYSQL_PASSWORD: {{ q (index .Env "DB_PASS") }}
+      MYSQL_ROOT_PASSWORD: {{ q (index .Env "MYSQL_ROOT_PASSWORD") }}
     volumes:
       - {{ .DataRoot }}/db:/var/lib/mysql
     healthcheck:

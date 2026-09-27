@@ -10,7 +10,7 @@ services:
     environment:
       DB_HOSTNAME: "postgres"
       DB_USERNAME: "postgres"
-      DB_PASSWORD: "{{ index .Env "DB_PASSWORD" }}"
+      DB_PASSWORD: {{ q (index .Env "DB_PASSWORD") }}
       DB_DATABASE_NAME: "immich"
       REDIS_HOSTNAME: "redis"
       IMMICH_MACHINE_LEARNING_URL: "http://immich-machine-learning:3003"
@@ -51,7 +51,7 @@ services:
     container_name: jabali-app-{{ .Slug }}-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_PASSWORD: "{{ index .Env "DB_PASSWORD" }}"
+      POSTGRES_PASSWORD: {{ q (index .Env "DB_PASSWORD") }}
       POSTGRES_USER: "postgres"
       POSTGRES_DB: "immich"
     volumes:

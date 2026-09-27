@@ -9,7 +9,7 @@ services:
       # (e.g. API-key passwords) can't break the rendered compose YAML.
       mail__transport: "SMTP"
       mail__options__host: {{ q (index .Env "SMTP_HOST") }}
-      mail__options__port: "{{ or (index .Env "SMTP_PORT") "587" }}"
+      mail__options__port: {{ q (or (index .Env "SMTP_PORT") "587") }}
       mail__options__secure: "{{ if eq (index .Env "SMTP_PORT") "465" }}true{{ else }}false{{ end }}"
       mail__options__auth__user: {{ q (index .Env "SMTP_USER") }}
       mail__options__auth__pass: {{ q (index .Env "SMTP_PASSWORD") }}

@@ -13,7 +13,7 @@ services:
       HOST: postgres
       PORT: "5432"
       USER: odoo
-      PASSWORD: "{{ index .Env "POSTGRES_PASSWORD" }}"
+      PASSWORD: {{ q (index .Env "POSTGRES_PASSWORD") }}
     volumes:
       - {{ .DataRoot }}/odoo-data:/var/lib/odoo
     ports:
@@ -34,7 +34,7 @@ services:
       # Odoo connects as a superuser so it can create/drop its own
       # databases from the database manager.
       POSTGRES_USER: odoo
-      POSTGRES_PASSWORD: "{{ index .Env "POSTGRES_PASSWORD" }}"
+      POSTGRES_PASSWORD: {{ q (index .Env "POSTGRES_PASSWORD") }}
       POSTGRES_DB: postgres
     volumes:
       - {{ .DataRoot }}/postgres:/var/lib/postgresql/data

@@ -6,7 +6,7 @@ services:
     environment:
       # Public URL Open WebUI uses when building absolute links.
       WEBUI_URL: "https://{{ .Domain }}/"
-      WEBUI_SECRET_KEY: "{{ index .Env "WEBUI_SECRET_KEY" }}"
+      WEBUI_SECRET_KEY: {{ q (index .Env "WEBUI_SECRET_KEY") }}
     volumes:
       - {{ .DataRoot }}/data:/app/backend/data
     ports:

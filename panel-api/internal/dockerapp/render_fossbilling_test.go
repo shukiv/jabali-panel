@@ -44,9 +44,11 @@ func TestRender_FossBilling(t *testing.T) {
 		`if [ -f /seed/config.php ]; then`, // idempotency guard
 		"system_url=https://billing.example.com/",
 		"admin_email=admin@billing.example.com",
-		"admin_password=adminpwAa1",           // policy suffix
-		"trusted_proxy_proxies=172.16.0.0/12", // force_https loop guard
-		`database_password=dbpass`,
+		`FB_ADMIN_PASSWORD: "adminpwAa1"`,      // policy suffix
+		"admin_password=$${FB_ADMIN_PASSWORD}", // read from env, never spliced
+		"trusted_proxy_proxies=172.16.0.0/12",  // force_https loop guard
+		`FB_DB_PASSWORD: "dbpass"`,
+		"database_password=$${FB_DB_PASSWORD}",
 		`MYSQL_PASSWORD: "dbpass"`,
 		`MYSQL_ROOT_PASSWORD: "rootpass"`,
 	} {

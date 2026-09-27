@@ -9,7 +9,7 @@ services:
       # (e.g. API-key passwords) can't break the rendered compose YAML.
       GITEA__mailer__ENABLED: "true"
       GITEA__mailer__SMTP_ADDR: {{ q (index .Env "SMTP_HOST") }}
-      GITEA__mailer__SMTP_PORT: "{{ or (index .Env "SMTP_PORT") "587" }}"
+      GITEA__mailer__SMTP_PORT: {{ q (or (index .Env "SMTP_PORT") "587") }}
       GITEA__mailer__PROTOCOL: "{{ if eq (index .Env "SMTP_PORT") "465" }}smtps{{ else }}smtp+starttls{{ end }}"
       GITEA__mailer__USER: {{ q (index .Env "SMTP_USER") }}
       GITEA__mailer__PASSWD: {{ q (index .Env "SMTP_PASSWORD") }}

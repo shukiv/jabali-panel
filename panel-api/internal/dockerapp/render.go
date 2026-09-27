@@ -10,6 +10,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"regexp"
 	"runtime"
 	"strconv"
@@ -115,6 +116,13 @@ func Render(entry Entry, params RenderParams) (string, error) {
 				return "", e
 			}
 			return strings.ReplaceAll(string(b), "$", "$$"), nil
+		},
+		// userinfo percent-encodes a value for the user or password part of a
+		// URL (DATABASE_URL, EMAIL_SERVER), so a credential holding '@', ':',
+		// '/', '%' or a space decodes back to itself. urlquery is not enough:
+		// it turns a space into '+', which userinfo decoding keeps as '+'.
+		"userinfo": func(v string) string {
+			return strings.ReplaceAll(url.QueryEscape(v), "+", "%20")
 		},
 		"hasPrefix": strings.HasPrefix,
 	}).Parse(entry.ComposeTemplate())
