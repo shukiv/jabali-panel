@@ -230,10 +230,11 @@ func reapOrphanStaging(stagingDir string, live map[string]struct{}, maxAge time.
 // be removed). Missing secretsDir is not an error.
 //
 // Orphans come from the REST destroy path: it deletes the row first and then
-// calls migrate.WipeJobSecret, but the panel runs as the jabali user and the
-// secrets dir is root:jabali 0750, so that unlink fails silently and the
-// row-driven pass above can never see the file again. This root sweep is what
-// reclaims those credentials.
+// asks the Agent to wipe the secret (migration.secrets_wipe, JAB-357). When
+// that call fails (the Agent is down or unwired, where the panel's own unlink
+// fails in the root:jabali 0750 secrets dir), the row-driven pass above can
+// never see the file again. This root sweep is what reclaims those
+// credentials.
 //
 // Deliberately narrow: only regular files named <26-char job id>.env.
 // Host-key pins (.known_hosts), directories, symlinks and any other name are
