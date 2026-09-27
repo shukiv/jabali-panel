@@ -42,6 +42,33 @@ A CrowdSec 1.8 AppSec **bot-detection challenge** is available, **off by default
 Because it is default-off and per-domain scoped, enabling it never silently
 challenges traffic on a domain the operator didn't choose.
 
+### WAF false positives and rule exclusions
+
+`/jabali-admin/security` → CrowdSec → **WAF exclusions** (GH #1649) answers
+"which rule blocked this?" and turns that rule off for one host and path:
+
+- **Recent WAF blocks** inspects the last 10, 25 or 50 AppSec alerts and
+  groups their blocks by rule, host and path. It loads only when you click
+  **Load blocks**, because each alert is inspected on the server.
+  - Red rules scored and can be excluded.
+  - Purple rules are outside the CRS range, for example CrowdSec's own AppSec
+    rules, so an exclusion cannot turn them off.
+  - Grey rules (901340, 949110, 980170) appear on almost every block and are
+    never the one to exclude.
+  - Many source IPs on one path usually means a false positive. One IP across
+    many paths usually means an attack.
+- **Rule exclusions** lists, adds and removes operator exclusions. An
+  exclusion always names a host, a path prefix and one rule. **Exclude…** on a
+  block prefills all three. Every add and remove applies to the WAF at once.
+  If crowdsec cannot be reloaded, the change is undone and the error says so.
+- A row tagged **Flarum** is managed for a Flarum forum (GH #1650). Removing it
+  works, but the next change to that forum or `jabali appsec flarum-sync` adds
+  it again.
+
+The same data is on the CLI: `jabali appsec explain` and
+`jabali appsec exclusion add|list|rm`. The CLI stores the row only; run
+`jabali appsec render-config --reconcile --reload` to apply it.
+
 ## AppArmor
 
 `/jabali-admin/security` → AppArmor — per-profile status (enforce / complain / **missing**).
