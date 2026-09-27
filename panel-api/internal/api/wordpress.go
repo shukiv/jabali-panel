@@ -58,6 +58,11 @@ type ApplicationHandlerConfig struct {
 	// CronJobs lets app installers (ITFlow #206) create + tear down the
 	// app-managed cron jobs an app needs. Optional; nil disables auto-cron.
 	CronJobs repository.CronJobRepository
+	// CRSExclusions and CRSHostModes let a Flarum install register its scoped
+	// CRS 920450 exclusion and apply it live, and a Flarum delete remove it
+	// (GH #1650). Optional: nil skips both.
+	CRSExclusions repository.CRSRuleExclusionRepository
+	CRSHostModes  repository.CRSHostModeRepository
 	// Apps is the M19 application registry. Nil-safe: the legacy
 	// /wordpress-installs handlers in this file don't read it (they
 	// hard-code the WordPress shape); only the new /applications
@@ -1211,6 +1216,9 @@ func createDeleteAndKickAgent(parentCtx context.Context, installID, userID, appT
 		DatabaseGrants: cfg.DatabaseGrants,
 		CronJobs:       cfg.CronJobs,
 		Agent:          cfg.Agent,
+		Domains:        cfg.Domains,
+		CRSExclusions:  cfg.CRSExclusions,
+		CRSHostModes:   cfg.CRSHostModes,
 	})
 }
 

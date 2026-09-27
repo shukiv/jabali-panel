@@ -71,9 +71,9 @@ const maxHostModes = 900
 
 // HostMode is one operator-set per-host AppSec mode.
 type HostMode struct {
-	Host string
-	Mode string
-	Note string
+	Host string `json:"host"`
+	Mode string `json:"mode"`
+	Note string `json:"note"`
 }
 
 // ValidateHostMode rejects anything that would break the seclang literal or name
@@ -132,7 +132,9 @@ func RenderHostModes(list []HostMode) string {
 			break
 		}
 		if err := ValidateHostMode(m); err != nil {
-			fmt.Fprintf(&b, "# SKIPPED (%s mode %s): %v\n", m.Host, m.Mode, err)
+			// %q, never %s — see RenderExclusions: a raw newline would end the
+			// comment and load the rest as a live directive (GH #1650).
+			fmt.Fprintf(&b, "# SKIPPED (%q mode %q): %v\n", m.Host, m.Mode, err)
 			continue
 		}
 		host := strings.ToLower(strings.TrimSpace(m.Host))

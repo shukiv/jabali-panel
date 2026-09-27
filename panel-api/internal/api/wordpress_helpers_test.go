@@ -249,6 +249,10 @@ func (m *mockWordPressInstallRepo) ListReadyByUpdatedAtAsc(_ context.Context, _ 
 	return nil, nil
 }
 
+func (m *mockWordPressInstallRepo) ListReadyIDsByAppType(_ context.Context, _ string) ([]string, error) {
+	return nil, nil
+}
+
 // Test helper
 
 type mockDatabaseGrantRepo struct {

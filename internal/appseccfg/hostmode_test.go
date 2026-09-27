@@ -85,3 +85,24 @@ func TestRenderOperatorBeforeFile_ExclusionsAndModes(t *testing.T) {
 		t.Errorf("both sections must render together:\n%s", both)
 	}
 }
+
+// GH #1650: same guarantee as the exclusions renderer — an invalid host mode's
+// SKIPPED breadcrumb must not let its host or mode escape the comment.
+func TestRenderHostModes_SkippedEntryCannotInjectDirectives(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		m    HostMode
+	}{
+		{"host", HostMode{Host: "forum.example.com" + injectedRule, Mode: HostModeDetect}},
+		{"mode", HostMode{Host: "forum.example.com", Mode: HostModeDetect + injectedRule}},
+		{"mode behind a bad host", HostMode{Host: "BAD HOST", Mode: HostModeDetect + injectedRule}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out := RenderHostModes([]HostMode{tc.m})
+			if !strings.Contains(out, "# SKIPPED") {
+				t.Fatalf("invalid host mode not reported:\n%s", out)
+			}
+			assertOnlyComments(t, out)
+		})
+	}
+}

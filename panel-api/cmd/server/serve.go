@@ -21,6 +21,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/limits"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/api"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/app"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/appsecops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/audit"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/auth"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/backupfinalizer"
@@ -548,6 +549,28 @@ func runServe(cmd *cobra.Command, args []string) error {
 				}
 				if _, err := sharedAgent.Call(rctx, "mail.sendas.reconcile", map[string]any{"pairs": pairs}); err != nil {
 					log.Warn("sendas boot-reconcile: agent push failed", "err", err)
+				}
+			}()
+			// GH #1650: drop the WAF exclusion of any Flarum install that is gone.
+			// A domain or account delete cascades the install row away with no
+			// Flarum event, so the exclusion would otherwise outlive the forum.
+			// Remove-only: this never adds an exclusion, and it calls the agent
+			// only when it removed one.
+			go func() {
+				rctx, rcancel := context.WithTimeout(context.Background(), 60*time.Second)
+				defer rcancel()
+				changed, _, err := appsecops.PruneFlarum(rctx, appsecops.Deps{
+					Agent:      sharedAgent,
+					Exclusions: repository.NewCRSRuleExclusionRepository(sharedDB),
+					HostModes:  repository.NewCRSHostModeRepository(sharedDB),
+					Installs:   repository.NewApplicationInstallRepository(sharedDB),
+					Domains:    repository.NewDomainRepository(sharedDB),
+				})
+				switch {
+				case err != nil:
+					log.Warn("flarum WAF exclusion boot-prune failed", "err", err)
+				case changed:
+					log.Info("flarum WAF exclusion boot-prune removed stale exclusions")
 				}
 			}()
 		}

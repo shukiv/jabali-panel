@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/appsecops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dbops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
@@ -24,6 +25,12 @@ type AppDeleteDeps struct {
 	DatabaseGrants repository.DatabaseUserGrantRepository
 	CronJobs       repository.CronJobRepository
 	Agent          agent.AgentInterface
+	// Domains, CRSExclusions and CRSHostModes let a Flarum delete remove the
+	// install's scoped WAF exclusion and apply that live (GH #1650). Optional:
+	// with any of them nil the row stays until the panel's start-up prune.
+	Domains       repository.DomainRepository
+	CRSExclusions repository.CRSRuleExclusionRepository
+	CRSHostModes  repository.CRSHostModeRepository
 }
 
 // AppDeleteArgs identifies the install being torn down plus the pre-resolved
@@ -146,6 +153,12 @@ func RunAppDelete(args AppDeleteArgs, deps AppDeleteDeps) error {
 	// way — deleting it before the databases row also releases the RESTRICT
 	// fk_wpinstalls_db.
 	deps.Installs.Delete(ctx, args.InstallID)
+
+	// GH #1650: with the install row gone, its Flarum WAF exclusion is stale.
+	// Remove it and apply that live. Best-effort: never fails the delete.
+	if appType == appsecops.AppTypeFlarum {
+		syncFlarumWAF(ctx, flarumWAFDeps(deps.Agent, deps.CRSExclusions, deps.CRSHostModes, deps.Installs, deps.Domains), "")
+	}
 
 	if dropFailed {
 		return errors.New("database or user drop failed on the host; panel rows kept so they stay visible and retryable")

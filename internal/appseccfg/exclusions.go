@@ -38,10 +38,10 @@ const maxOperatorExclusions = 900
 
 // Exclusion is one operator-managed rule exclusion.
 type Exclusion struct {
-	Host      string
-	URIPrefix string
-	RuleID    string
-	Note      string
+	Host      string `json:"host"`
+	URIPrefix string `json:"uri_prefix"`
+	RuleID    string `json:"rule_id"`
+	Note      string `json:"note"`
 }
 
 // ValidateExclusion rejects anything that would break the seclang literal or
@@ -166,7 +166,11 @@ func RenderExclusions(list []Exclusion) string {
 			break
 		}
 		if err := ValidateExclusion(e); err != nil {
-			fmt.Fprintf(&b, "# SKIPPED (%s %s rule %s): %v\n", e.Host, e.URIPrefix, e.RuleID, err)
+			// %q, never %s: an invalid entry is by definition untrusted, and a
+			// raw newline in any field would end this comment and load the rest
+			// as a live directive (GH #1650). The validator's own errors already
+			// quote the values they name.
+			fmt.Fprintf(&b, "# SKIPPED (%q %q rule %q): %v\n", e.Host, e.URIPrefix, e.RuleID, err)
 			continue
 		}
 		host := strings.ToLower(strings.TrimSpace(e.Host))

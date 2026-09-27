@@ -222,6 +222,10 @@ func deleteAppDirect(ctx context.Context, installID string) (*models.Application
 		DatabaseGrants: dbGrants,
 		CronJobs:       repository.NewCronJobRepository(sharedDB),
 		Agent:          sharedAgent,
+		// GH #1650: a Flarum delete removes its scoped WAF exclusion.
+		Domains:       repository.NewDomainRepository(sharedDB),
+		CRSExclusions: repository.NewCRSRuleExclusionRepository(sharedDB),
+		CRSHostModes:  repository.NewCRSHostModeRepository(sharedDB),
 	}); err != nil {
 		return install, err
 	}

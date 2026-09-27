@@ -1429,6 +1429,8 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Agent:               deps.Agent,
 				Apps:                deps.Apps,
 				CronJobs:            deps.CronJobs,
+				CRSExclusions:       repository.NewCRSRuleExclusionRepository(deps.DB),
+				CRSHostModes:        repository.NewCRSHostModeRepository(deps.DB),
 				Redis:               deps.Redis,
 				Reconciler:          deps.Reconciler,
 				CacheTokenSecret:    cacheHMACSecret(),

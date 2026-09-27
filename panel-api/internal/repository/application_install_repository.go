@@ -74,6 +74,10 @@ type ApplicationInstallRepository interface {
 	// dokuwiki, …) have no such file and would be falsely flagged as
 	// drifted (GH #378).
 	ListReadyByUpdatedAtAsc(ctx context.Context, limit int) ([]models.ApplicationInstall, error)
+	// ListReadyIDsByAppType returns the ids of every ready install of one app
+	// type, in id order. `jabali appsec flarum-sync` uses it to find the Flarum
+	// forums that predate their automatic WAF exclusion (GH #1650).
+	ListReadyIDsByAppType(ctx context.Context, appType string) ([]string, error)
 }
 
 // WordPressInstallRepository is the pre-M19 alias. Same interface, kept
@@ -306,6 +310,19 @@ func (r *applicationInstallRepo) Delete(ctx context.Context, id string) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+func (r *applicationInstallRepo) ListReadyIDsByAppType(ctx context.Context, appType string) ([]string, error) {
+	var out []string
+	err := r.db.WithContext(ctx).
+		Model(&models.ApplicationInstall{}).
+		Where("status = ? AND app_type = ?", "ready", appType).
+		Order("id ASC").
+		Pluck("id", &out).Error
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (r *applicationInstallRepo) ListReadyByUpdatedAtAsc(ctx context.Context, limit int) ([]models.ApplicationInstall, error) {
