@@ -51,7 +51,10 @@ func buildAppDeps() (api.ApplicationHandlerConfig, error) {
 		// so a CLI-installed ITFlow (or any cron-needing app) never gets its
 		// cron and its background jobs never run. The HTTP path wires this;
 		// the CLI path forgot (the #754 dual-path class).
-		CronJobs:         repository.NewCronJobRepository(sharedDB),
+		CronJobs: repository.NewCronJobRepository(sharedDB),
+		// GH #1650: a CLI-installed Flarum gets its scoped WAF exclusion too.
+		CRSExclusions:    repository.NewCRSRuleExclusionRepository(sharedDB),
+		CRSHostModes:     repository.NewCRSHostModeRepository(sharedDB),
 		Agent:            sharedAgent,
 		Apps:             registry,
 		Redis:            cacheRedis,

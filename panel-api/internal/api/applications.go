@@ -999,6 +999,13 @@ func createFlarumInstallAndKickAgent(parentCtx context.Context, args flarumKickA
 	if v, ok := respMap["version"].(string); ok {
 		version = v
 	}
+
+	// GH #1650: Flarum's API sends PATCH and DELETE as POST +
+	// X-HTTP-Method-Override, which CRS 920450 blocks. Register the forum's
+	// scoped exclusion and apply it live. Done before the "ready" flip so a CLI
+	// --wait caller cannot exit mid-apply. Best-effort: never fails the install.
+	syncFlarumWAF(ctx, flarumWAFDeps(cfg.Agent, cfg.CRSExclusions, cfg.CRSHostModes, cfg.ApplicationInstalls, cfg.Domains), args.InstallID)
+
 	cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "ready", nil, &version)
 }
 
