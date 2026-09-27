@@ -71,9 +71,9 @@ const maxHostModes = 900
 
 // HostMode is one operator-set per-host AppSec mode.
 type HostMode struct {
-	Host string
-	Mode string
-	Note string
+	Host string `json:"host"`
+	Mode string `json:"mode"`
+	Note string `json:"note"`
 }
 
 // ValidateHostMode rejects anything that would break the seclang literal or name

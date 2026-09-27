@@ -38,10 +38,10 @@ const maxOperatorExclusions = 900
 
 // Exclusion is one operator-managed rule exclusion.
 type Exclusion struct {
-	Host      string
-	URIPrefix string
-	RuleID    string
-	Note      string
+	Host      string `json:"host"`
+	URIPrefix string `json:"uri_prefix"`
+	RuleID    string `json:"rule_id"`
+	Note      string `json:"note"`
 }
 
 // ValidateExclusion rejects anything that would break the seclang literal or
