@@ -426,3 +426,38 @@ func TestSyncFlarum_OverlappingSyncsLandInOrder(t *testing.T) {
 		t.Fatalf("the last apply to land is stale: %v, want %v", got, want)
 	}
 }
+
+// Apply on its own (the path an admin UI takes) is serialised the same way: an
+// apply that read an older state must not land after one that read a newer one.
+func TestApply_OverlappingAppliesLandInOrder(t *testing.T) {
+	e := newEnv()
+	e.excl.rows = []models.CRSRuleExclusion{{ID: "a", Host: "a.example.com", URIPrefix: "/a/", RuleID: "942100"}}
+	e.agent.entered = make(chan struct{})
+	e.agent.hold = make(chan struct{})
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() { defer wg.Done(); _, _ = Apply(context.Background(), e.deps) }()
+	<-e.agent.entered // the first apply, holding the old state, is in flight
+	e.excl.mu.Lock()
+	e.excl.rows = append(e.excl.rows, models.CRSRuleExclusion{ID: "b", Host: "b.example.com", URIPrefix: "/b/", RuleID: "942100"})
+	e.excl.mu.Unlock()
+	go func() { defer wg.Done(); _, _ = Apply(context.Background(), e.deps) }()
+	deadline := time.Now().Add(300 * time.Millisecond)
+	for time.Now().Before(deadline) { // unserialised: the second apply lands meanwhile
+		e.agent.mu.Lock()
+		n := len(e.agent.applied)
+		e.agent.mu.Unlock()
+		if n > 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	close(e.agent.hold)
+	wg.Wait()
+
+	want := []string{"a.example.com/a/#942100", "b.example.com/b/#942100"}
+	if got := hosts(e.agent.last(t)); !equal(got, want) {
+		t.Fatalf("the last apply to land is stale: %v, want %v", got, want)
+	}
+}
