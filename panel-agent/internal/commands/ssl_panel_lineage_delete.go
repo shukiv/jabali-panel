@@ -43,6 +43,16 @@ type sslPanelLineageDeleteResponse struct {
 // sites-enabled holds symlinks into sites-available, so it is not searched.
 var lineageDeleteNginxDirs = []string{"/etc/nginx/sites-available", "/etc/nginx/conf.d", "/etc/nginx/snippets"}
 
+// lineageDeleteHostname is the machine hostname, which the installer sets to
+// the panel hostname (the deploy hook routes the panel certificate by it).
+var lineageDeleteHostname = func() string {
+	h, err := os.Hostname()
+	if err != nil {
+		return ""
+	}
+	return h
+}
+
 func init() {
 	Default.Register("ssl.panel.lineage_delete", sslPanelLineageDeleteHandler)
 }
@@ -65,6 +75,11 @@ func sslPanelLineageDeleteHandler(ctx context.Context, params json.RawMessage) (
 	}
 	if readMailLineageRecord() == name {
 		return sslPanelLineageDeleteResponse{Reason: "it is the panel mail certificate in use"}, nil
+	}
+	// The panel checks this too. The hostname's lineage feeds the panel's
+	// own certificate, so it is refused here as well, at the root boundary.
+	if host := strings.ToLower(lineageDeleteHostname()); host != "" && (name == host || name == "mail."+host) {
+		return sslPanelLineageDeleteResponse{Reason: "it belongs to the panel hostname"}, nil
 	}
 	if file := nginxReferencesLineage(name); file != "" {
 		return sslPanelLineageDeleteResponse{Reason: "nginx still references it in " + file}, nil

@@ -45,10 +45,31 @@ func setupLineageDelete(t *testing.T, record string, lineages ...string) *lineag
 	// renewal conf, which is what makes certbot stop renewing the lineage.
 	t.Setenv("PATH", t.TempDir())
 
-	prevRoot, prevRecord, prevDirs := sslLERoot, mailServedLineageFile, lineageDeleteNginxDirs
+	prevRoot, prevRecord, prevDirs, prevHost := sslLERoot, mailServedLineageFile, lineageDeleteNginxDirs, lineageDeleteHostname
 	sslLERoot, mailServedLineageFile, lineageDeleteNginxDirs = f.root, recordFile, []string{f.nginxDir}
-	t.Cleanup(func() { sslLERoot, mailServedLineageFile, lineageDeleteNginxDirs = prevRoot, prevRecord, prevDirs })
+	lineageDeleteHostname = func() string { return "Panel.Example.COM" }
+	t.Cleanup(func() {
+		sslLERoot, mailServedLineageFile, lineageDeleteNginxDirs, lineageDeleteHostname = prevRoot, prevRecord, prevDirs, prevHost
+	})
 	return f
+}
+
+// The hostname's lineage is the panel's own certificate, and mail.<hostname>
+// stays served: neither is ever deleted, whatever the panel asks.
+func TestSSLPanelLineageDelete_RefusesThePanelHostnameLineages(t *testing.T) {
+	for _, name := range []string{"panel.example.com", "mail.panel.example.com"} {
+		t.Run(name, func(t *testing.T) {
+			f := setupLineageDelete(t, "mx2.example.net", name)
+
+			resp, err := callLineageDelete(t, name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if resp["deleted"] != false || !f.renewalExists(name) {
+				t.Fatalf("resp = %v: the panel hostname's lineages must be kept", resp)
+			}
+		})
+	}
 }
 
 func (f *lineageFixture) renewalExists(name string) bool {
@@ -152,7 +173,8 @@ func TestSSLPanelLineageDelete_NoLineageIsANoOp(t *testing.T) {
 
 func TestSSLPanelLineageDelete_RejectsAnInvalidName(t *testing.T) {
 	f := setupLineageDelete(t, "mx2.example.net", "mx.example.net")
-	for _, bad := range []string{"", "../renewal/mx.example.net", "mx.example.net/..", "-mx.example.net", "mx example.net", "mx.example.net;rm"} {
+	for _, bad := range []string{"", "../renewal/mx.example.net", "mx.example.net/..", "-mx.example.net", "mx example.net", "mx.example.net;rm",
+		"mx.example.net,other.net", "mx:example.net", "mx.exämple.net"} {
 		_, err := callLineageDelete(t, bad)
 		var ae *agentwire.AgentError
 		if !errors.As(err, &ae) || ae.Code != agentwire.CodeInvalidArgument {
