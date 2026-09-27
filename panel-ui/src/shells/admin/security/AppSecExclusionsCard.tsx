@@ -202,12 +202,17 @@ const RecentBlocksCard = ({ onExclude }: { onExclude: (p: AppSecBlockPattern) =>
               key="detections"
               title={t("appsecexclusionscard.col_scored_by")}
               render={(_, p) =>
-                p.detections.length > 0 ? (
+                p.detections.length > 0 || p.other.length > 0 ? (
                   <Space size={[4, 4]} wrap>
                     {p.detections.map((id) => (
                       <Tag key={id} color="red">
                         {id}
                       </Tag>
+                    ))}
+                    {p.other.map((r) => (
+                      <Tooltip key={r.id} title={r.note}>
+                        <Tag color="purple">{r.id}</Tag>
+                      </Tooltip>
                     ))}
                   </Space>
                 ) : (
@@ -239,7 +244,15 @@ const RecentBlocksCard = ({ onExclude }: { onExclude: (p: AppSecBlockPattern) =>
               key="actions"
               title=""
               render={(_, p) => (
-                <Tooltip title={p.detections.length === 0 ? t("appsecexclusionscard.only_infra_tip") : undefined}>
+                <Tooltip
+                  title={
+                    p.detections.length > 0
+                      ? undefined
+                      : p.other.length > 0
+                        ? t("appsecexclusionscard.nothing_excludable_tip")
+                        : t("appsecexclusionscard.only_infra_tip")
+                  }
+                >
                   <RowActionButton
                     icon={<PlusOutlined />}
                     disabled={p.detections.length === 0}

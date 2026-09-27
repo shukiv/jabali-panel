@@ -554,6 +554,8 @@ export type AppSecBlockPattern = {
   rule_ids: string[];
   /** The rules that scored — the ones an exclusion can target. */
   detections: string[];
+  /** Rules that scored but that an exclusion cannot target (not CRS). */
+  other: AppSecInfraRule[];
   /** CRS rules that ride along on every block; never the one to exclude. */
   infra: AppSecInfraRule[];
   host: string;

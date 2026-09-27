@@ -4,6 +4,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/appseccfg"
 )
 
 // explain.go — the AppSec false-positive triage view. Shared by
@@ -55,42 +57,64 @@ type EventsResponse struct {
 //
 //	901340 — enables request-body inspection. Scores nothing. ADR-0124 exists
 //	         because this id was excluded in a first triage, to no effect.
-//	949110 — the inbound anomaly threshold rule. It is what returns 403, but it
-//	         is an effect of the score, not a detection. Excluding it disables
-//	         blocking wholesale.
+//	949110 — the inbound anomaly threshold rule (949111 is its sibling). It is
+//	         what returns 403, but it is an effect of the score, not a
+//	         detection. Excluding it disables blocking wholesale.
 //	980170 — reports the final score. Bookkeeping.
 var crsInfraRules = map[string]string{
 	"901340": "body-inspection enabler — scores nothing, never exclude this",
 	"949110": "anomaly threshold reached — the blocker, not a detection",
+	"949111": "anomaly threshold reached — the blocker, not a detection",
 	"980170": "score reporting — bookkeeping",
 }
 
-// InfraRule is a CRS rule that rides along on a block without being the
-// detection behind it.
+// InfraRule is a rule that matched a block with a note on why it is not the
+// one to exclude.
 type InfraRule struct {
 	ID   string `json:"id"`
 	Note string `json:"note"`
 }
 
-// AnnotateRules splits an id list into the detections worth acting on and the
-// infrastructure rules that ride along on every block.
-func AnnotateRules(ids []string) (detections []string, infra []InfraRule) {
+// notExcludableNote explains a matched rule that an operator exclusion cannot
+// target. On a live box these are mostly 9- and 10-digit ids, far outside the
+// CRS range, next to CRS detections such as 930130.
+const notExcludableNote = "not a CRS detection rule — its id is outside the range an exclusion can target, so an exclusion cannot turn it off"
+
+// excludable reports whether an operator exclusion can target rule id. It is
+// the rule-id half of ValidateExclusion, run on a scope that always passes, so
+// the triage view never offers a rule the add would refuse.
+func excludable(id string) bool {
+	return appseccfg.ValidateExclusion(appseccfg.Exclusion{Host: "h", URIPrefix: "/", RuleID: id}) == nil
+}
+
+// AnnotateRules splits an id list three ways:
+//
+//   - detections: rules that scored and that an exclusion can target;
+//   - other: rules that scored but that an exclusion cannot target;
+//   - infra: CRS rules that ride along on every block (crsInfraRules).
+func AnnotateRules(ids []string) (detections []string, other []InfraRule, infra []InfraRule) {
 	detections = []string{}
+	other = []InfraRule{}
 	infra = []InfraRule{}
 	for _, id := range ids {
 		if note, ok := crsInfraRules[id]; ok {
 			infra = append(infra, InfraRule{ID: id, Note: note})
 			continue
 		}
+		if !excludable(id) {
+			other = append(other, InfraRule{ID: id, Note: notExcludableNote})
+			continue
+		}
 		detections = append(detections, id)
 	}
-	return detections, infra
+	return detections, other, infra
 }
 
 // Pattern is every block that shares one rule list, host and URI.
 type Pattern struct {
 	RuleIDs     []string    `json:"rule_ids"`
 	Detections  []string    `json:"detections"`
+	Other       []InfraRule `json:"other"`
 	Infra       []InfraRule `json:"infra"`
 	Host        string      `json:"host"`
 	URI         string      `json:"uri"`
@@ -117,10 +141,10 @@ func GroupEvents(events []Event) []Pattern {
 		key := strings.Join(e.RuleIDs, ",") + "|" + e.TargetHost + "|" + e.TargetURI
 		g, ok := groups[key]
 		if !ok {
-			det, infra := AnnotateRules(e.RuleIDs)
+			det, other, infra := AnnotateRules(e.RuleIDs)
 			g = &group{
 				p: Pattern{
-					RuleIDs: append([]string{}, e.RuleIDs...), Detections: det, Infra: infra,
+					RuleIDs: append([]string{}, e.RuleIDs...), Detections: det, Other: other, Infra: infra,
 					Host: e.TargetHost, URI: e.TargetURI,
 					FirstAt: e.Timestamp, LastAt: e.Timestamp,
 				},

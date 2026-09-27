@@ -106,10 +106,16 @@ The same view is in the admin panel under Security → CrowdSec → WAF exclusio
 				resp.AlertsScanned, len(resp.Events), len(patterns))
 			for _, p := range patterns {
 				fmt.Printf("  %d block(s), %d distinct source IP(s)\n", p.Count, p.DistinctIPs)
-				if len(p.Detections) > 0 {
+				switch {
+				case len(p.Detections) > 0:
 					fmt.Printf("    scored by: %s   <- exclude one of THESE\n", strings.Join(p.Detections, ", "))
-				} else {
+				case len(p.Other) > 0:
+					fmt.Printf("    scored by: (no rule an exclusion can target — see below)\n")
+				default:
 					fmt.Printf("    scored by: (none identified — only infrastructure rules matched)\n")
+				}
+				for _, o := range p.Other {
+					fmt.Printf("    not CRS  : %s (%s)\n", o.ID, o.Note)
 				}
 				for _, i := range p.Infra {
 					fmt.Printf("    also     : %s (%s)\n", i.ID, i.Note)

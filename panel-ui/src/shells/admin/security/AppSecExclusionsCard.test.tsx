@@ -29,6 +29,7 @@ const eventsBody = {
     {
       rule_ids: ["901340", "942100", "949110"],
       detections: ["942100"],
+      other: [],
       infra: [
         { id: "901340", note: "body-inspection enabler — scores nothing, never exclude this" },
         { id: "949110", note: "anomaly threshold reached — the blocker, not a detection" },
@@ -43,11 +44,24 @@ const eventsBody = {
     {
       rule_ids: ["901340", "949110"],
       detections: [],
+      other: [],
       infra: [],
       host: "other.example.com",
       uri: "/",
       count: 1,
       distinct_ips: 1,
+      first_at: "2026-09-27T10:00:00Z",
+      last_at: "2026-09-27T10:00:00Z",
+    },
+    {
+      rule_ids: ["901340", "2410974272"],
+      detections: [],
+      other: [{ id: "2410974272", note: "not a CRS detection rule" }],
+      infra: [],
+      host: "native.example.com",
+      uri: "/",
+      count: 7,
+      distinct_ips: 4,
       first_at: "2026-09-27T10:00:00Z",
       last_at: "2026-09-27T10:00:00Z",
     },
@@ -120,6 +134,14 @@ describe("GH #1649 — AppSec exclusions panel", () => {
     renderPanel();
     fireEvent.click(await screen.findByRole("button", { name: /Load blocks/i }));
     const row = (await screen.findByText("other.example.com")).closest("tr") as HTMLElement;
+    expect(within(row).getByRole("button", { name: /Exclude/i })).toBeDisabled();
+  });
+
+  it("offers no exclusion when only rules outside the CRS range scored", async () => {
+    renderPanel();
+    fireEvent.click(await screen.findByRole("button", { name: /Load blocks/i }));
+    const row = (await screen.findByText("native.example.com")).closest("tr") as HTMLElement;
+    expect(within(row).getByText("2410974272")).toBeInTheDocument();
     expect(within(row).getByRole("button", { name: /Exclude/i })).toBeDisabled();
   });
 

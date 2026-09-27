@@ -14,6 +14,7 @@ import {
 const pattern = (over: Partial<AppSecBlockPattern> = {}): AppSecBlockPattern => ({
   rule_ids: ["901340", "942100", "949110"],
   detections: ["942100", "932200"],
+  other: [{ id: "2410974272", note: "" }],
   infra: [{ id: "901340", note: "" }],
   host: "Shop.Example.com:8443",
   uri: "/cart/add?id=1&q=' or 1=1#frag",

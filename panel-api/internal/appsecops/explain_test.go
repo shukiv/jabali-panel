@@ -84,3 +84,30 @@ func TestGroupInlineBlocks_ByIPInFirstSeenOrder(t *testing.T) {
 		t.Errorf("got %+v, want %+v", got, want)
 	}
 }
+
+// Live blocks carry rule ids an exclusion cannot target, such as 373950650
+// next to CRS 930130 on a /.env probe. Offering one would only earn a 422, so
+// they are kept apart from the detections (found on test box .60, GH #1649).
+func TestAnnotateRules_KeepsRulesAnExclusionCannotTargetApart(t *testing.T) {
+	det, other, infra := AnnotateRules([]string{"901340", "930130", "373950650", "2410974272", "949111", "980170"})
+	if !reflect.DeepEqual(det, []string{"930130"}) {
+		t.Errorf("detections = %v, want only 930130", det)
+	}
+	if len(other) != 2 || other[0].ID != "373950650" || other[1].ID != "2410974272" || other[0].Note == "" {
+		t.Errorf("other = %+v, want 373950650 and 2410974272 with a note", other)
+	}
+	var infraIDs []string
+	for _, r := range infra {
+		infraIDs = append(infraIDs, r.ID)
+	}
+	if !reflect.DeepEqual(infraIDs, []string{"901340", "949111", "980170"}) {
+		t.Errorf("infra = %v", infraIDs)
+	}
+}
+
+func TestGroupEvents_OnlyOtherRulesLeavesNothingToExclude(t *testing.T) {
+	got := GroupEvents([]Event{ev("2026-09-27T10:00:00Z", "1.1.1.1", "h.example.com", "/", "901340", "2410974272")})
+	if len(got) != 1 || len(got[0].Detections) != 0 || len(got[0].Other) != 1 {
+		t.Errorf("pattern = %+v, want no detections and one other rule", got)
+	}
+}
