@@ -84,3 +84,8 @@ amendment).
   - push-cert replaces every Stalwart TLS entry whose names overlap the new certificate. A certificate with a new first name therefore still replaces the old one on `:993`.
   - Renewal needs both names to resolve here. Dropping the old name needs a reissue with only the new name, which is not built (see the ADR-0048 amendment).
 - **Rename.** A panel rename still leaves the mail row on its issued name (JAB-389). When nothing is applied and the row is a Let's Encrypt certificate that is issued, the reconciler records that name as the applied mail hostname, so the effective mail hostname cannot drift to a name no certificate covers.
+- **Follow-ups (JAB-408, 2026-09-27).**
+  - The derived name is never dropped from the mail certificate, so no single-name reissue is built (ADR-0048, Decision 4).
+  - A switchover now checks that Stalwart serves the new certificate before applying the name.
+  - After a switchover it deletes the previous custom name's lineage.
+

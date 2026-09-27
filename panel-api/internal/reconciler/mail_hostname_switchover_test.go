@@ -142,7 +142,8 @@ func newSwitchoverFixture(t *testing.T, desired string, status string) *swFixtur
 	t.Helper()
 	f := &swFixture{
 		agent: &fakeAgent{resultByMethod: map[string]json.RawMessage{
-			"ssl.panel.issue": json.RawMessage(`{"issued_at":"2026-09-27T10:00:00Z","expires_at":"2026-12-26T10:00:00Z"}`),
+			"ssl.panel.issue":       json.RawMessage(`{"issued_at":"2026-09-27T10:00:00Z","expires_at":"2026-12-26T10:00:00Z"}`),
+			"ssl.panel.mail_served": json.RawMessage(`{"ok":true,"expected_sha256":"ab12","ports":[{"port":993,"match":true},{"port":465,"match":true}]}`),
 		}},
 		sw: &fakeSwitchoverRepo{claimOK: true},
 		certs: &fakePanelCertRepo{rows: map[string]*models.PanelCertificate{
@@ -224,8 +225,126 @@ func TestMailHostnameSwitchover_IssuesBothNamesAndApplies(t *testing.T) {
 	redirect := f.callsTo("nginx.webmail_redirect.apply")
 	require.Len(t, redirect, 1)
 	assert.Equal(t, "mx.example.net", redirect[0]["mail_hostname"], "the /webmail redirects follow the applied name in the same tick")
-	assert.Equal(t, []string{"ssl.panel.issue", "webmail.jmap_url.apply", "nginx.webmail_redirect.apply"}, f.methods(),
-		"webmail moves only after the certificate is deployed")
+	served := f.callsTo("ssl.panel.mail_served")
+	require.Len(t, served, 1)
+	assert.Equal(t, "mx.example.net", served[0]["hostname"])
+	assert.Equal(t, []string{"ssl.panel.issue", "ssl.panel.mail_served", "webmail.jmap_url.apply", "nginx.webmail_redirect.apply"}, f.methods(),
+		"the served certificate is checked before the name is applied, and webmail moves only after that")
+}
+
+// JAB-408: once a switchover replaces a custom mail hostname, that name's
+// certbot lineage is no longer deployed but keeps renewing, and fails once
+// its DNS is gone. The engine asks the Agent to delete it. mail.<hostname>
+// and the hostname are never deleted: they stay served.
+func TestMailHostnameSwitchover_PreviousCustomLineageIsDeleted(t *testing.T) {
+	cases := map[string]struct {
+		applied *string
+		desired string
+		setup   func(*swFixture)
+		want    []string
+	}{
+		"derived to custom":       {applied: nil, desired: "mx.example.net", want: nil},
+		"custom to custom":        {applied: wmPtr("mx.example.net"), desired: "mx2.example.net", want: []string{"mx.example.net"}},
+		"custom back to derived":  {applied: wmPtr("mx.example.net"), desired: "mail.mx.example.com", want: []string{"mx.example.net"}},
+		"same name again":         {applied: wmPtr("mx.example.net"), desired: "mx.example.net", want: nil},
+		"applied is the derived":  {applied: wmPtr("mail.mx.example.com"), desired: "mx.example.net", want: nil},
+		"applied is the hostname": {applied: wmPtr("mx.example.com"), desired: "mx.example.net", want: nil},
+		"applied is mail.<domain>": {applied: wmPtr("mail.tenant.org"), desired: "mx.example.net", want: nil,
+			setup: func(f *swFixture) {
+				f.domains.domains["t1"] = &models.Domain{ID: "t1", Name: "tenant.org", UserID: "u2"}
+			}},
+		"applied is a domain": {applied: wmPtr("shop.tenant.org"), desired: "mx.example.net", want: nil,
+			setup: func(f *swFixture) {
+				f.domains.domains["t1"] = &models.Domain{ID: "t1", Name: "shop.tenant.org", UserID: "u2"}
+			}},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newSwitchoverFixture(t, tc.desired, models.MailHostnameSwitchoverPending)
+			f.settings.MailHostname = tc.applied
+			f.dns["mx2.example.net"] = swIP
+			if tc.setup != nil {
+				tc.setup(f)
+			}
+
+			f.r.reconcileMailHostnameSwitchover(context.Background())
+
+			require.Len(t, f.sw.completes, 1)
+			var got []string
+			for _, c := range f.callsTo("ssl.panel.lineage_delete") {
+				got = append(got, c["name"].(string))
+			}
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+func TestMailHostnameSwitchover_LineageDeleteOnlyAfterComplete(t *testing.T) {
+	f := newSwitchoverFixture(t, "mx2.example.net", models.MailHostnameSwitchoverPending)
+	f.settings.MailHostname = wmPtr("mx.example.net")
+	f.dns["mx2.example.net"] = swIP
+	f.agent.resultByMethod["ssl.panel.mail_served"] = json.RawMessage(`{"ok":false,"reason":"port 993 serves another certificate"}`)
+
+	f.r.reconcileMailHostnameSwitchover(context.Background())
+
+	assert.Empty(t, f.sw.completes)
+	assert.Empty(t, f.callsTo("ssl.panel.lineage_delete"), "the old lineage is still the one served until the switchover completes")
+}
+
+// Deleting the old lineage is housekeeping: its failure leaves the
+// switchover done.
+func TestMailHostnameSwitchover_LineageDeleteFailureKeepsTheSwitchover(t *testing.T) {
+	f := newSwitchoverFixture(t, "mx2.example.net", models.MailHostnameSwitchoverPending)
+	f.settings.MailHostname = wmPtr("mx.example.net")
+	f.dns["mx2.example.net"] = swIP
+	f.agent.errByMethod = map[string]error{"ssl.panel.lineage_delete": errors.New("unknown method")}
+
+	f.r.reconcileMailHostnameSwitchover(context.Background())
+
+	require.Len(t, f.sw.completes, 1)
+	assert.Empty(t, f.sw.fails)
+	assert.Len(t, f.callsTo("ssl.panel.lineage_delete"), 1)
+	jmap := f.callsTo("webmail.jmap_url.apply")
+	require.Len(t, jmap, 1)
+	assert.Equal(t, "mx2.example.net", jmap[0]["mail_hostname"])
+}
+
+// JAB-408: `issued` is not `served`. On .60 a stale deploy hook left :993 on
+// the old certificate while the switchover reported done. The name is
+// applied only once the mail server serves the new certificate.
+func TestMailHostnameSwitchover_NewCertNotServedIsNotApplied(t *testing.T) {
+	const reason = "the mail server does not serve the new certificate for mx.example.net (sha256 ab12): port 993 serves another certificate (sha256 cd34); run `jabali update` if the certificate hooks are out of date"
+	cases := map[string]struct {
+		result json.RawMessage
+		err    error
+		want   string
+	}{
+		"old certificate served": {result: json.RawMessage(`{"ok":false,"reason":"` + strings.ReplaceAll(reason, "`", "\\u0060") + `"}`), want: reason},
+		"no reason given":        {result: json.RawMessage(`{"ok":false}`), want: "mx.example.net"},
+		"agent error":            {err: errors.New("unknown method"), want: "unknown method"},
+		"unreadable answer":      {result: json.RawMessage(`not json`), want: "mx.example.net"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newSwitchoverFixture(t, "mx.example.net", models.MailHostnameSwitchoverPending)
+			if tc.err != nil {
+				f.agent.errByMethod = map[string]error{"ssl.panel.mail_served": tc.err}
+			} else {
+				f.agent.resultByMethod["ssl.panel.mail_served"] = tc.result
+			}
+
+			f.r.reconcileMailHostnameSwitchover(context.Background())
+
+			assert.Empty(t, f.sw.completes, "a certificate the mail server does not serve must not be applied")
+			require.Len(t, f.sw.fails, 1)
+			assert.Contains(t, f.sw.fails[0].msg, tc.want)
+			assert.Equal(t, mailHostSwitchoverIssueRetry, f.sw.fails[0].retryIn,
+				"each retry re-runs the deploy hook, which restarts the mail server: not every 10 minutes")
+			jmap := f.callsTo("webmail.jmap_url.apply")
+			require.Len(t, jmap, 1)
+			assert.Equal(t, "mail.mx.example.com", jmap[0]["mail_hostname"], "webmail stays on the old name")
+		})
+	}
 }
 
 func TestMailHostnameSwitchover_ResetToDerivedClearsApplied(t *testing.T) {

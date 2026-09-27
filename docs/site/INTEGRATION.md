@@ -432,6 +432,7 @@ Keys follow camelCase with the leading prefix `admin` / `user`:
 | `site/admin/panel-certificate.md` | `adminPanelCertificate` | `/docs/admin/panel-certificate/` |
 | `site/admin/panel-hostname.md` | `adminPanelHostname` | `/docs/admin/panel-hostname/` |
 | `site/admin/mail-deliverability.md` | `adminMailDeliverability` | `/docs/admin/mail-deliverability/` |
+| `site/admin/mail-hostname.md` | `adminMailHostname` | `/docs/admin/mail-hostname/` |
 | `site/admin/mail-throttles.md` | `adminMailThrottles` | `/docs/admin/mail-throttles/` |
 | `site/admin/email-logs.md` | `adminEmailLogs` | `/docs/admin/email-logs/` |
 | `site/admin/email-queue.md` | `adminEmailQueue` | `/docs/admin/email-queue/` |

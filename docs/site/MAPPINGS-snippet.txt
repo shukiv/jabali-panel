@@ -73,6 +73,7 @@
 { src: '/home/shuki/projects/jabali2/docs/site/admin/ip-addresses.md',               key: 'adminIpAddresses' },
 { src: '/home/shuki/projects/jabali2/docs/site/admin/login.md',                      key: 'adminLogin' },
 { src: '/home/shuki/projects/jabali2/docs/site/admin/mail-deliverability.md',        key: 'adminMailDeliverability' },
+{ src: '/home/shuki/projects/jabali2/docs/site/admin/mail-hostname.md',               key: 'adminMailHostname' },
 { src: '/home/shuki/projects/jabali2/docs/site/admin/mail-throttles.md',             key: 'adminMailThrottles' },
 { src: '/home/shuki/projects/jabali2/docs/site/admin/malware.md',                    key: 'adminMalware' },
 { src: '/home/shuki/projects/jabali2/docs/site/admin/migration.md',                  key: 'adminMigration' },

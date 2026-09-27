@@ -230,3 +230,25 @@ After a switchover, every tick asserts Bulwark's JMAP URL from the effective nam
 - verifying the certificate actually served after a switchover (`done` means the issuance call succeeded);
 - moving the `/webmail` redirects before the next `jabali update`;
 - showing the custom name in mailbox client settings and autoconfig.
+
+## Amendment — follow-ups closed (JAB-390, JAB-408, 2026-09-27)
+
+This closes the "Not built" list of the amendment above.
+
+**Built.**
+
+- `/webmail` redirects follow a switchover within one reconcile tick (#1904, agent verb `nginx.webmail_redirect.apply`).
+- Settings → Email lists the DNS records to create before a change: an A record to the public IPv4, and an optional AAAA record when the server has a public IPv6 (#1905).
+- **Served-certificate check** (JAB-408). After the issue and before the name is applied, the agent verb `ssl.panel.mail_served` checks two things:
+  - the deploy hook's lineage record names the new name;
+  - Stalwart serves the issued certificate on IMAPS (993) and SMTPS (465) for the new name by SNI.
+
+  Otherwise the switchover fails with the reason and retries after one hour, because each retry re-runs the deploy hook and restarts Stalwart. It does not cover webmail on `:443`, whose vhost follows the name only after it is applied.
+- **Old custom lineage cleanup** (JAB-408). After a switchover completes, the agent verb `ssl.panel.lineage_delete` removes the certbot lineage of the previous applied name, so it stops renewing.
+  - The panel asks only when the previous name was custom: never `mail.<hostname>`, the hostname, or a name that is, or is `mail.<d>` of, a hosted domain.
+  - The agent keeps a lineage that is the recorded panel mail lineage, belongs to the machine hostname, or is referenced by an nginx config.
+
+**Decision 4: `mail.<hostname>` is never retired.** A switchover's old name is always the derived `mail.<hostname>`. It is also the panel zone's MX and MTA-STS `mx:` target (Decision 3) and its mail autoconfig host. Dropping it from the certificate would break incoming mail TLS and client setup, so a "retire the old name" action will not be built. Its DNS stays, so the transition certificate keeps renewing.
+
+**Decision 5: client settings and autoconfig keep `mail.<domain>`.** For the panel-primary domain they still advertise `mail.<hostname>`, which stays served. They do not follow a custom mail hostname.
+

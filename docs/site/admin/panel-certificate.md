@@ -32,3 +32,4 @@ Common failure causes are the same as tenant-domain failures: the panel hostname
 
 - Changing the panel hostname triggers a fresh issuance against the new hostname. The old certificate is retained for one renewal cycle to ease rollback.
 - The certificate path is consumed by nginx, the panel API (which serves the SPA over `:443`), and Bulwark. Each service reads the certificate on reload; in-flight connections complete on the prior certificate.
+- The separate panel mail certificate follows the mail hostname. See [Mail Hostname](./mail-hostname.md).
