@@ -58,6 +58,9 @@ func (f *fakePolicyRepo) Upsert(_ context.Context, p *models.UserEgressPolicy) e
 	return nil
 }
 func (f *fakePolicyRepo) EnsureDefault(context.Context, string, string) error { return nil }
+func (f *fakePolicyRepo) SeedMissing(context.Context, string, time.Time) (int64, error) {
+	return 0, nil
+}
 func (f *fakePolicyRepo) List(context.Context) ([]models.UserEgressPolicy, error) {
 	return nil, nil
 }

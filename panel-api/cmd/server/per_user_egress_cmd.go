@@ -3,9 +3,10 @@
 // soak period (default 7 days) to `enforced`. Invoked by the
 // jabali-per-user-egress-flip.timer systemd unit daily.
 //
-// Operator pin: when /etc/jabali/per-user-egress.mode contains the
+// Operator pin: when /etc/jabali/per-user-egress.pin contains the
 // literal string "learning", flip is a no-op — operator-controlled
-// hold for hosts where the LEARNING soak needs to run longer.
+// hold for hosts where the LEARNING soak needs to run longer. (The
+// .mode file next to it is the installer's seed default, not a pin.)
 //
 // See ADR-0084 §8 (LEARNING auto-flip) and the M34 runbook.
 

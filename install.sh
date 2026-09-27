@@ -12025,8 +12025,10 @@ install_ufw() {
 #
 # Default mode is ENFORCED on fresh installs. Hosts upgrading from a
 # build without this feature start in LEARNING for 7 days (Step 8 timer
-# matures the rows). Operator pin via /etc/jabali/per-user-egress.mode
-# pauses the auto-flip indefinitely.
+# matures the rows). /etc/jabali/per-user-egress.mode only picks the state
+# the reconciler seeds a user's missing policy row in; it is not a pin.
+# Operator pin: `echo learning > /etc/jabali/per-user-egress.pin` pauses
+# the auto-flip indefinitely.
 install_per_user_egress() {
   _log "configuring per-user PHP-FPM egress firewall (M34)"
 
@@ -12106,7 +12108,7 @@ UNIT
   # Step 8: LEARNING -> ENFORCED daily auto-flip timer.
   # `jabali per-user-egress flip-mature` lists policies in LEARNING for
   # ≥7 days and flips them to ENFORCED unless the operator pin file
-  # /etc/jabali/per-user-egress.mode contains "learning". Idempotent;
+  # /etc/jabali/per-user-egress.pin contains "learning". Idempotent;
   # safe to re-run on every `jabali update`.
   cat >/etc/systemd/system/jabali-per-user-egress-flip.service <<'UNIT'
 [Unit]

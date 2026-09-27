@@ -17,7 +17,8 @@ override.
 | Where | What |
 |---|---|
 | `/etc/nftables.d/jabali-per-user-egress.nft` | Generated rule file. Reconciler is the only writer. |
-| `/etc/jabali/per-user-egress.mode` | Operator pin. `learning` halts the auto-flip timer. |
+| `/etc/jabali/per-user-egress.mode` | State a user's missing policy row is seeded in (`learning` on hosts that predated M34, `enforced` on fresh installs). Not a pin. |
+| `/etc/jabali/per-user-egress.pin` | Operator pin. `learning` halts the auto-flip timer. |
 | `/etc/jabali/.per-user-egress-installed` | One-time marker; chooses LEARNING (existing host) vs ENFORCED (fresh install) at install time. |
 | `jabali-per-user-egress-load.service` | Boot-time `nft -f` re-apply of the rule file. |
 | `jabali-per-user-egress-flip.timer` | Daily 03:30 UTC LEARNING→ENFORCED auto-flip. |
@@ -102,11 +103,11 @@ whether to allowlist before flipping the user to ENFORCED.
 
 Hosts upgrading from a build without M34 start every user in
 LEARNING for 7 days. The daily timer flips matured rows to ENFORCED
-unless `/etc/jabali/per-user-egress.mode = learning` is set.
+unless `/etc/jabali/per-user-egress.pin = learning` is set.
 
 To extend the soak indefinitely:
 ```bash
-echo learning > /etc/jabali/per-user-egress.mode
+echo learning > /etc/jabali/per-user-egress.pin
 ```
 To run the auto-flip immediately (dry-run first):
 ```bash

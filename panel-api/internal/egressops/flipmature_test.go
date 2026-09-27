@@ -53,7 +53,7 @@ func TestFlipMature_DryRunWritesNothing(t *testing.T) {
 }
 
 func TestFlipMature_OperatorPinBlocks(t *testing.T) {
-	pinFile := filepath.Join(t.TempDir(), "per-user-egress.mode")
+	pinFile := filepath.Join(t.TempDir(), "per-user-egress.pin")
 	if err := os.WriteFile(pinFile, []byte("learning\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}

@@ -97,6 +97,17 @@ CIDR-scoped rule (the specific DB host) over opening the port to `0.0.0.0/0`.
 
 Admin overrides per-user under Users → Edit → Egress.
 
+**Every hosting user is enrolled.** The reconciler gives each user without a
+policy a row on every tick. On a host installed before the egress firewall
+existed, the row starts in **learning**: blocked connections are logged
+(`journalctl -k | grep jabali-egress-learn-<user>`) but allowed. After 7 days
+the nightly timer switches it to **enforced**. On newer hosts it starts
+enforced. Watch **Users → Edit → Egress** during those 7 days, and add the
+extras a tenant's app needs. To hold every learning user in learning, run
+`echo learning > /etc/jabali/per-user-egress.pin`. The
+`/etc/jabali/per-user-egress.mode` file only picks the starting state; it is
+not a pin.
+
 **SSH shells are covered too.** An SSH login does not run in the user's slice:
 logind places it in `user.slice/user-<uid>.slice/session-N.scope`. The ruleset
 therefore also matches by socket owner (`meta skuid`), after the cgroup match,

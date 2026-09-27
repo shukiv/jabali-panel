@@ -109,6 +109,8 @@ unchanged.
    (`jabali-per-user-egress-flip.timer`) runs the
    `jabali per-user-egress flip-mature` CLI. Operator pin via
    `/etc/jabali/per-user-egress.mode = learning` halts the auto-flip.
+   (Superseded 2026-09-27: the pin is `/etc/jabali/per-user-egress.pin`;
+   see the amendment at the end.)
    New installs default to ENFORCED with the default allowlist.
 
 ## Consequences
@@ -234,3 +236,43 @@ chain output {
 (GH #1798) now govern shells too: without them, `ssh` / `git@github.com` and
 `ping` from a shell are dropped for an enforced tenant. Learning-state tenants
 with heavy shell use will log more would-drops.
+
+## Amendment 2026-09-27 (2) — every hosting user gets a policy row; the pin is its own file
+
+**Gap 1: most tenants had no policy.** The renderer only sees users with a
+`user_egress_policies` row. Nothing created one when a user was created: the
+repository comment said a user-create hook called `EnsureDefault`, but no such
+hook existed. The only callers were the admin and tenant Egress page handlers.
+A tenant whose Egress page was never opened had no allowlist and no uid
+dispatch. Their PHP was covered only by the slice-scoped SSRF floor, and their
+shell by nothing.
+
+**Gap 2: the upgraded-host soak never ended.** On a host that predated M34,
+install.sh wrote `learning` into `/etc/jabali/per-user-egress.mode`, and
+`ReadEgressPin` read that same file as the operator pin. So the installer's
+default was an indefinite hold, and on those hosts the nightly flip never
+promoted a row. Nobody noticed because gap 1 meant there were almost no rows.
+
+**Decision.**
+
+- Each reconciler tick first seeds a row for every hosting user that has none
+  (`SeedMissing`: one `INSERT … SELECT … LEFT JOIN … WHERE p.user_id IS NULL`,
+  users with a username; `ON DUPLICATE KEY` no-op). This happens before the
+  tick lists policies. It covers every create path (API, CLI, billing,
+  migration, restore) without a hook in each, and repairs existing boxes.
+- The seed state comes from the mode file: `learning` on hosts that predated
+  M34, `enforced` on fresh installs. A missing, unreadable or unknown mode file
+  seeds `enforced` (fail closed). A learning seed stamps
+  `learning_started_at` at seed time, so the 7-day soak runs from the release
+  that seeds it, not from the host's install.
+- The operator pin moves to `/etc/jabali/per-user-egress.pin` (contents
+  `learning`). The mode file is only the seed default.
+
+**Consequences.** At the release that ships this, every tenant gets a policy.
+On hosts that predated M34, tenants are logged-only for 7 days and then
+enforced. Apps using ports outside the allowlist (remote databases, custom
+APIs) break on day 8 unless the operator adds extras or pins. The warning is
+the would-drop log (`jabali-egress-learn-<user>`) and `egress_drop_burst`. On
+hosts installed after M34, tenants are enforced at once. An operator who had
+pinned by writing `learning` into the mode file must now write the pin file.
+A user created on a host in learning mode also starts with a 7-day soak.

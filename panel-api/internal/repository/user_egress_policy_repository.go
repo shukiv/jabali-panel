@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"gorm.io/gorm"
@@ -33,13 +34,15 @@ type PolicyForReconcile struct {
 }
 
 // UserEgressPolicyRepository owns user_egress_policies. Admin handlers
-// call Upsert; the reconciler calls ListAllForReconcile + BumpDropCount.
-// EnsureDefault is the idempotent insert-or-noop used by user-create
-// hooks so every Linux user has exactly one row at all times.
+// call Upsert; the reconciler calls SeedMissing + ListAllForReconcile +
+// SetDropCount. SeedMissing is what gives every hosting user a row: the
+// reconciler runs it each tick, so a user created by any path (API, CLI,
+// billing, migration, restore) is enrolled within one tick.
 type UserEgressPolicyRepository interface {
 	Get(ctx context.Context, userID string) (*models.UserEgressPolicy, error)
 	Upsert(ctx context.Context, p *models.UserEgressPolicy) error
 	EnsureDefault(ctx context.Context, userID, defaultState string) error
+	SeedMissing(ctx context.Context, state string, now time.Time) (int64, error)
 	List(ctx context.Context) ([]models.UserEgressPolicy, error)
 	ListAllForReconcile(ctx context.Context) ([]PolicyForReconcile, error)
 	SetDropCount(ctx context.Context, userID string, count uint64, at time.Time) error
@@ -98,8 +101,8 @@ func (r *userEgressPolicyRepo) Upsert(ctx context.Context, p *models.UserEgressP
 
 // EnsureDefault inserts an empty-allowlist row in the requested state
 // if no row exists for the user. No-op if a row already exists. Called
-// from the user-create hook so brand-new users join the firewall in
-// the right mode without operator intervention.
+// when the admin or the user opens the Egress page, so the page always
+// has a row to show; SeedMissing is what enrolls every user.
 func (r *userEgressPolicyRepo) EnsureDefault(ctx context.Context, userID, defaultState string) error {
 	if defaultState == "" {
 		defaultState = models.UserEgressStateEnforced
@@ -122,6 +125,40 @@ func (r *userEgressPolicyRepo) EnsureDefault(ctx context.Context, userID, defaul
 		return translate(err)
 	}
 	return nil
+}
+
+// SeedMissing inserts a policy row in state for every hosting user that has
+// none, and returns how many it inserted. A hosting user is one with a
+// username; an admin account has none and no Linux user to filter. A
+// learning row is stamped learning_started_at = now, so its soak runs from
+// the day it was seeded, not from the host's install.
+//
+// Without a row a user is not in the egress payload at all: no allowlist,
+// no uid dispatch, no uid-scoped SSRF floor. Rows used to be created only
+// when someone opened the user's Egress page.
+func (r *userEgressPolicyRepo) SeedMissing(ctx context.Context, state string, now time.Time) (int64, error) {
+	if state != models.UserEgressStateEnforced && state != models.UserEgressStateLearning {
+		return 0, fmt.Errorf("seed state %q: want enforced or learning", state)
+	}
+	var startedAt *time.Time
+	if state == models.UserEgressStateLearning {
+		t := now.UTC()
+		startedAt = &t
+	}
+	res := r.db.WithContext(ctx).Exec(
+		// ON DUPLICATE KEY is a no-op for a row an EnsureDefault inserted
+		// between the SELECT and the INSERT. Not INSERT IGNORE, which would
+		// also turn a real error into a warning.
+		"INSERT INTO user_egress_policies (user_id, state, allowed_extra, learning_started_at) "+
+			"SELECT u.id, ?, JSON_ARRAY(), ? FROM users u "+
+			"LEFT JOIN user_egress_policies p ON p.user_id = u.id "+
+			"WHERE p.user_id IS NULL AND u.username IS NOT NULL AND u.username <> '' "+
+			"ON DUPLICATE KEY UPDATE user_id = user_egress_policies.user_id",
+		state, startedAt)
+	if res.Error != nil {
+		return 0, translate(res.Error)
+	}
+	return res.RowsAffected, nil
 }
 
 // List returns every row, ordered by user_id for a stable iteration.
@@ -249,7 +286,7 @@ func (r *userEgressPolicyRepo) StateCounts(ctx context.Context) (map[string]uint
 // ListMatureLearning returns rows that have been in 'learning' for at
 // least the given age. Step 8's `jabali per-user-egress flip-mature`
 // CLI consumes this and flips them to enforced unless the operator-pin
-// file /etc/jabali/per-user-egress.mode == "learning" is set.
+// file /etc/jabali/per-user-egress.pin == "learning" is set.
 func (r *userEgressPolicyRepo) ListMatureLearning(ctx context.Context, age time.Duration) ([]models.UserEgressPolicy, error) {
 	if age <= 0 {
 		return nil, errors.New("ListMatureLearning: age must be positive")
