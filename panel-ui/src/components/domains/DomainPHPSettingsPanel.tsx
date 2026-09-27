@@ -211,16 +211,20 @@ export function DomainPHPSettingsPanel({ domainId }: DomainPHPSettingsPanelProps
         // touched flags, so without the reset a domain switch would leave Save
         // enabled on a stale dirty state (latent bug in the original page).
         form.resetFields();
+        // GH #1705: the API omits a field the domain does not override
+        // (omitempty), so it arrives undefined. An undefined Select value shows
+        // the placeholder; null selects the inherit option, whose label names
+        // the real default ("256M (Default)"). Map absent to null.
         form.setFieldsValue({
-          php_memory_limit: resp.data.php_memory_limit,
-          php_upload_max_filesize: resp.data.php_upload_max_filesize,
-          php_post_max_size: resp.data.php_post_max_size,
-          php_max_input_vars: resp.data.php_max_input_vars,
-          php_max_execution_time: resp.data.php_max_execution_time,
-          php_max_input_time: resp.data.php_max_input_time,
-          php_display_errors: resp.data.php_display_errors,
-          php_error_reporting: resp.data.php_error_reporting,
-          php_timezone: resp.data.php_timezone,
+          php_memory_limit: resp.data.php_memory_limit ?? null,
+          php_upload_max_filesize: resp.data.php_upload_max_filesize ?? null,
+          php_post_max_size: resp.data.php_post_max_size ?? null,
+          php_max_input_vars: resp.data.php_max_input_vars ?? null,
+          php_max_execution_time: resp.data.php_max_execution_time ?? null,
+          php_max_input_time: resp.data.php_max_input_time ?? null,
+          php_display_errors: resp.data.php_display_errors ?? null,
+          php_error_reporting: resp.data.php_error_reporting ?? null,
+          php_timezone: resp.data.php_timezone ?? null,
         });
       } catch {
         feedback.message.error("Failed to load PHP settings");
@@ -307,18 +311,28 @@ export function DomainPHPSettingsPanel({ domainId }: DomainPHPSettingsPanelProps
   // A stock Debian php.ini ships date.timezone commented out → ini_get returns
   // "" and PHP's effective zone is UTC, so surface that rather than a blank.
   const timezoneFmt: DefaultFmt = (raw) => (raw === "" ? "UTC" : raw);
+  const defaultLabel = (
+    directive: string,
+    fmt: DefaultFmt = sizeFmt(),
+  ): string | null => {
+    const raw = phpSettings?.pool_defaults?.[directive];
+    if (raw === undefined) return null;
+    const shown = fmt(raw);
+    return shown === null ? null : `${shown} (Default)`;
+  };
   const withDefault = (
     opts: Opt[],
     directive: string,
     fmt: DefaultFmt = sizeFmt(),
   ): Opt[] => {
-    const raw = phpSettings?.pool_defaults?.[directive];
-    if (raw === undefined) return opts;
-    const shown = fmt(raw);
-    if (shown === null) return opts;
-    const label = `${shown} (Default)`;
+    const label = defaultLabel(directive, fmt);
+    if (label === null) return opts;
     return opts.map((o) => (o.value === null ? { ...o, label } : o));
   };
+  // The placeholder shows when the field is empty — after the clear button,
+  // too — so it names the same default as the inherit option.
+  const inheritPlaceholder = (directive: string, fmt: DefaultFmt = sizeFmt()) =>
+    defaultLabel(directive, fmt) ?? t("userphpsettingspage.use_pool_default");
 
   const fieldSet = (v: unknown) => v !== null && v !== undefined;
   const overrideLabel = (text: string, overridden: boolean) => (
@@ -406,7 +420,7 @@ export function DomainPHPSettingsPanel({ domainId }: DomainPHPSettingsPanelProps
                     name="php_memory_limit"
                   >
                     <Select
-                      placeholder={t("userphpsettingspage.use_pool_default")}
+                      placeholder={inheritPlaceholder("memory_limit")}
                       allowClear
                       options={withDefault(MEMORY_LIMIT_OPTIONS, "memory_limit")}
                     />
@@ -421,7 +435,7 @@ export function DomainPHPSettingsPanel({ domainId }: DomainPHPSettingsPanelProps
                     name="php_upload_max_filesize"
                   >
                     <Select
-                      placeholder={t("userphpsettingspage.use_pool_default")}
+                      placeholder={inheritPlaceholder("upload_max_filesize")}
                       allowClear
                       options={withDefault(UPLOAD_MAX_OPTIONS, "upload_max_filesize")}
                     />
@@ -436,7 +450,7 @@ export function DomainPHPSettingsPanel({ domainId }: DomainPHPSettingsPanelProps
                     name="php_post_max_size"
                   >
                     <Select
-                      placeholder={t("userphpsettingspage.use_pool_default")}
+                      placeholder={inheritPlaceholder("post_max_size")}
                       allowClear
                       options={withDefault(POST_MAX_OPTIONS, "post_max_size")}
                     />
@@ -451,7 +465,7 @@ export function DomainPHPSettingsPanel({ domainId }: DomainPHPSettingsPanelProps
                     name="php_max_input_vars"
                   >
                     <Select
-                      placeholder={t("userphpsettingspage.use_pool_default")}
+                      placeholder={inheritPlaceholder("max_input_vars")}
                       allowClear
                       options={withDefault(MAX_INPUT_VARS_OPTIONS, "max_input_vars")}
                     />
@@ -470,7 +484,7 @@ export function DomainPHPSettingsPanel({ domainId }: DomainPHPSettingsPanelProps
                     name="php_max_execution_time"
                   >
                     <Select
-                      placeholder={t("userphpsettingspage.use_pool_default")}
+                      placeholder={inheritPlaceholder("max_execution_time", sizeFmt("s"))}
                       allowClear
                       options={withDefault(MAX_EXECUTION_TIME_OPTIONS, "max_execution_time", sizeFmt("s"))}
                     />
@@ -485,7 +499,7 @@ export function DomainPHPSettingsPanel({ domainId }: DomainPHPSettingsPanelProps
                     name="php_max_input_time"
                   >
                     <Select
-                      placeholder={t("userphpsettingspage.use_pool_default")}
+                      placeholder={inheritPlaceholder("max_input_time", sizeFmt("s"))}
                       allowClear
                       options={withDefault(MAX_INPUT_TIME_OPTIONS, "max_input_time", sizeFmt("s"))}
                     />
@@ -527,7 +541,7 @@ export function DomainPHPSettingsPanel({ domainId }: DomainPHPSettingsPanelProps
                     name="php_error_reporting"
                   >
                     <Select
-                      placeholder={t("userphpsettingspage.use_pool_default")}
+                      placeholder={inheritPlaceholder("error_reporting", errorReportingFmt)}
                       allowClear
                       options={withDefault(ERROR_REPORTING_OPTIONS, "error_reporting", errorReportingFmt)}
                     />
@@ -544,7 +558,7 @@ export function DomainPHPSettingsPanel({ domainId }: DomainPHPSettingsPanelProps
                   >
                     <Select
                       showSearch
-                      placeholder={t("userphpsettingspage.use_pool_default")}
+                      placeholder={inheritPlaceholder("date.timezone", timezoneFmt)}
                       allowClear
                       optionFilterProp="label"
                       options={withDefault(TIMEZONE_OPTIONS, "date.timezone", timezoneFmt)}
