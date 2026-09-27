@@ -90,6 +90,12 @@ type BackupHandlerConfig struct {
 	// credential is left for a recovery link.
 	KratosClient *kratosclient.Client
 
+	// WebDomainAliases and ServerSettings feed the name guards a restored
+	// domain goes through (GH #1898). A restore that brings back domains
+	// refuses them when either is nil, rather than skip a guard.
+	WebDomainAliases repository.WebDomainAliasRepository
+	ServerSettings   repository.ServerSettingsRepository
+
 	Log             *slog.Logger
 	StrictRateLimit gin.HandlerFunc
 }
@@ -1239,6 +1245,8 @@ func (h *backupHandler) applyRestoreMetadata(ctx context.Context, metaRaw json.R
 		DNSRecords:     h.cfg.DNSRecords,
 		KratosClient:   h.cfg.KratosClient,
 		Agent:          h.cfg.Agent, // push restored forwarders to Stalwart (GH #1795)
+		// GH #1898: a restored domain passes the create-time checks.
+		CheckDomain: RestoreDomainCheck(h.cfg.Domains, h.cfg.WebDomainAliases, h.cfg.ServerSettings),
 	})
 	return r.Errors
 }

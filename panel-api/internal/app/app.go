@@ -1252,8 +1252,11 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				EgressPolicies: deps.UserEgressPolicies,
 				EgressRequests: deps.UserEgressRequests,
 				KratosClient:   deps.KratosClient,
-				Log:            deps.Log,
-				SSOKey:         deps.SSOKey,
+				// GH #1898: the name guards a restored domain goes through.
+				WebDomainAliases: deps.WebDomainAliases,
+				ServerSettings:   deps.ServerSettings,
+				Log:              deps.Log,
+				SSOKey:           deps.SSOKey,
 			})
 			api.RegisterMeBackupRoutes(v1, api.MeBackupsHandlerConfig{
 				Agent:          deps.Agent,
