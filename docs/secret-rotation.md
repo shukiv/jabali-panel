@@ -67,7 +67,23 @@ An earlier version of this runbook put Kratos out of scope because the root-only
 - If the command reports that session revocation failed, the secrets **stay rotated**; rolling back would bring the exposed values back. Revoke the rest with `jabali session list` / `jabali session revoke-user`.
 - If it reports that `kratos.yml` does not match its source files, run `jabali update` to re-render it, then retry.
 
-**Still open after rotating Kratos.** The old DB password could have been used to copy password hashes and TOTP secrets. Rotating the password stops further reads but does not invalidate data already copied. On hosts where compromise is plausible, have administrators reset their password and re-enroll TOTP. This is an operator decision; the tool does not force it.
+### Administrator passwords and 2FA (after `rotate kratos`)
+
+The old DB password could have been used to copy password hashes and TOTP secrets. Rotating the password stops further reads, but it does not invalidate data that was already copied. A copied TOTP secret keeps producing valid codes until the user sets up 2FA again.
+
+Decision (JAB-357, 2026-09-27): on each affected host, reset every administrator's password and 2FA by hand. The panel has no bulk command and no "change password at next login" flag. It does not make a user set up 2FA again either, because Kratos runs with `required_aal: highest_available`: a user with 2FA must use it, but a user without it is not asked to add it.
+
+Run these steps **after** `jabali secrets rotate kratos`, so the new credentials are written after the old DB password stops working:
+
+1. `jabali user list`: note every row with ROLE `admin`.
+2. For each admin, run `jabali user password <admin>`.
+   - This sets a new random password directly, and the old one stops working at once.
+   - Give the new password to the admin over a safe channel.
+   - Do not use `--link` here. With a recovery link, the old password may keep working until the admin finishes the recovery; this is not verified.
+3. For each admin, run `jabali user 2fa-reset <admin>`. This removes the TOTP secret and the recovery codes. The password is not changed.
+4. Each admin signs in, changes the password in their profile, and sets up 2FA again. The panel does not enforce this, so confirm with each admin that it is done.
+
+Tenant accounts are not covered by this decision.
 
 ## Recommended order (per host)
 
@@ -80,8 +96,9 @@ An earlier version of this runbook put Kratos out of scope because the root-only
 5. Panel + panel-mail TLS reissue.
 6. `jwt` — cheap, do it alongside any panel restart.
 7. `kratos` — last, in a maintenance window: it signs every user out. Deliberately NOT part of `rotate all`, so the forced sign-out is always an explicit choice.
-8. Purge lingering `migration-secrets/*.env` (the daily reaper now also removes orphans with no job row).
-9. Note the deferred WP-cache HMAC as an open item.
+8. Administrator passwords and 2FA, right after `kratos`. See "Administrator passwords and 2FA" above.
+9. Purge lingering `migration-secrets/*.env` (the daily reaper now also removes orphans with no job row).
+10. Note the deferred WP-cache HMAC as an open item.
 
 ## Verify after each rotation
 
