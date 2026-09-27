@@ -180,6 +180,23 @@ func newSecretsCmd() *cobra.Command {
 	return cmd
 }
 
+// rotateAuditPreRun opens the panel DB so the rotation can write its
+// secrets.rotate.* audit event (docs/secret-rotation.md); without it
+// cliAudit silently records nothing. It never fails the command: a
+// remediation must run even when the DB or the config is unavailable, so a
+// failure is reported on stderr and the rotation goes ahead without its
+// audit event.
+func rotateAuditPreRun(cmd *cobra.Command, _ []string) error {
+	if err := initConfig(); err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: config not loaded, no audit event will be recorded: %v\n", err)
+		return nil
+	}
+	if err := initDB(); err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: panel DB unavailable, no audit event will be recorded: %v\n", err)
+	}
+	return nil
+}
+
 func newSecretsRotateCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "rotate",
@@ -192,9 +209,10 @@ func newSecretsRotateCmd() *cobra.Command {
 func newRotatePdnsCmd() *cobra.Command {
 	var dryRun bool
 	cmd := &cobra.Command{
-		Use:   "pdns",
-		Short: "Rotate the PowerDNS DB user password (pdns.env + gmysql backend conf)",
-		Args:  cobra.NoArgs,
+		Use:     "pdns",
+		Short:   "Rotate the PowerDNS DB user password (pdns.env + gmysql backend conf)",
+		Args:    cobra.NoArgs,
+		PreRunE: rotateAuditPreRun,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 2*time.Minute)
 			defer cancel()
@@ -312,9 +330,10 @@ func rotatePdns(ctx context.Context, out io.Writer, dryRun bool) error {
 func newRotateAllCmd() *cobra.Command {
 	var dryRun bool
 	cmd := &cobra.Command{
-		Use:   "all",
-		Short: "Rotate every built panel secret in a lockout-safe order",
-		Args:  cobra.NoArgs,
+		Use:     "all",
+		Short:   "Rotate every built panel secret in a lockout-safe order",
+		Args:    cobra.NoArgs,
+		PreRunE: rotateAuditPreRun,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Minute)
 			defer cancel()
@@ -354,9 +373,10 @@ func rotateAll(ctx context.Context, out io.Writer, dryRun bool) error {
 func newRotateRedisPanelTokenCmd() *cobra.Command {
 	var dryRun bool
 	cmd := &cobra.Command{
-		Use:   "redis-panel-token",
-		Short: "Rotate JABALI_REDIS_PANEL_TOKEN (panel.env + redis aclfile, live ACL SETUSER)",
-		Args:  cobra.NoArgs,
+		Use:     "redis-panel-token",
+		Short:   "Rotate JABALI_REDIS_PANEL_TOKEN (panel.env + redis aclfile, live ACL SETUSER)",
+		Args:    cobra.NoArgs,
+		PreRunE: rotateAuditPreRun,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 2*time.Minute)
 			defer cancel()
@@ -486,9 +506,10 @@ func rotateRedisPanelToken(ctx context.Context, out io.Writer, dryRun bool) erro
 func newRotateJWTCmd() *cobra.Command {
 	var dryRun bool
 	cmd := &cobra.Command{
-		Use:   "jwt",
-		Short: "Rotate JWT_SECRET in panel.env (vestigial post-M20; safe near-noop)",
-		Args:  cobra.NoArgs,
+		Use:     "jwt",
+		Short:   "Rotate JWT_SECRET in panel.env (vestigial post-M20; safe near-noop)",
+		Args:    cobra.NoArgs,
+		PreRunE: rotateAuditPreRun,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 90*time.Second)
 			defer cancel()
@@ -553,9 +574,10 @@ func rotateSingleEnvKey(ctx context.Context, out io.Writer, dryRun bool, key, ac
 func newRotateDBAppUserCmd() *cobra.Command {
 	var dryRun bool
 	cmd := &cobra.Command{
-		Use:   "db-app-user",
-		Short: "Rotate the panel DB app-user (jabali_panel_app) password + DATABASE_URL",
-		Args:  cobra.NoArgs,
+		Use:     "db-app-user",
+		Short:   "Rotate the panel DB app-user (jabali_panel_app) password + DATABASE_URL",
+		Args:    cobra.NoArgs,
+		PreRunE: rotateAuditPreRun,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 2*time.Minute)
 			defer cancel()
