@@ -37,6 +37,7 @@ Tunables persist to `server_settings` and are applied by the agent's `nginx.tuna
 
 ## Mail
 
+- **Mail hostname** — the name mail clients and webmail use, `mail.<panel-hostname>` by default. See [Mail Hostname](./mail-hostname.md).
 - **Recovery sender** — the `From:` for Kratos password-recovery email.
 - **Outbound throttles** — defaults (see [Mail Throttles](./mail-throttles.md)).
 - **MTA-STS policy mode** — `enforce` or `testing`.
