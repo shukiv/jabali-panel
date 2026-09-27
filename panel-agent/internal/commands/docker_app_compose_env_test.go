@@ -31,7 +31,7 @@ func TestComposeCalls_DisableDotEnv(t *testing.T) {
 		t.Fatalf("runDockerCompose: %v", err)
 	}
 	// Empty output fails JSON validation; only the command's env matters here.
-	_ = runTenantComposeValidation(ctx, dir, nil, "jabali-user-t.slice")
+	_ = runTenantComposeValidation(ctx, dir, nil, "jabali-user-t.slice", nil)
 
 	if len(cmds) != 2 {
 		t.Fatalf("expected 2 compose commands, got %d", len(cmds))

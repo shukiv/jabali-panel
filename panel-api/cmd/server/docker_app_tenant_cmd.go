@@ -332,7 +332,7 @@ func runTenantDockerInstall(ctx context.Context, slug, name, userRef, domain, up
 		return fmt.Errorf("materialise env: %w", err)
 	}
 
-	composeYML, err := dockerapp.Render(entry, dockerapp.RenderParams{
+	composeYML, tenantServices, err := dockerapp.RenderTenant(entry, dockerapp.RenderParams{
 		Slug: instanceSlug, Name: name, Domain: domain, ImageChannel: entry.ImageChannel,
 		DataRoot: "/var/lib/jabali/docker-apps/" + instanceSlug,
 		CPULimit: cpu, MemoryLimit: mem, PIDsLimit: pids, Ports: runtime, Env: envMap,
@@ -362,6 +362,8 @@ func runTenantDockerInstall(ctx context.Context, slug, name, userRef, domain, up
 		"healthcheck_timeout_seconds": 300,
 		"tenant_validate":             true,
 		"tenant_caps":                 dockerapp.TenantCapAllowlist(entry.TenantCaps),
+		"tenant_cgroup":               "jabali-user-" + username + ".slice",
+		"tenant_services":             tenantServices,
 	}); err != nil {
 		msg := firstLine(err.Error())
 		_ = repo.UpdateStatus(context.Background(), app.ID, models.DockerAppStatusFailed, &msg)

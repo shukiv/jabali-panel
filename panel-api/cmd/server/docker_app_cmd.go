@@ -15,6 +15,7 @@ import (
 	"github.com/oklog/ulid/v2"
 	"github.com/spf13/cobra"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/tenantcompose"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dockerapp"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
@@ -553,17 +554,28 @@ func newDockerAppUpdateCmd() *cobra.Command {
 			// Re-render the compose from the current catalog template so a
 			// catalog fix / version bump reaches this install (the agent
 			// otherwise reuses the stale on-disk compose). Secrets preserved
-			// via the install's existing .env. Best-effort: on any failure
-			// fall back to the on-disk compose so update never hard-blocks.
+			// via the install's existing .env. For an admin app a failed
+			// re-render falls back to the on-disk compose so update never
+			// hard-blocks; a tenant app fails closed instead, like the admin
+			// API's update (Gitea #527), and carries the tenant gate (GH #1903).
 			updateParams := map[string]any{
 				"slug":                        app.EffectiveSlug(),
 				"healthcheck_timeout_seconds": 300,
 			}
-			if composeYML, envFile, rerr := rerenderInstallForCLI(ctx, repo, app); rerr != nil {
+			if composeYML, envFile, tenantServices, rerr := rerenderInstallForCLI(ctx, repo, app); rerr != nil {
+				if app.UserID != nil {
+					return fmt.Errorf("re-render failed; refusing to update a tenant app from its unvalidated on-disk compose: %w", rerr)
+				}
 				fmt.Fprintf(os.Stderr, "warning: re-render skipped (%v); using on-disk compose\n", rerr)
 			} else {
 				updateParams["compose_yml"] = composeYML
 				updateParams["env_file"] = envFile
+				if tenantServices != nil {
+					updateParams["tenant_services"] = tenantServices
+				}
+			}
+			if verr := cliApplyTenantValidate(ctx, app, updateParams); verr != nil {
+				return verr
 			}
 			raw, err := sharedAgent.Call(ctx, "docker_app.update", updateParams)
 			if err != nil {
@@ -714,10 +726,10 @@ func readInstallEnvCLI(ctx context.Context, app *models.DockerApp) (map[string]s
 	return resp.Env, nil
 }
 
-func rerenderInstallForCLI(ctx context.Context, repo repository.DockerAppRepository, app *models.DockerApp) (string, string, error) {
+func rerenderInstallForCLI(ctx context.Context, repo repository.DockerAppRepository, app *models.DockerApp) (string, string, tenantcompose.Services, error) {
 	existingEnv, err := readInstallEnvCLI(ctx, app)
 	if err != nil {
-		return "", "", err
+		return "", "", nil, err
 	}
 	return renderInstallComposeCLI(ctx, repo, app, existingEnv)
 }
@@ -725,18 +737,22 @@ func rerenderInstallForCLI(ctx context.Context, repo repository.DockerAppReposit
 // renderInstallComposeCLI re-renders an install's compose from the current
 // catalog using baseEnv as the secret/override source (preserved through
 // MaterialiseEnv). The env edit/regenerate paths pass a modified baseEnv.
-func renderInstallComposeCLI(ctx context.Context, repo repository.DockerAppRepository, app *models.DockerApp, baseEnv map[string]string) (string, string, error) {
+// A tenant app keeps its sandbox: the render re-applies the tenant hardening
+// and returns the service set the agent pins the compose to (GH #1903), as
+// api.renderInstallCompose does. Without it the CLI rewrote a tenant compose
+// as an unhardened admin compose.
+func renderInstallComposeCLI(ctx context.Context, repo repository.DockerAppRepository, app *models.DockerApp, baseEnv map[string]string) (string, string, tenantcompose.Services, error) {
 	cat, err := loadDockerCatalogForCLI()
 	if err != nil {
-		return "", "", fmt.Errorf("load catalog: %w", err)
+		return "", "", nil, fmt.Errorf("load catalog: %w", err)
 	}
 	entry, ok := cat.Get(app.Slug)
 	if !ok {
-		return "", "", fmt.Errorf("catalog entry %q not found", app.Slug)
+		return "", "", nil, fmt.Errorf("catalog entry %q not found", app.Slug)
 	}
 	envMap, err := dockerapp.MaterialiseEnv(entry, baseEnv)
 	if err != nil {
-		return "", "", fmt.Errorf("materialise env: %w", err)
+		return "", "", nil, fmt.Errorf("materialise env: %w", err)
 	}
 	ports, _ := repo.ListPortsForApp(ctx, app.ID)
 	runtime := make(map[string]dockerapp.RuntimePort, len(ports))
@@ -774,7 +790,7 @@ func renderInstallComposeCLI(ctx context.Context, repo repository.DockerAppRepos
 	if app.PIDsLimit != nil {
 		pids = *app.PIDsLimit
 	}
-	composeYML, err := dockerapp.Render(entry, dockerapp.RenderParams{
+	params := dockerapp.RenderParams{
 		Slug:         app.EffectiveSlug(),
 		Name:         app.Name,
 		Domain:       domain,
@@ -785,9 +801,43 @@ func renderInstallComposeCLI(ctx context.Context, repo repository.DockerAppRepos
 		PIDsLimit:    pids,
 		Ports:        runtime,
 		Env:          envMap,
-	})
-	if err != nil {
-		return "", "", fmt.Errorf("render: %w", err)
 	}
-	return composeYML, buildEnvFileForCLI(envMap), nil
+	tenantUsername := ""
+	if app.UserID != nil {
+		if tenantUsername, err = tenantUsernameForCLI(ctx, *app.UserID); err != nil {
+			return "", "", nil, err
+		}
+	}
+	composeYML, services, err := renderForOwnerCLI(entry, params, tenantUsername)
+	if err != nil {
+		return "", "", nil, fmt.Errorf("render: %w", err)
+	}
+	return composeYML, buildEnvFileForCLI(envMap), services, nil
+}
+
+// renderForOwnerCLI renders an install's compose for its owner. An admin app
+// (tenantUsername "") renders as is. A tenant app gets the tenant hardening
+// under its owner's slice, plus the service set the agent pins the compose to.
+func renderForOwnerCLI(entry dockerapp.Entry, params dockerapp.RenderParams, tenantUsername string) (string, tenantcompose.Services, error) {
+	if tenantUsername == "" {
+		composeYML, err := dockerapp.Render(entry, params)
+		return composeYML, nil, err
+	}
+	params.TenantHardening = &dockerapp.TenantHardening{
+		CgroupParent: "jabali-user-" + tenantUsername + ".slice",
+		Caps:         dockerapp.TenantCapAllowlist(entry.TenantCaps),
+		PIDsLimit:    params.PIDsLimit,
+	}
+	return dockerapp.RenderTenant(entry, params)
+}
+
+// tenantUsernameForCLI resolves a tenant app owner's username, which names the
+// owner's cgroup slice. Fails when it cannot, so a tenant re-render never
+// loses its hardening.
+func tenantUsernameForCLI(ctx context.Context, userID string) (string, error) {
+	u, err := repository.NewUserRepository(sharedDB).FindByID(ctx, userID)
+	if err != nil || u == nil || u.Username == nil || *u.Username == "" {
+		return "", fmt.Errorf("resolve tenant username for hardening: %v", err)
+	}
+	return *u.Username, nil
 }

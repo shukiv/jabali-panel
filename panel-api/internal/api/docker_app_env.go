@@ -194,7 +194,7 @@ func (h *dockerAppHandler) regenerateEnv(c *gin.Context) {
 // .env atomically, then recreates). Restores the running status on success.
 func (h *dockerAppHandler) applyEnv(ctx context.Context, app *models.DockerApp, overrideEnv map[string]string) error {
 	domain := h.installDomain(ctx, app.ID)
-	composeYML, envFile, err := h.renderInstallCompose(ctx, app, domain, overrideEnv)
+	composeYML, envFile, tenantServices, err := h.renderInstallCompose(ctx, app, domain, overrideEnv)
 	if err != nil {
 		return err
 	}
@@ -210,6 +210,7 @@ func (h *dockerAppHandler) applyEnv(ctx context.Context, app *models.DockerApp, 
 	if verr := h.applyTenantValidateParams(ctx, app, envUpdateParams); verr != nil {
 		return verr
 	}
+	setTenantServices(envUpdateParams, tenantServices)
 	_, callErr := h.cfg.Agent.Call(callCtx, "docker_app.update", envUpdateParams)
 	persistCtx, persistCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer persistCancel()

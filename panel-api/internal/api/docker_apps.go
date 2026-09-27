@@ -35,6 +35,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/oklog/ulid/v2"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/tenantcompose"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dockerapp"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
@@ -932,28 +933,29 @@ func (h *dockerAppHandler) applyTenantValidateParams(ctx context.Context, app *m
 // catalog template, preserving its domain, ports, limits and existing secrets
 // (via the on-disk .env). Used by update so catalog fixes + version bumps
 // reach existing installs. Returns the rendered compose + merged env file —
-// neither must be logged.
-func (h *dockerAppHandler) renderInstallCompose(ctx context.Context, app *models.DockerApp, domain string, overrideEnv map[string]string) (string, string, error) {
+// neither must be logged — and, for a tenant app, the service set the agent
+// pins the compose to (GH #1903; nil for an admin app).
+func (h *dockerAppHandler) renderInstallCompose(ctx context.Context, app *models.DockerApp, domain string, overrideEnv map[string]string) (string, string, tenantcompose.Services, error) {
 	if h.cfg.Catalog == nil {
-		return "", "", fmt.Errorf("catalog unavailable")
+		return "", "", nil, fmt.Errorf("catalog unavailable")
 	}
 	entry, ok := h.cfg.Catalog.Get(app.Slug)
 	if !ok {
-		return "", "", fmt.Errorf("catalog entry %q not found", app.Slug)
+		return "", "", nil, fmt.Errorf("catalog entry %q not found", app.Slug)
 	}
 	existingEnv := overrideEnv
 	if existingEnv == nil {
 		var err error
 		existingEnv, err = h.readInstallEnv(ctx, app.EffectiveSlug())
 		if err != nil {
-			return "", "", fmt.Errorf("read env: %w", err)
+			return "", "", nil, fmt.Errorf("read env: %w", err)
 		}
 	}
 	// existingEnv as overrides → secrets preserved; only genuinely-new
 	// catalog keys get freshly generated.
 	envMap, err := dockerapp.MaterialiseEnv(entry, existingEnv)
 	if err != nil {
-		return "", "", fmt.Errorf("materialise env: %w", err)
+		return "", "", nil, fmt.Errorf("materialise env: %w", err)
 	}
 	current, _ := h.cfg.Repo.ListPortsForApp(ctx, app.ID)
 	runtimePorts := make(map[string]dockerapp.RuntimePort, len(current))
@@ -983,11 +985,11 @@ func (h *dockerAppHandler) renderInstallCompose(ctx context.Context, app *models
 	var tenantHardening *dockerapp.TenantHardening
 	if app.UserID != nil {
 		if h.cfg.Users == nil {
-			return "", "", fmt.Errorf("users repo unavailable for tenant app re-render")
+			return "", "", nil, fmt.Errorf("users repo unavailable for tenant app re-render")
 		}
 		u, uerr := h.cfg.Users.FindByID(ctx, *app.UserID)
 		if uerr != nil || u == nil || u.Username == nil || *u.Username == "" {
-			return "", "", fmt.Errorf("resolve tenant username for hardening: %v", uerr)
+			return "", "", nil, fmt.Errorf("resolve tenant username for hardening: %v", uerr)
 		}
 		tenantHardening = &dockerapp.TenantHardening{
 			CgroupParent: "jabali-user-" + *u.Username + ".slice",
@@ -995,7 +997,7 @@ func (h *dockerAppHandler) renderInstallCompose(ctx context.Context, app *models
 			PIDsLimit:    pids,
 		}
 	}
-	composeYML, err := dockerapp.Render(entry, dockerapp.RenderParams{
+	params := dockerapp.RenderParams{
 		Slug:            app.EffectiveSlug(),
 		Name:            app.Name,
 		Domain:          domain,
@@ -1007,11 +1009,27 @@ func (h *dockerAppHandler) renderInstallCompose(ctx context.Context, app *models
 		Ports:           runtimePorts,
 		Env:             envMap,
 		TenantHardening: tenantHardening,
-	})
-	if err != nil {
-		return "", "", fmt.Errorf("render: %w", err)
 	}
-	return composeYML, buildEnvFile(envMap), nil
+	var composeYML string
+	var services tenantcompose.Services
+	if tenantHardening != nil {
+		composeYML, services, err = dockerapp.RenderTenant(entry, params)
+	} else {
+		composeYML, err = dockerapp.Render(entry, params)
+	}
+	if err != nil {
+		return "", "", nil, fmt.Errorf("render: %w", err)
+	}
+	return composeYML, buildEnvFile(envMap), services, nil
+}
+
+// setTenantServices adds the pinned service set to a compose-writing agent
+// call for a tenant app (GH #1903). The agent refuses a tenant compose write
+// without it, so a door that forgot to call this fails closed.
+func setTenantServices(params map[string]any, services tenantcompose.Services) {
+	if services != nil {
+		params["tenant_services"] = services
+	}
 }
 
 func buildEnvFile(env map[string]string) string {
@@ -1295,7 +1313,7 @@ func (h *dockerAppHandler) editDomainPorts(ctx context.Context, app *models.Dock
 	}
 
 	// --- re-render compose + re-dispatch (tenant sandbox preserved) ---
-	composeYML, envFile, rerr := h.renderInstallCompose(ctx, app, newDomain, nil)
+	composeYML, envFile, tenantServices, rerr := h.renderInstallCompose(ctx, app, newDomain, nil)
 	_ = runtimePorts // ports already persisted above; helper reads them from the repo
 	if rerr != nil {
 		return &dockerEditError{http.StatusInternalServerError, "render_failed", rerr.Error()}
@@ -1319,6 +1337,7 @@ func (h *dockerAppHandler) editDomainPorts(ctx context.Context, app *models.Dock
 		if verr := h.applyTenantValidateParams(callCtx, app, installParams); verr != nil {
 			return &dockerEditError{http.StatusInternalServerError, "tenant_validation_unavailable", firstLineString(verr.Error())}
 		}
+		setTenantServices(installParams, tenantServices)
 		if _, agentErr := h.cfg.Agent.Call(callCtx, "docker_app.install", installParams); agentErr != nil {
 			return &dockerEditError{http.StatusBadGateway, "agent_redispatch_failed", firstLineString(agentErr.Error())}
 		}
@@ -1533,7 +1552,7 @@ func (h *dockerAppHandler) updateImage(c *gin.Context) {
 		"healthcheck_timeout_seconds": 300,
 	}
 	domain := h.installDomain(ctx, app.ID)
-	if composeYML, envFile, rerr := h.renderInstallCompose(ctx, app, domain, nil); rerr != nil {
+	if composeYML, envFile, tenantServices, rerr := h.renderInstallCompose(ctx, app, domain, nil); rerr != nil {
 		// Gitea #527: for a tenant-owned app, falling back to the on-disk compose
 		// would recreate the container WITHOUT the tenant validation gate (the
 		// on-disk compose may be stale/restored/unsafe). Fail closed.
@@ -1556,6 +1575,7 @@ func (h *dockerAppHandler) updateImage(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "tenant_validation_unavailable", "detail": msg})
 			return
 		}
+		setTenantServices(updateParams, tenantServices)
 	}
 
 	// docker_app.update pulls a new image + recreates containers, which can

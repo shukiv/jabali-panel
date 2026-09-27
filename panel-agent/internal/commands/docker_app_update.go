@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/tenantcompose"
 )
 
 type dockerAppUpdateParams struct {
@@ -47,6 +48,9 @@ type dockerAppUpdateParams struct {
 	TenantValidate bool     `json:"tenant_validate,omitempty"`
 	TenantCaps     []string `json:"tenant_caps,omitempty"`
 	TenantCgroup   string   `json:"tenant_cgroup,omitempty"`
+	// TenantServices is the service set panel-api rendered (GH #1903).
+	// Required with TenantValidate whenever ComposeYML re-renders the install.
+	TenantServices tenantcompose.Services `json:"tenant_services,omitempty"`
 }
 
 type dockerAppUpdateResponse struct {
@@ -65,6 +69,9 @@ func dockerAppUpdateHandler(ctx context.Context, params json.RawMessage) (any, e
 	}
 	if err := validateSlug(p.Slug); err != nil {
 		return nil, err
+	}
+	if p.TenantValidate && p.ComposeYML != "" && p.TenantServices == nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "tenant compose rejected: " + errNoTenantServices.Error()}
 	}
 	dir := filepath.Join(dockerAppDataRoot, p.Slug)
 	if _, err := os.Stat(filepath.Join(dir, "compose.yml")); err != nil {
@@ -91,7 +98,11 @@ func dockerAppUpdateHandler(ctx context.Context, params json.RawMessage) (any, e
 	// container, foreign capability, host bind-mount), mirroring the install
 	// path's M49 validation.
 	if p.TenantValidate {
-		if err := runTenantComposeValidation(ctx, dir, p.TenantCaps, p.TenantCgroup); err != nil {
+		var services tenantcompose.Services
+		if p.ComposeYML != "" {
+			services = p.TenantServices
+		}
+		if err := runTenantComposeValidation(ctx, dir, p.TenantCaps, p.TenantCgroup, services); err != nil {
 			return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "tenant compose rejected: " + err.Error()}
 		}
 	}

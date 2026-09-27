@@ -8,7 +8,12 @@ import (
 
 const root = "/var/lib/jabali/docker-apps/memos-u01-notes"
 
-func cfg(svc string) []byte { return []byte(`{"services":{` + svc + `}}`) }
+// cfg wraps service JSON in a resolved config whose project name is root's
+// base name, as `docker compose config` prints it for a compose that sets
+// none (GH #1903).
+func cfg(svc string) []byte {
+	return []byte(`{"name":"memos-u01-notes","services":{` + svc + `}}`)
+}
 
 func TestValidateTenantCompose_OK(t *testing.T) {
 	j := cfg(`"memos":{"cap_add":["CHOWN","SETUID"],"cap_drop":["ALL"],"security_opt":["no-new-privileges:true"],"cgroup_parent":"jabali-user-test.slice","volumes":[{"type":"bind","source":"` + root + `/data","target":"/data"}]}`)
@@ -104,7 +109,6 @@ func TestValidateTenantCompose_AllowsBenignNamespaceModes(t *testing.T) {
 }
 
 func TestValidateTenantCompose_RejectsPublicPort(t *testing.T) {
-	root := "/var/lib/jabali/docker-apps/x"
 	j := cfg(`"web":{"ports":[{"published":"8080","host_ip":"0.0.0.0","target":80,"protocol":"tcp"}]}`)
 	if err := validateTenantCompose(j, nil, root, ""); err == nil {
 		t.Error("public 0.0.0.0 published port must be rejected for tenant installs")
@@ -117,7 +121,6 @@ func TestValidateTenantCompose_RejectsPublicPort(t *testing.T) {
 }
 
 func TestValidateTenantCompose_AllowsLoopbackPort(t *testing.T) {
-	root := "/var/lib/jabali/docker-apps/x"
 	j := cfg(`"web":{"cap_drop":["ALL"],"security_opt":["no-new-privileges:true"],"cgroup_parent":"jabali-user-test.slice","ports":[{"published":"10001","host_ip":"127.0.0.1","target":80,"protocol":"tcp"}]}`)
 	if err := validateTenantCompose(j, nil, root, ""); err != nil {
 		t.Errorf("loopback-published port must be allowed: %v", err)
@@ -126,13 +129,12 @@ func TestValidateTenantCompose_AllowsLoopbackPort(t *testing.T) {
 
 func TestValidateTenantCompose_RejectsNamedVolume(t *testing.T) {
 	j := cfg(`"memos":{"cap_drop":["ALL"],"security_opt":["no-new-privileges:true"],"cgroup_parent":"jabali-user-test.slice","volumes":[{"type":"volume","source":"vol","target":"/x"}]}`)
-	if err := validateTenantCompose(j, []string{"CHOWN"}, "/var/lib/jabali/docker-apps/x", ""); err == nil {
+	if err := validateTenantCompose(j, []string{"CHOWN"}, root, ""); err == nil {
 		t.Error("named volume must be rejected for tenant installs (#514)")
 	}
 }
 
 func TestValidateTenantCompose_RequiresHardening(t *testing.T) {
-	root := "/var/lib/jabali/docker-apps/x"
 	// no cap_drop ALL
 	if err := validateTenantCompose(cfg(`"memos":{"security_opt":["no-new-privileges:true"]}`), nil, root, ""); err == nil {
 		t.Error("missing cap_drop: ALL must be rejected (#516)")
@@ -144,7 +146,6 @@ func TestValidateTenantCompose_RequiresHardening(t *testing.T) {
 }
 
 func TestValidateTenantCompose_RejectsHostFileInputs(t *testing.T) {
-	root := "/var/lib/jabali/docker-apps/x"
 	hard := `"cap_drop":["ALL"],"security_opt":["no-new-privileges:true"],"cgroup_parent":"jabali-user-test.slice",`
 	for _, field := range []string{
 		`"build":"."`,
@@ -158,14 +159,13 @@ func TestValidateTenantCompose_RejectsHostFileInputs(t *testing.T) {
 		}
 	}
 	// top-level secrets
-	j := []byte(`{"services":{"memos":{` + hard + `}},"secrets":{"s1":{"file":"/etc/x"}}}`)
+	j := []byte(`{"name":"memos-u01-notes","services":{"memos":{` + hard + `}},"secrets":{"s1":{"file":"/etc/x"}}}`)
 	if err := validateTenantCompose(j, nil, root, ""); err == nil {
 		t.Error("top-level secrets must be rejected (#518)")
 	}
 }
 
 func TestValidateTenantCompose_RequiresTenantCgroupParent(t *testing.T) {
-	root := "/var/lib/jabali/docker-apps/x"
 	base := `"cap_drop":["ALL"],"security_opt":["no-new-privileges:true"]`
 	// missing cgroup_parent
 	if err := validateTenantCompose(cfg(`"memos":{`+base+`}`), nil, root, ""); err == nil {
@@ -184,7 +184,6 @@ func TestValidateTenantCompose_RequiresTenantCgroupParent(t *testing.T) {
 // Gitea #525: when the panel passes the expected owner slice, a compose that
 // declares a DIFFERENT tenant slice must be rejected (cross-tenant spoof).
 func TestValidateTenantCompose_ExactOwnerCgroup(t *testing.T) {
-	root := "/var/lib/jabali/docker-apps/x"
 	base := `"cap_drop":["ALL"],"security_opt":["no-new-privileges:true"]`
 	owner := "jabali-user-bob.slice"
 	// another tenant's slice — matches the generic pattern but not the owner
@@ -200,7 +199,10 @@ func TestValidateTenantCompose_ExactOwnerCgroup(t *testing.T) {
 // Gitea #531: a bind source that is a symlink resolving outside the data tree
 // must be rejected even though its lexical path is under the data root.
 func TestValidateTenantCompose_SymlinkBindEscape(t *testing.T) {
-	root := t.TempDir()
+	root := filepath.Join(t.TempDir(), "memos-u01-notes")
+	if err := os.Mkdir(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	// /root/evil -> /etc  (symlink under the data root pointing outside it)
 	link := filepath.Join(root, "evil")
 	if err := os.Symlink("/etc", link); err != nil {

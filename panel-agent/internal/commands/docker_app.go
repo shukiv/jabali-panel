@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/tenantcompose"
 )
 
 // dockerAppDataRoot is the parent of every per-app data directory.
@@ -75,6 +76,10 @@ type dockerAppInstallParams struct {
 	TenantCaps     []string `json:"tenant_caps,omitempty"`
 	// TenantCgroup is the exact owner slice the compose must declare (Gitea #525).
 	TenantCgroup string `json:"tenant_cgroup,omitempty"`
+	// TenantServices is the service set panel-api rendered from the catalog
+	// template without tenant input (GH #1903). Required with TenantValidate
+	// unless this is a recovery dispatch, which reuses the on-disk compose.
+	TenantServices tenantcompose.Services `json:"tenant_services,omitempty"`
 	// LogRotate (JAB-121) lists persistent log volumes to cover with a host
 	// logrotate snippet at install so their file logs — which bypass Docker's
 	// journald driver — stay bounded on tenant disk. Empty = no snippet.
@@ -132,6 +137,9 @@ func dockerAppInstallHandler(ctx context.Context, params json.RawMessage) (any, 
 	// on-disk compose.yml and every reconciler recovery destroyed the
 	// install (found on a production n8n: compose.yml == "RECOVERY").
 	recovery := p.ComposeYML == dockerAppComposeRecovery
+	if p.TenantValidate && !recovery && p.TenantServices == nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "tenant compose rejected: " + errNoTenantServices.Error()}
+	}
 	if recovery {
 		onDisk, rerr := os.ReadFile(filepath.Join(dir, "compose.yml"))
 		if rerr != nil || len(bytes.TrimSpace(onDisk)) == 0 || string(bytes.TrimSpace(onDisk)) == dockerAppComposeRecovery {
@@ -228,7 +236,7 @@ func dockerAppInstallHandler(ctx context.Context, params json.RawMessage) (any, 
 	// privileged container / foreign capability / host bind-mount can never be
 	// brought up for a tenant even if the rendered compose was wrong.
 	if p.TenantValidate {
-		if err := runTenantComposeValidation(ctx, dir, p.TenantCaps, p.TenantCgroup); err != nil {
+		if err := runTenantComposeValidation(ctx, dir, p.TenantCaps, p.TenantCgroup, p.TenantServices); err != nil {
 			return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "tenant compose rejected: " + err.Error()}
 		}
 	}
@@ -329,7 +337,7 @@ func runLifecycle(ctx context.Context, params json.RawMessage, statusOnSuccess s
 	// restart / rebuild all `compose up` from the on-disk compose, which could
 	// be stale or unhardened. Fail-safe (leave it down) rather than start it.
 	if p.TenantValidate && len(composeArgs) > 0 && composeArgs[0] == "up" {
-		if err := runTenantComposeValidation(ctx, dir, p.TenantCaps, p.TenantCgroup); err != nil {
+		if err := runTenantComposeValidation(ctx, dir, p.TenantCaps, p.TenantCgroup, nil); err != nil {
 			return nil, &agentwire.AgentError{Code: agentwire.CodeFailedPrecondition, Message: fmt.Sprintf("tenant compose validation failed: %v", err)}
 		}
 	}

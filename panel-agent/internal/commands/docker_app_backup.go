@@ -241,7 +241,7 @@ func dockerAppRestoreHandler(ctx context.Context, params json.RawMessage) (any, 
 	// old/unsafe compose.yml. Re-run the tenant safety gate before bringing it
 	// up; fail closed (leave it down) rather than start an unhardened compose.
 	if p.TenantValidate {
-		if err := runTenantComposeValidation(ctx, dir, p.TenantCaps, p.TenantCgroup); err != nil {
+		if err := runTenantComposeValidation(ctx, dir, p.TenantCaps, p.TenantCgroup, nil); err != nil {
 			return nil, &agentwire.AgentError{Code: agentwire.CodeFailedPrecondition, Message: fmt.Sprintf("restored compose failed tenant validation: %v", err)}
 		}
 	}
