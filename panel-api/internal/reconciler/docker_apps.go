@@ -359,13 +359,22 @@ func (r *Reconciler) dispatchInstall(ctx context.Context, app *models.DockerApp)
 	// Bare-minimum recovery payload — slug only. The agent reads
 	// compose.yml from disk and brings it up. The full install
 	// payload is set by the REST handler on first dispatch.
-	raw, err := r.agent.Call(callCtx, "docker_app.install", map[string]any{
+	params := map[string]any{
 		"slug":                        app.EffectiveSlug(),
 		"compose_yml":                 "RECOVERY", // sentinel: agent recovery path reads compose.yml from disk
 		"volumes":                     []string{},
 		"wait_healthy":                false,
 		"healthcheck_timeout_seconds": 0,
-	})
+	}
+	// A tenant app's on-disk compose goes through the tenant gate before
+	// `up`, like every other bring-up (GH #1903). Fail closed: leave it down.
+	if gerr := r.tenantGateParams(callCtx, app, params); gerr != nil {
+		errMsg := "tenant validation unavailable: " + firstLineString(gerr.Error())
+		_ = r.dockerApps.UpdateStatus(ctx, app.ID, models.DockerAppStatusFailed, &errMsg)
+		r.log.Warn("dockerapp: recovery install refused", "id", app.ID, "slug", app.Slug, "err", gerr)
+		return
+	}
+	raw, err := r.agent.Call(callCtx, "docker_app.install", params)
 	if err != nil {
 		errMsg := firstLineString(err.Error())
 		_ = r.dockerApps.UpdateStatus(ctx, app.ID, models.DockerAppStatusFailed, &errMsg)
@@ -676,10 +685,13 @@ func (r *Reconciler) pollImageUpdate(ctx context.Context, app *models.DockerApp)
 		// Tenant-owned app (Gitea #510): make the agent re-run the tenant
 		// compose safety gate on the on-disk compose before `up`, so an
 		// auto-update can never bring up an unhardened/unsafe compose — it
-		// fails closed instead. Mirrors the manual updateImage path.
-		if app.UserID != nil {
-			updateParams["tenant_validate"] = true
-			updateParams["tenant_caps"] = dockerapp.TenantCapAllowlist(entry.TenantCaps)
+		// fails closed instead. Mirrors the manual updateImage path, including
+		// the exact owner slice (Gitea #525, GH #1903). When the gate cannot
+		// be resolved the update is skipped; the app keeps running its current
+		// image and the next check retries.
+		if gerr := r.tenantGateParams(updateCtx, app, updateParams); gerr != nil {
+			r.log.Warn("dockerapp: auto-update skipped, tenant validation unavailable", "id", app.ID, "slug", app.Slug, "err", gerr)
+			return
 		}
 		_, err := r.agent.Call(updateCtx, "docker_app.update", updateParams)
 		if err != nil {
@@ -687,6 +699,35 @@ func (r *Reconciler) pollImageUpdate(ctx context.Context, app *models.DockerApp)
 			_ = r.dockerApps.UpdateStatus(ctx, app.ID, models.DockerAppStatusFailed, &msg)
 		}
 	}
+}
+
+// tenantGateParams adds the agent-side tenant compose gate to a bring-up of a
+// tenant-owned app: tenant_validate, the catalog cap allowlist and the exact
+// owner slice (Gitea #525). It fails when any of them cannot be resolved, so
+// the caller never brings a tenant app up unvalidated (Gitea #529). No-op for
+// an admin app. Mirrors api.applyTenantValidateParams.
+func (r *Reconciler) tenantGateParams(ctx context.Context, app *models.DockerApp, params map[string]any) error {
+	if app == nil || app.UserID == nil {
+		return nil
+	}
+	if r.dockerCatalog == nil {
+		return fmt.Errorf("catalog unavailable: cannot resolve tenant validation metadata")
+	}
+	entry, ok := r.dockerCatalog.Get(app.Slug)
+	if !ok {
+		return fmt.Errorf("catalog entry %q not found: cannot resolve tenant validation metadata", app.Slug)
+	}
+	if r.users == nil {
+		return fmt.Errorf("users repo unavailable: cannot resolve owner slice")
+	}
+	u, err := r.users.FindByID(ctx, *app.UserID)
+	if err != nil || u == nil || u.Username == nil || *u.Username == "" {
+		return fmt.Errorf("cannot resolve tenant owner slice for app %s: %v", app.ID, err)
+	}
+	params["tenant_validate"] = true
+	params["tenant_caps"] = dockerapp.TenantCapAllowlist(entry.TenantCaps)
+	params["tenant_cgroup"] = "jabali-user-" + *u.Username + ".slice"
+	return nil
 }
 
 // shortDigest trims a `sha256:abcdef...` to a 12-char view for
