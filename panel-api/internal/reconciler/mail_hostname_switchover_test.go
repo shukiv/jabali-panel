@@ -232,6 +232,83 @@ func TestMailHostnameSwitchover_IssuesBothNamesAndApplies(t *testing.T) {
 		"the served certificate is checked before the name is applied, and webmail moves only after that")
 }
 
+// JAB-408: once a switchover replaces a custom mail hostname, that name's
+// certbot lineage is no longer deployed but keeps renewing, and fails once
+// its DNS is gone. The engine asks the Agent to delete it. mail.<hostname>
+// and the hostname are never deleted: they stay served.
+func TestMailHostnameSwitchover_PreviousCustomLineageIsDeleted(t *testing.T) {
+	cases := map[string]struct {
+		applied *string
+		desired string
+		setup   func(*swFixture)
+		want    []string
+	}{
+		"derived to custom":       {applied: nil, desired: "mx.example.net", want: nil},
+		"custom to custom":        {applied: wmPtr("mx.example.net"), desired: "mx2.example.net", want: []string{"mx.example.net"}},
+		"custom back to derived":  {applied: wmPtr("mx.example.net"), desired: "mail.mx.example.com", want: []string{"mx.example.net"}},
+		"same name again":         {applied: wmPtr("mx.example.net"), desired: "mx.example.net", want: nil},
+		"applied is the derived":  {applied: wmPtr("mail.mx.example.com"), desired: "mx.example.net", want: nil},
+		"applied is the hostname": {applied: wmPtr("mx.example.com"), desired: "mx.example.net", want: nil},
+		"applied is mail.<domain>": {applied: wmPtr("mail.tenant.org"), desired: "mx.example.net", want: nil,
+			setup: func(f *swFixture) {
+				f.domains.domains["t1"] = &models.Domain{ID: "t1", Name: "tenant.org", UserID: "u2"}
+			}},
+		"applied is a domain": {applied: wmPtr("shop.tenant.org"), desired: "mx.example.net", want: nil,
+			setup: func(f *swFixture) {
+				f.domains.domains["t1"] = &models.Domain{ID: "t1", Name: "shop.tenant.org", UserID: "u2"}
+			}},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newSwitchoverFixture(t, tc.desired, models.MailHostnameSwitchoverPending)
+			f.settings.MailHostname = tc.applied
+			f.dns["mx2.example.net"] = swIP
+			if tc.setup != nil {
+				tc.setup(f)
+			}
+
+			f.r.reconcileMailHostnameSwitchover(context.Background())
+
+			require.Len(t, f.sw.completes, 1)
+			var got []string
+			for _, c := range f.callsTo("ssl.panel.lineage_delete") {
+				got = append(got, c["name"].(string))
+			}
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+func TestMailHostnameSwitchover_LineageDeleteOnlyAfterComplete(t *testing.T) {
+	f := newSwitchoverFixture(t, "mx2.example.net", models.MailHostnameSwitchoverPending)
+	f.settings.MailHostname = wmPtr("mx.example.net")
+	f.dns["mx2.example.net"] = swIP
+	f.agent.resultByMethod["ssl.panel.mail_served"] = json.RawMessage(`{"ok":false,"reason":"port 993 serves another certificate"}`)
+
+	f.r.reconcileMailHostnameSwitchover(context.Background())
+
+	assert.Empty(t, f.sw.completes)
+	assert.Empty(t, f.callsTo("ssl.panel.lineage_delete"), "the old lineage is still the one served until the switchover completes")
+}
+
+// Deleting the old lineage is housekeeping: its failure leaves the
+// switchover done.
+func TestMailHostnameSwitchover_LineageDeleteFailureKeepsTheSwitchover(t *testing.T) {
+	f := newSwitchoverFixture(t, "mx2.example.net", models.MailHostnameSwitchoverPending)
+	f.settings.MailHostname = wmPtr("mx.example.net")
+	f.dns["mx2.example.net"] = swIP
+	f.agent.errByMethod = map[string]error{"ssl.panel.lineage_delete": errors.New("unknown method")}
+
+	f.r.reconcileMailHostnameSwitchover(context.Background())
+
+	require.Len(t, f.sw.completes, 1)
+	assert.Empty(t, f.sw.fails)
+	assert.Len(t, f.callsTo("ssl.panel.lineage_delete"), 1)
+	jmap := f.callsTo("webmail.jmap_url.apply")
+	require.Len(t, jmap, 1)
+	assert.Equal(t, "mx2.example.net", jmap[0]["mail_hostname"])
+}
+
 // JAB-408: `issued` is not `served`. On .60 a stale deploy hook left :993 on
 // the old certificate while the switchover reported done. The name is
 // applied only once the mail server serves the new certificate.
