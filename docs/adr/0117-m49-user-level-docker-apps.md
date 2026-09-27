@@ -85,6 +85,32 @@ beyond `tenant_caps`, and any bind-mount outside the app data tree.
 ghost), so each `tenant_installable` app declares a **verified minimal
 `tenant_caps`** — established by actually running it under drop-ALL, not guessed.
 
+### Amendment 2026-09-27 — project, networks and service set pinned (GH #1903)
+
+The agent gate also refuses, on every tenant bring-up:
+
+- a compose project name other than the app directory's own (a top-level
+  `name:` moves `up`/`down` onto another project's containers);
+- any network but the project's own default one: no external or extra
+  networks, no custom name, driver options or IPAM, and no `network_mode`
+  other than `none` or a sibling service (`bridge` is docker's shared bridge);
+- `cgroup: host`, device grants (`gpus`, `deploy.resources.reservations`),
+  another `runtime`, OOM and sysctl knobs, and any limit outside
+  `deploy.resources.limits`.
+
+On the doors that write a compose (install, re-render update, env edit,
+domain/port edit, and their CLI twins), panel-api also sends
+`tenant_services`: the service names, images and limits of a second render of
+the catalog template with every tenant value (env, domain, name, ports)
+removed. The agent requires the resolved compose to match it exactly and
+refuses a tenant compose write without it. Doors that bring up the on-disk
+compose (start, restart, recovery, restore, image-only update) apply the rules
+above but not the service-set match: that file was pinned when written, and
+pinning it to the *current* catalog would break every restart after a catalog
+bump and every restore of an older snapshot. The legacy top-level
+`pids_limit`, which the M49 overlay wrote before GH #284, is refused only on a
+fresh render for the same reason.
+
 ## Decision 6 — Curated catalog: `tenant_installable` + loopback-only
 
 `app.yaml` gains `tenant_installable` (default **false** — admin-only) and
