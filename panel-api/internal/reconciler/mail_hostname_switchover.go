@@ -26,6 +26,9 @@ const (
 	// A failed issue is not retried every tick (Let's Encrypt rate limits).
 	mailHostSwitchoverIssueRetry   = time.Hour
 	mailHostSwitchoverIssueTimeout = 3 * time.Minute
+	// mailHostSwitchoverServedTimeout bounds ssl.panel.mail_served, which
+	// polls each mail port for up to 30 seconds while Stalwart restarts.
+	mailHostSwitchoverServedTimeout = 2 * time.Minute
 )
 
 // reconcileMailHostnameSwitchover moves the shared panel mail hostname
@@ -237,6 +240,15 @@ func (r *Reconciler) runMailHostnameSwitchover(ctx context.Context, s *models.Se
 		return "", false
 	}
 
+	// JAB-408: issued is not served. A stale deploy hook can leave Stalwart
+	// on the old certificate while ssl.panel.issue reports success, so check
+	// what IMAPS and SMTPS serve before the name is applied. A retry re-runs
+	// the deploy hook, which restarts Stalwart, so it waits the ACME retry.
+	if msg := r.checkMailCertServed(ctx, desired); msg != "" {
+		r.failMailHostnameSwitchover(ctx, desired, msg, mailHostSwitchoverIssueRetry)
+		return "", false
+	}
+
 	// Re-check right before applying: issuing took minutes, and a domain
 	// created meanwhile must not end up answering the applied name. The
 	// certificate still covers mail.<hostname>, so the box keeps serving.
@@ -258,6 +270,32 @@ func (r *Reconciler) runMailHostnameSwitchover(ctx context.Context, s *models.Se
 	}
 	r.log.Info("mail hostname switchover complete", "mail_hostname", desired, "expires_at", expiresAt)
 	return desired, true
+}
+
+// checkMailCertServed asks the Agent whether the mail server serves the
+// certificate just issued for desired. It returns "" when it does, and
+// otherwise the reason to record on the switchover.
+func (r *Reconciler) checkMailCertServed(ctx context.Context, desired string) string {
+	callCtx, cancel := context.WithTimeout(ctx, mailHostSwitchoverServedTimeout)
+	defer cancel()
+	raw, err := r.agent.Call(callCtx, "ssl.panel.mail_served", map[string]any{"hostname": desired})
+	if err != nil {
+		return fmt.Sprintf("the certificate for %s was issued, but checking that the mail server serves it failed: %v", desired, err)
+	}
+	var resp struct {
+		OK     bool   `json:"ok"`
+		Reason string `json:"reason"`
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return fmt.Sprintf("the certificate for %s was issued, but the served-certificate check returned an unreadable answer: %v", desired, err)
+	}
+	if resp.OK {
+		return ""
+	}
+	if resp.Reason == "" {
+		return fmt.Sprintf("the certificate for %s was issued, but the mail server does not serve it", desired)
+	}
+	return resp.Reason
 }
 
 // mailHostSwitchoverDue reports whether sw has an attempt to run now:

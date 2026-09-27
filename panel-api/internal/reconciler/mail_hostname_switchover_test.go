@@ -142,7 +142,8 @@ func newSwitchoverFixture(t *testing.T, desired string, status string) *swFixtur
 	t.Helper()
 	f := &swFixture{
 		agent: &fakeAgent{resultByMethod: map[string]json.RawMessage{
-			"ssl.panel.issue": json.RawMessage(`{"issued_at":"2026-09-27T10:00:00Z","expires_at":"2026-12-26T10:00:00Z"}`),
+			"ssl.panel.issue":       json.RawMessage(`{"issued_at":"2026-09-27T10:00:00Z","expires_at":"2026-12-26T10:00:00Z"}`),
+			"ssl.panel.mail_served": json.RawMessage(`{"ok":true,"expected_sha256":"ab12","ports":[{"port":993,"match":true},{"port":465,"match":true}]}`),
 		}},
 		sw: &fakeSwitchoverRepo{claimOK: true},
 		certs: &fakePanelCertRepo{rows: map[string]*models.PanelCertificate{
@@ -224,8 +225,49 @@ func TestMailHostnameSwitchover_IssuesBothNamesAndApplies(t *testing.T) {
 	redirect := f.callsTo("nginx.webmail_redirect.apply")
 	require.Len(t, redirect, 1)
 	assert.Equal(t, "mx.example.net", redirect[0]["mail_hostname"], "the /webmail redirects follow the applied name in the same tick")
-	assert.Equal(t, []string{"ssl.panel.issue", "webmail.jmap_url.apply", "nginx.webmail_redirect.apply"}, f.methods(),
-		"webmail moves only after the certificate is deployed")
+	served := f.callsTo("ssl.panel.mail_served")
+	require.Len(t, served, 1)
+	assert.Equal(t, "mx.example.net", served[0]["hostname"])
+	assert.Equal(t, []string{"ssl.panel.issue", "ssl.panel.mail_served", "webmail.jmap_url.apply", "nginx.webmail_redirect.apply"}, f.methods(),
+		"the served certificate is checked before the name is applied, and webmail moves only after that")
+}
+
+// JAB-408: `issued` is not `served`. On .60 a stale deploy hook left :993 on
+// the old certificate while the switchover reported done. The name is
+// applied only once the mail server serves the new certificate.
+func TestMailHostnameSwitchover_NewCertNotServedIsNotApplied(t *testing.T) {
+	const reason = "the mail server does not serve the new certificate for mx.example.net (sha256 ab12): port 993 serves another certificate (sha256 cd34); run `jabali update` if the certificate hooks are out of date"
+	cases := map[string]struct {
+		result json.RawMessage
+		err    error
+		want   string
+	}{
+		"old certificate served": {result: json.RawMessage(`{"ok":false,"reason":"` + strings.ReplaceAll(reason, "`", "\\u0060") + `"}`), want: reason},
+		"no reason given":        {result: json.RawMessage(`{"ok":false}`), want: "mx.example.net"},
+		"agent error":            {err: errors.New("unknown method"), want: "unknown method"},
+		"unreadable answer":      {result: json.RawMessage(`not json`), want: "mx.example.net"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newSwitchoverFixture(t, "mx.example.net", models.MailHostnameSwitchoverPending)
+			if tc.err != nil {
+				f.agent.errByMethod = map[string]error{"ssl.panel.mail_served": tc.err}
+			} else {
+				f.agent.resultByMethod["ssl.panel.mail_served"] = tc.result
+			}
+
+			f.r.reconcileMailHostnameSwitchover(context.Background())
+
+			assert.Empty(t, f.sw.completes, "a certificate the mail server does not serve must not be applied")
+			require.Len(t, f.sw.fails, 1)
+			assert.Contains(t, f.sw.fails[0].msg, tc.want)
+			assert.Equal(t, mailHostSwitchoverIssueRetry, f.sw.fails[0].retryIn,
+				"each retry re-runs the deploy hook, which restarts the mail server: not every 10 minutes")
+			jmap := f.callsTo("webmail.jmap_url.apply")
+			require.Len(t, jmap, 1)
+			assert.Equal(t, "mail.mx.example.com", jmap[0]["mail_hostname"], "webmail stays on the old name")
+		})
+	}
 }
 
 func TestMailHostnameSwitchover_ResetToDerivedClearsApplied(t *testing.T) {
