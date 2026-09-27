@@ -455,6 +455,9 @@ func renamedPanelFixture(t *testing.T) *swFixture {
 	row.UseLE = true
 	f.sw.pinOK = true
 	f.sw.onPin = func(name string) { f.settings.MailHostname = &name }
+	// Each read is a copy, as from the database, so the pass must carry the
+	// pinned name itself rather than see it through a shared pointer.
+	f.r.serverSettings = copyingSettingsRepo{&fakeServerSettingsRepo{settings: f.settings}}
 	return f
 }
 
@@ -523,7 +526,6 @@ func TestMailHostnamePin_NotWritten(t *testing.T) {
 func TestMailHostnamePin_LostOrFailedWrite(t *testing.T) {
 	t.Run("lost the race", func(t *testing.T) {
 		f := renamedPanelFixture(t)
-		f.r.serverSettings = copyingSettingsRepo{&fakeServerSettingsRepo{settings: f.settings}}
 		f.sw.pinOK = false
 		other := "mx.example.net"
 		f.sw.onLost = func() { f.settings.MailHostname = &other }
@@ -568,7 +570,6 @@ func (c copyingSettingsRepo) Get(ctx context.Context) (*models.ServerSettings, e
 // the pinned name, not the snapshot taken before the pin.
 func TestMailHostnamePin_LaterPassesInTheTickSeeIt(t *testing.T) {
 	f := renamedPanelFixture(t)
-	f.r.serverSettings = copyingSettingsRepo{&fakeServerSettingsRepo{settings: f.settings}}
 	ctx, rr := withRun(context.Background(), RunNormal)
 	defer rr.finish()
 	if s, _ := f.r.settingsGet(ctx); s.MailHostname != nil {
