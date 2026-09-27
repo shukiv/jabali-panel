@@ -81,6 +81,10 @@ func (m *mockWordPressInstallRepo) ListReadyByUpdatedAtAsc(_ context.Context, _ 
 	return m.ready, nil
 }
 
+func (m *mockWordPressInstallRepo) ListReadyIDsByAppType(_ context.Context, _ string) ([]string, error) {
+	return nil, nil
+}
+
 func (m *mockWordPressInstallRepo) CountCacheEnabledByUserID(_ context.Context, _, _ string) (int64, error) {
 	return 0, nil
 }

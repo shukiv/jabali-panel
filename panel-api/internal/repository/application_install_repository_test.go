@@ -416,3 +416,20 @@ func TestListReadyByUpdatedAtAsc_ScopesToWordPress(t *testing.T) {
 	require.Equal(t, "inst_wp", rows[0].ID)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
+
+// GH #1650: `jabali appsec flarum-sync` must only reach READY installs of the
+// named app type — a failed or half-installed forum gets no WAF exclusion.
+func TestListReadyIDsByAppType_ScopesToReadyAndType(t *testing.T) {
+	db, mock, raw := newMockDB(t)
+	defer raw.Close()
+
+	repo := NewApplicationInstallRepository(db)
+	mock.ExpectQuery("SELECT `id` FROM `application_installs` WHERE status = \\? AND app_type = \\? ORDER BY id ASC").
+		WithArgs("ready", "flarum").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("inst_a").AddRow("inst_b"))
+
+	ids, err := repo.ListReadyIDsByAppType(context.Background(), "flarum")
+	require.NoError(t, err)
+	require.Equal(t, []string{"inst_a", "inst_b"}, ids)
+	require.NoError(t, mock.ExpectationsWereMet())
+}

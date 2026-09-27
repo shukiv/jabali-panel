@@ -113,3 +113,34 @@ ordering scar).
 
 The operator id range stays **9,597,000–9,597,999**, disjoint from the
 built-in 9,599,xxx range, so the two files never collide on SecRule ids.
+
+## Amendment — panel-applied exclusions and Flarum (GH #1650, 2026-09-27)
+
+panel-api runs as `jabali` (JAB-357) and cannot write
+`/var/lib/crowdsec` or reload crowdsec, so an exclusion row the panel
+created did nothing until root next ran `render-config`. The agent verb
+`security.appsec.operator.apply` now takes the full set of exclusions and
+host modes, renders them with the same `RenderOperatorBeforeFile` as
+`render-config`, writes the operator file on a diff (removing it when the
+set is empty) and reloads crowdsec only on a change. Both writers produce
+the same bytes for the same rows. The verb refuses a request with a
+missing or `null` list, so a caller bug cannot drop live entries.
+
+Flarum sends PATCH/DELETE as `POST` + `X-HTTP-Method-Override`, which CRS
+920450 blocks. A Flarum install now registers one exclusion scoped to rule
+920450, the forum's host and its `/<subdirectory>/api/` path, and applies
+it through the verb. The row's note names its install; app delete and a
+remove-only start-up pass drop rows whose install is gone. **Not** a
+platform-wide rule: on Jabali CRS 911100 blocks PATCH/PUT/DELETE, and
+920450 is what stops `POST` + override from walking around it for any
+other framework that honours the header.
+
+Forums installed before this change are not backfilled automatically,
+because that would relax 920450 on every existing forum at the next update
+without an operator decision. `jabali appsec flarum-sync` is that
+decision: it adds the exclusion for every ready Flarum install and reloads
+once.
+
+A `# SKIPPED` breadcrumb for an invalid row now `%q`-quotes the row's
+fields. A raw newline in one of them would end the comment and load the
+rest as a live directive.

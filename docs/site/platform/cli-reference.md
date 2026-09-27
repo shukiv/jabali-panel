@@ -386,6 +386,14 @@ jabali appsec explain [flags]
 - `--json` — emit raw JSON instead of the grouped report
 - `--limit` — how many recent AppSec alerts to inspect (max 200) (default `25`)
 
+#### `jabali appsec flarum-sync`
+
+Add the scoped CRS 920450 exclusion for every existing Flarum forum
+
+```
+jabali appsec flarum-sync
+```
+
 #### `jabali appsec host-mode`
 
 Manage per-host AppSec mode (detection-only)

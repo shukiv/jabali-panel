@@ -28,6 +28,7 @@ func newAppSecCmd() *cobra.Command {
 	cmd.AddCommand(newAppSecExplainCmd())
 	cmd.AddCommand(newAppSecExclusionCmd())
 	cmd.AddCommand(newAppSecHostModeCmd())
+	cmd.AddCommand(newAppSecFlarumSyncCmd())
 	return cmd
 }
 

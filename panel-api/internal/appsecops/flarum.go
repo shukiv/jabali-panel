@@ -88,12 +88,31 @@ func FlarumExclusion(installID, domainName string, useWWW bool, subdirectory str
 // changed and nothing is applied: a row is only removed once its install is
 // known to be gone.
 func SyncFlarum(ctx context.Context, d Deps, installID string) (appseccfg.OperatorApplyResult, error) {
+	var ids []string
+	if installID != "" {
+		ids = []string{installID}
+	}
 	mu.Lock()
 	defer mu.Unlock()
-	if _, err := syncFlarumLocked(ctx, d, installID); err != nil {
+	if _, _, err := syncFlarumLocked(ctx, d, ids); err != nil {
 		return appseccfg.OperatorApplyResult{}, err
 	}
 	return applyLocked(ctx, d)
+}
+
+// SyncFlarumInstalls is SyncFlarum for many installs at once, with a single
+// apply (one crowdsec reload). It backs `jabali appsec flarum-sync`, the
+// operator's opt-in for forums installed before GH #1650. It returns the
+// exclusions it added; an install already covered adds nothing.
+func SyncFlarumInstalls(ctx context.Context, d Deps, installIDs []string) ([]appseccfg.Exclusion, appseccfg.OperatorApplyResult, error) {
+	mu.Lock()
+	defer mu.Unlock()
+	added, _, err := syncFlarumLocked(ctx, d, installIDs)
+	if err != nil {
+		return added, appseccfg.OperatorApplyResult{}, err
+	}
+	res, err := applyLocked(ctx, d)
+	return added, res, err
 }
 
 // PruneFlarum removes the managed exclusions whose install is gone and applies
@@ -103,7 +122,7 @@ func SyncFlarum(ctx context.Context, d Deps, installID string) (appseccfg.Operat
 func PruneFlarum(ctx context.Context, d Deps) (changed bool, res appseccfg.OperatorApplyResult, err error) {
 	mu.Lock()
 	defer mu.Unlock()
-	changed, err = syncFlarumLocked(ctx, d, "")
+	_, changed, err = syncFlarumLocked(ctx, d, nil)
 	if err != nil || !changed {
 		return changed, res, err
 	}
@@ -111,28 +130,32 @@ func PruneFlarum(ctx context.Context, d Deps) (changed bool, res appseccfg.Opera
 	return changed, res, err
 }
 
-func syncFlarumLocked(ctx context.Context, d Deps, installID string) (changed bool, err error) {
+// syncFlarumLocked registers the exclusion of each install in installIDs, then
+// removes every stale managed row. It reports what it added and whether any
+// row changed. mu must be held.
+func syncFlarumLocked(ctx context.Context, d Deps, installIDs []string) (added []appseccfg.Exclusion, changed bool, err error) {
 	if d.Exclusions == nil || d.Installs == nil || d.Domains == nil {
-		return false, ErrNotConfigured
+		return nil, false, ErrNotConfigured
 	}
 	rows, err := d.Exclusions.List(ctx)
 	if err != nil {
-		return false, fmt.Errorf("list CRS exclusions: %w", err)
+		return nil, false, fmt.Errorf("list CRS exclusions: %w", err)
 	}
 
-	if installID != "" {
+	for _, installID := range installIDs {
 		e, ok, err := expectedFlarumExclusion(ctx, d, installID)
 		if err != nil {
-			return false, err
+			return added, changed, err
 		}
 		if ok && !hasExclusion(rows, e) {
 			row := &models.CRSRuleExclusion{
 				ID: ids.NewULID(), Host: e.Host, URIPrefix: e.URIPrefix, RuleID: e.RuleID, Note: e.Note,
 			}
 			if err := d.Exclusions.Create(ctx, row); err != nil {
-				return false, fmt.Errorf("save Flarum exclusion for %s%s: %w", e.Host, e.URIPrefix, err)
+				return added, changed, fmt.Errorf("save Flarum exclusion for %s%s: %w", e.Host, e.URIPrefix, err)
 			}
 			rows = append(rows, *row)
+			added = append(added, e)
 			changed = true
 		}
 	}
@@ -144,17 +167,17 @@ func syncFlarumLocked(ctx context.Context, d Deps, installID string) (changed bo
 		}
 		e, ok, err := expectedFlarumExclusion(ctx, d, id)
 		if err != nil {
-			return changed, err
+			return added, changed, err
 		}
 		if ok && strings.EqualFold(r.Host, e.Host) && r.URIPrefix == e.URIPrefix {
 			continue
 		}
 		if err := d.Exclusions.DeleteByID(ctx, r.ID); err != nil && !errors.Is(err, repository.ErrNotFound) {
-			return changed, fmt.Errorf("remove stale Flarum exclusion %s: %w", r.ID, err)
+			return added, changed, fmt.Errorf("remove stale Flarum exclusion %s: %w", r.ID, err)
 		}
 		changed = true
 	}
-	return changed, nil
+	return added, changed, nil
 }
 
 // expectedFlarumExclusion returns the exclusion installID should have. ok is

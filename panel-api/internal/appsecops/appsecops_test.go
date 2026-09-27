@@ -461,3 +461,36 @@ func TestApply_OverlappingAppliesLandInOrder(t *testing.T) {
 		t.Fatalf("the last apply to land is stale: %v, want %v", got, want)
 	}
 }
+
+// `jabali appsec flarum-sync`: every listed Flarum install gets its exclusion,
+// one already covered and a non-Flarum install add nothing, stale rows go, and
+// the whole pass is ONE apply (one crowdsec reload).
+func TestSyncFlarumInstalls_OneApplyForMany(t *testing.T) {
+	e := newEnv()
+	e.addFlarum("i1", "d1", "forum", false)
+	e.addFlarum("i2", "d2", "", true)
+	e.installs.byID["wp"] = &models.ApplicationInstall{ID: "wp", DomainID: "d1", AppType: "wordpress"}
+	gone, err := FlarumExclusion("gone", "old.example.net", false, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.excl.rows = []models.CRSRuleExclusion{
+		{ID: "op", Host: "forum.example.com", URIPrefix: "/forum/api/", RuleID: "920450", Note: "by hand"},
+		{ID: "stale", Host: gone.Host, URIPrefix: gone.URIPrefix, RuleID: gone.RuleID, Note: gone.Note},
+	}
+
+	added, res, err := SyncFlarumInstalls(context.Background(), e.deps, []string{"i1", "i2", "wp"})
+	if err != nil || !res.Changed {
+		t.Fatalf("got %+v, %v", res, err)
+	}
+	if len(added) != 1 || added[0].Host != "www.other.example.org" {
+		t.Fatalf("want only i2 added (i1 is covered by the operator row), got %+v", added)
+	}
+	if e.agent.calls != 1 {
+		t.Fatalf("want one apply for the whole pass, got %d", e.agent.calls)
+	}
+	want := []string{"forum.example.com/forum/api/#920450", "www.other.example.org/api/#920450"}
+	if got := hosts(e.agent.last(t)); !equal(got, want) {
+		t.Fatalf("applied %v, want %v", got, want)
+	}
+}
