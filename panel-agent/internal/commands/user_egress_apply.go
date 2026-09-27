@@ -154,35 +154,14 @@ func userEgressApplyHandler(ctx context.Context, params json.RawMessage) (any, e
 		})
 	}
 
-	// Count emitted/skipped before render — same predicate as renderer.
-	usersEmitted := 0
-	usersSkipped := 0
-	// GH #708: an ENFORCED/learning user whose slice is missing gets skipped by
-	// the renderer and then falls through to the output chain's `policy accept`
-	// — i.e. their egress is NOT enforced (fail-open). We cannot emit an nft
-	// cgroup match for a non-existent slice, so we cannot fail-closed here; but
-	// we MUST NOT let it be silent. Collect them, report them in the response,
-	// and warn so the panel/operator re-creates the slice (or the reconciler
-	// retries) instead of the tenant silently escaping egress control.
-	var failOpen []string
-	for _, u := range users {
-		if u.State == "off" {
-			usersSkipped++
-			continue
-		}
-		if !defaultSliceExists(SlicePathFor(u.Username)) {
-			// GH #708: missing slice — enforced by UID fallback if the uid
-			// resolved; only truly fail-open (skipped) when we have no uid either.
-			if u.UID <= 0 {
-				usersSkipped++
-				failOpen = append(failOpen, u.Username)
-			} else {
-				usersEmitted++
-			}
-			continue
-		}
-		usersEmitted++
-	}
+	// GH #708: an ENFORCED/learning user with neither a cgroup slice nor a
+	// uid the renderer can match is skipped and falls through to the output
+	// chain's `policy accept` — i.e. their egress is NOT enforced (fail-open).
+	// We cannot fail closed here; but we MUST NOT let it be silent. Report
+	// them in the response and warn so the operator re-creates the slice (or
+	// the reconciler retries) instead of the tenant silently escaping egress
+	// control. egressCoverage applies the renderer's own predicate.
+	usersEmitted, usersSkipped, failOpen := egressCoverage(users, defaultSliceExists)
 	if len(failOpen) > 0 {
 		slog.WarnContext(ctx, "egress fail-open: enforced users skipped, slice missing on host",
 			"users", failOpen, "detail", "no cgroup slice AND no resolvable uid — NOT egress-controlled until the slice exists")

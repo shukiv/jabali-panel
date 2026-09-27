@@ -56,8 +56,9 @@ func TestRenderEgressBootNFT_EnforcesEveryNonOffUserByUID(t *testing.T) {
 	out := RenderEgressBootNFT(bootTestUsers(), CanonicalDefaults())
 
 	for _, want := range []string{
-		"meta skuid 1001 jump user_alice_enforced",
-		"meta skuid 1002 jump user_bob_learning",
+		"1001 : jump user_alice_enforced",
+		"1002 : jump user_bob_learning",
+		"meta skuid vmap @uid_to_chain",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q — that user is unprotected until the first "+
@@ -74,10 +75,10 @@ func TestRenderEgressBootNFT_EnforcesEveryNonOffUserByUID(t *testing.T) {
 // boot window. 169.254.169.254 is the cloud metadata endpoint, so losing this
 // for the first minute of every boot is the most valuable minute to lose it.
 //
-// The floor is emitted per-UID here rather than scoped to the tenant parent
-// slice, which covers every user with an egress policy row rather than every
-// tenant process. Narrower than the steady-state floor; wider than the nothing
-// that loaded before.
+// The floor is scoped by uid here rather than by the tenant parent slice,
+// which covers every user in the payload (state=off included, as the slice
+// floor does) rather than every tenant process. Narrower than the steady-state
+// floor; wider than the nothing that loaded before.
 func TestRenderEgressBootNFT_KeepsSSRFFloor(t *testing.T) {
 	requireHostMutationAllowed(t)
 	t.Parallel()
@@ -85,9 +86,9 @@ func TestRenderEgressBootNFT_KeepsSSRFFloor(t *testing.T) {
 	out := RenderEgressBootNFT(bootTestUsers(), CanonicalDefaults())
 
 	for _, want := range []string{
-		"meta skuid 1001 ip daddr 169.254.0.0/16 counter name ssrf_floor_drops drop",
-		"meta skuid 1001 ip6 daddr fe80::/10 counter name ssrf_floor_drops drop",
-		"meta skuid 1002 ip daddr 169.254.0.0/16 counter name ssrf_floor_drops drop",
+		"elements = { 1001, 1002, 1003 }",
+		"meta skuid @tenant_uids ip daddr 169.254.0.0/16 counter name ssrf_floor_drops drop",
+		"meta skuid @tenant_uids ip6 daddr fe80::/10 counter name ssrf_floor_drops drop",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing SSRF floor rule %q:\n%s", want, out)
@@ -100,7 +101,7 @@ func TestRenderEgressBootNFT_KeepsSSRFFloor(t *testing.T) {
 	// The floor must precede the per-user dispatch, or a user chain's `accept`
 	// can return before the floor is ever evaluated.
 	floorAt := strings.Index(out, "169.254.0.0/16")
-	jumpAt := strings.Index(out, "jump user_alice_enforced")
+	jumpAt := strings.Index(out, "meta skuid vmap @uid_to_chain")
 	if floorAt < 0 || jumpAt < 0 || floorAt > jumpAt {
 		t.Errorf("SSRF floor must come before per-user dispatch (floor@%d, jump@%d):\n%s",
 			floorAt, jumpAt, out)
@@ -146,10 +147,10 @@ func TestRenderEgressBootNFT_SkipsUsersWithoutUID(t *testing.T) {
 	if strings.Contains(out, "jump user_nouid") {
 		t.Errorf("user with no uid cannot be dispatched at boot:\n%s", out)
 	}
-	if strings.Contains(out, "meta skuid 0") {
+	if strings.Contains(out, " 0 : jump") || strings.Contains(out, "{ 0") {
 		t.Errorf("uid 0 is root, never a tenant — must not be matched:\n%s", out)
 	}
-	if !strings.Contains(out, "meta skuid 1005 jump user_good_enforced") {
+	if !strings.Contains(out, "1005 : jump user_good_enforced") {
 		t.Errorf("a user with a valid uid must still be enforced:\n%s", out)
 	}
 }
@@ -172,9 +173,12 @@ func TestRenderEgressNFT_CgroupVariantUnchanged(t *testing.T) {
 			t.Errorf("cgroup ruleset lost %q:\n%s", want, out)
 		}
 	}
-	// When slices exist, dispatch is by cgroup — the uid fallback is for
-	// missing slices only.
-	if strings.Contains(out, "meta skuid 1001 jump") {
-		t.Errorf("uid fallback leaked into the cgroup ruleset:\n%s", out)
+	// With slices present the uid dispatch is still there, for tenant
+	// processes outside the slice (SSH shells), and it comes after the cgroup
+	// dispatch so a slice process is matched by its cgroup first.
+	cgroupAt := strings.Index(out, "socket cgroupv2 level 3 vmap @cgroup_to_chain")
+	uidAt := strings.Index(out, "meta skuid vmap @uid_to_chain")
+	if uidAt < 0 || uidAt < cgroupAt {
+		t.Errorf("uid dispatch must follow the cgroup dispatch (cgroup@%d, uid@%d):\n%s", cgroupAt, uidAt, out)
 	}
 }
