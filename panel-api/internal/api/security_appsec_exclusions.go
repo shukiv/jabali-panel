@@ -36,7 +36,6 @@ const (
 	// for an operator who can wait.
 	appsecEventsDefaultLimit = 25
 	appsecEventsMaxLimit     = 50
-	appsecEventsTimeout      = 90 * time.Second
 
 	// appsecExclusionWriteBudget covers the slowest add or remove: an apply
 	// that fails, the undo, and a second apply (appsecops allows 45s for each
@@ -46,6 +45,9 @@ const (
 	// appsecExclusionIDMaxLen is a ULID's length. Longer ids are never stored.
 	appsecExclusionIDMaxLen = 26
 )
+
+// appsecEventsTimeout bounds one triage request. A var so a test can shorten it.
+var appsecEventsTimeout = 90 * time.Second
 
 // SecurityAppSecExclusionConfig is what the routes need. Without the two
 // repositories only /events is mounted.
@@ -136,6 +138,17 @@ func appsecEventsHandler(cli agent.AgentInterface) gin.HandlerFunc {
 		defer cancel()
 		raw, err := cli.Call(ctx, appsecops.EventsVerb, map[string]any{"limit": limit})
 		if err != nil {
+			// When this request's own deadline passes, the agent client
+			// reports a socket timeout, not an AgentError, so
+			// translateAgentError would say 500. The operator's fix is to
+			// inspect fewer alerts, which the UI offers on a 504.
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				c.JSON(http.StatusGatewayTimeout, gin.H{
+					"status": "error", "error": "agent_timeout",
+					"detail": fmt.Sprintf("inspecting %d alerts took too long; inspect fewer", limit),
+				})
+				return
+			}
 			status, body := translateAgentError(err)
 			c.JSON(status, body)
 			return

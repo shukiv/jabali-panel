@@ -2,11 +2,15 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -126,6 +130,27 @@ func TestAppSecEvents_AgentTimeoutIs504(t *testing.T) {
 	r := appsecExclRouter(t, m, &wafExclStore{}, true)
 	rec := appsecDo(r, http.MethodGet, appsecBase+"/events", "")
 	assert.Equal(t, http.StatusGatewayTimeout, rec.Code)
+}
+
+// slowAgent answers only when the caller gives up, the way agent.Client does
+// when the request's deadline passes: a wrapped socket timeout, not an
+// AgentError.
+type slowAgent struct{}
+
+func (slowAgent) Call(ctx context.Context, _ string, _ any) (json.RawMessage, error) {
+	<-ctx.Done()
+	return nil, fmt.Errorf("agent: read: %w", os.ErrDeadlineExceeded)
+}
+
+func TestAppSecEvents_OwnDeadlineIs504(t *testing.T) {
+	orig := appsecEventsTimeout
+	appsecEventsTimeout = 20 * time.Millisecond
+	t.Cleanup(func() { appsecEventsTimeout = orig })
+
+	r := appsecExclRouter(t, slowAgent{}, &wafExclStore{}, true)
+	rec := appsecDo(r, http.MethodGet, appsecBase+"/events?limit=50", "")
+	assert.Equal(t, http.StatusGatewayTimeout, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), `"agent_timeout"`)
 }
 
 func TestAppSecExclusions_AdminOnly(t *testing.T) {

@@ -53,7 +53,7 @@ challenges traffic on a domain the operator didn't choose.
   - Red rules scored and can be excluded.
   - Purple rules are outside the CRS range, for example CrowdSec's own AppSec
     rules, so an exclusion cannot turn them off.
-  - Grey rules (901340, 949110, 980170) appear on almost every block and are
+  - Grey rules (901340, 949110, 949111, 980170) appear on almost every block and are
     never the one to exclude.
   - Many source IPs on one path usually means a false positive. One IP across
     many paths usually means an attack.
