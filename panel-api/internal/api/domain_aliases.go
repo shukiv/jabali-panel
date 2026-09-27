@@ -254,24 +254,20 @@ func (h *domainAliasHandler) validateAliasHostname(ctx context.Context, dom *mod
 	if dom.WebDisabled {
 		return "", http.StatusBadRequest, "domain_has_no_web", "aliases require a web-hosted domain; this domain has web hosting disabled"
 	}
-	// Panel FQDN — an alias here would shadow the panel's own vhost.
-	if h.cfg.Settings != nil {
-		if s, err := h.cfg.Settings.Get(ctx); err == nil && s != nil {
-			panelHost := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(s.Hostname), "."))
-			if panelHost != "" && host == panelHost {
-				return "", http.StatusConflict, "alias_reserved_panel", "that hostname is reserved by the panel"
-			}
-		}
-	}
-	// JAB-390: the panel's custom mail hostname — the panel's mail vhost
-	// answers it. Unlike the check above this fails closed: a hostname that
-	// could not be cleared is refused.
+	// The panel's own names — an alias here would shadow the panel's vhosts:
+	// the panel FQDN and the derived mail.<hostname> (reserved even with no
+	// panel-primary domain row, so the helper check below cannot catch it),
+	// and the applied custom mail hostname (JAB-390). Fails closed: a hostname
+	// that could not be cleared is refused.
 	if h.cfg.Settings != nil {
 		s, err := h.cfg.Settings.Get(ctx)
 		if err != nil && !errors.Is(err, repository.ErrNotFound) {
-			return "", http.StatusInternalServerError, "db_mail_hostname_lookup", "could not verify the hostname against the panel mail hostname"
+			return "", http.StatusInternalServerError, "db_mail_hostname_lookup", "could not verify the hostname against the panel hostname and mail hostname"
 		}
 		if s != nil {
+			if domainops.PanelReservedName(host, s.Hostname) {
+				return "", http.StatusConflict, "alias_reserved_panel", "that hostname is reserved by the panel"
+			}
 			if applied, ok := models.AppliedMailHostname(s.MailHostname); ok && host == applied {
 				return "", http.StatusConflict, "alias_reserved_panel", "that hostname is reserved by the panel"
 			}
