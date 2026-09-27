@@ -105,3 +105,26 @@ func TestMailHostnameSwitchover_ClaimOnlyTheRequestedName(t *testing.T) {
 	require.False(t, claimed, "a row that no longer asks for the name, or is not due, is not claimed")
 	require.NoError(t, mock.ExpectationsWereMet())
 }
+
+// JAB-389/390: the rename pin writes only the applied mail hostname, and only
+// while none is applied, so it can never replace a switchover's name.
+func TestMailHostnameSwitchover_PinAppliedOnlyWhenNoneApplied(t *testing.T) {
+	gdb, mock, raw := newMockDB(t)
+	defer raw.Close()
+	repo := repository.NewMailHostnameSwitchoverRepository(gdb)
+
+	for _, affected := range []int64{1, 0} {
+		mock.ExpectBegin()
+		mock.ExpectExec("UPDATE `server_settings` SET `mail_hostname`=\\?.* WHERE id = \\? AND mail_hostname IS NULL").
+			WithArgs("mail.old.example.com", sqlmock.AnyArg(), 1).WillReturnResult(sqlmock.NewResult(0, affected))
+		mock.ExpectCommit()
+	}
+
+	wrote, err := repo.PinApplied(context.Background(), "mail.old.example.com")
+	require.NoError(t, err)
+	require.True(t, wrote)
+	wrote, err = repo.PinApplied(context.Background(), "mail.old.example.com")
+	require.NoError(t, err)
+	require.False(t, wrote, "a row that already has a name is left alone")
+	require.NoError(t, mock.ExpectationsWereMet())
+}

@@ -444,6 +444,19 @@ func (r *Reconciler) settingsGet(ctx context.Context) (*models.ServerSettings, e
 	return &cp, nil
 }
 
+// settingsForget drops the run's memoized server settings, so the next
+// settingsGet in the run reads the repository again. A pass that writes the
+// settings row mid-run calls it; outside a run it does nothing.
+func (r *Reconciler) settingsForget(ctx context.Context) {
+	_, rr := runFrom(ctx)
+	if rr == nil {
+		return
+	}
+	rr.memo.mu.Lock()
+	defer rr.memo.mu.Unlock()
+	rr.memo.settings = nil
+}
+
 // pageTemplateGet reads one page template, once per run, like settingsGet.
 func (r *Reconciler) pageTemplateGet(ctx context.Context, key string) (*models.PageTemplate, error) {
 	_, rr := runFrom(ctx)

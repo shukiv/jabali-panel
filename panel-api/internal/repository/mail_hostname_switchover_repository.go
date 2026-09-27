@@ -44,6 +44,11 @@ type MailHostnameSwitchoverRepository interface {
 	// is marked done. It rolls back with ErrSwitchoverChanged when the
 	// request no longer asks for desired.
 	Complete(ctx context.Context, desired string, applied *string, issuedAt, expiresAt, now time.Time) error
+	// PinApplied records name as the applied mail hostname, only while none
+	// is applied, and reports whether it wrote. It records a name the panel
+	// already serves mail on (the issued mail certificate after a panel
+	// rename, JAB-389), never a new target.
+	PinApplied(ctx context.Context, name string) (bool, error)
 }
 
 type mailHostnameSwitchoverRepo struct{ db *gorm.DB }
@@ -167,6 +172,19 @@ func (r *mailHostnameSwitchoverRepo) Fail(ctx context.Context, desired, msg stri
 			"next_retry_at": retryAt.UTC(),
 			"updated_at":    now.UTC(),
 		}).Error
+}
+
+// PinApplied writes the one column, and only while it is NULL, so it can
+// never replace a name a switchover applied in the meantime.
+func (r *mailHostnameSwitchoverRepo) PinApplied(ctx context.Context, name string) (bool, error) {
+	res := r.db.WithContext(ctx).
+		Model(&models.ServerSettings{}).
+		Where("id = ? AND mail_hostname IS NULL", 1).
+		Update("mail_hostname", name)
+	if res.Error != nil {
+		return false, fmt.Errorf("pin applied mail hostname: %w", res.Error)
+	}
+	return res.RowsAffected > 0, nil
 }
 
 func (r *mailHostnameSwitchoverRepo) Complete(ctx context.Context, desired string, applied *string, issuedAt, expiresAt, now time.Time) error {
