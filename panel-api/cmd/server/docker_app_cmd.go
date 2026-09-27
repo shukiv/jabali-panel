@@ -411,7 +411,16 @@ func newDockerAppLifecycleCmd(verb, short string) *cobra.Command {
 			}
 			// JAB-315: target EffectiveSlug so start/stop/restart hit this exact
 			// instance, not the base-slug container of a different install.
-			raw, err := sharedAgent.Call(ctx, "docker_app."+verb, map[string]any{"slug": app.EffectiveSlug()})
+			params := map[string]any{"slug": app.EffectiveSlug()}
+			// start/restart/rebuild bring the on-disk compose up, so a tenant
+			// app goes through the tenant gate first, like the API doors (GH
+			// #1903). Stop is not a bring-up and never needs it.
+			if verb != "stop" {
+				if verr := cliApplyTenantValidate(ctx, app, params); verr != nil {
+					return verr
+				}
+			}
+			raw, err := sharedAgent.Call(ctx, "docker_app."+verb, params)
 			if err != nil {
 				return err
 			}
