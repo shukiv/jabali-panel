@@ -680,7 +680,9 @@ func (h *userDockerAppHandler) install(c *gin.Context) {
 		return
 	}
 
-	composeYML, err := dockerapp.Render(entry, dockerapp.RenderParams{
+	// GH #1903: RenderTenant also returns the service set the agent pins the
+	// resolved compose to, rendered without any tenant-supplied value.
+	composeYML, tenantServices, err := dockerapp.RenderTenant(entry, dockerapp.RenderParams{
 		Slug:         instanceSlug,
 		Name:         req.Name,
 		Domain:       req.Domain,
@@ -727,6 +729,7 @@ func (h *userDockerAppHandler) install(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "tenant_validation_unavailable", "detail": firstLineString(err.Error())})
 			return
 		}
+		installParams["tenant_services"] = tenantServices
 		appID := app.ID
 		go func() {
 			bgCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Minute)

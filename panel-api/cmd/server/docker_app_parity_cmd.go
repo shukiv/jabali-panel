@@ -67,7 +67,7 @@ func cliApplyTenantValidate(ctx context.Context, app *models.DockerApp, params m
 }
 
 func applyDockerEnvWithBase(ctx context.Context, repo repository.DockerAppRepository, app *models.DockerApp, baseEnv map[string]string) error {
-	compose, envFile, err := renderInstallComposeCLI(ctx, repo, app, baseEnv)
+	compose, envFile, tenantServices, err := renderInstallComposeCLI(ctx, repo, app, baseEnv)
 	if err != nil {
 		return err
 	}
@@ -79,6 +79,9 @@ func applyDockerEnvWithBase(ctx context.Context, repo repository.DockerAppReposi
 	}
 	if verr := cliApplyTenantValidate(ctx, app, params); verr != nil {
 		return verr
+	}
+	if tenantServices != nil {
+		params["tenant_services"] = tenantServices
 	}
 	raw, err := sharedAgent.Call(ctx, "docker_app.update", params)
 	if err != nil {
