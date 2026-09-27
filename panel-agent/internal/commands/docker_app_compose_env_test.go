@@ -12,8 +12,9 @@ import (
 
 // GH #1790 follow-up: compose must never parse the project's .env. The file
 // holds the app's env values verbatim, and compose's dotenv parser fails every
-// command on a value that opens a quote it never closes (a password starting
-// with ' or "). Each compose call carries COMPOSE_DISABLE_ENV_FILE=true.
+// command on some values that start with a quote (an unclosed ' or ", or a
+// closing quote followed by more text). Each compose call carries
+// COMPOSE_DISABLE_ENV_FILE=true.
 func TestComposeCalls_DisableDotEnv(t *testing.T) {
 	var cmds []*exec.Cmd
 	prev := execCommandContext
