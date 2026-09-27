@@ -1,7 +1,8 @@
 // Database operations CLI (Gitea #559): per-database backup/restore, admin
 // maintenance + process management, and root-password rotation. Each dispatches
 // the same agent verb the API does (databases.go / databases_admin_ops.go), with
-// the same engine variants (mariadb/postgres). Config tuning (get/put) is
+// the same engine variants (mariadb/postgres); backup/restore take theirs from
+// dbops, as the API does. Config tuning (get/put) is
 // deferred — it needs the dbtuning allowlist validation + DBAdmin tuning repo and
 // is tracked for a follow-up. Mutations are CLI-audited.
 package main
@@ -11,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -19,6 +21,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/dbtuning"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dbops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
@@ -56,9 +59,10 @@ func newDBBackupCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			raw, err := sharedAgent.Call(ctx, "db.backup", map[string]any{"db_name": d.Name})
+			verb := dbops.BackupDatabaseCommand(d.Engine)
+			raw, err := sharedAgent.Call(ctx, verb, map[string]any{"db_name": d.Name})
 			if err != nil {
-				return fmt.Errorf("agent db.backup: %w", err)
+				return fmt.Errorf("agent %s: %w", verb, err)
 			}
 			cliAuditOK(ctx, "database.backup", "database", d.ID, &d.UserID)
 			os.Stdout.Write(raw)
@@ -92,8 +96,9 @@ func newDBRestoreCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if _, err := sharedAgent.Call(ctx, "db.restore", map[string]any{"db_name": d.Name, "path": file}); err != nil {
-				return fmt.Errorf("agent db.restore: %w", err)
+			if err := restoreDatabaseCLI(ctx, sharedAgent, repository.NewDatabaseUserGrantRepository(sharedDB),
+				repository.NewDatabaseUserRepository(sharedDB), d, file, cliRestoreRoot); err != nil {
+				return err
 			}
 			cliAuditOK(ctx, "database.restore", "database", d.ID, &d.UserID)
 			fmt.Fprintf(cmd.OutOrStdout(), "Restored %s from %s\n", d.Name, file)
@@ -103,6 +108,41 @@ func newDBRestoreCmd() *cobra.Command {
 	cmd.Flags().StringVar(&file, "file", "", "path to a .sql dump on the host (required)")
 	cmd.Flags().BoolVar(&force, "force", false, "confirm the overwrite")
 	return cmd
+}
+
+// cliRestoreRoot is where the CLI stages a dump for the agent (a var so tests
+// can point it elsewhere). It is the staging root the REST restore uses.
+var cliRestoreRoot = "/var/lib/jabali/restore"
+
+// restoreDatabaseCLI loads the dump at file into d with the agent verb for
+// d's engine, the same way the REST restore does.
+//
+// The agent opens a dump only under its staging roots and deletes it after a
+// successful load. So the operator's file is copied into restoreRoot under a
+// fresh name first: a path elsewhere on the host would be refused, and a
+// file already in the staging dir would be deleted. The copy is removed if
+// the agent fails.
+func restoreDatabaseCLI(ctx context.Context, call dbops.AgentCaller, grants repository.DatabaseUserGrantRepository, users repository.DatabaseUserRepository, d *models.Database, file, restoreRoot string) error {
+	if err := os.MkdirAll(restoreRoot, 0o750); err != nil {
+		return fmt.Errorf("staging dir: %w", err)
+	}
+	staged := filepath.Join(restoreRoot, ids.NewULID()+".sql")
+	if err := copyFileMode(file, staged, 0o600); err != nil {
+		_ = os.Remove(staged)
+		return fmt.Errorf("stage dump: %w", err)
+	}
+	verb := dbops.RestoreDatabaseCommand(d.Engine)
+	params := map[string]any{"db_name": d.Name, "path": staged}
+	if d.Engine == "postgres" {
+		owner, roles := dbops.PGGrantedRoles(ctx, grants, users, d.ID)
+		params["owner_role"] = owner
+		params["grant_roles"] = roles
+	}
+	if _, err := call.Call(ctx, verb, params); err != nil {
+		_ = os.Remove(staged)
+		return fmt.Errorf("agent %s: %w", verb, err)
+	}
+	return nil
 }
 
 func newDBProcessesCmd() *cobra.Command {

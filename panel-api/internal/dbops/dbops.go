@@ -146,6 +146,56 @@ func DropDatabaseCommand(engine string) string {
 	return "db.drop"
 }
 
+// BackupDatabaseCommand returns the Agent command that dumps a database for
+// the given engine: pg_dump for Postgres, mysqldump otherwise. Both write the
+// dump to the panel-readable staging dir and answer {path, size_bytes}.
+// Shared by the REST handler and the CLI so neither sends a Postgres database
+// to the MariaDB verb.
+func BackupDatabaseCommand(engine string) string {
+	if engine == "postgres" {
+		return "db.postgres.backup"
+	}
+	return "db.backup"
+}
+
+// RestoreDatabaseCommand returns the Agent command that loads a dump into a
+// database for the given engine. Postgres also needs the database's granted
+// tenant roles (see PGGrantedRoles). Both verbs open the dump only under the
+// restore staging roots and delete it after a successful load.
+func RestoreDatabaseCommand(engine string) string {
+	if engine == "postgres" {
+		return "db.postgres.restore"
+	}
+	return "db.restore"
+}
+
+// PGGrantedRoles resolves the Postgres roles granted on a database for the
+// restore post-pass (GH #1045): all is every granted postgres role, owner is
+// a deterministic primary (the first granted role) that restored objects are
+// reassigned to. Empty owner when the database has no postgres grants, or
+// when a repo is nil or fails — the agent then leaves restored objects owned
+// by postgres.
+func PGGrantedRoles(ctx context.Context, grants repository.DatabaseUserGrantRepository, users repository.DatabaseUserRepository, dbID string) (owner string, all []string) {
+	if grants == nil || users == nil {
+		return "", nil
+	}
+	rows, err := grants.ListByDatabaseID(ctx, dbID)
+	if err != nil {
+		return "", nil
+	}
+	for _, g := range rows {
+		u, uErr := users.FindByID(ctx, g.DatabaseUserID)
+		if uErr != nil || u == nil || u.Engine != "postgres" || u.Username == "" {
+			continue
+		}
+		all = append(all, u.Username)
+	}
+	if len(all) > 0 {
+		owner = all[0]
+	}
+	return owner, all
+}
+
 // DropDatabaseHost drops the database named dbName on the host, dispatching the
 // correct Agent command for engine (see DropDatabaseCommand). It is the single
 // lifecycle operation that every deletion path routes its host-side DROP
