@@ -11,7 +11,7 @@ services:
       # Operator-supplied SMTP (GH #322) — values q-escaped so special chars
       # (e.g. API-key passwords) can't break the rendered compose YAML.
       PAPERLESS_EMAIL_HOST: {{ q (index .Env "SMTP_HOST") }}
-      PAPERLESS_EMAIL_PORT: "{{ or (index .Env "SMTP_PORT") "587" }}"
+      PAPERLESS_EMAIL_PORT: {{ q (or (index .Env "SMTP_PORT") "587") }}
       PAPERLESS_EMAIL_HOST_USER: {{ q (index .Env "SMTP_USER") }}
       PAPERLESS_EMAIL_HOST_PASSWORD: {{ q (index .Env "SMTP_PASSWORD") }}
       PAPERLESS_EMAIL_FROM: {{ q (or (index .Env "SMTP_FROM") (printf "paperless@%s" .Domain)) }}
@@ -22,10 +22,10 @@ services:
       PAPERLESS_DBHOST: "db"
       PAPERLESS_DBNAME: "paperless"
       PAPERLESS_DBUSER: "paperless"
-      PAPERLESS_DBPASS: "{{ index .Env "POSTGRES_PASSWORD" }}"
-      PAPERLESS_SECRET_KEY: "{{ index .Env "PAPERLESS_SECRET_KEY" }}"
+      PAPERLESS_DBPASS: {{ q (index .Env "POSTGRES_PASSWORD") }}
+      PAPERLESS_SECRET_KEY: {{ q (index .Env "PAPERLESS_SECRET_KEY") }}
       PAPERLESS_ADMIN_USER: "jabali"
-      PAPERLESS_ADMIN_PASSWORD: "{{ index .Env "PAPERLESS_ADMIN_PASSWORD" }}"
+      PAPERLESS_ADMIN_PASSWORD: {{ q (index .Env "PAPERLESS_ADMIN_PASSWORD") }}
       PAPERLESS_URL: "{{ if .Domain }}https://{{ .Domain }}{{ end }}"
       PAPERLESS_PORT: "8000"
       PAPERLESS_TIME_ZONE: "UTC"
@@ -65,7 +65,7 @@ services:
     container_name: jabali-app-{{ .Slug }}-db
     restart: unless-stopped
     environment:
-      POSTGRES_PASSWORD: "{{ index .Env "POSTGRES_PASSWORD" }}"
+      POSTGRES_PASSWORD: {{ q (index .Env "POSTGRES_PASSWORD") }}
       POSTGRES_USER: "paperless"
       POSTGRES_DB: "paperless"
     volumes:

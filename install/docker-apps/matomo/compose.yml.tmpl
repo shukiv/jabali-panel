@@ -8,7 +8,7 @@ services:
     environment:
       MATOMO_DATABASE_HOST: "db"
       MATOMO_DATABASE_USERNAME: "matomo"
-      MATOMO_DATABASE_PASSWORD: "{{ index .Env "MATOMO_DATABASE_PASSWORD" }}"
+      MATOMO_DATABASE_PASSWORD: {{ q (index .Env "MATOMO_DATABASE_PASSWORD") }}
       MATOMO_DATABASE_DBNAME: "matomo"
       MATOMO_DATABASE_ADAPTER: "mysql"
     volumes:
@@ -37,8 +37,8 @@ services:
     environment:
       MYSQL_DATABASE: "matomo"
       MYSQL_USER: "matomo"
-      MYSQL_PASSWORD: "{{ index .Env "MATOMO_DATABASE_PASSWORD" }}"
-      MYSQL_ROOT_PASSWORD: "{{ index .Env "MYSQL_ROOT_PASSWORD" }}"
+      MYSQL_PASSWORD: {{ q (index .Env "MATOMO_DATABASE_PASSWORD") }}
+      MYSQL_ROOT_PASSWORD: {{ q (index .Env "MYSQL_ROOT_PASSWORD") }}
     volumes:
       - {{ .DataRoot }}/db:/var/lib/mysql
     healthcheck:

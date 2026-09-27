@@ -50,8 +50,8 @@ services:
     environment:
       MYSQL_DATABASE: "fossbilling"
       MYSQL_USER: "fossbilling"
-      MYSQL_PASSWORD: "{{ index .Env "DB_PASSWORD" }}"
-      MYSQL_ROOT_PASSWORD: "{{ index .Env "MYSQL_ROOT_PASSWORD" }}"
+      MYSQL_PASSWORD: {{ q (index .Env "DB_PASSWORD") }}
+      MYSQL_ROOT_PASSWORD: {{ q (index .Env "MYSQL_ROOT_PASSWORD") }}
     volumes:
       - {{ .DataRoot }}/db:/var/lib/mysql
     healthcheck:
@@ -77,6 +77,12 @@ services:
         condition: service_healthy
     volumes:
       - {{ .DataRoot }}/html:/seed:ro
+    # The installer reads its passwords from env vars instead of having them
+    # spliced into the script, so any character in them stays data. "$$" is
+    # compose's escape for a literal "$".
+    environment:
+      FB_DB_PASSWORD: {{ q (index .Env "DB_PASSWORD") }}
+      FB_ADMIN_PASSWORD: {{ q (printf "%sAa1" (index .Env "FOSSBILLING_ADMIN_PASSWORD")) }}
     entrypoint:
       - sh
       - -c
@@ -88,10 +94,10 @@ services:
           --data-urlencode "database_port=3306" \
           --data-urlencode "database_name=fossbilling" \
           --data-urlencode "database_username=fossbilling" \
-          --data-urlencode "database_password={{ index .Env "DB_PASSWORD" }}" \
+          --data-urlencode "database_password=$${FB_DB_PASSWORD}" \
           --data-urlencode "admin_name=Administrator" \
           --data-urlencode "admin_email=admin@{{ .Domain }}" \
-          --data-urlencode "admin_password={{ index .Env "FOSSBILLING_ADMIN_PASSWORD" }}Aa1" \
+          --data-urlencode "admin_password=$${FB_ADMIN_PASSWORD}" \
           --data-urlencode "currency_code=USD" \
           --data-urlencode "error_reporting=0" \
           --data-urlencode "trusted_proxy_enabled=1" \

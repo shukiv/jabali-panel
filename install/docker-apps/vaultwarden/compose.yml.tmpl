@@ -8,7 +8,7 @@ services:
       # Operator-supplied SMTP (GH #322) — values q-escaped so special chars
       # (e.g. API-key passwords) can't break the rendered compose YAML.
       SMTP_HOST: {{ q (index .Env "SMTP_HOST") }}
-      SMTP_PORT: "{{ or (index .Env "SMTP_PORT") "587" }}"
+      SMTP_PORT: {{ q (or (index .Env "SMTP_PORT") "587") }}
       SMTP_SECURITY: "{{ if eq (index .Env "SMTP_PORT") "465" }}force_tls{{ else }}starttls{{ end }}"
       SMTP_USERNAME: {{ q (index .Env "SMTP_USER") }}
       SMTP_PASSWORD: {{ q (index .Env "SMTP_PASSWORD") }}

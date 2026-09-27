@@ -10,7 +10,7 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      ZITADEL_MASTERKEY: "{{ index .Env "MASTERKEY" }}"
+      ZITADEL_MASTERKEY: {{ q (index .Env "MASTERKEY") }}
       # TLS is terminated at the nginx vhost; the container serves plain
       # HTTP. ExternalSecure=true keeps the issuer + cookies on https.
       ZITADEL_EXTERNALDOMAIN: "{{ .Domain }}"
@@ -31,15 +31,15 @@ services:
       ZITADEL_DATABASE_POSTGRES_PORT: "5432"
       ZITADEL_DATABASE_POSTGRES_DATABASE: zitadel
       ZITADEL_DATABASE_POSTGRES_USER_USERNAME: zitadel
-      ZITADEL_DATABASE_POSTGRES_USER_PASSWORD: "{{ index .Env "POSTGRES_PASSWORD" }}"
+      ZITADEL_DATABASE_POSTGRES_USER_PASSWORD: {{ q (index .Env "POSTGRES_PASSWORD") }}
       ZITADEL_DATABASE_POSTGRES_USER_SSL_MODE: disable
       ZITADEL_DATABASE_POSTGRES_ADMIN_USERNAME: postgres
-      ZITADEL_DATABASE_POSTGRES_ADMIN_PASSWORD: "{{ index .Env "POSTGRES_PASSWORD" }}"
+      ZITADEL_DATABASE_POSTGRES_ADMIN_PASSWORD: {{ q (index .Env "POSTGRES_PASSWORD") }}
       ZITADEL_DATABASE_POSTGRES_ADMIN_SSL_MODE: disable
       # First-instance admin. The "Aa1!" suffix guarantees the value
       # meets the default password policy regardless of the random base.
       ZITADEL_FIRSTINSTANCE_ORG_HUMAN_USERNAME: admin
-      ZITADEL_FIRSTINSTANCE_ORG_HUMAN_PASSWORD: "{{ index .Env "ADMIN_PASSWORD" }}Aa1!"
+      ZITADEL_FIRSTINSTANCE_ORG_HUMAN_PASSWORD: {{ q (printf "%sAa1!" (index .Env "ADMIN_PASSWORD")) }}
       ZITADEL_FIRSTINSTANCE_ORG_HUMAN_PASSWORDCHANGEREQUIRED: "true"
       # Mark the bootstrap admin's email verified so the first login skips
       # the "Activate User / verify e-mail with code" step — there is no SMTP
@@ -74,7 +74,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: "{{ index .Env "POSTGRES_PASSWORD" }}"
+      POSTGRES_PASSWORD: {{ q (index .Env "POSTGRES_PASSWORD") }}
       POSTGRES_DB: postgres
     volumes:
       - {{ .DataRoot }}/postgres:/var/lib/postgresql/data

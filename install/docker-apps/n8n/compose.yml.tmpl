@@ -9,7 +9,7 @@ services:
       # (e.g. API-key passwords) can't break the rendered compose YAML.
       N8N_EMAIL_MODE: "smtp"
       N8N_SMTP_HOST: {{ q (index .Env "SMTP_HOST") }}
-      N8N_SMTP_PORT: "{{ or (index .Env "SMTP_PORT") "587" }}"
+      N8N_SMTP_PORT: {{ q (or (index .Env "SMTP_PORT") "587") }}
       N8N_SMTP_USER: {{ q (index .Env "SMTP_USER") }}
       N8N_SMTP_PASS: {{ q (index .Env "SMTP_PASSWORD") }}
       N8N_SMTP_SENDER: {{ q (or (index .Env "SMTP_FROM") (printf "n8n@%s" .Domain)) }}

@@ -39,6 +39,28 @@ The agent renders `compose.yml.tmpl` with this struct:
 | `.Ports` | Map of port-name → `{HostPort: int, ContainerPort: int, BindInterface: string, Protocol: string}` for ports the admin enabled. |
 | `.Env` | Map of env var name → value (catalog-declared + secrets auto-generated at install time). |
 
+### Emitting an env value
+
+An `.Env` value can come from a tenant install override, so it may hold any
+character except a newline. Emit it only as the whole scalar of a mapping entry,
+through `q`, which JSON-quotes it and doubles `$` so compose does not
+interpolate it:
+
+```yaml
+DB_PASSWORD: {{ q (index .Env "DB_PASSWORD") }}
+ADMIN_PASSWORD: {{ q (printf "%sAa1!" (index .Env "ADMIN_PASSWORD")) }}
+DATABASE_URL: {{ q (printf "postgres://app:%s@db:5432/app" (userinfo (index .Env "DB_PASSWORD"))) }}
+```
+
+- Never write `"{{ index .Env "X" }}"`: a `$`, `"` or `\` in the value alters or breaks it.
+- Inside a URL, wrap the value in `userinfo` first, so `@`, `:`, `/`, `%` and spaces decode back to the original.
+- A shell script (`entrypoint: [sh, -c, ...]`) never splices a value. Put it in the service's `environment:` through `q` and read it in the script as `"$${NAME}"` (`$$` is compose's escape for `$`).
+- Reading a value in a condition (`{{ if (index .Env "SMTP_HOST") }}`) is fine.
+
+`TestCatalogTemplates_EnvOnlyThroughQ` fails CI on any other shape, and
+`TestRender_AllApps_EnvValuesReachContainerVerbatim` renders every app with a
+hostile value and checks that each container receives it exactly.
+
 ## Why a static catalog, not dynamic discovery
 
 Per ADR-0116 Decision 11, the catalog ships with the panel. New apps land via `jabali update`. We don't have a community-submission story yet — the design space (signing, sandbox testing, malware scanning of upstream images) is significant, and v1 ships without it.

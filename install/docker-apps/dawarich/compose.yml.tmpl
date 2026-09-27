@@ -12,12 +12,12 @@ services:
     command: ["bin/rails", "server", "-p", "3000", "-b", "0.0.0.0"]
     environment:
       RAILS_ENV: "production"
-      SECRET_KEY_BASE: "{{ index .Env "SECRET_KEY_BASE" }}"
+      SECRET_KEY_BASE: {{ q (index .Env "SECRET_KEY_BASE") }}
       DATABASE_HOST: "db"
       DATABASE_PORT: "5432"
       DATABASE_NAME: "dawarich_production"
       DATABASE_USERNAME: "postgres"
-      DATABASE_PASSWORD: "{{ index .Env "DATABASE_PASSWORD" }}"
+      DATABASE_PASSWORD: {{ q (index .Env "DATABASE_PASSWORD") }}
       REDIS_URL: "redis://redis:6379/0"
       APPLICATION_PROTOCOL: "https"
       APPLICATION_HOSTS: "{{ .Domain }},localhost,127.0.0.1"
@@ -54,12 +54,12 @@ services:
     entrypoint: sidekiq-entrypoint.sh
     environment:
       RAILS_ENV: "production"
-      SECRET_KEY_BASE: "{{ index .Env "SECRET_KEY_BASE" }}"
+      SECRET_KEY_BASE: {{ q (index .Env "SECRET_KEY_BASE") }}
       DATABASE_HOST: "db"
       DATABASE_PORT: "5432"
       DATABASE_NAME: "dawarich_production"
       DATABASE_USERNAME: "postgres"
-      DATABASE_PASSWORD: "{{ index .Env "DATABASE_PASSWORD" }}"
+      DATABASE_PASSWORD: {{ q (index .Env "DATABASE_PASSWORD") }}
       REDIS_URL: "redis://redis:6379/0"
       APPLICATION_PROTOCOL: "https"
       APPLICATION_HOSTS: "{{ .Domain }},localhost,127.0.0.1"
@@ -81,7 +81,7 @@ services:
     shm_size: 1gb
     environment:
       POSTGRES_USER: "postgres"
-      POSTGRES_PASSWORD: "{{ index .Env "DATABASE_PASSWORD" }}"
+      POSTGRES_PASSWORD: {{ q (index .Env "DATABASE_PASSWORD") }}
       POSTGRES_DB: "dawarich_production"
     volumes:
       - {{ .DataRoot }}/db:/var/lib/postgresql/data

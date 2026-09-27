@@ -8,10 +8,10 @@ services:
       - chrome
     environment:
       NEXTAUTH_URL: "https://{{ .Domain }}"
-      NEXTAUTH_SECRET: "{{ index .Env "NEXTAUTH_SECRET" }}"
+      NEXTAUTH_SECRET: {{ q (index .Env "NEXTAUTH_SECRET") }}
       DATA_DIR: "/data"
       MEILI_ADDR: "http://meilisearch:7700"
-      MEILI_MASTER_KEY: "{{ index .Env "MEILI_MASTER_KEY" }}"
+      MEILI_MASTER_KEY: {{ q (index .Env "MEILI_MASTER_KEY") }}
       BROWSER_WEB_URL: "http://chrome:9222"
     volumes:
       - {{ .DataRoot }}/data:/data
@@ -54,7 +54,7 @@ services:
     restart: unless-stopped
     environment:
       MEILI_NO_ANALYTICS: "true"
-      MEILI_MASTER_KEY: "{{ index .Env "MEILI_MASTER_KEY" }}"
+      MEILI_MASTER_KEY: {{ q (index .Env "MEILI_MASTER_KEY") }}
     volumes:
       - {{ .DataRoot }}/meili:/meili_data
     deploy:

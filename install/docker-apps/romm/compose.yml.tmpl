@@ -11,8 +11,8 @@ services:
       DB_PORT: "3306"
       DB_NAME: "romm"
       DB_USER: "romm"
-      DB_PASSWD: "{{ index .Env "DB_PASSWD" }}"
-      ROMM_AUTH_SECRET_KEY: "{{ index .Env "ROMM_AUTH_SECRET_KEY" }}"
+      DB_PASSWD: {{ q (index .Env "DB_PASSWD") }}
+      ROMM_AUTH_SECRET_KEY: {{ q (index .Env "ROMM_AUTH_SECRET_KEY") }}
     volumes:
       - {{ .DataRoot }}/resources:/romm/resources
       - {{ .DataRoot }}/assets:/romm/assets
@@ -42,8 +42,8 @@ services:
     environment:
       MYSQL_DATABASE: "romm"
       MYSQL_USER: "romm"
-      MYSQL_PASSWORD: "{{ index .Env "DB_PASSWD" }}"
-      MYSQL_ROOT_PASSWORD: "{{ index .Env "MYSQL_ROOT_PASSWORD" }}"
+      MYSQL_PASSWORD: {{ q (index .Env "DB_PASSWD") }}
+      MYSQL_ROOT_PASSWORD: {{ q (index .Env "MYSQL_ROOT_PASSWORD") }}
     volumes:
       - {{ .DataRoot }}/db:/var/lib/mysql
     healthcheck:

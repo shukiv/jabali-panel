@@ -7,7 +7,7 @@ services:
       # Request signing — required for any integrator (Nextcloud, etc.) to
       # talk to this server. JWT_ENABLED defaults true; pin it explicitly.
       JWT_ENABLED: "true"
-      JWT_SECRET: "{{ index .Env "JWT_SECRET" }}"
+      JWT_SECRET: {{ q (index .Env "JWT_SECRET") }}
       JWT_HEADER: "Authorization"
     volumes:
       - {{ .DataRoot }}/data:/var/www/onlyoffice/Data

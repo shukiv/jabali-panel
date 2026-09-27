@@ -10,7 +10,7 @@ services:
       # Operator-supplied SMTP (GH #322) — values q-escaped so special chars
       # (e.g. API-key passwords) can't break the rendered compose YAML.
       SMTP_HOST: {{ q (index .Env "SMTP_HOST") }}
-      SMTP_PORT: "{{ or (index .Env "SMTP_PORT") "587" }}"
+      SMTP_PORT: {{ q (or (index .Env "SMTP_PORT") "587") }}
       SMTP_SECURE: "{{ if eq (index .Env "SMTP_PORT") "465" }}ssl{{ else }}tls{{ end }}"
       SMTP_AUTHTYPE: "LOGIN"
       SMTP_NAME: {{ q (index .Env "SMTP_USER") }}
@@ -21,9 +21,9 @@ services:
       MYSQL_HOST: "db"
       MYSQL_DATABASE: "nextcloud"
       MYSQL_USER: "nextcloud"
-      MYSQL_PASSWORD: "{{ index .Env "MYSQL_PASSWORD" }}"
-      NEXTCLOUD_ADMIN_USER: "{{ index .Env "NEXTCLOUD_ADMIN_USER" }}"
-      NEXTCLOUD_ADMIN_PASSWORD: "{{ index .Env "NEXTCLOUD_ADMIN_PASSWORD" }}"
+      MYSQL_PASSWORD: {{ q (index .Env "MYSQL_PASSWORD") }}
+      NEXTCLOUD_ADMIN_USER: {{ q (index .Env "NEXTCLOUD_ADMIN_USER") }}
+      NEXTCLOUD_ADMIN_PASSWORD: {{ q (index .Env "NEXTCLOUD_ADMIN_PASSWORD") }}
       NEXTCLOUD_TRUSTED_DOMAINS: "{{ .Domain }}"
       OVERWRITEPROTOCOL: "https"
       OVERWRITEHOST: "{{ .Domain }}"
@@ -53,8 +53,8 @@ services:
     environment:
       MYSQL_DATABASE: "nextcloud"
       MYSQL_USER: "nextcloud"
-      MYSQL_PASSWORD: "{{ index .Env "MYSQL_PASSWORD" }}"
-      MYSQL_ROOT_PASSWORD: "{{ index .Env "MYSQL_ROOT_PASSWORD" }}"
+      MYSQL_PASSWORD: {{ q (index .Env "MYSQL_PASSWORD") }}
+      MYSQL_ROOT_PASSWORD: {{ q (index .Env "MYSQL_ROOT_PASSWORD") }}
     volumes:
       - {{ .DataRoot }}/db:/var/lib/mysql
     healthcheck:

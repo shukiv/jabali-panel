@@ -4,9 +4,9 @@ services:
     container_name: jabali-app-{{ .Slug }}
     restart: unless-stopped
     environment:
-      SECRET_TOKEN: "{{ index .Env "SECRET_TOKEN" }}"
-      ALLOW_REGISTRATION: "{{ index .Env "ALLOW_REGISTRATION" }}"
-      ADMIN_PASSWORD: "{{ index .Env "ADMIN_PASSWORD" }}"
+      SECRET_TOKEN: {{ q (index .Env "SECRET_TOKEN") }}
+      ALLOW_REGISTRATION: {{ q (index .Env "ALLOW_REGISTRATION") }}
+      ADMIN_PASSWORD: {{ q (index .Env "ADMIN_PASSWORD") }}
     volumes:
       - {{ .DataRoot }}/data:/app/data
     ports:

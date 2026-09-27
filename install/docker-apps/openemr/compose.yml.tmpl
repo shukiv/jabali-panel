@@ -7,12 +7,12 @@ services:
       - db
     environment:
       MYSQL_HOST: "db"
-      MYSQL_ROOT_PASS: "{{ index .Env "MYSQL_ROOT_PASSWORD" }}"
+      MYSQL_ROOT_PASS: {{ q (index .Env "MYSQL_ROOT_PASSWORD") }}
       MYSQL_USER: "openemr"
-      MYSQL_PASS: "{{ index .Env "MYSQL_PASS" }}"
+      MYSQL_PASS: {{ q (index .Env "MYSQL_PASS") }}
       MYSQL_DATABASE: "openemr"
       OE_USER: "admin"
-      OE_PASS: "{{ index .Env "OE_PASS" }}"
+      OE_PASS: {{ q (index .Env "OE_PASS") }}
     volumes:
       - {{ .DataRoot }}/sites:/var/www/localhost/htdocs/openemr/sites
     ports:
@@ -39,8 +39,8 @@ services:
     environment:
       MYSQL_DATABASE: "openemr"
       MYSQL_USER: "openemr"
-      MYSQL_PASSWORD: "{{ index .Env "MYSQL_PASS" }}"
-      MYSQL_ROOT_PASSWORD: "{{ index .Env "MYSQL_ROOT_PASSWORD" }}"
+      MYSQL_PASSWORD: {{ q (index .Env "MYSQL_PASS") }}
+      MYSQL_ROOT_PASSWORD: {{ q (index .Env "MYSQL_ROOT_PASSWORD") }}
     volumes:
       - {{ .DataRoot }}/db:/var/lib/mysql
     healthcheck:

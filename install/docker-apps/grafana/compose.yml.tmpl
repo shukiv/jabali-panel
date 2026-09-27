@@ -20,7 +20,7 @@ services:
       GF_SERVER_ROOT_URL: "https://{{ .Domain }}"
       GF_SERVER_DOMAIN: "{{ .Domain }}"
       GF_SECURITY_ADMIN_USER: "admin"
-      GF_SECURITY_ADMIN_PASSWORD: "{{ index .Env "ADMIN_PASSWORD" }}"
+      GF_SECURITY_ADMIN_PASSWORD: {{ q (index .Env "ADMIN_PASSWORD") }}
       GF_USERS_ALLOW_SIGN_UP: "false"
     volumes:
       - {{ .DataRoot }}/data:/var/lib/grafana

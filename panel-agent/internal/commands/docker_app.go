@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -486,13 +487,25 @@ func dirSizeBytes(ctx context.Context, dir string) (int64, error) {
 
 // --- helpers -----------------------------------------------------------------
 
+// composeCommand builds `docker compose <args...>` run in dir. Every compose
+// call goes through here so it runs with COMPOSE_DISABLE_ENV_FILE set: the
+// project's .env is jabali's own store of the app's env values (written by
+// panel-api, read back by docker_app.read_env), no catalog template
+// interpolates from it, and compose's dotenv parser rejects some values that
+// start with a quote (an unclosed ' or ", or a closing quote followed by more
+// text). Such a password failed every compose command for the app. Compose
+// releases without the variable ignore it and keep reading .env as before.
+func composeCommand(ctx context.Context, dir string, args ...string) *exec.Cmd {
+	cmd := execCommandContext(ctx, "docker", append([]string{"compose"}, args...)...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "COMPOSE_DISABLE_ENV_FILE=true")
+	return cmd
+}
+
 // runDockerCompose executes `docker compose <args...>` in dir. Returns
 // the combined stdout+stderr, plus any exec error.
 func runDockerCompose(ctx context.Context, dir string, args ...string) (string, error) {
-	full := append([]string{"compose"}, args...)
-	cmd := execCommandContext(ctx, "docker", full...)
-	cmd.Dir = dir
-	out, err := cmd.CombinedOutput()
+	out, err := composeCommand(ctx, dir, args...).CombinedOutput()
 	return string(out), err
 }
 

@@ -8,7 +8,7 @@ services:
       # config volume is empty, seeding secret_key from SEARXNG_SECRET and
       # base_url from SEARXNG_BASE_URL.
       SEARXNG_BASE_URL: "https://{{ .Domain }}/"
-      SEARXNG_SECRET: "{{ index .Env "SEARXNG_SECRET" }}"
+      SEARXNG_SECRET: {{ q (index .Env "SEARXNG_SECRET") }}
     volumes:
       - {{ .DataRoot }}/config:/etc/searxng
     ports:

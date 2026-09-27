@@ -11,16 +11,16 @@ services:
       # Operator-supplied SMTP (GH #322) — values q-escaped so special chars
       # (e.g. API-key passwords) can't break the rendered compose YAML.
       SMTP_HOST_ADDR: {{ q (index .Env "SMTP_HOST") }}
-      SMTP_HOST_PORT: "{{ or (index .Env "SMTP_PORT") "587" }}"
+      SMTP_HOST_PORT: {{ q (or (index .Env "SMTP_PORT") "587") }}
       SMTP_USER_NAME: {{ q (index .Env "SMTP_USER") }}
       SMTP_USER_PWD: {{ q (index .Env "SMTP_PASSWORD") }}
       SMTP_HOST_SSL_ENABLED: "{{ if eq (index .Env "SMTP_PORT") "465" }}true{{ else }}false{{ end }}"
       MAILER_EMAIL: {{ q (or (index .Env "SMTP_FROM") (printf "plausible@%s" .Domain)) }}
 {{- end }}
       BASE_URL: "https://{{ .Domain }}"
-      SECRET_KEY_BASE: "{{ index .Env "SECRET_KEY_BASE" }}"
-      TOTP_VAULT_KEY: "{{ index .Env "TOTP_VAULT_KEY" }}"
-      DATABASE_URL: "postgres://postgres:{{ index .Env "POSTGRES_PASSWORD" }}@postgres:5432/plausible_db"
+      SECRET_KEY_BASE: {{ q (index .Env "SECRET_KEY_BASE") }}
+      TOTP_VAULT_KEY: {{ q (index .Env "TOTP_VAULT_KEY") }}
+      DATABASE_URL: {{ q (printf "postgres://postgres:%s@postgres:5432/plausible_db" (userinfo (index .Env "POSTGRES_PASSWORD"))) }}
       CLICKHOUSE_DATABASE_URL: "http://clickhouse:8123/plausible_events_db"
     volumes:
       - /etc/timezone:/etc/timezone:ro
@@ -50,7 +50,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_DB: "plausible_db"
-      POSTGRES_PASSWORD: "{{ index .Env "POSTGRES_PASSWORD" }}"
+      POSTGRES_PASSWORD: {{ q (index .Env "POSTGRES_PASSWORD") }}
     volumes:
       - {{ .DataRoot }}/postgres:/var/lib/postgresql/data
     healthcheck:

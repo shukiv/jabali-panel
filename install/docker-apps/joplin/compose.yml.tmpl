@@ -11,7 +11,7 @@ services:
       # (e.g. API-key passwords) can't break the rendered compose YAML.
       MAILER_ENABLED: "true"
       MAILER_HOST: {{ q (index .Env "SMTP_HOST") }}
-      MAILER_PORT: "{{ or (index .Env "SMTP_PORT") "587" }}"
+      MAILER_PORT: {{ q (or (index .Env "SMTP_PORT") "587") }}
       MAILER_SECURITY: "{{ if eq (index .Env "SMTP_PORT") "465" }}tls{{ else }}starttls{{ end }}"
       MAILER_AUTH_USER: {{ q (index .Env "SMTP_USER") }}
       MAILER_AUTH_PASSWORD: {{ q (index .Env "SMTP_PASSWORD") }}
@@ -21,7 +21,7 @@ services:
       APP_BASE_URL: "{{ if .Domain }}https://{{ .Domain }}{{ else }}http://localhost{{ end }}"
       APP_PORT: "22300"
       DB_CLIENT: "pg"
-      POSTGRES_PASSWORD: "{{ index .Env "POSTGRES_PASSWORD" }}"
+      POSTGRES_PASSWORD: {{ q (index .Env "POSTGRES_PASSWORD") }}
       POSTGRES_DATABASE: "joplin"
       POSTGRES_USER: "joplin"
       POSTGRES_PORT: "5432"
@@ -47,7 +47,7 @@ services:
     container_name: jabali-app-{{ .Slug }}-db
     restart: unless-stopped
     environment:
-      POSTGRES_PASSWORD: "{{ index .Env "POSTGRES_PASSWORD" }}"
+      POSTGRES_PASSWORD: {{ q (index .Env "POSTGRES_PASSWORD") }}
       POSTGRES_USER: "joplin"
       POSTGRES_DB: "joplin"
     volumes:

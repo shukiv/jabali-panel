@@ -4,9 +4,9 @@ services:
     container_name: jabali-app-{{ .Slug }}
     restart: unless-stopped
     environment:
-      PUID: "{{ index .Env "PUID" }}"
-      PGID: "{{ index .Env "PGID" }}"
-      TZ: "{{ index .Env "TZ" }}"
+      PUID: {{ q (index .Env "PUID") }}
+      PGID: {{ q (index .Env "PGID") }}
+      TZ: {{ q (index .Env "TZ") }}
     volumes:
       - {{ .DataRoot }}/config:/config
     ports:
