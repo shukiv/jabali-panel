@@ -4,6 +4,8 @@ import { useTranslation } from "react-i18next";
 import { useMemo, useState } from "react";
 import { Button, Empty, Form, Input, Modal, Popconfirm, Radio, Select, Skeleton, Space, Table, Tag, Tooltip, Typography } from "antd";
 import { feedback } from "../../../../lib/feedback"; // GH #970: themed toasts
+import { extractApiError } from "../../../../apiErrors";
+import { toastCreateResult } from "../../../../components/mail/createFeedback";
 import { DeleteOutlined, PlusOutlined } from "@icons";
 import { useQueries, useQuery } from "@tanstack/react-query";
 
@@ -88,19 +90,17 @@ export const ForwardersTab = ({ domainId }: { domainId?: string } = {}) => {
   const submit = async () => {
     const vals = await form.validateFields();
     try {
-      await createMut.mutateAsync({
+      const created = await createMut.mutateAsync({
         mailboxID: vals.mailbox_id,
         type: vals.type,
         localPart: vals.type === "alias" ? vals.local_part : undefined,
         target: vals.target,
       });
-      feedback.message.success("Forwarder created");
+      toastCreateResult(created, "Forwarder created", "Forwarder saved, but not forwarding yet");
       setOpen(false);
       form.resetFields();
     } catch (err) {
-      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
-        ?? "Failed to create forwarder";
-      feedback.message.error(msg);
+      feedback.message.error(extractApiError(err, "Failed to create forwarder"));
     }
   };
 
@@ -170,9 +170,7 @@ export const ForwardersTab = ({ domainId }: { domainId?: string } = {}) => {
                       await deleteMut.mutateAsync(row.id);
                       feedback.message.success("Forwarder removed");
                     } catch (err) {
-                      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
-                        ?? "Failed to remove";
-                      feedback.message.error(msg);
+                      feedback.message.error(extractApiError(err, "Failed to remove"));
                     }
                   }}
                   okText={t("forwarderstab.remove")}

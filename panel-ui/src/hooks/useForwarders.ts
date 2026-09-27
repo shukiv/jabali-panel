@@ -15,6 +15,9 @@ export interface Forwarder {
   keep_copy: boolean;
   enabled: boolean;
   created_at: string;
+  // Set on create when the forwarder was saved but the mail server did not
+  // accept it, so it is not forwarding yet.
+  warning?: { code: string; detail: string };
 }
 
 const QK = ["forwarders"];

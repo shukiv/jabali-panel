@@ -4,6 +4,8 @@ import { useTranslation } from "react-i18next";
 import { useMemo, useState } from "react";
 import { Button, Checkbox, Empty, Form, Modal, Popconfirm, Select, Skeleton, Space, Tag, Tooltip, Typography } from "antd";
 import { feedback } from "../../../../lib/feedback"; // GH #970: themed toasts
+import { extractApiError } from "../../../../apiErrors";
+import { toastCreateResult } from "../../../../components/mail/createFeedback";
 import { DeleteOutlined, PlusOutlined } from "@icons";
 import { RowActionButton } from "../../../../components/RowActionButton";
 import { useQueries } from "@tanstack/react-query";
@@ -93,18 +95,16 @@ export const SharedFoldersTab = ({ domainId }: { domainId?: string } = {}) => {
     const rights: Rights = {};
     for (const key of vals.rights) rights[key] = true;
     try {
-      await createMut.mutateAsync({
+      const created = await createMut.mutateAsync({
         ownerMailboxID: vals.owner_mailbox_id,
         sharedWithMailboxID: vals.shared_with_mailbox_id,
         rights,
       });
-      feedback.message.success("Share created");
+      toastCreateResult(created, "Share created", "Share saved, but not active yet");
       setOpen(false);
       form.resetFields();
     } catch (err) {
-      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
-        ?? "Failed to create share";
-      feedback.message.error(msg);
+      feedback.message.error(extractApiError(err, "Failed to create share"));
     }
   };
 
@@ -186,9 +186,7 @@ export const SharedFoldersTab = ({ domainId }: { domainId?: string } = {}) => {
                       });
                       feedback.message.success("Share removed");
                     } catch (err) {
-                      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
-                        ?? "Failed to remove";
-                      feedback.message.error(msg);
+                      feedback.message.error(extractApiError(err, "Failed to remove"));
                     }
                   }}
                   okText={t("sharedfolderstab.remove")}
