@@ -279,7 +279,7 @@ func runDockerEnableTenant(yes bool) error {
 
 	// 1. down every app.
 	for _, d := range apps {
-		_ = exec.Command("docker", "compose", "-f", filepath.Join(d, "compose.yml"), "down").Run()
+		_ = dockerComposeAt(d, "down").Run()
 	}
 
 	// 2. enable remap in daemon.json + restart dockerd.
@@ -345,7 +345,7 @@ func runDockerEnableTenant(yes bool) error {
 
 	// 4. bring every app back up + health.
 	for _, d := range apps {
-		if out, err := exec.Command("docker", "compose", "-f", filepath.Join(d, "compose.yml"), "up", "-d").CombinedOutput(); err != nil {
+		if out, err := dockerComposeAt(d, "up", "-d").CombinedOutput(); err != nil {
 			return fmt.Errorf("app %s failed to come back up post-remap (flag NOT written): %v: %s", filepath.Base(d), err, out)
 		}
 	}
@@ -359,4 +359,15 @@ func runDockerEnableTenant(yes bool) error {
 	}
 	fmt.Printf("tenant docker enabled: userns-remap active, %d app(s) retrofitted, %s written\n", len(apps), dockerTenantFlagPath)
 	return nil
+}
+
+// dockerComposeAt builds `docker compose -f <dir>/compose.yml <args...>` with
+// COMPOSE_DISABLE_ENV_FILE set, matching the agent's composeCommand: the app's
+// .env is jabali's own store of its env values, no catalog template
+// interpolates from it, and compose's dotenv parser rejects some values that
+// start with a quote, which would abort the retrofit mid-way.
+func dockerComposeAt(dir string, args ...string) *exec.Cmd {
+	cmd := exec.Command("docker", append([]string{"compose", "-f", filepath.Join(dir, "compose.yml")}, args...)...)
+	cmd.Env = append(os.Environ(), "COMPOSE_DISABLE_ENV_FILE=true")
+	return cmd
 }
