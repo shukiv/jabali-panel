@@ -240,9 +240,12 @@ describe("EmailCard DNS records for a new mail hostname (JAB-390)", () => {
     serve(body(), { public_ipv4: "203.0.113.10", public_ipv6: "" });
     renderCard();
 
-    fireEvent.change(await screen.findByLabelText("Mail hostname"), { target: { value: "https://mx.example.net/" } });
-    expect(await screen.findByText(/point an A record for the new name at 203\.0\.113\.10/)).toBeInTheDocument();
-    expect(recordRows()).toEqual([]);
+    const input = await screen.findByLabelText("Mail hostname");
+    for (const text of ["https://mx.example.net/", "203.0.113.10", "mx", "mx..example.net", "-mx.example.net"]) {
+      fireEvent.change(input, { target: { value: text } });
+      expect(await screen.findByText(/point an A record for the new name at 203\.0\.113\.10/)).toBeInTheDocument();
+      expect(recordRows(), text).toEqual([]);
+    }
   });
 
   it("warns when the server's public IPv4 is not set", async () => {
