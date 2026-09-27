@@ -160,8 +160,7 @@ func newRotateKratosCmd() *cobra.Command {
 			if err := initConfig(); err != nil {
 				return err
 			}
-			_ = initDB()
-			return nil
+			return rotateAuditPreRun(cmd, args)
 		},
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 3*time.Minute)
