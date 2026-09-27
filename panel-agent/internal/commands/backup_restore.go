@@ -547,6 +547,11 @@ func applyAccountRestore(
 								db, cErr, strings.TrimSpace(string(cOut))))
 						continue
 					}
+					if rErr := pgRunSQL(ctx, pgRevokePublicSQL(db)); rErr != nil {
+						warnings = append(warnings,
+							fmt.Sprintf("db %s (postgres): revoke public access: %v; not loaded", db, rErr))
+						continue
+					}
 				}
 				// pg_restore --clean --if-exists drops then re-creates
 				// every object in the dump. Idempotent on re-runs.

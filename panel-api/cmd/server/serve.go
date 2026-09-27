@@ -574,6 +574,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		// ping works in the SSH sandbox (agent user.ping_access.apply).
 		rec.WithPingAccess(repository.NewPingAccessRepository(sharedDB))
 		rec.WithDBGrantEscape()
+		rec.WithPGPublicAccess(repository.NewPGDatabaseGrantRepository(sharedDB))
 		// M36: per-domain IP allow/deny ACLs. Reconciler threads ACLs into
 		// agent's domain.create payload; agent renders nginx directives
 		// inside the server block.

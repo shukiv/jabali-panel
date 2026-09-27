@@ -303,6 +303,9 @@ type Reconciler struct {
 	pingAccess repository.PingAccessRepository
 	// dbGrantEscape enables the legacy MariaDB grant conversion pass.
 	dbGrantEscape bool
+	// pgPublicAccess lists the panel's Postgres database grants for the
+	// PUBLIC access pass. nil disables the pass.
+	pgPublicAccess repository.PGDatabaseGrantRepository
 	// M34 deep stats — per-tick drop samples drive the 24h sparkline.
 	// Optional; nil disables sample persistence (drop_count_24h still
 	// updates on the policy row).
@@ -1025,6 +1028,9 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 	// MariaDB grants written before db_user.grant escaped `_` cover sibling
 	// tenants' databases. Converted once, then re-checked hourly.
 	r.reconcileDBGrantEscape(ctx)
+	// Postgres databases created before the panel revoked PUBLIC's CONNECT
+	// let any tenant role connect. Converted once, then re-checked hourly.
+	r.reconcilePGPublicAccess(ctx)
 	// GH #1053: converge FTP/SFTP subaccounts (passwd aliases, group
 	// membership, lock state, sshd jabali-xfer drop-in). Hash-gated no-op
 	// in steady state.

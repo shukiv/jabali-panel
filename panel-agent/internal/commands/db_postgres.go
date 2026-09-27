@@ -7,6 +7,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/hostreserve"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
@@ -83,7 +84,22 @@ func dbPgCreateHandler(ctx context.Context, params json.RawMessage) (any, error)
 	if err := pgRunSQL(ctx, sql); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "create db: " + err.Error()}
 	}
+	if err := pgRunSQL(ctx, pgRevokePublicSQL(p.DBName)); err != nil {
+		// Never hand out a database every role can connect to.
+		_ = pgRunSQL(ctx, fmt.Sprintf(`DROP DATABASE IF EXISTS "%s"`, p.DBName))
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "create db: revoke public access: " + err.Error()}
+	}
 	return dbPgCreateResponse{OK: true}, nil
+}
+
+// pgRevokePublicSQL takes CONNECT and TEMPORARY on a database away from
+// PUBLIC. Postgres grants both to every role on a new database, so any
+// tenant's role could connect to any other tenant's database, read its
+// catalog (table and column names, view and function source) and create
+// temporary tables there. The owner, and roles granted on the database, keep
+// their access. db must already be validated with pgValidIdent.
+func pgRevokePublicSQL(db string) string {
+	return fmt.Sprintf(`REVOKE CONNECT, TEMPORARY ON DATABASE "%s" FROM PUBLIC`, db)
 }
 
 // ---- db.postgres.drop_db ----
@@ -302,6 +318,102 @@ func dbPgDumpHandler(ctx context.Context, params json.RawMessage) (any, error) {
 	return dbPgCreateResponse{OK: true}, nil
 }
 
+// ---- db.postgres.revoke_public_access ----
+//
+// Converts the databases created before db.postgres.create_db revoked
+// PUBLIC's CONNECT and TEMPORARY (see pgRevokePublicSQL). The maintenance
+// database postgres and the templates are left alone: clients such as the
+// database console connect to postgres first.
+//
+// PUBLIC is revoked only after each database's panel-granted roles hold
+// their own database grant. A Postgres restore used to leave the tenant role
+// with no CONNECT of its own (see pgRestorePostPass), so on a database
+// restored before that fix the role reached its database through PUBLIC
+// alone; revoking PUBLIC first would lock the tenant out.
+
+// pgPublicAccessWhere selects the databases PUBLIC can still connect to or
+// create temporary tables in.
+const pgPublicAccessWhere = `NOT datistemplate AND datname <> 'postgres' AND ` +
+	`(has_database_privilege('public', oid, 'CONNECT') OR has_database_privilege('public', oid, 'TEMPORARY'))`
+
+type dbPgRevokePublicParams struct {
+	// Grants maps a database to the roles the panel granted on it. Required
+	// (an empty map means no grants), so a caller that forgot it cannot
+	// revoke PUBLIC without re-granting first.
+	Grants *map[string][]string `json:"grants"`
+}
+
+type dbPgRevokePublicResponse struct {
+	Regranted []string `json:"regranted"`
+	Revoked   []string `json:"revoked"`
+}
+
+func dbPgRevokePublicHandler(ctx context.Context, params json.RawMessage) (any, error) {
+	var p dbPgRevokePublicParams
+	if err := json.Unmarshal(params, &p); err != nil || p.Grants == nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "grants is required"}
+	}
+	resp := dbPgRevokePublicResponse{Regranted: []string{}, Revoked: []string{}}
+
+	// (1) Every panel-granted role gets its own database grant, the same
+	// GRANT db.postgres.grant issues. A database or role that no longer
+	// exists is skipped.
+	dbs := make([]string, 0, len(*p.Grants))
+	for db := range *p.Grants {
+		dbs = append(dbs, db)
+	}
+	sort.Strings(dbs)
+	for _, db := range dbs {
+		if !pgValidIdent(db) {
+			return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "invalid database name"}
+		}
+		for _, role := range (*p.Grants)[db] {
+			if !pgValidIdent(role) {
+				return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "invalid role name"}
+			}
+			sql := fmt.Sprintf(`DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_database WHERE datname = '%[1]s') AND EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '%[2]s') THEN
+    GRANT ALL PRIVILEGES ON DATABASE "%[1]s" TO "%[2]s";
+  END IF;
+END$$;`, db, role)
+			if err := pgRunSQL(ctx, sql); err != nil {
+				// Stop before any revoke: this role would lose its database.
+				return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("grant %s on %s: %v", role, db, err)}
+			}
+			resp.Regranted = append(resp.Regranted, role+" on "+db)
+		}
+	}
+
+	// (2) Revoke PUBLIC wherever it still has access.
+	out, err := execCommandContext(ctx, "sudo", "-u", "postgres", "psql", "-XAtq", "-c",
+		"SELECT datname FROM pg_database WHERE "+pgPublicAccessWhere+" ORDER BY 1").Output()
+	if err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeUnavailable, Message: "list databases: " + err.Error()}
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if name := strings.TrimSpace(line); name != "" {
+			resp.Revoked = append(resp.Revoked, name)
+		}
+	}
+	if len(resp.Revoked) == 0 {
+		return resp, nil
+	}
+	// format('%I') quotes each name server-side, so a database created
+	// outside the panel with an unusual name is covered too.
+	sql := `DO $$
+DECLARE r RECORD;
+BEGIN
+  FOR r IN SELECT datname FROM pg_database WHERE ` + pgPublicAccessWhere + ` LOOP
+    EXECUTE format('REVOKE CONNECT, TEMPORARY ON DATABASE %I FROM PUBLIC', r.datname);
+  END LOOP;
+END$$;`
+	if err := pgRunSQL(ctx, sql); err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "revoke public access: " + err.Error()}
+	}
+	return resp, nil
+}
+
 func init() {
 	Default.Register("db.postgres.create_db", dbPgCreateHandler)
 	Default.Register("db.postgres.drop_db", dbPgDropHandler)
@@ -311,4 +423,5 @@ func init() {
 	Default.Register("db.postgres.revoke", dbPgRevokeHandler)
 	Default.Register("db.postgres.list_dbs", dbPgListHandler)
 	Default.Register("db.postgres.dump", dbPgDumpHandler)
+	Default.Register("db.postgres.revoke_public_access", dbPgRevokePublicHandler)
 }
