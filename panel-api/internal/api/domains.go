@@ -326,8 +326,9 @@ type updateDomainRequest struct {
 	// for a non-admin PATCH (pointer pattern), never 403.
 	BotChallengeExempt *bool `json:"bot_challenge_exempt,omitempty"`
 	// BotChallengeInclude — per-domain opt-IN, effective only when the
-	// server-wide bot-detection scope is "selected". Admin-only (same reasoning;
-	// the switch lives in admin DomainEdit).
+	// server-wide bot-detection scope is "selected". Owner or admin (#1467):
+	// opting a site in only adds protection. Set in the owner-or-admin section
+	// of update, not the admin-only block.
 	BotChallengeInclude *bool `json:"bot_challenge_include,omitempty"`
 	// GH #648 (DMARCbis): per-domain settable np (non-existent subdomain
 	// policy) + t=y testing tag, folded into the canonical _dmarc record.
