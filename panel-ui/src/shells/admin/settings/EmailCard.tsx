@@ -11,7 +11,7 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { MailOutlined, ReloadOutlined } from "@icons";
-import { Alert, Badge, Button, Card, Descriptions, Input, Skeleton, Space, Tag, Typography } from "antd";
+import { Alert, Badge, Button, Card, Descriptions, Input, Skeleton, Space, Table, Tag, Typography } from "antd";
 
 import { extractApiError } from "../../../apiErrors";
 import { feedback } from "../../../lib/feedback";
@@ -22,6 +22,7 @@ import {
   type MailHostnameSwitchover,
   type SettingsEmailReady,
 } from "../../../hooks/useSettingsEmail";
+import { useServerCapabilities } from "../../../hooks/useServerCapabilities";
 
 export const EmailCard = () => {
   const { t } = useTranslation();
@@ -125,6 +126,9 @@ const MailHostnameChange = ({ data }: { data: SettingsEmailReady }) => {
   const cancel = useCancelMailHostname();
   const derived = `mail.${data.primaryDomainName}`;
   const sw = data.switchover;
+  // The records are listed for the name being typed or, with nothing typed,
+  // for the change in progress.
+  const recordsFor = asHostname(name) ?? (sw && sw.status !== "done" ? sw.desired : null);
   const issuing = sw?.status === "issuing";
   const busy = request.isPending || cancel.isPending;
 
@@ -183,8 +187,82 @@ const MailHostnameChange = ({ data }: { data: SettingsEmailReady }) => {
           </Button>
         )}
       </div>
+      <DnsRecordsGuide name={recordsFor} />
       <Typography.Paragraph type="secondary" style={{ marginTop: 8, marginBottom: 0 }}>
         {t("emailcard.mail_hostname_help", { derived, domain: data.primaryDomainName })}
+      </Typography.Paragraph>
+    </div>
+  );
+};
+
+// asHostname returns value as a lowercase hostname, or null when it is not
+// one (a URL, an IP address, a single label). The server validates the name;
+// this only decides whether to list DNS records for it.
+function asHostname(value: string): string | null {
+  const host = value.trim().toLowerCase();
+  const labels = host.split(".");
+  if (host.length > 253 || labels.length < 2) return null;
+  const label = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+  if (!labels.every((l) => label.test(l)) || !/[a-z]/.test(labels[labels.length - 1])) return null;
+  return host;
+}
+
+// DnsRecordsGuide lists the records the admin creates for a new mail
+// hostname before the change can apply (JAB-390). The switchover checks that
+// public DNS returns the server's public IPv4 for the name, so the A record
+// is required and a missing public IPv4 is a warning. An AAAA record is
+// listed only when the server has a public IPv6.
+const DnsRecordsGuide = ({ name }: { name: string | null }) => {
+  const { t } = useTranslation();
+  const { data: caps } = useServerCapabilities();
+  if (!caps) return null;
+  const ipv4 = caps.public_ipv4;
+  const ipv6 = caps.public_ipv6;
+  if (!ipv4) {
+    return <Alert type="warning" showIcon style={{ marginTop: 8 }} message={t("emailcard.dns_no_public_ipv4")} />;
+  }
+  if (!name) {
+    return (
+      <Typography.Paragraph type="secondary" style={{ marginTop: 8, marginBottom: 0 }}>
+        {t("emailcard.dns_hint", { ipv4 })}
+      </Typography.Paragraph>
+    );
+  }
+  const rows = [{ type: "A", value: ipv4 }, ...(ipv6 ? [{ type: "AAAA", value: ipv6 }] : [])];
+  return (
+    <div style={{ marginTop: 12 }}>
+      <Typography.Text strong>{t("emailcard.dns_records_title")}</Typography.Text>
+      <Table
+        aria-label={t("emailcard.dns_records_table")}
+        size="small"
+        pagination={false}
+        rowKey="type"
+        dataSource={rows}
+        style={{ marginTop: 4, maxWidth: 640 }}
+        columns={[
+          { title: t("emailcard.dns_type"), dataIndex: "type", width: 72 },
+          {
+            title: t("emailcard.dns_name"),
+            key: "name",
+            render: () => (
+              <Typography.Text copyable style={{ wordBreak: "break-all" }}>
+                {name}
+              </Typography.Text>
+            ),
+          },
+          {
+            title: t("emailcard.dns_value"),
+            dataIndex: "value",
+            render: (v: string) => (
+              <Typography.Text copyable style={{ wordBreak: "break-all" }}>
+                {v}
+              </Typography.Text>
+            ),
+          },
+        ]}
+      />
+      <Typography.Paragraph type="secondary" style={{ marginTop: 8, marginBottom: 0 }}>
+        {t("emailcard.dns_records_help")} {ipv6 ? t("emailcard.dns_aaaa_optional") : t("emailcard.dns_no_ipv6")}
       </Typography.Paragraph>
     </div>
   );
