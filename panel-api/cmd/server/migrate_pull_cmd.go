@@ -37,6 +37,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/domainops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate/cloudpanel"
@@ -539,30 +540,35 @@ func resolveOrCreateDestDomain(ctx context.Context, job *models.MigrationJob) {
 		return
 	}
 	uid := *job.TargetUserID
-	domains := repository.NewDomainRepository(sharedDB)
-	if existing, err := domains.FindByName(ctx, dom); err == nil && existing != nil {
+	existing, err := domainRepoFromDB().FindByName(ctx, dom)
+	switch {
+	case err == nil && existing != nil:
 		if existing.UserID != uid {
 			fmt.Printf("  (warning: domain %s exists under another user — not auto-using)\n", dom)
 			return
 		}
-	} else {
-		u, uerr := repository.NewUserRepository(sharedDB).FindByID(ctx, uid)
-		if uerr != nil || u.Username == nil || *u.Username == "" {
+	case err != nil && !errors.Is(err, repository.ErrNotFound):
+		fmt.Printf("  (warning: domain %s lookup failed, not auto-created: %v)\n", dom, err)
+		return
+	default:
+		// The siteurl is the source site's, which the tenant controls, so the
+		// create runs every rule the tenant REST create door runs.
+		deps := domainops.CreateDeps{
+			Domains:      domainRepoFromDB(),
+			Users:        repository.NewUserRepository(sharedDB),
+			Aliases:      repository.NewWebDomainAliasRepository(sharedDB),
+			Packages:     packageRepoFromDB(),
+			Settings:     serverSettingsRepoFromDB(),
+			DNSTemplates: repository.NewDNSTemplateRepository(sharedDB),
+			SharedCerts:  sharedCertRepoFromDB(),
+			Ports:        repository.NewPortAllocationRepository(sharedDB),
+		}
+		res, err := domainops.Create(ctx, deps, domainops.CreateHooks{}, migrationDestDomainInput(uid, dom))
+		if err != nil {
+			fmt.Printf("  (warning: domain %s not auto-created: %v)\n", dom, err)
 			return
 		}
-		docRoot := filepath.Join("/home", *u.Username, "domains", dom, "public_html")
-		now := time.Now().UTC()
-		me, sk := models.DeriveMailFlags(models.MailProviderNone)
-		row := &models.Domain{
-			ID: ids.NewULID(), UserID: uid, Name: dom, DocRoot: docRoot,
-			IsEnabled: true, SSLMode: models.SSLModeLE, SSLEnabled: models.SSLEnabledForMode(models.SSLModeLE),
-			MailProvider: models.MailProviderNone, EmailEnabled: me, SkipAutoSAN: sk,
-			CreatedAt: now, UpdatedAt: now,
-		}
-		if err := domains.Create(ctx, row); err != nil {
-			fmt.Printf("  (warning: auto-create domain %s failed: %v)\n", dom, err)
-			return
-		}
+		dom = res.Domain.Name
 		fmt.Printf("  \u2192 auto-created domain %s (provisioning in background)\n", dom)
 	}
 	_ = repository.NewMigrationJobRepository(sharedDB).UpdateDestDomain(ctx, job.ID, dom)
@@ -575,7 +581,20 @@ func deriveDomainFromURL(siteurl string) string {
 	if err != nil || u.Hostname() == "" {
 		return ""
 	}
-	return strings.TrimPrefix(u.Hostname(), "www.")
+	return strings.TrimPrefix(domainops.NormalizeDomainName(u.Hostname()), "www.")
+}
+
+// migrationDestDomainInput is the create request for a migration's
+// auto-detected destination domain. The job's owner is the owner and the
+// actor is a tenant, whoever started the job: the name comes from the source
+// site. Mail stays off, as before; an operator enables it later.
+func migrationDestDomainInput(ownerID, name string) domainops.CreateInput {
+	return domainops.CreateInput{
+		OwnerID:      ownerID,
+		Name:         name,
+		ActorIsAdmin: false,
+		MailProvider: models.MailProviderNone,
+	}
 }
 
 // pullWordPressPlugin (GH #648) pulls a WordPress site from the jabali-migrator
