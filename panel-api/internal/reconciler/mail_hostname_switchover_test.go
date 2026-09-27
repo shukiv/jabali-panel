@@ -42,6 +42,11 @@ type fakeSwitchoverRepo struct {
 	claims    []string
 	fails     []swFail
 	completes []swComplete
+	pins      []string
+	pinOK     bool
+	pinErr    error
+	onPin     func(string)
+	onLost    func()
 }
 
 func (f *fakeSwitchoverRepo) Get(context.Context) (*models.MailHostnameSwitchover, error) {
@@ -64,6 +69,16 @@ func (f *fakeSwitchoverRepo) Fail(_ context.Context, desired, msg string, retryA
 func (f *fakeSwitchoverRepo) Complete(_ context.Context, desired string, applied *string, _, _, _ time.Time) error {
 	f.completes = append(f.completes, swComplete{desired: desired, applied: applied})
 	return nil
+}
+func (f *fakeSwitchoverRepo) PinApplied(_ context.Context, name string) (bool, error) {
+	f.pins = append(f.pins, name)
+	if f.pinOK && f.onPin != nil {
+		f.onPin(name)
+	}
+	if !f.pinOK && f.pinErr == nil && f.onLost != nil {
+		f.onLost()
+	}
+	return f.pinOK, f.pinErr
 }
 
 type fakePanelCertRepo struct {
@@ -424,4 +439,146 @@ func TestMailHostnameJMAPAssert_FailureIsRetried(t *testing.T) {
 	f.r.reconcileMailHostnameSwitchover(context.Background())
 
 	assert.Len(t, f.callsTo("webmail.jmap_url.apply"), 2, "a failed apply is not stamped")
+}
+
+// JAB-389 keeps the panel mail certificate on the name it was issued for when
+// the panel is renamed. With no applied mail hostname, the effective name
+// would follow the new panel hostname, so Bulwark and the webmail vhosts would
+// move to mail.<new-hostname>, a name no certificate covers. The pass records
+// the name the issued Let's Encrypt certificate serves as the applied one, so
+// nothing moves until an admin requests a switchover.
+func renamedPanelFixture(t *testing.T) *swFixture {
+	t.Helper()
+	f := newSwitchoverFixture(t, "", "")
+	row := f.certs.rows[models.PanelCertKindMail]
+	row.Hostname = "mail.old.example.com"
+	row.UseLE = true
+	f.sw.pinOK = true
+	f.sw.onPin = func(name string) { f.settings.MailHostname = &name }
+	return f
+}
+
+func TestMailHostnamePin_RenamedPanelKeepsIssuedMailName(t *testing.T) {
+	f := renamedPanelFixture(t)
+
+	f.r.reconcileMailHostnameSwitchover(context.Background())
+
+	assert.Equal(t, []string{"mail.old.example.com"}, f.sw.pins)
+	jmap := f.callsTo("webmail.jmap_url.apply")
+	require.Len(t, jmap, 1)
+	assert.Equal(t, "mail.old.example.com", jmap[0]["mail_hostname"], "Bulwark stays on the name the certificate serves")
+	assert.Empty(t, f.callsTo("ssl.panel.issue"), "pinning never issues a certificate")
+
+	f.r.reconcileMailHostnameSwitchover(context.Background())
+	assert.Len(t, f.sw.pins, 1, "once applied, the pin is not written again")
+}
+
+func TestMailHostnamePin_NotWritten(t *testing.T) {
+	applied := "mx.example.net"
+	cases := []struct {
+		name   string
+		mutate func(*swFixture)
+		jmap   string
+	}{
+		{"row is the derived name", func(f *swFixture) {
+			f.certs.rows[models.PanelCertKindMail].Hostname = "mail.mx.example.com"
+		}, "mail.mx.example.com"},
+		{"self-signed row follows the hostname", func(f *swFixture) {
+			f.certs.rows[models.PanelCertKindMail].UseLE = false
+		}, "mail.mx.example.com"},
+		{"Let's Encrypt row not issued yet", func(f *swFixture) {
+			f.certs.rows[models.PanelCertKindMail].Status = models.PanelCertStatusPendingACMERetry
+		}, "mail.mx.example.com"},
+		{"row hostname is not a valid name", func(f *swFixture) {
+			f.certs.rows[models.PanelCertKindMail].Hostname = "https://mail.old.example.com/"
+		}, "mail.mx.example.com"},
+		{"row hostname is the panel hostname", func(f *swFixture) {
+			f.certs.rows[models.PanelCertKindMail].Hostname = "mx.example.com"
+		}, "mail.mx.example.com"},
+		{"a name is already applied", func(f *swFixture) {
+			f.settings.MailHostname = &applied
+		}, "mx.example.net"},
+		{"no mail certificate row", func(f *swFixture) {
+			delete(f.certs.rows, models.PanelCertKindMail)
+		}, "mail.mx.example.com"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := renamedPanelFixture(t)
+			tc.mutate(f)
+
+			f.r.reconcileMailHostnameSwitchover(context.Background())
+
+			assert.Empty(t, f.sw.pins)
+			jmap := f.callsTo("webmail.jmap_url.apply")
+			require.Len(t, jmap, 1)
+			assert.Equal(t, tc.jmap, jmap[0]["mail_hostname"])
+		})
+	}
+}
+
+// A pin that did not write must not point Bulwark at the name it tried to
+// pin: after a lost race it uses the name the other writer stored, and after
+// a failed write the name it already had.
+func TestMailHostnamePin_LostOrFailedWrite(t *testing.T) {
+	t.Run("lost the race", func(t *testing.T) {
+		f := renamedPanelFixture(t)
+		f.r.serverSettings = copyingSettingsRepo{&fakeServerSettingsRepo{settings: f.settings}}
+		f.sw.pinOK = false
+		other := "mx.example.net"
+		f.sw.onLost = func() { f.settings.MailHostname = &other }
+
+		f.r.reconcileMailHostnameSwitchover(context.Background())
+
+		assert.Len(t, f.sw.pins, 1)
+		jmap := f.callsTo("webmail.jmap_url.apply")
+		require.Len(t, jmap, 1)
+		assert.Equal(t, "mx.example.net", jmap[0]["mail_hostname"], "the stored name wins")
+	})
+	t.Run("write failed", func(t *testing.T) {
+		f := renamedPanelFixture(t)
+		f.sw.pinOK, f.sw.pinErr = false, errors.New("db down")
+
+		f.r.reconcileMailHostnameSwitchover(context.Background())
+
+		assert.Len(t, f.sw.pins, 1)
+		jmap := f.callsTo("webmail.jmap_url.apply")
+		require.Len(t, jmap, 1)
+		assert.Equal(t, "mail.mx.example.com", jmap[0]["mail_hostname"])
+	})
+}
+
+// copyingSettingsRepo returns a fresh copy on every Get, as the database
+// does, so a memoized snapshot cannot see a later write through a shared
+// pointer.
+type copyingSettingsRepo struct {
+	*fakeServerSettingsRepo
+}
+
+func (c copyingSettingsRepo) Get(ctx context.Context) (*models.ServerSettings, error) {
+	s, err := c.fakeServerSettingsRepo.Get(ctx)
+	if err != nil || s == nil {
+		return s, err
+	}
+	cp := *s
+	return &cp, nil
+}
+
+// Later passes in the same tick (webmail vhosts, sendmail credentials) read
+// the pinned name, not the snapshot taken before the pin.
+func TestMailHostnamePin_LaterPassesInTheTickSeeIt(t *testing.T) {
+	f := renamedPanelFixture(t)
+	f.r.serverSettings = copyingSettingsRepo{&fakeServerSettingsRepo{settings: f.settings}}
+	ctx, rr := withRun(context.Background(), RunNormal)
+	defer rr.finish()
+	if s, _ := f.r.settingsGet(ctx); s.MailHostname != nil {
+		t.Fatal("precondition: nothing applied before the pass")
+	}
+
+	f.r.reconcileMailHostnameSwitchover(ctx)
+
+	s, err := f.r.settingsGet(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, s.MailHostname)
+	assert.Equal(t, "mail.old.example.com", *s.MailHostname)
 }

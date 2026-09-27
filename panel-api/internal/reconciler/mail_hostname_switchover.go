@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/mailhostops"
@@ -38,6 +39,9 @@ const (
 // marks the request done. Every failure leaves the applied name alone and
 // records the reason on the request.
 //
+// Before that, a panel renamed with nothing applied gets the name its issued
+// mail certificate serves pinned as the applied one (pinIssuedMailHostname).
+//
 // It runs right after the panel-cert pass. The run's settings snapshot is
 // not refreshed after a switchover, so later passes in the same tick (the
 // webmail vhost sweep) still see the old name; their fingerprints change
@@ -50,11 +54,64 @@ func (r *Reconciler) reconcileMailHostnameSwitchover(ctx context.Context) {
 	if err != nil || settings == nil || settings.Hostname == "" {
 		return
 	}
+	r.pinIssuedMailHostname(ctx, settings)
 	effective := models.EffectiveMailHostname(settings.MailHostname, settings.Hostname)
 	if applied, ok := r.runMailHostnameSwitchover(ctx, settings); ok {
 		effective = applied
 	}
 	r.assertWebmailJMAPURL(ctx, effective)
+}
+
+// pinIssuedMailHostname keeps the mail hostname on the name the issued
+// panel mail certificate serves when the panel is renamed.
+//
+// JAB-389 keeps that certificate, and its row, on the name it was issued for
+// across a rename. With no applied mail hostname the effective one would
+// follow the new panel hostname, so Bulwark and the webmail vhosts would move
+// to mail.<new-hostname>, a name no certificate covers and whose DNS may not
+// exist. When nothing is applied and an issued Let's Encrypt mail certificate
+// serves a valid name other than mail.<hostname>, that name is recorded as
+// the applied one. Moving mail to mail.<new-hostname> is then a switchover
+// request like any other.
+//
+// A self-signed mail certificate is not pinned: it is regenerated for the
+// current hostname, so its row name is stale by design. On success, or when
+// another writer applied a name first, s is updated and the run's settings
+// snapshot dropped, so later passes in this tick see the stored name.
+func (r *Reconciler) pinIssuedMailHostname(ctx context.Context, s *models.ServerSettings) {
+	if r.mailHostSwitchover == nil || r.panelCerts == nil || s.MailHostname != nil {
+		return
+	}
+	row, err := r.panelCerts.GetByKind(ctx, models.PanelCertKindMail)
+	if err != nil {
+		if !errors.Is(err, repository.ErrNotFound) {
+			r.log.Warn("mail hostname pin: load mail cert row", "error", err)
+		}
+		return
+	}
+	if !row.UseLE || row.Status != models.PanelCertStatusIssued {
+		return
+	}
+	name, err := models.ValidateMailHostname(row.Hostname)
+	if err != nil || name == models.PanelMailHostname(s.Hostname) || strings.EqualFold(name, s.Hostname) {
+		return
+	}
+	wrote, err := r.mailHostSwitchover.PinApplied(ctx, name)
+	if err != nil {
+		r.log.Warn("mail hostname pin failed", "mail_hostname", name, "error", err)
+		return
+	}
+	r.settingsForget(ctx)
+	if !wrote {
+		// Another writer applied a name first; use what is stored.
+		if fresh, ferr := r.settingsGet(ctx); ferr == nil && fresh != nil {
+			s.MailHostname = fresh.MailHostname
+		}
+		return
+	}
+	s.MailHostname = &name
+	r.log.Info("mail hostname pinned to the issued mail certificate after a panel rename",
+		"mail_hostname", name, "panel_hostname", s.Hostname)
 }
 
 // runMailHostnameSwitchover runs one due switchover attempt. It returns the

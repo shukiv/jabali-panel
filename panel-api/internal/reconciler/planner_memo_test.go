@@ -219,3 +219,34 @@ func TestTickMemo_EntryPointsFinishTheirRun(t *testing.T) {
 		})
 	}
 }
+
+// A pass that writes the server settings mid-run (the JAB-389 mail hostname
+// pin) drops the run's memoized copy, so later passes in the same run read
+// the new row instead of the snapshot taken before the write.
+func TestTickMemo_SettingsForgetRereads(t *testing.T) {
+	name := "mail.old.example.com"
+	base := &fakeServerSettingsRepo{settings: &models.ServerSettings{Hostname: "mx.example.com"}}
+	counting := &countingSettingsRepo{ServerSettingsRepository: base}
+	r := &Reconciler{serverSettings: counting}
+	ctx, rr := withRun(context.Background(), RunNormal)
+	defer rr.finish()
+
+	first, err := r.settingsGet(ctx)
+	if err != nil || first.MailHostname != nil {
+		t.Fatalf("first read = %+v, %v", first, err)
+	}
+	base.settings = &models.ServerSettings{Hostname: "mx.example.com", MailHostname: &name}
+	if again, _ := r.settingsGet(ctx); again.MailHostname != nil {
+		t.Fatal("without a forget the run keeps its snapshot")
+	}
+
+	r.settingsForget(ctx)
+	after, err := r.settingsGet(ctx)
+	if err != nil || after.MailHostname == nil || *after.MailHostname != name {
+		t.Fatalf("after forget = %+v, %v; want the written mail hostname", after, err)
+	}
+	if got := counting.gets.Load(); got != 2 {
+		t.Fatalf("repository reads = %d, want 2 (one per snapshot)", got)
+	}
+	r.settingsForget(context.Background()) // outside a run: a no-op
+}
