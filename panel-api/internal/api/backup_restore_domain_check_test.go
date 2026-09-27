@@ -78,7 +78,13 @@ func TestRestoreDomainCheck_RefusesWhatCreateRefuses(t *testing.T) {
 			r.DocRoot = "/etc/nginx"
 			return r
 		}(), "alice", domainops.ErrDocRootOutsideHome},
-		{"no owner username", rdcRow("site.org"), "", nil},
+		// With no username the home prefix degenerates to "/home//", which
+		// "/home//bob/..." would match — another tenant's home.
+		{"no owner username", func() *models.Domain {
+			r := rdcRow("site.org")
+			r.DocRoot = "/home//bob/public_html"
+			return r
+		}(), "", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := check(context.Background(), tc.row, tc.user)
