@@ -1,65 +1,30 @@
 # Notifications
 
-M14. Redis Streams dispatcher → 6 channels → in-app + admin event sources.
+M14. Events go to the in-app bell and to every enabled channel. A Redis stream feeds a dispatcher that runs inside the panel process.
 
 ## Channels
 
-Admin configures channels at `/jabali-admin/notifications/channels`:
+Admins configure the server-wide channels at `/jabali-admin/notifications/channels`: Email, Slack, Discord, Telegram, ntfy, Webhook, SMS and Web Push. The in-app bell always gets every event that is on. See [Channels](./admin/notifications-channels.md).
 
-| Channel | Config |
-|---|---|
-| **In-app** | Always-on. Bell dropdown top-right. |
-| **Email** | SMTP submission via the panel's own Stalwart. |
-| **Slack** | Webhook URL. |
-| **Telegram** | Bot token + chat ID. |
-| **ntfy.sh** | Topic URL (works against `ntfy.sh` or a self-hosted ntfy server). |
-| **Web Push** | VAPID keys auto-generated on first install; users opt-in per browser via the bell. |
+## Events
 
-## Event sources
+`/jabali-admin/notifications/events` lists every event the panel can send (64 today) and turns each one on or off for the whole server. See [Events](./admin/notifications-events.md) for the full catalog.
 
-Built-in (M14 Step 4 and later):
+## Where an event goes
 
-- `cert_renew` — Let's Encrypt issuance / renewal success or failure.
-- `disk_full` — quota high-water-mark hit per user.
-- `service_down` — any of the watched services failed to start, restarted unexpectedly, or is in `failed` state.
-- `crowdsec_spike` — sudden spike in decisions or alerts.
-- `domain_expiry` — re-interpreted as cert expiry (no WHOIS in scope).
-- `aide_diff` — host-integrity drift detected.
-- `cron_failed` — a systemd-user cron timer's service unit returned non-zero.
-- `backup_succeeded` / `backup_failed`.
-- `mail_quarantined` — Stalwart / async YARA quarantined a message.
-- `malware_file_hit` — M33 detector hit.
-- `db_root_rotated` — admin rotated DB root password.
-- `ssh_login` — a shell / SFTP login to an account. Per account, the owner can
-  keep a **per-account ignore list** so logins from known hosts / users don't
-  notify (GH #1436).
-
-Stub sources defined but not yet wired: `domain-registrar`, `backup-future-warnings`.
-
-## Routing
-
-`/jabali-admin/notifications/routing` — per-event-source → per-channel mapping with a severity threshold. Examples:
-
-- `cert_renew` failures → Email + In-app (admins).
-- `cert_renew` success → In-app only.
-- `crowdsec_spike` → Slack #ops + ntfy.
+There are no routing rules. An event that is on goes to the bell and to every enabled server-wide channel. An event about one tenant also goes to that tenant's own channels that they routed it to. See [Routing](./admin/notifications-routing.md).
 
 ## Test
 
-`/jabali-admin/notifications/test` — fire a test event of any kind to verify routing.
+Click **Test** on a channel's row, or run `jabali notification broadcast --title "…"` to reach every enabled channel. See [Test](./admin/notifications-test.md).
 
 ## Architecture
 
-- Producers emit a row into Redis Streams `jabali:notifications`.
-- The dispatcher (in-process, single consumer per panel instance) reads the stream, looks up routing rules, calls each enabled sender.
-- Senders are pure adapters; adding a new channel is one Go file under `panel-api/internal/notifications/senders/`.
-- ADRs 0056-0059 cover the data model, sender interface, Web Push, and the bell dropdown.
-
-## End-user opt-in
-
-Users can opt **in** for `cron_failed`, `backup_succeeded`, `backup_failed`, `mail_quarantined` notifications to their own email — `/jabali-panel/profile` → Notifications.
-
-Per-event subscription scope is bounded by ownership: a user cannot subscribe to `crowdsec_spike` for the whole server, only to events affecting their own account.
+- Producers add each event to the Redis stream `jabali:notifications:queue`.
+- The dispatcher inside the panel process reads the stream and checks whether the event is on. It writes the bell row, then calls the sender for each target channel.
+- A failed delivery is retried. After 5 tries, the event moves to `jabali:notifications:dlq` (the **Dead Letter** tab). A channel that fails 3 times in a row is disabled.
+- Senders are adapters. Adding a new channel kind means one Go file under `panel-api/internal/notifications/senders/`.
+- ADRs 0056-0059 cover the data model, the sender interface, Web Push, and the bell dropdown.
 
 ## Per-user (tenant) channels — JAB-171
 

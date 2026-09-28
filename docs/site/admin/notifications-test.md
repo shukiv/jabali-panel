@@ -1,36 +1,26 @@
 # Notifications — Test
 
-`/jabali-admin/notifications/test`. Fire a synthetic event through the dispatcher to verify channel and routing configuration without waiting for a real event.
+The panel has no separate test page. You can test notifications in two ways.
 
-## Inputs
+## Test one channel
 
-- **Event source** — pick from the registered event sources (see [Events](./notifications-events.md)).
-- **Severity** — choose the severity level the synthetic event will carry.
-- **Subject user** — optional; defaults to the actor admin. Used when a routing rule includes "subject user" in the recipient filter.
-- **Payload** — auto-generated representative payload; editable as JSON if you want to exercise specific routing branches.
+On [Channels](./notifications-channels.md), click **Test** on the channel's row. The panel sends that channel a test message. If the message arrives, the channel's credentials and connection work. If it does not arrive, check the channel's token, URL or chat ID.
 
-## Flow
+From a shell:
 
-On submit:
+```bash
+jabali notification channels test <id>
+```
 
-1. The panel writes a `test=true` row into the Redis Stream the dispatcher consumes.
-2. The dispatcher reads the row, applies [Routing](./notifications-routing.md), and calls each matched sender.
-3. Each sender returns a per-attempt result captured in the right-hand pane.
+## Test every channel
 
-The right pane updates within seconds with per-channel deliverability outcome: HTTP status (for webhooks), SMTP response (for email), Web Push response, in-app insert count.
+A broadcast sends one message to every enabled channel:
 
-## Reading the results
+```bash
+jabali notification broadcast --title "Test" --body "Checking every channel" --severity info
+```
 
-- **Channel ok** — credentials and connectivity verified.
-- **Channel fail, code visible** — credentials wrong or the destination returned a non-2xx; check the configured token, URL, or chat ID.
-- **No channels invoked** — no routing rule matched the synthetic event with the chosen severity. Adjust the rule or the threshold.
+## When to test
 
-## When to use this page
-
-- After adding a new channel.
-- After editing a routing rule and wanting to confirm a particular event-source path matches as intended.
-- When investigating a reported notification gap: fire a test event of the same source and severity, observe whether the expected channel triggers.
-
-## Audit
-
-Test events are tagged in the audit log as `notification.test`. The dispatcher's structured logs include `test=true` so they are easy to filter out of production reporting.
+- After you add or edit a channel.
+- When a notification you expected did not arrive. First check that its event is on under [Events](./notifications-events.md). Then check that the channel is enabled; the panel turns off a channel after 3 failures in a row.

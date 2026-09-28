@@ -34,7 +34,7 @@ A schedule may target multiple destinations. Restic writes to each in turn. Band
 
 ## Health
 
-The Destinations tab shows the last-test result per row. The reconciler re-tests destinations daily; failures fire the `backup_failed` notification event source ([Notifications Events](./notifications-events.md)).
+The panel tests a destination only when you click **Test** or run `jabali backup destination test`. It does not re-test destinations on a schedule. A backup that fails fires `backup.fail` ([Notifications Events](./notifications-events.md)).
 
 ## Removing a destination
 

@@ -32,7 +32,7 @@ Things deliberately excluded: `/var`, `/tmp`, `/home`, `/proc`, `/sys`, mailbox 
 
 ## Notifications
 
-The `aide_diff` event source (M14) fires when a scan reports any difference. Route it to the operator under [Notifications Routing](./notifications-routing.md).
+The `aide.tamper.detected` event fires when a scan reports a change to a monitored file. It goes to the bell and to every enabled channel; see [Notifications Routing](./notifications-routing.md).
 
 ## Trust before incident
 
@@ -40,7 +40,7 @@ The first few `jabali update` runs after install will produce AIDE diffs as the 
 
 ## When AIDE fires alone
 
-If AIDE fires `aide_diff` and nothing else has changed (no `jabali update`, no operator action), treat it as a high-severity signal: a file outside the panel's drop-in paths has been modified. Pair with [Audit Log](./audit-log.md) and [CrowdSec Decisions](./crowdsec-decisions.md) to triangulate.
+If AIDE fires `aide.tamper.detected` and nothing else has changed (no `jabali update`, no operator action), treat it as a high-severity signal: a file outside the panel's drop-in paths has been modified. Pair with [Audit Log](./audit-log.md) and [CrowdSec Decisions](./crowdsec-decisions.md) to triangulate.
 
 ## CLI
 
