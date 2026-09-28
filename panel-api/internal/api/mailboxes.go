@@ -135,6 +135,9 @@ type createMailboxResponse struct {
 	Password string `json:"password,omitempty"`
 }
 
+// mailboxPasswordRule is the weak_password detail for create and rotate.
+const mailboxPasswordRule = "a mailbox password needs at least 8 characters and at most 72 bytes; leave it empty to generate one"
+
 type rotateMailboxPasswordRequest struct {
 	// NewPassword — optional. If empty, server generates one and
 	// returns it reveal-once.
@@ -272,6 +275,8 @@ func (h *mailboxHandler) create(c *gin.Context) {
 			c.JSON(http.StatusConflict, gin.H{"error": "mailbox_exists"})
 		case errors.Is(err, mailboxops.ErrQuotaTooSmall):
 			c.JSON(http.StatusBadRequest, gin.H{"error": "quota_too_small", "detail": "quota_bytes must be at least 16 MiB"})
+		case errors.Is(err, mailboxops.ErrWeakPassword):
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "weak_password", "detail": mailboxPasswordRule})
 		default:
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		}
@@ -430,6 +435,10 @@ func (h *mailboxHandler) rotatePassword(c *gin.Context) {
 	if err != nil {
 		if errors.Is(err, mailboxops.ErrNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "mailbox_not_found"})
+			return
+		}
+		if errors.Is(err, mailboxops.ErrWeakPassword) {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "weak_password", "detail": mailboxPasswordRule})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})

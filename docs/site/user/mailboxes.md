@@ -14,7 +14,9 @@
 ## Actions
 
 - **Create** — opens the create wizard. Pick the local part, the domain, the quota (within your package's per-mailbox cap), and either supply a password or let the panel generate one (shown once on the success page).
-- **Change password** — generates a new password (shown once) or accepts a supplied one. Stalwart hashes it with Argon2id.
+- **Change password** — generates a new password (shown once) or accepts a supplied one.
+
+A password you supply needs at least 8 characters and at most 72 bytes. The API and the `jabali mailbox` commands refuse anything else (`422 weak_password`). The panel stores a bcrypt hash of it, plus an encrypted copy used only for one-click webmail sign-in.
 - **Set quota** — change the per-mailbox disk quota. Reduces are accepted but do not delete existing mail; the mailbox simply rejects new mail until reduced under the limit.
 - **Open webmail** — single-click sign-in to Bulwark webmail via the self-deleting SSO file (60-second TTL, 256-bit nonce filename).
 - **Delete** — destructive. The agent removes the Stalwart account and the mailbox storage.

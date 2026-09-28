@@ -777,6 +777,7 @@ paths:
                   items: { type: array, items: { $ref: "#/components/schemas/Mailbox" } }
     post:
       tags: [Mailboxes]
+      summary: Create a mailbox on a domain
       parameters: [ { in: path, name: id, required: true, schema: { type: string, format: ulid } } ]
       requestBody:
         required: true
@@ -784,13 +785,20 @@ paths:
           application/json:
             schema:
               type: object
-              required: [local_part, password, quota_mb]
+              required: [local_part]
               properties:
                 local_part: { type: string, example: alice }
-                password:   { type: string, format: password, minLength: 12 }
-                quota_mb:   { type: integer, example: 1024 }
+                password: { type: string, format: password, minLength: 8, description: "At least 8 characters and at most 72 bytes. Omit to have the panel generate one." }
+                quota_bytes: { type: integer, minimum: 16777216, description: "Default 1 GiB; at least 16 MiB." }
+                display_name: { type: string, description: The sender name webmail shows. }
+                send_only: { type: boolean, description: Can sign in to send but never receives mail. }
       responses:
-        "201": { description: Created }
+        "201": { description: "{ id, email, quota_bytes, display_name, send_only, password }: password only when the panel generated it, shown once" }
+        "400": { description: "invalid_request, invalid_local_part or quota_too_small" }
+        "403": { description: Not your domain }
+        "404": { description: Domain not found }
+        "409": { description: "email_not_enabled or mailbox_exists" }
+        "422": { description: "weak_password: under 8 characters or over 72 bytes" }
 
   # ------------------------------------------------------- Applications ---
 
@@ -4067,10 +4075,11 @@ paths:
             schema:
               type: object
               properties:
-                new_password: { type: string, format: password, description: Omit to have the panel generate one. }
+                new_password: { type: string, format: password, minLength: 8, description: "Omit to have the panel generate one. At least 8 characters and at most 72 bytes." }
       responses:
         "200": { description: "{ password }: set only when the panel generated it; shown once" }
         "404": { description: Mailbox not found }
+        "422": { description: "weak_password: new_password is shorter than 8 characters or longer than 72 bytes" }
 
   /mailboxes/{mbid}/send-as:
     get:

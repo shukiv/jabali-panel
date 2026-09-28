@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"golang.org/x/crypto/bcrypt"
 
@@ -34,6 +35,12 @@ const (
 	DefaultQuotaBytes uint64 = 1 << 30          // 1 GiB
 	MinQuotaBytes     uint64 = 16 * 1024 * 1024 // 16 MiB floor
 	BcryptCost               = bcrypt.DefaultCost
+	// A caller-supplied password is an IMAP/SMTP/webmail credential the
+	// internet can try: at least PasswordMinChars characters (what both
+	// mailbox forms ask for), at most PasswordMaxBytes bytes (bcrypt hashes
+	// no more; a longer one used to fail the hash and answer 500).
+	PasswordMinChars = 8
+	PasswordMaxBytes = 72
 )
 
 // NotifyFunc is the best-effort agent notify (ADR-0013): its errors are
@@ -58,6 +65,7 @@ var (
 	ErrInvalidLocalPart = errors.New("mailboxops: invalid local part")
 	ErrMailboxExists    = errors.New("mailboxops: mailbox already exists")
 	ErrQuotaTooSmall    = errors.New("mailboxops: quota below the 16 MiB floor")
+	ErrWeakPassword     = errors.New("mailboxops: password must be at least 8 characters and at most 72 bytes")
 	ErrNotFound         = errors.New("mailboxops: mailbox not found")
 	ErrAgentUnavailable = errors.New("mailboxops: agent not configured")
 	ErrDeps             = errors.New("mailboxops: dependencies not wired")
@@ -107,6 +115,8 @@ func Create(ctx context.Context, d Deps, in CreateInput, notify NotifyFunc) (*mo
 	if password == "" {
 		password = ids.NewSecret()
 		generated = password
+	} else if err := checkPassword(password); err != nil {
+		return nil, "", err
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), BcryptCost)
 	if err != nil {
@@ -275,6 +285,11 @@ func RotatePassword(ctx context.Context, d Deps, email, newPassword string, noti
 	if d.Mailboxes == nil {
 		return "", fmt.Errorf("%w: mailboxes repo required", ErrDeps)
 	}
+	if newPassword != "" {
+		if err := checkPassword(newPassword); err != nil {
+			return "", err
+		}
+	}
 	mb, err := d.Mailboxes.FindByEmail(ctx, email)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
@@ -362,4 +377,15 @@ func sealIfKey(key *ssokey.Key, password string) ([]byte, error) {
 		return nil, nil
 	}
 	return key.Seal([]byte(password))
+}
+
+// checkPassword bounds a caller-supplied password (see PasswordMinChars).
+// Characters, not bytes, set the floor, so a non-ASCII password is not
+// rejected for being short in characters but long in bytes; the ceiling is
+// bytes, because that is what bcrypt limits.
+func checkPassword(p string) error {
+	if utf8.RuneCountInString(p) < PasswordMinChars || len(p) > PasswordMaxBytes {
+		return ErrWeakPassword
+	}
+	return nil
 }
