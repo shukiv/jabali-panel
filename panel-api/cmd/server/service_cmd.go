@@ -1,8 +1,9 @@
 // Admin service action CLI (Gitea #557). Mirrors POST /admin/services/:name/
 // :action (admin_services.go): the same action allowlist (restart/start/stop/
 // reload/enable/disable -> service.<action>), the same service-name regex, and
-// the same self-destruct protection (stop/disable on jabali-panel/jabali-agent/
-// mariadb is hard-blocked). Disruptive actions require --force. After a
+// the same self-destruct protection (api.IsPanelSelfDestruct: stop/disable on
+// jabali-panel, jabali-agent, jabali-kratos, mariadb, nginx and redis-server is
+// hard-blocked). Disruptive actions require --force. After a
 // successful action the refreshed service status is shown. Mutations CLI-audited.
 package main
 
@@ -14,6 +15,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/api"
 )
 
 var (
@@ -21,10 +24,8 @@ var (
 		"restart": "service.restart", "start": "service.start", "stop": "service.stop",
 		"reload": "service.reload", "enable": "service.enable", "disable": "service.disable",
 	}
-	cliServiceNameRe       = regexp.MustCompile(`^[a-zA-Z0-9._@-]+$`)
-	cliSelfDestructUnits   = map[string]bool{"jabali-panel": true, "jabali-agent": true, "mariadb": true}
-	cliSelfDestructActions = map[string]bool{"stop": true, "disable": true}
-	cliDisruptiveActions   = map[string]bool{"stop": true, "restart": true, "disable": true}
+	cliServiceNameRe     = regexp.MustCompile(`^[a-zA-Z0-9._@-]+$`)
+	cliDisruptiveActions = map[string]bool{"stop": true, "restart": true, "disable": true}
 )
 
 func newServiceCmd() *cobra.Command {
@@ -66,7 +67,7 @@ func newServiceActionCmd() *cobra.Command {
 			if !ok {
 				return fmt.Errorf("unsupported action %q (restart|start|stop|reload|enable|disable)", action)
 			}
-			if cliSelfDestructUnits[name] && cliSelfDestructActions[action] {
+			if api.IsPanelSelfDestruct(name, action) {
 				return fmt.Errorf("%s on %s would brick the management plane and is blocked", action, name)
 			}
 			if cliDisruptiveActions[action] && !force {

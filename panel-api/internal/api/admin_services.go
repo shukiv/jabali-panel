@@ -86,6 +86,13 @@ var (
 	}
 )
 
+// IsPanelSelfDestruct reports whether running action on unit (no ".service"
+// suffix) would lock the operator out of the management plane. The `jabali
+// service action` CLI asks this so it refuses exactly what this API refuses.
+func IsPanelSelfDestruct(unit, action string) bool {
+	return panelSelfDestructUnits[unit] && panelSelfDestructActions[action]
+}
+
 func (h *adminServicesHandler) action(c *gin.Context) {
 	name := c.Param("name")
 	action := c.Param("action")
