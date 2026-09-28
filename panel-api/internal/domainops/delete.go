@@ -139,7 +139,8 @@ type teardownStep struct {
 
 // ExecuteTeardown runs the host-side teardown for a domain whose panel row is
 // already gone: Stalwart account purge, nginx vhost removal (domain.delete also
-// reaps the mail vhost, relay credential, and logs), and the pdns zone. Every
+// reaps the mail vhost, relay credential, and logs), the pdns zone and the
+// box's recursor forward for the name. Every
 // step is idempotent agent-side, so retries are safe. An error means the
 // tombstone must stay for the reconciler to retry.
 func ExecuteTeardown(ctx context.Context, ag agent.AgentInterface, name string) error {
@@ -164,6 +165,22 @@ func ExecuteTeardown(ctx context.Context, ag agent.AgentInterface, name string) 
 			// That is a permanent condition, not a transient failure — a
 			// tombstone must not retry it forever.
 			if err != nil && strings.Contains(err.Error(), "powerdns backend not available") {
+				return nil
+			}
+			return err
+		}},
+		// The box's pdns-recursor forward (ADR-0047). The reconciler removes
+		// it only for a site still on disk with no row, and the vhost is
+		// gone by now, so without this step the forward outlived the zone:
+		// the box itself could no longer resolve the deleted name. A missing
+		// forwards file is a no-op on the agent. A name the recursor refuses
+		// as invalid was never added, so there is nothing to remove.
+		{"pdns.recursor_remove_zone", func(ctx context.Context) error {
+			cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			defer cancel()
+			_, err := ag.Call(cctx, "pdns.recursor_remove_zone", map[string]string{"zone": name})
+			var ae *agent.AgentError
+			if errors.As(err, &ae) && ae.Code == agent.CodeInvalidArgument {
 				return nil
 			}
 			return err

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
@@ -24,6 +25,8 @@ import (
 //     the row is already gone.
 //  4. A missing PowerDNS backend (DNS module off) is a permanent
 //     condition, not a retryable failure.
+//  5. The teardown removes the box's recursor forward for the name, so a
+//     deleted domain no longer resolves from a zone that is gone.
 
 // recordedCall is one agent call a test agent saw.
 type recordedCall struct {
@@ -129,7 +132,7 @@ func TestDelete_SyncHappyPath(t *testing.T) {
 	if err != nil || pending {
 		t.Fatalf("pending=%v err=%v", pending, err)
 	}
-	want := []string{"mail.domain.purge_accounts", "domain.delete", "dns.zone.delete"}
+	want := []string{"mail.domain.purge_accounts", "domain.delete", "dns.zone.delete", "pdns.recursor_remove_zone"}
 	got := methods(ag)
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("agent calls %v, want %v (purge must run, and only after the row delete succeeded)", got, want)
@@ -188,6 +191,43 @@ func TestExecuteTeardown_MissingPDNSIsSuccess(t *testing.T) {
 	}}
 	if err := ExecuteTeardown(context.Background(), ag, "gone.example"); err != nil {
 		t.Fatalf("a box without the DNS module must not fail (and retry forever): %v", err)
+	}
+}
+
+// The recursor forward goes with the zone. Before this step a deleted
+// domain's forward stayed in /etc/powerdns/recursor.forwards, pointing the
+// box's own resolver at a zone that no longer exists.
+func TestExecuteTeardown_RemovesTheRecursorForward(t *testing.T) {
+	ag := &selectiveAgent{}
+	if err := ExecuteTeardown(context.Background(), ag, "gone.example"); err != nil {
+		t.Fatalf("teardown: %v", err)
+	}
+	var params any
+	for _, c := range ag.calls {
+		if c.method == "pdns.recursor_remove_zone" {
+			params = c.params
+		}
+	}
+	got, ok := params.(map[string]string)
+	if !ok || got["zone"] != "gone.example" {
+		t.Fatalf("recursor forward not removed for the name: params %#v (calls %v)", params, methods(ag))
+	}
+}
+
+func TestExecuteTeardown_RecursorForwardErrors(t *testing.T) {
+	// A name the recursor refuses as invalid was never added: done.
+	invalid := &selectiveAgent{errByMethod: map[string]error{
+		"pdns.recursor_remove_zone": &agent.AgentError{Code: agent.CodeInvalidArgument, Message: "remove_zone: invalid zone"},
+	}}
+	if err := ExecuteTeardown(context.Background(), invalid, "gone.example"); err != nil {
+		t.Fatalf("an invalid-name answer must not keep the tombstone: %v", err)
+	}
+	// Any other failure keeps the tombstone, so the reconciler retries.
+	down := &selectiveAgent{errByMethod: map[string]error{
+		"pdns.recursor_remove_zone": &agent.AgentError{Code: agent.CodeInternal, Message: "rec_control reload-zones failed"},
+	}}
+	if err := ExecuteTeardown(context.Background(), down, "gone.example"); err == nil {
+		t.Fatal("a failed forward removal must be retried, not dropped")
 	}
 }
 
