@@ -107,7 +107,7 @@ Auto-init: the test action runs `restic init` if the repository doesn't exist. W
 
 ## Full teardown
 
-There is no `jabali --uninstall`. Intended path: redeploy the VM.
+Jabali has no uninstall command. Intended path: redeploy the VM.
 
 If you must keep the host:
 

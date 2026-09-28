@@ -30,5 +30,5 @@ A new operator typically has SPF and DKIM set automatically when the domain is a
 ## CLI
 
 ```bash
-jabali domain email dkim-rotate <domain>
+jabali domain email-dkim-rotate <domain>
 ```

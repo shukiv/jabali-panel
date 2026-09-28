@@ -37,7 +37,7 @@ Every operation here has a CLI equivalent:
 
 ```bash
 jabali user list
-jabali user create --username … --email … --package … --primary-domain …
+jabali user create --username … --email … --password-stdin
 jabali user password <email>
 jabali user 2fa-reset <email>
 jabali user delete <email>

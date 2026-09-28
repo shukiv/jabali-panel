@@ -18,12 +18,12 @@ JABALI_DNS_FORWARDER=192.168.1.1 curl -fsSL https://get.jabali-panel.com | bash
 
 ## 2. First login
 
-The installer prints an admin one-time URL at the end. Open it; you land in `/jabali-admin/dashboard`.
+The installer prints the panel URL, the admin username and a generated password at the end. Sign in with them; you land in `/jabali-admin/dashboard`.
 
-If you missed it, mint a new one:
+If you missed them, set a new password (or print a recovery URL with `--link`):
 
 ```bash
-jabali admin one-time-login
+jabali user password <username>
 ```
 
 ## 3. Set the panel hostname

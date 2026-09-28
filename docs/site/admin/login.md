@@ -14,13 +14,14 @@ Sessions are managed by **Kratos** (M20). The panel itself does not store passwo
 
 ## First admin
 
-Created by the installer. The admin one-time-login URL is printed at the end of `bash install.sh`. If you missed it:
+Created by the installer. The panel URL, the admin username and a generated password are printed at the end of `bash install.sh`. If you missed them:
 
 ```bash
-jabali admin one-time-login
+jabali user password <username>           # sets and prints a new password
+jabali user password <username> --link    # or prints a recovery URL, valid 24 h
 ```
 
-…prints a fresh URL valid for 10 minutes. Land on it → set a password → optionally enrol 2FA.
+Sign in, change the password if you used the printed one, and optionally enrol 2FA.
 
 ## Locked out
 

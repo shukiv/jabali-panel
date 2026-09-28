@@ -49,6 +49,6 @@ Every mutation appends an audit row: `directory_privacy.rule.created`, `…updat
 
 ## Troubleshooting
 
-- **"Renewal failed after enabling /"** ,vhost was generated before the ACME override block was added. Force a reconcile (`jabali admin reconcile <domain>`); the override should appear.
+- **"Renewal failed after enabling /"** ,vhost was generated before the ACME override block was added. The reconciler rewrites the vhost on its next tick (every 60 s); check again after a minute.
 - **"Browser shows realm but rejects every password"** ,confirm the rule has at least one credential pair. Zero-credential rules deny by design.
-- **htpasswd missing on disk** ,usually a reconciler error; check `journalctl -u jabali-reconciler` for the rule ID.
+- **htpasswd missing on disk** ,usually a reconciler error; check `journalctl -u jabali-panel` for the rule ID; the reconciler runs inside the panel process.

@@ -17,10 +17,11 @@ Day-2 operator reference. For day-1 install see [installation.md](./installation
 ### Lock out a panel user
 
 ```bash
-jabali user disable <email|username>
+jabali user suspend <id> --reason "…"
+jabali user unsuspend <id>
 ```
 
-(Domain stays up; user can't log in to the panel UI.)
+(The same cascade as Suspend in the admin UI.)
 
 ### Force-reset a user's password / 2FA
 
@@ -29,13 +30,14 @@ jabali user password <email>            # generates new password, prints once
 jabali user 2fa-reset <email>           # strip TOTP + recovery codes (CLI escape hatch)
 ```
 
-### Issue a one-time admin login
+### Get an admin back in
 
 ```bash
-jabali admin one-time-login
+jabali user 2fa-reset <email|username|user-id>    # when the admin lost their 2FA device
+jabali user password <email|username|user-id> --link
 ```
 
-Useful when 2FA on an admin account is locked out.
+`--link` prints a one-click recovery URL, valid 24 hours.
 
 ### Rotate the DB root password
 
@@ -44,7 +46,7 @@ Useful when 2FA on an admin account is locked out.
 Or CLI:
 
 ```bash
-jabali admin db root-password rotate
+jabali db root-password
 ```
 
 Audited (success + failure), announced via M14.
@@ -105,7 +107,7 @@ jabali repair --all --yes      # destructive (wipes nginx tmp, regen pool socket
 
 ## Migration cleanup
 
-After a successful cPanel / DA / Hestia restore: `jabali domain orphan-prune --dry-run` then `--apply` to clean any source-side orphans the importer missed.
+After a successful cPanel / DA / Hestia restore: `jabali domain prune-orphans` lists sites in nginx `sites-enabled` that have no panel row; `jabali domain prune-orphans --apply` deletes them.
 
 ## Diag bundle
 

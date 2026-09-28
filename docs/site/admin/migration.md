@@ -40,8 +40,8 @@ Each pipeline run targets a single destination user. While that user's domains, 
 After a successful restore:
 
 ```bash
-jabali domain orphan-prune --dry-run    # report orphans
-jabali domain orphan-prune --apply      # remove them
+jabali domain prune-orphans            # list nginx sites with no panel row
+jabali domain prune-orphans --apply    # delete them
 ```
 
 Catches domains the source had soft-deleted but the cpmove archive still referenced.

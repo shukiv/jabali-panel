@@ -18,9 +18,10 @@ Use for: forensic "who did what when" investigation; compliance.
 CLI:
 
 ```bash
-jabali audit list --since 24h
-jabali audit list --since 7d --action 'db.*'
-jabali audit list --user <id>
+jabali audit query                     # the last 50 events
+jabali audit query --limit 500         # up to 1000
+jabali audit query --q db.             # search action, target, actor kind and result
+jabali audit verify                    # check the hash chain for tampering
 ```
 
 ## 2. Notifications

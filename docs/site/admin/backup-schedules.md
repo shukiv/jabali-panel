@@ -45,5 +45,5 @@ jabali backup schedule list
 jabali backup schedule create --kind account_full --user <id> --destination daily-offsite --cron "0 3 * * *" --keep-daily 7 --keep-weekly 4 --keep-monthly 12
 jabali backup schedule delete <id>
 jabali backup scheduler tick                          # fire all due schedules now
-jabali backup scheduler tick --schedule-id <id>       # fire one
+jabali backup schedule run-now <id>                   # fire one
 ```

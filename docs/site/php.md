@@ -86,8 +86,9 @@ PHP hardening (no-eval, no-include-from-uploads, taint tracking) is on by defaul
 ## CLI
 
 ```bash
-jabali php list                       # installed PHP versions and pool counts
-jabali php install <version>          # install a new PHP version
-jabali php enable-ext <version> <ext>
-jabali php disable-ext <version> <ext>
+jabali php version list                         # installed PHP versions
+jabali php version install <version>            # install a PHP version, e.g. 8.4
+jabali php ext list --version <version>         # extensions and their state
+jabali php ext enable <ext> --version <version>
+jabali php ext disable <ext> --version <version>
 ```

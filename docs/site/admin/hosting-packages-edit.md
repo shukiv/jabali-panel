@@ -27,7 +27,7 @@ Every save writes one audit row per changed field, with a structured diff (old v
 ## CLI
 
 ```bash
-jabali package update <id> --memory-limit-mib 1024 --max-mailboxes 50
+jabali package edit <package-id> --memory-mb 1024 --emails 50
 ```
 
 Unspecified flags retain their current values.

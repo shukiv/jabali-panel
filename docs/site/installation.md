@@ -58,7 +58,7 @@ Diagnostics:
 ```bash
 journalctl -u jabali-panel.service -f
 journalctl -u jabali-agent.service -f
-jabali admin diag bundle   # encrypted support tarball
+jabali system diagnostic   # upload an encrypted support bundle; prints a link and a password
 ```
 
 ## Uninstall
