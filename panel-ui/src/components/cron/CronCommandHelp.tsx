@@ -22,6 +22,9 @@ export const CronCommandHelp = () => (
     <code>$</code> <code>;</code> …) are rejected, so plain commands like{" "}
     <code>ls</code>, <code>uptime</code>, or <code>cd … &amp;&amp; …</code> will
     not work. <code>curl</code>/<code>wget</code> are allowed only to ping one of
-    your own domains.
+    your own domains. <code>wp</code> runs on the account&apos;s CLI default PHP;
+    to run WP-CLI on another version, start the line with that PHP and
+    wp-cli&apos;s path, e.g.{" "}
+    <code>php7.4 /usr/local/bin/wp --path=… cron event run --due-now</code>.
   </Typography.Text>
 );

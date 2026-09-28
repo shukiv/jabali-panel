@@ -97,6 +97,8 @@ describe("AdminCreateCronModal — target-aware help (GH #1686 items 3+4)", () =
     // admin can see why a plain command fails.
     expect(baseElement.textContent).toContain("Commands must start with");
     expect(baseElement.textContent).toContain("will not work");
+    // GH #1838: how to run WP-CLI on a PHP version other than the CLI default.
+    expect(baseElement.textContent).toContain("php7.4 /usr/local/bin/wp --path=");
   });
 });
 
