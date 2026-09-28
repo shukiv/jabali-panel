@@ -4075,10 +4075,11 @@ paths:
             schema:
               type: object
               properties:
-                new_password: { type: string, format: password, description: Omit to have the panel generate one. }
+                new_password: { type: string, format: password, minLength: 8, description: "Omit to have the panel generate one. At least 8 characters and at most 72 bytes." }
       responses:
         "200": { description: "{ password }: set only when the panel generated it; shown once" }
         "404": { description: Mailbox not found }
+        "422": { description: "weak_password: new_password is shorter than 8 characters or longer than 72 bytes" }
 
   /mailboxes/{mbid}/send-as:
     get:
