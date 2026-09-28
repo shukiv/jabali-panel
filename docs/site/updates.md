@@ -26,8 +26,9 @@ The transient-unit survival was live-verified on 192.168.100.150.
 ## CLI
 
 ```bash
-jabali update                # blocking, prints output
-jabali update --auto         # for cron / CI; no prompts
+jabali update                 # download the release, migrate and restart
+jabali update --force         # run the full cycle even when there is no new release
+jabali update --from-source   # build on this host instead of downloading the release
 ```
 
 If the update fails, `jabali update` prints a hint pointing at `jabali repair --diagnose` (M33 added the hint after a string of recurring deploy scars where the operator needed to run repair next anyway).

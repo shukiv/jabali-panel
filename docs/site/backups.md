@@ -140,19 +140,19 @@ recovery.
 ## CLI
 
 ```bash
-jabali destination list
-jabali destination create --type sftp --name daily-offsite --host backup.example.com --user backups --key /root/.ssh/backup
-jabali destination test daily-offsite
+jabali backup destination list
+jabali backup destination create --kind sftp --name daily-offsite --url sftp:backups@backup.example.com:/srv/restic
+jabali backup destination test daily-offsite
 
 jabali backup schedule list
 jabali backup schedule create --kind account_full --user <id> --destination daily-offsite --cron "0 3 * * *" --keep-daily 7 --keep-weekly 4
 jabali backup schedule run-now <id>
 
-# Restore one account from a snapshot (add --apply to write to the live system)
-jabali backup account-restore --user <name> --destination daily-offsite --snapshot <id> --force --apply
+# Restore one account from a snapshot (--apply=false only stages it)
+jabali backup account-restore --user <name> --destination daily-offsite --snapshot <id> --force
 
-# System restore
-jabali system restore --snapshot <id> --destination daily-offsite
+# System restore from a restic repository
+jabali system restore --remote-url sftp:backups@backup.example.com:/srv/restic --snapshot latest --force
 # …or from a Full Server container archive (no shared restic destination needed):
 jabali system restore --from-tar /path/to/full-server-backup.tar
 ```

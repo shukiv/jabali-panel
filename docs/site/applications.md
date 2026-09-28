@@ -68,8 +68,9 @@ See [Databases](./databases.md).
 ## CLI
 
 ```bash
-jabali app list [--user <id>]
-jabali app install --user <id> --domain <name> --app wordpress
+jabali app list
+jabali app registry                                        # the app types you can install
+jabali app install --domain <fqdn> --app-type wordpress --user <id> --wait
 jabali app delete <install-id>
 ```
 

@@ -43,8 +43,9 @@ Click a version row to drill into the per-user pools currently using that versio
 ## CLI
 
 ```bash
-jabali php list
-jabali php install <version>
-jabali php enable-ext  <version> <extension>
-jabali php disable-ext <version> <extension>
+jabali php version list                         # installed PHP versions
+jabali php version install <version>            # install a PHP version, e.g. 8.4
+jabali php ext list --version <version>         # extensions and their state
+jabali php ext enable <ext> --version <version>
+jabali php ext disable <ext> --version <version>
 ```

@@ -58,12 +58,11 @@ Tunables persist to `server_settings` and are applied by the agent's `nginx.tuna
 
 ## Updates
 
-- **Update source** — `origin/main` (default) or a pinned branch.
-- **Update window** — optional cron expression; outside the window, `jabali update --auto` refuses to run.
+Panel self-update is not set here. Turn it on under [Server Updates](./server-updates.md) → **Jabali panel self-update**. It is off by default, and runs daily at the time you pick (default 04:30).
 
 ## Support
 
-- **Recipient public key** — overrides the maintainers' public key for the encrypted diag bundle.
+The diagnostic bundle has no settings. See [Support](./support.md).
 - **Recipient email** — overrides `webmaster@jabali-panel.com`.
 
 ## Convergence

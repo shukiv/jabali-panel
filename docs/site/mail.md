@@ -84,7 +84,7 @@ Admin-defined Stalwart expressions for routing / drop / quarantine. UI under Ser
 
 ```bash
 jabali mailbox list --domain example.com
-jabali mailbox create user@example.com --quota-mib 1024
+jabali mailbox create --domain example.com --local user --quota-mb 1024
 jabali mailbox set-quota user@example.com 2048
 jabali mailbox passwd user@example.com
 jabali mailbox delete user@example.com

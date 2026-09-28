@@ -72,5 +72,5 @@ The handler in `panel-api/internal/api/databases_admin_ops.go` is the adapter; t
 jabali db list [--user <id>]
 jabali db create --user <id> --name suffix
 jabali db delete <id>
-jabali db-user create --db <id> --username name
+jabali db user create --user <user> --name <name>
 ```

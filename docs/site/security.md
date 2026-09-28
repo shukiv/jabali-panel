@@ -190,4 +190,4 @@ PHP. Only uids from 1000 up are matched, so system daemons are never filtered.
 - Result (ok / fail).
 - Diff (where applicable).
 
-CLI: `jabali audit list --since 24h --action db.root.rotate`.
+CLI: `jabali audit query --q db.root` searches the log; `jabali audit verify` checks its hash chain.

@@ -2,7 +2,7 @@
 
 `/jabali-admin/support`. M29.
 
-Produces an encrypted diagnostic bundle suitable for emailing to the upstream maintainers without leaking secrets or end-user data.
+Uploads a redacted, encrypted diagnostic bundle for the Jabali maintainers, without leaking secrets or end-user data.
 
 ## What the bundle contains
 
@@ -45,13 +45,17 @@ Redactor cannot be disabled from the UI. The `RedactionCount` field on the bundl
 
 ## Encryption
 
-The tarball is encrypted in the agent with the recipient's public key (default: the upstream maintainers' key baked into the panel image; override under Server Settings → Support → Recipient Public Key).
-
-The plaintext bundle is never written to disk — the tarball is produced in memory and encrypted before any filesystem write.
+The agent builds the tar in memory and encrypts it before it leaves the host. It uses the [enclosed](https://github.com/CorentinTh/enclosed) note format, so the server stores only ciphertext. To decrypt, you need both the link (its `#` fragment carries the key) and a separate password.
 
 ## Delivery
 
-The Support page opens a `mailto:` to the configured recipient address (default `webmaster@jabali-panel.com`) with the encrypted bundle attached. No HTTP upload to a third-party service, so the panel remains installable on air-gapped or restricted-egress hosts.
+**Send Diagnostic Report** uploads the encrypted bundle to `https://enclosed.jabali-panel.com`, a note server the Jabali project runs. The upload starts as soon as the dialog opens. The note expires after 7 days.
+
+The dialog shows the link and the password. **Send via email** opens your mail client with both filled in, addressed to `webmaster@jabali-panel.com`. Nothing is emailed until you send that message.
+
+If the agent has a support-claim service configured (`JABALI_CLAIM_URL`), the dialog also shows a short claim code (`JAB-XXXXXXXX`). The code is safe to post anywhere, even in a public issue. The claim service holds the link and the password for support.
+
+The host must reach `enclosed.jabali-panel.com` over HTTPS. If it cannot, the upload fails and you get no bundle. If your policy forbids diagnostic data leaving the host, do not open the dialog.
 
 ## What the bundle does *not* contain
 
@@ -65,17 +69,11 @@ To keep this list current with the actual collector, the following are **not** c
 - CrowdSec decisions list
 - AppSec block log
 
-The intent is to keep the bundle small enough to email and to limit the surface to host-level state needed for incident triage. Operator-specific deep dives (a full `nginx -T`, a `mysqldump --no-data`) are run on demand against a live host once the maintainers and operator are in contact.
-
-## Why no auto-upload
-
-Operator policy varies. Some organisations require that no diagnostic data leaves the host without explicit operator action; some require encryption against a specific key. Putting the operator in the loop on every bundle satisfies both requirements.
+The intent is to keep the bundle small and to limit the surface to host-level state needed for incident triage. Operator-specific deep dives (a full `nginx -T`, a `mysqldump --no-data`) are run on demand against a live host once the maintainers and operator are in contact.
 
 ## CLI
 
 ```bash
-jabali admin diag bundle                                # write to /var/lib/jabali/support/
-jabali admin diag bundle --recipient-key /path/to/pubkey.asc
+jabali system diagnostic          # uploads the bundle; prints the link and the password
+jabali system diagnostic --json   # the raw result, for scripts
 ```
-
-The CLI variant produces the encrypted file but does not attempt to email it; the operator handles delivery.

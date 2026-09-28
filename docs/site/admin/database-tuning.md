@@ -52,7 +52,8 @@ Edits to `/etc/mysql/mariadb.conf.d/zz-custom.cnf` (operator-owned) are preserve
 ## CLI
 
 ```bash
-jabali admin db config apply
+jabali db config get                           # the tunable parameters and their current values
+jabali db config set <param=value> [...]       # set, apply, and restart the engine if needed
 ```
 
-Re-applies the persisted tuning state. Useful after a daemon restart that lost dynamic variables not yet written to the override file.
+`set` accepts only parameters on the tuner's allowlist. Add `--engine postgres` to tune PostgreSQL.

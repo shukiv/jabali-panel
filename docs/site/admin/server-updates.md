@@ -25,9 +25,9 @@ Running each update as a `systemd-run --transient --unit=jabali-update-<timestam
 
 The transient-unit pattern was live-verified on 192.168.100.150.
 
-## Update window
+## Automatic updates
 
-Server Settings → Updates → **Update window**. If set, `jabali update --auto` refuses to run outside the window. UI-initiated updates ignore the window (operator-driven, presumed deliberate).
+**Jabali panel self-update** on this page turns automatic updates on. It is off by default. When it is on, `jabali-autoupdate.timer` runs `jabali update -f` daily at the time you pick (default 04:30).
 
 ## Why a fixed bug came back
 
@@ -103,6 +103,7 @@ On any failure, the panel prints a hint pointing at `jabali repair --diagnose`. 
 ## CLI
 
 ```bash
-jabali update          # interactive
-jabali update --auto   # unattended, respects update window
+jabali update                 # download the release, migrate and restart
+jabali update --force         # run the full cycle even when there is no new release
+jabali update --from-source   # build on this host instead of downloading the release
 ```

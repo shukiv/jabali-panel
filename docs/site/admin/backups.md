@@ -39,9 +39,9 @@ Click for the detailed stage-by-stage log.
 ## CLI
 
 ```bash
-jabali destination list
-jabali destination create --type sftp --name daily-offsite ...
-jabali destination test daily-offsite
+jabali backup destination list
+jabali backup destination create --kind sftp --name daily-offsite --url sftp:backups@backup.example.com:/srv/restic
+jabali backup destination test daily-offsite
 
 jabali backup schedule list
 jabali backup schedule create --kind account_full --user <id> --destination daily-offsite --cron "0 3 * * *" --keep-daily 7

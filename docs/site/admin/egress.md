@@ -52,7 +52,12 @@ The setup was live-verified with the drop counter incrementing on a blocked port
 ## CLI
 
 ```bash
-jabali per-user egress list
-jabali per-user egress allow --user <id> --port 9418 --proto tcp --dest github.com
-jabali per-user egress revoke <rule-id>
+jabali per-user-egress summary                  # policy state counts and pending requests
+jabali per-user-egress get <email-or-id>        # one user's policy
+jabali per-user-egress set-policy <email-or-id> --state enforced --allow 140.82.112.0/20,443,tcp
+jabali per-user-egress requests                 # requests tenants sent from the panel
+jabali per-user-egress approve <request-id>
+jabali per-user-egress deny <request-id>
 ```
+
+`set-policy` replaces the user's whole allow list. `--state` is `off`, `learning` or `enforced`, and each `--allow` is `CIDR[,PORT[,PROTO]]`.

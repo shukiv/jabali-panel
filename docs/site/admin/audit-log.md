@@ -44,9 +44,8 @@ Each tenant has their own view at `/jabali-panel/activity` filtered to rows wher
 ## CLI
 
 ```bash
-jabali audit list                                   # last 100 rows
-jabali audit list --since 24h
-jabali audit list --action 'db.*' --since 7d
-jabali audit list --user <id>
-jabali audit list --action mailbox.passwd --result fail
+jabali audit query                     # the last 50 events
+jabali audit query --limit 500         # up to 1000
+jabali audit query --q db.             # search action, target, actor kind and result
+jabali audit verify                    # check the hash chain for tampering
 ```

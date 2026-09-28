@@ -30,9 +30,10 @@ System restores are typically performed on a freshly-bootstrapped panel host. Se
 3. On the new panel host:
 
    ```bash
-   jabali destination create --type s3 --name recovery ...
-   jabali system restore --snapshot <id> --destination recovery
+   jabali system restore --remote-url s3:s3.amazonaws.com/<bucket>/<path> --credentials-ref /root/recovery.env --password-file /root/restic.password --snapshot latest --force
    ```
+
+   `/root/recovery.env` holds the storage credentials (root:root, 0600). `/root/restic.password` holds the repository password: the one `jabali backup destination rotate-password` printed.
 
 4. The restore covers all 7 stages: panel-DB × 3, OS users, Stalwart state, Kratos state, hosted sites, config snapshot, plus the wrapping restic snapshot integrity check.
 5. After completion, run `jabali repair --diagnose` to surface any drift between restored state and the fresh host (typically only IP-related mismatches if the new host has a different IP).
@@ -67,6 +68,6 @@ to a host that shares no restic destination with the source:
 ## CLI
 
 ```bash
-jabali account restore --user <new-id> --snapshot <id> --destination recovery
-jabali system  restore --snapshot <id> --destination recovery
+jabali backup account-restore --user <username> --snapshot <id> --destination recovery --force
+jabali system restore --remote-url <restic-repo-url> --credentials-ref /root/recovery.env --password-file /root/restic.password --snapshot <id> --force
 ```

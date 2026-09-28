@@ -43,7 +43,7 @@ The installer creates a `default` package suitable for small VPS scale (10 GiB d
 
 ```bash
 jabali package list
-jabali package create --name standard --disk-quota-mib 5120 --memory-limit-mib 512 --cpu-pct 25 …
-jabali package update <id> --memory-limit-mib 1024
-jabali package delete <id>
+jabali package create --name standard --disk-mb 5120 --memory-mb 512 --cpu 25 …
+jabali package edit <package-id> --memory-mb 1024
+jabali package delete <package-id>
 ```

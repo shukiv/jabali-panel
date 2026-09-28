@@ -26,7 +26,7 @@ Backups → Destinations. The list of repositories the panel can write restic sn
 
 ## Repository password
 
-Each destination has its own restic repository password, auto-generated and stored encrypted in `db_admin_secrets`. The password is never exposed in the UI; restic cannot read snapshots without it. Operators who want a copy for emergency recovery may export the password to a sealed envelope from the CLI (`jabali destination get <id> --show-password`).
+Each destination's restic repository password is stored AES-256-GCM-sealed on its row in the panel database. A destination whose password was never rotated uses the shared legacy password file. The UI never shows the password, and restic cannot read snapshots without it. To get a copy for emergency recovery, rotate it: `jabali backup destination rotate-password <id-or-name>` re-keys the repository, keeps every snapshot readable, and prints the new password once.
 
 ## Multi-destination by schedule
 
@@ -43,10 +43,10 @@ Forbidden if any schedule targets it. Reassign or delete the schedules first.
 ## CLI
 
 ```bash
-jabali destination list
-jabali destination get <id-or-name>
-jabali destination create --type sftp --name daily-offsite --host backup.example.com --user backups --key /root/.ssh/backup
-jabali destination test daily-offsite
-jabali destination update daily-offsite --host new-host.example.com
-jabali destination delete daily-offsite
+jabali backup destination list
+jabali backup destination get <id-or-name>
+jabali backup destination create --kind sftp --name daily-offsite --url sftp:backups@backup.example.com:/srv/restic
+jabali backup destination update daily-offsite --sftp-auth key --sftp-key-path /root/.ssh/backup
+jabali backup destination test daily-offsite
+jabali backup destination delete daily-offsite
 ```
