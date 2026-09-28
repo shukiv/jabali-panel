@@ -4,6 +4,7 @@ import (
 	"flag"
 	"log/slog"
 	"os"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -14,9 +15,16 @@ import (
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/apps"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/audit"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/config"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dockerapp"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/notifications"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/pyframeworks"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/reconciler"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/sso"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ssokey"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/webmailsso"
 )
 
 var updateGolden = flag.Bool("update", false, "rewrite the undocumented-routes golden")
@@ -107,6 +115,10 @@ func fullDeps() Deps {
 		WebhookEndpoints: repository.NewWebhookEndpointRepository(db),
 		WebPushSubs: repository.NewWebPushSubscriptionRepository(db),
 		Snuffleupagus: repository.NewSnuffleupagusRepository(db),
+		DomainTeardowns: repository.NewDomainTeardownRepository(db),
+		SharedCerts: repository.NewSharedCertificateRepository(db),
+		WebDomainAliases: repository.NewWebDomainAliasRepository(db),
+		MailHostSwitchover: repository.NewMailHostnameSwitchoverRepository(db),
 		DB:         db,
 		Agent:      agent.NewMockClient(),
 		Reconciler: &reconciler.Reconciler{},
@@ -114,6 +126,50 @@ func fullDeps() Deps {
 		QuotaMount: "/home",
 		Log:        slog.Default(),
 		Redis:      redis.NewClient(&redis.Options{}),
+		// Zero values are enough: registration only captures these in closures.
+		SSO:                     &sso.Service{},
+		AdminerSSO:              &sso.AdminerService{},
+		SSOKey:                  &ssokey.Key{},
+		WebmailSSOMinter:        &webmailsso.Minter{},
+		DockerCatalog:           &dockerapp.Catalog{},
+		PyFrameworks:            &pyframeworks.Catalog{},
+		NotificationQueue:       &notifications.Queue{},
+		NotificationRegistry:    &notifications.Registry{},
+		AuditConsumer:           &audit.Consumer{},
+		SnuffleupagusReconciler: &reconciler.SnuffleupagusReconciler{},
+	}
+}
+
+// fullDepsNilOK lists the Deps fields fullDeps may leave nil, and why. Every
+// other field must be set: a nil dep silently unmounts the routes it gates, and
+// then neither coverage check below can see them. (The web domain alias and
+// mail-hostname routes once read as documented-but-missing because of this.)
+var fullDepsNilOK = map[string]string{
+	"KratosClient":          "NewWithDeps builds it from cfg.Auth.Kratos, which the tests set",
+	"StalwartAdmin":         "interface used at request time only; gates no route",
+	"StalwartAdminThrottle": "interface used at request time only; gates no route",
+	"AuditRecorder":         "interface used at request time only; gates no route",
+}
+
+// TestFullDepsWiresEveryDep fails when Deps gains a field that fullDeps leaves
+// nil, so a new dep-gated route family cannot drop out of both coverage checks.
+func TestFullDepsWiresEveryDep(t *testing.T) {
+	v := reflect.ValueOf(fullDeps())
+	for i := 0; i < v.NumField(); i++ {
+		f := v.Field(i)
+		switch f.Kind() {
+		case reflect.Interface, reflect.Pointer, reflect.Func, reflect.Map, reflect.Slice, reflect.Chan:
+		default:
+			continue
+		}
+		name := v.Type().Field(i).Name
+		if f.IsNil() {
+			if _, ok := fullDepsNilOK[name]; !ok {
+				t.Errorf("fullDeps leaves Deps.%s nil: set it (a zero value is enough), or add it to fullDepsNilOK with the reason", name)
+			}
+		} else if _, ok := fullDepsNilOK[name]; ok {
+			t.Errorf("Deps.%s is set in fullDeps; drop it from fullDepsNilOK", name)
+		}
 	}
 }
 
@@ -138,7 +194,11 @@ func normalizeRoute(method, ginPath string) (verb, path string) {
 			return "", ""
 		}
 	}
-	// gin :param / *wild → OpenAPI {param}.
+	return m, openAPIPath(p)
+}
+
+// openAPIPath turns gin :param / *wild segments into OpenAPI {param}.
+func openAPIPath(p string) string {
 	var b strings.Builder
 	for _, seg := range strings.Split(p, "/") {
 		if seg == "" {
@@ -157,7 +217,89 @@ func normalizeRoute(method, ginPath string) (verb, path string) {
 	if np == "" {
 		np = "/"
 	}
-	return m, np
+	return np
+}
+
+// documentedOps parses openapi.yaml into "verb path" -> rootMounted. A path
+// item with its own `servers` entry that does not end in /api/v1 is mounted at
+// the engine root (for example /nic/update, which DynDNS clients hardcode).
+func documentedOps(t *testing.T) map[string]bool {
+	t.Helper()
+	raw, err := os.ReadFile(openapiPath)
+	if err != nil {
+		t.Fatalf("read openapi.yaml: %v", err)
+	}
+	var spec struct {
+		Paths map[string]map[string]yaml.Node `yaml:"paths"`
+	}
+	if err := yaml.Unmarshal(raw, &spec); err != nil {
+		t.Fatalf("parse openapi.yaml: %v", err)
+	}
+	out := map[string]bool{}
+	for path, ops := range spec.Paths {
+		root := false
+		if node, ok := ops["servers"]; ok {
+			var servers []struct {
+				URL string `yaml:"url"`
+			}
+			if err := node.Decode(&servers); err != nil || len(servers) == 0 {
+				t.Fatalf("openapi.yaml %s: unreadable path-level servers: %v", path, err)
+			}
+			root = !strings.HasSuffix(strings.TrimRight(servers[0].URL, "/"), apiPrefix)
+		}
+		for verb := range ops {
+			if httpMethods[strings.ToLower(verb)] {
+				out[strings.ToLower(verb)+" "+path] = root
+			}
+		}
+	}
+	return out
+}
+
+// TestOpenAPINoPhantomRoutes is the reverse of TestOpenAPICoverage: every
+// operation openapi.yaml documents must be a registered route. A documented
+// route that does not exist is worse than an undocumented one: jabali-mcp
+// generates its tools from this spec, so a phantom becomes a tool that always
+// answers 404 (admin_list_users, admin_create_user and admin_run_updates did,
+// on every box). There is no golden: the phantom set must stay empty. A path
+// mounted outside /api/v1 declares that with a path-level `servers` entry.
+func TestOpenAPINoPhantomRoutes(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Auth.Kratos.PublicURL = "http://127.0.0.1:4433"
+	cfg.Auth.Kratos.AdminURL = "http://127.0.0.1:4434"
+	r := NewWithDeps(cfg, fullDeps())
+
+	api := map[string]bool{}  // "verb path" relative to /api/v1
+	root := map[string]bool{} // "verb path" from the engine root
+	for _, rt := range r.Routes() {
+		verb := strings.ToLower(rt.Method)
+		if !httpMethods[verb] {
+			continue
+		}
+		root[verb+" "+openAPIPath(rt.Path)] = true
+		if v, p := normalizeRoute(rt.Method, rt.Path); v != "" {
+			api[v+" "+p] = true
+		}
+	}
+
+	var phantoms []string
+	for op, rootMounted := range documentedOps(t) {
+		registered := api[op]
+		if rootMounted {
+			registered = root[op]
+		}
+		if !registered {
+			phantoms = append(phantoms, op)
+		}
+	}
+	sort.Strings(phantoms)
+	if len(phantoms) > 0 {
+		t.Errorf("openapi.yaml documents %d route(s) that are not registered:\n  %s\n"+
+			"Fix the path or method in internal/api/openapi.yaml, or remove the operation.\n"+
+			"A route mounted outside /api/v1 needs a path-level `servers` entry; a dep-gated\n"+
+			"route needs its dep set in fullDeps.",
+			len(phantoms), strings.Join(phantoms, "\n  "))
+	}
 }
 
 // documentedRoutes parses openapi.yaml into the set of "verb path" it documents.

@@ -314,15 +314,25 @@ components:
         updated_at: { type: string, format: date-time }
     UserCreate:
       type: object
-      required: [email]
+      required: [password]
       properties:
-        email: { type: string, format: email }
-        username: { type: string }
-        password: { type: string, format: password }
+        email:
+          type: string
+          format: email
+          description: Optional contact address. When `username` is omitted, the username is derived from its local part.
+        username:
+          type: string
+          pattern: '^[a-z_][a-z0-9_-]{0,31}$'
+          description: Login identifier and Linux account name. Required unless it can be derived from `email`; ignored for admins.
+        password: { type: string, format: password, minLength: 10 }
         name_first: { type: string }
         name_last: { type: string }
-        is_admin: { type: boolean }
-        package_id: { type: string }
+        is_admin: { type: boolean, default: false }
+        package_id: { type: string, description: Hosting package ID. }
+        skip_provision:
+          type: boolean
+          default: false
+          description: Create the panel row and login identity only; the Linux account is provisioned later via POST /users/{id}/reprovision.
     Database:
       type: object
       properties:
@@ -609,36 +619,15 @@ paths:
         "400": { description: Validation error }
         "404": { description: Domain not owned by caller }
 
-  /dns/records/{id}:
-    patch:
-      tags: [DNS]
-      summary: Update a record
-      parameters:
-        - { in: path, name: id, required: true, schema: { type: string, format: ulid } }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                content: { type: string, example: 203.0.113.99 }
-                ttl:     { type: integer }
-                priority: { type: integer }
-                is_enabled: { type: boolean }
-      responses:
-        "200": { description: Updated, content: { application/json: { schema: { $ref: "#/components/schemas/DNSRecord" } } } }
-    delete:
-      tags: [DNS]
-      summary: Delete a record
-      parameters:
-        - { in: path, name: id, required: true, schema: { type: string, format: ulid } }
-      responses:
-        "204": { description: Deleted }
-
   # ---------------------------------------------------------------- DDNS ---
 
   /nic/update:
+    servers:
+      - url: https://{panel-hostname}:8443
+        description: Engine root (not /api/v1) — DynDNS clients hardcode /nic/update
+        variables:
+          panel-hostname:
+            default: jabali-panel.local
     get:
       tags: [DDNS]
       summary: DynDNS v2 — update an A/AAAA record
@@ -781,50 +770,6 @@ paths:
       responses:
         "201": { description: Created }
 
-  /mailboxes/{id}:
-    delete:
-      tags: [Mailboxes]
-      parameters: [ { in: path, name: id, required: true, schema: { type: string, format: ulid } } ]
-      responses: { "204": { description: Deleted } }
-
-  /mailboxes/{id}/password:
-    put:
-      tags: [Mailboxes]
-      summary: Change mailbox password
-      parameters: [ { in: path, name: id, required: true, schema: { type: string, format: ulid } } ]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [password]
-              properties:
-                password: { type: string, format: password, minLength: 12 }
-      responses: { "204": { description: Changed } }
-
-  # -------------------------------------------------------- Forwarders ---
-
-  /domains/{id}/forwarders:
-    get:
-      tags: [Mailbox Forwarders]
-      parameters: [ { in: path, name: id, required: true, schema: { type: string, format: ulid } } ]
-      responses: { "200": { description: OK } }
-    post:
-      tags: [Mailbox Forwarders]
-      parameters: [ { in: path, name: id, required: true, schema: { type: string, format: ulid } } ]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [source, dest]
-              properties:
-                source: { type: string, example: sales@example.com }
-                dest:   { type: string, example: alice@example.com }
-      responses: { "201": { description: Created } }
-
   # ------------------------------------------------------- Applications ---
 
   /applications:
@@ -958,29 +903,6 @@ paths:
               properties:
                 name:   { type: string, example: myapp_prod }
                 engine: { type: string, enum: [mysql, postgres] }
-      responses: { "201": { description: Created } }
-
-  # ---------------------------------------------------------- Admin: Users ---
-
-  /admin/users:
-    get:
-      tags: [Users]
-      summary: List all panel users (admin)
-      responses: { "200": { description: OK } }
-    post:
-      tags: [Users]
-      summary: Create a tenant user (admin)
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [email, password]
-              properties:
-                email:    { type: string, format: email }
-                password: { type: string, format: password, minLength: 12 }
-                is_admin: { type: boolean, default: false }
       responses: { "201": { description: Created } }
 
   # ----------------------------------------------------- DNS Templates ---
@@ -1257,19 +1179,6 @@ paths:
                   maximum: 86400
                   description: "Server-wide default TTL for new DNS records (seconds)."
       responses: { "200": { description: Updated } }
-
-  # ------------------------------------------------------- Admin: Updates ---
-
-  /admin/updates/run:
-    post:
-      tags: [Updates]
-      summary: Trigger `jabali update` (admin)
-      description: |
-        Spawns a transient systemd unit that runs the update flow
-        (download release tarball or build from source, run migrations,
-        restart services). Returns immediately with a job handle.
-      responses: { "202": { description: Job queued — stream logs via WebSocket } }
-
 
   # -------------------------------------------------------------- Egress ---
 
@@ -3432,13 +3341,6 @@ paths:
     delete:
       tags: [Files]
       summary: Admin file manager delete
-      security: [ { KratosSession: [] } ]
-      responses: { "200": { description: OK } }
-
-  /admin/files/read:
-    get:
-      tags: [Files]
-      summary: Admin file manager read file
       security: [ { KratosSession: [] } ]
       responses: { "200": { description: OK } }
 
