@@ -13,13 +13,15 @@ import (
 
 // SuspendResult / UnsuspendResult carry the domain count + best-effort,
 // step-named warnings so the REST handler maps them 1:1 to its response keys
-// (kratos_warning / domain_warning / os_warning) and the CLI can print them.
+// (kratos_warning / domain_warning / os_warning / mail_warning) and the CLI can
+// print them.
 type SuspendResult struct {
 	AlreadySuspended bool
 	DomainsDisabled  int64
 	KratosWarning    string
 	DomainWarning    string
 	OSWarning        string
+	MailWarning      string
 }
 
 type UnsuspendResult struct {
@@ -28,6 +30,24 @@ type UnsuspendResult struct {
 	KratosWarning  string
 	DomainWarning  string
 	OSWarning      string
+	MailWarning    string
+}
+
+// flushMailLogins clears Stalwart's HTTP login cache after a suspension
+// change. Stalwart's queryLogin refuses a mailbox whose domain's owner is
+// suspended, but webmail and JMAP logins are answered from that cache, which
+// has no expiry: without the flush a suspended user's mailboxes kept webmail.
+// On unsuspend it lets them back in at once. Returns a warning, "" on success.
+func flushMailLogins(ctx context.Context, d Deps) string {
+	if d.Agent == nil {
+		return "mail_login_cache_flush_skipped: agent unavailable"
+	}
+	fctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	if _, err := d.Agent.Call(fctx, "mail.auth_cache.flush", map[string]any{}); err != nil {
+		return "mail_login_cache_flush_failed: " + err.Error()
+	}
+	return ""
 }
 
 // kratosStateWarning applies a Kratos identity state change (+ invalidate on
@@ -58,8 +78,9 @@ func kratosStateWarning(ctx context.Context, d Deps, identityID, state string, i
 //  3. disable every owned domain.
 //  4. stop the tenant's Docker apps (best-effort).
 //  5. agent user.suspend — OS: drop from jabali-sftp group + lock password.
+//  6. flush Stalwart's login cache, so the mailboxes leave webmail at once.
 //
-// Refusing to suspend an admin is the CALLER's responsibility. Steps 2-5 are
+// Refusing to suspend an admin is the CALLER's responsibility. Steps 2-6 are
 // best-effort: a failure becomes a warning, never a hard error, because step 1
 // already denies access.
 func Suspend(ctx context.Context, d Deps, user *models.User, reason string) (SuspendResult, error) {
@@ -127,6 +148,7 @@ func Suspend(ctx context.Context, d Deps, user *models.User, reason string) (Sus
 		ftpsync.SyncFtpHostAccess(ctx, d.Agent, d.FtpAccounts, d.Users, d.Packages, d.Log, *user.Username)
 	}
 
+	res.MailWarning = flushMailLogins(ctx, d)
 	return res, nil
 }
 
@@ -170,5 +192,6 @@ func Unsuspend(ctx context.Context, d Deps, user *models.User) (UnsuspendResult,
 		ftpsync.SyncFtpHostAccess(ctx, d.Agent, d.FtpAccounts, d.Users, d.Packages, d.Log, *user.Username)
 	}
 
+	res.MailWarning = flushMailLogins(ctx, d)
 	return res, nil
 }

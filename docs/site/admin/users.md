@@ -24,7 +24,7 @@ Filters: by role, by package, by suspension state, by free-text search across em
 - **Edit** — opens [Edit User](./users-edit.md).
 - **Reset password** — generates a new password (shown once); writes a Kratos credential update.
 - **Reset 2FA** — strips TOTP and recovery codes; the user must re-enrol on next login.
-- **Suspend** — sets `users.is_suspended=1`; the reconciler returns a "suspended" page on every vhost owned by the user.
+- **Suspend** — sets `users.is_suspended=1`; the reconciler returns a "suspended" page on every vhost owned by the user. The user's mailboxes stop signing in: IMAP, POP3, SMTP submission, JMAP and webmail. Mail to them is still accepted and stored, so nothing is lost, and they can sign in again as soon as the user is unsuspended. Suspending and unsuspending both clear Stalwart's webmail login cache, so the change reaches webmail at once.
 - **Delete** — destructive; removes domains, databases, mailboxes, OS account, `/home/<user>`, and all related rows.
 
 ## Create

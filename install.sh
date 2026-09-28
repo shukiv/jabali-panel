@@ -13346,6 +13346,11 @@ install_stalwart_apply() {
   # SELECT-only grant. Stalwart never writes to the source-of-truth
   # directory; on-every-auth `synchronize_account` writes into its own
   # registry (ADR-0045 §"Cache/invalidation model").
+  # users is granted by column: queryLogin reads only id and suspended (a
+  # suspended user's mailboxes stop signing in), and the table also holds
+  # password hashes and the encrypted database admin passwords. This block runs
+  # before the directory converger below, so an existing box has the grant
+  # before its queryLogin reads users.
   mariadb -e "
     CREATE USER IF NOT EXISTS '${stalwart_db_user}'@'localhost' IDENTIFIED BY '${stalwart_db_pass}';
     ALTER USER '${stalwart_db_user}'@'localhost' IDENTIFIED BY '${stalwart_db_pass}';
@@ -13354,9 +13359,10 @@ install_stalwart_apply() {
     GRANT SELECT ON jabali_panel.email_forwarders  TO '${stalwart_db_user}'@'localhost';
     GRANT SELECT ON jabali_panel.mail_groups        TO '${stalwart_db_user}'@'localhost';
     GRANT SELECT ON jabali_panel.mail_group_members TO '${stalwart_db_user}'@'localhost';
+    GRANT SELECT (id, suspended) ON jabali_panel.users TO '${stalwart_db_user}'@'localhost';
     FLUSH PRIVILEGES;
   "
-  _ok "Stalwart MariaDB user provisioned: ${stalwart_db_user} (SELECT on mailboxes, domains, email_forwarders, mail_groups, mail_group_members)"
+  _ok "Stalwart MariaDB user provisioned: ${stalwart_db_user} (SELECT on mailboxes, domains, email_forwarders, mail_groups, mail_group_members, users(id, suspended))"
 
   local admin_token_file="/etc/jabali-panel/stalwart-admin.token"
   if [[ ! -f "$admin_token_file" ]]; then
@@ -13710,10 +13716,17 @@ print(sql[0]["id"] if sql else "")' 2>/dev/null || true)"
     # to member rows (ADR-0132). A plain distribution list is a native Stalwart
     # mailing list, and a directory match on its address shadows the list, so
     # delivery fails with "Mailbox not found" (GH #1818, verified on 0.16.15).
+    # queryLogin: an enabled mailbox whose domain's owner is not suspended.
+    # A suspended user's mailboxes stop signing in (IMAP, POP3, SMTP
+    # submission, JMAP, webmail) but keep receiving and keep their mail:
+    # queryRecipient does not look at suspension. NOT EXISTS, not a join, so a
+    # mailbox whose domain row or owner cannot be found is not locked out.
+    # Keep byte-identical to apply-plan.json.tmpl's queryLogin.
+    local query_login="SELECT m.email_cached, m.password_hash FROM mailboxes m WHERE m.email_cached = ? AND m.is_disabled = 0 AND NOT EXISTS (SELECT 1 FROM domains d JOIN users u ON u.id = d.user_id WHERE d.id = m.domain_id AND u.suspended = 1)"
     local query_recipient="SELECT u.email_cached, u.password_hash FROM (SELECT ? AS lookup) input JOIN (SELECT m.email_cached AS email_cached, m.password_hash AS password_hash, m.email_cached AS match_key FROM mailboxes m WHERE m.is_disabled = 0 AND m.send_only = 0 UNION ALL SELECT mb.email_cached, mb.password_hash, g.email_cached AS match_key FROM mail_groups g JOIN mail_group_members gm ON gm.group_id = g.id JOIN mailboxes mb ON mb.id = gm.mailbox_id WHERE g.has_mailbox = 1 AND (g.group_kind <> 'distribution' OR g.internal_only = 1) AND mb.is_disabled = 0 AND mb.send_only = 0) u ON (u.match_key = input.lookup OR u.email_cached = (SELECT mb2.email_cached FROM email_forwarders f JOIN domains d ON d.id = f.domain_id JOIN mailboxes mb2 ON mb2.id = f.mailbox_id WHERE f.enabled = 1 AND f.type = 'alias' AND f.mailbox_id IS NOT NULL AND CONCAT(f.local_part, '@', d.name) = input.lookup LIMIT 1))"
     local query_aliases="SELECT CONCAT(f.local_part, '@', d.name) AS alias FROM email_forwarders f JOIN domains d ON d.id = f.domain_id JOIN mailboxes m ON m.id = f.mailbox_id WHERE f.enabled = 1 AND f.type = 'alias' AND m.email_cached = ?"
     local patch_json
-    patch_json="$(python3 -c 'import json,sys; print(json.dumps({"queryRecipient": sys.argv[1], "queryEmailAliases": sys.argv[2]}))' "$query_recipient" "$query_aliases")"
+    patch_json="$(python3 -c 'import json,sys; print(json.dumps({"queryLogin": sys.argv[1], "queryRecipient": sys.argv[2], "queryEmailAliases": sys.argv[3]}))' "$query_login" "$query_recipient" "$query_aliases")"
     if STALWART_URL="http://127.0.0.1:${jmap_port}" \
       STALWART_USER="admin" \
       STALWART_PASSWORD="$admin_token" \
