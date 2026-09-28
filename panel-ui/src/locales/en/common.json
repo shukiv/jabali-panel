@@ -609,13 +609,14 @@
     "mail_deliverability_server_wide_score": "Mail deliverability — server-wide score"
   },
   "mailthrottlespage": {
-    "each_row_converges_into_a_stalwart_mtaoutbou": "Each row converges into a Stalwart MtaOutboundThrottle object on the next reconciler tick. 0 = unlimited. v1 enforces the hourly cap (Stalwart's rate object takes one window); daily cap is logged but not enforced until a later wave splits it into a paired object.",
     "enabled": "Enabled",
-    "max_per_day_logged_only_v1": "Max per day (logged only, v1)",
+    "intro": "Each row becomes a Stalwart outbound throttle on the next reconciler tick. Stalwart applies both the hourly and the daily cap. 0 = unlimited.",
+    "max_per_day_0_unlimited": "Max per day (0 = unlimited)",
     "max_per_hour_0_unlimited": "Max per hour (0 = unlimited)",
     "per_account_per_domain_server_wide_outbound": "Per-account / per-domain / server-wide outbound rate caps",
     "scope": "Scope",
-    "scope_ref_ulid": "Scope ref (ULID)"
+    "sender_address": "Sender address",
+    "sender_domain": "Sender domain"
   },
   "adminmigrationdetailpage": {
     "bytes_processed": "Bytes processed",

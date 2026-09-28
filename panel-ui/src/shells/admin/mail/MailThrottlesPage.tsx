@@ -132,7 +132,7 @@ export const MailThrottlesPage = () => {
         showIcon
         style={{ marginBottom: 16 }}
         message={t("mailthrottlespage.per_account_per_domain_server_wide_outbound")}
-        description={t("mailthrottlespage.each_row_converges_into_a_stalwart_mtaoutbou")}
+        description={t("mailthrottlespage.intro")}
       />
       <Table rowKey="id" loading={isLoading} dataSource={data ?? []} columns={columns} pagination={false} />
       <Drawer
@@ -160,8 +160,12 @@ export const MailThrottlesPage = () => {
           <Form.Item shouldUpdate={(p, n) => p.scope !== n.scope} noStyle>
             {({ getFieldValue }) =>
               getFieldValue("scope") !== "global" ? (
-                <Form.Item name="scope_ref" label={t("mailthrottlespage.scope_ref_ulid")} rules={[{ required: true }]}>
-                  <Input placeholder={getFieldValue("scope") === "user" ? "users.id" : "domains.id"} disabled={!!drawer.row} />
+                <Form.Item
+                  name="scope_ref"
+                  label={t(getFieldValue("scope") === "user" ? "mailthrottlespage.sender_address" : "mailthrottlespage.sender_domain")}
+                  rules={[{ required: true }]}
+                >
+                  <Input placeholder={getFieldValue("scope") === "user" ? "alice@example.com" : "example.com"} disabled={!!drawer.row} />
                 </Form.Item>
               ) : null
             }
@@ -169,7 +173,7 @@ export const MailThrottlesPage = () => {
           <Form.Item name="max_per_hour" label={t("mailthrottlespage.max_per_hour_0_unlimited")}>
             <InputNumber min={0} max={1000000} style={{ width: "100%" }} />
           </Form.Item>
-          <Form.Item name="max_per_day" label={t("mailthrottlespage.max_per_day_logged_only_v1")}>
+          <Form.Item name="max_per_day" label={t("mailthrottlespage.max_per_day_0_unlimited")}>
             <InputNumber min={0} max={10000000} style={{ width: "100%" }} />
           </Form.Item>
           <Form.Item name="enabled" label={t("mailthrottlespage.enabled")} valuePropName="checked">
