@@ -294,6 +294,65 @@ func TestValidateCommand(t *testing.T) {
 			desc:     "A non-php binary is still rejected",
 		},
 
+		// wp-cli on a pinned PHP version (GH #1838): the interpreter runs the
+		// system wp-cli, and the rest of the line must pass the wp rules.
+		{
+			name:     "php_versioned_wp_cli",
+			raw:      "php7.4 /usr/local/bin/wp --skip-plugins --skip-themes --path=/home/shuki/example.com/public_html cron event run --due-now",
+			docroots: ownedDocroots,
+			wantErr:  "",
+			desc:     "php7.4 running the system wp-cli with an owned --path is allowed",
+		},
+		{
+			name:     "php_bare_wp_cli_two_token_path",
+			raw:      "php /usr/local/bin/wp cron event run --path /home/shuki/example.com/public_html",
+			docroots: ownedDocroots,
+			wantErr:  "",
+			desc:     "bare php running wp-cli with the two-token --path form is allowed",
+		},
+		{
+			name:     "php_versioned_wp_cli_no_path",
+			raw:      "php7.4 /usr/local/bin/wp cron event run --due-now",
+			docroots: ownedDocroots,
+			wantErr:  ErrCodeBadPathArg,
+			desc:     "wp-cli under php still requires --path",
+		},
+		{
+			name:     "php_versioned_wp_cli_foreign_path",
+			raw:      "php7.4 /usr/local/bin/wp cron event run --path=/home/other/example.org/public_html",
+			docroots: ownedDocroots,
+			wantErr:  ErrCodeBadPathArg,
+			desc:     "wp-cli under php still requires --path inside an owned docroot",
+		},
+		{
+			name:     "php_versioned_wp_path_before_script_ignored",
+			raw:      "php7.4 --path=/home/shuki/example.com/public_html /usr/local/bin/wp cron event run",
+			docroots: ownedDocroots,
+			wantErr:  ErrCodeBadPathArg,
+			desc:     "a --path given to php, not to wp-cli, does not count",
+		},
+		{
+			name:     "php_versioned_other_wp_binary_rejected",
+			raw:      "php7.4 /home/shuki/example.com/public_html/wp cron event run --path=/home/shuki/example.com/public_html",
+			docroots: ownedDocroots,
+			wantErr:  ErrCodeBadPathArg,
+			desc:     "only the system wp-cli path counts; any other non-.php file is still rejected",
+		},
+		{
+			name:     "php_versioned_bare_wp_rejected",
+			raw:      "php7.4 wp cron event run --path=/home/shuki/example.com/public_html",
+			docroots: ownedDocroots,
+			wantErr:  ErrCodeBadPathArg,
+			desc:     "php7.4 wp (not the absolute wp-cli path) is rejected",
+		},
+		{
+			name:     "php_versioned_wp_cli_inline_code_rejected",
+			raw:      "php7.4 -r 'echo 1;' /usr/local/bin/wp --path=/home/shuki/example.com/public_html",
+			docroots: ownedDocroots,
+			wantErr:  ErrCodeBinaryNotAllowed,
+			desc:     "inline-code flags stay rejected in the wp-cli form",
+		},
+
 		// Inline-code PHP flags are rejected (GH #440).
 		{
 			name:     "php_dash_r_rejected",
@@ -682,4 +741,21 @@ func BenchmarkValidateSchedule(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		_ = ValidateSchedule(expr)
 	}
+}
+
+// GH #1838: a php line that names some other "wp" says how to run wp-cli on a
+// chosen PHP version, instead of only failing the .php rule.
+func TestValidateCommand_WPCLIHint(t *testing.T) {
+	docroots := []string{"/home/shuki/example.com/public_html"}
+	for _, raw := range []string{
+		"php7.4 wp cron event run --path=/home/shuki/example.com/public_html",
+		"php7.4 /usr/bin/wp cron event run --path=/home/shuki/example.com/public_html",
+	} {
+		_, err := ValidateCommand(raw, docroots, "")
+		require.Error(t, err, raw)
+		assert.Contains(t, err.Error(), "php<X.Y> "+WPCLIPath, raw)
+	}
+	_, err := ValidateCommand("php7.4 /home/shuki/example.com/public_html/run.sh", docroots, "")
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), WPCLIPath, "no wp-cli hint for an unrelated file")
 }

@@ -552,13 +552,26 @@ func validatePHPCommand(argv []string, ownedDocroots []string) (*Command, error)
 		return &Command{Argv: argv}, nil
 	}
 
+	// GH #1838: `php<X.Y> /usr/local/bin/wp <wp args>` runs the system wp-cli
+	// on a chosen PHP version (bare `wp` always uses the account's CLI
+	// default). Only the exact system wp-cli path qualifies, and everything
+	// after it must pass the same rules as a `wp` line, so --path must still
+	// name an owned docroot.
+	if pathArg == WPCLIPath {
+		wpArgv := append([]string{"wp"}, argv[pathArgIndex+1:]...)
+		if _, err := validateWPCommand(wpArgv, ownedDocroots); err != nil {
+			return nil, err
+		}
+		return &Command{Argv: argv}, nil
+	}
+
 	// Must be absolute path
 	if !filepath.IsAbs(pathArg) {
 		return nil, &ValidationError{
 			Code: ErrCodeBadPathArg,
 			Detail: fmt.Sprintf(
-				"php path must be absolute, got %q",
-				pathArg,
+				"php path must be absolute, got %q%s",
+				pathArg, wpCLIHint(pathArg),
 			),
 		}
 	}
@@ -568,8 +581,8 @@ func validatePHPCommand(argv []string, ownedDocroots []string) (*Command, error)
 		return nil, &ValidationError{
 			Code: ErrCodeBadPathArg,
 			Detail: fmt.Sprintf(
-				"php path must end in .php, got %q",
-				pathArg,
+				"php path must end in .php, got %q%s",
+				pathArg, wpCLIHint(pathArg),
 			),
 		}
 	}
@@ -579,6 +592,20 @@ func validatePHPCommand(argv []string, ownedDocroots []string) (*Command, error)
 	}
 
 	return &Command{Argv: argv}, nil
+}
+
+// WPCLIPath is the system wp-cli, installed by install.sh as a symlink into
+// /opt/wp-cli and visible inside the per-user sandbox cron runs in.
+const WPCLIPath = "/usr/local/bin/wp"
+
+// wpCLIHint points a php line that names some other "wp" at the supported
+// form, so `php7.4 wp ...` explains itself instead of only failing the .php
+// rule.
+func wpCLIHint(pathArg string) string {
+	if baseName(pathArg) != "wp" {
+		return ""
+	}
+	return "; to run wp-cli on a chosen PHP version use php<X.Y> " + WPCLIPath + " --path=<docroot> ..."
 }
 
 // validatePathArg validates that an absolute path:
