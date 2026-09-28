@@ -19,8 +19,9 @@ type mdStore struct {
 	domains   []models.Domain
 	mailboxes []models.Mailbox
 	groups    map[string]bool // domainID + "/" + local part
-	resources map[string]bool // email
+	resources []models.SharedResource
 	lookupErr error
+	resErr    error
 }
 
 type mdDomains struct {
@@ -68,8 +69,17 @@ type mdResources struct {
 	s *mdStore
 }
 
-func (f mdResources) ExistsByEmail(_ context.Context, email string) (bool, error) {
-	return f.s.resources[email], nil
+func (f mdResources) ListByDomainID(_ context.Context, domainID string) ([]models.SharedResource, error) {
+	if f.s.resErr != nil {
+		return nil, f.s.resErr
+	}
+	var out []models.SharedResource
+	for _, sr := range f.s.resources {
+		if sr.DomainID == domainID {
+			out = append(out, sr)
+		}
+	}
+	return out, nil
 }
 
 func newMDStore() *mdStore {
@@ -90,8 +100,7 @@ func newMDStore() *mdStore {
 			{ID: "m-off", DomainID: "doff", LocalPart: "oscar", EmailCached: "oscar@off.test"},
 			{ID: "m-smtp", DomainID: "dsmtp", LocalPart: "printer", EmailCached: "printer@smtp.test", SendOnly: true},
 		},
-		groups:    map[string]bool{},
-		resources: map[string]bool{},
+		groups: map[string]bool{},
 	}
 }
 
@@ -236,9 +245,20 @@ func TestReconcileMailDirectories_LeavesATakenAddressAlone(t *testing.T) {
 		"mailbox": func(s *mdStore) {
 			s.mailboxes = append(s.mailboxes, models.Mailbox{ID: "m-x", DomainID: "d1", LocalPart: "jabali-directory", EmailCached: "jabali-directory@one.test"})
 		},
-		"mail group":      func(s *mdStore) { s.groups["d1/jabali-directory"] = true },
-		"shared resource": func(s *mdStore) { s.resources["jabali-directory@one.test"] = true },
-		"lookup error":    func(s *mdStore) { s.lookupErr = errors.New("db down") },
+		"mailbox, other case": func(s *mdStore) {
+			s.mailboxes = append(s.mailboxes, models.Mailbox{ID: "m-x", DomainID: "d1", LocalPart: "Jabali-Directory", EmailCached: "Jabali-Directory@one.test"})
+		},
+		"mail group": func(s *mdStore) { s.groups["d1/jabali-directory"] = true },
+		"shared resource": func(s *mdStore) {
+			s.resources = append(s.resources, models.SharedResource{ID: "sr", DomainID: "d1", LocalPart: strPtr("jabali-directory"), EmailCached: strPtr("jabali-directory@one.test")})
+		},
+		// An older row: the address was stored with the domain name as typed,
+		// and no local part.
+		"shared resource, address only, other case": func(s *mdStore) {
+			s.resources = append(s.resources, models.SharedResource{ID: "sr", DomainID: "d1", EmailCached: strPtr("Jabali-Directory@One.Test")})
+		},
+		"group lookup error":    func(s *mdStore) { s.lookupErr = errors.New("db down") },
+		"resource lookup error": func(s *mdStore) { s.resErr = errors.New("db down") },
 	}
 	for name, taint := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -246,6 +266,26 @@ func TestReconcileMailDirectories_LeavesATakenAddressAlone(t *testing.T) {
 			taint(s)
 			ag := &fakeAgent{}
 			newDirectoryReconciler(s, ag, true).reconcileMailDirectories(context.Background())
+			if n := len(directoryApplies(ag)); n != 0 {
+				t.Fatalf("applies = %d, want 0", n)
+			}
+		})
+	}
+}
+
+// The group and shared-resource repos guard the directory address: without
+// either one the pass does not run at all.
+func TestReconcileMailDirectories_NeedsEveryGuard(t *testing.T) {
+	for name, wire := range map[string]func(r *Reconciler, s *mdStore){
+		"no group repo":    func(r *Reconciler, s *mdStore) { r.WithMailDirectory(mdMailboxes{s: s}, nil, mdResources{s: s}) },
+		"no resource repo": func(r *Reconciler, s *mdStore) { r.WithMailDirectory(mdMailboxes{s: s}, mdGroups{s: s}, nil) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := newMDStore()
+			ag := &fakeAgent{}
+			r := newDirectoryReconciler(s, ag, true)
+			wire(r, s)
+			r.reconcileMailDirectories(context.Background())
 			if n := len(directoryApplies(ag)); n != 0 {
 				t.Fatalf("applies = %d, want 0", n)
 			}
@@ -292,7 +332,7 @@ func TestReconcileMailDirectories_UnresolvedReaderIsRetried(t *testing.T) {
 }
 
 func TestReconcileMailDirectories_BudgetPerTick(t *testing.T) {
-	s := &mdStore{groups: map[string]bool{}, resources: map[string]bool{}}
+	s := &mdStore{groups: map[string]bool{}}
 	for i := 0; i < mailDirectoryApplyBudgetPerTick+5; i++ {
 		id := fmt.Sprintf("d%02d", i)
 		name := fmt.Sprintf("n%02d.test", i)

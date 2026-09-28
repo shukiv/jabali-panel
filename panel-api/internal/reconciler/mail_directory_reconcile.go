@@ -49,9 +49,9 @@ type mailDirectorySpec struct {
 	Readers     []string             `json:"readers"`
 }
 
-// WithMailDirectory wires the directory pass. mailboxes is required; the
-// group and shared-resource repos guard the reserved address and may be nil
-// only in tests.
+// WithMailDirectory wires the directory pass. All three repos are required:
+// the group and shared-resource repos guard the reserved address, so a nil
+// one leaves the pass off rather than unguarded.
 func (r *Reconciler) WithMailDirectory(mailboxes repository.MailboxRepository, groups repository.MailGroupRepository, resources repository.SharedResourceRepository) *Reconciler {
 	r.mailDirMailboxes = mailboxes
 	r.mailDirGroups = groups
@@ -119,7 +119,7 @@ func buildMailDirectoryPlan(dom models.Domain, mbs []models.Mailbox) mailDirecto
 	type reader struct{ email, id string }
 	var readers []reader
 	for _, mb := range mbs {
-		if mb.LocalPart == mailaddr.DirectoryLocalPart {
+		if strings.EqualFold(mb.LocalPart, mailaddr.DirectoryLocalPart) {
 			p.Taken = true
 		}
 		if mb.System || mb.SendOnly {
@@ -149,7 +149,8 @@ func buildMailDirectoryPlan(dom models.Domain, mbs []models.Mailbox) mailDirecto
 }
 
 func (r *Reconciler) reconcileMailDirectories(ctx context.Context) {
-	if r.agent == nil || r.mailDirMailboxes == nil || r.domains == nil || r.serverSettings == nil {
+	if r.agent == nil || r.mailDirMailboxes == nil || r.mailDirGroups == nil || r.mailDirResources == nil ||
+		r.domains == nil || r.serverSettings == nil {
 		return
 	}
 	sctx, scancel := context.WithTimeout(ctx, 5*time.Second)
@@ -202,7 +203,7 @@ func (r *Reconciler) reconcileMailDirectories(ctx context.Context) {
 			continue
 		}
 		ran, err := r.project(ctx, PhaseMailDirectory, d.ID, plan.fingerprint(), false, func() error {
-			if plan.Taken || r.mailDirectoryAddressTaken(ctx, d.ID, plan.Spec.HostEmail) {
+			if plan.Taken || r.mailDirectoryAddressTaken(ctx, d.ID) {
 				return errMailDirectoryAddressTaken
 			}
 			return r.applyMailDirectory(ctx, plan.Spec)
@@ -252,18 +253,27 @@ func (r *Reconciler) applyMailDirectory(ctx context.Context, spec mailDirectoryS
 }
 
 // mailDirectoryAddressTaken reports whether a mail group or shared resource
-// holds the directory address: its Stalwart principal would be taken for the
-// directory's host. A lookup error counts as taken, so nothing is written on
-// a guess.
-func (r *Reconciler) mailDirectoryAddressTaken(ctx context.Context, domainID, hostEmail string) bool {
-	if r.mailDirGroups != nil {
-		if exists, err := r.mailDirGroups.ExistsByDomainAndLocalPart(ctx, domainID, mailaddr.DirectoryLocalPart); err != nil || exists {
+// of the domain holds the directory address. Its Stalwart principal would
+// then be taken for the directory's host: a shared resource's host is a
+// Group too, and the apply would replace its address book. Rows are matched
+// by domain id and local part, whatever the case of the stored address. A
+// lookup error counts as taken, so nothing is written on a guess.
+func (r *Reconciler) mailDirectoryAddressTaken(ctx context.Context, domainID string) bool {
+	if exists, err := r.mailDirGroups.ExistsByDomainAndLocalPart(ctx, domainID, mailaddr.DirectoryLocalPart); err != nil || exists {
+		return true
+	}
+	resources, err := r.mailDirResources.ListByDomainID(ctx, domainID)
+	if err != nil {
+		return true
+	}
+	for _, sr := range resources {
+		if sr.LocalPart != nil && strings.EqualFold(*sr.LocalPart, mailaddr.DirectoryLocalPart) {
 			return true
 		}
-	}
-	if r.mailDirResources != nil {
-		if exists, err := r.mailDirResources.ExistsByEmail(ctx, hostEmail); err != nil || exists {
-			return true
+		if sr.EmailCached != nil {
+			if local, _, ok := strings.Cut(*sr.EmailCached, "@"); ok && strings.EqualFold(local, mailaddr.DirectoryLocalPart) {
+				return true
+			}
 		}
 	}
 	return false
