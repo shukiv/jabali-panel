@@ -188,11 +188,16 @@ func (h *adminMailThrottlesHandler) del(c *gin.Context) {
 	// Best-effort: a failure here doesn't block the DB delete, and
 	// the next reconciler tick would catch a stranded Stalwart row
 	// anyway IF the row still existed — but it doesn't, so we'd
-	// leave a Stalwart orphan unless we try now.
-	if h.cfg.ThrottleClient != nil && row.StalwartID != "" {
+	// leave a Stalwart orphan unless we try now. A row owns up to two
+	// throttles (hourly StalwartID, daily StalwartIDDaily); both go.
+	if h.cfg.ThrottleClient != nil && (row.StalwartID != "" || row.StalwartIDDaily != "") {
 		cctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
 		defer cancel()
-		_ = h.cfg.ThrottleClient.Delete(cctx, "MtaOutboundThrottle", row.StalwartID)
+		for _, sid := range []string{row.StalwartID, row.StalwartIDDaily} {
+			if sid != "" {
+				_ = h.cfg.ThrottleClient.Delete(cctx, "MtaOutboundThrottle", sid)
+			}
+		}
 	}
 	if err := h.cfg.Policies.Delete(c.Request.Context(), id); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "delete_failed", "details": err.Error()})
