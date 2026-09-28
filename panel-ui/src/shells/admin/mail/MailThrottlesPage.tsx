@@ -1,9 +1,10 @@
 // MailThrottlesPage — M47 Wave 3 admin outbound-throttle CRUD.
 //
 // DB-as-truth: rows on this page are mail_outbound_policy rows. The
-// reconciler converges each row into Stalwart's MtaOutboundThrottle
-// on the next tick (5s typical). last_applied_at + last_error on each
-// row tell the operator whether the Stalwart side caught up.
+// reconciler converges each row into up to two Stalwart
+// MtaOutboundThrottle objects (hourly stalwart_id, daily
+// stalwart_id_daily) through the agent on its next tick. The ids and
+// last_error tell the operator whether the Stalwart side caught up.
 import { useTranslation } from "react-i18next";
 import { useState } from "react";
 import { RowActions } from "../../../components/RowActions";
@@ -23,6 +24,7 @@ type Policy = {
   max_per_day: number;
   enabled: boolean;
   stalwart_id: string;
+  stalwart_id_daily: string;
   last_applied_at: string | null;
   last_error: string | null;
   created_at: string;
@@ -57,13 +59,20 @@ export const MailThrottlesPage = () => {
       feedback.message.success("Throttle updated");
       setDrawer({ open: false });
     },
+    onError: (e: any) => feedback.message.error(e?.response?.data?.error ?? "update failed"),
   });
 
+  // A 502 stalwart_delete_failed keeps the row, disabled, so refetch either
+  // way and say why.
   const deleteMut = useMutation({
     mutationFn: (id: string) => apiClient.delete(`/admin/mail/throttles/${id}`),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["admin", "mail", "throttles"] });
       feedback.message.success("Throttle removed");
+    },
+    onError: (e: any) => {
+      qc.invalidateQueries({ queryKey: ["admin", "mail", "throttles"] });
+      feedback.message.error(e?.response?.data?.details ?? e?.response?.data?.error ?? "delete failed");
     },
   });
 
@@ -90,7 +99,11 @@ export const MailThrottlesPage = () => {
         if (row.last_error) {
           return <Tag color="red" title={row.last_error}>error</Tag>;
         }
-        if (!row.stalwart_id) {
+        // Each window has a Stalwart throttle exactly when it is enabled
+        // with a cap; synced means Stalwart holds what the row asks for.
+        const wantHour = row.enabled && row.max_per_hour > 0;
+        const wantDay = row.enabled && row.max_per_day > 0;
+        if (wantHour !== !!row.stalwart_id || wantDay !== !!row.stalwart_id_daily) {
           return <Tag>pending</Tag>;
         }
         return <Tag color="green">synced</Tag>;
