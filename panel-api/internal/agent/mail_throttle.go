@@ -40,3 +40,17 @@ func (m MailThrottles) Delete(ctx context.Context, stalwartID string) error {
 	_, err := m.Agent.Call(ctx, mailthrottle.VerbDelete, mailthrottle.DeleteRequest{StalwartID: stalwartID})
 	return err
 }
+
+// List returns every MtaOutboundThrottle in Stalwart, the panel's and
+// anyone else's.
+func (m MailThrottles) List(ctx context.Context) ([]mailthrottle.ListItem, error) {
+	raw, err := m.Agent.Call(ctx, mailthrottle.VerbList, nil)
+	if err != nil {
+		return nil, err
+	}
+	var res mailthrottle.ListResult
+	if err := json.Unmarshal(raw, &res); err != nil {
+		return nil, fmt.Errorf("%s: parse result: %w", mailthrottle.VerbList, err)
+	}
+	return res.Throttles, nil
+}

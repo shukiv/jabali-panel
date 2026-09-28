@@ -49,3 +49,19 @@ func TestMailThrottles_DeleteWire(t *testing.T) {
 		t.Fatalf("calls = %+v", calls)
 	}
 }
+
+func TestMailThrottles_ListWire(t *testing.T) {
+	m := NewMockClient().On(mailthrottle.VerbList, map[string]any{
+		"throttles": []map[string]string{{"stalwart_id": "jg1nyykmahqa", "description": "jabali global *: 10 per hour"}},
+	})
+	items, err := MailThrottles{Agent: m}.List(context.Background())
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(items) != 1 || items[0].StalwartID != "jg1nyykmahqa" || items[0].Description != "jabali global *: 10 per hour" {
+		t.Fatalf("items = %+v", items)
+	}
+	if calls := m.Calls(); len(calls) != 1 || calls[0].Command != "mail.throttle.list" {
+		t.Fatalf("calls = %+v", calls)
+	}
+}

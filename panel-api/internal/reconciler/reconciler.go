@@ -251,6 +251,7 @@ type Reconciler struct {
 	// M47 Wave 3 — outbound throttle reconcile.
 	outboundPolicies repository.MailOutboundPolicyRepository
 	mailThrottles    ThrottleApplier
+	mailThrottleMu   sync.Mutex // one throttle pass at a time (apply + sweep)
 	// M52 (ADR-0133) — shared resources convergence. All three required for
 	// reconcileSharedResources; nil on any disables the pass. srMailboxes +
 	// srMailGroups resolve a grant's polymorphic grantee → target email(s).

@@ -24,6 +24,7 @@ import (
 //
 //	mail.throttle.apply   mailthrottle.ApplyRequest  -> mailthrottle.ApplyResult
 //	mail.throttle.delete  mailthrottle.DeleteRequest -> mailthrottle.DeleteResult
+//	mail.throttle.list    (no params)                -> mailthrottle.ListResult
 //
 // apply is idempotent: with a known id it reads the object first and writes
 // only when it differs, so the reconciler can call it on every tick. An id
@@ -111,6 +112,47 @@ func mailThrottleDeleteHandler(ctx context.Context, params json.RawMessage) (any
 	return mailthrottle.DeleteResult{Deleted: true}, nil
 }
 
+// mailThrottleListHandler lists every MtaOutboundThrottle (id and
+// description), so the reconciler can remove the panel's throttles that no
+// row references any more.
+func mailThrottleListHandler(ctx context.Context, _ json.RawMessage) (any, error) {
+	out, err := runStalwartObjectCLI(ctx, "", "query", mailthrottle.StalwartType, "--json", "--fields", "description")
+	if err != nil {
+		return nil, err
+	}
+	items, err := parseThrottleList(out)
+	if err != nil {
+		return nil, err
+	}
+	return mailthrottle.ListResult{Throttles: items}, nil
+}
+
+// parseThrottleList reads `stalwart-cli query --json` output: one JSON object
+// per line (NDJSON), nothing at all when there are none. An id that does not
+// look like a Stalwart id is dropped, so the panel is never handed one it
+// could not pass back to delete.
+func parseThrottleList(out []byte) ([]mailthrottle.ListItem, error) {
+	items := []mailthrottle.ListItem{}
+	for _, line := range bytes.Split(out, []byte("\n")) {
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 {
+			continue
+		}
+		var obj struct {
+			ID          string `json:"id"`
+			Description string `json:"description"`
+		}
+		if err := json.Unmarshal(line, &obj); err != nil {
+			return nil, csInternal("parse stalwart-cli query output", err)
+		}
+		if !mailthrottle.ValidStalwartID(obj.ID) {
+			continue
+		}
+		items = append(items, mailthrottle.ListItem{StalwartID: obj.ID, Description: obj.Description})
+	}
+	return items, nil
+}
+
 // parseStalwartCreated reads the id out of stalwart-cli's
 // "Created <Type> <id>" line.
 func parseStalwartCreated(out []byte, typeName string) (string, error) {
@@ -170,4 +212,5 @@ func runStalwartObjectCLI(ctx context.Context, id string, args ...string) ([]byt
 func init() {
 	Default.Register(mailthrottle.VerbApply, mailThrottleApplyHandler)
 	Default.Register(mailthrottle.VerbDelete, mailThrottleDeleteHandler)
+	Default.Register(mailthrottle.VerbList, mailThrottleListHandler)
 }

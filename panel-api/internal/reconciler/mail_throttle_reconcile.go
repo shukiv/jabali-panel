@@ -13,11 +13,15 @@
 //
 // A failure keeps the window's id and stamps last_error, so the next tick
 // retries. Self-healing.
+//
+// After the rows, a sweep removes the panel's throttles (description starts
+// with mailthrottle.OwnedPrefix) that no row references any more.
 package reconciler
 
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/mailthrottle"
@@ -29,6 +33,7 @@ import (
 type ThrottleApplier interface {
 	Apply(ctx context.Context, req mailthrottle.ApplyRequest) (mailthrottle.ApplyResult, error)
 	Delete(ctx context.Context, stalwartID string) error
+	List(ctx context.Context) ([]mailthrottle.ListItem, error)
 }
 
 const mailThrottleCallTimeout = 30 * time.Second
@@ -40,21 +45,75 @@ func (r *Reconciler) reconcileMailThrottles(ctx context.Context) {
 	if r.outboundPolicies == nil || r.mailThrottles == nil {
 		return
 	}
+	// The admin reconcile endpoint can start a full pass while the ticker's
+	// is still running. Two throttle passes at once could each create a
+	// window's throttle, or one could sweep a throttle the other created but
+	// has not stamped yet.
+	if !r.mailThrottleMu.TryLock() {
+		return
+	}
+	defer r.mailThrottleMu.Unlock()
 	rows, err := r.outboundPolicies.List(ctx)
 	if err != nil {
 		r.log.Warn("mail-throttle: list failed", "err", err)
 		return
 	}
+	stamped := true
 	for i := range rows {
-		r.reconcileMailThrottleOne(ctx, &rows[i])
+		if !r.reconcileMailThrottleOne(ctx, &rows[i]) {
+			stamped = false
+		}
+	}
+	// A throttle whose id could not be stamped is referenced by no row yet;
+	// sweeping now would delete it and the next tick would create it again.
+	if stamped {
+		r.sweepMailThrottles(ctx)
+	}
+}
+
+// sweepMailThrottles removes the panel's Stalwart throttles that no row
+// references: one created this tick for a row an admin deleted meanwhile,
+// or one an earlier release left behind. It reads the rows again, after the
+// apply phase, so the first case is caught in the same tick. It does nothing
+// if either list fails, because an unreadable table must not look like an
+// empty one. Throttles whose description lacks mailthrottle.OwnedPrefix are
+// someone else's and are never touched.
+func (r *Reconciler) sweepMailThrottles(ctx context.Context) {
+	rows, err := r.outboundPolicies.List(ctx)
+	if err != nil {
+		r.log.Warn("mail-throttle: sweep skipped, list rows failed", "err", err)
+		return
+	}
+	referenced := map[string]bool{}
+	for _, row := range rows {
+		referenced[row.StalwartID] = true
+		referenced[row.StalwartIDDaily] = true
+	}
+	cctx, cancel := context.WithTimeout(ctx, mailThrottleCallTimeout)
+	defer cancel()
+	items, err := r.mailThrottles.List(cctx)
+	if err != nil {
+		r.log.Warn("mail-throttle: sweep skipped, list Stalwart throttles failed", "err", err)
+		return
+	}
+	for _, it := range items {
+		if referenced[it.StalwartID] || !strings.HasPrefix(it.Description, mailthrottle.OwnedPrefix) {
+			continue
+		}
+		if err := r.mailThrottles.Delete(cctx, it.StalwartID); err != nil {
+			r.log.Warn("mail-throttle: removing unreferenced throttle failed", "stalwart_id", it.StalwartID, "err", err)
+			continue
+		}
+		r.log.Info("mail-throttle: removed unreferenced throttle", "stalwart_id", it.StalwartID, "description", it.Description)
 	}
 }
 
 // reconcileMailThrottleOne converges both windows of one row, then stamps
 // both ids and one last_error for the row. Stamping once per row keeps a
 // failing window's error from being wiped by the other window's success.
-// Nothing is written when nothing changed.
-func (r *Reconciler) reconcileMailThrottleOne(ctx context.Context, row *models.MailOutboundPolicy) {
+// Nothing is written when nothing changed. It reports false when a stamp
+// failed.
+func (r *Reconciler) reconcileMailThrottleOne(ctx context.Context, row *models.MailOutboundPolicy) bool {
 	hourID, hourErr := r.reconcileThrottleWindow(ctx, row, mailthrottle.WindowHour)
 	dayID, dayErr := r.reconcileThrottleWindow(ctx, row, mailthrottle.WindowDay)
 
@@ -65,14 +124,18 @@ func (r *Reconciler) reconcileMailThrottleOne(ctx context.Context, row *models.M
 		r.log.Warn("mail-throttle: apply failed", "row", row.ID, "err", err)
 	}
 	if hourID == row.StalwartID && dayID == row.StalwartIDDaily && lastErr == nil && row.LastError == nil {
-		return
+		return true
 	}
+	ok := true
 	if err := r.outboundPolicies.UpdateApplyState(ctx, row.ID, hourID, lastErr); err != nil {
 		r.log.Warn("mail-throttle: state stamp failed", "row", row.ID, "window", mailthrottle.WindowHour, "err", err)
+		ok = false
 	}
 	if err := r.outboundPolicies.UpdateApplyStateDaily(ctx, row.ID, dayID, lastErr); err != nil {
 		r.log.Warn("mail-throttle: state stamp failed", "row", row.ID, "window", mailthrottle.WindowDay, "err", err)
+		ok = false
 	}
+	return ok
 }
 
 // reconcileThrottleWindow brings one window in line and returns the Stalwart

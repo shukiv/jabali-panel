@@ -76,6 +76,18 @@ func (f *fakeStalwartCLI) answer(args []string) (stdout, stderr string, rc int) 
 		id := fmt.Sprintf("new%d", f.nextID)
 		f.objects[id] = withID(f.t, flag("--json"), id)
 		return "Created MtaOutboundThrottle " + id + "\n", "", 0
+	case args[0] == "query":
+		// `query --json --fields description` prints one object per line,
+		// the id last, and nothing when there are none.
+		var b strings.Builder
+		for id, obj := range f.objects {
+			var m map[string]any
+			_ = json.Unmarshal([]byte(obj), &m)
+			line, _ := json.Marshal(map[string]any{"description": m["description"], "id": id})
+			b.Write(line)
+			b.WriteString("\n")
+		}
+		return b.String(), "", 0
 	case args[0] == "get":
 		id := args[2]
 		obj, ok := f.objects[id]
@@ -308,5 +320,54 @@ func TestMailThrottle_TokenNeverInArgv(t *testing.T) {
 				t.Fatalf("token in argv: %v", c)
 			}
 		}
+	}
+}
+
+func TestMailThrottleList(t *testing.T) {
+	f := useFakeStalwartCLI(t)
+	list := func() []mailthrottle.ListItem {
+		t.Helper()
+		out, err := mailThrottleListHandler(context.Background(), nil)
+		if err != nil {
+			t.Fatalf("list: %v", err)
+		}
+		return out.(mailthrottle.ListResult).Throttles
+	}
+	if got := list(); len(got) != 0 {
+		t.Fatalf("empty Stalwart listed %v", got)
+	}
+	first, err := applyThrottle(t, userHourly)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.objects["op1"] = `{"description":"operator cap","enable":true,"id":"op1"}`
+	got := list()
+	if len(got) != 2 {
+		t.Fatalf("listed %v, want 2", got)
+	}
+	byID := map[string]string{}
+	for _, it := range got {
+		byID[it.StalwartID] = it.Description
+	}
+	if byID[first.StalwartID] != mailthrottle.Description(userHourly) || byID["op1"] != "operator cap" {
+		t.Fatalf("listed %v", byID)
+	}
+	last := f.calls[len(f.calls)-1]
+	if strings.Join(last, " ") != "query MtaOutboundThrottle --json --fields description" {
+		t.Fatalf("query args = %v", last)
+	}
+}
+
+func TestParseThrottleList_DropsIDsItCouldNotDelete(t *testing.T) {
+	out := []byte("{\"description\":\"jabali x\",\"id\":\"ok1\"}\n{\"description\":\"jabali y\",\"id\":\"--ids=all\"}\n\n")
+	items, err := parseThrottleList(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].StalwartID != "ok1" {
+		t.Fatalf("items = %v", items)
+	}
+	if _, err := parseThrottleList([]byte("not json\n")); err == nil {
+		t.Fatal("garbage output parsed without error")
 	}
 }

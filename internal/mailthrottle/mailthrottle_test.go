@@ -150,3 +150,17 @@ func TestThrottleEqual(t *testing.T) {
 		t.Error("a different match rule must not compare equal")
 	}
 }
+
+// The reconciler removes unreferenced throttles by this prefix, so every
+// description the panel writes must carry it.
+func TestDescription_CarriesTheOwnedPrefix(t *testing.T) {
+	for _, r := range []ApplyRequest{
+		{Scope: ScopeGlobal, Window: WindowHour, Limit: 1},
+		{Scope: ScopeUser, ScopeRef: "a@example.com", Window: WindowDay, Limit: 2},
+		{Scope: ScopeDomain, Window: WindowHour, Limit: 3},
+	} {
+		if d := Payload(r).Description; !strings.HasPrefix(d, OwnedPrefix) {
+			t.Errorf("description %q lacks %q", d, OwnedPrefix)
+		}
+	}
+}

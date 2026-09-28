@@ -24,7 +24,14 @@ import (
 const (
 	VerbApply  = "mail.throttle.apply"
 	VerbDelete = "mail.throttle.delete"
+	VerbList   = "mail.throttle.list"
 )
+
+// OwnedPrefix starts the description of every throttle the panel creates.
+// The reconciler removes a Stalwart throttle with this prefix that no
+// mail_outbound_policy row references, so an operator's own throttles must
+// not start with it.
+const OwnedPrefix = "jabali "
 
 // StalwartType is the only Stalwart object type the verbs touch.
 const StalwartType = "MtaOutboundThrottle"
@@ -77,6 +84,18 @@ type DeleteRequest struct {
 type DeleteResult struct {
 	// Deleted is false when Stalwart had no such throttle (already gone).
 	Deleted bool `json:"deleted"`
+}
+
+// ListResult is the agent's answer to VerbList (which takes no params):
+// every MtaOutboundThrottle in Stalwart, the panel's and anyone else's.
+type ListResult struct {
+	Throttles []ListItem `json:"throttles"`
+}
+
+// ListItem is one Stalwart throttle.
+type ListItem struct {
+	StalwartID  string `json:"stalwart_id"`
+	Description string `json:"description"`
 }
 
 var (
@@ -232,7 +251,7 @@ func Description(r ApplyRequest) string {
 	if ref == "" {
 		ref = "*"
 	}
-	return fmt.Sprintf("jabali %s %s: %d per %s", r.Scope, ref, r.Limit, r.Window)
+	return fmt.Sprintf("%s%s %s: %d per %s", OwnedPrefix, r.Scope, ref, r.Limit, r.Window)
 }
 
 // Equal reports whether two throttles are the same object content. A nil
