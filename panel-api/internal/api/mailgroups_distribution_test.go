@@ -201,6 +201,16 @@ func TestCreate_DistributionSendsKind(t *testing.T) {
 	require.Equal(t, []any{}, p["member_emails"])
 }
 
+// GH #1637: a mail group may not take the address of the domain directory's
+// host principal.
+func TestCreate_RefusesTheDirectoryAddress(t *testing.T) {
+	fx := newMGFixture(t, "distribution", false, 0)
+	w := do(t, fx.router, "POST", "/api/v1/domains/dom1/mailgroups", map[string]any{"name": "jabali-directory", "group_kind": "distribution"})
+	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+	require.Contains(t, w.Body.String(), "invalid_name")
+	require.NotContains(t, fx.ag.calls, "mailgroup.apply")
+}
+
 // An internal-only distribution list delivers through one Sieve redirect per
 // member and Stalwart allows 20, so the panel refuses a 21st member up front
 // instead of letting members past the limit silently receive nothing.

@@ -7,6 +7,7 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/mailaddr"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/app"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
@@ -16,7 +17,7 @@ import (
 // envelope sender for local-mode email notifications (GH #322). Stalwart's
 // submission port (:587) requires AUTH, so the notification Email sender logs
 // in as this mailbox; it only ever sends, never receives.
-const notifyMailboxLocalPart = "jabali-notify"
+const notifyMailboxLocalPart = mailaddr.NotifyLocalPart
 
 // notifyMailboxQuotaBytes is a small quota — the mailbox is send-only and
 // should never accumulate stored mail.

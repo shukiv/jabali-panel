@@ -22,6 +22,7 @@
 ## Create wizard caveats
 
 - Local part validation: lowercase, alphanumeric plus `.`, `_`, `-`, `+`; cannot start with `.`.
+- `jabali-directory` is reserved for the [domain directory](./email.md#the-domain-directory) and is refused.
 - The total number of mailboxes counts against your package's `max_mailboxes`.
 - The default quota is your package's default; you may raise it up to the package's per-mailbox cap.
 

@@ -96,6 +96,9 @@ var (
 	// PhaseMailboxShares is one owner mailbox's share list (its Inbox
 	// shareWith on Stalwart). Keyed by the owner mailbox ID.
 	PhaseMailboxShares = Phase{Name: "mailbox.shares", AuditInterval: 15 * time.Minute}
+	// PhaseMailDirectory is one mail domain's directory address book: its
+	// cards and who may read it (GH #1637). Keyed by the domain ID.
+	PhaseMailDirectory = Phase{Name: "mail.directory", AuditInterval: time.Hour}
 	// PhasePingAccess is the jabali-ping group's member list and the
 	// ping_group_range that goes with it (GH #1798). One entry for the host;
 	// the interval repairs a group or range changed by hand.
@@ -225,6 +228,16 @@ func (l *applyLedger) stamp(p Phase, id, hash string, now time.Time) {
 		l.entries = map[ledgerKey]ledgerEntry{}
 	}
 	l.entries[ledgerKey{p.Name, id}] = ledgerEntry{Hash: hash, At: now}
+}
+
+// forget drops a resource's entry, so its next run applies it whatever its
+// fingerprint. A pass calls it when the resource leaves its scope: what the
+// Agent held for it may be torn down meanwhile, and an unchanged fingerprint
+// on its return must not skip the rebuild.
+func (l *applyLedger) forget(p Phase, id string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	delete(l.entries, ledgerKey{p.Name, id})
 }
 
 // PhaseCounts is what one run did in one Phase.

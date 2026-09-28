@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/mailaddr"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
@@ -413,5 +414,20 @@ func TestValidateGrants_LookupErrorFailsClosed(t *testing.T) {
 				t.Fatal("a DB error must NOT be collapsed into ErrGranteeNotFound")
 			}
 		})
+	}
+}
+
+// GH #1637: a shared resource's host is a Stalwart principal too, so it may
+// not take the address of the domain directory's host.
+func TestCreate_RefusesTheDirectoryAddress(t *testing.T) {
+	repo := &fakeResRepo{}
+	_, err := Create(context.Background(), Deps{Resources: repo}, CreateInput{
+		Domain: emailDomain(), Kind: "addressbook", Name: "jabali-directory",
+	}, nil)
+	if !errors.Is(err, ErrInvalidName) || !errors.Is(err, mailaddr.ErrLocalReserved) {
+		t.Fatalf("want ErrInvalidName wrapping ErrLocalReserved, got %v", err)
+	}
+	if len(repo.created) != 0 {
+		t.Fatalf("no row may be written for the reserved address, got %d", len(repo.created))
 	}
 }

@@ -134,6 +134,9 @@ func Create(ctx context.Context, d Deps, in CreateInput, notify NotifyFunc) (*mo
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidName, err)
 	}
+	if err := mailaddr.CheckNotReserved(canonLocal); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrInvalidName, err)
+	}
 	email := canonLocal + "@" + in.Domain.Name
 	// Pre-INSERT duplicate check: replaces the raw UNIQUE-constraint driver
 	// error with a typed one. The repository does NOT map the constraint to
