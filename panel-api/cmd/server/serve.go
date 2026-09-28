@@ -19,6 +19,7 @@ import (
 
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/kratosclient"
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/limits"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/api"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/app"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/appsecops"
@@ -398,10 +399,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 		// JAB-243: DB storage quota enforcement (write-freeze at package
 		// quota, hourly sweep inside the reconciler).
 		rec.WithDBQuotaEnforce(repository.NewDatabaseRepository(sharedDB))
-		// M47 Wave 3 throttle reconcile — needs both repo + Stalwart CUD client.
-		if sc, ok := deps.StalwartAdmin.(*stalwartadmin.Client); ok {
-			rec.WithMailThrottles(mailOutboundPolicyRepo, sc)
-		}
+		// M47 Wave 3 throttle reconcile. Stalwart is reached through the
+		// agent: the panel user cannot read Stalwart's admin credential.
+		rec.WithMailThrottles(mailOutboundPolicyRepo, agent.MailThrottles{Agent: sharedAgent})
 		// M52 (ADR-0133) — shared resources convergence (host principals +
 		// per-collection shareWith). Grant grantees resolve via the mailbox +
 		// mail-group repos.
@@ -436,10 +436,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 		deps.TLSRPTAggregate = tlsRptAggregateRepo
 		deps.ARFReports = arfReportRepo
 		deps.MailOutboundPolicies = mailOutboundPolicyRepo
-		// Same *stalwartadmin.Client satisfies the inline-delete dispatcher.
-		if sc, ok := deps.StalwartAdmin.(*stalwartadmin.Client); ok {
-			deps.StalwartAdminThrottle = sc
-		}
+		// DELETE /admin/mail/throttles/:id removes the row's Stalwart
+		// throttles inline, through the agent.
+		deps.MailThrottles = agent.MailThrottles{Agent: sharedAgent}
 		// M47 Wave 4/6/8 ingest — stalwart-cli subprocess client.
 		// Auth via the same recovery-admin secret panel-agent uses.
 		if stalwartUser, stalwartPass, ok := readStalwartAdminCreds(); ok {

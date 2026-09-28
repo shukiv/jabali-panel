@@ -250,7 +250,7 @@ type Reconciler struct {
 	backupDestinations repository.BackupDestinationRepository
 	// M47 Wave 3 — outbound throttle reconcile.
 	outboundPolicies repository.MailOutboundPolicyRepository
-	stalwartAdmin    ThrottleStalwartClient
+	mailThrottles    ThrottleApplier
 	// M52 (ADR-0133) — shared resources convergence. All three required for
 	// reconcileSharedResources; nil on any disables the pass. srMailboxes +
 	// srMailGroups resolve a grant's polymorphic grantee → target email(s).
@@ -544,10 +544,11 @@ func (r *Reconciler) skeletonWire(ctx context.Context) []map[string]any {
 }
 
 // WithMailThrottles wires the M47 Wave 3 outbound-throttle reconciler.
-// Both args are required — nil disables the pass entirely.
-func (r *Reconciler) WithMailThrottles(repo repository.MailOutboundPolicyRepository, sc ThrottleStalwartClient) *Reconciler {
+// Both args are required — nil disables the pass entirely. The applier is
+// agent.MailThrottles in the panel: Stalwart is reached through the agent.
+func (r *Reconciler) WithMailThrottles(repo repository.MailOutboundPolicyRepository, applier ThrottleApplier) *Reconciler {
 	r.outboundPolicies = repo
-	r.stalwartAdmin = sc
+	r.mailThrottles = applier
 	return r
 }
 

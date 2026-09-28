@@ -127,3 +127,49 @@ func slicesEqual[T comparable](a, b []T) bool {
 	}
 	return true
 }
+
+// Client.Create parses the "Created <Type> <id>" stdout shape stalwart-cli
+// emits on success. Pin the parse so an upstream output drift fails
+// here, not at runtime.
+func TestClient_Create_ParsesAssignedID(t *testing.T) {
+	c := NewClient("admin", "secret")
+	c.run = func(_ context.Context, args []string) ([]byte, []byte, error) {
+		// Spot-check the args: create + json flag + type.
+		joined := strings.Join(args, " ")
+		if !strings.Contains(joined, "create MtaOutboundThrottle --json") {
+			t.Errorf("expected `create MtaOutboundThrottle --json` in args, got: %s", joined)
+		}
+		return []byte("Created MtaOutboundThrottle irxz7ww7abaa\n"), nil, nil
+	}
+	id, err := c.Create(context.Background(), "MtaOutboundThrottle", map[string]any{"x": 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id != "irxz7ww7abaa" {
+		t.Errorf("id = %q, want %q", id, "irxz7ww7abaa")
+	}
+}
+
+func TestClient_Create_RejectsUnexpectedStdout(t *testing.T) {
+	c := NewClient("admin", "secret")
+	c.run = func(context.Context, []string) ([]byte, []byte, error) {
+		return []byte("Updated MtaOutboundThrottle x123"), nil, nil // wrong verb
+	}
+	if _, err := c.Create(context.Background(), "MtaOutboundThrottle", map[string]any{}); err == nil {
+		t.Error("expected reject when stdout doesn't start with `Created`")
+	}
+}
+
+func TestClient_Delete_UsesIdsFlag(t *testing.T) {
+	c := NewClient("admin", "secret")
+	c.run = func(_ context.Context, args []string) ([]byte, []byte, error) {
+		joined := strings.Join(args, " ")
+		if !strings.Contains(joined, "delete MtaOutboundThrottle --ids irxz7ww7abaa") {
+			t.Errorf("expected `delete --ids <id>` form, got: %s", joined)
+		}
+		return []byte("irxz7ww7abaa deleted\n"), nil, nil
+	}
+	if err := c.Delete(context.Background(), "MtaOutboundThrottle", "irxz7ww7abaa"); err != nil {
+		t.Fatal(err)
+	}
+}

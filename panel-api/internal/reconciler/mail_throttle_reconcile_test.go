@@ -3,6 +3,7 @@ package reconciler
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 	"testing"
@@ -10,46 +11,43 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/mailthrottle"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 )
 
-type fakeThrottleClient struct {
-	mu      sync.Mutex
-	creates []map[string]any // captured payloads
-	updates []struct{ id string; payload any }
-	deletes []string
-	failCmd map[string]error
+// fakeThrottleApplier stands in for agent.MailThrottles. Apply hands out a
+// new id for an empty one and keeps a known one, unless reassign names a
+// replacement (Stalwart lost the object).
+type fakeThrottleApplier struct {
+	mu       sync.Mutex
+	applies  []mailthrottle.ApplyRequest
+	deletes  []string
+	failOn   map[string]error // keyed "apply:<window>" or "delete"
+	reassign map[string]string
+	nextID   int
 }
 
-func (f *fakeThrottleClient) Create(_ context.Context, _ string, payload any) (string, error) {
+func (f *fakeThrottleApplier) Apply(_ context.Context, req mailthrottle.ApplyRequest) (mailthrottle.ApplyResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if err, ok := f.failCmd["create"]; ok {
-		return "", err
+	f.applies = append(f.applies, req)
+	if err, ok := f.failOn["apply:"+req.Window]; ok {
+		return mailthrottle.ApplyResult{}, err
 	}
-	// payload is MtaOutboundThrottlePayload — capture as generic map so
-	// the test asserts wire shape without coupling to the struct type.
-	m := map[string]any{}
-	// shallow reflect — simpler to just record verbatim
-	f.creates = append(f.creates, m)
-	_ = payload
-	return "stw-new-id-1", nil
-}
-
-func (f *fakeThrottleClient) Update(_ context.Context, _ string, id string, payload any) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.updates = append(f.updates, struct{ id string; payload any }{id, payload})
-	if err, ok := f.failCmd["update"]; ok {
-		return err
+	if req.StalwartID == "" {
+		f.nextID++
+		return mailthrottle.ApplyResult{StalwartID: fmt.Sprintf("stw-new-%d", f.nextID), Changed: true}, nil
 	}
-	return nil
+	if id, ok := f.reassign[req.StalwartID]; ok {
+		return mailthrottle.ApplyResult{StalwartID: id, Changed: true}, nil
+	}
+	return mailthrottle.ApplyResult{StalwartID: req.StalwartID}, nil
 }
 
-func (f *fakeThrottleClient) Delete(_ context.Context, _ string, id string) error {
+func (f *fakeThrottleApplier) Delete(_ context.Context, id string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if err, ok := f.failCmd["delete"]; ok {
+	if err, ok := f.failOn["delete"]; ok {
 		return err
 	}
 	f.deletes = append(f.deletes, id)
@@ -57,13 +55,13 @@ func (f *fakeThrottleClient) Delete(_ context.Context, _ string, id string) erro
 }
 
 type fakeOutboundPolicyRepo struct {
-	rows         map[string]*models.MailOutboundPolicy
-	stamped      []stampCall
+	rows    map[string]*models.MailOutboundPolicy
+	stamped []stampCall
 }
 
 type stampCall struct {
-	rowID, stalwartID string
-	lastErr           string
+	rowID, window, stalwartID string
+	lastErr                   string
 }
 
 func (f *fakeOutboundPolicyRepo) Create(_ context.Context, p *models.MailOutboundPolicy) error {
@@ -100,10 +98,11 @@ func (f *fakeOutboundPolicyRepo) UpdateApplyState(_ context.Context, id, stalwar
 	if lastErr != nil {
 		le = *lastErr
 	}
-	f.stamped = append(f.stamped, stampCall{rowID: id, stalwartID: stalwartID, lastErr: le})
+	f.stamped = append(f.stamped, stampCall{rowID: id, window: mailthrottle.WindowHour, stalwartID: stalwartID, lastErr: le})
 	// mutate the row so subsequent ticks see the new state.
 	if r, ok := f.rows[id]; ok {
 		r.StalwartID = stalwartID
+		r.LastError = lastErr
 	}
 	return nil
 }
@@ -113,9 +112,10 @@ func (f *fakeOutboundPolicyRepo) UpdateApplyStateDaily(_ context.Context, id, st
 	if lastErr != nil {
 		le = *lastErr
 	}
-	f.stamped = append(f.stamped, stampCall{rowID: id, stalwartID: stalwartIDDaily, lastErr: le})
+	f.stamped = append(f.stamped, stampCall{rowID: id, window: mailthrottle.WindowDay, stalwartID: stalwartIDDaily, lastErr: le})
 	if r, ok := f.rows[id]; ok {
 		r.StalwartIDDaily = stalwartIDDaily
+		r.LastError = lastErr
 	}
 	return nil
 }
@@ -124,13 +124,12 @@ func newFakeOutboundPolicyRepo() *fakeOutboundPolicyRepo {
 	return &fakeOutboundPolicyRepo{rows: map[string]*models.MailOutboundPolicy{}}
 }
 
-func throttleRecForTest(t *testing.T) (*Reconciler, *fakeOutboundPolicyRepo, *fakeThrottleClient) {
+func throttleRecForTest(t *testing.T) (*Reconciler, *fakeOutboundPolicyRepo, *fakeThrottleApplier) {
 	t.Helper()
 	r := &Reconciler{log: slog.Default()}
 	repo := newFakeOutboundPolicyRepo()
-	cl := &fakeThrottleClient{}
-	r.outboundPolicies = repo
-	r.stalwartAdmin = cl
+	cl := &fakeThrottleApplier{}
+	r.WithMailThrottles(repo, cl)
 	return r, repo, cl
 }
 
@@ -140,35 +139,48 @@ func TestReconcileMailThrottles_CreatesWhenStalwartIDEmpty(t *testing.T) {
 		ID: "row1", Scope: models.OutboundScopeGlobal, MaxPerHour: 100, Enabled: true,
 	}
 	r.reconcileMailThrottles(context.Background())
-	require.Len(t, cl.creates, 1)
-	assert.Empty(t, cl.updates)
-	assert.Equal(t, "stw-new-id-1", repo.rows["row1"].StalwartID)
-	require.Len(t, repo.stamped, 1)
-	assert.Empty(t, repo.stamped[0].lastErr)
+	require.Len(t, cl.applies, 1)
+	assert.Equal(t, mailthrottle.ApplyRequest{Scope: "global", Window: "hour", Limit: 100}, cl.applies[0])
+	assert.Equal(t, "stw-new-1", repo.rows["row1"].StalwartID)
+	assert.Nil(t, repo.rows["row1"].LastError)
 }
 
-func TestReconcileMailThrottles_UpdatesWhenStalwartIDPresent(t *testing.T) {
+// A window that already has an id sends it, so the agent can compare and
+// leave an unchanged object alone. When nothing changed the row is not
+// written at all.
+func TestReconcileMailThrottles_KnownIDIsSentAndNothingIsWritten(t *testing.T) {
 	r, repo, cl := throttleRecForTest(t)
 	repo.rows["row1"] = &models.MailOutboundPolicy{
-		ID: "row1", Scope: models.OutboundScopeUser, MaxPerHour: 50,
+		ID: "row1", Scope: models.OutboundScopeGlobal, MaxPerHour: 50,
 		Enabled: true, StalwartID: "stw-existing",
 	}
 	r.reconcileMailThrottles(context.Background())
-	assert.Empty(t, cl.creates)
-	require.Len(t, cl.updates, 1)
-	assert.Equal(t, "stw-existing", cl.updates[0].id)
+	require.Len(t, cl.applies, 1)
+	assert.Equal(t, "stw-existing", cl.applies[0].StalwartID)
+	assert.Empty(t, repo.stamped, "no DB write when the ids and the error are unchanged")
+}
+
+// Stalwart lost the object (deleted by hand, restore): the agent made a new
+// one, and the row must point at it.
+func TestReconcileMailThrottles_StampsAReplacedID(t *testing.T) {
+	r, repo, cl := throttleRecForTest(t)
+	cl.reassign = map[string]string{"stw-lost": "stw-replacement"}
+	repo.rows["row1"] = &models.MailOutboundPolicy{
+		ID: "row1", Scope: models.OutboundScopeGlobal, MaxPerHour: 50,
+		Enabled: true, StalwartID: "stw-lost",
+	}
+	r.reconcileMailThrottles(context.Background())
+	assert.Equal(t, "stw-replacement", repo.rows["row1"].StalwartID)
 }
 
 func TestReconcileMailThrottles_DeletesWhenDisabledWithStalwartID(t *testing.T) {
 	r, repo, cl := throttleRecForTest(t)
 	repo.rows["row1"] = &models.MailOutboundPolicy{
-		ID: "row1", Scope: models.OutboundScopeGlobal, Enabled: false, StalwartID: "stw-going-away",
+		ID: "row1", Scope: models.OutboundScopeGlobal, MaxPerHour: 100, Enabled: false, StalwartID: "stw-going-away",
 	}
 	r.reconcileMailThrottles(context.Background())
-	assert.Empty(t, cl.creates)
-	assert.Empty(t, cl.updates)
-	require.Len(t, cl.deletes, 1)
-	assert.Equal(t, "stw-going-away", cl.deletes[0])
+	assert.Empty(t, cl.applies)
+	require.Equal(t, []string{"stw-going-away"}, cl.deletes)
 	assert.Equal(t, "", repo.rows["row1"].StalwartID, "stalwart_id cleared after delete")
 }
 
@@ -178,47 +190,67 @@ func TestReconcileMailThrottles_NoOpWhenDisabledWithoutID(t *testing.T) {
 		ID: "row1", Scope: models.OutboundScopeGlobal, Enabled: false, StalwartID: "",
 	}
 	r.reconcileMailThrottles(context.Background())
-	assert.Empty(t, cl.creates)
-	assert.Empty(t, cl.updates)
+	assert.Empty(t, cl.applies)
 	assert.Empty(t, cl.deletes)
+	assert.Empty(t, repo.stamped)
 }
 
 func TestReconcileMailThrottles_KeepsStalwartIDOnApplyError(t *testing.T) {
 	r, repo, cl := throttleRecForTest(t)
-	cl.failCmd = map[string]error{"update": errors.New("stalwart 503")}
+	cl.failOn = map[string]error{"apply:hour": errors.New("stalwart-cli get: connection refused")}
 	repo.rows["row1"] = &models.MailOutboundPolicy{
 		ID: "row1", Scope: models.OutboundScopeGlobal, MaxPerHour: 100,
 		Enabled: true, StalwartID: "stw-keep-me",
 	}
 	r.reconcileMailThrottles(context.Background())
-	require.Len(t, cl.updates, 1)
 	assert.Equal(t, "stw-keep-me", repo.rows["row1"].StalwartID,
-		"stalwart_id must NOT clear when update fails — next tick retries")
-	require.Len(t, repo.stamped, 1)
-	assert.Contains(t, repo.stamped[0].lastErr, "stalwart 503")
+		"stalwart_id must NOT clear when apply fails — next tick retries")
+	require.NotNil(t, repo.rows["row1"].LastError)
+	assert.Contains(t, *repo.rows["row1"].LastError, "connection refused")
 }
 
-func TestThrottlePayloadFor_ScopeKeyMapping(t *testing.T) {
+// Both windows share last_error. The daily window's success used to stamp
+// last_error=NULL right after the hourly window stamped its failure, so the
+// admin never saw why the hourly cap was not in Stalwart.
+func TestReconcileMailThrottles_OneWindowsErrorSurvivesTheOthersSuccess(t *testing.T) {
+	r, repo, cl := throttleRecForTest(t)
+	cl.failOn = map[string]error{"apply:hour": errors.New("hourly broke")}
+	repo.rows["row1"] = &models.MailOutboundPolicy{
+		ID: "row1", Scope: models.OutboundScopeGlobal, MaxPerHour: 100, MaxPerDay: 1000, Enabled: true,
+	}
+	r.reconcileMailThrottles(context.Background())
+	require.NotNil(t, repo.rows["row1"].LastError, "hourly failure was wiped by the daily success")
+	assert.Contains(t, *repo.rows["row1"].LastError, "hour: hourly broke")
+	assert.Equal(t, "stw-new-1", repo.rows["row1"].StalwartIDDaily, "the daily window still applied")
+}
+
+func TestReconcileMailThrottles_ClearsLastErrorAfterRecovery(t *testing.T) {
+	r, repo, _ := throttleRecForTest(t)
+	old := "hour: stalwart down"
+	repo.rows["row1"] = &models.MailOutboundPolicy{
+		ID: "row1", Scope: models.OutboundScopeGlobal, MaxPerHour: 100,
+		Enabled: true, StalwartID: "stw-1", LastError: &old,
+	}
+	r.reconcileMailThrottles(context.Background())
+	assert.Nil(t, repo.rows["row1"].LastError)
+	assert.Equal(t, "stw-1", repo.rows["row1"].StalwartID)
+}
+
+func TestThrottleRequest_CarriesTheSenderOrDomain(t *testing.T) {
+	addr, dom, stray := "alice@example.com", "example.com", "leftover"
 	cases := []struct {
-		scope string
-		want  []string // keys expected in payload.Key
+		row  models.MailOutboundPolicy
+		want string
 	}{
-		{models.OutboundScopeGlobal, nil},
-		{models.OutboundScopeUser, []string{"sender"}},
-		{models.OutboundScopeDomain, []string{"senderDomain"}},
+		{models.MailOutboundPolicy{Scope: models.OutboundScopeUser, ScopeRef: &addr}, addr},
+		{models.MailOutboundPolicy{Scope: models.OutboundScopeDomain, ScopeRef: &dom}, dom},
+		{models.MailOutboundPolicy{Scope: models.OutboundScopeUser}, ""},
+		// A global row never sends a ref; the agent would reject it.
+		{models.MailOutboundPolicy{Scope: models.OutboundScopeGlobal, ScopeRef: &stray}, ""},
 	}
 	for _, c := range cases {
-		t.Run(c.scope, func(t *testing.T) {
-			row := &models.MailOutboundPolicy{Scope: c.scope, MaxPerHour: 10, Enabled: true}
-			p := throttlePayloadForWindow(row, throttleWindowHourly)
-			for _, k := range c.want {
-				if !p.Key[k] {
-					t.Errorf("scope=%s missing key=%s; full key map=%v", c.scope, k, p.Key)
-				}
-			}
-			if c.scope == models.OutboundScopeGlobal && len(p.Key) != 0 {
-				t.Errorf("global scope should have empty key map, got %v", p.Key)
-			}
-		})
+		row := c.row
+		got := throttleRequest(&row, mailthrottle.WindowDay, 9, "id1")
+		assert.Equal(t, mailthrottle.ApplyRequest{StalwartID: "id1", Scope: c.row.Scope, ScopeRef: c.want, Window: "day", Limit: 9}, got)
 	}
 }

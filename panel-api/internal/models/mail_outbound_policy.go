@@ -3,21 +3,21 @@ package models
 import "time"
 
 // MailOutboundPolicy is one outbound rate-cap row in the
-// mail_outbound_policy table (mig 000139 + mig 000144).
+// mail_outbound_policy table (mig 000139, 000144, 000145, 000146).
 //
-// scope ∈ {user, domain, global}. scope_ref is the matching ULID
-// (users.id for scope=user; domains.id for scope=domain; NULL for
-// scope=global — a single server-wide cap).
+// scope ∈ {user, domain, global}. scope_ref is the sender address
+// (scope=user) or sender domain (scope=domain), NULL for scope=global —
+// a single server-wide cap. Mig 000145 widened it from a ULID column.
 //
 // max_per_hour / max_per_day = 0 means unlimited. The reconciler
-// (Wave 3) converges each enabled row into a Stalwart
-// MtaOutboundThrottle object via internal/stalwartadmin; the assigned
-// upstream id lives in stalwart_id so subsequent updates target the
-// right object.
+// (Wave 3) converges each enabled row into up to two Stalwart
+// MtaOutboundThrottle objects through the agent's mail.throttle.* verbs;
+// their ids live in stalwart_id (hourly) and stalwart_id_daily so later
+// updates and deletes target the right objects.
 type MailOutboundPolicy struct {
 	ID            string     `gorm:"column:id;type:char(26);primaryKey" json:"id"`
 	Scope         string     `gorm:"column:scope;type:varchar(16);not null" json:"scope"`
-	ScopeRef      *string    `gorm:"column:scope_ref;type:char(26)" json:"scope_ref,omitempty"`
+	ScopeRef      *string    `gorm:"column:scope_ref;type:varchar(320)" json:"scope_ref,omitempty"`
 	MaxPerHour    uint       `gorm:"column:max_per_hour;type:int unsigned;not null;default:0" json:"max_per_hour"`
 	MaxPerDay     uint       `gorm:"column:max_per_day;type:int unsigned;not null;default:0" json:"max_per_day"`
 	Enabled       bool       `gorm:"column:enabled;type:tinyint(1);not null;default:1" json:"enabled"`
