@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 
 	_ "modernc.org/sqlite"
@@ -138,6 +139,88 @@ func TestStalwartQueryLogin_SuspendedOwnerCannotSignIn(t *testing.T) {
 	for email, want := range cases {
 		if got := directoryRows(t, db, planLogin, email); got != want {
 			t.Errorf("queryLogin(%s) = %d rows, want %d", email, got, want)
+		}
+	}
+}
+
+var (
+	planDirectoryQueryRe = regexp.MustCompile(`"query(?:Login|Recipient|EmailAliases)": "([^"]*)"`)
+	shDirectoryQueryRe   = regexp.MustCompile(`local query_(?:login|recipient|aliases)="([^"]*)"`)
+	shStalwartGrantRe    = regexp.MustCompile(`GRANT SELECT(?: \(([^)]*)\))? ON jabali_panel\.(\w+)\s+TO '\$\{stalwart_db_user\}'`)
+	sqlTableRe           = regexp.MustCompile(`(?i)\b(?:FROM|JOIN)\s+(\w+)(?:\s+(\w+))?`)
+	sqlColumnRefRe       = regexp.MustCompile(`\b(\w+)\.(\w+)\b`)
+	sqlKeywords          = map[string]bool{"WHERE": true, "ON": true, "JOIN": true, "LEFT": true, "INNER": true, "UNION": true, "GROUP": true, "ORDER": true, "LIMIT": true, "AS": true}
+)
+
+// Stalwart reads the directory as jabali-stalwart-ro, which install.sh grants
+// SELECT on named tables only. A query that reads a table, or under a
+// column-level grant a column, that the user cannot read fails on every
+// lookup: for queryLogin that is every mail login on the box. users is granted
+// by column only, because it also holds password hashes and the encrypted
+// database admin passwords.
+func TestStalwartDirectoryQueries_ReadOnlyGrantedTables(t *testing.T) {
+	root := repoRootT(t)
+	sh, err := os.ReadFile(filepath.Join(root, "install.sh"))
+	if err != nil {
+		t.Fatalf("read install.sh: %v", err)
+	}
+	plan, err := os.ReadFile(filepath.Join(root, "install", "stalwart", "apply-plan.json.tmpl"))
+	if err != nil {
+		t.Fatalf("read apply-plan.json.tmpl: %v", err)
+	}
+
+	grants := map[string]map[string]bool{} // table -> granted columns, nil = the whole table
+	for _, m := range shStalwartGrantRe.FindAllSubmatch(sh, -1) {
+		table := string(m[2])
+		if len(m[1]) == 0 {
+			grants[table] = nil
+			continue
+		}
+		cols := map[string]bool{}
+		for _, c := range strings.Split(string(m[1]), ",") {
+			cols[strings.TrimSpace(c)] = true
+		}
+		grants[table] = cols
+	}
+	if len(grants) == 0 {
+		t.Fatal("install.sh: no GRANT SELECT ... TO '${stalwart_db_user}' found")
+	}
+	if cols, ok := grants["users"]; ok && cols == nil {
+		t.Error("install.sh grants jabali-stalwart-ro the whole users table; grant only the columns the directory reads")
+	}
+
+	var queries []string
+	for _, m := range shDirectoryQueryRe.FindAllSubmatch(sh, -1) {
+		queries = append(queries, string(m[1]))
+	}
+	for _, m := range planDirectoryQueryRe.FindAllSubmatch(plan, -1) {
+		queries = append(queries, string(m[1]))
+	}
+	if len(queries) != 6 {
+		t.Fatalf("found %d directory queries, want 3 in install.sh and 3 in apply-plan.json.tmpl", len(queries))
+	}
+
+	for _, query := range queries {
+		aliases := map[string]string{}
+		for _, m := range sqlTableRe.FindAllStringSubmatch(query, -1) {
+			table, alias := m[1], m[2]
+			if _, ok := grants[table]; !ok {
+				t.Errorf("a directory query reads %s, which install.sh does not grant jabali-stalwart-ro:\n%s", table, query)
+				continue
+			}
+			if alias == "" || sqlKeywords[strings.ToUpper(alias)] {
+				alias = table
+			}
+			aliases[alias] = table
+		}
+		for _, m := range sqlColumnRefRe.FindAllStringSubmatch(query, -1) {
+			table, ok := aliases[m[1]]
+			if !ok {
+				continue
+			}
+			if cols := grants[table]; cols != nil && !cols[m[2]] {
+				t.Errorf("a directory query reads %s.%s, which install.sh does not grant jabali-stalwart-ro:\n%s", table, m[2], query)
+			}
 		}
 	}
 }

@@ -13346,6 +13346,11 @@ install_stalwart_apply() {
   # SELECT-only grant. Stalwart never writes to the source-of-truth
   # directory; on-every-auth `synchronize_account` writes into its own
   # registry (ADR-0045 §"Cache/invalidation model").
+  # users is granted by column: queryLogin reads only id and suspended (a
+  # suspended user's mailboxes stop signing in), and the table also holds
+  # password hashes and the encrypted database admin passwords. This block runs
+  # before the directory converger below, so an existing box has the grant
+  # before its queryLogin reads users.
   mariadb -e "
     CREATE USER IF NOT EXISTS '${stalwart_db_user}'@'localhost' IDENTIFIED BY '${stalwart_db_pass}';
     ALTER USER '${stalwart_db_user}'@'localhost' IDENTIFIED BY '${stalwart_db_pass}';
@@ -13354,9 +13359,10 @@ install_stalwart_apply() {
     GRANT SELECT ON jabali_panel.email_forwarders  TO '${stalwart_db_user}'@'localhost';
     GRANT SELECT ON jabali_panel.mail_groups        TO '${stalwart_db_user}'@'localhost';
     GRANT SELECT ON jabali_panel.mail_group_members TO '${stalwart_db_user}'@'localhost';
+    GRANT SELECT (id, suspended) ON jabali_panel.users TO '${stalwart_db_user}'@'localhost';
     FLUSH PRIVILEGES;
   "
-  _ok "Stalwart MariaDB user provisioned: ${stalwart_db_user} (SELECT on mailboxes, domains, email_forwarders, mail_groups, mail_group_members)"
+  _ok "Stalwart MariaDB user provisioned: ${stalwart_db_user} (SELECT on mailboxes, domains, email_forwarders, mail_groups, mail_group_members, users(id, suspended))"
 
   local admin_token_file="/etc/jabali-panel/stalwart-admin.token"
   if [[ ! -f "$admin_token_file" ]]; then
