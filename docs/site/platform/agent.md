@@ -51,6 +51,7 @@ Newline-delimited JSON over the Unix socket, one request per connection. The env
 - `mail.catchall.set`
 - `mail.disclaimer.set`
 - `mail.shared_folder.*`
+- `mail.directory.apply` (a mail domain's read-only [directory](../user/email.md#the-domain-directory) address book, ADR-0171)
 - `mail.mtasts.*`
 
 **DB**

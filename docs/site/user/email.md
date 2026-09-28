@@ -20,6 +20,27 @@
 
 The **Settings** tab has a per-domain webmail switch. Turning it off drops just the `mail.<domain>` webmail vhost for that domain — IMAP, SMTP, and mail delivery are unaffected. Webmail also has to be enabled in your hosting plan, so turning it on here has no effect while your plan has webmail off. The change applies on the next reconcile.
 
+## The domain directory
+
+Each domain whose mail Jabali hosts gets a read-only address book called
+**<domain> directory**. It lists the domain's mailboxes by name and address,
+and every mailbox it lists can read it. Webmail uses it for
+recipient suggestions, so typing a colleague's name in the To field finds
+them. Other mail apps that sync contacts over CardDAV show it as one more
+address book.
+
+- The directory lists only your domain's own mailboxes. It never shows other
+  domains on the server.
+- It lists mailboxes people use. System relays, send-only accounts and
+  disabled mailboxes are left out. A disabled mailbox also loses access to
+  the directory until you enable it again.
+- The name shown is the mailbox's display name.
+- Nobody can edit the directory from webmail or a mail app. Jabali rebuilds
+  it from the mailbox list, normally within a minute of a change.
+- The address `jabali-directory@<domain>` belongs to the directory. You
+  cannot use it for a mailbox, group or shared resource, and it does not
+  receive mail.
+
 ## IMAP and SMTP submission
 
 - **IMAP**: `imap.<panel-hostname>:993` with TLS, username is the full email address, password is the mailbox password.
