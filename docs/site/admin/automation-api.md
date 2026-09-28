@@ -1,54 +1,126 @@
 # Automation API
 
-`/jabali-admin/automation`. Scoped API tokens for the Automation API.
+`/jabali-admin/automation`. Tokens for the server-wide Automation API.
 
-## Current status
+The Automation API (`/api/v1/automation/`) is for systems that manage the whole
+server: a billing panel that creates and suspends hosting accounts, or a fleet
+manager that watches health and mail. It is not the per-user API. A user's own
+scripts use **API Tokens** in their shell, which act as that user and see only
+what the user owns. An automation token is server-wide, and its **scopes** limit
+it instead.
 
-The whole Automation API is **opt-in** and **off by default** (GH #1161) — an
-admin enables it under Server Settings, and it can additionally listen on `:443`
-for **firewalled billing hosts** that can't reach the Unix socket. The UI for
-minting and revoking scoped tokens is shipped, and the **read-only** endpoints
-(domains, mailboxes, databases, mail forwarders / domain-forwarders / groups /
-autoresponders, and the fleet-monitor `server-status`) are live (JAB-74, JAB-76).
-Write and bulk endpoints are still rolling out — until they're GA, prefer the CLI
-for unattended mutation.
-
-## Token shape
-
-Each token has:
-
-- **Name** — operator label.
-- **Owner** — the panel user the token acts as (an admin token can target any user; a user token is scoped to the owner).
-- **Scopes** — explicit list of API actions the token may call. Currently shipped scopes:
-  - `domains:read`
-  - `mailboxes:read`
-  - `databases:read`
-  - `audit:read`
-  - `backups:trigger`
-  - `ssl:renew`
-- **Expiration** — optional; tokens without an expiry persist until revoked.
-- **IP allowlist** — optional CIDR list; requests from outside the list are rejected.
-- **Rate limit** — per-token requests per minute (default 60).
+The API answers on the panel's `:8443` port. Some billing hosts cannot reach
+`:8443` because their outbound firewall blocks it (CSF's default `TCP_OUT`, for
+example). For them, turn on **Also serve the API on port 443** on this page. It
+serves only the signed `/api/v1/automation/` routes on `:443`; everything else
+stays on `:8443`.
 
 ## Minting a token
 
-Click **Create token**, fill in the fields, click **Generate**. The token value is displayed once. Store it; the panel does not retain the value (only a salted hash).
+Click **Create token**, give it a name, pick its scopes, and click **Generate**.
+The secret is shown once, as a 64-character hex string. Copy it: the panel keeps
+it encrypted and never shows it again.
 
-## Using a token
+From the command line:
 
-```http
-GET /api/v1/admin/domains
-Authorization: Bearer <token>
+```sh
+jabali automation-token mint billing --scope read:users --scope write:users
+jabali automation-token list
+jabali automation-token revoke billing
 ```
 
-Tokens are sent as the `Authorization: Bearer …` header. The response includes `X-RateLimit-Remaining` and `X-RateLimit-Reset` headers.
+## Scopes
 
-## Fleet monitor metrics — `GET /api/v1/automation/server-status`
+Grant only what the caller needs. A read scope never implies a write scope, and
+a write scope never implies a delete scope.
 
-For a central manager's Monitor tab. Gated by the `read:metrics` scope (a
-`read:*` token also grants it). Returns a thinned, normalized host-metrics
-envelope — not the raw admin server-status payload — so a fleet monitor gets
-live health without leaking host topology:
+| Scope | Allows |
+|---|---|
+| `read:domains` | list domains |
+| `read:users` | list and look up accounts; disk and bandwidth usage |
+| `read:applications` | list installed applications |
+| `read:packages` | list hosting packages |
+| `read:mail` | mailboxes, mail domains, forwarders, groups, autoresponder status, totals |
+| `read:status` | panel health and raw host metrics (`/automation/status`) |
+| `read:metrics` | normalised host metrics for a fleet monitor (`/automation/server-status`) |
+| `read:*` | every read scope (cannot be combined with individual read scopes) |
+| `write:users` | create accounts, set passwords, assign packages, suspend and unsuspend, mint one-time login links |
+| `write:domains` | suspend and unsuspend domains; create a primary domain with a new account |
+| `write:cache` | purge the web cache |
+| `write:backups` | start a server backup |
+| `write:services` | restart a panel service on the allow-list |
+| `write:*` | every write scope |
+| `delete:users` | delete an account and everything it owns |
+| `delete:*` | every delete scope |
+
+**Writes enabled** is a switch on each write-scoped token. Turn it off to pause a
+token's writes without revoking it.
+
+## Signing a request
+
+Every request carries an `Authorization` header signed with the secret:
+
+```
+Authorization: Jabali-HMAC kid=<token id>, ts=<unix seconds>, sig=<hex>
+```
+
+`sig` is the hex HMAC-SHA256, keyed with the secret exactly as shown at mint,
+over four lines joined by `\n`:
+
+1. the method, e.g. `GET`
+2. the full request URI, path and query, e.g. `/api/v1/automation/users?email=alice%40example.com`
+3. `ts`
+4. the hex SHA-256 of the request body (of the empty string when there is none)
+
+`ts` must be within 5 minutes of the panel's clock, and no more than 30 seconds
+ahead. Each signature is accepted once, so a captured request cannot be
+replayed. Bodies are limited to 1 MiB.
+
+```sh
+KID=01K...                      # token id
+SECRET=...                      # the 64-character secret
+URI='/api/v1/automation/capabilities'
+BODY=''
+TS=$(date +%s)
+BODY_HASH=$(printf '%s' "$BODY" | sha256sum | cut -d' ' -f1)
+SIG=$(printf 'GET\n%s\n%s\n%s' "$URI" "$TS" "$BODY_HASH" \
+  | openssl dgst -sha256 -hmac "$SECRET" -hex | awk '{print $NF}')
+curl -s "https://panel.example.com:8443$URI" \
+  -H "Authorization: Jabali-HMAC kid=$KID, ts=$TS, sig=$SIG"
+```
+
+A bad header, timestamp, token or signature answers `401`. A token without the
+route's scope answers `403`.
+
+## Endpoints
+
+Every route, with its scope, body and responses, is in the panel's **API Docs**
+page under the **Automation** tag (also at `/api/v1/_meta/openapi.json`). Start
+with `GET /api/v1/automation/capabilities`: any valid token may call it, and it
+lists the write and billing actions this panel serves.
+
+Behaviour worth knowing before you build on it:
+
+- **Writes are rate-limited** to 30 a minute per token, with bursts of up to 10.
+- **Every write is audited** under the token's id, and creating, suspending or
+  deleting an account raises a panel notification.
+- **Account creation is safe to retry.** When the email and username already
+  belong to the same account, the call answers `200` with `status: exists` and
+  that account's id.
+- **Deleting an account** needs `confirm: true`. Send `dry_run: true` first to
+  see what would be deleted.
+- **Admin accounts are out of reach.** The API never creates one, and refuses
+  to delete, suspend, change the password of, or mint a login link for one.
+- **Backups are asynchronous.** `POST /automation/backups` answers `202` with an
+  operation id; poll `GET /automation/operations/{id}`. Send an
+  `Idempotency-Key` header so a retry does not start a second backup.
+- **Some lists are capped** at 200 rows: domains, users and applications.
+
+## Fleet monitor metrics
+
+`GET /api/v1/automation/server-status` (scope `read:metrics`) returns a thinned,
+normalised host-metrics envelope, so a fleet monitor gets live health without
+host topology:
 
 ```json
 {
@@ -63,28 +135,11 @@ live health without leaking host topology:
 }
 ```
 
-Each slice degrades independently: if the CPU or host collector fails, the
-other slice still renders and the failure is reported under an `errors` map
-rather than failing the whole response. `io` (read/write bps) is omitted until a
-per-device collector exists. Results are cached for a few seconds so a monitor
-polling every few seconds does not issue a fresh agent fan-out per request.
+Each slice degrades on its own: if one collector fails, the rest still render
+and the failure is reported under `errors`. Results are cached for a few seconds,
+so frequent polling does not load the server.
 
 ## Revocation
 
-Revoke from the same page. Revocation takes effect immediately; in-flight requests carrying the token complete but no further requests are accepted.
-
-## Audit
-
-Every action a token performs writes an audit row with the token id captured in the actor metadata. The token name and owner are visible; the token value is not.
-
-## Roadmap
-
-Planned scopes (not yet shipped):
-
-- Mutating endpoints for domains, mailboxes, databases (write scopes).
-- Webhook delivery for notification events (the inverse — letting external systems consume panel events).
-- Per-app scopes for the [Applications](./applications.md) registry (e.g. `apps:wordpress:install`).
-
-## CLI as a stable alternative
-
-While the Automation API is rolling out, the CLI is the stable automation contract. Every UI action has a CLI equivalent; CLI exit codes are stable across releases (see [Platform CLI](../platform/cli.md)).
+Revoke from this page or with `jabali automation-token revoke`. The token stops
+working on its next request.

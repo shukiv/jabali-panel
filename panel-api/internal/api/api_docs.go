@@ -5,9 +5,9 @@
 // and is embedded into the binary via //go:embed, so a release-tarball
 // install ships the docs along with the code. Updating the spec is a
 // normal PR against that file. internal/app's openapi coverage tests
-// hold it to the registered routes in both directions. (docs/api/
-// openapi.yaml is an older, smaller copy that is not served; do not
-// edit it or vendor from it.)
+// hold it to the registered routes in both directions, and the tests
+// next to this file hold it to OpenAPI's structural rules. It is the
+// only copy; vendor from it (jabali-mcp pins its route list from it).
 //
 // The panel UI fetches the JSON form and feeds it into a Redoc
 // component on the "API Docs" page (admin + tenant shells both

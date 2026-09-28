@@ -1,23 +1,30 @@
 openapi: 3.0.3
 info:
-  title: Jabali Automation API
+  title: Jabali Panel API
   version: "v1"
   description: |
-    The **stable, documented subset** of the Jabali Panel REST API intended for
-    programmatic / token automation (scripts, CI, routers). It is **not** an
-    exhaustive reference for every backend endpoint the web UI calls — the panel
-    has many more internal, session-only endpoints (server status, security,
-    backups, notifications, apps, …) intentionally outside this contract.
+    Every route the Jabali Panel REST API serves. CI holds this file to the
+    router in both directions: an undocumented route and a documented route
+    that does not exist both fail the build. Routes whose only security is a
+    browser session back the web UI and may change between releases; the
+    token-reachable routes are the contract for scripts, CI and integrations.
 
-    Two authentication paths:
+    Three authentication paths:
 
     - **Browser sessions** (Kratos cookie) — interactive UI use
     - **Bearer tokens** (`Authorization: Bearer jat_…`) — programmatic access
       from scripts / CI / routers. Tokens are scoped to the user that minted
       them; admin tokens carry the same is_admin flag as the owning user.
+    - **Automation tokens** (`Authorization: Jabali-HMAC …`, security scheme
+      AutomationHMAC) — the server-wide `/automation/*` API for billing panels
+      and fleet managers. It answers on :8443 (and, when an admin turns it on,
+      on :443 too), but only to tokens an admin mints under
+      `/admin/automation/tokens`.
 
-    Every endpoint enforces ownership (`claims.UserID == resource.UserID`)
-    OR `is_admin = true`. Endpoints under `/admin/` are admin-only.
+    Every session and Bearer endpoint enforces ownership
+    (`claims.UserID == resource.UserID`) OR `is_admin = true`. Endpoints under
+    `/admin/` are admin-only. Automation tokens are server-wide and limited by
+    their scopes instead.
 
     Token mint UI: tenant shell → API Tokens. Plaintext is shown once at
     creation; the panel only stores the SHA-256 hash thereafter.
@@ -26,8 +33,9 @@ info:
 
     All non-2xx responses return JSON:
     ```
-    { "error": "<machine-readable>", "message": "<human-readable, optional>" }
+    { "error": "<machine-readable>", "detail": "<human-readable, optional>" }
     ```
+    The Automation API returns `{ "ok": false, "error": "<code>", "message": "<text>" }`.
     HTTP status conveys the category; the `error` field disambiguates within
     a category (e.g. 401 may be `missing_credentials` vs `invalid_token`).
   contact:
@@ -48,6 +56,8 @@ tags:
     description: Per-user PHP-FPM egress firewall (M34) — policy, request queue, mature-soak promotion.
   - name: Audit
     description: Tamper-evident audit log — query, verify the hash chain, prune.
+  - name: Automation
+    description: Server-wide, HMAC-signed API for billing panels and fleet managers, plus its token management. Usable only with an admin-minted token; every route names the scope it needs.
   - name: Docker Apps
     description: Admin Docker-compose app catalog installs (M48) — lifecycle, env, backups.
   - name: Python Apps
@@ -228,6 +238,18 @@ components:
       in: cookie
       name: ory_kratos_session
       description: Browser cookie from /login. Same-origin only.
+    AutomationHMAC:
+      type: apiKey
+      in: header
+      name: Authorization
+      description: |
+        `Authorization: Jabali-HMAC kid=<token-id>, ts=<unix-seconds>, sig=<hex>`
+        where `sig = hex(HMAC-SHA256(secret, METHOD + "\n" + URI + "\n" + ts + "\n" + hex(SHA-256(body))))`.
+        `secret` is the 64-character hex string returned once at mint, used
+        as-is. `URI` is the full request URI, path and query included (for
+        example `/api/v1/automation/users?email=a%40example.com`). `ts` must be
+        within 5 minutes of the server clock (at most 30 seconds ahead), and a
+        signature is accepted once. Bodies are capped at 1 MiB.
   schemas:
     EgressDestination:
       type: object
@@ -1433,22 +1455,50 @@ paths:
       responses:
         "200":
           description: The installs
-          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/DockerApp" } } } }
+          content: { application/json: { schema: { type: object, properties: { items: { type: array, items: { $ref: "#/components/schemas/DockerApp" } } } } } }
     post:
       tags: [Docker Apps]
       summary: Install a catalog Docker app (admin)
-      description: "Provisions a compose app from the catalog. Long-running → 202 + job. **Auth:** admin session."
+      description: "Provisions a compose app from the catalog. Answers 201 at once with the app in status installing; the install runs in the background, so poll GET /admin/docker-apps/{id}. **Auth:** admin session."
       security: [ { KratosSession: [] } ]
-      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { slug: { type: string }, domain_id: { type: string } } } } } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [slug, name]
+              properties:
+                slug: { type: string, description: Catalog entry (GET /admin/docker-apps/catalog). }
+                name: { type: string, pattern: '^[a-z0-9-]{1,32}$', description: Instance name. }
+                domain: { type: string, description: "Hostname to serve the app on through the reverse proxy; optional." }
+                update_mode: { type: string, enum: [manual, auto], description: Defaults to the catalog value. }
+                cpu_limit: { type: string, description: Docker CPU limit; defaults to the catalog value. }
+                memory_limit: { type: string, example: 512m, description: Docker memory limit; defaults to the catalog value. }
+                pids_limit: { type: integer, description: Defaults to the catalog value. }
+                env: { type: object, additionalProperties: { type: string }, description: Overrides for the catalog entry's environment variables. }
+                ports:
+                  type: array
+                  description: Per-port overrides; a port left out keeps its catalog default.
+                  items:
+                    type: object
+                    properties:
+                      name: { type: string, description: Catalog port name. }
+                      enabled: { type: boolean }
+                      bind_interface: { type: string, description: "loopback, or public:<managed IP id>" }
+                      host_port: { type: integer, description: 0 picks a free port. }
+                      reverse_proxy: { type: boolean }
+                backup_destination_id: { type: string }
       responses:
-        "202": { description: Install queued }
+        "201": { description: "The install: DockerApp with ports" }
+        "400": { description: "invalid_request, invalid_name, invalid_update_mode or another validation error" }
 
   /admin/docker-apps/catalog:
     get:
       tags: [Docker Apps]
       summary: List the Docker app catalog (admin)
       security: [ { KratosSession: [] } ]
-      responses: { "200": { description: Catalog entries } }
+      responses: { "200": { description: "{ items: [ catalog entry ] }" } }
 
   /admin/docker-apps/catalog/{slug}/icon:
     get:
@@ -1495,8 +1545,12 @@ paths:
     delete:
       tags: [Docker Apps]
       summary: Uninstall a Docker app (admin)
+      description: Deletes the app's data volumes unless keep_volumes is set.
       security: [ { KratosSession: [] } ]
-      parameters: [ { in: path, name: id, required: true, schema: { type: string, format: ulid } } ]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: ulid } }
+        - { in: query, name: keep_volumes, schema: { type: string }, description: "Any value keeps the data volumes." }
+        - { in: query, name: force, schema: { type: string, enum: ["true"] }, description: "Remove the row even when the host teardown fails." }
       responses: { "204": { description: Removed } }
 
   /admin/docker-apps/{id}/logs:
@@ -2142,8 +2196,8 @@ paths:
       responses:
         "201": { description: Stored and applied }
         "400": { description: Malformed JSON }
-        "409": { description: An exclusion for this host, path and rule exists }
-        "422": { description: Invalid exclusion, or the exclusion limit is reached }
+        "409": { description: "An exclusion for this host, path and rule exists" }
+        "422": { description: "Invalid exclusion, or the exclusion limit is reached" }
         "502": { description: The WAF could not be updated; see detail and rolled_back }
 
   /admin/security/crowdsec/appsec/exclusions/{id}:
@@ -2517,6 +2571,7 @@ paths:
         running/queued jobs are skipped. Response reports
         deleted / skipped_running / failed.
       security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: run_id, required: true, schema: { type: string } } ]
       responses: { "200": { description: OK } }
     get:
       tags: [Backup Runs]
@@ -2622,6 +2677,7 @@ paths:
       tags: [Backups]
       summary: Package a Full Server backup run into one downloadable container (GH #1408)
       security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: run_id, required: true, schema: { type: string } } ]
       responses: { "202": { description: Accepted } }
 
   /admin/system/full-backup/{run_id}/package-status:
@@ -2629,6 +2685,7 @@ paths:
       tags: [Backups]
       summary: Poll the status of a Full Server backup packaging job
       security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: run_id, required: true, schema: { type: string } } ]
       responses: { "200": { description: OK } }
 
   /admin/system/full-backup/{run_id}/download:
@@ -2636,6 +2693,7 @@ paths:
       tags: [Backups]
       summary: Download the packaged Full Server backup container
       security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: run_id, required: true, schema: { type: string } } ]
       responses: { "200": { description: OK } }
 
   /admin/system/full-restore-upload/inspect:
@@ -2770,7 +2828,7 @@ paths:
         "403": { description: Not the domain owner, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "404": { description: Domain not found, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "409": { description: "Refused — mail_domain_conflict (new name already carries mail), panel primary, web disabled, custom/shared cert, or name taken", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
-        "503": { description: Rename not available (dependencies not wired, or mail check unreachable), content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "503": { description: "Rename not available (dependencies not wired, or mail check unreachable)", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
 
 
   # --- Branding (auto) ---
@@ -3262,7 +3320,7 @@ paths:
         "200": { description: DNS facet removed; web + mail kept }
         "403": { description: Forbidden or panel-primary protected }
         "404": { description: Domain not found }
-        "409": { description: DNSSEC signed, or DNS is the domain's only facet }
+        "409": { description: "DNSSEC signed, or DNS is the domain's only facet" }
         "503": { description: DNS teardown unavailable (agent not wired) }
 
 
@@ -3826,9 +3884,13 @@ paths:
   /mail/forwarders:
     get:
       tags: [Mail]
-      summary: List forwarders
+      summary: List the forwarders and aliases on your mailboxes
+      description: Across all your domains; an admin sees every tenant's.
       security: [ { KratosSession: [] } ]
-      responses: { "200": { description: OK } }
+      parameters:
+        - { in: query, name: page, schema: { type: integer, minimum: 1, default: 1 } }
+        - { in: query, name: page_size, schema: { type: integer, minimum: 1, maximum: 200, default: 50 }, description: Values outside 1-200 fall back to 50. }
+      responses: { "200": { description: "{ data: [ forwarder ], total, page, page_size }" } }
 
   /mail/forwarders/domain-scoped:
     get:
@@ -3971,18 +4033,44 @@ paths:
   /mailboxes/{mbid}/forwarders:
     post:
       tags: [Mailboxes]
-      summary: Forwarders mailboxes
+      summary: Add a forwarder or an alias to a mailbox
       security: [ { KratosSession: [] } ]
       parameters: [ { in: path, name: mbid, required: true, schema: { type: string } } ]
-      responses: { "200": { description: OK } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type]
+              properties:
+                type: { type: string, enum: [alias, external], description: "alias: another address on the mailbox's domain delivers into this mailbox. external: forward this mailbox's mail to another address." }
+                local_part: { type: string, description: "Alias only, and required for it: the alias address's local part." }
+                target: { type: string, description: "External only: the address to forward to." }
+                keep_copy: { type: boolean, description: "External only: also keep a copy in the mailbox." }
+      responses:
+        "201": { description: "The forwarder. A `warning` (code convergence_failed) means it is saved but the mail server has not applied it yet." }
+        "400": { description: "invalid_body, invalid_type or alias_requires_local_part" }
+        "404": { description: Mailbox not found }
+        "409": { description: "already_exists: that forwarder or alias address already exists" }
 
   /mailboxes/{mbid}/rotate-password:
     post:
       tags: [Mailboxes]
-      summary: Rotate Password mailboxes
+      summary: Set or generate a mailbox's password
       security: [ { KratosSession: [] } ]
       parameters: [ { in: path, name: mbid, required: true, schema: { type: string } } ]
-      responses: { "200": { description: OK } }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                new_password: { type: string, format: password, description: Omit to have the panel generate one. }
+      responses:
+        "200": { description: "{ password }: set only when the panel generated it; shown once" }
+        "404": { description: Mailbox not found }
 
   /mailboxes/{mbid}/send-as:
     get:
@@ -5370,7 +5458,7 @@ paths:
       responses:
         "202": { description: Recorded; the reconciler applies it once the certificate is issued }
         "400": { description: invalid_request or invalid_mail_hostname }
-        "409": { description: mail_hostname_not_ready, mail_hostname_refused or switchover_in_progress }
+        "409": { description: "mail_hostname_not_ready, mail_hostname_refused or switchover_in_progress" }
     delete:
       tags: [Settings]
       summary: Cancel a pending or failed mail hostname switchover (JAB-390)
@@ -5741,22 +5829,26 @@ paths:
       tags: [Ssl Certificates]
       summary: Replace (re-upload) a shared certificate
       security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
       responses: { "200": { description: OK } }
     delete:
       tags: [Ssl Certificates]
       summary: Delete a shared certificate
       security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
       responses: { "200": { description: OK } }
   /domains/{id}/ssl/shared:
     post:
       tags: [Ssl Certificates]
       summary: Attach a shared certificate to a domain
       security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
       responses: { "200": { description: OK } }
     delete:
       tags: [Ssl Certificates]
       summary: Detach a shared certificate from a domain
       security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
       responses: { "200": { description: OK } }
 
   /ssl-certificates:
@@ -6020,16 +6112,19 @@ paths:
   /admin/updates/jabali/run:
     post:
       tags: [Updates]
-      summary: Create run
+      summary: Start `jabali update` (admin)
+      description: Runs the update in a transient systemd unit and returns at once. Poll /admin/updates/jabali/status for progress.
       security: [ { KratosSession: [] } ]
-      responses: { "200": { description: OK } }
+      responses: { "200": { description: "{ unit, started_at }" } }
 
   /admin/updates/jabali/status:
     get:
       tags: [Updates]
-      summary: List status
+      summary: State and log of the `jabali update` run (admin)
       security: [ { KratosSession: [] } ]
-      responses: { "200": { description: OK } }
+      parameters:
+        - { in: query, name: since, schema: { type: string }, description: "RFC 3339 time to read the log from, e.g. the run's started_at. Default: 15 minutes ago." }
+      responses: { "200": { description: "{ unit, status (active, inactive, failed, activating), exit_code once finished, log_tail, fetched_at }" } }
 
   /admin/updates/repair:
     delete:
@@ -6197,7 +6292,7 @@ paths:
         "200": { description: Renamed, content: { application/json: { schema: { type: object, properties: { id: { type: string }, username: { type: string } } } } } }
         "403": { description: Recent-auth step-up required (JAB-380), content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "404": { description: User not found, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
-        "422": { description: Rename refused — invalid name, a v1 refusal (FTP subaccounts / Python apps / cross-filesystem), or the name is taken, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "422": { description: "Rename refused — invalid name, a v1 refusal (FTP subaccounts / Python apps / cross-filesystem), or the name is taken", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
 
   /admin/domains/{id}/chown:
     post:
@@ -6215,7 +6310,7 @@ paths:
         "200": { description: Reassigned, content: { application/json: { schema: { type: object, properties: { id: { type: string }, user_id: { type: string }, doc_root: { type: string } } } } } }
         "403": { description: Recent-auth step-up required (JAB-380), content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "404": { description: Domain or new owner not found, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
-        "422": { description: Change refused — new owner is not a tenant, is already the owner, the domain has an app install, or the docroot is outside the owner's home, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "422": { description: "Change refused — new owner is not a tenant, is already the owner, the domain has an app install, or the docroot is outside the owner's home", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "503": { description: Change-owner not available (app-install repository not wired), content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
 
   /admin/databases/{id}/chown:
@@ -6237,7 +6332,7 @@ paths:
         "403": { description: Recent-auth step-up required (JAB-380), content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "404": { description: Database or new owner not found, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "409": { description: Database backs an application install — detach it first, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
-        "422": { description: Change refused — new owner is not a tenant/already the owner, postgres engine, a shared DB user, a name collision, or an off-convention name, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "422": { description: "Change refused — new owner is not a tenant/already the owner, postgres engine, a shared DB user, a name collision, or an off-convention name", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "503": { description: Change-owner not available (app-install repository not wired), content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
 
   /me/ssh-forwarding:
@@ -6251,12 +6346,20 @@ paths:
   /users:
     get:
       tags: [Users]
-      summary: List users
+      summary: List users (admin)
       security: [ { KratosSession: [] } ]
+      parameters:
+        - { in: query, name: page, schema: { type: integer, minimum: 1, default: 1 } }
+        - { in: query, name: page_size, schema: { type: integer, minimum: 1, maximum: 200, default: 20 }, description: Values over 200 are clamped to 200. }
+        - { in: query, name: q, schema: { type: string }, description: "Search email, username, first and last name." }
+        - { in: query, name: sort, schema: { type: string, enum: [email, username, name_first, package_id, created_at, is_admin, disk_used_kb], default: created_at } }
+        - { in: query, name: order, schema: { type: string, enum: [asc, desc] } }
+        - { in: query, name: is_admin, schema: { type: string, enum: ["true", "false"] }, description: "Only admins, or only non-admins." }
+        - { in: query, name: suspended, schema: { type: string, enum: ["true", "false"] }, description: "Only suspended, or only active, users." }
       responses:
         "200":
           description: The users
-          content: { application/json: { schema: { type: object, properties: { data: { type: array, items: { $ref: "#/components/schemas/User" } }, total: { type: integer } } } } }
+          content: { application/json: { schema: { type: object, properties: { data: { type: array, items: { $ref: "#/components/schemas/User" } }, total: { type: integer }, page: { type: integer }, page_size: { type: integer } } } } }
     post:
       tags: [Users]
       summary: Create user
@@ -6347,3 +6450,609 @@ paths:
       security: [ { KratosSession: [] } ]
       parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
       responses: { "200": { description: OK } }
+
+  # ------------------------------------------------------ Automation API ---
+  # panel-api/internal/api/automation*.go. Server-wide, HMAC-signed API for
+  # billing panels and fleet managers (security scheme AutomationHMAC). Served
+  # on :8443; automation_api_public_enabled (Server Settings) serves it on :443
+  # too. Each route names the token scope it needs; a write route also
+  # needs the token's writes_enabled switch on and shares a per-token budget of
+  # 30 writes a minute (burst 10). Errors use { ok: false, error, message }.
+
+  /automation/capabilities:
+    get:
+      tags: [Automation]
+      summary: List the write and billing actions this panel serves
+      description: Feature detection for billing modules. Lists only the routes mounted on this panel. Any valid token may call it.
+      security: [ { AutomationHMAC: [] } ]
+      responses:
+        "200": { description: "{ ok, actions: [ { action, method, path, scope, async } ] }" }
+
+  /automation/domains:
+    get:
+      tags: [Automation]
+      summary: List domains (scope read:domains)
+      description: Every domain on the server, at most 200 rows.
+      security: [ { AutomationHMAC: [] } ]
+      responses:
+        "200": { description: "{ data: [ { id, name, user_id, is_enabled } ], total }" }
+
+  /automation/users:
+    get:
+      tags: [Automation]
+      summary: List users, or find one by email or username (scope read:users)
+      description: |
+        With `email` or `username`, an exact-match lookup: one row, or an empty
+        list when nothing matches. Without either, every user, at most 200 rows.
+      security: [ { AutomationHMAC: [] } ]
+      parameters:
+        - { in: query, name: email, schema: { type: string, format: email }, description: Exact email to look up. }
+        - { in: query, name: username, schema: { type: string }, description: Exact username to look up (used when email is absent). }
+      responses:
+        "200": { description: "{ data: [ { id, email, username, package_id, is_admin, suspended } ], total }" }
+    post:
+      tags: [Automation]
+      summary: Create a hosting account (scope write:users)
+      description: |
+        Creates a tenant; automation can never create an admin. With `domain`,
+        also creates that primary domain, which needs the write:domains scope
+        too. A domain that fails to create does not roll back the account: the
+        response carries `domain_warning` instead of `domain_id`.
+
+        Idempotent by target state: when both `email` and `username` already
+        belong to the same user, the call answers 200 with `status: exists` and
+        that user's id (and creates the domain if the user does not own it yet).
+      security: [ { AutomationHMAC: [] } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                email: { type: string, format: email, description: Required unless username is given. }
+                username: { type: string, description: Login and Linux account name. Required unless email is given. }
+                password: { type: string, format: password, minLength: 10 }
+                package_id: { type: string, description: Hosting package ID (see GET /automation/packages). }
+                domain: { type: string, description: Primary domain to create for the account. Needs write:domains. }
+      responses:
+        "201": { description: "{ ok, status: created, user_id, message, domain_id?, domain_warning? }" }
+        "200": { description: "The user already exists: { ok, status: exists, user_id, message, domain_id?, domain_warning? }" }
+        "400": { description: Invalid domain name }
+        "403": { description: "scope_denied: domain given without write:domains" }
+        "404": { description: Hosting package not found }
+        "409": { description: "conflict: email or username taken by a different user, or the domain belongs to someone else" }
+        "422": { description: "unsupported: password under 10 characters, invalid email, or neither email nor username" }
+
+  /automation/users/{id}:
+    delete:
+      tags: [Automation]
+      summary: Delete an account and everything it owns (scope delete:users)
+      description: |
+        Irreversible cascade: domains, mailboxes, databases, Docker apps and the
+        Linux account. Send `dry_run: true` first to get the preview; the delete
+        itself needs `confirm: true`. Admin users are refused.
+      security: [ { AutomationHMAC: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string, format: ulid } } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                confirm: { type: boolean, description: Must be true to delete. }
+                dry_run: { type: boolean, description: Return what would be deleted and change nothing. }
+      responses:
+        "200": { description: "Deleted ({ ok, status: done, message }), or the dry-run preview ({ ok, status: dry_run, message, preview })" }
+        "404": { description: User not found }
+        "409": { description: "Admin user, or a Docker app teardown failed on the host" }
+        "422": { description: "confirm: true missing" }
+
+  /automation/users/{id}/password:
+    post:
+      tags: [Automation]
+      summary: Set an account's password (scope write:users)
+      security: [ { AutomationHMAC: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string, format: ulid } } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password: { type: string, format: password, minLength: 10 }
+      responses:
+        "200": { description: "{ ok, status: done, message }" }
+        "404": { description: User not found }
+        "409": { description: "Admin user, or the user has no identity record" }
+        "422": { description: Password under 10 characters }
+
+  /automation/users/{id}/package:
+    put:
+      tags: [Automation]
+      summary: Assign a hosting package (scope write:users)
+      description: Applies the package's limits to the account. Admin users have no package and are refused.
+      security: [ { AutomationHMAC: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string, format: ulid } } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [package_id]
+              properties:
+                package_id: { type: string }
+      responses:
+        "200": { description: "{ ok, status: done, message }" }
+        "404": { description: User or package not found }
+        "409": { description: Admin user }
+
+  /automation/users/{id}/login-token:
+    post:
+      tags: [Automation]
+      summary: Mint a one-time panel login link (scope write:users)
+      description: |
+        Returns a single-use link that signs the user into the panel. Treat it
+        as a credential. Admin users are refused. `client_ip` is accepted but
+        not enforced.
+      security: [ { AutomationHMAC: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string, format: ulid } } ]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ttl_s: { type: integer, minimum: 60, maximum: 3600, default: 300, description: Link lifetime in seconds; values outside 60-3600 are clamped. }
+                client_ip: { type: string, description: Accepted for compatibility; not enforced. }
+      responses:
+        "200": { description: "{ ok, url, expires_in, message }" }
+        "404": { description: User not found }
+        "409": { description: "Admin user, or the user has no identity record" }
+
+  /automation/users/{id}/disable:
+    post:
+      tags: [Automation]
+      summary: Suspend an account (scope write:users)
+      description: Suspends the account's sign-in, domains, Linux account and mail. A step that fails is reported under `warnings` (keys kratos, domain, os, mail). Admin users are refused.
+      security: [ { AutomationHMAC: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string, format: ulid } } ]
+      responses:
+        "200": { description: "{ ok, status: done, message, warnings? }" }
+        "404": { description: User not found }
+        "409": { description: Admin user }
+
+  /automation/users/{id}/enable:
+    post:
+      tags: [Automation]
+      summary: Lift an account's suspension (scope write:users)
+      security: [ { AutomationHMAC: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string, format: ulid } } ]
+      responses:
+        "200": { description: "{ ok, status: done, message, warnings? }" }
+        "404": { description: User not found }
+
+  /automation/users/{id}/usage:
+    get:
+      tags: [Automation]
+      summary: One account's disk and bandwidth usage (scope read:users)
+      description: Disk comes from the latest usage snapshot; bandwidth covers the prior 30 days.
+      security: [ { AutomationHMAC: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string, format: ulid } } ]
+      responses:
+        "200": { description: "{ data: { user_id, username, email, disk_used_mb, disk_quota_mb, bw_used_mb, bw_quota_mb, bw_window, disk_computed_at } }" }
+        "404": { description: User not found }
+
+  /automation/usage:
+    get:
+      tags: [Automation]
+      summary: Disk and bandwidth usage for every account (scope read:users)
+      security: [ { AutomationHMAC: [] } ]
+      responses:
+        "200": { description: "{ data: [ usage row as in GET /automation/users/{id}/usage ], total }" }
+
+  /automation/packages:
+    get:
+      tags: [Automation]
+      summary: List hosting packages (scope read:packages)
+      security: [ { AutomationHMAC: [] } ]
+      responses:
+        "200": { description: "{ data: [ { id, name, disk_quota_mb, bandwidth_quota_mb, max_domains, max_email_accounts, max_databases } ], total }" }
+
+  /automation/applications:
+    get:
+      tags: [Automation]
+      summary: List installed applications (scope read:applications)
+      description: At most 200 rows.
+      security: [ { AutomationHMAC: [] } ]
+      responses:
+        "200": { description: "{ data: [ { id, app_type, domain_id, status } ], total }" }
+
+  /automation/status:
+    get:
+      tags: [Automation]
+      summary: Panel health and raw host metrics (scope read:status)
+      description: Cached for 5 seconds. A collector that fails is reported under `errors` and leaves `healthy` false; the rest still render.
+      security: [ { AutomationHMAC: [] } ]
+      responses:
+        "200": { description: "{ healthy, time, version, commit, build_time, system, services, service_health, cpu, net, errors? }" }
+
+  /automation/server-status:
+    get:
+      tags: [Automation]
+      summary: Normalised host metrics for a fleet monitor (scope read:metrics)
+      description: A stable, thinned shape, cached for a few seconds. Each slice degrades on its own and reports its failure under `errors`.
+      security: [ { AutomationHMAC: [] } ]
+      responses:
+        "200": { description: "{ as_of, cpu: { usage_percent, iowait_percent }, host: { mem_used_kb, mem_total_kb, load_avg, partitions }, errors? }" }
+
+  /automation/mail/summary:
+    get:
+      tags: [Automation]
+      summary: Mail totals (scope read:mail)
+      security: [ { AutomationHMAC: [] } ]
+      responses:
+        "200": { description: "{ mail_domains, mailboxes, forwarders, mail_groups }" }
+
+  /automation/mail/domains:
+    get:
+      tags: [Automation]
+      summary: List mail-enabled domains (scope read:mail)
+      security: [ { AutomationHMAC: [] } ]
+      responses:
+        "200": { description: "{ data: [ { id, name, user_id } ], total }" }
+
+  /automation/mail/mailboxes:
+    get:
+      tags: [Automation]
+      summary: List mailboxes (scope read:mail)
+      description: No password material.
+      security: [ { AutomationHMAC: [] } ]
+      responses:
+        "200": { description: "{ data: [ { email, domain, owner, quota_bytes, last_usage_bytes, disabled } ], total }" }
+
+  /automation/mail/forwarders:
+    get:
+      tags: [Automation]
+      summary: List mailbox forwarders and aliases (scope read:mail)
+      security: [ { AutomationHMAC: [] } ]
+      responses:
+        "200": { description: "{ data: [ { id, mailbox_id, domain, owner_user_id, type, local_part, target, enabled, keep_copy } ], total }" }
+
+  /automation/mail/domain-forwarders:
+    get:
+      tags: [Automation]
+      summary: List domain-wide forwarders not tied to a mailbox (scope read:mail)
+      security: [ { AutomationHMAC: [] } ]
+      responses:
+        "200": { description: "{ data: [ { id, domain, owner_user_id, type, local_part, target, enabled, keep_copy } ], total }" }
+
+  /automation/mail/groups:
+    get:
+      tags: [Automation]
+      summary: List mail groups (scope read:mail)
+      security: [ { AutomationHMAC: [] } ]
+      responses:
+        "200": { description: "{ data: [ { id, email, domain, owner, display_name, group_kind, member_count, internal_only, has_mailbox, has_calendar, has_addressbook, has_files } ], total }" }
+
+  /automation/mail/autoresponders:
+    get:
+      tags: [Automation]
+      summary: List autoresponder status and schedules (scope read:mail)
+      description: Metadata only; the subject and body are never returned.
+      security: [ { AutomationHMAC: [] } ]
+      responses:
+        "200": { description: "{ data: [ { mailbox_id, email, enabled, from_date, to_date, updated_at } ], total }" }
+
+  /automation/domains/{id}/suspend:
+    post:
+      tags: [Automation]
+      summary: Suspend a domain (scope write:domains)
+      description: A domain that is already suspended answers 200 too.
+      security: [ { AutomationHMAC: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string, format: ulid } } ]
+      responses:
+        "200": { description: "{ ok, status: done, message }" }
+        "404": { description: Domain not found }
+
+  /automation/domains/{id}/unsuspend:
+    post:
+      tags: [Automation]
+      summary: Lift a domain's suspension (scope write:domains)
+      security: [ { AutomationHMAC: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string, format: ulid } } ]
+      responses:
+        "200": { description: "{ ok, status: done, message }" }
+        "404": { description: Domain not found }
+
+  /automation/cache/purge:
+    post:
+      tags: [Automation]
+      summary: Purge the web cache (scope write:cache)
+      security: [ { AutomationHMAC: [] } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                scope: { type: string, enum: [all, domain], default: all }
+                domain: { type: string, description: "Domain name; required when scope is domain." }
+      responses:
+        "200": { description: "{ ok, status: done, message }" }
+        "404": { description: Domain not found }
+        "422": { description: "Unknown scope, or scope domain without a domain" }
+
+  /automation/backups:
+    post:
+      tags: [Automation]
+      summary: Start a server backup (scope write:backups)
+      description: |
+        Asynchronous: answers 202 with an operation id to poll at
+        GET /automation/operations/{id}. Needs exactly one enabled backup
+        destination. Send an `Idempotency-Key` header to make retries safe;
+        without one the request signature is the key. A repeat of the same key
+        answers 202 with the first operation.
+      security: [ { AutomationHMAC: [] } ]
+      parameters:
+        - { in: header, name: Idempotency-Key, schema: { type: string, maxLength: 80 } }
+      responses:
+        "202": { description: "{ ok, operation_id, status, message }" }
+
+  /automation/operations/{id}:
+    get:
+      tags: [Automation]
+      summary: Poll an asynchronous operation
+      description: A token sees only its own operations; another token's id answers 404.
+      security: [ { AutomationHMAC: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string, format: ulid } } ]
+      responses:
+        "200": { description: "{ ok, operation_id, status (pending, running, done, error), message }" }
+        "404": { description: Operation not found }
+
+  /automation/services/{name}/restart:
+    post:
+      tags: [Automation]
+      summary: Restart a panel service (scope write:services)
+      description: Only services on the agent's service allow-list; any other name answers 400.
+      security: [ { AutomationHMAC: [] } ]
+      parameters: [ { in: path, name: name, required: true, schema: { type: string } } ]
+      responses:
+        "200": { description: "{ ok, status: done, message }" }
+        "400": { description: Service not on the allow-list }
+
+  # ------------------------------------------- Admin: Automation tokens ---
+  # panel-api/internal/api/admin_automation_tokens.go.
+
+  /admin/automation/tokens:
+    get:
+      tags: [Automation]
+      summary: List automation tokens (admin)
+      description: Secrets are never returned.
+      security: [ { KratosSession: [] } ]
+      responses:
+        "200": { description: "{ data: [ { id, name, scopes, created_by, created_at, last_used_at, last_used_ip, revoked_at, writes_enabled, expires_at, ip_allowlist } ], total }" }
+    post:
+      tags: [Automation]
+      summary: Mint an automation token (admin)
+      description: |
+        Returns the secret once: a 64-character hex string, used as-is as the
+        HMAC key. The panel stores it encrypted and never shows it again.
+      security: [ { KratosSession: [] } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, scopes]
+              properties:
+                name: { type: string, maxLength: 100 }
+                scopes:
+                  type: array
+                  minItems: 1
+                  description: "read:* cannot be combined with individual read scopes."
+                  items:
+                    type: string
+                    enum: ["read:*", "read:domains", "read:users", "read:applications", "read:status", "read:mail", "read:metrics", "read:packages", "write:*", "write:services", "write:users", "write:domains", "write:cache", "write:backups", "delete:*", "delete:users", "delete:domains"]
+                writes_enabled: { type: boolean, default: true, description: Master switch for the token's write scopes. }
+      responses:
+        "201": { description: "{ id, name, scopes, created_at, secret }" }
+        "400": { description: "No scopes, an unknown scope, read:* mixed with read scopes, or a name over 100 characters" }
+        "422": { description: Missing name or scopes }
+
+  /admin/automation/tokens/{id}:
+    delete:
+      tags: [Automation]
+      summary: Revoke an automation token (admin)
+      description: Takes effect on the next request.
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string, format: ulid } } ]
+      responses:
+        "200": { description: "{ id, revoked: true }" }
+
+  # ------------------------------------------------ Docker Apps (tenant) ---
+  # panel-api/internal/api/docker_apps_user.go. The caller's own installs only;
+  # another user's id answers 404. The whole surface answers 403
+  # docker_tenant_not_enabled until the host enables tenant Docker
+  # (`jabali docker enable-tenant`). A Bearer token needs the apps scope.
+
+  /docker-apps:
+    get:
+      tags: [Docker Apps]
+      summary: List your Docker apps
+      responses:
+        "200": { description: "{ items: [ DockerApp with ports ] }" }
+    post:
+      tags: [Docker Apps]
+      summary: Install a Docker app from the catalog
+      description: |
+        The app runs hardened (all capabilities dropped, no new privileges,
+        inside your resource slice) with loopback-only ports, served on
+        `domain` through the reverse proxy. `domain` is a domain you own, or a
+        free hostname the panel creates for you. Your hosting package must
+        include Docker apps and has the last word on app count, disk and the
+        CPU, memory and PID limits.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [slug, name, domain]
+              properties:
+                slug: { type: string, description: Catalog entry (GET /docker-apps/catalog). }
+                name: { type: string, pattern: '^[a-z0-9-]{1,32}$', description: Instance name. }
+                domain: { type: string }
+                cpu_limit: { type: string, description: "Docker CPU limit; defaults to the catalog value, clamped to your package." }
+                memory_limit: { type: string, example: 512m, description: "Docker memory limit; defaults to the catalog value, clamped to your package." }
+                pids_limit: { type: integer, description: "Defaults to the catalog value, clamped to your package." }
+                env: { type: object, additionalProperties: { type: string }, description: Overrides for the catalog entry's environment variables. }
+      responses:
+        "201": { description: "The install (DockerApp with ports and domain), in status installing; the install runs in the background, so poll GET /docker-apps/{id}" }
+        "400": { description: "invalid_request, invalid_name, domain_required, invalid_domain, unknown_slug, invalid_env or port_resolution_failed" }
+        "403": { description: "docker_tenant_not_enabled, no_account, docker_apps_require_package, no_package or docker_apps_not_in_package" }
+        "409": { description: "docker_app_quota_exceeded, disk_quota_exceeded, domain_in_use or already_installed" }
+
+  /docker-apps/catalog:
+    get:
+      tags: [Docker Apps]
+      summary: List the Docker apps you can install
+      description: The catalog entries open to tenants that your hosting package allows.
+      responses:
+        "200": { description: "{ items: [ catalog entry ] }" }
+
+  /docker-apps/catalog/{slug}/icon:
+    get:
+      tags: [Docker Apps]
+      summary: Catalog app icon
+      parameters:
+        - { in: path, name: slug, required: true, schema: { type: string } }
+        - { in: query, name: theme, schema: { type: string, enum: [light, dark] }, description: Pick the themed variant when the entry ships one. }
+      responses: { "200": { description: SVG or PNG icon }, "404": { description: No icon } }
+
+  /docker-apps/usage:
+    get:
+      tags: [Docker Apps]
+      summary: Your Docker apps' disk usage against your package quota
+      responses:
+        "200": { description: "{ used_bytes, quota_bytes, over_quota }" }
+
+  /docker-apps/{id}:
+    get:
+      tags: [Docker Apps]
+      summary: Get one of your Docker apps
+      parameters: [ { in: path, name: id, required: true, schema: { type: string, format: ulid } } ]
+      responses:
+        "200": { description: "DockerApp with ports" }
+        "404": { description: Not found }
+    delete:
+      tags: [Docker Apps]
+      summary: Uninstall one of your Docker apps
+      description: Removes the containers and deletes the app's data volumes. This cannot be undone.
+      parameters: [ { in: path, name: id, required: true, schema: { type: string, format: ulid } } ]
+      responses:
+        "200": { description: "{ id, status: deleted }" }
+        "404": { description: Not found }
+        "502": { description: "teardown_failed: the host could not remove the app; it stays listed" }
+
+  /docker-apps/{id}/start:
+    post:
+      tags: [Docker Apps]
+      summary: Start one of your Docker apps
+      parameters: [ { in: path, name: id, required: true, schema: { type: string, format: ulid } } ]
+      responses:
+        "200": { description: "{ id, status }" }
+        "404": { description: Not found }
+        "409": { description: "disk_quota_exceeded: your Docker app disk usage is over your package quota" }
+
+  /docker-apps/{id}/stop:
+    post:
+      tags: [Docker Apps]
+      summary: Stop one of your Docker apps
+      parameters: [ { in: path, name: id, required: true, schema: { type: string, format: ulid } } ]
+      responses:
+        "200": { description: "{ id, status }" }
+        "404": { description: Not found }
+
+  /docker-apps/{id}/restart:
+    post:
+      tags: [Docker Apps]
+      summary: Restart one of your Docker apps
+      parameters: [ { in: path, name: id, required: true, schema: { type: string, format: ulid } } ]
+      responses:
+        "200": { description: "{ id, status }" }
+        "404": { description: Not found }
+        "409": { description: "disk_quota_exceeded: your Docker app disk usage is over your package quota" }
+
+  /docker-apps/{id}/logs:
+    get:
+      tags: [Docker Apps]
+      summary: Recent container logs of one of your Docker apps
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: ulid } }
+        - { in: query, name: lines, schema: { type: integer, minimum: 1 }, description: How many trailing lines. }
+      responses:
+        "200": { description: Log snapshot }
+        "404": { description: Not found }
+
+  /docker-apps/{id}/env:
+    get:
+      tags: [Docker Apps]
+      summary: Environment variables of one of your Docker apps
+      description: Values are returned in clear, secrets included; `secret` marks the ones the UI masks.
+      parameters: [ { in: path, name: id, required: true, schema: { type: string, format: ulid } } ]
+      responses:
+        "200": { description: "{ env: [ { name, value, secret, generated } ] }" }
+        "404": { description: Not found }
+
+  # ----------------------------------------------------------------- SSO ---
+  # panel-api/internal/api/sso_phpmyadmin.go, sso_adminer.go. Browser session
+  # only, and the request must be same-origin.
+
+  /sso/phpmyadmin:
+    post:
+      tags: [Sso]
+      summary: One-time phpMyAdmin login to one of your databases
+      security: [ { KratosSession: [] } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [database_id]
+              properties:
+                database_id: { type: string, format: ulid }
+      responses:
+        "200": { description: "{ redirect_url }: open it to land signed in; the token in it works once" }
+        "400": { description: Invalid request }
+        "403": { description: "No session, a cross-origin request, or not your database" }
+        "404": { description: Database not found }
+
+  /sso/adminer:
+    post:
+      tags: [Sso]
+      summary: One-time Adminer login to one of your databases (MariaDB or PostgreSQL)
+      security: [ { KratosSession: [] } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [database_id]
+              properties:
+                database_id: { type: string, format: ulid }
+      responses:
+        "200": { description: "{ redirect_url }: open it to land signed in; the token in it works once" }
+        "400": { description: Invalid request }
+        "403": { description: "No session, a cross-origin request, or not your database" }
+        "404": { description: Database not found }
