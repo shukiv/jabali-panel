@@ -46,6 +46,7 @@ Newline-delimited JSON over the Unix socket, one request per connection. The env
 
 **Mail (Stalwart)**
 - `mail.mailbox.create`, `mail.mailbox.passwd`, `mail.mailbox.set_quota`, `mail.mailbox.delete`
+- `mail.auth_cache.flush` (clears Stalwart's HTTP login cache). Stalwart answers webmail and JMAP logins from this cache, not the mailbox table, so without a flush an old password or a disabled mailbox kept working there. The panel calls it when a mailbox is disabled. The password, mailbox delete, domain purge and domain rename verbs flush it themselves. It runs at most once every 5 seconds; a change inside that gap gets one flush at its end.
 - `mail.forwarder.upsert`, `mail.forwarder.delete`
 - `mail.autoresponder.upsert`, `mail.autoresponder.delete`
 - `mail.catchall.set`

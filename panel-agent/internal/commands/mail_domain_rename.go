@@ -252,5 +252,5 @@ func rewriteCatchAllOnRename(ctx context.Context, domainID, oldName, newName str
 }
 
 func init() {
-	Default.Register("mail.domain.rename", mailDomainRenameHandler)
+	Default.Register("mail.domain.rename", flushesMailAuthCache(mailDomainRenameHandler))
 }
