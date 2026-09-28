@@ -3879,9 +3879,16 @@ paths:
     delete:
       tags: [Mail]
       summary: Delete throttle
+      description: >-
+        Removes the row's Stalwart throttles, then the row. If Stalwart cannot
+        remove one, the row is kept, turned off, and the reconciler keeps
+        trying to remove its throttles.
       security: [ { KratosSession: [] } ]
       parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
-      responses: { "204": { description: OK } }
+      responses:
+        "204": { description: Deleted }
+        "404": { description: not_found }
+        "502": { description: "stalwart_delete_failed: a throttle could not be removed from Stalwart; the row is kept, turned off" }
     put:
       tags: [Mail]
       summary: Update throttle

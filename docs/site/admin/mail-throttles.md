@@ -1,6 +1,6 @@
 # Mail Throttles
 
-`/jabali-admin/mail/throttles`. Caps on how much mail a sender, a domain or the whole server can send (M47 Wave 3). Stalwart enforces each cap.
+`/jabali-admin/mail/throttles`. Caps on how much mail a sender, a domain or the whole server can send (M47 Wave 3). Each cap becomes a Stalwart outbound throttle (`MtaOutboundThrottle`).
 
 ## Why throttle outbound
 
@@ -22,19 +22,21 @@ The panel ships with no rows. Until you add one, it sets no outbound cap.
 
 ## How the caps are applied
 
-On each reconciler tick, the panel turns every enabled row into Stalwart outbound throttles. The hourly cap and the daily cap become two separate throttles.
+About once a minute, the reconciler makes Stalwart match every row. The hourly cap and the daily cap become two separate throttles. The panel has no access to Stalwart's admin credential, so the agent (`jabali-agent`) makes each change and reloads Stalwart's settings afterwards.
 
 - A `user` row counts per sender and applies only to that address.
 - A `domain` row counts per sender domain and applies only to that domain.
 - A `global` row is one count for all outbound mail.
 
+A throttle that someone changed or deleted in Stalwart by hand is put back on the next tick. Turning a row off, or setting a cap to `0`, removes that throttle.
+
 The **Stalwart sync** column shows the row's state:
 
-- **pending**: the row has not reached Stalwart yet.
-- **synced**: Stalwart has it.
+- **synced**: Stalwart holds exactly what the row asks for: one throttle for each enabled cap, and none when the row is off.
+- **pending**: Stalwart does not match the row yet. The next tick fixes it.
 - **error**: the last push failed. Hover over the tag to see the error. The next tick tries again.
 
-Deleting a row removes both of its throttles from Stalwart at once. If Stalwart cannot be reached at that moment, the row is still deleted but its throttles stay in Stalwart. In that case, delete them with `stalwart-cli`.
+Deleting a row removes both of its throttles from Stalwart first. If Stalwart cannot remove one, the delete fails with `stalwart_delete_failed` and the row stays, turned off. The next ticks keep trying to remove its throttles. Delete the row again when the error is gone.
 
 ## What the panel does not do
 
