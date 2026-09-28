@@ -38,8 +38,8 @@ every mailbox it lists can read it.
 
 - The directory lists only your domain's own mailboxes. It never shows other
   domains on the server.
-- It lists mailboxes people use. System relays, send-only accounts and
-  disabled mailboxes are left out. A disabled mailbox also loses access to
+- It lists mailboxes people use. System relays, the panel's notification
+  sender, send-only accounts and disabled mailboxes are left out. A disabled mailbox also loses access to
   the directory until you enable it again.
 - The name shown is the mailbox's display name.
 - Nobody can edit the directory from webmail or a mail app. Jabali rebuilds

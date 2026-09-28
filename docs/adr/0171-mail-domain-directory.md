@@ -61,8 +61,9 @@ mailboxes (display name and address) and is shared **read-only** with them.
   entries.
 - **Reconciler pass (`PhaseMailDirectory`).**
   - Scope: domains with `email_enabled` and the jabali mail provider.
-  - Entries and readers: the domain's mailboxes, except system relays,
-    send-only accounts and disabled mailboxes.
+  - Entries and readers: the domain's mailboxes, except system relays, the
+    panel's notification sender (`jabali-notify@<panel hostname>`), send-only
+    accounts and disabled mailboxes.
   - Needed: a domain with no mailbox a person uses gets no directory.
   - Fingerprint: the spec plus the mailbox row ids. A mailbox deleted and
     created again at the same address is a new Stalwart account and must get

@@ -104,7 +104,9 @@ func (p mailDirectoryPlan) fingerprint() string {
 }
 
 // buildMailDirectoryPlan returns the directory of dom from its mailbox rows.
-func buildMailDirectoryPlan(dom models.Domain, mbs []models.Mailbox) mailDirectoryPlan {
+// notifySender, the panel's notification sender, is left out like the system
+// relays: it is not a person, and on its own it needs no directory.
+func buildMailDirectoryPlan(dom models.Domain, mbs []models.Mailbox, notifySender string) mailDirectoryPlan {
 	var p mailDirectoryPlan
 	_, domain, err := mailaddr.Canonicalise(mailaddr.DirectoryLocalPart + "@" + dom.Name)
 	if err != nil {
@@ -122,7 +124,7 @@ func buildMailDirectoryPlan(dom models.Domain, mbs []models.Mailbox) mailDirecto
 		if strings.EqualFold(mb.LocalPart, mailaddr.DirectoryLocalPart) {
 			p.Taken = true
 		}
-		if mb.System || mb.SendOnly {
+		if mb.System || mb.SendOnly || (notifySender != "" && strings.EqualFold(mb.EmailCached, notifySender)) {
 			continue // infrastructure principals and SMTP-only accounts
 		}
 		// A disabled mailbox still keeps the domain's directory, so that its
@@ -159,6 +161,10 @@ func (r *Reconciler) reconcileMailDirectories(ctx context.Context) {
 	if err != nil || srv == nil || !srv.MailEnabled {
 		return
 	}
+	notifySender := ""
+	if srv.Hostname != "" {
+		notifySender = mailaddr.NotifyLocalPart + "@" + srv.Hostname
+	}
 	all, _, err := r.domains.List(ctx, repository.ListOptions{Limit: 10000})
 	if err != nil {
 		r.log.Warn("mail-directory: list domains failed", "error", err)
@@ -191,7 +197,7 @@ func (r *Reconciler) reconcileMailDirectories(ctx context.Context) {
 	now := time.Now()
 	applied := 0
 	for _, d := range doms {
-		plan := buildMailDirectoryPlan(d, byDomain[d.ID])
+		plan := buildMailDirectoryPlan(d, byDomain[d.ID], notifySender)
 		if !plan.Needed {
 			r.ledger.forget(PhaseMailDirectory, d.ID)
 			continue

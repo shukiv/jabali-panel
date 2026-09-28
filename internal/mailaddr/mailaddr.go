@@ -179,6 +179,11 @@ func canonDomain(raw string) (string, error) {
 // take the address: its principal would collide with the host.
 const DirectoryLocalPart = "jabali-directory"
 
+// NotifyLocalPart is the local part of the panel's notification sender on the
+// panel hostname's domain (GH #322). It is infrastructure, not a person: the
+// domain directory leaves it out.
+const NotifyLocalPart = "jabali-notify"
+
 // ErrLocalReserved is returned for a local part the panel keeps for itself.
 var ErrLocalReserved = errors.New("mailaddr: local part is reserved")
 

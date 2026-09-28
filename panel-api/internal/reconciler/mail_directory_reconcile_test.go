@@ -378,7 +378,7 @@ func TestBuildMailDirectoryPlan_LeavesOutNonCanonicalRows(t *testing.T) {
 		{ID: "a", DomainID: "d1", LocalPart: "alice", EmailCached: "alice@one.test"},
 		{ID: "b", DomainID: "d1", LocalPart: "Bob", EmailCached: "Bob@one.test"},
 		{ID: "c", DomainID: "d1", LocalPart: "carol", EmailCached: "carol@other.test"},
-	})
+	}, "")
 	if plan.Spec.HostEmail != "jabali-directory@one.test" {
 		t.Errorf("host = %q", plan.Spec.HostEmail)
 	}
@@ -397,7 +397,7 @@ func TestBuildMailDirectoryPlan_CapsTheBookName(t *testing.T) {
 	name := strings.Join([]string{label, label, label, strings.Repeat("b", 61)}, ".") // 253 bytes, the longest a domain can be
 	plan := buildMailDirectoryPlan(models.Domain{ID: "d1", Name: name, EmailEnabled: true}, []models.Mailbox{
 		{ID: "a", DomainID: "d1", LocalPart: "alice", EmailCached: "alice@" + name},
-	})
+	}, "")
 	if !plan.Needed {
 		t.Fatal("plan not needed")
 	}
@@ -410,5 +410,37 @@ func TestMailDirectoryApplyTimeout_GrowsWithTheDomain(t *testing.T) {
 	small, large := mailDirectoryApplyTimeout(10), mailDirectoryApplyTimeout(20000)
 	if small < time.Minute || large < small+3*time.Minute {
 		t.Fatalf("timeouts %v (10) and %v (20000): a large domain needs minutes more", small, large)
+	}
+}
+
+// The panel's notification sender on the panel hostname's domain is not a
+// person: it is not listed, and alone it gets no directory.
+func TestReconcileMailDirectories_LeavesOutTheNotifySender(t *testing.T) {
+	s := newMDStore()
+	s.domains = append(s.domains, models.Domain{ID: "dp", Name: "panel.test", EmailEnabled: true})
+	s.mailboxes = append(s.mailboxes,
+		models.Mailbox{ID: "m-notify", DomainID: "dp", LocalPart: "jabali-notify", EmailCached: "jabali-notify@panel.test"})
+	ag := &fakeAgent{}
+	r := newDirectoryReconciler(s, ag, true)
+	r.serverSettings = &fakeServerSettingsRepo{settings: &models.ServerSettings{MailEnabled: true, Hostname: "panel.test"}}
+
+	r.reconcileMailDirectories(context.Background())
+	for _, spec := range directoryApplies(ag) {
+		if spec.HostEmail == "jabali-directory@panel.test" {
+			t.Fatalf("the panel domain got a directory for its notify sender alone: %+v", spec)
+		}
+	}
+
+	s.mailboxes = append(s.mailboxes,
+		models.Mailbox{ID: "m-admin", DomainID: "dp", LocalPart: "admin", EmailCached: "admin@panel.test"})
+	r.reconcileMailDirectories(context.Background())
+	var panel []mailDirectorySpec
+	for _, spec := range directoryApplies(ag) {
+		if spec.HostEmail == "jabali-directory@panel.test" {
+			panel = append(panel, spec)
+		}
+	}
+	if len(panel) != 1 || strings.Join(panel[0].Readers, ",") != "admin@panel.test" || len(panel[0].Entries) != 1 {
+		t.Fatalf("panel domain applies = %+v, want one listing only admin", panel)
 	}
 }
