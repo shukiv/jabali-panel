@@ -80,6 +80,9 @@ func (h *userHandler) suspend(c *gin.Context) {
 	if res.OSWarning != "" {
 		resp["os_warning"] = res.OSWarning
 	}
+	if res.MailWarning != "" {
+		resp["mail_warning"] = res.MailWarning
+	}
 	c.JSON(http.StatusOK, resp)
 }
 
@@ -117,6 +120,9 @@ func (h *userHandler) unsuspend(c *gin.Context) {
 	}
 	if res.OSWarning != "" {
 		resp["os_warning"] = res.OSWarning
+	}
+	if res.MailWarning != "" {
+		resp["mail_warning"] = res.MailWarning
 	}
 	c.JSON(http.StatusOK, resp)
 }

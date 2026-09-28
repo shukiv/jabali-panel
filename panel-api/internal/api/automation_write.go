@@ -41,9 +41,9 @@ func autoOKWarnings(c *gin.Context, msg string, warnings map[string]string) {
 	c.JSON(http.StatusOK, body)
 }
 
-// lifecycleWarnings collapses the userops kratos/domain/os warning strings into a
-// keyed map, dropping the empties. Returns nil when every step succeeded.
-func lifecycleWarnings(kratos, domain, os string) map[string]string {
+// lifecycleWarnings collapses the userops kratos/domain/os/mail warning strings
+// into a keyed map, dropping the empties. Returns nil when every step succeeded.
+func lifecycleWarnings(kratos, domain, os, mail string) map[string]string {
 	w := map[string]string{}
 	if kratos != "" {
 		w["kratos"] = kratos
@@ -53,6 +53,9 @@ func lifecycleWarnings(kratos, domain, os string) map[string]string {
 	}
 	if os != "" {
 		w["os"] = os
+	}
+	if mail != "" {
+		w["mail"] = mail
 	}
 	if len(w) == 0 {
 		return nil

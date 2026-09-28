@@ -103,11 +103,25 @@ func directoryRows(t *testing.T, db *sql.DB, query, lookup string) int {
 	return n
 }
 
-// The converger is what runs on an existing box, so the two copies must match.
+// The converger is what runs on an existing box, so the two copies must match,
+// and the converger must send queryLogin, not only define it.
 func TestStalwartQueryLogin_InstallMatchesApplyPlan(t *testing.T) {
 	planLogin, shLogin, _ := directoryQueries(t)
 	if planLogin != shLogin {
 		t.Fatalf("queryLogin drift — edit BOTH:\n apply-plan: %s\n install.sh: %s", planLogin, shLogin)
+	}
+	sh, err := os.ReadFile(filepath.Join(repoRootT(t), "install.sh"))
+	if err != nil {
+		t.Fatalf("read install.sh: %v", err)
+	}
+	patch := regexp.MustCompile(`patch_json="\$\(python3 -c '[^']*"queryLogin": sys\.argv\[(\d)\][^']*' ([^)]*)\)"`).FindSubmatch(sh)
+	if patch == nil {
+		t.Fatal("install.sh: the directory converger's patch_json does not send queryLogin")
+	}
+	args := regexp.MustCompile(`"\$[a-z_]+"`).FindAll(patch[2], -1)
+	i := int(patch[1][0] - '1')
+	if i < 0 || i >= len(args) || string(args[i]) != `"$query_login"` {
+		t.Fatalf("install.sh: patch_json sends queryLogin from %q, want \"$query_login\"", args)
 	}
 }
 

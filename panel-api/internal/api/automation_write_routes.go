@@ -156,11 +156,11 @@ func userSuspendHandler(cfg AutomationConfig, suspend bool) gin.HandlerFunc {
 		if suspend {
 			res, err := userops.Suspend(ctx, billingUserOpsDeps(cfg), u, reason)
 			opErr = err
-			warnings = lifecycleWarnings(res.KratosWarning, res.DomainWarning, res.OSWarning)
+			warnings = lifecycleWarnings(res.KratosWarning, res.DomainWarning, res.OSWarning, res.MailWarning)
 		} else {
 			res, err := userops.Unsuspend(ctx, billingUserOpsDeps(cfg), u)
 			opErr = err
-			warnings = lifecycleWarnings(res.KratosWarning, res.DomainWarning, res.OSWarning)
+			warnings = lifecycleWarnings(res.KratosWarning, res.DomainWarning, res.OSWarning, res.MailWarning)
 		}
 		if opErr != nil {
 			auditWrite(c, cfg.Audits, tok, action, "user", id, models.AuditResultError)

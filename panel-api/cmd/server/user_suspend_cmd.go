@@ -82,7 +82,7 @@ func newUserSuspendCmd() *cobra.Command {
 				return nil
 			}
 			fmt.Printf("suspended user %s (domains disabled: %d)\n", id, res.DomainsDisabled)
-			cliPrintWarnings(res.KratosWarning, res.DomainWarning, res.OSWarning)
+			cliPrintWarnings(res.KratosWarning, res.DomainWarning, res.OSWarning, res.MailWarning)
 			return nil
 		},
 	}
@@ -118,7 +118,7 @@ func newUserUnsuspendCmd() *cobra.Command {
 				return nil
 			}
 			fmt.Printf("unsuspended user %s (domains enabled: %d)\n", id, res.DomainsEnabled)
-			cliPrintWarnings(res.KratosWarning, res.DomainWarning, res.OSWarning)
+			cliPrintWarnings(res.KratosWarning, res.DomainWarning, res.OSWarning, res.MailWarning)
 			return nil
 		},
 	}

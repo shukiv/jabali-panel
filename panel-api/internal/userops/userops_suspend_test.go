@@ -2,6 +2,8 @@ package userops
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
@@ -73,8 +75,14 @@ func TestSuspend_FullCascade(t *testing.T) {
 	}
 	// OS cascade fired for the linux user.
 	// JAB-254: suspension now also locks the tenant's FTP/SFTP aliases.
-	if len(ag.calls) != 2 || ag.calls[0].method != "user.suspend" || ag.calls[1].method != "ftpaccount.lock_tenant" {
-		t.Errorf("agent calls = %+v, want user.suspend then ftpaccount.lock_tenant", ag.calls)
+	// Suspension also flushes Stalwart's login cache, so the user's mailboxes
+	// leave webmail at once.
+	if len(ag.calls) != 3 || ag.calls[0].method != "user.suspend" || ag.calls[1].method != "ftpaccount.lock_tenant" ||
+		ag.calls[2].method != "mail.auth_cache.flush" {
+		t.Errorf("agent calls = %+v, want user.suspend, ftpaccount.lock_tenant, mail.auth_cache.flush", ag.calls)
+	}
+	if res.MailWarning != "" {
+		t.Errorf("MailWarning = %q, want none", res.MailWarning)
 	}
 }
 
@@ -123,8 +131,8 @@ func TestUnsuspend_ReversesCascade(t *testing.T) {
 	if res.DomainsEnabled != 2 || !doms.lastEn {
 		t.Errorf("domains: enabled=%d lastEnabled=%v, want 2 + true", res.DomainsEnabled, doms.lastEn)
 	}
-	if len(ag.calls) != 1 || ag.calls[0].method != "user.unsuspend" {
-		t.Errorf("agent calls = %+v, want one user.unsuspend", ag.calls)
+	if len(ag.calls) != 2 || ag.calls[0].method != "user.unsuspend" || ag.calls[1].method != "mail.auth_cache.flush" {
+		t.Errorf("agent calls = %+v, want user.unsuspend then mail.auth_cache.flush", ag.calls)
 	}
 }
 
@@ -201,5 +209,32 @@ func TestUnsuspend_CallsSyncFtpHostAccess(t *testing.T) {
 	}
 	if !hasSync {
 		t.Error("agent calls missing ftpaccount.sshd_sync (AC4/AC5 guard)")
+	}
+}
+
+// The login cache is flushed whether or not the user has a Linux account:
+// its mailboxes sign in to webmail through Stalwart, not the OS user. A
+// failed flush is reported, because webmail would otherwise stay open.
+func TestSuspend_FlushesMailLoginsAndReportsAFailure(t *testing.T) {
+	ag := &recordingAgent{retErr: errors.New("agent down")}
+	d := Deps{Users: &fakeSuspendUsers{}, Domains: &fakeSuspendDomains{}, Agent: ag}
+
+	res, err := Suspend(context.Background(), d, &models.User{ID: "u1"}, "spam")
+	if err != nil {
+		t.Fatalf("Suspend: %v", err)
+	}
+	if len(ag.calls) != 1 || ag.calls[0].method != "mail.auth_cache.flush" {
+		t.Fatalf("agent calls = %+v, want one mail.auth_cache.flush", ag.calls)
+	}
+	if !strings.Contains(res.MailWarning, "mail_login_cache_flush_failed") {
+		t.Fatalf("MailWarning = %q, want the flush failure", res.MailWarning)
+	}
+
+	res2, err := Unsuspend(context.Background(), Deps{Users: &fakeSuspendUsers{}}, &models.User{ID: "u1", Suspended: true})
+	if err != nil {
+		t.Fatalf("Unsuspend: %v", err)
+	}
+	if !strings.Contains(res2.MailWarning, "mail_login_cache_flush_skipped") {
+		t.Fatalf("MailWarning = %q, want the skipped flush without an agent", res2.MailWarning)
 	}
 }
