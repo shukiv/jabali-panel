@@ -26,6 +26,8 @@ type dirFake struct {
 	shareWith  map[string]map[string]bool
 	bookName   string
 	bookSets   int
+	// domainQueries counts x:Domain/query calls.
+	domainQueries int
 }
 
 func newDirFake() *dirFake {
@@ -50,7 +52,10 @@ func (f *dirFake) addCard(uid, email, name string) {
 
 func (f *dirFake) routes() map[string]jmapHandler {
 	return map[string]jmapHandler{
-		"x:Domain/query": jmapHandlerReturning(jmapQueryResult{IDs: []string{"dom1"}}),
+		"x:Domain/query": func(json.RawMessage) (any, *jmapFakeError) {
+			f.domainQueries++
+			return jmapQueryResult{IDs: []string{"dom1"}}, nil
+		},
 		"x:Account/query": func(args json.RawMessage) (any, *jmapFakeError) {
 			var a struct {
 				Filter struct {
@@ -227,6 +232,29 @@ func TestMailDirectoryApply_ConvergesCardsAndGrants(t *testing.T) {
 	}
 	if f.bookName != "example.com directory" || res.Readers != 2 || res.ReadersUnresolved != 0 || res.HostAccountID != "host1" {
 		t.Errorf("book name %q, result %+v", f.bookName, res)
+	}
+}
+
+// The domain is looked up a fixed number of times, not once per reader: a
+// large domain's apply must fit the panel's time budget.
+func TestMailDirectoryApply_DomainLookupsDoNotGrowWithReaders(t *testing.T) {
+	f := newDirFake()
+	p := directoryParams()
+	var readers []string
+	for i := 0; i < 20; i++ {
+		local := fmt.Sprintf("user%02d", i)
+		f.accounts[local] = "acct-" + local
+		readers = append(readers, local+"@example.com")
+	}
+	p["readers"] = readers
+	if _, err := runDirectoryApply(t, f, p); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if f.domainQueries > 3 {
+		t.Fatalf("x:Domain/query ran %d times for 20 readers, want a fixed few", f.domainQueries)
+	}
+	if len(f.shareWith) != 20 {
+		t.Fatalf("shareWith has %d readers, want 20", len(f.shareWith))
 	}
 }
 

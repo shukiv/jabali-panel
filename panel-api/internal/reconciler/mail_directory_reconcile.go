@@ -228,11 +228,19 @@ func (r *Reconciler) reconcileMailDirectories(ctx context.Context) {
 	}
 }
 
+// mailDirectoryApplyTimeout bounds one apply of n entries and readers. Each
+// reader is one Stalwart query and each card a share of a batched write, so a
+// large domain gets more than the minute a small one needs: a fixed budget
+// would fail it on every retry.
+func mailDirectoryApplyTimeout(n int) time.Duration {
+	return time.Minute + time.Duration(n)*10*time.Millisecond
+}
+
 // applyMailDirectory sends spec to the agent. A reader the agent could not
 // find in Stalwart is an error, so the domain is not stamped and is retried:
 // that mailbox has no grant yet.
 func (r *Reconciler) applyMailDirectory(ctx context.Context, spec mailDirectorySpec) error {
-	cctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	cctx, cancel := context.WithTimeout(ctx, mailDirectoryApplyTimeout(len(spec.Entries)+len(spec.Readers)))
 	defer cancel()
 	raw, err := r.agent.Call(cctx, "mail.directory.apply", spec)
 	if err != nil {

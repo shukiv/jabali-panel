@@ -191,10 +191,15 @@ func mailDirectoryApplyHandler(ctx context.Context, params json.RawMessage) (any
 
 	// Resolve every reader before pushing: shareWith is replaced whole, so a
 	// reader lost to a lookup error would be revoked. An error fails the
-	// apply and keeps the previous grants for the retry.
+	// apply and keeps the previous grants for the retry. The domain's
+	// registry id is looked up once, so a reader costs one query, not two.
+	domainID, err := directoryDomainID(ctx, p.HostEmail)
+	if err != nil {
+		return nil, err
+	}
 	shareWith := make(map[string]map[string]bool, len(p.Readers))
 	for _, reader := range p.Readers {
-		id, err := directoryReaderID(ctx, reader)
+		id, err := directoryReaderID(ctx, domainID, reader)
 		if err != nil {
 			return nil, err
 		}
@@ -449,19 +454,51 @@ func directoryCardSet(ctx context.Context, hostID, op string, items map[string]a
 	return done, nil
 }
 
+// directoryDomainID returns the registry id of the host's domain. The host
+// has just been ensured, so a missing domain is an error, not "no readers".
+func directoryDomainID(ctx context.Context, hostEmail string) (string, error) {
+	id, err := domainIDByName(ctx, hostEmail[strings.LastIndex(hostEmail, "@")+1:])
+	if err != nil {
+		return "", err
+	}
+	if id == "" {
+		return "", &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "the directory's domain is not in the registry"}
+	}
+	return id, nil
+}
+
+// directoryAccountID finds the account with localPart in the registry
+// domain domainID: the lookup accountIDByEmail makes, without its domain
+// query. "" means there is none.
+func directoryAccountID(ctx context.Context, localPart, domainID string) (string, error) {
+	var result jmapQueryResult
+	if err := jmapCall(ctx, "x:Account/query", map[string]any{
+		"filter": map[string]any{"name": localPart, "domainId": domainID},
+		"limit":  1,
+	}, &result); err != nil {
+		return "", err
+	}
+	if len(result.IDs) == 0 {
+		return "", nil
+	}
+	return result.IDs[0], nil
+}
+
 // directoryReaderID resolves a reader's account id. A mailbox that has never
 // signed in has no account in Stalwart's registry yet; it is created, as
 // mailbox.set_password does, so the grant does not wait for a first login.
-// "" means the account still could not be found.
-func directoryReaderID(ctx context.Context, email string) (string, error) {
-	id, err := accountIDByEmail(ctx, email)
+// "" means the account still could not be found. email is canonical and in
+// the domain, as validate checked.
+func directoryReaderID(ctx context.Context, domainID, email string) (string, error) {
+	local := email[:strings.LastIndex(email, "@")]
+	id, err := directoryAccountID(ctx, local, domainID)
 	if err != nil || id != "" {
 		return id, err
 	}
 	if err := accountEnsureInRegistry(ctx, email); err != nil {
 		return "", err
 	}
-	return accountIDByEmail(ctx, email)
+	return directoryAccountID(ctx, local, domainID)
 }
 
 func init() {

@@ -405,3 +405,10 @@ func TestBuildMailDirectoryPlan_CapsTheBookName(t *testing.T) {
 		t.Fatalf("display name is %d bytes, want at most %d", n, mailDirectoryMaxName)
 	}
 }
+
+func TestMailDirectoryApplyTimeout_GrowsWithTheDomain(t *testing.T) {
+	small, large := mailDirectoryApplyTimeout(10), mailDirectoryApplyTimeout(20000)
+	if small < time.Minute || large < small+3*time.Minute {
+		t.Fatalf("timeouts %v (10) and %v (20000): a large domain needs minutes more", small, large)
+	}
+}
