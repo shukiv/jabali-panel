@@ -9,13 +9,13 @@ Version pins shown are the values in `install.sh` at the time of writing. Run `j
 | Component | Version | Role | Upstream license |
 |---|---|---|---|
 | **jabali-panel** | this repo | Go + Gin HTTP panel API; serves the React SPA; the only writer to the panel DB | AGPL-3.0 |
-| **jabali-agent** | this repo | Root-privileged process; performs every privileged host operation over `/run/jabali-agent.sock` | AGPL-3.0 |
-| **Stalwart Mail** | 0.16.0 | SMTP + IMAP + JMAP + mailbox store (single binary) | AGPL-3.0 |
-| **Bulwark** | 1.4.14 | Node + Next.js standalone — SPA fallback, autoconfig / autodiscover, magic-link bridge | own |
+| **jabali-agent** | this repo | Root-privileged process; performs every privileged host operation over `/run/jabali/agent.sock` | AGPL-3.0 |
+| **Stalwart Mail** | 0.16.15 | SMTP + IMAP + JMAP + mailbox store (single binary) | AGPL-3.0 |
+| **Bulwark** | 1.8.0 (GitHub release tarball) | Node + Next.js standalone JMAP webmail on `mail.<domain>`, plus autoconfig / autodiscover and the magic-link bridge | own |
 | **Ory Kratos** | 26.2.0 | Identity (login, 2FA, recovery); Unix sockets only | Apache-2.0 |
 | **nginx** | Debian native | Reverse-proxy + per-vhost server. Sury-nginx purged defensively | BSD-2 |
-| **PHP-FPM** (Sury) | 8.1–8.5 | One systemd unit per version; per-user pools | PHP License |
-| **MariaDB** | 11.x (pinned in CI) | Panel DB + tenant DBs; `skip-networking` (M25.1) | GPL-2 |
+| **PHP-FPM** (Sury) | 8.1–8.5 | One master per panel user (`jabali-fpm@<user>`), on that user's version; the distro units are masked | PHP License |
+| **MariaDB** | Debian | Panel DB + tenant DBs; socket plus loopback `127.0.0.1:3306` only (M25.1, amended: Stalwart's SQL directory needs TCP) | GPL-2 |
 | **PostgreSQL** | Debian 17 | Tenant DBs only; opt-in | PostgreSQL |
 | **Redis** | Debian | Notification dispatcher stream + panel cache | BSD-3 |
 | **PowerDNS Authoritative** | Debian | Authoritative `:53` for hosted zones, MariaDB backend | GPL-2 |
@@ -36,8 +36,8 @@ Version pins shown are the values in `install.sh` at the time of writing. Run `j
 | **bubblewrap** | Debian | Per-user PHP sandbox + SSH chroot for migrations |
 | **UFW** | Debian | Port baseline only (IP decisions live in CrowdSec — M43, ADR-0089) |
 | **nftables** | Debian | Per-user egress (cgroup v2 vmap, M34, ADR-0084) |
-| **Linux Malware Detect (LMD)** | 2.0.1-rc4 (GitHub) | On-demand malware scanner — native HEX + YARA |
-| **YARA-X** (`yr` binary) | 1.15.0 (GitHub) | Pattern matching for LMD + the M33.2 async mail scanner |
+| **Linux Malware Detect (LMD)** | 2.0.1 (GitHub) | On-demand malware scanner — native HEX + YARA |
+| **YARA-X** (`yr` binary) | 1.20.0 (GitHub) | Pattern matching for LMD + the M33.2 async mail scanner |
 
 ## Apps / tooling
 
@@ -47,7 +47,6 @@ Version pins shown are the values in `install.sh` at the time of writing. Run `j
 | **Adminer** | 6.0.1 | Lighter DB web UI + `jabali-sso-plugin.php` |
 | **WP-CLI** | 2.12.0 | WordPress automation |
 | **GoAccess** | Debian | nginx log analyzer |
-| **Bulwark** | pinned SHA (vendored) | Next.js JMAP webmail, served per-tenant on `mail.<domain>` |
 | **restic** | Debian | Backup engine (deduplicated, encrypted, multi-destination) |
 | **Go toolchain** | 1.25.1 | Build agent + panel-api |
 | **Node.js** | NodeSource current LTS | Bulwark runtime + UI build |
@@ -108,7 +107,7 @@ If you need the live, currently-installed version of any component on a deployed
 
 ```bash
 dpkg-query -W -f='${Package} ${Version}\n' | grep -E 'mariadb|postgresql|redis|nginx|pdns|certbot|crowdsec|stalwart|kratos|auditd|aide|apparmor|nftables|ufw|restic|bubblewrap'
-stalwart-mail --version
+stalwart --version
 kratos version
 jabali --version
 ```

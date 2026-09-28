@@ -6,15 +6,14 @@
 
 Errgroup-aggregated polling every 5 seconds. Each card returns its own status; one slow card does not block the others.
 
-### Per-service cards
+### Services card
 
-For each of: nginx, php-fpm (per version), mariadb, postgresql, pdns-server, pdns-recursor, stalwart-mail, kratos, bulwark, redis, crowdsec, jabali-panel, jabali-agent, ssh, cron, and **docker** (shown only on hosts where the engine is installed — the M48 app marketplace):
+One row per watched unit: jabali-panel, jabali-agent, jabali-kratos, nginx, mariadb, redis-server and ssh always, plus jabali-stalwart, jabali-webmail, pdns, postgresql and docker when their module is on. See [Services](./services.md) for the full list and the rules for each unit.
 
-- Active state (active, inactive, failed)
-- Time since the unit entered the current state
-- Restart count in the last hour
-- Last journal line (truncated to 200 chars)
-- **Start / Stop / Restart** buttons (only visible when the operator off-toggle in Server Settings → General → "Allow service controls from UI" is on)
+Each row shows:
+
+- The unit's state: active, inactive, failed, activating or deactivating. An inactive unit that is not enabled at boot shows a grey **idle** tag.
+- **Start**, **Restart**, **Reload**, **Stop**, **Enable at boot** and **Disable at boot** buttons, depending on the unit's state.
 
 ### Host vitals
 
@@ -33,9 +32,9 @@ Top 10 panel-api requests in the last 60 seconds by latency. Drill-in shows the 
 
 ## Service controls
 
-Disabled by default. To enable: Server Settings → General → toggle on. Once enabled, the per-card buttons fire `systemctl start|stop|restart <unit>` via the agent. Every action is audited.
+The buttons are always on for admins. The agent runs each action and the panel logs it with the admin who ran it.
 
-The rationale for the off-default is to prevent a casual click from taking the panel itself down (Stop on `jabali-panel.service` self-destructs the UI). Operators who want the convenience may opt in.
+The panel refuses Stop and Disable on the units that serve the panel itself (jabali-panel, jabali-agent, jabali-kratos, mariadb, nginx, redis-server) with `403 self_destruct_blocked`. The card does not show those buttons for those units. See [Units you cannot stop](./services.md#units-you-cannot-stop).
 
 ## Polling, not WebSocket
 
@@ -47,6 +46,6 @@ The page surface was live-verified on 192.168.100.150 as the system's primary vi
 
 ## Related
 
-- [Services](./services.md) — the per-service control surface, expanded.
-- [Notifications](./notifications-events.md) — the `service_down` event source feeds notifications when the operator is not watching the page.
+- [Services](./services.md) — the watched units and what each button does.
+- [Notifications](./notifications-events.md) — the `service.down` event sends a notification when a watched unit goes down while no one is watching the page. It checks its own list of units; see [Alerts when a unit goes down](./services.md#alerts-when-a-unit-goes-down).
 - [Updates](./server-updates.md) — running `jabali update` is the most common reason a service briefly disappears from this page.

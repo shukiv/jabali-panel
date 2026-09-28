@@ -11,7 +11,7 @@
 | **AppArmor** | Per-profile status (enforce / complain / disabled) for shipped profiles. See [AppArmor](./apparmor.md). |
 | **Snuffleupagus** | PHP runtime hardening rule packs and per-app exception files. See [Snuffleupagus](./snuffleupagus.md). |
 | **AIDE** | Host-integrity daily scan results, manual scan trigger. See [AIDE](./aide.md). |
-| **Malware** | ClamAV on-demand, LMD opt-in monitor, YARA `php.yar`, Tetragon eBPF tripwires (M33 + M33.2). See [Malware](./malware.md). |
+| **Malware** | LMD native scanner, YARA-X rules, LMD opt-in real-time monitor (M33 + M33.2). See [Malware](./malware.md). |
 | **UFW** | Port baseline only (IP decisions live in CrowdSec since M43). See [UFW](./ufw-baseline.md). |
 | **Egress** | Per-user nftables + cgroup v2 vmap egress firewall (M34). See [Egress](./egress.md). |
 

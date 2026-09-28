@@ -55,6 +55,10 @@ and a pollable run whose status call errors is reaped once clearly stale.
 
 ## Frequency
 
-There's no **panel** auto-update timer enabled by default for a self-hosted
-install — the admin runs `jabali update` manually or sets up their own systemd
-timer / cron. (OS *security* patches auto-apply as above.)
+Panel self-update ships **off**. Turn it on under **Updates → Jabali panel
+self-update** (`/jabali-admin/updates`) and pick a time (default 04:30). The
+panel then keeps `jabali-autoupdate.timer` in step with that setting, and the
+box runs `jabali update -f` daily from its release channel. Until you turn it on,
+run `jabali update` yourself. (OS *security* patches auto-apply as above.) See
+[Server Updates](./admin/server-updates.md) for why the stable channel suits
+unattended updates.
