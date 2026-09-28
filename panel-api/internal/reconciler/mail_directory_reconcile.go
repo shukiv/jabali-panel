@@ -256,7 +256,8 @@ func (r *Reconciler) applyMailDirectory(ctx context.Context, spec mailDirectoryS
 // of the domain holds the directory address. Its Stalwart principal would
 // then be taken for the directory's host: a shared resource's host is a
 // Group too, and the apply would replace its address book. Rows are matched
-// by domain id and local part, whatever the case of the stored address. A
+// by domain id and the local part of their address, in any case: a shared
+// resource stores the domain name as it was typed. A
 // lookup error counts as taken, so nothing is written on a guess.
 func (r *Reconciler) mailDirectoryAddressTaken(ctx context.Context, domainID string) bool {
 	if exists, err := r.mailDirGroups.ExistsByDomainAndLocalPart(ctx, domainID, mailaddr.DirectoryLocalPart); err != nil || exists {
@@ -267,9 +268,8 @@ func (r *Reconciler) mailDirectoryAddressTaken(ctx context.Context, domainID str
 		return true
 	}
 	for _, sr := range resources {
-		if sr.LocalPart != nil && strings.EqualFold(*sr.LocalPart, mailaddr.DirectoryLocalPart) {
-			return true
-		}
+		// The address is what the resource's host principal is made from;
+		// a row without one has no host.
 		if sr.EmailCached != nil {
 			if local, _, ok := strings.Cut(*sr.EmailCached, "@"); ok && strings.EqualFold(local, mailaddr.DirectoryLocalPart) {
 				return true
