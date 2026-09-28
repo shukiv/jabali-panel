@@ -91,13 +91,33 @@ mailboxes (display name and address) and is shared **read-only** with them.
 - `x:Account/get` reports `@type` `Group` for the host and `User` for a mailbox.
 - `RCPT TO:<jabali-directory@<domain>>` returns 550: delivery resolves through
   the SQL directory, which has no row for the host.
+- Stalwart shows a reader its own label for a shared book: the default book
+  reads "Stalwart Address Book (jabali-directory@<domain>)" and any other
+  book reads "Address Book". The name the verb sets is seen only by the owner
+  and the admin. Bulwark lists the directory under the account name, "Shared:
+  jabali-directory@<domain>".
+- A PROPFIND on `/dav/card/` lists the directory's home to its readers only.
+  A reader's `addressbook-home-set` holds only its own home, so a CardDAV
+  client that follows the standard discovery does not find the directory.
+  The book is at `/dav/card/jabali-directory%40<domain>/default/`.
+
+### Verified in Bulwark (real browser, test box)
+
+- alice typing "bo" is offered bob@<domain>. A new mailbox is found by its
+  display name.
+- carol, in another domain, is offered nothing for "al" and "bo", and only
+  her own address for a prefix both domains' names share.
+- Bulwark reads contacts at sign-in. A session that was open before a new
+  mailbox's card existed did not offer it; a new sign-in did.
+- Disabling bob removed his card, and his grant: signing in right after he
+  was enabled again showed no directory until the next pass.
 
 ## Consequences
 
 **Positive**
 
-- Same-domain recipient suggestions work again in webmail. They also work in
-  any CardDAV client, which sees the directory as one more address book.
+- Same-domain recipient suggestions work again in webmail. A CardDAV client
+  can read the directory too, once the user adds it by URL.
 - The #1605 isolation stays as it is. No principal listing is re-enabled, and
   no mailbox can read another domain's directory.
 - No Bulwark change, and no new inbound authentication surface on the panel.
@@ -114,8 +134,10 @@ mailboxes (display name and address) and is shared **read-only** with them.
   before #1605 the whole server could see them.
 - Each mail domain with mailboxes gets one more Stalwart principal. Its
   address is reserved.
-- A change normally shows up within one reconciler tick (60 s by default).
-  A failed apply waits 15 minutes before its retry.
+- A change normally reaches Stalwart within one reconciler tick (60 s by
+  default), and a failed apply waits 15 minutes before its retry. A webmail
+  session that is already open sees it after its next sign-in.
+- CardDAV clients do not discover the directory; the user adds its URL.
 - The cost is two JMAP lookups per reader per apply, plus the card sync. The
   ledger makes an unchanged domain free except for the hourly audit.
 - The agent refuses a domain with more than 10000 mailboxes rather than

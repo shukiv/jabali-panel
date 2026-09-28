@@ -22,12 +22,19 @@ The **Settings** tab has a per-domain webmail switch. Turning it off drops just 
 
 ## The domain directory
 
-Each domain whose mail Jabali hosts gets a read-only address book called
-**<domain> directory**. It lists the domain's mailboxes by name and address,
-and every mailbox it lists can read it. Webmail uses it for
-recipient suggestions, so typing a colleague's name in the To field finds
-them. Other mail apps that sync contacts over CardDAV show it as one more
-address book.
+Each domain whose mail Jabali hosts gets a read-only address book, the
+domain directory. It lists the domain's mailboxes by name and address, and
+every mailbox it lists can read it.
+
+- **Webmail** uses it for recipient suggestions: typing a colleague's name or
+  address in the To field finds them. Under **Contacts** it appears as a
+  shared address book, **Shared: jabali-directory@<domain>**.
+- Webmail loads the directory when you sign in. A mailbox added while you are
+  signed in shows up in suggestions after you sign in again.
+- **Mail apps that sync contacts over CardDAV** do not find the directory on
+  their own. Add it as an address book at
+  `https://mail.<domain>/dav/card/jabali-directory%40<domain>/default/` and
+  sign in with your mailbox address and password.
 
 - The directory lists only your domain's own mailboxes. It never shows other
   domains on the server.

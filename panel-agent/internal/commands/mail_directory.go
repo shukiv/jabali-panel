@@ -206,6 +206,8 @@ func mailDirectoryApplyHandler(ctx context.Context, params json.RawMessage) (any
 	}
 	res.Readers = len(shareWith)
 
+	// The name is what the owner and the admin see. Stalwart shows a reader
+	// its own label for a shared book, whatever the owner named it.
 	var set jmapSetResult
 	if err := jmapCallWith(ctx, jmapCapContacts, "AddressBook/set", map[string]any{
 		"accountId": hostID,
