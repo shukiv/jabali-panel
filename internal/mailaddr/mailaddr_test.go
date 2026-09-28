@@ -148,3 +148,23 @@ func TestCanonicalise_Idempotent(t *testing.T) {
 		}
 	}
 }
+
+// GH #1637: the directory host's local part is refused in every spelling
+// Canonicalise folds onto it; other local parts pass.
+func TestCheckNotReserved(t *testing.T) {
+	t.Parallel()
+	for _, in := range []string{"jabali-directory@example.com", "Jabali-Directory@example.com", "jabali-directory+tag@example.com"} {
+		local, _, err := Canonicalise(in)
+		if err != nil {
+			t.Fatalf("Canonicalise(%q): %v", in, err)
+		}
+		if err := CheckNotReserved(local); !errors.Is(err, ErrLocalReserved) {
+			t.Errorf("CheckNotReserved(%q) = %v, want ErrLocalReserved", local, err)
+		}
+	}
+	for _, local := range []string{"alice", "jabali", "directory", "jabali-directory2"} {
+		if err := CheckNotReserved(local); err != nil {
+			t.Errorf("CheckNotReserved(%q) = %v, want nil", local, err)
+		}
+	}
+}

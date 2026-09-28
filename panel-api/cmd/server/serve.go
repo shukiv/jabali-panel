@@ -412,6 +412,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 		// Mailbox shares → the owner Inbox's Stalwart shareWith (backfill of
 		// shares saved before the panel applied them + retry of failed applies).
 		rec.WithMailboxShares(repository.NewMailboxShareRepository(sharedDB), mailboxRepo)
+		// GH #1637 (ADR-0171) — each mail domain's directory address book,
+		// shared read-only with the domain's mailboxes.
+		rec.WithMailDirectory(mailboxRepo, mailGroupRepo, repository.NewSharedResourceRepository(sharedDB))
 		// JAB-230 — noreply@ relay identities + shim cred files. Needs the
 		// sso.key to seal/unseal the relay passwords; nil key (fresh install
 		// mid-bootstrap) just disables the loop until the key exists.

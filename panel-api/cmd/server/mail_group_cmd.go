@@ -195,6 +195,9 @@ func newMailGroupCreateCmd() *cobra.Command {
 				return fmt.Errorf("email is not enabled on %s — enable it before creating groups", dom.Name)
 			}
 			canonLocal, _, err := mailaddr.Canonicalise(args[1] + "@" + dom.Name)
+			if err == nil {
+				err = mailaddr.CheckNotReserved(canonLocal)
+			}
 			if err != nil {
 				return fmt.Errorf("invalid local part: %w", err)
 			}

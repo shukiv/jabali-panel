@@ -288,6 +288,9 @@ func (h *mailGroupHandler) create(c *gin.Context) {
 		return
 	}
 	canonLocal, _, err := mailaddr.Canonicalise(req.Name + "@" + dom.Name)
+	if err == nil {
+		err = mailaddr.CheckNotReserved(canonLocal)
+	}
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_name", "detail": err.Error()})
 		return

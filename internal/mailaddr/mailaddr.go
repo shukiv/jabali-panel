@@ -173,6 +173,25 @@ func canonDomain(raw string) (string, error) {
 	return lower, nil
 }
 
+// DirectoryLocalPart is the local part of the Stalwart principal that hosts a
+// domain's directory address book (GH #1637, ADR-0171). The panel creates
+// that principal itself, so no mailbox, mail group or shared resource may
+// take the address: its principal would collide with the host.
+const DirectoryLocalPart = "jabali-directory"
+
+// ErrLocalReserved is returned for a local part the panel keeps for itself.
+var ErrLocalReserved = errors.New("mailaddr: local part is reserved")
+
+// CheckNotReserved returns ErrLocalReserved when canonLocal, a local part
+// already canonicalised by Canonicalise, is one the panel keeps for itself.
+// The doors that create an address in a domain call it.
+func CheckNotReserved(canonLocal string) error {
+	if canonLocal == DirectoryLocalPart {
+		return ErrLocalReserved
+	}
+	return nil
+}
+
 // shellMetaChars is the deny list referenced by both canonLocal (belt +
 // braces beside the charset allowlist) and canonDomain.
 //

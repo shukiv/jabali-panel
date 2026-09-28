@@ -20,15 +20,28 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	internalbackup "git.jabali-panel.com/shukivaknin/jabali2/internal/backup"
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/kratosclient"
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/mailaddr"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/forwarderops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/sshkeyops"
 )
+
+// reservedMailboxLocal reports whether a restored mailbox's local part is one
+// the panel keeps for itself (GH #1637), in any spelling that resolves to it.
+// A backup is input: a mailbox there would share its Stalwart principal with
+// the domain directory's host.
+func reservedMailboxLocal(local, domain string) bool {
+	if canon, _, err := mailaddr.Canonicalise(local + "@" + domain); err == nil {
+		return mailaddr.CheckNotReserved(canon) != nil
+	}
+	return mailaddr.CheckNotReserved(strings.ToLower(strings.TrimSpace(local))) != nil
+}
 
 // ApplyResult counts what landed during a single Apply call.
 // The CLI prints these so the operator sees concretely what came back.
@@ -227,6 +240,10 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 		}
 		if d.Mailboxes != nil {
 			for _, mb := range dm.Mailboxes {
+				if reservedMailboxLocal(mb.LocalPart, dm.Name) {
+					r.Errors = append(r.Errors, fmt.Sprintf("mailbox %s: not restored: %s@%s is reserved for the domain directory", mb.ID, mb.LocalPart, dm.Name))
+					continue
+				}
 				if existing, err := d.Mailboxes.FindByID(ctx, mb.ID); err == nil && existing != nil {
 					r.Skipped++
 				} else {

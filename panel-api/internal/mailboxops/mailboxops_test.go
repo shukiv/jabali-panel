@@ -6,6 +6,7 @@ import (
 	"errors"
 	"testing"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/mailaddr"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ssokey"
@@ -189,5 +190,35 @@ func TestDelete_HostFailureKeepsRow(t *testing.T) {
 	}
 	if repo.deleted != "" {
 		t.Fatalf("the row must NOT be deleted when the host destroy failed, got %q", repo.deleted)
+	}
+}
+
+// GH #1637: the address of the domain directory's host principal is not a
+// mailbox. A mailbox there would collide with the principal, whose address
+// book the whole domain reads.
+// GH #1637: a migrated source account at the directory's address is refused
+// like a new one.
+func TestCreateForRestore_RefusesTheDirectoryAddress(t *testing.T) {
+	repo := &fakeMBRepo{}
+	_, err := CreateForRestore(context.Background(), Deps{Mailboxes: repo},
+		RestoreCreateInput{DomainID: "d1", LocalPart: "jabali-directory", PasswordHash: "$2a$10$x"})
+	if !errors.Is(err, ErrInvalidLocalPart) || !errors.Is(err, mailaddr.ErrLocalReserved) {
+		t.Fatalf("want ErrInvalidLocalPart wrapping ErrLocalReserved, got %v", err)
+	}
+	if repo.created != nil {
+		t.Fatalf("no row may be written for the reserved address, got %+v", repo.created)
+	}
+}
+
+func TestCreate_RefusesTheDirectoryAddress(t *testing.T) {
+	repo := &fakeMBRepo{}
+	key := ssokey.Key{}
+	_, _, err := Create(context.Background(), Deps{Mailboxes: repo, SSOKey: &key},
+		CreateInput{Domain: enabledDomain(), LocalPart: "Jabali-Directory"}, nil)
+	if !errors.Is(err, ErrInvalidLocalPart) || !errors.Is(err, mailaddr.ErrLocalReserved) {
+		t.Fatalf("want ErrInvalidLocalPart wrapping ErrLocalReserved, got %v", err)
+	}
+	if repo.created != nil {
+		t.Fatalf("no row may be written for the reserved address, got %+v", repo.created)
 	}
 }

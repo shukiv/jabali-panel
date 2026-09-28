@@ -91,6 +91,9 @@ func Create(ctx context.Context, d Deps, in CreateInput, notify NotifyFunc) (*mo
 	if err != nil {
 		return nil, "", fmt.Errorf("%w: %v", ErrInvalidLocalPart, err)
 	}
+	if err := mailaddr.CheckNotReserved(canonLocal); err != nil {
+		return nil, "", fmt.Errorf("%w: %w", ErrInvalidLocalPart, err)
+	}
 	exists, err := d.Mailboxes.ExistsByDomainAndLocalPart(ctx, in.Domain.ID, canonLocal)
 	if err != nil {
 		return nil, "", fmt.Errorf("%w: uniqueness check: %v", ErrInternal, err)
@@ -235,6 +238,11 @@ type RestoreCreateInput struct {
 func CreateForRestore(ctx context.Context, d Deps, in RestoreCreateInput) (*models.Mailbox, error) {
 	if d.Mailboxes == nil {
 		return nil, fmt.Errorf("%w: mailboxes repo required", ErrDeps)
+	}
+	// A source account at the directory's address would share its Stalwart
+	// principal with the directory host (GH #1637).
+	if err := mailaddr.CheckNotReserved(in.LocalPart); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrInvalidLocalPart, err)
 	}
 	quota := in.QuotaBytes
 	if quota == 0 {

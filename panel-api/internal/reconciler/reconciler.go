@@ -186,6 +186,15 @@ type Reconciler struct {
 	mailboxShares       repository.MailboxShareRepository
 	mailboxShareMu      sync.Mutex
 	mailboxShareRetryAt map[string]time.Time
+	// mailDir* back the GH #1637 directory pass (mail_directory_reconcile.go):
+	// each mail domain's read-only directory address book. mailDirRetryAt
+	// backs off a domain whose last apply failed. Nil mailboxes = pass
+	// disabled.
+	mailDirMailboxes repository.MailboxRepository
+	mailDirGroups    repository.MailGroupRepository
+	mailDirResources repository.SharedResourceRepository
+	mailDirMu        sync.Mutex
+	mailDirRetryAt   map[string]time.Time
 	// wordPressInstalls holds reference to the WordPress installs repository
 	wordPressInstalls repository.WordPressInstallRepository
 	// sshKeys holds reference to the SSH keys repository
@@ -1020,6 +1029,9 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 	// fleet backfill: shares saved before the panel applied them were never
 	// pushed. Ledger-gated no-op in steady state.
 	r.reconcileMailboxShares(ctx)
+	// GH #1637: each mail domain's directory address book, shared read-only
+	// with the domain's mailboxes. Ledger-gated no-op in steady state.
+	r.reconcileMailDirectories(ctx)
 
 	// M34: per-user PHP-FPM egress firewall. Cheap noop when the repo
 	// isn't wired (test fixtures) or when there are zero policies.
