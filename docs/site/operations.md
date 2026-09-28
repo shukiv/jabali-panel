@@ -7,7 +7,7 @@ Day-2 operator reference. For day-1 install see [installation.md](./installation
 | When | Action |
 |---|---|
 | Daily | Review `/jabali-admin/security` → CrowdSec → Decisions. Spot any allowlist additions you need to make. |
-| Daily | Review `/jabali-admin/notifications` (or the bell) for `cert_renew failed`, `backup_failed`, `service_down`. |
+| Daily | Review `/jabali-admin/notifications` (or the bell) for `cert.renew.fail`, `backup.fail` and `service.down`. |
 | Weekly | `jabali update` — pulls latest fixes; auto-applies migrations. |
 | Weekly | Inspect `/jabali-admin/server-status` → trends. Spot disks filling up before quota alarms fire. |
 | Monthly | Verify a restore round-trip from at least one backup destination. |

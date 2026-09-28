@@ -1,50 +1,30 @@
 # Notifications — Routing
 
-`/jabali-admin/notifications/routing`. Per-event-source mapping to per-channel destinations, with severity thresholds and recipient filters.
+The panel has no routing rules. Where an event goes follows from three settings:
 
-## Rule shape
+- whether the event is on;
+- which server-wide channels are enabled;
+- for an event about one tenant, which of their own channels the tenant routed it to.
 
-A routing rule consists of:
+## Where an event goes
 
-- **Event pattern** — exact match (`cert_renew`) or wildcard (`backup_*`).
-- **Severity threshold** — emit only when the event's severity is at or above this level.
-- **Channel** — one of the enabled [Channels](./notifications-channels.md).
-- **Recipient filter** — admin only, specific admin user list, or "all admins".
-- **Active window** — optional cron expression; suppresses outside the window (useful for skipping non-critical notifications during off-hours).
+When a producer fires an event:
 
-A single event may match multiple rules; each rule produces an independent dispatch attempt.
+1. If the event is off on [Events](./notifications-events.md), the panel drops it.
+2. The panel writes the event to the in-app bell. An event about one user goes to that user's bell. A server event goes to every admin's bell.
+3. The event goes to every enabled server-wide channel on [Channels](./notifications-channels.md). A channel cannot filter events by name or by severity. To keep an event off every channel, turn the event off.
+4. An event about one tenant also goes to each of that tenant's own channels that they routed the event to. This happens only when an admin has turned on tenant notifications. See [Notifications](../notifications.md) for tenant channels.
 
-## Default rules
+## Failed deliveries
 
-The installer creates a starter set:
+The panel retries a failed delivery. After 5 tries, the event moves to the **Dead Letter** tab. `jabali notification dlq replay` sends it again, and `jabali notification dlq drop` discards it.
 
-| Event pattern | Channel | Recipients | Threshold |
-|---|---|---|---|
-| `cert_renew` (fail only) | In-app, Email | All admins | `warn` |
-| `service_down` | In-app, Email | All admins | `warn` |
-| `crowdsec_spike` | In-app | All admins | `notice` |
-| `disk_full` | In-app, Email | Subject user + all admins | `notice` |
-| `aide_diff` | In-app, Email | All admins | `warn` |
-| `backup_failed` | In-app, Email | Subject user + all admins | `warn` |
-| `malware_file_hit` | In-app, Email | All admins | `error` |
+A channel that fails 3 times in a row is turned off, and the panel fires `notifications.channel.auto_disabled`.
 
-Override or extend freely.
+## Testing a channel
 
-## Adding a rule
+Click **Test** on a channel's row to send that channel a test message. To send one message to every enabled channel:
 
-Click **Add rule**, pick an event pattern, severity threshold, target channel, and recipient filter. Save persists to `notification_routing_rules` and takes effect immediately (no reconciler delay).
-
-## Suppression
-
-Within each user's profile, a tenant may opt out of any rule that targets them. Server-level rules cannot opt them out of `service_down` or `crowdsec_spike` (those are admin-only by convention).
-
-## Per-channel delivery semantics
-
-- **In-app**: retained 30 days, marked-read state persists per user.
-- **Email**: best-effort; deferred messages are surfaced under [Email Queue](./email-queue.md).
-- **Slack / Telegram / ntfy**: synchronous webhook; failures are logged but not retried (the next event will land if the destination recovers).
-- **Web Push**: per-subscription; failed `gone` responses prune the subscription automatically.
-
-## CLI
-
-Routing is currently UI-only. The underlying table is `notification_routing_rules` and is included in `account_full` backups so a restore preserves operator intent.
+```bash
+jabali notification broadcast --title "Test" --body "Checking every channel"
+```

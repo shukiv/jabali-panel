@@ -85,4 +85,4 @@ Per-row **Run now** triggers the service unit immediately, bypassing the timer. 
 
 ## Failure handling
 
-If a cron job exits non-zero, the `OnFailure=` hook fires the `cron_failed` notification event. You can route this to your in-app bell or email under Profile → Notifications.
+The panel does not send a notification when a cron job fails. Open the job's log to see its output.

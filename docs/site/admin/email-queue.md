@@ -42,4 +42,4 @@ If [Mail Throttles](./mail-throttles.md) suspended a sender mid-batch, queued me
 
 ## Health
 
-Queue depth and oldest-message age feed the `service_down` event source (M14) when they exceed configured thresholds (default: depth > 1000 or oldest > 4 hours).
+The panel sends no notification about queue depth or message age. Check this page.

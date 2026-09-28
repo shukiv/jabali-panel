@@ -26,7 +26,7 @@ The Scenario Overrides tab lets the operator tune these without editing `/etc/cr
 
 ## Alert routing
 
-`crowdsec_spike` is the event source that fires when scenario emissions exceed a server-wide threshold. Wire it under [Routing](./notifications-routing.md) to the channels the operator wants paged on (Slack, ntfy, email).
+`crowdsec.ban.spike` fires on an unusually large burst of new bans in a short window. It goes to the bell and to every enabled channel; see [Routing](./notifications-routing.md).
 
 ## Console-pushed allowlists
 

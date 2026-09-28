@@ -23,7 +23,6 @@ Override per-mailbox or per-domain by adding a row in the **Overrides** tab.
 
 - Bulwark intercepts SMTP submission on `:587` / `:465`, checks the per-sender counter against the limit, and returns `421 4.7.0 throttled, try later` when exceeded.
 - Stalwart maintains the per-IP counter and applies the policy on outbound MTA delivery.
-- CrowdSec observes throttle hits and escalates a sender that hits the limit repeatedly within a short window to a temporary suspension.
 
 ## Excluded paths
 
@@ -32,13 +31,7 @@ Override per-mailbox or per-domain by adding a row in the **Overrides** tab.
 
 ## Suspending a sender
 
-When CrowdSec escalates a sender, the panel:
-
-1. Disables the mailbox login (Stalwart returns `535 5.7.8` on AUTH).
-2. Fires a `mail_throttle_suspended` notification (see [Notifications](./notifications-events.md)).
-3. Records the suspension in the audit log.
-
-The admin clears the suspension from the mailbox edit page once the cause is understood.
+The panel does not suspend a sender on its own, and sends no notification about throttle hits. To stop a mailbox from sending, disable it or change its password.
 
 ## Monitoring
 

@@ -30,7 +30,7 @@ After every successful run, restic's `forget --prune` runs with the schedule's r
 
 ## Notifications
 
-Each run emits `backup_succeeded` or `backup_failed` (see [Notifications Events](./notifications-events.md)).
+A failed job fires `backup.fail`. A finished job fires `backup.success`, which is off by default (see [Notifications Events](./notifications-events.md)).
 
 ## Common patterns
 

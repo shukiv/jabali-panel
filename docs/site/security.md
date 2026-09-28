@@ -16,7 +16,7 @@ UFW is **demoted**: only port-open/port-close baseline. Old `ufw deny from <ip>`
 CrowdSec extensions (M27, ADR 0061-0063):
 - **Per-IP allowlists** — admin-managed, persists across CrowdSec restarts.
 - **Per-scenario override** — change a scenario's severity / leakspeed / capacity at admin level.
-- **Alert routing** — alerts feed M14 notifications (`crowdsec_spike` event source).
+- **Alert routing** — a burst of new bans fires the `crowdsec.ban.spike` notification.
 
 ## AppSec WAF (M27 — replaces ModSecurity)
 
@@ -98,7 +98,7 @@ Per-app exceptions live in `/etc/php/<ver>/snuffleupagus.rules.d/`. WP, Moodle, 
 
 ## AIDE host-integrity
 
-Daily timer (`aide.timer`) compares the host against the AIDE database. Changes outside the panel's drop-in paths fire an `aide_diff` notification.
+A daily timer (`jabali-aide-check.timer`) compares the host against the AIDE database. Changes outside the panel's drop-in paths fire the `aide.tamper.detected` notification.
 
 ## Per-user egress firewall (M34)
 

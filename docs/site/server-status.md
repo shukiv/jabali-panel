@@ -35,5 +35,5 @@ Smoke test passed on 192.168.100.150. The card surface is the system's vitals vi
 ## Related
 
 - [security.md](./security.md) for CrowdSec console.
-- [notifications.md](./notifications.md) — `service_down` event source feeds notifications when a service flaps without your having the dashboard open.
+- [notifications.md](./notifications.md) — the `service.down` event sends a notification when a service goes down without your having the dashboard open.
 - [updates.md](./updates.md) for `jabali update` (it ties into Server Status because mid-update is the most common reason a service briefly disappears).
