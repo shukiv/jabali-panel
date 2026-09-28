@@ -19,16 +19,20 @@ Both are owned by you. The first time you add a cron job, systemd lingering is e
 
 ## Command allowlist
 
-The panel does not allow arbitrary shell commands, and cron jobs run **outside**
-the SSH shell sandbox as your user — so the command must be one of a fixed set
-of interpreters running a file you own, with no shell features (no `cd`, `$HOME`,
-`|`, `;`, `&&`, backticks, redirects, or globbing). Use **absolute paths**
-instead of `cd`/`$HOME`.
+The panel does not allow arbitrary shell commands. Cron jobs run as your user,
+inside the same sandbox as your SSH shell, and each command must be one of a
+fixed set of interpreters running a file you own, with no shell features (no
+`cd`, `$HOME`, `|`, `;`, `&&`, backticks, redirects, or globbing). Use
+**absolute paths** instead of `cd`/`$HOME`.
 
 The allowlist:
 
 - **`wp`** (WP-CLI) — requires `--path=<absolute-docroot>` instead of `cd`.
   Example: `wp --path=/home/USER/domains/example.com/public_html cron event run --due-now`
+  `wp` runs on your account's **CLI default PHP version** (PHP Settings → CLI /
+  Terminal default PHP version), not on the site's version. To run WP-CLI on a
+  specific version, start the line with that PHP and wp-cli's full path:
+  `php7.4 /usr/local/bin/wp --path=/home/USER/domains/example.com/public_html cron event run --due-now`
 - **`php`** (or a pinned version, e.g. `php8.3`) — runs an **absolute `.php` file
   inside one of your docroots**. Inline code (`-r`, `-R`, `-B`, `-E`) is not allowed.
 - **`python`** / **`python3`** / a pinned version (e.g. `python3.11`), or the
