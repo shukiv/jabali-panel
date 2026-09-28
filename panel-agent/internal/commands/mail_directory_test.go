@@ -296,7 +296,8 @@ func TestMailDirectoryApply_ValidatesInput(t *testing.T) {
 	wireJMAP(t, srv)
 
 	cases := map[string]func(p map[string]any){
-		"host is a mailbox address": func(p map[string]any) { p["host_email"] = "alice@example.com" },
+		// carol is neither an entry nor a reader, so only the host rule can refuse it.
+		"host is a mailbox address": func(p map[string]any) { p["host_email"] = "carol@example.com" },
 		"host not canonical":        func(p map[string]any) { p["host_email"] = "Jabali-Directory@example.com" },
 		"entry in another domain":   func(p map[string]any) { p["entries"] = []map[string]string{{"email": "eve@other.example"}} },
 		"entry not canonical":       func(p map[string]any) { p["entries"] = []map[string]string{{"email": "Alice@example.com"}} },
