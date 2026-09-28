@@ -6,7 +6,7 @@ Single page, 5-second polling, errgroup-aggregated.
 
 ## What's shown
 
-- **Per-service status cards**: nginx, php-fpm (per version), mariadb, postgresql, pdns-server, pdns-recursor, stalwart-mail, kratos, bulwark, redis, crowdsec, jabali-panel.service, jabali-agent.service. Each card: active/failed, since, restart count, last journal line.
+- **Services card**: jabali-panel, jabali-agent, jabali-kratos, nginx, mariadb, redis-server and ssh, plus jabali-stalwart, jabali-webmail, pdns, postgresql and docker when their module is on. Each row shows the state and the Start / Restart / Reload / Stop / Enable / Disable buttons. See [Services](./admin/services.md).
 - **Host vitals**: CPU%, load avg, RAM (used / free / cache), disk used per mount, network in/out per interface.
 - **Queues card** (placeholder — defers to M31.1): mail queue depth, backup queue depth, reconciler tick lag.
 - **Recent panel-api requests**: top 10 by latency.

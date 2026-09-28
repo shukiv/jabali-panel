@@ -29,7 +29,7 @@ Jabali is an open-source Linux web-hosting control panel. Go agent + React UI, M
 - AppSec WAF (CrowdSec) replaces the removed ModSecurity stack.
 - AppArmor profiles, Snuffleupagus PHP hardening, AIDE host-integrity timer.
 - Per-user egress firewall via nftables + cgroup v2 vmap.
-- Malware scanning: ClamAV on-demand, Linux Malware Detect, YARA, Tetragon eBPF tripwires.
+- Malware scanning: Linux Malware Detect with YARA-X rules, and an opt-in real-time monitor.
 
 **Operations**
 - Per-user resource limits: POSIX quota + cgroup v2 slice drop-ins + nginx `limit_req`.

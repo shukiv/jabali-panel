@@ -41,7 +41,7 @@ Comprehensive English docs for the current (Go) generation of Jabali Panel. Desi
 | [platform/cli-reference.md](./platform/cli-reference.md) | Full generated `jabali` command reference (every subcommand + flag). |
 | [platform/dnssec.md](./platform/dnssec.md) | DNSSEC architecture. |
 | [platform/mail-autoconfig.md](./platform/mail-autoconfig.md) | Thunderbird / Outlook / Apple autoconfig. |
-| [platform/health-monitor.md](./platform/health-monitor.md) | `/api/v1/health` + `/metrics`. |
+| [platform/health-monitor.md](./platform/health-monitor.md) | `/health`, `/health/agent` and the automation status endpoints. |
 | [platform/monitoring.md](./platform/monitoring.md) | Audit + notifications + Prometheus. |
 | [admin/](./admin/) | **57 admin subpages** — one per route / feature on the `/jabali-admin/*` URL tree. Mirrors the legacy site's `/docs/admin/*` granularity. |
 | [user/](./user/) | **34 tenant subpages** — one per route / feature on the `/jabali-panel/*` URL tree. Mirrors the legacy site's `/docs/user/*` granularity. |

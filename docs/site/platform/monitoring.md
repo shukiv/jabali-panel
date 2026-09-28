@@ -47,7 +47,7 @@ Use for: time-series dashboards (Grafana) + alertmanager rules.
 For ad-hoc:
 
 ```bash
-journalctl -u jabali-panel -u jabali-agent -u nginx -u stalwart-mail -f
+journalctl -u jabali-panel -u jabali-agent -u nginx -u jabali-stalwart -f
 ```
 
 Structured JSON in stdout from panel-api and agent; `jq` away.
@@ -56,4 +56,4 @@ Structured JSON in stdout from panel-api and agent; `jq` away.
 
 - **APM / tracing** — not yet. OpenTelemetry support is on the roadmap; the panel + agent currently emit log lines but not trace spans.
 - **Continuous profiling** — not shipped.
-- **eBPF observability** beyond Tetragon's tripwires (M33) — not shipped.
+- **eBPF observability** — not shipped. The Tetragon tripwires were removed in M39.

@@ -147,10 +147,9 @@ PHP. Only uids from 1000 up are matched, so system daemons are never filtered.
 
 ## Malware (M33, M33.2)
 
-- **ClamAV** — on-demand only (daemons masked); `jabali-freshclam.timer` daily for signatures (M33 on-demand mode).
-- **Linux Malware Detect (LMD)** — opt-in monitor (default off, mig 000082); apply-then-persist toggle.
-- **YARA** — only the `php.yar` rule (clamscan rejects PMF whitelists/* due to libclamav YARA subset restrictions).
-- **Tetragon** — eBPF tripwires; suspicious exec events ingested via `sessionwatcher` → M14 (`file_hit` + quarantine events).
+- **Linux Malware Detect (LMD) 2.0** — native HEX, MD5 and SHA-256 scanner with the rfxn signature pack. It replaced ClamAV, which was removed in M33 (amendment 3).
+- **LMD real-time monitor** — `jabali-maldet-monitor.service`, opt-in (default off, mig 000082); apply-then-persist toggle.
+- **YARA-X** (`yr`) — pattern matching for LMD: the rfxn rule pack, the signature-base (Neo23x0) rules, and rules the admin uploads.
 - **M33.2 mail-yara-async** (ADR-0079) — async post-delivery JMAP-poll YARA scan; NOT MtaHook/MtaMilter.
 - **Quarantine-rate circuit breaker** (JAB-248) — the scanner trips a breaker if the quarantine rate spikes, so a bad signature can't quarantine a tenant's whole tree in a runaway loop.
 

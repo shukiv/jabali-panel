@@ -67,7 +67,7 @@ Common root cause: a previous merge dropped a migration file but later migration
 Causes, in rough order of likelihood:
 
 1. The mailbox's password changed in the panel but the user is using the old one — reset under Mail → Mailboxes.
-2. Stalwart is down — `systemctl status stalwart-mail`.
+2. Stalwart is down — `systemctl status jabali-stalwart`.
 3. The webmail SSO file expired before it was hit (TTL is 60 s) — sync NTP if the host clock is skewed.
 4. AppArmor in `enforce` blocked something — `journalctl -k | grep DENIED`.
 
@@ -112,8 +112,8 @@ There is no `jabali --uninstall`. Intended path: redeploy the VM.
 If you must keep the host:
 
 ```bash
-systemctl disable --now jabali-panel jabali-agent stalwart-mail kratos bulwark pdns pdns-recursor crowdsec
-apt purge -y stalwart-mail crowdsec
+systemctl disable --now jabali-panel jabali-agent jabali-stalwart jabali-webmail jabali-kratos pdns pdns-recursor crowdsec
+apt purge -y crowdsec
 trash /etc/jabali /var/lib/jabali /var/lib/jabali-* /etc/nginx/sites-*/jabali-* /etc/php/*/fpm/pool.d/jabali-* /etc/systemd/system/jabali-* /etc/letsencrypt
 userdel -r jabali
 # DB still has panel data; drop it manually.

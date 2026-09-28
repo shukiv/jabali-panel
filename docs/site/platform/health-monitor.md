@@ -1,83 +1,71 @@
 # Platform — Health Monitor
 
-The same surface as [Server Status](../server-status.md) but exposed at machine-readable endpoints for external monitoring.
+The endpoints an external monitor can poll, and what each one proves.
 
 ## Endpoints
 
 | Endpoint | Auth | Returns |
 |---|---|---|
-| `GET /api/v1/health` | none | `{ "status": "ok" \| "degraded" \| "down", "version": "...", "uptime_s": N }` — used as the basic liveness probe. |
-| `GET /api/v1/health/detailed` | admin Bearer / cookie | Per-service status (same as `/jabali-admin/server-status`) as JSON. |
-| `GET /metrics` | admin Bearer | Prometheus-format metrics (request counts, latencies, reconciler tick durations, queue depths). |
-| `GET /api/v1/automation/status` | Automation token, scope `read:status` | Full server metrics for an external fleet monitor (see below). |
+| `GET /health` | none | `200 {"status":"ok","version":"<build>"}` while the panel process is running. It does not check the database, the agent or any other service. |
+| `GET /health/agent` | none | `200 {"status":"ok","agent":{"version":"…","go_version":"…","uptime_seconds":N,"started_at":"…"}}` when the agent answers within 2 seconds. Otherwise an error status, such as `503` when the agent is unreachable or `504` when it does not answer in time. |
+| `GET /api/v1/automation/status` | Automation token, scope `read:status` | Full server metrics for a fleet monitor (see below). |
+| `GET /api/v1/automation/server-status` | Automation token, scope `read:metrics` | A smaller, normalized CPU and host view. |
 
-## Fleet metrics — `/api/v1/automation/status`
+The panel serves all four on `https://<panel-hostname>:8443`. Port 443 does not serve `/health`. The two automation endpoints are also on port 443 when the operator turns on public access for the Automation API; see [Automation API](../admin/automation-api.md).
+
+The panel has no `/metrics` endpoint and no Prometheus exporter.
+
+## Fleet metrics: `/api/v1/automation/status`
 
 For a multi-server manager that polls each Jabali server without a panel session
-(GH #308 / JAB-75). Authenticated with an **automation token** (HMAC, replay-defended)
-carrying the `read:status` scope — mint one with:
+(GH #308 / JAB-75). It is authenticated with an **automation token** (HMAC, with a replay check)
+that carries the `read:status` scope. Mint one with:
 
 ```
-jabali automation-token create --scope read:status
+jabali automation-token mint <name> --scope read:status
 ```
 
-Returns the same collectors as the admin Server Status page (one source of truth),
-gathered from the agent in parallel and cached ~5 s so frequent polling doesn't
-hammer the agent:
+The endpoint returns the same collectors as the admin Server Status page. The panel asks the agent
+for them in parallel and caches the result for 5 seconds, so frequent polling does not
+load the agent:
 
 ```json
 {
   "healthy": true,
   "time": "2026-07-08T20:10:00Z",
-  "version": "<panel build sha>",
+  "version": "<panel build>",
+  "commit": "<full commit SHA>",
+  "build_time": "<RFC 3339 link time>",
   "system":   { "hostname": "...", "uptime_seconds": N, "load_avg": [..],
                 "cpu_count": N, "mem_total_kb": N, "mem_used_kb": N,
                 "swap_total_kb": N, "partitions": [{ "mount_point": "/",
                 "total_bytes": N, "used_bytes": N, "free_bytes": N }] },
-  "services": { "services": [ { "unit": "...", "load_state": "...", "active_state": "..." } ] },
+  "services": { "services": [ { "unit": "...", "active": "...", "sub": "...",
+                "load_state": "...", "unit_file_state": "...", "uptime_seconds": N } ] },
+  "service_health": [ { "name": "web", "unit": "nginx.service", "status": "healthy",
+                "reason": "running", "uptime_seconds": N, "last_checked": "..." } ],
   "cpu":      { ... live CPU usage ... },
-  "errors":   { "info": "timeout" }   // only present when a collector failed
+  "net":      { ... WAN throughput and packet loss ... },
+  "errors":   { "net": "<error>" }   // only present when a collector failed
 }
 ```
 
-- `healthy` is `true` when every collector returned; a partial failure surfaces
-  per-slot in `errors` but still returns HTTP 200 with whatever was collected.
-- The payload is **metrics only** — no credentials, tokens, or per-tenant infra.
-
-## Status semantics
-
-| status | Meaning |
-|---|---|
-| `ok` | All watched services healthy. |
-| `degraded` | A non-critical service is failed/degraded (e.g. ClamAV freshclam stale > 7 d). Panel still serves. |
-| `down` | A critical service is failed (panel-api itself returning health, so MariaDB / nginx / Stalwart down counts here). |
-
-## Watched services
-
-- `jabali-panel.service`
-- `jabali-agent.service`
-- `nginx.service`
-- `mariadb.service`
-- `postgresql.service` (only if at least one user has a Postgres DB; otherwise ignored)
-- `pdns.service`
-- `pdns-recursor.service`
-- `stalwart-mail.service`
-- `kratos.service`
-- `bulwark.service`
-- `redis.service`
-- `crowdsec.service`
-
-The watched set is computed at startup; services that aren't installed don't count against `degraded`.
+- `healthy` is `true` when every collector answered. A failed collector appears in
+  `errors`, and the endpoint still returns HTTP 200 with the data it collected.
+- `service_health` gives each service a stable name (`web`, `database`, `cache`, `mail`,
+  `webmail`, `identity`, `dns`, `docker`, `panel`, `agent`, `ssh`) and one of `healthy`,
+  `degraded` (starting or stopping), `failed` or `stopped`. A service that is not installed
+  on the server is left out.
+- The payload has metrics only: no credentials, no tokens and no per-tenant data.
 
 ## Use with an external monitor
 
-UptimeRobot / Pingdom / a self-hosted Uptime-Kuma:
+For UptimeRobot, Pingdom or a self-hosted Uptime Kuma:
 
-- Point at `https://<panel-hostname>/api/v1/health` — anonymous, fast.
-- Set expected response: HTTP 200 + body contains `"status":"ok"`.
-
-For Prometheus scraping, point at `/metrics` with a bearer token (mint under `/jabali-admin/automation`).
+- Poll `https://<panel-hostname>:8443/health` with no credentials. Expect HTTP 200 and a body that contains `"status":"ok"`. This proves only that the panel process is running.
+- Poll `https://<panel-hostname>:8443/health/agent` as well to know that the agent answers.
+- To watch the services themselves, poll `/api/v1/automation/status` with an automation token and alert on `healthy` or on `service_health`.
 
 ## Notifications integration
 
-The `service_down` event source (M14) reads the same internal state — so you don't *need* an external monitor for in-house alerting. The external monitor is useful for "the panel-api itself is down, who tells me?" cases.
+For alerts inside the panel, the `service.down` event checks the core units once a minute; see [Alerts when a unit goes down](../admin/services.md#alerts-when-a-unit-goes-down). An external monitor is still needed for the case where the panel itself is down and cannot send the alert.

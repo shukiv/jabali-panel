@@ -40,7 +40,7 @@ The installer is idempotent — safe to re-run. It writes drop-ins, never overwr
 1. Verifies Debian 13, root, no conflicting cPanel/Plesk/CyberPanel install.
 2. Adds Sury PHP repository (PHP 8.1–8.5+) and PackageCloud for CrowdSec.
 3. **Purges sury-nginx** if present — Jabali uses Debian-native nginx (Sury dropped nginx in 2026; this is defensive).
-4. Installs system packages: nginx, mariadb, postgresql, php-fpm (all current Sury versions), pdns-server, pdns-recursor, redis, stalwart-mail, crowdsec, ufw, fail2ban-substitute (CrowdSec), nftables, certbot, restic, clamav, lmd, yara, tetragon.
+4. Installs system packages: nginx, mariadb, postgresql, php-fpm (all current Sury versions), pdns-server, pdns-recursor, redis, Stalwart, crowdsec, ufw, fail2ban-substitute (CrowdSec), nftables, certbot, restic, Linux Malware Detect (LMD), YARA-X.
 5. Installs Kratos and Bulwark (Node SPA bridge) on Unix sockets — no TCP `:4433/:4434/:3000` exposure.
 6. Builds `jabali-panel-api` (Go) and `jabali-agent` (Go), writes systemd units, starts services.
 7. Runs DB migrations.

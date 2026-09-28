@@ -44,4 +44,4 @@ Logs default to 30 days. Configurable under Server Settings → Mail → Retenti
 
 ## CLI
 
-Not currently exposed. Use `journalctl -u stalwart-mail -f` for live tail with all the same data in structured form.
+Not currently exposed. Use `journalctl -u jabali-stalwart -f` for live tail with all the same data in structured form.
