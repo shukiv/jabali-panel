@@ -197,5 +197,5 @@ func purgeDomainMailingLists(ctx context.Context, domainID string) (int, error) 
 }
 
 func init() {
-	Default.Register("mail.domain.purge_accounts", mailDomainPurgeHandler)
+	Default.Register("mail.domain.purge_accounts", flushesMailAuthCache(mailDomainPurgeHandler))
 }

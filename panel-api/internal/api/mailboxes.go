@@ -374,13 +374,18 @@ func (h *mailboxHandler) update(c *gin.Context) {
 	}
 
 	// Enable / disable. queryLogin filters is_disabled = 0, so the change
-	// takes effect on the next authentication (live directory).
+	// takes effect on the next IMAP/SMTP authentication (live directory).
+	// Stalwart answers JMAP (webmail) from its HTTP login cache, so a disable
+	// also flushes that cache, or the mailbox kept its JMAP access.
 	if req.IsDisabled != nil {
 		if err := h.cfg.Mailboxes.SetDisabled(ctx, mb.ID, *req.IsDisabled); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 			return
 		}
 		mb.IsDisabled = *req.IsDisabled
+		if *req.IsDisabled {
+			h.notifyAgent(ctx, "mail.auth_cache.flush", map[string]any{})
+		}
 	}
 
 	if req.SendOnly != nil {

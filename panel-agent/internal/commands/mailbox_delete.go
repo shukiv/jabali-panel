@@ -60,5 +60,5 @@ func mailboxDeleteHandler(ctx context.Context, params json.RawMessage) (any, err
 }
 
 func init() {
-	Default.Register("mailbox.delete", mailboxDeleteHandler)
+	Default.Register("mailbox.delete", flushesMailAuthCache(mailboxDeleteHandler))
 }
