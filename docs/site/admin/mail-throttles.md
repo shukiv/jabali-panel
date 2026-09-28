@@ -30,6 +30,8 @@ About once a minute, the reconciler makes Stalwart match every row. The hourly c
 
 A throttle that someone changed or deleted in Stalwart by hand is put back on the next tick. Turning a row off, or setting a cap to `0`, removes that throttle.
 
+Every throttle the panel creates has a description that starts with `jabali `. On each tick, the panel removes any Stalwart throttle with that prefix that no row uses. If you create throttles in Stalwart yourself, do not start their descriptions with `jabali `.
+
 The **Stalwart sync** column shows the row's state:
 
 - **synced**: Stalwart holds exactly what the row asks for: one throttle for each enabled cap, and none when the row is off.
