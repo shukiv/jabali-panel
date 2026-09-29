@@ -247,6 +247,18 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 				if existing, err := d.Mailboxes.FindByID(ctx, mb.ID); err == nil && existing != nil {
 					r.Skipped++
 				} else {
+					// The database refuses a mailbox where an alias, group or
+					// shared resource is; clearing the address first would take
+					// that alias off its account in Stalwart's registry.
+					held, err := repository.MailboxAddressHeld(ctx, d.Mailboxes, dm.ID, mb.LocalPart)
+					if err != nil {
+						r.Errors = append(r.Errors, fmt.Sprintf("mailbox %s: not restored: address check: %v", mb.ID, err))
+						continue
+					}
+					if held {
+						r.Errors = append(r.Errors, fmt.Sprintf("mailbox %s: not restored: %s@%s already belongs to an alias, group or shared resource", mb.ID, mb.LocalPart, dm.Name))
+						continue
+					}
 					// A stale registry alias at this address would sign the
 					// restored mailbox in to another account.
 					if d.MailAddresses == nil {

@@ -11,6 +11,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/app"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
 // notifyMailboxLocalPart is the system mailbox used as the authenticated
@@ -71,6 +72,17 @@ func provisionNotifyMailbox(ctx context.Context, deps app.Deps, log *slog.Logger
 	sealed, err := deps.SSOKey.Seal([]byte(password))
 	if err != nil {
 		log.Warn("notify mailbox: seal failed", "err", err)
+		return ""
+	}
+	// The database refuses a mailbox where an alias, group or shared resource
+	// is; clearing the address first would take that alias off its account.
+	held, err := repository.MailboxAddressHeld(ctx, deps.Mailboxes, dom.ID, notifyMailboxLocalPart)
+	if err != nil {
+		log.Warn("notify mailbox: address check failed", "err", err)
+		return ""
+	}
+	if held {
+		log.Warn("notify mailbox: an alias, group or shared resource holds the address; not provisioned", "email", email)
 		return ""
 	}
 	// Stalwart keeps every alias it has seen, so a stale alias at this address
