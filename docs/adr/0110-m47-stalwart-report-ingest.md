@@ -158,9 +158,9 @@ What replaces Decisions 1 and 2:
    `[a-z0-9-]` and 48 characters, ARF feedback types → RFC 5965 names or
    `other`), counts clamped to `INT UNSIGNED`. TLS failures a policy
    counts but does not detail are stored as result type `unspecified`.
-5. **Notifications are per pass**, one per report type, naming up to
-   five domains, so a flood of forged reports is one notification every
-   5 minutes. Severity rules are unchanged. All three link to
+5. **Notifications are per pass**, one per report type (the DMARC and
+   TLS ones name up to five domains), so a flood of forged reports is
+   one notification every 5 minutes. Severity rules are unchanged. All three link to
    `/jabali-admin/mail/deliverability`; the `/jabali-admin/mail/dmarc`,
    `/tlsrpt` and `/feedback` pages they linked to never existed.
 

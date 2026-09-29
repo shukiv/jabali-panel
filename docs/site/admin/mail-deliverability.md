@@ -33,7 +33,7 @@ Big receivers send reports once a day, so a domain's first report can take 24 to
 
 ## Notifications
 
-Each time a check finds new reports, the panel sends one notification per report type: `mail.dmarc.report_received`, `mail.tls.report_received` or `mail.feedback.received`. The notification names the domains and links to this page. A TLS notification is sent only when a report counts failed sessions. See [Notifications — Events](./notifications-events.md).
+Each time a check finds new reports, the panel sends one notification per report type: `mail.dmarc.report_received`, `mail.tls.report_received` or `mail.feedback.received`. The DMARC and TLS notifications name the domains; all three link to this page. A TLS notification is sent only when a report counts failed sessions. See [Notifications — Events](./notifications-events.md).
 
 Anyone can send a report to a postmaster address, so the panel treats a report's contents as untrusted. It cuts each value to fit its column, drops control characters, keeps only valid IP addresses, and sends one notification per check no matter how many reports arrive.
 
