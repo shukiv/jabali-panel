@@ -116,7 +116,10 @@ func sendmailTestReconciler(agent *fakeSendmailAgent, mailboxes *fakeSendmailMai
 		agent:          agent,
 		mailboxes:      mailboxes,
 		sendmailSSOKey: &key,
-		log:            slog.New(slog.DiscardHandler),
+		// The relay mailbox create clears its address on the mail server
+		// first (mailboxops fails closed without a registry).
+		mailAddrRegistry: &fakeAliasRegistry{},
+		log:              slog.New(slog.DiscardHandler),
 	}
 }
 

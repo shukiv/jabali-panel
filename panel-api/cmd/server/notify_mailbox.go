@@ -73,6 +73,16 @@ func provisionNotifyMailbox(ctx context.Context, deps app.Deps, log *slog.Logger
 		log.Warn("notify mailbox: seal failed", "err", err)
 		return ""
 	}
+	// Stalwart keeps every alias it has seen, so a stale alias at this address
+	// would sign the notify mailbox in to another account. Best effort, unlike
+	// the other mailbox creates: on a fresh install the panel starts before
+	// Stalwart, the panel domain is the admin's own, and the reconciler's
+	// alias sweep takes a stale alias off within minutes.
+	if deps.MailAddresses != nil {
+		if err := deps.MailAddresses.ReleaseAddress(ctx, email); err != nil {
+			log.Warn("notify mailbox: could not clear the address on the mail server; the alias sweep retries", "err", err)
+		}
+	}
 	now := time.Now().UTC()
 	mb := &models.Mailbox{
 		ID:           ids.NewULID(),

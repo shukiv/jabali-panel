@@ -55,7 +55,7 @@ func enabledDomain() *models.Domain {
 func TestCreate_FieldParityAndDefaults(t *testing.T) {
 	repo := &fakeMBRepo{}
 	key := ssokey.Key{}
-	mb, gen, err := Create(context.Background(), Deps{Mailboxes: repo, SSOKey: &key},
+	mb, gen, err := Create(context.Background(), Deps{Mailboxes: repo, SSOKey: &key, Addresses: okReleaser{}},
 		CreateInput{Domain: enabledDomain(), LocalPart: "alice", DisplayName: "  Alice A  ", SendOnly: true}, nil)
 	if err != nil {
 		t.Fatalf("create: %v", err)
@@ -80,7 +80,7 @@ func TestCreate_FieldParityAndDefaults(t *testing.T) {
 func TestCreate_Gates(t *testing.T) {
 	key := ssokey.Key{}
 	base := func(repo *fakeMBRepo, dom *models.Domain, q uint64) (*models.Mailbox, string, error) {
-		return Create(context.Background(), Deps{Mailboxes: repo, SSOKey: &key},
+		return Create(context.Background(), Deps{Mailboxes: repo, SSOKey: &key, Addresses: okReleaser{}},
 			CreateInput{Domain: dom, LocalPart: "a", QuotaBytes: q}, nil)
 	}
 	if _, _, err := base(&fakeMBRepo{}, &models.Domain{Name: "x.com"}, 0); !errors.Is(err, ErrEmailNotEnabled) {
@@ -126,7 +126,7 @@ func TestRotate_WithKey_Seals(t *testing.T) {
 func TestCreateSystem_MintsSealedRelayPrincipal(t *testing.T) {
 	repo := &fakeMBRepo{}
 	key := ssokey.Key{}
-	mb, pw, err := CreateSystem(context.Background(), Deps{Mailboxes: repo, SSOKey: &key},
+	mb, pw, err := CreateSystem(context.Background(), Deps{Mailboxes: repo, SSOKey: &key, Addresses: okReleaser{}},
 		SystemCreateInput{Domain: enabledDomain(), LocalPart: "sendmail", DisplayName: "example.com (system sender)", QuotaBytes: 16 * 1024 * 1024}, nil)
 	if err != nil {
 		t.Fatalf("CreateSystem: %v", err)
@@ -149,7 +149,7 @@ func TestCreateSystem_MintsSealedRelayPrincipal(t *testing.T) {
 }
 
 func TestCreateSystem_NilKeyRejected(t *testing.T) {
-	if _, _, err := CreateSystem(context.Background(), Deps{Mailboxes: &fakeMBRepo{}, SSOKey: nil},
+	if _, _, err := CreateSystem(context.Background(), Deps{Mailboxes: &fakeMBRepo{}, SSOKey: nil, Addresses: okReleaser{}},
 		SystemCreateInput{Domain: enabledDomain(), LocalPart: "sendmail"}, nil); !errors.Is(err, ErrDeps) {
 		t.Errorf("a nil SSO key must be rejected (relay must be sealed), got %v", err)
 	}
@@ -159,8 +159,8 @@ func TestCreateSystem_NilKeyRejected(t *testing.T) {
 // there is no plaintext to seal.
 func TestCreateForRestore_NoSealNoGate(t *testing.T) {
 	repo := &fakeMBRepo{}
-	mb, err := CreateForRestore(context.Background(), Deps{Mailboxes: repo},
-		RestoreCreateInput{DomainID: "d1", LocalPart: "info", PasswordHash: "$2b$12$sourcehash", QuotaBytes: 0})
+	mb, err := CreateForRestore(context.Background(), Deps{Mailboxes: repo, Addresses: okReleaser{}},
+		RestoreCreateInput{DomainID: "d1", DomainName: "example.com", LocalPart: "info", PasswordHash: "$2b$12$sourcehash", QuotaBytes: 0})
 	if err != nil {
 		t.Fatalf("CreateForRestore: %v", err)
 	}
@@ -200,8 +200,8 @@ func TestDelete_HostFailureKeepsRow(t *testing.T) {
 // like a new one.
 func TestCreateForRestore_RefusesTheDirectoryAddress(t *testing.T) {
 	repo := &fakeMBRepo{}
-	_, err := CreateForRestore(context.Background(), Deps{Mailboxes: repo},
-		RestoreCreateInput{DomainID: "d1", LocalPart: "jabali-directory", PasswordHash: "$2a$10$x"})
+	_, err := CreateForRestore(context.Background(), Deps{Mailboxes: repo, Addresses: okReleaser{}},
+		RestoreCreateInput{DomainID: "d1", DomainName: "example.com", LocalPart: "jabali-directory", PasswordHash: "$2a$10$x"})
 	if !errors.Is(err, ErrInvalidLocalPart) || !errors.Is(err, mailaddr.ErrLocalReserved) {
 		t.Fatalf("want ErrInvalidLocalPart wrapping ErrLocalReserved, got %v", err)
 	}
@@ -213,7 +213,7 @@ func TestCreateForRestore_RefusesTheDirectoryAddress(t *testing.T) {
 func TestCreate_RefusesTheDirectoryAddress(t *testing.T) {
 	repo := &fakeMBRepo{}
 	key := ssokey.Key{}
-	_, _, err := Create(context.Background(), Deps{Mailboxes: repo, SSOKey: &key},
+	_, _, err := Create(context.Background(), Deps{Mailboxes: repo, SSOKey: &key, Addresses: okReleaser{}},
 		CreateInput{Domain: enabledDomain(), LocalPart: "Jabali-Directory"}, nil)
 	if !errors.Is(err, ErrInvalidLocalPart) || !errors.Is(err, mailaddr.ErrLocalReserved) {
 		t.Fatalf("want ErrInvalidLocalPart wrapping ErrLocalReserved, got %v", err)

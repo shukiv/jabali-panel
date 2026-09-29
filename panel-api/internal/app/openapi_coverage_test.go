@@ -148,6 +148,7 @@ var fullDepsNilOK = map[string]string{
 	"KratosClient":          "NewWithDeps builds it from cfg.Auth.Kratos, which the tests set",
 	"StalwartAdmin":         "interface used at request time only; gates no route",
 	"MailThrottles":         "interface used at request time only; gates no route",
+	"MailAddresses":         "interface used at request time only; gates no route",
 	"AuditRecorder":         "interface used at request time only; gates no route",
 }
 

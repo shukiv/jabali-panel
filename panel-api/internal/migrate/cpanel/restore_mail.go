@@ -14,9 +14,16 @@ import (
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/mailaddrowner"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/mailboxops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/stalwartadmin"
 )
+
+// mailAddressReleaser clears a migrated mailbox's address from Stalwart's
+// registry before its row is written (mailboxops.Deps.Addresses): a stale
+// alias there would sign the mailbox in to another account. Tests replace it.
+var mailAddressReleaser mailboxops.AddressReleaser = mailaddrowner.Releaser{Registry: stalwartadmin.NewClient()}
 
 // MailImportResult is returned to the restore-stage caller.
 //
@@ -382,8 +389,9 @@ func insertOneMailboxRow(
 	// Lifecycle's explicit restore entry point. It takes the already-computed
 	// bcrypt hash verbatim, leaves password_enc NULL (no plaintext to seal), and
 	// applies no EmailEnabled gate or agent notify — the migration's semantics.
-	if _, cErr := mailboxops.CreateForRestore(ctx, mailboxops.Deps{Mailboxes: mbRepo}, mailboxops.RestoreCreateInput{
+	if _, cErr := mailboxops.CreateForRestore(ctx, mailboxops.Deps{Mailboxes: mbRepo, Addresses: mailAddressReleaser}, mailboxops.RestoreCreateInput{
 		DomainID:     domain.ID,
+		DomainName:   domainName,
 		LocalPart:    localPart,
 		PasswordHash: passwordHash,
 		QuotaBytes:   1073741824,

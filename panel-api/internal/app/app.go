@@ -83,6 +83,10 @@ type Deps struct {
 	// stalwartadmin.Throttles.
 	MailOutboundPolicies repository.MailOutboundPolicyRepository
 	MailThrottles        api.ThrottleDispatcher
+	// MailAddresses clears addresses from Stalwart's registry before a
+	// mailbox or alias takes them (mailaddrowner.Releaser). Mailbox creates
+	// refuse without it.
+	MailAddresses api.MailAddressReleaser
 	BWDaily               repository.BWDailyRepository
 	DomainIPACLs          repository.DomainIPACLRepository
 	// GH #1625 — additional hostnames served from a web domain's vhost.
@@ -861,6 +865,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Agent:     deps.Agent,
 				SSOKey:    deps.SSOKey,
 				SSOTokens: deps.MailboxSSOTokens,
+				Addresses: deps.MailAddresses,
 			})
 		}
 		if deps.MailGroups != nil && deps.Mailboxes != nil && deps.Domains != nil {
@@ -914,6 +919,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			MailboxShares:   deps.MailboxShares,
 			SharedResources: srRepo,
 			SendDelegations: sendDelegRepo,
+			Addresses:       deps.MailAddresses,
 		})
 		// GH #873 round 4 — tenant-scoped mail traffic (own domains only).
 		if deps.DB != nil {
@@ -1263,6 +1269,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				// GH #1898: the name guards a restored domain goes through.
 				WebDomainAliases: deps.WebDomainAliases,
 				ServerSettings:   deps.ServerSettings,
+				MailAddresses:    deps.MailAddresses,
 				Log:              deps.Log,
 				SSOKey:           deps.SSOKey,
 			})

@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"time"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/mailaddrowner"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/mailboxops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ssokey"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/stalwartadmin"
 )
 
 // mailbox_ops.go mirrors the HTTP mailbox handlers but goes straight to
@@ -24,6 +26,15 @@ import (
 // over it, so the CLI and the REST handlers can no longer drift. Only the
 // CLI-local agent timeout stays here.
 const cliMailboxAgentTimeout = 30 * time.Second
+
+// cliMailAddresses clears an address from Stalwart's registry before a CLI
+// mailbox create stores the row, and moves an alias to its new mailbox.
+// Stalwart keeps every alias it has seen, so without it a new mailbox at a
+// once-aliased address signs in to the old owner's account. Tests replace it.
+var cliMailAddresses interface {
+	ReleaseAddress(ctx context.Context, address string) error
+	ReleaseTo(ctx context.Context, address, owner string) error
+} = mailaddrowner.Releaser{Registry: stalwartadmin.NewClient()}
 
 // agentNotifier is the minimal surface the CLI needs from the agent
 // client. Small interface so tests can pass a recording stub without
@@ -105,7 +116,7 @@ func listMailboxesDirect(ctx context.Context, repo repository.MailboxRepository,
 // caller supplied one — the CLI layer owns the reveal-once printing
 // contract.
 func createMailboxDirect(ctx context.Context, repo repository.MailboxRepository, notify agentNotifier, ssoKey *ssokey.Key, dom *models.Domain, localPart, password string, quotaBytes uint64, displayName string, sendOnly bool) (*models.Mailbox, string, error) {
-	return mailboxops.Create(ctx, mailboxops.Deps{Mailboxes: repo, SSOKey: ssoKey}, mailboxops.CreateInput{
+	return mailboxops.Create(ctx, mailboxops.Deps{Mailboxes: repo, SSOKey: ssoKey, Addresses: cliMailAddresses}, mailboxops.CreateInput{
 		Domain:      dom,
 		LocalPart:   localPart,
 		Password:    password,

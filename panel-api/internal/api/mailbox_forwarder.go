@@ -34,6 +34,10 @@ type MailboxForwarderHandlerConfig struct {
 	Forwarders     repository.EmailForwarderRepository
 	Autoresponders repository.EmailAutoresponderRepository
 	Agent          agent.AgentInterface
+	// Addresses takes a new alias's address off the other Stalwart accounts
+	// that still hold it, best effort (the reconciler's sweep catches what
+	// this misses). Nil skips it.
+	Addresses MailAddressReleaser
 }
 
 type forwarderResponse struct {
@@ -241,8 +245,20 @@ func (h *forwarderHandler) create(c *gin.Context) {
 			c.JSON(http.StatusConflict, gin.H{"error": "already_exists", "detail": "that forwarder or alias address already exists"})
 			return
 		}
+		if errors.Is(err, repository.ErrAddressInUse) {
+			c.JSON(http.StatusConflict, gin.H{"error": "address_in_use", "detail": "a mailbox already uses this address"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "detail": "the server could not complete the request"})
 		return
+	}
+	if f.Type == "alias" && f.LocalPart != nil && h.cfg.Addresses != nil {
+		// An alias that moved here from another mailbox is still on that
+		// mailbox's Stalwart account, which would keep its mail.
+		alias := *f.LocalPart + "@" + dom.Name
+		if err := h.cfg.Addresses.ReleaseTo(ctx, alias, mb.LocalPart+"@"+dom.Name); err != nil {
+			slog.Warn("forwarder create: stale alias release failed; the sweep retries", "alias", alias, "err", err)
+		}
 	}
 	resp := h.resolve(ctx, *f, mb, dom)
 	if err := h.applyForwarders(ctx, mb, dom); err != nil {
@@ -284,6 +300,15 @@ func (h *forwarderHandler) del(c *gin.Context) {
 	if err := h.cfg.Forwarders.Delete(ctx, f.ID); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "detail": "the server could not complete the request"})
 		return
+	}
+	if f.Type == "alias" && f.LocalPart != nil && h.cfg.Addresses != nil {
+		// Stalwart keeps a deleted alias on the account, which would go on
+		// receiving its mail. Best effort: a mailbox created at the address
+		// later clears it again before its row is written.
+		alias := *f.LocalPart + "@" + dom.Name
+		if err := h.cfg.Addresses.ReleaseAddress(ctx, alias); err != nil {
+			slog.Warn("forwarder delete: alias release failed", "alias", alias, "err", err)
+		}
 	}
 	// A failed re-converge on delete leaves a stale redirect, but 204 carries
 	// no body to surface it; the slog.Warn inside applyForwarders records it.

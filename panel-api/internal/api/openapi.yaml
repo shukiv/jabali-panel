@@ -797,8 +797,9 @@ paths:
         "400": { description: "invalid_request, invalid_local_part or quota_too_small" }
         "403": { description: Not your domain }
         "404": { description: Domain not found }
-        "409": { description: "email_not_enabled or mailbox_exists" }
+        "409": { description: "email_not_enabled, mailbox_exists, or address_in_use: an alias, mail group or shared resource has the address" }
         "422": { description: "weak_password: under 8 characters or over 72 bytes" }
+        "503": { description: "mail_server_unavailable: the mail server could not clear the address first; nothing was created, try again" }
 
   # ------------------------------------------------------- Applications ---
 
@@ -4074,7 +4075,7 @@ paths:
         "201": { description: "The forwarder. A `warning` (code convergence_failed) means it is saved but the mail server has not applied it yet." }
         "400": { description: "invalid_body, invalid_type or alias_requires_local_part" }
         "404": { description: Mailbox not found }
-        "409": { description: "already_exists: that forwarder or alias address already exists" }
+        "409": { description: "already_exists: that forwarder or alias address already exists; address_in_use: a mailbox has the alias address" }
 
   /mailboxes/{mbid}/rotate-password:
     post:

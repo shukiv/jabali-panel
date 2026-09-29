@@ -235,7 +235,7 @@ func (r *Reconciler) createRelayMailbox(ctx context.Context, d *models.Domain, l
 		_, _ = r.agent.Call(ncctx, cmd, params)
 	}
 	_, password, err := mailboxops.CreateSystem(ctx,
-		mailboxops.Deps{Mailboxes: r.mailboxes, SSOKey: r.sendmailSSOKey},
+		mailboxops.Deps{Mailboxes: r.mailboxes, SSOKey: r.sendmailSSOKey, Addresses: r.mailAddressReleaser()},
 		mailboxops.SystemCreateInput{
 			Domain:      d,
 			LocalPart:   localPart,

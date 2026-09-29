@@ -63,7 +63,24 @@ func dcMeta() *internalbackup.AccountMetadata {
 
 func dcDeps() (*dcDomains, *dcMailboxes, *dcInstalls, Deps) {
 	dom, mb, ai := &dcDomains{}, &dcMailboxes{}, &dcInstalls{}
-	return dom, mb, ai, Deps{Users: &createGuardUsersRepo{}, Domains: dom, Mailboxes: mb, AppInstalls: ai}
+	return dom, mb, ai, Deps{Users: &createGuardUsersRepo{}, Domains: dom, Mailboxes: mb, AppInstalls: ai, MailAddresses: &dcReleaser{mb: mb}}
+}
+
+// dcReleaser records the addresses Apply releases on the mail server, and
+// whether the mailbox row was already stored at that moment.
+type dcReleaser struct {
+	mb         *dcMailboxes
+	released   []string
+	afterWrite bool
+	err        error
+}
+
+func (r *dcReleaser) ReleaseAddress(_ context.Context, address string) error {
+	r.released = append(r.released, address)
+	if r.mb != nil && r.mb.created > len(r.released)-1 {
+		r.afterWrite = true
+	}
+	return r.err
 }
 
 func hasError(errs []string, sub string) bool {

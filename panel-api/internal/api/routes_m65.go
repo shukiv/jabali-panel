@@ -19,6 +19,8 @@ type M65RouteDeps struct {
 	MailboxShares   repository.MailboxShareRepository
 	SharedResources repository.SharedResourceRepository
 	SendDelegations repository.MailboxSendDelegationRepository
+	// Addresses: see MailboxForwarderHandlerConfig.Addresses.
+	Addresses MailAddressReleaser
 }
 
 // RegisterM65Routes registers all M6.5 email feature routes.
@@ -53,6 +55,7 @@ func registerForwarderRoutes(g *gin.RouterGroup, deps M65RouteDeps) {
 		Forwarders:     deps.Forwarders,
 		Autoresponders: deps.Autoresponders,
 		Agent:          deps.Agent,
+		Addresses:      deps.Addresses,
 	})
 }
 
