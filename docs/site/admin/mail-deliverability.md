@@ -1,34 +1,52 @@
 # Mail Deliverability
 
-`/jabali-admin/mail/deliverability`. Per-domain view of the DNS records and policies that govern outbound mail reputation.
+`/jabali-admin/mail/deliverability`. A score from 0 to 100 for how well the server's outbound mail is received, built from blocklist checks and from the reports other mail servers send back. 100 is clean.
 
-## Columns
+## The score
 
-- **Domain** — every domain on the panel that has mail enabled.
-- **DKIM** — present / absent at the panel; published / missing at the public resolver. Selector visible on hover.
-- **SPF** — record exists; soft-fail (`~all`) or hard-fail (`-all`) verdict; warnings if the record references too many includes (RFC 7208 §4.6.4 limit of 10 DNS lookups).
-- **DMARC** — record exists; policy (`none`, `quarantine`, `reject`); reporting addresses (`rua` / `ruf`) parsed.
-- **MTA-STS** — TXT record, policy file, MX-host alignment. See [ADR-0109](../platform/stack.md#adr-0109-per-domain-mta-sts).
-- **Reverse DNS** — PTR for the server's primary mail IP resolves to the panel hostname (gold standard for SMTP acceptance at major providers).
+Four signals are counted over the last 7 days. Each one can take up to 25 points off a clean 100:
 
-## Per-row actions
+| Signal | What is counted | Points off |
+|---|---|---|
+| `rbl` | Blocklists (Spamhaus, SpamCop, Barracuda, SURBL) that list the server's public IPv4 address | 25 per listing |
+| `dmarc_dkim_failures` | Records in received DMARC aggregate reports whose DKIM result was not a pass | 5 per record |
+| `tlsrpt_failures` | TLS sessions that failed, as received SMTP TLS reports count them | 10 per failed session |
+| `abuse_reports` | Abuse-feedback (ARF) reports from receivers about mail the server sent | 1 per report |
 
-- **Rotate DKIM** — generate a new DKIM key, publish the new DNS record, retain the old key on a configured grace period (default 7 days) so already-signed in-flight mail still validates.
-- **Re-publish records** — re-write the panel's recommended SPF, DMARC, and MTA-STS records into the zone if the operator manually edited them.
-- **View inbound reports** — Stalwart ingests TLS-RPT, MTA-STS-RPT, and DMARC aggregate reports (M47 Wave 2). The row drills into a per-domain reports panel with sender reputations, failure reasons, and trend lines.
+A score of 90 or more is **OK**, 60 to 89 is **Warning**, and below 60 is **Critical**. The page refreshes every minute.
 
-## Color coding
+## Per domain
 
-- Green: all four (DKIM, SPF, DMARC, MTA-STS) present and aligned.
-- Amber: DKIM and SPF present, DMARC missing or `p=none`.
-- Red: DKIM missing or SPF missing — mail from this domain is likely to be rejected or quarantined by major receivers.
+A domain's edit page shows the same score for that domain alone: the DMARC, TLS and abuse signals counted only for that domain. The blocklist signal is left out there, because every domain sends from the same IP address.
+
+## Where the reports come from
+
+Stalwart recognizes the DMARC, TLS and abuse reports in the mail it receives and keeps them for about 30 days. Every 5 minutes the panel copies the new ones into its database, where the score counts them.
+
+A receiver sends a report only to the address the domain's DNS asks for:
+
+- **TLS reports** — the panel publishes `_smtp._tls TXT "v=TLSRPTv1; rua=mailto:postmaster@<domain>"` for each mail domain.
+- **DMARC reports** — the panel's `_dmarc` record does not ask for reports. To receive them, add `rua=mailto:postmaster@<domain>` to the domain's `_dmarc` record. The panel treats an edited `_dmarc` record as yours and does not rewrite it.
+- **Abuse reports** — receivers send them to the addresses registered with their feedback-loop programs.
+
+Big receivers send reports once a day, so a domain's first report can take 24 to 48 hours.
+
+## Notifications
+
+Each time a check finds new reports, the panel sends one notification per report type: `mail.dmarc.report_received`, `mail.tls.report_received` or `mail.feedback.received`. The notification names the domains and links to this page. A TLS notification is sent only when a report counts failed sessions. See [Notifications — Events](./notifications-events.md).
+
+Anyone can send a report to a postmaster address, so the panel treats a report's contents as untrusted. It cuts each value to fit its column, drops control characters, keeps only valid IP addresses, and sends one notification per check no matter how many reports arrive.
 
 ## Why this page exists
 
-A new operator typically has SPF and DKIM set automatically when the domain is added, but DMARC and MTA-STS are opt-in. This page surfaces what is missing in one glance instead of forcing a per-domain DNS audit.
+A domain can have correct SPF, DKIM and DMARC records and still have its mail rejected: the IP address is blocklisted, a certificate expired, or recipients mark the mail as spam. The reports receivers send back are how the operator finds out. This page shows them in one place.
 
 ## CLI
 
 ```bash
+jabali mail deliverability
+jabali mail deliverability --domain <domain>
 jabali domain email-dkim-rotate <domain>
 ```
+
+`jabali mail deliverability` prints the same score as the page. `jabali domain email-dkim-rotate` makes a new DKIM key for a domain.

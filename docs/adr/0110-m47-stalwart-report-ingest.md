@@ -108,3 +108,68 @@ the **primary ingest source** collapses to ONE pattern:
 - `project_stalwart_mtaouthound_throttle_pin` — Wave 3 throttle
   shape pinned at the same time (deferred to Wave 7d when MtaSts
   singleton sync also lands via this same client).
+
+## Amendment 2026-09-29 — ingest over JMAP, listing instead of a cursor
+
+The ingest as built in 2026-05 never stored a report. On the .60 test
+box (Stalwart 0.16, three reports delivered by SMTP to
+`postmaster@mx.jabali-panel.com`) every part of Decision 1 and 2 failed:
+
+- The panel's AppArmor profile denies it exec of `stalwart-cli`, and
+  the panel user cannot read the admin secret in `stalwart.env`.
+- `receivedAt` is neither filterable nor sortable on the report types
+  (`unsupportedFilter` / `unsupportedSort`), so a `receivedAt:>cursor`
+  query cannot be made.
+- Lists inside a report come back as objects keyed `"0"`, `"1"`, …, not
+  arrays; field names (`policyDomain`, `dateRangeBegin`,
+  `organizationName`, `failedSessionCount`, …) and camelCase enums
+  (`certificateExpired`, `authFailure`) differ from what the code read.
+- ARF addresses keep their angle brackets, so the abuse count's
+  `original_mail_from LIKE '%@<domain>'` could not match.
+
+What replaces Decisions 1 and 2:
+
+1. **`internal/stalwartadmin` is a JMAP client** (GH #1936): Basic auth
+   `admin:<token>` from `/etc/jabali-panel/stalwart-admin.token`, which the
+   panel user can read, to `http://127.0.0.1:8446/jmap` with the
+   `urn:stalwart:jmap` capability. `QueryIDs` pages `x:<Type>/query`
+   by position (1000 per page, `calculateTotal`); `GetMany` batches
+   `x:<Type>/get`. The token travels only in the Authorization header.
+2. **Listing, not a cursor.** Each pass (every 5 min, 60 s budget) lists
+   every report id Stalwart holds (Stalwart expires them after about 30
+   days) and fetches only the ids this process has not handled yet, at
+   most 500 per pass in batches of 32. An id is marked handled only
+   when its store succeeds, so a failed store is retried next pass; ids
+   Stalwart no longer lists are forgotten. After a restart every report
+   is fetched once more and the repo checks keep it from being stored
+   twice. A cursor would also have let one forged report with a future
+   date hide every later report.
+3. **Duplicate keys.** A DMARC report and a TLS policy block are keyed
+   by reporter + policy domain + date range (`ExistsForReport` gained
+   the domain): a big receiver sends one report per domain for the same
+   day, and the old reporter + range key dropped every domain after the
+   first. TLS checks each policy block, not only the first. ARF stays
+   keyed by Stalwart id.
+4. **Untrusted input.** Anyone can mail a report to a report address.
+   Strings are cut to their column and stripped of control characters,
+   IPs parsed (else empty), enums mapped to a fixed set
+   (`dkim`/`spf` → `pass|fail`, disposition → `none|quarantine|reject`,
+   TLS result types → RFC 8460 names, unknown ones kebab-cased to
+   `[a-z0-9-]` and 48 characters, ARF feedback types → RFC 5965 names or
+   `other`), counts clamped to `INT UNSIGNED`. TLS failures a policy
+   counts but does not detail are stored as result type `unspecified`.
+5. **Notifications are per pass**, one per report type, naming up to
+   five domains, so a flood of forged reports is one notification every
+   5 minutes. Severity rules are unchanged. All three link to
+   `/jabali-admin/mail/deliverability`; the `/jabali-admin/mail/dmarc`,
+   `/tlsrpt` and `/feedback` pages they linked to never existed.
+
+Not changed: the panel's canonical `_dmarc` record carries no `rua=`
+tag, so hosted domains receive DMARC aggregate reports only when the
+operator adds one. The TLS-RPT record does ask for reports
+(`rua=mailto:postmaster@<zone>`).
+
+Verification: `internal/eventsources/mail_report_ingest_test.go` runs
+the three reports captured from .60
+(`testdata/stalwart_reports.ndjson`) through the ingest; each fix above
+was neutralised in turn and its test failed.
