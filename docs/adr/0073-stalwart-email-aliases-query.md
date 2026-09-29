@@ -142,7 +142,11 @@ cross-tenant path was not found, but it was not searched exhaustively.
    be reached (fail closed; API 503 `mail_server_unavailable`). The panel's
    own `jabali-notify@` mailbox is the exception: it is created at panel
    start, before Stalwart exists on a fresh install, on the admin's own
-   domain, so its release is best effort.
+   domain, so its release is best effort. Each door first asks the database
+   whether it would refuse the mailbox (`repository.MailboxAddressHeld`, the
+   same condition as the insert trigger) and stops there if so: releasing
+   first took a live alias off its owner's account in the registry for a
+   create that then failed (test box, 2026-09-30).
 4. **Alias doors move the alias.** After an alias is created, the panel
    takes it off every account but its new mailbox's; after one is deleted,
    off every account. Both are best effort: the row is already saved.
