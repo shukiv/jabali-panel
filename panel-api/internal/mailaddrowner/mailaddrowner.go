@@ -22,11 +22,13 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 )
 
 // Registry is the part of stalwartadmin.Client this package uses.
 type Registry interface {
 	Query(ctx context.Context, typeName string, filter map[string]any, properties []string) ([]json.RawMessage, error)
+	Get(ctx context.Context, typeName, id string) (json.RawMessage, error)
 	Update(ctx context.Context, typeName, id string, payload any) error
 }
 
@@ -94,14 +96,17 @@ func Release(ctx context.Context, reg Registry, address, keep string) ([]Removal
 		if keep != "" && strings.EqualFold(a.EmailAddress, keep) {
 			continue
 		}
-		for key, al := range a.Aliases {
+		for _, al := range a.Aliases {
 			if al.DomainID != domainID || !strings.EqualFold(al.Name, local) {
 				continue
 			}
-			if err := removeAlias(ctx, reg, a.ID, key); err != nil {
+			gone, err := removeAlias(ctx, reg, a.ID, al.Name, al.DomainID)
+			if err != nil {
 				return removed, err
 			}
-			removed = append(removed, Removal{AccountID: a.ID, Account: a.EmailAddress, Address: address})
+			if gone {
+				removed = append(removed, Removal{AccountID: a.ID, Account: a.EmailAddress, Address: address})
+			}
 		}
 	}
 	return removed, nil
@@ -125,7 +130,7 @@ func Sweep(ctx context.Context, reg Registry, owners Owners) ([]Removal, error) 
 	ownerOf := map[string]string{}
 	var removed []Removal
 	for _, a := range accounts {
-		for key, al := range a.Aliases {
+		for _, al := range a.Aliases {
 			domainName, ok := domains[al.DomainID]
 			if !ok || al.Name == "" {
 				continue
@@ -141,10 +146,13 @@ func Sweep(ctx context.Context, reg Registry, owners Owners) ([]Removal, error) 
 			if owner == "" || strings.EqualFold(owner, a.EmailAddress) {
 				continue
 			}
-			if err := removeAlias(ctx, reg, a.ID, key); err != nil {
+			gone, err := removeAlias(ctx, reg, a.ID, al.Name, al.DomainID)
+			if err != nil {
 				return removed, err
 			}
-			removed = append(removed, Removal{AccountID: a.ID, Account: a.EmailAddress, Address: address})
+			if gone {
+				removed = append(removed, Removal{AccountID: a.ID, Account: a.EmailAddress, Address: address})
+			}
 		}
 	}
 	return removed, nil
@@ -182,17 +190,42 @@ func loadAccounts(ctx context.Context, reg Registry) ([]account, error) {
 	return out, nil
 }
 
-// removeAlias drops one entry of an account's aliases map. A JMAP patch
-// that sets aliases to an empty value is refused by Stalwart; a patch that
-// nulls one key works (verified on 0.16).
-func removeAlias(ctx context.Context, reg Registry, accountID, key string) error {
-	if !validKey(key) {
-		return fmt.Errorf("mailaddrowner: unexpected alias key %q on account %s", key, accountID)
+// removeMu serializes alias removals in this process: the API doors and the
+// reconciler's sweep share the panel process, and two removals on one
+// account at once could each shift the other's key.
+var removeMu sync.Mutex
+
+// removeAlias drops the alias name@domainID from an account and reports
+// whether it was there. Stalwart keys an account's aliases by position:
+// removing one renumbers the ones after it (verified on 0.16: after
+// "aliases/0" went, "aliases/1" was refused as invalid). So the account is
+// read again right before each removal and the key taken from that read,
+// never from an earlier listing. A JMAP patch that sets aliases to an empty
+// value is refused by Stalwart; a patch that nulls one key works.
+func removeAlias(ctx context.Context, reg Registry, accountID, name, domainID string) (bool, error) {
+	removeMu.Lock()
+	defer removeMu.Unlock()
+	raw, err := reg.Get(ctx, "Account", accountID)
+	if err != nil {
+		return false, fmt.Errorf("mailaddrowner: read account %s: %w", accountID, err)
 	}
-	if err := reg.Update(ctx, "Account", accountID, map[string]any{"aliases/" + key: nil}); err != nil {
-		return fmt.Errorf("mailaddrowner: remove alias %s from account %s: %w", key, accountID, err)
+	var a account
+	if err := json.Unmarshal(raw, &a); err != nil {
+		return false, fmt.Errorf("mailaddrowner: decode account %s: %w", accountID, err)
 	}
-	return nil
+	for key, al := range a.Aliases {
+		if al.DomainID != domainID || !strings.EqualFold(al.Name, name) {
+			continue
+		}
+		if !validKey(key) {
+			return false, fmt.Errorf("mailaddrowner: unexpected alias key %q on account %s", key, accountID)
+		}
+		if err := reg.Update(ctx, "Account", accountID, map[string]any{"aliases/" + key: nil}); err != nil {
+			return false, fmt.Errorf("mailaddrowner: remove alias %s from account %s: %w", key, accountID, err)
+		}
+		return true, nil
+	}
+	return false, nil
 }
 
 // validKey accepts the keys Stalwart uses in an aliases map (short

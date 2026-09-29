@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -48,16 +50,54 @@ func (f *fakeAliasRegistry) Query(_ context.Context, typeName string, _ map[stri
 	return out, nil
 }
 
+func (f *fakeAliasRegistry) Get(_ context.Context, typeName, id string) (json.RawMessage, error) {
+	email, ok := f.accounts[id]
+	if typeName != "Account" || !ok {
+		return nil, errors.New("not found")
+	}
+	als := map[string]any{}
+	for k, a := range f.aliases[id] {
+		als[k] = map[string]any{"name": a[0], "domainId": a[1], "enabled": true}
+	}
+	return json.Marshal(map[string]any{"id": id, "emailAddress": email, "aliases": als})
+}
+
+// Update removes one alias the way Stalwart does: aliases are keyed by
+// position, so the ones after the removed entry move down one.
 func (f *fakeAliasRegistry) Update(_ context.Context, typeName, id string, payload any) error {
 	if typeName != "Account" {
 		return errors.New("unexpected type " + typeName)
 	}
 	for k := range payload.(map[string]any) {
 		key, _ := strings.CutPrefix(k, "aliases/")
-		delete(f.aliases[id], key)
+		cur := f.aliases[id]
+		if _, ok := cur[key]; !ok {
+			return errors.New("invalidPatch: Invalid value for object property (" + k + ")")
+		}
+		n, _ := strconv.Atoi(key)
+		next := map[string][2]string{}
+		for i := 0; i < len(cur); i++ {
+			switch {
+			case i < n:
+				next[strconv.Itoa(i)] = cur[strconv.Itoa(i)]
+			case i > n:
+				next[strconv.Itoa(i-1)] = cur[strconv.Itoa(i)]
+			}
+		}
+		f.aliases[id] = next
 		f.updates = append(f.updates, id+":"+k)
 	}
 	return nil
+}
+
+// names lists an account's alias names.
+func (f *fakeAliasRegistry) names(id string) []string {
+	var out []string
+	for _, a := range f.aliases[id] {
+		out = append(out, a[0])
+	}
+	sort.Strings(out)
+	return out
 }
 
 type fakeAddressOwners map[string]string
@@ -93,17 +133,11 @@ func TestReconcileMailAddressOwners_TakesStaleAliasesOff(t *testing.T) {
 
 	r.reconcileMailAddressOwners(context.Background())
 
-	if _, ok := reg.aliases["gc"]["0"]; ok {
-		t.Error("sales@ is still on the CEO's account after it moved to the new hire")
+	if got := reg.names("gc"); len(got) != 1 || got[0] != "old" {
+		t.Errorf("CEO's aliases = %v, want only old@: sales@ moved to the new hire, info@ is a mailbox, and old@ belongs to no one", got)
 	}
-	if _, ok := reg.aliases["gc"]["1"]; ok {
-		t.Error("info@ is still on the CEO's account although it is a mailbox of its own")
-	}
-	if _, ok := reg.aliases["gc"]["2"]; !ok {
-		t.Error("an alias the database gives to no one must be left alone")
-	}
-	if _, ok := reg.aliases["gd"]["0"]; !ok {
-		t.Error("the new owner lost sales@")
+	if got := reg.names("gd"); len(got) != 1 || got[0] != "sales" {
+		t.Errorf("new hire's aliases = %v, want sales@", got)
 	}
 }
 
@@ -164,8 +198,8 @@ func TestReconcileSendmailCreds_RelayMailboxReleasesItsAddress(t *testing.T) {
 	if len(mailboxes.created) != 1 {
 		t.Fatalf("created %d relay mailboxes, want 1", len(mailboxes.created))
 	}
-	if _, ok := reg.aliases["g1"]["0"]; ok {
-		t.Fatal("the relay's address is still another account's alias")
+	if got := reg.names("g1"); len(got) != 0 {
+		t.Fatalf("the relay's address is still another account's alias: %v", got)
 	}
 
 	r, mailboxes = newRec(nil)

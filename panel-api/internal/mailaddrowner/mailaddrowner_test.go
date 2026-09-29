@@ -6,6 +6,7 @@ import (
 	"errors"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -55,6 +56,17 @@ func (f *fakeRegistry) Query(_ context.Context, typeName string, _ map[string]an
 	return out, nil
 }
 
+func (f *fakeRegistry) Get(_ context.Context, typeName, id string) (json.RawMessage, error) {
+	a, ok := f.accounts[id]
+	if typeName != "Account" || !ok {
+		return nil, errors.New("not found")
+	}
+	return json.Marshal(a)
+}
+
+// Update removes one alias the way Stalwart does: the aliases are a list
+// keyed by position, so the ones after the removed entry move down one, and
+// a key past the end is an invalid patch.
 func (f *fakeRegistry) Update(_ context.Context, typeName, id string, payload any) error {
 	if typeName != "Account" {
 		return errors.New("unexpected type " + typeName)
@@ -67,7 +79,21 @@ func (f *fakeRegistry) Update(_ context.Context, typeName, id string, payload an
 		if v != nil || !ok {
 			return errors.New("unexpected patch " + k)
 		}
-		delete(f.accounts[id].Aliases, key)
+		a := f.accounts[id]
+		if _, ok := a.Aliases[key]; !ok {
+			return errors.New("invalidPatch: Invalid value for object property (" + k + ")")
+		}
+		n, _ := strconv.Atoi(key)
+		next := map[string]accountAlias{}
+		for i := 0; i < len(a.Aliases); i++ {
+			switch {
+			case i < n:
+				next[strconv.Itoa(i)] = a.Aliases[strconv.Itoa(i)]
+			case i > n:
+				next[strconv.Itoa(i-1)] = a.Aliases[strconv.Itoa(i)]
+			}
+		}
+		a.Aliases = next
 		f.updates = append(f.updates, id+":"+k)
 	}
 	return nil
@@ -177,6 +203,33 @@ func TestSweep_RemovesAliasesTheDatabaseGivesToSomeoneElse(t *testing.T) {
 	removed, err = Sweep(context.Background(), reg, fakeOwners{"sales@example.com": "CEO@example.com", "info@example.com": "ceo@example.com"})
 	if err != nil || len(removed) != 0 {
 		t.Fatalf("the owner's own aliases must stay: removed=%v err=%v", removed, err)
+	}
+}
+
+// Stalwart renumbers an account's aliases when one is removed. Taking
+// several off one account must still remove exactly the stale ones.
+func TestSweep_RemovesSeveralAliasesFromOneAccount(t *testing.T) {
+	reg := newFakeRegistry()
+	names := []string{"a1", "keep1", "a2", "a3", "keep2", "a4", "a5"}
+	reg.accounts["gc"].Aliases = map[string]accountAlias{}
+	owners := fakeOwners{}
+	for i, n := range names {
+		reg.accounts["gc"].Aliases[strconv.Itoa(i)] = accountAlias{Name: n, DomainID: "c3"}
+		if strings.HasPrefix(n, "keep") {
+			owners[n+"@example.com"] = "ceo@example.com"
+		} else {
+			owners[n+"@example.com"] = n + "@example.com" // a mailbox of its own now
+		}
+	}
+	removed, err := Sweep(context.Background(), reg, owners)
+	if err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+	if len(removed) != 5 {
+		t.Fatalf("removed %d aliases, want 5: %+v", len(removed), removed)
+	}
+	if got := reg.aliases("gc"); !reflect.DeepEqual(got, []string{"keep1@example.com", "keep2@example.com"}) {
+		t.Fatalf("gc aliases = %v, want only keep1@ and keep2@", got)
 	}
 }
 
