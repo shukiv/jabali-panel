@@ -337,3 +337,15 @@ func TestBootstrapRecords_WWWOptOut(t *testing.T) {
 		t.Fatal("apex A must still be emitted when includeWWW=false")
 	}
 }
+
+// A new mail domain's _dmarc asks receivers for aggregate reports at
+// postmaster@<zone>, where Stalwart reads them for the deliverability score.
+func TestBootstrapRecords_DMARCAsksForReports(t *testing.T) {
+	srv := &models.ServerSettings{PublicIPv4: "203.0.113.10"}
+	recs := BootstrapRecords("zone-1", "example.com", srv, bootIDCounter(), true, true, true)
+	dmarc := findRec(t, recs, "_dmarc", "TXT")
+	want := `"v=DMARC1; p=quarantine; sp=quarantine; adkim=r; aspf=r; rua=mailto:postmaster@example.com"`
+	if dmarc.Content != want {
+		t.Errorf("_dmarc = %s, want %s", dmarc.Content, want)
+	}
+}

@@ -262,12 +262,12 @@ func (r *Reconciler) restoreBootstrapApex(ctx context.Context, zone *models.DNSZ
 	// jabali-authored record has drifted from the current settings. A
 	// fully operator-customised _dmarc (not a canonical variant) is left
 	// untouched.
-	expectedDMARC := dnscompile.BuildDMARCString(domain.DmarcNP, domain.DmarcTesting)
+	expectedDMARC := dnscompile.BuildDMARCString(zone.Name, domain.DmarcNP, domain.DmarcTesting)
 	if !hasDMARC {
 		if err := r.dnsRecords.Create(ctx, mk("_dmarc", "TXT", expectedDMARC, 0)); err != nil {
 			r.log.Warn("mail-provider reconcile: restore DMARC", "err", err)
 		}
-	} else if dmarcRec != nil && dnscompile.IsCanonicalDMARC(dmarcRec.Content) && dmarcRec.Content != expectedDMARC {
+	} else if dmarcRec != nil && dnscompile.IsCanonicalDMARC(zone.Name, dmarcRec.Content) && dmarcRec.Content != expectedDMARC {
 		dmarcRec.Content = expectedDMARC
 		dmarcRec.UpdatedAt = now
 		if err := r.dnsRecords.Update(ctx, dmarcRec); err != nil {
