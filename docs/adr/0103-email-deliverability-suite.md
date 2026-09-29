@@ -151,7 +151,10 @@ shipped differs: panel-api writes the throttles itself
   that file is why the throttle reconciler never ran before this change.
 - **Why not an agent verb.** The panel holds the admin token either way,
   so a root verb would add a privileged surface without taking any
-  authority from the panel. The operator chose the panel path.
+  authority from the panel. The operator chose the panel path. This is
+  not root work in the sense of ADR-0001 (the agent runs as root, the
+  API as an unprivileged user): it is an HTTP call to a loopback service
+  with a credential the panel user owns, as mailscan already makes.
 - **Transport.** JMAP on `127.0.0.1:8446`: `x:MtaOutboundThrottle/query`,
   `/get` and `/set`, then `x:Action/set` with `ReloadSettings`. The
   panel's AppArmor profile does not allow it to exec `stalwart-cli`, and
