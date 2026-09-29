@@ -22,6 +22,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dnscompile"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dockerapp"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/mailaddrowner"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/nginxrules"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/notifications"
@@ -252,6 +253,12 @@ type Reconciler struct {
 	outboundPolicies repository.MailOutboundPolicyRepository
 	mailThrottles    ThrottleApplier
 	mailThrottleMu   sync.Mutex // one throttle pass at a time (apply + sweep)
+	// Stalwart registry alias sweep (mail_address_owner_reconcile.go). The
+	// registry also backs the relay mailbox create's address release.
+	mailAddrRegistry mailaddrowner.Registry
+	mailAddrOwners   mailaddrowner.Owners
+	mailAddrMu       sync.Mutex
+	mailAddrLastRun  time.Time
 	// M52 (ADR-0133) — shared resources convergence. All three required for
 	// reconcileSharedResources; nil on any disables the pass. srMailboxes +
 	// srMailGroups resolve a grant's polymorphic grantee → target email(s).
@@ -1328,6 +1335,10 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 	// MtaOutboundThrottle objects. Each row's stalwart_id tracks
 	// the upstream id so updates target the right object.
 	r.reconcileMailThrottles(ctx)
+
+	// Take stale aliases off Stalwart accounts the panel's database no
+	// longer gives them to (every 10 minutes).
+	r.reconcileMailAddressOwners(ctx)
 
 	tt.mark("post_sweeps")
 

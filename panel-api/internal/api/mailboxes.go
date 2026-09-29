@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -39,6 +40,20 @@ type MailboxHandlerConfig struct {
 	// the landing endpoint refuses it. Defaults to 5 minutes (matches
 	// PhpMyAdmin SSO) when zero-valued.
 	SSOTokenTTL time.Duration
+	// Addresses clears a new mailbox's address from Stalwart's registry
+	// before the row is written (mailaddrowner.Releaser). Nil refuses every
+	// create: a stale registry alias would sign the new mailbox in to
+	// another account.
+	Addresses MailAddressReleaser
+}
+
+// MailAddressReleaser takes an address off the Stalwart accounts that still
+// hold it as an alias (mailaddrowner.Releaser).
+type MailAddressReleaser interface {
+	// ReleaseAddress takes address off every account.
+	ReleaseAddress(ctx context.Context, address string) error
+	// ReleaseTo takes address off every account except owner's.
+	ReleaseTo(ctx context.Context, address, owner string) error
 }
 
 const (
@@ -254,10 +269,11 @@ func (h *mailboxHandler) create(c *gin.Context) {
 	// canonicalization, quota default/floor, password gen/hash/seal, duplicate
 	// rule, and display_name/send_only all live in the op. Authorization stayed
 	// here (the ownership check above).
-	mb, generatedPassword, err := mailboxops.Create(ctx, mailboxops.Deps{
-		Mailboxes: h.cfg.Mailboxes,
-		SSOKey:    h.cfg.SSOKey,
-	}, mailboxops.CreateInput{
+	deps := mailboxops.Deps{Mailboxes: h.cfg.Mailboxes, SSOKey: h.cfg.SSOKey}
+	if h.cfg.Addresses != nil {
+		deps.Addresses = h.cfg.Addresses
+	}
+	mb, generatedPassword, err := mailboxops.Create(ctx, deps, mailboxops.CreateInput{
 		Domain:      dom,
 		LocalPart:   req.LocalPart,
 		Password:    req.Password,
@@ -273,6 +289,11 @@ func (h *mailboxHandler) create(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_local_part", "detail": err.Error()})
 		case errors.Is(err, mailboxops.ErrMailboxExists):
 			c.JSON(http.StatusConflict, gin.H{"error": "mailbox_exists"})
+		case errors.Is(err, mailboxops.ErrAddressInUse):
+			c.JSON(http.StatusConflict, gin.H{"error": "address_in_use", "detail": "an alias, group or shared resource already uses this address"})
+		case errors.Is(err, mailboxops.ErrMailServer):
+			slog.Warn("mailbox create: mail server release failed", "err", err)
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "mail_server_unavailable", "detail": "the mail server could not be reached; try again"})
 		case errors.Is(err, mailboxops.ErrQuotaTooSmall):
 			c.JSON(http.StatusBadRequest, gin.H{"error": "quota_too_small", "detail": "quota_bytes must be at least 16 MiB"})
 		case errors.Is(err, mailboxops.ErrWeakPassword):

@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"slices"
 	"strings"
@@ -333,6 +334,12 @@ func (h *mailGroupHandler) create(c *gin.Context) {
 	if err := h.cfg.Groups.Create(ctx, g); err != nil {
 		if isConflict(err) {
 			c.JSON(http.StatusConflict, gin.H{"error": "group_exists"})
+			return
+		}
+		if errors.Is(err, repository.ErrAddressInUse) {
+			// A mailbox took the address after the check above.
+			c.JSON(http.StatusConflict, gin.H{"error": "address_taken",
+				"detail": "a mailbox already uses this address"})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})

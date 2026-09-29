@@ -20,6 +20,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -232,6 +233,9 @@ func newMailGroupCreateCmd() *cobra.Command {
 			}
 			if err := grepo.Create(ctx, g); err != nil {
 				cliAuditErr(ctx, "mail_group.create", "mail_group", g.ID, nil)
+				if errors.Is(err, repository.ErrAddressInUse) {
+					return fmt.Errorf("create mail group: %s@%s is a mailbox's address", canonLocal, dom.Name)
+				}
 				return fmt.Errorf("create mail group: %w", err)
 			}
 			email := canonLocal + "@" + dom.Name

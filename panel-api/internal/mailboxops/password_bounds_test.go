@@ -35,7 +35,7 @@ func TestCreate_PasswordBounds(t *testing.T) {
 	key := ssokey.Key{}
 	create := func(pw string) (*fakeMBRepo, error) {
 		repo := &fakeMBRepo{}
-		_, _, err := Create(context.Background(), Deps{Mailboxes: repo, SSOKey: &key},
+		_, _, err := Create(context.Background(), Deps{Mailboxes: repo, SSOKey: &key, Addresses: okReleaser{}},
 			CreateInput{Domain: enabledDomain(), LocalPart: "alice", Password: pw}, nil)
 		return repo, err
 	}

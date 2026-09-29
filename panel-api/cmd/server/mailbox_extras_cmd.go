@@ -354,7 +354,17 @@ func newMailboxForwarderAddCmd() *cobra.Command {
 				f.KeepCopy = keepCopy
 			}
 			if err := forwarderRepoFromDB().Create(ctx, f); err != nil {
+				if errors.Is(err, repository.ErrAddressInUse) {
+					return fmt.Errorf("create forwarder: %s@%s is a mailbox's address", localPart, dom.Name)
+				}
 				return fmt.Errorf("create forwarder: %w", err)
+			}
+			if fwdType == "alias" {
+				// An alias that moved here from another mailbox is still on
+				// that mailbox's Stalwart account, which would keep its mail.
+				if err := cliMailAddresses.ReleaseTo(ctx, localPart+"@"+dom.Name, mb.LocalPart+"@"+dom.Name); err != nil {
+					fmt.Fprintf(os.Stderr, "WARNING: could not take %s@%s off its previous mailbox on the mail server (the panel retries within 10 minutes): %v\n", localPart, dom.Name, err)
+				}
 			}
 			applyErr := applyForwardersCLI(ctx, mb.ID, mb.LocalPart+"@"+dom.Name)
 			if jsonOutput {
@@ -457,6 +467,13 @@ func newMailboxForwarderRemoveCmd() *cobra.Command {
 			}
 			if err := forwarderRepoFromDB().Delete(ctx, id); err != nil {
 				return fmt.Errorf("delete forwarder: %w", err)
+			}
+			if f.Type == "alias" && f.LocalPart != nil {
+				// Stalwart keeps a deleted alias on the account, which would
+				// go on receiving its mail.
+				if err := cliMailAddresses.ReleaseAddress(ctx, *f.LocalPart+"@"+dom.Name); err != nil {
+					fmt.Fprintf(os.Stderr, "WARNING: could not take %s@%s off the mail server: %v\n", *f.LocalPart, dom.Name, err)
+				}
 			}
 			var applyErr error
 			if f.MailboxID != nil {

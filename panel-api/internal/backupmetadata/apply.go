@@ -247,6 +247,16 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 				if existing, err := d.Mailboxes.FindByID(ctx, mb.ID); err == nil && existing != nil {
 					r.Skipped++
 				} else {
+					// A stale registry alias at this address would sign the
+					// restored mailbox in to another account.
+					if d.MailAddresses == nil {
+						r.Errors = append(r.Errors, fmt.Sprintf("mailbox %s: not restored: the mail server client is not wired", mb.ID))
+						continue
+					}
+					if err := d.MailAddresses.ReleaseAddress(ctx, mb.LocalPart+"@"+dm.Name); err != nil {
+						r.Errors = append(r.Errors, fmt.Sprintf("mailbox %s: not restored: clear %s@%s on the mail server: %v", mb.ID, mb.LocalPart, dm.Name, err))
+						continue
+					}
 					row := &models.Mailbox{
 						ID:           mb.ID,
 						DomainID:     dm.ID,

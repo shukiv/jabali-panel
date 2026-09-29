@@ -87,7 +87,8 @@ var (
 	ErrInvalidKind = errors.New("sharedresourceops: invalid kind")
 	// ErrInvalidName means the requested local part did not canonicalize.
 	ErrInvalidName = errors.New("sharedresourceops: invalid name")
-	// ErrAddressTaken means a resource already exists at the canonical address.
+	// ErrAddressTaken means a resource or a mailbox already exists at the
+	// canonical address.
 	ErrAddressTaken = errors.New("sharedresourceops: address already in use")
 	// ErrInternal means an unexpected data-access failure.
 	ErrInternal = errors.New("sharedresourceops: internal error")
@@ -163,6 +164,10 @@ func Create(ctx context.Context, d Deps, in CreateInput, notify NotifyFunc) (*mo
 		UpdatedAt:   now,
 	}
 	if err := d.Resources.Create(ctx, sr); err != nil {
+		if errors.Is(err, repository.ErrAddressInUse) {
+			// A mailbox holds the address (migration 000306).
+			return nil, ErrAddressTaken
+		}
 		return nil, fmt.Errorf("%w: insert: %v", ErrInternal, err)
 	}
 

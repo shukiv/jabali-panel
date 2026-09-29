@@ -33,6 +33,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/drsync"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/eventsources"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/mailaddrowner"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/mailscan"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/middleware"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
@@ -421,6 +422,10 @@ func runServe(cmd *cobra.Command, args []string) error {
 		// sso.key to seal/unseal the relay passwords; nil key (fresh install
 		// mid-bootstrap) just disables the loop until the key exists.
 		rec.WithSendmailCreds(mailboxRepo, ssoKeyPtr)
+		// Stale Stalwart registry aliases come off the accounts the
+		// database no longer gives them to; the relay mailbox create
+		// clears its address through the same client.
+		rec.WithMailAddressOwners(stalwartClient, repository.NewMailAddressOwnerRepository(sharedDB))
 		// JAB-235 — DNS-01 fallback for CDN-fronted domains. The same sso.key
 		// unseals the stored Cloudflare API token; nil key keeps Cloudflare
 		// DNS-01 unavailable (pdns-authoritative zones still work).
@@ -443,6 +448,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 		deps.MailThrottles = mailThrottles
 		// M47 Wave 4/6/8 DMARC / TLS-RPT / ARF report ingest.
 		deps.StalwartAdmin = stalwartClient
+		// A mailbox or alias takes its address off the other Stalwart
+		// accounts first; mailbox creates refuse without it.
+		deps.MailAddresses = mailaddrowner.Releaser{Registry: stalwartClient}
 		deps.BWDaily = repository.NewBWDailyRepository(sharedDB)
 		deps.DomainIPACLs = repository.NewDomainIPACLRepository(sharedDB)
 		deps.WebDomainAliases = repository.NewWebDomainAliasRepository(sharedDB)

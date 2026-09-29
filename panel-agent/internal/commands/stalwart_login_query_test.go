@@ -404,3 +404,33 @@ func directoryAliases(t *testing.T, db *sql.DB, query, owner string) []string {
 	}
 	return out
 }
+
+// An alias at an address a mailbox also holds is ignored: the mailbox gets
+// its own mail, and the alias owner's account is not handed the address.
+// Stalwart copies every alias it is given into its registry and resolves an
+// address there first, so an alias returned here would sign the mailbox in
+// to the alias owner's account.
+func TestStalwartDirectory_MailboxWinsOverAliasAtItsAddress(t *testing.T) {
+	_, _, planRecipient := directoryQueries(t)
+	planAliases, _ := directoryAliasQueries(t)
+	db := directoryTestDB(t)
+	for _, stmt := range []string{
+		`INSERT INTO mailboxes (id, domain_id, email_cached, password_hash, local_part) VALUES ('m5', 'd-active', 'info@active.test', 'h', 'info')`,
+		`INSERT INTO email_forwarders VALUES
+			('f1', 'd-active', 'm1', 1, 'alias', 'info'),
+			('f2', 'd-active', 'm1', 1, 'alias', 'sales')`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("fixture: %v", err)
+		}
+	}
+	if got := directoryEmails(t, db, planRecipient, "info@active.test"); strings.Join(got, ",") != "info@active.test" {
+		t.Errorf("queryRecipient(info@active.test) = %v, want only the info@ mailbox", got)
+	}
+	if got := directoryEmails(t, db, planRecipient, "sales@active.test"); strings.Join(got, ",") != "alice@active.test" {
+		t.Errorf("queryRecipient(sales@active.test) = %v, want alice (the alias still works)", got)
+	}
+	if got := directoryAliases(t, db, planAliases, "alice@active.test"); strings.Join(got, ",") != "sales@active.test" {
+		t.Errorf("queryEmailAliases(alice@active.test) = %v, want only sales@ (info@ is a mailbox)", got)
+	}
+}

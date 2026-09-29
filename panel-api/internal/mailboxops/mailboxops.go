@@ -58,6 +58,29 @@ type Deps struct {
 	// Nil → the row is stored/rotated with NO envelope (SSO unavailable until a
 	// rotate with a live key), never a stale one.
 	SSOKey *ssokey.Key
+	// Addresses clears the new mailbox's address from Stalwart's registry
+	// before the row is written (mailaddrowner.Releaser). The registry keeps
+	// every alias it has seen on the account that had it, and a mailbox at
+	// such an address signs in to that account. The create operations refuse
+	// when it is nil or fails.
+	Addresses AddressReleaser
+}
+
+// AddressReleaser takes an address off every Stalwart account that still
+// holds it as an alias.
+type AddressReleaser interface {
+	ReleaseAddress(ctx context.Context, address string) error
+}
+
+// releaseAddress runs the Addresses gate for a create; it fails closed.
+func releaseAddress(ctx context.Context, d Deps, address string) error {
+	if d.Addresses == nil {
+		return fmt.Errorf("%w: no mail server client to release %s", ErrMailServer, address)
+	}
+	if err := d.Addresses.ReleaseAddress(ctx, address); err != nil {
+		return fmt.Errorf("%w: %v", ErrMailServer, err)
+	}
+	return nil
 }
 
 var (
@@ -70,6 +93,12 @@ var (
 	ErrAgentUnavailable = errors.New("mailboxops: agent not configured")
 	ErrDeps             = errors.New("mailboxops: dependencies not wired")
 	ErrInternal         = errors.New("mailboxops: internal error")
+	// ErrAddressInUse: an alias, mail group or shared resource holds the
+	// address (migration 000306).
+	ErrAddressInUse = errors.New("mailboxops: the address already belongs to an alias, group or mailbox")
+	// ErrMailServer: the mail server could not be asked to release the
+	// address, so the mailbox was not created.
+	ErrMailServer = errors.New("mailboxops: the mail server could not be reached to set up the address")
 )
 
 // CreateInput is one interactive mailbox creation. Note the ABSENCE of a System
@@ -137,6 +166,9 @@ func Create(ctx context.Context, d Deps, in CreateInput, notify NotifyFunc) (*mo
 		return nil, "", fmt.Errorf("%w: seal: %v", ErrInternal, err)
 	}
 
+	if err := releaseAddress(ctx, d, canonLocal+"@"+in.Domain.Name); err != nil {
+		return nil, "", err
+	}
 	now := time.Now().UTC()
 	mb := &models.Mailbox{
 		ID:           ids.NewULID(),
@@ -156,6 +188,9 @@ func Create(ctx context.Context, d Deps, in CreateInput, notify NotifyFunc) (*mo
 		}
 		if errors.Is(err, mailaddr.ErrLocalReserved) {
 			return nil, "", fmt.Errorf("%w: %w", ErrInvalidLocalPart, err)
+		}
+		if errors.Is(err, repository.ErrAddressInUse) {
+			return nil, "", ErrAddressInUse
 		}
 		return nil, "", fmt.Errorf("%w: insert: %v", ErrInternal, err)
 	}
@@ -208,6 +243,9 @@ func CreateSystem(ctx context.Context, d Deps, in SystemCreateInput, notify Noti
 	if quota == 0 {
 		quota = DefaultQuotaBytes
 	}
+	if err := releaseAddress(ctx, d, in.LocalPart+"@"+in.Domain.Name); err != nil {
+		return nil, "", err
+	}
 	now := time.Now().UTC()
 	mb := &models.Mailbox{
 		ID:           ids.NewULID(),
@@ -223,6 +261,9 @@ func CreateSystem(ctx context.Context, d Deps, in SystemCreateInput, notify Noti
 		UpdatedAt:    now,
 	}
 	if err := d.Mailboxes.Create(ctx, mb); err != nil {
+		if errors.Is(err, repository.ErrAddressInUse) {
+			return nil, "", ErrAddressInUse
+		}
 		return nil, "", fmt.Errorf("%w: insert: %v", ErrInternal, err)
 	}
 	email := in.LocalPart + "@" + in.Domain.Name
@@ -239,6 +280,7 @@ func CreateSystem(ctx context.Context, d Deps, in SystemCreateInput, notify Noti
 // sealed and password_enc stays NULL until the tenant rotates.
 type RestoreCreateInput struct {
 	DomainID     string
+	DomainName   string // the domain's name, for the registry release
 	LocalPart    string // already canonical
 	PasswordHash string // pre-computed; NEVER sealed
 	QuotaBytes   uint64 // 0 → DefaultQuotaBytes
@@ -262,6 +304,12 @@ func CreateForRestore(ctx context.Context, d Deps, in RestoreCreateInput) (*mode
 	if quota == 0 {
 		quota = DefaultQuotaBytes
 	}
+	if in.DomainName == "" {
+		return nil, fmt.Errorf("%w: domain name required", ErrDeps)
+	}
+	if err := releaseAddress(ctx, d, in.LocalPart+"@"+in.DomainName); err != nil {
+		return nil, err
+	}
 	now := time.Now().UTC()
 	mb := &models.Mailbox{
 		ID:           ids.NewULID(),
@@ -276,6 +324,9 @@ func CreateForRestore(ctx context.Context, d Deps, in RestoreCreateInput) (*mode
 		// The database refuses postmaster@ on a tenant domain (ADR-0110).
 		if errors.Is(err, mailaddr.ErrLocalReserved) {
 			return nil, fmt.Errorf("%w: %w", ErrInvalidLocalPart, err)
+		}
+		if errors.Is(err, repository.ErrAddressInUse) {
+			return nil, ErrAddressInUse
 		}
 		return nil, fmt.Errorf("%w: insert: %v", ErrInternal, err)
 	}
