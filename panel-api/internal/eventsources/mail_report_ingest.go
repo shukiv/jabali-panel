@@ -42,13 +42,21 @@ const (
 	reportGetBatch = 32
 	// maxReportsPerPass bounds one pass; the rest wait for the next.
 	maxReportsPerPass = 500
+	// reportRetention is how long stored report rows are kept (ADR-0103).
+	// The deliverability score counts the last 7 days.
+	reportRetention = 90 * 24 * time.Hour
+	// reportPruneEvery is how often a source prunes its table.
+	reportPruneEvery = 24 * time.Hour
 )
 
 // reportIngest remembers which Stalwart report ids one source has handled
-// in this process.
+// in this process, and prunes the source's table once a day.
 type reportIngest struct {
 	typeName string
 	seen     map[string]bool
+	// prune deletes the source's rows older than cutoff; nil skips pruning.
+	prune     func(ctx context.Context, cutoff time.Time) (int64, error)
+	lastPrune time.Time
 }
 
 func newReportIngest(typeName string) *reportIngest {
@@ -79,6 +87,7 @@ func runReportIngest(ctx context.Context, pass func(ctx context.Context)) {
 // importOne returns nil once a report is done with (stored, a duplicate, or
 // unusable) and an error to try it again next pass.
 func (ri *reportIngest) pass(ctx context.Context, d Deps, importOne func(ctx context.Context, raw json.RawMessage) error) {
+	ri.maybePrune(ctx, d)
 	ids, err := d.StalwartAdmin.QueryIDs(ctx, ri.typeName, nil)
 	if err != nil {
 		d.Log.Warn("report-ingest: list failed", "type", ri.typeName, "err", err)
@@ -121,6 +130,34 @@ func (ri *reportIngest) pass(ctx context.Context, d Deps, importOne func(ctx con
 			ri.seen[head.ID] = true
 		}
 	}
+}
+
+// maybePrune deletes the source's rows older than reportRetention, at most
+// once per reportPruneEvery. A failed prune is tried again next pass.
+func (ri *reportIngest) maybePrune(ctx context.Context, d Deps) {
+	if ri.prune == nil {
+		return
+	}
+	now := d.Now()
+	if !ri.lastPrune.IsZero() && now.Sub(ri.lastPrune) < reportPruneEvery {
+		return
+	}
+	n, err := ri.prune(ctx, now.Add(-reportRetention).UTC())
+	if err != nil {
+		d.Log.Warn("report-ingest: prune failed", "type", ri.typeName, "err", err)
+		return
+	}
+	ri.lastPrune = now
+	if n > 0 {
+		d.Log.Info("report-ingest: pruned", "type", ri.typeName, "rows", n)
+	}
+}
+
+// reportTooOld reports whether a report that ended at end is past retention.
+// Such a report would be pruned the next day and, after a restart, imported
+// and announced again, so it is not imported at all.
+func reportTooOld(d Deps, end time.Time) bool {
+	return end.Before(d.Now().Add(-reportRetention))
 }
 
 // clip trims s, drops control characters and cuts it to max characters

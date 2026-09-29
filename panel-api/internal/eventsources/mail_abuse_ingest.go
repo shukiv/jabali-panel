@@ -25,6 +25,7 @@ func runMailAbuseIngest(ctx context.Context, d Deps) {
 		return
 	}
 	ri := newReportIngest("ArfExternalReport")
+	ri.prune = d.ARFReports.PruneOlderThan
 	runReportIngest(ctx, func(ctx context.Context) { mailAbuseIngestPass(ctx, d, ri) })
 }
 
@@ -57,6 +58,14 @@ func mailAbuseImportOne(ctx context.Context, d Deps, raw json.RawMessage) (bool,
 		d.Log.Warn("abuse-ingest: unreadable report, skipped", "err", err)
 		return false, nil
 	}
+	received := rep.ReceivedAt.UTC()
+	if received.IsZero() {
+		received = d.Now().UTC()
+	}
+	if reportTooOld(d, received) {
+		d.Log.Info("abuse-ingest: report older than retention, skipped", "id", rep.ID, "received", received)
+		return false, nil
+	}
 	id := clip(rep.ID, 128)
 	exists, err := d.ARFReports.ExistsForStalwartID(ctx, id)
 	if err != nil {
@@ -64,10 +73,6 @@ func mailAbuseImportOne(ctx context.Context, d Deps, raw json.RawMessage) (bool,
 	}
 	if exists {
 		return false, nil
-	}
-	received := rep.ReceivedAt.UTC()
-	if received.IsZero() {
-		received = d.Now().UTC()
 	}
 	var arrival *time.Time
 	if rep.Report.ArrivalDate != nil && !rep.Report.ArrivalDate.IsZero() {
