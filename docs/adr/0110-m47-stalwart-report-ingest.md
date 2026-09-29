@@ -242,8 +242,9 @@ admin"):
    postmaster@ made before this change is not in `queryRecipient`, so
    the fallback still applies to its domain; not verified on a box.
    Moving an ordinary alias between two mailboxes of one tenant has the
-   same stale-registry effect (mail keeps going to the old mailbox);
-   that is not fixed here.
+   same stale-registry effect (mail keeps going to the old mailbox, and a
+   mailbox created later at the address signs in to the alias owner's
+   account); that is fixed separately (ADR-0073 amendment, PR #1941).
 3. **The admin postmaster mailbox** is provisioned by panel-api at boot
    (`postmaster@<panel hostname>`, 1 GiB) when the panel domain has
    email and no postmaster yet. It is an ordinary listed mailbox (not
