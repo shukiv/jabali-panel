@@ -25,8 +25,22 @@ A password you supply needs at least 8 characters and at most 72 bytes. The API 
 
 - Local part validation: lowercase, alphanumeric plus `.`, `_`, `-`, `+`; cannot start with `.`.
 - `jabali-directory` is reserved for the [domain directory](./email.md#the-domain-directory) and is refused.
+- An address that is already an alias of another mailbox, a mail group or a shared resource on the domain cannot become a mailbox (`409 address_in_use`). Delete the alias, group or resource first. See [One owner per address](#one-owner-per-address).
+- If the mail server cannot be reached, the mailbox is not created (`503 mail_server_unavailable`). Try again once mail is back up.
 - The total number of mailboxes counts against your package's `max_mailboxes`.
 - The default quota is your package's default; you may raise it up to the package's per-mailbox cap.
+
+## One owner per address
+
+Each address on a domain belongs to one thing: a mailbox, an alias of a mailbox, a mail group or a shared resource. The panel refuses a second one at the same address, in any combination with a mailbox.
+
+The mail server keeps a record of every alias it has delivered to, on the mailbox that had it. So the panel also clears an address on the mail server:
+
+- before it creates a mailbox there, so the new mailbox signs in to its own account and not to the one that once had the alias;
+- when an alias moves to another mailbox, so its mail goes to the new mailbox;
+- when an alias is deleted, so the old mailbox stops receiving its mail.
+
+If the mail server is down when an alias moves, the panel finishes the move within 10 minutes of it coming back. An alias that was deleted while the mail server was down can keep delivering to its old mailbox until the address is used again.
 
 ## Where the mail lives
 

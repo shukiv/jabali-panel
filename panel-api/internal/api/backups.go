@@ -96,6 +96,11 @@ type BackupHandlerConfig struct {
 	WebDomainAliases repository.WebDomainAliasRepository
 	ServerSettings   repository.ServerSettingsRepository
 
+	// MailAddresses clears a restored mailbox's address from Stalwart's
+	// registry before the mailbox is stored. A restore refuses its
+	// mailboxes when it is nil.
+	MailAddresses MailAddressReleaser
+
 	Log             *slog.Logger
 	StrictRateLimit gin.HandlerFunc
 }
@@ -1223,7 +1228,7 @@ func (h *backupHandler) applyRestoreMetadata(ctx context.Context, metaRaw json.R
 	if err := json.Unmarshal(metaRaw, &meta); err != nil {
 		return []string{"parse metadata bundle: " + err.Error()}
 	}
-	r := backupmetadata.Apply(ctx, &meta, backupmetadata.Deps{
+	deps := backupmetadata.Deps{
 		Users:          h.cfg.Users,
 		Domains:        h.cfg.Domains,
 		Databases:      h.cfg.Databases,
@@ -1247,7 +1252,11 @@ func (h *backupHandler) applyRestoreMetadata(ctx context.Context, metaRaw json.R
 		Agent:          h.cfg.Agent, // push restored forwarders to Stalwart (GH #1795)
 		// GH #1898: a restored domain passes the create-time checks.
 		CheckDomain: RestoreDomainCheck(h.cfg.Domains, h.cfg.WebDomainAliases, h.cfg.ServerSettings),
-	})
+	}
+	if h.cfg.MailAddresses != nil {
+		deps.MailAddresses = h.cfg.MailAddresses
+	}
+	r := backupmetadata.Apply(ctx, &meta, deps)
 	return r.Errors
 }
 

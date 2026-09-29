@@ -68,11 +68,24 @@ type Deps struct {
 	// stored without it. Required for restoring domains: nil refuses every
 	// domain, so no restore door can skip the checks by forgetting to wire them.
 	CheckDomain func(ctx context.Context, row *models.Domain, ownerUsername string) (warnings []string, err error)
+	// MailAddresses takes a restored mailbox's address off every Stalwart
+	// account before Apply stores the mailbox. Stalwart's registry keeps
+	// every alias it has seen, so a mailbox at an address that was once
+	// another mailbox's alias would sign in to that mailbox's account.
+	// Required for restoring mailboxes: nil, or a failed release, refuses
+	// the mailbox.
+	MailAddresses AddressReleaser
 	// Agent, when set, lets Apply push restored email forwarders to Stalwart
 	// (forwarder.apply). Optional: nil skips convergence, so the restored rows
 	// converge on the first later forwarder mutation instead (GH #1795 follow-up).
 	Agent agent.AgentInterface
 	Log   *slog.Logger
+}
+
+// AddressReleaser clears a mail address from Stalwart's registry
+// (mailaddrowner.Releaser).
+type AddressReleaser interface {
+	ReleaseAddress(ctx context.Context, address string) error
 }
 
 func (d Deps) warn(msg string, err error, kv ...any) {

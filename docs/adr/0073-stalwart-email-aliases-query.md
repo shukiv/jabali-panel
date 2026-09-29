@@ -100,6 +100,66 @@ python3 imap.py bob@123123.com Secret-Bob-1
 → Subject: alias retry 4
 ```
 
+## Amendment (2026-09-29): one owner per address
+
+### Context
+
+Stalwart 0.16 copies the aliases `queryEmailAliases` returns into its own
+registry when an account signs in or is resolved for delivery, and it
+never takes one away. It also looks an address up in the registry before
+the SQL directory. Verified on the test box with the 2026-09-29 release
+binary:
+
+- An alias moved from one mailbox to another kept delivering to the old
+  mailbox.
+- A mailbox created at the address of a deleted alias signed in to the
+  alias's old owner (`auth.success` with the old owner's `accountId`).
+- A mailbox created at the address of a live alias did the same.
+
+A tenant could read another mailbox's mail by creating a mailbox at one of
+its old alias addresses. Every tenant involved was in the same domain; a
+cross-tenant path was not found, but it was not searched exhaustively.
+
+### Decision
+
+1. **The database refuses a shared address.** Migration 000306 adds
+   triggers: a mailbox cannot take the address of an alias (enabled or
+   not), a mail group or a shared resource in its domain, and none of
+   those can take a mailbox's address. An UPDATE is refused only when it
+   moves a row onto such an address, so a pair made before the migration
+   keeps working. The repositories report the refusal as
+   `repository.ErrAddressInUse`, and the API as 409 `address_in_use` (or
+   `address_taken` for groups and shared resources).
+2. **The directory lets the mailbox win.** The alias branches of
+   `queryRecipient` and `queryEmailAliases` ignore an alias at an address
+   a mailbox holds, so a pair made before the migration resolves to the
+   mailbox and the alias owner is no longer given the address.
+3. **Every mailbox create door clears the address first.** Before the row
+   is written, the panel takes the address off every Stalwart account that
+   holds it as an alias (`mailaddrowner.Releaser`, through the admin
+   management API). The API, CLI, relay (`noreply@`), cPanel/Hestia import
+   and backup restore doors refuse the mailbox when the mail server cannot
+   be reached (fail closed; API 503 `mail_server_unavailable`). The panel's
+   own `jabali-notify@` mailbox is the exception: it is created at panel
+   start, before Stalwart exists on a fresh install, on the admin's own
+   domain, so its release is best effort.
+4. **Alias doors move the alias.** After an alias is created, the panel
+   takes it off every account but its new mailbox's; after one is deleted,
+   off every account. Both are best effort: the row is already saved.
+5. **A sweep catches the rest.** Every 10 minutes the reconciler reads
+   every account's aliases and takes one off an account when the database
+   gives the address to a different principal (`mailaddrowner.Sweep`). It
+   logs each removal at WARN.
+
+### Known limits
+
+- The sweep leaves an alias the database gives to no one: it cannot tell a
+  deleted alias from an address the panel does not manage. A deleted alias
+  whose release failed keeps delivering to its old mailbox until a mailbox,
+  alias or group takes the address.
+- Only the admin backup restore rebuilds panel rows (`backupmetadata.Apply`);
+  the tenant `/me` restore does not, so it has no mailbox door to guard.
+
 ## References
 
 - ADR-0045 — Stalwart v0.16 RocksDB + apply-plan bootstrap

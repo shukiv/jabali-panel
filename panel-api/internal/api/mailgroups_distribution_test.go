@@ -26,6 +26,7 @@ type mgGroupsFake struct {
 	addMemberCalled     bool
 	internalOnlyWritten bool
 	createdGroup        *models.MailGroup
+	createErr           error
 }
 
 func (f *mgGroupsFake) FindByID(context.Context, string) (*models.MailGroup, error) {
@@ -56,6 +57,9 @@ func (f *mgGroupsFake) ExistsByDomainAndLocalPart(context.Context, string, strin
 	return false, nil
 }
 func (f *mgGroupsFake) Create(_ context.Context, g *models.MailGroup) error {
+	if f.createErr != nil {
+		return f.createErr
+	}
 	f.createdGroup = g
 	return nil
 }
@@ -208,6 +212,17 @@ func TestCreate_RefusesTheDirectoryAddress(t *testing.T) {
 	w := do(t, fx.router, "POST", "/api/v1/domains/dom1/mailgroups", map[string]any{"name": "jabali-directory", "group_kind": "distribution"})
 	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
 	require.Contains(t, w.Body.String(), "invalid_name")
+	require.NotContains(t, fx.ag.calls, "mailgroup.apply")
+}
+
+// A mailbox took the address between the handler's check and the insert:
+// the database refuses the group (migration 000306).
+func TestCreate_MailboxAtTheAddressIs409(t *testing.T) {
+	fx := newMGFixture(t, "distribution", false, 0)
+	fx.groups.createErr = repository.ErrAddressInUse
+	w := do(t, fx.router, "POST", "/api/v1/domains/dom1/mailgroups", map[string]any{"name": "sales", "group_kind": "distribution"})
+	require.Equal(t, http.StatusConflict, w.Code, w.Body.String())
+	require.Contains(t, w.Body.String(), "address_taken")
 	require.NotContains(t, fx.ag.calls, "mailgroup.apply")
 }
 

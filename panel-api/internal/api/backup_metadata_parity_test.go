@@ -18,9 +18,10 @@ import (
 // The producer is the source of truth; KratosClient/Log are wiring, not
 // sections, so they're excluded. So is CheckDomain (GH #1898): a restore-time
 // guard hook, which the admin restore builds from its own alias and settings
-// stores.
+// stores. And MailAddresses: the restore's Stalwart registry release, which
+// only the admin restore wires.
 func TestBackupMetadataAdaptersInLockstep(t *testing.T) {
-	skip := map[string]bool{"KratosClient": true, "Log": true, "CheckDomain": true}
+	skip := map[string]bool{"KratosClient": true, "Log": true, "CheckDomain": true, "MailAddresses": true}
 
 	builder := reflect.TypeOf(backupmetadata.Deps{})
 	adapters := map[string]reflect.Type{

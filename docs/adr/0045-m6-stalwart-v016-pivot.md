@@ -44,6 +44,10 @@ Concretely:
    upserts the external directory row into Stalwart's registry. There is
    no intermediate cache with a staleness window. Password/quota changes
    in the source-of-truth table propagate on the next auth.
+   **Correction (2026-09-29):** the upsert only adds aliases; it never
+   removes one, and the registry is consulted before the SQL directory.
+   A moved or deleted alias stayed on its old account. See the ADR-0073
+   amendment for what the panel does about it.
 5. **DKIM** now a JMAP object (`DkimSignature`) that accepts externally
    generated `privateKey` — panel-side keygen + PowerDNS publishing still
    works, we just additionally push the `DkimSignature` JMAP object so

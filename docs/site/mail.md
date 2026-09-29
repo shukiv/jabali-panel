@@ -39,7 +39,7 @@ without removing the vhost or DNS zone.
 
 ## Mail groups (GH #1818)
 
-A mail group is an address on a domain whose members are mailboxes on the same domain. **Mail → Groups** creates one; there are two types, fixed at creation:
+A mail group is an address on a domain whose members are mailboxes on the same domain. **Mail → Groups** creates one; there are two types, fixed at creation. A group cannot take a mailbox's address, and a mailbox cannot take a group's (see [One owner per address](./user/mailboxes.md#one-owner-per-address)).
 
 - **Distribution list** (the default) — every member receives their own copy of each message in their own inbox. Jabali projects it as a Stalwart mailing list whose recipients are the members that can receive mail (disabled and send-only mailboxes are left out). A list with no such members has nothing at its address, so senders get a `550` instead of mail that is accepted and dropped.
 - **Shared workspace** — one shared inbox that members open in webmail (no copies are delivered), plus a shared calendar, contacts and files, and send-as the group address.

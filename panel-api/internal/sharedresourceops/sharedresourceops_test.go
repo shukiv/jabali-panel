@@ -15,15 +15,19 @@ import (
 // values. created records every persisted row so a test can assert whether a
 // refusal wrote anything.
 type fakeResRepo struct {
-	exists   bool
-	existErr error
-	created  []*models.SharedResource
+	exists    bool
+	existErr  error
+	createErr error
+	created   []*models.SharedResource
 }
 
 func (f *fakeResRepo) ExistsByEmail(_ context.Context, _ string) (bool, error) {
 	return f.exists, f.existErr
 }
 func (f *fakeResRepo) Create(_ context.Context, r *models.SharedResource) error {
+	if f.createErr != nil {
+		return f.createErr
+	}
 	f.created = append(f.created, r)
 	return nil
 }
@@ -128,6 +132,18 @@ func TestCreate_RefusesDuplicateAddress(t *testing.T) {
 	}
 	if len(repo.created) != 0 {
 		t.Fatalf("no row must be written when the address is taken, got %d", len(repo.created))
+	}
+}
+
+// A mailbox at the address: the database refuses the resource (migration
+// 000306), reported as the address being taken.
+func TestCreate_MailboxAtTheAddressIsTaken(t *testing.T) {
+	repo := &fakeResRepo{createErr: repository.ErrAddressInUse}
+	_, err := Create(context.Background(), Deps{Resources: repo}, CreateInput{
+		Domain: emailDomain(), Kind: "calendar", Name: "teamcal",
+	}, nil)
+	if !errors.Is(err, ErrAddressTaken) {
+		t.Fatalf("want ErrAddressTaken, got %v", err)
 	}
 }
 

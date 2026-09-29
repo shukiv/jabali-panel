@@ -133,7 +133,7 @@ func (r *mailGroupRepo) ListAllWithDomain(ctx context.Context) ([]MailGroupWithD
 }
 
 func (r *mailGroupRepo) Create(ctx context.Context, g *models.MailGroup) error {
-	return r.db.WithContext(ctx).Create(g).Error
+	return mapAddressInUse(r.db.WithContext(ctx).Create(g).Error)
 }
 
 // UpdateMeta updates the display name + description. Dedicated method (no

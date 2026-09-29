@@ -357,7 +357,7 @@ func (r *mailboxRepo) CountByDomainID(ctx context.Context, domainID string) (int
 // from Go is harmless (the trigger overwrites it anyway), but the
 // caller should not RELY on that value.
 func (r *mailboxRepo) Create(ctx context.Context, mb *models.Mailbox) error {
-	return r.db.WithContext(ctx).Create(mb).Error
+	return mapAddressInUse(r.db.WithContext(ctx).Create(mb).Error)
 }
 
 func (r *mailboxRepo) Delete(ctx context.Context, id string) error {

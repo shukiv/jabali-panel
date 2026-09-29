@@ -2,6 +2,7 @@ package commands
 
 import (
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -25,6 +26,8 @@ var (
 	planQueryLoginRe     = regexp.MustCompile(`"queryLogin": "([^"]*)"`)
 	planQueryRecipientRe = regexp.MustCompile(`"queryRecipient": "([^"]*)"`)
 	shQueryLoginRe       = regexp.MustCompile(`local query_login="([^"]*)"`)
+	planQueryAliasesRe   = regexp.MustCompile(`"queryEmailAliases": "([^"]*)"`)
+	shQueryAliasesRe     = regexp.MustCompile(`local query_aliases="([^"]*)"`)
 )
 
 func directoryQueries(t *testing.T) (planLogin, shLogin, planRecipient string) {
@@ -68,17 +71,18 @@ func directoryTestDB(t *testing.T) *sql.DB {
 		`CREATE TABLE users (id TEXT PRIMARY KEY, suspended INTEGER NOT NULL DEFAULT 0)`,
 		`CREATE TABLE domains (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, name TEXT NOT NULL)`,
 		`CREATE TABLE mailboxes (id TEXT PRIMARY KEY, domain_id TEXT NOT NULL, email_cached TEXT NOT NULL,
-			password_hash TEXT NOT NULL, is_disabled INTEGER NOT NULL DEFAULT 0, send_only INTEGER NOT NULL DEFAULT 0)`,
+			password_hash TEXT NOT NULL, is_disabled INTEGER NOT NULL DEFAULT 0, send_only INTEGER NOT NULL DEFAULT 0,
+			local_part TEXT NOT NULL)`,
 		`CREATE TABLE mail_groups (id TEXT PRIMARY KEY, email_cached TEXT, has_mailbox INTEGER, group_kind TEXT, internal_only INTEGER)`,
 		`CREATE TABLE mail_group_members (group_id TEXT, mailbox_id TEXT)`,
 		`CREATE TABLE email_forwarders (id TEXT, domain_id TEXT, mailbox_id TEXT, enabled INTEGER, type TEXT, local_part TEXT)`,
 		`INSERT INTO users VALUES ('u-active', 0), ('u-suspended', 1)`,
 		`INSERT INTO domains VALUES ('d-active', 'u-active', 'active.test'), ('d-suspended', 'u-suspended', 'suspended.test')`,
 		`INSERT INTO mailboxes VALUES
-			('m1', 'd-active', 'alice@active.test', 'h', 0, 0),
-			('m2', 'd-active', 'off@active.test', 'h', 1, 0),
-			('m3', 'd-suspended', 'carol@suspended.test', 'h', 0, 0),
-			('m4', 'd-gone', 'orphan@gone.test', 'h', 0, 0)`,
+			('m1', 'd-active', 'alice@active.test', 'h', 0, 0, 'alice'),
+			('m2', 'd-active', 'off@active.test', 'h', 1, 0, 'off'),
+			('m3', 'd-suspended', 'carol@suspended.test', 'h', 0, 0, 'carol'),
+			('m4', 'd-gone', 'orphan@gone.test', 'h', 0, 0, 'orphan')`,
 	} {
 		if _, err := db.Exec(stmt); err != nil {
 			t.Fatalf("schema: %v\n%s", err, stmt)
@@ -234,5 +238,94 @@ func TestStalwartQueryRecipient_SuspendedOwnerStillReceives(t *testing.T) {
 	}
 	if got := directoryRows(t, db, planRecipient, "off@active.test"); got != 0 {
 		t.Fatalf("queryRecipient(off@active.test) = %d rows, want 0 (disabled mailbox)", got)
+	}
+}
+
+func directoryAliasQueries(t *testing.T) (plan, sh string) {
+	t.Helper()
+	root := repoRootT(t)
+	planB, err := os.ReadFile(filepath.Join(root, "install", "stalwart", "apply-plan.json.tmpl"))
+	if err != nil {
+		t.Fatalf("read apply-plan.json.tmpl: %v", err)
+	}
+	shB, err := os.ReadFile(filepath.Join(root, "install.sh"))
+	if err != nil {
+		t.Fatalf("read install.sh: %v", err)
+	}
+	m := planQueryAliasesRe.FindSubmatch(planB)
+	if m == nil {
+		t.Fatal("apply-plan.json.tmpl: no queryEmailAliases")
+	}
+	plan = string(m[1])
+	m = shQueryAliasesRe.FindSubmatch(shB)
+	if m == nil {
+		t.Fatal("install.sh: no local query_aliases=\"...\" in the directory converger")
+	}
+	return plan, string(m[1])
+}
+
+func TestStalwartQueryEmailAliases_InstallMatchesApplyPlan(t *testing.T) {
+	plan, sh := directoryAliasQueries(t)
+	if plan != sh {
+		t.Fatalf("queryEmailAliases drift — edit BOTH:\n apply-plan: %s\n install.sh: %s", plan, sh)
+	}
+}
+
+func directoryStrings(t *testing.T, db *sql.DB, query, lookup string) []string {
+	t.Helper()
+	rows, err := db.Query(query, lookup)
+	if err != nil {
+		t.Fatalf("query failed: %v\n%s", err, query)
+	}
+	defer rows.Close()
+	cols, err := rows.Columns()
+	if err != nil {
+		t.Fatalf("columns: %v", err)
+	}
+	var out []string
+	for rows.Next() {
+		vals := make([]any, len(cols))
+		ptrs := make([]any, len(cols))
+		for i := range vals {
+			ptrs[i] = &vals[i]
+		}
+		if err := rows.Scan(ptrs...); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		out = append(out, fmt.Sprint(vals[0]))
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows: %v", err)
+	}
+	return out
+}
+
+// An alias at an address a mailbox also holds is ignored: the mailbox gets
+// its own mail, and the alias owner's account is not handed the address.
+// Stalwart copies every alias it is given into its registry and resolves an
+// address there first, so an alias returned here would sign the mailbox in
+// to the alias owner's account.
+func TestStalwartDirectory_MailboxWinsOverAliasAtItsAddress(t *testing.T) {
+	_, _, planRecipient := directoryQueries(t)
+	planAliases, _ := directoryAliasQueries(t)
+	db := directoryTestDB(t)
+	for _, stmt := range []string{
+		`INSERT INTO mailboxes VALUES ('m5', 'd-active', 'info@active.test', 'h', 0, 0, 'info')`,
+		`INSERT INTO email_forwarders VALUES
+			('f1', 'd-active', 'm1', 1, 'alias', 'info'),
+			('f2', 'd-active', 'm1', 1, 'alias', 'sales')`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("fixture: %v", err)
+		}
+	}
+	if got := directoryStrings(t, db, planRecipient, "info@active.test"); len(got) != 1 || got[0] != "info@active.test" {
+		t.Errorf("queryRecipient(info@active.test) = %v, want only the info@ mailbox", got)
+	}
+	if got := directoryStrings(t, db, planRecipient, "sales@active.test"); len(got) != 1 || got[0] != "alice@active.test" {
+		t.Errorf("queryRecipient(sales@active.test) = %v, want alice (the alias still works)", got)
+	}
+	if got := directoryStrings(t, db, planAliases, "alice@active.test"); len(got) != 1 || got[0] != "sales@active.test" {
+		t.Errorf("queryEmailAliases(alice@active.test) = %v, want only sales@ (info@ is a mailbox)", got)
 	}
 }

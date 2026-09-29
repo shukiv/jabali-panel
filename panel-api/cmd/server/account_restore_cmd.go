@@ -32,8 +32,10 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/backupmetadata"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/backupwrapperhelpers"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/mailaddrowner"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/stalwartadmin"
 )
 
 // applyPanelMetadata parses the metadata.json bytes from the agent
@@ -70,6 +72,8 @@ func applyPanelMetadata(ctx context.Context, cmd *cobra.Command, raw json.RawMes
 		// GH #1898: a restored domain passes the create-time checks.
 		CheckDomain: api.RestoreDomainCheck(repository.NewDomainRepository(sharedDB),
 			repository.NewWebDomainAliasRepository(sharedDB), repository.NewServerSettingsRepository(sharedDB)),
+		// A restored mailbox's address comes off Stalwart's registry first.
+		MailAddresses: mailaddrowner.Releaser{Registry: stalwartadmin.NewClient()},
 	}
 	r := backupmetadata.Apply(ctx, &meta, deps)
 	w := cmd.OutOrStdout()
