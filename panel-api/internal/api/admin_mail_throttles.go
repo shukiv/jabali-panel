@@ -1,8 +1,7 @@
 // Package api — admin Mail outbound-throttle CRUD (M47 Wave 3).
 //
 // Admin-only. Writes to mail_outbound_policy; the reconciler converges
-// each row into Stalwart's MtaOutboundThrottle objects on the next tick,
-// through the agent (the panel cannot reach Stalwart's admin API).
+// each row into Stalwart's MtaOutboundThrottle objects on the next tick.
 //
 // Endpoints:
 //
@@ -23,17 +22,18 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"git.jabali-panel.com/shukivaknin/jabali2/internal/mailthrottle"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/mailthrottle"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/middleware"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
-// validateScopeRef pre-empts Stalwart Expression injection. The agent
-// builds expressions like `sender_domain == '<scope_ref>'` with scope_ref
-// embedded verbatim; a single quote would turn the throttle's match into
-// always-fire (or always-skip), silently breaking the cap. The agent runs
-// the same check, from the same package, before it builds anything.
+// validateScopeRef pre-empts Stalwart Expression injection. The throttle
+// payload holds expressions like `sender_domain == '<scope_ref>'` with
+// scope_ref embedded verbatim; a single quote would turn the throttle's
+// match into always-fire (or always-skip), silently breaking the cap.
+// stalwartadmin.Throttles runs the same check, from the same package,
+// before it builds anything.
 func validateScopeRef(scope, ref string) bool {
 	return mailthrottle.ValidScopeRef(scope, ref)
 }
@@ -42,7 +42,7 @@ func validateScopeRef(scope, ref string) bool {
 type AdminMailThrottlesHandlerConfig struct {
 	Policies repository.MailOutboundPolicyRepository
 	// ThrottleClient removes a deleted row's Stalwart throttles
-	// (agent.MailThrottles). When nil, DELETE only removes the DB row.
+	// (stalwartadmin.Throttles). When nil, DELETE only removes the DB row.
 	ThrottleClient ThrottleDispatcher
 }
 

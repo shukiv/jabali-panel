@@ -22,7 +22,7 @@ The panel ships with no rows. Until you add one, it sets no outbound cap.
 
 ## How the caps are applied
 
-About once a minute, the reconciler makes Stalwart match every row. The hourly cap and the daily cap become two separate throttles. The panel has no access to Stalwart's admin credential, so the agent (`jabali-agent`) makes each change and reloads Stalwart's settings afterwards.
+About once a minute, the reconciler makes Stalwart match every row. The hourly cap and the daily cap become two separate throttles. The panel makes each change through Stalwart's management API, signed in with its Stalwart admin token (`/etc/jabali-panel/stalwart-admin.token`), and reloads Stalwart's settings afterwards.
 
 - A `user` row counts per sender and applies only to that address.
 - A `domain` row counts per sender domain and applies only to that domain.

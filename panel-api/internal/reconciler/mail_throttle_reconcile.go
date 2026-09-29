@@ -1,13 +1,12 @@
 // Package reconciler — M47 Wave 3 outbound-throttle convergence.
 //
 // Reads mail_outbound_policy on each tick and makes Stalwart's
-// MtaOutboundThrottle objects match. The panel cannot reach Stalwart's admin
-// API (its credential is not readable by the panel user, JAB-357), so every
-// change goes through the agent's mail.throttle.* verbs. Each row has an
-// hourly and a daily window, and each window is its own state machine:
+// MtaOutboundThrottle objects match, through Stalwart's management API with
+// the panel's admin token (stalwartadmin.Throttles). Each row has an hourly
+// and a daily window, and each window is its own state machine:
 //
-//	enabled && cap > 0   → apply: the agent creates the object, updates it,
-//	                       or leaves it alone, and returns the id it owns
+//	enabled && cap > 0   → apply: create the object, update it, or leave it
+//	                       alone, and keep the id it owns
 //	otherwise, id != ''  → delete, clear the id
 //	otherwise            → no-op
 //
@@ -24,12 +23,12 @@ import (
 	"strings"
 	"time"
 
-	"git.jabali-panel.com/shukivaknin/jabali2/internal/mailthrottle"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/mailthrottle"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 )
 
 // ThrottleApplier pushes throttle windows into Stalwart. The panel's
-// implementation is agent.MailThrottles; tests inject a fake.
+// implementation is stalwartadmin.Throttles; tests inject a fake.
 type ThrottleApplier interface {
 	Apply(ctx context.Context, req mailthrottle.ApplyRequest) (mailthrottle.ApplyResult, error)
 	Delete(ctx context.Context, stalwartID string) error
@@ -168,9 +167,9 @@ func (r *Reconciler) reconcileThrottleWindow(ctx context.Context, row *models.Ma
 	return "", nil
 }
 
-// throttleRequest is what the agent needs to build one window's object.
+// throttleRequest is what the applier needs to build one window's object.
 // scope_ref was validated by the API handler and is validated again by the
-// agent, because it ends up inside a Stalwart expression.
+// applier, because it ends up inside a Stalwart expression.
 func throttleRequest(row *models.MailOutboundPolicy, window string, limit uint64, currentID string) mailthrottle.ApplyRequest {
 	req := mailthrottle.ApplyRequest{
 		StalwartID: currentID,

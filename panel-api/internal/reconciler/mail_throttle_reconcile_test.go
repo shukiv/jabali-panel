@@ -11,11 +11,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"git.jabali-panel.com/shukivaknin/jabali2/internal/mailthrottle"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/mailthrottle"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 )
 
-// fakeThrottleApplier stands in for agent.MailThrottles. Apply hands out a
+// fakeThrottleApplier stands in for stalwartadmin.Throttles. Apply hands out a
 // new id for an empty one and keeps a known one, unless reassign names a
 // replacement (Stalwart lost the object). stalwart is what List returns; a
 // created throttle is added to it and a deleted one removed.

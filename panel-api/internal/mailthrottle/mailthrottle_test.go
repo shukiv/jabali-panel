@@ -10,7 +10,7 @@ import (
 // printed on the .60 test box (stalwart-cli 1.0.12) for a throttle created
 // with Payload's shape; only the description is swapped for the one
 // Description builds. Decoding it must give back an equal Throttle, or the
-// agent would see a difference on every reconcile tick and rewrite the object
+// panel would see a difference on every reconcile tick and rewrite the object
 // (and reload Stalwart's settings) forever.
 const stalwartGet = `{"enable":true,"description":"jabali user probe@example.invalid: 5 per hour","key":{"sender":true},"match":{"match":{"0":{"if":"sender == 'probe@example.invalid'","then":"true"}},"else":"false"},"rate":{"count":5,"period":3600000},"id":"jg1nyykmahqa"}`
 
@@ -119,12 +119,12 @@ func TestApplyRequest_ValidateRejects(t *testing.T) {
 	}
 }
 
-func TestDeleteRequest_Validate(t *testing.T) {
-	if err := (DeleteRequest{StalwartID: "jg1nyykmahqa"}).Validate(); err != nil {
-		t.Fatalf("valid id rejected: %v", err)
+func TestValidStalwartID(t *testing.T) {
+	if !ValidStalwartID("jg1nyykmahqa") {
+		t.Fatal("valid id rejected")
 	}
 	for _, id := range []string{"", "-x", "a,b", "a b", "../x"} {
-		if err := (DeleteRequest{StalwartID: id}).Validate(); err == nil {
+		if ValidStalwartID(id) {
 			t.Errorf("id %q accepted", id)
 		}
 	}

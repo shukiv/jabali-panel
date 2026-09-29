@@ -80,7 +80,7 @@ type Deps struct {
 	TLSRPTAggregate repository.TLSRPTAggregateRepository
 	ARFReports      repository.ARFReportRepository
 	// M47 Wave 3 outbound throttle config. MailThrottles is
-	// agent.MailThrottles: Stalwart is reached through the agent.
+	// stalwartadmin.Throttles.
 	MailOutboundPolicies repository.MailOutboundPolicyRepository
 	MailThrottles        api.ThrottleDispatcher
 	BWDaily               repository.BWDailyRepository

@@ -11,8 +11,7 @@ import "time"
 //
 // max_per_hour / max_per_day = 0 means unlimited. The reconciler
 // (Wave 3) converges each enabled row into up to two Stalwart
-// MtaOutboundThrottle objects through the agent's mail.throttle.* verbs;
-// their ids live in stalwart_id (hourly) and stalwart_id_daily so later
+// MtaOutboundThrottle objects (stalwartadmin.Throttles); their ids live in stalwart_id (hourly) and stalwart_id_daily so later
 // updates and deletes target the right objects.
 type MailOutboundPolicy struct {
 	ID            string     `gorm:"column:id;type:char(26);primaryKey" json:"id"`

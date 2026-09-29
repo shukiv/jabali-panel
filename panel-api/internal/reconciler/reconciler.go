@@ -546,7 +546,7 @@ func (r *Reconciler) skeletonWire(ctx context.Context) []map[string]any {
 
 // WithMailThrottles wires the M47 Wave 3 outbound-throttle reconciler.
 // Both args are required — nil disables the pass entirely. The applier is
-// agent.MailThrottles in the panel: Stalwart is reached through the agent.
+// stalwartadmin.Throttles in the panel.
 func (r *Reconciler) WithMailThrottles(repo repository.MailOutboundPolicyRepository, applier ThrottleApplier) *Reconciler {
 	r.outboundPolicies = repo
 	r.mailThrottles = applier

@@ -1,17 +1,12 @@
-// Package mailthrottle is the one definition of an outbound mail throttle as
-// it crosses the panel↔agent boundary and lands in Stalwart.
+// Package mailthrottle is the one definition of an outbound mail throttle:
+// what the panel asks for (ApplyRequest), how it is checked (Validate), and
+// the Stalwart MtaOutboundThrottle object it becomes (Payload).
 //
-// The panel keeps throttle policy in mail_outbound_policy and decides which
-// Stalwart MtaOutboundThrottle objects should exist. It cannot reach
-// Stalwart's admin API itself: the admin credential in
-// /etc/jabali-panel/stalwart.env is not readable by the panel user
-// (JAB-357). So the panel sends an ApplyRequest or DeleteRequest to the
-// agent's mail.throttle.apply / mail.throttle.delete verbs, and the agent
-// builds the Stalwart object with Payload.
-//
-// Both sides import this package, so the wire shape cannot drift. The agent
-// runs Validate again because ScopeRef ends up inside a Stalwart expression,
-// and the agent is the privilege boundary.
+// The panel keeps throttle policy in mail_outbound_policy. The reconciler
+// turns each row into up to two ApplyRequests (hourly, daily), and
+// stalwartadmin.Throttles writes them to Stalwart. The API handler and
+// Throttles both run the same checks, because ScopeRef ends up inside a
+// Stalwart expression.
 package mailthrottle
 
 import (
@@ -20,20 +15,13 @@ import (
 	"regexp"
 )
 
-// Agent verbs.
-const (
-	VerbApply  = "mail.throttle.apply"
-	VerbDelete = "mail.throttle.delete"
-	VerbList   = "mail.throttle.list"
-)
-
 // OwnedPrefix starts the description of every throttle the panel creates.
 // The reconciler removes a Stalwart throttle with this prefix that no
 // mail_outbound_policy row references, so an operator's own throttles must
 // not start with it.
 const OwnedPrefix = "jabali "
 
-// StalwartType is the only Stalwart object type the verbs touch.
+// StalwartType is the Stalwart object type a throttle is.
 const StalwartType = "MtaOutboundThrottle"
 
 // Scopes. Same values as models.OutboundScope*.
@@ -50,11 +38,11 @@ const (
 	WindowDay  = "day"
 )
 
-// ApplyRequest asks the agent to make one throttle window exist in Stalwart.
+// ApplyRequest asks for one throttle window to exist in Stalwart.
 type ApplyRequest struct {
 	// StalwartID is the object this window already owns, if any. Empty
-	// means create. If Stalwart no longer has the object, the agent creates
-	// a new one and returns its id.
+	// means create. If Stalwart no longer has the object, a new one is
+	// created and its id returned.
 	StalwartID string `json:"stalwart_id,omitempty"`
 	Scope      string `json:"scope"`
 	// ScopeRef is the sender address (user scope) or sender domain (domain
@@ -68,31 +56,14 @@ type ApplyRequest struct {
 	Limit uint64 `json:"limit"`
 }
 
-// ApplyResult is the agent's answer to ApplyRequest.
+// ApplyResult says which object the window owns after an apply.
 type ApplyResult struct {
 	StalwartID string `json:"stalwart_id"`
 	// Changed is false when Stalwart already held exactly this throttle.
 	Changed bool `json:"changed"`
 }
 
-// DeleteRequest asks the agent to remove one throttle from Stalwart.
-type DeleteRequest struct {
-	StalwartID string `json:"stalwart_id"`
-}
-
-// DeleteResult is the agent's answer to DeleteRequest.
-type DeleteResult struct {
-	// Deleted is false when Stalwart had no such throttle (already gone).
-	Deleted bool `json:"deleted"`
-}
-
-// ListResult is the agent's answer to VerbList (which takes no params):
-// every MtaOutboundThrottle in Stalwart, the panel's and anyone else's.
-type ListResult struct {
-	Throttles []ListItem `json:"throttles"`
-}
-
-// ListItem is one Stalwart throttle.
+// ListItem is one Stalwart throttle, the panel's or anyone else's.
 type ListItem struct {
 	StalwartID  string `json:"stalwart_id"`
 	Description string `json:"description"`
@@ -125,7 +96,7 @@ func ValidStalwartID(id string) bool {
 	return idRe.MatchString(id) && id[0] != '-'
 }
 
-// Validate checks every field before the agent builds anything from it.
+// Validate checks every field before anything is built from it.
 func (r ApplyRequest) Validate() error {
 	if r.StalwartID != "" && !ValidStalwartID(r.StalwartID) {
 		return fmt.Errorf("invalid stalwart_id %q", r.StalwartID)
@@ -153,17 +124,9 @@ func (r ApplyRequest) Validate() error {
 	return nil
 }
 
-// Validate checks the id before the agent passes it to stalwart-cli.
-func (r DeleteRequest) Validate() error {
-	if !ValidStalwartID(r.StalwartID) {
-		return fmt.Errorf("invalid stalwart_id %q", r.StalwartID)
-	}
-	return nil
-}
-
-// Throttle is Stalwart's MtaOutboundThrottle object, as `stalwart-cli
-// create|update --json` takes it and `stalwart-cli get --json` returns it
-// (verified on Stalwart with stalwart-cli 1.0.12).
+// Throttle is Stalwart's MtaOutboundThrottle object, as
+// x:MtaOutboundThrottle/set takes it and x:MtaOutboundThrottle/get returns
+// it (verified on the .60 test box).
 type Throttle struct {
 	Description string `json:"description"`
 	Enable      bool   `json:"enable"`

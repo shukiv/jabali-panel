@@ -136,3 +136,36 @@ a `match` Expression. Pin all three via `stalwart-cli describe`
 before writing the apply; do NOT guess (the queue-gate lesson).
 Wave-3 DB half (`mail_outbound_policy` repo + /admin/mail/throttle
 CRUD + reconciler loop) is Stalwart-independent and can land first.
+
+## Amendment 2026-09-29 — panel-api writes the throttles, over JMAP (GH #1936)
+
+The Wave 3 pin above planned an agent verb, `mail.throttle.apply`. What
+shipped differs: panel-api writes the throttles itself
+(`stalwartadmin.Throttles`), and there is no `mail.throttle.*` verb.
+
+- **Credential.** The panel signs in as `admin` with
+  `/etc/jabali-panel/stalwart-admin.token` (0640 jabali:jabali-mail), read
+  on every call. ADR-0142 names this token the panel's management
+  credential, and mailscan already uses it. The panel never had the
+  recovery-admin line in `stalwart.env` (0640 root:jabali-mail); reading
+  that file is why the throttle reconciler never ran before this change.
+- **Why not an agent verb.** The panel holds the admin token either way,
+  so a root verb would add a privileged surface without taking any
+  authority from the panel. The operator chose the panel path.
+- **Transport.** JMAP on `127.0.0.1:8446`: `x:MtaOutboundThrottle/query`,
+  `/get` and `/set`, then `x:Action/set` with `ReloadSettings`. The
+  panel's AppArmor profile does not allow it to exec `stalwart-cli`, and
+  the profile is unchanged.
+- **Pinned on the .60 test box.** A missing id comes back as `notFound`
+  on get and as `notUpdated`/`notDestroyed` of type `notFound` on set. A
+  bad payload comes back as `notCreated` of type `invalidPatch`. A wrong
+  token is HTTP 401.
+- **Pinned object.** `key` is `{"sender": true}` (user scope),
+  `{"senderDomain": true}` (domain scope) or `{}` (global). A scoped row
+  fires only when `sender == '<address>'` or
+  `sender_domain == '<domain>'`. The sender or domain is validated before
+  it goes into that expression. `rate` is `{count, period}`, with the
+  period in milliseconds. The hourly and daily caps are separate objects.
+- **Ownership.** Every panel-made throttle's description starts with
+  `jabali `. The reconciler removes such a throttle when no row references
+  it. Throttles with any other description are left alone.

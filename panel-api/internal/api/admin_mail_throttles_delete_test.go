@@ -42,7 +42,7 @@ type recordingThrottleClient struct {
 
 func (c *recordingThrottleClient) Delete(_ context.Context, id string) error {
 	if id == c.failOn {
-		return errors.New("agent: stalwart-cli delete: connection refused")
+		return errors.New("stalwart-cli delete: connection refused")
 	}
 	c.deleted = append(c.deleted, id)
 	return nil
