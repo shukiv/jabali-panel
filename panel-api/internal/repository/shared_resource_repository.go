@@ -86,7 +86,7 @@ func (r *sharedResourceRepo) Create(ctx context.Context, sr *models.SharedResour
 		sr.CreatedAt = now
 	}
 	sr.UpdatedAt = now
-	return r.db.WithContext(ctx).Create(sr).Error
+	return mapPostmasterReserved(r.db.WithContext(ctx).Create(sr).Error)
 }
 
 func (r *sharedResourceRepo) UpdateMeta(ctx context.Context, id, displayName string) error {

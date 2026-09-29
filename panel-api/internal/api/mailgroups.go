@@ -289,7 +289,8 @@ func (h *mailGroupHandler) create(c *gin.Context) {
 	}
 	canonLocal, _, err := mailaddr.Canonicalise(req.Name + "@" + dom.Name)
 	if err == nil {
-		err = mailaddr.CheckNotReserved(canonLocal)
+		// postmaster@ on a tenant domain is the server admin's (ADR-0110).
+		err = mailaddr.CheckNotReservedOn(canonLocal, dom.IsPanelPrimary)
 	}
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_name", "detail": err.Error()})

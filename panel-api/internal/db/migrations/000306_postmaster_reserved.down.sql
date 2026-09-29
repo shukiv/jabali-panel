@@ -1,0 +1,9 @@
+-- ADR-0110: see 000306_postmaster_reserved.up.sql.
+DROP TRIGGER IF EXISTS trg_shared_resources_postmaster_reserved_update;
+DROP TRIGGER IF EXISTS trg_shared_resources_postmaster_reserved_insert;
+DROP TRIGGER IF EXISTS trg_mail_groups_postmaster_reserved_update;
+DROP TRIGGER IF EXISTS trg_mail_groups_postmaster_reserved_insert;
+DROP TRIGGER IF EXISTS trg_email_forwarders_postmaster_reserved_update;
+DROP TRIGGER IF EXISTS trg_email_forwarders_postmaster_reserved_insert;
+DROP TRIGGER IF EXISTS trg_mailboxes_postmaster_reserved_update;
+DROP TRIGGER IF EXISTS trg_mailboxes_postmaster_reserved_insert;

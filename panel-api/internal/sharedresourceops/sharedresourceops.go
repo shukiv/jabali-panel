@@ -134,7 +134,8 @@ func Create(ctx context.Context, d Deps, in CreateInput, notify NotifyFunc) (*mo
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidName, err)
 	}
-	if err := mailaddr.CheckNotReserved(canonLocal); err != nil {
+	// postmaster@ on a tenant domain is the server admin's (ADR-0110).
+	if err := mailaddr.CheckNotReservedOn(canonLocal, in.Domain.IsPanelPrimary); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrInvalidName, err)
 	}
 	email := canonLocal + "@" + in.Domain.Name

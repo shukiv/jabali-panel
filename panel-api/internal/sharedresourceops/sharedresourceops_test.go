@@ -431,3 +431,17 @@ func TestCreate_RefusesTheDirectoryAddress(t *testing.T) {
 		t.Fatalf("no row may be written for the reserved address, got %d", len(repo.created))
 	}
 }
+
+// ADR-0110: postmaster@ on a tenant domain belongs to the server admin.
+func TestCreate_RefusesPostmasterOnATenantDomain(t *testing.T) {
+	repo := &fakeResRepo{}
+	_, err := Create(context.Background(), Deps{Resources: repo}, CreateInput{
+		Domain: emailDomain(), Kind: "mailbox", Name: "postmaster",
+	}, nil)
+	if !errors.Is(err, ErrInvalidName) || !errors.Is(err, mailaddr.ErrPostmasterReserved) {
+		t.Fatalf("want ErrInvalidName wrapping ErrPostmasterReserved, got %v", err)
+	}
+	if len(repo.created) != 0 {
+		t.Fatalf("no row may be written for postmaster@ on a tenant domain, got %d", len(repo.created))
+	}
+}

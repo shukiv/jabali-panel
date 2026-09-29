@@ -99,7 +99,8 @@ func Create(ctx context.Context, d Deps, in CreateInput, notify NotifyFunc) (*mo
 	if err != nil {
 		return nil, "", fmt.Errorf("%w: %v", ErrInvalidLocalPart, err)
 	}
-	if err := mailaddr.CheckNotReserved(canonLocal); err != nil {
+	// postmaster@ on a tenant domain is the server admin's (ADR-0110).
+	if err := mailaddr.CheckNotReservedOn(canonLocal, in.Domain.IsPanelPrimary); err != nil {
 		return nil, "", fmt.Errorf("%w: %w", ErrInvalidLocalPart, err)
 	}
 	exists, err := d.Mailboxes.ExistsByDomainAndLocalPart(ctx, in.Domain.ID, canonLocal)
@@ -152,6 +153,9 @@ func Create(ctx context.Context, d Deps, in CreateInput, notify NotifyFunc) (*mo
 	if err := d.Mailboxes.Create(ctx, mb); err != nil {
 		if errors.Is(err, repository.ErrConflict) {
 			return nil, "", ErrMailboxExists
+		}
+		if errors.Is(err, mailaddr.ErrLocalReserved) {
+			return nil, "", fmt.Errorf("%w: %w", ErrInvalidLocalPart, err)
 		}
 		return nil, "", fmt.Errorf("%w: insert: %v", ErrInternal, err)
 	}
@@ -269,6 +273,10 @@ func CreateForRestore(ctx context.Context, d Deps, in RestoreCreateInput) (*mode
 		UpdatedAt:    now,
 	}
 	if err := d.Mailboxes.Create(ctx, mb); err != nil {
+		// The database refuses postmaster@ on a tenant domain (ADR-0110).
+		if errors.Is(err, mailaddr.ErrLocalReserved) {
+			return nil, fmt.Errorf("%w: %w", ErrInvalidLocalPart, err)
+		}
 		return nil, fmt.Errorf("%w: insert: %v", ErrInternal, err)
 	}
 	return mb, nil

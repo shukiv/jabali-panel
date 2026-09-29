@@ -18,6 +18,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/mailaddr"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/autoresponderops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/forwarderops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
@@ -285,6 +286,18 @@ func newMailboxForwarderCmd() *cobra.Command {
 	return cmd
 }
 
+// checkAliasLocalPart refuses an alias at postmaster@ on a domain other than
+// the panel hostname's: that address is the server admin's (ADR-0110).
+func checkAliasLocalPart(fwdType, localPart string, dom *models.Domain) error {
+	if fwdType != "alias" {
+		return nil
+	}
+	if err := mailaddr.CheckPostmasterOn(localPart, dom.IsPanelPrimary); err != nil {
+		return fmt.Errorf("invalid alias: %w", err)
+	}
+	return nil
+}
+
 func newMailboxForwarderAddCmd() *cobra.Command {
 	var (
 		fwdType   string
@@ -312,6 +325,9 @@ func newMailboxForwarderAddCmd() *cobra.Command {
 			}
 			if fwdType == "alias" && localPart == "" {
 				return fmt.Errorf("--local is required for alias")
+			}
+			if err := checkAliasLocalPart(fwdType, localPart, dom); err != nil {
+				return err
 			}
 			if fwdType == "external" && target == "" {
 				return fmt.Errorf("--target is required for external")

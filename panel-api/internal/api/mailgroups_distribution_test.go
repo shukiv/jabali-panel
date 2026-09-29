@@ -211,6 +211,15 @@ func TestCreate_RefusesTheDirectoryAddress(t *testing.T) {
 	require.NotContains(t, fx.ag.calls, "mailgroup.apply")
 }
 
+// ADR-0110: postmaster@ on a tenant domain belongs to the server admin.
+func TestCreate_RefusesPostmasterOnATenantDomain(t *testing.T) {
+	fx := newMGFixture(t, "distribution", false, 0)
+	w := do(t, fx.router, "POST", "/api/v1/domains/dom1/mailgroups", map[string]any{"name": "postmaster", "group_kind": "distribution"})
+	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+	require.Contains(t, w.Body.String(), "server administrator")
+	require.NotContains(t, fx.ag.calls, "mailgroup.apply")
+}
+
 // An internal-only distribution list delivers through one Sieve redirect per
 // member and Stalwart allows 20, so the panel refuses a 21st member up front
 // instead of letting members past the limit silently receive nothing.
