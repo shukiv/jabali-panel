@@ -280,8 +280,9 @@ func TestStalwartQueryRecipient_SuspendedOwnerStillReceives(t *testing.T) {
 // 550 for an address the directory does not resolve, so DMARC and TLS reports
 // sent to postmaster@<domain> never arrived. A domain that has no postmaster
 // of its own resolves postmaster@ to the postmaster mailbox on the panel's
-// primary domain (the server admin); a tenant's own postmaster mailbox, alias,
-// forwarder or group wins.
+// primary domain (the server admin). Migration 000306 stops tenants making a
+// postmaster@ now; a postmaster mailbox, alias or group a domain had before
+// keeps its mail.
 func TestStalwartQueryRecipient_PostmasterFallsBackToTheServerAdmin(t *testing.T) {
 	_, _, planRecipient := directoryQueries(t)
 	db := directoryTestDB(t)
@@ -312,9 +313,9 @@ func TestStalwartQueryRecipient_PostmasterFallsBackToTheServerAdmin(t *testing.T
 		"postmaster@active.test":    {"postmaster@panel.test"}, // no postmaster of its own
 		"postmaster@suspended.test": {"postmaster@panel.test"},
 		"postmaster@panel.test":     {"postmaster@panel.test"},
-		"postmaster@own.test":       {"postmaster@own.test"}, // tenant's mailbox wins
-		"postmaster@alias.test":     {"boss@alias.test"},     // tenant's alias wins
-		"postmaster@group.test":     {"member@group.test"},   // tenant's group wins
+		"postmaster@own.test":       {"postmaster@own.test"}, // the domain's own mailbox keeps it
+		"postmaster@alias.test":     {"boss@alias.test"},     // the domain's own alias keeps it
+		"postmaster@group.test":     {"member@group.test"},   // the domain's own group keeps it
 		"postmaster@fwd.test":       nil,                     // tenant's disabled alias: the tenant owns the name
 		"postmaster@web.test":       nil,                     // email not enabled
 		"postmaster@unknown.test":   nil,                     // not a panel domain

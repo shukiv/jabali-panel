@@ -28,6 +28,10 @@ const postmasterMailboxQuotaBytes = 1 << 30 // 1 GiB
 // those addresses on it. Without it Stalwart answers 550 to postmaster@, so the
 // DMARC and TLS reports receivers send there never arrive (ADR-0110).
 //
+// Stalwart keeps each of those addresses on this account for good, so
+// migration 000306 refuses a new postmaster@ mailbox, alias, group or shared
+// resource on any other domain: a tenant mailbox there would sign in here.
+//
 // It is an ordinary mailbox, listed on the panel domain like any other, so the
 // admin reads it in webmail. Stalwart reads the reports for the panel to import
 // and also delivers them here, beside other mail to postmaster@; report mail

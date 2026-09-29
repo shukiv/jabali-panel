@@ -56,7 +56,9 @@ mail from your domain, and messages from people who have a problem with it.
 
 You cannot make a mailbox, alias, group or shared resource at
 `postmaster@<domain>`. A postmaster address made before this rule keeps
-working and still gets the domain's postmaster mail.
+working and still gets the domain's postmaster mail. A migration or a backup
+restore makes new addresses, so it skips a postmaster address and lists it
+in its report.
 
 ## IMAP and SMTP submission
 
