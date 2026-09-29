@@ -164,12 +164,73 @@ What replaces Decisions 1 and 2:
    `/jabali-admin/mail/deliverability`; the `/jabali-admin/mail/dmarc`,
    `/tlsrpt` and `/feedback` pages they linked to never existed.
 
-Not changed: the panel's canonical `_dmarc` record carries no `rua=`
-tag, so hosted domains receive DMARC aggregate reports only when the
-operator adds one. The TLS-RPT record does ask for reports
-(`rua=mailto:postmaster@<zone>`).
+The canonical `_dmarc` record is extended in the amendment below.
 
 Verification: `internal/eventsources/mail_report_ingest_test.go` runs
 the three reports captured from .60
 (`testdata/stalwart_reports.ndjson`) through the ingest; each fix above
 was neutralised in turn and its test failed.
+
+## Amendment 2026-09-29 (2) — reports can reach the box: postmaster routing, rua, retention
+
+The first amendment made the ingest work, but reports still could not
+arrive for most domains:
+
+- **Stalwart answered 550 to `postmaster@<domain>`** unless the domain
+  had a postmaster mailbox or alias. RFC 5321 requires every mail
+  domain to accept postmaster@, and the panel's TLS-RPT record already
+  sent receivers there. A report addressed to a domain without one was
+  refused.
+- **The canonical `_dmarc` record had no `rua=`**, so no receiver sent
+  DMARC aggregate reports at all.
+- **Nothing pruned the report tables.** ADR-0103 set a 90-day retention,
+  and the repos had `PruneOlderThan`, but nothing called it.
+
+Decisions (the user picked "server admin" routing and "let the reports
+land"):
+
+1. **Postmaster routing in Stalwart's directory.** For an email-enabled
+   domain with no postmaster mailbox, alias or group of its own,
+   `queryRecipient` resolves `postmaster@<domain>` to the `postmaster`
+   mailbox on the `is_panel_primary` domain, and `queryEmailAliases`
+   lists those addresses on it. Both are needed: with only the first,
+   Stalwart accepts the RCPT and then bounces "Mailbox not found" at
+   local delivery, because the account does not own the address. The
+   alias listing also lets that mailbox send as those addresses, which
+   is within the admin's existing authority. A tenant's own postmaster
+   (even a disabled one) wins. The queries read only tables
+   `jabali-stalwart-ro` is already granted, and they stay
+   byte-identical between install.sh's converger and
+   apply-plan.json.tmpl (parity tests for both). A change to the
+   directory queries takes effect after Stalwart reloads its settings;
+   install.sh restarts Stalwart after the converger.
+2. **The admin postmaster mailbox** is provisioned by panel-api at boot
+   (`postmaster@<panel hostname>`, 1 GiB) when the panel domain has
+   email and no postmaster yet. It is an ordinary listed mailbox (not
+   `system`, which would hide it from the admin), with its password
+   sealed for webmail SSO.
+3. **Reports are also delivered to the postmaster mailbox.**
+   `ReportSettings.inboundReportForwarding` stays on (Stalwart's
+   default). Turning it off looked like the way to keep reports out of
+   mailboxes, but on Stalwart 0.16 it silently drops ALL mail to
+   postmaster@, human mail included (verified on .60). A test keeps
+   either install path from setting it false. Report mail Stalwart files
+   as spam is expunged from Junk after 30 days (`DataRetention`
+   `expungeTrashAfter`).
+4. **`rua=mailto:postmaster@<zone>`** is added to the canonical `_dmarc`
+   record. The address is in the zone itself, so no RFC 7489 §7.1
+   authorisation record is needed. Records rendered before are still
+   canonical, so the reconciler upgrades them on its next pass; an
+   operator-edited `_dmarc` is left alone. A zone name that is not a
+   plain DNS name renders the record without `rua`.
+5. **Retention.** Each ingest source prunes its table at most once a
+   day, deleting rows older than 90 days. A report whose window ended
+   before the cutoff (or an ARF report received before it) is not
+   imported: the prune would delete it and a restart would import and
+   announce it again.
+
+Verification on .60: after the change, `postmaster@` of a second domain
+was accepted and delivered to the admin postmaster mailbox; a DMARC
+report to it was analysed and delivered; a tenant mailbox still signed
+in and received mail; the new `_dmarc` was served by PowerDNS within one
+reconcile pass.

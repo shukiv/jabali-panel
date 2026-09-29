@@ -37,7 +37,7 @@ If DNSSEC is enabled for the zone (see [DNSSEC](./dnssec.md)), records are signe
 
 ## Common record patterns
 
-- **Email**: MX 10 mail.example.com (if mail is enabled, the panel adds this automatically), TXT `"v=spf1 include:_spf.<panel-hostname> -all"`, TXT `_dmarc "v=DMARC1; p=quarantine; rua=mailto:postmaster@example.com"`.
+- **Email**: MX 10 mail.example.com (if mail is enabled, the panel adds this automatically), TXT `"v=spf1 include:_spf.<panel-hostname> -all"`, TXT `_dmarc "v=DMARC1; p=quarantine; sp=quarantine; adkim=r; aspf=r; rua=mailto:postmaster@example.com"` (the panel adds this one too).
 - **Domain verification**: TXT records of the form `google-site-verification=...`, `apple-domain-verification=...`. Paste exactly as the third party requests.
 - **Static IP**: A `@ -> <ip>`, AAAA `@ -> <ipv6>`, CNAME `www -> @`.
 
