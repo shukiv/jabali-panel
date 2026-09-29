@@ -9,7 +9,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/mailaddr"
 )
 
-// The migration 000306 triggers refuse postmaster@ on a tenant domain with
+// The migration 000307 triggers refuse postmaster@ on a tenant domain with
 // SIGNAL; the repositories report that as mailaddr.ErrPostmasterReserved and
 // leave every other error alone.
 func TestMapPostmasterReserved(t *testing.T) {

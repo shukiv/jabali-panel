@@ -255,7 +255,7 @@ func TestCreate_AllowsPostmasterOnThePanelDomain(t *testing.T) {
 }
 
 // The database refuses postmaster@ on a tenant domain for doors that do not
-// check first (migration 000306). That refusal is a reserved address, not an
+// check first (migration 000307). That refusal is a reserved address, not an
 // internal error, so importers report it as a skipped mailbox.
 func TestCreateForRestore_DatabaseRefusalIsAReservedAddress(t *testing.T) {
 	repo := &fakeMBRepo{createErr: mailaddr.ErrPostmasterReserved}

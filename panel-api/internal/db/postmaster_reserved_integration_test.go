@@ -1,6 +1,6 @@
 //go:build integration
 
-// Integration test for migration 000306 (ADR-0110): postmaster@ on every
+// Integration test for migration 000307 (ADR-0110): postmaster@ on every
 // domain but the panel hostname's belongs to the server administrator. Stalwart
 // keeps postmaster@<domain> on the admin's postmaster account once it has
 // delivered there, so a tenant mailbox created later at the address signs in
@@ -92,7 +92,7 @@ func TestIntegration_PostmasterReserved(t *testing.T) {
 	t.Run("an existing postmaster row keeps working", func(t *testing.T) {
 		// The panel hostname moves: the old admin postmaster row now sits on a
 		// domain that is not the panel's, like a tenant postmaster made before
-		// 000306. Updates that do not move it still succeed.
+		// 000307. Updates that do not move it still succeed.
 		require.NoError(t, gdb.Exec("UPDATE domains SET is_panel_primary = 0 WHERE id = ?", panelDom.ID).Error)
 		require.NoError(t, gdb.Exec("UPDATE domains SET is_panel_primary = 1 WHERE id = ?", otherDom.ID).Error)
 		require.NoError(t, mailboxes.UpdatePasswordHash(ctx, panelPostmaster.ID, "$2a$12$yyyyyyyyyyyyyyyyyyyyyy"))
@@ -104,19 +104,26 @@ func TestIntegration_PostmasterReserved(t *testing.T) {
 	t.Run("renaming a domain still renames its existing postmaster rows", func(t *testing.T) {
 		// Renaming a domain resyncs email_cached through the AFTER UPDATE
 		// triggers on domains, which UPDATE mailboxes and mail_groups and so
-		// run the 000306 BEFORE UPDATE triggers nested. Rows made before
-		// 000306 sit on a domain that is not the panel's; model them by
+		// run the 000307 BEFORE UPDATE triggers nested. Rows made before
+		// 000307 sit on a domain that is not the panel's; model them by
 		// making them on the panel domain and then moving the panel flag.
-		groups := repository.NewMailGroupRepository(gdb)
-		group := &models.MailGroup{ID: ids.NewULID(), DomainID: panelDom.ID, LocalPart: "postmaster", GroupKind: "distribution", CreatedAt: now, UpdatedAt: now}
-		require.NoError(t, groups.Create(ctx, group))
+		// The group gets a domain of its own: a group at a mailbox's address
+		// is refused (000306).
+		groupDom := &models.Domain{ID: ids.NewULID(), UserID: user.ID, Name: "groups.example.com", EmailEnabled: true}
+		require.NoError(t, domains.Create(ctx, groupDom))
 		require.NoError(t, gdb.Exec("UPDATE domains SET is_panel_primary = 0 WHERE id = ?", panelDom.ID).Error)
+		require.NoError(t, gdb.Exec("UPDATE domains SET is_panel_primary = 1 WHERE id = ?", groupDom.ID).Error)
+		groups := repository.NewMailGroupRepository(gdb)
+		group := &models.MailGroup{ID: ids.NewULID(), DomainID: groupDom.ID, LocalPart: "postmaster", GroupKind: "distribution", CreatedAt: now, UpdatedAt: now}
+		require.NoError(t, groups.Create(ctx, group))
+		require.NoError(t, gdb.Exec("UPDATE domains SET is_panel_primary = 0 WHERE id = ?", groupDom.ID).Error)
 		require.NoError(t, gdb.Exec("UPDATE domains SET is_panel_primary = 1 WHERE id = ?", otherDom.ID).Error)
 
 		require.NoError(t, gdb.Exec("UPDATE domains SET name = 'renamed.example.com' WHERE id = ?", panelDom.ID).Error)
+		require.NoError(t, gdb.Exec("UPDATE domains SET name = 'renamed-groups.example.com' WHERE id = ?", groupDom.ID).Error)
 		var emails []string
 		require.NoError(t, gdb.Raw("SELECT email_cached FROM mailboxes WHERE id = ? UNION ALL SELECT email_cached FROM mail_groups WHERE id = ?", panelPostmaster.ID, group.ID).Scan(&emails).Error)
-		require.Equal(t, []string{"postmaster@renamed.example.com", "postmaster@renamed.example.com"}, emails)
+		require.Equal(t, []string{"postmaster@renamed.example.com", "postmaster@renamed-groups.example.com"}, emails)
 
 		require.NoError(t, gdb.Exec("UPDATE domains SET name = 'panel.example.com' WHERE id = ?", panelDom.ID).Error)
 		require.NoError(t, gdb.Exec("DELETE FROM mail_groups WHERE id = ?", group.ID).Error)

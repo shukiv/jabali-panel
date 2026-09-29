@@ -280,7 +280,7 @@ func TestStalwartQueryRecipient_SuspendedOwnerStillReceives(t *testing.T) {
 // 550 for an address the directory does not resolve, so DMARC and TLS reports
 // sent to postmaster@<domain> never arrived. A domain that has no postmaster
 // of its own resolves postmaster@ to the postmaster mailbox on the panel's
-// primary domain (the server admin). Migration 000306 stops tenants making a
+// primary domain (the server admin). Migration 000307 stops tenants making a
 // postmaster@ now; a postmaster mailbox, alias or group a domain had before
 // keeps its mail.
 func TestStalwartQueryRecipient_PostmasterFallsBackToTheServerAdmin(t *testing.T) {
