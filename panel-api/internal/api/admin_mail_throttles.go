@@ -17,6 +17,7 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -77,6 +78,15 @@ type throttleRequest struct {
 	Enabled    *bool   `json:"enabled"` // pointer so default-true on POST without one
 }
 
+// validCaps rejects a cap Stalwart would refuse (0 means no cap).
+func validCaps(c *gin.Context, req throttleRequest) bool {
+	if req.MaxPerHour > mailthrottle.MaxLimit || req.MaxPerDay > mailthrottle.MaxLimit {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_cap", "details": fmt.Sprintf("max_per_hour and max_per_day must be at most %d, Stalwart's limit", mailthrottle.MaxLimit)})
+		return false
+	}
+	return true
+}
+
 func validScope(scope string) bool {
 	switch scope {
 	case models.OutboundScopeUser, models.OutboundScopeDomain, models.OutboundScopeGlobal:
@@ -102,6 +112,9 @@ func (h *adminMailThrottlesHandler) create(c *gin.Context) {
 	}
 	if !validScope(req.Scope) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_scope"})
+		return
+	}
+	if !validCaps(c, req) {
 		return
 	}
 	if req.Scope == models.OutboundScopeGlobal {
@@ -144,6 +157,9 @@ func (h *adminMailThrottlesHandler) update(c *gin.Context) {
 	var req throttleRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request", "details": err.Error()})
+		return
+	}
+	if !validCaps(c, req) {
 		return
 	}
 	row.MaxPerHour = req.MaxPerHour

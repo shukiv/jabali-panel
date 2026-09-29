@@ -14,8 +14,8 @@ Each row is one cap:
 |---|---|
 | **Scope** | `global`: one cap on all outbound mail from the server. `user`: one sender address. `domain`: one sender domain. |
 | **Sender address** / **Sender domain** | For `user`, the full address, for example `alice@example.com`. For `domain`, the domain, for example `example.com`. The panel rejects anything else, including quotes and backslashes. Scope and sender cannot change after the row is created. |
-| **Max per hour** | Messages per hour. `0` means no hourly cap. |
-| **Max per day** | Messages per day. `0` means no daily cap. |
+| **Max per hour** | Messages per hour, at most 1,000,000 (Stalwart's limit). `0` means no hourly cap. |
+| **Max per day** | Messages per day, at most 1,000,000 (Stalwart's limit). `0` means no daily cap. |
 | **Enabled** | Turning a row off removes its caps from Stalwart. |
 
 The panel ships with no rows. Until you add one, it sets no outbound cap.

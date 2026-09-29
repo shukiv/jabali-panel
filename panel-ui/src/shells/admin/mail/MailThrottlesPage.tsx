@@ -187,7 +187,7 @@ export const MailThrottlesPage = () => {
             <InputNumber min={0} max={1000000} style={{ width: "100%" }} />
           </Form.Item>
           <Form.Item name="max_per_day" label={t("mailthrottlespage.max_per_day_0_unlimited")}>
-            <InputNumber min={0} max={10000000} style={{ width: "100%" }} />
+            <InputNumber min={0} max={1000000} style={{ width: "100%" }} />
           </Form.Item>
           <Form.Item name="enabled" label={t("mailthrottlespage.enabled")} valuePropName="checked">
             <Switch />

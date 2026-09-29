@@ -258,11 +258,18 @@ type setResult struct {
 	NotDestroyed map[string]setError        `json:"notDestroyed"`
 }
 
-// setError is a JMAP SetError (RFC 8620 §5.3).
+// setError is a JMAP SetError (RFC 8620 §5.3). Stalwart explains a
+// validationFailed in ValidationErrors, e.g.
+// {"type":"MaxValue","property":"count","required":1000000}.
 type setError struct {
-	Type        string   `json:"type"`
-	Description string   `json:"description"`
-	Properties  []string `json:"properties"`
+	Type             string   `json:"type"`
+	Description      string   `json:"description"`
+	Properties       []string `json:"properties"`
+	ValidationErrors []struct {
+		Type     string          `json:"type"`
+		Property string          `json:"property"`
+		Required json.RawMessage `json:"required"`
+	} `json:"validationErrors"`
 }
 
 func (e setError) String() string {
@@ -272,6 +279,12 @@ func (e setError) String() string {
 	}
 	if len(e.Properties) > 0 {
 		s += " (" + strings.Join(e.Properties, ", ") + ")"
+	}
+	for _, v := range e.ValidationErrors {
+		s += "; " + v.Property + ": " + v.Type
+		if len(v.Required) > 0 {
+			s += " " + string(v.Required)
+		}
 	}
 	return s
 }

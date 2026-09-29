@@ -31,6 +31,11 @@ const (
 	ScopeDomain = "domain"
 )
 
+// MaxLimit is the largest rate count Stalwart accepts on an
+// MtaOutboundThrottle (validationFailed, MaxValue on count; pinned on the .60
+// test box). A larger cap could never be applied, so the API refuses it.
+const MaxLimit = 1_000_000
+
 // Windows. One mail_outbound_policy row owns up to one Stalwart throttle
 // per window.
 const (
@@ -51,7 +56,7 @@ type ApplyRequest struct {
 	// global scope.
 	ScopeRef string `json:"scope_ref,omitempty"`
 	Window   string `json:"window"`
-	// Limit is the number of messages allowed per window. Must be > 0: a
+	// Limit is the number of messages allowed per window, 1 to MaxLimit. A
 	// window with no cap has no Stalwart object, so the panel deletes it.
 	Limit uint64 `json:"limit"`
 }
@@ -120,6 +125,9 @@ func (r ApplyRequest) Validate() error {
 	}
 	if r.Limit == 0 {
 		return errors.New("limit must be greater than 0")
+	}
+	if r.Limit > MaxLimit {
+		return fmt.Errorf("limit %d is over Stalwart's maximum of %d", r.Limit, MaxLimit)
 	}
 	return nil
 }
