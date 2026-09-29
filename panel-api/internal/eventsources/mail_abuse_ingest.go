@@ -1,10 +1,11 @@
-// M47 Wave 4 ingest source — ARF (RFC 5965) abuse feedback reports.
-// One row per inbound feedback envelope ("user marked your message as
-// spam" from Gmail/Microsoft/Yahoo postmaster); rate of incoming
-// reports is the deliverability signal operators care about.
+// M47 Wave 4 ingest source — ARF (RFC 5965) feedback reports: a receiver
+// (Gmail, Microsoft, Yahoo postmaster) telling the sender that a recipient
+// marked one of its messages as spam. One arf_report row per report, keyed
+// by the Stalwart id; the deliverability score counts them per sender
+// domain.
 //
-// Dispatches `mail.feedback.received` on every import; the dashboard
-// (Wave 9) aggregates the rate per source-domain.
+// See mail_report_ingest.go for the listing and why a report's contents are
+// treated as untrusted.
 package eventsources
 
 import (
@@ -18,112 +19,95 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/stalwartadmin"
 )
 
-const (
-	mailAbuseIngestTick    = 5 * time.Minute
-	mailAbuseIngestTimeout = 60 * time.Second
-)
-
 func runMailAbuseIngest(ctx context.Context, d Deps) {
 	if d.StalwartAdmin == nil || d.ARFReports == nil {
 		d.Log.Debug("eventsources: mail_abuse_ingest disabled (missing stalwart client or repo)")
 		return
 	}
-	mailAbuseIngestPass(ctx, d)
-	tick := time.NewTicker(mailAbuseIngestTick)
-	defer tick.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-tick.C:
-		}
-		mailAbuseIngestPass(ctx, d)
-	}
+	ri := newReportIngest("ArfExternalReport")
+	runReportIngest(ctx, func(ctx context.Context) { mailAbuseIngestPass(ctx, d, ri) })
 }
 
-func mailAbuseIngestPass(ctx context.Context, d Deps) {
-	cctx, cancel := context.WithTimeout(ctx, mailAbuseIngestTimeout)
-	defer cancel()
-	cursor, err := d.ARFReports.MostRecentReceivedAt(cctx)
-	if err != nil {
-		d.Log.Warn("abuse-ingest: cursor read failed", "err", err)
-		return
-	}
-	if !cursor.IsZero() {
-		cursor = cursor.Add(-stalwartCursorSlack)
-	}
-	filter := ""
-	if !cursor.IsZero() {
-		filter = "receivedAt:>" + cursor.UTC().Format(time.RFC3339)
-	}
-	var raw json.RawMessage
-	if filter != "" {
-		raw, err = d.StalwartAdmin.Query(cctx, "ArfExternalReport", filter)
-	} else {
-		raw, err = d.StalwartAdmin.Query(cctx, "ArfExternalReport")
-	}
-	if err != nil {
-		d.Log.Warn("abuse-ingest: stalwart query failed", "err", err)
-		return
-	}
-	var reports []stalwartadmin.ArfExternalReport
-	if err := json.Unmarshal(raw, &reports); err != nil {
-		d.Log.Warn("abuse-ingest: parse failed", "err", err)
-		return
-	}
-	if len(reports) == 0 {
-		return
-	}
-	rows := make([]models.ARFReport, 0, len(reports))
-	for _, rep := range reports {
-		exists, _ := d.ARFReports.ExistsForStalwartID(cctx, rep.ID)
-		if exists {
-			continue
+func mailAbuseIngestPass(ctx context.Context, d Deps, ri *reportIngest) {
+	imported := 0
+	ri.pass(ctx, d, func(ctx context.Context, raw json.RawMessage) error {
+		stored, err := mailAbuseImportOne(ctx, d, raw)
+		if stored {
+			imported++
 		}
-		arrival := rep.Report.ArrivalDate
-		var arrivalPtr *time.Time
-		if !arrival.IsZero() {
-			arrivalPtr = &arrival
-		}
-		rows = append(rows, models.ARFReport{
-			StalwartID:       rep.ID,
-			ReceivedAt:       rep.ReceivedAt,
-			FeedbackType:     defaultStr(rep.Report.FeedbackType, "abuse"),
-			Reporter:         rep.From,
-			OriginalRcpt:     rep.Report.OriginalRcptTo,
-			OriginalMailFrom: rep.Report.OriginalMailFrom,
-			SourceIP:         rep.Report.SourceIP,
-			Incidents:        clampUint(rep.Report.IncidentsCount, 1),
-			UserAgent:        rep.Report.UserAgent,
-			ReportingMTA:     rep.Report.ReportingMTA,
-			ArrivalDate:      arrivalPtr,
-		})
-	}
-	n, err := d.ARFReports.InsertMany(cctx, rows)
-	if err != nil {
-		d.Log.Warn("abuse-ingest: insert failed", "err", err)
+		return err
+	})
+	if d.Queue == nil || imported == 0 {
 		return
 	}
-	d.Log.Info("abuse-ingest: imported", "rows", n)
-	if d.Queue == nil || n == 0 {
-		return
-	}
-	if !shouldFire(cctx, d, "mail.feedback.received", time.Now().UTC().Format(time.RFC3339), 5*time.Minute) {
-		return
-	}
-	body := fmt.Sprintf("%d new abuse-feedback report(s) imported from upstream postmasters", n)
-	_, _ = d.Queue.Publish(cctx, notifications.Envelope{
+	_, _ = d.Queue.Publish(ctx, notifications.Envelope{
 		EventKind: "mail.feedback.received",
 		Severity:  "warning",
 		Title:     "ARF feedback reports received",
-		Body:      body,
-		Deeplink:  "/jabali-admin/mail/feedback",
+		Body:      fmt.Sprintf("%d new abuse-feedback report(s) imported from upstream postmasters", imported),
+		Deeplink:  deliverabilityLink,
 	})
 }
 
-func clampUint(v, min uint) uint {
-	if v < min {
-		return min
+// mailAbuseImportOne stores one report. It reports whether it stored it,
+// and returns an error to retry the report later.
+func mailAbuseImportOne(ctx context.Context, d Deps, raw json.RawMessage) (bool, error) {
+	var rep stalwartadmin.ArfExternalReport
+	if err := json.Unmarshal(raw, &rep); err != nil {
+		d.Log.Warn("abuse-ingest: unreadable report, skipped", "err", err)
+		return false, nil
 	}
-	return v
+	id := clip(rep.ID, 128)
+	exists, err := d.ARFReports.ExistsForStalwartID(ctx, id)
+	if err != nil {
+		return false, err
+	}
+	if exists {
+		return false, nil
+	}
+	received := rep.ReceivedAt.UTC()
+	if received.IsZero() {
+		received = d.Now().UTC()
+	}
+	var arrival *time.Time
+	if rep.Report.ArrivalDate != nil && !rep.Report.ArrivalDate.IsZero() {
+		a := rep.Report.ArrivalDate.UTC()
+		arrival = &a
+	}
+	row := models.ARFReport{
+		StalwartID:       id,
+		ReceivedAt:       received,
+		FeedbackType:     arfFeedbackType(rep.Report.FeedbackType),
+		Reporter:         clip(rep.From, 253),
+		OriginalRcpt:     reportAddress(rep.Report.OriginalRcptTo),
+		OriginalMailFrom: reportAddress(rep.Report.OriginalMailFrom),
+		SourceIP:         reportIP(rep.Report.SourceIP),
+		Incidents:        clampCount(max(rep.Report.Incidents, 1)),
+		UserAgent:        clip(rep.Report.UserAgent, 255),
+		ReportingMTA:     clip(rep.Report.ReportingMta, 253),
+		ArrivalDate:      arrival,
+	}
+	n, err := d.ARFReports.InsertMany(ctx, []models.ARFReport{row})
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
+// arfFeedbackTypes maps Stalwart's ArfFeedbackType to RFC 5965's
+// Feedback-Type values.
+var arfFeedbackTypes = map[string]string{
+	"abuse":       "abuse",
+	"authFailure": "auth-failure",
+	"fraud":       "fraud",
+	"notSpam":     "not-spam",
+	"virus":       "virus",
+	"other":       "other",
+}
+
+func arfFeedbackType(s string) string {
+	if t, ok := arfFeedbackTypes[s]; ok {
+		return t
+	}
+	return "other"
 }

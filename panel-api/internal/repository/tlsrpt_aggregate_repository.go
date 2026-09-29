@@ -15,7 +15,9 @@ import (
 // the operational discipline. Cursor = MostRecentWindowEnd.
 type TLSRPTAggregateRepository interface {
 	InsertMany(ctx context.Context, rows []models.TLSRPTAggregate) (int, error)
-	ExistsForReport(ctx context.Context, reporter string, windowStart, windowEnd time.Time) (bool, error)
+	// ExistsForReport reports whether a policy block (reporter + policy
+	// domain + window) is already stored.
+	ExistsForReport(ctx context.Context, reporter, domain string, windowStart, windowEnd time.Time) (bool, error)
 	ListByDomainSince(ctx context.Context, domain string, since time.Time) ([]models.TLSRPTAggregate, error)
 	CountFailuresSince(ctx context.Context, domain string, since time.Time) (int64, error)
 	PruneOlderThan(ctx context.Context, cutoff time.Time) (int64, error)
@@ -67,10 +69,10 @@ func (r *tlsRptRepo) ReKeyDomain(ctx context.Context, oldDomain, newDomain strin
 	return res.RowsAffected, nil
 }
 
-func (r *tlsRptRepo) ExistsForReport(ctx context.Context, reporter string, windowStart, windowEnd time.Time) (bool, error) {
+func (r *tlsRptRepo) ExistsForReport(ctx context.Context, reporter, domain string, windowStart, windowEnd time.Time) (bool, error) {
 	var count int64
 	if err := r.db.WithContext(ctx).Model(&models.TLSRPTAggregate{}).
-		Where("reporter = ? AND window_start = ? AND window_end = ?", reporter, windowStart.UTC(), windowEnd.UTC()).
+		Where("domain = ? AND reporter = ? AND window_start = ? AND window_end = ?", domain, reporter, windowStart.UTC(), windowEnd.UTC()).
 		Count(&count).Error; err != nil {
 		return false, translate(err)
 	}

@@ -398,9 +398,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 		// JAB-243: DB storage quota enforcement (write-freeze at package
 		// quota, hourly sweep inside the reconciler).
 		rec.WithDBQuotaEnforce(repository.NewDatabaseRepository(sharedDB))
-		// M47 Wave 3 throttle reconcile, through Stalwart's management API
-		// (JMAP) with the panel's admin token (stalwart-admin.token, ADR-0142).
-		mailThrottles := stalwartadmin.Throttles{Client: stalwartadmin.NewClient()}
+		// Stalwart's management API (JMAP) with the panel's admin token
+		// (stalwart-admin.token, ADR-0142). The M47 Wave 3 throttle
+		// reconcile writes through it; the report ingest reads through it.
+		stalwartClient := stalwartadmin.NewClient()
+		mailThrottles := stalwartadmin.Throttles{Client: stalwartClient}
 		rec.WithMailThrottles(mailOutboundPolicyRepo, mailThrottles)
 		// M52 (ADR-0133) — shared resources convergence (host principals +
 		// per-collection shareWith). Grant grantees resolve via the mailbox +
@@ -439,10 +441,8 @@ func runServe(cmd *cobra.Command, args []string) error {
 		// DELETE /admin/mail/throttles/:id removes the row's Stalwart
 		// throttles inline.
 		deps.MailThrottles = mailThrottles
-		// M47 Wave 4/6/8 report ingest stays off (deps.StalwartAdmin nil):
-		// its sources parse a stalwart-cli output shape Stalwart does not
-		// print, and never ran on a real box (the credential they read was
-		// not readable by the panel).
+		// M47 Wave 4/6/8 DMARC / TLS-RPT / ARF report ingest.
+		deps.StalwartAdmin = stalwartClient
 		deps.BWDaily = repository.NewBWDailyRepository(sharedDB)
 		deps.DomainIPACLs = repository.NewDomainIPACLRepository(sharedDB)
 		deps.WebDomainAliases = repository.NewWebDomainAliasRepository(sharedDB)

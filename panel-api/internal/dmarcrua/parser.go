@@ -24,7 +24,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 )
 
-// Report is the decoded RUA aggregate. Reporter + window pin the
+// Report is the decoded RUA aggregate. Reporter + domain + window pin the
 // idempotency tuple the repo's ExistsForReport gates on.
 type Report struct {
 	Reporter    string
@@ -70,7 +70,7 @@ type xmlFeedback struct {
 //     Outlook/proofpoint, ship .zip)
 //
 // Always returns a Report (possibly with zero Rows) or an error. The
-// caller must gate the InsertMany on ExistsForReport(reporter,
+// caller must gate the InsertMany on ExistsForReport(reporter, domain,
 // windowStart, windowEnd) so re-delivery doesn't duplicate.
 func Parse(raw []byte) (*Report, error) {
 	xmlBytes, err := decompressIfNeeded(raw)

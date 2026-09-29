@@ -3,6 +3,7 @@ package repository_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/stretchr/testify/assert"
@@ -48,5 +49,26 @@ func TestDMARC_ReKeyDomain_NoMatchIsZero(t *testing.T) {
 	n, err := repo.ReKeyDomain(context.Background(), "nodmarc.com", "new.com")
 	require.NoError(t, err)
 	assert.Equal(t, int64(0), n)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// A receiver sends one DMARC report per domain for the same day, so the
+// duplicate check must include the domain: without it the first domain's
+// report hid every other domain's report for that day.
+func TestDMARC_ExistsForReport_KeysOnDomain(t *testing.T) {
+	t.Parallel()
+	gdb, mock, raw := newMockDB(t)
+	defer raw.Close()
+	repo := repository.NewDMARCAggregateRepository(gdb)
+	start := time.Date(2026, 9, 27, 0, 0, 0, 0, time.UTC)
+	end := start.Add(24*time.Hour - time.Second)
+
+	mock.ExpectQuery(`SELECT count\(\*\) FROM .dmarc_aggregate. WHERE domain = \? AND reporter = \? AND window_start = \? AND window_end = \?`).
+		WithArgs("b.example", "google.com", start, end, 1).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+
+	exists, err := repo.ExistsForReport(context.Background(), "google.com", "b.example", start, end)
+	require.NoError(t, err)
+	assert.False(t, exists)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
