@@ -19,6 +19,8 @@ Click **Add forwarder**, supply:
 
 On save, the agent creates the forwarder in Stalwart's routing table.
 
+The source address cannot be `postmaster@<domain>`: that address belongs to the server administrator. See [The postmaster address](./email.md#the-postmaster-address).
+
 ## Loop prevention
 
 The panel refuses to save a forwarder whose destination is itself, or whose destination forms a known loop with another forwarder on the same panel. External loops (your forwarder sends to an external address that forwards back to you) are caught by Stalwart's loop detection at delivery time — the resulting bounce explains the loop.

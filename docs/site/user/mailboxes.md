@@ -25,6 +25,7 @@ A password you supply needs at least 8 characters and at most 72 bytes. The API 
 
 - Local part validation: lowercase, alphanumeric plus `.`, `_`, `-`, `+`; cannot start with `.`.
 - `jabali-directory` is reserved for the [domain directory](./email.md#the-domain-directory) and is refused.
+- `postmaster` is reserved for the server administrator and is refused. See [The postmaster address](./email.md#the-postmaster-address).
 - The total number of mailboxes counts against your package's `max_mailboxes`.
 - The default quota is your package's default; you may raise it up to the package's per-mailbox cap.
 

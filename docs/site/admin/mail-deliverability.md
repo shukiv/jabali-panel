@@ -33,7 +33,11 @@ Big receivers send reports once a day, so a domain's first report can take 24 to
 
 ## The postmaster mailbox
 
-Every mail domain accepts mail to `postmaster@<domain>`, as RFC 5321 requires. A domain whose owner has made a postmaster mailbox, alias or group gets that mail itself. For every other domain, mail to `postmaster@` goes to the postmaster mailbox on the panel's own domain, `postmaster@<panel hostname>`. The panel creates that mailbox when it starts, if the panel domain has email and no postmaster yet. It is listed with the panel domain's mailboxes and opens in webmail like any other.
+Every mail domain accepts mail to `postmaster@<domain>`, as RFC 5321 requires, and that mail goes to the postmaster mailbox on the panel's own domain, `postmaster@<panel hostname>`. The panel creates that mailbox when it starts, if the panel domain has email and no postmaster yet. It is listed with the panel domain's mailboxes and opens in webmail like any other.
+
+`postmaster@` on every domain but the panel's belongs to you, the server administrator. Nobody can make a mailbox, alias, group or shared resource there: the panel, the CLI, migrations and backup restores all refuse it, and restores and migrations list the address as skipped. This is a security rule. Once the mail server has delivered `postmaster@<domain>` to your postmaster mailbox, it keeps that address on your account for good, so a tenant mailbox made there later would sign in to your mailbox. A postmaster mailbox, alias or group a tenant made before this rule keeps working and keeps its domain's postmaster mail.
+
+If you move the panel to another hostname, the old postmaster mailbox keeps the addresses it has collected. Delete it once the new one exists, so the new one receives them.
 
 Receivers' reports are delivered there too: about one message per receiver, per domain, per day. Report mail that Stalwart files as spam is deleted from Junk after 30 days; delete the rest when you no longer need it. The panel has already read every report for this page, so deleting the messages loses nothing here. The mailbox has a 1 GiB quota.
 
