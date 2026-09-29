@@ -52,14 +52,6 @@ type HistoryLookup interface {
 	ListRecentByEvent(ctx context.Context, kind string, since time.Time) ([]models.NotificationHistory, error)
 }
 
-
-// StalwartQueryClient is the narrow Stalwart-admin slice the M47
-// Wave 4/6/8 ingest sources need — just Query (Get / Create / Update
-// aren't needed here; the ingest is read-only).
-type StalwartQueryClient interface {
-	Query(ctx context.Context, typeName string, filters ...string) (json.RawMessage, error)
-}
-
 // Deps bundles the collaborators every source needs. Zero-valued fields
 // are legal — sources check and skip themselves when a dependency is
 // missing rather than panicking, so on a minimal install (no SSL certs
@@ -109,11 +101,11 @@ type Deps struct {
 	// probe; MailRBLStates is where transitions are persisted).
 	MailRBLStates repository.MailRBLStateRepository
 
-	// M47 Wave 4/6/8 ingest sources. StalwartAdmin is the
-	// stalwart-cli subprocess wrapper; nil disables all three
+	// M47 Wave 4/6/8 ingest sources. StalwartAdmin is the Stalwart
+	// management client (stalwartadmin.Client); nil disables all three
 	// ingest goroutines. Each ingest also needs its own repo:
 	// DMARCAggregate / TLSRPTAggregate / ARFReports.
-	StalwartAdmin   StalwartQueryClient
+	StalwartAdmin   StalwartReportClient
 	DMARCAggregate  repository.DMARCAggregateRepository
 	TLSRPTAggregate repository.TLSRPTAggregateRepository
 	ARFReports      repository.ARFReportRepository

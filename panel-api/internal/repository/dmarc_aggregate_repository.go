@@ -22,10 +22,12 @@ type DMARCAggregateRepository interface {
 	InsertMany(ctx context.Context, rows []models.DMARCAggregate) (int, error)
 
 	// ExistsForReport short-circuits ingest when a report (identified
-	// by reporter + window) has already been imported. RUA messages
-	// can be re-delivered (server retries, operator backfill) so the
-	// ingest source MUST gate on this.
-	ExistsForReport(ctx context.Context, reporter string, windowStart, windowEnd time.Time) (bool, error)
+	// by reporter + policy domain + window) has already been imported.
+	// RUA messages can be re-delivered (server retries, operator
+	// backfill) so the ingest source MUST gate on this. The domain is
+	// part of the key because a receiver sends one report per domain for
+	// the same window.
+	ExistsForReport(ctx context.Context, reporter, domain string, windowStart, windowEnd time.Time) (bool, error)
 
 	ListByDomainSince(ctx context.Context, domain string, since time.Time) ([]models.DMARCAggregate, error)
 
@@ -72,12 +74,12 @@ func (r *dmarcRepo) InsertMany(ctx context.Context, rows []models.DMARCAggregate
 	return len(rows), nil
 }
 
-func (r *dmarcRepo) ExistsForReport(ctx context.Context, reporter string, windowStart, windowEnd time.Time) (bool, error) {
+func (r *dmarcRepo) ExistsForReport(ctx context.Context, reporter, domain string, windowStart, windowEnd time.Time) (bool, error) {
 	var n int64
 	if err := r.db.WithContext(ctx).
 		Model(&models.DMARCAggregate{}).
-		Where("reporter = ? AND window_start = ? AND window_end = ?",
-			reporter, windowStart.UTC(), windowEnd.UTC()).
+		Where("domain = ? AND reporter = ? AND window_start = ? AND window_end = ?",
+			domain, reporter, windowStart.UTC(), windowEnd.UTC()).
 		Limit(1).
 		Count(&n).Error; err != nil {
 		return false, translate(err)

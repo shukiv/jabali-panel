@@ -52,8 +52,16 @@ const jmapPath = "/jmap"
 // maxResponseBytes bounds a response body read into memory.
 const maxResponseBytes = 8 << 20
 
-// getBatch is how many ids one x:<Type>/get asks for.
+// getBatch is how many ids one x:<Type>/get asks for (Stalwart's
+// maxObjectsInGet is 500).
 const getBatch = 256
+
+// queryPage is how many ids one x:<Type>/query asks for; maxQueryIDs stops a
+// runaway listing.
+const (
+	queryPage   = 1000
+	maxQueryIDs = 100_000
+)
 
 var jmapUsing = []string{"urn:ietf:params:jmap:core", "urn:stalwart:jmap"}
 
@@ -88,6 +96,22 @@ func NewClient() *Client {
 // them). properties names the fields to return (nil: every field); the id
 // is always included.
 func (c *Client) Query(ctx context.Context, typeName string, filter map[string]any, properties []string) ([]json.RawMessage, error) {
+	for _, p := range properties {
+		if err := validateField(p); err != nil {
+			return nil, err
+		}
+	}
+	ids, err := c.QueryIDs(ctx, typeName, filter)
+	if err != nil {
+		return nil, err
+	}
+	return c.GetMany(ctx, typeName, ids, properties)
+}
+
+// QueryIDs returns the ids of every object of typeName that matches filter
+// (nil: all of them), paging through Stalwart's query results. An id that
+// could not be passed back to Stalwart safely (see validateID) is left out.
+func (c *Client) QueryIDs(ctx context.Context, typeName string, filter map[string]any) ([]string, error) {
 	if err := validateTypeName(typeName); err != nil {
 		return nil, err
 	}
@@ -96,25 +120,59 @@ func (c *Client) Query(ctx context.Context, typeName string, filter map[string]a
 			return nil, err
 		}
 	}
+	ids := []string{}
+	listed := 0
+	for {
+		qargs := map[string]any{"position": listed, "limit": queryPage, "calculateTotal": true}
+		if filter != nil {
+			qargs["filter"] = filter
+		}
+		var qr struct {
+			IDs   []string `json:"ids"`
+			Total *int     `json:"total"`
+		}
+		if err := c.call(ctx, "x:"+typeName+"/query", qargs, &qr); err != nil {
+			return nil, err
+		}
+		listed += len(qr.IDs)
+		if listed > maxQueryIDs {
+			return nil, fmt.Errorf("stalwartadmin: %s/query: more than %d objects", typeName, maxQueryIDs)
+		}
+		for _, id := range qr.IDs {
+			if validateID(id) == nil {
+				ids = append(ids, id)
+			}
+		}
+		done := len(qr.IDs) == 0 || len(qr.IDs) < queryPage
+		if qr.Total != nil {
+			done = len(qr.IDs) == 0 || listed >= *qr.Total
+		}
+		if done {
+			return ids, nil
+		}
+	}
+}
+
+// GetMany fetches the objects with the given ids. properties names the
+// fields to return (nil: every field); the id is always included. An id
+// Stalwart no longer has is left out.
+func (c *Client) GetMany(ctx context.Context, typeName string, ids, properties []string) ([]json.RawMessage, error) {
+	if err := validateTypeName(typeName); err != nil {
+		return nil, err
+	}
+	for _, id := range ids {
+		if err := validateID(id); err != nil {
+			return nil, err
+		}
+	}
 	for _, p := range properties {
 		if err := validateField(p); err != nil {
 			return nil, err
 		}
 	}
-	qargs := map[string]any{}
-	if filter != nil {
-		qargs["filter"] = filter
-	}
-	var qr struct {
-		IDs []string `json:"ids"`
-	}
-	if err := c.call(ctx, "x:"+typeName+"/query", qargs, &qr); err != nil {
-		return nil, err
-	}
 	objs := []json.RawMessage{}
-	for start := 0; start < len(qr.IDs); start += getBatch {
-		ids := qr.IDs[start:min(start+getBatch, len(qr.IDs))]
-		gargs := map[string]any{"ids": ids}
+	for start := 0; start < len(ids); start += getBatch {
+		gargs := map[string]any{"ids": ids[start:min(start+getBatch, len(ids))]}
 		if properties != nil {
 			gargs["properties"] = properties
 		}

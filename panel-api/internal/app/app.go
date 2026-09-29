@@ -75,7 +75,7 @@ type Deps struct {
 	// baseline and fires mail.rbl.{listed,cleared} on transitions.
 	MailRBLStates repository.MailRBLStateRepository
 	// M47 Wave 4/6/8 ingest sources.
-	StalwartAdmin   eventsources.StalwartQueryClient
+	StalwartAdmin   eventsources.StalwartReportClient
 	DMARCAggregate  repository.DMARCAggregateRepository
 	TLSRPTAggregate repository.TLSRPTAggregateRepository
 	ARFReports      repository.ARFReportRepository

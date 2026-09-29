@@ -158,7 +158,7 @@ func TestClient_Query_QueriesThenGetsTheProperties(t *testing.T) {
 	if len(objs) != 2 || !strings.Contains(string(objs[1]), "b2") {
 		t.Fatalf("objs = %s", objs)
 	}
-	if got := string(f.requests()[0].args); got != `{"filter":{"domain":"example.com"}}` {
+	if got := string(f.requests()[0].args); got != `{"calculateTotal":true,"filter":{"domain":"example.com"},"limit":1000,"position":0}` {
 		t.Errorf("query args = %s", got)
 	}
 	if got := string(f.requests()[1].args); got != `{"ids":["a1","b2"],"properties":["receivedAt"]}` {
@@ -172,8 +172,42 @@ func TestClient_Query_NoMatchesIsNoObjectsAndNoGet(t *testing.T) {
 	if err != nil || objs == nil || len(objs) != 0 {
 		t.Fatalf("objs = %v, err = %v; want an empty, non-nil slice", objs, err)
 	}
-	if len(f.requests()) != 1 || string(f.requests()[0].args) != `{}` {
+	if len(f.requests()) != 1 || string(f.requests()[0].args) != `{"calculateTotal":true,"limit":1000,"position":0}` {
 		t.Fatalf("requests = %v, want one unfiltered query", f.requests())
+	}
+}
+
+// Stalwart may return fewer ids than asked for. The listing must page on
+// until it has every id, or reports past the first page are never seen.
+func TestClient_QueryIDs_PagesUntilTheTotal(t *testing.T) {
+	all := []string{"a1", "a2", "a3", "a4", "a5"}
+	c, f := newTestClient(t, func(m string, raw json.RawMessage) (int, string, any) {
+		var args struct {
+			Position int `json:"position"`
+		}
+		_ = json.Unmarshal(raw, &args)
+		end := min(args.Position+2, len(all))
+		return 200, m, map[string]any{"ids": all[args.Position:end], "total": len(all)}
+	})
+	ids, err := c.QueryIDs(context.Background(), "DmarcExternalReport", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(ids, ",") != "a1,a2,a3,a4,a5" {
+		t.Fatalf("ids = %v", ids)
+	}
+	if n := len(f.requests()); n != 3 {
+		t.Fatalf("%d queries, want 3", n)
+	}
+}
+
+// An id that could not be sent back to Stalwart safely is left out, not
+// passed on.
+func TestClient_QueryIDs_LeavesOutUnsafeIDs(t *testing.T) {
+	c, _ := newTestClient(t, ok(map[string]any{"ids": []string{"ok1", "--ids=all", "a/b"}, "total": 3}))
+	ids, err := c.QueryIDs(context.Background(), "DmarcExternalReport", nil)
+	if err != nil || strings.Join(ids, ",") != "ok1" {
+		t.Fatalf("ids = %v, err = %v", ids, err)
 	}
 }
 
