@@ -10,6 +10,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/app"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
 // postmasterLocalPart is the RFC 5321 postmaster address every mail domain
@@ -87,6 +88,19 @@ func provisionPostmasterMailbox(ctx context.Context, deps app.Deps, log *slog.Lo
 				return ""
 			}
 		}
+	}
+
+	// A shared resource there (or a row the checks above missed) makes the
+	// database refuse the mailbox; clearing the address on the mail server
+	// first would take a live alias off its account.
+	held, err := repository.MailboxAddressHeld(ctx, deps.Mailboxes, dom.ID, postmasterLocalPart)
+	if err != nil {
+		log.Warn("postmaster mailbox: address check failed", "err", err)
+		return ""
+	}
+	if held {
+		log.Warn("postmaster mailbox: postmaster@ on the panel domain belongs to an alias, group or shared resource; other domains' postmaster@ is not accepted until it is a mailbox", "domain", dom.Name)
+		return ""
 	}
 
 	// Random password, stored bcrypt-hashed (Stalwart auth) and sealed with

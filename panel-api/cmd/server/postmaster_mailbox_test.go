@@ -28,7 +28,12 @@ func (f *pmDomains) FindPanelPrimary(context.Context) (*models.Domain, error) {
 type pmMailboxes struct {
 	repository.MailboxRepository
 	existing map[string]bool // domainID/localPart
+	held     bool            // an alias, group or shared resource has the address
 	created  []*models.Mailbox
+}
+
+func (f *pmMailboxes) AddressHeld(context.Context, string, string) (bool, error) {
+	return f.held, nil
 }
 
 func (f *pmMailboxes) ExistsByDomainAndLocalPart(_ context.Context, domainID, localPart string) (bool, error) {
@@ -128,5 +133,23 @@ func TestProvisionPostmasterMailbox_LeavesTheAdminsChoiceAlone(t *testing.T) {
 	deps, mbs, _, _ := pmDeps(nil)
 	if got := provisionPostmasterMailbox(context.Background(), deps, slog.New(slog.DiscardHandler)); got != "" || len(mbs.created) != 0 {
 		t.Errorf("no panel domain: returned %q, created %d", got, len(mbs.created))
+	}
+}
+
+// A shared resource at postmaster@ on the panel domain is not among the
+// checks above, but the database refuses a mailbox there. The mailbox is not
+// made, and the address is not released on the mail server: that would take
+// a live alias off its account.
+func TestProvisionPostmasterMailbox_LeavesAHeldAddressAlone(t *testing.T) {
+	dom := &models.Domain{ID: "d-panel", Name: "panel.example", EmailEnabled: true, IsPanelPrimary: true}
+	deps, mbs, _, _ := pmDeps(dom)
+	mbs.held = true
+	rel := &cliTestReleaser{}
+	deps.MailAddresses = rel
+
+	got := provisionPostmasterMailbox(context.Background(), deps, slog.New(slog.DiscardHandler))
+
+	if got != "" || len(mbs.created) != 0 || len(rel.released) != 0 {
+		t.Fatalf("returned %q, created %d, released %v; want nothing", got, len(mbs.created), rel.released)
 	}
 }
