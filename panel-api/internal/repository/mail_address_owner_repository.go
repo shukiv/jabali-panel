@@ -13,9 +13,10 @@ import (
 type MailAddressOwnerRepository interface {
 	// Owner returns the address of the principal address belongs to: the
 	// mailbox at the address, else the mailbox an enabled alias at the
-	// address delivers to, else the mail group at the address. It returns ""
-	// when nothing owns the address. A mailbox wins over an alias at the same
-	// address, as in Stalwart's SQL directory queries.
+	// address delivers to, else the mail group at the address, else the
+	// shared mailbox at the address. It returns "" when nothing owns the
+	// address. A mailbox wins over an alias at the same address, as in
+	// Stalwart's SQL directory queries.
 	Owner(ctx context.Context, address string) (string, error)
 }
 
@@ -35,12 +36,14 @@ const mailAddressOwnerQuery = `SELECT o.owner FROM (
     WHERE f.enabled = 1 AND f.type = 'alias' AND CONCAT(f.local_part, '@', d.name) = ?
   UNION ALL
   SELECT 3 AS prio, g.email_cached AS owner FROM mail_groups g WHERE g.email_cached = ?
+  UNION ALL
+  SELECT 4 AS prio, s.email_cached AS owner FROM shared_resources s WHERE s.email_cached = ?
 ) o ORDER BY o.prio LIMIT 1`
 
 func (r *mailAddressOwnerRepo) Owner(ctx context.Context, address string) (string, error) {
 	address = strings.ToLower(strings.TrimSpace(address))
 	var owners []string
-	if err := r.db.WithContext(ctx).Raw(mailAddressOwnerQuery, address, address, address).Scan(&owners).Error; err != nil {
+	if err := r.db.WithContext(ctx).Raw(mailAddressOwnerQuery, address, address, address, address).Scan(&owners).Error; err != nil {
 		return "", err
 	}
 	if len(owners) == 0 {

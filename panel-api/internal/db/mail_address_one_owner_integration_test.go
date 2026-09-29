@@ -89,6 +89,8 @@ func TestIntegration_MailAddressOneOwner(t *testing.T) {
 	require.NoError(t, gdb.Exec("UPDATE email_forwarders SET enabled = 0 WHERE domain_id = ? AND local_part = 'paused'", domA.ID).Error)
 	require.NoError(t, groups.Create(ctx, group(domA.ID, "team")))
 	require.NoError(t, resources.Create(ctx, resource(domA.ID, "room")))
+	deskLocal, deskEmail := "desk", "desk@a.example.com"
+	require.NoError(t, resources.Create(ctx, &models.SharedResource{ID: ids.NewULID(), DomainID: domA.ID, Kind: "mailbox", LocalPart: &deskLocal, EmailCached: &deskEmail, CreatedAt: now, UpdatedAt: now}))
 
 	t.Run("a mailbox at an alias, group or resource address is refused", func(t *testing.T) {
 		refused(t, mailboxes.Create(ctx, mailbox(domA.ID, "sales")))
@@ -164,6 +166,7 @@ func TestIntegration_MailAddressOneOwner(t *testing.T) {
 			"Spare@A.example.com":  "ceo@a.example.com",   // an alias, any case
 			"paused@a.example.com": "",                    // a disabled alias delivers nowhere
 			"team@a.example.com":   "team@a.example.com",  // a mail group
+			"desk@a.example.com":   "desk@a.example.com",  // a shared mailbox
 			"sales@a.example.com":  "sales@a.example.com", // mailbox and alias: the mailbox wins
 			"nobody@a.example.com": "",
 			"sales@b.example.com":  "sales@b.example.com",
