@@ -1,190 +1,184 @@
 // Package reconciler — M47 Wave 3 outbound-throttle convergence.
 //
-// Reads mail_outbound_policy on each tick and ensures Stalwart's
-// MtaOutboundThrottle object matches. State machine:
+// Reads mail_outbound_policy on each tick and makes Stalwart's
+// MtaOutboundThrottle objects match, through Stalwart's management API with
+// the panel's admin token (stalwartadmin.Throttles). Each row has an hourly
+// and a daily window, and each window is its own state machine:
 //
-//	row.enabled  && stalwart_id=='' → Create on Stalwart, persist id
-//	row.enabled  && stalwart_id!='' → Update on Stalwart (idempotent)
-//	!row.enabled && stalwart_id!='' → Delete on Stalwart, clear id
-//	!row.enabled && stalwart_id=='' → no-op
+//	enabled && cap > 0   → apply: create the object, update it, or leave it
+//	                       alone, and keep the id it owns
+//	otherwise, id != ''  → delete, clear the id
+//	otherwise            → no-op
 //
-// Failures stamp last_error on the row + leave stalwart_id where it
-// was, so the next tick retries. Self-healing.
+// A failure keeps the window's id and stamps last_error, so the next tick
+// retries. Self-healing.
+//
+// After the rows, a sweep removes the panel's throttles (description starts
+// with mailthrottle.OwnedPrefix) that no row references any more.
 package reconciler
 
 import (
 	"context"
-	"fmt"
+	"errors"
+	"strings"
 	"time"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/mailthrottle"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
-	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/stalwartadmin"
 )
 
-// ThrottleStalwartClient is the narrow CRUD slice Wave 3 needs.
-// Subset of *stalwartadmin.Client; tests inject a fake.
-type ThrottleStalwartClient interface {
-	Create(ctx context.Context, typeName string, payload any) (string, error)
-	Update(ctx context.Context, typeName, id string, payload any) error
-	Delete(ctx context.Context, typeName, id string) error
+// ThrottleApplier pushes throttle windows into Stalwart. The panel's
+// implementation is stalwartadmin.Throttles; tests inject a fake.
+type ThrottleApplier interface {
+	Apply(ctx context.Context, req mailthrottle.ApplyRequest) (mailthrottle.ApplyResult, error)
+	Delete(ctx context.Context, stalwartID string) error
+	List(ctx context.Context) ([]mailthrottle.ListItem, error)
 }
 
 const mailThrottleCallTimeout = 30 * time.Second
 
 // reconcileMailThrottles converges every mail_outbound_policy row.
 // Called from the main reconcile loop on each tick. Self-disables
-// when the policy repo or Stalwart client isn't wired.
+// when the policy repo or the applier isn't wired.
 func (r *Reconciler) reconcileMailThrottles(ctx context.Context) {
-	if r.outboundPolicies == nil || r.stalwartAdmin == nil {
+	if r.outboundPolicies == nil || r.mailThrottles == nil {
 		return
 	}
+	// The admin reconcile endpoint can start a full pass while the ticker's
+	// is still running. Two throttle passes at once could each create a
+	// window's throttle, or one could sweep a throttle the other created but
+	// has not stamped yet.
+	if !r.mailThrottleMu.TryLock() {
+		return
+	}
+	defer r.mailThrottleMu.Unlock()
 	rows, err := r.outboundPolicies.List(ctx)
 	if err != nil {
 		r.log.Warn("mail-throttle: list failed", "err", err)
 		return
 	}
+	stamped := true
 	for i := range rows {
-		r.reconcileMailThrottleOne(ctx, &rows[i])
+		if !r.reconcileMailThrottleOne(ctx, &rows[i]) {
+			stamped = false
+		}
+	}
+	// A throttle whose id could not be stamped is referenced by no row yet;
+	// sweeping now would delete it and the next tick would create it again.
+	if stamped {
+		r.sweepMailThrottles(ctx)
 	}
 }
 
-// reconcileMailThrottleOne converges BOTH rate windows independently.
-// One mail_outbound_policy row can produce up to two Stalwart
-// MtaOutboundThrottle objects: one for the hourly cap (StalwartID),
-// one for the daily cap (StalwartIDDaily). Either, both, or neither
-// can be active depending on max_per_hour / max_per_day. The
-// reconciler treats each window as its own state machine.
-func (r *Reconciler) reconcileMailThrottleOne(ctx context.Context, row *models.MailOutboundPolicy) {
-	r.reconcileThrottleWindow(ctx, row, throttleWindowHourly)
-	r.reconcileThrottleWindow(ctx, row, throttleWindowDaily)
-}
-
-type throttleWindow int
-
-const (
-	throttleWindowHourly throttleWindow = iota
-	throttleWindowDaily
-)
-
-func (r *Reconciler) reconcileThrottleWindow(ctx context.Context, row *models.MailOutboundPolicy, w throttleWindow) {
-	var count uint
-	var currentID string
-	switch w {
-	case throttleWindowHourly:
-		count = row.MaxPerHour
-		currentID = row.StalwartID
-	case throttleWindowDaily:
-		count = row.MaxPerDay
-		currentID = row.StalwartIDDaily
-	}
-	wantActive := row.Enabled && count > 0
-
-	switch {
-	case wantActive && currentID == "":
-		r.throttleWindowCreate(ctx, row, w)
-	case wantActive && currentID != "":
-		r.throttleWindowUpdate(ctx, row, w, currentID)
-	case !wantActive && currentID != "":
-		r.throttleWindowDelete(ctx, row, w, currentID)
-	}
-}
-
-func (r *Reconciler) throttleWindowCreate(ctx context.Context, row *models.MailOutboundPolicy, w throttleWindow) {
-	cctx, cancel := context.WithTimeout(ctx, mailThrottleCallTimeout)
-	defer cancel()
-	payload := throttlePayloadForWindow(row, w)
-	id, err := r.stalwartAdmin.Create(cctx, "MtaOutboundThrottle", payload)
-	r.stampThrottleWindowResult(ctx, row.ID, w, id, err)
-}
-
-func (r *Reconciler) throttleWindowUpdate(ctx context.Context, row *models.MailOutboundPolicy, w throttleWindow, currentID string) {
-	cctx, cancel := context.WithTimeout(ctx, mailThrottleCallTimeout)
-	defer cancel()
-	payload := throttlePayloadForWindow(row, w)
-	err := r.stalwartAdmin.Update(cctx, "MtaOutboundThrottle", currentID, payload)
-	r.stampThrottleWindowResult(ctx, row.ID, w, currentID, err)
-}
-
-func (r *Reconciler) throttleWindowDelete(ctx context.Context, row *models.MailOutboundPolicy, w throttleWindow, currentID string) {
-	cctx, cancel := context.WithTimeout(ctx, mailThrottleCallTimeout)
-	defer cancel()
-	err := r.stalwartAdmin.Delete(cctx, "MtaOutboundThrottle", currentID)
+// sweepMailThrottles removes the panel's Stalwart throttles that no row
+// references: one created this tick for a row an admin deleted meanwhile,
+// or one an earlier release left behind. It reads the rows again, after the
+// apply phase, so the first case is caught in the same tick. It does nothing
+// if either list fails, because an unreadable table must not look like an
+// empty one. Throttles whose description lacks mailthrottle.OwnedPrefix are
+// someone else's and are never touched.
+func (r *Reconciler) sweepMailThrottles(ctx context.Context) {
+	rows, err := r.outboundPolicies.List(ctx)
 	if err != nil {
-		r.stampThrottleWindowResult(ctx, row.ID, w, currentID, err)
+		r.log.Warn("mail-throttle: sweep skipped, list rows failed", "err", err)
 		return
 	}
-	r.stampThrottleWindowResult(ctx, row.ID, w, "", nil)
-}
-
-func (r *Reconciler) stampThrottleWindowResult(ctx context.Context, rowID string, w throttleWindow, stalwartID string, callErr error) {
-	var lastErr *string
-	if callErr != nil {
-		msg := callErr.Error()
-		lastErr = &msg
-		r.log.Warn("mail-throttle: apply failed", "row", rowID, "window", throttleWindowName(w), "err", callErr)
-	} else {
-		r.log.Info("mail-throttle: applied", "row", rowID, "window", throttleWindowName(w), "stalwart_id", stalwartID)
+	referenced := map[string]bool{}
+	for _, row := range rows {
+		referenced[row.StalwartID] = true
+		referenced[row.StalwartIDDaily] = true
 	}
-	var err error
-	if w == throttleWindowHourly {
-		err = r.outboundPolicies.UpdateApplyState(ctx, rowID, stalwartID, lastErr)
-	} else {
-		err = r.outboundPolicies.UpdateApplyStateDaily(ctx, rowID, stalwartID, lastErr)
-	}
+	cctx, cancel := context.WithTimeout(ctx, mailThrottleCallTimeout)
+	defer cancel()
+	items, err := r.mailThrottles.List(cctx)
 	if err != nil {
-		r.log.Warn("mail-throttle: state stamp failed", "row", rowID, "window", throttleWindowName(w), "err", err)
+		r.log.Warn("mail-throttle: sweep skipped, list Stalwart throttles failed", "err", err)
+		return
 	}
-}
-
-func throttleWindowName(w throttleWindow) string {
-	if w == throttleWindowDaily {
-		return "daily"
-	}
-	return "hourly"
-}
-
-// throttlePayloadForWindow renders one Stalwart MtaOutboundThrottle
-// payload for either the hourly or daily window of a policy row.
-// Scope keying + Expression match are identical across windows; only
-// rate differs.
-//
-// scope_ref MUST be sanitised by the API handler — the literal is
-// embedded verbatim into Stalwart's Expression string and a stray
-// quote would degrade the throttle into always-fire.
-func throttlePayloadForWindow(row *models.MailOutboundPolicy, w throttleWindow) stalwartadmin.MtaOutboundThrottlePayload {
-	keyMap := map[string]bool{}
-	match := stalwartadmin.NewAlwaysFireMatch()
-	switch row.Scope {
-	case models.OutboundScopeUser:
-		keyMap[stalwartadmin.ThrottleKeySender] = true
-		if row.ScopeRef != nil && *row.ScopeRef != "" {
-			match = stalwartadmin.NewSenderFilterMatch(*row.ScopeRef)
+	for _, it := range items {
+		if referenced[it.StalwartID] || !strings.HasPrefix(it.Description, mailthrottle.OwnedPrefix) {
+			continue
 		}
-	case models.OutboundScopeDomain:
-		keyMap[stalwartadmin.ThrottleKeySenderDomain] = true
-		if row.ScopeRef != nil && *row.ScopeRef != "" {
-			match = stalwartadmin.NewSenderDomainFilterMatch(*row.ScopeRef)
+		if err := r.mailThrottles.Delete(cctx, it.StalwartID); err != nil {
+			r.log.Warn("mail-throttle: removing unreferenced throttle failed", "stalwart_id", it.StalwartID, "err", err)
+			continue
 		}
-	}
-	var rate stalwartadmin.MtaThrottleRate
-	if w == throttleWindowDaily {
-		rate = stalwartadmin.DailyRate(uint64(row.MaxPerDay))
-	} else {
-		rate = stalwartadmin.HourlyRate(uint64(row.MaxPerHour))
-	}
-	return stalwartadmin.MtaOutboundThrottlePayload{
-		Description: throttleDescription(row, w),
-		Enable:      row.Enabled,
-		Key:         keyMap,
-		Rate:        rate,
-		Match:       match,
+		r.log.Info("mail-throttle: removed unreferenced throttle", "stalwart_id", it.StalwartID, "description", it.Description)
 	}
 }
 
-func throttleDescription(row *models.MailOutboundPolicy, w throttleWindow) string {
-	ref := "-"
-	if row.ScopeRef != nil {
-		ref = *row.ScopeRef
+// reconcileMailThrottleOne converges both windows of one row, then stamps
+// both ids and one last_error for the row. Stamping once per row keeps a
+// failing window's error from being wiped by the other window's success.
+// Nothing is written when nothing changed. It reports false when a stamp
+// failed.
+func (r *Reconciler) reconcileMailThrottleOne(ctx context.Context, row *models.MailOutboundPolicy) bool {
+	hourID, hourErr := r.reconcileThrottleWindow(ctx, row, mailthrottle.WindowHour)
+	dayID, dayErr := r.reconcileThrottleWindow(ctx, row, mailthrottle.WindowDay)
+
+	var lastErr *string
+	if err := errors.Join(hourErr, dayErr); err != nil {
+		msg := err.Error()
+		lastErr = &msg
+		r.log.Warn("mail-throttle: apply failed", "row", row.ID, "err", err)
 	}
-	return fmt.Sprintf("jabali %s/%s/%s h=%d d=%d", row.Scope, ref, throttleWindowName(w), row.MaxPerHour, row.MaxPerDay)
+	if hourID == row.StalwartID && dayID == row.StalwartIDDaily && lastErr == nil && row.LastError == nil {
+		return true
+	}
+	ok := true
+	if err := r.outboundPolicies.UpdateApplyState(ctx, row.ID, hourID, lastErr); err != nil {
+		r.log.Warn("mail-throttle: state stamp failed", "row", row.ID, "window", mailthrottle.WindowHour, "err", err)
+		ok = false
+	}
+	if err := r.outboundPolicies.UpdateApplyStateDaily(ctx, row.ID, dayID, lastErr); err != nil {
+		r.log.Warn("mail-throttle: state stamp failed", "row", row.ID, "window", mailthrottle.WindowDay, "err", err)
+		ok = false
+	}
+	return ok
+}
+
+// reconcileThrottleWindow brings one window in line and returns the Stalwart
+// id the window owns afterwards. On error the id is the one it had.
+func (r *Reconciler) reconcileThrottleWindow(ctx context.Context, row *models.MailOutboundPolicy, window string) (string, error) {
+	limit, currentID := uint64(row.MaxPerHour), row.StalwartID
+	if window == mailthrottle.WindowDay {
+		limit, currentID = uint64(row.MaxPerDay), row.StalwartIDDaily
+	}
+	cctx, cancel := context.WithTimeout(ctx, mailThrottleCallTimeout)
+	defer cancel()
+
+	if row.Enabled && limit > 0 {
+		res, err := r.mailThrottles.Apply(cctx, throttleRequest(row, window, limit, currentID))
+		if err != nil {
+			return currentID, errors.New(window + ": " + err.Error())
+		}
+		if res.Changed {
+			r.log.Info("mail-throttle: applied", "row", row.ID, "window", window, "stalwart_id", res.StalwartID)
+		}
+		return res.StalwartID, nil
+	}
+	if currentID == "" {
+		return "", nil
+	}
+	if err := r.mailThrottles.Delete(cctx, currentID); err != nil {
+		return currentID, errors.New(window + ": " + err.Error())
+	}
+	r.log.Info("mail-throttle: removed", "row", row.ID, "window", window, "stalwart_id", currentID)
+	return "", nil
+}
+
+// throttleRequest is what the applier needs to build one window's object.
+// scope_ref was validated by the API handler and is validated again by the
+// applier, because it ends up inside a Stalwart expression.
+func throttleRequest(row *models.MailOutboundPolicy, window string, limit uint64, currentID string) mailthrottle.ApplyRequest {
+	req := mailthrottle.ApplyRequest{
+		StalwartID: currentID,
+		Scope:      row.Scope,
+		Window:     window,
+		Limit:      limit,
+	}
+	if row.Scope != models.OutboundScopeGlobal && row.ScopeRef != nil {
+		req.ScopeRef = *row.ScopeRef
+	}
+	return req
 }

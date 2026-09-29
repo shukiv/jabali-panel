@@ -3872,22 +3872,36 @@ paths:
     post:
       tags: [Mail]
       summary: Create throttle
+      description: max_per_hour and max_per_day are 0 (no cap) to 1000000, Stalwart's limit.
       security: [ { KratosSession: [] } ]
-      responses: { "200": { description: OK } }
+      responses:
+        "201": { description: Created }
+        "400": { description: "invalid_request, invalid_scope, invalid_cap (a cap over 1000000), or a scope_ref that is not a sender address or domain" }
 
   /admin/mail/throttles/{id}:
     delete:
       tags: [Mail]
       summary: Delete throttle
+      description: >-
+        Removes the row's Stalwart throttles, then the row. If Stalwart cannot
+        remove one, the row is kept, turned off, and the reconciler keeps
+        trying to remove its throttles.
       security: [ { KratosSession: [] } ]
       parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
-      responses: { "204": { description: OK } }
+      responses:
+        "204": { description: Deleted }
+        "404": { description: not_found }
+        "502": { description: "stalwart_delete_failed: a throttle could not be removed from Stalwart; the row is kept, turned off" }
     put:
       tags: [Mail]
       summary: Update throttle
+      description: Changes the two caps (0 to 1000000) and enabled.
       security: [ { KratosSession: [] } ]
       parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
-      responses: { "200": { description: OK } }
+      responses:
+        "200": { description: OK }
+        "400": { description: "invalid_request or invalid_cap (a cap over 1000000)" }
+        "404": { description: not_found }
 
   /mail/forwarders:
     get:

@@ -1,74 +1,56 @@
 // Package api — admin Mail outbound-throttle CRUD (M47 Wave 3).
 //
 // Admin-only. Writes to mail_outbound_policy; the reconciler converges
-// each row into Stalwart's MtaOutboundThrottle on the next tick.
+// each row into Stalwart's MtaOutboundThrottle objects on the next tick.
 //
 // Endpoints:
 //
 //	GET    /admin/mail/throttles            — list all rows
 //	POST   /admin/mail/throttles            — create new row
 //	PUT    /admin/mail/throttles/:id        — update existing
-//	DELETE /admin/mail/throttles/:id        — remove (reconciler also
-//	                                          unwinds the Stalwart side
-//	                                          on the next tick because
-//	                                          Enabled==false drives the
-//	                                          delete branch — but the
-//	                                          row is GONE here, so we
-//	                                          dispatch the delete inline)
+//	DELETE /admin/mail/throttles/:id        — remove the row and its
+//	                                          Stalwart throttles (inline:
+//	                                          once the row is gone the
+//	                                          reconciler cannot find them)
 package api
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
-	"regexp"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/mailthrottle"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/middleware"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
-// scopeRefDomainRe + scopeRefEmailRe pre-empt Stalwart Expression
-// injection. The reconciler builds expressions like
-// `sender_domain == '<scope_ref>'` and embeds scope_ref verbatim.
-// Without these guards an admin could insert a value with a single
-// quote and turn the throttle's match into always-fire (or
-// always-skip), silently breaking the cap.
-var (
-	scopeRefDomainRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$`)
-	scopeRefEmailRe  = regexp.MustCompile(`^[a-zA-Z0-9._%+\-]+@[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$`)
-)
-
+// validateScopeRef pre-empts Stalwart Expression injection. The throttle
+// payload holds expressions like `sender_domain == '<scope_ref>'` with
+// scope_ref embedded verbatim; a single quote would turn the throttle's
+// match into always-fire (or always-skip), silently breaking the cap.
+// stalwartadmin.Throttles runs the same check, from the same package,
+// before it builds anything.
 func validateScopeRef(scope, ref string) bool {
-	switch scope {
-	case models.OutboundScopeUser:
-		return scopeRefEmailRe.MatchString(ref) && !strings.ContainsAny(ref, "'\\")
-	case models.OutboundScopeDomain:
-		return scopeRefDomainRe.MatchString(ref) && !strings.ContainsAny(ref, "'\\")
-	}
-	return false
+	return mailthrottle.ValidScopeRef(scope, ref)
 }
 
 // AdminMailThrottlesHandlerConfig — single dep.
 type AdminMailThrottlesHandlerConfig struct {
 	Policies repository.MailOutboundPolicyRepository
-	// ThrottleClient is the inline delete dispatch path. When nil,
-	// DELETE only removes the DB row; the reconciler still cleans up
-	// the Stalwart side on the next tick (the row is gone so the
-	// !enabled && stalwart_id!="" branch fires).
+	// ThrottleClient removes a deleted row's Stalwart throttles
+	// (stalwartadmin.Throttles). When nil, DELETE only removes the DB row.
 	ThrottleClient ThrottleDispatcher
 }
 
-// ThrottleDispatcher is the narrow subset of *stalwartadmin.Client the
-// inline delete path uses. Mirrors reconciler.ThrottleStalwartClient
-// (deliberately duplicated — the reconciler-side and handler-side
-// usage shouldn't share an interface across packages, the wire is
-// the same but the responsibilities differ).
+// ThrottleDispatcher is the delete half of reconciler.ThrottleApplier.
+// Deleting an id Stalwart no longer has succeeds.
 type ThrottleDispatcher interface {
-	Delete(ctx context.Context, typeName, id string) error
+	Delete(ctx context.Context, stalwartID string) error
 }
 
 func RegisterAdminMailThrottlesRoutes(g *gin.RouterGroup, cfg AdminMailThrottlesHandlerConfig) {
@@ -96,6 +78,15 @@ type throttleRequest struct {
 	Enabled    *bool   `json:"enabled"` // pointer so default-true on POST without one
 }
 
+// validCaps rejects a cap Stalwart would refuse (0 means no cap).
+func validCaps(c *gin.Context, req throttleRequest) bool {
+	if req.MaxPerHour > mailthrottle.MaxLimit || req.MaxPerDay > mailthrottle.MaxLimit {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_cap", "details": fmt.Sprintf("max_per_hour and max_per_day must be at most %d, Stalwart's limit", mailthrottle.MaxLimit)})
+		return false
+	}
+	return true
+}
+
 func validScope(scope string) bool {
 	switch scope {
 	case models.OutboundScopeUser, models.OutboundScopeDomain, models.OutboundScopeGlobal:
@@ -121,6 +112,9 @@ func (h *adminMailThrottlesHandler) create(c *gin.Context) {
 	}
 	if !validScope(req.Scope) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_scope"})
+		return
+	}
+	if !validCaps(c, req) {
 		return
 	}
 	if req.Scope == models.OutboundScopeGlobal {
@@ -165,6 +159,9 @@ func (h *adminMailThrottlesHandler) update(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request", "details": err.Error()})
 		return
 	}
+	if !validCaps(c, req) {
+		return
+	}
 	row.MaxPerHour = req.MaxPerHour
 	row.MaxPerDay = req.MaxPerDay
 	if req.Enabled != nil {
@@ -184,15 +181,37 @@ func (h *adminMailThrottlesHandler) del(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
 		return
 	}
-	// Inline-delete the Stalwart-side object if we know its id.
-	// Best-effort: a failure here doesn't block the DB delete, and
-	// the next reconciler tick would catch a stranded Stalwart row
-	// anyway IF the row still existed — but it doesn't, so we'd
-	// leave a Stalwart orphan unless we try now.
-	if h.cfg.ThrottleClient != nil && row.StalwartID != "" {
-		cctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
+	// A row owns up to two Stalwart throttles (hourly StalwartID, daily
+	// StalwartIDDaily). Once the row is gone nothing points at them, so they
+	// go first. If one cannot be removed, the row stays, disabled: the
+	// reconciler keeps retrying the removal, and the admin can see it and
+	// delete again. Deleting the row anyway would leave a cap in Stalwart
+	// that the panel no longer shows.
+	if h.cfg.ThrottleClient != nil && (row.StalwartID != "" || row.StalwartIDDaily != "") {
+		if row.Enabled {
+			row.Enabled = false
+			if err := h.cfg.Policies.Update(c.Request.Context(), row); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "delete_failed", "details": err.Error()})
+				return
+			}
+		}
+		cctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
 		defer cancel()
-		_ = h.cfg.ThrottleClient.Delete(cctx, "MtaOutboundThrottle", row.StalwartID)
+		var errs []error
+		for _, sid := range []string{row.StalwartID, row.StalwartIDDaily} {
+			if sid != "" {
+				if err := h.cfg.ThrottleClient.Delete(cctx, sid); err != nil {
+					errs = append(errs, err)
+				}
+			}
+		}
+		if err := errors.Join(errs...); err != nil {
+			c.JSON(http.StatusBadGateway, gin.H{
+				"error":   "stalwart_delete_failed",
+				"details": "the throttle is disabled and kept until Stalwart removes it: " + err.Error(),
+			})
+			return
+		}
 	}
 	if err := h.cfg.Policies.Delete(c.Request.Context(), id); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "delete_failed", "details": err.Error()})

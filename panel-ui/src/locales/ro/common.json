@@ -565,13 +565,14 @@
     "mail_deliverability_server_wide_score": ""
   },
   "mailthrottlespage": {
-    "each_row_converges_into_a_stalwart_mtaoutbou": "",
     "enabled": "Activat",
-    "max_per_day_logged_only_v1": "",
+    "intro": "",
+    "max_per_day_0_unlimited": "",
     "max_per_hour_0_unlimited": "",
     "per_account_per_domain_server_wide_outbound": "",
     "scope": "",
-    "scope_ref_ulid": ""
+    "sender_address": "",
+    "sender_domain": ""
   },
   "adminmigrationdetailpage": {
     "bytes_processed": "",

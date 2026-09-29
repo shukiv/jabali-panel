@@ -1,38 +1,60 @@
 # Mail Throttles
 
-`/jabali-admin/mail/throttles`. Outbound mail rate-limit policy enforced by Bulwark and Stalwart (M47 Wave 3).
+`/jabali-admin/mail/throttles`. Caps on how much mail a sender, a domain or the whole server can send (M47 Wave 3). Each cap becomes a Stalwart outbound throttle (`MtaOutboundThrottle`).
 
 ## Why throttle outbound
 
-A compromised mailbox or runaway PHP script can generate thousands of messages per minute. Without per-sender caps, the panel's outbound IP rapidly accumulates reputation damage that takes weeks to recover. Throttles bound the worst case before it leaves the network.
+A compromised mailbox or a runaway PHP script can send thousands of messages per minute. Without per-sender caps, the server's outbound IP quickly damages its reputation, and that takes weeks to recover. Throttles limit the worst case before the mail leaves the network.
 
-## Configurable limits
+## Rows
 
-| Scope | Units | Default |
-|---|---|---|
-| Per mailbox | messages / minute | 30 |
-| Per mailbox | messages / hour | 500 |
-| Per mailbox | recipients / message | 100 |
-| Per domain | messages / minute | 300 |
-| Per domain | messages / hour | 5000 |
-| Per IP | messages / minute | 1000 |
+Each row is one cap:
 
-Override per-mailbox or per-domain by adding a row in the **Overrides** tab.
+| Field | Meaning |
+|---|---|
+| **Scope** | `global`: one cap on all outbound mail from the server. `user`: one sender address. `domain`: one sender domain. |
+| **Sender address** / **Sender domain** | For `user`, the full address, for example `alice@example.com`. For `domain`, the domain, for example `example.com`. The panel rejects anything else, including quotes and backslashes. Scope and sender cannot change after the row is created. |
+| **Max per hour** | Messages per hour, at most 1,000,000 (Stalwart's limit). `0` means no hourly cap. |
+| **Max per day** | Messages per day, at most 1,000,000 (Stalwart's limit). `0` means no daily cap. |
+| **Enabled** | Turning a row off removes its caps from Stalwart. |
 
-## Enforcement
+The panel ships with no rows. Until you add one, it sets no outbound cap.
 
-- Bulwark intercepts SMTP submission on `:587` / `:465`, checks the per-sender counter against the limit, and returns `421 4.7.0 throttled, try later` when exceeded.
-- Stalwart maintains the per-IP counter and applies the policy on outbound MTA delivery.
+## How the caps are applied
 
-## Excluded paths
+About once a minute, the reconciler makes Stalwart match every row. The hourly cap and the daily cap become two separate throttles. The panel makes each change through Stalwart's management API, signed in with its Stalwart admin token (`/etc/jabali-panel/stalwart-admin.token`), and reloads Stalwart's settings afterwards.
 
-- System-generated mail (recovery emails, notifications from the panel itself) is exempt.
-- Mailing-list expansion (if implemented in a future release) will count once per outbound recipient batch, not once per list member.
+- A `user` row counts per sender and applies only to that address.
+- A `domain` row counts per sender domain and applies only to that domain.
+- A `global` row is one count for all outbound mail.
 
-## Suspending a sender
+A throttle that someone changed or deleted in Stalwart by hand is put back on the next tick. Turning a row off, or setting a cap to `0`, removes that throttle.
 
-The panel does not suspend a sender on its own, and sends no notification about throttle hits. To stop a mailbox from sending, disable it or change its password.
+Every throttle the panel creates has a description that starts with `jabali `. On each tick, the panel removes any Stalwart throttle with that prefix that no row uses. If you create throttles in Stalwart yourself, do not start their descriptions with `jabali `.
 
-## Monitoring
+The **Stalwart sync** column shows the row's state:
 
-The page renders the past 24 hours of throttle hits as a per-sender heatmap. Click a sender to drill into the per-minute history.
+- **synced**: Stalwart holds exactly what the row asks for: one throttle for each enabled cap, and none when the row is off.
+- **pending**: Stalwart does not match the row yet. The next tick fixes it.
+- **error**: the last push failed. Hover over the tag to see the error. The next tick tries again.
+
+Deleting a row removes both of its throttles from Stalwart first. If Stalwart cannot remove one, the delete fails with `stalwart_delete_failed` and the row stays, turned off. The next ticks keep trying to remove its throttles. Delete the row again when the error is gone.
+
+## What the panel does not do
+
+- It does not suspend a sender that keeps hitting a cap.
+- It sends no notification about throttle hits.
+- It shows no history of throttle hits.
+
+To stop a mailbox from sending, disable it or change its password.
+
+## API
+
+```
+GET    /api/v1/admin/mail/throttles
+POST   /api/v1/admin/mail/throttles        {"scope":"user","scope_ref":"alice@example.com","max_per_hour":100,"max_per_day":1000,"enabled":true}
+PUT    /api/v1/admin/mail/throttles/{id}   {"scope":"user","max_per_hour":200,"max_per_day":2000,"enabled":true}
+DELETE /api/v1/admin/mail/throttles/{id}
+```
+
+`PUT` needs `scope` in the body, but it changes only the two caps and `enabled`. It replaces both caps, so send both. An omitted cap becomes `0`, which means no cap.

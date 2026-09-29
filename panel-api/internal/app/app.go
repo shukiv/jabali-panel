@@ -79,9 +79,10 @@ type Deps struct {
 	DMARCAggregate  repository.DMARCAggregateRepository
 	TLSRPTAggregate repository.TLSRPTAggregateRepository
 	ARFReports      repository.ARFReportRepository
-	// M47 Wave 3 outbound throttle config.
-	MailOutboundPolicies  repository.MailOutboundPolicyRepository
-	StalwartAdminThrottle api.ThrottleDispatcher
+	// M47 Wave 3 outbound throttle config. MailThrottles is
+	// stalwartadmin.Throttles.
+	MailOutboundPolicies repository.MailOutboundPolicyRepository
+	MailThrottles        api.ThrottleDispatcher
 	BWDaily               repository.BWDailyRepository
 	DomainIPACLs          repository.DomainIPACLRepository
 	// GH #1625 — additional hostnames served from a web domain's vhost.
@@ -999,7 +1000,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		// M47 Wave 3 — admin outbound-throttle CRUD.
 		api.RegisterAdminMailThrottlesRoutes(v1, api.AdminMailThrottlesHandlerConfig{
 			Policies:       deps.MailOutboundPolicies,
-			ThrottleClient: deps.StalwartAdminThrottle,
+			ThrottleClient: deps.MailThrottles,
 		})
 		// M47: admin mail-queue (ADR-0103) over the Wave-1 agent.
 		api.RegisterAdminMailQueueRoutes(v1, deps.Agent)

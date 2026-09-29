@@ -1,208 +1,134 @@
-// Package stalwartadmin is a thin Go wrapper over the official
-// `stalwart-cli` binary install.sh ships at /usr/local/bin/stalwart-cli
-// (see install.sh _install_stalwart_cli). M47 ingest sources call it on
-// a 5-minute cadence to poll Stalwart's first-class report objects
-// (DmarcExternalReport / TlsExternalReport / ArfExternalReport) — the
-// finding from the .150 spike that collapsed Waves 4/6/8 from
-// JMAP-mailbox-poll into one pattern (project_stalwart_native_report_storage).
+// Package stalwartadmin talks to Stalwart's management API: JMAP on the
+// loopback admin port, with Stalwart's config objects as x:<Type> methods
+// (x:MtaOutboundThrottle/get, …/set, x:Action/set). The throttle reconciler
+// (M47 Wave 3) writes MtaOutboundThrottle objects through it.
 //
-// Subprocess wrapper (not HTTP) because:
-//  1. Stalwart's REST schema uses HTTP/2 + hash-redirect URLs that
-//     change with every schema version — pinning a Go REST client to
-//     reverse-engineered endpoints would break on upstream upgrades.
-//  2. stalwart-cli is the canonical, upstream-maintained client; it
-//     tracks the schema automatically. 5-min cadence × ~3 calls per
-//     pass = ~36 subprocess execs/hour — negligible overhead.
-//  3. The binary is GUARANTEED to be present on every jabali host
-//     (install.sh provisions it) and runs as `jabali` (no privilege
-//     escalation needed — Basic auth via STALWART_RECOVERY_ADMIN).
+// Auth is HTTP Basic as "admin" with the token in
+// /etc/jabali-panel/stalwart-admin.token (0640 jabali:jabali-mail), the
+// panel's Stalwart management credential (ADR-0103, ADR-0142), as for
+// mailscan. The token is read on every call, so a rotation
+// (mail.admin_cred.manage) takes effect without a panel restart.
+//
+// It speaks HTTP in-process rather than running stalwart-cli because the
+// panel's AppArmor profile does not let it exec stalwart-cli. The request
+// and response shapes below were checked against Stalwart on the .60 test
+// box. The agent (mailbox_jmap.go) and mailscan carry their own JMAP
+// clients; see the consolidation TODO in mailscan/client.go.
 package stalwartadmin
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os/exec"
+	"io"
+	"net/http"
+	"os"
+	"slices"
 	"strings"
 	"time"
 )
-
-// DefaultBinary is the absolute path install.sh symlinks. Override
-// only for tests via Client.Binary.
-const DefaultBinary = "/usr/local/bin/stalwart-cli"
 
 // DefaultURL is the loopback admin HTTP endpoint Stalwart binds (per
 // M25 unix-socket lockdown — 127.0.0.1 only, no public exposure).
 const DefaultURL = "http://127.0.0.1:8446"
 
-// DefaultTimeout caps each CLI invocation. Stalwart's query/get are
-// in-memory reads — sub-second at any reasonable report volume — but
-// 30s leaves headroom for a large DMARC backlog dump after a long
-// outage without stranding the event-source loop on a hung admin port.
+// DefaultTokenPath holds the admin token. JABALI_STALWART_ADMIN_TOKEN_PATH
+// overrides it, as for mailscan.
+const DefaultTokenPath = "/etc/jabali-panel/stalwart-admin.token"
+
+const envTokenPath = "JABALI_STALWART_ADMIN_TOKEN_PATH"
+
+// adminUser is the Basic-auth user the token belongs to.
+const adminUser = "admin"
+
+// DefaultTimeout caps each request. 30s leaves headroom on a slow admin
+// port without stranding a reconcile tick.
 const DefaultTimeout = 30 * time.Second
 
-// Client wraps stalwart-cli invocations. Construct via NewClient.
-// The struct is intentionally tiny — all knobs come from constructor
-// args so config plumbing through serve.go is one block.
+const jmapPath = "/jmap"
+
+// maxResponseBytes bounds a response body read into memory.
+const maxResponseBytes = 8 << 20
+
+// getBatch is how many ids one x:<Type>/get asks for.
+const getBatch = 256
+
+var jmapUsing = []string{"urn:ietf:params:jmap:core", "urn:stalwart:jmap"}
+
+// ErrNotFound marks a get, update or delete of an id Stalwart does not have.
+var ErrNotFound = errors.New("stalwart object not found")
+
+// Client calls Stalwart's management API. Construct via NewClient.
 type Client struct {
-	// Binary is the absolute path to stalwart-cli. Default: DefaultBinary.
-	Binary string
 	// URL is the admin HTTP endpoint (no trailing slash). Default: DefaultURL.
 	URL string
-	// User + Password are Basic auth credentials. On jabali hosts
-	// these come from STALWART_RECOVERY_ADMIN in /etc/jabali-panel/stalwart.env
-	// (the same secret the panel-agent's mail.* commands use).
-	User     string
-	Password string
-	// Timeout is the per-invocation deadline (CLI exec). 0 → DefaultTimeout.
-	Timeout time.Duration
-
-	// run is the function that actually runs the binary. Default
-	// production impl shells out via exec.CommandContext. Tests inject
-	// a fake to return canned stdout/stderr without touching exec.
-	run func(ctx context.Context, args []string) (stdout []byte, stderr []byte, err error)
+	// TokenPath is read on every call. Default: DefaultTokenPath.
+	TokenPath string
+	// HTTP sends the requests. Default: a client with DefaultTimeout.
+	HTTP *http.Client
 }
 
-// NewClient returns a Client wired to the production subprocess
-// runner. Callers should keep one Client around for the process
-// lifetime; it's stateless beyond the cached config and a zero-cost
-// alloc to construct.
-func NewClient(user, password string) *Client {
-	c := &Client{
-		Binary:   DefaultBinary,
-		URL:      DefaultURL,
-		User:     user,
-		Password: password,
-		Timeout:  DefaultTimeout,
+// NewClient returns a Client for the local Stalwart. It reads nothing yet:
+// the token is read on every call.
+func NewClient() *Client {
+	path := os.Getenv(envTokenPath)
+	if path == "" {
+		path = DefaultTokenPath
 	}
-	c.run = c.runExec
-	return c
+	return &Client{
+		URL:       DefaultURL,
+		TokenPath: path,
+		HTTP:      &http.Client{Timeout: DefaultTimeout},
+	}
 }
 
-// Query asks Stalwart for all objects of the given type. The result
-// is the raw JSON array stalwart-cli emits (one object per row).
-//
-// Pass filters as `key:value` strings — stalwart-cli supports `--filter
-// receivedAt:>X` etc. The CLI surface accepts:
-//
-//	query <Type> [--filter <key:op:value>] [--limit N] [--order <field>:<dir>] --json
-//
-// We don't try to model Stalwart's filter grammar in Go — pass the
-// strings through verbatim; callers know the schema for their type
-// (use `stalwart-cli describe <Type>` to introspect).
-func (c *Client) Query(ctx context.Context, typeName string, filters ...string) (json.RawMessage, error) {
+// Query returns the objects of typeName that match filter (nil: all of
+// them). properties names the fields to return (nil: every field); the id
+// is always included.
+func (c *Client) Query(ctx context.Context, typeName string, filter map[string]any, properties []string) ([]json.RawMessage, error) {
 	if err := validateTypeName(typeName); err != nil {
 		return nil, err
 	}
-	args := []string{
-		"--url", c.URL,
-		"--user", c.User,
-		"--password", c.Password,
-		"query", typeName, "--json",
-	}
-	for _, f := range filters {
-		if err := validateFilter(f); err != nil {
+	for k := range filter {
+		if err := validateField(k); err != nil {
 			return nil, err
 		}
-		args = append(args, "--filter", f)
 	}
-	stdout, stderr, err := c.invoke(ctx, args)
-	if err != nil {
-		return nil, fmt.Errorf("stalwart-cli query %s: %w; stderr=%s", typeName, err, strings.TrimSpace(string(stderr)))
+	for _, p := range properties {
+		if err := validateField(p); err != nil {
+			return nil, err
+		}
 	}
-	if len(stdout) == 0 {
-		// Empty output means zero rows. Return a JSON empty array so
-		// the caller can json.Unmarshal into a slice uniformly.
-		return json.RawMessage(`[]`), nil
+	qargs := map[string]any{}
+	if filter != nil {
+		qargs["filter"] = filter
 	}
-	return json.RawMessage(stdout), nil
+	var qr struct {
+		IDs []string `json:"ids"`
+	}
+	if err := c.call(ctx, "x:"+typeName+"/query", qargs, &qr); err != nil {
+		return nil, err
+	}
+	objs := []json.RawMessage{}
+	for start := 0; start < len(qr.IDs); start += getBatch {
+		ids := qr.IDs[start:min(start+getBatch, len(qr.IDs))]
+		gargs := map[string]any{"ids": ids}
+		if properties != nil {
+			gargs["properties"] = properties
+		}
+		var gr getResult
+		if err := c.call(ctx, "x:"+typeName+"/get", gargs, &gr); err != nil {
+			return nil, err
+		}
+		objs = append(objs, gr.List...)
+	}
+	return objs, nil
 }
 
-// Create POSTs a new object. payload is the JSON value Stalwart's
-// schema expects for the type. Returns the upstream-assigned id
-// parsed from stalwart-cli's "Created <Type> <id>" stdout. Callers
-// persist the id so subsequent updates / deletes target the right
-// object. See project_stalwart_mtaouthound_throttle_pin for shapes.
-func (c *Client) Create(ctx context.Context, typeName string, payload any) (string, error) {
-	if err := validateTypeName(typeName); err != nil {
-		return "", err
-	}
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return "", fmt.Errorf("stalwartadmin: marshal: %w", err)
-	}
-	args := []string{
-		"--url", c.URL,
-		"--user", c.User,
-		"--password", c.Password,
-		"create", typeName, "--json", string(body),
-	}
-	stdout, stderr, err := c.invoke(ctx, args)
-	if err != nil {
-		return "", fmt.Errorf("stalwart-cli create %s: %w; stderr=%s", typeName, err, strings.TrimSpace(string(stderr)))
-	}
-	out := strings.TrimSpace(string(stdout))
-	prefix := "Created " + typeName + " "
-	if !strings.HasPrefix(out, prefix) {
-		return "", fmt.Errorf("stalwartadmin: unexpected create output %q", out)
-	}
-	id := strings.TrimSpace(strings.TrimPrefix(out, prefix))
-	if id == "" {
-		return "", fmt.Errorf("stalwartadmin: empty id in create output %q", out)
-	}
-	return id, nil
-}
-
-// Update mutates an existing object by id. payload may be partial.
-func (c *Client) Update(ctx context.Context, typeName, id string, payload any) error {
-	if err := validateTypeName(typeName); err != nil {
-		return err
-	}
-	if err := validateID(id); err != nil {
-		return err
-	}
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return fmt.Errorf("stalwartadmin: marshal: %w", err)
-	}
-	args := []string{
-		"--url", c.URL,
-		"--user", c.User,
-		"--password", c.Password,
-		"update", typeName, id, "--json", string(body),
-	}
-	_, stderr, err := c.invoke(ctx, args)
-	if err != nil {
-		return fmt.Errorf("stalwart-cli update %s %s: %w; stderr=%s", typeName, id, err, strings.TrimSpace(string(stderr)))
-	}
-	return nil
-}
-
-// Delete removes one object by id. Stalwart's CLI accepts
-// comma-separated --ids; we pass a single id to keep the surface narrow.
-func (c *Client) Delete(ctx context.Context, typeName, id string) error {
-	if err := validateTypeName(typeName); err != nil {
-		return err
-	}
-	if err := validateID(id); err != nil {
-		return err
-	}
-	args := []string{
-		"--url", c.URL,
-		"--user", c.User,
-		"--password", c.Password,
-		"delete", typeName, "--ids", id,
-	}
-	_, stderr, err := c.invoke(ctx, args)
-	if err != nil {
-		return fmt.Errorf("stalwart-cli delete %s %s: %w; stderr=%s", typeName, id, err, strings.TrimSpace(string(stderr)))
-	}
-	return nil
-}
-
-// Get fetches a single object by id. Pass `singleton` for the singleton
-// types (Authentication, MtaSts, etc).
+// Get fetches one object by id, with every field. It returns ErrNotFound
+// when Stalwart has no such object.
 func (c *Client) Get(ctx context.Context, typeName, id string) (json.RawMessage, error) {
 	if err := validateTypeName(typeName); err != nil {
 		return nil, err
@@ -210,47 +136,243 @@ func (c *Client) Get(ctx context.Context, typeName, id string) (json.RawMessage,
 	if err := validateID(id); err != nil {
 		return nil, err
 	}
-	args := []string{
-		"--url", c.URL,
-		"--user", c.User,
-		"--password", c.Password,
-		"get", typeName, id, "--json",
+	var gr getResult
+	if err := c.call(ctx, "x:"+typeName+"/get", map[string]any{"ids": []string{id}}, &gr); err != nil {
+		return nil, err
 	}
-	stdout, stderr, err := c.invoke(ctx, args)
+	for _, raw := range gr.List {
+		var o struct {
+			ID string `json:"id"`
+		}
+		if json.Unmarshal(raw, &o) == nil && o.ID == id {
+			return raw, nil
+		}
+	}
+	if slices.Contains(gr.NotFound, id) {
+		return nil, ErrNotFound
+	}
+	return nil, fmt.Errorf("stalwartadmin: %s/get returned neither %s nor notFound", typeName, id)
+}
+
+// Create makes a new object and returns the id Stalwart assigned.
+func (c *Client) Create(ctx context.Context, typeName string, payload any) (string, error) {
+	if err := validateTypeName(typeName); err != nil {
+		return "", err
+	}
+	var sr setResult
+	if err := c.call(ctx, "x:"+typeName+"/set", map[string]any{"create": map[string]any{"c": payload}}, &sr); err != nil {
+		return "", err
+	}
+	if e, ok := sr.NotCreated["c"]; ok {
+		return "", fmt.Errorf("stalwartadmin: create %s: %s", typeName, e)
+	}
+	var created struct {
+		ID string `json:"id"`
+	}
+	if raw, ok := sr.Created["c"]; !ok || json.Unmarshal(raw, &created) != nil || validateID(created.ID) != nil {
+		return "", fmt.Errorf("stalwartadmin: create %s: no valid id in the response", typeName)
+	}
+	return created.ID, nil
+}
+
+// Update replaces the given fields of an existing object. It returns
+// ErrNotFound when Stalwart has no such object.
+func (c *Client) Update(ctx context.Context, typeName, id string, payload any) error {
+	if err := validateTypeName(typeName); err != nil {
+		return err
+	}
+	if err := validateID(id); err != nil {
+		return err
+	}
+	var sr setResult
+	if err := c.call(ctx, "x:"+typeName+"/set", map[string]any{"update": map[string]any{id: payload}}, &sr); err != nil {
+		return err
+	}
+	if e, ok := sr.NotUpdated[id]; ok {
+		if e.Type == "notFound" {
+			return ErrNotFound
+		}
+		return fmt.Errorf("stalwartadmin: update %s %s: %s", typeName, id, e)
+	}
+	if _, ok := sr.Updated[id]; !ok {
+		return fmt.Errorf("stalwartadmin: update %s %s: not confirmed", typeName, id)
+	}
+	return nil
+}
+
+// Delete removes one object by id. It returns ErrNotFound when Stalwart has
+// no such object.
+func (c *Client) Delete(ctx context.Context, typeName, id string) error {
+	if err := validateTypeName(typeName); err != nil {
+		return err
+	}
+	if err := validateID(id); err != nil {
+		return err
+	}
+	var sr setResult
+	if err := c.call(ctx, "x:"+typeName+"/set", map[string]any{"destroy": []string{id}}, &sr); err != nil {
+		return err
+	}
+	if e, ok := sr.NotDestroyed[id]; ok {
+		if e.Type == "notFound" {
+			return ErrNotFound
+		}
+		return fmt.Errorf("stalwartadmin: delete %s %s: %s", typeName, id, e)
+	}
+	for _, d := range sr.Destroyed {
+		if d == id {
+			return nil
+		}
+	}
+	return fmt.Errorf("stalwartadmin: delete %s %s: not confirmed", typeName, id)
+}
+
+// ReloadSettings makes changed config objects (throttles among them) take
+// effect without restarting Stalwart.
+func (c *Client) ReloadSettings(ctx context.Context) error {
+	var sr setResult
+	args := map[string]any{"create": map[string]any{"reload": map[string]any{"@type": "ReloadSettings"}}}
+	if err := c.call(ctx, "x:Action/set", args, &sr); err != nil {
+		return err
+	}
+	if e, ok := sr.NotCreated["reload"]; ok {
+		return fmt.Errorf("stalwartadmin: reload settings: %s", e)
+	}
+	if _, ok := sr.Created["reload"]; !ok {
+		return errors.New("stalwartadmin: reload settings: not confirmed")
+	}
+	return nil
+}
+
+type getResult struct {
+	List     []json.RawMessage `json:"list"`
+	NotFound []string          `json:"notFound"`
+}
+
+type setResult struct {
+	Created      map[string]json.RawMessage `json:"created"`
+	Updated      map[string]json.RawMessage `json:"updated"`
+	Destroyed    []string                   `json:"destroyed"`
+	NotCreated   map[string]setError        `json:"notCreated"`
+	NotUpdated   map[string]setError        `json:"notUpdated"`
+	NotDestroyed map[string]setError        `json:"notDestroyed"`
+}
+
+// setError is a JMAP SetError (RFC 8620 §5.3). Stalwart explains a
+// validationFailed in ValidationErrors, e.g.
+// {"type":"MaxValue","property":"count","required":1000000}.
+type setError struct {
+	Type             string   `json:"type"`
+	Description      string   `json:"description"`
+	Properties       []string `json:"properties"`
+	ValidationErrors []struct {
+		Type     string          `json:"type"`
+		Property string          `json:"property"`
+		Required json.RawMessage `json:"required"`
+	} `json:"validationErrors"`
+}
+
+func (e setError) String() string {
+	s := e.Type
+	if e.Description != "" {
+		s += ": " + e.Description
+	}
+	if len(e.Properties) > 0 {
+		s += " (" + strings.Join(e.Properties, ", ") + ")"
+	}
+	for _, v := range e.ValidationErrors {
+		s += "; " + v.Property + ": " + v.Type
+		if len(v.Required) > 0 {
+			s += " " + string(v.Required)
+		}
+	}
+	return s
+}
+
+// call sends one JMAP method call and decodes its arguments into out.
+func (c *Client) call(ctx context.Context, method string, args, out any) error {
+	token, err := c.readToken()
 	if err != nil {
-		return nil, fmt.Errorf("stalwart-cli get %s %s: %w; stderr=%s", typeName, id, err, strings.TrimSpace(string(stderr)))
+		return err
 	}
-	return json.RawMessage(stdout), nil
-}
-
-// invoke is the timeout-bounded run shim. Centralises the cancellation
-// + timeout so every public method gets it without restating.
-func (c *Client) invoke(ctx context.Context, args []string) ([]byte, []byte, error) {
-	timeout := c.Timeout
-	if timeout == 0 {
-		timeout = DefaultTimeout
+	body, err := json.Marshal(map[string]any{
+		"using":       jmapUsing,
+		"methodCalls": []any{[]any{method, args, "c0"}},
+	})
+	if err != nil {
+		return fmt.Errorf("stalwartadmin: marshal %s: %w", method, err)
 	}
-	cctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	return c.run(cctx, args)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.URL+jmapPath, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("stalwartadmin: %s: %w", method, err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.SetBasicAuth(adminUser, token)
+	hc := c.HTTP
+	if hc == nil {
+		hc = &http.Client{Timeout: DefaultTimeout}
+	}
+	resp, err := hc.Do(req)
+	if err != nil {
+		return fmt.Errorf("stalwartadmin: %s: %w", method, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized {
+		return fmt.Errorf("stalwartadmin: %s: Stalwart rejected the admin token (HTTP 401)", method)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("stalwartadmin: %s: HTTP %d", method, resp.StatusCode)
+	}
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
+	if err != nil {
+		return fmt.Errorf("stalwartadmin: %s: read response: %w", method, err)
+	}
+	if len(raw) > maxResponseBytes {
+		return fmt.Errorf("stalwartadmin: %s: response larger than %d bytes", method, maxResponseBytes)
+	}
+	var parsed struct {
+		MethodResponses [][3]json.RawMessage `json:"methodResponses"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return fmt.Errorf("stalwartadmin: %s: unparseable response: %w", method, err)
+	}
+	if len(parsed.MethodResponses) != 1 {
+		return fmt.Errorf("stalwartadmin: %s: %d method responses, want 1", method, len(parsed.MethodResponses))
+	}
+	mr := parsed.MethodResponses[0]
+	var name string
+	if err := json.Unmarshal(mr[0], &name); err != nil {
+		return fmt.Errorf("stalwartadmin: %s: bad method response name: %w", method, err)
+	}
+	if name == "error" {
+		var e setError
+		_ = json.Unmarshal(mr[1], &e)
+		return fmt.Errorf("stalwartadmin: %s: JMAP error %s", method, e)
+	}
+	if name != method {
+		return fmt.Errorf("stalwartadmin: %s: response is for %q", method, name)
+	}
+	if err := json.Unmarshal(mr[1], out); err != nil {
+		return fmt.Errorf("stalwartadmin: %s: decode response: %w", method, err)
+	}
+	return nil
 }
 
-// runExec is the production subprocess runner. Captures stdout + stderr
-// separately so error contexts surface the actual stalwart-cli failure
-// message rather than a bare exit-code-1.
-func (c *Client) runExec(ctx context.Context, args []string) ([]byte, []byte, error) {
-	cmd := exec.CommandContext(ctx, c.Binary, args...)
-	var stdout, stderr strings.Builder
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	err := cmd.Run()
-	return []byte(stdout.String()), []byte(stderr.String()), err
+func (c *Client) readToken() (string, error) {
+	b, err := os.ReadFile(c.TokenPath) //nolint:gosec // operator-owned path; 0640 jabali:jabali-mail
+	if err != nil {
+		return "", fmt.Errorf("stalwartadmin: read admin token: %w", err)
+	}
+	token := strings.TrimSpace(string(b))
+	if token == "" {
+		return "", fmt.Errorf("stalwartadmin: admin token at %s is empty", c.TokenPath)
+	}
+	return token, nil
 }
 
-// validateTypeName rejects anything that doesn't look like a Stalwart
-// schema type (CamelCase, [A-Za-z][A-Za-z0-9]*). Defense-in-depth —
-// the type name eventually becomes an argv string the CLI passes to
-// the admin REST URL, so injection here would map to URL injection.
+// validateTypeName accepts a Stalwart schema type (CamelCase,
+// [A-Z][A-Za-z0-9]*). It becomes part of the method name, so nothing else
+// may reach Stalwart as one.
 func validateTypeName(t string) error {
 	if t == "" {
 		return errors.New("stalwartadmin: empty type name")
@@ -268,41 +390,31 @@ func validateTypeName(t string) error {
 	return nil
 }
 
-// validateID accepts the `singleton` literal or anything that looks
-// like a Stalwart id (alphanumeric + hyphen/underscore, no path
-// separators or shell-metas). Stalwart ids are short opaque tokens
-// (e.g. "b" for the first Domain on .150) so the regex is generous.
+// validateField accepts a property name: a lowercase letter, then letters
+// and digits (e.g. receivedAt).
+func validateField(f string) error {
+	if f == "" || !(f[0] >= 'a' && f[0] <= 'z') {
+		return fmt.Errorf("stalwartadmin: invalid field %q", f)
+	}
+	for _, r := range f {
+		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')) {
+			return fmt.Errorf("stalwartadmin: invalid field %q", f)
+		}
+	}
+	return nil
+}
+
+// validateID accepts anything that looks like a Stalwart id: a short
+// alphanumeric token (e.g. "jg1nyykmahqa", "singleton").
 func validateID(id string) error {
-	if id == "" {
-		return errors.New("stalwartadmin: empty id")
+	if id == "" || len(id) > 64 || id[0] == '-' {
+		return fmt.Errorf("stalwartadmin: invalid id %q", id)
 	}
 	for _, r := range id {
 		ok := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
 			(r >= '0' && r <= '9') || r == '-' || r == '_'
 		if !ok {
 			return fmt.Errorf("stalwartadmin: id %q contains illegal char %q", id, r)
-		}
-	}
-	return nil
-}
-
-// validateFilter prevents an attacker-controlled filter from injecting
-// extra argv (the args go via exec.Command, which doesn't shell-expand,
-// but a filter like `--password=foo` could still poison the arg list).
-// Allowed: alphanumeric + `:` (separator) + `.` + `-` + `_` + comparators.
-func validateFilter(f string) error {
-	if f == "" {
-		return errors.New("stalwartadmin: empty filter")
-	}
-	if strings.HasPrefix(f, "-") {
-		return fmt.Errorf("stalwartadmin: filter %q starts with '-' (looks like a flag)", f)
-	}
-	for _, r := range f {
-		ok := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
-			(r >= '0' && r <= '9') || r == ':' || r == '.' || r == '-' ||
-			r == '_' || r == '@' || r == '<' || r == '>' || r == '='
-		if !ok {
-			return fmt.Errorf("stalwartadmin: filter %q contains illegal char %q", f, r)
 		}
 	}
 	return nil

@@ -398,10 +398,10 @@ func runServe(cmd *cobra.Command, args []string) error {
 		// JAB-243: DB storage quota enforcement (write-freeze at package
 		// quota, hourly sweep inside the reconciler).
 		rec.WithDBQuotaEnforce(repository.NewDatabaseRepository(sharedDB))
-		// M47 Wave 3 throttle reconcile — needs both repo + Stalwart CUD client.
-		if sc, ok := deps.StalwartAdmin.(*stalwartadmin.Client); ok {
-			rec.WithMailThrottles(mailOutboundPolicyRepo, sc)
-		}
+		// M47 Wave 3 throttle reconcile, through Stalwart's management API
+		// (JMAP) with the panel's admin token (stalwart-admin.token, ADR-0142).
+		mailThrottles := stalwartadmin.Throttles{Client: stalwartadmin.NewClient()}
+		rec.WithMailThrottles(mailOutboundPolicyRepo, mailThrottles)
 		// M52 (ADR-0133) — shared resources convergence (host principals +
 		// per-collection shareWith). Grant grantees resolve via the mailbox +
 		// mail-group repos.
@@ -436,15 +436,13 @@ func runServe(cmd *cobra.Command, args []string) error {
 		deps.TLSRPTAggregate = tlsRptAggregateRepo
 		deps.ARFReports = arfReportRepo
 		deps.MailOutboundPolicies = mailOutboundPolicyRepo
-		// Same *stalwartadmin.Client satisfies the inline-delete dispatcher.
-		if sc, ok := deps.StalwartAdmin.(*stalwartadmin.Client); ok {
-			deps.StalwartAdminThrottle = sc
-		}
-		// M47 Wave 4/6/8 ingest — stalwart-cli subprocess client.
-		// Auth via the same recovery-admin secret panel-agent uses.
-		if stalwartUser, stalwartPass, ok := readStalwartAdminCreds(); ok {
-			deps.StalwartAdmin = stalwartadmin.NewClient(stalwartUser, stalwartPass)
-		}
+		// DELETE /admin/mail/throttles/:id removes the row's Stalwart
+		// throttles inline.
+		deps.MailThrottles = mailThrottles
+		// M47 Wave 4/6/8 report ingest stays off (deps.StalwartAdmin nil):
+		// its sources parse a stalwart-cli output shape Stalwart does not
+		// print, and never ran on a real box (the credential they read was
+		// not readable by the panel).
 		deps.BWDaily = repository.NewBWDailyRepository(sharedDB)
 		deps.DomainIPACLs = repository.NewDomainIPACLRepository(sharedDB)
 		deps.WebDomainAliases = repository.NewWebDomainAliasRepository(sharedDB)
@@ -1446,30 +1444,4 @@ func startHTTPRedirect(httpsAddr string, log interface{ Debug(string, ...any) })
 	if err := redirect.ListenAndServe(); err != nil {
 		log.Debug("HTTP→HTTPS redirect listener failed", "err", err)
 	}
-}
-
-// readStalwartAdminCreds parses STALWART_RECOVERY_ADMIN from
-// /etc/jabali-panel/stalwart.env (the same env file panel-agent's
-// mail.* commands read). Format: STALWART_RECOVERY_ADMIN=user:secret.
-// Returns ok=false when the file is missing or malformed — callers
-// should leave StalwartAdmin nil so the ingest sources skip themselves.
-func readStalwartAdminCreds() (user, password string, ok bool) {
-	data, err := os.ReadFile("/etc/jabali-panel/stalwart.env")
-	if err != nil {
-		return "", "", false
-	}
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		const k = "STALWART_RECOVERY_ADMIN="
-		if !strings.HasPrefix(line, k) {
-			continue
-		}
-		rest := strings.TrimPrefix(line, k)
-		idx := strings.IndexByte(rest, ':')
-		if idx <= 0 || idx == len(rest)-1 {
-			return "", "", false
-		}
-		return rest[:idx], rest[idx+1:], true
-	}
-	return "", "", false
 }
