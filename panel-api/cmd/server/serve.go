@@ -898,6 +898,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}()
 	}
 
+	// Every mail domain must accept postmaster@ (RFC 5321), and receivers
+	// send their DMARC and TLS reports there. Stalwart's directory resolves
+	// postmaster@ of a domain without its own to this mailbox (ADR-0110).
+	provisionPostmasterMailbox(context.Background(), deps, log)
+
 	// GH #322: build the notification sender registry (with the provisioned
 	// notify-mailbox creds) before routes so the channels handler can send the
 	// "Send test" synchronously and report the real delivery result.
