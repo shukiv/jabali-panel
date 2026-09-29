@@ -58,3 +58,36 @@ func TestApply_RefusesAMailboxWhoseAddressCannotBeReleased(t *testing.T) {
 		})
 	}
 }
+
+// heldMailboxes answers the one-owner check: an alias, group or shared
+// resource already has the address in domain heldDomain.
+type heldMailboxes struct {
+	*dcMailboxes
+	heldDomain string
+}
+
+func (h *heldMailboxes) AddressHeld(_ context.Context, domainID, _ string) (bool, error) {
+	return domainID == h.heldDomain, nil
+}
+
+// A mailbox the database would refuse is not restored, and its address is
+// not released on the mail server: that would take a live alias off its
+// account in Stalwart's registry.
+func TestApply_SkipsAHeldMailboxAddressWithoutReleasingIt(t *testing.T) {
+	_, mb, _, deps := dcDeps()
+	deps.CheckDomain = allowDomains
+	deps.Mailboxes = &heldMailboxes{dcMailboxes: mb, heldDomain: "d-good"}
+	rel := deps.MailAddresses.(*dcReleaser)
+
+	r := Apply(context.Background(), dcMeta(), deps)
+
+	if len(rel.released) != 1 || rel.released[0] != "info@bad.org" {
+		t.Fatalf("released %v, want only info@bad.org", rel.released)
+	}
+	if mb.created != 1 || r.Mailboxes != 1 {
+		t.Fatalf("mailboxes stored = %d (result %d), want 1: %v", mb.created, r.Mailboxes, r.Errors)
+	}
+	if want := "mailbox mb-good: not restored: info@good.org already belongs to an alias, group or shared resource"; !hasError(r.Errors, want) {
+		t.Fatalf("refusal not reported as %q: %v", want, r.Errors)
+	}
+}

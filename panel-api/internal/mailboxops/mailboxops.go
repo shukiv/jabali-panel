@@ -72,8 +72,19 @@ type AddressReleaser interface {
 	ReleaseAddress(ctx context.Context, address string) error
 }
 
-// releaseAddress runs the Addresses gate for a create; it fails closed.
-func releaseAddress(ctx context.Context, d Deps, address string) error {
+// releaseAddress runs the Addresses gate for a create; it fails closed. It
+// first refuses an address the database would refuse (an alias, group or
+// shared resource holds it), so a create that cannot succeed leaves that
+// alias on its account in Stalwart's registry.
+func releaseAddress(ctx context.Context, d Deps, domainID, localPart, domainName string) error {
+	held, err := repository.MailboxAddressHeld(ctx, d.Mailboxes, domainID, localPart)
+	if err != nil {
+		return fmt.Errorf("%w: address check: %v", ErrInternal, err)
+	}
+	if held {
+		return ErrAddressInUse
+	}
+	address := localPart + "@" + domainName
 	if d.Addresses == nil {
 		return fmt.Errorf("%w: no mail server client to release %s", ErrMailServer, address)
 	}
@@ -165,7 +176,7 @@ func Create(ctx context.Context, d Deps, in CreateInput, notify NotifyFunc) (*mo
 		return nil, "", fmt.Errorf("%w: seal: %v", ErrInternal, err)
 	}
 
-	if err := releaseAddress(ctx, d, canonLocal+"@"+in.Domain.Name); err != nil {
+	if err := releaseAddress(ctx, d, in.Domain.ID, canonLocal, in.Domain.Name); err != nil {
 		return nil, "", err
 	}
 	now := time.Now().UTC()
@@ -239,7 +250,7 @@ func CreateSystem(ctx context.Context, d Deps, in SystemCreateInput, notify Noti
 	if quota == 0 {
 		quota = DefaultQuotaBytes
 	}
-	if err := releaseAddress(ctx, d, in.LocalPart+"@"+in.Domain.Name); err != nil {
+	if err := releaseAddress(ctx, d, in.Domain.ID, in.LocalPart, in.Domain.Name); err != nil {
 		return nil, "", err
 	}
 	now := time.Now().UTC()
@@ -303,7 +314,7 @@ func CreateForRestore(ctx context.Context, d Deps, in RestoreCreateInput) (*mode
 	if in.DomainName == "" {
 		return nil, fmt.Errorf("%w: domain name required", ErrDeps)
 	}
-	if err := releaseAddress(ctx, d, in.LocalPart+"@"+in.DomainName); err != nil {
+	if err := releaseAddress(ctx, d, in.DomainID, in.LocalPart, in.DomainName); err != nil {
 		return nil, err
 	}
 	now := time.Now().UTC()
