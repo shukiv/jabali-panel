@@ -285,6 +285,22 @@ func TestClient_OtherSetFailuresAreErrors(t *testing.T) {
 	}
 }
 
+// Stalwart explains a validationFailed in validationErrors, not in
+// description. The admin sees this text as the row's error, so it must name
+// the field and the limit.
+func TestClient_ValidationErrorsAreInTheMessage(t *testing.T) {
+	c, _ := newTestClient(t, ok(map[string]any{
+		"notCreated": map[string]any{"c": map[string]any{
+			"type":             "validationFailed",
+			"validationErrors": []any{map[string]any{"type": "MaxValue", "property": "count", "required": 1000000}},
+		}},
+	}))
+	_, err := c.Create(context.Background(), "MtaOutboundThrottle", map[string]any{})
+	if err == nil || !strings.Contains(err.Error(), "count") || !strings.Contains(err.Error(), "1000000") {
+		t.Fatalf("err = %v; want the property and the limit", err)
+	}
+}
+
 func TestClient_UnconfirmedWritesAreErrors(t *testing.T) {
 	c, _ := newTestClient(t, ok(map[string]any{}))
 	ctx := context.Background()

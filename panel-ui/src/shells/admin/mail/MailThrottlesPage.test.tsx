@@ -52,6 +52,15 @@ describe("mail throttle form asks for what the API accepts", () => {
     expect(await within(drawer).findByLabelText("Sender domain")).toHaveAttribute("placeholder", "example.com");
   });
 
+  // Stalwart refuses a throttle over 1,000,000 messages per window, so a
+  // larger cap could never be applied.
+  it("stops both caps at Stalwart's maximum", async () => {
+    renderPage();
+    const drawer = await openDrawerWithScope("user");
+    expect(within(drawer).getByLabelText("Max per hour (0 = unlimited)")).toHaveAttribute("aria-valuemax", "1000000");
+    expect(within(drawer).getByLabelText("Max per day (0 = unlimited)")).toHaveAttribute("aria-valuemax", "1000000");
+  });
+
   it("does not call the daily cap unenforced", async () => {
     renderPage();
     const drawer = await openDrawerWithScope("user");

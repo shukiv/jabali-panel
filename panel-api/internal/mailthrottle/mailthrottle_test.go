@@ -100,6 +100,7 @@ func TestApplyRequest_ValidateRejects(t *testing.T) {
 		"unknown scope":           func(r *ApplyRequest) { r.Scope = "mailbox" },
 		"unknown window":          func(r *ApplyRequest) { r.Window = "minute" },
 		"zero limit":              func(r *ApplyRequest) { r.Limit = 0 },
+		"limit Stalwart refuses":  func(r *ApplyRequest) { r.Limit = 1_000_001 },
 		"id that reads as a flag": func(r *ApplyRequest) { r.StalwartID = "-rf" },
 		"id with a slash":         func(r *ApplyRequest) { r.StalwartID = "a/b" },
 		"id with a space":         func(r *ApplyRequest) { r.StalwartID = "a b" },
@@ -116,6 +117,15 @@ func TestApplyRequest_ValidateRejects(t *testing.T) {
 				t.Fatalf("Validate accepted %+v", r)
 			}
 		})
+	}
+}
+
+// Stalwart refuses a rate count above 1,000,000 (validationFailed, MaxValue,
+// pinned on the .60 test box). The largest count it takes must pass.
+func TestApplyRequest_ValidateAcceptsStalwartsMaximum(t *testing.T) {
+	r := ApplyRequest{Scope: ScopeGlobal, Window: WindowDay, Limit: 1_000_000}
+	if err := r.Validate(); err != nil {
+		t.Fatalf("Validate rejected Stalwart's maximum: %v", err)
 	}
 }
 
