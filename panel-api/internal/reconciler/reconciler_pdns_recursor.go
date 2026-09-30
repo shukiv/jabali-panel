@@ -21,7 +21,7 @@ import (
 // whose forwarder this process already added. force re-sends it anyway
 // (ReconcileOne, the path a freshly created domain takes, GH #896).
 func (r *Reconciler) reconcileRecursorForward(ctx context.Context, zone string, force bool) {
-	if zone == "" {
+	if zone == "" || !r.dnsModuleOn(ctx) {
 		return
 	}
 	params := map[string]any{
@@ -32,6 +32,22 @@ func (r *Reconciler) reconcileRecursorForward(ctx context.Context, zone string, 
 	_, _ = r.project(ctx, PhaseDNSRecursor, zone, fingerprint(params), force, func() error {
 		return r.addRecursorForward(ctx, zone, params)
 	})
+}
+
+// dnsModuleOn reports whether the DNS module is on (server_settings.dns_enabled).
+// With it off the box runs no PowerDNS and no recursor, so a forward add or
+// remove can only fail (GH #1820: "controlsocket missing", per domain per
+// minute). Unwired or unreadable settings keep the previous behaviour (on):
+// this suppresses failing calls, it is not an access decision.
+func (r *Reconciler) dnsModuleOn(ctx context.Context) bool {
+	if r.serverSettings == nil {
+		return true
+	}
+	srv, err := r.settingsGet(ctx)
+	if err != nil || srv == nil {
+		return true
+	}
+	return srv.DNSEnabled
 }
 
 func (r *Reconciler) addRecursorForward(ctx context.Context, zone string, params map[string]any) error {
@@ -67,7 +83,7 @@ func (r *Reconciler) addRecursorForward(ctx context.Context, zone string, params
 // its fingerprint, so a site that stays orphaned is re-removed only once
 // per audit interval, and a later add of the zone is never skipped.
 func (r *Reconciler) reconcileRecursorForwardRemove(ctx context.Context, zone string) {
-	if zone == "" {
+	if zone == "" || !r.dnsModuleOn(ctx) {
 		return
 	}
 	params := map[string]any{"zone": zone}

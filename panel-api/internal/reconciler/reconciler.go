@@ -1936,7 +1936,7 @@ func (r *Reconciler) applyPHPPool(ctx context.Context, user *models.User, pool *
 	_, err := r.agent.Call(agentCtx, "php.pool.apply", params)
 	if err != nil {
 		errMsg := fmt.Sprintf("agent apply failed: %v", err)
-		r.log.Error("php.pool.apply failed", "pool_id", pool.ID, "user_id", user.ID, "err", err)
+		r.log.Error("php.pool.apply failed", "pool_id", pool.ID, "user_id", user.ID, "username", username, "php_version", pool.PHPVersion, "err", err)
 		r.phpPools.SetStatus(ctx, pool.ID, "error", &errMsg)
 		return
 	}
@@ -1945,17 +1945,17 @@ func (r *Reconciler) applyPHPPool(ctx context.Context, user *models.User, pool *
 	ready := r.socketReady(ctx, socketPath, 2*time.Second, 100*time.Millisecond)
 	if !ready {
 		errMsg := "socket did not become ready after agent apply"
-		r.log.Warn("php pool socket timeout", "pool_id", pool.ID, "socket", socketPath)
+		r.log.Warn("php pool socket timeout", "pool_id", pool.ID, "username", username, "php_version", pool.PHPVersion, "socket", socketPath)
 		r.phpPools.SetStatus(ctx, pool.ID, "error", &errMsg)
 		return
 	}
 
 	// Mark pool as active
 	if err := r.phpPools.SetStatus(ctx, pool.ID, "active", nil); err != nil {
-		r.log.Error("failed to mark PHP pool active", "pool_id", pool.ID, "err", err)
+		r.log.Error("failed to mark PHP pool active", "pool_id", pool.ID, "username", username, "php_version", pool.PHPVersion, "err", err)
 		return
 	}
-	r.log.Info("PHP pool applied and marked active", "pool_id", pool.ID, "user_id", user.ID)
+	r.log.Info("PHP pool applied and marked active", "pool_id", pool.ID, "user_id", user.ID, "username", username, "php_version", pool.PHPVersion)
 
 	// Trigger nginx regeneration for all domains bound to this pool
 	r.regenerateNginxForPool(ctx, pool)
@@ -2084,13 +2084,13 @@ func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Dom
 	}
 	user, err := r.users.FindByID(ctx, domain.UserID)
 	if err != nil {
-		r.log.Error("failed to fetch user for domain", "domain_id", domain.ID, "user_id", domain.UserID, "err", err)
+		r.log.Error("failed to fetch user for domain", "domain_id", domain.ID, "domain", domain.Name, "user_id", domain.UserID, "err", err)
 		return
 	}
 
 	// Username should always be set for non-admin users hosting domains.
 	if user.Username == nil || *user.Username == "" || user.IsAdmin {
-		r.log.Error("user has no username for domain", "domain_id", domain.ID, "user_id", domain.UserID)
+		r.log.Error("user has no username for domain", "domain_id", domain.ID, "domain", domain.Name, "user_id", domain.UserID)
 		return
 	}
 	username := *user.Username
@@ -2104,7 +2104,7 @@ func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Dom
 		pool, err := r.phpPools.FindByID(phpCtx, *domain.PHPPoolID)
 		phpCancel()
 		if err != nil {
-			r.log.Warn("failed to fetch PHP pool for domain, PHP disabled", "domain_id", domain.ID, "pool_id", *domain.PHPPoolID, "err", err)
+			r.log.Warn("failed to fetch PHP pool for domain, PHP disabled", "domain_id", domain.ID, "domain", domain.Name, "pool_id", *domain.PHPPoolID, "err", err)
 		} else if pool != nil {
 			hasPHP = true
 			phpVersion = pool.PHPVersion
@@ -2824,6 +2824,15 @@ func (r *Reconciler) reconcileDNSZone(ctx context.Context, domain *models.Domain
 	// Localhost allow is only needed for manual ops troubleshooting via
 	// `dig AXFR @127.0.0.1` — add that for debugging.
 	allowAXFR = append(allowAXFR, "127.0.0.1")
+
+	// GH #1820: with the DNS module off there is no PowerDNS to push to. Keep
+	// the zone rows above converged in the panel DB, but send nothing: every
+	// push failed ("powerdns backend not available"), once per domain per
+	// minute. Nothing is stamped, so the first tick after the module is turned
+	// on pushes the zone.
+	if srv != nil && !srv.DNSEnabled {
+		return
+	}
 
 	// Gate the whole push on a content compare. Unconditionally stamping the
 	// serial and pushing meant EVERY enabled domain, EVERY tick: one

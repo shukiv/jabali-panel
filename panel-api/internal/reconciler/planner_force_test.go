@@ -39,6 +39,7 @@ func plannerFixture(t *testing.T) (*Reconciler, *fakeAgent, *models.Domain) {
 				NS1Name:    "ns1.example.com",
 				NS2Name:    "ns2.example.com",
 				AdminEmail: "admin@example.com",
+				DNSEnabled: true, // GH #1820: the zone push and recursor forwards need the DNS module on
 			}},
 		)
 	return r, agent, dom

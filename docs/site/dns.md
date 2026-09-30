@@ -7,6 +7,8 @@ Jabali ships **two** PowerDNS processes:
 
 Split-port setup (ADR-0047): the recursor binds the loopback so local processes (the panel, certbot, Stalwart, etc.) can resolve external names without going through an upstream resolver, while the authoritative binds public IPs so the world can query hosted zones.
 
+DNS is an optional module (the DNS module in Server Settings, `server_settings.dns_enabled`). With it off, the panel still keeps each domain's zone records in its database, but it publishes nothing: no zone push to PowerDNS and no recursor forwarders. Turning the module on installs PowerDNS, and the panel publishes every zone once PowerDNS is up. Leave it off when your domains' DNS is hosted elsewhere (a registrar, Cloudflare, another provider).
+
 ## Zones
 
 Each hosted domain gets an authoritative zone in PowerDNS. Default records:

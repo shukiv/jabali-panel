@@ -1538,6 +1538,7 @@ func TestReconcile_BootstrapsAndPushesZone(t *testing.T) {
 			NS1Name:    "ns1.example.com",
 			NS2Name:    "ns2.example.com",
 			AdminEmail: "admin@example.com",
+			DNSEnabled: true, // GH #1820: the zone push needs the DNS module on
 		},
 	}
 
@@ -1625,6 +1626,7 @@ func TestReconcile_PassesAXFRToAgent(t *testing.T) {
 			NS2Name:    "ns2.example.com",
 			NS2IPv4:    "198.51.100.7", // Secondary nameserver configured
 			AdminEmail: "admin@example.com",
+			DNSEnabled: true, // GH #1820: the zone push needs the DNS module on
 		},
 	}
 
