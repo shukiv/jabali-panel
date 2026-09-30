@@ -65,7 +65,7 @@ func RegisterSharedResourceRoutes(g *gin.RouterGroup, cfg SharedResourceHandlerC
 
 type createSharedResourceRequest struct {
 	Name        string `json:"name"` // local part of the host address
-	Kind        string `json:"kind"` // mailbox|calendar|addressbook|files
+	Kind        string `json:"kind"` // calendar|addressbook|files (mailbox refused — GH #1914)
 	DisplayName string `json:"display_name"`
 }
 
@@ -133,7 +133,8 @@ func (h *sharedResourceHandler) create(c *gin.Context) {
 			c.JSON(http.StatusConflict, gin.H{"error": "email_not_enabled",
 				"detail": "enable email on the domain before creating shared resources"})
 		case errors.Is(err, sharedresourceops.ErrInvalidKind):
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_kind"})
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_kind",
+				"detail": "kind must be calendar, addressbook or files; for a shared mailbox, create a mail group"})
 		case errors.Is(err, sharedresourceops.ErrInvalidName):
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_name", "detail": err.Error()})
 		case errors.Is(err, sharedresourceops.ErrAddressTaken):

@@ -118,7 +118,7 @@ func newSharedResourceCreateCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&domainID, "domain", "", "domain ID (ULID)")
 	cmd.Flags().StringVar(&name, "name", "", "host address local part")
-	cmd.Flags().StringVar(&kind, "kind", "", "mailbox|calendar|addressbook|files")
+	cmd.Flags().StringVar(&kind, "kind", "", "calendar|addressbook|files (for a shared mailbox, create a mail group)")
 	cmd.Flags().StringVar(&displayName, "display-name", "", "display name")
 	return cmd
 }
