@@ -57,7 +57,7 @@ Full reindex on main after merging substantive structural changes (new package, 
 
 # MCP Tools — Use These First
 
-Four MCP categories are available in every session. Reach for them **before** falling back to built-in knowledge, grep, or manual browser checks.
+Three MCP categories are available in every session. Reach for them **before** falling back to built-in knowledge, grep, or manual browser checks.
 
 ## Context7 — Live Library Docs
 
@@ -69,16 +69,6 @@ Use **before** writing any code that calls a library API (GORM, Gin, antd, React
 ```
 
 **Trigger**: any time you're about to write a call to an external package and you're not 100% certain of the current API signature or option names.
-
-## jabali-db — Live Database Queries
-
-Use to inspect live schema, verify migration results, or check data state — instead of guessing from migration files.
-
-```
-mcp__jabali-db__mysql_query   → run SELECT / SHOW / EXPLAIN against the local DB
-```
-
-**Trigger**: verifying migration ran, checking FK constraints, inspecting live data during debugging.
 
 ## Chrome DevTools / claude-in-chrome — UI Validation
 

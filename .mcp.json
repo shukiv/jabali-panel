@@ -18,23 +18,6 @@
         "-y",
         "chrome-devtools-mcp@latest"
       ]
-    },
-    "jabali-db": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "@benborla29/mcp-server-mysql@latest"
-      ],
-      "env": {
-        "MYSQL_HOST": "${JABALI_DEV_DB_HOST:-127.0.0.1}",
-        "MYSQL_PORT": "${JABALI_DEV_DB_PORT:-3306}",
-        "MYSQL_USER": "${JABALI_DEV_DB_USER}",
-        "MYSQL_PASS": "${JABALI_DEV_DB_PASS}",
-        "MYSQL_DB": "${JABALI_DEV_DB_NAME:-jabali_panel}",
-        "ALLOW_INSERT_OPERATION": "false",
-        "ALLOW_UPDATE_OPERATION": "false",
-        "ALLOW_DELETE_OPERATION": "false"
-      }
     }
   }
 }
