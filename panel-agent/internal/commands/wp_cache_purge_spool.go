@@ -22,6 +22,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -31,6 +32,14 @@ import (
 // wpPurgeSpoolDir is a var (not const) so tests can point the watcher at a temp
 // dir instead of the real /run path.
 var wpPurgeSpoolDir = "/run/jabali-wp-purge"
+
+// Hooks for tests: the root-owned vhost dir the ownership check reads, the
+// nginx purge, and the warm started after a successful purge.
+var (
+	wpPurgeSitesDir  = "/etc/nginx/sites-available"
+	wpPurgeRunPurge  = nginxCachePurgeHandler
+	wpPurgeStartWarm = startWarmAfterPurge
+)
 
 const (
 	wpPurgePollInterval = 2 * time.Second
@@ -157,6 +166,25 @@ func nginxVhostDocroot(vhostPath string) (string, error) {
 
 var nginxRootRE = regexp.MustCompile(`(?m)^\s*root\s+([^;]+);`)
 
+// nginxVhostCacheOn reports whether the host's vhost has the page cache on (a
+// `fastcgi_cache <zone>;` directive, rendered only when the domain's cache is
+// enabled). A purge on a cache-off vhost succeeds as a no-op, and warming it
+// would only add PHP renders nginx never stores.
+func nginxVhostCacheOn(vhostPath string) bool {
+	b, err := os.ReadFile(vhostPath)
+	if err != nil {
+		return false
+	}
+	for _, m := range nginxFastcgiCacheRE.FindAllSubmatch(b, -1) {
+		if string(m[1]) != "off" {
+			return true
+		}
+	}
+	return false
+}
+
+var nginxFastcgiCacheRE = regexp.MustCompile(`(?m)^\s*fastcgi_cache\s+([^;\s]+)\s*;`)
+
 // wpPurgeItem is one well-formed spool request collected in a tick, before the
 // per-(uid, host) coalescing pass. Ownership is confirmed later, once per group.
 type wpPurgeItem struct {
@@ -268,7 +296,7 @@ func coalesceAndPurge(ctx context.Context, items []*wpPurgeItem, log *slog.Logge
 		// tenant cannot forge /etc/nginx/sites-available/<host>.conf, so the
 		// vhost's own root directive is the authoritative docroot; the requester
 		// must own it.
-		realDocroot, drerr := nginxVhostDocroot(filepath.Join("/etc/nginx/sites-available", k.host+".conf"))
+		realDocroot, drerr := nginxVhostDocroot(filepath.Join(wpPurgeSitesDir, k.host+".conf"))
 		if drerr != nil || realDocroot == "" {
 			log.Warn("wp-purge: no nginx vhost for host, ignored", "user", username, "host", k.host, "files", len(grp))
 			removeAll()
@@ -289,7 +317,7 @@ func coalesceAndPurge(ctx context.Context, items []*wpPurgeItem, log *slog.Logge
 		outPaths, wholeDomain := mergeGroupPaths(grp)
 		body, _ := json.Marshal(map[string]any{"domain": k.host, "paths": outPaths})
 		pctx, cancel := context.WithTimeout(ctx, 20*time.Second)
-		_, perr := nginxCachePurgeHandler(pctx, body)
+		_, perr := wpPurgeRunPurge(pctx, body)
 		cancel()
 		if perr != nil {
 			log.Warn("wp-purge: nginx.cache.purge failed", "host", k.host, "err", perr)
@@ -299,5 +327,96 @@ func coalesceAndPurge(ctx context.Context, items []*wpPurgeItem, log *slog.Logge
 		log.Info("wp-purge: purged nginx cache (coalesced)", "user", username, "host", k.host,
 			"files_coalesced", len(grp), "paths_merged", len(outPaths), "whole_domain", wholeDomain)
 		removeAll()
+		// Refill what was just purged, so the next visitor gets a HIT instead of
+		// paying a full PHP render (a low-traffic site otherwise serves a cold
+		// page after every edit). Ownership was checked above. A vhost with the
+		// cache off stores nothing, so it is not warmed.
+		if nginxVhostCacheOn(filepath.Join(wpPurgeSitesDir, k.host+".conf")) {
+			wpPurgeStartWarm(ctx, k.host, outPaths, wholeDomain, log)
+		}
 	}
+}
+
+const (
+	// wpWarmMaxConcurrent bounds warms running at once across the box, so a
+	// burst of edits on many sites can't stack PHP renders.
+	wpWarmMaxConcurrent = 2
+	// wpWarmWholeDomainCooldown: the plugin purges the whole domain on
+	// site-wide changes, comments included, so re-warm a whole domain at most
+	// this often per host. A targeted warm (home + the edited post) is cheap
+	// and not held back.
+	wpWarmWholeDomainCooldown = 10 * time.Minute
+	wpWarmTimeout             = 5 * time.Minute
+)
+
+var (
+	wpWarmMu        sync.Mutex
+	wpWarmInFlight  = map[string]bool{}
+	wpWarmLastWhole = map[string]time.Time{}
+	wpWarmSlots     = make(chan struct{}, wpWarmMaxConcurrent)
+	// wpWarmRun runs one warm; a var so tests can observe it.
+	wpWarmRun = func(ctx context.Context, params map[string]any) (any, error) {
+		raw, err := json.Marshal(params)
+		if err != nil {
+			return nil, err
+		}
+		return nginxCacheWarmupHandler(ctx, raw)
+	}
+)
+
+// startWarmAfterPurge warms a host's page cache in the background after a WP
+// purge: exactly the purged paths, or homepage + sitemap for a whole-domain
+// purge. At most one warm per host runs at a time (a purge arriving mid-warm is
+// not queued: its pages fill on the next visit), and a whole-domain warm runs at
+// most once per wpWarmWholeDomainCooldown per host. Best effort: it never
+// delays or fails the purge.
+func startWarmAfterPurge(ctx context.Context, host string, paths []string, wholeDomain bool, log *slog.Logger) {
+	now := time.Now()
+	wpWarmMu.Lock()
+	if wpWarmInFlight[host] {
+		wpWarmMu.Unlock()
+		log.Debug("wp-purge: warm already running for host, skipped", "host", host)
+		return
+	}
+	if wholeDomain {
+		if last, ok := wpWarmLastWhole[host]; ok && now.Sub(last) < wpWarmWholeDomainCooldown {
+			wpWarmMu.Unlock()
+			log.Debug("wp-purge: whole-domain warm inside cooldown, skipped", "host", host)
+			return
+		}
+		wpWarmLastWhole[host] = now
+	}
+	wpWarmInFlight[host] = true
+	wpWarmMu.Unlock()
+
+	params := map[string]any{"host": host}
+	if wholeDomain {
+		params["max_urls"] = cacheWarmupDefaultMax
+	} else {
+		params["paths"] = append([]string(nil), paths...)
+	}
+	go func() {
+		defer func() {
+			wpWarmMu.Lock()
+			delete(wpWarmInFlight, host)
+			wpWarmMu.Unlock()
+		}()
+		select {
+		case wpWarmSlots <- struct{}{}:
+			defer func() { <-wpWarmSlots }()
+		case <-ctx.Done():
+			return
+		}
+		wctx, cancel := context.WithTimeout(ctx, wpWarmTimeout)
+		defer cancel()
+		res, err := wpWarmRun(wctx, params)
+		if err != nil {
+			log.Warn("wp-purge: cache warm failed", "host", host, "err", err)
+			return
+		}
+		if m, ok := res.(map[string]any); ok {
+			log.Info("wp-purge: warmed nginx cache", "host", host, "whole_domain", wholeDomain,
+				"warmed", m["warmed"], "failed", m["failed"], "circuit_broken", m["circuit_broken"])
+		}
+	}()
 }

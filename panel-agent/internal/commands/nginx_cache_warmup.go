@@ -23,6 +23,99 @@ import (
 type cacheWarmupParams struct {
 	Host    string `json:"host"`
 	MaxURLs int    `json:"max_urls"`
+	// Paths warms exactly these same-host paths instead of homepage + sitemap.
+	// The WordPress purge-spool watcher sends the paths it just purged, so the
+	// next visitor gets a cache HIT instead of a cold render. Entries that are
+	// not plain "/..." paths are skipped; at most cacheWarmupHardMax are warmed.
+	Paths []string `json:"paths,omitempty"`
+}
+
+// maxWarmPathLen bounds one requested path (a URL path, not a document).
+const maxWarmPathLen = 2048
+
+// sanitizeWarmPaths keeps the plain same-host paths from paths, in order,
+// de-duplicated and capped at cacheWarmupHardMax. It returns how many entries
+// were invalid (empty entries and duplicates are dropped without counting).
+// The paths come from a tenant's WordPress through the purge spool, so only a
+// path that starts with a single "/" and holds no whitespace or control
+// characters is fetched: never a scheme, a "//host", or anything that could
+// change which host curl talks to.
+func sanitizeWarmPaths(paths []string) (out []string, invalid int) {
+	seen := map[string]bool{}
+	for _, raw := range paths {
+		if raw == "" {
+			continue
+		}
+		ok := len(raw) <= maxWarmPathLen && strings.HasPrefix(raw, "/") && !strings.HasPrefix(raw, "//")
+		for i := 0; ok && i < len(raw); i++ {
+			if c := raw[i]; c <= 0x20 || c == 0x7f {
+				ok = false
+			}
+		}
+		if !ok {
+			invalid++
+			continue
+		}
+		if seen[raw] {
+			continue
+		}
+		seen[raw] = true
+		if len(out) < cacheWarmupHardMax {
+			out = append(out, raw)
+		}
+	}
+	return out, invalid
+}
+
+// warmExactPaths fetches each path in order with the same pacing and circuit
+// breaker as the sitemap warmup, and reports the same stats shape.
+func warmExactPaths(ctx context.Context, host string, requested []string) map[string]any {
+	paths, invalid := sanitizeWarmPaths(requested)
+	start := time.Now()
+	var attempted, warmed, failed, consecFail int
+	var firstError string
+	circuitBroken := false
+	for i, path := range paths {
+		if ctx.Err() != nil {
+			break
+		}
+		if consecFail >= cacheWarmupMaxConsecFail {
+			circuitBroken = true
+			firstError = fmt.Sprintf("circuit-broken after %d consecutive failures (first: %s)", consecFail, firstError)
+			break
+		}
+		if i > 0 {
+			select {
+			case <-time.After(cacheWarmupPaceDelay):
+			case <-ctx.Done():
+			}
+		}
+		code := warmupFetch(ctx, host, path)
+		attempted++
+		if code >= 200 && code < 400 {
+			warmed++
+			consecFail = 0
+			continue
+		}
+		failed++
+		consecFail++
+		if firstError == "" {
+			firstError = fmt.Sprintf("%s -> %d", path, code)
+		}
+	}
+	return map[string]any{
+		"ok":             true,
+		"host":           host,
+		"requested":      len(requested),
+		"clamped_to":     len(paths),
+		"attempted":      attempted,
+		"warmed":         warmed,
+		"skipped":        invalid,
+		"failed":         failed,
+		"first_error":    firstError,
+		"circuit_broken": circuitBroken,
+		"duration_ms":    time.Since(start).Milliseconds(),
+	}
 }
 
 const (
@@ -261,6 +354,9 @@ func nginxCacheWarmupHandler(ctx context.Context, params json.RawMessage) (any, 
 	host := strings.TrimSpace(strings.ToLower(p.Host))
 	if !probeDomainRe.MatchString(host) {
 		return nil, csInvalidArg(fmt.Sprintf("invalid host %q", p.Host))
+	}
+	if len(p.Paths) > 0 {
+		return warmExactPaths(ctx, host, p.Paths), nil
 	}
 	// JAB-95 Phase 1: report the effective limit instead of silently clamping,
 	// and return rich stats so the panel/UI can show what actually happened.
