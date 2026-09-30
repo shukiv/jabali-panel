@@ -1418,6 +1418,9 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				PHPPools:         deps.PHPPools,
 				Agent:            deps.Agent,
 				PoolIniOverrides: deps.PHPPoolIniOverrides,
+				// GH #1701: the owner's package PHP settings policy.
+				Users:    deps.Users,
+				Packages: deps.Packages,
 			})
 			// GH #1332 item 14: per-domain env vars.
 			api.RegisterDomainEnvVarsRoutes(v1, api.DomainEnvVarsHandlerConfig{

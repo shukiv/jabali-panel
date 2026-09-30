@@ -15,6 +15,13 @@
 // which are CSV strings on the wire but arrays in the Form, and the JSON-array
 // round-trip for egress_ssh_out_cidrs (a JSON array string on the wire).
 
+import {
+  decodePHPSettingsPolicy,
+  defaultPHPSettingsPolicy,
+  encodePHPSettingsPolicy,
+  type PHPSettingsPolicyForm,
+} from "./phpSettingsPolicy";
+
 // Mirrors models.AllBackupDestinationKinds (GH #454). Keep in sync with the
 // backend enum in backup_destination.go.
 export const BACKUP_DESTINATION_KINDS = ["local", "sftp", "s3", "b2", "azure", "gcs", "rest"] as const;
@@ -60,19 +67,25 @@ export type PackageFormValues = {
   egress_ssh_out: boolean;
   egress_ssh_out_cidrs: string | string[];
   egress_icmp: boolean;
+  // GH #1701: who may set each php.ini directive on the per-domain PHP
+  // Settings page. A JSON object string on the wire ('' = defaults); the Form
+  // binds a directive -> level map.
+  php_settings_policy: string | PHPSettingsPolicyForm;
 };
 
 export type PackageRecord = PackageFormValues & { id: string };
 
-// Wire payload: the two multi-select fields are CSV strings, and the egress CIDR
-// list is a JSON array string, not arrays.
+// Wire payload: the two multi-select fields are CSV strings, the egress CIDR
+// list is a JSON array string, and the PHP settings policy is a JSON object
+// string, not arrays or maps.
 export type PackageWirePayload = Omit<
   PackageFormValues,
-  "docker_app_slugs" | "allowed_backup_destination_kinds" | "egress_ssh_out_cidrs"
+  "docker_app_slugs" | "allowed_backup_destination_kinds" | "egress_ssh_out_cidrs" | "php_settings_policy"
 > & {
   docker_app_slugs: string;
   allowed_backup_destination_kinds: string;
   egress_ssh_out_cidrs: string;
+  php_settings_policy: string;
 };
 
 export type LimitFieldGroup = "resource" | "quota" | "backup" | "fpm";
@@ -294,6 +307,7 @@ export const PACKAGE_DEFAULTS: PackageFormValues = {
   egress_ssh_out: false,
   egress_ssh_out_cidrs: [],
   egress_icmp: false,
+  php_settings_policy: defaultPHPSettingsPolicy(), // GH #1701
 };
 
 // --- CSV codecs (AC2). docker_app_slugs and allowed_backup_destination_kinds are
@@ -337,6 +351,7 @@ export function encodePackagePayload(values: PackageFormValues): PackageWirePayl
   return {
     ...values,
     egress_ssh_out_cidrs: encodeCIDRList(values.egress_ssh_out_cidrs),
+    php_settings_policy: encodePHPSettingsPolicy(values.php_settings_policy),
     docker_app_slugs: Array.isArray(values.docker_app_slugs)
       ? values.docker_app_slugs.join(",")
       : (values.docker_app_slugs ?? ""),
@@ -361,6 +376,7 @@ export function decodePackageForm(record: PackageRecord): PackageFormValues {
     egress_ssh_out: !!rest.egress_ssh_out,
     egress_ssh_out_cidrs: decodeCIDRList(rest.egress_ssh_out_cidrs),
     egress_icmp: !!rest.egress_icmp,
+    php_settings_policy: decodePHPSettingsPolicy(rest.php_settings_policy),
   };
 }
 

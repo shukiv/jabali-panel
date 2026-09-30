@@ -130,6 +130,8 @@ func (r *packageRepo) Update(ctx context.Context, p *models.HostingPackage) erro
 		// reported success but reverted on reload (same silent-drop scar).
 		"max_backups", "max_backup_schedules", "scheduled_backups_enabled",
 		"allowed_backup_destination_kinds", "backup_retention_policy",
+		// GH #1701: per-package PHP settings policy.
+		"php_settings_policy",
 		"updated_at",
 	).Updates(p).Error; err != nil {
 		return translate(err)

@@ -29,6 +29,14 @@ import {
   type PackageRecord,
   type PackageWirePayload,
 } from "./packageFields";
+import { PHP_SETTING_DIRECTIVES, type PHPSettingsPolicyForm } from "./phpSettingsPolicy";
+
+// GH #1701: the two levels a catalog directive takes. The security-sensitive
+// directives (a later slice) add "tenant_privileged".
+const PHP_POLICY_OPTIONS = [
+  { value: "tenant_allowed", label: "Tenant can change" },
+  { value: "admin_only", label: "Admin only" },
+];
 
 type NspawnImage = { name: string };
 
@@ -124,7 +132,19 @@ export const PackageEditor = ({ title, initialValue, isLoading, submitting, onSu
     }
   }, [initialValue, form]);
 
-  const handleFinish = (values: PackageFormValues) => onSubmit(encodePackagePayload(values));
+  // GH #1701: encode the PHP settings policy from the form STORE, not the
+  // submitted values. The submitted values hold only the directives the form
+  // renders; the store also keeps any other stored key (a security-sensitive
+  // directive an admin opted in through the CLI), which a save must not drop.
+  const handleFinish = (values: PackageFormValues) =>
+    onSubmit(
+      encodePackagePayload({
+        ...values,
+        php_settings_policy:
+          (form.getFieldValue("php_settings_policy") as PHPSettingsPolicyForm | undefined) ??
+          values.php_settings_policy,
+      }),
+    );
 
   if (isLoading && !initialValue) {
     return (
@@ -367,6 +387,25 @@ export const PackageEditor = ({ title, initialValue, isLoading, submitting, onSu
         </div>
         <LimitField field={byName("fpm_max_children_cap")} t={t} />
         <LimitField field={byName("fpm_worker_mem_mb")} t={t} />
+
+        {/* GH #1701: per-directive policy for the per-domain PHP Settings page. */}
+        <Typography.Title level={5} style={{ marginTop: 8 }}>
+          PHP settings tenants may change
+        </Typography.Title>
+        <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
+          Who may set each directive on a domain&apos;s PHP Settings page. An
+          admin can always set every one. &quot;Admin only&quot; locks it for the
+          tenant, who sees the value but cannot change it.
+        </Typography.Paragraph>
+        <Row gutter={[16, 0]}>
+          {PHP_SETTING_DIRECTIVES.map((d) => (
+            <Col xs={24} sm={12} lg={8} key={d}>
+              <Form.Item label={<code>{d}</code>} name={["php_settings_policy", d]}>
+                <Select aria-label={`${d} policy`} options={PHP_POLICY_OPTIONS} />
+              </Form.Item>
+            </Col>
+          ))}
+        </Row>
 
         <Form.Item
           label={t("packageedit.docker_apps_per_package_allowlist")}

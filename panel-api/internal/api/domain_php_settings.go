@@ -8,12 +8,14 @@ import (
 	"log/slog"
 	"net/http"
 	"regexp"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/auth"
 	ginctx "git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
@@ -29,6 +31,12 @@ type DomainPHPSettingsHandlerConfig struct {
 	// response to omit pool_defaults, and the UI falls back to a generic label.
 	Agent            agent.AgentInterface
 	PoolIniOverrides repository.PHPPoolIniOverrideRepository
+	// Users + Packages resolve the domain owner's hosting package, whose PHP
+	// settings policy (GH #1701) says which directives the owner may set.
+	// Without them a tenant may set nothing (fail closed); an admin is
+	// unaffected.
+	Users    repository.UserRepository
+	Packages repository.PackageRepository
 }
 
 // RegisterDomainPHPSettingsRoutes adds the PHP settings endpoints:
@@ -64,6 +72,13 @@ type getDomainPHPSettingsResponse struct {
 	// are php.ini directive names (memory_limit, upload_max_filesize, …). Absent
 	// when the agent/pool can't be resolved; the UI then shows a generic label.
 	PoolDefaults map[string]string `json:"pool_defaults,omitempty"`
+	// Policy (GH #1701) is who may set each directive on this domain: the
+	// domain owner's package policy over models.PHPSettingCatalog. Both an
+	// admin and the owner get it, so the admin sees what the owner may change.
+	Policy map[string]models.PHPSettingLevel `json:"policy"`
+	// Editable lists the directives the CALLER may set: every catalog
+	// directive for an admin, the ones their package permits for a tenant.
+	Editable []string `json:"editable"`
 }
 
 // updateDomainPHPSettingsRequest mirrors the overridable fields plus an optional
@@ -186,6 +201,7 @@ func (h *domainPHPSettingsHandler) get(c *gin.Context) {
 		PHPErrorReporting:    dom.PHPErrorReporting,
 		PHPTimezone:          dom.PHPTimezone,
 	}
+	resp.Policy, resp.Editable = h.callerPHPPolicy(ctx, phpPolicyAdmin(claims), dom.UserID)
 
 	// Resolve the effective PHP version + the pool itself. If the domain is
 	// bound to a user pool, use that pool. If unbound, fall back to the user's
@@ -378,6 +394,33 @@ func (h *domainPHPSettingsHandler) patch(c *gin.Context) {
 		return
 	}
 
+	// GH #1701: a tenant may change only the directives their package permits.
+	// A directive they may not set must come back unchanged (the page sends the
+	// full set, locked values included); any change to one is refused, never
+	// silently dropped. An admin may set every directive.
+	if !phpPolicyAdmin(claims) {
+		pkg, perr := h.ownerPackage(ctx, dom.UserID)
+		if perr != nil {
+			slog.ErrorContext(ctx, "patch php-settings: resolve owner package", "error", perr, "user_id", dom.UserID)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+			return
+		}
+		var denied []string
+		for _, d := range changedPHPDirectives(req, dom) {
+			if !pkg.PHPSettingLevelFor(d).TenantMaySet() {
+				denied = append(denied, d)
+			}
+		}
+		if len(denied) > 0 {
+			c.JSON(http.StatusForbidden, gin.H{
+				"error":      "php_setting_not_permitted",
+				"directives": denied,
+				"detail":     "your hosting package lets only an administrator set: " + strings.Join(denied, ", "),
+			})
+			return
+		}
+	}
+
 	// Update settings
 	settings := repository.DomainPHPSettings{
 		MemoryLimit:       req.PHPMemoryLimit,
@@ -443,4 +486,97 @@ func (h *domainPHPSettingsHandler) patch(c *gin.Context) {
 	// For now, return 200 OK.
 
 	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+// ownerPackage returns the hosting package of a domain's owner: nil when the
+// owner has no package, or the package row is gone (the catalog defaults
+// apply, as for every other package-gated feature, GH #282). Any other failure,
+// including missing repositories, is an error so the caller fails closed.
+func (h *domainPHPSettingsHandler) ownerPackage(ctx context.Context, userID string) (*models.HostingPackage, error) {
+	if h.cfg.Users == nil || h.cfg.Packages == nil {
+		return nil, errors.New("php settings policy: users/packages repository not wired")
+	}
+	user, err := h.cfg.Users.FindByID(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("load owner: %w", err)
+	}
+	if user.PackageID == nil || *user.PackageID == "" {
+		return nil, nil
+	}
+	pkg, err := h.cfg.Packages.FindByID(ctx, *user.PackageID)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("load package: %w", err)
+	}
+	return pkg, nil
+}
+
+// callerPHPPolicy returns the owner's resolved policy and the directives the
+// caller may set. When the owner's package cannot be resolved, every
+// directive reads admin_only and a tenant may set none.
+func (h *domainPHPSettingsHandler) callerPHPPolicy(ctx context.Context, isAdmin bool, ownerID string) (map[string]models.PHPSettingLevel, []string) {
+	var policy map[string]models.PHPSettingLevel
+	pkg, err := h.ownerPackage(ctx, ownerID)
+	if err != nil {
+		slog.WarnContext(ctx, "php-settings: resolve owner package", "error", err, "user_id", ownerID)
+		policy = make(map[string]models.PHPSettingLevel, len(models.PHPSettingCatalog))
+		for _, d := range models.PHPSettingCatalog {
+			policy[d.Directive] = models.PHPSettingAdminOnly
+		}
+	} else {
+		policy = pkg.ResolvedPHPSettingsPolicy()
+	}
+	editable := make([]string, 0, len(models.PHPSettingCatalog))
+	for _, d := range models.PHPSettingCatalog {
+		if isAdmin || policy[d.Directive].TenantMaySet() {
+			editable = append(editable, d.Directive)
+		}
+	}
+	return policy, editable
+}
+
+// changedPHPDirectives lists, in catalog order, the directives whose value in
+// the request differs from the domain's stored value (nil = no override).
+func changedPHPDirectives(req updateDomainPHPSettingsRequest, dom *models.Domain) []string {
+	changed := map[string]bool{
+		"memory_limit":        !eqPtr(req.PHPMemoryLimit, dom.PHPMemoryLimit),
+		"upload_max_filesize": !eqPtr(req.PHPUploadMaxFilesize, dom.PHPUploadMaxFilesize),
+		"post_max_size":       !eqPtr(req.PHPPostMaxSize, dom.PHPPostMaxSize),
+		"max_input_vars":      !eqPtr(req.PHPMaxInputVars, dom.PHPMaxInputVars),
+		"max_execution_time":  !eqPtr(req.PHPMaxExecutionTime, dom.PHPMaxExecutionTime),
+		"max_input_time":      !eqPtr(req.PHPMaxInputTime, dom.PHPMaxInputTime),
+		"display_errors":      !eqPtr(req.PHPDisplayErrors, dom.PHPDisplayErrors),
+		"error_reporting":     !eqPtr(req.PHPErrorReporting, dom.PHPErrorReporting),
+		"date.timezone":       !eqPtr(req.PHPTimezone, dom.PHPTimezone),
+	}
+	var out []string
+	for _, d := range models.PHPSettingCatalog {
+		// A catalog directive this map does not compare counts as changed, so
+		// adding one to the catalog without comparing it here locks it for a
+		// tenant rather than letting their change through unchecked.
+		if c, ok := changed[d.Directive]; !ok || c {
+			out = append(out, d.Directive)
+		}
+	}
+	return out
+}
+
+func eqPtr[T comparable](a, b *T) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
+}
+
+// phpPolicyAdmin reports whether the caller sets PHP directives as an admin:
+// a real admin, or an admin acting as the domain's owner (ADR-0128). An admin
+// has no separate page for a domain's PHP settings and opens the owner's page
+// through impersonation, so the owner's package policy does not bind them
+// there (GH #1701). ImpersonatedBy is set only by ResolveImpersonation, after
+// it has checked the real session is an admin's and the grant is theirs; the
+// owner check above still scopes the request to the impersonated user.
+func phpPolicyAdmin(claims *auth.AccessClaims) bool {
+	return claims.IsAdmin || claims.ImpersonatedBy != ""
 }

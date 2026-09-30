@@ -113,6 +113,9 @@ type createPackageRequest struct {
 	FpmAdvancedMode    bool   `json:"fpm_advanced_mode"`
 	FpmVersionDefaults string `json:"fpm_version_defaults"`
 	DockerAppSlugs     string `json:"docker_app_slugs"`
+	// PHPSettingsPolicy (GH #1701): JSON object of php.ini directive -> level
+	// ('' = every directive at its default). See models.PHPSettingCatalog.
+	PHPSettingsPolicy string `json:"php_settings_policy"`
 	// M13: nspawn image pin (empty = use server default).
 	NspawnImageVersion string `json:"nspawn_image_version"`
 }
@@ -153,6 +156,7 @@ type updatePackageRequest struct {
 	FpmAdvancedMode    *bool   `json:"fpm_advanced_mode"`
 	FpmVersionDefaults *string `json:"fpm_version_defaults"`
 	DockerAppSlugs     *string `json:"docker_app_slugs"`
+	PHPSettingsPolicy  *string `json:"php_settings_policy"` // GH #1701
 	NspawnImageVersion *string `json:"nspawn_image_version"`
 }
 
@@ -221,6 +225,12 @@ func (h *packageHandler) create(c *gin.Context) {
 		return
 	}
 	req.EgressSSHOutCIDRs = normEgressCIDRs
+	// GH #1701: validate + canonicalise the PHP settings policy.
+	normPHPPolicy, phpPolicyErr := models.NormalizePHPSettingsPolicy(req.PHPSettingsPolicy)
+	if phpPolicyErr != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_php_settings_policy", "detail": phpPolicyErr.Error()})
+		return
+	}
 	pkg := &models.HostingPackage{
 		ID:               ids.NewULID(),
 		Name:             req.Name,
@@ -261,6 +271,7 @@ func (h *packageHandler) create(c *gin.Context) {
 		FpmAdvancedMode:    req.FpmAdvancedMode,
 		FpmVersionDefaults: req.FpmVersionDefaults,
 		DockerAppSlugs:     req.DockerAppSlugs,
+		PHPSettingsPolicy:  normPHPPolicy,
 		CreatedAt:          now,
 		UpdatedAt:          now,
 	}
@@ -454,6 +465,14 @@ func (h *packageHandler) update(c *gin.Context) {
 	}
 	if req.DockerAppSlugs != nil {
 		pkg.DockerAppSlugs = *req.DockerAppSlugs
+	}
+	if req.PHPSettingsPolicy != nil { // GH #1701
+		norm, err := models.NormalizePHPSettingsPolicy(*req.PHPSettingsPolicy)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_php_settings_policy", "detail": err.Error()})
+			return
+		}
+		pkg.PHPSettingsPolicy = norm
 	}
 	if req.NspawnImageVersion != nil {
 		v := strings.TrimSpace(*req.NspawnImageVersion)
