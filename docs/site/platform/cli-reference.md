@@ -4046,6 +4046,7 @@ jabali package create [flags]
 - `--name` — package name (required)
 - `--nspawn-image` — pin users to an nspawn rootfs version (empty=server default)
 - `--php-exec` — opt out of the PHP command-exec lockdown (exec/proc_open work)
+- `--php-settings-policy` — JSON object of php.ini directive to level (admin_only / tenant_allowed; tenant_privileged for security-sensitive directives) saying who may set it on the per-domain PHP Settings page — GH #1701. Empty = defaults (tenants may set every directive they can today). The CLI and admins are not limited by it. e.g. '{"memory_limit":"admin_only"}'
 - `--scheduled-backups` — allow tenant scheduled backups
 - `--ssh` — enable SSH access
 - `--webmail` — enable webmail (Bulwark UI) for this package (default `true`)
@@ -4103,6 +4104,7 @@ jabali package edit <package-id> [flags]
 - `--name` — package name
 - `--nspawn-image` — pin users to an nspawn rootfs version (empty clears the pin)
 - `--php-exec` — PHP command-exec opt-out (true/false)
+- `--php-settings-policy` — JSON object of php.ini directive to level (admin_only / tenant_allowed; tenant_privileged for security-sensitive directives) saying who may set it on the per-domain PHP Settings page — GH #1701. Empty = defaults (tenants may set every directive they can today). The CLI and admins are not limited by it. e.g. '{"memory_limit":"admin_only"}'
 - `--scheduled-backups` — tenant scheduled backups (true/false)
 - `--ssh` — SSH access (true/false)
 - `--webmail` — webmail Bulwark UI (true/false)

@@ -203,3 +203,58 @@ describe("DomainPHPSettingsPanel (GH #1543)", () => {
     });
   });
 });
+
+// GH #1701: the API says which directives the caller may set (`editable`) and
+// the owner's package policy. A directive the caller may not set renders
+// read-only with a lock tag; an admin sees which ones the tenant cannot change.
+describe("DomainPHPSettingsPanel package policy (GH #1701)", () => {
+  const ALL = [
+    "memory_limit",
+    "upload_max_filesize",
+    "post_max_size",
+    "max_input_vars",
+    "max_execution_time",
+    "max_input_time",
+    "display_errors",
+    "error_reporting",
+    "date.timezone",
+  ];
+  const policy = Object.fromEntries(ALL.map((d) => [d, d === "memory_limit" ? "admin_only" : "tenant_allowed"]));
+
+  function withSettings(extra: Record<string, unknown>) {
+    mocked.get.mockImplementation((url: string) => {
+      if (url === "/php/versions") return Promise.resolve({ data: { versions: ["8.3"] } });
+      if (url === "/domains/d1/php-settings")
+        return Promise.resolve({ data: { ...SETTINGS, php_memory_limit: "256M", policy, ...extra } });
+      return Promise.resolve({ data: {} });
+    });
+  }
+
+  function memoryLimitSelect(): HTMLElement {
+    const item = screen.getByText("userphpsettingspage.memory_limit").closest(".ant-form-item");
+    const sel = item?.querySelector(".ant-select");
+    if (!sel) throw new Error("memory_limit select not found");
+    return sel as HTMLElement;
+  }
+
+  it("a tenant sees a locked directive read-only, the others editable", async () => {
+    withSettings({ editable: ALL.filter((d) => d !== "memory_limit") });
+    renderPanel();
+    expect(await screen.findByText("Set by your administrator")).toBeInTheDocument();
+    expect(screen.getAllByText("Set by your administrator")).toHaveLength(1);
+    expect(memoryLimitSelect().className).toContain("ant-select-disabled");
+    const upload = screen
+      .getByText("userphpsettingspage.upload_max_file_size")
+      .closest(".ant-form-item")
+      ?.querySelector(".ant-select");
+    expect(upload?.className).not.toContain("ant-select-disabled");
+  });
+
+  it("an admin can change every directive and sees which ones the tenant cannot", async () => {
+    withSettings({ editable: ALL });
+    renderPanel();
+    expect(await screen.findByText("Admin only")).toBeInTheDocument();
+    expect(screen.queryByText("Set by your administrator")).toBeNull();
+    expect(memoryLimitSelect().className).not.toContain("ant-select-disabled");
+  });
+});

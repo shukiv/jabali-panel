@@ -73,6 +73,29 @@ durable started/ended audit trail.
    An expired/revoked grant returns a specific 4xx so the SPA drops back to
    the admin view instead of silently acting as admin.
 
+### Exception: per-domain PHP settings policy (GH #1701)
+
+`GET/PATCH /domains/:id/php-settings` treats an act-as request as an admin
+when it applies the domain owner's package PHP settings policy
+(`phpPolicyAdmin` in `internal/api/domain_php_settings.go`): the admin may
+set a directive the owner's package keeps for admins. There is no admin-side
+page for a domain's PHP settings, so act-as is the only UI path an admin has
+to that surface, and without this exception an admin could change an
+admin-only directive only through the CLI.
+
+The exception is narrow:
+- It covers this one handler and only the package-policy check. The IDOR
+  check still confines the request to the target's own domains, and every
+  other rule in this section is unchanged: `RequireAdmin` endpoints still
+  403 during act-as.
+- It grants nothing an admin cannot already do: admins set these directives
+  through the CLI.
+- `ImpersonatedBy` is set only by `ResolveImpersonation`, after checks 1 and
+  3 above, and the request is audited with the real admin as actor (4).
+
+Do not "fix" this handler to match point 2 without first giving admins
+another way to set admin-only PHP directives from the panel.
+
 This is a deliberate, audited **carve-out around ADR-0034**: Kratos remains
 the sole *authenticator*; impersonation is an *authorization* overlay for
 an already-authenticated admin, fully logged and reversible.

@@ -53,6 +53,7 @@ var packageFieldFlag = map[string]string{
 	"fpm_version_defaults":             "fpm-version-defaults",
 	"docker_app_slugs":                 "docker-app-slugs",
 	"nspawn_image_version":             "nspawn-image",
+	"php_settings_policy":              "php-settings-policy", // GH #1701
 }
 
 // packageNonEditableJSON are hosting_packages columns that are identity /
@@ -311,4 +312,31 @@ func TestApplyPackageEditFlags_EgressTriStateGarbageIsError(t *testing.T) {
 	require.Error(t, err)
 	require.False(t, changed)
 	require.False(t, p.EgressSSHOut, "row untouched on a bad toggle value")
+}
+
+// GH #1701: the CLI stores the same canonical PHP settings policy the REST
+// path does, and refuses the same invalid ones.
+func TestBuildPackageFromCreateFlags_NormalizesPHPSettingsPolicy(t *testing.T) {
+	p, err := buildPackageFromCreateFlags(packageCreateFlags{name: "x", phpSettingsPolicy: `{"post_max_size":"admin_only","memory_limit":"admin_only"}`})
+	require.NoError(t, err)
+	require.Equal(t, `{"memory_limit":"admin_only","post_max_size":"admin_only"}`, p.PHPSettingsPolicy)
+
+	_, err = buildPackageFromCreateFlags(packageCreateFlags{name: "x", phpSettingsPolicy: `{"disable_functions":"tenant_allowed"}`})
+	require.Error(t, err, "a sensitive directive can never be tenant_allowed")
+}
+
+func TestApplyPackageEditFlags_PHPSettingsPolicy(t *testing.T) {
+	p := &models.HostingPackage{PHPSettingsPolicy: `{"memory_limit":"admin_only"}`}
+	changed, err := applyPackageEditFlags(changedSet("disk-mb"), p, packageEditFlags{diskMB: 1})
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, `{"memory_limit":"admin_only"}`, p.PHPSettingsPolicy, "an unnamed policy must not change")
+
+	changed, err = applyPackageEditFlags(changedSet("php-settings-policy"), p, packageEditFlags{phpSettingsPolicy: ""})
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, "", p.PHPSettingsPolicy, "an empty --php-settings-policy resets to the defaults")
+
+	_, err = applyPackageEditFlags(changedSet("php-settings-policy"), p, packageEditFlags{phpSettingsPolicy: `{"nope":"admin_only"}`})
+	require.Error(t, err)
 }
