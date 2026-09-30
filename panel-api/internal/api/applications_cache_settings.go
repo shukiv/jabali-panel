@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/auth"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
@@ -353,7 +354,7 @@ func (h *wordPressHandler) cacheStats(c *gin.Context) {
 	// tenant would leak other tenants' aggregate cache activity (used_memory
 	// deltas). Tenants see only their own per-prefix stats (keys/connection).
 	if claims.IsAdmin && h.cfg.Redis != nil {
-		if info, iErr := h.cfg.Redis.Info(c.Request.Context(), "stats", "memory").Result(); iErr == nil {
+		if info, ok := redisServerInfo(c.Request.Context(), h.cfg.Redis, "stats", "memory"); ok {
 			hits := infoInt(info, "keyspace_hits")
 			miss := infoInt(info, "keyspace_misses")
 			if hits+miss > 0 {
@@ -373,6 +374,19 @@ func (h *wordPressHandler) cacheStats(c *gin.Context) {
 		}
 	}
 	c.JSON(http.StatusOK, gin.H{"stats": stats})
+}
+
+// redisServerInfo runs INFO on the panel's Redis connection and logs a failure
+// instead of dropping it. The panel's ACL user lacked INFO (it sits in
+// @dangerous) and every caller discarded the NOPERM, so the eviction warning
+// and the admin hit ratio silently never appeared.
+func redisServerInfo(ctx context.Context, rdb *redis.Client, sections ...string) (string, bool) {
+	info, err := rdb.Info(ctx, sections...).Result()
+	if err != nil {
+		slog.WarnContext(ctx, "cache: redis INFO failed", "err", err, "sections", sections)
+		return "", false
+	}
+	return info, true
 }
 
 // infoInt extracts an integer field from a Redis INFO text block.
@@ -563,7 +577,7 @@ func (h *wordPressHandler) cacheAdvise(c *gin.Context) {
 	// Redis eviction pressure (admin-privileged INFO).
 	evicted := 0
 	if claims.IsAdmin && h.cfg.Redis != nil {
-		if info, iErr := h.cfg.Redis.Info(c.Request.Context(), "stats").Result(); iErr == nil {
+		if info, ok := redisServerInfo(c.Request.Context(), h.cfg.Redis, "stats"); ok {
 			evicted = infoInt(info, "evicted_keys")
 			if evicted > 0 {
 				note += " Redis is evicting keys under memory pressure (evicted_keys>0) — object-cache entries may be dropped early; consider a smaller max-TTL or more Redis memory."
