@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
+	"os"
 	"regexp"
+	"strings"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
 )
@@ -14,9 +17,12 @@ import (
 // override — so the panel's per-domain PHP Settings dropdowns can label the
 // inherit option with the real value (e.g. "256M (Default)") instead of a
 // generic "Pool default". The panel overlays the pool's own ini overrides
-// (which it holds in the DB) on top of this baseline; here we report only what
-// the box's FPM master config + conf.d resolve to, read straight from PHP so a
-// distro/operator-tuned php.ini is reflected truthfully rather than guessed.
+// (which it holds in the DB) on top of this baseline; here we report what the
+// box's FPM master config + conf.d resolve to, read straight from PHP so a
+// distro/operator-tuned php.ini is reflected truthfully rather than guessed,
+// with the pool template's literal values over it (overlayPoolTemplateDefaults).
+// The same baseline is what a domain's vhost pins for a setting it leaves unset
+// (php_flag_pins.go, php_value_pins.go), so the label and the pin agree.
 
 // phpIniDefaultDirectives is the fixed set of per-domain PHP directives whose
 // box baseline the panel labels as the inherited "(Default)". Kept in lockstep
@@ -96,7 +102,84 @@ func readPHPIniDefaults(ctx context.Context, version string) (map[string]string,
 	if uerr := json.Unmarshal(out, &defaults); uerr != nil {
 		return nil, fmt.Errorf("php ini output parse failed: %v", uerr)
 	}
-	return defaults, nil
+	return overlayPoolTemplateDefaults(defaults, readPoolTemplateIniValues(poolTemplatePath())), nil
+}
+
+// The php CLI read above is not the whole FPM baseline (GH #1701). Every jabali
+// pool conf is rendered from the pool template, whose literal php_value lines
+// (GH #253: memory_limit=512M, max_execution_time=300, ...) are what a domain
+// with no value of its own actually runs with; php.ini's 128M never applies.
+// And the CLI SAPI forces max_execution_time=0 and max_input_time=-1 whatever
+// php.ini says, so a CLI read of those two is never the FPM value. A pool's
+// own ini overrides (php_admin_value, from the panel DB) sit above both; the
+// panel overlays those itself.
+
+// phpCLIHardcodedDirectives are the tracked directives the php CLI SAPI forces.
+var phpCLIHardcodedDirectives = map[string]bool{"max_execution_time": true, "max_input_time": true}
+
+// poolTemplatePath is the pool template the agent renders pool confs from.
+// JABALI_PHP_POOL_TEMPLATE_PATH overrides it for tests.
+func poolTemplatePath() string {
+	if p := os.Getenv("JABALI_PHP_POOL_TEMPLATE_PATH"); p != "" {
+		return p
+	}
+	return "/etc/jabali-panel/php-pool.conf.tmpl"
+}
+
+// poolTemplateIniRE matches a literal php_value / php_admin_value line.
+var poolTemplateIniRE = regexp.MustCompile(`^php(_admin)?_value\[([A-Za-z0-9_.]+)\]\s*=\s*(.*?)\s*$`)
+
+// readPoolTemplateIniValues returns the directives the pool template sets with
+// a literal value. Templated lines ({{ ... }}) are skipped; php_admin_value
+// beats php_value for the same directive, as in FPM. An unreadable template
+// yields nil (logged): the CLI read then stands alone, minus the CLI-hardcoded
+// directives.
+func readPoolTemplateIniValues(path string) map[string]string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		log.Printf("php.ini_defaults: pool template %s unreadable: %v", path, err)
+		return nil
+	}
+	vals := map[string]string{}
+	admin := map[string]bool{}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.Contains(line, "{{") {
+			continue
+		}
+		m := poolTemplateIniRE.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		isAdmin := m[1] != ""
+		if admin[m[2]] && !isAdmin {
+			continue
+		}
+		vals[m[2]] = m[3]
+		if isAdmin {
+			admin[m[2]] = true
+		}
+	}
+	return vals
+}
+
+// overlayPoolTemplateDefaults layers the template's literal values over the CLI
+// read for the tracked directives, and drops a CLI-hardcoded directive the
+// template does not set (absent means unknown, never the CLI's 0 or -1).
+func overlayPoolTemplateDefaults(cli, tmpl map[string]string) map[string]string {
+	out := make(map[string]string, len(cli))
+	for k, v := range cli {
+		if phpCLIHardcodedDirectives[k] {
+			continue
+		}
+		out[k] = v
+	}
+	for _, d := range phpIniDefaultDirectives {
+		if v, ok := tmpl[d]; ok {
+			out[d] = v
+		}
+	}
+	return out
 }
 
 // phpIniReadScript builds the PHP -r program that echoes json_encode of ini_get

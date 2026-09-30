@@ -29,10 +29,13 @@ import (
 // than pinned to a guess.
 
 // phpFlagPins holds the three flags. A nil field is unset (no pin emitted).
+// Values carries the inherited value pins ("directive=value", see
+// php_value_pins.go), appended the same way.
 type phpFlagPins struct {
 	LogErrors    *bool
 	FileUploads  *bool
 	ShortOpenTag *bool
+	Values       []string
 }
 
 // withPHPFlagPins appends the pinned flags to a PHP_VALUE body. An empty body
@@ -42,7 +45,7 @@ func withPHPFlagPins(phpValue string, pins phpFlagPins) string {
 	if phpValue == "" {
 		return ""
 	}
-	var parts []string
+	parts := append([]string(nil), pins.Values...)
 	for _, f := range []struct {
 		name string
 		v    *bool
@@ -109,11 +112,12 @@ func phpFlagPinsForParams(ctx context.Context, p *domainCreateParams) phpFlagPin
 	if !p.HasPHP {
 		return phpFlagPins{}
 	}
-	sent := phpFlagPins{LogErrors: p.PHPLogErrors, FileUploads: p.PHPFileUploads, ShortOpenTag: p.PHPShortOpenTag}
-	if p.PHPFlagsInheritUnknown {
-		return sent
+	pins := phpFlagPins{LogErrors: p.PHPLogErrors, FileUploads: p.PHPFileUploads, ShortOpenTag: p.PHPShortOpenTag}
+	if !p.PHPFlagsInheritUnknown {
+		pins = resolvePHPFlagPins(ctx, true, p.PHPVersion, pins)
 	}
-	return resolvePHPFlagPins(ctx, true, p.PHPVersion, sent)
+	pins.Values = phpInheritedValuePins(ctx, p)
+	return pins
 }
 
 // phpIniBool reads an ini_get() flag: "1" (or on/yes/true) is on; "", "0" and

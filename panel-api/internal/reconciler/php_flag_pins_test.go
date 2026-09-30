@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"reflect"
 	"testing"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
@@ -32,9 +33,9 @@ func TestPHPFlagPinParams_DomainThenPool(t *testing.T) {
 	}}
 	dom := &models.Domain{ID: "d1", PHPLogErrors: bp(true)}
 	got := flagPinReconciler(ovs).phpFlagPinParams(context.Background(), dom, "p1")
-	want := map[string]any{"php_log_errors": true, "php_file_uploads": false}
-	if len(got) != len(want) || got["php_log_errors"] != true || got["php_file_uploads"] != false {
-		t.Fatalf("got %v, want %v (domain log_errors wins, pool file_uploads off, short_open_tag left to the agent)", got, want)
+	want := map[string]any{"php_log_errors": true, "php_file_uploads": false, "php_pool_values": map[string]string{"memory_limit": "1G"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v, want %v (domain log_errors wins, pool file_uploads off, pool memory_limit sent, short_open_tag left to the agent)", got, want)
 	}
 }
 
@@ -60,9 +61,9 @@ func TestPHPFlagPinParams_ReadsPoolOverridesAsPHPDoes(t *testing.T) {
 			{Directive: "file_uploads", Value: "0", Kind: "value"},
 			{Directive: "short_open_tag", Value: "1", Kind: "flag"},
 			{Directive: "log_errors", Value: "yes", Kind: "flag"},
-			// Not one of the three flags: never read as a boolean.
-			{Directive: "memory_limit", Value: "1G", Kind: "value"},
-			{Directive: "memory_limit", Value: "0", Kind: "value"},
+			// Not a pinned directive: never read as a boolean.
+			{Directive: "opcache.jit", Value: "tracing", Kind: "value"},
+			{Directive: "opcache.jit", Value: "0", Kind: "value"},
 		},
 	}}
 	got := flagPinReconciler(ovs).phpFlagPinParams(context.Background(), &models.Domain{ID: "d1"}, "p1")
@@ -135,5 +136,32 @@ func TestCreateDomainOnAgent_SendsPHPFlagPins(t *testing.T) {
 	}
 	if _, ok := params["php_log_errors"]; ok {
 		t.Fatalf("log_errors is set by neither the domain nor the pool; the agent pins php.ini, got %v", params["php_log_errors"])
+	}
+}
+
+// The pool's value overrides go to the agent as php_pool_values, so a domain
+// that leaves one unset is pinned to it; two that disagree leave it out and
+// mark the inherited values unknown.
+func TestPHPFlagPinParams_SendsPoolValues(t *testing.T) {
+	ovs := &fakeIniOverrideRepo{byPool: map[string][]models.PHPPoolIniOverride{
+		"p1": {
+			{Directive: "memory_limit", Value: "1G", Kind: "value"},
+			{Directive: "date.timezone", Value: "Europe/Berlin", Kind: "value"},
+			{Directive: "opcache.memory_consumption", Value: "256", Kind: "value"},
+		},
+	}}
+	got := flagPinReconciler(ovs).phpFlagPinParams(context.Background(), &models.Domain{ID: "d1"}, "p1")
+	want := map[string]string{"memory_limit": "1G", "date.timezone": "Europe/Berlin"}
+	if !reflect.DeepEqual(got["php_pool_values"], want) {
+		t.Fatalf("php_pool_values = %v, want %v", got["php_pool_values"], want)
+	}
+	if _, ok := got["php_flags_inherit_unknown"]; ok {
+		t.Fatalf("got %v, want no inherit_unknown", got)
+	}
+
+	ovs.byPool["p1"] = append(ovs.byPool["p1"], models.PHPPoolIniOverride{Directive: "memory_limit", Value: "2G", Kind: "value"})
+	got = flagPinReconciler(ovs).phpFlagPinParams(context.Background(), &models.Domain{ID: "d1"}, "p1")
+	if got["php_flags_inherit_unknown"] != true || !reflect.DeepEqual(got["php_pool_values"], map[string]string{"date.timezone": "Europe/Berlin"}) {
+		t.Fatalf("conflicting memory_limit: got %v, want inherit_unknown and only date.timezone", got)
 	}
 }
