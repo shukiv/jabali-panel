@@ -170,19 +170,20 @@ func Create(ctx context.Context, d Deps, in CreateInput) (*CreateResult, error) 
 		return nil, fmt.Errorf("%w: password required", ErrInvalidUsername)
 	}
 
-	// Effective username — caller-supplied OR derived from email
-	// prefix. Admins keep nil (no Linux user provisioned).
+	// Effective username — caller-supplied OR derived from email prefix.
+	// Admins need one too: it is the login identifier (ADR-0119), and
+	// migration 000164 made users.username NOT NULL, so an admin row without
+	// one failed to insert (GH #1938). An admin still gets no Linux account
+	// (see the provisioning step below).
 	var effectiveUsername *string
-	if !in.IsAdmin {
-		if in.Username != nil {
-			effectiveUsername = in.Username
-		} else {
-			derived := UserFromEmail(in.Email)
-			effectiveUsername = &derived
-		}
-		if effectiveUsername == nil || *effectiveUsername == "" || !usernameRe.MatchString(*effectiveUsername) {
-			return nil, fmt.Errorf("%w: must match ^[a-z_][a-z0-9_-]{0,31}$", ErrInvalidUsername)
-		}
+	if in.Username != nil {
+		effectiveUsername = in.Username
+	} else {
+		derived := UserFromEmail(in.Email)
+		effectiveUsername = &derived
+	}
+	if *effectiveUsername == "" || !usernameRe.MatchString(*effectiveUsername) {
+		return nil, fmt.Errorf("%w: must match ^[a-z_][a-z0-9_-]{0,31}$", ErrInvalidUsername)
 	}
 
 	// Package validation — when supplied + Packages wired.
