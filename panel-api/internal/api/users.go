@@ -318,7 +318,7 @@ func (h *userHandler) create(c *gin.Context) {
 		SkipProvision: req.SkipProvision,
 	})
 	if err != nil {
-		userOpsRESTError(c, err)
+		userOpsRESTError(c, h.cfg.Log, err)
 		return
 	}
 	if res.ProvisionWarning != "" {
@@ -334,8 +334,10 @@ func (h *userHandler) create(c *gin.Context) {
 	c.JSON(http.StatusCreated, res.User)
 }
 
-// userOpsRESTError translates userops sentinels to HTTP status + JSON.
-func userOpsRESTError(c *gin.Context, err error) {
+// userOpsRESTError translates userops sentinels to HTTP status + JSON. An
+// error it cannot map is a 500 the caller sees only as "internal", so it is
+// logged (GH #1938: an admin create failed with nothing in the journal).
+func userOpsRESTError(c *gin.Context, log *slog.Logger, err error) {
 	switch {
 	case errors.Is(err, userops.ErrInvalidUsername):
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -357,6 +359,9 @@ func userOpsRESTError(c *gin.Context, err error) {
 			"detail": err.Error(),
 		})
 	default:
+		if log != nil {
+			log.Error("user create failed", "path", c.FullPath(), "err", err)
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 	}
 }

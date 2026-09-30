@@ -4,7 +4,7 @@ Reached from **Users → Create User**. Single-form wizard that provisions every
 
 ## Required fields
 
-- **Username** — the login identifier (M54: you sign in with the username, not the email). Lowercase, alphanumeric plus `-` and `_`, 3–32 characters. Becomes the Linux account name, the PHP pool name, and the SFTP login.
+- **Username** — the login identifier (M54: you sign in with the username, not the email). Lowercase, alphanumeric plus `-` and `_`, 3–32 characters. Becomes the Linux account name, the PHP pool name, and the SFTP login. An admin needs a username too, because it is how they sign in, but gets no Linux account, PHP pool or SFTP login.
 - **Role** — `user` (hosting customer) or `admin` (full operator access).
 - **Package** — selected from [Hosting Packages](./hosting-packages.md). Determines quotas and limits.
 - **Primary domain** — the first hosted domain for this user. Created in the same transaction.
