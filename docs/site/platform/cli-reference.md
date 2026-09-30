@@ -2180,7 +2180,7 @@ jabali domain disclaimer set <domain-name-or-id> [flags]
 **Flags:**
 
 - `--file` — Read disclaimer from this file (overrides --text)
-- `--text` — Disclaimer text (UTF-8, plain or HTML)
+- `--text` — Disclaimer text (UTF-8 plain text; HTML mail shows it escaped)
 
 ##### `jabali domain disclaimer show`
 

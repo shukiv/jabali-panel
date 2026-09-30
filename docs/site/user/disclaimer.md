@@ -1,43 +1,53 @@
 # Disclaimer
 
-`/jabali-panel/mail/disclaimer`. A server-side disclaimer appended to outbound mail per domain.
+A per-domain disclaimer that the mail server appends to mail sent from the domain.
 
-## Configuration
+## Where to set it
 
-Per-domain:
+**Mail → Mail Domains → your domain → Settings → Disclaimer**
+(`/jabali-panel/mail-domains/<domain id>/settings`). It used to be a separate
+Disclaimer tab; old links to that tab open Settings.
 
-- **Active** — on / off.
-- **Plain-text disclaimer** — the text to append to plain-text messages and to the text part of multipart messages.
-- **HTML disclaimer** — the HTML fragment to append to HTML messages and to the HTML part of multipart messages.
-- **Apply to** — all outbound, or only outbound to external recipients (not to other mailboxes on the same panel).
+The Settings tab shows the disclaimer only when the domain has email enabled.
 
-## Placement
+- **Enable Disclaimer**: on or off.
+- **Disclaimer Text**: the text to append. It is required while the disclaimer is on.
 
-Stalwart appends the disclaimer at the bottom of the message body. The header and the signature line (if your client uses a standard `-- \n` separator) are preserved; the disclaimer follows.
+Click **Save** to apply. The change takes effect for the next message; nothing
+has to be restarted.
 
-For HTML messages, the disclaimer is wrapped in a `<div class="jabali-disclaimer">` so you can target it with the receiving client's CSS, or so that bridging tools can strip it.
+The same setting is available from the command line:
 
-## Templating variables
+```
+jabali domain disclaimer show  <domain-name-or-id>
+jabali domain disclaimer set   <domain-name-or-id> --text "..."   # or --file <path>
+jabali domain disclaimer clear <domain-name-or-id>
+```
 
-The disclaimer body may include:
+## What gets added
 
-- `${sender-name}` — the display name of the sender.
-- `${sender-address}` — the sender's email.
-- `${domain}` — the sending domain.
-- `${date}` — the message timestamp in the recipient's locale (best effort; defaults to UTC).
+The text is plain text. The mail server adds it to every readable part of the
+message, and leaves attachments alone:
 
-## Common patterns
+- **Plain-text part**: the text goes at the end, after a `-- ` signature separator line.
+- **HTML part**: the text goes just before `</body>`, after a horizontal rule. It is
+  HTML-escaped, so markup such as `<b>` or a link shows up as literal text.
+  You cannot put HTML in a disclaimer.
 
-- **Legal notice** — confidentiality clause, recipient-error instructions.
-- **Marketing footer** — small "Powered by ..." attribution with a logo.
-- **Compliance** — required disclosures for regulated industries (financial advice, medical).
+A multipart message (plain text and HTML together) gets the disclaimer in both parts.
 
-## Caveats
+The disclaimer is chosen by the sender's domain. It is added when the message's
+envelope sender is an address on a domain that has email and the disclaimer
+turned on.
 
-- HTML disclaimer rendering depends on the receiving client. Outlook, Gmail, Apple Mail, and Thunderbird all render the disclaimer as expected; older clients or text-only clients see only the plain-text version.
-- DKIM signatures are computed *after* the disclaimer is appended, so the signature stays valid.
-- The disclaimer is not added to messages sent by automated systems on the host (notifications from the panel itself, cron output) — only to outbound mail sent through SMTP submission.
+## Delivery is never blocked
 
-## HTML coverage
+- The mail server re-signs DKIM after the disclaimer is added, so signatures stay valid.
+- If the disclaimer cannot be added (the disclaimer service fails, or the rewritten
+  message would be larger than 48 MB), the message is delivered **without** the
+  disclaimer. It is never bounced or delayed because of the disclaimer.
 
-HTML rendering coverage was deferred pending a live spike on a test VM (see ADR-0052). Test against your primary recipient base before relying on the HTML output for critical compliance.
+## Common uses
+
+- A legal notice: a confidentiality clause and what to do if the mail reached the wrong person.
+- A required disclosure for a regulated business.
