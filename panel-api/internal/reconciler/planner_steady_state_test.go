@@ -20,6 +20,10 @@ import (
 // or is shown to be a read and added here.
 var steadyTickObservations = map[string]bool{
 	"domain.list": true,
+	// The module converger's probe of an enabled module (binary lookup +
+	// systemctl is-active). plannerFixture turns the DNS module on (GH #1820),
+	// so the probe runs every tick; the install it can trigger is backoff-gated.
+	"system.module.status": true,
 }
 
 // steadyStateFixture extends plannerFixture into a host with more of the
