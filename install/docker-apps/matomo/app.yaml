@@ -11,7 +11,7 @@ icon: icon.svg
 upstream: https://github.com/matomo-org/matomo
 documentation: https://matomo.org/docs/
 
-image_channel: matomo:5-apache@sha256:8e6bdd396496a98e4011cfbdc4be996d9259cbd1f09e0651b6058bb9a5984e13
+image_channel: matomo:5-apache@sha256:70b23dfb55d25a32538009f75a0222adf2322515b626512a9228c1b97e51b020
 update_mode: manual
 
 resources:
