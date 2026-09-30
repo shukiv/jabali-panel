@@ -166,6 +166,25 @@ func nginxVhostDocroot(vhostPath string) (string, error) {
 
 var nginxRootRE = regexp.MustCompile(`(?m)^\s*root\s+([^;]+);`)
 
+// nginxVhostCacheOn reports whether the host's vhost has the page cache on (a
+// `fastcgi_cache <zone>;` directive, rendered only when the domain's cache is
+// enabled). A purge on a cache-off vhost succeeds as a no-op, and warming it
+// would only add PHP renders nginx never stores.
+func nginxVhostCacheOn(vhostPath string) bool {
+	b, err := os.ReadFile(vhostPath)
+	if err != nil {
+		return false
+	}
+	for _, m := range nginxFastcgiCacheRE.FindAllSubmatch(b, -1) {
+		if string(m[1]) != "off" {
+			return true
+		}
+	}
+	return false
+}
+
+var nginxFastcgiCacheRE = regexp.MustCompile(`(?m)^\s*fastcgi_cache\s+([^;\s]+)\s*;`)
+
 // wpPurgeItem is one well-formed spool request collected in a tick, before the
 // per-(uid, host) coalescing pass. Ownership is confirmed later, once per group.
 type wpPurgeItem struct {
@@ -310,8 +329,11 @@ func coalesceAndPurge(ctx context.Context, items []*wpPurgeItem, log *slog.Logge
 		removeAll()
 		// Refill what was just purged, so the next visitor gets a HIT instead of
 		// paying a full PHP render (a low-traffic site otherwise serves a cold
-		// page after every edit). Ownership was checked above.
-		wpPurgeStartWarm(ctx, k.host, outPaths, wholeDomain, log)
+		// page after every edit). Ownership was checked above. A vhost with the
+		// cache off stores nothing, so it is not warmed.
+		if nginxVhostCacheOn(filepath.Join(wpPurgeSitesDir, k.host+".conf")) {
+			wpPurgeStartWarm(ctx, k.host, outPaths, wholeDomain, log)
+		}
 	}
 }
 

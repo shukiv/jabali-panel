@@ -24,11 +24,18 @@ type warmCall struct {
 // records every warm the watcher starts.
 func spoolWarmFixture(t *testing.T, purgeErr error) (string, *[]warmCall) {
 	t.Helper()
+	return spoolWarmFixtureVhost(t, purgeErr, "    location ~ \\.php$ {\n        fastcgi_cache jabali_fcgi;\n    }\n")
+}
+
+// spoolWarmFixtureVhost is spoolWarmFixture with extra vhost body lines (the
+// cache directive, or none for a cache-off domain).
+func spoolWarmFixtureVhost(t *testing.T, purgeErr error, extra string) (string, *[]warmCall) {
+	t.Helper()
 	const host = "blog.example"
 	sites := t.TempDir()
 	docroot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(sites, host+".conf"),
-		[]byte("server {\n    root "+docroot+";\n}\n"), 0o644); err != nil {
+		[]byte("server {\n    root "+docroot+";\n"+extra+"}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	origSites, origPurge, origWarm := wpPurgeSitesDir, wpPurgeRunPurge, wpPurgeStartWarm
@@ -80,6 +87,46 @@ func TestCoalesceAndPurge_NoWarmWhenThePurgeFails(t *testing.T) {
 	coalesceAndPurge(context.Background(), []*wpPurgeItem{spoolItem(t, host, os.Getuid(), []string{"/"})}, quietLog())
 	if len(*warms) != 0 {
 		t.Fatalf("warms = %+v, want none after a failed purge", *warms)
+	}
+}
+
+// A domain with the page cache off still purges (a no-op) but is not warmed:
+// nginx would store nothing, so a warm is only extra PHP renders.
+func TestCoalesceAndPurge_NoWarmWhenTheCacheIsOff(t *testing.T) {
+	for name, extra := range map[string]string{
+		"no directive":      "    location ~ \\.php$ {\n        fastcgi_pass unix:/run/php/x.sock;\n        fastcgi_cache_valid 200 5m;\n    }\n",
+		"fastcgi_cache off": "    fastcgi_cache off;\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			host, warms := spoolWarmFixtureVhost(t, nil, extra)
+			purged := false
+			wpPurgeRunPurge = func(context.Context, json.RawMessage) (any, error) { purged = true; return nil, nil }
+			coalesceAndPurge(context.Background(), []*wpPurgeItem{spoolItem(t, host, os.Getuid(), []string{"/"})}, quietLog())
+			if !purged {
+				t.Fatal("the purge should still run for a cache-off domain")
+			}
+			if len(*warms) != 0 {
+				t.Fatalf("warms = %+v, want none for a cache-off domain", *warms)
+			}
+		})
+	}
+}
+
+// The cache-off guard reads the vhost the agent itself renders: a cache-on vhost
+// must read as on, a cache-off one as off, or warming silently stops (or runs
+// for every domain) after a template change.
+func TestNginxVhostCacheOn_MatchesTheRenderedVhost(t *testing.T) {
+	for _, on := range []bool{true, false} {
+		f := filepath.Join(t.TempDir(), "example.com.conf")
+		if err := os.WriteFile(f, []byte(renderVhostForCacheTest(t, on)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if got := nginxVhostCacheOn(f); got != on {
+			t.Errorf("rendered vhost with cache_enabled=%v: nginxVhostCacheOn = %v", on, got)
+		}
+	}
+	if nginxVhostCacheOn(filepath.Join(t.TempDir(), "missing.conf")) {
+		t.Error("a missing vhost must read as cache off")
 	}
 }
 
