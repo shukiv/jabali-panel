@@ -475,7 +475,7 @@ func TestCreate_RefusesTheDirectoryAddress(t *testing.T) {
 func TestCreate_RefusesPostmasterOnATenantDomain(t *testing.T) {
 	repo := &fakeResRepo{}
 	_, err := Create(context.Background(), Deps{Resources: repo}, CreateInput{
-		Domain: emailDomain(), Kind: "mailbox", Name: "postmaster",
+		Domain: emailDomain(), Kind: "calendar", Name: "postmaster",
 	}, nil)
 	if !errors.Is(err, ErrInvalidName) || !errors.Is(err, mailaddr.ErrPostmasterReserved) {
 		t.Fatalf("want ErrInvalidName wrapping ErrPostmasterReserved, got %v", err)
