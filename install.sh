@@ -3685,8 +3685,8 @@ ensure_mariadb_socket_acl_for_jabali() {
 # ADR-0056 + ADR-0059. Unix-socket-only Redis at /run/redis/redis.sock,
 # mode 0660, group jabali-sockets (same pattern as every other service
 # under ADR-0050). AOF on (dispatcher queue survives restart).
-# 128 MB maxmemory with allkeys-lru (safe for both dispatcher queue
-# and future WP object-cache).
+# maxmemory with allkeys-lru: 128 MB in the socket drop-in, raised to fit
+# host RAM by size_redis_maxmemory's 15-jabali-maxmemory.conf.
 #
 # db 0 → panel-api notification dispatcher
 # db 1 → reserved for future WordPress object-cache
@@ -4038,6 +4038,91 @@ install_redis() {
   fi
 
   _ok "Redis listening on unix socket /run/redis/redis.sock mode 0660 ${owner}:${group}"
+}
+
+# size_redis_maxmemory sizes Redis maxmemory to host RAM in its own drop-in,
+# 15-jabali-maxmemory.conf, which loads after 10-jabali-socket.conf and so
+# overrides its fixed 128mb.
+#
+# Why: 128 MB was a starting floor (ADR-0059). One Redis holds every tenant's
+# WordPress object cache plus the notification stream, under allkeys-lru. A
+# fleet box sat at 99.7% of 128 MB: sites' object caches evicted each other,
+# and the notification stream in db 0 was as evictable as any cache key.
+# (Keeping the stream safe from eviction needs its own instance or store; this
+# only makes eviction much rarer.)
+#
+# Sizing, mirroring tune_mariadb_for_ram / bound_stalwart_memory: a fraction
+# of RAM with a floor and a ceiling.
+#   maxmemory = RAM/16 rounded down to a 64 MB step, floor 128 MB (never
+#               below the old value), ceiling 1024 MB
+#   <=2 GB -> 128 MB   4 GB -> 256 MB   8 GB -> 512 MB   >=16 GB -> 1024 MB
+# The 64 MB step, and leaving the RAM figure out of the file, keep MemTotal's
+# small drift across kernel updates from rewriting the drop-in and restarting
+# Redis for nothing.
+# The ceiling matters because an AOF rewrite forks Redis and copy-on-write can
+# briefly double its memory, on a box where MariaDB and Stalwart are already
+# sized to large shares of RAM.
+#
+# Applying it needs a restart: the default user is locked and jabali_panel has
+# no CONFIG, so root has no credential for CONFIG SET. The restart happens only
+# when the drop-in changes (once per box, and again if RAM changes); AOF keeps
+# the keys. Operators override with a higher-numbered drop-in (for example
+# 50-local.conf): Redis applies the last maxmemory it reads.
+# redis_maxmemory_mb <host-ram-mb> — prints Redis maxmemory in MB.
+#
+# Split from size_redis_maxmemory so the brackets can be tested directly at
+# every interesting host size. Pure arithmetic: no filesystem, no systemctl.
+redis_maxmemory_mb() {
+  local mem_mb="$1" mm
+  mm=$((mem_mb / 16 / 64 * 64))
+  [[ $mm -lt 128 ]] && mm=128
+  [[ $mm -gt 1024 ]] && mm=1024
+  printf '%s\n' "$mm"
+}
+
+size_redis_maxmemory() {
+  local dropin_dir="/etc/redis/redis.conf.d"
+  local dropin="${dropin_dir}/15-jabali-maxmemory.conf"
+  local mem_kb mem_mb mm
+
+  # Redis not installed, or installed without jabali's drop-in directory: the
+  # include line install_redis adds is not there, so nothing would read it.
+  command -v redis-server >/dev/null 2>&1 || return 0
+  [[ -d "$dropin_dir" ]] || return 0
+
+  mem_kb=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null || echo 0)
+  mem_mb=$((mem_kb / 1024))
+  if [[ $mem_mb -le 0 ]]; then
+    _warn "redis-mem: cannot read MemTotal; leaving maxmemory as it is"
+    return 0
+  fi
+  mm=$(redis_maxmemory_mb "$mem_mb")
+
+  local desired
+  desired=$(cat <<REDIS_MEM_EOF
+# Managed by jabali install.sh -- sized to host RAM.
+# Do NOT hand-edit; install.sh rewrites on every run. To override, add a
+# higher-numbered drop-in (for example 50-local.conf): the last maxmemory wins.
+# See install.sh:size_redis_maxmemory for the sizing brackets.
+maxmemory ${mm}mb
+REDIS_MEM_EOF
+)
+
+  if [[ -f "$dropin" ]] && cmp -s <(printf '%s\n' "$desired") "$dropin"; then
+    _log "redis-mem: drop-in already current (maxmemory ${mm}mb)"
+    return 0
+  fi
+
+  local tmp
+  tmp="$(mktemp --tmpdir jabali-redis-mem.XXXXXX)"
+  printf '%s\n' "$desired" >"$tmp"
+  install -m 0644 -o root -g root "$tmp" "$dropin"
+  rm -f "$tmp"
+  _log "redis-mem: wrote $dropin (maxmemory ${mm}mb for ${mem_mb} MB RAM)"
+
+  # try-restart: a stopped Redis stays stopped and reads the drop-in when it
+  # next starts.
+  systemctl try-restart redis-server || _warn "redis-mem: redis-server restart failed; maxmemory applies at its next start"
 }
 
 # install_redis_acl — #406 / ADR-0148. Lock the no-AUTH default user and give
@@ -16338,6 +16423,12 @@ EOF
     install_redis_acl
   fi
 
+  # Redis maxmemory sized to host RAM (was a fixed 128mb). Self-heal on every
+  # update; restarts redis-server only when the drop-in changes.
+  if declare -f size_redis_maxmemory >/dev/null 2>&1; then
+    size_redis_maxmemory
+  fi
+
   # JAB-39: ensure PHP runtime extensions (incl. sqlite3/pdo_sqlite) for every
   # installed FPM version — install_base_packages doesn't run on update.
   if declare -f provision_php_extensions >/dev/null 2>&1; then
@@ -16575,6 +16666,7 @@ main() {
   # sources install.sh and runs install_docker_engine on demand.
   install_redis
   install_redis_acl
+  size_redis_maxmemory   # Redis maxmemory sized to host RAM
   # M37 Phase 4: PostgreSQL is OPT-IN. install_postgres no longer runs on
   # fresh install. Operator flips server_settings.postgres_enabled in
   # the Databases tab; panel-api dispatches db.postgres.install which
