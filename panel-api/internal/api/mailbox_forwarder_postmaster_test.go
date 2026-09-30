@@ -10,7 +10,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 )
 
-// fwRefusingForwarders is the database refusing the row (migration 000308).
+// fwRefusingForwarders is the database refusing the row (migration 000309).
 type fwRefusingForwarders struct{ fwFakeForwarders }
 
 func (f *fwRefusingForwarders) Create(context.Context, *models.EmailForwarder) error {

@@ -9,7 +9,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/mailaddr"
 )
 
-// postmasterReservedMessage is the MESSAGE_TEXT of the migration 000308
+// postmasterReservedMessage is the MESSAGE_TEXT of the migration 000309
 // triggers that refuse a new mailbox, alias, group or shared resource at
 // postmaster@ on a domain other than the panel hostname's (ADR-0110).
 const postmasterReservedMessage = "postmaster@ belongs to the server administrator"
