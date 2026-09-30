@@ -225,7 +225,16 @@ npm_report() {
   json="$(cd "$REPO_DIR/panel-ui" && npm outdated --json 2>/dev/null)"
   [[ -z "$json" || "$json" == "{}" ]] && { echo "All npm deps up to date."; return; }
   if command -v jq >/dev/null 2>&1; then
-    echo "$json" | jq -r 'to_entries[] | "\(.key) \(.value.current) -> \(.value.latest)"'
+    # Without node_modules (a fresh checkout, the monthly workflow) npm reports
+    # no "current" and lists every dependency; the version the lockfile pins is
+    # what installs, so report that and drop the ones already at latest.
+    local lock="$REPO_DIR/panel-ui/package-lock.json"
+    [[ -f "$lock" ]] || lock=/dev/null
+    echo "$json" | jq -r --slurpfile lock "$lock" '
+      to_entries[]
+      | (.value.current // ($lock[0].packages["node_modules/" + .key].version? // "?")) as $cur
+      | select($cur != .value.latest)
+      | "\(.key) \($cur) -> \(.value.latest)"'
   else
     echo "$json"
   fi
