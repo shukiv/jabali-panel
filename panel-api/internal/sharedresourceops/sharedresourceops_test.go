@@ -3,6 +3,7 @@ package sharedresourceops
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/mailaddr"
@@ -105,6 +106,28 @@ func TestCreate_RefusesInvalidKind(t *testing.T) {
 	}
 	if len(repo.created) != 0 {
 		t.Fatalf("no row must be written for an invalid kind, got %d", len(repo.created))
+	}
+}
+
+// GH #1914: a shared mailbox has no working delivery or grant path (the
+// reconciler skips the kind), so create refuses it and points at a mail group.
+func TestCreate_RefusesMailboxKind(t *testing.T) {
+	repo := &fakeResRepo{}
+	notified := false
+	_, err := Create(context.Background(), Deps{Resources: repo}, CreateInput{
+		Domain: emailDomain(), Kind: "mailbox", Name: "desk",
+	}, func(context.Context, string, any) { notified = true })
+	if !errors.Is(err, ErrInvalidKind) {
+		t.Fatalf("want ErrInvalidKind, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "mail group") {
+		t.Fatalf("error should point at a mail group, got %q", err)
+	}
+	if len(repo.created) != 0 || notified {
+		t.Fatalf("no row and no agent apply for a mailbox kind, got rows=%d notified=%v", len(repo.created), notified)
+	}
+	if ValidKind("mailbox") {
+		t.Fatal("ValidKind(mailbox) must be false")
 	}
 }
 

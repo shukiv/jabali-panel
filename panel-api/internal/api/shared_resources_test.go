@@ -175,6 +175,21 @@ func TestSharedResource_Create_InvalidKind(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+// GH #1914: the API no longer creates a shared mailbox (it would accept no mail
+// and apply no grants); the answer points the caller at a mail group.
+func TestSharedResource_Create_MailboxKindRefused(t *testing.T) {
+	res := &srResFake{}
+	ag := &srAgentFake{}
+	r := srRouter(t, res, ag)
+	w := do(t, r, "POST", "/api/v1/domains/dom1/shared-resources",
+		map[string]any{"name": "desk", "kind": "mailbox", "display_name": "Desk"})
+	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+	require.Contains(t, w.Body.String(), `"invalid_kind"`)
+	require.Contains(t, w.Body.String(), "mail group")
+	require.Empty(t, res.created)
+	require.NotContains(t, ag.calls, "sharedresource.apply")
+}
+
 func TestSharedResource_SetGrants(t *testing.T) {
 	res := &srResFake{byID: map[string]*models.SharedResource{
 		"res1": {ID: "res1", DomainID: "dom1", Kind: "calendar"},

@@ -5056,7 +5056,7 @@ jabali shared-resource create [flags]
 
 - `--display-name` — display name
 - `--domain` — domain ID (ULID)
-- `--kind` — mailbox|calendar|addressbook|files
+- `--kind` — calendar|addressbook|files (for a shared mailbox, create a mail group)
 - `--name` — host address local part
 
 #### `jabali shared-resource grant`
