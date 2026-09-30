@@ -1,6 +1,6 @@
 # PHP Settings
 
-`/jabali-panel/php-settings`. Per-user PHP configuration. Applied to every domain you own that runs PHP through your per-user FPM pool.
+`/jabali-panel/php-settings`. PHP configuration for your domains. The PHP limits below are set **per domain**: open the domain's **PHP Settings** tab on its page, or pick the domain here.
 
 ## Editable values
 
@@ -13,17 +13,18 @@
 | `max_input_time` | Maximum time PHP spends parsing input data. |
 | `max_input_vars` | Maximum POST variables per request. |
 | `display_errors` | Show PHP errors to the browser. Off by default; only enable temporarily in development. |
+| `error_reporting` | Which PHP errors are reported (None, Production, or All). |
 | `date.timezone` | Default time zone for date / time functions. |
 
-Each value is capped by your package; the form clamps to the cap on save with a UI warning.
+Leave a value at **Use pool default** to inherit the value of your PHP pool; the option shows that value, for example `256M (Default)`.
+
+## Settings your administrator controls
+
+Your hosting package decides which of these values you may change. A value your administrator keeps for themselves shows the tag **Set by your administrator** and cannot be changed from your panel; the value shown still applies to the domain. Ask your administrator if you need it changed. An API request that changes such a value is refused with `php_setting_not_permitted`, naming the setting.
 
 ## Application
 
-On save, the agent rewrites your per-user FPM pool drop-in (`/etc/php/<version>/fpm/pool.d/jabali-<your-username>.conf`) and issues a graceful FPM reload (no in-flight request loss). Effects are visible on the next request.
-
-## Per-domain overrides
-
-The current panel applies PHP settings **per user**, not per domain. Every domain in your account inherits the same INI values. Per-domain overrides require operator action (`.user.ini` files in the docroot are honoured by PHP-FPM; the panel does not manage them).
+A saved change is applied to the domain on the next reconciler pass (within about a minute). It applies to that domain only, whatever PHP version the domain runs.
 
 ## OpCache
 

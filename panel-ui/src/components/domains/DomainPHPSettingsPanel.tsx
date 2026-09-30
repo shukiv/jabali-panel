@@ -35,6 +35,12 @@ type DomainPHPSettings = {
   // php.ini directive name. Used to label each select's inherit option with the
   // actual default, e.g. "256M (Default)". Absent → generic label.
   pool_defaults?: Record<string, string> | null;
+  // GH #1701: who may set each directive on this domain (the owner's package
+  // policy), and which directives the CALLER may set. Audience is data: an
+  // admin gets every directive in `editable`, a tenant only what their
+  // package permits. Absent (an older API) = nothing locked.
+  policy?: Record<string, string> | null;
+  editable?: string[] | null;
 };
 
 type PHPSettingsFormData = {
@@ -47,6 +53,19 @@ type PHPSettingsFormData = {
   php_display_errors?: boolean | null;
   php_error_reporting?: number | null;
   php_timezone?: string | null;
+};
+
+// Form field -> php.ini directive, for the GH #1701 policy lookups.
+const FIELD_DIRECTIVE: Record<keyof PHPSettingsFormData, string> = {
+  php_memory_limit: "memory_limit",
+  php_upload_max_filesize: "upload_max_filesize",
+  php_post_max_size: "post_max_size",
+  php_max_input_vars: "max_input_vars",
+  php_max_execution_time: "max_execution_time",
+  php_max_input_time: "max_input_time",
+  php_display_errors: "display_errors",
+  php_error_reporting: "error_reporting",
+  php_timezone: "date.timezone",
 };
 
 const MEMORY_LIMIT_OPTIONS = [
@@ -234,20 +253,34 @@ export function DomainPHPSettingsPanel({ domainId }: DomainPHPSettingsPanelProps
     })();
   }, [domainId, form]);
 
+  // GH #1701: a directive the caller may not set is shown read-only and sent
+  // back exactly as stored, so the API sees no change to it.
+  const locked = (field: keyof PHPSettingsFormData): boolean => {
+    const editable = phpSettings?.editable;
+    return Array.isArray(editable) && !editable.includes(FIELD_DIRECTIVE[field]);
+  };
+  const outgoing = <K extends keyof PHPSettingsFormData>(
+    field: K,
+    values: PHPSettingsFormData,
+  ): PHPSettingsFormData[K] | null =>
+    locked(field)
+      ? ((phpSettings?.[field] as PHPSettingsFormData[K] | undefined) ?? null)
+      : // undefined (never set / cleared) -> null so the API clears the override.
+        (values[field] ?? null);
+
   const onSave = async (values: PHPSettingsFormData) => {
     setSubmitting(true);
     try {
       await apiClient.patch(`/domains/${domainId}/php-settings`, {
-        php_memory_limit: values.php_memory_limit,
-        php_upload_max_filesize: values.php_upload_max_filesize,
-        php_post_max_size: values.php_post_max_size,
-        php_max_input_vars: values.php_max_input_vars,
-        php_max_execution_time: values.php_max_execution_time,
-        php_max_input_time: values.php_max_input_time,
-        // undefined (never set / cleared) -> null so the API clears the override.
-        php_display_errors: values.php_display_errors ?? null,
-        php_error_reporting: values.php_error_reporting ?? null,
-        php_timezone: values.php_timezone ?? null,
+        php_memory_limit: outgoing("php_memory_limit", values),
+        php_upload_max_filesize: outgoing("php_upload_max_filesize", values),
+        php_post_max_size: outgoing("php_post_max_size", values),
+        php_max_input_vars: outgoing("php_max_input_vars", values),
+        php_max_execution_time: outgoing("php_max_execution_time", values),
+        php_max_input_time: outgoing("php_max_input_time", values),
+        php_display_errors: outgoing("php_display_errors", values),
+        php_error_reporting: outgoing("php_error_reporting", values),
+        php_timezone: outgoing("php_timezone", values),
       });
       feedback.message.success("PHP settings updated successfully");
       // Reload settings to confirm.
@@ -255,8 +288,13 @@ export function DomainPHPSettingsPanel({ domainId }: DomainPHPSettingsPanelProps
         `/domains/${domainId}/php-settings`,
       );
       setPhpSettings(resp.data);
-    } catch {
-      feedback.message.error("Failed to update PHP settings");
+    } catch (err) {
+      const e = err as { response?: { data?: { error?: string; detail?: string } } };
+      feedback.message.error(
+        e.response?.data?.error === "php_setting_not_permitted" && e.response.data.detail
+          ? e.response.data.detail
+          : "Failed to update PHP settings",
+      );
     } finally {
       setSubmitting(false);
     }
@@ -335,7 +373,26 @@ export function DomainPHPSettingsPanel({ domainId }: DomainPHPSettingsPanelProps
     defaultLabel(directive, fmt) ?? t("userphpsettingspage.use_pool_default");
 
   const fieldSet = (v: unknown) => v !== null && v !== undefined;
-  const overrideLabel = (text: string, overridden: boolean) => (
+  // GH #1701: a tenant sees "Set by your administrator" on a locked directive;
+  // an admin sees "Admin only" on one the tenant cannot change.
+  const policyTag = (field: keyof PHPSettingsFormData) => {
+    if (locked(field)) {
+      return (
+        <Tag color="gold" style={{ marginInlineEnd: 0 }}>
+          Set by your administrator
+        </Tag>
+      );
+    }
+    if (phpSettings?.policy?.[FIELD_DIRECTIVE[field]] === "admin_only") {
+      return (
+        <Tag color="purple" style={{ marginInlineEnd: 0 }}>
+          Admin only
+        </Tag>
+      );
+    }
+    return null;
+  };
+  const overrideLabel = (text: string, overridden: boolean, field: keyof PHPSettingsFormData) => (
     <Space size={6}>
       {text}
       {overridden ? (
@@ -345,6 +402,7 @@ export function DomainPHPSettingsPanel({ domainId }: DomainPHPSettingsPanelProps
       ) : (
         <Tag style={{ marginInlineEnd: 0 }}>Pool default</Tag>
       )}
+      {policyTag(field)}
     </Space>
   );
 
@@ -416,10 +474,12 @@ export function DomainPHPSettingsPanel({ domainId }: DomainPHPSettingsPanelProps
                     label={overrideLabel(
                       t("userphpsettingspage.memory_limit"),
                       fieldSet(phpSettings?.php_memory_limit),
+                      "php_memory_limit",
                     )}
                     name="php_memory_limit"
                   >
                     <Select
+                      disabled={locked("php_memory_limit")}
                       placeholder={inheritPlaceholder("memory_limit")}
                       allowClear
                       options={withDefault(MEMORY_LIMIT_OPTIONS, "memory_limit")}
@@ -431,10 +491,12 @@ export function DomainPHPSettingsPanel({ domainId }: DomainPHPSettingsPanelProps
                     label={overrideLabel(
                       t("userphpsettingspage.upload_max_file_size"),
                       fieldSet(phpSettings?.php_upload_max_filesize),
+                      "php_upload_max_filesize",
                     )}
                     name="php_upload_max_filesize"
                   >
                     <Select
+                      disabled={locked("php_upload_max_filesize")}
                       placeholder={inheritPlaceholder("upload_max_filesize")}
                       allowClear
                       options={withDefault(UPLOAD_MAX_OPTIONS, "upload_max_filesize")}
@@ -446,10 +508,12 @@ export function DomainPHPSettingsPanel({ domainId }: DomainPHPSettingsPanelProps
                     label={overrideLabel(
                       t("userphpsettingspage.post_max_size"),
                       fieldSet(phpSettings?.php_post_max_size),
+                      "php_post_max_size",
                     )}
                     name="php_post_max_size"
                   >
                     <Select
+                      disabled={locked("php_post_max_size")}
                       placeholder={inheritPlaceholder("post_max_size")}
                       allowClear
                       options={withDefault(POST_MAX_OPTIONS, "post_max_size")}
@@ -461,10 +525,12 @@ export function DomainPHPSettingsPanel({ domainId }: DomainPHPSettingsPanelProps
                     label={overrideLabel(
                       t("userphpsettingspage.max_input_variables"),
                       fieldSet(phpSettings?.php_max_input_vars),
+                      "php_max_input_vars",
                     )}
                     name="php_max_input_vars"
                   >
                     <Select
+                      disabled={locked("php_max_input_vars")}
                       placeholder={inheritPlaceholder("max_input_vars")}
                       allowClear
                       options={withDefault(MAX_INPUT_VARS_OPTIONS, "max_input_vars")}
@@ -480,10 +546,12 @@ export function DomainPHPSettingsPanel({ domainId }: DomainPHPSettingsPanelProps
                     label={overrideLabel(
                       t("userphpsettingspage.max_execution_time"),
                       fieldSet(phpSettings?.php_max_execution_time),
+                      "php_max_execution_time",
                     )}
                     name="php_max_execution_time"
                   >
                     <Select
+                      disabled={locked("php_max_execution_time")}
                       placeholder={inheritPlaceholder("max_execution_time", sizeFmt("s"))}
                       allowClear
                       options={withDefault(MAX_EXECUTION_TIME_OPTIONS, "max_execution_time", sizeFmt("s"))}
@@ -495,10 +563,12 @@ export function DomainPHPSettingsPanel({ domainId }: DomainPHPSettingsPanelProps
                     label={overrideLabel(
                       t("userphpsettingspage.max_input_time"),
                       fieldSet(phpSettings?.php_max_input_time),
+                      "php_max_input_time",
                     )}
                     name="php_max_input_time"
                   >
                     <Select
+                      disabled={locked("php_max_input_time")}
                       placeholder={inheritPlaceholder("max_input_time", sizeFmt("s"))}
                       allowClear
                       options={withDefault(MAX_INPUT_TIME_OPTIONS, "max_input_time", sizeFmt("s"))}
@@ -521,11 +591,13 @@ export function DomainPHPSettingsPanel({ domainId }: DomainPHPSettingsPanelProps
                     label={overrideLabel(
                       "Display errors",
                       fieldSet(phpSettings?.php_display_errors),
+                      "php_display_errors",
                     )}
                     name="php_display_errors"
                     extra="Shows PHP errors in the page output. Keep off on public/production sites."
                   >
                     <Select
+                      disabled={locked("php_display_errors")}
                       placeholder="Use pool default (off)"
                       allowClear
                       options={DISPLAY_ERRORS_OPTIONS}
@@ -537,10 +609,12 @@ export function DomainPHPSettingsPanel({ domainId }: DomainPHPSettingsPanelProps
                     label={overrideLabel(
                       "Error reporting",
                       fieldSet(phpSettings?.php_error_reporting),
+                      "php_error_reporting",
                     )}
                     name="php_error_reporting"
                   >
                     <Select
+                      disabled={locked("php_error_reporting")}
                       placeholder={inheritPlaceholder("error_reporting", errorReportingFmt)}
                       allowClear
                       options={withDefault(ERROR_REPORTING_OPTIONS, "error_reporting", errorReportingFmt)}
@@ -552,11 +626,13 @@ export function DomainPHPSettingsPanel({ domainId }: DomainPHPSettingsPanelProps
                     label={overrideLabel(
                       "Timezone",
                       fieldSet(phpSettings?.php_timezone),
+                      "php_timezone",
                     )}
                     name="php_timezone"
                     extra="date.timezone for this domain's PHP."
                   >
                     <Select
+                      disabled={locked("php_timezone")}
                       showSearch
                       placeholder={inheritPlaceholder("date.timezone", timezoneFmt)}
                       allowClear

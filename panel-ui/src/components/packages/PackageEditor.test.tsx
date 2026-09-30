@@ -101,3 +101,42 @@ describe("PackageEditor egress allowances (GH #1798)", () => {
     expect(ping?.getAttribute("aria-checked")).toBe("true");
   });
 });
+
+// GH #1701: one policy select per catalog directive, and a save keeps a stored
+// key the editor does not render (a sensitive directive set through the CLI).
+describe("PackageEditor PHP settings policy (GH #1701)", () => {
+  it("renders a policy select for every catalog directive", async () => {
+    const { PHP_SETTING_DIRECTIVES } = await import("./phpSettingsPolicy");
+    renderEditor();
+    for (const d of PHP_SETTING_DIRECTIVES) {
+      expect(screen.getByText(d), `missing policy row: ${d}`).toBeTruthy();
+    }
+  });
+
+  it("an edit save keeps the stored policy, including keys it does not render", async () => {
+    const { fireEvent, waitFor } = await import("@testing-library/react");
+    const onSubmit = vi.fn();
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <PackageEditor
+          title="Edit package"
+          initialValue={{
+            ...PACKAGE_DEFAULTS,
+            id: "pkg-1",
+            name: "Basic",
+            php_settings_policy: '{"memory_limit":"admin_only","open_basedir":"tenant_privileged"}',
+          }}
+          submitting={false}
+          onSubmit={onSubmit}
+        />
+      </QueryClientProvider>,
+    );
+    await screen.findByText("Admin only");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    expect(onSubmit.mock.calls[0][0].php_settings_policy).toBe(
+      '{"memory_limit":"admin_only","open_basedir":"tenant_privileged"}',
+    );
+  });
+});

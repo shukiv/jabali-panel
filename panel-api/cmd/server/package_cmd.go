@@ -100,6 +100,7 @@ type packageCreateFlags struct {
 	// GH #1798: per-package egress allowances (default false = DENY).
 	egressSSHOut, egressICMP bool
 	egressSSHOutCIDRs        string
+	phpSettingsPolicy        string // GH #1701
 
 	fpmMaxChildren, fpmWorkerMemMB uint32
 	fpmUserCanEdit, fpmAdvanced    bool
@@ -198,6 +199,13 @@ func buildPackageFromCreateFlags(f packageCreateFlags) (*models.HostingPackage, 
 		return nil, fmt.Errorf("invalid egress-ssh-out-cidrs: %w", egressErr)
 	}
 	p.EgressSSHOutCIDRs = normEgressCIDRs
+	// GH #1701: validate + canonicalise the PHP settings policy (mirrors
+	// packages.go).
+	normPHPPolicy, phpPolicyErr := models.NormalizePHPSettingsPolicy(f.phpSettingsPolicy)
+	if phpPolicyErr != nil {
+		return nil, fmt.Errorf("invalid php-settings-policy: %w", phpPolicyErr)
+	}
+	p.PHPSettingsPolicy = normPHPPolicy
 	return p, nil
 }
 
@@ -278,6 +286,7 @@ func registerPackageCreateFlags(cmd *cobra.Command, f *packageCreateFlags) {
 	fl.BoolVar(&f.phpExec, "php-exec", false, "opt out of the PHP command-exec lockdown (exec/proc_open work)")
 	fl.BoolVar(&f.egressSSHOut, "egress-ssh-out", false, "allow outbound SSH (:22) for enforced tenants on this package (GH #1798)")
 	fl.StringVar(&f.egressSSHOutCIDRs, "egress-ssh-out-cidrs", "", `JSON array of CIDRs scoping outbound SSH (empty=anywhere), e.g. '["140.82.112.0/20"]'`)
+	fl.StringVar(&f.phpSettingsPolicy, "php-settings-policy", "", `JSON object of php.ini directive to level (admin_only / tenant_allowed; tenant_privileged for security-sensitive directives) saying who may set it on the per-domain PHP Settings page — GH #1701. Empty = defaults (tenants may set every directive they can today). The CLI and admins are not limited by it. e.g. '{"memory_limit":"admin_only"}'`)
 	fl.BoolVar(&f.egressICMP, "egress-icmp", false, "allow outbound ICMP echo-request (ping) for enforced tenants on this package (GH #1798)")
 	// GH #1628: webmail defaults ON, so this create flag defaults true (pass
 	// --webmail=false to withhold webmail from the plan). Mirrors the REST
@@ -319,6 +328,7 @@ type packageEditFlags struct {
 	// (true/false/unset); the CIDR scope is a plain string.
 	egressSSHOut, egressICMP string
 	egressSSHOutCIDRs        string
+	phpSettingsPolicy        string // GH #1701
 }
 
 // applyPackageEditFlags applies the named edit flags onto a loaded row and
@@ -431,6 +441,15 @@ func applyPackageEditFlags(changed func(string) bool, p *models.HostingPackage, 
 			return false, fmt.Errorf("invalid egress-ssh-out-cidrs: %w", err)
 		}
 		p.EgressSSHOutCIDRs = norm
+		dirty = true
+	}
+	// GH #1701: validate + canonicalise the PHP settings policy on change.
+	if changed("php-settings-policy") {
+		norm, err := models.NormalizePHPSettingsPolicy(f.phpSettingsPolicy)
+		if err != nil {
+			return false, fmt.Errorf("invalid php-settings-policy: %w", err)
+		}
+		p.PHPSettingsPolicy = norm
 		dirty = true
 	}
 	// Advanced implies can-edit — unconditional, matching packages.go:399.
@@ -561,6 +580,7 @@ func registerPackageEditFlags(cmd *cobra.Command, f *packageEditFlags) {
 	fl.StringVar(&f.egressSSHOut, "egress-ssh-out", "", "allow outbound SSH :22 for enforced tenants (true/false) — GH #1798")
 	fl.StringVar(&f.egressICMP, "egress-icmp", "", "allow outbound ICMP ping for enforced tenants (true/false) — GH #1798")
 	fl.StringVar(&f.egressSSHOutCIDRs, "egress-ssh-out-cidrs", "", `JSON array of CIDRs scoping outbound SSH (empty=anywhere) — GH #1798`)
+	fl.StringVar(&f.phpSettingsPolicy, "php-settings-policy", "", `JSON object of php.ini directive to level (admin_only / tenant_allowed; tenant_privileged for security-sensitive directives) saying who may set it on the per-domain PHP Settings page — GH #1701. Empty = defaults (tenants may set every directive they can today). The CLI and admins are not limited by it. e.g. '{"memory_limit":"admin_only"}'`)
 	fl.StringVar(&f.scheduledBackups, "scheduled-backups", "", "tenant scheduled backups (true/false)")
 	fl.StringVar(&f.fpmUserCanEdit, "fpm-user-can-edit", "", "tenant FPM performance mode (true/false)")
 	fl.StringVar(&f.fpmAdvanced, "fpm-advanced", "", "tenant advanced FPM knobs (true/false, true implies fpm-user-can-edit)")

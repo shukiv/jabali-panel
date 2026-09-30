@@ -130,6 +130,14 @@ type HostingPackage struct {
 	FpmAdvancedMode    bool   `gorm:"column:fpm_advanced_mode;type:tinyint(1);not null;default:0" json:"fpm_advanced_mode"`
 	FpmVersionDefaults string `gorm:"column:fpm_version_defaults;type:varchar(2000);not null;default:'{}'" json:"fpm_version_defaults"`
 
+	// PHPSettingsPolicy (GH #1701) is a JSON object of php.ini directive ->
+	// level (admin_only / tenant_allowed / tenant_privileged): who may set that
+	// directive on the per-domain PHP Settings page for domains on this
+	// package. '' or a missing key = the catalog default. Written only through
+	// NormalizePHPSettingsPolicy and read only through PHPSettingLevelFor,
+	// which fails closed (see php_settings_policy.go).
+	PHPSettingsPolicy string `gorm:"column:php_settings_policy;type:text;not null" json:"php_settings_policy"`
+
 	// NspawnImageVersion (M13 / ADR-0067) pins users on this package to a
 	// specific systemd-nspawn rootfs at /var/lib/jabali-nspawn/images/<v>/.
 	// NULL → reconciler stamps from server_settings.default_nspawn_image_version
