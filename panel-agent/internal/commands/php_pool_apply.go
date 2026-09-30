@@ -188,6 +188,59 @@ func hasControlChar(s string) bool {
 	return false
 }
 
+// validatePoolIniOverrides checks the admin_values and admin_flags a pool
+// apply renders into the pool conf: directive names against the allowlists and
+// forbiddenDirectives, values for control characters, flags for on/off.
+func validatePoolIniOverrides(values, flags []KV) *agentwire.AgentError {
+	// Validate admin_values directives.
+	for _, av := range values {
+		if isForbiddenDirective(av.Name) {
+			return &agentwire.AgentError{
+				Code:    agentwire.CodeInvalidArgument,
+				Message: fmt.Sprintf("forbidden directive: %s", av.Name),
+			}
+		}
+		if !adminValueAllowlist[av.Name] {
+			return &agentwire.AgentError{
+				Code:    agentwire.CodeInvalidArgument,
+				Message: fmt.Sprintf("unknown admin_value directive: %s", av.Name),
+			}
+		}
+		// The value is rendered raw into the pool conf: a newline would start
+		// a new line past the directive allowlist and forbiddenDirectives
+		// (e.g. php_admin_value[open_basedir] = /).
+		if hasControlChar(av.Value) {
+			return &agentwire.AgentError{
+				Code:    agentwire.CodeInvalidArgument,
+				Message: fmt.Sprintf("admin_value %s: value contains a control character", av.Name),
+			}
+		}
+	}
+
+	// Validate admin_flags directives and values.
+	for _, af := range flags {
+		if isForbiddenDirective(af.Name) {
+			return &agentwire.AgentError{
+				Code:    agentwire.CodeInvalidArgument,
+				Message: fmt.Sprintf("forbidden directive: %s", af.Name),
+			}
+		}
+		if !adminFlagAllowlist[af.Name] {
+			return &agentwire.AgentError{
+				Code:    agentwire.CodeInvalidArgument,
+				Message: fmt.Sprintf("unknown admin_flag directive: %s", af.Name),
+			}
+		}
+		if af.Value != "on" && af.Value != "off" {
+			return &agentwire.AgentError{
+				Code:    agentwire.CodeInvalidArgument,
+				Message: fmt.Sprintf("admin_flag value must be 'on' or 'off', got: %s", af.Value),
+			}
+		}
+	}
+	return nil
+}
+
 // globDeletePoolFiles removes pool files for the given username, optionally
 // keeping the named version intact. Pass excludeVersion="" for the legacy
 // wipe-all-versions behavior; pass a concrete version to leave that one
@@ -508,51 +561,8 @@ func phpPoolApplyHandler(ctx context.Context, params json.RawMessage) (any, erro
 		}
 	}
 
-	// Validate admin_values directives.
-	for _, av := range p.AdminValues {
-		if isForbiddenDirective(av.Name) {
-			return nil, &agentwire.AgentError{
-				Code:    agentwire.CodeInvalidArgument,
-				Message: fmt.Sprintf("forbidden directive: %s", av.Name),
-			}
-		}
-		if !adminValueAllowlist[av.Name] {
-			return nil, &agentwire.AgentError{
-				Code:    agentwire.CodeInvalidArgument,
-				Message: fmt.Sprintf("unknown admin_value directive: %s", av.Name),
-			}
-		}
-		// The value is rendered raw into the pool conf: a newline would start
-		// a new line past the directive allowlist and forbiddenDirectives
-		// (e.g. php_admin_value[open_basedir] = /).
-		if hasControlChar(av.Value) {
-			return nil, &agentwire.AgentError{
-				Code:    agentwire.CodeInvalidArgument,
-				Message: fmt.Sprintf("admin_value %s: value contains a control character", av.Name),
-			}
-		}
-	}
-
-	// Validate admin_flags directives and values.
-	for _, af := range p.AdminFlags {
-		if isForbiddenDirective(af.Name) {
-			return nil, &agentwire.AgentError{
-				Code:    agentwire.CodeInvalidArgument,
-				Message: fmt.Sprintf("forbidden directive: %s", af.Name),
-			}
-		}
-		if !adminFlagAllowlist[af.Name] {
-			return nil, &agentwire.AgentError{
-				Code:    agentwire.CodeInvalidArgument,
-				Message: fmt.Sprintf("unknown admin_flag directive: %s", af.Name),
-			}
-		}
-		if af.Value != "on" && af.Value != "off" {
-			return nil, &agentwire.AgentError{
-				Code:    agentwire.CodeInvalidArgument,
-				Message: fmt.Sprintf("admin_flag value must be 'on' or 'off', got: %s", af.Value),
-			}
-		}
+	if err := validatePoolIniOverrides(p.AdminValues, p.AdminFlags); err != nil {
+		return nil, err
 	}
 
 	// The config dir can exist without the FPM binary (a partial install, or a
