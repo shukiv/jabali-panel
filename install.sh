@@ -4063,6 +4063,7 @@ install_redis_acl() {
      && grep -q '^user jabali_panel ' /etc/redis/users.acl 2>/dev/null \
      && grep -q '^user default off' /etc/redis/users.acl 2>/dev/null \
      && [[ -f /etc/redis/redis.conf.d/20-jabali-acl.conf ]]; then
+    converge_redis_panel_info_acl
     return 0
   fi
 
@@ -4114,7 +4115,7 @@ install_redis_acl() {
   # Runtime tenant users (wp_<osuser>) are appended by panel-api via ACL SETUSER.
   cat > "$aclfile" <<ACL
 user default on nopass ~* &* +@all
-user jabali_panel on >${panel_token} ~jabali:* ~automation:* resetchannels +@all -@dangerous +acl +@connection
+user jabali_panel on >${panel_token} ~jabali:* ~automation:* resetchannels +@all -@dangerous +acl +@connection +info
 ACL
   chown redis:redis "$aclfile"; chmod 0640 "$aclfile"
   printf 'aclfile %s
@@ -4139,6 +4140,50 @@ ACL
   sed -i 's|^user default on nopass.*|user default off nopass ~* resetchannels -@all|' "$aclfile"
   redis-cli -s "$sock" --user jabali_panel --pass "$panel_token" --no-auth-warning ACL LOAD >/dev/null 2>&1 || systemctl restart redis-server
   _ok "Redis ACLs configured: default locked, jabali_panel scoped, per-tenant users ready"
+}
+
+# converge_redis_panel_info_acl — give the existing fleet's jabali_panel Redis
+# user the INFO command. INFO sits in @dangerous, so the original ACL line
+# (+@all -@dangerous ...) left panel-api unable to read evicted_keys, the hit
+# ratio or used_memory: the WordPress cache diagnostic's eviction warning and
+# the admin cache stats never showed on any box. Fresh installs get +info from
+# the ACL line in install_redis_acl; this reaches hosts that take its fast path.
+#
+# Detect at runtime rather than by grepping users.acl: panel-api's ACL SAVE
+# rewrites that file in canonical form, and it also holds the per-tenant wp_*
+# users, so it is never rewritten here. The grant is ACL SETUSER + ACL SAVE as
+# jabali_panel itself (it already holds +acl, so +info adds no real power).
+# Acts only on NOPERM: any other answer (NOAUTH, WRONGPASS, no socket) means
+# the ACL state is not what this expects, and it is left alone with a warning.
+# The token goes through REDISCLI_AUTH, never argv.
+converge_redis_panel_info_acl() {
+  local sock="/run/redis/redis.sock"
+  local panel_token out
+  command -v redis-cli >/dev/null 2>&1 || return 0
+  [[ -S "$sock" ]] || return 0
+  panel_token="$(sed -n 's/^JABALI_REDIS_PANEL_TOKEN=//p' "$ENV_FILE" 2>/dev/null | head -1)"
+  [[ -n "$panel_token" ]] || return 0
+
+  # `|| true`: under set -Eeuo pipefail a refused connection (or head closing
+  # the pipe) would otherwise fail the assignment and trip the ERR trap.
+  out="$(REDISCLI_AUTH="$panel_token" redis-cli -s "$sock" --user jabali_panel --no-auth-warning INFO server 2>&1 | head -1)" || true
+  case "$out" in
+    NOPERM*) ;;
+    "# Server"*) return 0 ;;
+    *)
+      _warn "redis-acl: INFO as jabali_panel answered '${out}'; leaving its ACL unchanged"
+      return 0
+      ;;
+  esac
+
+  REDISCLI_AUTH="$panel_token" redis-cli -s "$sock" --user jabali_panel --no-auth-warning ACL SETUSER jabali_panel +info >/dev/null 2>&1 || true
+  REDISCLI_AUTH="$panel_token" redis-cli -s "$sock" --user jabali_panel --no-auth-warning ACL SAVE >/dev/null 2>&1 || true
+  out="$(REDISCLI_AUTH="$panel_token" redis-cli -s "$sock" --user jabali_panel --no-auth-warning INFO server 2>&1 | head -1)" || true
+  if [[ "$out" == "# Server"* ]]; then
+    _ok "redis-acl: jabali_panel may now run INFO (cache eviction and hit-ratio stats)"
+  else
+    _warn "redis-acl: granting INFO to jabali_panel did not take effect ('${out}')"
+  fi
 }
 
 # ---------- step 2.5c: PostgreSQL 16 (M37 Phase 1) ---------------------------
