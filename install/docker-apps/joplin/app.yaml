@@ -2,7 +2,7 @@ slug: joplin
 popularity: 40
 name: Joplin Server
 tags: ["Productivity"]
-version: "3.7.1"
+version: "3.7.2"
 description: |
   Self-hosted sync server for Joplin (open-source note app with
   end-to-end encryption, Markdown, Web Clipper). Two services:
@@ -11,7 +11,7 @@ icon: icon.svg
 upstream: https://github.com/laurent22/joplin
 documentation: https://joplinapp.org/help/install/joplin_server
 
-image_channel: joplin/server:3.7.1@sha256:0877bfba41a943017c42c58e90db9d8d548bfe699b5e410248b5b879371734f9
+image_channel: joplin/server:3.7.2@sha256:3f7b852959aac38da10e3a451823bf149cbae6e74d8258db5b6e6e7f0db50c26
 update_mode: manual
 tenant_installable: true
 

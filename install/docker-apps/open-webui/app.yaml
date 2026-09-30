@@ -2,7 +2,7 @@ slug: open-webui
 popularity: 46
 name: Open WebUI
 tags: ["AI", "Developer tools"]
-version: "0.11.3"
+version: "0.11.4"
 description: |
   Extensible, self-hosted AI chat interface that runs entirely offline.
   Talks to local LLM runners (Ollama) and any OpenAI-compatible API, with
@@ -13,7 +13,7 @@ icon: icon.svg
 upstream: https://github.com/open-webui/open-webui
 documentation: https://docs.openwebui.com/
 
-image_channel: ghcr.io/open-webui/open-webui:0.11.3@sha256:751b617714b91e4cfd0186a509c72480c858e012976103b09a30dad053c36175
+image_channel: ghcr.io/open-webui/open-webui:0.11.4@sha256:9591b13f13843c7721c2b8eaf7382846c81b3ffe126526d1888d1fed50c6a33f
 update_mode: manual
 tenant_installable: true
 

@@ -3,7 +3,7 @@ popularity: 90
 tenant_installable: true
 name: Vaultwarden
 tags: ["Security"]
-version: "1.37.2"
+version: "1.37.3"
 description: |
   Self-hosted password manager, Bitwarden-compatible API. Rust rewrite
   of the official Bitwarden server. Small memory footprint, single
@@ -12,7 +12,7 @@ icon: icon.svg
 upstream: https://github.com/dani-garcia/vaultwarden
 documentation: https://github.com/dani-garcia/vaultwarden/wiki
 
-image_channel: vaultwarden/server:1.37.2@sha256:094b5689ed81549bd293418395c7cf495ae9d960fc2d4928cef2083ef913d912
+image_channel: vaultwarden/server:1.37.3@sha256:1587c45feaa479f1f5e8af3b00eded36bff77bcf1880cf8dbf0541706dd470e0
 update_mode: manual
 
 resources:
