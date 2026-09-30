@@ -13731,7 +13731,7 @@ print(sql[0]["id"] if sql else "")' 2>/dev/null || true)"
     # found" for an address the account does not own. Keep both byte-identical
     # to apply-plan.json.tmpl. Stalwart keeps each such address on the admin's
     # account for good, so a tenant postmaster made later would sign in to the
-    # admin's mailbox: migration 000307 refuses any new postmaster@ row on a
+    # admin's mailbox: migration 000308 refuses any new postmaster@ row on a
     # domain that is not the panel's. A postmaster a domain had before that
     # keeps its mail (the NOT EXISTS clauses). Never set
     # ReportSettings.inboundReportForwarding to false: Stalwart then drops ALL

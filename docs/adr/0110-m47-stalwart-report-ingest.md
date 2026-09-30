@@ -224,12 +224,12 @@ admin"):
    tenant signs in to the admin's account, so the fix makes the clash
    impossible instead: no new mailbox, alias (or external forward with a
    local part), group or shared resource may take postmaster@ on a
-   domain that is not `is_panel_primary`. Migration 000307 adds BEFORE
+   domain that is not `is_panel_primary`. Migration 000308 adds BEFORE
    INSERT/UPDATE triggers on `mailboxes`, `email_forwarders`,
    `mail_groups` and `shared_resources` that SIGNAL on such a row, so
    every door is covered (API, CLI, the cPanel/DirectAdmin/Hestia
    importers, backup restore, direct SQL). An UPDATE is refused only
-   when it moves a row onto postmaster@, so rows made before 000307 keep
+   when it moves a row onto postmaster@, so rows made before 000308 keep
    working. The API and CLI doors check first
    (`mailaddr.CheckNotReservedOn` / `CheckPostmasterOn`) for a clear
    message; the repositories report a trigger refusal as

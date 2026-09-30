@@ -1,6 +1,6 @@
 //go:build integration
 
-// Integration test for migration 000307 (ADR-0110): postmaster@ on every
+// Integration test for migration 000308 (ADR-0110): postmaster@ on every
 // domain but the panel hostname's belongs to the server administrator. Stalwart
 // keeps postmaster@<domain> on the admin's postmaster account once it has
 // delivered there, so a tenant mailbox created later at the address signs in
@@ -92,7 +92,7 @@ func TestIntegration_PostmasterReserved(t *testing.T) {
 	t.Run("an existing postmaster row keeps working", func(t *testing.T) {
 		// The panel hostname moves: the old admin postmaster row now sits on a
 		// domain that is not the panel's, like a tenant postmaster made before
-		// 000307. Updates that do not move it still succeed.
+		// 000308. Updates that do not move it still succeed.
 		require.NoError(t, gdb.Exec("UPDATE domains SET is_panel_primary = 0 WHERE id = ?", panelDom.ID).Error)
 		require.NoError(t, gdb.Exec("UPDATE domains SET is_panel_primary = 1 WHERE id = ?", otherDom.ID).Error)
 		require.NoError(t, mailboxes.UpdatePasswordHash(ctx, panelPostmaster.ID, "$2a$12$yyyyyyyyyyyyyyyyyyyyyy"))
@@ -104,8 +104,8 @@ func TestIntegration_PostmasterReserved(t *testing.T) {
 	t.Run("renaming a domain still renames its existing postmaster rows", func(t *testing.T) {
 		// Renaming a domain resyncs email_cached through the AFTER UPDATE
 		// triggers on domains, which UPDATE mailboxes and mail_groups and so
-		// run the 000307 BEFORE UPDATE triggers nested. Rows made before
-		// 000307 sit on a domain that is not the panel's; model them by
+		// run the 000308 BEFORE UPDATE triggers nested. Rows made before
+		// 000308 sit on a domain that is not the panel's; model them by
 		// making them on the panel domain and then moving the panel flag.
 		// The group gets a domain of its own: a group at a mailbox's address
 		// is refused (000306).
