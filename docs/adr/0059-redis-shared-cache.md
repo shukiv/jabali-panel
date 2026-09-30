@@ -56,6 +56,11 @@ ExecStartPost=/bin/chgrp jabali-sockets /run/redis/redis.sock
 - `appendonly yes` (AOF). Dispatcher queue survives `systemctl restart redis-server`. AOF default fsync policy (`everysec`) is the right trade-off — at most 1 s of queue loss on an ungraceful crash, which is fine for notification events (the upstream event source will re-emit on the next reconciler tick).
 - `maxmemory 128mb` + `allkeys-lru`. Notification queue is tiny (few KB); WP cache will push the needle when it lands. LRU eviction is safe for both workloads — the dispatcher's stream entries get explicitly XACKed + trimmed (not LRU'd), and WP cache is designed to tolerate eviction (any miss falls through to the DB).
 - Memory note for operators: 128 MB is a starting floor. When WP cache load meaningfully grows, bumping `maxmemory` is a one-line drop-in override (a higher-numbered `/etc/redis/redis.conf.d/*.conf` file).
+- **Update (sized to RAM):** 128 MB proved too small once WP object caching was live. A fleet box sat at 99.7% of it, with tenants' object caches evicting each other. `install.sh:size_redis_maxmemory` now writes `/etc/redis/redis.conf.d/15-jabali-maxmemory.conf` on fresh installs and on every `jabali update`:
+  - `maxmemory` = RAM/16, rounded down to a 64 MB step, floor 128 MB, ceiling 1024 MB (4 GB → 256 MB, 8 GB → 512 MB, 16 GB and up → 1024 MB);
+  - it loads after `10-jabali-socket.conf`, so it replaces the fixed 128 MB. An operator override numbered above 15 (for example `50-local.conf`) still wins;
+  - applying it restarts `redis-server` once, only when the drop-in changes (root has no credential for `CONFIG SET`); AOF keeps the keys.
+- The eviction claim above no longer holds for the notification stream. Under `allkeys-lru` a stream key is as evictable as any cache key once memory is full; XACK and trimming do not protect it. Sizing to RAM makes that much rarer but does not rule it out. Protecting the stream needs its own Redis instance (with `noeviction`) or another store, and is a separate change.
 
 ### Client wiring
 
