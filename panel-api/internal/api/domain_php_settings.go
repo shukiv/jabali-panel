@@ -576,7 +576,9 @@ func eqPtr[T comparable](a, b *T) bool {
 // through impersonation, so the owner's package policy does not bind them
 // there (GH #1701). ImpersonatedBy is set only by ResolveImpersonation, after
 // it has checked the real session is an admin's and the grant is theirs; the
-// owner check above still scopes the request to the impersonated user.
+// owner check above still scopes the request to the impersonated user. This
+// is a recorded exception to ADR-0128's "IsAdmin=false during act-as" rule;
+// see its "Exception: per-domain PHP settings policy" section.
 func phpPolicyAdmin(claims *auth.AccessClaims) bool {
 	return claims.IsAdmin || claims.ImpersonatedBy != ""
 }
