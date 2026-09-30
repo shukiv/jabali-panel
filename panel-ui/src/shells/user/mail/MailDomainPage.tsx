@@ -6,7 +6,7 @@
 // retirement of the flat Mail page are a follow-up (PR-B).
 import { Alert, Button, Card, Skeleton, Space, Typography } from "antd";
 import { MailOutlined, PlusOutlined } from "@icons";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 
 import { useSetBreadcrumbs } from "../../../components/admin/BreadcrumbContext";
@@ -16,7 +16,6 @@ import { MailboxesTab } from "./tabs/MailboxesTab";
 import { GroupsTab } from "./tabs/GroupsTab";
 import { ForwardersTab } from "./tabs/ForwardersTab";
 import { CatchAllTab } from "./tabs/CatchAllTab";
-import { DisclaimerTab } from "./tabs/DisclaimerTab";
 import { SettingsTab } from "./tabs/SettingsTab";
 import { SharedFoldersTab } from "./tabs/SharedFoldersTab";
 import { SharedResourcesTab } from "./tabs/SharedResourcesTab";
@@ -31,13 +30,16 @@ const TAB_KEYS = [
   "shared",
   "resources",
   "catchall",
-  "disclaimer",
   "settings",
   "logs",
   "statistics",
 ] as const;
 type TabKey = (typeof TAB_KEYS)[number];
 const DEFAULT_TAB: TabKey = "mailboxes";
+
+// Tabs that moved: an old link or bookmark lands on the tab that holds the
+// setting now. GH #1915: the disclaimer lives on Settings.
+const MOVED_TABS = new Map<string, TabKey>([["disclaimer", "settings"]]);
 
 const TAB_LABELS: Record<TabKey, string> = {
   mailboxes: "Accounts",
@@ -46,7 +48,6 @@ const TAB_LABELS: Record<TabKey, string> = {
   shared: "Shared Folders",
   resources: "Shared Resources",
   catchall: "Catch-All",
-  disclaimer: "Disclaimer",
   settings: "Settings",
   logs: "Logs",
   statistics: "Statistics",
@@ -60,7 +61,14 @@ export const MailDomainPage = () => {
   const domainQ = useOneQuery<Domain>({ resource: "domains", id: domainId });
   const activeKey: TabKey = (TAB_KEYS as readonly string[]).includes(tab ?? "")
     ? (tab as TabKey)
-    : DEFAULT_TAB;
+    : (MOVED_TABS.get(tab ?? "") ?? DEFAULT_TAB);
+
+  // Rewrite a moved tab's URL to its new home so the address bar and history
+  // match the tab shown.
+  useEffect(() => {
+    const moved = MOVED_TABS.get(tab ?? "");
+    if (moved) navigate(`/jabali-panel/mail-domains/${domainId}/${moved}`, { replace: true });
+  }, [tab, domainId, navigate]);
 
   // GH #1387 (johnnyq): the shell already renders ONE breadcrumb (RouteBreadcrumb,
   // GH #455). Override it with the 3-level entity trail instead of rendering a
@@ -117,8 +125,6 @@ export const MailDomainPage = () => {
         return <SharedResourcesTab domainId={domainId} />;
       case "catchall":
         return <CatchAllTab domainId={domainId} />;
-      case "disclaimer":
-        return <DisclaimerTab domainId={domainId} />;
       case "settings":
         return <SettingsTab domainId={domainId} />;
       case "logs":

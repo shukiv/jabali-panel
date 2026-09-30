@@ -55,16 +55,18 @@ type cliUserInput struct {
 // marks `username` as the password identifier — so an email is optional and is
 // synthesized as <username>@<panelHost> when omitted (the users.email column is
 // NOT NULL and email is a Kratos trait). Pure (panelHost injected) for testing.
-func resolveCreateIdentity(rawUsername, rawEmail string, isAdmin bool, panelHost string) (*string, string, error) {
+func resolveCreateIdentity(rawUsername, rawEmail string, panelHost string) (*string, string, error) {
 	username := strings.TrimSpace(rawUsername)
 	email := strings.TrimSpace(rawEmail)
 	if username == "" && email == "" {
 		return nil, "", fmt.Errorf("provide --username (the login name); --email is optional")
 	}
 	// Backward compat: derive a username from the email when only an email was
-	// given for a regular user. Admins own no /home/<user>, so they may stay
-	// username-less unless one is passed explicitly.
-	if username == "" && !isAdmin {
+	// given. Admins need one too: the username is the login identifier
+	// (ADR-0119) and users.username is NOT NULL since migration 000164, so a
+	// username-less admin failed to insert (GH #1938). An admin still gets no
+	// /home/<user>.
+	if username == "" {
 		username = cliLinuxUserFromEmail(email)
 		if username == "" {
 			return nil, "", fmt.Errorf("could not derive a username from email %q — pass --username explicitly", email)
@@ -110,7 +112,7 @@ func createUserDirect(ctx context.Context, in cliUserInput) (*models.User, strin
 		return nil, "", fmt.Errorf("password must be at least 10 characters")
 	}
 
-	effectiveUsername, email, err := resolveCreateIdentity(in.Username, in.Email, in.IsAdmin, sharedCfg.Server.Hostname)
+	effectiveUsername, email, err := resolveCreateIdentity(in.Username, in.Email, sharedCfg.Server.Hostname)
 	if err != nil {
 		return nil, "", err
 	}

@@ -441,7 +441,7 @@ func (h *backupHandler) createUserFromBundle(c *gin.Context, tarPath, targetUser
 		if errors.As(err, &ce) {
 			c.JSON(ce.status, gin.H{"error": ce.code, "detail": ce.detail})
 		} else {
-			userOpsRESTError(c, err) // userops sentinels → HTTP
+			userOpsRESTError(c, h.cfg.Log, err) // userops sentinels → HTTP
 		}
 		return nil, false
 	}

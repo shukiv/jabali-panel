@@ -200,7 +200,7 @@ func newDomainDisclaimerSetCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&text, "text", "", "Disclaimer text (UTF-8, plain or HTML)")
+	cmd.Flags().StringVar(&text, "text", "", "Disclaimer text (UTF-8 plain text; HTML mail shows it escaped)")
 	cmd.Flags().StringVar(&file, "file", "", "Read disclaimer from this file (overrides --text)")
 	return cmd
 }

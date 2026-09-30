@@ -345,7 +345,7 @@ components:
         username:
           type: string
           pattern: '^[a-z_][a-z0-9_-]{0,31}$'
-          description: Login identifier and Linux account name. Required unless it can be derived from `email`; ignored for admins.
+          description: Login identifier and Linux account name. Required unless it can be derived from `email`. Admins need one too (they sign in with it) but get no Linux account.
         password: { type: string, format: password, minLength: 10 }
         name_first: { type: string }
         name_last: { type: string }

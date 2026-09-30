@@ -25,14 +25,19 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
-// kinds is the single source of truth for the shared-resource kind allowlist —
-// the REST handler and the CLI used to keep two separate copies. It matches the
-// migration's ENUM('mailbox','calendar','addressbook','files').
+// kinds is the single source of truth for the kinds a new shared resource may
+// have — the REST handler and the CLI used to keep two separate copies. The
+// migration's ENUM('mailbox','calendar','addressbook','files') still holds
+// 'mailbox' for rows created before GH #1914, but create refuses it: the
+// reconciler never converges a shared mailbox (a member who can send as it
+// needs Stalwart group membership, not a shareWith), so one would accept no
+// mail and apply no grants. A mail group is the shared mailbox today. The UI
+// never offered the kind.
 var kinds = map[string]bool{
-	"mailbox": true, "calendar": true, "addressbook": true, "files": true,
+	"calendar": true, "addressbook": true, "files": true,
 }
 
-// ValidKind reports whether kind is an allowed shared-resource kind.
+// ValidKind reports whether kind is a kind a new shared resource may have.
 func ValidKind(kind string) bool { return kinds[kind] }
 
 // NotifyFunc is the best-effort agent notify (ADR-0013): its errors are
@@ -127,6 +132,9 @@ func Create(ctx context.Context, d Deps, in CreateInput, notify NotifyFunc) (*mo
 	}
 	if !in.Domain.EmailEnabled {
 		return nil, ErrEmailNotEnabled
+	}
+	if in.Kind == "mailbox" {
+		return nil, fmt.Errorf("%w: a shared mailbox is not available; create a mail group instead", ErrInvalidKind)
 	}
 	if !ValidKind(in.Kind) {
 		return nil, fmt.Errorf("%w: %s", ErrInvalidKind, in.Kind)

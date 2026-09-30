@@ -532,7 +532,7 @@ type ServerSettings struct {
 	// GH #634: configurable shared FastCGI cache capacity (ADR-0108 keyzone).
 	NginxCacheMaxSizeGB   int `gorm:"column:nginx_cache_max_size_gb;type:int;not null;default:4"    json:"nginx_cache_max_size_gb"`
 	NginxCacheKeyzoneMB   int `gorm:"column:nginx_cache_keyzone_mb;type:int;not null;default:64"    json:"nginx_cache_keyzone_mb"`
-	NginxCacheInactiveMin int `gorm:"column:nginx_cache_inactive_min;type:int;not null;default:60"  json:"nginx_cache_inactive_min"`
+	NginxCacheInactiveMin int `gorm:"column:nginx_cache_inactive_min;type:int;not null;default:1440"  json:"nginx_cache_inactive_min"`
 
 	// LogRetention holds operator-configured retention windows for the log/report
 	// tables, as a { category: days } JSON map (Server Settings -> Logs). An

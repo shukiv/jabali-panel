@@ -1,10 +1,13 @@
 // GH #1628 slice 4: tenant per-domain webmail Settings tab — real-browser pass.
+// GH #1915: the disclaimer moved from its own tab onto Settings.
 //
 // Verifies in Chromium (built SPA, mocked API) what happy-dom cannot: the new
 // Settings tab registers and route-activates on a direct load, the webmail
 // Switch renders + flips → PATCH /domains/:id { webmail_enabled } → toast, the
-// email-off domain hides the switch behind an "enable email first" prompt, and
-// the 10-tab Card strip does not overflow the document at phone width.
+// email-off domain hides the switch behind an "enable email first" prompt, the
+// disclaimer form loads the saved values and saves → PUT /domains/:id/disclaimer,
+// an old /disclaimer link lands on Settings, and the 9-tab Card strip does not
+// overflow the document at phone width.
 import { mockApi, signIn, test, expect, user, expectNoHorizontalOverflow } from "./fixtures";
 import type { Page } from "@playwright/test";
 
@@ -13,8 +16,11 @@ const DOMAIN_ID = "01KDOM0000000000000000MAIL";
 async function setup(
   page: Page,
   opts: { emailEnabled: boolean; webmailEnabled: boolean },
-): Promise<{ patched: Record<string, unknown>[] }> {
+): Promise<{ patched: Record<string, unknown>[]; put: Record<string, unknown>[]; disclaimerGets: number[] }> {
   const patched: Record<string, unknown>[] = [];
+  const put: Record<string, unknown>[] = [];
+  const disclaimerGets: number[] = [];
+  let disclaimer = { enabled: true, text: "Confidential.", updated_at: "2026-09-30T00:00:00Z" };
 
   await mockApi(page, { me: user });
 
@@ -64,7 +70,25 @@ async function setup(
     return route.fallback();
   });
 
-  return { patched };
+  await page.route(`**/api/v1/domains/${DOMAIN_ID}/disclaimer`, async (route) => {
+    const method = route.request().method();
+    if (method === "GET") {
+      disclaimerGets.push(1);
+    } else if (method === "PUT") {
+      const body = route.request().postDataJSON() as { enabled: boolean; text: string };
+      put.push(body);
+      disclaimer = { ...body, updated_at: "2026-09-30T00:00:01Z" };
+    } else {
+      return route.fallback();
+    }
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ domain_id: DOMAIN_ID, domain_name: "example.com", ...disclaimer }),
+    });
+  });
+
+  return { patched, put, disclaimerGets };
 }
 
 test.describe("GH #1628 slice 4 — tenant per-domain webmail Settings tab", () => {
@@ -89,7 +113,7 @@ test.describe("GH #1628 slice 4 — tenant per-domain webmail Settings tab", () 
   });
 
   test("email-off domain hides the switch and prompts to enable email", async ({ page }) => {
-    await setup(page, { emailEnabled: false, webmailEnabled: true });
+    const { disclaimerGets } = await setup(page, { emailEnabled: false, webmailEnabled: true });
     await signIn(page, user);
     await page.waitForURL(/\/jabali-panel/);
 
@@ -97,9 +121,50 @@ test.describe("GH #1628 slice 4 — tenant per-domain webmail Settings tab", () 
 
     await expect(page.getByText(/enable email for this domain first/i)).toBeVisible();
     await expect(page.getByRole("switch", { name: "Webmail client" })).toHaveCount(0);
+    await expect(page.getByRole("switch", { name: "Enable Disclaimer" })).toHaveCount(0);
+    expect(disclaimerGets).toHaveLength(0);
   });
 
-  test("the 10-tab strip does not overflow the document at phone width", async ({ page }) => {
+  test("GH #1915: Settings shows the saved disclaimer and saves it via PUT", async ({ page }) => {
+    const { put } = await setup(page, { emailEnabled: true, webmailEnabled: true });
+    await signIn(page, user);
+    await page.waitForURL(/\/jabali-panel/);
+
+    await page.goto(`/jabali-panel/mail-domains/${DOMAIN_ID}/settings`);
+
+    const sw = page.getByRole("switch", { name: "Enable Disclaimer" });
+    await expect(sw).toBeChecked();
+    const text = page.getByRole("textbox", { name: "Disclaimer Text" });
+    await expect(text).toHaveValue("Confidential.");
+
+    await text.fill("");
+    await page.getByRole("button", { name: "Save" }).click();
+    await expect(page.getByText("Text required when enabled")).toBeVisible();
+    expect(put).toHaveLength(0);
+
+    await text.fill("Legal notice.");
+    await page.getByRole("button", { name: "Save" }).click();
+    await expect.poll(() => put.length).toBe(1);
+    expect(put[0]).toEqual({ enabled: true, text: "Legal notice." });
+    await expect(page.getByText("Disclaimer saved")).toBeVisible();
+    // The form remounts from the refetched row and keeps the saved text.
+    await expect(page.getByRole("textbox", { name: "Disclaimer Text" })).toHaveValue("Legal notice.");
+  });
+
+  test("GH #1915: the Disclaimer tab is gone and its old link opens Settings", async ({ page }) => {
+    await setup(page, { emailEnabled: true, webmailEnabled: true });
+    await signIn(page, user);
+    await page.waitForURL(/\/jabali-panel/);
+
+    await page.goto(`/jabali-panel/mail-domains/${DOMAIN_ID}/disclaimer`);
+
+    await page.waitForURL(new RegExp(`/mail-domains/${DOMAIN_ID}/settings$`));
+    await expect(page.getByRole("tab", { name: "Settings", selected: true })).toBeVisible();
+    await expect(page.getByRole("tab", { name: "Disclaimer" })).toHaveCount(0);
+    await expect(page.getByRole("switch", { name: "Enable Disclaimer" })).toBeVisible();
+  });
+
+  test("the 9-tab strip does not overflow the document at phone width", async ({ page }) => {
     await setup(page, { emailEnabled: true, webmailEnabled: true });
     await page.setViewportSize({ width: 390, height: 844 });
     await signIn(page, user);
