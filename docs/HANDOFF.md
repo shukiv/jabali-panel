@@ -99,8 +99,9 @@ Full set in `docs/adr/` (numbered through 0124). The load-bearing ones:
   `notification_*`, `audit_events`, `server_settings` (app-populated
   first-boot), `managed_ips` (M24), `user_limit_overrides`,
   `user_egress_policies`.
-- Live inspection: the `mcp__jabali-db__mysql_query` MCP (local DB) — use
-  it to verify a migration ran / check live data instead of guessing.
+- Live inspection: run read-only `mysql jabali_panel` queries on the test
+  box (`ssh jabalitests`) to verify a migration ran / check live data
+  instead of guessing.
 
 ## 5. Services jabali ships (systemd)
 
@@ -319,9 +320,8 @@ files/DBs.
   (`search_graph`/`trace_path`/`get_code_snippet`, project
   `home-shuki-projects-jabali2`) before grep. Re-index after structural
   changes to `main`.
-- **MCP first:** Context7 for library APIs, `jabali-db` for live schema,
-  chrome-devtools/claude-in-chrome for UI verification, antd/shadcn for
-  components.
+- **MCP first:** Context7 for library APIs, chrome-devtools/claude-in-chrome
+  for UI verification, antd/shadcn for components.
 
 ## 11. Environments
 
