@@ -179,8 +179,10 @@ func TestSSLPanelMailServed_OldCertificateOnOnePort(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Match "port N", not the bare number: the reason also carries random
+	// certificate sha256 prefixes, which can contain "465".
 	reason, _ := resp["reason"].(string)
-	if resp["ok"] != false || !strings.Contains(reason, "993") || strings.Contains(reason, "465") {
+	if resp["ok"] != false || !strings.Contains(reason, "port 993") || strings.Contains(reason, "port 465") {
 		t.Fatalf("resp = %v, want not ok naming port 993 only", resp)
 	}
 }
@@ -260,7 +262,7 @@ func TestSSLPanelMailServed_PortNotListening(t *testing.T) {
 		t.Fatal(err)
 	}
 	reason, _ := resp["reason"].(string)
-	if resp["ok"] != false || !strings.Contains(reason, "465") {
+	if resp["ok"] != false || !strings.Contains(reason, "port 465") {
 		t.Fatalf("resp = %v, want not ok naming port 465", resp)
 	}
 }
