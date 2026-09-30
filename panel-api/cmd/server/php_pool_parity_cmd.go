@@ -252,6 +252,11 @@ func newPHPPoolIniAddCmd() *cobra.Command {
 			if kind != "value" && kind != "flag" {
 				return fmt.Errorf("--kind must be value|flag")
 			}
+			v, problem := phppoolops.ValidIniOverrideValue(kind, value)
+			if problem != "" {
+				return fmt.Errorf("--value: %s", problem)
+			}
+			value = v
 			ctx, cancel := context.WithTimeout(cmd.Context(), 60*time.Second)
 			defer cancel()
 			poolRepo := repository.NewPHPPoolRepository(sharedDB)
@@ -292,7 +297,11 @@ func newPHPPoolIniUpdateCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("override not found: %w", err)
 			}
-			ov.Value = value
+			v, problem := phppoolops.ValidIniOverrideValue(ov.Kind, value)
+			if problem != "" {
+				return fmt.Errorf("--value: %s", problem)
+			}
+			ov.Value = v
 			if err := ovRepo.Update(ctx, ov); err != nil {
 				return fmt.Errorf("update override: %w", err)
 			}

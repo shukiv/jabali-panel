@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -357,4 +358,35 @@ func TestSplitIniOverrides_Empty(t *testing.T) {
 	require.NotNil(t, flags)
 	assert.Empty(t, values)
 	assert.Empty(t, flags)
+}
+
+// ValidIniOverrideValue is the value check both override doors share.
+func TestValidIniOverrideValue(t *testing.T) {
+	for _, tc := range []struct {
+		kind, in, want string
+		ok             bool
+	}{
+		{"value", "256M", "256M", true},
+		{"value", "Europe/Berlin", "Europe/Berlin", true},
+		{"value", "", "", true},
+		{"value", "256M\nphp_admin_value[open_basedir] = /", "", false},
+		{"value", "256M\r", "", false},
+		{"value", "256M\x00", "", false},
+		{"value", "a\tb", "", false},
+		{"value", "a\x7fb", "", false},
+		{"value", strings.Repeat("é", 255), strings.Repeat("é", 255), true},
+		{"value", strings.Repeat("x", 256), "", false},
+		{"flag", "on", "on", true},
+		{"flag", " Off ", "off", true},
+		{"flag", "ON", "on", true},
+		{"flag", "1", "", false},
+		{"flag", "yes", "", false},
+		{"flag", "on\n", "on", true},
+		{"flag", "", "", false},
+	} {
+		got, problem := phppoolops.ValidIniOverrideValue(tc.kind, tc.in)
+		if (problem == "") != tc.ok || got != tc.want {
+			t.Errorf("ValidIniOverrideValue(%q, %q) = %q, %q; want %q ok=%v", tc.kind, tc.in, got, problem, tc.want, tc.ok)
+		}
+	}
 }
