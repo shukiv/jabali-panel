@@ -420,3 +420,29 @@ func TestPoolHelpersSlugKeyed(t *testing.T) {
 		}
 	}
 }
+
+// An admin_value is rendered raw into the pool conf, so a newline in it would
+// add a line past the directive allowlist and forbiddenDirectives. Any control
+// character is refused before anything is written.
+func TestPoolApplyRejectsControlCharInAdminValue(t *testing.T) {
+	for _, v := range []string{
+		"256M\nphp_admin_value[open_basedir] = /",
+		"256M\r\nuser = root",
+		"256M\x00",
+		"256M\t",
+	} {
+		params, _ := json.Marshal(phpPoolApplyParams{
+			Username:                  "alice",
+			PHPVersion:                "8.4",
+			PmMode:                    "ondemand",
+			PmMaxChildren:             20,
+			ProcessIdleTimeoutSeconds: 60,
+			AdminValues:               []KV{{Name: "memory_limit", Value: v}},
+		})
+		_, err := phpPoolApplyHandler(context.Background(), params)
+		aerr, ok := err.(*agentwire.AgentError)
+		if !ok || aerr.Code != agentwire.CodeInvalidArgument || !strings.Contains(aerr.Message, "control character") {
+			t.Fatalf("value %q: err = %v, want invalid_argument naming the control character", v, err)
+		}
+	}
+}

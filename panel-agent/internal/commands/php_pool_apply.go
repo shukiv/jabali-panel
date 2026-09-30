@@ -177,6 +177,17 @@ func isForbiddenDirective(name string) bool {
 	return false
 }
 
+// hasControlChar reports whether s holds an ASCII control character
+// (newline, carriage return, NUL, tab, DEL, ...).
+func hasControlChar(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] < 0x20 || s[i] == 0x7f {
+			return true
+		}
+	}
+	return false
+}
+
 // globDeletePoolFiles removes pool files for the given username, optionally
 // keeping the named version intact. Pass excludeVersion="" for the legacy
 // wipe-all-versions behavior; pass a concrete version to leave that one
@@ -509,6 +520,15 @@ func phpPoolApplyHandler(ctx context.Context, params json.RawMessage) (any, erro
 			return nil, &agentwire.AgentError{
 				Code:    agentwire.CodeInvalidArgument,
 				Message: fmt.Sprintf("unknown admin_value directive: %s", av.Name),
+			}
+		}
+		// The value is rendered raw into the pool conf: a newline would start
+		// a new line past the directive allowlist and forbiddenDirectives
+		// (e.g. php_admin_value[open_basedir] = /).
+		if hasControlChar(av.Value) {
+			return nil, &agentwire.AgentError{
+				Code:    agentwire.CodeInvalidArgument,
+				Message: fmt.Sprintf("admin_value %s: value contains a control character", av.Name),
 			}
 		}
 	}

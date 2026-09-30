@@ -56,16 +56,20 @@ const (
 	maxPHPPoolPageSize     = 200
 )
 
-// RegisterPHPPoolRoutes mounts /php-pools* under g.
-// - GET /php-pools (admin: all; user: scoped to self)
-// - GET /php-pools/:id (admin: all; user: scoped to self)
-// - POST /php-pools (admin: all; user: own only)
-// - PUT + PATCH /php-pools/:id (admin: all; user: scoped to self)
-// - DELETE /php-pools/:id (admin: all; user: scoped to self)
-// - GET /php-pools/:id/ini-overrides (admin: all; user: scoped to self)
-// - POST /php-pools/:id/ini-overrides (admin: all; user: scoped to self)
-// - PUT /php-pools/:id/ini-overrides/:override_id (admin: all; user: scoped to self)
-// - DELETE /php-pools/:id/ini-overrides/:override_id (admin: all; user: scoped to self)
+// RegisterPHPPoolRoutes mounts /php-pools* under g. The caller mounts g behind
+// RequireAdmin (app.go): pool tuning and ini overrides are admin-only, and a
+// tenant tunes its own pool through the separate /me routes
+// (php_pool_user_tuning.go). The per-handler ownership checks below are a
+// second gate, not the tenant door.
+// - GET /php-pools
+// - GET /php-pools/:id
+// - POST /php-pools
+// - PUT + PATCH /php-pools/:id
+// - DELETE /php-pools/:id
+// - GET /php-pools/:id/ini-overrides
+// - POST /php-pools/:id/ini-overrides
+// - PUT /php-pools/:id/ini-overrides/:override_id
+// - DELETE /php-pools/:id/ini-overrides/:override_id
 func RegisterPHPPoolRoutes(g *gin.RouterGroup, cfg PHPPoolHandlerConfig) {
 	h := &phpPoolHandler{cfg: cfg}
 
@@ -682,6 +686,12 @@ func (h *phpPoolHandler) createIniOverride(c *gin.Context) {
 		})
 		return
 	}
+	value, problem := phppoolops.ValidIniOverrideValue(req.Kind, req.Value)
+	if problem != "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_value", "detail": problem})
+		return
+	}
+	req.Value = value
 
 	// Create ini override record
 	now := time.Now().UTC()
@@ -768,6 +778,13 @@ func (h *phpPoolHandler) updateIniOverride(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "override_not_found"})
 		return
 	}
+
+	value, problem := phppoolops.ValidIniOverrideValue(override.Kind, req.Value)
+	if problem != "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_value", "detail": problem})
+		return
+	}
+	req.Value = value
 
 	// Capture old value for audit logging
 	oldValue := override.Value

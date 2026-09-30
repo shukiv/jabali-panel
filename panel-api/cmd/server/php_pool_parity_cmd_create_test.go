@@ -38,3 +38,18 @@ func TestPHPPoolCreate_RoutesThroughSharedLifecycle(t *testing.T) {
 		t.Fatal("the stale hand-copied reconcilePHPPoolCLI must be gone — it had drifted from the HTTP reconcile (JAB-360)")
 	}
 }
+
+// The CLI ini add/update writes the override row directly, like the API does,
+// so both must check the value through the same shared validator: a newline in
+// a value is rendered raw into the pool conf. Source-pinned for the same reason
+// as above (no DB fixture in cmd/server); the behaviour is unit-tested in
+// internal/phppoolops.
+func TestPHPPoolIni_ValidatesValueViaSharedValidator(t *testing.T) {
+	src, err := os.ReadFile("php_pool_parity_cmd.go")
+	if err != nil {
+		t.Fatalf("read php_pool_parity_cmd.go: %v", err)
+	}
+	if n := strings.Count(string(src), "phppoolops.ValidIniOverrideValue("); n != 2 {
+		t.Fatalf("phppoolops.ValidIniOverrideValue called %d times, want 2 (ini add and ini update)", n)
+	}
+}
