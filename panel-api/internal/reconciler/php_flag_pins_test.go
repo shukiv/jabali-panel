@@ -120,7 +120,10 @@ func TestCreateDomainOnAgent_SendsPHPFlagPins(t *testing.T) {
 	pool := &models.PHPPool{ID: "p1", UserID: dom.UserID, PHPVersion: "8.4"}
 	r.WithPHPPools(&fakePHPPoolRepo{pools: map[string]*models.PHPPool{"p1": pool}})
 	r.WithPHPPoolIniOverrides(&fakeIniOverrideRepo{byPool: map[string][]models.PHPPoolIniOverride{
-		"p1": {{Directive: "file_uploads", Value: "off", Kind: "flag"}},
+		"p1": {
+			{Directive: "file_uploads", Value: "off", Kind: "flag"},
+			{Directive: "memory_limit", Value: "1G", Kind: "value"},
+		},
 	}})
 	dom.PHPPoolID = &pool.ID
 	dom.PHPShortOpenTag = bp(true)
@@ -133,6 +136,9 @@ func TestCreateDomainOnAgent_SendsPHPFlagPins(t *testing.T) {
 	params := call.params.(map[string]any)
 	if params["php_short_open_tag"] != true || params["php_file_uploads"] != false {
 		t.Fatalf("domain.create params = %v, want php_short_open_tag=true (domain) and php_file_uploads=false (pool)", params)
+	}
+	if !reflect.DeepEqual(params["php_pool_values"], map[string]string{"memory_limit": "1G"}) {
+		t.Fatalf("domain.create php_pool_values = %v, want the pool's memory_limit override", params["php_pool_values"])
 	}
 	if _, ok := params["php_log_errors"]; ok {
 		t.Fatalf("log_errors is set by neither the domain nor the pool; the agent pins php.ini, got %v", params["php_log_errors"])
