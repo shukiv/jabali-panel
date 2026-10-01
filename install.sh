@@ -13163,7 +13163,7 @@ install_notify_template() {
 # STALWART_VERSION is the single pin for the Stalwart Mail server binary,
 # consumed by both install_stalwart (fresh install) and upgrade_stalwart_binary
 # (the jabali update path). Bump here + install/stalwart.sha256 together.
-STALWART_VERSION="0.16.15"
+STALWART_VERSION="0.16.24"
 
 # upgrade_stalwart_binary is the jabali-update entry point for the Stalwart
 # server binary (GH #525). install.sh's full install_stalwart runs on fresh
@@ -14075,7 +14075,7 @@ _install_stalwart_binary() {
 # speaks the v0.16 JMAP management API, used by install.sh bootstrap and
 # the reconciler. Idempotent against version reported by --version.
 _install_stalwart_cli() {
-  local cli_version="1.0.12"
+  local cli_version="1.0.13"
   local cli_binary="/usr/local/bin/stalwart-cli"
   local arch="x86_64-unknown-linux-gnu"
   local tarball="stalwart-cli-${arch}.tar.xz"
