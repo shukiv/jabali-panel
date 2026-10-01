@@ -229,12 +229,22 @@ the test host (Ubuntu noble, Redis 7.0.15) and codified in `install_redis_acl()`
 Scoping it to `~jabali:notifications:*` as first drafted would NOPERM automation
 replay-defense + audit. The shipped `jabali_panel` user is therefore:
 ```
-user jabali_panel on >TOKEN ~jabali:* ~automation:* resetchannels +@all -@dangerous +acl +@connection
+user jabali_panel on >TOKEN ~jabali:* ~automation:* resetchannels +@all -@dangerous +acl +@connection +info
 ```
 `+acl` lets the same connection run the per-tenant ACL lifecycle (`ACL SETUSER`/
 `DELUSER`/`SAVE`), so panel-api needs no second admin connection — the separate
 `jabali_acl_admin`/`jabali_dispatcher` split in §3 is collapsed into one trusted
 control-plane user. Tenants remain tightly scoped (`~jc:<prefix>:*`).
+
+`+info` was added later. `INFO` is in `@dangerous`, so the first line refused it,
+and panel-api dropped the NOPERM: the WordPress cache diagnostic's
+`evicted_keys` warning and the admin hit ratio / `used_memory` never appeared.
+`INFO` reports server statistics only (no keys, values or credentials), and
+`+acl` already lets this user change its own rules, so granting it moves no real
+boundary. `CONFIG` and the rest of `@dangerous` stay denied. Fresh installs get
+it from the ACL line; `converge_redis_panel_info_acl` in install.sh grants it on
+existing hosts (`ACL SETUSER jabali_panel +info` + `ACL SAVE`, acting only on a
+NOPERM reply), and panel-api now logs a failed INFO.
 
 **Verified live (gated, default-lock survives restart):** default off → no-auth
 PING = NOAUTH; panel reconnects as jabali_panel + dispatcher starts; a

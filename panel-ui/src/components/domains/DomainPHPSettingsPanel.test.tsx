@@ -16,6 +16,11 @@ vi.mock("../../lib/feedback", () => ({
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({ t: (k: string) => k }),
 }));
+// Stub the stream modal (it would open a WebSocket); render a marker when shown.
+vi.mock("../LogStreamModal", () => ({
+  LogStreamModal: (p: { visible: boolean; title: string }) =>
+    p.visible ? <div data-testid="log-stream-modal">{p.title}</div> : null,
+}));
 
 import { apiClient } from "../../apiClient";
 import { DomainPHPSettingsPanel } from "./DomainPHPSettingsPanel";
@@ -256,5 +261,57 @@ describe("DomainPHPSettingsPanel package policy (GH #1701)", () => {
     expect(await screen.findByText("Admin only")).toBeInTheDocument();
     expect(screen.queryByText("Set by your administrator")).toBeNull();
     expect(memoryLimitSelect().className).not.toContain("ant-select-disabled");
+  });
+});
+
+describe("DomainPHPSettingsPanel Reset OPcache (GH #1701)", () => {
+  function withReset(allowed: boolean | undefined) {
+    mocked.get.mockImplementation((url: string) => {
+      if (url === "/php/versions") return Promise.resolve({ data: { versions: ["8.3", "8.4"] } });
+      if (url === "/domains/d1/php-settings")
+        return Promise.resolve({ data: { ...SETTINGS, opcache_reset_allowed: allowed } });
+      return Promise.resolve({ data: {} });
+    });
+  }
+
+  it("resets this domain's OPcache after the confirm", async () => {
+    withReset(true);
+    mocked.post.mockResolvedValue({ data: { restarted: true, php_version: "8.3" } });
+    renderPanel();
+    fireEvent.click(await screen.findByText("Reset OPcache"));
+    // The confirm names what restarts before anything happens.
+    expect(await screen.findByText(/restarts PHP 8\.3 for every site/)).toBeInTheDocument();
+    expect(mocked.post).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Reset" }));
+    await vi.waitFor(() =>
+      expect(mocked.post).toHaveBeenCalledWith("/domains/d1/php-settings/opcache-reset"),
+    );
+  });
+
+  it("hides the reset when the caller may not reset", async () => {
+    withReset(false);
+    renderPanel();
+    await screen.findByText("View error log");
+    expect(screen.queryByText("Reset OPcache")).toBeNull();
+  });
+
+  it("hides the reset on an API that does not say", async () => {
+    withReset(undefined);
+    renderPanel();
+    await screen.findByText("View error log");
+    expect(screen.queryByText("Reset OPcache")).toBeNull();
+  });
+});
+
+describe("DomainPHPSettingsPanel error log shortcut (GH #1701)", () => {
+  it("opens this domain's error log right on the page", async () => {
+    mocked.post.mockResolvedValue({ data: { stream_key: "k1", websocket_url: "/ws/logs/k1" } });
+    renderPanel();
+    expect(screen.queryByTestId("log-stream-modal")).toBeNull();
+    fireEvent.click(await screen.findByText("View error log"));
+    await vi.waitFor(() =>
+      expect(mocked.post).toHaveBeenCalledWith("/logs/access", { log_type: "error", domain_id: "d1" }),
+    );
+    expect(await screen.findByTestId("log-stream-modal")).toHaveTextContent("Error Log Stream");
   });
 });

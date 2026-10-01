@@ -11,23 +11,26 @@ import (
 	ginctx "git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/phppoolops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
 // DomainPHPPoolHandlerConfig wires the domain↔pool binding routes.
 //
-// Agent / Users / PHPPoolIniOverrides are required so the user-driven
-// version switch can fire php.pool.apply immediately, mirroring the admin
-// PUT /php-pools/:id flow. Without them, a version change only updates
-// the DB and waits for the next reconciler tick — and only converges if
-// pool.Status was flipped to "pending" first, which the reconciler uses
-// as its work filter.
+// Reconciler + Agent / Users / PHPPoolIniOverrides / Packages let a version
+// switch converge now (GH #1701, see applyNow). Without them a switch only
+// updates the DB and waits for the next full reconcile pass, which applies a
+// pending pool and re-points the domain's vhost.
 type DomainPHPPoolHandlerConfig struct {
 	Domains             repository.DomainRepository
 	PHPPools            repository.PHPPoolRepository
 	PHPPoolIniOverrides repository.PHPPoolIniOverrideRepository
 	Users               repository.UserRepository
 	Agent               agent.AgentInterface
+	// Packages carries the owner's GH #402 exec-functions opt-out into the
+	// pool apply (GH #1422); without it the apply keeps the lockdown.
+	Packages   repository.PackageRepository
+	Reconciler DomainPHPScheduler
 }
 
 // RegisterDomainPHPPoolRoutes adds two routes under the existing /domains
@@ -194,6 +197,7 @@ func (h *domainPHPPoolHandler) bind(c *gin.Context) {
 		oldPoolIDStr = *oldPoolID
 	}
 	slog.InfoContext(ctx, "domain_php_pool.bound", "user_id", claims.UserID, "domain_id", dom.ID, "pool_id", poolID, "old_pool_id", oldPoolIDStr, "new_pool_id", poolID)
+	h.applyNow(dom.ID, *pool)
 
 	c.JSON(http.StatusOK, gin.H{
 		"domain_id":   dom.ID,
@@ -240,9 +244,53 @@ func (h *domainPHPPoolHandler) unbind(c *gin.Context) {
 	dom.PHPPoolID = nil
 
 	slog.InfoContext(ctx, "domain_php_pool.unbound", "user_id", claims.UserID, "domain_id", dom.ID, "old_pool_id", oldPoolIDStr, "new_pool_id", "")
+	// Unbound, the domain runs on the owner's default pool (the earliest).
+	if pools, lerr := h.cfg.PHPPools.ListByUserID(ctx, dom.UserID); lerr == nil && len(pools) > 0 {
+		h.applyNow(dom.ID, pools[0])
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"domain_id":   dom.ID,
 		"php_pool_id": nil,
 	})
+}
+
+// applyNow makes a version switch take effect now instead of at the next full
+// reconcile pass (GH #1701). A pool that already runs only needs the domain's
+// vhost re-pointed at its socket. A new or failed pool is applied first, and
+// the vhost re-pointed only after the apply succeeds: re-pointing first would
+// send the domain to a socket nothing listens on. A failed apply leaves the
+// pool for the full pass to retry, as before.
+func (h *domainPHPPoolHandler) applyNow(domainID string, pool models.PHPPool) {
+	if h.cfg.Reconciler == nil {
+		return
+	}
+	if poolRunning(&pool) {
+		h.cfg.Reconciler.Schedule(domainID)
+		return
+	}
+	if h.cfg.Agent == nil || h.cfg.Users == nil || h.cfg.PHPPoolIniOverrides == nil {
+		return
+	}
+	deps := phppoolops.ReconcileDeps{
+		Agent:     h.cfg.Agent,
+		Users:     h.cfg.Users,
+		Overrides: h.cfg.PHPPoolIniOverrides,
+		Pools:     h.cfg.PHPPools,
+		Packages:  h.cfg.Packages,
+	}
+	go func() {
+		if err := phppoolops.ReconcileViaAgent(deps, pool); err != nil {
+			slog.Warn("php-pool switch: apply failed, left for the reconcile pass", "error", err, "pool_id", pool.ID, "domain_id", domainID)
+			return
+		}
+		h.cfg.Reconciler.Schedule(domainID)
+	}()
+}
+
+// poolRunning: the pool's FPM master is up, so a vhost may point at its socket
+// now. Any other status waits for the full reconcile pass, which applies pools
+// before it renders vhosts.
+func poolRunning(p *models.PHPPool) bool {
+	return p != nil && (p.Status == "active" || p.Status == "ready")
 }

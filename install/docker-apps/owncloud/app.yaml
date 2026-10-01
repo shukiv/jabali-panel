@@ -2,7 +2,7 @@ slug: owncloud
 popularity: 52
 name: ownCloud
 tags: ["File sharing"]
-version: "11.0.0"
+version: "11.0.1"
 description: |
   Self-hosted file sync and share platform. Three services: ownCloud
   server (PHP), MariaDB, and Redis for transactional file locking.
@@ -12,7 +12,7 @@ icon: icon.svg
 upstream: https://github.com/owncloud/core
 documentation: https://doc.owncloud.com/server/10.16/
 
-image_channel: owncloud/server:11.0.0@sha256:667c772de235e23f49f064eddefaaab2bc1c18beeea8506c1ad24f4a3a931738
+image_channel: owncloud/server:11.0.1@sha256:74a1de2ade39a6b87a91c34794b6873177f4c8d987315e81f444f5d4caace7da
 update_mode: manual
 
 resources:

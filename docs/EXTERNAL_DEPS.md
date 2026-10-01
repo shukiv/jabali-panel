@@ -19,7 +19,7 @@ the string to bump it.
 
 | Component | Version / pin | Source | install.sh anchor | Why |
 |---|---|---|---|---|
-| Go toolchain | `1.26.4` (override: `JABALI_GO_VERSION`) | go.dev tarball | `GO_VERSION="${JABALI_GO_VERSION:-1.26.4}"` (line ~122) | builds panel-api + panel-agent |
+| Go toolchain | `1.26.8` (override: `JABALI_GO_VERSION`) | go.dev tarball | `GO_VERSION="${JABALI_GO_VERSION:-1.26.8}"` (line ~140); equal to the go.mod `toolchain` line and the CI workflows' `GO_VERSION` (`TestGoToolchainPinsAgree`) | builds panel-api + panel-agent, on install and on every `jabali update` (`ensure_go_toolchain_current`) |
 | PHP (Sury / ondrej) | distro-latest from `packages.sury.org` (Debian) or `ppa:ondrej/php` (Ubuntu) | apt | sury+ondrej repo blocks (line ~1538) | tenant PHP runtime, multi-version per-user pools |
 
 ## Web / proxy / TLS
@@ -35,7 +35,7 @@ the string to bump it.
 |---|---|---|---|
 | MariaDB | distro 11.x | apt | panel DB + tenant DBs (M7). Reserved-word trap on 11.4+ documented in `feedback_mariadb_reserved_words` |
 | Redis | distro | apt | M14 notifications stream + SSO session store |
-| Adminer | `6.0.1` | `github.com/vrana/adminer` release | M37 DB UI |
+| Adminer | `6.1.1` | `github.com/vrana/adminer` release | M37 DB UI |
 | phpMyAdmin | `5.2.3` | phpmyadmin.net tarball | M7 |
 
 ## DNS
@@ -52,7 +52,7 @@ the string to bump it.
 | CrowdSec engine | packagecloud + distro main | apt | M27 + M43 IP-trust single source |
 | CrowdSec nginx bouncer | distro | apt | inline ban |
 | CrowdSec AppSec hub | hub-pinned | `cscli hub install` | M27, custom vpatch rules at `/etc/crowdsec/appsec-rules/` |
-| Snuffleupagus (PHP ext) | `0.13.0` | source build | M41 PHP hardening rules |
+| Snuffleupagus (PHP ext) | `0.14.0` | source build | M41 PHP hardening rules |
 | ClamAV | distro **binary only** — `clamd` + `freshclam` daemons masked | apt | M33 on-demand scan; signatures refresh via `jabali-freshclam.timer` |
 | YARA-X | `1.17.0` | `github.com/VirusTotal/yara-x` release tarball | M33 malware engine; clamscan subset constraints per `feedback_clamscan_yara_subset` |
 | LMD (Linux Malware Detect) | `2.0.1-rc4` | upstream tar | M33 signature feed |
@@ -63,10 +63,10 @@ the string to bump it.
 
 | Component | Version | Source | Notes |
 |---|---|---|---|
-| Stalwart mail server | `0.16.7` | `github.com/stalwartlabs/stalwart` release | SMTP + IMAP + JMAP per ADR-0041 |
-| Stalwart CLI | `1.0.8` | `github.com/stalwartlabs/cli` release | mail admin |
+| Stalwart mail server | `0.16.24` | `github.com/stalwartlabs/stalwart` release | SMTP + IMAP + JMAP per ADR-0041 |
+| Stalwart CLI | `1.0.13` | `github.com/stalwartlabs/cli` release | mail admin |
 | Stalwart spam-filter rules | version from upstream sha file | `github.com/stalwartlabs/spam-filter` | rule pack |
-| Bulwark webmail | `1.7.3` | `github.com/bulwarkmail/webmail` release | M6 webmail; per-mailbox SSO |
+| Bulwark webmail | `1.12.0` | `github.com/bulwarkmail/webmail` release | M6 webmail; per-mailbox SSO |
 
 ## Identity (M20)
 

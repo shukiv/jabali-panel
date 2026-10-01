@@ -81,7 +81,7 @@ slow endpoint is traceable per account without touching the global config.
 
 ## Snuffleupagus
 
-PHP hardening (no-eval, no-include-from-uploads, taint tracking) is on by default — see [security.md](./security.md#snuffleupagus).
+PHP runtime hardening for every PHP version. It is off by default; an administrator turns on simulation or enforce mode under Security → PHP Defense. See [security.md](./security.md#snuffleupagus).
 
 ## CLI
 

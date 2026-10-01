@@ -137,7 +137,7 @@ REPO_DIR="${JABALI_REPO_DIR:-/opt/jabali-panel}"
 # owns /etc/resolv.conf and pdns-recursor recurses through 1.1.1.1 +
 # 9.9.9.9 via UDP.
 DNS_FORWARDER="${JABALI_DNS_FORWARDER:-}"
-GO_VERSION="${JABALI_GO_VERSION:-1.26.5}"
+GO_VERSION="${JABALI_GO_VERSION:-1.26.8}"
 # SHA-256 of the pinned Go tarballs, from https://go.dev/dl/?mode=json.
 # Pinned HERE rather than in install/ because install_go runs BEFORE
 # clone_or_update_repo — on a fresh install $REPO_DIR does not exist yet, so a
@@ -147,8 +147,8 @@ GO_VERSION="${JABALI_GO_VERSION:-1.26.5}"
 # Bump together with GO_VERSION. An unpinned version (JABALI_GO_VERSION
 # override, or the CDN-gap fallback) verifies against go.dev's published
 # checksum instead — see install_go.
-GO_SHA256_AMD64="${JABALI_GO_SHA256_AMD64:-5c2c3b16caefa1d968a94c1daca04a7ca301a496d9b086e17ad77bb81393f053}"
-GO_SHA256_ARM64="${JABALI_GO_SHA256_ARM64:-fe4789e92b1f33358680864bbe8704289e7bb5fc207d80623c308935bd696d49}"
+GO_SHA256_AMD64="${JABALI_GO_SHA256_AMD64:-d0f743b33e8d8945e6b1f432edd15785c70507121d6e2a723b21285eddf8b57b}"
+GO_SHA256_ARM64="${JABALI_GO_SHA256_ARM64:-211ffced9dcb9633a55eac6364816ec0ddd951389a740e88fa8b3337971bdda0}"
 GO_ROOT="${JABALI_GO_ROOT:-/usr/local/go}"
 SERVICE_USER="${JABALI_SERVICE_USER:-jabali}"
 SERVICE_NAME="${JABALI_SERVICE_NAME:-jabali-panel}"
@@ -3685,8 +3685,8 @@ ensure_mariadb_socket_acl_for_jabali() {
 # ADR-0056 + ADR-0059. Unix-socket-only Redis at /run/redis/redis.sock,
 # mode 0660, group jabali-sockets (same pattern as every other service
 # under ADR-0050). AOF on (dispatcher queue survives restart).
-# 128 MB maxmemory with allkeys-lru (safe for both dispatcher queue
-# and future WP object-cache).
+# maxmemory with allkeys-lru: 128 MB in the socket drop-in, raised to fit
+# host RAM by size_redis_maxmemory's 15-jabali-maxmemory.conf.
 #
 # db 0 → panel-api notification dispatcher
 # db 1 → reserved for future WordPress object-cache
@@ -4040,6 +4040,91 @@ install_redis() {
   _ok "Redis listening on unix socket /run/redis/redis.sock mode 0660 ${owner}:${group}"
 }
 
+# size_redis_maxmemory sizes Redis maxmemory to host RAM in its own drop-in,
+# 15-jabali-maxmemory.conf, which loads after 10-jabali-socket.conf and so
+# overrides its fixed 128mb.
+#
+# Why: 128 MB was a starting floor (ADR-0059). One Redis holds every tenant's
+# WordPress object cache plus the notification stream, under allkeys-lru. A
+# fleet box sat at 99.7% of 128 MB: sites' object caches evicted each other,
+# and the notification stream in db 0 was as evictable as any cache key.
+# (Keeping the stream safe from eviction needs its own instance or store; this
+# only makes eviction much rarer.)
+#
+# Sizing, mirroring tune_mariadb_for_ram / bound_stalwart_memory: a fraction
+# of RAM with a floor and a ceiling.
+#   maxmemory = RAM/16 rounded down to a 64 MB step, floor 128 MB (never
+#               below the old value), ceiling 1024 MB
+#   <=2 GB -> 128 MB   4 GB -> 256 MB   8 GB -> 512 MB   >=16 GB -> 1024 MB
+# The 64 MB step, and leaving the RAM figure out of the file, keep MemTotal's
+# small drift across kernel updates from rewriting the drop-in and restarting
+# Redis for nothing.
+# The ceiling matters because an AOF rewrite forks Redis and copy-on-write can
+# briefly double its memory, on a box where MariaDB and Stalwart are already
+# sized to large shares of RAM.
+#
+# Applying it needs a restart: the default user is locked and jabali_panel has
+# no CONFIG, so root has no credential for CONFIG SET. The restart happens only
+# when the drop-in changes (once per box, and again if RAM changes); AOF keeps
+# the keys. Operators override with a higher-numbered drop-in (for example
+# 50-local.conf): Redis applies the last maxmemory it reads.
+# redis_maxmemory_mb <host-ram-mb> — prints Redis maxmemory in MB.
+#
+# Split from size_redis_maxmemory so the brackets can be tested directly at
+# every interesting host size. Pure arithmetic: no filesystem, no systemctl.
+redis_maxmemory_mb() {
+  local mem_mb="$1" mm
+  mm=$((mem_mb / 16 / 64 * 64))
+  [[ $mm -lt 128 ]] && mm=128
+  [[ $mm -gt 1024 ]] && mm=1024
+  printf '%s\n' "$mm"
+}
+
+size_redis_maxmemory() {
+  local dropin_dir="/etc/redis/redis.conf.d"
+  local dropin="${dropin_dir}/15-jabali-maxmemory.conf"
+  local mem_kb mem_mb mm
+
+  # Redis not installed, or installed without jabali's drop-in directory: the
+  # include line install_redis adds is not there, so nothing would read it.
+  command -v redis-server >/dev/null 2>&1 || return 0
+  [[ -d "$dropin_dir" ]] || return 0
+
+  mem_kb=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null || echo 0)
+  mem_mb=$((mem_kb / 1024))
+  if [[ $mem_mb -le 0 ]]; then
+    _warn "redis-mem: cannot read MemTotal; leaving maxmemory as it is"
+    return 0
+  fi
+  mm=$(redis_maxmemory_mb "$mem_mb")
+
+  local desired
+  desired=$(cat <<REDIS_MEM_EOF
+# Managed by jabali install.sh -- sized to host RAM.
+# Do NOT hand-edit; install.sh rewrites on every run. To override, add a
+# higher-numbered drop-in (for example 50-local.conf): the last maxmemory wins.
+# See install.sh:size_redis_maxmemory for the sizing brackets.
+maxmemory ${mm}mb
+REDIS_MEM_EOF
+)
+
+  if [[ -f "$dropin" ]] && cmp -s <(printf '%s\n' "$desired") "$dropin"; then
+    _log "redis-mem: drop-in already current (maxmemory ${mm}mb)"
+    return 0
+  fi
+
+  local tmp
+  tmp="$(mktemp --tmpdir jabali-redis-mem.XXXXXX)"
+  printf '%s\n' "$desired" >"$tmp"
+  install -m 0644 -o root -g root "$tmp" "$dropin"
+  rm -f "$tmp"
+  _log "redis-mem: wrote $dropin (maxmemory ${mm}mb for ${mem_mb} MB RAM)"
+
+  # try-restart: a stopped Redis stays stopped and reads the drop-in when it
+  # next starts.
+  systemctl try-restart redis-server || _warn "redis-mem: redis-server restart failed; maxmemory applies at its next start"
+}
+
 # install_redis_acl — #406 / ADR-0148. Lock the no-AUTH default user and give
 # panel-api a scoped ACL user, so reaching the socket no longer grants full
 # access (the prerequisite for ever letting tenants connect for WP caching).
@@ -4063,6 +4148,7 @@ install_redis_acl() {
      && grep -q '^user jabali_panel ' /etc/redis/users.acl 2>/dev/null \
      && grep -q '^user default off' /etc/redis/users.acl 2>/dev/null \
      && [[ -f /etc/redis/redis.conf.d/20-jabali-acl.conf ]]; then
+    converge_redis_panel_info_acl
     return 0
   fi
 
@@ -4114,7 +4200,7 @@ install_redis_acl() {
   # Runtime tenant users (wp_<osuser>) are appended by panel-api via ACL SETUSER.
   cat > "$aclfile" <<ACL
 user default on nopass ~* &* +@all
-user jabali_panel on >${panel_token} ~jabali:* ~automation:* resetchannels +@all -@dangerous +acl +@connection
+user jabali_panel on >${panel_token} ~jabali:* ~automation:* resetchannels +@all -@dangerous +acl +@connection +info
 ACL
   chown redis:redis "$aclfile"; chmod 0640 "$aclfile"
   printf 'aclfile %s
@@ -4139,6 +4225,50 @@ ACL
   sed -i 's|^user default on nopass.*|user default off nopass ~* resetchannels -@all|' "$aclfile"
   redis-cli -s "$sock" --user jabali_panel --pass "$panel_token" --no-auth-warning ACL LOAD >/dev/null 2>&1 || systemctl restart redis-server
   _ok "Redis ACLs configured: default locked, jabali_panel scoped, per-tenant users ready"
+}
+
+# converge_redis_panel_info_acl — give the existing fleet's jabali_panel Redis
+# user the INFO command. INFO sits in @dangerous, so the original ACL line
+# (+@all -@dangerous ...) left panel-api unable to read evicted_keys, the hit
+# ratio or used_memory: the WordPress cache diagnostic's eviction warning and
+# the admin cache stats never showed on any box. Fresh installs get +info from
+# the ACL line in install_redis_acl; this reaches hosts that take its fast path.
+#
+# Detect at runtime rather than by grepping users.acl: panel-api's ACL SAVE
+# rewrites that file in canonical form, and it also holds the per-tenant wp_*
+# users, so it is never rewritten here. The grant is ACL SETUSER + ACL SAVE as
+# jabali_panel itself (it already holds +acl, so +info adds no real power).
+# Acts only on NOPERM: any other answer (NOAUTH, WRONGPASS, no socket) means
+# the ACL state is not what this expects, and it is left alone with a warning.
+# The token goes through REDISCLI_AUTH, never argv.
+converge_redis_panel_info_acl() {
+  local sock="/run/redis/redis.sock"
+  local panel_token out
+  command -v redis-cli >/dev/null 2>&1 || return 0
+  [[ -S "$sock" ]] || return 0
+  panel_token="$(sed -n 's/^JABALI_REDIS_PANEL_TOKEN=//p' "$ENV_FILE" 2>/dev/null | head -1)"
+  [[ -n "$panel_token" ]] || return 0
+
+  # `|| true`: under set -Eeuo pipefail a refused connection (or head closing
+  # the pipe) would otherwise fail the assignment and trip the ERR trap.
+  out="$(REDISCLI_AUTH="$panel_token" redis-cli -s "$sock" --user jabali_panel --no-auth-warning INFO server 2>&1 | head -1)" || true
+  case "$out" in
+    NOPERM*) ;;
+    "# Server"*) return 0 ;;
+    *)
+      _warn "redis-acl: INFO as jabali_panel answered '${out}'; leaving its ACL unchanged"
+      return 0
+      ;;
+  esac
+
+  REDISCLI_AUTH="$panel_token" redis-cli -s "$sock" --user jabali_panel --no-auth-warning ACL SETUSER jabali_panel +info >/dev/null 2>&1 || true
+  REDISCLI_AUTH="$panel_token" redis-cli -s "$sock" --user jabali_panel --no-auth-warning ACL SAVE >/dev/null 2>&1 || true
+  out="$(REDISCLI_AUTH="$panel_token" redis-cli -s "$sock" --user jabali_panel --no-auth-warning INFO server 2>&1 | head -1)" || true
+  if [[ "$out" == "# Server"* ]]; then
+    _ok "redis-acl: jabali_panel may now run INFO (cache eviction and hit-ratio stats)"
+  else
+    _warn "redis-acl: granting INFO to jabali_panel did not take effect ('${out}')"
+  fi
 }
 
 # ---------- step 2.5c: PostgreSQL 16 (M37 Phase 1) ---------------------------
@@ -5374,8 +5504,8 @@ install_go() {
     # stable", but for a pin-to-latest that IS $GO_VERSION, so it retried the
     # identical failing URL and died. Instead, walk the published stable list
     # (newest first) and take the FIRST version that (a) differs from the one
-    # that just failed and (b) actually downloads. go.mod needs only go 1.25.0,
-    # so an older published stable still builds the panel.
+    # that just failed and (b) actually downloads. An older published stable
+    # still builds the panel: GOTOOLCHAIN=auto fetches the go.mod toolchain.
     local failed_pin="$GO_VERSION" _ver _got=""
     _warn "Go $failed_pin not downloadable from go.dev (unpublished pin or CDN propagation gap) -- trying other published stable releases"
     # mode=json lists only releases whose files are actually published -- unlike
@@ -5445,6 +5575,70 @@ EOF
   chmod 0644 /etc/profile.d/jabali-go.sh
 
   _ok "Go installed: $("$GO_ROOT/bin/go" version)"
+}
+
+# ensure_go_toolchain_current — `jabali update` compiles with $GO_ROOT/bin/go:
+# jabali-sendmail whenever the shim is stale (ensure_jabali_sendmail_binary),
+# and the panel and agent when no release tarball is available or with
+# --from-source. install_go runs only on install day, so a box keeps the Go it
+# was installed with. This brings it to the pinned GO_VERSION on update. Unlike install_go it downloads and verifies BEFORE it
+# touches $GO_ROOT, and swaps the new tree in with a rename: a failed download
+# leaves the old Go in place, and the build still gets the go.mod toolchain
+# through GOTOOLCHAIN=auto. Pinned version and pinned checksum only, no
+# fallback walk. Every failure warns and returns 0.
+ensure_go_toolchain_current() {
+  local cur="" arch="" expected="" tarball="" stage="" got=""
+  cur="$("$GO_ROOT/bin/go" version 2>/dev/null | awk '{print $3}' || true)"
+  if [[ "$cur" == "go$GO_VERSION" ]]; then
+    return 0
+  fi
+  case "$(uname -m)" in
+    x86_64) arch=amd64; expected="$GO_SHA256_AMD64" ;;
+    aarch64|arm64) arch=arm64; expected="$GO_SHA256_ARM64" ;;
+  esac
+  if [[ -z "$arch" || -z "$expected" ]]; then
+    _warn "Go ${cur:-missing}: no pinned go${GO_VERSION} checksum for $(uname -m); keeping the installed Go"
+    return 0
+  fi
+  _log "updating Go ${cur:-missing} -> go${GO_VERSION}"
+  tarball="$(mktemp /tmp/jabali-go.XXXXXX)" || { _warn "Go update: mktemp failed; keeping the installed Go"; return 0; }
+  if ! curl -fsSL --connect-timeout 20 --retry 3 --retry-delay 5 --retry-connrefused \
+      --speed-limit 1024 --speed-time 30 -o "$tarball" \
+      "https://go.dev/dl/go${GO_VERSION}.linux-${arch}.tar.gz"; then
+    rm -f "$tarball"
+    _warn "Go update: go${GO_VERSION} download failed; keeping ${cur:-the installed Go}"
+    return 0
+  fi
+  got="$(sha256sum "$tarball" | awk '{print $1}')"
+  if [[ "$got" != "$expected" ]]; then
+    rm -f "$tarball"
+    _warn "Go update: checksum mismatch for go${GO_VERSION}.linux-${arch}.tar.gz (expected $expected, got $got); NOT installing"
+    return 0
+  fi
+  # Stage next to $GO_ROOT so the swap is a rename on one filesystem.
+  stage="$(mktemp -d "$(dirname "$GO_ROOT")/.jabali-go-stage.XXXXXX")" \
+    || { rm -f "$tarball"; _warn "Go update: cannot stage next to $GO_ROOT; keeping the installed Go"; return 0; }
+  if ! tar -C "$stage" -xzf "$tarball" || [[ "$("$stage/go/bin/go" version 2>/dev/null | awk '{print $3}')" != "go$GO_VERSION" ]]; then
+    rm -rf "$stage" "$tarball"
+    _warn "Go update: the go${GO_VERSION} tarball did not unpack to a working toolchain; keeping the installed Go"
+    return 0
+  fi
+  rm -f "$tarball"
+  if [[ -e "$GO_ROOT" ]] && ! mv "$GO_ROOT" "$stage/old"; then
+    rm -rf "$stage"
+    _warn "Go update: cannot move $GO_ROOT aside; keeping the installed Go"
+    return 0
+  fi
+  if ! mv "$stage/go" "$GO_ROOT"; then
+    # Put the old tree back; leave the stage on disk if even that fails.
+    if [[ ! -e "$stage/old" ]] || mv "$stage/old" "$GO_ROOT"; then
+      rm -rf "$stage"
+    fi
+    _warn "Go update: cannot move go${GO_VERSION} into $GO_ROOT; kept the installed Go"
+    return 0
+  fi
+  rm -rf "$stage"
+  _ok "Go updated: ${cur:-none} -> $("$GO_ROOT/bin/go" version | awk '{print $3}')"
 }
 
 # ---------- step 3: service user + dirs -------------------------------------
@@ -8161,7 +8355,7 @@ install_adminer() {
   # other install.sh pin (phpMyAdmin, Stalwart, Kratos, …). Bump this one line,
   # then `scripts/deps-check.sh --refresh-sha adminer_version` to re-capture the
   # checksum.
-  local adminer_version="6.0.1"
+  local adminer_version="6.1.1"
   local adminer_dir="/var/www/jabali-adminer"
   local adminer_url="https://github.com/vrana/adminer/releases/download/v${adminer_version}/adminer-${adminer_version}.php"
   local adminer_stamp="${adminer_dir}/.adminer-version"
@@ -8330,7 +8524,9 @@ install_wp_cli() {
 ensure_snuffleupagus_bundle_synced() {
   local src="${1:-${REPO_DIR:-/opt/jabali-panel}/install/snuffleupagus/rules}"
   local dst="${2:-/usr/share/jabali/snuffleupagus/rules}"
-  [[ -d "$src" ]] || return 0
+  # No base rules in the source = a broken checkout. Leave the mirror as it
+  # is: pruning it would render an empty ruleset (protection off).
+  [[ -f "$src/00-base.rules" ]] || return 0
   mkdir -p "$dst"
   local changed=0 f base
   for f in "$src"/*.rules; do
@@ -8338,6 +8534,16 @@ ensure_snuffleupagus_bundle_synced() {
     base="$(basename "$f")"
     if [[ ! -f "$dst/$base" ]] || ! cmp -s "$f" "$dst/$base"; then
       install -m 0644 "$f" "$dst/$base" && changed=1
+    fi
+  done
+  # Prune files the repo no longer ships: the reconciler renders every
+  # *.rules it finds here, so a rule file moved to the repo's pending/ (or
+  # deleted) would otherwise stay loaded on every existing host.
+  for f in "$dst"/*.rules; do
+    [[ -e "$f" ]] || continue
+    base="$(basename "$f")"
+    if [[ ! -f "$src/$base" ]]; then
+      rm -f "$f" && changed=1
     fi
   done
   if [[ -f "$src/README.md" ]]; then
@@ -11168,8 +11374,8 @@ install_malware_stack() {
   # YARA-X (the `yr` binary) — Rust rewrite of YARA, full module support
   # including the `hash` module that libclamav YARA can't load. maldet
   # 2.0.1+ prefers `yr` over libyara when both are present.
-  local YARAX_VERSION="1.20.0"
-  local YARAX_SHA256="cabb8df46492fff59c51261302c71ed9cb2cef393d3f0ca560801a34a8e24cbe"
+  local YARAX_VERSION="1.21.0"
+  local YARAX_SHA256="01585181e8979e36ac10ab123fcf8921cf8ba879bf942916413e091e18d64852"
   if ! command -v yr >/dev/null 2>&1 || \
      [[ "$(yr --version 2>/dev/null | awk '{print $2}')" != "$YARAX_VERSION" ]]; then
     local tmp_yrx
@@ -11315,7 +11521,7 @@ YARA_EX
   # scripts/deps-check.sh in the monthly deps issue). signature-base has
   # no tagged releases, so the pin is a commit SHA. Pin bumps require a
   # PR review, same as LMD_VERSION/LMD_SHA256.
-  local SIGBASE_COMMIT="278165d7845decece517f756cf92ff4a41938d1e" # 2026-08-31 "rules for Virtualizor compromise"
+  local SIGBASE_COMMIT="94a1c48d7ab499879287ff611dfe7f9c56376030" # 2026-09-08 "refactor: disabled old rule"
   #
   # Custom YARA scanner picks up rules via the maldet 2.0.1 drop-in dir
   # at /usr/local/maldetect/sigs/custom.yara.d/. We symlink:
@@ -13033,7 +13239,7 @@ install_notify_template() {
 # STALWART_VERSION is the single pin for the Stalwart Mail server binary,
 # consumed by both install_stalwart (fresh install) and upgrade_stalwart_binary
 # (the jabali update path). Bump here + install/stalwart.sha256 together.
-STALWART_VERSION="0.16.15"
+STALWART_VERSION="0.16.24"
 
 # upgrade_stalwart_binary is the jabali-update entry point for the Stalwart
 # server binary (GH #525). install.sh's full install_stalwart runs on fresh
@@ -13959,7 +14165,7 @@ _install_stalwart_binary() {
 # speaks the v0.16 JMAP management API, used by install.sh bootstrap and
 # the reconciler. Idempotent against version reported by --version.
 _install_stalwart_cli() {
-  local cli_version="1.0.12"
+  local cli_version="1.0.13"
   local cli_binary="/usr/local/bin/stalwart-cli"
   local arch="x86_64-unknown-linux-gnu"
   local tarball="stalwart-cli-${arch}.tar.xz"
@@ -14116,7 +14322,7 @@ _install_spam_rules() {
 }
 
 install_bulwark() {
-  local bulwark_version="1.8.0"
+  local bulwark_version="1.12.0"
   local arch="linux-amd64"
   local tarball="bulwark-standalone-${bulwark_version}-${arch}.tar.gz"
   local url="https://github.com/bulwarkmail/webmail/releases/download/${bulwark_version}/${tarball}"
@@ -15169,11 +15375,26 @@ SCRIPT_EOF
 
 # ---------- main ------------------------------------------------------------
 
+# _snuf_detect_fpm_minors — print the PHP minors ("8.3 8.4 8.5") that have
+# an FPM binary in $1 (default /usr/sbin). Debian and Sury install it as
+# php-fpm8.4; the php8.4-fpm spelling is matched as well. The glob used
+# before only knew php8.4-fpm, so on a real box it found nothing and every
+# `jabali update` built Snuffleupagus for JABALI_PHP_VERSIONS alone
+# (default 8.4): other minors kept an old build or had none at all.
+_snuf_detect_fpm_minors() {
+  local dir="${1:-/usr/sbin}" f base
+  for f in "$dir"/php-fpm[0-9]*.[0-9]* "$dir"/php[0-9]*.[0-9]*-fpm; do
+    [[ -x "$f" ]] || continue
+    base="${f##*/}"
+    if [[ "$base" =~ ([0-9]+\.[0-9]+) ]]; then printf '%s\n' "${BASH_REMATCH[1]}"; fi
+  done | sort -u -V | tr '\n' ' ' | sed 's/ $//'
+}
+
 install_snuffleupagus() {
   # Pin the upstream tag + tarball SHA256. Update both atomically when
   # bumping. SHA256 = sha256sum of the GitHub release tarball.
-  local snuf_version="0.13.0"
-  local snuf_sha256="350a33cd3906bdba46f5c4cf3d00edeb81eaf6a7b9a3a7e5ef47bc967492ae90"
+  local snuf_version="0.14.0"
+  local snuf_sha256="080cf7e24d15a8650e271837030fca546e627c7a4c7317710c683282fdcb71c6"
 
   local build="${REPO_DIR}/install/snuffleupagus/build/build.sh"
   if [[ ! -x "$build" ]]; then
@@ -15195,12 +15416,8 @@ install_snuffleupagus() {
   # would only cover the bootstrap-time JABALI_PHP_VERSIONS set and
   # operator-added minors would silently lack PHP Defense (caught
   # 2026-05-04 — UI showed "1/3 installed PHP minors" with 8.5 active).
-  local _detected_minors=""
-  if compgen -G "/usr/sbin/php*-fpm" >/dev/null; then
-    _detected_minors="$(ls -1 /usr/sbin/php*-fpm 2>/dev/null \
-      | sed -E 's|.*/php([0-9]+\.[0-9]+)-fpm|\1|' \
-      | sort -u | tr '\n' ' ')"
-  fi
+  local _detected_minors
+  _detected_minors="$(_snuf_detect_fpm_minors)"
   # Union of explicit override + on-disk detection. Keeps the override
   # behavior (operator forcing a specific subset) while adding any
   # newly-installed minor automatically on the next run.
@@ -15267,14 +15484,8 @@ EOF_CLI
   # the panel reconciler reads from a stable on-disk path independent of
   # the source checkout layout.
   install -d -m 0755 /usr/share/jabali/snuffleupagus/rules
-  if [[ -d "${REPO_DIR}/install/snuffleupagus/rules" ]]; then
-    install -m 0644 "${REPO_DIR}/install/snuffleupagus/rules/"*.rules \
-      /usr/share/jabali/snuffleupagus/rules/ 2>/dev/null || true
-    if [[ -f "${REPO_DIR}/install/snuffleupagus/rules/README.md" ]]; then
-      install -m 0644 "${REPO_DIR}/install/snuffleupagus/rules/README.md" \
-        /usr/share/jabali/snuffleupagus/rules/ 2>/dev/null || true
-    fi
-  fi
+  ensure_snuffleupagus_bundle_synced \
+    "${REPO_DIR}/install/snuffleupagus/rules" /usr/share/jabali/snuffleupagus/rules
 
   # Build per minor. Same auto-detect as the dev-pkg loop above:
   # union of JABALI_PHP_VERSIONS + every phpX.Y-fpm binary on disk.
@@ -16307,6 +16518,12 @@ EOF
     install_redis_acl
   fi
 
+  # Redis maxmemory sized to host RAM (was a fixed 128mb). Self-heal on every
+  # update; restarts redis-server only when the drop-in changes.
+  if declare -f size_redis_maxmemory >/dev/null 2>&1; then
+    size_redis_maxmemory
+  fi
+
   # JAB-39: ensure PHP runtime extensions (incl. sqlite3/pdo_sqlite) for every
   # installed FPM version — install_base_packages doesn't run on update.
   if declare -f provision_php_extensions >/dev/null 2>&1; then
@@ -16338,6 +16555,11 @@ EOF
   if declare -f install_php_cli_sendmail_path >/dev/null 2>&1; then
     install_php_cli_sendmail_path
   fi
+  # The pinned Go, before anything below or the update's own build step
+  # compiles with it. A subshell, so nothing in it can abort the provision
+  # chain; the function itself never fails.
+  ( ensure_go_toolchain_current ) || _warn "Go toolchain update failed; the build uses the go.mod toolchain instead"
+
   # JAB-230 — the shim binary itself. Closes the two-hop trap where the
   # previous panel binary's update code installs everything EXCEPT the new
   # binary it doesn't know about.
@@ -16544,6 +16766,7 @@ main() {
   # sources install.sh and runs install_docker_engine on demand.
   install_redis
   install_redis_acl
+  size_redis_maxmemory   # Redis maxmemory sized to host RAM
   # M37 Phase 4: PostgreSQL is OPT-IN. install_postgres no longer runs on
   # fresh install. Operator flips server_settings.postgres_enabled in
   # the Databases tab; panel-api dispatches db.postgres.install which

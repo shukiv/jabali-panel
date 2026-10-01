@@ -1,6 +1,7 @@
-# stalwart-cli v1.0.12 SHA-256 checksum for stalwart-cli-x86_64-unknown-linux-gnu.tar.xz
-# Source: https://github.com/stalwartlabs/cli/releases/tag/v1.0.12
-# Captured 2026-08-05 directly from the GitHub release artifact.
+# stalwart-cli v1.0.13 SHA-256 checksum for stalwart-cli-x86_64-unknown-linux-gnu.tar.xz
+# Source: https://github.com/stalwartlabs/cli/releases/tag/v1.0.13
+# Captured 2026-10-01 from the GitHub release artifact; matches the digest
+# GitHub publishes for the asset.
 #
 # The stalwart-cli tool speaks the JMAP management API and is used by
 # install.sh + the panel-agent to provision Stalwart configuration as
@@ -10,4 +11,4 @@
 #   curl -sSL https://github.com/stalwartlabs/cli/releases/download/v<x.y.z>/stalwart-cli-x86_64-unknown-linux-gnu.tar.xz | sha256sum
 # install.sh `_die`s if the placeholder PLACEHOLDER_CAPTURE_ON_FIRST_DEPLOY
 # survives — same pattern as install/stalwart.sha256.
-e2bb054509aaac311f13ff4f9e09c38c607195de2e9735cf84cfc6ee4776a5a2  stalwart-cli-x86_64-unknown-linux-gnu.tar.xz
+1b8509b767edd1a17693e092b518c41610ec4b724f4e62c461bd28cd40c669f7  stalwart-cli-x86_64-unknown-linux-gnu.tar.xz

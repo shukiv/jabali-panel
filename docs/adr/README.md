@@ -164,6 +164,7 @@ This directory contains Architecture Decision Records (ADRs) documenting signifi
 | [0159](0159-per-user-notification-channels.md) | Per-user notification channels + routing (JAB-171) | Accepted |
 | [0160](0160-build-tag-demo-mode.md) | Build-tag-gated demo mode on main (JAB-159) | Accepted |
 | [0161](0161-ioncube-loader-server-wide.md) | ionCube Loader — server-wide per PHP version, composed into PHP Extensions | Accepted |
+| [0172](0172-system-jobs-catalog.md) | System jobs come from a fixed catalog; no disable from the list (GH #1686) | Accepted |
 <!-- 0133-0140: numbers reserved during planning, no ADR file was ever written (JAB-161). -->
 <!-- /AUTO-GENERATED -->
 

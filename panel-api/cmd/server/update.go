@@ -403,7 +403,10 @@ chmod 0750 "$WR"`)
 			// Release channel (GH #445): "development" tracks origin/main
 			// (historical behavior); "stable" tracks the movable `stable`
 			// tag (a reviewed build promoted via `jabali release promote`).
-			channel := releaseChannelOrDefault()
+			channel, channelErr := releaseChannel()
+			if channelErr != nil {
+				fmt.Printf("  release channel: could not read it (%v) — staying on the current build; the next update retries\n", channelErr)
+			}
 			// The VM is a deployment target, not a source of truth. Tracked-
 			// file drift (typical cause: operator `sed`/patches a file in
 			// place on the VM to test a fix, then later commits the same
@@ -437,8 +440,8 @@ chmod 0750 "$WR"`)
 			if err := asUser(repoDir, "git", "fetch", "origin", "main"); err != nil {
 				return err
 			}
-			resetRef := "origin/main"
-			if channel == "stable" {
+			resetRef, followStable := updateBaseRef(channel, channelErr)
+			if followStable {
 				// Fetched separately from main: the `stable` tag is absent on
 				// origin until the first promote, so a combined fetch would
 				// hard-fail on a host that has never had one (GH #445).

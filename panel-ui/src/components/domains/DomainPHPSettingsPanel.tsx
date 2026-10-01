@@ -9,13 +9,15 @@
 // per-version-pool — shared by every domain on that version — so they stay put.
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Button, Col, Form, Row, Select, Space, Spin, Tag, Typography } from "antd";
+import { Button, Col, Form, Popconfirm, Row, Select, Space, Spin, Tag, Typography } from "antd";
 import { useNavigate } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { feedback } from "../../lib/feedback"; // GH #970: themed toasts
 import { apiClient } from "../../apiClient";
 import { isPHPEOL } from "../../utils/phpEol";
 import { IANA_TIMEZONES } from "../../data/timezones";
+import { LogStreamModal } from "../LogStreamModal";
+import { useDomainLogStreams } from "../logs/useDomainLogStreams";
 
 type DomainPHPSettings = {
   php_pool_id?: string | null;
@@ -41,6 +43,9 @@ type DomainPHPSettings = {
   // package permits. Absent (an older API) = nothing locked.
   policy?: Record<string, string> | null;
   editable?: string[] | null;
+  // GH #1701: the caller may reset this domain's OPcache (an admin, or a
+  // tenant whose package lets them edit FPM). Absent (an older API) = no.
+  opcache_reset_allowed?: boolean;
 };
 
 type PHPSettingsFormData = {
@@ -160,11 +165,13 @@ export function DomainPHPSettingsPanel({ domainId }: DomainPHPSettingsPanelProps
   const { t } = useTranslation();
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const logStreams = useDomainLogStreams();
   const [phpSettings, setPhpSettings] = useState<DomainPHPSettings | null>(null);
   const [availableVersions, setAvailableVersions] = useState<string[]>([]);
   const [versionSaving, setVersionSaving] = useState(false);
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [resetting, setResetting] = useState(false);
   const [form] = Form.useForm<PHPSettingsFormData>();
 
   // Installed PHP versions for the version selector. Non-fatal: the selector
@@ -213,6 +220,27 @@ export function DomainPHPSettingsPanel({ domainId }: DomainPHPSettingsPanelProps
       );
     } finally {
       setVersionSaving(false);
+    }
+  };
+
+  // GH #1701: OPcache belongs to the PHP pool, so the reset restarts the pool
+  // serving this domain and every site on it starts with an empty cache.
+  const onResetOpcache = async () => {
+    setResetting(true);
+    try {
+      const resp = await apiClient.post<{ php_version?: string }>(
+        `/domains/${domainId}/php-settings/opcache-reset`,
+      );
+      feedback.message.success(
+        `OPcache reset (PHP ${resp.data?.php_version ?? phpSettings?.php_version ?? ""} restarted)`,
+      );
+    } catch (err) {
+      const e = err as { response?: { data?: { detail?: string; error?: string } } };
+      feedback.message.error(
+        e.response?.data?.detail ?? e.response?.data?.error ?? "Failed to reset OPcache",
+      );
+    } finally {
+      setResetting(false);
     }
   };
 
@@ -438,14 +466,29 @@ export function DomainPHPSettingsPanel({ domainId }: DomainPHPSettingsPanelProps
                 />
               </Form.Item>
 
-              {/* GH #1332 items 7, 15: quick actions for this domain. Reset
-                  OPcache lives on the OPcache & JIT tab (per-version / shared-
-                  pool, not per-domain), so it is not duplicated here. */}
+              {/* GH #1332 items 7, 15: quick actions for this domain. GH #1701:
+                  Reset OPcache is back here at the reporter's request, next to
+                  the per-version one on the OPcache & JIT tab; it resets the
+                  pool serving this domain. View error log opens this domain's
+                  error-log stream right here (GH #1701), the same stream as the
+                  Error Log button on the domain's Logs tab. */}
               <Space wrap style={{ marginBottom: 8 }}>
+                {phpSettings.opcache_reset_allowed && phpSettings.php_version && (
+                  <Popconfirm
+                    title="Reset OPcache?"
+                    description={`This restarts PHP ${phpSettings.php_version} for every site on this domain's PHP pool.`}
+                    okText="Reset"
+                    onConfirm={onResetOpcache}
+                  >
+                    <Button type="link" style={{ paddingInline: 0 }} loading={resetting}>
+                      Reset OPcache
+                    </Button>
+                  </Popconfirm>
+                )}
                 <Button
                   type="link"
                   style={{ paddingInline: 0 }}
-                  onClick={() => navigate(`/jabali-panel/logs?domain=${domainId}`)}
+                  onClick={() => void logStreams.openStream("error", domainId)}
                 >
                   View error log
                 </Button>
@@ -668,6 +711,8 @@ export function DomainPHPSettingsPanel({ domainId }: DomainPHPSettingsPanelProps
             </>
           )}
       </Spin>
+      {/* Portal-rendered; holds no form fields. */}
+      <LogStreamModal {...logStreams.modalProps} />
     </Form>
   );
 }

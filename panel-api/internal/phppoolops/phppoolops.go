@@ -17,7 +17,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
@@ -278,4 +280,31 @@ func SplitIniOverrides(overrides []models.PHPPoolIniOverride) (adminValues, admi
 		}
 	}
 	return adminValues, adminFlags
+}
+
+// ValidIniOverrideValue checks a pool ini override value and returns it
+// normalised, or a problem to show the caller. Both doors that write overrides
+// (the /php-pools API and `jabali php pool ini`) use it. A flag is "on" or
+// "off": the agent renders php_admin_flag and refuses anything else, which
+// would fail the whole pool apply later. Every value is written raw into the
+// pool conf, so a control character is refused (a newline would start a line
+// past the agent's directive allowlist), and it must fit the 255-character
+// column.
+func ValidIniOverrideValue(kind, value string) (string, string) {
+	if kind == "flag" {
+		v := strings.ToLower(strings.TrimSpace(value))
+		if v != "on" && v != "off" {
+			return "", "a flag value must be 'on' or 'off'"
+		}
+		return v, ""
+	}
+	for i := 0; i < len(value); i++ {
+		if value[i] < 0x20 || value[i] == 0x7f {
+			return "", "value must not contain control characters"
+		}
+	}
+	if utf8.RuneCountInString(value) > 255 {
+		return "", "value must be at most 255 characters"
+	}
+	return value, ""
 }

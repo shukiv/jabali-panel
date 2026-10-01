@@ -1,7 +1,7 @@
 slug: snipe-it
 name: Snipe-IT
 tags: ["IT", "Inventory", "Assets"]
-version: "8.7.2"
+version: "8.8.0"
 description: |
   Free, open-source IT asset management. Track hardware, licenses,
   accessories, and consumables. Laravel app container + bundled MariaDB.
@@ -9,7 +9,7 @@ icon: icon.webp
 upstream: https://github.com/snipe/snipe-it
 documentation: https://snipe-it.readme.io/docs
 
-image_channel: snipe/snipe-it:v8.7.2@sha256:18cc45da877ec5509e1fdb17b492db42e37d3ca3bc89d885d82e9c0ecdae1253
+image_channel: snipe/snipe-it:v8.8.0@sha256:973da940ffcca77ccd31fd0197e182b8b8614531bf3e8ed7f8665b83722c67ce
 update_mode: manual
 
 resources:

@@ -1,15 +1,9 @@
-# Stalwart Mail Server v0.16.15 SHA-256 checksum for stalwart-x86_64-unknown-linux-gnu.tar.gz
-# Source: https://github.com/stalwartlabs/stalwart/releases/tag/v0.16.15
-# Captured 2026-07-31 directly from the GitHub release artifact (GH #625).
-# 0.16.15 is a drop-in binary replacement from v0.16.x -- upstream says
-# "replace the binary" for any 0.16.x, no config/JMAP-management migration.
-#
-# Taken for a SECURITY fix, not routine currency: upstream 0.16.15 fixes
-# "Scoped credentials with SysApiKeyCreate or SysApiKeyUpdate permissions can
-# regain its own account's full rights" -- a privilege escalation out of a
-# scoped API key. It also stops encrypting appended messages for accounts that
-# never opted into encryptOnAppend, and fixes an MTA panic when MTA-STS is
-# disabled and a remote MTA fetches /.well-known/mta-sts.txt.
+# Stalwart Mail Server v0.16.24 SHA-256 checksum for stalwart-x86_64-unknown-linux-gnu.tar.gz
+# Source: https://github.com/stalwartlabs/stalwart/releases/tag/v0.16.24
+# Captured 2026-10-01 from the GitHub release artifact; matches the digest
+# GitHub publishes for the asset. 0.16.24 is a drop-in binary replacement
+# within v0.16.x -- upstream says "replace the binary", no config migration.
+# (The 0.16.19 MySQL key-column note does not apply: our store is RocksDB.)
 #
 # Stalwart v0.16.x replaced its REST API with a JMAP management API
 # (see ADR-0041 + plan #1). SQL directory is supported against MariaDB
@@ -19,4 +13,4 @@
 #   curl -sSL https://github.com/stalwartlabs/stalwart/releases/download/v<x.y.z>/stalwart-x86_64-unknown-linux-gnu.tar.gz | sha256sum
 # install.sh `_die`s if the placeholder PLACEHOLDER_CAPTURE_ON_FIRST_DEPLOY
 # survives — matches the DokuWiki/MediaWiki tarball precedent.
-6f23c6217f0f9710bafde889b7efbc349c7cfa613c4b14b8b365245799373676  stalwart-x86_64-unknown-linux-gnu.tar.gz
+51392691d4ab67864e84af5215277dbd4a069ffaf9a0ceb94a07462e22487843  stalwart-x86_64-unknown-linux-gnu.tar.gz

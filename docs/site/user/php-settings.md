@@ -24,11 +24,15 @@ Your hosting package decides which of these values you may change. A value your 
 
 ## Application
 
-A saved change is applied to the domain on the next reconciler pass (within about a minute). It applies to that domain only, whatever PHP version the domain runs.
+A change saved from the panel or the API is applied to the domain within a few seconds. A change an administrator makes with `jabali domain php-settings set` on the server is applied on the next reconciler pass (within about a minute). A change applies to that domain only, whatever PHP version the domain runs.
+
+Switching the domain to another PHP version also takes effect within a few seconds. When that version has no running PHP pool for your account yet, the pool is started first and the domain moves to it after the pool runs.
 
 ## OpCache
 
 OPcache is enabled per-version with operator-chosen defaults (typically 128 MiB cache, 10000 files). Tenant tuning of OpCache is not exposed; ask the operator if you need a larger cache for a code base with many files.
+
+**Reset OPcache** on the domain's **PHP Settings** tab clears the cached code after you deploy files that PHP does not pick up on its own. The reset restarts the PHP pool that serves the domain, so every site on that pool sees a short restart; the panel asks you to confirm first. The button shows only when your hosting package lets you edit PHP-FPM settings. Administrators, also while impersonating, can always reset.
 
 ## JIT
 
@@ -41,7 +45,7 @@ Most CMSes (WordPress, Drupal, Moodle) ship recommendations:
 - WordPress: `memory_limit 256M`, `upload_max_filesize 64M`, `post_max_size 64M`, `max_execution_time 300`.
 - Moodle: `memory_limit 512M`, `upload_max_filesize 1024M` (when accepting large coursework uploads).
 
-Start with the recommendation, then raise specific values only when you hit an error in the app's error log.
+Start with the recommendation, then raise specific values only when you hit an error in the app's error log. **View error log** on the domain's **PHP Settings** tab opens that domain's error log live, on the same page.
 
 
 ## Command line, Composer, and cron

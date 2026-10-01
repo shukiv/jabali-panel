@@ -87,14 +87,7 @@ The panel API daemon holds **no** AppArmor policy-management capability (`mac_ad
 
 ## Snuffleupagus
 
-PHP runtime hardening loaded as a Zend extension on every PHP version. Default rules:
-
-- Block `eval` against tainted request data.
-- Disallow `include` / `require` from `php://`, `data:`, or remote URLs.
-- Taint tracking from `$_GET` / `$_POST` into shell-execution sinks.
-- Block known-bad shellcode patterns.
-
-Per-app exceptions live in `/etc/php/<ver>/snuffleupagus.rules.d/`. WP, Moodle, NextCloud, etc. ship with pre-baked exception files.
+PHP runtime hardening, built for every installed PHP version and loaded into PHP-FPM and the PHP command line. The mode is **off** by default; **simulation** logs what would be stopped and **enforce** stops it. The loaded rules block the command-execution functions (`system`, `exec`, `shell_exec`, `passthru`, `popen`, `proc_open`, `pcntl_exec`), `assert`, `show_source`, `highlight_file` and `phpinfo`, and harden sessions (SameSite cookie, signed `unserialize()` data, XXE protection). More rules ship in the bundle but are not loaded yet; see [PHP Defense](./admin/snuffleupagus.md).
 
 ## AIDE host-integrity
 

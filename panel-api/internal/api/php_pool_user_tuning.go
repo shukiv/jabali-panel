@@ -304,10 +304,22 @@ func (h *phpUserTuningHandler) resetOpcache(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "pool_not_found"})
 		return
 	}
+	if !resetPoolOpcache(c, h.cfg.Agent, h.cfg.PHPPools, user, pool) {
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"restarted": true, "php_version": pool.PHPVersion})
+}
+
+// resetPoolOpcache restarts the FPM master of pool (owned by user) through
+// php.opcache.reset, which drops that master's OPcache. Shared by the
+// per-version reset on the OPcache & JIT tab and the per-domain reset on a
+// domain's PHP Settings (GH #1701). It writes the error response and returns
+// false on failure.
+func resetPoolOpcache(c *gin.Context, ag agent.AgentInterface, pools repository.PHPPoolRepository, user *models.User, pool *models.PHPPool) bool {
 	// Resolve the slug exactly as reconcilePHPPoolViaAgent does: the earliest
 	// pool (ListByUserID[0]) is the default, whose slug == username.
 	isDefault := true
-	if list, err := h.cfg.PHPPools.ListByUserID(c.Request.Context(), user.ID); err == nil && len(list) > 0 {
+	if list, err := pools.ListByUserID(c.Request.Context(), user.ID); err == nil && len(list) > 0 {
 		isDefault = list[0].ID == pool.ID
 	}
 	username := ""
@@ -316,14 +328,14 @@ func (h *phpUserTuningHandler) resetOpcache(c *gin.Context) {
 	}
 	slug := models.PoolSlug(username, pool.PHPVersion, isDefault)
 	c.Set("audit_target", "php_opcache:"+slug)
-	if _, err := h.cfg.Agent.Call(c.Request.Context(), "php.opcache.reset", map[string]any{
+	if _, err := ag.Call(c.Request.Context(), "php.opcache.reset", map[string]any{
 		"username": username,
 		"slug":     slug,
 	}); err != nil {
 		respondAgentErr(c, "opcache_reset_failed", err)
-		return
+		return false
 	}
-	c.JSON(http.StatusOK, gin.H{"restarted": true, "php_version": pool.PHPVersion})
+	return true
 }
 
 func (h *phpUserTuningHandler) applyToPool(c *gin.Context, pool *models.PHPPool, pmMode string, mc, st, mn, mx, mr, tt, idle uint32, mode string) {

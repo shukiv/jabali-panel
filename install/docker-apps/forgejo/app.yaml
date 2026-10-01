@@ -2,7 +2,7 @@ slug: forgejo
 popularity: 70
 name: Forgejo
 tags: ["Developer tools"]
-version: "16.0.3"
+version: "16.0.5"
 description: |
   Lightweight self-hosted Git forge — a community-run fork of Gitea.
   Bundled SQLite for v1; admin can flip to compose-managed Postgres
@@ -12,7 +12,7 @@ icon: icon.svg
 upstream: https://codeberg.org/forgejo/forgejo
 documentation: https://forgejo.org/docs/
 
-image_channel: codeberg.org/forgejo/forgejo:16.0.3@sha256:7c4e1db440be7b2ca685b49d0d7864cdd78e92431f531bf7893659def8200fc5
+image_channel: codeberg.org/forgejo/forgejo:16.0.5@sha256:cf5f5ae6acf2ababca0ee3d255705b83a47f35b25e07fc931d694d60664053fe
 volume_owner: "1000:1000"
 update_mode: manual
 

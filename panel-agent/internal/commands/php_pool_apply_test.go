@@ -420,3 +420,25 @@ func TestPoolHelpersSlugKeyed(t *testing.T) {
 		}
 	}
 }
+
+// An admin_value is rendered raw into the pool conf, so a newline in it would
+// add a line past the directive allowlist and forbiddenDirectives. Any control
+// character is refused. validatePoolIniOverrides is called directly: the
+// handler checks /etc/php/<ver>/fpm/pool.d first, which a CI runner lacks.
+func TestPoolApplyRejectsControlCharInAdminValue(t *testing.T) {
+	for _, v := range []string{
+		"256M\nphp_admin_value[open_basedir] = /",
+		"256M\r\nuser = root",
+		"256M\x00",
+		"256M\t",
+	} {
+		err := validatePoolIniOverrides([]KV{{Name: "memory_limit", Value: v}}, nil)
+		if err == nil || err.Code != agentwire.CodeInvalidArgument || !strings.Contains(err.Message, "control character") {
+			t.Fatalf("value %q: err = %v, want invalid_argument naming the control character", v, err)
+		}
+	}
+	if err := validatePoolIniOverrides([]KV{{Name: "memory_limit", Value: "256M"}, {Name: "date.timezone", Value: "Europe/Berlin"}},
+		[]KV{{Name: "log_errors", Value: "off"}}); err != nil {
+		t.Fatalf("clean overrides refused: %v", err)
+	}
+}

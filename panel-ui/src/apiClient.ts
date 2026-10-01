@@ -930,6 +930,50 @@ export async function listAdminCronJobs(): Promise<AdminCronJobListResponse> {
   return resp.data;
 }
 
+/** One row of Admin → Cron Jobs → System jobs (GH #1686). */
+export interface AdminSystemJob {
+  id: string;
+  kind: "timer" | "backup_schedule";
+  label: string;
+  description: string;
+  category: string;
+  /** Short text, or a cron expression when schedule_format is "cron". */
+  schedule: string;
+  schedule_format: "text" | "cron";
+  status: "running" | "scheduled" | "disabled";
+  /** "" when results are tracked elsewhere (backup schedules). */
+  last_result: "success" | "failed" | "never" | "running" | "";
+  last_run_at: string | null;
+  next_run_at: string | null;
+  can_run_now: boolean;
+  has_log: boolean;
+  managed_by?: "updates" | "backups";
+}
+
+export interface AdminSystemJobListResponse {
+  data: AdminSystemJob[];
+  total: number;
+}
+
+/** Admin: the scheduled jobs Jabali installs, plus server-wide backup schedules. */
+export async function listAdminSystemJobs(): Promise<AdminSystemJobListResponse> {
+  const resp = await apiClient.get<AdminSystemJobListResponse>("/admin/system-jobs");
+  return resp.data;
+}
+
+/** Admin: start a system job now. 409 when it is already running. */
+export async function runAdminSystemJob(id: string): Promise<void> {
+  await apiClient.post(`/admin/system-jobs/${encodeURIComponent(id)}/run`);
+}
+
+/** Admin: a system job's recent journal lines. */
+export async function getAdminSystemJobLog(id: string, lines?: number): Promise<CronLogResponse> {
+  const resp = await apiClient.get<CronLogResponse>(`/admin/system-jobs/${encodeURIComponent(id)}/log`, {
+    params: lines ? { lines } : undefined,
+  });
+  return resp.data;
+}
+
 /**
  * Create a new cron job
  */

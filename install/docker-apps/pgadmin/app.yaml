@@ -2,7 +2,7 @@ slug: pgadmin
 popularity: 40
 name: pgAdmin
 tags: ["Developer tools", "Database"]
-version: "9.17"
+version: "9.18"
 description: |
   Web-based administration and management tool for PostgreSQL. Browse
   schemas, run queries, manage roles and backups from the browser. Admin
@@ -16,7 +16,7 @@ documentation: https://www.pgadmin.org/docs/
 # "ssl.py ... ValueError: Unknown object" (a broken OID table in that build) —
 # box-verified on a real host. 9.16 boots and serves /misc/ping. Re-verify a
 # container actually starts before bumping this pin.
-image_channel: dpage/pgadmin4:9.17@sha256:2f4ce946ddf8360680d7eff4eaba1d91859eb6b4003e6623bad5c63a322c2f4d
+image_channel: dpage/pgadmin4:9.18@sha256:c332c5f6dfba995d9ebc4af261d93506d6876085d712eaaa3defc8dd1a3f26de
 update_mode: manual
 
 # pgAdmin runs as the unprivileged "pgadmin" user (uid/gid 5050) and reads
