@@ -1,0 +1,120 @@
+# Jabali PHP Defense -- PENDING base rules (not loaded).
+#
+# Split from 00-base.rules on 2026-10-01. The renderer only reads
+# ../*.rules, so nothing in this directory reaches active.rules. Move a
+# rule back into ../00-base.rules only after it passes a per-app soak
+# in enforce mode; see README.md here for the known false blocks.
+
+# putenv LD_*/PATH/GCONV_*: privilege-escalation primitive.
+sp.disable_function.function("putenv").param("assignment").value_r("LD_").drop();
+sp.disable_function.function("putenv").param("assignment").value("PATH").drop();
+sp.disable_function.function("putenv").param("assignment").value_r("GCONV_").drop();
+
+# Webshell-drop prevention: tenant PHP must not write .php files.
+sp.disable_function.function("file_put_contents").param("filename").value_r("\\.php$").drop();
+
+# --- Stream wrapper allowlist: REMOVED (GH #335) ---
+# A static wrappers_whitelist is fundamentally incompatible with a
+# multi-tenant host: modern PHP packages register userland wrappers at
+# runtime (guzzle:// from guzzlehttp/psr7, s3:// from the AWS SDK,
+# Flysystem adapters, ...), so any fixed allowlist silently breaks a
+# growing set of apps. It broke ITFlow's email-to-ticket parser in
+# production (imapengine -> mail-mime-parser -> guzzle/psr7:
+# "Unable to create stream resource").
+#
+# Removing it does NOT open an attacker-reachable surface:
+#   - Userland wrappers are only usable in-process -- registering one
+#     already requires code execution, at which point the whitelist is
+#     moot.
+#   - The sharp built-ins (php://, data://) were already allowed here.
+#   - The phar-deserialization RCE this line nominally targeted is
+#     independently mitigated: phar.readonly=On is pinned on every host
+#     (blocks attacker phar creation), and PHP 8.0 removed the automatic
+#     phar-metadata unserialization the classic RCE relied on.
+#   - expect:// (the one genuinely dangerous built-in) needs the pecl
+#     `expect` extension, which jabali does not install.
+# eval_blacklist + disable_function(system/exec/...) + unserialize_hmac
+# (above) remain the real code-execution defenses.
+
+# --- M41 enrichment: HIGH-value upstream rules (2026-05-03) ---
+
+# eval-with-dangerous-token. Catches obfuscated payloads via
+# gzinflate/base64_decode/str_rot13 wrappers that ultimately concat
+# a known-bad token into the eval'd string.
+sp.eval_blacklist.list("system,exec,shell_exec,passthru,proc_open,popen,pcntl_exec,assert,eval");
+
+# Webshell upload via $_FILES. PHP 8+ param name is "destination".
+sp.disable_function.function("move_uploaded_file").param("to").value_r("\\.ph").drop();
+sp.disable_function.function("move_uploaded_file").param("to").value_r("\\.ht").drop();
+
+# mail() / mb_send_mail() argv injection (CVE-2016-10033 class).
+# additional_params is forwarded as-is to sendmail; '-' allows -X
+# logfile-write or -C alternate-config tricks.
+sp.disable_function.function("mail").param("additional_params").value_r("\\-").drop();
+sp.disable_function.function("mb_send_mail").param("additional_params").value_r("\\-").drop();
+
+# curl SSL bypass: 64=CURLOPT_SSL_VERIFYPEER, 81=CURLOPT_SSL_VERIFYHOST.
+# Tenants that legitimately disable verify do it for a self-signed
+# private endpoint -- use a custom CA bundle instead.
+sp.disable_function.function("curl_setopt").param("option").value("64").drop();
+sp.disable_function.function("curl_setopt").param("option").value("81").drop();
+
+# curl SSRF -> LFI: file:// scheme reads local filesystem via curl.
+sp.disable_function.function("curl_setopt").param("value").value_r("file://").drop();
+sp.disable_function.function("curl_init").param("url").value_r("file://").drop();
+
+# extract() on superglobal-like ($_GET/$_POST/$_REQUEST) arrays is
+# unconditional auto-globals injection. flags=0 (EXTR_OVERWRITE) lets
+# attacker overwrite legit local vars.
+sp.disable_function.function("extract").param("array").value_r("^_").drop();
+sp.disable_function.function("extract").param("flags").value("0").drop();
+
+# include/require extension allowlist. Anything not ending in
+# .php/.inc/.phtml resolves to a path-traversal LFI vector.
+sp.disable_function.function("require_once").value_r("\\.(inc|phtml|php)$").allow();
+sp.disable_function.function("include_once").value_r("\\.(inc|phtml|php)$").allow();
+sp.disable_function.function("require").value_r("\\.(inc|phtml|php)$").allow();
+sp.disable_function.function("include").value_r("\\.(inc|phtml|php)$").allow();
+sp.disable_function.function("require_once").drop();
+sp.disable_function.function("include_once").drop();
+sp.disable_function.function("require").drop();
+sp.disable_function.function("include").drop();
+
+# Runtime ini_set lockdown. Blocks tenant code from loosening the
+# server-wide hardening at request time.
+sp.disable_function.function("ini_set").param("option").value("open_basedir").drop();
+sp.disable_function.function("ini_set").param("option").value("assert.active").drop();
+sp.disable_function.function("ini_set").param("option").value("zend.assertions").drop();
+sp.disable_function.function("ini_set").param("option").value("memory_limit").drop();
+sp.disable_function.function("ini_set").param("option").value("include_path").drop();
+sp.disable_function.function("ini_set").param("option").value_r("error_log").drop();
+sp.disable_function.function("ini_set").param("option").value_r("error_reporting").drop();
+sp.disable_function.function("ini_set").param("option").value_r("display_errors").drop();
+sp.disable_function.function("ini_set").param("option").value("auto_prepend_file").drop();
+sp.disable_function.function("ini_set").param("option").value("auto_append_file").drop();
+
+# --- Reflection + indirect invocation vectors ---
+# call_user_func / call_user_func_array with a literal string naming a
+# banned OS-exec or eval function bypass the per-function bans above
+# because the call goes through zend_call_function after name lookup,
+# not through the direct symbol sp.disable_function intercepts. Block
+# the string-literal form of the most dangerous callables.
+sp.disable_function.function("call_user_func").param("function").value_r("^(system|exec|shell_exec|passthru|popen|proc_open|pcntl_exec|assert)$").drop();
+sp.disable_function.function("call_user_func_array").param("function").value_r("^(system|exec|shell_exec|passthru|popen|proc_open|pcntl_exec|assert)$").drop();
+# Reflection::invoke / ::invokeArgs bypass sp.disable_function entirely
+# because they route through the Reflection engine, not zend_call_function.
+# $r = new ReflectionFunction('system'); $r->invoke('id') is the canonical
+# webshell evasion pattern. Block both Function and Method flavours.
+# Reflection invoke rules REMOVED (GH #897): any Class::method hook makes
+# Snuffleupagus defer destruction of discarded temporaries to script
+# shutdown (PHP 8.4/8.5, verified with a minimal repro -- see the dl()
+# note above), silently breaking destructor-timing patterns across
+# frameworks: Laravel's Route::resource() registrations vanished
+# (InvoiceShelf #897), and the same class of bug would hit destructor-
+# committed DB transactions and lock guards. Mirrors the GH #335
+# wrappers_whitelist removal: a rule that silently breaks legitimate
+# frameworks costs more than its marginal hardening. Compensating
+# controls that remain: the direct symbol bans on system/exec/... above,
+# the call_user_func string-literal bans, and eval_blacklist -- the
+# Reflection evasion needs arbitrary-PHP execution already, at which
+# point those layers are the operative defenses.

@@ -31,10 +31,12 @@ import (
 
 var simulationRe = regexp.MustCompile(`\.drop\(\)(?:\.simulation\(\))?;`)
 
-const (
-	snufActiveRulesPath = "/etc/jabali/snuffleupagus/active.rules"
-	snufBundleDir       = "/usr/share/jabali/snuffleupagus/rules"
-	snufFallbackBundle  = "/opt/jabali-panel/install/snuffleupagus/rules"
+const snufActiveRulesPath = "/etc/jabali/snuffleupagus/active.rules"
+
+// Variables so tests can render from the repo bundle.
+var (
+	snufBundleDir      = "/usr/share/jabali/snuffleupagus/rules"
+	snufFallbackBundle = "/opt/jabali-panel/install/snuffleupagus/rules"
 )
 
 // SnuffleupagusReconciler renders the active.rules file from DB state.
@@ -132,6 +134,8 @@ func renderActiveRules(mode models.SnuffleupagusMode, overrides []models.Snuffle
 	if _, err := os.Stat(bundleDir); err != nil {
 		bundleDir = snufFallbackBundle
 	}
+	// Top level only: the repo's pending/ rules are not loaded, and
+	// ensure_snuffleupagus_bundle_synced does not mirror them.
 	files, err := filepath.Glob(filepath.Join(bundleDir, "*.rules"))
 	if err != nil {
 		return nil, err
@@ -185,7 +189,9 @@ func renderActiveRules(mode models.SnuffleupagusMode, overrides []models.Snuffle
 				if ov.Reason != nil {
 					reason = strings.ReplaceAll(*ov.Reason, "\n", " ")
 				}
-				buf.WriteString(fmt.Sprintf("# DISABLED rule=%q reason=%q at=%s\n",
+				// %+q escapes non-ASCII: Snuffleupagus up to v0.13 stops
+				// parsing at the first byte > 0x7f, comments included.
+				buf.WriteString(fmt.Sprintf("# DISABLED rule=%+q reason=%+q at=%s\n",
 					ov.RuleName, reason, ov.SetAt.UTC().Format(time.RFC3339)))
 			}
 		}

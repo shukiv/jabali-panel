@@ -1,39 +1,37 @@
-# Snuffleupagus
+# Snuffleupagus (PHP Defense)
 
-Security → Snuffleupagus. PHP runtime hardening loaded as a Zend extension into every installed PHP version.
+Security → PHP Defense. Snuffleupagus is a PHP extension that stops dangerous function calls inside PHP itself. The panel builds it for every installed PHP version and loads it into PHP-FPM and the PHP command line, so cron jobs and shell users get the same rules as web requests.
 
-## Default rule pack
+## Modes
 
-The installer ships a baseline rule set that blocks the most common compromise vectors:
+| Mode | Effect |
+|---|---|
+| **Off** (default) | The extension is loaded with an empty rule set. |
+| **Simulation** | Each rule logs what it would have stopped; nothing is stopped. |
+| **Enforce** | A matching call ends the request or script with an error. |
 
-- Reject `eval` invocations against tainted request data.
-- Disallow `include` / `require` from `php://`, `data:`, and remote URLs.
-- Track taint flow from `$_GET` / `$_POST` into shell-execution sinks; block when the sink would receive tainted input.
-- Block known-bad shellcode patterns by signature.
-- Cookie integrity protection (signed session cookies) to defeat session hijacking.
+Change it on the page or with `jabali php-defense mode <off|simulation|enforce>`. Every PHP-FPM pool reloads to pick up the change.
 
-The full rule set is shipped as `.rules` files under `/etc/php/<version>/snuffleupagus.rules.d/`.
+## Loaded rules
 
-## Per-app exception files
+- Session hardening: SameSite=Lax on the session cookie, an HMAC on `unserialize()` data, a hardened random-number generator, and XXE protection when the XML extension is loaded.
+- Command execution: `system`, `exec`, `shell_exec`, `passthru`, `popen`, `proc_open`, `pcntl_exec`.
+- `assert` (evaluates a string as code), and the information leaks `show_source`, `highlight_file`, `phpinfo`.
 
-Some apps (WordPress, Moodle, NextCloud) legitimately use patterns that the baseline blocks. The panel ships per-app exception files for these cases, applied automatically when the app is installed via [Applications](./applications.md). Each exception scopes to a specific install path so the relaxation does not leak to other sites on the same host.
+In enforce mode these also stop code that calls them for harmless reasons. Symfony Console reads the terminal size through `proc_open`, so Composer and the command-line installers that use it (Drupal, phpBB) stop with an error.
 
-## Page surface
+## Rules not loaded yet
 
-- **Enabled per version** — toggle Snuffleupagus on or off for each installed PHP version.
-- **Rule pack version** — currently shipped; "update available" badge when a newer pack is in the next release.
-- **Per-app exception count** — quick summary of how many app installs have applied exception files.
-- **Recent blocks** — last 100 Snuffleupagus block events with path, rule, and offending input excerpt.
+The shipped bundle also contains rules for `putenv`, writing `.php` files, `eval`, uploads, `mail()` parameters, `curl` with `file://`, `extract`, `include`/`require`, `ini_set` and `call_user_func`, plus overlays for WordPress, Drupal, Joomla, PrestaShop and Magento. From July 2026 a character in a comment stopped Snuffleupagus 0.13 from reading them, so no box ran them. Loaded as written they break WordPress, Drupal, phpBB and Laravel apps, so they wait in `install/snuffleupagus/rules/pending/` and come back one at a time after testing.
 
-## Operator-defined exceptions
+## Turning one rule off
 
-For a one-off legitimate pattern, the operator may add a rule under `/etc/php/<version>/snuffleupagus.rules.d/local/`. The local directory is not overwritten by `jabali update`.
+Open the rules list, choose **Disable** on a rule and give a reason. The panel comments that rule out of `/etc/jabali/snuffleupagus/active.rules` and reloads every pool. The CLI equivalent is `jabali php-defense rule-toggle`.
 
-## Performance
+## Incidents
 
-Snuffleupagus runs as a Zend extension; overhead is sub-microsecond per request for typical pages. Disable per-version only when isolating a performance regression and re-enable afterward.
+Stopped and simulated calls appear under **Recent incidents** within a minute, with the rule and the full log line. `jabali php-defense incidents` lists them on the command line.
 
 ## Related
 
 - [PHP Manager](./php-manager.md) for per-version PHP configuration.
-- [Removed Features](../removed-features.md) for context on the WAF stack changes.

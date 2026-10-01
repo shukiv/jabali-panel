@@ -35,7 +35,7 @@ the string to bump it.
 |---|---|---|---|
 | MariaDB | distro 11.x | apt | panel DB + tenant DBs (M7). Reserved-word trap on 11.4+ documented in `feedback_mariadb_reserved_words` |
 | Redis | distro | apt | M14 notifications stream + SSO session store |
-| Adminer | `6.0.1` | `github.com/vrana/adminer` release | M37 DB UI |
+| Adminer | `6.1.1` | `github.com/vrana/adminer` release | M37 DB UI |
 | phpMyAdmin | `5.2.3` | phpmyadmin.net tarball | M7 |
 
 ## DNS
@@ -52,7 +52,7 @@ the string to bump it.
 | CrowdSec engine | packagecloud + distro main | apt | M27 + M43 IP-trust single source |
 | CrowdSec nginx bouncer | distro | apt | inline ban |
 | CrowdSec AppSec hub | hub-pinned | `cscli hub install` | M27, custom vpatch rules at `/etc/crowdsec/appsec-rules/` |
-| Snuffleupagus (PHP ext) | `0.13.0` | source build | M41 PHP hardening rules |
+| Snuffleupagus (PHP ext) | `0.14.0` | source build | M41 PHP hardening rules |
 | ClamAV | distro **binary only** — `clamd` + `freshclam` daemons masked | apt | M33 on-demand scan; signatures refresh via `jabali-freshclam.timer` |
 | YARA-X | `1.17.0` | `github.com/VirusTotal/yara-x` release tarball | M33 malware engine; clamscan subset constraints per `feedback_clamscan_yara_subset` |
 | LMD (Linux Malware Detect) | `2.0.1-rc4` | upstream tar | M33 signature feed |

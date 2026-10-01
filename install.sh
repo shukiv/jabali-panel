@@ -8291,7 +8291,7 @@ install_adminer() {
   # other install.sh pin (phpMyAdmin, Stalwart, Kratos, …). Bump this one line,
   # then `scripts/deps-check.sh --refresh-sha adminer_version` to re-capture the
   # checksum.
-  local adminer_version="6.0.1"
+  local adminer_version="6.1.1"
   local adminer_dir="/var/www/jabali-adminer"
   local adminer_url="https://github.com/vrana/adminer/releases/download/v${adminer_version}/adminer-${adminer_version}.php"
   local adminer_stamp="${adminer_dir}/.adminer-version"
@@ -8460,7 +8460,9 @@ install_wp_cli() {
 ensure_snuffleupagus_bundle_synced() {
   local src="${1:-${REPO_DIR:-/opt/jabali-panel}/install/snuffleupagus/rules}"
   local dst="${2:-/usr/share/jabali/snuffleupagus/rules}"
-  [[ -d "$src" ]] || return 0
+  # No base rules in the source = a broken checkout. Leave the mirror as it
+  # is: pruning it would render an empty ruleset (protection off).
+  [[ -f "$src/00-base.rules" ]] || return 0
   mkdir -p "$dst"
   local changed=0 f base
   for f in "$src"/*.rules; do
@@ -8468,6 +8470,16 @@ ensure_snuffleupagus_bundle_synced() {
     base="$(basename "$f")"
     if [[ ! -f "$dst/$base" ]] || ! cmp -s "$f" "$dst/$base"; then
       install -m 0644 "$f" "$dst/$base" && changed=1
+    fi
+  done
+  # Prune files the repo no longer ships: the reconciler renders every
+  # *.rules it finds here, so a rule file moved to the repo's pending/ (or
+  # deleted) would otherwise stay loaded on every existing host.
+  for f in "$dst"/*.rules; do
+    [[ -e "$f" ]] || continue
+    base="$(basename "$f")"
+    if [[ ! -f "$src/$base" ]]; then
+      rm -f "$f" && changed=1
     fi
   done
   if [[ -f "$src/README.md" ]]; then
@@ -15285,11 +15297,26 @@ SCRIPT_EOF
 
 # ---------- main ------------------------------------------------------------
 
+# _snuf_detect_fpm_minors — print the PHP minors ("8.3 8.4 8.5") that have
+# an FPM binary in $1 (default /usr/sbin). Debian and Sury install it as
+# php-fpm8.4; the php8.4-fpm spelling is matched as well. The glob used
+# before only knew php8.4-fpm, so on a real box it found nothing and every
+# `jabali update` built Snuffleupagus for JABALI_PHP_VERSIONS alone
+# (default 8.4): other minors kept an old build or had none at all.
+_snuf_detect_fpm_minors() {
+  local dir="${1:-/usr/sbin}" f base
+  for f in "$dir"/php-fpm[0-9]*.[0-9]* "$dir"/php[0-9]*.[0-9]*-fpm; do
+    [[ -x "$f" ]] || continue
+    base="${f##*/}"
+    if [[ "$base" =~ ([0-9]+\.[0-9]+) ]]; then printf '%s\n' "${BASH_REMATCH[1]}"; fi
+  done | sort -u -V | tr '\n' ' ' | sed 's/ $//'
+}
+
 install_snuffleupagus() {
   # Pin the upstream tag + tarball SHA256. Update both atomically when
   # bumping. SHA256 = sha256sum of the GitHub release tarball.
-  local snuf_version="0.13.0"
-  local snuf_sha256="350a33cd3906bdba46f5c4cf3d00edeb81eaf6a7b9a3a7e5ef47bc967492ae90"
+  local snuf_version="0.14.0"
+  local snuf_sha256="080cf7e24d15a8650e271837030fca546e627c7a4c7317710c683282fdcb71c6"
 
   local build="${REPO_DIR}/install/snuffleupagus/build/build.sh"
   if [[ ! -x "$build" ]]; then
@@ -15311,12 +15338,8 @@ install_snuffleupagus() {
   # would only cover the bootstrap-time JABALI_PHP_VERSIONS set and
   # operator-added minors would silently lack PHP Defense (caught
   # 2026-05-04 — UI showed "1/3 installed PHP minors" with 8.5 active).
-  local _detected_minors=""
-  if compgen -G "/usr/sbin/php*-fpm" >/dev/null; then
-    _detected_minors="$(ls -1 /usr/sbin/php*-fpm 2>/dev/null \
-      | sed -E 's|.*/php([0-9]+\.[0-9]+)-fpm|\1|' \
-      | sort -u | tr '\n' ' ')"
-  fi
+  local _detected_minors
+  _detected_minors="$(_snuf_detect_fpm_minors)"
   # Union of explicit override + on-disk detection. Keeps the override
   # behavior (operator forcing a specific subset) while adding any
   # newly-installed minor automatically on the next run.
@@ -15383,14 +15406,8 @@ EOF_CLI
   # the panel reconciler reads from a stable on-disk path independent of
   # the source checkout layout.
   install -d -m 0755 /usr/share/jabali/snuffleupagus/rules
-  if [[ -d "${REPO_DIR}/install/snuffleupagus/rules" ]]; then
-    install -m 0644 "${REPO_DIR}/install/snuffleupagus/rules/"*.rules \
-      /usr/share/jabali/snuffleupagus/rules/ 2>/dev/null || true
-    if [[ -f "${REPO_DIR}/install/snuffleupagus/rules/README.md" ]]; then
-      install -m 0644 "${REPO_DIR}/install/snuffleupagus/rules/README.md" \
-        /usr/share/jabali/snuffleupagus/rules/ 2>/dev/null || true
-    fi
-  fi
+  ensure_snuffleupagus_bundle_synced \
+    "${REPO_DIR}/install/snuffleupagus/rules" /usr/share/jabali/snuffleupagus/rules
 
   # Build per minor. Same auto-detect as the dev-pkg loop above:
   # union of JABALI_PHP_VERSIONS + every phpX.Y-fpm binary on disk.
