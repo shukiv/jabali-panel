@@ -5577,10 +5577,11 @@ EOF
   _ok "Go installed: $("$GO_ROOT/bin/go" version)"
 }
 
-# ensure_go_toolchain_current — `jabali update` builds the panel and agent
-# from source with $GO_ROOT/bin/go, but install_go runs only on install day,
-# so a box keeps the Go it was installed with. This brings it to the pinned
-# GO_VERSION on update. Unlike install_go it downloads and verifies BEFORE it
+# ensure_go_toolchain_current — `jabali update` compiles with $GO_ROOT/bin/go:
+# jabali-sendmail whenever the shim is stale (ensure_jabali_sendmail_binary),
+# and the panel and agent when no release tarball is available or with
+# --from-source. install_go runs only on install day, so a box keeps the Go it
+# was installed with. This brings it to the pinned GO_VERSION on update. Unlike install_go it downloads and verifies BEFORE it
 # touches $GO_ROOT, and swaps the new tree in with a rename: a failed download
 # leaves the old Go in place, and the build still gets the go.mod toolchain
 # through GOTOOLCHAIN=auto. Pinned version and pinned checksum only, no

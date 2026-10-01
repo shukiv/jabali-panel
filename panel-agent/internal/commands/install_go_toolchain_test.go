@@ -81,9 +81,9 @@ func TestGoToolchainPinsAgree(t *testing.T) {
 	}
 }
 
-// ensure_go_toolchain_current replaces $GO_ROOT during `jabali update`, right
-// before the update compiles the panel with it. A failed download, a bad
-// checksum or a broken tarball must leave the installed Go untouched.
+// ensure_go_toolchain_current replaces $GO_ROOT during `jabali update`, before
+// the update compiles anything with it. A failed download, a bad checksum or a
+// broken tarball must leave the installed Go untouched.
 func TestEnsureGoToolchainCurrent(t *testing.T) {
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("bash not available")
