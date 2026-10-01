@@ -269,7 +269,7 @@ func writeFlarumNginx(ctx context.Context, domain, osUser, subdir string) error 
 		return fmt.Errorf("mkdir %s: %w", domainDir, err)
 	}
 	dest := flarumSnippetPath(domain, subdir)
-	if err := os.WriteFile(dest, []byte(flarumNginxConf(osUser, subdir)), 0o644); err != nil {
+	if err := os.WriteFile(dest, snippetWithPHPPins([]byte(flarumNginxConf(osUser, subdir)), domain), 0o644); err != nil {
 		return fmt.Errorf("write %s: %w", dest, err)
 	}
 	return reloadNginxAfterSnippet(ctx, dest)
