@@ -19,7 +19,7 @@ the string to bump it.
 
 | Component | Version / pin | Source | install.sh anchor | Why |
 |---|---|---|---|---|
-| Go toolchain | `1.26.4` (override: `JABALI_GO_VERSION`) | go.dev tarball | `GO_VERSION="${JABALI_GO_VERSION:-1.26.4}"` (line ~122) | builds panel-api + panel-agent |
+| Go toolchain | `1.26.8` (override: `JABALI_GO_VERSION`) | go.dev tarball | `GO_VERSION="${JABALI_GO_VERSION:-1.26.8}"` (line ~140); equal to the go.mod `toolchain` line and the CI workflows' `GO_VERSION` (`TestGoToolchainPinsAgree`) | builds panel-api + panel-agent, on install and on every `jabali update` (`ensure_go_toolchain_current`) |
 | PHP (Sury / ondrej) | distro-latest from `packages.sury.org` (Debian) or `ppa:ondrej/php` (Ubuntu) | apt | sury+ondrej repo blocks (line ~1538) | tenant PHP runtime, multi-version per-user pools |
 
 ## Web / proxy / TLS

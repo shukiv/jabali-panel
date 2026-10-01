@@ -187,6 +187,27 @@ if [[ -n "$sigbase_cur" ]]; then
   fi
 fi
 
+# Go toolchain — pinned in install.sh as GO_VERSION="${JABALI_GO_VERSION:-x.y.z}"
+# and kept equal to go.mod's toolchain line and the workflows' GO_VERSION
+# (TestGoToolchainPinsAgree). Go publishes on go.dev, not as GitHub releases,
+# so it can't ride the MANIFEST loop. go.dev's JSON lists stable releases
+# newest first.
+go_cur="$(grep -oE '^GO_VERSION="\$\{JABALI_GO_VERSION:-[0-9.]+\}"' "$INSTALL_SH" 2>/dev/null \
+  | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)"
+if [[ -n "$go_cur" ]]; then
+  go_lat="$(curl -fsSL "https://go.dev/dl/?mode=json" 2>/dev/null \
+    | grep -oE '"version"[[:space:]]*:[[:space:]]*"go[0-9.]+"' | head -1 \
+    | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?')"
+  if [[ -z "$go_lat" ]]; then
+    ROWS_OUT+=("go|$go_cur|(fetch failed)|ok|golang/go")
+  elif [[ "$go_cur" == "$go_lat" ]]; then
+    ROWS_OUT+=("go|$go_cur|$go_lat|ok|golang/go")
+  else
+    ROWS_OUT+=("go|$go_cur|$go_lat|UPGRADE|golang/go")
+    outdated=$((outdated+1))
+  fi
+fi
+
 # ---- apt / packagecloud deps ---------------------------------------------
 # CrowdSec (engine) and the crowdsec-nginx-bouncer are installed from the
 # upstream packagecloud apt repo (add_crowdsec_apt_source in install.sh),
@@ -240,6 +261,15 @@ npm_report() {
   fi
 }
 
+# release_link name repo -> where a pin row's release notes live.
+release_link() {
+  if [[ "$1" == "go" ]]; then
+    printf '%s' "https://go.dev/doc/devel/release"
+  else
+    printf '%s' "https://github.com/$2/releases/latest"
+  fi
+}
+
 # ---- render ---------------------------------------------------------------
 if [[ "$MODE" == "markdown" ]]; then
   echo "## install.sh pins (${outdated} to upgrade)"
@@ -249,7 +279,7 @@ if [[ "$MODE" == "markdown" ]]; then
   for r in "${ROWS_OUT[@]}"; do
     IFS='|' read -r n c l s repo <<<"$r"
     mark="✅"; [[ "$s" == "UPGRADE" ]] && mark="⬆️ **upgrade**"
-    echo "| \`$n\` | $c | $l | $mark | [$repo](https://github.com/$repo/releases/latest) |"
+    echo "| \`$n\` | $c | $l | $mark | [$repo]($(release_link "$n" "$repo")) |"
   done
   echo
   echo "## Go modules (\`go.mod\`)"
@@ -279,8 +309,9 @@ if [[ "$MODE" == "markdown" ]]; then
     IFS='|' read -r n c l s repo <<<"$r"
     [[ "$s" != "UPGRADE" ]] && continue
     [[ "$n" == "signature-base" ]] && continue # rolling rule commits, not feature releases
-    notes="$(release_body "$repo")"
-    echo "<details><summary><code>$n</code> $c → $l — <a href=\"https://github.com/$repo/releases/latest\">full notes</a></summary>"
+    notes=""
+    [[ "$n" != "go" ]] && notes="$(release_body "$repo")" # Go has no GitHub releases
+    echo "<details><summary><code>$n</code> $c → $l — <a href=\"$(release_link "$n" "$repo")\">full notes</a></summary>"
     echo
     if [[ -n "$notes" ]]; then echo "$notes"; else echo "_(release notes not fetched — open the link)_"; fi
     echo

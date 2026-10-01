@@ -137,7 +137,7 @@ REPO_DIR="${JABALI_REPO_DIR:-/opt/jabali-panel}"
 # owns /etc/resolv.conf and pdns-recursor recurses through 1.1.1.1 +
 # 9.9.9.9 via UDP.
 DNS_FORWARDER="${JABALI_DNS_FORWARDER:-}"
-GO_VERSION="${JABALI_GO_VERSION:-1.26.5}"
+GO_VERSION="${JABALI_GO_VERSION:-1.26.8}"
 # SHA-256 of the pinned Go tarballs, from https://go.dev/dl/?mode=json.
 # Pinned HERE rather than in install/ because install_go runs BEFORE
 # clone_or_update_repo — on a fresh install $REPO_DIR does not exist yet, so a
@@ -147,8 +147,8 @@ GO_VERSION="${JABALI_GO_VERSION:-1.26.5}"
 # Bump together with GO_VERSION. An unpinned version (JABALI_GO_VERSION
 # override, or the CDN-gap fallback) verifies against go.dev's published
 # checksum instead — see install_go.
-GO_SHA256_AMD64="${JABALI_GO_SHA256_AMD64:-5c2c3b16caefa1d968a94c1daca04a7ca301a496d9b086e17ad77bb81393f053}"
-GO_SHA256_ARM64="${JABALI_GO_SHA256_ARM64:-fe4789e92b1f33358680864bbe8704289e7bb5fc207d80623c308935bd696d49}"
+GO_SHA256_AMD64="${JABALI_GO_SHA256_AMD64:-d0f743b33e8d8945e6b1f432edd15785c70507121d6e2a723b21285eddf8b57b}"
+GO_SHA256_ARM64="${JABALI_GO_SHA256_ARM64:-211ffced9dcb9633a55eac6364816ec0ddd951389a740e88fa8b3337971bdda0}"
 GO_ROOT="${JABALI_GO_ROOT:-/usr/local/go}"
 SERVICE_USER="${JABALI_SERVICE_USER:-jabali}"
 SERVICE_NAME="${JABALI_SERVICE_NAME:-jabali-panel}"
@@ -5504,8 +5504,8 @@ install_go() {
     # stable", but for a pin-to-latest that IS $GO_VERSION, so it retried the
     # identical failing URL and died. Instead, walk the published stable list
     # (newest first) and take the FIRST version that (a) differs from the one
-    # that just failed and (b) actually downloads. go.mod needs only go 1.25.0,
-    # so an older published stable still builds the panel.
+    # that just failed and (b) actually downloads. An older published stable
+    # still builds the panel: GOTOOLCHAIN=auto fetches the go.mod toolchain.
     local failed_pin="$GO_VERSION" _ver _got=""
     _warn "Go $failed_pin not downloadable from go.dev (unpublished pin or CDN propagation gap) -- trying other published stable releases"
     # mode=json lists only releases whose files are actually published -- unlike
@@ -5575,6 +5575,69 @@ EOF
   chmod 0644 /etc/profile.d/jabali-go.sh
 
   _ok "Go installed: $("$GO_ROOT/bin/go" version)"
+}
+
+# ensure_go_toolchain_current — `jabali update` builds the panel and agent
+# from source with $GO_ROOT/bin/go, but install_go runs only on install day,
+# so a box keeps the Go it was installed with. This brings it to the pinned
+# GO_VERSION on update. Unlike install_go it downloads and verifies BEFORE it
+# touches $GO_ROOT, and swaps the new tree in with a rename: a failed download
+# leaves the old Go in place, and the build still gets the go.mod toolchain
+# through GOTOOLCHAIN=auto. Pinned version and pinned checksum only, no
+# fallback walk. Every failure warns and returns 0.
+ensure_go_toolchain_current() {
+  local cur="" arch="" expected="" tarball="" stage="" got=""
+  cur="$("$GO_ROOT/bin/go" version 2>/dev/null | awk '{print $3}' || true)"
+  if [[ "$cur" == "go$GO_VERSION" ]]; then
+    return 0
+  fi
+  case "$(uname -m)" in
+    x86_64) arch=amd64; expected="$GO_SHA256_AMD64" ;;
+    aarch64|arm64) arch=arm64; expected="$GO_SHA256_ARM64" ;;
+  esac
+  if [[ -z "$arch" || -z "$expected" ]]; then
+    _warn "Go ${cur:-missing}: no pinned go${GO_VERSION} checksum for $(uname -m); keeping the installed Go"
+    return 0
+  fi
+  _log "updating Go ${cur:-missing} -> go${GO_VERSION}"
+  tarball="$(mktemp /tmp/jabali-go.XXXXXX)" || { _warn "Go update: mktemp failed; keeping the installed Go"; return 0; }
+  if ! curl -fsSL --connect-timeout 20 --retry 3 --retry-delay 5 --retry-connrefused \
+      --speed-limit 1024 --speed-time 30 -o "$tarball" \
+      "https://go.dev/dl/go${GO_VERSION}.linux-${arch}.tar.gz"; then
+    rm -f "$tarball"
+    _warn "Go update: go${GO_VERSION} download failed; keeping ${cur:-the installed Go}"
+    return 0
+  fi
+  got="$(sha256sum "$tarball" | awk '{print $1}')"
+  if [[ "$got" != "$expected" ]]; then
+    rm -f "$tarball"
+    _warn "Go update: checksum mismatch for go${GO_VERSION}.linux-${arch}.tar.gz (expected $expected, got $got); NOT installing"
+    return 0
+  fi
+  # Stage next to $GO_ROOT so the swap is a rename on one filesystem.
+  stage="$(mktemp -d "$(dirname "$GO_ROOT")/.jabali-go-stage.XXXXXX")" \
+    || { rm -f "$tarball"; _warn "Go update: cannot stage next to $GO_ROOT; keeping the installed Go"; return 0; }
+  if ! tar -C "$stage" -xzf "$tarball" || [[ "$("$stage/go/bin/go" version 2>/dev/null | awk '{print $3}')" != "go$GO_VERSION" ]]; then
+    rm -rf "$stage" "$tarball"
+    _warn "Go update: the go${GO_VERSION} tarball did not unpack to a working toolchain; keeping the installed Go"
+    return 0
+  fi
+  rm -f "$tarball"
+  if [[ -e "$GO_ROOT" ]] && ! mv "$GO_ROOT" "$stage/old"; then
+    rm -rf "$stage"
+    _warn "Go update: cannot move $GO_ROOT aside; keeping the installed Go"
+    return 0
+  fi
+  if ! mv "$stage/go" "$GO_ROOT"; then
+    # Put the old tree back; leave the stage on disk if even that fails.
+    if [[ ! -e "$stage/old" ]] || mv "$stage/old" "$GO_ROOT"; then
+      rm -rf "$stage"
+    fi
+    _warn "Go update: cannot move go${GO_VERSION} into $GO_ROOT; kept the installed Go"
+    return 0
+  fi
+  rm -rf "$stage"
+  _ok "Go updated: ${cur:-none} -> $("$GO_ROOT/bin/go" version | awk '{print $3}')"
 }
 
 # ---------- step 3: service user + dirs -------------------------------------
@@ -16477,6 +16540,11 @@ EOF
   if declare -f install_php_cli_sendmail_path >/dev/null 2>&1; then
     install_php_cli_sendmail_path
   fi
+  # The pinned Go, before anything below or the update's own build step
+  # compiles with it. A subshell, so nothing in it can abort the provision
+  # chain; the function itself never fails.
+  ( ensure_go_toolchain_current ) || _warn "Go toolchain update failed; the build uses the go.mod toolchain instead"
+
   # JAB-230 — the shim binary itself. Closes the two-hop trap where the
   # previous panel binary's update code installs everything EXCEPT the new
   # binary it doesn't know about.

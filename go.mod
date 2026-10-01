@@ -1,14 +1,13 @@
 module git.jabali-panel.com/shukivaknin/jabali2
 
-go 1.25.0
+go 1.26.0
 
-// JAB-383: pin a minimum toolchain that carries the go1.25.2..go1.25.13 stdlib
-// security fixes (39 govulncheck-reachable CVEs: os.Root symlink+trailing-slash
-// root escape, net/mail + mime parsing DoS, archive/zip|tar extraction DoS,
-// crypto/tls + x509 + net/http). GOTOOLCHAIN=auto uses this when the local go is
-// older (e.g. the build-local-and-scp deploy path), and the newer installer Go
-// otherwise — so no build, wherever it runs, ships the vulnerable stdlib.
-toolchain go1.25.13
+// JAB-383: pin a minimum toolchain so no build ships an outdated stdlib.
+// GOTOOLCHAIN=auto uses this when the local go is older (e.g. the
+// build-local-and-scp deploy path), and the newer installer Go otherwise.
+// Keep it equal to GO_VERSION in install.sh and in the CI workflows
+// (TestGoToolchainPinsAgree checks this).
+toolchain go1.26.8
 
 require (
 	github.com/BurntSushi/toml v1.6.0
@@ -24,7 +23,7 @@ require (
 	github.com/fxamacker/cbor/v2 v2.9.4
 	github.com/gin-gonic/gin v1.12.0
 	github.com/go-sql-driver/mysql v1.10.1
-	github.com/golang-migrate/migrate/v4 v4.19.1
+	github.com/golang-migrate/migrate/v4 v4.20.1
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510
 	github.com/gorilla/websocket v1.5.3
 	github.com/muesli/termenv v0.16.0
@@ -35,16 +34,16 @@ require (
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
 	github.com/stretchr/testify v1.12.1
-	golang.org/x/crypto v0.55.0
-	golang.org/x/net v0.58.0
-	golang.org/x/sync v0.22.0
-	golang.org/x/sys v0.47.0
-	golang.org/x/term v0.45.0
-	golang.org/x/time v0.15.0
+	golang.org/x/crypto v0.57.0
+	golang.org/x/net v0.59.0
+	golang.org/x/sync v0.23.0
+	golang.org/x/sys v0.48.0
+	golang.org/x/term v0.46.0
+	golang.org/x/time v0.16.0
 	gopkg.in/yaml.v3 v3.0.1
 	gorm.io/driver/mysql v1.6.0
 	gorm.io/gorm v1.31.2
-	modernc.org/sqlite v1.59.0
+	modernc.org/sqlite v1.60.1
 )
 
 require (
@@ -107,9 +106,9 @@ require (
 	go.uber.org/atomic v1.11.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/arch v0.22.0 // indirect
-	golang.org/x/text v0.41.0 // indirect
-	google.golang.org/protobuf v1.36.10 // indirect
-	modernc.org/libc v1.75.7 // indirect
+	golang.org/x/text v0.42.0 // indirect
+	google.golang.org/protobuf v1.36.11 // indirect
+	modernc.org/libc v1.77.1 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
 )

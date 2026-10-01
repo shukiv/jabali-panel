@@ -22,7 +22,7 @@
 </p>
 
 <p>
-  <img src="https://img.shields.io/badge/Go-1.25-00ADD8?logo=go&logoColor=white" alt="Go 1.25">
+  <img src="https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white" alt="Go 1.26">
   <img src="https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black" alt="React 19">
   <img src="https://img.shields.io/badge/Ant_Design-5-0170FE?logo=antdesign&logoColor=white" alt="Ant Design 5">
   <img src="https://img.shields.io/badge/MariaDB-11-003545?logo=mariadb&logoColor=white" alt="MariaDB 11">
@@ -93,7 +93,7 @@ Classic / scripted install (no TUI — the proven bash installer directly):
 curl -fsSL https://raw.githubusercontent.com/shukiv/jabali-panel/main/install.sh | sudo bash
 ```
 
-Both run the same engine. `install.sh` fetches Go 1.25, builds the panel + agent
+Both run the same engine. `install.sh` fetches Go 1.26, builds the panel + agent
 binaries, builds the SPA with Vite, writes systemd units, provisions MariaDB +
 Redis + PowerDNS + Stalwart + Bulwark + CrowdSec (per the selected modules), and
 smoke-tests `/health`. Idempotent — re-run to upgrade. Set `JABALI_MODULES=…`

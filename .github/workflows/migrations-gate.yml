@@ -18,7 +18,7 @@ on:
         description: Go toolchain version (keep in step with the callers' GO_VERSION).
         required: false
         type: string
-        default: "1.25.13"
+        default: "1.26.8"
 
 permissions:
   contents: read
