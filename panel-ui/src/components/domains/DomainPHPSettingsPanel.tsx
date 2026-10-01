@@ -9,7 +9,19 @@
 // per-version-pool — shared by every domain on that version — so they stay put.
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Button, Col, Form, Popconfirm, Row, Select, Space, Spin, Tag, Typography } from "antd";
+import {
+  AutoComplete,
+  Button,
+  Col,
+  Form,
+  Popconfirm,
+  Row,
+  Select,
+  Space,
+  Spin,
+  Tag,
+  Typography,
+} from "antd";
 import { useNavigate } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { feedback } from "../../lib/feedback"; // GH #970: themed toasts
@@ -36,6 +48,10 @@ type DomainPHPSettings = {
   php_log_errors?: boolean | null;
   php_file_uploads?: boolean | null;
   php_short_open_tag?: boolean | null;
+  // GH #1701 Slice 3 admin values. php_open_basedir is the stored token form
+  // ({DOCROOT}, {WEBSPACEROOT}, {TMP} and absolute paths).
+  php_open_basedir?: string | null;
+  php_allow_url_fopen?: boolean | null;
   // GH #1543 (johnnyq): the real value this domain inherits per directive when
   // it sets no override (pool ini override → box php.ini baseline), keyed by
   // php.ini directive name. Used to label each select's inherit option with the
@@ -65,6 +81,8 @@ type PHPSettingsFormData = {
   php_log_errors?: boolean | null;
   php_file_uploads?: boolean | null;
   php_short_open_tag?: boolean | null;
+  php_open_basedir?: string | null;
+  php_allow_url_fopen?: boolean | null;
 };
 
 // Form field -> php.ini directive, for the GH #1701 policy lookups.
@@ -81,6 +99,8 @@ const FIELD_DIRECTIVE: Record<keyof PHPSettingsFormData, string> = {
   php_log_errors: "log_errors",
   php_file_uploads: "file_uploads",
   php_short_open_tag: "short_open_tag",
+  php_open_basedir: "open_basedir",
+  php_allow_url_fopen: "allow_url_fopen",
 };
 
 const MEMORY_LIMIT_OPTIONS = [
@@ -167,6 +187,17 @@ const FLAG_OPTIONS = [
   { label: "Use pool default", value: null as boolean | null },
   { label: "On", value: true as boolean | null },
   { label: "Off", value: false as boolean | null },
+];
+
+// GH #1701 Slice 3: open_basedir presets. The server checks every value: a
+// tenant may list only folders inside their home, an admin may add other paths
+// but never another user's home. The pool default is the home folder plus the
+// temp folders; the database socket and the cache-purge folder are always
+// added.
+const OPEN_BASEDIR_OPTIONS = [
+  { label: "This domain's folder + temp folders", value: "{DOCROOT}:{TMP}" },
+  { label: "This domain's folder only (most apps then cannot upload files)", value: "{DOCROOT}" },
+  { label: "Home folder + temp folders", value: "{WEBSPACEROOT}:{TMP}" },
 ];
 
 // The full IANA/PHP timezone list, shared with admin Server Settings so both
@@ -294,6 +325,8 @@ export function DomainPHPSettingsPanel({ domainId }: DomainPHPSettingsPanelProps
           php_log_errors: resp.data.php_log_errors ?? null,
           php_file_uploads: resp.data.php_file_uploads ?? null,
           php_short_open_tag: resp.data.php_short_open_tag ?? null,
+          php_open_basedir: resp.data.php_open_basedir ?? null,
+          php_allow_url_fopen: resp.data.php_allow_url_fopen ?? null,
         });
       } catch {
         feedback.message.error("Failed to load PHP settings");
@@ -334,6 +367,9 @@ export function DomainPHPSettingsPanel({ domainId }: DomainPHPSettingsPanelProps
         php_log_errors: outgoing("php_log_errors", values),
         php_file_uploads: outgoing("php_file_uploads", values),
         php_short_open_tag: outgoing("php_short_open_tag", values),
+        // An emptied open_basedir clears the override (inherit the pool's).
+        php_open_basedir: outgoing("php_open_basedir", values)?.trim() || null,
+        php_allow_url_fopen: outgoing("php_allow_url_fopen", values),
       });
       feedback.message.success("PHP settings updated successfully");
       // Reload settings to confirm.
@@ -343,10 +379,15 @@ export function DomainPHPSettingsPanel({ domainId }: DomainPHPSettingsPanelProps
       setPhpSettings(resp.data);
     } catch (err) {
       const e = err as { response?: { data?: { error?: string; detail?: string } } };
+      const apiError = e.response?.data?.error;
       feedback.message.error(
-        e.response?.data?.error === "php_setting_not_permitted" && e.response.data.detail
+        apiError === "php_setting_not_permitted" && e.response?.data?.detail
           ? e.response.data.detail
-          : "Failed to update PHP settings",
+          : // A value the server refused names the setting and the reason,
+            // e.g. an open_basedir folder outside the home directory.
+            apiError?.startsWith("invalid_php_setting: ")
+            ? apiError.slice("invalid_php_setting: ".length)
+            : "Failed to update PHP settings",
       );
     } finally {
       setSubmitting(false);
@@ -371,6 +412,8 @@ export function DomainPHPSettingsPanel({ domainId }: DomainPHPSettingsPanelProps
     "php_log_errors",
     "php_file_uploads",
     "php_short_open_tag",
+    "php_open_basedir",
+    "php_allow_url_fopen",
   ];
 
   // GH #1332 item 6: a small tag on each field showing whether it is a custom
@@ -766,6 +809,62 @@ export function DomainPHPSettingsPanel({ domainId }: DomainPHPSettingsPanelProps
                       placeholder={inheritPlaceholder("short_open_tag", flagFmt)}
                       allowClear
                       options={withDefault(FLAG_OPTIONS, "short_open_tag", flagFmt)}
+                    />
+                  </Form.Item>
+                </Col>
+              </Row>
+
+              {/* GH #1701 Slice 3: security-sensitive, admin only unless the
+                  owner's package opts the tenant in. */}
+              <Typography.Title level={5}>Security</Typography.Title>
+              <Typography.Paragraph type="secondary" style={{ marginTop: -4 }}>
+                These limit what this domain&apos;s PHP code can reach. The
+                server checks every value.
+              </Typography.Paragraph>
+              <Row gutter={[16, 16]}>
+                <Col xs={24} sm={12}>
+                  <Form.Item
+                    label={overrideLabel(
+                      "Allowed folders (open_basedir)",
+                      fieldSet(phpSettings?.php_open_basedir),
+                      "php_open_basedir",
+                    )}
+                    name="php_open_basedir"
+                    extra={
+                      <>
+                        The folders PHP may open files in, separated by{" "}
+                        <code>:</code>. Use <code>{"{DOCROOT}"}</code> for this
+                        domain&apos;s folder, <code>{"{WEBSPACEROOT}"}</code> for
+                        the home folder and <code>{"{TMP}"}</code> for the temp
+                        folders, or absolute paths. Without the temp folders,
+                        uploads fail in WordPress and most apps.
+                      </>
+                    }
+                  >
+                    <AutoComplete
+                      disabled={locked("php_open_basedir")}
+                      placeholder="Home folder + temp folders (Default)"
+                      allowClear
+                      filterOption={false}
+                      options={OPEN_BASEDIR_OPTIONS}
+                    />
+                  </Form.Item>
+                </Col>
+                <Col xs={24} sm={12}>
+                  <Form.Item
+                    label={overrideLabel(
+                      "Remote file access (allow_url_fopen)",
+                      fieldSet(phpSettings?.php_allow_url_fopen),
+                      "php_allow_url_fopen",
+                    )}
+                    name="php_allow_url_fopen"
+                    extra="Lets file functions such as file_get_contents() read http:// and ftp:// URLs. cURL works either way."
+                  >
+                    <Select
+                      disabled={locked("php_allow_url_fopen")}
+                      placeholder={inheritPlaceholder("allow_url_fopen", flagFmt)}
+                      allowClear
+                      options={withDefault(FLAG_OPTIONS, "allow_url_fopen", flagFmt)}
                     />
                   </Form.Item>
                 </Col>

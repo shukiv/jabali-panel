@@ -30,6 +30,12 @@ import (
 // next pass instead of keeping the old value for up to the forced 15-minute
 // redispatch. Two overrides that disagree on one value leave it out and mark
 // the inherited values unknown, like a conflicting flag.
+//
+// GH #1701 Slice 3: the domain's own open_basedir and allow_url_fopen ride
+// along as php_open_basedir / php_allow_url_fopen (the agent renders them
+// through PHP_ADMIN_VALUE). Without one, the agent pins the inherited value
+// itself: the open_basedir in the pool's own file, and the box php.ini's
+// allow_url_fopen (no pool override can set it).
 func (r *Reconciler) phpFlagPinParams(ctx context.Context, domain *models.Domain, poolID string) map[string]any {
 	flags := []struct {
 		param, directive string
@@ -103,6 +109,12 @@ func (r *Reconciler) phpFlagPinParams(ctx context.Context, domain *models.Domain
 	}
 	if len(sendValues) > 0 {
 		out["php_pool_values"] = sendValues
+	}
+	if domain.PHPOpenBasedir != nil && *domain.PHPOpenBasedir != "" {
+		out["php_open_basedir"] = *domain.PHPOpenBasedir
+	}
+	if domain.PHPAllowURLFopen != nil {
+		out["php_allow_url_fopen"] = *domain.PHPAllowURLFopen
 	}
 	return out
 }

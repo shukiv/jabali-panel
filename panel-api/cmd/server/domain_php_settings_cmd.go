@@ -14,7 +14,9 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
@@ -83,14 +85,6 @@ func newDomainPHPSettingsGetCmd() *cobra.Command {
 }
 
 func newDomainPHPSettingsSetCmd() *cobra.Command {
-	var (
-		memoryLimit  string
-		uploadMax    string
-		postMax      string
-		maxInputVars int
-		maxExecTime  int
-		maxInputTime int
-	)
 	cmd := &cobra.Command{
 		Use:     "set <domain-name-or-id> [flags]",
 		Short:   "Set php.ini directives (only the flags you pass change; reconciler converges)",
@@ -100,56 +94,11 @@ func newDomainPHPSettingsSetCmd() *cobra.Command {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Second)
 			defer cancel()
 
-			var s repository.DomainPHPSettings
-			any := false
-			f := cmd.Flags()
-			if f.Changed("memory-limit") {
-				if err := cliValidatePHPSize("memory-limit", memoryLimit); err != nil {
-					return err
-				}
-				s.MemoryLimit = &memoryLimit
-				any = true
-			}
-			if f.Changed("upload-max-filesize") {
-				if err := cliValidatePHPSize("upload-max-filesize", uploadMax); err != nil {
-					return err
-				}
-				s.UploadMaxFilesize = &uploadMax
-				any = true
-			}
-			if f.Changed("post-max-size") {
-				if err := cliValidatePHPSize("post-max-size", postMax); err != nil {
-					return err
-				}
-				s.PostMaxSize = &postMax
-				any = true
-			}
-			if f.Changed("max-input-vars") {
-				if err := cliValidatePHPInt("max-input-vars", maxInputVars); err != nil {
-					return err
-				}
-				s.MaxInputVars = &maxInputVars
-				any = true
-			}
-			if f.Changed("max-execution-time") {
-				if err := cliValidatePHPInt("max-execution-time", maxExecTime); err != nil {
-					return err
-				}
-				s.MaxExecutionTime = &maxExecTime
-				any = true
-			}
-			if f.Changed("max-input-time") {
-				if err := cliValidatePHPInt("max-input-time", maxInputTime); err != nil {
-					return err
-				}
-				s.MaxInputTime = &maxInputTime
-				any = true
-			}
-			if !any {
-				return fmt.Errorf("pass at least one directive flag (see --help)")
-			}
-
 			dom, err := resolveDomainSpec(ctx, domainRepoFromDB(), args[0])
+			if err != nil {
+				return err
+			}
+			s, err := cliPHPSettingsFromFlags(cmd.Flags(), dom)
 			if err != nil {
 				return err
 			}
@@ -161,13 +110,63 @@ func newDomainPHPSettingsSetCmd() *cobra.Command {
 		},
 	}
 	f := cmd.Flags()
-	f.StringVar(&memoryLimit, "memory-limit", "", "memory_limit (e.g. 256M)")
-	f.StringVar(&uploadMax, "upload-max-filesize", "", "upload_max_filesize (e.g. 64M)")
-	f.StringVar(&postMax, "post-max-size", "", "post_max_size (e.g. 64M)")
-	f.IntVar(&maxInputVars, "max-input-vars", 0, "max_input_vars (1..86400)")
-	f.IntVar(&maxExecTime, "max-execution-time", 0, "max_execution_time seconds (1..86400)")
-	f.IntVar(&maxInputTime, "max-input-time", 0, "max_input_time seconds (1..86400)")
+	f.String("memory-limit", "", "memory_limit (e.g. 256M)")
+	f.String("upload-max-filesize", "", "upload_max_filesize (e.g. 64M)")
+	f.String("post-max-size", "", "post_max_size (e.g. 64M)")
+	f.Int("max-input-vars", 0, "max_input_vars (1..86400)")
+	f.Int("max-execution-time", 0, "max_execution_time seconds (1..86400)")
+	f.Int("max-input-time", 0, "max_input_time seconds (1..86400)")
 	return cmd
+}
+
+// cliPHPSettingsFromFlags returns the settings `set` writes: the domain's
+// stored ones with each passed flag applied. UpdatePHPSettings writes every
+// directive, so starting from the stored values is what keeps a directive
+// whose flag is not passed (an admin's open_basedir among them) instead of
+// clearing it.
+func cliPHPSettingsFromFlags(f *pflag.FlagSet, dom *models.Domain) (repository.DomainPHPSettings, error) {
+	s := repository.DomainPHPSettingsOf(dom)
+	changed := false
+	for _, sf := range []struct {
+		name string
+		dst  **string
+	}{
+		{"memory-limit", &s.MemoryLimit},
+		{"upload-max-filesize", &s.UploadMaxFilesize},
+		{"post-max-size", &s.PostMaxSize},
+	} {
+		if !f.Changed(sf.name) {
+			continue
+		}
+		v, _ := f.GetString(sf.name)
+		if err := cliValidatePHPSize(sf.name, v); err != nil {
+			return s, err
+		}
+		*sf.dst = &v
+		changed = true
+	}
+	for _, inf := range []struct {
+		name string
+		dst  **int
+	}{
+		{"max-input-vars", &s.MaxInputVars},
+		{"max-execution-time", &s.MaxExecutionTime},
+		{"max-input-time", &s.MaxInputTime},
+	} {
+		if !f.Changed(inf.name) {
+			continue
+		}
+		v, _ := f.GetInt(inf.name)
+		if err := cliValidatePHPInt(inf.name, v); err != nil {
+			return s, err
+		}
+		*inf.dst = &v
+		changed = true
+	}
+	if !changed {
+		return s, fmt.Errorf("pass at least one directive flag (see --help)")
+	}
+	return s, nil
 }
 
 func derefInt(p *int) any {

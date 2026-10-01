@@ -24,9 +24,17 @@ export const PHP_SETTING_DIRECTIVES = [
 
 export type PHPSettingDirective = (typeof PHP_SETTING_DIRECTIVES)[number];
 
-// tenant_privileged is the opt-in level for the security-sensitive directives
-// (open_basedir, disable_functions, …) a later slice adds; the catalog
-// directives above take admin_only or tenant_allowed.
+// The security-sensitive directives a domain's PHP Settings page can set (GH
+// #1701 slice 3), mirroring the Go PHPDomainSensitiveDirectives (kept in step
+// by TestPHPSettingCatalogTSInSync). They take admin_only (the default) or
+// tenant_privileged, never tenant_allowed.
+export const PHP_SENSITIVE_DOMAIN_DIRECTIVES = [
+  "open_basedir",
+  "allow_url_fopen",
+] as const;
+
+// tenant_privileged is the opt-in level for the security-sensitive
+// directives; the catalog directives take admin_only or tenant_allowed.
 export type PHPSettingLevel =
   "admin_only" | "tenant_allowed" | "tenant_privileged";
 
@@ -34,14 +42,28 @@ export type PHPSettingLevel =
 // each one before policies existed, and a policy only ever restricts that.
 export const PHP_SETTING_DEFAULT_LEVEL: PHPSettingLevel = "tenant_allowed";
 
-// Form shape: directive -> level. Keys outside the catalog (a sensitive
-// directive set through the CLI) are kept so a save from the editor does not
-// drop them.
+// A sensitive directive defaults to admin_only.
+export const PHP_SENSITIVE_DEFAULT_LEVEL: PHPSettingLevel = "admin_only";
+
+// Form shape: directive -> level. Keys the editor does not render (a
+// sensitive directive set through the CLI) are kept so a save from the editor
+// does not drop them.
 export type PHPSettingsPolicyForm = Record<string, PHPSettingLevel>;
+
+function defaultLevel(directive: string): PHPSettingLevel | undefined {
+  if ((PHP_SETTING_DIRECTIVES as readonly string[]).includes(directive)) {
+    return PHP_SETTING_DEFAULT_LEVEL;
+  }
+  if ((PHP_SENSITIVE_DOMAIN_DIRECTIVES as readonly string[]).includes(directive)) {
+    return PHP_SENSITIVE_DEFAULT_LEVEL;
+  }
+  return undefined;
+}
 
 export function defaultPHPSettingsPolicy(): PHPSettingsPolicyForm {
   const out: PHPSettingsPolicyForm = {};
   for (const d of PHP_SETTING_DIRECTIVES) out[d] = PHP_SETTING_DEFAULT_LEVEL;
+  for (const d of PHP_SENSITIVE_DOMAIN_DIRECTIVES) out[d] = PHP_SENSITIVE_DEFAULT_LEVEL;
   return out;
 }
 
@@ -69,19 +91,18 @@ export function decodePHPSettingsPolicy(
 
 // encodePHPSettingsPolicy writes only what differs from the default, so an
 // untouched policy stays "" (the canonical empty value the API and CLI store)
-// and a later default change still reaches untouched directives. Non-catalog
-// keys pass through unchanged.
+// and a later default change still reaches untouched directives. Keys the
+// editor does not render pass through unchanged.
 export function encodePHPSettingsPolicy(
   value: PHPSettingsPolicyForm | string | undefined,
 ): string {
   if (value === undefined) return "";
   if (typeof value === "string") return value.trim();
-  const catalog = new Set<string>(PHP_SETTING_DIRECTIVES);
   const out: Record<string, string> = {};
   for (const k of Object.keys(value).sort()) {
     const level = value[k];
     if (!level) continue;
-    if (catalog.has(k) && level === PHP_SETTING_DEFAULT_LEVEL) continue;
+    if (level === defaultLevel(k)) continue;
     out[k] = level;
   }
   return Object.keys(out).length ? JSON.stringify(out) : "";

@@ -47,6 +47,10 @@ var phpIniDefaultDirectives = []string{
 	"log_errors",
 	"file_uploads",
 	"short_open_tag",
+	// GH #1701 Slice 3. A pool cannot override it, so this read is both the
+	// "(Default)" label and the value php_admin_pins.go pins on a domain that
+	// sets none.
+	"allow_url_fopen",
 }
 
 // phpVersionRE bounds the version to <major>.<minor> before it is spliced into a

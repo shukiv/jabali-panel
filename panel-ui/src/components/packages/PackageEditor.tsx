@@ -29,13 +29,24 @@ import {
   type PackageRecord,
   type PackageWirePayload,
 } from "./packageFields";
-import { PHP_SETTING_DIRECTIVES, type PHPSettingsPolicyForm } from "./phpSettingsPolicy";
+import {
+  PHP_SENSITIVE_DOMAIN_DIRECTIVES,
+  PHP_SETTING_DIRECTIVES,
+  type PHPSettingsPolicyForm,
+} from "./phpSettingsPolicy";
 
-// GH #1701: the two levels a catalog directive takes. The security-sensitive
-// directives (a later slice) add "tenant_privileged".
+// GH #1701: the two levels a catalog directive takes.
 const PHP_POLICY_OPTIONS = [
   { value: "tenant_allowed", label: "Tenant can change" },
   { value: "admin_only", label: "Admin only" },
+];
+
+// GH #1701 slice 3: the security-sensitive directives never take
+// tenant_allowed; the opt-in is tenant_privileged, and the server still checks
+// every value the tenant sends.
+const PHP_SENSITIVE_POLICY_OPTIONS = [
+  { value: "admin_only", label: "Admin only" },
+  { value: "tenant_privileged", label: "Tenant can change (checked)" },
 ];
 
 type NspawnImage = { name: string };
@@ -402,6 +413,20 @@ export const PackageEditor = ({ title, initialValue, isLoading, submitting, onSu
             <Col xs={24} sm={12} lg={8} key={d}>
               <Form.Item label={<code>{d}</code>} name={["php_settings_policy", d]}>
                 <Select aria-label={`${d} policy`} options={PHP_POLICY_OPTIONS} />
+              </Form.Item>
+            </Col>
+          ))}
+        </Row>
+        <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
+          Security-sensitive: admin only unless you opt in. A tenant who may
+          change one can only narrow <code>open_basedir</code> to folders inside
+          their own home.
+        </Typography.Paragraph>
+        <Row gutter={[16, 0]}>
+          {PHP_SENSITIVE_DOMAIN_DIRECTIVES.map((d) => (
+            <Col xs={24} sm={12} lg={8} key={d}>
+              <Form.Item label={<code>{d}</code>} name={["php_settings_policy", d]}>
+                <Select aria-label={`${d} policy`} options={PHP_SENSITIVE_POLICY_OPTIONS} />
               </Form.Item>
             </Col>
           ))}

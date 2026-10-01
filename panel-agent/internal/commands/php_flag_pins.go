@@ -30,12 +30,14 @@ import (
 
 // phpFlagPins holds the three flags. A nil field is unset (no pin emitted).
 // Values carries the inherited value pins ("directive=value", see
-// php_value_pins.go), appended the same way.
+// php_value_pins.go), appended the same way. Admin carries the PHP_ADMIN_VALUE
+// lines (php_admin_pins.go), rendered on their own fastcgi_param.
 type phpFlagPins struct {
 	LogErrors    *bool
 	FileUploads  *bool
 	ShortOpenTag *bool
 	Values       []string
+	Admin        []string
 }
 
 // withPHPFlagPins appends the pinned flags to a PHP_VALUE body. An empty body
@@ -117,6 +119,7 @@ func phpFlagPinsForParams(ctx context.Context, p *domainCreateParams) phpFlagPin
 		pins = resolvePHPFlagPins(ctx, true, p.PHPVersion, pins)
 	}
 	pins.Values = phpInheritedValuePins(ctx, p)
+	pins.Admin = phpAdminValuePins(ctx, p)
 	return pins
 }
 

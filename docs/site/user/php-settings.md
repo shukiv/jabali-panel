@@ -23,6 +23,17 @@ Leave a value at **Use pool default** to inherit the value of your PHP pool; the
 
 Every setting on this page is set on every request of every PHP domain, including domains left on the default. So a value you set on one domain never carries over to another domain that runs on the same PHP pool.
 
+## Security settings
+
+Two more settings limit what a domain's PHP code can reach. They are **admin only** unless your hosting package lets you change them; the server checks every value either way.
+
+| Key | Purpose |
+|---|---|
+| `open_basedir` | The folders this domain's PHP may open files in, separated by `:`. Use `{DOCROOT}` for the domain's folder, `{WEBSPACEROOT}` for your home folder and `{TMP}` for the temp folders (`/tmp` and `/var/tmp`), or absolute paths. The default is your home folder plus the temp folders. You may list only folders inside your home folder, so you can narrow the default but never widen it; an administrator may add other folders, but never another account's home. The database socket and the page-cache purge folder are always added, so `localhost` database connections and WordPress cache purges keep working. Leave out `{TMP}` only if your application does not handle uploads: WordPress and most applications read uploaded files from the temp folder. |
+| `allow_url_fopen` | Let file functions such as `file_get_contents()` read `http://` and `ftp://` URLs. cURL works either way. |
+
+Like the other settings, both are set on every request of every PHP domain, so a narrower `open_basedir` on one domain never applies to another domain on the same PHP pool.
+
 ## Settings your administrator controls
 
 Your hosting package decides which of these values you may change. A value your administrator keeps for themselves shows the tag **Set by your administrator** and cannot be changed from your panel; the value shown still applies to the domain. Ask your administrator if you need it changed. An API request that changes such a value is refused with `php_setting_not_permitted`, naming the setting.

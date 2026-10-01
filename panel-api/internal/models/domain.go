@@ -418,6 +418,15 @@ type Domain struct {
 	PHPFileUploads  *bool `gorm:"type:tinyint(1)" json:"php_file_uploads,omitempty"`
 	PHPShortOpenTag *bool `gorm:"type:tinyint(1)" json:"php_short_open_tag,omitempty"`
 
+	// GH #1701 Slice 3: per-domain open_basedir / allow_url_fopen, rendered
+	// through PHP_ADMIN_VALUE, NULL = inherit (the pool's open_basedir; the box
+	// php.ini's allow_url_fopen). PHPOpenBasedir is the stored token form
+	// ({WEBSPACEROOT}, {DOCROOT}, {TMP}, absolute paths; see
+	// internal/phpbasedir), expanded by the agent. Both are pinned on every
+	// PHP vhost, like the flags above.
+	PHPOpenBasedir   *string `gorm:"type:text" json:"php_open_basedir,omitempty"`
+	PHPAllowURLFopen *bool   `gorm:"type:tinyint(1)" json:"php_allow_url_fopen,omitempty"`
+
 	// M18: per-domain HTTP rate/conn limits. Zero = unlimited (no
 	// nginx directive emitted). RateLimitRPS is requests-per-SECOND
 	// as seen by the reconciler; the vhost renderer converts to

@@ -24,7 +24,11 @@ vi.mock("../LogStreamModal", () => ({
 
 import { apiClient } from "../../apiClient";
 import { DomainPHPSettingsPanel } from "./DomainPHPSettingsPanel";
-import { PHP_SETTING_DIRECTIVES } from "../packages/phpSettingsPolicy";
+import {
+  PHP_SENSITIVE_DOMAIN_DIRECTIVES,
+  PHP_SETTING_DIRECTIVES,
+} from "../packages/phpSettingsPolicy";
+import { feedback } from "../../lib/feedback";
 
 const mocked = apiClient as unknown as {
   get: ReturnType<typeof vi.fn>;
@@ -216,7 +220,7 @@ describe("DomainPHPSettingsPanel (GH #1543)", () => {
 describe("DomainPHPSettingsPanel package policy (GH #1701)", () => {
   // Every directive the page renders, from the shared catalog, so a directive
   // added there is covered here too.
-  const ALL: string[] = [...PHP_SETTING_DIRECTIVES];
+  const ALL: string[] = [...PHP_SETTING_DIRECTIVES, ...PHP_SENSITIVE_DOMAIN_DIRECTIVES];
   const policy = Object.fromEntries(ALL.map((d) => [d, d === "memory_limit" ? "admin_only" : "tenant_allowed"]));
 
   function withSettings(extra: Record<string, unknown>) {
@@ -350,5 +354,103 @@ describe("DomainPHPSettingsPanel flags (GH #1701 Slice 2)", () => {
     expect(flagItem("Short open tag").textContent).toContain("Set by your administrator");
     const uploadsSel = flagItem("File uploads").querySelector(".ant-select");
     expect(uploadsSel?.className).not.toContain("ant-select-disabled");
+  });
+});
+
+describe("DomainPHPSettingsPanel security settings (GH #1701 Slice 3)", () => {
+  const ALL: string[] = [...PHP_SETTING_DIRECTIVES, ...PHP_SENSITIVE_DOMAIN_DIRECTIVES];
+
+  function withSettings(extra: Record<string, unknown>) {
+    mocked.get.mockImplementation((url: string) => {
+      if (url === "/php/versions") return Promise.resolve({ data: { versions: ["8.3"] } });
+      if (url === "/domains/d1/php-settings")
+        return Promise.resolve({ data: { ...SETTINGS, ...extra } });
+      return Promise.resolve({ data: {} });
+    });
+    mocked.patch.mockResolvedValue({});
+  }
+
+  function item(label: string): HTMLElement {
+    const el = screen.getByText(label).closest(".ant-form-item");
+    if (!el) throw new Error(`${label} form item not found`);
+    return el as HTMLElement;
+  }
+
+  const OPEN_BASEDIR = "Allowed folders (open_basedir)";
+  const ALLOW_URL_FOPEN = "Remote file access (allow_url_fopen)";
+
+  it("shows the stored open_basedir and the inherited allow_url_fopen", async () => {
+    withSettings({ php_open_basedir: "{DOCROOT}:{TMP}", pool_defaults: { allow_url_fopen: "1" }, editable: ALL });
+    renderPanel();
+    await screen.findByText(OPEN_BASEDIR);
+    const input = item(OPEN_BASEDIR).querySelector("input") as HTMLInputElement;
+    expect(input.value).toBe("{DOCROOT}:{TMP}");
+    expect(item(ALLOW_URL_FOPEN).textContent).toContain("On (Default)");
+  });
+
+  it("saves a typed open_basedir trimmed, and an emptied one as inherit", async () => {
+    const { waitFor } = await import("@testing-library/react");
+    withSettings({ php_open_basedir: "{DOCROOT}", editable: ALL });
+    renderPanel();
+    await screen.findByText(OPEN_BASEDIR);
+    const input = item(OPEN_BASEDIR).querySelector("input") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: " {DOCROOT}:/home/u1/lib " } });
+    fireEvent.click(screen.getByRole("button", { name: "Save Changes" }));
+    await waitFor(() => expect(mocked.patch).toHaveBeenCalledTimes(1));
+    expect(mocked.patch.mock.calls[0][1]).toMatchObject({
+      php_open_basedir: "{DOCROOT}:/home/u1/lib",
+      php_allow_url_fopen: null,
+    });
+
+    fireEvent.change(input, { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save Changes" }));
+    await waitFor(() => expect(mocked.patch).toHaveBeenCalledTimes(2));
+    expect(mocked.patch.mock.calls[1][1]).toMatchObject({ php_open_basedir: null });
+  });
+
+  it("a tenant without the opt-in sees both read-only and sends them back as stored", async () => {
+    const { waitFor } = await import("@testing-library/react");
+    withSettings({
+      php_open_basedir: "{DOCROOT}:/usr/share/php",
+      php_allow_url_fopen: false,
+      php_timezone: "UTC",
+      policy: { open_basedir: "admin_only", allow_url_fopen: "admin_only" },
+      editable: [...PHP_SETTING_DIRECTIVES],
+    });
+    renderPanel();
+    await screen.findByText(OPEN_BASEDIR);
+    expect((item(OPEN_BASEDIR).querySelector("input") as HTMLInputElement).disabled).toBe(true);
+    expect(item(ALLOW_URL_FOPEN).querySelector(".ant-select")?.className).toContain("ant-select-disabled");
+    expect(item(OPEN_BASEDIR).textContent).toContain("Set by your administrator");
+
+    // A permitted change: clear the stored timezone.
+    const clear = item("Timezone").querySelector(".ant-select-clear");
+    expect(clear).not.toBeNull();
+    fireEvent.mouseDown(clear as Element);
+    fireEvent.click(screen.getByRole("button", { name: "Save Changes" }));
+    await waitFor(() => expect(mocked.patch).toHaveBeenCalledTimes(1));
+    expect(mocked.patch.mock.calls[0][1]).toMatchObject({
+      php_timezone: null,
+      php_open_basedir: "{DOCROOT}:/usr/share/php",
+      php_allow_url_fopen: false,
+    });
+  });
+
+  it("shows the server's reason when it refuses a value", async () => {
+    const { waitFor } = await import("@testing-library/react");
+    withSettings({ editable: ALL });
+    mocked.patch.mockRejectedValue({
+      response: { data: { error: 'invalid_php_setting: open_basedir: "/srv" is outside your home directory /home/u1' } },
+    });
+    renderPanel();
+    await screen.findByText(OPEN_BASEDIR);
+    const input = item(OPEN_BASEDIR).querySelector("input") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "/srv" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save Changes" }));
+    await waitFor(() =>
+      expect(feedback.message.error).toHaveBeenCalledWith(
+        'open_basedir: "/srv" is outside your home directory /home/u1',
+      ),
+    );
   });
 });

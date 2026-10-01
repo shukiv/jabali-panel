@@ -49,7 +49,7 @@ func newPHPPolicyFixture(t *testing.T, policy string) *phpPolicyFixture {
 	base.domains["d1"] = &models.Domain{ID: "d1", UserID: "u1", Name: "ex.test", PHPMemoryLimit: strp("256M")}
 	f.domains = &phpSettingsWriteRepo{mockDomainRepo: base}
 	pkgID := "pkg1"
-	f.users = &mockUserRepo{users: map[string]*models.User{"u1": {ID: "u1", PackageID: &pkgID}}}
+	f.users = &mockUserRepo{users: map[string]*models.User{"u1": {ID: "u1", Username: strp("u1"), PackageID: &pkgID}}}
 	f.packages = &mockPackageRepo{packages: map[string]*models.HostingPackage{
 		"pkg1": {ID: "pkg1", PHPSettingsPolicy: policy},
 	}}
@@ -222,8 +222,8 @@ func TestPHPSettingsPolicy_GetReportsPolicyAndEditable(t *testing.T) {
 	}
 	*f.admin = true
 	_, adminEditable := f.get(t)
-	if len(adminEditable) != len(models.PHPSettingCatalog) {
-		t.Fatalf("admin editable = %v, want every catalog directive", adminEditable)
+	if len(adminEditable) != len(models.PHPPolicyDirectives()) {
+		t.Fatalf("admin editable = %v, want every policy directive", adminEditable)
 	}
 }
 
@@ -247,8 +247,8 @@ func TestPHPSettingsPolicy_ImpersonatingAdminMayChangeALockedDirective(t *testin
 		t.Fatalf("want 200 for an impersonating admin, got %d: %s", w.Code, w.Body.String())
 	}
 	_, editable := f.get(t)
-	if len(editable) != len(models.PHPSettingCatalog) {
-		t.Fatalf("impersonating admin editable = %v, want every catalog directive", editable)
+	if len(editable) != len(models.PHPPolicyDirectives()) {
+		t.Fatalf("impersonating admin editable = %v, want every policy directive", editable)
 	}
 }
 

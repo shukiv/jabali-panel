@@ -248,6 +248,32 @@ type DomainPHPSettings struct {
 	LogErrors    *bool `json:"php_log_errors,omitempty"`
 	FileUploads  *bool `json:"php_file_uploads,omitempty"`
 	ShortOpenTag *bool `json:"php_short_open_tag,omitempty"`
+	// GH #1701 Slice 3 admin values (same NULL = inherit rule). OpenBasedir
+	// must already be normalized by internal/phpbasedir.
+	OpenBasedir   *string `json:"php_open_basedir,omitempty"`
+	AllowURLFopen *bool   `json:"php_allow_url_fopen,omitempty"`
+}
+
+// DomainPHPSettingsOf returns a domain's stored PHP settings. UpdatePHPSettings
+// writes every field (nil clears it), so a caller changing only some of them
+// starts from this, or it clears the rest.
+func DomainPHPSettingsOf(d *models.Domain) DomainPHPSettings {
+	return DomainPHPSettings{
+		MemoryLimit:       d.PHPMemoryLimit,
+		UploadMaxFilesize: d.PHPUploadMaxFilesize,
+		PostMaxSize:       d.PHPPostMaxSize,
+		MaxInputVars:      d.PHPMaxInputVars,
+		MaxExecutionTime:  d.PHPMaxExecutionTime,
+		MaxInputTime:      d.PHPMaxInputTime,
+		DisplayErrors:     d.PHPDisplayErrors,
+		ErrorReporting:    d.PHPErrorReporting,
+		Timezone:          d.PHPTimezone,
+		LogErrors:         d.PHPLogErrors,
+		FileUploads:       d.PHPFileUploads,
+		ShortOpenTag:      d.PHPShortOpenTag,
+		OpenBasedir:       d.PHPOpenBasedir,
+		AllowURLFopen:     d.PHPAllowURLFopen,
+	}
 }
 
 type domainRepo struct{ db *gorm.DB }
@@ -609,6 +635,9 @@ func (r *domainRepo) UpdatePHPSettings(ctx context.Context, id string, settings 
 			"php_log_errors":     settings.LogErrors,
 			"php_file_uploads":   settings.FileUploads,
 			"php_short_open_tag": settings.ShortOpenTag,
+			// GH #1701 Slice 3.
+			"php_open_basedir":    settings.OpenBasedir,
+			"php_allow_url_fopen": settings.AllowURLFopen,
 		})
 	if res.Error != nil {
 		return translate(res.Error)

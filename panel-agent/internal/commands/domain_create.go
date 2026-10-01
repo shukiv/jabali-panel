@@ -133,6 +133,11 @@ type domainCreateParams struct {
 	// overrides, so the inherited value is unknown. Pin only the values sent;
 	// pinning the php.ini baseline could undo a pool's php_admin_flag.
 	PHPFlagsInheritUnknown bool `json:"php_flags_inherit_unknown,omitempty"`
+	// GH #1701 Slice 3: the domain's own open_basedir (stored token form, see
+	// internal/phpbasedir) and allow_url_fopen, rendered through
+	// PHP_ADMIN_VALUE. ""/nil => pin the inherited value (php_admin_pins.go).
+	PHPOpenBasedir   string `json:"php_open_basedir,omitempty"`
+	PHPAllowURLFopen *bool  `json:"php_allow_url_fopen,omitempty"`
 	// EnvVars are per-domain environment variables (GH #1332 item 14), rendered
 	// as fastcgi_param in the PHP location. Keys are re-validated against the
 	// shared phpenv denylist here (defense in depth) before rendering.
@@ -341,6 +346,8 @@ const vhostTemplate = `{{define "ownershipgate"}}{{ if .OwnershipGate }}    # GH
 {{ end }}
 {{ if .PHPValueParam }}
         fastcgi_param PHP_VALUE "{{.PHPValueParam}}";
+{{ end }}{{ if .PHPAdminValueParam }}
+        fastcgi_param PHP_ADMIN_VALUE "{{.PHPAdminValueParam}}";
 {{ end }}{{ if .EnvParams }}
 {{.EnvParams}}
 {{ end }}
@@ -447,6 +454,8 @@ const vhostTemplate = `{{define "ownershipgate"}}{{ if .OwnershipGate }}    # GH
 {{ end }}
 {{ if .PHPValueParam }}
         fastcgi_param PHP_VALUE "{{.PHPValueParam}}";
+{{ end }}{{ if .PHPAdminValueParam }}
+        fastcgi_param PHP_ADMIN_VALUE "{{.PHPAdminValueParam}}";
 {{ end }}{{ if .EnvParams }}
 {{.EnvParams}}
 {{ end }}
@@ -547,6 +556,7 @@ const vhostTemplate = `{{define "ownershipgate"}}{{ if .OwnershipGate }}    # GH
         fastcgi_param SCRIPT_FILENAME $realpath_root$jabali_pi_script;
         fastcgi_param PATH_INFO $jabali_pi_suffix;
 {{ if .PHPValueParam }}        fastcgi_param PHP_VALUE "{{.PHPValueParam}}";
+{{ end }}{{ if .PHPAdminValueParam }}        fastcgi_param PHP_ADMIN_VALUE "{{.PHPAdminValueParam}}";
 {{ end }}{{ if .EnvParams }}
 {{.EnvParams}}
 {{ end }}    }
@@ -767,6 +777,7 @@ type vhostData struct {
 	PHPMaxExecutionTime  int
 	PHPMaxInputTime      int
 	PHPValueParam        string // fastcgi_param PHP_VALUE directive content
+	PHPAdminValueParam   string // GH #1701 Slice 3: fastcgi_param PHP_ADMIN_VALUE content
 	EnvParams            string // GH #1332 item 14: fastcgi_param env-var lines
 	// RateLimitDirectives is the fully-rendered per-vhost rate/conn
 	// limit block (may span 0–2 lines). Computed by the caller via
@@ -1260,6 +1271,7 @@ func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redi
 		PHPMaxExecutionTime:        phpMaxExecTime,
 		PHPMaxInputTime:            phpMaxInputTime,
 		PHPValueParam:              withPHPFlagPins(buildPHPValueParam(hasPHP, phpMemLimit, phpUploadMax, phpPostMax, phpMaxInputVars, phpMaxExecTime, phpMaxInputTime, phpDisplayErrors, phpErrorReporting, phpTimezone), phpFlags),
+		PHPAdminValueParam:         buildPHPAdminValueParam(hasPHP, phpFlags.Admin),
 		EnvParams:                  buildEnvParams(hasPHP, envVars),
 		ListenIPv4:                 listenIPv4,
 		ListenIPv6:                 listenIPv6,
