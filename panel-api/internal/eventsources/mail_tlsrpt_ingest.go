@@ -27,6 +27,7 @@ func runMailTlsRptIngest(ctx context.Context, d Deps) {
 		return
 	}
 	ri := newReportIngest("TlsExternalReport")
+	ri.prune = d.TLSRPTAggregate.PruneOlderThan
 	runReportIngest(ctx, func(ctx context.Context) { mailTlsRptIngestPass(ctx, d, ri) })
 }
 
@@ -58,6 +59,10 @@ func mailTlsRptImportOne(ctx context.Context, d Deps, raw json.RawMessage) ([]tl
 	start, end := rep.Report.DateRangeStart.UTC(), rep.Report.DateRangeEnd.UTC()
 	if reporter == "" || start.IsZero() || end.IsZero() {
 		d.Log.Warn("tlsrpt-ingest: report without a reporter or date range, skipped", "id", rep.ID)
+		return nil, nil
+	}
+	if reportTooOld(d, end) {
+		d.Log.Info("tlsrpt-ingest: report older than retention, skipped", "id", rep.ID, "end", end)
 		return nil, nil
 	}
 	var rows []models.TLSRPTAggregate

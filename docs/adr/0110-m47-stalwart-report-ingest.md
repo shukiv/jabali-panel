@@ -164,12 +164,117 @@ What replaces Decisions 1 and 2:
    `/jabali-admin/mail/deliverability`; the `/jabali-admin/mail/dmarc`,
    `/tlsrpt` and `/feedback` pages they linked to never existed.
 
-Not changed: the panel's canonical `_dmarc` record carries no `rua=`
-tag, so hosted domains receive DMARC aggregate reports only when the
-operator adds one. The TLS-RPT record does ask for reports
-(`rua=mailto:postmaster@<zone>`).
+The canonical `_dmarc` record is extended in the amendment below.
 
 Verification: `internal/eventsources/mail_report_ingest_test.go` runs
 the three reports captured from .60
 (`testdata/stalwart_reports.ndjson`) through the ingest; each fix above
 was neutralised in turn and its test failed.
+
+## Amendment 2026-09-29 (2) — reports can reach the box: postmaster routing, rua, retention
+
+The first amendment made the ingest work, but reports still could not
+arrive for most domains:
+
+- **Stalwart answered 550 to `postmaster@<domain>`** unless the domain
+  had a postmaster mailbox or alias. RFC 5321 requires every mail
+  domain to accept postmaster@, and the panel's TLS-RPT record already
+  sent receivers there. A report addressed to a domain without one was
+  refused.
+- **The canonical `_dmarc` record had no `rua=`**, so no receiver sent
+  DMARC aggregate reports at all.
+- **Nothing pruned the report tables.** ADR-0103 set a 90-day retention,
+  and the repos had `PruneOlderThan`, but nothing called it.
+
+Decisions (the user picked "server admin" routing, "let the reports
+land", and, after the takeover below, "reserve postmaster@ for the
+admin"):
+
+1. **Postmaster routing in Stalwart's directory.** For an email-enabled
+   domain with no postmaster mailbox, alias or group of its own,
+   `queryRecipient` resolves `postmaster@<domain>` to the `postmaster`
+   mailbox on the `is_panel_primary` domain, and `queryEmailAliases`
+   lists those addresses on it. Both are needed: with only the first,
+   Stalwart accepts the RCPT and then bounces "Mailbox not found" at
+   local delivery, because the account does not own the address. The
+   alias listing also lets that mailbox send as those addresses, which
+   is within the admin's existing authority. A postmaster mailbox,
+   alias or group the tenant made before this change (even a disabled
+   one) keeps the domain's postmaster mail. The queries read only tables
+   `jabali-stalwart-ro` is already granted, and they stay
+   byte-identical between install.sh's converger and
+   apply-plan.json.tmpl (parity tests for both). A change to the
+   directory queries takes effect after Stalwart reloads its settings;
+   install.sh restarts Stalwart after the converger.
+2. **postmaster@ is reserved for the admin on every domain but the
+   panel hostname's.** Stalwart keeps each account's addresses in its
+   own registry. The addresses come from `queryEmailAliases` the first
+   time an address resolves, and a later sync (every sign-in) adds new
+   ones but never removes one; `InvalidateCaches` does not either, and
+   local delivery reads the registry first. So once the fallback has
+   delivered to `postmaster@<domain>`, the admin's account holds that
+   address for good. On .60 a tenant then made its own
+   `postmaster@<domain>` mailbox, signed in with its own password, and
+   Stalwart logged `auth.success` with the ADMIN postmaster's
+   accountId: the tenant read every domain's postmaster mail. A tenant
+   alias there never got its mail, and deleting a tenant alias left the
+   address on the tenant's account. Removing the stale registry alias
+   by JMAP (`x:Account/set` `{"aliases/<key>": null}`) works, but any
+   removal after the tenant row exists leaves a window in which the
+   tenant signs in to the admin's account, so the fix makes the clash
+   impossible instead: no new mailbox, alias (or external forward with a
+   local part), group or shared resource may take postmaster@ on a
+   domain that is not `is_panel_primary`. Migration 000309 adds BEFORE
+   INSERT/UPDATE triggers on `mailboxes`, `email_forwarders`,
+   `mail_groups` and `shared_resources` that SIGNAL on such a row, so
+   every door is covered (API, CLI, the cPanel/DirectAdmin/Hestia
+   importers, backup restore, direct SQL). An UPDATE is refused only
+   when it moves a row onto postmaster@, so rows made before 000309 keep
+   working. The API and CLI doors check first
+   (`mailaddr.CheckNotReservedOn` / `CheckPostmasterOn`) for a clear
+   message; the repositories report a trigger refusal as
+   `mailaddr.ErrPostmasterReserved`, which importers and restore list
+   as a skipped address.
+   Known limits: when the panel hostname moves to another domain, the
+   old admin postmaster account keeps the fallback addresses it has
+   collected (admin-owned, so no tenant exposure), and the new one does
+   not gain them until the old account is deleted. A shared resource at
+   postmaster@ made before this change is not in `queryRecipient`, so
+   the fallback still applies to its domain; not verified on a box.
+   Moving an ordinary alias between two mailboxes of one tenant has the
+   same stale-registry effect (mail keeps going to the old mailbox, and a
+   mailbox created later at the address signs in to the alias owner's
+   account); that is fixed separately (ADR-0073 amendment, PR #1941).
+3. **The admin postmaster mailbox** is provisioned by panel-api at boot
+   (`postmaster@<panel hostname>`, 1 GiB) when the panel domain has
+   email and no postmaster yet. It is an ordinary listed mailbox (not
+   `system`, which would hide it from the admin), with its password
+   sealed for webmail SSO.
+4. **Reports are also delivered to the postmaster mailbox.**
+   `ReportSettings.inboundReportForwarding` stays on (Stalwart's
+   default). Turning it off looked like the way to keep reports out of
+   mailboxes, but on Stalwart 0.16 it silently drops ALL mail to
+   postmaster@, human mail included (verified on .60). A test keeps
+   either install path from setting it false. Report mail Stalwart files
+   as spam is expunged from Junk after 30 days (`DataRetention`
+   `expungeTrashAfter`).
+5. **`rua=mailto:postmaster@<zone>`** is added to the canonical `_dmarc`
+   record. The address is in the zone itself, so no RFC 7489 §7.1
+   authorisation record is needed. Records rendered before are still
+   canonical, so the reconciler upgrades them on its next pass; an
+   operator-edited `_dmarc` is left alone. A zone name that is not a
+   plain DNS name renders the record without `rua`.
+6. **Retention.** Each ingest source prunes its table at most once a
+   day, deleting rows older than 90 days. A report whose window ended
+   before the cutoff (or an ARF report received before it) is not
+   imported: the prune would delete it and a restart would import and
+   announce it again.
+
+Verification on .60: after the change, `postmaster@` of a second domain
+was accepted and delivered to the admin postmaster mailbox; a DMARC
+report to it was analysed and delivered; a tenant mailbox still signed
+in and received mail; the new `_dmarc` was served by PowerDNS within one
+reconcile pass. `internal/db/postmaster_reserved_integration_test.go`
+runs the migration chain and checks each trigger through the real
+repositories; it failed with the triggers neutralised, and with the
+UPDATE triggers firing on every update.

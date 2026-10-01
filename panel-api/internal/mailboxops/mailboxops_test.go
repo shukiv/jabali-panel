@@ -222,3 +222,49 @@ func TestCreate_RefusesTheDirectoryAddress(t *testing.T) {
 		t.Fatalf("no row may be written for the reserved address, got %+v", repo.created)
 	}
 }
+
+// ADR-0110: postmaster@ on a tenant domain belongs to the server admin. Stalwart
+// keeps the address on the admin's postmaster account, so a tenant mailbox
+// there would sign in to the admin's account.
+func TestCreate_RefusesPostmasterOnATenantDomain(t *testing.T) {
+	repo := &fakeMBRepo{}
+	key := ssokey.Key{}
+	_, _, err := Create(context.Background(), Deps{Mailboxes: repo, SSOKey: &key},
+		CreateInput{Domain: enabledDomain(), LocalPart: "PostMaster"}, nil)
+	if !errors.Is(err, ErrInvalidLocalPart) || !errors.Is(err, mailaddr.ErrPostmasterReserved) {
+		t.Fatalf("want ErrInvalidLocalPart wrapping ErrPostmasterReserved, got %v", err)
+	}
+	if repo.created != nil {
+		t.Fatalf("no row may be written for postmaster@ on a tenant domain, got %+v", repo.created)
+	}
+}
+
+// On the panel hostname's domain, postmaster@ is the admin's own mailbox.
+func TestCreate_AllowsPostmasterOnThePanelDomain(t *testing.T) {
+	repo := &fakeMBRepo{}
+	key := ssokey.Key{}
+	dom := enabledDomain()
+	dom.IsPanelPrimary = true
+	if _, _, err := Create(context.Background(), Deps{Mailboxes: repo, SSOKey: &key, Addresses: okReleaser{}},
+		CreateInput{Domain: dom, LocalPart: "postmaster"}, nil); err != nil {
+		t.Fatalf("Create postmaster on the panel domain: %v", err)
+	}
+	if repo.created == nil || repo.created.LocalPart != "postmaster" {
+		t.Fatalf("want the postmaster row written, got %+v", repo.created)
+	}
+}
+
+// The database refuses postmaster@ on a tenant domain for doors that do not
+// check first (migration 000309). That refusal is a reserved address, not an
+// internal error, so importers report it as a skipped mailbox.
+func TestCreateForRestore_DatabaseRefusalIsAReservedAddress(t *testing.T) {
+	repo := &fakeMBRepo{createErr: mailaddr.ErrPostmasterReserved}
+	_, err := CreateForRestore(context.Background(), Deps{Mailboxes: repo, Addresses: okReleaser{}},
+		RestoreCreateInput{DomainID: "d1", DomainName: "example.com", LocalPart: "postmaster", PasswordHash: "$2a$10$x"})
+	if !errors.Is(err, ErrInvalidLocalPart) || !errors.Is(err, mailaddr.ErrPostmasterReserved) {
+		t.Fatalf("want ErrInvalidLocalPart wrapping ErrPostmasterReserved, got %v", err)
+	}
+	if errors.Is(err, ErrInternal) {
+		t.Fatalf("a reserved address is not an internal error: %v", err)
+	}
+}

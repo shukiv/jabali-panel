@@ -177,11 +177,19 @@ func reportDeps(client *fakeReports, pub *capturingPublisher) Deps {
 	}
 }
 
+// dmarcDeps sets the clock two days after the DMARC fixture's window
+// (2025-09-28), which is past retention at reportDeps' clock.
+func dmarcDeps(client *fakeReports, pub *capturingPublisher) Deps {
+	d := reportDeps(client, pub)
+	d.Now = func() time.Time { return time.Date(2025, 9, 30, 12, 0, 0, 0, time.UTC) }
+	return d
+}
+
 func TestDmarcIngest_StoresTheRecordsOfARealStalwartReport(t *testing.T) {
 	client, pub := newFakeReports(), &capturingPublisher{}
 	client.add(t, "DmarcExternalReport", fixture(t, "DmarcExternalReport", "jg1tf79uacaa"))
 	repo := &fakeDmarcRepo{}
-	d := reportDeps(client, pub)
+	d := dmarcDeps(client, pub)
 	d.DMARCAggregate = repo
 
 	mailDmarcIngestPass(context.Background(), d, newReportIngest("DmarcExternalReport"))
@@ -216,7 +224,7 @@ func TestDmarcIngest_OneReportPerDomainForTheSameDay(t *testing.T) {
 		client.add(t, "DmarcExternalReport", r)
 	}
 	repo := &fakeDmarcRepo{}
-	d := reportDeps(client, &capturingPublisher{})
+	d := dmarcDeps(client, &capturingPublisher{})
 	d.DMARCAggregate = repo
 
 	mailDmarcIngestPass(context.Background(), d, newReportIngest("DmarcExternalReport"))
@@ -237,7 +245,7 @@ func TestReportIngest_FetchesEachReportOnceAndRetriesFailures(t *testing.T) {
 	client, pub := newFakeReports(), &capturingPublisher{}
 	client.add(t, "DmarcExternalReport", fixture(t, "DmarcExternalReport", "r1"))
 	repo := &fakeDmarcRepo{insertErr: errors.New("db down")}
-	d := reportDeps(client, pub)
+	d := dmarcDeps(client, pub)
 	d.DMARCAggregate = repo
 	ri := newReportIngest("DmarcExternalReport")
 
@@ -270,7 +278,7 @@ func TestReportIngest_ListFailureStoresNothing(t *testing.T) {
 	client.add(t, "DmarcExternalReport", fixture(t, "DmarcExternalReport", "r1"))
 	client.listErr = errors.New("stalwartadmin: x:DmarcExternalReport/query: HTTP 503")
 	repo := &fakeDmarcRepo{}
-	d := reportDeps(client, &capturingPublisher{})
+	d := dmarcDeps(client, &capturingPublisher{})
 	d.DMARCAggregate = repo
 	mailDmarcIngestPass(context.Background(), d, newReportIngest("DmarcExternalReport"))
 	if len(repo.rows) != 0 || len(client.fetched) != 0 {
@@ -288,7 +296,7 @@ func TestReportIngest_AFloodOfReportsIsOneNotification(t *testing.T) {
 		client.add(t, "DmarcExternalReport", r)
 	}
 	repo := &fakeDmarcRepo{}
-	d := reportDeps(client, pub)
+	d := dmarcDeps(client, pub)
 	d.DMARCAggregate = repo
 	mailDmarcIngestPass(context.Background(), d, newReportIngest("DmarcExternalReport"))
 	if len(repo.rows) != 100 {
@@ -316,7 +324,7 @@ func TestDmarcIngest_UntrustedFieldsFitTheirColumns(t *testing.T) {
 	rec["evaluatedDkim"] = "unspecified"
 	client.add(t, "DmarcExternalReport", r)
 	repo := &fakeDmarcRepo{}
-	d := reportDeps(client, &capturingPublisher{})
+	d := dmarcDeps(client, &capturingPublisher{})
 	d.DMARCAggregate = repo
 	mailDmarcIngestPass(context.Background(), d, newReportIngest("DmarcExternalReport"))
 
@@ -445,5 +453,75 @@ func TestArfFeedbackType(t *testing.T) {
 		if got := arfFeedbackType(in); got != want {
 			t.Errorf("arfFeedbackType(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// A report whose window ended before the retention cutoff is not stored: the
+// daily prune would delete it and a restart would import and announce it again.
+func TestDmarcIngest_SkipsAReportPastRetention(t *testing.T) {
+	client, pub := newFakeReports(), &capturingPublisher{}
+	client.add(t, "DmarcExternalReport", fixture(t, "DmarcExternalReport", "r1")) // window 2025-09-28
+	repo := &fakeDmarcRepo{}
+	d := reportDeps(client, pub) // 2026-09-29: a year later
+	d.DMARCAggregate = repo
+	ri := newReportIngest("DmarcExternalReport")
+
+	mailDmarcIngestPass(context.Background(), d, ri)
+
+	if len(repo.rows) != 0 || pub.Count() != 0 {
+		t.Fatalf("stale report stored: rows=%d notifications=%d", len(repo.rows), pub.Count())
+	}
+	if !ri.seen["r1"] {
+		t.Fatal("a skipped report must count as handled, not be fetched every pass")
+	}
+}
+
+// The stored rows are kept 90 days (ADR-0103): each source prunes its table
+// at most once a day.
+func TestReportIngest_PrunesOnceADay(t *testing.T) {
+	client := newFakeReports()
+	now := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
+	d := reportDeps(client, &capturingPublisher{})
+	d.Now = func() time.Time { return now }
+	d.DMARCAggregate = &fakeDmarcRepo{}
+	var cutoffs []time.Time
+	ri := newReportIngest("DmarcExternalReport")
+	ri.prune = func(_ context.Context, cutoff time.Time) (int64, error) {
+		cutoffs = append(cutoffs, cutoff)
+		return 3, nil
+	}
+
+	mailDmarcIngestPass(context.Background(), d, ri)
+	now = now.Add(5 * time.Minute)
+	mailDmarcIngestPass(context.Background(), d, ri)
+	now = now.Add(24 * time.Hour)
+	mailDmarcIngestPass(context.Background(), d, ri)
+
+	want := []time.Time{
+		time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC),
+		time.Date(2026, 7, 2, 12, 5, 0, 0, time.UTC),
+	}
+	if len(cutoffs) != len(want) || !cutoffs[0].Equal(want[0]) || !cutoffs[1].Equal(want[1]) {
+		t.Fatalf("prune cutoffs = %v, want %v", cutoffs, want)
+	}
+}
+
+func TestReportIngest_FailedPruneIsTriedAgain(t *testing.T) {
+	d := reportDeps(newFakeReports(), &capturingPublisher{})
+	d.DMARCAggregate = &fakeDmarcRepo{}
+	calls := 0
+	ri := newReportIngest("DmarcExternalReport")
+	ri.prune = func(context.Context, time.Time) (int64, error) {
+		calls++
+		if calls == 1 {
+			return 0, errors.New("db down")
+		}
+		return 0, nil
+	}
+	mailDmarcIngestPass(context.Background(), d, ri)
+	mailDmarcIngestPass(context.Background(), d, ri)
+	mailDmarcIngestPass(context.Background(), d, ri)
+	if calls != 2 {
+		t.Fatalf("prune ran %d times, want 2 (the failure, then one success)", calls)
 	}
 }

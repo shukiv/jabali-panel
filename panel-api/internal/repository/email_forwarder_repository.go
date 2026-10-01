@@ -153,12 +153,12 @@ func (r *emailForwarderRepo) Create(ctx context.Context, fwd *models.EmailForwar
 	now := time.Now().UTC()
 	fwd.CreatedAt = now
 	fwd.UpdatedAt = now
-	return mapAddressInUse(r.db.WithContext(ctx).Create(fwd).Error)
+	return mapAddressInUse(mapPostmasterReserved(r.db.WithContext(ctx).Create(fwd).Error))
 }
 
 func (r *emailForwarderRepo) Update(ctx context.Context, fwd *models.EmailForwarder) error {
 	fwd.UpdatedAt = time.Now().UTC()
-	return mapAddressInUse(r.db.WithContext(ctx).Save(fwd).Error)
+	return mapAddressInUse(mapPostmasterReserved(r.db.WithContext(ctx).Save(fwd).Error))
 }
 
 func (r *emailForwarderRepo) ReKeyAliasTargets(ctx context.Context, domainID, newDomain string) (int64, error) {

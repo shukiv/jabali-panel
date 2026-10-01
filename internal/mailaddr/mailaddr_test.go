@@ -168,3 +168,37 @@ func TestCheckNotReserved(t *testing.T) {
 		}
 	}
 }
+
+// postmaster@ on a tenant domain belongs to the server admin (ADR-0110); on the
+// panel hostname's domain it is the admin's own mailbox.
+func TestCheckNotReservedOn_PostmasterIsTheAdmins(t *testing.T) {
+	t.Parallel()
+	for _, in := range []string{"postmaster@example.com", "PostMaster@example.com", "postmaster+reports@example.com"} {
+		local, _, err := Canonicalise(in)
+		if err != nil {
+			t.Fatalf("Canonicalise(%q): %v", in, err)
+		}
+		err = CheckNotReservedOn(local, false)
+		if !errors.Is(err, ErrPostmasterReserved) || !errors.Is(err, ErrLocalReserved) {
+			t.Errorf("CheckNotReservedOn(%q, tenant domain) = %v, want ErrPostmasterReserved wrapping ErrLocalReserved", local, err)
+		}
+		if err := CheckNotReservedOn(local, true); err != nil {
+			t.Errorf("CheckNotReservedOn(%q, panel domain) = %v, want nil", local, err)
+		}
+	}
+	if err := CheckNotReservedOn(DirectoryLocalPart, true); !errors.Is(err, ErrLocalReserved) {
+		t.Errorf("CheckNotReservedOn(directory, panel domain) = %v, want ErrLocalReserved", err)
+	}
+	for _, local := range []string{"alice", "postmasters", "post-master", "abuse"} {
+		if err := CheckNotReservedOn(local, false); err != nil {
+			t.Errorf("CheckNotReservedOn(%q, tenant domain) = %v, want nil", local, err)
+		}
+	}
+	// Alias local parts are stored as typed, so the alias check ignores case
+	// and surrounding space.
+	for _, local := range []string{"postmaster", "Postmaster", " POSTMASTER "} {
+		if err := CheckPostmasterOn(local, false); !errors.Is(err, ErrPostmasterReserved) {
+			t.Errorf("CheckPostmasterOn(%q, tenant domain) = %v, want ErrPostmasterReserved", local, err)
+		}
+	}
+}

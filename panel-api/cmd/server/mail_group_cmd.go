@@ -197,7 +197,8 @@ func newMailGroupCreateCmd() *cobra.Command {
 			}
 			canonLocal, _, err := mailaddr.Canonicalise(args[1] + "@" + dom.Name)
 			if err == nil {
-				err = mailaddr.CheckNotReserved(canonLocal)
+				// postmaster@ on a tenant domain is the server admin's (ADR-0110).
+				err = mailaddr.CheckNotReservedOn(canonLocal, dom.IsPanelPrimary)
 			}
 			if err != nil {
 				return fmt.Errorf("invalid local part: %w", err)

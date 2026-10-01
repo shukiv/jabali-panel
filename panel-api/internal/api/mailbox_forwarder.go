@@ -19,6 +19,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/mailaddr"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/auth"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/forwarderops"
@@ -209,6 +210,11 @@ func (h *forwarderHandler) create(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "alias_requires_local_part", "detail": "an alias needs its address"})
 		return
 	}
+	// postmaster@ on a tenant domain is the server admin's (ADR-0110).
+	if req.Type == "alias" && mailaddr.CheckPostmasterOn(req.LocalPart, dom.IsPanelPrimary) != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "reserved_local_part", "detail": "postmaster@ belongs to the server administrator"})
+		return
+	}
 	if req.Target == "" {
 		// External default target is the mailbox itself. For an ALIAS the target
 		// column is unused at apply (delivery is by local_part -> mailbox), but it
@@ -239,6 +245,10 @@ func (h *forwarderHandler) create(c *gin.Context) {
 		f.KeepCopy = req.KeepCopy
 	}
 	if err := h.cfg.Forwarders.Create(ctx, f); err != nil {
+		if errors.Is(err, mailaddr.ErrLocalReserved) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "reserved_local_part", "detail": "postmaster@ belongs to the server administrator"})
+			return
+		}
 		if isDuplicateKeyErr(err) {
 			// uq_external_forward (this mailbox already forwards there) or
 			// uq_alias_local (the alias address is taken in the domain).

@@ -24,6 +24,7 @@ func runMailDmarcIngest(ctx context.Context, d Deps) {
 		return
 	}
 	ri := newReportIngest("DmarcExternalReport")
+	ri.prune = d.DMARCAggregate.PruneOlderThan
 	runReportIngest(ctx, func(ctx context.Context) { mailDmarcIngestPass(ctx, d, ri) })
 }
 
@@ -58,6 +59,10 @@ func mailDmarcImportOne(ctx context.Context, d Deps, raw json.RawMessage) (*dmar
 	start, end := rep.Report.DateRangeBegin.UTC(), rep.Report.DateRangeEnd.UTC()
 	if domain == "" || reporter == "" || start.IsZero() || end.IsZero() {
 		d.Log.Warn("dmarc-ingest: report without a domain, reporter or date range, skipped", "id", rep.ID)
+		return nil, nil
+	}
+	if reportTooOld(d, end) {
+		d.Log.Info("dmarc-ingest: report older than retention, skipped", "id", rep.ID, "end", end)
 		return nil, nil
 	}
 	exists, err := d.DMARCAggregate.ExistsForReport(ctx, reporter, domain, start, end)

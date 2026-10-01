@@ -48,6 +48,18 @@ every mailbox it lists can read it.
   cannot use it for a mailbox, group or shared resource, and it does not
   receive mail.
 
+## The postmaster address
+
+Mail to `postmaster@<domain>` goes to the server administrator, as for every
+domain on the server. It carries the reports other mail servers send about
+mail from your domain, and messages from people who have a problem with it.
+
+You cannot make a mailbox, alias, group or shared resource at
+`postmaster@<domain>`. A postmaster address made before this rule keeps
+working and still gets the domain's postmaster mail. A migration or a backup
+restore makes new addresses, so it skips a postmaster address and lists it
+in its report.
+
 ## IMAP and SMTP submission
 
 - **IMAP**: `imap.<panel-hostname>:993` with TLS, username is the full email address, password is the mailbox password.

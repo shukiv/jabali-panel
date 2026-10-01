@@ -312,7 +312,7 @@ func isPristineMailBootstrapRecord(r *models.DNSRecord, zoneName string, srv *mo
 	case r.Name == "@" && r.Type == "TXT":
 		return srv != nil && hintMatches(r.Content, dnscompile.BuildSPFString(srv))
 	case r.Name == "_dmarc" && r.Type == "TXT":
-		return dnscompile.IsCanonicalDMARC(r.Content)
+		return dnscompile.IsCanonicalDMARC(zoneName, r.Content)
 	}
 	return false
 }

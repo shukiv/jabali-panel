@@ -59,7 +59,7 @@ func BuildApexMailRecords(provider, zoneName string, srv *models.ServerSettings,
 		return []models.DNSRecord{
 			mk("@", "MX", "mail."+zoneName, 10),
 			mk("@", "TXT", BuildSPFString(srv), 0),
-			mk("_dmarc", "TXT", `"v=DMARC1; p=quarantine; sp=quarantine; adkim=r; aspf=r"`, 0),
+			mk("_dmarc", "TXT", BuildDMARCString(zoneName, "", false), 0),
 		}
 	case models.MailProviderM365:
 		return []models.DNSRecord{

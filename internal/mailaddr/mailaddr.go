@@ -197,6 +197,37 @@ func CheckNotReserved(canonLocal string) error {
 	return nil
 }
 
+// PostmasterLocalPart is the RFC 5321 postmaster address. On every domain but
+// the panel hostname's, postmaster@ belongs to the server administrator
+// (ADR-0110): Stalwart delivers it to the admin's postmaster mailbox and keeps
+// the address on that account for good. A tenant mailbox at the address would
+// sign in to the admin's account, and a tenant alias, group or shared resource
+// there would never get its mail.
+const PostmasterLocalPart = "postmaster"
+
+// ErrPostmasterReserved is ErrLocalReserved for postmaster@ on a domain other
+// than the panel hostname's.
+var ErrPostmasterReserved = fmt.Errorf("%w: postmaster@ belongs to the server administrator", ErrLocalReserved)
+
+// CheckNotReservedOn is CheckNotReserved for a local part on a known domain:
+// it also refuses postmaster unless panelPrimary (the panel hostname's domain).
+func CheckNotReservedOn(canonLocal string, panelPrimary bool) error {
+	if err := CheckNotReserved(canonLocal); err != nil {
+		return err
+	}
+	return CheckPostmasterOn(canonLocal, panelPrimary)
+}
+
+// CheckPostmasterOn returns ErrPostmasterReserved for postmaster, in any case,
+// unless panelPrimary. Alias doors call it directly: an alias local part is
+// not canonicalised.
+func CheckPostmasterOn(local string, panelPrimary bool) error {
+	if !panelPrimary && strings.EqualFold(strings.TrimSpace(local), PostmasterLocalPart) {
+		return ErrPostmasterReserved
+	}
+	return nil
+}
+
 // shellMetaChars is the deny list referenced by both canonLocal (belt +
 // braces beside the charset allowlist) and canonDomain.
 //

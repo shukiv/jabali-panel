@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dnscompile"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/domainmailops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
@@ -410,7 +412,7 @@ func staticEmailHints(domainName, selector, pubKey, ip4, ip6 string) []domainEma
 	hints = append(hints, []domainEmailDNSHint{
 		{Purpose: "MX — delivers incoming mail to this host", Name: domainName + ".", Type: "MX", Value: "10 mail." + domainName + "."},
 		{Purpose: "SPF — authorises this host to send mail for the domain", Name: domainName + ".", Type: "TXT", Value: `v=spf1 mx ~all`},
-		{Purpose: "DMARC — tells receivers to reject unauthenticated mail", Name: "_dmarc." + domainName + ".", Type: "TXT", Value: "v=DMARC1; p=quarantine; sp=quarantine; adkim=r; aspf=r"},
+		{Purpose: "DMARC — tells receivers to reject unauthenticated mail", Name: "_dmarc." + domainName + ".", Type: "TXT", Value: strings.Trim(dnscompile.BuildDMARCString(domainName, "", false), `"`)},
 		{Purpose: "autoconfig — Thunderbird / mobile client auto-discovery", Name: "autoconfig." + domainName + ".", Type: "CNAME", Value: "mail." + domainName + "."},
 		{Purpose: "autodiscover — Outlook auto-discovery (CNAME flavour)", Name: "autodiscover." + domainName + ".", Type: "CNAME", Value: "mail." + domainName + "."},
 		{Purpose: "_autodiscover._tcp — alternative auto-discovery flavour (Outlook)", Name: "_autodiscover._tcp." + domainName + ".", Type: "SRV", Value: "0 0 443 mail." + domainName + "."},

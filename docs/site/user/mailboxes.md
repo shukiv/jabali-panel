@@ -25,6 +25,7 @@ A password you supply needs at least 8 characters and at most 72 bytes. The API 
 
 - Local part validation: lowercase, alphanumeric plus `.`, `_`, `-`, `+`; cannot start with `.`.
 - `jabali-directory` is reserved for the [domain directory](./email.md#the-domain-directory) and is refused.
+- `postmaster` is reserved for the server administrator and is refused. See [The postmaster address](./email.md#the-postmaster-address).
 - An address that is already an alias of another mailbox, a mail group or a shared resource on the domain cannot become a mailbox (`409 address_in_use`). Delete the alias, group or resource first. See [One owner per address](#one-owner-per-address).
 - If the mail server cannot be reached, the mailbox is not created (`503 mail_server_unavailable`). Try again once mail is back up.
 - The total number of mailboxes counts against your package's `max_mailboxes`.
