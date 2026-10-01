@@ -45,7 +45,7 @@ Most CMSes (WordPress, Drupal, Moodle) ship recommendations:
 - WordPress: `memory_limit 256M`, `upload_max_filesize 64M`, `post_max_size 64M`, `max_execution_time 300`.
 - Moodle: `memory_limit 512M`, `upload_max_filesize 1024M` (when accepting large coursework uploads).
 
-Start with the recommendation, then raise specific values only when you hit an error in the app's error log.
+Start with the recommendation, then raise specific values only when you hit an error in the app's error log. **View error log** on the domain's **PHP Settings** tab opens that domain's error log live, on the same page.
 
 
 ## Command line, Composer, and cron

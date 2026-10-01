@@ -16,6 +16,11 @@ vi.mock("../../lib/feedback", () => ({
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({ t: (k: string) => k }),
 }));
+// Stub the stream modal (it would open a WebSocket); render a marker when shown.
+vi.mock("../LogStreamModal", () => ({
+  LogStreamModal: (p: { visible: boolean; title: string }) =>
+    p.visible ? <div data-testid="log-stream-modal">{p.title}</div> : null,
+}));
 
 import { apiClient } from "../../apiClient";
 import { DomainPHPSettingsPanel } from "./DomainPHPSettingsPanel";
@@ -295,5 +300,18 @@ describe("DomainPHPSettingsPanel Reset OPcache (GH #1701)", () => {
     renderPanel();
     await screen.findByText("View error log");
     expect(screen.queryByText("Reset OPcache")).toBeNull();
+  });
+});
+
+describe("DomainPHPSettingsPanel error log shortcut (GH #1701)", () => {
+  it("opens this domain's error log right on the page", async () => {
+    mocked.post.mockResolvedValue({ data: { stream_key: "k1", websocket_url: "/ws/logs/k1" } });
+    renderPanel();
+    expect(screen.queryByTestId("log-stream-modal")).toBeNull();
+    fireEvent.click(await screen.findByText("View error log"));
+    await vi.waitFor(() =>
+      expect(mocked.post).toHaveBeenCalledWith("/logs/access", { log_type: "error", domain_id: "d1" }),
+    );
+    expect(await screen.findByTestId("log-stream-modal")).toHaveTextContent("Error Log Stream");
   });
 });

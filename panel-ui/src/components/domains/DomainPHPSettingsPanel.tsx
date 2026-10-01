@@ -16,6 +16,8 @@ import { feedback } from "../../lib/feedback"; // GH #970: themed toasts
 import { apiClient } from "../../apiClient";
 import { isPHPEOL } from "../../utils/phpEol";
 import { IANA_TIMEZONES } from "../../data/timezones";
+import { LogStreamModal } from "../LogStreamModal";
+import { useDomainLogStreams } from "../logs/useDomainLogStreams";
 
 type DomainPHPSettings = {
   php_pool_id?: string | null;
@@ -163,6 +165,7 @@ export function DomainPHPSettingsPanel({ domainId }: DomainPHPSettingsPanelProps
   const { t } = useTranslation();
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const logStreams = useDomainLogStreams();
   const [phpSettings, setPhpSettings] = useState<DomainPHPSettings | null>(null);
   const [availableVersions, setAvailableVersions] = useState<string[]>([]);
   const [versionSaving, setVersionSaving] = useState(false);
@@ -466,7 +469,9 @@ export function DomainPHPSettingsPanel({ domainId }: DomainPHPSettingsPanelProps
               {/* GH #1332 items 7, 15: quick actions for this domain. GH #1701:
                   Reset OPcache is back here at the reporter's request, next to
                   the per-version one on the OPcache & JIT tab; it resets the
-                  pool serving this domain. */}
+                  pool serving this domain. View error log opens this domain's
+                  error-log stream right here (GH #1701), the same stream as the
+                  Error Log button on the domain's Logs tab. */}
               <Space wrap style={{ marginBottom: 8 }}>
                 {phpSettings.opcache_reset_allowed && phpSettings.php_version && (
                   <Popconfirm
@@ -483,7 +488,7 @@ export function DomainPHPSettingsPanel({ domainId }: DomainPHPSettingsPanelProps
                 <Button
                   type="link"
                   style={{ paddingInline: 0 }}
-                  onClick={() => navigate(`/jabali-panel/logs?domain=${domainId}`)}
+                  onClick={() => void logStreams.openStream("error", domainId)}
                 >
                   View error log
                 </Button>
@@ -706,6 +711,8 @@ export function DomainPHPSettingsPanel({ domainId }: DomainPHPSettingsPanelProps
             </>
           )}
       </Spin>
+      {/* Portal-rendered; holds no form fields. */}
+      <LogStreamModal {...logStreams.modalProps} />
     </Form>
   );
 }

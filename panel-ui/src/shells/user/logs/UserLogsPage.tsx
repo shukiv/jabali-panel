@@ -34,10 +34,11 @@ export const UserLogsPage = () => {
 
   const domains: DomainLogRow[] = domainsData?.data || [];
 
-  // GH #1332 item 7: the per-domain PHP Settings page links here with
-  // ?domain=<id> to jump straight to that site's logs. Filter to it (and offer
-  // a one-click "show all") when present; unknown/foreign ids just fall through
-  // to the full list since the table is already scoped to the caller's domains.
+  // GH #1332 item 7: ?domain=<id> jumps straight to that site's logs (PHP
+  // Settings linked here until GH #1701 opened the error log in place; old
+  // links keep working). Filter to it (and offer a one-click "show all") when
+  // present; unknown/foreign ids just fall through to the full list since the
+  // table is already scoped to the caller's domains.
   const focusDomainId = searchParams.get("domain");
   const shownDomains =
     focusDomainId && domains.some((d) => d.id === focusDomainId)
