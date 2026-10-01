@@ -66,7 +66,7 @@ the string to bump it.
 | Stalwart mail server | `0.16.24` | `github.com/stalwartlabs/stalwart` release | SMTP + IMAP + JMAP per ADR-0041 |
 | Stalwart CLI | `1.0.13` | `github.com/stalwartlabs/cli` release | mail admin |
 | Stalwart spam-filter rules | version from upstream sha file | `github.com/stalwartlabs/spam-filter` | rule pack |
-| Bulwark webmail | `1.7.3` | `github.com/bulwarkmail/webmail` release | M6 webmail; per-mailbox SSO |
+| Bulwark webmail | `1.12.0` | `github.com/bulwarkmail/webmail` release | M6 webmail; per-mailbox SSO |
 
 ## Identity (M20)
 
