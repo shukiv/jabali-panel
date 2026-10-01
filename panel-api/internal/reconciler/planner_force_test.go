@@ -21,13 +21,14 @@ func plannerFixture(t *testing.T) (*Reconciler, *fakeAgent, *models.Domain) {
 	userRepo.users["user-1"] = &models.User{ID: "user-1", Email: "alice@example.com", Username: &username}
 	now := time.Now().UTC()
 	dom := &models.Domain{
-		ID:        "domain-1",
-		UserID:    "user-1",
-		Name:      "example.com",
-		DocRoot:   "/home/alice/domains/example.com/public_html",
-		IsEnabled: true,
-		CreatedAt: now,
-		UpdatedAt: now,
+		OwnershipState: verifiedOwnership,
+		ID:             "domain-1",
+		UserID:         "user-1",
+		Name:           "example.com",
+		DocRoot:        "/home/alice/domains/example.com/public_html",
+		IsEnabled:      true,
+		CreatedAt:      now,
+		UpdatedAt:      now,
 	}
 	domainRepo.domains[dom.ID] = dom
 	r := New(domainRepo, userRepo, agent, slog.New(slog.NewTextHandler(io.Discard, nil)), Config{Interval: time.Second}).

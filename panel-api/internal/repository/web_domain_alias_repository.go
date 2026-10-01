@@ -21,7 +21,9 @@ type WebDomainAliasRepository interface {
 	ListByDomain(ctx context.Context, domainID string) ([]models.WebDomainAlias, error)
 	// ListHostnamesByDomainID returns just the lowercased hostnames for
 	// one domain, ordered stably — the reconciler's single source of
-	// truth for a domain's aliases on a converge pass.
+	// truth for a domain's aliases on a converge pass. Only VERIFIED
+	// aliases are returned (GH #1816 / ADR-0170): a pending alias never
+	// joins the vhost's server_name or the certificate.
 	ListHostnamesByDomainID(ctx context.Context, domainID string) ([]string, error)
 	// FindByHostname resolves an alias by its (globally unique) hostname,
 	// or ErrNotFound when the name is free. The create handler uses it to
@@ -80,7 +82,7 @@ func (r *webDomainAliasRepo) ListHostnamesByDomainID(ctx context.Context, domain
 	var names []string
 	err := r.db.WithContext(ctx).
 		Model(&models.WebDomainAlias{}).
-		Where("domain_id = ?", domainID).
+		Where("domain_id = ? AND ownership_status = ?", domainID, models.OwnershipVerified).
 		Order("hostname ASC").
 		Pluck("hostname", &names).Error
 	if err != nil {

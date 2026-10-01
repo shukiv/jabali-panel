@@ -26,6 +26,7 @@ import (
 	internalbackup "git.jabali-panel.com/shukivaknin/jabali2/internal/backup"
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/kratosclient"
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/mailaddr"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/domainops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/forwarderops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
@@ -76,6 +77,18 @@ type ApplyResult struct {
 // panel DB. Returns a non-nil ApplyResult even on partial failures;
 // per-row errors are collected in Result.Errors so a domain failure
 // doesn't abort the database/cron path.
+// restoredOwnership decides a restored domain's ownership (GH #1816 /
+// ADR-0170 decision 2). Every restore that recreates a domain row is
+// admin-run (the admin restore API, `jabali account restore`), so the
+// administrator vouches for the name — except for a row the archive itself
+// records as pending, which is never promoted by a restore.
+func restoredOwnership(dm internalbackup.MetadataDomain) domainops.OwnershipDecision {
+	if dm.OwnershipStatus != "" && dm.OwnershipStatus != models.OwnershipVerified {
+		return domainops.OwnershipDecision{}
+	}
+	return domainops.OwnershipDecision{Verified: true, Method: models.OwnershipMethodRestore}
+}
+
 func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) ApplyResult {
 	r := ApplyResult{}
 	if m == nil {
@@ -195,6 +208,11 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 			if cerr != nil {
 				refused[dm.ID] = true
 				r.Errors = append(r.Errors, fmt.Sprintf("domain %s (%s): not restored: %v", dm.ID, dm.Name, cerr))
+				continue
+			}
+			if err := domainops.ApplyOwnershipDecision(&row.OwnershipState, restoredOwnership(dm), now); err != nil {
+				refused[dm.ID] = true
+				r.Errors = append(r.Errors, fmt.Sprintf("domain %s (%s): not restored: ownership token: %v", dm.ID, dm.Name, err))
 				continue
 			}
 			for _, w := range warnings {

@@ -110,3 +110,27 @@ func SecurityToggle(adminUserID, subsystem, state, sourceIP, requestID string) *
 		Meta: metaJSON(map[string]any{"subsystem": subsystem, "state": state}),
 	}
 }
+
+// DomainOwnership — an administrator approved or revoked the ownership proof
+// of a domain or a web alias, or switched the proof requirement (GH #1816 /
+// ADR-0170). subjectUserID is the owner of the affected name ("" for the
+// server-wide switch, which stays admin-only).
+func DomainOwnership(adminUserID, subjectUserID, action, targetType, targetID, sourceIP, requestID string, meta map[string]any) *models.AuditEvent {
+	return &models.AuditEvent{
+		ActorUserID: sp(adminUserID), ActorKind: models.AuditActorAdmin,
+		SubjectUserID: sp(subjectUserID), Action: action,
+		TargetType: targetType, TargetID: targetID, Result: models.AuditResultOK,
+		SourceIP: sp(sourceIP), RequestID: sp(requestID), Meta: metaJSON(meta),
+	}
+}
+
+// DomainOwnershipSystem is an ownership change the panel made on its own
+// (GH #1816): a DNS proof accepted, the parent rule applied, or a name nobody
+// proved removed. It has no actor user; subjectUserID is the name's owner, so
+// the change shows in their activity too.
+func DomainOwnershipSystem(subjectUserID, action, targetType, targetID string, meta map[string]any) *models.AuditEvent {
+	return &models.AuditEvent{
+		ActorKind: models.AuditActorSystem, SubjectUserID: sp(subjectUserID), Action: action,
+		TargetType: targetType, TargetID: targetID, Result: models.AuditResultOK, Meta: metaJSON(meta),
+	}
+}

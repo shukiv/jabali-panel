@@ -136,7 +136,8 @@ func baseDeps() (*fakeDomainRepo, *fakeZoneRepo, *fakeRecordRepo, Deps) {
 }
 
 func newDomain() *models.Domain {
-	return &models.Domain{ID: "dom1", UserID: "user1", Name: "example.com"}
+	return &models.Domain{ID: "dom1", UserID: "user1", Name: "example.com",
+		OwnershipState: models.OwnershipState{OwnershipStatus: models.OwnershipVerified}}
 }
 
 func m6Count(recs []models.DNSRecord) int {
@@ -185,6 +186,25 @@ func TestEnable_AgentUnconfigured_NoPersist(t *testing.T) {
 	require.ErrorIs(t, err, ErrAgentUnconfigured)
 	require.False(t, dom.EmailEnabled)
 	require.Nil(t, domains.updated, "no DB write on agent-unconfigured")
+	require.Empty(t, records.created)
+}
+
+// GH #1816 / ADR-0170: an unproven name is never registered with Stalwart —
+// no agent call, no DB write, no managed records.
+func TestEnable_PendingOwnership_Refused(t *testing.T) {
+	domains, _, records, d := baseDeps()
+	called := false
+	d.Call = func(ctx context.Context, cmd string, params any) (json.RawMessage, error) {
+		called = true
+		return okCall(cmd, params)
+	}
+	dom := newDomain()
+	dom.OwnershipState = models.OwnershipState{OwnershipStatus: models.OwnershipPending}
+
+	_, _, _, err := Enable(context.Background(), d, dom)
+	require.ErrorIs(t, err, ErrOwnershipPending)
+	require.False(t, called, "no agent call for a pending domain")
+	require.Nil(t, domains.updated, "no DB write for a pending domain")
 	require.Empty(t, records.created)
 }
 

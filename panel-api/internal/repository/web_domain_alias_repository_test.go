@@ -38,3 +38,21 @@ func TestWebDomainAlias_FindStrictSubdomainHostnames_EmptyName(t *testing.T) {
 	require.Empty(t, got)
 	require.NoError(t, mock.ExpectationsWereMet(), "an empty name must not query")
 }
+
+// GH #1816 / ADR-0170: the reconciler's alias list (vhost server_name and
+// certificate SANs) holds VERIFIED aliases only; a pending alias never
+// joins the served names.
+func TestWebDomainAlias_ListHostnamesByDomainID_VerifiedOnly(t *testing.T) {
+	gdb, mock, raw := newMockDB(t)
+	defer raw.Close()
+	repo := repository.NewWebDomainAliasRepository(gdb)
+
+	mock.ExpectQuery("SELECT `hostname` FROM `web_domain_aliases` WHERE domain_id = \\? AND ownership_status = \\? ORDER BY hostname ASC").
+		WithArgs("d1", "verified").
+		WillReturnRows(sqlmock.NewRows([]string{"hostname"}).AddRow("shop.example.net"))
+
+	got, err := repo.ListHostnamesByDomainID(context.Background(), "d1")
+	require.NoError(t, err)
+	require.Equal(t, []string{"shop.example.net"}, got)
+	require.NoError(t, mock.ExpectationsWereMet())
+}

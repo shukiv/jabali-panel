@@ -2362,6 +2362,105 @@ paths:
       parameters: [ { in: path, name: id, required: true, schema: { type: string } }, { in: path, name: alias_id, required: true, schema: { type: string } } ]
       responses: { "200": { description: OK } }
 
+  /domains/{id}/aliases/{alias_id}/ownership/verify:
+    post:
+      tags: [Domain Ownership]
+      summary: Check a pending web alias's ownership record now
+      description: |
+        GH #1816 / ADR-0170. Reads `_jabali-challenge.<alias>` through the public
+        resolvers. Owner or admin; at most 6 checks a minute per user (429).
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } }, { in: path, name: alias_id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: "The check result and the alias's ownership state" }, "404": { description: Not found }, "429": { description: Rate limited } }
+
+  # --- Domain Ownership (GH #1816 / ADR-0170) ---
+
+  /domains/{id}/ownership:
+    get:
+      tags: [Domain Ownership]
+      summary: A domain's ownership state and the record that proves it
+      description: |
+        `status` is `verified` or `pending`. A pending domain is proven by the TXT
+        record `challenge_name` = `challenge_value` at its current DNS provider.
+        `expires_at` is when an unproven name is released.
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK }, "404": { description: Not found } }
+
+  /domains/{id}/ownership/verify:
+    post:
+      tags: [Domain Ownership]
+      summary: Check a pending domain's ownership record now
+      description: |
+        Reads the challenge record through the public resolvers (two of three
+        must return the value). Owner or admin; at most 6 checks a minute per
+        user (429). The panel also re-checks on its own with backoff.
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: "The check result and the domain's ownership state" }, "404": { description: Not found }, "429": { description: Rate limited } }
+
+  /admin/domain-ownership/pending:
+    get:
+      tags: [Domain Ownership]
+      summary: List the domains and aliases waiting for ownership proof (admin)
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: "`data` (domains), `total`, `aliases`" }, "403": { description: Forbidden } }
+
+  /admin/domain-ownership/domains/{id}/approve:
+    post:
+      tags: [Domain Ownership]
+      summary: Approve a pending domain (admin, audited)
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK }, "404": { description: Not found }, "409": { description: "not_pending" } }
+
+  /admin/domain-ownership/domains/{id}/revoke:
+    post:
+      tags: [Domain Ownership]
+      summary: Send a verified domain back to pending (admin, audited)
+      description: |
+        The parent-proven domains and aliases under it follow. The panel's own
+        domain and docker-app domains are refused (409).
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK }, "404": { description: Not found }, "409": { description: "not_verified, panel_primary_protected or docker_app_domain" }, "500": { description: "cascade_incomplete: repeat the revoke" } }
+
+  /admin/domain-ownership/aliases/{alias_id}/approve:
+    post:
+      tags: [Domain Ownership]
+      summary: Approve a pending web alias (admin, audited)
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: alias_id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK }, "404": { description: Not found }, "409": { description: "not_pending" } }
+
+  /admin/domain-ownership/aliases/{alias_id}/revoke:
+    post:
+      tags: [Domain Ownership]
+      summary: Send a verified web alias back to pending (admin, audited)
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: alias_id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK }, "404": { description: Not found }, "409": { description: "not_verified" } }
+
+  /admin/domain-ownership/settings:
+    get:
+      tags: [Domain Ownership]
+      summary: Whether new domain names need ownership proof (admin)
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: "`require_proof`, `updated_by`, `updated_at`" } }
+    put:
+      tags: [Domain Ownership]
+      summary: Switch the ownership-proof requirement (admin, audited)
+      description: |
+        Body `{"require_proof": bool}`. Switching it off returns a `warning`:
+        names added while it is off are live at once and stay live.
+      security: [ { KratosSession: [] } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [require_proof], properties: { require_proof: { type: boolean } } }
+      responses: { "200": { description: OK }, "422": { description: Validation failed } }
+
 
   # --- Active Tasks (auto) ---
 

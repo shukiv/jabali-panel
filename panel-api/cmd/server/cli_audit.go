@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/audit"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
@@ -38,6 +39,44 @@ func cliAudit(ctx context.Context, action, targetType, target, result string, su
 		TargetID:      target,
 		Result:        result,
 	})
+}
+
+// cliAuditRecorder is the audit.Recorder a service gets when a CLI command
+// runs it (GH #1816: the ownership service records the changes it makes on
+// its own, such as a cascade after an approval). It writes each event
+// synchronously, for the reason cliAudit does, and keeps the event's actor
+// kind: a change the service made on its own stays a "system" event.
+type cliAuditRecorder struct {
+	create func(context.Context, *models.AuditEvent) error
+}
+
+// newCLIAuditRecorder returns nil without a database.
+func newCLIAuditRecorder() audit.Recorder {
+	if sharedDB == nil {
+		return nil
+	}
+	return cliAuditRecorder{create: repository.NewAuditEventRepository(sharedDB).Create}
+}
+
+func (r cliAuditRecorder) Record(e *models.AuditEvent) {
+	if e == nil || r.create == nil {
+		return
+	}
+	if e.ID == "" {
+		e.ID = ids.NewULID()
+	}
+	if e.TS.IsZero() {
+		e.TS = time.Now().UTC()
+	}
+	if e.Result == "" {
+		e.Result = models.AuditResultOK
+	}
+	if e.ActorKind == "" {
+		e.ActorKind = models.AuditActorSystem
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = r.create(ctx, e) // best-effort, like cliAudit
 }
 
 // cliAuditOK / cliAuditErr are the common-case shorthands.

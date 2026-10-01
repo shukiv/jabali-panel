@@ -170,3 +170,26 @@ func TestImportDomains_NonSeparateStaysFullFacet(t *testing.T) {
 		}
 	}
 }
+
+// GH #1816 / ADR-0170 decision 2: an admin-run migration vouches for the
+// names it imports, so every imported row is created verified (migration).
+func TestImportDomains_CreatesVerifiedRows(t *testing.T) {
+	dir := t.TempDir()
+	zoned := filepath.Join(dir, "site.example.db")
+	if err := os.WriteFile(zoned, []byte("@ IN SOA ns admin ( 1 2 3 4 5 )\n@ IN A 192.0.2.1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	repo := &recordingDomainRepo{}
+	parsed := &ParsedTarball{ExtractDir: dir, SourceUser: "erin", ZoneFiles: []string{zoned}}
+	if _, err := ImportDomains(context.Background(), repo, &createRecordingAgent{},
+		parsed, "01USERULID0000000000000000", "erin"); err != nil {
+		t.Fatalf("ImportDomains hard error: %v", err)
+	}
+	d := rowByName(repo.created, "site.example")
+	if d == nil {
+		t.Fatal("site.example row missing")
+	}
+	if d.OwnershipStatus != models.OwnershipVerified || d.OwnershipMethod != models.OwnershipMethodMigration {
+		t.Fatalf("a migrated domain must be verified (migration), got %s/%s", d.OwnershipStatus, d.OwnershipMethod)
+	}
+}

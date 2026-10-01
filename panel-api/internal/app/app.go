@@ -23,6 +23,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ioncube"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/middleware"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/notifications"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ownershipops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/pyframeworks"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/reconciler"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
@@ -214,6 +215,11 @@ type Deps struct {
 	// write to this Queue. Nil when Redis is not configured; handlers
 	// must 503 rather than panic.
 	NotificationQueue *notifications.Queue
+
+	// OwnershipService runs the GH #1816 / ADR-0170 ownership-proof actions
+	// (verify now, admin approve/revoke) for the API; serve.go also runs its
+	// ticker. Nil disables those routes.
+	OwnershipService *ownershipops.Service
 
 	// NotificationRegistry maps channel kinds to their senders. Built once in
 	// serve.go (with the provisioned notify-mailbox creds) and shared by the
@@ -483,6 +489,9 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				// `domain` runs createDomainOp with identical semantics.
 				DomainCreate: api.DomainHandlerConfig{
 					Domains:         deps.Domains,
+					// GH #1816: automation creates are pending unless the token
+					// holds assert:domain_ownership.
+					DomainOwnership: repository.NewDomainOwnershipRepository(deps.DB),
 					PortAllocations: repository.NewPortAllocationRepository(deps.DB),
 					Users:           deps.Users,
 					Packages:        deps.Packages,
@@ -717,6 +726,9 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		if deps.Domains != nil {
 			api.RegisterDomainRoutes(v1, api.DomainHandlerConfig{
 				Domains:         deps.Domains,
+				// GH #1816 / ADR-0170: the proof-required switch and the
+				// ownership state writes.
+				DomainOwnership: repository.NewDomainOwnershipRepository(deps.DB),
 				PortAllocations: repository.NewPortAllocationRepository(deps.DB),
 				// JAB-236: durable delete — tombstone before the row goes.
 				DomainTeardowns: deps.DomainTeardowns,
@@ -793,7 +805,25 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Certs:     deps.SSLCerts,
 				Settings:  deps.ServerSettings,
 				Reconcile: schedule,
+				Ownership: repository.NewDomainOwnershipRepository(deps.DB), // GH #1816
 			})
+		}
+		// GH #1816 / ADR-0170 — ownership proof: Verify now, and the admin
+		// pending list, approve/revoke and the proof-required switch. The
+		// service pointer is assigned only when set: a nil pointer inside
+		// the interface would register routes that panic.
+		if deps.Domains != nil && deps.OwnershipService != nil {
+			cfg := api.DomainOwnershipHandlerConfig{
+				Domains: deps.Domains,
+				Aliases: deps.WebDomainAliases,
+				Store:   repository.NewDomainOwnershipRepository(deps.DB),
+				Actions: deps.OwnershipService,
+				Users:   deps.Users,
+			}
+			if deps.AuditRecorder != nil {
+				cfg.Audit = deps.AuditRecorder
+			}
+			api.RegisterDomainOwnershipRoutes(v1, cfg)
 		}
 		// M6.6 — per-domain mail TLS opt-in + status.
 		if deps.Domains != nil && deps.MailCerts != nil {
@@ -1523,7 +1553,8 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		// stays unmounted and any /admin/docker-apps/* request 404s.
 		if deps.DockerApps != nil && deps.Agent != nil {
 			api.RegisterDockerAppRoutes(v1, api.DockerAppHandlerConfig{
-				Repo:           deps.DockerApps,
+				Repo:            deps.DockerApps,
+				DomainOwnership: repository.NewDomainOwnershipRepository(deps.DB), // GH #1816
 				Catalog:        deps.DockerCatalog,
 				ServerSettings: deps.ServerSettings,
 				Domains:        deps.Domains,
@@ -1540,6 +1571,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		if deps.DockerApps != nil && deps.DockerCatalog != nil && deps.Agent != nil {
 			api.RegisterUserDockerAppRoutes(v1, api.UserDockerAppHandlerConfig{
 				Repo:             deps.DockerApps,
+				DomainOwnership:  repository.NewDomainOwnershipRepository(deps.DB), // GH #1816
 				Catalog:          deps.DockerCatalog,
 				Domains:          deps.Domains,
 				Agent:            deps.Agent,

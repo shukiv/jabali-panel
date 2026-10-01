@@ -835,13 +835,14 @@ func TestReconcileAll_EnabledDomainMissing(t *testing.T) {
 	userRepo.users[user.ID] = user
 
 	domain := &models.Domain{
-		ID:        "domain-1",
-		UserID:    user.ID,
-		Name:      "missing.com",
-		DocRoot:   "/home/alice/domains/missing.com/public_html",
-		IsEnabled: true,
-		CreatedAt: now,
-		UpdatedAt: now,
+		OwnershipState: verifiedOwnership,
+		ID:             "domain-1",
+		UserID:         user.ID,
+		Name:           "missing.com",
+		DocRoot:        "/home/alice/domains/missing.com/public_html",
+		IsEnabled:      true,
+		CreatedAt:      now,
+		UpdatedAt:      now,
 	}
 	domainRepo.domains[domain.ID] = domain
 
@@ -898,13 +899,14 @@ func TestReconcileAll_DisabledDomainPresent(t *testing.T) {
 	userRepo.users[user.ID] = user
 
 	domain := &models.Domain{
-		ID:        "domain-2",
-		UserID:    user.ID,
-		Name:      "example.com",
-		DocRoot:   "/home/bob/domains/example.com/public_html",
-		IsEnabled: false,
-		CreatedAt: now,
-		UpdatedAt: now,
+		OwnershipState: verifiedOwnership,
+		ID:             "domain-2",
+		UserID:         user.ID,
+		Name:           "example.com",
+		DocRoot:        "/home/bob/domains/example.com/public_html",
+		IsEnabled:      false,
+		CreatedAt:      now,
+		UpdatedAt:      now,
 	}
 	domainRepo.domains[domain.ID] = domain
 
@@ -969,14 +971,15 @@ func TestReconcileAll_DomainWithPHPPool(t *testing.T) {
 
 	// Create a domain with a reference to the PHP pool
 	domain := &models.Domain{
-		ID:        "domain-1",
-		UserID:    user.ID,
-		Name:      "phpsite.com",
-		DocRoot:   "/home/phpuser/domains/phpsite.com/public_html",
-		IsEnabled: true,
-		PHPPoolID: &phpPoolID,
-		CreatedAt: now,
-		UpdatedAt: now,
+		OwnershipState: verifiedOwnership,
+		ID:             "domain-1",
+		UserID:         user.ID,
+		Name:           "phpsite.com",
+		DocRoot:        "/home/phpuser/domains/phpsite.com/public_html",
+		IsEnabled:      true,
+		PHPPoolID:      &phpPoolID,
+		CreatedAt:      now,
+		UpdatedAt:      now,
 	}
 	domainRepo.domains[domain.ID] = domain
 
@@ -1058,6 +1061,7 @@ func TestReconcileAll_DomainWithPHPSettingsOverrides(t *testing.T) {
 	inputTime := 60
 
 	domain := &models.Domain{
+		OwnershipState:       verifiedOwnership,
 		ID:                   "domain-1",
 		UserID:               user.ID,
 		Name:                 "phpsite.com",
@@ -1123,14 +1127,15 @@ func TestReconcileAll_DomainWithoutPHPSettingsOverrides(t *testing.T) {
 
 	// Domain without overrides (all nil)
 	domain := &models.Domain{
-		ID:        "domain-1",
-		UserID:    user.ID,
-		Name:      "phpsite.com",
-		DocRoot:   "/home/phpuser/domains/phpsite.com/public_html",
-		IsEnabled: true,
-		PHPPoolID: &phpPoolID,
-		CreatedAt: now,
-		UpdatedAt: now,
+		OwnershipState: verifiedOwnership,
+		ID:             "domain-1",
+		UserID:         user.ID,
+		Name:           "phpsite.com",
+		DocRoot:        "/home/phpuser/domains/phpsite.com/public_html",
+		IsEnabled:      true,
+		PHPPoolID:      &phpPoolID,
+		CreatedAt:      now,
+		UpdatedAt:      now,
 	}
 	domainRepo.domains[domain.ID] = domain
 
@@ -1179,13 +1184,14 @@ func TestReconcileOne_DomainFound(t *testing.T) {
 	userRepo.users[user.ID] = user
 
 	domain := &models.Domain{
-		ID:        "domain-3",
-		UserID:    user.ID,
-		Name:      "test.com",
-		DocRoot:   "/home/charlie/domains/test.com/public_html",
-		IsEnabled: true,
-		CreatedAt: now,
-		UpdatedAt: now,
+		OwnershipState: verifiedOwnership,
+		ID:             "domain-3",
+		UserID:         user.ID,
+		Name:           "test.com",
+		DocRoot:        "/home/charlie/domains/test.com/public_html",
+		IsEnabled:      true,
+		CreatedAt:      now,
+		UpdatedAt:      now,
 	}
 	domainRepo.domains[domain.ID] = domain
 
@@ -1240,6 +1246,7 @@ func TestReconcileOne_PassesCustomDirectives(t *testing.T) {
 
 	customDirectives := "add_header X-Foo bar;"
 	domain := &models.Domain{
+		OwnershipState:        verifiedOwnership,
 		ID:                    "domain-4",
 		UserID:                user.ID,
 		Name:                  "test2.com",
@@ -1286,31 +1293,34 @@ func TestReconcileAllForce_RerendersEveryDomain(t *testing.T) {
 	userRepo.users[user.ID] = user
 
 	domain1 := &models.Domain{
-		ID:        "domain-1",
-		UserID:    user.ID,
-		Name:      "enabled.com",
-		DocRoot:   "/home/testuser/domains/enabled.com/public_html",
-		IsEnabled: true,
-		CreatedAt: now,
-		UpdatedAt: now,
+		OwnershipState: verifiedOwnership,
+		ID:             "domain-1",
+		UserID:         user.ID,
+		Name:           "enabled.com",
+		DocRoot:        "/home/testuser/domains/enabled.com/public_html",
+		IsEnabled:      true,
+		CreatedAt:      now,
+		UpdatedAt:      now,
 	}
 	domain2 := &models.Domain{
-		ID:        "domain-2",
-		UserID:    user.ID,
-		Name:      "disabled.com",
-		DocRoot:   "/home/testuser/domains/disabled.com/public_html",
-		IsEnabled: false,
-		CreatedAt: now,
-		UpdatedAt: now,
+		OwnershipState: verifiedOwnership,
+		ID:             "domain-2",
+		UserID:         user.ID,
+		Name:           "disabled.com",
+		DocRoot:        "/home/testuser/domains/disabled.com/public_html",
+		IsEnabled:      false,
+		CreatedAt:      now,
+		UpdatedAt:      now,
 	}
 	domain3 := &models.Domain{
-		ID:        "domain-3",
-		UserID:    user.ID,
-		Name:      "another.com",
-		DocRoot:   "/home/testuser/domains/another.com/public_html",
-		IsEnabled: true,
-		CreatedAt: now,
-		UpdatedAt: now,
+		OwnershipState: verifiedOwnership,
+		ID:             "domain-3",
+		UserID:         user.ID,
+		Name:           "another.com",
+		DocRoot:        "/home/testuser/domains/another.com/public_html",
+		IsEnabled:      true,
+		CreatedAt:      now,
+		UpdatedAt:      now,
 	}
 	domainRepo.domains[domain1.ID] = domain1
 	domainRepo.domains[domain2.ID] = domain2
@@ -1365,14 +1375,15 @@ func TestReconcileOne_RateLimitZoneFragmentPrecedesDomainCreate(t *testing.T) {
 	}
 	userRepo.users[user.ID] = user
 	domain := &models.Domain{
-		ID:           "domain-rl",
-		UserID:       user.ID,
-		Name:         "rl.example.com",
-		DocRoot:      "/home/alice/domains/rl.example.com/public_html",
-		IsEnabled:    true,
-		RateLimitRPS: 100, // trigger zone emission
-		CreatedAt:    now,
-		UpdatedAt:    now,
+		OwnershipState: verifiedOwnership,
+		ID:             "domain-rl",
+		UserID:         user.ID,
+		Name:           "rl.example.com",
+		DocRoot:        "/home/alice/domains/rl.example.com/public_html",
+		IsEnabled:      true,
+		RateLimitRPS:   100, // trigger zone emission
+		CreatedAt:      now,
+		UpdatedAt:      now,
 	}
 	domainRepo.domains[domain.ID] = domain
 
@@ -1553,14 +1564,15 @@ func TestReconcile_BootstrapsAndPushesZone(t *testing.T) {
 	userRepo.users[user.ID] = user
 
 	domain := &models.Domain{
-		ID:        "domain-1",
-		UserID:    user.ID,
-		Name:      "example.com",
-		DocRoot:   "/home/alice/domains/example.com/public_html",
-		IsEnabled: true,
-		CreateWWW: true, // GH #225: www is opt-in now; this test covers the with-www path (8 records)
-		CreatedAt: now,
-		UpdatedAt: now,
+		OwnershipState: verifiedOwnership,
+		ID:             "domain-1",
+		UserID:         user.ID,
+		Name:           "example.com",
+		DocRoot:        "/home/alice/domains/example.com/public_html",
+		IsEnabled:      true,
+		CreateWWW:      true, // GH #225: www is opt-in now; this test covers the with-www path (8 records)
+		CreatedAt:      now,
+		UpdatedAt:      now,
 	}
 	domainRepo.domains[domain.ID] = domain
 
@@ -1641,13 +1653,14 @@ func TestReconcile_PassesAXFRToAgent(t *testing.T) {
 	userRepo.users[user.ID] = user
 
 	domain := &models.Domain{
-		ID:        "domain-1",
-		UserID:    user.ID,
-		Name:      "example.com",
-		DocRoot:   "/home/alice/domains/example.com/public_html",
-		IsEnabled: true,
-		CreatedAt: now,
-		UpdatedAt: now,
+		OwnershipState: verifiedOwnership,
+		ID:             "domain-1",
+		UserID:         user.ID,
+		Name:           "example.com",
+		DocRoot:        "/home/alice/domains/example.com/public_html",
+		IsEnabled:      true,
+		CreatedAt:      now,
+		UpdatedAt:      now,
 	}
 	domainRepo.domains[domain.ID] = domain
 
@@ -2067,24 +2080,26 @@ func TestReconcilePHPPools_NginxRegenForBoundDomains(t *testing.T) {
 	// Create two domains bound to this pool
 	now := time.Now().UTC()
 	domain1 := &models.Domain{
-		ID:        "domain-1",
-		UserID:    user.ID,
-		Name:      "site1.com",
-		DocRoot:   "/home/phphost/domains/site1.com/public_html",
-		IsEnabled: true,
-		PHPPoolID: &pendingPool.ID,
-		CreatedAt: now,
-		UpdatedAt: now,
+		OwnershipState: verifiedOwnership,
+		ID:             "domain-1",
+		UserID:         user.ID,
+		Name:           "site1.com",
+		DocRoot:        "/home/phphost/domains/site1.com/public_html",
+		IsEnabled:      true,
+		PHPPoolID:      &pendingPool.ID,
+		CreatedAt:      now,
+		UpdatedAt:      now,
 	}
 	domain2 := &models.Domain{
-		ID:        "domain-2",
-		UserID:    user.ID,
-		Name:      "site2.com",
-		DocRoot:   "/home/phphost/domains/site2.com/public_html",
-		IsEnabled: true,
-		PHPPoolID: &pendingPool.ID,
-		CreatedAt: now,
-		UpdatedAt: now,
+		OwnershipState: verifiedOwnership,
+		ID:             "domain-2",
+		UserID:         user.ID,
+		Name:           "site2.com",
+		DocRoot:        "/home/phphost/domains/site2.com/public_html",
+		IsEnabled:      true,
+		PHPPoolID:      &pendingPool.ID,
+		CreatedAt:      now,
+		UpdatedAt:      now,
 	}
 	domainRepo.domains[domain1.ID] = domain1
 	domainRepo.domains[domain2.ID] = domain2
@@ -2357,20 +2372,20 @@ func TestSANHostnamesForDomain(t *testing.T) {
 		}
 	})
 	t.Run("email disabled, www out", func(t *testing.T) {
-		d := &models.Domain{Name: "example.com", EmailEnabled: false, CreateWWW: false}
+		d := &models.Domain{OwnershipState: verifiedOwnership, Name: "example.com", EmailEnabled: false, CreateWWW: false}
 		if got := sanHostnamesForDomain(d, nil); got != nil {
 			t.Errorf("got %v, want nil", got)
 		}
 	})
 	t.Run("www opt-in adds www (GH #895)", func(t *testing.T) {
-		d := &models.Domain{Name: "example.com", EmailEnabled: false, CreateWWW: true}
+		d := &models.Domain{OwnershipState: verifiedOwnership, Name: "example.com", EmailEnabled: false, CreateWWW: true}
 		got := sanHostnamesForDomain(d, nil)
 		if len(got) != 1 || got[0] != "www.example.com" {
 			t.Errorf("got %v, want [www.example.com]", got)
 		}
 	})
 	t.Run("www opt-in + email keeps www first", func(t *testing.T) {
-		d := &models.Domain{Name: "example.com", EmailEnabled: true, CreateWWW: true}
+		d := &models.Domain{OwnershipState: verifiedOwnership, Name: "example.com", EmailEnabled: true, CreateWWW: true}
 		got := sanHostnamesForDomain(d, nil)
 		want := []string{"www.example.com", "mail.example.com", "autoconfig.example.com", "autodiscover.example.com"}
 		if len(got) != len(want) {
@@ -2383,14 +2398,14 @@ func TestSANHostnamesForDomain(t *testing.T) {
 		}
 	})
 	t.Run("SkipAutoSAN + www opt-in keeps only www", func(t *testing.T) {
-		d := &models.Domain{Name: "example.com", EmailEnabled: true, MTASTSEnabled: true, SkipAutoSAN: true, CreateWWW: true}
+		d := &models.Domain{OwnershipState: verifiedOwnership, Name: "example.com", EmailEnabled: true, MTASTSEnabled: true, SkipAutoSAN: true, CreateWWW: true}
 		got := sanHostnamesForDomain(d, nil)
 		if len(got) != 1 || got[0] != "www.example.com" {
 			t.Errorf("got %v, want [www.example.com]", got)
 		}
 	})
 	t.Run("email enabled", func(t *testing.T) {
-		d := &models.Domain{Name: "example.com", EmailEnabled: true}
+		d := &models.Domain{OwnershipState: verifiedOwnership, Name: "example.com", EmailEnabled: true}
 		got := sanHostnamesForDomain(d, nil)
 		want := []string{"mail.example.com", "autoconfig.example.com", "autodiscover.example.com"}
 		if len(got) != len(want) {
@@ -2403,7 +2418,7 @@ func TestSANHostnamesForDomain(t *testing.T) {
 		}
 	})
 	t.Run("mta_sts only", func(t *testing.T) {
-		d := &models.Domain{Name: "example.com", MTASTSEnabled: true}
+		d := &models.Domain{OwnershipState: verifiedOwnership, Name: "example.com", MTASTSEnabled: true}
 		got := sanHostnamesForDomain(d, nil)
 		want := []string{"mta-sts.example.com"}
 		if len(got) != 1 || got[0] != want[0] {
@@ -2411,7 +2426,7 @@ func TestSANHostnamesForDomain(t *testing.T) {
 		}
 	})
 	t.Run("email + mta_sts", func(t *testing.T) {
-		d := &models.Domain{Name: "example.com", EmailEnabled: true, MTASTSEnabled: true}
+		d := &models.Domain{OwnershipState: verifiedOwnership, Name: "example.com", EmailEnabled: true, MTASTSEnabled: true}
 		got := sanHostnamesForDomain(d, nil)
 		want := []string{"mail.example.com", "autoconfig.example.com", "autodiscover.example.com", "mta-sts.example.com"}
 		if len(got) != len(want) {
@@ -2424,7 +2439,7 @@ func TestSANHostnamesForDomain(t *testing.T) {
 		}
 	})
 	t.Run("aliases append after helpers (GH #1625)", func(t *testing.T) {
-		d := &models.Domain{Name: "example.com", EmailEnabled: true, CreateWWW: true}
+		d := &models.Domain{OwnershipState: verifiedOwnership, Name: "example.com", EmailEnabled: true, CreateWWW: true}
 		got := sanHostnamesForDomain(d, []string{"shop.example.net", "www.brand.io"})
 		want := []string{
 			"www.example.com",
@@ -2441,7 +2456,7 @@ func TestSANHostnamesForDomain(t *testing.T) {
 		}
 	})
 	t.Run("SkipAutoSAN keeps explicit aliases (GH #1625)", func(t *testing.T) {
-		d := &models.Domain{Name: "example.com", EmailEnabled: true, MTASTSEnabled: true, SkipAutoSAN: true, CreateWWW: false}
+		d := &models.Domain{OwnershipState: verifiedOwnership, Name: "example.com", EmailEnabled: true, MTASTSEnabled: true, SkipAutoSAN: true, CreateWWW: false}
 		got := sanHostnamesForDomain(d, []string{"alias.example.net"})
 		if len(got) != 1 || got[0] != "alias.example.net" {
 			t.Errorf("got %v, want [alias.example.net]", got)
@@ -2695,7 +2710,8 @@ func TestReconcileVersionedPHPPools(t *testing.T) {
 	}
 	pool82 := "pool-82"
 	domainRepo.domains["d1"] = &models.Domain{
-		ID: "d1", UserID: user.ID, Name: "a.com", IsEnabled: true, PHPPoolID: &pool82,
+		OwnershipState: verifiedOwnership,
+		ID:             "d1", UserID: user.ID, Name: "a.com", IsEnabled: true, PHPPoolID: &pool82,
 	}
 	// Orphan versioned pool (no domains), OLD -> should be reaped.
 	phpPoolRepo.pools["pool-80"] = &models.PHPPool{
@@ -2787,7 +2803,8 @@ func TestReconcileVersionedPHPPools_SelfHealsWipedActivePool(t *testing.T) {
 	}
 	pool82 := "pool-82"
 	domainRepo.domains["d1"] = &models.Domain{
-		ID: "d1", UserID: user.ID, Name: "a.com", IsEnabled: true, PHPPoolID: &pool82,
+		OwnershipState: verifiedOwnership,
+		ID:             "d1", UserID: user.ID, Name: "a.com", IsEnabled: true, PHPPoolID: &pool82,
 	}
 
 	r := New(domainRepo, userRepo, agent, log, Config{Interval: time.Second}).

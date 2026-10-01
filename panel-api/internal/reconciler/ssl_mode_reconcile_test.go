@@ -28,7 +28,7 @@ func TestReconcileSSL_ModeRouting(t *testing.T) {
 		ss := &fakeServerSettingsRepo{settings: &models.ServerSettings{Hostname: "host.example.com", AdminEmail: "admin@example.com"}}
 		r := New(dr, nil, ag, slog.Default(), Config{}).WithSSLCerts(sc)
 		r.serverSettings = ss
-		dom := &models.Domain{ID: "d1", Name: "example.com", SSLMode: mode}
+		dom := &models.Domain{OwnershipState: verifiedOwnership, ID: "d1", Name: "example.com", SSLMode: mode}
 		if cert != nil {
 			cert.DomainID = "d1"
 			sc.byDomain["d1"] = cert
@@ -124,7 +124,7 @@ func TestReconcileSSL_NoneClearsEvenIfRevokeFails(t *testing.T) {
 	}
 	r := New(dr, nil, ag, slog.Default(), Config{}).WithSSLCerts(sc)
 	r.serverSettings = &fakeServerSettingsRepo{settings: &models.ServerSettings{Hostname: "host.example.com"}}
-	dom := &models.Domain{ID: "d1", Name: "example.com", SSLMode: models.SSLModeNone}
+	dom := &models.Domain{OwnershipState: verifiedOwnership, ID: "d1", Name: "example.com", SSLMode: models.SSLModeNone}
 
 	r.reconcileSSLForDomain(context.Background(), dom)
 

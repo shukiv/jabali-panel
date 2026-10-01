@@ -38,6 +38,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/tenantcompose"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dockerapp"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/domainops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
@@ -46,8 +47,11 @@ import (
 
 // DockerAppHandlerConfig bundles dependencies.
 type DockerAppHandlerConfig struct {
-	Repo    repository.DockerAppRepository
-	Catalog *dockerapp.Catalog
+	Repo repository.DockerAppRepository
+	// DomainOwnership (GH #1816) reads the proof-required switch when an
+	// install auto-creates its domain. Nil means proof is required.
+	DomainOwnership repository.DomainOwnershipRepository
+	Catalog         *dockerapp.Catalog
 	// ServerSettings is the gate for the M48 marketplace opt-in. When
 	// settings.docker_marketplace_enabled is false, every route in
 	// this group returns 503 docker_marketplace_disabled. The flag is
@@ -87,6 +91,18 @@ type dockerAppHandler struct{ cfg DockerAppHandlerConfig }
 // hard-deletes the row. domScope bounds the domain sweep to the caller's reach
 // (admin: all domains; tenant: the caller's own), so it never touches another
 // tenant's domain.
+// stampDockerDomainOwnership records the create-time ownership decision on a
+// domain a docker-app install or edit auto-creates (GH #1816 / ADR-0170).
+func stampDockerDomainOwnership(ctx context.Context, domains repository.DomainRepository,
+	policy repository.DomainOwnershipRepository, dom *models.Domain, actorIsAdmin bool) error {
+	var finder domainops.AncestorFinder
+	if domains != nil {
+		finder = domains
+	}
+	return domainops.StampOwnership(ctx, domainops.OwnershipDeps{Domains: finder, Policy: ownershipPolicy(policy)},
+		dom, actorIsAdmin, time.Now().UTC())
+}
+
 func (h *dockerAppHandler) clearDockerAppCorpse(ctx context.Context, existing *models.DockerApp, domScope []models.Domain) error {
 	ports, _ := h.cfg.Repo.ListPortsForApp(ctx, existing.ID)
 	for _, p := range ports {
@@ -622,6 +638,15 @@ func (h *dockerAppHandler) install(c *gin.Context) {
 					NginxRules:  rules,
 					ManagedBy:   models.DomainManagedByDockerApp,
 					DockerAppID: &app.ID,
+				}
+				// GH #1816: the same ownership decision as a domain create —
+				// a tenant's unproven name is created pending (its proxy
+				// vhost stays down until the owner proves it).
+				if oerr := stampDockerDomainOwnership(ctx, h.cfg.Domains, h.cfg.DomainOwnership, dom, claims.IsAdmin); oerr != nil {
+					msg := "domain auto-create failed: could not record the domain ownership state"
+					_ = h.cfg.Repo.UpdateStatus(ctx, app.ID, models.DockerAppStatusFailed, &msg)
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "domain_ownership_failed", "detail": msg, "id": app.ID})
+					return
 				}
 				if derr := h.cfg.Domains.Create(ctx, dom); derr != nil {
 					msg := "domain auto-create failed: " + firstLineString(derr.Error())
@@ -1302,6 +1327,10 @@ func (h *dockerAppHandler) editDomainPorts(ctx context.Context, app *models.Dock
 							NginxRules:  rules,
 							ManagedBy:   models.DomainManagedByDockerApp,
 							DockerAppID: &app.ID,
+						}
+						// GH #1816: the same ownership decision as a domain create.
+						if oerr := stampDockerDomainOwnership(ctx, h.cfg.Domains, h.cfg.DomainOwnership, dom, isAdmin); oerr != nil {
+							return &dockerEditError{http.StatusInternalServerError, "domain_ownership_failed", "could not record the domain ownership state"}
 						}
 						if derr := h.cfg.Domains.Create(ctx, dom); derr != nil {
 							return &dockerEditError{http.StatusConflict, "domain_create_failed", derr.Error()}

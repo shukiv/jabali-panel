@@ -21,7 +21,8 @@ func sslWebrootFixture(t *testing.T, issueErr error) (*Reconciler, *fakeAgent, *
 	ag := &fakeAgent{errByMethod: map[string]error{"ssl.issue": issueErr}}
 
 	dom := &models.Domain{
-		ID: "d1", Name: "sub.example.com", UserID: "u1",
+		OwnershipState: verifiedOwnership,
+		ID:             "d1", Name: "sub.example.com", UserID: "u1",
 		DocRoot: "/home/u1/domains/sub.example.com/public_html",
 		SSLMode: models.SSLModeLE, IsEnabled: true,
 	}

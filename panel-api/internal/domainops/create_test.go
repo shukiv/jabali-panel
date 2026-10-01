@@ -98,8 +98,11 @@ func TestCreate(t *testing.T) {
 	ctx := context.Background()
 	uname := "alice"
 	owner := &models.User{ID: "u1", Username: &uname}
+	// These cases exercise the fast paths of a LIVE domain, so the proof
+	// requirement is off and the name is verified at create (GH #1816).
+	// TestCreateOwnership covers the pending path.
 	deps := func(s *createStore) CreateDeps {
-		return CreateDeps{Domains: s, Users: createOwners{"u1": owner}}
+		return CreateDeps{Domains: s, Users: createOwners{"u1": owner}, Ownership: ownershipPolicy{require: false}}
 	}
 	base := CreateInput{OwnerID: "u1", Name: "shop.example.com"}
 

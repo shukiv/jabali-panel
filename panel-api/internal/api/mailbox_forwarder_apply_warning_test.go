@@ -84,7 +84,7 @@ type fwWarningBody struct {
 func newForwarderHandlerFake(agentErr error) *forwarderHandler {
 	return &forwarderHandler{cfg: MailboxForwarderHandlerConfig{
 		Mailboxes:  fwFakeMailboxes{mb: &models.Mailbox{ID: "mb1", LocalPart: "joe", DomainID: "dom1"}},
-		Domains:    fwFakeDomains{dom: &models.Domain{ID: "dom1", Name: "example.com", UserID: "u1"}},
+		Domains:    fwFakeDomains{dom: &models.Domain{ID: "dom1", Name: "example.com", UserID: "u1", OwnershipState: models.OwnershipState{OwnershipStatus: models.OwnershipVerified}}},
 		Forwarders: &fwFakeForwarders{},
 		Agent:      fwStubAgent{err: agentErr},
 	}}
@@ -156,5 +156,16 @@ func TestForwarderCreate_NoWarningOnSuccess(t *testing.T) {
 	}
 	if strings.Contains(w.Body.String(), "warning") {
 		t.Fatalf("no warning expected on a successful apply, got: %s", w.Body.String())
+	}
+}
+
+// GH #1816 / ADR-0170: no new forwarder on a name that is not proven.
+func TestForwarderCreate_PendingOwnership409(t *testing.T) {
+	h := newForwarderHandlerFake(nil)
+	h.cfg.Domains = fwFakeDomains{dom: &models.Domain{ID: "dom1", Name: "example.com", UserID: "u1",
+		OwnershipState: models.OwnershipState{OwnershipStatus: models.OwnershipPending}}}
+	w := postForwarderAs(h, `{"type":"external","target":"out@elsewhere.com"}`, tenantU1)
+	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "domain_ownership_pending") {
+		t.Fatalf("want 409 domain_ownership_pending, got %d %s", w.Code, w.Body.String())
 	}
 }

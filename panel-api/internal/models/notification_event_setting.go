@@ -356,6 +356,42 @@ var AllNotificationEventKinds = []NotificationEventKindMeta{
 		Severity:    "warning",
 		DefaultOn:   true,
 	},
+	// GH #1816 / ADR-0170: domain ownership proof.
+	{
+		Kind:        "domain.ownership.verified",
+		Label:       "Domain ownership verified",
+		Description: "A domain (or its administrator) proved ownership, so its DNS zone, certificate and mail are being set up.",
+		Severity:    "info",
+		DefaultOn:   true,
+	},
+	{
+		Kind:        "domain.ownership.revoked",
+		Label:       "Domain ownership withdrawn",
+		Description: "An administrator withdrew a domain's verification. The domain is offline until its owner proves it again.",
+		Severity:    "warning",
+		DefaultOn:   true,
+	},
+	{
+		Kind:        "domain.ownership.expiring",
+		Label:       "Unverified domain about to be removed",
+		Description: "A domain or alias is still not verified and will be removed in a few days unless its owner proves it.",
+		Severity:    "warning",
+		DefaultOn:   true,
+	},
+	{
+		Kind:        "domain.ownership.expired",
+		Label:       "Unverified domain removed",
+		Description: "A domain or alias was never verified and was removed. Its site files were kept.",
+		Severity:    "warning",
+		DefaultOn:   true,
+	},
+	{
+		Kind:        "domain.ownership.needs_admin",
+		Label:       "Domain needs administrator approval",
+		Description: "A pending domain cannot be proven by DNS (its nameservers already point here, or its DNS does not answer). An administrator must approve it.",
+		Severity:    "warning",
+		DefaultOn:   true,
+	},
 	{
 		Kind:        "mail.rbl.listed",
 		Label:       "Mail IP blocklisted (RBL)",

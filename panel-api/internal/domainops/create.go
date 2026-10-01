@@ -29,14 +29,19 @@ import (
 //	name → alias collision → owner id → cross-tenant suffix (non-admin) →
 //	web-off options → apex IPs → owner lookup → owner eligibility → quota →
 //	document root → mail posture → web template → mail-provider tokens →
-//	service matrix → reverse-proxy port → preview slug → insert →
-//	shared-cert attach → inline SSL → mail enable → reconcile schedule
+//	service matrix → ownership decision → reverse-proxy port → preview slug →
+//	insert → shared-cert attach → inline SSL → mail enable → reconcile
+//	schedule
 //
 // Every step up to the insert is a hard rejection; nothing is stored when one
 // fails, and a reserved port is released. Every step after the insert is a
 // fast path: the create has succeeded, and a failure is reported in the
 // result for the adapter to surface. The reconciler converges anything a fast
 // path did not finish.
+//
+// GH #1816 / ADR-0170: a name the owner has not proven is stored PENDING, and
+// the shared-cert attach, inline SSL and mail enable fast paths are skipped
+// for it. The reconciler runs them once the name is verified.
 
 // Create rejections that have no older sentinel. Each adapter maps them.
 var (
@@ -174,6 +179,12 @@ type CreateInput struct {
 	// (GH #1540). Only valid when web is off and DNS is on.
 	DNSApexIPv4 string
 	DNSApexIPv6 string
+	// Ownership is the adapter's statement that the name is already proven
+	// (GH #1816): an admin-run migration pull or restore, or a billing token
+	// holding assert:domain_ownership. Nil lets DecideOwnership apply the
+	// normal rules (admin actor, parent rule, else pending). It never skips a
+	// name guard: those follow ActorIsAdmin alone.
+	Ownership *OwnershipAssertion
 }
 
 // OwnerFinder resolves CreateInput.OwnerID to the owning user.
@@ -221,6 +232,9 @@ type CreateDeps struct {
 	Agent agent.AgentInterface
 	// Log records the checks Create skips fail-open. Nil uses slog.Default().
 	Log *slog.Logger
+	// Ownership reads the proof-required switch (GH #1816). Nil means proof
+	// is required: the switch fails closed.
+	Ownership OwnershipPolicyReader
 }
 
 // CreateHooks are the post-create fast paths an adapter can run. A nil hook
@@ -252,6 +266,10 @@ type CreateResult struct {
 	// MailWarnings and MailErr are what EnableMail returned. Soft.
 	MailWarnings []string
 	MailErr      error
+	// OwnershipPending is true when the name was stored pending (GH #1816):
+	// the owner must publish the challenge record, or an admin approve it,
+	// before the domain goes live. The adapter tells the caller so.
+	OwnershipPending bool
 }
 
 // NameCheckDeps are the stores the create-time name guards read. A nil store
@@ -394,6 +412,14 @@ func Create(ctx context.Context, d CreateDeps, hooks CreateHooks, in CreateInput
 		return nil, err
 	}
 
+	// GH #1816: is the name proven? Decided against the RESOLVED owner, so
+	// the parent rule compares real user ids.
+	ownership, err := DecideOwnership(ctx, OwnershipDeps{Domains: d.Domains, Policy: d.Ownership},
+		in.Name, owner.ID, in.ActorIsAdmin, in.Ownership)
+	if err != nil {
+		return nil, err
+	}
+
 	now := time.Now().UTC()
 	dom := &models.Domain{
 		ID: ids.NewULID(),
@@ -421,6 +447,9 @@ func Create(ctx context.Context, d CreateDeps, hooks CreateHooks, in CreateInput
 		DNSApexIPv6:           ptrOrNil(apexIPv6),
 		CreatedAt:             now,
 		UpdatedAt:             now,
+	}
+	if err := ApplyOwnershipDecision(&dom.OwnershipState, ownership, now); err != nil {
+		return nil, err
 	}
 
 	// The port is reserved BEFORE the insert (owner_id = the new ULID) so the
@@ -461,6 +490,17 @@ func Create(ctx context.Context, d CreateDeps, hooks CreateHooks, in CreateInput
 // create.
 func runCreateHooks(ctx context.Context, d CreateDeps, hooks CreateHooks, dom *models.Domain, webEnabled bool) *CreateResult {
 	res := &CreateResult{Domain: dom}
+
+	// GH #1816: a pending name gets no trusted certificate and no mail
+	// registration until it is proven. Only the reconcile runs; it keeps the
+	// domain off the public until then.
+	if !OwnershipVerified(dom) {
+		res.OwnershipPending = true
+		if hooks.Schedule != nil {
+			hooks.Schedule(dom.ID)
+		}
+		return res
+	}
 
 	// A covering shared certificate gives HTTPS at once, with no ACME wait
 	// (JAB-170 phase 5). An explicit self/none mode is kept, and a web-off

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -94,11 +95,12 @@ func directoryTestDB(t *testing.T) *sql.DB {
 	for _, stmt := range []string{
 		`CREATE TABLE users (id TEXT PRIMARY KEY, suspended INTEGER NOT NULL DEFAULT 0)`,
 		`CREATE TABLE domains (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, name TEXT NOT NULL,
-			email_enabled INTEGER NOT NULL DEFAULT 1, is_panel_primary INTEGER NOT NULL DEFAULT 0)`,
+			email_enabled INTEGER NOT NULL DEFAULT 1, is_panel_primary INTEGER NOT NULL DEFAULT 0,
+			ownership_status TEXT NOT NULL DEFAULT 'verified')`,
 		`CREATE TABLE mailboxes (id TEXT PRIMARY KEY, domain_id TEXT NOT NULL, email_cached TEXT NOT NULL,
 			password_hash TEXT NOT NULL, is_disabled INTEGER NOT NULL DEFAULT 0, send_only INTEGER NOT NULL DEFAULT 0,
 			local_part TEXT NOT NULL DEFAULT '')`,
-		`CREATE TABLE mail_groups (id TEXT PRIMARY KEY, email_cached TEXT, has_mailbox INTEGER, group_kind TEXT, internal_only INTEGER)`,
+		`CREATE TABLE mail_groups (id TEXT PRIMARY KEY, email_cached TEXT, has_mailbox INTEGER, group_kind TEXT, internal_only INTEGER, domain_id TEXT)`,
 		`CREATE TABLE mail_group_members (group_id TEXT, mailbox_id TEXT)`,
 		`CREATE TABLE email_forwarders (id TEXT, domain_id TEXT, mailbox_id TEXT, enabled INTEGER, type TEXT, local_part TEXT)`,
 		`INSERT INTO users VALUES ('u-active', 0), ('u-suspended', 1)`,
@@ -168,11 +170,20 @@ func TestStalwartQueryLogin_InstallMatchesApplyPlan(t *testing.T) {
 func TestStalwartQueryLogin_SuspendedOwnerCannotSignIn(t *testing.T) {
 	planLogin, _, _ := directoryQueries(t)
 	db := directoryTestDB(t)
+	for _, stmt := range []string{
+		`INSERT INTO domains (id, user_id, name) VALUES ('d-noowner', 'u-gone', 'noowner.test')`,
+		`INSERT INTO mailboxes (id, domain_id, email_cached, password_hash, local_part) VALUES ('m6', 'd-noowner', 'dave@noowner.test', 'h', 'dave')`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("seed: %v\n%s", err, stmt)
+		}
+	}
 	cases := map[string]int{
 		"alice@active.test":    1, // enabled mailbox, active owner
 		"off@active.test":      0, // disabled mailbox
 		"carol@suspended.test": 0, // owner suspended
-		"orphan@gone.test":     1, // no domain row: not locked out by a missing join
+		"dave@noowner.test":    1, // owner row missing: the suspension check does not lock it out
+		"orphan@gone.test":     0, // no domain row, so no verified domain (GH #1816)
 		"nobody@active.test":   0,
 	}
 	for email, want := range cases {
@@ -302,7 +313,7 @@ func TestStalwartQueryRecipient_PostmasterFallsBackToTheServerAdmin(t *testing.T
 		`INSERT INTO email_forwarders VALUES
 			('f1', 'd-alias', 'm-alias', 1, 'alias', 'postmaster'),
 			('f2', 'd-fwd', 'm-alias', 0, 'alias', 'postmaster')`,
-		`INSERT INTO mail_groups VALUES ('g1', 'postmaster@group.test', 1, 'resource', 0)`,
+		`INSERT INTO mail_groups VALUES ('g1', 'postmaster@group.test', 1, 'resource', 0, 'd-group')`,
 		`INSERT INTO mail_group_members VALUES ('g1', 'm-group')`,
 	} {
 		if _, err := db.Exec(stmt); err != nil {
@@ -361,7 +372,7 @@ func TestStalwartQueryEmailAliases_AdminPostmasterOwnsTheFallbackAddresses(t *te
 		`INSERT INTO email_forwarders VALUES
 			('f1', 'd-alias', 'm-alias', 1, 'alias', 'postmaster'),
 			('f2', 'd-alias', 'm-alias', 1, 'alias', 'sales')`,
-		`INSERT INTO mail_groups VALUES ('g1', 'postmaster@group.test', 1, 'resource', 0)`,
+		`INSERT INTO mail_groups VALUES ('g1', 'postmaster@group.test', 1, 'resource', 0, 'd-group')`,
 	} {
 		if _, err := db.Exec(stmt); err != nil {
 			t.Fatalf("seed: %v\n%s", err, stmt)
@@ -433,4 +444,78 @@ func TestStalwartDirectory_MailboxWinsOverAliasAtItsAddress(t *testing.T) {
 	if got := directoryAliases(t, db, planAliases, "alice@active.test"); strings.Join(got, ",") != "sales@active.test" {
 		t.Errorf("queryEmailAliases(alice@active.test) = %v, want only sales@ (info@ is a mailbox)", got)
 	}
+}
+
+// GH #1816 / ADR-0170: an address on a domain its owner has not proven is
+// never local. Its mailbox cannot sign in, and no branch resolves it: the
+// mailbox, a group on it or a member on it, an alias on it, or its postmaster@
+// falling back to the admin. Mail to it goes to the real MX instead.
+func TestStalwartDirectory_PendingDomainIsNotLocal(t *testing.T) {
+	planLogin, _, planRecipient := directoryQueries(t)
+	planAliases, _ := directoryAliasQueries(t)
+	db := directoryTestDB(t)
+	for _, stmt := range []string{
+		`INSERT INTO domains (id, user_id, name, email_enabled, is_panel_primary, ownership_status) VALUES
+			('d-panel', 'u-active', 'panel.test', 1, 1, 'verified'),
+			('d-pend', 'u-active', 'pend.test', 1, 0, 'pending')`,
+		`INSERT INTO mailboxes (id, domain_id, email_cached, password_hash, local_part) VALUES
+			('pm-admin', 'd-panel', 'postmaster@panel.test', 'h', 'postmaster'),
+			('m-pend', 'd-pend', 'bob@pend.test', 'h', 'bob')`,
+		`INSERT INTO email_forwarders VALUES ('f1', 'd-pend', 'm1', 1, 'alias', 'sales')`,
+		`INSERT INTO mail_groups VALUES
+			('g-pend', 'team@pend.test', 1, 'resource', 0, 'd-pend'),
+			('g-ok', 'team@active.test', 1, 'resource', 0, 'd-active')`,
+		`INSERT INTO mail_group_members VALUES ('g-pend', 'm1'), ('g-ok', 'm1'), ('g-ok', 'm-pend')`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("seed: %v\n%s", err, stmt)
+		}
+	}
+
+	check := func(state string, want map[string][]string, wantLogin int, wantAliceAliases, wantAdminAliases string) {
+		t.Helper()
+		if got := directoryRows(t, db, planLogin, "bob@pend.test"); got != wantLogin {
+			t.Errorf("%s: queryLogin(bob@pend.test) = %d rows, want %d", state, got, wantLogin)
+		}
+		for lookup, w := range want {
+			// Distinct principals: an alias target that is also a group
+			// member comes back once per row, and Stalwart uses the first.
+			got := directoryEmails(t, db, planRecipient, lookup)
+			sort.Strings(got)
+			got = slices.Compact(got)
+			if strings.Join(got, ",") != strings.Join(w, ",") {
+				t.Errorf("%s: queryRecipient(%s) = %v, want %v", state, lookup, got, w)
+			}
+		}
+		got := directoryAliases(t, db, planAliases, "alice@active.test")
+		sort.Strings(got)
+		if strings.Join(got, ",") != wantAliceAliases {
+			t.Errorf("%s: queryEmailAliases(alice@active.test) = %v, want %q", state, got, wantAliceAliases)
+		}
+		got = directoryAliases(t, db, planAliases, "postmaster@panel.test")
+		sort.Strings(got)
+		if strings.Join(got, ",") != wantAdminAliases {
+			t.Errorf("%s: queryEmailAliases(postmaster@panel.test) = %v, want %q", state, got, wantAdminAliases)
+		}
+	}
+
+	check("pending", map[string][]string{
+		"bob@pend.test":        nil,
+		"sales@pend.test":      nil,
+		"team@pend.test":       nil,
+		"team@active.test":     {"alice@active.test"}, // the member on the pending domain is left out
+		"postmaster@pend.test": nil,
+	}, 0, "", "postmaster@active.test,postmaster@suspended.test")
+
+	// Proof lands: the same rows are local again.
+	if _, err := db.Exec(`UPDATE domains SET ownership_status = 'verified' WHERE id = 'd-pend'`); err != nil {
+		t.Fatal(err)
+	}
+	check("verified", map[string][]string{
+		"bob@pend.test":        {"bob@pend.test"},
+		"sales@pend.test":      {"alice@active.test"},
+		"team@pend.test":       {"alice@active.test"},
+		"team@active.test":     {"alice@active.test", "bob@pend.test"},
+		"postmaster@pend.test": {"postmaster@panel.test"},
+	}, 1, "sales@pend.test", "postmaster@active.test,postmaster@pend.test,postmaster@suspended.test")
 }

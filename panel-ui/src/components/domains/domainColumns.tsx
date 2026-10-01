@@ -15,6 +15,7 @@ import { getSSLTag } from "../../utils/sslState";
 import { adminLinks } from "../admin/entityLinks";
 import { serviceBadge, type Domain, type DomainApplicationSummary } from "./types";
 import { DomainApplicationCell } from "./DomainApplicationCell";
+import { OwnershipTag } from "./DomainOwnershipPanel";
 
 // A discriminated union — audience policy stays internal to the module rather
 // than being rebuilt as caller-supplied column/callback bags (JAB-300 AC).
@@ -67,6 +68,8 @@ const renderDomainCell = (record: Domain, audience: DomainInventoryAudience) => 
       {audience.kind === "admin" && record.is_quota_suspended && (
         <Tag color="orange">Suspended (quota)</Tag>
       )}
+      {/* GH #1816: an unverified domain is offline until its owner proves it. */}
+      <OwnershipTag status={record.ownership_status} />
     </div>
     <Typography.Text
       type="secondary"

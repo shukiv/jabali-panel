@@ -37,6 +37,7 @@ import { DomainDocRootPanel } from "../../../components/domains/DomainDocRootPan
 import { DomainPHPSettingsPanel } from "../../../components/domains/DomainPHPSettingsPanel";
 import { RenameDomainButton } from "../../../components/domains/RenameDomainButton";
 import { DomainEnvVarsCard } from "../php-settings/DomainEnvVarsCard";
+import { DomainOwnershipPanel } from "../../../components/domains/DomainOwnershipPanel";
 import { OverviewTab } from "./tabs/OverviewTab";
 import { SSLTab } from "./tabs/SSLTab";
 
@@ -217,6 +218,9 @@ export const WebDomainPage = () => {
           onRenamed={() => void domainQ.refetch?.()}
         />
       </Space>
+
+      {/* GH #1816: a pending domain shows the record that proves it. */}
+      <DomainOwnershipPanel domain={domain} />
 
       {mobile ? (
         // Narrow screens: a full-width Select replaces the tab strip so tabs

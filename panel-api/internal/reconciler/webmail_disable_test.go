@@ -51,7 +51,7 @@ func TestWebmailDisabled_StopsAndDisables_EvenWithoutSSLCerts(t *testing.T) {
 func TestWebmailEnabled_StartsAndEnables(t *testing.T) {
 	ag := &fakeWebmailAgent{}
 	dr := newFakeDomainRepo()
-	dr.domains["d1"] = &models.Domain{ID: "d1", Name: "example.com", UserID: "u1", EmailEnabled: true, WebmailEnabled: true}
+	dr.domains["d1"] = &models.Domain{OwnershipState: verifiedOwnership, ID: "d1", Name: "example.com", UserID: "u1", EmailEnabled: true, WebmailEnabled: true}
 	sc := newFakeSSLCertRepo()
 	r := New(dr, nil, ag, slog.Default(), Config{}).WithSSLCerts(sc)
 	r.serverSettings = &fakeServerSettingsRepo{settings: &models.ServerSettings{WebmailEnabled: true}}

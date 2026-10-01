@@ -2302,6 +2302,66 @@ jabali domain mta-sts <domain-name|domain-id> [flags]
 - `--disable` — disable MTA-STS
 - `--enable` — enable MTA-STS
 
+#### `jabali domain ownership`
+
+Domain ownership proof: status, verify, approve, revoke, pending, policy
+
+```
+jabali domain ownership
+```
+
+##### `jabali domain ownership approve`
+
+Approve a pending domain as an administrator (audited)
+
+```
+jabali domain ownership approve <domain-name|domain-id>
+```
+
+##### `jabali domain ownership pending`
+
+List the domains waiting for ownership proof
+
+```
+jabali domain ownership pending
+```
+
+##### `jabali domain ownership policy`
+
+Show or switch whether new domain names need ownership proof (audited)
+
+```
+jabali domain ownership policy [on|off] [flags]
+```
+
+**Flags:**
+
+- `--yes` — confirm switching ownership proof off
+
+##### `jabali domain ownership revoke`
+
+Send a verified domain back to pending as an administrator (audited)
+
+```
+jabali domain ownership revoke <domain-name|domain-id>
+```
+
+##### `jabali domain ownership status`
+
+Show a domain's ownership state and the TXT record that proves it
+
+```
+jabali domain ownership status <domain-name|domain-id>
+```
+
+##### `jabali domain ownership verify`
+
+Check a pending domain's TXT record through the public resolvers now
+
+```
+jabali domain ownership verify <domain-name|domain-id>
+```
+
 #### `jabali domain php-settings`
 
 Get/set a domain's php.ini directives (JAB-129)

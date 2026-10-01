@@ -63,7 +63,7 @@ func addrMailboxRouter(repo *addrMailboxRepo, rel MailAddressReleaser) *gin.Engi
 	cfg := MailboxHandlerConfig{
 		Mailboxes: repo,
 		Domains: &saDomainRepo{byID: map[string]*models.Domain{
-			"dom1": {ID: "dom1", Name: "x.test", UserID: "u1", EmailEnabled: true},
+			"dom1": {ID: "dom1", Name: "x.test", UserID: "u1", EmailEnabled: true, OwnershipState: models.OwnershipState{OwnershipStatus: models.OwnershipVerified}},
 		}},
 	}
 	if rel != nil {

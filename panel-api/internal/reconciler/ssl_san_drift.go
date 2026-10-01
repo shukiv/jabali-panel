@@ -174,6 +174,10 @@ func (r *Reconciler) expandCertSANsForDrift(ctx context.Context, cert repository
 	if dom.SSLMode != models.SSLModeLE && dom.SSLMode != "" {
 		return
 	}
+	// GH #1816: never ask a CA for a certificate on an unproven name.
+	if ownershipPending(dom) {
+		return
+	}
 
 	desired := sanHostnamesForDomain(dom, r.aliasHostnames(ctx, dom.ID))
 	reachable := r.resolvableSANs(ctx, desired)

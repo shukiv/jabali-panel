@@ -64,6 +64,10 @@ func TestNotificationEventKinds_EmittedKindsAreRegistered(t *testing.T) {
 		"egress.drop.burst", "exec.audit.burst",
 		"domain.ghost_detected.mismatch", "domain.ghost_detected.nxdomain",
 		"domain.ghost_detected.partial",
+		// GH #1816 domain ownership proof (ownershipops)
+		"domain.ownership.verified", "domain.ownership.revoked",
+		"domain.ownership.expiring", "domain.ownership.expired",
+		"domain.ownership.needs_admin",
 		"mail.rbl.listed", "mail.rbl.cleared", "mail.dmarc.report_received",
 		"mail.tls.report_received", "mail.feedback.received",
 		"docker_app.entitlement_stopped", "docker_app.disk_quota_stopped",

@@ -212,6 +212,12 @@ func (h *sslHandler) attachSharedCert(c *gin.Context) {
 	if domain == nil {
 		return
 	}
+	// GH #1816 / ADR-0170: an unproven name never rides a CA-issued shared
+	// certificate (the reconciler would not present it either).
+	if !domain.Verified() {
+		c.JSON(http.StatusConflict, gin.H{"error": "domain_ownership_pending", "detail": "prove ownership of the domain before attaching a shared certificate"})
+		return
+	}
 	var req attachSharedRequest
 	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.SharedCertificateID) == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "shared_certificate_id_required"})

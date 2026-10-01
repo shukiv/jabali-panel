@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/domainops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
@@ -182,6 +183,12 @@ func ensurePanelPrimary(ctx context.Context, hostname string) error {
 			IndexPriority:  "html_first",
 			CreatedAt:      now,
 			UpdatedAt:      now,
+		}
+		// GH #1816: the panel's own hostname is an administrator's name.
+		if err := domainops.StampOwnership(ctx, domainops.OwnershipDeps{
+			Policy: repository.NewDomainOwnershipRepository(sharedDB),
+		}, d, true, now.UTC()); err != nil {
+			return fmt.Errorf("panel-primary ownership state: %w", err)
 		}
 		if err := domains.Create(ctx, d); err != nil {
 			return fmt.Errorf("create panel-primary domain row: %w", err)

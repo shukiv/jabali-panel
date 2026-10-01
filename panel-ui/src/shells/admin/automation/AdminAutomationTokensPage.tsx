@@ -45,6 +45,13 @@ const SCOPE_OPTIONS = [
   { value: "write:domains", label: "write:domains (suspend/unsuspend)" },
   { value: "write:cache", label: "write:cache (purge)" },
   { value: "write:backups", label: "write:backups (trigger backup)" },
+  // GH #1816 / ADR-0170: its own family, never implied by write:*. A billing
+  // system holding it vouches that its customers own the domain names it
+  // creates, so they are live at once instead of waiting for a DNS proof.
+  {
+    value: "assert:domain_ownership",
+    label: "assert:domain_ownership (domains this token creates skip the ownership proof)",
+  },
 ];
 
 // Wildcard families that are mutually exclusive with their own explicit children.

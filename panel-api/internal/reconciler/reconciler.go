@@ -1363,6 +1363,13 @@ func (r *Reconciler) ReconcileOne(ctx context.Context, domainID string) error {
 		return nil
 	}
 
+	// GH #1816: an unproven name converges to its pending shape only (no
+	// published zone, no recursor forward, no ACME, a gated vhost).
+	if ownershipPending(domain) {
+		r.reconcilePendingDomain(ctx, domain, true)
+		return nil
+	}
+
 	// DNS zone convergence runs FIRST and independently of the nginx/
 	// user provisioning below. Previously this lived at the end of
 	// createDomainOnAgent, so any early return there (missing
@@ -2394,7 +2401,9 @@ func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Dom
 	// sends nil.
 	redirectHTTPS := false
 	certIssueMethod := ""
-	if domain.SSLMode == models.SSLModeShared && domain.SharedCertificateID != nil && *domain.SharedCertificateID != "" {
+	// GH #1816: a pending name never presents the shared (CA-issued) cert;
+	// it falls through to its self-signed placeholder row.
+	if domain.SSLMode == models.SSLModeShared && domain.SharedCertificateID != nil && *domain.SharedCertificateID != "" && !ownershipPending(domain) {
 		certPath, keyPath := sharedCertPaths(*domain.SharedCertificateID)
 		params["ssl_cert_path"], params["ssl_key_path"] = certPath, keyPath
 		redirectHTTPS = redirectHTTPSForCert(domain.SSLMode, certPath)
@@ -2431,6 +2440,14 @@ func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Dom
 	// Preview URL params (temp URLs) — nil when disabled or no hostname.
 	for k, v := range r.previewParams(ctx, domain) {
 		params[k] = v
+	}
+
+	// GH #1816 / ADR-0170: a pending domain's real-name server blocks answer
+	// 444 to every request that lacks this gate value, which only the preview
+	// URL's proxy sends. Omitted for a verified domain, so its payload (and
+	// vhost) is byte-identical to before.
+	if ownershipPending(domain) {
+		params["ownership_gate"] = ownershipGate(domain)
 	}
 
 	// JAB-369: skip the agent round-trip when the fully-assembled payload is
@@ -2791,6 +2808,14 @@ func (r *Reconciler) reconcileDNSZone(ctx context.Context, domain *models.Domain
 		}
 	}
 
+	// GH #1816: a pending domain's zone rows stay in the panel database (the
+	// owner may edit them) but the zone is kept OFF the authoritative server
+	// until the name is proven. Checked before anything is compiled or pushed.
+	if ownershipPending(domain) {
+		r.unpublishPendingZone(ctx, zone)
+		return
+	}
+
 	if !zone.IsEnabled {
 		return
 	}
@@ -3115,6 +3140,16 @@ func (r *Reconciler) reconcileSSLForDomain(ctx context.Context, domain *models.D
 	cert, err := r.sslCerts.FindByDomainID(ctx, domain.ID)
 	if err != nil && !errors.Is(err, repository.ErrNotFound) {
 		r.log.Error("ssl: find cert failed", "domain", domain.Name, "err", err)
+		return
+	}
+
+	// GH #1816: an unproven name never gets a certificate from a CA. It serves
+	// a self-signed placeholder (for the preview hairpin) — which also
+	// replaces an issued certificate once a domain goes back to pending. A
+	// 'none' domain keeps no certificate, and a 'custom' one keeps the
+	// certificate its owner uploaded (a CA already validated that name).
+	if ownershipPending(domain) && domain.SSLMode != models.SSLModeNone && domain.SSLMode != models.SSLModeCustom {
+		r.sslEnsureSelfSigned(ctx, domain, cert)
 		return
 	}
 
@@ -4086,6 +4121,13 @@ func cacheBypassPathsFromInstalls(insts []models.ApplicationInstall) []string {
 // run domains concurrently. Must remain safe to run concurrently with
 // itself and with ReconcileOne (see the pool comment in ReconcileAll).
 func (r *Reconciler) reconcileEnabledDomain(ctx context.Context, name string, domain *models.Domain, agentSites map[string]bool) {
+	// GH #1816 / ADR-0170: an unproven name — of any kind, docker-app and
+	// web-off included — converges to its pending shape only. Branched first
+	// so no step below can publish it.
+	if ownershipPending(domain) {
+		r.reconcilePendingDomain(ctx, domain, false)
+		return
+	}
 	// Docker-app proxy domains (managed_by='docker_app') are
 	// admin-owned, docroot-less reverse proxies — they take a
 	// dedicated render path and skip EVERY tenant-only convergence

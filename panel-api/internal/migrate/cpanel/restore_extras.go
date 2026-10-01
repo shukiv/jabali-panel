@@ -128,6 +128,10 @@ func ImportExtras(
 				CreatedAt:     now,
 				UpdatedAt:     now,
 			}
+			if err := markMigratedOwnership(d, now); err != nil {
+				res.Skipped = append(res.Skipped, fmt.Sprintf("subdomain_skip:ownership_token:%s:%v", n, err))
+				continue
+			}
 			if err := domainsRepo.Create(ctx, d); err != nil {
 				res.Skipped = append(res.Skipped, fmt.Sprintf("subdomain_skip:db_create:%s:%v", n, err))
 				continue

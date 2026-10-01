@@ -394,6 +394,7 @@ func Build(ctx context.Context, user *models.User, d Deps) *internalbackup.Accou
 				DisclaimerText:       dom.DisclaimerText,
 				DNSSECEnabled:        dom.DNSSECEnabled,
 				CreatedAt:            timeRFC(dom.CreatedAt),
+				OwnershipStatus:      dom.OwnershipStatus,
 			}
 			if dom.EmailEnabledAt != nil {
 				dRow.EmailEnabledAt = timeRFC(*dom.EmailEnabledAt)

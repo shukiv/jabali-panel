@@ -52,9 +52,9 @@ func TestReconcileDKIM2_AppliedStateGating(t *testing.T) {
 	agent := &fakeDkim2Agent{}
 	srv := &models.ServerSettings{}
 	r := dkim2Reconciler(agent, srv, []models.Domain{
-		{Name: "mail1.example", EmailEnabled: true},
-		{Name: "mail2.example", EmailEnabled: true},
-		{Name: "web-only.example", EmailEnabled: false},
+		{OwnershipState: verifiedOwnership, Name: "mail1.example", EmailEnabled: true},
+		{OwnershipState: verifiedOwnership, Name: "mail2.example", EmailEnabled: true},
+		{OwnershipState: verifiedOwnership, Name: "web-only.example", EmailEnabled: false},
 	})
 	ctx := context.Background()
 
@@ -98,7 +98,7 @@ func TestReconcileDKIM2_AppliedStateGating(t *testing.T) {
 func TestReconcileDKIM2_RetryAndLateMailDomain(t *testing.T) {
 	agent := &fakeDkim2Agent{fail: true}
 	srv := &models.ServerSettings{DKIM2SigningEnabled: true}
-	repo := &fakeDkim2DomainRepo{rows: []models.Domain{{Name: "mail1.example", EmailEnabled: true}}}
+	repo := &fakeDkim2DomainRepo{rows: []models.Domain{{OwnershipState: verifiedOwnership, Name: "mail1.example", EmailEnabled: true}}}
 	r := &Reconciler{
 		domains:        repo,
 		serverSettings: &fakeSettingsRepo{srv: srv},
@@ -115,7 +115,7 @@ func TestReconcileDKIM2_RetryAndLateMailDomain(t *testing.T) {
 	}
 
 	// New mail domain appears: converged on the next tick, existing one not re-called.
-	repo.rows = append(repo.rows, models.Domain{Name: "late.example", EmailEnabled: true})
+	repo.rows = append(repo.rows, models.Domain{OwnershipState: verifiedOwnership, Name: "late.example", EmailEnabled: true})
 	r.reconcileDKIM2(ctx)
 	if len(agent.calls) != 3 {
 		t.Fatalf("late mail domain must converge exactly once (calls=%d)", len(agent.calls))

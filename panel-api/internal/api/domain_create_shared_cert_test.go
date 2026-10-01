@@ -51,7 +51,9 @@ func TestCreateDomainOp_SharedCertAutoAttach(t *testing.T) {
 
 	newH := func(sc *scCerts) (*domainHandler, *scDomains) {
 		dom := &scDomains{dcDomains: newDCDomains()}
-		cfg := DomainHandlerConfig{Users: newAbUsers(owner), Domains: dom}
+		// Proof off: these cases are about the attach, on a live name.
+		cfg := DomainHandlerConfig{Users: newAbUsers(owner), Domains: dom,
+			DomainOwnership: ownershipStub{require: false}}
 		if sc != nil {
 			cfg.SharedCerts = sc
 		}
@@ -108,6 +110,20 @@ func TestCreateDomainOp_SharedCertAutoAttach(t *testing.T) {
 		d := create(h, createDomainInput{})
 		if d.SSLMode != models.SSLModeLE || d.SharedCertificateID != nil {
 			t.Fatalf("a failed attach must not be reported as shared, got %s/%v", d.SSLMode, d.SharedCertificateID)
+		}
+	})
+
+	// GH #1816: a tenant create stored pending never rides a CA-issued
+	// shared certificate.
+	t.Run("pending domain is never attached", func(t *testing.T) {
+		h, dom := newH(&scCerts{certs: certs})
+		h.cfg.DomainOwnership = ownershipStub{require: true}
+		d := create(h, createDomainInput{})
+		if d.OwnershipStatus != models.OwnershipPending {
+			t.Fatalf("precondition: a tenant create is pending, got %q", d.OwnershipStatus)
+		}
+		if d.SSLMode != models.SSLModeLE || d.SharedCertificateID != nil || len(dom.setArgs) != 0 {
+			t.Fatalf("a pending domain must not be attached, got %s/%v %v", d.SSLMode, d.SharedCertificateID, dom.setArgs)
 		}
 	})
 

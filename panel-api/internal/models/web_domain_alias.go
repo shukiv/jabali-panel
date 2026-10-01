@@ -18,6 +18,10 @@ type WebDomainAlias struct {
 	ID        string    `gorm:"type:char(26);primaryKey" json:"id"`
 	DomainID  string    `gorm:"type:char(26);not null;index:idx_web_domain_aliases_domain" json:"domain_id"`
 	Hostname  string    `gorm:"type:varchar(253);not null;uniqueIndex:ux_web_domain_aliases_hostname" json:"hostname"`
+	// OwnershipState (GH #1816 / ADR-0170): an alias that is not under a
+	// verified domain of the same owner needs its own proof before it joins
+	// the vhost's server_name or the certificate.
+	OwnershipState
 	CreatedAt time.Time `gorm:"type:datetime(6);not null" json:"created_at"`
 	UpdatedAt time.Time `gorm:"type:datetime(6);not null" json:"updated_at"`
 }

@@ -197,10 +197,11 @@ func domainNameForID(existing map[string]*models.Mailbox, _ string) string {
 
 func testDomain(id, name string, emailEnabled bool) *models.Domain {
 	return &models.Domain{
-		ID:           id,
-		Name:         name,
-		UserID:       "u-test",
-		EmailEnabled: emailEnabled,
+		ID:             id,
+		Name:           name,
+		UserID:         "u-test",
+		EmailEnabled:   emailEnabled,
+		OwnershipState: models.OwnershipState{OwnershipStatus: models.OwnershipVerified},
 	}
 }
 

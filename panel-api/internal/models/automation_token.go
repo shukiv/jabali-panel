@@ -152,7 +152,15 @@ var AllowedAutomationScopes = []string{
 	"delete:*",
 	"delete:users",
 	"delete:domains",
+	// GH #1816 / ADR-0170: the billing system vouches that the customer owns
+	// the domain it creates, so it goes live without the DNS proof. Its own
+	// family: no wildcard (write:* included) ever implies it.
+	AutomationScopeAssertDomainOwnership,
 }
+
+// AutomationScopeAssertDomainOwnership lets an automation create skip the
+// domain ownership proof (GH #1816). Off unless an admin mints it explicitly.
+const AutomationScopeAssertDomainOwnership = "assert:domain_ownership"
 
 // IsAllowedAutomationScope reports whether s is a recognised automation scope.
 func IsAllowedAutomationScope(s string) bool {

@@ -22,6 +22,7 @@ import { DomainListenIPSection } from "./DomainListenIPSection";
 import { DomainMailboxesSection } from "./DomainMailboxesSection";
 import { DomainNginxSection } from "../../DomainSettingsButton";
 import { DomainSSLSection } from "./DomainSSLSection";
+import { DomainOwnershipPanel } from "../../../components/domains/DomainOwnershipPanel";
 import { DomainSkipAutoSANToggle } from "./DomainSkipAutoSANToggle";
 import { DomainCacheSection } from "../../../components/DomainCacheSection";
 import { DomainMTASTSSection } from "./DomainMTASTSSection";
@@ -332,6 +333,8 @@ export const DomainEdit = () => {
         <Typography.Paragraph type="secondary" style={{ marginBottom: 16 }}>
           Owner: <Link to={adminLinks.user(domain.user_id)}>{ownerLabel(ownerRef)}</Link>
         </Typography.Paragraph>
+        {/* GH #1816: ownership proof, with Approve / Revoke. */}
+        <DomainOwnershipPanel domain={domain} admin />
         {isPanelPrimary && (
           <Alert
             type="info"

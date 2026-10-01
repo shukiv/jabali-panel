@@ -1,12 +1,15 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/domainops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/userops"
 )
@@ -95,6 +98,52 @@ func (h *domainHandler) rename(c *gin.Context) {
 		}
 	}
 
+	// GH #1816 / ADR-0170 section 5: the new name gets the create-time
+	// ownership decision. An unproven name is written pending BEFORE the row
+	// is renamed, so no reconcile pass ever sees the new name carrying the old
+	// name's proof; a failed rename restores the old name's state.
+	var finder domainops.AncestorFinder
+	if h.cfg.Domains != nil {
+		finder = h.cfg.Domains
+	}
+	dec, derr := domainops.PlanRenameOwnership(ctx, domainops.OwnershipDeps{
+		Domains: finder, Policy: ownershipPolicy(h.cfg.DomainOwnership),
+	}, domain, newName, claims.IsAdmin)
+	if errors.Is(derr, domainops.ErrRenameUnprovenMail) {
+		c.JSON(http.StatusConflict, gin.H{"error": "rename_requires_proven_name",
+			"message": "this domain's mail would move to " + newName + ", which is not proven yet — ask an administrator, or add " + newName + " as a new domain and prove it first"})
+		return
+	} else if derr != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	wasVerified := domain.Verified()
+	oldMethod, oldToken := domain.OwnershipMethod, domain.OwnershipToken
+	restoreOwnership := func() {}
+	if !dec.Verified {
+		if h.cfg.DomainOwnership == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "ownership_unavailable", "message": "the new name needs an ownership proof, which is not available on this panel"})
+			return
+		}
+		token, terr := domainops.NewOwnershipToken()
+		if terr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+			return
+		}
+		now := time.Now().UTC()
+		if _, perr := h.cfg.DomainOwnership.MarkDomainPending(ctx, domain.ID, token, now, false, true); perr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+			return
+		}
+		if wasVerified {
+			restoreOwnership = func() {
+				if _, rerr := h.cfg.DomainOwnership.MarkDomainVerified(context.WithoutCancel(ctx), domain.ID, oldMethod, token, time.Now().UTC()); rerr != nil {
+					slog.Error("rename: restoring the ownership state after a failed rename", "domain_id", domain.ID, "err", rerr)
+				}
+			}
+		}
+	}
+
 	// *reconciler.Reconciler satisfies RenameReconciler, but pass it as a truly
 	// nil interface when unwired so RenameDomain's nil check holds (a typed-nil
 	// pointer in an interface is not == nil).
@@ -133,6 +182,7 @@ func (h *domainHandler) rename(c *gin.Context) {
 		Log:      slog.Default(),
 	}, rec, domain, newName)
 	if err != nil {
+		restoreOwnership()
 		var re *userops.RenameError
 		if errors.As(err, &re) {
 			c.JSON(renameHTTPStatus(re.Code), gin.H{"error": re.Code, "message": re.Message})
@@ -140,6 +190,17 @@ func (h *domainHandler) rename(c *gin.Context) {
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
+	}
+
+	// A pending domain renamed to a name the decision proves (an admin rename,
+	// or a verified parent of the owner's) is verified now.
+	if dec.Verified && !wasVerified && h.cfg.DomainOwnership != nil {
+		if _, verr := h.cfg.DomainOwnership.MarkDomainVerified(ctx, domain.ID, dec.Method, oldToken, time.Now().UTC()); verr != nil {
+			slog.Error("rename: recording the new name's ownership", "domain_id", domain.ID, "err", verr)
+		}
+		if h.cfg.Reconciler != nil {
+			h.cfg.Reconciler.Schedule(domain.ID)
+		}
 	}
 
 	// warnings carries any best-effort app-URL rewrite that did not complete —
@@ -159,7 +220,7 @@ func renameHTTPStatus(code string) int {
 	switch code {
 	case "invalid_name", "noop", "custom_docroot", "ambiguous_docroot":
 		return http.StatusBadRequest
-	case "mail_domain_conflict", "panel_primary", "web_disabled",
+	case "mail_domain_conflict", "panel_primary", "web_disabled", "rename_requires_proven_name",
 		"ssl_custom_cert", "name_taken", "owner_unprovisioned", "owner_unresolved",
 		"ftp_subaccounts":
 		return http.StatusConflict

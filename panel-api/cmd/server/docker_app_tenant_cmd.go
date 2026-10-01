@@ -14,10 +14,12 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/oklog/ulid/v2"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dockerapp"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/domainops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
@@ -304,6 +306,13 @@ func runTenantDockerInstall(ctx context.Context, slug, name, userRef, domain, up
 				ID: ulid.Make().String(), UserID: user.ID, Name: domain,
 				IsEnabled: true, SSLEnabled: true, NginxRules: rules,
 				ManagedBy: models.DomainManagedByDockerApp, DockerAppID: &app.ID,
+			}
+			// GH #1816: the CLI runs as root, an administrator's create.
+			if oerr := domainops.StampOwnership(ctx, domainops.OwnershipDeps{
+				Policy: repository.NewDomainOwnershipRepository(sharedDB),
+			}, dom, true, time.Now().UTC()); oerr != nil {
+				_ = repo.Delete(ctx, app.ID)
+				return fmt.Errorf("domain ownership state: %w", oerr)
 			}
 			if derr := domRepo.Create(ctx, dom); derr != nil {
 				_ = repo.Delete(ctx, app.ID)

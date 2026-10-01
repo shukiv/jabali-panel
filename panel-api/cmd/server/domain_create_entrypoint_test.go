@@ -220,7 +220,8 @@ func TestCLICreateWarnings(t *testing.T) {
 
 	_, lookupErr := domainops.AttachCoveringSharedCert(ctx, domainops.SharedCertDeps{
 		Certs: cliCertLister{err: errors.New("db down")}, Domains: &cliCreateStore{},
-	}, &models.Domain{ID: "d1", Name: "shop.example.com"})
+	}, &models.Domain{ID: "d1", Name: "shop.example.com",
+		OwnershipState: models.OwnershipState{OwnershipStatus: models.OwnershipVerified}})
 	if !errors.Is(lookupErr, domainops.ErrSharedCertLookup) {
 		t.Fatalf("setup: want a lookup error, got %v", lookupErr)
 	}
@@ -278,7 +279,8 @@ func attachErr(t *testing.T, cert *models.SharedCertificate) error {
 	t.Helper()
 	_, err := domainops.AttachCoveringSharedCert(context.Background(), domainops.SharedCertDeps{
 		Certs: cliCertLister{certs: []models.SharedCertificate{*cert}}, Domains: &cliFailingCertSetter{},
-	}, &models.Domain{ID: "d1", Name: "shop.example.com"})
+	}, &models.Domain{ID: "d1", Name: "shop.example.com",
+		OwnershipState: models.OwnershipState{OwnershipStatus: models.OwnershipVerified}})
 	if !errors.Is(err, domainops.ErrSharedCertAttach) {
 		t.Fatalf("setup: want an attach error, got %v", err)
 	}
@@ -310,6 +312,7 @@ func TestCLICreateDomain_WiresTheCreateEntrypoint(t *testing.T) {
 		`DNSTemplates:\s+repository\.NewDNSTemplateRepository\(sharedDB\),`,
 		`SharedCerts:\s+sharedCertRepoFromDB\(\),`,
 		`Ports:\s+repository\.NewPortAllocationRepository\(sharedDB\),`,
+		`Ownership:\s+repository\.NewDomainOwnershipRepository\(sharedDB\),`,
 		`EnableMail:\s+cliEnableMail,`,
 		`\}, cliCreateInput\(in\)\)`,
 		`cliCreateError\(err, in, owners\.resolved\)`,

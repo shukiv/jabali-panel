@@ -289,6 +289,9 @@ func createDomainDirect(ctx context.Context, in cliDomainInput) (*models.Domain,
 		DNSTemplates: repository.NewDNSTemplateRepository(sharedDB),
 		SharedCerts:  sharedCertRepoFromDB(),
 		Ports:        repository.NewPortAllocationRepository(sharedDB),
+		// GH #1816: the CLI acts as admin, so its creates are verified; the
+		// switch only decides whether the method is admin or policy_off.
+		Ownership: repository.NewDomainOwnershipRepository(sharedDB),
 	}
 	// The port probe is only needed for an explicit port. Assign the agent only
 	// when the pointer is set: a nil *agent.Client in the interface would pass

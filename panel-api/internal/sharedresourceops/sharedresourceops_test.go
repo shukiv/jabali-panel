@@ -79,12 +79,12 @@ func (n *recordingNotify) fn(_ context.Context, cmd string, params any) {
 }
 
 func emailDomain() *models.Domain {
-	return &models.Domain{ID: "dom1", Name: "example.org", EmailEnabled: true}
+	return &models.Domain{ID: "dom1", Name: "example.org", EmailEnabled: true, OwnershipState: models.OwnershipState{OwnershipStatus: models.OwnershipVerified}}
 }
 
 func TestCreate_RefusesOnDisabledEmail(t *testing.T) {
 	repo := &fakeResRepo{}
-	dom := &models.Domain{ID: "dom1", Name: "example.org", EmailEnabled: false}
+	dom := &models.Domain{ID: "dom1", Name: "example.org", EmailEnabled: false, OwnershipState: models.OwnershipState{OwnershipStatus: models.OwnershipVerified}}
 	_, err := Create(context.Background(), Deps{Resources: repo}, CreateInput{
 		Domain: dom, Kind: "calendar", Name: "teamcal",
 	}, nil)
@@ -482,5 +482,21 @@ func TestCreate_RefusesPostmasterOnATenantDomain(t *testing.T) {
 	}
 	if len(repo.created) != 0 {
 		t.Fatalf("no row may be written for postmaster@ on a tenant domain, got %d", len(repo.created))
+	}
+}
+
+// GH #1816 / ADR-0170: an unproven name gets no shared resource.
+func TestCreate_RefusesPendingOwnership(t *testing.T) {
+	repo := &fakeResRepo{}
+	dom := emailDomain()
+	dom.OwnershipState = models.OwnershipState{OwnershipStatus: models.OwnershipPending}
+	_, err := Create(context.Background(), Deps{Resources: repo}, CreateInput{
+		Domain: dom, Kind: "calendar", Name: "teamcal",
+	}, nil)
+	if !errors.Is(err, ErrOwnershipPending) {
+		t.Fatalf("want ErrOwnershipPending, got %v", err)
+	}
+	if len(repo.created) != 0 {
+		t.Fatalf("no row may be written on a pending domain, got %d", len(repo.created))
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/domainmailops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/domainops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
 // domain_create_op.go — the REST adapter over domainops.Create (JAB-279 AC1).
@@ -87,6 +88,11 @@ type createDomainInput struct {
 	// DNS-only zone. Same web-off/DNS-on gate as DNSApexIPv4; must be a bare IPv6
 	// (not an IPv4 or IPv4-mapped address). Empty when the zone has no v6 apex.
 	DNSApexIPv6 string
+	// Ownership (GH #1816 / ADR-0170) is the door's statement that the name
+	// is already proven — set only by the automation door for a token that
+	// holds assert:domain_ownership. Nil lets domainops decide (an admin
+	// actor and the parent rule verify; anything else is stored pending).
+	Ownership *domainops.OwnershipAssertion
 }
 
 // createDomainError carries the exact HTTP shape the inline create() used, so
@@ -256,6 +262,7 @@ func createDomainOp(ctx context.Context, h *domainHandler, in createDomainInput)
 		SharedCerts:           h.cfg.SharedCerts,
 		Ports:                 h.cfg.PortAllocations,
 		Agent:                 h.cfg.Agent,
+		Ownership:             ownershipPolicy(h.cfg.DomainOwnership),
 	}, h.createDomainHooks(in.SkipInlineSSL), domainops.CreateInput{
 		OwnerID:          in.OwnerID,
 		Name:             in.Name,
@@ -275,6 +282,7 @@ func createDomainOp(ctx context.Context, h *domainHandler, in createDomainInput)
 		DNSDisabled:      in.DNSDisabled,
 		DNSApexIPv4:      in.DNSApexIPv4,
 		DNSApexIPv6:      in.DNSApexIPv6,
+		Ownership:        in.Ownership,
 	})
 	if err != nil {
 		return nil, createDomainOpError(err)
@@ -296,6 +304,15 @@ func createDomainOp(ctx context.Context, h *domainHandler, in createDomainInput)
 			"domain_id", d.ID, "domain", d.Name, "warnings", res.MailWarnings)
 	}
 	return d, nil
+}
+
+// ownershipPolicy adapts the handler's ownership store to the create
+// policy reader, keeping a nil store a nil interface (proof required).
+func ownershipPolicy(repo repository.DomainOwnershipRepository) domainops.OwnershipPolicyReader {
+	if repo == nil {
+		return nil
+	}
+	return repo
 }
 
 // createDomainHooks are the post-create fast paths this process can run. The

@@ -4,7 +4,7 @@
 // The table, columns, row actions and lifecycle live in the module, shared
 // byte-for-byte with the tenant list.
 import { Button, Card, Space, Tag, Typography } from "antd";
-import { GlobalOutlined, PlusOutlined } from "@icons";
+import { GlobalOutlined, PlusOutlined, SafetyCertificateOutlined } from "@icons";
 import { useNavigate, useSearchParams } from "react-router";
 
 import { useOneQuery } from "../../../hooks/useQueries";
@@ -55,9 +55,15 @@ export const DomainList = () => {
             </Tag>
           )}
         </Space>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate("create")}>
-          Create Domain
-        </Button>
+        <Space wrap>
+          {/* GH #1816: names waiting for ownership proof + the proof switch. */}
+          <Button icon={<SafetyCertificateOutlined />} onClick={() => navigate("ownership")}>
+            Ownership proof
+          </Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate("create")}>
+            Create Domain
+          </Button>
+        </Space>
       </Space>
 
       <Card>

@@ -283,6 +283,8 @@ func (h *mailboxHandler) create(c *gin.Context) {
 	}, h.notifyAgent)
 	if err != nil {
 		switch {
+		case errors.Is(err, mailboxops.ErrOwnershipPending):
+			c.JSON(http.StatusConflict, gin.H{"error": "domain_ownership_pending", "detail": "prove ownership of the domain before creating mailboxes"})
 		case errors.Is(err, mailboxops.ErrEmailNotEnabled):
 			c.JSON(http.StatusConflict, gin.H{"error": "email_not_enabled", "detail": "enable email on the domain before creating mailboxes"})
 		case errors.Is(err, mailboxops.ErrInvalidLocalPart):
