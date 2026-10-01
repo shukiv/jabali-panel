@@ -37,15 +37,33 @@ type DomainPHPSettingsHandlerConfig struct {
 	// unaffected.
 	Users    repository.UserRepository
 	Packages repository.PackageRepository
+	// Reconciler applies a saved change now (GH #1701): PATCH schedules the
+	// domain, so its vhost carries the new values within seconds instead of
+	// at the next full reconcile pass. Optional; nil leaves it to that pass.
+	Reconciler DomainPHPScheduler
+	// ResetRateLimit bounds the OPcache reset, which restarts an FPM master.
+	// Wire from rl.StrictPerActor(); nil disables it.
+	ResetRateLimit gin.HandlerFunc
+}
+
+// DomainPHPScheduler schedules an out-of-band reconcile of one domain.
+type DomainPHPScheduler interface {
+	Schedule(domainID string)
 }
 
 // RegisterDomainPHPSettingsRoutes adds the PHP settings endpoints:
-//   - GET  /domains/:id/php-settings
+//   - GET   /domains/:id/php-settings
 //   - PATCH /domains/:id/php-settings
+//   - POST  /domains/:id/php-settings/opcache-reset
 func RegisterDomainPHPSettingsRoutes(g *gin.RouterGroup, cfg DomainPHPSettingsHandlerConfig) {
 	h := &domainPHPSettingsHandler{cfg: cfg}
+	resetLimit := cfg.ResetRateLimit
+	if resetLimit == nil {
+		resetLimit = func(c *gin.Context) { c.Next() }
+	}
 	g.GET("/domains/:id/php-settings", h.get)
 	g.PATCH("/domains/:id/php-settings", h.patch)
+	g.POST("/domains/:id/php-settings/opcache-reset", resetLimit, h.resetOpcache)
 }
 
 type domainPHPSettingsHandler struct {
@@ -79,6 +97,10 @@ type getDomainPHPSettingsResponse struct {
 	// Editable lists the directives the CALLER may set: every catalog
 	// directive for an admin, the ones their package permits for a tenant.
 	Editable []string `json:"editable"`
+	// OpcacheResetAllowed: the caller may reset this domain's OPcache (POST
+	// …/php-settings/opcache-reset). Same rule as the OPcache & JIT tab's
+	// reset: an admin always, a tenant whose package lets them edit FPM.
+	OpcacheResetAllowed bool `json:"opcache_reset_allowed"`
 }
 
 // updateDomainPHPSettingsRequest mirrors the overridable fields plus an optional
@@ -203,16 +225,10 @@ func (h *domainPHPSettingsHandler) get(c *gin.Context) {
 	}
 	resp.Policy, resp.Editable = h.callerPHPPolicy(ctx, phpPolicyAdmin(claims), dom.UserID)
 
-	// Resolve the effective PHP version + the pool itself. If the domain is
-	// bound to a user pool, use that pool. If unbound, fall back to the user's
-	// own pool (ADR-0023: one pool per user). If neither exists, leave nil and
-	// the UI renders "Server default".
-	var pool *models.PHPPool
-	if dom.PHPPoolID != nil && *dom.PHPPoolID != "" {
-		pool, _ = h.cfg.PHPPools.FindByID(ctx, *dom.PHPPoolID)
-	} else {
-		pool, _ = h.cfg.PHPPools.FindByUserID(ctx, dom.UserID)
-	}
+	// The effective PHP version + the pool itself. If neither exists, leave
+	// nil and the UI renders "Server default".
+	pool := h.domainPool(ctx, dom)
+	resp.OpcacheResetAllowed = pool != nil && h.opcacheResetAllowed(ctx, claims, dom.UserID)
 	if pool != nil {
 		v := pool.PHPVersion
 		resp.PHPVersion = &v
@@ -481,11 +497,96 @@ func (h *domainPHPSettingsHandler) patch(c *gin.Context) {
 		}
 	}
 
-	// Trigger reconciler to re-provision this domain
-	// (Placeholder: caller should pass Reconciler and invoke ReconcileOne)
-	// For now, return 200 OK.
+	// Apply now (GH #1701): re-render this domain's vhost with the saved
+	// values instead of waiting for the next full reconcile pass, but only
+	// while the pool serving the domain runs. A pool that does not (a version
+	// change above marks it pending) converges on that pass, which applies
+	// the pool before it renders the vhost.
+	if h.cfg.Reconciler != nil && poolRunning(h.domainPool(ctx, dom)) {
+		h.cfg.Reconciler.Schedule(domainID)
+	}
 
 	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+// domainPool is the pool that serves dom: its bound pool, else the owner's
+// default pool (ADR-0023). nil when there is none.
+func (h *domainPHPSettingsHandler) domainPool(ctx context.Context, dom *models.Domain) *models.PHPPool {
+	if h.cfg.PHPPools == nil {
+		return nil
+	}
+	var pool *models.PHPPool
+	if dom.PHPPoolID != nil && *dom.PHPPoolID != "" {
+		pool, _ = h.cfg.PHPPools.FindByID(ctx, *dom.PHPPoolID)
+	} else {
+		pool, _ = h.cfg.PHPPools.FindByUserID(ctx, dom.UserID)
+	}
+	return pool
+}
+
+// opcacheResetAllowed: the same rule as the reset on the OPcache & JIT tab —
+// the owner's package must let them edit FPM (no package, or a package that
+// can't be read, means no). An admin, also while acting as the owner, always
+// may.
+func (h *domainPHPSettingsHandler) opcacheResetAllowed(ctx context.Context, claims *auth.AccessClaims, ownerID string) bool {
+	if phpPolicyAdmin(claims) {
+		return true
+	}
+	pkg, err := h.ownerPackage(ctx, ownerID)
+	if err != nil {
+		slog.WarnContext(ctx, "php-settings: owner package unreadable, OPcache reset refused", "error", err, "user_id", ownerID)
+		return false
+	}
+	return pkg != nil && pkg.FpmUserCanEdit
+}
+
+// resetOpcache restarts the FPM master serving this domain, which drops its
+// OPcache (GH #1701). OPcache belongs to the pool, so every site on the same
+// pool loses its cache too; the UI says so before it asks.
+func (h *domainPHPSettingsHandler) resetOpcache(c *gin.Context) {
+	claims := ginctx.Claims(c)
+	if claims == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+	ctx := c.Request.Context()
+	dom, err := h.cfg.Domains.FindByID(ctx, c.Param("id"))
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "domain_not_found"})
+			return
+		}
+		slog.ErrorContext(ctx, "opcache-reset: load domain", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	if !claims.IsAdmin && dom.UserID != claims.UserID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		return
+	}
+	if !h.opcacheResetAllowed(ctx, claims, dom.UserID) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "fpm_editing_not_allowed"})
+		return
+	}
+	pool := h.domainPool(ctx, dom)
+	if pool == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "pool_not_found"})
+		return
+	}
+	if h.cfg.Agent == nil || h.cfg.Users == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "opcache_reset_unavailable"})
+		return
+	}
+	owner, err := h.cfg.Users.FindByID(ctx, dom.UserID)
+	if err != nil || owner == nil {
+		slog.ErrorContext(ctx, "opcache-reset: load owner", "error", err, "user_id", dom.UserID)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	if !resetPoolOpcache(c, h.cfg.Agent, h.cfg.PHPPools, owner, pool) {
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"restarted": true, "php_version": pool.PHPVersion})
 }
 
 // ownerPackage returns the hosting package of a domain's owner: nil when the

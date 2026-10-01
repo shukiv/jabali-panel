@@ -258,3 +258,42 @@ describe("DomainPHPSettingsPanel package policy (GH #1701)", () => {
     expect(memoryLimitSelect().className).not.toContain("ant-select-disabled");
   });
 });
+
+describe("DomainPHPSettingsPanel Reset OPcache (GH #1701)", () => {
+  function withReset(allowed: boolean | undefined) {
+    mocked.get.mockImplementation((url: string) => {
+      if (url === "/php/versions") return Promise.resolve({ data: { versions: ["8.3", "8.4"] } });
+      if (url === "/domains/d1/php-settings")
+        return Promise.resolve({ data: { ...SETTINGS, opcache_reset_allowed: allowed } });
+      return Promise.resolve({ data: {} });
+    });
+  }
+
+  it("resets this domain's OPcache after the confirm", async () => {
+    withReset(true);
+    mocked.post.mockResolvedValue({ data: { restarted: true, php_version: "8.3" } });
+    renderPanel();
+    fireEvent.click(await screen.findByText("Reset OPcache"));
+    // The confirm names what restarts before anything happens.
+    expect(await screen.findByText(/restarts PHP 8\.3 for every site/)).toBeInTheDocument();
+    expect(mocked.post).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Reset" }));
+    await vi.waitFor(() =>
+      expect(mocked.post).toHaveBeenCalledWith("/domains/d1/php-settings/opcache-reset"),
+    );
+  });
+
+  it("hides the reset when the caller may not reset", async () => {
+    withReset(false);
+    renderPanel();
+    await screen.findByText("View error log");
+    expect(screen.queryByText("Reset OPcache")).toBeNull();
+  });
+
+  it("hides the reset on an API that does not say", async () => {
+    withReset(undefined);
+    renderPanel();
+    await screen.findByText("View error log");
+    expect(screen.queryByText("Reset OPcache")).toBeNull();
+  });
+});

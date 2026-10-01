@@ -1410,6 +1410,9 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				PHPPoolIniOverrides: deps.PHPPoolIniOverrides,
 				Users:               deps.Users,
 				Agent:               deps.Agent,
+				// GH #1701: a version switch applies now.
+				Packages:   deps.Packages,
+				Reconciler: domainPHPScheduler(deps.Reconciler),
 			})
 		}
 		if deps.Domains != nil {
@@ -1421,6 +1424,10 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				// GH #1701: the owner's package PHP settings policy.
 				Users:    deps.Users,
 				Packages: deps.Packages,
+				// GH #1701: a save applies now; the OPcache reset restarts an
+				// FPM master, so it takes a per-user budget.
+				Reconciler:     domainPHPScheduler(deps.Reconciler),
+				ResetRateLimit: rl.StrictPerActor(),
 			})
 			// GH #1332 item 14: per-domain env vars.
 			api.RegisterDomainEnvVarsRoutes(v1, api.DomainEnvVarsHandlerConfig{
@@ -1700,6 +1707,16 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 // startRateLimiterSweeper launches a background goroutine that drops idle
 // per-IP buckets so the limiter's memory stays bounded. Safe to call once
 // per process; the goroutine lives for the program's lifetime.
+// domainPHPScheduler hands the PHP settings handlers the reconciler, or a nil
+// interface when there is none: a nil *Reconciler inside a non-nil interface
+// would pass the handlers' nil check and panic on Schedule.
+func domainPHPScheduler(r *reconciler.Reconciler) api.DomainPHPScheduler {
+	if r == nil {
+		return nil
+	}
+	return r
+}
+
 func startRateLimiterSweeper(rl *middleware.RateLimiter) {
 	ticker := time.NewTicker(rateLimiterSweepEvery)
 	go func() {
