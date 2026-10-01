@@ -20,7 +20,21 @@ const DIRECTIVES = [
   "log_errors",
   "file_uploads",
   "short_open_tag",
+  // GH #1701 Slice 3: security-sensitive, opted in with tenant_privileged.
+  "open_basedir",
+  "allow_url_fopen",
 ];
+const SENSITIVE = new Set(["open_basedir", "allow_url_fopen"]);
+
+// The policy level of every directive, with `locked` admin-only.
+function policyLocking(locked: string): Record<string, string> {
+  return Object.fromEntries(
+    DIRECTIVES.map((d) => [
+      d,
+      d === locked ? "admin_only" : SENSITIVE.has(d) ? "tenant_privileged" : "tenant_allowed",
+    ]),
+  );
+}
 
 test("tenant PHP settings: a package-locked directive is read-only and sent back unchanged (#1701)", async ({
   page,
@@ -56,9 +70,7 @@ test("tenant PHP settings: a package-locked directive is read-only and sent back
       body: JSON.stringify({
         php_version: "8.3",
         php_memory_limit: "256M",
-        policy: Object.fromEntries(
-          DIRECTIVES.map((d) => [d, d === "memory_limit" ? "admin_only" : "tenant_allowed"]),
-        ),
+        policy: policyLocking("memory_limit"),
         editable: DIRECTIVES.filter((d) => d !== "memory_limit"),
       }),
     });
@@ -124,9 +136,7 @@ test("tenant PHP settings: a locked flag is sent back unchanged, a permitted fla
         php_version: "8.3",
         php_short_open_tag: true,
         pool_defaults: { log_errors: "1", file_uploads: "1", short_open_tag: "" },
-        policy: Object.fromEntries(
-          DIRECTIVES.map((d) => [d, d === "short_open_tag" ? "admin_only" : "tenant_allowed"]),
-        ),
+        policy: policyLocking("short_open_tag"),
         editable: DIRECTIVES.filter((d) => d !== "short_open_tag"),
       }),
     });
@@ -148,4 +158,69 @@ test("tenant PHP settings: a locked flag is sent back unchanged, a permitted fla
   expect(patched!.php_file_uploads).toBe(false);
   expect(patched!.php_short_open_tag).toBe(true);
   expect(patched!.php_log_errors).toBeNull();
+});
+
+// GH #1701 Slice 3: a tenant whose package opts them in picks an open_basedir
+// preset and turns allow_url_fopen off; a save sends both. A tenant without
+// the opt-in sees both read-only (covered by the unit tests).
+test("tenant PHP settings: open_basedir preset and allow_url_fopen are saved (#1701 slice 3)", async ({
+  page,
+}) => {
+  await mockApi(page, {
+    me: user,
+    domains: [
+      {
+        id: DOMAIN_ID,
+        user_id: user.id,
+        name: "example.com",
+        doc_root: "/home/user/example.com",
+        is_enabled: true,
+        nginx_custom_directives: "",
+        created_at: "2026-01-01T00:00:00Z",
+        updated_at: "2026-01-01T00:00:00Z",
+      },
+    ],
+  });
+
+  await page.route("**/api/v1/php/versions", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ versions: ["8.3"] }) }),
+  );
+  let patched: Record<string, unknown> | null = null;
+  await page.route(`**/api/v1/domains/${DOMAIN_ID}/php-settings`, async (route) => {
+    if (route.request().method() === "PATCH") {
+      patched = route.request().postDataJSON() as Record<string, unknown>;
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ success: true }) });
+    }
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        php_version: "8.3",
+        pool_defaults: { allow_url_fopen: "1" },
+        policy: policyLocking(""),
+        editable: DIRECTIVES,
+      }),
+    });
+  });
+
+  await signIn(page, user);
+  await page.goto(`/jabali-panel/domains/${DOMAIN_ID}/php-settings`);
+
+  const basedirItem = page.locator(".ant-form-item").filter({ hasText: "Allowed folders (open_basedir)" });
+  await basedirItem.locator("input").click();
+  await page
+    .locator(".ant-select-dropdown:visible .ant-select-item-option")
+    .filter({ hasText: "This domain's folder + temp folders" })
+    .click();
+  await expect(basedirItem.locator("input")).toHaveValue("{DOCROOT}:{TMP}");
+
+  const fopenItem = page.locator(".ant-form-item").filter({ hasText: "Remote file access (allow_url_fopen)" });
+  await expect(fopenItem).toContainText("On (Default)");
+  await fopenItem.locator(".ant-select").click();
+  await page.locator(".ant-select-dropdown:visible .ant-select-item-option").filter({ hasText: /^Off$/ }).click();
+
+  await page.getByRole("button", { name: "Save Changes" }).click();
+  await expect.poll(() => patched).not.toBeNull();
+  expect(patched!.php_open_basedir).toBe("{DOCROOT}:{TMP}");
+  expect(patched!.php_allow_url_fopen).toBe(false);
 });

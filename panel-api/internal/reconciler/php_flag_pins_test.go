@@ -171,3 +171,22 @@ func TestPHPFlagPinParams_SendsPoolValues(t *testing.T) {
 		t.Fatalf("conflicting memory_limit: got %v, want inherit_unknown and only date.timezone", got)
 	}
 }
+
+// GH #1701 Slice 3: the domain's own open_basedir and allow_url_fopen are
+// sent; unset ones are left out for the agent to pin the inherited value.
+func TestPHPFlagPinParams_AdminValues(t *testing.T) {
+	ovs := &fakeIniOverrideRepo{byPool: map[string][]models.PHPPoolIniOverride{}}
+	ob := "{DOCROOT}:{TMP}"
+	dom := &models.Domain{ID: "d1", PHPOpenBasedir: &ob, PHPAllowURLFopen: bp(false)}
+	got := flagPinReconciler(ovs).phpFlagPinParams(context.Background(), dom, "p1")
+	if got["php_open_basedir"] != ob || got["php_allow_url_fopen"] != false {
+		t.Fatalf("got %v, want php_open_basedir %q and php_allow_url_fopen false", got, ob)
+	}
+	got = flagPinReconciler(ovs).phpFlagPinParams(context.Background(), &models.Domain{ID: "d1"}, "p1")
+	if _, ok := got["php_open_basedir"]; ok {
+		t.Fatalf("unset open_basedir sent: %v", got)
+	}
+	if _, ok := got["php_allow_url_fopen"]; ok {
+		t.Fatalf("unset allow_url_fopen sent: %v", got)
+	}
+}

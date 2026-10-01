@@ -73,6 +73,26 @@ badge** on any domain that differs from the account default:
   `date.timezone` is pinned as `UTC`, which is what PHP runs with. A value the
   agent cannot read with confidence is not pinned. The **(Default)** label next
   to each setting shows the same inherited value.
+- `open_basedir` and `allow_url_fopen` per domain (GH #1701 Slice 3). Both are
+  `PHP_INI_SYSTEM`, so the agent sends them through `fastcgi_param
+  PHP_ADMIN_VALUE`, which replaces the pool's value for that request. They are
+  pinned on every PHP domain like the settings above: a domain that sets none
+  gets the `open_basedir` in its pool's own file and the box `php.ini`'s
+  `allow_url_fopen` (a pool cannot override it). A domain's `open_basedir` is a
+  list of `{DOCROOT}`, `{WEBSPACEROOT}`, `{TMP}` and absolute paths; the agent
+  expands it and always adds `/run/mysqld/mysqld.sock` and
+  `/run/jabali-wp-purge`, as the pool default does. A tenant may list only
+  folders inside their home; an admin may add other paths but never `/`,
+  another user's home, or `/root`, `/proc` or `/sys`. Both are admin only unless
+  the package grants `tenant_privileged`.
+- `disable_functions` stays per pool (per account and PHP version, set through
+  the package): a function PHP disables stays disabled for the worker's
+  lifetime, so it cannot differ between domains that share a pool.
+  `include_path` and `session.save_path` are not per-domain settings either: an
+  admin value for them locks `ini_set()` on the shared worker for every domain
+  on the pool. `mail.force_extra_parameters` is not offered: Jabali's mail shim
+  always sends from the domain's relay identity, ignores `-f`, and would treat
+  any other argument as an extra recipient.
 - Per-domain environment variables passed to the FPM pool.
 - Per-domain log + cron shortcuts and an **OPcache reset** button.
 

@@ -14,6 +14,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/phpbasedir"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/auth"
 	ginctx "git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
@@ -88,6 +89,10 @@ type getDomainPHPSettingsResponse struct {
 	PHPLogErrors    *bool `json:"php_log_errors,omitempty"`
 	PHPFileUploads  *bool `json:"php_file_uploads,omitempty"`
 	PHPShortOpenTag *bool `json:"php_short_open_tag,omitempty"`
+	// GH #1701 Slice 3 admin values. PHPOpenBasedir is the stored token form
+	// (internal/phpbasedir).
+	PHPOpenBasedir   *string `json:"php_open_basedir,omitempty"`
+	PHPAllowURLFopen *bool   `json:"php_allow_url_fopen,omitempty"`
 	// PoolDefaults (GH #1543) is the effective value this domain INHERITS per
 	// directive when it sets no override — the pool's ini override if it has
 	// one, else the box's FPM php.ini baseline (read live via the agent). Keys
@@ -95,10 +100,10 @@ type getDomainPHPSettingsResponse struct {
 	// when the agent/pool can't be resolved; the UI then shows a generic label.
 	PoolDefaults map[string]string `json:"pool_defaults,omitempty"`
 	// Policy (GH #1701) is who may set each directive on this domain: the
-	// domain owner's package policy over models.PHPSettingCatalog. Both an
+	// domain owner's package policy over models.PHPPolicyDirectives. Both an
 	// admin and the owner get it, so the admin sees what the owner may change.
 	Policy map[string]models.PHPSettingLevel `json:"policy"`
-	// Editable lists the directives the CALLER may set: every catalog
+	// Editable lists the directives the CALLER may set: every policy
 	// directive for an admin, the ones their package permits for a tenant.
 	Editable []string `json:"editable"`
 	// OpcacheResetAllowed: the caller may reset this domain's OPcache (POST
@@ -128,6 +133,10 @@ type updateDomainPHPSettingsRequest struct {
 	PHPLogErrors    *bool `json:"php_log_errors"`
 	PHPFileUploads  *bool `json:"php_file_uploads"`
 	PHPShortOpenTag *bool `json:"php_short_open_tag"`
+	// GH #1701 Slice 3 admin values (nil = inherit). PHPOpenBasedir is
+	// validated against the owner's home by internal/phpbasedir.
+	PHPOpenBasedir   *string `json:"php_open_basedir"`
+	PHPAllowURLFopen *bool   `json:"php_allow_url_fopen"`
 }
 
 // regexes for input validation
@@ -233,6 +242,8 @@ func (h *domainPHPSettingsHandler) get(c *gin.Context) {
 		PHPLogErrors:         dom.PHPLogErrors,
 		PHPFileUploads:       dom.PHPFileUploads,
 		PHPShortOpenTag:      dom.PHPShortOpenTag,
+		PHPOpenBasedir:       dom.PHPOpenBasedir,
+		PHPAllowURLFopen:     dom.PHPAllowURLFopen,
 	}
 	resp.Policy, resp.Editable = h.callerPHPPolicy(ctx, phpPolicyAdmin(claims), dom.UserID)
 
@@ -461,6 +472,26 @@ func (h *domainPHPSettingsHandler) patch(c *gin.Context) {
 		}
 	}
 
+	// GH #1701 Slice 3: a changed open_basedir is checked against the
+	// owner's home. A tenant may only list folders inside it; an admin may add
+	// other paths, never another user's home. An unchanged value is the one
+	// already stored (the page sends a locked value back as is) and is not
+	// checked again: it may be an admin path a tenant could not have set.
+	if req.PHPOpenBasedir != nil && !eqPtr(req.PHPOpenBasedir, dom.PHPOpenBasedir) {
+		owner, oerr := h.ownerUsername(ctx, dom.UserID)
+		if oerr != nil {
+			slog.ErrorContext(ctx, "patch php-settings: resolve owner", "error", oerr, "user_id", dom.UserID)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+			return
+		}
+		norm, verr := phpbasedir.Normalize(*req.PHPOpenBasedir, owner, !phpPolicyAdmin(claims))
+		if verr != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": errInvalidPHPSetting("open_basedir: " + verr.Error()).Error()})
+			return
+		}
+		req.PHPOpenBasedir = &norm
+	}
+
 	// Update settings
 	settings := repository.DomainPHPSettings{
 		MemoryLimit:       req.PHPMemoryLimit,
@@ -475,6 +506,8 @@ func (h *domainPHPSettingsHandler) patch(c *gin.Context) {
 		LogErrors:         req.PHPLogErrors,
 		FileUploads:       req.PHPFileUploads,
 		ShortOpenTag:      req.PHPShortOpenTag,
+		OpenBasedir:       req.PHPOpenBasedir,
+		AllowURLFopen:     req.PHPAllowURLFopen,
 	}
 
 	if err := h.cfg.Domains.UpdatePHPSettings(ctx, domainID, settings); err != nil {
@@ -645,28 +678,46 @@ func (h *domainPHPSettingsHandler) ownerPackage(ctx context.Context, userID stri
 // caller may set. When the owner's package cannot be resolved, every
 // directive reads admin_only and a tenant may set none.
 func (h *domainPHPSettingsHandler) callerPHPPolicy(ctx context.Context, isAdmin bool, ownerID string) (map[string]models.PHPSettingLevel, []string) {
+	directives := models.PHPPolicyDirectives()
 	var policy map[string]models.PHPSettingLevel
 	pkg, err := h.ownerPackage(ctx, ownerID)
 	if err != nil {
 		slog.WarnContext(ctx, "php-settings: resolve owner package", "error", err, "user_id", ownerID)
-		policy = make(map[string]models.PHPSettingLevel, len(models.PHPSettingCatalog))
-		for _, d := range models.PHPSettingCatalog {
-			policy[d.Directive] = models.PHPSettingAdminOnly
+		policy = make(map[string]models.PHPSettingLevel, len(directives))
+		for _, d := range directives {
+			policy[d] = models.PHPSettingAdminOnly
 		}
 	} else {
 		policy = pkg.ResolvedPHPSettingsPolicy()
 	}
-	editable := make([]string, 0, len(models.PHPSettingCatalog))
-	for _, d := range models.PHPSettingCatalog {
-		if isAdmin || policy[d.Directive].TenantMaySet() {
-			editable = append(editable, d.Directive)
+	editable := make([]string, 0, len(directives))
+	for _, d := range directives {
+		if isAdmin || policy[d].TenantMaySet() {
+			editable = append(editable, d)
 		}
 	}
 	return policy, editable
 }
 
-// changedPHPDirectives lists, in catalog order, the directives whose value in
-// the request differs from the domain's stored value (nil = no override).
+// ownerUsername returns the system username of a domain's owner, whose home
+// bounds the domain's open_basedir.
+func (h *domainPHPSettingsHandler) ownerUsername(ctx context.Context, userID string) (string, error) {
+	if h.cfg.Users == nil {
+		return "", errors.New("php settings: users repository not wired")
+	}
+	user, err := h.cfg.Users.FindByID(ctx, userID)
+	if err != nil {
+		return "", fmt.Errorf("load owner: %w", err)
+	}
+	if user == nil || user.Username == nil || *user.Username == "" {
+		return "", errors.New("owner has no system username")
+	}
+	return *user.Username, nil
+}
+
+// changedPHPDirectives lists, in policy order (models.PHPPolicyDirectives),
+// the directives whose value in the request differs from the domain's stored
+// value (nil = no override).
 func changedPHPDirectives(req updateDomainPHPSettingsRequest, dom *models.Domain) []string {
 	changed := map[string]bool{
 		"memory_limit":        !eqPtr(req.PHPMemoryLimit, dom.PHPMemoryLimit),
@@ -681,14 +732,16 @@ func changedPHPDirectives(req updateDomainPHPSettingsRequest, dom *models.Domain
 		"log_errors":          !eqPtr(req.PHPLogErrors, dom.PHPLogErrors),
 		"file_uploads":        !eqPtr(req.PHPFileUploads, dom.PHPFileUploads),
 		"short_open_tag":      !eqPtr(req.PHPShortOpenTag, dom.PHPShortOpenTag),
+		"open_basedir":        !eqPtr(req.PHPOpenBasedir, dom.PHPOpenBasedir),
+		"allow_url_fopen":     !eqPtr(req.PHPAllowURLFopen, dom.PHPAllowURLFopen),
 	}
 	var out []string
-	for _, d := range models.PHPSettingCatalog {
-		// A catalog directive this map does not compare counts as changed, so
-		// adding one to the catalog without comparing it here locks it for a
+	for _, d := range models.PHPPolicyDirectives() {
+		// A policy directive this map does not compare counts as changed, so
+		// adding one to the policy without comparing it here locks it for a
 		// tenant rather than letting their change through unchecked.
-		if c, ok := changed[d.Directive]; !ok || c {
-			out = append(out, d.Directive)
+		if c, ok := changed[d]; !ok || c {
+			out = append(out, d)
 		}
 	}
 	return out

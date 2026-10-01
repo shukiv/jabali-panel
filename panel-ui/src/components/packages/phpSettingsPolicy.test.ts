@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  PHP_SENSITIVE_DOMAIN_DIRECTIVES,
   PHP_SETTING_DIRECTIVES,
   decodePHPSettingsPolicy,
   defaultPHPSettingsPolicy,
@@ -29,11 +30,22 @@ describe("php settings policy codec (GH #1701)", () => {
     }
   });
 
-  it("keeps a stored key outside the catalog through a round trip", () => {
+  it("keeps a stored key the editor does not render through a round trip", () => {
     // A security-sensitive directive opted in through the CLI must survive a
     // save from the editor, which does not render it.
-    const stored = '{"memory_limit":"admin_only","open_basedir":"tenant_privileged"}';
+    const stored = '{"include_path":"tenant_privileged","memory_limit":"admin_only"}';
     expect(encodePHPSettingsPolicy(decodePHPSettingsPolicy(stored))).toBe(stored);
+  });
+
+  it("a sensitive domain directive defaults to admin_only and stores only an opt-in", () => {
+    const p = defaultPHPSettingsPolicy();
+    for (const d of PHP_SENSITIVE_DOMAIN_DIRECTIVES) expect(p[d], d).toBe("admin_only");
+    expect(encodePHPSettingsPolicy(p)).toBe("");
+    p.allow_url_fopen = "tenant_privileged";
+    expect(encodePHPSettingsPolicy(p)).toBe('{"allow_url_fopen":"tenant_privileged"}');
+    expect(decodePHPSettingsPolicy('{"open_basedir":"tenant_privileged"}').open_basedir).toBe(
+      "tenant_privileged",
+    );
   });
 
   it("a malformed stored value loads as the defaults", () => {

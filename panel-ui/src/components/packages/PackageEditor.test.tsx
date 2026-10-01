@@ -105,11 +105,13 @@ describe("PackageEditor egress allowances (GH #1798)", () => {
 // GH #1701: one policy select per catalog directive, and a save keeps a stored
 // key the editor does not render (a sensitive directive set through the CLI).
 describe("PackageEditor PHP settings policy (GH #1701)", () => {
-  it("renders a policy select for every catalog directive", async () => {
-    const { PHP_SETTING_DIRECTIVES } = await import("./phpSettingsPolicy");
+  it("renders a policy select for every catalog and sensitive domain directive", async () => {
+    const { PHP_SENSITIVE_DOMAIN_DIRECTIVES, PHP_SETTING_DIRECTIVES } = await import(
+      "./phpSettingsPolicy"
+    );
     renderEditor();
-    for (const d of PHP_SETTING_DIRECTIVES) {
-      expect(screen.getByText(d), `missing policy row: ${d}`).toBeTruthy();
+    for (const d of [...PHP_SETTING_DIRECTIVES, ...PHP_SENSITIVE_DOMAIN_DIRECTIVES]) {
+      expect(screen.getAllByText(d).length, `missing policy row: ${d}`).toBeGreaterThan(0);
     }
   });
 
@@ -125,18 +127,19 @@ describe("PackageEditor PHP settings policy (GH #1701)", () => {
             ...PACKAGE_DEFAULTS,
             id: "pkg-1",
             name: "Basic",
-            php_settings_policy: '{"memory_limit":"admin_only","open_basedir":"tenant_privileged"}',
+            php_settings_policy:
+              '{"include_path":"tenant_privileged","memory_limit":"admin_only","open_basedir":"tenant_privileged"}',
           }}
           submitting={false}
           onSubmit={onSubmit}
         />
       </QueryClientProvider>,
     );
-    await screen.findByText("Admin only");
+    await screen.findAllByText("Admin only");
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(onSubmit).toHaveBeenCalled());
     expect(onSubmit.mock.calls[0][0].php_settings_policy).toBe(
-      '{"memory_limit":"admin_only","open_basedir":"tenant_privileged"}',
+      '{"include_path":"tenant_privileged","memory_limit":"admin_only","open_basedir":"tenant_privileged"}',
     );
   });
 });

@@ -101,27 +101,61 @@ func TestPHPSettingCatalogTSInSync(t *testing.T) {
 		t.Skipf("panel-ui catalog not readable (%v) — skipping cross-boundary check", err)
 	}
 	content := string(data)
-	start := strings.Index(content, "PHP_SETTING_DIRECTIVES")
-	if start < 0 {
-		t.Fatalf("phpSettingsPolicy.ts does not define PHP_SETTING_DIRECTIVES")
-	}
-	end := strings.Index(content[start:], "]")
-	if end < 0 {
-		t.Fatalf("PHP_SETTING_DIRECTIVES is not an array literal")
-	}
-	body := content[start : start+end]
-	var want []string
+	var catalog []string
 	for _, d := range PHPSettingCatalog {
-		want = append(want, `"`+d.Directive+`"`)
+		catalog = append(catalog, d.Directive)
 	}
-	var got []string
-	for _, f := range strings.FieldsFunc(body, func(r rune) bool { return r == ',' || r == '\n' || r == '[' }) {
-		f = strings.TrimSpace(f)
-		if strings.HasPrefix(f, `"`) {
-			got = append(got, f)
+	for _, tc := range []struct {
+		name string
+		want []string
+	}{
+		{"PHP_SETTING_DIRECTIVES", catalog},
+		{"PHP_SENSITIVE_DOMAIN_DIRECTIVES", PHPDomainSensitiveDirectives},
+	} {
+		start := strings.Index(content, "export const "+tc.name+" =")
+		if start < 0 {
+			t.Fatalf("phpSettingsPolicy.ts does not define %s", tc.name)
+		}
+		end := strings.Index(content[start:], "]")
+		if end < 0 {
+			t.Fatalf("%s is not an array literal", tc.name)
+		}
+		body := content[start : start+end]
+		var got []string
+		for _, f := range strings.FieldsFunc(body, func(r rune) bool { return r == ',' || r == '\n' || r == '[' }) {
+			f = strings.TrimSpace(f)
+			if strings.HasPrefix(f, `"`) {
+				got = append(got, strings.Trim(f, `"`))
+			}
+		}
+		if strings.Join(got, ",") != strings.Join(tc.want, ",") {
+			t.Fatalf("panel-ui %s = %v, want the Go list in order %v", tc.name, got, tc.want)
 		}
 	}
-	if strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Fatalf("panel-ui PHP_SETTING_DIRECTIVES = %v, want the Go catalog in order %v", got, want)
+}
+
+// The sensitive directives a domain can set are a subset of the sensitive
+// set, so they keep its admin_only floor, and a package that says nothing
+// leaves them admin-only (GH #1701 slice 3).
+func TestPHPDomainSensitiveDirectives(t *testing.T) {
+	sensitive := map[string]bool{}
+	for _, d := range PHPSensitiveDirectives {
+		sensitive[d] = true
+	}
+	var pkg *HostingPackage
+	resolved := (&HostingPackage{}).ResolvedPHPSettingsPolicy()
+	for _, d := range PHPDomainSensitiveDirectives {
+		if !sensitive[d] {
+			t.Fatalf("%s is not in PHPSensitiveDirectives", d)
+		}
+		if got := pkg.PHPSettingLevelFor(d); got != PHPSettingAdminOnly {
+			t.Errorf("no package: %s = %q, want admin_only", d, got)
+		}
+		if got, ok := resolved[d]; !ok || got != PHPSettingAdminOnly {
+			t.Errorf("resolved policy %s = %q (present %v), want admin_only", d, got, ok)
+		}
+	}
+	if got := len(PHPPolicyDirectives()); got != len(PHPSettingCatalog)+len(PHPDomainSensitiveDirectives) {
+		t.Fatalf("PHPPolicyDirectives has %d entries", got)
 	}
 }

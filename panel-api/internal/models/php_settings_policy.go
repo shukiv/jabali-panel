@@ -86,6 +86,30 @@ var PHPSensitiveDirectives = []string{
 	"session.save_path",
 }
 
+// PHPDomainSensitiveDirectives are the sensitive directives a domain's PHP
+// Settings page can set (GH #1701 slice 3). The agent renders them through
+// fastcgi_param PHP_ADMIN_VALUE and pins them on every PHP vhost, like the
+// standard ones. The other sensitive directives stay out: disable_functions is
+// a pool setting (a function PHP disables stays disabled for the worker's
+// life, so it cannot differ per domain), and an admin value for include_path
+// or session.save_path locks ini_set() on the shared worker for sibling
+// domains too. panel-ui mirrors this list in phpSettingsPolicy.ts.
+var PHPDomainSensitiveDirectives = []string{
+	"open_basedir",
+	"allow_url_fopen",
+}
+
+// PHPPolicyDirectives lists every directive a domain's PHP Settings page
+// writes, in display order: the standard catalog, then the sensitive ones a
+// domain can set.
+func PHPPolicyDirectives() []string {
+	out := make([]string, 0, len(PHPSettingCatalog)+len(PHPDomainSensitiveDirectives))
+	for _, d := range PHPSettingCatalog {
+		out = append(out, d.Directive)
+	}
+	return append(out, PHPDomainSensitiveDirectives...)
+}
+
 func phpSettingClass(directive string) (PHPSettingClass, PHPSettingLevel, bool) {
 	for _, d := range PHPSettingCatalog {
 		if d.Directive == directive {
@@ -191,12 +215,14 @@ func (l PHPSettingLevel) TenantMaySet() bool {
 	return l == PHPSettingTenantAllowed || l == PHPSettingTenantPrivileged
 }
 
-// ResolvedPHPSettingsPolicy returns the effective level of every catalog
-// directive for a package (nil = no package).
+// ResolvedPHPSettingsPolicy returns the effective level of every directive a
+// domain's PHP Settings page writes (PHPPolicyDirectives) for a package (nil =
+// no package).
 func (p *HostingPackage) ResolvedPHPSettingsPolicy() map[string]PHPSettingLevel {
-	out := make(map[string]PHPSettingLevel, len(PHPSettingCatalog))
-	for _, d := range PHPSettingCatalog {
-		out[d.Directive] = p.PHPSettingLevelFor(d.Directive)
+	directives := PHPPolicyDirectives()
+	out := make(map[string]PHPSettingLevel, len(directives))
+	for _, d := range directives {
+		out[d] = p.PHPSettingLevelFor(d)
 	}
 	return out
 }
