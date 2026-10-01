@@ -1,10 +1,14 @@
-# Bulwark Webmail 1.8.0 standalone tarball SHA-256.
-# Source: https://github.com/bulwarkmail/webmail/releases/tag/1.8.0
-#   asset: bulwark-standalone-1.8.0-linux-amd64.tar.gz
-# Captured 2026-08-08 directly from the GitHub release artifact.
-# 1.8.0 (2026-08-06): fixes the stale account chip after mailbox impersonation
-# (bulwarkmail/webmail#697, GH #646) — the handoff now drops the browser-cached
-# account list so the top-left chip follows the impersonated mailbox.
+# Bulwark Webmail 1.12.0 standalone tarball SHA-256.
+# Source: https://github.com/bulwarkmail/webmail/releases/tag/1.12.0
+#   asset: bulwark-standalone-1.12.0-linux-amd64.tar.gz
+# Captured 2026-10-01 from the GitHub release artifact; matches the release's
+# own .sha256 file and the digest GitHub publishes for the asset.
+# 1.8.1 - 1.12.0 fix 11 published advisories plus further security issues
+# (XSS through HTML mail and SVG previews, identity cookies minted without
+# checking credentials, tenant admins in the admin dashboard, cross-origin
+# JMAP passthrough writes). From 1.11.1 a
+# mailbox impersonation runs on an 8-hour app password Bulwark creates on the
+# mailbox, instead of carrying the Stalwart master password in the cookie.
 #
 # Bulwark ships a prebuilt "standalone" Next.js tarball (server.js +
 # node_modules + .next), so we no longer git-clone + `npm ci` +
@@ -16,4 +20,4 @@
 #   curl -sSL https://github.com/bulwarkmail/webmail/releases/download/<v>/bulwark-standalone-<v>-linux-amd64.tar.gz | sha256sum
 # Paste the returned 64-char hex below. install.sh `_die`s if the
 # placeholder PLACEHOLDER_CAPTURE_ON_FIRST_DEPLOY survives.
-df4f5f215735ef1768ed54c3e6b516ea7b3352add19a9f9f6627cf8c48529de4
+5081e046b5d7f00d3d42e5a0140c253e185e0f4e7f306e8591aac7cabaea3b61
