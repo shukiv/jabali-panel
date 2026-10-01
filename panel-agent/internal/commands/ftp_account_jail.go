@@ -44,7 +44,8 @@ import (
 // PrivateMounts OFF for it — proven on jabalitests), so the bind mount is
 // host-global and visible to a fresh sshd/vsftpd login with no namespace-escape
 // machinery. It does NOT survive reboot; the panel reconciler re-establishes it
-// each tick (DB-is-truth), and a boot oneshot converges before first login.
+// each tick (DB-is-truth, ftpaccount.ensure_jail). There is no boot-time unit,
+// so after a reboot an isolated account cannot log in until the first tick.
 
 // ftpJailRootDefault is the parent of every per-subaccount jail. Root-owned,
 // outside any tenant-writable tree.
