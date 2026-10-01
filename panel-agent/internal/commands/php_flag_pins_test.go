@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -84,10 +85,10 @@ func TestResolvePHPFlagPins_ReadFailureLeavesInheritedUnpinned(t *testing.T) {
 
 func TestResolvePHPFlagPins_NonPHPAndBadVersion(t *testing.T) {
 	calls := stubPHPIniBaseline(t, map[string]string{"log_errors": "1", "file_uploads": "1", "short_open_tag": ""}, nil)
-	if got := resolvePHPFlagPins(context.Background(), false, "8.4", phpFlagPins{LogErrors: boolp(true)}); got != (phpFlagPins{}) {
+	if got := resolvePHPFlagPins(context.Background(), false, "8.4", phpFlagPins{LogErrors: boolp(true)}); !reflect.DeepEqual(got, phpFlagPins{}) {
 		t.Fatalf("non-PHP vhost got %+v, want no pins", got)
 	}
-	if got := resolvePHPFlagPins(context.Background(), true, "8.4; rm -rf /", phpFlagPins{}); got != (phpFlagPins{}) {
+	if got := resolvePHPFlagPins(context.Background(), true, "8.4; rm -rf /", phpFlagPins{}); !reflect.DeepEqual(got, phpFlagPins{}) {
 		t.Fatalf("a malformed version must not be read, got %+v", got)
 	}
 	if *calls != 0 {
@@ -142,7 +143,7 @@ func TestPHPFlagPinsForParams_InheritUnknownPinsOnlySentValues(t *testing.T) {
 	}
 
 	p.HasPHP = false
-	if got := phpFlagPinsForParams(context.Background(), p); got != (phpFlagPins{}) {
+	if got := phpFlagPinsForParams(context.Background(), p); !reflect.DeepEqual(got, phpFlagPins{}) {
 		t.Fatalf("non-PHP vhost got %+v", got)
 	}
 }
@@ -150,12 +151,13 @@ func TestPHPFlagPinsForParams_InheritUnknownPinsOnlySentValues(t *testing.T) {
 // The JSON the panel sends decodes onto the params the pin decision reads.
 func TestDomainCreateParams_DecodePHPFlagFields(t *testing.T) {
 	var p domainCreateParams
-	raw := `{"has_php":true,"php_version":"8.4","php_log_errors":false,"php_file_uploads":true,"php_short_open_tag":true,"php_flags_inherit_unknown":true}`
+	raw := `{"has_php":true,"php_version":"8.4","php_log_errors":false,"php_file_uploads":true,"php_short_open_tag":true,"php_flags_inherit_unknown":true,"php_pool_values":{"memory_limit":"1G","date.timezone":"Europe/Berlin"}}`
 	if err := json.Unmarshal([]byte(raw), &p); err != nil {
 		t.Fatal(err)
 	}
 	if p.PHPLogErrors == nil || *p.PHPLogErrors || p.PHPFileUploads == nil || !*p.PHPFileUploads ||
-		p.PHPShortOpenTag == nil || !*p.PHPShortOpenTag || !p.PHPFlagsInheritUnknown {
+		p.PHPShortOpenTag == nil || !*p.PHPShortOpenTag || !p.PHPFlagsInheritUnknown ||
+		p.PHPPoolValues["memory_limit"] != "1G" || p.PHPPoolValues["date.timezone"] != "Europe/Berlin" {
 		t.Fatalf("decoded %+v", p)
 	}
 }

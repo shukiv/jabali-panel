@@ -113,6 +113,10 @@ type domainCreateParams struct {
 	PHPDisplayErrors  bool   `json:"php_display_errors,omitempty"`
 	PHPErrorReporting *int   `json:"php_error_reporting,omitempty"`
 	PHPTimezone       string `json:"php_timezone,omitempty"`
+	// PHPPoolValues (GH #1701) are the bound pool's own ini overrides for the
+	// per-domain value directives, keyed by directive. A directive the domain
+	// leaves unset is pinned to this value (phpInheritedValuePins).
+	PHPPoolValues map[string]string `json:"php_pool_values,omitempty"`
 	// GH #1701 Slice 2: log_errors / file_uploads / short_open_tag. nil => the
 	// panel has no value (neither the domain nor its pool sets one); the agent
 	// then pins the box php.ini baseline instead (resolvePHPFlagPins).

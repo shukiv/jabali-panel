@@ -21,7 +21,7 @@
 
 Leave a value at **Use pool default** to inherit the value of your PHP pool; the option shows that value, for example `256M (Default)` or `On (Default)`.
 
-`log_errors`, `file_uploads` and `short_open_tag` are set on every request of every PHP domain, including domains left on the default. So a value you set on one domain never carries over to another domain that runs on the same PHP pool.
+Every setting on this page is set on every request of every PHP domain, including domains left on the default. So a value you set on one domain never carries over to another domain that runs on the same PHP pool.
 
 ## Settings your administrator controls
 

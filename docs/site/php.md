@@ -63,6 +63,16 @@ badge** on any domain that differs from the account default:
   `display_errors` is pinned the same way (always Off unless the domain turns
   it on). A domain's own value takes precedence over a pool flag; use the
   package's PHP settings policy to stop a tenant from changing one.
+- The value settings (`memory_limit`, `upload_max_filesize`, `post_max_size`,
+  `max_input_vars`, `max_execution_time`, `max_input_time`, `error_reporting`,
+  `date.timezone`) are set on every PHP domain the same way. A domain that
+  leaves one unset gets the value it inherits: the pool's ini override, else
+  the pool template's shared-hosting default (`memory_limit` 512M, upload and
+  post size 512M, `max_execution_time` and `max_input_time` 300 s,
+  `max_input_vars` 10000), else the box's FPM `php.ini`. An empty
+  `date.timezone` is pinned as `UTC`, which is what PHP runs with. A value the
+  agent cannot read with confidence is not pinned. The **(Default)** label next
+  to each setting shows the same inherited value.
 - Per-domain environment variables passed to the FPM pool.
 - Per-domain log + cron shortcuts and an **OPcache reset** button.
 

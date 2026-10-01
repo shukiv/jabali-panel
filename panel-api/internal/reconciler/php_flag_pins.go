@@ -21,6 +21,15 @@ import (
 // be read, or two overrides disagree on one flag, php_flags_inherit_unknown
 // tells the agent not to pin the inherited value this pass (only the domain's
 // own values), rather than pin a baseline that may be wrong.
+//
+// The same read carries the pool's value overrides (memory_limit, the upload
+// and input limits, date.timezone) as php_pool_values: the agent pins each
+// value directive a domain leaves unset to that pool value, else the box
+// baseline (GH #1701 follow-up). Sending them here also changes the params
+// hash when an admin edits a pool override, so the vhost is re-pinned on the
+// next pass instead of keeping the old value for up to the forced 15-minute
+// redispatch. Two overrides that disagree on one value leave it out and mark
+// the inherited values unknown, like a conflicting flag.
 func (r *Reconciler) phpFlagPinParams(ctx context.Context, domain *models.Domain, poolID string) map[string]any {
 	flags := []struct {
 		param, directive string
@@ -36,6 +45,7 @@ func (r *Reconciler) phpFlagPinParams(ctx context.Context, domain *models.Domain
 	}
 	out := map[string]any{}
 	poolFlags := map[string]bool{}
+	poolValues := map[string]string{}
 	conflict := map[string]bool{}
 	switch {
 	case poolID == "" || r.phpPoolIniOverrides == nil:
@@ -53,6 +63,16 @@ func (r *Reconciler) phpFlagPinParams(ctx context.Context, domain *models.Domain
 			break
 		}
 		for _, o := range ovs {
+			if phpPinValueDirectives[o.Directive] {
+				if prev, seen := poolValues[o.Directive]; seen && prev != o.Value {
+					conflict[o.Directive] = true
+					r.log.Warn("php value pins: pool has conflicting overrides for one directive; pinning only the domain's own values",
+						"domain_id", domain.ID, "pool_id", poolID, "directive", o.Directive)
+					out["php_flags_inherit_unknown"] = true
+				}
+				poolValues[o.Directive] = o.Value
+				continue
+			}
 			if !tracked[o.Directive] {
 				continue
 			}
@@ -75,5 +95,28 @@ func (r *Reconciler) phpFlagPinParams(ctx context.Context, domain *models.Domain
 			out[f.param] = pv
 		}
 	}
+	sendValues := map[string]string{}
+	for d, v := range poolValues {
+		if !conflict[d] {
+			sendValues[d] = v
+		}
+	}
+	if len(sendValues) > 0 {
+		out["php_pool_values"] = sendValues
+	}
 	return out
+}
+
+// phpPinValueDirectives are the per-domain value directives whose pool
+// override is sent as php_pool_values. error_reporting has no pool override
+// (not in the agent's admin_value allowlist); it is listed for completeness.
+var phpPinValueDirectives = map[string]bool{
+	"memory_limit":        true,
+	"upload_max_filesize": true,
+	"post_max_size":       true,
+	"max_input_vars":      true,
+	"max_execution_time":  true,
+	"max_input_time":      true,
+	"error_reporting":     true,
+	"date.timezone":       true,
 }

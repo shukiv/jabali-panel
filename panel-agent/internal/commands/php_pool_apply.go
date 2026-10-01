@@ -637,11 +637,7 @@ func phpPoolApplyHandler(ctx context.Context, params json.RawMessage) (any, erro
 	poolName := fmt.Sprintf("jabali-%s", slug)
 
 	// Render the template.
-	// Support JABALI_PHP_POOL_TEMPLATE_PATH env var for testing.
-	tmplPath := os.Getenv("JABALI_PHP_POOL_TEMPLATE_PATH")
-	if tmplPath == "" {
-		tmplPath = "/etc/jabali-panel/php-pool.conf.tmpl"
-	}
+	tmplPath := poolTemplatePath()
 	tmplData, err := os.ReadFile(tmplPath)
 	if err != nil {
 		return nil, &agentwire.AgentError{
