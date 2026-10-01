@@ -37,7 +37,7 @@ func TestForwarderCreate_RefusesAPostmasterAliasOnATenantDomain(t *testing.T) {
 // On the panel hostname's domain postmaster@ is the admin's own address.
 func TestForwarderCreate_AllowsAPostmasterAliasOnThePanelDomain(t *testing.T) {
 	h := newForwarderHandlerFake(nil)
-	h.cfg.Domains = fwFakeDomains{dom: &models.Domain{ID: "dom1", Name: "panel.example.com", UserID: "u1", IsPanelPrimary: true}}
+	h.cfg.Domains = fwFakeDomains{dom: &models.Domain{ID: "dom1", Name: "panel.example.com", UserID: "u1", IsPanelPrimary: true, OwnershipState: models.OwnershipState{OwnershipStatus: models.OwnershipVerified}}}
 	w := postForwarder(h, `{"type":"alias","local_part":"postmaster"}`)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("want 201, got %d %s", w.Code, w.Body.String())
@@ -49,7 +49,7 @@ func TestForwarderCreate_AllowsAPostmasterAliasOnThePanelDomain(t *testing.T) {
 func TestForwarderCreate_DatabaseRefusalIsAReservedAddress(t *testing.T) {
 	h := newForwarderHandlerFake(nil)
 	h.cfg.Forwarders = &fwRefusingForwarders{}
-	h.cfg.Domains = fwFakeDomains{dom: &models.Domain{ID: "dom1", Name: "panel.example.com", UserID: "u1", IsPanelPrimary: true}}
+	h.cfg.Domains = fwFakeDomains{dom: &models.Domain{ID: "dom1", Name: "panel.example.com", UserID: "u1", IsPanelPrimary: true, OwnershipState: models.OwnershipState{OwnershipStatus: models.OwnershipVerified}}}
 	w := postForwarder(h, `{"type":"alias","local_part":"postmaster"}`)
 	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "reserved_local_part") {
 		t.Fatalf("want 400 reserved_local_part, got %d %s", w.Code, w.Body.String())

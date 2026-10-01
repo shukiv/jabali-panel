@@ -13728,6 +13728,141 @@ elif isinstance(d, dict) and d.get("id"):
   done
 }
 
+# converge_stalwart_directory_queries [jmap_port] [admin_token] — the ADR-0073
+# converger for the SQL x:Directory query fields (queryLogin, queryRecipient,
+# queryEmailAliases). install_stalwart_apply runs it on every install/update,
+# and `jabali update` runs it again right after `migrate up` (see below).
+# Defaults: port 8446 and the admin token file, as on an installed box.
+# Returns 1 when the Directory could not be updated.
+#
+# GH #371: `AND m.send_only = 0` excludes send-only mailboxes from the
+# recipient/delivery lookup while queryLogin (auth) still returns them —
+# so a send-only account can submit mail but inbound gets a 550 (no valid
+# recipient) and nothing is ever stored. Same gate shape as is_disabled.
+# GH #1818: this converger is authoritative (ADR-0073 — it overwrites the
+# x:Directory query fields on every install/update, so the apply-plan base
+# never wins on an existing box). It previously lacked the mail_groups
+# member-expansion that apply-plan gained in M51 (712ca9587), so a message to
+# group@domain resolved to zero rows and Stalwart returned 550 on every
+# installed host. Keep this byte-identical to apply-plan.json.tmpl's
+# queryRecipient: mailboxes (is_disabled=0, send_only=0) + mail_groups
+# member fan-out (has_mailbox=1, member not disabled/send-only) + alias
+# forwarder resolution. GH #371 send_only=0 is preserved in both branches.
+# The member fan-out applies only to groups projected as a Stalwart Group
+# account (resource groups and internal-only distribution lists): Stalwart
+# refuses delivery to a bare Group address unless the directory resolves it
+# to member rows (ADR-0132). A plain distribution list is a native Stalwart
+# mailing list, and a directory match on its address shadows the list, so
+# delivery fails with "Mailbox not found" (GH #1818, verified on 0.16.15).
+# queryLogin: an enabled mailbox whose domain's owner is not suspended.
+# A suspended user's mailboxes stop signing in (IMAP, POP3, SMTP
+# submission, JMAP, webmail) but keep receiving and keep their mail:
+# queryRecipient does not look at suspension. The suspension check is a
+# NOT EXISTS, so a domain whose owner row cannot be found is not locked out
+# by it.
+# Postmaster (ADR-0110): RFC 5321 requires every mail domain to accept
+# postmaster@, and receivers send DMARC and TLS reports there. For an
+# email-enabled domain with no postmaster mailbox, alias or group of its
+# own, queryRecipient resolves postmaster@<domain> to the postmaster
+# mailbox on the panel-primary domain, and queryEmailAliases lists those
+# addresses on that mailbox: Stalwart's local delivery answers "Mailbox not
+# found" for an address the account does not own. Stalwart keeps each such
+# address on the admin's account for good, so a tenant postmaster made later
+# would sign in to the admin's mailbox: migration 000309 refuses any new
+# postmaster@ row on a domain that is not the panel's. A postmaster a domain
+# had before that keeps its mail (the NOT EXISTS clauses). Never set
+# ReportSettings.inboundReportForwarding to false: Stalwart then drops ALL
+# mail to postmaster@, not only the reports (verified on 0.16, 2026-09-29).
+# Alias branches (queryRecipient's alias lookup, queryEmailAliases): an
+# alias at an address a mailbox also holds is ignored, so the mailbox wins.
+# Stalwart copies every alias into its registry and resolves an address
+# there first; an alias that kept a mailbox's address put the mailbox's
+# mail and sign-in on the alias owner's account. The panel refuses such
+# pairs (migration 000306); this covers pairs made before it.
+# GH #1816 / ADR-0170: every branch (the alias lookup and the postmaster
+# fallback included) joins domains and requires ownership_status =
+# 'verified', so an address on a name its owner has not proven is never a
+# local recipient: mail another tenant or a web app sends to it goes to the
+# real MX instead.
+#
+# GH #1816 / ADR-0170: queryLogin also requires a verified domain, so a
+# mailbox on a domain an administrator sent back to pending cannot sign in
+# (IMAP, POP3, SMTP submission, JMAP, webmail) and so cannot send as a name
+# its owner has not proven. Its mail stays stored and is reachable again once
+# the domain is verified.
+#
+# The ownership filters read domains.ownership_status (migration 000311). On
+# `jabali update`, provision_new_software runs this BEFORE `migrate up`, and on
+# a box that has not migrated yet a query naming that column would fail every
+# lookup: no mail in and no login until the migration ran, or for good if the
+# update stopped in between (a failed migrate rolls the binaries back). So the
+# filtered queries are written only when the column exists; otherwise the
+# pre-#1816 queries stay (suspension, alias and postmaster rules as above, no
+# ownership filter), and `jabali update` calls this again after the migration
+# ("converge Stalwart directory queries" step).
+converge_stalwart_directory_queries() {
+  local jmap_port="${1:-8446}"
+  local admin_token="${2:-}"
+  local cli="${JABALI_STALWART_CLI:-/usr/local/bin/stalwart-cli}"
+  if [[ -z "$admin_token" ]]; then
+    admin_token="$(cat /etc/jabali-panel/stalwart-admin.token 2>/dev/null || true)"
+  fi
+  if [[ -z "$admin_token" ]]; then
+    _warn "Stalwart admin token missing — skipping Directory query-field convergence"
+    return 1
+  fi
+
+  _log "converging Stalwart Directory query fields (ADR-0073)"
+  local sql_dir_id
+  sql_dir_id="$(STALWART_URL="http://127.0.0.1:${jmap_port}" \
+    STALWART_USER="admin" \
+    STALWART_PASSWORD="$admin_token" \
+    "$cli" query Directory --json 2>/dev/null \
+    | python3 -c 'import json,sys
+# stalwart-cli >=1.0.7 emits NDJSON (one object per line), not a JSON array —
+# json.load() would raise "Extra data" and the id never resolved, silently
+# skipping query-field convergence. Parse line-by-line.
+data = [json.loads(l) for l in sys.stdin if l.strip()]
+sql = [d for d in data if d.get("@type") == "Sql"]
+print(sql[0]["id"] if sql else "")' 2>/dev/null || true)"
+  if [[ -z "$sql_dir_id" ]]; then
+    _warn "could not resolve SQL Directory id — skipping query-field convergence"
+    return 1
+  fi
+
+  local query_login="SELECT m.email_cached, m.password_hash FROM mailboxes m JOIN domains d ON d.id = m.domain_id WHERE m.email_cached = ? AND m.is_disabled = 0 AND d.ownership_status = 'verified' AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = d.user_id AND u.suspended = 1)"
+  local query_recipient="SELECT u.email_cached, u.password_hash FROM (SELECT ? AS lookup) input JOIN (SELECT m.email_cached AS email_cached, m.password_hash AS password_hash, m.email_cached AS match_key FROM mailboxes m JOIN domains md ON md.id = m.domain_id WHERE m.is_disabled = 0 AND m.send_only = 0 AND md.ownership_status = 'verified' UNION ALL SELECT mb.email_cached, mb.password_hash, g.email_cached AS match_key FROM mail_groups g JOIN domains gd ON gd.id = g.domain_id JOIN mail_group_members gm ON gm.group_id = g.id JOIN mailboxes mb ON mb.id = gm.mailbox_id JOIN domains mbd ON mbd.id = mb.domain_id WHERE g.has_mailbox = 1 AND (g.group_kind <> 'distribution' OR g.internal_only = 1) AND mb.is_disabled = 0 AND mb.send_only = 0 AND gd.ownership_status = 'verified' AND mbd.ownership_status = 'verified') u ON (u.match_key = input.lookup OR u.email_cached = (SELECT mb2.email_cached FROM email_forwarders f JOIN domains d ON d.id = f.domain_id JOIN mailboxes mb2 ON mb2.id = f.mailbox_id WHERE f.enabled = 1 AND f.type = 'alias' AND f.mailbox_id IS NOT NULL AND d.ownership_status = 'verified' AND CONCAT(f.local_part, '@', d.name) = input.lookup AND NOT EXISTS (SELECT 1 FROM mailboxes xo WHERE xo.domain_id = f.domain_id AND xo.local_part = f.local_part) LIMIT 1) OR u.match_key = (SELECT pm.email_cached FROM domains pd JOIN domains hd ON hd.is_panel_primary = 1 JOIN mailboxes pm ON pm.domain_id = hd.id WHERE pm.local_part = 'postmaster' AND pd.email_enabled = 1 AND pd.ownership_status = 'verified' AND CONCAT('postmaster@', pd.name) = input.lookup AND NOT EXISTS (SELECT 1 FROM mailboxes xm WHERE xm.domain_id = pd.id AND xm.local_part = 'postmaster') AND NOT EXISTS (SELECT 1 FROM email_forwarders xf WHERE xf.domain_id = pd.id AND xf.local_part = 'postmaster') AND NOT EXISTS (SELECT 1 FROM mail_groups xg WHERE xg.email_cached = input.lookup) LIMIT 1))"
+  local query_aliases="SELECT a.alias FROM (SELECT ? AS lookup) input JOIN (SELECT CONCAT(f.local_part, '@', d.name) AS alias, m.email_cached AS owner FROM email_forwarders f JOIN domains d ON d.id = f.domain_id JOIN mailboxes m ON m.id = f.mailbox_id WHERE f.enabled = 1 AND f.type = 'alias' AND d.ownership_status = 'verified' AND NOT EXISTS (SELECT 1 FROM mailboxes xo WHERE xo.domain_id = f.domain_id AND xo.local_part = f.local_part) UNION ALL SELECT CONCAT('postmaster@', pd.name) AS alias, pm.email_cached AS owner FROM domains pd JOIN domains hd ON hd.is_panel_primary = 1 JOIN mailboxes pm ON pm.domain_id = hd.id WHERE pm.local_part = 'postmaster' AND pd.email_enabled = 1 AND pd.ownership_status = 'verified' AND NOT EXISTS (SELECT 1 FROM mailboxes xm WHERE xm.domain_id = pd.id AND xm.local_part = 'postmaster') AND NOT EXISTS (SELECT 1 FROM email_forwarders xf WHERE xf.domain_id = pd.id AND xf.local_part = 'postmaster') AND NOT EXISTS (SELECT 1 FROM mail_groups xg WHERE xg.email_cached = CONCAT('postmaster@', pd.name))) a ON a.owner = input.lookup"
+
+  local have_ownership
+  have_ownership="$(mariadb -N -B -e "SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = 'jabali_panel' AND TABLE_NAME = 'domains' AND COLUMN_NAME = 'ownership_status'" 2>/dev/null || true)"
+  if [[ "$have_ownership" != "1" ]]; then
+    _warn "domains.ownership_status not migrated yet — keeping the pre-GH #1816 Directory queries until the migration runs"
+    query_login="SELECT m.email_cached, m.password_hash FROM mailboxes m WHERE m.email_cached = ? AND m.is_disabled = 0 AND NOT EXISTS (SELECT 1 FROM domains d JOIN users u ON u.id = d.user_id WHERE d.id = m.domain_id AND u.suspended = 1)"
+    query_recipient="SELECT u.email_cached, u.password_hash FROM (SELECT ? AS lookup) input JOIN (SELECT m.email_cached AS email_cached, m.password_hash AS password_hash, m.email_cached AS match_key FROM mailboxes m WHERE m.is_disabled = 0 AND m.send_only = 0 UNION ALL SELECT mb.email_cached, mb.password_hash, g.email_cached AS match_key FROM mail_groups g JOIN mail_group_members gm ON gm.group_id = g.id JOIN mailboxes mb ON mb.id = gm.mailbox_id WHERE g.has_mailbox = 1 AND (g.group_kind <> 'distribution' OR g.internal_only = 1) AND mb.is_disabled = 0 AND mb.send_only = 0) u ON (u.match_key = input.lookup OR u.email_cached = (SELECT mb2.email_cached FROM email_forwarders f JOIN domains d ON d.id = f.domain_id JOIN mailboxes mb2 ON mb2.id = f.mailbox_id WHERE f.enabled = 1 AND f.type = 'alias' AND f.mailbox_id IS NOT NULL AND CONCAT(f.local_part, '@', d.name) = input.lookup AND NOT EXISTS (SELECT 1 FROM mailboxes xo WHERE xo.domain_id = f.domain_id AND xo.local_part = f.local_part) LIMIT 1) OR u.match_key = (SELECT pm.email_cached FROM domains pd JOIN domains hd ON hd.is_panel_primary = 1 JOIN mailboxes pm ON pm.domain_id = hd.id WHERE pm.local_part = 'postmaster' AND pd.email_enabled = 1 AND CONCAT('postmaster@', pd.name) = input.lookup AND NOT EXISTS (SELECT 1 FROM mailboxes xm WHERE xm.domain_id = pd.id AND xm.local_part = 'postmaster') AND NOT EXISTS (SELECT 1 FROM email_forwarders xf WHERE xf.domain_id = pd.id AND xf.local_part = 'postmaster') AND NOT EXISTS (SELECT 1 FROM mail_groups xg WHERE xg.email_cached = input.lookup) LIMIT 1))"
+    query_aliases="SELECT a.alias FROM (SELECT ? AS lookup) input JOIN (SELECT CONCAT(f.local_part, '@', d.name) AS alias, m.email_cached AS owner FROM email_forwarders f JOIN domains d ON d.id = f.domain_id JOIN mailboxes m ON m.id = f.mailbox_id WHERE f.enabled = 1 AND f.type = 'alias' AND NOT EXISTS (SELECT 1 FROM mailboxes xo WHERE xo.domain_id = f.domain_id AND xo.local_part = f.local_part) UNION ALL SELECT CONCAT('postmaster@', pd.name) AS alias, pm.email_cached AS owner FROM domains pd JOIN domains hd ON hd.is_panel_primary = 1 JOIN mailboxes pm ON pm.domain_id = hd.id WHERE pm.local_part = 'postmaster' AND pd.email_enabled = 1 AND NOT EXISTS (SELECT 1 FROM mailboxes xm WHERE xm.domain_id = pd.id AND xm.local_part = 'postmaster') AND NOT EXISTS (SELECT 1 FROM email_forwarders xf WHERE xf.domain_id = pd.id AND xf.local_part = 'postmaster') AND NOT EXISTS (SELECT 1 FROM mail_groups xg WHERE xg.email_cached = CONCAT('postmaster@', pd.name))) a ON a.owner = input.lookup"
+  fi
+
+  local patch_json
+  patch_json="$(python3 -c 'import json,sys; print(json.dumps({"queryLogin": sys.argv[1], "queryRecipient": sys.argv[2], "queryEmailAliases": sys.argv[3]}))' "$query_login" "$query_recipient" "$query_aliases")"
+  if ! STALWART_URL="http://127.0.0.1:${jmap_port}" \
+    STALWART_USER="admin" \
+    STALWART_PASSWORD="$admin_token" \
+    "$cli" update Directory "$sql_dir_id" --json "$patch_json" >/dev/null 2>&1; then
+    _warn "Stalwart Directory update failed for id ${sql_dir_id} — logins, recipients and aliases keep their previous queries"
+    return 1
+  fi
+  # An updated Directory takes effect only after a settings reload (verified
+  # on 0.16.15); a later restart does it too, but the post-migrate call has none.
+  if ! STALWART_URL="http://127.0.0.1:${jmap_port}" \
+    STALWART_USER="admin" \
+    STALWART_PASSWORD="$admin_token" \
+    "$cli" create Action --json '{"@type":"ReloadSettings"}' >/dev/null 2>&1; then
+    _warn "Stalwart ReloadSettings failed — the new Directory queries take effect at the next Stalwart restart"
+  fi
+  _ok "Stalwart Directory query fields converged (id=${sql_dir_id})"
+}
+
 # _install_stalwart_apply_plan starts Stalwart (if not already running),
 # waits for /jmap to be reachable, runs stalwart-cli apply against the
 # rendered plan, then deletes factory listeners and restarts. Idempotent:
@@ -13887,82 +14022,7 @@ _install_stalwart_apply_plan() {
   # edits to its query fields can't land via apply (no upsert). Update
   # them directly here on every install/update run, regardless of
   # skip_apply, so the live config tracks the template.
-  _log "converging Stalwart Directory query fields (ADR-0073)"
-  local sql_dir_id
-  sql_dir_id="$(STALWART_URL="http://127.0.0.1:${jmap_port}" \
-    STALWART_USER="admin" \
-    STALWART_PASSWORD="$admin_token" \
-    /usr/local/bin/stalwart-cli query Directory --json 2>/dev/null \
-    | python3 -c 'import json,sys
-# stalwart-cli >=1.0.7 emits NDJSON (one object per line), not a JSON array —
-# json.load() would raise "Extra data" and the id never resolved, silently
-# skipping query-field convergence. Parse line-by-line.
-data = [json.loads(l) for l in sys.stdin if l.strip()]
-sql = [d for d in data if d.get("@type") == "Sql"]
-print(sql[0]["id"] if sql else "")' 2>/dev/null || true)"
-  if [[ -z "$sql_dir_id" ]]; then
-    _warn "could not resolve SQL Directory id — skipping query-field convergence"
-  else
-    # GH #371: `AND m.send_only = 0` excludes send-only mailboxes from the
-    # recipient/delivery lookup while queryLogin (auth) still returns them —
-    # so a send-only account can submit mail but inbound gets a 550 (no valid
-    # recipient) and nothing is ever stored. Same gate shape as is_disabled.
-    # GH #1818: this converger is authoritative (ADR-0073 — it overwrites the
-    # x:Directory query fields on every install/update, so the apply-plan base
-    # never wins on an existing box). It previously lacked the mail_groups
-    # member-expansion that apply-plan gained in M51 (712ca9587), so a message to
-    # group@domain resolved to zero rows and Stalwart returned 550 on every
-    # installed host. Keep this byte-identical to apply-plan.json.tmpl's
-    # queryRecipient: mailboxes (is_disabled=0, send_only=0) + mail_groups
-    # member fan-out (has_mailbox=1, member not disabled/send-only) + alias
-    # forwarder resolution. GH #371 send_only=0 is preserved in both branches.
-    # The member fan-out applies only to groups projected as a Stalwart Group
-    # account (resource groups and internal-only distribution lists): Stalwart
-    # refuses delivery to a bare Group address unless the directory resolves it
-    # to member rows (ADR-0132). A plain distribution list is a native Stalwart
-    # mailing list, and a directory match on its address shadows the list, so
-    # delivery fails with "Mailbox not found" (GH #1818, verified on 0.16.15).
-    # queryLogin: an enabled mailbox whose domain's owner is not suspended.
-    # A suspended user's mailboxes stop signing in (IMAP, POP3, SMTP
-    # submission, JMAP, webmail) but keep receiving and keep their mail:
-    # queryRecipient does not look at suspension. NOT EXISTS, not a join, so a
-    # mailbox whose domain row or owner cannot be found is not locked out.
-    # Keep byte-identical to apply-plan.json.tmpl's queryLogin.
-    # Postmaster (ADR-0110): RFC 5321 requires every mail domain to accept
-    # postmaster@, and receivers send DMARC and TLS reports there. For an
-    # email-enabled domain with no postmaster mailbox, alias or group of its
-    # own, queryRecipient resolves postmaster@<domain> to the postmaster
-    # mailbox on the panel-primary domain, and queryEmailAliases lists those
-    # addresses on that mailbox: Stalwart's local delivery answers "Mailbox not
-    # found" for an address the account does not own. Keep both byte-identical
-    # to apply-plan.json.tmpl. Stalwart keeps each such address on the admin's
-    # account for good, so a tenant postmaster made later would sign in to the
-    # admin's mailbox: migration 000309 refuses any new postmaster@ row on a
-    # domain that is not the panel's. A postmaster a domain had before that
-    # keeps its mail (the NOT EXISTS clauses). Never set
-    # ReportSettings.inboundReportForwarding to false: Stalwart then drops ALL
-    # mail to postmaster@, not only the reports (verified on 0.16, 2026-09-29).
-    # Alias branches (queryRecipient's alias lookup, queryEmailAliases): an
-    # alias at an address a mailbox also holds is ignored, so the mailbox wins.
-    # Stalwart copies every alias into its registry and resolves an address
-    # there first; an alias that kept a mailbox's address put the mailbox's
-    # mail and sign-in on the alias owner's account. The panel refuses such
-    # pairs (migration 000306); this covers pairs made before it. Keep both
-    # byte-identical to apply-plan.json.tmpl.
-    local query_login="SELECT m.email_cached, m.password_hash FROM mailboxes m WHERE m.email_cached = ? AND m.is_disabled = 0 AND NOT EXISTS (SELECT 1 FROM domains d JOIN users u ON u.id = d.user_id WHERE d.id = m.domain_id AND u.suspended = 1)"
-    local query_recipient="SELECT u.email_cached, u.password_hash FROM (SELECT ? AS lookup) input JOIN (SELECT m.email_cached AS email_cached, m.password_hash AS password_hash, m.email_cached AS match_key FROM mailboxes m WHERE m.is_disabled = 0 AND m.send_only = 0 UNION ALL SELECT mb.email_cached, mb.password_hash, g.email_cached AS match_key FROM mail_groups g JOIN mail_group_members gm ON gm.group_id = g.id JOIN mailboxes mb ON mb.id = gm.mailbox_id WHERE g.has_mailbox = 1 AND (g.group_kind <> 'distribution' OR g.internal_only = 1) AND mb.is_disabled = 0 AND mb.send_only = 0) u ON (u.match_key = input.lookup OR u.email_cached = (SELECT mb2.email_cached FROM email_forwarders f JOIN domains d ON d.id = f.domain_id JOIN mailboxes mb2 ON mb2.id = f.mailbox_id WHERE f.enabled = 1 AND f.type = 'alias' AND f.mailbox_id IS NOT NULL AND CONCAT(f.local_part, '@', d.name) = input.lookup AND NOT EXISTS (SELECT 1 FROM mailboxes xo WHERE xo.domain_id = f.domain_id AND xo.local_part = f.local_part) LIMIT 1) OR u.match_key = (SELECT pm.email_cached FROM domains pd JOIN domains hd ON hd.is_panel_primary = 1 JOIN mailboxes pm ON pm.domain_id = hd.id WHERE pm.local_part = 'postmaster' AND pd.email_enabled = 1 AND CONCAT('postmaster@', pd.name) = input.lookup AND NOT EXISTS (SELECT 1 FROM mailboxes xm WHERE xm.domain_id = pd.id AND xm.local_part = 'postmaster') AND NOT EXISTS (SELECT 1 FROM email_forwarders xf WHERE xf.domain_id = pd.id AND xf.local_part = 'postmaster') AND NOT EXISTS (SELECT 1 FROM mail_groups xg WHERE xg.email_cached = input.lookup) LIMIT 1))"
-    local query_aliases="SELECT a.alias FROM (SELECT ? AS lookup) input JOIN (SELECT CONCAT(f.local_part, '@', d.name) AS alias, m.email_cached AS owner FROM email_forwarders f JOIN domains d ON d.id = f.domain_id JOIN mailboxes m ON m.id = f.mailbox_id WHERE f.enabled = 1 AND f.type = 'alias' AND NOT EXISTS (SELECT 1 FROM mailboxes xo WHERE xo.domain_id = f.domain_id AND xo.local_part = f.local_part) UNION ALL SELECT CONCAT('postmaster@', pd.name) AS alias, pm.email_cached AS owner FROM domains pd JOIN domains hd ON hd.is_panel_primary = 1 JOIN mailboxes pm ON pm.domain_id = hd.id WHERE pm.local_part = 'postmaster' AND pd.email_enabled = 1 AND NOT EXISTS (SELECT 1 FROM mailboxes xm WHERE xm.domain_id = pd.id AND xm.local_part = 'postmaster') AND NOT EXISTS (SELECT 1 FROM email_forwarders xf WHERE xf.domain_id = pd.id AND xf.local_part = 'postmaster') AND NOT EXISTS (SELECT 1 FROM mail_groups xg WHERE xg.email_cached = CONCAT('postmaster@', pd.name))) a ON a.owner = input.lookup"
-    local patch_json
-    patch_json="$(python3 -c 'import json,sys; print(json.dumps({"queryLogin": sys.argv[1], "queryRecipient": sys.argv[2], "queryEmailAliases": sys.argv[3]}))' "$query_login" "$query_recipient" "$query_aliases")"
-    if STALWART_URL="http://127.0.0.1:${jmap_port}" \
-      STALWART_USER="admin" \
-      STALWART_PASSWORD="$admin_token" \
-      /usr/local/bin/stalwart-cli update Directory "$sql_dir_id" --json "$patch_json" >/dev/null 2>&1; then
-      _ok "Stalwart Directory query fields converged (id=${sql_dir_id})"
-    else
-      _warn "Stalwart Directory update failed for id ${sql_dir_id} — aliases may not resolve"
-    fi
-  fi
+  converge_stalwart_directory_queries "$jmap_port" "$admin_token" || true
 
   # SpamSettings convergence — same pattern as the Directory query-field
   # convergence above. The base apply-plan's `update x:SpamSettings`

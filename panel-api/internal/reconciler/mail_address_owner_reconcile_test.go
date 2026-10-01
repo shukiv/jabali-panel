@@ -179,7 +179,7 @@ func TestReconcileSendmailCreds_RelayMailboxReleasesItsAddress(t *testing.T) {
 			domainNames: map[string]string{"d1": "site.tld"},
 		}
 		r := sendmailTestReconciler(&fakeSendmailAgent{}, mailboxes, []models.Domain{
-			{ID: "d1", Name: "site.tld", UserID: "u1", EmailEnabled: true},
+			{OwnershipState: verifiedOwnership, ID: "d1", Name: "site.tld", UserID: "u1", EmailEnabled: true},
 		})
 		r.mailAddrRegistry = nil
 		if reg != nil {

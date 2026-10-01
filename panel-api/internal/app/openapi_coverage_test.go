@@ -19,6 +19,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/config"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dockerapp"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/notifications"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ownershipops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/pyframeworks"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/reconciler"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
@@ -119,6 +120,12 @@ func fullDeps() Deps {
 		SharedCerts: repository.NewSharedCertificateRepository(db),
 		WebDomainAliases: repository.NewWebDomainAliasRepository(db),
 		MailHostSwitchover: repository.NewMailHostnameSwitchoverRepository(db),
+		// GH #1816: mounts the /domains/:id/ownership and
+		// /admin/domain-ownership routes.
+		OwnershipService: ownershipops.New(ownershipops.Deps{
+			Store:   repository.NewDomainOwnershipRepository(db),
+			Domains: repository.NewDomainRepository(db),
+		}),
 		DB:         db,
 		Agent:      agent.NewMockClient(),
 		Reconciler: &reconciler.Reconciler{},

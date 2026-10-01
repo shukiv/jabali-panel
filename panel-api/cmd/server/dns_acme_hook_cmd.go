@@ -14,6 +14,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/dnsverify"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dns01"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dnscompile"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/domainops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
@@ -319,6 +320,9 @@ func acmeHookCleanup(ctx context.Context, domain, validation string) error {
 // runs, so the hook's push and the next tick's push are idempotent
 // twins rather than two competing writers.
 func pushZoneToPdns(ctx context.Context, zone *models.DNSZone) error {
+	if err := zonePushAllowed(ctx, domainRepoFromDB(), zone); err != nil {
+		return err
+	}
 	zones := dnsZoneRepoFromDB()
 	records := dnsRecordRepoFromDB()
 	srv, _ := repository.NewServerSettingsRepository(sharedDB).Get(ctx)
@@ -348,6 +352,30 @@ func pushZoneToPdns(ctx context.Context, zone *models.DNSZone) error {
 		"also_notify":     alsoNotify,
 	}); err != nil {
 		return fmt.Errorf("dns.zone.upsert %s: %w", zone.Name, err)
+	}
+	return nil
+}
+
+// zoneDomainFinder loads the domain that owns a zone.
+type zoneDomainFinder interface {
+	FindByID(ctx context.Context, id string) (*models.Domain, error)
+}
+
+// zonePushAllowed refuses to publish the zone of a domain whose owner has
+// not proven the name (GH #1816 / ADR-0170): the reconciler keeps that zone
+// off the authoritative server, and a DNS-01 challenge must not put it back.
+// A lookup failure refuses too (fail closed). A zone with no owning domain
+// row (none today) is not gated.
+func zonePushAllowed(ctx context.Context, domains zoneDomainFinder, zone *models.DNSZone) error {
+	if zone == nil || zone.DomainID == "" {
+		return nil
+	}
+	d, err := domains.FindByID(ctx, zone.DomainID)
+	if err != nil {
+		return fmt.Errorf("zone %s: load owning domain: %w", zone.Name, err)
+	}
+	if !domainops.OwnershipVerified(d) {
+		return fmt.Errorf("zone %s: the domain's ownership is not proven yet; its zone is not published", zone.Name)
 	}
 	return nil
 }

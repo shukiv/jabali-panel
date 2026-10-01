@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/domainops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
@@ -340,6 +341,14 @@ func computeBackfillPlan(desired map[string]bool, actual map[string]actualForwar
 	return plan
 }
 
+// backfillWantsForward reports whether a domain's zone belongs in the
+// recursor's forwards: enabled, and (GH #1816 / ADR-0170) proven — no
+// process on this server resolves an unproven name from the tenant's zone,
+// so a pending domain's forward is planned for removal.
+func backfillWantsForward(d *models.Domain) bool {
+	return d.IsEnabled && domainops.OwnershipVerified(d)
+}
+
 func (o *pdnsBackfillOpts) run(ctx context.Context) error {
 	// 1. Walk enabled domains from the DB.
 	domRepo := repository.NewDomainRepository(sharedDB)
@@ -353,9 +362,9 @@ func (o *pdnsBackfillOpts) run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("list domains: %w", err)
 	}
-	for _, d := range allDomains {
-		if d.IsEnabled {
-			desired[d.Name] = true
+	for i := range allDomains {
+		if backfillWantsForward(&allDomains[i]) {
+			desired[allDomains[i].Name] = true
 		}
 	}
 

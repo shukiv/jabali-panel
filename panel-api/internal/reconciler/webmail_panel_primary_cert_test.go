@@ -40,7 +40,7 @@ func panelPrimaryVhostApply(t *testing.T, mailHostname *string, domainCert bool)
 	t.Helper()
 	ag := &paramsWebmailAgent{}
 	dr := newFakeDomainRepo()
-	dr.domains["p1"] = &models.Domain{ID: "p1", Name: "mx.jabali-panel.com", UserID: "u1", EmailEnabled: true, WebmailEnabled: true, IsPanelPrimary: true}
+	dr.domains["p1"] = &models.Domain{OwnershipState: verifiedOwnership, ID: "p1", Name: "mx.jabali-panel.com", UserID: "u1", EmailEnabled: true, WebmailEnabled: true, IsPanelPrimary: true}
 	ur := &fakeUserRepo{users: map[string]*models.User{"u1": {ID: "u1"}}}
 	certs := newFakeSSLCertRepo()
 	if domainCert {

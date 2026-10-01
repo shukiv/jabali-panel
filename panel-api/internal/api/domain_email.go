@@ -253,6 +253,8 @@ func (h *domainEmailHandler) enable(c *gin.Context) {
 	if err != nil {
 		// Translate the module's sentinel errors back to HTTP responses.
 		switch {
+		case errors.Is(err, domainmailops.ErrOwnershipPending):
+			c.JSON(http.StatusConflict, gin.H{"error": "domain_ownership_pending", "detail": "prove ownership of the domain before enabling mail"})
 		case errors.Is(err, domainmailops.ErrAgentUnconfigured):
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "agent_unconfigured"})
 		case errors.Is(err, domainmailops.ErrAgentBadResponse):

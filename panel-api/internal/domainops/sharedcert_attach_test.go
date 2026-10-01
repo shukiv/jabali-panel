@@ -39,8 +39,21 @@ func TestAttachCoveringSharedCert(t *testing.T) {
 	other := `["*.other.test"]`
 	certs := []models.SharedCertificate{{ID: "c-other", SANs: &other}, {ID: "c-wild", SANs: &wild}}
 	newDomain := func() *models.Domain {
-		return &models.Domain{ID: "d1", UserID: "u1", Name: "shop.example.com", SSLMode: models.SSLModeLE}
+		d := &models.Domain{ID: "d1", UserID: "u1", Name: "shop.example.com", SSLMode: models.SSLModeLE}
+		d.OwnershipStatus = models.OwnershipVerified
+		return d
 	}
+
+	// GH #1816: a pending name never rides a covering certificate to a
+	// trusted cert before its owner proves it.
+	t.Run("a pending domain is never attached", func(t *testing.T) {
+		l, s, d := &fakeCertLister{certs: certs}, &fakeCertSetter{}, newDomain()
+		d.OwnershipStatus = models.OwnershipPending
+		cert, err := AttachCoveringSharedCert(context.Background(), SharedCertDeps{Certs: l, Domains: s}, d)
+		if cert != nil || err != nil || l.calls != 0 || len(s.args) != 0 || d.SSLMode != models.SSLModeLE {
+			t.Fatalf("want no attach for a pending domain, got %v %v calls=%d %v %s", cert, err, l.calls, s.args, d.SSLMode)
+		}
+	})
 
 	t.Run("covering cert attaches and updates the domain", func(t *testing.T) {
 		l, s, d := &fakeCertLister{certs: certs}, &fakeCertSetter{}, newDomain()

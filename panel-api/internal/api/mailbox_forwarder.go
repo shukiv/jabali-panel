@@ -197,6 +197,12 @@ func (h *forwarderHandler) create(c *gin.Context) {
 		h.writeErr(c, err)
 		return
 	}
+	// GH #1816 / ADR-0170: no new addresses on a name that is not proven
+	// (a domain that went back to pending keeps its mailboxes, not new aliases).
+	if !dom.Verified() {
+		c.JSON(http.StatusConflict, gin.H{"error": "domain_ownership_pending", "detail": "prove ownership of the domain before adding forwarders"})
+		return
+	}
 	var req forwarderCreateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_body", "detail": "the forwarder is incomplete"})

@@ -34,6 +34,10 @@ type DomainHandlerConfig struct {
 	// BEFORE the row goes, so the host-side teardown survives a panel
 	// restart and gets retried by the reconciler until it succeeds.
 	DomainTeardowns repository.DomainTeardownRepository
+	// DomainOwnership (GH #1816 / ADR-0170) reads the proof-required switch
+	// at create and backs the ownership endpoints. Nil means proof is
+	// required: a tenant create is stored pending.
+	DomainOwnership repository.DomainOwnershipRepository
 	Users           repository.UserRepository
 	SSLCerts        repository.SSLCertificateRepository
 	SharedCerts     repository.SharedCertificateRepository
@@ -734,6 +738,16 @@ func (h *domainHandler) enrichDomainResponse(ctx context.Context, d models.Domai
 	if h.cfg.ManagedIPs != nil {
 		row.ListenIPv4 = h.resolveListenSummary(ctx, d.ListenIPv4ID, "ipv4")
 		row.ListenIPv6 = h.resolveListenSummary(ctx, d.ListenIPv6ID, "ipv6")
+	}
+	// The preview link, as the list fills it. Without it the Web Domain page
+	// (Overview tab, and the GH #1816 pending banner) never showed the link.
+	if d.TempURLEnabled && h.cfg.ServerSettings != nil {
+		if srv, err := h.cfg.ServerSettings.Get(ctx); err == nil && srv != nil {
+			if base := models.EffectivePreviewBase(srv); base != "" {
+				u := "https://" + models.PreviewHost(d.Name, base)
+				row.TempURL = &u
+			}
+		}
 	}
 	return row
 }

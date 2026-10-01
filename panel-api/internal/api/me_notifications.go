@@ -109,9 +109,15 @@ var tenantRelevantEventKinds = map[string]bool{
 	// tenant's own resources (domains, mail reputation, Docker apps). Admin/server
 	// kinds (aide.tamper, malware, egress, db.admin.*, automation.*, update.*)
 	// stay out of the tenant catalog on purpose.
-	"domain.ghost_detected.mismatch":  true,
-	"domain.ghost_detected.nxdomain":  true,
-	"domain.ghost_detected.partial":   true,
+	"domain.ghost_detected.mismatch": true,
+	"domain.ghost_detected.nxdomain": true,
+	"domain.ghost_detected.partial":  true,
+	// GH #1816: the ownership events addressed to a domain's owner. The
+	// admin-only domain.ownership.needs_admin stays out.
+	"domain.ownership.verified":       true,
+	"domain.ownership.revoked":        true,
+	"domain.ownership.expiring":       true,
+	"domain.ownership.expired":        true,
 	"mail.rbl.listed":                 true,
 	"mail.rbl.cleared":                true,
 	"mail.dmarc.report_received":      true,

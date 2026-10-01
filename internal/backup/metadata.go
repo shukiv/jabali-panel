@@ -138,6 +138,11 @@ type MetadataDomain struct {
 	DNSSECEnabled         bool    `json:"dnssec_enabled"`
 	DNSSECEnabledAt       string  `json:"dnssec_enabled_at,omitempty"`
 	CreatedAt             string  `json:"created_at,omitempty"`
+	// OwnershipStatus (GH #1816 / ADR-0170) is the source row's ownership
+	// state. A restore keeps an explicitly pending name pending; a verified
+	// or absent status (archives from before the field) restores verified
+	// with method "restore", as the restore is admin-run.
+	OwnershipStatus string `json:"ownership_status,omitempty"`
 
 	SSLCertificate *MetadataSSLCert    `json:"ssl_certificate,omitempty"`
 	Mailboxes      []MetadataMailbox   `json:"mailboxes,omitempty"`

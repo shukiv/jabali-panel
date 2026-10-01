@@ -67,6 +67,7 @@ func mailOpsTestReconciler(agent *fakeMailEnableAgent, dom *models.Domain) (*Rec
 
 func mailOpsTestDomain(isPanelPrimary bool) *models.Domain {
 	return &models.Domain{
+		OwnershipState: verifiedOwnership,
 		ID:             "dom1",
 		Name:           "tenant.example.com", // TLD "com" → mail-routable
 		EmailEnabled:   true,

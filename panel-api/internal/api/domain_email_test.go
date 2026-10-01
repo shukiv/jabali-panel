@@ -36,9 +36,10 @@ func domainEmailTestRouter(t *testing.T, ma *mockAgent, isAdmin bool, userID str
 
 	domains := newMockDomainRepo()
 	domains.domains["dom1"] = &models.Domain{
-		ID:     "dom1",
-		UserID: "user1",
-		Name:   "example.com",
+		ID:             "dom1",
+		UserID:         "user1",
+		Name:           "example.com",
+		OwnershipState: models.OwnershipState{OwnershipStatus: models.OwnershipVerified},
 	}
 	RegisterDomainEmailRoutes(v1, DomainEmailHandlerConfig{
 		Domains: domains,
@@ -61,9 +62,10 @@ func domainEmailRouterWithDNS(t *testing.T, ma *mockAgent) (*gin.Engine, *mockDo
 
 	domains := newMockDomainRepo()
 	domains.domains["dom1"] = &models.Domain{
-		ID:     "dom1",
-		UserID: "user1",
-		Name:   "example.com",
+		ID:             "dom1",
+		UserID:         "user1",
+		Name:           "example.com",
+		OwnershipState: models.OwnershipState{OwnershipStatus: models.OwnershipVerified},
 	}
 	zones := newMockDNSZoneRepo()
 	zones.zones["zone1"] = &models.DNSZone{ID: "zone1", DomainID: "dom1", Name: "example.com"}
@@ -129,6 +131,23 @@ func TestDomainEmail_Enable_AgentFails(t *testing.T) {
 	require.Equal(t, http.StatusBadGateway, rec.Code)
 	require.False(t, domains.domains["dom1"].EmailEnabled)
 	require.Nil(t, domains.domains["dom1"].DkimSelector)
+}
+
+// GH #1816 / ADR-0170: enabling mail on a domain whose owner has not proven
+// the name is refused with 409 before the agent is called.
+func TestDomainEmail_Enable_PendingOwnership409(t *testing.T) {
+	ma := &mockAgent{}
+	r, domains := domainEmailTestRouter(t, ma, false, "user1")
+	domains.domains["dom1"].OwnershipState = models.OwnershipState{OwnershipStatus: models.OwnershipPending}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/domains/dom1/email", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusConflict, rec.Code)
+	require.Contains(t, rec.Body.String(), "domain_ownership_pending")
+	require.Zero(t, ma.callCount, "no agent call for a pending domain")
+	require.False(t, domains.domains["dom1"].EmailEnabled)
 }
 
 // TestDomainEmail_Enable_AgentBadResponse guards against the agent

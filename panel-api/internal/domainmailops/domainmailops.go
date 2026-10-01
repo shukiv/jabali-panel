@@ -105,6 +105,10 @@ var (
 	// ErrPersistFailed wraps a repository failure while writing the rotated
 	// key, so the adapter can tell a persistence fault from an agent one.
 	ErrPersistFailed = errors.New("domainmailops: persist new dkim key failed")
+	// ErrOwnershipPending is returned by Enable for a domain whose owner has
+	// not proven control of the name (GH #1816 / ADR-0170): an unproven name
+	// is never registered with Stalwart.
+	ErrOwnershipPending = errors.New("domainmailops: domain ownership is not proven yet")
 )
 
 // WarningKind classifies a single managed-DNS or SSL-SAN result surfaced by the
@@ -214,6 +218,9 @@ func WarningMessages(ws []Warning) []string {
 // written to the DB. Wrapped errors come from ErrAgent{Unconfigured,Failed,
 // BadResponse}. Returns selector, public key, and accumulated DNS/SSL warnings.
 func Enable(ctx context.Context, d Deps, dom *models.Domain) (selector, pubKey string, warnings []Warning, err error) {
+	if !dom.Verified() {
+		return "", "", nil, ErrOwnershipPending
+	}
 	if d.Call == nil {
 		return "", "", nil, ErrAgentUnconfigured
 	}

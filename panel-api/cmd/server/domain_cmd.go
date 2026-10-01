@@ -43,6 +43,8 @@ func newDomainCmd() *cobra.Command {
 	cmd.AddCommand(domainPHPVersionSubcommands()...)
 	cmd.AddCommand(domainPHPSettingsSubcommands()...)
 	cmd.AddCommand(domainDirectoryPrivacySubcommands()...)
+	// GH #1816 / ADR-0170 ownership proof (domain_ownership_cmd.go).
+	cmd.AddCommand(newDomainOwnershipCmd())
 	return cmd
 }
 

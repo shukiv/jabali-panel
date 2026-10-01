@@ -48,13 +48,16 @@ const defaultTenantDockerFlag = "/etc/jabali/docker-tenant-enabled"
 
 // UserDockerAppHandlerConfig bundles tenant-handler dependencies.
 type UserDockerAppHandlerConfig struct {
-	Repo           repository.DockerAppRepository
-	Catalog        *dockerapp.Catalog
-	Domains        repository.DomainRepository
-	Agent          agent.AgentInterface
-	Users          repository.UserRepository
-	Packages       repository.PackageRepository
-	ServerSettings repository.ServerSettingsRepository
+	Repo repository.DockerAppRepository
+	// DomainOwnership (GH #1816) reads the proof-required switch when an
+	// install auto-creates its domain. Nil means proof is required.
+	DomainOwnership repository.DomainOwnershipRepository
+	Catalog         *dockerapp.Catalog
+	Domains         repository.DomainRepository
+	Agent           agent.AgentInterface
+	Users           repository.UserRepository
+	Packages        repository.PackageRepository
+	ServerSettings  repository.ServerSettingsRepository
 	// WebDomainAliases backs the GH #1625 alias-collision guard on the
 	// auto-create path (the GH #1789 follow-up). nil disables the check
 	// (fail-open only when the feature is unwired), matching AliasCollision.
@@ -656,6 +659,13 @@ func (h *userDockerAppHandler) install(c *gin.Context) {
 				ID: ulid.Make().String(), UserID: claims.UserID, Name: req.Domain,
 				IsEnabled: true, SSLEnabled: true, NginxRules: rules,
 				ManagedBy: models.DomainManagedByDockerApp, DockerAppID: &app.ID,
+			}
+			// GH #1816: the same ownership decision as a domain create — a
+			// tenant's unproven name is created pending (its proxy vhost stays
+			// down until the owner proves it).
+			if oerr := stampDockerDomainOwnership(ctx, h.cfg.Domains, h.cfg.DomainOwnership, dom, claims.IsAdmin); oerr != nil {
+				h.failInstall(c, app.ID, "domain_ownership_failed", errors.New("could not record the domain ownership state"))
+				return
 			}
 			if derr := h.cfg.Domains.Create(ctx, dom); derr != nil {
 				h.failInstall(c, app.ID, "domain_create_failed", derr)

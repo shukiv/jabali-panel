@@ -20,6 +20,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/domainops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/middleware"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
@@ -298,7 +299,14 @@ func createAutomationDomain(c *gin.Context, cfg AutomationConfig, tok *models.Au
 		return "", "domain already exists"
 	}
 	h := &domainHandler{cfg: cfg.DomainCreate}
-	dom, oerr := createDomainOp(ctx, h, createDomainInput{OwnerID: ownerID, Name: name, SkipInlineSSL: true})
+	// GH #1816 / ADR-0170: a billing system vouches for the name only with
+	// the opt-in assert:domain_ownership scope (never implied by write:*);
+	// otherwise the domain is stored pending like any tenant create.
+	var ownership *domainops.OwnershipAssertion
+	if tok != nil && tok.Scopes.Has(models.AutomationScopeAssertDomainOwnership) {
+		ownership = &domainops.OwnershipAssertion{Method: models.OwnershipMethodAutomation}
+	}
+	dom, oerr := createDomainOp(ctx, h, createDomainInput{OwnerID: ownerID, Name: name, SkipInlineSSL: true, Ownership: ownership})
 	if oerr != nil {
 		auditWrite(c, cfg.Audits, tok, action, "domain", name, models.AuditResultError)
 		w := oerr.Code

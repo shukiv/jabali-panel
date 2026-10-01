@@ -48,7 +48,7 @@ func wmGateReconciler(dr *fakeDomainRepo, ur *fakeUserRepo, pr repository.Packag
 func TestWebmail_PackageEntitlementOff_RemovesVhost(t *testing.T) {
 	ag := &fakeWebmailAgent{}
 	dr := newFakeDomainRepo()
-	dr.domains["d1"] = &models.Domain{ID: "d1", Name: "example.com", UserID: "u1", EmailEnabled: true, WebmailEnabled: true}
+	dr.domains["d1"] = &models.Domain{OwnershipState: verifiedOwnership, ID: "d1", Name: "example.com", UserID: "u1", EmailEnabled: true, WebmailEnabled: true}
 	ur := &fakeUserRepo{users: map[string]*models.User{
 		"u1": {ID: "u1", PackageID: wmPtr("p1")},
 	}}
@@ -67,7 +67,7 @@ func TestWebmail_PackageEntitlementOff_RemovesVhost(t *testing.T) {
 func TestWebmail_NoPackage_KeepsVhost(t *testing.T) {
 	ag := &fakeWebmailAgent{}
 	dr := newFakeDomainRepo()
-	dr.domains["d1"] = &models.Domain{ID: "d1", Name: "example.com", UserID: "u1", EmailEnabled: true, WebmailEnabled: true}
+	dr.domains["d1"] = &models.Domain{OwnershipState: verifiedOwnership, ID: "d1", Name: "example.com", UserID: "u1", EmailEnabled: true, WebmailEnabled: true}
 	ur := &fakeUserRepo{users: map[string]*models.User{
 		"u1": {ID: "u1", PackageID: nil},
 	}}
@@ -88,7 +88,7 @@ func TestWebmail_NoPackage_KeepsVhost(t *testing.T) {
 func TestWebmail_PerUserToggleIgnored_KeepsVhost(t *testing.T) {
 	ag := &fakeWebmailAgent{}
 	dr := newFakeDomainRepo()
-	dr.domains["d1"] = &models.Domain{ID: "d1", Name: "example.com", UserID: "u1", EmailEnabled: true, WebmailEnabled: true}
+	dr.domains["d1"] = &models.Domain{OwnershipState: verifiedOwnership, ID: "d1", Name: "example.com", UserID: "u1", EmailEnabled: true, WebmailEnabled: true}
 	ur := &fakeUserRepo{users: map[string]*models.User{
 		// Per-user flag OFF, but on a webmail-ON package — the retired gate must
 		// no longer remove the vhost.
@@ -108,7 +108,7 @@ func TestWebmail_PerUserToggleIgnored_KeepsVhost(t *testing.T) {
 func TestWebmail_PackageListError_FailsOpen(t *testing.T) {
 	ag := &fakeWebmailAgent{}
 	dr := newFakeDomainRepo()
-	dr.domains["d1"] = &models.Domain{ID: "d1", Name: "example.com", UserID: "u1", EmailEnabled: true, WebmailEnabled: true}
+	dr.domains["d1"] = &models.Domain{OwnershipState: verifiedOwnership, ID: "d1", Name: "example.com", UserID: "u1", EmailEnabled: true, WebmailEnabled: true}
 	ur := &fakeUserRepo{users: map[string]*models.User{
 		"u1": {ID: "u1", PackageID: wmPtr("p1")},
 	}}

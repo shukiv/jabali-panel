@@ -110,6 +110,9 @@ var (
 	// ErrMailServer: the mail server could not be asked to release the
 	// address, so the mailbox was not created.
 	ErrMailServer = errors.New("mailboxops: the mail server could not be reached to set up the address")
+	// ErrOwnershipPending: the domain's owner has not proven the name yet
+	// (GH #1816 / ADR-0170), so it gets no mail principals.
+	ErrOwnershipPending = errors.New("mailboxops: domain ownership is not proven yet")
 )
 
 // CreateInput is one interactive mailbox creation. Note the ABSENCE of a System
@@ -131,6 +134,9 @@ type CreateInput struct {
 func Create(ctx context.Context, d Deps, in CreateInput, notify NotifyFunc) (*models.Mailbox, string, error) {
 	if d.Mailboxes == nil || in.Domain == nil {
 		return nil, "", fmt.Errorf("%w: mailboxes repo + domain required", ErrDeps)
+	}
+	if !in.Domain.Verified() {
+		return nil, "", ErrOwnershipPending
 	}
 	if !in.Domain.EmailEnabled {
 		return nil, "", ErrEmailNotEnabled

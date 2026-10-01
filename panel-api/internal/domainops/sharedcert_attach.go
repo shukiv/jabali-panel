@@ -56,7 +56,9 @@ type SharedCertDeps struct {
 // alongside the error (so an adapter can name it in a retry hint) and d is left
 // unchanged. Errors print the store error alone, without the sentinel text.
 func AttachCoveringSharedCert(ctx context.Context, deps SharedCertDeps, d *models.Domain) (*models.SharedCertificate, error) {
-	if d.WebDisabled || deps.Certs == nil {
+	// GH #1816: a pending name never rides a server-wide wildcard to a
+	// trusted certificate before its owner proves it.
+	if d.WebDisabled || deps.Certs == nil || !OwnershipVerified(d) {
 		return nil, nil
 	}
 	if d.SSLMode != "" && d.SSLMode != models.SSLModeLE {

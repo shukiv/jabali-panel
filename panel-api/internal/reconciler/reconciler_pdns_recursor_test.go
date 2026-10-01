@@ -31,13 +31,14 @@ func TestReconcileAll_RecursorAddZoneForEnabledDomain(t *testing.T) {
 	userRepo.users[user.ID] = user
 
 	domain := &models.Domain{
-		ID:        "domain-1",
-		UserID:    user.ID,
-		Name:      "alice-site.com",
-		DocRoot:   "/home/alice/domains/alice-site.com/public_html",
-		IsEnabled: true,
-		CreatedAt: now,
-		UpdatedAt: now,
+		OwnershipState: verifiedOwnership,
+		ID:             "domain-1",
+		UserID:         user.ID,
+		Name:           "alice-site.com",
+		DocRoot:        "/home/alice/domains/alice-site.com/public_html",
+		IsEnabled:      true,
+		CreatedAt:      now,
+		UpdatedAt:      now,
 	}
 	domainRepo.domains[domain.ID] = domain
 
@@ -131,13 +132,14 @@ func TestReconcileAll_RecursorRemoveZoneSkipsDisabled(t *testing.T) {
 	// (example.com). Without this DB row it'd be an orphan; with it
 	// the domain is "disabled but tracked" and remove_zone MUST NOT fire.
 	domain := &models.Domain{
-		ID:        "domain-disabled",
-		UserID:    user.ID,
-		Name:      "example.com",
-		DocRoot:   "/home/bob/domains/example.com/public_html",
-		IsEnabled: false,
-		CreatedAt: now,
-		UpdatedAt: now,
+		OwnershipState: verifiedOwnership,
+		ID:             "domain-disabled",
+		UserID:         user.ID,
+		Name:           "example.com",
+		DocRoot:        "/home/bob/domains/example.com/public_html",
+		IsEnabled:      false,
+		CreatedAt:      now,
+		UpdatedAt:      now,
 	}
 	domainRepo.domains[domain.ID] = domain
 

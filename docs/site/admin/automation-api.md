@@ -52,6 +52,7 @@ a write scope never implies a delete scope.
 | `write:*` | every write scope |
 | `delete:users` | delete an account and everything it owns |
 | `delete:*` | every delete scope |
+| `assert:domain_ownership` | a domain the token creates (for example with a new account from a billing system) is verified at once instead of waiting for its owner's DNS proof (GH #1816). The billing system vouches that its customer owns the name. It is its own scope family: `write:*` does not include it, so grant it only to a billing system you trust. |
 
 **Writes enabled** is a switch on each write-scoped token. Turn it off to pause a
 token's writes without revoking it.

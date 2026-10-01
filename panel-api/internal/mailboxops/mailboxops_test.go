@@ -49,7 +49,7 @@ func (f *fakeMBRepo) UpdateQuota(_ context.Context, _ string, q uint64) error { 
 func (f *fakeMBRepo) Delete(_ context.Context, id string) error              { f.deleted = id; return nil }
 
 func enabledDomain() *models.Domain {
-	return &models.Domain{ID: "d1", Name: "example.com", EmailEnabled: true}
+	return &models.Domain{ID: "d1", Name: "example.com", EmailEnabled: true, OwnershipState: models.OwnershipState{OwnershipStatus: models.OwnershipVerified}}
 }
 
 func TestCreate_FieldParityAndDefaults(t *testing.T) {
@@ -83,7 +83,7 @@ func TestCreate_Gates(t *testing.T) {
 		return Create(context.Background(), Deps{Mailboxes: repo, SSOKey: &key, Addresses: okReleaser{}},
 			CreateInput{Domain: dom, LocalPart: "a", QuotaBytes: q}, nil)
 	}
-	if _, _, err := base(&fakeMBRepo{}, &models.Domain{Name: "x.com"}, 0); !errors.Is(err, ErrEmailNotEnabled) {
+	if _, _, err := base(&fakeMBRepo{}, &models.Domain{Name: "x.com", OwnershipState: models.OwnershipState{OwnershipStatus: models.OwnershipVerified}}, 0); !errors.Is(err, ErrEmailNotEnabled) {
 		t.Errorf("email-disabled domain must be rejected, got %v", err)
 	}
 	if _, _, err := base(&fakeMBRepo{exists: true}, enabledDomain(), 0); !errors.Is(err, ErrMailboxExists) {
@@ -266,5 +266,22 @@ func TestCreateForRestore_DatabaseRefusalIsAReservedAddress(t *testing.T) {
 	}
 	if errors.Is(err, ErrInternal) {
 		t.Fatalf("a reserved address is not an internal error: %v", err)
+	}
+}
+
+// GH #1816 / ADR-0170: an unproven name gets no mailbox, checked before the
+// email gate so the refusal says why.
+func TestCreate_RefusesPendingOwnership(t *testing.T) {
+	repo := &fakeMBRepo{}
+	key := ssokey.Key{}
+	dom := enabledDomain()
+	dom.OwnershipState = models.OwnershipState{OwnershipStatus: models.OwnershipPending}
+	_, _, err := Create(context.Background(), Deps{Mailboxes: repo, SSOKey: &key},
+		CreateInput{Domain: dom, LocalPart: "alice"}, nil)
+	if !errors.Is(err, ErrOwnershipPending) {
+		t.Fatalf("want ErrOwnershipPending, got %v", err)
+	}
+	if repo.created != nil {
+		t.Fatal("no mailbox row may be written on a pending domain")
 	}
 }

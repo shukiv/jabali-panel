@@ -25,13 +25,14 @@ func dnsModuleFixture(t *testing.T, dnsEnabled bool, withDomain bool) (*Reconcil
 	if withDomain {
 		now := time.Now().UTC()
 		domainRepo.domains["domain-1"] = &models.Domain{
-			ID:        "domain-1",
-			UserID:    "user-1",
-			Name:      "example.com",
-			DocRoot:   "/home/alice/domains/example.com/public_html",
-			IsEnabled: true,
-			CreatedAt: now,
-			UpdatedAt: now,
+			OwnershipState: verifiedOwnership,
+			ID:             "domain-1",
+			UserID:         "user-1",
+			Name:           "example.com",
+			DocRoot:        "/home/alice/domains/example.com/public_html",
+			IsEnabled:      true,
+			CreatedAt:      now,
+			UpdatedAt:      now,
 		}
 	}
 	zones := &fakeDNSZoneRepo{zones: map[string]*models.DNSZone{}}

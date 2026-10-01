@@ -88,6 +88,9 @@ var (
 	// ErrEmailNotEnabled means the domain does not have email enabled, so a
 	// shared resource (an SMTP recipient / DAV principal) cannot be created.
 	ErrEmailNotEnabled = errors.New("sharedresourceops: email is not enabled on the domain")
+	// ErrOwnershipPending means the domain's owner has not proven the name
+	// yet (GH #1816 / ADR-0170), so it gets no mail principals.
+	ErrOwnershipPending = errors.New("sharedresourceops: domain ownership is not proven yet")
 	// ErrInvalidKind means the kind is not in the allowlist.
 	ErrInvalidKind = errors.New("sharedresourceops: invalid kind")
 	// ErrInvalidName means the requested local part did not canonicalize.
@@ -129,6 +132,9 @@ type CreateInput struct {
 func Create(ctx context.Context, d Deps, in CreateInput, notify NotifyFunc) (*models.SharedResource, error) {
 	if d.Resources == nil || in.Domain == nil {
 		return nil, fmt.Errorf("%w: resources repo + domain required", ErrDeps)
+	}
+	if !in.Domain.Verified() {
+		return nil, ErrOwnershipPending
 	}
 	if !in.Domain.EmailEnabled {
 		return nil, ErrEmailNotEnabled

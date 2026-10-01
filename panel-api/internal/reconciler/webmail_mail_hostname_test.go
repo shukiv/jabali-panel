@@ -20,8 +20,8 @@ import (
 
 func TestPanelMailHostnameVhostParams(t *testing.T) {
 	str := func(s string) *string { return &s }
-	tenant := &models.Domain{Name: "tenant.com"}
-	primary := &models.Domain{Name: "mx.jabali-panel.com", IsPanelPrimary: true}
+	tenant := &models.Domain{OwnershipState: verifiedOwnership, Name: "tenant.com"}
+	primary := &models.Domain{OwnershipState: verifiedOwnership, Name: "mx.jabali-panel.com", IsPanelPrimary: true}
 	cases := []struct {
 		name     string
 		settings *models.ServerSettings
@@ -73,7 +73,7 @@ func (f *paramsWebmailAgent) Call(ctx context.Context, cmd string, params any) (
 func TestWebmailVhostApply_SendsPanelMailHostname(t *testing.T) {
 	ag := &paramsWebmailAgent{}
 	dr := newFakeDomainRepo()
-	dr.domains["d1"] = &models.Domain{ID: "d1", Name: "tenant.com", UserID: "u1", EmailEnabled: true, WebmailEnabled: true}
+	dr.domains["d1"] = &models.Domain{OwnershipState: verifiedOwnership, ID: "d1", Name: "tenant.com", UserID: "u1", EmailEnabled: true, WebmailEnabled: true}
 	ur := &fakeUserRepo{users: map[string]*models.User{"u1": {ID: "u1"}}}
 	certs := newFakeSSLCertRepo()
 	certs.byDomain["d1"] = &models.SSLCertificate{DomainID: "d1", Status: models.SSLStatusIssued,

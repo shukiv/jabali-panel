@@ -151,3 +151,30 @@ func TestApply_CheckWarningsReportedAndClearedFieldStored(t *testing.T) {
 		t.Fatalf("warning not reported: %v", r.Errors)
 	}
 }
+
+// GH #1816 / ADR-0170 decision 2: an admin-run restore vouches for the names
+// it recreates (verified, method restore), including archives from before
+// the ownership field; a row the archive records as pending stays pending
+// with a fresh challenge token.
+func TestApply_RestoredOwnership(t *testing.T) {
+	dom, _, _, deps := dcDeps()
+	deps.CheckDomain = func(context.Context, *models.Domain, string) ([]string, error) { return nil, nil }
+	meta := dcMeta()
+	meta.Domains[0].OwnershipStatus = ""                     // good.org: an older archive
+	meta.Domains[1].OwnershipStatus = models.OwnershipPending // bad.org: pending at the source
+	Apply(context.Background(), meta, deps)
+
+	if len(dom.created) != 2 {
+		t.Fatalf("want both domains restored, got %d", len(dom.created))
+	}
+	byName := map[string]models.OwnershipState{}
+	for _, d := range dom.created {
+		byName[d.Name] = d.OwnershipState
+	}
+	if got := byName["good.org"]; got.OwnershipStatus != models.OwnershipVerified || got.OwnershipMethod != models.OwnershipMethodRestore {
+		t.Fatalf("an admin restore must verify the name (restore), got %s/%s", got.OwnershipStatus, got.OwnershipMethod)
+	}
+	if got := byName["bad.org"]; got.OwnershipStatus != models.OwnershipPending || len(got.OwnershipToken) != 64 {
+		t.Fatalf("a pending row must stay pending with a fresh token, got %s token=%q", got.OwnershipStatus, got.OwnershipToken)
+	}
+}

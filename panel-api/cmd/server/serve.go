@@ -918,6 +918,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 		deps.NotificationRegistry = buildNotificationRegistry(context.Background(), deps, log)
 	}
 
+	// GH #1816 / ADR-0170: one ownership service for the API and the ticker.
+	deps.OwnershipService = newOwnershipService(deps, sharedAgent, log)
+
 	// ---- HTTP(S) ----
 	handler := app.NewWithDeps(cfg, deps)
 
@@ -1008,6 +1011,12 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// GH #259: scheduled registrar-expiry WHOIS fetch -> domains.registrar_expires_at.
 	if sharedAgent != nil && deps.Domains != nil {
 		go reconciler.StartDomainExpiryTicker(ctx, sharedAgent, deps.Domains, log)
+	}
+
+	// GH #1816 / ADR-0170: re-check pending domain and alias names with
+	// backoff, and release the ones nobody proved. Primary only.
+	if deps.OwnershipService != nil {
+		go deps.OwnershipService.Start(ctx)
 	}
 
 	// GH #873: mail statistics sampler (Stalwart Prometheus + queue size).

@@ -277,6 +277,12 @@ func (h *mailGroupHandler) create(c *gin.Context) {
 	if !ok {
 		return
 	}
+	// GH #1816 / ADR-0170: an unproven name gets no mail principals.
+	if !dom.Verified() {
+		c.JSON(http.StatusConflict, gin.H{"error": "domain_ownership_pending",
+			"detail": "prove ownership of the domain before creating groups"})
+		return
+	}
 	if !dom.EmailEnabled {
 		c.JSON(http.StatusConflict, gin.H{"error": "email_not_enabled",
 			"detail": "enable email on the domain before creating groups"})

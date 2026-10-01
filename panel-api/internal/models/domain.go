@@ -642,6 +642,12 @@ type Domain struct {
 	// Admin-only, opt-in (default 0). Inert in scope "all".
 	BotChallengeInclude bool `gorm:"column:bot_challenge_include;type:tinyint(1);not null" json:"bot_challenge_include"`
 
+	// OwnershipState (GH #1816 / ADR-0170, migration 000311) is whether the
+	// owner has proven control of the name. A pending domain is kept off the
+	// public: no published zone, no recursor forward, no mail, no trusted
+	// certificate, and a real-name vhost only the preview URL can reach.
+	OwnershipState
+
 	CreatedAt time.Time `gorm:"type:datetime(6);not null" json:"created_at"`
 	UpdatedAt time.Time `gorm:"type:datetime(6);not null" json:"updated_at"`
 }

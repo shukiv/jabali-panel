@@ -278,3 +278,52 @@ func (m *mockSSLCertsForBadge) ListExhaustedForSSLEnabledDomains(context.Context
 
 func (m *mockSSLCertsForBadge) RearmACME(context.Context, string, int, time.Time) error { return nil }
 func (m *mockSSLCertsForBadge) ResetForRetry(context.Context, string, time.Time) error  { return nil }
+
+// GH #1816: the detail endpoint carries the preview link, as the list does.
+// The Web Domain page reads the domain from GET /domains/:id, so without it
+// the Overview tab and the pending-ownership banner never showed the link.
+func TestDomainGet_FillsThePreviewURL(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, tc := range []struct {
+		name    string
+		enabled bool
+		want    string
+	}{
+		{"preview on", true, "https://my-site-com.preview.panel.example"},
+		{"preview off", false, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := gin.New()
+			v1 := r.Group("/api/v1")
+			v1.Use(func(c *gin.Context) {
+				ginctx.SetClaims(c, &auth.AccessClaims{UserID: "u1"})
+				c.Next()
+			})
+			base := newMockDomainRepo()
+			base.Create(context.Background(), &models.Domain{ID: "d1", UserID: "u1", Name: "my.site.com", TempURLEnabled: tc.enabled})
+			RegisterDomainRoutes(v1, DomainHandlerConfig{
+				Domains:        base,
+				ServerSettings: &fakeSettingsRepo{s: &models.ServerSettings{Hostname: "panel.example"}},
+			})
+
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/domains/d1", nil))
+			if w.Code != http.StatusOK {
+				t.Fatalf("status %d, body=%s", w.Code, w.Body.String())
+			}
+			var resp struct {
+				TempURL *string `json:"temp_url"`
+			}
+			if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			got := ""
+			if resp.TempURL != nil {
+				got = *resp.TempURL
+			}
+			if got != tc.want {
+				t.Errorf("temp_url = %q, want %q (body=%s)", got, tc.want, w.Body.String())
+			}
+		})
+	}
+}

@@ -45,7 +45,8 @@ func (r *Reconciler) reconcileDKIM2(ctx context.Context) {
 
 	for i := range domains {
 		d := &domains[i]
-		if !d.EmailEnabled {
+		// GH #1816: an unproven name has no Stalwart domain to sign for.
+		if !d.EmailEnabled || ownershipPending(d) {
 			// A domain whose email was disabled loses its Stalwart registry
 			// entry (and with it the signature) via domain_email.disable —
 			// drop it from the cache so a later re-enable reconverges.

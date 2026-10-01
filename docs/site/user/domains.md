@@ -24,6 +24,27 @@ If your package allows it, **Add domain** opens a small form: domain name, PHP v
 
 The domain count is checked against the package limit; if you are at the limit, the form refuses to submit and links you to your administrator's contact form.
 
+## Verifying a new domain
+
+A domain you add stays **Unverified** until you prove that you control the name (GH #1816). This stops anyone from claiming a name that belongs to someone else. Until the domain is verified:
+
+- its DNS zone is not published and no mail is accepted for it;
+- it has no trusted certificate;
+- visitors who reach the name get no response;
+- if an administrator sends a verified domain back to Unverified, its mailboxes cannot sign in until it is verified again. Their mail is kept.
+
+To build the site while you wait, turn on **Preview URL** on the domain's Overview tab. The site then works through its preview address, even though its real name is not published yet. You can also edit its DNS records in the panel; they are published once the domain is verified.
+
+To verify the domain:
+
+1. Open the domain. The banner at the top shows a TXT record: a **Name** (`_jabali-challenge.<your domain>`) and a **Value** (`jabali-verify=…`).
+2. Add that TXT record at the DNS provider your domain uses **today** (usually your registrar). Records added in this panel do not count while the domain is unverified.
+3. Click **Verify now**, or wait: the panel checks on its own, every minute at first and less often later. The domain goes live as soon as two public DNS resolvers return the value. You can remove the record after that.
+
+The banner shows what the last check found. If it says your nameservers already point to this server, a DNS record cannot prove the name; ask your administrator to approve it.
+
+A domain that is never verified is removed from your account after **14 days**, with a notice 4 days before. Its site files are kept. A subdomain of a domain you already verified (for example `blog.example.com` under a verified `example.com`) is verified at once and needs no record.
+
 ## Removing a domain
 
 Open **Edit** → **Delete**. Destructive: the vhost is torn down, the certificate is revoked, the DNS zone is removed, and any mailboxes in the domain are deleted. Asks twice.

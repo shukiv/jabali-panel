@@ -40,6 +40,30 @@ Every change writes to the `domains` table and schedules `Reconciler.Schedule(<d
 
 Convergence latency is typically under 60 seconds.
 
+## Ownership proof
+
+A domain a tenant adds stays **pending** until its owner proves control of the name with a TXT record (`_jabali-challenge.<name>` = `jabali-verify=<token>`) at the domain's current DNS provider (GH #1816, ADR-0170). A pending domain has no published zone, no recursor forward, no mail, no trusted certificate and no MTA-STS policy, and every request for its real name gets no response (nginx 444). Only its preview URL serves the site, once the owner turns Preview URL on.
+
+A name is **verified at once** when:
+
+- an administrator adds it (the panel, `jabali domain create`, an admin docker app);
+- it sits under a verified domain of the same owner, or under a domain whose owner allows subdomains by other accounts;
+- an admin-run migration or backup restore brings it in (a row the archive recorded as pending stays pending);
+- a billing system creates it with an automation token that holds `assert:domain_ownership`;
+- proof is switched off.
+
+Domains that existed before the update were marked verified (`legacy`).
+
+**Web Domains → Ownership proof** (`/jabali-admin/domains/ownership`) lists the domains and web aliases waiting for proof, with the last check result and the date an unproven name is removed. From there you can:
+
+- **Check now** — run the TXT check at once.
+- **Approve** — verify a name without a DNS proof. Use it only when you know who owns the name, for example when its nameservers already point here (a DNS record cannot prove such a name, and the check says `ns_points_here`).
+- **Require ownership proof** — the server-wide switch, on by default. Switching it off lets tenants claim any name, including names that belong to someone else; names added while it is off stay live when you switch it back on. Domains already waiting stay pending.
+
+The domain's **Edit** page shows its ownership state. A verified domain has **Revoke verification**, which sends it back to pending (its zone, mail and certificate come down on the next reconcile pass, and its mailboxes can no longer sign in; their mail is kept) together with the subdomains and aliases that were verified through it. The panel's own domain and docker-app domains cannot be revoked. A revoked domain is never removed automatically.
+
+A never-verified name is removed after **14 days** (its owner is told 4 days before); the site files are kept. Approvals, revokes and the switch are written to the audit log, and so are the changes the panel makes on its own (a name verified by its DNS record or through its parent, and a name removed after 14 days, recorded with the actor `system`), and the `domain.ownership.*` notification events report verifications, removals and names that need your approval.
+
 ## CLI
 
 ```bash
@@ -47,4 +71,12 @@ jabali domain list
 jabali domain enable  <name|id>
 jabali domain disable <name|id>
 jabali domain delete  <name|id>
+
+# Ownership proof (GH #1816)
+jabali domain ownership status  <name|id>   # state and the TXT record
+jabali domain ownership verify  <name|id>   # check now
+jabali domain ownership approve <name|id>   # audited
+jabali domain ownership revoke  <name|id>   # audited
+jabali domain ownership pending
+jabali domain ownership policy [on|off]     # 'off' needs --yes
 ```

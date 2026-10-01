@@ -76,6 +76,14 @@ func (r *Reconciler) reconcileSendmailCreds(ctx context.Context) {
 
 	for i := range domains {
 		d := &domains[i]
+		// GH #1816: no noreply@ relay identity for an unproven name — it
+		// would let the tenant's site send mail as that name from this server.
+		if ownershipPending(d) {
+			if err := r.retireSendmailCred(ctx, d, usernames); err != nil {
+				r.log.Warn("sendmail-cred: retire for pending domain failed", "domain", d.Name, "error", err)
+			}
+			continue
+		}
 		if err := r.ensureSendmailCred(ctx, d, mailHost, usernames); err != nil {
 			r.log.Warn("sendmail-cred: converge failed", "domain", d.Name, "error", err)
 		}
@@ -91,26 +99,15 @@ func (r *Reconciler) ensureSendmailCred(ctx context.Context, d *models.Domain, m
 		return nil
 	}
 
-	username, ok := usernames[d.UserID]
+	username, ok, err := r.sendmailOwner(ctx, d, usernames)
+	if err != nil {
+		return err
+	}
 	if !ok {
-		u, err := r.users.FindByID(ctx, d.UserID)
-		if err != nil {
-			return fmt.Errorf("owner lookup: %w", err)
-		}
-		// Admins (incl. the panel-primary domain's synthesized user_<ulid>
-		// row) and rows without a Linux account run no tenant PHP — same
-		// skip set ReconcilePHPPools uses. Without the IsAdmin check the
-		// panel hostname's owner passes the empty-check but fails the OS
-		// user.Lookup agent-side, warn-looping every tick (seen on the
-		// testserver E2E).
-		if u.Username == nil || *u.Username == "" || u.IsAdmin {
-			r.sendmailMu.Lock()
-			r.sendmailDone[d.ID] = fingerprintWant
-			r.sendmailMu.Unlock()
-			return nil
-		}
-		username = *u.Username
-		usernames[d.UserID] = username
+		r.sendmailMu.Lock()
+		r.sendmailDone[d.ID] = fingerprintWant
+		r.sendmailMu.Unlock()
+		return nil
 	}
 
 	email, password, err := r.ensureRelayMailbox(ctx, d)
@@ -160,6 +157,84 @@ func (r *Reconciler) ensureSendmailCred(ctx context.Context, d *models.Domain, m
 	return nil
 }
 
+// sendmailOwner resolves the Linux username whose PHP uses d's cred file.
+// ok is false for an owner that runs no tenant PHP: admins (incl. the
+// panel-primary domain's synthesized user_<ulid> row) and rows without a
+// Linux account — same skip set ReconcilePHPPools uses. Without the IsAdmin
+// check the panel hostname's owner passes the empty-check but fails the OS
+// user.Lookup agent-side, warn-looping every tick (seen on the testserver
+// E2E).
+func (r *Reconciler) sendmailOwner(ctx context.Context, d *models.Domain, usernames map[string]string) (string, bool, error) {
+	if username, ok := usernames[d.UserID]; ok {
+		return username, true, nil
+	}
+	u, err := r.users.FindByID(ctx, d.UserID)
+	if err != nil {
+		return "", false, fmt.Errorf("owner lookup: %w", err)
+	}
+	if u.Username == nil || *u.Username == "" || u.IsAdmin {
+		return "", false, nil
+	}
+	usernames[d.UserID] = *u.Username
+	return *u.Username, true, nil
+}
+
+// sendmailRetiredFingerprint marks a pending domain whose relay identity has
+// been retired this process lifetime. It can never equal a
+// sendmailFingerprint (hex), so verifying the domain re-runs the ensure.
+const sendmailRetiredFingerprint = "retired"
+
+// retireSendmailCred converges a pending domain (GH #1816) to "no relay
+// identity": the cred file is removed, and a panel-created relay mailbox gets
+// a fresh password the tenant never saw — the old one sat in a file the
+// tenant's PHP could read, so without the rotation a revoked domain's tenant
+// could still authenticate as noreply@<name> and send as it. A domain that
+// never had one (never verified) costs a lookup once per boot. Verifying the
+// domain again hands the new sealed password to a new cred file.
+func (r *Reconciler) retireSendmailCred(ctx context.Context, d *models.Domain, usernames map[string]string) error {
+	r.sendmailMu.Lock()
+	done := r.sendmailDone[d.ID]
+	r.sendmailMu.Unlock()
+	if done == sendmailRetiredFingerprint {
+		return nil
+	}
+
+	username, ok, err := r.sendmailOwner(ctx, d, usernames)
+	if err != nil {
+		return err
+	}
+	if ok {
+		cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		_, err := r.agent.Call(cctx, "sendmail.cred.remove", map[string]any{
+			"username": username,
+			"domain":   d.Name,
+		})
+		cancel()
+		if err != nil {
+			return fmt.Errorf("agent cred remove: %w", err)
+		}
+	}
+
+	for _, localPart := range []string{sendmailRelayLocalPart, sendmailRelayFallbackLocalPart} {
+		email := localPart + "@" + d.Name
+		mb, err := r.mailboxes.FindByEmail(ctx, email)
+		if err != nil && !errors.Is(err, repository.ErrNotFound) {
+			return fmt.Errorf("find %s: %w", email, err)
+		}
+		if mb == nil || !mb.SendOnly {
+			continue // none, or a human mailbox — never touched here
+		}
+		if _, err := r.rotateRelayPassword(ctx, mb, email); err != nil {
+			return err
+		}
+	}
+
+	r.sendmailMu.Lock()
+	r.sendmailDone[d.ID] = sendmailRetiredFingerprint
+	r.sendmailMu.Unlock()
+	return nil
+}
+
 // sendmailRelayFallbackLocalPart is tried when a HUMAN mailbox already owns
 // noreply@<domain> (migrated accounts ship those routinely).
 const sendmailRelayFallbackLocalPart = "jabali-noreply"
@@ -202,25 +277,35 @@ func (r *Reconciler) ensureRelayMailbox(ctx context.Context, d *models.Domain) (
 		}
 
 		// Panel-created row without a recoverable plaintext: rotate.
-		password := ids.NewSecret()
-		hash, herr := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-		if herr != nil {
-			return "", "", fmt.Errorf("hash: %w", herr)
+		password, rerr := r.rotateRelayPassword(ctx, mb, email)
+		if rerr != nil {
+			return "", "", rerr
 		}
-		enc, serr := r.sendmailSSOKey.Seal([]byte(password))
-		if serr != nil {
-			return "", "", fmt.Errorf("seal: %w", serr)
-		}
-		if uerr := r.mailboxes.UpdatePasswordHashAndEnc(ctx, mb.ID, string(hash), enc); uerr != nil {
-			return "", "", fmt.Errorf("rotate %s: %w", email, uerr)
-		}
-		// Invalidate Stalwart's auth cache for the principal (best-effort).
-		nctx, ncancel := context.WithTimeout(ctx, 10*time.Second)
-		_, _ = r.agent.Call(nctx, "mailbox.set_password", map[string]any{"id": mb.ID, "email": email})
-		ncancel()
 		return email, password, nil
 	}
 	return "", "", nil
+}
+
+// rotateRelayPassword gives a relay mailbox a fresh password (hash + sealed
+// plaintext) and returns it.
+func (r *Reconciler) rotateRelayPassword(ctx context.Context, mb *models.Mailbox, email string) (string, error) {
+	password := ids.NewSecret()
+	hash, herr := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if herr != nil {
+		return "", fmt.Errorf("hash: %w", herr)
+	}
+	enc, serr := r.sendmailSSOKey.Seal([]byte(password))
+	if serr != nil {
+		return "", fmt.Errorf("seal: %w", serr)
+	}
+	if uerr := r.mailboxes.UpdatePasswordHashAndEnc(ctx, mb.ID, string(hash), enc); uerr != nil {
+		return "", fmt.Errorf("rotate %s: %w", email, uerr)
+	}
+	// Invalidate Stalwart's auth cache for the principal (best-effort).
+	nctx, ncancel := context.WithTimeout(ctx, 10*time.Second)
+	_, _ = r.agent.Call(nctx, "mailbox.set_password", map[string]any{"id": mb.ID, "email": email})
+	ncancel()
+	return password, nil
 }
 
 func (r *Reconciler) createRelayMailbox(ctx context.Context, d *models.Domain, localPart, email string) (string, error) {

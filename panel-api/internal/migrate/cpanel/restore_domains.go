@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/domainops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/htaccess"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
@@ -252,6 +253,19 @@ func ImportDomains(
 			applyMigratedHtaccess(filepath.Join(docRoot, ".htaccess"), domainName, d, res)
 		}
 
+		// GH #1816 / ADR-0170 decision 2: an administrator pulled this name
+		// from another server, so it is created proven (method migration).
+		if err := markMigratedOwnership(d, now); err != nil {
+			res.Skipped = append(res.Skipped, fmt.Sprintf("domain_skip:ownership_token:%s:%v", domainName, err))
+			res.Failed = append(res.Failed, fmt.Sprintf("%s (%v)", domainName, err))
+			if isWeb {
+				delCtx, dcancel := context.WithTimeout(ctx, 60*time.Second)
+				_, _ = agentCli.Call(delCtx, "domain.delete", map[string]string{"domain": domainName})
+				dcancel()
+			}
+			continue
+		}
+
 		if err := domainsRepo.Create(ctx, d); err != nil {
 			// JAB-57: for a web facet, domain.create already built the nginx
 			// vhost (+ enabled symlink) but the panel row failed to land — an
@@ -360,4 +374,12 @@ func applyMigratedHtaccess(path, domainName string, d *models.Domain, res *Domai
 		res.HtaccessWarnings = append(res.HtaccessWarnings,
 			fmt.Sprintf("%s: %s", domainName, w.Reason))
 	}
+}
+
+// markMigratedOwnership records that an administrator vouched for a migrated
+// name (GH #1816 / ADR-0170): every cPanel/DirectAdmin/HestiaCP import is
+// admin-run, so the row is created verified with method "migration".
+func markMigratedOwnership(d *models.Domain, now time.Time) error {
+	return domainops.ApplyOwnershipDecision(&d.OwnershipState,
+		domainops.OwnershipDecision{Verified: true, Method: models.OwnershipMethodMigration}, now.UTC())
 }

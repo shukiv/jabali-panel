@@ -136,7 +136,8 @@ func (r *Reconciler) reconcileWebmailVhosts(ctx context.Context) {
 	webmailHosts := make([]string, 0, len(domains)*2)
 	for i := range domains {
 		d := &domains[i]
-		if d.EmailEnabled && d.WebmailEnabled && !webmailOffUsers[d.UserID] {
+		// GH #1816: no webmail vhost (mail.<name>) for an unproven name.
+		if d.EmailEnabled && d.WebmailEnabled && !webmailOffUsers[d.UserID] && !ownershipPending(d) {
 			anyEmailEnabled = true
 			r.applyWebmailVhost(ctx, d)
 			// Mirror what the agent's mail vhost template emits as

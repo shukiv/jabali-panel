@@ -46,6 +46,9 @@ type DomainAliasHandlerConfig struct {
 	// converge (re-render server_name + reissue the cert) instead of
 	// waiting for the next tick.
 	Reconcile func(domainID string)
+	// Ownership (GH #1816 / ADR-0170) reads the proof-required switch for a
+	// new alias. Nil means proof is required.
+	Ownership repository.DomainOwnershipRepository
 }
 
 func RegisterDomainAliasRoutes(g *gin.RouterGroup, cfg DomainAliasHandlerConfig) {
@@ -125,6 +128,21 @@ func (h *domainAliasHandler) create(c *gin.Context) {
 		ID:       ids.NewULID(),
 		DomainID: dom.ID,
 		Hostname: hostname,
+	}
+	// GH #1816 / ADR-0170: an alias is a new public name for the site, so it
+	// gets the create-time decision against the domain's owner. A pending
+	// alias is kept out of server_name and the certificate until its own
+	// challenge record proves it.
+	claims := ginctx.Claims(c)
+	dec, derr := domainops.DecideOwnership(ctx, domainops.OwnershipDeps{
+		Domains: h.cfg.Domains, Policy: ownershipPolicy(h.cfg.Ownership),
+	}, hostname, dom.UserID, claims != nil && claims.IsAdmin, nil)
+	if derr == nil {
+		derr = domainops.ApplyOwnershipDecision(&row.OwnershipState, dec, time.Now().UTC())
+	}
+	if derr != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
 	}
 	if err := h.cfg.Aliases.Create(ctx, row); err != nil {
 		// The UNIQUE index is the backstop for a race between the

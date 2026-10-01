@@ -130,8 +130,8 @@ func TestReconcileSendmailCreds_ProvisionsAndCaches(t *testing.T) {
 		domainNames: map[string]string{"d1": "site.tld", "d2": "mailless.tld"},
 	}
 	r := sendmailTestReconciler(agent, mailboxes, []models.Domain{
-		{ID: "d1", Name: "site.tld", UserID: "u1", EmailEnabled: true},
-		{ID: "d2", Name: "mailless.tld", UserID: "u1", EmailEnabled: false},
+		{OwnershipState: verifiedOwnership, ID: "d1", Name: "site.tld", UserID: "u1", EmailEnabled: true},
+		{OwnershipState: verifiedOwnership, ID: "d2", Name: "mailless.tld", UserID: "u1", EmailEnabled: false},
 	})
 	ctx := context.Background()
 
@@ -196,7 +196,7 @@ func TestReconcileSendmailCreds_MailHostnameOverride(t *testing.T) {
 		domainNames: map[string]string{"d1": "site.tld"},
 	}
 	r := sendmailTestReconciler(agent, mailboxes, []models.Domain{
-		{ID: "d1", Name: "site.tld", UserID: "u1", EmailEnabled: true},
+		{OwnershipState: verifiedOwnership, ID: "d1", Name: "site.tld", UserID: "u1", EmailEnabled: true},
 	})
 	override := "mail.example.com"
 	r.serverSettings = &fakeSettingsRepo{srv: &models.ServerSettings{
@@ -228,7 +228,7 @@ func TestReconcileSendmailCreds_ExistingSealedPasswordReused(t *testing.T) {
 		"noreply@site.tld": {ID: "mb1", LocalPart: "noreply", PasswordEnc: enc, SendOnly: true},
 	}}
 	r := sendmailTestReconciler(agent, mailboxes, []models.Domain{
-		{ID: "d1", Name: "site.tld", UserID: "u1"},
+		{OwnershipState: verifiedOwnership, ID: "d1", Name: "site.tld", UserID: "u1"},
 	})
 
 	r.reconcileSendmailCreds(context.Background())
@@ -248,7 +248,7 @@ func TestReconcileSendmailCreds_LegacyRowRotates(t *testing.T) {
 		"noreply@site.tld": {ID: "mb1", LocalPart: "noreply", PasswordEnc: nil, SendOnly: true},
 	}}
 	r := sendmailTestReconciler(agent, mailboxes, []models.Domain{
-		{ID: "d1", Name: "site.tld", UserID: "u1"},
+		{OwnershipState: verifiedOwnership, ID: "d1", Name: "site.tld", UserID: "u1"},
 	})
 
 	r.reconcileSendmailCreds(context.Background())
@@ -271,9 +271,9 @@ func TestReconcileSendmailCreds_SkipsAndRetries(t *testing.T) {
 		domainNames: map[string]string{"d1": "site.tld", "d-admin": "adminsite.tld"},
 	}
 	r := sendmailTestReconciler(agent, mailboxes, []models.Domain{
-		{ID: "d-nouser", Name: "nouser.tld", UserID: "u2"},   // no Linux user
-		{ID: "d-admin", Name: "panelhost.tld", UserID: "u3"}, // admin w/ synthesized username
-		{ID: "d1", Name: "site.tld", UserID: "u1"},
+		{OwnershipState: verifiedOwnership, ID: "d-nouser", Name: "nouser.tld", UserID: "u2"}, // no Linux user
+		{OwnershipState: verifiedOwnership, ID: "d-admin", Name: "panelhost.tld", UserID: "u3"},                                  // admin w/ synthesized username
+		{OwnershipState: verifiedOwnership, ID: "d1", Name: "site.tld", UserID: "u1"},
 	})
 	ctx := context.Background()
 
@@ -308,7 +308,7 @@ func TestReconcileSendmailCreds_HumanNoreplyNeverTouched(t *testing.T) {
 		domainNames: map[string]string{"d1": "site.tld"},
 	}
 	r := sendmailTestReconciler(agent, mailboxes, []models.Domain{
-		{ID: "d1", Name: "site.tld", UserID: "u1"},
+		{OwnershipState: verifiedOwnership, ID: "d1", Name: "site.tld", UserID: "u1"},
 	})
 
 	r.reconcileSendmailCreds(context.Background())
@@ -339,7 +339,7 @@ func TestReconcileSendmailCreds_BothNamesHumanSkips(t *testing.T) {
 		domainNames: map[string]string{"d1": "site.tld"},
 	}
 	r := sendmailTestReconciler(agent, mailboxes, []models.Domain{
-		{ID: "d1", Name: "site.tld", UserID: "u1"},
+		{OwnershipState: verifiedOwnership, ID: "d1", Name: "site.tld", UserID: "u1"},
 	})
 	ctx := context.Background()
 
@@ -365,7 +365,7 @@ func TestReconcileSendmailCreds_SkippedWhenMailModuleDisabled(t *testing.T) {
 		domainNames: map[string]string{"d1": "site.tld"},
 	}
 	r := sendmailTestReconciler(agent, mailboxes, []models.Domain{
-		{ID: "d1", Name: "site.tld", UserID: "u1", EmailEnabled: true},
+		{OwnershipState: verifiedOwnership, ID: "d1", Name: "site.tld", UserID: "u1", EmailEnabled: true},
 	})
 	r.serverSettings = &fakeSettingsRepo{srv: &models.ServerSettings{Hostname: "panel.example.tld", MailEnabled: false}}
 
@@ -383,7 +383,7 @@ func TestReconcileSendmailCreds_NoHostnameNoop(t *testing.T) {
 	agent := &fakeSendmailAgent{}
 	mailboxes := &fakeSendmailMailboxRepo{byEmail: map[string]*models.Mailbox{}}
 	r := sendmailTestReconciler(agent, mailboxes, []models.Domain{
-		{ID: "d1", Name: "site.tld", UserID: "u1"},
+		{OwnershipState: verifiedOwnership, ID: "d1", Name: "site.tld", UserID: "u1"},
 	})
 	r.serverSettings = &fakeSettingsRepo{srv: &models.ServerSettings{Hostname: ""}}
 

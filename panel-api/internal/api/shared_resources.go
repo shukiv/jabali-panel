@@ -129,6 +129,9 @@ func (h *sharedResourceHandler) create(c *gin.Context) {
 		}, h.notifyAgent)
 	if err != nil {
 		switch {
+		case errors.Is(err, sharedresourceops.ErrOwnershipPending):
+			c.JSON(http.StatusConflict, gin.H{"error": "domain_ownership_pending",
+				"detail": "prove ownership of the domain before creating shared resources"})
 		case errors.Is(err, sharedresourceops.ErrEmailNotEnabled):
 			c.JSON(http.StatusConflict, gin.H{"error": "email_not_enabled",
 				"detail": "enable email on the domain before creating shared resources"})

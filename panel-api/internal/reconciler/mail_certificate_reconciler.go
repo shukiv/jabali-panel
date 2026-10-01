@@ -42,7 +42,9 @@ func (r *Reconciler) reconcileMailCertificates(ctx context.Context) {
 		} else {
 			for i := range domains {
 				d := &domains[i]
-				if !d.EmailEnabled {
+				// GH #1816: an unproven name gets no mail certificate; treat
+				// it like a domain without mail (a revoked one's is removed).
+				if !d.EmailEnabled || ownershipPending(d) {
 					// Mail is off (provider none/external, or switched off
 					// after a prior jabali state): tear down any per-domain
 					// mail certificate so a stale mail.<domain> SSL doesn't
@@ -242,6 +244,11 @@ func (r *Reconciler) lookupDomainName(ctx context.Context, domainID string) (str
 	}
 	d, err := r.domains.FindByID(ctx, domainID)
 	if err != nil || d == nil {
+		return "", false
+	}
+	// GH #1816: never issue a mail certificate for an unproven name, even
+	// when a row raced in before the backfill pass removed it.
+	if ownershipPending(d) {
 		return "", false
 	}
 	name := strings.TrimSpace(strings.ToLower(d.Name))

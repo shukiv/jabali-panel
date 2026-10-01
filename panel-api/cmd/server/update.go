@@ -1601,6 +1601,27 @@ fi
 			preUpdateBinaries = nil
 			return nil
 		}},
+		{"converge Stalwart directory queries", func() error {
+			// GH #1816 / ADR-0170: "provision new software" ran the Stalwart
+			// Directory converger before the migrations. On a box that had not
+			// yet migrated domains.ownership_status it kept the queries that
+			// do not filter on it (a query naming a missing column fails every
+			// login and delivery). Run it again now that the schema is
+			// current, so a mailbox on an unproven domain gets no mail and
+			// cannot sign in.
+			installSh := repoDir + "/install.sh"
+			if _, err := os.Stat(installSh); err != nil {
+				return nil // no install.sh — dev environment, skip
+			}
+			if _, err := os.Stat("/etc/jabali-panel/stalwart-admin.token"); err != nil {
+				return nil // mail module not installed
+			}
+			if err := run("", "bash", "-c",
+				"source "+installSh+" && converge_stalwart_directory_queries"); err != nil {
+				fmt.Printf("  (Stalwart directory converge failed: %v — mail on unproven domains stays unfiltered until the next `jabali update`)\n", err)
+			}
+			return nil
+		}},
 		{"sync jabali-agent + jabali-panel units", func() error {
 			// Re-render the jabali-agent.service and jabali-panel.service
 			// unit files from install.sh's writers so hardening/env

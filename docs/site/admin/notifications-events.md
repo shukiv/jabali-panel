@@ -70,6 +70,11 @@ Each event has one of four severities: `info`, `warning`, `error` or `critical`.
 | `domain.ghost_detected.mismatch` | warning | yes | Ghosted domain — IP mismatch. The domain resolves to a different IP than this server. Expected behind a proxy/CDN such as Cloudflare — disable if you front domains that way. |
 | `domain.ghost_detected.nxdomain` | warning | yes | Ghosted domain — does not resolve. The domain does not resolve in public DNS. It may be newly added or its DNS is not yet live. |
 | `domain.ghost_detected.partial` | warning | yes | Ghosted domain — partial DNS. Only some of the domain's expected records point here. DNS may be mid-propagation or misconfigured. |
+| `domain.ownership.verified` | info | yes | Domain ownership verified. A domain (or its administrator) proved ownership, so its DNS zone, certificate and mail are being set up. |
+| `domain.ownership.revoked` | warning | yes | Domain ownership withdrawn. An administrator withdrew a domain's verification. The domain is offline until its owner proves it again. |
+| `domain.ownership.expiring` | warning | yes | Unverified domain about to be removed. A domain or alias is still not verified and will be removed in a few days unless its owner proves it. |
+| `domain.ownership.expired` | warning | yes | Unverified domain removed. A domain or alias was never verified and was removed. Its site files were kept. |
+| `domain.ownership.needs_admin` | warning | yes | Domain needs administrator approval. A pending domain cannot be proven by DNS (its nameservers already point here, or its DNS does not answer). An administrator must approve it. |
 | `mail.rbl.listed` | error | yes | Mail IP blocklisted (RBL). The server's sending IP was found on a DNS blocklist. Outbound mail may be rejected — action required. |
 | `mail.rbl.cleared` | info | no | Mail IP delisted (RBL). The server's sending IP is no longer on a previously-seen blocklist. Informational. |
 | `mail.dmarc.report_received` | info | no | DMARC aggregate report received. An aggregate DMARC (RUA) report arrived for one of your domains. Informational. |

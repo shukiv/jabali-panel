@@ -42,14 +42,15 @@ func steadyStateFixture(t *testing.T, webmailOn bool) (*Reconciler, *fakeAgent) 
 	domains := r.domains.(*fakeDomainRepo)
 	now := time.Now().UTC()
 	shop := &models.Domain{
-		ID:           "domain-2",
-		UserID:       "user-1",
-		Name:         "shop.example.net",
-		DocRoot:      "/home/alice/domains/shop.example.net/public_html",
-		IsEnabled:    true,
-		RateLimitRPS: 5,
-		CreatedAt:    now,
-		UpdatedAt:    now,
+		OwnershipState: verifiedOwnership,
+		ID:             "domain-2",
+		UserID:         "user-1",
+		Name:           "shop.example.net",
+		DocRoot:        "/home/alice/domains/shop.example.net/public_html",
+		IsEnabled:      true,
+		RateLimitRPS:   5,
+		CreatedAt:      now,
+		UpdatedAt:      now,
 	}
 	domains.domains[shop.ID] = shop
 

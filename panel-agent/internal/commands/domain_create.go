@@ -97,8 +97,14 @@ type domainCreateParams struct {
 	PreviewHost     string `json:"preview_host,omitempty"`
 	PreviewCertPath string `json:"preview_cert_path,omitempty"`
 	PreviewKeyPath  string `json:"preview_key_path,omitempty"`
-	SSLCertPath     string `json:"ssl_cert_path"`
-	SSLKeyPath      string `json:"ssl_key_path"`
+	// OwnershipGate (GH #1816 / ADR-0170) is set while the owner has not yet
+	// proven control of the name. The real-name server blocks then drop
+	// (444) every request that does not carry it in X-Jabali-Preview-Gate,
+	// a header only the preview block's proxy sends. Lowercase hex; empty
+	// renders the vhost exactly as before.
+	OwnershipGate string `json:"ownership_gate,omitempty"`
+	SSLCertPath   string `json:"ssl_cert_path"`
+	SSLKeyPath    string `json:"ssl_key_path"`
 	// PHP INI overrides: omitted if not set on the domain.
 	PHPMemoryLimit       string `json:"php_memory_limit,omitempty"`
 	PHPUploadMaxFilesize string `json:"php_upload_max_filesize,omitempty"`
@@ -202,6 +208,10 @@ type domainCreateResponse struct {
 // Pattern: ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$
 var domainRegex = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$`)
 
+// ownershipGateRegex validates the ownership gate (GH #1816): lowercase hex
+// only, as the value is written into an nginx if() condition.
+var ownershipGateRegex = regexp.MustCompile(`^[0-9a-f]{32,64}$`)
+
 // vhostTemplate is the nginx vhost configuration template.
 //
 // Listen-IP rendering note (M24): each `listen` line uses an explicit
@@ -209,7 +219,11 @@ var domainRegex = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9](
 // shape renders the invalid `listen :80;` when X is empty, so we keep
 // the bracketed [::] / bare 80 fallbacks separately. See plans/m24-ip-manager.md
 // review F-H-3.
-const vhostTemplate = `{{define "servebody"}}{{ if .IsEnabled }}
+const vhostTemplate = `{{define "ownershipgate"}}{{ if .OwnershipGate }}    # GH #1816: ownership of this name is not proven yet. Only the preview
+    # URL's proxy sends this header; every other request is dropped with no
+    # response (444), ACME challenges included.
+    if ($http_x_jabali_preview_gate != "{{.OwnershipGate}}") { return 444; }
+{{ end }}{{end}}{{define "servebody"}}{{ if .IsEnabled }}
     root {{.DocRoot}};
     # JAB-183: refuse to follow a symlink whose owner differs from the owner of
     # the thing it points at. Docroots are 2750 <user>:www-data and homes are
@@ -565,7 +579,7 @@ const vhostTemplate = `{{define "servebody"}}{{ if .IsEnabled }}
 {{ end }}{{ if .ListenIPv6 }}    listen [{{.ListenIPv6}}]:80;
 {{ else }}    listen [::]:80;
 {{ end }}    server_name {{.Domain}} www.{{.Domain}}{{.ExtraServerNames}};
-{{ if .IsEnabled }}
+{{ template "ownershipgate" . }}{{ if .IsEnabled }}
     # ACME HTTP-01 webroot. Must be a location block — a server-level
     # redirect fires in nginx SERVER_REWRITE phase BEFORE FIND_CONFIG,
     # so a server-scoped redirect short-circuits every request
@@ -624,7 +638,7 @@ server {
     # unknown-directive error), the http2 on directive on >=1.25.1
     # (where the listen parameter is deprecated and warns every reload).
     server_name {{.Domain}} www.{{.Domain}}{{.ExtraServerNames}};
-    ssl_certificate {{.SSLCertPath}};
+{{ template "ownershipgate" . }}    ssl_certificate {{.SSLCertPath}};
     ssl_certificate_key {{.SSLKeyPath}};
     # JAB-69: modern TLS + Mozilla-intermediate ciphers (no 3DES/RC4/CBC-weak).
     ssl_protocols TLSv1.2 TLSv1.3;
@@ -683,7 +697,8 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-{{ if .SSLCertPath }}        proxy_ssl_server_name on;
+{{ if .OwnershipGate }}        proxy_set_header X-Jabali-Preview-Gate {{.OwnershipGate}};
+{{ end }}{{ if .SSLCertPath }}        proxy_ssl_server_name on;
         proxy_ssl_name {{.Domain}};
 {{ end }}        proxy_redirect http://www.{{.Domain}} http://$http_host;
         proxy_redirect https://www.{{.Domain}} https://$http_host;
@@ -717,11 +732,14 @@ type vhostData struct {
 	// suffix appended after "{{.Domain}} www.{{.Domain}}" in server_name
 	// — a leading-space-joined list (" a.com b.com") or "" when none.
 	// Already re-validated against domainRegex by sanitizeAliasServerNames.
-	ExtraServerNames   string
-	PreviewHost        string
-	PreviewCertPath    string
-	PreviewKeyPath     string
-	PreviewUpstream    string
+	ExtraServerNames string
+	PreviewHost      string
+	PreviewCertPath  string
+	PreviewKeyPath   string
+	PreviewUpstream  string
+	// OwnershipGate: see domainCreateParams.OwnershipGate. Validated
+	// against ownershipGateRegex before it reaches the template.
+	OwnershipGate      string
 	DocRoot            string
 	HasPHP             bool
 	PHPVersion         string
@@ -1119,7 +1137,7 @@ func buildCacheGate(paths []string, fallback string) string {
 	return "(" + strings.Join(valid, "|") + ")"
 }
 
-func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redirectDirectives, ruleDirectives, customDirectives, rateLimitDirectives, ipACLDirectives, dirPrivacyDirectives, indexPriority string, isEnabled, hasPHP bool, sslCertPath, sslKeyPath, phpMemLimit, phpUploadMax, phpPostMax string, phpMaxInputVars, phpMaxExecTime, phpMaxInputTime int, phpDisplayErrors bool, phpErrorReporting *int, phpTimezone string, envVars []domainEnvVarParam, listenIPv4, listenIPv6 string, cacheEnabled bool, cachePath string, cachePaths []string, cacheBypassPaths []string, cacheTTLSeconds int, cacheQueryAllowlist []string, fpmSocket string, previewHost, previewCertPath, previewKeyPath string, interceptErrors, pathInfo, redirectHTTPS, serveHTTPS bool, aliases []string, phpFlags phpFlagPins) (string, error) {
+func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redirectDirectives, ruleDirectives, customDirectives, rateLimitDirectives, ipACLDirectives, dirPrivacyDirectives, indexPriority string, isEnabled, hasPHP bool, sslCertPath, sslKeyPath, phpMemLimit, phpUploadMax, phpPostMax string, phpMaxInputVars, phpMaxExecTime, phpMaxInputTime int, phpDisplayErrors bool, phpErrorReporting *int, phpTimezone string, envVars []domainEnvVarParam, listenIPv4, listenIPv6 string, cacheEnabled bool, cachePath string, cachePaths []string, cacheBypassPaths []string, cacheTTLSeconds int, cacheQueryAllowlist []string, fpmSocket string, previewHost, previewCertPath, previewKeyPath string, interceptErrors, pathInfo, redirectHTTPS, serveHTTPS bool, aliases []string, phpFlags phpFlagPins, ownershipGate string) (string, error) {
 	// GH #1625: re-sanitize the panel-supplied aliases HERE (trust
 	// boundary) into the server_name suffix — never render them raw.
 	aliasServerNames := sanitizeAliasServerNames(domain, aliases)
@@ -1215,6 +1233,7 @@ func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redi
 		PreviewCertPath:            previewCertPath,
 		PreviewKeyPath:             previewKeyPath,
 		PreviewUpstream:            previewUpstream,
+		OwnershipGate:              ownershipGate,
 		HTTP2Param:                 h2.Param,
 		HTTP2Directive:             h2.Directive,
 		DocRoot:                    docRoot,
@@ -1454,6 +1473,14 @@ func domainCreateHandler(ctx context.Context, params json.RawMessage) (any, erro
 		}
 	}
 
+	// GH #1816: the ownership gate lands in an nginx if() condition.
+	if p.OwnershipGate != "" && !ownershipGateRegex.MatchString(p.OwnershipGate) {
+		return nil, &agentwire.AgentError{
+			Code:    agentwire.CodeInvalidArgument,
+			Message: "invalid ownership_gate: must be 32-64 lowercase hex characters",
+		}
+	}
+
 	// Validate username format
 	if !usernameRegex.MatchString(p.Username) {
 		return nil, &agentwire.AgentError{
@@ -1574,7 +1601,7 @@ func domainCreateHandler(ctx context.Context, params json.RawMessage) (any, erro
 	// cert file turns out to be missing on disk (#213).
 	redirectHTTPS, serveHTTPS := resolveHTTPSFlags(&p)
 	phpFlags := phpFlagPinsForParams(ctx, &p)
-	configPath, err := writeVhost(ctx, p.Username, p.Domain, p.DocRoot, p.PHPVersion, p.RedirectDirectives, p.RuleDirectives, p.CustomDirectives, rateLimitDirectives, ipACLDirectives, dirPrivacyDirectives, p.IndexPriority, isEnabled, p.HasPHP, p.SSLCertPath, p.SSLKeyPath, p.PHPMemoryLimit, p.PHPUploadMaxFilesize, p.PHPPostMaxSize, p.PHPMaxInputVars, p.PHPMaxExecutionTime, p.PHPMaxInputTime, p.PHPDisplayErrors, p.PHPErrorReporting, p.PHPTimezone, p.EnvVars, p.ListenIPv4, p.ListenIPv6, p.CacheEnabled, p.CachePath, p.CachePaths, p.CacheBypassPaths, p.CacheTTLSeconds, p.CacheQueryAllowlist, p.FPMSocket, p.PreviewHost, p.PreviewCertPath, p.PreviewKeyPath, p.InterceptErrors, p.PathInfo, redirectHTTPS, serveHTTPS, p.Aliases, phpFlags)
+	configPath, err := writeVhost(ctx, p.Username, p.Domain, p.DocRoot, p.PHPVersion, p.RedirectDirectives, p.RuleDirectives, p.CustomDirectives, rateLimitDirectives, ipACLDirectives, dirPrivacyDirectives, p.IndexPriority, isEnabled, p.HasPHP, p.SSLCertPath, p.SSLKeyPath, p.PHPMemoryLimit, p.PHPUploadMaxFilesize, p.PHPPostMaxSize, p.PHPMaxInputVars, p.PHPMaxExecutionTime, p.PHPMaxInputTime, p.PHPDisplayErrors, p.PHPErrorReporting, p.PHPTimezone, p.EnvVars, p.ListenIPv4, p.ListenIPv6, p.CacheEnabled, p.CachePath, p.CachePaths, p.CacheBypassPaths, p.CacheTTLSeconds, p.CacheQueryAllowlist, p.FPMSocket, p.PreviewHost, p.PreviewCertPath, p.PreviewKeyPath, p.InterceptErrors, p.PathInfo, redirectHTTPS, serveHTTPS, p.Aliases, phpFlags, p.OwnershipGate)
 	if err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,

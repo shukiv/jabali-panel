@@ -79,6 +79,7 @@ const PackageList = lazy(() => import("./shells/admin/packages/PackageList").the
 const DomainCreate = lazy(() => import("./shells/admin/domains/DomainCreate").then((m) => ({ default: m.DomainCreate })));
 const DomainEdit = lazy(() => import("./shells/admin/domains/DomainEdit").then((m) => ({ default: m.DomainEdit })));
 const DomainList = lazy(() => import("./shells/admin/domains/DomainList").then((m) => ({ default: m.DomainList })));
+const DomainOwnershipPage = lazy(() => import("./shells/admin/domains/DomainOwnershipPage").then((m) => ({ default: m.DomainOwnershipPage })));
 const AdminDatabaseList = lazy(() => import("./shells/admin/databases/DatabaseList").then((m) => ({ default: m.DatabaseList })));
 const AdminDatabaseCreate = lazy(() => import("./shells/admin/databases/DatabaseCreate").then((m) => ({ default: m.DatabaseCreate })));
 const ServerSettingsPage = lazy(() => import("./shells/admin/settings/ServerSettingsPage").then((m) => ({ default: m.ServerSettingsPage })));
@@ -265,6 +266,8 @@ const ThemedApp = () => {
               <Route index element={<DomainList />} />
               <Route path="create" element={<DomainCreate />} />
               <Route path="edit/:id" element={<DomainEdit />} />
+              {/* GH #1816: ownership proof — switch + pending names. */}
+              <Route path="ownership" element={<DomainOwnershipPage />} />
               <Route path=":id/dns" element={<DNSRecordsPage />} />
             </Route>
             {/* GH #1609: admin databases list — reassign a database's owner. */}

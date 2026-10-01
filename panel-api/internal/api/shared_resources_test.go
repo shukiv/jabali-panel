@@ -131,7 +131,7 @@ func srRouterFull(t *testing.T, res *srResFake, ag *srAgentFake, mb *srMbFake, m
 		ginctx.SetClaims(c, &auth.AccessClaims{UserID: "user1", IsAdmin: false})
 		c.Next()
 	})
-	dom := &srDomFake{dom: &models.Domain{ID: "dom1", UserID: "user1", Name: "example.org", EmailEnabled: true}}
+	dom := &srDomFake{dom: &models.Domain{ID: "dom1", UserID: "user1", Name: "example.org", EmailEnabled: true, OwnershipState: models.OwnershipState{OwnershipStatus: models.OwnershipVerified}}}
 	RegisterSharedResourceRoutes(v1, SharedResourceHandlerConfig{
 		Resources: res, Domains: dom, Mailboxes: mb, MailGroups: mg, Agent: ag,
 	})

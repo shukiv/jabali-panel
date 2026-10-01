@@ -105,7 +105,8 @@ func (r *Reconciler) ensurePanelPrimaryDKIM(ctx context.Context, domain *models.
 // on the agent to generate the Ed25519 keypair, register the Stalwart
 // domain, and then syncs the M6 DNS records. No-op once provisioned.
 func (r *Reconciler) ensureTenantEmailEnabled(ctx context.Context, domain *models.Domain) {
-	if domain == nil || domain.IsPanelPrimary || !domain.EmailEnabled {
+	// GH #1816: never register an unproven name with Stalwart.
+	if domain == nil || domain.IsPanelPrimary || !domain.EmailEnabled || ownershipPending(domain) {
 		return
 	}
 	if !domainIsMailRoutable(domain.Name) {

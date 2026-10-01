@@ -108,6 +108,7 @@ func (a *mgAgentFake) lastParams(cmd string) map[string]any {
 type mgFixture struct {
 	groups *mgGroupsFake
 	ag     *mgAgentFake
+	dom    *srDomFake
 	router *gin.Engine
 }
 
@@ -130,10 +131,10 @@ func newMGFixture(t *testing.T, kind string, internalOnly bool, mailboxes int) *
 		id := fmt.Sprintf("mb%d", i)
 		mb.byID[id] = &models.Mailbox{ID: id, DomainID: "dom1", EmailCached: fmt.Sprintf("user%d@example.org", i)}
 	}
-	dom := &srDomFake{dom: &models.Domain{ID: "dom1", UserID: "user1", Name: "example.org", EmailEnabled: true}}
+	dom := &srDomFake{dom: &models.Domain{ID: "dom1", UserID: "user1", Name: "example.org", EmailEnabled: true, OwnershipState: models.OwnershipState{OwnershipStatus: models.OwnershipVerified}}}
 	ag := &mgAgentFake{}
 	RegisterMailGroupRoutes(v1, MailGroupHandlerConfig{Groups: groups, Mailboxes: mb, Domains: dom, Agent: ag})
-	return &mgFixture{groups: groups, ag: ag, router: r}
+	return &mgFixture{groups: groups, ag: ag, dom: dom, router: r}
 }
 
 func mailboxIDs(n int) []string {
@@ -292,4 +293,14 @@ func TestUpdate_EnableInternalOnlyDistributionReapplies(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	requireDistributionApply(t, fx.ag, []any{"user1@example.org", "user2@example.org"})
 	require.Equal(t, true, fx.ag.lastParams("mailgroup.apply")["internal_only"])
+}
+
+// GH #1816 / ADR-0170: an unproven name gets no mail group.
+func TestCreate_PendingOwnership409(t *testing.T) {
+	fx := newMGFixture(t, "distribution", false, 0)
+	fx.dom.dom.OwnershipState = models.OwnershipState{OwnershipStatus: models.OwnershipPending}
+	w := do(t, fx.router, "POST", "/api/v1/domains/dom1/mailgroups", map[string]any{"name": "sales", "group_kind": "distribution"})
+	require.Equal(t, http.StatusConflict, w.Code, w.Body.String())
+	require.Contains(t, w.Body.String(), "domain_ownership_pending")
+	require.Empty(t, fx.ag.calls, "no agent call for a pending domain")
 }

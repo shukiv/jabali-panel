@@ -84,6 +84,15 @@ export type Domain = {
   bot_challenge_include?: boolean;
   // GH #1812: the owner lets other accounts create subdomains under this domain.
   allow_subdomain_delegation?: boolean;
+  // GH #1816 / ADR-0170: ownership proof. Anything but "verified" is pending
+  // (the server treats an empty or unknown status as pending too).
+  ownership_status?: string;
+  ownership_method?: string;
+  ownership_last_result?: string;
+  ownership_pending_since?: string | null;
+  ownership_verified_at?: string | null;
+  // "tenant" or "docker_app" (a docker app's domain cannot be revoked).
+  managed_by?: string;
   nginx_custom_directives: string;
   // GH #1624 / ADR-0169 Phase 4a: tenant-authored raw "advanced directives".
   // Optional — absent (omitempty) until the Phase 4a backend column (#1691)
