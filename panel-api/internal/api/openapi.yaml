@@ -5177,6 +5177,14 @@ paths:
       parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
       responses: { "200": { description: OK } }
 
+  /domains/{id}/php-settings/opcache-reset:
+    post:
+      tags: [Php Settings]
+      summary: Reset OPcache for the PHP pool serving this domain (restarts that pool's FPM master)
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
   /domains/{id}/env-vars:
     get:
       tags: [Php Settings]
