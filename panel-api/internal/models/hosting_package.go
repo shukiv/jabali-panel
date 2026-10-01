@@ -77,10 +77,10 @@ type HostingPackage struct {
 	CGIEnabled bool `gorm:"type:tinyint(1);not null;default:0" json:"cgi_enabled"`
 
 	// WebmailEnabled (GH #1628) makes webmail (the Bulwark UI) a per-package
-	// entitlement, defaulting ON — the account-level control that will replace
-	// the per-user users.webmail_enabled kill-switch. Slice 1 only STORES this;
-	// the webmail reconciler does not read it yet (that rewire + the backfill of
-	// existing per-user "off" accounts is slice 2). Mail delivery is unaffected.
+	// entitlement, defaulting ON. It replaced the per-user
+	// users.webmail_enabled toggle (#316), whose column migration 000312
+	// dropped (GH #1817). The webmail reconciler and the webmail SSO gate read
+	// it. Mail delivery is unaffected.
 	//
 	// NO `default:1` GORM tag on purpose: GORM's create callback substitutes a
 	// tag default for a zero-value field AND writes it back onto the struct, so

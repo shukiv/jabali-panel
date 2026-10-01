@@ -333,7 +333,6 @@ components:
         package_id: { type: string, nullable: true }
         linux_uid: { type: integer, nullable: true }
         suspended: { type: boolean }
-        webmail_enabled: { type: boolean }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
     UserCreate:
