@@ -150,7 +150,7 @@ production use; listed here so the one-liner env audit stays honest.
 <!-- AUTO-GENERATED:env-install — regenerate via /update-docs -->
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `JABALI_GO_VERSION` | No | `1.26.4` | Go version `install.sh` downloads on a clean box. |
+| `JABALI_GO_VERSION` | No | `1.26.8` | Go version `install.sh` downloads on a clean box. |
 | `JABALI_GO_ROOT` | No | `/usr/local/go` | Where the installer writes the Go toolchain. |
 | `JABALI_SERVICE_USER` | No | `jabali` | Service account the panel + agent run as. |
 | `JABALI_REPO_DIR` | No | `/opt/jabali2` | Git checkout path on the target host. |

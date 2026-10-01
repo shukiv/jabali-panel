@@ -48,7 +48,7 @@ Version pins shown are the values in `install.sh` at the time of writing. Run `j
 | **WP-CLI** | 2.12.0 | WordPress automation |
 | **GoAccess** | Debian | nginx log analyzer |
 | **restic** | Debian | Backup engine (deduplicated, encrypted, multi-destination) |
-| **Go toolchain** | 1.25.1 | Build agent + panel-api |
+| **Go toolchain** | 1.26.8 | Build agent + panel-api |
 | **Node.js** | NodeSource current LTS | Bulwark runtime + UI build |
 
 ## OS plumbing
