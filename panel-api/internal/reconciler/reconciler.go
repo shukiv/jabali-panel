@@ -2099,6 +2099,7 @@ func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Dom
 	hasPHP := false
 	var phpVersion string
 	var fpmSocket string
+	var boundPoolID string
 	if domain.PHPPoolID != nil && r.phpPools != nil {
 		phpCtx, phpCancel := context.WithTimeout(ctx, 5*time.Second)
 		pool, err := r.phpPools.FindByID(phpCtx, *domain.PHPPoolID)
@@ -2107,6 +2108,7 @@ func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Dom
 			r.log.Warn("failed to fetch PHP pool for domain, PHP disabled", "domain_id", domain.ID, "domain", domain.Name, "pool_id", *domain.PHPPoolID, "err", err)
 		} else if pool != nil {
 			hasPHP = true
+			boundPoolID = pool.ID
 			phpVersion = pool.PHPVersion
 			// Resolve this domain's FPM socket from its bound pool (GH #329).
 			// The default pool (the user's earliest, created_at ASC) keeps the
@@ -2266,6 +2268,15 @@ func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Dom
 	}
 	if domain.PHPTimezone != nil {
 		params["php_timezone"] = *domain.PHPTimezone
+	}
+	// GH #1701 Slice 2: the agent pins log_errors / file_uploads /
+	// short_open_tag on every PHP vhost. Send the value to pin when the panel
+	// knows one: the domain's own, else the bound pool's flag override. With
+	// neither, the agent pins the box php.ini baseline.
+	if hasPHP {
+		for directive, v := range r.phpFlagPinParams(ctx, domain, boundPoolID) {
+			params[directive] = v
+		}
 	}
 	// GH #1332 item 14: per-domain env vars -> nginx fastcgi_param. The agent
 	// re-validates keys against the security denylist before rendering.

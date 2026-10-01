@@ -244,6 +244,10 @@ type DomainPHPSettings struct {
 	DisplayErrors  *bool   `json:"php_display_errors,omitempty"`
 	ErrorReporting *int    `json:"php_error_reporting,omitempty"`
 	Timezone       *string `json:"php_timezone,omitempty"`
+	// GH #1701 Slice 2 flags (same NULL = inherit rule).
+	LogErrors    *bool `json:"php_log_errors,omitempty"`
+	FileUploads  *bool `json:"php_file_uploads,omitempty"`
+	ShortOpenTag *bool `json:"php_short_open_tag,omitempty"`
 }
 
 type domainRepo struct{ db *gorm.DB }
@@ -601,6 +605,10 @@ func (r *domainRepo) UpdatePHPSettings(ctx context.Context, id string, settings 
 			"php_display_errors":  settings.DisplayErrors,
 			"php_error_reporting": settings.ErrorReporting,
 			"php_timezone":        settings.Timezone,
+			// GH #1701 Slice 2.
+			"php_log_errors":     settings.LogErrors,
+			"php_file_uploads":   settings.FileUploads,
+			"php_short_open_tag": settings.ShortOpenTag,
 		})
 	if res.Error != nil {
 		return translate(res.Error)

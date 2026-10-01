@@ -48,3 +48,15 @@ func TestNewVersionedPHPPool_ClonesCompleteTuning(t *testing.T) {
 		t.Errorf("versioned pool did not clone the complete tuning model:\n default=%+v\n got=%+v", def, got)
 	}
 }
+
+// PHPIniBoolOn matches PHP's own reading of a boolean ini value.
+func TestPHPIniBoolOn(t *testing.T) {
+	for v, want := range map[string]bool{
+		"on": true, "On": true, " ON ": true, "yes": true, "true": true, "1": true, "2": true, "-1": true, "01": true,
+		"off": false, "Off": false, "no": false, "false": false, "0": false, "": false, "00": false, "none": false,
+	} {
+		if got := PHPIniBoolOn(v); got != want {
+			t.Errorf("PHPIniBoolOn(%q) = %v, want %v", v, got, want)
+		}
+	}
+}

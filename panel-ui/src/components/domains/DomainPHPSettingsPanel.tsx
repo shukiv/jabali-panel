@@ -32,6 +32,10 @@ type DomainPHPSettings = {
   php_display_errors?: boolean | null;
   php_error_reporting?: number | null;
   php_timezone?: string | null;
+  // GH #1701 Slice 2 flags.
+  php_log_errors?: boolean | null;
+  php_file_uploads?: boolean | null;
+  php_short_open_tag?: boolean | null;
   // GH #1543 (johnnyq): the real value this domain inherits per directive when
   // it sets no override (pool ini override → box php.ini baseline), keyed by
   // php.ini directive name. Used to label each select's inherit option with the
@@ -58,6 +62,9 @@ type PHPSettingsFormData = {
   php_display_errors?: boolean | null;
   php_error_reporting?: number | null;
   php_timezone?: string | null;
+  php_log_errors?: boolean | null;
+  php_file_uploads?: boolean | null;
+  php_short_open_tag?: boolean | null;
 };
 
 // Form field -> php.ini directive, for the GH #1701 policy lookups.
@@ -71,6 +78,9 @@ const FIELD_DIRECTIVE: Record<keyof PHPSettingsFormData, string> = {
   php_display_errors: "display_errors",
   php_error_reporting: "error_reporting",
   php_timezone: "date.timezone",
+  php_log_errors: "log_errors",
+  php_file_uploads: "file_uploads",
+  php_short_open_tag: "short_open_tag",
 };
 
 const MEMORY_LIMIT_OPTIONS = [
@@ -148,6 +158,15 @@ const ERROR_REPORTING_OPTIONS = [
   { label: "None (report nothing)", value: 0 },
   { label: "Production (errors + warnings)", value: 22527 },
   { label: "All (development)", value: 32767 },
+];
+
+// GH #1701 Slice 2 flags. null = inherit: the pool's flag, else the box
+// php.ini. The agent pins the resolved value on every PHP vhost, so one
+// domain's choice cannot carry over to a sibling on the same PHP pool.
+const FLAG_OPTIONS = [
+  { label: "Use pool default", value: null as boolean | null },
+  { label: "On", value: true as boolean | null },
+  { label: "Off", value: false as boolean | null },
 ];
 
 // The full IANA/PHP timezone list, shared with admin Server Settings so both
@@ -272,6 +291,9 @@ export function DomainPHPSettingsPanel({ domainId }: DomainPHPSettingsPanelProps
           php_display_errors: resp.data.php_display_errors ?? null,
           php_error_reporting: resp.data.php_error_reporting ?? null,
           php_timezone: resp.data.php_timezone ?? null,
+          php_log_errors: resp.data.php_log_errors ?? null,
+          php_file_uploads: resp.data.php_file_uploads ?? null,
+          php_short_open_tag: resp.data.php_short_open_tag ?? null,
         });
       } catch {
         feedback.message.error("Failed to load PHP settings");
@@ -309,6 +331,9 @@ export function DomainPHPSettingsPanel({ domainId }: DomainPHPSettingsPanelProps
         php_display_errors: outgoing("php_display_errors", values),
         php_error_reporting: outgoing("php_error_reporting", values),
         php_timezone: outgoing("php_timezone", values),
+        php_log_errors: outgoing("php_log_errors", values),
+        php_file_uploads: outgoing("php_file_uploads", values),
+        php_short_open_tag: outgoing("php_short_open_tag", values),
       });
       feedback.message.success("PHP settings updated successfully");
       // Reload settings to confirm.
@@ -343,6 +368,9 @@ export function DomainPHPSettingsPanel({ domainId }: DomainPHPSettingsPanelProps
     "php_display_errors",
     "php_error_reporting",
     "php_timezone",
+    "php_log_errors",
+    "php_file_uploads",
+    "php_short_open_tag",
   ];
 
   // GH #1332 item 6: a small tag on each field showing whether it is a custom
@@ -353,7 +381,7 @@ export function DomainPHPSettingsPanel({ domainId }: DomainPHPSettingsPanelProps
   // null option is what the Select shows while a domain has no override, so this
   // surfaces the actual default without any extra auto-select logic. Falls back
   // to the generic label when the backend couldn't resolve a value.
-  type Opt = { label: string; value: string | number | null };
+  type Opt = { label: string; value: string | number | boolean | null };
   // A per-directive formatter turns the raw box baseline (from pool_defaults)
   // into the "(Default)" label on the null (inherit) option. Returning null —
   // or an absent key, meaning the agent resolved no baseline — keeps the
@@ -377,6 +405,9 @@ export function DomainPHPSettingsPanel({ domainId }: DomainPHPSettingsPanelProps
   // A stock Debian php.ini ships date.timezone commented out → ini_get returns
   // "" and PHP's effective zone is UTC, so surface that rather than a blank.
   const timezoneFmt: DefaultFmt = (raw) => (raw === "" ? "UTC" : raw);
+  // A flag reads the way ini_get reports it: "1" on; "" or "0" off.
+  const flagFmt: DefaultFmt = (raw) =>
+    raw === "1" || raw.toLowerCase() === "on" ? "On" : "Off";
   const defaultLabel = (
     directive: string,
     fmt: DefaultFmt = sizeFmt(),
@@ -681,6 +712,60 @@ export function DomainPHPSettingsPanel({ domainId }: DomainPHPSettingsPanelProps
                       allowClear
                       optionFilterProp="label"
                       options={withDefault(TIMEZONE_OPTIONS, "date.timezone", timezoneFmt)}
+                    />
+                  </Form.Item>
+                </Col>
+                <Col xs={24} sm={12}>
+                  <Form.Item
+                    label={overrideLabel(
+                      "Log errors",
+                      fieldSet(phpSettings?.php_log_errors),
+                      "php_log_errors",
+                    )}
+                    name="php_log_errors"
+                    extra="Records PHP errors in the error log. Visitors never see logged errors."
+                  >
+                    <Select
+                      disabled={locked("php_log_errors")}
+                      placeholder={inheritPlaceholder("log_errors", flagFmt)}
+                      allowClear
+                      options={withDefault(FLAG_OPTIONS, "log_errors", flagFmt)}
+                    />
+                  </Form.Item>
+                </Col>
+                <Col xs={24} sm={12}>
+                  <Form.Item
+                    label={overrideLabel(
+                      "File uploads",
+                      fieldSet(phpSettings?.php_file_uploads),
+                      "php_file_uploads",
+                    )}
+                    name="php_file_uploads"
+                    extra="Lets this domain's PHP accept uploaded files. Off breaks uploads in WordPress and most apps."
+                  >
+                    <Select
+                      disabled={locked("php_file_uploads")}
+                      placeholder={inheritPlaceholder("file_uploads", flagFmt)}
+                      allowClear
+                      options={withDefault(FLAG_OPTIONS, "file_uploads", flagFmt)}
+                    />
+                  </Form.Item>
+                </Col>
+                <Col xs={24} sm={12}>
+                  <Form.Item
+                    label={overrideLabel(
+                      "Short open tag",
+                      fieldSet(phpSettings?.php_short_open_tag),
+                      "php_short_open_tag",
+                    )}
+                    name="php_short_open_tag"
+                    extra="Treats <? as a PHP opening tag. Only for old code that needs it: files that start with <?xml stop working."
+                  >
+                    <Select
+                      disabled={locked("php_short_open_tag")}
+                      placeholder={inheritPlaceholder("short_open_tag", flagFmt)}
+                      allowClear
+                      options={withDefault(FLAG_OPTIONS, "short_open_tag", flagFmt)}
                     />
                   </Form.Item>
                 </Col>

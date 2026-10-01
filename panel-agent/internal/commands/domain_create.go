@@ -113,6 +113,16 @@ type domainCreateParams struct {
 	PHPDisplayErrors  bool   `json:"php_display_errors,omitempty"`
 	PHPErrorReporting *int   `json:"php_error_reporting,omitempty"`
 	PHPTimezone       string `json:"php_timezone,omitempty"`
+	// GH #1701 Slice 2: log_errors / file_uploads / short_open_tag. nil => the
+	// panel has no value (neither the domain nor its pool sets one); the agent
+	// then pins the box php.ini baseline instead (resolvePHPFlagPins).
+	PHPLogErrors    *bool `json:"php_log_errors,omitempty"`
+	PHPFileUploads  *bool `json:"php_file_uploads,omitempty"`
+	PHPShortOpenTag *bool `json:"php_short_open_tag,omitempty"`
+	// PHPFlagsInheritUnknown: the panel could not read the pool's flag
+	// overrides, so the inherited value is unknown. Pin only the values sent;
+	// pinning the php.ini baseline could undo a pool's php_admin_flag.
+	PHPFlagsInheritUnknown bool `json:"php_flags_inherit_unknown,omitempty"`
 	// EnvVars are per-domain environment variables (GH #1332 item 14), rendered
 	// as fastcgi_param in the PHP location. Keys are re-validated against the
 	// shared phpenv denylist here (defense in depth) before rendering.
@@ -1105,7 +1115,7 @@ func buildCacheGate(paths []string, fallback string) string {
 	return "(" + strings.Join(valid, "|") + ")"
 }
 
-func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redirectDirectives, ruleDirectives, customDirectives, rateLimitDirectives, ipACLDirectives, dirPrivacyDirectives, indexPriority string, isEnabled, hasPHP bool, sslCertPath, sslKeyPath, phpMemLimit, phpUploadMax, phpPostMax string, phpMaxInputVars, phpMaxExecTime, phpMaxInputTime int, phpDisplayErrors bool, phpErrorReporting *int, phpTimezone string, envVars []domainEnvVarParam, listenIPv4, listenIPv6 string, cacheEnabled bool, cachePath string, cachePaths []string, cacheBypassPaths []string, cacheTTLSeconds int, cacheQueryAllowlist []string, fpmSocket string, previewHost, previewCertPath, previewKeyPath string, interceptErrors, pathInfo, redirectHTTPS, serveHTTPS bool, aliases []string) (string, error) {
+func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redirectDirectives, ruleDirectives, customDirectives, rateLimitDirectives, ipACLDirectives, dirPrivacyDirectives, indexPriority string, isEnabled, hasPHP bool, sslCertPath, sslKeyPath, phpMemLimit, phpUploadMax, phpPostMax string, phpMaxInputVars, phpMaxExecTime, phpMaxInputTime int, phpDisplayErrors bool, phpErrorReporting *int, phpTimezone string, envVars []domainEnvVarParam, listenIPv4, listenIPv6 string, cacheEnabled bool, cachePath string, cachePaths []string, cacheBypassPaths []string, cacheTTLSeconds int, cacheQueryAllowlist []string, fpmSocket string, previewHost, previewCertPath, previewKeyPath string, interceptErrors, pathInfo, redirectHTTPS, serveHTTPS bool, aliases []string, phpFlags phpFlagPins) (string, error) {
 	// GH #1625: re-sanitize the panel-supplied aliases HERE (trust
 	// boundary) into the server_name suffix — never render them raw.
 	aliasServerNames := sanitizeAliasServerNames(domain, aliases)
@@ -1226,7 +1236,7 @@ func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redi
 		PHPMaxInputVars:            phpMaxInputVars,
 		PHPMaxExecutionTime:        phpMaxExecTime,
 		PHPMaxInputTime:            phpMaxInputTime,
-		PHPValueParam:              buildPHPValueParam(hasPHP, phpMemLimit, phpUploadMax, phpPostMax, phpMaxInputVars, phpMaxExecTime, phpMaxInputTime, phpDisplayErrors, phpErrorReporting, phpTimezone),
+		PHPValueParam:              withPHPFlagPins(buildPHPValueParam(hasPHP, phpMemLimit, phpUploadMax, phpPostMax, phpMaxInputVars, phpMaxExecTime, phpMaxInputTime, phpDisplayErrors, phpErrorReporting, phpTimezone), phpFlags),
 		EnvParams:                  buildEnvParams(hasPHP, envVars),
 		ListenIPv4:                 listenIPv4,
 		ListenIPv6:                 listenIPv6,
@@ -1559,7 +1569,8 @@ func domainCreateHandler(ctx context.Context, params json.RawMessage) (any, erro
 	// panel always sends the field; writeVhost still forces it false if the
 	// cert file turns out to be missing on disk (#213).
 	redirectHTTPS, serveHTTPS := resolveHTTPSFlags(&p)
-	configPath, err := writeVhost(ctx, p.Username, p.Domain, p.DocRoot, p.PHPVersion, p.RedirectDirectives, p.RuleDirectives, p.CustomDirectives, rateLimitDirectives, ipACLDirectives, dirPrivacyDirectives, p.IndexPriority, isEnabled, p.HasPHP, p.SSLCertPath, p.SSLKeyPath, p.PHPMemoryLimit, p.PHPUploadMaxFilesize, p.PHPPostMaxSize, p.PHPMaxInputVars, p.PHPMaxExecutionTime, p.PHPMaxInputTime, p.PHPDisplayErrors, p.PHPErrorReporting, p.PHPTimezone, p.EnvVars, p.ListenIPv4, p.ListenIPv6, p.CacheEnabled, p.CachePath, p.CachePaths, p.CacheBypassPaths, p.CacheTTLSeconds, p.CacheQueryAllowlist, p.FPMSocket, p.PreviewHost, p.PreviewCertPath, p.PreviewKeyPath, p.InterceptErrors, p.PathInfo, redirectHTTPS, serveHTTPS, p.Aliases)
+	phpFlags := phpFlagPinsForParams(ctx, &p)
+	configPath, err := writeVhost(ctx, p.Username, p.Domain, p.DocRoot, p.PHPVersion, p.RedirectDirectives, p.RuleDirectives, p.CustomDirectives, rateLimitDirectives, ipACLDirectives, dirPrivacyDirectives, p.IndexPriority, isEnabled, p.HasPHP, p.SSLCertPath, p.SSLKeyPath, p.PHPMemoryLimit, p.PHPUploadMaxFilesize, p.PHPPostMaxSize, p.PHPMaxInputVars, p.PHPMaxExecutionTime, p.PHPMaxInputTime, p.PHPDisplayErrors, p.PHPErrorReporting, p.PHPTimezone, p.EnvVars, p.ListenIPv4, p.ListenIPv6, p.CacheEnabled, p.CachePath, p.CachePaths, p.CacheBypassPaths, p.CacheTTLSeconds, p.CacheQueryAllowlist, p.FPMSocket, p.PreviewHost, p.PreviewCertPath, p.PreviewKeyPath, p.InterceptErrors, p.PathInfo, redirectHTTPS, serveHTTPS, p.Aliases, phpFlags)
 	if err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,

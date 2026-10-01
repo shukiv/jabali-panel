@@ -409,6 +409,15 @@ type Domain struct {
 	PHPErrorReporting *int    `gorm:"type:int" json:"php_error_reporting,omitempty"`
 	PHPTimezone       *string `gorm:"type:varchar(64)" json:"php_timezone,omitempty"`
 
+	// GH #1701 Slice 2: per-domain log_errors / file_uploads / short_open_tag,
+	// same PHP_VALUE mechanism, NULL = inherit (the pool's flag, else the box
+	// php.ini). The agent pins all three on every PHP vhost (this domain's
+	// value, else the inherited one) so a value cannot bleed onto a sibling
+	// domain served by the same reused FPM worker.
+	PHPLogErrors    *bool `gorm:"type:tinyint(1)" json:"php_log_errors,omitempty"`
+	PHPFileUploads  *bool `gorm:"type:tinyint(1)" json:"php_file_uploads,omitempty"`
+	PHPShortOpenTag *bool `gorm:"type:tinyint(1)" json:"php_short_open_tag,omitempty"`
+
 	// M18: per-domain HTTP rate/conn limits. Zero = unlimited (no
 	// nginx directive emitted). RateLimitRPS is requests-per-SECOND
 	// as seen by the reconciler; the vhost renderer converts to
