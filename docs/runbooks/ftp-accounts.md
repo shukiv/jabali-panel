@@ -106,7 +106,7 @@ account can log in again (deliberate: the real password only ever lived
 in `/etc/shadow`). Stray aliases with no DB row are removed.
 
 An isolated account's bind mount does not survive a reboot or a manual
-`umount`. The reconciler re-mounts it on its next tick (`ftp.ensure_jail`,
+`umount`. The reconciler re-mounts it on its next tick (`ftpaccount.ensure_jail`,
 called for every isolated row each pass), so expect up to a minute after
 boot before those accounts can log in.
 
