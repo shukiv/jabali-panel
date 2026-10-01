@@ -36,6 +36,11 @@ var phpIniDefaultDirectives = []string{
 	"max_input_time",
 	"error_reporting", // GH #1332 bitmask; the panel maps it to a preset label
 	"date.timezone",   // GH #1332; "" here is PHP's effective UTC fallback
+	// GH #1701 Slice 2 flags ("1" on, "" or "0" off). Also the baseline
+	// resolvePHPFlagPins pins on a domain that sets no value of its own.
+	"log_errors",
+	"file_uploads",
+	"short_open_tag",
 }
 
 // phpVersionRE bounds the version to <major>.<minor> before it is spliced into a
@@ -61,31 +66,37 @@ func phpIniDefaultsHandler(ctx context.Context, params json.RawMessage) (any, er
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "php_version must be <major>.<minor>"}
 	}
 
-	// Read the values PHP itself resolves for the FPM SAPI's config: the master
-	// php.ini plus its conf.d scan dir — the same layering the FPM pool starts
-	// from before per-pool php_admin_value. Executed through the version's own
-	// CLI binary so the answer matches that version's build.
-	bin := "php" + p.PHPVersion // e.g. php8.3, resolved via PATH
-	iniFile := "/etc/php/" + p.PHPVersion + "/fpm/php.ini"
-	scanDir := "/etc/php/" + p.PHPVersion + "/fpm/conf.d"
+	defaults, err := readPHPIniDefaults(ctx, p.PHPVersion)
+	if err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: err.Error()}
+	}
+	return phpIniDefaultsResponse{PHPVersion: p.PHPVersion, Defaults: defaults}, nil
+}
 
-	script := phpIniReadScript()
+// readPHPIniDefaults reads the values PHP itself resolves for the FPM SAPI's
+// config: the master php.ini plus its conf.d scan dir — the same layering the
+// FPM pool starts from before per-pool php_admin_value. Executed through the
+// version's own CLI binary so the answer matches that version's build. version
+// must already match phpVersionRE.
+func readPHPIniDefaults(ctx context.Context, version string) (map[string]string, error) {
+	bin := "php" + version // e.g. php8.3, resolved via PATH
+	iniFile := "/etc/php/" + version + "/fpm/php.ini"
+	scanDir := "/etc/php/" + version + "/fpm/conf.d"
 
-	cmd := execCommandContext(ctx, bin, "-c", iniFile, "-r", script)
+	cmd := execCommandContext(ctx, bin, "-c", iniFile, "-r", phpIniReadScript())
 	// Layer conf.d exactly as FPM does. -n would drop it; instead point the scan
 	// dir at the FPM conf.d so extension/tuning .ini files are honoured.
 	cmd.Env = append(cmd.Environ(), "PHP_INI_SCAN_DIR="+scanDir)
 
 	out, err := cmd.Output()
 	if err != nil {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("php %s ini read failed: %v", p.PHPVersion, err)}
+		return nil, fmt.Errorf("php %s ini read failed: %v", version, err)
 	}
 	var defaults map[string]string
 	if uerr := json.Unmarshal(out, &defaults); uerr != nil {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("php ini output parse failed: %v", uerr)}
+		return nil, fmt.Errorf("php ini output parse failed: %v", uerr)
 	}
-
-	return phpIniDefaultsResponse{PHPVersion: p.PHPVersion, Defaults: defaults}, nil
+	return defaults, nil
 }
 
 // phpIniReadScript builds the PHP -r program that echoes json_encode of ini_get

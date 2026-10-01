@@ -84,6 +84,10 @@ type getDomainPHPSettingsResponse struct {
 	PHPDisplayErrors  *bool   `json:"php_display_errors,omitempty"`
 	PHPErrorReporting *int    `json:"php_error_reporting,omitempty"`
 	PHPTimezone       *string `json:"php_timezone,omitempty"`
+	// GH #1701 Slice 2 flags.
+	PHPLogErrors    *bool `json:"php_log_errors,omitempty"`
+	PHPFileUploads  *bool `json:"php_file_uploads,omitempty"`
+	PHPShortOpenTag *bool `json:"php_short_open_tag,omitempty"`
 	// PoolDefaults (GH #1543) is the effective value this domain INHERITS per
 	// directive when it sets no override — the pool's ini override if it has
 	// one, else the box's FPM php.ini baseline (read live via the agent). Keys
@@ -120,6 +124,10 @@ type updateDomainPHPSettingsRequest struct {
 	PHPDisplayErrors  *bool   `json:"php_display_errors"`
 	PHPErrorReporting *int    `json:"php_error_reporting"`
 	PHPTimezone       *string `json:"php_timezone"`
+	// GH #1701 Slice 2 flags (nil = inherit).
+	PHPLogErrors    *bool `json:"php_log_errors"`
+	PHPFileUploads  *bool `json:"php_file_uploads"`
+	PHPShortOpenTag *bool `json:"php_short_open_tag"`
 }
 
 // regexes for input validation
@@ -222,6 +230,9 @@ func (h *domainPHPSettingsHandler) get(c *gin.Context) {
 		PHPDisplayErrors:     dom.PHPDisplayErrors,
 		PHPErrorReporting:    dom.PHPErrorReporting,
 		PHPTimezone:          dom.PHPTimezone,
+		PHPLogErrors:         dom.PHPLogErrors,
+		PHPFileUploads:       dom.PHPFileUploads,
+		PHPShortOpenTag:      dom.PHPShortOpenTag,
 	}
 	resp.Policy, resp.Editable = h.callerPHPPolicy(ctx, phpPolicyAdmin(claims), dom.UserID)
 
@@ -274,21 +285,34 @@ func (h *domainPHPSettingsHandler) resolvePoolDefaults(ctx context.Context, pool
 	for k, v := range base {
 		out[k] = v
 	}
-	// Overlay the pool's own value-kind ini overrides (a flag-kind override —
-	// on/off — is not one of these numeric/size directives).
+	// Overlay the pool's own ini overrides for the directives tracked here. A
+	// flag-kind override, or any override on a boolean directive, is read the
+	// way PHP reads it and reported the way ini_get does ("1" / "") so the page
+	// reads every flag the same way (GH #1701 Slice 2).
 	if h.cfg.PoolIniOverrides != nil {
 		if ovs, err := h.cfg.PoolIniOverrides.ListByPool(ctx, pool.ID); err == nil {
 			for i := range ovs {
-				if ovs[i].Kind == "value" {
-					if _, tracked := out[ovs[i].Directive]; tracked {
-						out[ovs[i].Directive] = ovs[i].Value
-					}
+				if _, tracked := out[ovs[i].Directive]; !tracked {
+					continue
+				}
+				if ovs[i].Kind != "flag" && !phpBoolDirectives[ovs[i].Directive] {
+					out[ovs[i].Directive] = ovs[i].Value
+					continue
+				}
+				if models.PHPIniBoolOn(ovs[i].Value) {
+					out[ovs[i].Directive] = "1"
+				} else {
+					out[ovs[i].Directive] = ""
 				}
 			}
 		}
 	}
 	return out
 }
+
+// phpBoolDirectives are the per-domain boolean directives: a pool override on
+// one is a boolean whether it was saved as a flag or a value.
+var phpBoolDirectives = map[string]bool{"log_errors": true, "file_uploads": true, "short_open_tag": true}
 
 // phpIniDefaults reads (and caches) the box FPM php.ini baseline for a PHP
 // version via the agent's php.ini_defaults command.
@@ -448,6 +472,9 @@ func (h *domainPHPSettingsHandler) patch(c *gin.Context) {
 		DisplayErrors:     req.PHPDisplayErrors,
 		ErrorReporting:    req.PHPErrorReporting,
 		Timezone:          req.PHPTimezone,
+		LogErrors:         req.PHPLogErrors,
+		FileUploads:       req.PHPFileUploads,
+		ShortOpenTag:      req.PHPShortOpenTag,
 	}
 
 	if err := h.cfg.Domains.UpdatePHPSettings(ctx, domainID, settings); err != nil {
@@ -651,6 +678,9 @@ func changedPHPDirectives(req updateDomainPHPSettingsRequest, dom *models.Domain
 		"display_errors":      !eqPtr(req.PHPDisplayErrors, dom.PHPDisplayErrors),
 		"error_reporting":     !eqPtr(req.PHPErrorReporting, dom.PHPErrorReporting),
 		"date.timezone":       !eqPtr(req.PHPTimezone, dom.PHPTimezone),
+		"log_errors":          !eqPtr(req.PHPLogErrors, dom.PHPLogErrors),
+		"file_uploads":        !eqPtr(req.PHPFileUploads, dom.PHPFileUploads),
+		"short_open_tag":      !eqPtr(req.PHPShortOpenTag, dom.PHPShortOpenTag),
 	}
 	var out []string
 	for _, d := range models.PHPSettingCatalog {

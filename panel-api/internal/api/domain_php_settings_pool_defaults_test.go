@@ -77,3 +77,53 @@ func TestResolvePoolDefaults_NilAgentDegrades(t *testing.T) {
 		t.Errorf("no agent should omit pool_defaults, got %v", got)
 	}
 }
+
+// GH #1701 Slice 2: a pool's flag-kind override is the inherited value of that
+// flag, reported the way ini_get does ("1" on, "" off) so the page labels the
+// inherit option truthfully.
+func TestResolvePoolDefaults_OverlaysPoolFlagOverrides(t *testing.T) {
+	poolIniDefaultMu.Lock()
+	delete(poolIniDefaultCache, "8.2")
+	poolIniDefaultMu.Unlock()
+
+	h := &domainPHPSettingsHandler{cfg: DomainPHPSettingsHandlerConfig{
+		Agent: &pdFakeAgent{defaults: map[string]string{
+			"log_errors":     "1",
+			"file_uploads":   "1",
+			"short_open_tag": "",
+		}},
+		PoolIniOverrides: &pdFakeOverrides{rows: []models.PHPPoolIniOverride{
+			{Directive: "file_uploads", Value: "off", Kind: "flag"},
+			{Directive: "short_open_tag", Value: "On", Kind: "flag"},
+		}},
+	}}
+	got := h.resolvePoolDefaults(context.Background(), &models.PHPPool{ID: "p1", PHPVersion: "8.2"})
+	if got["file_uploads"] != "" || got["short_open_tag"] != "1" || got["log_errors"] != "1" {
+		t.Fatalf("got %v, want file_uploads off (pool), short_open_tag on (pool), log_errors on (php.ini)", got)
+	}
+}
+
+// A pool override on a boolean directive is read the way PHP reads it, whether
+// it was saved as a flag or a value: "1" and "yes" are on, "0" is off.
+func TestResolvePoolDefaults_ReadsBooleanOverridesAsPHPDoes(t *testing.T) {
+	poolIniDefaultMu.Lock()
+	delete(poolIniDefaultCache, "8.2")
+	poolIniDefaultMu.Unlock()
+
+	h := &domainPHPSettingsHandler{cfg: DomainPHPSettingsHandlerConfig{
+		Agent: &pdFakeAgent{defaults: map[string]string{
+			"log_errors":     "",
+			"file_uploads":   "1",
+			"short_open_tag": "",
+		}},
+		PoolIniOverrides: &pdFakeOverrides{rows: []models.PHPPoolIniOverride{
+			{Directive: "file_uploads", Value: "0", Kind: "value"},
+			{Directive: "short_open_tag", Value: "1", Kind: "flag"},
+			{Directive: "log_errors", Value: "yes", Kind: "value"},
+		}},
+	}}
+	got := h.resolvePoolDefaults(context.Background(), &models.PHPPool{ID: "p1", PHPVersion: "8.2"})
+	if got["file_uploads"] != "" || got["short_open_tag"] != "1" || got["log_errors"] != "1" {
+		t.Fatalf("got %v, want file_uploads off (value 0), short_open_tag on (flag 1), log_errors on (value yes)", got)
+	}
+}

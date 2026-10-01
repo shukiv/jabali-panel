@@ -64,6 +64,11 @@ var PHPSettingCatalog = []PHPSettingDef{
 	{"display_errors", PHPSettingStandard, PHPSettingTenantAllowed},
 	{"error_reporting", PHPSettingStandard, PHPSettingTenantAllowed},
 	{"date.timezone", PHPSettingStandard, PHPSettingTenantAllowed},
+	// GH #1701 Slice 2: new per-domain settings, tenant_allowed by default as
+	// agreed on the issue (they affect only the tenant's own site).
+	{"log_errors", PHPSettingStandard, PHPSettingTenantAllowed},
+	{"file_uploads", PHPSettingStandard, PHPSettingTenantAllowed},
+	{"short_open_tag", PHPSettingStandard, PHPSettingTenantAllowed},
 }
 
 // PHPSensitiveDirectives are pinned admin-only whatever a policy says. A

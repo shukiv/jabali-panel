@@ -17,6 +17,9 @@ export const PHP_SETTING_DIRECTIVES = [
   "display_errors",
   "error_reporting",
   "date.timezone",
+  "log_errors",
+  "file_uploads",
+  "short_open_tag",
 ] as const;
 
 export type PHPSettingDirective = (typeof PHP_SETTING_DIRECTIVES)[number];

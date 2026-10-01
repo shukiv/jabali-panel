@@ -54,6 +54,15 @@ Some values are set **per domain** rather than per user, with an **override
 badge** on any domain that differs from the account default:
 
 - `display_errors`, `error_reporting`, and `date.timezone` per domain (GH #1332).
+- `log_errors`, `file_uploads`, and `short_open_tag` per domain (GH #1701). The
+  agent sets all three on every request of every PHP domain: the domain's value,
+  else the value it inherits (the pool's flag override, else the box's FPM
+  `php.ini` for that PHP version). A value sent this way stays on the reused
+  PHP-FPM worker, so without that a value set on one domain would carry over to
+  a sibling domain on the same pool (checked on PHP 8.4 and 8.5).
+  `display_errors` is pinned the same way (always Off unless the domain turns
+  it on). A domain's own value takes precedence over a pool flag; use the
+  package's PHP settings policy to stop a tenant from changing one.
 - Per-domain environment variables passed to the FPM pool.
 - Per-domain log + cron shortcuts and an **OPcache reset** button.
 

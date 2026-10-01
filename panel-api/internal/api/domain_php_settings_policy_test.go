@@ -251,3 +251,57 @@ func TestPHPSettingsPolicy_ImpersonatingAdminMayChangeALockedDirective(t *testin
 		t.Fatalf("impersonating admin editable = %v, want every catalog directive", editable)
 	}
 }
+
+// GH #1701 Slice 2: the new flags are policy-governed like the rest. A tenant
+// turning on a locked short_open_tag is refused and nothing is written.
+func TestPHPSettingsPolicy_TenantChangingALockedFlagIsRefused(t *testing.T) {
+	f := newPHPPolicyFixture(t, `{"short_open_tag":"admin_only"}`)
+	w := f.patch(t, map[string]any{"php_memory_limit": "256M", "php_short_open_tag": true})
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("want 403, got %d: %s", w.Code, w.Body.String())
+	}
+	var body struct {
+		Directives []string `json:"directives"`
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &body)
+	if !reflect.DeepEqual(body.Directives, []string{"short_open_tag"}) {
+		t.Fatalf("directives = %v, want [short_open_tag]", body.Directives)
+	}
+	if len(f.domains.writes) != 0 {
+		t.Fatalf("a refused PATCH must write nothing, got %d writes", len(f.domains.writes))
+	}
+}
+
+// A permitted flag change is written, and GET returns it.
+func TestPHPSettingsPolicy_TenantSetsThePermittedFlags(t *testing.T) {
+	f := newPHPPolicyFixture(t, "")
+	w := f.patch(t, map[string]any{"php_memory_limit": "256M", "php_log_errors": false, "php_file_uploads": false, "php_short_open_tag": true})
+	if w.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if len(f.domains.writes) != 1 {
+		t.Fatalf("want one write, got %d", len(f.domains.writes))
+	}
+	s := f.domains.writes[0]
+	if s.LogErrors == nil || *s.LogErrors || s.FileUploads == nil || *s.FileUploads || s.ShortOpenTag == nil || !*s.ShortOpenTag {
+		t.Fatalf("write = %+v, want log_errors off, file_uploads off, short_open_tag on", s)
+	}
+}
+
+// GET returns the stored flag values.
+func TestPHPSettings_GetReturnsTheFlags(t *testing.T) {
+	f := newPHPPolicyFixture(t, "")
+	on, off := true, false
+	d := f.domains.domains["d1"]
+	d.PHPLogErrors, d.PHPFileUploads, d.PHPShortOpenTag = &off, &off, &on
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/domains/d1/php-settings", nil)
+	w := httptest.NewRecorder()
+	f.router.ServeHTTP(w, req)
+	var body map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body["php_log_errors"] != false || body["php_file_uploads"] != false || body["php_short_open_tag"] != true {
+		t.Fatalf("GET body = %s, want the three stored flags", w.Body.String())
+	}
+}

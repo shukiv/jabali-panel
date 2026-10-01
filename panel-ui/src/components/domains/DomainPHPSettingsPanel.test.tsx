@@ -24,6 +24,7 @@ vi.mock("../LogStreamModal", () => ({
 
 import { apiClient } from "../../apiClient";
 import { DomainPHPSettingsPanel } from "./DomainPHPSettingsPanel";
+import { PHP_SETTING_DIRECTIVES } from "../packages/phpSettingsPolicy";
 
 const mocked = apiClient as unknown as {
   get: ReturnType<typeof vi.fn>;
@@ -213,17 +214,9 @@ describe("DomainPHPSettingsPanel (GH #1543)", () => {
 // the owner's package policy. A directive the caller may not set renders
 // read-only with a lock tag; an admin sees which ones the tenant cannot change.
 describe("DomainPHPSettingsPanel package policy (GH #1701)", () => {
-  const ALL = [
-    "memory_limit",
-    "upload_max_filesize",
-    "post_max_size",
-    "max_input_vars",
-    "max_execution_time",
-    "max_input_time",
-    "display_errors",
-    "error_reporting",
-    "date.timezone",
-  ];
+  // Every directive the page renders, from the shared catalog, so a directive
+  // added there is covered here too.
+  const ALL: string[] = [...PHP_SETTING_DIRECTIVES];
   const policy = Object.fromEntries(ALL.map((d) => [d, d === "memory_limit" ? "admin_only" : "tenant_allowed"]));
 
   function withSettings(extra: Record<string, unknown>) {
@@ -313,5 +306,49 @@ describe("DomainPHPSettingsPanel error log shortcut (GH #1701)", () => {
       expect(mocked.post).toHaveBeenCalledWith("/logs/access", { log_type: "error", domain_id: "d1" }),
     );
     expect(await screen.findByTestId("log-stream-modal")).toHaveTextContent("Error Log Stream");
+  });
+});
+
+// GH #1701 Slice 2: log_errors / file_uploads / short_open_tag.
+describe("DomainPHPSettingsPanel flags (GH #1701 Slice 2)", () => {
+  function withSettings(extra: Record<string, unknown>) {
+    mocked.get.mockImplementation((url: string) => {
+      if (url === "/php/versions") return Promise.resolve({ data: { versions: ["8.3"] } });
+      if (url === "/domains/d1/php-settings")
+        return Promise.resolve({ data: { ...SETTINGS, ...extra } });
+      return Promise.resolve({ data: {} });
+    });
+  }
+
+  function flagItem(label: string): HTMLElement {
+    const item = screen.getByText(label).closest(".ant-form-item");
+    if (!item) throw new Error(`${label} form item not found`);
+    return item as HTMLElement;
+  }
+
+  it("labels each flag's inherit option with the value it inherits", async () => {
+    withSettings({ pool_defaults: { log_errors: "1", file_uploads: "", short_open_tag: "0" } });
+    renderPanel();
+    await screen.findByText("Log errors");
+    // Inheriting (no override): the select shows the inherit option's label.
+    expect(flagItem("Log errors").textContent).toContain("On (Default)");
+    expect(flagItem("File uploads").textContent).toContain("Off (Default)");
+    expect(flagItem("Short open tag").textContent).toContain("Off (Default)");
+  });
+
+  it("a locked flag is read-only; a permitted one stays editable", async () => {
+    const editable = PHP_SETTING_DIRECTIVES.filter((d) => d !== "short_open_tag");
+    withSettings({
+      php_short_open_tag: true,
+      policy: { short_open_tag: "admin_only" },
+      editable,
+    });
+    renderPanel();
+    await screen.findByText("Short open tag");
+    const shortSel = flagItem("Short open tag").querySelector(".ant-select");
+    expect(shortSel?.className).toContain("ant-select-disabled");
+    expect(flagItem("Short open tag").textContent).toContain("Set by your administrator");
+    const uploadsSel = flagItem("File uploads").querySelector(".ant-select");
+    expect(uploadsSel?.className).not.toContain("ant-select-disabled");
   });
 });

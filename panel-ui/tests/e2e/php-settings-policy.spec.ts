@@ -17,6 +17,9 @@ const DIRECTIVES = [
   "display_errors",
   "error_reporting",
   "date.timezone",
+  "log_errors",
+  "file_uploads",
+  "short_open_tag",
 ];
 
 test("tenant PHP settings: a package-locked directive is read-only and sent back unchanged (#1701)", async ({
@@ -82,4 +85,67 @@ test("tenant PHP settings: a package-locked directive is read-only and sent back
   await expect.poll(() => patched).not.toBeNull();
   expect(patched!.php_timezone).toBe("Asia/Jerusalem");
   expect(patched!.php_memory_limit).toBe("256M");
+});
+
+// GH #1701 Slice 2: the flags follow the same policy. A locked short_open_tag
+// is read-only and goes back as stored; a permitted file_uploads change is sent.
+test("tenant PHP settings: a locked flag is sent back unchanged, a permitted flag is saved (#1701 slice 2)", async ({
+  page,
+}) => {
+  await mockApi(page, {
+    me: user,
+    domains: [
+      {
+        id: DOMAIN_ID,
+        user_id: user.id,
+        name: "example.com",
+        doc_root: "/home/user/example.com",
+        is_enabled: true,
+        nginx_custom_directives: "",
+        created_at: "2026-01-01T00:00:00Z",
+        updated_at: "2026-01-01T00:00:00Z",
+      },
+    ],
+  });
+
+  await page.route("**/api/v1/php/versions", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ versions: ["8.3"] }) }),
+  );
+  let patched: Record<string, unknown> | null = null;
+  await page.route(`**/api/v1/domains/${DOMAIN_ID}/php-settings`, async (route) => {
+    if (route.request().method() === "PATCH") {
+      patched = route.request().postDataJSON() as Record<string, unknown>;
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ success: true }) });
+    }
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        php_version: "8.3",
+        php_short_open_tag: true,
+        pool_defaults: { log_errors: "1", file_uploads: "1", short_open_tag: "" },
+        policy: Object.fromEntries(
+          DIRECTIVES.map((d) => [d, d === "short_open_tag" ? "admin_only" : "tenant_allowed"]),
+        ),
+        editable: DIRECTIVES.filter((d) => d !== "short_open_tag"),
+      }),
+    });
+  });
+
+  await signIn(page, user);
+  await page.goto(`/jabali-panel/domains/${DOMAIN_ID}/php-settings`);
+
+  const shortItem = page.locator(".ant-form-item").filter({ hasText: "Short open tag" });
+  await expect(shortItem.locator(".ant-select")).toHaveClass(/ant-select-disabled/);
+  await expect(shortItem.getByText("Set by your administrator")).toBeVisible();
+
+  const uploadsItem = page.locator(".ant-form-item").filter({ hasText: "File uploads" });
+  await expect(uploadsItem).toContainText("On (Default)");
+  await uploadsItem.locator(".ant-select").click();
+  await page.locator(".ant-select-dropdown:visible .ant-select-item-option").filter({ hasText: /^Off$/ }).click();
+  await page.getByRole("button", { name: "Save Changes" }).click();
+  await expect.poll(() => patched).not.toBeNull();
+  expect(patched!.php_file_uploads).toBe(false);
+  expect(patched!.php_short_open_tag).toBe(true);
+  expect(patched!.php_log_errors).toBeNull();
 });
