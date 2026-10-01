@@ -3574,7 +3574,7 @@ jabali malware status
 
 #### `jabali malware update-signatures`
 
-Update malware signatures (freshclam/maldet)
+Update malware signatures (maldet + the signature-base YARA pack)
 
 ```
 jabali malware update-signatures
