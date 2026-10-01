@@ -1,14 +1,31 @@
 # FTP / SFTP accounts (GH #1053)
 
-Tenant-created file-transfer subaccounts. Each account is a second passwd
-entry sharing the owning tenant's uid (`useradd --non-unique`): its own
-username (`<tenant>_<label>`), its own password, its own start directory —
-but every file it writes is owned by the tenant, so quotas, per-user
-PHP-FPM, AppArmor, and backups behave exactly as if the tenant wrote it.
+Tenant-created file-transfer subaccounts. Each account has its own
+username (`<tenant>_<label>`), its own password and its own directory.
+There are two models, chosen per account (`ftp_accounts.isolated`):
+
+- **Isolated (separate uid, GH #1145).** The default where filesystem
+  quota is enabled. The account is its own system user: its own uid
+  (from 1000000000 up, allocated by the panel and never reused) and its own
+  primary group. It is chrooted to a root-owned jail,
+  `/var/lib/jabali-ftp-jails/<tenant>/<label>` (root:root 0755), where the
+  selected directory is bind-mounted at `/data`. `..` from `/data` reaches only
+  the empty jail root. Files it writes are owned by **the account's own
+  uid**. POSIX ACLs (access and default) give both the account and the tenant
+  `rwX` on the selected tree, so the tenant can still manage those files.
+  Disk use counts against the account's own per-uid quota (`quota_mb`).
+- **Same-uid alias (legacy).** The fallback where quota is not available,
+  or when the Isolated toggle is turned off at create time. A second
+  passwd entry sharing the tenant's uid (`useradd --non-unique`), chrooted
+  to the tenant home. Every file it writes is owned by the tenant, so quotas,
+  per-user PHP-FPM, AppArmor and backups behave exactly as if the tenant
+  wrote it. An SFTP session can `..` out of its start directory to the whole
+  tenant home (JAB-252), which is why isolated is the default.
 
 - **SFTP** always works for these accounts (port 22, per-account
   `Match User` blocks in `/etc/ssh/sshd_config.d/jabali-xfer.conf`,
-  chrooted to the tenant home, password auth only).
+  password auth only). The chroot is the jail for an isolated account and
+  the tenant home for an alias.
 - **FTPS** works only after the server-level opt-in below.
 
 ## Enabling FTP (server level, default OFF)
@@ -65,8 +82,9 @@ into `/etc/vsftpd.conf`:
 
 There is no per-*tenant* connection cap: a tenant behind one IP is held by
 `max_per_ip`, but across many IPs only the global `max_clients` applies, and at
-the default rate each session is unthrottled. Disk is still bounded per-tenant
-(shared-uid quota). Per-tenant cgroup placement of interactive sessions is
+the default rate each session is unthrottled. Disk is still bounded: an alias
+writes into the tenant's own quota, and an isolated account into its per-uid
+quota. Per-tenant cgroup placement of interactive sessions is
 deferred to the session-placement epic (JAB-259/260).
 
 ## Tenant home permission flip
@@ -87,6 +105,11 @@ random password — the tenant must reset it in the panel before the
 account can log in again (deliberate: the real password only ever lived
 in `/etc/shadow`). Stray aliases with no DB row are removed.
 
+An isolated account's bind mount does not survive a reboot or a manual
+`umount`. The reconciler re-mounts it on its next tick (`ftp.ensure_jail`,
+called for every isolated row each pass), so expect up to a minute after
+boot before those accounts can log in.
+
 ## Troubleshooting
 
 | Symptom | Check |
@@ -95,5 +118,7 @@ in `/etc/shadow`). Stray aliases with no DB row are removed.
 | "530 Login incorrect" for a valid password | Account disabled in the panel (`usermod -L` lock)? `passwd -S <name>` shows `L` |
 | SFTP connection resets after auth | `sshd -t`; is `/home/<tenant>` root-owned 0751? Never add a subaccount to `jabali-sftp` — its `/home/%u` chroot cannot fit an alias username |
 | Passive transfers hang | NAT without `pasv_address` set, or 40000:40100/tcp closed upstream |
-| Deleting an account fails | Should never block on running processes — the agent uses `userdel -f` (the tenant's own FPM holds the shared uid). Check the panel log for the agent error |
+| Isolated account: SFTP resets after auth, or lands in an empty directory | `findmnt /var/lib/jabali-ftp-jails/<tenant>/<label>/data` shows the bind mount? If not, the next reconcile tick re-mounts it. The jail and its parents must stay root-owned 0755 |
+| Isolated account's uploads return 404 in the browser | nginx (www-data) can only serve files from a folder it can read. Folders under a docroot are normally group www-data with setgid; a folder without that group blocks every file inside it, and the nginx error log shows `Permission denied`. **The folder may be private on purpose** (for example customer documents that must not be reachable by URL), so ask the tenant before opening it. If it should be public, fix only that folder: `chgrp -R -h www-data <folder>` and `find <folder> -type d -exec chmod g+s {} +`. Do not reach for `jabali domain fix-perms <tenant>` here: it re-groups the **whole** docroot to www-data and opens every private folder in it |
+| Deleting an account fails | Should never block on running processes — the agent uses `userdel -f` (for an alias, the tenant's own FPM holds the shared uid). Deleting an isolated account also unmounts and removes its jail, never the bind-mount source. Check the panel log for the agent error |
 | Brute-force noise | `cscli decisions list --scenario crowdsecurity/vsftpd-bf` |
