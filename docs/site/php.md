@@ -93,6 +93,13 @@ badge** on any domain that differs from the account default:
   on the pool. `mail.force_extra_parameters` is not offered: Jabali's mail shim
   always sends from the domain's relay identity, ignores `-f`, and would treat
   any other argument as an extra recipient.
+- App installs with their own PHP location (a Drupal, Joomla, OpenEMR,
+  InvoiceShelf or Flarum install in a subfolder, and osTicket's PATH_INFO
+  handler) get the same per-domain values: the agent keeps
+  `/etc/nginx/jabali/<domain>/php-pins.params` with the vhost's `PHP_VALUE`,
+  `PHP_ADMIN_VALUE` and environment lines, and every app snippet's PHP location
+  includes it. Before, a request there ran with whatever the previous request on
+  the worker left behind.
 - Per-domain environment variables passed to the FPM pool.
 - Per-domain log + cron shortcuts and an **OPcache reset** button.
 

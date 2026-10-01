@@ -1327,9 +1327,22 @@ func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redi
 	if target, lerr := os.Readlink(enabledPath); lerr == nil && target == configPath {
 		linkOK = true
 	}
-	if readErr == nil && bytes.Equal(existingBytes, wantBytes) && linkOK {
+	// GH #1701: the app snippets' PHP locations carry the same per-domain PHP
+	// values as the vhost's (php_pins_snippets.go). Their files ride the same
+	// gate, nginx -t and rollback as the vhost.
+	pinChanges := planPHPPinFiles(filepath.Join(nginxJabaliDir, domain), domain, renderPHPPinParams(vhostData))
+	if readErr == nil && bytes.Equal(existingBytes, wantBytes) && linkOK && len(pinChanges) == 0 {
 		return configPath, nil
 	}
+	if err := applyPinFileChanges(pinChanges); err != nil {
+		return "", err
+	}
+	pinsTested := false
+	defer func() {
+		if !pinsTested {
+			revertPinFileChanges(pinChanges)
+		}
+	}()
 
 	// Write vhost configuration atomically (temp file + rename).
 	tmpFile := configPath + ".tmp"
@@ -1359,9 +1372,14 @@ func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redi
 		// if one existed so the domain keeps serving; only tear down a brand-new
 		// vhost that has no prior config to fall back to. Either way, surface the
 		// original rejection so the bad directive is reported on every ~60s tick.
+		// Put the snippet files back first: the restore below re-tests the
+		// last-good vhost, which must not fail on this pass's snippet change.
+		revertPinFileChanges(pinChanges)
+		pinsTested = true
 		restoreVhostAfterFailedTest(ctx, configPath, enabledPath, existingBytes, readErr == nil, linkOK)
 		return "", nginxTestFailure("domain.vhost", testOutput.String())
 	}
+	pinsTested = true
 
 	// Reload nginx.
 	reloadCmd := execCommandContext(ctx, "systemctl", "reload", "nginx")

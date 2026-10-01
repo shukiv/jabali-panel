@@ -118,7 +118,7 @@ func writeAppRewrite(ctx context.Context, appType, domain, osUser, subdir string
 	}
 
 	dest := snippetPath(domain, appType, subdir)
-	if err := os.WriteFile(dest, buf.Bytes(), 0o644); err != nil {
+	if err := os.WriteFile(dest, snippetWithPHPPins(buf.Bytes(), domain), 0o644); err != nil {
 		return fmt.Errorf("write %s: %w", dest, err)
 	}
 

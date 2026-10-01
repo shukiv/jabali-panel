@@ -280,7 +280,7 @@ func writeOsTicketNginx(ctx context.Context, domain, osUser string) error {
 		return fmt.Errorf("mkdir %s: %w", domainDir, err)
 	}
 	dest := osticketSnippetPath(domain)
-	if err := os.WriteFile(dest, []byte(osticketNginxConf(osUser)), 0o644); err != nil {
+	if err := os.WriteFile(dest, snippetWithPHPPins([]byte(osticketNginxConf(osUser)), domain), 0o644); err != nil {
 		return fmt.Errorf("write %s: %w", dest, err)
 	}
 	return reloadNginxAfterSnippet(ctx, dest)
