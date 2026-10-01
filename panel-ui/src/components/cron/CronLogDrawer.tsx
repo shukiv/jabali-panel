@@ -7,18 +7,24 @@ import {
   ReloadOutlined,
 } from "@icons";
 import { useQuery } from "@tanstack/react-query";
-import { getCronJobLog } from "../../apiClient";
+import { getCronJobLog, type CronLogResponse } from "../../apiClient";
 
 interface CronLogDrawerProps {
   open: boolean;
   onClose: () => void;
   jobId: string;
+  /** Drawer title; defaults to the cron job log title. */
+  title?: string;
+  /** Reads a different log (Admin → System jobs, GH #1686); defaults to the cron job log. */
+  fetchLog?: (lines: number) => Promise<CronLogResponse>;
 }
 
 export const CronLogDrawer = ({
   open,
   onClose,
   jobId,
+  title,
+  fetchLog,
 }: CronLogDrawerProps) => {
   const { t } = useTranslation();
   const [lines, setLines] = useState<number>(200);
@@ -28,8 +34,8 @@ export const CronLogDrawer = ({
     isLoading,
     refetch,
   } = useQuery({
-    queryKey: ["cron-log", jobId, lines],
-    queryFn: async () => getCronJobLog(jobId, lines),
+    queryKey: [fetchLog ? "system-job-log" : "cron-log", jobId, lines],
+    queryFn: async () => (fetchLog ? fetchLog(lines) : getCronJobLog(jobId, lines)),
     enabled: open,
   });
 
@@ -45,7 +51,7 @@ export const CronLogDrawer = ({
 
   return (
     <Drawer
-      title={t("cronlogdrawer.cron_job_log")}
+      title={title ?? t("cronlogdrawer.cron_job_log")}
       placement="right"
       onClose={onClose}
       open={open}

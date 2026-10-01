@@ -4,9 +4,12 @@
 // column order (Enabled before the merged Last-run tag), paginated table, and
 // the admin create-as-user / edit editor (GH #1686 item 2). Toggle / run /
 // edit / delete / log / overlays all live in the Module; they authorise admins
-// server-side via fetchAndAuthorize's claims.IsAdmin bypass.
+// server-side via fetchAndAuthorize's claims.IsAdmin bypass. A second tab,
+// System jobs (GH #1686), lists the scheduled jobs Jabali itself installs,
+// kept apart from tenant jobs; ?tab=system opens it.
 import { useTranslation } from "react-i18next";
-import { Space, Tag, Tooltip, Typography } from "antd";
+import { useSearchParams } from "react-router";
+import { Space, Tabs, Tag, Tooltip, Typography } from "antd";
 import dayjs from "dayjs";
 import relativeTime from "dayjs/plugin/relativeTime";
 
@@ -19,6 +22,7 @@ import {
   type CronWorkspaceRow,
 } from "../../../components/cron/cronColumns";
 import { AdminCreateCronModal } from "./AdminCreateCronModal";
+import { AdminSystemJobs } from "./AdminSystemJobs";
 import { humanizeSchedule } from "../../../utils/cronSchedule";
 
 dayjs.extend(relativeTime);
@@ -27,6 +31,8 @@ const truncate = (s: string, n = 40) => (s.length <= n ? s : s.substring(0, n) +
 
 export const AdminCronList = () => {
   const { t } = useTranslation();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tab = searchParams.get("tab") === "system" ? "system" : "tenant";
 
   const audience: CronWorkspaceAudience = {
     title: "Cron Jobs (all tenants)",
@@ -110,5 +116,14 @@ export const AdminCronList = () => {
     ],
   };
 
-  return <CronJobWorkspace audience={audience} />;
+  return (
+    <Tabs
+      activeKey={tab}
+      onChange={(k) => setSearchParams(k === "system" ? { tab: "system" } : {}, { replace: true })}
+      items={[
+        { key: "tenant", label: "Tenant jobs", children: <CronJobWorkspace audience={audience} /> },
+        { key: "system", label: "System jobs", children: <AdminSystemJobs /> },
+      ]}
+    />
+  );
 };

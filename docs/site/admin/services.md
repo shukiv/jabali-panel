@@ -35,7 +35,7 @@ An inactive unit that is not enabled at boot shows a grey **idle** tag instead o
 
 A unit that is not installed or is masked is not shown. The list is the agent's allow-list, and the agent refuses an action on any unit outside it.
 
-PHP-FPM, `pdns-recursor`, CrowdSec, cron and the timers are not on this card. PHP-FPM runs as one `jabali-fpm@<user>.service` per panel user; the distro `php<ver>-fpm` units are masked. Use `systemctl` from a shell for any of these.
+PHP-FPM, `pdns-recursor`, CrowdSec, cron and the timers are not on this card. PHP-FPM runs as one `jabali-fpm@<user>.service` per panel user; the distro `php<ver>-fpm` units are masked. The scheduled jobs Jabali installs (its timers) are listed under **Admin → Cron Jobs → System jobs**, with Run now and their log. Use `systemctl` from a shell for anything else.
 
 ## Units you cannot stop
 

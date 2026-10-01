@@ -989,6 +989,13 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		api.RegisterAdminServicesRoutes(v1, api.AdminServicesHandlerConfig{
 			Agent: deps.Agent,
 		})
+		// Admin: System jobs under Cron Jobs (GH #1686) — the scheduled jobs
+		// Jabali installs, with Run now and their log.
+		api.RegisterAdminSystemJobsRoutes(v1, api.AdminSystemJobsHandlerConfig{
+			Agent:        deps.Agent,
+			Schedules:    deps.BackupSchedules,
+			RunRateLimit: rl.StrictPerActor(),
+		})
 		// M47 Wave 9 — admin Mail deliverability score card.
 		api.RegisterAdminMailDeliverabilityRoutes(v1, api.AdminMailDeliverabilityHandlerConfig{
 			MailRBLStates:   deps.MailRBLStates,

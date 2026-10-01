@@ -23,6 +23,8 @@ The full inventory of moving parts.
 | `crowdsec.service` + bouncers | Go | `root` | `127.0.0.1:8081` (LAPI), `127.0.0.1:7422` (AppSec), unix `/run/crowdsec/api.sock` | IP-trust source + AppSec WAF. |
 | `jabali-aide-check.timer` | shell | `root` | — | Daily host-integrity scan (04:30 UTC). |
 
+The AIDE check is one of about 20 scheduled jobs Jabali installs as systemd timers. **Admin → Cron Jobs → System jobs** lists all of them with their status, last and next run, and log (see [Cron Jobs](../cron.md#system-jobs)).
+
 ## Data model
 
 - **Panel DB** (MariaDB): single DB, ~150 tables. Every domain, user, mailbox, DNS record, audit row, backup job, etc. is here.

@@ -220,6 +220,8 @@ tags:
     description: Panel-wide config (hostname, DNS, storage, …). Admin only.
   - name: Services
     description: Admin service control (restart, reload).
+  - name: System Jobs
+    description: Scheduled jobs Jabali installs on the server (Admin → Cron Jobs → System jobs). Admin only.
   - name: Updates
     description: Admin self-update + diagnostics.
 
@@ -5414,6 +5416,32 @@ paths:
       summary: POST service
       security: [ { KratosSession: [] } ]
       parameters: [ { in: path, name: name, required: true, schema: { type: string } }, { in: path, name: action, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+
+  # --- System jobs (GH #1686) ---
+
+  /admin/system-jobs:
+    get:
+      tags: [System Jobs]
+      summary: List the scheduled jobs Jabali installs, with status, last and next run, plus the server-wide backup schedules
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
+
+  /admin/system-jobs/{id}/run:
+    post:
+      tags: [System Jobs]
+      summary: Start a system job now (refused with 422 for jobs that cannot be run by hand; 409 when it is already running)
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "202": { description: Started } }
+
+  /admin/system-jobs/{id}/log:
+    get:
+      tags: [System Jobs]
+      summary: Recent journal lines of a system job (lines=1..500, default 200)
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } }, { in: query, name: lines, required: false, schema: { type: integer } } ]
       responses: { "200": { description: OK } }
 
 
