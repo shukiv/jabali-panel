@@ -388,6 +388,8 @@ func forgetForSchedule(ctx context.Context, cmd *cobra.Command, s models.BackupS
 			return fmt.Errorf("forget %d snapshot(s) of %d job(s): %w", len(ids), end-start, err)
 		}
 		for _, j := range drop[start:end] {
+			fmt.Fprintf(out, "forgot job %s (%s, %s, %d snapshot(s))\n",
+				j.JobID, j.Series, j.Time.UTC().Format(time.RFC3339), len(j.SnapshotIDs))
 			deleteForgottenJobRow(ctx, cmd, jobs, j.JobID, d.ID)
 		}
 		start = end

@@ -410,7 +410,8 @@ func TestForgetForSchedule_ForgetsDroppedJobsByIDAndDeletesTheirRows(t *testing.
 		"J1": {ID: "J1", Kind: models.BackupJobKindAccountBackup, Status: models.BackupJobStatusSucceeded, DestinationID: &d1},
 	}}
 	sched := models.BackupSchedule{ID: "s1", KeepDaily: keep(1)}
-	if err := forgetForSchedule(context.Background(), newRetentionTestCmd(), sched, testDest(), jobs, false); err != nil {
+	cmd := newRetentionTestCmd()
+	if err := forgetForSchedule(context.Background(), cmd, sched, testDest(), jobs, false); err != nil {
 		t.Fatal(err)
 	}
 	fc := forgetCalls(*calls)
@@ -432,6 +433,15 @@ func TestForgetForSchedule_ForgetsDroppedJobsByIDAndDeletesTheirRows(t *testing.
 	}
 	if !eq(jobs.deleted, []string{"J1"}) {
 		t.Errorf("deleted rows = %v, want [J1] (J2 has no row)", jobs.deleted)
+	}
+	out := cmd.OutOrStdout().(*bytes.Buffer).String()
+	for _, id := range []string{"J1", "J2"} {
+		if !strings.Contains(out, "forgot job "+id+" ") {
+			t.Errorf("the sweep should log each job it forgot (%s), got:\n%s", id, out)
+		}
+	}
+	if strings.Contains(out, "forgot job J3") {
+		t.Errorf("J3 was kept and must not be logged as forgotten:\n%s", out)
 	}
 }
 
