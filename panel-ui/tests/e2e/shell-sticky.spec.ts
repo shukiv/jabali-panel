@@ -1,12 +1,13 @@
-// The shell's content column must let `position: sticky` work. It clips
-// horizontal overflow (so one wide element cannot sideways-scroll the page on
-// a phone), and it used to do that with `overflow-x: hidden`. Any overflow
-// other than visible makes an element a scroll container, so every sticky
-// element inside a page bound to the content column, which never scrolls
-// (the window does in the user shell, an inner layout in the admin shell),
-// and never stuck: the Server Settings tab bar (GH #688) and the File Manager
-// bulk-action bar scrolled away with the page. `overflow-x: clip` clips the
-// same way without making a scroll container.
+// A shell's content column must let `position: sticky` work in its pages.
+// The tenant shell's column clips horizontal overflow (so one wide element
+// cannot sideways-scroll the page on a phone) and used to do it with
+// `overflow-x: hidden`. Any overflow other than visible makes an element a
+// scroll container, and that column never scrolls (the window does), so every
+// sticky element in a tenant page, such as the File Manager bulk-action bar,
+// scrolled away with the page. `overflow-x: clip` clips the same way without
+// making a scroll container. The admin shell's column scrolls itself, so
+// sticky works there (the Server Settings tab bar, GH #688); its test guards
+// that it stays so.
 import { admin, mockApi, signIn, test, expect, user } from "./fixtures";
 import type { Page } from "@playwright/test";
 
@@ -49,8 +50,9 @@ test("a sticky element in an admin-shell page stays in view while the page scrol
   await page.locator("main.ant-layout-content").waitFor();
   await addStickyProbe(page);
 
-  // The admin shell scrolls an inner layout, not the window: scroll whatever
-  // is under the pointer and check the probe's first scrollable ancestor moved.
+  // The admin shell scrolls its content column, not the window: scroll
+  // whatever is under the pointer and check that an ancestor of the probe
+  // moved.
   const probe = page.locator("#sticky-probe");
   await page.mouse.move(640, 400);
   await page.mouse.wheel(0, 2000);
@@ -69,3 +71,4 @@ test("a sticky element in an admin-shell page stays in view while the page scrol
     .toBeGreaterThan(1000);
   await expect(probe).toBeInViewport();
 });
+
