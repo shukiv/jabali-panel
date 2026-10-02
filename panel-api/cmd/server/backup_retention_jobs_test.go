@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -92,53 +93,163 @@ func TestPlanJobRetention_SeriesAreIndependent(t *testing.T) {
 	}
 }
 
-// A job without a manifest (failed, or still running) goes only once a newer
-// complete backup exists in its series; a series with no complete backup is
-// kept whole.
+// A job without a manifest that still holds data counts toward the keep
+// rules like a complete one; within one day the complete one is preferred. A
+// job without a manifest and without data goes once a newer complete backup
+// exists in its series.
 func TestPlanJobRetention_IncompleteJobs(t *testing.T) {
 	snaps := jobSet("OK", "u1", "2026-01-02T01:00:00Z", "2026-01-02T01:01:00Z", "2026-01-02T01:02:00Z")
 	snaps = append(snaps,
-		snap("old-home", "OLD", "u1", "home", "2026-01-01T01:00:00Z"),   // failed before OK
-		snap("new-home", "NEW", "u1", "home", "2026-01-03T01:00:00Z"),   // newer than OK: maybe running
-		snap("lone-home", "LONE", "u2", "home", "2026-01-01T01:00:00Z"), // u2 has no complete backup
+		snap("old-home", "OLD", "u1", "home", "2026-01-01T01:00:00Z"),    // failed on day 1: day 1's only backup
+		snap("late-home", "LATE", "u1", "home", "2026-01-02T09:00:00Z"),  // failed later on OK's day
+		snap("new-home", "NEW", "u1", "home", "2026-01-03T01:00:00Z"),    // newest: maybe running
+		snap("old-dns", "NODATA", "u1", "dns", "2026-01-01T02:00:00Z"),   // no data, older than OK
+		snap("new-dns", "NODATA2", "u1", "dns", "2026-01-03T02:00:00Z"),  // no data, newer than OK
+		snap("lone-home", "LONE", "u2", "home", "2026-01-01T01:00:00Z"),  // u2 has no complete backup
+		snap("lone-dns", "LONEDNS", "u2", "dns", "2026-01-01T02:00:00Z"), // nor a newer one to judge this by
 	)
 	plan := planJobRetention(snaps, retentionPolicy{Daily: 7})
-	if got := jobIDs(plan.Keep); !eq(got, []string{"LONE", "NEW", "OK"}) {
+	if got := jobIDs(plan.Keep); !eq(got, []string{"LONE", "LONEDNS", "NEW", "NODATA2", "OK", "OLD"}) {
 		t.Fatalf("keep = %v", got)
 	}
-	if got := jobIDs(plan.Drop); !eq(got, []string{"OLD"}) {
-		t.Fatalf("drop = %v", got)
+	if got := jobIDs(plan.Drop); !eq(got, []string{"LATE", "NODATA"}) {
+		t.Fatalf("drop = %v, want LATE (OK is the complete backup of its day) and NODATA", got)
 	}
 }
 
-func TestPlanJobRetention_UntaggedAndAmbiguousLeftAlone(t *testing.T) {
-	snaps := jobSet("J1", "u1", "2026-01-01T01:00:00Z", "2026-01-01T01:01:00Z", "2026-01-01T01:02:00Z")
-	snaps = append(snaps, jobSet("J2", "u1", "2026-01-02T01:00:00Z", "2026-01-02T01:01:00Z", "2026-01-02T01:02:00Z")...)
-	snaps = append(snaps, jobSet("J3", "u1", "2026-01-03T01:00:00Z", "2026-01-03T01:01:00Z", "2026-01-03T01:02:00Z")...)
-	// J1 also has a snapshot under another account: never dropped.
-	snaps = append(snaps, snap("J1-other", "J1", "u9", "home", "2026-01-01T01:03:00Z"))
-	untagged := snap("legacy", "", "u1", "home", "2025-12-01T01:00:00Z")
-	untagged.Tags = []string{"jabali", "kind=account_backup", "user-id=u1", "schedule-id=s1"}
-	snaps = append(snaps, untagged)
-
-	plan := planJobRetention(snaps, retentionPolicy{Daily: 1})
-	if plan.Untagged != 1 {
-		t.Fatalf("untagged = %d, want 1", plan.Untagged)
+// Within one day, week or month a rule keeps a complete backup over a newer
+// incomplete one, and of incomplete ones the one holding the most kinds of
+// data over a newer one holding less.
+func TestPlanJobRetention_PrefersCompleteThenMostData(t *testing.T) {
+	snaps := []resticSnapshot{
+		// day 1: home+db+mail, then a newer mail-only job
+		snap("a-home", "A", "u1", "home", "2026-01-01T01:00:00Z"),
+		snap("a-db", "A", "u1", "db", "2026-01-01T01:01:00Z"),
+		snap("a-mail", "A", "u1", "mail", "2026-01-01T01:02:00Z"),
+		snap("b-mail", "B", "u1", "mail", "2026-01-01T05:00:00Z"),
 	}
-	if !eq(plan.Ambiguous, []string{"J1"}) {
-		t.Fatalf("ambiguous = %v, want [J1]", plan.Ambiguous)
+	// day 2: complete, then a newer home+db+mail job without its manifest
+	snaps = append(snaps, jobSet("C", "u1", "2026-01-02T01:00:00Z", "2026-01-02T01:01:00Z", "2026-01-02T01:02:00Z")...)
+	snaps = append(snaps,
+		snap("d-home", "D", "u1", "home", "2026-01-02T05:00:00Z"),
+		snap("d-db", "D", "u1", "db", "2026-01-02T05:01:00Z"),
+		snap("d-mail", "D", "u1", "mail", "2026-01-02T05:02:00Z"),
+	)
+	plan := planJobRetention(snaps, retentionPolicy{Daily: 2})
+	if got := jobIDs(plan.Keep); !eq(got, []string{"A", "C"}) {
+		t.Fatalf("keep = %v, want [A C]", got)
 	}
-	// keep-daily=1 over J2, J3: J3 is the newest; J2 is the oldest left in the
-	// series with no count left, so it goes.
-	if got := jobIDs(plan.Drop); !eq(got, []string{"J2"}) {
-		t.Fatalf("drop = %v, want [J2]", got)
+	if got := jobIDs(plan.Drop); !eq(got, []string{"B", "D"}) {
+		t.Fatalf("drop = %v, want [B D]", got)
 	}
 }
 
-func TestPlanJobRetention_EmptyPolicyDropsNothing(t *testing.T) {
-	snaps := jobSet("J1", "u1", "2026-01-01T01:00:00Z", "2026-01-01T01:01:00Z", "2026-01-01T01:02:00Z")
-	if plan := planJobRetention(snaps, retentionPolicy{}); len(plan.Drop) != 0 {
-		t.Fatalf("an empty policy must drop nothing, got %v", jobIDs(plan.Drop))
+// oldSweep forgets what the sweep before whole-job retention forgot: restic's
+// keep rules applied per (host, path) group. The manifest's path is the same
+// for every account, so manifests are kept host-wide; home and db paths are
+// one account's, so each account keeps its full history of those; the mail
+// stage's path is one job's, so mail is never forgotten.
+func oldSweep(snaps []resticSnapshot, p retentionPolicy) []resticSnapshot {
+	groups := map[string][]int{}
+	for i, s := range snaps {
+		var path string
+		switch stage := tagValue(s.Tags, "stage"); stage {
+		case "manifest":
+			path = "/manifest.json"
+		case "mail":
+			path = "/mail/" + tagValue(s.Tags, "job-id")
+		default:
+			path = "/" + stage + "/" + tagValue(s.Tags, "user-id")
+		}
+		groups[s.Hostname+"|"+path] = append(groups[s.Hostname+"|"+path], i)
+	}
+	kept := map[int]bool{}
+	for _, idx := range groups {
+		sort.SliceStable(idx, func(a, b int) bool { return snaps[idx[a]].Time.After(snaps[idx[b]].Time) })
+		times := make([]time.Time, len(idx))
+		for i, j := range idx {
+			times[i] = snaps[j].Time
+		}
+		for i, k := range keepByPolicy(times, p) {
+			if k {
+				kept[idx[i]] = true
+			}
+		}
+	}
+	var out []resticSnapshot
+	for i, s := range snaps {
+		if kept[i] {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// What the fleet's repositories look like after months of the old sweep: a
+// few manifests per host, each account's policy history of home and db
+// snapshots without them, and the mail of every job. Retention must keep that
+// history and forget only the mail-only leftovers beyond the policy.
+func TestPlanJobRetention_KeepsHistoryTheOldSweepLeftWithoutManifests(t *testing.T) {
+	p := retentionPolicy{Daily: 7, Weekly: 4, Monthly: 12}
+	var snaps []resticSnapshot
+	start := time.Date(2025, 11, 1, 0, 0, 0, 0, time.UTC)
+	for d := 0; d < 150; d++ {
+		day := start.AddDate(0, 0, d)
+		for i, user := range []string{"alice", "bob", "carol"} {
+			at := day.Add(time.Duration(1+i) * time.Hour)
+			job := fmt.Sprintf("%s-%03d", user, d)
+			for k, stage := range []string{"home", "db", "mail", "manifest"} {
+				s := snap(job+"-"+stage, job, user, stage, at.Add(time.Duration(k)*time.Minute).Format(time.RFC3339))
+				snaps = append(snaps, s)
+			}
+		}
+	}
+	left := oldSweep(snaps, p)
+
+	withHome, manifests, mailOnly := map[string]bool{}, 0, map[string]bool{}
+	for j, stages := range stagesByJob(left) {
+		switch {
+		case slices.Contains(stages, "manifest"):
+			manifests++
+			withHome[j] = true
+		case slices.Contains(stages, "home"):
+			withHome[j] = true
+		case eq(stages, []string{"mail"}):
+			mailOnly[j] = true
+		}
+	}
+	if manifests > 20 || len(withHome) < 3*12 || len(mailOnly) < 3*130 {
+		t.Fatalf("the scenario does not look like the fleet: %d manifests, %d jobs with home", manifests, len(withHome))
+	}
+
+	plan := planJobRetention(left, p)
+	// alice's first backup kept its manifest: it is the host's oldest one,
+	// which the old sweep kept. That complete backup is now alice's November,
+	// preferred over her newer job of 30 November that holds home and db
+	// without a manifest. Every other job with a home folder is kept.
+	preferred := map[string]bool{"alice-029": true}
+	kept := map[string]bool{}
+	for _, j := range plan.Keep {
+		kept[j.JobID] = true
+	}
+	if !kept["alice-000"] {
+		t.Error("alice-000 is complete and the oldest backup: it must be kept")
+	}
+	for j := range withHome {
+		if !kept[j] && !preferred[j] {
+			t.Errorf("job %s still has its home folder and database: it is policy history and must be kept", j)
+		}
+	}
+	for _, j := range plan.Drop {
+		if !mailOnly[j.JobID] && !preferred[j.JobID] {
+			t.Errorf("dropped %s, which is not a mail-only leftover", j.JobID)
+		}
+	}
+	// Each account's history is its jobs with a home folder, so the policy has
+	// no room left for a mail-only job: every one of them goes.
+	if len(plan.Drop) != len(mailOnly)+len(preferred) || len(plan.Keep) != len(withHome)-len(preferred) {
+		t.Errorf("dropped %d of %d mail-only jobs, kept %d of %d jobs with a home folder",
+			len(plan.Drop), len(mailOnly), len(plan.Keep), len(withHome))
 	}
 }
 
@@ -285,6 +396,36 @@ func TestKeepByPolicy_MatchesRestic(t *testing.T) {
 type fakeJobStore struct {
 	rows    map[string]*models.BackupJob
 	deleted []string
+	// listedBefore records the cutoff of the last finished-rows query.
+	listedBefore time.Time
+}
+
+// ListFinishedBackupsForDestination mirrors the repository query: finished
+// account/system backups on destID that finished before `before`.
+func (f *fakeJobStore) ListFinishedBackupsForDestination(_ context.Context, destID string, before time.Time) ([]models.BackupJob, error) {
+	f.listedBefore = before
+	var out []models.BackupJob
+	for _, r := range f.rows {
+		if r.DestinationID == nil || *r.DestinationID != destID {
+			continue
+		}
+		if r.Kind != models.BackupJobKindAccountBackup && r.Kind != models.BackupJobKindSystemBackup {
+			continue
+		}
+		if r.Status != models.BackupJobStatusSucceeded && r.Status != models.BackupJobStatusPartial {
+			continue
+		}
+		t := r.CreatedAt
+		if r.FinishedAt != nil {
+			t = *r.FinishedAt
+		}
+		if !t.Before(before) {
+			continue
+		}
+		out = append(out, *r)
+	}
+	sort.Slice(out, func(a, b int) bool { return out[a].ID < out[b].ID })
+	return out, nil
 }
 
 func (f *fakeJobStore) Get(_ context.Context, id string) (*models.BackupJob, error) {
