@@ -69,10 +69,26 @@ jabali dr feed --destination <dest-id>            # default: hourly
 jabali dr feed --destination <dest-id> --cron "*/30 * * * *"   # tune freshness
 ```
 
-`dr feed` ensures an enabled `system_backup` schedule ships to the DR destination.
-It is idempotent — re-running just re-enables the existing schedule. Freshness of
-the standby is bounded by this cadence (how often a new manifest appears) plus the
-standby's 60s pull interval.
+`dr feed` ensures an enabled DR feed schedule ships every tenant's account backup
+and the system backup to the DR destination. It is idempotent — re-running just
+re-enables the existing schedule. Freshness of the standby is bounded by this
+cadence (how often a new manifest appears) plus the standby's 60s pull interval.
+
+The DR feed schedule has **no keep policy**: nothing is ever deleted from the DR
+repository until you set one, so it grows with every run (at a 10-minute cadence,
+hundreds of backups a day). Once you know how much history you need, give it a
+policy on the primary:
+
+```
+jabali backup schedule list                      # find the DR feed schedule's id
+jabali backup schedule update <id> --keep-daily 7 --keep-weekly 4 --keep-monthly 6
+jabali backup retention apply --dry-run          # preview what the next sweep forgets
+```
+
+The daily retention sweep then keeps whole backups by those counts (see
+[Backup Schedules](../site/admin/backup-schedules.md#retention-application)); the
+newest backup always survives, so the standby keeps restoring the latest one.
+The standby itself never runs retention.
 
 ### On the standby — pair it
 
