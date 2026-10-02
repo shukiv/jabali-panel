@@ -29,8 +29,11 @@ func newRetentionTestCmd() *cobra.Command {
 	return c
 }
 
-func testDest() *models.BackupDestination {
-	return &models.BackupDestination{ID: "d1", Name: "nightly", URL: "/var/lib/jabali-backups/repo"}
+func testDest() resticRepo {
+	return resticRepo{
+		BackupDestination: &models.BackupDestination{ID: "d1", Name: "nightly", URL: "/var/lib/jabali-backups/repo"},
+		PasswordFile:      "/etc/jabali-panel/restic-repo.password",
+	}
 }
 
 func TestRetention_UnlocksAndRetriesOnStaleLock(t *testing.T) {
@@ -142,5 +145,45 @@ func TestRetention_CatalogHasRetentionFailEvent(t *testing.T) {
 	}
 	if meta.Severity != "error" || !meta.DefaultOn {
 		t.Fatalf("backup.retention.fail should be severity=error DefaultOn=true, got %q on=%v", meta.Severity, meta.DefaultOn)
+	}
+}
+
+func recordRetentionAlerts(t *testing.T) *[][]string {
+	t.Helper()
+	orig := publishRetentionFailure
+	t.Cleanup(func() { publishRetentionFailure = orig })
+	var alerts [][]string
+	publishRetentionFailure = func(_ context.Context, _ *cobra.Command, failures []string) {
+		alerts = append(alerts, failures)
+	}
+	return &alerts
+}
+
+// A sweep where every (schedule, destination) pair failed has nothing to
+// prune. It must still alert and exit non-zero, or a one-destination box's
+// failing sweep is silent (the JAB-392 failure mode).
+func TestFinishRetention_EveryPairFailedStillAlertsAndExitsNonZero(t *testing.T) {
+	alerts := recordRetentionAlerts(t)
+	calls := fakeRestic(t, nil)
+	failures := []string{"schedule s1 dest d1 (nightly) forget: wrong password or no key found"}
+	err := finishRetention(context.Background(), newRetentionTestCmd(), map[string]resticRepo{}, failures, false)
+	if err == nil || !strings.Contains(err.Error(), "wrong password") {
+		t.Fatalf("err = %v, want the sweep to fail with its forget failure", err)
+	}
+	if len(*alerts) != 1 {
+		t.Errorf("alerts = %v, want one backup.retention.fail", *alerts)
+	}
+	if len(*calls) != 0 {
+		t.Errorf("nothing was forgotten, so nothing should be pruned: %v", *calls)
+	}
+}
+
+func TestFinishRetention_NothingToDoIsQuiet(t *testing.T) {
+	alerts := recordRetentionAlerts(t)
+	if err := finishRetention(context.Background(), newRetentionTestCmd(), map[string]resticRepo{}, nil, false); err != nil {
+		t.Errorf("no policy and no failures must exit zero: %v", err)
+	}
+	if len(*alerts) != 0 {
+		t.Errorf("no failures, no alert: %v", *alerts)
 	}
 }

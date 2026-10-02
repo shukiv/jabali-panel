@@ -676,6 +676,18 @@ jabali backup retention apply [flags]
 
 - `--dry-run` — List the backup jobs that would be forgotten and pass --dry-run to prune; no destructive ops
 
+##### `jabali backup retention verify`
+
+Check that every backup's stage snapshots are still in its repository (read-only)
+
+```
+jabali backup retention verify [flags]
+```
+
+**Flags:**
+
+- `--destination` — check only this destination (id or name)
+
 #### `jabali backup schedule`
 
 Manage backup schedules

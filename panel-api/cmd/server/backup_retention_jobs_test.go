@@ -333,10 +333,7 @@ func TestForgetForSchedule_RealRestic_NoPartialRestorePoint(t *testing.T) {
 		t.Fatal("control: the old per-stage forget no longer leaves partial jobs; the scenario does not exercise the bug")
 	}
 
-	origPW := resticPasswordFile
-	resticPasswordFile = r.pw
-	t.Cleanup(func() { resticPasswordFile = origPW })
-	dest := &models.BackupDestination{ID: "d1", Name: "local", URL: r.dir}
+	dest := resticRepo{&models.BackupDestination{ID: "d1", Name: "local", URL: r.dir}, r.pw}
 	jobs := &fakeJobStore{rows: map[string]*models.BackupJob{}}
 	dID := "d1"
 	for _, id := range []string{"R1", "R2", "R3"} {

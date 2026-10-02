@@ -26,7 +26,7 @@ Backups → Destinations. The list of repositories the panel can write restic sn
 
 ## Repository password
 
-Each destination's restic repository password is stored AES-256-GCM-sealed on its row in the panel database. A destination whose password was never rotated uses the shared legacy password file. The UI never shows the password, and restic cannot read snapshots without it. To get a copy for emergency recovery, rotate it: `jabali backup destination rotate-password <id-or-name>` re-keys the repository, keeps every snapshot readable, and prints the new password once.
+Each destination's restic repository password is stored AES-256-GCM-sealed on its row in the panel database. A destination whose password was never rotated uses the shared legacy password file. The UI never shows the password, and restic cannot read snapshots without it. To get a copy for emergency recovery, rotate it: `jabali backup destination rotate-password <id-or-name>` re-keys the repository, keeps every snapshot readable, and prints the new password once. Backups, restores and the nightly retention sweep all use the destination's own password from then on.
 
 ## Multi-destination by schedule
 
