@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,7 +25,12 @@ func testSSOKey(t *testing.T, seed byte) *ssokey.Key {
 func withSSOKey(t *testing.T, k *ssokey.Key) {
 	t.Helper()
 	orig := retentionSSOKey
-	retentionSSOKey = func() *ssokey.Key { return k }
+	retentionSSOKey = func() (*ssokey.Key, error) {
+		if k == nil {
+			return nil, errors.New("sso key file not found")
+		}
+		return k, nil
+	}
 	t.Cleanup(func() { retentionSSOKey = orig })
 }
 

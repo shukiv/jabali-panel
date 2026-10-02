@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -39,8 +40,18 @@ func (r resticRepo) args() []string {
 }
 
 // retentionSSOKey loads the key that unseals a destination's password_enc.
+// It does not log: the CLI logger writes to stdout, which --json output owns.
 // A var so tests can supply their own key.
-var retentionSSOKey = ssoKeyForCLI
+var retentionSSOKey = func() (*ssokey.Key, error) {
+	if sharedCfg == nil || sharedCfg.SSO.KeyPath == "" {
+		return nil, errors.New("sso.key_path is not configured")
+	}
+	k, err := ssokey.Load(sharedCfg.SSO.KeyPath)
+	if err != nil {
+		return nil, err
+	}
+	return &k, nil
+}
 
 // destPasswords resolves, once per CLI run, the password file that opens each
 // destination's repository.
@@ -55,6 +66,7 @@ var retentionSSOKey = ssoKeyForCLI
 // removes. It never goes into argv or the environment.
 type destPasswords struct {
 	key    *ssokey.Key
+	keyErr error
 	loaded bool
 	dir    string
 	files  map[string]string // destination ID -> password file
@@ -75,10 +87,11 @@ func (p *destPasswords) repo(d *models.BackupDestination) (resticRepo, error) {
 		return resticRepo{d, f}, nil
 	}
 	if !p.loaded {
-		p.key, p.loaded = retentionSSOKey(), true
+		p.key, p.keyErr = retentionSSOKey()
+		p.loaded = true
 	}
-	if p.key == nil {
-		return resticRepo{}, fmt.Errorf("destination %s (%s) has a rotated repository password, but the SSO key that unseals it could not be loaded", d.ID, d.Name)
+	if p.keyErr != nil {
+		return resticRepo{}, fmt.Errorf("destination %s (%s) has a rotated repository password, but the SSO key that unseals it could not be loaded: %w", d.ID, d.Name, p.keyErr)
 	}
 	plain, err := p.key.Open(d.PasswordEnc)
 	if err != nil {
