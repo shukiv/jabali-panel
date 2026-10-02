@@ -27,15 +27,17 @@ Retention runs once a day, from `jabali-backup-retention.timer` at 04:30 (`jabal
 Retention keeps or forgets **whole backups**. One backup is several restic snapshots: one per stage (home folder, databases, mail, … for an account; the panel database, TLS, OS users, … for the system backup) and a manifest that ties them together. The sweep:
 
 1. Groups the schedule's snapshots by backup (their `job-id` tag), and the backups by account, or by host for the system backup. One account's backups never use up another's keep counts.
-2. Applies restic's keep rules to each account's complete backups (those with a manifest), by the manifest's time. As in restic, the most recent backup of each day, week or month is kept, up to the counts. When a count is not used up, the oldest backup is kept too.
+2. Applies restic's keep rules to each account's backups, by the backup's time. They count complete backups (those with a manifest) and account backups without a manifest that still hold home folder, database, mail or docker app data. As in restic, one backup of each day, week or month is kept, up to the counts: a complete backup if that day, week or month has one, otherwise the one holding the most kinds of data, and of equal ones the most recent. When a count is not used up, the oldest backup is kept too.
 3. Forgets every snapshot of each backup it does not keep, by snapshot ID, and deletes that backup's row in the panel.
 
 So a restore point is never left partial. An older version applied the keep counts to each stage separately. When a backup's stages fell on different days (a run across midnight), or a failed run wrote only some stages, that could keep a manifest whose home folder or database snapshot was forgotten.
 
+That older version also grouped snapshots by path. The manifest's path is the same for every account, so a server kept only about one policy's worth of manifests in total, while each account's home folder and database snapshots kept that account's full history. So many backups made before whole-backup retention hold data but no manifest. The panel cannot restore them, but their data can still be read with `restic restore` or `restic dump`, and they are counted by the keep rules rather than forgotten as leftovers. A backup that holds only mail is forgotten when the rules do not keep it.
+
+A backup with no manifest and none of that data (a run that failed before it saved any) is forgotten once the account has a newer complete backup. A system backup without a manifest is treated the same way, against the server's newer complete system backup.
+
 Never forgotten:
 - a backup that is still queued or running;
-- a backup with no manifest that is newer than the account's newest complete backup;
-- an account with no complete backup at all;
 - snapshots without a `job-id` tag.
 
 Before that prune, the sweep also deletes the panel row of every finished backup on that destination that has nothing left in its repository: no snapshot tagged with its `job-id` and none matching its recorded snapshot ID. Sweeps before whole-backup retention forgot snapshots but kept those rows, so the panel listed backups that could no longer be restored, and they counted toward plan backup limits. A backup must have finished at least an hour before the sweep's snapshot listing to be judged, and a repository that lists no snapshots at all is left alone (a wrong path or credentials would look the same). `--dry-run` lists the rows it would delete.

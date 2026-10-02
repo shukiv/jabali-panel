@@ -1,6 +1,7 @@
 package main
 
 import (
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -23,9 +24,20 @@ import (
 //
 // So the keep decision is made per whole job: jobs are grouped into series
 // (one per host and account, or per host for the system backup), restic's own
-// daily/weekly/monthly rules are applied to each complete job's manifest time,
-// and every snapshot of a dropped job is forgotten by ID. A job is kept or
-// dropped as one unit, so a restore point is never partial.
+// daily/weekly/monthly rules are applied to each job's time, and every
+// snapshot of a dropped job is forgotten by ID. A job is kept or dropped as
+// one unit, so a restore point is never partial.
+//
+// The rules count every job that still holds account data, with or without
+// its manifest. Those per-stage sweeps grouped by host and path, and the
+// manifest's path is the same for every account, so a host kept about one
+// policy's worth of manifests in total while each account's home folder and
+// database snapshots kept the account's full history. Found on the fleet:
+// over a thousand such backups per host, holding the only copy of that
+// history. The panel cannot restore a backup without its manifest, but its
+// data can still be read back with restic, so retention keeps that history
+// rather than deleting it as leftovers. Within one day, week or month a
+// complete backup is preferred.
 
 // resticSnapshot is one row of `restic snapshots --json`.
 type resticSnapshot struct {
@@ -50,6 +62,41 @@ type retentionJob struct {
 	Complete    bool      // has its manifest snapshot
 	Time        time.Time // the manifest's time; for an incomplete job, its newest snapshot's
 	SnapshotIDs []string
+	Data        []string // the data stages it still has (dataStages), sorted
+}
+
+// dataStages are the account backup stages that hold the account's own data.
+// A job without its manifest that still has one of them is counted by the
+// keep rules; one with none of them is a leftover.
+var dataStages = map[string]bool{
+	internalbackup.StageHome:   true,
+	internalbackup.StageDB:     true,
+	internalbackup.StageMail:   true,
+	internalbackup.StageDocker: true,
+}
+
+// rank orders the jobs of one day, week or month for the keep rules: a
+// complete backup first, then the incomplete job holding the most kinds of
+// data. Equal ranks go to the newest, as in restic. A complete job is taken to
+// have every stage its manifest lists; `jabali backup retention verify`
+// checks that.
+func (j retentionJob) rank() int {
+	if j.Complete {
+		return len(dataStages) + 1
+	}
+	return len(j.Data)
+}
+
+// summary describes the job for the sweep's output.
+func (j retentionJob) summary() string {
+	switch {
+	case j.Complete:
+		return "complete"
+	case len(j.Data) == 0:
+		return "no manifest, no data"
+	default:
+		return "no manifest, holds " + strings.Join(j.Data, "+")
+	}
 }
 
 // jobRetentionPlan is what the sweep does with one (schedule, destination).
@@ -86,13 +133,14 @@ func seriesOf(s resticSnapshot) string {
 
 // planJobRetention decides, per whole job, what a schedule's keep policy keeps.
 //
-//   - Complete jobs are kept by restic's rules (keepByPolicy) on their
-//     manifest times, per series.
-//   - An incomplete job (no manifest: failed, or still running) is dropped only
-//     when a complete job in its series is newer; otherwise it is kept. The
-//     caller still checks the job's row and keeps any job that is queued or
-//     running.
-//   - A series with no complete job is kept whole.
+//   - Complete jobs, and incomplete jobs (no manifest) that still hold data
+//     (dataStages), are kept by restic's rules on their times, per series.
+//     Within one day, week or month a rule keeps the job of highest rank: a
+//     complete one before an incomplete one.
+//   - An incomplete job with no data is dropped only when a complete job in
+//     its series is newer; otherwise it is kept.
+//   - The caller still checks each dropped job's row and keeps any job that is
+//     queued or running.
 //   - Snapshots with no job-id, and jobs spread over more than one series,
 //     are never dropped.
 func planJobRetention(snaps []resticSnapshot, p retentionPolicy) jobRetentionPlan {
@@ -126,9 +174,13 @@ func planJobRetention(snaps []resticSnapshot, p retentionPolicy) jobRetentionPla
 		if s.Time.After(a.newest) {
 			a.newest = s.Time
 		}
-		if tagValue(s.Tags, internalbackup.TagKeyStage) == internalbackup.StageManifest {
+		switch stage := tagValue(s.Tags, internalbackup.TagKeyStage); {
+		case stage == internalbackup.StageManifest:
 			a.job.Complete = true
 			a.job.Time = s.Time
+		case dataStages[stage] && !slices.Contains(a.job.Data, stage):
+			a.job.Data = append(a.job.Data, stage)
+			slices.Sort(a.job.Data)
 		}
 	}
 
@@ -151,29 +203,32 @@ func planJobRetention(snaps []resticSnapshot, p retentionPolicy) jobRetentionPla
 	}
 
 	for _, series := range seriesOrder {
-		var complete, incomplete []retentionJob
+		var counted, leftovers []retentionJob
+		var newestComplete time.Time
 		for _, j := range bySeries[series] {
-			if j.Complete {
-				complete = append(complete, j)
+			if j.Complete || len(j.Data) > 0 {
+				counted = append(counted, j)
 			} else {
-				incomplete = append(incomplete, j)
+				leftovers = append(leftovers, j)
+			}
+			if j.Complete && j.Time.After(newestComplete) {
+				newestComplete = j.Time
 			}
 		}
-		if len(complete) == 0 {
-			plan.Keep = append(plan.Keep, incomplete...)
-			continue
+		sortNewestFirst(counted)
+		ranks := make([]int, len(counted))
+		for i, j := range counted {
+			ranks[i] = j.rank()
 		}
-		sortNewestFirst(complete)
-		keep := keepByPolicy(jobTimes(complete), p)
-		for i, j := range complete {
+		keep := keepByPolicyRanked(jobTimes(counted), ranks, p)
+		for i, j := range counted {
 			if keep[i] {
 				plan.Keep = append(plan.Keep, j)
 			} else {
 				plan.Drop = append(plan.Drop, j)
 			}
 		}
-		newestComplete := complete[0].Time
-		for _, j := range incomplete {
+		for _, j := range leftovers {
 			if j.Time.Before(newestComplete) {
 				plan.Drop = append(plan.Drop, j)
 			} else {
@@ -209,28 +264,43 @@ func jobTimes(js []retentionJob) []time.Time {
 // output), which keeps the longest history the policy allows. Buckets are
 // read in each time's own zone, as restic does.
 func keepByPolicy(times []time.Time, p retentionPolicy) []bool {
-	type rule struct {
+	return keepByPolicyRanked(times, make([]int, len(times)), p)
+}
+
+// keepByPolicyRanked is keepByPolicy where each rule keeps, of the times in
+// one bucket, the one of highest rank (the newest of those) instead of the
+// newest. With equal ranks it keeps exactly what restic keeps.
+func keepByPolicyRanked(times []time.Time, rank []int, p retentionPolicy) []bool {
+	rules := []struct {
 		count  int
 		bucket func(time.Time) int
-		last   int
-	}
-	rules := []*rule{
-		{count: p.Daily, bucket: func(t time.Time) int { return t.Year()*10000 + int(t.Month())*100 + t.Day() }, last: -1},
-		{count: p.Weekly, bucket: func(t time.Time) int { y, w := t.ISOWeek(); return y*100 + w }, last: -1},
-		{count: p.Monthly, bucket: func(t time.Time) int { return t.Year()*100 + int(t.Month()) }, last: -1},
+	}{
+		{p.Daily, func(t time.Time) int { return t.Year()*10000 + int(t.Month())*100 + t.Day() }},
+		{p.Weekly, func(t time.Time) int { y, w := t.ISOWeek(); return y*100 + w }},
+		{p.Monthly, func(t time.Time) int { return t.Year()*100 + int(t.Month()) }},
 	}
 	keep := make([]bool, len(times))
-	for i, t := range times {
-		for _, r := range rules {
-			if r.count <= 0 {
-				continue
+	for _, r := range rules {
+		count := r.count
+		if count <= 0 || len(times) == 0 {
+			continue
+		}
+		// A bucket is a run of consecutive times with the same value. restic
+		// keeps the first time of each run, as long as the rule has counts.
+		for start := 0; start < len(times) && count > 0; {
+			v := r.bucket(times[start])
+			best, end := start, start+1
+			for ; end < len(times) && r.bucket(times[end]) == v; end++ {
+				if rank[end] > rank[best] {
+					best = end
+				}
 			}
-			v := r.bucket(t)
-			if v != r.last || i == len(times)-1 {
-				keep[i] = true
-				r.last = v
-				r.count--
-			}
+			keep[best] = true
+			count--
+			start = end
+		}
+		if count > 0 {
+			keep[len(times)-1] = true
 		}
 	}
 	return keep

@@ -75,11 +75,18 @@ policy per whole backup job:
     restic --repo <dest.url> snapshots --json --tag schedule-id=<sched.id>
 
 groups the snapshots by job (job-id tag) and by series (one account, or the
-system backup, on one host), keeps complete jobs by restic's daily, weekly
-and monthly rules on their manifest times, and forgets every snapshot of a
-dropped job by ID. A backup is kept or forgotten as one unit, so no restore
-point is left partial. A queued or running job, a snapshot without a job-id
-tag, and a series with no complete backup are never forgotten. The backup_jobs
+system backup, on one host), keeps jobs by restic's daily, weekly and monthly
+rules on their times, and forgets every snapshot of a dropped job by ID. A
+backup is kept or forgotten as one unit, so no restore point is left partial.
+
+The rules count complete jobs (with a manifest) and account jobs without a
+manifest that still hold home, db, mail or docker data; within one day, week
+or month they keep a complete job first. Sweeps before whole-job retention
+kept a host's manifests host-wide but each account's home and db history, so
+many backups hold data without a manifest. The panel cannot restore those,
+but restic can read their data. A job with neither a manifest nor data is
+forgotten once a newer complete job exists in its series. A queued or running
+job, and a snapshot without a job-id tag, are never forgotten. The backup_jobs
 row of a forgotten job is deleted once its snapshots are gone.
 
 Then, per destination, the row of every finished backup with no snapshot left
@@ -391,8 +398,8 @@ func forgetForSchedule(ctx context.Context, cmd *cobra.Command, s models.BackupS
 	}
 	if dryRun {
 		for _, j := range drop {
-			fmt.Fprintf(out, "[dry-run] would forget job %s (%s, %s, %d snapshot(s))\n",
-				j.JobID, j.Series, j.Time.UTC().Format(time.RFC3339), len(j.SnapshotIDs))
+			fmt.Fprintf(out, "[dry-run] would forget job %s (%s, %s, %s, %d snapshot(s))\n",
+				j.JobID, j.Series, j.Time.UTC().Format(time.RFC3339), j.summary(), len(j.SnapshotIDs))
 		}
 		return nil
 	}
@@ -410,8 +417,8 @@ func forgetForSchedule(ctx context.Context, cmd *cobra.Command, s models.BackupS
 			return fmt.Errorf("forget %d snapshot(s) of %d job(s): %w", len(ids), end-start, err)
 		}
 		for _, j := range drop[start:end] {
-			fmt.Fprintf(out, "forgot job %s (%s, %s, %d snapshot(s))\n",
-				j.JobID, j.Series, j.Time.UTC().Format(time.RFC3339), len(j.SnapshotIDs))
+			fmt.Fprintf(out, "forgot job %s (%s, %s, %s, %d snapshot(s))\n",
+				j.JobID, j.Series, j.Time.UTC().Format(time.RFC3339), j.summary(), len(j.SnapshotIDs))
 			deleteForgottenJobRow(ctx, cmd, jobs, j.JobID, d.ID)
 		}
 		start = end
