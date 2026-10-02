@@ -674,7 +674,7 @@ jabali backup retention apply [flags]
 
 **Flags:**
 
-- `--dry-run` — Pass restic --dry-run to forget+prune (lists what would be removed; no destructive ops)
+- `--dry-run` — List the backup jobs that would be forgotten and pass --dry-run to prune; no destructive ops
 
 #### `jabali backup schedule`
 

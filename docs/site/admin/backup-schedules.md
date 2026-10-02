@@ -9,7 +9,7 @@ Backups → Schedules. The cron expressions that drive periodic backup runs.
 - **Subject** — for `account_full`, one user, a set of users, or "all users". For `system_backup`, the panel host (single subject).
 - **Destination(s)** — one or more from [Destinations](./backup-destinations.md). Restic writes to each.
 - **Cron expression** — standard 5-field cron (`min hour day month dow`).
-- **Retention** — restic-style `--keep-daily N`, `--keep-weekly N`, `--keep-monthly N`, `--keep-yearly N`.
+- **Retention** — `--keep-daily N`, `--keep-weekly N`, `--keep-monthly N`, with restic's meaning. A schedule with none set keeps every backup.
 - **Enabled** — schedule may be paused without deletion.
 
 ## Implementation
@@ -22,7 +22,25 @@ A schedule is serialised by id: a new tick will not start if the previous run ha
 
 ## Retention application
 
-After every successful run, restic's `forget --prune` runs with the schedule's retention flags. The prune phase may take longer than the backup itself on large repositories; the run is not marked complete until prune finishes.
+Retention runs once a day, from `jabali-backup-retention.timer` at 04:30 (`jabali backup retention apply`), for every enabled schedule with a keep count, on each of its destinations. It is not part of a backup run.
+
+Retention keeps or forgets **whole backups**. One backup is several restic snapshots: one per stage (home folder, databases, mail, … for an account; the panel database, TLS, OS users, … for the system backup) and a manifest that ties them together. The sweep:
+
+1. Groups the schedule's snapshots by backup (their `job-id` tag), and the backups by account, or by host for the system backup. One account's backups never use up another's keep counts.
+2. Applies restic's keep rules to each account's complete backups (those with a manifest), by the manifest's time. As in restic, the most recent backup of each day, week or month is kept, up to the counts. When a count is not used up, the oldest backup is kept too.
+3. Forgets every snapshot of each backup it does not keep, by snapshot ID, and deletes that backup's row in the panel.
+
+So a restore point is never left partial. An older version applied the keep counts to each stage separately. When a backup's stages fell on different days (a run across midnight), or a failed run wrote only some stages, that could keep a manifest whose home folder or database snapshot was forgotten.
+
+Never forgotten:
+- a backup that is still queued or running;
+- a backup with no manifest that is newer than the account's newest complete backup;
+- an account with no complete backup at all;
+- snapshots without a `job-id` tag.
+
+A single `restic prune` per destination then frees the space; it can take longer than the backups themselves on large repositories. A DR standby never runs retention: its destinations are the primary's.
+
+Preview a sweep with `jabali backup retention apply --dry-run`: it lists the backups it would forget and forgets nothing.
 
 ## Quotas and limits
 

@@ -37,7 +37,7 @@ Multiple destinations per backup are supported — restic writes to each.
 - Pick the backup kind, the user(s) (for `account_full`), the destination, the cron schedule, and the retention policy.
 - Schedules become `systemd` system timers managed by the agent.
 
-Retention policies use restic's `--keep-daily`, `--keep-weekly`, `--keep-monthly`, `--keep-yearly` flags.
+Retention policies use restic's `--keep-daily`, `--keep-weekly` and `--keep-monthly` rules, applied once a day to whole backups: a backup's snapshots are kept or forgotten together, so a restore point is never partial. See [Backup Schedules](./admin/backup-schedules.md#retention-application).
 
 The dispatcher runs jobs with a **per-destination slot cap and a circuit
 breaker** (JAB-362): one dead or unreachable destination can no longer starve
