@@ -33,6 +33,7 @@ type resticSnapshot struct {
 	Time     time.Time `json:"time"`
 	Hostname string    `json:"hostname"`
 	Tags     []string  `json:"tags"`
+	Paths    []string  `json:"paths"`
 }
 
 // retentionPolicy is a schedule's keep_daily/weekly/monthly; 0 = rule unset.

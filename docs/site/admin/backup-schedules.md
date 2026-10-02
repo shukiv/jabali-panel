@@ -42,6 +42,17 @@ A single `restic prune` per destination then frees the space; it can take longer
 
 Preview a sweep with `jabali backup retention apply --dry-run`: it lists the backups it would forget and forgets nothing.
 
+Each destination is opened with its own repository password once that password has been rotated (see [Repository password](./backup-destinations.md#repository-password)), and with the shared password file otherwise. A destination the sweep cannot open fails on its own; the others are still swept.
+
+### Checking existing backups
+
+`jabali backup retention verify` reads the manifest of every backup in each enabled destination (`--destination <id-or-name>` for one) and checks that every stage snapshot it lists is still in the repository. It reports:
+
+- **broken**: a stage snapshot the manifest lists is missing, or the manifest lists no stage that wrote data. That backup cannot be restored. Sweeps from before whole-backup retention could leave backups like this.
+- **unreadable**: the manifest itself could not be read.
+
+It changes nothing and reads the repository without a lock, so it can run while backups do. It reads one manifest per backup, which takes a while on a large remote repository. It exits non-zero when it finds anything, and `--json` prints the full report. Delete a broken backup from **Admin → Backups**; that forgets every snapshot of the backup.
+
 ## Quotas and limits
 
 `system_backup` is heavy by definition (the entire panel host). On constrained disks the operator should target an off-host destination (`sftp`, `s3`, `b2`) rather than `local`. Disk-quota checks at run time skip a run with a warning if the destination is short on space.

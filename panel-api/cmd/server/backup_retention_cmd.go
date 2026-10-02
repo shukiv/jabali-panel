@@ -59,6 +59,7 @@ func newBackupRetentionCmd() *cobra.Command {
 		Short: "Manage restic retention (forget + prune per destination)",
 	}
 	cmd.AddCommand(newBackupRetentionApplyCmd())
+	cmd.AddCommand(newBackupRetentionVerifyCmd())
 	return cmd
 }
 
