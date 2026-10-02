@@ -31,8 +31,9 @@ import (
 const verifyCallTimeout = 10 * time.Minute
 
 type verifyMissing struct {
-	Stage      string `json:"stage"`
-	SnapshotID string `json:"snapshot_id"`
+	Stage      string   `json:"stage"`
+	Items      []string `json:"items,omitempty"` // e.g. the database or app of a db/docker stage
+	SnapshotID string   `json:"snapshot_id"`
 }
 
 // verifyBackup is one backup that failed the check.
@@ -173,7 +174,7 @@ func verifyDestination(ctx context.Context, r resticRepo) verifyDestReport {
 			}
 			written++
 			if !snapshotPresent(ids, st.SnapshotID) {
-				b.Missing = append(b.Missing, verifyMissing{Stage: st.Name, SnapshotID: st.SnapshotID})
+				b.Missing = append(b.Missing, verifyMissing{Stage: st.Name, Items: st.Items, SnapshotID: st.SnapshotID})
 			}
 		}
 		b.NoData = written == 0
@@ -285,7 +286,11 @@ func brokenReason(b verifyBackup) string {
 	}
 	parts := make([]string, 0, len(b.Missing))
 	for _, m := range b.Missing {
-		parts = append(parts, fmt.Sprintf("%s (snapshot %s)", m.Stage, snapPrefix(m.SnapshotID)))
+		name := m.Stage
+		if len(m.Items) > 0 {
+			name += " " + strings.Join(m.Items, ",")
+		}
+		parts = append(parts, fmt.Sprintf("%s (snapshot %s)", name, snapPrefix(m.SnapshotID)))
 	}
 	return "missing " + strings.Join(parts, ", ")
 }

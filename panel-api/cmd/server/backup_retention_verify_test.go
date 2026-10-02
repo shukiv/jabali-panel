@@ -105,6 +105,16 @@ func TestVerifyDestination_ReportsBrokenNoDataAndUnreadable(t *testing.T) {
 	}
 }
 
+func TestBrokenReason_NamesTheDatabaseOfAMissingDBStage(t *testing.T) {
+	got := brokenReason(verifyBackup{Missing: []verifyMissing{
+		{Stage: "home", SnapshotID: fullID('1')},
+		{Stage: "db", Items: []string{"shop_db"}, SnapshotID: fullID('2')},
+	}})
+	if got != "missing home (snapshot 11111111), db shop_db (snapshot 22222222)" {
+		t.Errorf("brokenReason = %q", got)
+	}
+}
+
 func TestReportVerify_ExitsNonZeroOnlyWhenSomethingIsWrong(t *testing.T) {
 	ok := []verifyDestReport{{DestinationID: "d1", DestinationName: "n", Checked: 3}}
 	if err := reportVerify(newRetentionTestCmd(), ok); err != nil {
