@@ -29,8 +29,11 @@ func newRetentionTestCmd() *cobra.Command {
 	return c
 }
 
-func testDest() *models.BackupDestination {
-	return &models.BackupDestination{ID: "d1", Name: "nightly", URL: "/var/lib/jabali-backups/repo"}
+func testDest() resticRepo {
+	return resticRepo{
+		BackupDestination: &models.BackupDestination{ID: "d1", Name: "nightly", URL: "/var/lib/jabali-backups/repo"},
+		PasswordFile:      "/etc/jabali-panel/restic-repo.password",
+	}
 }
 
 func TestRetention_UnlocksAndRetriesOnStaleLock(t *testing.T) {

@@ -28,7 +28,6 @@ import (
 	"github.com/spf13/cobra"
 
 	internalbackup "git.jabali-panel.com/shukivaknin/jabali2/internal/backup"
-	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/backupwrapperhelpers"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/notifications"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
@@ -100,6 +99,8 @@ by install_backup_foundation in install.sh.`,
 			if err := assertResticEnvironment(); err != nil {
 				return err
 			}
+			pw := newDestPasswords()
+			defer pw.close()
 			// GH #331 two-node drill finding: a DR standby's DB is the
 			// PRIMARY's replica, so its schedules + destinations point at
 			// the primary's repos — including the shared DR channel. A
@@ -134,7 +135,7 @@ by install_backup_foundation in install.sh.`,
 
 			// Track which destinations had any forget run against them so
 			// we only invoke prune where it would have work to do.
-			pruneDests := map[string]*models.BackupDestination{}
+			pruneDests := map[string]resticRepo{}
 			// JAB-392: accumulate every forget/prune failure so the sweep exits
 			// non-zero AND fires ONE aggregate admin alert, instead of printing
 			// to a journal nobody reads and exiting 0 (it did that for 52 days).
@@ -159,13 +160,20 @@ by install_backup_foundation in install.sh.`,
 					if !d.Enabled {
 						continue
 					}
-					if err := forgetForSchedule(ctx, cmd, s, d, jobRepo, dryRun); err != nil {
+					r, err := pw.repo(d)
+					if err != nil {
+						fmt.Fprintf(cmd.ErrOrStderr(),
+							"schedule %s dest %s: %v\n", s.ID, d.ID, err)
+						failures = append(failures, fmt.Sprintf("schedule %s dest %s (%s): %v", s.ID, d.ID, d.Name, err))
+						continue
+					}
+					if err := forgetForSchedule(ctx, cmd, s, r, jobRepo, dryRun); err != nil {
 						fmt.Fprintf(cmd.ErrOrStderr(),
 							"schedule %s dest %s forget failed: %v\n", s.ID, d.ID, err)
 						failures = append(failures, fmt.Sprintf("schedule %s dest %s (%s) forget: %v", s.ID, d.ID, d.Name, err))
 						continue
 					}
-					pruneDests[d.ID] = d
+					pruneDests[d.ID] = r
 				}
 			}
 
@@ -210,19 +218,6 @@ var retentionExec = func(ctx context.Context, env []string, stdout, stderr io.Wr
 	return c.Run()
 }
 
-// resticRepoArgs is the shared global-flag prefix every retention restic call
-// needs: the repo URL, the password file, and the destination's -o options.
-func resticRepoArgs(d *models.BackupDestination) []string {
-	args := []string{"--repo", d.URL, "--password-file", resticPasswordFile}
-	for _, opt := range backupwrapperhelpers.ResticOptionsFor(d) {
-		if opt == "" {
-			continue
-		}
-		args = append(args, "-o", opt)
-	}
-	return args
-}
-
 // runResticWithLockRecovery runs a retention restic command against d and
 // recovers from a stale repository lock (JAB-392).
 //
@@ -236,19 +231,20 @@ func resticRepoArgs(d *models.BackupDestination) []string {
 // running backup) and retry the command once. A lock held by a live backup
 // survives the stale-only unlock, so the retry fails again and the caller
 // reports the failure instead of pruning underneath a running backup.
-func runResticWithLockRecovery(ctx context.Context, cmd *cobra.Command, d *models.BackupDestination, args []string) error {
-	return runResticWithLockRecoveryTo(ctx, cmd, d, args, cmd.OutOrStdout())
+func runResticWithLockRecovery(ctx context.Context, cmd *cobra.Command, r resticRepo, args []string) error {
+	return runResticWithLockRecoveryTo(ctx, cmd, r, args, cmd.OutOrStdout())
 }
 
 // runResticCapture is runResticWithLockRecovery for a command whose stdout the
 // sweep reads (restic snapshots --json).
-func runResticCapture(ctx context.Context, cmd *cobra.Command, d *models.BackupDestination, args []string) ([]byte, error) {
+func runResticCapture(ctx context.Context, cmd *cobra.Command, r resticRepo, args []string) ([]byte, error) {
 	var out bytes.Buffer
-	err := runResticWithLockRecoveryTo(ctx, cmd, d, args, &out)
+	err := runResticWithLockRecoveryTo(ctx, cmd, r, args, &out)
 	return out.Bytes(), err
 }
 
-func runResticWithLockRecoveryTo(ctx context.Context, cmd *cobra.Command, d *models.BackupDestination, args []string, stdout io.Writer) error {
+func runResticWithLockRecoveryTo(ctx context.Context, cmd *cobra.Command, r resticRepo, args []string, stdout io.Writer) error {
+	d := r.BackupDestination
 	env := append(os.Environ(), destEnv(d)...)
 	var errBuf bytes.Buffer
 	// A retry after a stale-lock unlock writes into a fresh buffer, so a
@@ -265,7 +261,7 @@ func runResticWithLockRecoveryTo(ctx context.Context, cmd *cobra.Command, d *mod
 	fmt.Fprintf(cmd.ErrOrStderr(),
 		"restic reports the repository already locked (dest %s / %s) — clearing stale locks with `restic unlock` and retrying once (JAB-392)\n",
 		d.ID, d.Name)
-	unlockArgs := append(resticRepoArgs(d), "unlock")
+	unlockArgs := append(r.args(), "unlock")
 	if uerr := retentionExec(ctx, env, cmd.OutOrStdout(), cmd.ErrOrStderr(), "restic", unlockArgs...); uerr != nil {
 		return fmt.Errorf("repository was locked and `restic unlock` failed: %w (original error: %v)", uerr, err)
 	}
@@ -306,7 +302,8 @@ const forgetBatchSize = 50
 
 // forgetForSchedule applies schedule s's keep policy to destination d per
 // whole backup job (see backup_retention_jobs.go).
-func forgetForSchedule(ctx context.Context, cmd *cobra.Command, s models.BackupSchedule, d *models.BackupDestination, jobs retentionJobStore, dryRun bool) error {
+func forgetForSchedule(ctx context.Context, cmd *cobra.Command, s models.BackupSchedule, r resticRepo, jobs retentionJobStore, dryRun bool) error {
+	d := r.BackupDestination
 	policy := retentionPolicy{}
 	if s.KeepDaily != nil {
 		policy.Daily = *s.KeepDaily
@@ -323,8 +320,8 @@ func forgetForSchedule(ctx context.Context, cmd *cobra.Command, s models.BackupS
 		return nil
 	}
 
-	listArgs := append(resticRepoArgs(d), "snapshots", "--json", "--tag", "schedule-id="+s.ID)
-	raw, err := runResticCapture(ctx, cmd, d, listArgs)
+	listArgs := append(r.args(), "snapshots", "--json", "--tag", "schedule-id="+s.ID)
+	raw, err := runResticCapture(ctx, cmd, r, listArgs)
 	if err != nil {
 		return fmt.Errorf("list snapshots: %w", err)
 	}
@@ -383,8 +380,8 @@ func forgetForSchedule(ctx context.Context, cmd *cobra.Command, s models.BackupS
 			ids = append(ids, drop[end].SnapshotIDs...)
 			end++
 		}
-		args := append(append(resticRepoArgs(d), "forget"), ids...)
-		if err := runResticWithLockRecovery(ctx, cmd, d, args); err != nil {
+		args := append(append(r.args(), "forget"), ids...)
+		if err := runResticWithLockRecovery(ctx, cmd, r, args); err != nil {
 			return fmt.Errorf("forget %d snapshot(s) of %d job(s): %w", len(ids), end-start, err)
 		}
 		for _, j := range drop[start:end] {
@@ -421,23 +418,13 @@ func deleteForgottenJobRow(ctx context.Context, cmd *cobra.Command, jobs retenti
 	}
 }
 
-func pruneOneDestination(ctx context.Context, cmd *cobra.Command, d *models.BackupDestination, dryRun bool) error {
-	args := []string{
-		"--repo", d.URL,
-		"--password-file", resticPasswordFile,
-	}
-	for _, opt := range backupwrapperhelpers.ResticOptionsFor(d) {
-		if opt == "" {
-			continue
-		}
-		args = append(args, "-o", opt)
-	}
-	args = append(args, "prune")
+func pruneOneDestination(ctx context.Context, cmd *cobra.Command, r resticRepo, dryRun bool) error {
+	args := append(r.args(), "prune")
 	if dryRun {
 		args = append(args, "--dry-run")
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "running: restic prune (dest %s / %s)\n", d.ID, d.Name)
-	return runResticWithLockRecovery(ctx, cmd, d, args)
+	fmt.Fprintf(cmd.OutOrStdout(), "running: restic prune (dest %s / %s)\n", r.ID, r.Name)
+	return runResticWithLockRecovery(ctx, cmd, r, args)
 }
 
 func destEnv(d *models.BackupDestination) []string {
@@ -473,13 +460,9 @@ func assertResticEnvironment() error {
 	if _, err := exec.LookPath("restic"); err != nil {
 		return fmt.Errorf("restic not on PATH: %w (run install_backup_foundation in install.sh)", err)
 	}
-	pwFI, err := os.Stat(resticPasswordFile)
-	if err != nil {
-		return fmt.Errorf("read %s: %w", resticPasswordFile, err)
-	}
-	if pwFI.Size() == 0 {
-		return fmt.Errorf("%s is empty (regenerate via install_backup_foundation)", resticPasswordFile)
-	}
+	// The password that opens each destination is checked per destination
+	// (destPasswords.repo): a rotated destination does not use the shared
+	// file, which the reconciler deletes once every destination is rotated.
 	return nil
 }
 
