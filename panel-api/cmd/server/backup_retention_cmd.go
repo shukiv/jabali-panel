@@ -127,7 +127,6 @@ by install_backup_foundation in install.sh.`,
 			}
 
 			schedRepo := repository.NewBackupScheduleRepository(sharedDB)
-			destRepo := repository.NewBackupDestinationRepository(sharedDB)
 			jobRepo := repository.NewBackupJobRepository(sharedDB)
 			scheds, err := schedRepo.List(ctx)
 			if err != nil {
@@ -178,36 +177,48 @@ by install_backup_foundation in install.sh.`,
 				}
 			}
 
-			if len(pruneDests) == 0 {
-				fmt.Fprintln(cmd.OutOrStdout(),
-					"no (schedule, destination) pairs with retention policy; nothing to forget or prune")
-				return nil
-			}
-
-			// Resolve any remaining destinations that may have been
-			// stale-cached (defensive; pruneDests was populated above).
-			_ = destRepo
-			for _, d := range pruneDests {
-				if err := pruneOneDestination(ctx, cmd, d, dryRun); err != nil {
-					fmt.Fprintf(cmd.ErrOrStderr(),
-						"prune dest %s failed: %v\n", d.ID, err)
-					failures = append(failures, fmt.Sprintf("prune dest %s (%s): %v", d.ID, d.Name, err))
-				}
-			}
-			if len(failures) > 0 {
-				// Alert (best-effort) + exit non-zero. The notification is the
-				// operator-visible signal; the exit code makes `systemctl status`
-				// and any OnFailure= truthful even when Redis is down (JAB-392).
-				publishBackupRetentionFailure(ctx, cmd, failures)
-				return fmt.Errorf("retention sweep completed with %d failure(s): %s", len(failures), strings.Join(failures, "; "))
-			}
-			return nil
+			return finishRetention(ctx, cmd, pruneDests, failures, dryRun)
 		},
 	}
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false,
 		"List the backup jobs that would be forgotten and pass --dry-run to prune; no destructive ops")
 	return cmd
 }
+
+// finishRetention prunes each destination the sweep forgot from, then reports
+// every forget and prune failure with an admin alert and a non-zero exit.
+//
+// A sweep in which every (schedule, destination) pair failed has nothing to
+// prune, and used to return "nothing to forget or prune" with exit 0 before
+// looking at its failures. On a box with one destination, a sweep that
+// failed every night (a lock that would not clear, a rotated password) was
+// silent again, the JAB-392 failure mode.
+func finishRetention(ctx context.Context, cmd *cobra.Command, pruneDests map[string]resticRepo, failures []string, dryRun bool) error {
+	if len(pruneDests) == 0 && len(failures) == 0 {
+		fmt.Fprintln(cmd.OutOrStdout(),
+			"no (schedule, destination) pairs with retention policy; nothing to forget or prune")
+		return nil
+	}
+	for _, d := range pruneDests {
+		if err := pruneOneDestination(ctx, cmd, d, dryRun); err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(),
+				"prune dest %s failed: %v\n", d.ID, err)
+			failures = append(failures, fmt.Sprintf("prune dest %s (%s): %v", d.ID, d.Name, err))
+		}
+	}
+	if len(failures) > 0 {
+		// Alert (best-effort) + exit non-zero. The notification is the
+		// operator-visible signal; the exit code makes `systemctl status`
+		// and any OnFailure= truthful even when Redis is down (JAB-392).
+		publishRetentionFailure(ctx, cmd, failures)
+		return fmt.Errorf("retention sweep completed with %d failure(s): %s", len(failures), strings.Join(failures, "; "))
+	}
+	return nil
+}
+
+// publishRetentionFailure is the alert seam, so tests can see the alert fire
+// without Redis.
+var publishRetentionFailure = publishBackupRetentionFailure
 
 // retentionExec is the exec seam for the retention sweep's restic invocations,
 // so tests can drive the JAB-392 stale-lock recovery without spawning restic.
