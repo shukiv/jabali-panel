@@ -328,6 +328,19 @@ pre {
   overflow-x: auto;
 }
 
+/* The tenant shell's content column (UserLayout) clips horizontal overflow
+   so one wide element cannot sideways-scroll the page on a phone. clip, not
+   hidden: overflow-x: hidden makes the column a scroll container, and as it
+   never scrolls (the window does), every position: sticky element inside a
+   page stuck to it and scrolled away with the page (the File Manager bulk
+   bar). hidden stays as the fallback for browsers without clip (Safari < 16).
+   The admin shell is different: its content column scrolls itself, so sticky
+   already works there. */
+.jabali-user-content {
+  overflow-x: hidden;
+  overflow-x: clip;
+}
+
 /* GH #279 — while impersonating, the always-visible amber banner (sticky,
    z-index above the modal mask as a security indicator) used to overlap modal
    and drawer CONTENT. Offset that content below the banner so the bar stays

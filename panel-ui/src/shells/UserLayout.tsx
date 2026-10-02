@@ -265,13 +265,17 @@ export function UserLayout() {
         ) : null}
         <Layout>
           <Content
+            // Clips horizontal overflow so a single wide element can't
+            // sideways-scroll the page on mobile (tables keep their own inner
+            // scroll). The class clips with overflow-x: clip, not hidden:
+            // hidden makes this column a scroll container that never scrolls
+            // (the window does), so no position: sticky inside a page could
+            // stick. See global.css.
+            className="jabali-user-content"
             style={{
               padding: screens.md ? "32px 24px 24px" : "20px 12px 12px",
-              // minWidth:0 lets this flex child shrink; overflowX hidden is
-              // the backstop so a single wide element can't sideways-scroll
-              // the page on mobile (tables keep their own inner scroll).
+              // minWidth:0 lets this flex child shrink.
               minWidth: 0,
-              overflowX: "hidden",
             }}
           >
             <DRStandbyBanner />
