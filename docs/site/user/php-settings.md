@@ -12,7 +12,7 @@
 | `max_execution_time` | Maximum CPU time per request. |
 | `max_input_time` | Maximum time PHP spends parsing input data. |
 | `max_input_vars` | Maximum POST variables per request. |
-| `display_errors` | Show PHP errors to the browser. Off by default; only enable temporarily in development. |
+| `display_errors` | Show PHP errors to the browser. Off by default, shown as `Off (Default)`, even when the PHP pool turns it on: a domain that sets no value always runs with it off. Only enable it temporarily in development. |
 | `error_reporting` | Which PHP errors are reported (None, Production, or All). |
 | `date.timezone` | Default time zone for date / time functions. |
 | `log_errors` | Record PHP errors in the error log. Visitors never see logged errors. |
@@ -20,6 +20,14 @@
 | `short_open_tag` | Treat `<?` as a PHP opening tag. Only for old code that needs it: files that start with `<?xml` stop working. |
 
 Leave a value at **Use pool default** to inherit the value of your PHP pool; the option shows that value, for example `256M (Default)` or `On (Default)`.
+
+## Using the page
+
+- Each setting is tagged **Custom** when the domain sets its own value, or **Pool default** when it inherits one. The tag follows your edits before you save. A changed setting is also tagged **Unsaved** until you save it.
+- **Reset to default** next to a custom setting puts it back on the inherited value, the same as picking **Use pool default**. Save to apply it.
+- The settings are in collapsible sections. **Resource Limits**, **Execution Limits** and **Error Handling & Runtime** start open. **Security** starts collapsed unless the domain sets one of its values. A section header shows how many of its settings are custom and how many are unsaved.
+- The bar under the sections counts the unsaved changes. **Discard** puts the saved values back. While there are unsaved changes, the bar stays at the bottom of the window, so **Save Changes** is in view on a long page.
+- With unsaved changes, the panel asks before you lose them when you switch to another tab of the domain, pick another domain on the PHP Settings page, or close or reload the browser tab. The sidebar links and the browser's Back button do not ask.
 
 Every setting on this page is set on every request of every PHP domain, including domains left on the default. So a value you set on one domain never carries over to another domain that runs on the same PHP pool.
 

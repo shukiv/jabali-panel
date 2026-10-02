@@ -67,7 +67,20 @@ vi.mock("./tabs/SSLTab", () => ({
   SSLTab: ({ domain }: { domain: { id: string } }) => <div>ssl-pane:{domain.id}</div>,
 }));
 vi.mock("../../../components/domains/DomainPHPSettingsPanel", () => ({
-  DomainPHPSettingsPanel: ({ domainId }: { domainId: string }) => <div>php-pane:{domainId}</div>,
+  DomainPHPSettingsPanel: ({
+    domainId,
+    onDirtyChange,
+  }: {
+    domainId: string;
+    onDirtyChange?: (dirty: boolean) => void;
+  }) => (
+    <div>
+      php-pane:{domainId}
+      <button type="button" onClick={() => onDirtyChange?.(true)}>
+        make-php-dirty
+      </button>
+    </div>
+  ),
 }));
 vi.mock("../php-settings/DomainEnvVarsCard", () => ({
   DomainEnvVarsCard: ({ domainId }: { domainId?: string }) => <div>env-pane:{domainId}</div>,
@@ -81,8 +94,9 @@ vi.mock("../../admin/domains/DomainDirectoryPrivacySection", () => ({
   ),
 }));
 vi.mock("../../../apiClient", () => ({ apiClient: { patch } }));
+const confirm = vi.hoisted(() => vi.fn());
 vi.mock("../../../lib/feedback", () => ({
-  feedback: { message: { success: vi.fn(), error: vi.fn() } },
+  feedback: { message: { success: vi.fn(), error: vi.fn() }, modal: { confirm } },
 }));
 
 import { WebDomainPage } from "./WebDomainPage";
@@ -103,6 +117,7 @@ function renderAt(path: string) {
 
 beforeEach(() => {
   navigate.mockReset();
+  confirm.mockReset();
   setBreadcrumbs.mockReset();
   patch.mockReset();
   patch.mockResolvedValue({});
@@ -298,5 +313,27 @@ describe("WebDomainPage (GH #1543)", () => {
     } finally {
       bp.mockRestore();
     }
+  });
+
+  // GH #1701: only the active tab renders, so leaving PHP Settings unmounts its
+  // form. With unsaved changes the switch asks first; Discard goes on.
+  it("asks before leaving the PHP Settings tab with unsaved changes", async () => {
+    renderAt("/jabali-panel/domains/d1/php-settings");
+    await screen.findByText("php-pane:d1");
+
+    // Nothing unsaved: the switch goes straight through.
+    fireEvent.click(screen.getByText("Caching"));
+    expect(confirm).not.toHaveBeenCalled();
+    expect(navigate).toHaveBeenCalledWith("/jabali-panel/domains/d1/caching");
+    navigate.mockReset();
+
+    fireEvent.click(screen.getByText("make-php-dirty"));
+    fireEvent.click(screen.getByText("Caching"));
+    expect(navigate).not.toHaveBeenCalled();
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(confirm.mock.calls[0][0].title).toBe("Discard unsaved PHP settings?");
+
+    confirm.mock.calls[0][0].onOk();
+    expect(navigate).toHaveBeenCalledWith("/jabali-panel/domains/d1/caching");
   });
 });

@@ -206,6 +206,8 @@ test("tenant PHP settings: open_basedir preset and allow_url_fopen are saved (#1
   await signIn(page, user);
   await page.goto(`/jabali-panel/domains/${DOMAIN_ID}/php-settings`);
 
+  // The Security section holds nothing custom, so it starts collapsed.
+  await page.locator(".ant-collapse-header").filter({ hasText: "Security" }).click();
   const basedirItem = page.locator(".ant-form-item").filter({ hasText: "Allowed folders (open_basedir)" });
   await basedirItem.locator("input").click();
   await page
@@ -223,4 +225,89 @@ test("tenant PHP settings: open_basedir preset and allow_url_fopen are saved (#1
   await expect.poll(() => patched).not.toBeNull();
   expect(patched!.php_open_basedir).toBe("{DOCROOT}:{TMP}");
   expect(patched!.php_allow_url_fopen).toBe(false);
+});
+
+// GH #1701 (lxsdevcode, 10-01): display_errors names the value it inherits;
+// Save stays in view on the long page; a custom setting resets to the default;
+// the unsaved changes are counted and a tab switch asks before dropping them.
+test("tenant PHP settings: inherited display_errors, sticky Save, reset and the unsaved-changes guard (#1701)", async ({
+  page,
+}) => {
+  await mockApi(page, {
+    me: user,
+    domains: [
+      {
+        id: DOMAIN_ID,
+        user_id: user.id,
+        name: "example.com",
+        doc_root: "/home/user/example.com",
+        is_enabled: true,
+        nginx_custom_directives: "",
+        created_at: "2026-01-01T00:00:00Z",
+        updated_at: "2026-01-01T00:00:00Z",
+      },
+    ],
+  });
+
+  await page.route("**/api/v1/php/versions", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ versions: ["8.3"] }) }),
+  );
+  let patched: Record<string, unknown> | null = null;
+  await page.route(`**/api/v1/domains/${DOMAIN_ID}/php-settings`, async (route) => {
+    if (route.request().method() === "PATCH") {
+      patched = route.request().postDataJSON() as Record<string, unknown>;
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ success: true }) });
+    }
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        php_version: "8.3",
+        php_memory_limit: "1G",
+        pool_defaults: { memory_limit: "512M" },
+        policy: policyLocking(""),
+        editable: DIRECTIVES,
+      }),
+    });
+  });
+
+  await signIn(page, user);
+  await page.goto(`/jabali-panel/domains/${DOMAIN_ID}/php-settings`);
+
+  const displayErrors = page.locator(".ant-form-item").filter({ hasText: "Display errors" }).last();
+  await expect(displayErrors.locator(".ant-select")).toContainText("Off (Default)");
+
+  // The page is taller than the window, so Save at its end is out of view.
+  const save = page.getByRole("button", { name: "Save Changes" });
+  const lastSection = page.locator(".ant-collapse-item").last();
+  const viewport = page.viewportSize()!;
+  expect((await lastSection.boundingBox())!.y).toBeGreaterThan(viewport.height);
+  await expect(save).not.toBeInViewport();
+
+  // A custom value resets to the pool default; the change counts as unsaved.
+  const memoryItem = page.locator(".ant-form-item").filter({ has: page.locator("#php_memory_limit") }).last();
+  await expect(memoryItem).toContainText("Custom");
+  await memoryItem.getByRole("button", { name: /to default$/ }).click();
+  await expect(memoryItem).toContainText("Pool default");
+  await expect(memoryItem.locator(".ant-select")).toContainText("512M (Default)");
+  await expect(page.getByRole("status").filter({ hasText: "Unsaved changes (1)" })).toBeVisible();
+
+  // With a change to save, Save comes into view and stays there while the
+  // page scrolls.
+  await expect(save).toBeInViewport();
+  await lastSection.scrollIntoViewIfNeeded();
+  await expect(save).toBeInViewport();
+
+  // Leaving the tab asks; keeping the edits stays on the tab with them.
+  await page.getByRole("tab", { name: "Caching" }).click();
+  const dialog = page.getByRole("dialog").filter({ hasText: "Discard unsaved PHP settings?" });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("button", { name: "Keep editing" }).click();
+  await expect(dialog).toBeHidden();
+  await expect(page).toHaveURL(new RegExp(`/domains/${DOMAIN_ID}/php-settings$`));
+  await expect(page.getByRole("status").filter({ hasText: "Unsaved changes (1)" })).toBeVisible();
+
+  await save.click();
+  await expect.poll(() => patched).not.toBeNull();
+  expect(patched!.php_memory_limit).toBeNull();
 });
