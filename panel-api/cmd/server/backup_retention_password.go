@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strconv"
 
+	internalbackup "git.jabali-panel.com/shukivaknin/jabali2/internal/backup"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/backupwrapperhelpers"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ssokey"
@@ -19,9 +20,15 @@ type resticRepo struct {
 }
 
 // args is the global-flag prefix every retention restic call needs: the repo
-// URL, the password file, and the destination's -o options.
+// URL, the password file, and the destination's -o options. An empty URL is
+// the agent's default local repository, as for a backup: the "Local"
+// destination the default local backup schedule creates (GH #1240) has no URL.
 func (r resticRepo) args() []string {
-	args := []string{"--repo", r.URL, "--password-file", r.PasswordFile}
+	repo := r.URL
+	if repo == "" {
+		repo = internalbackup.DefaultRepo
+	}
+	args := []string{"--repo", repo, "--password-file", r.PasswordFile}
 	for _, opt := range backupwrapperhelpers.ResticOptionsFor(r.BackupDestination) {
 		if opt == "" {
 			continue

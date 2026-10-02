@@ -42,7 +42,7 @@ A single `restic prune` per destination then frees the space; it can take longer
 
 Preview a sweep with `jabali backup retention apply --dry-run`: it lists the backups it would forget and forgets nothing.
 
-Each destination is opened with its own repository password once that password has been rotated (see [Repository password](./backup-destinations.md#repository-password)), and with the shared password file otherwise. A destination the sweep cannot open fails on its own; the others are still swept.
+Each destination is opened with its own repository password once that password has been rotated (see [Repository password](./backup-destinations.md#repository-password)), and with the shared password file otherwise. A destination the sweep cannot open fails on its own; the others are still swept. The **Local** destination that the default local backup schedule creates has no URL; the sweep prunes the same default repository (`/var/lib/jabali-backups/repo`) the backups write to.
 
 ### Checking existing backups
 

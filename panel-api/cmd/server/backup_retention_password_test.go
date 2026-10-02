@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	internalbackup "git.jabali-panel.com/shukivaknin/jabali2/internal/backup"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ssokey"
 )
@@ -170,5 +171,20 @@ func TestForgetForSchedule_RealRestic_RotatedDestination(t *testing.T) {
 	got := stagesByJob(r.snapshots(t))
 	if len(got) != 1 || got["R3"] == nil {
 		t.Errorf("want only R3 kept, got %v", got)
+	}
+}
+
+// The "Local" destination the default local backup schedule creates (GH #1240)
+// has no URL; the agent backs it up to its default repository, so the sweep
+// must prune that repository, not run restic with an empty --repo.
+func TestResticRepo_EmptyURLIsTheDefaultLocalRepository(t *testing.T) {
+	r := resticRepo{&models.BackupDestination{ID: "d1", Name: "Local", Kind: models.BackupDestinationKindLocal}, "/pw"}
+	args := strings.Join(r.args(), " ")
+	if !strings.Contains(args, "--repo "+internalbackup.DefaultRepo+" ") {
+		t.Errorf("args = %q, want --repo %s", args, internalbackup.DefaultRepo)
+	}
+	r.URL = "/srv/elsewhere"
+	if args := strings.Join(r.args(), " "); !strings.Contains(args, "--repo /srv/elsewhere ") {
+		t.Errorf("a destination with a URL must keep it: %q", args)
 	}
 }
