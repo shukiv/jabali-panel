@@ -23,6 +23,23 @@ export function UserPHPSettingsPage() {
   const [, setMe] = useState<Identity | null>(null);
   const [domains, setDomains] = useState<Domain[]>([]);
   const [selectedDomain, setSelectedDomain] = useState<string | null>(null);
+  // GH #1701: the picked domain's PHP settings hold unsaved changes; picking
+  // another domain remounts the panel, so it asks first.
+  const [domainDirty, setDomainDirty] = useState(false);
+  const pickDomain = (id: string) => {
+    if (id === selectedDomain || !domainDirty) {
+      setSelectedDomain(id);
+      return;
+    }
+    feedback.modal.confirm({
+      title: "Discard unsaved PHP settings?",
+      content: "Your changes to this domain's PHP settings have not been saved.",
+      okText: "Discard changes",
+      okButtonProps: { danger: true },
+      cancelText: "Keep editing",
+      onOk: () => setSelectedDomain(id),
+    });
+  };
   const [availableVersions, setAvailableVersions] = useState<string[]>([]);
   const [cliVersion, setCliVersion] = useState<string>(""); // "" = auto
   const [cliSaving, setCliSaving] = useState(false);
@@ -184,11 +201,15 @@ export function UserPHPSettingsPage() {
                         style={{ minWidth: 280 }}
                         placeholder={t("userphpsettingspage.select_a_domain")}
                         value={selectedDomain}
-                        onChange={setSelectedDomain}
+                        onChange={pickDomain}
                         options={domains.map((d) => ({ label: d.name, value: d.id }))}
                       />
                       {selectedDomain && (
-                        <DomainPHPSettingsPanel key={selectedDomain} domainId={selectedDomain} />
+                        <DomainPHPSettingsPanel
+                          key={selectedDomain}
+                          domainId={selectedDomain}
+                          onDirtyChange={setDomainDirty}
+                        />
                       )}
                     </Space>
                   </Card>

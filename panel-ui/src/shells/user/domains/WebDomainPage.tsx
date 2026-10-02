@@ -15,12 +15,17 @@
 // The tab bar stays horizontal on desktop (johnnyq's call over a vertical
 // sidebar) but collapses to a Select on narrow screens so it doesn't force
 // horizontal scrolling on mobile (lxsdevcode).
+//
+// Only the active tab is rendered, so a tab switch unmounts the PHP Settings
+// form: with unsaved changes there it asks first (GH #1701).
+import { useState } from "react";
 import type { ReactNode } from "react";
 import { Alert, Button, Card, Grid, Select, Skeleton, Space, Typography } from "antd";
 import { GlobalOutlined } from "@icons";
 import { useNavigate, useParams } from "react-router";
 
 import { useSetBreadcrumbs } from "../../../components/admin/BreadcrumbContext";
+import { feedback } from "../../../lib/feedback";
 import { useOneQuery } from "../../../hooks/useQueries";
 import { useServerCapabilities } from "../../../hooks/useServerCapabilities";
 import type { Domain } from "../../../components/domains/types";
@@ -56,6 +61,8 @@ export const WebDomainPage = () => {
   // strip — an unknown breakpoint must not flip to the mobile control.
   const screens = Grid.useBreakpoint();
   const mobile = screens.md === false;
+  // GH #1701: the PHP Settings tab holds unsaved changes.
+  const [phpDirty, setPhpDirty] = useState(false);
 
   // The shell already renders ONE breadcrumb (RouteBreadcrumb, GH #455). Override
   // it with the entity trail so the last crumb is the domain name, not the raw
@@ -151,7 +158,7 @@ export const WebDomainPage = () => {
       label: "PHP Settings",
       node: (
         <Space direction="vertical" size="large" style={{ width: "100%" }}>
-          <DomainPHPSettingsPanel domainId={domain.id} />
+          <DomainPHPSettingsPanel domainId={domain.id} onDirtyChange={setPhpDirty} />
           <DomainEnvVarsCard domainId={domain.id} />
         </Space>
       ),
@@ -203,6 +210,22 @@ export const WebDomainPage = () => {
   const activeKey = tabs.some((tdef) => tdef.key === tab) ? (tab as string) : DEFAULT_TAB;
   const active = tabs.find((tdef) => tdef.key === activeKey) ?? tabs[0];
 
+  const goToTab = (k: string) => {
+    const go = () => navigate(`${LIST_PATH}/${domain.id}/${k}`);
+    if (k !== activeKey && activeKey === "php-settings" && phpDirty) {
+      feedback.modal.confirm({
+        title: "Discard unsaved PHP settings?",
+        content: "Your changes on the PHP Settings tab have not been saved.",
+        okText: "Discard changes",
+        okButtonProps: { danger: true },
+        cancelText: "Keep editing",
+        onOk: go,
+      });
+      return;
+    }
+    go();
+  };
+
   return (
     <div style={{ padding: "20px" }}>
       <Space
@@ -228,7 +251,7 @@ export const WebDomainPage = () => {
         <Card>
           <Select
             value={activeKey}
-            onChange={(k) => navigate(`${LIST_PATH}/${domain.id}/${k}`)}
+            onChange={goToTab}
             options={tabs.map((tdef) => ({ value: tdef.key, label: tdef.label }))}
             style={{ width: "100%", marginBottom: 16 }}
             aria-label="Domain section"
@@ -239,7 +262,7 @@ export const WebDomainPage = () => {
         <Card
           tabList={tabs.map((tdef) => ({ key: tdef.key, tab: tdef.label }))}
           activeTabKey={activeKey}
-          onTabChange={(k) => navigate(`${LIST_PATH}/${domain.id}/${k}`)}
+          onTabChange={goToTab}
         >
           {active.node}
         </Card>

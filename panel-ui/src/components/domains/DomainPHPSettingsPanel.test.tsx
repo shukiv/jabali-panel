@@ -61,12 +61,12 @@ beforeEach(() => {
   mocked.post.mockResolvedValue({});
 });
 
-function renderPanel() {
+function renderPanel(onDirtyChange?: (dirty: boolean) => void) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
       <MemoryRouter>
-        <DomainPHPSettingsPanel domainId="d1" />
+        <DomainPHPSettingsPanel domainId="d1" onDirtyChange={onDirtyChange} />
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -402,7 +402,12 @@ describe("DomainPHPSettingsPanel security settings (GH #1701 Slice 3)", () => {
       php_allow_url_fopen: null,
     });
 
-    fireEvent.change(input, { target: { value: "" } });
+    // The save reloads the settings and reseeds the form (here the mock still
+    // returns {DOCROOT}), which remounts the input: look it up again.
+    await waitFor(() => expect(screen.getByRole("status").textContent).toBe("No unsaved changes"));
+    const reseeded = item(OPEN_BASEDIR).querySelector("input") as HTMLInputElement;
+    expect(reseeded.value).toBe("{DOCROOT}");
+    fireEvent.change(reseeded, { target: { value: "" } });
     fireEvent.click(screen.getByRole("button", { name: "Save Changes" }));
     await waitFor(() => expect(mocked.patch).toHaveBeenCalledTimes(2));
     expect(mocked.patch.mock.calls[1][1]).toMatchObject({ php_open_basedir: null });
@@ -452,5 +457,153 @@ describe("DomainPHPSettingsPanel security settings (GH #1701 Slice 3)", () => {
         'open_basedir: "/srv" is outside your home directory /home/u1',
       ),
     );
+  });
+});
+
+// GH #1701 (lxsdevcode, 10-01): the page says what each setting runs with,
+// which settings are custom and what is not saved yet; it keeps Save in view,
+// collapses its sections and asks before unsaved changes are lost.
+describe("DomainPHPSettingsPanel page UX (GH #1701)", () => {
+  const ALL: string[] = [...PHP_SETTING_DIRECTIVES, ...PHP_SENSITIVE_DOMAIN_DIRECTIVES];
+  const OPEN_BASEDIR = "Allowed folders (open_basedir)";
+
+  function withSettings(extra: Record<string, unknown>) {
+    mocked.get.mockImplementation((url: string) => {
+      if (url === "/php/versions") return Promise.resolve({ data: { versions: ["8.3"] } });
+      if (url === "/domains/d1/php-settings")
+        return Promise.resolve({ data: { ...SETTINGS, editable: ALL, ...extra } });
+      return Promise.resolve({ data: {} });
+    });
+    mocked.patch.mockResolvedValue({});
+  }
+
+  function item(label: string): HTMLElement {
+    const el = screen.getByText(label).closest(".ant-form-item");
+    if (!el) throw new Error(`${label} form item not found`);
+    return el as HTMLElement;
+  }
+  const basedirInput = () => item(OPEN_BASEDIR).querySelector("input") as HTMLInputElement;
+  const status = () => screen.getByRole("status").textContent;
+  const saveButton = () => screen.getByRole("button", { name: "Save Changes" }) as HTMLButtonElement;
+  function sectionHeader(label: string): HTMLElement {
+    const el = screen.getByText(label).closest(".ant-collapse-header");
+    if (!el) throw new Error(`${label} section header not found`);
+    return el as HTMLElement;
+  }
+
+  it("shows the value display_errors inherits, not a bare 'Use pool default'", async () => {
+    withSettings({});
+    renderPanel();
+    await screen.findByText(OPEN_BASEDIR);
+    const select = document.getElementById("php_display_errors")?.closest(".ant-select");
+    expect(select?.textContent).toContain("Off (Default)");
+  });
+
+  it("keeps a collapsed section's settings in the form, and opens a section that holds a custom value", async () => {
+    withSettings({});
+    const { unmount } = renderPanel();
+    await screen.findByText(OPEN_BASEDIR);
+    // Security holds nothing custom: collapsed, but its fields are rendered so
+    // a save never reads them as cleared.
+    expect(sectionHeader("Security").getAttribute("aria-expanded")).toBe("false");
+    expect(document.getElementById("php_open_basedir")).not.toBeNull();
+    expect(document.getElementById("php_allow_url_fopen")).not.toBeNull();
+    unmount();
+
+    withSettings({ php_allow_url_fopen: false });
+    renderPanel();
+    await screen.findByText(OPEN_BASEDIR);
+    expect(sectionHeader("Security").getAttribute("aria-expanded")).toBe("true");
+    expect(sectionHeader("Security").textContent).toContain("1 custom");
+  });
+
+  it("counts a change as unsaved only while it differs from the stored value", async () => {
+    withSettings({ php_open_basedir: "{DOCROOT}" });
+    renderPanel();
+    await screen.findByText(OPEN_BASEDIR);
+    expect(status()).toBe("No unsaved changes");
+    expect(saveButton().disabled).toBe(true);
+
+    fireEvent.change(basedirInput(), { target: { value: "{DOCROOT}:{TMP}" } });
+    expect(status()).toBe("Unsaved changes (1)");
+    expect(saveButton().disabled).toBe(false);
+    expect(item(OPEN_BASEDIR).textContent).toContain("Unsaved");
+    expect(sectionHeader("Security").textContent).toContain("1 unsaved");
+
+    // Back to the stored value (spaces are trimmed on save): nothing to save.
+    fireEvent.change(basedirInput(), { target: { value: " {DOCROOT} " } });
+    expect(status()).toBe("No unsaved changes");
+    expect(saveButton().disabled).toBe(true);
+  });
+
+  it("Reset to default clears a custom value, and the save sends it as inherit", async () => {
+    const { waitFor } = await import("@testing-library/react");
+    withSettings({ php_memory_limit: "1G" });
+    renderPanel();
+    await screen.findByText("userphpsettingspage.memory_limit");
+    const memory = () => item("userphpsettingspage.memory_limit");
+    expect(memory().textContent).toContain("Custom");
+
+    fireEvent.click(screen.getByRole("button", { name: "Reset userphpsettingspage.memory_limit to default" }));
+    expect(memory().textContent).toContain("Pool default");
+    expect(memory().textContent).toContain("Unsaved");
+    expect(screen.queryByRole("button", { name: "Reset userphpsettingspage.memory_limit to default" })).toBeNull();
+    expect(status()).toBe("Unsaved changes (1)");
+
+    fireEvent.click(saveButton());
+    await waitFor(() => expect(mocked.patch).toHaveBeenCalledTimes(1));
+    expect(mocked.patch.mock.calls[0][1]).toMatchObject({ php_memory_limit: null });
+  });
+
+  it("offers no reset on a setting the caller may not change", async () => {
+    withSettings({
+      php_memory_limit: "1G",
+      editable: ALL.filter((d) => d !== "memory_limit"),
+    });
+    renderPanel();
+    await screen.findByText("Set by your administrator");
+    expect(item("userphpsettingspage.memory_limit").textContent).toContain("Custom");
+    expect(screen.queryByRole("button", { name: /^Reset userphpsettingspage.memory_limit/ })).toBeNull();
+  });
+
+  it("Discard puts the stored values back", async () => {
+    withSettings({ php_open_basedir: "{DOCROOT}" });
+    renderPanel();
+    await screen.findByText(OPEN_BASEDIR);
+    fireEvent.change(basedirInput(), { target: { value: "/home/u1/x" } });
+    expect(status()).toBe("Unsaved changes (1)");
+
+    fireEvent.click(screen.getByRole("button", { name: "Discard" }));
+    expect(status()).toBe("No unsaved changes");
+    expect(basedirInput().value).toBe("{DOCROOT}");
+    expect(screen.queryByRole("button", { name: "Discard" })).toBeNull();
+  });
+
+  it("tells the host about unsaved changes, and the browser asks before leaving with them", async () => {
+    withSettings({ php_open_basedir: "{DOCROOT}" });
+    const onDirty = vi.fn();
+    const { unmount } = renderPanel(onDirty);
+    await screen.findByText(OPEN_BASEDIR);
+    const leave = () => {
+      const e = new Event("beforeunload", { cancelable: true });
+      window.dispatchEvent(e);
+      return e.defaultPrevented;
+    };
+    expect(leave()).toBe(false);
+
+    fireEvent.change(basedirInput(), { target: { value: "/home/u1/x" } });
+    expect(onDirty).toHaveBeenLastCalledWith(true);
+    expect(leave()).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "Discard" }));
+    expect(onDirty).toHaveBeenLastCalledWith(false);
+    expect(leave()).toBe(false);
+
+    // Unmounted with unsaved changes: the host hears it holds none any more.
+    fireEvent.change(basedirInput(), { target: { value: "/home/u1/y" } });
+    expect(onDirty).toHaveBeenLastCalledWith(true);
+    unmount();
+    expect(onDirty).toHaveBeenLastCalledWith(false);
+    expect(leave()).toBe(false);
   });
 });

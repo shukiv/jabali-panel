@@ -7,12 +7,24 @@
 // (GET/PATCH /domains/:id/php-settings). The account/pool-level tabs on the
 // standalone page (CLI/Composer, Performance, OPcache, Extensions, Xdebug) are
 // per-version-pool — shared by every domain on that version — so they stay put.
-import { useEffect, useState } from "react";
+//
+// GH #1701 (lxsdevcode): each setting shows whether it is Custom or inherits
+// the pool default (live, as you edit), with a Reset to default link on a
+// custom one. The sections collapse, and a sticky bar at the bottom counts the
+// unsaved changes and holds Save and Discard. Closing or reloading the page
+// with unsaved changes asks first; so does switching the domain's tab or the
+// picked domain, through onDirtyChange (the app's BrowserRouter has no
+// navigation blocker, so the sidebar and the Back button are not guarded).
+import { useEffect, useReducer, useRef, useState } from "react";
+import type { ReactElement, ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import {
+  Affix,
   AutoComplete,
   Button,
   Col,
+  Collapse,
+  Flex,
   Form,
   Popconfirm,
   Row,
@@ -21,6 +33,7 @@ import {
   Spin,
   Tag,
   Typography,
+  theme,
 } from "antd";
 import { useNavigate } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
@@ -162,12 +175,16 @@ const MAX_INPUT_TIME_OPTIONS = [
   { label: "300s", value: 300 },
 ];
 
-// GH #1332 per-domain runtime directives. display_errors is pinned Off on every
-// PHP vhost by the agent, so "Use pool default" and "Off" are the same effect —
-// both keep errors hidden; "On" surfaces them for this domain only.
+// GH #1332 per-domain runtime directives. The agent pins display_errors Off on
+// every PHP vhost that sets no value of its own, whatever the pool or php.ini
+// says (a pool display_errors override never reaches a domain), so the
+// inherited value is always Off (GH #1701: it used to read "Use pool default"
+// with no value). "On" surfaces errors for this domain only.
+const DISPLAY_ERRORS_DEFAULT_LABEL = "Off (Default)";
 const DISPLAY_ERRORS_OPTIONS = [
-  { label: "On (show errors)", value: true },
-  { label: "Off", value: false },
+  { label: DISPLAY_ERRORS_DEFAULT_LABEL, value: null as boolean | null },
+  { label: "On (show errors)", value: true as boolean | null },
+  { label: "Off", value: false as boolean | null },
 ];
 
 // error_reporting bitmask presets. Production (22527) = E_ALL minus notices,
@@ -207,12 +224,69 @@ const TIMEZONE_OPTIONS = [
   ...IANA_TIMEZONES.map((z) => ({ label: z, value: z as string | null })),
 ];
 
-export interface DomainPHPSettingsPanelProps {
-  domainId: string;
+type FormField = keyof PHPSettingsFormData;
+const FORM_FIELDS = Object.keys(FIELD_DIRECTIVE) as FormField[];
+
+// The form values for stored settings. The API omits a field the domain does
+// not override (omitempty); it becomes null, which selects the inherit option
+// (GH #1705: undefined would show the placeholder instead).
+function formValuesOf(s: DomainPHPSettings): PHPSettingsFormData {
+  return Object.fromEntries(FORM_FIELDS.map((f) => [f, s[f] ?? null])) as PHPSettingsFormData;
 }
 
-export function DomainPHPSettingsPanel({ domainId }: DomainPHPSettingsPanelProps) {
+// A form value as it would be saved: absent is null, and open_basedir is
+// trimmed with an empty one meaning inherit (see onSave).
+function savedForm(field: FormField, v: unknown): unknown {
+  if (v === undefined || v === null) return null;
+  if (field === "php_open_basedir" && typeof v === "string") return v.trim() || null;
+  return v;
+}
+
+const fieldSet = (v: unknown) => v !== null && v !== undefined;
+
+// The collapsible sections, in page order. The first three are open by
+// default; Security opens on load only when the domain sets one of its values,
+// so a collapsed section never hides an override.
+const SECTIONS: { key: string; fields: FormField[] }[] = [
+  {
+    key: "resources",
+    fields: ["php_memory_limit", "php_upload_max_filesize", "php_post_max_size", "php_max_input_vars"],
+  },
+  { key: "execution", fields: ["php_max_execution_time", "php_max_input_time"] },
+  {
+    key: "runtime",
+    fields: [
+      "php_display_errors",
+      "php_error_reporting",
+      "php_timezone",
+      "php_log_errors",
+      "php_file_uploads",
+      "php_short_open_tag",
+    ],
+  },
+  { key: "security", fields: ["php_open_basedir", "php_allow_url_fopen"] },
+];
+const OPEN_BY_DEFAULT = ["resources", "execution", "runtime"];
+
+function openSectionsFor(s: DomainPHPSettings): string[] {
+  return SECTIONS.filter(
+    (sec) => OPEN_BY_DEFAULT.includes(sec.key) || sec.fields.some((f) => fieldSet(s[f])),
+  ).map((sec) => sec.key);
+}
+
+// Each control sits in a row with its Reset to default link.
+const CONTROL_STYLE = { flex: 1, minWidth: 0 };
+
+export interface DomainPHPSettingsPanelProps {
+  domainId: string;
+  // Told whether the form holds unsaved changes, so the host can ask before
+  // its own navigation unmounts the panel (a tab switch, another domain).
+  onDirtyChange?: (dirty: boolean) => void;
+}
+
+export function DomainPHPSettingsPanel({ domainId, onDirtyChange }: DomainPHPSettingsPanelProps) {
   const { t } = useTranslation();
+  const { token } = theme.useToken();
   const navigate = useNavigate();
   const qc = useQueryClient();
   const logStreams = useDomainLogStreams();
@@ -222,7 +296,23 @@ export function DomainPHPSettingsPanel({ domainId }: DomainPHPSettingsPanelProps
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [resetting, setResetting] = useState(false);
+  const [openSections, setOpenSections] = useState<string[]>(OPEN_BY_DEFAULT);
   const [form] = Form.useForm<PHPSettingsFormData>();
+  // GH #1701: the panel renders from the live form values (Custom / Unsaved
+  // tags, the unsaved count, Save), read from the store. AntD does not
+  // re-render the parent on a form change, so every change re-renders it here,
+  // synchronously: a user edit (onValuesChange), a reset and a reseed.
+  // (Form.useWatch batches its re-render, so a quick Save click could still
+  // see the old state.)
+  const [, rerender] = useReducer((n: number) => n + 1, 0);
+
+  // resetFields BEFORE setFieldsValue: setFieldsValue does not clear the
+  // touched flags, so a domain switch would otherwise keep a stale dirty state.
+  const seedForm = (s: DomainPHPSettings) => {
+    form.resetFields();
+    form.setFieldsValue(formValuesOf(s));
+    rerender();
+  };
 
   // Installed PHP versions for the version selector. Non-fatal: the selector
   // falls back to "Server default" only.
@@ -304,36 +394,16 @@ export function DomainPHPSettingsPanel({ domainId }: DomainPHPSettingsPanelProps
           `/domains/${domainId}/php-settings`,
         );
         setPhpSettings(resp.data);
-        // resetFields BEFORE setFieldsValue: setFieldsValue does not clear the
-        // touched flags, so without the reset a domain switch would leave Save
-        // enabled on a stale dirty state (latent bug in the original page).
-        form.resetFields();
-        // GH #1705: the API omits a field the domain does not override
-        // (omitempty), so it arrives undefined. An undefined Select value shows
-        // the placeholder; null selects the inherit option, whose label names
-        // the real default ("256M (Default)"). Map absent to null.
-        form.setFieldsValue({
-          php_memory_limit: resp.data.php_memory_limit ?? null,
-          php_upload_max_filesize: resp.data.php_upload_max_filesize ?? null,
-          php_post_max_size: resp.data.php_post_max_size ?? null,
-          php_max_input_vars: resp.data.php_max_input_vars ?? null,
-          php_max_execution_time: resp.data.php_max_execution_time ?? null,
-          php_max_input_time: resp.data.php_max_input_time ?? null,
-          php_display_errors: resp.data.php_display_errors ?? null,
-          php_error_reporting: resp.data.php_error_reporting ?? null,
-          php_timezone: resp.data.php_timezone ?? null,
-          php_log_errors: resp.data.php_log_errors ?? null,
-          php_file_uploads: resp.data.php_file_uploads ?? null,
-          php_short_open_tag: resp.data.php_short_open_tag ?? null,
-          php_open_basedir: resp.data.php_open_basedir ?? null,
-          php_allow_url_fopen: resp.data.php_allow_url_fopen ?? null,
-        });
+        seedForm(resp.data);
+        setOpenSections(openSectionsFor(resp.data));
       } catch {
         feedback.message.error("Failed to load PHP settings");
       } finally {
         setLoading(false);
       }
     })();
+    // seedForm only uses the stable form instance.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [domainId, form]);
 
   // GH #1701: a directive the caller may not set is shown read-only and sent
@@ -372,11 +442,13 @@ export function DomainPHPSettingsPanel({ domainId }: DomainPHPSettingsPanelProps
         php_allow_url_fopen: outgoing("php_allow_url_fopen", values),
       });
       feedback.message.success("PHP settings updated successfully");
-      // Reload settings to confirm.
+      // Reload settings to confirm, and show them as stored (the server may
+      // tidy a value, e.g. an open_basedir path), so nothing reads as unsaved.
       const resp = await apiClient.get<DomainPHPSettings>(
         `/domains/${domainId}/php-settings`,
       );
       setPhpSettings(resp.data);
+      seedForm(resp.data);
     } catch (err) {
       const e = err as { response?: { data?: { error?: string; detail?: string } } };
       const apiError = e.response?.data?.error;
@@ -394,31 +466,42 @@ export function DomainPHPSettingsPanel({ domainId }: DomainPHPSettingsPanelProps
     }
   };
 
-  // Fields the Save button cares about. AntD's form state changes don't
-  // trigger parent re-renders, so we can't compute `hasChanges` inline —
-  // we have to evaluate it inside a Form.Item shouldUpdate wrapper so it
-  // re-runs on every form mutation. Typed literal-tuple so
-  // form.isFieldsTouched's keyof-narrowed overload accepts it.
-  const dirtyFields: (keyof PHPSettingsFormData)[] = [
-    "php_memory_limit",
-    "php_upload_max_filesize",
-    "php_post_max_size",
-    "php_max_input_vars",
-    "php_max_execution_time",
-    "php_max_input_time",
-    "php_display_errors",
-    "php_error_reporting",
-    "php_timezone",
-    "php_log_errors",
-    "php_file_uploads",
-    "php_short_open_tag",
-    "php_open_basedir",
-    "php_allow_url_fopen",
-  ];
+  // GH #1701: the live form values (see rerender above).
+  const current = form.getFieldsValue(true) as PHPSettingsFormData;
+  // A field is unsaved when its value differs from the stored one, not merely
+  // touched: picking another value and then the original again leaves nothing
+  // to save. A locked field cannot change.
+  const changed: FormField[] = phpSettings
+    ? FORM_FIELDS.filter(
+        (f) => !locked(f) && savedForm(f, current[f]) !== savedForm(f, phpSettings[f]),
+      )
+    : [];
+  const dirty = changed.length > 0;
+  const isCustom = (field: FormField) => fieldSet(savedForm(field, current[field]));
 
-  // GH #1332 item 6: a small tag on each field showing whether it is a custom
-  // override or falls back to the pool default. Reflects the last-saved state
-  // (phpSettings), refreshed after every save.
+  const onDirtyChangeRef = useRef(onDirtyChange);
+  onDirtyChangeRef.current = onDirtyChange;
+  useEffect(() => {
+    onDirtyChangeRef.current?.(dirty);
+  }, [dirty]);
+  // An unmounted panel holds nothing unsaved.
+  useEffect(() => () => onDirtyChangeRef.current?.(false), []);
+
+  // Closing or reloading the tab with unsaved changes asks first.
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
+
+  const onDiscard = () => {
+    if (phpSettings) seedForm(phpSettings);
+  };
+
   // GH #1543: relabel the "Use pool default" (value null) option of a select
   // with the real inherited value — "256M (Default)" — from pool_defaults. The
   // null option is what the Select shows while a domain has no override, so this
@@ -474,10 +557,9 @@ export function DomainPHPSettingsPanel({ domainId }: DomainPHPSettingsPanelProps
   const inheritPlaceholder = (directive: string, fmt: DefaultFmt = sizeFmt()) =>
     defaultLabel(directive, fmt) ?? t("userphpsettingspage.use_pool_default");
 
-  const fieldSet = (v: unknown) => v !== null && v !== undefined;
   // GH #1701: a tenant sees "Set by your administrator" on a locked directive;
   // an admin sees "Admin only" on one the tenant cannot change.
-  const policyTag = (field: keyof PHPSettingsFormData) => {
+  const policyTag = (field: FormField) => {
     if (locked(field)) {
       return (
         <Tag color="gold" style={{ marginInlineEnd: 0 }}>
@@ -494,22 +576,351 @@ export function DomainPHPSettingsPanel({ domainId }: DomainPHPSettingsPanelProps
     }
     return null;
   };
-  const overrideLabel = (text: string, overridden: boolean, field: keyof PHPSettingsFormData) => (
+  // GH #1332 item 6, GH #1701: every setting is tagged Custom (the domain sets
+  // it) or Pool default (it inherits), following the form as you edit, and
+  // Unsaved until it is saved.
+  const overrideLabel = (text: string, field: FormField) => (
     <Space size={6}>
       {text}
-      {overridden ? (
+      {isCustom(field) ? (
         <Tag color="blue" style={{ marginInlineEnd: 0 }}>
           Custom
         </Tag>
       ) : (
         <Tag style={{ marginInlineEnd: 0 }}>Pool default</Tag>
       )}
+      {changed.includes(field) && (
+        <Tag color="orange" style={{ marginInlineEnd: 0 }}>
+          Unsaved
+        </Tag>
+      )}
       {policyTag(field)}
     </Space>
   );
 
+  // One setting: its label, its control and, while it is custom, a Reset to
+  // default link (the same as picking the inherit option). The link sits
+  // beside the control, outside the <label>, so it never joins the control's
+  // accessible name.
+  const settingItem = (
+    field: FormField,
+    text: string,
+    control: ReactElement,
+    extra?: ReactNode,
+  ) => (
+    <Col xs={24} sm={12} key={field}>
+      <Form.Item label={overrideLabel(text, field)} htmlFor={field} extra={extra}>
+        <Flex gap={8} align="center">
+          <Form.Item name={field} noStyle>
+            {control}
+          </Form.Item>
+          {!locked(field) && isCustom(field) && (
+            <Button
+              type="link"
+              size="small"
+              style={{ paddingInline: 0 }}
+              aria-label={`Reset ${text} to default`}
+              onClick={() => {
+                form.setFieldValue(field, null);
+                rerender();
+              }}
+            >
+              Reset to default
+            </Button>
+          )}
+        </Flex>
+      </Form.Item>
+    </Col>
+  );
+
+  // A collapsed section still says how many of its settings are custom or
+  // unsaved.
+  const sectionExtra = (key: string) => {
+    const fields = SECTIONS.find((s) => s.key === key)?.fields ?? [];
+    const custom = fields.filter(isCustom).length;
+    const unsaved = fields.filter((f) => changed.includes(f)).length;
+    return (
+      <Space size={4}>
+        {custom > 0 && (
+          <Tag color="blue" style={{ marginInlineEnd: 0 }}>
+            {custom} custom
+          </Tag>
+        )}
+        {unsaved > 0 && (
+          <Tag color="orange" style={{ marginInlineEnd: 0 }}>
+            {unsaved} unsaved
+          </Tag>
+        )}
+      </Space>
+    );
+  };
+
+  const sections: { key: string; label: string; children: ReactNode }[] = [
+    {
+      key: "resources",
+      label: "Resource Limits",
+      children: (
+        <>
+          {/* GH #1332 item 3: these are DOMAIN-level php.ini overrides,
+              applied to this domain regardless of which PHP version it runs —
+              not per-version. Label it so that's clear. */}
+          <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
+            Applied to this domain across all PHP versions. Per-version worker
+            tuning lives under Performance.
+          </Typography.Paragraph>
+          <Row gutter={[16, 16]}>
+            {settingItem(
+              "php_memory_limit",
+              t("userphpsettingspage.memory_limit"),
+              <Select
+                style={CONTROL_STYLE}
+                disabled={locked("php_memory_limit")}
+                placeholder={inheritPlaceholder("memory_limit")}
+                allowClear
+                options={withDefault(MEMORY_LIMIT_OPTIONS, "memory_limit")}
+              />,
+            )}
+            {settingItem(
+              "php_upload_max_filesize",
+              t("userphpsettingspage.upload_max_file_size"),
+              <Select
+                style={CONTROL_STYLE}
+                disabled={locked("php_upload_max_filesize")}
+                placeholder={inheritPlaceholder("upload_max_filesize")}
+                allowClear
+                options={withDefault(UPLOAD_MAX_OPTIONS, "upload_max_filesize")}
+              />,
+            )}
+            {settingItem(
+              "php_post_max_size",
+              t("userphpsettingspage.post_max_size"),
+              <Select
+                style={CONTROL_STYLE}
+                disabled={locked("php_post_max_size")}
+                placeholder={inheritPlaceholder("post_max_size")}
+                allowClear
+                options={withDefault(POST_MAX_OPTIONS, "post_max_size")}
+              />,
+            )}
+            {settingItem(
+              "php_max_input_vars",
+              t("userphpsettingspage.max_input_variables"),
+              <Select
+                style={CONTROL_STYLE}
+                disabled={locked("php_max_input_vars")}
+                placeholder={inheritPlaceholder("max_input_vars")}
+                allowClear
+                options={withDefault(MAX_INPUT_VARS_OPTIONS, "max_input_vars")}
+              />,
+            )}
+          </Row>
+        </>
+      ),
+    },
+    {
+      key: "execution",
+      label: "Execution Limits",
+      children: (
+        <Row gutter={[16, 16]}>
+          {settingItem(
+            "php_max_execution_time",
+            t("userphpsettingspage.max_execution_time"),
+            <Select
+              style={CONTROL_STYLE}
+              disabled={locked("php_max_execution_time")}
+              placeholder={inheritPlaceholder("max_execution_time", sizeFmt("s"))}
+              allowClear
+              options={withDefault(MAX_EXECUTION_TIME_OPTIONS, "max_execution_time", sizeFmt("s"))}
+            />,
+          )}
+          {settingItem(
+            "php_max_input_time",
+            t("userphpsettingspage.max_input_time"),
+            <Select
+              style={CONTROL_STYLE}
+              disabled={locked("php_max_input_time")}
+              placeholder={inheritPlaceholder("max_input_time", sizeFmt("s"))}
+              allowClear
+              options={withDefault(MAX_INPUT_TIME_OPTIONS, "max_input_time", sizeFmt("s"))}
+            />,
+          )}
+        </Row>
+      ),
+    },
+    {
+      key: "runtime",
+      label: "Error Handling & Runtime",
+      children: (
+        <>
+          <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
+            These apply to this domain across all its PHP versions. Turn{" "}
+            <strong>Display errors</strong> on only for development — it prints
+            PHP errors to visitors.
+          </Typography.Paragraph>
+          <Row gutter={[16, 16]}>
+            {settingItem(
+              "php_display_errors",
+              "Display errors",
+              <Select
+                style={CONTROL_STYLE}
+                disabled={locked("php_display_errors")}
+                placeholder={DISPLAY_ERRORS_DEFAULT_LABEL}
+                allowClear
+                options={DISPLAY_ERRORS_OPTIONS}
+              />,
+              "Shows PHP errors in the page output. Keep off on public/production sites.",
+            )}
+            {settingItem(
+              "php_error_reporting",
+              "Error reporting",
+              <Select
+                style={CONTROL_STYLE}
+                disabled={locked("php_error_reporting")}
+                placeholder={inheritPlaceholder("error_reporting", errorReportingFmt)}
+                allowClear
+                options={withDefault(ERROR_REPORTING_OPTIONS, "error_reporting", errorReportingFmt)}
+              />,
+            )}
+            {settingItem(
+              "php_timezone",
+              "Timezone",
+              <Select
+                style={CONTROL_STYLE}
+                disabled={locked("php_timezone")}
+                showSearch
+                placeholder={inheritPlaceholder("date.timezone", timezoneFmt)}
+                allowClear
+                optionFilterProp="label"
+                options={withDefault(TIMEZONE_OPTIONS, "date.timezone", timezoneFmt)}
+              />,
+              "date.timezone for this domain's PHP.",
+            )}
+            {settingItem(
+              "php_log_errors",
+              "Log errors",
+              <Select
+                style={CONTROL_STYLE}
+                disabled={locked("php_log_errors")}
+                placeholder={inheritPlaceholder("log_errors", flagFmt)}
+                allowClear
+                options={withDefault(FLAG_OPTIONS, "log_errors", flagFmt)}
+              />,
+              "Records PHP errors in the error log. Visitors never see logged errors.",
+            )}
+            {settingItem(
+              "php_file_uploads",
+              "File uploads",
+              <Select
+                style={CONTROL_STYLE}
+                disabled={locked("php_file_uploads")}
+                placeholder={inheritPlaceholder("file_uploads", flagFmt)}
+                allowClear
+                options={withDefault(FLAG_OPTIONS, "file_uploads", flagFmt)}
+              />,
+              "Lets this domain's PHP accept uploaded files. Off breaks uploads in WordPress and most apps.",
+            )}
+            {settingItem(
+              "php_short_open_tag",
+              "Short open tag",
+              <Select
+                style={CONTROL_STYLE}
+                disabled={locked("php_short_open_tag")}
+                placeholder={inheritPlaceholder("short_open_tag", flagFmt)}
+                allowClear
+                options={withDefault(FLAG_OPTIONS, "short_open_tag", flagFmt)}
+              />,
+              "Treats <? as a PHP opening tag. Only for old code that needs it: files that start with <?xml stop working.",
+            )}
+          </Row>
+        </>
+      ),
+    },
+    {
+      // GH #1701 Slice 3: security-sensitive, admin only unless the owner's
+      // package opts the tenant in.
+      key: "security",
+      label: "Security",
+      children: (
+        <>
+          <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
+            These limit what this domain&apos;s PHP code can reach. The server
+            checks every value.
+          </Typography.Paragraph>
+          <Row gutter={[16, 16]}>
+            {settingItem(
+              "php_open_basedir",
+              "Allowed folders (open_basedir)",
+              <AutoComplete
+                style={CONTROL_STYLE}
+                disabled={locked("php_open_basedir")}
+                placeholder="Home folder + temp folders (Default)"
+                allowClear
+                filterOption={false}
+                options={OPEN_BASEDIR_OPTIONS}
+              />,
+              <>
+                The folders PHP may open files in, separated by <code>:</code>.
+                Use <code>{"{DOCROOT}"}</code> for this domain&apos;s folder,{" "}
+                <code>{"{WEBSPACEROOT}"}</code> for the home folder and{" "}
+                <code>{"{TMP}"}</code> for the temp folders, or absolute paths.
+                Without the temp folders, uploads fail in WordPress and most
+                apps.
+              </>,
+            )}
+            {settingItem(
+              "php_allow_url_fopen",
+              "Remote file access (allow_url_fopen)",
+              <Select
+                style={CONTROL_STYLE}
+                disabled={locked("php_allow_url_fopen")}
+                placeholder={inheritPlaceholder("allow_url_fopen", flagFmt)}
+                allowClear
+                options={withDefault(FLAG_OPTIONS, "allow_url_fopen", flagFmt)}
+              />,
+              "Lets file functions such as file_get_contents() read http:// and ftp:// URLs. cURL works either way.",
+            )}
+          </Row>
+        </>
+      ),
+    },
+  ];
+
+  // The count of unsaved changes, Discard and Save.
+  const saveBar = (
+    <Flex
+      align="center"
+      gap={12}
+      wrap
+      style={{
+        marginTop: 16,
+        padding: "12px 0",
+        background: token.colorBgContainer,
+        borderTop: `1px solid ${token.colorBorderSecondary}`,
+      }}
+    >
+      <Typography.Text
+        role="status"
+        type={dirty ? "warning" : "secondary"}
+        style={{ flex: "1 1 auto", whiteSpace: "nowrap" }}
+      >
+        {dirty ? `Unsaved changes (${changed.length})` : "No unsaved changes"}
+      </Typography.Text>
+      <Space wrap>
+        {dirty && <Button onClick={onDiscard}>Discard</Button>}
+        <Button type="primary" htmlType="submit" loading={submitting} disabled={!dirty}>
+          Save Changes
+        </Button>
+      </Space>
+    </Flex>
+  );
+
   return (
-    <Form<PHPSettingsFormData> form={form} layout="vertical" onFinish={onSave}>
+    <Form<PHPSettingsFormData>
+      form={form}
+      layout="vertical"
+      onFinish={onSave}
+      onValuesChange={() => rerender()}
+    >
       <Spin spinning={loading}>
           {phpSettings && (
             <>
@@ -575,323 +986,25 @@ export function DomainPHPSettingsPanel({ domainId }: DomainPHPSettingsPanelProps
                 </Button>
               </Space>
 
-              <Typography.Title level={5} style={{ marginBottom: 0 }}>
-                Resource Limits
-              </Typography.Title>
-              {/* GH #1332 item 3: these are DOMAIN-level php.ini overrides,
-                  applied to this domain regardless of which PHP version it
-                  runs — not per-version. Label it so that's clear. */}
-              <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
-                Applied to this domain across all PHP versions. Per-version
-                worker tuning lives under Performance.
-              </Typography.Paragraph>
-              <Row gutter={[16, 16]}>
-                <Col xs={24} sm={12}>
-                  <Form.Item
-                    label={overrideLabel(
-                      t("userphpsettingspage.memory_limit"),
-                      fieldSet(phpSettings?.php_memory_limit),
-                      "php_memory_limit",
-                    )}
-                    name="php_memory_limit"
-                  >
-                    <Select
-                      disabled={locked("php_memory_limit")}
-                      placeholder={inheritPlaceholder("memory_limit")}
-                      allowClear
-                      options={withDefault(MEMORY_LIMIT_OPTIONS, "memory_limit")}
-                    />
-                  </Form.Item>
-                </Col>
-                <Col xs={24} sm={12}>
-                  <Form.Item
-                    label={overrideLabel(
-                      t("userphpsettingspage.upload_max_file_size"),
-                      fieldSet(phpSettings?.php_upload_max_filesize),
-                      "php_upload_max_filesize",
-                    )}
-                    name="php_upload_max_filesize"
-                  >
-                    <Select
-                      disabled={locked("php_upload_max_filesize")}
-                      placeholder={inheritPlaceholder("upload_max_filesize")}
-                      allowClear
-                      options={withDefault(UPLOAD_MAX_OPTIONS, "upload_max_filesize")}
-                    />
-                  </Form.Item>
-                </Col>
-                <Col xs={24} sm={12}>
-                  <Form.Item
-                    label={overrideLabel(
-                      t("userphpsettingspage.post_max_size"),
-                      fieldSet(phpSettings?.php_post_max_size),
-                      "php_post_max_size",
-                    )}
-                    name="php_post_max_size"
-                  >
-                    <Select
-                      disabled={locked("php_post_max_size")}
-                      placeholder={inheritPlaceholder("post_max_size")}
-                      allowClear
-                      options={withDefault(POST_MAX_OPTIONS, "post_max_size")}
-                    />
-                  </Form.Item>
-                </Col>
-                <Col xs={24} sm={12}>
-                  <Form.Item
-                    label={overrideLabel(
-                      t("userphpsettingspage.max_input_variables"),
-                      fieldSet(phpSettings?.php_max_input_vars),
-                      "php_max_input_vars",
-                    )}
-                    name="php_max_input_vars"
-                  >
-                    <Select
-                      disabled={locked("php_max_input_vars")}
-                      placeholder={inheritPlaceholder("max_input_vars")}
-                      allowClear
-                      options={withDefault(MAX_INPUT_VARS_OPTIONS, "max_input_vars")}
-                    />
-                  </Form.Item>
-                </Col>
-              </Row>
+              {/* forceRender: a section's fields stay in the form while it is
+                  collapsed. Without it a never-opened section's fields would
+                  be missing from the save and read as cleared. */}
+              <Collapse
+                activeKey={openSections}
+                onChange={(keys) => setOpenSections(Array.isArray(keys) ? keys : [keys])}
+                items={sections.map((s) => ({
+                  ...s,
+                  forceRender: true,
+                  extra: sectionExtra(s.key),
+                }))}
+              />
 
-              <Typography.Title level={5}>Execution Limits</Typography.Title>
-              <Row gutter={[16, 16]}>
-                <Col xs={24} sm={12}>
-                  <Form.Item
-                    label={overrideLabel(
-                      t("userphpsettingspage.max_execution_time"),
-                      fieldSet(phpSettings?.php_max_execution_time),
-                      "php_max_execution_time",
-                    )}
-                    name="php_max_execution_time"
-                  >
-                    <Select
-                      disabled={locked("php_max_execution_time")}
-                      placeholder={inheritPlaceholder("max_execution_time", sizeFmt("s"))}
-                      allowClear
-                      options={withDefault(MAX_EXECUTION_TIME_OPTIONS, "max_execution_time", sizeFmt("s"))}
-                    />
-                  </Form.Item>
-                </Col>
-                <Col xs={24} sm={12}>
-                  <Form.Item
-                    label={overrideLabel(
-                      t("userphpsettingspage.max_input_time"),
-                      fieldSet(phpSettings?.php_max_input_time),
-                      "php_max_input_time",
-                    )}
-                    name="php_max_input_time"
-                  >
-                    <Select
-                      disabled={locked("php_max_input_time")}
-                      placeholder={inheritPlaceholder("max_input_time", sizeFmt("s"))}
-                      allowClear
-                      options={withDefault(MAX_INPUT_TIME_OPTIONS, "max_input_time", sizeFmt("s"))}
-                    />
-                  </Form.Item>
-                </Col>
-              </Row>
-
-              <Typography.Title level={5}>
-                Error Handling &amp; Runtime
-              </Typography.Title>
-              <Typography.Paragraph type="secondary" style={{ marginTop: -4 }}>
-                These apply to this domain across all its PHP versions. Turn{" "}
-                <strong>Display errors</strong> on only for development — it
-                prints PHP errors to visitors.
-              </Typography.Paragraph>
-              <Row gutter={[16, 16]}>
-                <Col xs={24} sm={12}>
-                  <Form.Item
-                    label={overrideLabel(
-                      "Display errors",
-                      fieldSet(phpSettings?.php_display_errors),
-                      "php_display_errors",
-                    )}
-                    name="php_display_errors"
-                    extra="Shows PHP errors in the page output. Keep off on public/production sites."
-                  >
-                    <Select
-                      disabled={locked("php_display_errors")}
-                      placeholder="Use pool default (off)"
-                      allowClear
-                      options={DISPLAY_ERRORS_OPTIONS}
-                    />
-                  </Form.Item>
-                </Col>
-                <Col xs={24} sm={12}>
-                  <Form.Item
-                    label={overrideLabel(
-                      "Error reporting",
-                      fieldSet(phpSettings?.php_error_reporting),
-                      "php_error_reporting",
-                    )}
-                    name="php_error_reporting"
-                  >
-                    <Select
-                      disabled={locked("php_error_reporting")}
-                      placeholder={inheritPlaceholder("error_reporting", errorReportingFmt)}
-                      allowClear
-                      options={withDefault(ERROR_REPORTING_OPTIONS, "error_reporting", errorReportingFmt)}
-                    />
-                  </Form.Item>
-                </Col>
-                <Col xs={24} sm={12}>
-                  <Form.Item
-                    label={overrideLabel(
-                      "Timezone",
-                      fieldSet(phpSettings?.php_timezone),
-                      "php_timezone",
-                    )}
-                    name="php_timezone"
-                    extra="date.timezone for this domain's PHP."
-                  >
-                    <Select
-                      disabled={locked("php_timezone")}
-                      showSearch
-                      placeholder={inheritPlaceholder("date.timezone", timezoneFmt)}
-                      allowClear
-                      optionFilterProp="label"
-                      options={withDefault(TIMEZONE_OPTIONS, "date.timezone", timezoneFmt)}
-                    />
-                  </Form.Item>
-                </Col>
-                <Col xs={24} sm={12}>
-                  <Form.Item
-                    label={overrideLabel(
-                      "Log errors",
-                      fieldSet(phpSettings?.php_log_errors),
-                      "php_log_errors",
-                    )}
-                    name="php_log_errors"
-                    extra="Records PHP errors in the error log. Visitors never see logged errors."
-                  >
-                    <Select
-                      disabled={locked("php_log_errors")}
-                      placeholder={inheritPlaceholder("log_errors", flagFmt)}
-                      allowClear
-                      options={withDefault(FLAG_OPTIONS, "log_errors", flagFmt)}
-                    />
-                  </Form.Item>
-                </Col>
-                <Col xs={24} sm={12}>
-                  <Form.Item
-                    label={overrideLabel(
-                      "File uploads",
-                      fieldSet(phpSettings?.php_file_uploads),
-                      "php_file_uploads",
-                    )}
-                    name="php_file_uploads"
-                    extra="Lets this domain's PHP accept uploaded files. Off breaks uploads in WordPress and most apps."
-                  >
-                    <Select
-                      disabled={locked("php_file_uploads")}
-                      placeholder={inheritPlaceholder("file_uploads", flagFmt)}
-                      allowClear
-                      options={withDefault(FLAG_OPTIONS, "file_uploads", flagFmt)}
-                    />
-                  </Form.Item>
-                </Col>
-                <Col xs={24} sm={12}>
-                  <Form.Item
-                    label={overrideLabel(
-                      "Short open tag",
-                      fieldSet(phpSettings?.php_short_open_tag),
-                      "php_short_open_tag",
-                    )}
-                    name="php_short_open_tag"
-                    extra="Treats <? as a PHP opening tag. Only for old code that needs it: files that start with <?xml stop working."
-                  >
-                    <Select
-                      disabled={locked("php_short_open_tag")}
-                      placeholder={inheritPlaceholder("short_open_tag", flagFmt)}
-                      allowClear
-                      options={withDefault(FLAG_OPTIONS, "short_open_tag", flagFmt)}
-                    />
-                  </Form.Item>
-                </Col>
-              </Row>
-
-              {/* GH #1701 Slice 3: security-sensitive, admin only unless the
-                  owner's package opts the tenant in. */}
-              <Typography.Title level={5}>Security</Typography.Title>
-              <Typography.Paragraph type="secondary" style={{ marginTop: -4 }}>
-                These limit what this domain&apos;s PHP code can reach. The
-                server checks every value.
-              </Typography.Paragraph>
-              <Row gutter={[16, 16]}>
-                <Col xs={24} sm={12}>
-                  <Form.Item
-                    label={overrideLabel(
-                      "Allowed folders (open_basedir)",
-                      fieldSet(phpSettings?.php_open_basedir),
-                      "php_open_basedir",
-                    )}
-                    name="php_open_basedir"
-                    extra={
-                      <>
-                        The folders PHP may open files in, separated by{" "}
-                        <code>:</code>. Use <code>{"{DOCROOT}"}</code> for this
-                        domain&apos;s folder, <code>{"{WEBSPACEROOT}"}</code> for
-                        the home folder and <code>{"{TMP}"}</code> for the temp
-                        folders, or absolute paths. Without the temp folders,
-                        uploads fail in WordPress and most apps.
-                      </>
-                    }
-                  >
-                    <AutoComplete
-                      disabled={locked("php_open_basedir")}
-                      placeholder="Home folder + temp folders (Default)"
-                      allowClear
-                      filterOption={false}
-                      options={OPEN_BASEDIR_OPTIONS}
-                    />
-                  </Form.Item>
-                </Col>
-                <Col xs={24} sm={12}>
-                  <Form.Item
-                    label={overrideLabel(
-                      "Remote file access (allow_url_fopen)",
-                      fieldSet(phpSettings?.php_allow_url_fopen),
-                      "php_allow_url_fopen",
-                    )}
-                    name="php_allow_url_fopen"
-                    extra="Lets file functions such as file_get_contents() read http:// and ftp:// URLs. cURL works either way."
-                  >
-                    <Select
-                      disabled={locked("php_allow_url_fopen")}
-                      placeholder={inheritPlaceholder("allow_url_fopen", flagFmt)}
-                      allowClear
-                      options={withDefault(FLAG_OPTIONS, "allow_url_fopen", flagFmt)}
-                    />
-                  </Form.Item>
-                </Col>
-              </Row>
-
-              <Form.Item
-                noStyle
-                shouldUpdate={(prev, cur) =>
-                  dirtyFields.some((f) => prev[f] !== cur[f])
-                }
-              >
-                {() => {
-                  const hasChanges = form.isFieldsTouched(dirtyFields);
-                  return (
-                    <Form.Item style={{ marginBottom: 0, marginTop: 24 }}>
-                      <Button
-                        type="primary"
-                        htmlType="submit"
-                        loading={submitting}
-                        disabled={!hasChanges}
-                      >
-                        Save Changes
-                      </Button>
-                    </Form.Item>
-                  );
-                }}
-              </Form.Item>
+              {/* GH #1701: with unsaved changes, Save stays in view at the
+                  bottom of a long page. Affix, not CSS sticky: the shell's
+                  content column clips overflow-x, which makes it the sticky
+                  element's scroll container, and it never scrolls (the window
+                  does). */}
+              {dirty ? <Affix offsetBottom={0}>{saveBar}</Affix> : saveBar}
             </>
           )}
       </Spin>
