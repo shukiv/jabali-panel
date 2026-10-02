@@ -285,6 +285,36 @@ func TestKeepByPolicy_MatchesRestic(t *testing.T) {
 type fakeJobStore struct {
 	rows    map[string]*models.BackupJob
 	deleted []string
+	// listedBefore records the cutoff of the last finished-rows query.
+	listedBefore time.Time
+}
+
+// ListFinishedBackupsForDestination mirrors the repository query: finished
+// account/system backups on destID that finished before `before`.
+func (f *fakeJobStore) ListFinishedBackupsForDestination(_ context.Context, destID string, before time.Time) ([]models.BackupJob, error) {
+	f.listedBefore = before
+	var out []models.BackupJob
+	for _, r := range f.rows {
+		if r.DestinationID == nil || *r.DestinationID != destID {
+			continue
+		}
+		if r.Kind != models.BackupJobKindAccountBackup && r.Kind != models.BackupJobKindSystemBackup {
+			continue
+		}
+		if r.Status != models.BackupJobStatusSucceeded && r.Status != models.BackupJobStatusPartial {
+			continue
+		}
+		t := r.CreatedAt
+		if r.FinishedAt != nil {
+			t = *r.FinishedAt
+		}
+		if !t.Before(before) {
+			continue
+		}
+		out = append(out, *r)
+	}
+	sort.Slice(out, func(a, b int) bool { return out[a].ID < out[b].ID })
+	return out, nil
 }
 
 func (f *fakeJobStore) Get(_ context.Context, id string) (*models.BackupJob, error) {

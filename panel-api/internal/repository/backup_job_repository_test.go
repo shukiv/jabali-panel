@@ -175,3 +175,23 @@ func TestBackupJob_OldestAccountBackup_RetainedOnly(t *testing.T) {
 	require.Equal(t, "j1", j.ID)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
+
+func TestBackupJobRepository_ListFinishedBackupsForDestination(t *testing.T) {
+	db, mock, raw := newMockBackupDB(t)
+	defer raw.Close()
+	repo := NewBackupJobRepository(db)
+
+	before := time.Date(2026, 10, 2, 3, 0, 0, 0, time.UTC)
+	mock.ExpectQuery(regexp.QuoteMeta(
+		"SELECT `id`,`user_id`,`destination_id`,`kind`,`status`,`snapshot_id`,`created_at`,`finished_at` FROM `backup_jobs` "+
+			"WHERE destination_id = ? AND kind IN (?,?) AND status IN (?,?) AND COALESCE(finished_at, created_at) < ? ORDER BY created_at ASC")).
+		WithArgs("01DEST", models.BackupJobKindAccountBackup, models.BackupJobKindSystemBackup,
+			models.BackupJobStatusSucceeded, models.BackupJobStatusPartial, before).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "status"}).AddRow("01JOB", models.BackupJobStatusSucceeded))
+
+	rows, err := repo.ListFinishedBackupsForDestination(context.Background(), "01DEST", before)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.Equal(t, "01JOB", rows[0].ID)
+	require.NoError(t, mock.ExpectationsWereMet())
+}

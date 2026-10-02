@@ -166,7 +166,7 @@ func TestFinishRetention_EveryPairFailedStillAlertsAndExitsNonZero(t *testing.T)
 	alerts := recordRetentionAlerts(t)
 	calls := fakeRestic(t, nil)
 	failures := []string{"schedule s1 dest d1 (nightly) forget: wrong password or no key found"}
-	err := finishRetention(context.Background(), newRetentionTestCmd(), map[string]resticRepo{}, failures, false)
+	err := finishRetention(context.Background(), newRetentionTestCmd(), map[string]resticRepo{}, &fakeJobStore{}, failures, false)
 	if err == nil || !strings.Contains(err.Error(), "wrong password") {
 		t.Fatalf("err = %v, want the sweep to fail with its forget failure", err)
 	}
@@ -180,7 +180,7 @@ func TestFinishRetention_EveryPairFailedStillAlertsAndExitsNonZero(t *testing.T)
 
 func TestFinishRetention_NothingToDoIsQuiet(t *testing.T) {
 	alerts := recordRetentionAlerts(t)
-	if err := finishRetention(context.Background(), newRetentionTestCmd(), map[string]resticRepo{}, nil, false); err != nil {
+	if err := finishRetention(context.Background(), newRetentionTestCmd(), map[string]resticRepo{}, &fakeJobStore{}, nil, false); err != nil {
 		t.Errorf("no policy and no failures must exit zero: %v", err)
 	}
 	if len(*alerts) != 0 {

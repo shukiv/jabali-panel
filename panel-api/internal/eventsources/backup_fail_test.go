@@ -143,3 +143,7 @@ func TestBackupFail_SkipsRowsOutsideLookback(t *testing.T) {
 	backupFailPass(context.Background(), d)
 	require.Equal(t, 0, pub.Count())
 }
+
+func (f *fakeBackupJobs) ListFinishedBackupsForDestination(context.Context, string, time.Time) ([]models.BackupJob, error) {
+	return nil, nil
+}

@@ -82,6 +82,12 @@ point is left partial. A queued or running job, a snapshot without a job-id
 tag, and a series with no complete backup are never forgotten. The backup_jobs
 row of a forgotten job is deleted once its snapshots are gone.
 
+Then, per destination, the row of every finished backup with no snapshot left
+in the repository (none tagged with its job-id, none matching its snapshot_id)
+is deleted too: older sweeps forgot snapshots without deleting rows. Rows of
+backups that finished less than an hour before the listing, and every row of a
+destination whose repository lists no snapshots, are left alone.
+
 Then a single ` + "`restic prune`" + ` per destination at the end. Schedules
 with all-NULL keep_* are skipped (operator hasn't picked a policy).
 Manual backups (ScheduleID NULL) are never pruned.
@@ -177,7 +183,7 @@ by install_backup_foundation in install.sh.`,
 				}
 			}
 
-			return finishRetention(ctx, cmd, pruneDests, failures, dryRun)
+			return finishRetention(ctx, cmd, pruneDests, jobRepo, failures, dryRun)
 		},
 	}
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false,
@@ -185,21 +191,26 @@ by install_backup_foundation in install.sh.`,
 	return cmd
 }
 
-// finishRetention prunes each destination the sweep forgot from, then reports
-// every forget and prune failure with an admin alert and a non-zero exit.
+// finishRetention deletes the rows of backups with nothing left in each
+// destination the sweep forgot from (backup_retention_rows.go) and prunes it,
+// then reports every failure with an admin alert and a non-zero exit.
 //
 // A sweep in which every (schedule, destination) pair failed has nothing to
 // prune, and used to return "nothing to forget or prune" with exit 0 before
 // looking at its failures. On a box with one destination, a sweep that
 // failed every night (a lock that would not clear, a rotated password) was
 // silent again, the JAB-392 failure mode.
-func finishRetention(ctx context.Context, cmd *cobra.Command, pruneDests map[string]resticRepo, failures []string, dryRun bool) error {
+func finishRetention(ctx context.Context, cmd *cobra.Command, pruneDests map[string]resticRepo, jobs retentionJobStore, failures []string, dryRun bool) error {
 	if len(pruneDests) == 0 && len(failures) == 0 {
 		fmt.Fprintln(cmd.OutOrStdout(),
 			"no (schedule, destination) pairs with retention policy; nothing to forget or prune")
 		return nil
 	}
 	for _, d := range pruneDests {
+		if err := deleteStaleBackupRows(ctx, cmd, d, jobs, dryRun); err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "dest %s stale backup rows: %v\n", d.ID, err)
+			failures = append(failures, fmt.Sprintf("stale backup rows dest %s (%s): %v", d.ID, d.Name, err))
+		}
 		if err := pruneOneDestination(ctx, cmd, d, dryRun); err != nil {
 			fmt.Fprintf(cmd.ErrOrStderr(),
 				"prune dest %s failed: %v\n", d.ID, err)
@@ -303,10 +314,12 @@ func publishBackupRetentionFailure(ctx context.Context, cmd *cobra.Command, fail
 
 // retentionJobStore is the slice of the backup_jobs repository the sweep
 // uses: a dropped job's row is read to spare a queued or running job, and
-// deleted once its snapshots are forgotten.
+// deleted once its snapshots are forgotten; finished rows are listed to find
+// those whose snapshots are already gone.
 type retentionJobStore interface {
 	Get(ctx context.Context, id string) (*models.BackupJob, error)
 	Delete(ctx context.Context, id string) error
+	ListFinishedBackupsForDestination(ctx context.Context, destinationID string, before time.Time) ([]models.BackupJob, error)
 }
 
 // forgetBatchSize bounds the snapshot IDs passed to one `restic forget`.

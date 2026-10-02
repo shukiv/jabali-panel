@@ -38,6 +38,8 @@ Never forgotten:
 - an account with no complete backup at all;
 - snapshots without a `job-id` tag.
 
+Before that prune, the sweep also deletes the panel row of every finished backup on that destination that has nothing left in its repository: no snapshot tagged with its `job-id` and none matching its recorded snapshot ID. Sweeps before whole-backup retention forgot snapshots but kept those rows, so the panel listed backups that could no longer be restored, and they counted toward plan backup limits. A backup must have finished at least an hour before the sweep's snapshot listing to be judged, and a repository that lists no snapshots at all is left alone (a wrong path or credentials would look the same). `--dry-run` lists the rows it would delete.
+
 A single `restic prune` per destination then frees the space; it can take longer than the backups themselves on large repositories. A DR standby never runs retention: its destinations are the primary's.
 
 Preview a sweep with `jabali backup retention apply --dry-run`: it lists the backups it would forget and forgets nothing.
