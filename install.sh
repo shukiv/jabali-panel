@@ -9798,9 +9798,17 @@ install_crowdsec() {
   else
     bouncer_pkg="crowdsec-firewall-bouncer-iptables"
   fi
-  if ! dpkg -s "$bouncer_pkg" >/dev/null 2>&1; then
+  # `dpkg -s` also succeeds for a package dpkg only unpacked. A fleet box sat
+  # on an unpacked bouncer for weeks: its postinst stopped at the conffile
+  # prompt for crowdsec-firewall-bouncer.yaml (no stdin), the bouncer never
+  # started, and this check logged "already installed" on every run. So
+  # require "install ok installed", and keep our managed config on the
+  # conffile prompt (confold).
+  if [[ "$(dpkg-query -W -f='${Status}' "$bouncer_pkg" 2>/dev/null)" != "install ok installed" ]]; then
     _spin "apt install $bouncer_pkg" \
-      apt-get install -y -qq --no-install-recommends "$bouncer_pkg"
+      apt-get install -y -qq --no-install-recommends \
+        -o Dpkg::Options::=--force-confold -o Dpkg::Options::=--force-confdef \
+        "$bouncer_pkg"
   else
     _log "$bouncer_pkg already installed"
   fi
@@ -9921,7 +9929,13 @@ install_crowdsec() {
   # bouncer starts with a stale/empty key → "bouncer stream halted" on boot.
   # Prune auto-created bouncers, mint a stable 'jabali-firewall' key, and
   # patch the YAML config so the bouncer points at $lapi_tcp.
-  local fw_bouncer_conf="/etc/crowdsec/bouncers/${bouncer_pkg}.yaml"
+  # Both package variants ship crowdsec-firewall-bouncer.yaml and
+  # crowdsec-firewall-bouncer.service; neither is named after the variant.
+  # This block used ${bouncer_pkg}.yaml, which never exists, so it only ever
+  # warned "missing after package install" and the key setup and health check
+  # below never ran.
+  local fw_bouncer_conf="/etc/crowdsec/bouncers/crowdsec-firewall-bouncer.yaml"
+  local fw_bouncer_unit="crowdsec-firewall-bouncer.service"
   if [[ -f "$fw_bouncer_conf" ]]; then
     # Postinst auto-names follow "cs-firewall-bouncer-<epoch>" or
     # "crowdsec-firewall-bouncer-<epoch>". Prune them — keeps
@@ -9955,20 +9969,20 @@ install_crowdsec() {
       _warn "cscli bouncers add failed — $fw_bouncer_conf left unmanaged; check 'cscli bouncers list'"
     else
       yq -y -i ".api_key = \"$fw_api_key\" | .api_url = \"http://${lapi_tcp}/\"" "$fw_bouncer_conf"
-      systemctl restart "${bouncer_pkg}.service" 2>/dev/null \
-        || _warn "${bouncer_pkg}.service restart failed — check 'journalctl -u ${bouncer_pkg}'"
+      systemctl restart "$fw_bouncer_unit" 2>/dev/null \
+        || _warn "$fw_bouncer_unit restart failed — check 'journalctl -u $fw_bouncer_unit'"
       # Post-restart health check: if the bouncer is still failing 3 s after
       # restart (stale key from a previous install), rotate the key and retry.
       sleep 3
-      if ! systemctl is-active --quiet "${bouncer_pkg}.service"; then
-        _warn "${bouncer_pkg}.service failed after restart — rotating LAPI key and retrying"
+      if ! systemctl is-active --quiet "$fw_bouncer_unit"; then
+        _warn "$fw_bouncer_unit failed after restart — rotating LAPI key and retrying"
         cscli bouncers delete "$fw_bouncer_name" >/dev/null 2>&1 || true
         fw_api_key="$(cscli bouncers add "$fw_bouncer_name" -o raw 2>/dev/null)"
         if [[ -n "$fw_api_key" ]]; then
           yq -y -i ".api_key = \"$fw_api_key\" | .api_url = \"http://${lapi_tcp}/\"" "$fw_bouncer_conf"
-          systemctl restart "${bouncer_pkg}.service" 2>/dev/null || true
+          systemctl restart "$fw_bouncer_unit" 2>/dev/null || true
           sleep 2
-          if systemctl is-active --quiet "${bouncer_pkg}.service"; then
+          if systemctl is-active --quiet "$fw_bouncer_unit"; then
             _ok "crowdsec-firewall-bouncer recovered after key rotation"
           else
             _warn "crowdsec-firewall-bouncer still failing after key rotation — run 'jabali repair --auto' for diagnostics"
@@ -10046,6 +10060,50 @@ DPkg::Post-Invoke { "[ -x $script ] && $script || true"; };
 JABALI_APT_HOOK_EOF
   chmod 0644 "$apt_conf"
   _ok "crowdsec bouncer apt-heal hook installed ($script + $apt_conf)"
+}
+
+# heal_crowdsec_firewall_bouncer — run by `jabali update` on every box.
+#
+# install_crowdsec only runs on a fresh install, so nothing on an existing
+# box noticed when the firewall bouncer stopped working. A fleet box ran for
+# weeks with crowdsec-firewall-bouncer-nftables unpacked but never
+# configured: its postinst stopped at the conffile prompt for
+# crowdsec-firewall-bouncer.yaml (apt had no stdin), the service never
+# started, and banned IPs were never dropped at the firewall. Every later apt
+# run hit the same prompt and failed.
+#
+# This finishes a bouncer package that dpkg left unpacked or half-configured,
+# keeping the current (jabali-managed) config, and starts the bouncer if it is
+# down. Does nothing when CrowdSec or the bouncer is not installed.
+heal_crowdsec_firewall_bouncer() {
+  command -v cscli >/dev/null 2>&1 || return 0
+  local pkg status
+  for pkg in crowdsec-firewall-bouncer-nftables crowdsec-firewall-bouncer-iptables; do
+    status="$(dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null || true)"
+    case "$status" in
+      "install ok installed" | "" | *not-installed | *config-files) continue ;;
+    esac
+    _log "$pkg is '$status' — finishing its configuration, keeping the current config"
+    if ! DEBIAN_FRONTEND=noninteractive dpkg --configure --force-confold --force-confdef "$pkg" >/dev/null 2>&1; then
+      _warn "dpkg --configure $pkg failed — the firewall bouncer stays down; run: dpkg --configure --force-confold $pkg"
+    fi
+  done
+
+  local unit=crowdsec-firewall-bouncer.service
+  systemctl cat "$unit" >/dev/null 2>&1 || return 0
+  if ! systemctl is-enabled --quiet "$unit" 2>/dev/null; then
+    systemctl enable "$unit" >/dev/null 2>&1 || true
+  fi
+  if systemctl is-active --quiet "$unit"; then
+    return 0
+  fi
+  systemctl start "$unit" >/dev/null 2>&1 || true
+  sleep 2
+  if systemctl is-active --quiet "$unit"; then
+    _ok "crowdsec firewall bouncer was not running — started"
+  else
+    _warn "crowdsec firewall bouncer is NOT running — banned IPs are not dropped at the firewall; check 'journalctl -u $unit'"
+  fi
 }
 
 install_crowdsec_appsec() {
