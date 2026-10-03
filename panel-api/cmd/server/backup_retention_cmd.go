@@ -199,9 +199,10 @@ var publishRetentionFailure = publishBackupRetentionFailure
 
 // retentionExec is the exec seam for the retention sweep's restic invocations,
 // so tests can drive the JAB-392 stale-lock recovery without spawning restic.
-// Production wiring is exec.CommandContext.
+// Production wiring is exec.CommandContext, stopped with SIGINT on cancel so
+// restic removes its lock.
 var retentionExec = func(ctx context.Context, env []string, stdout, stderr io.Writer, name string, args ...string) error {
-	c := exec.CommandContext(ctx, name, args...)
+	c := internalbackup.StopGracefully(exec.CommandContext(ctx, name, args...))
 	c.Env = env
 	c.Stdout, c.Stderr = stdout, stderr
 	return c.Run()
