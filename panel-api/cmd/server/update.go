@@ -467,6 +467,29 @@ chmod 0750 "$WR"`)
 					resetRef = "HEAD"
 				}
 			}
+			// Never move this server backwards, and decide that before the
+			// reset: everything from here to the binary swap runs from the
+			// reset tree (update_channel_guard.go).
+			if resetRef != "HEAD" {
+				var liveSchema uint
+				if cfg := sharedCfg; cfg.Database.URL != "" && cfg.Database.URL != "placeholder-until-phase-3" {
+					st, sErr := db.State(cfg.Database.URL)
+					if sErr != nil {
+						return fmt.Errorf("schema downgrade check: read live schema version: %w", sErr)
+					}
+					liveSchema = st.Version
+				}
+				target, note, tErr := updateResetTarget(func(args ...string) (string, error) {
+					return asUserOut(repoDir, "git", args...)
+				}, resetRef, followStable, liveSchema)
+				if tErr != nil {
+					return tErr
+				}
+				if note != "" {
+					fmt.Println("  " + note)
+				}
+				resetRef = target
+			}
 			// Show diffstat of any local drift vs HEAD before we reset so
 			// the operator can see what was clobbered. Silent on clean tree.
 			// Capture rather than stream. This is a best-effort courtesy —
