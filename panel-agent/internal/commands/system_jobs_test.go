@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -71,6 +72,7 @@ const listTimersFixture = `[{"next":1790915527065624,"left":1790915527065624,"la
 
 func stubJobSystemctl(t *testing.T, show string) *[][]string {
 	t.Helper()
+	stubUnitJournal(t, nil, nil)
 	orig := systemctlRunner
 	t.Cleanup(func() { systemctlRunner = orig })
 	calls := &[][]string{}
@@ -82,6 +84,20 @@ func stubJobSystemctl(t *testing.T, show string) *[][]string {
 		return "", nil
 	}
 	return calls
+}
+
+// stubUnitJournal serves systemd's journal lines per unit and records which
+// units were asked for.
+func stubUnitJournal(t *testing.T, lines map[string]string, err error) *[]string {
+	t.Helper()
+	orig := unitJobJournal
+	t.Cleanup(func() { unitJobJournal = orig })
+	asked := &[]string{}
+	unitJobJournal = func(_ context.Context, unit string) ([]byte, error) {
+		*asked = append(*asked, unit)
+		return []byte(lines[unit]), err
+	}
+	return asked
 }
 
 func stubListTimers(t *testing.T, out string, err error) {
@@ -255,4 +271,79 @@ func TestSystemJobLog_CapsBytesKeepingTheTail(t *testing.T) {
 	log := res.(systemjobs.LogResponse).Log
 	assert.LessOrEqual(t, len(log), maxJobLogBytes)
 	assert.True(t, strings.HasSuffix(log, "last line\n"))
+}
+
+// journalLine is one `journalctl -o json` record of systemd's own messages,
+// with the fields a real box prints (systemd 255, captured on the test box).
+func journalLine(us int64, msgID, jobType, jobResult, unitResult string) string {
+	m := map[string]any{"__REALTIME_TIMESTAMP": strconv.FormatInt(us, 10), "MESSAGE_ID": msgID, "_PID": "1"}
+	if jobType != "" {
+		m["JOB_TYPE"] = jobType
+	}
+	if jobResult != "" {
+		m["JOB_RESULT"] = jobResult
+	}
+	if unitResult != "" {
+		m["UNIT_RESULT"] = unitResult
+	}
+	b, _ := json.Marshal(m)
+	return string(b)
+}
+
+// A disabled timer does not hold its service, so systemd unloads the service
+// after a Run now and its ExecMain* times read empty. The last run then comes
+// from systemd's journal lines, the newest run winning; a job systemd still
+// holds is not looked up (GH #1686).
+func TestSystemJobsList_LastRunFromJournalWhenSystemdForgot(t *testing.T) {
+	stubJobSystemctl(t, showFixture)
+	stubListTimers(t, listTimersFixture, nil)
+	asked := stubUnitJournal(t, map[string]string{
+		"jabali-cache-doctor.service": strings.Join([]string{
+			journalLine(1791064765066517, msgUnitStarting, "start", "", ""),
+			journalLine(1791064765081859, "98e322203f7a4ed290d09fe03c09fe15", "", "", ""),
+			journalLine(1791064765082283, msgUnitResultBad, "", "", "exit-code"),
+			journalLine(1791064765082885, msgUnitFailed, "start", "failed", ""),
+			journalLine(1791064872922023, msgUnitStarting, "start", "", ""),
+			journalLine(1791064872924010, "7ad2d189f7e94e70a38c781354912448", "", "", ""),
+			journalLine(1791064874924301, msgUnitStarted, "start", "done", ""),
+		}, "\n"),
+	}, nil)
+
+	jobs := listJobs(t)
+	cache := jobs["cache-doctor"]
+	assert.Equal(t, systemjobs.StatusDisabled, cache.Status())
+	assert.Equal(t, systemjobs.LastSuccess, cache.LastResult(), "the newest run succeeded")
+	assert.Equal(t, "2026-10-03T22:01:12Z", cache.LastStartedAt)
+	assert.Equal(t, "2026-10-03T22:01:14Z", cache.LastFinishedAt)
+	assert.Equal(t, []string{"jabali-cache-doctor.service"}, *asked,
+		"only a job whose last run systemd no longer holds is looked up")
+}
+
+func TestSystemJobsList_FailedRunFromJournal(t *testing.T) {
+	stubJobSystemctl(t, showFixture)
+	stubListTimers(t, listTimersFixture, nil)
+	stubUnitJournal(t, map[string]string{
+		"jabali-cache-doctor.service": strings.Join([]string{
+			journalLine(1791064765066517, msgUnitStarting, "start", "", ""),
+			journalLine(1791064765082283, msgUnitResultBad, "", "", "exit-code"),
+			journalLine(1791064765082885, msgUnitFailed, "start", "failed", ""),
+		}, "\n"),
+	}, nil)
+
+	cache := listJobs(t)["cache-doctor"]
+	assert.Equal(t, systemjobs.LastFailed, cache.LastResult())
+	assert.Equal(t, "exit-code", cache.Result)
+}
+
+// No journal (journalctl failed, or nothing logged) leaves the job as
+// systemctl reported it: never run.
+func TestSystemJobsList_NoJournalStaysNever(t *testing.T) {
+	stubJobSystemctl(t, showFixture)
+	stubListTimers(t, listTimersFixture, nil)
+	for _, err := range []error{nil, errors.New("journalctl: no such file")} {
+		stubUnitJournal(t, map[string]string{"jabali-cache-doctor.service": "not json\n"}, err)
+		cache := listJobs(t)["cache-doctor"]
+		assert.Equal(t, systemjobs.LastNever, cache.LastResult())
+		assert.Empty(t, cache.LastStartedAt)
+	}
 }

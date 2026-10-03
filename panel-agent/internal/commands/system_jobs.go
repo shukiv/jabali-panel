@@ -26,6 +26,7 @@ import (
 var (
 	listTimersJSON = realListTimersJSON
 	journalTail    = realJournalTail
+	unitJobJournal = realUnitJobJournal
 )
 
 func realListTimersJSON(ctx context.Context, timers []string) ([]byte, error) {
@@ -36,6 +37,13 @@ func realListTimersJSON(ctx context.Context, timers []string) ([]byte, error) {
 func realJournalTail(ctx context.Context, unit string, lines int) ([]byte, error) {
 	return execCommandContext(ctx, "journalctl", "-u", unit, "-n", strconv.Itoa(lines),
 		"--no-pager", "-o", "short-iso").Output()
+}
+
+// realUnitJobJournal reads systemd's own recent messages about unit (the
+// "Starting", "Finished" and "Failed" lines), one JSON object per line.
+func realUnitJobJournal(ctx context.Context, unit string) ([]byte, error) {
+	return execCommandContext(ctx, "journalctl", "_PID=1", "UNIT="+unit, "-n", "20",
+		"-o", "json", "--no-pager").Output()
 }
 
 // jobShowProps is read for every timer and service in one `systemctl show`.
@@ -85,6 +93,9 @@ func systemJobsListHandler(ctx context.Context, _ json.RawMessage) (any, error) 
 			LastFinishedAt: unixStamp(firstProp(s, "ExecMainExitTimestamp")),
 			NextRunAt:      next[j.Timer],
 		}
+		if st.LastStartedAt == "" && st.ServiceActive == "inactive" {
+			lastRunFromJournal(ctx, j.Service, &st)
+		}
 		for _, v := range t["TimersCalendar"] {
 			if m := onCalendarRe.FindStringSubmatch(v); m != nil {
 				st.Calendar = append(st.Calendar, m[1])
@@ -98,6 +109,79 @@ func systemJobsListHandler(ctx context.Context, _ json.RawMessage) (any, error) 
 		resp.Jobs = append(resp.Jobs, st)
 	}
 	return resp, nil
+}
+
+// systemd message ids (see `journalctl --catalog`) for a unit's start job.
+const (
+	msgUnitStarting  = "7d4958e842da4a758f6c1cdc7b36dcc5" // "Starting <unit>..."
+	msgUnitStarted   = "39f53479d3a045ac8e11786248231fbf" // "Finished <unit>." (JOB_RESULT=done)
+	msgUnitFailed    = "be02cf6855d2428ba40df7e9d022f03d" // "Failed to start <unit>." (JOB_RESULT=failed, ...)
+	msgUnitResultBad = "d9b373ed55a64feb8242e02dbe79a49c" // "Failed with result 'exit-code'." (UNIT_RESULT)
+)
+
+// lastRunFromJournal fills in a job's last run from the journal when systemd
+// no longer holds it. systemd unloads a finished service that nothing
+// references; a disabled timer does not reference its service, so after a
+// Run now the service's ExecMain* times are gone and the run read as
+// "never" (GH #1686). A reboot clears them for every job the same way. The
+// journal keeps systemd's own start and finish lines for the unit. Best
+// effort: if journalctl fails, the job keeps what systemctl reported.
+func lastRunFromJournal(ctx context.Context, service string, st *systemjobs.State) {
+	out, err := unitJobJournal(ctx, service)
+	if err != nil {
+		return
+	}
+	var started, finished, jobResult, unitResult string
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		var e struct {
+			MessageID  string `json:"MESSAGE_ID"`
+			JobType    string `json:"JOB_TYPE"`
+			JobResult  string `json:"JOB_RESULT"`
+			UnitResult string `json:"UNIT_RESULT"`
+			Realtime   string `json:"__REALTIME_TIMESTAMP"`
+		}
+		if json.Unmarshal([]byte(line), &e) != nil {
+			continue
+		}
+		at := journalStamp(e.Realtime)
+		if at == "" {
+			continue
+		}
+		switch {
+		case e.MessageID == msgUnitStarting && e.JobType == "start":
+			started, finished, jobResult, unitResult = at, "", "", ""
+		case e.MessageID == msgUnitResultBad:
+			unitResult = e.UnitResult
+		case (e.MessageID == msgUnitStarted || e.MessageID == msgUnitFailed) && e.JobType == "start":
+			finished, jobResult = at, e.JobResult
+		}
+	}
+	if started == "" {
+		return
+	}
+	st.LastStartedAt, st.LastFinishedAt = started, finished
+	switch {
+	case jobResult == "done":
+		st.Result = "success"
+	case unitResult != "":
+		st.Result = unitResult
+	case jobResult != "":
+		st.Result = jobResult
+	default:
+		// Started with no finish line: it never completed (the box went down
+		// mid-run, say), which is not a success.
+		st.Result = "unknown"
+	}
+}
+
+// journalStamp turns the journal's __REALTIME_TIMESTAMP (microseconds since
+// the epoch) into RFC 3339 UTC.
+func journalStamp(v string) string {
+	us, err := strconv.ParseInt(v, 10, 64)
+	if err != nil || us <= 0 {
+		return ""
+	}
+	return time.UnixMicro(us).UTC().Format(time.RFC3339)
 }
 
 // nextTimerRuns reads each timer's next run from `systemctl list-timers

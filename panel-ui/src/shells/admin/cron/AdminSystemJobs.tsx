@@ -105,14 +105,31 @@ export const AdminSystemJobs = () => {
     {
       title: "Schedule",
       dataIndex: "schedule",
-      render: (s: string, row) =>
-        row.schedule_format === "cron" ? (
+      render: (s: string, row) => {
+        // A disabled job does not run on its schedule, so the schedule is shown
+        // as what it would be, not as an active one (GH #1686). Run now still
+        // works and still updates Last run.
+        if (row.status === "disabled") {
+          const when = row.schedule_format === "cron" ? humanizeSchedule(s) : s;
+          return (
+            <Space direction="vertical" size={0}>
+              <Typography.Text type="secondary">Not scheduled</Typography.Text>
+              {when && (
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  {when} when enabled
+                </Typography.Text>
+              )}
+            </Space>
+          );
+        }
+        return row.schedule_format === "cron" ? (
           <Tooltip title={s}>
             <Tag>{humanizeSchedule(s)}</Tag>
           </Tooltip>
         ) : (
           s || "—"
-        ),
+        );
+      },
     },
     {
       title: "Status",
