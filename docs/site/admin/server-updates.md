@@ -86,6 +86,21 @@ reconciler. A fleet that is not
 auto-updating needs a deliberate deploy step after every merge that matters, and
 "we merged the fix" is not the same statement as "the fix is in force".
 
+### Switching a box to the stable channel
+
+A box that followed main (the development channel) usually runs a newer build
+than the `stable` release. Switching it to stable never moves it backwards:
+`jabali update` sees that `stable` is behind the build it runs, prints
+"staying on the current build until a newer stable release is promoted", and
+keeps that build. The box picks up the next stable release once one is promoted
+past it.
+
+Before it moves the checkout, `jabali update` also checks the newest migration in
+the channel's target. If the target would not know the schema the database is
+already at, the update stops with "refusing to update" and changes nothing. This
+check runs before anything is reset or installed; the later check right before the
+binary swap still runs too.
+
 ## Common failure modes
 
 | Symptom | Cause | Resolution |
