@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -185,5 +187,54 @@ func TestFinishRetention_NothingToDoIsQuiet(t *testing.T) {
 	}
 	if len(*alerts) != 0 {
 		t.Errorf("no failures, no alert: %v", *alerts)
+	}
+}
+
+type fakeScheduleStore struct {
+	dests map[string][]models.BackupDestination
+	errs  map[string]error
+}
+
+func (f fakeScheduleStore) GetDestinations(_ context.Context, id string) ([]models.BackupDestination, error) {
+	if err := f.errs[id]; err != nil {
+		return nil, err
+	}
+	return f.dests[id], nil
+}
+
+// A schedule whose destinations cannot be loaded (a database error, or a
+// binary newer than the schema) was skipped with a line on stderr, and the
+// sweep exited zero without an alert. It is a failure like any other.
+func TestForgetEverySchedule_DestinationLoadFailureAlertsAndExitsNonZero(t *testing.T) {
+	alerts := recordRetentionAlerts(t)
+	fakeRestic(t, jobSet("J1", "u1", "2026-01-01T01:00:00Z", "2026-01-01T01:01:00Z", "2026-01-01T01:02:00Z"))
+	shared := filepath.Join(t.TempDir(), "restic-repo.password")
+	if err := os.WriteFile(shared, []byte("shared"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	withSharedPasswordFile(t, shared)
+	scheds := []models.BackupSchedule{
+		{ID: "s1", Enabled: true, KeepDaily: keep(7)},
+		{ID: "s2", Enabled: true, KeepDaily: keep(7)},
+	}
+	store := fakeScheduleStore{
+		dests: map[string][]models.BackupDestination{"s2": {{ID: "d1", Name: "nightly", URL: "/srv/d1", Enabled: true}}},
+		errs:  map[string]error{"s1": errors.New("Error 1054 (42S22): Unknown column 'd.consecutive_failures' in 'SELECT'")},
+	}
+	pw := newDestPasswords()
+	defer pw.close()
+	cmd := newRetentionTestCmd()
+	pruneDests, failures := forgetEverySchedule(context.Background(), cmd, scheds, store, pw, &fakeJobStore{rows: map[string]*models.BackupJob{}}, false)
+	if len(failures) != 1 || !strings.Contains(failures[0], "s1") || !strings.Contains(failures[0], "load destinations") {
+		t.Fatalf("failures = %v, want one for schedule s1's destinations", failures)
+	}
+	if _, ok := pruneDests["d1"]; !ok {
+		t.Errorf("the other schedule's destination must still be swept: %v", pruneDests)
+	}
+	if err := finishRetention(context.Background(), cmd, pruneDests, &fakeJobStore{}, failures, false); err == nil {
+		t.Error("the sweep must exit non-zero")
+	}
+	if len(*alerts) != 1 {
+		t.Errorf("alerts = %v, want one backup.retention.fail", *alerts)
 	}
 }
