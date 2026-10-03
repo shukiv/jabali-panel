@@ -190,3 +190,91 @@ func TestDeleteStaleBackupRows_RealRestic(t *testing.T) {
 		t.Errorf("deleted = %v, want only R1 (its snapshots were forgotten)", jobs.deleted)
 	}
 }
+
+// A backup whose manifest is gone loses its row even though its data
+// snapshots are still there: restoring from the panel starts from the
+// manifest, so the row lists a backup nobody can restore. The data snapshots
+// are not touched.
+func TestDeleteStaleBackupRows_ManifestGone(t *testing.T) {
+	snaps := []resticSnapshot{
+		snap("LOST-home", "LOST", "u1", "home", "2026-01-01T01:00:00Z"),
+		snap("LOST-db", "LOST", "u1", "db", "2026-01-01T01:01:00Z"),
+		snap("PARTLOST-home", "PARTLOST", "u1", "home", "2026-01-02T01:00:00Z"),
+		snap("RETAG-home", "RETAG", "u1", "home", "2026-01-03T01:00:00Z"),
+		snap("RETAG-manifest-new", "RETAG", "u1", "manifest", "2026-01-03T01:02:00Z"),
+		snap("OLDID-home", "OLDID", "u1", "home", "2026-01-04T01:00:00Z"),
+		{ID: fullID('o'), Time: time.Now(), Hostname: "box", Tags: []string{"stage=manifest"}}, // no job-id
+	}
+	snaps = append(snaps, jobSet("KEPT", "u1", "2026-01-05T01:00:00Z", "2026-01-05T01:01:00Z", "2026-01-05T01:02:00Z")...)
+	calls := fakeRestic(t, snaps)
+	old := time.Now().Add(-48 * time.Hour)
+	partial := finishedRow("PARTLOST", "d1", fullID('p'), old)
+	partial.Status = models.BackupJobStatusPartial
+	jobs := &fakeJobStore{rows: map[string]*models.BackupJob{
+		"LOST":     finishedRow("LOST", "d1", fullID('l'), old),     // manifest forgotten, home+db left: delete
+		"PARTLOST": partial,                                         // same for a partial backup: delete
+		"KEPT":     finishedRow("KEPT", "d1", "KEPT-manifest", old), // complete
+		"RETAG":    finishedRow("RETAG", "d1", fullID('r'), old),    // its manifest has a new ID but is there
+		"OLDID":    finishedRow("OLDID", "d1", fullID('o'), old),    // manifest has no job-id tag, found by ID
+	}}
+	cmd := newRetentionTestCmd()
+	if err := deleteStaleBackupRows(context.Background(), cmd, testDest(), jobs, false); err != nil {
+		t.Fatal(err)
+	}
+	sort.Strings(jobs.deleted)
+	if !eq(jobs.deleted, []string{"LOST", "PARTLOST"}) {
+		t.Fatalf("deleted = %v, want LOST and PARTLOST", jobs.deleted)
+	}
+	for _, c := range *calls {
+		if hasArg(c, "forget") {
+			t.Errorf("deleting a row must not forget its data snapshots: %v", c)
+		}
+	}
+	out := cmd.OutOrStdout().(*bytes.Buffer).String()
+	if !strings.Contains(out, "deleted the row of backup LOST (account_backup, succeeded,") ||
+		!strings.Contains(out, "its manifest is gone; its data snapshots stay") {
+		t.Errorf("a row deleted for a lost manifest should say so, got:\n%s", out)
+	}
+	if !strings.Contains(out, "0 with no snapshot left in the repository, 2 whose manifest is gone") {
+		t.Errorf("the summary should count both kinds, got:\n%s", out)
+	}
+}
+
+// End to end on a real repository: a backup whose manifest was forgotten
+// loses its row, and its home snapshot stays in the repository.
+func TestDeleteStaleBackupRows_RealResticManifestGone(t *testing.T) {
+	r := newTestRepo(t)
+	for _, j := range []struct{ id, at string }{{"M1", "2026-01-01 10:00:00"}, {"M2", "2026-01-02 10:00:00"}} {
+		r.backupStage(t, j.id, "home", j.at)
+		r.backupStage(t, j.id, "manifest", j.at)
+	}
+	manifests := map[string]string{}
+	for _, s := range r.snapshots(t) {
+		if tagValue(s.Tags, "stage") == "manifest" {
+			manifests[tagValue(s.Tags, "job-id")] = s.ID
+		}
+	}
+	r.run(t, "", "forget", manifests["M1"])
+
+	old := time.Now().Add(-48 * time.Hour)
+	jobs := &fakeJobStore{rows: map[string]*models.BackupJob{
+		"M1": finishedRow("M1", "d1", manifests["M1"], old),
+		"M2": finishedRow("M2", "d1", manifests["M2"], old),
+	}}
+	dest := resticRepo{&models.BackupDestination{ID: "d1", Name: "local", URL: r.dir}, r.pw}
+	if err := deleteStaleBackupRows(context.Background(), newRetentionTestCmd(), dest, jobs, false); err != nil {
+		t.Fatal(err)
+	}
+	if !eq(jobs.deleted, []string{"M1"}) {
+		t.Errorf("deleted = %v, want only M1 (its manifest was forgotten)", jobs.deleted)
+	}
+	homeLeft := false
+	for _, s := range r.snapshots(t) {
+		if tagValue(s.Tags, "job-id") == "M1" && tagValue(s.Tags, "stage") == "home" {
+			homeLeft = true
+		}
+	}
+	if !homeLeft {
+		t.Error("M1's home snapshot must stay in the repository")
+	}
+}

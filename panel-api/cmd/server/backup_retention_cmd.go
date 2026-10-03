@@ -91,7 +91,10 @@ row of a forgotten job is deleted once its snapshots are gone.
 
 Then, per destination, the row of every finished backup with no snapshot left
 in the repository (none tagged with its job-id, none matching its snapshot_id)
-is deleted too: older sweeps forgot snapshots without deleting rows. Failed
+is deleted too: older sweeps forgot snapshots without deleting rows. So is
+the row of a backup whose manifest is gone (its snapshot_id is not in the
+repository and none of its job-id snapshots is a manifest), since the panel
+cannot restore it; its data snapshots stay. Failed
 and cancelled backups are judged too once they are 30 days old; nothing else
 deletes the row of a run that failed before it wrote a snapshot. Rows of
 backups that finished less than an hour before the listing, and every row of a
