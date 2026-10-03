@@ -123,6 +123,18 @@ describe("AdminSystemJobs (GH #1686)", () => {
     expect(within(backup).queryByRole("button", { name: "More actions" })).toBeNull();
   });
 
+  it("shows a disabled job's schedule as not scheduled", async () => {
+    renderJobs();
+
+    const update = await rowOf("Panel auto-update");
+    expect(within(update).getByText("Not scheduled")).toBeTruthy();
+    expect(within(update).getByText("Daily at 03:40 when enabled")).toBeTruthy();
+
+    const sweep = await rowOf("Log retention sweep");
+    expect(within(sweep).getByText("Daily at 03:40")).toBeTruthy();
+    expect(within(sweep).queryByText("Not scheduled")).toBeNull();
+  });
+
   it("asks before Run now, then starts the job", async () => {
     vi.mocked(runAdminSystemJob).mockResolvedValue(undefined);
     renderJobs();

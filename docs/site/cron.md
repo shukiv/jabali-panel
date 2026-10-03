@@ -45,9 +45,11 @@ Each row shows what the job does, its schedule, its status, when it last ran and
 
 - **Scheduled**: the job's timer is active and the job will run at the next run time.
 - **Running**: the job is running now.
-- **Disabled**: the job's timer is not active, so the job does not run. Some jobs are off on purpose. For example, panel auto-update is off until it is turned on on the Updates page, and the free-hostname check-in runs only on a server that uses a free hostname.
+- **Disabled**: the job's timer is not active, so the job does not run. Some jobs are off on purpose. For example, panel auto-update is off until it is turned on on the Updates page, and the free-hostname check-in runs only on a server that uses a free hostname. The schedule column then reads **Not scheduled**, with the schedule the job would run on once enabled underneath.
 
 A job that is not installed on the server is not shown. The success of a run is systemd's verdict on it (`Result`), not the raw exit code, because some jobs exit with a non-zero code by design. For example, AIDE exits non-zero when it reports file changes.
+
+The last run counts every run, scheduled or started with Run now, including runs of a disabled job. systemd forgets a finished run of a job whose timer is disabled, and every job's last run after a reboot; the agent then reads the last run from systemd's own start and finish lines in the journal.
 
 The actions are:
 
