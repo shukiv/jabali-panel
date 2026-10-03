@@ -1934,6 +1934,24 @@ fi
 			}
 			return nil
 		}},
+		{"heal crowdsec firewall bouncer", func() error {
+			// install_crowdsec only runs on a fresh install, so a firewall
+			// bouncer whose package dpkg left unpacked (postinst stopped at
+			// a conffile prompt), or whose service is down, stayed that way
+			// with no warning: banned IPs were not dropped at the firewall.
+			// heal_crowdsec_firewall_bouncer finishes the package (keeping
+			// the managed config) and starts the bouncer. Idempotent; a
+			// no-op where CrowdSec or the bouncer is not installed.
+			installSh := repoDir + "/install.sh"
+			if _, err := os.Stat(installSh); err != nil {
+				return nil
+			}
+			if err := run("", "bash", "-c",
+				"source "+installSh+" && heal_crowdsec_firewall_bouncer"); err != nil {
+				fmt.Printf("  (heal_crowdsec_firewall_bouncer failed: %v — continuing)\n", err)
+			}
+			return nil
+		}},
 		{"self-heal crowdsec BOUNCING_ON_TYPE (GH #212 log spam)", func() error {
 			// The nginx Lua bouncer rejects the firewall-bouncer comma-list
 			// `ban,captcha` and falls back to `ban`, spamming the nginx error
