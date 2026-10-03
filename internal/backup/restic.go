@@ -42,7 +42,7 @@ type ResticConfig struct {
 	// there is no gzip/xz; this only selects the level.
 	Compression string
 	// Runner intercepts every CLI invocation. Production uses
-	// realRunner (exec.CommandContext); tests inject a fake.
+	// realRunner (exec.CommandContext + StopGracefully); tests inject a fake.
 	Runner Runner
 }
 
@@ -62,10 +62,29 @@ type Runner interface {
 	Run(ctx context.Context, name string, args []string, env []string, stdin io.Reader) (stdout, stderr []byte, err error)
 }
 
+// CancelGrace is how long a cancelled restic command gets to exit on its own
+// after SIGINT before it is killed. A var so tests can shorten it.
+var CancelGrace = 20 * time.Second
+
+// StopGracefully makes a command created with exec.CommandContext stop the
+// way restic needs when its context ends: SIGINT first, then SIGKILL if it is
+// still running CancelGrace later. The default (SIGKILL straight away) never
+// lets restic run its cleanup, so it leaves its lock in the repository; a
+// leftover lock from a timed-out status listing then blocks the next forget,
+// prune or check. A command created with exec.Command is returned unchanged.
+func StopGracefully(cmd *exec.Cmd) *exec.Cmd {
+	if cmd.Cancel == nil {
+		return cmd
+	}
+	cmd.Cancel = func() error { return cmd.Process.Signal(os.Interrupt) }
+	cmd.WaitDelay = CancelGrace
+	return cmd
+}
+
 type realRunner struct{}
 
 func (realRunner) Run(ctx context.Context, name string, args []string, env []string, stdin io.Reader) ([]byte, []byte, error) {
-	cmd := exec.CommandContext(ctx, name, args...)
+	cmd := StopGracefully(exec.CommandContext(ctx, name, args...))
 	// env is ADDITIVE — caller's KEY=VALUE pairs merged on top of the
 	// process's own env. Replacing wholesale would strip PATH and
 	// leave restic's `sftp.command=sshpass …` failing with

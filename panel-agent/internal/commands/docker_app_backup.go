@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/backup"
 )
 
 type dockerAppBackupParams struct {
@@ -62,12 +63,12 @@ func dockerAppBackupHandler(ctx context.Context, params json.RawMessage) (any, e
 		return nil, &agentwire.AgentError{Code: agentwire.CodeFailedPrecondition, Message: eerr.Error()}
 	}
 
-	cmd := execCommandContext(ctx, "restic", "backup", dir,
+	cmd := backup.StopGracefully(execCommandContext(ctx, "restic", "backup", dir,
 		"--tag", "docker-app",
 		"--tag", "panel-managed",
 		"--tag", "slug:"+p.Slug,
 		"--tag", "reason:"+p.Reason,
-		"--json")
+		"--json"))
 	cmd.Env = env
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -126,10 +127,10 @@ func dockerAppListBackupsHandler(ctx context.Context, params json.RawMessage) (a
 		return nil, &agentwire.AgentError{Code: agentwire.CodeFailedPrecondition, Message: eerr.Error()}
 	}
 
-	cmd := execCommandContext(ctx, "restic", "snapshots",
+	cmd := backup.StopGracefully(execCommandContext(ctx, "restic", "snapshots",
 		"--tag", "docker-app",
 		"--tag", "slug:"+p.Slug,
-		"--json")
+		"--json"))
 	cmd.Env = env
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -224,10 +225,10 @@ func dockerAppRestoreHandler(ctx context.Context, params json.RawMessage) (any, 
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("docker compose down: %v", err)}
 	}
 
-	rc := execCommandContext(ctx, "restic", "restore", p.SnapshotID,
+	rc := backup.StopGracefully(execCommandContext(ctx, "restic", "restore", p.SnapshotID,
 		"--target", "/",
 		"--include", dir,
-		"--json")
+		"--json"))
 	rc.Env = env
 	if out, err := rc.CombinedOutput(); err != nil {
 		return nil, &agentwire.AgentError{

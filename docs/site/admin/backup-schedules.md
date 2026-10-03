@@ -20,6 +20,8 @@ Each schedule becomes a `systemd` system timer managed by the agent. The timer t
 
 A schedule is serialised by id: a new tick will not start if the previous run has not finished. Two schedules for the same subject may overlap; the underlying restic repository handles concurrent writes natively.
 
+When the panel or agent gives up on a restic command (a timeout, or the call is cancelled), restic is sent SIGINT, so it removes its repository lock before it exits. It is killed only if it is still running 20 seconds later.
+
 ## Retention application
 
 Retention runs once a day, from `jabali-backup-retention.timer` at 04:30 (`jabali backup retention apply`), for every enabled schedule with a keep count, on each of its destinations. It is not part of a backup run.

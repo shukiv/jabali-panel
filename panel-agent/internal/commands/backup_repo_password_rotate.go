@@ -200,8 +200,8 @@ func resticEnv(cfg backup.ResticConfig) []string {
 }
 
 func resticKeyList(ctx context.Context, cfg backup.ResticConfig) ([]resticKey, error) {
-	cmd := execCommandContext(ctx, resticBinary(cfg), "--repo", cfg.Repo,
-		"--password-file", cfg.PasswordFile, "key", "list", "--json")
+	cmd := backup.StopGracefully(execCommandContext(ctx, resticBinary(cfg), "--repo", cfg.Repo,
+		"--password-file", cfg.PasswordFile, "key", "list", "--json"))
 	cmd.Env = resticEnv(cfg)
 	out, err := cmd.Output()
 	if err != nil {
@@ -215,10 +215,10 @@ func resticKeyList(ctx context.Context, cfg backup.ResticConfig) ([]resticKey, e
 }
 
 func resticKeyAdd(ctx context.Context, cfg backup.ResticConfig, newPasswordFile string) error {
-	cmd := execCommandContext(ctx, resticBinary(cfg), "--repo", cfg.Repo,
+	cmd := backup.StopGracefully(execCommandContext(ctx, resticBinary(cfg), "--repo", cfg.Repo,
 		"--password-file", cfg.PasswordFile, "key", "add",
 		"--new-password-file", newPasswordFile,
-		"--user", "jabali", "--host", "jabali-panel")
+		"--user", "jabali", "--host", "jabali-panel"))
 	cmd.Env = resticEnv(cfg)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("%v: %s", err, strings.TrimSpace(string(out)))
@@ -227,8 +227,8 @@ func resticKeyAdd(ctx context.Context, cfg backup.ResticConfig, newPasswordFile 
 }
 
 func resticKeyRemove(ctx context.Context, cfg backup.ResticConfig, keyID string) error {
-	cmd := execCommandContext(ctx, resticBinary(cfg), "--repo", cfg.Repo,
-		"--password-file", cfg.PasswordFile, "key", "remove", keyID)
+	cmd := backup.StopGracefully(execCommandContext(ctx, resticBinary(cfg), "--repo", cfg.Repo,
+		"--password-file", cfg.PasswordFile, "key", "remove", keyID))
 	cmd.Env = resticEnv(cfg)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("%v: %s", err, strings.TrimSpace(string(out)))
