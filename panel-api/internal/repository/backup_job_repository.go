@@ -90,11 +90,12 @@ type BackupJobRepository interface {
 	// can't blow up memory.
 	ListByStatusSince(ctx context.Context, status string, since time.Time, limit int) ([]models.BackupJob, error)
 	// ListFinishedBackupsForDestination returns the account and system
-	// backups that finished (succeeded or partial) on destinationID before
+	// backups on destinationID that ended with one of statuses before
 	// `before`, oldest first, with only the identifying columns (no
 	// manifest or warnings JSON). The retention sweep uses it to find rows
-	// whose snapshots are no longer in that destination's repository.
-	ListFinishedBackupsForDestination(ctx context.Context, destinationID string, before time.Time) ([]models.BackupJob, error)
+	// whose snapshots are no longer in that destination's repository. No
+	// statuses, no rows.
+	ListFinishedBackupsForDestination(ctx context.Context, destinationID string, statuses []string, before time.Time) ([]models.BackupJob, error)
 }
 
 // BackupRunSummary aggregates one logical scheduler tick (run_id) into
@@ -547,14 +548,17 @@ func (r *backupJobRepo) ListByStatusSince(ctx context.Context, status string, si
 }
 
 // ListFinishedBackupsForDestination implements BackupJobRepository.
-func (r *backupJobRepo) ListFinishedBackupsForDestination(ctx context.Context, destinationID string, before time.Time) ([]models.BackupJob, error) {
+func (r *backupJobRepo) ListFinishedBackupsForDestination(ctx context.Context, destinationID string, statuses []string, before time.Time) ([]models.BackupJob, error) {
+	if len(statuses) == 0 {
+		return nil, nil
+	}
 	var rows []models.BackupJob
 	if err := r.db.WithContext(ctx).
 		Select("id", "user_id", "destination_id", "kind", "status", "snapshot_id", "created_at", "finished_at").
 		Where("destination_id = ? AND kind IN ? AND status IN ? AND COALESCE(finished_at, created_at) < ?",
 			destinationID,
 			[]string{models.BackupJobKindAccountBackup, models.BackupJobKindSystemBackup},
-			[]string{models.BackupJobStatusSucceeded, models.BackupJobStatusPartial},
+			statuses,
 			before).
 		Order("created_at ASC").
 		Find(&rows).Error; err != nil {

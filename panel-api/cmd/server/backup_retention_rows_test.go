@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -35,7 +36,7 @@ func TestDeleteStaleBackupRows_DeletesOnlyRowsWithNothingLeft(t *testing.T) {
 	if !eq(jobs.deleted, []string{"J2"}) {
 		t.Fatalf("deleted = %v, want only J2", jobs.deleted)
 	}
-	if limit := time.Now().Add(-staleRowMinAge); jobs.listedBefore.After(limit.Add(time.Second)) {
+	if limit := time.Now().Add(-staleRowMinAge); jobs.listedBefore[models.BackupJobStatusSucceeded].After(limit.Add(time.Second)) {
 		t.Errorf("rows were judged up to %v; a backup must have finished an hour before the listing", jobs.listedBefore)
 	}
 	for _, c := range *calls {
@@ -87,6 +88,44 @@ func TestDeleteStaleBackupRows_DryRunAndListingFailureDeleteNothing(t *testing.T
 	}
 	if len(jobs.deleted) != 0 {
 		t.Errorf("a failed listing must not delete rows: %v", jobs.deleted)
+	}
+}
+
+func failedRow(id, dest, status string, finished time.Time) *models.BackupJob {
+	r := finishedRow(id, dest, "", finished)
+	r.Status = status
+	return r
+}
+
+// Failed and cancelled backups' rows are judged once they are 30 days old: a
+// run that failed before it wrote a snapshot has nothing for the keep rules to
+// forget, so nothing else ever deletes its row. Younger ones stay visible, and
+// one whose snapshots are still in the repository stays with them.
+func TestDeleteStaleBackupRows_OldFailedAndCancelledRows(t *testing.T) {
+	snaps := jobSet("J1", "u1", "2026-01-01T01:00:00Z", "2026-01-01T01:01:00Z", "2026-01-01T01:02:00Z")
+	snaps = append(snaps, snap("p-home", "PARTIALDATA", "u1", "home", "2026-01-02T01:00:00Z"))
+	fakeRestic(t, snaps)
+	old, recent := time.Now().Add(-40*24*time.Hour), time.Now().Add(-10*24*time.Hour)
+	jobs := &fakeJobStore{rows: map[string]*models.BackupJob{
+		"OLDFAIL":     failedRow("OLDFAIL", "d1", models.BackupJobStatusFailed, old),
+		"OLDCANCEL":   failedRow("OLDCANCEL", "d1", models.BackupJobStatusCancelled, old),
+		"NEWFAIL":     failedRow("NEWFAIL", "d1", models.BackupJobStatusFailed, recent),
+		"PARTIALDATA": failedRow("PARTIALDATA", "d1", models.BackupJobStatusFailed, old), // its home snapshot is there
+		"RUNNING":     failedRow("RUNNING", "d1", models.BackupJobStatusRunning, old),
+	}}
+	cmd := newRetentionTestCmd()
+	if err := deleteStaleBackupRows(context.Background(), cmd, testDest(), jobs, false); err != nil {
+		t.Fatal(err)
+	}
+	sort.Strings(jobs.deleted)
+	if !eq(jobs.deleted, []string{"OLDCANCEL", "OLDFAIL"}) {
+		t.Fatalf("deleted = %v, want OLDCANCEL and OLDFAIL", jobs.deleted)
+	}
+	if got, want := jobs.listedBefore[models.BackupJobStatusFailed], time.Now().Add(-failedRowMinAge); got.After(want.Add(time.Second)) {
+		t.Errorf("failed rows were judged up to %v; they must be %v old", got, failedRowMinAge)
+	}
+	if out := cmd.OutOrStdout().(*bytes.Buffer).String(); !strings.Contains(out, "deleted the row of backup OLDFAIL (account_backup, failed,") {
+		t.Errorf("a deleted row should be logged with its status, got:\n%s", out)
 	}
 }
 

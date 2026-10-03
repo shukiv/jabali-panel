@@ -24,16 +24,28 @@ import (
 //
 // So after the forget pass the sweep lists every snapshot in the destination
 // and deletes the row of each finished backup that has nothing left there.
+//
+// Failed and cancelled backups are judged too, once they are older than
+// failedRowMinAge. Nothing else ever deletes their rows: a run that failed
+// before it wrote a snapshot has nothing for the keep rules to forget, so its
+// row stayed in the panel forever (64 on one fleet box). The age keeps recent
+// failures, and their errors, visible in the panel.
 
 // staleRowMinAge is how long before the snapshot listing a backup must have
 // finished for its row to be judged. A backup that finished after the listing
 // was taken would otherwise look as if it had no snapshots.
 const staleRowMinAge = time.Hour
 
-// deleteStaleBackupRows deletes the row of every finished (succeeded or
-// partial) account or system backup on destination r of which no snapshot is
-// left in its repository: none tagged with its job-id, and none matching the
-// row's snapshot_id (which covers snapshots written before job-id tags).
+// failedRowMinAge is how old a failed or cancelled backup must be for its row
+// to be judged.
+const failedRowMinAge = 30 * 24 * time.Hour
+
+// deleteStaleBackupRows deletes the row of every finished account or system
+// backup on destination r of which no snapshot is left in its repository: none
+// tagged with its job-id, and none matching the row's snapshot_id (which
+// covers snapshots written before job-id tags). Succeeded and partial backups
+// are judged once they finished staleRowMinAge before the listing; failed and
+// cancelled ones once they are failedRowMinAge old.
 //
 // It judges nothing when the repository lists no snapshots at all (a wrong
 // path or credentials would look the same as an empty repository), or when
@@ -62,10 +74,17 @@ func deleteStaleBackupRows(ctx context.Context, cmd *cobra.Command, r resticRepo
 		}
 	}
 
-	rows, err := jobs.ListFinishedBackupsForDestination(ctx, r.ID, listedAt.Add(-staleRowMinAge))
+	rows, err := jobs.ListFinishedBackupsForDestination(ctx, r.ID,
+		[]string{models.BackupJobStatusSucceeded, models.BackupJobStatusPartial}, listedAt.Add(-staleRowMinAge))
 	if err != nil {
 		return fmt.Errorf("list backup rows: %w", err)
 	}
+	failedRows, err := jobs.ListFinishedBackupsForDestination(ctx, r.ID,
+		[]string{models.BackupJobStatusFailed, models.BackupJobStatusCancelled}, listedAt.Add(-failedRowMinAge))
+	if err != nil {
+		return fmt.Errorf("list failed backup rows: %w", err)
+	}
+	rows = append(rows, failedRows...)
 	var stale []models.BackupJob
 	for _, row := range rows {
 		if jobIDs[row.ID] || (row.SnapshotID != "" && snapshotPresent(ids, row.SnapshotID)) {
@@ -73,13 +92,13 @@ func deleteStaleBackupRows(ctx context.Context, cmd *cobra.Command, r resticRepo
 		}
 		stale = append(stale, row)
 	}
-	fmt.Fprintf(out, "dest %s (%s): %d finished backup row(s), %d with no snapshot left in the repository\n",
-		r.ID, r.Name, len(rows), len(stale))
+	fmt.Fprintf(out, "dest %s (%s): %d finished backup row(s) (%d failed or cancelled over %d days ago), %d with no snapshot left in the repository\n",
+		r.ID, r.Name, len(rows), len(failedRows), int(failedRowMinAge/(24*time.Hour)), len(stale))
 
 	failed := 0
 	for _, row := range stale {
 		if dryRun {
-			fmt.Fprintf(out, "[dry-run] would delete the row of backup %s (%s, %s)\n", row.ID, row.Kind, rowTime(row))
+			fmt.Fprintf(out, "[dry-run] would delete the row of backup %s (%s, %s, %s)\n", row.ID, row.Kind, row.Status, rowTime(row))
 			continue
 		}
 		if err := jobs.Delete(ctx, row.ID); err != nil {
@@ -87,7 +106,7 @@ func deleteStaleBackupRows(ctx context.Context, cmd *cobra.Command, r resticRepo
 			fmt.Fprintf(cmd.ErrOrStderr(), "delete the row of backup %s: %v\n", row.ID, err)
 			continue
 		}
-		fmt.Fprintf(out, "deleted the row of backup %s (%s, %s): no snapshot left\n", row.ID, row.Kind, rowTime(row))
+		fmt.Fprintf(out, "deleted the row of backup %s (%s, %s, %s): no snapshot left\n", row.ID, row.Kind, row.Status, rowTime(row))
 	}
 	if failed > 0 {
 		return fmt.Errorf("%d of %d stale backup row(s) could not be deleted", failed, len(stale))

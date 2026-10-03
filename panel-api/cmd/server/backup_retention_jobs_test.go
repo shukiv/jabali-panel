@@ -396,14 +396,21 @@ func TestKeepByPolicy_MatchesRestic(t *testing.T) {
 type fakeJobStore struct {
 	rows    map[string]*models.BackupJob
 	deleted []string
-	// listedBefore records the cutoff of the last finished-rows query.
-	listedBefore time.Time
+	// listedBefore records each finished-rows query's cutoff, by its first
+	// status.
+	listedBefore map[string]time.Time
 }
 
-// ListFinishedBackupsForDestination mirrors the repository query: finished
-// account/system backups on destID that finished before `before`.
-func (f *fakeJobStore) ListFinishedBackupsForDestination(_ context.Context, destID string, before time.Time) ([]models.BackupJob, error) {
-	f.listedBefore = before
+// ListFinishedBackupsForDestination mirrors the repository query: account/
+// system backups on destID that ended with one of statuses before `before`.
+func (f *fakeJobStore) ListFinishedBackupsForDestination(_ context.Context, destID string, statuses []string, before time.Time) ([]models.BackupJob, error) {
+	if len(statuses) == 0 {
+		return nil, nil
+	}
+	if f.listedBefore == nil {
+		f.listedBefore = map[string]time.Time{}
+	}
+	f.listedBefore[statuses[0]] = before
 	var out []models.BackupJob
 	for _, r := range f.rows {
 		if r.DestinationID == nil || *r.DestinationID != destID {
@@ -412,7 +419,7 @@ func (f *fakeJobStore) ListFinishedBackupsForDestination(_ context.Context, dest
 		if r.Kind != models.BackupJobKindAccountBackup && r.Kind != models.BackupJobKindSystemBackup {
 			continue
 		}
-		if r.Status != models.BackupJobStatusSucceeded && r.Status != models.BackupJobStatusPartial {
+		if !slices.Contains(statuses, r.Status) {
 			continue
 		}
 		t := r.CreatedAt
