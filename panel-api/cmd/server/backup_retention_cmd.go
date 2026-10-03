@@ -146,50 +146,7 @@ by install_backup_foundation in install.sh.`,
 				return fmt.Errorf("list backup_schedules: %w", err)
 			}
 
-			// Track which destinations had any forget run against them so
-			// we only invoke prune where it would have work to do.
-			pruneDests := map[string]resticRepo{}
-			// JAB-392: accumulate every forget/prune failure so the sweep exits
-			// non-zero AND fires ONE aggregate admin alert, instead of printing
-			// to a journal nobody reads and exiting 0 (it did that for 52 days).
-			var failures []string
-			for _, s := range scheds {
-				if !s.Enabled {
-					continue
-				}
-				if s.KeepDaily == nil && s.KeepWeekly == nil && s.KeepMonthly == nil {
-					fmt.Fprintf(cmd.OutOrStdout(),
-						"schedule %s: no retention policy, skipping\n", s.ID)
-					continue
-				}
-				dests, err := schedRepo.GetDestinations(ctx, s.ID)
-				if err != nil {
-					fmt.Fprintf(cmd.ErrOrStderr(),
-						"schedule %s: load destinations failed: %v\n", s.ID, err)
-					continue
-				}
-				for i := range dests {
-					d := &dests[i]
-					if !d.Enabled {
-						continue
-					}
-					r, err := pw.repo(d)
-					if err != nil {
-						fmt.Fprintf(cmd.ErrOrStderr(),
-							"schedule %s dest %s: %v\n", s.ID, d.ID, err)
-						failures = append(failures, fmt.Sprintf("schedule %s dest %s (%s): %v", s.ID, d.ID, d.Name, err))
-						continue
-					}
-					if err := forgetForSchedule(ctx, cmd, s, r, jobRepo, dryRun); err != nil {
-						fmt.Fprintf(cmd.ErrOrStderr(),
-							"schedule %s dest %s forget failed: %v\n", s.ID, d.ID, err)
-						failures = append(failures, fmt.Sprintf("schedule %s dest %s (%s) forget: %v", s.ID, d.ID, d.Name, err))
-						continue
-					}
-					pruneDests[d.ID] = r
-				}
-			}
-
+			pruneDests, failures := forgetEverySchedule(ctx, cmd, scheds, schedRepo, pw, jobRepo, dryRun)
 			return finishRetention(ctx, cmd, pruneDests, jobRepo, failures, dryRun)
 		},
 	}
@@ -327,6 +284,61 @@ type retentionJobStore interface {
 	Get(ctx context.Context, id string) (*models.BackupJob, error)
 	Delete(ctx context.Context, id string) error
 	ListFinishedBackupsForDestination(ctx context.Context, destinationID string, before time.Time) ([]models.BackupJob, error)
+}
+
+// retentionScheduleStore is the backup_schedules lookup the sweep uses.
+type retentionScheduleStore interface {
+	GetDestinations(ctx context.Context, scheduleID string) ([]models.BackupDestination, error)
+}
+
+// forgetEverySchedule applies each enabled schedule's keep policy on each of
+// its enabled destinations. It returns the destinations that had a forget run
+// (the ones to prune) and one line per failure: a schedule whose destinations
+// could not be loaded, or a destination that could not be opened or swept.
+//
+// JAB-392: every failure goes to finishRetention, so the sweep exits non-zero
+// and raises one admin alert instead of printing to a journal nobody reads.
+func forgetEverySchedule(ctx context.Context, cmd *cobra.Command, scheds []models.BackupSchedule, schedules retentionScheduleStore, pw *destPasswords, jobs retentionJobStore, dryRun bool) (map[string]resticRepo, []string) {
+	pruneDests := map[string]resticRepo{}
+	var failures []string
+	for _, s := range scheds {
+		if !s.Enabled {
+			continue
+		}
+		if s.KeepDaily == nil && s.KeepWeekly == nil && s.KeepMonthly == nil {
+			fmt.Fprintf(cmd.OutOrStdout(),
+				"schedule %s: no retention policy, skipping\n", s.ID)
+			continue
+		}
+		dests, err := schedules.GetDestinations(ctx, s.ID)
+		if err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(),
+				"schedule %s: load destinations failed: %v\n", s.ID, err)
+			failures = append(failures, fmt.Sprintf("schedule %s: load destinations: %v", s.ID, err))
+			continue
+		}
+		for i := range dests {
+			d := &dests[i]
+			if !d.Enabled {
+				continue
+			}
+			r, err := pw.repo(d)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(),
+					"schedule %s dest %s: %v\n", s.ID, d.ID, err)
+				failures = append(failures, fmt.Sprintf("schedule %s dest %s (%s): %v", s.ID, d.ID, d.Name, err))
+				continue
+			}
+			if err := forgetForSchedule(ctx, cmd, s, r, jobs, dryRun); err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(),
+					"schedule %s dest %s forget failed: %v\n", s.ID, d.ID, err)
+				failures = append(failures, fmt.Sprintf("schedule %s dest %s (%s) forget: %v", s.ID, d.ID, d.Name, err))
+				continue
+			}
+			pruneDests[d.ID] = r
+		}
+	}
+	return pruneDests, failures
 }
 
 // forgetBatchSize bounds the snapshot IDs passed to one `restic forget`.
