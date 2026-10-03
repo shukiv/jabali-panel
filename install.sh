@@ -2350,8 +2350,25 @@ install_time_sync() {
       || systemctl is-active --quiet openntpd 2>/dev/null; then
     _ok "alternative time-sync daemon already active — leaving as-is"
   else
-    # systemd-timesyncd ships with systemd on every Debian/Ubuntu host
-    # but isn't always enabled on minimal cloud images.
+    # systemd-timesyncd is its own package on current Debian and Ubuntu
+    # (split out of systemd), and minimal cloud images ship without it. A
+    # fleet box (Debian 13) had no time sync at all and ran 5 minutes slow,
+    # which breaks TOTP; every update only warned "failed to start". Install
+    # it, unless another time daemon's package is installed: they conflict on
+    # time-daemon, so apt would remove the operator's (inactive) chrony/ntp.
+    if ! is_container && ! systemctl cat systemd-timesyncd.service >/dev/null 2>&1; then
+      if dpkg-query -W -f='${Status}\n' chrony ntp ntpsec openntpd 2>/dev/null | grep -q 'install ok installed'; then
+        _warn "systemd-timesyncd is not installed and another time daemon's package is (but not running) — start it or remove it; leaving time sync as-is"
+      else
+        _log "systemd-timesyncd not installed — installing it"
+        export DEBIAN_FRONTEND=noninteractive
+        if ! apt-get install -y -qq --no-install-recommends systemd-timesyncd >/dev/null 2>&1; then
+          apt-get update -qq >/dev/null 2>&1 || true
+          apt-get install -y -qq --no-install-recommends systemd-timesyncd >/dev/null 2>&1 \
+            || _warn "systemd-timesyncd install failed"
+        fi
+      fi
+    fi
     if ! systemctl is-enabled --quiet systemd-timesyncd 2>/dev/null; then
       systemctl enable --quiet systemd-timesyncd 2>/dev/null || true
     fi
