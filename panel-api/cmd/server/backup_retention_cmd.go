@@ -91,7 +91,9 @@ row of a forgotten job is deleted once its snapshots are gone.
 
 Then, per destination, the row of every finished backup with no snapshot left
 in the repository (none tagged with its job-id, none matching its snapshot_id)
-is deleted too: older sweeps forgot snapshots without deleting rows. Rows of
+is deleted too: older sweeps forgot snapshots without deleting rows. Failed
+and cancelled backups are judged too once they are 30 days old; nothing else
+deletes the row of a run that failed before it wrote a snapshot. Rows of
 backups that finished less than an hour before the listing, and every row of a
 destination whose repository lists no snapshots, are left alone.
 
@@ -283,7 +285,7 @@ func publishBackupRetentionFailure(ctx context.Context, cmd *cobra.Command, fail
 type retentionJobStore interface {
 	Get(ctx context.Context, id string) (*models.BackupJob, error)
 	Delete(ctx context.Context, id string) error
-	ListFinishedBackupsForDestination(ctx context.Context, destinationID string, before time.Time) ([]models.BackupJob, error)
+	ListFinishedBackupsForDestination(ctx context.Context, destinationID string, statuses []string, before time.Time) ([]models.BackupJob, error)
 }
 
 // retentionScheduleStore is the backup_schedules lookup the sweep uses.

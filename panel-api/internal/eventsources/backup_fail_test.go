@@ -144,6 +144,6 @@ func TestBackupFail_SkipsRowsOutsideLookback(t *testing.T) {
 	require.Equal(t, 0, pub.Count())
 }
 
-func (f *fakeBackupJobs) ListFinishedBackupsForDestination(context.Context, string, time.Time) ([]models.BackupJob, error) {
+func (f *fakeBackupJobs) ListFinishedBackupsForDestination(context.Context, string, []string, time.Time) ([]models.BackupJob, error) {
 	return nil, nil
 }

@@ -189,9 +189,15 @@ func TestBackupJobRepository_ListFinishedBackupsForDestination(t *testing.T) {
 			models.BackupJobStatusSucceeded, models.BackupJobStatusPartial, before).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "status"}).AddRow("01JOB", models.BackupJobStatusSucceeded))
 
-	rows, err := repo.ListFinishedBackupsForDestination(context.Background(), "01DEST", before)
+	rows, err := repo.ListFinishedBackupsForDestination(context.Background(), "01DEST",
+		[]string{models.BackupJobStatusSucceeded, models.BackupJobStatusPartial}, before)
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
 	require.Equal(t, "01JOB", rows[0].ID)
+
+	// No statuses is no rows, not an `IN ()` syntax error.
+	rows, err = repo.ListFinishedBackupsForDestination(context.Background(), "01DEST", nil, before)
+	require.NoError(t, err)
+	require.Empty(t, rows)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
