@@ -16,7 +16,6 @@ import {
   ClockCircleOutlined,
   KeyOutlined,
   MailOutlined,
-  CalendarCheckOutlined,
 } from "@icons";
 import { AutoReplyModal } from "../AutoReplyModal";
 import {
@@ -42,7 +41,6 @@ import { useListQuery } from "../../../../hooks/useQueries";
 import { useTableURL } from "../../../../hooks/useTableURL";
 import type { Domain } from "../../../../components/domains/types";
 import { EditMailboxModal } from "../../../../components/mail/EditMailboxModal";
-import { MailSyncInfoModal } from "../../../../components/mail/MailSyncInfoModal";
 
 type MailboxRow = Mailbox & { domain_name: string };
 type GroupMembership = {
@@ -101,8 +99,8 @@ export const MailboxesTab = ({ domainId }: { domainId?: string } = {}) => {
 
 
   // The per-domain endpoint returns rows without a domain_name (that column is
-  // hidden in the drill-down anyway); backfill it from the domains list so the
-  // Calendar/contacts modal still has a domain to build DAV URLs from.
+  // hidden in the drill-down anyway); backfill it from the domains list so
+  // every row carries its domain name.
   const domainNameById = useMemo(() => {
     const m: Record<string, string> = {};
     for (const d of domains) m[d.id] = d.name;
@@ -155,7 +153,6 @@ export const MailboxesTab = ({ domainId }: { domainId?: string } = {}) => {
 
   const [editTarget, setEditTarget] = useState<MailboxRow | null>(null);
   const [arTarget, setArTarget] = useState<MailboxRow | null>(null);
-  const [syncTarget, setSyncTarget] = useState<MailboxRow | null>(null);
 
   const deleteMutation = useDeleteMailbox();
   const { rotate: rotatePassword, rotatingId, reveal, clearReveal } = useMailboxPasswordReset();
@@ -367,19 +364,6 @@ export const MailboxesTab = ({ domainId }: { domainId?: string } = {}) => {
                     onClick: () => webmail.launch(row.id),
                   },
                   { key: "edit", label: "Edit", icon: <EditOutlined />, onClick: () => setEditTarget(row) },
-                  // Send-only mailboxes (GH #371 relays like noreply@) have no
-                  // inbox/calendar/contacts, so skip the CalDAV/CardDAV action.
-                  ...(!row.send_only
-                    ? [
-                        {
-                          key: "sync",
-                          label: "Calendar & contacts",
-                          icon: <CalendarCheckOutlined />,
-                          tooltip: "CalDAV / CardDAV URLs for Thunderbird, Apple Mail, etc.",
-                          onClick: () => setSyncTarget(row),
-                        },
-                      ]
-                    : []),
                   { key: "resetpw", label: "Rotate password", icon: <KeyOutlined />, loading: rotatingId === row.id, onClick: () => rotatePassword({ id: row.id, email: row.email, title: "New mailbox password" }) },
                   { key: "autoreply", label: "Automatic replies", icon: <ClockCircleOutlined />, onClick: () => setArTarget(row) },
                   {
@@ -421,13 +405,6 @@ export const MailboxesTab = ({ domainId }: { domainId?: string } = {}) => {
         email={arTarget?.email ?? ""}
         current={arTarget ? arByMailbox[arTarget.id] ?? null : null}
         onClose={() => setArTarget(null)}
-      />
-
-      <MailSyncInfoModal
-        open={syncTarget !== null}
-        email={syncTarget?.email ?? ""}
-        domain={syncTarget?.domain_name ?? ""}
-        onClose={() => setSyncTarget(null)}
       />
 
       <MailboxPasswordRevealModal reveal={reveal} onClose={clearReveal} />

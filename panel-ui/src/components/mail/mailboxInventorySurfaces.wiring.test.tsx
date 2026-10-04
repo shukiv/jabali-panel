@@ -53,3 +53,12 @@ describe("MailboxesTab (tenant) rotate + delete wiring", () => {
     expect(tenantSrc).toContain("confirm: {");
   });
 });
+
+describe("MailboxesTab (tenant) calendar & contacts action", () => {
+  it("is gone: mail apps find calendars and contacts on their own (GH #1917)", () => {
+    // Retired: the per-mailbox CalDAV/CardDAV URL modal and its row action.
+    // Both strings were present before GH #1917, so bringing either back reddens.
+    expect(tenantSrc).not.toContain("Calendar & contacts");
+    expect(tenantSrc).not.toContain("MailSyncInfoModal");
+  });
+});

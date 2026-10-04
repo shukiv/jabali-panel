@@ -109,12 +109,9 @@ func TestDomainEmail_Enable_Success(t *testing.T) {
 	require.NotNil(t, domains.domains["dom1"].DkimSelector)
 	require.Equal(t, "jabali", *domains.domains["dom1"].DkimSelector)
 
-	// DNS hints: MX, SPF, DMARC, DKIM — 4 entries post-enable.
-	// Six records in the hint list: MX, SPF, DMARC, autoconfig CNAME,
-	// _autodiscover._tcp SRV, DKIM. Expanded from the pre-Step-6 count
-	// of 4 when we added autoconfig + autodiscover as part of the DNS
-	// autoconfig work.
-	require.Len(t, resp.Records, 14)
+	// Same 16-record hint list as TestDomainEmail_Get_ShowsHints, with the
+	// real DKIM key in place of the placeholder.
+	require.Len(t, resp.Records, 16)
 }
 
 // TestDomainEmail_Enable_AgentFails verifies the panel does NOT flip
@@ -263,10 +260,11 @@ func TestDomainEmail_Get_ShowsHints(t *testing.T) {
 	var resp domainEmailResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
 	require.False(t, resp.EmailEnabled)
-	// 14 records in the hint list: MX, SPF, DMARC, autoconfig CNAME,
+	// 16 records in the hint list: MX, SPF, DMARC, autoconfig CNAME,
 	// autodiscover CNAME, _autodiscover._tcp SRV, _imap/_imaps/
-	// _submission/_submissions SRV, TLS-RPT TXT, 2 CAA, DKIM (GH #134).
-	require.Len(t, resp.Records, 14)
+	// _submission/_submissions SRV, _caldavs/_carddavs SRV (GH #1917),
+	// TLS-RPT TXT, 2 CAA, DKIM (GH #134).
+	require.Len(t, resp.Records, 16)
 	// Last record is the DKIM placeholder before enable — empty Value
 	// is the contract for "generated later".
 	last := len(resp.Records) - 1
@@ -340,6 +338,60 @@ func TestDomainEmail_Get_IncludesMailHostAWhenServerIPKnown(t *testing.T) {
 	require.True(t, ok, "DKIM hint present when enabled")
 	require.Equal(t, "v=DKIM1;k=ed25519;p=AAAA", dkim.Value,
 		"DKIM Value is the raw TXT content (unquoted), copy-pasteable as-is")
+}
+
+// TestDomainEmail_Get_ListsDAVDiscoverySRV — GH #1917: the panel no longer
+// shows per-mailbox CalDAV/CardDAV URLs, so mail apps find calendars and
+// contacts only through the secure DAV SRV rows. An external-DNS domain must
+// be told to publish them, with the same target a panel-hosted zone gets:
+// mail.<domain>:443 by default, or the GH #1462 override host (and port).
+func TestDomainEmail_Get_ListsDAVDiscoverySRV(t *testing.T) {
+	cases := []struct {
+		name              string
+		calDAV, cardDAV   string
+		wantCal, wantCard string
+	}{
+		{"built-in DAV", "", "", "0 1 443 mail.example.com.", "0 1 443 mail.example.com."},
+		{"calendar override with port", "dav.example.net:8443", "", "0 1 8443 dav.example.net.", "0 1 443 mail.example.com."},
+		{"contacts override", "", "cloud.example.org", "0 1 443 mail.example.com.", "0 1 443 cloud.example.org."},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			r := gin.New()
+			v1 := r.Group("/api/v1")
+			v1.Use(func(c *gin.Context) {
+				ginctx.SetClaims(c, &auth.AccessClaims{UserID: "user1", IsAdmin: false})
+				c.Next()
+			})
+			domains := newMockDomainRepo()
+			domains.domains["dom1"] = &models.Domain{
+				ID: "dom1", UserID: "user1", Name: "example.com", EmailEnabled: true,
+				CalDAVHost: tc.calDAV, CardDAVHost: tc.cardDAV,
+			}
+			RegisterDomainEmailRoutes(v1, DomainEmailHandlerConfig{Domains: domains, Agent: &mockAgent{}})
+
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/domains/dom1/email", nil)
+			rec := httptest.NewRecorder()
+			r.ServeHTTP(rec, req)
+			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+			var resp domainEmailResponse
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+			byKey := map[string]domainEmailDNSHint{}
+			for _, h := range resp.Records {
+				byKey[h.Type+":"+h.Name] = h
+			}
+			cal, ok := byKey["SRV:_caldavs._tcp.example.com."]
+			require.True(t, ok, "calendar discovery SRV listed")
+			require.Equal(t, tc.wantCal, cal.Value)
+			card, ok := byKey["SRV:_carddavs._tcp.example.com."]
+			require.True(t, ok, "contacts discovery SRV listed")
+			require.Equal(t, tc.wantCard, card.Value)
+			_, plain := byKey["SRV:_caldav._tcp.example.com."]
+			require.False(t, plain, "plaintext :80 DAV SRV is never advertised")
+		})
+	}
 }
 
 // ---- M6 Step 6: DNS autoconfig sync ---------------------------------

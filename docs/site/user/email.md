@@ -73,6 +73,27 @@ Major mail clients can configure your account automatically:
 - **Outlook**: the same pattern using `autodiscover.<domain>`.
 - **Apple Mail, iOS**: install the `.mobileconfig` profile served by the panel at `https://<panel-hostname>/.well-known/mobileconfig?email=<address>`.
 
+## Calendar and contacts
+
+Each mailbox has a calendar (CalDAV) and contacts (CardDAV). Apps that look
+them up, such as Thunderbird and DAVx⁵, find them on their own: add the
+account with the full email address and the mailbox password, and the app
+offers the calendars and address books too. They use the domain's
+`_caldavs._tcp` and `_carddavs._tcp` DNS records, which point at
+`mail.<domain>`.
+
+On an iPhone or a Mac, add a CalDAV account for the calendar and a CardDAV
+account for contacts. Use the server `mail.<domain>`, the full email address
+and the mailbox password.
+
+- When the panel hosts the domain's DNS, it publishes these records for you.
+- When the DNS is hosted elsewhere, add them at your DNS provider. They are in
+  the list under **DNS records** on the Mail Domains page, with the other mail
+  records.
+- The shared domain directory is the one address book an app does not find on
+  its own. See [The domain directory](#the-domain-directory) to add it by
+  URL.
+
 ## What is and is not included
 
 The mail stack is **Stalwart** ([why](../mail.md)). It handles SMTP, IMAP, JMAP, mailbox storage, and per-user spam scoring. The panel ships:
@@ -85,4 +106,3 @@ Outside scope:
 
 - Mailing lists (Mailman) — not currently shipped.
 - POP3 — disabled by default; the operator may enable it server-wide.
-- Calendar (CalDAV) and contacts (CardDAV) — provided by Stalwart but not exposed in the panel UI yet.

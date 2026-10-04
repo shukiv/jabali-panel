@@ -2,7 +2,6 @@ package reconciler
 
 import (
 	"context"
-	"strconv"
 	"strings"
 	"time"
 
@@ -68,9 +67,7 @@ func (r *Reconciler) convergeDAVService(ctx context.Context, zone *models.DNSZon
 	}
 
 	if override != "" {
-		host, port := splitDAVHostPort(override, 443)
-		wantSecure := "1 " + strconv.Itoa(port) + " " + host
-		r.upsertDAVRow(ctx, zone.ID, secureRow, secureName, wantSecure)
+		r.upsertDAVRow(ctx, zone.ID, secureRow, secureName, dnscompile.DAVSecureSRV(override, mailTarget))
 		// External DAV is HTTPS-only — drop the plaintext :80 record.
 		if insecureRow != nil {
 			if err := r.dnsRecords.Delete(ctx, insecureRow.ID); err != nil {
@@ -81,7 +78,7 @@ func (r *Reconciler) convergeDAVService(ctx context.Context, zone *models.DNSZon
 	}
 
 	// No override — restore the mail.<domain> defaults for both.
-	r.upsertDAVRow(ctx, zone.ID, secureRow, secureName, "1 443 "+mailTarget)
+	r.upsertDAVRow(ctx, zone.ID, secureRow, secureName, dnscompile.DAVSecureSRV("", mailTarget))
 	r.upsertDAVRow(ctx, zone.ID, insecureRow, insecureName, "1 80 "+mailTarget)
 }
 
@@ -108,17 +105,4 @@ func (r *Reconciler) upsertDAVRow(ctx context.Context, zoneID string, row *model
 	if err := r.dnsRecords.Create(ctx, rec); err != nil {
 		r.log.Warn("dav override: create SRV", "name", name, "err", err)
 	}
-}
-
-// splitDAVHostPort parses a validated "host" or "host:port" override into
-// (host, port), defaulting the port. Input is API-validated (davHostRe), so
-// this only has to separate a trailing :port; a malformed value can't reach it.
-func splitDAVHostPort(override string, defPort int) (string, int) {
-	override = strings.TrimSpace(override)
-	if i := strings.LastIndexByte(override, ':'); i > 0 {
-		if p, err := strconv.Atoi(override[i+1:]); err == nil && p > 0 && p <= 65535 {
-			return override[:i], p
-		}
-	}
-	return override, defPort
 }
