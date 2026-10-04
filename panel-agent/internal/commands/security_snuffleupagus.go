@@ -233,6 +233,11 @@ func snuffleupagusApplyHandler(ctx context.Context, raw json.RawMessage) (any, e
 	resp := snuffleupagusApplyResponse{
 		Sha256: hex.EncodeToString(sum[:]),
 	}
+	// GH #1701: pools whose package lifts the exec bans run their own copy of
+	// the rules. Rebuild those from the new body before the reload, so a mode or
+	// rule change reaches them too. A copy that could not be rebuilt is stale,
+	// so the apply must not report success (same reasoning as GH #707 below).
+	regenErr := regeneratePoolPHPDefenseRules()
 	// GH #707: propagate the reload failure. The rules file is written, but if
 	// the FPM pools did not reload they are serving STALE rules — the apply must
 	// NOT report success, or the DB/UI claim a policy that is not live.
@@ -240,10 +245,22 @@ func snuffleupagusApplyHandler(ctx context.Context, raw json.RawMessage) (any, e
 	if r, ok := reload.(snuffleupagusReloadResponse); ok {
 		resp.Pools = r.Pools
 	}
-	if reloadErr != nil {
-		return resp, reloadErr
+	return resp, snuffleupagusApplyErr(reloadErr, regenErr)
+}
+
+// snuffleupagusApplyErr reports both failures of a rules apply. A pool whose
+// unit fails to reload is a standing condition on some boxes, so returning
+// only the reload error would hide every pool-copy rebuild failure behind it,
+// and a stale copy keeps the old mode for that pool.
+func snuffleupagusApplyErr(reloadErr, regenErr error) error {
+	switch {
+	case reloadErr != nil && regenErr != nil:
+		return fmt.Errorf("%w; %w", reloadErr, regenErr)
+	case reloadErr != nil:
+		return reloadErr
+	default:
+		return regenErr
 	}
-	return resp, nil
 }
 
 func init() {

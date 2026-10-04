@@ -96,7 +96,16 @@ type HostingPackage struct {
 	// disable_functions command-exec lockdown — emits no disable_functions
 	// line so exec/proc_open/shell_exec/... work for apps that need them.
 	// Admin-only (packages are admin-assigned); default 0 keeps the lockdown.
+	// GH #1701: now derived from PHPDisabledFunctions (true when no lockdown
+	// function is disabled) and written with it, so an older binary reading
+	// the row still sees the right opt-out.
 	PHPExecEnabled bool `gorm:"column:php_exec_enabled;type:tinyint(1);not null;default:0" json:"php_exec_enabled"`
+
+	// PHPDisabledFunctions (GH #1701) is the disable_functions list this
+	// package's pools run with, canonical comma-separated form. nil = the
+	// GH #401 lockdown default (or no list at all when PHPExecEnabled is set on
+	// a row written before this column). See EffectivePHPDisabledFunctions.
+	PHPDisabledFunctions *string `gorm:"column:php_disabled_functions;type:text" json:"php_disabled_functions"`
 
 	// Per-package egress allowances for the M34 per-user firewall (GH #1798).
 	// Both default 0 (DENY): outbound SSH and ICMP stay blocked for enforced

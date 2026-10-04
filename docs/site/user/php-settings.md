@@ -42,6 +42,15 @@ Two more settings limit what a domain's PHP code can reach. They are **admin onl
 
 Like the other settings, both are set on every request of every PHP domain, so a narrower `open_basedir` on one domain never applies to another domain on the same PHP pool.
 
+## Disabled functions and paths
+
+The **Disabled functions and paths** section at the bottom of the page is read-only. Open it to see what this domain's PHP really runs with:
+
+- **PHP functions**: each command-execution function (`exec`, `shell_exec`, `proc_open`, …) and any other function that is disabled or blocked, with its status: disabled by your hosting package, disabled server-wide, blocked by PHP Defense, allowed but logged by PHP Defense, or allowed.
+- **Paths**: `include_path`, where PHP looks for included files, and `session.save_path`, where PHP stores sessions. These apply to every site on the same PHP pool; an empty `session.save_path` means PHP's temp folder.
+
+Your hosting package decides which functions are disabled. Ask your administrator if your application needs one of them.
+
 ## Settings your administrator controls
 
 Your hosting package decides which of these values you may change. A value your administrator keeps for themselves shows the tag **Set by your administrator** and cannot be changed from your panel; the value shown still applies to the domain. Ask your administrator if you need it changed. An API request that changes such a value is refused with `php_setting_not_permitted`, naming the setting.

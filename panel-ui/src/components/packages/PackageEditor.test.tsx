@@ -143,3 +143,52 @@ describe("PackageEditor PHP settings policy (GH #1701)", () => {
     );
   });
 });
+
+// GH #1701: the package's disabled PHP functions replace the all-or-nothing
+// exec switch. The list is sent; php_exec_enabled is derived by the backend.
+describe("PackageEditor disabled PHP functions (GH #1701)", () => {
+  async function renderEdit(record: Partial<Record<string, unknown>>) {
+    const onSubmit = vi.fn();
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <PackageEditor
+          title="Edit package"
+          initialValue={{ ...PACKAGE_DEFAULTS, id: "pkg-1", name: "Basic", ...record }}
+          submitting={false}
+          onSubmit={onSubmit}
+        />
+      </QueryClientProvider>,
+    );
+    await screen.findByText("Disabled PHP functions");
+    return onSubmit;
+  }
+
+  it("a package at the default saves null and never sends php_exec_enabled", async () => {
+    const { fireEvent, waitFor } = await import("@testing-library/react");
+    const onSubmit = await renderEdit({ php_disabled_functions: null, php_exec_enabled: false });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    expect(onSubmit.mock.calls[0][0].php_disabled_functions).toBeNull();
+    expect("php_exec_enabled" in onSubmit.mock.calls[0][0]).toBe(false);
+  });
+
+  it("unchecking shell_exec saves the list without it", async () => {
+    const { fireEvent, waitFor } = await import("@testing-library/react");
+    const onSubmit = await renderEdit({ php_disabled_functions: null, php_exec_enabled: false });
+    const box = screen.getByRole("checkbox", { name: "shell_exec" }) as HTMLInputElement;
+    expect(box.checked).toBe(true);
+    fireEvent.click(box);
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    expect(onSubmit.mock.calls[0][0].php_disabled_functions).toBe(
+      "exec,passthru,system,proc_open,popen,pcntl_exec,pcntl_fork,proc_nice,dl",
+    );
+  });
+
+  it("a package saved with the old exec switch on loads with every box unchecked", async () => {
+    await renderEdit({ php_disabled_functions: null, php_exec_enabled: true });
+    const box = screen.getByRole("checkbox", { name: "exec" }) as HTMLInputElement;
+    expect(box.checked).toBe(false);
+  });
+});

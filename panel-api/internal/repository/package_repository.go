@@ -132,6 +132,9 @@ func (r *packageRepo) Update(ctx context.Context, p *models.HostingPackage) erro
 		"allowed_backup_destination_kinds", "backup_retention_policy",
 		// GH #1701: per-package PHP settings policy.
 		"php_settings_policy",
+		// GH #1701: per-package disabled PHP functions (php_exec_enabled above
+		// is written with it, derived from the list).
+		"php_disabled_functions",
 		"updated_at",
 	).Updates(p).Error; err != nil {
 		return translate(err)

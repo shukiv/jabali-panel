@@ -21,6 +21,12 @@ import {
   encodePHPSettingsPolicy,
   type PHPSettingsPolicyForm,
 } from "./phpSettingsPolicy";
+import {
+  decodeDisabledFunctions,
+  defaultDisabledFunctionsForm,
+  encodeDisabledFunctions,
+  type PHPDisabledFunctionsForm,
+} from "./phpDisabledFunctions";
 
 // Mirrors models.AllBackupDestinationKinds (GH #454). Keep in sync with the
 // backend enum in backup_destination.go.
@@ -71,6 +77,11 @@ export type PackageFormValues = {
   // Settings page. A JSON object string on the wire ('' = defaults); the Form
   // binds a directive -> level map.
   php_settings_policy: string | PHPSettingsPolicyForm;
+  // GH #1701: the disable_functions list the package's sites run with. On the
+  // wire a comma-separated string, or null for the default command-exec
+  // lockdown; the Form binds the lockdown checkboxes + extra functions.
+  // php_exec_enabled above is derived from it by the backend.
+  php_disabled_functions: string | null | PHPDisabledFunctionsForm;
 };
 
 export type PackageRecord = PackageFormValues & { id: string };
@@ -80,12 +91,20 @@ export type PackageRecord = PackageFormValues & { id: string };
 // string, not arrays or maps.
 export type PackageWirePayload = Omit<
   PackageFormValues,
-  "docker_app_slugs" | "allowed_backup_destination_kinds" | "egress_ssh_out_cidrs" | "php_settings_policy"
+  | "docker_app_slugs"
+  | "allowed_backup_destination_kinds"
+  | "egress_ssh_out_cidrs"
+  | "php_settings_policy"
+  | "php_disabled_functions"
+  | "php_exec_enabled"
 > & {
   docker_app_slugs: string;
   allowed_backup_destination_kinds: string;
   egress_ssh_out_cidrs: string;
   php_settings_policy: string;
+  // GH #1701: the list is sent and php_exec_enabled is not; the backend
+  // derives the flag from the list.
+  php_disabled_functions: string | null;
 };
 
 export type LimitFieldGroup = "resource" | "quota" | "backup" | "fpm";
@@ -308,6 +327,7 @@ export const PACKAGE_DEFAULTS: PackageFormValues = {
   egress_ssh_out_cidrs: [],
   egress_icmp: false,
   php_settings_policy: defaultPHPSettingsPolicy(), // GH #1701
+  php_disabled_functions: defaultDisabledFunctionsForm(), // GH #1701
 };
 
 // --- CSV codecs (AC2). docker_app_slugs and allowed_backup_destination_kinds are
@@ -348,8 +368,13 @@ export function looksLikeCIDR(value: string): boolean {
 }
 
 export function encodePackagePayload(values: PackageFormValues): PackageWirePayload {
+  const { php_exec_enabled: _exec, ...rest } = values;
+  void _exec;
+  const fns = values.php_disabled_functions;
   return {
-    ...values,
+    ...rest,
+    php_disabled_functions:
+      typeof fns === "object" && fns !== null ? encodeDisabledFunctions(fns) : (fns ?? null),
     egress_ssh_out_cidrs: encodeCIDRList(values.egress_ssh_out_cidrs),
     php_settings_policy: encodePHPSettingsPolicy(values.php_settings_policy),
     docker_app_slugs: Array.isArray(values.docker_app_slugs)
@@ -377,6 +402,10 @@ export function decodePackageForm(record: PackageRecord): PackageFormValues {
     egress_ssh_out_cidrs: decodeCIDRList(rest.egress_ssh_out_cidrs),
     egress_icmp: !!rest.egress_icmp,
     php_settings_policy: decodePHPSettingsPolicy(rest.php_settings_policy),
+    php_disabled_functions: decodeDisabledFunctions(
+      typeof rest.php_disabled_functions === "string" ? rest.php_disabled_functions : null,
+      !!rest.php_exec_enabled,
+    ),
   };
 }
 

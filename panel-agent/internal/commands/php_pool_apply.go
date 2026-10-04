@@ -668,6 +668,11 @@ func phpPoolApplyHandler(ctx context.Context, params json.RawMessage) (any, erro
 			Message: "disable_functions contains control characters",
 		}
 	}
+	// GH #1701: only comma-separated lowercase function names (the panel's
+	// canonical form) ever reach the pool conf.
+	if err := validateDisableFunctions(disableFunctions); err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: err.Error()}
+	}
 
 	// GH #1332 item 12: derive the slow-log path from the slug (never over the
 	// wire) and ensure the tenant-owned logs dir exists so the tenant-run FPM
@@ -799,6 +804,14 @@ func phpPoolApplyHandler(ctx context.Context, params json.RawMessage) (any, erro
 	xdebugChanged, xderr := applyPoolXdebug(p.PHPVersion, slug, p.Username, p.XdebugEnabled)
 	if xderr != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeFailedPrecondition, Message: xderr.Error()}
+	}
+
+	// GH #1701: a pool whose disable_functions leaves PHP Defense's exec bans
+	// enabled loads its own PHP Defense rules without them, so the package's
+	// decision holds in enforce mode too. Written before the reload below,
+	// which is enough for the master to pick it up.
+	if _, pderr := applyPoolPHPDefense(p.PHPVersion, slug, phpDefenseAllowFromDisabled(disableFunctions)); pderr != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: pderr.Error()}
 	}
 
 	// Restart or reload the slug's FPM service.

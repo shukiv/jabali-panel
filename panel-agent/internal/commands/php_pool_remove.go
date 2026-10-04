@@ -116,6 +116,10 @@ func phpPoolRemoveHandler(ctx context.Context, params json.RawMessage) (any, err
 		_ = execCommandContext(ctx, "systemctl", "disable", "--quiet", serviceName).Run()
 	}
 
+	// The pool's own PHP Defense rules, if its package lifted the exec bans
+	// (GH #1701).
+	removePoolPHPDefense(slug)
+
 	// A versioned slug owns its own systemd drop-in dir; remove it so a reaped
 	// version leaves nothing behind (the default pool's drop-in is owned by
 	// user.slice.ensure and must be left intact).

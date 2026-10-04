@@ -87,7 +87,23 @@ badge** on any domain that differs from the account default:
   the package grants `tenant_privileged`.
 - `disable_functions` stays per pool (per account and PHP version, set through
   the package): a function PHP disables stays disabled for the worker's
-  lifetime, so it cannot differ between domains that share a pool.
+  lifetime, so it cannot differ between domains that share a pool. The
+  package's **Disabled PHP functions** list (`php_disabled_functions`, GH
+  #1701) is that list; by default it disables every command-execution
+  function. When it leaves `system`, `exec`, `shell_exec`, `passthru`, `popen`,
+  `proc_open` or `pcntl_exec` enabled, the agent gives the pool its own copy of
+  the PHP Defense rules without the ban on those functions
+  (`/etc/jabali/snuffleupagus/pools/<pool>.rules`, loaded through
+  `/etc/php/<version>/jabali-ext/<pool>/90-jabali-php-defense.ini`). Every
+  other PHP Defense rule still applies, and command-line PHP (cron, SSH) keeps
+  the server-wide rules.
+- The page's read-only **Disabled functions and paths** section shows what the
+  pool serving the domain really runs with: each command-execution function
+  (and anything else disabled or banned) as disabled by the hosting package,
+  disabled server-wide in `php.ini`, blocked or logged by PHP Defense, or
+  allowed; and the pool's `include_path` and `session.save_path`, from the
+  pool's ini overrides or `php.ini`. The agent reads these from the files the
+  pool loads (`GET /domains/:id/php-settings/effective`).
   `include_path` and `session.save_path` are not per-domain settings either: an
   admin value for them locks `ini_set()` on the shared worker for every domain
   on the pool. `mail.force_extra_parameters` is not offered: Jabali's mail shim

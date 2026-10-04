@@ -56,6 +56,7 @@ type DomainPHPScheduler interface {
 //   - GET   /domains/:id/php-settings
 //   - PATCH /domains/:id/php-settings
 //   - POST  /domains/:id/php-settings/opcache-reset
+//   - GET   /domains/:id/php-settings/effective
 func RegisterDomainPHPSettingsRoutes(g *gin.RouterGroup, cfg DomainPHPSettingsHandlerConfig) {
 	h := &domainPHPSettingsHandler{cfg: cfg}
 	resetLimit := cfg.ResetRateLimit
@@ -65,6 +66,7 @@ func RegisterDomainPHPSettingsRoutes(g *gin.RouterGroup, cfg DomainPHPSettingsHa
 	g.GET("/domains/:id/php-settings", h.get)
 	g.PATCH("/domains/:id/php-settings", h.patch)
 	g.POST("/domains/:id/php-settings/opcache-reset", resetLimit, h.resetOpcache)
+	g.GET("/domains/:id/php-settings/effective", h.effective)
 }
 
 type domainPHPSettingsHandler struct {
@@ -765,4 +767,146 @@ func eqPtr[T comparable](a, b *T) bool {
 // see its "Exception: per-domain PHP settings policy" section.
 func phpPolicyAdmin(claims *auth.AccessClaims) bool {
 	return claims.IsAdmin || claims.ImpersonatedBy != ""
+}
+
+// domainPHPEffectiveResponse is what the domain's PHP pool really runs with
+// (GH #1701), read by the agent from the files the pool's master loads. Shown
+// read-only on PHP Settings to the admin and the domain owner.
+type domainPHPEffectiveResponse struct {
+	PHPVersion string `json:"php_version"`
+	// PoolFound is false while the pool has not been written yet.
+	PoolFound bool `json:"pool_found"`
+	// DisabledFunctions: source "pool" (the hosting package's list) or
+	// "php.ini" (server-wide).
+	DisabledFunctions []domainPHPEffectiveFunction `json:"disabled_functions"`
+	PHPDefense        domainPHPDefenseEffective    `json:"php_defense"`
+	IncludePath       domainPHPEffectiveIni        `json:"include_path"`
+	SessionSavePath   domainPHPEffectiveIni        `json:"session_save_path"`
+	// IniReadError: the php.ini read failed, so php.ini values are missing.
+	IniReadError string `json:"ini_read_error,omitempty"`
+}
+
+type domainPHPEffectiveFunction struct {
+	Name   string `json:"name"`
+	Source string `json:"source"`
+}
+
+type domainPHPDefenseEffective struct {
+	// Active: PHP Defense is loaded for this PHP version.
+	Active bool `json:"active"`
+	// Mode of the rules the pool loads: enforce, simulation or off.
+	Mode string `json:"mode"`
+	// PoolRules: the pool loads its own rules, without the bans its package
+	// lifts.
+	PoolRules bool `json:"pool_rules"`
+	// Functions PHP Defense bans there: state "blocked" or "logged".
+	Functions []domainPHPDefenseFunction `json:"functions"`
+}
+
+type domainPHPDefenseFunction struct {
+	Name  string `json:"name"`
+	State string `json:"state"`
+}
+
+type domainPHPEffectiveIni struct {
+	Value  string `json:"value"`
+	Source string `json:"source"`
+}
+
+// phpEffectiveCacheTTL bounds the agent read, which starts a PHP process, to a
+// few per minute per pool however often the page is opened. Short, so a
+// package change shows up almost at once.
+const phpEffectiveCacheTTL = 15 * time.Second
+
+type cachedPHPEffective struct {
+	at   time.Time
+	resp domainPHPEffectiveResponse
+}
+
+var (
+	phpEffectiveMu    sync.Mutex
+	phpEffectiveCache = map[string]cachedPHPEffective{}
+)
+
+// effective returns what the domain's PHP pool really runs with (GH #1701):
+// its disabled functions, the functions PHP Defense bans there, and
+// include_path / session.save_path. Read-only; the domain owner or an admin,
+// like GET.
+func (h *domainPHPSettingsHandler) effective(c *gin.Context) {
+	claims := ginctx.Claims(c)
+	if claims == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+	ctx := c.Request.Context()
+	dom, err := h.cfg.Domains.FindByID(ctx, c.Param("id"))
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "domain_not_found"})
+			return
+		}
+		slog.ErrorContext(ctx, "php-settings effective: load domain", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	if !claims.IsAdmin && dom.UserID != claims.UserID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		return
+	}
+	pool := h.domainPool(ctx, dom)
+	if pool == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "pool_not_found"})
+		return
+	}
+	if h.cfg.Agent == nil || h.cfg.Users == nil || h.cfg.PHPPools == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "effective_unavailable"})
+		return
+	}
+	owner, err := h.cfg.Users.FindByID(ctx, dom.UserID)
+	if err != nil || owner == nil || owner.Username == nil || *owner.Username == "" {
+		slog.ErrorContext(ctx, "php-settings effective: load owner", "error", err, "user_id", dom.UserID)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	// The slug exactly as the pool apply resolves it: the owner's earliest
+	// pool is the default (slug == username).
+	isDefault := true
+	if list, lerr := h.cfg.PHPPools.ListByUserID(ctx, owner.ID); lerr == nil && len(list) > 0 {
+		isDefault = list[0].ID == pool.ID
+	}
+	slug := models.PoolSlug(*owner.Username, pool.PHPVersion, isDefault)
+
+	key := pool.PHPVersion + "|" + slug
+	phpEffectiveMu.Lock()
+	if hit, ok := phpEffectiveCache[key]; ok && time.Since(hit.at) < phpEffectiveCacheTTL {
+		phpEffectiveMu.Unlock()
+		c.JSON(http.StatusOK, hit.resp)
+		return
+	}
+	phpEffectiveMu.Unlock()
+
+	cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	raw, err := h.cfg.Agent.Call(cctx, "php.pool.effective", map[string]any{"php_version": pool.PHPVersion, "slug": slug})
+	if err != nil {
+		slog.WarnContext(ctx, "php-settings effective: agent", "error", err, "slug", slug)
+		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_unavailable"})
+		return
+	}
+	var resp domainPHPEffectiveResponse
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		slog.WarnContext(ctx, "php-settings effective: decode", "error", err)
+		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_unavailable"})
+		return
+	}
+	if resp.DisabledFunctions == nil {
+		resp.DisabledFunctions = []domainPHPEffectiveFunction{}
+	}
+	if resp.PHPDefense.Functions == nil {
+		resp.PHPDefense.Functions = []domainPHPDefenseFunction{}
+	}
+	phpEffectiveMu.Lock()
+	phpEffectiveCache[key] = cachedPHPEffective{at: time.Now(), resp: resp}
+	phpEffectiveMu.Unlock()
+	c.JSON(http.StatusOK, resp)
 }

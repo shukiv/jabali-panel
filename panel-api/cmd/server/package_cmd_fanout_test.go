@@ -168,28 +168,29 @@ func TestMarkPackagePHPPoolsPending_ListUsersErrorNoWrites(t *testing.T) {
 	require.Empty(t, pools.calls)
 }
 
-// Source contract for the edit-command fan-out: the php_exec change is captured
-// before the flags mutate the row (value gate), and the fan-out runs strictly
-// after persistence (AC5: a failed Update fans out nothing). These orderings are
+// Source contract for the edit-command fan-out: the disabled-functions list
+// (GH #1701; php_exec is derived from it) is captured before the flags mutate
+// the row (value gate), and the fan-out runs strictly after persistence (AC5: a
+// failed Update fans out nothing). These orderings are
 // load-bearing and easy to break in a refactor, so pin them in source.
 func TestPackageEdit_PHPExecFanoutSourceContract(t *testing.T) {
 	src, err := os.ReadFile("package_cmd.go")
 	require.NoError(t, err)
 	s := string(src)
 
-	iPrev := strings.Index(s, "prevPHPExec := p.PHPExecEnabled")
+	iPrev := strings.Index(s, "prevDisabledFns := strings.Join(models.EffectivePHPDisabledFunctions(p)")
 	iApply := strings.Index(s, "applyPackageEditFlags(cmd.Flags().Changed")
 	iUpdate := strings.Index(s, "repo.Update(ctx, p)")
-	iGate := strings.Index(s, "if p.PHPExecEnabled != prevPHPExec {")
+	iGate := strings.Index(s, "newDisabledFns != prevDisabledFns {")
 	iFanout := strings.Index(s, "markPackagePHPPoolsPending(fanCtx")
 
-	require.Greater(t, iPrev, 0, "edit must capture the pre-edit php_exec state")
+	require.Greater(t, iPrev, 0, "edit must capture the pre-edit disabled-functions list")
 	require.Greater(t, iApply, 0)
 	require.Greater(t, iUpdate, 0)
-	require.Greater(t, iGate, 0, "fan-out must be value-gated on a php_exec change")
-	require.Greater(t, iFanout, 0, "edit must fan out a php_exec change")
+	require.Greater(t, iGate, 0, "fan-out must be value-gated on a disabled-functions change")
+	require.Greater(t, iFanout, 0, "edit must fan out a disabled-functions change")
 
-	require.Less(t, iPrev, iApply, "prevPHPExec must be read before applyPackageEditFlags mutates the row")
+	require.Less(t, iPrev, iApply, "prevDisabledFns must be read before applyPackageEditFlags mutates the row")
 	require.Less(t, iUpdate, iFanout, "fan-out must run strictly after repo.Update (AC5)")
 	require.Less(t, iGate, iFanout, "the value gate must guard the fan-out")
 }

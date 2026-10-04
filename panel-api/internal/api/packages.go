@@ -1,7 +1,9 @@
 package api
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -98,6 +100,10 @@ type createPackageRequest struct {
 	SSHEnabled                    bool   `json:"ssh_enabled"`
 	CGIEnabled                    bool   `json:"cgi_enabled"`
 	PHPExecEnabled                bool   `json:"php_exec_enabled"`
+	// PHPDisabledFunctions (GH #1701): the package's disable_functions list.
+	// nil = the lockdown default (or none, when php_exec_enabled is set). Wins
+	// over php_exec_enabled when both are sent.
+	PHPDisabledFunctions *string `json:"php_disabled_functions"`
 	// Per-package egress allowances (GH #1798). Plain bools default false =
 	// DENY. EgressSSHOutCIDRs is a JSON array of CIDRs ('' = anywhere).
 	EgressSSHOut      bool   `json:"egress_ssh_out"`
@@ -145,6 +151,10 @@ type updatePackageRequest struct {
 	SSHEnabled                    *bool   `json:"ssh_enabled"`
 	CGIEnabled                    *bool   `json:"cgi_enabled"`
 	PHPExecEnabled                *bool   `json:"php_exec_enabled"`
+	// PHPDisabledFunctions (GH #1701): a string sets the list, null resets it
+	// to the lockdown default, and omitting it leaves it unchanged. Raw JSON
+	// so null and omitted stay apart. Wins over php_exec_enabled.
+	PHPDisabledFunctions json.RawMessage `json:"php_disabled_functions"`
 	// Per-package egress allowances (GH #1798).
 	EgressSSHOut       *bool   `json:"egress_ssh_out"`
 	EgressSSHOutCIDRs  *string `json:"egress_ssh_out_cidrs"`
@@ -231,6 +241,19 @@ func (h *packageHandler) create(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_php_settings_policy", "detail": phpPolicyErr.Error()})
 		return
 	}
+	// GH #1701: the disabled-functions list. The legacy php_exec_enabled
+	// toggle applies only when no list is sent.
+	var disabledFns *string
+	if req.PHPDisabledFunctions != nil {
+		norm, err := models.NormalizePHPDisabledFunctions(*req.PHPDisabledFunctions)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_php_disabled_functions", "detail": err.Error()})
+			return
+		}
+		disabledFns = models.PHPDisabledFunctionsField(norm)
+	} else if req.PHPExecEnabled {
+		disabledFns = models.SetPHPExecOnList(models.PHPLockdownFunctions, true)
+	}
 	pkg := &models.HostingPackage{
 		ID:               ids.NewULID(),
 		Name:             req.Name,
@@ -255,9 +278,8 @@ func (h *packageHandler) create(c *gin.Context) {
 		AllowedBackupDestinationKinds: req.AllowedBackupDestinationKinds,
 		BackupRetentionPolicy:         req.BackupRetentionPolicy,
 
-		SSHEnabled:     req.SSHEnabled,
-		CGIEnabled:     req.CGIEnabled,
-		PHPExecEnabled: req.PHPExecEnabled,
+		SSHEnabled: req.SSHEnabled,
+		CGIEnabled: req.CGIEnabled,
 		// GH #1798: per-package egress allowances (default false = DENY).
 		EgressSSHOut:      req.EgressSSHOut,
 		EgressSSHOutCIDRs: req.EgressSSHOutCIDRs,
@@ -275,6 +297,7 @@ func (h *packageHandler) create(c *gin.Context) {
 		CreatedAt:          now,
 		UpdatedAt:          now,
 	}
+	pkg.SetPHPDisabledFunctions(disabledFns)
 	if v := strings.TrimSpace(req.NspawnImageVersion); v != "" {
 		if !isImageNamePattern(v) {
 			c.JSON(http.StatusBadRequest, gin.H{
@@ -336,7 +359,9 @@ func (h *packageHandler) update(c *gin.Context) {
 	// fan-out, so we can compare to the new values once Update returns
 	// successfully. Read BEFORE the field copies overwrite pkg.
 	prevSSHEnabled := pkg.SSHEnabled
-	prevPHPExec := pkg.PHPExecEnabled
+	// GH #1701: compare the effective disabled list, not the flag, so a list
+	// edit re-renders the pools as promptly as the old toggle did.
+	prevDisabledFns := strings.Join(models.EffectivePHPDisabledFunctions(pkg), ",")
 	prevWebmailEnabled := pkg.WebmailEnabled // GH #1628
 
 	if req.Name != nil {
@@ -423,8 +448,24 @@ func (h *packageHandler) update(c *gin.Context) {
 	if req.WebmailEnabled != nil { // GH #1628
 		pkg.WebmailEnabled = *req.WebmailEnabled
 	}
-	if req.PHPExecEnabled != nil {
-		pkg.PHPExecEnabled = *req.PHPExecEnabled
+	if len(req.PHPDisabledFunctions) > 0 { // GH #1701; wins over php_exec_enabled
+		if string(bytes.TrimSpace(req.PHPDisabledFunctions)) == "null" {
+			pkg.SetPHPDisabledFunctions(nil)
+		} else {
+			var raw string
+			if err := json.Unmarshal(req.PHPDisabledFunctions, &raw); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_php_disabled_functions", "detail": "must be a string or null"})
+				return
+			}
+			norm, err := models.NormalizePHPDisabledFunctions(raw)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_php_disabled_functions", "detail": err.Error()})
+				return
+			}
+			pkg.SetPHPDisabledFunctions(models.PHPDisabledFunctionsField(norm))
+		}
+	} else if req.PHPExecEnabled != nil {
+		pkg.SetPHPDisabledFunctions(models.SetPHPExecOnList(models.EffectivePHPDisabledFunctions(pkg), *req.PHPExecEnabled))
 	}
 	// GH #1798: per-package egress allowances.
 	if req.EgressSSHOut != nil {
@@ -514,10 +555,11 @@ func (h *packageHandler) update(c *gin.Context) {
 	if req.SSHEnabled != nil && *req.SSHEnabled != prevSSHEnabled {
 		h.fanOutSSHReconcile(pkg.ID)
 	}
-	// GH #402: re-render every pool on this package when php_exec_enabled
-	// flipped, so the disable_functions change applies without waiting for
-	// the periodic sweep.
-	if req.PHPExecEnabled != nil && *req.PHPExecEnabled != prevPHPExec {
+	// GH #402 / GH #1701: re-render every pool on this package when its
+	// effective disabled-functions list changed (the php_exec_enabled toggle
+	// or a list edit), so the change applies without waiting for the periodic
+	// sweep.
+	if strings.Join(models.EffectivePHPDisabledFunctions(pkg), ",") != prevDisabledFns {
 		h.fanOutPHPPoolReapply(pkg.ID)
 	}
 	// GH #1628: re-run the webmail vhost sweep when webmail_enabled flipped, so

@@ -4117,6 +4117,7 @@ jabali package create [flags]
 - `--memory-mb` — memory limit in MB (0=unlimited) (default `0`)
 - `--name` — package name (required)
 - `--nspawn-image` — pin users to an nspawn rootfs version (empty=server default)
+- `--php-disabled-functions` — PHP functions disabled for this package's sites, comma-separated (GH #1701). "default" = the command-exec lockdown (exec,passthru,shell_exec,system,proc_open,popen,pcntl_exec,pcntl_fork,proc_nice,dl); "none" = nothing disabled. Allowing system/exec/shell_exec/passthru/popen/proc_open/pcntl_exec also lifts the PHP Defense ban on it for these sites. Wins over --php-exec.
 - `--php-exec` — opt out of the PHP command-exec lockdown (exec/proc_open work)
 - `--php-settings-policy` — JSON object of php.ini directive to level (admin_only / tenant_allowed; tenant_privileged for security-sensitive directives) saying who may set it on the per-domain PHP Settings page — GH #1701. Empty = defaults (tenants may set every directive they can today). The CLI and admins are not limited by it. e.g. '{"memory_limit":"admin_only"}'
 - `--scheduled-backups` — allow tenant scheduled backups
@@ -4175,6 +4176,7 @@ jabali package edit <package-id> [flags]
 - `--memory-mb` — memory limit MB (default `0`)
 - `--name` — package name
 - `--nspawn-image` — pin users to an nspawn rootfs version (empty clears the pin)
+- `--php-disabled-functions` — PHP functions disabled for this package's sites, comma-separated (GH #1701). "default" = the command-exec lockdown (exec,passthru,shell_exec,system,proc_open,popen,pcntl_exec,pcntl_fork,proc_nice,dl); "none" = nothing disabled. Allowing system/exec/shell_exec/passthru/popen/proc_open/pcntl_exec also lifts the PHP Defense ban on it for these sites. Wins over --php-exec.
 - `--php-exec` — PHP command-exec opt-out (true/false)
 - `--php-settings-policy` — JSON object of php.ini directive to level (admin_only / tenant_allowed; tenant_privileged for security-sensitive directives) saying who may set it on the per-domain PHP Settings page — GH #1701. Empty = defaults (tenants may set every directive they can today). The CLI and admins are not limited by it. e.g. '{"memory_limit":"admin_only"}'
 - `--scheduled-backups` — tenant scheduled backups (true/false)
