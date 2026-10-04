@@ -2335,6 +2335,9 @@ func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Dom
 
 	params["redirect_directives"] = redirects.Compile(domain)
 	params["rule_directives"] = nginxrules.Compile(domain)
+	// GH #1999: the front_controller rule changes the fallback of the vhost's
+	// own `location /`, so it travels as its own param. "" keeps the default.
+	params["php_fallback"] = nginxrules.FrontController(domain)
 
 	// M18 per-domain HTTP limits. The agent renders them verbatim via
 	// BuildRateLimitDirectives, which is a no-op when both are zero.

@@ -10,6 +10,7 @@
 //	add_header <name> <value> [always];                   -> custom_header
 //	location ~* \.(a|b)$ { deny all; }                    -> deny_paths
 //	location ~* \.(a|b)$ { expires <dur>; }               -> static_cache
+//	location / { try_files $uri $uri/ /x.php?<query>; }   -> front_controller
 //
 // Everything else — any other directive, any location whose matcher is not the
 // extension-anchored regex above, any body directive other than the ones listed
@@ -27,6 +28,7 @@ import (
 	"strconv"
 	"strings"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/frontcontroller"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 )
 
@@ -143,6 +145,10 @@ func convertLocation(res *Result, block string, lineNo int) {
 		return
 	}
 	header := strings.TrimSpace(block[:open+1]) // include the `{` for the regex
+	if rootLocHeaderRE.MatchString(header) {
+		convertRootLocation(res, block[open+1:], header, lineNo)
+		return
+	}
 	m := locHeaderRE.FindStringSubmatch(header)
 	if m == nil {
 		res.warnSec(lineNo, trimLong(header), "only `location ~* \\.(ext|ext)$` blocks are supported; this matcher may route or expose files — skipped")
@@ -201,6 +207,46 @@ func convertLocation(res *Result, block string, lineNo int) {
 	default:
 		res.warn(lineNo, trimLong(header), "location has no supported action (expected `deny all;` or `expires ...;`) — skipped")
 	}
+}
+
+// rootLocHeaderRE matches a plain prefix `location / {`, the block whose
+// try_files fallback a front_controller rule sets (GH #1999).
+var rootLocHeaderRE = regexp.MustCompile(`^location\s+/\s*\{$`)
+
+// convertRootLocation imports `location / { try_files $uri $uri/ <fallback>; }`
+// as a front_controller rule (GH #1999): the panel renders its own `location /`
+// and only lets the fallback change. Any other body is not imported, since a
+// root location can route the whole site.
+func convertRootLocation(res *Result, body, header string, lineNo int) {
+	if c := strings.LastIndex(body, "}"); c >= 0 {
+		body = body[:c]
+	}
+	var stmts []string
+	for _, stmt := range strings.Split(body, ";") {
+		if s := strings.TrimSpace(stmt); s != "" {
+			stmts = append(stmts, s)
+		}
+	}
+	const unsupported = "only `location / { try_files $uri $uri/ /index.php?...; }` can be imported for the site root (as a Front controller rule); this location may route the whole site — skipped"
+	if len(stmts) != 1 {
+		res.warnSec(lineNo, trimLong(header), unsupported)
+		return
+	}
+	args := tokenize(stmts[0])
+	if len(args) != 4 || args[0] != "try_files" || args[1] != "$uri" || args[2] != "$uri/" {
+		res.warnSec(lineNo, trimLong(stmts[0]), unsupported)
+		return
+	}
+	script, query, err := frontcontroller.Parse(args[3])
+	if err != nil {
+		res.warnSec(lineNo, trimLong(stmts[0]), "try_files fallback can't be a Front controller rule: "+err.Error()+" — skipped")
+		return
+	}
+	if frontcontroller.Fallback(script, query) == frontcontroller.Default {
+		res.addNote("`location / { try_files $uri $uri/ " + frontcontroller.Default + "; }` (line " + strconv.Itoa(lineNo) + ") is already how the panel serves PHP sites — nothing to import")
+		return
+	}
+	res.addRule(models.NginxRule{Type: "front_controller", Script: script, Query: query})
 }
 
 // convertDirective handles a single `name args` statement (the trailing `;`

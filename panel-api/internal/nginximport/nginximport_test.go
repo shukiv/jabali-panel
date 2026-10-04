@@ -156,3 +156,48 @@ func TestConvert_MixedDenyExpiresSkipped(t *testing.T) {
 		t.Errorf("expected a warning")
 	}
 }
+
+// GH #1999: the reporter's Plesk snippet imports as a front_controller rule.
+func TestConvert_RootTryFilesBecomesFrontController(t *testing.T) {
+	res := Convert("location / {\n    try_files $uri $uri/ /index.php?mod=$uri&$args;\n}\n")
+	if len(res.Rules) != 1 || len(res.Warnings) != 0 {
+		t.Fatalf("rules = %+v, warnings = %+v", res.Rules, res.Warnings)
+	}
+	r := res.Rules[0]
+	if r.Type != "front_controller" || r.Script != "/index.php" || r.Query != "mod=$uri&$args" {
+		t.Fatalf("rule = %+v", r)
+	}
+	// One line, and a script with no query.
+	res = Convert(`location / { try_files $uri $uri/ /app.php; }`)
+	if len(res.Rules) != 1 || res.Rules[0].Script != "/app.php" || res.Rules[0].Query != "" {
+		t.Fatalf("one-line form: rules = %+v, warnings = %+v", res.Rules, res.Warnings)
+	}
+}
+
+func TestConvert_DefaultRootTryFilesIsANote(t *testing.T) {
+	res := Convert(`location / { try_files $uri $uri/ /index.php?$query_string; }`)
+	if len(res.Rules) != 0 || len(res.Warnings) != 0 || len(res.Notes) != 1 {
+		t.Fatalf("rules = %+v, warnings = %+v, notes = %v", res.Rules, res.Warnings, res.Notes)
+	}
+}
+
+func TestConvert_OtherRootLocationsAreSecurityWarnings(t *testing.T) {
+	for _, snippet := range []string{
+		`location / { proxy_pass http://127.0.0.1:8080; }`,
+		`location / { try_files $uri $uri/ /index.php?mod=$uri; deny all; }`,
+		`location / { try_files $uri /index.php?mod=$uri; }`,
+		`location / { try_files $uri $uri/ =404; }`,
+		`location / { try_files $uri $uri/ @app; }`,
+		`location / { try_files $uri $uri/ /index.php?a=$host; }`,
+		`location / { try_files $uri $uri/ "/index.php?a=1 b"; }`,
+		`location = / { try_files $uri $uri/ /index.php?mod=$uri; }`,
+	} {
+		res := Convert(snippet)
+		if len(res.Rules) != 0 {
+			t.Errorf("%s: imported %+v", snippet, res.Rules)
+		}
+		if len(res.Warnings) != 1 || !res.Warnings[0].Security {
+			t.Errorf("%s: warnings = %+v, want one security warning", snippet, res.Warnings)
+		}
+	}
+}

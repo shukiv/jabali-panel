@@ -67,7 +67,10 @@ export type NginxRule =
   // block from `extensions` (bare, letter/digit-only tokens) — the tenant never
   // writes the regex. deny_paths → `deny all;`, static_cache → `expires <dur>;`.
   | { type: "deny_paths"; extensions: string[] }
-  | { type: "static_cache"; extensions: string[]; duration: string };
+  | { type: "static_cache"; extensions: string[]; duration: string }
+  // GH #1999: the fallback of the panel's own `location /` on a PHP domain,
+  // rendered `try_files $uri $uri/ <script>?<query>;`. One per domain.
+  | { type: "front_controller"; script: string; query?: string };
 
 // Minimal shape — admin and user shells have slightly different Domain
 // records but this button only cares about these fields.
@@ -163,6 +166,10 @@ const compileRules = (rules: NginxRule[]): string => {
         }
         break;
       }
+      case "front_controller":
+        // Not a server-scope directive: it changes the fallback of the vhost's
+        // own `location /`, so the backend renders nothing here either.
+        break;
     }
   }
   return out.join("\n");
@@ -609,6 +616,60 @@ const renderStaticCacheBody = (
   </>
 );
 
+// GH #1999: the try_files fallback a front controller rule renders, as
+// nginxrules.FrontController / frontcontroller.Fallback (Go) build it.
+const frontControllerFallback = (rule: Extract<NginxRule, { type: "front_controller" }>): string =>
+  rule.query ? `${rule.script}?${rule.query}` : rule.script;
+
+const renderFrontControllerBody = (
+  rule: Extract<NginxRule, { type: "front_controller" }>,
+  onUpdate: (field: string, value: unknown) => void,
+) => (
+  <>
+    <Row gutter={16} style={{ marginBottom: 12 }}>
+      <Col span={12}>
+        <div style={{ marginBottom: 8 }}>
+          <Typography.Text>
+            PHP script <Typography.Text type="danger">*</Typography.Text>
+          </Typography.Text>
+        </div>
+        <Input
+          placeholder="/index.php"
+          value={rule.script}
+          onChange={(e) => onUpdate("script", e.target.value)}
+        />
+        <Typography.Text type="secondary" style={{ display: "block", marginTop: 4 }}>
+          A .php file, as a path from the site&apos;s root folder.
+        </Typography.Text>
+      </Col>
+      <Col span={12}>
+        <div style={{ marginBottom: 8 }}>
+          <Typography.Text>Query string</Typography.Text>
+        </div>
+        <Input
+          placeholder="$query_string"
+          value={rule.query ?? ""}
+          onChange={(e) => onUpdate("query", e.target.value)}
+        />
+        <Typography.Text type="secondary" style={{ display: "block", marginTop: 4 }}>
+          Can use $uri, $args, $query_string, $request_uri, $document_uri and $is_args.
+        </Typography.Text>
+      </Col>
+    </Row>
+    <div style={{ marginBottom: 8 }}>
+      <Typography.Text type="secondary">nginx line: </Typography.Text>
+      <Typography.Text code>{`try_files $uri $uri/ ${frontControllerFallback(rule)};`}</Typography.Text>
+    </div>
+    <Typography.Text type="secondary" style={{ display: "block" }}>
+      Files and folders that exist (CSS, JavaScript, images) are still served as they are. Any
+      other request runs this script. For example, with the query{" "}
+      <Typography.Text code>mod=$uri&amp;$args</Typography.Text>, /users/edit/123 runs{" "}
+      <Typography.Text code>/index.php?mod=/users/edit/123</Typography.Text>. Applies only when
+      the domain runs PHP.
+    </Typography.Text>
+  </>
+);
+
 // Sortable rule card
 interface SortableRuleCardProps {
   idx: number;
@@ -658,6 +719,7 @@ const SortableRuleCard = ({
       max_upload_size: "Max Upload Size",
       deny_paths: "Deny Paths",
       static_cache: "Static Cache",
+      front_controller: "Front Controller",
     };
     return labels[type];
   };
@@ -680,6 +742,8 @@ const SortableRuleCard = ({
         return `deny ${(rule.extensions || []).join(", ")}`;
       case "static_cache":
         return `${(rule.extensions || []).join(", ")} → ${rule.duration}`;
+      case "front_controller":
+        return `other requests → ${frontControllerFallback(rule)}`;
     }
   };
 
@@ -788,6 +852,11 @@ const SortableRuleCard = ({
             {rule.type === "static_cache" &&
               renderStaticCacheBody(
                 rule as Extract<NginxRule, { type: "static_cache" }>,
+                (field, value) => onUpdate(idx, field, value)
+              )}
+            {rule.type === "front_controller" &&
+              renderFrontControllerBody(
+                rule as Extract<NginxRule, { type: "front_controller" }>,
                 (field, value) => onUpdate(idx, field, value)
               )}
           </div>
@@ -922,6 +991,9 @@ const RuleBuilder = ({
       case "static_cache":
         newRule = { type: "static_cache", extensions: [], duration: "30d" };
         break;
+      case "front_controller":
+        newRule = { type: "front_controller", script: "/index.php", query: "$query_string" };
+        break;
     }
 
     const newIdx = rules.length;
@@ -957,8 +1029,13 @@ const RuleBuilder = ({
     { key: "max_upload_size", label: "Max Upload Size", icon: <PlusOutlined /> },
     { key: "deny_paths", label: "Deny Paths", icon: <PlusOutlined /> },
     { key: "static_cache", label: "Static Cache", icon: <PlusOutlined /> },
+    { key: "front_controller", label: "Front Controller", icon: <PlusOutlined /> },
   ].filter(
-    (it) => !allowedTypes || allowedTypes.includes(it.key as NginxRule["type"]),
+    (it) =>
+      (!allowedTypes || allowedTypes.includes(it.key as NginxRule["type"])) &&
+      // GH #1999: a vhost has one `location /`, so a domain has one front
+      // controller; edit the existing rule instead of adding a second.
+      !(it.key === "front_controller" && rules.some((r) => r.type === "front_controller")),
   );
 
   // One-line "what does this do" for the rule-type picker Modal.
@@ -971,6 +1048,7 @@ const RuleBuilder = ({
     max_upload_size: "Raise the maximum upload size (client_max_body_size).",
     deny_paths: "Deny access to files by extension.",
     static_cache: "Cache matching static files for a set duration.",
+    front_controller: "Send requests that match no file or folder to a PHP script (custom router).",
   };
 
   return (
@@ -1038,7 +1116,8 @@ const RuleBuilder = ({
       )}
 
       {/* Rule-type picker. Reuses the allowedTypes-filtered list, so the tenant
-          subset (rewrite / custom_header / deny_paths / static_cache) and the
+          subset (rewrite / custom_header / deny_paths / static_cache /
+          front_controller) and the
           admin full set both flow through here. Picking a type appends a blank
           rule and closes the Modal (the card then expands + scrolls into view).
           destroyOnHidden so each open starts clean. */}
@@ -1281,7 +1360,7 @@ const HtaccessImport = ({
 // entries via POST /domains/:id/nginx-import/preview (GH #1624). Sibling of
 // HtaccessImport for people migrating from an nginx-based panel. Only a narrow,
 // tenant-safe set is recognized (rewrite / add_header / deny + expires
-// locations); everything else is listed as a warning, never applied silently.
+// locations / a root try_files front controller); everything else is listed as a warning, never applied silently.
 const NginxImport = ({
   domainId,
   rules,
@@ -1326,7 +1405,11 @@ const NginxImport = ({
 
   const handleAdd = () => {
     if (!preview || preview.rules.length === 0) return;
-    onRulesChange([...rules, ...preview.rules]);
+    // GH #1999: a domain has one front controller, so an imported one replaces
+    // the existing rule rather than adding a second (which Save would refuse).
+    const importsFrontController = preview.rules.some((r) => r.type === "front_controller");
+    const kept = importsFrontController ? rules.filter((r) => r.type !== "front_controller") : rules;
+    onRulesChange([...kept, ...preview.rules]);
     feedback.message.success(
       `Added ${preview.rules.length} rule(s) to the Rule Builder: review them, then Save.`,
     );
@@ -1343,11 +1426,13 @@ const NginxImport = ({
       <Typography.Paragraph type="secondary" style={{ marginBottom: 8 }}>
         Paste an nginx <code>server</code>/<code>location</code> snippet to
         convert its rewrites, response headers, extension <code>deny</code>{" "}
-        blocks and extension <code>expires</code> caches into typed Rule Builder
-        entries. Anything that routes, proxies, or reads files (
-        <code>proxy_pass</code>, <code>root</code>, <code>alias</code>,{" "}
-        <code>return</code>, prefix <code>location</code> blocks) is listed below
-        and never applied — those stay admin-only.
+        blocks, extension <code>expires</code> caches and a{" "}
+        <code>location / {"{"} try_files $uri $uri/ /index.php?…; {"}"}</code>{" "}
+        front controller into typed Rule Builder entries. Anything else that
+        routes, proxies, or reads files (<code>proxy_pass</code>,{" "}
+        <code>root</code>, <code>alias</code>, <code>return</code>, other prefix{" "}
+        <code>location</code> blocks) is listed below and never applied — those
+        stay admin-only.
       </Typography.Paragraph>
       <Input.TextArea
         value={content}
@@ -1826,7 +1911,7 @@ export const TenantNginxRulesPanel = ({
       <RuleBuilder
         rules={rules}
         onRulesChange={setRules}
-        allowedTypes={["rewrite", "custom_header", "deny_paths", "static_cache"]}
+        allowedTypes={["rewrite", "custom_header", "deny_paths", "static_cache", "front_controller"]}
         toolbarExtra={
           <Tooltip title="Import from an nginx config">
             <Button

@@ -16,6 +16,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/frontcontroller"
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/kratosclient"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dnscompile"
@@ -2139,7 +2140,7 @@ func validatePageRedirects(prs models.PageRedirects) error {
 
 func isValidNginxRuleType(s string) bool {
 	switch s {
-	case "custom_header", "rewrite", "proxy_pass", "ip_access", "php_setting", "max_upload_size", "static_alias", "media_alias", "deny_paths", "static_cache":
+	case "custom_header", "rewrite", "proxy_pass", "ip_access", "php_setting", "max_upload_size", "static_alias", "media_alias", "deny_paths", "static_cache", "front_controller":
 		return true
 	}
 	return false
@@ -2162,6 +2163,7 @@ func validateNginxRules(rules models.NginxRules) error {
 	if len(rules) > maxNginxRules {
 		return fmt.Errorf("too many rules (max %d)", maxNginxRules)
 	}
+	frontControllers := 0
 	for i, r := range rules {
 		if !isValidNginxRuleType(r.Type) {
 			return fmt.Errorf("rule %d: unknown type %q", i, r.Type)
@@ -2269,9 +2271,22 @@ func validateNginxRules(rules models.NginxRules) error {
 			if !isNginxExpires(r.Duration) {
 				return fmt.Errorf("rule %d: static_cache duration must be an nginx expires value (e.g. \"30d\", \"1h\", \"max\", \"off\")", i)
 			}
+		case "front_controller":
+			// GH #1999: the fallback of the domain's own `location /`. The agent
+			// renders it as the last try_files argument, so the grammar is the
+			// injection boundary: one nginx token, a .php path from the docroot,
+			// and only the nginx variables frontcontroller.Variables lists. A
+			// vhost has one `location /`, so a domain has at most one.
+			frontControllers++
+			if frontControllers > 1 {
+				return fmt.Errorf("rule %d: a domain can have only one front_controller rule", i)
+			}
+			if err := frontcontroller.Validate(r.Script, r.Query); err != nil {
+				return fmt.Errorf("rule %d: %v", i, err)
+			}
 		}
 		// Forbid control characters everywhere to prevent newline injection into vhost
-		allText := r.Name + r.Value + r.Pattern + r.Replacement + r.Target + r.Path + r.Size + r.ReadTimeout + r.Duration + strings.Join(r.Extensions, "")
+		allText := r.Name + r.Value + r.Pattern + r.Replacement + r.Target + r.Path + r.Size + r.ReadTimeout + r.Duration + r.Script + r.Query + strings.Join(r.Extensions, "")
 		for _, c := range allText {
 			if c < 32 && c != '\t' {
 				return fmt.Errorf("rule %d: contains invalid control chars", i)
@@ -2525,6 +2540,12 @@ var tenantSafeNginxRuleTypes = map[string]struct{}{
 	//   - static_cache -> location ~* \.(…)$ { expires <dur>; }   (no add_header)
 	"deny_paths":   {},
 	"static_cache": {},
+	// GH #1999: the fallback of the domain's `location /`. Panel-rendered from a
+	// script path and a query in the frontcontroller grammar (one nginx token,
+	// allowlisted variables only). Existing files are still served first, and
+	// the script is a .php file in the tenant's own docroot that a visitor can
+	// already request directly, so it adds no reach.
+	"front_controller": {},
 }
 
 // tenantManagedResponseHeaders are response-header names a tenant custom_header
