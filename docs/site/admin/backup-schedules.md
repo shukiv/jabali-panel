@@ -24,7 +24,7 @@ When the panel or agent gives up on a restic command (a timeout, or the call is 
 
 ## Retention application
 
-Retention runs once a day, from `jabali-backup-retention.timer` at 04:30 (`jabali backup retention apply`), for every enabled schedule with a keep count, on each of its destinations. It is not part of a backup run.
+Retention runs once a day, from `jabali-backup-retention.timer` at 05:00 (`jabali backup retention apply`), for every enabled schedule with a keep count, on each of its destinations. It is not part of a backup run. It runs after the panel self-update (default 04:30), so a sweep always uses the build that update installed; if a self-update is still running at 05:00, the sweep waits for it to finish.
 
 Retention keeps or forgets **whole backups**. One backup is several restic snapshots: one per stage (home folder, databases, mail, … for an account; the panel database, TLS, OS users, … for the system backup) and a manifest that ties them together. The sweep:
 

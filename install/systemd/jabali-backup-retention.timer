@@ -3,9 +3,12 @@ Description=Daily restic forget+prune for Jabali backup repo
 Documentation=https://github.com/shukiv/jabali-panel/blob/main/docs/adr/0075-backup-restore-restic.md
 
 [Timer]
-# 04:30 host-local time. Off-peak; long enough after 03:00 maldet
-# scans + 04:00 quarantine purge to avoid I/O contention.
-OnCalendar=*-*-* 04:30:00
+# 05:00 host-local time. Off-peak; long enough after 03:00 maldet
+# scans + 04:00 quarantine purge to avoid I/O contention, and after the
+# panel self-update (default 04:30). At 04:30 the two fired together and
+# the sweep ran the build the update was about to replace, so a retention
+# fix only took effect a day after it was installed.
+OnCalendar=*-*-* 05:00:00
 # Fire missed runs after a host wakes from sleep / suspend.
 Persistent=true
 Unit=jabali-backup-retention.service

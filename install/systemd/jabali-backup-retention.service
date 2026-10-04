@@ -1,18 +1,22 @@
 [Unit]
 Description=Jabali backup retention sweep (M30 — restic forget + prune)
 Documentation=https://github.com/shukiv/jabali-panel/blob/main/docs/adr/0075-backup-restore-restic.md
-After=jabali-panel.service network-online.target mariadb.service
+After=jabali-panel.service network-online.target mariadb.service jabali-autoupdate.service
+# jabali-autoupdate.service: an admin can move the self-update to any time.
+# When a sweep is due while an update is running, this ordering makes it
+# wait for the update to finish instead of running against a half-swapped
+# install. It orders only; it never starts an update.
 # No Requires=jabali-panel.service. The CLI reads server_settings to pick
 # up keep-daily/weekly/monthly knobs but the panel may be transiently down
 # during boot; install.sh enables this timer in the install foundation
 # step before the panel unit lands. A failed run is tolerated — the timer
-# fires again at 04:30 the next day. `Restart=no` matches the M22 reaper.
+# fires again at 05:00 the next day. `Restart=no` matches the M22 reaper.
 #
 # mariadb.service is listed explicitly rather than relied on transitively
 # through jabali-panel.service. `jabali backup retention apply` opens its
 # own connection, so "the panel started" says nothing about whether the
 # socket is there yet. Without this the Persistent=true catch-up run — the
-# one that fires at boot after a host was off at 04:30 — loses the race
+# one that fires at boot after a host was off at 05:00 — loses the race
 # and dies with
 #
 #   open db: open mariadb: dial unix /var/run/mysqld/mysqld.sock:
@@ -45,7 +49,7 @@ Environment=RESTIC_CACHE_DIR=/var/lib/jabali-backups/.cache/restic
 
 # Restic prune walks every pack file in /var/lib/jabali-backups/repo/. On
 # a multi-GB repo this can hit several minutes of CPU + disk I/O; the
-# 04:30 schedule keeps it off-peak. ProtectHome=read-only because the
+# 05:00 schedule keeps it off-peak. ProtectHome=read-only because the
 # retention sweep never touches /home; it only purges restic packs.
 PrivateTmp=yes
 ProtectSystem=strict
