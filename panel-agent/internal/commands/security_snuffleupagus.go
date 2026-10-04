@@ -245,13 +245,22 @@ func snuffleupagusApplyHandler(ctx context.Context, raw json.RawMessage) (any, e
 	if r, ok := reload.(snuffleupagusReloadResponse); ok {
 		resp.Pools = r.Pools
 	}
-	if reloadErr != nil {
-		return resp, reloadErr
+	return resp, snuffleupagusApplyErr(reloadErr, regenErr)
+}
+
+// snuffleupagusApplyErr reports both failures of a rules apply. A pool whose
+// unit fails to reload is a standing condition on some boxes, so returning
+// only the reload error would hide every pool-copy rebuild failure behind it,
+// and a stale copy keeps the old mode for that pool.
+func snuffleupagusApplyErr(reloadErr, regenErr error) error {
+	switch {
+	case reloadErr != nil && regenErr != nil:
+		return fmt.Errorf("%w; %w", reloadErr, regenErr)
+	case reloadErr != nil:
+		return reloadErr
+	default:
+		return regenErr
 	}
-	if regenErr != nil {
-		return resp, regenErr
-	}
-	return resp, nil
 }
 
 func init() {

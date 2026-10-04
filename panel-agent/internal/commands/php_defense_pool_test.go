@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -277,10 +278,32 @@ func TestPHPDefensePoolWiringSourceContract(t *testing.T) {
 	if iRename < 0 || iRegen < iRename || iSPReload < iRegen {
 		t.Fatalf("rules apply wiring: rename=%d regenerate=%d reload=%d", iRename, iRegen, iSPReload)
 	}
+	if !strings.Contains(sp, "return resp, snuffleupagusApplyErr(reloadErr, regenErr)") {
+		t.Error("rules apply does not report both the reload and the pool-copy rebuild error")
+	}
 
 	for _, f := range []string{"php_pool_remove.go", "php_fpm_reap.go"} {
 		if !strings.Contains(read(f), "removePoolPHPDefense(slug)") {
 			t.Errorf("%s does not remove the pool's PHP Defense rules", f)
 		}
+	}
+}
+
+// A pool unit that fails to reload must not hide a pool-copy rebuild failure.
+func TestSnuffleupagusApplyErrReportsBoth(t *testing.T) {
+	reload := errors.New("1 of 16 PHP-FPM pool reload(s) failed")
+	regen := errors.New("PHP Defense rules not rebuilt for pool(s): alice")
+	if err := snuffleupagusApplyErr(nil, nil); err != nil {
+		t.Fatalf("no failure: %v", err)
+	}
+	if err := snuffleupagusApplyErr(reload, nil); err != reload {
+		t.Fatalf("reload only: %v", err)
+	}
+	if err := snuffleupagusApplyErr(nil, regen); err != regen {
+		t.Fatalf("regen only: %v", err)
+	}
+	err := snuffleupagusApplyErr(reload, regen)
+	if !errors.Is(err, reload) || !errors.Is(err, regen) || !strings.Contains(err.Error(), "alice") {
+		t.Fatalf("both: %v", err)
 	}
 }
