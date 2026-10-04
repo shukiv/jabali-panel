@@ -235,3 +235,9 @@ differently than the sketch. Kept here so the ADR and the code do not drift.
   - Trust: existing files are still served first, and the script is a `.php`
     file in the tenant's own docroot that a visitor can already request
     directly, so it adds no reach.
+  - Known interactions, left as is: a domain whose `location /` is replaced (a
+    root `proxy_pass` / reverse-proxy domain, or an admin raw `location /`)
+    ignores the rule, like `deny_paths`/`static_cache`. With the FastCGI
+    micro-cache on, a non-default query reaches `location = /index.php` as a
+    non-empty `$query_string`, so `$jabali_qs_kind = other` and routed pages
+    bypass the cache (fail-closed, documented for users).

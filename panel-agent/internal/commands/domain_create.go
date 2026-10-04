@@ -850,23 +850,23 @@ type vhostData struct {
 // never set PHPFallback, or got an invalid one, renders the default
 // "/index.php?$query_string".
 func (d vhostData) TryFilesFallback() string {
-	return sanitizePHPFallback(d.PHPFallback)
+	fallback, _ := sanitizePHPFallback(d.PHPFallback)
+	return fallback
 }
 
 // sanitizePHPFallback re-validates the panel-supplied front controller
 // fallback (GH #1999) at the agent's trust boundary: it renders unquoted as
 // the last try_files argument, so only a value in the frontcontroller grammar
 // (one nginx token, allowlisted variables) gets through. Anything else falls
-// back to the default rather than failing the whole vhost.
-func sanitizePHPFallback(fallback string) string {
+// back to the default rather than failing the whole vhost; the error says why.
+func sanitizePHPFallback(fallback string) (string, error) {
 	if fallback == "" {
-		return frontcontroller.Default
+		return frontcontroller.Default, nil
 	}
 	if _, _, err := frontcontroller.Parse(fallback); err != nil {
-		log.Printf("domain.create: ignoring invalid php_fallback: %v", err)
-		return frontcontroller.Default
+		return frontcontroller.Default, err
 	}
-	return fallback
+	return fallback, nil
 }
 
 // indexDirectiveFor maps the panel's index_priority enum to the concrete
@@ -1334,6 +1334,9 @@ func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redi
 		// 2026-06-04 on vpsjournal.com/yacht.vpsjournal.com.
 		RootOverridden: directivesOverrideRoot(customDirectives, ruleDirectives),
 		PHPFallback:    phpFallback,
+	}
+	if _, err := sanitizePHPFallback(phpFallback); err != nil {
+		log.Printf("domain.create %s: ignoring invalid php_fallback: %v", domain, err)
 	}
 
 	var vhostConfig bytes.Buffer
