@@ -3,7 +3,7 @@ Description=Weekly refresh of Stalwart spam-filter rules (Sun 03:15 host-local)
 Documentation=https://github.com/stalwartlabs/spam-filter
 
 [Timer]
-# Sunday 03:15 host-local. Off-peak; ~1h before the 04:30 backup retention
+# Sunday 03:15 host-local. Off-peak; ~1h45m before the 05:00 backup retention
 # sweep, ~15min after the 03:00 maldet scans. spam-filter rules change at
 # upstream's cadence (irregular, days-to-weeks); weekly is generous enough
 # that we're never more than 7 days stale on heuristic updates.

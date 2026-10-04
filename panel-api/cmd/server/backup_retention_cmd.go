@@ -1,5 +1,5 @@
 // `jabali backup retention apply` — fired by jabali-backup-retention.timer
-// daily at 04:30. Per ADR-0080 each backup writes directly to ONE
+// daily at 05:00. Per ADR-0080 each backup writes directly to ONE
 // destination, so retention has to walk every (schedule, destination)
 // pair and apply the schedule's keep policy to that destination's repo,
 // per whole backup job (backup_retention_jobs.go): the job's snapshots
@@ -104,7 +104,7 @@ Then a single ` + "`restic prune`" + ` per destination at the end. Schedules
 with all-NULL keep_* are skipped (operator hasn't picked a policy).
 Manual backups (ScheduleID NULL) are never pruned.
 
-Wired into systemd timer jabali-backup-retention.timer (daily 04:30)
+Wired into systemd timer jabali-backup-retention.timer (daily 05:00, after the default 04:30 panel self-update)
 by install_backup_foundation in install.sh.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx, cancel := context.WithTimeout(context.Background(), resticForgetTimeout)
@@ -492,7 +492,7 @@ func destEnv(d *models.BackupDestination) []string {
 			"WARNING: failed to read credentials env %s for dest %s (%s): %v\n"+
 				"  This usually means the CLI is running as a non-root user. The retention\n"+
 				"  timer (jabali-backup-retention.timer) runs as root by design — invoke\n"+
-				"  this command via sudo, or wait for the timer's daily 04:30 run.\n",
+				"  this command via sudo, or wait for the timer's daily 05:00 run.\n",
 			*d.CredentialsRef, d.ID, d.Name, err)
 		return nil
 	}

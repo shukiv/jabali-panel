@@ -6090,6 +6090,17 @@ ensure_maintenance_isolation() {
       "${REPO_DIR}/install/systemd/disk-maintenance" \
       /usr/local/libexec/jabali/disk-maintenance
   fi
+  # The backup retention timer moved from 04:30 to 05:00, after the default
+  # panel self-update, which it used to race. Only install_backup_foundation
+  # (fresh install) lays the timer down, so re-copy it here or an updated box
+  # keeps 04:30. Same gate: only a timer that already exists. The
+  # daemon-reload below makes the running timer pick up the new schedule.
+  if [[ -f /etc/systemd/system/jabali-backup-retention.timer \
+        && -f "${REPO_DIR}/install/systemd/jabali-backup-retention.timer" ]]; then
+    install -m 0644 -o root -g root \
+      "${REPO_DIR}/install/systemd/jabali-backup-retention.timer" \
+      /etc/systemd/system/jabali-backup-retention.timer
+  fi
   systemctl daemon-reload 2>/dev/null || true
 }
 
