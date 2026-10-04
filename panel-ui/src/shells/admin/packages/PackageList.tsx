@@ -15,6 +15,7 @@ import { EmptyWithCTA } from "../../../components/EmptyWithCTA";
 import { useDeleteMutation } from "../../../hooks/useQueries";
 import { useTableURL } from "../../../hooks/useTableURL";
 import { shortDateTime } from "../../../utils/datetime";
+import { disabledFunctionsSummary } from "../../../components/packages/phpDisabledFunctions";
 
 type Package = {
   id: string;
@@ -27,6 +28,7 @@ type Package = {
   ssh_enabled: boolean;
   cgi_enabled: boolean;
   php_exec_enabled: boolean;
+  php_disabled_functions: string | null; // GH #1701
   created_at: string;
   updated_at: string;
 };
@@ -179,9 +181,13 @@ export const PackageList = () => {
             title={t("packagelist.php_exec")}
             key="php_exec_enabled"
             sorter
-            render={(enabled: boolean) =>
-              enabled ? <Tag color="red">on</Tag> : <Tag>off</Tag>
-            }
+            // GH #1701: the package's disabled functions, not just the
+            // all-or-nothing flag, so a package that re-allows one function
+            // does not read as fully locked.
+            render={(enabled: boolean, record: Package) => {
+              const summary = disabledFunctionsSummary(record.php_disabled_functions, enabled);
+              return <Tag color={summary === "locked" ? undefined : "red"}>{summary}</Tag>;
+            }}
           />
           <Table.Column
             dataIndex="created_at"

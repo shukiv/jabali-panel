@@ -12,7 +12,7 @@
 //             background refetch must not clobber the operator's unsaved edits).
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Button, Card, Col, Divider, Form, Input, InputNumber, Row, Select, Spin, Switch, Typography } from "antd";
+import { Button, Card, Checkbox, Col, Divider, Form, Input, InputNumber, Row, Select, Spin, Switch, Typography } from "antd";
 import { CheckOutlined, CloseOutlined } from "@icons";
 
 import { apiClient } from "../../apiClient";
@@ -34,6 +34,12 @@ import {
   PHP_SETTING_DIRECTIVES,
   type PHPSettingsPolicyForm,
 } from "./phpSettingsPolicy";
+import {
+  PHP_DEFENSE_EXEC_FUNCTIONS,
+  PHP_FUNCTION_NAME,
+  PHP_LOCKDOWN_FUNCTIONS,
+  defaultDisabledFunctionsForm,
+} from "./phpDisabledFunctions";
 
 // GH #1701: the two levels a catalog directive takes.
 const PHP_POLICY_OPTIONS = [
@@ -356,20 +362,53 @@ export const PackageEditor = ({ title, initialValue, isLoading, submitting, onSu
           <Typography.Text>Webmail Enabled</Typography.Text>
         </div>
 
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 24 }}>
-          <Form.Item
-            name="php_exec_enabled"
-            valuePropName="checked"
-            tooltip={t("packageedit.security_re_enables_php_exec_proc_open_shell")}
-            noStyle
-          >
-            <Switch checkedChildren={<CheckOutlined />} unCheckedChildren={<CloseOutlined />} />
-          </Form.Item>
-          <Typography.Text>
-            Allow PHP exec functions{" "}
-            <Typography.Text type="warning">(proc_open / shell_exec — security risk)</Typography.Text>
-          </Typography.Text>
-        </div>
+        {/* GH #1701: the package's disabled PHP functions. Replaces the old
+            all-or-nothing "Allow PHP exec functions" switch; the backend still
+            reports php_exec_enabled, derived from this list. */}
+        <Typography.Title level={5} style={{ marginTop: 8 }}>
+          Disabled PHP functions
+        </Typography.Title>
+        <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
+          Functions this package&apos;s sites cannot call. By default every
+          command-execution function is disabled. Uncheck one only for plans whose
+          apps genuinely need to run commands:{" "}
+          <Typography.Text type="warning">allowing any of them is a security risk.</Typography.Text>{" "}
+          Allowing {PHP_DEFENSE_EXEC_FUNCTIONS.map((f, i) => (
+            <span key={f}>
+              {i > 0 ? ", " : ""}
+              <code>{f}</code>
+            </span>
+          ))}{" "}
+          also lifts PHP Defense&apos;s ban on it for these sites.
+        </Typography.Paragraph>
+        <Form.Item label="Command execution (checked = disabled)" name={["php_disabled_functions", "lockdown"]}>
+          <Checkbox.Group
+            aria-label="Disabled command-execution functions"
+            options={PHP_LOCKDOWN_FUNCTIONS.map((f) => ({ value: f, label: <code>{f}</code> }))}
+          />
+        </Form.Item>
+        <Form.Item
+          label="Also disable"
+          name={["php_disabled_functions", "extra"]}
+          extra="Any other PHP functions to disable for these sites, e.g. mail or curl_exec."
+          rules={[
+            {
+              validator: (_r, value: string[] | undefined) => {
+                const bad = (value ?? []).find((f) => !PHP_FUNCTION_NAME.test(f.trim().toLowerCase()));
+                return bad ? Promise.reject(new Error(`"${bad}" is not a PHP function name`)) : Promise.resolve();
+              },
+            },
+          ]}
+        >
+          <Select mode="tags" aria-label="Also disable" tokenSeparators={[",", " "]} placeholder="Function names" open={false} />
+        </Form.Item>
+        <Button
+          type="link"
+          style={{ paddingLeft: 0, marginBottom: 16 }}
+          onClick={() => form.setFieldValue("php_disabled_functions", defaultDisabledFunctionsForm())}
+        >
+          Reset disabled functions to the default
+        </Button>
 
         <Typography.Title level={5} style={{ marginTop: 8 }}>
           PHP-FPM Performance Policy

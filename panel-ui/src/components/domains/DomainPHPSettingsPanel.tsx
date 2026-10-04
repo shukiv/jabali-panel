@@ -43,6 +43,7 @@ import { isPHPEOL } from "../../utils/phpEol";
 import { IANA_TIMEZONES } from "../../data/timezones";
 import { LogStreamModal } from "../LogStreamModal";
 import { useDomainLogStreams } from "../logs/useDomainLogStreams";
+import { PHPEffectiveEnvironment } from "./PHPEffectiveEnvironment";
 
 type DomainPHPSettings = {
   php_pool_id?: string | null;
@@ -1005,6 +1006,10 @@ export function DomainPHPSettingsPanel({ domainId, onDirtyChange }: DomainPHPSet
                   element's scroll container, and it never scrolls (the window
                   does). */}
               {dirty ? <Affix offsetBottom={0}>{saveBar}</Affix> : saveBar}
+
+              {/* GH #1701: read-only — what this domain's PHP pool really runs
+                  with (disabled functions, PHP Defense bans, paths). */}
+              <PHPEffectiveEnvironment domainId={domainId} />
             </>
           )}
       </Spin>

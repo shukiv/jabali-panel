@@ -1,0 +1,251 @@
+package commands
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
+
+	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
+)
+
+// php.pool.effective (GH #1701) reports what one PHP pool really runs with,
+// for the read-only part of a domain's PHP Settings page: the disabled
+// functions, what PHP Defense blocks there, and include_path /
+// session.save_path. It reads the files the pool's master loads (its pool
+// conf, the FPM php.ini + conf.d + the pool's own scan dir, and the PHP Defense
+// rules file it is pointed at), so it shows the configuration in force, not
+// what the panel meant to write.
+
+type phpPoolEffectiveParams struct {
+	PHPVersion string `json:"php_version"`
+	Slug       string `json:"slug"`
+}
+
+// phpEffectiveFunction is one disabled function and where it is disabled:
+// "pool" (the pool's disable_functions, from its hosting package) or
+// "php.ini" (server-wide; a pool cannot enable it again).
+type phpEffectiveFunction struct {
+	Name   string `json:"name"`
+	Source string `json:"source"`
+}
+
+// phpDefenseFunction is one function PHP Defense bans for the pool:
+// "blocked" (enforce) or "logged" (simulation: the call still runs).
+type phpDefenseFunction struct {
+	Name  string `json:"name"`
+	State string `json:"state"`
+}
+
+type phpDefenseEffective struct {
+	// Active: the PHP Defense module is installed and loaded for this PHP
+	// version's FPM. When false nothing below applies.
+	Active bool `json:"active"`
+	// Mode of the rules the pool loads: enforce, simulation or off.
+	Mode string `json:"mode"`
+	// PoolRules: the pool loads its own copy (its package lifts some bans).
+	PoolRules bool                 `json:"pool_rules"`
+	Functions []phpDefenseFunction `json:"functions"`
+}
+
+// phpIniEffective is one ini value and where it comes from: "pool" (the pool
+// conf sets it, from a pool ini override) or "php.ini".
+type phpIniEffective struct {
+	Value  string `json:"value"`
+	Source string `json:"source"`
+}
+
+type phpPoolEffectiveResponse struct {
+	PHPVersion        string                 `json:"php_version"`
+	Slug              string                 `json:"slug"`
+	PoolFound         bool                   `json:"pool_found"`
+	DisabledFunctions []phpEffectiveFunction `json:"disabled_functions"`
+	PHPDefense        phpDefenseEffective    `json:"php_defense"`
+	IncludePath       phpIniEffective        `json:"include_path"`
+	SessionSavePath   phpIniEffective        `json:"session_save_path"`
+	// IniReadError is set when the php.ini read failed; the php.ini parts are
+	// then missing rather than guessed.
+	IniReadError string `json:"ini_read_error,omitempty"`
+}
+
+// snuffleupagusLibRoot holds the per-minor snuffleupagus.so builds. A var so
+// tests can point it at a temp dir.
+var snuffleupagusLibRoot = "/usr/lib/php/jabali-snuffleupagus"
+
+// phpEffectiveIniNames are the php.ini values the read reports.
+var phpEffectiveIniNames = []string{"disable_functions", "include_path", "session.save_path"}
+
+// phpEffectiveIniRead runs the version's PHP with the FPM php.ini, its conf.d
+// and the pool's own scan dir (the layering fpm-exec gives the master) and
+// returns the three ini values. A var so tests can stub it.
+var phpEffectiveIniRead = func(ctx context.Context, version, slug string) (map[string]string, error) {
+	namesJSON, _ := json.Marshal(phpEffectiveIniNames)
+	script := "$d=[];foreach(json_decode('" + string(namesJSON) + "',true) as $k){$d[$k]=(string)ini_get($k);}echo json_encode($d);"
+	cmd := execCommandContext(ctx, "php"+version, "-c", filepath.Join("/etc/php", version, "fpm", "php.ini"), "-r", script)
+	cmd.Env = append(cmd.Environ(), "PHP_INI_SCAN_DIR="+filepath.Join("/etc/php", version, "fpm", "conf.d")+":"+filepath.Join("/etc/php", version, "jabali-ext", slug))
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("php %s ini read failed: %v", version, err)
+	}
+	var vals map[string]string
+	if err := json.Unmarshal(out, &vals); err != nil {
+		return nil, fmt.Errorf("php ini output parse failed: %v", err)
+	}
+	return vals, nil
+}
+
+func phpPoolEffectiveHandler(ctx context.Context, raw json.RawMessage) (any, error) {
+	var p phpPoolEffectiveParams
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: fmt.Sprintf("failed to parse params: %v", err)}
+	}
+	if !phpVersionRE.MatchString(p.PHPVersion) {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "php_version must be <major>.<minor>"}
+	}
+	if !phpPoolSlugRegex.MatchString(p.Slug) || strings.Contains(p.Slug, "..") {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "invalid slug format"}
+	}
+	return readPHPPoolEffective(ctx, p.PHPVersion, p.Slug), nil
+}
+
+func readPHPPoolEffective(ctx context.Context, version, slug string) phpPoolEffectiveResponse {
+	resp := phpPoolEffectiveResponse{
+		PHPVersion:        version,
+		Slug:              slug,
+		DisabledFunctions: []phpEffectiveFunction{},
+		PHPDefense:        phpDefenseEffective{Functions: []phpDefenseFunction{}},
+	}
+
+	// The pool conf's own ini lines; php_admin_value beats php_value.
+	poolVals := map[string]string{}
+	if data, err := os.ReadFile(filepath.Join(phpEtcRoot, version, "fpm", "pool.d", "jabali-"+slug+".conf")); err == nil {
+		resp.PoolFound = true
+		admin := map[string]string{}
+		sc := bufio.NewScanner(bytes.NewReader(data))
+		for sc.Scan() {
+			m := poolTemplateIniRE.FindStringSubmatch(strings.TrimSpace(sc.Text()))
+			if m == nil {
+				continue
+			}
+			if m[1] == "_admin" {
+				admin[m[2]] = m[3]
+			} else {
+				poolVals[m[2]] = m[3]
+			}
+		}
+		for k, v := range admin {
+			poolVals[k] = v
+		}
+	}
+
+	ini, err := phpEffectiveIniRead(ctx, version, slug)
+	if err != nil {
+		resp.IniReadError = err.Error()
+		ini = map[string]string{}
+	}
+
+	// FPM adds the pool's disable_functions to php.ini's; a function php.ini
+	// disables stays disabled whatever the pool says.
+	seen := map[string]bool{}
+	for _, f := range splitFunctionList(ini["disable_functions"]) {
+		if !seen[f] {
+			seen[f] = true
+			resp.DisabledFunctions = append(resp.DisabledFunctions, phpEffectiveFunction{Name: f, Source: "php.ini"})
+		}
+	}
+	for _, f := range splitFunctionList(poolVals["disable_functions"]) {
+		if !seen[f] {
+			seen[f] = true
+			resp.DisabledFunctions = append(resp.DisabledFunctions, phpEffectiveFunction{Name: f, Source: "pool"})
+		}
+	}
+	sort.Slice(resp.DisabledFunctions, func(i, j int) bool { return resp.DisabledFunctions[i].Name < resp.DisabledFunctions[j].Name })
+
+	resp.IncludePath = effectiveIni(poolVals, ini, "include_path")
+	resp.SessionSavePath = effectiveIni(poolVals, ini, "session.save_path")
+	resp.PHPDefense = readPoolPHPDefense(version, slug)
+	return resp
+}
+
+func effectiveIni(pool, ini map[string]string, name string) phpIniEffective {
+	if v, ok := pool[name]; ok {
+		return phpIniEffective{Value: strings.Trim(v, `"`), Source: "pool"}
+	}
+	return phpIniEffective{Value: ini[name], Source: "php.ini"}
+}
+
+// splitFunctionList splits a disable_functions value (commas, optional
+// spaces) into lowercase names.
+func splitFunctionList(v string) []string {
+	var out []string
+	for _, f := range strings.Split(strings.Trim(v, `"`), ",") {
+		if f = strings.ToLower(strings.TrimSpace(f)); f != "" {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+var phpDefenseModeRE = regexp.MustCompile(`(?m)^# mode=(off|simulation|enforce)\b`)
+
+// readPoolPHPDefense reports the PHP Defense bans of the rules file the pool's
+// master loads: its own copy when the pool's scan dir points at one, else the
+// server-wide active.rules.
+func readPoolPHPDefense(version, slug string) phpDefenseEffective {
+	out := phpDefenseEffective{Functions: []phpDefenseFunction{}}
+	if _, err := os.Stat(filepath.Join(snuffleupagusLibRoot, version, "snuffleupagus.so")); err != nil {
+		return out
+	}
+	if _, err := os.Stat(filepath.Join(phpEtcRoot, version, "fpm", "conf.d", "30-jabali-snuffleupagus.ini")); err != nil {
+		return out
+	}
+	out.Active = true
+
+	rulesPath := phpDefenseActiveRulesPath
+	if ini, err := os.ReadFile(phpDefensePoolIniPath(version, slug)); err == nil {
+		for _, line := range strings.Split(string(ini), "\n") {
+			v, ok := strings.CutPrefix(strings.TrimSpace(line), "sp.configuration_file=")
+			// Only follow a pointer into the agent's own pool-copy dir.
+			if ok && filepath.Dir(v) == filepath.Clean(phpDefensePoolRulesDir) {
+				rulesPath = v
+				out.PoolRules = true
+			}
+		}
+	}
+	rules, err := os.ReadFile(rulesPath)
+	if err != nil {
+		out.Active = false
+		return out
+	}
+	switch m := phpDefenseModeRE.FindSubmatch(rules); {
+	case m != nil:
+		out.Mode = string(m[1])
+	case bytes.Contains(rules, []byte(".simulation();")):
+		out.Mode = "simulation"
+	default:
+		out.Mode = "enforce"
+	}
+	for _, line := range strings.Split(string(rules), "\n") {
+		m := phpDefenseDropLineRE.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		state := "blocked"
+		if strings.Contains(line, ".simulation()") {
+			state = "logged"
+		}
+		out.Functions = append(out.Functions, phpDefenseFunction{Name: m[1], State: state})
+	}
+	sort.Slice(out.Functions, func(i, j int) bool { return out.Functions[i].Name < out.Functions[j].Name })
+	return out
+}
+
+func init() {
+	Default.Register("php.pool.effective", phpPoolEffectiveHandler)
+}
