@@ -125,6 +125,14 @@ badge** on any domain that differs from the account default:
   the per-user SFTP jail mounts. PHP's own `disk_free_space()`,
   `disk_total_space()`, `sys_getloadavg()` and `php_uname()` work under the
   enforced profile.
+  While the profile is in complain mode (it only logs) or not loaded, those
+  functions show **Can start any program** instead: they can run anything the
+  site's user can, and PHP Defense lifts its exec ban for packages that allow
+  them, so nothing else limits them. The agent reports `exec_confinement`
+  (`enforce`, `complain`, `none` for AppArmor off or the profile not loaded,
+  `unknown` when `aa-status` exits 4/42 or cannot run); `exec_confined` stays
+  true exactly for `enforce`. The package editor reads the same mode from the
+  admin AppArmor status and warns when a package allows an exec function.
   `include_path` and `session.save_path` are not per-domain settings either: an
   admin value for them locks `ini_set()` on the shared worker for every domain
   on the pool. `mail.force_extra_parameters` is not offered: Jabali's mail shim

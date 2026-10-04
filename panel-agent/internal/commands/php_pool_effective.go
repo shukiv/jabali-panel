@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -90,39 +91,60 @@ type phpPoolEffectiveResponse struct {
 	// even where the hosting package allows the function. False when the
 	// profile is in complain mode, not loaded, or AppArmor is off.
 	ExecConfined bool `json:"exec_confined"`
+	// ExecConfinement says what those functions can start on this server,
+	// from the same profile:
+	//   "enforce"  only the shell and cat (ExecConfined)
+	//   "complain" any program: the profile only logs (the soak before enforce)
+	//   "none"     any program: AppArmor is off or the profile is not loaded
+	//   "unknown"  aa-status could not be read
+	ExecConfinement string `json:"exec_confinement"`
 }
 
 // fpmAppArmorProfile is the AppArmor profile the per-user PHP-FPM masters
 // run under (install/apparmor/usr.local.libexec.jabali.fpm-exec).
 const fpmAppArmorProfile = "jabali-fpm-app"
 
-// fpmAppArmorMode returns the mode fpmAppArmorProfile is loaded in
-// ("enforce", "complain", ...), or "" when AppArmor or the profile is not
-// loaded or aa-status could not be read. A var so tests can stub it.
-var fpmAppArmorMode = func(ctx context.Context) string {
+// fpmExecConfinement returns the ExecConfinement value for this server. A var
+// so tests can stub it.
+var fpmExecConfinement = func(ctx context.Context) string {
 	out, err := execCommandContext(ctx, "aa-status", "--json").Output()
-	if err != nil {
-		return ""
-	}
-	return aaStatusProfileMode(out, fpmAppArmorProfile)
+	return execConfinementFromAAStatus(out, err)
 }
 
-// aaStatusProfileMode reads one profile's mode from `aa-status --json`
-// output ({"profiles": {"<name>": "enforce|complain|..."}}).
-func aaStatusProfileMode(aaStatusJSON []byte, profile string) string {
+// execConfinementFromAAStatus classifies `aa-status --json` output
+// ({"profiles": {"<name>": "enforce|complain|..."}}) and its exit status.
+// aa-status(8): 1 AppArmor is not enabled, 2 no policy is loaded, 3 no
+// control files under /sys/kernel/security, all of which leave PHP
+// unconfined; 4 (no privilege), 42 (internal error) or a failure to run it
+// say nothing about the profile.
+func execConfinementFromAAStatus(out []byte, err error) string {
+	if err != nil {
+		var exit interface{ ExitCode() int }
+		if errors.As(err, &exit) {
+			switch exit.ExitCode() {
+			case 1, 2, 3:
+				return "none"
+			}
+		}
+		return "unknown"
+	}
 	var raw struct {
 		Profiles map[string]string `json:"profiles"`
 	}
-	if json.Unmarshal(aaStatusJSON, &raw) != nil {
-		return ""
+	if json.Unmarshal(out, &raw) != nil {
+		return "unknown"
 	}
-	return raw.Profiles[profile]
-}
-
-// appArmorModeConfines reports whether a profile mode blocks what the
-// profile does not allow. complain only logs it.
-func appArmorModeConfines(mode string) bool {
-	return mode == "enforce" || mode == "kill"
+	// Exact key: complain-mode learning children show up as
+	// "jabali-fpm-app//null-/usr/bin/<prog>" and are not the profile.
+	switch raw.Profiles[fpmAppArmorProfile] {
+	case "enforce", "kill":
+		return "enforce"
+	case "complain":
+		return "complain"
+	case "", "unconfined":
+		return "none"
+	}
+	return "unknown"
 }
 
 // snuffleupagusLibRoot holds the per-minor snuffleupagus.so builds. A var so
@@ -349,7 +371,8 @@ func readPHPPoolEffective(ctx context.Context, version, slug string) phpPoolEffe
 	default:
 		resp.UnavailableFunctions = unavailableInFPM(check, exts, modules, iniDisabled)
 	}
-	resp.ExecConfined = appArmorModeConfines(fpmAppArmorMode(ctx))
+	resp.ExecConfinement = fpmExecConfinement(ctx)
+	resp.ExecConfined = resp.ExecConfinement == "enforce"
 	return resp
 }
 

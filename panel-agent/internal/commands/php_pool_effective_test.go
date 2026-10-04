@@ -16,12 +16,12 @@ import (
 func setupEffectiveFixture(t *testing.T) {
 	t.Helper()
 	root := usePHPDefenseTempPaths(t)
-	oldLib, oldRead, oldMods, oldExts, oldAA := snuffleupagusLibRoot, phpEffectiveIniRead, phpFPMModules, phpFunctionExtensions, fpmAppArmorMode
+	oldLib, oldRead, oldMods, oldExts, oldAA := snuffleupagusLibRoot, phpEffectiveIniRead, phpFPMModules, phpFunctionExtensions, fpmExecConfinement
 	snuffleupagusLibRoot = filepath.Join(root, "lib")
 	t.Cleanup(func() {
-		snuffleupagusLibRoot, phpEffectiveIniRead, phpFPMModules, phpFunctionExtensions, fpmAppArmorMode = oldLib, oldRead, oldMods, oldExts, oldAA
+		snuffleupagusLibRoot, phpEffectiveIniRead, phpFPMModules, phpFunctionExtensions, fpmExecConfinement = oldLib, oldRead, oldMods, oldExts, oldAA
 	})
-	fpmAppArmorMode = func(context.Context) string { return "complain" }
+	fpmExecConfinement = func(context.Context) string { return "complain" }
 	// A Debian-like PHP-FPM: no pcntl (the CLI has it), its own cgi-fcgi.
 	phpFPMModules = func(context.Context, string, string) (map[string]bool, error) {
 		return map[string]bool{"core": true, "standard": true, "cgi-fcgi": true, "posix": true}, nil
@@ -244,32 +244,53 @@ func TestReadPHPPoolEffectiveAvailabilityError(t *testing.T) {
 	}
 }
 
-// GH #2001: under an enforced jabali-fpm-app profile, PHP can start only the
-// shell and cat, so the read says so; complain mode, no profile or no
-// AppArmor leave exec unconfined.
-func TestReadPHPPoolEffective_ExecConfined(t *testing.T) {
+// GH #2001: the read says what PHP's program-starting functions can start:
+// only the shell and cat under an enforced jabali-fpm-app profile, anything
+// otherwise. exec_confined stays true exactly for enforce.
+func TestReadPHPPoolEffective_ExecConfinement(t *testing.T) {
 	setupEffectiveFixture(t)
-	for mode, want := range map[string]bool{"enforce": true, "kill": true, "complain": false, "": false} {
-		fpmAppArmorMode = func(context.Context) string { return mode }
-		if got := readPHPPoolEffective(context.Background(), "8.4", "alice").ExecConfined; got != want {
-			t.Errorf("mode %q: exec_confined = %v, want %v", mode, got, want)
+	for _, c := range []string{"enforce", "complain", "none", "unknown"} {
+		fpmExecConfinement = func(context.Context) string { return c }
+		got := readPHPPoolEffective(context.Background(), "8.4", "alice")
+		if got.ExecConfinement != c || got.ExecConfined != (c == "enforce") {
+			t.Errorf("%s: exec_confinement = %q, exec_confined = %v", c, got.ExecConfinement, got.ExecConfined)
 		}
 	}
 }
 
-func TestAAStatusProfileMode(t *testing.T) {
-	out := []byte(`{"version":"2","profiles":{"jabali-fpm-app":"enforce","jabali-fpm-app//null-/usr/bin/id":"complain","jabali-sendmail":"enforce"},"processes":{}}`)
-	if got := aaStatusProfileMode(out, fpmAppArmorProfile); got != "enforce" {
-		t.Errorf("mode = %q, want enforce", got)
+type fakeExitError int
+
+func (e fakeExitError) Error() string { return "exit status" }
+func (e fakeExitError) ExitCode() int { return int(e) }
+
+func TestExecConfinementFromAAStatus(t *testing.T) {
+	status := func(profiles string) []byte {
+		return []byte(`{"version":"2","profiles":{` + profiles + `},"processes":{}}`)
 	}
-	if got := aaStatusProfileMode([]byte(`{"profiles":{}}`), fpmAppArmorProfile); got != "" {
-		t.Errorf("absent profile: mode = %q", got)
-	}
-	// A complain-mode learning child or a look-alike name is not the profile.
-	if got := aaStatusProfileMode([]byte(`{"profiles":{"jabali-fpm-app//null-/usr/bin/df":"enforce","jabali-fpm-app-x":"enforce"}}`), fpmAppArmorProfile); got != "" {
-		t.Errorf("child or look-alike only: mode = %q, want \"\"", got)
-	}
-	if got := aaStatusProfileMode([]byte("aa-status: not json"), fpmAppArmorProfile); got != "" {
-		t.Errorf("bad output: mode = %q", got)
+	for _, c := range []struct {
+		name string
+		out  []byte
+		err  error
+		want string
+	}{
+		{"enforced", status(`"jabali-fpm-app":"enforce","jabali-sendmail":"enforce"`), nil, "enforce"},
+		{"kill mode", status(`"jabali-fpm-app":"kill"`), nil, "enforce"},
+		{"complain", status(`"jabali-fpm-app":"complain"`), nil, "complain"},
+		// Learning children and look-alikes are not the profile.
+		{"child or look-alike only", status(`"jabali-fpm-app//null-/usr/bin/df":"enforce","jabali-fpm-app-x":"enforce"`), nil, "none"},
+		{"profile not loaded", status(`"jabali-agent":"enforce"`), nil, "none"},
+		{"unconfined flag", status(`"jabali-fpm-app":"unconfined"`), nil, "none"},
+		{"AppArmor not enabled", nil, fakeExitError(1), "none"},
+		{"no policy loaded", nil, fakeExitError(2), "none"},
+		{"no control files", nil, fakeExitError(3), "none"},
+		{"no privilege", nil, fakeExitError(4), "unknown"},
+		{"internal error", nil, fakeExitError(42), "unknown"},
+		{"aa-status missing", nil, errors.New("exec: \"aa-status\": executable file not found"), "unknown"},
+		{"not json", []byte("aa-status: oops"), nil, "unknown"},
+		{"new mode", status(`"jabali-fpm-app":"prompt"`), nil, "unknown"},
+	} {
+		if got := execConfinementFromAAStatus(c.out, c.err); got != c.want {
+			t.Errorf("%s: got %q, want %q", c.name, got, c.want)
+		}
 	}
 }

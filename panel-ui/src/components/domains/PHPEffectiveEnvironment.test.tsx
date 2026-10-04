@@ -91,6 +91,7 @@ describe("PHPEffectiveEnvironment", () => {
         session_save_path: { value: "", source: "php.ini" },
         unavailable_functions: [],
         exec_confined: true,
+        exec_confinement: "enforce",
       },
     });
     renderIt();
@@ -103,11 +104,36 @@ describe("PHPEffectiveEnvironment", () => {
     expect(screen.getByText(/Commands\s+such as df, ls, grep or id fail/)).toBeTruthy();
   });
 
-  it("GH #2001: no confinement note without an enforced profile", async () => {
+  it("GH #2001: no confinement tag when the agent does not say", async () => {
     renderIt();
     fireEvent.click(screen.getByText("Disabled functions and paths"));
     await screen.findByText("shell_exec");
     expect(screen.queryByText("Starts only the shell and cat")).toBeNull();
+    expect(screen.queryByText("Can start any program")).toBeNull();
+  });
+
+  it("GH #2001: says program functions can start anything when the profile only logs", async () => {
+    get.mockResolvedValue({
+      data: {
+        php_version: "8.4",
+        pool_found: true,
+        disabled_functions: [{ name: "exec", source: "pool" }],
+        php_defense: { active: false, mode: "", pool_rules: false, functions: [] },
+        include_path: { value: "", source: "php.ini" },
+        session_save_path: { value: "", source: "php.ini" },
+        unavailable_functions: [],
+        exec_confined: false,
+        exec_confinement: "complain",
+      },
+    });
+    renderIt();
+    fireEvent.click(screen.getByText("Disabled functions and paths"));
+    const shellRow = (await screen.findByText("shell_exec")).closest("tr") as HTMLElement;
+    expect(shellRow.textContent).toContain("Can start any program");
+    expect(shellRow.textContent).not.toContain("Starts only the shell and cat");
+    expect((screen.getByText("exec").closest("tr") as HTMLElement).textContent).not.toContain("Can start any program");
+    expect(screen.getByText(/is in complain mode, so it only logs/)).toBeTruthy();
+    expect(screen.getByText(/the same as shell access/)).toBeTruthy();
   });
 
   it("GH #1701: says when the build check could not run", async () => {

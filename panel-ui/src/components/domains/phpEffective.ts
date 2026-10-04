@@ -1,6 +1,6 @@
 // What a domain's PHP pool really runs with (GH #1701): the shape of GET
 // /domains/:id/php-settings/effective, and the function table built from it.
-import { PHP_LOCKDOWN_FUNCTIONS } from "../packages/phpDisabledFunctions";
+import { PHP_DEFENSE_EXEC_FUNCTIONS, PHP_LOCKDOWN_FUNCTIONS } from "../packages/phpDisabledFunctions";
 
 export type EffectiveFunction = { name: string; source: "pool" | "php.ini" };
 export type DefenseFunction = { name: string; state: "blocked" | "logged" };
@@ -27,19 +27,26 @@ export type PHPEffective = {
   // start programs can start only the shell and cat. Optional: an older agent
   // omits it.
   exec_confined?: boolean;
+  // GH #2001: what those functions can start on this server. "enforce": only
+  // the shell and cat; "complain" (the profile only logs) or "none" (not
+  // loaded, or AppArmor off): any program; "unknown": could not be read.
+  // Optional: older agents omit it.
+  exec_confinement?: ExecConfinement;
 };
 
-// The functions that start another program. Under an enforced PHP-FPM
-// AppArmor profile they can start only the shell and cat (GH #2001).
-export const PHP_PROGRAM_FUNCTIONS: ReadonlySet<string> = new Set([
-  "exec",
-  "passthru",
-  "shell_exec",
-  "system",
-  "proc_open",
-  "popen",
-  "pcntl_exec",
-]);
+export type ExecConfinement = "enforce" | "complain" | "none" | "unknown";
+
+// The server's exec confinement, falling back to exec_confined for an agent
+// that predates exec_confinement (it could only say "enforced").
+export function execConfinement(e: PHPEffective): ExecConfinement {
+  if (e.exec_confinement) return e.exec_confinement;
+  return e.exec_confined ? "enforce" : "unknown";
+}
+
+// The functions that start another program: the ones PHP Defense bans. Under
+// an enforced PHP-FPM AppArmor profile they can start only the shell and cat
+// (GH #2001).
+export const PHP_PROGRAM_FUNCTIONS: ReadonlySet<string> = new Set(PHP_DEFENSE_EXEC_FUNCTIONS);
 
 export type FunctionRow = {
   name: string;
@@ -50,9 +57,10 @@ export type FunctionRow = {
     | "logged_defense"
     | "allowed"
     | "allowed_unavailable";
-  // GH #2001: an allowed function that starts programs, on a server whose
-  // PHP-FPM AppArmor profile lets it start only the shell and cat.
-  confined?: boolean;
+  // GH #2001: for an allowed function that starts programs, what it can
+  // start: "confined" (only the shell and cat, the PHP-FPM AppArmor profile is
+  // enforced) or "unconfined" (any program, the profile is not enforcing).
+  exec?: "confined" | "unconfined";
 };
 
 // One row per function worth showing: the command-execution functions (the
@@ -63,8 +71,15 @@ export type FunctionRow = {
 // allowed-but-logged) function: disabled and blocked are permission states
 // and keep their status. Once a PHP build provides it, the same package shows
 // it as allowed. GH #2001: an allowed function that starts programs is marked
-// confined when the PHP-FPM AppArmor profile is enforced; that qualifies the
-// status rather than replacing it.
+// with what it can start under the PHP-FPM AppArmor profile; that qualifies
+// the status rather than replacing it.
+const execTag: Record<ExecConfinement, FunctionRow["exec"]> = {
+  enforce: "confined",
+  complain: "unconfined",
+  none: "unconfined",
+  unknown: undefined,
+};
+
 export function functionRows(e: PHPEffective): FunctionRow[] {
   const unavailable = new Set(e.unavailable_functions ?? []);
   const disabled = new Map(e.disabled_functions.map((f) => [f.name, f.source]));
@@ -81,10 +96,10 @@ export function functionRows(e: PHPEffective): FunctionRow[] {
     const d = defense.get(name);
     if (d === "blocked") return { name, status: "blocked_defense" };
     if (unavailable.has(name)) return { name, status: "allowed_unavailable" };
-    // GH #2001: callable, but under an enforced AppArmor profile a program
-    // function can start only the shell and cat.
-    const confined = e.exec_confined === true && PHP_PROGRAM_FUNCTIONS.has(name);
     const status = d === "logged" ? "logged_defense" : "allowed";
-    return confined ? { name, status, confined } : { name, status };
+    // GH #2001: callable, so what it can start depends on the AppArmor
+    // profile: only the shell and cat when enforced, anything when not.
+    const exec = PHP_PROGRAM_FUNCTIONS.has(name) ? execTag[execConfinement(e)] : undefined;
+    return exec ? { name, status, exec } : { name, status };
   });
 }

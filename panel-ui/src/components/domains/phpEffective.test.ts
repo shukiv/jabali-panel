@@ -83,21 +83,34 @@ describe("functionRows", () => {
     const e: PHPEffective = {
       ...base,
       exec_confined: true,
+      exec_confinement: "enforce",
       disabled_functions: [{ name: "passthru", source: "pool" }],
       php_defense: { ...base.php_defense, mode: "simulation", functions: [{ name: "system", state: "logged" }] },
       unavailable_functions: ["pcntl_exec"],
     };
     const row = (name: string) => functionRows(e).find((r) => r.name === name);
-    expect(row("shell_exec")).toEqual({ name: "shell_exec", status: "allowed", confined: true });
+    expect(row("shell_exec")).toEqual({ name: "shell_exec", status: "allowed", exec: "confined" });
     // The qualifier keeps the status it qualifies.
-    expect(row("system")).toEqual({ name: "system", status: "logged_defense", confined: true });
+    expect(row("system")).toEqual({ name: "system", status: "logged_defense", exec: "confined" });
     // Disabled or missing functions are not callable, so nothing to qualify.
-    expect(row("passthru")?.confined).toBeUndefined();
-    expect(row("pcntl_exec")?.confined).toBeUndefined();
-    // Functions that start no program are never confined.
-    expect(row("proc_nice")?.confined).toBeUndefined();
-    // Complain mode, or an older agent, leaves exec unconfined.
-    expect(functionRows({ ...e, exec_confined: false }).some((r) => r.confined)).toBe(false);
-    expect(functionRows(base).some((r) => r.confined)).toBe(false);
+    expect(row("passthru")?.exec).toBeUndefined();
+    expect(row("pcntl_exec")?.exec).toBeUndefined();
+    // Functions that start no program are never qualified.
+    expect(row("proc_nice")?.exec).toBeUndefined();
+    // An agent from before exec_confinement still says enforced.
+    const { exec_confinement: _omit, ...older } = e;
+    expect(functionRows(older).find((r) => r.name === "shell_exec")?.exec).toBe("confined");
+  });
+
+  it("GH #2001: complain mode or no profile marks allowed program functions unconfined", () => {
+    for (const c of ["complain", "none"] as const) {
+      const rows = functionRows({ ...base, exec_confinement: c });
+      expect(rows.find((r) => r.name === "shell_exec")?.exec).toBe("unconfined");
+      expect(rows.find((r) => r.name === "proc_nice")?.exec).toBeUndefined();
+    }
+    // Unknown, or an older agent that sends nothing, claims neither.
+    expect(functionRows({ ...base, exec_confinement: "unknown" }).some((r) => r.exec)).toBe(false);
+    expect(functionRows(base).some((r) => r.exec)).toBe(false);
+    expect(functionRows({ ...base, exec_confined: false }).some((r) => r.exec)).toBe(false);
   });
 });

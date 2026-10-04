@@ -133,10 +133,10 @@ func TestPHPSettingsEffective_PassesExecConfined(t *testing.T) {
 	ag := &effectiveAgent{reply: `{"php_version":"8.4","slug":"u1-php8.4","pool_found":true,
 		"disabled_functions":[],"php_defense":{"active":false,"mode":"","pool_rules":false,"functions":[]},
 		"include_path":{"value":"","source":"php.ini"},"session_save_path":{"value":"","source":"php.ini"},
-		"unavailable_functions":[],"exec_confined":true}`}
+		"unavailable_functions":[],"exec_confined":true,"exec_confinement":"enforce"}`}
 	w := getEffective(newEffectiveRouter(t, "u1", false, ag))
-	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"exec_confined":true`) {
-		t.Fatalf("want 200 with exec_confined true, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"exec_confined":true`) || !strings.Contains(w.Body.String(), `"exec_confinement":"enforce"`) {
+		t.Fatalf("want 200 with exec_confined true and exec_confinement enforce, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
