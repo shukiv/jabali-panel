@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"strings"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/frontcontroller"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 )
 
@@ -184,9 +185,38 @@ func Compile(d *models.Domain) string {
 						"        expires %s;\n"+
 						"    }\n", alt, r.Duration)
 			}
+
+		case "front_controller":
+			// GH #1999: not a server-scope directive. It changes the fallback of
+			// the vhost template's own `location /`, so it travels to the agent
+			// as its own param (FrontController below). Rendering a second
+			// `location /` here would make the agent drop its PHP locations
+			// (RootOverridden).
 		}
 	}
 	return b.String()
+}
+
+// FrontController returns the try_files fallback of the domain's front
+// controller rule (GH #1999), e.g. "/index.php?mod=$uri&$args", or "" when the
+// domain has none, so the agent keeps its default "/index.php?$query_string".
+// A rule that fails the frontcontroller grammar is skipped like any other
+// unrenderable rule: the API validates on save, and the agent validates the
+// fallback again before it reaches the vhost.
+func FrontController(d *models.Domain) string {
+	if d == nil {
+		return ""
+	}
+	for _, r := range d.NginxRules {
+		if r.Type != "front_controller" {
+			continue
+		}
+		if frontcontroller.Validate(r.Script, r.Query) != nil {
+			return ""
+		}
+		return frontcontroller.Fallback(r.Script, r.Query)
+	}
+	return ""
 }
 
 // reverseProxyRules returns the domain's persisted NginxRules with the

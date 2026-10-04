@@ -17,6 +17,7 @@ import (
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/filesafe"
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/frontcontroller"
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/phpenv"
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/skelpath"
 )
@@ -35,7 +36,13 @@ type domainCreateParams struct {
 	CustomDirectives   string `json:"custom_directives"`
 	RedirectDirectives string `json:"redirect_directives"`
 	RuleDirectives     string `json:"rule_directives"`
-	IndexPriority      string `json:"index_priority"`
+	// PHPFallback (GH #1999) is the try_files fallback of the default
+	// `location /` on a PHP domain, from the domain's front_controller rule,
+	// e.g. "/index.php?mod=$uri&$args". Empty (or invalid, after the agent
+	// re-validates it) renders the default "/index.php?$query_string", so the
+	// vhost stays byte-identical.
+	PHPFallback   string `json:"php_fallback,omitempty"`
+	IndexPriority string `json:"index_priority"`
 	// IsEnabled controls whether the vhost serves the tenant's docroot
 	// (true) or a branded "site disabled" placeholder (false). Pointer
 	// so omitted fields default to true (backwards compat).
@@ -261,7 +268,7 @@ const vhostTemplate = `{{define "ownershipgate"}}{{ if .OwnershipGate }}    # GH
 {{ if not .RootOverridden }}
     location / {
 {{ if .HasPHP }}
-        try_files $uri $uri/ /index.php?$query_string;
+        try_files $uri $uri/ {{.TryFilesFallback}};
 {{ else }}
         try_files $uri $uri/ =404;
 {{ end }}
@@ -833,6 +840,33 @@ type vhostData struct {
 	// "reverse proxy domain to upstream X" without hand-rolling a
 	// /etc/nginx/conf.d/* override that lives outside the reconciler.
 	RootOverridden bool
+	// PHPFallback is the panel-supplied front controller fallback (GH #1999),
+	// unvalidated. The template renders it through TryFilesFallback only.
+	PHPFallback string
+}
+
+// TryFilesFallback is the last try_files argument of the default `location /`
+// on a PHP domain (GH #1999). It validates at render time, so a vhostData that
+// never set PHPFallback, or got an invalid one, renders the default
+// "/index.php?$query_string".
+func (d vhostData) TryFilesFallback() string {
+	fallback, _ := sanitizePHPFallback(d.PHPFallback)
+	return fallback
+}
+
+// sanitizePHPFallback re-validates the panel-supplied front controller
+// fallback (GH #1999) at the agent's trust boundary: it renders unquoted as
+// the last try_files argument, so only a value in the frontcontroller grammar
+// (one nginx token, allowlisted variables) gets through. Anything else falls
+// back to the default rather than failing the whole vhost; the error says why.
+func sanitizePHPFallback(fallback string) (string, error) {
+	if fallback == "" {
+		return frontcontroller.Default, nil
+	}
+	if _, _, err := frontcontroller.Parse(fallback); err != nil {
+		return frontcontroller.Default, err
+	}
+	return fallback, nil
 }
 
 // indexDirectiveFor maps the panel's index_priority enum to the concrete
@@ -1148,7 +1182,7 @@ func buildCacheGate(paths []string, fallback string) string {
 	return "(" + strings.Join(valid, "|") + ")"
 }
 
-func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redirectDirectives, ruleDirectives, customDirectives, rateLimitDirectives, ipACLDirectives, dirPrivacyDirectives, indexPriority string, isEnabled, hasPHP bool, sslCertPath, sslKeyPath, phpMemLimit, phpUploadMax, phpPostMax string, phpMaxInputVars, phpMaxExecTime, phpMaxInputTime int, phpDisplayErrors bool, phpErrorReporting *int, phpTimezone string, envVars []domainEnvVarParam, listenIPv4, listenIPv6 string, cacheEnabled bool, cachePath string, cachePaths []string, cacheBypassPaths []string, cacheTTLSeconds int, cacheQueryAllowlist []string, fpmSocket string, previewHost, previewCertPath, previewKeyPath string, interceptErrors, pathInfo, redirectHTTPS, serveHTTPS bool, aliases []string, phpFlags phpFlagPins, ownershipGate string) (string, error) {
+func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redirectDirectives, ruleDirectives, customDirectives, rateLimitDirectives, ipACLDirectives, dirPrivacyDirectives, indexPriority string, isEnabled, hasPHP bool, sslCertPath, sslKeyPath, phpMemLimit, phpUploadMax, phpPostMax string, phpMaxInputVars, phpMaxExecTime, phpMaxInputTime int, phpDisplayErrors bool, phpErrorReporting *int, phpTimezone string, envVars []domainEnvVarParam, listenIPv4, listenIPv6 string, cacheEnabled bool, cachePath string, cachePaths []string, cacheBypassPaths []string, cacheTTLSeconds int, cacheQueryAllowlist []string, fpmSocket string, previewHost, previewCertPath, previewKeyPath string, interceptErrors, pathInfo, redirectHTTPS, serveHTTPS bool, aliases []string, phpFlags phpFlagPins, ownershipGate, phpFallback string) (string, error) {
 	// GH #1625: re-sanitize the panel-supplied aliases HERE (trust
 	// boundary) into the server_name suffix — never render them raw.
 	aliasServerNames := sanitizeAliasServerNames(domain, aliases)
@@ -1299,6 +1333,10 @@ func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redi
 		// specific-IP listener, usually a mail vhost). Caught
 		// 2026-06-04 on vpsjournal.com/yacht.vpsjournal.com.
 		RootOverridden: directivesOverrideRoot(customDirectives, ruleDirectives),
+		PHPFallback:    phpFallback,
+	}
+	if _, err := sanitizePHPFallback(phpFallback); err != nil {
+		log.Printf("domain.create %s: ignoring invalid php_fallback: %v", domain, err)
 	}
 
 	var vhostConfig bytes.Buffer
@@ -1631,7 +1669,7 @@ func domainCreateHandler(ctx context.Context, params json.RawMessage) (any, erro
 	// cert file turns out to be missing on disk (#213).
 	redirectHTTPS, serveHTTPS := resolveHTTPSFlags(&p)
 	phpFlags := phpFlagPinsForParams(ctx, &p)
-	configPath, err := writeVhost(ctx, p.Username, p.Domain, p.DocRoot, p.PHPVersion, p.RedirectDirectives, p.RuleDirectives, p.CustomDirectives, rateLimitDirectives, ipACLDirectives, dirPrivacyDirectives, p.IndexPriority, isEnabled, p.HasPHP, p.SSLCertPath, p.SSLKeyPath, p.PHPMemoryLimit, p.PHPUploadMaxFilesize, p.PHPPostMaxSize, p.PHPMaxInputVars, p.PHPMaxExecutionTime, p.PHPMaxInputTime, p.PHPDisplayErrors, p.PHPErrorReporting, p.PHPTimezone, p.EnvVars, p.ListenIPv4, p.ListenIPv6, p.CacheEnabled, p.CachePath, p.CachePaths, p.CacheBypassPaths, p.CacheTTLSeconds, p.CacheQueryAllowlist, p.FPMSocket, p.PreviewHost, p.PreviewCertPath, p.PreviewKeyPath, p.InterceptErrors, p.PathInfo, redirectHTTPS, serveHTTPS, p.Aliases, phpFlags, p.OwnershipGate)
+	configPath, err := writeVhost(ctx, p.Username, p.Domain, p.DocRoot, p.PHPVersion, p.RedirectDirectives, p.RuleDirectives, p.CustomDirectives, rateLimitDirectives, ipACLDirectives, dirPrivacyDirectives, p.IndexPriority, isEnabled, p.HasPHP, p.SSLCertPath, p.SSLKeyPath, p.PHPMemoryLimit, p.PHPUploadMaxFilesize, p.PHPPostMaxSize, p.PHPMaxInputVars, p.PHPMaxExecutionTime, p.PHPMaxInputTime, p.PHPDisplayErrors, p.PHPErrorReporting, p.PHPTimezone, p.EnvVars, p.ListenIPv4, p.ListenIPv6, p.CacheEnabled, p.CachePath, p.CachePaths, p.CacheBypassPaths, p.CacheTTLSeconds, p.CacheQueryAllowlist, p.FPMSocket, p.PreviewHost, p.PreviewCertPath, p.PreviewKeyPath, p.InterceptErrors, p.PathInfo, redirectHTTPS, serveHTTPS, p.Aliases, phpFlags, p.OwnershipGate, p.PHPFallback)
 	if err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,

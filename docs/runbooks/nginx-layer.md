@@ -148,6 +148,10 @@ server {                          # :443 — HTTPS (when SSL is configured)
         # or
         try_files $uri $uri/ =404;                        # static
     }
+    # GH #1999: a front_controller rule replaces only the PHP fallback
+    # (e.g. /index.php?mod=$uri&$args). It travels as the php_fallback
+    # param, and the agent re-validates it with internal/frontcontroller;
+    # an invalid value renders the default above.
 
     # Error pages (M28)
     # Static asset caching (if cache_enabled)

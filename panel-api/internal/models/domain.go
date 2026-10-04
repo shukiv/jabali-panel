@@ -108,6 +108,15 @@ type NginxRule struct {
 	// only — no `add_header`, because an add_header inside a location suppresses
 	// the panel's inherited server-scope security headers (JAB-70).
 	Duration string `json:"duration,omitempty"`
+
+	// front_controller (GH #1999): the PHP script, and the query string passed
+	// to it, that the domain's `location /` falls back to when a request matches
+	// no file or folder: `try_files $uri $uri/ <script>?<query>;`. The grammar
+	// (internal/frontcontroller) keeps both a single nginx token and limits the
+	// query to a short list of nginx variables. At most one per domain; it only
+	// changes anything on a domain that runs PHP.
+	Script string `json:"script,omitempty"`
+	Query  string `json:"query,omitempty"`
 }
 
 // NginxRules implements driver.Valuer / sql.Scanner so GORM can

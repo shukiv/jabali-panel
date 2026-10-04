@@ -207,3 +207,37 @@ differently than the sketch. Kept here so the ADR and the code do not drift.
   renders the column), so an admin needs a way to null it. Neither store is
   reverse-parsed into the other (Alternative C stays rejected). Precedence between
   typed rules and raw directives is deliberately left unspecified.
+
+- **Addendum — front controller rule (GH #1999).** A tenant app with its own
+  router needed the PHP fallback of the template's `location /` changed
+  (`try_files $uri $uri/ /index.php?mod=$uri&$args;`). A raw `location /` would
+  set `RootOverridden` and drop the template's PHP locations, and a catch-all
+  `rewrite` also sends static files to PHP. So this is a new **typed** kind,
+  `front_controller` (script + query), in the tenant subset, which follows this
+  ADR's typed-first rule:
+  - It is **not** a server-scope directive. `nginxrules.Compile` renders nothing
+    for it; `nginxrules.FrontController` sends the fallback as its own
+    `php_fallback` param, and the agent renders it as the last `try_files`
+    argument of its own `location /`. PHP handling is unchanged (an
+    `/index.php` fallback still hits `location = /index.php`, any other script
+    `location ~ \.php$`, both with the existence guard).
+  - The grammar lives in the shared `internal/frontcontroller` package and is
+    checked at save (API) **and** at render (agent, `vhostData.TryFilesFallback`):
+    the script is `^/[A-Za-z0-9_.\-/]*\.php$` with no `..` or `//`, and the query
+    takes only `[A-Za-z0-9_.\-=&/%]` literals plus `$args`, `$document_uri`,
+    `$is_args`, `$query_string`, `$request_uri` and `$uri` (variable names read
+    to the end of the name, so `$urix` is rejected). That keeps the fallback one
+    nginx token with no tenant-chosen variables. An invalid value renders the
+    default; no rule renders the vhost byte for byte as before.
+  - One per domain (a vhost has one `location /`). The nginx importer maps
+    `location / { try_files $uri $uri/ <script>?<query>; }` onto it; any other
+    root location stays a security warning.
+  - Trust: existing files are still served first, and the script is a `.php`
+    file in the tenant's own docroot that a visitor can already request
+    directly, so it adds no reach.
+  - Known interactions, left as is: a domain whose `location /` is replaced (a
+    root `proxy_pass` / reverse-proxy domain, or an admin raw `location /`)
+    ignores the rule, like `deny_paths`/`static_cache`. With the FastCGI
+    micro-cache on, a non-default query reaches `location = /index.php` as a
+    non-empty `$query_string`, so `$jabali_qs_kind = other` and routed pages
+    bypass the cache (fail-closed, documented for users).

@@ -580,3 +580,31 @@ func TestCompileLocationQuotesInjectionChars(t *testing.T) {
 		t.Fatalf("location path with ; and { must render quoted, got:\n%s", got)
 	}
 }
+
+// GH #1999: front_controller is not a server-scope directive. Compile renders
+// nothing for it (a second `location /` would make the agent drop its PHP
+// locations), and FrontController returns the try_files fallback.
+func TestFrontController(t *testing.T) {
+	d := &models.Domain{NginxRules: []models.NginxRule{
+		{Type: "front_controller", Script: "/index.php", Query: "mod=$uri&$args"},
+	}}
+	if got := Compile(d); got != "" {
+		t.Fatalf("Compile rendered a front_controller rule: %q", got)
+	}
+	if got := FrontController(d); got != "/index.php?mod=$uri&$args" {
+		t.Fatalf("FrontController = %q", got)
+	}
+	if got := FrontController(&models.Domain{NginxRules: []models.NginxRule{{Type: "front_controller", Script: "/app.php"}}}); got != "/app.php" {
+		t.Fatalf("FrontController without a query = %q", got)
+	}
+	for name, dom := range map[string]*models.Domain{
+		"nil":      nil,
+		"no rules": {},
+		"other":    {NginxRules: []models.NginxRule{{Type: "rewrite", Pattern: "^/a$", Replacement: "/b"}}},
+		"invalid":  {NginxRules: []models.NginxRule{{Type: "front_controller", Script: "/index.php", Query: "a=1;deny all"}}},
+	} {
+		if got := FrontController(dom); got != "" {
+			t.Errorf("%s: FrontController = %q, want \"\"", name, got)
+		}
+	}
+}

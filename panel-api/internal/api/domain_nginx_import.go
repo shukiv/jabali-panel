@@ -22,7 +22,7 @@ type DomainNginxImportHandlerConfig struct {
 // Sibling of the .htaccess importer (ADR-0130) for people migrating from an
 // nginx-based panel. Preview is STATELESS: it shape-matches the supplied nginx
 // snippet into typed NginxRule entries (rewrite / custom_header / deny_paths /
-// static_cache) and returns them with warnings for everything it would not
+// static_cache / front_controller) and returns them with warnings for everything it would not
 // convert. It mutates nothing — the UI then applies the (possibly edited) rules
 // via PATCH /domains/:id { nginx_rules }, which runs validateTenantNginxRules +
 // the reconciler's nginx -t gate.
@@ -119,6 +119,8 @@ func ruleSummary(r models.NginxRule) string {
 		return "deny_paths " + joinExt(r.Extensions)
 	case "static_cache":
 		return "static_cache " + joinExt(r.Extensions) + " " + r.Duration
+	case "front_controller":
+		return "front_controller " + r.Script + " " + r.Query
 	}
 	return r.Type
 }
