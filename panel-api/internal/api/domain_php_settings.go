@@ -789,6 +789,9 @@ type domainPHPEffectiveResponse struct {
 	UnavailableFunctions []string `json:"unavailable_functions"`
 	// AvailabilityError: that check could not run; the list is then empty.
 	AvailabilityError string `json:"availability_error,omitempty"`
+	// ExecConfined (GH #2001): the PHP-FPM AppArmor profile is enforced, so
+	// exec, shell_exec, system and the rest can start only the shell and cat.
+	ExecConfined bool `json:"exec_confined"`
 }
 
 type domainPHPEffectiveFunction struct {

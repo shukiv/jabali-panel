@@ -80,6 +80,36 @@ describe("PHPEffectiveEnvironment", () => {
     expect(screen.getByText(/PHP 8.3 for websites \(PHP-FPM\) does not include it/)).toBeTruthy();
   });
 
+  it("GH #2001: says an enforced AppArmor profile lets program functions start only the shell and cat", async () => {
+    get.mockResolvedValue({
+      data: {
+        php_version: "8.4",
+        pool_found: true,
+        disabled_functions: [{ name: "exec", source: "pool" }],
+        php_defense: { active: false, mode: "", pool_rules: false, functions: [] },
+        include_path: { value: "", source: "php.ini" },
+        session_save_path: { value: "", source: "php.ini" },
+        unavailable_functions: [],
+        exec_confined: true,
+      },
+    });
+    renderIt();
+    fireEvent.click(screen.getByText("Disabled functions and paths"));
+    const shellRow = (await screen.findByText("shell_exec")).closest("tr") as HTMLElement;
+    expect(shellRow.textContent).toContain("Allowed");
+    expect(shellRow.textContent).toContain("Starts only the shell and cat");
+    const execRow = screen.getByText("exec").closest("tr") as HTMLElement;
+    expect(execRow.textContent).not.toContain("Starts only the shell and cat");
+    expect(screen.getByText(/Commands\s+such as df, ls, grep or id fail/)).toBeTruthy();
+  });
+
+  it("GH #2001: no confinement note without an enforced profile", async () => {
+    renderIt();
+    fireEvent.click(screen.getByText("Disabled functions and paths"));
+    await screen.findByText("shell_exec");
+    expect(screen.queryByText("Starts only the shell and cat")).toBeNull();
+  });
+
   it("GH #1701: says when the build check could not run", async () => {
     get.mockResolvedValue({
       data: {
