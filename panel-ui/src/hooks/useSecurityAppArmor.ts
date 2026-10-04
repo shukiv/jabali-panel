@@ -46,6 +46,35 @@ export function useAppArmorStatus() {
   });
 }
 
+// GH #2001: what an allowed PHP command-execution function can start on this
+// server, from the mode of the profile PHP-FPM runs under. "enforce": only the
+// shell and cat; "complain" (it only logs) or "none" (not loaded, kernel-gated,
+// or AppArmor off): any program. undefined while unknown.
+export type FpmExecConfinement = "enforce" | "complain" | "none";
+
+export function fpmExecConfinement(status: AppArmorStatus | undefined): FpmExecConfinement | undefined {
+  if (!status || !Array.isArray(status.profiles)) return undefined;
+  if (!status.enabled) return "none";
+  const mode = status.profiles.find((p) => p.name === "jabali-fpm-app")?.mode;
+  if (mode === "enforce") return "enforce";
+  if (mode === "complain") return "complain";
+  return "none";
+}
+
+// One status read for the package editor: same cache as useAppArmorStatus,
+// without its 60s polling.
+export function useFpmExecConfinement(): FpmExecConfinement | undefined {
+  const q = useQuery({
+    queryKey: ["security", "apparmor", "status"],
+    queryFn: async () => {
+      const { data } = await apiClient.get<AppArmorStatus>(`${BASE}/status`);
+      return data;
+    },
+    staleTime: 60_000,
+  });
+  return fpmExecConfinement(q.data);
+}
+
 export function useSetAppArmorMode() {
   const qc = useQueryClient();
   return useMutation({

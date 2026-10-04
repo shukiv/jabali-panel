@@ -12,11 +12,12 @@
 //             background refetch must not clobber the operator's unsaved edits).
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Button, Card, Checkbox, Col, Divider, Form, Input, InputNumber, Row, Select, Spin, Switch, Typography } from "antd";
+import { Alert, Button, Card, Checkbox, Col, Divider, Form, Input, InputNumber, Row, Select, Spin, Switch, Typography } from "antd";
 import { CheckOutlined, CloseOutlined } from "@icons";
 
 import { apiClient } from "../../apiClient";
 import { useDiskQuotaEnabled } from "../../hooks/useDiskQuotaEnabled";
+import { useFpmExecConfinement } from "../../hooks/useSecurityAppArmor";
 import {
   BACKUP_DESTINATION_KINDS,
   PACKAGE_DEFAULTS,
@@ -101,6 +102,12 @@ export const PackageEditor = ({ title, initialValue, isLoading, submitting, onSu
   const [form] = Form.useForm<PackageFormValues>();
   const { enabled: diskQuotaEnabled } = useDiskQuotaEnabled();
   const egressSSHOut = Form.useWatch("egress_ssh_out", form);
+  // GH #2001: whether the form allows a function that starts programs, and
+  // what such a function can start on this server.
+  const lockdownDisabled = Form.useWatch(["php_disabled_functions", "lockdown"], form) as string[] | undefined;
+  const allowsProgramExec =
+    lockdownDisabled !== undefined && PHP_DEFENSE_EXEC_FUNCTIONS.some((f) => !lockdownDisabled.includes(f));
+  const execConfinement = useFpmExecConfinement();
 
   const [nspawnImages, setNspawnImages] = useState<NspawnImage[]>([]);
   useEffect(() => {
@@ -387,6 +394,24 @@ export const PackageEditor = ({ title, initialValue, isLoading, submitting, onSu
             options={PHP_LOCKDOWN_FUNCTIONS.map((f) => ({ value: f, label: <code>{f}</code> }))}
           />
         </Form.Item>
+        {allowsProgramExec && execConfinement === "enforce" && (
+          <Alert
+            type="info"
+            showIcon
+            style={{ marginBottom: 16 }}
+            message="On this server, PHP's AppArmor profile (jabali-fpm-app) is enforced, so an allowed command-execution function can start only the shell (sh) and cat. Other commands, such as df, ls or grep, fail with Permission denied."
+          />
+        )}
+        {allowsProgramExec && (execConfinement === "complain" || execConfinement === "none") && (
+          <Alert
+            type="warning"
+            showIcon
+            style={{ marginBottom: 16 }}
+            message={`On this server, PHP's AppArmor profile (jabali-fpm-app) ${
+              execConfinement === "complain" ? "is in complain mode, so it only logs" : "is not active"
+            }. An allowed command-execution function can run any program the site's user can run: for anyone who takes over such a site, that is the same as shell access. Switch the profile to enforce under Security → AppArmor to limit these functions to the shell and cat.`}
+          />
+        )}
         <Form.Item
           label="Also disable"
           name={["php_disabled_functions", "extra"]}

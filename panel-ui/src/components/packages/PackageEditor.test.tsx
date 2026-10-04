@@ -192,3 +192,61 @@ describe("PackageEditor disabled PHP functions (GH #1701)", () => {
     expect(box.checked).toBe(false);
   });
 });
+
+// GH #2001: allowing a command-execution function says what it can start on
+// this server, from the jabali-fpm-app AppArmor profile's mode.
+describe("PackageEditor command execution vs AppArmor (GH #2001)", () => {
+  async function renderWithProfile(mode: "enforce" | "complain" | null, disabled: string | null) {
+    const { apiClient } = await import("../../apiClient");
+    const get = apiClient.get as unknown as ReturnType<typeof vi.fn>;
+    get.mockImplementation(async (url: string) =>
+      url === "/admin/security/apparmor/status"
+        ? {
+            data: {
+              enabled: true,
+              profiles: mode ? [{ name: "jabali-fpm-app", mode }] : [{ name: "jabali-agent", mode: "enforce" }],
+              denials: [],
+              violations: [],
+            },
+          }
+        : { data: {} },
+    );
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <PackageEditor
+          title="Edit package"
+          initialValue={{ ...PACKAGE_DEFAULTS, id: "pkg-1", name: "Dev", php_disabled_functions: disabled }}
+          submitting={false}
+          onSubmit={vi.fn()}
+        />
+      </QueryClientProvider>,
+    );
+  }
+
+  it("warns that an allowed exec function can run any program while the profile only logs", async () => {
+    await renderWithProfile("complain", "pcntl_fork,proc_nice,dl");
+    expect(await screen.findByText(/is in complain mode, so it only logs/)).toBeTruthy();
+    expect(screen.getByText(/the same as shell access/)).toBeTruthy();
+  });
+
+  it("warns when the profile is not loaded at all", async () => {
+    await renderWithProfile(null, "pcntl_fork,proc_nice,dl");
+    expect(await screen.findByText(/jabali-fpm-app\) is not active/)).toBeTruthy();
+  });
+
+  it("says an allowed exec function starts only the shell and cat under an enforced profile", async () => {
+    await renderWithProfile("enforce", "pcntl_fork,proc_nice,dl");
+    expect(await screen.findByText(/can start only the shell \(sh\) and cat/)).toBeTruthy();
+    expect(screen.queryByText(/the same as shell access/)).toBeNull();
+  });
+
+  it("says nothing while every command-execution function stays disabled", async () => {
+    const { waitFor } = await import("@testing-library/react");
+    await renderWithProfile("complain", null);
+    const { apiClient } = await import("../../apiClient");
+    await waitFor(() => expect(apiClient.get).toHaveBeenCalledWith("/admin/security/apparmor/status"));
+    expect(screen.queryByText(/jabali-fpm-app/)).toBeNull();
+  });
+});
+

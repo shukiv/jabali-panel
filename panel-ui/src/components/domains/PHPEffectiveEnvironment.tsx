@@ -10,7 +10,7 @@ import type { ReactNode } from "react";
 import { Alert, Collapse, Descriptions, Spin, Table, Tag, Typography } from "antd";
 import { useQuery } from "@tanstack/react-query";
 import { apiClient } from "../../apiClient";
-import { functionRows, type EffectiveIni, type FunctionRow, type PHPEffective } from "./phpEffective";
+import { execConfinement, functionRows, type EffectiveIni, type FunctionRow, type PHPEffective } from "./phpEffective";
 
 const STATUS_TAG: Record<FunctionRow["status"], { color?: string; text: string }> = {
   disabled_package: { text: "Disabled by the hosting package" },
@@ -100,7 +100,8 @@ export function PHPEffectiveEnvironment({ domainId }: { domainId: string }) {
               render: (s: FunctionRow["status"], row: FunctionRow) => (
                 <>
                   <Tag color={STATUS_TAG[s].color}>{STATUS_TAG[s].text}</Tag>
-                  {row.confined && <Tag color="orange">Starts only the shell and cat</Tag>}
+                  {row.exec === "confined" && <Tag color="orange">Starts only the shell and cat</Tag>}
+                  {row.exec === "unconfined" && <Tag color="red">Can start any program</Tag>}
                 </>
               ),
             },
@@ -115,7 +116,19 @@ export function PHPEffectiveEnvironment({ domainId }: { domainId: string }) {
             available with no change to the package.
           </Typography.Paragraph>
         )}
-        {rows.some((r) => r.confined) && (
+        {rows.some((r) => r.exec === "unconfined") && (
+          <Typography.Paragraph type="secondary" style={{ marginTop: 8 }}>
+            "Can start any program" means the AppArmor profile that protects PHP on this server{" "}
+            {execConfinement(e) === "complain"
+              ? "is in complain mode, so it only logs"
+              : "is not active"}
+            . These functions can run any program this site&apos;s user can run, which, for anyone who
+            takes over the site through a vulnerable app, is the same as shell access. An
+            administrator can switch the profile (jabali-fpm-app) to enforce under Security →
+            AppArmor; then these functions can start only the shell and cat.
+          </Typography.Paragraph>
+        )}
+        {rows.some((r) => r.exec === "confined") && (
           <Typography.Paragraph type="secondary" style={{ marginTop: 8 }}>
             "Starts only the shell and cat" means this server runs PHP under an AppArmor profile
             that lets these functions start the shell (sh) and cat, and no other program. Commands

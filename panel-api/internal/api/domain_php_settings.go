@@ -792,6 +792,10 @@ type domainPHPEffectiveResponse struct {
 	// ExecConfined (GH #2001): the PHP-FPM AppArmor profile is enforced, so
 	// exec, shell_exec, system and the rest can start only the shell and cat.
 	ExecConfined bool `json:"exec_confined"`
+	// ExecConfinement (GH #2001): what those functions can start here.
+	// "enforce" (only the shell and cat), "complain" or "none" (any program:
+	// the profile only logs, or is not loaded / AppArmor is off), "unknown".
+	ExecConfinement string `json:"exec_confinement"`
 }
 
 type domainPHPEffectiveFunction struct {
