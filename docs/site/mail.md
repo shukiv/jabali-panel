@@ -9,7 +9,7 @@ Jabali's mail stack is [**Stalwart**](https://stalw.art) (SMTP submission + MTA 
 - Webmail: **Bulwark** at `https://mail.<domain>/`. One-click SSO from `/jabali-panel/mail/mailboxes` uses the M22 self-deleting `jabali-sso-*.php` file (not the failed M22 magic-link/mu-plugin path).
 - IMAP / SMTP submission: `imap.<panel-hostname>:993` (TLS), `smtp.<panel-hostname>:465` (TLS) or `:587` (STARTTLS).
 - Autoconfig / autodiscover: Apple `mobileconfig`, Thunderbird `autoconfig.xml`, Outlook `autodiscover.xml` (see [platform/mail-autoconfig.md](./platform/mail-autoconfig.md)).
-- Calendars + contacts: per-mailbox **CalDAV / CardDAV** URLs are surfaced for manual client setup (GH #1039), and the mail vhost routes CalDAV/CardDAV so clients auto-mount.
+- Calendars + contacts: the mail vhost serves CalDAV / CardDAV and `/.well-known/caldav|carddav`, and the `_caldavs._tcp` / `_carddavs._tcp` SRV records point clients at it, so mail apps find a mailbox's calendars and contacts on their own. The panel no longer shows per-mailbox DAV URLs (GH #1917); an external-DNS domain gets the two SRV records in its mail DNS record list.
 
 ## Mail Domains (GH #1387)
 

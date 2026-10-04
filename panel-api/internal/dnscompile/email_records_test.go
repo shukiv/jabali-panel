@@ -133,3 +133,20 @@ func TestExportedConstants(t *testing.T) {
 	require.Equal(t, "m6", EmailRecordsManagedBy)
 	require.Equal(t, "jabali", EmailRecordsSelector)
 }
+
+// TestDAVSecureSRV — GH #1462/#1917: the secure DAV SRV content the reconciler
+// writes and the mail DNS hints show. No override → mail host on 443; an
+// override → its host, on its port or 443.
+func TestDAVSecureSRV(t *testing.T) {
+	cases := []struct{ override, want string }{
+		{"", "1 443 mail.example.com"},
+		{"  ", "1 443 mail.example.com"},
+		{"dav.example.net", "1 443 dav.example.net"},
+		{"dav.example.net:8443", "1 8443 dav.example.net"},
+	}
+	for _, tc := range cases {
+		if got := DAVSecureSRV(tc.override, "mail.example.com"); got != tc.want {
+			t.Errorf("DAVSecureSRV(%q) = %q, want %q", tc.override, got, tc.want)
+		}
+	}
+}

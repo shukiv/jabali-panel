@@ -1,6 +1,8 @@
 package dnscompile
 
 import (
+	"strconv"
+	"strings"
 	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
@@ -135,4 +137,31 @@ func BuildEmailRecords(
 		mk("@", "CAA", `0 issue "letsencrypt.org"`, 0),
 		mk("@", "CAA", `0 iodef "mailto:postmaster@`+zoneName+`"`, 0),
 	}
+}
+
+// DAVSecureSRV is the content of a domain's secure CalDAV or CardDAV SRV row
+// (_caldavs._tcp / _carddavs._tcp): "<weight> <port> <target>", with the
+// priority in its own column. With no override it points at mailTarget on 443.
+// With a per-domain override (GH #1462, "host" or "host:port") it points at
+// that host, on its port or 443. The reconciler writes this row and the mail
+// DNS hints show it (GH #1917), so the two cannot drift.
+func DAVSecureSRV(override, mailTarget string) string {
+	if strings.TrimSpace(override) == "" {
+		return "1 443 " + mailTarget
+	}
+	host, port := splitDAVHostPort(override, 443)
+	return "1 " + strconv.Itoa(port) + " " + host
+}
+
+// splitDAVHostPort parses a validated "host" or "host:port" override into
+// (host, port), defaulting the port. Input is API-validated (davHostRe), so
+// this only has to separate a trailing :port; a malformed value can't reach it.
+func splitDAVHostPort(override string, defPort int) (string, int) {
+	override = strings.TrimSpace(override)
+	if i := strings.LastIndexByte(override, ':'); i > 0 {
+		if p, err := strconv.Atoi(override[i+1:]); err == nil && p > 0 && p <= 65535 {
+			return override[:i], p
+		}
+	}
+	return override, defPort
 }

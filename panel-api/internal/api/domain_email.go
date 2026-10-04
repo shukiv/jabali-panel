@@ -204,7 +204,7 @@ func (h *domainEmailHandler) get(c *gin.Context) {
 	if dom.DkimPublicKey != nil {
 		pubKey = *dom.DkimPublicKey
 	}
-	hints, warnings := h.buildHintsWithStatus(ctx, dom.ID, dom.Name, selector, pubKey)
+	hints, warnings := h.buildHintsWithStatus(ctx, dom, selector, pubKey)
 	c.JSON(http.StatusOK, domainEmailResponse{
 		DomainID:       dom.ID,
 		DomainName:     dom.Name,
@@ -267,7 +267,7 @@ func (h *domainEmailHandler) enable(c *gin.Context) {
 		return
 	}
 
-	hints, statusWarnings := h.buildHintsWithStatus(ctx, dom.ID, dom.Name, selector, pubKey)
+	hints, statusWarnings := h.buildHintsWithStatus(ctx, dom, selector, pubKey)
 	c.JSON(http.StatusOK, domainEmailResponse{
 		DomainID:       dom.ID,
 		DomainName:     dom.Name,
@@ -329,7 +329,8 @@ func (h *domainEmailHandler) disable(c *gin.Context) {
 // When DNS repos aren't wired or the domain has no zone, returns the
 // bare hint list with empty `Status` — the UI falls back to showing
 // them as static instructions.
-func (h *domainEmailHandler) buildHintsWithStatus(ctx context.Context, domainID, domainName, selector, pubKey string) ([]domainEmailDNSHint, []string) {
+func (h *domainEmailHandler) buildHintsWithStatus(ctx context.Context, dom *models.Domain, selector, pubKey string) ([]domainEmailDNSHint, []string) {
+	domainID, domainName := dom.ID, dom.Name
 	// The mail host's public IP (server_settings) leads the record set so an
 	// external-DNS operator (GH #1612) can publish mail.<domain> — every MX/SRV/
 	// autodiscover record points at it. Best-effort: an unwired/unreadable
@@ -340,7 +341,7 @@ func (h *domainEmailHandler) buildHintsWithStatus(ctx context.Context, domainID,
 			ip4, ip6 = s.PublicIPv4, s.PublicIPv6
 		}
 	}
-	hints := staticEmailHints(domainName, selector, pubKey, ip4, ip6)
+	hints := staticEmailHints(domainName, selector, pubKey, ip4, ip6, dom.CalDAVHost, dom.CardDAVHost)
 
 	if h.cfg.DNSZones == nil || h.cfg.DNSRecords == nil {
 		return hints, nil
@@ -397,7 +398,13 @@ func (h *domainEmailHandler) buildHintsWithStatus(ctx context.Context, domainID,
 // panel-hosted zone the M4 bootstrap already publishes it (status shows "ok"),
 // so listing it universally is honest, not redundant. Empty ip4/ip6 (server IP
 // unknown, or ServerSettings not wired) simply omits the row.
-func staticEmailHints(domainName, selector, pubKey, ip4, ip6 string) []domainEmailDNSHint {
+//
+// calDAVHost/cardDAVHost are the domain's GH #1462 overrides ("" = built-in
+// DAV). Mail apps find calendars and contacts through the secure DAV SRV rows
+// alone, so those rows are listed (GH #1917) with the same target the zone
+// publishes. The plaintext :80 rows are left out on purpose: no client needs
+// them, and an external-DNS operator should not advertise plaintext DAV.
+func staticEmailHints(domainName, selector, pubKey, ip4, ip6, calDAVHost, cardDAVHost string) []domainEmailDNSHint {
 	hints := make([]domainEmailDNSHint, 0, 16)
 	if ip4 != "" {
 		hints = append(hints, domainEmailDNSHint{
@@ -422,6 +429,8 @@ func staticEmailHints(domainName, selector, pubKey, ip4, ip6 string) []domainEma
 		{Purpose: "_imaps._tcp — IMAPS client auto-config", Name: "_imaps._tcp." + domainName + ".", Type: "SRV", Value: "0 1 993 mail." + domainName + "."},
 		{Purpose: "_submission._tcp — SMTP submission (STARTTLS) auto-config", Name: "_submission._tcp." + domainName + ".", Type: "SRV", Value: "0 1 587 mail." + domainName + "."},
 		{Purpose: "_submissions._tcp — SMTP submission (implicit TLS) auto-config", Name: "_submissions._tcp." + domainName + ".", Type: "SRV", Value: "0 1 465 mail." + domainName + "."},
+		{Purpose: "_caldavs._tcp — mail apps find the mailbox's calendars", Name: "_caldavs._tcp." + domainName + ".", Type: "SRV", Value: davSRVHintValue(calDAVHost, domainName)},
+		{Purpose: "_carddavs._tcp — mail apps find the mailbox's contacts", Name: "_carddavs._tcp." + domainName + ".", Type: "SRV", Value: davSRVHintValue(cardDAVHost, domainName)},
 		{Purpose: "TLS-RPT — receives aggregate TLS-failure reports (RFC 8460)", Name: "_smtp._tls." + domainName + ".", Type: "TXT", Value: "v=TLSRPTv1; rua=mailto:postmaster@" + domainName},
 		{Purpose: "CAA — restricts cert issuance to Let's Encrypt", Name: domainName + ".", Type: "CAA", Value: `0 issue "letsencrypt.org"`},
 		{Purpose: "CAA — incident-reporting address for cert issues", Name: domainName + ".", Type: "CAA", Value: `0 iodef "mailto:postmaster@` + domainName + `"`},
@@ -442,6 +451,12 @@ func staticEmailHints(domainName, selector, pubKey, ip4, ip6 string) []domainEma
 		})
 	}
 	return hints
+}
+
+// davSRVHintValue renders a secure DAV SRV row in the hint's record-data form
+// ("<priority> <weight> <port> <fqdn>.") from the content the zone publishes.
+func davSRVHintValue(override, domainName string) string {
+	return "0 " + dnscompile.DAVSecureSRV(override, "mail."+domainName) + "."
 }
 
 // shortLabelForHint maps a hint's FQDN back to the short label stored
