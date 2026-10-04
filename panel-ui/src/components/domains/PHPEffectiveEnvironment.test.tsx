@@ -55,4 +55,47 @@ describe("PHPEffectiveEnvironment", () => {
     fireEvent.click(screen.getByText("Disabled functions and paths"));
     expect(await screen.findByText("This domain's PHP pool has not been set up yet.")).toBeTruthy();
   });
+
+  it("GH #1701: marks functions this PHP build lacks and explains why", async () => {
+    get.mockResolvedValue({
+      data: {
+        php_version: "8.3",
+        pool_found: true,
+        disabled_functions: [],
+        php_defense: { active: true, mode: "off", pool_rules: false, functions: [] },
+        include_path: { value: "", source: "php.ini" },
+        session_save_path: { value: "", source: "php.ini" },
+        unavailable_functions: ["dl", "pcntl_exec", "pcntl_fork"],
+      },
+    });
+    renderIt();
+    fireEvent.click(screen.getByText("Disabled functions and paths"));
+    const tags = await screen.findAllByText("Allowed, not in this PHP build");
+    expect(tags).toHaveLength(3);
+    const dlRow = screen.getByText("dl").closest("tr") as HTMLElement;
+    expect(dlRow.textContent).toContain("Allowed, not in this PHP build");
+    const execRow = screen.getByText("exec").closest("tr") as HTMLElement;
+    expect(execRow.textContent).toContain("Allowed");
+    expect(execRow.textContent).not.toContain("not in this PHP build");
+    expect(screen.getByText(/PHP 8.3 for websites \(PHP-FPM\) does not include it/)).toBeTruthy();
+  });
+
+  it("GH #1701: says when the build check could not run", async () => {
+    get.mockResolvedValue({
+      data: {
+        php_version: "8.3",
+        pool_found: true,
+        disabled_functions: [],
+        php_defense: { active: false, mode: "", pool_rules: false, functions: [] },
+        include_path: { value: "", source: "php.ini" },
+        session_save_path: { value: "", source: "php.ini" },
+        unavailable_functions: [],
+        availability_error: "php-fpm 8.3 module list failed",
+      },
+    });
+    renderIt();
+    fireEvent.click(screen.getByText("Disabled functions and paths"));
+    expect(await screen.findByText(/Could not check which functions this PHP build provides/)).toBeTruthy();
+    expect(screen.queryByText("Allowed, not in this PHP build")).toBeNull();
+  });
 });

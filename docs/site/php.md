@@ -104,6 +104,15 @@ badge** on any domain that differs from the account default:
   allowed; and the pool's `include_path` and `session.save_path`, from the
   pool's ini overrides or `php.ini`. The agent reads these from the files the
   pool loads (`GET /domains/:id/php-settings/effective`).
+  An allowed function that the version's PHP-FPM build does not provide shows
+  as **Allowed, not in this PHP build** (GH #1701). The agent lists the
+  modules PHP-FPM loads (`php-fpm<version> -m` with the pool's ini layering)
+  and maps each function to its extension with the CLI. A function is missing
+  when PHP-FPM does not load its extension (Debian builds `pcntl` into the
+  CLI only, so `pcntl_exec` / `pcntl_fork`), or when only the command-line
+  SAPI registers it (`dl`, `cli_set_process_title`). Disabled and blocked
+  functions keep those statuses. Once PHP-FPM loads the extension, the same
+  package shows the function as allowed.
   `include_path` and `session.save_path` are not per-domain settings either: an
   admin value for them locks `ini_set()` on the shared worker for every domain
   on the pool. `mail.force_extra_parameters` is not offered: Jabali's mail shim
