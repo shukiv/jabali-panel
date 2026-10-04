@@ -1,26 +1,43 @@
 # Catch-all
 
-`/jabali-panel/mail/catch-all`. What happens to mail addressed to a local part that does not exist as a mailbox or forwarder.
+What happens to mail sent to an address at your domain that has no mailbox,
+forwarder or group.
 
-## Options
+## Where to set it
 
-- **Reject** (default) — Stalwart returns SMTP `550 5.1.1 User unknown` to the sending server. The sender's MTA generates a bounce. This is the recommended default because it prevents backscatter and signals to legitimate senders that the address is wrong.
-- **Discard** — accept the mail and silently drop it. Useful only when reject is causing legitimate but mistyped mail to bounce (rare); generally discouraged.
-- **Forward to mailbox** — accept and deliver to a designated mailbox. The destination mailbox sees the original `To:` header so you can route or filter on it.
-- **Forward to address** — accept and forward to an external address. Subject to the same SRS / SPF considerations as ordinary [Forwarders](./forwarders.md).
+**Mail → Mail Domains → your domain → Settings → Catch-All**
+(`/jabali-panel/mail-domains/<domain id>/settings`). It used to be a separate
+Catch-All tab; old links to that tab open Settings.
 
-## Per-domain configuration
+The Settings tab shows the catch-all only when the domain has email enabled.
 
-Catch-all is per-domain. Each domain may have its own setting; the page lists one row per mail-enabled domain in your account.
+- **Not set** (the default): the mail server rejects mail to an unknown
+  address, and the sending server returns it to the sender as a bounce. This
+  is the recommended setting: legitimate senders learn the address is wrong,
+  and nothing piles up.
+- **Set**: pick a **Target mailbox** from the domain's mailboxes and click
+  **Set catch-all**. Mail to any unknown address at the domain is delivered
+  to that mailbox.
 
-## Spam implications
+**Clear catch-all** removes it, and unknown addresses are rejected again.
 
-Catch-all "Forward to mailbox" makes the destination mailbox an easy target for dictionary spam (every typo of a real address lands here). The destination mailbox typically receives orders of magnitude more spam than a normal mailbox. Stalwart's spam filter applies, but consider the trade-off before enabling.
+Catch-all is per domain: each domain has its own setting, on its own Settings
+tab.
 
-## Recommendation
+The same setting is available from the command line:
 
-Default to **Reject**. Switch to **Forward to mailbox** only when you have a specific business reason and you accept the spam load.
+```
+jabali domain catchall show  <domain-name-or-id>
+jabali domain catchall set   <domain-name-or-id> --target <email>
+jabali domain catchall clear <domain-name-or-id>
+```
 
-## What about "Reject" plus an autoresponder
+The command line also accepts an address outside the domain as the target.
+The Settings tab shows such a target as "(current)" and keeps it when you save.
 
-Not supported. Reject and autoresponse are mutually exclusive — the SMTP transaction is rejected before the autoresponder could fire. To send a "this address is wrong, please use X" reply automatically, accept into a mailbox + set an autoresponder on that mailbox + redirect / discard the original.
+## Spam
+
+A catch-all mailbox receives every typo of every real address, and every
+address a spammer guesses. It typically gets far more spam than a normal
+mailbox. The spam filter still applies, but set a catch-all only when you have
+a reason to receive mail at addresses you never created.

@@ -9,7 +9,7 @@ Hosting customers log in at `/jabali-panel`. Pages:
 | Domains | `/jabali-panel/domains` | Your hosted domains; per-domain edit (PHP version, SSL, DNSSEC, redirects, aliases). |
 | DNS | `/jabali-panel/dns` | Records for your zones; per-domain DNSSEC toggle + DS record. |
 | SSL | `/jabali-panel/ssl` | Cert state, force re-issue. |
-| Mail | `/jabali-panel/mail` | Mail Domains list → per-domain drill-down: Mailboxes, Forwarders, Autoresponders, Catch-all, Disclaimer, Shared Folders, CalDAV/CardDAV, Logs + Statistics. |
+| Mail | `/jabali-panel/mail-domains` | Mail Domains list → per-domain drill-down: Accounts (mailboxes, with their autoresponders), Forwarders, Groups, Shared Folders, Shared Resources, Settings (webmail, catch-all, disclaimer), Logs + Statistics. |
 | Databases | `/jabali-panel/databases` | Your MariaDB / PostgreSQL DBs + DB users (tabbed). SSO into phpMyAdmin (MariaDB) / Adminer (PostgreSQL); per-database Download + Restore-from-file. |
 | PHP Settings | `/jabali-panel/php-settings` | Per-user + per-domain `memory_limit`, `upload_max_filesize`, `display_errors`, OPcache/JIT, Xdebug, Composer version, extra extensions (within your package's allowed range). |
 | Files | `/jabali-panel/files` | AntD-native file manager (no separate filebrowser daemon); chunked upload with cancel + live speed, async copy/move/extract progress. |
