@@ -90,6 +90,10 @@ and the mailbox password.
 - When the DNS is hosted elsewhere, add them at your DNS provider. They are in
   the list under **DNS records** on the Mail Domains page, with the other mail
   records.
+- An app that cannot look them up needs the addresses typed in. The calendar
+  is at `https://mail.<domain>/dav/cal/<address>/` and the contacts are at
+  `https://mail.<domain>/dav/card/<address>/`, where `<address>` is the full
+  email address.
 - The shared domain directory is the one address book an app does not find on
   its own. See [The domain directory](#the-domain-directory) to add it by
   URL.
