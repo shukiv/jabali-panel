@@ -53,4 +53,29 @@ describe("functionRows", () => {
       statusOf({ ...base, php_defense: { ...base.php_defense, active: false, functions: blocked } }, "shell_exec"),
     ).toBe("allowed");
   });
+
+  it("GH #1701: a function this PHP-FPM build lacks is allowed but unavailable; permission states win", () => {
+    const e: PHPEffective = {
+      ...base,
+      disabled_functions: [{ name: "dl", source: "pool" }],
+      php_defense: {
+        ...base.php_defense,
+        mode: "simulation",
+        functions: [
+          { name: "pcntl_fork", state: "logged" },
+          { name: "pcntl_exec", state: "blocked" },
+        ],
+      },
+      unavailable_functions: ["dl", "pcntl_exec", "pcntl_fork", "proc_nice"],
+    };
+    expect(statusOf(e, "proc_nice")).toBe("allowed_unavailable");
+    // Logged by PHP Defense but missing from the build: still unavailable.
+    expect(statusOf(e, "pcntl_fork")).toBe("allowed_unavailable");
+    // Disabled and blocked are permission states and keep their status.
+    expect(statusOf(e, "dl")).toBe("disabled_package");
+    expect(statusOf(e, "pcntl_exec")).toBe("blocked_defense");
+    expect(statusOf(e, "exec")).toBe("allowed");
+    // An agent that sends no list leaves every allowed function allowed.
+    expect(statusOf(base, "proc_nice")).toBe("allowed");
+  });
 });

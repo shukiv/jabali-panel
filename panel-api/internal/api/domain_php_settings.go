@@ -784,6 +784,11 @@ type domainPHPEffectiveResponse struct {
 	SessionSavePath   domainPHPEffectiveIni        `json:"session_save_path"`
 	// IniReadError: the php.ini read failed, so php.ini values are missing.
 	IniReadError string `json:"ini_read_error,omitempty"`
+	// UnavailableFunctions (GH #1701): reported functions this PHP version's
+	// FPM build does not provide (pcntl_* without pcntl, dl). Always a list.
+	UnavailableFunctions []string `json:"unavailable_functions"`
+	// AvailabilityError: that check could not run; the list is then empty.
+	AvailabilityError string `json:"availability_error,omitempty"`
 }
 
 type domainPHPEffectiveFunction struct {
@@ -904,6 +909,9 @@ func (h *domainPHPSettingsHandler) effective(c *gin.Context) {
 	}
 	if resp.PHPDefense.Functions == nil {
 		resp.PHPDefense.Functions = []domainPHPDefenseFunction{}
+	}
+	if resp.UnavailableFunctions == nil {
+		resp.UnavailableFunctions = []string{}
 	}
 	phpEffectiveMu.Lock()
 	phpEffectiveCache[key] = cachedPHPEffective{at: time.Now(), resp: resp}

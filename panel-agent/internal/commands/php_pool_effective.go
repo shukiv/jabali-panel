@@ -21,7 +21,9 @@ import (
 // session.save_path. It reads the files the pool's master loads (its pool
 // conf, the FPM php.ini + conf.d + the pool's own scan dir, and the PHP Defense
 // rules file it is pointed at), so it shows the configuration in force, not
-// what the panel meant to write.
+// what the panel meant to write. It also reports which of those functions
+// this PHP version's FPM build does not provide at all, so a function the
+// package allows is not shown as callable when PHP-FPM has no such function.
 
 type phpPoolEffectiveParams struct {
 	PHPVersion string `json:"php_version"`
@@ -72,6 +74,14 @@ type phpPoolEffectiveResponse struct {
 	// IniReadError is set when the php.ini read failed; the php.ini parts are
 	// then missing rather than guessed.
 	IniReadError string `json:"ini_read_error,omitempty"`
+	// UnavailableFunctions are the reported functions (the lockdown list plus
+	// every disabled or PHP Defense-banned name) that this PHP version's FPM
+	// build does not provide, e.g. pcntl_* when FPM does not load pcntl, or
+	// dl, which only PHP's command-line build registers.
+	UnavailableFunctions []string `json:"unavailable_functions"`
+	// AvailabilityError is set when that check could not run; the list is
+	// then empty rather than guessed.
+	AvailabilityError string `json:"availability_error,omitempty"`
 }
 
 // snuffleupagusLibRoot holds the per-minor snuffleupagus.so builds. A var so
@@ -88,7 +98,7 @@ var phpEffectiveIniRead = func(ctx context.Context, version, slug string) (map[s
 	namesJSON, _ := json.Marshal(phpEffectiveIniNames)
 	script := "$d=[];foreach(json_decode('" + string(namesJSON) + "',true) as $k){$d[$k]=(string)ini_get($k);}echo json_encode($d);"
 	cmd := execCommandContext(ctx, "php"+version, "-c", filepath.Join("/etc/php", version, "fpm", "php.ini"), "-r", script)
-	cmd.Env = append(cmd.Environ(), "PHP_INI_SCAN_DIR="+filepath.Join("/etc/php", version, "fpm", "conf.d")+":"+filepath.Join("/etc/php", version, "jabali-ext", slug))
+	cmd.Env = append(cmd.Environ(), phpEffectiveEnv(version, slug))
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("php %s ini read failed: %v", version, err)
@@ -98,6 +108,96 @@ var phpEffectiveIniRead = func(ctx context.Context, version, slug string) (map[s
 		return nil, fmt.Errorf("php ini output parse failed: %v", err)
 	}
 	return vals, nil
+}
+
+// phpEffectiveEnv is the ini layering fpm-exec gives the pool's master: the
+// FPM conf.d plus the pool's own scan dir.
+func phpEffectiveEnv(version, slug string) string {
+	return "PHP_INI_SCAN_DIR=" + filepath.Join("/etc/php", version, "fpm", "conf.d") + ":" + filepath.Join("/etc/php", version, "jabali-ext", slug)
+}
+
+// phpFPMModules lists the modules the version's PHP-FPM loads with the pool's
+// ini layering (`php-fpm -m`), lowercased. A var so tests can stub it.
+var phpFPMModules = func(ctx context.Context, version, slug string) (map[string]bool, error) {
+	cmd := execCommandContext(ctx, "/usr/sbin/php-fpm"+version, "-c", filepath.Join("/etc/php", version, "fpm", "php.ini"), "-m")
+	cmd.Env = append(cmd.Environ(), phpEffectiveEnv(version, slug))
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("php-fpm %s module list failed: %v", version, err)
+	}
+	mods := map[string]bool{}
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "[") {
+			continue
+		}
+		mods[strings.ToLower(line)] = true
+	}
+	if len(mods) == 0 {
+		return nil, fmt.Errorf("php-fpm %s listed no modules", version)
+	}
+	return mods, nil
+}
+
+// phpFunctionExtensions maps each name to the extension that provides it in
+// the version's PHP build ("" when the build has no such function), read with
+// the CLI and the pool's ini layering. Names go in as arguments, never into
+// the script. A var so tests can stub it.
+var phpFunctionExtensions = func(ctx context.Context, version, slug string, names []string) (map[string]string, error) {
+	script := "$o=[];foreach(array_slice($argv,1) as $n){$o[$n]=function_exists($n)?(string)(new ReflectionFunction($n))->getExtensionName():'';}echo json_encode((object)$o);"
+	args := append([]string{"-c", filepath.Join("/etc/php", version, "fpm", "php.ini"), "-r", script, "--"}, names...)
+	cmd := execCommandContext(ctx, "php"+version, args...)
+	cmd.Env = append(cmd.Environ(), phpEffectiveEnv(version, slug))
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("php %s function read failed: %v", version, err)
+	}
+	exts := map[string]string{}
+	if err := json.Unmarshal(out, &exts); err != nil {
+		return nil, fmt.Errorf("php function read output parse failed: %v", err)
+	}
+	return exts, nil
+}
+
+// cliSAPIFunctions are registered by PHP's command-line SAPI itself, under the
+// "standard" module (php-src PHP-8.3 sapi/cli/php_cli.c additional_functions;
+// main/main.c registers them into "standard"). The CLI read reports them, but
+// PHP-FPM never has them.
+var cliSAPIFunctions = map[string]bool{"dl": true, "cli_set_process_title": true, "cli_get_process_title": true}
+
+// fpmSAPIFunctions are PHP-FPM's own (php-src PHP-8.3
+// sapi/fpm/fpm/fpm_main_arginfo.h, module cgi-fcgi). The CLI read does not
+// know them, but every PHP-FPM has them.
+var fpmSAPIFunctions = map[string]bool{"fastcgi_finish_request": true, "apache_request_headers": true, "getallheaders": true, "fpm_get_status": true}
+
+// phpFunctionIdentRE is a lowercase PHP function name. Only names that match
+// are checked; anything else from a config file is left out of the read.
+var phpFunctionIdentRE = regexp.MustCompile(`^[a-z_][a-z0-9_]{0,99}$`)
+
+// unavailableInFPM decides which names PHP-FPM does not provide. exts comes
+// from the CLI read, modules from `php-fpm -m`, iniDisabled from php.ini's
+// disable_functions.
+func unavailableInFPM(names []string, exts map[string]string, modules, iniDisabled map[string]bool) []string {
+	out := []string{}
+	for _, n := range names {
+		switch {
+		case cliSAPIFunctions[n]:
+			out = append(out, n)
+		case fpmSAPIFunctions[n]:
+		case iniDisabled[n]:
+			// PHP drops a disabled function from its function table, so the
+			// CLI read cannot see it. It is disabled either way; unknown
+			// here, not unavailable.
+		case exts[n] == "":
+			// No extension of this PHP build provides it.
+			out = append(out, n)
+		case !modules[strings.ToLower(exts[n])]:
+			// Its extension is in the CLI build but PHP-FPM does not load it
+			// (Debian builds pcntl into the CLI only).
+			out = append(out, n)
+		}
+	}
+	return out
 }
 
 func phpPoolEffectiveHandler(ctx context.Context, raw json.RawMessage) (any, error) {
@@ -116,10 +216,11 @@ func phpPoolEffectiveHandler(ctx context.Context, raw json.RawMessage) (any, err
 
 func readPHPPoolEffective(ctx context.Context, version, slug string) phpPoolEffectiveResponse {
 	resp := phpPoolEffectiveResponse{
-		PHPVersion:        version,
-		Slug:              slug,
-		DisabledFunctions: []phpEffectiveFunction{},
-		PHPDefense:        phpDefenseEffective{Functions: []phpDefenseFunction{}},
+		PHPVersion:           version,
+		Slug:                 slug,
+		DisabledFunctions:    []phpEffectiveFunction{},
+		PHPDefense:           phpDefenseEffective{Functions: []phpDefenseFunction{}},
+		UnavailableFunctions: []string{},
 	}
 
 	// The pool conf's own ini lines; php_admin_value beats php_value.
@@ -170,6 +271,43 @@ func readPHPPoolEffective(ctx context.Context, version, slug string) phpPoolEffe
 	resp.IncludePath = effectiveIni(poolVals, ini, "include_path")
 	resp.SessionSavePath = effectiveIni(poolVals, ini, "session.save_path")
 	resp.PHPDefense = readPoolPHPDefense(version, slug)
+
+	// Which of the reported functions this PHP-FPM build has at all.
+	names := map[string]bool{}
+	for _, f := range splitFunctionList(defaultDisableFunctions) {
+		names[f] = true
+	}
+	for _, f := range resp.DisabledFunctions {
+		names[f.Name] = true
+	}
+	for _, f := range resp.PHPDefense.Functions {
+		names[f.Name] = true
+	}
+	check := make([]string, 0, len(names))
+	for n := range names {
+		if phpFunctionIdentRE.MatchString(n) {
+			check = append(check, n)
+		}
+	}
+	sort.Strings(check)
+	iniDisabled := map[string]bool{}
+	for _, f := range splitFunctionList(ini["disable_functions"]) {
+		iniDisabled[f] = true
+	}
+	modules, merr := phpFPMModules(ctx, version, slug)
+	exts, eerr := phpFunctionExtensions(ctx, version, slug, check)
+	switch {
+	case merr != nil:
+		resp.AvailabilityError = merr.Error()
+	case eerr != nil:
+		resp.AvailabilityError = eerr.Error()
+	case err != nil:
+		// Without php.ini's disable list a server-disabled function would
+		// read as missing from the build.
+		resp.AvailabilityError = "php.ini could not be read"
+	default:
+		resp.UnavailableFunctions = unavailableInFPM(check, exts, modules, iniDisabled)
+	}
 	return resp
 }
 

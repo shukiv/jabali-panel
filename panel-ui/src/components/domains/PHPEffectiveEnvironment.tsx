@@ -18,6 +18,7 @@ const STATUS_TAG: Record<FunctionRow["status"], { color?: string; text: string }
   blocked_defense: { color: "red", text: "Blocked by PHP Defense" },
   logged_defense: { color: "gold", text: "Allowed, logged by PHP Defense" },
   allowed: { color: "green", text: "Allowed" },
+  allowed_unavailable: { text: "Allowed, not in this PHP build" },
 };
 
 function defenseNote(e: PHPEffective): string {
@@ -59,6 +60,7 @@ export function PHPEffectiveEnvironment({ domainId }: { domainId: string }) {
     body = <Alert type="info" showIcon message="This domain's PHP pool has not been set up yet." />;
   } else {
     const e = q.data;
+    const rows = functionRows(e);
     body = (
       <>
         {e.ini_read_error && (
@@ -67,6 +69,14 @@ export function PHPEffectiveEnvironment({ domainId }: { domainId: string }) {
             showIcon
             style={{ marginBottom: 12 }}
             message="The server's php.ini could not be read, so server-wide values are missing."
+          />
+        )}
+        {e.availability_error && (
+          <Alert
+            type="warning"
+            showIcon
+            style={{ marginBottom: 12 }}
+            message="Could not check which functions this PHP build provides, so a function shown as Allowed may still be missing."
           />
         )}
         <Typography.Title level={5} style={{ marginTop: 0 }}>
@@ -81,7 +91,7 @@ export function PHPEffectiveEnvironment({ domainId }: { domainId: string }) {
           rowKey="name"
           pagination={false}
           scroll={{ x: "max-content" }}
-          dataSource={functionRows(e)}
+          dataSource={rows}
           columns={[
             { title: "Function", dataIndex: "name", render: (n: string) => <code>{n}</code> },
             {
@@ -91,6 +101,15 @@ export function PHPEffectiveEnvironment({ domainId }: { domainId: string }) {
             },
           ]}
         />
+        {rows.some((r) => r.status === "allowed_unavailable") && (
+          <Typography.Paragraph type="secondary" style={{ marginTop: 8 }}>
+            "Allowed, not in this PHP build" means the hosting package allows the function, but PHP{" "}
+            {e.php_version} for websites (PHP-FPM) does not include it. The pcntl_ functions need the
+            pcntl extension, which is often built into PHP's command-line version only, and dl() exists
+            only in the command-line version. If a later PHP build includes the function, it becomes
+            available with no change to the package.
+          </Typography.Paragraph>
+        )}
         <Typography.Title level={5}>Paths</Typography.Title>
         <Descriptions size="small" column={1} bordered>
           <Descriptions.Item label="include_path">{iniValue(e.include_path, "(empty)")}</Descriptions.Item>

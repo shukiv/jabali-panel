@@ -6,6 +6,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
@@ -14,9 +16,31 @@ import (
 func setupEffectiveFixture(t *testing.T) {
 	t.Helper()
 	root := usePHPDefenseTempPaths(t)
-	oldLib, oldRead := snuffleupagusLibRoot, phpEffectiveIniRead
+	oldLib, oldRead, oldMods, oldExts := snuffleupagusLibRoot, phpEffectiveIniRead, phpFPMModules, phpFunctionExtensions
 	snuffleupagusLibRoot = filepath.Join(root, "lib")
-	t.Cleanup(func() { snuffleupagusLibRoot, phpEffectiveIniRead = oldLib, oldRead })
+	t.Cleanup(func() {
+		snuffleupagusLibRoot, phpEffectiveIniRead, phpFPMModules, phpFunctionExtensions = oldLib, oldRead, oldMods, oldExts
+	})
+	// A Debian-like PHP-FPM: no pcntl (the CLI has it), its own cgi-fcgi.
+	phpFPMModules = func(context.Context, string, string) (map[string]bool, error) {
+		return map[string]bool{"core": true, "standard": true, "cgi-fcgi": true, "posix": true}, nil
+	}
+	phpFunctionExtensions = func(_ context.Context, _, _ string, names []string) (map[string]string, error) {
+		exts := map[string]string{}
+		for _, n := range names {
+			switch {
+			case strings.HasPrefix(n, "pcntl_"):
+				exts[n] = "pcntl"
+			case n == "exec":
+				// Disabled in the fixture's php.ini: PHP drops it from the
+				// function table, so the CLI read cannot see it.
+				exts[n] = ""
+			default:
+				exts[n] = "standard"
+			}
+		}
+		return exts, nil
+	}
 	phpEffectiveIniRead = func(context.Context, string, string) (map[string]string, error) {
 		return map[string]string{
 			"disable_functions": "pcntl_alarm,exec",
@@ -131,6 +155,9 @@ func TestReadPHPPoolEffectiveNoModuleNoIni(t *testing.T) {
 	if got.IniReadError == "" {
 		t.Error("a failed php.ini read must be reported, not guessed")
 	}
+	if got.AvailabilityError == "" || len(got.UnavailableFunctions) != 0 {
+		t.Errorf("without php.ini's disable list nothing may be called unavailable: %q %v", got.AvailabilityError, got.UnavailableFunctions)
+	}
 	if len(got.DisabledFunctions) != 3 {
 		t.Errorf("the pool's own list must still be reported: %+v", got.DisabledFunctions)
 	}
@@ -147,5 +174,71 @@ func TestPHPPoolEffectiveHandlerValidates(t *testing.T) {
 		if !errors.As(err, &ae) || ae.Code != agentwire.CodeInvalidArgument {
 			t.Errorf("%s: err = %v, want invalid_argument", raw, err)
 		}
+	}
+}
+
+// GH #1701: which functions PHP-FPM does not provide at all.
+func TestUnavailableInFPM(t *testing.T) {
+	names := []string{"cli_set_process_title", "dl", "exec", "fastcgi_finish_request", "mail", "nosuch_fn", "pcntl_exec", "posix_kill"}
+	exts := map[string]string{
+		"cli_set_process_title": "standard", // the CLI SAPI registers it under standard
+		"dl":                    "standard",
+		"exec":                  "standard",
+		"pcntl_exec":            "pcntl",
+		"posix_kill":            "posix",
+		"nosuch_fn":             "",
+		"mail":                  "", // disabled in php.ini, so the CLI cannot see it
+		// fastcgi_finish_request: the CLI does not have it
+	}
+	modules := map[string]bool{"core": true, "standard": true, "cgi-fcgi": true, "posix": true}
+	got := unavailableInFPM(names, exts, modules, map[string]bool{"mail": true})
+	want := []string{"cli_set_process_title", "dl", "nosuch_fn", "pcntl_exec"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("unavailable = %v, want %v", got, want)
+	}
+}
+
+func TestReadPHPPoolEffectiveUnavailable(t *testing.T) {
+	setupEffectiveFixture(t)
+	var asked []string
+	inner := phpFunctionExtensions
+	phpFunctionExtensions = func(ctx context.Context, v, s string, names []string) (map[string]string, error) {
+		asked = names
+		return inner(ctx, v, s, names)
+	}
+	got := readPHPPoolEffective(context.Background(), "8.4", "alice")
+	if got.AvailabilityError != "" {
+		t.Fatalf("availability error: %s", got.AvailabilityError)
+	}
+	// The lockdown's pcntl_exec, pcntl_fork and dl are missing from this
+	// PHP-FPM; pcntl_alarm is php.ini-disabled, so it is not called missing.
+	want := []string{"dl", "pcntl_exec", "pcntl_fork"}
+	if !reflect.DeepEqual(got.UnavailableFunctions, want) {
+		t.Errorf("unavailable = %v, want %v", got.UnavailableFunctions, want)
+	}
+	// Checked: the lockdown list plus every disabled and banned name.
+	for _, n := range []string{"proc_nice", "pcntl_alarm", "passthru", "phpinfo"} {
+		found := false
+		for _, a := range asked {
+			found = found || a == n
+		}
+		if !found {
+			t.Errorf("%s was not checked (asked %v)", n, asked)
+		}
+	}
+}
+
+func TestReadPHPPoolEffectiveAvailabilityError(t *testing.T) {
+	setupEffectiveFixture(t)
+	phpFPMModules = func(context.Context, string, string) (map[string]bool, error) {
+		return nil, errors.New("php-fpm8.4: not found")
+	}
+	got := readPHPPoolEffective(context.Background(), "8.4", "alice")
+	if got.AvailabilityError == "" {
+		t.Error("a failed module read must be reported")
+	}
+	b, _ := json.Marshal(got)
+	if !strings.Contains(string(b), `"unavailable_functions":[]`) {
+		t.Errorf("unavailable_functions must be an empty list, not null: %s", b)
 	}
 }
