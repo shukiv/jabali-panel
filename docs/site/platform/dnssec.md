@@ -4,7 +4,7 @@ M15. Per-domain, opt-in. ADR-0057.
 
 ## Model
 
-Each hosted zone can be signed independently. Toggle per-domain at Domains → Edit → DNSSEC (admin) or `/jabali-panel/domains/edit/:id` → DNSSEC (owner). No global on/off.
+Each hosted zone can be signed independently. Toggle per-domain from the domain's **⋯** menu on the DNS page (`/jabali-admin/dns` for the admin, `/jabali-panel/dns` for the owner): **Enable DNSSEC**, **Disable DNSSEC** (confirms first), **View DS & keys**. No global on/off.
 
 When enabled, the agent runs:
 

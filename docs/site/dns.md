@@ -23,15 +23,17 @@ Each hosted domain gets an authoritative zone in PowerDNS. Default records:
 - SPF TXT (if mail enabled)
 - MTA-STS TXT (if mail enabled, ADR-0109)
 
-Add / edit / delete custom records under DNS → `<domain>` → Records.
+Add / edit / delete custom records on the DNS page: click the domain's name to open its records.
 
 ## DNSSEC
 
-Per-domain toggle. When enabled:
+Per-domain, from the domain's **⋯** menu on the DNS page (**Enable DNSSEC** / **Disable DNSSEC**). When enabled:
 
 1. Agent calls `pdnsutil secure-zone <domain>` → KSK + ZSK generated and rectified.
 2. Panel persists key metadata in the DB so it survives PDNS rebuilds.
-3. The DNSSEC page displays the **DS record** to publish at the parent registrar.
+3. **⋯ → View DS & keys** shows the keys and the **DS record** to publish at the parent registrar.
+
+**Disable DNSSEC** asks for confirmation first, because the DS record has to come off the registrar before signing stops. A signed zone cannot be deleted until DNSSEC is disabled.
 
 Until the DS is published at the registrar, the zone is signed but not part of the chain of trust — that's fine for testing; not fine for production.
 

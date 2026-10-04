@@ -1,24 +1,31 @@
 // DNSZoneInventory — the shared DNS Zone Inventory Module (JAB-299).
 //
 // The admin and tenant DNS landing screens were near-identical copies of the
-// same Card.tabList shell ("Zones" + "DNSSEC"), the same batched /dns/zones
-// query, and the same columns. This module owns all of that; the two route
-// shells (DNSZonesOverviewPage, UserDNSZonesOverviewPage) are thin Adapters
-// that supply an audience policy.
+// same shell, the same batched /dns/zones query, and the same columns. This
+// module owns all of that; the two route shells (DNSZonesOverviewPage,
+// UserDNSZonesOverviewPage) are thin Adapters that supply an audience policy.
+//
+// GH #1918 (johnnyq): the separate DNSSEC tab is gone. The domain name opens
+// the zone's records (no "Manage Records" button), and the row's ⋯ menu holds
+// Enable / Disable DNSSEC, View DS & keys, and the zone (or domain) delete —
+// the same name-link + ⋯ shape as the Mail Domains list (GH #1387).
 //
 // The audience policy controls only what genuinely differs between the two:
-// owner-column visibility, the "Manage Records" route prefix, the empty-state
-// action, the DNSSEC owner-visibility + copy, and the page header. Everything
-// else — query state (URL-backed search/sort/page), the whole-list error
-// branch, and the common columns — is shared so the two screens cannot drift.
+// owner-column visibility, the records route prefix, the empty-state action,
+// the DNSSEC keys note, and the page header. Everything else — query state
+// (URL-backed search/sort/page), the whole-list error branch, and the common
+// columns — is shared so the two screens cannot drift.
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Alert, Button, Card, Space, Spin, Table, Tag, Tooltip, Typography } from "antd";
-import { useNavigate } from "react-router";
+import { Alert, Button, Card, Dropdown, Spin, Table, Tag, Tooltip, Typography } from "antd";
+import type { MenuProps } from "antd";
+import { Link } from "react-router";
+import { DeleteOutlined, KeyOutlined, MoreOutlined, SafetyOutlined } from "@icons";
 
-import { useTabParam } from "../../hooks/useTabParam";
+import { feedback } from "../../lib/feedback"; // GH #970: themed toasts
+import { useSetDNSSEC } from "../../hooks/useDNSSEC";
 import { columnSearchProps } from "../columnSearch";
-import { DNSSECTable } from "../dnssec/DNSSECTable";
+import { DNSSECKeysModal } from "../dnssec/DNSSECKeysModal";
 import { DNSZoneDeleteAction } from "./DNSZoneDeleteAction";
 import { DNSDomainDeleteAction } from "./DNSDomainDeleteAction";
 import { DNSZoneEnableButton } from "./DNSZoneEnableButton";
@@ -55,22 +62,18 @@ export interface DnsZoneRow {
 // owner-visible, admin-routed variant; the tenant passes the owner-free,
 // tenant-routed one. Nothing about the query or the common columns lives here.
 export interface DnsZoneInventoryAudience {
-  // showOwner adds the Owner column to the Zones table and drives the DNSSEC
-  // tab's owner column (AC4 / AC5).
+  // showOwner adds the Owner column to the zone table (AC4).
   showOwner: boolean;
-  // manageRoute builds the "Manage Records" target for a zone row — the only
+  // manageRoute builds the records page a zone's name links to — the only
   // place the /jabali-admin vs /jabali-panel prefix differs.
   manageRoute: (zoneId: string) => string;
   // renderEmpty owns the empty-state: admin offers a create-domain CTA, the
   // tenant shows a plain Empty. Supplied by the Adapter so it can close over
   // its own navigate/copy.
   renderEmpty: () => React.ReactNode;
-  // dnssec copy + owner policy for the DNSSEC tab.
-  dnssec: {
-    showOwner: boolean;
-    message: string;
-    description: string;
-  };
+  // dnssecNote is optional copy under the keys in the "View DS & keys" modal —
+  // the admin adapter says how signing is done; the tenant omits it.
+  dnssecNote?: React.ReactNode;
   // header is the page title strip (icon + text). `extra` is an optional action
   // rendered opposite the title — the tenant supplies an "Add DNS Zone" button
   // (GH #1541); the admin adapter omits it (zones there are created via domains).
@@ -81,15 +84,122 @@ export interface DnsZoneInventoryAudience {
   };
 }
 
-const ZonesTab = ({ audience }: { audience: DnsZoneInventoryAudience }) => {
+// apiErrorText pulls the API's detail/error out of a failed request.
+const apiErrorText = (err: unknown, fallback: string) =>
+  (err as { response?: { data?: { detail?: string; error?: string } } })?.response?.data?.detail ??
+  (err as { response?: { data?: { error?: string } } })?.response?.data?.error ??
+  (err instanceof Error ? err.message : fallback);
+
+const ZoneTable = ({ audience }: { audience: DnsZoneInventoryAudience }) => {
   const { t } = useTranslation();
-  const navigate = useNavigate();
   // GH #1611: the row whose DNS zone is being deleted (null = closed). Admin +
   // tenant both get the action; the backend enforces admin-or-owner.
   const [deleteTarget, setDeleteTarget] = useState<DnsZoneRow | null>(null);
   // GH #1611: the DNS-only row whose WHOLE domain is being deleted (its zone
   // can't be dropped alone — DNS is the last facet).
   const [deleteDomainTarget, setDeleteDomainTarget] = useState<DnsZoneRow | null>(null);
+  // GH #1918: the signed zone whose DS records + keys are open (null = closed).
+  const [keysTarget, setKeysTarget] = useState<DnsZoneRow | null>(null);
+  // The row whose DNSSEC flip is in flight — spins that row's ⋯ trigger.
+  const [dnssecBusyId, setDnssecBusyId] = useState<string | null>(null);
+  const setDNSSEC = useSetDNSSEC();
+
+  const flipDNSSEC = async (zone: DnsZoneRow, enabled: boolean) => {
+    setDnssecBusyId(zone.id);
+    try {
+      await setDNSSEC.mutateAsync({ domainID: zone.id, enabled });
+      feedback.message.success(
+        enabled
+          ? `DNSSEC enabled for ${zone.name}. Publish its DS record at your registrar (⋯ → View DS & keys).`
+          : `DNSSEC disabled for ${zone.name}.`,
+      );
+    } catch (err) {
+      feedback.message.error(apiErrorText(err, "Could not change DNSSEC"));
+    } finally {
+      setDnssecBusyId(null);
+    }
+  };
+
+  // Disabling signing while the registrar still publishes the DS makes
+  // validating resolvers reject the zone, so it confirms first. Enabling is
+  // harmless until a DS is published, so it does not.
+  const confirmDisableDNSSEC = (zone: DnsZoneRow) => {
+    feedback.modal.confirm({
+      title: `Disable DNSSEC for ${zone.name}?`,
+      content:
+        "Remove the DS record at your registrar first. While the registrar still " +
+        "publishes it, resolvers that check DNSSEC reject the unsigned zone, and " +
+        "the domain stops resolving for their users.",
+      okText: "Disable DNSSEC",
+      okButtonProps: { danger: true },
+      onOk: () => flipDNSSEC(zone, false),
+    });
+  };
+
+  const rowMenu = (record: DnsZoneRow): MenuProps["items"] => {
+    // GH #1611: a DNS-only domain (web off + mail off) can't drop its zone
+    // alone — DNS is the last facet — so it offers a whole-domain delete
+    // instead of the zone delete the backend would refuse.
+    const dnsOnly = record.web_disabled === true && record.email_enabled !== true;
+    const items: NonNullable<MenuProps["items"]> = [];
+    // Signing needs a zone in PowerDNS (the agent runs pdnsutil on it). A
+    // signed row always offers Disable, so a stuck state can be cleared.
+    if (record.dnssec_enabled) {
+      items.push(
+        {
+          key: "dnssec-keys",
+          icon: <KeyOutlined />,
+          label: "View DS & keys",
+          onClick: () => setKeysTarget(record),
+        },
+        {
+          key: "dnssec-off",
+          icon: <SafetyOutlined />,
+          danger: true,
+          label: "Disable DNSSEC",
+          onClick: () => confirmDisableDNSSEC(record),
+        },
+      );
+    } else if (record.provisioned) {
+      items.push({
+        key: "dnssec-on",
+        icon: <SafetyOutlined />,
+        label: "Enable DNSSEC",
+        onClick: () => void flipDNSSEC(record, true),
+      });
+    }
+    if (dnsOnly) {
+      items.push({
+        key: "delete-domain",
+        icon: <DeleteOutlined />,
+        danger: true,
+        label: t("dnszonesoverviewpage.delete_domain"),
+        onClick: () => setDeleteDomainTarget(record),
+      });
+    } else if (record.provisioned) {
+      // Delete the DNS zone (keep web + mail). Only for a panel-hosted zone; a
+      // DNSSEC-signed zone must be unsigned first (the backend refuses it too).
+      items.push({
+        key: "delete-zone",
+        icon: <DeleteOutlined />,
+        danger: true,
+        disabled: record.dnssec_enabled === true,
+        label: record.dnssec_enabled ? (
+          <span>
+            {t("dnszonesoverviewpage.delete_zone")}
+            <br />
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              {t("dnszonesoverviewpage.delete_disabled_dnssec")}
+            </Typography.Text>
+          </span>
+        ) : (
+          t("dnszonesoverviewpage.delete_zone")
+        ),
+        onClick: () => setDeleteTarget(record),
+      });
+    }
+    return items;
+  };
 
   // One batched request (JAB-377): the endpoint returns provisioning state +
   // record count + effective TTL per row, so there is no per-domain zone fetch
@@ -161,6 +271,11 @@ const ZonesTab = ({ audience }: { audience: DnsZoneInventoryAudience }) => {
               currentQ: query.params.q,
               onSearch: (v) => query.setParams({ q: v, page: 1 }),
             })}
+            // GH #1918: the name opens the zone's records. While DNS is
+            // dropped there are no records to manage, so it stays plain text.
+            render={(name: string, record: DnsZoneRow) =>
+              record.dns_disabled ? name : <Link to={audience.manageRoute(record.id)}>{name}</Link>
+            }
           />
           {audience.showOwner && (
             <Table.Column<DnsZoneRow>
@@ -221,48 +336,25 @@ const ZonesTab = ({ audience }: { audience: DnsZoneInventoryAudience }) => {
           <Table.Column<DnsZoneRow>
             title={t("dnszonesoverviewpage.actions")}
             render={(_, record) => {
-              // GH #1611: a DNS-only domain (web off + mail off) can't drop its
-              // zone alone — DNS is the last facet — so it offers a whole-domain
-              // delete instead of the zone delete the backend would refuse.
-              const dnsOnly = record.web_disabled === true && record.email_enabled !== true;
+              // GH #1611: DNS was dropped ("host DNS elsewhere"). Enable DNS is
+              // that row's only action, so it stays a visible button rather
+              // than a one-item ⋯ menu.
+              if (record.dns_disabled) {
+                return <DNSZoneEnableButton zone={record} />;
+              }
+              const items = rowMenu(record);
+              if (!items || items.length === 0) {
+                return <Typography.Text type="secondary">—</Typography.Text>;
+              }
               return (
-                <Space>
-                  {/* Managing records is meaningless while DNS is dropped (no
-                      zone rows exist), so hide it on those rows. */}
-                  {!record.dns_disabled && (
-                    <Button
-                      type="primary"
-                      onClick={() => navigate(audience.manageRoute(record.id))}
-                    >
-                      Manage Records
-                    </Button>
-                  )}
-                  {record.dns_disabled ? (
-                    // GH #1611: DNS was dropped ("host DNS elsewhere") — offer to
-                    // host it here again. The backend re-creates the zone.
-                    <DNSZoneEnableButton zone={record} />
-                  ) : dnsOnly ? (
-                    <Button danger onClick={() => setDeleteDomainTarget(record)}>
-                      {t("dnszonesoverviewpage.delete_domain")}
-                    </Button>
-                  ) : (
-                    // Delete the DNS zone (keep web + mail). Only for a
-                    // panel-hosted zone; a DNSSEC-signed zone must be unsigned
-                    // first (the backend refuses it too).
-                    record.provisioned &&
-                    (record.dnssec_enabled ? (
-                      <Tooltip title={t("dnszonesoverviewpage.delete_disabled_dnssec")}>
-                        <Button danger disabled>
-                          {t("dnszonesoverviewpage.delete_zone")}
-                        </Button>
-                      </Tooltip>
-                    ) : (
-                      <Button danger onClick={() => setDeleteTarget(record)}>
-                        {t("dnszonesoverviewpage.delete_zone")}
-                      </Button>
-                    ))
-                  )}
-                </Space>
+                <Dropdown trigger={["click"]} menu={{ items }}>
+                  <Button
+                    size="small"
+                    icon={<MoreOutlined />}
+                    loading={dnssecBusyId === record.id}
+                    aria-label={`Actions for ${record.name}`}
+                  />
+                </Dropdown>
               );
             }}
           />
@@ -282,27 +374,20 @@ const ZonesTab = ({ audience }: { audience: DnsZoneInventoryAudience }) => {
           onClose={() => setDeleteDomainTarget(null)}
         />
       )}
+      <DNSSECKeysModal
+        domainID={keysTarget?.id ?? null}
+        domainName={keysTarget?.name ?? ""}
+        open={keysTarget != null}
+        onClose={() => setKeysTarget(null)}
+        note={audience.dnssecNote}
+      />
     </>
   );
 };
 
-const DnssecTab = ({ audience }: { audience: DnsZoneInventoryAudience }) => (
-  <>
-    <Alert
-      type="info"
-      showIcon
-      style={{ marginBottom: 16 }}
-      message={audience.dnssec.message}
-      description={audience.dnssec.description}
-    />
-    <DNSSECTable showOwner={audience.dnssec.showOwner} />
-  </>
-);
-
 // DnsZoneInventory is the whole DNS landing screen. Each route shell renders
 // exactly this with its audience policy.
 export const DnsZoneInventory = ({ audience }: { audience: DnsZoneInventoryAudience }) => {
-  const [activeTab, setActiveTab] = useTabParam<"zones" | "dnssec">("zones");
   return (
     <div>
       <div
@@ -320,15 +405,8 @@ export const DnsZoneInventory = ({ audience }: { audience: DnsZoneInventoryAudie
         </Typography.Title>
         {audience.header.extra}
       </div>
-      <Card
-        tabList={[
-          { key: "zones", tab: "Zones" },
-          { key: "dnssec", tab: "DNSSEC" },
-        ]}
-        activeTabKey={activeTab}
-        onTabChange={(k) => setActiveTab(k as "zones" | "dnssec")}
-      >
-        {activeTab === "zones" ? <ZonesTab audience={audience} /> : <DnssecTab audience={audience} />}
+      <Card>
+        <ZoneTable audience={audience} />
       </Card>
     </div>
   );

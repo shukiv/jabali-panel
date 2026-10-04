@@ -3,7 +3,7 @@
 //
 // Three endpoints:
 //   GET  /domains/:id/dnssec        — current state + cached keys
-//   PUT  /domains/:id/dnssec        — flip enabled on/off
+//   PUT  /domains/:id/dnssec        — flip enabled on/off (useSetDNSSEC)
 //   GET  /domains/:id/dnssec/ds     — DS records for registrar
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -54,18 +54,30 @@ export function useDNSSECState(domainID: string | undefined) {
   });
 }
 
-export function useUpdateDNSSEC(domainID: string) {
+// useSetDNSSEC flips DNSSEC for any domain. The DNS zone list (GH #1918) builds
+// each row's menu inside a column renderer, so the domain is a call argument,
+// not a hook argument. The zone list's Signed tag reads the same column
+// (domains.dnssec_enabled), so it is refreshed too.
+export function useSetDNSSEC() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (enabled: boolean): Promise<DNSSECState> => {
-      const res = await apiClient.put<DNSSECState>(`/domains/${domainID}/dnssec`, {
-        enabled,
-      });
+    mutationFn: async ({
+      domainID,
+      enabled,
+    }: {
+      domainID: string;
+      enabled: boolean;
+    }): Promise<DNSSECState> => {
+      const res = await apiClient.put<DNSSECState>(
+        `/domains/${encodeURIComponent(domainID)}/dnssec`,
+        { enabled },
+      );
       return res.data;
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["dnssec"] });
       qc.invalidateQueries({ queryKey: ["domains"] });
+      qc.invalidateQueries({ queryKey: ["list", "dns/zones"] });
     },
   });
 }

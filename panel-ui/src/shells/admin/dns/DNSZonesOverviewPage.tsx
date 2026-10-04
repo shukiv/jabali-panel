@@ -1,8 +1,8 @@
 // DNSZonesOverviewPage — admin Adapter for the shared DNS Zone Inventory
 // Module (JAB-299). The page owns only the admin audience policy: owner column
 // visible, admin domain routes, a create-domain empty-state CTA, and the
-// owner-visible DNSSEC tab. All list/query/column behavior lives in
-// components/dns/DNSZoneInventory.
+// signing note in the DNSSEC keys modal. All list/query/column behavior lives
+// in components/dns/DNSZoneInventory.
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router";
@@ -33,12 +33,8 @@ export const DNSZonesOverviewPage = () => {
         onCta={() => navigate("/jabali-admin/domains/create")}
       />
     ),
-    dnssec: {
-      showOwner: true,
-      message: "Sign zones with DNSSEC. Enable per-domain, then publish the DS record at the registrar.",
-      description:
-        "Signing is best-effort NSEC3 with ECDSAP256SHA256 (RFC 8624). Keys are managed by PowerDNS via pdnsutil.",
-    },
+    dnssecNote:
+      "Signing is best-effort NSEC3 with ECDSAP256SHA256 (RFC 8624). Keys are managed by PowerDNS via pdnsutil.",
     header: {
       icon: <ServerOutlined />,
       title: "DNS Zones",
