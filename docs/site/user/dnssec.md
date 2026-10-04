@@ -1,6 +1,6 @@
 # DNSSEC (User)
 
-Per-domain DNSSEC signing. Toggle under Domain Edit → DNSSEC.
+Per-domain DNSSEC signing. Turn it on or off from the domain's **⋯** menu on the **DNS** page (`/jabali-panel/dns`).
 
 ## What DNSSEC does
 
@@ -10,9 +10,9 @@ DNSSEC is opt-in per domain. The default is off; it costs a small amount of CPU 
 
 ## Turning it on
 
-1. Open your domain in [Domains](./domains.md) → Edit.
-2. Toggle **DNSSEC** to on.
-3. Within a couple of seconds the page displays a **DS record** — a short text string containing the algorithm, key id, and digest.
+1. Open **DNS** and find your domain.
+2. Click **⋯ → Enable DNSSEC**. The DNSSEC column changes to **Signed**.
+3. Click **⋯ → View DS & keys**. It shows the zone's keys and its **DS record** — a short text string containing the algorithm, key id, and digest.
 4. Publish the DS record at the parent registrar (where you registered the domain). Every registrar has a "DNSSEC" form somewhere; paste the DS values in.
 5. Wait for the parent to push the DS into the parent zone — typically minutes, up to one day depending on the registrar's update cadence.
 6. Verify with an online DNSSEC analyser (Verisign Labs, DNSViz) or with `dig +dnssec @8.8.8.8 example.com SOA`; the answer should carry the `ad` (Authenticated Data) flag.
@@ -23,7 +23,9 @@ Your zone is signed but the chain of trust is broken — validating resolvers tr
 
 ## Turning it off
 
-Toggle off. The agent removes the keys and re-publishes an unsigned zone. **Remove the DS from the parent registrar at the same time** — leaving the DS in place after turning off signing creates a validation failure for resolvers and may make the domain unreachable.
+**Remove the DS from the parent registrar first.** Then click **⋯ → Disable DNSSEC** and confirm. The agent removes the keys and re-publishes an unsigned zone. Leaving the DS in place after turning off signing creates a validation failure for resolvers and may make the domain unreachable.
+
+A signed zone cannot be deleted. Disable DNSSEC first.
 
 ## Key rotation
 

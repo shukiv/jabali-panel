@@ -4,15 +4,14 @@
 
 ## List
 
-Columns: zone name, owner, record count, last modified, DNSSEC status, serial.
+One list of zones (GH #1918). Columns: domain name, owner, zone status, record count, TTL, DNSSEC (Signed / Unsigned), registration expiry.
 
-## Per-zone view
-
-Click a zone to drill into:
-
-- **Records** — `A`, `AAAA`, `CNAME`, `MX`, `TXT`, `SRV`, `CAA`, `PTR`, `NS`, `SOA`. Inline edit / delete, paginated, searchable by name.
-- **DNSSEC** — toggle signing, view active keys, copy the DS record to publish at the parent registrar. See [Per-Domain DNSSEC](../platform/dnssec.md).
-- **History** — recent changes (zone-level audit slice).
+- **Domain name** — opens the zone's records: `A`, `AAAA`, `CNAME`, `MX`, `TXT`, `SRV`, `CAA`, `PTR`, `NS`, `SOA`. Inline edit / delete, paginated, searchable by name.
+- **⋯ menu** — per-zone actions:
+  - **Enable DNSSEC** on an unsigned zone, or **Disable DNSSEC** on a signed one. Disable asks for confirmation: remove the DS record at the registrar first.
+  - **View DS & keys** on a signed zone — the active keys and the DS record to publish at the parent registrar. See [Per-Domain DNSSEC](../platform/dnssec.md).
+  - **Delete zone** (or **Delete domain** for a DNS-only domain). A signed zone must be unsigned first.
+- A domain whose DNS is hosted elsewhere shows **Enable DNS** instead of a menu.
 
 ## Adding a zone
 

@@ -1,7 +1,7 @@
 // UserDNSZonesOverviewPage — tenant Adapter for the shared DNS Zone Inventory
 // Module (JAB-299). The page owns only the tenant audience policy: no owner
-// column, tenant domain routes, a plain empty state, and the owner-free DNSSEC
-// tab. All list/query/column behavior lives in components/dns/DNSZoneInventory.
+// column, tenant domain routes, and a plain empty state. All list/query/column
+// behavior lives in components/dns/DNSZoneInventory.
 //
 // GH #1541 (johnnyq): DNS-only zones used to be added from the Domains page
 // "Add" split, which is gone. The "add these later" path now lives here — an
@@ -32,12 +32,6 @@ export const UserDNSZonesOverviewPage = () => {
         description={t("userdnszonesoverviewpage.no_domains_found")}
       />
     ),
-    dnssec: {
-      showOwner: false,
-      message: "Protect your domain with DNSSEC.",
-      description:
-        "Enable signing here, then copy the DS record to your registrar to complete the chain of trust.",
-    },
     header: {
       icon: <CloudServerOutlined />,
       title: "DNS",

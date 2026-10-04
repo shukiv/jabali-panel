@@ -1,11 +1,16 @@
-// DNSZoneInventory.test.tsx — JAB-299. The shared DNS Zone Inventory Module
-// must honor the audience policy: the admin audience keeps the owner column
-// and admin routes, the tenant audience drops the owner column and uses tenant
-// routes, and the DNSSEC tab receives the audience's owner-visibility policy
-// (AC4 / AC5). The common columns render the same values for both (AC3).
+// DNSZoneInventory.test.tsx — JAB-299 / GH #1611 / GH #1918. The shared DNS
+// Zone Inventory Module must honor the audience policy: the admin audience
+// keeps the owner column and admin routes, the tenant audience drops the owner
+// column and uses tenant routes (AC4). The common columns render the same
+// values for both (AC3).
+//
+// GH #1918 (johnnyq): there is no DNSSEC tab and no "Manage Records" button.
+// The domain name links to the zone's records, and the row's ⋯ menu holds
+// Enable / Disable DNSSEC (Disable confirms first), View DS & keys, and the
+// zone or domain delete.
 import { App } from "antd";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -19,18 +24,45 @@ vi.mock("react-i18next", () => ({
   useTranslation: () => ({ t: (k: string) => k }),
 }));
 
-const navigateSpy = vi.fn();
-vi.mock("react-router", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("react-router")>();
-  return { ...actual, useNavigate: () => navigateSpy };
-});
+const fb = vi.hoisted(() => ({
+  confirm: vi.fn(),
+  success: vi.fn(),
+  error: vi.fn(),
+}));
+vi.mock("../../lib/feedback", () => ({
+  feedback: {
+    message: { success: fb.success, error: fb.error, warning: vi.fn() },
+    modal: { confirm: fb.confirm },
+  },
+}));
 
-// DNSSECTable is exercised by its own tests; here we only need to capture the
-// owner-visibility policy the audience hands it (AC5).
-vi.mock("../dnssec/DNSSECTable", () => ({
-  DNSSECTable: ({ showOwner }: { showOwner: boolean }) => (
-    <div data-testid="dnssec-table" data-showowner={String(showOwner)} />
-  ),
+// The DNSSEC endpoints: the flip mutation is a spy, and the keys modal reads a
+// signed state with one KSK and one DS record.
+const dnssec = vi.hoisted(() => ({ mutateAsync: vi.fn() }));
+vi.mock("../../hooks/useDNSSEC", () => ({
+  useSetDNSSEC: () => ({ mutateAsync: dnssec.mutateAsync, isPending: false }),
+  useDNSSECState: (id: string | undefined) => ({
+    isLoading: false,
+    isError: false,
+    data: id
+      ? {
+          domain_id: id,
+          domain_name: "one.tld",
+          enabled: true,
+          keys: [{ key_tag: 4242, key_type: "KSK", algorithm: 13, public_key: "k", active: true }],
+        }
+      : undefined,
+  }),
+  useDSRecords: (id: string | undefined, enabled: boolean) => ({
+    isLoading: false,
+    isError: false,
+    data:
+      id && enabled
+        ? { domain_id: id, domain_name: "one.tld", ds_records: [{ key_tag: 4242, algorithm: 13, digest_type: 2, digest: "ABCDEF0123" }] }
+        : undefined,
+  }),
+  algorithmLabel: (a: number) => `alg${a}`,
+  digestTypeLabel: (d: number) => `dt${d}`,
 }));
 
 const provisioned: DnsZoneRow = {
@@ -79,7 +111,7 @@ const adminAudience: DnsZoneInventoryAudience = {
   showOwner: true,
   manageRoute: (id) => `/jabali-admin/domains/${id}/dns`,
   renderEmpty: () => <div>empty</div>,
-  dnssec: { showOwner: true, message: "m", description: "d" },
+  dnssecNote: "admin signing note",
   header: { icon: null, title: "DNS Zones" },
 };
 
@@ -87,7 +119,6 @@ const tenantAudience: DnsZoneInventoryAudience = {
   showOwner: false,
   manageRoute: (id) => `/jabali-panel/domains/${id}/dns`,
   renderEmpty: () => <div>empty</div>,
-  dnssec: { showOwner: false, message: "m", description: "d" },
   header: { icon: null, title: "DNS" },
 };
 
@@ -102,8 +133,20 @@ const renderPage = (audience: DnsZoneInventoryAudience) =>
     </QueryClientProvider>,
   );
 
+// rowOf finds a zone's table row by its domain name.
+const rowOf = (name: string) => screen.getByText(name).closest("tr") as HTMLElement;
+
+// openMenu opens a row's ⋯ menu and returns the menu items' accessible names.
+const openMenu = async (name: string) => {
+  fireEvent.click(within(rowOf(name)).getByRole("button", { name: `Actions for ${name}` }));
+  const items = await screen.findAllByRole("menuitem");
+  return items;
+};
+
+const menuItem = (label: RegExp) => screen.getByRole("menuitem", { name: label });
+
 describe("DnsZoneInventory audience policy (JAB-299)", () => {
-  it("admin audience shows the owner column and routes to admin domains (AC4)", () => {
+  it("admin audience shows the owner column and links names to admin domains (AC4)", () => {
     renderPage(adminAudience);
 
     // Owner column header + owner values are admin-only. antd renders the
@@ -112,21 +155,24 @@ describe("DnsZoneInventory audience policy (JAB-299)", () => {
     expect(screen.getByText("alice")).toBeInTheDocument();
     expect(screen.getByText("bob")).toBeInTheDocument();
 
-    // Manage Records on the first row navigates to the admin route.
-    fireEvent.click(screen.getAllByText("Manage Records")[0]);
-    expect(navigateSpy).toHaveBeenCalledWith("/jabali-admin/domains/d1/dns");
+    // GH #1918: the domain name opens the zone's records.
+    expect(screen.getByRole("link", { name: "one.tld" })).toHaveAttribute(
+      "href",
+      "/jabali-admin/domains/d1/dns",
+    );
   });
 
-  it("tenant audience drops the owner column and routes to tenant domains (AC4)", () => {
-    navigateSpy.mockClear();
+  it("tenant audience drops the owner column and links names to tenant domains (AC4)", () => {
     renderPage(tenantAudience);
 
     // No owner column, no owner values.
     expect(screen.queryByText("dnszonesoverviewpage.owner")).not.toBeInTheDocument();
     expect(screen.queryByText("alice")).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getAllByText("Manage Records")[0]);
-    expect(navigateSpy).toHaveBeenCalledWith("/jabali-panel/domains/d1/dns");
+    expect(screen.getByRole("link", { name: "one.tld" })).toHaveAttribute(
+      "href",
+      "/jabali-panel/domains/d1/dns",
+    );
   });
 
   it("renders provisioning, DNSSEC, and TTL presentation for both rows (AC3)", () => {
@@ -140,29 +186,79 @@ describe("DnsZoneInventory audience policy (JAB-299)", () => {
     // effective_ttl null and registrar_expires_at null both render an em dash.
     expect(screen.getAllByText("—").length).toBeGreaterThan(0);
   });
+});
 
-  it("shows a DNS-zone delete action gated by provisioning + DNSSEC (GH #1611)", () => {
+describe("DnsZoneInventory one zone list (GH #1918)", () => {
+  beforeEach(() => {
+    dnssec.mutateAsync.mockReset();
+    dnssec.mutateAsync.mockResolvedValue({});
+    fb.confirm.mockReset();
+  });
+
+  it("has no DNSSEC tab and no Manage Records button", () => {
     renderPage(adminAudience);
 
-    // Only the provisioned row carries a delete action; the not-provisioned row
-    // (nothing to tear down) has none.
-    const del = screen.getAllByText("dnszonesoverviewpage.delete_zone");
-    expect(del.length).toBe(1);
-    // The provisioned fixture is DNSSEC-signed, so the button is disabled
+    expect(screen.queryByRole("tab")).not.toBeInTheDocument();
+    expect(screen.queryByText("Manage Records")).not.toBeInTheDocument();
+  });
+
+  it("a signed zone's menu offers View DS & keys and Disable DNSSEC; its delete waits for unsigning", async () => {
+    renderPage(adminAudience);
+    await openMenu("one.tld");
+
+    expect(menuItem(/View DS & keys/)).toBeInTheDocument();
+    expect(menuItem(/Disable DNSSEC/)).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: /Enable DNSSEC/ })).not.toBeInTheDocument();
+    // The provisioned fixture is DNSSEC-signed, so the zone delete is disabled
     // (unsign first) — the same refusal the backend enforces.
-    expect(del[0].closest("button")).toBeDisabled();
+    const del = menuItem(/dnszonesoverviewpage.delete_zone/);
+    expect(del).toHaveAttribute("aria-disabled", "true");
+    expect(del).toHaveTextContent("dnszonesoverviewpage.delete_disabled_dnssec");
   });
 
-  it("DNSSEC tab receives showOwner=true for the admin audience (AC5)", () => {
+  it("Disable DNSSEC confirms first and only then turns signing off", async () => {
     renderPage(adminAudience);
-    fireEvent.click(screen.getByText("DNSSEC"));
-    expect(screen.getByTestId("dnssec-table").getAttribute("data-showowner")).toBe("true");
+    await openMenu("one.tld");
+    fireEvent.click(menuItem(/Disable DNSSEC/));
+
+    expect(fb.confirm).toHaveBeenCalledTimes(1);
+    const opts = fb.confirm.mock.calls[0][0] as { content: string; onOk: () => Promise<void> };
+    expect(opts.content).toMatch(/DS record at your registrar/);
+    expect(dnssec.mutateAsync).not.toHaveBeenCalled();
+
+    await opts.onOk();
+    expect(dnssec.mutateAsync).toHaveBeenCalledWith({ domainID: "d1", enabled: false });
   });
 
-  it("DNSSEC tab receives showOwner=false for the tenant audience (AC5)", () => {
-    renderPage(tenantAudience);
-    fireEvent.click(screen.getByText("DNSSEC"));
-    expect(screen.getByTestId("dnssec-table").getAttribute("data-showowner")).toBe("false");
+  it("an unsigned provisioned zone offers Enable DNSSEC, which signs without a confirm", async () => {
+    table.items = [{ ...provisioned, id: "d9", name: "nine.tld", dnssec_enabled: false }];
+    renderPage(adminAudience);
+    await openMenu("nine.tld");
+
+    expect(screen.queryByRole("menuitem", { name: /View DS & keys/ })).not.toBeInTheDocument();
+    expect(menuItem(/dnszonesoverviewpage.delete_zone/)).not.toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(menuItem(/Enable DNSSEC/));
+
+    expect(fb.confirm).not.toHaveBeenCalled();
+    expect(dnssec.mutateAsync).toHaveBeenCalledWith({ domainID: "d9", enabled: true });
+  });
+
+  it("an unprovisioned zone has nothing to sign or delete, so it has no menu", () => {
+    table.items = [notProvisioned];
+    renderPage(adminAudience);
+
+    expect(within(rowOf("two.tld")).queryByRole("button", { name: /Actions for/ })).not.toBeInTheDocument();
+  });
+
+  it("View DS & keys opens the keys and DS records, with the audience note", async () => {
+    renderPage(adminAudience);
+    await openMenu("one.tld");
+    fireEvent.click(menuItem(/View DS & keys/));
+
+    expect(await screen.findByText("DNSSEC keys · one.tld")).toBeInTheDocument();
+    expect(screen.getAllByText("4242").length).toBeGreaterThan(0);
+    expect(screen.getByText("ABCDEF0123")).toBeInTheDocument();
+    expect(screen.getByText("admin signing note")).toBeInTheDocument();
   });
 });
 
@@ -214,38 +310,40 @@ describe("DnsZoneInventory facet-state actions (GH #1611)", () => {
     email_enabled: true,
   };
 
-  it("a dropped-DNS row shows 'Hosted elsewhere' + Enable DNS and hides Manage Records", () => {
+  it("a dropped-DNS row shows 'Hosted elsewhere' + Enable DNS, with no records link or menu", () => {
     table.items = [dnsDropped];
     renderPage(adminAudience);
 
     expect(screen.getByText("dnszonesoverviewpage.dns_hosted_elsewhere")).toBeInTheDocument();
     expect(screen.getByText("dnszonesoverviewpage.enable_dns")).toBeInTheDocument();
-    // No zone rows exist while DNS is dropped, so no "Manage Records" and no
-    // zone/domain delete on this row.
-    expect(screen.queryByText("Manage Records")).not.toBeInTheDocument();
-    expect(screen.queryByText("dnszonesoverviewpage.delete_zone")).not.toBeInTheDocument();
-    expect(screen.queryByText("dnszonesoverviewpage.delete_domain")).not.toBeInTheDocument();
+    // No zone rows exist while DNS is dropped: the name is plain text and
+    // there is no ⋯ menu (so no zone/domain delete and no DNSSEC).
+    expect(screen.queryByRole("link", { name: "dropped.tld" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Actions for/ })).not.toBeInTheDocument();
   });
 
-  it("a DNS-only row offers Delete domain, not a zone delete", () => {
+  it("a DNS-only row offers Delete domain, not a zone delete", async () => {
     table.items = [dnsOnly];
     renderPage(adminAudience);
 
-    expect(screen.getByText("dnszonesoverviewpage.delete_domain")).toBeInTheDocument();
-    expect(screen.queryByText("dnszonesoverviewpage.delete_zone")).not.toBeInTheDocument();
     // A DNS-only row still has a zone to manage.
-    expect(screen.getByText("Manage Records")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "dnsonly.tld" })).toBeInTheDocument();
+    await openMenu("dnsonly.tld");
+    expect(menuItem(/dnszonesoverviewpage.delete_domain/)).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: /dnszonesoverviewpage.delete_zone/ })).not.toBeInTheDocument();
   });
 
-  it("an ordinary multi-facet row keeps the zone delete; the three states coexist", () => {
+  it("an ordinary multi-facet row keeps the zone delete; the three states coexist", async () => {
     table.items = [dnsDropped, dnsOnly, normalMulti];
     renderPage(adminAudience);
 
-    // Each state renders exactly its own action.
     expect(screen.getAllByText("dnszonesoverviewpage.enable_dns")).toHaveLength(1);
-    expect(screen.getAllByText("dnszonesoverviewpage.delete_domain")).toHaveLength(1);
-    expect(screen.getAllByText("dnszonesoverviewpage.delete_zone")).toHaveLength(1);
-    // Manage Records on both provisioned/manageable rows, hidden on the dropped one.
-    expect(screen.getAllByText("Manage Records")).toHaveLength(2);
+    // Records links on both manageable rows, none on the dropped one.
+    expect(screen.getAllByRole("link")).toHaveLength(2);
+    // ⋯ menus on the two rows with a zone, not on the dropped one.
+    expect(screen.getAllByRole("button", { name: /Actions for/ })).toHaveLength(2);
+    await openMenu("multi.tld");
+    expect(menuItem(/dnszonesoverviewpage.delete_zone/)).not.toHaveAttribute("aria-disabled", "true");
+    expect(screen.queryByRole("menuitem", { name: /dnszonesoverviewpage.delete_domain/ })).not.toBeInTheDocument();
   });
 });
