@@ -15,7 +15,6 @@ import type { Domain } from "../../../components/domains/types";
 import { MailboxesTab } from "./tabs/MailboxesTab";
 import { GroupsTab } from "./tabs/GroupsTab";
 import { ForwardersTab } from "./tabs/ForwardersTab";
-import { CatchAllTab } from "./tabs/CatchAllTab";
 import { SettingsTab } from "./tabs/SettingsTab";
 import { SharedFoldersTab } from "./tabs/SharedFoldersTab";
 import { SharedResourcesTab } from "./tabs/SharedResourcesTab";
@@ -29,7 +28,6 @@ const TAB_KEYS = [
   "groups",
   "shared",
   "resources",
-  "catchall",
   "settings",
   "logs",
   "statistics",
@@ -38,8 +36,12 @@ type TabKey = (typeof TAB_KEYS)[number];
 const DEFAULT_TAB: TabKey = "mailboxes";
 
 // Tabs that moved: an old link or bookmark lands on the tab that holds the
-// setting now. GH #1915: the disclaimer lives on Settings.
-const MOVED_TABS = new Map<string, TabKey>([["disclaimer", "settings"]]);
+// setting now. GH #1915: the disclaimer lives on Settings. GH #1916: so does
+// the catch-all.
+const MOVED_TABS = new Map<string, TabKey>([
+  ["disclaimer", "settings"],
+  ["catchall", "settings"],
+]);
 
 const TAB_LABELS: Record<TabKey, string> = {
   mailboxes: "Accounts",
@@ -47,7 +49,6 @@ const TAB_LABELS: Record<TabKey, string> = {
   groups: "Groups",
   shared: "Shared Folders",
   resources: "Shared Resources",
-  catchall: "Catch-All",
   settings: "Settings",
   logs: "Logs",
   statistics: "Statistics",
@@ -123,8 +124,6 @@ export const MailDomainPage = () => {
         return <SharedFoldersTab domainId={domainId} />;
       case "resources":
         return <SharedResourcesTab domainId={domainId} />;
-      case "catchall":
-        return <CatchAllTab domainId={domainId} />;
       case "settings":
         return <SettingsTab domainId={domainId} />;
       case "logs":

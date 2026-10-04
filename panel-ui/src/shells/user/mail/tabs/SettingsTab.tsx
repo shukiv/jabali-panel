@@ -12,13 +12,30 @@
 // GH #1915 (johnnyq): the per-domain outbound disclaimer moved here from its
 // own tab. It is the same owner-scoped GET/PUT /domains/:id/disclaimer the tab
 // used; only the placement changed.
+//
+// GH #1916 (johnnyq): the catch-all moved here from its own tab too. Same
+// owner-scoped GET/PUT/DELETE /domains/:id/catchall; the target is picked from
+// the domain's mailboxes (#234).
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Alert, Button, Card, Form, Input, Skeleton, Space, Switch, Typography } from "antd";
+import { Alert, Button, Card, Form, Input, Popconfirm, Select, Skeleton, Space, Switch, Typography } from "antd";
+import { useQuery } from "@tanstack/react-query";
+import { apiClient } from "../../../../apiClient";
 import { feedback } from "../../../../lib/feedback"; // GH #970: themed toasts
 import { useOneQuery, useUpdateMutation } from "../../../../hooks/useQueries";
 import { useDisclaimer, useUpdateDisclaimer, type Disclaimer } from "../../../../hooks/useDisclaimer";
+import {
+  useDeleteDomainCatchAll,
+  useDomainCatchAll,
+  useUpdateDomainCatchAll,
+  type DomainCatchAll,
+} from "../../../../hooks/useCatchAll";
+import type { Mailbox } from "../../../../hooks/useMailboxes";
 import type { Domain } from "../../../../components/domains/types";
+
+function apiErrorMessage(err: unknown, fallback: string): string {
+  return (err as { response?: { data?: { error?: string } } })?.response?.data?.error ?? fallback;
+}
 
 interface DisclaimerValues {
   enabled: boolean;
@@ -39,9 +56,7 @@ const DisclaimerForm = ({ domainId, saved }: { domainId: string; saved: Disclaim
       await update.mutateAsync({ domainID: domainId, enabled: vals.enabled, text: vals.text ?? "" });
       feedback.message.success("Disclaimer saved");
     } catch (err) {
-      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
-        ?? "Failed to save disclaimer";
-      feedback.message.error(msg);
+      feedback.message.error(apiErrorMessage(err, "Failed to save disclaimer"));
     }
   };
 
@@ -100,6 +115,111 @@ const DisclaimerCard = ({ domainId }: { domainId: string }) => {
   );
 };
 
+// CatchAllForm, like DisclaimerForm, mounts once the saved catch-all has
+// loaded and is keyed by it, so a save or a clear remounts it with what the
+// server stored.
+const CatchAllForm = ({ domain, saved }: { domain: Domain; saved: DomainCatchAll }) => {
+  const { t } = useTranslation();
+  const [form] = Form.useForm<{ target?: string }>();
+  const update = useUpdateDomainCatchAll();
+  const clear = useDeleteDomainCatchAll();
+  const { data: mailboxes = [], isLoading: loadingMailboxes } = useQuery({
+    queryKey: ["catchall-mailboxes", domain.id],
+    queryFn: async () => {
+      const { data } = await apiClient.get<{ data: Mailbox[] }>(
+        `/domains/${domain.id}/mailboxes?page=1&page_size=200&sort=local_part&order=asc`,
+      );
+      return data.data;
+    },
+  });
+
+  // Keep a current target that is not one of the domain's mailboxes (an
+  // external address set through the CLI, or one set before the picker
+  // existed) so saving never drops it.
+  const options = mailboxes.map((m) => ({ label: m.email, value: m.email }));
+  if (saved.target && !options.some((o) => o.value === saved.target)) {
+    options.unshift({ label: `${saved.target} (current)`, value: saved.target });
+  }
+
+  const onFinish = async ({ target }: { target?: string }) => {
+    try {
+      await update.mutateAsync({ domainID: domain.id, target: target ?? "" });
+      feedback.message.success("Catch-all saved");
+    } catch (err) {
+      feedback.message.error(apiErrorMessage(err, "Failed to save the catch-all"));
+    }
+  };
+
+  const onClear = async () => {
+    try {
+      await clear.mutateAsync(domain.id);
+      feedback.message.success("Catch-all cleared");
+    } catch (err) {
+      feedback.message.error(apiErrorMessage(err, "Failed to clear the catch-all"));
+    }
+  };
+
+  return (
+    <Form form={form} layout="vertical" initialValues={{ target: saved.target ?? undefined }} onFinish={onFinish}>
+      <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
+        {saved.target ? (
+          <>
+            Mail to an unknown address at <Typography.Text code>{domain.name}</Typography.Text> is
+            delivered to <Typography.Text code>{saved.target}</Typography.Text>.
+          </>
+        ) : (
+          <>
+            Not set: mail to an unknown address at <Typography.Text code>{domain.name}</Typography.Text> is
+            rejected.
+          </>
+        )}
+      </Typography.Paragraph>
+      <Form.Item
+        name="target"
+        label={t("catchalltab.target_mailbox")}
+        rules={[{ required: true, message: "Select a target mailbox" }]}
+        extra="Mail sent to unknown addresses at this domain is delivered to this mailbox. Expect it to collect a lot of spam."
+      >
+        <Select
+          showSearch
+          placeholder="Select a mailbox"
+          loading={loadingMailboxes}
+          options={options}
+          optionFilterProp="label"
+          notFoundContent={loadingMailboxes ? "Loading…" : "No mailboxes in this domain"}
+        />
+      </Form.Item>
+      <Space wrap>
+        <Button type="primary" htmlType="submit" loading={update.isPending}>
+          Set catch-all
+        </Button>
+        {saved.target && (
+          <Popconfirm title={`Clear the catch-all for ${domain.name}?`} okText="Clear" onConfirm={onClear}>
+            <Button danger loading={clear.isPending}>
+              Clear catch-all
+            </Button>
+          </Popconfirm>
+        )}
+      </Space>
+    </Form>
+  );
+};
+
+const CatchAllCard = ({ domain }: { domain: Domain }) => {
+  const q = useDomainCatchAll(domain.id);
+  return (
+    <Card size="small" title="Catch-All">
+      {q.isLoading ? (
+        <Skeleton active paragraph={{ rows: 2 }} />
+      ) : q.data ? (
+        <CatchAllForm key={`${q.data.updated_at}|${q.data.target ?? ""}`} domain={domain} saved={q.data} />
+      ) : (
+        <Alert type="error" showIcon message="Failed to load the catch-all" />
+      )}
+    </Card>
+  );
+};
+
 export const SettingsTab = ({ domainId }: { domainId?: string } = {}) => {
   const { data: domain, isLoading } = useOneQuery<Domain>({
     resource: "domains",
@@ -136,7 +256,7 @@ export const SettingsTab = ({ domainId }: { domainId?: string } = {}) => {
         type="info"
         showIcon
         message="Enable email for this domain first"
-        description="Webmail and the disclaimer are only relevant once this domain has email enabled."
+        description="Webmail, the catch-all and the disclaimer are only relevant once this domain has email enabled."
       />
     );
   }
@@ -167,6 +287,7 @@ export const SettingsTab = ({ domainId }: { domainId?: string } = {}) => {
           </Typography.Text>
         </Space>
       </Card>
+      <CatchAllCard domain={domain} />
       <DisclaimerCard domainId={domain.id} />
     </Space>
   );
