@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -194,6 +195,43 @@ type accountManifestRow struct {
 	Tags       []string  `json:"tags,omitempty"`
 }
 
+// handleRestoreReply is what the CLI does with the agent's backup.restore
+// reply. On an applied restore it walks the meta-stage payload and reinstates
+// every panel-DB row (user, php_pools, domains, ssl_certs, mailboxes, DNS,
+// databases, db_users + grants, app_installs, ssh_keys, cron_jobs), falling
+// back to a manifest-only user-row reconstruction when the snapshot carries
+// no meta stage (older schema_version=1 snapshots).
+//
+// In recon mode (--apply=false) it writes nothing. The agent still returns
+// the metadata bundle, and reinstating it would rewrite live panel rows, Kratos
+// and Stalwart: exactly what a staging-only smoke test must not touch.
+func handleRestoreReply(w io.Writer, raw json.RawMessage, apply bool,
+	applyMeta func(json.RawMessage), ensureUser func(accountRestoreUserBlock) error) {
+	var resp struct {
+		User     accountRestoreUserBlock `json:"user"`
+		Metadata json.RawMessage         `json:"metadata"`
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return
+	}
+	if !apply {
+		fmt.Fprintln(w, "recon mode (--apply=false): panel state NOT reconstructed; nothing applied to the live system.")
+		return
+	}
+	if len(resp.Metadata) > 0 {
+		applyMeta(resp.Metadata)
+		return
+	}
+	if resp.User.ID != "" {
+		if err := ensureUser(resp.User); err != nil {
+			fmt.Fprintf(w,
+				"WARNING: panel user row reconstruction failed: %v\n"+
+					"  Run `jabali user create --user-id %s --username %s --email %s` manually.\n",
+				err, resp.User.ID, resp.User.Username, resp.User.Email)
+		}
+	}
+}
+
 func newBackupAccountRestoreCmd() *cobra.Command {
 	var (
 		username       string
@@ -357,29 +395,9 @@ Examples:
 			pretty, _ := json.MarshalIndent(json.RawMessage(raw), "  ", "  ")
 			fmt.Fprintln(cmd.OutOrStdout(), "  "+string(pretty))
 
-			// Post-restore: walk the meta-stage payload and reinstate
-			// every panel-DB row (user, php_pools, domains, ssl_certs,
-			// databases, db_users + grants, app_installs, ssh_keys,
-			// cron_jobs). Falls back to a manifest-only user-row
-			// reconstruction when the snapshot doesn't carry a meta
-			// stage (older schema_version=1 snapshots).
-			var resp struct {
-				User     accountRestoreUserBlock `json:"user"`
-				Metadata json.RawMessage         `json:"metadata"`
-				Applied  []string                `json:"applied"`
-			}
-			if jerr := json.Unmarshal(raw, &resp); jerr == nil {
-				if len(resp.Metadata) > 0 {
-					applyPanelMetadata(ctx, cmd, resp.Metadata)
-				} else if resp.User.ID != "" {
-					if cerr := ensurePanelUserRow(ctx, cmd, resp.User); cerr != nil {
-						fmt.Fprintf(cmd.OutOrStdout(),
-							"WARNING: panel user row reconstruction failed: %v\n"+
-								"  Run `jabali user create --user-id %s --username %s --email %s` manually.\n",
-							cerr, resp.User.ID, resp.User.Username, resp.User.Email)
-					}
-				}
-			}
+			handleRestoreReply(cmd.OutOrStdout(), raw, applyFlag,
+				func(meta json.RawMessage) { applyPanelMetadata(ctx, cmd, meta) },
+				func(u accountRestoreUserBlock) error { return ensurePanelUserRow(ctx, cmd, u) })
 			return nil
 		},
 	}
