@@ -1926,14 +1926,14 @@ func (r *Reconciler) applyPHPPool(ctx context.Context, user *models.User, pool *
 		params["admin_flags"] = adminFlags
 	}
 
-	// GH #402: if the user's package opts out of the #401 command-exec
-	// lockdown, send disable_functions="" (explicit opt-out -> agent emits no
-	// line). Omitting the key entirely (the default) lets the agent apply its
-	// safe default. Only an admin-assigned package can flip this; a tenant has
-	// no path to it.
+	// GH #402 / GH #1701: send the package's disabled-functions list (the
+	// agent derives the PHP Defense lift from it). The key is omitted for the
+	// lockdown default so the agent keeps its safe default.
+	// Only an admin-assigned package can change this; a tenant has no path to
+	// it. Fail-closed: no package, or one that can't be read, gets the default.
 	if r.packages != nil && user.PackageID != nil && *user.PackageID != "" {
-		if pkg, perr := r.packages.FindByID(ctx, *user.PackageID); perr == nil && pkg != nil && pkg.PHPExecEnabled {
-			params["disable_functions"] = ""
+		if pkg, perr := r.packages.FindByID(ctx, *user.PackageID); perr == nil && pkg != nil {
+			phppoolops.AddPoolDisableFunctions(params, pkg)
 		}
 	}
 

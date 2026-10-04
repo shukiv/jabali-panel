@@ -101,6 +101,7 @@ type packageCreateFlags struct {
 	egressSSHOut, egressICMP bool
 	egressSSHOutCIDRs        string
 	phpSettingsPolicy        string // GH #1701
+	phpDisabledFunctions     string // GH #1701; "" = flag not given
 
 	fpmMaxChildren, fpmWorkerMemMB uint32
 	fpmUserCanEdit, fpmAdvanced    bool
@@ -146,7 +147,6 @@ func buildPackageFromCreateFlags(f packageCreateFlags) (*models.HostingPackage, 
 
 		SSHEnabled:     f.sshEnabled,
 		CGIEnabled:     f.cgiEnabled,
-		PHPExecEnabled: f.phpExec,
 		WebmailEnabled: f.webmailEnabled, // GH #1628
 
 		EgressSSHOut:      f.egressSSHOut, // GH #1798
@@ -163,6 +163,19 @@ func buildPackageFromCreateFlags(f packageCreateFlags) (*models.HostingPackage, 
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
+	// GH #1701: the disabled-functions list, mirroring the REST create
+	// handler. --php-disabled-functions wins; --php-exec is the legacy toggle.
+	var disabledFns *string
+	if f.phpDisabledFunctions != "" {
+		list, err := parseCLIDisabledFunctions(f.phpDisabledFunctions)
+		if err != nil {
+			return nil, err
+		}
+		disabledFns = list
+	} else if f.phpExec {
+		disabledFns = models.SetPHPExecOnList(models.PHPLockdownFunctions, true)
+	}
+	p.SetPHPDisabledFunctions(disabledFns)
 	// FPM policy defaults (mirror packages.go:166-182).
 	if p.FpmMaxChildrenCap == 0 {
 		p.FpmMaxChildrenCap = 20
@@ -284,6 +297,7 @@ func registerPackageCreateFlags(cmd *cobra.Command, f *packageCreateFlags) {
 	fl.BoolVar(&f.sshEnabled, "ssh", false, "enable SSH access")
 	fl.BoolVar(&f.cgiEnabled, "cgi", false, "enable CGI")
 	fl.BoolVar(&f.phpExec, "php-exec", false, "opt out of the PHP command-exec lockdown (exec/proc_open work)")
+	fl.StringVar(&f.phpDisabledFunctions, "php-disabled-functions", "", phpDisabledFunctionsFlagHelp)
 	fl.BoolVar(&f.egressSSHOut, "egress-ssh-out", false, "allow outbound SSH (:22) for enforced tenants on this package (GH #1798)")
 	fl.StringVar(&f.egressSSHOutCIDRs, "egress-ssh-out-cidrs", "", `JSON array of CIDRs scoping outbound SSH (empty=anywhere), e.g. '["140.82.112.0/20"]'`)
 	fl.StringVar(&f.phpSettingsPolicy, "php-settings-policy", "", `JSON object of php.ini directive to level (admin_only / tenant_allowed; tenant_privileged for security-sensitive directives) saying who may set it on the per-domain PHP Settings page — GH #1701. Empty = defaults (tenants may set every directive they can today). The CLI and admins are not limited by it. e.g. '{"memory_limit":"admin_only"}'`)
@@ -329,6 +343,7 @@ type packageEditFlags struct {
 	egressSSHOut, egressICMP string
 	egressSSHOutCIDRs        string
 	phpSettingsPolicy        string // GH #1701
+	phpDisabledFunctions     string // GH #1701
 }
 
 // applyPackageEditFlags applies the named edit flags onto a loaded row and
@@ -399,7 +414,22 @@ func applyPackageEditFlags(changed func(string) bool, p *models.HostingPackage, 
 
 	tri("ssh", &p.SSHEnabled, f.sshEnabled)
 	tri("cgi", &p.CGIEnabled, f.cgiEnabled)
-	tri("php-exec", &p.PHPExecEnabled, f.phpExec)
+	// GH #1701: --php-disabled-functions sets the list and wins; --php-exec
+	// is the legacy toggle, applied to the list so other entries stay.
+	if changed("php-disabled-functions") {
+		list, err := parseCLIDisabledFunctions(f.phpDisabledFunctions)
+		if err != nil {
+			return false, err
+		}
+		p.SetPHPDisabledFunctions(list)
+		dirty = true
+	} else {
+		var execAllowed bool
+		tri("php-exec", &execAllowed, f.phpExec)
+		if f.phpExec == "true" || f.phpExec == "false" {
+			p.SetPHPDisabledFunctions(models.SetPHPExecOnList(models.EffectivePHPDisabledFunctions(p), execAllowed))
+		}
+	}
 	tri("webmail", &p.WebmailEnabled, f.webmailEnabled)    // GH #1628
 	tri("egress-ssh-out", &p.EgressSSHOut, f.egressSSHOut) // GH #1798
 	tri("egress-icmp", &p.EgressICMP, f.egressICMP)        // GH #1798
@@ -482,11 +512,12 @@ func newPackageEditCmd() *cobra.Command {
 				return err
 			}
 
-			// JAB-306 AC4: remember the pre-edit php_exec state so the pool
-			// re-render fans out only when the operator actually flips it (a
-			// value gate, not flag presence) — `--php-exec true` on an
-			// already-true package must not force a fleet-wide re-render.
-			prevPHPExec := p.PHPExecEnabled
+			// JAB-306 AC4: remember the pre-edit disabled-functions list so the
+			// pool re-render fans out only when it actually changes (a value
+			// gate, not flag presence) — `--php-exec true` on an already-true
+			// package must not force a fleet-wide re-render. GH #1701: the list,
+			// not the php_exec flag, so a list edit fans out too.
+			prevDisabledFns := strings.Join(models.EffectivePHPDisabledFunctions(p), ",")
 
 			didChange, err := applyPackageEditFlags(cmd.Flags().Changed, p, f)
 			if err != nil {
@@ -520,13 +551,17 @@ func newPackageEditCmd() *cobra.Command {
 			// equivalent: the SSH reconcile sweep re-reads the package and diffs
 			// group membership every tick (ssh_keys_reconcile.go), so a CLI
 			// ssh_enabled flip converges on its own.
-			if p.PHPExecEnabled != prevPHPExec {
+			if newDisabledFns := strings.Join(models.EffectivePHPDisabledFunctions(p), ","); newDisabledFns != prevDisabledFns {
 				fanCtx, fanCancel := context.WithTimeout(cmd.Context(), 2*time.Minute)
 				n, ferr := markPackagePHPPoolsPending(fanCtx, userRepo(), repository.NewPHPPoolRepository(sharedDB), p.ID)
 				fanCancel()
-				fmt.Fprintf(os.Stderr, "php_exec set to %v: marked %d serving PHP pool(s) pending; the reconciler re-renders them on its next sweep(s)\n", p.PHPExecEnabled, n)
+				shown := newDisabledFns
+				if shown == "" {
+					shown = "(none)"
+				}
+				fmt.Fprintf(os.Stderr, "disabled PHP functions set to %s: marked %d serving PHP pool(s) pending; the reconciler re-renders them on its next sweep(s)\n", shown, n)
 				if ferr != nil {
-					return fmt.Errorf("mark php pools pending after php_exec change: %w", ferr)
+					return fmt.Errorf("mark php pools pending after disabled-functions change: %w", ferr)
 				}
 			}
 			if jsonOutput {
@@ -576,6 +611,7 @@ func registerPackageEditFlags(cmd *cobra.Command, f *packageEditFlags) {
 	fl.StringVar(&f.sshEnabled, "ssh", "", "SSH access (true/false)")
 	fl.StringVar(&f.cgiEnabled, "cgi", "", "CGI access (true/false)")
 	fl.StringVar(&f.phpExec, "php-exec", "", "PHP command-exec opt-out (true/false)")
+	fl.StringVar(&f.phpDisabledFunctions, "php-disabled-functions", "", phpDisabledFunctionsFlagHelp)
 	fl.StringVar(&f.webmailEnabled, "webmail", "", "webmail Bulwark UI (true/false)") // GH #1628
 	fl.StringVar(&f.egressSSHOut, "egress-ssh-out", "", "allow outbound SSH :22 for enforced tenants (true/false) — GH #1798")
 	fl.StringVar(&f.egressICMP, "egress-icmp", "", "allow outbound ICMP ping for enforced tenants (true/false) — GH #1798")
@@ -716,4 +752,27 @@ func boolYN(b bool) string {
 		return "yes"
 	}
 	return "no"
+}
+
+// phpDisabledFunctionsFlagHelp documents --php-disabled-functions on both
+// package create and edit (GH #1701).
+const phpDisabledFunctionsFlagHelp = `PHP functions disabled for this package's sites, comma-separated (GH #1701). "default" = the command-exec lockdown (exec,passthru,shell_exec,system,proc_open,popen,pcntl_exec,pcntl_fork,proc_nice,dl); "none" = nothing disabled. Allowing system/exec/shell_exec/passthru/popen/proc_open/pcntl_exec also lifts the PHP Defense ban on it for these sites. Wins over --php-exec.`
+
+// parseCLIDisabledFunctions turns a --php-disabled-functions value into the
+// stored column value (nil = the lockdown default).
+func parseCLIDisabledFunctions(v string) (*string, error) {
+	switch strings.TrimSpace(v) {
+	case "default":
+		return nil, nil
+	case "none":
+		empty := ""
+		return &empty, nil
+	case "":
+		return nil, fmt.Errorf(`--php-disabled-functions: want a list of functions, "default" or "none"`)
+	}
+	norm, err := models.NormalizePHPDisabledFunctions(v)
+	if err != nil {
+		return nil, fmt.Errorf("invalid php-disabled-functions: %w", err)
+	}
+	return models.PHPDisabledFunctionsField(norm), nil
 }

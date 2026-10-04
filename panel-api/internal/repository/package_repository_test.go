@@ -143,6 +143,13 @@ func TestPackage_Update_PersistsPHPSettingsPolicy(t *testing.T) {
 	updatePersistsColumn(t, "php_settings_policy")
 }
 
+// GH #1701: the disabled-functions list goes through the same Select-allowlist
+// Update; missing from it, the admin's list would save and revert on reload
+// while php_exec_enabled (derived from it) persisted.
+func TestPackage_Update_PersistsPHPDisabledFunctions(t *testing.T) {
+	updatePersistsColumn(t, "php_disabled_functions")
+}
+
 // GH #1628: webmail defaults ON, so the column carries DEFAULT 1. If the model
 // field also kept a `default:1` GORM tag, GORM's create callback would
 // substitute that default for an explicit false (zero value) AND write it back

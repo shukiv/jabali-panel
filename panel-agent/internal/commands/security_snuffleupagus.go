@@ -233,6 +233,11 @@ func snuffleupagusApplyHandler(ctx context.Context, raw json.RawMessage) (any, e
 	resp := snuffleupagusApplyResponse{
 		Sha256: hex.EncodeToString(sum[:]),
 	}
+	// GH #1701: pools whose package lifts the exec bans run their own copy of
+	// the rules. Rebuild those from the new body before the reload, so a mode or
+	// rule change reaches them too. A copy that could not be rebuilt is stale,
+	// so the apply must not report success (same reasoning as GH #707 below).
+	regenErr := regeneratePoolPHPDefenseRules()
 	// GH #707: propagate the reload failure. The rules file is written, but if
 	// the FPM pools did not reload they are serving STALE rules — the apply must
 	// NOT report success, or the DB/UI claim a policy that is not live.
@@ -242,6 +247,9 @@ func snuffleupagusApplyHandler(ctx context.Context, raw json.RawMessage) (any, e
 	}
 	if reloadErr != nil {
 		return resp, reloadErr
+	}
+	if regenErr != nil {
+		return resp, regenErr
 	}
 	return resp, nil
 }

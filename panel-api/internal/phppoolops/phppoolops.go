@@ -234,16 +234,16 @@ func ReconcileViaAgent(deps ReconcileDeps, pool models.PHPPool) error {
 		"xdebug_enabled":                    pool.XdebugEnabled,
 	}
 
-	// GH #1422: carry the GH #402 per-package disable_functions opt-out on this
-	// path too. Without it, any pool reconcile driven from here (a PHP settings
-	// save, a version assign, an Xdebug/extension/tuning change) re-applied the
-	// #401 command-exec lockdown and silently re-broke shell_exec/proc_open for
-	// an exec-enabled package. Mirror reconciler.applyPHPPool: send "" only when
-	// the user's package opts out; omit the key otherwise so the agent keeps its
-	// safe default. Fail-closed — nil Packages / no package / flag off => no key.
+	// GH #1422: carry the per-package disabled-functions list (GH #402,
+	// GH #1701) on this path too. Without it, any pool reconcile driven from
+	// here (a PHP settings save, a version assign, an Xdebug/extension/tuning
+	// change) re-applied the #401 command-exec lockdown and silently re-broke
+	// shell_exec/proc_open for an exec-enabled package. Same helper as
+	// reconciler.applyPHPPool. Fail-closed: nil Packages / no package => the
+	// agent's default.
 	if deps.Packages != nil && user != nil && user.PackageID != nil && *user.PackageID != "" {
-		if pkg, perr := deps.Packages.FindByID(ctx, *user.PackageID); perr == nil && pkg != nil && pkg.PHPExecEnabled {
-			params["disable_functions"] = ""
+		if pkg, perr := deps.Packages.FindByID(ctx, *user.PackageID); perr == nil && pkg != nil {
+			AddPoolDisableFunctions(params, pkg)
 		}
 	}
 
@@ -307,4 +307,14 @@ func ValidIniOverrideValue(kind, value string) (string, string) {
 		return "", "value must be at most 255 characters"
 	}
 	return value, ""
+}
+
+// AddPoolDisableFunctions puts a package's disable_functions list into
+// php.pool.apply params (GH #1701). The key is left out for the lockdown
+// default, so the agent applies its own safe default. The agent derives the
+// PHP Defense lift from this list.
+func AddPoolDisableFunctions(params map[string]any, pkg *models.HostingPackage) {
+	if disable := models.PoolDisableFunctions(pkg); disable != nil {
+		params["disable_functions"] = *disable
+	}
 }

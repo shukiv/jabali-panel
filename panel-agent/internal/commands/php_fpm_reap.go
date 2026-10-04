@@ -72,6 +72,10 @@ func reapFPMPoolArtifacts(ctx context.Context, slug string) {
 	// Version-pin file — the one fpmWorkerStatus counts (GH #686).
 	_ = os.Remove(filepath.Join(userPhpverDir, slug))
 
+	// The pool's own PHP Defense rules, if its package lifted the exec bans
+	// (GH #1701).
+	removePoolPHPDefense(slug)
+
 	// A versioned slug owns its own drop-in dir; the default pool's is owned by
 	// user.slice.ensure and must be left intact.
 	if isVersioned {

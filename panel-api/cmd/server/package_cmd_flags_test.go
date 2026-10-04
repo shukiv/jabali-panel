@@ -53,7 +53,8 @@ var packageFieldFlag = map[string]string{
 	"fpm_version_defaults":             "fpm-version-defaults",
 	"docker_app_slugs":                 "docker-app-slugs",
 	"nspawn_image_version":             "nspawn-image",
-	"php_settings_policy":              "php-settings-policy", // GH #1701
+	"php_settings_policy":              "php-settings-policy",    // GH #1701
+	"php_disabled_functions":           "php-disabled-functions", // GH #1701
 }
 
 // packageNonEditableJSON are hosting_packages columns that are identity /
@@ -339,4 +340,61 @@ func TestApplyPackageEditFlags_PHPSettingsPolicy(t *testing.T) {
 
 	_, err = applyPackageEditFlags(changedSet("php-settings-policy"), p, packageEditFlags{phpSettingsPolicy: `{"nope":"admin_only"}`})
 	require.Error(t, err)
+}
+
+// GH #1701: the disabled-functions list through the CLI, mirroring the REST
+// handler: the list wins over --php-exec, and --php-exec keeps extra entries.
+
+func TestBuildPackageFromCreateFlags_PHPDisabledFunctions(t *testing.T) {
+	p, err := buildPackageFromCreateFlags(packageCreateFlags{name: "a", webmailEnabled: true})
+	require.NoError(t, err)
+	require.Nil(t, p.PHPDisabledFunctions, "no flag = the lockdown default")
+	require.False(t, p.PHPExecEnabled)
+
+	p, err = buildPackageFromCreateFlags(packageCreateFlags{name: "b", webmailEnabled: true, phpExec: true})
+	require.NoError(t, err)
+	require.NotNil(t, p.PHPDisabledFunctions)
+	require.Equal(t, "", *p.PHPDisabledFunctions)
+	require.True(t, p.PHPExecEnabled)
+
+	p, err = buildPackageFromCreateFlags(packageCreateFlags{name: "c", webmailEnabled: true, phpExec: true, phpDisabledFunctions: "mail,EXEC"})
+	require.NoError(t, err)
+	require.Equal(t, "exec,mail", *p.PHPDisabledFunctions)
+	require.False(t, p.PHPExecEnabled, "the list wins over --php-exec")
+
+	_, err = buildPackageFromCreateFlags(packageCreateFlags{name: "d", webmailEnabled: true, phpDisabledFunctions: "exec;id"})
+	require.Error(t, err)
+}
+
+func TestApplyPackageEditFlags_PHPDisabledFunctions(t *testing.T) {
+	p := &models.HostingPackage{}
+	changed, err := applyPackageEditFlags(changedSet("php-disabled-functions"), p, packageEditFlags{phpDisabledFunctions: "none"})
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, "", *p.PHPDisabledFunctions)
+	require.True(t, p.PHPExecEnabled)
+
+	_, err = applyPackageEditFlags(changedSet("php-disabled-functions"), p, packageEditFlags{phpDisabledFunctions: "default"})
+	require.NoError(t, err)
+	require.Nil(t, p.PHPDisabledFunctions)
+	require.False(t, p.PHPExecEnabled)
+
+	// --php-exec true keeps the admin's extra functions.
+	extra := "exec,mail"
+	p.PHPDisabledFunctions = &extra
+	_, err = applyPackageEditFlags(changedSet("php-exec"), p, packageEditFlags{phpExec: "true"})
+	require.NoError(t, err)
+	require.Equal(t, "mail", *p.PHPDisabledFunctions)
+	require.True(t, p.PHPExecEnabled)
+
+	// The list wins when both are named.
+	_, err = applyPackageEditFlags(changedSet("php-exec", "php-disabled-functions"), p, packageEditFlags{phpExec: "true", phpDisabledFunctions: "dl"})
+	require.NoError(t, err)
+	require.Equal(t, "dl", *p.PHPDisabledFunctions)
+	require.False(t, p.PHPExecEnabled)
+
+	for _, bad := range []string{"", "exec;id"} {
+		_, err = applyPackageEditFlags(changedSet("php-disabled-functions"), p, packageEditFlags{phpDisabledFunctions: bad})
+		require.Error(t, err, bad)
+	}
 }
