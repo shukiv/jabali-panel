@@ -94,3 +94,9 @@ after the per-user dispatch). The file now opens with `add table` +
   `{{.DisableFunctions}}`, not a hard-coded list. The tenant override guard
   (`forbiddenDirectives`) is unchanged, so only an admin-assigned package can
   flip it. Package edits fan out a pool re-render.
+  **GH #1701:** the opt-out is now a per-package list,
+  `hosting_packages.php_disabled_functions` (NULL = this lockdown), with
+  `php_exec_enabled` derived from it. In PHP Defense enforce mode the opt-out
+  used to do nothing, because 00-base.rules bans the same command-execution
+  functions in every pool; a pool whose list allows any of them now loads its
+  own copy of the PHP Defense rules without those bans.
