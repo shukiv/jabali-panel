@@ -78,4 +78,26 @@ describe("functionRows", () => {
     // An agent that sends no list leaves every allowed function allowed.
     expect(statusOf(base, "proc_nice")).toBe("allowed");
   });
+
+  it("GH #2001: an enforced AppArmor profile marks allowed program functions confined", () => {
+    const e: PHPEffective = {
+      ...base,
+      exec_confined: true,
+      disabled_functions: [{ name: "passthru", source: "pool" }],
+      php_defense: { ...base.php_defense, mode: "simulation", functions: [{ name: "system", state: "logged" }] },
+      unavailable_functions: ["pcntl_exec"],
+    };
+    const row = (name: string) => functionRows(e).find((r) => r.name === name);
+    expect(row("shell_exec")).toEqual({ name: "shell_exec", status: "allowed", confined: true });
+    // The qualifier keeps the status it qualifies.
+    expect(row("system")).toEqual({ name: "system", status: "logged_defense", confined: true });
+    // Disabled or missing functions are not callable, so nothing to qualify.
+    expect(row("passthru")?.confined).toBeUndefined();
+    expect(row("pcntl_exec")?.confined).toBeUndefined();
+    // Functions that start no program are never confined.
+    expect(row("proc_nice")?.confined).toBeUndefined();
+    // Complain mode, or an older agent, leaves exec unconfined.
+    expect(functionRows({ ...e, exec_confined: false }).some((r) => r.confined)).toBe(false);
+    expect(functionRows(base).some((r) => r.confined)).toBe(false);
+  });
 });

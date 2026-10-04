@@ -127,6 +127,19 @@ func TestPHPSettingsEffective_PassesUnavailableFunctions(t *testing.T) {
 	}
 }
 
+// GH #2001: an enforced PHP-FPM AppArmor profile reaches the SPA, so it can
+// say exec and friends start only the shell and cat.
+func TestPHPSettingsEffective_PassesExecConfined(t *testing.T) {
+	ag := &effectiveAgent{reply: `{"php_version":"8.4","slug":"u1-php8.4","pool_found":true,
+		"disabled_functions":[],"php_defense":{"active":false,"mode":"","pool_rules":false,"functions":[]},
+		"include_path":{"value":"","source":"php.ini"},"session_save_path":{"value":"","source":"php.ini"},
+		"unavailable_functions":[],"exec_confined":true}`}
+	w := getEffective(newEffectiveRouter(t, "u1", false, ag))
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"exec_confined":true`) {
+		t.Fatalf("want 200 with exec_confined true, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 func TestPHPSettingsEffective_OtherTenantRefused(t *testing.T) {
 	ag := &effectiveAgent{}
 	w := getEffective(newEffectiveRouter(t, "u2", false, ag))

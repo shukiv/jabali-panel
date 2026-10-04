@@ -97,7 +97,12 @@ export function PHPEffectiveEnvironment({ domainId }: { domainId: string }) {
             {
               title: "Status",
               dataIndex: "status",
-              render: (s: FunctionRow["status"]) => <Tag color={STATUS_TAG[s].color}>{STATUS_TAG[s].text}</Tag>,
+              render: (s: FunctionRow["status"], row: FunctionRow) => (
+                <>
+                  <Tag color={STATUS_TAG[s].color}>{STATUS_TAG[s].text}</Tag>
+                  {row.confined && <Tag color="orange">Starts only the shell and cat</Tag>}
+                </>
+              ),
             },
           ]}
         />
@@ -108,6 +113,17 @@ export function PHPEffectiveEnvironment({ domainId }: { domainId: string }) {
             pcntl extension, which is often built into PHP's command-line version only, and dl() exists
             only in the command-line version. If a later PHP build includes the function, it becomes
             available with no change to the package.
+          </Typography.Paragraph>
+        )}
+        {rows.some((r) => r.confined) && (
+          <Typography.Paragraph type="secondary" style={{ marginTop: 8 }}>
+            "Starts only the shell and cat" means this server runs PHP under an AppArmor profile
+            that lets these functions start the shell (sh) and cat, and no other program. Commands
+            such as df, ls, grep or id fail with "Permission denied", and cat can read only some
+            system files, such as /proc/meminfo, /proc/cpuinfo and /proc/stat. PHP&apos;s own
+            functions cover common server details: disk_free_space() and disk_total_space() for disk
+            space, sys_getloadavg() for load, and php_uname() for the operating system. PHP&apos;s
+            mail() is not affected.
           </Typography.Paragraph>
         )}
         <Typography.Title level={5}>Paths</Typography.Title>

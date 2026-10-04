@@ -16,11 +16,12 @@ import (
 func setupEffectiveFixture(t *testing.T) {
 	t.Helper()
 	root := usePHPDefenseTempPaths(t)
-	oldLib, oldRead, oldMods, oldExts := snuffleupagusLibRoot, phpEffectiveIniRead, phpFPMModules, phpFunctionExtensions
+	oldLib, oldRead, oldMods, oldExts, oldAA := snuffleupagusLibRoot, phpEffectiveIniRead, phpFPMModules, phpFunctionExtensions, fpmAppArmorMode
 	snuffleupagusLibRoot = filepath.Join(root, "lib")
 	t.Cleanup(func() {
-		snuffleupagusLibRoot, phpEffectiveIniRead, phpFPMModules, phpFunctionExtensions = oldLib, oldRead, oldMods, oldExts
+		snuffleupagusLibRoot, phpEffectiveIniRead, phpFPMModules, phpFunctionExtensions, fpmAppArmorMode = oldLib, oldRead, oldMods, oldExts, oldAA
 	})
+	fpmAppArmorMode = func(context.Context) string { return "complain" }
 	// A Debian-like PHP-FPM: no pcntl (the CLI has it), its own cgi-fcgi.
 	phpFPMModules = func(context.Context, string, string) (map[string]bool, error) {
 		return map[string]bool{"core": true, "standard": true, "cgi-fcgi": true, "posix": true}, nil
@@ -240,5 +241,35 @@ func TestReadPHPPoolEffectiveAvailabilityError(t *testing.T) {
 	b, _ := json.Marshal(got)
 	if !strings.Contains(string(b), `"unavailable_functions":[]`) {
 		t.Errorf("unavailable_functions must be an empty list, not null: %s", b)
+	}
+}
+
+// GH #2001: under an enforced jabali-fpm-app profile, PHP can start only the
+// shell and cat, so the read says so; complain mode, no profile or no
+// AppArmor leave exec unconfined.
+func TestReadPHPPoolEffective_ExecConfined(t *testing.T) {
+	setupEffectiveFixture(t)
+	for mode, want := range map[string]bool{"enforce": true, "kill": true, "complain": false, "": false} {
+		fpmAppArmorMode = func(context.Context) string { return mode }
+		if got := readPHPPoolEffective(context.Background(), "8.4", "alice").ExecConfined; got != want {
+			t.Errorf("mode %q: exec_confined = %v, want %v", mode, got, want)
+		}
+	}
+}
+
+func TestAAStatusProfileMode(t *testing.T) {
+	out := []byte(`{"version":"2","profiles":{"jabali-fpm-app":"enforce","jabali-fpm-app//null-/usr/bin/id":"complain","jabali-sendmail":"enforce"},"processes":{}}`)
+	if got := aaStatusProfileMode(out, fpmAppArmorProfile); got != "enforce" {
+		t.Errorf("mode = %q, want enforce", got)
+	}
+	if got := aaStatusProfileMode([]byte(`{"profiles":{}}`), fpmAppArmorProfile); got != "" {
+		t.Errorf("absent profile: mode = %q", got)
+	}
+	// A complain-mode learning child or a look-alike name is not the profile.
+	if got := aaStatusProfileMode([]byte(`{"profiles":{"jabali-fpm-app//null-/usr/bin/df":"enforce","jabali-fpm-app-x":"enforce"}}`), fpmAppArmorProfile); got != "" {
+		t.Errorf("child or look-alike only: mode = %q, want \"\"", got)
+	}
+	if got := aaStatusProfileMode([]byte("aa-status: not json"), fpmAppArmorProfile); got != "" {
+		t.Errorf("bad output: mode = %q", got)
 	}
 }

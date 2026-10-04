@@ -113,6 +113,18 @@ badge** on any domain that differs from the account default:
   SAPI registers it (`dl`, `cli_set_process_title`). Disabled and blocked
   functions keep those statuses. Once PHP-FPM loads the extension, the same
   package shows the function as allowed.
+  When the `jabali-fpm-app` AppArmor profile is in enforce mode, each allowed
+  function that starts a program (`exec`, `passthru`, `shell_exec`, `system`,
+  `proc_open`, `popen`, `pcntl_exec`) also shows **Starts only the shell and
+  cat** (GH #2001). The profile lets PHP-FPM start `sh`/`bash`/`dash`, `cat`
+  and the `mail()` shim and nothing else, so `df`, `ls`, `grep`, `id` or
+  `uname` fail with "Permission denied", and `cat` reads only the `/proc`
+  files the base abstraction grants (`meminfo`, `cpuinfo`, `stat`; not
+  `uptime` or `loadavg`). The agent reads the mode from `aa-status --json`.
+  This is deliberate: `df` alone would expose the host mount table, including
+  the per-user SFTP jail mounts. PHP's own `disk_free_space()`,
+  `disk_total_space()`, `sys_getloadavg()` and `php_uname()` work under the
+  enforced profile.
   `include_path` and `session.save_path` are not per-domain settings either: an
   admin value for them locks `ini_set()` on the shared worker for every domain
   on the pool. `mail.force_extra_parameters` is not offered: Jabali's mail shim

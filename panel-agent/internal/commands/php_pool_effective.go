@@ -82,6 +82,47 @@ type phpPoolEffectiveResponse struct {
 	// AvailabilityError is set when that check could not run; the list is
 	// then empty rather than guessed.
 	AvailabilityError string `json:"availability_error,omitempty"`
+	// ExecConfined (GH #2001) is true when the jabali-fpm-app AppArmor
+	// profile, which every per-user PHP-FPM master runs under, is loaded in
+	// enforce mode. PHP's program-starting functions (exec, shell_exec,
+	// system, ...) can then start only the programs that profile allows (the
+	// shell and cat), so `df`, `ls` or `grep` fail with "Permission denied"
+	// even where the hosting package allows the function. False when the
+	// profile is in complain mode, not loaded, or AppArmor is off.
+	ExecConfined bool `json:"exec_confined"`
+}
+
+// fpmAppArmorProfile is the AppArmor profile the per-user PHP-FPM masters
+// run under (install/apparmor/usr.local.libexec.jabali.fpm-exec).
+const fpmAppArmorProfile = "jabali-fpm-app"
+
+// fpmAppArmorMode returns the mode fpmAppArmorProfile is loaded in
+// ("enforce", "complain", ...), or "" when AppArmor or the profile is not
+// loaded or aa-status could not be read. A var so tests can stub it.
+var fpmAppArmorMode = func(ctx context.Context) string {
+	out, err := execCommandContext(ctx, "aa-status", "--json").Output()
+	if err != nil {
+		return ""
+	}
+	return aaStatusProfileMode(out, fpmAppArmorProfile)
+}
+
+// aaStatusProfileMode reads one profile's mode from `aa-status --json`
+// output ({"profiles": {"<name>": "enforce|complain|..."}}).
+func aaStatusProfileMode(aaStatusJSON []byte, profile string) string {
+	var raw struct {
+		Profiles map[string]string `json:"profiles"`
+	}
+	if json.Unmarshal(aaStatusJSON, &raw) != nil {
+		return ""
+	}
+	return raw.Profiles[profile]
+}
+
+// appArmorModeConfines reports whether a profile mode blocks what the
+// profile does not allow. complain only logs it.
+func appArmorModeConfines(mode string) bool {
+	return mode == "enforce" || mode == "kill"
 }
 
 // snuffleupagusLibRoot holds the per-minor snuffleupagus.so builds. A var so
@@ -308,6 +349,7 @@ func readPHPPoolEffective(ctx context.Context, version, slug string) phpPoolEffe
 	default:
 		resp.UnavailableFunctions = unavailableInFPM(check, exts, modules, iniDisabled)
 	}
+	resp.ExecConfined = appArmorModeConfines(fpmAppArmorMode(ctx))
 	return resp
 }
 
