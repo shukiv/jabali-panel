@@ -281,6 +281,23 @@ func globDeletePoolFiles(username string, excludeVersion ...string) (map[string]
 	return deletedVersions, nil
 }
 
+// systemctlDetail returns systemctl's own first output line as " (…)" for an
+// error message, or "" when it printed nothing. GH #1820: "exit status 1"
+// alone hid the cause; systemctl says e.g. "Job for … failed because of
+// unavailable resources or another system error." The pool's last_error is
+// what the panel shows, so this is the line an admin acts on.
+func systemctlDetail(out []byte) string {
+	line, _, _ := strings.Cut(strings.TrimSpace(string(out)), "\n")
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return ""
+	}
+	if len(line) > 300 {
+		line = line[:300] + "…"
+	}
+	return " (" + line + ")"
+}
+
 // restartOrReloadUserFPM handles per-user FPM service restart/reload.
 // If oldVersion == newVersion (and not empty), attempts reload via USR2.
 // If the reload fails (unit not loaded/inactive), falls back to restart.
@@ -297,15 +314,17 @@ func restartOrReloadUserFPM(ctx context.Context, username string, oldVersion, ne
 	// Try reload if versions match and oldVersion is not empty.
 	if oldVersion == newVersion && oldVersion != "" {
 		reloadCmd := execCommandContext(ctx, "systemctl", "reload", serviceName)
-		if err := reloadCmd.Run(); err != nil {
+		if out, err := reloadCmd.CombinedOutput(); err != nil {
 			// Reload failed; check if unit is not loaded or inactive, then restart.
 			// Otherwise return the error.
 			isActiveCmd := execCommandContext(ctx, "systemctl", "is-active", serviceName)
-			if err := isActiveCmd.Run(); err != nil {
+			if aerr := isActiveCmd.Run(); aerr != nil {
 				// Unit not loaded or inactive; fall through to restart.
 			} else {
-				// Unit is active but reload failed — this is an error.
-				return fmt.Errorf("failed to reload %s: %w", serviceName, err)
+				// Unit is active but reload failed — this is an error. GH #1820:
+				// this wrapped the is-active result (nil) instead of the reload
+				// error, so the pool's last_error read "%!w(<nil>)".
+				return fmt.Errorf("failed to reload %s: %w%s", serviceName, err, systemctlDetail(out))
 			}
 		} else {
 			// Reload succeeded; enable and return.
@@ -316,8 +335,8 @@ func restartOrReloadUserFPM(ctx context.Context, username string, oldVersion, ne
 
 	// Restart (version changed or first-time apply).
 	restartCmd := execCommandContext(ctx, "systemctl", "restart", serviceName)
-	if err := restartCmd.Run(); err != nil {
-		return fmt.Errorf("failed to restart %s: %w", serviceName, err)
+	if out, err := restartCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to restart %s: %w%s", serviceName, err, systemctlDetail(out))
 	}
 
 	// Enable the service for auto-start on boot.
