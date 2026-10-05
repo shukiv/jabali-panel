@@ -58,32 +58,36 @@ type itflowInstallResp struct {
 
 // itflowRepoURL is the upstream git repo. Branch master per the
 // maintainer (#206) — ITFlow self-updates along master via git pull from
-// its admin UI, so there's no release tag to pin.
+// its admin UI.
 const itflowRepoURL = "https://github.com/itflow-org/itflow.git"
 
 // itflowPinnedCommit is the reviewed master commit the installer checks out
-// (GH #455). ITFlow ships no release tags and self-updates along master via
-// its admin UI, so we clone master (the in-app updater needs that .git) but
-// reset the working tree to this reviewed SHA at install time and verify HEAD
-// matches — installs are reproducible and never pull an unreviewed master tip.
-// Bump deliberately (code review) when adopting a newer ITFlow.
-// 2026-09-04 stable (GH #1461): develop->master release merge (upstream
-// PR #1301). Domain-expiry lookups were rewritten to RDAP + native DNS +
-// a port-43 whois socket (functions/domain.php) — no PHP exec functions.
-// The in-app updater still shells out to git (exec/shell_exec in
-// functions/app.php) but now degrades gracefully when they're disabled.
-// Focused-review at bump time: setup_cli.php CLI interface + db.sql import
-// + config.php write unchanged (our installer contract holds); getIP()
-// still defaults to REMOTE_ADDR (GH #226 — no XFF/proxy-header trust under
-// our nginx->FPM); no exec left in the expiry path.
-const itflowMasterPinnedCommit = "dbf143d771535e1a350d02b36e7559ee153b8abb"
+// (GH #455). ITFlow self-updates along master via its admin UI, so we clone
+// master (the in-app updater needs that .git) but reset the working tree to
+// this reviewed SHA at install time and verify HEAD matches — installs are
+// reproducible and never pull an unreviewed master tip. Upstream now tags
+// its monthly releases (v26.10, ...), but a tag can move, so we still pin
+// the SHA. Bump deliberately (code review) when adopting a newer ITFlow.
+// v26.10 (GH #1973): develop->master release merge (upstream PR #1303).
+// Since the 2026-09-04 pin (GH #1461): 39 commits, mostly new API v1
+// endpoints (archive/create/update for domains, networks, vendors, ...),
+// each behind validate_api_key.php. Focused-review at bump time:
+// setup_cli.php unchanged (our headless-setup contract holds); db.sql adds
+// one column (recurring_invoice_auto_send); config.php write unchanged;
+// getIP() unchanged, still REMOTE_ADDR (GH #226 — no XFF/proxy-header
+// trust under our nginx->FPM); no exec/shell_exec/proc_open/eval/
+// unserialize added outside the bundled libs. Domain expiry stays exec-free
+// (RDAP + native DNS); the in-app updater still needs exec and degrades
+// gracefully without it.
+const itflowMasterPinnedCommit = "c05ccb738a5628519dcf8124391c9944aa09b891"
 
 // itflowDevelopPinnedCommit pins the `develop` branch (GH #332). develop is
 // ITFlow's active dev branch  bleeding-edge and NOT security-reviewed; we pin
 // it (like master) so installs are reproducible and never drift to a raw tip,
 // but the UI labels it unreviewed. Bump deliberately when adopting newer dev.
-// Bumped alongside the 2026-08 master stable (GH #928).
-const itflowDevelopPinnedCommit = "cbf8922f5b79287ab874cede0f97e0e34f6b328f"
+// Bumped alongside the v26.10 master release (GH #1973) to the develop
+// commit that release merged, whose tree is identical to v26.10.
+const itflowDevelopPinnedCommit = "ab2361b294be618eace4e1fa964d856af784a8b8"
 
 // itflowResolveBranch maps the requested branch to (branch, pinnedCommit),
 // defaulting to master. Any unknown value falls back to master (fail-safe).
