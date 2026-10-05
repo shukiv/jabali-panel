@@ -177,8 +177,8 @@ export function ServicesSummaryCard({ services }: Props) {
         )}
         {pending?.action === "restart" && restartInterruptsPanel.has(pending.unit) && (
           <p>
-            Restarting {prettyName(pending.unit)} interrupts the panel itself — the panel will be unreachable for a
-            few seconds. Continue?
+            Restart causes a brief drop in service, and restarting {prettyName(pending.unit)} also interrupts the
+            panel itself — the panel will be unreachable for a few seconds. Continue?
           </p>
         )}
       </Modal>
