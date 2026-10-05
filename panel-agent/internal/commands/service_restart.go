@@ -14,15 +14,27 @@ import (
 // returns — keeps round-trip symmetry obvious at the API layer.
 type serviceRestartParams struct {
 	Name string `json:"name"`
+	// Deferred schedules the restart a moment out and returns at once. The
+	// panel sets it for units its own request runs through (nginx,
+	// jabali-panel, jabali-agent, redis-server — GH #1992); restarting one
+	// of those inline cut off the response asking for it.
+	Deferred bool `json:"deferred,omitempty"`
 }
 
 // serviceRestartResponse reports the post-restart state so the UI can
-// re-render the status tag without a second round-trip.
+// re-render the status tag without a second round-trip. A deferred restart
+// reports the state before it runs, with Scheduled set.
 type serviceRestartResponse struct {
-	Name      string `json:"name"`
-	Active    string `json:"active"`
-	LoadState string `json:"load_state"`
+	Name         string `json:"name"`
+	Active       string `json:"active"`
+	LoadState    string `json:"load_state"`
+	Scheduled    bool   `json:"scheduled,omitempty"`
+	DelaySeconds int    `json:"delay_seconds,omitempty"`
 }
+
+// deferredRestartDelaySeconds is how far out a deferred restart runs: long
+// enough for the response to leave nginx (and any proxy in front of it).
+const deferredRestartDelaySeconds = 2
 
 // serviceRestartHandler is the inverse of service.list — takes one name
 // from the same allow-list and hits `systemctl restart`. Refuses
@@ -91,6 +103,10 @@ func serviceRestartHandler(ctx context.Context, params json.RawMessage) (any, er
 		}
 	}
 
+	if p.Deferred {
+		return scheduleServiceRestart(ctx, p.Name, unit)
+	}
+
 	if out, err := systemctlRunner(ctx, "restart", unit); err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,
@@ -104,6 +120,42 @@ func serviceRestartHandler(ctx context.Context, params json.RawMessage) (any, er
 		Name:      post.Name,
 		Active:    post.Active,
 		LoadState: post.LoadState,
+	}, nil
+}
+
+// scheduleServiceRestart hands the restart to systemd as a transient timer
+// and returns before it runs — the same way system.reboot schedules itself.
+// PID 1 owns the timer, so the restart still happens when it takes down the
+// agent or the panel that asked for it. The fixed unit name makes a second
+// request while one is pending fail instead of queueing another restart;
+// --collect frees the name once the restart has run. (Same deadlock family as
+// the panel-cert self-restart in ssl_panel_issue.go.)
+func scheduleServiceRestart(ctx context.Context, name, unit string) (any, error) {
+	out, err := execCommandContext(ctx, "systemd-run", "--quiet", "--collect",
+		"--unit=jabali-service-restart-"+name,
+		fmt.Sprintf("--on-active=%ds", deferredRestartDelaySeconds),
+		"--timer-property=AccuracySec=100ms",
+		"systemctl", "restart", unit).CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if strings.Contains(msg, "already loaded") {
+			return nil, &agentwire.AgentError{
+				Code:    agentwire.CodeFailedPrecondition,
+				Message: fmt.Sprintf("a restart of %s is already scheduled", name),
+			}
+		}
+		return nil, &agentwire.AgentError{
+			Code:    agentwire.CodeInternal,
+			Message: fmt.Sprintf("schedule restart of %s: %v: %s", unit, err, msg),
+		}
+	}
+	pre := probeService(ctx, name)
+	return serviceRestartResponse{
+		Name:         pre.Name,
+		Active:       pre.Active,
+		LoadState:    pre.LoadState,
+		Scheduled:    true,
+		DelaySeconds: deferredRestartDelaySeconds,
 	}, nil
 }
 

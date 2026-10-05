@@ -50,6 +50,23 @@ const selfDestructUnits = new Set([
   "redis-server.service",
 ]);
 
+// Units whose restart interrupts the panel itself: nginx proxies every panel
+// request, and jabali-panel Requires= jabali-agent and redis-server, so
+// restarting either restarts the panel. The API schedules these restarts a
+// moment out so its response is not cut off (GH #1992), and the panel is then
+// unreachable for a few seconds. Kept in sync with restartDeferredUnits in
+// panel-api/internal/api/admin_services.go.
+const restartInterruptsPanel = new Set([
+  "nginx.service",
+  "jabali-panel.service",
+  "jabali-agent.service",
+  "redis-server.service",
+]);
+
+// How long after a scheduled restart to refetch the status: past the restart
+// delay and the few seconds the panel is down.
+const scheduledRefetchMs = 8000;
+
 type Action = "restart" | "reload" | "start" | "stop" | "enable" | "disable";
 
 const destructiveActions = new Set<Action>(["stop", "disable", "restart"]);
@@ -71,9 +88,21 @@ export function ServicesSummaryCard({ services }: Props) {
   const ctl = useMutation({
     mutationFn: async ({ unit, action }: { unit: string; action: Action }) => {
       const name = unit.replace(/\.service$/, "");
-      await apiClient.post(`/admin/services/${encodeURIComponent(name)}/${action}`);
+      const res = await apiClient.post<{ scheduled?: boolean }>(
+        `/admin/services/${encodeURIComponent(name)}/${action}`,
+      );
+      return res?.data;
     },
-    onSuccess: () => {
+    onSuccess: (data, { unit }) => {
+      if (data?.scheduled) {
+        // The restart runs a moment after this response; refetching now
+        // would land in the outage window.
+        feedback.message.info(
+          `${prettyName(unit)} is restarting — the panel will be unreachable for a few seconds.`,
+        );
+        setTimeout(() => qc.invalidateQueries({ queryKey: ["admin", "server-status"] }), scheduledRefetchMs);
+        return;
+      }
       qc.invalidateQueries({ queryKey: ["admin", "server-status"] });
       feedback.message.success("Done");
     },
@@ -143,8 +172,14 @@ export function ServicesSummaryCard({ services }: Props) {
         {pending?.action === "disable" && (
           <p>This will prevent the unit from starting at boot. Combine with Stop if you also want it down right now.</p>
         )}
-        {pending?.action === "restart" && (
+        {pending?.action === "restart" && !restartInterruptsPanel.has(pending.unit) && (
           <p>Restart causes a brief drop in service. Continue?</p>
+        )}
+        {pending?.action === "restart" && restartInterruptsPanel.has(pending.unit) && (
+          <p>
+            Restarting {prettyName(pending.unit)} interrupts the panel itself — the panel will be unreachable for a
+            few seconds. Continue?
+          </p>
         )}
       </Modal>
     </>
