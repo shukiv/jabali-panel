@@ -172,7 +172,8 @@ export const PACKAGE_LIMIT_FIELDS = [
     min: 0,
     max: 100000,
     width: "100%",
-    tooltipText: "systemd TasksMax — upper bound on concurrent processes. 0 = unlimited.",
+    tooltipText:
+      "systemd TasksMax: the most processes and threads the account can run at once. Every PHP-FPM master and worker counts, each Python app uses at least 4 (a master plus 3 workers), and cron jobs and SSH sessions count too. At the limit, sites and apps cannot start new processes and stop answering. 0 = unlimited.",
     group: "resource",
   },
   // Feature quotas. 0 = unlimited (or feature not included) on every field.

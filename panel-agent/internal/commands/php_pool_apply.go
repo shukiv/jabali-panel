@@ -324,7 +324,7 @@ func restartOrReloadUserFPM(ctx context.Context, username string, oldVersion, ne
 				// Unit is active but reload failed — this is an error. GH #1820:
 				// this wrapped the is-active result (nil) instead of the reload
 				// error, so the pool's last_error read "%!w(<nil>)".
-				return fmt.Errorf("failed to reload %s: %w%s", serviceName, err, systemctlDetail(out))
+				return fmt.Errorf("failed to reload %s: %w%s%s", serviceName, err, systemctlDetail(out), tasksLimitSuffix(ctx, serviceName))
 			}
 		} else {
 			// Reload succeeded; enable and return.
@@ -336,7 +336,7 @@ func restartOrReloadUserFPM(ctx context.Context, username string, oldVersion, ne
 	// Restart (version changed or first-time apply).
 	restartCmd := execCommandContext(ctx, "systemctl", "restart", serviceName)
 	if out, err := restartCmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to restart %s: %w%s", serviceName, err, systemctlDetail(out))
+		return fmt.Errorf("failed to restart %s: %w%s%s", serviceName, err, systemctlDetail(out), tasksLimitSuffix(ctx, serviceName))
 	}
 
 	// Enable the service for auto-start on boot.

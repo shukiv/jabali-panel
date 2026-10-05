@@ -78,6 +78,10 @@ type pythonAppApplyResult struct {
 	// failing to import the entrypoint) instead of a generic "not active" — the
 	// exact "nothing in logs" wall from GH #357.
 	Detail string `json:"detail,omitempty"`
+	// Hint names the account's Max tasks limit when the app is not active
+	// because its slice is full (GH #1820). Kept apart from Detail, which the
+	// panel presents as journal output.
+	Hint string `json:"hint,omitempty"`
 }
 
 func pythonAppUnitName(appID string) string { return "jabali-app-" + appID + ".service" }
@@ -275,7 +279,7 @@ func pythonAppApplyHandler(ctx context.Context, params json.RawMessage) (any, er
 	_ = execCommandContext(ctx, "systemctl", "enable", "--quiet", unit).Run()
 	if needsRestart {
 		if out, err := execCommandContext(ctx, "systemctl", "restart", unit).CombinedOutput(); err != nil {
-			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("restart %s: %v: %s", unit, err, strings.TrimSpace(string(out)))}
+			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("restart %s: %v: %s%s", unit, err, strings.TrimSpace(string(out)), tasksLimitSuffix(ctx, unit))}
 		}
 	}
 
@@ -288,6 +292,7 @@ func pythonAppApplyHandler(ctx context.Context, params json.RawMessage) (any, er
 		if out, jerr := execCommandContext(ctx, "journalctl", "-u", unit, "-n", "20", "--no-pager", "--output=cat").CombinedOutput(); jerr == nil {
 			res.Detail = lastLines(strings.TrimSpace(string(out)), 15)
 		}
+		res.Hint = tasksLimitHint(ctx, unit)
 	}
 	return res, nil
 }
