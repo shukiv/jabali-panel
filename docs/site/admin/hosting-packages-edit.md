@@ -7,7 +7,7 @@ Reached from the **Edit** action on a row in [Hosting Packages](./hosting-packag
 A field change persists immediately to the `packages` row. The reconciler then enumerates every user assigned to the package and re-applies the relevant state:
 
 - Disk quota changes → `setquota -u <user> <soft> <hard> 0 0` (idempotent).
-- Memory / CPU / tasks changes → re-render `/etc/systemd/system/user-<UID>.slice.d/jabali-resource-limits.conf`, then `systemctl daemon-reload`.
+- Memory / CPU / IO / tasks changes → re-render `/etc/systemd/system/jabali-user-<username>.slice.d/limits.conf`, then `systemctl daemon-reload` (see [Resource Limits](../resource-limits.md)).
 - Request rate changes → re-render the user's nginx `limit_req_zone` directive, then reload nginx.
 - PHP-INI ceilings → re-validate every user's per-user override; values exceeding the new ceiling are clamped on the user's next save (existing values remain until then to avoid silent breakage).
 - Allowed PHP versions or allowed apps — informational only at edit time; the cap is re-checked at the next create attempt.

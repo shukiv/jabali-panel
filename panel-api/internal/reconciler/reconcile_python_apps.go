@@ -108,6 +108,7 @@ func (r *Reconciler) reconcileOnePythonApp(ctx context.Context, app *models.Pyth
 		Active bool   `json:"active"`
 		Unit   string `json:"unit"`
 		Detail string `json:"detail"`
+		Hint   string `json:"hint"`
 	}
 	_ = json.Unmarshal(raw, &res)
 	status := models.PythonAppStatusFailed
@@ -123,10 +124,18 @@ func (r *Reconciler) reconcileOnePythonApp(ctx context.Context, app *models.Pyth
 		if d := strings.TrimSpace(res.Detail); d != "" {
 			m = "app started but is not active. Recent logs (journalctl -u " + res.Unit + "):\n" + d
 		}
+		if h := strings.TrimSpace(res.Hint); h != "" {
+			// GH #1820: the account's slice is full. The journal only shows
+			// the symptom (a process that could not start), so lead with the
+			// cause.
+			m = "The app is not running because " + h + ".\n\n" + m
+		}
 		lastErr = &m
-		r.log.Warn("pyapp: app applied but not active", "id", app.ID, "unit", res.Unit, "detail", res.Detail)
+		r.log.Warn("pyapp: app applied but not active", "id", app.ID, "unit", res.Unit, "detail", res.Detail, "hint", res.Hint)
 	}
-	if app.Status != status {
+	// Also rewrite when only the reason changed: an app that was already
+	// failed would otherwise keep showing its first reason forever.
+	if app.Status != status || (lastErr != nil && (app.LastError == nil || *app.LastError != *lastErr)) {
 		if err := r.pythonApps.UpdateStatus(ctx, app.ID, status, lastErr); err != nil {
 			r.log.Warn("pyapp: status update failed", "id", app.ID, "err", err)
 		}

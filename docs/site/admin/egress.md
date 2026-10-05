@@ -30,7 +30,7 @@ Each rule is namespaced per-user; no rule from one user can affect another.
 
 ## Implementation
 
-- Each user runs in their own systemd slice (`user-<UID>.slice`).
+- Each user runs in their own systemd slice (`jabali.slice/jabali-user.slice/jabali-user-<username>.slice`).
 - nftables uses a `meta cgroupv2` match against the slice id.
 - A vmap maps `cgroupv2-id → ruleset` for O(1) classification.
 - The reconciler converges the ruleset on each tick.
