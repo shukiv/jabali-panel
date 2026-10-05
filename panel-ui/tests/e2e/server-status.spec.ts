@@ -139,6 +139,42 @@ test.describe("admin server status page", () => {
     await expect(page.getByRole("cell", { name: "panel", exact: true })).toBeVisible();
   });
 
+  // GH #1992: restarting the panel's own unit is scheduled a moment out by the
+  // API. The confirm says the panel will drop, the click answers at once, and
+  // the toast repeats the warning instead of a bare "Done".
+  test("restarting the panel warns that it will be unreachable for a few seconds", async ({ page }) => {
+    await mockApi(page, { me: admin });
+    await page.route("**/api/v1/admin/server-status*", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ ...fakeEnvelope, alerts: [] }),
+      }),
+    );
+    const restarts: string[] = [];
+    await page.route("**/api/v1/admin/services/*/restart", (route) => {
+      restarts.push(new URL(route.request().url()).pathname);
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ name: "jabali-panel", active: "active", load_state: "loaded", scheduled: true, delay_seconds: 2 }),
+      });
+    });
+
+    await signIn(page, admin);
+    await page.goto("/jabali-admin/server-status");
+
+    const row = page.getByRole("row").filter({ has: page.getByRole("cell", { name: "panel", exact: true }) });
+    await row.getByRole("button", { name: /Restart/ }).click();
+
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByText(/the panel will be unreachable for a few seconds/i)).toBeVisible();
+    await dialog.getByRole("button", { name: "Restart" }).click();
+
+    await expect(page.getByText(/panel is restarting — the panel will be unreachable for a few seconds/i)).toBeVisible();
+    expect(restarts).toEqual(["/api/v1/admin/services/jabali-panel/restart"]);
+  });
+
   test("dashboard deep-links into server status", async ({ page }) => {
     await mockApi(page, { me: admin });
     await page.route("**/api/v1/admin/server-status*", (route) =>

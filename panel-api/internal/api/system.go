@@ -105,6 +105,10 @@ func RegisterSystemRoutes(rg *gin.RouterGroup, cli agent.AgentInterface, kc *kra
 
 			raw, err := cli.Call(ctx, "service."+verb, serviceActionParams(name, verb))
 			if err != nil {
+				if restartAlreadyScheduled(err) {
+					respondRestartAlreadyScheduled(c, name)
+					return
+				}
 				status, body := translateAgentError(err)
 				c.JSON(status, body)
 				return

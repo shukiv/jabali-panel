@@ -140,7 +140,7 @@ func scheduleServiceRestart(ctx context.Context, name, unit string) (any, error)
 		msg := strings.TrimSpace(string(out))
 		if strings.Contains(msg, "already loaded") {
 			return nil, &agentwire.AgentError{
-				Code:    agentwire.CodeFailedPrecondition,
+				Code:    agentwire.CodeAlreadyExists,
 				Message: fmt.Sprintf("a restart of %s is already scheduled", name),
 			}
 		}

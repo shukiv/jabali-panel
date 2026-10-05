@@ -10,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/auth"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 )
@@ -19,12 +20,16 @@ type fakeAgent struct {
 	lastCmd    string
 	lastParams any
 	resp       json.RawMessage
+	err        error
 }
 
 func (f *fakeAgent) Call(_ context.Context, cmd string, params any) (json.RawMessage, error) {
 	f.called = true
 	f.lastCmd = cmd
 	f.lastParams = params
+	if f.err != nil {
+		return nil, f.err
+	}
 	if f.resp == nil {
 		return json.RawMessage(`{"ok":true}`), nil
 	}
@@ -186,5 +191,21 @@ func TestAdminServices_OtherRestartsAndActionsAreNotDeferred(t *testing.T) {
 		if _, has := params["deferred"]; has {
 			t.Fatalf("%s %s: params=%v, want no deferred", tc.action, tc.name, params)
 		}
+	}
+}
+
+// A second click while the first deferred restart is pending: the agent
+// refuses the duplicate, and the API says so with a 409 instead of a 502.
+func TestAdminServices_RestartAlreadyScheduledIs409(t *testing.T) {
+	ag := &fakeAgent{err: &agent.AgentError{Code: agent.CodeAlreadyExists, Message: "a restart of nginx is already scheduled"}}
+	r := newAdminServicesTestRouter(t, ag)
+	w := doPost(t, r, "/v1/admin/services/nginx/restart")
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status=%d body=%s, want 409", w.Code, w.Body.String())
+	}
+	var body map[string]string
+	_ = json.Unmarshal(w.Body.Bytes(), &body)
+	if body["error"] != "restart_already_scheduled" {
+		t.Fatalf("body=%v", body)
 	}
 }

@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"regexp"
@@ -101,6 +102,22 @@ var (
 	}
 )
 
+// restartAlreadyScheduled reports whether the agent refused a deferred restart
+// because one for the same unit is still pending (a second click).
+func restartAlreadyScheduled(err error) bool {
+	var ae *agent.AgentError
+	return errors.As(err, &ae) && ae.Code == agent.CodeAlreadyExists
+}
+
+// respondRestartAlreadyScheduled answers that second click with a 409 the UI
+// can show, in the panel's own words.
+func respondRestartAlreadyScheduled(c *gin.Context, name string) {
+	c.JSON(http.StatusConflict, gin.H{
+		"error":  "restart_already_scheduled",
+		"detail": "A restart of " + name + " is already scheduled. Wait a few seconds for the panel to come back.",
+	})
+}
+
 // serviceActionParams builds the agent params for a service action. A restart
 // of a unit on the request path is sent as deferred (see restartDeferredUnits).
 func serviceActionParams(name, action string) map[string]any {
@@ -149,6 +166,10 @@ func (h *adminServicesHandler) action(c *gin.Context) {
 	if err != nil {
 		h.cfg.Log.Warn("event=audit kind=service_action_failed",
 			"actor_id", actorID, "service", name, "action", action, "err", err.Error())
+		if restartAlreadyScheduled(err) {
+			respondRestartAlreadyScheduled(c, name)
+			return
+		}
 		respondAgentErr(c, "agent_error", err)
 		return
 	}

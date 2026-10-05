@@ -190,6 +190,22 @@ func TestSystemServicesRestart_RequestPathUnitIsDeferred(t *testing.T) {
 	}
 }
 
+func TestSystemServicesRestart_AlreadyScheduledIs409(t *testing.T) {
+	t.Parallel()
+
+	m := agent.NewMockClient().OnError("service.restart", &agent.AgentError{
+		Code:    agent.CodeAlreadyExists,
+		Message: "a restart of nginx is already scheduled",
+	})
+	r := adminRouter(m)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/system/services/nginx/restart", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusConflict, rec.Code)
+	assert.Contains(t, rec.Body.String(), "restart_already_scheduled")
+}
+
 // TestSystemServicesRestart_Masked — the agent returns
 // CodeFailedPrecondition for masked units; the API should map that to
 // 409 so the UI can render a "service is masked" message.

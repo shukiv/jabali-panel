@@ -199,6 +199,6 @@ func TestServiceRestart_DeferredAlreadyScheduled(t *testing.T) {
 	require.Error(t, err)
 	ae, ok := err.(*agentwire.AgentError)
 	require.True(t, ok)
-	assert.Equal(t, agentwire.CodeFailedPrecondition, ae.Code)
+	assert.Equal(t, agentwire.CodeAlreadyExists, ae.Code)
 	assert.Contains(t, ae.Message, "already scheduled")
 }
