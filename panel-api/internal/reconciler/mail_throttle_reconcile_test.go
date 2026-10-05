@@ -359,3 +359,24 @@ func TestReconcileMailThrottles_SweepWithNoRowsRemovesEveryPanelThrottle(t *test
 	r.reconcileMailThrottles(context.Background())
 	assert.Equal(t, []string{"j1"}, cl.deletes)
 }
+
+// GH #357: a box installed without the mail module has no Stalwart. The pass
+// must not touch it at all (it logged a failed token read every tick); with
+// mail on, the same rows and orphans are handled as before.
+func TestReconcileMailThrottles_SkipsWhenMailModuleOff(t *testing.T) {
+	r, repo, cl := throttleRecForTest(t)
+	repo.rows["row1"] = &models.MailOutboundPolicy{
+		ID: "row1", Scope: models.OutboundScopeGlobal, MaxPerHour: 100, Enabled: true,
+	}
+	cl.stalwart = []mailthrottle.ListItem{{StalwartID: "orphan1", Description: "jabali user a@example.com: 5 per hour"}}
+
+	r.serverSettings = &fakeServerSettingsRepo{settings: &models.ServerSettings{MailEnabled: false}}
+	r.reconcileMailThrottles(context.Background())
+	assert.Empty(t, cl.applies, "mail off: no throttle may be applied")
+	assert.Empty(t, cl.deletes, "mail off: the sweep must not run")
+
+	r.serverSettings = &fakeServerSettingsRepo{settings: &models.ServerSettings{MailEnabled: true}}
+	r.reconcileMailThrottles(context.Background())
+	assert.Len(t, cl.applies, 1, "mail on: the row is applied")
+	assert.Equal(t, []string{"orphan1"}, cl.deletes, "mail on: the orphan is swept")
+}

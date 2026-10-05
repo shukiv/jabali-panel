@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
@@ -191,6 +192,42 @@ func TestExecuteTeardown_MissingPDNSIsSuccess(t *testing.T) {
 	}}
 	if err := ExecuteTeardown(context.Background(), ag, "gone.example"); err != nil {
 		t.Fatalf("a box without the DNS module must not fail (and retry forever): %v", err)
+	}
+}
+
+// GH #357: on a box installed without the mail module the agent answers the
+// purge with "mail server not installed". That is permanent, so the teardown
+// must go on to remove the vhost and the zone instead of retrying forever.
+func TestExecuteTeardown_NoMailServerIsSuccess(t *testing.T) {
+	ag := &selectiveAgent{errByMethod: map[string]error{
+		"mail.domain.purge_accounts": &agent.AgentError{Code: agent.CodeFailedPrecondition, Message: agentwire.MsgMailServerNotInstalled},
+	}}
+	if err := ExecuteTeardown(context.Background(), ag, "gone.example"); err != nil {
+		t.Fatalf("a box without the mail module must not fail (and retry forever): %v", err)
+	}
+	got := strings.Join(methods(ag), ",")
+	for _, want := range []string{"domain.delete", "dns.zone.delete", "pdns.recursor_remove_zone"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("teardown skipped %s after the no-mail answer: calls %s", want, got)
+		}
+	}
+}
+
+// Any other purge failure — including a missing token on a box that has
+// Stalwart — still stops the teardown and keeps the tombstone, so the old
+// owner's mail is never left behind.
+func TestExecuteTeardown_OtherMailPurgeFailuresStillBlock(t *testing.T) {
+	for _, perr := range []error{
+		&agent.AgentError{Code: agent.CodeInternal, Message: "admin token: read /etc/jabali-panel/stalwart-admin.token: open /etc/jabali-panel/stalwart-admin.token: no such file or directory"},
+		&agent.AgentError{Code: agent.CodeFailedPrecondition, Message: "some other precondition"},
+	} {
+		ag := &selectiveAgent{errByMethod: map[string]error{"mail.domain.purge_accounts": perr}}
+		if err := ExecuteTeardown(context.Background(), ag, "gone.example"); err == nil {
+			t.Fatalf("purge error %v must keep the tombstone", perr)
+		}
+		if strings.Contains(strings.Join(methods(ag), ","), "domain.delete") {
+			t.Fatalf("purge error %v must stop the teardown before domain.delete: calls %v", perr, methods(ag))
+		}
 	}
 }
 

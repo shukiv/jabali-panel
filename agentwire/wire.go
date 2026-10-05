@@ -78,6 +78,13 @@ const (
 	CodeFailedPrecondition  = "failed_precondition"
 )
 
+// MsgMailServerNotInstalled is the CodeFailedPrecondition message a mail verb
+// returns on a box with no mail server at all (installed without the mail
+// module): no Stalwart admin token and no Stalwart on disk. There is nothing
+// to clean up there, so a teardown treats it as done instead of retrying
+// forever (GH #357).
+const MsgMailServerNotInstalled = "mail server not installed"
+
 // ErrMalformedResponse is raised by the client when response bytes don't
 // parse as a Response. Not a protocol-defined value — client-side sentinel.
 var ErrMalformedResponse = errors.New("agent: malformed response")

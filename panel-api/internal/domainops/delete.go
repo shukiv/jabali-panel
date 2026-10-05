@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
@@ -149,7 +150,18 @@ func ExecuteTeardown(ctx context.Context, ag agent.AgentInterface, name string) 
 	}
 	steps := []teardownStep{
 		{"mail.domain.purge_accounts", func(ctx context.Context) error {
-			return PurgeDomainMail(ctx, ag, name)
+			err := PurgeDomainMail(ctx, ag, name)
+			// GH #357: a box without the mail module has no Stalwart and no
+			// accounts. Permanent, like the missing PowerDNS backend below —
+			// without this the purge failed every retry and the steps after
+			// it (the vhost, the zone) never ran. Only this exact answer
+			// counts: a missing token on a box that HAS Stalwart stays an
+			// error, so the old owner's mail is never left behind.
+			var ae *agent.AgentError
+			if errors.As(err, &ae) && ae.Code == agent.CodeFailedPrecondition && ae.Message == agentwire.MsgMailServerNotInstalled {
+				return nil
+			}
+			return err
 		}},
 		{"domain.delete", func(ctx context.Context) error {
 			cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
