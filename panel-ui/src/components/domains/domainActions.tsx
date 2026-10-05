@@ -14,7 +14,6 @@ import {
   DeleteOutlined,
   EditOutlined,
   FileTextOutlined,
-  GlobalOutlined,
   InfoCircleOutlined,
   PauseCircleOutlined,
   PlayCircleOutlined,
@@ -57,23 +56,9 @@ export type DomainMenuCtx = {
 };
 
 export function buildDomainMenuItems(r: Domain, ctx: DomainMenuCtx): MenuProps["items"] {
-  const { audience, caps, togglingId, navigate, onOpenModal } = ctx;
-  // GH #1419: hide DNS when the DNS module is off (the page only 403s).
-  // Default-on while caps load, matching the sidebar gate.
-  const dnsEnabled = caps?.dns_enabled !== false;
-  // The DNS route prefix is the one navigation target that differs by audience.
-  const dnsPrefix = audience.kind === "admin" ? "/jabali-admin" : "/jabali-panel";
-
-  const dnsItem = dnsEnabled
-    ? [
-        {
-          key: "dns",
-          icon: <GlobalOutlined />,
-          label: "DNS",
-          onClick: () => navigate(`${dnsPrefix}/domains/${r.id}/dns`),
-        },
-      ]
-    : [];
+  const { audience, togglingId, navigate, onOpenModal } = ctx;
+  // GH #1920 (johnnyq): no DNS entry here — a domain's records are managed
+  // only under DNS > Zones.
 
   const toggleItem = {
     key: "toggle",
@@ -108,7 +93,6 @@ export function buildDomainMenuItems(r: Domain, ctx: DomainMenuCtx): MenuProps["
         label: "Edit",
         onClick: () => navigate(`/jabali-admin/domains/edit/${r.id}`),
       },
-      ...dnsItem,
       {
         key: "info",
         icon: <InfoCircleOutlined />,

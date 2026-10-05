@@ -28,8 +28,15 @@ vi.mock("../../../components/EmptyWithCTA", () => ({ EmptyWithCTA: () => <div />
 // Stub the inventory — this adapter test only cares that the header action
 // (Add DNS Zone) is rendered and wired to the admin drawer.
 vi.mock("../../../components/dns/DNSZoneInventory", () => ({
-  DnsZoneInventory: ({ audience }: { audience: { header: { extra?: ReactNode } } }) => (
-    <div>{audience.header.extra}</div>
+  DnsZoneInventory: ({
+    audience,
+  }: {
+    audience: { header: { extra?: ReactNode }; manageRoute: (id: string) => string };
+  }) => (
+    <div>
+      {audience.header.extra}
+      <span>route:{audience.manageRoute("d1")}</span>
+    </div>
   ),
 }));
 
@@ -48,5 +55,19 @@ describe("admin DNSZonesOverviewPage Add DNS Zone (GH #1540)", () => {
     expect(await screen.findByPlaceholderText("e.g., example.com")).toBeInTheDocument();
     const ip = (await screen.findByPlaceholderText("e.g., 203.0.113.10")) as HTMLInputElement;
     expect(ip.value).toBe("192.0.2.1");
+  });
+});
+
+// GH #1920 (johnnyq): a zone's records open inside the DNS section, not on the
+// domain's pages.
+describe("DNSZonesOverviewPage zone links (GH #1920)", () => {
+  it("links a zone to its records under /jabali-admin/dns", () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <DNSZonesOverviewPage />
+      </QueryClientProvider>,
+    );
+    expect(screen.getByText("route:/jabali-admin/dns/d1")).toBeInTheDocument();
   });
 });

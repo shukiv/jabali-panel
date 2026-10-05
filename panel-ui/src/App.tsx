@@ -19,7 +19,7 @@
 // AuthProvider + BrowserRouter + ConfigProvider directly. Every
 // protected page re-uses the same whoami cache.
 import { QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Navigate, Route, Routes } from "react-router";
+import { BrowserRouter, Navigate, Route, Routes, Outlet } from "react-router";
 import { App as AntdApp, ConfigProvider, Empty, Spin } from "antd";
 import { lazy, Suspense, useEffect } from "react";
 import { RouteErrorBoundary } from "./components/RouteErrorBoundary";
@@ -92,6 +92,7 @@ const UserDomainList = lazy(() => import("./shells/user/domains/UserDomainList")
 const WebDomainPage = lazy(() => import("./shells/user/domains/WebDomainPage").then((m) => ({ default: m.WebDomainPage })));
 const UserDatabasesPage = lazy(() => import("./shells/user/databases/UserDatabasesPage").then((m) => ({ default: m.UserDatabasesPage })));
 const DNSRecordsPage = lazy(() => import("./shells/dns/DNSRecordsPage").then((m) => ({ default: m.DNSRecordsPage })));
+const DomainDNSRedirect = lazy(() => import("./shells/dns/DomainDNSRedirect").then((m) => ({ default: m.DomainDNSRedirect })));
 const DNSZonesOverviewPage = lazy(() => import("./shells/admin/dns/DNSZonesOverviewPage").then((m) => ({ default: m.DNSZonesOverviewPage })));
 const UserDNSZonesOverviewPage = lazy(() => import("./shells/user/dns/UserDNSZonesOverviewPage").then((m) => ({ default: m.UserDNSZonesOverviewPage })));
 const SSLManagerPage = lazy(() => import("./shells/admin/ssl/SSLManagerPage").then((m) => ({ default: m.SSLManagerPage })));
@@ -268,21 +269,26 @@ const ThemedApp = () => {
               <Route path="edit/:id" element={<DomainEdit />} />
               {/* GH #1816: ownership proof — switch + pending names. */}
               <Route path="ownership" element={<DomainOwnershipPage />} />
-              <Route path=":id/dns" element={<DNSRecordsPage />} />
+              {/* GH #1920: records live under DNS > Zones; old links redirect. */}
+              <Route path=":id/dns" element={<DomainDNSRedirect />} />
             </Route>
             {/* GH #1609: admin databases list — reassign a database's owner. */}
             <Route path="databases">
               <Route index element={<AdminDatabaseList />} />
               <Route path="create" element={<AdminDatabaseCreate />} />
             </Route>
+            {/* GH #1920: a zone's records open inside the DNS section. */}
             <Route
               path="dns"
               element={
                 <CapabilityRoute cap="dns_enabled" fallback="/jabali-admin/dashboard">
-                  <DNSZonesOverviewPage />
+                  <Outlet />
                 </CapabilityRoute>
               }
-            />
+            >
+              <Route index element={<DNSZonesOverviewPage />} />
+              <Route path=":id" element={<DNSRecordsPage />} />
+            </Route>
             <Route path="ssl" element={<SSLManagerPage />} />
             <Route path="settings" element={<ServerSettingsPage />} />
             <Route path="admin-files" element={<AdminFileManagerPage />} />
@@ -374,10 +380,11 @@ const ThemedApp = () => {
             <Route path="domains">
               <Route index element={<UserDomainList />} />
               <Route path="create" element={<Navigate to="../domains" replace />} />
-              {/* GH #1543: DNS is now a tab on the Web Domain page — :id/:tab
-                  catches "dns" and WebDomainPage renders DNSRecordsPanel embedded.
-                  Admin keeps its standalone /jabali-admin/domains/:id/dns route. */}
+              {/* GH #1920: DNS is no longer a Web Domain tab; records live under
+                  DNS > Zones. The old tab URL redirects there (the static "dns"
+                  segment outranks :tab). */}
               <Route path=":id" element={<WebDomainPage />} />
+              <Route path=":id/dns" element={<DomainDNSRedirect />} />
               <Route path=":id/:tab" element={<WebDomainPage />} />
             </Route>
             <Route path="databases">
@@ -391,10 +398,13 @@ const ThemedApp = () => {
               path="dns"
               element={
                 <CapabilityRoute cap="dns_enabled" fallback="/jabali-panel/dashboard">
-                  <UserDNSZonesOverviewPage />
+                  <Outlet />
                 </CapabilityRoute>
               }
-            />
+            >
+              <Route index element={<UserDNSZonesOverviewPage />} />
+              <Route path=":id" element={<DNSRecordsPage />} />
+            </Route>
             <Route path="ssl" element={<UserSSLManagerPage />} />
             <Route path="dnssec" element={<Navigate to="/jabali-panel/dns" replace />} />
             <Route path="php-settings" element={<UserPHPSettingsPage />} />

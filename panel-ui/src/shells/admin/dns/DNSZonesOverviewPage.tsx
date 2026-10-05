@@ -25,7 +25,7 @@ export const DNSZonesOverviewPage = () => {
 
   const audience: DnsZoneInventoryAudience = {
     showOwner: true,
-    manageRoute: (id) => `/jabali-admin/domains/${id}/dns`,
+    manageRoute: (id) => `/jabali-admin/dns/${encodeURIComponent(id)}`,
     renderEmpty: () => (
       <EmptyWithCTA
         description={t("dnszonesoverviewpage.no_dns_zones_yet_create_a_domain_to_manage_i")}

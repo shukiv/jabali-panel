@@ -109,7 +109,7 @@ beforeEach(() => {
 
 const adminAudience: DnsZoneInventoryAudience = {
   showOwner: true,
-  manageRoute: (id) => `/jabali-admin/domains/${id}/dns`,
+  manageRoute: (id) => `/jabali-admin/dns/${id}`,
   renderEmpty: () => <div>empty</div>,
   dnssecNote: "admin signing note",
   header: { icon: null, title: "DNS Zones" },
@@ -117,7 +117,7 @@ const adminAudience: DnsZoneInventoryAudience = {
 
 const tenantAudience: DnsZoneInventoryAudience = {
   showOwner: false,
-  manageRoute: (id) => `/jabali-panel/domains/${id}/dns`,
+  manageRoute: (id) => `/jabali-panel/dns/${id}`,
   renderEmpty: () => <div>empty</div>,
   header: { icon: null, title: "DNS" },
 };
@@ -158,7 +158,7 @@ describe("DnsZoneInventory audience policy (JAB-299)", () => {
     // GH #1918: the domain name opens the zone's records.
     expect(screen.getByRole("link", { name: "one.tld" })).toHaveAttribute(
       "href",
-      "/jabali-admin/domains/d1/dns",
+      "/jabali-admin/dns/d1",
     );
   });
 
@@ -171,7 +171,7 @@ describe("DnsZoneInventory audience policy (JAB-299)", () => {
 
     expect(screen.getByRole("link", { name: "one.tld" })).toHaveAttribute(
       "href",
-      "/jabali-panel/domains/d1/dns",
+      "/jabali-panel/dns/d1",
     );
   });
 

@@ -5,12 +5,12 @@
 // the browser Back button walks the tabs.
 //
 // Tabs here: Overview (facts + the preview-URL / bot-challenge toggles), Logs,
-// SSL, DNS (gated on dns_enabled), PHP Settings, Redirects, Index Files, Caching
+// SSL, PHP Settings, Redirects, Index Files, Caching
 // and Directory Privacy, plus three tabs gated on the same caps as the old row
 // menu — Domain options and Rewrite rules (tenant_domain_options_enabled) and
 // Document root (tenant_docroot_editable). The tenant row menu is now just
-// Enable/Delete; the DNS records manager (DNSRecordsPanel) renders here embedded
-// and standalone on the admin route.
+// Enable/Delete. There is no DNS tab: records are managed under DNS > Zones
+// (GH #1920).
 //
 // The tab bar stays horizontal on desktop (johnnyq's call over a vertical
 // sidebar) but collapses to a Select on narrow screens so it doesn't force
@@ -33,7 +33,6 @@ import { DomainCacheSection } from "../../../components/DomainCacheSection";
 import { DomainDirectoryPrivacySection } from "../../admin/domains/DomainDirectoryPrivacySection";
 import { DomainIndexPanel } from "../../DomainIndexPanel";
 import { DomainRedirectsPanel } from "../../DomainRedirectsPanel";
-import { DNSRecordsPanel } from "../../dns/DNSRecordsPage";
 import { DomainLogsPanel } from "../../../components/logs/DomainLogsPanel";
 import { DomainNginxOptionsPanel } from "../../../components/DomainNginxOptionsPanel";
 import { DomainAdvancedDirectivesPanel } from "../../../components/DomainAdvancedDirectivesPanel";
@@ -114,11 +113,9 @@ export const WebDomainPage = () => {
   // it. Gate on an explicit `false` (not `undefined`) so it doesn't flash while
   // capabilities are still loading.
   const showOptionsHint = caps?.tenant_domain_options_enabled === false;
-  // DNS renders here as a tab (GH #1543). Gate on the same dns_enabled signal
-  // the sidebar and the old row-menu item used — default-on while caps load.
-  // The tenant DNS Zones overview page links straight into this tab to manage a
-  // zone's records, so this is the tenant's per-domain DNS records manager.
-  const dnsOn = caps?.dns_enabled !== false;
+  // GH #1920 (johnnyq): no DNS tab. A domain's records are managed under
+  // DNS > Zones (/jabali-panel/dns/:id); the old /domains/:id/dns tab URL
+  // redirects there from its own route.
 
   const tabs: { key: string; label: string; node: ReactNode }[] = [
     {
@@ -146,9 +143,6 @@ export const WebDomainPage = () => {
     // renew or retry issuance (GH #1543, lxsdevcode). Certificate mode is shown
     // read-only; switching mode is an admin action.
     { key: "ssl", label: "SSL", node: <SSLTab domain={domain} /> },
-    ...(dnsOn
-      ? [{ key: "dns", label: "DNS", node: <DNSRecordsPanel domainId={domain.id} embedded /> }]
-      : []),
     // PHP Settings — this domain's PHP version + php.ini limit overrides and its
     // env vars. The account/pool-level PHP tabs (Performance, OPcache,
     // Extensions, Xdebug, CLI/Composer) are per-version-pool and stay on the

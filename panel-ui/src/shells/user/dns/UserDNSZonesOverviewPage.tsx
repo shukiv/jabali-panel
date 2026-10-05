@@ -25,7 +25,7 @@ export const UserDNSZonesOverviewPage = () => {
 
   const audience: DnsZoneInventoryAudience = {
     showOwner: false,
-    manageRoute: (id) => `/jabali-panel/domains/${id}/dns`,
+    manageRoute: (id) => `/jabali-panel/dns/${encodeURIComponent(id)}`,
     renderEmpty: () => (
       <Empty
         image={Empty.PRESENTED_IMAGE_SIMPLE}

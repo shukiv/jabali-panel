@@ -1,6 +1,6 @@
 # DNS Records
 
-`/jabali-panel/domains/<id>/dns`. The records inside a single DNS zone you own.
+`/jabali-panel/dns/<id>`. The records inside a single DNS zone you own. Open it from **DNS → Zones** by clicking the domain's name. DNS records are managed only here, not from the Web Domain page; the old `/jabali-panel/domains/<id>/dns` address redirects here.
 
 ## Record types you can add
 

@@ -104,7 +104,7 @@ test.describe("DNS zone list (GH #1918)", () => {
 
     await expect(page.getByRole("link", { name: "example.com" })).toHaveAttribute(
       "href",
-      `/jabali-panel/domains/${ZONE_ID}/dns`,
+      `/jabali-panel/dns/${ZONE_ID}`,
     );
     await expect(page.getByRole("tab", { name: "DNSSEC" })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Manage Records" })).toHaveCount(0);
