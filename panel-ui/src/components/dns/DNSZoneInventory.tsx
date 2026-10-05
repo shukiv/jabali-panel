@@ -225,12 +225,6 @@ const ZoneTable = ({ audience }: { audience: DnsZoneInventoryAudience }) => {
 
   return (
     <>
-      <Alert
-        title={t("dnszonesoverviewpage.dns_zones_are_provisioned_automatically_when")}
-        type="info"
-        showIcon
-        style={{ marginBottom: 16 }}
-      />
       {query.isLoading ? (
         <Spin />
       ) : query.isError ? (
