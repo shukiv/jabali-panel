@@ -33,7 +33,7 @@ autoconfig.example.com.   CNAME <panel-hostname>.
 autodiscover.example.com. CNAME <panel-hostname>.
 ```
 
-The panel doesn't manage these automatically (the domain may not have its DNS hosted on Jabali). They're displayed as recommended records under Domains → Edit → DNS.
+When the domain's DNS is hosted on Jabali, the panel publishes these with the domain's mail records; open the domain under **DNS → Zones** to see them. When its DNS is hosted elsewhere, add them at your DNS provider.
 
 ## The mobileconfig flow
 

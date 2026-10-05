@@ -24,8 +24,15 @@ vi.mock("../../../lib/feedback", () => ({
 // Stub the inventory — this adapter test only cares that the header action
 // (Add DNS Zone) is rendered and wired to the drawer.
 vi.mock("../../../components/dns/DNSZoneInventory", () => ({
-  DnsZoneInventory: ({ audience }: { audience: { header: { extra?: ReactNode } } }) => (
-    <div>{audience.header.extra}</div>
+  DnsZoneInventory: ({
+    audience,
+  }: {
+    audience: { header: { extra?: ReactNode }; manageRoute: (id: string) => string };
+  }) => (
+    <div>
+      {audience.header.extra}
+      <span>route:{audience.manageRoute("d1")}</span>
+    </div>
   ),
 }));
 
@@ -42,5 +49,19 @@ describe("UserDNSZonesOverviewPage Add DNS Zone (GH #1541)", () => {
     fireEvent.click(await screen.findByRole("button", { name: /add dns zone/i }));
     // The drawer (dns mode) shows the domain-name input.
     expect(await screen.findByPlaceholderText("e.g., example.com")).toBeInTheDocument();
+  });
+});
+
+// GH #1920 (johnnyq): a zone's records open inside the DNS section, not on the
+// domain's pages.
+describe("UserDNSZonesOverviewPage zone links (GH #1920)", () => {
+  it("links a zone to its records under /jabali-panel/dns", () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <UserDNSZonesOverviewPage />
+      </QueryClientProvider>,
+    );
+    expect(screen.getByText("route:/jabali-panel/dns/d1")).toBeInTheDocument();
   });
 });

@@ -59,9 +59,9 @@ export type NavItem = {
   // matchPatterns lets an item claim deeper sub-paths it doesn't own
   // by `path` startsWith. Regex tested against the full pathname; if
   // any matches, the item is selected even when another item's path
-  // would be a longer prefix. Use for nested routes like
-  // /jabali-panel/domains/:id/dns that logically belong to a different
-  // sidebar entry than the one /jabali-panel/domains owns.
+  // would be a longer prefix. Use for nested routes that logically
+  // belong to a different sidebar entry than the one whose path is the
+  // longer prefix.
   matchPatterns?: RegExp[];
 };
 
@@ -204,7 +204,6 @@ export const adminNav: NavItem[] = [
     description: "nav.admin.dns_desc",
     icon: navIcon(ServerOutlined),
     path: "/jabali-admin/dns",
-    matchPatterns: [/^\/jabali-admin\/domains\/[^/]+\/dns(?:\/|$)/],
   },
   {
     key: "ips",
@@ -374,7 +373,6 @@ export const userNav: NavItem[] = [
     label: "nav.user.dns",
     icon: navIcon(CloudServerOutlined),
     path: "/jabali-panel/dns",
-    matchPatterns: [/^\/jabali-panel\/domains\/[^/]+\/dns(?:\/|$)/],
   },
   {
     key: "ssl",

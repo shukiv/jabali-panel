@@ -1,12 +1,31 @@
-// Wave D E2E for GH #466: the tenant DNS records manager (now the DNS tab of the
-// Web Domain page, GH #1543) must honor the admin's per-type permission matrix
-// returned by GET /dns/policy. With a locked-down
+// Wave D E2E for GH #466: the tenant DNS records manager (DNS > Zones > a
+// zone, /jabali-panel/dns/:id since GH #1920) must honor the admin's per-type
+// permission matrix returned by GET /dns/policy. With a locked-down
 // policy (A/AAAA/CNAME only), an MX record is read-only ("Restricted") while an
 // A record keeps its Edit/Delete actions, and the Add Record type picker offers
 // only creatable types.
+import type { Page } from "@playwright/test";
 import { test, expect, mockApi, signIn, user } from "./fixtures";
 
 const DOMAIN_ID = "01KPDOMAIN0000000000000000";
+
+// The records page sits behind the dns_enabled capability gate (GH #1920);
+// mockApi does not serve /me/server-capabilities.
+async function mockDNSEnabled(page: Page) {
+  await page.route("**/api/v1/me/server-capabilities", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        dns_enabled: true,
+        mail_enabled: true,
+        security_enabled: true,
+        quota_enabled: true,
+        api_enabled: true,
+      }),
+    }),
+  );
+}
 
 const lockedDownPolicy = {
   A: { create: true, edit: true, delete: true },
@@ -59,6 +78,7 @@ test("tenant DNS page honors a locked-down record-type policy (#466)", async ({ 
       },
     ],
   });
+  await mockDNSEnabled(page);
 
   // DNS-specific endpoints (not covered by mockApi).
   await page.route("**/api/v1/dns/policy", (route) =>
@@ -103,11 +123,9 @@ test("tenant DNS page honors a locked-down record-type policy (#466)", async ({ 
   );
 
   await signIn(page, user);
-  await page.goto(`/jabali-panel/domains/${DOMAIN_ID}/dns`);
+  await page.goto(`/jabali-panel/dns/${DOMAIN_ID}`);
 
-  // GH #1543: this URL now renders the Web Domain page with DNS as an embedded
-  // tab, so the standalone "DNS Records for …" title is suppressed. The panel's
-  // own Add Record control is the stable "records manager loaded" anchor.
+  await expect(page.getByRole("heading", { name: "DNS Records for example.com" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Add Record" }).first()).toBeVisible();
 
   // The MX row is restricted (no Edit/Delete) under locked-down policy.
@@ -144,6 +162,7 @@ test("tenant DNS Add button is disabled when no type is creatable (#466)", async
       },
     ],
   });
+  await mockDNSEnabled(page);
   await page.route("**/api/v1/dns/policy", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ policy: denyAll, is_admin: false }) }),
   );
@@ -162,8 +181,10 @@ test("tenant DNS Add button is disabled when no type is creatable (#466)", async
   );
 
   await signIn(page, user);
+  // Enter through the old Web Domain DNS-tab URL: a bookmark of it must land
+  // on the zone's records page under DNS (GH #1920).
   await page.goto(`/jabali-panel/domains/${DOMAIN_ID}/dns`);
-  // GH #1543: DNS renders embedded in the Web Domain page's DNS tab; the
-  // Add Record button is the load anchor (and here must be disabled).
+  await page.waitForURL(`**/jabali-panel/dns/${DOMAIN_ID}`);
+  // The Add Record button is the load anchor (and here must be disabled).
   await expect(page.getByRole("button", { name: "Add Record" }).first()).toBeDisabled();
 });

@@ -49,17 +49,19 @@ describe("buildDomainMenuItems — admin audience", () => {
 
   it("offers the admin item set and none of the tenant-only actions", () => {
     const k = keys(buildDomainMenuItems(row(), ctx({ audience: admin, caps: { dns_enabled: true } })));
-    expect(k).toEqual(["edit", "dns", "info", "redirects", "index", "settings", "caching", "chown", "rename", "toggle", "delete"]);
+    expect(k).toEqual(["edit", "info", "redirects", "index", "settings", "caching", "chown", "rename", "toggle", "delete"]);
     // tenant-only actions never appear on the admin list
     for (const t of ["directory-privacy", "nginx-options", "rewrite-rules", "document-root", "preview-url", "bot-challenge"]) {
       expect(k).not.toContain(t);
     }
   });
 
-  it("hides DNS when the DNS module is off (GH #1419)", () => {
-    const k = keys(buildDomainMenuItems(row(), ctx({ audience: admin, caps: { dns_enabled: false } })));
-    expect(k).not.toContain("dns");
-    expect(k).toContain("edit");
+  it("has no DNS entry: records are managed under DNS > Zones (GH #1920)", () => {
+    for (const dns_enabled of [true, false]) {
+      const k = keys(buildDomainMenuItems(row(), ctx({ audience: admin, caps: { dns_enabled } })));
+      expect(k).not.toContain("dns");
+      expect(k).toContain("edit");
+    }
   });
 
   it("hides Delete for the System domain (is_panel_primary guard)", () => {
@@ -80,13 +82,11 @@ describe("buildDomainMenuItems — admin audience", () => {
     expect(k).not.toContain("rename");
   });
 
-  it("Edit and DNS navigate to the admin route prefix", () => {
+  it("Edit navigates to the admin route prefix", () => {
     const navigate = vi.fn();
     const items = buildDomainMenuItems(row(), ctx({ audience: admin, caps: { dns_enabled: true }, navigate }));
     byKey(items, "edit")?.onClick?.();
     expect(navigate).toHaveBeenCalledWith("/jabali-admin/domains/edit/d1");
-    byKey(items, "dns")?.onClick?.();
-    expect(navigate).toHaveBeenCalledWith("/jabali-admin/domains/d1/dns");
   });
 });
 

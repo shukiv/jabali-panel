@@ -57,9 +57,6 @@ vi.mock("../../DomainSettingsButton", () => ({
 vi.mock("../../../components/domains/DomainDocRootPanel", () => ({
   DomainDocRootPanel: ({ domainId }: { domainId: string }) => <div>docroot-pane:{domainId}</div>,
 }));
-vi.mock("../../dns/DNSRecordsPage", () => ({
-  DNSRecordsPanel: ({ domainId }: { domainId: string }) => <div>dns-pane:{domainId}</div>,
-}));
 vi.mock("../../../components/logs/DomainLogsPanel", () => ({
   DomainLogsPanel: ({ domainId }: { domainId: string }) => <div>logs-pane:{domainId}</div>,
 }));
@@ -178,16 +175,13 @@ describe("WebDomainPage (GH #1543)", () => {
     );
   });
 
-  it("shows the DNS tab and renders the DNS panel when the DNS module is on (GH #1419 gating relocated from the row menu)", async () => {
-    renderAt("/jabali-panel/domains/d1/dns");
-    expect(await screen.findByText("dns-pane:d1")).toBeInTheDocument();
-  });
-
-  it("hides the DNS tab and falls back to Overview when the DNS module is off (GH #1419)", async () => {
-    caps.value = { dns_enabled: false, tenant_domain_options_enabled: false, tenant_docroot_editable: false };
-    renderAt("/jabali-panel/domains/d1/dns");
+  // GH #1920 (johnnyq): DNS records are managed only under DNS > Zones, so the
+  // Web Domain page has no DNS tab even with the DNS module on. The old
+  // /domains/:id/dns URL is redirected by its own route (DomainDNSRedirect).
+  it("has no DNS tab, even with the DNS module on (GH #1920)", async () => {
+    renderAt("/jabali-panel/domains/d1/overview");
     expect(await screen.findByText("Preview URL")).toBeInTheDocument();
-    expect(screen.queryByText("dns-pane:d1")).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "DNS" })).not.toBeInTheDocument();
   });
 
   it("renders the SSL pane when :tab=ssl (GH #1543, lxsdevcode)", async () => {
