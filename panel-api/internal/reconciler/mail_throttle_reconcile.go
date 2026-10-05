@@ -44,6 +44,17 @@ func (r *Reconciler) reconcileMailThrottles(ctx context.Context) {
 	if r.outboundPolicies == nil || r.mailThrottles == nil {
 		return
 	}
+	// GH #357: a box without the mail module has no Stalwart to hold
+	// throttles; every pass logged a failed token read. Skip on a positive
+	// "mail off" reading only — an unreadable settings row keeps the pass.
+	if r.serverSettings != nil {
+		sctx, scancel := context.WithTimeout(ctx, 5*time.Second)
+		srv, err := r.settingsGet(sctx)
+		scancel()
+		if err == nil && srv != nil && !srv.MailEnabled {
+			return
+		}
+	}
 	// The admin reconcile endpoint can start a full pass while the ticker's
 	// is still running. Two throttle passes at once could each create a
 	// window's throttle, or one could sweep a throttle the other created but
