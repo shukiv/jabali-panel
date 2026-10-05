@@ -3,10 +3,35 @@ package commands
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
 )
+
+// stalwartMarkers are what install_stalwart leaves on a box with the mail
+// module: the systemd unit and the extracted binary directory. A var so tests
+// can point it at a temp dir.
+var stalwartMarkers = []string{"/etc/systemd/system/jabali-stalwart.service", "/opt/stalwart"}
+
+// mailServerAbsent reports whether this box has no mail server at all: the
+// admin token does not exist AND no Stalwart marker exists. Only then is there
+// nothing to purge. A missing token on a box that has Stalwart is a broken
+// install, not an absent one, so it stays an error and the caller retries.
+// Any stat error other than "does not exist" counts as present (fail closed).
+func mailServerAbsent() bool {
+	if _, err := stalwartAdminTokenFunc(); err == nil || !errors.Is(err, fs.ErrNotExist) {
+		return false
+	}
+	for _, p := range stalwartMarkers {
+		if _, err := os.Lstat(p); err == nil || !errors.Is(err, fs.ErrNotExist) {
+			return false
+		}
+	}
+	return true
+}
 
 // mailDomainPurgeParams is the input for mail.domain.purge_accounts.
 type mailDomainPurgeParams struct {
@@ -57,6 +82,13 @@ func mailDomainPurgeHandler(ctx context.Context, params json.RawMessage) (any, e
 	}
 	if p.Domain == "" {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "domain required"}
+	}
+	// GH #357: a box installed without the mail module has no Stalwart, so
+	// there are no accounts to purge. Say so with a distinct answer the
+	// panel's teardown accepts as done; before, the token read failed as an
+	// internal error and a deleted domain's teardown retried forever.
+	if mailServerAbsent() {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeFailedPrecondition, Message: agentwire.MsgMailServerNotInstalled}
 	}
 
 	targetID, err := domainIDByName(ctx, p.Domain)
