@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
@@ -82,6 +83,9 @@ type pythonAppApplyResult struct {
 	// because its slice is full (GH #1820). Kept apart from Detail, which the
 	// panel presents as journal output.
 	Hint string `json:"hint,omitempty"`
+	// Building means the venv/pip build is still running in the background
+	// (GH #357); the panel shows the app as building and asks again next tick.
+	Building bool `json:"building,omitempty"`
 }
 
 func pythonAppUnitName(appID string) string { return "jabali-app-" + appID + ".service" }
@@ -151,24 +155,18 @@ func pythonAppApplyHandler(ctx context.Context, params json.RawMessage) (any, er
 	}
 
 	venv := filepath.Join(appRoot, "venv")
-	pyBin := "python" + p.PythonVersion
-
-	// 1) venv (as the user), idempotent.
-	if _, err := os.Stat(filepath.Join(venv, "bin", "python")); err != nil {
-		// GH #357: `python<ver> -m venv` needs the version-specific
-		// python<ver>-venv package on Debian/Ubuntu — the interpreter binary can
-		// be present without it, and venv then dies with "ensurepip is not
-		// available", leaving the app stuck pending->failed. Ensure it first.
-		if verr := ensurePythonVenvPackage(ctx, p.PythonVersion); verr != nil {
-			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("python venv prerequisite: %v", verr)}
-		}
-		if out, err := runAsUser(ctx, p.Username, pyBin, "-m", "venv", venv); err != nil {
-			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("create venv: %v: %s", err, out)}
-		}
+	server := "gunicorn"
+	if p.AppType == "asgi" {
+		server = "uvicorn"
 	}
 
-	// 2) deps + app server (as the user). requirements.txt is optional.
-	//
+	// The per-app root-owned state dir holds the EnvironmentFile and the
+	// requirements-hash marker. Created before the build so the marker can be
+	// written.
+	if err := os.MkdirAll(pythonAppEnvDir, 0o750); err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("mkdir env dir: %v", err)}
+	}
+
 	// GH #357: the reconciler re-applies every app on every ~60s tick, so each
 	// step here MUST be idempotent/convergent — otherwise a healthy app re-pips
 	// and `systemctl restart`s every minute (dropping in-flight requests and
@@ -176,62 +174,18 @@ func pythonAppApplyHandler(ctx context.Context, params json.RawMessage) (any, er
 	// pip forever. Gate each expensive/disruptive step on real change and only
 	// restart when something actually changed. `needsRestart` accumulates that.
 	needsRestart := false
-	server := "gunicorn"
-	if p.AppType == "asgi" {
-		server = "uvicorn"
-	}
-	pip := filepath.Join(venv, "bin", "pip")
 
-	// The per-app root-owned state dir holds the EnvironmentFile and the
-	// requirements-hash marker. Created before pip so the marker can be written.
-	if err := os.MkdirAll(pythonAppEnvDir, 0o750); err != nil {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("mkdir env dir: %v", err)}
-	}
-
-	// requirements.txt (optional): only (re)install when its content changed
-	// since the last SUCCESSFUL install. The marker records the sha256 we last
-	// installed; a converged app skips pip entirely, and the tenant editing
-	// requirements.txt is what re-triggers it.
-	reqPath := filepath.Join(appRoot, "requirements.txt")
-	reqMarker := filepath.Join(pythonAppEnvDir, p.AppID+".reqsha")
-	if _, statErr := os.Stat(reqPath); statErr == nil {
-		sum, herr := fileSHA256(reqPath)
-		if herr != nil {
-			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("hash requirements.txt: %v", herr)}
-		}
-		prev, _ := os.ReadFile(reqMarker)
-		reqFailMarker := filepath.Join(pythonAppEnvDir, p.AppID+".reqfail")
-		if strings.TrimSpace(string(prev)) != sum {
-			// GH #357: a deterministically-failing build must not re-run pip on
-			// every converge tick (~60s) — one broken app stormed pip ~95
-			// times/hour. If the last FAILED attempt was for these SAME
-			// requirements and we're still inside the backoff, surface the
-			// cached error without touching pip. A requirements.txt edit (new
-			// sha) or the backoff elapsing retries.
-			if f := readReqFail(reqFailMarker); f.SHA == sum && time.Since(time.Unix(f.At, 0)) < pipRetryBackoff {
-				return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: f.Error}
-			}
-			// No -q: quiet mode hides the "Collecting <pkg>" lines that name the
-			// package pip was building when it failed, so a build error came back
-			// as a bare traceback ("KeyError: '__version__'") with no clue which
-			// dependency broke (GH #357). Success output is discarded, so the
-			// only effect of dropping -q is a more useful failure message.
-			if out, err := runAsUser(ctx, p.Username, pip, "install", "-r", reqPath); err != nil {
-				msg := fmt.Sprintf("pip install requirements: %v: %s", err, pipFailureContext(out))
-				writeReqFail(reqFailMarker, sum, msg, time.Now())
-				return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: msg}
-			}
-			_ = os.WriteFile(reqMarker, []byte(sum), 0o640)
-			_ = os.Remove(reqFailMarker) // clear the cached failure on success
-			needsRestart = true
-		}
-	}
-
-	// App server: install only when its binary is missing from the venv.
-	if _, err := os.Stat(filepath.Join(venv, "bin", server)); err != nil {
-		if out, err := runAsUser(ctx, p.Username, pip, "install", server); err != nil {
-			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("pip install %s: %v: %s", server, err, pipFailureContext(out))}
-		}
+	// 1-2) venv + requirements.txt + app server, in the background. GH #357: a
+	// first install of a real requirements.txt takes minutes, longer than the
+	// panel's 120s deadline for this call. Run inside the call, pip was killed
+	// at the deadline and the app showed "i/o timeout". This call now reports
+	// building until the build finishes; the call after that collects its result.
+	switch state, err := pythonAppBuildStep(p, appRoot, venv, server, pythonAppEnvDir); {
+	case err != nil:
+		return nil, err
+	case state == pythonBuildRunning:
+		return pythonAppApplyResult{Building: true, Unit: pythonAppUnitName(p.AppID)}, nil
+	case state == pythonBuildFinished:
 		needsRestart = true
 	}
 
@@ -407,15 +361,34 @@ func validEnvKey(k string) bool {
 // fileSHA256 returns the hex sha256 of a file's contents. Used to skip
 // re-running `pip install -r requirements.txt` when the file is unchanged
 // since the last successful install (GH #357 per-tick pip storm).
+// maxRequirementsBytes caps how much of a tenant's requirements.txt the agent
+// (running as root) will read to hash it. Real files are a few KB.
+const maxRequirementsBytes = 1 << 20
+
+// fileSHA256 hashes a tenant-controlled file. The tenant decides what the path
+// is, so only a regular file of at most maxRequirementsBytes is read: a FIFO
+// would block the read forever and a symlink to /dev/zero would never end. The
+// open is non-blocking so a FIFO swapped in after a stat can't block it either.
 func fileSHA256(path string) (string, error) {
-	f, err := os.Open(path)
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return "", err
 	}
 	defer f.Close()
-	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
+	fi, err := f.Stat()
+	if err != nil {
 		return "", err
+	}
+	if !fi.Mode().IsRegular() {
+		return "", fmt.Errorf("%s is not a regular file", filepath.Base(path))
+	}
+	h := sha256.New()
+	n, err := io.Copy(h, io.LimitReader(f, maxRequirementsBytes+1))
+	if err != nil {
+		return "", err
+	}
+	if n > maxRequirementsBytes {
+		return "", fmt.Errorf("%s is larger than %d bytes", filepath.Base(path), maxRequirementsBytes)
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
