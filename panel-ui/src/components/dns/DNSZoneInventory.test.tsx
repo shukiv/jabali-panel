@@ -202,6 +202,18 @@ describe("DnsZoneInventory one zone list (GH #1918)", () => {
     expect(screen.queryByText("Manage Records")).not.toBeInTheDocument();
   });
 
+  // GH #1919 (johnnyq): the "DNS zones are provisioned automatically…" callout
+  // only took up space above the list, on both the admin and tenant pages.
+  it.each([
+    ["admin", adminAudience],
+    ["tenant", tenantAudience],
+  ])("shows no provisioning callout above the %s list", (_name, audience) => {
+    renderPage(audience);
+
+    expect(screen.queryByText(/dns_zones_are_provisioned_automatically_when/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
   it("a signed zone's menu offers View DS & keys and Disable DNSSEC; its delete waits for unsigning", async () => {
     renderPage(adminAudience);
     await openMenu("one.tld");

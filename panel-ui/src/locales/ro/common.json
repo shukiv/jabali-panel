@@ -342,7 +342,6 @@
   },
   "dnszonesoverviewpage": {
     "actions": "Acțiuni",
-    "dns_zones_are_provisioned_automatically_when": "",
     "dnssec": "",
     "domain_name": "Nume de domeniu",
     "domain_registration_expiry_from_whois": "",
@@ -1389,7 +1388,6 @@
   },
   "userdnszonesoverviewpage": {
     "actions": "Acțiuni",
-    "dns_zones_are_provisioned_automatically_when": "",
     "dnssec": "",
     "domain_name": "Nume de domeniu",
     "domain_registration_expiry_from_whois": "",
