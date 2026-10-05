@@ -64,6 +64,7 @@ The handler in `panel-api/internal/api/databases_admin_ops.go` is the adapter; t
 - **MariaDB skip-networking** (M25.1) — DBs are reachable only via socket. phpMyAdmin connects via socket; the panel connects via socket; user apps connect via socket.
 - **Socket peer auth** for the panel itself — the `jabali` Linux user is the DB owner; no password needed for the panel's own connection.
 - **Root password alongside socket peer auth** (ADR-0097) — root has a password (so `mysql -uroot -p` from a console still works) plus socket peer auth (so the panel never sends it).
+- **No program execution from phpMyAdmin or Adminer** — their PHP pool (`jabali-pma`, user `www-data`) disables the command-exec functions, `putenv` and `mail`, so a flaw in either app cannot start programs that would read other sites' files. See [Security → AppArmor](security.md#apparmor).
 - **Reconciler-converged tuning** — never edit `/etc/mysql/mariadb.conf.d/jabali.cnf` by hand; the reconciler will overwrite.
 
 ## CLI
