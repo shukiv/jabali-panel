@@ -8272,6 +8272,19 @@ security.limit_extensions = .php
 ; sso.key is out of scope — creds via the UDS SSO validator only.
 php_admin_value[open_basedir] = /opt/phpmyadmin:/var/www/jabali-adminer:/tmp:/var/tmp
 
+; Exec lockdown. This pool runs as www-data, the group that can read every
+; site's files, and its master is not under the jabali-fpm-app AppArmor
+; profile (the jabali-fpm@pma drop-in starts php-fpm directly). A program
+; started from PHP ignores open_basedir, so code execution in phpMyAdmin or
+; Adminer must not reach exec. Neither app starts programs to serve a page.
+; The list is the tenant lockdown (GH #401, the agent's
+; defaultDisableFunctions) plus putenv, mail and mb_send_mail:
+; putenv("LD_PRELOAD=...") followed by mail() starting sendmail runs code
+; even with exec disabled, and neither app sends mail. Keep it stricter
+; than the tenant list; checked by
+; install/tests/test_pma_pool_exec_lockdown.sh.
+php_admin_value[disable_functions] = exec,passthru,shell_exec,system,proc_open,popen,pcntl_exec,pcntl_fork,proc_nice,dl,putenv,mail,mb_send_mail
+
 ; Import limits (GH #285): the PHP defaults (upload_max_filesize=2M,
 ; post_max_size=8M, memory_limit=128M, max_execution_time=30s) make
 ; phpMyAdmin/Adminer SQL-file uploads fail on anything but tiny dumps.
