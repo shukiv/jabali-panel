@@ -52,6 +52,14 @@ Every app uses the same 6-step pipeline:
 - "Clone" → currently WP-only, others on the roadmap.
 - "Delete" → destructive teardown.
 
+## Python apps — build and status
+
+When a Python app is created, or its `requirements.txt` changes, the panel builds it as the account's user: it creates the app's virtualenv, runs `pip install -r requirements.txt`, and installs the app server (gunicorn for WSGI, uvicorn for ASGI) if `requirements.txt` did not already. A first install of a real project can take several minutes, so the build runs in the background (GH #357). The app shows **building** until it finishes, then **running**, or **failed** with the reason on hover.
+
+- A failed `pip install` shows the packages pip was working on and the last lines of its output. The panel retries it after 15 minutes, or straight away when `requirements.txt` changes.
+- Each pip step stops after 8 minutes. A build that never finishes in that time shows **failed** with `timed out`.
+- Restarting the agent stops a build that is running; the next pass starts it again, and pip keeps what it already installed.
+
 ## Python apps — media directory
 
 A Python app can serve a per-app **media directory straight from nginx** (GH

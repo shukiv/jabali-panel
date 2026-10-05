@@ -105,12 +105,24 @@ func (r *Reconciler) reconcileOnePythonApp(ctx context.Context, app *models.Pyth
 		return
 	}
 	var res struct {
-		Active bool   `json:"active"`
-		Unit   string `json:"unit"`
-		Detail string `json:"detail"`
-		Hint   string `json:"hint"`
+		Active   bool   `json:"active"`
+		Unit     string `json:"unit"`
+		Detail   string `json:"detail"`
+		Hint     string `json:"hint"`
+		Building bool   `json:"building"`
 	}
 	_ = json.Unmarshal(raw, &res)
+	if res.Building {
+		// GH #357: the agent is still installing the venv and requirements in
+		// the background. Show it as building (clearing any earlier error)
+		// and ask again next tick.
+		if app.Status != models.PythonAppStatusBuilding {
+			if err := r.pythonApps.UpdateStatus(ctx, app.ID, models.PythonAppStatusBuilding, nil); err != nil {
+				r.log.Warn("pyapp: status update failed", "id", app.ID, "err", err)
+			}
+		}
+		return
+	}
 	status := models.PythonAppStatusFailed
 	var lastErr *string
 	if res.Active {

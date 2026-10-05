@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
 )
@@ -80,6 +81,11 @@ func userDeleteHandler(ctx context.Context, params json.RawMessage) (any, error)
 	// converger reap_orphan_nspawn_php_units is the self-heal backstop for
 	// units orphaned before this shipped.
 	reapUserNspawnPHPUnit(ctx, p.Username)
+
+	// GH #357: Python app builds run in the background as the user. Stop them
+	// before userdel frees the UID, so no pip keeps running under a UID the
+	// system may later hand to a new account.
+	cancelPythonBuildsForUser(p.Username, 15*time.Second)
 
 	// Remove the per-user slice BEFORE userdel so systemd can still resolve the UID
 	// while stopping user@<uid>.service.
