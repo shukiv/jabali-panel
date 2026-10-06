@@ -116,3 +116,142 @@ func TestApply_DockerAppOnAnotherAccountsDataDirIsRefused(t *testing.T) {
 		t.Fatalf("errors %v: the account's own app must not be refused", r.Errors)
 	}
 }
+
+// utDBs / utDBUsers keep the rows Apply creates and answer List with the rows
+// other accounts already have.
+type utDBs struct {
+	repository.DatabaseRepository
+	existing []models.Database
+	created  []string
+}
+
+func (r *utDBs) List(context.Context, repository.ListOptions) ([]models.Database, int64, error) {
+	return r.existing, int64(len(r.existing)), nil
+}
+func (r *utDBs) Create(_ context.Context, d *models.Database) error {
+	r.created = append(r.created, d.Name)
+	return nil
+}
+
+type utDBUsers struct {
+	repository.DatabaseUserRepository
+	existing []models.DatabaseUser
+	created  []string
+}
+
+func (r *utDBUsers) List(context.Context, repository.ListOptions) ([]models.DatabaseUser, int64, error) {
+	return r.existing, int64(len(r.existing)), nil
+}
+func (r *utDBUsers) Create(_ context.Context, u *models.DatabaseUser) error {
+	r.created = append(r.created, u.Username)
+	return nil
+}
+
+func utDBMeta(dbs, users []string) *internalbackup.AccountMetadata {
+	alice := "alice"
+	m := &internalbackup.AccountMetadata{User: internalbackup.MetadataUser{ID: "u1", Username: &alice}}
+	for i, n := range dbs {
+		m.Databases = append(m.Databases, internalbackup.MetadataDatabase{ID: "db" + string(rune('a'+i)), Name: n, Engine: "mariadb"})
+	}
+	for i, n := range users {
+		m.DatabaseUsers = append(m.DatabaseUsers, internalbackup.MetadataDatabaseUser{ID: "du" + string(rune('a'+i)), Username: n})
+	}
+	return m
+}
+
+func sameSet(got []string, want ...string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	seen := map[string]bool{}
+	for _, g := range got {
+		seen[g] = true
+	}
+	for _, w := range want {
+		if !seen[w] {
+			return false
+		}
+	}
+	return true
+}
+
+// SECURITY: a database or database-user row is a handle the account's owner
+// can drop, dump, restore or re-password through the panel. No restore turns
+// one of this server's own databases or MariaDB accounts into one.
+func TestApply_NoRestoreRegistersThisServersOwnDatabasesOrAccounts(t *testing.T) {
+	for _, untrusted := range []bool{false, true} {
+		dbs, users := &utDBs{}, &utDBUsers{}
+		meta := utDBMeta([]string{"jabali_panel", "mysql", "alice_wp"}, []string{"root", "jabali_panel_app", "jb_s_alice_wp", "mariadb.sys", "alice_u"})
+
+		r := Apply(context.Background(), meta, Deps{Users: namedUsersRepo{username: "alice"}, Databases: dbs, DatabaseUsers: users, Untrusted: untrusted})
+
+		if !sameSet(dbs.created, "alice_wp") || !sameSet(users.created, "alice_u") {
+			t.Fatalf("untrusted=%v: created databases %v users %v (errors %v), want only alice_wp and alice_u", untrusted, dbs.created, users.created, r.Errors)
+		}
+		if !hasError(r.Errors, "database dba (jabali_panel): not restored: it is one of this server's own databases") ||
+			!hasError(r.Errors, "db_user dua (root): not restored: it is one of this server's own database accounts") {
+			t.Fatalf("untrusted=%v: errors %v should explain the refusals", untrusted, r.Errors)
+		}
+	}
+}
+
+// From an uploaded file, databases and database users stay in the account's
+// own namespace (<account>_...) and never take a name another account has.
+func TestApply_UploadedBackupKeepsDatabasesInTheAccountsNamespace(t *testing.T) {
+	dbs := &utDBs{existing: []models.Database{{ID: "x", UserID: "u-bob", Name: "alice_shop"}}}
+	users := &utDBUsers{existing: []models.DatabaseUser{{ID: "y", UserID: "u-bob", Username: "alice_admin"}}}
+	meta := utDBMeta([]string{"alice_wp", "carol_x", "alice_shop", "shopdb"}, []string{"alice_u", "bob_u", "alice_admin"})
+
+	r := Apply(context.Background(), meta, Deps{Users: namedUsersRepo{username: "alice"}, Databases: dbs, DatabaseUsers: users, Untrusted: true})
+
+	if !sameSet(dbs.created, "alice_wp") || !sameSet(users.created, "alice_u") {
+		t.Fatalf("created databases %v users %v (errors %v), want only alice_wp and alice_u", dbs.created, users.created, r.Errors)
+	}
+	for _, want := range []string{
+		"database dbb (carol_x): not restored: a database from an uploaded backup must be named alice_<name>",
+		"database dbc (alice_shop): not restored: another account has a database with this name",
+		"db_user dub (bob_u): not restored: a database user from an uploaded backup must be named alice_<name>",
+		"db_user duc (alice_admin): not restored: another account has a database user with this name",
+	} {
+		if !hasError(r.Errors, want) {
+			t.Errorf("errors %v should contain %q", r.Errors, want)
+		}
+	}
+}
+
+// A restore from this server's own backup destination keeps an admin-named
+// database (made without the account prefix).
+func TestApply_OwnDestinationKeepsAnAdminNamedDatabase(t *testing.T) {
+	dbs, users := &utDBs{}, &utDBUsers{}
+	meta := utDBMeta([]string{"shopdb"}, []string{"shopuser"})
+
+	r := Apply(context.Background(), meta, Deps{Users: namedUsersRepo{username: "alice"}, Databases: dbs, DatabaseUsers: users})
+
+	if !sameSet(dbs.created, "shopdb") || !sameSet(users.created, "shopuser") {
+		t.Fatalf("created databases %v users %v (errors %v), want both kept", dbs.created, users.created, r.Errors)
+	}
+}
+
+// A docker app's slugs name its data directory and compose project: a row
+// whose slug isn't a plain app name is not restored.
+func TestApply_DockerAppWithAMalformedSlugIsRefused(t *testing.T) {
+	dockers := &utDocker{}
+	meta := &internalbackup.AccountMetadata{
+		User: internalbackup.MetadataUser{ID: "u1"},
+		DockerApps: []internalbackup.MetadataDockerApp{
+			{ID: "bad1", Slug: "../etc"},
+			{ID: "bad2", Slug: "gitea", InstanceSlug: "gitea/../../x"},
+			{ID: "ok", Slug: "gitea", InstanceSlug: "gitea-2"},
+		},
+	}
+
+	r := Apply(context.Background(), meta, Deps{Users: existingUsersRepo{}, DockerApps: dockers})
+
+	got := createdApps(dockers)
+	if got["bad1"] || got["bad2"] || !got["ok"] {
+		t.Fatalf("created %v (errors %v), want only ok", got, r.Errors)
+	}
+	if !hasError(r.Errors, `docker_app bad1: not restored: "../etc" is not an app name`) {
+		t.Fatalf("errors %v should explain the refusal", r.Errors)
+	}
+}

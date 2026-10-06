@@ -478,8 +478,25 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 
 	// 4) Databases + db_users + grants.
 	if d.Databases != nil {
-		dbNameToID := make(map[string]string, len(m.Databases))
-		for _, db := range m.Databases {
+		// SECURITY (GH #1993): a database or database-user row is a handle
+		// the account's owner can drop, dump, restore or re-password through
+		// the panel. Never this server's own; from an uploaded file, only
+		// names in the account's own namespace that no other account has.
+		var otherDBs, otherDBUsers map[string]bool
+		dbRows, dbUserRows := m.Databases, m.DatabaseUsers
+		if d.Untrusted {
+			var listErr error
+			if otherDBs, otherDBUsers, listErr = otherAccountsDatabaseNames(ctx, d, m.User.ID); listErr != nil {
+				r.Errors = append(r.Errors, fmt.Sprintf("databases: not restored: %v", listErr))
+				dbRows, dbUserRows = nil, nil
+			}
+		}
+		dbNameToID := make(map[string]string, len(dbRows))
+		for _, db := range dbRows {
+			if why := restoredDatabaseRefusal(db.Name, account, d.Untrusted, otherDBs); why != "" {
+				r.Errors = append(r.Errors, fmt.Sprintf("database %s (%s): not restored: %s", db.ID, db.Name, why))
+				continue
+			}
 			dbNameToID[db.Name] = db.ID
 			row := &models.Database{
 				ID:        db.ID,
@@ -506,7 +523,11 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 			r.Databases++
 		}
 		if d.DatabaseUsers != nil {
-			for _, du := range m.DatabaseUsers {
+			for _, du := range dbUserRows {
+				if why := restoredDBUserRefusal(du.Username, account, d.Untrusted, otherDBUsers); why != "" {
+					r.Errors = append(r.Errors, fmt.Sprintf("db_user %s (%s): not restored: %s", du.ID, du.Username, why))
+					continue
+				}
 				dbu := &models.DatabaseUser{
 					ID:           du.ID,
 					UserID:       m.User.ID,
@@ -644,6 +665,10 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 			if !a.ServerLevel {
 				uid := m.User.ID
 				owner = &uid
+			}
+			if bad := malformedDockerSlug(a); bad != "" {
+				r.Errors = append(r.Errors, fmt.Sprintf("docker_app %s: not restored: %q is not an app name", a.ID, bad))
+				continue
 			}
 			if slug, taken := dockerSlugTaken(existing, a, owner); taken {
 				r.Errors = append(r.Errors, fmt.Sprintf("docker_app %s: not restored: another account's app already uses %q", a.ID, slug))
@@ -931,6 +956,107 @@ func applyUser(ctx context.Context, m *internalbackup.AccountMetadata, d Deps, n
 		return false, fmt.Errorf("create: %w", err)
 	}
 	return true, nil
+}
+
+// systemDatabaseNames are this server's own databases (with every jabali_*
+// one); systemDBUserNames its own MariaDB accounts (with every jabali* and
+// jb_s_* restore shadow one).
+var (
+	systemDatabaseNames = map[string]bool{
+		"mysql": true, "information_schema": true, "performance_schema": true, "sys": true,
+		"crowdsec": true, "postgres": true, "template0": true, "template1": true, "jabali": true,
+	}
+	systemDBUserNames = map[string]bool{
+		"root": true, "mysql": true, "mariadb.sys": true, "crowdsec": true, "debian-sys-maint": true,
+		"postgres": true, "jabali": true,
+	}
+	restoredDBNameRe = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+)
+
+func systemDatabase(name string) bool {
+	l := strings.ToLower(name)
+	return systemDatabaseNames[l] || strings.HasPrefix(l, "jabali_")
+}
+
+func systemDBUser(name string) bool {
+	l := strings.ToLower(name)
+	return systemDBUserNames[l] || strings.HasPrefix(l, "jabali_") || strings.HasPrefix(l, "jabali-") || strings.HasPrefix(l, "jb_s_")
+}
+
+// restoredDatabaseRefusal says why a database row named name may not be
+// restored for account, or "".
+func restoredDatabaseRefusal(name, account string, untrusted bool, others map[string]bool) string {
+	switch {
+	case systemDatabase(name):
+		return "it is one of this server's own databases"
+	case !untrusted:
+		return ""
+	case !restoredDBNameRe.MatchString(name) || !accountNameRe.MatchString(account) ||
+		len(name) <= len(account)+1 || !strings.HasPrefix(name, account+"_"):
+		return fmt.Sprintf("a database from an uploaded backup must be named %s_<name>", account)
+	case others[name]:
+		return "another account has a database with this name"
+	}
+	return ""
+}
+
+// restoredDBUserRefusal is restoredDatabaseRefusal for a database user.
+func restoredDBUserRefusal(name, account string, untrusted bool, others map[string]bool) string {
+	switch {
+	case systemDBUser(name):
+		return "it is one of this server's own database accounts"
+	case !untrusted:
+		return ""
+	case !restoredDBNameRe.MatchString(name) || !accountNameRe.MatchString(account) ||
+		len(name) <= len(account)+1 || !strings.HasPrefix(name, account+"_"):
+		return fmt.Sprintf("a database user from an uploaded backup must be named %s_<name>", account)
+	case others[name]:
+		return "another account has a database user with this name"
+	}
+	return ""
+}
+
+// otherAccountsDatabaseNames returns the database and database-user names
+// rows of accounts other than userID hold.
+func otherAccountsDatabaseNames(ctx context.Context, d Deps, userID string) (dbs, users map[string]bool, err error) {
+	dbs, users = map[string]bool{}, map[string]bool{}
+	rows, _, err := d.Databases.List(ctx, repository.ListOptions{})
+	if err != nil {
+		return nil, nil, fmt.Errorf("list this server's databases: %w", err)
+	}
+	for _, r := range rows {
+		if r.UserID != userID {
+			dbs[r.Name] = true
+		}
+	}
+	if d.DatabaseUsers != nil {
+		urows, _, err := d.DatabaseUsers.List(ctx, repository.ListOptions{})
+		if err != nil {
+			return nil, nil, fmt.Errorf("list this server's database users: %w", err)
+		}
+		for _, r := range urows {
+			if r.UserID != userID {
+				users[r.Username] = true
+			}
+		}
+	}
+	return dbs, users, nil
+}
+
+// dockerSlugRe is the agent's rule for a docker app slug (validateSlug): the
+// slugs name the app's data directory and compose project.
+var dockerSlugRe = regexp.MustCompile(`^[a-z][a-z0-9-]{1,31}$`)
+
+// malformedDockerSlug returns a's slug or instance slug when it isn't a plain
+// app name, else "".
+func malformedDockerSlug(a internalbackup.MetadataDockerApp) string {
+	if !dockerSlugRe.MatchString(a.Slug) {
+		return a.Slug
+	}
+	if a.InstanceSlug != "" && !dockerSlugRe.MatchString(a.InstanceSlug) {
+		return a.InstanceSlug
+	}
+	return ""
 }
 
 // dockerSlugTaken reports whether an app on this server other than a, with an
