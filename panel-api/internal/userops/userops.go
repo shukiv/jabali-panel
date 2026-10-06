@@ -229,14 +229,27 @@ func Create(ctx context.Context, d Deps, in CreateInput) (*CreateResult, error) 
 		// ErrIdentityExisted = 409 conflict but we resolved the
 		// existing identity id by email lookup. Reuse it instead of
 		// rolling back the panel row — keeps migration reruns +
-		// destroy-then-recreate cycles idempotent. Operator can rotate
-		// the password via the panel afterward.
+		// destroy-then-recreate cycles idempotent.
+		//
+		// The reused identity takes this account's password: kept as it
+		// was, the password just set wouldn't sign in, and whoever knew
+		// the identity's old one would (GH #1993). Only an identity no
+		// other panel account is linked to: the one found by email can be
+		// another account's (its panel email changed, its traits didn't),
+		// and setting its password would hand that account over. Either
+		// failure fails the create and rolls back like any Kratos failure.
 		if errors.Is(kErr, kratosclient.ErrIdentityExisted) && identityID != "" {
-			if d.Log != nil {
-				d.Log.Warn("kratos identity already exists; reusing",
+			kErr = nil
+			if owner, oErr := d.Users.FindByKratosIdentityID(ctx, identityID); oErr == nil && owner != nil {
+				kErr = fmt.Errorf("a sign-in identity with this email belongs to another account (%s)", owner.ID)
+			} else if oErr != nil && !errors.Is(oErr, repository.ErrNotFound) {
+				kErr = fmt.Errorf("check the existing identity's account: %w", oErr)
+			} else if pwErr := d.KratosClient.SetPassword(ctx, identityID, u.PasswordHash); pwErr != nil {
+				kErr = fmt.Errorf("set the existing identity's password: %w", pwErr)
+			} else if d.Log != nil {
+				d.Log.Warn("kratos identity already existed; reused with the new password",
 					"user_id", u.ID, "email", u.Email, "kratos_id", identityID)
 			}
-			kErr = nil
 		}
 		if kErr != nil {
 			if delErr := d.Users.Delete(ctx, u.ID); delErr != nil && d.Log != nil {
