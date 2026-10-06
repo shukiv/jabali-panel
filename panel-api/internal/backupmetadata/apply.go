@@ -112,6 +112,14 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 	if d.PHPPools != nil {
 		for _, p := range m.PHPPools {
 			if existing, err := d.PHPPools.FindByID(ctx, p.ID); err == nil && existing != nil {
+				// SECURITY: an uploaded bundle is untrusted. A pool with this id
+				// that another account owns runs PHP as that account's user;
+				// binding a restored domain to it would hand the domain that
+				// user's privileges.
+				if existing.UserID != m.User.ID {
+					r.Errors = append(r.Errors, fmt.Sprintf("php_pool %s: not restored: a pool with this id belongs to another account", p.ID))
+					continue
+				}
 				poolIDs[p.ID] = existing.ID
 				r.Skipped++
 				continue

@@ -162,3 +162,46 @@ func TestApply_DomainThatFailsToSaveTakesItsChildren(t *testing.T) {
 		t.Fatalf("errors %v should carry the domain failure", r.Errors)
 	}
 }
+
+// SECURITY: an uploaded backup is untrusted. A bundle naming a pool id that
+// belongs to another account must not bind the restored domain to it — that
+// pool runs PHP as the other account's user.
+func TestApply_NeverBindsADomainToAnotherAccountsPool(t *testing.T) {
+	foreign := "p-bob"
+	pools := &ppPools{rows: []models.PHPPool{{ID: foreign, UserID: "u-bob", PHPVersion: "8.4"}}}
+	doms := &ppDomains{pools: pools}
+	mb := &dcMailboxes{}
+	meta := ppMeta()
+	meta.PHPPools[0].ID = foreign
+	meta.Domains[0].PHPPoolID = &foreign
+
+	r := Apply(context.Background(), meta, ppDeps(pools, doms, mb))
+
+	if len(doms.created) != 1 {
+		t.Fatalf("domains = %+v, want alice.org restored", doms.created)
+	}
+	if got := doms.created[0].PHPPoolID; got != nil && *got == foreign {
+		t.Fatalf("alice.org bound to another account's pool %s", foreign)
+	}
+	if !hasError(r.Errors, "another account") {
+		t.Fatalf("errors %v should say the pool belongs to another account", r.Errors)
+	}
+}
+
+// A domain naming a pool id the bundle doesn't list is restored unbound, not
+// bound to whatever pool has that id on this server.
+func TestApply_DomainNamingAnUnlistedPoolIsLeftUnbound(t *testing.T) {
+	foreign := "p-bob"
+	pools := &ppPools{rows: []models.PHPPool{{ID: foreign, UserID: "u-bob", PHPVersion: "8.4"}}}
+	doms := &ppDomains{pools: pools}
+	mb := &dcMailboxes{}
+	meta := ppMeta()
+	meta.PHPPools = nil
+	meta.Domains[0].PHPPoolID = &foreign
+
+	Apply(context.Background(), meta, ppDeps(pools, doms, mb))
+
+	if len(doms.created) != 1 || doms.created[0].PHPPoolID != nil {
+		t.Fatalf("domains = %+v, want alice.org restored with no pool", doms.created)
+	}
+}
