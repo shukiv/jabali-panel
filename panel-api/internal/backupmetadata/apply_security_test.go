@@ -30,14 +30,16 @@ func (r *createGuardUsersRepo) Create(context.Context, *models.User) error {
 // returns "" (no identity for the bundle email) so the step-9 mint branch would
 // fire if it were reachable.
 type recordingKratos struct {
-	mints int
+	mints   int
+	imports int
 }
 
 func (k *recordingKratos) CreateIdentityWithPassword(context.Context, kratosclient.AdminTraits, string) (string, error) {
 	k.mints++
 	return "id-minted", nil
 }
-func (k *recordingKratos) ImportIdentities(context.Context, []kratosclient.ExportedIdentity) error {
+func (k *recordingKratos) ImportIdentities(_ context.Context, ids []kratosclient.ExportedIdentity) error {
+	k.imports += len(ids)
 	return nil
 }
 func (k *recordingKratos) IdentityIDByEmail(context.Context, string) (string, error) {
@@ -89,4 +91,36 @@ func TestApply_NoKratosMintForExistingUser(t *testing.T) {
 		t.Errorf("step 9 must not mint an identity for a pre-existing user (created=false); minted %d", kratos.mints)
 	}
 	_ = r
+}
+
+// GH #1993: a bundle from an uploaded file can't put a sign-in identity into
+// this server's Kratos: its exported identity (traits, state, metadata and a
+// password hash) is chosen by whoever wrote the file. From this server's own
+// backup the identity is still imported (GH #954).
+func TestApply_UploadedBackupImportsNoKratosIdentity(t *testing.T) {
+	exported := `{"schema_id":"default","state":"active",` +
+		`"traits":{"email":"future-admin@example.com","is_admin":true},` +
+		`"credentials":{"password":{"type":"password","identifiers":["future-admin@example.com"],` +
+		`"config":{"hashed_password":"$2a$10$` + strings.Repeat("a", 53) + `"}}}}`
+	meta := func() *internalbackup.AccountMetadata {
+		return &internalbackup.AccountMetadata{
+			User:   internalbackup.MetadataUser{ID: "u1", Email: "alice@example.com"},
+			Kratos: &internalbackup.MetadataKratos{ExportedIdentity: exported},
+		}
+	}
+
+	kratos := &recordingKratos{}
+	r := Apply(context.Background(), meta(), Deps{Users: existingUsersRepo{}, KratosClient: kratos, Untrusted: true})
+	if kratos.imports != 0 {
+		t.Fatalf("an uploaded file's identity was imported into Kratos (%d)", kratos.imports)
+	}
+	if !hasError(r.Errors, "login: the sign-in identity in the uploaded file was not imported") {
+		t.Fatalf("errors %v should say the identity was left out", r.Errors)
+	}
+
+	kratos = &recordingKratos{}
+	Apply(context.Background(), meta(), Deps{Users: existingUsersRepo{}, KratosClient: kratos})
+	if kratos.imports != 1 {
+		t.Fatalf("this server's own backup: imported %d identities, want 1", kratos.imports)
+	}
 }
