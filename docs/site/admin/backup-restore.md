@@ -53,6 +53,26 @@ to a host that shares no restic destination with the source:
   users** and even restoring an account into a user that doesn't yet exist
   (create-from-manifest).
 
+### What an uploaded archive can't restore
+
+An uploaded archive is a file anyone could have written, so the panel restores
+it into the target account only (GH #1993):
+
+- **Databases** — the account's own, or new ones named `<account>_<name>`.
+  Never this server's own databases, another account's, or one that already
+  exists here without belonging to the account. A database an admin created
+  without the account prefix is refused; restore it by hand.
+- **Mail** — only for the account's own domains.
+- **Docker apps** — the account's own, or an app name not in use here.
+  Server-level apps are not restored, and neither is an app whose name another
+  account's app uses.
+- **Custom nginx directives** on a domain are left out. Re-add them in the
+  domain's settings after reviewing them.
+
+Each item left out is listed in the restore report. The server agent must be
+as new as the panel: an older agent can't confine the restore, so the panel
+refuses it (`agent_update_required`).
+
 ## Operator-only safety rails
 
 - A restore into an existing user requires typing the user's username as confirmation.
