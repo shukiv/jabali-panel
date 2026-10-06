@@ -5519,7 +5519,7 @@ paths:
   /admin/services/{name}/{action}:
     post:
       tags: [Services]
-      summary: POST service
+      summary: Run a service action (restart, start, stop, reload, enable, disable). Restarting nginx, jabali-panel, jabali-agent or redis-server is scheduled 2 seconds out and answers with scheduled true
       security: [ { KratosSession: [] } ]
       parameters: [ { in: path, name: name, required: true, schema: { type: string } }, { in: path, name: action, required: true, schema: { type: string } } ]
       responses: { "200": { description: OK } }
@@ -6172,7 +6172,7 @@ paths:
   /system/services/{name}/restart:
     post:
       tags: [System]
-      summary: Restart services
+      summary: Restart a service. Restarting nginx, jabali-panel, jabali-agent or redis-server is scheduled 2 seconds out and answers with scheduled true
       security: [ { KratosSession: [] } ]
       parameters: [ { in: path, name: name, required: true, schema: { type: string } } ]
       responses: { "200": { description: OK } }

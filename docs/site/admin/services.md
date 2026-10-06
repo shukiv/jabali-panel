@@ -50,6 +50,12 @@ The panel refuses Stop and Disable for these units with `403 self_destruct_block
 
 Stopping any of these would lock you out of the panel. Restart is still allowed. To stop one of them, use `systemctl` from a shell on the host.
 
+## Restarting a unit the panel runs through
+
+Restarting `nginx`, `jabali-panel`, `jabali-agent` or `redis-server` interrupts the panel itself. Every panel request goes through nginx, and the panel restarts along with the agent or Redis. The confirm dialog says so.
+
+The panel schedules these restarts 2 seconds out, so its answer reaches you before the restart starts. The panel is then unreachable for a few seconds, and the Services card refreshes once it is back. Clicking Restart again while one is still pending is refused.
+
 ## Alerts when a unit goes down
 
 The `service.down` notification checks its own list of units once a minute:

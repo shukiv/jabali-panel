@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"regexp"
@@ -84,7 +85,48 @@ var (
 		"stop":    true,
 		"disable": true,
 	}
+
+	// restartDeferredUnits are the units the restart request itself travels
+	// through: nginx proxies it, jabali-panel serves it, and jabali-panel
+	// Requires= jabali-agent and redis-server, so restarting either restarts
+	// the panel too. Restarted inline, they cut off the response (an empty
+	// reply, which Cloudflare shows as a 520 "could not parse" page; a 502
+	// without it — GH #1992). The agent schedules these restarts a moment out
+	// instead, so the response returns first. Keep in sync with
+	// restartInterruptsPanel in the UI (ServicesSummaryCard.tsx).
+	restartDeferredUnits = map[string]bool{
+		"nginx":        true,
+		"jabali-panel": true,
+		"jabali-agent": true,
+		"redis-server": true,
+	}
 )
+
+// restartAlreadyScheduled reports whether the agent refused a deferred restart
+// because one for the same unit is still pending (a second click).
+func restartAlreadyScheduled(err error) bool {
+	var ae *agent.AgentError
+	return errors.As(err, &ae) && ae.Code == agent.CodeAlreadyExists
+}
+
+// respondRestartAlreadyScheduled answers that second click with a 409 the UI
+// can show, in the panel's own words.
+func respondRestartAlreadyScheduled(c *gin.Context, name string) {
+	c.JSON(http.StatusConflict, gin.H{
+		"error":  "restart_already_scheduled",
+		"detail": "A restart of " + name + " is already scheduled. Wait a few seconds for the panel to come back.",
+	})
+}
+
+// serviceActionParams builds the agent params for a service action. A restart
+// of a unit on the request path is sent as deferred (see restartDeferredUnits).
+func serviceActionParams(name, action string) map[string]any {
+	p := map[string]any{"name": name}
+	if action == "restart" && restartDeferredUnits[name] {
+		p["deferred"] = true
+	}
+	return p
+}
 
 // IsPanelSelfDestruct reports whether running action on unit (no ".service"
 // suffix) would lock the operator out of the management plane. The `jabali
@@ -120,10 +162,14 @@ func (h *adminServicesHandler) action(c *gin.Context) {
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
 	defer cancel()
-	raw, err := h.cfg.Agent.Call(ctx, cmd, map[string]any{"name": name})
+	raw, err := h.cfg.Agent.Call(ctx, cmd, serviceActionParams(name, action))
 	if err != nil {
 		h.cfg.Log.Warn("event=audit kind=service_action_failed",
 			"actor_id", actorID, "service", name, "action", action, "err", err.Error())
+		if restartAlreadyScheduled(err) {
+			respondRestartAlreadyScheduled(c, name)
+			return
+		}
 		respondAgentErr(c, "agent_error", err)
 		return
 	}

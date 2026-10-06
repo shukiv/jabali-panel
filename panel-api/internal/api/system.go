@@ -103,8 +103,12 @@ func RegisterSystemRoutes(rg *gin.RouterGroup, cli agent.AgentInterface, kc *kra
 			ctx, cancel := context.WithTimeout(c.Request.Context(), systemCallTimeout)
 			defer cancel()
 
-			raw, err := cli.Call(ctx, "service."+verb, map[string]any{"name": name})
+			raw, err := cli.Call(ctx, "service."+verb, serviceActionParams(name, verb))
 			if err != nil {
+				if restartAlreadyScheduled(err) {
+					respondRestartAlreadyScheduled(c, name)
+					return
+				}
 				status, body := translateAgentError(err)
 				c.JSON(status, body)
 				return
@@ -112,7 +116,7 @@ func RegisterSystemRoutes(rg *gin.RouterGroup, cli agent.AgentInterface, kc *kra
 			c.Data(http.StatusOK, "application/json; charset=utf-8", raw)
 		})
 	}
-	registerServiceAction("restart", false) // restart is safe — panel + agent come right back up
+	registerServiceAction("restart", false) // panel/agent/nginx/redis restarts are deferred (serviceActionParams, GH #1992)
 	registerServiceAction("start", false)
 	registerServiceAction("stop", true)
 	registerServiceAction("enable", false)

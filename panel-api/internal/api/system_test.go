@@ -162,6 +162,50 @@ func TestSystemServicesRestart_OK(t *testing.T) {
 	assert.Equal(t, "service.restart", m.Calls()[0].Command)
 }
 
+// GH #1992: the /system route restarts nginx the same way as the admin
+// services route — deferred, so the response is not cut off.
+func TestSystemServicesRestart_RequestPathUnitIsDeferred(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name     string
+		deferred bool
+	}{{"nginx", true}, {"redis-server", true}, {"mariadb", false}} {
+		m := agent.NewMockClient().On("service.restart", map[string]any{"name": tc.name})
+		r := adminRouter(m)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/system/services/"+tc.name+"/restart", nil)
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, req)
+
+		require.Equal(t, http.StatusOK, rec.Code, tc.name)
+		require.Len(t, m.Calls(), 1, tc.name)
+		var params map[string]any
+		require.NoError(t, json.Unmarshal(m.Calls()[0].Params, &params), tc.name)
+		assert.Equal(t, tc.name, params["name"])
+		if tc.deferred {
+			assert.Equal(t, true, params["deferred"], tc.name)
+		} else {
+			assert.NotContains(t, params, "deferred", tc.name)
+		}
+	}
+}
+
+func TestSystemServicesRestart_AlreadyScheduledIs409(t *testing.T) {
+	t.Parallel()
+
+	m := agent.NewMockClient().OnError("service.restart", &agent.AgentError{
+		Code:    agent.CodeAlreadyExists,
+		Message: "a restart of nginx is already scheduled",
+	})
+	r := adminRouter(m)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/system/services/nginx/restart", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusConflict, rec.Code)
+	assert.Contains(t, rec.Body.String(), "restart_already_scheduled")
+}
+
 // TestSystemServicesRestart_Masked — the agent returns
 // CodeFailedPrecondition for masked units; the API should map that to
 // 409 so the UI can render a "service is masked" message.
