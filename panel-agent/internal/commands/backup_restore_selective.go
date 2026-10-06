@@ -363,7 +363,7 @@ func applySelectiveHome(ctx context.Context, stagingRoot, username string, st *b
 	if err := execCommandContext(ctx, "rsync", "-aH", src, dst).Run(); err != nil {
 		return "home: rsync: " + err.Error()
 	}
-	if err := chownTreeRecursive(dst, uid, gid); err != nil {
+	if err := chownTreeRecursive(dst, dst, uid, gid); err != nil {
 		return "home: chown: " + err.Error()
 	}
 	if err := restoreDocrootGroup(username); err != nil {
@@ -415,7 +415,7 @@ func applySelectiveDomains(ctx context.Context, stagingRoot, username string, do
 			warnings = append(warnings, "domain "+d+": rsync: "+err.Error())
 			continue
 		}
-		if err := chownTreeRecursive(dst, uid, gid); err != nil {
+		if err := chownTreeRecursive("/home/"+username, dst, uid, gid); err != nil {
 			warnings = append(warnings, "domain "+d+": chown: "+err.Error())
 			continue
 		}

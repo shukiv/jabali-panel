@@ -188,14 +188,14 @@ func restoreAccounts(ctx context.Context, c *backup.Client, jobID, stagingRoot s
 				warnings = append(warnings, fmt.Sprintf("user=%s home rsync: %v", username, err))
 			} else {
 				// Symlink-safe recursive chown (Gitea #498): the restored
-				// home tree is snapshot-controlled, so Walk+Lchown instead of
-				// `chown -R` (which follows symlinks out of /home/<user>).
+				// home tree is snapshot-controlled, so never `chown -R`
+				// (which follows symlinks out of /home/<user>).
 				if u, lerr := user.Lookup(username); lerr != nil {
 					warnings = append(warnings, fmt.Sprintf("user=%s home chown lookup: %v", username, lerr))
 				} else {
 					uid, _ := strconv.Atoi(u.Uid)
 					gid, _ := strconv.Atoi(u.Gid)
-					if cerr := chownTreeRecursive("/home/"+username, uid, gid); cerr != nil {
+					if cerr := chownTreeRecursive("/home/"+username, "/home/"+username, uid, gid); cerr != nil {
 						warnings = append(warnings, fmt.Sprintf("user=%s home chown: %v", username, cerr))
 					}
 				}

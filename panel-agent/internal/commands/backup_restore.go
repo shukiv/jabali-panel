@@ -524,7 +524,7 @@ func applyAccountRestore(
 				warnings = append(warnings, fmt.Sprintf("home: rsync: %v", err))
 				continue
 			}
-			if err := chownTreeRecursive(dst, uid, gid); err != nil {
+			if err := chownTreeRecursive(dst, dst, uid, gid); err != nil {
 				warnings = append(warnings, fmt.Sprintf("home: chown: %v", err))
 				continue
 			}
@@ -938,16 +938,13 @@ func restoreDocrootGroup(username string) error {
 	return nil
 }
 
-// chownTreeRecursive walks `root` and chowns every entry to uid:gid.
-// We avoid `chown -R` because it forks for symlinks and tries to
-// follow them; filepath.Walk + Lchown stays inside the tree.
-func chownTreeRecursive(root string, uid, gid int) error {
-	return filepath.Walk(root, func(path string, _ os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		return os.Lchown(path, uid, gid)
-	})
+// chownTreeRecursive chowns root and every entry under it to uid:gid, root
+// reached from anchor (the account's home). Never `chown -R`, which follows
+// symlinks, and never a walk by path: the tenant can swap a directory for a
+// symlink mid-walk and send root's chown out of the tree. fsperm.ChownTree
+// walks by file descriptor.
+func chownTreeRecursive(anchor, root string, uid, gid int) error {
+	return fsperm.ChownTree(anchor, root, uid, gid)
 }
 
 // backupAccountListManifestsHandler enumerates kind=account_backup
