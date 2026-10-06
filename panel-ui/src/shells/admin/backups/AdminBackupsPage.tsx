@@ -23,6 +23,7 @@ import {
   LifeBuoyOutlined,
 } from "@icons";
 import { useEffect, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 
 import { BackupStatusTag } from "../../../components/backups/BackupStatusTag";
 import {
@@ -32,7 +33,7 @@ import {
 } from "../../../components/backups/backupArtifact";
 import { backupArtifactActions } from "../../../components/backups/backupArtifactActions";
 
-import { apiClient } from "../../../apiClient";
+import { apiClient, type UploadedBackup } from "../../../apiClient";
 import { extractApiError } from "../../../apiErrors";
 import { useListQuery } from "../../../hooks/useQueries";
 import { BackupLogModal } from "./BackupLogModal";
@@ -40,6 +41,7 @@ import { BackupLogsTab } from "./BackupLogsTab";
 import { BackupSettingsTab } from "./BackupSettingsTab";
 import { CreateBackupDrawer } from "./CreateBackupDrawer";
 import { RestoreFromUploadDrawer } from "./RestoreFromUploadDrawer";
+import { UPLOADED_BACKUPS_RESOURCE, UploadedBackupsTable } from "./UploadedBackupsTable";
 import { FullServerPackageModal } from "./FullServerPackageModal";
 import { RestoreFullServerDrawer } from "./RestoreFullServerDrawer";
 import { DestinationsTab } from "./DestinationsTab";
@@ -151,6 +153,9 @@ export const AdminBackupsPage = () => {
   const dl = useBackupDownloadPrepare("admin"); // GH #1408: prepare-then-download
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [uploadRestoreOpen, setUploadRestoreOpen] = useState(false);
+  // GH #1993: the kept upload being restored from the Uploaded backups table.
+  const [restoreKept, setRestoreKept] = useState<UploadedBackup | null>(null);
+  const qc = useQueryClient();
   const [packageRunId, setPackageRunId] = useState<string | null>(null);
   const [fullRestoreOpen, setFullRestoreOpen] = useState(false);
   const [logJob, setLogJob] = useState<BackupJob | null>(null);
@@ -562,6 +567,7 @@ export const AdminBackupsPage = () => {
         activeTabKey={activeTab}
         onTabChange={(k) => setActiveTab(k as TabKey)}
       >
+        {activeTab === "backups" && <UploadedBackupsTable onRestore={setRestoreKept} />}
         {activeTab === "backups" && (
           <Table<TableRow>
             rowKey="rowKey"
@@ -743,8 +749,13 @@ export const AdminBackupsPage = () => {
       />
 
       <RestoreFromUploadDrawer
-        open={uploadRestoreOpen}
-        onClose={() => setUploadRestoreOpen(false)}
+        open={uploadRestoreOpen || restoreKept !== null}
+        uploaded={restoreKept}
+        onClose={() => {
+          setUploadRestoreOpen(false);
+          setRestoreKept(null);
+        }}
+        onKeptChange={() => void qc.invalidateQueries({ queryKey: ["list", UPLOADED_BACKUPS_RESOURCE] })}
       />
 
       <FullServerPackageModal
