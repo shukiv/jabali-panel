@@ -140,4 +140,17 @@ describe("UploadedBackupsTable (GH #1993)", () => {
     await waitFor(() => expect(mocked.get).toHaveBeenCalled());
     expect(container.textContent).toBe("");
   });
+
+  it("shows a running restore's step", async () => {
+    mockList([
+      row("busy1", {
+        restore_status: "restoring",
+        restore_target: "alice",
+        restore_progress: { step: 3, steps: 3, label: "Restoring mail", detail: "Unpacking the backup — 40%", percent: 40 },
+      }),
+    ]);
+    renderTable();
+    await screen.findByText("Uploaded backups");
+    expect(within(rowOf("busy1.tar.zst")).getByText("Step 3 of 3 — Unpacking the backup — 40%")).toBeTruthy();
+  });
 });

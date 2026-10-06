@@ -64,7 +64,13 @@ type uploadedBackupView struct {
 	// create it.
 	TargetExists    *bool `json:"target_exists,omitempty"`
 	CreateSupported bool  `json:"create_supported"`
+	// RestoreProgress is the running restore's progress by step (GH #1993).
+	RestoreProgress *restoreProgress `json:"restore_progress,omitempty"`
 }
+
+// uploadedRestoreProgressKey keys the progress of a restore of an uploaded
+// backup.
+func uploadedRestoreProgressKey(id string) string { return "uploaded-backup:" + id }
 
 func (h *backupHandler) uploadedView(ctx context.Context, b *models.UploadedBackup, detail bool) uploadedBackupView {
 	v := uploadedBackupView{UploadedBackup: *b, Components: []string{}, CreateSupported: h.cfg.Packages != nil}
@@ -73,6 +79,9 @@ func (h *backupHandler) uploadedView(ctx context.Context, b *models.UploadedBack
 	}
 	if fi, err := os.Lstat(uploadedbackups.Path(b.ID)); err == nil && fi.Mode().IsRegular() {
 		v.FilePresent = true
+	}
+	if b.RestoreStatus == models.UploadedBackupRestoring {
+		v.RestoreProgress = uploadRestoreProgressFor(uploadedRestoreProgressKey(b.ID))
 	}
 	if b.RestoreResult != nil && *b.RestoreResult != "" {
 		var r uploadedRestoreResult
@@ -343,7 +352,9 @@ func (h *backupHandler) runUploadedBackupRestore(b *models.UploadedBackup, path,
 	ctx, cancel := context.WithTimeout(context.Background(), restoreJobTimeout)
 	defer cancel()
 
-	res, err := h.restoreUploadedAccount(ctx, path, username, targetID, components)
+	report, done := progressReporter(uploadedRestoreProgressKey(b.ID))
+	defer done()
+	res, err := h.restoreUploadedAccount(ctx, path, username, targetID, components, report)
 	result := uploadedRestoreResult{Applied: res.Applied, Warnings: append(res.Warnings, res.MetadataErrors...)}
 	status := models.UploadedBackupDone
 	if err != nil {

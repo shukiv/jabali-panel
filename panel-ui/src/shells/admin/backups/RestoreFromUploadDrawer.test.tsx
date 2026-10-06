@@ -108,7 +108,13 @@ describe("RestoreFromUploadDrawer (GH #1993)", () => {
 
     fireEvent.click(screen.getByText("Restore into alice"));
     await waitFor(() =>
-      expect(m.restoreKeptUploadedBackup).toHaveBeenCalledWith(KEPT.id, "alice", ["home", "db", "mail"], undefined),
+      expect(m.restoreKeptUploadedBackup).toHaveBeenCalledWith(
+        KEPT.id,
+        "alice",
+        ["home", "db", "mail"],
+        undefined,
+        expect.any(Function),
+      ),
     );
     expect(m.applyUploadedBackupRestore).not.toHaveBeenCalled();
     await screen.findByText("Restore result");
@@ -143,10 +149,13 @@ describe("RestoreFromUploadDrawer (GH #1993)", () => {
     renderDrawer({ uploaded: KEPT });
     fireEvent.click(await screen.findByText("Create alice & restore"));
     await waitFor(() =>
-      expect(m.restoreKeptUploadedBackup).toHaveBeenCalledWith(KEPT.id, "alice", KEPT.components, {
-        createUser: true,
-        packageId: null,
-      }),
+      expect(m.restoreKeptUploadedBackup).toHaveBeenCalledWith(
+        KEPT.id,
+        "alice",
+        KEPT.components,
+        { createUser: true, packageId: null },
+        expect.any(Function),
+      ),
     );
   });
 
@@ -160,7 +169,35 @@ describe("RestoreFromUploadDrawer (GH #1993)", () => {
     expect(m.registerUploadedBackup).not.toHaveBeenCalled();
     fireEvent.click(screen.getByText("Restore into my account"));
     await waitFor(() =>
-      expect(m.applyUploadedBackupRestore).toHaveBeenCalledWith("upload-1", "alice", ["home", "db", "mail"], "/me/backups", undefined),
+      expect(m.applyUploadedBackupRestore).toHaveBeenCalledWith(
+        "upload-1",
+        "alice",
+        ["home", "db", "mail"],
+        "/me/backups",
+        undefined,
+        expect.any(Function),
+      ),
     );
+  });
+
+  it("shows the running restore's step and what it is doing", async () => {
+    m.restoreKeptUploadedBackup.mockImplementation(
+      (_id: string, _u: string, _c: string[], _o: unknown, onProgress: (p: unknown) => void) => {
+        onProgress({
+          step: 1,
+          steps: 3,
+          label: "Restoring files, databases and apps",
+          detail: "Restoring database alice_wp (2 of 3)",
+          percent: 33,
+        });
+        return new Promise(() => {}); // still running
+      },
+    );
+    renderDrawer({ uploaded: KEPT });
+    fireEvent.click(await screen.findByText("Restore into alice"));
+    expect(await screen.findByText("Step 1 of 3: Restoring files, databases and apps")).toBeTruthy();
+    expect(screen.getByText("Restoring database alice_wp (2 of 3)")).toBeTruthy();
+    // 1 of 3 steps at 33% → 11% of the whole restore.
+    expect(document.querySelector(".ant-progress")?.getAttribute("aria-valuenow")).toBe("11");
   });
 });

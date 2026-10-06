@@ -11,6 +11,7 @@ import { useDeleteMutation, useListQuery } from "../../../hooks/useQueries";
 import { extractApiError } from "../../../apiErrors";
 import { shortDateTime } from "../../../utils/datetime";
 import type { UploadedBackup } from "../../../apiClient";
+import { RestoreProgressView } from "./RestoreProgressView";
 
 export const UPLOADED_BACKUPS_RESOURCE = "admin/uploaded-backups";
 
@@ -46,7 +47,12 @@ function keptUntil(b: UploadedBackup): string {
 function LastRestore({ b }: { b: UploadedBackup }) {
   switch (b.restore_status) {
     case "restoring":
-      return <Tag color="blue">Restoring into {b.restore_target}</Tag>;
+      return (
+        <Space direction="vertical" size={0}>
+          <Tag color="blue">Restoring into {b.restore_target}</Tag>
+          <RestoreProgressView progress={b.restore_progress} compact />
+        </Space>
+      );
     case "done":
       return (
         <Space direction="vertical" size={0}>

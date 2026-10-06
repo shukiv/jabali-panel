@@ -422,7 +422,7 @@ func (h *backupHandler) runFullRestore(containerPath, marker string, req fullRes
 			}
 			target, userCreated = nt, true
 		}
-		res, rerr := h.restoreUploadedAccount(ctx, u.InnerPath, u.Username, target.ID, nil)
+		res, rerr := h.restoreUploadedAccount(ctx, u.InnerPath, u.Username, target.ID, nil, nil)
 		if rerr != nil {
 			line := u.Username + ": " + rerr.Error()
 			if userCreated {

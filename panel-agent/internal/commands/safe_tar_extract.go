@@ -54,11 +54,28 @@ const (
 // destRoot must be an absolute, cleaned path with no symlink components — the
 // caller owns creating it fresh.
 func safeExtractZstdTar(ctx context.Context, srcPath, destRoot string) (int64, error) {
+	return safeExtractZstdTarProgress(ctx, srcPath, destRoot, nil)
+}
+
+// safeExtractZstdTarProgress is safeExtractZstdTar that reports to onRead
+// (when not nil) every chunk of srcPath the decompressor reads, so a caller
+// can show how much of the archive is unpacked (GH #1993).
+func safeExtractZstdTarProgress(ctx context.Context, srcPath, destRoot string, onRead func(int64)) (int64, error) {
 	if !filepath.IsAbs(destRoot) || destRoot != filepath.Clean(destRoot) {
 		return 0, fmt.Errorf("destRoot must be an absolute clean path")
 	}
 	// Decompress through the zstd CLI; srcPath is our own staging path.
 	zstd := execCommandContext(ctx, "zstd", "-dc", srcPath)
+	if onRead != nil {
+		// Feed the archive through stdin to count what zstd has read.
+		f, err := os.OpenFile(srcPath, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+		if err != nil {
+			return 0, fmt.Errorf("open archive: %w", err)
+		}
+		defer f.Close()
+		zstd = execCommandContext(ctx, "zstd", "-dc")
+		zstd.Stdin = &countingReader{r: f, onRead: onRead}
+	}
 	stdout, err := zstd.StdoutPipe()
 	if err != nil {
 		return 0, fmt.Errorf("zstd pipe: %w", err)
