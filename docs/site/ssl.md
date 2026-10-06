@@ -41,6 +41,10 @@ cert known to the panel with issuer, expiry (Issued + Last-check folded into the
   validity dates (GH #1355).
 - **Retry** — force a fresh issuance attempt.
 
+Renew and Retry are admin actions. A tenant's SSL Manager and a domain's SSL
+tab show the certificate and its state but not those buttons: renewal and
+issuance retries run on their own, and the tab says so.
+
 ## Common failure modes
 
 | Symptom | Cause | Fix |
