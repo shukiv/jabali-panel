@@ -272,6 +272,10 @@ type restoreUploadApplyRequest struct {
 	// always non-admin, and its password is regenerated (recover via link).
 	CreateUser bool    `json:"create_user,omitempty"`
 	PackageID  *string `json:"package_id,omitempty"`
+	// Overwrite replaces what the account already has on this server with
+	// the backup's. Off (the default), the restore adds only what is missing
+	// (GH #1993).
+	Overwrite bool `json:"overwrite,omitempty"`
 }
 
 // restoreUploadApply restores the uploaded archive into an EXISTING user.
@@ -316,6 +320,9 @@ func (h *backupHandler) restoreUploadApply(c *gin.Context) {
 		c.JSON(http.StatusConflict, gin.H{"error": "agent_update_required", "detail": agentUpdateRequiredDetail})
 		return
 	}
+	if keepExistingRefused(c, h.cfg.Agent, req.Overwrite) {
+		return
+	}
 
 	target, uerr := h.cfg.Users.FindByUsername(c.Request.Context(), req.TargetUsername)
 	userCreated := false
@@ -347,6 +354,7 @@ func (h *backupHandler) restoreUploadApply(c *gin.Context) {
 		targetID:    target.ID,
 		components:  req.Components,
 		userCreated: userCreated,
+		overwrite:   req.Overwrite,
 	})
 
 	c.JSON(http.StatusAccepted, gin.H{"status": "restoring", "upload_id": req.UploadID, "user_created": userCreated})
@@ -479,6 +487,7 @@ type uploadRestoreArgs struct {
 	targetID    string
 	userCreated bool
 	components  []string
+	overwrite   bool
 }
 
 // runUploadRestore performs the detached restore: agent apply → metadata rebuild
@@ -493,7 +502,7 @@ func (h *backupHandler) runUploadRestore(a uploadRestoreArgs) {
 	// (restoreUploadedAccount).
 	report, done := progressReporter(a.outcomePath)
 	defer done()
-	res, err := h.restoreUploadedAccount(ctx, a.path, a.username, a.targetID, a.components, report)
+	res, err := h.restoreUploadedAccount(ctx, a.path, a.username, a.targetID, a.components, a.overwrite, report)
 	if err != nil {
 		detail := err.Error()
 		if a.userCreated {

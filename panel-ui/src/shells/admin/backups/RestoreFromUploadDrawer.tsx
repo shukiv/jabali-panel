@@ -7,6 +7,8 @@
 // GH #1993: in admin mode the upload is kept on the server with a retention
 // choice and listed under Backups, so a failed restore is retried without
 // uploading again. Opened with `uploaded`, the drawer restores a kept upload.
+// A restore adds only what the account is missing unless "Overwrite existing
+// items with the backup" is checked.
 import { useEffect, useState } from "react";
 import {
   Alert,
@@ -91,6 +93,8 @@ export function RestoreFromUploadDrawer({ open, onClose, ownerMode, uploaded, on
   // GH #1408 create-from-manifest: when the bundle's user isn't on this box yet.
   const [createUser, setCreateUser] = useState(false);
   const [packageId, setPackageId] = useState<string | null>(null);
+  // GH #1993: off = keep what the account already has, add what is missing.
+  const [overwrite, setOverwrite] = useState(false);
   const { items: packages } = useListQuery<{ id: string; name: string }>({ resource: "packages" });
 
   const reset = () => {
@@ -107,6 +111,7 @@ export function RestoreFromUploadDrawer({ open, onClose, ownerMode, uploaded, on
     setRetention("keep");
     setKept(null);
     setProgress(null);
+    setOverwrite(false);
   };
 
   // showKept fills the ready phase from a kept upload.
@@ -194,7 +199,7 @@ export function RestoreFromUploadDrawer({ open, onClose, ownerMode, uploaded, on
     // below polls its status until it seals. Tell the admin it's running so an
     // empty "applying" state doesn't look like nothing happened (GH #1408).
     feedback.message.info("Restore started — running in the background");
-    const opts = createUser ? { createUser: true, packageId } : undefined;
+    const opts = { ...(createUser ? { createUser: true, packageId } : {}), overwrite };
     try {
       const r = kept
         ? await restoreKeptUploadedBackup(kept.id, targetUser, selected, opts, setProgress)
@@ -371,12 +376,36 @@ export function RestoreFromUploadDrawer({ open, onClose, ownerMode, uploaded, on
                 }))}
               />
             </div>
-            <Alert
-              type="warning"
-              showIcon
-              message="This overwrites the target user's selected data"
-              description="Restoring the home directory and databases replaces the live contents with the backup. This cannot be undone."
-            />
+            <Checkbox
+              checked={overwrite}
+              onChange={(e) => setOverwrite(e.target.checked)}
+              disabled={phase !== "ready"}
+            >
+              Overwrite existing items with the backup
+            </Checkbox>
+            {overwrite ? (
+              <Alert
+                type="warning"
+                showIcon
+                message={
+                  ownerMode
+                    ? "This overwrites your account's selected data"
+                    : "This overwrites the target user's selected data"
+                }
+                description="The home directory and databases are replaced with the backup's: files added since the backup are deleted. This cannot be undone."
+              />
+            ) : (
+              <Alert
+                type="info"
+                showIcon
+                message="Only what is missing is added"
+                description={
+                  ownerMode
+                    ? "Files and databases already in your account stay as they are. A database that already has data is skipped, and the result lists what was kept. Mail already there is not copied twice."
+                    : "Files, databases and Docker apps already in the account stay as they are, and so do its mailboxes' auto-replies. A database or Docker app that already has data is skipped, and the result lists what was kept. Mail already there is not copied twice."
+                }
+              />
+            )}
             {phase === "applying" && (
               <Alert
                 type="info"
@@ -396,7 +425,7 @@ export function RestoreFromUploadDrawer({ open, onClose, ownerMode, uploaded, on
             {phase !== "done" && (
               <Button
                 type="primary"
-                danger
+                danger={overwrite}
                 loading={phase === "applying"}
                 disabled={
                   phase === "applying" ||

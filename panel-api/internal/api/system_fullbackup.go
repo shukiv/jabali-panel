@@ -422,7 +422,9 @@ func (h *backupHandler) runFullRestore(containerPath, marker string, req fullRes
 			}
 			target, userCreated = nt, true
 		}
-		res, rerr := h.restoreUploadedAccount(ctx, u.InnerPath, u.Username, target.ID, nil, nil)
+		// A full server restore replaces each account's data, as before
+		// keep-existing (GH #1993).
+		res, rerr := h.restoreUploadedAccount(ctx, u.InnerPath, u.Username, target.ID, nil, true, nil)
 		if rerr != nil {
 			line := u.Username + ": " + rerr.Error()
 			if userCreated {

@@ -144,19 +144,28 @@ const ubAdmin = "01KADMIN000000000000000000"
 type ubAgent struct {
 	inspectErr error
 	restore    func() (string, error)
+	caps       string           // agent.version capabilities; empty = every one a restore needs
+	seen       []map[string]any // backup.restore_from_tar params
 }
 
 func (a *ubAgent) agent() *mockAgent {
-	return &mockAgent{callFn: func(_ context.Context, cmd string, _ any) (json.RawMessage, error) {
+	return &mockAgent{callFn: func(_ context.Context, cmd string, params any) (json.RawMessage, error) {
 		switch cmd {
 		case "agent.version":
-			return json.RawMessage(`{"version":"x","capabilities":["restore_upload_confinement"]}`), nil
+			caps := a.caps
+			if caps == "" {
+				caps = `"restore_upload_confinement","restore_keep_existing"`
+			}
+			return json.RawMessage(`{"version":"x","capabilities":[` + caps + `]}`), nil
 		case "backup.inspect_uploaded_tar":
 			if a.inspectErr != nil {
 				return nil, a.inspectErr
 			}
 			return json.RawMessage(`{"user":{"username":"alice","email":"alice@example.org"},"components":["home","db","mail"]}`), nil
 		case "backup.restore_from_tar":
+			if p, ok := params.(map[string]any); ok {
+				a.seen = append(a.seen, p)
+			}
 			if a.restore == nil {
 				return json.RawMessage(`{"applied":["home → /home/alice"],"upload_confinement_enforced":true}`), nil
 			}

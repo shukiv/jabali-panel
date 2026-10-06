@@ -108,13 +108,7 @@ describe("RestoreFromUploadDrawer (GH #1993)", () => {
 
     fireEvent.click(screen.getByText("Restore into alice"));
     await waitFor(() =>
-      expect(m.restoreKeptUploadedBackup).toHaveBeenCalledWith(
-        KEPT.id,
-        "alice",
-        ["home", "db", "mail"],
-        undefined,
-        expect.any(Function),
-      ),
+      expect(m.restoreKeptUploadedBackup).toHaveBeenCalledWith(KEPT.id, "alice", ["home", "db", "mail"], { overwrite: false }, expect.any(Function)),
     );
     expect(m.applyUploadedBackupRestore).not.toHaveBeenCalled();
     await screen.findByText("Restore result");
@@ -149,13 +143,11 @@ describe("RestoreFromUploadDrawer (GH #1993)", () => {
     renderDrawer({ uploaded: KEPT });
     fireEvent.click(await screen.findByText("Create alice & restore"));
     await waitFor(() =>
-      expect(m.restoreKeptUploadedBackup).toHaveBeenCalledWith(
-        KEPT.id,
-        "alice",
-        KEPT.components,
-        { createUser: true, packageId: null },
-        expect.any(Function),
-      ),
+      expect(m.restoreKeptUploadedBackup).toHaveBeenCalledWith(KEPT.id, "alice", KEPT.components, {
+        createUser: true,
+        packageId: null,
+        overwrite: false,
+      }, expect.any(Function)),
     );
   });
 
@@ -169,14 +161,57 @@ describe("RestoreFromUploadDrawer (GH #1993)", () => {
     expect(m.registerUploadedBackup).not.toHaveBeenCalled();
     fireEvent.click(screen.getByText("Restore into my account"));
     await waitFor(() =>
-      expect(m.applyUploadedBackupRestore).toHaveBeenCalledWith(
-        "upload-1",
-        "alice",
-        ["home", "db", "mail"],
-        "/me/backups",
-        undefined,
-        expect.any(Function),
-      ),
+      expect(m.applyUploadedBackupRestore).toHaveBeenCalledWith("upload-1", "alice", ["home", "db", "mail"], "/me/backups", {
+        overwrite: false,
+      }, expect.any(Function)),
+    );
+  });
+});
+
+// GH #1993: a restore adds only what the account is missing unless the admin
+// (or the tenant) checks "Overwrite existing items with the backup".
+describe("RestoreFromUploadDrawer overwrite (GH #1993)", () => {
+  it("keeps what is there by default", async () => {
+    renderDrawer({ uploaded: KEPT });
+    await screen.findByText("Backup of alice");
+    const box = screen.getByRole("checkbox", { name: "Overwrite existing items with the backup" }) as HTMLInputElement;
+    expect(box.checked).toBe(false);
+    expect(screen.getByText("Only what is missing is added")).toBeTruthy();
+    expect(screen.queryByText("This overwrites the target user's selected data")).toBeNull();
+    const restore = screen.getByText("Restore into alice").closest("button") as HTMLButtonElement;
+    expect(restore.className).not.toContain("dangerous");
+    fireEvent.click(restore);
+    await waitFor(() =>
+      expect(m.restoreKeptUploadedBackup).toHaveBeenCalledWith(KEPT.id, "alice", KEPT.components, { overwrite: false }, expect.any(Function)),
+    );
+  });
+
+  it("overwrites only when checked, and says so", async () => {
+    renderDrawer({ uploaded: KEPT });
+    await screen.findByText("Backup of alice");
+    fireEvent.click(screen.getByRole("checkbox", { name: "Overwrite existing items with the backup" }));
+    expect(screen.getByText("This overwrites the target user's selected data")).toBeTruthy();
+    expect(screen.queryByText("Only what is missing is added")).toBeNull();
+    const restore = screen.getByText("Restore into alice").closest("button") as HTMLButtonElement;
+    expect(restore.className).toContain("dangerous");
+    fireEvent.click(restore);
+    await waitFor(() =>
+      expect(m.restoreKeptUploadedBackup).toHaveBeenCalledWith(KEPT.id, "alice", KEPT.components, { overwrite: true }, expect.any(Function)),
+    );
+  });
+
+  it("offers the same choice for a tenant's own restore", async () => {
+    renderDrawer({ ownerMode: true });
+    pickFile();
+    fireEvent.click(screen.getByText(/Upload & inspect/));
+    await screen.findByText("Backup of alice");
+    fireEvent.click(screen.getByRole("checkbox", { name: "Overwrite existing items with the backup" }));
+    expect(screen.getByText("This overwrites your account's selected data")).toBeTruthy();
+    fireEvent.click(screen.getByText("Restore into my account"));
+    await waitFor(() =>
+      expect(m.applyUploadedBackupRestore).toHaveBeenCalledWith("upload-1", "alice", ["home", "db", "mail"], "/me/backups", {
+        overwrite: true,
+      }, expect.any(Function)),
     );
   });
 

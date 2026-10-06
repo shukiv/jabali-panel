@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+
+	"github.com/gin-gonic/gin"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
@@ -24,6 +27,22 @@ const capRestoreUploadConfinement = "restore_upload_confinement"
 
 // agentUpdateRequiredDetail is shown when the agent predates mode=upload.
 const agentUpdateRequiredDetail = "the server agent must be updated before a backup file can be restored safely"
+
+// capRestoreKeepExisting is the agent.version capability for keep_existing
+// (GH #1993): a restore that keeps what is already on this server. An agent
+// without it ignores the param and replaces.
+const capRestoreKeepExisting = "restore_keep_existing"
+
+// keepExistingRefused answers 409 agent_update_required, and reports true,
+// for a restore that keeps what is already on this server (overwrite off,
+// the default) on an agent that would replace it instead.
+func keepExistingRefused(c *gin.Context, ag agent.AgentInterface, overwrite bool) bool {
+	if overwrite || agentHasCapability(c.Request.Context(), ag, capRestoreKeepExisting) {
+		return false
+	}
+	c.JSON(http.StatusConflict, gin.H{"error": "agent_update_required", "detail": agentUpdateRequiredDetail})
+	return true
+}
 
 // agentHasCapability reports whether the agent's agent.version lists name. An
 // agent that predates capabilities lists none; an error counts as no.
@@ -106,7 +125,14 @@ func (cfg BackupHandlerConfig) uploadRestoreParams(ctx context.Context, targetID
 // account already has.
 type uploadedData struct {
 	databases, dockerSlugs []string
+	// keepExisting: the restore keeps what the account already has here
+	// (overwrite off), so Apply leaves its existing rows' settings alone.
+	keepExisting bool
 }
+
+// applyUploadedMetadata is applyRestoreMetadataForUser; tests swap it to see
+// what an upload restore hands the metadata rebuild.
+var applyUploadedMetadata = (*backupHandler).applyRestoreMetadataForUser
 
 // uploadedAccountRestore is what restoring one account from an uploaded file
 // did: the agent's applied items and warnings from both passes, and the rows
@@ -133,8 +159,10 @@ const unconfirmedRestoreDetail = "the agent did not confirm it confined the rest
 
 // restoreUploadedAccount restores the account targetID (username) from the
 // uploaded account archive at tarPath. components selects stages (empty =
-// all). The error is the admin-facing reason nothing past the agent's first
-// pass was applied; what that pass applied is still returned.
+// all). overwrite replaces what the account already has here with the
+// backup's; without it the restore adds only what is missing (GH #1993). The
+// error is the admin-facing reason nothing past the agent's first pass was
+// applied; what that pass applied is still returned.
 //
 // The agent restores mail only into the account's own domains, and a restore
 // into a fresh account rebuilds those domains from the file's metadata after
@@ -142,7 +170,7 @@ const unconfirmedRestoreDetail = "the agent did not confirm it confined the rest
 // the metadata rebuild) mail, with the account's domains looked up again.
 //
 // report, when not nil, receives the restore's progress by step (GH #1993).
-func (h *backupHandler) restoreUploadedAccount(ctx context.Context, tarPath, username, targetID string, components []string, report func(restoreProgress)) (uploadedAccountRestore, error) {
+func (h *backupHandler) restoreUploadedAccount(ctx context.Context, tarPath, username, targetID string, components []string, overwrite bool, report func(restoreProgress)) (uploadedAccountRestore, error) {
 	var out uploadedAccountRestore
 	mail := len(components) == 0 || containsStr(components, "mail")
 	steps := 3 // files, rows, DNS records
@@ -154,6 +182,7 @@ func (h *backupHandler) restoreUploadedAccount(ctx context.Context, tarPath, use
 		"tar_path":        tarPath,
 		"target_username": username,
 		"components":      components,
+		"keep_existing":   !overwrite,
 	}
 	if mail {
 		params["skip_components"] = []string{"mail"}
@@ -173,8 +202,8 @@ func (h *backupHandler) restoreUploadedAccount(ctx context.Context, tarPath, use
 	if report != nil {
 		report(restoreProgress{Step: 2, Steps: steps, Label: restoreStepRowsLabel})
 	}
-	out.MetadataErrors = h.applyRestoreMetadataForUser(ctx, first.Metadata, targetID,
-		uploadedData{databases: first.RestoredDatabases, dockerSlugs: first.RestoredDockerSlugs})
+	out.MetadataErrors = applyUploadedMetadata(h, ctx, first.Metadata, targetID,
+		uploadedData{databases: first.RestoredDatabases, dockerSlugs: first.RestoredDockerSlugs, keepExisting: !overwrite})
 
 	// GH #1993: last, the domains' custom DNS records. RestoreBundleDNS has the
 	// reconciler make the restored domains' zones and adds the records once
@@ -201,6 +230,7 @@ func (h *backupHandler) restoreUploadedAccount(ctx context.Context, tarPath, use
 		"tar_path":        tarPath,
 		"target_username": username,
 		"components":      []string{"mail"},
+		"keep_existing":   !overwrite,
 	}, restoreProgress{Step: 3, Steps: steps, Label: restoreStepMailLabel}, report)
 	switch {
 	case err != nil:

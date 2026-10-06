@@ -70,6 +70,20 @@ func (r *owMailboxes) Create(_ context.Context, m *models.Mailbox) error {
 type owAutoresponders struct {
 	repository.EmailAutoresponderRepository
 	updated []string
+	// existing: mailboxes that already have an autoresponder; findErr fails
+	// the lookup.
+	existing map[string]bool
+	findErr  error
+}
+
+func (r *owAutoresponders) FindByMailboxID(_ context.Context, mailboxID string) (*models.EmailAutoresponder, error) {
+	if r.findErr != nil {
+		return nil, r.findErr
+	}
+	if r.existing[mailboxID] {
+		return &models.EmailAutoresponder{MailboxID: mailboxID}, nil
+	}
+	return nil, repository.ErrNotFound
 }
 
 func (r *owAutoresponders) Update(_ context.Context, a *models.EmailAutoresponder) error {

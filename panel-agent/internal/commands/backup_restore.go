@@ -72,6 +72,12 @@ type restoreEnforcement struct {
 	// Claims collects what the restore created or wrote for the account; nil
 	// records nothing.
 	Claims *restoreClaims
+	// KeepExisting (GH #1993): add only what isn't on this server yet. Home
+	// files already there are kept (rsync --ignore-existing, no --delete), and
+	// a database that already has tables or a docker app whose data dir isn't
+	// empty is left as it is and not claimed. False replaces: the account
+	// becomes a mirror of the backup.
+	KeepExisting bool
 }
 
 // restoreClaims names the databases and docker app data an upload-mode
@@ -99,6 +105,12 @@ func (e restoreEnforcement) claimDockerSlug(slug string) {
 // restoreDockerRoot is where a restored docker app's data lands (a var so
 // tests can point it elsewhere).
 var restoreDockerRoot = dockerAppDataRoot
+
+// keptReason is the report line for something a keep-existing restore left
+// as it is.
+func keptReason(what string) string {
+	return what + `; check "Overwrite existing items with the backup" to replace it`
+}
 
 // restoreModeUpload is an admin restore from an uploaded backup file, of one
 // account or a whole-server container. Whoever made the file chose every name
@@ -540,16 +552,30 @@ func applyAccountRestore(
 			// attacker-controlled ACL/xattr/capability metadata that root would
 			// otherwise apply into a live tenant home); owner/mode are
 			// re-normalized below regardless (Gitea #462).
-			if err := execCommandContext(ctx, "rsync", "-aH", "--delete", src, dst).Run(); err != nil {
+			// Replace mirrors the backup (files added since are removed);
+			// keep-existing only adds the files that aren't there yet.
+			copied := true
+			if enf.KeepExisting {
+				if err := addMissingHomeFiles(ctx, src, dst, uid, gid); err != nil {
+					// Files added before the error still get the owner and
+					// docroot group fixes below.
+					warnings = append(warnings, fmt.Sprintf("home: %v", err))
+					copied = false
+				}
+			} else if err := execCommandContext(ctx, "rsync", "-aH", "--delete", src, dst).Run(); err != nil {
 				warnings = append(warnings, fmt.Sprintf("home: rsync: %v", err))
 				putHomeBack()
 				continue
 			}
-			err := chownTreeRecursive(dst, dst, uid, gid)
-			putHomeBack()
-			if err != nil {
-				warnings = append(warnings, fmt.Sprintf("home: chown: %v", err))
-				continue
+			// The user's own copy needs no chown, and the files kept stay
+			// as they are.
+			if !enf.KeepExisting {
+				err := chownTreeRecursive(dst, dst, uid, gid)
+				putHomeBack()
+				if err != nil {
+					warnings = append(warnings, fmt.Sprintf("home: chown: %v", err))
+					continue
+				}
 			}
 			// BUG A fix: the blanket uid:gid chown above clobbers the
 			// provisioning convention that web docroots are group-owned
@@ -569,7 +595,14 @@ func applyAccountRestore(
 			if n := stripRestoredCacheBlocks(username); n > 0 {
 				applied = append(applied, fmt.Sprintf("stripped source cache constants from %d wp-config(s)", n))
 			}
-			applied = append(applied, fmt.Sprintf("home → /home/%s", username))
+			if !copied {
+				continue
+			}
+			if enf.KeepExisting {
+				applied = append(applied, fmt.Sprintf("home → /home/%s (files already there kept)", username))
+			} else {
+				applied = append(applied, fmt.Sprintf("home → /home/%s", username))
+			}
 
 		case backup.StageDocker:
 			// GH #1408: docker data lands in a GLOBAL docker-apps/<slug> dir keyed
@@ -600,6 +633,10 @@ func applyAccountRestore(
 					warnings = append(warnings, fmt.Sprintf("docker %s: not restored: %s", slug, why))
 					continue
 				}
+			}
+			if enf.KeepExisting && dirHasEntries(dst) {
+				warnings = append(warnings, fmt.Sprintf("docker %s: kept: %s", slug, keptReason("its data is already on this server")))
+				continue
 			}
 			// restic preserves absolute paths, so the staged tree is at
 			// stagingRoot/docker/var/lib/jabali/docker-apps/<slug>/.
@@ -674,6 +711,15 @@ func applyAccountRestore(
 					warnings = append(warnings, fmt.Sprintf("db %q: not restored: a database with this name already exists on this server and isn't this account's", db))
 					continue
 				}
+				if pgExists && enf.KeepExisting {
+					if has, hErr := pgHasTables(ctx, db); hErr != nil {
+						warnings = append(warnings, fmt.Sprintf("db %s (postgres): kept: couldn't check whether it already has data: %v", db, hErr))
+						continue
+					} else if has {
+						warnings = append(warnings, fmt.Sprintf("db %s (postgres): kept: %s", db, keptReason("it already has data on this server")))
+						continue
+					}
+				}
 				if !pgExists {
 					mkCmd := execCommandContext(ctx, "sudo", "-u", "postgres",
 						"createdb", "--encoding=UTF8", db)
@@ -723,6 +769,15 @@ func applyAccountRestore(
 				continue
 			}
 
+			if enf.KeepExisting {
+				if has, hErr := mariaDBHasTables(ctx, db); hErr != nil {
+					warnings = append(warnings, fmt.Sprintf("db %s: kept: couldn't check whether it already has data: %v", db, hErr))
+					continue
+				} else if has {
+					warnings = append(warnings, fmt.Sprintf("db %s: kept: %s", db, keptReason("it already has data on this server")))
+					continue
+				}
+			}
 			candidates := []string{
 				filepath.Join(stagingRoot, "db", db+".sql"),
 				filepath.Join(stagingRoot, "db", "stdin"),
@@ -1165,4 +1220,39 @@ func init() {
 	Default.Register("backup.restore", backupRestoreHandler)
 	Default.Register("backup.restore_status", backupRestoreStatusHandler)
 	Default.Register("backup.account_list_manifests", backupAccountListManifestsHandler)
+}
+
+// mariaDBHasTables reports whether MariaDB database db exists and has a
+// table. db matched restoreDBNameRe (it starts with a letter) and goes in as
+// the database argument: no SQL is built from it.
+func mariaDBHasTables(ctx context.Context, db string) (bool, error) {
+	out, err := execCommandContext(ctx, "mariadb", "-N", "-B", "-e", "SHOW TABLES", db).CombinedOutput()
+	if err != nil {
+		if strings.Contains(string(out), "ERROR 1049") { // unknown database
+			return false, nil
+		}
+		return false, fmt.Errorf("%v: %s", err, strings.TrimSpace(string(out)))
+	}
+	return strings.TrimSpace(string(out)) != "", nil
+}
+
+// pgHasTables reports whether PostgreSQL database db has a table outside the
+// system schemas. db goes in as the -d argument: no SQL is built from it.
+func pgHasTables(ctx context.Context, db string) (bool, error) {
+	out, err := execCommandContext(ctx, "sudo", "-u", "postgres", "psql", "-XAtq", "-d", db, "-c",
+		"SELECT count(*) FROM pg_tables WHERE schemaname NOT IN ('pg_catalog', 'information_schema')").Output()
+	if err != nil {
+		return false, err
+	}
+	n, convErr := strconv.Atoi(strings.TrimSpace(string(out)))
+	if convErr != nil {
+		return false, fmt.Errorf("unexpected table count %q", strings.TrimSpace(string(out)))
+	}
+	return n > 0, nil
+}
+
+// dirHasEntries reports whether path is a directory with anything in it.
+func dirHasEntries(path string) bool {
+	entries, err := os.ReadDir(path)
+	return err == nil && len(entries) > 0
 }

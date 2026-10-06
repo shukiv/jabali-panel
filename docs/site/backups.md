@@ -93,7 +93,8 @@ Tenants no longer need an admin for a restore. From the user Backups page a
 tenant can **upload a backup archive and restore selected legs** — files,
 databases, and mail — of their own account (GH #1408). A per-account download is
 prepared in the background with a live **"Preparing…"** indicator so a large
-account doesn't block the request.
+account doesn't block the request. What the account already has is kept unless
+they check **Overwrite existing items with the backup** (GH #1993).
 
 ### Restore a single domain's document root
 
@@ -145,6 +146,11 @@ recovery.
 An uploaded archive restores into the target account only: its own databases,
 mail domains and docker apps, or new ones. See
 [what an uploaded archive can't restore](./admin/backup-restore.md#what-an-uploaded-archive-cant-restore).
+
+By default it adds only what the account is missing: files, databases and
+Docker apps already there are kept. Check **Overwrite existing items with the
+backup** to replace them with the backup's. See
+[keep or overwrite](./admin/backup-restore.md#keep-or-overwrite-what-is-already-there).
 
 ## CLI
 
