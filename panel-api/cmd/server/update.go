@@ -1558,34 +1558,6 @@ fi
 			_ = run("", "ln", "-sf", defaultPanelBinPath, "/usr/local/bin/jabali")
 			return nil
 		}},
-		{"re-render appsec config (post-build)", func() error {
-			// The earlier "reconcile crowdsec appsec config" buildStep runs
-			// BEFORE the binary is rebuilt + installed (just above), so an
-			// AppSec change shipped in THIS build (a CRS exclusion in
-			// internal/appseccfg — GH #594) wouldn't render until the NEXT
-			// update. Re-run render-config NOW with the freshly-installed
-			// binary, and reload crowdsec if the YAML *or* the CRS before-
-			// plugin changed (render-config writes both; the earlier step only
-			// watched the YAML, so a before.conf-only change never reloaded).
-			if _, err := os.Stat("/etc/crowdsec"); err != nil {
-				return nil // crowdsec not installed
-			}
-			yamlPath := "/etc/crowdsec/appsec-configs/jabali-appsec.yaml"
-			beforePath := "/var/lib/crowdsec/data/crs-plugins/jabali/jabali-before.conf"
-			yBefore, _ := os.ReadFile(yamlPath)
-			cBefore, _ := os.ReadFile(beforePath)
-			if err := run("", defaultPanelBinPath, "appsec", "render-config", "--reconcile"); err != nil {
-				fmt.Printf("  (post-build appsec render-config failed: %v — continuing)\n", err)
-				return nil
-			}
-			yAfter, _ := os.ReadFile(yamlPath)
-			cAfter, _ := os.ReadFile(beforePath)
-			if string(yBefore) != string(yAfter) || string(cBefore) != string(cAfter) {
-				fmt.Println("  (appsec config changed post-build — reloading crowdsec)")
-				_ = run("", "bash", "-c", "systemctl reload crowdsec 2>/dev/null || systemctl restart crowdsec || true")
-			}
-			return nil
-		}},
 		{"setup jabali-mailhook service", func() error {
 			// The MTA-hook disclaimer service (GH #233) is set up only in
 			// install.sh main() on fresh installs; run its idempotent
@@ -1622,6 +1594,41 @@ fi
 			// snapshot is only taking up disk.
 			preUpdateBinaries.cleanup()
 			preUpdateBinaries = nil
+			return nil
+		}},
+		{"re-render appsec config (post-build)", func() error {
+			// The earlier "reconcile crowdsec appsec config" buildStep runs
+			// BEFORE the binary is rebuilt + installed, so an AppSec change
+			// shipped in THIS build (a CRS exclusion in internal/appseccfg —
+			// GH #594) wouldn't render until the NEXT update. Re-run
+			// render-config with the freshly-installed binary, and reload
+			// crowdsec if the YAML *or* the CRS before-plugin changed
+			// (render-config writes both; the earlier step only watched the
+			// YAML, so a before.conf-only change never reloaded).
+			//
+			// AFTER "run migrations": render-config reads the operator CRS
+			// exclusions and host modes from the database. A box updating
+			// across their migrations (crs_rule_exclusions 000251,
+			// crs_host_modes 000302) doesn't have those tables before them,
+			// so the render left the operator CRS config as it was and only
+			// the next update got it right.
+			if _, err := os.Stat("/etc/crowdsec"); err != nil {
+				return nil // crowdsec not installed
+			}
+			yamlPath := "/etc/crowdsec/appsec-configs/jabali-appsec.yaml"
+			beforePath := "/var/lib/crowdsec/data/crs-plugins/jabali/jabali-before.conf"
+			yBefore, _ := os.ReadFile(yamlPath)
+			cBefore, _ := os.ReadFile(beforePath)
+			if err := run("", defaultPanelBinPath, "appsec", "render-config", "--reconcile"); err != nil {
+				fmt.Printf("  (post-build appsec render-config failed: %v — continuing)\n", err)
+				return nil
+			}
+			yAfter, _ := os.ReadFile(yamlPath)
+			cAfter, _ := os.ReadFile(beforePath)
+			if string(yBefore) != string(yAfter) || string(cBefore) != string(cAfter) {
+				fmt.Println("  (appsec config changed post-build — reloading crowdsec)")
+				_ = run("", "bash", "-c", "systemctl reload crowdsec 2>/dev/null || systemctl restart crowdsec || true")
+			}
 			return nil
 		}},
 		{"converge Stalwart directory queries", func() error {
