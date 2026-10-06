@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	mysqldriver "github.com/go-sql-driver/mysql"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
@@ -253,5 +254,24 @@ func TestCronJobCascadeDelete_OnUserDelete(t *testing.T) {
 	job, err := repo.FindByID(context.Background(), "cron_abc123")
 	require.Equal(t, ErrNotFound, err)
 	require.Nil(t, job)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// TestCronJobCreate_DuplicateIsConflict: a duplicate id surfaces as
+// ErrConflict, so a backup restore re-run reports the job as already there
+// instead of "create: Error 1062" (GH #1993).
+func TestCronJobCreate_DuplicateIsConflict(t *testing.T) {
+	db, mock, raw := newMockCronDB(t)
+	defer raw.Close()
+
+	repo := NewCronJobRepository(db)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO `cron_jobs`")).
+		WillReturnError(&mysqldriver.MySQLError{Number: 1062, Message: "Duplicate entry 'cron_dup' for key 'PRIMARY'"})
+	mock.ExpectRollback()
+
+	err := repo.Create(context.Background(), &models.CronJob{ID: "cron_dup", UserID: "user1", Name: "n", Command: "true", Schedule: "* * * * *"})
+	require.ErrorIs(t, err, ErrConflict)
 	require.NoError(t, mock.ExpectationsWereMet())
 }

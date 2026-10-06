@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	mysqldriver "github.com/go-sql-driver/mysql"
 	"github.com/stretchr/testify/require"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
@@ -431,5 +432,25 @@ func TestListReadyIDsByAppType_ScopesToReadyAndType(t *testing.T) {
 	ids, err := repo.ListReadyIDsByAppType(context.Background(), "flarum")
 	require.NoError(t, err)
 	require.Equal(t, []string{"inst_a", "inst_b"}, ids)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// TestApplicationInstallCreate_DuplicateIsConflict: a duplicate id or
+// (domain, subdirectory, app type) surfaces as ErrConflict, like the other
+// repositories, so a backup restore reports an install that is already there
+// as skipped instead of "create: Error 1062" (GH #1993).
+func TestApplicationInstallCreate_DuplicateIsConflict(t *testing.T) {
+	db, mock, raw := newMockDB(t)
+	defer raw.Close()
+
+	repo := NewApplicationInstallRepository(db)
+
+	mock.ExpectBegin()
+	mock.ExpectExec("INSERT INTO `application_installs`").
+		WillReturnError(&mysqldriver.MySQLError{Number: 1062, Message: "Duplicate entry 'domain1--wordpress' for key 'uniq_app_installs_domain_subdir_apptype'"})
+	mock.ExpectRollback()
+
+	err := repo.Create(context.Background(), &models.ApplicationInstall{ID: "inst_dup", UserID: "user1", DomainID: "domain1", Status: "installed"})
+	require.ErrorIs(t, err, ErrConflict)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
