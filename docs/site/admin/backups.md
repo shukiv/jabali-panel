@@ -36,6 +36,12 @@ Each row: started at, kind, target (user or whole-system), destination, status (
 
 Click for the detailed stage-by-stage log.
 
+## Uploaded backups
+
+Account backups uploaded from another server with **Restore from Upload** are
+listed above the run history, with **Restore** and **Delete**. See
+[Uploaded backups stay on the server](./backup-restore.md#uploaded-backups-stay-on-the-server).
+
 ## CLI
 
 ```bash
