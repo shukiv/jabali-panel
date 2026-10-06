@@ -102,6 +102,12 @@ func backupRestoreFromTarHandler(ctx context.Context, raw json.RawMessage) (any,
 	if enf.Mode == "tenant" && (enf.AllowedDBNames == nil || enf.AllowedMailDomains == nil) {
 		return nil, bkInvalidArg("mode=tenant requires allowed_db_names and allowed_mail_domains (may be empty, not null)")
 	}
+	// GH #1993: every panel caller passes a mode (tenant, or upload for an
+	// admin restore of an uploaded file). A call without one comes from a
+	// panel older than this agent: refuse it rather than restore unconfined.
+	if enf.Mode != "tenant" && !enf.upload() {
+		return nil, bkInvalidArg("mode must be tenant or upload; update the panel before restoring an uploaded backup")
+	}
 	if enf.upload() && (enf.AllowedDBNames == nil || enf.ForeignDBNames == nil || enf.AllowedMailDomains == nil ||
 		enf.OwnedDockerSlugs == nil || enf.ForeignDockerSlugs == nil) {
 		return nil, bkInvalidArg("mode=upload requires allowed_db_names, foreign_db_names, allowed_mail_domains, owned_docker_slugs and foreign_docker_slugs (may be empty, not null)")

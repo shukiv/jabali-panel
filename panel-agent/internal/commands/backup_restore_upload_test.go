@@ -277,3 +277,13 @@ func TestAgentVersion_ReportsUploadConfinement(t *testing.T) {
 		t.Fatalf("capabilities %v should include %s", caps, capRestoreUploadConfinement)
 	}
 }
+
+// Every panel caller passes a mode; a call without one comes from a panel older
+// than this agent and must not restore unconfined.
+func TestBackupRestoreFromTar_RequiresAMode(t *testing.T) {
+	raw, _ := json.Marshal(map[string]any{"job_id": "x", "tar_path": "/x", "target_username": "alice"})
+	_, err := backupRestoreFromTarHandler(context.Background(), raw)
+	if err == nil || !strings.Contains(err.Error(), "mode must be tenant or upload") {
+		t.Fatalf("got %v, want the missing mode refused", err)
+	}
+}
