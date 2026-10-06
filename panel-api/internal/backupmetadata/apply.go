@@ -283,6 +283,15 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 					CreatedAt:    now,
 					UpdatedAt:    now,
 				}
+				// SECURITY: the vhost renderers write these paths into nginx
+				// configs as root. Keep them only when they name this domain's
+				// own files; otherwise the certificate is issued again.
+				if !knownSSLStatus[cert.Status] || !ownCertFiles(row.Name, cert.CertPath, cert.KeyPath) {
+					if cert.CertPath != nil || cert.KeyPath != nil {
+						r.Errors = append(r.Errors, fmt.Sprintf("ssl_cert %s (%s): its certificate files are not this domain's own; it will be issued again", cert.ID, row.Name))
+					}
+					cert.CertPath, cert.KeyPath, cert.Status = nil, nil, models.SSLStatusPending
+				}
 				if err := d.SSLCerts.Create(ctx, cert); err != nil {
 					r.Errors = append(r.Errors, fmt.Sprintf("ssl_cert %s: create: %v", cert.ID, err))
 					continue
@@ -895,6 +904,35 @@ func applyUser(ctx context.Context, m *internalbackup.AccountMetadata, d Deps, n
 		return false, fmt.Errorf("create: %w", err)
 	}
 	return true, nil
+}
+
+// knownSSLStatus is every status an ssl_certificates row can hold.
+var knownSSLStatus = map[string]bool{
+	models.SSLStatusPending: true, models.SSLStatusIssuing: true, models.SSLStatusIssued: true,
+	models.SSLStatusFailed: true, models.SSLStatusRevoked: true, models.SSLStatusRenewing: true,
+	models.SSLStatusSelfSigned: true, models.SSLStatusCustom: true, models.SSLStatusPendingACMERetry: true,
+}
+
+// certFileDirs are the two layouts the panel writes a domain's certificate
+// in: certbot's lineage (issued and custom certificates) and the self-signed
+// placeholder.
+var certFileDirs = []string{"/etc/letsencrypt/live/", "/etc/ssl/jabali-selfsigned/"}
+
+// ownCertFiles reports whether cert and key are domain's own certificate
+// files in one of certFileDirs, or both unset.
+func ownCertFiles(domain string, cert, key *string) bool {
+	if cert == nil || key == nil {
+		return cert == nil && key == nil
+	}
+	if domain == "" || strings.HasPrefix(domain, ".") || strings.ContainsAny(domain, "/\\") {
+		return false
+	}
+	for _, dir := range certFileDirs {
+		if *cert == dir+domain+"/fullchain.pem" && *key == dir+domain+"/privkey.pem" {
+			return true
+		}
+	}
+	return false
 }
 
 // restorePoolIni writes a backup pool's ini overrides onto poolID, the pool
