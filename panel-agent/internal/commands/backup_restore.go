@@ -59,8 +59,8 @@ type restoreEnforcement struct {
 	// target account's own databases.
 	DBPrefix               string   // "<target>_": the only name a NEW database may take
 	ForeignDBNames         []string // databases another account owns on this server
-	ForeignMailDomains     []string // domains another account owns on this server
 	OwnedDockerSlugs       []string // the target account's docker apps (effective slug)
+	ForeignDockerSlugs     []string // docker apps another account (or the server) owns here
 	ServerLevelDockerSlugs []string // apps the backup's metadata marks server-level
 	DockerMetadataMissing  bool     // the metadata is unreadable: which apps are server-level is unknown
 }
@@ -72,8 +72,10 @@ var restoreDockerRoot = dockerAppDataRoot
 // restoreModeUpload is an admin restore from an uploaded backup file, of one
 // account or a whole-server container. Whoever made the file chose every name
 // in it, so it may only write into the target account's own databases, mail
-// domains and docker apps, or create new ones in the account's own namespace;
-// never this server's own databases or another account's (GH #1993).
+// domains (AllowedMailDomains) and docker apps, or create NEW ones in the
+// account's own namespace; never this server's own databases or anything
+// another account owns, and never anything that already exists here without
+// belonging to the account (GH #1993).
 const restoreModeUpload = "upload"
 
 func (e restoreEnforcement) upload() bool { return e.Mode == restoreModeUpload }
@@ -103,16 +105,6 @@ func (e restoreEnforcement) uploadDBRefusal(db string) string {
 	return ""
 }
 
-// mailDomainForeign reports whether another account owns domain here.
-func (e restoreEnforcement) mailDomainForeign(domain string) bool {
-	for _, d := range e.ForeignMailDomains {
-		if strings.EqualFold(d, domain) {
-			return true
-		}
-	}
-	return false
-}
-
 // uploadDockerRefusal says why an uploaded backup may not restore the data of
 // docker app slug into dst, or "" when it may.
 func (e restoreEnforcement) uploadDockerRefusal(slug, dst string) string {
@@ -121,6 +113,8 @@ func (e restoreEnforcement) uploadDockerRefusal(slug, dst string) string {
 		return "the backup's metadata is unreadable, so it can't show the app is the account's own"
 	case containsString(e.ServerLevelDockerSlugs, slug):
 		return "a server-level app can't be restored from an uploaded backup"
+	case containsString(e.ForeignDockerSlugs, slug):
+		return "an app with this name belongs to another account on this server"
 	case containsString(e.OwnedDockerSlugs, slug):
 		return ""
 	}
@@ -626,7 +620,12 @@ func applyAccountRestore(
 				probeCmd := execCommandContext(ctx, "sudo", "-u", "postgres",
 					"psql", "-XAtq", "-c", createSQL)
 				probeOut, _ := probeCmd.Output()
-				if strings.TrimSpace(string(probeOut)) == "" {
+				pgExists := strings.TrimSpace(string(probeOut)) != ""
+				if pgExists && enf.upload() && !enf.dbAllowed(db) {
+					warnings = append(warnings, fmt.Sprintf("db %q: not restored: a database with this name already exists on this server and isn't this account's", db))
+					continue
+				}
+				if !pgExists {
 					mkCmd := execCommandContext(ctx, "sudo", "-u", "postgres",
 						"createdb", "--encoding=UTF8", db)
 					if cOut, cErr := mkCmd.CombinedOutput(); cErr != nil {
@@ -700,10 +699,24 @@ func applyAccountRestore(
 			// db.create defaults to. Idempotent — present DBs are
 			// untouched. Backticks around name guard against names
 			// with reserved-word collisions (M24 'dual' incident).
-			createCmd := execCommandContext(ctx, "mariadb", "-e",
-				fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;", db))
+			//
+			// GH #1993: a database an uploaded backup names that the account
+			// doesn't own must be NEW. A plain CREATE fails when it exists, so
+			// the file can't load into a database nobody told us about (an
+			// orphan, or one outside the panel's rows). db matched
+			// restoreDBNameRe, so it can't break out of the backticks.
+			createSQL := "CREATE DATABASE IF NOT EXISTS `%s` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+			newOnly := enf.upload() && !enf.dbAllowed(db)
+			if newOnly {
+				createSQL = "CREATE DATABASE `%s` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+			}
+			createCmd := execCommandContext(ctx, "mariadb", "-e", fmt.Sprintf(createSQL, db))
 			if cOut, cErr := createCmd.CombinedOutput(); cErr != nil {
 				_ = f.Close()
+				if newOnly && strings.Contains(string(cOut), "1007") {
+					warnings = append(warnings, fmt.Sprintf("db %q: not restored: a database with this name already exists on this server and isn't this account's", db))
+					continue
+				}
 				warnings = append(warnings,
 					fmt.Sprintf("db %s: create database: %v: %s", db, cErr, strings.TrimSpace(string(cOut))))
 				continue
@@ -753,28 +766,22 @@ func applyAccountRestore(
 			// every non-owned <domain> subdir from the (agent-owned) staging before
 			// import — a crafted tar otherwise injects messages into another
 			// tenant's mailbox via JMAP Email/import.
-			if enf.upload() {
-				dirs, _ := os.ReadDir(mailTree)
-				for _, e := range dirs {
-					if e.IsDir() && enf.mailDomainForeign(e.Name()) {
-						_ = os.RemoveAll(filepath.Join(mailTree, e.Name()))
-						warnings = append(warnings, fmt.Sprintf("mail: domain %q belongs to another account on this server — skipped", e.Name()))
-					}
+			// GH #1993: an upload restore uses the same allowlist, the target
+			// account's own domains.
+			if enf.enforceMail() {
+				notOwned, noneLeft := "mail: domain %q is not yours — skipped", "mail: no mailboxes for your domains in this archive — skip"
+				if enf.upload() {
+					notOwned, noneLeft = "mail: domain %q is not one of this account's domains — skipped", "mail: no mailboxes for this account's domains in this archive — skip"
 				}
-				if left, _ := os.ReadDir(mailTree); len(left) == 0 {
-					warnings = append(warnings, "mail: no mailboxes for this account's domains in this archive — skip")
-					continue
-				}
-			} else if enf.enforceMail() {
 				dirs, _ := os.ReadDir(mailTree)
 				for _, e := range dirs {
 					if e.IsDir() && !enf.mailDomainAllowed(e.Name()) {
 						_ = os.RemoveAll(filepath.Join(mailTree, e.Name()))
-						warnings = append(warnings, fmt.Sprintf("mail: domain %q is not yours — skipped", e.Name()))
+						warnings = append(warnings, fmt.Sprintf(notOwned, e.Name()))
 					}
 				}
 				if left, _ := os.ReadDir(mailTree); len(left) == 0 {
-					warnings = append(warnings, "mail: no mailboxes for your domains in this archive — skip")
+					warnings = append(warnings, noneLeft)
 					continue
 				}
 			}

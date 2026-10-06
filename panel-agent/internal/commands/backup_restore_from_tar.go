@@ -51,12 +51,13 @@ type backupRestoreFromTarParams struct {
 	AllowedDBNames     []string `json:"allowed_db_names,omitempty"`
 	AllowedMailDomains []string `json:"allowed_mail_domains,omitempty"`
 	// GH #1993 admin restore from an uploaded file (Mode=="upload"): the panel
-	// supplies the target's own databases (AllowedDBNames) and docker apps, and
-	// the databases and domains other accounts own. All four are REQUIRED in
-	// that mode (fail-closed); see restoreModeUpload.
+	// supplies the target's own databases, domains and docker apps
+	// (AllowedDBNames, AllowedMailDomains, OwnedDockerSlugs) and the databases
+	// and docker apps everyone else owns. All five are REQUIRED in that mode
+	// (fail-closed); see restoreModeUpload.
 	ForeignDBNames     []string `json:"foreign_db_names,omitempty"`
-	ForeignMailDomains []string `json:"foreign_mail_domains,omitempty"`
 	OwnedDockerSlugs   []string `json:"owned_docker_slugs,omitempty"`
+	ForeignDockerSlugs []string `json:"foreign_docker_slugs,omitempty"`
 }
 
 type backupRestoreFromTarResult struct {
@@ -92,8 +93,8 @@ func backupRestoreFromTarHandler(ctx context.Context, raw json.RawMessage) (any,
 		AllowedDBNames:     p.AllowedDBNames,
 		AllowedMailDomains: p.AllowedMailDomains,
 		ForeignDBNames:     p.ForeignDBNames,
-		ForeignMailDomains: p.ForeignMailDomains,
 		OwnedDockerSlugs:   p.OwnedDockerSlugs,
+		ForeignDockerSlugs: p.ForeignDockerSlugs,
 	}
 	// Belt-and-suspenders: a tenant restore MUST carry both allowlists (a nil
 	// list means "unrestricted", so a caller that forgot one would restore
@@ -101,8 +102,9 @@ func backupRestoreFromTarHandler(ctx context.Context, raw json.RawMessage) (any,
 	if enf.Mode == "tenant" && (enf.AllowedDBNames == nil || enf.AllowedMailDomains == nil) {
 		return nil, bkInvalidArg("mode=tenant requires allowed_db_names and allowed_mail_domains (may be empty, not null)")
 	}
-	if enf.upload() && (enf.AllowedDBNames == nil || enf.ForeignDBNames == nil || enf.ForeignMailDomains == nil || enf.OwnedDockerSlugs == nil) {
-		return nil, bkInvalidArg("mode=upload requires allowed_db_names, foreign_db_names, foreign_mail_domains and owned_docker_slugs (may be empty, not null)")
+	if enf.upload() && (enf.AllowedDBNames == nil || enf.ForeignDBNames == nil || enf.AllowedMailDomains == nil ||
+		enf.OwnedDockerSlugs == nil || enf.ForeignDockerSlugs == nil) {
+		return nil, bkInvalidArg("mode=upload requires allowed_db_names, foreign_db_names, allowed_mail_domains, owned_docker_slugs and foreign_docker_slugs (may be empty, not null)")
 	}
 	return restoreAccountFromTar(ctx, p.JobID, p.TarPath, p.TargetUsername, p.Components, apply, enf)
 }

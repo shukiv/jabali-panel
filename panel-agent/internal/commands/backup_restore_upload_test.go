@@ -18,13 +18,21 @@ import (
 // or create new ones in its own namespace. Whoever made the file chose every
 // name in it.
 
-// uploadExecRecorder stubs every command and records it as one line.
-func uploadExecRecorder(t *testing.T) *[]string {
+// uploadExecRecorder stubs every command and records it as one line. A
+// command containing one of existing fails the way MariaDB does for a
+// CREATE DATABASE of a database that exists.
+func uploadExecRecorder(t *testing.T, existing ...string) *[]string {
 	t.Helper()
 	var cmds []string
 	prev := execCommandContext
 	execCommandContext = func(ctx context.Context, name string, args ...string) *exec.Cmd {
-		cmds = append(cmds, name+" "+strings.Join(args, " "))
+		line := name + " " + strings.Join(args, " ")
+		cmds = append(cmds, line)
+		for _, e := range existing {
+			if strings.Contains(line, "CREATE DATABASE `"+e+"`") {
+				return exec.CommandContext(ctx, "sh", "-c", "echo \"ERROR 1007 (HY000) at line 1: Can't create database '"+e+"'; database exists\" >&2; exit 1")
+			}
+		}
 		return exec.CommandContext(ctx, "true")
 	}
 	t.Cleanup(func() { execCommandContext = prev })
@@ -67,13 +75,17 @@ func mustWrite(t *testing.T, path, body string) {
 	}
 }
 
-func createdDatabases(cmds []string) map[string]bool {
+// createStatements maps each database a CREATE DATABASE named to whether it
+// used IF NOT EXISTS.
+func createStatements(cmds []string) map[string]bool {
 	out := map[string]bool{}
-	const marker = "CREATE DATABASE IF NOT EXISTS `"
 	for _, c := range cmds {
-		if i := strings.Index(c, marker); i >= 0 {
-			rest := c[i+len(marker):]
-			out[rest[:strings.Index(rest, "`")]] = true
+		for _, marker := range []string{"CREATE DATABASE IF NOT EXISTS `", "CREATE DATABASE `"} {
+			if i := strings.Index(c, marker); i >= 0 {
+				rest := c[i+len(marker):]
+				out[rest[:strings.Index(rest, "`")]] = strings.Contains(marker, "IF NOT EXISTS")
+				break
+			}
 		}
 	}
 	return out
@@ -89,10 +101,11 @@ func hasWarning(ws []string, sub string) bool {
 }
 
 func TestUploadRestore_LoadsOnlyTheAccountsOwnOrNewDatabases(t *testing.T) {
-	cmds := uploadExecRecorder(t)
 	me := currentUsername(t)
+	// <me>_orphan exists in MariaDB with no panel row: neither owned nor foreign.
+	cmds := uploadExecRecorder(t, me+"_orphan")
 	root := t.TempDir()
-	names := []string{"jabali_panel", "mysql", "bob_shop", "carol_x", me + "_new", me + "_owned", "shopdb"}
+	names := []string{"jabali_panel", "mysql", "bob_shop", "carol_x", me + "_new", me + "_owned", "shopdb", me + "_orphan"}
 	var stages []backup.ManifestStage
 	for _, n := range names {
 		stages = append(stages, backup.ManifestStage{Name: backup.StageDB, Items: []string{n}})
@@ -107,16 +120,19 @@ func TestUploadRestore_LoadsOnlyTheAccountsOwnOrNewDatabases(t *testing.T) {
 
 	_, warnings := applyAccountRestore(context.Background(), root, me, backup.ManifestUser{Username: me}, stages, results, enf)
 
-	got := createdDatabases(*cmds)
-	for _, n := range []string{me + "_new", me + "_owned", "shopdb"} {
-		if !got[n] {
-			t.Errorf("database %s was not restored (created: %v, warnings: %v)", n, got, warnings)
+	got := createStatements(*cmds)
+	for n, ifNotExists := range map[string]bool{me + "_owned": true, "shopdb": true, me + "_new": false} {
+		if v, ok := got[n]; !ok || v != ifNotExists {
+			t.Errorf("database %s: created=%v ifNotExists=%v, want created with ifNotExists=%v (warnings %v)", n, ok, v, ifNotExists, warnings)
 		}
 	}
 	for _, n := range []string{"jabali_panel", "mysql", "bob_shop", "carol_x"} {
-		if got[n] {
+		if _, ok := got[n]; ok {
 			t.Errorf("database %s was loaded from an uploaded backup", n)
 		}
+	}
+	if hasWarning(warnings, "db "+me+"_orphan: mariadb load") || !hasWarning(warnings, `"`+me+`_orphan": not restored: a database with this name already exists`) {
+		t.Errorf("warnings %v: the existing database the account doesn't own must be refused, not loaded", warnings)
 	}
 	for _, want := range []string{`"jabali_panel": not restored: it is one of this server's own databases`,
 		`"bob_shop": not restored: it belongs to another account`, `"carol_x": not restored: a database from an uploaded backup must be`} {
@@ -134,7 +150,7 @@ func TestUploadRestore_SkipsMailForAnotherAccountsDomain(t *testing.T) {
 	mustWrite(t, filepath.Join(root, "mail", "alice.org", "info", "cur", "1"), "x")
 	stages := []backup.ManifestStage{{Name: backup.StageMail}}
 	results := []backupRestoreStage{{Name: backup.StageMail, Status: backup.StageStatusOK}}
-	enf := restoreEnforcement{Mode: restoreModeUpload, AllowedDBNames: []string{}, ForeignMailDomains: []string{"BOB.org"}}
+	enf := restoreEnforcement{Mode: restoreModeUpload, AllowedDBNames: []string{}, AllowedMailDomains: []string{"Alice.org"}}
 
 	_, warnings := applyAccountRestore(context.Background(), root, me, backup.ManifestUser{Username: me}, stages, results, enf)
 
@@ -144,7 +160,7 @@ func TestUploadRestore_SkipsMailForAnotherAccountsDomain(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(root, "mail", "alice.org")); err != nil {
 		t.Errorf("alice.org's mail was dropped: %v", err)
 	}
-	if !hasWarning(warnings, `domain "bob.org" belongs to another account`) {
+	if !hasWarning(warnings, `domain "bob.org" is not one of this account's domains`) {
 		t.Errorf("warnings %v should name bob.org", warnings)
 	}
 }
@@ -160,14 +176,15 @@ func TestUploadRestore_NeverOverwritesAnotherAccountsDockerApp(t *testing.T) {
 	for _, existing := range []string{"taken", "mine"} {
 		mustWrite(t, filepath.Join(live, existing, "compose.yml"), "services: {}")
 	}
-	slugs := []string{"taken", "mine", "srv", "fresh"}
+	slugs := []string{"taken", "mine", "srv", "fresh", "theirs"}
 	var stages []backup.ManifestStage
 	for _, s := range slugs {
 		stages = append(stages, backup.ManifestStage{Name: backup.StageDocker, Items: []string{s}})
 	}
 	results := stageUpload(t, root, stages)
 	enf := restoreEnforcement{Mode: restoreModeUpload, AllowedDBNames: []string{},
-		OwnedDockerSlugs: []string{"mine"}, ServerLevelDockerSlugs: []string{"srv"}}
+		OwnedDockerSlugs: []string{"mine"}, ServerLevelDockerSlugs: []string{"srv"},
+		ForeignDockerSlugs: []string{"theirs"}} // theirs: another account's app, its data dir not on disk
 
 	applied, warnings := applyAccountRestore(context.Background(), root, me, backup.ManifestUser{Username: me}, stages, results, enf)
 
@@ -182,14 +199,15 @@ func TestUploadRestore_NeverOverwritesAnotherAccountsDockerApp(t *testing.T) {
 			}
 		}
 	}
-	if synced["taken"] || synced["srv"] {
+	if synced["taken"] || synced["srv"] || synced["theirs"] {
 		t.Errorf("synced %v: another account's or a server-level app was overwritten", synced)
 	}
 	if !synced["mine"] || !synced["fresh"] {
 		t.Errorf("synced %v (applied %v, warnings %v): the account's own and a new app should be restored", synced, applied, warnings)
 	}
 	if !hasWarning(warnings, "docker taken: not restored: an app with this name already exists") ||
-		!hasWarning(warnings, "docker srv: not restored: a server-level app") {
+		!hasWarning(warnings, "docker srv: not restored: a server-level app") ||
+		!hasWarning(warnings, "docker theirs: not restored: an app with this name belongs to another account") {
 		t.Errorf("warnings %v should explain both refusals", warnings)
 	}
 }
@@ -220,9 +238,10 @@ func TestBackupRestoreFromTar_UploadRequiresEveryList(t *testing.T) {
 	}
 	base := func() map[string]any {
 		return map[string]any{"mode": "upload", "job_id": "x", "tar_path": "/x", "target_username": "alice",
-			"allowed_db_names": []string{}, "foreign_db_names": []string{}, "foreign_mail_domains": []string{}, "owned_docker_slugs": []string{}}
+			"allowed_db_names": []string{}, "foreign_db_names": []string{}, "allowed_mail_domains": []string{},
+			"owned_docker_slugs": []string{}, "foreign_docker_slugs": []string{}}
 	}
-	for _, missing := range []string{"allowed_db_names", "foreign_db_names", "foreign_mail_domains", "owned_docker_slugs"} {
+	for _, missing := range []string{"allowed_db_names", "foreign_db_names", "allowed_mail_domains", "owned_docker_slugs", "foreign_docker_slugs"} {
 		p := base()
 		delete(p, missing)
 		if err := call(p); err == nil || !strings.Contains(err.Error(), "mode=upload requires") {
