@@ -99,10 +99,7 @@ func NewWordPressInstallRepository(db *gorm.DB) WordPressInstallRepository {
 }
 
 func (r *applicationInstallRepo) Create(ctx context.Context, install *models.ApplicationInstall) error {
-	if err := r.db.WithContext(ctx).Create(install).Error; err != nil {
-		return err
-	}
-	return nil
+	return translate(r.db.WithContext(ctx).Create(install).Error)
 }
 
 func (r *applicationInstallRepo) FindByID(ctx context.Context, id string) (*models.ApplicationInstall, error) {

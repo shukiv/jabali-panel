@@ -34,10 +34,7 @@ func (r *cronJobRepo) Create(ctx context.Context, job *models.CronJob) error {
 	// to enabled=1 — defeating the cPanel cron importer's disabled-import
 	// and any disabled cron via cronops/backup-restore. Without the tag,
 	// the struct's Enabled is written verbatim.
-	if err := r.db.WithContext(ctx).Create(job).Error; err != nil {
-		return err
-	}
-	return nil
+	return translate(r.db.WithContext(ctx).Create(job).Error)
 }
 
 func (r *cronJobRepo) FindByID(ctx context.Context, id string) (*models.CronJob, error) {
