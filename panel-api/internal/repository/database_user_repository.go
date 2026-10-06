@@ -102,7 +102,7 @@ func (r *databaseUserRepo) CountByUserID(ctx context.Context, userID string) (in
 }
 
 func (r *databaseUserRepo) Create(ctx context.Context, du *models.DatabaseUser) error {
-	return r.db.WithContext(ctx).Create(du).Error
+	return translate(r.db.WithContext(ctx).Create(du).Error)
 }
 
 func (r *databaseUserRepo) Delete(ctx context.Context, id string) error {

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	mysqldriver "github.com/go-sql-driver/mysql"
 	"github.com/stretchr/testify/require"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
@@ -154,6 +155,26 @@ func TestDatabaseUserRepository_Create(t *testing.T) {
 
 	err := repo.Create(context.Background(), du)
 	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// TestDatabaseUserRepository_Create_DuplicateIsConflict: a duplicate id or
+// (user, username) surfaces as ErrConflict, like the other repositories, so
+// callers (the create handler's 409, a backup restore's "already there") can
+// tell it from a real failure (GH #1993).
+func TestDatabaseUserRepository_Create_DuplicateIsConflict(t *testing.T) {
+	db, mock, raw := newMockDB(t)
+	defer raw.Close()
+
+	repo := NewDatabaseUserRepository(db)
+
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO `database_users`")).
+		WillReturnError(&mysqldriver.MySQLError{Number: 1062, Message: "Duplicate entry 'user1-alice_db' for key 'uniq_user_username'"})
+	mock.ExpectRollback()
+
+	err := repo.Create(context.Background(), &models.DatabaseUser{ID: "duser_dup", UserID: "user1", Username: "alice_db", PasswordHash: "h"})
+	require.ErrorIs(t, err, ErrConflict)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

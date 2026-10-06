@@ -71,7 +71,7 @@ func (r *databaseUserGrantRepo) ListByDatabaseUserIDs(ctx context.Context, datab
 }
 
 func (r *databaseUserGrantRepo) Create(ctx context.Context, grant *models.DatabaseUserGrant) error {
-	return r.db.WithContext(ctx).Create(grant).Error
+	return translate(r.db.WithContext(ctx).Create(grant).Error)
 }
 
 func (r *databaseUserGrantRepo) Delete(ctx context.Context, id string) error {
