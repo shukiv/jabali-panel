@@ -20,6 +20,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -327,6 +329,17 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 					cert.CertPath, cert.KeyPath, cert.Status = nil, nil, models.SSLStatusPending
 				case !knownSSLStatus[cert.Status]:
 					r.Errors = append(r.Errors, fmt.Sprintf("ssl_cert %s (%s): status %q is not one the panel knows; it will be issued again", cert.ID, row.Name, cert.Status))
+					cert.CertPath, cert.KeyPath, cert.Status = nil, nil, models.SSLStatusPending
+				case cert.CertPath != nil && !certFileOnServer(*cert.CertPath):
+					// GH #1993: account backups don't carry the certificate
+					// files. On another server the row would name files that
+					// aren't there: the vhost serves plain HTTP, and nothing
+					// re-issues an issued row. Start over like a new domain.
+					r.Errors = append(r.Errors, fmt.Sprintf("ssl_cert %s (%s): its certificate isn't on this server; a new one will be issued", cert.ID, row.Name))
+					cert.CertPath, cert.KeyPath, cert.Status = nil, nil, models.SSLStatusPending
+				case cert.Status == models.SSLStatusIssuing || cert.Status == models.SSLStatusPendingACMERetry:
+					// Mid-issue on the old server; no pass picks these up here
+					// (an ACME retry needs its retry time, which isn't restored).
 					cert.CertPath, cert.KeyPath, cert.Status = nil, nil, models.SSLStatusPending
 				}
 				if err := d.SSLCerts.Create(ctx, cert); err != nil {
@@ -1247,6 +1260,14 @@ var knownSSLStatus = map[string]bool{
 	models.SSLStatusPending: true, models.SSLStatusIssuing: true, models.SSLStatusIssued: true,
 	models.SSLStatusFailed: true, models.SSLStatusRevoked: true, models.SSLStatusRenewing: true,
 	models.SSLStatusSelfSigned: true, models.SSLStatusCustom: true, models.SSLStatusPendingACMERetry: true,
+}
+
+// certFileOnServer reports whether a certificate file is on this server. Only
+// "no such file" counts as missing: a file the panel can't stat is assumed
+// there.
+var certFileOnServer = func(path string) bool {
+	_, err := os.Stat(path)
+	return !errors.Is(err, fs.ErrNotExist)
 }
 
 // certFileDirs are the two layouts the panel writes a domain's certificate

@@ -21,6 +21,15 @@ touching the rest of the account.
 
 The agent restores in the same per-stage order the backup ran: files first, databases second, mailboxes third, DNS records last. Each stage is idempotent at the file or row level.
 
+### SSL certificates
+
+An account backup doesn't include the domains' certificate files (a
+full-server backup does). When an account restore brings back a domain whose
+certificate isn't on this server, because the backup came from another server
+or the files are gone, the panel issues a new one as it does for a new
+domain: Let's Encrypt, once the domain's DNS points at this server
+(GH #1993). The restore report lists each domain this applies to.
+
 ## Restore — `system_backup`
 
 System restores are typically performed on a freshly-bootstrapped panel host. Sequence:
@@ -112,7 +121,7 @@ refuses it (`agent_update_required`).
 
 ## What restore does *not* do
 
-- Re-issue Let's Encrypt certificates — they are restored from the snapshot. Run `jabali ssl renew <domain>` for any cert whose expiry is near.
+- Re-issue Let's Encrypt certificates after a full-server restore — they are restored from the snapshot. Run `jabali ssl renew <domain>` for any cert whose expiry is near. (An account restore issues new ones when the files aren't on this server; see [SSL certificates](#ssl-certificates).)
 - Reconcile listen IPs — if the new host has different IPs than the snapshot's host, the operator must update [IP Addresses](./ip-addresses.md) before the reconciler succeeds.
 - Restart third-party services not under the panel's control.
 
