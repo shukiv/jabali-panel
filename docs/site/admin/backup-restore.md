@@ -96,6 +96,9 @@ it into the target account only (GH #1993):
   restored too.
 - **Custom nginx directives** on a domain are left out. Re-add them in the
   domain's settings after reviewing them.
+- **Sign-in** — the account's sign-in from the backup (its password) is not
+  imported. The account keeps the sign-in it has on this server; an account
+  the restore creates gets a new password and needs a recovery link.
 
 Each item left out is listed in the restore report. The server agent must be
 as new as the panel: an older agent can't confine the restore, so the panel

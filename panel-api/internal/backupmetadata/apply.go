@@ -922,7 +922,16 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 	}
 
 	// 8) Kratos identity restoration
-	if m.Kratos != nil && m.Kratos.ExportedIdentity != "" && d.KratosClient != nil {
+	//
+	// SECURITY (GH #1993): never from an uploaded file. The exported identity
+	// (traits, state, metadata, password hash) is whatever the file says;
+	// importing it would add a sign-in identity to this server that the file
+	// chose (same reasoning as step 9's gate). An account restored from an
+	// upload keeps the sign-in it has here (a new one gets a random password
+	// and a recovery link).
+	if m.Kratos != nil && m.Kratos.ExportedIdentity != "" && d.Untrusted {
+		r.Errors = append(r.Errors, "login: the sign-in identity in the uploaded file was not imported; the account keeps the sign-in it has on this server")
+	} else if m.Kratos != nil && m.Kratos.ExportedIdentity != "" && d.KratosClient != nil {
 		var exportedIdentity kratosclient.ExportedIdentity
 		if err := json.Unmarshal([]byte(m.Kratos.ExportedIdentity), &exportedIdentity); err != nil {
 			r.Errors = append(r.Errors, fmt.Sprintf("kratos identity: unmarshal: %v", err))
