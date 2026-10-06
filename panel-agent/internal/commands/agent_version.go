@@ -25,7 +25,18 @@ type agentVersionResponse struct {
 	GoVersion     string `json:"go_version"`
 	UptimeSeconds int64  `json:"uptime_seconds"`
 	StartedAt     string `json:"started_at"`
+	// Capabilities names behaviours the panel must confirm before it relies
+	// on them; an older agent reports none, so the panel refuses rather than
+	// run unprotected.
+	Capabilities []string `json:"capabilities"`
 }
+
+// Capability names (agentVersionResponse.Capabilities).
+const (
+	// capRestoreUploadConfinement: backup.restore_from_tar honours mode=upload
+	// (GH #1993).
+	capRestoreUploadConfinement = "restore_upload_confinement"
+)
 
 func agentVersionHandler(_ context.Context, _ json.RawMessage) (any, error) {
 	now := time.Now()
@@ -34,6 +45,7 @@ func agentVersionHandler(_ context.Context, _ json.RawMessage) (any, error) {
 		GoVersion:     runtime.Version(),
 		UptimeSeconds: int64(now.Sub(StartTime).Seconds()),
 		StartedAt:     StartTime.UTC().Format(time.RFC3339),
+		Capabilities:  []string{capRestoreUploadConfinement},
 	}, nil
 }
 

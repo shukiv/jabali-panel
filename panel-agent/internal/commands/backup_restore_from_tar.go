@@ -50,6 +50,13 @@ type backupRestoreFromTarParams struct {
 	Mode               string   `json:"mode,omitempty"`
 	AllowedDBNames     []string `json:"allowed_db_names,omitempty"`
 	AllowedMailDomains []string `json:"allowed_mail_domains,omitempty"`
+	// GH #1993 admin restore from an uploaded file (Mode=="upload"): the panel
+	// supplies the target's own databases (AllowedDBNames) and docker apps, and
+	// the databases and domains other accounts own. All four are REQUIRED in
+	// that mode (fail-closed); see restoreModeUpload.
+	ForeignDBNames     []string `json:"foreign_db_names,omitempty"`
+	ForeignMailDomains []string `json:"foreign_mail_domains,omitempty"`
+	OwnedDockerSlugs   []string `json:"owned_docker_slugs,omitempty"`
 }
 
 type backupRestoreFromTarResult struct {
@@ -66,6 +73,9 @@ type backupRestoreFromTarResult struct {
 	// the panel rejects the restore rather than running it unrestricted.
 	DBAllowlistEnforced   bool `json:"db_allowlist_enforced"`
 	MailAllowlistEnforced bool `json:"mail_allowlist_enforced"`
+	// UploadConfinementEnforced echoes that an upload-mode restore ran with
+	// its confinement (GH #1993).
+	UploadConfinementEnforced bool `json:"upload_confinement_enforced"`
 }
 
 func backupRestoreFromTarHandler(ctx context.Context, raw json.RawMessage) (any, error) {
@@ -81,12 +91,18 @@ func backupRestoreFromTarHandler(ctx context.Context, raw json.RawMessage) (any,
 		Mode:               p.Mode,
 		AllowedDBNames:     p.AllowedDBNames,
 		AllowedMailDomains: p.AllowedMailDomains,
+		ForeignDBNames:     p.ForeignDBNames,
+		ForeignMailDomains: p.ForeignMailDomains,
+		OwnedDockerSlugs:   p.OwnedDockerSlugs,
 	}
 	// Belt-and-suspenders: a tenant restore MUST carry both allowlists (a nil
 	// list means "unrestricted", so a caller that forgot one would restore
 	// wide-open). Refuse rather than run partially-gated.
 	if enf.Mode == "tenant" && (enf.AllowedDBNames == nil || enf.AllowedMailDomains == nil) {
 		return nil, bkInvalidArg("mode=tenant requires allowed_db_names and allowed_mail_domains (may be empty, not null)")
+	}
+	if enf.upload() && (enf.AllowedDBNames == nil || enf.ForeignDBNames == nil || enf.ForeignMailDomains == nil || enf.OwnedDockerSlugs == nil) {
+		return nil, bkInvalidArg("mode=upload requires allowed_db_names, foreign_db_names, foreign_mail_domains and owned_docker_slugs (may be empty, not null)")
 	}
 	return restoreAccountFromTar(ctx, p.JobID, p.TarPath, p.TargetUsername, p.Components, apply, enf)
 }
@@ -171,6 +187,7 @@ func restoreAccountFromTar(ctx context.Context, jobID, tarPath, targetUsername s
 	// fail closed against an agent that predates the feature (it never sets these).
 	out.DBAllowlistEnforced = enf.enforceDB()
 	out.MailAllowlistEnforced = enf.enforceMail()
+	out.UploadConfinementEnforced = enf.upload()
 
 	// v1 restores into the SAME username the backup was taken from — the home
 	// tree inside the archive is /home/<backup-user> and applyAccountRestore
@@ -186,6 +203,10 @@ func restoreAccountFromTar(ctx context.Context, jobID, tarPath, targetUsername s
 	// Best-effort metadata (FTP subaccount hashes etc.) from the meta stage.
 	if mb, mErr := os.ReadFile(filepath.Join(root, "meta", "metadata.json")); mErr == nil {
 		out.Metadata = mb
+	}
+	if enf.upload() {
+		enf.DBPrefix = targetUsername + "_"
+		enf.ServerLevelDockerSlugs, enf.DockerMetadataMissing = serverLevelDockerSlugs(out.Metadata)
 	}
 
 	// Per-stage gate: a stage is applied only when it materialized in the tar AND
@@ -359,4 +380,28 @@ func backupInspectUploadedTarHandler(ctx context.Context, raw json.RawMessage) (
 func init() {
 	Default.Register("backup.restore_from_tar", backupRestoreFromTarHandler)
 	Default.Register("backup.inspect_uploaded_tar", backupInspectUploadedTarHandler)
+}
+
+// serverLevelDockerSlugs returns the data slugs of the docker apps the
+// backup's metadata marks server-level. missing=true when the metadata
+// can't be read, so the caller can't tell which apps those are.
+func serverLevelDockerSlugs(meta []byte) (slugs []string, missing bool) {
+	if len(meta) == 0 {
+		return nil, true
+	}
+	var m backup.AccountMetadata
+	if err := json.Unmarshal(meta, &m); err != nil {
+		return nil, true
+	}
+	for _, a := range m.DockerApps {
+		if !a.ServerLevel {
+			continue
+		}
+		slug := a.InstanceSlug
+		if slug == "" {
+			slug = a.Slug
+		}
+		slugs = append(slugs, slug)
+	}
+	return slugs, false
 }
