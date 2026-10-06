@@ -77,6 +77,20 @@ server's disk. The 12-hour cleanup of `/var/lib/jabali-uploads` skips that
 directory. A tenant's own restore from upload (in their account) keeps
 nothing: the file is deleted once the restore ends.
 
+### Progress
+
+A restore from an uploaded backup shows its progress while it runs, in the
+restore drawer and in the **Uploaded backups** list (GH #1993):
+
+1. **Restoring files, databases and apps** — first unpacking the backup (with
+   a percentage), then each part in turn ("Restoring database shop_wp (2 of 4)").
+2. **Rebuilding the account's domains, mailboxes and settings.**
+3. **Restoring mail** — only when the backup has mail and it was selected.
+
+A tenant restoring their own account sees the same detail for its one step.
+The server agent must be as new as the panel to report what a step is doing;
+with an older agent only the step is shown.
+
 ### What an uploaded archive can't restore
 
 An uploaded archive is a file anyone could have written, so the panel restores

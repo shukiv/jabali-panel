@@ -2810,6 +2810,7 @@ paths:
     get:
       tags: [Backups]
       summary: An uploaded backup, its last restore, and whether its account exists here
+      description: While a restore runs, restore_progress gives its step (step, steps, label) and what the step is doing (detail, percent) (GH #1993).
       security: [ { KratosSession: [] } ]
       parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
       responses: { "200": { description: OK }, "404": { description: Not found } }
@@ -2887,6 +2888,7 @@ paths:
     get:
       tags: [Backups]
       summary: Poll the status of an uploaded-archive restore
+      description: While status is restoring, progress gives the restore's step (step, steps, label) and what the step is doing (detail, percent) (GH #1993).
       security: [ { KratosSession: [] } ]
       responses: { "200": { description: OK } }
 
@@ -4379,6 +4381,7 @@ paths:
     get:
       tags: [Me]
       summary: Poll a self-service restore-from-upload (GH #1408)
+      description: While status is restoring, progress gives what the restore is doing (label, detail, percent) (GH #1993).
       security: [ { KratosSession: [] } ]
       responses: { "200": { description: OK } }
 

@@ -87,6 +87,9 @@ type restoreUploadOutcome struct {
 	Applied  []string `json:"applied,omitempty"`
 	Warnings []string `json:"warnings,omitempty"`
 	Error    string   `json:"error,omitempty"`
+	// Progress is the running restore's progress by step (GH #1993). It is
+	// never written to the marker; the status handler adds it.
+	Progress *restoreProgress `json:"progress,omitempty"`
 }
 
 func restoreUploadOutcomePath(adminUserID, uploadID string) string {
@@ -488,7 +491,9 @@ func (h *backupHandler) runUploadRestore(a uploadRestoreArgs) {
 	// rows from the backup's metadata bundle, REMAPPED to this box's target
 	// user, then the agent restores mail into the domains that rebuild made
 	// (restoreUploadedAccount).
-	res, err := h.restoreUploadedAccount(ctx, a.path, a.username, a.targetID, a.components)
+	report, done := progressReporter(a.outcomePath)
+	defer done()
+	res, err := h.restoreUploadedAccount(ctx, a.path, a.username, a.targetID, a.components, report)
 	if err != nil {
 		detail := err.Error()
 		if a.userCreated {
@@ -562,10 +567,14 @@ func (h *backupHandler) restoreUploadStatus(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_upload_id"})
 		return
 	}
-	o, err := readRestoreUploadOutcome(restoreUploadOutcomePath(adminID, uploadID))
+	path := restoreUploadOutcomePath(adminID, uploadID)
+	o, err := readRestoreUploadOutcome(path)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
 		return
+	}
+	if o.Status == "restoring" {
+		o.Progress = uploadRestoreProgressFor(path)
 	}
 	c.JSON(http.StatusOK, o)
 }

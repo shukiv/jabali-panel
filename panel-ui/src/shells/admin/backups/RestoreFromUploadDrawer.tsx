@@ -30,6 +30,7 @@ import {
   registerUploadedBackup,
   restoreKeptUploadedBackup,
   uploadBackupArchiveChunked,
+  type RestoreProgress,
   type UploadedBackup,
   type UploadedBackupInfo,
   type UploadedBackupRestoreResult,
@@ -37,6 +38,7 @@ import {
 } from "../../../apiClient";
 import { useListQuery } from "../../../hooks/useQueries";
 import { extractApiError } from "../../../apiErrors";
+import { RestoreProgressView } from "./RestoreProgressView";
 
 const COMPONENT_LABELS: Record<string, string> = {
   home: "Home directory (website files)",
@@ -76,6 +78,8 @@ export function RestoreFromUploadDrawer({ open, onClose, ownerMode, uploaded, on
   const keepUploads = !ownerMode;
   const [retention, setRetention] = useState<UploadedBackupRetention>("keep");
   const [kept, setKept] = useState<UploadedBackup | null>(null);
+  // GH #1993: the running restore's step and what it is doing.
+  const [progress, setProgress] = useState<RestoreProgress | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [phase, setPhase] = useState<Phase>("pick");
   const [pct, setPct] = useState(0);
@@ -102,6 +106,7 @@ export function RestoreFromUploadDrawer({ open, onClose, ownerMode, uploaded, on
     setPackageId(null);
     setRetention("keep");
     setKept(null);
+    setProgress(null);
   };
 
   // showKept fills the ready phase from a kept upload.
@@ -184,6 +189,7 @@ export function RestoreFromUploadDrawer({ open, onClose, ownerMode, uploaded, on
   const apply = async () => {
     if ((!uploadId && !kept) || !targetUser || selected.length === 0) return;
     setPhase("applying");
+    setProgress(null);
     // The restore is accepted immediately and runs in the background; the call
     // below polls its status until it seals. Tell the admin it's running so an
     // empty "applying" state doesn't look like nothing happened (GH #1408).
@@ -191,8 +197,8 @@ export function RestoreFromUploadDrawer({ open, onClose, ownerMode, uploaded, on
     const opts = createUser ? { createUser: true, packageId } : undefined;
     try {
       const r = kept
-        ? await restoreKeptUploadedBackup(kept.id, targetUser, selected, opts)
-        : await applyUploadedBackupRestore(uploadId as string, targetUser, selected, base, opts);
+        ? await restoreKeptUploadedBackup(kept.id, targetUser, selected, opts, setProgress)
+        : await applyUploadedBackupRestore(uploadId as string, targetUser, selected, base, opts, setProgress);
       if (kept) onKeptChange?.();
       setResult(r);
       setPhase("done");
@@ -376,7 +382,15 @@ export function RestoreFromUploadDrawer({ open, onClose, ownerMode, uploaded, on
                 type="info"
                 showIcon
                 message={`Restoring ${info.user.username} in the background`}
-                description="This can take several minutes for large backups. Keep this drawer open to see the result, or come back later — the restore keeps running on the server."
+                description={
+                  <Space direction="vertical" size={8} style={{ width: "100%" }}>
+                    <span>
+                      This can take several minutes for large backups. Keep this drawer open to see the result, or
+                      come back later — the restore keeps running on the server.
+                    </span>
+                    <RestoreProgressView progress={progress} />
+                  </Space>
+                }
               />
             )}
             {phase !== "done" && (

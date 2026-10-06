@@ -293,14 +293,24 @@ func (h *meBackupHandler) runTenantUploadRestore(a tenantUploadRestoreArgs) {
 	if a.allowedDomains == nil {
 		a.allowedDomains = []string{}
 	}
-	raw, err := h.cfg.Agent.Call(ctx, "backup.restore_from_tar", map[string]any{
-		"job_id":               ids.NewULID(),
-		"tar_path":             a.path,
-		"target_username":      a.username,
-		"components":           a.components,
-		"mode":                 "tenant",
-		"allowed_db_names":     a.allowedDBs,
-		"allowed_mail_domains": a.allowedDomains,
+	// GH #1993: the status poll shows what the restore is doing.
+	report, done := progressReporter(a.outcomePath)
+	defer done()
+	jobID := ids.NewULID()
+	var (
+		raw json.RawMessage
+		err error
+	)
+	withAgentRestoreProgress(ctx, h.cfg.Agent, jobID, restoreProgress{Step: 1, Steps: 1, Label: restoreStepOwnLabel}, report, func() {
+		raw, err = h.cfg.Agent.Call(ctx, "backup.restore_from_tar", map[string]any{
+			"job_id":               jobID,
+			"tar_path":             a.path,
+			"target_username":      a.username,
+			"components":           a.components,
+			"mode":                 "tenant",
+			"allowed_db_names":     a.allowedDBs,
+			"allowed_mail_domains": a.allowedDomains,
+		})
 	})
 	if err != nil {
 		writeRestoreUploadOutcome(a.outcomePath, "failed", nil, nil, restoreFailureDetail(err))
@@ -342,10 +352,14 @@ func (h *meBackupHandler) restoreUploadStatus(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_upload_id"})
 		return
 	}
-	o, err := readRestoreUploadOutcome(restoreUploadTenantOutcomePath(userID, uploadID))
+	path := restoreUploadTenantOutcomePath(userID, uploadID)
+	o, err := readRestoreUploadOutcome(path)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
 		return
+	}
+	if o.Status == "restoring" {
+		o.Progress = uploadRestoreProgressFor(path)
 	}
 	c.JSON(http.StatusOK, o)
 }

@@ -172,7 +172,16 @@ func restoreAccountFromTar(ctx context.Context, jobID, tarPath, targetUsername s
 		return nil, bkInternal("mkdir staging", err)
 	}
 
-	written, err := safeExtractZstdTar(ctx, tarClean, staging)
+	// GH #1993: backup.restore_progress reports what this restore is doing.
+	var tarSize int64
+	if fi, err := os.Lstat(tarClean); err == nil {
+		tarSize = fi.Size()
+	}
+	progress := startRestoreProgress(jobID, tarSize)
+	defer progress.finish()
+	ctx = withRestoreProgress(ctx, progress)
+
+	written, err := safeExtractZstdTarProgress(ctx, tarClean, staging, progress.addUnpacked)
 	if err != nil {
 		_ = os.RemoveAll(staging)
 		return nil, bkInvalidArg("archive rejected: " + err.Error())

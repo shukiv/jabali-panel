@@ -499,10 +499,26 @@ func applyAccountRestore(
 	uid, _ := strconv.Atoi(u.Uid)
 	gid, _ := strconv.Atoi(u.Gid)
 
+	// GH #1993: report each stage as it starts (a no-op unless the restore
+	// is tracked, see backup_restore_progress.go).
+	progress := restoreProgressFrom(ctx)
+	toApply, nth := 0, 0
+	for i := range manifestStages {
+		if applicable[i] {
+			toApply++
+		}
+	}
+
 	for i, st := range manifestStages {
 		if !applicable[i] {
 			continue
 		}
+		nth++
+		item := ""
+		if len(st.Items) == 1 {
+			item = st.Items[0]
+		}
+		progress.applying(st.Name, item, nth, toApply)
 		switch st.Name {
 		case backup.StageHome:
 			// Restic preserves the absolute path; staged tree is at

@@ -551,6 +551,16 @@ export async function inspectUploadedBackup(
   return data;
 }
 
+// GH #1993: a running upload restore's progress — its step, and what the step
+// is doing when the server knows.
+export interface RestoreProgress {
+  step: number;
+  steps: number;
+  label: string;
+  detail?: string;
+  percent?: number;
+}
+
 export interface UploadedBackupRestoreResult {
   status: string;
   applied?: string[] | null;
@@ -569,6 +579,7 @@ export async function applyUploadedBackupRestore(
   // GH #1408 create-from-manifest: when the target user doesn't exist yet,
   // createUser creates it from the bundle (admin only) with the chosen package.
   opts?: { createUser?: boolean; packageId?: string | null },
+  onProgress?: (p: RestoreProgress) => void,
 ): Promise<UploadedBackupRestoreResult> {
   await apiClient.post(
     `${base}/restore-upload/apply`,
@@ -592,6 +603,7 @@ export async function applyUploadedBackupRestore(
     } catch {
       // transient poll error — keep trying until the deadline
     }
+    if (s?.progress) onProgress?.(s.progress);
     if (s?.status === "done") {
       return { status: "ok", applied: s.applied, warnings: s.warnings };
     }
@@ -607,6 +619,7 @@ interface RestoreUploadStatus {
   applied?: string[];
   warnings?: string[];
   error?: string;
+  progress?: RestoreProgress;
 }
 
 // === GH #1993: uploaded account backups kept on this server ===
@@ -629,6 +642,8 @@ export interface UploadedBackup {
   restored_at: string | null;
   restore_target: string;
   restore_result?: { applied?: string[]; warnings?: string[]; error?: string };
+  // While a restore runs: its progress by step.
+  restore_progress?: RestoreProgress;
   file_present: boolean;
   // Detail and register only: whether account_username exists here.
   target_exists?: boolean;
@@ -664,6 +679,7 @@ export async function restoreKeptUploadedBackup(
   targetUsername: string,
   components: string[],
   opts?: { createUser?: boolean; packageId?: string | null },
+  onProgress?: (p: RestoreProgress) => void,
 ): Promise<UploadedBackupRestoreResult> {
   await apiClient.post(`/admin/uploaded-backups/${id}/restore`, {
     target_username: targetUsername,
@@ -679,6 +695,7 @@ export async function restoreKeptUploadedBackup(
     } catch {
       // transient poll error — keep trying until the deadline
     }
+    if (b?.restore_progress) onProgress?.(b.restore_progress);
     if (b?.restore_status === "done") {
       return { status: "ok", applied: b.restore_result?.applied, warnings: b.restore_result?.warnings };
     }

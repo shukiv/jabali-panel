@@ -140,9 +140,15 @@ const unconfirmedRestoreDetail = "the agent did not confirm it confined the rest
 // into a fresh account rebuilds those domains from the file's metadata after
 // the agent ran. So the agent runs twice: everything but mail, then (after
 // the metadata rebuild) mail, with the account's domains looked up again.
-func (h *backupHandler) restoreUploadedAccount(ctx context.Context, tarPath, username, targetID string, components []string) (uploadedAccountRestore, error) {
+//
+// report, when not nil, receives the restore's progress by step (GH #1993).
+func (h *backupHandler) restoreUploadedAccount(ctx context.Context, tarPath, username, targetID string, components []string, report func(restoreProgress)) (uploadedAccountRestore, error) {
 	var out uploadedAccountRestore
 	mail := len(components) == 0 || containsStr(components, "mail")
+	steps := 2
+	if mail {
+		steps = 3
+	}
 	params := map[string]any{
 		"job_id":          ids.NewULID(),
 		"tar_path":        tarPath,
@@ -152,7 +158,8 @@ func (h *backupHandler) restoreUploadedAccount(ctx context.Context, tarPath, use
 	if mail {
 		params["skip_components"] = []string{"mail"}
 	}
-	first, err := h.restoreFromTar(ctx, targetID, params)
+	first, err := h.restoreFromTarReporting(ctx, targetID, params,
+		restoreProgress{Step: 1, Steps: steps, Label: restoreStepFilesLabel}, report)
 	if err != nil {
 		return out, err
 	}
@@ -162,6 +169,9 @@ func (h *backupHandler) restoreUploadedAccount(ctx context.Context, tarPath, use
 		// didn't confine it (swapped mid-flight) must not get its metadata
 		// applied too.
 		return out, errors.New(unconfirmedRestoreDetail)
+	}
+	if report != nil {
+		report(restoreProgress{Step: 2, Steps: steps, Label: restoreStepRowsLabel})
 	}
 	out.MetadataErrors = h.applyRestoreMetadataForUser(ctx, first.Metadata, targetID,
 		uploadedData{databases: first.RestoredDatabases, dockerSlugs: first.RestoredDockerSlugs})
@@ -173,12 +183,12 @@ func (h *backupHandler) restoreUploadedAccount(ctx context.Context, tarPath, use
 	if !mail || !hasMail {
 		return out, nil
 	}
-	second, err := h.restoreFromTar(ctx, targetID, map[string]any{
+	second, err := h.restoreFromTarReporting(ctx, targetID, map[string]any{
 		"job_id":          ids.NewULID(),
 		"tar_path":        tarPath,
 		"target_username": username,
 		"components":      []string{"mail"},
-	})
+	}, restoreProgress{Step: 3, Steps: steps, Label: restoreStepMailLabel}, report)
 	switch {
 	case err != nil:
 		out.Warnings = append(out.Warnings, "mail: "+err.Error())
@@ -189,6 +199,21 @@ func (h *backupHandler) restoreUploadedAccount(ctx context.Context, tarPath, use
 		out.Warnings = append(out.Warnings, second.Warnings...)
 	}
 	return out, nil
+}
+
+// restoreFromTarReporting is restoreFromTar that reports step while the agent
+// runs, with what the agent is doing as its detail. The watcher has stopped
+// when it returns, so it never overwrites a later step.
+func (h *backupHandler) restoreFromTarReporting(ctx context.Context, targetID string, params map[string]any, step restoreProgress, report func(restoreProgress)) (restoreFromTarReply, error) {
+	var (
+		reply restoreFromTarReply
+		err   error
+	)
+	jobID, _ := params["job_id"].(string)
+	withAgentRestoreProgress(ctx, h.cfg.Agent, jobID, step, report, func() {
+		reply, err = h.restoreFromTar(ctx, targetID, params)
+	})
+	return reply, err
 }
 
 // restoreFromTar runs backup.restore_from_tar in mode=upload for the account
