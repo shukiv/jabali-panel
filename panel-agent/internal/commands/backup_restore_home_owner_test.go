@@ -43,9 +43,19 @@ func homeModeAndGroup(t *testing.T, home string) (os.FileMode, int) {
 	return fi.Mode().Perm(), int(fi.Sys().(*syscall.Stat_t).Gid)
 }
 
+// asWWWData makes group stand in for www-data, one of the groups a home may
+// have.
+func asWWWData(t *testing.T, group int) {
+	t.Helper()
+	prev := wwwDataGID
+	wwwDataGID = func() int { return group }
+	t.Cleanup(func() { wwwDataGID = prev })
+}
+
 func TestAccountRestore_HomeKeepsItsOwnerAndMode(t *testing.T) {
 	me := currentUsername(t)
 	group := supplementaryGroup(t)
+	asWWWData(t, group)
 	for _, rsyncFails := range []bool{false, true} {
 		root, homes := t.TempDir(), t.TempDir()
 		prev := restoreHomeRoot
@@ -111,7 +121,7 @@ func TestHomeOwnership_PutsBackWhatItSaved(t *testing.T) {
 	if err := os.Chown(home, os.Getuid(), os.Getgid()); err != nil {
 		t.Fatal(err)
 	}
-	if err := saved.put(home + "/"); err != nil {
+	if err := saved.put(home+"/", os.Getuid(), os.Getgid(), group); err != nil {
 		t.Fatal(err)
 	}
 	fi, _ := os.Lstat(home)
@@ -121,7 +131,7 @@ func TestHomeOwnership_PutsBackWhatItSaved(t *testing.T) {
 
 	// A home that wasn't there saves nothing, and putting it back is a no-op.
 	missing := filepath.Join(t.TempDir(), "bob")
-	if err := saveHomeOwnership(missing).put(missing); err != nil {
+	if err := saveHomeOwnership(missing).put(missing, os.Getuid(), os.Getgid(), group); err != nil {
 		t.Errorf("put of a missing home: %v", err)
 	}
 	// A home swapped for a link is never followed.
@@ -129,10 +139,39 @@ func TestHomeOwnership_PutsBackWhatItSaved(t *testing.T) {
 	if err := os.Symlink(home, link); err != nil {
 		t.Fatal(err)
 	}
-	if err := (homeOwnership{uid: os.Getuid(), gid: os.Getgid(), mode: 0o700, saved: true}).put(link); err == nil {
+	if err := (homeOwnership{uid: os.Getuid(), gid: os.Getgid(), mode: 0o700, saved: true}).put(link, os.Getuid(), os.Getgid(), group); err == nil {
 		t.Error("put followed a link")
 	}
 	if fi, _ := os.Lstat(home); fi.Mode().Perm() != 0o751 {
 		t.Errorf("the link's target changed: %v", fi.Mode())
+	}
+}
+
+// SECURITY: a home that wasn't in one of the account's own layouts (left
+// behind by another account, whose uid may now be someone else's) does not
+// get its old owner back: it stays the account's, as the chown pass made it.
+func TestHomeOwnership_NeverPutsBackAnotherOwner(t *testing.T) {
+	group := supplementaryGroup(t)
+	home := filepath.Join(t.TempDir(), "alice")
+	if err := os.Mkdir(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for name, h := range map[string]homeOwnership{
+		"another account's uid": {uid: os.Getuid() + 4242, gid: os.Getgid(), mode: 0o751, saved: true},
+		"another group":         {uid: os.Getuid(), gid: os.Getgid() + 4242, mode: 0o751, saved: true},
+	} {
+		if err := h.put(home, os.Getuid(), os.Getgid(), group); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+		if fi, _ := os.Lstat(home); fi.Mode().Perm() != 0o700 {
+			t.Errorf("%s: the home was changed to %v", name, fi.Mode())
+		}
+	}
+	// The account's own layout comes back, but never writable by others.
+	if err := (homeOwnership{uid: os.Getuid(), gid: group, mode: 0o777, saved: true}).put(home, os.Getuid(), os.Getgid(), group); err != nil {
+		t.Fatal(err)
+	}
+	if fi, _ := os.Lstat(home); fi.Mode().Perm() != 0o755 {
+		t.Errorf("home mode %v, want 0755 (group and others never write)", fi.Mode())
 	}
 }

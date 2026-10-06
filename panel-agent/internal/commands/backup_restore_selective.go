@@ -363,11 +363,11 @@ func applySelectiveHome(ctx context.Context, stagingRoot, username string, st *b
 	// its own owner and mode (see homeOwnership).
 	homeOwner := saveHomeOwnership(dst)
 	if err := execCommandContext(ctx, "rsync", "-aH", src, dst).Run(); err != nil {
-		_ = homeOwner.put(dst)
+		_ = homeOwner.put(dst, uid, gid, wwwDataGID())
 		return "home: rsync: " + err.Error()
 	}
 	err := chownTreeRecursive(dst, dst, uid, gid)
-	if perr := homeOwner.put(dst); perr != nil && err == nil {
+	if perr := homeOwner.put(dst, uid, gid, wwwDataGID()); perr != nil && err == nil {
 		err = fmt.Errorf("owner and mode of %s: %w", filepath.Clean(dst), perr)
 	}
 	if err != nil {

@@ -203,8 +203,12 @@ func restoreAccounts(ctx context.Context, c *backup.Client, jobID, stagingRoot s
 				}
 				applied = append(applied, fmt.Sprintf("home: %s -> /home/%s", username, username))
 			}
-			if perr := homeOwner.put("/home/" + username); perr != nil {
-				warnings = append(warnings, fmt.Sprintf("user=%s home owner and mode: %v", username, perr))
+			if u, lerr := user.Lookup(username); lerr == nil {
+				uid, _ := strconv.Atoi(u.Uid)
+				gid, _ := strconv.Atoi(u.Gid)
+				if perr := homeOwner.put("/home/"+username, uid, gid, wwwDataGID()); perr != nil {
+					warnings = append(warnings, fmt.Sprintf("user=%s home owner and mode: %v", username, perr))
+				}
 			}
 		}
 

@@ -531,7 +531,7 @@ func applyAccountRestore(
 			}
 			homeOwner := saveHomeOwnership(dst)
 			putHomeBack := func() {
-				if err := homeOwner.put(dst); err != nil {
+				if err := homeOwner.put(dst, uid, gid, wwwDataGID()); err != nil {
 					warnings = append(warnings, fmt.Sprintf("home: owner and mode of %s: %v", filepath.Clean(dst), err))
 				}
 			}
@@ -997,10 +997,18 @@ func saveHomeOwnership(home string) homeOwnership {
 	return homeOwnership{uid: int(st.Uid), gid: int(st.Gid), mode: st.Mode & 0o7777, saved: true}
 }
 
-// put gives the home back the saved owner and mode. The home's parent is
-// root's, and the home is opened without following a link.
-func (h homeOwnership) put(home string) error {
-	if !h.saved {
+// homeModeMask keeps a home's mode to what the SSH settings use (0751,
+// 0750, setgid): never writable by group or others.
+const homeModeMask = 0o2755
+
+// put gives the home of the account uid:gid back the saved owner and mode,
+// when they are one of the account's own layouts: owned by root or the
+// account, group the account's or wwwGID. Anything else (a home left behind
+// by another account, whose uid may since belong to someone else) stays as
+// the chown pass made it, the account's. The home's parent is root's, and the
+// home is opened without following a link.
+func (h homeOwnership) put(home string, uid, gid, wwwGID int) error {
+	if !h.saved || (h.uid != 0 && h.uid != uid) || (h.gid != gid && h.gid != wwwGID) {
 		return nil
 	}
 	fd, err := unix.Open(filepath.Clean(home), unix.O_NOFOLLOW|unix.O_DIRECTORY|unix.O_RDONLY|unix.O_CLOEXEC, 0)
@@ -1011,7 +1019,21 @@ func (h homeOwnership) put(home string) error {
 	if err := unix.Fchown(fd, h.uid, h.gid); err != nil {
 		return err
 	}
-	return unix.Fchmod(fd, h.mode)
+	return unix.Fchmod(fd, h.mode&homeModeMask)
+}
+
+// wwwDataGID is the www-data group's id, or -1 when there is none. A var so
+// tests can stand another group in.
+var wwwDataGID = func() int {
+	g, err := user.LookupGroup("www-data")
+	if err != nil {
+		return -1
+	}
+	id, err := strconv.Atoi(g.Gid)
+	if err != nil {
+		return -1
+	}
+	return id
 }
 
 // chownTreeRecursive chowns root and every entry under it to uid:gid, root
