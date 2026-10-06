@@ -21,7 +21,6 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	ginctx "git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
-	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/userops"
 )
@@ -304,6 +303,13 @@ func (h *backupHandler) restoreUploadApply(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "agent_unavailable"})
 		return
 	}
+	// GH #1993: the restore runs the agent in mode=upload. An agent that
+	// predates it would ignore the mode and restore unconfined, so refuse it
+	// before anything (even creating the account) happens.
+	if !agentHasCapability(c.Request.Context(), h.cfg.Agent, capRestoreUploadConfinement) {
+		c.JSON(http.StatusConflict, gin.H{"error": "agent_update_required", "detail": agentUpdateRequiredDetail})
+		return
+	}
 
 	target, uerr := h.cfg.Users.FindByUsername(c.Request.Context(), req.TargetUsername)
 	userCreated := false
@@ -475,43 +481,29 @@ func (h *backupHandler) runUploadRestore(a uploadRestoreArgs) {
 	ctx, cancel := context.WithTimeout(context.Background(), restoreJobTimeout)
 	defer cancel()
 
-	raw, err := h.cfg.Agent.Call(ctx, "backup.restore_from_tar", map[string]any{
-		"job_id":          ids.NewULID(),
-		"tar_path":        a.path,
-		"target_username": a.username,
-		"components":      a.components,
-	})
+	// The agent restores the files, then the panel rebuilds this account's DB
+	// rows from the backup's metadata bundle, REMAPPED to this box's target
+	// user, then the agent restores mail into the domains that rebuild made
+	// (restoreUploadedAccount).
+	res, err := h.restoreUploadedAccount(ctx, a.path, a.username, a.targetID, a.components)
 	if err != nil {
-		detail := restoreFailureDetail(err)
+		detail := err.Error()
 		if a.userCreated {
 			// GH #1408: the account was created before the restore ran — leave it
 			// (deleting is the destructive path). A retry re-uploads and restores
 			// into the now-existing user, no create needed.
 			detail += " — note: the account was created; re-upload and restore into the now-existing user"
 		}
-		writeRestoreUploadOutcome(a.outcomePath, "failed", nil, nil, detail)
+		writeRestoreUploadOutcome(a.outcomePath, "failed", res.Applied, res.Warnings, detail)
 		_ = os.Remove(a.path) // terminal failure — don't strand a huge tar
 		return
 	}
-	var result struct {
-		Applied  []string        `json:"applied"`
-		Warnings []string        `json:"warnings"`
-		Metadata json.RawMessage `json:"metadata"`
-	}
-	_ = json.Unmarshal(raw, &result)
-
-	// Rebuild panel DB rows from the backup's metadata bundle, REMAPPED to this
-	// box's target user. The bundle carries the SOURCE box's user_id; every child
-	// row FKs to it (backupmetadata.Apply). On a cross-server restore that id
-	// isn't this box's target user, so rewrite user.id to the resolved target
-	// before applying — otherwise the rows attach to a non-existent user.
-	metaErrs := h.applyRestoreMetadataForUser(ctx, result.Metadata, a.targetID)
-	result.Warnings = append(result.Warnings, metaErrs...)
+	warnings := append(res.Warnings, res.MetadataErrors...)
 
 	// GH #1408: when we created the account for this DR restore, tell the admin
 	// how the user signs in (their password was regenerated, not restored).
 	if a.userCreated {
-		result.Warnings = append(result.Warnings,
+		warnings = append(warnings,
 			"Account "+a.username+" was created from the backup with a regenerated password — send a recovery link: jabali user password "+a.username+" --link")
 	}
 
@@ -519,21 +511,22 @@ func (h *backupHandler) runUploadRestore(a uploadRestoreArgs) {
 	// doesn't linger in the uploads dir.
 	_ = os.Remove(a.path)
 
-	writeRestoreUploadOutcome(a.outcomePath, "done", result.Applied, result.Warnings, "")
+	writeRestoreUploadOutcome(a.outcomePath, "done", res.Applied, warnings, "")
 }
 
 // applyRestoreMetadataForUser rewrites the metadata bundle's user id to targetID
 // (so a cross-server bundle's rows attach to THIS box's user) before the shared
-// applyRestoreMetadata rebuild.
-func (h *backupHandler) applyRestoreMetadataForUser(ctx context.Context, metaRaw json.RawMessage, targetID string) []string {
+// applyRestoreMetadata rebuild. The bundle comes from an uploaded file, so it
+// is untrusted; restored names what the agent restored into the account.
+func (h *backupHandler) applyRestoreMetadataForUser(ctx context.Context, metaRaw json.RawMessage, targetID string, restored uploadedData) []string {
 	if len(metaRaw) == 0 || targetID == "" {
-		return h.applyRestoreMetadata(ctx, metaRaw)
+		return h.applyRestoreMetadata(ctx, metaRaw, &restored)
 	}
 	remapped, err := remapMetadataUserID(metaRaw, targetID)
 	if err != nil {
 		return []string{err.Error()}
 	}
-	return h.applyRestoreMetadata(ctx, remapped)
+	return h.applyRestoreMetadata(ctx, remapped, &restored)
 }
 
 // remapMetadataUserID rewrites the metadata bundle's user.id to targetID. Every

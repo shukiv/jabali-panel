@@ -68,6 +68,19 @@ type Deps struct {
 	// stored without it. Required for restoring domains: nil refuses every
 	// domain, so no restore door can skip the checks by forgetting to wire them.
 	CheckDomain func(ctx context.Context, row *models.Domain, ownerUsername string) (warnings []string, err error)
+	// Untrusted marks a bundle from an uploaded file rather than one of this
+	// server's own backup destinations (GH #1993). Whoever made the file
+	// chose its contents, so Apply restores nothing admin-level from it:
+	// no server-level docker apps and no custom nginx directives.
+	Untrusted bool
+	// RestoredDatabases / RestoredDockerSlugs name the databases and docker
+	// app folders (effective slug) the agent restored into the account from
+	// the uploaded file. With Untrusted, a database or docker app row is
+	// restored only for one of these or one the account already has: a row
+	// for anything else would hand the account data the agent refused, such
+	// as a database that exists here without a panel row (GH #1993).
+	RestoredDatabases   map[string]bool
+	RestoredDockerSlugs map[string]bool
 	// MailAddresses takes a restored mailbox's address off every Stalwart
 	// account before Apply stores the mailbox. Stalwart's registry keeps
 	// every alias it has seen, so a mailbox at an address that was once

@@ -2779,7 +2779,9 @@ paths:
       tags: [Backups]
       summary: Restore an uploaded backup archive into an existing user
       security: [ { KratosSession: [] } ]
-      responses: { "202": { description: Accepted } }
+      responses:
+        "202": { description: Accepted }
+        "409": { description: "agent_update_required: the server agent predates confined restores of uploaded backups (GH #1993)" }
 
   /admin/system/full-backup/{run_id}/package:
     post:
@@ -2817,7 +2819,9 @@ paths:
       tags: [Backups]
       summary: Restore selected users from an uploaded Full Server container
       security: [ { KratosSession: [] } ]
-      responses: { "202": { description: Accepted } }
+      responses:
+        "202": { description: Accepted }
+        "409": { description: "agent_update_required: the server agent predates confined restores of uploaded backups (GH #1993)" }
 
   /admin/system/full-restore-upload/status:
     get:

@@ -39,6 +39,11 @@ type backupRestoreFromTarParams struct {
 	// Components names the manifest stages to apply (e.g. "home","db","dns").
 	// Empty = apply every stage present (a full account restore).
 	Components []string `json:"components,omitempty"`
+	// SkipComponents names stages not to apply even when Components selects
+	// them (or is empty). The panel's upload restore skips "mail" in its
+	// first pass and restores mail once it rebuilt the account's domains
+	// (GH #1993).
+	SkipComponents []string `json:"skip_components,omitempty"`
 	// ApplyStaged=false stages the extracted tree without touching the live
 	// system (recon), mirroring backup.restore.
 	ApplyStaged *bool `json:"apply_staged,omitempty"`
@@ -50,6 +55,14 @@ type backupRestoreFromTarParams struct {
 	Mode               string   `json:"mode,omitempty"`
 	AllowedDBNames     []string `json:"allowed_db_names,omitempty"`
 	AllowedMailDomains []string `json:"allowed_mail_domains,omitempty"`
+	// GH #1993 admin restore from an uploaded file (Mode=="upload"): the panel
+	// supplies the target's own databases, domains and docker apps
+	// (AllowedDBNames, AllowedMailDomains, OwnedDockerSlugs) and the databases
+	// and docker apps everyone else owns. All five are REQUIRED in that mode
+	// (fail-closed); see restoreModeUpload.
+	ForeignDBNames     []string `json:"foreign_db_names,omitempty"`
+	OwnedDockerSlugs   []string `json:"owned_docker_slugs,omitempty"`
+	ForeignDockerSlugs []string `json:"foreign_docker_slugs,omitempty"`
 }
 
 type backupRestoreFromTarResult struct {
@@ -66,6 +79,14 @@ type backupRestoreFromTarResult struct {
 	// the panel rejects the restore rather than running it unrestricted.
 	DBAllowlistEnforced   bool `json:"db_allowlist_enforced"`
 	MailAllowlistEnforced bool `json:"mail_allowlist_enforced"`
+	// UploadConfinementEnforced echoes that an upload-mode restore ran with
+	// its confinement (GH #1993).
+	UploadConfinementEnforced bool `json:"upload_confinement_enforced"`
+	// RestoredDatabases / RestoredDockerSlugs name the databases and docker
+	// app data an upload-mode restore created or wrote for the account; the
+	// panel restores rows from the file only for those (GH #1993).
+	RestoredDatabases   []string `json:"restored_databases,omitempty"`
+	RestoredDockerSlugs []string `json:"restored_docker_slugs,omitempty"`
 }
 
 func backupRestoreFromTarHandler(ctx context.Context, raw json.RawMessage) (any, error) {
@@ -81,6 +102,9 @@ func backupRestoreFromTarHandler(ctx context.Context, raw json.RawMessage) (any,
 		Mode:               p.Mode,
 		AllowedDBNames:     p.AllowedDBNames,
 		AllowedMailDomains: p.AllowedMailDomains,
+		ForeignDBNames:     p.ForeignDBNames,
+		OwnedDockerSlugs:   p.OwnedDockerSlugs,
+		ForeignDockerSlugs: p.ForeignDockerSlugs,
 	}
 	// Belt-and-suspenders: a tenant restore MUST carry both allowlists (a nil
 	// list means "unrestricted", so a caller that forgot one would restore
@@ -88,13 +112,23 @@ func backupRestoreFromTarHandler(ctx context.Context, raw json.RawMessage) (any,
 	if enf.Mode == "tenant" && (enf.AllowedDBNames == nil || enf.AllowedMailDomains == nil) {
 		return nil, bkInvalidArg("mode=tenant requires allowed_db_names and allowed_mail_domains (may be empty, not null)")
 	}
-	return restoreAccountFromTar(ctx, p.JobID, p.TarPath, p.TargetUsername, p.Components, apply, enf)
+	// GH #1993: every panel caller passes a mode (tenant, or upload for an
+	// admin restore of an uploaded file). A call without one comes from a
+	// panel older than this agent: refuse it rather than restore unconfined.
+	if enf.Mode != "tenant" && !enf.upload() {
+		return nil, bkInvalidArg("mode must be tenant or upload; update the panel before restoring an uploaded backup")
+	}
+	if enf.upload() && (enf.AllowedDBNames == nil || enf.ForeignDBNames == nil || enf.AllowedMailDomains == nil ||
+		enf.OwnedDockerSlugs == nil || enf.ForeignDockerSlugs == nil) {
+		return nil, bkInvalidArg("mode=upload requires allowed_db_names, foreign_db_names, allowed_mail_domains, owned_docker_slugs and foreign_docker_slugs (may be empty, not null)")
+	}
+	return restoreAccountFromTar(ctx, p.JobID, p.TarPath, p.TargetUsername, p.Components, p.SkipComponents, apply, enf)
 }
 
 // restoreAccountFromTar is the reusable core: extract an untrusted account backup
 // tar and apply it to targetUsername. Shared by the single-upload restore handler
 // and the full-server container restore (which calls it once per inner user tar).
-func restoreAccountFromTar(ctx context.Context, jobID, tarPath, targetUsername string, components []string, apply bool, enf restoreEnforcement) (*backupRestoreFromTarResult, error) {
+func restoreAccountFromTar(ctx context.Context, jobID, tarPath, targetUsername string, components, skipComponents []string, apply bool, enf restoreEnforcement) (*backupRestoreFromTarResult, error) {
 	if !jobIDRE.MatchString(jobID) {
 		return nil, bkInvalidArg("job_id must be a 26-char ULID")
 	}
@@ -171,6 +205,7 @@ func restoreAccountFromTar(ctx context.Context, jobID, tarPath, targetUsername s
 	// fail closed against an agent that predates the feature (it never sets these).
 	out.DBAllowlistEnforced = enf.enforceDB()
 	out.MailAllowlistEnforced = enf.enforceMail()
+	out.UploadConfinementEnforced = enf.upload()
 
 	// v1 restores into the SAME username the backup was taken from — the home
 	// tree inside the archive is /home/<backup-user> and applyAccountRestore
@@ -187,17 +222,20 @@ func restoreAccountFromTar(ctx context.Context, jobID, tarPath, targetUsername s
 	if mb, mErr := os.ReadFile(filepath.Join(root, "meta", "metadata.json")); mErr == nil {
 		out.Metadata = mb
 	}
+	if enf.upload() {
+		enf.DBPrefix = targetUsername + "_"
+		enf.ServerLevelDockerSlugs, enf.DockerMetadataMissing = serverLevelDockerSlugs(out.Metadata)
+	}
 
 	// Per-stage gate: a stage is applied only when it materialized in the tar AND
 	// (no component filter, or the filter selected it). Aligned by manifest-stage
 	// index — same discipline as backup.restore (docker/db fan out same-named
 	// stages, so a name-keyed gate would collapse them, GH #1360).
-	want := componentFilter(components)
+	want, skip := componentFilter(components), componentFilter(skipComponents)
 	stageResults := make([]backupRestoreStage, len(manifest.Stages))
 	for i, st := range manifest.Stages {
 		res := backupRestoreStage{Name: st.Name, Status: backup.StageStatusSkipped}
-		selected := want == nil || want[st.Name]
-		if selected && stageMaterializedInTar(root, st.Name) {
+		if stageSelected(want, skip, st.Name) && stageMaterializedInTar(root, st.Name) {
 			res.Status = backup.StageStatusOK
 		}
 		stageResults[i] = res
@@ -210,11 +248,17 @@ func restoreAccountFromTar(ctx context.Context, jobID, tarPath, targetUsername s
 		return &out, nil
 	}
 
+	if enf.upload() {
+		enf.Claims = &restoreClaims{}
+	}
 	applied, warnings := applyAccountRestore(ctx, root, targetUsername, manifest.User, manifest.Stages, stageResults, enf)
 	out.Applied = applied
 	out.Warnings = append(out.Warnings, warnings...)
+	if enf.Claims != nil {
+		out.RestoredDatabases, out.RestoredDockerSlugs = enf.Claims.Databases, enf.Claims.DockerSlugs
+	}
 
-	if len(applied) > 0 {
+	if removeRestoreStaging(applied, enf) {
 		if rmErr := os.RemoveAll(staging); rmErr != nil {
 			out.StagingCleanup = "cleanup_failed: " + rmErr.Error()
 			out.Warnings = append(out.Warnings, "staging cleanup failed: "+rmErr.Error())
@@ -225,6 +269,22 @@ func restoreAccountFromTar(ctx context.Context, jobID, tarPath, targetUsername s
 		out.StagingCleanup = "kept (no stages applied)"
 	}
 	return &out, nil
+}
+
+// stageSelected reports whether the stage named name is applied: the
+// component filter want selects it (nil selects every stage) and skip doesn't
+// name it.
+func stageSelected(want, skip map[string]bool, name string) bool {
+	return (want == nil || want[name]) && !skip[name]
+}
+
+// removeRestoreStaging reports whether the staging tree goes once the restore
+// applied. An upload restore always removes it: it is a full extracted copy of
+// the uploaded file, and the panel's mail pass applies nothing for an archive
+// without mail (GH #1993). Otherwise a restore that applied nothing keeps it
+// for inspection.
+func removeRestoreStaging(applied []string, enf restoreEnforcement) bool {
+	return len(applied) > 0 || enf.upload()
 }
 
 // componentFilter builds a set of stage names to apply, or nil to apply all.
@@ -359,4 +419,28 @@ func backupInspectUploadedTarHandler(ctx context.Context, raw json.RawMessage) (
 func init() {
 	Default.Register("backup.restore_from_tar", backupRestoreFromTarHandler)
 	Default.Register("backup.inspect_uploaded_tar", backupInspectUploadedTarHandler)
+}
+
+// serverLevelDockerSlugs returns the data slugs of the docker apps the
+// backup's metadata marks server-level. missing=true when the metadata
+// can't be read, so the caller can't tell which apps those are.
+func serverLevelDockerSlugs(meta []byte) (slugs []string, missing bool) {
+	if len(meta) == 0 {
+		return nil, true
+	}
+	var m backup.AccountMetadata
+	if err := json.Unmarshal(meta, &m); err != nil {
+		return nil, true
+	}
+	for _, a := range m.DockerApps {
+		if !a.ServerLevel {
+			continue
+		}
+		slug := a.InstanceSlug
+		if slug == "" {
+			slug = a.Slug
+		}
+		slugs = append(slugs, slug)
+	}
+	return slugs, false
 }

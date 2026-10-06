@@ -49,9 +49,11 @@ func TestRunUploadRestore_Outcome(t *testing.T) {
 			if callErr {
 				return nil, context.DeadlineExceeded
 			}
-			return json.RawMessage(`{"applied":["home → /home/alice"],"warnings":["mail staged"]}`), nil
+			return json.RawMessage(`{"applied":["home → /home/alice"],"warnings":["mail staged"],"upload_confinement_enforced":true}`), nil
 		}}
-		return &backupHandler{cfg: BackupHandlerConfig{Agent: mock}}, tar, outcome
+		cfg := ucConfig() // GH #1993: the upload-mode lists for target T
+		cfg.Agent = mock
+		return &backupHandler{cfg: cfg}, tar, outcome
 	}
 
 	t.Run("success", func(t *testing.T) {

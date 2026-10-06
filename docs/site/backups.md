@@ -137,6 +137,10 @@ directly, rather than one reached through a configured restic destination — th
 portable counterpart to snapshot restore for cross-host moves and disaster
 recovery.
 
+An uploaded archive restores into the target account only: its own databases,
+mail domains and docker apps, or new ones. See
+[what an uploaded archive can't restore](./admin/backup-restore.md#what-an-uploaded-archive-cant-restore).
+
 ## CLI
 
 ```bash

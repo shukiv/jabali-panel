@@ -15,7 +15,7 @@ import (
 
 // system_fullbackup.extract — GH #1408 slice 2 (create-from-manifest for the
 // full-server container). Instead of the agent looping restoreAccountFromTar
-// internally (system.fullbackup.restore_uploaded, which discards each user's
+// internally (the former system.fullbackup.restore_uploaded, which discarded each user's
 // metadata + can't create a missing account), the PANEL drives the loop: it
 // extracts the container once, then per selected user runs the SAME per-account
 // path it uses for a single upload — create-if-missing, backup.restore_from_tar,

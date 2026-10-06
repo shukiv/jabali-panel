@@ -1200,7 +1200,7 @@ func (h *backupHandler) runAccountRestoreJob(jobID string, dest *models.BackupDe
 	// consistent to rebuild) and for old snapshots that carry no bundle. A
 	// metadata-apply failure must not leave the job reporting a clean success.
 	if finalStatus != models.BackupJobStatusFailed {
-		if errs := h.applyRestoreMetadata(ctx, result.Metadata); len(errs) > 0 {
+		if errs := h.applyRestoreMetadata(ctx, result.Metadata, nil); len(errs) > 0 {
 			if finalStatus == models.BackupJobStatusSucceeded {
 				finalStatus = models.BackupJobStatusPartial
 			}
@@ -1220,7 +1220,10 @@ func (h *backupHandler) runAccountRestoreJob(jobID string, dest *models.BackupDe
 // no-op, the documented fallback. Restored cron ROWS regain their systemd
 // timers on the next reconciler tick (internal/reconciler/cron_reconcile.go),
 // the same convergence model the rest of restored state follows.
-func (h *backupHandler) applyRestoreMetadata(ctx context.Context, metaRaw json.RawMessage) []string {
+// uploaded is set for a bundle that came from an uploaded file rather than one
+// of this server's own backup destinations (see backupmetadata.Deps.Untrusted)
+// and names what the agent restored from it; nil for an own-destination one.
+func (h *backupHandler) applyRestoreMetadata(ctx context.Context, metaRaw json.RawMessage, uploaded *uploadedData) []string {
 	if len(metaRaw) == 0 {
 		return nil
 	}
@@ -1252,6 +1255,11 @@ func (h *backupHandler) applyRestoreMetadata(ctx context.Context, metaRaw json.R
 		Agent:          h.cfg.Agent, // push restored forwarders to Stalwart (GH #1795)
 		// GH #1898: a restored domain passes the create-time checks.
 		CheckDomain: RestoreDomainCheck(h.cfg.Domains, h.cfg.WebDomainAliases, h.cfg.ServerSettings),
+		Untrusted:   uploaded != nil,
+	}
+	if uploaded != nil {
+		deps.RestoredDatabases = stringSet(uploaded.databases)
+		deps.RestoredDockerSlugs = stringSet(uploaded.dockerSlugs)
 	}
 	if h.cfg.MailAddresses != nil {
 		deps.MailAddresses = h.cfg.MailAddresses
@@ -1261,6 +1269,15 @@ func (h *backupHandler) applyRestoreMetadata(ctx context.Context, metaRaw json.R
 }
 
 // --- helpers + sentinel below ---
+
+// stringSet returns the set of xs.
+func stringSet(xs []string) map[string]bool {
+	m := make(map[string]bool, len(xs))
+	for _, x := range xs {
+		m[x] = true
+	}
+	return m
+}
 
 var errEmptyBody = errors.New("empty body")
 

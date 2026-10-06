@@ -17,7 +17,6 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/backupwrapperhelpers"
-	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 )
 
@@ -318,6 +317,12 @@ func (h *backupHandler) fullRestoreApply(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "agent_unavailable"})
 		return
 	}
+	// GH #1993: each account restores in the agent's mode=upload; refuse an
+	// agent that predates it before anything is extracted or created.
+	if !agentHasCapability(c.Request.Context(), h.cfg.Agent, capRestoreUploadConfinement) {
+		c.JSON(http.StatusConflict, gin.H{"error": "agent_update_required", "detail": agentUpdateRequiredDetail})
+		return
+	}
 	c.Set("audit_target", req.UploadID)
 	c.Set("audit_target_type", "backup_run")
 
@@ -417,31 +422,26 @@ func (h *backupHandler) runFullRestore(containerPath, marker string, req fullRes
 			}
 			target, userCreated = nt, true
 		}
-		rraw, rerr := h.cfg.Agent.Call(ctx, "backup.restore_from_tar", map[string]any{
-			"job_id":          ids.NewULID(),
-			"tar_path":        u.InnerPath,
-			"target_username": u.Username,
-		})
+		res, rerr := h.restoreUploadedAccount(ctx, u.InnerPath, u.Username, target.ID, nil)
 		if rerr != nil {
-			line := u.Username + ": " + restoreFailureDetail(rerr)
+			line := u.Username + ": " + rerr.Error()
 			if userCreated {
 				line += " (account created; a retry restores into it)"
 			}
 			packed = append(packed, line)
 			continue
 		}
-		var rr struct {
-			Applied  []string        `json:"applied"`
-			Metadata json.RawMessage `json:"metadata"`
-		}
-		_ = json.Unmarshal(rraw, &rr)
-		metaErrs := h.applyRestoreMetadataForUser(ctx, rr.Metadata, target.ID)
-		line := u.Username + ": restored " + strconv.Itoa(len(rr.Applied)) + " item(s)"
+		line := u.Username + ": restored " + strconv.Itoa(len(res.Applied)) + " item(s)"
 		if userCreated {
 			line += " (account created — send a recovery link: jabali user password " + u.Username + " --link)"
 		}
-		if len(metaErrs) > 0 {
-			line += "; metadata: " + strings.Join(metaErrs, "; ")
+		// GH #1993: what the agent refused from the file (another account's
+		// database, an existing app, ...) must reach the admin.
+		if len(res.Warnings) > 0 {
+			line += "; " + strings.Join(res.Warnings, "; ")
+		}
+		if len(res.MetadataErrors) > 0 {
+			line += "; metadata: " + strings.Join(res.MetadataErrors, "; ")
 		}
 		packed = append(packed, line)
 	}

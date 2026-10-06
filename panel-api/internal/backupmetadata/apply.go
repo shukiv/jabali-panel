@@ -230,6 +230,13 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 				CreatedAt:             now,
 				UpdatedAt:             now,
 			}
+			// Custom nginx directives are admin-only raw config, checked only by
+			// the relaxed admin rules. From an uploaded file they are config
+			// written by whoever made it (GH #1993).
+			if d.Untrusted && row.NginxCustomDirectives != nil && strings.TrimSpace(*row.NginxCustomDirectives) != "" {
+				row.NginxCustomDirectives = nil
+				r.Errors = append(r.Errors, fmt.Sprintf("domain %s (%s): custom nginx directives not restored from an uploaded backup; re-add them in the domain's settings after reviewing them", dm.ID, dm.Name))
+			}
 			if d.CheckDomain == nil {
 				refused[dm.ID] = true
 				r.Errors = append(r.Errors, fmt.Sprintf("domain %s (%s): not restored: the restore checks are not wired", dm.ID, dm.Name))
@@ -471,8 +478,29 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 
 	// 4) Databases + db_users + grants.
 	if d.Databases != nil {
-		dbNameToID := make(map[string]string, len(m.Databases))
-		for _, db := range m.Databases {
+		// SECURITY (GH #1993): a database or database-user row is a handle
+		// the account's owner can drop, dump, restore or re-password through
+		// the panel. Never this server's own; from an uploaded file, only
+		// names in the account's own namespace that no other account has.
+		var otherDBs, otherDBUsers, accountDBs map[string]bool
+		dbRows, dbUserRows := m.Databases, m.DatabaseUsers
+		if d.Untrusted {
+			var listErr error
+			if otherDBs, otherDBUsers, accountDBs, listErr = accountDatabaseNames(ctx, d, m.User.ID); listErr != nil {
+				r.Errors = append(r.Errors, fmt.Sprintf("databases: not restored: %v", listErr))
+				dbRows, dbUserRows = nil, nil
+			}
+		}
+		dbNameToID := make(map[string]string, len(dbRows))
+		for _, db := range dbRows {
+			if why := restoredDatabaseRefusal(db.Name, account, d.Untrusted, otherDBs); why != "" {
+				r.Errors = append(r.Errors, fmt.Sprintf("database %s (%s): not restored: %s", db.ID, db.Name, why))
+				continue
+			}
+			if d.Untrusted && !d.RestoredDatabases[db.Name] && !accountDBs[db.Name] {
+				r.Errors = append(r.Errors, fmt.Sprintf("database %s (%s): not restored: the restore didn't load its data into a database of this account", db.ID, db.Name))
+				continue
+			}
 			dbNameToID[db.Name] = db.ID
 			row := &models.Database{
 				ID:        db.ID,
@@ -499,7 +527,11 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 			r.Databases++
 		}
 		if d.DatabaseUsers != nil {
-			for _, du := range m.DatabaseUsers {
+			for _, du := range dbUserRows {
+				if why := restoredDBUserRefusal(du.Username, account, d.Untrusted, otherDBUsers); why != "" {
+					r.Errors = append(r.Errors, fmt.Sprintf("db_user %s (%s): not restored: %s", du.ID, du.Username, why))
+					continue
+				}
 				dbu := &models.DatabaseUser{
 					ID:           du.ID,
 					UserID:       m.User.ID,
@@ -612,8 +644,22 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 	// 5b) Docker apps (GH #954): rebuild the panel row + published ports so the
 	// restored app is panel-managed. The DATA tree + compose-up land via the
 	// stage=docker restore (#1017); without this row the app is orphaned on disk.
-	if d.DockerApps != nil {
-		for _, a := range m.DockerApps {
+	if d.DockerApps != nil && len(m.DockerApps) > 0 {
+		// An app's data lives in one global dir per effective slug, so a
+		// restored app must not take a slug an app with another owner uses.
+		apps := m.DockerApps
+		existing, listErr := d.DockerApps.ListAll(ctx)
+		if listErr != nil {
+			r.Errors = append(r.Errors, fmt.Sprintf("docker_apps: not restored: list this server's apps: %v", listErr))
+			apps = nil
+		}
+		for _, a := range apps {
+			// GH #1993: a server-level app from an uploaded file would be an
+			// admin-level app chosen by whoever made it.
+			if a.ServerLevel && d.Untrusted {
+				r.Errors = append(r.Errors, fmt.Sprintf("docker_app %s (%s): not restored: a server-level app can't be restored from an uploaded backup", a.ID, a.Slug))
+				continue
+			}
 			// Server-level apps (GH #1360) restore with UserID NULL so they
 			// stay admin/server-level; tenant apps are (re)owned by the
 			// account being restored. Re-owning a server-level app to the
@@ -623,6 +669,19 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 			if !a.ServerLevel {
 				uid := m.User.ID
 				owner = &uid
+			}
+			if bad := malformedDockerSlug(a); bad != "" {
+				r.Errors = append(r.Errors, fmt.Sprintf("docker_app %s: not restored: %q is not an app name", a.ID, bad))
+				continue
+			}
+			slug, taken := dockerSlugTaken(existing, a, owner)
+			if taken {
+				r.Errors = append(r.Errors, fmt.Sprintf("docker_app %s: not restored: another account's app already uses %q", a.ID, slug))
+				continue
+			}
+			if d.Untrusted && !d.RestoredDockerSlugs[slug] && !accountHasApp(existing, slug, m.User.ID) {
+				r.Errors = append(r.Errors, fmt.Sprintf("docker_app %s: not restored: the restore didn't restore its data into an app folder of this account (%q)", a.ID, slug))
+				continue
 			}
 			row := &models.DockerApp{
 				ID: a.ID, UserID: owner, Slug: a.Slug, InstanceSlug: a.InstanceSlug,
@@ -906,6 +965,141 @@ func applyUser(ctx context.Context, m *internalbackup.AccountMetadata, d Deps, n
 		return false, fmt.Errorf("create: %w", err)
 	}
 	return true, nil
+}
+
+// systemDatabaseNames are this server's own databases (with every jabali_*
+// one); systemDBUserNames its own MariaDB accounts (with every jabali* and
+// jb_s_* restore shadow one).
+var (
+	systemDatabaseNames = map[string]bool{
+		"mysql": true, "information_schema": true, "performance_schema": true, "sys": true,
+		"crowdsec": true, "postgres": true, "template0": true, "template1": true, "jabali": true,
+	}
+	systemDBUserNames = map[string]bool{
+		"root": true, "mysql": true, "mariadb.sys": true, "crowdsec": true, "debian-sys-maint": true,
+		"postgres": true, "jabali": true,
+	}
+	restoredDBNameRe = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+)
+
+func systemDatabase(name string) bool {
+	l := strings.ToLower(name)
+	return systemDatabaseNames[l] || strings.HasPrefix(l, "jabali_")
+}
+
+func systemDBUser(name string) bool {
+	l := strings.ToLower(name)
+	return systemDBUserNames[l] || strings.HasPrefix(l, "jabali_") || strings.HasPrefix(l, "jabali-") || strings.HasPrefix(l, "jb_s_")
+}
+
+// restoredDatabaseRefusal says why a database row named name may not be
+// restored for account, or "".
+func restoredDatabaseRefusal(name, account string, untrusted bool, others map[string]bool) string {
+	switch {
+	case systemDatabase(name):
+		return "it is one of this server's own databases"
+	case !untrusted:
+		return ""
+	case !restoredDBNameRe.MatchString(name) || !accountNameRe.MatchString(account) ||
+		len(name) <= len(account)+1 || !strings.HasPrefix(name, account+"_"):
+		return fmt.Sprintf("a database from an uploaded backup must be named %s_<name>", account)
+	case others[name]:
+		return "another account has a database with this name"
+	}
+	return ""
+}
+
+// restoredDBUserRefusal is restoredDatabaseRefusal for a database user.
+func restoredDBUserRefusal(name, account string, untrusted bool, others map[string]bool) string {
+	switch {
+	case systemDBUser(name):
+		return "it is one of this server's own database accounts"
+	case !untrusted:
+		return ""
+	case !restoredDBNameRe.MatchString(name) || !accountNameRe.MatchString(account) ||
+		len(name) <= len(account)+1 || !strings.HasPrefix(name, account+"_"):
+		return fmt.Sprintf("a database user from an uploaded backup must be named %s_<name>", account)
+	case others[name]:
+		return "another account has a database user with this name"
+	}
+	return ""
+}
+
+// accountDatabaseNames returns the database and database-user names rows of
+// accounts other than userID hold, and the database names userID's own rows
+// hold.
+func accountDatabaseNames(ctx context.Context, d Deps, userID string) (dbs, users, own map[string]bool, err error) {
+	dbs, users, own = map[string]bool{}, map[string]bool{}, map[string]bool{}
+	rows, _, err := d.Databases.List(ctx, repository.ListOptions{})
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("list this server's databases: %w", err)
+	}
+	for _, r := range rows {
+		if r.UserID != userID {
+			dbs[r.Name] = true
+		} else {
+			own[r.Name] = true
+		}
+	}
+	if d.DatabaseUsers != nil {
+		urows, _, err := d.DatabaseUsers.List(ctx, repository.ListOptions{})
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("list this server's database users: %w", err)
+		}
+		for _, r := range urows {
+			if r.UserID != userID {
+				users[r.Username] = true
+			}
+		}
+	}
+	return dbs, users, own, nil
+}
+
+// dockerSlugRe is the agent's rule for a docker app slug (validateSlug): the
+// slugs name the app's data directory and compose project.
+var dockerSlugRe = regexp.MustCompile(`^[a-z][a-z0-9-]{1,31}$`)
+
+// malformedDockerSlug returns a's slug or instance slug when it isn't a plain
+// app name, else "".
+func malformedDockerSlug(a internalbackup.MetadataDockerApp) string {
+	if !dockerSlugRe.MatchString(a.Slug) {
+		return a.Slug
+	}
+	if a.InstanceSlug != "" && !dockerSlugRe.MatchString(a.InstanceSlug) {
+		return a.InstanceSlug
+	}
+	return ""
+}
+
+// accountHasApp reports whether the account userID already has an app whose
+// data folder is slug.
+func accountHasApp(existing []*models.DockerApp, slug, userID string) bool {
+	for _, e := range existing {
+		if e != nil && e.UserID != nil && *e.UserID == userID && e.EffectiveSlug() == slug {
+			return true
+		}
+	}
+	return false
+}
+
+// dockerSlugTaken reports whether an app on this server other than a, with an
+// owner other than owner (nil = server-level), already uses a's effective
+// slug, and returns that slug.
+func dockerSlugTaken(existing []*models.DockerApp, a internalbackup.MetadataDockerApp, owner *string) (string, bool) {
+	slug := a.InstanceSlug
+	if slug == "" {
+		slug = a.Slug
+	}
+	for _, e := range existing {
+		if e == nil || e.ID == a.ID || e.EffectiveSlug() != slug {
+			continue
+		}
+		sameOwner := (e.UserID == nil && owner == nil) || (e.UserID != nil && owner != nil && *e.UserID == *owner)
+		if !sameOwner {
+			return slug, true
+		}
+	}
+	return slug, false
 }
 
 // knownSSLStatus is every status an ssl_certificates row can hold.

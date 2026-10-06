@@ -32,6 +32,7 @@ func (c *captureDockerRepo) Create(_ context.Context, app *models.DockerApp) err
 func (c *captureDockerRepo) CreatePort(context.Context, *models.DockerAppPublishedPort) error {
 	return nil
 }
+func (c *captureDockerRepo) ListAll(context.Context) ([]*models.DockerApp, error) { return nil, nil }
 
 // GH #1360: a restored server-level app (ServerLevel=true) must keep UserID
 // NULL — re-owning it to the restoring admin would subject it to tenant
