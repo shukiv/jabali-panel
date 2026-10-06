@@ -176,6 +176,14 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 	ownDomains := map[string]bool{}
 	ownMailboxes := map[string]bool{}
 	ownDatabases := map[string]bool{}
+	// domainIDs, mailboxIDs, dbIDs and dbUserIDs map a backup row id to the
+	// row that stands for it on this server: the restored row, or the
+	// account's own row of the same name created here before the restore
+	// (GH #1993). Child rows are attached through them.
+	domainIDs := map[string]string{}
+	mailboxIDs := map[string]string{}
+	dbIDs := map[string]string{}
+	dbUserIDs := map[string]string{}
 	// account is the account's username on THIS server. Every path the bundle
 	// names is moved off the bundle's username onto it and checked against
 	// it: the bundle's username is only a claim by whoever made the file.
@@ -193,11 +201,30 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 					continue
 				}
 				ownDomains[dm.ID] = true
+				domainIDs[dm.ID] = dm.ID
 				r.Skipped++
 				continue
 			} else if err != nil && !errors.Is(err, repository.ErrNotFound) {
 				refused[dm.ID] = true
 				r.Errors = append(r.Errors, fmt.Sprintf("domain %s: lookup: %v", dm.ID, err))
+				continue
+			}
+			// GH #1993: the account may already have this domain here under
+			// another id, created on this server before the restore. Its
+			// mailboxes, forwarders and app installs are restored under it.
+			if existing, err := d.Domains.FindByName(ctx, dm.Name); err == nil && existing != nil {
+				if existing.UserID != m.User.ID {
+					refused[dm.ID] = true
+					r.Errors = append(r.Errors, fmt.Sprintf("domain %s (%s): not restored: a domain with this name belongs to another account", dm.ID, dm.Name))
+					continue
+				}
+				ownDomains[existing.ID] = true
+				domainIDs[dm.ID] = existing.ID
+				r.Skipped++
+				continue
+			} else if err != nil && !errors.Is(err, repository.ErrNotFound) {
+				refused[dm.ID] = true
+				r.Errors = append(r.Errors, fmt.Sprintf("domain %s (%s): lookup: %v", dm.ID, dm.Name, err))
 				continue
 			}
 			row := &models.Domain{
@@ -276,6 +303,7 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 				continue
 			}
 			ownDomains[dm.ID] = true
+			domainIDs[dm.ID] = dm.ID
 			r.Domains++
 			if dm.SSLCertificate != nil && d.SSLCerts != nil {
 				cert := &models.SSLCertificate{
@@ -318,7 +346,8 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 	// surfaces that as a warning.
 	for di := range m.Domains {
 		dm := m.Domains[di]
-		if refused[dm.ID] {
+		domID, ok := domainIDs[dm.ID]
+		if refused[dm.ID] || !ok {
 			continue
 		}
 		if d.Mailboxes != nil {
@@ -327,20 +356,31 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 					r.Errors = append(r.Errors, fmt.Sprintf("mailbox %s: not restored: %s@%s is reserved for the domain directory", mb.ID, mb.LocalPart, dm.Name))
 					continue
 				}
-				if existing, err := d.Mailboxes.FindByID(ctx, mb.ID); err == nil && existing != nil {
+				existing, err := d.Mailboxes.FindByID(ctx, mb.ID)
+				if errors.Is(err, repository.ErrNotFound) {
+					// GH #1993: the account may already have this address
+					// here, created before the restore under another id.
+					existing, err = d.Mailboxes.FindByEmail(ctx, mb.LocalPart+"@"+dm.Name)
+				}
+				if err != nil && !errors.Is(err, repository.ErrNotFound) {
+					r.Errors = append(r.Errors, fmt.Sprintf("mailbox %s: not restored: lookup: %v", mb.ID, err))
+					continue
+				}
+				if err == nil && existing != nil {
 					// Its autoresponder and shares below are written by mailbox
 					// id, so a mailbox of another domain stays untouched.
-					if existing.DomainID != dm.ID {
-						r.Errors = append(r.Errors, fmt.Sprintf("mailbox %s: not restored: a mailbox with this id belongs to another domain", mb.ID))
+					if existing.DomainID != domID {
+						r.Errors = append(r.Errors, fmt.Sprintf("mailbox %s: not restored: a mailbox with this id or address belongs to another domain", mb.ID))
 						continue
 					}
-					ownMailboxes[mb.ID] = true
+					ownMailboxes[existing.ID] = true
+					mailboxIDs[mb.ID] = existing.ID
 					r.Skipped++
 				} else {
 					// The database refuses a mailbox where an alias, group or
 					// shared resource is; clearing the address first would take
 					// that alias off its account in Stalwart's registry.
-					held, err := repository.MailboxAddressHeld(ctx, d.Mailboxes, dm.ID, mb.LocalPart)
+					held, err := repository.MailboxAddressHeld(ctx, d.Mailboxes, domID, mb.LocalPart)
 					if err != nil {
 						r.Errors = append(r.Errors, fmt.Sprintf("mailbox %s: not restored: address check: %v", mb.ID, err))
 						continue
@@ -361,7 +401,7 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 					}
 					row := &models.Mailbox{
 						ID:           mb.ID,
-						DomainID:     dm.ID,
+						DomainID:     domID,
 						LocalPart:    mb.LocalPart,
 						EmailCached:  mb.EmailCached,
 						PasswordHash: mb.PasswordHash,
@@ -376,12 +416,14 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 						continue
 					}
 					ownMailboxes[mb.ID] = true
+					mailboxIDs[mb.ID] = mb.ID
 					r.Mailboxes++
 				}
+				mbID := mailboxIDs[mb.ID]
 				// Autoresponder is keyed by the mailbox PK; Update upserts.
 				if mb.Autoresponder != nil && d.Autoresponders != nil {
 					ar := &models.EmailAutoresponder{
-						MailboxID: mb.ID,
+						MailboxID: mbID,
 						Enabled:   mb.Autoresponder.Enabled,
 						Subject:   mb.Autoresponder.Subject,
 						TextBody:  mb.Autoresponder.TextBody,
@@ -404,10 +446,14 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 						if sh.Rights != "" {
 							_ = json.Unmarshal([]byte(sh.Rights), &rights)
 						}
+						sharedWith := sh.SharedWithMailboxID
+						if id, ok := mailboxIDs[sharedWith]; ok {
+							sharedWith = id
+						}
 						share := &models.MailboxShare{
 							ID:                  sh.ID,
-							OwnerMailboxID:      mb.ID,
-							SharedWithMailboxID: sh.SharedWithMailboxID,
+							OwnerMailboxID:      mbID,
+							SharedWithMailboxID: sharedWith,
 							Rights:              rights,
 							CreatedAt:           now,
 						}
@@ -426,8 +472,8 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 			// self-heal.
 			mbEmail := map[string]string{}
 			for _, mb := range dm.Mailboxes {
-				if mb.EmailCached != "" {
-					mbEmail[mb.ID] = mb.EmailCached
+				if id, ok := mailboxIDs[mb.ID]; ok && mb.EmailCached != "" {
+					mbEmail[id] = mb.EmailCached
 				}
 			}
 			convergeFwds := map[string]string{}
@@ -436,14 +482,20 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 					r.Skipped++
 					continue
 				}
-				if fw.MailboxID != nil && !ownMailboxes[*fw.MailboxID] {
+				fwMailbox := fw.MailboxID
+				if fwMailbox != nil {
+					if id, ok := mailboxIDs[*fwMailbox]; ok {
+						fwMailbox = &id
+					}
+				}
+				if fwMailbox != nil && !ownMailboxes[*fwMailbox] {
 					r.Errors = append(r.Errors, fmt.Sprintf("forwarder %s: not restored: its mailbox is not one of this account's restored mailboxes", fw.ID))
 					continue
 				}
 				row := &models.EmailForwarder{
 					ID:        fw.ID,
-					MailboxID: fw.MailboxID,
-					DomainID:  dm.ID,
+					MailboxID: fwMailbox,
+					DomainID:  domID,
 					Type:      fw.Type,
 					LocalPart: fw.LocalPart,
 					Target:    fw.Target,
@@ -492,6 +544,19 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 			}
 		}
 		dbNameToID := make(map[string]string, len(dbRows))
+		// ownByName is the account's own databases and database users by
+		// name, loaded on the first name conflict (GH #1993).
+		var ownByName *ownDatabaseRows
+		lookupOwn := func() *ownDatabaseRows {
+			if ownByName == nil {
+				o, err := listOwnDatabaseRows(ctx, d, m.User.ID)
+				if err != nil {
+					r.Errors = append(r.Errors, fmt.Sprintf("databases: %v", err))
+				}
+				ownByName = o
+			}
+			return ownByName
+		}
 		for _, db := range dbRows {
 			if why := restoredDatabaseRefusal(db.Name, account, d.Untrusted, otherDBs); why != "" {
 				r.Errors = append(r.Errors, fmt.Sprintf("database %s (%s): not restored: %s", db.ID, db.Name, why))
@@ -516,6 +581,13 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 				if errors.Is(err, repository.ErrConflict) {
 					if existing, ferr := d.Databases.FindByID(ctx, db.ID); ferr == nil && existing != nil && existing.UserID == m.User.ID {
 						ownDatabases[db.ID] = true
+						dbIDs[db.ID] = db.ID
+					} else if id, ok := lookupOwn().dbs[db.Name]; ok {
+						// GH #1993: the account already has this database here
+						// under another id, created before the restore.
+						ownDatabases[id] = true
+						dbIDs[db.ID] = id
+						dbNameToID[db.Name] = id
 					}
 					r.Skipped++
 					continue
@@ -524,6 +596,7 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 				continue
 			}
 			ownDatabases[db.ID] = true
+			dbIDs[db.ID] = db.ID
 			r.Databases++
 		}
 		if d.DatabaseUsers != nil {
@@ -544,9 +617,22 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 					if errors.Is(err, repository.ErrConflict) {
 						// Grants below attach to this user id: only to one
 						// that is this account's own.
-						if existing, ferr := d.DatabaseUsers.FindByID(ctx, du.ID); ferr != nil || existing == nil || existing.UserID != m.User.ID {
+						existing, ferr := d.DatabaseUsers.FindByID(ctx, du.ID)
+						switch {
+						case ferr == nil && existing != nil && existing.UserID == m.User.ID:
+							dbUserIDs[du.ID] = du.ID
+						case ferr == nil && existing != nil:
 							r.Errors = append(r.Errors, fmt.Sprintf("db_user %s: not restored: a database user with this id belongs to another account", du.ID))
 							continue
+						default:
+							// GH #1993: the account may already have this
+							// database user here under another id.
+							id, ok := lookupOwn().users[du.Username]
+							if !ok {
+								r.Errors = append(r.Errors, fmt.Sprintf("db_user %s (%s): not restored: a database user with this name belongs to another account", du.ID, du.Username))
+								continue
+							}
+							dbUserIDs[du.ID] = id
 						}
 						r.Skipped++
 					} else {
@@ -554,6 +640,7 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 						continue
 					}
 				} else {
+					dbUserIDs[du.ID] = du.ID
 					r.DatabaseUsers++
 				}
 				if d.DatabaseGrants != nil {
@@ -563,6 +650,9 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 							continue
 						}
 						dbID := g.DatabaseID
+						if id, ok := dbIDs[dbID]; ok {
+							dbID = id
+						}
 						if dbID == "" && g.DatabaseName != "" {
 							dbID = dbNameToID[g.DatabaseName]
 						}
@@ -577,7 +667,7 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 						gr := &models.DatabaseUserGrant{
 							ID:             gid,
 							DatabaseID:     dbID,
-							DatabaseUserID: du.ID,
+							DatabaseUserID: dbUserIDs[du.ID],
 							GrantLevel:     g.GrantLevel,
 							Privileges:     g.Privileges,
 							CreatedAt:      now,
@@ -601,6 +691,14 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 	// 5) App installs.
 	if d.AppInstalls != nil {
 		for _, ai := range m.AppInstalls {
+			if id, ok := domainIDs[ai.DomainID]; ok {
+				ai.DomainID = id
+			}
+			if ai.DBID != nil {
+				if id, ok := dbIDs[*ai.DBID]; ok {
+					ai.DBID = &id
+				}
+			}
 			if refused[ai.DomainID] {
 				r.Errors = append(r.Errors, fmt.Sprintf("app_install %s: not restored: its domain was refused", ai.ID))
 				continue
@@ -1053,6 +1151,39 @@ func accountDatabaseNames(ctx context.Context, d Deps, userID string) (dbs, user
 		}
 	}
 	return dbs, users, own, nil
+}
+
+// ownDatabaseRows maps the names of an account's own databases and database
+// users to their ids.
+type ownDatabaseRows struct {
+	dbs, users map[string]string
+}
+
+// listOwnDatabaseRows lists userID's own databases and database users by
+// name. On error it returns what it could list (never nil).
+func listOwnDatabaseRows(ctx context.Context, d Deps, userID string) (*ownDatabaseRows, error) {
+	o := &ownDatabaseRows{dbs: map[string]string{}, users: map[string]string{}}
+	rows, _, err := d.Databases.List(ctx, repository.ListOptions{})
+	if err != nil {
+		return o, fmt.Errorf("list this server's databases: %w", err)
+	}
+	for _, r := range rows {
+		if r.UserID == userID {
+			o.dbs[r.Name] = r.ID
+		}
+	}
+	if d.DatabaseUsers != nil {
+		urows, _, err := d.DatabaseUsers.List(ctx, repository.ListOptions{})
+		if err != nil {
+			return o, fmt.Errorf("list this server's database users: %w", err)
+		}
+		for _, r := range urows {
+			if r.UserID == userID {
+				o.users[r.Username] = r.ID
+			}
+		}
+	}
+	return o, nil
 }
 
 // dockerSlugRe is the agent's rule for a docker app slug (validateSlug): the

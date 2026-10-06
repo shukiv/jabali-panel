@@ -68,6 +68,9 @@ type ppDomains struct {
 func (r *ppDomains) FindByID(context.Context, string) (*models.Domain, error) {
 	return nil, repository.ErrNotFound
 }
+func (r *ppDomains) FindByName(context.Context, string) (*models.Domain, error) {
+	return nil, repository.ErrNotFound
+}
 
 func (r *ppDomains) Create(ctx context.Context, d *models.Domain) error {
 	if r.failAll != nil {
