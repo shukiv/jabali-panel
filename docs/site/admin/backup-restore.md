@@ -58,10 +58,11 @@ to a host that shares no restic destination with the source:
 An uploaded archive is a file anyone could have written, so the panel restores
 it into the target account only (GH #1993):
 
-- **Databases** — the account's own, or new ones named `<account>_<name>`.
-  Never this server's own databases, another account's, or one that already
-  exists here without belonging to the account. A database an admin created
-  without the account prefix is refused; restore it by hand.
+- **Databases and database users** — the account's own, or new ones named
+  `<account>_<name>`. Never this server's own databases or MariaDB accounts,
+  another account's, or a database that already exists here without belonging
+  to the account. One an admin created without the account prefix is refused;
+  restore it by hand.
 - **Mail** — only for the account's own domains.
 - **Docker apps** — the account's own, or an app name not in use here.
   Server-level apps are not restored, and neither is an app whose name another
