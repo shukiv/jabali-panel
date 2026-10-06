@@ -286,10 +286,12 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 				// SECURITY: the vhost renderers write these paths into nginx
 				// configs as root. Keep them only when they name this domain's
 				// own files; otherwise the certificate is issued again.
-				if !knownSSLStatus[cert.Status] || !ownCertFiles(row.Name, cert.CertPath, cert.KeyPath) {
-					if cert.CertPath != nil || cert.KeyPath != nil {
-						r.Errors = append(r.Errors, fmt.Sprintf("ssl_cert %s (%s): its certificate files are not this domain's own; it will be issued again", cert.ID, row.Name))
-					}
+				switch {
+				case !ownCertFiles(row.Name, cert.CertPath, cert.KeyPath):
+					r.Errors = append(r.Errors, fmt.Sprintf("ssl_cert %s (%s): its certificate files are not this domain's own; it will be issued again", cert.ID, row.Name))
+					cert.CertPath, cert.KeyPath, cert.Status = nil, nil, models.SSLStatusPending
+				case !knownSSLStatus[cert.Status]:
+					r.Errors = append(r.Errors, fmt.Sprintf("ssl_cert %s (%s): status %q is not one the panel knows; it will be issued again", cert.ID, row.Name, cert.Status))
 					cert.CertPath, cert.KeyPath, cert.Status = nil, nil, models.SSLStatusPending
 				}
 				if err := d.SSLCerts.Create(ctx, cert); err != nil {

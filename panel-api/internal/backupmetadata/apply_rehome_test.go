@@ -10,9 +10,10 @@ import (
 )
 
 // GH #1993: a backup names the account's paths under the username it had on
-// the server that made it. The admin restore puts the account's files under
-// THIS server's username for it, and the bundle's username is only a claim:
-// paths are moved onto this server's name and checked against it.
+// the server that made it, and that username is only a claim by whoever made
+// the file. The rows' paths are moved onto this server's username for the
+// account and checked against it. (The agent's home stage still restores
+// files only into the same username; renaming on restore is not supported.)
 
 // namedUsersRepo answers that the account already exists on this server under
 // username.

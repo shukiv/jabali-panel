@@ -70,11 +70,14 @@ func TestApply_AnotherDomainsCertFilesAreCleared(t *testing.T) {
 }
 
 func TestApply_UnknownCertStatusBecomesPending(t *testing.T) {
-	got, _ := spRestore(t, "owned",
+	got, r := spRestore(t, "owned",
 		"/etc/letsencrypt/live/alice.org/fullchain.pem", "/etc/letsencrypt/live/alice.org/privkey.pem")
 
 	if got.Status != models.SSLStatusPending {
 		t.Fatalf("status = %q, want %q", got.Status, models.SSLStatusPending)
+	}
+	if !hasError(r.Errors, `status "owned"`) || hasError(r.Errors, "not this domain's own") {
+		t.Fatalf("errors %v should name the unknown status, not the files", r.Errors)
 	}
 }
 
