@@ -176,12 +176,22 @@ func (h *backupHandler) restoreUploadedAccount(ctx context.Context, tarPath, use
 	out.MetadataErrors = h.applyRestoreMetadataForUser(ctx, first.Metadata, targetID,
 		uploadedData{databases: first.RestoredDatabases, dockerSlugs: first.RestoredDockerSlugs})
 
+	// GH #1993: last, the domains' custom DNS records. RestoreBundleDNS has the
+	// reconciler make the restored domains' zones and adds the records once
+	// they exist.
+	withDNS := func() (uploadedAccountRestore, error) {
+		a, w := RestoreBundleDNS(ctx, h.restoreDNSDeps(true), first.Metadata, targetID)
+		out.Applied = append(out.Applied, a...)
+		out.Warnings = append(out.Warnings, w...)
+		return out, nil
+	}
+
 	hasMail := false
 	for _, st := range first.Stages {
 		hasMail = hasMail || st.Name == "mail"
 	}
 	if !mail || !hasMail {
-		return out, nil
+		return withDNS()
 	}
 	second, err := h.restoreFromTarReporting(ctx, targetID, map[string]any{
 		"job_id":          ids.NewULID(),
@@ -198,7 +208,7 @@ func (h *backupHandler) restoreUploadedAccount(ctx context.Context, tarPath, use
 		out.Applied = append(out.Applied, second.Applied...)
 		out.Warnings = append(out.Warnings, second.Warnings...)
 	}
-	return out, nil
+	return withDNS()
 }
 
 // restoreFromTarReporting is restoreFromTar that reports step while the agent

@@ -55,6 +55,27 @@ The server agent must be as new as the panel to create the accounts. With an
 older agent the restored database users are left out and the report says to run
 `jabali update`.
 
+### DNS records
+
+A restore brings back each domain's custom DNS records: the ones added under
+DNS (GH #1993). The panel rebuilds its own records for the domain (its address,
+mail, SPF and DKIM) itself. The custom records are added once the domain's DNS
+zone exists; for a domain the restore brought back, the panel creates the zone
+first, which can take up to a minute. Each record goes through the same checks
+as a record added under DNS:
+
+- A record already in the zone is left as it is. Nothing in the zone is
+  removed.
+- A record that isn't valid, or that clashes with one in the zone (a CNAME at
+  a name that has other records), isn't added.
+- An address record (A or AAAA) at a name where this server publishes its own
+  address, such as the domain itself, isn't added, so the site keeps pointing
+  at this server.
+
+No records are restored for a domain whose DNS is hosted elsewhere, whose
+ownership isn't verified yet, or whose zone is disabled. Each record left out
+is listed in the restore report.
+
 ## Restore — `system_backup`
 
 System restores are typically performed on a freshly-bootstrapped panel host. Sequence:
@@ -149,6 +170,9 @@ it into the target account only (GH #1993):
 - **Sign-in** — the account's sign-in from the backup (its password) is not
   imported. The account keeps the sign-in it has on this server; an account
   the restore creates gets a new password and needs a recovery link.
+- **DNS records** — only the record types the account may add under DNS
+  (never NS). Address records that don't point at this server are listed in
+  the report so you can check them.
 
 Each item left out is listed in the restore report. The server agent must be
 as new as the panel: an older agent can't confine the restore, so the panel

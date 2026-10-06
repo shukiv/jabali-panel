@@ -1269,6 +1269,12 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			}
 		}
 		if deps.BackupJobs != nil && deps.Users != nil {
+			// Typed-nil guard: a nil *reconciler.Reconciler in the interface
+			// would be non-nil and panic on Schedule.
+			var restoreScheduler api.DomainScheduler
+			if deps.Reconciler != nil {
+				restoreScheduler = deps.Reconciler
+			}
 			api.RegisterBackupRoutes(v1, api.BackupHandlerConfig{
 				Agent:          deps.Agent,
 				Jobs:           deps.BackupJobs,
@@ -1311,6 +1317,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				ServerSettings:   deps.ServerSettings,
 				MailAddresses:    deps.MailAddresses,
 				UploadedBackups:  deps.UploadedBackups,
+				Scheduler:        restoreScheduler, // GH #1993: restored DNS records
 				Log:              deps.Log,
 				SSOKey:           deps.SSOKey,
 			})

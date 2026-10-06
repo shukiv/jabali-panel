@@ -95,6 +95,10 @@ type BackupHandlerConfig struct {
 	// refuses them when either is nil, rather than skip a guard.
 	WebDomainAliases repository.WebDomainAliasRepository
 	ServerSettings   repository.ServerSettingsRepository
+	// Scheduler, optional, has the reconciler create a restored domain's DNS
+	// zone at once so the restore can add the backup's DNS records to it
+	// (GH #1993); nil waits for the periodic pass.
+	Scheduler DomainScheduler
 
 	// MailAddresses clears a restored mailbox's address from Stalwart's
 	// registry before the mailbox is stored. A restore refuses its
@@ -1215,6 +1219,18 @@ func (h *backupHandler) runAccountRestoreJob(jobID string, dest *models.BackupDe
 				finalErr = "metadata apply: " + strings.Join(errs, "; ")
 			}
 			h.cfg.logErr("account restore metadata apply had errors", errors.New(strings.Join(errs, "; ")), "job_id", jobID)
+		}
+		// GH #1993: the domains' custom DNS records, once their zones exist.
+		if acct := metadataUserID(result.Metadata); acct != "" {
+			if _, dnsWarnings := RestoreBundleDNS(ctx, h.restoreDNSDeps(false), result.Metadata, acct); len(dnsWarnings) > 0 {
+				if finalStatus == models.BackupJobStatusSucceeded {
+					finalStatus = models.BackupJobStatusPartial
+				}
+				if finalErr == "" {
+					finalErr = strings.Join(dnsWarnings, "; ")
+				}
+				h.cfg.logErr("account restore dns records had warnings", errors.New(strings.Join(dnsWarnings, "; ")), "job_id", jobID)
+			}
 		}
 	}
 	seal(finalStatus, finalErr, raw)

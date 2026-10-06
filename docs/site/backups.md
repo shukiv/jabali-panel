@@ -83,6 +83,9 @@ their original login password preserved through a root-only one-shot staging
 file (GH #1361). MariaDB **database users** come back with their MariaDB account,
 grants and original password, so sites keep connecting to their databases
 (GH #1993; see [Database users and their passwords](./admin/backup-restore.md#database-users-and-their-passwords)).
+The domains' custom DNS records are added once their zones exist, through the
+same checks as a record added under DNS (GH #1993; see
+[Backup & restore](./admin/backup-restore.md#dns-records)).
 
 ### Tenant self-service restore-from-upload
 

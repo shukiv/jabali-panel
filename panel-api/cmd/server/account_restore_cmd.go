@@ -116,10 +116,39 @@ func applyPanelMetadata(ctx context.Context, cmd *cobra.Command, raw json.RawMes
 		}
 	}
 
+	// GH #1993: the domains' custom DNS records. This process has no
+	// reconciler: the panel's periodic pass creates the zones (within a
+	// minute) and RestoreBundleDNS waits for them.
+	if bundleHasDNSRecords(&meta) {
+		fmt.Fprintln(w, "  dns:            waiting for the domains' DNS zones, then adding the backup's records…")
+		applied, warnings := api.RestoreBundleDNS(ctx, api.RestoreDNSDeps{
+			Domains:  repository.NewDomainRepository(sharedDB),
+			Zones:    repository.NewDNSZoneRepository(sharedDB),
+			Records:  repository.NewDNSRecordRepository(sharedDB),
+			Settings: repository.NewServerSettingsRepository(sharedDB),
+		}, raw, meta.User.ID)
+		for _, a := range applied {
+			fmt.Fprintf(w, "  %s\n", a)
+		}
+		for _, e := range warnings {
+			fmt.Fprintf(w, "  WARNING: %s\n", e)
+		}
+	}
+
 	fmt.Fprintln(w, "Note: mailbox + forwarder ROWS are reconstructed above and their stored")
 	fmt.Fprintln(w, "Maildir MESSAGES are replayed into Stalwart via JMAP (see the mail →")
 	fmt.Fprintln(w, "line in the agent output for the count). DNSSEC keys are not in this")
 	fmt.Fprintln(w, "bundle — re-enable with `jabali pdns dnssec enable`.")
+}
+
+// bundleHasDNSRecords reports whether meta carries custom DNS records.
+func bundleHasDNSRecords(meta *internalbackup.AccountMetadata) bool {
+	for _, d := range meta.Domains {
+		if len(d.DNSRecords) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func boolMark(b bool) string {
