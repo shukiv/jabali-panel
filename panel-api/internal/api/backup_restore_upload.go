@@ -37,8 +37,11 @@ import (
 // staged file. The apply is step-up gated (destructive) and hands the reassembled
 // tar to the agent's untrusted-tar extractor (backup.restore_from_tar).
 
+// restoreUploadDir is the agent-readable handoff dir (a var so tests can point
+// it elsewhere).
+var restoreUploadDir = "/var/lib/jabali-uploads"
+
 const (
-	restoreUploadDir      = "/var/lib/jabali-uploads"
 	restoreUploadTTL      = 24 * time.Hour
 	maxInFlightRestoreTar = 2
 	// maxRestoreUploadBytes bounds a single reassembled archive so a stuck /

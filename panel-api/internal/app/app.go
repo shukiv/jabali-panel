@@ -153,6 +153,9 @@ type Deps struct {
 	// M30 backup-restore (ADR-0075). Nil disables the /admin/backups
 	// + /me/backups routes; UI surfaces an empty state.
 	BackupJobs repository.BackupJobRepository
+	// GH #1993: account backups uploaded from another server, kept on this
+	// one. Nil leaves the /admin/uploaded-backups routes out.
+	UploadedBackups repository.UploadedBackupRepository
 	// M30.1 backup destinations + schedules (ADR-0078). All three nil
 	// disables the /admin/backup-destinations + /admin/backup-schedules
 	// routes (UI tabs hidden) and the in-process scheduler / copy
@@ -1307,6 +1310,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				WebDomainAliases: deps.WebDomainAliases,
 				ServerSettings:   deps.ServerSettings,
 				MailAddresses:    deps.MailAddresses,
+				UploadedBackups:  deps.UploadedBackups,
 				Log:              deps.Log,
 				SSOKey:           deps.SSOKey,
 			})

@@ -100,6 +100,9 @@ type BackupHandlerConfig struct {
 	// registry before the mailbox is stored. A restore refuses its
 	// mailboxes when it is nil.
 	MailAddresses MailAddressReleaser
+	// UploadedBackups keeps account backups uploaded from another server
+	// (GH #1993). Optional: nil leaves the /admin/uploaded-backups routes out.
+	UploadedBackups repository.UploadedBackupRepository
 
 	Log             *slog.Logger
 	StrictRateLimit gin.HandlerFunc
@@ -151,6 +154,10 @@ func RegisterBackupRoutes(rg *gin.RouterGroup, cfg BackupHandlerConfig) {
 	admin.POST("/backups/restore-upload/inspect", h.restoreUploadInspect)
 	admin.POST("/backups/restore-upload/apply", h.restoreUploadApply)
 	admin.GET("/backups/restore-upload/status", h.restoreUploadStatus)
+	// GH #1993: keep an uploaded backup on this server, listed in Backups.
+	if cfg.UploadedBackups != nil {
+		h.registerUploadedBackupRoutes(admin)
+	}
 	admin.GET("/backup-runs", h.listRuns)
 	admin.GET("/backup-runs/:run_id/jobs", h.listRunJobs)
 	admin.DELETE("/backup-runs/:run_id/jobs", h.deleteRunJobs)

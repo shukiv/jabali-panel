@@ -2783,6 +2783,59 @@ paths:
         "202": { description: Accepted }
         "409": { description: "agent_update_required: the server agent predates confined restores of uploaded backups (GH #1993)" }
 
+  /admin/uploaded-backups:
+    get:
+      tags: [Backups]
+      summary: List the account backups uploaded from another server and kept here (GH #1993)
+      security: [ { KratosSession: [] } ]
+      parameters:
+        - { in: query, name: page, schema: { type: integer } }
+        - { in: query, name: page_size, schema: { type: integer } }
+        - { in: query, name: q, schema: { type: string } }
+      responses: { "200": { description: "List envelope {data, total, page, page_size}" } }
+    post:
+      tags: [Backups]
+      summary: Keep the caller's finished restore-upload as an uploaded backup (GH #1993)
+      description: >-
+        Body {upload_id, retention, file_name}. retention is keep (default), keep_7_days or
+        delete_after_restore (removed after a successful restore; a failed restore keeps it).
+        The agent checks the file is a Jabali account backup before it is kept.
+      security: [ { KratosSession: [] } ]
+      responses:
+        "201": { description: Created }
+        "404": { description: "upload_not_found: no finished upload with this upload_id for the caller" }
+        "422": { description: "invalid_retention, or not_an_account_backup with the reason" }
+
+  /admin/uploaded-backups/{id}:
+    get:
+      tags: [Backups]
+      summary: An uploaded backup, its last restore, and whether its account exists here
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK }, "404": { description: Not found } }
+    delete:
+      tags: [Backups]
+      summary: Delete an uploaded backup and its archive
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses:
+        "200": { description: OK }
+        "404": { description: Not found }
+        "409": { description: "restore_in_progress: a restore is using this backup" }
+
+  /admin/uploaded-backups/{id}/restore:
+    post:
+      tags: [Backups]
+      summary: Restore an uploaded backup into an account (detached; poll GET /admin/uploaded-backups/{id})
+      description: Body {target_username, components, create_user, package_id}, as restore-upload/apply.
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses:
+        "202": { description: Accepted }
+        "404": { description: "not_found, or target_user_not_found" }
+        "409": { description: "restore_in_progress, or agent_update_required" }
+        "410": { description: "archive_missing: the archive file is gone; delete the entry" }
+
   /admin/system/full-backup/{run_id}/package:
     post:
       tags: [Backups]

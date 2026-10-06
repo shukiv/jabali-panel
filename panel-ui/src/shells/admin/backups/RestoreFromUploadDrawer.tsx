@@ -3,7 +3,11 @@
 // inspect it, pick components + a target user, and restore. The apply is
 // admin-only. The restore runs in the background (202 + status poll), so the
 // drawer shows a clear "running in the background" state until it seals.
-import { useState } from "react";
+//
+// GH #1993: in admin mode the upload is kept on the server with a retention
+// choice and listed under Backups, so a failed restore is retried without
+// uploading again. Opened with `uploaded`, the drawer restores a kept upload.
+import { useEffect, useState } from "react";
 import {
   Alert,
   Button,
@@ -11,6 +15,7 @@ import {
   Drawer,
   Input,
   Progress,
+  Radio,
   Select,
   Space,
   Typography,
@@ -20,10 +25,15 @@ import { InboxOutlined } from "@icons";
 import { feedback } from "../../../lib/feedback";
 import {
   applyUploadedBackupRestore,
+  getUploadedBackup,
   inspectUploadedBackup,
+  registerUploadedBackup,
+  restoreKeptUploadedBackup,
   uploadBackupArchiveChunked,
+  type UploadedBackup,
   type UploadedBackupInfo,
   type UploadedBackupRestoreResult,
+  type UploadedBackupRetention,
 } from "../../../apiClient";
 import { useListQuery } from "../../../hooks/useQueries";
 import { extractApiError } from "../../../apiErrors";
@@ -31,7 +41,7 @@ import { extractApiError } from "../../../apiErrors";
 const COMPONENT_LABELS: Record<string, string> = {
   home: "Home directory (website files)",
   db: "Databases",
-  mail: "Mail (staged for manual apply)",
+  mail: "Mail (mailboxes and messages)",
   dns: "DNS records",
   docker: "Docker apps (restored stopped)",
 };
@@ -43,14 +53,29 @@ interface Props {
   // caller (no username field), the API is /me/backups, and only the audited
   // components (files/db/mail) are offered.
   ownerMode?: boolean;
+  // GH #1993 (admin): restore this kept upload instead of uploading a file.
+  uploaded?: UploadedBackup | null;
+  // GH #1993 (admin): called when a kept upload was added or restored, so the
+  // Backups list refreshes.
+  onKeptChange?: () => void;
 }
+
+const RETENTION_OPTIONS: { value: UploadedBackupRetention; label: string }[] = [
+  { value: "keep", label: "Keep it on this server until I delete it" },
+  { value: "keep_7_days", label: "Keep it for 7 days" },
+  { value: "delete_after_restore", label: "Delete it once a restore succeeds" },
+];
 
 type Phase = "pick" | "uploading" | "inspecting" | "ready" | "applying" | "done";
 
 const OWNER_COMPONENTS = ["home", "db", "mail"];
 
-export function RestoreFromUploadDrawer({ open, onClose, ownerMode }: Props) {
+export function RestoreFromUploadDrawer({ open, onClose, ownerMode, uploaded, onKeptChange }: Props) {
   const base = ownerMode ? "/me/backups" : "/admin/backups";
+  // GH #1993: admin uploads are kept on the server; the restore runs from there.
+  const keepUploads = !ownerMode;
+  const [retention, setRetention] = useState<UploadedBackupRetention>("keep");
+  const [kept, setKept] = useState<UploadedBackup | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [phase, setPhase] = useState<Phase>("pick");
   const [pct, setPct] = useState(0);
@@ -75,7 +100,44 @@ export function RestoreFromUploadDrawer({ open, onClose, ownerMode }: Props) {
     setResult(null);
     setCreateUser(false);
     setPackageId(null);
+    setRetention("keep");
+    setKept(null);
   };
+
+  // showKept fills the ready phase from a kept upload.
+  const showKept = (b: UploadedBackup) => {
+    setKept(b);
+    setInfo({
+      user: { id: "", username: b.account_username, email: b.account_email || undefined },
+      components: b.components,
+      target_exists: b.target_exists,
+      create_supported: b.create_supported,
+    });
+    setSelected(b.components);
+    setTargetUser(b.account_username);
+    setCreateUser(b.target_exists === false && b.create_supported);
+    setPhase("ready");
+  };
+
+  const uploadedId = uploaded?.id;
+  useEffect(() => {
+    if (!open || !uploadedId) return;
+    let cancelled = false;
+    setPhase("inspecting");
+    getUploadedBackup(uploadedId)
+      .then((b) => {
+        if (!cancelled) showKept(b);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        feedback.message.error(extractApiError(err, "Could not load the uploaded backup"));
+        onClose();
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, uploadedId]);
 
   const close = () => {
     reset();
@@ -94,6 +156,13 @@ export function RestoreFromUploadDrawer({ open, onClose, ownerMode }: Props) {
       );
       setUploadId(id);
       setPhase("inspecting");
+      if (keepUploads) {
+        // The server checks the archive while keeping it.
+        const b = await registerUploadedBackup(id, retention, file.name);
+        onKeptChange?.();
+        showKept(b);
+        return;
+      }
       const meta = await inspectUploadedBackup(id, base);
       setInfo(meta);
       // Default selection = everything the archive holds, restricted to the
@@ -113,34 +182,38 @@ export function RestoreFromUploadDrawer({ open, onClose, ownerMode }: Props) {
   };
 
   const apply = async () => {
-    if (!uploadId || !targetUser || selected.length === 0) return;
+    if ((!uploadId && !kept) || !targetUser || selected.length === 0) return;
     setPhase("applying");
     // The restore is accepted immediately and runs in the background; the call
     // below polls its status until it seals. Tell the admin it's running so an
     // empty "applying" state doesn't look like nothing happened (GH #1408).
     feedback.message.info("Restore started — running in the background");
+    const opts = createUser ? { createUser: true, packageId } : undefined;
     try {
-      const r = await applyUploadedBackupRestore(
-        uploadId,
-        targetUser,
-        selected,
-        base,
-        createUser ? { createUser: true, packageId } : undefined,
-      );
+      const r = kept
+        ? await restoreKeptUploadedBackup(kept.id, targetUser, selected, opts)
+        : await applyUploadedBackupRestore(uploadId as string, targetUser, selected, base, opts);
+      if (kept) onKeptChange?.();
       setResult(r);
       setPhase("done");
       const n = r.applied?.length ?? 0;
       if (n > 0) feedback.message.success(`Restored ${n} item(s) into ${targetUser}`);
       else feedback.message.warning("Nothing was applied — see details");
     } catch (err) {
-      feedback.message.error(extractApiError(err, "Restore failed"));
+      const reason = extractApiError(err, "Restore failed");
+      if (kept) {
+        onKeptChange?.();
+        feedback.message.error(`${reason} — the uploaded backup is kept; restore it again from Backups`);
+      } else {
+        feedback.message.error(reason);
+      }
       setPhase("ready");
     }
   };
 
   return (
     <Drawer
-      title="Restore from uploaded backup"
+      title={uploaded ? "Restore uploaded backup" : "Restore from uploaded backup"}
       width={520}
       open={open}
       onClose={close}
@@ -148,7 +221,13 @@ export function RestoreFromUploadDrawer({ open, onClose, ownerMode }: Props) {
     >
       <Space direction="vertical" size="middle" style={{ width: "100%" }}>
         <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
-          {ownerMode ? (
+          {uploaded ? (
+            <>
+              Restore this uploaded backup into an account. It stays on this
+              server afterwards, unless it was uploaded to be deleted once a
+              restore succeeds.
+            </>
+          ) : ownerMode ? (
             <>
               Upload a backup archive you downloaded earlier (the{" "}
               <code>.tar</code>) and restore it into <strong>your own account</strong>{" "}
@@ -160,7 +239,8 @@ export function RestoreFromUploadDrawer({ open, onClose, ownerMode }: Props) {
               Upload a backup archive you downloaded earlier (the per-account{" "}
               <code>.tar</code>) and restore it — useful for disaster recovery or
               moving a user to a new server. If the user doesn&apos;t exist yet,
-              the panel can create it from the backup.
+              the panel can create it from the backup. The upload is listed under
+              Backups, so a failed restore can be retried without uploading again.
             </>
           )}
         </Typography.Paragraph>
@@ -169,7 +249,7 @@ export function RestoreFromUploadDrawer({ open, onClose, ownerMode }: Props) {
             direct-IP panel access/login is currently broken, so the advice was
             misleading. Restore it once direct-IP access works again. */}
 
-        {(phase === "pick" || phase === "uploading") && (
+        {!uploaded && (phase === "pick" || phase === "uploading") && (
           <>
             <Upload.Dragger
               multiple={false}
@@ -187,6 +267,18 @@ export function RestoreFromUploadDrawer({ open, onClose, ownerMode }: Props) {
               </p>
               <p className="ant-upload-text">Click or drag the backup .tar here</p>
             </Upload.Dragger>
+            {keepUploads && (
+              <div>
+                <Typography.Text strong>After the restore</Typography.Text>
+                <Radio.Group
+                  value={retention}
+                  onChange={(e) => setRetention(e.target.value as UploadedBackupRetention)}
+                  disabled={phase === "uploading"}
+                  style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 4 }}
+                  options={RETENTION_OPTIONS}
+                />
+              </div>
+            )}
             {phase === "uploading" && <Progress percent={pct} status="active" />}
             <Button
               type="primary"
@@ -320,6 +412,9 @@ export function RestoreFromUploadDrawer({ open, onClose, ownerMode }: Props) {
             message="Restore result"
             description={
               <Space direction="vertical" size={2}>
+                {kept && kept.retention !== "delete_after_restore" && (
+                  <span>The uploaded backup stays listed under Backups.</span>
+                )}
                 {(result.applied ?? []).map((a) => (
                   <span key={a}>✓ {a}</span>
                 ))}
@@ -333,9 +428,11 @@ export function RestoreFromUploadDrawer({ open, onClose, ownerMode }: Props) {
                     {m}
                   </Typography.Text>
                 ))}
-                <Button size="small" onClick={reset} style={{ marginTop: 8 }}>
-                  Restore another
-                </Button>
+                {!uploaded && (
+                  <Button size="small" onClick={reset} style={{ marginTop: 8 }}>
+                    Restore another
+                  </Button>
+                )}
               </Space>
             }
           />

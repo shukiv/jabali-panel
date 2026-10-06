@@ -98,6 +98,7 @@ func fullDeps() Deps {
 		UpdateHistory: repository.NewUpdateHistoryRepository(db),
 		UpdateAutoupdate: repository.NewUpdateAutoupdateConfigRepository(db),
 		BackupJobs: repository.NewBackupJobRepository(db),
+		UploadedBackups: repository.NewUploadedBackupRepository(db),
 		BackupDestinations: repository.NewBackupDestinationRepository(db),
 		BackupSchedules: repository.NewBackupScheduleRepository(db),
 		MalwareQuarantine: repository.NewMalwareQuarantineRepository(db),

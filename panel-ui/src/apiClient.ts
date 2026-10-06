@@ -609,6 +609,86 @@ interface RestoreUploadStatus {
   error?: string;
 }
 
+// === GH #1993: uploaded account backups kept on this server ===
+
+export type UploadedBackupRetention = "keep" | "keep_7_days" | "delete_after_restore";
+
+export interface UploadedBackup {
+  id: string;
+  file_name: string;
+  size_bytes: number;
+  account_username: string;
+  account_email: string;
+  components: string[];
+  retention: UploadedBackupRetention;
+  expires_at: string | null;
+  uploaded_by: string;
+  // "" (never restored), "restoring", "done" or "failed".
+  restore_status: string;
+  restore_started_at: string | null;
+  restored_at: string | null;
+  restore_target: string;
+  restore_result?: { applied?: string[]; warnings?: string[]; error?: string };
+  file_present: boolean;
+  // Detail and register only: whether account_username exists here.
+  target_exists?: boolean;
+  create_supported: boolean;
+  created_at: string;
+}
+
+// registerUploadedBackup keeps a finished upload on the server with a
+// retention choice, and returns it with what the archive holds.
+export async function registerUploadedBackup(
+  uploadId: string,
+  retention: UploadedBackupRetention,
+  fileName: string,
+): Promise<UploadedBackup> {
+  const { data } = await apiClient.post<{ data: UploadedBackup }>("/admin/uploaded-backups", {
+    upload_id: uploadId,
+    retention,
+    file_name: fileName,
+  });
+  return data.data;
+}
+
+export async function getUploadedBackup(id: string): Promise<UploadedBackup> {
+  const { data } = await apiClient.get<{ data: UploadedBackup }>(`/admin/uploaded-backups/${id}`);
+  return data.data;
+}
+
+// restoreKeptUploadedBackup starts a restore of a kept upload (202) and polls
+// the backup until the restore finishes. The archive stays on the server
+// unless it was uploaded with delete_after_restore and the restore succeeded.
+export async function restoreKeptUploadedBackup(
+  id: string,
+  targetUsername: string,
+  components: string[],
+  opts?: { createUser?: boolean; packageId?: string | null },
+): Promise<UploadedBackupRestoreResult> {
+  await apiClient.post(`/admin/uploaded-backups/${id}/restore`, {
+    target_username: targetUsername,
+    components,
+    ...(opts?.createUser ? { create_user: true, package_id: opts.packageId ?? null } : {}),
+  });
+  const deadline = Date.now() + 65 * 60 * 1000; // matches the server's 60-min cap
+  for (;;) {
+    await new Promise((r) => setTimeout(r, 2500));
+    let b: UploadedBackup | null = null;
+    try {
+      b = await getUploadedBackup(id);
+    } catch {
+      // transient poll error — keep trying until the deadline
+    }
+    if (b?.restore_status === "done") {
+      return { status: "ok", applied: b.restore_result?.applied, warnings: b.restore_result?.warnings };
+    }
+    if (b?.restore_status === "failed") {
+      throw new Error(b.restore_result?.error || "restore_failed");
+    }
+    if (Date.now() > deadline) throw new Error("restore_timeout");
+  }
+}
+
 // === GH #1408 phase 2: restore from an uploaded full-server container ===
 
 export interface FullContainerUserStatus {

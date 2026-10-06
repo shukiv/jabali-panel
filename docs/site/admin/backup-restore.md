@@ -53,6 +53,30 @@ to a host that shares no restic destination with the source:
   users** and even restoring an account into a user that doesn't yet exist
   (create-from-manifest).
 
+### Uploaded backups stay on the server
+
+An account backup an admin uploads is kept on this server and listed in the
+**Backups** tab under **Uploaded backups** (GH #1993). A failed restore can be
+retried from there without uploading the file again. Before the upload, choose
+what happens to it after the restore:
+
+- **Keep it on this server until I delete it** (the default).
+- **Keep it for 7 days** — removed automatically after that.
+- **Delete it once a restore succeeds** — a failed restore keeps it for a
+  retry. The entry stays listed for a day so its restore report can be read.
+
+Each entry shows the account, the file and its size, when it was uploaded, how
+long it is kept, and its last restore. **Restore** restores it again; when its
+account is not on this server, the account can be created from the backup.
+**Delete** removes the file (accounts already restored from it are not
+changed). One backup can't be
+restored twice at once, or deleted while a restore of it runs.
+
+The files live in `/var/lib/jabali-uploads/kept/` and count against the
+server's disk. The 12-hour cleanup of `/var/lib/jabali-uploads` skips that
+directory. A tenant's own restore from upload (in their account) keeps
+nothing: the file is deleted once the restore ends.
+
 ### What an uploaded archive can't restore
 
 An uploaded archive is a file anyone could have written, so the panel restores
