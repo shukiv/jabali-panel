@@ -184,6 +184,8 @@ func restoreAccounts(ctx context.Context, c *backup.Client, jobID, stagingRoot s
 
 		homeSrc := filepath.Join(userStaging, "home", "home", username)
 		if _, err := os.Stat(homeSrc); err == nil {
+			// The home itself keeps its own owner and mode (see homeOwnership).
+			homeOwner := saveHomeOwnership("/home/" + username)
 			if err := rsyncOnto(ctx, homeSrc+"/", "/home/"+username+"/"); err != nil {
 				warnings = append(warnings, fmt.Sprintf("user=%s home rsync: %v", username, err))
 			} else {
@@ -200,6 +202,9 @@ func restoreAccounts(ctx context.Context, c *backup.Client, jobID, stagingRoot s
 					}
 				}
 				applied = append(applied, fmt.Sprintf("home: %s -> /home/%s", username, username))
+			}
+			if perr := homeOwner.put("/home/" + username); perr != nil {
+				warnings = append(warnings, fmt.Sprintf("user=%s home owner and mode: %v", username, perr))
 			}
 		}
 
