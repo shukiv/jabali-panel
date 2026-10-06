@@ -7200,21 +7200,33 @@ EOF
   # Owned by SERVICE_USER 0700: only the panel writes, the agent is root.
   install -d -m 0700 -o "$SERVICE_USER" -g "$SERVICE_USER" /var/lib/jabali/restore
 
-  # GH #425: reap abandoned upload staging files (chunked uploads with no final
-  # chunk) so a tenant can't slowly fill the service partition shared with
-  # MariaDB + panel state. systemd-tmpfiles-clean.timer runs daily; 'e' removes
-  # files older than the age from the (existing) dir. Active uploads are written
-  # on every chunk so their mtime stays young until the upload is abandoned.
-  local uploads_reaper=/etc/tmpfiles.d/jabali-uploads-reaper.conf
-  local uploads_reaper_rule='e /var/lib/jabali-uploads - - - 12h'
-  if [[ ! -f "$uploads_reaper" ]] || ! cmp -s <(printf '%s\n' "$uploads_reaper_rule") "$uploads_reaper"; then
-    printf '%s\n' "$uploads_reaper_rule" > "$uploads_reaper"
-    systemd-tmpfiles --clean "$uploads_reaper" 2>/dev/null || true
-  fi
+  install_uploads_reaper
 
   systemctl daemon-reload
   systemctl enable --quiet "$AGENT_SERVICE_NAME.service"
   systemctl enable --quiet "$SERVICE_NAME.service"
+}
+
+# install_uploads_reaper — GH #425: reap abandoned upload staging files
+# (chunked uploads with no final chunk) so a tenant can't slowly fill the
+# service partition shared with MariaDB + panel state.
+# systemd-tmpfiles-clean.timer runs daily; 'e' removes files older than the age
+# from the (existing) dir. Active uploads are written on every chunk so their
+# mtime stays young until the upload is abandoned.
+# GH #1993: account backups an admin uploaded from another server are kept in
+# /var/lib/jabali-uploads/kept until the admin deletes them (or their retention
+# ends); 'x' excludes that dir and everything in it from the age cleanup.
+# Runs on install (write_systemd_unit) and every `jabali update`
+# (provision_new_software), so existing boxes get the exclusion in the same
+# update that ships the panel which keeps the files.
+install_uploads_reaper() {
+  local uploads_reaper=/etc/tmpfiles.d/jabali-uploads-reaper.conf
+  local uploads_reaper_rules
+  uploads_reaper_rules=$'e /var/lib/jabali-uploads - - - 12h\nx /var/lib/jabali-uploads/kept'
+  if [[ ! -f "$uploads_reaper" ]] || ! cmp -s <(printf '%s\n' "$uploads_reaper_rules") "$uploads_reaper"; then
+    printf '%s\n' "$uploads_reaper_rules" > "$uploads_reaper"
+    systemd-tmpfiles --clean "$uploads_reaper" 2>/dev/null || true
+  fi
 }
 
 # ---------- step 7: start + smoke test --------------------------------------
@@ -16246,6 +16258,9 @@ provision_new_software() {
   # not only at fresh install, so unit fixes (e.g. its ReadWritePaths)
   # reach existing boxes. Idempotent: install + daemon-reload + enable.
   install_migration_secrets_reaper
+  # GH #1993: the uploads reaper must skip kept uploaded backups before the
+  # panel that keeps them starts.
+  install_uploads_reaper
   # Record which LE lineage is the panel mail cert so its unattended
   # renewals keep deploying on boxes renamed since (JAB-389/390).
   declare -f seed_panel_mail_lineage_marker >/dev/null && seed_panel_mail_lineage_marker

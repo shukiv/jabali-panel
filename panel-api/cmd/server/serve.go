@@ -47,6 +47,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/sso"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ssokey"
 	stalwartadmin "git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/stalwartadmin"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/uploadedbackups"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/webmailsso"
 
 	// M35 migration importer registry — blank imports run each
@@ -617,6 +618,8 @@ func runServe(cmd *cobra.Command, args []string) error {
 		rec.WithDomainDirectoryPrivacy(deps.DomainDirectoryPrivacy)
 		// M30 (ADR-0075): backup-restore workflow rows.
 		deps.BackupJobs = repository.NewBackupJobRepository(sharedDB)
+		// GH #1993: account backups uploaded from another server.
+		deps.UploadedBackups = repository.NewUploadedBackupRepository(sharedDB)
 		// M30.2 (ADR-0080): destinations + schedules. backup_copy_jobs
 		// removed — per-destination model writes directly to remote.
 		deps.BackupDestinations = repository.NewBackupDestinationRepository(sharedDB)
@@ -1044,6 +1047,12 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// mailbox.usage probe + UpdateUsage existed but were never wired).
 	if sharedAgent != nil && deps.Mailboxes != nil {
 		go reconciler.StartMailboxUsageTicker(ctx, sharedAgent, deps.Mailboxes, log)
+	}
+
+	// GH #1993: remove kept uploaded backups whose retention ended, and
+	// archive files no row owns.
+	if deps.UploadedBackups != nil {
+		go uploadedbackups.StartSweeper(ctx, deps.UploadedBackups, log)
 	}
 
 	// GH #1242: tenant DB size sampler -> databases.size_bytes, so the admin
