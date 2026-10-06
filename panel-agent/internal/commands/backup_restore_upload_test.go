@@ -287,3 +287,78 @@ func TestBackupRestoreFromTar_RequiresAMode(t *testing.T) {
 		t.Fatalf("got %v, want the missing mode refused", err)
 	}
 }
+
+// The panel registers database and docker app rows from an uploaded file only
+// for what the restore created or wrote for the account. A database or app
+// folder it refused (one that exists here and isn't the account's) must not
+// be reported, or the panel would hand the account that data as a row.
+func TestUploadRestore_ReportsWhatItRestoredForTheAccount(t *testing.T) {
+	me := currentUsername(t)
+	uploadExecRecorder(t, me+"_orphan")
+	root := t.TempDir()
+	live := t.TempDir()
+	prev := restoreDockerRoot
+	restoreDockerRoot = live
+	t.Cleanup(func() { restoreDockerRoot = prev })
+	mustWrite(t, filepath.Join(live, "taken", "compose.yml"), "services: {}")
+	var stages []backup.ManifestStage
+	for _, n := range []string{me + "_new", me + "_owned", me + "_orphan", "bob_shop"} {
+		stages = append(stages, backup.ManifestStage{Name: backup.StageDB, Items: []string{n}})
+	}
+	for _, s := range []string{"mine", "fresh", "taken"} {
+		stages = append(stages, backup.ManifestStage{Name: backup.StageDocker, Items: []string{s}})
+	}
+	results := stageUpload(t, root, stages)
+	claims := &restoreClaims{}
+	enf := restoreEnforcement{Mode: restoreModeUpload, DBPrefix: me + "_",
+		AllowedDBNames: []string{me + "_owned"}, ForeignDBNames: []string{"bob_shop"},
+		OwnedDockerSlugs: []string{"mine"}, ForeignDockerSlugs: []string{}, Claims: claims}
+
+	_, warnings := applyAccountRestore(context.Background(), root, me, backup.ManifestUser{Username: me}, stages, results, enf)
+
+	if strings.Join(claims.Databases, ",") != me+"_new,"+me+"_owned" {
+		t.Errorf("restored databases %v (warnings %v), want [%s_new %s_owned]", claims.Databases, warnings, me, me)
+	}
+	if strings.Join(claims.DockerSlugs, ",") != "mine,fresh" {
+		t.Errorf("restored docker slugs %v (warnings %v), want [mine fresh]", claims.DockerSlugs, warnings)
+	}
+}
+
+// The panel restores mail in a second pass, after it rebuilt the account's
+// domains: the first pass skips the mail stage.
+func TestStageSelected(t *testing.T) {
+	skip := componentFilter([]string{"mail"})
+	for _, c := range []struct {
+		want  []string
+		name  string
+		apply bool
+	}{
+		{nil, "home", true},
+		{nil, "mail", false},
+		{[]string{"home", "mail"}, "mail", false},
+		{[]string{"home", "mail"}, "db", false},
+		{[]string{"home", "mail"}, "home", true},
+	} {
+		if got := stageSelected(componentFilter(c.want), skip, c.name); got != c.apply {
+			t.Errorf("components %v skip [mail]: stage %s applied=%v, want %v", c.want, c.name, got, c.apply)
+		}
+	}
+	if !stageSelected(nil, nil, "mail") {
+		t.Error("no filter and no skip must apply every stage")
+	}
+}
+
+// An upload restore always removes its staging: it is a full extracted copy of
+// the uploaded file, and the panel's mail pass applies nothing for an archive
+// without mail.
+func TestRemoveRestoreStaging(t *testing.T) {
+	if !removeRestoreStaging(nil, restoreEnforcement{Mode: restoreModeUpload}) {
+		t.Error("an upload restore that applied nothing must still remove its staging")
+	}
+	if removeRestoreStaging(nil, restoreEnforcement{Mode: "tenant"}) {
+		t.Error("a tenant restore that applied nothing keeps its staging, as before")
+	}
+	if !removeRestoreStaging([]string{"home → /home/x"}, restoreEnforcement{Mode: "tenant"}) {
+		t.Error("a restore that applied something removes its staging")
+	}
+}

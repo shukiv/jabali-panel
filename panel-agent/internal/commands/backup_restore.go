@@ -63,6 +63,31 @@ type restoreEnforcement struct {
 	ForeignDockerSlugs     []string // docker apps another account (or the server) owns here
 	ServerLevelDockerSlugs []string // apps the backup's metadata marks server-level
 	DockerMetadataMissing  bool     // the metadata is unreadable: which apps are server-level is unknown
+	// Claims collects what the restore created or wrote for the account; nil
+	// records nothing.
+	Claims *restoreClaims
+}
+
+// restoreClaims names the databases and docker app data an upload-mode
+// restore created or wrote for the account (GH #1993). The panel registers
+// database and docker app rows from the file only for these, so a row never
+// hands the account data the restore refused, such as a database that exists
+// here without a panel row.
+type restoreClaims struct {
+	Databases   []string
+	DockerSlugs []string
+}
+
+func (e restoreEnforcement) claimDatabase(db string) {
+	if e.Claims != nil {
+		e.Claims.Databases = append(e.Claims.Databases, db)
+	}
+}
+
+func (e restoreEnforcement) claimDockerSlug(slug string) {
+	if e.Claims != nil {
+		e.Claims.DockerSlugs = append(e.Claims.DockerSlugs, slug)
+	}
 }
 
 // restoreDockerRoot is where a restored docker app's data lands (a var so
@@ -571,6 +596,7 @@ func applyAccountRestore(
 				warnings = append(warnings, fmt.Sprintf("docker %s: mkdir %s: %v", slug, dst, err))
 				continue
 			}
+			enf.claimDockerSlug(slug)
 			// -aH, not -aHAX: same reasoning as the home stage — never apply
 			// ACLs/xattrs/capabilities carried by an untrusted snapshot.
 			if err := execCommandContext(ctx, "rsync", "-aH", "--delete", src, dst+"/").Run(); err != nil {
@@ -640,6 +666,7 @@ func applyAccountRestore(
 						continue
 					}
 				}
+				enf.claimDatabase(db)
 				// pg_restore --clean --if-exists drops then re-creates
 				// every object in the dump. Idempotent on re-runs.
 				//
@@ -721,6 +748,7 @@ func applyAccountRestore(
 					fmt.Sprintf("db %s: create database: %v: %s", db, cErr, strings.TrimSpace(string(cOut))))
 				continue
 			}
+			enf.claimDatabase(db)
 			// JAB-239: the dump is tenant-controlled content (it came
 			// from the tenant's own snapshot), so it loads through the
 			// db-scoped shadow account as an unprivileged OS user —

@@ -482,11 +482,11 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 		// the account's owner can drop, dump, restore or re-password through
 		// the panel. Never this server's own; from an uploaded file, only
 		// names in the account's own namespace that no other account has.
-		var otherDBs, otherDBUsers map[string]bool
+		var otherDBs, otherDBUsers, accountDBs map[string]bool
 		dbRows, dbUserRows := m.Databases, m.DatabaseUsers
 		if d.Untrusted {
 			var listErr error
-			if otherDBs, otherDBUsers, listErr = otherAccountsDatabaseNames(ctx, d, m.User.ID); listErr != nil {
+			if otherDBs, otherDBUsers, accountDBs, listErr = accountDatabaseNames(ctx, d, m.User.ID); listErr != nil {
 				r.Errors = append(r.Errors, fmt.Sprintf("databases: not restored: %v", listErr))
 				dbRows, dbUserRows = nil, nil
 			}
@@ -495,6 +495,10 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 		for _, db := range dbRows {
 			if why := restoredDatabaseRefusal(db.Name, account, d.Untrusted, otherDBs); why != "" {
 				r.Errors = append(r.Errors, fmt.Sprintf("database %s (%s): not restored: %s", db.ID, db.Name, why))
+				continue
+			}
+			if d.Untrusted && !d.RestoredDatabases[db.Name] && !accountDBs[db.Name] {
+				r.Errors = append(r.Errors, fmt.Sprintf("database %s (%s): not restored: the restore didn't load its data into a database of this account", db.ID, db.Name))
 				continue
 			}
 			dbNameToID[db.Name] = db.ID
@@ -670,8 +674,13 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 				r.Errors = append(r.Errors, fmt.Sprintf("docker_app %s: not restored: %q is not an app name", a.ID, bad))
 				continue
 			}
-			if slug, taken := dockerSlugTaken(existing, a, owner); taken {
+			slug, taken := dockerSlugTaken(existing, a, owner)
+			if taken {
 				r.Errors = append(r.Errors, fmt.Sprintf("docker_app %s: not restored: another account's app already uses %q", a.ID, slug))
+				continue
+			}
+			if d.Untrusted && !d.RestoredDockerSlugs[slug] && !accountHasApp(existing, slug, m.User.ID) {
+				r.Errors = append(r.Errors, fmt.Sprintf("docker_app %s: not restored: the restore didn't restore its data into an app folder of this account (%q)", a.ID, slug))
 				continue
 			}
 			row := &models.DockerApp{
@@ -1016,23 +1025,26 @@ func restoredDBUserRefusal(name, account string, untrusted bool, others map[stri
 	return ""
 }
 
-// otherAccountsDatabaseNames returns the database and database-user names
-// rows of accounts other than userID hold.
-func otherAccountsDatabaseNames(ctx context.Context, d Deps, userID string) (dbs, users map[string]bool, err error) {
-	dbs, users = map[string]bool{}, map[string]bool{}
+// accountDatabaseNames returns the database and database-user names rows of
+// accounts other than userID hold, and the database names userID's own rows
+// hold.
+func accountDatabaseNames(ctx context.Context, d Deps, userID string) (dbs, users, own map[string]bool, err error) {
+	dbs, users, own = map[string]bool{}, map[string]bool{}, map[string]bool{}
 	rows, _, err := d.Databases.List(ctx, repository.ListOptions{})
 	if err != nil {
-		return nil, nil, fmt.Errorf("list this server's databases: %w", err)
+		return nil, nil, nil, fmt.Errorf("list this server's databases: %w", err)
 	}
 	for _, r := range rows {
 		if r.UserID != userID {
 			dbs[r.Name] = true
+		} else {
+			own[r.Name] = true
 		}
 	}
 	if d.DatabaseUsers != nil {
 		urows, _, err := d.DatabaseUsers.List(ctx, repository.ListOptions{})
 		if err != nil {
-			return nil, nil, fmt.Errorf("list this server's database users: %w", err)
+			return nil, nil, nil, fmt.Errorf("list this server's database users: %w", err)
 		}
 		for _, r := range urows {
 			if r.UserID != userID {
@@ -1040,7 +1052,7 @@ func otherAccountsDatabaseNames(ctx context.Context, d Deps, userID string) (dbs
 			}
 		}
 	}
-	return dbs, users, nil
+	return dbs, users, own, nil
 }
 
 // dockerSlugRe is the agent's rule for a docker app slug (validateSlug): the
@@ -1057,6 +1069,17 @@ func malformedDockerSlug(a internalbackup.MetadataDockerApp) string {
 		return a.InstanceSlug
 	}
 	return ""
+}
+
+// accountHasApp reports whether the account userID already has an app whose
+// data folder is slug.
+func accountHasApp(existing []*models.DockerApp, slug, userID string) bool {
+	for _, e := range existing {
+		if e != nil && e.UserID != nil && *e.UserID == userID && e.EffectiveSlug() == slug {
+			return true
+		}
+	}
+	return false
 }
 
 // dockerSlugTaken reports whether an app on this server other than a, with an

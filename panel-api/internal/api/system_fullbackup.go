@@ -17,7 +17,6 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/backupwrapperhelpers"
-	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 )
 
@@ -423,47 +422,26 @@ func (h *backupHandler) runFullRestore(containerPath, marker string, req fullRes
 			}
 			target, userCreated = nt, true
 		}
-		params := map[string]any{
-			"job_id":          ids.NewULID(),
-			"tar_path":        u.InnerPath,
-			"target_username": u.Username,
-		}
-		if perr := h.cfg.uploadRestoreParams(ctx, target.ID, params); perr != nil {
-			packed = append(packed, u.Username+": not restored: "+perr.Error())
-			continue
-		}
-		rraw, rerr := h.cfg.Agent.Call(ctx, "backup.restore_from_tar", params)
+		res, rerr := h.restoreUploadedAccount(ctx, u.InnerPath, u.Username, target.ID, nil)
 		if rerr != nil {
-			line := u.Username + ": " + restoreFailureDetail(rerr)
+			line := u.Username + ": " + rerr.Error()
 			if userCreated {
 				line += " (account created; a retry restores into it)"
 			}
 			packed = append(packed, line)
 			continue
 		}
-		var rr struct {
-			Applied                   []string        `json:"applied"`
-			Warnings                  []string        `json:"warnings"`
-			Metadata                  json.RawMessage `json:"metadata"`
-			UploadConfinementEnforced bool            `json:"upload_confinement_enforced"`
-		}
-		_ = json.Unmarshal(rraw, &rr)
-		if !rr.UploadConfinementEnforced {
-			packed = append(packed, u.Username+": the agent did not confirm it confined the restore to this account; its metadata was not applied — "+agentUpdateRequiredDetail)
-			continue
-		}
-		metaErrs := h.applyRestoreMetadataForUser(ctx, rr.Metadata, target.ID)
-		line := u.Username + ": restored " + strconv.Itoa(len(rr.Applied)) + " item(s)"
+		line := u.Username + ": restored " + strconv.Itoa(len(res.Applied)) + " item(s)"
 		if userCreated {
 			line += " (account created — send a recovery link: jabali user password " + u.Username + " --link)"
 		}
 		// GH #1993: what the agent refused from the file (another account's
 		// database, an existing app, ...) must reach the admin.
-		if len(rr.Warnings) > 0 {
-			line += "; " + strings.Join(rr.Warnings, "; ")
+		if len(res.Warnings) > 0 {
+			line += "; " + strings.Join(res.Warnings, "; ")
 		}
-		if len(metaErrs) > 0 {
-			line += "; metadata: " + strings.Join(metaErrs, "; ")
+		if len(res.MetadataErrors) > 0 {
+			line += "; metadata: " + strings.Join(res.MetadataErrors, "; ")
 		}
 		packed = append(packed, line)
 	}

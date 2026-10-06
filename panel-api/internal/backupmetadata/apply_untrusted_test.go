@@ -45,7 +45,8 @@ func TestApply_UploadedBackupRestoresNoServerLevelDockerApp(t *testing.T) {
 		},
 	}
 
-	r := Apply(context.Background(), meta, Deps{Users: existingUsersRepo{}, DockerApps: dockers, Untrusted: true})
+	r := Apply(context.Background(), meta, Deps{Users: existingUsersRepo{}, DockerApps: dockers, Untrusted: true,
+		RestoredDockerSlugs: map[string]bool{"jabali-sounder": true, "nextcloud": true}})
 
 	got := createdApps(dockers)
 	if got["srv-1"] || !got["ten-1"] {
@@ -183,7 +184,8 @@ func TestApply_NoRestoreRegistersThisServersOwnDatabasesOrAccounts(t *testing.T)
 		dbs, users := &utDBs{}, &utDBUsers{}
 		meta := utDBMeta([]string{"jabali_panel", "mysql", "alice_wp"}, []string{"root", "jabali_panel_app", "jb_s_alice_wp", "mariadb.sys", "alice_u"})
 
-		r := Apply(context.Background(), meta, Deps{Users: namedUsersRepo{username: "alice"}, Databases: dbs, DatabaseUsers: users, Untrusted: untrusted})
+		r := Apply(context.Background(), meta, Deps{Users: namedUsersRepo{username: "alice"}, Databases: dbs, DatabaseUsers: users, Untrusted: untrusted,
+			RestoredDatabases: map[string]bool{"jabali_panel": true, "mysql": true, "alice_wp": true}})
 
 		if !sameSet(dbs.created, "alice_wp") || !sameSet(users.created, "alice_u") {
 			t.Fatalf("untrusted=%v: created databases %v users %v (errors %v), want only alice_wp and alice_u", untrusted, dbs.created, users.created, r.Errors)
@@ -202,7 +204,8 @@ func TestApply_UploadedBackupKeepsDatabasesInTheAccountsNamespace(t *testing.T) 
 	users := &utDBUsers{existing: []models.DatabaseUser{{ID: "y", UserID: "u-bob", Username: "alice_admin"}}}
 	meta := utDBMeta([]string{"alice_wp", "carol_x", "alice_shop", "shopdb"}, []string{"alice_u", "bob_u", "alice_admin"})
 
-	r := Apply(context.Background(), meta, Deps{Users: namedUsersRepo{username: "alice"}, Databases: dbs, DatabaseUsers: users, Untrusted: true})
+	r := Apply(context.Background(), meta, Deps{Users: namedUsersRepo{username: "alice"}, Databases: dbs, DatabaseUsers: users, Untrusted: true,
+		RestoredDatabases: map[string]bool{"alice_wp": true, "carol_x": true, "alice_shop": true, "shopdb": true}})
 
 	if !sameSet(dbs.created, "alice_wp") || !sameSet(users.created, "alice_u") {
 		t.Fatalf("created databases %v users %v (errors %v), want only alice_wp and alice_u", dbs.created, users.created, r.Errors)
@@ -253,5 +256,40 @@ func TestApply_DockerAppWithAMalformedSlugIsRefused(t *testing.T) {
 	}
 	if !hasError(r.Errors, `docker_app bad1: not restored: "../etc" is not an app name`) {
 		t.Fatalf("errors %v should explain the refusal", r.Errors)
+	}
+}
+
+// From an uploaded file, a database or docker app row is restored only for
+// what the agent restored into the account (or what the account already
+// has). Otherwise a row would hand the account data the agent refused: a
+// database that exists here without a panel row, or an app folder another
+// app left behind.
+func TestApply_UploadedBackupRegistersOnlyWhatTheAgentRestored(t *testing.T) {
+	me := "u1"
+	dbs := &utDBs{existing: []models.Database{{ID: "x", UserID: me, Name: "alice_had"}}}
+	dockers := &utDocker{existing: []*models.DockerApp{{ID: "had", UserID: &me, Slug: "n8n", InstanceSlug: "n8n-1"}}}
+	meta := utDBMeta([]string{"alice_wp", "alice_orphan", "alice_had"}, nil)
+	meta.DockerApps = []internalbackup.MetadataDockerApp{
+		{ID: "a1", Slug: "gitea", InstanceSlug: "gitea-1"},
+		{ID: "a2", Slug: "kuma"},
+		{ID: "a3", Slug: "n8n", InstanceSlug: "n8n-1"},
+	}
+
+	r := Apply(context.Background(), meta, Deps{Users: namedUsersRepo{username: "alice"}, Databases: dbs, DockerApps: dockers, Untrusted: true,
+		RestoredDatabases: map[string]bool{"alice_wp": true}, RestoredDockerSlugs: map[string]bool{"gitea-1": true}})
+
+	if !sameSet(dbs.created, "alice_wp", "alice_had") {
+		t.Errorf("created databases %v (errors %v), want alice_wp and the account's own alice_had", dbs.created, r.Errors)
+	}
+	if got := createdApps(dockers); !got["a1"] || got["a2"] || !got["a3"] {
+		t.Errorf("created apps %v (errors %v), want a1 and the account's own a3", got, r.Errors)
+	}
+	for _, want := range []string{
+		"database dbb (alice_orphan): not restored: the restore didn't load its data into a database of this account",
+		`docker_app a2: not restored: the restore didn't restore its data into an app folder of this account ("kuma")`,
+	} {
+		if !hasError(r.Errors, want) {
+			t.Errorf("errors %v should contain %q", r.Errors, want)
+		}
 	}
 }

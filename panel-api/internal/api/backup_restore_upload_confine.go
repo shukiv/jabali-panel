@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
@@ -97,4 +98,110 @@ func (cfg BackupHandlerConfig) uploadRestoreParams(ctx context.Context, targetID
 	p["owned_docker_slugs"] = ownedApps
 	p["foreign_docker_slugs"] = foreignApps
 	return nil
+}
+
+// uploadedData names the databases and docker app folders (effective slug)
+// the agent restored into the account from an uploaded file. Apply registers
+// database and docker app rows from the file only for these, or for ones the
+// account already has.
+type uploadedData struct {
+	databases, dockerSlugs []string
+}
+
+// uploadedAccountRestore is what restoring one account from an uploaded file
+// did: the agent's applied items and warnings from both passes, and the rows
+// the metadata rebuild didn't restore.
+type uploadedAccountRestore struct {
+	Applied, Warnings, MetadataErrors []string
+}
+
+// restoreFromTarReply is the part of backup.restore_from_tar's result an
+// upload restore reads.
+type restoreFromTarReply struct {
+	Applied                   []string        `json:"applied"`
+	Warnings                  []string        `json:"warnings"`
+	Metadata                  json.RawMessage `json:"metadata"`
+	UploadConfinementEnforced bool            `json:"upload_confinement_enforced"`
+	RestoredDatabases         []string        `json:"restored_databases"`
+	RestoredDockerSlugs       []string        `json:"restored_docker_slugs"`
+	Stages                    []struct {
+		Name string `json:"name"`
+	} `json:"stages"`
+}
+
+const unconfirmedRestoreDetail = "the agent did not confirm it confined the restore to this account; nothing else was applied — " + agentUpdateRequiredDetail
+
+// restoreUploadedAccount restores the account targetID (username) from the
+// uploaded account archive at tarPath. components selects stages (empty =
+// all). The error is the admin-facing reason nothing past the agent's first
+// pass was applied; what that pass applied is still returned.
+//
+// The agent restores mail only into the account's own domains, and a restore
+// into a fresh account rebuilds those domains from the file's metadata after
+// the agent ran. So the agent runs twice: everything but mail, then (after
+// the metadata rebuild) mail, with the account's domains looked up again.
+func (h *backupHandler) restoreUploadedAccount(ctx context.Context, tarPath, username, targetID string, components []string) (uploadedAccountRestore, error) {
+	var out uploadedAccountRestore
+	mail := len(components) == 0 || containsStr(components, "mail")
+	params := map[string]any{
+		"job_id":          ids.NewULID(),
+		"tar_path":        tarPath,
+		"target_username": username,
+		"components":      components,
+	}
+	if mail {
+		params["skip_components"] = []string{"mail"}
+	}
+	first, err := h.restoreFromTar(ctx, targetID, params)
+	if err != nil {
+		return out, err
+	}
+	out.Applied, out.Warnings = first.Applied, first.Warnings
+	if !first.UploadConfinementEnforced {
+		// The capability gate ran before the restore; an agent that still
+		// didn't confine it (swapped mid-flight) must not get its metadata
+		// applied too.
+		return out, errors.New(unconfirmedRestoreDetail)
+	}
+	out.MetadataErrors = h.applyRestoreMetadataForUser(ctx, first.Metadata, targetID,
+		uploadedData{databases: first.RestoredDatabases, dockerSlugs: first.RestoredDockerSlugs})
+
+	hasMail := false
+	for _, st := range first.Stages {
+		hasMail = hasMail || st.Name == "mail"
+	}
+	if !mail || !hasMail {
+		return out, nil
+	}
+	second, err := h.restoreFromTar(ctx, targetID, map[string]any{
+		"job_id":          ids.NewULID(),
+		"tar_path":        tarPath,
+		"target_username": username,
+		"components":      []string{"mail"},
+	})
+	switch {
+	case err != nil:
+		out.Warnings = append(out.Warnings, "mail: "+err.Error())
+	case !second.UploadConfinementEnforced:
+		out.Warnings = append(out.Warnings, "mail: not restored: "+unconfirmedRestoreDetail)
+	default:
+		out.Applied = append(out.Applied, second.Applied...)
+		out.Warnings = append(out.Warnings, second.Warnings...)
+	}
+	return out, nil
+}
+
+// restoreFromTar runs backup.restore_from_tar in mode=upload for the account
+// targetID with params plus the account's lists.
+func (h *backupHandler) restoreFromTar(ctx context.Context, targetID string, params map[string]any) (restoreFromTarReply, error) {
+	var reply restoreFromTarReply
+	if err := h.cfg.uploadRestoreParams(ctx, targetID, params); err != nil {
+		return reply, fmt.Errorf("not restored: %w", err)
+	}
+	raw, err := h.cfg.Agent.Call(ctx, "backup.restore_from_tar", params)
+	if err != nil {
+		return reply, errors.New(restoreFailureDetail(err))
+	}
+	_ = json.Unmarshal(raw, &reply)
+	return reply, nil
 }
