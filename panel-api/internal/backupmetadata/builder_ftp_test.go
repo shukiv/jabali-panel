@@ -55,11 +55,13 @@ func TestBuild_CapturesFtpAccounts(t *testing.T) {
 // Apply rebuilds the rows owned by the restored account.
 func TestApply_RebuildsFtpAccounts(t *testing.T) {
 	repo := &stubFtpRepo{}
+	owner := "t1"
+	jail := "/var/lib/jabali-ftp-jails/t1/t1_web"
 	meta := &internalbackup.AccountMetadata{
-		User: internalbackup.MetadataUser{ID: "u1"},
+		User: internalbackup.MetadataUser{ID: "u1", Username: &owner},
 		FtpAccounts: []internalbackup.MetadataFtpAccount{
 			{ID: "f1", Username: "t1_web", HomePath: "/home/t1/site", FTPAccess: true, SFTPAccess: true,
-				IsEnabled: true, UID: uptr(50001), Isolated: true, QuotaMB: 500, JailPath: "/j"},
+				IsEnabled: true, UID: uptr(50001), Isolated: true, QuotaMB: 500, JailPath: jail},
 		},
 	}
 	r := Apply(context.Background(), meta, Deps{Users: existingUsersRepo{}, FtpAccounts: repo})
@@ -71,7 +73,7 @@ func TestApply_RebuildsFtpAccounts(t *testing.T) {
 	}
 	got := repo.created[0]
 	if got.UserID != "u1" || got.Username != "t1_web" || got.UID == nil || *got.UID != 50001 ||
-		!got.Isolated || got.JailPath != "/j" || got.QuotaMB != 500 || !got.SFTPAccess {
+		!got.Isolated || got.JailPath != jail || got.QuotaMB != 500 || !got.SFTPAccess {
 		t.Fatalf("rebuilt row wrong: %#v", got)
 	}
 }

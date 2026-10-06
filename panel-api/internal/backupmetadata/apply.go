@@ -20,6 +20,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -28,6 +30,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/mailaddr"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/domainops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/forwarderops"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ftpops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/sshkeyops"
@@ -106,13 +109,39 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 	r.UserCreated = created
 
 	// 2) PHP pools + ini overrides — domains reference pools by id.
+	// poolIDs maps each backup pool id to the pool that stands for it on this
+	// server; a backup pool missing from it was not restored (GH #1993).
+	poolIDs := map[string]string{}
 	if d.PHPPools != nil {
 		for _, p := range m.PHPPools {
 			if existing, err := d.PHPPools.FindByID(ctx, p.ID); err == nil && existing != nil {
+				// SECURITY: an uploaded bundle is untrusted. A pool with this id
+				// that another account owns runs PHP as that account's user;
+				// binding a restored domain to it would hand the domain that
+				// user's privileges.
+				if existing.UserID != m.User.ID {
+					r.Errors = append(r.Errors, fmt.Sprintf("php_pool %s: not restored: a pool with this id belongs to another account", p.ID))
+					continue
+				}
+				poolIDs[p.ID] = existing.ID
+				restorePoolIni(ctx, d, &r, existing.ID, p.IniOverrides)
 				r.Skipped++
 				continue
 			} else if err != nil && !errors.Is(err, repository.ErrNotFound) {
 				r.Errors = append(r.Errors, fmt.Sprintf("php_pool %s: lookup: %v", p.ID, err))
+				continue
+			}
+			// GH #1993: an account created on this server before the restore
+			// already has its own pool for the default PHP version, under
+			// another id. One pool per (user, version) is allowed, so the
+			// backup's pool of that version is this one.
+			if existing, err := d.PHPPools.FindByUserAndVersion(ctx, m.User.ID, p.PHPVersion); err == nil && existing != nil {
+				poolIDs[p.ID] = existing.ID
+				restorePoolIni(ctx, d, &r, existing.ID, p.IniOverrides)
+				r.Skipped++
+				continue
+			} else if err != nil && !errors.Is(err, repository.ErrNotFound) {
+				r.Errors = append(r.Errors, fmt.Sprintf("php_pool %s: lookup PHP %s pool: %v", p.ID, p.PHPVersion, err))
 				continue
 			}
 			pool := &models.PHPPool{
@@ -130,25 +159,9 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 				r.Errors = append(r.Errors, fmt.Sprintf("php_pool %s: create: %v", p.ID, err))
 				continue
 			}
+			poolIDs[p.ID] = p.ID
 			r.PHPPools++
-			if d.PHPPoolIni != nil {
-				for _, o := range p.IniOverrides {
-					ov := &models.PHPPoolIniOverride{
-						ID:        o.ID,
-						PoolID:    p.ID,
-						Directive: o.Directive,
-						Value:     o.Value,
-						Kind:      o.Kind,
-						CreatedAt: now,
-						UpdatedAt: now,
-					}
-					if err := d.PHPPoolIni.Create(ctx, ov); err != nil {
-						r.Errors = append(r.Errors, fmt.Sprintf("php_pool_ini %s: create: %v", o.ID, err))
-						continue
-					}
-					r.PHPPoolIni++
-				}
-			}
+			restorePoolIni(ctx, d, &r, p.ID, p.IniOverrides)
 		}
 	}
 
@@ -156,16 +169,34 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 	// refused holds the domains CheckDomain turned down (GH #1898); none of
 	// their mailboxes, forwarders or app installs are restored either.
 	refused := map[string]bool{}
-	ownerUsername := ""
+	// SECURITY: an uploaded bundle is untrusted, and every id in it was chosen
+	// by whoever made the file. These hold the rows that belong to the account
+	// being restored, restored now or already its own; a child row the bundle
+	// ties to anything else is not restored (GH #1993).
+	ownDomains := map[string]bool{}
+	ownMailboxes := map[string]bool{}
+	ownDatabases := map[string]bool{}
+	// account is the account's username on THIS server. Every path the bundle
+	// names is moved off the bundle's username onto it and checked against
+	// it: the bundle's username is only a claim by whoever made the file.
+	account := restoreAccountUsername(ctx, m, d)
+	bundleUser := ""
 	if m.User.Username != nil {
-		ownerUsername = *m.User.Username
+		bundleUser = *m.User.Username
 	}
 	if d.Domains != nil {
 		for _, dm := range m.Domains {
 			if existing, err := d.Domains.FindByID(ctx, dm.ID); err == nil && existing != nil {
+				if existing.UserID != m.User.ID {
+					refused[dm.ID] = true
+					r.Errors = append(r.Errors, fmt.Sprintf("domain %s (%s): not restored: a domain with this id belongs to another account", dm.ID, dm.Name))
+					continue
+				}
+				ownDomains[dm.ID] = true
 				r.Skipped++
 				continue
 			} else if err != nil && !errors.Is(err, repository.ErrNotFound) {
+				refused[dm.ID] = true
 				r.Errors = append(r.Errors, fmt.Sprintf("domain %s: lookup: %v", dm.ID, err))
 				continue
 			}
@@ -173,7 +204,7 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 				ID:                    dm.ID,
 				UserID:                m.User.ID,
 				Name:                  dm.Name,
-				DocRoot:               dm.DocRoot,
+				DocRoot:               rehomePath(dm.DocRoot, "/home", bundleUser, account),
 				IsEnabled:             dm.IsEnabled,
 				NginxCustomDirectives: dm.NginxCustomDirectives,
 				RedirectAllTo:         dm.RedirectAllTo,
@@ -204,7 +235,7 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 				r.Errors = append(r.Errors, fmt.Sprintf("domain %s (%s): not restored: the restore checks are not wired", dm.ID, dm.Name))
 				continue
 			}
-			warnings, cerr := d.CheckDomain(ctx, row, ownerUsername)
+			warnings, cerr := d.CheckDomain(ctx, row, account)
 			if cerr != nil {
 				refused[dm.ID] = true
 				r.Errors = append(r.Errors, fmt.Sprintf("domain %s (%s): not restored: %v", dm.ID, dm.Name, cerr))
@@ -218,10 +249,26 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 			for _, w := range warnings {
 				r.Errors = append(r.Errors, fmt.Sprintf("domain %s (%s): %s", dm.ID, dm.Name, w))
 			}
+			// Bind the domain to the pool that stands for its backup pool here.
+			// A pool that wasn't restored leaves it unbound: the reconciler binds
+			// an unbound domain to the account's default pool, where pointing at
+			// the missing id would fail the row on its foreign key (GH #1993).
+			if row.PHPPoolID != nil && d.PHPPools != nil {
+				if id, ok := poolIDs[*row.PHPPoolID]; ok {
+					row.PHPPoolID = &id
+				} else {
+					row.PHPPoolID = nil
+					r.Errors = append(r.Errors, fmt.Sprintf("domain %s (%s): its PHP pool was not restored; it uses the account's default PHP pool", dm.ID, dm.Name))
+				}
+			}
 			if err := d.Domains.Create(ctx, row); err != nil {
+				// Without the row its mailboxes, forwarders and app installs
+				// can't be stored either; skip them so this stays the error.
+				refused[dm.ID] = true
 				r.Errors = append(r.Errors, fmt.Sprintf("domain %s (%s): create: %v", dm.ID, dm.Name, err))
 				continue
 			}
+			ownDomains[dm.ID] = true
 			r.Domains++
 			if dm.SSLCertificate != nil && d.SSLCerts != nil {
 				cert := &models.SSLCertificate{
@@ -235,6 +282,17 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 					KeyPath:      dm.SSLCertificate.KeyPath,
 					CreatedAt:    now,
 					UpdatedAt:    now,
+				}
+				// SECURITY: the vhost renderers write these paths into nginx
+				// configs as root. Keep them only when they name this domain's
+				// own files; otherwise the certificate is issued again.
+				switch {
+				case !ownCertFiles(row.Name, cert.CertPath, cert.KeyPath):
+					r.Errors = append(r.Errors, fmt.Sprintf("ssl_cert %s (%s): its certificate files are not this domain's own; it will be issued again", cert.ID, row.Name))
+					cert.CertPath, cert.KeyPath, cert.Status = nil, nil, models.SSLStatusPending
+				case !knownSSLStatus[cert.Status]:
+					r.Errors = append(r.Errors, fmt.Sprintf("ssl_cert %s (%s): status %q is not one the panel knows; it will be issued again", cert.ID, row.Name, cert.Status))
+					cert.CertPath, cert.KeyPath, cert.Status = nil, nil, models.SSLStatusPending
 				}
 				if err := d.SSLCerts.Create(ctx, cert); err != nil {
 					r.Errors = append(r.Errors, fmt.Sprintf("ssl_cert %s: create: %v", cert.ID, err))
@@ -263,6 +321,13 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 					continue
 				}
 				if existing, err := d.Mailboxes.FindByID(ctx, mb.ID); err == nil && existing != nil {
+					// Its autoresponder and shares below are written by mailbox
+					// id, so a mailbox of another domain stays untouched.
+					if existing.DomainID != dm.ID {
+						r.Errors = append(r.Errors, fmt.Sprintf("mailbox %s: not restored: a mailbox with this id belongs to another domain", mb.ID))
+						continue
+					}
+					ownMailboxes[mb.ID] = true
 					r.Skipped++
 				} else {
 					// The database refuses a mailbox where an alias, group or
@@ -303,6 +368,7 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 						r.Errors = append(r.Errors, fmt.Sprintf("mailbox %s: create: %v", mb.ID, err))
 						continue
 					}
+					ownMailboxes[mb.ID] = true
 					r.Mailboxes++
 				}
 				// Autoresponder is keyed by the mailbox PK; Update upserts.
@@ -363,6 +429,10 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 					r.Skipped++
 					continue
 				}
+				if fw.MailboxID != nil && !ownMailboxes[*fw.MailboxID] {
+					r.Errors = append(r.Errors, fmt.Sprintf("forwarder %s: not restored: its mailbox is not one of this account's restored mailboxes", fw.ID))
+					continue
+				}
 				row := &models.EmailForwarder{
 					ID:        fw.ID,
 					MailboxID: fw.MailboxID,
@@ -416,12 +486,16 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 			}
 			if err := d.Databases.Create(ctx, row); err != nil {
 				if errors.Is(err, repository.ErrConflict) {
+					if existing, ferr := d.Databases.FindByID(ctx, db.ID); ferr == nil && existing != nil && existing.UserID == m.User.ID {
+						ownDatabases[db.ID] = true
+					}
 					r.Skipped++
 					continue
 				}
 				r.Errors = append(r.Errors, fmt.Sprintf("database %s (%s): create: %v", db.ID, db.Name, err))
 				continue
 			}
+			ownDatabases[db.ID] = true
 			r.Databases++
 		}
 		if d.DatabaseUsers != nil {
@@ -436,6 +510,12 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 				}
 				if err := d.DatabaseUsers.Create(ctx, dbu); err != nil {
 					if errors.Is(err, repository.ErrConflict) {
+						// Grants below attach to this user id: only to one
+						// that is this account's own.
+						if existing, ferr := d.DatabaseUsers.FindByID(ctx, du.ID); ferr != nil || existing == nil || existing.UserID != m.User.ID {
+							r.Errors = append(r.Errors, fmt.Sprintf("db_user %s: not restored: a database user with this id belongs to another account", du.ID))
+							continue
+						}
 						r.Skipped++
 					} else {
 						r.Errors = append(r.Errors, fmt.Sprintf("db_user %s: create: %v", du.ID, err))
@@ -456,6 +536,10 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 						}
 						if dbID == "" {
 							r.Errors = append(r.Errors, fmt.Sprintf("db_grant %s: unresolved database", gid))
+							continue
+						}
+						if !ownDatabases[dbID] {
+							r.Errors = append(r.Errors, fmt.Sprintf("db_grant %s: not restored: its database is not one of this account's", gid))
 							continue
 						}
 						gr := &models.DatabaseUserGrant{
@@ -487,6 +571,14 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 		for _, ai := range m.AppInstalls {
 			if refused[ai.DomainID] {
 				r.Errors = append(r.Errors, fmt.Sprintf("app_install %s: not restored: its domain was refused", ai.ID))
+				continue
+			}
+			if !ownDomains[ai.DomainID] {
+				r.Errors = append(r.Errors, fmt.Sprintf("app_install %s: not restored: its domain is not one of this account's", ai.ID))
+				continue
+			}
+			if ai.DBID != nil && *ai.DBID != "" && !ownDatabases[*ai.DBID] {
+				r.Errors = append(r.Errors, fmt.Sprintf("app_install %s: not restored: its database is not one of this account's", ai.ID))
 				continue
 			}
 			row := &models.ApplicationInstall{
@@ -624,15 +716,31 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 	// restore staging path); without that the reconciler sets a throwaway and
 	// the tenant must reset. QuotaMB is restored verbatim (a restore onto a
 	// smaller package can overcommit the split — the reconciler's cap check is
-	// advisory here). Username embeds the SOURCE tenant prefix; a DR restore to
-	// a different target username is out of scope (the row is restored as-is).
+	// advisory here). Username embeds the SOURCE tenant prefix and is restored
+	// as-is; the home and jail paths move to this server's username.
 	if d.FtpAccounts != nil {
 		for _, a := range m.FtpAccounts {
+			// The reconciler provisions the system user, home and jail from
+			// these paths: keep them inside this account's own home and jail
+			// directory, never another account's.
+			home := rehomePath(a.HomePath, "/home", bundleUser, account)
+			if !pathWithin(home, "/home", account) {
+				r.Errors = append(r.Errors, fmt.Sprintf("ftp_account %s: not restored: home %q is outside /home/%s", a.ID, a.HomePath, account))
+				continue
+			}
+			jail := a.JailPath
+			if jail != "" {
+				jail = rehomePath(jail, ftpops.JailRoot, bundleUser, account)
+				if !pathWithin(jail, ftpops.JailRoot, account) {
+					r.Errors = append(r.Errors, fmt.Sprintf("ftp_account %s: not restored: jail %q is outside %s/%s", a.ID, a.JailPath, ftpops.JailRoot, account))
+					continue
+				}
+			}
 			row := &models.FtpAccount{
 				ID:           a.ID,
 				UserID:       m.User.ID,
 				Username:     a.Username,
-				HomePath:     a.HomePath,
+				HomePath:     home,
 				FTPAccess:    a.FTPAccess,
 				SFTPAccess:   a.SFTPAccess,
 				WebDAVAccess: a.WebDAVAccess,
@@ -640,7 +748,7 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 				UID:          a.UID,
 				Isolated:     a.Isolated,
 				QuotaMB:      a.QuotaMB,
-				JailPath:     a.JailPath,
+				JailPath:     jail,
 				CreatedAt:    now,
 				UpdatedAt:    now,
 			}
@@ -798,6 +906,119 @@ func applyUser(ctx context.Context, m *internalbackup.AccountMetadata, d Deps, n
 		return false, fmt.Errorf("create: %w", err)
 	}
 	return true, nil
+}
+
+// knownSSLStatus is every status an ssl_certificates row can hold.
+var knownSSLStatus = map[string]bool{
+	models.SSLStatusPending: true, models.SSLStatusIssuing: true, models.SSLStatusIssued: true,
+	models.SSLStatusFailed: true, models.SSLStatusRevoked: true, models.SSLStatusRenewing: true,
+	models.SSLStatusSelfSigned: true, models.SSLStatusCustom: true, models.SSLStatusPendingACMERetry: true,
+}
+
+// certFileDirs are the two layouts the panel writes a domain's certificate
+// in: certbot's lineage (issued and custom certificates) and the self-signed
+// placeholder.
+var certFileDirs = []string{"/etc/letsencrypt/live/", "/etc/ssl/jabali-selfsigned/"}
+
+// ownCertFiles reports whether cert and key are domain's own certificate
+// files in one of certFileDirs, or both unset.
+func ownCertFiles(domain string, cert, key *string) bool {
+	if cert == nil || key == nil {
+		return cert == nil && key == nil
+	}
+	if domain == "" || strings.HasPrefix(domain, ".") || strings.ContainsAny(domain, "/\\") {
+		return false
+	}
+	for _, dir := range certFileDirs {
+		if *cert == dir+domain+"/fullchain.pem" && *key == dir+domain+"/privkey.pem" {
+			return true
+		}
+	}
+	return false
+}
+
+// restorePoolIni writes a backup pool's ini overrides onto poolID, the pool
+// that stands for it on this server. A directive the pool already sets keeps
+// its value: restore adds settings, it doesn't overwrite them.
+func restorePoolIni(ctx context.Context, d Deps, r *ApplyResult, poolID string, overrides []internalbackup.MetadataPHPPoolIniOverride) {
+	if d.PHPPoolIni == nil || len(overrides) == 0 {
+		return
+	}
+	current, err := d.PHPPoolIni.ListByPool(ctx, poolID)
+	if err != nil {
+		r.Errors = append(r.Errors, fmt.Sprintf("php_pool %s: list ini overrides: %v", poolID, err))
+		return
+	}
+	set := make(map[string]bool, len(current))
+	for _, o := range current {
+		set[o.Directive] = true
+	}
+	now := time.Now().UTC()
+	for _, o := range overrides {
+		if set[o.Directive] {
+			r.Skipped++
+			continue
+		}
+		ov := &models.PHPPoolIniOverride{
+			ID:        o.ID,
+			PoolID:    poolID,
+			Directive: o.Directive,
+			Value:     o.Value,
+			Kind:      o.Kind,
+			CreatedAt: now,
+			UpdatedAt: now,
+		}
+		if err := d.PHPPoolIni.Create(ctx, ov); err != nil {
+			r.Errors = append(r.Errors, fmt.Sprintf("php_pool_ini %s: create: %v", o.ID, err))
+			continue
+		}
+		set[o.Directive] = true
+		r.PHPPoolIni++
+	}
+}
+
+// restoreAccountUsername is the username of the account being restored: this
+// server's row when it has one, else the bundle's.
+func restoreAccountUsername(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) string {
+	if users := d.users(); users != nil {
+		if u, err := users.FindByID(ctx, m.User.ID); err == nil && u != nil && u.Username != nil && *u.Username != "" {
+			return *u.Username
+		}
+	}
+	if m.User.Username != nil {
+		return *m.User.Username
+	}
+	return ""
+}
+
+// accountNameRe is a panel username (userops' rule); it can't be "." or "..".
+var accountNameRe = regexp.MustCompile(`^[a-z_][a-z0-9_-]{0,31}$`)
+
+// pathWithin reports whether the absolute path p, cleaned, is base/account or
+// inside it. An account name that isn't a panel username admits nothing.
+func pathWithin(p, base, account string) bool {
+	if !accountNameRe.MatchString(account) || !filepath.IsAbs(p) {
+		return false
+	}
+	root := base + "/" + account
+	c := filepath.Clean(p)
+	return c == root || strings.HasPrefix(c, root+"/")
+}
+
+// rehomePath moves p from base/from to base/to when it is that directory or
+// inside it: the backup names the account's paths under the username it had
+// where the backup was made. Any other path comes back unchanged for the
+// caller's own check.
+func rehomePath(p, base, from, to string) string {
+	if from == to || !accountNameRe.MatchString(from) || !accountNameRe.MatchString(to) || !filepath.IsAbs(p) {
+		return p
+	}
+	old := base + "/" + from
+	c := filepath.Clean(p)
+	if c == old || strings.HasPrefix(c, old+"/") {
+		return base + "/" + to + c[len(old):]
+	}
+	return p
 }
 
 // users is the user repo accessor on Deps. Builder Deps doesn't carry
