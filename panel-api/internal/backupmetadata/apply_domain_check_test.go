@@ -22,6 +22,9 @@ type dcDomains struct {
 func (r *dcDomains) FindByID(context.Context, string) (*models.Domain, error) {
 	return nil, repository.ErrNotFound
 }
+func (r *dcDomains) FindByName(context.Context, string) (*models.Domain, error) {
+	return nil, repository.ErrNotFound
+}
 func (r *dcDomains) Create(_ context.Context, d *models.Domain) error {
 	r.created = append(r.created, *d)
 	return nil
@@ -33,6 +36,9 @@ type dcMailboxes struct {
 }
 
 func (r *dcMailboxes) FindByID(context.Context, string) (*models.Mailbox, error) {
+	return nil, repository.ErrNotFound
+}
+func (r *dcMailboxes) FindByEmail(context.Context, string) (*models.Mailbox, error) {
 	return nil, repository.ErrNotFound
 }
 func (r *dcMailboxes) Create(context.Context, *models.Mailbox) error { r.created++; return nil }

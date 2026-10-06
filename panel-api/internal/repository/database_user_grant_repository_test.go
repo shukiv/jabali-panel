@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	mysqldriver "github.com/go-sql-driver/mysql"
 	"github.com/stretchr/testify/require"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
@@ -129,6 +130,26 @@ func TestDatabaseUserGrantRepository_Create(t *testing.T) {
 
 	err := repo.Create(context.Background(), grant)
 	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// TestDatabaseUserGrantRepository_Create_DuplicateIsConflict: a grant that is
+// already there (same id, or the same database and user) surfaces as
+// ErrConflict so a backup restore skips it instead of reporting a failure
+// (GH #1993).
+func TestDatabaseUserGrantRepository_Create_DuplicateIsConflict(t *testing.T) {
+	db, mock, raw := newMockDB(t)
+	defer raw.Close()
+
+	repo := NewDatabaseUserGrantRepository(db)
+
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO `database_user_grants`")).
+		WillReturnError(&mysqldriver.MySQLError{Number: 1062, Message: "Duplicate entry 'db1-duser1' for key 'uniq_db_user'"})
+	mock.ExpectRollback()
+
+	err := repo.Create(context.Background(), &models.DatabaseUserGrant{ID: "grant_dup", DatabaseID: "db1", DatabaseUserID: "duser1", GrantLevel: "rw"})
+	require.ErrorIs(t, err, ErrConflict)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

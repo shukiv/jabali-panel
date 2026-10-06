@@ -29,6 +29,14 @@ func (r *owDomains) FindByID(_ context.Context, id string) (*models.Domain, erro
 	}
 	return nil, repository.ErrNotFound
 }
+func (r *owDomains) FindByName(_ context.Context, name string) (*models.Domain, error) {
+	for _, d := range r.existing {
+		if d.Name == name {
+			return &d, nil
+		}
+	}
+	return nil, repository.ErrNotFound
+}
 func (r *owDomains) Create(_ context.Context, d *models.Domain) error {
 	r.created = append(r.created, *d)
 	return nil
@@ -43,6 +51,14 @@ type owMailboxes struct {
 func (r *owMailboxes) FindByID(_ context.Context, id string) (*models.Mailbox, error) {
 	if m, ok := r.existing[id]; ok {
 		return &m, nil
+	}
+	return nil, repository.ErrNotFound
+}
+func (r *owMailboxes) FindByEmail(_ context.Context, email string) (*models.Mailbox, error) {
+	for _, m := range r.existing {
+		if m.EmailCached == email {
+			return &m, nil
+		}
 	}
 	return nil, repository.ErrNotFound
 }
