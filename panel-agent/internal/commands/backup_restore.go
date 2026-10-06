@@ -519,7 +519,7 @@ func applyAccountRestore(
 			// trailing slash so rsync copies CONTENTS not the dir.
 			src := filepath.Join(stagingRoot, "home", "home", username) + "/"
 			dst := "/home/" + username + "/"
-			if _, err := os.Stat(filepath.Clean(src)); err != nil {
+			if err := stagedEntry(stagingRoot, filepath.Clean(src), true); err != nil {
 				warnings = append(warnings,
 					fmt.Sprintf("home: source %s missing: %v", src, err))
 				continue
@@ -590,7 +590,7 @@ func applyAccountRestore(
 			// restic preserves absolute paths, so the staged tree is at
 			// stagingRoot/docker/var/lib/jabali/docker-apps/<slug>/.
 			src := filepath.Join(stagingRoot, backup.StageDocker, dockerAppDataRoot, slug) + "/"
-			if _, err := os.Stat(filepath.Clean(src)); err != nil {
+			if err := stagedEntry(stagingRoot, filepath.Clean(src), true); err != nil {
 				warnings = append(warnings, fmt.Sprintf("docker %s: source %s missing: %v", slug, src, err))
 				continue
 			}
@@ -647,7 +647,7 @@ func applyAccountRestore(
 			// PG dump first — backup_databases.go writes "<db>.pgdump"
 			// for postgres engine. If present, route to pg_restore.
 			pgPath := filepath.Join(stagingRoot, "db", db+".pgdump")
-			if _, perr := os.Stat(pgPath); perr == nil {
+			if stagedEntry(stagingRoot, pgPath, false) == nil {
 				// CREATE DATABASE if missing. PG has no
 				// IF NOT EXISTS for CREATE DATABASE pre-9.x but
 				// we accept an "already exists" error as success.
@@ -687,7 +687,7 @@ func applyAccountRestore(
 				// the file; the child just inherits the fd, and the staging
 				// tree stays root-only. Same trust shape as the MariaDB
 				// branch below, which pipes for the same reason.
-				pgFile, oErr := os.Open(pgPath)
+				pgFile, oErr := openStagedFile(stagingRoot, pgPath)
 				if oErr != nil {
 					warnings = append(warnings,
 						fmt.Sprintf("db %s (postgres): open dump: %v", db, oErr))
@@ -715,7 +715,7 @@ func applyAccountRestore(
 			}
 			var src string
 			for _, p := range candidates {
-				if _, err := os.Stat(p); err == nil {
+				if stagedEntry(stagingRoot, p, false) == nil {
 					src = p
 					break
 				}
@@ -724,7 +724,7 @@ func applyAccountRestore(
 				warnings = append(warnings, fmt.Sprintf("db %s: dump file not found in staging", db))
 				continue
 			}
-			f, err := os.Open(src)
+			f, err := openStagedFile(stagingRoot, src)
 			if err != nil {
 				warnings = append(warnings, fmt.Sprintf("db %s: open dump: %v", db, err))
 				continue
@@ -780,6 +780,12 @@ func applyAccountRestore(
 			mailTree := filepath.Join(stagingRoot, "mail") // flat-layout fallback
 			if matches, _ := filepath.Glob(filepath.Join(stagingRoot, "mail", "run", "jabali-backup", "*", "mail")); len(matches) > 0 {
 				mailTree = matches[len(matches)-1]
+			}
+			// The mail stage reads, prunes and imports this tree as root: reach
+			// it without following a symlink.
+			if err := stagedEntry(stagingRoot, mailTree, true); err != nil {
+				warnings = append(warnings, "mail: no message tree in snapshot — skip")
+				continue
 			}
 
 			// Legacy (pre-ADR-0123) snapshots carried a whole-store
