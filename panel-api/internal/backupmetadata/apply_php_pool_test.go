@@ -205,3 +205,55 @@ func TestApply_DomainNamingAnUnlistedPoolIsLeftUnbound(t *testing.T) {
 		t.Fatalf("domains = %+v, want alice.org restored with no pool", doms.created)
 	}
 }
+
+// ppIni is an ini-override repo keyed by pool.
+type ppIni struct {
+	repository.PHPPoolIniOverrideRepository
+	rows []models.PHPPoolIniOverride
+}
+
+func (r *ppIni) ListByPool(_ context.Context, poolID string) ([]models.PHPPoolIniOverride, error) {
+	var out []models.PHPPoolIniOverride
+	for _, o := range r.rows {
+		if o.PoolID == poolID {
+			out = append(out, o)
+		}
+	}
+	return out, nil
+}
+
+func (r *ppIni) Create(_ context.Context, o *models.PHPPoolIniOverride) error {
+	r.rows = append(r.rows, *o)
+	return nil
+}
+
+// The backup pool's PHP settings come with it onto the account's own pool of
+// the same version. A setting the pool already has keeps its value: restore
+// adds, it doesn't overwrite.
+func TestApply_PoolSettingsComeWithTheMappedPool(t *testing.T) {
+	pools := &ppPools{rows: []models.PHPPool{{ID: "p-target", UserID: "u1", PHPVersion: "8.4"}}}
+	ini := &ppIni{rows: []models.PHPPoolIniOverride{{ID: "o-have", PoolID: "p-target", Directive: "memory_limit", Value: "256M", Kind: "value"}}}
+	meta := ppMeta()
+	meta.PHPPools[0].IniOverrides = []internalbackup.MetadataPHPPoolIniOverride{
+		{ID: "o1", Directive: "memory_limit", Value: "512M", Kind: "value"},
+		{ID: "o2", Directive: "max_execution_time", Value: "120", Kind: "value"},
+	}
+	deps := ppDeps(pools, &ppDomains{pools: pools}, &dcMailboxes{})
+	deps.PHPPoolIni = ini
+
+	r := Apply(context.Background(), meta, deps)
+
+	got := map[string]string{}
+	for _, o := range ini.rows {
+		if o.PoolID != "p-target" {
+			t.Fatalf("override %+v written to pool %s, want p-target", o, o.PoolID)
+		}
+		if _, dup := got[o.Directive]; dup {
+			t.Fatalf("directive %s written twice: %+v", o.Directive, ini.rows)
+		}
+		got[o.Directive] = o.Value
+	}
+	if got["memory_limit"] != "256M" || got["max_execution_time"] != "120" {
+		t.Fatalf("pool settings = %v (errors %v), want memory_limit kept at 256M and max_execution_time=120 added", got, r.Errors)
+	}
+}

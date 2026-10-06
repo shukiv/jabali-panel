@@ -124,6 +124,7 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 					continue
 				}
 				poolIDs[p.ID] = existing.ID
+				restorePoolIni(ctx, d, &r, existing.ID, p.IniOverrides)
 				r.Skipped++
 				continue
 			} else if err != nil && !errors.Is(err, repository.ErrNotFound) {
@@ -136,6 +137,7 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 			// backup's pool of that version is this one.
 			if existing, err := d.PHPPools.FindByUserAndVersion(ctx, m.User.ID, p.PHPVersion); err == nil && existing != nil {
 				poolIDs[p.ID] = existing.ID
+				restorePoolIni(ctx, d, &r, existing.ID, p.IniOverrides)
 				r.Skipped++
 				continue
 			} else if err != nil && !errors.Is(err, repository.ErrNotFound) {
@@ -159,24 +161,7 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 			}
 			poolIDs[p.ID] = p.ID
 			r.PHPPools++
-			if d.PHPPoolIni != nil {
-				for _, o := range p.IniOverrides {
-					ov := &models.PHPPoolIniOverride{
-						ID:        o.ID,
-						PoolID:    p.ID,
-						Directive: o.Directive,
-						Value:     o.Value,
-						Kind:      o.Kind,
-						CreatedAt: now,
-						UpdatedAt: now,
-					}
-					if err := d.PHPPoolIni.Create(ctx, ov); err != nil {
-						r.Errors = append(r.Errors, fmt.Sprintf("php_pool_ini %s: create: %v", o.ID, err))
-						continue
-					}
-					r.PHPPoolIni++
-				}
-			}
+			restorePoolIni(ctx, d, &r, p.ID, p.IniOverrides)
 		}
 	}
 
@@ -910,6 +895,46 @@ func applyUser(ctx context.Context, m *internalbackup.AccountMetadata, d Deps, n
 		return false, fmt.Errorf("create: %w", err)
 	}
 	return true, nil
+}
+
+// restorePoolIni writes a backup pool's ini overrides onto poolID, the pool
+// that stands for it on this server. A directive the pool already sets keeps
+// its value: restore adds settings, it doesn't overwrite them.
+func restorePoolIni(ctx context.Context, d Deps, r *ApplyResult, poolID string, overrides []internalbackup.MetadataPHPPoolIniOverride) {
+	if d.PHPPoolIni == nil || len(overrides) == 0 {
+		return
+	}
+	current, err := d.PHPPoolIni.ListByPool(ctx, poolID)
+	if err != nil {
+		r.Errors = append(r.Errors, fmt.Sprintf("php_pool %s: list ini overrides: %v", poolID, err))
+		return
+	}
+	set := make(map[string]bool, len(current))
+	for _, o := range current {
+		set[o.Directive] = true
+	}
+	now := time.Now().UTC()
+	for _, o := range overrides {
+		if set[o.Directive] {
+			r.Skipped++
+			continue
+		}
+		ov := &models.PHPPoolIniOverride{
+			ID:        o.ID,
+			PoolID:    poolID,
+			Directive: o.Directive,
+			Value:     o.Value,
+			Kind:      o.Kind,
+			CreatedAt: now,
+			UpdatedAt: now,
+		}
+		if err := d.PHPPoolIni.Create(ctx, ov); err != nil {
+			r.Errors = append(r.Errors, fmt.Sprintf("php_pool_ini %s: create: %v", o.ID, err))
+			continue
+		}
+		set[o.Directive] = true
+		r.PHPPoolIni++
+	}
 }
 
 // restoreAccountUsername is the username of the account being restored: this
