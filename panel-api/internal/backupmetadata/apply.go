@@ -20,6 +20,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -28,6 +30,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/mailaddr"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/domainops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/forwarderops"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ftpops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/sshkeyops"
@@ -181,6 +184,13 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 	// refused holds the domains CheckDomain turned down (GH #1898); none of
 	// their mailboxes, forwarders or app installs are restored either.
 	refused := map[string]bool{}
+	// SECURITY: an uploaded bundle is untrusted, and every id in it was chosen
+	// by whoever made the file. These hold the rows that belong to the account
+	// being restored, restored now or already its own; a child row the bundle
+	// ties to anything else is not restored (GH #1993).
+	ownDomains := map[string]bool{}
+	ownMailboxes := map[string]bool{}
+	ownDatabases := map[string]bool{}
 	ownerUsername := ""
 	if m.User.Username != nil {
 		ownerUsername = *m.User.Username
@@ -188,9 +198,16 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 	if d.Domains != nil {
 		for _, dm := range m.Domains {
 			if existing, err := d.Domains.FindByID(ctx, dm.ID); err == nil && existing != nil {
+				if existing.UserID != m.User.ID {
+					refused[dm.ID] = true
+					r.Errors = append(r.Errors, fmt.Sprintf("domain %s (%s): not restored: a domain with this id belongs to another account", dm.ID, dm.Name))
+					continue
+				}
+				ownDomains[dm.ID] = true
 				r.Skipped++
 				continue
 			} else if err != nil && !errors.Is(err, repository.ErrNotFound) {
+				refused[dm.ID] = true
 				r.Errors = append(r.Errors, fmt.Sprintf("domain %s: lookup: %v", dm.ID, err))
 				continue
 			}
@@ -262,6 +279,7 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 				r.Errors = append(r.Errors, fmt.Sprintf("domain %s (%s): create: %v", dm.ID, dm.Name, err))
 				continue
 			}
+			ownDomains[dm.ID] = true
 			r.Domains++
 			if dm.SSLCertificate != nil && d.SSLCerts != nil {
 				cert := &models.SSLCertificate{
@@ -303,6 +321,13 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 					continue
 				}
 				if existing, err := d.Mailboxes.FindByID(ctx, mb.ID); err == nil && existing != nil {
+					// Its autoresponder and shares below are written by mailbox
+					// id, so a mailbox of another domain stays untouched.
+					if existing.DomainID != dm.ID {
+						r.Errors = append(r.Errors, fmt.Sprintf("mailbox %s: not restored: a mailbox with this id belongs to another domain", mb.ID))
+						continue
+					}
+					ownMailboxes[mb.ID] = true
 					r.Skipped++
 				} else {
 					// The database refuses a mailbox where an alias, group or
@@ -343,6 +368,7 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 						r.Errors = append(r.Errors, fmt.Sprintf("mailbox %s: create: %v", mb.ID, err))
 						continue
 					}
+					ownMailboxes[mb.ID] = true
 					r.Mailboxes++
 				}
 				// Autoresponder is keyed by the mailbox PK; Update upserts.
@@ -403,6 +429,10 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 					r.Skipped++
 					continue
 				}
+				if fw.MailboxID != nil && !ownMailboxes[*fw.MailboxID] {
+					r.Errors = append(r.Errors, fmt.Sprintf("forwarder %s: not restored: its mailbox is not one of this account's restored mailboxes", fw.ID))
+					continue
+				}
 				row := &models.EmailForwarder{
 					ID:        fw.ID,
 					MailboxID: fw.MailboxID,
@@ -456,12 +486,16 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 			}
 			if err := d.Databases.Create(ctx, row); err != nil {
 				if errors.Is(err, repository.ErrConflict) {
+					if existing, ferr := d.Databases.FindByID(ctx, db.ID); ferr == nil && existing != nil && existing.UserID == m.User.ID {
+						ownDatabases[db.ID] = true
+					}
 					r.Skipped++
 					continue
 				}
 				r.Errors = append(r.Errors, fmt.Sprintf("database %s (%s): create: %v", db.ID, db.Name, err))
 				continue
 			}
+			ownDatabases[db.ID] = true
 			r.Databases++
 		}
 		if d.DatabaseUsers != nil {
@@ -476,6 +510,12 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 				}
 				if err := d.DatabaseUsers.Create(ctx, dbu); err != nil {
 					if errors.Is(err, repository.ErrConflict) {
+						// Grants below attach to this user id: only to one
+						// that is this account's own.
+						if existing, ferr := d.DatabaseUsers.FindByID(ctx, du.ID); ferr != nil || existing == nil || existing.UserID != m.User.ID {
+							r.Errors = append(r.Errors, fmt.Sprintf("db_user %s: not restored: a database user with this id belongs to another account", du.ID))
+							continue
+						}
 						r.Skipped++
 					} else {
 						r.Errors = append(r.Errors, fmt.Sprintf("db_user %s: create: %v", du.ID, err))
@@ -496,6 +536,10 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 						}
 						if dbID == "" {
 							r.Errors = append(r.Errors, fmt.Sprintf("db_grant %s: unresolved database", gid))
+							continue
+						}
+						if !ownDatabases[dbID] {
+							r.Errors = append(r.Errors, fmt.Sprintf("db_grant %s: not restored: its database is not one of this account's", gid))
 							continue
 						}
 						gr := &models.DatabaseUserGrant{
@@ -527,6 +571,14 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 		for _, ai := range m.AppInstalls {
 			if refused[ai.DomainID] {
 				r.Errors = append(r.Errors, fmt.Sprintf("app_install %s: not restored: its domain was refused", ai.ID))
+				continue
+			}
+			if !ownDomains[ai.DomainID] {
+				r.Errors = append(r.Errors, fmt.Sprintf("app_install %s: not restored: its domain is not one of this account's", ai.ID))
+				continue
+			}
+			if ai.DBID != nil && *ai.DBID != "" && !ownDatabases[*ai.DBID] {
+				r.Errors = append(r.Errors, fmt.Sprintf("app_install %s: not restored: its database is not one of this account's", ai.ID))
 				continue
 			}
 			row := &models.ApplicationInstall{
@@ -667,7 +719,19 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 	// advisory here). Username embeds the SOURCE tenant prefix; a DR restore to
 	// a different target username is out of scope (the row is restored as-is).
 	if d.FtpAccounts != nil {
+		account := restoreAccountUsername(ctx, m, d)
 		for _, a := range m.FtpAccounts {
+			// The reconciler provisions the system user, home and jail from
+			// these paths: keep them inside this account's own home and jail
+			// directory, never another account's.
+			if !pathWithin(a.HomePath, "/home", account) {
+				r.Errors = append(r.Errors, fmt.Sprintf("ftp_account %s: not restored: home %q is outside /home/%s", a.ID, a.HomePath, account))
+				continue
+			}
+			if a.JailPath != "" && !pathWithin(a.JailPath, ftpops.JailRoot, account) {
+				r.Errors = append(r.Errors, fmt.Sprintf("ftp_account %s: not restored: jail %q is outside %s/%s", a.ID, a.JailPath, ftpops.JailRoot, account))
+				continue
+			}
 			row := &models.FtpAccount{
 				ID:           a.ID,
 				UserID:       m.User.ID,
@@ -838,6 +902,34 @@ func applyUser(ctx context.Context, m *internalbackup.AccountMetadata, d Deps, n
 		return false, fmt.Errorf("create: %w", err)
 	}
 	return true, nil
+}
+
+// restoreAccountUsername is the username of the account being restored: this
+// server's row when it has one, else the bundle's.
+func restoreAccountUsername(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) string {
+	if users := d.users(); users != nil {
+		if u, err := users.FindByID(ctx, m.User.ID); err == nil && u != nil && u.Username != nil && *u.Username != "" {
+			return *u.Username
+		}
+	}
+	if m.User.Username != nil {
+		return *m.User.Username
+	}
+	return ""
+}
+
+// accountNameRe is the shape of a username that may name a directory.
+var accountNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_.-]*$`)
+
+// pathWithin reports whether the absolute path p, cleaned, is base/account or
+// inside it. An account name that isn't a plain directory name admits nothing.
+func pathWithin(p, base, account string) bool {
+	if !accountNameRe.MatchString(account) || account == "." || account == ".." || !filepath.IsAbs(p) {
+		return false
+	}
+	root := base + "/" + account
+	c := filepath.Clean(p)
+	return c == root || strings.HasPrefix(c, root+"/")
 }
 
 // users is the user repo accessor on Deps. Builder Deps doesn't carry
