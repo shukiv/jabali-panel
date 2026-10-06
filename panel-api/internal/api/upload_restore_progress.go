@@ -40,6 +40,7 @@ const (
 	restoreStepFilesLabel = "Restoring files, databases and apps"
 	restoreStepRowsLabel  = "Rebuilding the account's domains, mailboxes and settings"
 	restoreStepMailLabel  = "Restoring mail"
+	restoreStepDNSLabel   = "Restoring DNS records"
 	// restoreStepOwnLabel is a tenant's restore into their own account.
 	restoreStepOwnLabel = "Restoring files, databases and mail"
 )

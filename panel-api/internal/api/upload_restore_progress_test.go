@@ -104,9 +104,9 @@ func TestUploadedBackupRestore_ShowsProgressByStep(t *testing.T) {
 		t.Fatalf("progress %+v, want %+v", got, want)
 	}
 
-	waitFor(restoreProgress{Step: 1, Steps: 3, Label: restoreStepFilesLabel, Detail: "Restoring database alice_wp (2 of 3)", Percent: 33})
+	waitFor(restoreProgress{Step: 1, Steps: 4, Label: restoreStepFilesLabel, Detail: "Restoring database alice_wp (2 of 3)", Percent: 33})
 	close(pa.pass1)
-	waitFor(restoreProgress{Step: 3, Steps: 3, Label: restoreStepMailLabel, Detail: "Restoring database alice_wp (2 of 3)", Percent: 33})
+	waitFor(restoreProgress{Step: 3, Steps: 4, Label: restoreStepMailLabel, Detail: "Restoring database alice_wp (2 of 3)", Percent: 33})
 	close(pa.pass2)
 	if got := waitRestore(t, e, b.ID); got.RestoreStatus != models.UploadedBackupDone {
 		t.Fatalf("restore ended %q", got.RestoreStatus)
@@ -169,5 +169,35 @@ func TestTenantRestoreUploadStatus_IncludesProgressWhileRestoring(t *testing.T) 
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/status?upload_id=upload-0001", nil))
 	if !strings.Contains(w.Body.String(), `"detail":"Unpacking the backup — 10%","percent":10`) {
 		t.Errorf("tenant restoring status %s carries no progress", w.Body)
+	}
+}
+
+// The DNS records are the last step: a restored domain's zone can take a
+// minute to appear before its records are added.
+func TestRestoreUploadedAccount_ReportsTheDNSStepLast(t *testing.T) {
+	for _, c := range []struct {
+		components []string
+		want       []string
+	}{
+		{nil, []string{restoreStepFilesLabel, restoreStepRowsLabel, restoreStepMailLabel, restoreStepDNSLabel}},
+		{[]string{"home"}, []string{restoreStepFilesLabel, restoreStepRowsLabel, restoreStepDNSLabel}},
+	} {
+		h, a, _ := ucUploadPasses(t, func(int) string {
+			return `{"stages":[{"name":"home"},{"name":"mail"}],"upload_confinement_enforced":true}`
+		})
+		var labels []string
+		steps := map[int]bool{}
+		report := func(p restoreProgress) {
+			if len(labels) == 0 || labels[len(labels)-1] != p.Label {
+				labels = append(labels, p.Label)
+			}
+			steps[p.Steps] = true
+		}
+		if _, err := h.restoreUploadedAccount(context.Background(), a.path, "alice", "T", c.components, report); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Join(labels, "|") != strings.Join(c.want, "|") || len(steps) != 1 || !steps[len(c.want)] {
+			t.Errorf("components %v: steps %v of %v, want %v of %d", c.components, labels, steps, c.want, len(c.want))
+		}
 	}
 }

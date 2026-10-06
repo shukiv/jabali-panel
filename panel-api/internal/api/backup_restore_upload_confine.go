@@ -145,9 +145,9 @@ const unconfirmedRestoreDetail = "the agent did not confirm it confined the rest
 func (h *backupHandler) restoreUploadedAccount(ctx context.Context, tarPath, username, targetID string, components []string, report func(restoreProgress)) (uploadedAccountRestore, error) {
 	var out uploadedAccountRestore
 	mail := len(components) == 0 || containsStr(components, "mail")
-	steps := 2
+	steps := 3 // files, rows, DNS records
 	if mail {
-		steps = 3
+		steps = 4
 	}
 	params := map[string]any{
 		"job_id":          ids.NewULID(),
@@ -180,6 +180,9 @@ func (h *backupHandler) restoreUploadedAccount(ctx context.Context, tarPath, use
 	// reconciler make the restored domains' zones and adds the records once
 	// they exist.
 	withDNS := func() (uploadedAccountRestore, error) {
+		if report != nil {
+			report(restoreProgress{Step: steps, Steps: steps, Label: restoreStepDNSLabel})
+		}
 		a, w := RestoreBundleDNS(ctx, h.restoreDNSDeps(true), first.Metadata, targetID)
 		out.Applied = append(out.Applied, a...)
 		out.Warnings = append(out.Warnings, w...)
