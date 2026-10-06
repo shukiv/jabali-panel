@@ -362,3 +362,36 @@ func TestRemoveRestoreStaging(t *testing.T) {
 		t.Error("a restore that applied something removes its staging")
 	}
 }
+
+// Same for PostgreSQL: a database the probe finds that isn't the account's is
+// refused and not reported; a new one is created and reported.
+func TestUploadRestore_ReportsTheNewPostgresDatabase(t *testing.T) {
+	me := currentUsername(t)
+	prev := execCommandContext
+	execCommandContext = func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		if strings.Contains(strings.Join(args, " "), "datname = '"+me+"_pgorphan'") {
+			return exec.CommandContext(ctx, "echo", "1")
+		}
+		return exec.CommandContext(ctx, "true")
+	}
+	t.Cleanup(func() { execCommandContext = prev })
+	root := t.TempDir()
+	var stages []backup.ManifestStage
+	results := []backupRestoreStage{}
+	for _, n := range []string{me + "_pgnew", me + "_pgorphan"} {
+		stages = append(stages, backup.ManifestStage{Name: backup.StageDB, Items: []string{n}})
+		results = append(results, backupRestoreStage{Name: backup.StageDB, Status: backup.StageStatusOK})
+		mustWrite(t, filepath.Join(root, "db", n+".pgdump"), "PGDMP")
+	}
+	claims := &restoreClaims{}
+	enf := restoreEnforcement{Mode: restoreModeUpload, DBPrefix: me + "_", AllowedDBNames: []string{}, ForeignDBNames: []string{}, Claims: claims}
+
+	_, warnings := applyAccountRestore(context.Background(), root, me, backup.ManifestUser{Username: me}, stages, results, enf)
+
+	if strings.Join(claims.Databases, ",") != me+"_pgnew" {
+		t.Errorf("restored databases %v (warnings %v), want [%s_pgnew]", claims.Databases, warnings, me)
+	}
+	if !hasWarning(warnings, `"`+me+`_pgorphan": not restored: a database with this name already exists`) {
+		t.Errorf("warnings %v should refuse the existing PostgreSQL database", warnings)
+	}
+}

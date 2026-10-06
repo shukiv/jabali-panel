@@ -63,10 +63,13 @@ it into the target account only (GH #1993):
   another account's, or a database that already exists here without belonging
   to the account. One an admin created without the account prefix is refused;
   restore it by hand.
-- **Mail** — only for the account's own domains.
+  A database comes back in the panel only when its data was restored too.
+- **Mail** — only for the account's own domains, including the ones the
+  archive brings: mail is restored last, after the account's domains.
 - **Docker apps** — the account's own, or an app name not in use here.
   Server-level apps are not restored, and neither is an app whose name another
-  account's app uses.
+  account's app uses. An app comes back in the panel only when its data was
+  restored too.
 - **Custom nginx directives** on a domain are left out. Re-add them in the
   domain's settings after reviewing them.
 
