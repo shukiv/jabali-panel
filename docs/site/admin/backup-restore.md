@@ -30,6 +30,31 @@ or the files are gone, the panel issues a new one as it does for a new
 domain: Let's Encrypt, once the domain's DNS points at this server
 (GH #1993). The restore report lists each domain this applies to.
 
+### Database users and their passwords
+
+A restore recreates each restored database user's MariaDB account and grants,
+not just its row in the panel, so a site's database login keeps working on a new
+server (GH #1993). A backup records each MariaDB database user's password hash
+for this:
+
+- A user from a backup made before this release has no recorded password. It
+  comes back with a new one: set a password under **Databases** and in the
+  site's configuration. The restore report lists each such user.
+- A database user the account already has keeps its password; the restore adds
+  only the grants it restores.
+- A database user is not restored when a MariaDB account with its name already
+  exists on this server and is not the account's, or when another account has a
+  database or database user with its name (an older backup can hold one the
+  account has since handed over). The restore report says which.
+- The restore never touches this server's own databases or MariaDB accounts
+  (`mysql`, `root`, `jabali_*`, …), nor the account's phpMyAdmin account.
+- For a PostgreSQL database user the restore rebuilds its panel row but does
+  not create the PostgreSQL role.
+
+The server agent must be as new as the panel to create the accounts. With an
+older agent the restored database users are left out and the report says to run
+`jabali update`.
+
 ## Restore — `system_backup`
 
 System restores are typically performed on a freshly-bootstrapped panel host. Sequence:
@@ -111,6 +136,8 @@ it into the target account only (GH #1993):
   to the account. One an admin created without the account prefix is refused;
   restore it by hand.
   A database comes back in the panel only when its data was restored too.
+  A grant from the archive is made only on a database whose data the archive
+  restored: the archive's author never gets a login to data they didn't supply.
 - **Mail** — only for the account's own domains, including the ones the
   archive brings: mail is restored last, after the account's domains.
 - **Docker apps** — the account's own, or an app name not in use here.

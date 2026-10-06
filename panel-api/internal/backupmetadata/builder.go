@@ -225,6 +225,7 @@ func Build(ctx context.Context, user *models.User, d Deps) *internalbackup.Accou
 				ID:           du.ID,
 				Username:     du.Username,
 				PasswordHash: du.PasswordHash,
+				Engine:       du.Engine,
 				CreatedAt:    timeRFC(du.CreatedAt),
 			}
 			for _, g := range grantsByUser[du.ID] {

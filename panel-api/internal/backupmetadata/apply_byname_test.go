@@ -270,7 +270,9 @@ func TestApply_AnotherAccountsRowsOfTheSameNameAreRefused(t *testing.T) {
 		t.Fatalf("attached to another account's rows: domains=%v mailboxes=%v forwarders=%v apps=%v grants=%v",
 			f.doms.created, f.mbs.created, f.fwds.created, f.apps.created, f.grants.created)
 	}
-	for _, want := range []string{"a domain with this name belongs to another account", "a database user with this name belongs to another account"} {
+	// The database user is refused before the create, by name (another
+	// account's names are refused in every restore).
+	for _, want := range []string{"a domain with this name belongs to another account", "another account has a database user with this name"} {
 		if !hasError(r.Errors, want) {
 			t.Errorf("errors %v should contain %q", r.Errors, want)
 		}

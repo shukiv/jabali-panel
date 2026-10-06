@@ -36,6 +36,8 @@ const (
 	// capRestoreUploadConfinement: backup.restore_from_tar honours mode=upload
 	// (GH #1993).
 	capRestoreUploadConfinement = "restore_upload_confinement"
+	// capDBUserCreateOnly: db_user.create honours create_only (GH #1993).
+	capDBUserCreateOnly = "db_user_create_only"
 )
 
 func agentVersionHandler(_ context.Context, _ json.RawMessage) (any, error) {
@@ -45,7 +47,7 @@ func agentVersionHandler(_ context.Context, _ json.RawMessage) (any, error) {
 		GoVersion:     runtime.Version(),
 		UptimeSeconds: int64(now.Sub(StartTime).Seconds()),
 		StartedAt:     StartTime.UTC().Format(time.RFC3339),
-		Capabilities:  []string{capRestoreUploadConfinement},
+		Capabilities:  []string{capRestoreUploadConfinement, capDBUserCreateOnly},
 	}, nil
 }
 

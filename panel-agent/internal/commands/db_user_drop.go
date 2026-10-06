@@ -39,6 +39,9 @@ func dbUserDropHandler(ctx context.Context, params json.RawMessage) (any, error)
 			Message: "invalid database user name",
 		}
 	}
+	if err := reservedDBUserRefusal(p.DBUserName); err != nil {
+		return nil, err
+	}
 
 	// Escape the username literal for the 'name'@'localhost' form.
 	escapedUsername, err := EscapeMariaDBLiteral(p.DBUserName)

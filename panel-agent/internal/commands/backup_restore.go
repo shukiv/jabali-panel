@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/backup"
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/dbreserve"
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/fsperm"
 )
 
@@ -105,20 +106,12 @@ const restoreModeUpload = "upload"
 
 func (e restoreEnforcement) upload() bool { return e.Mode == restoreModeUpload }
 
-// systemDatabases are this server's own databases (plus every jabali_* one,
-// see uploadDBRefusal). An uploaded backup never loads into them.
-var systemDatabases = map[string]bool{
-	"mysql": true, "information_schema": true, "performance_schema": true, "sys": true,
-	"crowdsec": true, "postgres": true, "template0": true, "template1": true,
-}
-
 // uploadDBRefusal says why an uploaded backup may not load db, or "" when it
 // may: the target account owns it, or it is a new name in the account's own
 // namespace.
 func (e restoreEnforcement) uploadDBRefusal(db string) string {
-	lower := strings.ToLower(db)
 	switch {
-	case systemDatabases[lower] || strings.HasPrefix(lower, "jabali_"):
+	case dbreserve.Database(db):
 		return "it is one of this server's own databases"
 	case e.dbAllowed(db):
 		return ""
