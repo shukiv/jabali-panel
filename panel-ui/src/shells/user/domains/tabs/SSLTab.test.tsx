@@ -1,9 +1,9 @@
 // SSLTab.test — GH #1543. The tenant per-domain SSL tab: it reads the
-// owner-scoped GET /domains/:id/ssl, gates View Certificate / Renew to an
-// issued cert and Retry to a failed / parked one, and POSTs to the tenant
-// renew/retry endpoints. It never offers a certificate-mode switch (admin-only).
+// owner-scoped GET /domains/:id/ssl and gates View Certificate to an issued
+// cert. It offers no Renew / Retry (those endpoints are admin-only and only
+// ever answered a tenant with a 403) and no certificate-mode switch.
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const get = vi.hoisted(() => vi.fn());
@@ -39,29 +39,33 @@ beforeEach(() => {
 });
 
 describe("SSLTab (GH #1543)", () => {
-  it("issued: shows View Certificate + Renew, hides Retry, and renews via the tenant endpoint", async () => {
+  it("issued: shows View Certificate and says renewal is automatic, with no Renew or Retry", async () => {
     get.mockResolvedValue({ data: { ssl: { status: "issued", issued_at: inDays(-5), expires_at: inDays(80) } } });
     renderTab();
     expect(await screen.findByRole("button", { name: /View Certificate/ })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Retry now/ })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /Renew now/ }));
-    await waitFor(() => expect(post).toHaveBeenCalledWith("/domains/d1/ssl/renew"));
+    expect(screen.getByText(/renews automatically/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Renew/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Retry/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /View Certificate/ }));
+    expect(await screen.findByText("cert-modal:d1")).toBeInTheDocument();
+    expect(post).not.toHaveBeenCalled();
   });
 
-  it("failed: shows the error alert + Retry, hides Renew, and retries via the tenant endpoint", async () => {
+  it("failed: shows the error and says issuance is retried automatically, with no Retry", async () => {
     get.mockResolvedValue({ data: { ssl: { status: "failed", last_error: "DNS not resolving" } } });
     renderTab();
     expect(await screen.findByText("DNS not resolving")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Renew now/ })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /Retry now/ }));
-    await waitFor(() => expect(post).toHaveBeenCalledWith("/domains/d1/ssl/retry"));
+    expect(screen.getByText(/retries issuance automatically/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Retry/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Renew/ })).not.toBeInTheDocument();
   });
 
-  it("pending_acme_retry: offers a manual Retry", async () => {
+  it("pending_acme_retry: no Retry either", async () => {
     get.mockResolvedValue({ data: { ssl: { status: "pending_acme_retry", last_error: "waiting on DNS" } } });
     renderTab();
-    expect(await screen.findByRole("button", { name: /Retry now/ })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Renew now/ })).not.toBeInTheDocument();
+    expect(await screen.findByText(/retries issuance automatically/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Retry/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Renew/ })).not.toBeInTheDocument();
   });
 
   it("self_signed: explains the self-signed cert and offers no actions (inspect 409s for non-issued)", async () => {
@@ -69,18 +73,15 @@ describe("SSLTab (GH #1543)", () => {
     renderTab();
     expect(await screen.findByText(/served with a self-signed certificate/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /View Certificate/ })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Renew now/ })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Retry now/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Renew/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Retry/ })).not.toBeInTheDocument();
   });
 
-  it("no cert (404): renders without View/Renew/Retry actions", async () => {
+  it("no cert (404): renders without any action", async () => {
     get.mockRejectedValue({ response: { status: 404 } });
     renderTab();
-    // The read settles to 'no certificate' — none of the action buttons appear.
-    await waitFor(() =>
-      expect(screen.queryByRole("button", { name: /Renew now/ })).not.toBeInTheDocument(),
-    );
-    expect(screen.queryByRole("button", { name: /Retry now/ })).not.toBeInTheDocument();
+    expect(await screen.findByText(/SSL is managed by the server administrator/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /View Certificate/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Renew|Retry/ })).not.toBeInTheDocument();
   });
 });

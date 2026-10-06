@@ -10,7 +10,7 @@ export const UserSSLManagerPage = () => {
       </Typography.Title>
 
       <Card>
-        <SSLManagerTable endpoint="/ssl-certificates" showOwner={false} />
+        <SSLManagerTable endpoint="/ssl-certificates" showOwner={false} adminActions={false} />
       </Card>
     </div>
   );

@@ -52,6 +52,12 @@ interface SSLManagerTableProps {
   statusFilter?: SSLFilter;
   /** Drop panel-cert:* synthetic rows — the admin SYSTEM band shows them instead. */
   hideSystemRows?: boolean;
+  /**
+   * Offer Renew and Retry. Their endpoints (POST /domains/:id/ssl/renew and
+   * /ssl/retry) are admin-only, so the tenant page turns them off rather than
+   * show buttons that fail with a 403. Default true.
+   */
+  adminActions?: boolean;
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -131,6 +137,7 @@ export const SSLManagerTable = ({
   showOwner,
   statusFilter = "all",
   hideSystemRows = false,
+  adminActions = true,
 }: SSLManagerTableProps) => {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -503,8 +510,8 @@ export const SSLManagerTable = ({
             </Tooltip>
           );
         }
-        const isRetryable = record.status === "failed" ||
-          (record.status === "pending_acme_retry" && record.next_retry_at && new Date(record.next_retry_at) < new Date());
+        const isRetryable = adminActions && (record.status === "failed" ||
+          (record.status === "pending_acme_retry" && record.next_retry_at && new Date(record.next_retry_at) < new Date()));
         // One labeled, state-appropriate primary action per row; the rest
         // live in the ⋯ overflow (Certificate console). Renew stays primary
         // for issued rows, Retry now for retryable failures.
@@ -516,7 +523,7 @@ export const SSLManagerTable = ({
           ...(record.status === "issued"
             ? [{ key: "revoke", danger: true, icon: <DeleteOutlined />, label: t("sslmanagertable.revoke_certificate") }]
             : []),
-          ...(record.status === "pending_acme_retry" && !isRetryable
+          ...(adminActions && record.status === "pending_acme_retry" && !isRetryable
             ? [{ key: "retry", icon: <RedoOutlined />, label: "Force retry now" }]
             : []),
           ...(record.last_error && record.status !== "issued"
@@ -540,7 +547,7 @@ export const SSLManagerTable = ({
         };
         return (
           <Space>
-            {record.status === "issued" && (
+            {adminActions && record.status === "issued" && (
               <Tooltip title={t("sslmanagertable.renew_certificate")}>
                 <RowActionButton
                   icon={<ReloadOutlined />}

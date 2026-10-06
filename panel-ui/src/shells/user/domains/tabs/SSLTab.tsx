@@ -1,21 +1,23 @@
 // SSLTab — the SSL pane of the tenant Web Domain page (GH #1543, lxsdevcode).
 // The Overview badge only tells you the state; this tab is where a tenant acts
-// on the certificate for THIS domain: see its status / issuer / expiry, view
-// the issued certificate, and renew or retry issuance. It reads the same
-// owner-scoped endpoints the tenant SSL Manager table already uses
-// (GET/POST /domains/:id/ssl*), scoped to one domain.
+// on the certificate for THIS domain: see its status / issuer / expiry and view
+// the issued certificate. It reads the same owner-scoped endpoints the tenant
+// SSL Manager table already uses (GET /domains/:id/ssl*), scoped to one domain.
+//
+// No Renew / Retry buttons: POST /domains/:id/ssl/renew and /ssl/retry are
+// admin-only, so for a tenant they only ever failed with a 403. Renewal and
+// retries run on their own; the tab says so.
 //
 // Deliberately NOT a certificate-mode switcher: choosing Let's Encrypt /
 // self-signed / custom-upload / shared is an admin capability (DomainSSLSection
 // hits /admin/*), so the mode is shown read-only here — same as the tenant SSL
 // Manager, which lists the mode but never lets a tenant change it.
 import { Alert, Button, Descriptions, Skeleton, Space, Tag, Typography } from "antd";
-import { ReloadOutlined, RedoOutlined, SafetyCertificateOutlined } from "@icons";
+import { SafetyCertificateOutlined } from "@icons";
 import { useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 
 import { apiClient } from "../../../../apiClient";
-import { feedback } from "../../../../lib/feedback";
 import { getSSLTag } from "../../../../utils/sslState";
 import { daysUntil, modeTag } from "../../../../components/ssl/sslHealth";
 import { SSLCertViewModal } from "../../../../components/ssl/SSLCertViewModal";
@@ -32,7 +34,6 @@ type CertStatus = {
 };
 
 export const SSLTab = ({ domain }: { domain: Domain }) => {
-  const qc = useQueryClient();
   const [viewOpen, setViewOpen] = useState(false);
 
   const certQ = useQuery<CertStatus | null>({
@@ -49,44 +50,6 @@ export const SSLTab = ({ domain }: { domain: Domain }) => {
     },
   });
 
-  // Renew/retry both change the served cert, so refresh this tab, the domain
-  // row + list (the Overview badge), and the SSL Manager page in one go —
-  // the same fan-out the Overview toggles use.
-  const invalidate = () => {
-    qc.invalidateQueries({ queryKey: ["domain-ssl", domain.id] });
-    qc.invalidateQueries({ queryKey: ["one", "domains", domain.id] });
-    qc.invalidateQueries({ queryKey: ["list", "domains"] });
-    qc.invalidateQueries({ queryKey: ["ssl-manager"] });
-  };
-
-  const renew = useMutation({
-    mutationFn: () => apiClient.post(`/domains/${domain.id}/ssl/renew`),
-    onSuccess: () => {
-      feedback.message.success("Renewal scheduled");
-      invalidate();
-    },
-    onError: () => feedback.message.error("Failed to schedule renewal"),
-  });
-
-  const retry = useMutation({
-    mutationFn: () => apiClient.post(`/domains/${domain.id}/ssl/retry`),
-    onSuccess: () => {
-      feedback.message.success("Retry queued");
-      invalidate();
-    },
-    onError: (err) => {
-      // A cert that isn't in a retryable state comes back 409 with a reason —
-      // surface it as info, not a blanket failure (mirrors DomainSSLSection).
-      const e = err as { response?: { status?: number; data?: { detail?: string } } };
-      if (e.response?.status === 409) {
-        feedback.message.info(e.response.data?.detail ?? "This certificate isn't retryable right now.");
-      } else {
-        feedback.message.error(e.response?.data?.detail ?? "Failed to queue retry");
-      }
-      invalidate();
-    },
-  });
-
   if (certQ.isLoading) return <Skeleton active paragraph={{ rows: 3 }} />;
 
   const cert = certQ.data;
@@ -95,22 +58,23 @@ export const SSLTab = ({ domain }: { domain: Domain }) => {
   const mode = modeTag(domain.ssl_mode);
   const isIssued = status === "issued";
   // A parked (pending_acme_retry) or failed cert is serving the self-signed
-  // fallback; offer a manual retry so a tenant who just fixed DNS can re-attempt
-  // now instead of waiting for the daily recheck.
-  const isRetryable = status === "failed" || status === "pending_acme_retry";
+  // fallback while the server retries issuance on its own.
+  const isRetrying = status === "failed" || status === "pending_acme_retry";
   const days = isIssued ? daysUntil(cert?.expires_at ?? null) : null;
-  // When there's no actionable cert (not issued, not retryable), explain the
-  // state without implying "no certificate" — a self_signed domain IS served.
-  // View Certificate stays issued-only because the API's inspect endpoint
-  // returns a 409 for any non-issued status.
-  const note =
-    status === "self_signed"
+  // Explain the state without implying "no certificate" — a self_signed domain
+  // IS served. View Certificate stays issued-only because the API's inspect
+  // endpoint returns a 409 for any non-issued status.
+  const note = isIssued
+    ? "The certificate renews automatically before it expires."
+    : isRetrying
+      ? "The server retries issuance automatically. Once the domain's DNS points at this server, the next retry gets the certificate; the server administrator can also retry it now."
+      : status === "self_signed"
       ? "This domain is served with a self-signed certificate. The certificate mode is set by the server administrator."
       : status === "revoked"
         ? "The certificate was revoked. The certificate mode is set by the server administrator."
         : status === "pending" || status === "issuing" || status === "renewing"
-          ? "A certificate is being issued — its details and renewal actions appear here once it's ready."
-          : "SSL is managed by the server administrator. When a certificate is issued, its details and renewal actions appear here.";
+          ? "A certificate is being issued — its details appear here once it's ready."
+          : "SSL is managed by the server administrator. When a certificate is issued, its details appear here.";
 
   return (
     <Space direction="vertical" size="large" style={{ width: "100%" }}>
@@ -156,34 +120,17 @@ export const SSLTab = ({ domain }: { domain: Domain }) => {
         ) : null}
       </Descriptions>
 
-      <Space wrap>
-        {isIssued ? (
-          <>
-            <Button icon={<SafetyCertificateOutlined />} onClick={() => setViewOpen(true)}>
-              View Certificate
-            </Button>
-            <Button icon={<ReloadOutlined />} loading={renew.isPending} onClick={() => renew.mutate()}>
-              Renew now
-            </Button>
-          </>
-        ) : null}
-        {isRetryable ? (
-          <Button
-            type="primary"
-            icon={<RedoOutlined />}
-            loading={retry.isPending}
-            onClick={() => retry.mutate()}
-          >
-            Retry now
+      {isIssued ? (
+        <Space wrap>
+          <Button icon={<SafetyCertificateOutlined />} onClick={() => setViewOpen(true)}>
+            View Certificate
           </Button>
-        ) : null}
-      </Space>
-
-      {!isIssued && !isRetryable ? (
-        <Typography.Paragraph type="secondary" style={{ margin: 0 }}>
-          {note}
-        </Typography.Paragraph>
+        </Space>
       ) : null}
+
+      <Typography.Paragraph type="secondary" style={{ margin: 0 }}>
+        {note}
+      </Typography.Paragraph>
 
       <SSLCertViewModal
         domainId={viewOpen ? domain.id : null}
