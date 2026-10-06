@@ -106,13 +106,29 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 	r.UserCreated = created
 
 	// 2) PHP pools + ini overrides — domains reference pools by id.
+	// poolIDs maps each backup pool id to the pool that stands for it on this
+	// server; a backup pool missing from it was not restored (GH #1993).
+	poolIDs := map[string]string{}
 	if d.PHPPools != nil {
 		for _, p := range m.PHPPools {
 			if existing, err := d.PHPPools.FindByID(ctx, p.ID); err == nil && existing != nil {
+				poolIDs[p.ID] = existing.ID
 				r.Skipped++
 				continue
 			} else if err != nil && !errors.Is(err, repository.ErrNotFound) {
 				r.Errors = append(r.Errors, fmt.Sprintf("php_pool %s: lookup: %v", p.ID, err))
+				continue
+			}
+			// GH #1993: an account created on this server before the restore
+			// already has its own pool for the default PHP version, under
+			// another id. One pool per (user, version) is allowed, so the
+			// backup's pool of that version is this one.
+			if existing, err := d.PHPPools.FindByUserAndVersion(ctx, m.User.ID, p.PHPVersion); err == nil && existing != nil {
+				poolIDs[p.ID] = existing.ID
+				r.Skipped++
+				continue
+			} else if err != nil && !errors.Is(err, repository.ErrNotFound) {
+				r.Errors = append(r.Errors, fmt.Sprintf("php_pool %s: lookup PHP %s pool: %v", p.ID, p.PHPVersion, err))
 				continue
 			}
 			pool := &models.PHPPool{
@@ -130,6 +146,7 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 				r.Errors = append(r.Errors, fmt.Sprintf("php_pool %s: create: %v", p.ID, err))
 				continue
 			}
+			poolIDs[p.ID] = p.ID
 			r.PHPPools++
 			if d.PHPPoolIni != nil {
 				for _, o := range p.IniOverrides {
@@ -218,7 +235,22 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 			for _, w := range warnings {
 				r.Errors = append(r.Errors, fmt.Sprintf("domain %s (%s): %s", dm.ID, dm.Name, w))
 			}
+			// Bind the domain to the pool that stands for its backup pool here.
+			// A pool that wasn't restored leaves it unbound: the reconciler binds
+			// an unbound domain to the account's default pool, where pointing at
+			// the missing id would fail the row on its foreign key (GH #1993).
+			if row.PHPPoolID != nil && d.PHPPools != nil {
+				if id, ok := poolIDs[*row.PHPPoolID]; ok {
+					row.PHPPoolID = &id
+				} else {
+					row.PHPPoolID = nil
+					r.Errors = append(r.Errors, fmt.Sprintf("domain %s (%s): its PHP pool was not restored; it uses the account's default PHP pool", dm.ID, dm.Name))
+				}
+			}
 			if err := d.Domains.Create(ctx, row); err != nil {
+				// Without the row its mailboxes, forwarders and app installs
+				// can't be stored either; skip them so this stays the error.
+				refused[dm.ID] = true
 				r.Errors = append(r.Errors, fmt.Sprintf("domain %s (%s): create: %v", dm.ID, dm.Name, err))
 				continue
 			}
