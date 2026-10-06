@@ -12,6 +12,7 @@ import (
 
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/kratosclient"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
 // adoptUsers is createUsers plus the link and rollback writes Create makes
@@ -20,6 +21,15 @@ type adoptUsers struct {
 	createUsers
 	linked  string
 	deleted bool
+	// owners maps a Kratos identity id to the panel user linked to it.
+	owners map[string]*models.User
+}
+
+func (f *adoptUsers) FindByKratosIdentityID(_ context.Context, identityID string) (*models.User, error) {
+	if u, ok := f.owners[identityID]; ok {
+		return u, nil
+	}
+	return nil, repository.ErrNotFound
 }
 
 func (f *adoptUsers) LinkKratosIdentity(_ context.Context, _ string, identityID string) error {
@@ -61,11 +71,14 @@ func (k *fakeKratosAdmin) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func adoptCreate(t *testing.T, k *fakeKratosAdmin) (*adoptUsers, *CreateResult, error) {
+func adoptCreate(t *testing.T, k *fakeKratosAdmin, owners ...map[string]*models.User) (*adoptUsers, *CreateResult, error) {
 	t.Helper()
 	srv := httptest.NewServer(k)
 	t.Cleanup(srv.Close)
 	users := &adoptUsers{}
+	if len(owners) > 0 {
+		users.owners = owners[0]
+	}
 	name := "carol"
 	res, err := Create(context.Background(), Deps{
 		Users: users, BcryptCost: 4, KratosClient: kratosclient.NewClient(srv.URL, srv.URL),
@@ -103,6 +116,23 @@ func TestCreate_AdoptedIdentityPasswordFailureRollsBack(t *testing.T) {
 	users, _, err := adoptCreate(t, k)
 	if err == nil {
 		t.Fatal("create succeeded although the adopted identity kept its old password")
+	}
+	if !users.deleted || users.linked != "" {
+		t.Fatalf("deleted=%v linked=%q, want the panel row rolled back and nothing linked", users.deleted, users.linked)
+	}
+}
+
+// The identity found by email can be another panel account's (its panel
+// email changed, its Kratos traits didn't). Taking it over would set that
+// account's password: the create fails without touching the identity.
+func TestCreate_IdentityLinkedToAnotherAccountIsNotTouched(t *testing.T) {
+	k := &fakeKratosAdmin{patches: map[string]string{}}
+	users, _, err := adoptCreate(t, k, map[string]*models.User{"existing-1": {ID: "u-other"}})
+	if err == nil {
+		t.Fatal("create succeeded on another account's sign-in identity")
+	}
+	if len(k.patches) != 0 {
+		t.Fatalf("the other account's identity was changed: %v", k.patches)
 	}
 	if !users.deleted || users.linked != "" {
 		t.Fatalf("deleted=%v linked=%q, want the panel row rolled back and nothing linked", users.deleted, users.linked)

@@ -233,16 +233,22 @@ func Create(ctx context.Context, d Deps, in CreateInput) (*CreateResult, error) 
 		//
 		// The reused identity takes this account's password: kept as it
 		// was, the password just set wouldn't sign in, and whoever knew
-		// the identity's old one would (GH #1993). If it can't be set,
-		// the create fails and rolls back like any Kratos failure.
+		// the identity's old one would (GH #1993). Only an identity no
+		// other panel account is linked to: the one found by email can be
+		// another account's (its panel email changed, its traits didn't),
+		// and setting its password would hand that account over. Either
+		// failure fails the create and rolls back like any Kratos failure.
 		if errors.Is(kErr, kratosclient.ErrIdentityExisted) && identityID != "" {
-			if d.Log != nil {
-				d.Log.Warn("kratos identity already exists; reusing it with the new password",
-					"user_id", u.ID, "email", u.Email, "kratos_id", identityID)
-			}
 			kErr = nil
-			if pwErr := d.KratosClient.SetPassword(ctx, identityID, u.PasswordHash); pwErr != nil {
+			if owner, oErr := d.Users.FindByKratosIdentityID(ctx, identityID); oErr == nil && owner != nil {
+				kErr = fmt.Errorf("a sign-in identity with this email belongs to another account (%s)", owner.ID)
+			} else if oErr != nil && !errors.Is(oErr, repository.ErrNotFound) {
+				kErr = fmt.Errorf("check the existing identity's account: %w", oErr)
+			} else if pwErr := d.KratosClient.SetPassword(ctx, identityID, u.PasswordHash); pwErr != nil {
 				kErr = fmt.Errorf("set the existing identity's password: %w", pwErr)
+			} else if d.Log != nil {
+				d.Log.Warn("kratos identity already existed; reused with the new password",
+					"user_id", u.ID, "email", u.Email, "kratos_id", identityID)
 			}
 		}
 		if kErr != nil {
