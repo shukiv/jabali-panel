@@ -191,9 +191,13 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 	ownDomains := map[string]bool{}
 	ownMailboxes := map[string]bool{}
 	ownDatabases := map[string]bool{}
-	ownerUsername := ""
+	// account is the account's username on THIS server. Every path the bundle
+	// names is moved off the bundle's username onto it and checked against
+	// it: the bundle's username is only a claim by whoever made the file.
+	account := restoreAccountUsername(ctx, m, d)
+	bundleUser := ""
 	if m.User.Username != nil {
-		ownerUsername = *m.User.Username
+		bundleUser = *m.User.Username
 	}
 	if d.Domains != nil {
 		for _, dm := range m.Domains {
@@ -215,7 +219,7 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 				ID:                    dm.ID,
 				UserID:                m.User.ID,
 				Name:                  dm.Name,
-				DocRoot:               dm.DocRoot,
+				DocRoot:               rehomePath(dm.DocRoot, "/home", bundleUser, account),
 				IsEnabled:             dm.IsEnabled,
 				NginxCustomDirectives: dm.NginxCustomDirectives,
 				RedirectAllTo:         dm.RedirectAllTo,
@@ -246,7 +250,7 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 				r.Errors = append(r.Errors, fmt.Sprintf("domain %s (%s): not restored: the restore checks are not wired", dm.ID, dm.Name))
 				continue
 			}
-			warnings, cerr := d.CheckDomain(ctx, row, ownerUsername)
+			warnings, cerr := d.CheckDomain(ctx, row, account)
 			if cerr != nil {
 				refused[dm.ID] = true
 				r.Errors = append(r.Errors, fmt.Sprintf("domain %s (%s): not restored: %v", dm.ID, dm.Name, cerr))
@@ -716,27 +720,31 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 	// restore staging path); without that the reconciler sets a throwaway and
 	// the tenant must reset. QuotaMB is restored verbatim (a restore onto a
 	// smaller package can overcommit the split — the reconciler's cap check is
-	// advisory here). Username embeds the SOURCE tenant prefix; a DR restore to
-	// a different target username is out of scope (the row is restored as-is).
+	// advisory here). Username embeds the SOURCE tenant prefix and is restored
+	// as-is; the home and jail paths move to this server's username.
 	if d.FtpAccounts != nil {
-		account := restoreAccountUsername(ctx, m, d)
 		for _, a := range m.FtpAccounts {
 			// The reconciler provisions the system user, home and jail from
 			// these paths: keep them inside this account's own home and jail
 			// directory, never another account's.
-			if !pathWithin(a.HomePath, "/home", account) {
+			home := rehomePath(a.HomePath, "/home", bundleUser, account)
+			if !pathWithin(home, "/home", account) {
 				r.Errors = append(r.Errors, fmt.Sprintf("ftp_account %s: not restored: home %q is outside /home/%s", a.ID, a.HomePath, account))
 				continue
 			}
-			if a.JailPath != "" && !pathWithin(a.JailPath, ftpops.JailRoot, account) {
-				r.Errors = append(r.Errors, fmt.Sprintf("ftp_account %s: not restored: jail %q is outside %s/%s", a.ID, a.JailPath, ftpops.JailRoot, account))
-				continue
+			jail := a.JailPath
+			if jail != "" {
+				jail = rehomePath(jail, ftpops.JailRoot, bundleUser, account)
+				if !pathWithin(jail, ftpops.JailRoot, account) {
+					r.Errors = append(r.Errors, fmt.Sprintf("ftp_account %s: not restored: jail %q is outside %s/%s", a.ID, a.JailPath, ftpops.JailRoot, account))
+					continue
+				}
 			}
 			row := &models.FtpAccount{
 				ID:           a.ID,
 				UserID:       m.User.ID,
 				Username:     a.Username,
-				HomePath:     a.HomePath,
+				HomePath:     home,
 				FTPAccess:    a.FTPAccess,
 				SFTPAccess:   a.SFTPAccess,
 				WebDAVAccess: a.WebDAVAccess,
@@ -744,7 +752,7 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 				UID:          a.UID,
 				Isolated:     a.Isolated,
 				QuotaMB:      a.QuotaMB,
-				JailPath:     a.JailPath,
+				JailPath:     jail,
 				CreatedAt:    now,
 				UpdatedAt:    now,
 			}
@@ -918,18 +926,34 @@ func restoreAccountUsername(ctx context.Context, m *internalbackup.AccountMetada
 	return ""
 }
 
-// accountNameRe is the shape of a username that may name a directory.
-var accountNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_.-]*$`)
+// accountNameRe is a panel username (userops' rule); it can't be "." or "..".
+var accountNameRe = regexp.MustCompile(`^[a-z_][a-z0-9_-]{0,31}$`)
 
 // pathWithin reports whether the absolute path p, cleaned, is base/account or
-// inside it. An account name that isn't a plain directory name admits nothing.
+// inside it. An account name that isn't a panel username admits nothing.
 func pathWithin(p, base, account string) bool {
-	if !accountNameRe.MatchString(account) || account == "." || account == ".." || !filepath.IsAbs(p) {
+	if !accountNameRe.MatchString(account) || !filepath.IsAbs(p) {
 		return false
 	}
 	root := base + "/" + account
 	c := filepath.Clean(p)
 	return c == root || strings.HasPrefix(c, root+"/")
+}
+
+// rehomePath moves p from base/from to base/to when it is that directory or
+// inside it: the backup names the account's paths under the username it had
+// where the backup was made. Any other path comes back unchanged for the
+// caller's own check.
+func rehomePath(p, base, from, to string) string {
+	if from == to || !accountNameRe.MatchString(from) || !accountNameRe.MatchString(to) || !filepath.IsAbs(p) {
+		return p
+	}
+	old := base + "/" + from
+	c := filepath.Clean(p)
+	if c == old || strings.HasPrefix(c, old+"/") {
+		return base + "/" + to + c[len(old):]
+	}
+	return p
 }
 
 // users is the user repo accessor on Deps. Builder Deps doesn't carry
