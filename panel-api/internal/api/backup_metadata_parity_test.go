@@ -19,9 +19,10 @@ import (
 // sections, so they're excluded. So is CheckDomain (GH #1898): a restore-time
 // guard hook, which the admin restore builds from its own alias and settings
 // stores. And MailAddresses: the restore's Stalwart registry release, which
-// only the admin restore wires.
+// only the admin restore wires. And Untrusted (GH #1993): a per-restore flag
+// for a bundle from an uploaded file.
 func TestBackupMetadataAdaptersInLockstep(t *testing.T) {
-	skip := map[string]bool{"KratosClient": true, "Log": true, "CheckDomain": true, "MailAddresses": true}
+	skip := map[string]bool{"KratosClient": true, "Log": true, "CheckDomain": true, "MailAddresses": true, "Untrusted": true}
 
 	builder := reflect.TypeOf(backupmetadata.Deps{})
 	adapters := map[string]reflect.Type{

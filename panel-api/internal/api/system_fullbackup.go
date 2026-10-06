@@ -318,6 +318,12 @@ func (h *backupHandler) fullRestoreApply(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "agent_unavailable"})
 		return
 	}
+	// GH #1993: each account restores in the agent's mode=upload; refuse an
+	// agent that predates it before anything is extracted or created.
+	if !agentHasCapability(c.Request.Context(), h.cfg.Agent, capRestoreUploadConfinement) {
+		c.JSON(http.StatusConflict, gin.H{"error": "agent_update_required", "detail": agentUpdateRequiredDetail})
+		return
+	}
 	c.Set("audit_target", req.UploadID)
 	c.Set("audit_target_type", "backup_run")
 
@@ -417,11 +423,16 @@ func (h *backupHandler) runFullRestore(containerPath, marker string, req fullRes
 			}
 			target, userCreated = nt, true
 		}
-		rraw, rerr := h.cfg.Agent.Call(ctx, "backup.restore_from_tar", map[string]any{
+		params := map[string]any{
 			"job_id":          ids.NewULID(),
 			"tar_path":        u.InnerPath,
 			"target_username": u.Username,
-		})
+		}
+		if perr := h.cfg.uploadRestoreParams(ctx, target.ID, params); perr != nil {
+			packed = append(packed, u.Username+": not restored: "+perr.Error())
+			continue
+		}
+		rraw, rerr := h.cfg.Agent.Call(ctx, "backup.restore_from_tar", params)
 		if rerr != nil {
 			line := u.Username + ": " + restoreFailureDetail(rerr)
 			if userCreated {
@@ -431,14 +442,25 @@ func (h *backupHandler) runFullRestore(containerPath, marker string, req fullRes
 			continue
 		}
 		var rr struct {
-			Applied  []string        `json:"applied"`
-			Metadata json.RawMessage `json:"metadata"`
+			Applied                   []string        `json:"applied"`
+			Warnings                  []string        `json:"warnings"`
+			Metadata                  json.RawMessage `json:"metadata"`
+			UploadConfinementEnforced bool            `json:"upload_confinement_enforced"`
 		}
 		_ = json.Unmarshal(rraw, &rr)
+		if !rr.UploadConfinementEnforced {
+			packed = append(packed, u.Username+": the agent did not confirm it confined the restore to this account; its metadata was not applied — "+agentUpdateRequiredDetail)
+			continue
+		}
 		metaErrs := h.applyRestoreMetadataForUser(ctx, rr.Metadata, target.ID)
 		line := u.Username + ": restored " + strconv.Itoa(len(rr.Applied)) + " item(s)"
 		if userCreated {
 			line += " (account created — send a recovery link: jabali user password " + u.Username + " --link)"
+		}
+		// GH #1993: what the agent refused from the file (another account's
+		// database, an existing app, ...) must reach the admin.
+		if len(rr.Warnings) > 0 {
+			line += "; " + strings.Join(rr.Warnings, "; ")
 		}
 		if len(metaErrs) > 0 {
 			line += "; metadata: " + strings.Join(metaErrs, "; ")

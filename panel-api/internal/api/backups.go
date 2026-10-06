@@ -1200,7 +1200,7 @@ func (h *backupHandler) runAccountRestoreJob(jobID string, dest *models.BackupDe
 	// consistent to rebuild) and for old snapshots that carry no bundle. A
 	// metadata-apply failure must not leave the job reporting a clean success.
 	if finalStatus != models.BackupJobStatusFailed {
-		if errs := h.applyRestoreMetadata(ctx, result.Metadata); len(errs) > 0 {
+		if errs := h.applyRestoreMetadata(ctx, result.Metadata, false); len(errs) > 0 {
 			if finalStatus == models.BackupJobStatusSucceeded {
 				finalStatus = models.BackupJobStatusPartial
 			}
@@ -1220,7 +1220,9 @@ func (h *backupHandler) runAccountRestoreJob(jobID string, dest *models.BackupDe
 // no-op, the documented fallback. Restored cron ROWS regain their systemd
 // timers on the next reconciler tick (internal/reconciler/cron_reconcile.go),
 // the same convergence model the rest of restored state follows.
-func (h *backupHandler) applyRestoreMetadata(ctx context.Context, metaRaw json.RawMessage) []string {
+// untrusted marks a bundle that came from an uploaded file rather than one of
+// this server's own backup destinations (see backupmetadata.Deps.Untrusted).
+func (h *backupHandler) applyRestoreMetadata(ctx context.Context, metaRaw json.RawMessage, untrusted bool) []string {
 	if len(metaRaw) == 0 {
 		return nil
 	}
@@ -1252,6 +1254,7 @@ func (h *backupHandler) applyRestoreMetadata(ctx context.Context, metaRaw json.R
 		Agent:          h.cfg.Agent, // push restored forwarders to Stalwart (GH #1795)
 		// GH #1898: a restored domain passes the create-time checks.
 		CheckDomain: RestoreDomainCheck(h.cfg.Domains, h.cfg.WebDomainAliases, h.cfg.ServerSettings),
+		Untrusted:   untrusted,
 	}
 	if h.cfg.MailAddresses != nil {
 		deps.MailAddresses = h.cfg.MailAddresses

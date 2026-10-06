@@ -68,6 +68,11 @@ type Deps struct {
 	// stored without it. Required for restoring domains: nil refuses every
 	// domain, so no restore door can skip the checks by forgetting to wire them.
 	CheckDomain func(ctx context.Context, row *models.Domain, ownerUsername string) (warnings []string, err error)
+	// Untrusted marks a bundle from an uploaded file rather than one of this
+	// server's own backup destinations (GH #1993). Whoever made the file
+	// chose its contents, so Apply restores nothing admin-level from it:
+	// no server-level docker apps and no custom nginx directives.
+	Untrusted bool
 	// MailAddresses takes a restored mailbox's address off every Stalwart
 	// account before Apply stores the mailbox. Stalwart's registry keeps
 	// every alias it has seen, so a mailbox at an address that was once

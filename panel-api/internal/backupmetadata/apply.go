@@ -230,6 +230,13 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 				CreatedAt:             now,
 				UpdatedAt:             now,
 			}
+			// Custom nginx directives are admin-only raw config, checked only by
+			// the relaxed admin rules. From an uploaded file they are config
+			// written by whoever made it (GH #1993).
+			if d.Untrusted && row.NginxCustomDirectives != nil && strings.TrimSpace(*row.NginxCustomDirectives) != "" {
+				row.NginxCustomDirectives = nil
+				r.Errors = append(r.Errors, fmt.Sprintf("domain %s (%s): custom nginx directives not restored from an uploaded backup; re-add them in the domain's settings after reviewing them", dm.ID, dm.Name))
+			}
 			if d.CheckDomain == nil {
 				refused[dm.ID] = true
 				r.Errors = append(r.Errors, fmt.Sprintf("domain %s (%s): not restored: the restore checks are not wired", dm.ID, dm.Name))
@@ -612,8 +619,22 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 	// 5b) Docker apps (GH #954): rebuild the panel row + published ports so the
 	// restored app is panel-managed. The DATA tree + compose-up land via the
 	// stage=docker restore (#1017); without this row the app is orphaned on disk.
-	if d.DockerApps != nil {
-		for _, a := range m.DockerApps {
+	if d.DockerApps != nil && len(m.DockerApps) > 0 {
+		// An app's data lives in one global dir per effective slug, so a
+		// restored app must not take a slug an app with another owner uses.
+		apps := m.DockerApps
+		existing, listErr := d.DockerApps.ListAll(ctx)
+		if listErr != nil {
+			r.Errors = append(r.Errors, fmt.Sprintf("docker_apps: not restored: list this server's apps: %v", listErr))
+			apps = nil
+		}
+		for _, a := range apps {
+			// GH #1993: a server-level app from an uploaded file would be an
+			// admin-level app chosen by whoever made it.
+			if a.ServerLevel && d.Untrusted {
+				r.Errors = append(r.Errors, fmt.Sprintf("docker_app %s (%s): not restored: a server-level app can't be restored from an uploaded backup", a.ID, a.Slug))
+				continue
+			}
 			// Server-level apps (GH #1360) restore with UserID NULL so they
 			// stay admin/server-level; tenant apps are (re)owned by the
 			// account being restored. Re-owning a server-level app to the
@@ -623,6 +644,10 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 			if !a.ServerLevel {
 				uid := m.User.ID
 				owner = &uid
+			}
+			if slug, taken := dockerSlugTaken(existing, a, owner); taken {
+				r.Errors = append(r.Errors, fmt.Sprintf("docker_app %s: not restored: another account's app already uses %q", a.ID, slug))
+				continue
 			}
 			row := &models.DockerApp{
 				ID: a.ID, UserID: owner, Slug: a.Slug, InstanceSlug: a.InstanceSlug,
@@ -906,6 +931,26 @@ func applyUser(ctx context.Context, m *internalbackup.AccountMetadata, d Deps, n
 		return false, fmt.Errorf("create: %w", err)
 	}
 	return true, nil
+}
+
+// dockerSlugTaken reports whether an app on this server other than a, with an
+// owner other than owner (nil = server-level), already uses a's effective
+// slug, and returns that slug.
+func dockerSlugTaken(existing []*models.DockerApp, a internalbackup.MetadataDockerApp, owner *string) (string, bool) {
+	slug := a.InstanceSlug
+	if slug == "" {
+		slug = a.Slug
+	}
+	for _, e := range existing {
+		if e == nil || e.ID == a.ID || e.EffectiveSlug() != slug {
+			continue
+		}
+		sameOwner := (e.UserID == nil && owner == nil) || (e.UserID != nil && owner != nil && *e.UserID == *owner)
+		if !sameOwner {
+			return slug, true
+		}
+	}
+	return slug, false
 }
 
 // knownSSLStatus is every status an ssl_certificates row can hold.

@@ -304,6 +304,13 @@ func (h *backupHandler) restoreUploadApply(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "agent_unavailable"})
 		return
 	}
+	// GH #1993: the restore runs the agent in mode=upload. An agent that
+	// predates it would ignore the mode and restore unconfined, so refuse it
+	// before anything (even creating the account) happens.
+	if !agentHasCapability(c.Request.Context(), h.cfg.Agent, capRestoreUploadConfinement) {
+		c.JSON(http.StatusConflict, gin.H{"error": "agent_update_required", "detail": agentUpdateRequiredDetail})
+		return
+	}
 
 	target, uerr := h.cfg.Users.FindByUsername(c.Request.Context(), req.TargetUsername)
 	userCreated := false
@@ -475,12 +482,18 @@ func (h *backupHandler) runUploadRestore(a uploadRestoreArgs) {
 	ctx, cancel := context.WithTimeout(context.Background(), restoreJobTimeout)
 	defer cancel()
 
-	raw, err := h.cfg.Agent.Call(ctx, "backup.restore_from_tar", map[string]any{
+	params := map[string]any{
 		"job_id":          ids.NewULID(),
 		"tar_path":        a.path,
 		"target_username": a.username,
 		"components":      a.components,
-	})
+	}
+	if err := h.cfg.uploadRestoreParams(ctx, a.targetID, params); err != nil {
+		writeRestoreUploadOutcome(a.outcomePath, "failed", nil, nil, "not restored: "+err.Error())
+		_ = os.Remove(a.path)
+		return
+	}
+	raw, err := h.cfg.Agent.Call(ctx, "backup.restore_from_tar", params)
 	if err != nil {
 		detail := restoreFailureDetail(err)
 		if a.userCreated {
@@ -494,11 +507,20 @@ func (h *backupHandler) runUploadRestore(a uploadRestoreArgs) {
 		return
 	}
 	var result struct {
-		Applied  []string        `json:"applied"`
-		Warnings []string        `json:"warnings"`
-		Metadata json.RawMessage `json:"metadata"`
+		Applied                   []string        `json:"applied"`
+		Warnings                  []string        `json:"warnings"`
+		Metadata                  json.RawMessage `json:"metadata"`
+		UploadConfinementEnforced bool            `json:"upload_confinement_enforced"`
 	}
 	_ = json.Unmarshal(raw, &result)
+	// The capability gate ran before the restore; an agent that still didn't
+	// confine it (swapped mid-flight) must not get its metadata applied too.
+	if !result.UploadConfinementEnforced {
+		writeRestoreUploadOutcome(a.outcomePath, "failed", result.Applied, result.Warnings,
+			"the agent did not confirm it confined the restore to this account; nothing else was applied — "+agentUpdateRequiredDetail)
+		_ = os.Remove(a.path)
+		return
+	}
 
 	// Rebuild panel DB rows from the backup's metadata bundle, REMAPPED to this
 	// box's target user. The bundle carries the SOURCE box's user_id; every child
@@ -526,14 +548,15 @@ func (h *backupHandler) runUploadRestore(a uploadRestoreArgs) {
 // (so a cross-server bundle's rows attach to THIS box's user) before the shared
 // applyRestoreMetadata rebuild.
 func (h *backupHandler) applyRestoreMetadataForUser(ctx context.Context, metaRaw json.RawMessage, targetID string) []string {
+	// Both callers restore an uploaded file: its bundle is untrusted.
 	if len(metaRaw) == 0 || targetID == "" {
-		return h.applyRestoreMetadata(ctx, metaRaw)
+		return h.applyRestoreMetadata(ctx, metaRaw, true)
 	}
 	remapped, err := remapMetadataUserID(metaRaw, targetID)
 	if err != nil {
 		return []string{err.Error()}
 	}
-	return h.applyRestoreMetadata(ctx, remapped)
+	return h.applyRestoreMetadata(ctx, remapped, true)
 }
 
 // remapMetadataUserID rewrites the metadata bundle's user.id to targetID. Every
