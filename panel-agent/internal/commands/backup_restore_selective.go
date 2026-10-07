@@ -359,11 +359,18 @@ func applySelectiveHome(ctx context.Context, stagingRoot, username string, st *b
 		return "home: staged source missing: " + err.Error()
 	}
 	// -aH not -aHAX: skip untrusted ACL/xattr restore from the repo;
-	// owner/mode are re-normalized below (Gitea #462).
+	// owner/mode are re-normalized below (Gitea #462). The home itself keeps
+	// its own owner and mode (see homeOwnership).
+	homeOwner := saveHomeOwnership(dst)
 	if err := execCommandContext(ctx, "rsync", "-aH", src, dst).Run(); err != nil {
+		_ = homeOwner.put(dst, uid, gid, wwwDataGID())
 		return "home: rsync: " + err.Error()
 	}
-	if err := chownTreeRecursive(dst, dst, uid, gid); err != nil {
+	err := chownTreeRecursive(dst, dst, uid, gid)
+	if perr := homeOwner.put(dst, uid, gid, wwwDataGID()); perr != nil && err == nil {
+		err = fmt.Errorf("owner and mode of %s: %w", filepath.Clean(dst), perr)
+	}
+	if err != nil {
 		return "home: chown: " + err.Error()
 	}
 	if err := restoreDocrootGroup(username); err != nil {

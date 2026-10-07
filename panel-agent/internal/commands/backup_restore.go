@@ -23,12 +23,17 @@ import (
 	"syscall"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/backup"
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/dbreserve"
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/fsperm"
 )
 
 const restoreLockPath = "/var/lib/jabali-backups/.restore.lock"
+
+// restoreHomeRoot is where account homes live; tests point it elsewhere.
+var restoreHomeRoot = "/home"
 
 // restoreDBNameRe is the canonical database-identifier policy shared with
 // db.create / db.drop (^[a-zA-Z][a-zA-Z0-9_-]{0,63}$). Restore reads the
@@ -518,11 +523,17 @@ func applyAccountRestore(
 			// stagingRoot/home/home/<username>/. Source needs a
 			// trailing slash so rsync copies CONTENTS not the dir.
 			src := filepath.Join(stagingRoot, "home", "home", username) + "/"
-			dst := "/home/" + username + "/"
+			dst := filepath.Join(restoreHomeRoot, username) + "/"
 			if err := stagedEntry(stagingRoot, filepath.Clean(src), true); err != nil {
 				warnings = append(warnings,
 					fmt.Sprintf("home: source %s missing: %v", src, err))
 				continue
+			}
+			homeOwner := saveHomeOwnership(dst)
+			putHomeBack := func() {
+				if err := homeOwner.put(dst, uid, gid, wwwDataGID()); err != nil {
+					warnings = append(warnings, fmt.Sprintf("home: owner and mode of %s: %v", filepath.Clean(dst), err))
+				}
 			}
 			// -aH (not -aHAX): do NOT restore ACLs/xattrs from the backup. The
 			// repository is untrusted (a poisoned snapshot could carry
@@ -531,9 +542,12 @@ func applyAccountRestore(
 			// re-normalized below regardless (Gitea #462).
 			if err := execCommandContext(ctx, "rsync", "-aH", "--delete", src, dst).Run(); err != nil {
 				warnings = append(warnings, fmt.Sprintf("home: rsync: %v", err))
+				putHomeBack()
 				continue
 			}
-			if err := chownTreeRecursive(dst, dst, uid, gid); err != nil {
+			err := chownTreeRecursive(dst, dst, uid, gid)
+			putHomeBack()
+			if err != nil {
 				warnings = append(warnings, fmt.Sprintf("home: chown: %v", err))
 				continue
 			}
@@ -951,6 +965,75 @@ func restoreDocrootGroup(username string) error {
 		}
 	}
 	return nil
+}
+
+// homeOwnership is a home directory's own owner and mode, saved before a
+// restore copies over it.
+//
+// GH #1993: the home's owner and mode come from the account's SSH setting
+// (root's 0751 for SFTP, the user's 0750 group www-data for SSH; see
+// ssh.user.home_chown), and nginx (www-data) reaches the account's sites
+// through it. rsync -a copies the backup's onto it, and the chown pass after
+// makes it the user's own 0750: every site of the account then answers 404.
+// The reconciler sets it only when the SSH setting changes, so the restore
+// puts back what the home had.
+type homeOwnership struct {
+	uid, gid int
+	mode     uint32
+	saved    bool
+}
+
+// saveHomeOwnership records the home directory's owner and mode; a home that
+// doesn't exist yet records nothing (a new home is the reconciler's to set).
+func saveHomeOwnership(home string) homeOwnership {
+	fi, err := os.Lstat(filepath.Clean(home))
+	if err != nil || !fi.IsDir() {
+		return homeOwnership{}
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok {
+		return homeOwnership{}
+	}
+	return homeOwnership{uid: int(st.Uid), gid: int(st.Gid), mode: st.Mode & 0o7777, saved: true}
+}
+
+// homeModeMask keeps a home's mode to what the SSH settings use (0751,
+// 0750, setgid): never writable by group or others.
+const homeModeMask = 0o2755
+
+// put gives the home of the account uid:gid back the saved owner and mode,
+// when they are one of the account's own layouts: owned by root or the
+// account, group the account's or wwwGID. Anything else (a home left behind
+// by another account, whose uid may since belong to someone else) stays as
+// the chown pass made it, the account's. The home's parent is root's, and the
+// home is opened without following a link.
+func (h homeOwnership) put(home string, uid, gid, wwwGID int) error {
+	if !h.saved || (h.uid != 0 && h.uid != uid) || (h.gid != gid && h.gid != wwwGID) {
+		return nil
+	}
+	fd, err := unix.Open(filepath.Clean(home), unix.O_NOFOLLOW|unix.O_DIRECTORY|unix.O_RDONLY|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return err
+	}
+	defer unix.Close(fd)
+	if err := unix.Fchown(fd, h.uid, h.gid); err != nil {
+		return err
+	}
+	return unix.Fchmod(fd, h.mode&homeModeMask)
+}
+
+// wwwDataGID is the www-data group's id, or -1 when there is none. A var so
+// tests can stand another group in.
+var wwwDataGID = func() int {
+	g, err := user.LookupGroup("www-data")
+	if err != nil {
+		return -1
+	}
+	id, err := strconv.Atoi(g.Gid)
+	if err != nil {
+		return -1
+	}
+	return id
 }
 
 // chownTreeRecursive chowns root and every entry under it to uid:gid, root
