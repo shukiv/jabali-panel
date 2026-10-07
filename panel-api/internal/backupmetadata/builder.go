@@ -73,6 +73,10 @@ type Deps struct {
 	// chose its contents, so Apply restores nothing admin-level from it:
 	// no server-level docker apps and no custom nginx directives.
 	Untrusted bool
+	// KeepExisting (GH #1993: "Overwrite existing items with the backup"
+	// off) adds only what the account is missing: a row it already has
+	// keeps its settings. An existing mailbox keeps its autoresponder.
+	KeepExisting bool
 	// RestoredDatabases / RestoredDockerSlugs name the databases and docker
 	// app folders (effective slug) the agent restored into the account from
 	// the uploaded file. With Untrusted, a database or docker app row is

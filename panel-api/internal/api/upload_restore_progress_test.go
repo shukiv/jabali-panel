@@ -48,7 +48,7 @@ type progressAgent struct {
 func (a *progressAgent) Call(_ context.Context, cmd string, params any) (json.RawMessage, error) {
 	switch cmd {
 	case "agent.version":
-		return json.RawMessage(`{"version":"x","capabilities":["restore_upload_confinement"]}`), nil
+		return json.RawMessage(`{"version":"x","capabilities":["restore_upload_confinement","restore_keep_existing"]}`), nil
 	case "backup.restore_progress":
 		return json.RawMessage(`{"phase":"applying","stage":"db","item":"alice_wp","index":2,"count":3}`), nil
 	case "backup.restore_from_tar":
@@ -193,7 +193,7 @@ func TestRestoreUploadedAccount_ReportsTheDNSStepLast(t *testing.T) {
 			}
 			steps[p.Steps] = true
 		}
-		if _, err := h.restoreUploadedAccount(context.Background(), a.path, "alice", "T", c.components, report); err != nil {
+		if _, err := h.restoreUploadedAccount(context.Background(), a.path, "alice", "T", c.components, true, report); err != nil {
 			t.Fatal(err)
 		}
 		if strings.Join(labels, "|") != strings.Join(c.want, "|") || len(steps) != 1 || !steps[len(c.want)] {

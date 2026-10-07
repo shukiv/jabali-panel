@@ -380,7 +380,8 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 					r.Errors = append(r.Errors, fmt.Sprintf("mailbox %s: not restored: lookup: %v", mb.ID, err))
 					continue
 				}
-				if err == nil && existing != nil {
+				hadMailbox := err == nil && existing != nil
+				if hadMailbox {
 					// Its autoresponder and shares below are written by mailbox
 					// id, so a mailbox of another domain stays untouched.
 					if existing.DomainID != domID {
@@ -435,7 +436,20 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 				}
 				mbID := mailboxIDs[mb.ID]
 				// Autoresponder is keyed by the mailbox PK; Update upserts.
-				if mb.Autoresponder != nil && d.Autoresponders != nil {
+				// Keeping what is there, a mailbox that already has one keeps it.
+				restoreAR := mb.Autoresponder != nil && d.Autoresponders != nil
+				if restoreAR && d.KeepExisting && hadMailbox {
+					cur, err := d.Autoresponders.FindByMailboxID(ctx, mbID)
+					switch {
+					case err == nil && cur != nil:
+						r.Skipped++
+						restoreAR = false
+					case err != nil && !errors.Is(err, repository.ErrNotFound):
+						r.Errors = append(r.Errors, fmt.Sprintf("autoresponder %s: not restored: lookup: %v", mb.ID, err))
+						restoreAR = false
+					}
+				}
+				if restoreAR {
 					ar := &models.EmailAutoresponder{
 						MailboxID: mbID,
 						Enabled:   mb.Autoresponder.Enabled,

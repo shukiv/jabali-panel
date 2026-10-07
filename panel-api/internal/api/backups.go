@@ -1254,6 +1254,13 @@ func (h *backupHandler) applyRestoreMetadata(ctx context.Context, metaRaw json.R
 	if err := json.Unmarshal(metaRaw, &meta); err != nil {
 		return []string{"parse metadata bundle: " + err.Error()}
 	}
+	r := backupmetadata.Apply(ctx, &meta, h.restoreMetadataDeps(uploaded))
+	return r.Errors
+}
+
+// restoreMetadataDeps is what applyRestoreMetadata's rebuild runs with;
+// uploaded as there.
+func (h *backupHandler) restoreMetadataDeps(uploaded *uploadedData) backupmetadata.Deps {
 	deps := backupmetadata.Deps{
 		Users:          h.cfg.Users,
 		Domains:        h.cfg.Domains,
@@ -1283,12 +1290,12 @@ func (h *backupHandler) applyRestoreMetadata(ctx context.Context, metaRaw json.R
 	if uploaded != nil {
 		deps.RestoredDatabases = stringSet(uploaded.databases)
 		deps.RestoredDockerSlugs = stringSet(uploaded.dockerSlugs)
+		deps.KeepExisting = uploaded.keepExisting
 	}
 	if h.cfg.MailAddresses != nil {
 		deps.MailAddresses = h.cfg.MailAddresses
 	}
-	r := backupmetadata.Apply(ctx, &meta, deps)
-	return r.Errors
+	return deps
 }
 
 // --- helpers + sentinel below ---

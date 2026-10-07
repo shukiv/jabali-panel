@@ -568,6 +568,20 @@ export interface UploadedBackupRestoreResult {
   metadata_errors?: string[] | null;
 }
 
+export interface UploadedRestoreOptions {
+  createUser?: boolean;
+  packageId?: string | null;
+  overwrite?: boolean;
+}
+
+// uploadedRestoreBody is the restore request's option fields (exported for tests).
+export function uploadedRestoreBody(opts?: UploadedRestoreOptions) {
+  return {
+    ...(opts?.createUser ? { create_user: true, package_id: opts.packageId ?? null } : {}),
+    ...(opts?.overwrite ? { overwrite: true } : {}),
+  };
+}
+
 // applyUploadedBackupRestore kicks off the restore (202) and polls the status
 // marker until it seals — the apply runs detached server-side so a minutes-long
 // account restore doesn't span a proxy timeout (same shape as the DB restore).
@@ -578,7 +592,9 @@ export async function applyUploadedBackupRestore(
   base = "/admin/backups", // GH #1408: "/me/backups" forces target = the caller
   // GH #1408 create-from-manifest: when the target user doesn't exist yet,
   // createUser creates it from the bundle (admin only) with the chosen package.
-  opts?: { createUser?: boolean; packageId?: string | null },
+  // GH #1993: overwrite replaces what the account already has; without it the
+  // restore adds only what is missing.
+  opts?: UploadedRestoreOptions,
   onProgress?: (p: RestoreProgress) => void,
 ): Promise<UploadedBackupRestoreResult> {
   await apiClient.post(
@@ -587,7 +603,7 @@ export async function applyUploadedBackupRestore(
       upload_id: uploadId,
       target_username: targetUsername,
       components,
-      ...(opts?.createUser ? { create_user: true, package_id: opts.packageId ?? null } : {}),
+      ...uploadedRestoreBody(opts),
     },
   );
   const deadline = Date.now() + 65 * 60 * 1000; // matches the server's 60-min cap
@@ -678,13 +694,13 @@ export async function restoreKeptUploadedBackup(
   id: string,
   targetUsername: string,
   components: string[],
-  opts?: { createUser?: boolean; packageId?: string | null },
+  opts?: UploadedRestoreOptions,
   onProgress?: (p: RestoreProgress) => void,
 ): Promise<UploadedBackupRestoreResult> {
   await apiClient.post(`/admin/uploaded-backups/${id}/restore`, {
     target_username: targetUsername,
     components,
-    ...(opts?.createUser ? { create_user: true, package_id: opts.packageId ?? null } : {}),
+    ...uploadedRestoreBody(opts),
   });
   const deadline = Date.now() + 65 * 60 * 1000; // matches the server's 60-min cap
   for (;;) {

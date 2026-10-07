@@ -146,6 +146,31 @@ A tenant restoring their own account sees the same detail for its one step.
 The server agent must be as new as the panel to report what a step is doing;
 with an older agent only the step is shown.
 
+### Keep or overwrite what is already there
+
+A restore from an uploaded archive adds only what the account is missing
+(GH #1993). **Overwrite existing items with the backup** in the restore drawer
+is off by default:
+
+- **Off** — files already in the home stay as they are; only missing files are
+  added. A database that already has tables, or a Docker app folder that
+  already has files, is skipped and listed in the restore report. An existing
+  mailbox keeps its auto-reply. Mail already there is not copied twice.
+- **On** — the backup replaces the account's data, as restores did before:
+  the home is mirrored from the backup (files added since are deleted),
+  databases are reloaded from their dumps, and Docker app folders are
+  replaced.
+
+Restoring into a home that may hold the tenant's symlinks, the copy that keeps
+existing files never follows a symlink: whatever the tenant has at a name,
+link or not, counts as already there. The tenant's own restore offers the same
+choice. A full-server restore (`jabali system restore --from-tar`) replaces,
+as before.
+
+Keeping needs an agent as new as the panel; an older one would replace, so
+the panel refuses that restore (`agent_update_required`). With **Overwrite**
+on, an older agent still restores.
+
 ### What an uploaded archive can't restore
 
 An uploaded archive is a file anyone could have written, so the panel restores

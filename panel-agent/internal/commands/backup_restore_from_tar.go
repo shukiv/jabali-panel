@@ -63,6 +63,22 @@ type backupRestoreFromTarParams struct {
 	ForeignDBNames     []string `json:"foreign_db_names,omitempty"`
 	OwnedDockerSlugs   []string `json:"owned_docker_slugs,omitempty"`
 	ForeignDockerSlugs []string `json:"foreign_docker_slugs,omitempty"`
+	// KeepExisting (GH #1993): add only what isn't on this server yet; see
+	// restoreEnforcement.KeepExisting. False (or absent) replaces.
+	KeepExisting bool `json:"keep_existing,omitempty"`
+}
+
+// enforcement is what the restore enforces for these params.
+func (p backupRestoreFromTarParams) enforcement() restoreEnforcement {
+	return restoreEnforcement{
+		Mode:               p.Mode,
+		AllowedDBNames:     p.AllowedDBNames,
+		AllowedMailDomains: p.AllowedMailDomains,
+		ForeignDBNames:     p.ForeignDBNames,
+		OwnedDockerSlugs:   p.OwnedDockerSlugs,
+		ForeignDockerSlugs: p.ForeignDockerSlugs,
+		KeepExisting:       p.KeepExisting,
+	}
 }
 
 type backupRestoreFromTarResult struct {
@@ -98,14 +114,7 @@ func backupRestoreFromTarHandler(ctx context.Context, raw json.RawMessage) (any,
 	if p.ApplyStaged != nil {
 		apply = *p.ApplyStaged
 	}
-	enf := restoreEnforcement{
-		Mode:               p.Mode,
-		AllowedDBNames:     p.AllowedDBNames,
-		AllowedMailDomains: p.AllowedMailDomains,
-		ForeignDBNames:     p.ForeignDBNames,
-		OwnedDockerSlugs:   p.OwnedDockerSlugs,
-		ForeignDockerSlugs: p.ForeignDockerSlugs,
-	}
+	enf := p.enforcement()
 	// Belt-and-suspenders: a tenant restore MUST carry both allowlists (a nil
 	// list means "unrestricted", so a caller that forgot one would restore
 	// wide-open). Refuse rather than run partially-gated.

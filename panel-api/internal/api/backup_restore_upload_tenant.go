@@ -191,6 +191,10 @@ func (h *meBackupHandler) restoreUploadInspect(c *gin.Context) {
 type tenantRestoreUploadApplyRequest struct {
 	UploadID   string   `json:"upload_id"`
 	Components []string `json:"components,omitempty"`
+	// Overwrite replaces the account's files and databases with the
+	// backup's; off (the default), the restore adds only what is missing
+	// (GH #1993).
+	Overwrite bool `json:"overwrite,omitempty"`
 }
 
 // restoreUploadApply restores the uploaded archive into the CALLER's own account.
@@ -242,6 +246,9 @@ func (h *meBackupHandler) restoreUploadApply(c *gin.Context) {
 		})
 		return
 	}
+	if keepExistingRefused(c, h.cfg.Agent, req.Overwrite) {
+		return
+	}
 
 	// Owned resources → allowlists (ALWAYS non-nil; an empty present list means
 	// "enforce, owns none" — the agent skips every db/mail stage). The DB
@@ -268,6 +275,7 @@ func (h *meBackupHandler) restoreUploadApply(c *gin.Context) {
 		components:     components,
 		allowedDBs:     allowedDBs,
 		allowedDomains: allowedDomains,
+		overwrite:      req.Overwrite,
 	})
 	c.JSON(http.StatusAccepted, gin.H{"status": "restoring", "upload_id": req.UploadID})
 }
@@ -279,6 +287,7 @@ type tenantUploadRestoreArgs struct {
 	components     []string
 	allowedDBs     []string
 	allowedDomains []string
+	overwrite      bool
 }
 
 func (h *meBackupHandler) runTenantUploadRestore(a tenantUploadRestoreArgs) {
@@ -310,6 +319,7 @@ func (h *meBackupHandler) runTenantUploadRestore(a tenantUploadRestoreArgs) {
 			"mode":                 "tenant",
 			"allowed_db_names":     a.allowedDBs,
 			"allowed_mail_domains": a.allowedDomains,
+			"keep_existing":        !a.overwrite,
 		})
 	})
 	if err != nil {

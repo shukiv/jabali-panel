@@ -277,6 +277,8 @@ type restoreUploadedBackupRequest struct {
 	Components     []string `json:"components,omitempty"`
 	CreateUser     bool     `json:"create_user,omitempty"`
 	PackageID      *string  `json:"package_id,omitempty"`
+	// Overwrite: see restoreUploadApplyRequest.Overwrite.
+	Overwrite bool `json:"overwrite,omitempty"`
 }
 
 // restoreUploadedBackup handles POST /admin/uploaded-backups/:id/restore. It
@@ -307,6 +309,9 @@ func (h *backupHandler) restoreUploadedBackup(c *gin.Context) {
 	}
 	if !agentHasCapability(c.Request.Context(), h.cfg.Agent, capRestoreUploadConfinement) {
 		c.JSON(http.StatusConflict, gin.H{"error": "agent_update_required", "detail": agentUpdateRequiredDetail})
+		return
+	}
+	if keepExistingRefused(c, h.cfg.Agent, req.Overwrite) {
 		return
 	}
 	now := time.Now().UTC()
@@ -341,20 +346,20 @@ func (h *backupHandler) restoreUploadedBackup(c *gin.Context) {
 
 	c.Set("audit_target", req.TargetUsername)
 	c.Set("audit_target_type", "user")
-	go h.runUploadedBackupRestore(b, path, req.TargetUsername, target.ID, req.Components, userCreated)
+	go h.runUploadedBackupRestore(b, path, req.TargetUsername, target.ID, req.Components, userCreated, req.Overwrite)
 	c.JSON(http.StatusAccepted, gin.H{"status": models.UploadedBackupRestoring, "id": b.ID, "user_created": userCreated})
 }
 
 // runUploadedBackupRestore is the detached restore of an uploaded backup. The
 // archive stays, unless its retention is delete_after_restore and the restore
 // succeeded.
-func (h *backupHandler) runUploadedBackupRestore(b *models.UploadedBackup, path, username, targetID string, components []string, userCreated bool) {
+func (h *backupHandler) runUploadedBackupRestore(b *models.UploadedBackup, path, username, targetID string, components []string, userCreated, overwrite bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), restoreJobTimeout)
 	defer cancel()
 
 	report, done := progressReporter(uploadedRestoreProgressKey(b.ID))
 	defer done()
-	res, err := h.restoreUploadedAccount(ctx, path, username, targetID, components, report)
+	res, err := h.restoreUploadedAccount(ctx, path, username, targetID, components, overwrite, report)
 	result := uploadedRestoreResult{Applied: res.Applied, Warnings: append(res.Warnings, res.MetadataErrors...)}
 	status := models.UploadedBackupDone
 	if err != nil {
