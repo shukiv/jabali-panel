@@ -96,11 +96,17 @@ func TestEnsureGoToolchainCurrent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	body, ok := installShFunctionBodies(string(raw))["ensure_go_toolchain_current"]
+	bodies := installShFunctionBodies(string(raw))
+	body, ok := bodies["ensure_go_toolchain_current"]
 	if !ok {
 		t.Fatal("ensure_go_toolchain_current() not found in install.sh")
 	}
-	fn := "ensure_go_toolchain_current() {" + body + "\n}\n"
+	// GH #2041: its download retries over IPv4 through curl_ipv4_retry.
+	retry, ok := bodies["curl_ipv4_retry"]
+	if !ok {
+		t.Fatal("curl_ipv4_retry() not found in install.sh")
+	}
+	fn := "curl_ipv4_retry() {" + retry + "\n}\nensure_go_toolchain_current() {" + body + "\n}\n"
 
 	// fakeGo writes a go binary that reports version v.
 	fakeGo := func(t *testing.T, dir, v string) {

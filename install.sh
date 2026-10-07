@@ -353,6 +353,20 @@ _warn() { printf '\033[1;33m[!]\033[0m %s\n' "$*" >&2; _log_to_file "[!] $*"; }
 _err()  { printf '\033[1;31m[✗]\033[0m %s\n' "$*" >&2; _log_to_file "[✗] $*"; }
 _die()  { printf '\033[1;31m[✗]\033[0m %s\n' "$*" >&2; _log_to_file "[✗] $*"; exit 1; }
 
+# curl_ipv4_retry runs curl with the given arguments and, when that fails,
+# once more over IPv4 (GH #2041). A host can reach a download server over a
+# broken IPv6 path: from one Linode, dl.google.com answered 404 to every Go
+# tarball over IPv6 and served them over IPv4. curl tries IPv6 first, and its
+# --retry does not retry an HTTP error. Use it for downloads to a file (-o).
+# Writing to stdout, a first try that fails mid-transfer leaves part of a body
+# before the retry's copy, so use it there only for a reader that takes the
+# first complete match (install_go's go.dev listing reads).
+curl_ipv4_retry() {
+  curl "$@" && return 0
+  _log "download failed; retrying over IPv4"
+  curl -4 "$@"
+}
+
 # is_module_enabled — M353 (GH #353) modular install. Returns 0 (enabled) when
 # the given optional-module key should be installed. JABALI_MODULES is a comma
 # list emitted by the TUI (installer/) or set for a headless install.
@@ -2262,13 +2276,13 @@ EARLYDNS
     _log "installing Composer versions (latest + LTS 2.2) from getcomposer.org"
     local _composer_tmp
     _composer_tmp="$(mktemp)"
-    if curl -fsSL -o "$_composer_tmp" https://getcomposer.org/installer; then
+    if curl_ipv4_retry -fsSL -o "$_composer_tmp" https://getcomposer.org/installer; then
       # Verify the installer's SHA-384 before executing it as root — Composer's
       # own documented procedure. The signature is served from composer.github.io
       # (a DIFFERENT host than the installer), so an attacker must compromise
       # both. Not pinned in-repo: the installer is rebuilt upstream regularly.
       local _composer_sig _composer_sum
-      _composer_sig="$(curl -fsSL --max-time 20 https://composer.github.io/installer.sig || true)"
+      _composer_sig="$(curl_ipv4_retry -fsSL --max-time 20 https://composer.github.io/installer.sig || true)"
       _composer_sum="$(sha384sum "$_composer_tmp" | awk '{print $1}')"
       if [[ -z "$_composer_sig" ]]; then
         rm -f "$_composer_tmp"
@@ -2753,7 +2767,7 @@ EOF
   # affects fewer Debian-on-VPS installs in practice; if it bites,
   # the operator is currently the one to debug.
   _log "downloading Sury GPG key (curl: connect 15s, total 60s)"
-  curl -fsSL --connect-timeout 15 --max-time 60 \
+  curl_ipv4_retry -fsSL --connect-timeout 15 --max-time 60 \
     https://packages.sury.org/php/apt.gpg -o /usr/share/keyrings/sury-php.gpg \
     || _die "curl failed to fetch Sury GPG key from packages.sury.org — check egress / DNS from this host"
 
@@ -3139,7 +3153,7 @@ _install_nodesource_source() {
   # parsing error. Same hang/diagnostic story as _install_sury_source.
   local ns_armored
   ns_armored="$(mktemp)"
-  curl -fsSL --connect-timeout 15 --max-time 60 \
+  curl_ipv4_retry -fsSL --connect-timeout 15 --max-time 60 \
     https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key -o "$ns_armored" \
     || _die "curl failed to fetch NodeSource GPG key from deb.nodesource.com — check egress / DNS from this host"
   local ns_gpg_out
@@ -3744,7 +3758,7 @@ install_docker_engine() {
 
     install -d -m 0755 /etc/apt/keyrings
     if [[ ! -f /etc/apt/keyrings/docker.asc ]]; then
-      curl -fsSL "https://download.docker.com/linux/${docker_distro}/gpg" -o /etc/apt/keyrings/docker.asc
+      curl_ipv4_retry -fsSL "https://download.docker.com/linux/${docker_distro}/gpg" -o /etc/apt/keyrings/docker.asc
       chmod a+r /etc/apt/keyrings/docker.asc
     fi
     local docker_list="/etc/apt/sources.list.d/docker.list"
@@ -5513,7 +5527,7 @@ install_go() {
 
   _log "installing Go $GO_VERSION ($GO_ARCH)"
   local tarball="/tmp/go${GO_VERSION}.linux-${GO_ARCH}.tar.gz"
-  local go_curl=(curl -fsSL --connect-timeout 20 --retry 3 --retry-delay 5 --retry-connrefused --speed-limit 1024 --speed-time 30)
+  local go_curl=(curl_ipv4_retry -fsSL --connect-timeout 20 --retry 3 --retry-delay 5 --retry-connrefused --speed-limit 1024 --speed-time 30)
   if ! "${go_curl[@]}" -o "$tarball" "https://go.dev/dl/go${GO_VERSION}.linux-${GO_ARCH}.tar.gz"; then
     # GH #670: the pinned tarball can 404 on a given host even though go.dev
     # LISTS the version -- a regional dl.google.com CDN-propagation gap for a
@@ -5524,7 +5538,7 @@ install_go() {
     # that just failed and (b) actually downloads. An older published stable
     # still builds the panel: GOTOOLCHAIN=auto fetches the go.mod toolchain.
     local failed_pin="$GO_VERSION" _ver _got=""
-    _warn "Go $failed_pin not downloadable from go.dev (unpublished pin or CDN propagation gap) -- trying other published stable releases"
+    _warn "Go $failed_pin not downloadable from go.dev over IPv6 or IPv4 (unpublished pin or CDN propagation gap) -- trying other published stable releases"
     # mode=json lists only releases whose files are actually published -- unlike
     # go.dev/VERSION, which reports a version the instant it is tagged, before its
     # tarballs exist (the original GH #670 regression).
@@ -5540,7 +5554,7 @@ install_go() {
         GO_VERSION="$_ver"; _got=1; break
       fi
     done
-    [[ -n "$_got" ]] || _die "failed to download Go: pinned go${failed_pin} and every published stable fallback 404'd from go.dev -- check egress to go.dev / dl.google.com from this host"
+    [[ -n "$_got" ]] || _die "failed to download Go: pinned go${failed_pin} and every published stable fallback failed from go.dev over IPv6 and IPv4 -- check egress to go.dev / dl.google.com from this host"
     # A downgrade is a security-relevant event, not a detail: the host is now
     # building the panel with an older toolchain that may carry known CVEs, and
     # simply making the pinned URL fail is enough to trigger it. Say so loudly.
@@ -5619,7 +5633,7 @@ ensure_go_toolchain_current() {
   fi
   _log "updating Go ${cur:-missing} -> go${GO_VERSION}"
   tarball="$(mktemp /tmp/jabali-go.XXXXXX)" || { _warn "Go update: mktemp failed; keeping the installed Go"; return 0; }
-  if ! curl -fsSL --connect-timeout 20 --retry 3 --retry-delay 5 --retry-connrefused \
+  if ! curl_ipv4_retry -fsSL --connect-timeout 20 --retry 3 --retry-delay 5 --retry-connrefused \
       --speed-limit 1024 --speed-time 30 -o "$tarball" \
       "https://go.dev/dl/go${GO_VERSION}.linux-${arch}.tar.gz"; then
     rm -f "$tarball"
@@ -8436,7 +8450,7 @@ install_adminer() {
     _log "downloading adminer.php (${adminer_version})"
     local adminer_tmp
     adminer_tmp="$(mktemp)"
-    if ! curl -fsSL --retry 4 --retry-delay 2 --retry-connrefused -o "$adminer_tmp" "${adminer_url}"; then
+    if ! curl_ipv4_retry -fsSL --retry 4 --retry-delay 2 --retry-connrefused -o "$adminer_tmp" "${adminer_url}"; then
       rm -f "$adminer_tmp"
       _err "failed to download adminer from ${adminer_url}"
       return 1
@@ -8535,7 +8549,7 @@ install_wp_cli() {
   # the symlinks are always re-pointed below.
   if [[ ! -f "$wp_phar" ]]; then
     _log "downloading wp-cli $wp_version"
-    if ! curl -fsSL -o "$wp_archive" \
+    if ! curl_ipv4_retry -fsSL -o "$wp_archive" \
       "https://github.com/wp-cli/wp-cli/releases/download/v${wp_version}/wp-cli-${wp_version}.phar"; then
       _die "failed to download wp-cli $wp_version phar"
     fi
@@ -8698,7 +8712,7 @@ install_phpmyadmin() {
     # total wall-time so the installer doesn't stall forever on a
     # dead upstream.
     _log "downloading phpMyAdmin $pma_version"
-    if ! curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors \
+    if ! curl_ipv4_retry -fsSL --retry 5 --retry-delay 3 --retry-all-errors \
          --max-time 300 -o "$pma_archive" \
          "https://files.phpmyadmin.net/phpMyAdmin/${pma_version}/phpMyAdmin-${pma_version}-all-languages.tar.gz"; then
       # Non-fatal: phpMyAdmin is optional and its CDN is flaky. Don't abort
@@ -9674,7 +9688,7 @@ add_crowdsec_apt_source() {
     _log "fetching CrowdSec upstream signing key → $keyring"
     local tmp_key
     tmp_key="$(mktemp --tmpdir jabali-cs-key.XXXXXX)"
-    if ! curl -fsSL --connect-timeout 10 -o "$tmp_key" "$key_url"; then
+    if ! curl_ipv4_retry -fsSL --connect-timeout 10 -o "$tmp_key" "$key_url"; then
       rm -f "$tmp_key"
       _die "failed to fetch CrowdSec signing key from $key_url"
     fi
@@ -11463,7 +11477,7 @@ install_malware_stack() {
     tmp_lmd=$(mktemp -d -t lmd-XXXXXX)
     if (
       cd "$tmp_lmd" && \
-      curl -fsSL "https://github.com/rfxn/linux-malware-detect/archive/refs/tags/v${LMD_VERSION}.tar.gz" -o lmd.tar.gz && \
+      curl_ipv4_retry -fsSL "https://github.com/rfxn/linux-malware-detect/archive/refs/tags/v${LMD_VERSION}.tar.gz" -o lmd.tar.gz && \
       echo "${LMD_SHA256}  lmd.tar.gz" | sha256sum -c - >/dev/null && \
       tar -xzf lmd.tar.gz && \
       cd "linux-malware-detect-${LMD_VERSION}" && \
@@ -11493,7 +11507,7 @@ install_malware_stack() {
     tmp_yrx=$(mktemp -d -t yarax-XXXXXX)
     if (
       cd "$tmp_yrx" && \
-      curl -fsSL "https://github.com/VirusTotal/yara-x/releases/download/v${YARAX_VERSION}/yara-x-v${YARAX_VERSION}-x86_64-unknown-linux-gnu.tar.gz" -o yrx.tar.gz && \
+      curl_ipv4_retry -fsSL "https://github.com/VirusTotal/yara-x/releases/download/v${YARAX_VERSION}/yara-x-v${YARAX_VERSION}-x86_64-unknown-linux-gnu.tar.gz" -o yrx.tar.gz && \
       echo "${YARAX_SHA256}  yrx.tar.gz" | sha256sum -c - >/dev/null && \
       tar -xzf yrx.tar.gz && \
       install -m 0755 -o root -g root yr /usr/local/bin/yr
@@ -14266,7 +14280,7 @@ _install_stalwart_binary() {
   local sha_file="${REPO_DIR}/install/stalwart.sha256"
 
   _log "downloading Stalwart $version from GitHub"
-  if ! curl -fsSL --connect-timeout 20 --retry 3 --retry-delay 5 --retry-connrefused --speed-limit 1024 --speed-time 30 "$url" -o "$tarball_path"; then
+  if ! curl_ipv4_retry -fsSL --connect-timeout 20 --retry 3 --retry-delay 5 --retry-connrefused --speed-limit 1024 --speed-time 30 "$url" -o "$tarball_path"; then
     _die "failed to download Stalwart from $url"
   fi
 
@@ -14375,7 +14389,7 @@ _install_stalwart_cli() {
   fi
 
   _log "downloading stalwart-cli $cli_version"
-  if ! curl -fsSL --connect-timeout 20 --retry 3 --retry-delay 5 --retry-connrefused --speed-limit 1024 --speed-time 30 "$url" -o "$tarball_path"; then
+  if ! curl_ipv4_retry -fsSL --connect-timeout 20 --retry 3 --retry-delay 5 --retry-connrefused --speed-limit 1024 --speed-time 30 "$url" -o "$tarball_path"; then
     _die "failed to download stalwart-cli from $url"
   fi
 
@@ -14466,7 +14480,7 @@ _install_spam_rules() {
   local url="https://github.com/stalwartlabs/spam-filter/releases/download/v${version}/spam-filter-rules.json.gz"
   local tmp="/tmp/spam-filter-rules.json.gz.$$"
   _log "downloading Stalwart spam-filter rules v${version}"
-  if ! curl -fsSL "$url" -o "$tmp"; then
+  if ! curl_ipv4_retry -fsSL "$url" -o "$tmp"; then
     rm -f "$tmp"
     _die "failed to download spam-filter rules from $url"
   fi
@@ -14595,7 +14609,7 @@ install_bulwark() {
 
   local tarball_path="/tmp/${tarball}"
   _log "downloading $tarball"
-  if ! curl -fsSL --connect-timeout 20 --retry 3 --retry-delay 5 --retry-connrefused --speed-limit 1024 --speed-time 30 "$url" -o "$tarball_path"; then
+  if ! curl_ipv4_retry -fsSL --connect-timeout 20 --retry 3 --retry-delay 5 --retry-connrefused --speed-limit 1024 --speed-time 30 "$url" -o "$tarball_path"; then
     _die "failed to download Bulwark from $url"
   fi
 
@@ -15098,7 +15112,7 @@ install_kratos() {
   # on this fall-through).
   if [[ "${_kratos_skip_binary:-0}" != "1" ]]; then
     _log "downloading Kratos $kratos_version from GitHub"
-    if ! curl -fsSL "$kratos_url" -o "$kratos_tar"; then
+    if ! curl_ipv4_retry -fsSL "$kratos_url" -o "$kratos_tar"; then
       _die "failed to download Kratos from $kratos_url"
     fi
 
