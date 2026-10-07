@@ -18,6 +18,10 @@ type MailboxShareRepository interface {
 	FindByOwnerID(ctx context.Context, ownerMailboxID string, opts ListOptions) ([]models.MailboxShare, int64, error)
 	FindBySharedWithID(ctx context.Context, sharedWithMailboxID string, opts ListOptions) ([]models.MailboxShare, int64, error)
 	ListByUserID(ctx context.Context, userID string, opts ListOptions) ([]models.MailboxShare, int64, error)
+	// ListByUserAndDomainID is ListByUserID narrowed to the shares that
+	// involve one domain: its owner mailbox or the mailbox it is shared
+	// with lives there (GH #1997).
+	ListByUserAndDomainID(ctx context.Context, userID, domainID string, opts ListOptions) ([]models.MailboxShare, int64, error)
 	ListAll(ctx context.Context, opts ListOptions) ([]models.MailboxShare, int64, error)
 	Create(ctx context.Context, share *models.MailboxShare) error
 	Update(ctx context.Context, share *models.MailboxShare) error
@@ -85,6 +89,33 @@ func (r *mailboxShareRepo) ListByUserID(ctx context.Context, userID string, opts
 		Joins("JOIN mailboxes ON mailboxes.id = mailbox_shares.owner_mailbox_id").
 		Joins("JOIN domains ON domains.id = mailboxes.domain_id").
 		Where("domains.user_id = ?", userID)
+	if err := q.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	tx := q.Select("mailbox_shares.*").Order("mailbox_shares.created_at DESC")
+	if opts.Limit > 0 {
+		tx = tx.Limit(opts.Limit)
+	}
+	if opts.Offset > 0 {
+		tx = tx.Offset(opts.Offset)
+	}
+	if err := tx.Find(&shares).Error; err != nil {
+		return nil, 0, err
+	}
+	return shares, total, nil
+}
+
+// ListByUserAndDomainID keeps ListByUserID's owner scope (owner mailbox ->
+// domain -> user) and adds the domain: a share shows on the page of each
+// domain it touches, the owner's or the recipient's.
+func (r *mailboxShareRepo) ListByUserAndDomainID(ctx context.Context, userID, domainID string, opts ListOptions) ([]models.MailboxShare, int64, error) {
+	var shares []models.MailboxShare
+	var total int64
+	q := r.db.WithContext(ctx).Model(&models.MailboxShare{}).
+		Joins("JOIN mailboxes ON mailboxes.id = mailbox_shares.owner_mailbox_id").
+		Joins("JOIN domains ON domains.id = mailboxes.domain_id").
+		Joins("LEFT JOIN mailboxes AS shared_with ON shared_with.id = mailbox_shares.shared_with_mailbox_id").
+		Where("domains.user_id = ? AND (mailboxes.domain_id = ? OR shared_with.domain_id = ?)", userID, domainID, domainID)
 	if err := q.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}

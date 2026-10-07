@@ -93,3 +93,29 @@ func TestMailboxShare_DeleteByOwner_ForeignRowIsNotFound(t *testing.T) {
 		"deleting a share owned by another mailbox must not succeed")
 	require.NoError(t, mock.ExpectationsWereMet())
 }
+
+// GH #1997: the shares of one owner that touch one domain, on either side, so
+// the Shared Folders tab of a mail domain lists that domain only.
+func TestMailboxShare_ListByUserAndDomainID_ScopesInSQL(t *testing.T) {
+	db, mock, raw := newMockShareDB(t)
+	defer raw.Close()
+	repo := NewMailboxShareRepository(db)
+
+	const scope = `FROM .mailbox_shares. JOIN mailboxes ON mailboxes\.id = mailbox_shares\.owner_mailbox_id JOIN domains ON domains\.id = mailboxes\.domain_id LEFT JOIN mailboxes AS shared_with ON shared_with\.id = mailbox_shares\.shared_with_mailbox_id WHERE domains\.user_id = \? AND \(mailboxes\.domain_id = \? OR shared_with\.domain_id = \?\)`
+	mock.ExpectQuery(`SELECT count\(\*\) ` + scope).
+		WithArgs("user-1", "dom-1", "dom-1").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(3))
+
+	mock.ExpectQuery(`SELECT mailbox_shares\.\* ` + scope + ` ORDER BY mailbox_shares\.created_at DESC LIMIT`).
+		WithArgs("user-1", "dom-1", "dom-1", sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "owner_mailbox_id", "shared_with_mailbox_id", "created_at"}).
+			AddRow("share-1", "own-1", "with-1", time.Now()))
+
+	rows, total, err := repo.ListByUserAndDomainID(context.Background(), "user-1", "dom-1",
+		ListOptions{Limit: 200})
+	require.NoError(t, err)
+	require.Equal(t, int64(3), total)
+	require.Len(t, rows, 1)
+	require.Equal(t, "share-1", rows[0].ID)
+	require.NoError(t, mock.ExpectationsWereMet())
+}

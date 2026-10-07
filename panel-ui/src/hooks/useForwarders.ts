@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../apiClient";
+import { fetchAllPages } from "../lib/fetchAllPages";
 
 export interface Forwarder {
   id: string;
@@ -22,13 +23,14 @@ export interface Forwarder {
 
 const QK = ["forwarders"];
 
-export function useForwarders() {
+// useForwarders lists the account's forwarders, every page of them. With a
+// domainId it lists that mail domain's only, as its Forwarders tab shows
+// (GH #1997). The mutations invalidate both through the shared QK prefix.
+export function useForwarders(domainId?: string) {
   return useQuery({
-    queryKey: QK,
-    queryFn: async () => {
-      const { data } = await apiClient.get<{ data: Forwarder[]; total: number }>("/mail/forwarders");
-      return data.data ?? [];
-    },
+    queryKey: [...QK, domainId ?? "all"],
+    queryFn: () =>
+      fetchAllPages<Forwarder>("/mail/forwarders", domainId ? { domain_id: domainId } : {}),
   });
 }
 

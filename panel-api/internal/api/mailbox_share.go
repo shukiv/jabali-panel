@@ -119,7 +119,15 @@ func (h *shareHandler) listAllForUser(c *gin.Context) {
 		total  int64
 		err    error
 	)
-	if claims.IsAdmin {
+	// GH #1997: a mail domain's page lists the shares that involve that
+	// domain only. They are the domain owner's, also when an admin asks.
+	scope, ok := listDomainFilter(c, h.cfg.Domains, claims)
+	if !ok {
+		return
+	}
+	if scope != nil {
+		shares, total, err = h.cfg.MailboxShares.ListByUserAndDomainID(ctx, scope.UserID, scope.ID, opts)
+	} else if claims.IsAdmin {
 		shares, total, err = h.cfg.MailboxShares.ListAll(ctx, opts)
 	} else {
 		shares, total, err = h.cfg.MailboxShares.ListByUserID(ctx, claims.UserID, opts)

@@ -55,3 +55,28 @@ func TestEmailForwarder_ListByUserID_ScopesInSQL(t *testing.T) {
 	require.Equal(t, "fwd-1", rows[0].ID)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
+
+// GH #1997: one domain's mailbox-keyed forwarders, so the Forwarders tab of a
+// mail domain lists that domain only and `total` counts what it shows.
+func TestEmailForwarder_ListMailboxForwardersByDomainID_ScopesInSQL(t *testing.T) {
+	db, mock, raw := newMockForwarderDB(t)
+	defer raw.Close()
+	repo := NewEmailForwarderRepository(db)
+
+	mock.ExpectQuery(`SELECT count\(\*\) FROM .email_forwarders. WHERE domain_id = \? AND mailbox_id IS NOT NULL`).
+		WithArgs("dom-1").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(260))
+
+	mock.ExpectQuery(`SELECT \* FROM .email_forwarders. WHERE domain_id = \? AND mailbox_id IS NOT NULL ORDER BY created_at DESC LIMIT`).
+		WithArgs("dom-1", sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "mailbox_id", "domain_id", "created_at"}).
+			AddRow("fwd-1", "mbx-1", "dom-1", time.Now()))
+
+	rows, total, err := repo.ListMailboxForwardersByDomainID(context.Background(), "dom-1",
+		ListOptions{Offset: 200, Limit: 200})
+	require.NoError(t, err)
+	require.Equal(t, int64(260), total)
+	require.Len(t, rows, 1)
+	require.Equal(t, "fwd-1", rows[0].ID)
+	require.NoError(t, mock.ExpectationsWereMet())
+}

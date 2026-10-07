@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../apiClient";
+import { fetchAllPages } from "../lib/fetchAllPages";
 
 export interface Rights {
   mayRead?: boolean;
@@ -29,13 +30,15 @@ export interface MailboxShare {
 
 const QK_ALL = ["mail_shares", "all"];
 
-export function useAllShares() {
+// useAllShares lists the account's shares, every page of them. With a
+// domainId it lists the shares that involve that mail domain, from or to
+// it, as its Shared Folders tab shows (GH #1997). The mutations invalidate
+// both through the QK_ALL prefix.
+export function useAllShares(domainId?: string) {
   return useQuery({
-    queryKey: QK_ALL,
-    queryFn: async () => {
-      const { data } = await apiClient.get<{ data: MailboxShare[]; total: number }>("/mail/shares");
-      return data.data ?? [];
-    },
+    queryKey: [...QK_ALL, domainId ?? "account"],
+    queryFn: () =>
+      fetchAllPages<MailboxShare>("/mail/shares", domainId ? { domain_id: domainId } : {}),
   });
 }
 
