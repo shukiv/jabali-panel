@@ -3,7 +3,9 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
+	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
@@ -103,9 +105,44 @@ func TestRetargetRecreatedAccount(t *testing.T) {
 			}
 		})
 	}
-	// A bundle without a username is never retargeted.
+	// A bundle without a username is never retargeted, nor one whose username
+	// is empty, onto a target without one.
 	out, _ := retargetRecreatedAccount(json.RawMessage(`{"user":{"id":"u-old"}}`), "u-new", "alice")
 	if metadataUserID(out) != "u-old" {
 		t.Fatal("a bundle that names no username was retargeted")
+	}
+	out, _ = retargetRecreatedAccount(json.RawMessage(`{"user":{"id":"u-old","username":""}}`), "u-new", "")
+	if metadataUserID(out) != "u-old" {
+		t.Fatal("a bundle with an empty username was retargeted")
+	}
+}
+
+// The DNS records go to the recreated account's domain too.
+func TestRunAccountRestoreJob_RestoresARecreatedAccountsDNSRecords(t *testing.T) {
+	fastRestoreDNSWait(t, time.Second)
+	f := &rdFixture{
+		domains: &rdDomains{rows: map[string]*models.Domain{}},
+		zones:   &rdZones{zones: map[string]*models.DNSZone{}, appearAt: map[string]int{}, lookups: map[string]int{}},
+		records: &rdRecords{},
+		sched:   &rdScheduler{},
+		srv:     &models.ServerSettings{PublicIPv4: "203.0.113.10", DefaultDNSTTL: 300},
+	}
+	f.addDomain("d1", "example.com", "u-new", "z1")
+	alice := "alice"
+	jobs := newSealCapture()
+	h := &backupHandler{cfg: BackupHandlerConfig{
+		Jobs: jobs, Users: &rcUsers{rows: map[string]*models.User{"u-new": {ID: "u-new", Username: &alice}}},
+		Agent: restoreAgent{reply: json.RawMessage(`{"job_id":"job-1","stages":[{"name":"home","status":"ok"}],"metadata":` +
+			`{"user":{"id":"u-old","username":"alice"},"domains":[{"id":"d1","name":"example.com",` +
+			`"dns_records":[{"name":"sub","type":"NS","content":"ns1.elsewhere.net.","ttl":3600,"is_enabled":true}]}]}}`)},
+		Domains: &rdUploadDomains{*f.domains}, DNSZones: f.zones, DNSRecords: f.records,
+		ServerSettings: rdSettings{s: f.srv}, Scheduler: f.sched,
+	}}
+	h.runAccountRestoreJob("job-1", &models.BackupDestination{ID: "d1", Kind: "local"},
+		map[string]any{"target_user_id": "u-new", "target_username": "alice"})
+	jobs.wait(t)
+
+	if got := strings.Join(f.records.userRecords("z1"), "|"); got != "sub NS ns1.elsewhere.net." {
+		t.Fatalf("records %q (status %s, error %q), want the backup's NS record", got, jobs.status, jobs.errText)
 	}
 }
