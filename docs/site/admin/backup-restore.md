@@ -182,8 +182,13 @@ it into the target account only (GH #1993):
   to the account. One an admin created without the account prefix is refused;
   restore it by hand.
   A database comes back in the panel only when its data was restored too.
-  A grant from the archive is made only on a database whose data the archive
-  restored: the archive's author never gets a login to data they didn't supply.
+  A grant from the archive is made only on a database that holds nothing but
+  the archive's data: one that was new or empty before the restore (no
+  tables, views, stored routines or events) and whose data loaded without an
+  error. A database that already held something is still reloaded from the
+  dump with **Overwrite** on, but the archive's database users get no access
+  to it, and the restore report says so. The archive's author never gets a
+  login to data they didn't supply.
 - **Mail** — only for the account's own domains, including the ones the
   archive brings: mail is restored last, after the account's domains.
 - **PHP pools** — a pool's process settings that the PHP pool page would

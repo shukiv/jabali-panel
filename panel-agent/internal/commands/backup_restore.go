@@ -88,11 +88,28 @@ type restoreEnforcement struct {
 type restoreClaims struct {
 	Databases   []string
 	DockerSlugs []string
+	// ArchiveMariaDBs are the MariaDB databases whose data, after the
+	// restore, is all the archive's: new or holding nothing (no table, view,
+	// routine or event) before it, and loaded without an error. A database
+	// that already held something keeps it under the archive's, and one whose
+	// load failed holds whatever got in, so the panel lets the archive grant
+	// access only to these. Only the MariaDB load claims one: a name restored
+	// as PostgreSQL says nothing about the MariaDB database of that name.
+	ArchiveMariaDBs []string
 }
+
+// loadRestoredMariaDBDump loads a restored database's dump; tests swap it.
+var loadRestoredMariaDBDump = loadMariaDBDumpScoped
 
 func (e restoreEnforcement) claimDatabase(db string) {
 	if e.Claims != nil {
 		e.Claims.Databases = append(e.Claims.Databases, db)
+	}
+}
+
+func (e restoreEnforcement) claimArchiveMariaDB(db string) {
+	if e.Claims != nil {
+		e.Claims.ArchiveMariaDBs = append(e.Claims.ArchiveMariaDBs, db)
 	}
 }
 
@@ -810,6 +827,18 @@ func applyAccountRestore(
 			// the file can't load into a database nobody told us about (an
 			// orphan, or one outside the panel's rows). db matched
 			// restoreDBNameRe, so it can't break out of the backticks.
+			// archive: the database holds nothing yet, so after a good load
+			// all of it is the archive's. Checked in both modes: keep-existing
+			// skipped one with tables above, but a routine or an event
+			// outlives the load. A database that can't be checked counts as
+			// one that holds something. Between this check and the load only
+			// the account itself can write to the database, not the archive.
+			archive := false
+			if enf.Claims != nil {
+				if has, hErr := mariaDBHoldsObjects(ctx, db); hErr == nil && !has {
+					archive = true
+				}
+			}
 			createSQL := "CREATE DATABASE IF NOT EXISTS `%s` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
 			newOnly := enf.upload() && !enf.dbAllowed(db)
 			if newOnly {
@@ -831,12 +860,15 @@ func applyAccountRestore(
 			// from the tenant's own snapshot), so it loads through the
 			// db-scoped shadow account as an unprivileged OS user —
 			// never as root. See db_load_scoped.go.
-			lerr := loadMariaDBDumpScoped(ctx, db, f)
+			lerr := loadRestoredMariaDBDump(ctx, db, f)
 			_ = f.Close()
 			if lerr != nil {
 				warnings = append(warnings,
 					fmt.Sprintf("db %s: mariadb load: %v", db, lerr))
 				continue
+			}
+			if archive {
+				enf.claimArchiveMariaDB(db)
 			}
 			applied = append(applied, fmt.Sprintf("db → %s", db))
 
@@ -1234,6 +1266,33 @@ func mariaDBHasTables(ctx context.Context, db string) (bool, error) {
 		return false, fmt.Errorf("%v: %s", err, strings.TrimSpace(string(out)))
 	}
 	return strings.TrimSpace(string(out)) != "", nil
+}
+
+// mariaDBHoldsObjects reports whether MariaDB database db holds anything: a
+// table, a view, a stored routine or an event. A routine or an event outlives
+// a dump loaded over it and can run with its definer's rights, so a database
+// with only those isn't empty. A database that doesn't exist holds nothing.
+// db goes in as the default database: no SQL is built from it.
+func mariaDBHoldsObjects(ctx context.Context, db string) (bool, error) {
+	out, err := execCommandContext(ctx, "mariadb", "-N", "-B", "-e",
+		"SELECT (SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE())"+
+			" + (SELECT COUNT(*) FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA = DATABASE())"+
+			" + (SELECT COUNT(*) FROM information_schema.EVENTS WHERE EVENT_SCHEMA = DATABASE())", db).CombinedOutput()
+	if err != nil {
+		if strings.Contains(string(out), "ERROR 1049") { // unknown database
+			return false, nil
+		}
+		return false, fmt.Errorf("%v: %s", err, strings.TrimSpace(string(out)))
+	}
+	return objectCount(out)
+}
+
+func objectCount(out []byte) (bool, error) {
+	n, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil {
+		return false, fmt.Errorf("unexpected object count %q", strings.TrimSpace(string(out)))
+	}
+	return n > 0, nil
 }
 
 // pgHasTables reports whether PostgreSQL database db has a table outside the

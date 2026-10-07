@@ -405,14 +405,44 @@ func TestApply_UploadedBackupGrantsOnlyOnDatabasesItRestored(t *testing.T) {
 		t.Fatalf("grant rows %v errors %v", f.grants.rows, r.Errors)
 	}
 
-	// Restored from the file: granted.
+	// Restored from the file, and all its data is the file's: granted.
 	f = newMAFixture()
 	f.dbs.rows["db1"] = &models.Database{ID: "db1", UserID: "u1", Name: "alice_wp", Engine: "mariadb"}
 	Apply(context.Background(), maMeta(maHash), Deps{
 		Users: namedUsersRepo{username: "alice"}, Databases: f.dbs, DatabaseUsers: f.users, DatabaseGrants: f.grants, Agent: f.agent,
-		Untrusted: true, RestoredDatabases: map[string]bool{"alice_wp": true},
+		Untrusted: true, RestoredDatabases: map[string]bool{"alice_wp": true}, ArchiveMariaDBs: map[string]bool{"alice_wp": true},
 	})
 	if calls := f.agent.dbUserCalls(); len(calls) != 2 || calls[1].cmd != "db_user.grant" {
 		t.Fatalf("agent calls %+v, want the grant on a restored database", calls)
+	}
+}
+
+// SECURITY: a database the file was loaded over still holds the tables it had
+// here, so the file can't grant access to it either. Nor can it when the
+// agent doesn't say which databases hold only the file's data.
+func TestApply_UploadedBackupGrantsNothingOnADatabaseThatAlreadyHadData(t *testing.T) {
+	for name, c := range map[string]struct {
+		archive map[string]bool
+		want    string
+	}{
+		"loaded over its data": {map[string]bool{}, "db_grant g1: not restored: alice_wp holds data that isn't the uploaded backup's (it wasn't empty before the restore, or the backup's data didn't load), so the uploaded backup can't grant access to it"},
+		"an older agent":       {nil, "db_grant g1: not restored: this server's agent is too old to tell whether alice_wp holds only the uploaded backup's data; run jabali update and restore again"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newMAFixture()
+			f.dbs.rows["db1"] = &models.Database{ID: "db1", UserID: "u1", Name: "alice_wp", Engine: "mariadb"}
+			r := Apply(context.Background(), maMeta(maHash), Deps{
+				Users: namedUsersRepo{username: "alice"}, Databases: f.dbs, DatabaseUsers: f.users, DatabaseGrants: f.grants, Agent: f.agent,
+				Untrusted: true, RestoredDatabases: map[string]bool{"alice_wp": true}, ArchiveMariaDBs: c.archive,
+			})
+			for _, call := range f.agent.dbUserCalls() {
+				if call.cmd == "db_user.grant" {
+					t.Fatalf("granted %v on a database that kept data the file didn't supply", call.params)
+				}
+			}
+			if f.grants.rows["g1"] != nil || !hasError(r.Errors, c.want) {
+				t.Fatalf("grant rows %v errors %v", f.grants.rows, r.Errors)
+			}
+		})
 	}
 }

@@ -89,6 +89,12 @@ type Deps struct {
 	// as a database that exists here without a panel row (GH #1993).
 	RestoredDatabases   map[string]bool
 	RestoredDockerSlugs map[string]bool
+	// ArchiveMariaDBs are the restored MariaDB databases whose data is all
+	// the file's: new or empty before the restore, and loaded without an
+	// error. With Untrusted, the file grants access only to these: a database
+	// it was loaded over still holds what it had here. nil means the agent
+	// didn't say, and the file grants nothing.
+	ArchiveMariaDBs map[string]bool
 	// MailAddresses takes a restored mailbox's address off every Stalwart
 	// account before Apply stores the mailbox. Stalwart's registry keeps
 	// every alias it has seen, so a mailbox at an address that was once

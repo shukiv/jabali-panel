@@ -125,6 +125,9 @@ func (cfg BackupHandlerConfig) uploadRestoreParams(ctx context.Context, targetID
 // account already has.
 type uploadedData struct {
 	databases, dockerSlugs []string
+	// archiveMariaDBs are the restored MariaDB databases whose data is all
+	// the file's, as the agent named them; nil when it didn't.
+	archiveMariaDBs []string
 	// keepExisting: the restore keeps what the account already has here
 	// (overwrite off), so Apply leaves its existing rows' settings alone.
 	keepExisting bool
@@ -150,6 +153,7 @@ type restoreFromTarReply struct {
 	UploadConfinementEnforced bool            `json:"upload_confinement_enforced"`
 	RestoredDatabases         []string        `json:"restored_databases"`
 	RestoredDockerSlugs       []string        `json:"restored_docker_slugs"`
+	ArchiveMariaDBs           []string        `json:"archive_mariadb_databases"`
 	Stages                    []struct {
 		Name string `json:"name"`
 	} `json:"stages"`
@@ -203,7 +207,8 @@ func (h *backupHandler) restoreUploadedAccount(ctx context.Context, tarPath, use
 		report(restoreProgress{Step: 2, Steps: steps, Label: restoreStepRowsLabel})
 	}
 	out.MetadataErrors = applyUploadedMetadata(h, ctx, first.Metadata, targetID,
-		uploadedData{databases: first.RestoredDatabases, dockerSlugs: first.RestoredDockerSlugs, keepExisting: !overwrite})
+		uploadedData{databases: first.RestoredDatabases, dockerSlugs: first.RestoredDockerSlugs,
+			archiveMariaDBs: first.ArchiveMariaDBs, keepExisting: !overwrite})
 
 	// GH #1993: last, the domains' custom DNS records. RestoreBundleDNS has the
 	// reconciler make the restored domains' zones and adds the records once

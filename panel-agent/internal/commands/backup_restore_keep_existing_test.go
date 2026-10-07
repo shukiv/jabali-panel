@@ -41,6 +41,16 @@ func keepExecRecorder(t *testing.T, withTables, missing, pgWithTables []string) 
 			if in(missing, last) {
 				return exec.CommandContext(ctx, "sh", "-c", "echo \"ERROR 1049 (42000): Unknown database '"+last+"'\" >&2; exit 1")
 			}
+		case name == "mariadb" && strings.Contains(line, "information_schema.ROUTINES"):
+			if in(withTables, last) {
+				return exec.CommandContext(ctx, "echo", "1")
+			}
+			if in(missing, last) {
+				return exec.CommandContext(ctx, "sh", "-c", "echo \"ERROR 1049 (42000): Unknown database '"+last+"'\" >&2; exit 1")
+			}
+			return exec.CommandContext(ctx, "echo", "0")
+		case strings.Contains(line, "pg_proc"):
+			return exec.CommandContext(ctx, "echo", "3")
 		case strings.Contains(line, "pg_database WHERE datname"):
 			for _, db := range pgWithTables {
 				if strings.Contains(line, "'"+db+"'") {

@@ -161,7 +161,22 @@ func TestTenantRestoreUploadApply_KeepingNeedsAnAgentThatKeeps(t *testing.T) {
 		if overwrite && w.Code == http.StatusConflict {
 			t.Errorf("overwrite on an old agent: refused %s", w.Body)
 		}
+		if overwrite {
+			// The accepted restore runs in the background and writes its
+			// outcome into the temp dir: let it end before the dir is removed.
+			waitTenantRestoreEnds(t, restoreUploadTenantOutcomePath("T", "upload0001"))
+		}
 	}
+}
+
+func waitTenantRestoreEnds(t *testing.T, outcomePath string) {
+	t.Helper()
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		if o, err := readRestoreUploadOutcome(outcomePath); err == nil && o.Status != "restoring" {
+			return
+		}
+	}
+	t.Fatal("the background restore didn't end")
 }
 
 func TestRunUploadRestore_KeepsWhatIsThereUnlessOverwrite(t *testing.T) {
@@ -228,5 +243,38 @@ func TestRestoreMetadataDeps_CarriesThePackages(t *testing.T) {
 	h := &backupHandler{cfg: BackupHandlerConfig{Packages: pkgs}}
 	if got := h.restoreMetadataDeps(&uploadedData{}).Packages; got != pkgs {
 		t.Fatalf("Packages = %v, want the handler's package store", got)
+	}
+}
+
+// The rebuild gets the databases whose data is all the archive's, as the
+// agent named them; an agent that doesn't name them leaves the list unset,
+// so the archive grants nothing (GH #1993).
+func TestRunUploadRestore_TheRebuildGetsTheArchivesDatabases(t *testing.T) {
+	for name, c := range map[string]struct {
+		reply string
+		want  map[string]bool
+	}{
+		"named":          {`{"upload_confinement_enforced":true,"restored_databases":["alice_wp","alice_old"],"archive_mariadb_databases":["alice_wp"]}`, map[string]bool{"alice_wp": true}},
+		"none":           {`{"upload_confinement_enforced":true,"restored_databases":["alice_old"],"archive_mariadb_databases":[]}`, map[string]bool{}},
+		"an older agent": {`{"upload_confinement_enforced":true,"restored_databases":["alice_wp"]}`, nil},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var got *uploadedData
+			prev := applyUploadedMetadata
+			applyUploadedMetadata = func(_ *backupHandler, _ context.Context, _ json.RawMessage, _ string, u uploadedData) []string {
+				got = &u
+				return nil
+			}
+			t.Cleanup(func() { applyUploadedMetadata = prev })
+			h, a, _ := ucUploadPasses(t, func(int) string { return c.reply })
+			h.runUploadRestore(a)
+			if got == nil {
+				t.Fatal("no rebuild")
+			}
+			deps := h.restoreMetadataDeps(got)
+			if (deps.ArchiveMariaDBs == nil) != (c.want == nil) || fmt.Sprint(deps.ArchiveMariaDBs) != fmt.Sprint(c.want) {
+				t.Fatalf("ArchiveMariaDBs %v (nil=%v), want %v (nil=%v)", deps.ArchiveMariaDBs, deps.ArchiveMariaDBs == nil, c.want, c.want == nil)
+			}
+		})
 	}
 }
