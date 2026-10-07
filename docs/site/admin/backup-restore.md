@@ -52,7 +52,7 @@ SCRAM-SHA-256 verifier.
   says which.
 - The restore never touches this server's own databases, MariaDB accounts or
   PostgreSQL roles (`mysql`, `root`, `postgres`, `jabali_*`, …), nor the
-  account's phpMyAdmin account.
+  account's phpMyAdmin account or Adminer role.
 - A grant joins a database user and a database of the same engine only.
 - A PostgreSQL role gets the access the **Databases** page gives: all of each
   database it is granted, and that database's `public` schema with its tables

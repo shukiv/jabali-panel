@@ -113,6 +113,22 @@ func TestApply_LeavesAnExistingPostgresRolesPasswordAlone(t *testing.T) {
 	}
 }
 
+// The per-account Adminer role is the panel's own; no restore takes it from a
+// bundle, nor creates it with the bundle's password.
+func TestApply_DoesNotRestoreTheAccountsAdminerRole(t *testing.T) {
+	f := newMAFixture()
+	meta := pgMeta(pgVerifier)
+	meta.DatabaseUsers[0].Username = "alice_pgadmin"
+	r := f.apply(meta)
+
+	if len(f.users.rows) != 0 || len(f.agent.pgCalls()) != 0 {
+		t.Fatalf("restored %v / calls %+v", f.users.rows, f.agent.pgCalls())
+	}
+	if !hasError(r.Errors, "db_user du1 (alice_pgadmin): not restored: it is the account's Adminer role") {
+		t.Fatalf("errors %v", r.Errors)
+	}
+}
+
 // SECURITY: a role of the restored user's name that already exists is not the
 // restored row's: the row would let the account's owner reset its password.
 func TestApply_DatabaseUserWhoseNameExistsInPostgresIsTakenBackOut(t *testing.T) {
