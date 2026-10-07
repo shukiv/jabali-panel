@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"strings"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
 )
@@ -20,6 +21,11 @@ type dbUserCreateParams struct {
 	// grant so the migrated app's hardcoded creds keep working with
 	// zero config rewrite. Mutually exclusive with Password.
 	PasswordHash string `json:"password_hash,omitempty"`
+	// CreateOnly creates the account only when none of this name exists, and
+	// never changes one that does: the call fails with already_exists. A
+	// backup restore sets it (GH #1993): an existing account is not the
+	// restored row's to take over, whoever holds it.
+	CreateOnly bool `json:"create_only,omitempty"`
 }
 
 // nativePwdHashRe pins the supported hash format (mysql_native_password).
@@ -52,6 +58,9 @@ func dbUserCreateHandler(ctx context.Context, params json.RawMessage) (any, erro
 			Message: "invalid database user name",
 		}
 	}
+	if err := reservedDBUserRefusal(p.DBUserName); err != nil {
+		return nil, err
+	}
 
 	if (p.Password == "" && p.PasswordHash == "") || (p.Password != "" && p.PasswordHash != "") {
 		return nil, &agentwire.AgentError{
@@ -79,6 +88,9 @@ func dbUserCreateHandler(ctx context.Context, params json.RawMessage) (any, erro
 	// importer's repeat invocations idempotent (a re-run / resume
 	// must not 1396 ER_CANNOT_USER on an already-created compat user).
 	var sql string
+	if p.CreateOnly {
+		return dbUserCreateOnly(ctx, escapedUsername, p)
+	}
 	if p.PasswordHash != "" {
 		// Migration-compat path. Hash format already validated above;
 		// no escaping needed (hex + '*' is shell+SQL-safe and the
@@ -122,6 +134,30 @@ func dbUserCreateHandler(ctx context.Context, params json.RawMessage) (any, erro
 		}
 	}
 
+	return dbUserCreateResponse{OK: true}, nil
+}
+
+// dbUserCreateOnly runs db_user.create with create_only: a plain CREATE USER,
+// which MariaDB refuses (1396) when the account exists.
+func dbUserCreateOnly(ctx context.Context, escapedUsername string, p dbUserCreateParams) (any, error) {
+	var sql string
+	if p.PasswordHash != "" {
+		// Format validated by the caller: '*' + 40 hex.
+		sql = fmt.Sprintf("CREATE USER %s@'localhost' IDENTIFIED BY PASSWORD '%s'", escapedUsername, p.PasswordHash)
+	} else {
+		escapedPassword, err := EscapeMariaDBLiteral(p.Password)
+		if err != nil {
+			return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "invalid password"}
+		}
+		sql = fmt.Sprintf("CREATE USER %s@'localhost' IDENTIFIED BY %s", escapedUsername, escapedPassword)
+	}
+	out, err := execCommandContext(ctx, "mysql", "-e", sql).CombinedOutput()
+	if err != nil {
+		if strings.Contains(string(out), "ERROR 1396") {
+			return nil, &agentwire.AgentError{Code: agentwire.CodeAlreadyExists, Message: "a MariaDB account with this name already exists"}
+		}
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "failed to create user"}
+	}
 	return dbUserCreateResponse{OK: true}, nil
 }
 

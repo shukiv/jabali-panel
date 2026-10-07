@@ -43,6 +43,9 @@ func dbCreateHandler(ctx context.Context, params json.RawMessage) (any, error) {
 			Message: "invalid database name",
 		}
 	}
+	if err := reservedDatabaseRefusal(p.DBName); err != nil {
+		return nil, err
+	}
 
 	// Reject dangerous patterns (second layer of defense).
 	if strings.Contains(p.DBName, "/") ||

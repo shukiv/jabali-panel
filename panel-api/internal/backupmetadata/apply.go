@@ -28,6 +28,7 @@ import (
 	"time"
 
 	internalbackup "git.jabali-panel.com/shukivaknin/jabali2/internal/backup"
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/dbreserve"
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/kratosclient"
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/mailaddr"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/domainops"
@@ -545,16 +546,15 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 	if d.Databases != nil {
 		// SECURITY (GH #1993): a database or database-user row is a handle
 		// the account's owner can drop, dump, restore or re-password through
-		// the panel. Never this server's own; from an uploaded file, only
-		// names in the account's own namespace that no other account has.
-		var otherDBs, otherDBUsers, accountDBs map[string]bool
+		// the panel. Never this server's own, nor a name another account has
+		// (an older backup can hold one the account has since handed over,
+		// e.g. `jabali db chown`); from an uploaded file, only names in the
+		// account's own namespace.
 		dbRows, dbUserRows := m.Databases, m.DatabaseUsers
-		if d.Untrusted {
-			var listErr error
-			if otherDBs, otherDBUsers, accountDBs, listErr = accountDatabaseNames(ctx, d, m.User.ID); listErr != nil {
-				r.Errors = append(r.Errors, fmt.Sprintf("databases: not restored: %v", listErr))
-				dbRows, dbUserRows = nil, nil
-			}
+		otherDBs, otherDBUsers, accountDBs, listErr := accountDatabaseNames(ctx, d, m.User.ID)
+		if listErr != nil {
+			r.Errors = append(r.Errors, fmt.Sprintf("databases: not restored: %v", listErr))
+			dbRows, dbUserRows = nil, nil
 		}
 		dbNameToID := make(map[string]string, len(dbRows))
 		// ownByName is the account's own databases and database users by
@@ -570,6 +570,10 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 			}
 			return ownByName
 		}
+		// The database users and grants this restore creates get their
+		// MariaDB side after the loop (createRestoredDBAccounts).
+		var newDBUsers []restoredDBAccount
+		var newGrants []*models.DatabaseUserGrant
 		for _, db := range dbRows {
 			if why := restoredDatabaseRefusal(db.Name, account, d.Untrusted, otherDBs); why != "" {
 				r.Errors = append(r.Errors, fmt.Sprintf("database %s (%s): not restored: %s", db.ID, db.Name, why))
@@ -622,6 +626,7 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 					ID:           du.ID,
 					UserID:       m.User.ID,
 					Username:     du.Username,
+					Engine:       restoredDBUserEngine(du, m.Databases),
 					PasswordHash: du.PasswordHash,
 					CreatedAt:    now,
 					UpdatedAt:    now,
@@ -655,6 +660,7 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 				} else {
 					dbUserIDs[du.ID] = du.ID
 					r.DatabaseUsers++
+					newDBUsers = append(newDBUsers, restoredDBAccount{row: dbu, nativeHash: du.NativePasswordHash})
 				}
 				if d.DatabaseGrants != nil {
 					for _, g := range du.Grants {
@@ -695,9 +701,13 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 							continue
 						}
 						r.DatabaseGrants++
+						newGrants = append(newGrants, gr)
 					}
 				}
 			}
+		}
+		if d.Agent != nil {
+			createRestoredDBAccounts(ctx, d, m.User.ID, newDBUsers, newGrants, &r)
 		}
 	}
 
@@ -1087,44 +1097,21 @@ func applyUser(ctx context.Context, m *internalbackup.AccountMetadata, d Deps, n
 	return true, nil
 }
 
-// systemDatabaseNames are this server's own databases (with every jabali_*
-// one); systemDBUserNames its own MariaDB accounts (with every jabali* and
-// jb_s_* restore shadow one).
-var (
-	systemDatabaseNames = map[string]bool{
-		"mysql": true, "information_schema": true, "performance_schema": true, "sys": true,
-		"crowdsec": true, "postgres": true, "template0": true, "template1": true, "jabali": true,
-	}
-	systemDBUserNames = map[string]bool{
-		"root": true, "mysql": true, "mariadb.sys": true, "crowdsec": true, "debian-sys-maint": true,
-		"postgres": true, "jabali": true,
-	}
-	restoredDBNameRe = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
-)
-
-func systemDatabase(name string) bool {
-	l := strings.ToLower(name)
-	return systemDatabaseNames[l] || strings.HasPrefix(l, "jabali_")
-}
-
-func systemDBUser(name string) bool {
-	l := strings.ToLower(name)
-	return systemDBUserNames[l] || strings.HasPrefix(l, "jabali_") || strings.HasPrefix(l, "jabali-") || strings.HasPrefix(l, "jb_s_")
-}
+var restoredDBNameRe = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
 // restoredDatabaseRefusal says why a database row named name may not be
 // restored for account, or "".
 func restoredDatabaseRefusal(name, account string, untrusted bool, others map[string]bool) string {
 	switch {
-	case systemDatabase(name):
+	case dbreserve.Database(name):
 		return "it is one of this server's own databases"
+	case others[name]:
+		return "another account has a database with this name"
 	case !untrusted:
 		return ""
 	case !restoredDBNameRe.MatchString(name) || !accountNameRe.MatchString(account) ||
 		len(name) <= len(account)+1 || !strings.HasPrefix(name, account+"_"):
 		return fmt.Sprintf("a database from an uploaded backup must be named %s_<name>", account)
-	case others[name]:
-		return "another account has a database with this name"
 	}
 	return ""
 }
@@ -1132,15 +1119,17 @@ func restoredDatabaseRefusal(name, account string, untrusted bool, others map[st
 // restoredDBUserRefusal is restoredDatabaseRefusal for a database user.
 func restoredDBUserRefusal(name, account string, untrusted bool, others map[string]bool) string {
 	switch {
-	case systemDBUser(name):
+	case dbreserve.User(name):
 		return "it is one of this server's own database accounts"
+	case strings.HasSuffix(strings.ToLower(name), "_mysqladmin"):
+		return "it is the account's phpMyAdmin account, which the panel manages itself"
+	case others[name]:
+		return "another account has a database user with this name"
 	case !untrusted:
 		return ""
 	case !restoredDBNameRe.MatchString(name) || !accountNameRe.MatchString(account) ||
 		len(name) <= len(account)+1 || !strings.HasPrefix(name, account+"_"):
 		return fmt.Sprintf("a database user from an uploaded backup must be named %s_<name>", account)
-	case others[name]:
-		return "another account has a database user with this name"
 	}
 	return ""
 }

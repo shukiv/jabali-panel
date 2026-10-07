@@ -512,6 +512,12 @@ func runMetadataStage(ctx context.Context, req backupCreateParams) backup.Manife
 	if ferr := enrichFtpCredentials(req.Metadata); ferr != nil {
 		st.Warnings = append(st.Warnings, "ftp credentials: "+ferr.Error())
 	}
+	// GH #1993: each MariaDB database user's password hash, so a restore on
+	// another server recreates the account and the site's database login keeps
+	// working (the panel only has its own hash). Best effort like the above.
+	if derr := enrichDatabaseUserAuth(ctx, req.Metadata); derr != nil {
+		st.Warnings = append(st.Warnings, "database user passwords: "+derr.Error())
+	}
 	body, err := json.Marshal(req.Metadata)
 	if err != nil {
 		st.Status = backup.StageStatusFailed

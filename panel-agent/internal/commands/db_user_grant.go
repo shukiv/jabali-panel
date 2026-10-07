@@ -105,6 +105,9 @@ func dbUserGrantHandler(ctx context.Context, params json.RawMessage) (any, error
 			Message: "invalid database name",
 		}
 	}
+	if err := reservedDatabaseRefusal(p.DBName); err != nil {
+		return nil, err
+	}
 
 	// Validate db_user_name format.
 	if !dbUserGrantNameRegex.MatchString(p.DBUserName) {
@@ -112,6 +115,9 @@ func dbUserGrantHandler(ctx context.Context, params json.RawMessage) (any, error
 			Code:    agentwire.CodeInvalidArgument,
 			Message: "invalid database user name",
 		}
+	}
+	if err := reservedDBUserRefusal(p.DBUserName); err != nil {
+		return nil, err
 	}
 
 	// Determine which privilege list to use: privileges (new) or fallback to grant_level (legacy).

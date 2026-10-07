@@ -114,6 +114,13 @@ func (r *owDatabases) FindByID(_ context.Context, id string) (*models.Database, 
 	}
 	return nil, repository.ErrNotFound
 }
+func (r *owDatabases) List(context.Context, repository.ListOptions) ([]models.Database, int64, error) {
+	var out []models.Database
+	for _, d := range r.existing {
+		out = append(out, d)
+	}
+	return out, int64(len(out)), nil
+}
 func (r *owDatabases) Create(_ context.Context, d *models.Database) error {
 	if _, ok := r.existing[d.ID]; ok {
 		return repository.ErrConflict
@@ -131,6 +138,13 @@ func (r *owDBUsers) FindByID(_ context.Context, id string) (*models.DatabaseUser
 		return &u, nil
 	}
 	return nil, repository.ErrNotFound
+}
+func (r *owDBUsers) List(context.Context, repository.ListOptions) ([]models.DatabaseUser, int64, error) {
+	var out []models.DatabaseUser
+	for _, u := range r.existing {
+		out = append(out, u)
+	}
+	return out, int64(len(out)), nil
 }
 func (r *owDBUsers) Create(_ context.Context, u *models.DatabaseUser) error {
 	if _, ok := r.existing[u.ID]; ok {

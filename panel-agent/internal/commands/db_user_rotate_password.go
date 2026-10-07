@@ -38,6 +38,9 @@ func dbUserRotatePasswordHandler(ctx context.Context, params json.RawMessage) (a
 			Message: "invalid database user name",
 		}
 	}
+	if err := reservedDBUserRefusal(p.DBUserName); err != nil {
+		return nil, err
+	}
 
 	if p.NewPassword == "" {
 		return nil, &agentwire.AgentError{

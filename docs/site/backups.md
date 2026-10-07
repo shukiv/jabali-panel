@@ -80,7 +80,9 @@ baseline safety net without configuring a per-user schedule.
 An `account_full` restore rebuilds the account's databases (MariaDB **and**
 PostgreSQL), mail, DNS, cron, apps, and **FTP/SFTP subaccounts** — the last with
 their original login password preserved through a root-only one-shot staging
-file (GH #1361).
+file (GH #1361). MariaDB **database users** come back with their MariaDB account,
+grants and original password, so sites keep connecting to their databases
+(GH #1993; see [Database users and their passwords](./admin/backup-restore.md#database-users-and-their-passwords)).
 
 ### Tenant self-service restore-from-upload
 

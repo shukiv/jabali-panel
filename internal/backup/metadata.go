@@ -203,14 +203,23 @@ type MetadataDatabase struct {
 }
 
 // MetadataDatabaseUser mirrors models.DatabaseUser plus its grants
-// (one DBUser → many DatabaseIDs). Restore preserves password_hash so
-// the user's existing MariaDB credentials keep working.
+// (one DBUser → many DatabaseIDs). PasswordHash is the panel row's own
+// hash; the MariaDB account itself is recreated from NativePasswordHash.
 type MetadataDatabaseUser struct {
-	ID           string                      `json:"id"`
-	Username     string                      `json:"username"`
-	PasswordHash string                      `json:"password_hash,omitempty"`
-	CreatedAt    string                      `json:"created_at,omitempty"`
-	Grants       []MetadataDatabaseUserGrant `json:"grants,omitempty"`
+	ID           string `json:"id"`
+	Username     string `json:"username"`
+	PasswordHash string `json:"password_hash,omitempty"`
+	// Engine is "mariadb" or "postgres". Empty in bundles made before
+	// GH #1993, which carried no engine.
+	Engine string `json:"engine,omitempty"`
+	// NativePasswordHash is the MariaDB account's mysql_native_password hash
+	// ('*' + 40 hex), filled in by the agent when it writes the bundle (the
+	// panel doesn't have it). A restore recreates the account with it, so
+	// the site's database login keeps working. Empty for other engines and
+	// plugins, and in bundles made before GH #1993.
+	NativePasswordHash string                      `json:"native_password_hash,omitempty"`
+	CreatedAt          string                      `json:"created_at,omitempty"`
+	Grants             []MetadataDatabaseUserGrant `json:"grants,omitempty"`
 }
 
 // MetadataDatabaseUserGrant pairs a database user with the database it
