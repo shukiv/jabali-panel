@@ -239,6 +239,13 @@ func migrationImportHomeHandler(ctx context.Context, raw json.RawMessage) (any, 
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "dest scope init: " + dsErr.Error()}
 	}
 	dest := u.HomeDir + "/"
+	// The chown walks below start at the home. Resolve resolves symlinks,
+	// so anchor at the home's resolved path too (a host whose /home is a
+	// link); the home itself sits in a root-owned directory.
+	homeAnchor := u.HomeDir
+	if resolved, err := filepath.EvalSymlinks(u.HomeDir); err == nil {
+		homeAnchor = resolved
+	}
 	if p.DestSubpath != "" {
 		// Defense: refuse absolute or escape paths.
 		clean := strings.TrimLeft(filepath.Clean(p.DestSubpath), "/")
@@ -263,9 +270,9 @@ func migrationImportHomeHandler(ctx context.Context, raw json.RawMessage) (any, 
 			}
 		}
 		dest = resolvedDest + "/"
-		// Symlink-safe chown (Gitea #497): Walk+Lchown stays inside the tree,
-		// never following a symlink the source tarball may have planted.
-		_ = chownTreeRecursive(dest, uid, gid)
+		// Symlink-safe chown (Gitea #497): never follows a symlink the source
+		// tarball may have planted.
+		_ = chownTreeRecursive(homeAnchor, dest, uid, gid)
 	}
 	srcWithSlash := strings.TrimRight(srcAbs, "/") + "/"
 	args = append(args, srcWithSlash, dest)
@@ -299,12 +306,12 @@ func migrationImportHomeHandler(ctx context.Context, raw json.RawMessage) (any, 
 	}
 	chownTarget := dest
 	if p.DestSubpath == "" {
-		chownTarget = u.HomeDir
+		chownTarget = homeAnchor
 	}
 	// Symlink-safe recursive chown (Gitea #497): the rsync'd tree is
-	// source-tarball-controlled, so use Walk+Lchown (never `chown -R`, which
-	// follows symlinks out of the tree).
-	if cerr := chownTreeRecursive(chownTarget, uid, groupID); cerr != nil {
+	// source-tarball-controlled, so never `chown -R`, which follows symlinks
+	// out of the tree.
+	if cerr := chownTreeRecursive(homeAnchor, chownTarget, uid, groupID); cerr != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,
 			Message: fmt.Sprintf("chown failed: %v", cerr),

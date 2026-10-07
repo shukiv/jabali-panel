@@ -26,6 +26,7 @@
 package fsperm
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -168,4 +169,98 @@ func RepairDocrootGroup(userHome, docroot string, gid int) error {
 		}
 	}
 	return walkApply(cur, gid)
+}
+
+// ChownTree sets owner uid and group gid on root and everything under it,
+// AS ROOT over a tenant-writable tree. A symlink is chowned itself, never
+// followed.
+//
+// root is reached from anchor one component at a time (openat O_NOFOLLOW),
+// so a symlink planted between anchor and root fails the call instead of
+// redirecting it. anchor must be a directory the tenant can't swap for a
+// link (their home: /home belongs to root). root may equal anchor.
+//
+// SECURITY (TOCTOU): the walk is by file descriptor, the same way as
+// walkApply. A directory the tenant swaps for a symlink after it was seen is
+// chowned as the link (AT_SYMLINK_NOFOLLOW), and the walk never enters it.
+func ChownTree(anchor, root string, uid, gid int) error {
+	fd, err := openUnder(anchor, root)
+	if err != nil {
+		return err
+	}
+	defer unix.Close(fd)
+	return walkChown(fd, uid, gid)
+}
+
+// openUnder opens the directory root, descending from anchor one component
+// at a time without following a symlink.
+func openUnder(anchor, root string) (int, error) {
+	anchor, root = filepath.Clean(anchor), filepath.Clean(root)
+	rel, err := filepath.Rel(anchor, root)
+	if err != nil || strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
+		return -1, fmt.Errorf("%q is not under %q", root, anchor)
+	}
+	cur, err := unix.Open(anchor, openFlags, 0)
+	if err != nil {
+		return -1, fmt.Errorf("open %s: %w", anchor, err)
+	}
+	if rel == "." {
+		return cur, nil
+	}
+	for _, comp := range strings.Split(rel, string(os.PathSeparator)) {
+		child, oerr := unix.Openat(cur, comp, openFlags, 0)
+		unix.Close(cur)
+		if oerr != nil {
+			return -1, fmt.Errorf("open %s under %s: %w", comp, anchor, oerr)
+		}
+		cur = child
+	}
+	return cur, nil
+}
+
+// beforeDescend, when set, runs between seeing a directory entry and opening
+// it. Tests use it to swap the entry, as a racing tenant would.
+var beforeDescend func(dfd int, name string)
+
+// walkChown chowns the directory at dfd and, recursively, every entry in it.
+func walkChown(dfd, uid, gid int) error {
+	if err := unix.Fchown(dfd, uid, gid); err != nil {
+		return fmt.Errorf("fchown: %w", err)
+	}
+	names, err := readEntryNames(dfd)
+	if err != nil {
+		return err
+	}
+	for _, name := range names {
+		if name == "." || name == ".." {
+			continue
+		}
+		var cst unix.Stat_t
+		if err := unix.Fstatat(dfd, name, &cst, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+			continue // vanished — skip
+		}
+		if cst.Mode&unix.S_IFMT == unix.S_IFDIR {
+			if beforeDescend != nil {
+				beforeDescend(dfd, name)
+			}
+			cfd, oerr := unix.Openat(dfd, name, openFlags, 0)
+			if oerr == nil {
+				err = walkChown(cfd, uid, gid)
+				unix.Close(cfd)
+				if err != nil {
+					return err
+				}
+				continue
+			}
+			// No longer a directory (raced to a symlink or a file): chown
+			// the entry itself below, without following it.
+		}
+		if err := unix.Fchownat(dfd, name, uid, gid, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+			if errors.Is(err, unix.ENOENT) {
+				continue
+			}
+			return fmt.Errorf("fchownat %s: %w", name, err)
+		}
+	}
+	return nil
 }

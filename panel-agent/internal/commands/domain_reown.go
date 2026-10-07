@@ -96,7 +96,7 @@ func domainReownHandler(ctx context.Context, raw json.RawMessage) (any, error) {
 	if err := os.Rename(p.OldDocRoot, p.NewDocRoot); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("move docroot %q -> %q: %v", p.OldDocRoot, p.NewDocRoot, err)}
 	}
-	if err := chownTreeRecursive(p.NewDocRoot, p.NewUID, wwwGID); err != nil {
+	if err := chownTreeRecursive(filepath.Dir(grandparent), p.NewDocRoot, p.NewUID, wwwGID); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("re-own moved tree (docroot moved to %q; re-run to resume): %v", p.NewDocRoot, err)}
 	}
 	// Re-assert setgid 2750 on the docroot itself so new files keep inheriting the
