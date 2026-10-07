@@ -242,6 +242,15 @@ func (m *mockDomainRepo) UpdateDisclaimer(ctx context.Context, id string, enable
 	return nil
 }
 
+func (m *mockDomainRepo) SetRateLimits(ctx context.Context, id string, rps, conn uint32) error {
+	d, ok := m.domains[id]
+	if !ok {
+		return repository.ErrNotFound
+	}
+	d.RateLimitRPS, d.ConnectionLimit = rps, conn
+	return nil
+}
+
 func (m *mockDomainRepo) UpdateCacheEnabled(ctx context.Context, id string, enabled bool) error {
 	return nil
 }

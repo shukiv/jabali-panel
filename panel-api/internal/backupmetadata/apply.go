@@ -214,6 +214,9 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 				ownDomains[dm.ID] = true
 				domainIDs[dm.ID] = dm.ID
 				r.Skipped++
+				if d.OverwriteRows {
+					overwriteDomain(ctx, d, &r, m.User.ID, account, existing, dm, poolIDs)
+				}
 				continue
 			} else if err != nil && !errors.Is(err, repository.ErrNotFound) {
 				refused[dm.ID] = true
@@ -232,6 +235,9 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 				ownDomains[existing.ID] = true
 				domainIDs[dm.ID] = existing.ID
 				r.Skipped++
+				if d.OverwriteRows {
+					overwriteDomain(ctx, d, &r, m.User.ID, account, existing, dm, poolIDs)
+				}
 				continue
 			} else if err != nil && !errors.Is(err, repository.ErrNotFound) {
 				refused[dm.ID] = true

@@ -195,3 +195,25 @@ func TestRestoreDomainCheck_DropsUnsafeVhostFields(t *testing.T) {
 		}
 	})
 }
+
+// GH #1993: the index priority goes into the domain's web server config, so
+// a restored one must be one the domain page offers.
+func TestRestoreDomainCheck_IndexPriority(t *testing.T) {
+	for in, want := range map[string]struct {
+		priority string
+		warned   bool
+	}{
+		"":                {"", false},
+		"php_first":       {"php_first", false},
+		" html_only ":     {"html_only", false},
+		"full; autoindex": {"", true},
+		"index.cgi":       {"", true},
+	} {
+		row := rdcRow("site.org")
+		row.IndexPriority = in
+		w, err := rdcCheck()(context.Background(), row, "alice")
+		if err != nil || row.IndexPriority != want.priority || (len(w) == 1) != want.warned {
+			t.Errorf("index priority %q: got %q warnings %v err %v, want %q warned=%v", in, row.IndexPriority, w, err, want.priority, want.warned)
+		}
+	}
+}
