@@ -32,6 +32,8 @@ var errRestoreChecksUnwired = errors.New("the restore domain checks are not full
 //   - raw nginx directives that fail the admin directive validator;
 //   - a redirect-all target or type that the update door would refuse (both
 //     are dropped together, so a type is never left without its target).
+//   - a per-domain PHP limit the PHP settings page would refuse (the agent
+//     renders the sizes into the site's web server config).
 func RestoreDomainCheck(domains domainops.SuffixDomainFinder, aliases domainops.AliasHostnameFinder,
 	settings domainops.MailSettingsReader) func(ctx context.Context, row *models.Domain, ownerUsername string) ([]string, error) {
 	return func(ctx context.Context, row *models.Domain, ownerUsername string) ([]string, error) {
@@ -61,6 +63,7 @@ func RestoreDomainCheck(domains domainops.SuffixDomainFinder, aliases domainops.
 			row.RedirectAllType = nil
 			warnings = append(warnings, "redirect-all dropped: "+reason)
 		}
+		warnings = append(warnings, dropRestoredPHPLimits(row)...)
 		return warnings, nil
 	}
 }
@@ -83,4 +86,43 @@ func restoredRedirectProblem(row *models.Domain) string {
 		}
 	}
 	return ""
+}
+
+// dropRestoredPHPLimits clears each per-domain PHP limit the PHP settings page
+// would refuse and returns one warning for each.
+func dropRestoredPHPLimits(row *models.Domain) []string {
+	var warnings []string
+	for _, f := range []struct {
+		name string
+		v    **string
+	}{
+		{"memory_limit", &row.PHPMemoryLimit},
+		{"upload_max_filesize", &row.PHPUploadMaxFilesize},
+		{"post_max_size", &row.PHPPostMaxSize},
+	} {
+		if *f.v == nil {
+			continue
+		}
+		if err := validateSizeParam(**f.v); err != nil {
+			*f.v = nil
+			warnings = append(warnings, fmt.Sprintf("PHP %s dropped: %v", f.name, err))
+		}
+	}
+	for _, f := range []struct {
+		name string
+		v    **int
+	}{
+		{"max_input_vars", &row.PHPMaxInputVars},
+		{"max_execution_time", &row.PHPMaxExecutionTime},
+		{"max_input_time", &row.PHPMaxInputTime},
+	} {
+		if *f.v == nil {
+			continue
+		}
+		if err := validateIntParam(**f.v, f.name); err != nil {
+			*f.v = nil
+			warnings = append(warnings, fmt.Sprintf("PHP %s dropped: %v", f.name, err))
+		}
+	}
+	return warnings
 }

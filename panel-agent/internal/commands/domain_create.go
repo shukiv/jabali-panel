@@ -918,6 +918,13 @@ func pathsUnderHome(username, docRoot string) []string {
 // directive. Covers "Area/City", "UTC", "Etc/GMT+5", etc.
 var phpTimezoneRE = regexp.MustCompile(`^[A-Za-z0-9_+/-]{1,64}$`)
 
+// phpSizeRE guards the per-domain memory_limit, upload_max_filesize and
+// post_max_size the same way. The panel's PHP settings page checks them, but a
+// domain restored from a backup never passed that page, and the value lands
+// inside the double-quoted PHP_VALUE string. Accepts every size that page
+// accepts, plus PHP's -1 (no limit) and lower-case units.
+var phpSizeRE = regexp.MustCompile(`^(-1|[0-9]{1,8}[KMGkmg]?)$`)
+
 // domainEnvVarParam is one per-domain environment variable from the panel.
 type domainEnvVarParam struct {
 	Key   string `json:"key"`
@@ -969,13 +976,13 @@ func buildPHPValueParam(hasPHP bool, memLimit, uploadMax, postMax string, maxInp
 	} else {
 		parts = append(parts, "display_errors=Off")
 	}
-	if memLimit != "" {
+	if phpSizeRE.MatchString(memLimit) {
 		parts = append(parts, "memory_limit="+memLimit)
 	}
-	if uploadMax != "" {
+	if phpSizeRE.MatchString(uploadMax) {
 		parts = append(parts, "upload_max_filesize="+uploadMax)
 	}
-	if postMax != "" {
+	if phpSizeRE.MatchString(postMax) {
 		parts = append(parts, "post_max_size="+postMax)
 	}
 	if maxInputVars > 0 {

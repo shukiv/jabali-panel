@@ -770,37 +770,30 @@ func TestVhostTemplate_PHPValueParamAbsentWhenEmpty(t *testing.T) {
 	}
 }
 
-// TestBuildPHPValueParam_InjectionAttempts verifies that buildPHPValueParam
-// does not allow newline injection or other escape attempts. Note: the API
-// validates these at the boundary; this test verifies the agent-side doesn't
-// introduce additional vulnerabilities.
+// TestBuildPHPValueParam_InjectionAttempts: a size limit is rendered inside
+// the double-quoted PHP_VALUE string, one directive per line. The panel's PHP
+// settings page checks it, but a domain restored from a backup did not pass
+// that page, so the agent drops a size that isn't a plain PHP size.
 func TestBuildPHPValueParam_InjectionAttempts(t *testing.T) {
-	tests := []struct {
-		name     string
-		memLimit string
-	}{
-		{
-			name:     "newline attempt in memory_limit",
-			memLimit: "256M\nextra_directive=value",
-		},
-		{
-			name:     "semicolon attempt",
-			memLimit: "256M;extra=value",
-		},
+	bad := []string{
+		"256M\nextra_directive=value",
+		"256M;extra=value",
+		`256M"; fastcgi_param X "y`,
+		"256M ",
+		"M",
+		"",
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// buildPHPValueParam will include the raw string; the template
-			// will emit it inside nginx double-quotes, which is safe.
-			// The API layer (panel-api) validates the input, so the agent
-			// can assume it's already safe.
-			result := buildPHPValueParam(true, tt.memLimit, "", "", 0, 0, 0, false, nil, "")
-			assert.NotEmpty(t, result)
-			// The agent doesn't sanitize; the API does.
-			// This test just verifies buildPHPValueParam passes through
-			// what the API has already validated.
-		})
+	for _, v := range bad {
+		for field, build := range map[string]func(string) string{
+			"memory_limit":        func(v string) string { return buildPHPValueParam(true, v, "", "", 0, 0, 0, false, nil, "") },
+			"upload_max_filesize": func(v string) string { return buildPHPValueParam(true, "", v, "", 0, 0, 0, false, nil, "") },
+			"post_max_size":       func(v string) string { return buildPHPValueParam(true, "", "", v, 0, 0, 0, false, nil, "") },
+		} {
+			assert.Equal(t, "display_errors=Off", build(v), "%s=%q", field, v)
+		}
+	}
+	for _, v := range []string{"256M", "64k", "2G", "1048576", "-1"} {
+		assert.Equal(t, "display_errors=Off\nmemory_limit="+v, buildPHPValueParam(true, v, "", "", 0, 0, 0, false, nil, ""), v)
 	}
 }
 
