@@ -55,7 +55,7 @@ func runRecreatedRestore(t *testing.T, target string) (*sealCapture, *daDBs, *rc
 			`{"user":{"id":"u-old","username":"alice"},"databases":[{"id":"db1","name":"alice_wp","engine":"mariadb"}]}}`)},
 	}}
 	h.runAccountRestoreJob("job-1", &models.BackupDestination{ID: "d1", Kind: "local"},
-		map[string]any{"target_user_id": "u-new", "target_username": target})
+		map[string]any{"target_user_id": "u-new", "target_username": &target}) // as restore() passes it
 	jobs.wait(t)
 	return jobs, dbs, users
 }
@@ -139,7 +139,7 @@ func TestRunAccountRestoreJob_RestoresARecreatedAccountsDNSRecords(t *testing.T)
 		ServerSettings: rdSettings{s: f.srv}, Scheduler: f.sched,
 	}}
 	h.runAccountRestoreJob("job-1", &models.BackupDestination{ID: "d1", Kind: "local"},
-		map[string]any{"target_user_id": "u-new", "target_username": "alice"})
+		map[string]any{"target_user_id": "u-new", "target_username": &alice})
 	jobs.wait(t)
 
 	if got := strings.Join(f.records.userRecords("z1"), "|"); got != "sub NS ns1.elsewhere.net." {

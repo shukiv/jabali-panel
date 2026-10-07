@@ -1214,7 +1214,15 @@ func (h *backupHandler) runAccountRestoreJob(jobID string, dest *models.BackupDe
 		// GH #1993: an account deleted and created again here has a new id;
 		// its snapshot names the old one.
 		targetID, _ := params["target_user_id"].(string)
-		targetName, _ := params["target_username"].(string)
+		targetName := ""
+		switch v := params["target_username"].(type) {
+		case string:
+			targetName = v
+		case *string: // as restore() passes it
+			if v != nil {
+				targetName = *v
+			}
+		}
 		meta, rerr := retargetRecreatedAccount(result.Metadata, targetID, targetName)
 		if rerr != nil {
 			meta = result.Metadata
