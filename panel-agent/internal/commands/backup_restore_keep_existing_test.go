@@ -394,26 +394,20 @@ func TestAddMissingHomeFiles_ReportsWhatItCouldNotAdd(t *testing.T) {
 }
 
 // Keep-existing leaves the owners of the files already in the home alone:
-// the user's own copy needs no chown pass. Seen through a directory the
-// chown walk can't read.
+// the user's own copy needs no chown pass. Seen through a set-user-ID file:
+// a chown clears the bit, even to the owner the file already has.
 func TestKeepExisting_HomeSkipsTheChownPass(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("root reads a mode-000 directory")
-	}
 	me := currentUsername(t)
 	for _, keep := range []bool{true, false} {
 		root, homes := t.TempDir(), t.TempDir()
 		prev := restoreHomeRoot
 		restoreHomeRoot = homes
 		t.Cleanup(func() { restoreHomeRoot = prev })
-		locked := filepath.Join(homes, me, "private")
-		if err := os.MkdirAll(locked, 0o755); err != nil {
+		tool := filepath.Join(homes, me, "bin", "tool")
+		mustWrite(t, tool, "#!/bin/sh\n")
+		if err := os.Chmod(tool, 0o755|os.ModeSetuid); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.Chmod(locked, 0); err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
 		mustWrite(t, filepath.Join(root, "home", "home", me, "index.html"), "hi")
 		keepExecRecorder(t, nil, nil, nil)
 		stages := []backup.ManifestStage{{Name: backup.StageHome}}
@@ -422,7 +416,11 @@ func TestKeepExisting_HomeSkipsTheChownPass(t *testing.T) {
 		_, warnings := applyAccountRestore(context.Background(), root, me, backup.ManifestUser{Username: me}, stages, results,
 			restoreEnforcement{KeepExisting: keep})
 
-		if walked := hasWarning(warnings, "home: chown:"); walked == keep {
+		st, err := os.Stat(tool)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if walked := st.Mode()&os.ModeSetuid == 0; walked == keep {
 			t.Errorf("keep=%v: chown pass ran=%v (warnings %v)", keep, walked, warnings)
 		}
 	}
