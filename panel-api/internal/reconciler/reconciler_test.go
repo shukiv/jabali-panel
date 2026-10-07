@@ -316,6 +316,15 @@ func (f *fakeDomainRepo) UpdateDisclaimer(ctx context.Context, id string, enable
 	return nil
 }
 
+func (f *fakeDomainRepo) SetRateLimits(ctx context.Context, id string, rps, conn uint32) error {
+	d, ok := f.domains[id]
+	if !ok {
+		return &notFoundErr{}
+	}
+	d.RateLimitRPS, d.ConnectionLimit = rps, conn
+	return nil
+}
+
 func (f *fakeDomainRepo) UpdateCacheEnabled(ctx context.Context, id string, enabled bool) error {
 	return nil
 }

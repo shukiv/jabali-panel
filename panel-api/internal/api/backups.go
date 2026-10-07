@@ -1302,6 +1302,9 @@ func (h *backupHandler) restoreMetadataDeps(uploaded *uploadedData) backupmetada
 	if h.cfg.Mailboxes != nil {
 		deps.MailboxSettings = restoreMailboxSettings{mailboxes: h.cfg.Mailboxes, agent: h.cfg.Agent}
 	}
+	if h.cfg.Scheduler != nil {
+		deps.ScheduleDomain = h.cfg.Scheduler.Schedule
+	}
 	if h.cfg.MailAddresses != nil {
 		deps.MailAddresses = h.cfg.MailAddresses
 	}

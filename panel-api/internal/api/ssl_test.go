@@ -281,6 +281,11 @@ func (m *MockDomainRepository) UpdateCatchallTarget(ctx context.Context, id stri
 	return args.Error(0)
 }
 
+func (m *MockDomainRepository) SetRateLimits(ctx context.Context, id string, rps, conn uint32) error {
+	args := m.Called(ctx, id, rps, conn)
+	return args.Error(0)
+}
+
 func (m *MockDomainRepository) UpdateDisclaimer(ctx context.Context, id string, enabled bool, text *string) error {
 	args := m.Called(ctx, id, enabled, text)
 	return args.Error(0)

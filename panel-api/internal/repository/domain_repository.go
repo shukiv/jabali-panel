@@ -144,6 +144,10 @@ type DomainRepository interface {
 	// UpdateDisclaimer writes disclaimer_enabled + disclaimer_text.
 	// M6.5 Step 6 ADR-0052; reconciler pushes to Stalwart sieve.
 	UpdateDisclaimer(ctx context.Context, id string, enabled bool, text *string) error
+	// SetRateLimits writes rate_limit_rps + connection_limit (0 = none).
+	// Dedicated method because the columns are not in Update()'s allowlist;
+	// a restore with Overwrite is its only writer (GH #1993).
+	SetRateLimits(ctx context.Context, id string, rps, conn uint32) error
 	// UpdateDNSSECEnabled writes dnssec_enabled + dnssec_enabled_at.
 	// ADR-0076. Dedicated method because neither column is in Update()'s
 	// allowlist; enabling without a timestamp or disabling without clearing
@@ -819,6 +823,24 @@ func (r *domainRepo) UpdateCatchallTarget(ctx context.Context, id string, target
 	res := r.db.WithContext(ctx).Model(&models.Domain{}).
 		Where("id = ?", id).
 		Update("catchall_target", target)
+	if res.Error != nil {
+		return translate(res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetRateLimits — see interface doc.
+func (r *domainRepo) SetRateLimits(ctx context.Context, id string, rps, conn uint32) error {
+	res := r.db.WithContext(ctx).Model(&models.Domain{}).
+		Where("id = ?", id).
+		Updates(map[string]any{
+			"rate_limit_rps":   rps,
+			"connection_limit": conn,
+			"updated_at":       time.Now().UTC(),
+		})
 	if res.Error != nil {
 		return translate(res.Error)
 	}

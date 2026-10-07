@@ -125,6 +125,28 @@ func TestRestoreMetadataDeps_OverwriteRowsWiring(t *testing.T) {
 	}
 }
 
+// An existing domain whose web settings the rebuild changes is converged at
+// once, as after a save on the domain page.
+func TestRestoreMetadataDeps_ScheduleDomainWiring(t *testing.T) {
+	sched := &rmdScheduler{}
+	h := &backupHandler{cfg: BackupHandlerConfig{Scheduler: sched}}
+	deps := h.restoreMetadataDeps(&uploadedData{overwriteRows: true})
+	if deps.ScheduleDomain == nil {
+		t.Fatal("ScheduleDomain not wired")
+	}
+	deps.ScheduleDomain("d1")
+	if len(sched.ids) != 1 || sched.ids[0] != "d1" {
+		t.Fatalf("scheduled %v, want d1", sched.ids)
+	}
+	if (&backupHandler{}).restoreMetadataDeps(&uploadedData{overwriteRows: true}).ScheduleDomain != nil {
+		t.Error("ScheduleDomain wired without a scheduler")
+	}
+}
+
+type rmdScheduler struct{ ids []string }
+
+func (s *rmdScheduler) Schedule(id string) { s.ids = append(s.ids, id) }
+
 // rmsMailboxes records the mailbox setters a restore calls.
 type rmsMailboxes struct {
 	repository.MailboxRepository

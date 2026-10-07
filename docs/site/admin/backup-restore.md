@@ -161,8 +161,8 @@ is off by default:
 - **On** — the backup replaces the account's data, as restores did before:
   the home is mirrored from the backup (files added since are deleted),
   databases are reloaded from their dumps, and Docker app folders are
-  replaced. On an admin restore, the mailboxes, database users and PHP pools
-  the account already has also take the backup's settings:
+  replaced. On an admin restore, the mailboxes, database users, PHP pools and
+  domains the account already has also take the backup's settings:
   - a mailbox takes the backup's quota and whether it is disabled. It keeps
     its password, because the mail already in it didn't come from the archive;
   - a database user takes the backup's password only when every database it
@@ -171,7 +171,15 @@ is off by default:
   - a PHP pool takes the backup's process settings (mode, max children, idle
     timeout), held to the same rules as a restored pool (see below). Settings
     the PHP pool page would refuse leave the pool's own in place. A PHP
-    setting both have takes the backup's value; one only the pool has stays.
+    setting both have takes the backup's value; one only the pool has stays;
+  - a domain takes the backup's on/off state, redirect-all, index priority,
+    PHP limits, rate and connection limits, PHP pool, catch-all and outbound
+    disclaimer, through the checks its own pages run. A PHP limit the
+    account's hosting package lets only an administrator set stays as it is.
+    The catch-all is taken only when it points at a mailbox the account had
+    on this server before the restore. A backup without a catch-all or a
+    disclaimer clears the domain's. The domain's name, document root, SSL,
+    DKIM, DNSSEC, custom nginx directives and mail provider stay as they are.
 
   The restore report lists each password kept, and why.
 
@@ -219,6 +227,8 @@ it into the target account only (GH #1993):
   else is refused before anything is restored.
 - **Custom nginx directives** on a domain are left out. Re-add them in the
   domain's settings after reviewing them.
+- **Index priority** on a domain that the domain page doesn't offer is left
+  out; the domain gets the default.
 - **PHP limits** on a domain (memory, upload and post size, input variables,
   execution and input time) that the domain's PHP settings page would refuse
   are left out, and so is one the account's hosting package lets only an

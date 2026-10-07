@@ -34,6 +34,8 @@ var errRestoreChecksUnwired = errors.New("the restore domain checks are not full
 //     are dropped together, so a type is never left without its target).
 //   - a per-domain PHP limit the PHP settings page would refuse (the agent
 //     renders the sizes into the site's web server config).
+//   - an index priority the domain page doesn't offer (GH #1993); the domain
+//     then gets the default.
 func RestoreDomainCheck(domains domainops.SuffixDomainFinder, aliases domainops.AliasHostnameFinder,
 	settings domainops.MailSettingsReader) func(ctx context.Context, row *models.Domain, ownerUsername string) ([]string, error) {
 	return func(ctx context.Context, row *models.Domain, ownerUsername string) ([]string, error) {
@@ -62,6 +64,12 @@ func RestoreDomainCheck(domains domainops.SuffixDomainFinder, aliases domainops.
 			row.RedirectAllTo = nil
 			row.RedirectAllType = nil
 			warnings = append(warnings, "redirect-all dropped: "+reason)
+		}
+		if p := strings.TrimSpace(row.IndexPriority); p != "" && !IsValidIndexPriority(p) {
+			row.IndexPriority = ""
+			warnings = append(warnings, fmt.Sprintf("index priority %q dropped: it is not one the domain page offers", p))
+		} else {
+			row.IndexPriority = p
 		}
 		warnings = append(warnings, dropRestoredPHPLimits(row)...)
 		return warnings, nil

@@ -86,12 +86,19 @@ type Deps struct {
 	// already has, within each row's rules: an existing mailbox takes the
 	// backup's quota and disabled flag (MailboxSettings) and keeps its
 	// password; an existing database user takes the backup's password only
-	// when every database it can open was restored from the file.
+	// when every database it can open was restored from the file; an
+	// existing PHP pool or domain takes the backup's settings within the
+	// rules of its own pages.
 	OverwriteRows bool
 	// MailboxSettings changes an existing mailbox the way the mailbox page
 	// does, so the mail server follows. With OverwriteRows, nil leaves
 	// existing mailboxes as they are, with a line in the report.
 	MailboxSettings MailboxSettings
+	// ScheduleDomain, optional, has the reconciler converge a domain soon,
+	// as the domain pages do after a save. With OverwriteRows it is called
+	// for each existing domain whose web settings changed; without it the
+	// next reconciler pass picks the change up.
+	ScheduleDomain func(domainID string)
 	// RestoredDatabases / RestoredDockerSlugs name the databases and docker
 	// app folders (effective slug) the agent restored into the account from
 	// the uploaded file. With Untrusted, a database or docker app row is

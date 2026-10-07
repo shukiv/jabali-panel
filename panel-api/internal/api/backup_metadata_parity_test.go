@@ -20,13 +20,13 @@ import (
 // guard hook, which the admin restore builds from its own alias and settings
 // stores. And MailAddresses: the restore's Stalwart registry release, which
 // only the admin restore wires. And Untrusted, RestoredDatabases,
-// RestoredDockerSlugs, ArchiveMariaDBs, KeepExisting, OverwriteRows and
-// MailboxSettings (GH #1993): per-restore inputs for a bundle from an
-// uploaded file.
+// RestoredDockerSlugs, ArchiveMariaDBs, KeepExisting, OverwriteRows,
+// MailboxSettings and ScheduleDomain (GH #1993): per-restore inputs for a
+// bundle from an uploaded file.
 func TestBackupMetadataAdaptersInLockstep(t *testing.T) {
 	skip := map[string]bool{"KratosClient": true, "Log": true, "CheckDomain": true, "MailAddresses": true,
 		"Untrusted": true, "RestoredDatabases": true, "RestoredDockerSlugs": true, "KeepExisting": true,
-		"ArchiveMariaDBs": true, "OverwriteRows": true, "MailboxSettings": true}
+		"ArchiveMariaDBs": true, "OverwriteRows": true, "MailboxSettings": true, "ScheduleDomain": true}
 
 	builder := reflect.TypeOf(backupmetadata.Deps{})
 	adapters := map[string]reflect.Type{
