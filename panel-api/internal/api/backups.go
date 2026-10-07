@@ -1282,7 +1282,8 @@ func (h *backupHandler) restoreMetadataDeps(uploaded *uploadedData) backupmetada
 		DNSZones:       h.cfg.DNSZones,
 		DNSRecords:     h.cfg.DNSRecords,
 		KratosClient:   h.cfg.KratosClient,
-		Agent:          h.cfg.Agent, // push restored forwarders to Stalwart (GH #1795)
+		Packages:       h.cfg.Packages, // a pool from an uploaded file keeps to the package cap (GH #1993)
+		Agent:          h.cfg.Agent,    // push restored forwarders to Stalwart (GH #1795)
 		// GH #1898: a restored domain passes the create-time checks.
 		CheckDomain: RestoreDomainCheck(h.cfg.Domains, h.cfg.WebDomainAliases, h.cfg.ServerSettings),
 		Untrusted:   uploaded != nil,
