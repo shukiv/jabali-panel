@@ -2,7 +2,6 @@ package backupmetadata
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
@@ -44,19 +43,9 @@ func restoredPoolTuning(ctx context.Context, d Deps, userID string, pool *models
 // packageFPMCap is the FPM max-children cap of the account's package, or 0
 // for an account with no package (no package cap).
 func packageFPMCap(ctx context.Context, d Deps, userID string) (uint32, error) {
-	if d.Users == nil || d.Packages == nil {
-		return 0, errors.New("the package checks are not wired")
-	}
-	u, err := d.Users.FindByID(ctx, userID)
-	if err != nil || u == nil {
-		return 0, fmt.Errorf("look up the account: %v", err)
-	}
-	if u.PackageID == nil || *u.PackageID == "" {
-		return 0, nil
-	}
-	pkg, err := d.Packages.FindByID(ctx, *u.PackageID)
+	pkg, err := accountPackage(ctx, d, userID)
 	if err != nil || pkg == nil {
-		return 0, fmt.Errorf("look up the account's package: %v", err)
+		return 0, err
 	}
 	return pkg.FpmMaxChildrenCap, nil
 }
