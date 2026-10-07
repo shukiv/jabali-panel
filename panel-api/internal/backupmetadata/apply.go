@@ -701,7 +701,7 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 				} else {
 					dbUserIDs[du.ID] = du.ID
 					r.DatabaseUsers++
-					newDBUsers = append(newDBUsers, restoredDBAccount{row: dbu, nativeHash: du.NativePasswordHash})
+					newDBUsers = append(newDBUsers, restoredDBAccount{row: dbu, nativeHash: du.NativePasswordHash, pgVerifier: du.PostgresPasswordVerifier})
 				}
 				if d.DatabaseGrants != nil {
 					for _, g := range du.Grants {
@@ -1169,6 +1169,8 @@ func restoredDBUserRefusal(name, account string, untrusted bool, others map[stri
 		return "it is one of this server's own database accounts"
 	case strings.HasSuffix(strings.ToLower(name), "_mysqladmin"):
 		return "it is the account's phpMyAdmin account, which the panel manages itself"
+	case strings.HasSuffix(strings.ToLower(name), "_pgadmin"):
+		return "it is the account's Adminer role, which the panel manages itself"
 	case others[name]:
 		return "another account has a database user with this name"
 	case !untrusted:

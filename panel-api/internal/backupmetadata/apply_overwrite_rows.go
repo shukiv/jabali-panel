@@ -52,10 +52,10 @@ type existingDBUser struct {
 }
 
 // overwriteDBUserPasswords gives each database user the account already has
-// the backup's password, but only when every database it can open holds
-// nothing but this file's data (ArchiveMariaDBs): the file's author knows
-// that password. Otherwise the user keeps its password, with a line in the
-// report.
+// the backup's password (a MariaDB hash or a PostgreSQL SCRAM verifier), but
+// only when every database it can open holds nothing but this file's data
+// (ArchiveMariaDBs, ArchivePostgresDBs): the file's author knows that
+// password. Otherwise the user keeps its password, with a line in the report.
 func overwriteDBUserPasswords(ctx context.Context, d Deps, accountID string, users []existingDBUser, r *ApplyResult) {
 	for _, u := range users {
 		row, err := d.DatabaseUsers.FindByID(ctx, u.id)
@@ -69,18 +69,23 @@ func overwriteDBUserPasswords(ctx context.Context, d Deps, accountID string, use
 			r.Errors = append(r.Errors, label+": kept its password: "+why)
 			continue
 		}
+		engine := dbEngine(row.Engine)
+		cmd, params := "db_user.create", map[string]any{"db_user_name": row.Username, "password_hash": u.backup.NativePasswordHash}
+		if engine == "postgres" {
+			// Without create_only: sets an existing role's password, and never
+			// a role with server-wide rights.
+			cmd, params = "db.postgres.create_role", map[string]any{"role": row.Username, "password_verifier": u.backup.PostgresPasswordVerifier}
+		}
 		callCtx, cancel := context.WithTimeout(ctx, restoredDBAccountTimeout)
-		_, err = d.Agent.Call(callCtx, "db_user.create", map[string]any{
-			"db_user_name": row.Username, "password_hash": u.backup.NativePasswordHash,
-		})
+		_, err = d.Agent.Call(callCtx, cmd, params)
 		cancel()
 		if err != nil {
-			r.Errors = append(r.Errors, fmt.Sprintf("%s: kept its password: setting it in MariaDB failed: %v", label, err))
+			r.Errors = append(r.Errors, fmt.Sprintf("%s: kept its password: setting it in %s failed: %v", label, dbEngineName(engine), err))
 			continue
 		}
 		if u.backup.PasswordHash != "" {
 			if err := d.DatabaseUsers.UpdatePasswordHash(ctx, row.ID, u.backup.PasswordHash); err != nil {
-				r.Errors = append(r.Errors, fmt.Sprintf("%s: has the backup's password in MariaDB, but the panel's record of it was not updated: %v", label, err))
+				r.Errors = append(r.Errors, fmt.Sprintf("%s: has the backup's password in %s, but the panel's record of it was not updated: %v", label, dbEngineName(engine), err))
 			}
 		}
 	}
@@ -88,16 +93,21 @@ func overwriteDBUserPasswords(ctx context.Context, d Deps, accountID string, use
 
 // dbUserPasswordRefusal says why row keeps its password, or "".
 func dbUserPasswordRefusal(ctx context.Context, d Deps, accountID string, row *models.DatabaseUser, backup internalbackup.MetadataDatabaseUser) string {
+	engine := dbEngine(row.Engine)
+	usable := nativePasswordHashRe.MatchString(backup.NativePasswordHash)
+	archive := d.ArchiveMariaDBs
+	if engine == "postgres" {
+		usable = internalbackup.IsPostgresSCRAMVerifier(backup.PostgresPasswordVerifier)
+		archive = d.ArchivePostgresDBs
+	}
 	switch {
-	case row.Engine == "postgres":
-		return "a PostgreSQL user's password is not restored onto an existing user"
-	case !nativePasswordHashRe.MatchString(backup.NativePasswordHash):
-		return "the backup doesn't carry its MariaDB password"
+	case !usable:
+		return fmt.Sprintf("the backup doesn't carry its %s password", dbEngineName(engine))
 	case d.Agent == nil:
 		return "the server agent is not wired"
 	case d.DatabaseGrants == nil || d.Databases == nil:
 		return "the database checks are not wired"
-	case d.ArchiveMariaDBs == nil:
+	case archive == nil:
 		return "this server's agent is too old to tell whether its databases hold only the uploaded backup's data; run jabali update and restore again"
 	}
 	// The grants after this restore: the ones it had, and the ones added.
@@ -116,9 +126,11 @@ func dbUserPasswordRefusal(ctx context.Context, d Deps, accountID string, row *m
 		switch {
 		case db.UserID != accountID:
 			return fmt.Sprintf("it can open %s, which isn't this account's", db.Name)
+		case dbEngine(db.Engine) != engine:
+			return fmt.Sprintf("it has a grant on %s, which is a %s database", db.Name, dbEngineName(dbEngine(db.Engine)))
 		case !d.RestoredDatabases[db.Name]:
 			return fmt.Sprintf("it can open %s, which this backup didn't restore", db.Name)
-		case !d.ArchiveMariaDBs[db.Name]:
+		case !archive[db.Name]:
 			// Loaded over data this server had, or not loaded cleanly.
 			return fmt.Sprintf("it can open %s, which holds data that isn't the uploaded backup's", db.Name)
 		}

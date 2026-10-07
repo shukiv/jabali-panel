@@ -103,3 +103,43 @@ func TestRunUploadRestore_RecreatesTheRestoredDatabaseUsersMariaDBAccount(t *tes
 		t.Fatalf("outcome %+v err=%v, want done without warnings", o, err)
 	}
 }
+
+// The same for a PostgreSQL database user: its role is created with the
+// backup's verifier, and the grant is made on the database the agent says
+// holds only the upload's data (archive_postgres_databases).
+func TestRunUploadRestore_RecreatesTheRestoredDatabaseUsersPostgresRole(t *testing.T) {
+	const verifier = "SCRAM-SHA-256$4096:c2FsdHNhbHRzYWx0$c3RvcmVka2V5c3RvcmVka2V5:c2VydmVya2V5c2VydmVya2V5"
+	h, a, _ := ucUploadPasses(t, func(int) string { return "" })
+	h.cfg.Databases = &daDBs{rows: []models.Database{{ID: "x", UserID: "B", Name: "bob_shop"}}}
+	h.cfg.DatabaseUsers = &daDBUsers{}
+	h.cfg.DatabaseGrants = &daGrants{}
+	var dbCalls []string
+	h.cfg.Agent.(*mockAgent).callFn = func(_ context.Context, cmd string, params any) (json.RawMessage, error) {
+		switch cmd {
+		case "backup.restore_from_tar":
+			return json.RawMessage(`{"upload_confinement_enforced":true,"restored_databases":["alice_pg"],"archive_mariadb_databases":[],"archive_postgres_databases":["alice_pg"],"metadata":` +
+				`{"user":{"id":"SRC","username":"alice"},` +
+				`"databases":[{"id":"d1","name":"alice_pg","engine":"postgres"}],` +
+				`"database_users":[{"id":"u1","username":"alice_u","engine":"postgres","postgres_password_verifier":"` + verifier + `",` +
+				`"grants":[{"id":"g1","database_id":"d1","database_name":"alice_pg","grant_level":"rw","privileges":"ALL"}]}]}}`), nil
+		case "agent.version":
+			return json.RawMessage(`{"version":"x","capabilities":["restore_upload_confinement","db_user_create_only","pg_role_create_only"]}`), nil
+		case "db.postgres.create_role", "db.postgres.grant":
+			raw, _ := json.Marshal(params)
+			dbCalls = append(dbCalls, cmd+" "+string(raw))
+			return json.RawMessage(`{"ok":true}`), nil
+		}
+		return nil, fmt.Errorf("unexpected %s", cmd)
+	}
+	h.runUploadRestore(a)
+
+	if len(dbCalls) != 2 ||
+		!strings.HasPrefix(dbCalls[0], "db.postgres.create_role ") || !strings.Contains(dbCalls[0], `"role":"alice_u"`) || !strings.Contains(dbCalls[0], `"password_verifier":"`+verifier+`"`) || !strings.Contains(dbCalls[0], `"create_only":true`) ||
+		!strings.HasPrefix(dbCalls[1], "db.postgres.grant ") || !strings.Contains(dbCalls[1], `"db_name":"alice_pg"`) || !strings.Contains(dbCalls[1], `"role":"alice_u"`) {
+		t.Fatalf("agent database calls %v, want alice_u created with the backup's verifier, then granted on alice_pg", dbCalls)
+	}
+	o, err := readRestoreUploadOutcome(a.outcomePath)
+	if err != nil || o.Status != "done" || len(o.Warnings) != 0 {
+		t.Fatalf("outcome %+v err=%v, want done without warnings", o, err)
+	}
+}

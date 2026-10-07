@@ -217,9 +217,15 @@ type MetadataDatabaseUser struct {
 	// panel doesn't have it). A restore recreates the account with it, so
 	// the site's database login keeps working. Empty for other engines and
 	// plugins, and in bundles made before GH #1993.
-	NativePasswordHash string                      `json:"native_password_hash,omitempty"`
-	CreatedAt          string                      `json:"created_at,omitempty"`
-	Grants             []MetadataDatabaseUserGrant `json:"grants,omitempty"`
+	NativePasswordHash string `json:"native_password_hash,omitempty"`
+	// PostgresPasswordVerifier is the PostgreSQL role's SCRAM-SHA-256
+	// verifier from pg_authid, filled in by the agent like
+	// NativePasswordHash. A restore recreates the role with it, so the
+	// site's database login keeps working. Empty for MariaDB users, for a
+	// role with an md5 or no password, and in bundles made before it.
+	PostgresPasswordVerifier string                      `json:"postgres_password_verifier,omitempty"`
+	CreatedAt                string                      `json:"created_at,omitempty"`
+	Grants                   []MetadataDatabaseUserGrant `json:"grants,omitempty"`
 }
 
 // MetadataDatabaseUserGrant pairs a database user with the database it

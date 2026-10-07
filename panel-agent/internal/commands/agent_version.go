@@ -41,6 +41,10 @@ const (
 	// capRestoreKeepExisting: backup.restore_from_tar honours keep_existing
 	// (GH #1993).
 	capRestoreKeepExisting = "restore_keep_existing"
+	// capPGRoleCreateOnly: db.postgres.create_role honours create_only and
+	// password_verifier, and backup.restore_from_tar reports
+	// archive_postgres_databases (GH #1993).
+	capPGRoleCreateOnly = "pg_role_create_only"
 )
 
 func agentVersionHandler(_ context.Context, _ json.RawMessage) (any, error) {
@@ -50,7 +54,7 @@ func agentVersionHandler(_ context.Context, _ json.RawMessage) (any, error) {
 		GoVersion:     runtime.Version(),
 		UptimeSeconds: int64(now.Sub(StartTime).Seconds()),
 		StartedAt:     StartTime.UTC().Format(time.RFC3339),
-		Capabilities:  []string{capRestoreUploadConfinement, capDBUserCreateOnly, capRestoreKeepExisting},
+		Capabilities:  []string{capRestoreUploadConfinement, capDBUserCreateOnly, capRestoreKeepExisting, capPGRoleCreateOnly},
 	}, nil
 }
 

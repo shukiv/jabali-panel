@@ -313,10 +313,10 @@ func TestApply_OverwriteKeepsADatabaseUsersPassword(t *testing.T) {
 			want:  "this server's agent is too old to tell",
 		},
 		{
-			name:  "postgres",
+			name:  "the backup has no PostgreSQL password for it",
 			setup: func(f *maFixture) { owrExistingDBUser(f, "alice_u", "postgres") },
 			meta:  owrBackupDBUser(maHash), restore: []string{"alice_wp"},
-			want: "a PostgreSQL user's password is not restored onto an existing user",
+			want: "the backup doesn't carry its PostgreSQL password",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

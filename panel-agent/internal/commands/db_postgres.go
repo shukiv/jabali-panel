@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/backup"
 )
 
 // db.postgres.* commands — M37 Wave A.
@@ -128,6 +129,13 @@ func dbPgDropHandler(ctx context.Context, params json.RawMessage) (any, error) {
 type dbPgCreateRoleParams struct {
 	Role     string `json:"role"`
 	Password string `json:"password"`
+	// PasswordVerifier gives the role a SCRAM-SHA-256 verifier instead of a
+	// password: a restored role's, from its backup (GH #1993). Without
+	// CreateOnly it sets an existing role's password, which must exist.
+	PasswordVerifier string `json:"password_verifier"`
+	// CreateOnly never changes an existing role: a role with this name is
+	// not the caller's, whoever holds it, and the answer is already_exists.
+	CreateOnly bool `json:"create_only"`
 }
 
 func dbPgCreateRoleHandler(ctx context.Context, params json.RawMessage) (any, error) {
@@ -138,8 +146,17 @@ func dbPgCreateRoleHandler(ctx context.Context, params json.RawMessage) (any, er
 	if !pgValidIdent(p.Role) {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "invalid role name"}
 	}
+	if p.PasswordVerifier != "" {
+		if !backup.IsPostgresSCRAMVerifier(p.PasswordVerifier) {
+			return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "invalid password verifier (not SCRAM-SHA-256)"}
+		}
+		return pgSetRoleSecret(ctx, p.Role, p.PasswordVerifier, p.CreateOnly)
+	}
 	if p.Password == "" || strings.ContainsAny(p.Password, "'\\\n\r") {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "invalid password (empty or contains forbidden chars)"}
+	}
+	if p.CreateOnly {
+		return pgSetRoleSecret(ctx, p.Role, p.Password, true)
 	}
 	// CREATE ROLE / IF NOT EXISTS via DO block — PG lacks IF NOT EXISTS
 	// on CREATE ROLE pre-9.x; modern still doesn't have it on the
@@ -156,6 +173,69 @@ END $$;`, p.Role, p.Role, p.Password, p.Role, p.Password)
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "create role: " + err.Error()}
 	}
 	return dbPgCreateResponse{OK: true}, nil
+}
+
+// Markers pgSetRoleSecret's script prints when the role is, or isn't, there,
+// or is one it never changes.
+const (
+	pgRoleExistsMarker     = "JABALI_ROLE_EXISTS"
+	pgRoleMissingMarker    = "JABALI_ROLE_MISSING"
+	pgRolePrivilegedMarker = "JABALI_ROLE_PRIVILEGED"
+)
+
+// pgSetRoleSecret gives role the secret: a password, or a SCRAM-SHA-256
+// verifier, which PostgreSQL stores as it is. With createOnly it creates the
+// role and never changes an existing one (already_exists); without, it sets
+// an existing role's password (not_found when there is none), except a
+// superuser's or another role with server-wide rights (permission_denied):
+// those are never a tenant's. The script reaches psql on stdin and the
+// statements take the values as psql variables, so no SQL is built from
+// them. role passed pgValidIdent and the secret has no quote, backslash or
+// line break, so \set takes both as they are.
+func pgSetRoleSecret(ctx context.Context, role, secret string, createOnly bool) (any, error) {
+	var b strings.Builder
+	b.WriteString("\\set role '" + role + "'\n")
+	b.WriteString("\\set secret '" + secret + "'\n")
+	b.WriteString("SELECT (count(*) > 0)::int AS role_exists," +
+		" (count(*) FILTER (WHERE rolsuper OR rolcreaterole OR rolreplication OR rolbypassrls) > 0)::int AS role_privileged" +
+		" FROM pg_roles WHERE rolname = :'role' \\gset\n")
+	if createOnly {
+		b.WriteString("\\if :role_exists\n\\echo " + pgRoleExistsMarker + "\n\\else\nCREATE ROLE :\"role\" WITH LOGIN PASSWORD :'secret';\n\\endif\n")
+	} else {
+		b.WriteString("\\if :role_privileged\n\\echo " + pgRolePrivilegedMarker + "\n\\elif :role_exists\nALTER ROLE :\"role\" WITH LOGIN PASSWORD :'secret';\n\\else\n\\echo " + pgRoleMissingMarker + "\n\\endif\n")
+	}
+	cmd := execCommandContext(ctx, "sudo", "-u", "postgres", "psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-f", "-")
+	cmd.Stdin = strings.NewReader(b.String())
+	out, err := cmd.CombinedOutput()
+	text := strings.ReplaceAll(string(out), secret, "[secret]")
+	switch {
+	case err != nil && strings.Contains(text, "already exists"):
+		return nil, &agentwire.AgentError{Code: agentwire.CodeAlreadyExists, Message: "a role named " + role + " already exists"}
+	case err != nil:
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "set role password: " + pgErrorLines(text)}
+	case strings.Contains(text, pgRolePrivilegedMarker):
+		return nil, &agentwire.AgentError{Code: agentwire.CodePermissionDenied, Message: "role " + role + " has server-wide rights; its password is not changed here"}
+	case strings.Contains(text, pgRoleExistsMarker):
+		return nil, &agentwire.AgentError{Code: agentwire.CodeAlreadyExists, Message: "a role named " + role + " already exists"}
+	case strings.Contains(text, pgRoleMissingMarker):
+		return nil, &agentwire.AgentError{Code: agentwire.CodeNotFound, Message: "no role named " + role}
+	}
+	return dbPgCreateResponse{OK: true}, nil
+}
+
+// pgErrorLines keeps psql's ERROR lines from its output and drops the rest
+// (the statement it echoes under LINE carries the values).
+func pgErrorLines(out string) string {
+	var keep []string
+	for _, ln := range strings.Split(out, "\n") {
+		if strings.Contains(ln, "ERROR:") {
+			keep = append(keep, strings.TrimSpace(ln))
+		}
+	}
+	if len(keep) == 0 {
+		return "psql failed"
+	}
+	return strings.Join(keep, "; ")
 }
 
 // ---- db.postgres.drop_role ----

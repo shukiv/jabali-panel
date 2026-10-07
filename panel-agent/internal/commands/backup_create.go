@@ -518,6 +518,10 @@ func runMetadataStage(ctx context.Context, req backupCreateParams) backup.Manife
 	if derr := enrichDatabaseUserAuth(ctx, req.Metadata); derr != nil {
 		st.Warnings = append(st.Warnings, "database user passwords: "+derr.Error())
 	}
+	// The same for each PostgreSQL database user's role.
+	if perr := enrichPostgresRoleAuth(ctx, req.Metadata); perr != nil {
+		st.Warnings = append(st.Warnings, "PostgreSQL role passwords: "+perr.Error())
+	}
 	body, err := json.Marshal(req.Metadata)
 	if err != nil {
 		st.Status = backup.StageStatusFailed
