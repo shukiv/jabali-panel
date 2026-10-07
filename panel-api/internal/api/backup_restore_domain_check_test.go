@@ -120,6 +120,52 @@ func TestRestoreDomainCheck_CleanRowPassesUnchanged(t *testing.T) {
 	}
 }
 
+func intp(i int) *int { return &i }
+
+func TestRestoreDomainCheck_KeepsValidPHPLimits(t *testing.T) {
+	row := rdcRow("site.org")
+	row.PHPMemoryLimit, row.PHPUploadMaxFilesize, row.PHPPostMaxSize = strp("512M"), strp("64M"), strp("1G")
+	row.PHPMaxInputVars, row.PHPMaxExecutionTime, row.PHPMaxInputTime = intp(3000), intp(300), intp(60)
+	w, err := rdcCheck()(context.Background(), row, "alice")
+	if err != nil || len(w) != 0 {
+		t.Fatalf("valid limits: warnings %v err %v", w, err)
+	}
+	if *row.PHPMemoryLimit != "512M" || *row.PHPUploadMaxFilesize != "64M" || *row.PHPPostMaxSize != "1G" ||
+		*row.PHPMaxInputVars != 3000 || *row.PHPMaxExecutionTime != 300 || *row.PHPMaxInputTime != 60 {
+		t.Fatalf("valid limits changed: %+v", row)
+	}
+}
+
+// A PHP limit the PHP settings page would refuse is dropped with a warning:
+// the agent renders the sizes into the site's web server config.
+func TestRestoreDomainCheck_DropsPHPLimitsTheSettingsPageRefuses(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		set   func(*models.Domain)
+		unset func(*models.Domain) bool
+	}{
+		{"memory_limit", func(d *models.Domain) { d.PHPMemoryLimit = strp(`1";x`) }, func(d *models.Domain) bool { return d.PHPMemoryLimit == nil }},
+		{"upload_max_filesize", func(d *models.Domain) { d.PHPUploadMaxFilesize = strp("2M\nx=1") }, func(d *models.Domain) bool { return d.PHPUploadMaxFilesize == nil }},
+		{"post_max_size", func(d *models.Domain) { d.PHPPostMaxSize = strp("8M;") }, func(d *models.Domain) bool { return d.PHPPostMaxSize == nil }},
+		{"max_input_vars", func(d *models.Domain) { d.PHPMaxInputVars = intp(0) }, func(d *models.Domain) bool { return d.PHPMaxInputVars == nil }},
+		{"max_execution_time", func(d *models.Domain) { d.PHPMaxExecutionTime = intp(-5) }, func(d *models.Domain) bool { return d.PHPMaxExecutionTime == nil }},
+		{"max_input_time", func(d *models.Domain) { d.PHPMaxInputTime = intp(86401) }, func(d *models.Domain) bool { return d.PHPMaxInputTime == nil }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			row := rdcRow("site.org")
+			row.PHPMemoryLimit = strp("256M")
+			tc.set(row)
+			w, err := rdcCheck()(context.Background(), row, "alice")
+			if err != nil || !tc.unset(row) || len(w) != 1 || !strings.Contains(w[0], "PHP "+tc.name+" dropped") {
+				t.Fatalf("got warnings %v err %v row %+v", w, err, row)
+			}
+			if tc.name != "memory_limit" && (row.PHPMemoryLimit == nil || *row.PHPMemoryLimit != "256M") {
+				t.Fatalf("a valid limit beside it was dropped: %v", row.PHPMemoryLimit)
+			}
+		})
+	}
+}
+
 // Unsafe optional vhost fields are dropped with a warning; the domain stays.
 func TestRestoreDomainCheck_DropsUnsafeVhostFields(t *testing.T) {
 	t.Run("directive the admin validator refuses", func(t *testing.T) {
