@@ -26,7 +26,9 @@ import (
 // entry with O_EXCL (O_NOFOLLOW) or mkdirat/symlinkat, relative to that
 // verified directory fd. Anything the tenant has at a name, link or not, is
 // "already there" and is left alone. The staged tree it reads from is
-// root's, so it is read by path.
+// root's and is read by path, but a staged file is opened without following
+// a link and only when it is still the regular file the copy looked at, and
+// a created link gets its owner through an fd opened on the link itself.
 
 const keepHomeDirFlags = unix.O_NOFOLLOW | unix.O_DIRECTORY | unix.O_RDONLY | unix.O_CLOEXEC
 
@@ -136,10 +138,9 @@ func (c *keepHomeCopy) dir(src string, dfd int, rel string) {
 			target, err := os.Readlink(srcPath)
 			if err == nil {
 				raceWindow(name)
-				err = unix.Symlinkat(target, dfd, name)
-			}
-			if err == nil {
-				err = unix.Fchownat(dfd, name, c.uid, c.gid, unix.AT_SYMLINK_NOFOLLOW)
+				if err = unix.Symlinkat(target, dfd, name); err == nil {
+					err = c.chownCreatedLink(dfd, name)
+				}
 			}
 			if err != nil && !errors.Is(err, unix.EEXIST) {
 				c.fail(entRel, err)
@@ -172,6 +173,12 @@ func (c *keepHomeCopy) descend(srcPath string, info fs.FileInfo, dfd int, name, 
 // staged file's content.
 func (c *keepHomeCopy) file(srcPath string, info fs.FileInfo, dfd int, name, rel string) {
 	raceWindow(name)
+	in, err := openStagedSource(srcPath, info)
+	if err != nil {
+		c.fail(rel, err)
+		return
+	}
+	defer in.Close()
 	fd, err := unix.Openat(dfd, name, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o600)
 	if err != nil {
 		if !errors.Is(err, unix.EEXIST) {
@@ -181,17 +188,54 @@ func (c *keepHomeCopy) file(srcPath string, info fs.FileInfo, dfd int, name, rel
 	}
 	out := os.NewFile(uintptr(fd), name)
 	defer out.Close()
-	in, err := os.Open(srcPath)
-	if err == nil {
-		_, err = io.Copy(out, in)
-		in.Close()
-	}
+	_, err = io.Copy(out, in)
 	if err == nil {
 		err = c.finish(fd, info, false)
 	}
 	if err != nil {
 		c.fail(rel, err)
 	}
+}
+
+// openStagedSource opens the staged file at path for reading. It follows no
+// link, doesn't block on a fifo, and refuses anything but the regular file
+// the copy looked at (info).
+func openStagedSource(path string, info fs.FileInfo) (*os.File, error) {
+	f, err := os.OpenFile(path, os.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, err
+	}
+	got, err := f.Stat()
+	if err == nil && (!got.Mode().IsRegular() || !os.SameFile(got, info)) {
+		err = errors.New("the backup's file changed while the restore read it")
+	}
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+	return f, nil
+}
+
+// chownCreatedLink gives the link the copy just created at name under dfd
+// the account's owner. It opens the link itself (O_PATH, O_NOFOLLOW) and sets
+// the owner through that fd, once it has checked the fd is a link this
+// process owns with no other name, so an entry the tenant puts at name in
+// between keeps its owner.
+func (c *keepHomeCopy) chownCreatedLink(dfd int, name string) error {
+	raceWindow(name)
+	fd, err := unix.Openat(dfd, name, unix.O_PATH|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return err
+	}
+	defer unix.Close(fd)
+	var st unix.Stat_t
+	if err := unix.Fstat(fd, &st); err != nil {
+		return err
+	}
+	if st.Mode&unix.S_IFMT != unix.S_IFLNK || int(st.Uid) != os.Geteuid() || st.Nlink != 1 {
+		return errors.New("replaced before its owner was set")
+	}
+	return unix.Fchownat(fd, "", c.uid, c.gid, unix.AT_EMPTY_PATH|unix.AT_SYMLINK_NOFOLLOW)
 }
 
 // finish gives the entry at fd the account's owner and the staged entry's

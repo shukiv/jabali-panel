@@ -239,6 +239,102 @@ func TestAddMissingHomeFiles_LinkPlantedMidCopy(t *testing.T) {
 	}
 }
 
+// The staged file is read only when it is still the regular file the copy
+// looked at, never through a link and never from a fifo.
+func TestAddMissingHomeFiles_ReadsOnlyTheStagedFileItLookedAt(t *testing.T) {
+	for name, swap := range map[string]func(t *testing.T, p, outside string){
+		"a link": func(t *testing.T, p, outside string) {
+			if err := os.Symlink(filepath.Join(outside, "other"), p+".new"); err != nil {
+				t.Error(err)
+			}
+		},
+		"another file": func(t *testing.T, p, outside string) { mustWrite(t, p+".new", "outside") },
+		"a fifo": func(t *testing.T, p, outside string) {
+			if err := syscall.Mkfifo(p+".new", 0o600); err != nil {
+				t.Error(err)
+			}
+		},
+		// Removed first, so the fifo may reuse the file's inode number.
+		"a fifo in its place": func(t *testing.T, p, outside string) {
+			if err := os.Remove(p); err != nil {
+				t.Error(err)
+			}
+			if err := syscall.Mkfifo(p+".new", 0o600); err != nil {
+				t.Error(err)
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			src, home, outside := t.TempDir(), t.TempDir(), t.TempDir()
+			mustWrite(t, filepath.Join(src, "index.html"), "backup")
+			mustWrite(t, filepath.Join(outside, "other"), "outside")
+			keepHomeRace = func(n string) {
+				if n != "index.html" {
+					return
+				}
+				// Put the new entry in place with a rename, so the old file
+				// is still there and its inode isn't reused.
+				p := filepath.Join(src, n)
+				swap(t, p, outside)
+				if err := os.Rename(p+".new", p); err != nil {
+					t.Error(err)
+				}
+			}
+			t.Cleanup(func() { keepHomeRace = nil })
+
+			done := make(chan error, 1)
+			go func() { done <- addMissingHomeFiles(context.Background(), src, home, os.Getuid(), os.Getgid()) }()
+			var err error
+			select {
+			case err = <-done:
+			case <-time.After(5 * time.Second):
+				t.Fatal("the copy blocked opening the staged file")
+			}
+			if err == nil {
+				t.Error("a staged file replaced mid-copy was copied without an error")
+			}
+			if _, lerr := os.Lstat(filepath.Join(home, "index.html")); !os.IsNotExist(lerr) {
+				t.Errorf("home/index.html was created (%v); want nothing added for it", lerr)
+			}
+		})
+	}
+}
+
+// The copy sets the owner of the link it created, and of nothing the tenant
+// puts at that name before the owner is set.
+func TestAddMissingHomeFiles_SetsTheOwnerOfOnlyTheLinkItCreated(t *testing.T) {
+	src, home := t.TempDir(), t.TempDir()
+	if err := os.Symlink("releases/v2", filepath.Join(src, "current")); err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	keepHomeRace = func(name string) {
+		if name != "current" {
+			return
+		}
+		if calls++; calls != 2 { // after the link is created
+			return
+		}
+		p := filepath.Join(home, "current")
+		if err := os.Remove(p); err != nil {
+			t.Error(err)
+		}
+		mustWrite(t, p, "tenant")
+	}
+	t.Cleanup(func() { keepHomeRace = nil })
+
+	err := addMissingHomeFiles(context.Background(), src, home, os.Getuid(), os.Getgid())
+	if calls != 2 {
+		t.Errorf("race hook ran %d times for the link, want 2 (before creating it and before setting its owner)", calls)
+	}
+	if err == nil {
+		t.Error("an entry swapped in for the created link had its owner set without an error")
+	}
+	if got := readString(t, filepath.Join(home, "current")); got != "tenant" {
+		t.Errorf("home/current = %q, want the tenant's file left as it is", got)
+	}
+}
+
 func TestAddMissingHomeFiles_CopiesALinkAsALink(t *testing.T) {
 	src, home := t.TempDir(), t.TempDir()
 	if err := os.Symlink("releases/v2", filepath.Join(src, "current")); err != nil {
