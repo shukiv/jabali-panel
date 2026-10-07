@@ -56,6 +56,16 @@ func (r *ppPools) Create(_ context.Context, p *models.PHPPool) error {
 	return nil
 }
 
+func (r *ppPools) Update(_ context.Context, p *models.PHPPool) error {
+	for i := range r.rows {
+		if r.rows[i].ID == p.ID {
+			r.rows[i] = *p
+			return nil
+		}
+	}
+	return repository.ErrNotFound
+}
+
 // ppDomains fails Create when the row names a PHP pool that doesn't exist,
 // like the fk_domain_php_pool foreign key.
 type ppDomains struct {

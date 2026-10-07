@@ -18,26 +18,47 @@ func restoredPoolTuning(ctx context.Context, d Deps, userID string, pool *models
 	if err != nil {
 		return nil, err
 	}
-	var notes []string
+	t, refused, notes, err := poolTuning(limit, pool.PmMode, pool.PmMaxChildren, pool.ProcessIdleTimeoutSeconds)
+	if err == nil && refused != "" {
+		notes = []string{fmt.Sprintf("process settings not restored (%s); the pool uses the defaults", refused)}
+		var capped []string
+		t, _, capped, err = poolTuning(limit, "", 0, 0)
+		notes = append(notes, capped...)
+	}
+	if err != nil {
+		return nil, err
+	}
+	setPoolTuning(pool, t)
+	return notes, nil
+}
+
+// poolTuning holds process settings to the pool page's limits, then to the
+// package cap limit (0: none), with a note for each change. refused is the
+// pool page's reason when it would refuse them. An error means they don't fit
+// the cap.
+func poolTuning(limit uint32, mode string, children, idle uint32) (t phppoolops.CreateTuning, refused string, notes []string, err error) {
 	t, msg, _, ok := phppoolops.ResolveCreateTuning(false, phppoolops.CreateTuning{
-		PmMode:                    pool.PmMode,
-		PmMaxChildren:             pool.PmMaxChildren,
-		ProcessIdleTimeoutSeconds: pool.ProcessIdleTimeoutSeconds,
+		PmMode:                    mode,
+		PmMaxChildren:             children,
+		ProcessIdleTimeoutSeconds: idle,
 	})
 	if !ok {
-		notes = append(notes, fmt.Sprintf("process settings not restored (%s); the pool uses the defaults", msg))
-		t, _, _, _ = phppoolops.ResolveCreateTuning(false, phppoolops.CreateTuning{})
+		return t, msg, nil, nil
 	}
 	if limit > 0 && t.PmMaxChildren > limit {
 		if msg, ok := phppoolops.ClampToPackageCap(limit, t.PmMode, &t.PmMaxChildren, &t.PmStartServers,
 			&t.PmMinSpareServers, &t.PmMaxSpareServers, &t.PmMaxRequests, &t.RequestTerminateTimeoutSeconds); !ok {
-			return nil, fmt.Errorf("its settings don't fit the package's cap: %s", msg)
+			return t, "", nil, fmt.Errorf("its settings don't fit the package's cap: %s", msg)
 		}
 		notes = append(notes, fmt.Sprintf("max children lowered to %d, the account's package cap", limit))
 	}
+	return t, "", notes, nil
+}
+
+// setPoolTuning puts the process settings t on pool.
+func setPoolTuning(pool *models.PHPPool, t phppoolops.CreateTuning) {
 	pool.PmMode, pool.PmMaxChildren, pool.ProcessIdleTimeoutSeconds = t.PmMode, t.PmMaxChildren, t.ProcessIdleTimeoutSeconds
 	pool.PmStartServers, pool.PmMinSpareServers, pool.PmMaxSpareServers = t.PmStartServers, t.PmMinSpareServers, t.PmMaxSpareServers
-	return notes, nil
 }
 
 // packageFPMCap is the FPM max-children cap of the account's package, or 0

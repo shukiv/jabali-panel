@@ -155,17 +155,23 @@ is off by default:
 - **Off** — files already in the home stay as they are; only missing files are
   added. A database that already has tables, or a Docker app folder that
   already has files, is skipped and listed in the restore report. An existing
-  mailbox keeps its auto-reply. Mail already there is not copied twice.
+  mailbox keeps its auto-reply. A PHP pool the account has keeps its process
+  settings, and a PHP setting it has keeps its value; the backup's other PHP
+  settings are added. Mail already there is not copied twice.
 - **On** — the backup replaces the account's data, as restores did before:
   the home is mirrored from the backup (files added since are deleted),
   databases are reloaded from their dumps, and Docker app folders are
-  replaced. On an admin restore, the mailboxes and database users the account
-  already has also take the backup's settings:
+  replaced. On an admin restore, the mailboxes, database users and PHP pools
+  the account already has also take the backup's settings:
   - a mailbox takes the backup's quota and whether it is disabled. It keeps
     its password, because the mail already in it didn't come from the archive;
   - a database user takes the backup's password only when every database it
     can open holds nothing but the archive's data (see below). Otherwise it
-    keeps its password.
+    keeps its password;
+  - a PHP pool takes the backup's process settings (mode, max children, idle
+    timeout), held to the same rules as a restored pool (see below). Settings
+    the PHP pool page would refuse leave the pool's own in place. A PHP
+    setting both have takes the backup's value; one only the pool has stays.
 
   The restore report lists each password kept, and why.
 
@@ -201,7 +207,9 @@ it into the target account only (GH #1993):
   archive brings: mail is restored last, after the account's domains.
 - **PHP pools** — a pool's process settings that the PHP pool page would
   refuse are replaced by the defaults, and its max children is held to the
-  account's package cap.
+  account's package cap. A PHP setting the pool page would refuse (a control
+  character in a value, a flag other than on or off) is left out, whether
+  **Overwrite** is on or off.
 - **Docker apps** — the account's own, or an app name not in use here.
   Server-level apps are not restored, and neither is an app whose name another
   account's app uses. An app comes back in the panel only when its data was
