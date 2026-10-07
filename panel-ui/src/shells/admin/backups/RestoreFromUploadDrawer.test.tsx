@@ -192,6 +192,7 @@ describe("RestoreFromUploadDrawer overwrite (GH #1993)", () => {
     fireEvent.click(screen.getByRole("checkbox", { name: "Overwrite existing items with the backup" }));
     expect(screen.getByText("This overwrites the target user's selected data")).toBeTruthy();
     expect(screen.queryByText("Only what is missing is added")).toBeNull();
+    expect(screen.getByText(/Mailboxes and database users the account already has take the backup's settings/)).toBeTruthy();
     const restore = screen.getByText("Restore into alice").closest("button") as HTMLButtonElement;
     expect(restore.className).toContain("dangerous");
     fireEvent.click(restore);
@@ -207,6 +208,7 @@ describe("RestoreFromUploadDrawer overwrite (GH #1993)", () => {
     await screen.findByText("Backup of alice");
     fireEvent.click(screen.getByRole("checkbox", { name: "Overwrite existing items with the backup" }));
     expect(screen.getByText("This overwrites your account's selected data")).toBeTruthy();
+    expect(screen.queryByText(/Mailboxes and database users the account already has/)).toBeNull();
     fireEvent.click(screen.getByText("Restore into my account"));
     await waitFor(() =>
       expect(m.applyUploadedBackupRestore).toHaveBeenCalledWith("upload-1", "alice", ["home", "db", "mail"], "/me/backups", {

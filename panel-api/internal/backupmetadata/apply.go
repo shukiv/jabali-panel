@@ -401,6 +401,9 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 					ownMailboxes[existing.ID] = true
 					mailboxIDs[mb.ID] = existing.ID
 					r.Skipped++
+					if d.OverwriteRows {
+						overwriteMailbox(ctx, d, &r, existing, mb, mb.LocalPart+"@"+dm.Name)
+					}
 				} else {
 					// The database refuses a mailbox where an alias, group or
 					// shared resource is; clearing the address first would take
@@ -598,6 +601,9 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 		// MariaDB side after the loop (createRestoredDBAccounts).
 		var newDBUsers []restoredDBAccount
 		var newGrants []*models.DatabaseUserGrant
+		// The account's own database users the backup also has; with
+		// OverwriteRows they may take the backup's password.
+		var existingDBUsers []existingDBUser
 		for _, db := range dbRows {
 			if why := restoredDatabaseRefusal(db.Name, account, d.Untrusted, otherDBs); why != "" {
 				r.Errors = append(r.Errors, fmt.Sprintf("database %s (%s): not restored: %s", db.ID, db.Name, why))
@@ -663,6 +669,7 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 						switch {
 						case ferr == nil && existing != nil && existing.UserID == m.User.ID:
 							dbUserIDs[du.ID] = du.ID
+							existingDBUsers = append(existingDBUsers, existingDBUser{id: du.ID, backup: du})
 						case ferr == nil && existing != nil:
 							r.Errors = append(r.Errors, fmt.Sprintf("db_user %s: not restored: a database user with this id belongs to another account", du.ID))
 							continue
@@ -675,6 +682,7 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 								continue
 							}
 							dbUserIDs[du.ID] = id
+							existingDBUsers = append(existingDBUsers, existingDBUser{id: id, backup: du})
 						}
 						r.Skipped++
 					} else {
@@ -732,6 +740,11 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 		}
 		if d.Agent != nil {
 			createRestoredDBAccounts(ctx, d, m.User.ID, newDBUsers, newGrants, &r)
+		}
+		// After the grants are made: a password is set only on a user whose
+		// every grant is on a database this file restored.
+		if d.OverwriteRows && d.DatabaseUsers != nil {
+			overwriteDBUserPasswords(ctx, d, m.User.ID, existingDBUsers, &r)
 		}
 	}
 

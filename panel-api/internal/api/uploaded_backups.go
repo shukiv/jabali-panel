@@ -359,7 +359,7 @@ func (h *backupHandler) runUploadedBackupRestore(b *models.UploadedBackup, path,
 
 	report, done := progressReporter(uploadedRestoreProgressKey(b.ID))
 	defer done()
-	res, err := h.restoreUploadedAccount(ctx, path, username, targetID, components, overwrite, report)
+	res, err := h.restoreUploadedAccount(ctx, path, username, targetID, components, uploadModeFor(overwrite), report)
 	result := uploadedRestoreResult{Applied: res.Applied, Warnings: append(res.Warnings, res.MetadataErrors...)}
 	status := models.UploadedBackupDone
 	if err != nil {

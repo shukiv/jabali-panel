@@ -131,6 +131,9 @@ type uploadedData struct {
 	// keepExisting: the restore keeps what the account already has here
 	// (overwrite off), so Apply leaves its existing rows' settings alone.
 	keepExisting bool
+	// overwriteRows: "Overwrite existing items with the backup" on an
+	// account upload door, so Apply also updates the account's existing rows.
+	overwriteRows bool
 }
 
 // applyUploadedMetadata is applyRestoreMetadataForUser; tests swap it to see
@@ -161,10 +164,33 @@ type restoreFromTarReply struct {
 
 const unconfirmedRestoreDetail = "the agent did not confirm it confined the restore to this account; nothing else was applied — " + agentUpdateRequiredDetail
 
+// uploadRestoreMode is what a restore from an uploaded file does with what the
+// account already has here (GH #1993).
+type uploadRestoreMode int
+
+const (
+	// uploadKeepExisting adds only what the account is missing.
+	uploadKeepExisting uploadRestoreMode = iota
+	// uploadOverwrite ("Overwrite existing items with the backup" on an
+	// account upload door) replaces the account's files and mail with the
+	// backup's, and updates the rows it already has.
+	uploadOverwrite
+	// uploadReplaceData replaces the account's files and mail and leaves the
+	// rows it already has: a full server restore, as before keep-existing.
+	uploadReplaceData
+)
+
+// uploadModeFor is the mode of an account upload door's restore.
+func uploadModeFor(overwrite bool) uploadRestoreMode {
+	if overwrite {
+		return uploadOverwrite
+	}
+	return uploadKeepExisting
+}
+
 // restoreUploadedAccount restores the account targetID (username) from the
 // uploaded account archive at tarPath. components selects stages (empty =
-// all). overwrite replaces what the account already has here with the
-// backup's; without it the restore adds only what is missing (GH #1993). The
+// all), and mode what happens to what the account already has here. The
 // error is the admin-facing reason nothing past the agent's first pass was
 // applied; what that pass applied is still returned.
 //
@@ -174,8 +200,9 @@ const unconfirmedRestoreDetail = "the agent did not confirm it confined the rest
 // the metadata rebuild) mail, with the account's domains looked up again.
 //
 // report, when not nil, receives the restore's progress by step (GH #1993).
-func (h *backupHandler) restoreUploadedAccount(ctx context.Context, tarPath, username, targetID string, components []string, overwrite bool, report func(restoreProgress)) (uploadedAccountRestore, error) {
+func (h *backupHandler) restoreUploadedAccount(ctx context.Context, tarPath, username, targetID string, components []string, mode uploadRestoreMode, report func(restoreProgress)) (uploadedAccountRestore, error) {
 	var out uploadedAccountRestore
+	keepExisting := mode == uploadKeepExisting
 	mail := len(components) == 0 || containsStr(components, "mail")
 	steps := 3 // files, rows, DNS records
 	if mail {
@@ -186,7 +213,7 @@ func (h *backupHandler) restoreUploadedAccount(ctx context.Context, tarPath, use
 		"tar_path":        tarPath,
 		"target_username": username,
 		"components":      components,
-		"keep_existing":   !overwrite,
+		"keep_existing":   keepExisting,
 	}
 	if mail {
 		params["skip_components"] = []string{"mail"}
@@ -208,7 +235,7 @@ func (h *backupHandler) restoreUploadedAccount(ctx context.Context, tarPath, use
 	}
 	out.MetadataErrors = applyUploadedMetadata(h, ctx, first.Metadata, targetID,
 		uploadedData{databases: first.RestoredDatabases, dockerSlugs: first.RestoredDockerSlugs,
-			archiveMariaDBs: first.ArchiveMariaDBs, keepExisting: !overwrite})
+			archiveMariaDBs: first.ArchiveMariaDBs, keepExisting: keepExisting, overwriteRows: mode == uploadOverwrite})
 
 	// GH #1993: last, the domains' custom DNS records. RestoreBundleDNS has the
 	// reconciler make the restored domains' zones and adds the records once
@@ -235,7 +262,7 @@ func (h *backupHandler) restoreUploadedAccount(ctx context.Context, tarPath, use
 		"tar_path":        tarPath,
 		"target_username": username,
 		"components":      []string{"mail"},
-		"keep_existing":   !overwrite,
+		"keep_existing":   keepExisting,
 	}, restoreProgress{Step: 3, Steps: steps, Label: restoreStepMailLabel}, report)
 	switch {
 	case err != nil:

@@ -392,7 +392,11 @@ export function RestoreFromUploadDrawer({ open, onClose, ownerMode, uploaded, on
                     ? "This overwrites your account's selected data"
                     : "This overwrites the target user's selected data"
                 }
-                description="The home directory and databases are replaced with the backup's: files added since the backup are deleted. This cannot be undone."
+                description={
+                  ownerMode
+                    ? "The home directory and databases are replaced with the backup's: files added since the backup are deleted. This cannot be undone."
+                    : "The home directory and databases are replaced with the backup's: files added since the backup are deleted. Mailboxes and database users the account already has take the backup's settings; the restore report lists what is kept. This cannot be undone."
+                }
               />
             ) : (
               <Alert
