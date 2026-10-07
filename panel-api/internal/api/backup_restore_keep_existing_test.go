@@ -161,7 +161,22 @@ func TestTenantRestoreUploadApply_KeepingNeedsAnAgentThatKeeps(t *testing.T) {
 		if overwrite && w.Code == http.StatusConflict {
 			t.Errorf("overwrite on an old agent: refused %s", w.Body)
 		}
+		if overwrite {
+			// The accepted restore runs in the background and writes its
+			// outcome into the temp dir: let it end before the dir is removed.
+			waitTenantRestoreEnds(t, restoreUploadTenantOutcomePath("T", "upload0001"))
+		}
 	}
+}
+
+func waitTenantRestoreEnds(t *testing.T, outcomePath string) {
+	t.Helper()
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		if o, err := readRestoreUploadOutcome(outcomePath); err == nil && o.Status != "restoring" {
+			return
+		}
+	}
+	t.Fatal("the background restore didn't end")
 }
 
 func TestRunUploadRestore_KeepsWhatIsThereUnlessOverwrite(t *testing.T) {
