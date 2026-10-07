@@ -205,7 +205,9 @@ it into the target account only (GH #1993):
   domain's settings after reviewing them.
 - **PHP limits** on a domain (memory, upload and post size, input variables,
   execution and input time) that the domain's PHP settings page would refuse
-  are left out. The domain uses the server's defaults for them.
+  are left out, and so is one the account's hosting package lets only an
+  administrator set. When the package can't be read, every limit is left out.
+  The domain uses the server's defaults for them.
 - **Sign-in** — the account's sign-in from the backup (its password) is not
   imported. The account keeps the sign-in it has on this server; an account
   the restore creates gets a new password and needs a recovery link.

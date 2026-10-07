@@ -296,6 +296,11 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 			for _, w := range warnings {
 				r.Errors = append(r.Errors, fmt.Sprintf("domain %s (%s): %s", dm.ID, dm.Name, w))
 			}
+			if d.Untrusted {
+				for _, n := range restoredPHPLimitsPolicy(ctx, d, m.User.ID, row) {
+					r.Errors = append(r.Errors, fmt.Sprintf("domain %s (%s): %s", dm.ID, dm.Name, n))
+				}
+			}
 			// Bind the domain to the pool that stands for its backup pool here.
 			// A pool that wasn't restored leaves it unbound: the reconciler binds
 			// an unbound domain to the account's default pool, where pointing at
