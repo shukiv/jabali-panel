@@ -81,6 +81,17 @@ type Deps struct {
 	// off) adds only what the account is missing: a row it already has
 	// keeps its settings. An existing mailbox keeps its autoresponder.
 	KeepExisting bool
+	// OverwriteRows (GH #1993: "Overwrite existing items with the backup"
+	// checked on an account upload door) also updates the rows the account
+	// already has, within each row's rules: an existing mailbox takes the
+	// backup's quota and disabled flag (MailboxSettings) and keeps its
+	// password; an existing database user takes the backup's password only
+	// when every database it can open was restored from the file.
+	OverwriteRows bool
+	// MailboxSettings changes an existing mailbox the way the mailbox page
+	// does, so the mail server follows. With OverwriteRows, nil leaves
+	// existing mailboxes as they are, with a line in the report.
+	MailboxSettings MailboxSettings
 	// RestoredDatabases / RestoredDockerSlugs name the databases and docker
 	// app folders (effective slug) the agent restored into the account from
 	// the uploaded file. With Untrusted, a database or docker app row is
@@ -107,6 +118,13 @@ type Deps struct {
 	// converge on the first later forwarder mutation instead (GH #1795 follow-up).
 	Agent agent.AgentInterface
 	Log   *slog.Logger
+}
+
+// MailboxSettings sets an existing mailbox's quota and disabled flag, given
+// this server's row for it.
+type MailboxSettings interface {
+	SetQuota(ctx context.Context, mb *models.Mailbox, quotaBytes uint64) error
+	SetDisabled(ctx context.Context, mb *models.Mailbox, disabled bool) error
 }
 
 // AddressReleaser clears a mail address from Stalwart's registry

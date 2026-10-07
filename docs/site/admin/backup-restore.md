@@ -159,13 +159,21 @@ is off by default:
 - **On** — the backup replaces the account's data, as restores did before:
   the home is mirrored from the backup (files added since are deleted),
   databases are reloaded from their dumps, and Docker app folders are
-  replaced.
+  replaced. On an admin restore, the mailboxes and database users the account
+  already has also take the backup's settings:
+  - a mailbox takes the backup's quota and whether it is disabled. It keeps
+    its password, because the mail already in it didn't come from the archive;
+  - a database user takes the backup's password only when every database it
+    can open holds nothing but the archive's data (see below). Otherwise it
+    keeps its password.
+
+  The restore report lists each password kept, and why.
 
 Restoring into a home that may hold the tenant's symlinks, the copy that keeps
 existing files never follows a symlink: whatever the tenant has at a name,
 link or not, counts as already there. The tenant's own restore offers the same
 choice. A full-server restore (`jabali system restore --from-tar`) replaces,
-as before.
+as before, and leaves the settings of the rows each account already has.
 
 Keeping needs an agent as new as the panel; an older one would replace, so
 the panel refuses that restore (`agent_update_required`). With **Overwrite**

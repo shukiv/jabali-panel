@@ -1297,6 +1297,10 @@ func (h *backupHandler) restoreMetadataDeps(uploaded *uploadedData) backupmetada
 		if uploaded.archiveMariaDBs != nil {
 			deps.ArchiveMariaDBs = stringSet(uploaded.archiveMariaDBs)
 		}
+		deps.OverwriteRows = uploaded.overwriteRows
+	}
+	if h.cfg.Mailboxes != nil {
+		deps.MailboxSettings = restoreMailboxSettings{mailboxes: h.cfg.Mailboxes, agent: h.cfg.Agent}
 	}
 	if h.cfg.MailAddresses != nil {
 		deps.MailAddresses = h.cfg.MailAddresses
