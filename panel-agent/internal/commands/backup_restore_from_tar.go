@@ -187,21 +187,10 @@ func restoreAccountFromTar(ctx context.Context, jobID, tarPath, targetUsername s
 		return nil, bkInvalidArg("archive rejected: " + err.Error())
 	}
 
-	// The downloaded archive is tarred as `<source-job-id>/<stage>/…` (the panel
-	// runs `tar -C <downloads> <job-id>`), so the extracted tree has a single
-	// job-id dir on top. Descend into it — that dir IS the per-stage staging
-	// root applyAccountRestore expects (identical to backup.restore's staging).
-	root, rerr := resolveExtractedRoot(staging)
-	if rerr != nil {
-		_ = os.RemoveAll(staging)
-		return nil, bkInvalidArg(rerr.Error())
-	}
-
-	// manifest lives under the manifest stage: <root>/manifest/manifest.json.
-	manifestBytes, err := os.ReadFile(filepath.Join(root, "manifest", "manifest.json"))
+	root, manifestBytes, metadata, err := readExtractedUpload(staging)
 	if err != nil {
 		_ = os.RemoveAll(staging)
-		return nil, bkInvalidArg("archive has no manifest/manifest.json (not a Jabali account backup)")
+		return nil, bkInvalidArg(err.Error())
 	}
 	manifest, err := backup.AccountManifestFromBytes(manifestBytes)
 	if err != nil {
@@ -228,9 +217,7 @@ func restoreAccountFromTar(ctx context.Context, jobID, tarPath, targetUsername s
 	}
 
 	// Best-effort metadata (FTP subaccount hashes etc.) from the meta stage.
-	if mb, mErr := os.ReadFile(filepath.Join(root, "meta", "metadata.json")); mErr == nil {
-		out.Metadata = mb
-	}
+	out.Metadata = metadata
 	if enf.upload() {
 		enf.DBPrefix = targetUsername + "_"
 		enf.ServerLevelDockerSlugs, enf.DockerMetadataMissing = serverLevelDockerSlugs(out.Metadata)
@@ -278,6 +265,33 @@ func restoreAccountFromTar(ctx context.Context, jobID, tarPath, targetUsername s
 		out.StagingCleanup = "kept (no stages applied)"
 	}
 	return &out, nil
+}
+
+// readExtractedUpload finds the per-stage root of an extracted upload and reads
+// its manifest and, when present, its metadata (nil when absent).
+func readExtractedUpload(staging string) (root string, manifest, metadata []byte, err error) {
+	// The downloaded archive is tarred as `<source-job-id>/<stage>/…` (the panel
+	// runs `tar -C <downloads> <job-id>`), so the extracted tree has a single
+	// job-id dir on top. Descend into it — that dir IS the per-stage staging
+	// root applyAccountRestore expects (identical to backup.restore's staging).
+	root, err = resolveExtractedRoot(staging)
+	if err != nil {
+		return "", nil, nil, err
+	}
+	// GH #1993: before root reads anything from the tree, refuse a symlink
+	// outside the home and app data trees the restore copies as they are.
+	if err := checkStagedLinks(staging, root); err != nil {
+		return "", nil, nil, err
+	}
+	// manifest lives under the manifest stage: <root>/manifest/manifest.json.
+	manifest, err = readStagedFile(root, filepath.Join(root, "manifest", "manifest.json"))
+	if err != nil {
+		return "", nil, nil, fmt.Errorf("archive has no manifest/manifest.json (not a Jabali account backup)")
+	}
+	if mb, mErr := readStagedFile(root, filepath.Join(root, "meta", "metadata.json")); mErr == nil {
+		metadata = mb
+	}
+	return root, manifest, metadata, nil
 }
 
 // stageSelected reports whether the stage named name is applied: the
@@ -339,8 +353,9 @@ func intersectComponents(requested, allowed []string) []string {
 // directory (the panel runs `tar -C <downloads> <job-id>`), so the real root is
 // that lone child. A defensively un-prefixed archive (manifest directly under
 // staging) returns staging itself. Anything else is not a Jabali account backup.
+// It follows no symlink.
 func resolveExtractedRoot(staging string) (string, error) {
-	if fi, err := os.Stat(filepath.Join(staging, "manifest", "manifest.json")); err == nil && fi.Mode().IsRegular() {
+	if stagedEntry(staging, filepath.Join(staging, "manifest", "manifest.json"), false) == nil {
 		return staging, nil
 	}
 	ents, err := os.ReadDir(staging)
@@ -355,7 +370,7 @@ func resolveExtractedRoot(staging string) (string, error) {
 	}
 	if len(dirs) == 1 {
 		root := filepath.Join(staging, dirs[0])
-		if fi, err := os.Stat(filepath.Join(root, "manifest", "manifest.json")); err == nil && fi.Mode().IsRegular() {
+		if stagedEntry(staging, filepath.Join(root, "manifest", "manifest.json"), false) == nil {
 			return root, nil
 		}
 	}
@@ -364,13 +379,12 @@ func resolveExtractedRoot(staging string) (string, error) {
 
 // stageMaterializedInTar reports whether the extracted tree carries this stage's
 // directory (the tar is a merge of the per-stage snapshots, so stage <name>
-// lands at staging/<name>/).
+// lands at staging/<name>/). A stage folder that is a symlink doesn't count.
 func stageMaterializedInTar(staging, name string) bool {
 	if name == "" {
 		return false
 	}
-	fi, err := os.Stat(filepath.Join(staging, name))
-	return err == nil && fi.IsDir()
+	return stagedEntry(staging, filepath.Join(staging, name), true) == nil
 }
 
 // backup.inspect_uploaded_tar — GH #1408. Read ONLY the manifest from an

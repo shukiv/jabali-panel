@@ -165,6 +165,9 @@ it into the target account only (GH #1993):
   Server-level apps are not restored, and neither is an app whose name another
   account's app uses. An app comes back in the panel only when its data was
   restored too.
+- **Symbolic links** — restored inside the account's home and an app's data
+  folder, as the backup has them. An archive with a symbolic link anywhere
+  else is refused before anything is restored.
 - **Custom nginx directives** on a domain are left out. Re-add them in the
   domain's settings after reviewing them.
 - **Sign-in** — the account's sign-in from the backup (its password) is not
