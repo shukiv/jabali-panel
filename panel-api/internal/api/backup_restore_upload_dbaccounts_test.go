@@ -77,7 +77,7 @@ func TestRunUploadRestore_RecreatesTheRestoredDatabaseUsersMariaDBAccount(t *tes
 	h.cfg.Agent.(*mockAgent).callFn = func(_ context.Context, cmd string, params any) (json.RawMessage, error) {
 		switch cmd {
 		case "backup.restore_from_tar":
-			return json.RawMessage(`{"upload_confinement_enforced":true,"restored_databases":["alice_wp"],"metadata":` +
+			return json.RawMessage(`{"upload_confinement_enforced":true,"restored_databases":["alice_wp"],"archive_mariadb_databases":["alice_wp"],"metadata":` +
 				`{"user":{"id":"SRC","username":"alice"},` +
 				`"databases":[{"id":"d1","name":"alice_wp","engine":"mariadb"}],` +
 				`"database_users":[{"id":"u1","username":"alice_u","engine":"mariadb","native_password_hash":"` + hash + `",` +

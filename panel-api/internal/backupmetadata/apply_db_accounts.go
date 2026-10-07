@@ -139,8 +139,8 @@ func createRestoredDBAccounts(ctx context.Context, d Deps, accountID string, use
 		if du.Engine == "postgres" || db.Engine == "postgres" {
 			continue
 		}
-		if d.Untrusted && !d.RestoredDatabases[db.Name] {
-			dropRestoredGrant(ctx, d, g, r, fmt.Sprintf("the uploaded backup didn't restore %s's data, so it can't grant access to it", db.Name))
+		if why := uploadedGrantRefusal(d, db.Name); why != "" {
+			dropRestoredGrant(ctx, d, g, r, why)
 			continue
 		}
 		params := map[string]any{"db_name": db.Name, "db_user_name": du.Username, "grant_level": g.GrantLevel}
@@ -222,4 +222,21 @@ func randomDBPassword() (string, error) {
 		return "", err
 	}
 	return base64.RawURLEncoding.EncodeToString(b), nil
+}
+
+// uploadedGrantRefusal says why a grant from an uploaded file on database db
+// isn't made, or "". The file's author knows its users' passwords, so the
+// file grants access only to a database holding nothing but its own data.
+func uploadedGrantRefusal(d Deps, db string) string {
+	switch {
+	case !d.Untrusted:
+		return ""
+	case !d.RestoredDatabases[db]:
+		return fmt.Sprintf("the uploaded backup didn't restore %s's data, so it can't grant access to it", db)
+	case d.ArchiveMariaDBs == nil:
+		return fmt.Sprintf("this server's agent is too old to tell whether %s holds only the uploaded backup's data; run jabali update and restore again", db)
+	case !d.ArchiveMariaDBs[db]:
+		return fmt.Sprintf("%s holds data that isn't the uploaded backup's (it wasn't empty before the restore, or the backup's data didn't load), so the uploaded backup can't grant access to it", db)
+	}
+	return ""
 }

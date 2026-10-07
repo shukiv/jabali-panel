@@ -103,6 +103,16 @@ type backupRestoreFromTarResult struct {
 	// panel restores rows from the file only for those (GH #1993).
 	RestoredDatabases   []string `json:"restored_databases,omitempty"`
 	RestoredDockerSlugs []string `json:"restored_docker_slugs,omitempty"`
+	// ArchiveMariaDBs are the restored MariaDB databases whose data is all
+	// the archive's (restoreClaims.ArchiveMariaDBs). In upload mode it is always
+	// a list, empty when there are none: a missing one is an older agent.
+	ArchiveMariaDBs []string `json:"archive_mariadb_databases"`
+}
+
+// setClaims puts what an upload-mode restore created or wrote into the reply.
+func (r *backupRestoreFromTarResult) setClaims(c *restoreClaims) {
+	r.RestoredDatabases, r.RestoredDockerSlugs = c.Databases, c.DockerSlugs
+	r.ArchiveMariaDBs = append([]string{}, c.ArchiveMariaDBs...)
 }
 
 func backupRestoreFromTarHandler(ctx context.Context, raw json.RawMessage) (any, error) {
@@ -260,7 +270,7 @@ func restoreAccountFromTar(ctx context.Context, jobID, tarPath, targetUsername s
 	out.Applied = applied
 	out.Warnings = append(out.Warnings, warnings...)
 	if enf.Claims != nil {
-		out.RestoredDatabases, out.RestoredDockerSlugs = enf.Claims.Databases, enf.Claims.DockerSlugs
+		out.setClaims(enf.Claims)
 	}
 
 	if removeRestoreStaging(applied, enf) {

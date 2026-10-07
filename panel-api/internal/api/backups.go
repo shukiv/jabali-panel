@@ -1292,6 +1292,11 @@ func (h *backupHandler) restoreMetadataDeps(uploaded *uploadedData) backupmetada
 		deps.RestoredDatabases = stringSet(uploaded.databases)
 		deps.RestoredDockerSlugs = stringSet(uploaded.dockerSlugs)
 		deps.KeepExisting = uploaded.keepExisting
+		// Left nil when the agent didn't name them: the file then grants
+		// access to no database.
+		if uploaded.archiveMariaDBs != nil {
+			deps.ArchiveMariaDBs = stringSet(uploaded.archiveMariaDBs)
+		}
 	}
 	if h.cfg.MailAddresses != nil {
 		deps.MailAddresses = h.cfg.MailAddresses
