@@ -124,7 +124,14 @@ func (h *forwarderHandler) listAll(c *gin.Context) {
 		total int64
 		err   error
 	)
-	if claims.IsAdmin {
+	// GH #1997: a mail domain's page lists that domain's forwarders only.
+	scope, ok := listDomainFilter(c, h.cfg.Domains, claims)
+	if !ok {
+		return
+	}
+	if scope != nil {
+		fwds, total, err = h.cfg.Forwarders.ListMailboxForwardersByDomainID(ctx, scope.ID, opts)
+	} else if claims.IsAdmin {
 		fwds, total, err = h.cfg.Forwarders.ListAll(ctx, opts)
 	} else {
 		fwds, total, err = h.cfg.Forwarders.ListByUserID(ctx, claims.UserID, opts)
@@ -387,7 +394,20 @@ type domainScopedForwarderResponse struct {
 func (h *forwarderHandler) listDomainScoped(c *gin.Context) {
 	ctx := c.Request.Context()
 	claims := ginctx.Claims(c)
-	fwds, _, err := h.cfg.Forwarders.ListAll(ctx, repository.ListOptions{Limit: 1000})
+	// GH #1997: a mail domain's page lists that domain's imported aliases only.
+	scope, ok := listDomainFilter(c, h.cfg.Domains, claims)
+	if !ok {
+		return
+	}
+	var (
+		fwds []models.EmailForwarder
+		err  error
+	)
+	if scope != nil {
+		fwds, _, err = h.cfg.Forwarders.ListByDomainID(ctx, scope.ID, repository.ListOptions{})
+	} else {
+		fwds, _, err = h.cfg.Forwarders.ListAll(ctx, repository.ListOptions{Limit: 1000})
+	}
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "detail": "the server could not complete the request"})
 		return
@@ -397,9 +417,13 @@ func (h *forwarderHandler) listDomainScoped(c *gin.Context) {
 		if f.MailboxID != nil {
 			continue
 		}
-		dom, err := h.cfg.Domains.FindByID(ctx, f.DomainID)
-		if err != nil {
-			continue
+		dom := scope
+		if dom == nil {
+			d, err := h.cfg.Domains.FindByID(ctx, f.DomainID)
+			if err != nil {
+				continue
+			}
+			dom = d
 		}
 		if !claims.IsAdmin && dom.UserID != claims.UserID {
 			continue

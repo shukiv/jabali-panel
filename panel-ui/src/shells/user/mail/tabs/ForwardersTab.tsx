@@ -63,7 +63,8 @@ export const ForwardersTab = ({ domainId }: { domainId?: string } = {}) => {
     return out;
   }, [mailboxResults]);
 
-  const { data: forwarders = [], isLoading } = useForwarders();
+  // GH #1997: on a mail domain's page, that domain's forwarders only.
+  const { data: forwarders = [], isLoading } = useForwarders(domainId);
   const createMut = useCreateForwarder();
   const deleteMut = useDeleteForwarder();
 
@@ -186,7 +187,7 @@ export const ForwardersTab = ({ domainId }: { domainId?: string } = {}) => {
         />
       </div>
 
-      <DomainScopedForwarders />
+      <DomainScopedForwarders domainId={domainId} />
 
       <Modal
         open={open}
@@ -264,16 +265,18 @@ interface DomainScopedForwarder {
   created_at: string;
 }
 
-function DomainScopedForwarders() {
+function DomainScopedForwarders({ domainId }: { domainId?: string }) {
   // Surfaces NULL-mailbox forwarders the M35 DA importer left behind
   // (pure-redirect aliases from /etc/virtual/<dom>/aliases). Stalwart
   // push is deferred to a future domain-scoped reconciler phase;
   // until then this is read-only — rows visible so the operator
   // knows what was imported, but edits go through manual SQL.
+  // On a mail domain's page, that domain's rows only (GH #1997).
   const { data, isLoading } = useQuery<{ data: DomainScopedForwarder[] }>({
-    queryKey: ["mail", "forwarders", "domain-scoped"],
+    queryKey: ["mail", "forwarders", "domain-scoped", domainId ?? "all"],
     queryFn: async () => {
-      const res = await apiClient.get("/mail/forwarders/domain-scoped");
+      const qs = domainId ? `?${new URLSearchParams({ domain_id: domainId }).toString()}` : "";
+      const res = await apiClient.get(`/mail/forwarders/domain-scoped${qs}`);
       return res.data;
     },
     refetchOnWindowFocus: false,

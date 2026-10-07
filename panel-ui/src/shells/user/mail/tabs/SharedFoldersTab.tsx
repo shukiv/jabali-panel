@@ -73,7 +73,8 @@ export const SharedFoldersTab = ({ domainId }: { domainId?: string } = {}) => {
     return out;
   }, [mailboxResults]);
 
-  const { data: shares = [], isLoading: sharesLoading } = useAllShares();
+  // GH #1997: on a mail domain's page, the shares that involve that domain.
+  const { data: shares = [], isLoading: sharesLoading } = useAllShares(domainId);
   const [search, setSearch] = useState("");
   const filteredShares = useMemo(() => {
     const q = search.trim().toLowerCase();

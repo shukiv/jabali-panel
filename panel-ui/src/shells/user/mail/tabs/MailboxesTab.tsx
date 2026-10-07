@@ -132,9 +132,10 @@ export const MailboxesTab = ({ domainId }: { domainId?: string } = {}) => {
   const arByMailbox = autorespondersQuery.data ?? EMPTY_AUTORESPONDERS;
 
   // Aliases + external forwards per mailbox (GH #237). One bulk query
-  // across all the caller's mailboxes; grouped client-side so each row can
-  // show its aliases under the address and a forwarding indicator.
-  const { data: forwarders = [] } = useForwarders();
+  // across all the caller's mailboxes (the domain's, when embedded in the
+  // Mail Domains drill-down); grouped client-side so each row can show its
+  // aliases under the address and a forwarding indicator.
+  const { data: forwarders = [] } = useForwarders(domainId);
   const fwdByMailbox = useMemo(() => {
     const out: Record<
       string,

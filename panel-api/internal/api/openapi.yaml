@@ -4067,19 +4067,30 @@ paths:
     get:
       tags: [Mail]
       summary: List the forwarders and aliases on your mailboxes
-      description: Across all your domains; an admin sees every tenant's.
+      description: Across all your domains, or one domain with domain_id; an admin sees every tenant's.
       security: [ { KratosSession: [] } ]
       parameters:
+        - { in: query, name: domain_id, schema: { type: string }, description: "Only this domain's forwarders (yours; an admin may name any domain)." }
         - { in: query, name: page, schema: { type: integer, minimum: 1, default: 1 } }
         - { in: query, name: page_size, schema: { type: integer, minimum: 1, maximum: 200, default: 50 }, description: Values outside 1-200 fall back to 50. }
-      responses: { "200": { description: "{ data: [ forwarder ], total, page, page_size }" } }
+      responses:
+        "200": { description: "{ data: [ forwarder ], total, page, page_size }" }
+        "400": { description: invalid_domain_id }
+        "403": { description: "forbidden (another account's domain)" }
+        "404": { description: domain_not_found }
 
   /mail/forwarders/domain-scoped:
     get:
       tags: [Mail]
       summary: List domain scoped
       security: [ { KratosSession: [] } ]
-      responses: { "200": { description: OK } }
+      parameters:
+        - { in: query, name: domain_id, schema: { type: string }, description: "Only this domain's rows (yours; an admin may name any domain)." }
+      responses:
+        "200": { description: OK }
+        "400": { description: invalid_domain_id }
+        "403": { description: "forbidden (another account's domain)" }
+        "404": { description: domain_not_found }
 
   /mail/logs:
     get:
@@ -4099,8 +4110,17 @@ paths:
     get:
       tags: [Mail]
       summary: List shares
+      description: Across all your domains, or with domain_id the shares from or to that domain's mailboxes.
       security: [ { KratosSession: [] } ]
-      responses: { "200": { description: OK } }
+      parameters:
+        - { in: query, name: domain_id, schema: { type: string }, description: "Only the shares that involve this domain (yours; an admin may name any domain)." }
+        - { in: query, name: page, schema: { type: integer, minimum: 1, default: 1 } }
+        - { in: query, name: page_size, schema: { type: integer, minimum: 1, maximum: 200, default: 50 }, description: Values outside 1-200 fall back to 50. }
+      responses:
+        "200": { description: "{ data: [ share ], total, page, page_size }" }
+        "400": { description: invalid_domain_id }
+        "403": { description: "forbidden (another account's domain)" }
+        "404": { description: domain_not_found }
 
 
   # --- Mail Certificate (auto) ---

@@ -23,6 +23,10 @@ type EmailForwarderRepository interface {
 	ListByDomainIDs(ctx context.Context, domainIDs []string) ([]models.EmailForwarder, error)
 	ListByMailboxID(ctx context.Context, mailboxID string, opts ListOptions) ([]models.EmailForwarder, int64, error)
 	ListByUserID(ctx context.Context, userID string, opts ListOptions) ([]models.EmailForwarder, int64, error)
+	// ListMailboxForwardersByDomainID is ListByDomainID without the
+	// domain-scoped (NULL mailbox) rows, so `total` matches what the
+	// mailbox-keyed Forwarders list shows for one domain (GH #1997).
+	ListMailboxForwardersByDomainID(ctx context.Context, domainID string, opts ListOptions) ([]models.EmailForwarder, int64, error)
 	ListAll(ctx context.Context, opts ListOptions) ([]models.EmailForwarder, int64, error)
 	Create(ctx context.Context, fwd *models.EmailForwarder) error
 	Update(ctx context.Context, fwd *models.EmailForwarder) error
@@ -117,6 +121,27 @@ func (r *emailForwarderRepo) ListByUserID(ctx context.Context, userID string, op
 		return nil, 0, err
 	}
 	tx := q.Select("email_forwarders.*").Order("email_forwarders.created_at DESC")
+	if opts.Limit > 0 {
+		tx = tx.Limit(opts.Limit)
+	}
+	if opts.Offset > 0 {
+		tx = tx.Offset(opts.Offset)
+	}
+	if err := tx.Find(&rows).Error; err != nil {
+		return nil, 0, err
+	}
+	return rows, total, nil
+}
+
+func (r *emailForwarderRepo) ListMailboxForwardersByDomainID(ctx context.Context, domainID string, opts ListOptions) ([]models.EmailForwarder, int64, error) {
+	var rows []models.EmailForwarder
+	var total int64
+	q := r.db.WithContext(ctx).Model(&models.EmailForwarder{}).
+		Where("domain_id = ? AND mailbox_id IS NOT NULL", domainID)
+	if err := q.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	tx := q.Order("created_at DESC")
 	if opts.Limit > 0 {
 		tx = tx.Limit(opts.Limit)
 	}
