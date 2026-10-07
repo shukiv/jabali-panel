@@ -158,6 +158,16 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 				CreatedAt:                 now,
 				UpdatedAt:                 now,
 			}
+			if d.Untrusted {
+				notes, err := restoredPoolTuning(ctx, d, m.User.ID, pool)
+				if err != nil {
+					r.Errors = append(r.Errors, fmt.Sprintf("php_pool %s: not restored: %v", p.ID, err))
+					continue
+				}
+				for _, n := range notes {
+					r.Errors = append(r.Errors, fmt.Sprintf("php_pool %s: %s", p.ID, n))
+				}
+			}
 			if err := d.PHPPools.Create(ctx, pool); err != nil {
 				r.Errors = append(r.Errors, fmt.Sprintf("php_pool %s: create: %v", p.ID, err))
 				continue

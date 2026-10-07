@@ -186,6 +186,9 @@ it into the target account only (GH #1993):
   restored: the archive's author never gets a login to data they didn't supply.
 - **Mail** — only for the account's own domains, including the ones the
   archive brings: mail is restored last, after the account's domains.
+- **PHP pools** — a pool's process settings that the PHP pool page would
+  refuse are replaced by the defaults, and its max children is held to the
+  account's package cap.
 - **Docker apps** — the account's own, or an app name not in use here.
   Server-level apps are not restored, and neither is an app whose name another
   account's app uses. An app comes back in the panel only when its data was

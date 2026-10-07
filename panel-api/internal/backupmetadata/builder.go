@@ -59,7 +59,11 @@ type Deps struct {
 	LimitOverrides repository.UserLimitOverrideRepository
 	EgressPolicies repository.UserEgressPolicyRepository
 	EgressRequests repository.UserEgressRequestRepository
-	KratosClient   KratosClient
+	// Packages resolves the account's hosting package, whose FPM cap holds a
+	// PHP pool restored from an uploaded file. With Untrusted, nil refuses
+	// those pools: a cap Apply can't read is never skipped.
+	Packages     repository.PackageRepository
+	KratosClient KratosClient
 	// CheckDomain vets a domain row rebuilt from the archive before Apply
 	// stores it (GH #1898). It runs the create-time checks a domain door
 	// would, because the archive may come from an untrusted source. An error

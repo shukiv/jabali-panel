@@ -220,3 +220,13 @@ func TestRunTenantUploadRestore_KeepsWhatIsThereUnlessOverwrite(t *testing.T) {
 		}
 	}
 }
+
+// A restore's Apply gets the package store, which holds a PHP pool from an
+// uploaded file to the account's package cap (GH #1993).
+func TestRestoreMetadataDeps_CarriesThePackages(t *testing.T) {
+	pkgs := &quotaPkgs{}
+	h := &backupHandler{cfg: BackupHandlerConfig{Packages: pkgs}}
+	if got := h.restoreMetadataDeps(&uploadedData{}).Packages; got != pkgs {
+		t.Fatalf("Packages = %v, want the handler's package store", got)
+	}
+}
