@@ -107,12 +107,17 @@ type backupRestoreFromTarResult struct {
 	// the archive's (restoreClaims.ArchiveMariaDBs). In upload mode it is always
 	// a list, empty when there are none: a missing one is an older agent.
 	ArchiveMariaDBs []string `json:"archive_mariadb_databases"`
+	// ArchivePostgresDBs are the same for PostgreSQL
+	// (restoreClaims.ArchivePostgresDBs), a separate list: a name restored
+	// as one engine says nothing about the other engine's database.
+	ArchivePostgresDBs []string `json:"archive_postgres_databases"`
 }
 
 // setClaims puts what an upload-mode restore created or wrote into the reply.
 func (r *backupRestoreFromTarResult) setClaims(c *restoreClaims) {
 	r.RestoredDatabases, r.RestoredDockerSlugs = c.Databases, c.DockerSlugs
 	r.ArchiveMariaDBs = append([]string{}, c.ArchiveMariaDBs...)
+	r.ArchivePostgresDBs = append([]string{}, c.ArchivePostgresDBs...)
 }
 
 func backupRestoreFromTarHandler(ctx context.Context, raw json.RawMessage) (any, error) {

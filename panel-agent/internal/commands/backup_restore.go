@@ -96,6 +96,10 @@ type restoreClaims struct {
 	// access only to these. Only the MariaDB load claims one: a name restored
 	// as PostgreSQL says nothing about the MariaDB database of that name.
 	ArchiveMariaDBs []string
+	// ArchivePostgresDBs are the same for the PostgreSQL load: new or holding
+	// nothing (no relation, routine or large object outside the system
+	// schemas) before it, and restored without an error.
+	ArchivePostgresDBs []string
 }
 
 // loadRestoredMariaDBDump loads a restored database's dump; tests swap it.
@@ -110,6 +114,12 @@ func (e restoreEnforcement) claimDatabase(db string) {
 func (e restoreEnforcement) claimArchiveMariaDB(db string) {
 	if e.Claims != nil {
 		e.Claims.ArchiveMariaDBs = append(e.Claims.ArchiveMariaDBs, db)
+	}
+}
+
+func (e restoreEnforcement) claimArchivePostgresDB(db string) {
+	if e.Claims != nil {
+		e.Claims.ArchivePostgresDBs = append(e.Claims.ArchivePostgresDBs, db)
 	}
 }
 
@@ -737,6 +747,18 @@ func applyAccountRestore(
 						continue
 					}
 				}
+				// archive: as for MariaDB below, a database that is new or
+				// holds nothing is all the archive's after a good load. A
+				// database that can't be checked counts as one that holds
+				// something.
+				archive := false
+				if enf.Claims != nil {
+					if !pgExists {
+						archive = true
+					} else if has, hErr := pgHoldsObjects(ctx, db); hErr == nil && !has {
+						archive = true
+					}
+				}
 				if !pgExists {
 					mkCmd := execCommandContext(ctx, "sudo", "-u", "postgres",
 						"createdb", "--encoding=UTF8", db)
@@ -781,6 +803,9 @@ func applyAccountRestore(
 						fmt.Sprintf("db %s (postgres): pg_restore: %v: %s",
 							db, rErr, strings.TrimSpace(string(rOut))))
 					continue
+				}
+				if archive {
+					enf.claimArchivePostgresDB(db)
 				}
 				applied = append(applied, fmt.Sprintf("db → %s (postgres)", db))
 				continue
@@ -1293,6 +1318,25 @@ func objectCount(out []byte) (bool, error) {
 		return false, fmt.Errorf("unexpected object count %q", strings.TrimSpace(string(out)))
 	}
 	return n > 0, nil
+}
+
+// pgHoldsObjects reports whether PostgreSQL database db holds anything
+// outside the system schemas: a relation of any kind (table, view, sequence,
+// index, …), a routine, or a large object. A routine outlives a dump restored
+// over it and can run with its owner's rights, and a large object is data
+// outside any table, so a database with only those isn't empty. db goes in as
+// the -d argument: no SQL is built from it.
+func pgHoldsObjects(ctx context.Context, db string) (bool, error) {
+	out, err := execCommandContext(ctx, "sudo", "-u", "postgres", "psql", "-XAtq", "-d", db, "-c",
+		"SELECT (SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace"+
+			" WHERE n.nspname NOT IN ('pg_catalog', 'information_schema') AND n.nspname NOT LIKE 'pg\\_toast%' AND n.nspname NOT LIKE 'pg\\_temp%')"+
+			" + (SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace"+
+			" WHERE n.nspname NOT IN ('pg_catalog', 'information_schema'))"+
+			" + (SELECT count(*) FROM pg_largeobject_metadata)").Output()
+	if err != nil {
+		return false, err
+	}
+	return objectCount(out)
 }
 
 // pgHasTables reports whether PostgreSQL database db has a table outside the

@@ -107,20 +107,25 @@ type maCall struct {
 }
 
 // maAgent records every call and fails the commands named in fail (with
-// failErr when set). old is an agent without db_user.create's create_only.
+// failErr when set). old is an agent without db_user.create's create_only;
+// noPG one without db.postgres.create_role's.
 type maAgent struct {
 	calls   []maCall
 	fail    map[string]bool
 	failErr error
 	old     bool
+	noPG    bool
 }
 
 func (a *maAgent) Call(_ context.Context, cmd string, params any) (json.RawMessage, error) {
 	if cmd == "agent.version" {
-		if a.old {
+		switch {
+		case a.old:
 			return json.RawMessage(`{"version":"x","capabilities":["restore_upload_confinement"]}`), nil
+		case a.noPG:
+			return json.RawMessage(`{"version":"x","capabilities":["restore_upload_confinement","db_user_create_only"]}`), nil
 		}
-		return json.RawMessage(`{"version":"x","capabilities":["restore_upload_confinement","db_user_create_only"]}`), nil
+		return json.RawMessage(`{"version":"x","capabilities":["restore_upload_confinement","db_user_create_only","pg_role_create_only"]}`), nil
 	}
 	raw, _ := json.Marshal(params)
 	var p map[string]any

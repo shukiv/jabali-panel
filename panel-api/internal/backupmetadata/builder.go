@@ -113,6 +113,10 @@ type Deps struct {
 	// it was loaded over still holds what it had here. nil means the agent
 	// didn't say, and the file grants nothing.
 	ArchiveMariaDBs map[string]bool
+	// ArchivePostgresDBs are the same for the restored PostgreSQL databases.
+	// A name in one list says nothing about the other engine's database of
+	// that name. nil means the agent didn't say, and the file grants nothing.
+	ArchivePostgresDBs map[string]bool
 	// MailAddresses takes a restored mailbox's address off every Stalwart
 	// account before Apply stores the mailbox. Stalwart's registry keeps
 	// every alias it has seen, so a mailbox at an address that was once

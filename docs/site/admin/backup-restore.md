@@ -32,28 +32,38 @@ domain: Let's Encrypt, once the domain's DNS points at this server
 
 ### Database users and their passwords
 
-A restore recreates each restored database user's MariaDB account and grants,
-not just its row in the panel, so a site's database login keeps working on a new
-server (GH #1993). A backup records each MariaDB database user's password hash
-for this:
+A restore recreates each restored database user's MariaDB account or
+PostgreSQL role and its grants, not just its row in the panel, so a site's
+database login keeps working on a new server (GH #1993). A backup records each
+database user's password hash for this: the MariaDB hash, or the PostgreSQL
+SCRAM-SHA-256 verifier.
 
 - A user from a backup made before this release has no recorded password. It
   comes back with a new one: set a password under **Databases** and in the
-  site's configuration. The restore report lists each such user.
+  site's configuration. The restore report lists each such user. So does a
+  PostgreSQL role whose password the source server stored as md5: an md5 hash
+  works only under the role's original name.
 - A database user the account already has keeps its password; the restore adds
   only the grants it restores.
-- A database user is not restored when a MariaDB account with its name already
-  exists on this server and is not the account's, or when another account has a
-  database or database user with its name (an older backup can hold one the
-  account has since handed over). The restore report says which.
-- The restore never touches this server's own databases or MariaDB accounts
-  (`mysql`, `root`, `jabali_*`, …), nor the account's phpMyAdmin account.
-- For a PostgreSQL database user the restore rebuilds its panel row but does
-  not create the PostgreSQL role.
+- A database user is not restored when a MariaDB account or PostgreSQL role
+  with its name already exists on this server and is not the account's, or
+  when another account has a database or database user with its name (an older
+  backup can hold one the account has since handed over). The restore report
+  says which.
+- The restore never touches this server's own databases, MariaDB accounts or
+  PostgreSQL roles (`mysql`, `root`, `postgres`, `jabali_*`, …), nor the
+  account's phpMyAdmin account.
+- A grant joins a database user and a database of the same engine only.
+- A PostgreSQL role gets the access the **Databases** page gives: all of each
+  database it is granted, and that database's `public` schema with its tables
+  and sequences. The restored tables stay owned by the server's `postgres`
+  role, as in a database created on this server: the role can read and change
+  their rows and create tables of its own, but can't alter or drop the
+  restored ones.
 
-The server agent must be as new as the panel to create the accounts. With an
-older agent the restored database users are left out and the report says to run
-`jabali update`.
+The server agent must be as new as the panel to create the accounts and
+roles. With an older agent the restored database users are left out and the
+report says to run `jabali update`.
 
 ### DNS records
 
@@ -199,15 +209,16 @@ An uploaded archive is a file anyone could have written, so the panel restores
 it into the target account only (GH #1993):
 
 - **Databases and database users** — the account's own, or new ones named
-  `<account>_<name>`. Never this server's own databases or MariaDB accounts,
-  another account's, or a database that already exists here without belonging
+  `<account>_<name>`. Never this server's own databases, MariaDB accounts or
+  PostgreSQL roles, another account's, or a database that already exists here
+  without belonging
   to the account. One an admin created without the account prefix is refused;
   restore it by hand.
   A database comes back in the panel only when its data was restored too.
   A grant from the archive is made only on a database that holds nothing but
   the archive's data: one that was new or empty before the restore (no
-  tables, views, stored routines or events) and whose data loaded without an
-  error. A database that already held something is still reloaded from the
+  tables, views, stored routines or events, and in PostgreSQL no large
+  objects) and whose data loaded without an error. A database that already held something is still reloaded from the
   dump with **Overwrite** on, but the archive's database users get no access
   to it, and the restore report says so. The archive's author never gets a
   login to data they didn't supply.

@@ -701,7 +701,7 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 				} else {
 					dbUserIDs[du.ID] = du.ID
 					r.DatabaseUsers++
-					newDBUsers = append(newDBUsers, restoredDBAccount{row: dbu, nativeHash: du.NativePasswordHash})
+					newDBUsers = append(newDBUsers, restoredDBAccount{row: dbu, nativeHash: du.NativePasswordHash, pgVerifier: du.PostgresPasswordVerifier})
 				}
 				if d.DatabaseGrants != nil {
 					for _, g := range du.Grants {
