@@ -152,6 +152,9 @@ func TestApply_UploadedDomainHoldsEveryPHPSettingToItsPackage(t *testing.T) {
 // page would for the tenant; a setting the backup doesn't have is cleared.
 func TestApply_OverwriteDomainTakesTheBackupsPHPSettings(t *testing.T) {
 	f := odSetup("d-own", true, `{"open_basedir":"tenant_privileged","allow_url_fopen":"tenant_privileged"}`)
+	own := f.domains.rows["d-own"]
+	own.PHPFileUploads, own.PHPAllowURLFopen = odPtr(true), odPtr(false) // the backup turns them off and on
+	f.domains.rows["d-own"] = own
 	m := odMeta("d-own")
 	psSettings(&m.Domains[0], "alice")
 	m.Domains[0].PHPTimezone = nil
