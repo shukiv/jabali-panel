@@ -42,6 +42,10 @@ func (r *owDomains) Create(_ context.Context, d *models.Domain) error {
 	return nil
 }
 
+// Update stands for the write Apply makes after the insert, for a switch the
+// insert turned on.
+func (r *owDomains) Update(context.Context, *models.Domain) error { return nil }
+
 type owMailboxes struct {
 	repository.MailboxRepository
 	existing map[string]models.Mailbox

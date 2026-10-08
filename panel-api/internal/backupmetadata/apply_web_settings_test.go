@@ -14,11 +14,14 @@ import (
 // GH #1993: a domain's web settings ride in the account backup and come back
 // with the domain, through the restore checks.
 
-// wsDomains records the domains Apply creates and the updates it makes.
+// wsDomains records the domains Apply creates and the updates it makes, and
+// keeps each row as the database would. Its insert does what GORM's does to a
+// false bool whose column defaults on: it stores true and sets it on the row.
 type wsDomains struct {
 	repository.DomainRepository
 	created []models.Domain
 	updated []models.Domain
+	rows    map[string]models.Domain
 }
 
 func (r *wsDomains) FindByID(context.Context, string) (*models.Domain, error) {
@@ -29,11 +32,20 @@ func (r *wsDomains) FindByName(context.Context, string) (*models.Domain, error) 
 }
 func (r *wsDomains) Create(_ context.Context, d *models.Domain) error {
 	r.created = append(r.created, *d)
+	d.IsEnabled, d.SSLEnabled, d.WebmailEnabled = true, true, true
+	r.store(*d)
 	return nil
 }
 func (r *wsDomains) Update(_ context.Context, d *models.Domain) error {
 	r.updated = append(r.updated, *d)
+	r.store(*d)
 	return nil
+}
+func (r *wsDomains) store(d models.Domain) {
+	if r.rows == nil {
+		r.rows = map[string]models.Domain{}
+	}
+	r.rows[d.ID] = d
 }
 
 func wsJSON(t *testing.T, v any) string {
@@ -125,8 +137,29 @@ func TestApply_RestoresDomainWebSettings(t *testing.T) {
 		t.Errorf("switches = %+v, want the backup's", got)
 	}
 	// The webmail column defaults on: the insert alone would leave it on.
-	if len(doms.updated) != 1 || doms.updated[0].WebmailEnabled {
-		t.Errorf("updates after create = %d; want one writing webmail off", len(doms.updated))
+	if stored := doms.rows["d1"]; stored.WebmailEnabled {
+		t.Error("webmail stored on; the backup has it off")
+	}
+}
+
+// A domain the backup has switched off, or without SSL, comes back that way.
+func TestApply_KeepsDomainSwitchesOff(t *testing.T) {
+	doms := &wsDomains{}
+	var checked []models.Domain
+	dm := internalbackup.MetadataDomain{ID: "d1", Name: "shop.org", DocRoot: "/home/olduser/domains/shop.org/public_html",
+		IsEnabled: false, SSLEnabled: false}
+	Apply(context.Background(), wsMeta(dm), Deps{
+		Users: namedUsersRepo{username: "olduser"}, Domains: doms, CheckDomain: passCheck(&checked),
+	})
+	stored, ok := doms.rows["d1"]
+	if !ok {
+		t.Fatal("domain not restored")
+	}
+	if stored.IsEnabled || stored.SSLEnabled {
+		t.Errorf("stored enabled %v, SSL %v: want both off, as in the backup", stored.IsEnabled, stored.SSLEnabled)
+	}
+	if !stored.WebmailEnabled {
+		t.Error("webmail stored off; an archive without the field keeps it on")
 	}
 }
 
@@ -144,9 +177,6 @@ func TestApply_OldArchiveKeepsWWWAndWebmailOn(t *testing.T) {
 	}
 	if got := doms.created[0]; !got.CreateWWW || !got.WebmailEnabled {
 		t.Errorf("www %v, webmail %v: want both on", got.CreateWWW, got.WebmailEnabled)
-	}
-	if len(doms.updated) != 0 {
-		t.Errorf("updates after create = %d, want none", len(doms.updated))
 	}
 }
 

@@ -95,6 +95,10 @@ func (r *ppDomains) Create(ctx context.Context, d *models.Domain) error {
 	return nil
 }
 
+// Update stands for the write Apply makes after the insert, for a switch the
+// insert turned on.
+func (r *ppDomains) Update(context.Context, *models.Domain) error { return nil }
+
 func ppMeta() *internalbackup.AccountMetadata {
 	uname := "alice"
 	src := "p-src"

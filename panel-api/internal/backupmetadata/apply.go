@@ -321,6 +321,9 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 					r.Errors = append(r.Errors, fmt.Sprintf("domain %s (%s): its PHP pool was not restored; it uses the account's default PHP pool", dm.ID, dm.Name))
 				}
 			}
+			// These columns default on, and GORM's insert turns a false one
+			// into true, on the row as well. The update writes the backup's.
+			enabled, ssl, webmail := row.IsEnabled, row.SSLEnabled, row.WebmailEnabled
 			if err := d.Domains.Create(ctx, row); err != nil {
 				// Without the row its mailboxes, forwarders and app installs
 				// can't be stored either; skip them so this stays the error.
@@ -328,12 +331,10 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 				r.Errors = append(r.Errors, fmt.Sprintf("domain %s (%s): create: %v", dm.ID, dm.Name, err))
 				continue
 			}
-			// The webmail column defaults on, so the insert leaves a switched
-			// off webmail on (GORM skips a false bool with a default); the
-			// update writes it.
-			if !row.WebmailEnabled {
+			if !enabled || !ssl || !webmail {
+				row.IsEnabled, row.SSLEnabled, row.WebmailEnabled = enabled, ssl, webmail
 				if err := d.Domains.Update(ctx, row); err != nil {
-					r.Errors = append(r.Errors, fmt.Sprintf("domain %s (%s): webmail left on: %v", dm.ID, dm.Name, err))
+					r.Errors = append(r.Errors, fmt.Sprintf("domain %s (%s): left on, as a new domain is (enabled, SSL, webmail): %v", dm.ID, dm.Name, err))
 				}
 			}
 			ownDomains[dm.ID] = true

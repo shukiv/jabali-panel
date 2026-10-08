@@ -30,6 +30,10 @@ func (r *dcDomains) Create(_ context.Context, d *models.Domain) error {
 	return nil
 }
 
+// Update stands for the write Apply makes after the insert, for a switch the
+// insert turned on.
+func (r *dcDomains) Update(context.Context, *models.Domain) error { return nil }
+
 type dcMailboxes struct {
 	repository.MailboxRepository
 	created int
