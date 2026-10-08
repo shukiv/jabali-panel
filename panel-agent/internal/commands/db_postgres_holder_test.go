@@ -251,7 +251,7 @@ func TestPgLoadScoped_RefusesAHolderNameARoleAlreadyHas(t *testing.T) {
 		return "", false
 	})
 
-	err := pgLoadScoped(context.Background(), db, dumpFile(t), "", nil, true)
+	err := pgLoadScoped(context.Background(), db, dumpFile(t), "", nil)
 
 	if err == nil || err.Code != agentwire.CodeFailedPrecondition || !strings.Contains(err.Message, "isn't a restore holder") {
 		t.Fatalf("got %v, want failed_precondition naming the role", err)
@@ -270,7 +270,7 @@ func TestPgLoadScoped_WithAnOwnerHandsTheObjectsToIt(t *testing.T) {
 	db := "alice_pgy"
 	w := newPgWorld(t, func(string) (string, bool) { return "", false })
 
-	if err := pgLoadScoped(context.Background(), db, dumpFile(t), "alice_app", []string{"alice_app"}, false); err != nil {
+	if err := pgLoadScoped(context.Background(), db, dumpFile(t), "alice_app", []string{"alice_app"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -281,6 +281,26 @@ func TestPgLoadScoped_WithAnOwnerHandsTheObjectsToIt(t *testing.T) {
 	drop := w.script(t, `\set holder '`+pgHolderRole(db)+`'`, `DROP ROLE :"holder"`)
 	if rename < 0 || drop < rename {
 		t.Errorf("the idle holder wasn't dropped after the swap (rename %d, drop %d)", rename, drop)
+	}
+}
+
+// A restore on the Databases page of a database no role is granted on leaves
+// the objects with its holder, never with postgres.
+func TestDBPgRestore_WithNoOwnerTheHolderKeepsTheObjects(t *testing.T) {
+	db := "alice_pgn"
+	w := newPgWorld(t, func(string) (string, bool) { return "", false })
+
+	if err := pgLoadScoped(context.Background(), db, dumpFile(t), "", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	if w.ran(`REASSIGN OWNED BY "`+pgShadowRole(db)+`" TO "`+pgHolderRole(db)+`"`) < 0 {
+		t.Errorf("the objects didn't go to the holder; ran %v", w.lines)
+	}
+	for _, l := range w.lines {
+		if strings.Contains(l, "REASSIGN") && strings.Contains(l, `TO "postgres"`) {
+			t.Errorf("the objects went to postgres: %s", l)
+		}
 	}
 }
 

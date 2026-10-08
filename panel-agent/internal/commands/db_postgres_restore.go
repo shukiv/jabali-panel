@@ -61,8 +61,9 @@ import (
 //      re-apply DATABASE + table/sequence/default privileges to every granted
 //      role (MariaDB's GRANT ON db.* covers all tables — Postgres needs this
 //      explicitly); ALTER DATABASE OWNER TO postgres (jabali's create model);
-//      drop the shadow. When there are no granted roles, ownership falls to
-//      postgres.
+//      drop the shadow. When there are no granted roles, the objects go to the
+//      database's holder role (db_postgres_holder.go), never to postgres: the
+//      first role granted on the database later takes them over.
 //   4. swap: DROP the real db, RENAME <tmp> onto its name. A crash in the tiny
 //      gap between these leaves the restored data in the jbrt_* db (manually
 //      recoverable), never an empty database. CheckReserve guards the transient
@@ -248,7 +249,7 @@ func dbPgRestoreHandler(ctx context.Context, params json.RawMessage) (any, error
 	}
 	defer f.Close()
 
-	if aerr := pgLoadScoped(ctx, p.DBName, f, p.OwnerRole, p.GrantRoles, false); aerr != nil {
+	if aerr := pgLoadScoped(ctx, p.DBName, f, p.OwnerRole, p.GrantRoles); aerr != nil {
 		return nil, aerr
 	}
 
@@ -262,11 +263,10 @@ func dbPgRestoreHandler(ctx context.Context, params json.RawMessage) (any, error
 // pgLoadScoped loads the dump in f into PostgreSQL database db the way the
 // SECURITY MODEL above describes: as a non-superuser shadow role, into a
 // staging database swapped onto db only once the load and its post-pass
-// succeed. f is open and seekable. The restored objects go to ownerRole; with
-// no ownerRole, to the database's holder role when hold is set (see
-// pgHolderRole), and to postgres otherwise. Each of grantRoles gets the
-// access db.postgres.grant gives.
-func pgLoadScoped(ctx context.Context, db string, f *os.File, ownerRole string, grantRoles []string, hold bool) *agentwire.AgentError {
+// succeed. f is open and seekable. The restored objects go to ownerRole, or,
+// with none, to the database's holder role (see pgHolderRole). Each of
+// grantRoles gets the access db.postgres.grant gives.
+func pgLoadScoped(ctx context.Context, db string, f *os.File, ownerRole string, grantRoles []string) *agentwire.AgentError {
 	// Refuse to start loading when the PG data filesystem is already under the
 	// host reserve floor (mirrors db.restore's /var/lib/mysql check).
 	if err := hostreserve.CheckReserve("/var/lib/postgresql", 0); err != nil {
@@ -411,16 +411,11 @@ END $$;`, shadow, shadow, pwd, shadow, pwd)
 	// (4) Superuser post-pass on the STAGING db — ownership + grants, none of it
 	// from dump content.
 	ownerTarget := ownerRole
-	switch {
-	case ownerTarget != "":
-	case hold:
-		holder := pgHolderRole(db)
-		if aerr := pgEnsureHolder(ctx, holder); aerr != nil {
+	if ownerTarget == "" {
+		ownerTarget = pgHolderRole(db)
+		if aerr := pgEnsureHolder(ctx, ownerTarget); aerr != nil {
 			return aerr
 		}
-		ownerTarget = holder
-	default:
-		ownerTarget = "postgres"
 	}
 	if aerr := pgRestorePostPass(ctx, tmpDB, shadow, ownerTarget, grantRoles); aerr != nil {
 		return aerr

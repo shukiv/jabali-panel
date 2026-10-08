@@ -134,7 +134,7 @@ var loadRestoredMariaDBDump = loadMariaDBDumpScoped
 // a database user granted on it takes it over (GH #1993). grantRoles get
 // access to the restored database.
 var loadRestoredPostgresDump = func(ctx context.Context, db string, dump *os.File, grantRoles []string) error {
-	if aerr := pgLoadScoped(ctx, db, dump, "", grantRoles, true); aerr != nil {
+	if aerr := pgLoadScoped(ctx, db, dump, "", grantRoles); aerr != nil {
 		return aerr
 	}
 	return nil
