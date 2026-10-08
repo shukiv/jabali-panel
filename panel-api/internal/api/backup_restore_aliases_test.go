@@ -56,9 +56,25 @@ func TestRestoreAliasCheck_RefusesWhatTheAliasPageRefuses(t *testing.T) {
 	}
 }
 
+// Any store missing refuses: an unwired guard would find no conflict, and
+// without the settings the panel's hostname would pass.
 func TestRestoreAliasCheck_UnwiredRefuses(t *testing.T) {
-	if _, err := RestoreAliasCheck(nil, nil, nil)(context.Background(), rdcRow("site.org"), "shop.example.net"); err == nil {
-		t.Fatal("an unwired check must refuse")
+	doms, als, set := rdcDomains{}, rdcAliases{}, rdcSettings{}
+	for _, tc := range []struct {
+		name  string
+		check func(context.Context, *models.Domain, string) (string, error)
+		host  string
+	}{
+		{"nothing", RestoreAliasCheck(nil, nil, nil), "shop.example.net"},
+		{"no domains", RestoreAliasCheck(nil, als, set), "shop.example.net"},
+		{"no alias store", RestoreAliasCheck(doms, nil, set), "shop.example.net"},
+		{"no settings", RestoreAliasCheck(doms, als, nil), "panel.example.net"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if host, err := tc.check(context.Background(), rdcRow("site.org"), tc.host); err == nil {
+				t.Fatalf("stored %q; an unwired check must refuse", host)
+			}
+		})
 	}
 }
 
