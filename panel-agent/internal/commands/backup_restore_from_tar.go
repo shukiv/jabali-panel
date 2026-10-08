@@ -66,6 +66,9 @@ type backupRestoreFromTarParams struct {
 	// KeepExisting (GH #1993): add only what isn't on this server yet; see
 	// restoreEnforcement.KeepExisting. False (or absent) replaces.
 	KeepExisting bool `json:"keep_existing,omitempty"`
+	// SkipPostgres (GH #1993): restore no PostgreSQL database; see
+	// restoreEnforcement.SkipPostgres.
+	SkipPostgres bool `json:"skip_postgres,omitempty"`
 }
 
 // enforcement is what the restore enforces for these params.
@@ -78,6 +81,7 @@ func (p backupRestoreFromTarParams) enforcement() restoreEnforcement {
 		OwnedDockerSlugs:   p.OwnedDockerSlugs,
 		ForeignDockerSlugs: p.ForeignDockerSlugs,
 		KeepExisting:       p.KeepExisting,
+		SkipPostgres:       p.SkipPostgres,
 	}
 }
 
@@ -426,6 +430,13 @@ type backupInspectUploadedTarResult struct {
 	// enforcement. The tenant restore handler gates on it BEFORE applying, so an
 	// older agent (which never sets it) can't run an unrestricted tenant restore.
 	AllowlistSupported bool `json:"allowlist_supported"`
+	// Summary is what the restore preflight checks against this server (GH
+	// #1993): nil when the archive has no readable metadata. Never the
+	// metadata itself, which holds password hashes.
+	Summary *backup.BundleSummary `json:"summary,omitempty"`
+	// PreflightSupported is always true on an agent that reads Summary and
+	// honours skip_postgres; an older agent never sets it.
+	PreflightSupported bool `json:"preflight_supported"`
 }
 
 func backupInspectUploadedTarHandler(ctx context.Context, raw json.RawMessage) (any, error) {
@@ -441,13 +452,19 @@ func backupInspectUploadedTarHandler(ctx context.Context, raw json.RawMessage) (
 		return nil, bkInvalidArg("tar_path is not a regular file")
 	}
 
-	manifestBytes, err := readManifestFromZstdTar(ctx, tarClean)
+	manifestBytes, metadataBytes, err := readBundleFromZstdTar(ctx, tarClean)
 	if err != nil {
 		return nil, bkInvalidArg("archive inspect failed: " + err.Error())
 	}
+	return inspectUploadedBundle(manifestBytes, metadataBytes)
+}
+
+// inspectUploadedBundle is the inspect result for an archive's manifest and
+// metadata (nil when it has none).
+func inspectUploadedBundle(manifestBytes, metadataBytes []byte) (backupInspectUploadedTarResult, error) {
 	manifest, err := backup.AccountManifestFromBytes(manifestBytes)
 	if err != nil {
-		return nil, bkInvalidArg("manifest parse failed: " + err.Error())
+		return backupInspectUploadedTarResult{}, bkInvalidArg("manifest parse failed: " + err.Error())
 	}
 	// Components the UI can offer = the distinct restorable stage names in the
 	// manifest (manifest/meta are internal). Apply re-gates on actual presence.
@@ -460,7 +477,15 @@ func backupInspectUploadedTarHandler(ctx context.Context, raw json.RawMessage) (
 		comps = append(comps, st.Name)
 		seen[st.Name] = true
 	}
-	return backupInspectUploadedTarResult{User: manifest.User, Components: comps, AllowlistSupported: true}, nil
+	out := backupInspectUploadedTarResult{User: manifest.User, Components: comps, AllowlistSupported: true, PreflightSupported: true}
+	if metadataBytes != nil {
+		var m backup.AccountMetadata
+		if json.Unmarshal(metadataBytes, &m) == nil {
+			sum := backup.SummarizeMetadata(&m)
+			out.Summary = &sum
+		}
+	}
+	return out, nil
 }
 
 func init() {

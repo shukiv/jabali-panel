@@ -44,6 +44,12 @@ type AccountMetadata struct {
 	// reference pools by id).
 	PHPPools []MetadataPHPPool `json:"php_pools,omitempty"`
 
+	// PHPExtensions are the PHP extensions enabled on the source server for
+	// each PHP version the pools use (built-in ones left out), recorded by the
+	// agent at backup time so a restore can check this server has them
+	// (GH #1993). Nil in bundles made before it.
+	PHPExtensions map[string][]string `json:"php_extensions,omitempty"`
+
 	// MariaDB databases + their grant matrix.
 	Databases     []MetadataDatabase     `json:"databases,omitempty"`
 	DatabaseUsers []MetadataDatabaseUser `json:"database_users,omitempty"`

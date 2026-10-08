@@ -78,6 +78,10 @@ type restoreEnforcement struct {
 	// empty is left as it is and not claimed. False replaces: the account
 	// becomes a mirror of the backup.
 	KeepExisting bool
+	// SkipPostgres (GH #1993): restore no PostgreSQL database. The panel sets
+	// it when PostgreSQL is turned off on this server; each one is left out
+	// with a warning.
+	SkipPostgres bool
 }
 
 // restoreClaims names the databases and docker app data an upload-mode
@@ -726,6 +730,10 @@ func applyAccountRestore(
 			// for postgres engine. If present, route to pg_restore.
 			pgPath := filepath.Join(stagingRoot, "db", db+".pgdump")
 			if stagedEntry(stagingRoot, pgPath, false) == nil {
+				if enf.SkipPostgres {
+					warnings = append(warnings, fmt.Sprintf("db %s (postgres): not restored: PostgreSQL is turned off on this server", db))
+					continue
+				}
 				// CREATE DATABASE if missing. PG has no
 				// IF NOT EXISTS for CREATE DATABASE pre-9.x but
 				// we accept an "already exists" error as success.

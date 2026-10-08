@@ -478,6 +478,24 @@ export async function restoreDatabaseUploadAuto(
 
 // === GH #1408: restore from an uploaded backup archive (admin) ===
 
+// GH #1993: the restore preflight — the backup checked against this server
+// before Restore. A "block" check (a PHP version this server lacks) stops the
+// restore; "warn" checks name what won't be restored as it is.
+export interface RestorePreflightCheck {
+  area: string;
+  level: "ok" | "info" | "warn" | "block";
+  message: string;
+}
+
+export interface RestorePreflight {
+  blocked: boolean;
+  checks: RestorePreflightCheck[];
+}
+
+// The inspect and preflight calls read the uploaded archive on the server,
+// which can take up to about two minutes for a large one.
+const INSPECT_TIMEOUT_MS = 140_000;
+
 export interface UploadedBackupInfo {
   user: { id: string; username: string; email?: string; is_admin?: boolean };
   components: string[];
@@ -486,6 +504,8 @@ export interface UploadedBackupInfo {
   // server can create it (Packages wired). Both optional for old responses.
   target_exists?: boolean;
   create_supported?: boolean;
+  // GH #1993 (admin): the restore preflight.
+  preflight?: RestorePreflight;
 }
 
 // uploadBackupArchiveChunked streams a downloaded account backup .tar to the
@@ -547,6 +567,7 @@ export async function inspectUploadedBackup(
   const { data } = await apiClient.post<UploadedBackupInfo>(
     `${base}/restore-upload/inspect`,
     { upload_id: uploadId },
+    { timeout: INSPECT_TIMEOUT_MS },
   );
   return data;
 }
@@ -664,6 +685,9 @@ export interface UploadedBackup {
   // Detail and register only: whether account_username exists here.
   target_exists?: boolean;
   create_supported: boolean;
+  // Register only: the restore preflight (getUploadedBackupPreflight
+  // otherwise).
+  preflight?: RestorePreflight;
   created_at: string;
 }
 
@@ -674,10 +698,19 @@ export async function registerUploadedBackup(
   retention: UploadedBackupRetention,
   fileName: string,
 ): Promise<UploadedBackup> {
-  const { data } = await apiClient.post<{ data: UploadedBackup }>("/admin/uploaded-backups", {
-    upload_id: uploadId,
-    retention,
-    file_name: fileName,
+  const { data } = await apiClient.post<{ data: UploadedBackup }>(
+    "/admin/uploaded-backups",
+    { upload_id: uploadId, retention, file_name: fileName },
+    { timeout: INSPECT_TIMEOUT_MS },
+  );
+  return data.data;
+}
+
+// getUploadedBackupPreflight checks a kept upload against this server
+// (GH #1993).
+export async function getUploadedBackupPreflight(id: string): Promise<RestorePreflight> {
+  const { data } = await apiClient.get<{ data: RestorePreflight }>(`/admin/uploaded-backups/${id}/preflight`, {
+    timeout: INSPECT_TIMEOUT_MS,
   });
   return data.data;
 }

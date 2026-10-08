@@ -56,7 +56,8 @@ func TestCreateUserFromBundle_Guards(t *testing.T) {
 		w := httptest.NewRecorder()
 		c, _ := gin.CreateTestContext(w)
 		c.Request = httptest.NewRequest(http.MethodPost, "/x", nil)
-		if u, ok := h.createUserFromBundle(c, "/staged.tar.zst", target, nil); ok || u != nil {
+		ins, _, _ := h.inspectUpload(c.Request.Context(), "/staged.tar.zst")
+		if u, ok := h.createUserFromBundle(c, ins, target, nil); ok || u != nil {
 			t.Fatalf("guard must not create a user (ok=%v)", ok)
 		}
 		return w.Code

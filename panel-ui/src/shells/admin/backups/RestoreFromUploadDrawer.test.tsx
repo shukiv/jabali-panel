@@ -16,6 +16,7 @@ vi.mock("../../../apiClient", () => ({
   applyUploadedBackupRestore: vi.fn(),
   registerUploadedBackup: vi.fn(),
   getUploadedBackup: vi.fn(),
+  getUploadedBackupPreflight: vi.fn(),
   restoreKeptUploadedBackup: vi.fn(),
 }));
 
@@ -35,6 +36,7 @@ const MOCKED = [
   "applyUploadedBackupRestore",
   "registerUploadedBackup",
   "getUploadedBackup",
+  "getUploadedBackupPreflight",
   "restoreKeptUploadedBackup",
 ] as const;
 const m = api as unknown as Record<(typeof MOCKED)[number], ReturnType<typeof vi.fn>>;
@@ -84,6 +86,7 @@ beforeEach(() => {
   m.uploadBackupArchiveChunked.mockResolvedValue("upload-1");
   m.registerUploadedBackup.mockImplementation(async (_id: string, retention: string) => ({ ...KEPT, retention }));
   m.getUploadedBackup.mockResolvedValue(KEPT);
+  m.getUploadedBackupPreflight.mockResolvedValue({ blocked: false, checks: [] });
   m.restoreKeptUploadedBackup.mockResolvedValue({ status: "ok", applied: ["home", "db"] });
   m.inspectUploadedBackup.mockResolvedValue({
     user: { id: "u1", username: "alice" },
@@ -236,5 +239,56 @@ describe("RestoreFromUploadDrawer overwrite (GH #1993)", () => {
     expect(screen.getByText("Restoring database alice_wp (2 of 3)")).toBeTruthy();
     // 1 of 3 steps at 33% → 11% of the whole restore.
     expect(document.querySelector(".ant-progress")?.getAttribute("aria-valuenow")).toBe("11");
+  });
+});
+
+// GH #1993: before Restore the drawer shows the backup checked against this
+// server. A PHP version this server lacks blocks the restore.
+describe("RestoreFromUploadDrawer preflight (GH #1993)", () => {
+  const BLOCKED = {
+    blocked: true,
+    checks: [
+      { area: "php", level: "block", message: "PHP 7.4 isn't installed on this server, and the account's sites use it." },
+      { area: "postgres", level: "warn", message: "PostgreSQL is turned off on this server." },
+    ],
+  };
+
+  it("shows a kept upload's checks and blocks Restore", async () => {
+    m.getUploadedBackupPreflight.mockResolvedValue(BLOCKED);
+    renderDrawer({ uploaded: KEPT });
+    expect(await screen.findByText("This backup can't be restored here yet")).toBeTruthy();
+    expect(m.getUploadedBackupPreflight).toHaveBeenCalledWith(KEPT.id);
+    expect(screen.getByText(/PHP 7.4 isn't installed on this server/)).toBeTruthy();
+    expect(screen.getByText("PostgreSQL is turned off on this server.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Restore into alice/ })).toBeDisabled();
+  });
+
+  it("shows the checks the upload came back with, and restores past warnings", async () => {
+    m.registerUploadedBackup.mockResolvedValue({
+      ...KEPT,
+      preflight: { blocked: false, checks: [{ area: "mail", level: "warn", message: "Mail is turned off on this server." }] },
+    });
+    renderDrawer();
+    pickFile();
+    fireEvent.click(screen.getByText(/Upload & inspect/));
+    expect(await screen.findByText("Some of this backup won't be restored as it is")).toBeTruthy();
+    expect(m.getUploadedBackupPreflight).not.toHaveBeenCalled();
+    const restore = screen.getByRole("button", { name: /Restore into alice/ });
+    expect(restore).toBeEnabled();
+    fireEvent.click(restore);
+    await waitFor(() => expect(m.restoreKeptUploadedBackup).toHaveBeenCalled());
+  });
+
+  it("shows the checks of a restore the server blocked", async () => {
+    m.restoreKeptUploadedBackup.mockRejectedValue({
+      isAxiosError: true,
+      response: { status: 409, data: { error: "restore_preflight_blocked", detail: "PHP 7.4 isn't installed", preflight: BLOCKED } },
+    });
+    renderDrawer({ uploaded: KEPT });
+    const restore = await screen.findByRole("button", { name: /Restore into alice/ });
+    await waitFor(() => expect(restore).toBeEnabled());
+    fireEvent.click(restore);
+    expect(await screen.findByText("This backup can't be restored here yet")).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Restore into alice/ })).toBeDisabled();
   });
 });

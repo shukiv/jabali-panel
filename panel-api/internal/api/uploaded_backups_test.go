@@ -143,9 +143,16 @@ const ubAdmin = "01KADMIN000000000000000000"
 // backup.restore_from_tar reply (an error fails it).
 type ubAgent struct {
 	inspectErr error
-	restore    func() (string, error)
-	caps       string           // agent.version capabilities; empty = every one a restore needs
-	seen       []map[string]any // backup.restore_from_tar params
+	// inspect is the backup.inspect_uploaded_tar reply; empty is alice's
+	// archive, with nothing for the preflight to check.
+	inspect string
+	// phpVersions and phpExts answer php.version.list and php.ext.list
+	// (version -> the ext list's extensions JSON).
+	phpVersions string
+	phpExts     map[string]string
+	restore     func() (string, error)
+	caps        string           // agent.version capabilities; empty = every one a restore needs
+	seen        []map[string]any // backup.restore_from_tar params
 }
 
 func (a *ubAgent) agent() *mockAgent {
@@ -161,7 +168,19 @@ func (a *ubAgent) agent() *mockAgent {
 			if a.inspectErr != nil {
 				return nil, a.inspectErr
 			}
-			return json.RawMessage(`{"user":{"username":"alice","email":"alice@example.org"},"components":["home","db","mail"]}`), nil
+			if a.inspect != "" {
+				return json.RawMessage(a.inspect), nil
+			}
+			return json.RawMessage(`{"user":{"username":"alice","email":"alice@example.org"},"components":["home","db","mail"],"preflight_supported":true}`), nil
+		case "php.version.list":
+			return json.RawMessage(`{"versions":[` + a.phpVersions + `]}`), nil
+		case "php.ext.list":
+			v := params.(map[string]string)["version"]
+			ext, ok := a.phpExts[v]
+			if !ok {
+				return nil, fmt.Errorf("no ext list for %s", v)
+			}
+			return json.RawMessage(`{"version":"` + v + `","extensions":` + ext + `}`), nil
 		case "backup.restore_from_tar":
 			if p, ok := params.(map[string]any); ok {
 				a.seen = append(a.seen, p)
@@ -179,6 +198,15 @@ func (a *ubAgent) agent() *mockAgent {
 type ubEnv struct {
 	r    *gin.Engine
 	repo *memUploaded
+	// settings has every feature on; a test turns one off.
+	settings *models.ServerSettings
+}
+
+// allFeaturesOn is server settings with PostgreSQL, mail, DNS and Docker apps
+// for users on.
+func allFeaturesOn() *models.ServerSettings {
+	return &models.ServerSettings{PostgresEnabled: true, MailEnabled: true, DNSEnabled: true,
+		DockerMarketplaceEnabled: true, DockerAppsForUsersEnabled: true}
 }
 
 func newUBEnv(t *testing.T, a *ubAgent) ubEnv {
@@ -195,6 +223,8 @@ func newUBEnv(t *testing.T, a *ubAgent) ubEnv {
 	cfg.Agent = a.agent()
 	cfg.Users = ubUsers{}
 	cfg.UploadedBackups = repo
+	settings := allFeaturesOn()
+	cfg.ServerSettings = &fakeSettingsRepo{s: settings}
 	r := gin.New()
 	v1 := r.Group("/api/v1", func(c *gin.Context) {
 		ginctx.SetClaims(c, &auth.AccessClaims{UserID: ubAdmin, IsAdmin: true})
@@ -202,7 +232,7 @@ func newUBEnv(t *testing.T, a *ubAgent) ubEnv {
 	})
 	h := &backupHandler{cfg: cfg}
 	h.registerUploadedBackupRoutes(v1.Group("/admin"))
-	return ubEnv{r: r, repo: repo}
+	return ubEnv{r: r, repo: repo, settings: settings}
 }
 
 func (e ubEnv) do(t *testing.T, method, path string, body any) *httptest.ResponseRecorder {

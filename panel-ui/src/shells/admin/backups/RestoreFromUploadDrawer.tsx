@@ -8,8 +8,11 @@
 // choice and listed under Backups, so a failed restore is retried without
 // uploading again. Opened with `uploaded`, the drawer restores a kept upload.
 // A restore adds only what the account is missing unless "Overwrite existing
-// items with the backup" is checked.
+// items with the backup" is checked. Before Restore, the drawer shows the
+// backup checked against this server (the preflight); a blocking check
+// disables Restore.
 import { useEffect, useState } from "react";
+import axios from "axios";
 import {
   Alert,
   Button,
@@ -28,10 +31,12 @@ import { feedback } from "../../../lib/feedback";
 import {
   applyUploadedBackupRestore,
   getUploadedBackup,
+  getUploadedBackupPreflight,
   inspectUploadedBackup,
   registerUploadedBackup,
   restoreKeptUploadedBackup,
   uploadBackupArchiveChunked,
+  type RestorePreflight,
   type RestoreProgress,
   type UploadedBackup,
   type UploadedBackupInfo,
@@ -41,6 +46,7 @@ import {
 import { useListQuery } from "../../../hooks/useQueries";
 import { extractApiError } from "../../../apiErrors";
 import { RestoreProgressView } from "./RestoreProgressView";
+import { RestorePreflightView } from "./RestorePreflightView";
 
 const COMPONENT_LABELS: Record<string, string> = {
   home: "Home directory (website files)",
@@ -95,6 +101,10 @@ export function RestoreFromUploadDrawer({ open, onClose, ownerMode, uploaded, on
   const [packageId, setPackageId] = useState<string | null>(null);
   // GH #1993: off = keep what the account already has, add what is missing.
   const [overwrite, setOverwrite] = useState(false);
+  // GH #1993: the backup checked against this server, and whether that check
+  // is still running.
+  const [preflight, setPreflight] = useState<RestorePreflight | null>(null);
+  const [checking, setChecking] = useState(false);
   const { items: packages } = useListQuery<{ id: string; name: string }>({ resource: "packages" });
 
   const reset = () => {
@@ -112,6 +122,8 @@ export function RestoreFromUploadDrawer({ open, onClose, ownerMode, uploaded, on
     setKept(null);
     setProgress(null);
     setOverwrite(false);
+    setPreflight(null);
+    setChecking(false);
   };
 
   // showKept fills the ready phase from a kept upload.
@@ -126,6 +138,7 @@ export function RestoreFromUploadDrawer({ open, onClose, ownerMode, uploaded, on
     setSelected(b.components);
     setTargetUser(b.account_username);
     setCreateUser(b.target_exists === false && b.create_supported);
+    setPreflight(b.preflight ?? null);
     setPhase("ready");
   };
 
@@ -136,7 +149,19 @@ export function RestoreFromUploadDrawer({ open, onClose, ownerMode, uploaded, on
     setPhase("inspecting");
     getUploadedBackup(uploadedId)
       .then((b) => {
-        if (!cancelled) showKept(b);
+        if (cancelled) return;
+        showKept(b);
+        setChecking(true);
+        return getUploadedBackupPreflight(uploadedId)
+          .then((p) => {
+            if (!cancelled) setPreflight(p);
+          })
+          .catch((err) => {
+            if (!cancelled) feedback.message.error(extractApiError(err, "Could not check the backup against this server"));
+          })
+          .finally(() => {
+            if (!cancelled) setChecking(false);
+          });
       })
       .catch((err) => {
         if (cancelled) return;
@@ -175,6 +200,7 @@ export function RestoreFromUploadDrawer({ open, onClose, ownerMode, uploaded, on
       }
       const meta = await inspectUploadedBackup(id, base);
       setInfo(meta);
+      setPreflight(meta.preflight ?? null);
       // Default selection = everything the archive holds, restricted to the
       // audited-safe set in ownerMode (docker/dns aren't self-service).
       const offered = ownerMode
@@ -212,6 +238,10 @@ export function RestoreFromUploadDrawer({ open, onClose, ownerMode, uploaded, on
       else feedback.message.warning("Nothing was applied — see details");
     } catch (err) {
       const reason = extractApiError(err, "Restore failed");
+      // The server ran the preflight again and it blocked: show its checks.
+      if (axios.isAxiosError(err) && err.response?.data?.error === "restore_preflight_blocked" && err.response.data.preflight) {
+        setPreflight(err.response.data.preflight as RestorePreflight);
+      }
       if (kept) {
         onKeptChange?.();
         feedback.message.error(`${reason} — the uploaded backup is kept; restore it again from Backups`);
@@ -312,6 +342,7 @@ export function RestoreFromUploadDrawer({ open, onClose, ownerMode, uploaded, on
               message={`Backup of ${info.user.username}`}
               description={info.user.email || undefined}
             />
+            <RestorePreflightView preflight={preflight} checking={checking} />
             {!ownerMode && info.target_exists === false ? (
               info.create_supported ? (
                 // GH #1408 create-from-manifest: the bundle's user isn't here yet.
@@ -433,6 +464,8 @@ export function RestoreFromUploadDrawer({ open, onClose, ownerMode, uploaded, on
                 loading={phase === "applying"}
                 disabled={
                   phase === "applying" ||
+                  checking ||
+                  preflight?.blocked === true ||
                   !targetUser ||
                   selected.length === 0 ||
                   // create needed but this server can't create the user
