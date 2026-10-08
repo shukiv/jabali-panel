@@ -1,14 +1,14 @@
 slug: zitadel
 name: ZITADEL
 tags: ["Security", "Developer tools"]
-version: "4.19.3"
+version: "4.19.4"
 description: >-
   Self-hosted identity & access management: a complete OIDC/OAuth2/SAML provider with login UI, passkeys, MFA, and multi-tenant orgs. Two services: the ZITADEL Go server and a PostgreSQL event store. Any OIDC/SAML app can use it for login. TLS terminates at the nginx vhost (container runs plain HTTP, ExternalSecure=true); Console + OIDC work over HTTP/1.1. First login: admin@zitadel.<your-domain> with the generated ADMIN_PASSWORD (+suffix Aa1!) from the .env; change required on first sign-in.
 icon: icon.svg
 upstream: https://github.com/zitadel/zitadel
 documentation: https://zitadel.com/docs
 
-image_channel: ghcr.io/zitadel/zitadel:v4.19.3@sha256:d8430210beea5319bce553a0e6ff77167e30633535c3e072938c6b675f3c115e
+image_channel: ghcr.io/zitadel/zitadel:v4.19.4@sha256:90a3045b80a2b5b395e1e770302076906af3a5911225af7c464b4f3bd00d0a1b
 update_mode: manual
 
 resources:
