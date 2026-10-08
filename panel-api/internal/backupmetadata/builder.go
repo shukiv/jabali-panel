@@ -128,6 +128,10 @@ type Deps struct {
 	// account the restore created. With Untrusted, each other FTP subaccount
 	// Apply restores is listed in the report: it gets a new password.
 	FtpPasswordsStaged map[string]bool
+	// AccountCreated (GH #1993): the restore created the account, so its
+	// home holds nothing but the uploaded file's data. With Untrusted, the
+	// file's SSH keys are restored only then.
+	AccountCreated bool
 	// MailAddresses takes a restored mailbox's address off every Stalwart
 	// account before Apply stores the mailbox. Stalwart's registry keeps
 	// every alias it has seen, so a mailbox at an address that was once

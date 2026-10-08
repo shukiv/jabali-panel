@@ -886,7 +886,25 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 	// reconciler-tick convergence model the rest of restored state uses (see
 	// applyRestoreMetadata), so the batch carries no Scheduler — restored keys
 	// re-converge on the next tick, not immediately.
-	if d.SSHKeys != nil {
+	//
+	// SECURITY (GH #1993): an SSH key is a login to the account. From an
+	// uploaded file it is restored only into an account the restore created,
+	// whose home holds nothing but the file's data: the file's author never
+	// gets a login to data they didn't supply. Into an account that was
+	// already here each key the account doesn't have is listed instead.
+	if d.SSHKeys != nil && d.Untrusted && !d.AccountCreated {
+		have := map[string]bool{}
+		if existing, err := d.SSHKeys.ListByUserID(ctx, m.User.ID); err == nil {
+			for _, k := range existing {
+				have[k.Fingerprint] = true
+			}
+		}
+		for _, k := range m.SSHKeys {
+			if !have[k.Fingerprint] {
+				r.Errors = append(r.Errors, fmt.Sprintf("ssh_key %q: not restored: an uploaded backup brings SSH keys back only into an account the restore created; check the key, then add it under SSH Keys", k.Name))
+			}
+		}
+	} else if d.SSHKeys != nil {
 		batch := sshkeyops.NewRestoreBatch(sshkeyops.Deps{Keys: d.SSHKeys})
 		for _, k := range m.SSHKeys {
 			row := &models.SSHKey{

@@ -35,6 +35,10 @@ func checkFtpPasswordsAsked(t *testing.T, calls []map[string]any, rebuilds []upl
 	if len(rebuilds) != 1 || strings.Join(rebuilds[0].ftpPasswordsStaged, ",") != "alice_web" {
 		t.Errorf("metadata rebuild got %+v, want the staged alice_web", rebuilds)
 	}
+	// The rebuild restores the file's SSH keys only into a created account.
+	if len(rebuilds) == 1 && rebuilds[0].accountCreated != created {
+		t.Errorf("metadata rebuild accountCreated = %v, want %v", rebuilds[0].accountCreated, created)
+	}
 }
 
 func TestRunUploadRestore_AsksForFtpPasswordsOnlyForACreatedAccount(t *testing.T) {
@@ -62,5 +66,14 @@ func TestRestoreMetadataDeps_FtpPasswordsStaged(t *testing.T) {
 	d := h.restoreMetadataDeps(&uploadedData{ftpPasswordsStaged: []string{"alice_web"}})
 	if !d.FtpPasswordsStaged["alice_web"] || d.FtpPasswordsStaged["alice_ro"] {
 		t.Fatalf("FtpPasswordsStaged = %v, want alice_web only", d.FtpPasswordsStaged)
+	}
+}
+
+func TestRestoreMetadataDeps_AccountCreated(t *testing.T) {
+	h := &backupHandler{}
+	for _, created := range []bool{true, false} {
+		if d := h.restoreMetadataDeps(&uploadedData{accountCreated: created}); d.AccountCreated != created {
+			t.Errorf("AccountCreated = %v, want %v", d.AccountCreated, created)
+		}
 	}
 }
