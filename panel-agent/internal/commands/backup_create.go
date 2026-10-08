@@ -522,6 +522,11 @@ func runMetadataStage(ctx context.Context, req backupCreateParams) backup.Manife
 	if perr := enrichPostgresRoleAuth(ctx, req.Metadata); perr != nil {
 		st.Warnings = append(st.Warnings, "PostgreSQL role passwords: "+perr.Error())
 	}
+	// The PHP extensions the account's PHP versions have here, for a
+	// restore's preflight on another server.
+	if xerr := enrichPHPExtensions(req.Metadata); xerr != nil {
+		st.Warnings = append(st.Warnings, "PHP extensions: "+xerr.Error())
+	}
 	body, err := json.Marshal(req.Metadata)
 	if err != nil {
 		st.Status = backup.StageStatusFailed

@@ -41,6 +41,7 @@ func (h *backupHandler) registerUploadedBackupRoutes(admin *gin.RouterGroup) {
 	admin.GET("/uploaded-backups", h.listUploadedBackups)
 	admin.POST("/uploaded-backups", h.registerUploadedBackup)
 	admin.GET("/uploaded-backups/:id", h.getUploadedBackup)
+	admin.GET("/uploaded-backups/:id/preflight", h.uploadedBackupPreflight)
 	admin.POST("/uploaded-backups/:id/restore", h.restoreUploadedBackup)
 	admin.DELETE("/uploaded-backups/:id", h.deleteUploadedBackup)
 }
@@ -66,6 +67,9 @@ type uploadedBackupView struct {
 	CreateSupported bool  `json:"create_supported"`
 	// RestoreProgress is the running restore's progress by step (GH #1993).
 	RestoreProgress *restoreProgress `json:"restore_progress,omitempty"`
+	// Preflight is the restore preflight (register only; the detail view
+	// has its own endpoint, as it reads the whole file).
+	Preflight *restorePreflight `json:"preflight,omitempty"`
 }
 
 // uploadedRestoreProgressKey keys the progress of a restore of an uploaded
@@ -207,20 +211,14 @@ func (h *backupHandler) registerUploadedBackup(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "agent_unavailable"})
 		return
 	}
-	raw, err := h.cfg.Agent.Call(c.Request.Context(), "backup.inspect_uploaded_tar", map[string]string{"tar_path": staged})
-	if err != nil {
+	extendWriteDeadline(c, inspectWriteBudget)
+	ins, raw, err := h.inspectUpload(c.Request.Context(), staged)
+	if err != nil && raw == nil {
 		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "not_an_account_backup",
 			"detail": agentReason(err, "the file could not be read as a Jabali account backup")})
 		return
 	}
-	var ins struct {
-		User struct {
-			Username string `json:"username"`
-			Email    string `json:"email"`
-		} `json:"user"`
-		Components []string `json:"components"`
-	}
-	if json.Unmarshal(raw, &ins) != nil || !restoreTargetUsernameRE.MatchString(ins.User.Username) {
+	if err != nil || !restoreTargetUsernameRE.MatchString(ins.User.Username) {
 		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "not_an_account_backup",
 			"detail": "the file is not a Jabali account backup this server can restore"})
 		return
@@ -269,7 +267,10 @@ func (h *backupHandler) registerUploadedBackup(c *gin.Context) {
 	}
 	c.Set("audit_target", row.AccountUsername)
 	c.Set("audit_target_type", "user")
-	c.JSON(http.StatusCreated, gin.H{"data": h.uploadedView(c.Request.Context(), row, true)})
+	view := h.uploadedView(c.Request.Context(), row, true)
+	preflight := h.preflightFor(c.Request.Context(), ins)
+	view.Preflight = &preflight
+	c.JSON(http.StatusCreated, gin.H{"data": view})
 }
 
 type restoreUploadedBackupRequest struct {
@@ -314,6 +315,12 @@ func (h *backupHandler) restoreUploadedBackup(c *gin.Context) {
 	if keepExistingRefused(c, h.cfg.Agent, req.Overwrite) {
 		return
 	}
+	// GH #1993: the preflight, on the server's own reading of the file,
+	// before the restore is claimed.
+	ins, preflight, ok := h.gateUploadRestore(c, path)
+	if !ok {
+		return
+	}
 	now := time.Now().UTC()
 	switch err := h.cfg.UploadedBackups.ClaimRestore(c.Request.Context(), b.ID, req.TargetUsername, now, uploadedbackups.StaleBefore(now)); {
 	case errors.Is(err, repository.ErrUploadedBackupBusy):
@@ -336,7 +343,7 @@ func (h *backupHandler) restoreUploadedBackup(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "target_user_not_found", "detail": "user does not exist — enable 'create from backup', or create the user first"})
 			return
 		}
-		newTarget, ok := h.createUserFromBundle(c, path, req.TargetUsername, req.PackageID)
+		newTarget, ok := h.createUserFromBundle(c, ins, req.TargetUsername, req.PackageID)
 		if !ok {
 			h.finishUploadedRestore(b, models.UploadedBackupFailed, uploadedRestoreResult{Error: "the account could not be created from the backup"})
 			return // helper wrote the error response
@@ -346,20 +353,20 @@ func (h *backupHandler) restoreUploadedBackup(c *gin.Context) {
 
 	c.Set("audit_target", req.TargetUsername)
 	c.Set("audit_target_type", "user")
-	go h.runUploadedBackupRestore(b, path, req.TargetUsername, target.ID, req.Components, userCreated, req.Overwrite)
+	go h.runUploadedBackupRestore(b, path, req.TargetUsername, target.ID, req.Components, userCreated, req.Overwrite, preflight.skips)
 	c.JSON(http.StatusAccepted, gin.H{"status": models.UploadedBackupRestoring, "id": b.ID, "user_created": userCreated})
 }
 
 // runUploadedBackupRestore is the detached restore of an uploaded backup. The
 // archive stays, unless its retention is delete_after_restore and the restore
 // succeeded.
-func (h *backupHandler) runUploadedBackupRestore(b *models.UploadedBackup, path, username, targetID string, components []string, userCreated, overwrite bool) {
+func (h *backupHandler) runUploadedBackupRestore(b *models.UploadedBackup, path, username, targetID string, components []string, userCreated, overwrite bool, skips restoreSkips) {
 	ctx, cancel := context.WithTimeout(context.Background(), restoreJobTimeout)
 	defer cancel()
 
 	report, done := progressReporter(uploadedRestoreProgressKey(b.ID))
 	defer done()
-	res, err := h.restoreUploadedAccount(ctx, path, username, targetID, components, uploadModeFor(overwrite), report)
+	res, err := h.restoreUploadedAccount(ctx, path, username, targetID, components, uploadModeFor(overwrite), skips, report)
 	result := uploadedRestoreResult{Applied: res.Applied, Warnings: append(res.Warnings, res.MetadataErrors...)}
 	status := models.UploadedBackupDone
 	if err != nil {

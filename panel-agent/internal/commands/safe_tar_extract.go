@@ -209,19 +209,21 @@ func readFileFromPlainTar(srcPath, name string) ([]byte, error) {
 	return nil, fmt.Errorf("%s not found in container", name)
 }
 
-// readManifestFromZstdTar streams the zstd tar read-only (writes NOTHING) and
-// returns the account manifest bytes (<job-id>/manifest/manifest.json). Used by
-// the inspect step to show what a backup holds before the destructive apply. It
-// stops as soon as the manifest is found.
-func readManifestFromZstdTar(ctx context.Context, srcPath string) ([]byte, error) {
+// readBundleFromZstdTar streams the zstd tar read-only (writes NOTHING) and
+// returns the account manifest (<job-id>/manifest/manifest.json) and its
+// metadata bundle (<job-id>/meta/metadata.json), nil when the archive has
+// none. Used by the inspect step to show what a backup holds before the
+// destructive apply, and by the restore preflight (GH #1993). Archive members
+// come in no set order, so it reads until it has both or the archive ends.
+func readBundleFromZstdTar(ctx context.Context, srcPath string) (manifest, metadata []byte, err error) {
 	zstd := execCommandContext(ctx, "zstd", "-dc", srcPath)
 	stdout, err := zstd.StdoutPipe()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	zstd.Stderr = io.Discard
 	if err := zstd.Start(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer func() {
 		_ = stdout.Close()
@@ -230,29 +232,46 @@ func readManifestFromZstdTar(ctx context.Context, srcPath string) ([]byte, error
 
 	tr := tar.NewReader(stdout)
 	entries := 0
-	for {
+	// A restore reads both files under the archive's one top-level directory;
+	// so does this.
+	top := ""
+	for manifest == nil || metadata == nil {
 		hdr, err := tr.Next()
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
-			return nil, fmt.Errorf("read tar: %w", err)
+			return nil, nil, fmt.Errorf("read tar: %w", err)
 		}
 		entries++
 		if entries > safeTarMaxEntries {
 			break
 		}
 		rel, rerr := safeRelPath(hdr.Name)
-		if rerr != nil || rel == "" {
+		if rerr != nil || rel == "" || hdr.Typeflag != tar.TypeReg {
 			continue
 		}
 		parts := strings.Split(rel, string(filepath.Separator))
-		if len(parts) >= 3 && parts[1] == "manifest" &&
-			parts[len(parts)-1] == "manifest.json" && hdr.Typeflag == tar.TypeReg {
-			return io.ReadAll(io.LimitReader(tr, 8<<20)) // 8 MiB cap — a manifest is tiny
+		if len(parts) != 3 || (top != "" && parts[0] != top) {
+			continue
+		}
+		switch {
+		case manifest == nil && parts[1] == "manifest" && parts[2] == "manifest.json":
+			if manifest, err = io.ReadAll(io.LimitReader(tr, 8<<20)); err != nil {
+				return nil, nil, fmt.Errorf("read manifest: %w", err)
+			}
+			top = parts[0]
+		case metadata == nil && parts[1] == "meta" && parts[2] == "metadata.json":
+			if metadata, err = io.ReadAll(io.LimitReader(tr, 64<<20)); err != nil {
+				return nil, nil, fmt.Errorf("read metadata: %w", err)
+			}
+			top = parts[0]
 		}
 	}
-	return nil, fmt.Errorf("no manifest/manifest.json in archive")
+	if manifest == nil {
+		return nil, nil, fmt.Errorf("no manifest/manifest.json in archive")
+	}
+	return manifest, metadata, nil
 }
 
 // safeRelPath normalizes a tar member name to a relative path under the root, or

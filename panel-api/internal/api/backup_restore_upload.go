@@ -232,16 +232,20 @@ func (h *backupHandler) restoreUploadInspect(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "agent_unavailable"})
 		return
 	}
-	raw, err := h.cfg.Agent.Call(c.Request.Context(), "backup.inspect_uploaded_tar", map[string]string{"tar_path": path})
-	if err != nil {
+	extendWriteDeadline(c, inspectWriteBudget)
+	ins, raw, err := h.inspectUpload(c.Request.Context(), path)
+	if err != nil && raw == nil {
 		respondAgentError(c, err)
 		return
 	}
 	// GH #1408: annotate whether the bundle's own user already exists (so the UI
 	// offers restore-into-existing vs create-from-backup) and whether this
-	// server can create it (Packages wired).
+	// server can create it (Packages wired). GH #1993: add the preflight; the
+	// summary it was made from stays here.
 	var parsed map[string]any
-	if json.Unmarshal(raw, &parsed) == nil {
+	if err == nil && json.Unmarshal(raw, &parsed) == nil {
+		delete(parsed, "summary")
+		parsed["preflight"] = h.preflightFor(c.Request.Context(), ins)
 		targetExists := false
 		if u, ok := parsed["user"].(map[string]any); ok {
 			if uname, _ := u["username"].(string); uname != "" {
@@ -323,6 +327,12 @@ func (h *backupHandler) restoreUploadApply(c *gin.Context) {
 	if keepExistingRefused(c, h.cfg.Agent, req.Overwrite) {
 		return
 	}
+	// GH #1993: the preflight runs again here, on the server's own reading of
+	// the file, so a blocked restore never starts.
+	ins, preflight, ok := h.gateUploadRestore(c, path)
+	if !ok {
+		return
+	}
 
 	target, uerr := h.cfg.Users.FindByUsername(c.Request.Context(), req.TargetUsername)
 	userCreated := false
@@ -333,7 +343,7 @@ func (h *backupHandler) restoreUploadApply(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "target_user_not_found", "detail": "user does not exist — enable 'create from backup', or create the user first"})
 			return
 		}
-		newTarget, ok := h.createUserFromBundle(c, path, req.TargetUsername, req.PackageID)
+		newTarget, ok := h.createUserFromBundle(c, ins, req.TargetUsername, req.PackageID)
 		if !ok {
 			return // helper wrote the error response
 		}
@@ -355,6 +365,7 @@ func (h *backupHandler) restoreUploadApply(c *gin.Context) {
 		components:  req.Components,
 		userCreated: userCreated,
 		overwrite:   req.Overwrite,
+		skips:       preflight.skips,
 	})
 
 	c.JSON(http.StatusAccepted, gin.H{"status": "restoring", "upload_id": req.UploadID, "user_created": userCreated})
@@ -395,18 +406,23 @@ func (h *backupHandler) resolveOrCreateUserFromTar(ctx context.Context, tarPath,
 	if h.cfg.Packages == nil {
 		return nil, &createBundleError{http.StatusNotImplemented, "create_from_bundle_unavailable", "create-from-backup is not enabled on this server"}
 	}
-	raw, err := h.cfg.Agent.Call(ctx, "backup.inspect_uploaded_tar", map[string]string{"tar_path": tarPath})
-	if err != nil {
+	ins, raw, err := h.inspectUpload(ctx, tarPath)
+	if err != nil && raw == nil {
 		return nil, &createBundleError{http.StatusBadGateway, "inspect_failed", restoreFailureDetail(err)}
 	}
-	var ins struct {
-		User struct {
-			Username string `json:"username"`
-			Email    string `json:"email"`
-			IsAdmin  bool   `json:"is_admin"`
-		} `json:"user"`
+	if err != nil {
+		return nil, &createBundleError{http.StatusBadRequest, "bundle_unreadable", ""}
 	}
-	if json.Unmarshal(raw, &ins) != nil || ins.User.Username == "" {
+	return h.createUserFromInspect(ctx, ins, targetUsername, packageID)
+}
+
+// createUserFromInspect is resolveOrCreateUserFromTar for a file already
+// inspected as ins, so a restore reads the archive once (GH #1993).
+func (h *backupHandler) createUserFromInspect(ctx context.Context, ins uploadInspect, targetUsername string, packageID *string) (*models.User, error) {
+	if h.cfg.Packages == nil {
+		return nil, &createBundleError{http.StatusNotImplemented, "create_from_bundle_unavailable", "create-from-backup is not enabled on this server"}
+	}
+	if ins.User.Username == "" {
 		return nil, &createBundleError{http.StatusBadRequest, "bundle_unreadable", ""}
 	}
 	if ins.User.Username != targetUsername {
@@ -451,11 +467,11 @@ func (h *backupHandler) resolveOrCreateUserFromTar(ctx context.Context, tarPath,
 	return res.User, nil
 }
 
-// createUserFromBundle is the gin wrapper over resolveOrCreateUserFromTar for
-// the single-account apply handler: on error it writes the HTTP response and
+// createUserFromBundle is the gin wrapper over createUserFromInspect for the
+// single-account apply handlers: on error it writes the HTTP response and
 // returns ok=false.
-func (h *backupHandler) createUserFromBundle(c *gin.Context, tarPath, targetUsername string, packageID *string) (*models.User, bool) {
-	u, err := h.resolveOrCreateUserFromTar(c.Request.Context(), tarPath, targetUsername, packageID)
+func (h *backupHandler) createUserFromBundle(c *gin.Context, ins uploadInspect, targetUsername string, packageID *string) (*models.User, bool) {
+	u, err := h.createUserFromInspect(c.Request.Context(), ins, targetUsername, packageID)
 	if err != nil {
 		var ce *createBundleError
 		if errors.As(err, &ce) {
@@ -488,6 +504,8 @@ type uploadRestoreArgs struct {
 	userCreated bool
 	components  []string
 	overwrite   bool
+	// skips: the parts the restore leaves out (the preflight's).
+	skips restoreSkips
 }
 
 // runUploadRestore performs the detached restore: agent apply → metadata rebuild
@@ -502,7 +520,7 @@ func (h *backupHandler) runUploadRestore(a uploadRestoreArgs) {
 	// (restoreUploadedAccount).
 	report, done := progressReporter(a.outcomePath)
 	defer done()
-	res, err := h.restoreUploadedAccount(ctx, a.path, a.username, a.targetID, a.components, uploadModeFor(a.overwrite), report)
+	res, err := h.restoreUploadedAccount(ctx, a.path, a.username, a.targetID, a.components, uploadModeFor(a.overwrite), a.skips, report)
 	if err != nil {
 		detail := err.Error()
 		if a.userCreated {

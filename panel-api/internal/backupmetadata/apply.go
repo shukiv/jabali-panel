@@ -101,6 +101,7 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 		return r
 	}
 	now := time.Now().UTC()
+	dropSkippedParts(m, d)
 
 	// 1) User row first — every other table FKs to user_id.
 	created, uerr := applyUser(ctx, m, d, now)

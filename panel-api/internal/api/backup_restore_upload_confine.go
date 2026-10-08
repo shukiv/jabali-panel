@@ -137,6 +137,9 @@ type uploadedData struct {
 	// overwriteRows: "Overwrite existing items with the backup" on an
 	// account upload door, so Apply also updates the account's existing rows.
 	overwriteRows bool
+	// skipMail / skipPostgres: the restore leaves the backup's mail or
+	// PostgreSQL out, because it is turned off on this server.
+	skipMail, skipPostgres bool
 }
 
 // applyUploadedMetadata is applyRestoreMetadataForUser; tests swap it to see
@@ -203,14 +206,21 @@ func uploadModeFor(overwrite bool) uploadRestoreMode {
 // the agent ran. So the agent runs twice: everything but mail, then (after
 // the metadata rebuild) mail, with the account's domains looked up again.
 //
+// skips leaves out the parts turned off on this server (GH #1993: the
+// preflight); the zero value leaves nothing out.
+//
 // report, when not nil, receives the restore's progress by step (GH #1993).
-func (h *backupHandler) restoreUploadedAccount(ctx context.Context, tarPath, username, targetID string, components []string, mode uploadRestoreMode, report func(restoreProgress)) (uploadedAccountRestore, error) {
+func (h *backupHandler) restoreUploadedAccount(ctx context.Context, tarPath, username, targetID string, components []string, mode uploadRestoreMode, skips restoreSkips, report func(restoreProgress)) (uploadedAccountRestore, error) {
 	var out uploadedAccountRestore
 	keepExisting := mode == uploadKeepExisting
-	mail := len(components) == 0 || containsStr(components, "mail")
-	steps := 3 // files, rows, DNS records
+	mailSelected := len(components) == 0 || containsStr(components, "mail")
+	mail := mailSelected && !skips.mail
+	steps := 2 // files, rows
 	if mail {
-		steps = 4
+		steps++
+	}
+	if !skips.dns {
+		steps++ // DNS records, last
 	}
 	params := map[string]any{
 		"job_id":          ids.NewULID(),
@@ -219,15 +229,26 @@ func (h *backupHandler) restoreUploadedAccount(ctx context.Context, tarPath, use
 		"components":      components,
 		"keep_existing":   keepExisting,
 	}
-	if mail {
-		params["skip_components"] = []string{"mail"}
+	var skip []string
+	if mailSelected {
+		skip = append(skip, "mail")
+	}
+	if skips.docker {
+		skip = append(skip, "docker")
+	}
+	if len(skip) > 0 {
+		params["skip_components"] = skip
+	}
+	if skips.postgres {
+		params["skip_postgres"] = true
 	}
 	first, err := h.restoreFromTarReporting(ctx, targetID, params,
 		restoreProgress{Step: 1, Steps: steps, Label: restoreStepFilesLabel}, report)
 	if err != nil {
 		return out, err
 	}
-	out.Applied, out.Warnings = first.Applied, first.Warnings
+	out.Applied = first.Applied
+	out.Warnings = append(append([]string{}, skips.notes...), first.Warnings...)
 	if !first.UploadConfinementEnforced {
 		// The capability gate ran before the restore; an agent that still
 		// didn't confine it (swapped mid-flight) must not get its metadata
@@ -240,12 +261,16 @@ func (h *backupHandler) restoreUploadedAccount(ctx context.Context, tarPath, use
 	out.MetadataErrors = applyUploadedMetadata(h, ctx, first.Metadata, targetID,
 		uploadedData{databases: first.RestoredDatabases, dockerSlugs: first.RestoredDockerSlugs,
 			archiveMariaDBs: first.ArchiveMariaDBs, archivePostgresDBs: first.ArchivePostgresDBs,
-			keepExisting: keepExisting, overwriteRows: mode == uploadOverwrite})
+			keepExisting: keepExisting, overwriteRows: mode == uploadOverwrite,
+			skipMail: skips.mail, skipPostgres: skips.postgres})
 
 	// GH #1993: last, the domains' custom DNS records. RestoreBundleDNS has the
 	// reconciler make the restored domains' zones and adds the records once
 	// they exist.
 	withDNS := func() (uploadedAccountRestore, error) {
+		if skips.dns {
+			return out, nil
+		}
 		if report != nil {
 			report(restoreProgress{Step: steps, Steps: steps, Label: restoreStepDNSLabel})
 		}

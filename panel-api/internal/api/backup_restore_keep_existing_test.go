@@ -30,7 +30,7 @@ func keAgent(caps string, restores *[]map[string]any) *mockAgent {
 		case "agent.version":
 			return json.RawMessage(`{"version":"x","capabilities":[` + caps + `]}`), nil
 		case "backup.inspect_uploaded_tar":
-			return json.RawMessage(`{"allowlist_supported":true,"user":{"username":"alice"}}`), nil
+			return json.RawMessage(`{"allowlist_supported":true,"preflight_supported":true,"user":{"username":"alice"}}`), nil
 		case "backup.restore_from_tar":
 			*restores = append(*restores, params.(map[string]any))
 			return json.RawMessage(`{"applied":["home → /home/alice"],"upload_confinement_enforced":true,"db_allowlist_enforced":true,"mail_allowlist_enforced":true}`), nil
@@ -78,6 +78,7 @@ func TestRestoreUploadApply_KeepingNeedsAnAgentThatKeeps(t *testing.T) {
 			cfg := ucConfig()
 			cfg.Agent = keAgent(c.caps, &restores)
 			cfg.Users = ubUsers{}
+			cfg.ServerSettings = &fakeSettingsRepo{s: allFeaturesOn()}
 			h := &backupHandler{cfg: cfg}
 			stage(t, "upload0001")
 

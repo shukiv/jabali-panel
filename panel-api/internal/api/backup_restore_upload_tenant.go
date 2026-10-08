@@ -180,6 +180,7 @@ func (h *meBackupHandler) restoreUploadInspect(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "agent_unavailable"})
 		return
 	}
+	extendWriteDeadline(c, inspectWriteBudget)
 	raw, err := h.cfg.Agent.Call(c.Request.Context(), "backup.inspect_uploaded_tar", map[string]string{"tar_path": path})
 	if err != nil {
 		respondAgentError(c, err)
@@ -230,7 +231,9 @@ func (h *meBackupHandler) restoreUploadApply(c *gin.Context) {
 
 	// FAIL-CLOSED capability gate: confirm the agent enforces the ownership
 	// allowlists BEFORE we let it touch the live system. inspect reads only the
-	// manifest (no extraction), so an old agent is refused with zero live change.
+	// manifest and metadata (no extraction), so an old agent is refused with
+	// zero live change.
+	extendWriteDeadline(c, inspectWriteBudget)
 	iraw, ierr := h.cfg.Agent.Call(ctx, "backup.inspect_uploaded_tar", map[string]string{"tar_path": path})
 	if ierr != nil {
 		respondAgentError(c, ierr)

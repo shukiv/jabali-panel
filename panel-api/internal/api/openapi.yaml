@@ -2771,6 +2771,11 @@ paths:
     post:
       tags: [Backups]
       summary: Inspect an uploaded backup archive (user + restorable components)
+      description: >-
+        preflight is the check of the backup against this server (GH #1993): {blocked, checks:
+        [{area, level, message}]}, level ok, info, warn or block. A PHP version the account's
+        sites use and this server lacks blocks the restore; missing PHP extensions, and PostgreSQL,
+        mail, DNS or Docker apps for users turned off here, warn (the restore leaves those out).
       security: [ { KratosSession: [] } ]
       responses: { "200": { description: OK } }
 
@@ -2781,7 +2786,8 @@ paths:
       security: [ { KratosSession: [] } ]
       responses:
         "202": { description: Accepted }
-        "409": { description: "agent_update_required: the server agent predates confined restores of uploaded backups (GH #1993)" }
+        "409": { description: "agent_update_required: the server agent predates confined restores of uploaded backups (GH #1993); or restore_preflight_blocked, with the preflight" }
+        "422": { description: "not_an_account_backup: the file could not be read" }
 
   /admin/uploaded-backups:
     get:
@@ -2802,7 +2808,7 @@ paths:
         The agent checks the file is a Jabali account backup before it is kept.
       security: [ { KratosSession: [] } ]
       responses:
-        "201": { description: Created }
+        "201": { description: "Created; data carries the restore preflight (see restore-upload/inspect)" }
         "404": { description: "upload_not_found: no finished upload with this upload_id for the caller" }
         "422": { description: "invalid_retention, or not_an_account_backup with the reason" }
 
@@ -2824,6 +2830,18 @@ paths:
         "404": { description: Not found }
         "409": { description: "restore_in_progress: a restore is using this backup" }
 
+  /admin/uploaded-backups/{id}/preflight:
+    get:
+      tags: [Backups]
+      summary: The restore preflight of an uploaded backup (GH #1993)
+      description: "{data: {blocked, checks}}, as restore-upload/inspect's preflight. It reads the archive, so it can take a while for a large one."
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses:
+        "200": { description: OK }
+        "404": { description: Not found }
+        "422": { description: "not_an_account_backup: the file could not be read" }
+
   /admin/uploaded-backups/{id}/restore:
     post:
       tags: [Backups]
@@ -2834,7 +2852,8 @@ paths:
       responses:
         "202": { description: Accepted }
         "404": { description: "not_found, or target_user_not_found" }
-        "409": { description: "restore_in_progress, or agent_update_required" }
+        "409": { description: "restore_in_progress, agent_update_required, or restore_preflight_blocked with the preflight" }
+        "422": { description: "not_an_account_backup: the file could not be read" }
         "410": { description: "archive_missing: the archive file is gone; delete the entry" }
 
   /admin/system/full-backup/{run_id}/package:

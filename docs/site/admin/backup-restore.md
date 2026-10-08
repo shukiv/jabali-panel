@@ -145,6 +145,39 @@ server's disk. The 12-hour cleanup of `/var/lib/jabali-uploads` skips that
 directory. A tenant's own restore from upload (in their account) keeps
 nothing: the file is deleted once the restore ends.
 
+### Checks before a restore
+
+Before **Restore**, the restore drawer checks the uploaded backup against this
+server and lists what it found (GH #1993). The panel runs the same check again
+when the restore starts, so a backup the check blocks is never restored.
+
+- **PHP versions** — every PHP version the account's sites use must be
+  installed here. A missing one blocks the restore: install it under **PHP
+  Versions**, then restore.
+- **PHP extensions** — the extensions the source server had enabled for those
+  versions, other than the ones built into PHP. One this server lacks is a
+  warning: the restore runs, and a site that needs it doesn't work until you
+  enable it under **PHP Versions**. A backup made before Jabali recorded the
+  extensions can't be checked for them, and the drawer says so.
+- **PostgreSQL**, **mail**, **DNS** and **Docker apps for users** — when one
+  is turned off on this server and the backup has some of it, the drawer warns
+  that it won't be restored, and the restore leaves it out:
+  - PostgreSQL off: the backup's PostgreSQL databases and their users;
+  - mail off: its mailboxes (with their auto-replies and shares) and
+    forwarders. The domains keep their mail settings;
+  - DNS off: its custom DNS records;
+  - Docker apps for users off, or the Docker engine not installed: its Docker
+    apps.
+
+  The restore report lists each part left out. To restore one, turn it on
+  under **Server Settings** first, then restore again.
+
+The check reads the archive, so it can take a minute or two for a large
+backup. The server agent must be as new as the panel to run it; with an older
+agent the restore is refused until the agent is updated. A tenant's restore of
+their own account and a full-server restore (`jabali system restore
+--from-tar`) run no check and leave nothing out.
+
 ### Progress
 
 A restore from an uploaded backup shows its progress while it runs, in the
@@ -154,6 +187,7 @@ restore drawer and in the **Uploaded backups** list (GH #1993):
    a percentage), then each part in turn ("Restoring database shop_wp (2 of 4)").
 2. **Rebuilding the account's domains, mailboxes and settings.**
 3. **Restoring mail** — only when the backup has mail and it was selected.
+4. **Restoring DNS records** — the backup's custom ones; skipped when DNS is turned off here.
 
 A tenant restoring their own account sees the same detail for its one step.
 The server agent must be as new as the panel to report what a step is doing;

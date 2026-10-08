@@ -49,6 +49,8 @@ func (a *progressAgent) Call(_ context.Context, cmd string, params any) (json.Ra
 	switch cmd {
 	case "agent.version":
 		return json.RawMessage(`{"version":"x","capabilities":["restore_upload_confinement","restore_keep_existing"]}`), nil
+	case "backup.inspect_uploaded_tar":
+		return json.RawMessage(`{"user":{"username":"alice"},"preflight_supported":true}`), nil
 	case "backup.restore_progress":
 		return json.RawMessage(`{"phase":"applying","stage":"db","item":"alice_wp","index":2,"count":3}`), nil
 	case "backup.restore_from_tar":
@@ -73,6 +75,7 @@ func TestUploadedBackupRestore_ShowsProgressByStep(t *testing.T) {
 	cfg.Agent = pa
 	cfg.Users = ubUsers{}
 	cfg.UploadedBackups = e.repo
+	cfg.ServerSettings = &fakeSettingsRepo{s: allFeaturesOn()}
 	e.r = gin.New()
 	v1 := e.r.Group("/api/v1", func(c *gin.Context) {
 		ginctx.SetClaims(c, &auth.AccessClaims{UserID: ubAdmin, IsAdmin: true})
@@ -193,7 +196,7 @@ func TestRestoreUploadedAccount_ReportsTheDNSStepLast(t *testing.T) {
 			}
 			steps[p.Steps] = true
 		}
-		if _, err := h.restoreUploadedAccount(context.Background(), a.path, "alice", "T", c.components, uploadOverwrite, report); err != nil {
+		if _, err := h.restoreUploadedAccount(context.Background(), a.path, "alice", "T", c.components, uploadOverwrite, restoreSkips{}, report); err != nil {
 			t.Fatal(err)
 		}
 		if strings.Join(labels, "|") != strings.Join(c.want, "|") || len(steps) != 1 || !steps[len(c.want)] {

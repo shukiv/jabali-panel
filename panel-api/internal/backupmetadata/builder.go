@@ -90,6 +90,12 @@ type Deps struct {
 	// existing PHP pool or domain takes the backup's settings within the
 	// rules of its own pages.
 	OverwriteRows bool
+	// SkipMail / SkipPostgres (GH #1993): the restore leaves the backup's
+	// mail (mailboxes, their autoresponders and shares, and forwarders) or its
+	// PostgreSQL databases and users out, because mail or PostgreSQL is turned
+	// off on this server.
+	SkipMail     bool
+	SkipPostgres bool
 	// MailboxSettings changes an existing mailbox the way the mailbox page
 	// does, so the mail server follows. With OverwriteRows, nil leaves
 	// existing mailboxes as they are, with a line in the report.
