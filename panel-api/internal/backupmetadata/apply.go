@@ -275,6 +275,7 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 				CreatedAt:             now,
 				UpdatedAt:             now,
 			}
+			setBackupPHPSettings(row, dm, bundleUser, account)
 			for _, p := range setRestoredWebSettings(row, dm, bundleUser, account) {
 				r.Errors = append(r.Errors, fmt.Sprintf("domain %s (%s): %s", dm.ID, dm.Name, p))
 			}

@@ -129,6 +129,21 @@ type MetadataDomain struct {
 	PHPMaxInputVars       *int    `json:"php_max_input_vars,omitempty"`
 	PHPMaxExecutionTime   *int    `json:"php_max_execution_time,omitempty"`
 	PHPMaxInputTime       *int    `json:"php_max_input_time,omitempty"`
+	// The domain's other PHP settings (GH #1993), as the PHP settings page
+	// stores them: nil inherits the pool's or the server's value.
+	// PHPOpenBasedir is the token form (internal/phpbasedir). An archive made
+	// before them carries only the limits above and leaves
+	// PHPSettingsComplete false: a restore over an existing domain then keeps
+	// that domain's own settings instead of clearing them.
+	PHPDisplayErrors      *bool   `json:"php_display_errors,omitempty"`
+	PHPErrorReporting     *int    `json:"php_error_reporting,omitempty"`
+	PHPTimezone           *string `json:"php_timezone,omitempty"`
+	PHPLogErrors          *bool   `json:"php_log_errors,omitempty"`
+	PHPFileUploads        *bool   `json:"php_file_uploads,omitempty"`
+	PHPShortOpenTag       *bool   `json:"php_short_open_tag,omitempty"`
+	PHPOpenBasedir        *string `json:"php_open_basedir,omitempty"`
+	PHPAllowURLFopen      *bool   `json:"php_allow_url_fopen,omitempty"`
+	PHPSettingsComplete   bool    `json:"php_settings_complete,omitempty"`
 	RateLimitRPS          uint32  `json:"rate_limit_rps"`
 	ConnectionLimit       uint32  `json:"connection_limit"`
 	ListenIPv4ID          *uint64 `json:"listen_ipv4_id,omitempty"`

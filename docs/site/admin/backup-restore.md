@@ -272,9 +272,12 @@ is off by default:
     the PHP pool page would refuse leave the pool's own in place. A PHP
     setting both have takes the backup's value; one only the pool has stays;
   - a domain takes the backup's on/off state, redirect-all, index priority,
-    PHP limits, rate and connection limits, PHP pool, catch-all and outbound
-    disclaimer, through the checks its own pages run. A PHP limit the
+    PHP settings, rate and connection limits, PHP pool, catch-all and outbound
+    disclaimer, through the checks its own pages run. A PHP setting the
     account's hosting package lets only an administrator set stays as it is.
+    A backup made before Jabali recorded every PHP setting (GH #1993) changes
+    only the PHP limits (memory, upload and post size, input variables,
+    execution and input time); the domain keeps its other PHP settings.
     The catch-all is taken only when it points at a mailbox the account had
     on this server before the restore. A backup without a catch-all or a
     disclaimer clears the domain's. The domain's name, document root, SSL,
@@ -329,11 +332,15 @@ it into the target account only (GH #1993):
   domain's settings after reviewing them.
 - **Index priority** on a domain that the domain page doesn't offer is left
   out; the domain gets the default.
-- **PHP limits** on a domain (memory, upload and post size, input variables,
-  execution and input time) that the domain's PHP settings page would refuse
-  are left out, and so is one the account's hosting package lets only an
-  administrator set. When the package can't be read, every limit is left out.
-  The domain uses the server's defaults for them.
+- **PHP settings** on a domain (the limits, error display and reporting, time
+  zone, error logging, file uploads, short open tags, `open_basedir` and
+  `allow_url_fopen`) that the domain's PHP settings page would refuse are left
+  out, and so is one the account's hosting package lets only an administrator
+  set. `open_basedir` and `allow_url_fopen` are security settings: the package
+  must let the tenant set them (`tenant_privileged`), which an account without
+  a package never does, and `open_basedir` may list only folders inside the
+  account's home. When the package can't be read, every PHP setting is left
+  out. The domain uses the server's defaults for them.
 - **FTP passwords** — an FTP or SFTP subaccount's password comes back only
   into an account the restore created, whose home holds nothing but the
   archive's data (GH #1993). It is taken only for the account's own

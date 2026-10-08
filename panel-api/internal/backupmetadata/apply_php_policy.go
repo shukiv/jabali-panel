@@ -4,16 +4,21 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
+	internalbackup "git.jabali-panel.com/shukivaknin/jabali2/internal/backup"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 )
 
 // GH #1993: an uploaded file was written by whoever made it, so a domain it
-// brings takes a PHP limit only when the account's package lets a tenant set
-// it (GH #1701), as the PHP settings page does for the tenant.
+// brings takes a PHP setting only when the account's package lets a tenant set
+// it (GH #1701), as the PHP settings page does for the tenant. open_basedir and
+// allow_url_fopen need tenant_privileged, which an account without a package
+// never has.
 
-// phpLimitField is one per-domain PHP limit a backup carries, by the directive
-// the package's PHP policy names.
+// phpLimitField is one per-domain PHP setting a backup carries, by the
+// directive the package's PHP policy names. It covers every directive the PHP
+// settings page writes (models.PHPPolicyDirectives).
 type phpLimitField struct {
 	directive string
 	set       bool
@@ -28,12 +33,20 @@ func phpLimitFields(row *models.Domain) []phpLimitField {
 		{"max_input_vars", row.PHPMaxInputVars != nil, func() { row.PHPMaxInputVars = nil }},
 		{"max_execution_time", row.PHPMaxExecutionTime != nil, func() { row.PHPMaxExecutionTime = nil }},
 		{"max_input_time", row.PHPMaxInputTime != nil, func() { row.PHPMaxInputTime = nil }},
+		{"display_errors", row.PHPDisplayErrors != nil, func() { row.PHPDisplayErrors = nil }},
+		{"error_reporting", row.PHPErrorReporting != nil, func() { row.PHPErrorReporting = nil }},
+		{"date.timezone", row.PHPTimezone != nil, func() { row.PHPTimezone = nil }},
+		{"log_errors", row.PHPLogErrors != nil, func() { row.PHPLogErrors = nil }},
+		{"file_uploads", row.PHPFileUploads != nil, func() { row.PHPFileUploads = nil }},
+		{"short_open_tag", row.PHPShortOpenTag != nil, func() { row.PHPShortOpenTag = nil }},
+		{"open_basedir", row.PHPOpenBasedir != nil, func() { row.PHPOpenBasedir = nil }},
+		{"allow_url_fopen", row.PHPAllowURLFopen != nil, func() { row.PHPAllowURLFopen = nil }},
 	}
 }
 
-// restoredPHPLimitsPolicy clears each PHP limit on row that the account's
+// restoredPHPLimitsPolicy clears each PHP setting on row that the account's
 // package lets only an administrator set, and returns a line for each. When
-// the package can't be read, it clears every limit: the domain then uses the
+// the package can't be read, it clears every one: the domain then uses the
 // server's defaults.
 func restoredPHPLimitsPolicy(ctx context.Context, d Deps, userID string, row *models.Domain) []string {
 	var set []phpLimitField
@@ -58,6 +71,24 @@ func restoredPHPLimitsPolicy(ctx context.Context, d Deps, userID string, row *mo
 		}
 	}
 	return notes
+}
+
+// setBackupPHPSettings sets the PHP settings beyond the limits on dst to the
+// backup's. open_basedir names the account's folders under the username the
+// backup was made with; they move onto the account's username here, as the
+// document root does, and the checks then hold every entry to that home.
+func setBackupPHPSettings(dst *models.Domain, dm internalbackup.MetadataDomain, bundleUser, account string) {
+	dst.PHPDisplayErrors, dst.PHPErrorReporting, dst.PHPTimezone = dm.PHPDisplayErrors, dm.PHPErrorReporting, dm.PHPTimezone
+	dst.PHPLogErrors, dst.PHPFileUploads, dst.PHPShortOpenTag = dm.PHPLogErrors, dm.PHPFileUploads, dm.PHPShortOpenTag
+	dst.PHPAllowURLFopen, dst.PHPOpenBasedir = dm.PHPAllowURLFopen, nil
+	if dm.PHPOpenBasedir != nil {
+		entries := strings.Split(*dm.PHPOpenBasedir, ":")
+		for i, e := range entries {
+			entries[i] = rehomePath(e, "/home", bundleUser, account)
+		}
+		v := strings.Join(entries, ":")
+		dst.PHPOpenBasedir = &v
+	}
 }
 
 // accountPackage is the account's hosting package, nil when it has none.

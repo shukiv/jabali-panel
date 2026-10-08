@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/phpbasedir"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/domainops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 )
@@ -32,8 +33,9 @@ var errRestoreChecksUnwired = errors.New("the restore domain checks are not full
 //   - raw nginx directives that fail the admin directive validator;
 //   - a redirect-all target or type that the update door would refuse (both
 //     are dropped together, so a type is never left without its target).
-//   - a per-domain PHP limit the PHP settings page would refuse (the agent
-//     renders the sizes into the site's web server config).
+//   - a per-domain PHP setting the PHP settings page would refuse (the agent
+//     renders them into the site's web server config). open_basedir from an
+//     uploaded file may list only paths inside the owner's home.
 //   - an index priority the domain page doesn't offer (GH #1993); the domain
 //     then gets the default.
 //
@@ -80,7 +82,7 @@ func RestoreDomainCheck(domains domainops.SuffixDomainFinder, aliases domainops.
 		} else {
 			row.IndexPriority = p
 		}
-		warnings = append(warnings, dropRestoredPHPLimits(row)...)
+		warnings = append(warnings, dropRestoredPHPSettings(row, ownerUsername, source)...)
 		warnings = append(warnings, dropRestoredWebSettings(ctx, row, ownerUsername, settings, previews, source)...)
 		return warnings, nil
 	}
@@ -118,41 +120,86 @@ func restoredRedirectProblem(row *models.Domain) string {
 	return ""
 }
 
-// dropRestoredPHPLimits clears each per-domain PHP limit the PHP settings page
-// would refuse and returns one warning for each.
-func dropRestoredPHPLimits(row *models.Domain) []string {
+// dropRestoredPHPSettings clears each per-domain PHP setting the PHP settings
+// page would refuse, with a warning, and stores open_basedir in the page's
+// canonical form. From an uploaded file open_basedir is held to the tenant's
+// rules: only paths inside the owner's home (GH #1993).
+func dropRestoredPHPSettings(row *models.Domain, ownerUsername string, source RestoreSource) []string {
 	var warnings []string
-	for _, f := range []struct {
-		name string
-		v    **string
-	}{
-		{"memory_limit", &row.PHPMemoryLimit},
-		{"upload_max_filesize", &row.PHPUploadMaxFilesize},
-		{"post_max_size", &row.PHPPostMaxSize},
-	} {
-		if *f.v == nil {
+	for _, s := range restoredPHPSettingRules {
+		if s.check == nil {
 			continue
 		}
-		if err := validateSizeParam(**f.v); err != nil {
-			*f.v = nil
-			warnings = append(warnings, fmt.Sprintf("PHP %s dropped: %v", f.name, err))
-		}
-	}
-	for _, f := range []struct {
-		name string
-		v    **int
-	}{
-		{"max_input_vars", &row.PHPMaxInputVars},
-		{"max_execution_time", &row.PHPMaxExecutionTime},
-		{"max_input_time", &row.PHPMaxInputTime},
-	} {
-		if *f.v == nil {
-			continue
-		}
-		if err := validateIntParam(**f.v, f.name); err != nil {
-			*f.v = nil
-			warnings = append(warnings, fmt.Sprintf("PHP %s dropped: %v", f.name, err))
+		if err := s.check(row, ownerUsername, source == RestoreFromUpload); err != nil {
+			s.clear(row)
+			warnings = append(warnings, fmt.Sprintf("PHP %s dropped: %v", s.directive, err))
 		}
 	}
 	return warnings
+}
+
+// restoredPHPSetting is the PHP settings page's rule for one directive it
+// writes. check returns why the page refuses the row's value (nil when the
+// value is unset or accepted) and may rewrite it to the stored form; clear
+// unsets it. An on/off switch has no check: the page takes either value.
+type restoredPHPSetting struct {
+	directive string
+	check     func(row *models.Domain, owner string, tenant bool) error
+	clear     func(row *models.Domain)
+}
+
+// restoredPHPSettingRules covers every directive in
+// models.PHPPolicyDirectives (TestRestoredPHPSettingRules_CoverEveryPageDirective).
+var restoredPHPSettingRules = []restoredPHPSetting{
+	phpSizeSetting("memory_limit", func(d *models.Domain) **string { return &d.PHPMemoryLimit }),
+	phpSizeSetting("upload_max_filesize", func(d *models.Domain) **string { return &d.PHPUploadMaxFilesize }),
+	phpSizeSetting("post_max_size", func(d *models.Domain) **string { return &d.PHPPostMaxSize }),
+	phpIntSetting("max_input_vars", func(d *models.Domain) **int { return &d.PHPMaxInputVars }, phpRangeCheck("max_input_vars")),
+	phpIntSetting("max_execution_time", func(d *models.Domain) **int { return &d.PHPMaxExecutionTime }, phpRangeCheck("max_execution_time")),
+	phpIntSetting("max_input_time", func(d *models.Domain) **int { return &d.PHPMaxInputTime }, phpRangeCheck("max_input_time")),
+	{directive: "display_errors"},
+	phpIntSetting("error_reporting", func(d *models.Domain) **int { return &d.PHPErrorReporting }, validateErrorReporting),
+	{"date.timezone", func(row *models.Domain, _ string, _ bool) error {
+		if row.PHPTimezone == nil {
+			return nil
+		}
+		return validateTimezone(*row.PHPTimezone)
+	}, func(row *models.Domain) { row.PHPTimezone = nil }},
+	{directive: "log_errors"},
+	{directive: "file_uploads"},
+	{directive: "short_open_tag"},
+	{"open_basedir", func(row *models.Domain, owner string, tenant bool) error {
+		if row.PHPOpenBasedir == nil {
+			return nil
+		}
+		norm, err := phpbasedir.Normalize(*row.PHPOpenBasedir, owner, tenant)
+		if err != nil {
+			return err
+		}
+		row.PHPOpenBasedir = &norm
+		return nil
+	}, func(row *models.Domain) { row.PHPOpenBasedir = nil }},
+	{directive: "allow_url_fopen"},
+}
+
+func phpSizeSetting(directive string, field func(*models.Domain) **string) restoredPHPSetting {
+	return restoredPHPSetting{directive, func(row *models.Domain, _ string, _ bool) error {
+		if v := *field(row); v != nil {
+			return validateSizeParam(*v)
+		}
+		return nil
+	}, func(row *models.Domain) { *field(row) = nil }}
+}
+
+func phpIntSetting(directive string, field func(*models.Domain) **int, valid func(int) error) restoredPHPSetting {
+	return restoredPHPSetting{directive, func(row *models.Domain, _ string, _ bool) error {
+		if v := *field(row); v != nil {
+			return valid(*v)
+		}
+		return nil
+	}, func(row *models.Domain) { *field(row) = nil }}
+}
+
+func phpRangeCheck(name string) func(int) error {
+	return func(v int) error { return validateIntParam(v, name) }
 }
