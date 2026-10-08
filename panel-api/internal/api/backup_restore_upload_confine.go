@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dbops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
@@ -142,6 +143,15 @@ type uploadedData struct {
 	skipMail, skipPostgres bool
 }
 
+// regrantRestoredPostgres grants the account's PostgreSQL database users on
+// the databases a restore loaded again (see dbops.RegrantRestoredPostgres).
+func (h *backupHandler) regrantRestoredPostgres(ctx context.Context, accountID string, names []string) (errs, notes []string) {
+	if h.cfg.Agent == nil {
+		return nil, nil
+	}
+	return dbops.RegrantRestoredPostgres(ctx, h.cfg.Agent, h.cfg.Databases, h.cfg.DatabaseGrants, h.cfg.DatabaseUsers, accountID, names)
+}
+
 // applyUploadedMetadata is applyRestoreMetadataForUser; tests swap it to see
 // what an upload restore hands the metadata rebuild.
 var applyUploadedMetadata = (*backupHandler).applyRestoreMetadataForUser
@@ -164,6 +174,7 @@ type restoreFromTarReply struct {
 	RestoredDockerSlugs       []string        `json:"restored_docker_slugs"`
 	ArchiveMariaDBs           []string        `json:"archive_mariadb_databases"`
 	ArchivePostgresDBs        []string        `json:"archive_postgres_databases"`
+	RestoredPostgresDBs       []string        `json:"restored_postgres_databases"`
 	Stages                    []struct {
 		Name string `json:"name"`
 	} `json:"stages"`
@@ -263,6 +274,11 @@ func (h *backupHandler) restoreUploadedAccount(ctx context.Context, tarPath, use
 			archiveMariaDBs: first.ArchiveMariaDBs, archivePostgresDBs: first.ArchivePostgresDBs,
 			keepExisting: keepExisting, overwriteRows: mode == uploadOverwrite,
 			skipMail: skips.mail, skipPostgres: skips.postgres})
+	// GH #1993: the restored PostgreSQL databases' users get their access
+	// again, and the first takes over the restored objects.
+	pgErrs, pgNotes := h.regrantRestoredPostgres(ctx, targetID, first.RestoredPostgresDBs)
+	out.MetadataErrors = append(out.MetadataErrors, pgErrs...)
+	out.Warnings = append(out.Warnings, pgNotes...)
 
 	// GH #1993: last, the domains' custom DNS records. RestoreBundleDNS has the
 	// reconciler make the restored domains' zones and adds the records once

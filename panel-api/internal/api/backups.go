@@ -24,6 +24,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/backupmetadata"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/backupwrapperhelpers"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dbops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/middleware"
@@ -1182,6 +1183,9 @@ func (h *backupHandler) runAccountRestoreJob(jobID string, dest *models.BackupDe
 		// snapshot's meta stage — the bundle the finalizer applies to
 		// rebuild panel DB rows (JAB-312). Empty on old snapshots.
 		Metadata json.RawMessage `json:"metadata,omitempty"`
+		// RestoredPostgresDBs are the PostgreSQL databases the restore
+		// loaded (GH #1993).
+		RestoredPostgresDBs []string `json:"restored_postgres_databases"`
 	}
 	finalStatus := models.BackupJobStatusSucceeded
 	finalErr := ""
@@ -1227,7 +1231,11 @@ func (h *backupHandler) runAccountRestoreJob(jobID string, dest *models.BackupDe
 		if rerr != nil {
 			meta = result.Metadata
 		}
-		if errs := h.applyRestoreMetadata(ctx, meta, nil); len(errs) > 0 {
+		errs := h.applyRestoreMetadata(ctx, meta, nil)
+		// GH #1993: the restored PostgreSQL databases' users get their access
+		// again, and the first takes over the restored objects.
+		pgErrs, _ := h.regrantRestoredPostgres(ctx, targetID, result.RestoredPostgresDBs)
+		if errs = append(errs, pgErrs...); len(errs) > 0 {
 			if finalStatus == models.BackupJobStatusSucceeded {
 				finalStatus = models.BackupJobStatusPartial
 			}
@@ -2717,7 +2725,7 @@ func (h *meBackupHandler) restoreSelective(c *gin.Context) {
 			h.cfg.logErr("selective restore: destination lookup failed", derr, "dest_id", *job.DestinationID)
 		}
 	}
-	go h.runSelectiveRestoreJob(restoreJob.ID, job.SnapshotID, *owner.Username, req, ownedDomains, restoreDest)
+	go h.runSelectiveRestoreJob(restoreJob.ID, job.SnapshotID, *owner.Username, owner.ID, req, ownedDomains, restoreDest)
 	c.JSON(http.StatusAccepted, gin.H{"status": "queued", "job_id": restoreJob.ID})
 }
 
@@ -2734,7 +2742,7 @@ type selectiveRestoreOutcome struct {
 // completion and seals the job row with the outcome. Detached from the
 // request; every context is fresh (a status write on the dead request
 // context would be a silent no-op).
-func (h *meBackupHandler) runSelectiveRestoreJob(jobID, manifestSnap, username string, req meRestoreSelectiveRequest, ownedDomains map[string]string, dest *models.BackupDestination) {
+func (h *meBackupHandler) runSelectiveRestoreJob(jobID, manifestSnap, username, userID string, req meRestoreSelectiveRequest, ownedDomains map[string]string, dest *models.BackupDestination) {
 	ctx, cancel := context.WithTimeout(context.Background(), restoreJobTimeout)
 	defer cancel()
 	seal := func(status, errText string, out selectiveRestoreOutcome) {
@@ -2783,11 +2791,18 @@ func (h *meBackupHandler) runSelectiveRestoreJob(jobID, manifestSnap, username s
 			seal(models.BackupJobStatusFailed, "restore_failed", out)
 			return
 		}
-		var ar selectiveRestoreOutcome
+		var ar struct {
+			selectiveRestoreOutcome
+			RestoredPostgresDBs []string `json:"restored_postgres_databases"`
+		}
 		_ = json.Unmarshal(raw, &ar)
 		out.Applied = append(out.Applied, ar.Applied...)
 		out.Skipped = append(out.Skipped, ar.Skipped...)
 		out.Warnings = append(out.Warnings, ar.Warnings...)
+		// GH #1993: the restored PostgreSQL databases' users get their access
+		// again, and the first takes over the restored objects.
+		pgErrs, pgNotes := dbops.RegrantRestoredPostgres(ctx, h.cfg.Agent, h.cfg.Databases, h.cfg.DatabaseGrants, h.cfg.DatabaseUsers, userID, ar.RestoredPostgresDBs)
+		out.Warnings = append(append(out.Warnings, pgErrs...), pgNotes...)
 	}
 
 	// DNS records are panel-side DB rows — restore them here (owner-scoped),

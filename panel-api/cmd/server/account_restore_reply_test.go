@@ -2,10 +2,14 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
+
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dbops"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
 const restoreReplyWithMeta = `{"user":{"id":"01U","username":"alice","is_admin":false},"metadata":{"schema_version":2},"applied":[]}`
@@ -44,5 +48,35 @@ func TestHandleRestoreReply_AppliedRestoreReinstates(t *testing.T) {
 	_, _, out := runRestoreReply(t, restoreReplyUserOnly, true, errors.New("boom"))
 	if !strings.Contains(out, "jabali user create --user-id 01U --username alice") {
 		t.Fatalf("a failed user-row rebuild must print the manual command: %q", out)
+	}
+}
+
+// GH #1993: after the CLI restores an account, the PostgreSQL databases the
+// agent loaded get their users granted again, and the CLI prints what didn't
+// work.
+func TestRegrantRestoredPostgresCLI_GrantsTheLoadedDatabasesForTheAccount(t *testing.T) {
+	prev := regrantRestoredPostgres
+	t.Cleanup(func() { regrantRestoredPostgres = prev })
+	var gotAccount string
+	var gotNames []string
+	regrantRestoredPostgres = func(_ context.Context, _ dbops.AgentCaller, _ repository.DatabaseRepository, _ repository.DatabaseUserGrantRepository, _ repository.DatabaseUserRepository, accountID string, names []string) ([]string, []string) {
+		gotAccount, gotNames = accountID, names
+		return []string{"db alice_pg (postgres): granting alice_u on it again failed: boom"}, []string{"db alice_bare (postgres): no database user is granted on it"}
+	}
+	var buf bytes.Buffer
+	regrantRestoredPostgresCLI(context.Background(), &buf, nil,
+		json.RawMessage(`{"restored_postgres_databases":["alice_pg","alice_bare"]}`), "01U")
+
+	if gotAccount != "01U" || strings.Join(gotNames, ",") != "alice_pg,alice_bare" {
+		t.Fatalf("regranted %v for %q, want both databases for 01U", gotNames, gotAccount)
+	}
+	if out := buf.String(); !strings.Contains(out, "WARNING: db alice_pg (postgres): granting alice_u") || !strings.Contains(out, "note: db alice_bare (postgres)") {
+		t.Errorf("output %q should print the failure and the note", out)
+	}
+
+	gotNames = nil
+	regrantRestoredPostgresCLI(context.Background(), &buf, nil, json.RawMessage(`{"applied":[]}`), "01U")
+	if gotNames != nil {
+		t.Errorf("a reply naming no PostgreSQL database regranted %v", gotNames)
 	}
 }

@@ -27,6 +27,15 @@ func (r *daDBs) Create(_ context.Context, d *models.Database) error {
 	r.rows = append(r.rows, *d)
 	return nil
 }
+func (r *daDBs) ListByUserID(_ context.Context, userID string, _ repository.ListOptions) ([]models.Database, int64, error) {
+	var out []models.Database
+	for _, d := range r.rows {
+		if d.UserID == userID {
+			out = append(out, d)
+		}
+	}
+	return out, int64(len(out)), nil
+}
 func (r *daDBs) FindByID(_ context.Context, id string) (*models.Database, error) {
 	for _, d := range r.rows {
 		if d.ID == id {
@@ -65,6 +74,15 @@ type daGrants struct {
 func (r *daGrants) Create(_ context.Context, g *models.DatabaseUserGrant) error {
 	r.rows = append(r.rows, *g)
 	return nil
+}
+func (r *daGrants) ListByDatabaseID(_ context.Context, id string) ([]models.DatabaseUserGrant, error) {
+	var out []models.DatabaseUserGrant
+	for _, g := range r.rows {
+		if g.DatabaseID == id {
+			out = append(out, g)
+		}
+	}
+	return out, nil
 }
 
 func TestRunUploadRestore_RecreatesTheRestoredDatabaseUsersMariaDBAccount(t *testing.T) {

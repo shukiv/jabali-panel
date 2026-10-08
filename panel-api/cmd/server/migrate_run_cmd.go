@@ -939,6 +939,7 @@ func runJabaliImport(
 	} else {
 		fmt.Fprintf(cmd.ErrOrStderr(), "warning: decode restore reply: %v (data may be applied but panel rows unverified)\n", jerr)
 	}
+	regrantRestoredPostgresCLI(ctx, cmd.OutOrStdout(), ag, rawRestore, sourceULID)
 
 	wpMigDoneStage(ctx, jobsRepo, stRestore)
 	_ = jobsRepo.UpdateState(ctx, job.ID, models.MigrationStateDone, nil)
