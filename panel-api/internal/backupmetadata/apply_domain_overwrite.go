@@ -19,12 +19,16 @@ import (
 // (CheckDomain) for its web settings, the package's PHP policy for its PHP
 // limits, and for its catch-all a mailbox the account had before the
 // restore. Its name, document root, SSL, DKIM, DNSSEC, custom nginx
-// directives, mail provider and ownership stay as they are.
+// directives, mail provider and ownership stay as they are. So do its typed
+// nginx rules: they may hold an administrator's rules or an app's proxy on
+// this server, and the backup's set would replace them whole; the report
+// says when the backup's differ. Its www, web and DNS switches are chosen
+// when a domain is created, and stay too.
 
 // overwriteDomain gives existing, the account's own domain as read here, the
 // settings of dm, the backup's row for it. poolIDs maps the backup's pools to
 // the account's pools here.
-func overwriteDomain(ctx context.Context, d Deps, r *ApplyResult, userID, account string, existing *models.Domain, dm internalbackup.MetadataDomain, poolIDs map[string]string) {
+func overwriteDomain(ctx context.Context, d Deps, r *ApplyResult, userID, bundleUser, account string, existing *models.Domain, dm internalbackup.MetadataDomain, poolIDs map[string]string) {
 	label := fmt.Sprintf("domain %s (%s)", dm.ID, dm.Name)
 	report := func(format string, args ...any) {
 		r.Errors = append(r.Errors, label+": "+fmt.Sprintf(format, args...))
@@ -44,6 +48,17 @@ func overwriteDomain(ctx context.Context, d Deps, r *ApplyResult, userID, accoun
 	backup := models.Domain{}
 	setBackupPHPLimits(&backup, dm)
 	setBackupPHPLimits(&probe, dm)
+	web := hasWebSettings(dm)
+	if web {
+		for _, p := range setRestoredWebSettings(&backup, dm, bundleUser, account) {
+			report("%s", p)
+		}
+		copyOverwritableWebSettings(&probe, &backup)
+		if !sameJSON(backup.NginxRules, existing.NginxRules) {
+			report("nginx rules not updated: the domain keeps its own, and the backup's differ; review them in the domain's settings")
+		}
+	}
+	probe.NginxRules = nil
 	warnings, err := d.CheckDomain(ctx, &probe, account)
 	if err != nil {
 		report("settings not updated: %v", err)
@@ -53,7 +68,10 @@ func overwriteDomain(ctx context.Context, d Deps, r *ApplyResult, userID, accoun
 		report("%s", w)
 	}
 
-	changed := overwriteDomainWeb(ctx, d, report, existing, &probe, dm)
+	changed := overwriteDomainWeb(ctx, d, report, existing, &probe, dm, web, &backup)
+	if web && overwriteDomainEnvAndCache(ctx, d, report, existing, &probe, &backup) {
+		changed = true
+	}
 	if overwriteDomainPHPLimits(ctx, d, report, userID, existing, &probe, &backup) {
 		changed = true
 	}
@@ -82,10 +100,11 @@ func overwriteDomain(ctx context.Context, d Deps, r *ApplyResult, userID, accoun
 }
 
 // overwriteDomainWeb gives existing the backup's enabled flag, redirect-all
-// and index priority, each as the checks left it on probe. A setting the
+// and index priority, each as the checks left it on probe, and with web the
+// backup's web settings the domain's update page writes. A setting the
 // checks dropped leaves the domain's own. Only the row read here is written,
 // so every other column keeps its value.
-func overwriteDomainWeb(ctx context.Context, d Deps, report func(string, ...any), existing, probe *models.Domain, dm internalbackup.MetadataDomain) bool {
+func overwriteDomainWeb(ctx context.Context, d Deps, report func(string, ...any), existing, probe *models.Domain, dm internalbackup.MetadataDomain, web bool, backup *models.Domain) bool {
 	next := *existing
 	changed := false
 	if probe.IsEnabled != existing.IsEnabled {
@@ -98,6 +117,31 @@ func overwriteDomainWeb(ctx context.Context, d Deps, report func(string, ...any)
 	}
 	if want := strings.TrimSpace(dm.IndexPriority); want != "" && probe.IndexPriority == want && want != existing.IndexPriority {
 		next.IndexPriority, changed = want, true
+	}
+	if web {
+		// take reports whether the checks kept the backup's value (from the
+		// backup's want to the probe's got) and the domain's differs.
+		take := func(got, want, have any) bool { return sameJSON(got, want) && !sameJSON(got, have) }
+		if take(probe.PageRedirects, backup.PageRedirects, existing.PageRedirects) {
+			next.PageRedirects, changed = probe.PageRedirects, true
+		}
+		if take(probe.NginxTenantDirectives, backup.NginxTenantDirectives, existing.NginxTenantDirectives) {
+			next.NginxTenantDirectives, changed = probe.NginxTenantDirectives, true
+		}
+		if take(probe.NginxSafeOptions, backup.NginxSafeOptions, existing.NginxSafeOptions) {
+			next.NginxSafeOptions, changed = probe.NginxSafeOptions, true
+		}
+		for _, f := range []struct{ got, want, have, dst *bool }{
+			{&probe.WebmailEnabled, &backup.WebmailEnabled, &existing.WebmailEnabled, &next.WebmailEnabled},
+			{&probe.TempURLEnabled, &backup.TempURLEnabled, &existing.TempURLEnabled, &next.TempURLEnabled},
+			{&probe.BotChallengeExempt, &backup.BotChallengeExempt, &existing.BotChallengeExempt, &next.BotChallengeExempt},
+			{&probe.BotChallengeInclude, &backup.BotChallengeInclude, &existing.BotChallengeInclude, &next.BotChallengeInclude},
+			{&probe.AllowSubdomainDelegation, &backup.AllowSubdomainDelegation, &existing.AllowSubdomainDelegation, &next.AllowSubdomainDelegation},
+		} {
+			if *f.got == *f.want && *f.got != *f.have {
+				*f.dst, changed = *f.got, true
+			}
+		}
 	}
 	if !changed {
 		return false

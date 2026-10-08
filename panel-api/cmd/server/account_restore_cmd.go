@@ -73,7 +73,8 @@ func applyPanelMetadata(ctx context.Context, cmd *cobra.Command, raw json.RawMes
 		Agent:          sharedAgent, // push restored forwarders to Stalwart (GH #1795)
 		// GH #1898: a restored domain passes the create-time checks.
 		CheckDomain: api.RestoreDomainCheck(repository.NewDomainRepository(sharedDB),
-			repository.NewWebDomainAliasRepository(sharedDB), repository.NewServerSettingsRepository(sharedDB)),
+			repository.NewWebDomainAliasRepository(sharedDB), repository.NewServerSettingsRepository(sharedDB),
+			repository.NewDomainRepository(sharedDB), api.RestoreFromOwnBackup),
 		// A restored mailbox's address comes off Stalwart's registry first.
 		MailAddresses: mailaddrowner.Releaser{Registry: stalwartadmin.NewClient()},
 	}

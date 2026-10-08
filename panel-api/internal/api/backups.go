@@ -1309,6 +1309,10 @@ func (h *backupHandler) applyRestoreMetadata(ctx context.Context, metaRaw json.R
 // restoreMetadataDeps is what applyRestoreMetadata's rebuild runs with;
 // uploaded as there.
 func (h *backupHandler) restoreMetadataDeps(uploaded *uploadedData) backupmetadata.Deps {
+	source := RestoreFromOwnBackup
+	if uploaded != nil {
+		source = RestoreFromUpload
+	}
 	deps := backupmetadata.Deps{
 		Users:          h.cfg.Users,
 		Domains:        h.cfg.Domains,
@@ -1333,8 +1337,8 @@ func (h *backupHandler) restoreMetadataDeps(uploaded *uploadedData) backupmetada
 		Packages:       h.cfg.Packages, // a pool from an uploaded file keeps to the package cap (GH #1993)
 		Agent:          h.cfg.Agent,    // push restored forwarders to Stalwart (GH #1795)
 		// GH #1898: a restored domain passes the create-time checks.
-		CheckDomain: RestoreDomainCheck(h.cfg.Domains, h.cfg.WebDomainAliases, h.cfg.ServerSettings),
-		Untrusted:   uploaded != nil,
+		CheckDomain: RestoreDomainCheck(h.cfg.Domains, h.cfg.WebDomainAliases, h.cfg.ServerSettings, h.cfg.Domains, source),
+		Untrusted:   source == RestoreFromUpload,
 	}
 	if uploaded != nil {
 		deps.RestoredDatabases = stringSet(uploaded.databases)

@@ -216,7 +216,7 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 				domainIDs[dm.ID] = dm.ID
 				r.Skipped++
 				if d.OverwriteRows {
-					overwriteDomain(ctx, d, &r, m.User.ID, account, existing, dm, poolIDs)
+					overwriteDomain(ctx, d, &r, m.User.ID, bundleUser, account, existing, dm, poolIDs)
 				}
 				continue
 			} else if err != nil && !errors.Is(err, repository.ErrNotFound) {
@@ -237,7 +237,7 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 				domainIDs[dm.ID] = existing.ID
 				r.Skipped++
 				if d.OverwriteRows {
-					overwriteDomain(ctx, d, &r, m.User.ID, account, existing, dm, poolIDs)
+					overwriteDomain(ctx, d, &r, m.User.ID, bundleUser, account, existing, dm, poolIDs)
 				}
 				continue
 			} else if err != nil && !errors.Is(err, repository.ErrNotFound) {
@@ -274,6 +274,9 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 				DNSSECEnabled:         dm.DNSSECEnabled,
 				CreatedAt:             now,
 				UpdatedAt:             now,
+			}
+			for _, p := range setRestoredWebSettings(row, dm, bundleUser, account) {
+				r.Errors = append(r.Errors, fmt.Sprintf("domain %s (%s): %s", dm.ID, dm.Name, p))
 			}
 			// Custom nginx directives are admin-only raw config, checked only by
 			// the relaxed admin rules. From an uploaded file they are config
@@ -324,6 +327,14 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 				refused[dm.ID] = true
 				r.Errors = append(r.Errors, fmt.Sprintf("domain %s (%s): create: %v", dm.ID, dm.Name, err))
 				continue
+			}
+			// The webmail column defaults on, so the insert leaves a switched
+			// off webmail on (GORM skips a false bool with a default); the
+			// update writes it.
+			if !row.WebmailEnabled {
+				if err := d.Domains.Update(ctx, row); err != nil {
+					r.Errors = append(r.Errors, fmt.Sprintf("domain %s (%s): webmail left on: %v", dm.ID, dm.Name, err))
+				}
 			}
 			ownDomains[dm.ID] = true
 			domainIDs[dm.ID] = dm.ID

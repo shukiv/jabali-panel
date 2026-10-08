@@ -480,6 +480,7 @@ func Build(ctx context.Context, user *models.User, d Deps) *internalbackup.Accou
 			if nr, err := json.Marshal(dom.NginxRules); err == nil && string(nr) != "null" {
 				dRow.NginxRules = string(nr)
 			}
+			setMetadataWebSettings(&dRow, &dom)
 			if cert := certByDomain[dom.ID]; cert != nil {
 				sslRow := &internalbackup.MetadataSSLCert{
 					ID: cert.ID, Status: cert.Status,
