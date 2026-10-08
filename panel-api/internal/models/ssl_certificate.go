@@ -15,6 +15,12 @@ const (
 	SSLStatusPendingACMERetry = "pending_acme_retry"
 )
 
+// SSLIssueMethodRestored marks a Let's Encrypt domain's certificate that a
+// restore installed from a backup (GH #1993). certbot doesn't manage it, so
+// its timer never renews it; the reconciler hands the domain to Let's
+// Encrypt before it expires.
+const SSLIssueMethodRestored = "restored"
+
 // SSLCertificate represents a managed SSL/TLS certificate for a hosted domain.
 // One cert per domain. Tracks ACME lifecycle (issue, renew, revoke) and
 // stores filesystem paths to the certificate and key.
@@ -33,7 +39,8 @@ type SSLCertificate struct {
 	NextRetryAt   *time.Time `gorm:"type:datetime(6);index:ix_ssl_cert_next_retry" json:"next_retry_at,omitempty"`
 	RetryCount    int        `gorm:"type:int;not null;default:0"                 json:"retry_count"`
 	// IssueMethod records which ACME challenge produced the current cert:
-	// '' (unknown/legacy or non-ACME), 'http-01', or 'dns-01' (JAB-235).
+	// '' (unknown/legacy or non-ACME), 'http-01', or 'dns-01' (JAB-235), or
+	// SSLIssueMethodRestored for one a restore installed from a backup.
 	IssueMethod string `gorm:"column:issue_method;type:varchar(16);not null;default:''" json:"issue_method"`
 	LastAttemptAt *time.Time `gorm:"type:datetime(6);index:ix_ssl_cert_last_attempt" json:"last_attempt_at,omitempty"`
 	CreatedAt     time.Time  `gorm:"type:datetime(6);not null"                   json:"created_at"`

@@ -292,3 +292,47 @@ describe("RestoreFromUploadDrawer preflight (GH #1993)", () => {
     expect(screen.getByRole("button", { name: /Restore into alice/ })).toBeDisabled();
   });
 });
+
+// GH #1993, JAB-54: the admin restore installs the backup's SSL certificates
+// only when "Keep the backup's SSL certificates" is checked. A tenant's own
+// restore doesn't offer it.
+describe("RestoreFromUploadDrawer SSL certificates (GH #1993)", () => {
+  const KEEP = "Keep the backup's SSL certificates";
+
+  it("leaves the backup's certificates out by default", async () => {
+    renderDrawer({ uploaded: KEPT });
+    await screen.findByText("Backup of alice");
+    const box = screen.getByRole("checkbox", { name: KEEP }) as HTMLInputElement;
+    expect(box.checked).toBe(false);
+    expect(screen.getByText(/Let's Encrypt issues new certificates once the domains' DNS points to this server/)).toBeTruthy();
+    fireEvent.click(screen.getByText("Restore into alice"));
+    await waitFor(() =>
+      expect(m.restoreKeptUploadedBackup).toHaveBeenCalledWith(KEPT.id, "alice", KEPT.components, { overwrite: false }, expect.any(Function)),
+    );
+  });
+
+  it("asks to keep them when checked, and says what that installs", async () => {
+    renderDrawer({ uploaded: KEPT });
+    await screen.findByText("Backup of alice");
+    fireEvent.click(screen.getByRole("checkbox", { name: KEEP }));
+    expect(screen.getByText(/signed by a trusted certificate authority and is still valid/)).toBeTruthy();
+    fireEvent.click(screen.getByText("Restore into alice"));
+    await waitFor(() =>
+      expect(m.restoreKeptUploadedBackup).toHaveBeenCalledWith(
+        KEPT.id,
+        "alice",
+        KEPT.components,
+        { overwrite: false, keepCertificates: true },
+        expect.any(Function),
+      ),
+    );
+  });
+
+  it("isn't offered for a tenant's own restore", async () => {
+    renderDrawer({ ownerMode: true });
+    pickFile();
+    fireEvent.click(screen.getByText(/Upload & inspect/));
+    await screen.findByText("Backup of alice");
+    expect(screen.queryByRole("checkbox", { name: KEEP })).toBeNull();
+  });
+});

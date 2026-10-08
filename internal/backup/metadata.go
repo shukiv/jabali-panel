@@ -144,6 +144,11 @@ type MetadataDomain struct {
 	DNSSECEnabled         bool    `json:"dnssec_enabled"`
 	DNSSECEnabledAt       string  `json:"dnssec_enabled_at,omitempty"`
 	CreatedAt             string  `json:"created_at,omitempty"`
+	// SSLMode and SkipAutoSAN (GH #1993) are the domain's certificate mode
+	// and its opt-out of the automatic www/alias names on it. Empty in an
+	// archive made before them: the restore then uses the default mode.
+	SSLMode     string `json:"ssl_mode,omitempty"`
+	SkipAutoSAN bool   `json:"skip_auto_san,omitempty"`
 	// OwnershipStatus (GH #1816 / ADR-0170) is the source row's ownership
 	// state. A restore keeps an explicitly pending name pending; a verified
 	// or absent status (archives from before the field) restores verified
@@ -195,6 +200,12 @@ type MetadataSSLCert struct {
 	CertPath      *string `json:"cert_path,omitempty"`
 	KeyPath       *string `json:"key_path,omitempty"`
 	CreatedAt     string  `json:"created_at,omitempty"`
+	// CertPEM and KeyPEM (GH #1993) are the certificate with its chain and
+	// its private key, read by the agent from the domain's own certificate
+	// files when the backup is made. Empty for a self-signed certificate and
+	// for one that also covers names outside the account's domains.
+	CertPEM string `json:"cert_pem,omitempty"`
+	KeyPEM  string `json:"key_pem,omitempty"`
 }
 
 // MetadataPHPPool mirrors models.PHPPool plus its ini overrides.

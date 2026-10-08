@@ -285,6 +285,9 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 				row.NginxCustomDirectives = nil
 				r.Errors = append(r.Errors, fmt.Sprintf("domain %s (%s): custom nginx directives not restored from an uploaded backup; re-add them in the domain's settings after reviewing them", dm.ID, dm.Name))
 			}
+			for _, n := range setRestoredSSLMode(row, dm) {
+				r.Errors = append(r.Errors, fmt.Sprintf("domain %s (%s): %s", dm.ID, dm.Name, n))
+			}
 			if d.CheckDomain == nil {
 				refused[dm.ID] = true
 				r.Errors = append(r.Errors, fmt.Sprintf("domain %s (%s): not restored: the restore checks are not wired", dm.ID, dm.Name))
@@ -340,6 +343,7 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 			ownDomains[dm.ID] = true
 			domainIDs[dm.ID] = dm.ID
 			r.Domains++
+			customServed := false
 			if dm.SSLCertificate != nil && d.SSLCerts != nil {
 				cert := &models.SSLCertificate{
 					ID:           dm.SSLCertificate.ID,
@@ -364,12 +368,15 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 					r.Errors = append(r.Errors, fmt.Sprintf("ssl_cert %s (%s): status %q is not one the panel knows; it will be issued again", cert.ID, row.Name, cert.Status))
 					cert.CertPath, cert.KeyPath, cert.Status = nil, nil, models.SSLStatusPending
 				case cert.CertPath != nil && !certFileOnServer(*cert.CertPath):
-					// GH #1993: account backups don't carry the certificate
-					// files. On another server the row would name files that
-					// aren't there: the vhost serves plain HTTP, and nothing
-					// re-issues an issued row. Start over like a new domain.
-					r.Errors = append(r.Errors, fmt.Sprintf("ssl_cert %s (%s): its certificate isn't on this server; a new one will be issued", cert.ID, row.Name))
-					cert.CertPath, cert.KeyPath, cert.Status = nil, nil, models.SSLStatusPending
+					// GH #1993: on another server the row would name files
+					// that aren't there: the vhost serves plain HTTP, and
+					// nothing re-issues an issued row. Install the backup's
+					// certificate when it may and passes the checks;
+					// otherwise start over like a new domain.
+					if ok, note := installRestoredCert(ctx, d, row, cert, dm.SSLCertificate, now); !ok {
+						r.Errors = append(r.Errors, fmt.Sprintf("ssl_cert %s (%s): %s", cert.ID, row.Name, note))
+						cert.CertPath, cert.KeyPath, cert.Status = nil, nil, models.SSLStatusPending
+					}
 				case cert.Status == models.SSLStatusIssuing || cert.Status == models.SSLStatusPendingACMERetry:
 					// Mid-issue on the old server; no pass picks these up here
 					// (an ACME retry needs its retry time, which isn't restored).
@@ -380,6 +387,16 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 					continue
 				}
 				r.SSLCerts++
+				customServed = cert.Status == models.SSLStatusCustom
+			}
+			// A custom-certificate domain left without its certificate would
+			// serve no HTTPS: nothing issues one in that mode.
+			if row.SSLMode == models.SSLModeCustom && !customServed {
+				if err := d.Domains.UpdateSSLMode(ctx, row.ID, models.SSLModeLE); err != nil {
+					r.Errors = append(r.Errors, fmt.Sprintf("domain %s (%s): its custom certificate was not restored, and switching it to Let's Encrypt failed: %v", dm.ID, dm.Name, err))
+				} else {
+					r.Errors = append(r.Errors, fmt.Sprintf("domain %s (%s): its custom certificate was not restored; it gets a Let's Encrypt certificate", dm.ID, dm.Name))
+				}
 			}
 		}
 	}

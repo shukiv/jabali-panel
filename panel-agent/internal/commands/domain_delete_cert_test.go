@@ -88,3 +88,67 @@ func TestRemoveDomainCertArtifacts_ReapsMailLineage(t *testing.T) {
 		t.Fatalf("a sibling domain's mail lineage must survive (name-scoped), stat err = %v", err)
 	}
 }
+
+// GH #1993: a certificate and key an owner uploaded or a restore installed
+// (ssl.install_custom writes them as plain files, with no renewal conf) are
+// removed with the domain. certbot delete never reaches them, so the private
+// key stayed on the server, and a later restore of the name found the stale
+// files "on this server".
+func TestRemoveDomainCertArtifacts_RemovesUntrackedCertificateFiles(t *testing.T) {
+	tmpLE := t.TempDir()
+	origLE := sslLERoot
+	sslLERoot = tmpLE
+	defer func() { sslLERoot = origLE }()
+	origSS := baseSelfSignDir
+	baseSelfSignDir = t.TempDir()
+	defer func() { baseSelfSignDir = origSS }()
+
+	write := func(rel string) string {
+		p := filepath.Join(tmpLE, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	gone := []string{
+		write("live/old.example.com/fullchain.pem"),
+		write("live/old.example.com/privkey.pem"),
+		write("archive/old.example.com/privkey1.pem"),
+		write("live/mail.old.example.com/privkey.pem"),
+	}
+	kept := write("live/keep.example.com/privkey.pem")
+
+	removeDomainCertArtifacts(context.Background(), "old.example.com")
+
+	for _, p := range gone {
+		if _, err := os.Stat(filepath.Dir(p)); !os.IsNotExist(err) {
+			t.Fatalf("%s should be removed with the domain, stat err = %v", filepath.Dir(p), err)
+		}
+	}
+	if _, err := os.Stat(kept); err != nil {
+		t.Fatalf("another domain's certificate must survive, stat err = %v", err)
+	}
+}
+
+// A lineage certbot still tracks is certbot's to remove.
+func TestRemoveUntrackedLineage_LeavesATrackedLineage(t *testing.T) {
+	root := t.TempDir()
+	for _, rel := range []string{"renewal/old.example.com.conf", "live/old.example.com/privkey.pem"} {
+		p := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	removeUntrackedLineage(root, "old.example.com")
+
+	if _, err := os.Stat(filepath.Join(root, "live/old.example.com/privkey.pem")); err != nil {
+		t.Fatalf("a tracked lineage's files must stay, stat err = %v", err)
+	}
+}

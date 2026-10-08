@@ -32,6 +32,10 @@ type SSLCertificateWithDomain struct {
 	// /etc/letsencrypt/live/<domain>/, which is wrong for installed custom
 	// certificates.
 	CertPath *string `json:"cert_path,omitempty"`
+	// IssueMethod is carried for the SAN-drift pass, which leaves a
+	// certificate a restore installed (GH #1993) to the reconciler's
+	// hand-back. Internal — not part of the admin SSL JSON.
+	IssueMethod string `json:"-"`
 	// Domain flags carried on the ListAll join for the SAN-drift pass
 	// (JAB-226): they feed sanHostnamesForDomain so it can tell which SANs
 	// an issued cert SHOULD carry, without a per-cert domain lookup. Only
@@ -230,7 +234,7 @@ func (r *sslCertificateRepo) ListAll(ctx context.Context) ([]SSLCertificateWithD
 		        d.user_id, u.username as user_username,
 		        sc.status, sc.issued_at, sc.expires_at,
 		        sc.renewal_count, sc.last_renewed_at, sc.last_error, sc.staging, sc.last_attempt_at,
-		        sc.cert_path,
+		        sc.cert_path, sc.issue_method,
 		        d.ssl_mode, d.email_enabled, d.skip_auto_san, d.create_www, d.mta_sts_enabled`).
 		Table("ssl_certificates sc").
 		Joins("JOIN domains d ON sc.domain_id = d.id").

@@ -23,12 +23,14 @@ import (
 // RestoredDockerSlugs, ArchiveMariaDBs, ArchivePostgresDBs, KeepExisting,
 // OverwriteRows, MailboxSettings, ScheduleDomain, SkipMail, SkipPostgres,
 // FtpPasswordsStaged and AccountCreated (GH #1993): per-restore inputs for a
-// bundle from an uploaded file.
+// bundle from an uploaded file. And RestoreCertificates (GH #1993): whether
+// the restore installs the certificates the bundle carries.
 func TestBackupMetadataAdaptersInLockstep(t *testing.T) {
 	skip := map[string]bool{"KratosClient": true, "Log": true, "CheckDomain": true, "MailAddresses": true,
 		"Untrusted": true, "RestoredDatabases": true, "RestoredDockerSlugs": true, "KeepExisting": true,
 		"ArchiveMariaDBs": true, "ArchivePostgresDBs": true, "OverwriteRows": true, "MailboxSettings": true, "ScheduleDomain": true,
-		"SkipMail": true, "SkipPostgres": true, "FtpPasswordsStaged": true, "AccountCreated": true}
+		"SkipMail": true, "SkipPostgres": true, "FtpPasswordsStaged": true, "AccountCreated": true,
+		"RestoreCertificates": true}
 
 	builder := reflect.TypeOf(backupmetadata.Deps{})
 	adapters := map[string]reflect.Type{

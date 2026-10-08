@@ -593,6 +593,9 @@ export interface UploadedRestoreOptions {
   createUser?: boolean;
   packageId?: string | null;
   overwrite?: boolean;
+  // GH #1993: install the SSL certificates the backup carries, when they pass
+  // the server's checks; off, Let's Encrypt issues new ones (admin only).
+  keepCertificates?: boolean;
 }
 
 // uploadedRestoreBody is the restore request's option fields (exported for tests).
@@ -600,6 +603,7 @@ export function uploadedRestoreBody(opts?: UploadedRestoreOptions) {
   return {
     ...(opts?.createUser ? { create_user: true, package_id: opts.packageId ?? null } : {}),
     ...(opts?.overwrite ? { overwrite: true } : {}),
+    ...(opts?.keepCertificates ? { keep_certificates: true } : {}),
   };
 }
 

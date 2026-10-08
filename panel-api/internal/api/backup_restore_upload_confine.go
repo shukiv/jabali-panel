@@ -147,6 +147,9 @@ type uploadedData struct {
 	// accountCreated: the restore created the account, so Apply restores
 	// the file's SSH keys.
 	accountCreated bool
+	// keepCertificates: the admin chose to keep the backup's SSL
+	// certificates, so Apply installs those that pass the checks.
+	keepCertificates bool
 }
 
 // regrantRestoredPostgres grants the account's PostgreSQL database users on
@@ -287,7 +290,7 @@ func (h *backupHandler) restoreUploadedAccount(ctx context.Context, tarPath, use
 	out.MetadataErrors = applyUploadedMetadata(h, ctx, first.Metadata, targetID,
 		uploadedData{databases: first.RestoredDatabases, dockerSlugs: first.RestoredDockerSlugs,
 			archiveMariaDBs: first.ArchiveMariaDBs, archivePostgresDBs: first.ArchivePostgresDBs,
-			keepExisting: keepExisting, overwriteRows: mode == uploadOverwrite,
+			keepExisting: keepExisting, overwriteRows: mode == uploadOverwrite, keepCertificates: !skips.certificates,
 			skipMail: skips.mail, skipPostgres: skips.postgres,
 			ftpPasswordsStaged: first.FTPPasswordsStaged, accountCreated: userCreated})
 	// GH #1993: the restored PostgreSQL databases' users get their access

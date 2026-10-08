@@ -2783,6 +2783,10 @@ paths:
     post:
       tags: [Backups]
       summary: Restore an uploaded backup archive into an existing user
+      description: >-
+        Body {upload_id, target_username, components, create_user, package_id, overwrite,
+        keep_certificates}. keep_certificates installs the SSL certificates and keys the backup
+        carries when they pass the checks (GH #1993); off (the default), Let's Encrypt issues new ones.
       security: [ { KratosSession: [] } ]
       responses:
         "202": { description: Accepted }
@@ -2846,7 +2850,7 @@ paths:
     post:
       tags: [Backups]
       summary: Restore an uploaded backup into an account (detached; poll GET /admin/uploaded-backups/{id})
-      description: Body {target_username, components, create_user, package_id}, as restore-upload/apply.
+      description: Body {target_username, components, create_user, package_id, overwrite, keep_certificates}, as restore-upload/apply.
       security: [ { KratosSession: [] } ]
       parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
       responses:

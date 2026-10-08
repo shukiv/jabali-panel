@@ -77,6 +77,9 @@ func applyPanelMetadata(ctx context.Context, cmd *cobra.Command, raw json.RawMes
 			repository.NewDomainRepository(sharedDB), api.RestoreFromOwnBackup),
 		// A restored mailbox's address comes off Stalwart's registry first.
 		MailAddresses: mailaddrowner.Releaser{Registry: stalwartadmin.NewClient()},
+		// The CLI restores from this server's own backup destinations, so the
+		// backup's certificates come back when they pass the checks (GH #1993).
+		RestoreCertificates: true,
 	}
 	r := backupmetadata.Apply(ctx, &meta, deps)
 	w := cmd.OutOrStdout()

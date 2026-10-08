@@ -111,8 +111,24 @@ func domainDeleteHandler(ctx context.Context, params json.RawMessage) (any, erro
 // the reissued cert lands under the distinct mail.<new> lineage, untouched.
 func removeDomainCertArtifacts(ctx context.Context, domain string) {
 	_ = os.RemoveAll(filepath.Join(baseSelfSignDir, domain))
-	cleanupCertbotLineage(ctx, sslLERoot, domain)
-	cleanupCertbotLineage(ctx, sslLERoot, "mail."+domain)
+	for _, name := range []string{domain, "mail." + domain} {
+		cleanupCertbotLineage(ctx, sslLERoot, name)
+		removeUntrackedLineage(sslLERoot, name)
+	}
+}
+
+// removeUntrackedLineage removes root/live/<name>/ and root/archive/<name>/
+// once certbot no longer tracks name (no renewal conf): the certificate and key
+// an owner uploaded or a restore installed (ssl.install_custom), which `certbot
+// delete` never reaches, and what is left of a lineage whose delete failed.
+// Left behind, a deleted domain's private key stays on the server, and a later
+// restore of the name finds the stale files "on this server" (GH #1993).
+func removeUntrackedLineage(root, name string) {
+	if _, err := os.Stat(filepath.Join(root, "renewal", name+".conf")); err == nil {
+		return
+	}
+	_ = os.RemoveAll(filepath.Join(root, "live", name))
+	_ = os.RemoveAll(filepath.Join(root, "archive", name))
 }
 
 // removeMailVhostFiles reaps the per-domain mail vhost (`<domain>-mail.conf`)

@@ -77,6 +77,13 @@ type Deps struct {
 	// chose its contents, so Apply restores nothing admin-level from it:
 	// no server-level docker apps and no custom nginx directives.
 	Untrusted bool
+	// RestoreCertificates installs the certificate and key the backup
+	// carries for a domain whose certificate isn't on this server, when they
+	// pass the checks (GH #1993). Set for a restore from this server's own
+	// backup destinations, and for an uploaded file only when the admin or
+	// owner chose "Keep the backup's SSL certificates" (JAB-54: a source's
+	// private key is not trusted unasked). Off, Let's Encrypt issues new ones.
+	RestoreCertificates bool
 	// KeepExisting (GH #1993: "Overwrite existing items with the backup"
 	// off) adds only what the account is missing: a row it already has
 	// keeps its settings. An existing mailbox keeps its autoresponder.
@@ -474,6 +481,7 @@ func Build(ctx context.Context, user *models.User, d Deps) *internalbackup.Accou
 			if dom.DNSSECEnabledAt != nil {
 				dRow.DNSSECEnabledAt = timeRFC(*dom.DNSSECEnabledAt)
 			}
+			dRow.SSLMode, dRow.SkipAutoSAN = dom.SSLMode, dom.SkipAutoSAN
 			if pr, err := json.Marshal(dom.PageRedirects); err == nil && string(pr) != "null" {
 				dRow.PageRedirects = string(pr)
 			}
