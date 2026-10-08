@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
 // GH #1993: a restored domain's web settings pass the rules of the page that
@@ -182,5 +183,67 @@ func TestRestoreWebCheck_PreviewURLCollision(t *testing.T) {
 	row.TempURLEnabled = true
 	if _, err := webCheck(RestoreFromOwnBackup, rdcPreviews{})(context.Background(), row, "alice"); err != nil || !row.TempURLEnabled {
 		t.Errorf("preview on %v (err %v): want it kept when nothing collides", row.TempURLEnabled, err)
+	}
+}
+
+// The restore doors check an uploaded file's settings as the account owner's,
+// and a backup from the server's own destination as the administrator's.
+type rwcRepoDomains struct {
+	repository.DomainRepository
+	rdcDomains
+	rdcPreviews
+}
+
+type rwcRepoAliases struct {
+	repository.WebDomainAliasRepository
+	rdcAliases
+}
+
+type rwcRepoSettings struct {
+	repository.ServerSettingsRepository
+	rdcSettings
+}
+
+func (r rwcRepoDomains) FindByName(ctx context.Context, name string) (*models.Domain, error) {
+	return r.rdcDomains.FindByName(ctx, name)
+}
+
+func (r rwcRepoAliases) FindByHostname(ctx context.Context, host string) (*models.WebDomainAlias, error) {
+	return r.rdcAliases.FindByHostname(ctx, host)
+}
+
+func (r rwcRepoSettings) Get(ctx context.Context) (*models.ServerSettings, error) {
+	return r.rdcSettings.Get(ctx)
+}
+
+func (r rwcRepoDomains) FindStrictSubdomains(ctx context.Context, name string) ([]models.Domain, error) {
+	return r.rdcDomains.FindStrictSubdomains(ctx, name)
+}
+
+func (r rwcRepoDomains) ListPreviewEnabled(ctx context.Context) ([]models.Domain, error) {
+	return r.rdcPreviews.ListPreviewEnabled(ctx)
+}
+
+func TestRestoreMetadataDeps_ChecksByWhereTheBackupComesFrom(t *testing.T) {
+	h := &backupHandler{cfg: BackupHandlerConfig{
+		Domains: rwcRepoDomains{rdcDomains: rdcDomains{}}, WebDomainAliases: rwcRepoAliases{rdcAliases: rdcAliases{}},
+		ServerSettings: rwcRepoSettings{},
+	}}
+	for _, tc := range []struct {
+		name     string
+		uploaded *uploadedData
+		want     string
+	}{
+		{"own destination", nil, "rewrite,proxy_pass,custom_header,static_alias"},
+		{"uploaded file", &uploadedData{}, "rewrite,custom_header"},
+	} {
+		row := rdcRow("shop.org")
+		row.NginxRules = webRules()
+		if _, err := h.restoreMetadataDeps(tc.uploaded).CheckDomain(context.Background(), row, "alice"); err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if got := ruleTypes(row.NginxRules); got != tc.want {
+			t.Errorf("%s: rules = %s, want %s", tc.name, got, tc.want)
+		}
 	}
 }
