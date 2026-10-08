@@ -141,6 +141,9 @@ type uploadedData struct {
 	// skipMail / skipPostgres: the restore leaves the backup's mail or
 	// PostgreSQL out, because it is turned off on this server.
 	skipMail, skipPostgres bool
+	// skipDNS: the restore leaves the backup's DNS records out, so it
+	// doesn't run RestoreBundleDNS and Apply turns no MTA-STS on (GH #1993).
+	skipDNS bool
 	// ftpPasswordsStaged are the FTP subaccounts whose password from the
 	// file the agent staged; nil when it named none.
 	ftpPasswordsStaged []string
@@ -291,7 +294,7 @@ func (h *backupHandler) restoreUploadedAccount(ctx context.Context, tarPath, use
 		uploadedData{databases: first.RestoredDatabases, dockerSlugs: first.RestoredDockerSlugs,
 			archiveMariaDBs: first.ArchiveMariaDBs, archivePostgresDBs: first.ArchivePostgresDBs,
 			keepExisting: keepExisting, overwriteRows: mode == uploadOverwrite, keepCertificates: !skips.certificates,
-			skipMail: skips.mail, skipPostgres: skips.postgres,
+			skipMail: skips.mail, skipPostgres: skips.postgres, skipDNS: skips.dns,
 			ftpPasswordsStaged: first.FTPPasswordsStaged, accountCreated: userCreated})
 	// GH #1993: the restored PostgreSQL databases' users get their access
 	// again, and the first takes over the restored objects.

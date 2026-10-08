@@ -276,6 +276,7 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 				UpdatedAt:             now,
 			}
 			setBackupPHPSettings(row, dm, bundleUser, account)
+			setRestoredMailSettings(row, dm)
 			for _, p := range setRestoredWebSettings(row, dm, bundleUser, account) {
 				r.Errors = append(r.Errors, fmt.Sprintf("domain %s (%s): %s", dm.ID, dm.Name, p))
 			}
@@ -340,6 +341,11 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 				if err := d.Domains.Update(ctx, row); err != nil {
 					r.Errors = append(r.Errors, fmt.Sprintf("domain %s (%s): left on, as a new domain is (enabled, SSL, webmail): %v", dm.ID, dm.Name, err))
 				}
+			}
+			if dm.MTASTSEnabled {
+				enableRestoredMTASTS(ctx, d, func(format string, args ...any) {
+					r.Errors = append(r.Errors, fmt.Sprintf("domain %s (%s): ", dm.ID, dm.Name)+fmt.Sprintf(format, args...))
+				}, row)
 			}
 			ownDomains[dm.ID] = true
 			domainIDs[dm.ID] = dm.ID

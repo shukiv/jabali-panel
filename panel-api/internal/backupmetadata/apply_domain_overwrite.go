@@ -45,6 +45,11 @@ func overwriteDomain(ctx context.Context, d Deps, r *ApplyResult, userID, bundle
 	probe.IsEnabled = dm.IsEnabled
 	probe.RedirectAllTo, probe.RedirectAllType = nonEmptyTrimmed(dm.RedirectAllTo), nonEmptyTrimmed(dm.RedirectAllType)
 	probe.IndexPriority = strings.TrimSpace(dm.IndexPriority)
+	mail := hasMailSettings(dm)
+	if mail {
+		probe.DmarcNP, probe.DmarcTesting = dm.DmarcNP, dm.DmarcTesting
+		probe.CalDAVHost, probe.CardDAVHost = dm.CalDAVHost, dm.CardDAVHost
+	}
 	backup := models.Domain{}
 	setBackupPHPLimits(&backup, dm)
 	setBackupPHPSettings(&backup, dm, bundleUser, account)
@@ -83,7 +88,7 @@ func overwriteDomain(ctx context.Context, d Deps, r *ApplyResult, userID, bundle
 		report("%s", w)
 	}
 
-	changed := overwriteDomainWeb(ctx, d, report, existing, &probe, dm, web, &backup)
+	changed := overwriteDomainWeb(ctx, d, report, existing, &probe, dm, web, mail, &backup)
 	if web && overwriteDomainEnvAndCache(ctx, d, report, existing, &probe, &backup) {
 		changed = true
 	}
@@ -108,6 +113,11 @@ func overwriteDomain(ctx context.Context, d Deps, r *ApplyResult, userID, bundle
 			}
 		}
 	}
+	// MTA-STS is turned on as the backup has it, never off: a policy receivers
+	// cached would then point at a vhost that is gone.
+	if dm.MTASTSEnabled && !existing.MTASTSEnabled && enableRestoredMTASTS(ctx, d, report, existing) {
+		changed = true
+	}
 	if changed && d.ScheduleDomain != nil {
 		d.ScheduleDomain(existing.ID)
 	}
@@ -115,11 +125,13 @@ func overwriteDomain(ctx context.Context, d Deps, r *ApplyResult, userID, bundle
 }
 
 // overwriteDomainWeb gives existing the backup's enabled flag, redirect-all
-// and index priority, each as the checks left it on probe, and with web the
-// backup's web settings the domain's update page writes. A setting the
-// checks dropped leaves the domain's own. Only the row read here is written,
-// so every other column keeps its value.
-func overwriteDomainWeb(ctx context.Context, d Deps, report func(string, ...any), existing, probe *models.Domain, dm internalbackup.MetadataDomain, web bool, backup *models.Domain) bool {
+// and index priority, each as the checks left it on probe, with web the
+// backup's web settings the domain's update page writes, and with mail its
+// DMARC tags and CalDAV/CardDAV hosts. A setting the checks dropped leaves
+// the domain's own. Only the row read here is written, so every other column
+// keeps its value; one write carries them all, since each write sets every
+// column the update page writes.
+func overwriteDomainWeb(ctx context.Context, d Deps, report func(string, ...any), existing, probe *models.Domain, dm internalbackup.MetadataDomain, web, mail bool, backup *models.Domain) bool {
 	next := *existing
 	changed := false
 	if probe.IsEnabled != existing.IsEnabled {
@@ -156,6 +168,23 @@ func overwriteDomainWeb(ctx context.Context, d Deps, report func(string, ...any)
 			if *f.got == *f.want && *f.got != *f.have {
 				*f.dst, changed = *f.got, true
 			}
+		}
+	}
+	if mail {
+		// The checks keep a value or clear it; a cleared one that the backup
+		// set leaves the domain's own.
+		keep := func(got, want string) bool { return got == strings.TrimSpace(want) }
+		if keep(probe.DmarcNP, dm.DmarcNP) && probe.DmarcNP != existing.DmarcNP {
+			next.DmarcNP, changed = probe.DmarcNP, true
+		}
+		if probe.DmarcTesting != existing.DmarcTesting {
+			next.DmarcTesting, changed = probe.DmarcTesting, true
+		}
+		if keep(probe.CalDAVHost, dm.CalDAVHost) && probe.CalDAVHost != existing.CalDAVHost {
+			next.CalDAVHost, changed = probe.CalDAVHost, true
+		}
+		if keep(probe.CardDAVHost, dm.CardDAVHost) && probe.CardDAVHost != existing.CardDAVHost {
+			next.CardDAVHost, changed = probe.CardDAVHost, true
 		}
 	}
 	if !changed {

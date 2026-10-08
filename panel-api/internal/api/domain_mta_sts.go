@@ -29,6 +29,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"time"
 
@@ -147,11 +148,9 @@ func (h *domainMTAStsHandler) update(c *gin.Context) {
 	c.JSON(http.StatusOK, h.buildResponse(ctx, dom))
 }
 
-// publishDNSRecords inserts the two MTA-STS records via the same
-// (idempotent — skip on duplicate, warn on conflict with a user-edited
-// row) pattern email_enable uses. Errors log but do not fail the toggle
-// — the operator sees the cert/policy hint in the GET response and can
-// fix DNS conflicts manually.
+// publishDNSRecords puts the domain's two MTA-STS records in its zone.
+// Errors do not fail the toggle — the operator sees the cert/policy hint in
+// the GET response and can fix DNS conflicts manually.
 func (h *domainMTAStsHandler) publishDNSRecords(ctx context.Context, dom *models.Domain) {
 	if h.cfg.DNSZones == nil || h.cfg.DNSRecords == nil || h.cfg.ServerSettings == nil {
 		return
@@ -164,35 +163,54 @@ func (h *domainMTAStsHandler) publishDNSRecords(ctx context.Context, dom *models
 	if err != nil || srv == nil {
 		return
 	}
+	_, _ = PublishMTAStsRecords(ctx, h.cfg.DNSRecords, zone, srv, dom)
+}
+
+// PublishMTAStsRecords puts dom's two MTA-STS records in zone (ADR-0109): the
+// policy host's address and the _mta-sts TXT naming the policy id. Records
+// already there as intended stay; otherwise the zone's MTA-STS rows are
+// replaced, so a new policy id or server address takes effect. It reports
+// whether it wrote anything. The MTA-STS toggle and the account restore
+// (GH #1993) both publish through it.
+func PublishMTAStsRecords(ctx context.Context, records repository.DNSRecordRepository, zone *models.DNSZone, srv *models.ServerSettings, dom *models.Domain) (bool, error) {
 	intended := dnscompile.BuildMTAStsRecords(
 		zone.ID, zone.Name, srv.PublicIPv4, dom.MTASTSId,
 		srv, ids.NewULID, time.Now().UTC(),
 	)
 	if len(intended) == 0 {
-		return
-	}
-	existing, err := h.cfg.DNSRecords.ListByZoneID(ctx, zone.ID)
-	if err != nil {
-		return
-	}
-	for _, rec := range intended {
-		// Idempotent: skip if we already placed this exact MTA-STS row.
-		if hasExistingMTAStsRecord(existing, rec.Name, rec.Type) {
-			// TXT id may have rotated — replace it on every enable.
-			if rec.Type == "TXT" {
-				_ = h.cfg.DNSRecords.DeleteByZoneIDAndManagedBy(ctx, zone.ID, dnscompile.MTAStsRecordsManagedBy)
-				// fall through to re-create both rows fresh below
-				for _, again := range intended {
-					a := again
-					_ = h.cfg.DNSRecords.Create(ctx, &a)
-				}
-				return
-			}
-			continue
+		if srv.PublicIPv4 == "" {
+			return false, errors.New("this server has no public IPv4 address to publish")
 		}
-		r := rec
-		_ = h.cfg.DNSRecords.Create(ctx, &r)
+		return false, errors.New("the domain has no MTA-STS policy id")
 	}
+	existing, err := records.ListByZoneID(ctx, zone.ID)
+	if err != nil {
+		return false, err
+	}
+	have := map[string]bool{}
+	for _, r := range existing {
+		if r.ManagedBy != nil && *r.ManagedBy == dnscompile.MTAStsRecordsManagedBy {
+			have[r.Name+" "+r.Type+" "+r.Content] = true
+		}
+	}
+	same := len(have) == len(intended)
+	for _, r := range intended {
+		same = same && have[r.Name+" "+r.Type+" "+r.Content]
+	}
+	if same {
+		return false, nil
+	}
+	if len(have) > 0 {
+		if err := records.DeleteByZoneIDAndManagedBy(ctx, zone.ID, dnscompile.MTAStsRecordsManagedBy); err != nil {
+			return false, err
+		}
+	}
+	for i := range intended {
+		if err := records.Create(ctx, &intended[i]); err != nil {
+			return true, err
+		}
+	}
+	return true, nil
 }
 
 func (h *domainMTAStsHandler) removeDNSRecords(ctx context.Context, dom *models.Domain) {
@@ -204,15 +222,6 @@ func (h *domainMTAStsHandler) removeDNSRecords(ctx context.Context, dom *models.
 		return
 	}
 	_ = h.cfg.DNSRecords.DeleteByZoneIDAndManagedBy(ctx, zone.ID, dnscompile.MTAStsRecordsManagedBy)
-}
-
-func hasExistingMTAStsRecord(rows []models.DNSRecord, name, typ string) bool {
-	for _, r := range rows {
-		if r.Name == name && r.Type == typ && r.ManagedBy != nil && *r.ManagedBy == dnscompile.MTAStsRecordsManagedBy {
-			return true
-		}
-	}
-	return false
 }
 
 // buildResponse summarises state for the UI. status_hint values:

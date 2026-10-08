@@ -139,6 +139,23 @@ No records are restored for a domain whose DNS is hosted elsewhere, whose
 ownership isn't verified yet, or whose zone is disabled. Each record left out
 is listed in the restore report.
 
+### Mail settings
+
+A restored domain gets back its mail settings (GH #1993): its mail provider
+(Jabali, none, Microsoft 365, Google Workspace, or a DNS template's), the
+provider's DKIM token, its DMARC `np` and testing tags, and its CalDAV and
+CardDAV hosts. Each goes through the checks of the page that sets it; a value
+the page would refuse is left out and listed in the report. A domain made from
+a DNS template doesn't get Jabali mail back, because its mail page doesn't
+offer it. A backup made before Jabali recorded these settings restores the
+domain with the default provider, as before.
+
+MTA-STS comes back on when the restore also restores DNS records: the restore
+publishes the policy's two DNS records once the domain's zone exists. It stays
+off, with a line in the report, for a domain whose DNS is hosted elsewhere or
+whose ownership isn't verified yet, and when an upload restore leaves DNS
+records out. Turn it on in the domain's mail settings afterwards.
+
 ## Restore — `system_backup`
 
 System restores are typically performed on a freshly-bootstrapped panel host. Sequence:
@@ -272,8 +289,10 @@ is off by default:
     the PHP pool page would refuse leave the pool's own in place. A PHP
     setting both have takes the backup's value; one only the pool has stays;
   - a domain takes the backup's on/off state, redirect-all, index priority,
-    PHP settings, rate and connection limits, PHP pool, catch-all and outbound
-    disclaimer, through the checks its own pages run. A PHP setting the
+    PHP settings, rate and connection limits, PHP pool, catch-all, outbound
+    disclaimer, DMARC tags and CalDAV/CardDAV hosts, through the checks its
+    own pages run. MTA-STS is turned on when the backup has it on, never
+    off. A PHP setting the
     account's hosting package lets only an administrator set stays as it is.
     A backup made before Jabali recorded every PHP setting (GH #1993) changes
     only the PHP limits (memory, upload and post size, input variables,
@@ -281,7 +300,8 @@ is off by default:
     The catch-all is taken only when it points at a mailbox the account had
     on this server before the restore. A backup without a catch-all or a
     disclaimer clears the domain's. The domain's name, document root, SSL,
-    DKIM, DNSSEC, custom nginx directives and mail provider stay as they are.
+    DKIM, DNSSEC, custom nginx directives, mail provider and the provider's
+    DKIM token stay as they are.
 
   The restore report lists each password kept, and why.
 

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/phpbasedir"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dnscompile"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/domainops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 )
@@ -38,6 +39,10 @@ var errRestoreChecksUnwired = errors.New("the restore domain checks are not full
 //     uploaded file may list only paths inside the owner's home.
 //   - an index priority the domain page doesn't offer (GH #1993); the domain
 //     then gets the default.
+//   - a mail setting the domain page would refuse (GH #1993): an unknown mail
+//     provider, a malformed provider DKIM token, DMARC np tag or CalDAV/CardDAV
+//     host. A domain with the custom (DNS template) posture doesn't get Jabali
+//     mail, as the domain's mail page refuses it.
 //
 // The domain's web settings (GH #1993) are held to the rules of the page that
 // sets each one, and what fails is dropped with a warning. From an uploaded
@@ -83,6 +88,7 @@ func RestoreDomainCheck(domains domainops.SuffixDomainFinder, aliases domainops.
 			row.IndexPriority = p
 		}
 		warnings = append(warnings, dropRestoredPHPSettings(row, ownerUsername, source)...)
+		warnings = append(warnings, dropRestoredMailSettings(row)...)
 		warnings = append(warnings, dropRestoredWebSettings(ctx, row, ownerUsername, settings, previews, source)...)
 		return warnings, nil
 	}
@@ -118,6 +124,55 @@ func restoredRedirectProblem(row *models.Domain) string {
 		}
 	}
 	return ""
+}
+
+// dropRestoredMailSettings holds a restored row's mail settings to the domain
+// page's rules: what fails is dropped with a warning, the rest is stored in
+// the page's form. An empty MailProvider (an archive made before it) is left
+// for the column's default.
+func dropRestoredMailSettings(row *models.Domain) []string {
+	var warnings []string
+	if p := row.MailProvider; p != "" && !models.ValidMailProvider(p) {
+		row.MailProvider = ""
+		warnings = append(warnings, fmt.Sprintf("mail provider dropped: %q is not one the panel offers; the domain gets the default", p))
+	}
+	if row.MailProvider == models.MailProviderCustom && row.EmailEnabled {
+		row.EmailEnabled = false
+		warnings = append(warnings, "Jabali mail not turned on: the domain was made from a DNS template, whose records say where its mail goes")
+	}
+	if row.M365Onmicrosoft != nil {
+		v, err := dnscompile.NormaliseM365Onmicrosoft(*row.M365Onmicrosoft)
+		if err != nil {
+			warnings = append(warnings, "Microsoft 365 tenant dropped: "+err.Error())
+		}
+		row.M365Onmicrosoft = strPtrOrNil(v)
+	}
+	if row.GoogleDKIM != nil {
+		v, err := dnscompile.ValidateGoogleDKIM(*row.GoogleDKIM)
+		if err != nil {
+			warnings = append(warnings, "Google DKIM dropped: "+err.Error())
+		}
+		row.GoogleDKIM = strPtrOrNil(v)
+	}
+	if np := strings.TrimSpace(row.DmarcNP); dnscompile.ValidDMARCNP(np) {
+		row.DmarcNP = np
+	} else {
+		row.DmarcNP = ""
+		warnings = append(warnings, fmt.Sprintf("DMARC np dropped: %q must be empty, none, quarantine, or reject", np))
+	}
+	for _, f := range []struct {
+		name string
+		v    *string
+	}{{"CalDAV host", &row.CalDAVHost}, {"CardDAV host", &row.CardDAVHost}} {
+		h := strings.TrimSpace(*f.v)
+		if err := validateDAVHost(h); err != nil {
+			*f.v = ""
+			warnings = append(warnings, fmt.Sprintf("%s dropped: %v", f.name, err))
+			continue
+		}
+		*f.v = h
+	}
+	return warnings
 }
 
 // dropRestoredPHPSettings clears each per-domain PHP setting the PHP settings

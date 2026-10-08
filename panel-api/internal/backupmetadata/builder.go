@@ -84,6 +84,11 @@ type Deps struct {
 	// owner chose "Keep the backup's SSL certificates" (JAB-54: a source's
 	// private key is not trusted unasked). Off, Let's Encrypt issues new ones.
 	RestoreCertificates bool
+	// RestoresDNS: the door restores the domains' DNS records once Apply is
+	// done (api.RestoreBundleDNS), which publishes MTA-STS's records too. A
+	// domain's MTA-STS comes back on only then: without its records a
+	// receiving server can't find the policy (GH #1993).
+	RestoresDNS bool
 	// KeepExisting (GH #1993: "Overwrite existing items with the backup"
 	// off) adds only what the account is missing: a row it already has
 	// keeps its settings. An existing mailbox keeps its autoresponder.
@@ -491,6 +496,7 @@ func Build(ctx context.Context, user *models.User, d Deps) *internalbackup.Accou
 				dRow.DNSSECEnabledAt = timeRFC(*dom.DNSSECEnabledAt)
 			}
 			dRow.SSLMode, dRow.SkipAutoSAN = dom.SSLMode, dom.SkipAutoSAN
+			setMetadataMailSettings(&dRow, &dom)
 			if pr, err := json.Marshal(dom.PageRedirects); err == nil && string(pr) != "null" {
 				dRow.PageRedirects = string(pr)
 			}

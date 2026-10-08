@@ -1343,6 +1343,9 @@ func (h *backupHandler) restoreMetadataDeps(uploaded *uploadedData) backupmetada
 		// certificates back; an uploaded file's only when the admin chose
 		// to keep them (GH #1993, JAB-54).
 		RestoreCertificates: uploaded == nil || uploaded.keepCertificates,
+		// Both doors restore the domains' DNS records once Apply is done
+		// (RestoreBundleDNS), unless the upload leaves them out.
+		RestoresDNS: uploaded == nil || !uploaded.skipDNS,
 	}
 	if uploaded != nil {
 		deps.RestoredDatabases = stringSet(uploaded.databases)
