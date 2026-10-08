@@ -254,6 +254,24 @@ func MailHostnameCollision(ctx context.Context, settings repository.ServerSettin
 // success, or (_, status, code, detail) to reject. Cheap syntactic
 // checks run before any DB lookup.
 func (h *domainAliasHandler) validateAliasHostname(ctx context.Context, dom *models.Domain, raw string) (string, int, string, string) {
+	d := aliasHostnameDeps{Domains: h.cfg.Domains, Aliases: h.cfg.Aliases}
+	if h.cfg.Settings != nil {
+		d.Settings = h.cfg.Settings
+	}
+	return checkAliasHostname(ctx, d, dom, raw)
+}
+
+// aliasHostnameDeps is what checkAliasHostname reads. Settings may be nil:
+// the panel-name guard is then skipped (the alias page's optional wiring).
+type aliasHostnameDeps struct {
+	Domains  domainops.SuffixDomainFinder
+	Aliases  domainops.AliasHostnameFinder
+	Settings domainops.MailSettingsReader
+}
+
+// checkAliasHostname is the alias page's hostname rule (GH #1625), shared
+// with the account restore (RestoreAliasCheck, GH #1993).
+func checkAliasHostname(ctx context.Context, h aliasHostnameDeps, dom *models.Domain, raw string) (string, int, string, string) {
 	host := normalizeDomainName(raw)
 	if err := validateDomainName(host); err != nil {
 		return "", http.StatusBadRequest, "invalid_hostname", err.Error()
@@ -277,8 +295,8 @@ func (h *domainAliasHandler) validateAliasHostname(ctx context.Context, dom *mod
 	// panel-primary domain row, so the helper check below cannot catch it),
 	// and the applied custom mail hostname (JAB-390). Fails closed: a hostname
 	// that could not be cleared is refused.
-	if h.cfg.Settings != nil {
-		s, err := h.cfg.Settings.Get(ctx)
+	if h.Settings != nil {
+		s, err := h.Settings.Get(ctx)
 		if err != nil && !errors.Is(err, repository.ErrNotFound) {
 			return "", http.StatusInternalServerError, "db_mail_hostname_lookup", "could not verify the hostname against the panel hostname and mail hostname"
 		}
@@ -292,7 +310,7 @@ func (h *domainAliasHandler) validateAliasHostname(ctx context.Context, dom *mod
 		}
 	}
 	// Bare apex of any domain on the server (own primary already caught).
-	if existing, err := h.cfg.Domains.FindByName(ctx, host); err == nil && existing != nil {
+	if existing, err := h.Domains.FindByName(ctx, host); err == nil && existing != nil {
 		return "", http.StatusConflict, "alias_taken_by_domain", "that hostname is already a domain on this server"
 	}
 	// Helper server_name of any domain — the cross-tenant hijack vector.
@@ -304,12 +322,12 @@ func (h *domainAliasHandler) validateAliasHostname(ctx context.Context, dom *mod
 		if base == "" {
 			continue
 		}
-		if existing, err := h.cfg.Domains.FindByName(ctx, base); err == nil && existing != nil {
+		if existing, err := h.Domains.FindByName(ctx, base); err == nil && existing != nil {
 			return "", http.StatusConflict, "alias_conflicts_helper", "that hostname is a reserved mail/web name for the domain " + base
 		}
 	}
 	// Global alias uniqueness (the DB UNIQUE index is the backstop).
-	if existing, err := h.cfg.Aliases.FindByHostname(ctx, host); err == nil && existing != nil {
+	if existing, err := h.Aliases.FindByHostname(ctx, host); err == nil && existing != nil {
 		return "", http.StatusConflict, "alias_exists", "that hostname is already an alias"
 	}
 	return host, 0, "", ""

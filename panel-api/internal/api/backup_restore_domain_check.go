@@ -94,6 +94,28 @@ func RestoreDomainCheck(domains domainops.SuffixDomainFinder, aliases domainops.
 	}
 }
 
+// RestoreAliasCheck returns the backupmetadata.Deps.CheckAlias hook (GH
+// #1993): a web domain alias the archive brings goes through the alias page's
+// hostname rule (GH #1625) for the domain it is restored onto, and is stored
+// as the page stores it. Every store is required: an unwired guard would find
+// no conflict, so the hook refuses instead.
+func RestoreAliasCheck(domains domainops.SuffixDomainFinder, aliases domainops.AliasHostnameFinder,
+	settings domainops.MailSettingsReader) func(ctx context.Context, dom *models.Domain, hostname string) (string, error) {
+	return func(ctx context.Context, dom *models.Domain, hostname string) (string, error) {
+		if domains == nil || aliases == nil || settings == nil {
+			return "", errRestoreChecksUnwired
+		}
+		host, status, code, detail := checkAliasHostname(ctx, aliasHostnameDeps{Domains: domains, Aliases: aliases, Settings: settings}, dom, hostname)
+		if status != 0 {
+			if detail == "" {
+				detail = code
+			}
+			return "", errors.New(detail)
+		}
+		return host, nil
+	}
+}
+
 // RestoreSource is where a restored archive comes from.
 type RestoreSource int
 

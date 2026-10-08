@@ -193,6 +193,9 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 	// account's own row of the same name created here before the restore
 	// (GH #1993). Child rows are attached through them.
 	domainIDs := map[string]string{}
+	// domainRows holds the row each of them stands for, as it is here: the
+	// restored row or the account's own. The aliases are checked against it.
+	domainRows := map[string]*models.Domain{}
 	mailboxIDs := map[string]string{}
 	dbIDs := map[string]string{}
 	dbUserIDs := map[string]string{}
@@ -214,6 +217,7 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 				}
 				ownDomains[dm.ID] = true
 				domainIDs[dm.ID] = dm.ID
+				domainRows[dm.ID] = existing
 				r.Skipped++
 				if d.OverwriteRows {
 					overwriteDomain(ctx, d, &r, m.User.ID, bundleUser, account, existing, dm, poolIDs)
@@ -235,6 +239,7 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 				}
 				ownDomains[existing.ID] = true
 				domainIDs[dm.ID] = existing.ID
+				domainRows[dm.ID] = existing
 				r.Skipped++
 				if d.OverwriteRows {
 					overwriteDomain(ctx, d, &r, m.User.ID, bundleUser, account, existing, dm, poolIDs)
@@ -349,6 +354,7 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 			}
 			ownDomains[dm.ID] = true
 			domainIDs[dm.ID] = dm.ID
+			domainRows[dm.ID] = row
 			r.Domains++
 			customServed := false
 			if dm.SSLCertificate != nil && d.SSLCerts != nil {
@@ -405,6 +411,14 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 					r.Errors = append(r.Errors, fmt.Sprintf("domain %s (%s): its custom certificate was not restored; it gets a Let's Encrypt certificate", dm.ID, dm.Name))
 				}
 			}
+		}
+	}
+
+	// 3a) Web domain aliases (GH #1625, GH #1993), once every domain is in:
+	// an alias must not take a name a domain of the same backup has.
+	for _, dm := range m.Domains {
+		if dom := domainRows[dm.ID]; dom != nil && len(dm.Aliases) > 0 {
+			restoreDomainAliases(ctx, d, &r, dm, dom, now)
 		}
 	}
 

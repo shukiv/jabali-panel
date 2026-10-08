@@ -91,6 +91,9 @@ inFlight map dedupe duplicate dispatches.`,
 				// sealed-password destinations fail before the agent call (Gitea #538).
 				SSOKey: ssoKeyForCLI(),
 				Log:    sharedLog,
+
+				// GH #1993: a scheduled backup carries the domains' aliases.
+				WebDomainAliases: repository.NewWebDomainAliasRepository(sharedDB),
 			})
 			if s == nil {
 				return fmt.Errorf("scheduler.New returned nil — required deps missing (check serve.go's Deps assembly)")

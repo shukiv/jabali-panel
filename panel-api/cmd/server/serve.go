@@ -1119,6 +1119,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 		Agent:          deps.Agent,
 		SSOKey:         deps.SSOKey,
 		Log:            log,
+
+		// GH #1993: a scheduled backup carries the domains' aliases.
+		WebDomainAliases: deps.WebDomainAliases,
 	}); sched != nil {
 		go sched.Start(ctx)
 	} else {

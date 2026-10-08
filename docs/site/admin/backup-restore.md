@@ -28,9 +28,12 @@ The agent restores in the same per-stage order the backup ran: files first, data
 
 An account backup carries each domain's certificate and private key (GH #1993)
 when the certificate was issued by a certificate authority or uploaded on the
-custom certificate page, and covers only the account's own domains. A
-self-signed certificate isn't carried, and neither is one that also covers a
-name outside the account, such as a wildcard of the panel's own domain. A
+custom certificate page, and covers only the account's own domains and their
+verified web domain aliases. An alias counts by its own name only: a
+certificate that also covers a wildcard of an alias, or a name under one,
+isn't carried. A self-signed certificate isn't carried, and neither is one
+that also covers a name outside the account, such as a wildcard of the
+panel's own domain. A
 backup made before this release carries none. Keep downloaded backups private:
 they hold the domains' private keys.
 
@@ -155,6 +158,23 @@ publishes the policy's two DNS records once the domain's zone exists. It stays
 off, with a line in the report, for a domain whose DNS is hosted elsewhere or
 whose ownership isn't verified yet, and when an upload restore leaves DNS
 records out. Turn it on in the domain's mail settings afterwards.
+
+### Web domain aliases
+
+A restore brings back each domain's web domain aliases (GH #1993), the extra
+hostnames added on the domain's **Aliases** tab. Each goes through the checks
+of that tab: an alias that isn't a valid hostname, that is the domain's own or
+`www` name, that is the panel's hostname, or that is already a domain, a
+domain's mail name or another alias on this server isn't added, and the
+restore report says why. A domain with web hosting off gets no aliases.
+
+A restore only adds aliases. An alias the domain already has stays as it is,
+and an alias the domain has but the backup doesn't isn't removed, whether
+**Overwrite existing items with the backup** is on or off. An alias the backup
+records as verified comes back verified; one that was pending comes back
+pending. Once an alias is added, the panel rebuilds the domain's site
+configuration and certificate to cover it. A backup made before Jabali
+recorded aliases restores none.
 
 ## Restore — `system_backup`
 

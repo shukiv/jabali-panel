@@ -1361,6 +1361,9 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Settings:  deps.ServerSettings,
 				Notify:    deps.NotificationQueue,
 				Log:       deps.Log,
+
+				// GH #1993: the tenant's own backup carries its domains' aliases.
+				WebDomainAliases: deps.WebDomainAliases,
 			})
 		}
 		// M30.1 (ADR-0078): backup destinations + schedules.

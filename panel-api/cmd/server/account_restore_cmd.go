@@ -83,6 +83,10 @@ func applyPanelMetadata(ctx context.Context, cmd *cobra.Command, raw json.RawMes
 		// The DNS step below publishes the domains' records, MTA-STS's too, so
 		// a domain's MTA-STS comes back on (GH #1993).
 		RestoresDNS: true,
+		// A restored web domain alias passes the alias page's checks (GH #1993).
+		WebDomainAliases: repository.NewWebDomainAliasRepository(sharedDB),
+		CheckAlias: api.RestoreAliasCheck(repository.NewDomainRepository(sharedDB),
+			repository.NewWebDomainAliasRepository(sharedDB), repository.NewServerSettingsRepository(sharedDB)),
 	}
 	r := backupmetadata.Apply(ctx, &meta, deps)
 	w := cmd.OutOrStdout()

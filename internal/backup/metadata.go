@@ -203,6 +203,10 @@ type MetadataDomain struct {
 	WebDisabled              bool    `json:"web_disabled,omitempty"`
 	DNSDisabled              bool    `json:"dns_disabled,omitempty"`
 
+	// Aliases (GH #1625, GH #1993) are the domain's web domain aliases: other
+	// hostnames its site answers on.
+	Aliases []MetadataDomainAlias `json:"aliases,omitempty"`
+
 	SSLCertificate *MetadataSSLCert    `json:"ssl_certificate,omitempty"`
 	Mailboxes      []MetadataMailbox   `json:"mailboxes,omitempty"`
 	Forwarders     []MetadataForwarder `json:"forwarders,omitempty"`
@@ -211,6 +215,16 @@ type MetadataDomain struct {
 	// they re-derive from domain config via the reconciler.
 	DNSRecords []MetadataDNSRecord `json:"dns_records,omitempty"`
 	DNSSECKeys []MetadataDNSSECKey `json:"dnssec_keys,omitempty"`
+}
+
+// MetadataDomainAlias mirrors models.WebDomainAlias. A restore gives each
+// alias a new id: an id the file chose never names a row already on the
+// server. OwnershipStatus is the alias's own ownership state (GH #1816); a
+// pending alias stays pending.
+type MetadataDomainAlias struct {
+	ID              string `json:"id"`
+	Hostname        string `json:"hostname"`
+	OwnershipStatus string `json:"ownership_status,omitempty"`
 }
 
 // MetadataSSLCert mirrors models.SSLCertificate (sans large per-cert
