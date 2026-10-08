@@ -59,7 +59,9 @@ func TestRender_Odoo(t *testing.T) {
 	assertNoUnresolved(t, out)
 	for _, n := range []string{
 		"image: odoo:18.0",
-		"command: odoo --proxy-mode", // proxy trust is load-bearing behind the vhost
+		// Proxy trust is load-bearing behind the vhost; Odoo 20 listens on
+		// loopback inside the container unless told otherwise (GH #1956).
+		"command: odoo --proxy-mode --http-interface=0.0.0.0",
 		`PASSWORD: "odoopw"`,
 		"HOST: postgres",
 		`"127.0.0.1:10060:8069/tcp"`,
