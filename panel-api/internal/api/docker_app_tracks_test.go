@@ -102,7 +102,7 @@ type trackRepo struct {
 
 func (r *trackRepo) FindByID(context.Context, string) (*models.DockerApp, error) { return r.app, nil }
 func (r *trackRepo) ListPortsForApp(context.Context, string) ([]*models.DockerAppPublishedPort, error) {
-	return nil, nil
+	return []*models.DockerAppPublishedPort{{ID: "p1", PortName: "http", HostPort: 10000, ContainerPort: 8080, BindInterface: "loopback", Protocol: "tcp"}}, nil
 }
 func (r *trackRepo) UpdateStatus(_ context.Context, _, status string, _ *string) error {
 	r.mu.Lock()
@@ -280,17 +280,26 @@ func TestEditDomainPorts_UpdateRequiredBeforeAnyChange(t *testing.T) {
 	}
 }
 
-// The edit re-renders on the install's own track and keeps its label there.
+// The edit re-renders on the install's own track, and its label follows the
+// image the edit put it on.
 func TestEditDomainPorts_StaysOnTheInstallsTrack(t *testing.T) {
-	h, repo, mock := trackHandler(t, "odoo", "19.0")
-	if err := h.editDomainPorts(context.Background(), repo.app, nil, nil, "admin", true); err != nil {
-		t.Fatalf("edit: %v", err)
-	}
-	compose, _ := lastAgentParams(t, mock, "docker_app.install")["compose_yml"].(string)
-	if !strings.Contains(compose, "image: "+odoo19Image+"\n") {
-		t.Fatalf("compose %q, want the held 19 image", compose)
-	}
-	if _, versions := repo.snapshot(); len(versions) != 0 {
-		t.Fatalf("label rewritten to %v; it was already 19.0", versions)
+	for _, tc := range []struct {
+		recorded string
+		labels   []string
+	}{
+		{"34.0.2", []string{"34.0.3"}},
+		{"34.0.3", nil},
+	} {
+		h, repo, mock := trackHandler(t, "nextcloud", tc.recorded)
+		if err := h.editDomainPorts(context.Background(), repo.app, nil, nil, "admin", true); err != nil {
+			t.Fatalf("%s: edit: %v", tc.recorded, err)
+		}
+		compose, _ := lastAgentParams(t, mock, "docker_app.install")["compose_yml"].(string)
+		if !strings.Contains(compose, "image: "+nc34Image+"\n") {
+			t.Fatalf("%s: compose %q, want the held 34 image", tc.recorded, compose)
+		}
+		if _, versions := repo.snapshot(); strings.Join(versions, ",") != strings.Join(tc.labels, ",") {
+			t.Fatalf("%s: labels %v, want %v", tc.recorded, versions, tc.labels)
+		}
 	}
 }
