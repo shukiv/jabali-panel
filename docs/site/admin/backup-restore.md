@@ -37,7 +37,7 @@ they hold the domains' private keys.
 When an account restore brings back a domain whose certificate isn't on this
 server, because the backup came from another server or the files are gone:
 
-- **A backup from this server's destinations**, or `jabali account restore`,
+- **A backup from this server's destinations**, or `jabali backup account-restore`,
   installs the backup's certificate when it pairs with its key, covers the
   domain, and is valid for at least another day.
 - **An uploaded file** installs it only when **Keep the backup's SSL
