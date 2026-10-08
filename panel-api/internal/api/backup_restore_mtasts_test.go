@@ -148,3 +148,37 @@ func TestRestoreMetadataDeps_RestoresDNSUnlessTheUploadSkipsIt(t *testing.T) {
 		t.Fatal("restoreUploadedAccount must pass skips.dns on as uploadedData.skipDNS")
 	}
 }
+
+// GH #1993 (found on the way): `jabali domain mta-sts --enable` turned the
+// switch on but published no DNS records — only the mail page's toggle did,
+// and the CLI said the reconciler would. Both now run SyncMTAStsDNS.
+func TestSyncMTAStsDNS_PublishesWhenOnAndRemovesWhenOff(t *testing.T) {
+	f := newRDFixture()
+	d := f.domains.rows["example.com"]
+	d.ID, d.MTASTSEnabled, d.MTASTSId = "d1", true, 1700000000
+	deps := MTAStsDNSDeps{Zones: f.zones, Records: f.records, Settings: rdSettings{s: f.srv}}
+	if err := SyncMTAStsDNS(context.Background(), deps, d); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+	if got := strings.Join(f.records.mtaStsRows("z1"), "|"); got != rdMTAStsWant {
+		t.Fatalf("records %q, want %q", got, rdMTAStsWant)
+	}
+	d.MTASTSEnabled = false
+	if err := SyncMTAStsDNS(context.Background(), deps, d); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+	if rows := f.records.mtaStsRows("z1"); len(rows) != 0 || len(f.records.rows) != 2 {
+		t.Fatalf("MTA-STS records %v, rows %d; want only the zone's own two left", rows, len(f.records.rows))
+	}
+	d.ID = "d-none"
+	if err := SyncMTAStsDNS(context.Background(), deps, d); err == nil {
+		t.Fatal("a domain without a zone must say so")
+	}
+}
+
+func TestDomainMTAStsCLI_SyncsTheDNSRecords(t *testing.T) {
+	src, err := os.ReadFile("../../cmd/server/domain_advanced_cmd.go")
+	if err != nil || !strings.Contains(string(src), "api.SyncMTAStsDNS(") || strings.Contains(string(src), "The reconciler publishes/removes the DNS") {
+		t.Fatal("`jabali domain mta-sts` must publish or remove the records through api.SyncMTAStsDNS")
+	}
+}

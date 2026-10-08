@@ -433,11 +433,26 @@ func newDomainMTAStsCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if _, err := domainRepoFromDB().UpdateMTASTSEnabled(ctx, d.ID, enable); err != nil {
+			newID, err := domainRepoFromDB().UpdateMTASTSEnabled(ctx, d.ID, enable)
+			if err != nil {
 				return fmt.Errorf("update mta_sts_enabled: %w", err)
 			}
 			cliAuditOK(ctx, "domain.mta_sts", "domain", d.ID, &d.UserID)
-			fmt.Fprintf(cmd.OutOrStdout(), "%s MTA-STS=%v. The reconciler publishes/removes the DNS + policy on the next pass.\n", d.Name, enable)
+			// The DNS records are published here, as the mail page's toggle
+			// does: nothing else publishes them (GH #1993).
+			d.MTASTSEnabled = enable
+			if enable && newID != 0 {
+				d.MTASTSId = newID
+			}
+			out := cmd.OutOrStdout()
+			if err := api.SyncMTAStsDNS(ctx, api.MTAStsDNSDeps{
+				Zones:    repository.NewDNSZoneRepository(sharedDB),
+				Records:  repository.NewDNSRecordRepository(sharedDB),
+				Settings: repository.NewServerSettingsRepository(sharedDB),
+			}, d); err != nil {
+				fmt.Fprintf(out, "WARNING: %s MTA-STS DNS records not updated: %v\n", d.Name, err)
+			}
+			fmt.Fprintf(out, "%s MTA-STS=%v. The reconciler converges the certificate and the policy on the next pass.\n", d.Name, enable)
 			return nil
 		},
 	}
