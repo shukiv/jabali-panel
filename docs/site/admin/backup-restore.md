@@ -195,6 +195,24 @@ System restores are typically performed on a freshly-bootstrapped panel host. Se
 
 Round-trip restore was live-verified on 192.168.100.150.
 
+### Accounts the restored panel database doesn't have
+
+A system restore that includes accounts rebuilds the panel rows of an account
+its panel database dump doesn't have (an account deleted before the system
+backup ran, or a target host with no rows at all) from that account's newest
+backup. Its domains come back with the settings the account backup carries
+(GH #1993): their web, PHP, certificate-mode and mail settings. A setting an
+older backup doesn't carry takes its default, as on a new domain. Two things
+differ from an account restore:
+
+- **MTA-STS** comes back off, because this restore doesn't publish DNS
+  records. Turn it on in the domain's mail settings.
+- **Web domain aliases** aren't restored, because this restore doesn't run the
+  alias checks. Add them on the domain's **Aliases** tab, or restore the
+  account afterwards.
+
+A domain comes back verified, unless its backup records it as pending.
+
 ## Restore from an uploaded archive
 
 Besides restic destinations, both account and full-server restores accept a
