@@ -13,6 +13,9 @@ Filter by kind, by subject (for `account_full`), by date range.
 Pick a snapshot, then choose:
 
 - **Target user** — restore to the same user (overwrite), to a new user (preserve original), or to an existing different user (uncommon; usually for forensic investigation).
+  An account deleted and created again with the same username counts as the
+  same user: the restore rebuilds its domains, databases, mailboxes and other
+  panel records on it (GH #1993).
 - **Components** — restore everything (a **Select all** toggle) or pick subsets (files, databases, mailboxes, DNS, FTP subaccounts). FTP/SFTP subaccounts are rebuilt with their original login password (GH #1361); MariaDB **and** PostgreSQL databases are covered.
 - **Dry run** — see what would be touched without writing.
 

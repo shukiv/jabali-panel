@@ -1211,7 +1211,23 @@ func (h *backupHandler) runAccountRestoreJob(jobID string, dest *models.BackupDe
 	// consistent to rebuild) and for old snapshots that carry no bundle. A
 	// metadata-apply failure must not leave the job reporting a clean success.
 	if finalStatus != models.BackupJobStatusFailed {
-		if errs := h.applyRestoreMetadata(ctx, result.Metadata, nil); len(errs) > 0 {
+		// GH #1993: an account deleted and created again here has a new id;
+		// its snapshot names the old one.
+		targetID, _ := params["target_user_id"].(string)
+		targetName := ""
+		switch v := params["target_username"].(type) {
+		case string:
+			targetName = v
+		case *string: // as restore() passes it
+			if v != nil {
+				targetName = *v
+			}
+		}
+		meta, rerr := retargetRecreatedAccount(result.Metadata, targetID, targetName)
+		if rerr != nil {
+			meta = result.Metadata
+		}
+		if errs := h.applyRestoreMetadata(ctx, meta, nil); len(errs) > 0 {
 			if finalStatus == models.BackupJobStatusSucceeded {
 				finalStatus = models.BackupJobStatusPartial
 			}
@@ -1221,8 +1237,8 @@ func (h *backupHandler) runAccountRestoreJob(jobID string, dest *models.BackupDe
 			h.cfg.logErr("account restore metadata apply had errors", errors.New(strings.Join(errs, "; ")), "job_id", jobID)
 		}
 		// GH #1993: the domains' custom DNS records, once their zones exist.
-		if acct := metadataUserID(result.Metadata); acct != "" {
-			if _, dnsWarnings := RestoreBundleDNS(ctx, h.restoreDNSDeps(false), result.Metadata, acct); len(dnsWarnings) > 0 {
+		if acct := metadataUserID(meta); acct != "" {
+			if _, dnsWarnings := RestoreBundleDNS(ctx, h.restoreDNSDeps(false), meta, acct); len(dnsWarnings) > 0 {
 				if finalStatus == models.BackupJobStatusSucceeded {
 					finalStatus = models.BackupJobStatusPartial
 				}
@@ -1234,6 +1250,30 @@ func (h *backupHandler) runAccountRestoreJob(jobID string, dest *models.BackupDe
 		}
 	}
 	seal(finalStatus, finalErr, raw)
+}
+
+// retargetRecreatedAccount points a snapshot's metadata bundle at the account
+// it is restored into when that is the same account created again here: the
+// same username under a new id (GH #1993). Without it the rebuild tries to
+// create the account under its old id, the username clashes, and none of the
+// panel rows come back. A bundle of another account is left as it is.
+func retargetRecreatedAccount(metaRaw json.RawMessage, targetID, targetUsername string) (json.RawMessage, error) {
+	if len(metaRaw) == 0 || targetID == "" || targetUsername == "" {
+		return metaRaw, nil
+	}
+	var m struct {
+		User struct {
+			ID       string  `json:"id"`
+			Username *string `json:"username"`
+		} `json:"user"`
+	}
+	if err := json.Unmarshal(metaRaw, &m); err != nil {
+		return metaRaw, nil // Apply reports the bundle it can't parse
+	}
+	if m.User.ID == targetID || m.User.Username == nil || *m.User.Username != targetUsername {
+		return metaRaw, nil
+	}
+	return remapMetadataUserID(metaRaw, targetID)
 }
 
 // applyRestoreMetadata rebuilds the panel DB rows from the metadata bundle the
