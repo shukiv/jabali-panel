@@ -373,9 +373,8 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 					// nothing re-issues an issued row. Install the backup's
 					// certificate when it may and passes the checks;
 					// otherwise start over like a new domain.
-					note, ok := installRestoredCert(ctx, d, row, cert, dm.SSLCertificate, now)
-					r.Errors = append(r.Errors, fmt.Sprintf("ssl_cert %s (%s): %s", cert.ID, row.Name, note))
-					if !ok {
+					if ok, note := installRestoredCert(ctx, d, row, cert, dm.SSLCertificate, now); !ok {
+						r.Errors = append(r.Errors, fmt.Sprintf("ssl_cert %s (%s): %s", cert.ID, row.Name, note))
 						cert.CertPath, cert.KeyPath, cert.Status = nil, nil, models.SSLStatusPending
 					}
 				case cert.Status == models.SSLStatusIssuing || cert.Status == models.SSLStatusPendingACMERetry:

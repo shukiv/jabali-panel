@@ -254,8 +254,10 @@ func TestApply_InstallsTheBackupsCertificate(t *testing.T) {
 		if c.ExpiresAt == nil || !c.ExpiresAt.Equal(notAfter.UTC()) {
 			t.Fatalf("untrusted=%v: expires %v, want the certificate's %v", untrusted, c.ExpiresAt, notAfter)
 		}
-		if !hasError(got.r.Errors, "ssl_cert c1 (alice.org): the backup's certificate is installed and valid until "+notAfter.UTC().Format(time.DateOnly)) {
-			t.Fatalf("untrusted=%v: errors %v, want the installed line", untrusted, got.r.Errors)
+		// A report line marks the restore as partial: an installed
+		// certificate has none.
+		if hasError(got.r.Errors, "ssl_cert c1") {
+			t.Fatalf("untrusted=%v: errors %v, want no line for an installed certificate", untrusted, got.r.Errors)
 		}
 		if got.dom.SSLMode != models.SSLModeLE || !got.dom.SkipAutoSAN || len(got.modes) != 0 || got.r.SSLCerts != 1 {
 			t.Fatalf("untrusted=%v: domain mode %q skip-auto-san %v, mode writes %v, certificates %d", untrusted, got.dom.SSLMode, got.dom.SkipAutoSAN, got.modes, got.r.SSLCerts)
@@ -360,7 +362,7 @@ func TestApply_CustomCertificateDomain(t *testing.T) {
 	agent := &srAgent{}
 	got := srRestore(t, srCase{mode: models.SSLModeCustom, status: models.SSLStatusCustom, ownership: models.OwnershipPending,
 		certPEM: cert, keyPEM: key, keep: true, agent: agent})
-	if len(agent.calls) != 1 || got.cert.Status != models.SSLStatusCustom || got.cert.IssueMethod != "" {
+	if len(agent.calls) != 1 || got.cert.Status != models.SSLStatusCustom || got.cert.IssueMethod != "" || hasError(got.r.Errors, "ssl_cert c1") {
 		t.Fatalf("calls %d certificate %+v (errors %v), want the owner's certificate installed as custom", len(agent.calls), got.cert, got.r.Errors)
 	}
 	if got.dom.SSLMode != models.SSLModeCustom || len(got.modes) != 0 {

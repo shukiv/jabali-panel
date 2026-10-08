@@ -92,53 +92,54 @@ func checkRestoredCert(certPEM, keyPEM, domain string, verifyChain bool, now tim
 
 // installRestoredCert installs the backup's certificate for row, whose
 // certificate (cert, still to be stored) isn't on this server, and points cert
-// at it. It returns the report line and whether the certificate is installed;
-// when it isn't, the caller starts the certificate over.
-func installRestoredCert(ctx context.Context, d Deps, row *models.Domain, cert *models.SSLCertificate, mc *internalbackup.MetadataSSLCert, now time.Time) (string, bool) {
+// at it. It returns whether the certificate is installed and, when it isn't,
+// the report line saying why; the caller then starts the certificate over. An
+// installed certificate needs no line: a report line marks the restore as
+// partial.
+func installRestoredCert(ctx context.Context, d Deps, row *models.Domain, cert *models.SSLCertificate, mc *internalbackup.MetadataSSLCert, now time.Time) (bool, string) {
 	const reissue = "; a new one will be issued"
 	switch {
 	case row.SSLMode == models.SSLModeSelf || row.SSLMode == models.SSLModeNone:
-		return "its certificate isn't on this server" + reissue, false
+		return false, "its certificate isn't on this server" + reissue
 	case cert.Status != models.SSLStatusIssued && cert.Status != models.SSLStatusRenewing && cert.Status != models.SSLStatusCustom:
-		return "its certificate isn't on this server" + reissue, false
+		return false, "its certificate isn't on this server" + reissue
 	case mc.CertPEM == "" || mc.KeyPEM == "":
-		return "its certificate isn't on this server, and the backup doesn't carry it" + reissue, false
+		return false, "its certificate isn't on this server, and the backup doesn't carry it" + reissue
 	case row.SSLMode != models.SSLModeCustom && !row.OwnershipState.Verified():
 		// The reconciler serves a placeholder on a domain whose ownership
 		// isn't proven, over any certificate a CA issued.
-		return "the backup's certificate is not used: the domain's ownership isn't verified" + reissue, false
+		return false, "the backup's certificate is not used: the domain's ownership isn't verified" + reissue
 	case !d.RestoreCertificates:
-		return "the backup's certificate was left out (\"Keep the backup's SSL certificates\" was not chosen)" + reissue, false
+		return false, "the backup's certificate was left out (\"Keep the backup's SSL certificates\" was not chosen)" + reissue
 	case d.Agent == nil:
-		return "the backup's certificate can't be installed: the agent is not wired" + reissue, false
+		return false, "the backup's certificate can't be installed: the agent is not wired" + reissue
 	}
 	leaf, err := checkRestoredCert(mc.CertPEM, mc.KeyPEM, row.Name, d.Untrusted, now)
 	if err != nil {
-		return "the backup's certificate is not used: " + err.Error() + reissue, false
+		return false, "the backup's certificate is not used: " + err.Error() + reissue
 	}
 	raw, err := d.Agent.Call(ctx, "ssl.install_custom", map[string]any{
 		"domain": row.Name, "cert_pem": mc.CertPEM, "key_pem": mc.KeyPEM,
 	})
 	if err != nil {
-		return fmt.Sprintf("installing the backup's certificate failed (%s)", firstLineOf(err)) + reissue, false
+		return false, fmt.Sprintf("installing the backup's certificate failed (%s)", firstLineOf(err)) + reissue
 	}
 	var res struct {
 		CertPath string `json:"cert_path"`
 		KeyPath  string `json:"key_path"`
 	}
 	if err := json.Unmarshal(raw, &res); err != nil || !ownCertFiles(row.Name, &res.CertPath, &res.KeyPath) {
-		return "installing the backup's certificate failed (the agent named no certificate files of this domain)" + reissue, false
+		return false, "installing the backup's certificate failed (the agent named no certificate files of this domain)" + reissue
 	}
 	issued, expires := leaf.NotBefore.UTC(), leaf.NotAfter.UTC()
 	cert.CertPath, cert.KeyPath = &res.CertPath, &res.KeyPath
 	cert.IssuedAt, cert.ExpiresAt = &issued, &expires
-	until := expires.Format(time.DateOnly)
 	if row.SSLMode == models.SSLModeCustom {
 		cert.Status, cert.IssueMethod = models.SSLStatusCustom, ""
-		return "the backup's certificate is installed; it is valid until " + until, true
+		return true, ""
 	}
 	cert.Status, cert.IssueMethod = models.SSLStatusIssued, models.SSLIssueMethodRestored
-	return "the backup's certificate is installed and valid until " + until + "; Let's Encrypt replaces it before then", true
+	return true, ""
 }
 
 // firstLineOf is err's first line: an agent error can carry command output.

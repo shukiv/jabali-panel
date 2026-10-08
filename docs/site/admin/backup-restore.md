@@ -60,8 +60,8 @@ Any other domain gets a new certificate as a new domain does: Let's Encrypt,
 once its DNS points at this server. A domain that used a shared certificate
 gets one of its own, because the shared certificate belongs to the server. A
 domain with a custom certificate that isn't installed switches to Let's
-Encrypt. The restore report says, for each domain, whether its certificate was
-installed and, if not, why.
+Encrypt. The restore report lists each domain whose certificate wasn't
+installed, and why.
 
 ### Database users and their passwords
 
