@@ -80,6 +80,13 @@ func applyPanelMetadata(ctx context.Context, cmd *cobra.Command, raw json.RawMes
 		// The CLI restores from this server's own backup destinations, so the
 		// backup's certificates come back when they pass the checks (GH #1993).
 		RestoreCertificates: true,
+		// The DNS step below publishes the domains' records, MTA-STS's too, so
+		// a domain's MTA-STS comes back on (GH #1993).
+		RestoresDNS: true,
+		// A restored web domain alias passes the alias page's checks (GH #1993).
+		WebDomainAliases: repository.NewWebDomainAliasRepository(sharedDB),
+		CheckAlias: api.RestoreAliasCheck(repository.NewDomainRepository(sharedDB),
+			repository.NewWebDomainAliasRepository(sharedDB), repository.NewServerSettingsRepository(sharedDB)),
 	}
 	r := backupmetadata.Apply(ctx, &meta, deps)
 	w := cmd.OutOrStdout()
@@ -146,10 +153,11 @@ func applyPanelMetadata(ctx context.Context, cmd *cobra.Command, raw json.RawMes
 	fmt.Fprintln(w, "bundle — re-enable with `jabali pdns dnssec enable`.")
 }
 
-// bundleHasDNSRecords reports whether meta carries custom DNS records.
+// bundleHasDNSRecords reports whether meta carries custom DNS records, or a
+// domain whose MTA-STS records the DNS step publishes.
 func bundleHasDNSRecords(meta *internalbackup.AccountMetadata) bool {
 	for _, d := range meta.Domains {
-		if len(d.DNSRecords) > 0 {
+		if len(d.DNSRecords) > 0 || d.MTASTSEnabled {
 			return true
 		}
 	}

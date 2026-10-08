@@ -673,12 +673,15 @@ func writeTempStr(s string) (string, error) {
 	return f.Name(), f.Close()
 }
 
-// sqlEscape doubles single-quotes for embedding into an ALTER USER
-// IDENTIFIED BY '...' literal. Caller must wrap the result in single
-// quotes themselves. Passwords are install-generated strong randoms
-// so semicolon / backslash / null bytes shouldn't appear, but quoting
-// defensively keeps a future hand-edited file from breaking the SQL.
+// sqlEscape escapes s for a single-quoted MariaDB string literal; the caller
+// wraps the result in the quotes. MariaDB reads a backslash inside a literal
+// as an escape (unless sql_mode has NO_BACKSLASH_ESCAPES), so a value holding
+// \' or ending in \ would close the literal early and run what follows as
+// SQL: the account reconstruction writes tenants' text this way, as root
+// (GH #1993). Backslashes are doubled first, then quotes. Under
+// NO_BACKSLASH_ESCAPES a backslash is stored twice, but the literal holds.
 func sqlEscape(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
 	return strings.ReplaceAll(s, "'", "''")
 }
 

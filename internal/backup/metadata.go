@@ -129,26 +129,54 @@ type MetadataDomain struct {
 	PHPMaxInputVars       *int    `json:"php_max_input_vars,omitempty"`
 	PHPMaxExecutionTime   *int    `json:"php_max_execution_time,omitempty"`
 	PHPMaxInputTime       *int    `json:"php_max_input_time,omitempty"`
-	RateLimitRPS          uint32  `json:"rate_limit_rps"`
-	ConnectionLimit       uint32  `json:"connection_limit"`
-	ListenIPv4ID          *uint64 `json:"listen_ipv4_id,omitempty"`
-	ListenIPv6ID          *uint64 `json:"listen_ipv6_id,omitempty"`
-	EmailEnabled          bool    `json:"email_enabled"`
-	DkimSelector          *string `json:"dkim_selector,omitempty"`
-	DkimPublicKey         *string `json:"dkim_public_key,omitempty"`
-	EmailEnabledAt        string  `json:"email_enabled_at,omitempty"`
-	IsPanelPrimary        bool    `json:"is_panel_primary"`
-	CatchallTarget        *string `json:"catchall_target,omitempty"`
-	DisclaimerEnabled     bool    `json:"disclaimer_enabled"`
-	DisclaimerText        *string `json:"disclaimer_text,omitempty"`
-	DNSSECEnabled         bool    `json:"dnssec_enabled"`
-	DNSSECEnabledAt       string  `json:"dnssec_enabled_at,omitempty"`
-	CreatedAt             string  `json:"created_at,omitempty"`
+	// The domain's other PHP settings (GH #1993), as the PHP settings page
+	// stores them: nil inherits the pool's or the server's value.
+	// PHPOpenBasedir is the token form (internal/phpbasedir). An archive made
+	// before them carries only the limits above and leaves
+	// PHPSettingsComplete false: a restore over an existing domain then keeps
+	// that domain's own settings instead of clearing them.
+	PHPDisplayErrors    *bool   `json:"php_display_errors,omitempty"`
+	PHPErrorReporting   *int    `json:"php_error_reporting,omitempty"`
+	PHPTimezone         *string `json:"php_timezone,omitempty"`
+	PHPLogErrors        *bool   `json:"php_log_errors,omitempty"`
+	PHPFileUploads      *bool   `json:"php_file_uploads,omitempty"`
+	PHPShortOpenTag     *bool   `json:"php_short_open_tag,omitempty"`
+	PHPOpenBasedir      *string `json:"php_open_basedir,omitempty"`
+	PHPAllowURLFopen    *bool   `json:"php_allow_url_fopen,omitempty"`
+	PHPSettingsComplete bool    `json:"php_settings_complete,omitempty"`
+	RateLimitRPS        uint32  `json:"rate_limit_rps"`
+	ConnectionLimit     uint32  `json:"connection_limit"`
+	ListenIPv4ID        *uint64 `json:"listen_ipv4_id,omitempty"`
+	ListenIPv6ID        *uint64 `json:"listen_ipv6_id,omitempty"`
+	EmailEnabled        bool    `json:"email_enabled"`
+	DkimSelector        *string `json:"dkim_selector,omitempty"`
+	DkimPublicKey       *string `json:"dkim_public_key,omitempty"`
+	EmailEnabledAt      string  `json:"email_enabled_at,omitempty"`
+	IsPanelPrimary      bool    `json:"is_panel_primary"`
+	CatchallTarget      *string `json:"catchall_target,omitempty"`
+	DisclaimerEnabled   bool    `json:"disclaimer_enabled"`
+	DisclaimerText      *string `json:"disclaimer_text,omitempty"`
+	DNSSECEnabled       bool    `json:"dnssec_enabled"`
+	DNSSECEnabledAt     string  `json:"dnssec_enabled_at,omitempty"`
+	CreatedAt           string  `json:"created_at,omitempty"`
 	// SSLMode and SkipAutoSAN (GH #1993) are the domain's certificate mode
 	// and its opt-out of the automatic www/alias names on it. Empty in an
 	// archive made before them: the restore then uses the default mode.
 	SSLMode     string `json:"ssl_mode,omitempty"`
 	SkipAutoSAN bool   `json:"skip_auto_san,omitempty"`
+	// The domain's mail settings (GH #1993), as its pages store them: the
+	// mail provider and the provider's DKIM tokens, the DMARC np and testing
+	// tags, the CalDAV/CardDAV hosts and the MTA-STS switch. An archive made
+	// before them has no MailProvider: a restore then leaves the provider to
+	// the column's default and an existing domain's mail settings as they are.
+	MailProvider    string  `json:"mail_provider,omitempty"`
+	M365Onmicrosoft *string `json:"m365_onmicrosoft,omitempty"`
+	GoogleDKIM      *string `json:"google_dkim,omitempty"`
+	DmarcNP         string  `json:"dmarc_np,omitempty"`
+	DmarcTesting    bool    `json:"dmarc_testing,omitempty"`
+	CalDAVHost      string  `json:"caldav_host,omitempty"`
+	CardDAVHost     string  `json:"carddav_host,omitempty"`
+	MTASTSEnabled   bool    `json:"mta_sts_enabled,omitempty"`
 	// OwnershipStatus (GH #1816 / ADR-0170) is the source row's ownership
 	// state. A restore keeps an explicitly pending name pending; a verified
 	// or absent status (archives from before the field) restores verified
@@ -175,6 +203,10 @@ type MetadataDomain struct {
 	WebDisabled              bool    `json:"web_disabled,omitempty"`
 	DNSDisabled              bool    `json:"dns_disabled,omitempty"`
 
+	// Aliases (GH #1625, GH #1993) are the domain's web domain aliases: other
+	// hostnames its site answers on.
+	Aliases []MetadataDomainAlias `json:"aliases,omitempty"`
+
 	SSLCertificate *MetadataSSLCert    `json:"ssl_certificate,omitempty"`
 	Mailboxes      []MetadataMailbox   `json:"mailboxes,omitempty"`
 	Forwarders     []MetadataForwarder `json:"forwarders,omitempty"`
@@ -183,6 +215,16 @@ type MetadataDomain struct {
 	// they re-derive from domain config via the reconciler.
 	DNSRecords []MetadataDNSRecord `json:"dns_records,omitempty"`
 	DNSSECKeys []MetadataDNSSECKey `json:"dnssec_keys,omitempty"`
+}
+
+// MetadataDomainAlias mirrors models.WebDomainAlias. A restore gives each
+// alias a new id: an id the file chose never names a row already on the
+// server. OwnershipStatus is the alias's own ownership state (GH #1816); a
+// pending alias stays pending.
+type MetadataDomainAlias struct {
+	ID              string `json:"id"`
+	Hostname        string `json:"hostname"`
+	OwnershipStatus string `json:"ownership_status,omitempty"`
 }
 
 // MetadataSSLCert mirrors models.SSLCertificate (sans large per-cert

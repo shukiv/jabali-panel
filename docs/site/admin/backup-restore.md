@@ -28,9 +28,12 @@ The agent restores in the same per-stage order the backup ran: files first, data
 
 An account backup carries each domain's certificate and private key (GH #1993)
 when the certificate was issued by a certificate authority or uploaded on the
-custom certificate page, and covers only the account's own domains. A
-self-signed certificate isn't carried, and neither is one that also covers a
-name outside the account, such as a wildcard of the panel's own domain. A
+custom certificate page, and covers only the account's own domains and their
+verified web domain aliases. An alias counts by its own name only: a
+certificate that also covers a wildcard of an alias, or a name under one,
+isn't carried. A self-signed certificate isn't carried, and neither is one
+that also covers a name outside the account, such as a wildcard of the
+panel's own domain. A
 backup made before this release carries none. Keep downloaded backups private:
 they hold the domains' private keys.
 
@@ -139,6 +142,40 @@ No records are restored for a domain whose DNS is hosted elsewhere, whose
 ownership isn't verified yet, or whose zone is disabled. Each record left out
 is listed in the restore report.
 
+### Mail settings
+
+A restored domain gets back its mail settings (GH #1993): its mail provider
+(Jabali, none, Microsoft 365, Google Workspace, or a DNS template's), the
+provider's DKIM token, its DMARC `np` and testing tags, and its CalDAV and
+CardDAV hosts. Each goes through the checks of the page that sets it; a value
+the page would refuse is left out and listed in the report. A domain made from
+a DNS template doesn't get Jabali mail back, because its mail page doesn't
+offer it. A backup made before Jabali recorded these settings restores the
+domain with the default provider, as before.
+
+MTA-STS comes back on when the restore also restores DNS records: the restore
+publishes the policy's two DNS records once the domain's zone exists. It stays
+off, with a line in the report, for a domain whose DNS is hosted elsewhere or
+whose ownership isn't verified yet, and when an upload restore leaves DNS
+records out. Turn it on in the domain's mail settings afterwards.
+
+### Web domain aliases
+
+A restore brings back each domain's web domain aliases (GH #1993), the extra
+hostnames added on the domain's **Aliases** tab. Each goes through the checks
+of that tab: an alias that isn't a valid hostname, that is the domain's own or
+`www` name, that is the panel's hostname, or that is already a domain, a
+domain's mail name or another alias on this server isn't added, and the
+restore report says why. A domain with web hosting off gets no aliases.
+
+A restore only adds aliases. An alias the domain already has stays as it is,
+and an alias the domain has but the backup doesn't isn't removed, whether
+**Overwrite existing items with the backup** is on or off. An alias the backup
+records as verified comes back verified; one that was pending comes back
+pending. Once an alias is added, the panel rebuilds the domain's site
+configuration and certificate to cover it. A backup made before Jabali
+recorded aliases restores none.
+
 ## Restore — `system_backup`
 
 System restores are typically performed on a freshly-bootstrapped panel host. Sequence:
@@ -157,6 +194,24 @@ System restores are typically performed on a freshly-bootstrapped panel host. Se
 5. After completion, run `jabali repair --diagnose` to surface any drift between restored state and the fresh host (typically only IP-related mismatches if the new host has a different IP).
 
 Round-trip restore was live-verified on 192.168.100.150.
+
+### Accounts the restored panel database doesn't have
+
+A system restore that includes accounts rebuilds the panel rows of an account
+its panel database dump doesn't have (an account deleted before the system
+backup ran, or a target host with no rows at all) from that account's newest
+backup. Its domains come back with the settings the account backup carries
+(GH #1993): their web, PHP, certificate-mode and mail settings. A setting an
+older backup doesn't carry takes its default, as on a new domain. Two things
+differ from an account restore:
+
+- **MTA-STS** comes back off, because this restore doesn't publish DNS
+  records. Turn it on in the domain's mail settings.
+- **Web domain aliases** aren't restored, because this restore doesn't run the
+  alias checks. Add them on the domain's **Aliases** tab, or restore the
+  account afterwards.
+
+A domain comes back verified, unless its backup records it as pending.
 
 ## Restore from an uploaded archive
 
@@ -272,13 +327,19 @@ is off by default:
     the PHP pool page would refuse leave the pool's own in place. A PHP
     setting both have takes the backup's value; one only the pool has stays;
   - a domain takes the backup's on/off state, redirect-all, index priority,
-    PHP limits, rate and connection limits, PHP pool, catch-all and outbound
-    disclaimer, through the checks its own pages run. A PHP limit the
+    PHP settings, rate and connection limits, PHP pool, catch-all, outbound
+    disclaimer, DMARC tags and CalDAV/CardDAV hosts, through the checks its
+    own pages run. MTA-STS is turned on when the backup has it on, never
+    off. A PHP setting the
     account's hosting package lets only an administrator set stays as it is.
+    A backup made before Jabali recorded every PHP setting (GH #1993) changes
+    only the PHP limits (memory, upload and post size, input variables,
+    execution and input time); the domain keeps its other PHP settings.
     The catch-all is taken only when it points at a mailbox the account had
     on this server before the restore. A backup without a catch-all or a
     disclaimer clears the domain's. The domain's name, document root, SSL,
-    DKIM, DNSSEC, custom nginx directives and mail provider stay as they are.
+    DKIM, DNSSEC, custom nginx directives, mail provider and the provider's
+    DKIM token stay as they are.
 
   The restore report lists each password kept, and why.
 
@@ -329,11 +390,15 @@ it into the target account only (GH #1993):
   domain's settings after reviewing them.
 - **Index priority** on a domain that the domain page doesn't offer is left
   out; the domain gets the default.
-- **PHP limits** on a domain (memory, upload and post size, input variables,
-  execution and input time) that the domain's PHP settings page would refuse
-  are left out, and so is one the account's hosting package lets only an
-  administrator set. When the package can't be read, every limit is left out.
-  The domain uses the server's defaults for them.
+- **PHP settings** on a domain (the limits, error display and reporting, time
+  zone, error logging, file uploads, short open tags, `open_basedir` and
+  `allow_url_fopen`) that the domain's PHP settings page would refuse are left
+  out, and so is one the account's hosting package lets only an administrator
+  set. `open_basedir` and `allow_url_fopen` are security settings: the package
+  must let the tenant set them (`tenant_privileged`), which an account without
+  a package never does, and `open_basedir` may list only folders inside the
+  account's home. When the package can't be read, every PHP setting is left
+  out. The domain uses the server's defaults for them.
 - **FTP passwords** — an FTP or SFTP subaccount's password comes back only
   into an account the restore created, whose home holds nothing but the
   archive's data (GH #1993). It is taken only for the account's own

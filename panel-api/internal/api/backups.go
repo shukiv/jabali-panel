@@ -1343,6 +1343,13 @@ func (h *backupHandler) restoreMetadataDeps(uploaded *uploadedData) backupmetada
 		// certificates back; an uploaded file's only when the admin chose
 		// to keep them (GH #1993, JAB-54).
 		RestoreCertificates: uploaded == nil || uploaded.keepCertificates,
+		// Both doors restore the domains' DNS records once Apply is done
+		// (RestoreBundleDNS), unless the upload leaves them out.
+		RestoresDNS: uploaded == nil || !uploaded.skipDNS,
+
+		// GH #1993: a restored web domain alias passes the alias page's checks.
+		WebDomainAliases: h.cfg.WebDomainAliases,
+		CheckAlias:       RestoreAliasCheck(h.cfg.Domains, h.cfg.WebDomainAliases, h.cfg.ServerSettings),
 	}
 	if uploaded != nil {
 		deps.RestoredDatabases = stringSet(uploaded.databases)
@@ -1422,7 +1429,8 @@ func (cfg BackupHandlerConfig) metadataDeps() backupmetadata.Deps {
 		Forwarders: cfg.Forwarders, Autoresponders: cfg.Autoresponders, MailboxShares: cfg.MailboxShares,
 		DNSSECKeys: cfg.DNSSECKeys, DNSZones: cfg.DNSZones, DNSRecords: cfg.DNSRecords, SSHKeys: cfg.SSHKeys, CronJobs: cfg.CronJobs, FtpAccounts: cfg.FtpAccounts,
 		LimitOverrides: cfg.LimitOverrides, EgressPolicies: cfg.EgressPolicies, EgressRequests: cfg.EgressRequests,
-		Log: cfg.Log,
+		WebDomainAliases: cfg.WebDomainAliases,
+		Log:              cfg.Log,
 	}
 }
 
@@ -1466,6 +1474,9 @@ type MeBackupsHandlerConfig struct {
 	LimitOverrides repository.UserLimitOverrideRepository
 	EgressPolicies repository.UserEgressPolicyRepository
 	EgressRequests repository.UserEgressRequestRepository
+	// WebDomainAliases lets the tenant's backup carry its domains' aliases
+	// (GH #1993).
+	WebDomainAliases repository.WebDomainAliasRepository
 	// Packages resolves the caller's hosting-package backup limits (GH #454).
 	// REQUIRED — RegisterMeBackupRoutes panics if nil, and the create gate fails
 	// CLOSED (denies) rather than skipping when the entitlement can't be resolved.
@@ -1504,7 +1515,8 @@ func (cfg MeBackupsHandlerConfig) metadataDeps() backupmetadata.Deps {
 		Forwarders: cfg.Forwarders, Autoresponders: cfg.Autoresponders, MailboxShares: cfg.MailboxShares,
 		DNSSECKeys: cfg.DNSSECKeys, DNSZones: cfg.DNSZones, DNSRecords: cfg.DNSRecords, SSHKeys: cfg.SSHKeys, CronJobs: cfg.CronJobs, FtpAccounts: cfg.FtpAccounts,
 		LimitOverrides: cfg.LimitOverrides, EgressPolicies: cfg.EgressPolicies, EgressRequests: cfg.EgressRequests,
-		Log: cfg.Log,
+		WebDomainAliases: cfg.WebDomainAliases,
+		Log:              cfg.Log,
 	}
 }
 

@@ -60,13 +60,18 @@ type restoreDNSDomain struct {
 	// records (the reconciler adds the zone's own records in the same pass
 	// that creates it, and the conflict checks must see them).
 	seen bool
+	// mtasts: the restore turned the domain's MTA-STS on, so its records are
+	// published too.
+	mtasts bool
 }
 
 // RestoreBundleDNS restores the custom DNS records metaRaw carries for the
 // domains of accountID it names. Only the account's own domains are touched;
 // one Apply refused is not the account's and is skipped (Apply reported it).
 // Records already in the zone are left alone (an exact duplicate counts as
-// already there); nothing is removed. It returns a line per domain restored
+// already there); nothing is removed. A domain whose MTA-STS the backup had
+// on, and which has it on here (Apply turns it on when the restore runs
+// this), gets its MTA-STS records too. It returns a line per domain restored
 // and one per record or domain it could not restore.
 func RestoreBundleDNS(ctx context.Context, d RestoreDNSDeps, metaRaw json.RawMessage, accountID string) (applied, warnings []string) {
 	if len(metaRaw) == 0 || d.Domains == nil || d.Zones == nil || d.Records == nil {
@@ -78,22 +83,32 @@ func RestoreBundleDNS(ctx context.Context, d RestoreDNSDeps, metaRaw json.RawMes
 	}
 	var pending []*restoreDNSDomain
 	for _, dm := range meta.Domains {
-		if len(dm.DNSRecords) == 0 {
+		if len(dm.DNSRecords) == 0 && !dm.MTASTSEnabled {
 			continue
 		}
 		row, err := d.Domains.FindByName(ctx, dm.Name)
 		if err != nil || row == nil || row.UserID != accountID {
 			continue
 		}
-		switch {
-		case row.DNSDisabled:
-			warnings = append(warnings, fmt.Sprintf("dns %s: %d records not restored: DNS for this domain is hosted elsewhere", row.Name, len(dm.DNSRecords)))
-			continue
-		case !domainops.OwnershipVerified(row):
-			warnings = append(warnings, fmt.Sprintf("dns %s: %d records not restored: the domain's ownership isn't verified yet, so it has no DNS zone; add them under DNS once it is", row.Name, len(dm.DNSRecords)))
+		mtasts := dm.MTASTSEnabled && row.MTASTSEnabled
+		if len(dm.DNSRecords) == 0 && !mtasts {
 			continue
 		}
-		pd := &restoreDNSDomain{row: row, records: dm.DNSRecords}
+		// Apply leaves MTA-STS off on such a domain and says why; the lines
+		// here are for the records.
+		switch {
+		case row.DNSDisabled:
+			if len(dm.DNSRecords) > 0 {
+				warnings = append(warnings, fmt.Sprintf("dns %s: %d records not restored: DNS for this domain is hosted elsewhere", row.Name, len(dm.DNSRecords)))
+			}
+			continue
+		case !domainops.OwnershipVerified(row):
+			if len(dm.DNSRecords) > 0 {
+				warnings = append(warnings, fmt.Sprintf("dns %s: %d records not restored: the domain's ownership isn't verified yet, so it has no DNS zone; add them under DNS once it is", row.Name, len(dm.DNSRecords)))
+			}
+			continue
+		}
+		pd := &restoreDNSDomain{row: row, records: dm.DNSRecords, mtasts: mtasts}
 		if _, err := d.Zones.FindByDomainID(ctx, row.ID); err == nil {
 			pd.seen = true // the zone was there before the restore: no wait
 		} else if d.Scheduler != nil {
@@ -123,9 +138,16 @@ func RestoreBundleDNS(ctx context.Context, d RestoreDNSDeps, metaRaw json.RawMes
 				still = append(still, pd)
 				continue
 			}
-			a, w := restoreZoneRecords(ctx, d, srv, pd.row, zone, pd.records)
-			applied = append(applied, a...)
-			warnings = append(warnings, w...)
+			if len(pd.records) > 0 {
+				a, w := restoreZoneRecords(ctx, d, srv, pd.row, zone, pd.records)
+				applied = append(applied, a...)
+				warnings = append(warnings, w...)
+			}
+			if pd.mtasts {
+				a, w := publishRestoredMTASts(ctx, d, srv, pd.row, zone)
+				applied = append(applied, a...)
+				warnings = append(warnings, w...)
+			}
 		}
 		pending = still
 		if len(pending) == 0 || time.Now().After(deadline) || ctx.Err() != nil {
@@ -137,9 +159,40 @@ func RestoreBundleDNS(ctx context.Context, d RestoreDNSDeps, metaRaw json.RawMes
 		}
 	}
 	for _, pd := range pending {
-		warnings = append(warnings, fmt.Sprintf("dns %s: %d records not restored: its DNS zone wasn't created in time; add them under DNS", pd.row.Name, len(pd.records)))
+		if len(pd.records) > 0 {
+			warnings = append(warnings, fmt.Sprintf("dns %s: %d records not restored: its DNS zone wasn't created in time; add them under DNS", pd.row.Name, len(pd.records)))
+		}
+		if pd.mtasts {
+			warnings = append(warnings, fmt.Sprintf("dns %s: MTA-STS records not published: its DNS zone wasn't created in time; %s", pd.row.Name, mtaStsRetry))
+		}
 	}
 	return applied, warnings
+}
+
+// mtaStsRetry tells the admin how to publish a domain's MTA-STS records the
+// restore couldn't: the toggle publishes them.
+const mtaStsRetry = "turn MTA-STS off and on again in the domain's mail settings"
+
+// publishRestoredMTASts publishes the MTA-STS records of a domain the restore
+// turned MTA-STS on for, once its zone exists.
+func publishRestoredMTASts(ctx context.Context, d RestoreDNSDeps, srv *models.ServerSettings, domain *models.Domain, zone *models.DNSZone) (applied, warnings []string) {
+	if reason := dnsZoneNotServedReason(domain, zone); reason != "" {
+		return nil, []string{fmt.Sprintf("dns %s: MTA-STS records not published: %s", domain.Name, reason)}
+	}
+	if srv == nil {
+		return nil, []string{fmt.Sprintf("dns %s: MTA-STS records not published: the server settings couldn't be read; %s", domain.Name, mtaStsRetry)}
+	}
+	wrote, err := PublishMTAStsRecords(ctx, d.Records, zone, srv, domain)
+	if err != nil {
+		return nil, []string{fmt.Sprintf("dns %s: MTA-STS records not published: %v; %s", domain.Name, err, mtaStsRetry)}
+	}
+	if !wrote {
+		return []string{fmt.Sprintf("dns → %s: MTA-STS records already there", domain.Name)}, nil
+	}
+	if d.Scheduler != nil {
+		d.Scheduler.Schedule(domain.ID)
+	}
+	return []string{fmt.Sprintf("dns → %s: MTA-STS records published", domain.Name)}, nil
 }
 
 // restoreZoneRecords adds records to zone (domain's), each through the

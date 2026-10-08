@@ -84,6 +84,18 @@ type Deps struct {
 	// owner chose "Keep the backup's SSL certificates" (JAB-54: a source's
 	// private key is not trusted unasked). Off, Let's Encrypt issues new ones.
 	RestoreCertificates bool
+	// WebDomainAliases (GH #1625, GH #1993): the builder reads each domain's
+	// aliases, and Apply restores them through CheckAlias.
+	WebDomainAliases repository.WebDomainAliasRepository
+	// CheckAlias holds a restored alias to the alias page's rules for dom
+	// (api.RestoreAliasCheck) and returns the hostname as the page stores
+	// it. Nil refuses every alias.
+	CheckAlias func(ctx context.Context, dom *models.Domain, hostname string) (string, error)
+	// RestoresDNS: the door restores the domains' DNS records once Apply is
+	// done (api.RestoreBundleDNS), which publishes MTA-STS's records too. A
+	// domain's MTA-STS comes back on only then: without its records a
+	// receiving server can't find the policy (GH #1993).
+	RestoresDNS bool
 	// KeepExisting (GH #1993: "Overwrite existing items with the backup"
 	// off) adds only what the account is missing: a row it already has
 	// keeps its settings. An existing mailbox keeps its autoresponder.
@@ -410,6 +422,19 @@ func Build(ctx context.Context, user *models.User, d Deps) *internalbackup.Accou
 			}
 		}
 
+		aliasesByDomain := map[string][]internalbackup.MetadataDomainAlias{}
+		if d.WebDomainAliases != nil && len(domIDs) > 0 {
+			aliases, aerr := d.WebDomainAliases.ListByDomainIDs(ctx, domIDs)
+			if aerr != nil {
+				d.warn("metadata: list web domain aliases (batch)", aerr, "user_id", user.ID)
+			}
+			for _, a := range aliases {
+				aliasesByDomain[a.DomainID] = append(aliasesByDomain[a.DomainID], internalbackup.MetadataDomainAlias{
+					ID: a.ID, Hostname: a.Hostname, OwnershipStatus: a.OwnershipStatus,
+				})
+			}
+		}
+
 		dnssecByDomain := map[string][]models.DomainDNSSECKey{}
 		if d.DNSSECKeys != nil && len(domIDs) > 0 {
 			keys, kerr := d.DNSSECKeys.ListByDomainIDs(ctx, domIDs)
@@ -460,6 +485,15 @@ func Build(ctx context.Context, user *models.User, d Deps) *internalbackup.Accou
 				PHPMaxInputVars:      dom.PHPMaxInputVars,
 				PHPMaxExecutionTime:  dom.PHPMaxExecutionTime,
 				PHPMaxInputTime:      dom.PHPMaxInputTime,
+				PHPDisplayErrors:     dom.PHPDisplayErrors,
+				PHPErrorReporting:    dom.PHPErrorReporting,
+				PHPTimezone:          dom.PHPTimezone,
+				PHPLogErrors:         dom.PHPLogErrors,
+				PHPFileUploads:       dom.PHPFileUploads,
+				PHPShortOpenTag:      dom.PHPShortOpenTag,
+				PHPOpenBasedir:       dom.PHPOpenBasedir,
+				PHPAllowURLFopen:     dom.PHPAllowURLFopen,
+				PHPSettingsComplete:  true,
 				RateLimitRPS:         dom.RateLimitRPS,
 				ConnectionLimit:      dom.ConnectionLimit,
 				ListenIPv4ID:         dom.ListenIPv4ID,
@@ -482,6 +516,8 @@ func Build(ctx context.Context, user *models.User, d Deps) *internalbackup.Accou
 				dRow.DNSSECEnabledAt = timeRFC(*dom.DNSSECEnabledAt)
 			}
 			dRow.SSLMode, dRow.SkipAutoSAN = dom.SSLMode, dom.SkipAutoSAN
+			setMetadataMailSettings(&dRow, &dom)
+			dRow.Aliases = aliasesByDomain[dom.ID]
 			if pr, err := json.Marshal(dom.PageRedirects); err == nil && string(pr) != "null" {
 				dRow.PageRedirects = string(pr)
 			}

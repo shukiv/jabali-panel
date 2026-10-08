@@ -45,9 +45,29 @@ func overwriteDomain(ctx context.Context, d Deps, r *ApplyResult, userID, bundle
 	probe.IsEnabled = dm.IsEnabled
 	probe.RedirectAllTo, probe.RedirectAllType = nonEmptyTrimmed(dm.RedirectAllTo), nonEmptyTrimmed(dm.RedirectAllType)
 	probe.IndexPriority = strings.TrimSpace(dm.IndexPriority)
+	mail := hasMailSettings(dm)
+	if mail {
+		probe.DmarcNP, probe.DmarcTesting = dm.DmarcNP, dm.DmarcTesting
+		probe.CalDAVHost, probe.CardDAVHost = dm.CalDAVHost, dm.CardDAVHost
+	}
 	backup := models.Domain{}
 	setBackupPHPLimits(&backup, dm)
+	setBackupPHPSettings(&backup, dm, bundleUser, account)
 	setBackupPHPLimits(&probe, dm)
+	// The checks see each PHP setting beyond the limits only when the backup
+	// changes it. One the domain keeps isn't checked again, as on the PHP
+	// settings page: its open_basedir may be an administrator's path that the
+	// tenant's rules for an uploaded file would refuse.
+	for _, f := range domainPHPLimits {
+		if !f.setting {
+			continue
+		}
+		if dm.PHPSettingsComplete && f.key(&backup) != f.key(existing) {
+			f.copy(&probe, &backup)
+		} else {
+			f.copy(&probe, &models.Domain{})
+		}
+	}
 	web := hasWebSettings(dm)
 	if web {
 		for _, p := range setRestoredWebSettings(&backup, dm, bundleUser, account) {
@@ -68,11 +88,11 @@ func overwriteDomain(ctx context.Context, d Deps, r *ApplyResult, userID, bundle
 		report("%s", w)
 	}
 
-	changed := overwriteDomainWeb(ctx, d, report, existing, &probe, dm, web, &backup)
+	changed := overwriteDomainWeb(ctx, d, report, existing, &probe, dm, web, mail, &backup)
 	if web && overwriteDomainEnvAndCache(ctx, d, report, existing, &probe, &backup) {
 		changed = true
 	}
-	if overwriteDomainPHPLimits(ctx, d, report, userID, existing, &probe, &backup) {
+	if overwriteDomainPHPLimits(ctx, d, report, userID, existing, &probe, &backup, dm.PHPSettingsComplete) {
 		changed = true
 	}
 	if dm.RateLimitRPS != existing.RateLimitRPS || dm.ConnectionLimit != existing.ConnectionLimit {
@@ -93,6 +113,11 @@ func overwriteDomain(ctx context.Context, d Deps, r *ApplyResult, userID, bundle
 			}
 		}
 	}
+	// MTA-STS is turned on as the backup has it, never off: a policy receivers
+	// cached would then point at a vhost that is gone.
+	if dm.MTASTSEnabled && !existing.MTASTSEnabled && enableRestoredMTASTS(ctx, d, report, existing) {
+		changed = true
+	}
 	if changed && d.ScheduleDomain != nil {
 		d.ScheduleDomain(existing.ID)
 	}
@@ -100,11 +125,13 @@ func overwriteDomain(ctx context.Context, d Deps, r *ApplyResult, userID, bundle
 }
 
 // overwriteDomainWeb gives existing the backup's enabled flag, redirect-all
-// and index priority, each as the checks left it on probe, and with web the
-// backup's web settings the domain's update page writes. A setting the
-// checks dropped leaves the domain's own. Only the row read here is written,
-// so every other column keeps its value.
-func overwriteDomainWeb(ctx context.Context, d Deps, report func(string, ...any), existing, probe *models.Domain, dm internalbackup.MetadataDomain, web bool, backup *models.Domain) bool {
+// and index priority, each as the checks left it on probe, with web the
+// backup's web settings the domain's update page writes, and with mail its
+// DMARC tags and CalDAV/CardDAV hosts. A setting the checks dropped leaves
+// the domain's own. Only the row read here is written, so every other column
+// keeps its value; one write carries them all, since each write sets every
+// column the update page writes.
+func overwriteDomainWeb(ctx context.Context, d Deps, report func(string, ...any), existing, probe *models.Domain, dm internalbackup.MetadataDomain, web, mail bool, backup *models.Domain) bool {
 	next := *existing
 	changed := false
 	if probe.IsEnabled != existing.IsEnabled {
@@ -143,6 +170,23 @@ func overwriteDomainWeb(ctx context.Context, d Deps, report func(string, ...any)
 			}
 		}
 	}
+	if mail {
+		// The checks keep a value or clear it; a cleared one that the backup
+		// set leaves the domain's own.
+		keep := func(got, want string) bool { return got == strings.TrimSpace(want) }
+		if keep(probe.DmarcNP, dm.DmarcNP) && probe.DmarcNP != existing.DmarcNP {
+			next.DmarcNP, changed = probe.DmarcNP, true
+		}
+		if probe.DmarcTesting != existing.DmarcTesting {
+			next.DmarcTesting, changed = probe.DmarcTesting, true
+		}
+		if keep(probe.CalDAVHost, dm.CalDAVHost) && probe.CalDAVHost != existing.CalDAVHost {
+			next.CalDAVHost, changed = probe.CalDAVHost, true
+		}
+		if keep(probe.CardDAVHost, dm.CardDAVHost) && probe.CardDAVHost != existing.CardDAVHost {
+			next.CardDAVHost, changed = probe.CardDAVHost, true
+		}
+	}
 	if !changed {
 		return false
 	}
@@ -154,18 +198,19 @@ func overwriteDomainWeb(ctx context.Context, d Deps, report func(string, ...any)
 	return true
 }
 
-// overwriteDomainPHPLimits gives existing each PHP limit the backup changes,
+// overwriteDomainPHPLimits gives existing each PHP setting the backup changes,
 // as the PHP settings page would for the tenant: the change passes the
 // checks (probe) and the account's package lets a tenant set it. Clearing a
-// limit is a change too. When the package can't be read, the domain keeps
-// its limits. Its other PHP settings are written back as they are.
-func overwriteDomainPHPLimits(ctx context.Context, d Deps, report func(string, ...any), userID string, existing, probe, backup *models.Domain) bool {
+// setting is a change too. When the package can't be read, the domain keeps
+// its settings. complete says the backup carries the settings beyond the
+// limits; one made before them changes only the limits.
+func overwriteDomainPHPLimits(ctx context.Context, d Deps, report func(string, ...any), userID string, existing, probe, backup *models.Domain, complete bool) bool {
 	want := *existing
 	var pkg *models.HostingPackage
 	var pkgErr error
 	read, changed := false, false
 	for _, f := range domainPHPLimits {
-		if f.key(backup) == f.key(existing) {
+		if (f.setting && !complete) || f.key(backup) == f.key(existing) {
 			continue
 		}
 		if f.key(backup) != "" && f.key(probe) == "" {
@@ -189,16 +234,20 @@ func overwriteDomainPHPLimits(ctx context.Context, d Deps, report func(string, .
 		return false
 	}
 	if err := d.Domains.UpdatePHPSettings(ctx, existing.ID, repository.DomainPHPSettingsOf(&want)); err != nil {
-		report("PHP limits not updated: %v", err)
+		report("PHP settings not updated: %v", err)
 		return false
 	}
 	return true
 }
 
-// domainPHPLimit is one per-domain PHP limit, by the directive the package's
-// PHP policy names.
+// domainPHPLimit is one per-domain PHP setting, by the directive the
+// package's PHP policy names. domainPHPLimits covers every directive the PHP
+// settings page writes (models.PHPPolicyDirectives).
 type domainPHPLimit struct {
 	directive string
+	// setting marks the settings beyond the six limits, which a backup
+	// carries only when PHPSettingsComplete says so (GH #1993).
+	setting bool
 	// key is the limit's value as a string, "" when unset.
 	key func(*models.Domain) string
 	// copy sets the limit on dst to src's.
@@ -206,18 +255,34 @@ type domainPHPLimit struct {
 }
 
 var domainPHPLimits = []domainPHPLimit{
-	{"memory_limit", func(x *models.Domain) string { return stringKey(x.PHPMemoryLimit) },
+	{"memory_limit", false, func(x *models.Domain) string { return stringKey(x.PHPMemoryLimit) },
 		func(dst, src *models.Domain) { dst.PHPMemoryLimit = src.PHPMemoryLimit }},
-	{"upload_max_filesize", func(x *models.Domain) string { return stringKey(x.PHPUploadMaxFilesize) },
+	{"upload_max_filesize", false, func(x *models.Domain) string { return stringKey(x.PHPUploadMaxFilesize) },
 		func(dst, src *models.Domain) { dst.PHPUploadMaxFilesize = src.PHPUploadMaxFilesize }},
-	{"post_max_size", func(x *models.Domain) string { return stringKey(x.PHPPostMaxSize) },
+	{"post_max_size", false, func(x *models.Domain) string { return stringKey(x.PHPPostMaxSize) },
 		func(dst, src *models.Domain) { dst.PHPPostMaxSize = src.PHPPostMaxSize }},
-	{"max_input_vars", func(x *models.Domain) string { return intKey(x.PHPMaxInputVars) },
+	{"max_input_vars", false, func(x *models.Domain) string { return intKey(x.PHPMaxInputVars) },
 		func(dst, src *models.Domain) { dst.PHPMaxInputVars = src.PHPMaxInputVars }},
-	{"max_execution_time", func(x *models.Domain) string { return intKey(x.PHPMaxExecutionTime) },
+	{"max_execution_time", false, func(x *models.Domain) string { return intKey(x.PHPMaxExecutionTime) },
 		func(dst, src *models.Domain) { dst.PHPMaxExecutionTime = src.PHPMaxExecutionTime }},
-	{"max_input_time", func(x *models.Domain) string { return intKey(x.PHPMaxInputTime) },
+	{"max_input_time", false, func(x *models.Domain) string { return intKey(x.PHPMaxInputTime) },
 		func(dst, src *models.Domain) { dst.PHPMaxInputTime = src.PHPMaxInputTime }},
+	{"display_errors", true, func(x *models.Domain) string { return boolKey(x.PHPDisplayErrors) },
+		func(dst, src *models.Domain) { dst.PHPDisplayErrors = src.PHPDisplayErrors }},
+	{"error_reporting", true, func(x *models.Domain) string { return intKey(x.PHPErrorReporting) },
+		func(dst, src *models.Domain) { dst.PHPErrorReporting = src.PHPErrorReporting }},
+	{"date.timezone", true, func(x *models.Domain) string { return stringKey(x.PHPTimezone) },
+		func(dst, src *models.Domain) { dst.PHPTimezone = src.PHPTimezone }},
+	{"log_errors", true, func(x *models.Domain) string { return boolKey(x.PHPLogErrors) },
+		func(dst, src *models.Domain) { dst.PHPLogErrors = src.PHPLogErrors }},
+	{"file_uploads", true, func(x *models.Domain) string { return boolKey(x.PHPFileUploads) },
+		func(dst, src *models.Domain) { dst.PHPFileUploads = src.PHPFileUploads }},
+	{"short_open_tag", true, func(x *models.Domain) string { return boolKey(x.PHPShortOpenTag) },
+		func(dst, src *models.Domain) { dst.PHPShortOpenTag = src.PHPShortOpenTag }},
+	{"open_basedir", true, func(x *models.Domain) string { return stringKey(x.PHPOpenBasedir) },
+		func(dst, src *models.Domain) { dst.PHPOpenBasedir = src.PHPOpenBasedir }},
+	{"allow_url_fopen", true, func(x *models.Domain) string { return boolKey(x.PHPAllowURLFopen) },
+		func(dst, src *models.Domain) { dst.PHPAllowURLFopen = src.PHPAllowURLFopen }},
 }
 
 // setBackupPHPLimits sets the per-domain PHP limits on dst to the backup's.
@@ -371,4 +436,11 @@ func intKey(p *int) string {
 		return ""
 	}
 	return "=" + strconv.Itoa(*p)
+}
+
+func boolKey(p *bool) string {
+	if p == nil {
+		return ""
+	}
+	return "=" + strconv.FormatBool(*p)
 }

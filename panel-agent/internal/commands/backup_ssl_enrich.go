@@ -28,15 +28,24 @@ var backupCertStatuses = map[string]bool{"issued": true, "renewing": true, "cust
 // domain's own, when it doesn't pair with its key, and when it also covers a
 // name outside the account's domains: an administrator's wider certificate,
 // say a wildcard of the panel's own domain, must not reach the account's
-// backup, which its owner can download. Best effort: a certificate that
-// can't be read is left out, and the restore issues a new one.
+// backup, which its owner can download. A verified web domain alias of the
+// account (GH #1625) counts by its own name only: not a wildcard of it, nor a
+// name under it. Best effort: a certificate that can't be read is left out,
+// and the restore issues a new one.
 func enrichSSLCertificates(meta *backup.AccountMetadata) {
 	if meta == nil {
 		return
 	}
 	var own []string
+	aliases := map[string]bool{}
 	for _, d := range meta.Domains {
 		own = append(own, strings.ToLower(d.Name))
+		for _, a := range d.Aliases {
+			// A pending alias isn't the account's yet.
+			if a.OwnershipStatus == "" || a.OwnershipStatus == "verified" {
+				aliases[strings.TrimSuffix(strings.ToLower(a.Hostname), ".")] = true
+			}
+		}
 	}
 	for i := range meta.Domains {
 		d := &meta.Domains[i]
@@ -64,7 +73,7 @@ func enrichSSLCertificates(meta *backup.AccountMetadata) {
 			continue
 		}
 		leaf, err := x509.ParseCertificate(pair.Certificate[0])
-		if err != nil || !namesWithin(leaf.DNSNames, own) {
+		if err != nil || !namesWithin(leaf.DNSNames, own, aliases) {
 			continue
 		}
 		c.CertPEM, c.KeyPEM = string(certPEM), string(keyPEM)
@@ -102,12 +111,16 @@ func readBackupCertFile(path string) ([]byte, error) {
 }
 
 // namesWithin reports whether every name is one of the domains or a name
-// under one of them (a wildcard counts as the names under its base).
-func namesWithin(names, domains []string) bool {
+// under one of them (a wildcard counts as the names under its base), or
+// exactly one of the exact names.
+func namesWithin(names, domains []string, exact map[string]bool) bool {
 	if len(names) == 0 {
 		return false
 	}
 	for _, n := range names {
+		if exact[strings.ToLower(n)] {
+			continue
+		}
 		n = strings.TrimPrefix(strings.ToLower(n), "*.")
 		ok := false
 		for _, d := range domains {

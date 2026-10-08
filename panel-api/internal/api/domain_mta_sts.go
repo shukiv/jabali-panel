@@ -29,6 +29,8 @@ package api
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -127,16 +129,13 @@ func (h *domainMTAStsHandler) update(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "update_failed", "details": err.Error()})
 		return
 	}
-	if req.Enabled {
-		dom.MTASTSEnabled = true
-		if newID != 0 {
-			dom.MTASTSId = newID
-		}
-		h.publishDNSRecords(ctx, dom)
-	} else {
-		dom.MTASTSEnabled = false
-		h.removeDNSRecords(ctx, dom)
+	dom.MTASTSEnabled = req.Enabled
+	if req.Enabled && newID != 0 {
+		dom.MTASTSId = newID
 	}
+	// Errors do not fail the toggle — the operator sees the cert/policy hint
+	// in the GET response and can fix DNS conflicts manually.
+	_ = SyncMTAStsDNS(ctx, MTAStsDNSDeps{Zones: h.cfg.DNSZones, Records: h.cfg.DNSRecords, Settings: h.cfg.ServerSettings}, dom)
 	if h.cfg.Reconciler != nil {
 		h.cfg.Reconciler.Schedule(dom.ID)
 	}
@@ -147,72 +146,83 @@ func (h *domainMTAStsHandler) update(c *gin.Context) {
 	c.JSON(http.StatusOK, h.buildResponse(ctx, dom))
 }
 
-// publishDNSRecords inserts the two MTA-STS records via the same
-// (idempotent — skip on duplicate, warn on conflict with a user-edited
-// row) pattern email_enable uses. Errors log but do not fail the toggle
-// — the operator sees the cert/policy hint in the GET response and can
-// fix DNS conflicts manually.
-func (h *domainMTAStsHandler) publishDNSRecords(ctx context.Context, dom *models.Domain) {
-	if h.cfg.DNSZones == nil || h.cfg.DNSRecords == nil || h.cfg.ServerSettings == nil {
-		return
+// MTAStsDNSDeps is what SyncMTAStsDNS reads and writes.
+type MTAStsDNSDeps struct {
+	Zones    repository.DNSZoneRepository
+	Records  repository.DNSRecordRepository
+	Settings repository.ServerSettingsRepository
+}
+
+// SyncMTAStsDNS publishes dom's two MTA-STS records when its MTA-STS is on and
+// removes them when it is off. Nothing else publishes them, so every door that
+// flips the switch runs it: the domain's mail page and `jabali domain mta-sts`.
+func SyncMTAStsDNS(ctx context.Context, d MTAStsDNSDeps, dom *models.Domain) error {
+	if d.Zones == nil || d.Records == nil {
+		return errors.New("the DNS stores are not wired")
 	}
-	zone, err := h.cfg.DNSZones.FindByDomainID(ctx, dom.ID)
+	zone, err := d.Zones.FindByDomainID(ctx, dom.ID)
 	if err != nil {
-		return
+		return fmt.Errorf("the domain has no DNS zone here: %w", err)
 	}
-	srv, err := h.cfg.ServerSettings.Get(ctx)
+	if !dom.MTASTSEnabled {
+		return d.Records.DeleteByZoneIDAndManagedBy(ctx, zone.ID, dnscompile.MTAStsRecordsManagedBy)
+	}
+	if d.Settings == nil {
+		return errors.New("the server settings are not wired")
+	}
+	srv, err := d.Settings.Get(ctx)
 	if err != nil || srv == nil {
-		return
+		return fmt.Errorf("read the server settings: %v", err)
 	}
+	_, err = PublishMTAStsRecords(ctx, d.Records, zone, srv, dom)
+	return err
+}
+
+// PublishMTAStsRecords puts dom's two MTA-STS records in zone (ADR-0109): the
+// policy host's address and the _mta-sts TXT naming the policy id. Records
+// already there as intended stay; otherwise the zone's MTA-STS rows are
+// replaced, so a new policy id or server address takes effect. It reports
+// whether it wrote anything. The MTA-STS toggle and the account restore
+// (GH #1993) both publish through it.
+func PublishMTAStsRecords(ctx context.Context, records repository.DNSRecordRepository, zone *models.DNSZone, srv *models.ServerSettings, dom *models.Domain) (bool, error) {
 	intended := dnscompile.BuildMTAStsRecords(
 		zone.ID, zone.Name, srv.PublicIPv4, dom.MTASTSId,
 		srv, ids.NewULID, time.Now().UTC(),
 	)
 	if len(intended) == 0 {
-		return
-	}
-	existing, err := h.cfg.DNSRecords.ListByZoneID(ctx, zone.ID)
-	if err != nil {
-		return
-	}
-	for _, rec := range intended {
-		// Idempotent: skip if we already placed this exact MTA-STS row.
-		if hasExistingMTAStsRecord(existing, rec.Name, rec.Type) {
-			// TXT id may have rotated — replace it on every enable.
-			if rec.Type == "TXT" {
-				_ = h.cfg.DNSRecords.DeleteByZoneIDAndManagedBy(ctx, zone.ID, dnscompile.MTAStsRecordsManagedBy)
-				// fall through to re-create both rows fresh below
-				for _, again := range intended {
-					a := again
-					_ = h.cfg.DNSRecords.Create(ctx, &a)
-				}
-				return
-			}
-			continue
+		if srv.PublicIPv4 == "" {
+			return false, errors.New("this server has no public IPv4 address to publish")
 		}
-		r := rec
-		_ = h.cfg.DNSRecords.Create(ctx, &r)
+		return false, errors.New("the domain has no MTA-STS policy id")
 	}
-}
-
-func (h *domainMTAStsHandler) removeDNSRecords(ctx context.Context, dom *models.Domain) {
-	if h.cfg.DNSZones == nil || h.cfg.DNSRecords == nil {
-		return
-	}
-	zone, err := h.cfg.DNSZones.FindByDomainID(ctx, dom.ID)
+	existing, err := records.ListByZoneID(ctx, zone.ID)
 	if err != nil {
-		return
+		return false, err
 	}
-	_ = h.cfg.DNSRecords.DeleteByZoneIDAndManagedBy(ctx, zone.ID, dnscompile.MTAStsRecordsManagedBy)
-}
-
-func hasExistingMTAStsRecord(rows []models.DNSRecord, name, typ string) bool {
-	for _, r := range rows {
-		if r.Name == name && r.Type == typ && r.ManagedBy != nil && *r.ManagedBy == dnscompile.MTAStsRecordsManagedBy {
-			return true
+	have := map[string]bool{}
+	for _, r := range existing {
+		if r.ManagedBy != nil && *r.ManagedBy == dnscompile.MTAStsRecordsManagedBy {
+			have[r.Name+" "+r.Type+" "+r.Content] = true
 		}
 	}
-	return false
+	same := len(have) == len(intended)
+	for _, r := range intended {
+		same = same && have[r.Name+" "+r.Type+" "+r.Content]
+	}
+	if same {
+		return false, nil
+	}
+	if len(have) > 0 {
+		if err := records.DeleteByZoneIDAndManagedBy(ctx, zone.ID, dnscompile.MTAStsRecordsManagedBy); err != nil {
+			return false, err
+		}
+	}
+	for i := range intended {
+		if err := records.Create(ctx, &intended[i]); err != nil {
+			return true, err
+		}
+	}
+	return true, nil
 }
 
 // buildResponse summarises state for the UI. status_hint values:

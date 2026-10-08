@@ -17,6 +17,7 @@ package commands
 import (
 	"context"
 	cryptoRand "crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	mathRand "math/rand"
@@ -873,39 +874,182 @@ func insertDomain(ctx context.Context, userID string, d backup.MetadataDomain) e
 	if d.NginxRules != "" {
 		nginxRules = "'" + sqlEscape(d.NginxRules) + "'"
 	}
-	stmt := fmt.Sprintf(
-		"INSERT IGNORE INTO jabali_panel.domains "+
-			"(id, user_id, name, doc_root, is_enabled, nginx_custom_directives, "+
-			"redirect_all_to, redirect_all_type, page_redirects, nginx_rules, "+
-			"index_priority, ssl_enabled, php_pool_id, php_memory_limit, "+
-			"php_upload_max_filesize, php_post_max_size, php_max_input_vars, "+
-			"php_max_execution_time, php_max_input_time, rate_limit_rps, "+
-			"connection_limit, listen_ipv4_id, listen_ipv6_id, email_enabled, "+
-			"dkim_selector, dkim_public_key, email_enabled_at, is_panel_primary, "+
-			"catchall_target, disclaimer_enabled, disclaimer_text, dnssec_enabled, "+
-			"dnssec_enabled_at, ghost_state, created_at, updated_at) "+
-			"VALUES ('%s','%s','%s','%s',%d,%s,%s,%s,%s,%s,'%s',%d,%s,%s,%s,%s,%s,%s,%s,%d,%d,%s,%s,%d,%s,%s,%s,%d,%s,%d,%s,%d,%s,'unchecked',NOW(),NOW())",
-		sqlEscape(d.ID), sqlEscape(userID), sqlEscape(d.Name), sqlEscape(d.DocRoot),
-		boolToInt(d.IsEnabled), optTextPtr(d.NginxCustomDirectives),
-		optStringPtr(d.RedirectAllTo), optStringPtr(d.RedirectAllType),
-		pageRedirects, nginxRules,
-		sqlEscape(d.IndexPriority), boolToInt(d.SSLEnabled),
-		optStringPtr(d.PHPPoolID),
-		optStringPtr(d.PHPMemoryLimit), optStringPtr(d.PHPUploadMaxFilesize),
-		optStringPtr(d.PHPPostMaxSize),
-		optIntPtr(d.PHPMaxInputVars), optIntPtr(d.PHPMaxExecutionTime),
-		optIntPtr(d.PHPMaxInputTime),
-		d.RateLimitRPS, d.ConnectionLimit,
-		optUint64Ptr(d.ListenIPv4ID), optUint64Ptr(d.ListenIPv6ID),
-		boolToInt(d.EmailEnabled),
-		optStringPtr(d.DkimSelector), optTextPtr(d.DkimPublicKey),
-		optTimeRFC(d.EmailEnabledAt),
-		boolToInt(d.IsPanelPrimary),
-		optStringPtr(d.CatchallTarget),
-		boolToInt(d.DisclaimerEnabled), optTextPtr(d.DisclaimerText),
-		boolToInt(d.DNSSECEnabled),
-		optTimeRFC(d.DNSSECEnabledAt))
-	return runMariaDBStmt(ctx, stmt)
+	ownership, err := restoredDomainOwnership(d.OwnershipStatus)
+	if err != nil {
+		return err
+	}
+	cols := []sqlColumn{
+		{"id", "'" + sqlEscape(d.ID) + "'"},
+		{"user_id", "'" + sqlEscape(userID) + "'"},
+		{"name", "'" + sqlEscape(d.Name) + "'"},
+		{"doc_root", "'" + sqlEscape(d.DocRoot) + "'"},
+		{"is_enabled", strconv.Itoa(boolToInt(d.IsEnabled))},
+		{"nginx_custom_directives", optTextPtr(d.NginxCustomDirectives)},
+		{"redirect_all_to", optStringPtr(d.RedirectAllTo)},
+		{"redirect_all_type", optStringPtr(d.RedirectAllType)},
+		{"page_redirects", pageRedirects},
+		{"nginx_rules", nginxRules},
+		{"index_priority", "'" + sqlEscape(d.IndexPriority) + "'"},
+		{"ssl_enabled", strconv.Itoa(boolToInt(d.SSLEnabled))},
+		{"php_pool_id", optStringPtr(d.PHPPoolID)},
+		{"php_memory_limit", optStringPtr(d.PHPMemoryLimit)},
+		{"php_upload_max_filesize", optStringPtr(d.PHPUploadMaxFilesize)},
+		{"php_post_max_size", optStringPtr(d.PHPPostMaxSize)},
+		{"php_max_input_vars", optIntPtr(d.PHPMaxInputVars)},
+		{"php_max_execution_time", optIntPtr(d.PHPMaxExecutionTime)},
+		{"php_max_input_time", optIntPtr(d.PHPMaxInputTime)},
+		{"rate_limit_rps", strconv.FormatUint(uint64(d.RateLimitRPS), 10)},
+		{"connection_limit", strconv.FormatUint(uint64(d.ConnectionLimit), 10)},
+		{"listen_ipv4_id", optUint64Ptr(d.ListenIPv4ID)},
+		{"listen_ipv6_id", optUint64Ptr(d.ListenIPv6ID)},
+		{"email_enabled", strconv.Itoa(boolToInt(d.EmailEnabled))},
+		{"dkim_selector", optStringPtr(d.DkimSelector)},
+		{"dkim_public_key", optTextPtr(d.DkimPublicKey)},
+		{"email_enabled_at", optTimeRFC(d.EmailEnabledAt)},
+		{"is_panel_primary", strconv.Itoa(boolToInt(d.IsPanelPrimary))},
+		{"catchall_target", optStringPtr(d.CatchallTarget)},
+		{"disclaimer_enabled", strconv.Itoa(boolToInt(d.DisclaimerEnabled))},
+		{"disclaimer_text", optTextPtr(d.DisclaimerText)},
+		{"dnssec_enabled", strconv.Itoa(boolToInt(d.DNSSECEnabled))},
+		{"dnssec_enabled_at", optTimeRFC(d.DNSSECEnabledAt)},
+		// GH #1993: the rest of the domain's PHP settings. Absent (NULL)
+		// inherits the server's value, as on the domain's PHP page.
+		{"php_display_errors", optBoolPtr(d.PHPDisplayErrors)},
+		{"php_error_reporting", optIntPtr(d.PHPErrorReporting)},
+		{"php_timezone", optStringPtr(d.PHPTimezone)},
+		{"php_log_errors", optBoolPtr(d.PHPLogErrors)},
+		{"php_file_uploads", optBoolPtr(d.PHPFileUploads)},
+		{"php_short_open_tag", optBoolPtr(d.PHPShortOpenTag)},
+		{"php_open_basedir", optTextPtr(d.PHPOpenBasedir)},
+		{"php_allow_url_fopen", optBoolPtr(d.PHPAllowURLFopen)},
+		// The certificate mode, and the mail and web settings. A setting an
+		// older archive doesn't carry takes the column's default, as on a
+		// domain the panel creates.
+		{"ssl_mode", sqlEnumOrDefault(d.SSLMode, domainSSLModes)},
+		{"skip_auto_san", strconv.Itoa(boolToInt(d.SkipAutoSAN))},
+		{"mail_provider", sqlTextOrDefault(d.MailProvider)},
+		{"m365_onmicrosoft", optStringPtr(d.M365Onmicrosoft)},
+		{"google_dkim", optTextPtr(d.GoogleDKIM)},
+		{"dmarc_np", "'" + sqlEscape(d.DmarcNP) + "'"},
+		{"dmarc_testing", strconv.Itoa(boolToInt(d.DmarcTesting))},
+		{"caldav_host", "'" + sqlEscape(d.CalDAVHost) + "'"},
+		{"carddav_host", "'" + sqlEscape(d.CardDAVHost) + "'"},
+		// MTA-STS stays off: its policy is found through two DNS records the
+		// panel's restore publishes, and this one doesn't. It is turned on
+		// again in the domain's mail settings.
+		{"mta_sts_enabled", "0"},
+		{"nginx_tenant_directives", optTextPtr(d.NginxTenantDirectives)},
+		{"nginx_safe_options", sqlJSONOrDefault(d.NginxSafeOptions)},
+		{"env_vars", sqlJSONOrDefault(d.EnvVars)},
+		{"cache_enabled", strconv.Itoa(boolToInt(d.CacheEnabled))},
+		{"cache_path", sqlTextOrDefault(d.CachePath)},
+		{"cache_ttl_seconds", sqlPositiveOrDefault(d.CacheTTLSeconds)},
+		{"cache_query_allowlist", "'" + sqlEscape(d.CacheQueryAllowlist) + "'"},
+		{"create_www", sqlBoolOrDefault(d.CreateWWW)},
+		{"webmail_enabled", sqlBoolOrDefault(d.WebmailEnabled)},
+		{"temp_url_enabled", strconv.Itoa(boolToInt(d.TempURLEnabled))},
+		{"bot_challenge_exempt", strconv.Itoa(boolToInt(d.BotChallengeExempt))},
+		{"bot_challenge_include", strconv.Itoa(boolToInt(d.BotChallengeInclude))},
+		{"allow_subdomain_delegation", strconv.Itoa(boolToInt(d.AllowSubdomainDelegation))},
+		{"web_disabled", strconv.Itoa(boolToInt(d.WebDisabled))},
+		{"dns_disabled", strconv.Itoa(boolToInt(d.DNSDisabled))},
+	}
+	cols = append(cols, ownership...)
+	cols = append(cols,
+		sqlColumn{"ghost_state", "'unchecked'"},
+		sqlColumn{"created_at", "NOW()"},
+		sqlColumn{"updated_at", "NOW()"},
+	)
+	// The domain's web domain aliases are not restored here: an alias must
+	// pass the alias page's checks against every domain on the server, which
+	// only the panel's restore runs.
+	return runMariaDBStmt(ctx, sqlInsertIgnore("jabali_panel.domains", cols))
+}
+
+// sqlColumn is one column of an INSERT and its value, as a SQL literal.
+type sqlColumn struct{ name, value string }
+
+// sqlInsertIgnore is INSERT IGNORE INTO table with cols.
+func sqlInsertIgnore(table string, cols []sqlColumn) string {
+	names, values := make([]string, len(cols)), make([]string, len(cols))
+	for i, c := range cols {
+		names[i], values[i] = c.name, c.value
+	}
+	return "INSERT IGNORE INTO " + table + " (" + strings.Join(names, ", ") + ") VALUES (" + strings.Join(values, ",") + ")"
+}
+
+// domainSSLModes are the domains.ssl_mode enum's values.
+var domainSSLModes = map[string]bool{"le": true, "self": true, "custom": true, "none": true, "shared": true}
+
+// restoredDomainOwnership is the panel's ownership rule for a restored domain
+// (backupmetadata.restoredOwnership): an admin-run restore vouches for the
+// name unless the backup records it as pending. Either way the row gets a new
+// challenge token; the columns' default would leave it pending without one.
+func restoredDomainOwnership(status string) ([]sqlColumn, error) {
+	var b [32]byte
+	if _, err := cryptoRandRead(b[:]); err != nil {
+		return nil, fmt.Errorf("ownership token: %w", err)
+	}
+	token := sqlColumn{"ownership_token", "'" + hex.EncodeToString(b[:]) + "'"}
+	if status != "" && status != "verified" {
+		return []sqlColumn{
+			{"ownership_status", "'pending'"}, {"ownership_method", "''"}, token,
+			{"ownership_pending_since", "UTC_TIMESTAMP(6)"}, {"ownership_next_check_at", "UTC_TIMESTAMP(6)"},
+		}, nil
+	}
+	return []sqlColumn{
+		{"ownership_status", "'verified'"}, {"ownership_method", "'restore'"}, token,
+		{"ownership_verified_at", "UTC_TIMESTAMP(6)"}, {"ownership_last_result", "'verified'"},
+	}, nil
+}
+
+// optBoolPtr formats a *bool as a SQL literal (NULL when nil).
+func optBoolPtr(p *bool) string {
+	if p == nil {
+		return "NULL"
+	}
+	return strconv.Itoa(boolToInt(*p))
+}
+
+// sqlBoolOrDefault is *p, or the column's default when nil.
+func sqlBoolOrDefault(p *bool) string {
+	if p == nil {
+		return "DEFAULT"
+	}
+	return strconv.Itoa(boolToInt(*p))
+}
+
+// sqlTextOrDefault is s as a literal, or the column's default when empty.
+func sqlTextOrDefault(s string) string {
+	if s == "" {
+		return "DEFAULT"
+	}
+	return "'" + sqlEscape(s) + "'"
+}
+
+// sqlEnumOrDefault is s when the enum has it, else the column's default.
+func sqlEnumOrDefault(s string, values map[string]bool) string {
+	if !values[s] {
+		return "DEFAULT"
+	}
+	return "'" + s + "'"
+}
+
+// sqlJSONOrDefault is s when it is a JSON document, else the column's
+// default.
+func sqlJSONOrDefault(s string) string {
+	if strings.TrimSpace(s) == "" || !json.Valid([]byte(s)) {
+		return "DEFAULT"
+	}
+	return "'" + sqlEscape(s) + "'"
+}
+
+// sqlPositiveOrDefault is n, or the column's default when it isn't positive.
+func sqlPositiveOrDefault(n int) string {
+	if n <= 0 {
+		return "DEFAULT"
+	}
+	return strconv.Itoa(n)
 }
 
 func insertSSLCert(ctx context.Context, domainID string, c backup.MetadataSSLCert) error {

@@ -19,6 +19,9 @@ type WebDomainAliasRepository interface {
 	Create(ctx context.Context, row *models.WebDomainAlias) error
 	FindByID(ctx context.Context, id string) (*models.WebDomainAlias, error)
 	ListByDomain(ctx context.Context, domainID string) ([]models.WebDomainAlias, error)
+	// ListByDomainIDs returns the aliases of every domain in domainIDs in one
+	// query (the backup builder's batch read, JAB-374).
+	ListByDomainIDs(ctx context.Context, domainIDs []string) ([]models.WebDomainAlias, error)
 	// ListHostnamesByDomainID returns just the lowercased hostnames for
 	// one domain, ordered stably — the reconciler's single source of
 	// truth for a domain's aliases on a converge pass. Only VERIFIED
@@ -71,6 +74,21 @@ func (r *webDomainAliasRepo) ListByDomain(ctx context.Context, domainID string) 
 	err := r.db.WithContext(ctx).
 		Where("domain_id = ?", domainID).
 		Order("hostname ASC").
+		Find(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+func (r *webDomainAliasRepo) ListByDomainIDs(ctx context.Context, domainIDs []string) ([]models.WebDomainAlias, error) {
+	if len(domainIDs) == 0 {
+		return nil, nil
+	}
+	var rows []models.WebDomainAlias
+	err := r.db.WithContext(ctx).
+		Where("domain_id IN ?", domainIDs).
+		Order("domain_id ASC, hostname ASC").
 		Find(&rows).Error
 	if err != nil {
 		return nil, err

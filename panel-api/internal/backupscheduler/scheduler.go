@@ -94,9 +94,12 @@ type Deps struct {
 	SSHKeys        repository.SSHKeyRepository
 	CronJobs       repository.CronJobRepository
 	FtpAccounts    repository.FtpAccountRepository
-	LimitOverrides repository.UserLimitOverrideRepository
-	EgressPolicies repository.UserEgressPolicyRepository
-	EgressRequests repository.UserEgressRequestRepository
+	// WebDomainAliases lets a scheduled backup carry each domain's web
+	// domain aliases (GH #1993).
+	WebDomainAliases repository.WebDomainAliasRepository
+	LimitOverrides   repository.UserLimitOverrideRepository
+	EgressPolicies   repository.UserEgressPolicyRepository
+	EgressRequests   repository.UserEgressRequestRepository
 
 	Agent agent.AgentInterface
 
@@ -875,10 +878,12 @@ func scheduleMetaDeps(deps Deps, logger *slog.Logger) backupmetadata.Deps {
 		SSHKeys:        deps.SSHKeys,
 		CronJobs:       deps.CronJobs,
 		FtpAccounts:    deps.FtpAccounts,
-		LimitOverrides: deps.LimitOverrides,
-		EgressPolicies: deps.EgressPolicies,
-		EgressRequests: deps.EgressRequests,
-		Log:            logger,
+		// GH #1993: each domain's web domain aliases.
+		WebDomainAliases: deps.WebDomainAliases,
+		LimitOverrides:   deps.LimitOverrides,
+		EgressPolicies:   deps.EgressPolicies,
+		EgressRequests:   deps.EgressRequests,
+		Log:              logger,
 	}
 }
 
