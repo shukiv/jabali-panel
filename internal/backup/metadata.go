@@ -150,6 +150,26 @@ type MetadataDomain struct {
 	// with method "restore", as the restore is admin-run.
 	OwnershipStatus string `json:"ownership_status,omitempty"`
 
+	// The domain's web settings (GH #1993), as its pages store them. An
+	// archive made before these fields restores each one at its default, so
+	// the settings that default on (www, webmail) are pointers: absent keeps
+	// them on.
+	NginxTenantDirectives    *string `json:"nginx_tenant_directives,omitempty"`
+	NginxSafeOptions         string  `json:"nginx_safe_options,omitempty"` // raw JSON
+	EnvVars                  string  `json:"env_vars,omitempty"`           // raw JSON
+	CacheEnabled             bool    `json:"cache_enabled,omitempty"`
+	CachePath                string  `json:"cache_path,omitempty"`
+	CacheTTLSeconds          int     `json:"cache_ttl_seconds,omitempty"`
+	CacheQueryAllowlist      string  `json:"cache_query_allowlist,omitempty"`
+	CreateWWW                *bool   `json:"create_www,omitempty"`
+	WebmailEnabled           *bool   `json:"webmail_enabled,omitempty"`
+	TempURLEnabled           bool    `json:"temp_url_enabled,omitempty"`
+	BotChallengeExempt       bool    `json:"bot_challenge_exempt,omitempty"`
+	BotChallengeInclude      bool    `json:"bot_challenge_include,omitempty"`
+	AllowSubdomainDelegation bool    `json:"allow_subdomain_delegation,omitempty"`
+	WebDisabled              bool    `json:"web_disabled,omitempty"`
+	DNSDisabled              bool    `json:"dns_disabled,omitempty"`
+
 	SSLCertificate *MetadataSSLCert    `json:"ssl_certificate,omitempty"`
 	Mailboxes      []MetadataMailbox   `json:"mailboxes,omitempty"`
 	Forwarders     []MetadataForwarder `json:"forwarders,omitempty"`

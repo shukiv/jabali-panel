@@ -51,7 +51,7 @@ func rdcCheck() func(context.Context, *models.Domain, string) ([]string, error) 
 	return RestoreDomainCheck(
 		rdcDomains{"other.com": {ID: "d-o", Name: "other.com", UserID: "u-other"}},
 		rdcAliases{"aliased.com": {ID: "a1", DomainID: "d-x", Hostname: "aliased.com"}},
-		rdcSettings{},
+		rdcSettings{}, nil, RestoreFromOwnBackup,
 	)
 }
 
@@ -100,7 +100,7 @@ func TestRestoreDomainCheck_RefusesWhatCreateRefuses(t *testing.T) {
 
 // Missing stores refuse rather than silently skip a guard.
 func TestRestoreDomainCheck_UnwiredRefuses(t *testing.T) {
-	check := RestoreDomainCheck(rdcDomains{}, nil, rdcSettings{})
+	check := RestoreDomainCheck(rdcDomains{}, nil, rdcSettings{}, nil, RestoreFromOwnBackup)
 	if _, err := check(context.Background(), rdcRow("site.org"), "alice"); !errors.Is(err, errRestoreChecksUnwired) {
 		t.Fatalf("want errRestoreChecksUnwired, got %v", err)
 	}

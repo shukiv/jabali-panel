@@ -36,8 +36,17 @@ var errRestoreChecksUnwired = errors.New("the restore domain checks are not full
 //     renders the sizes into the site's web server config).
 //   - an index priority the domain page doesn't offer (GH #1993); the domain
 //     then gets the default.
+//
+// The domain's web settings (GH #1993) are held to the rules of the page that
+// sets each one, and what fails is dropped with a warning. From an uploaded
+// file (RestoreFromUpload) only what the account's owner could set comes
+// back: an admin-only nginx rule type or the bot-challenge opt-out is left
+// for the administrator to review and add again, and so are the typed rules,
+// nginx options and advanced directives while the server doesn't let owners
+// set those (tenant_domain_options_enabled).
 func RestoreDomainCheck(domains domainops.SuffixDomainFinder, aliases domainops.AliasHostnameFinder,
-	settings domainops.MailSettingsReader) func(ctx context.Context, row *models.Domain, ownerUsername string) ([]string, error) {
+	settings domainops.MailSettingsReader, previews domainops.PreviewDomainLister,
+	source RestoreSource) func(ctx context.Context, row *models.Domain, ownerUsername string) ([]string, error) {
 	return func(ctx context.Context, row *models.Domain, ownerUsername string) ([]string, error) {
 		if domains == nil || aliases == nil || settings == nil {
 			return nil, errRestoreChecksUnwired
@@ -72,9 +81,22 @@ func RestoreDomainCheck(domains domainops.SuffixDomainFinder, aliases domainops.
 			row.IndexPriority = p
 		}
 		warnings = append(warnings, dropRestoredPHPLimits(row)...)
+		warnings = append(warnings, dropRestoredWebSettings(ctx, row, ownerUsername, settings, previews, source)...)
 		return warnings, nil
 	}
 }
+
+// RestoreSource is where a restored archive comes from.
+type RestoreSource int
+
+const (
+	// RestoreFromOwnBackup is an archive this server wrote to one of its own
+	// backup destinations.
+	RestoreFromOwnBackup RestoreSource = iota
+	// RestoreFromUpload is a file someone uploaded. Whoever made it chose its
+	// contents.
+	RestoreFromUpload
+)
 
 // restoredRedirectProblem applies the update door's redirect-all rules to a
 // restored row and returns why it fails, or "".

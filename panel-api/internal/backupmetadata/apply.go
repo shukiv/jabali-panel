@@ -216,7 +216,7 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 				domainIDs[dm.ID] = dm.ID
 				r.Skipped++
 				if d.OverwriteRows {
-					overwriteDomain(ctx, d, &r, m.User.ID, account, existing, dm, poolIDs)
+					overwriteDomain(ctx, d, &r, m.User.ID, bundleUser, account, existing, dm, poolIDs)
 				}
 				continue
 			} else if err != nil && !errors.Is(err, repository.ErrNotFound) {
@@ -237,7 +237,7 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 				domainIDs[dm.ID] = existing.ID
 				r.Skipped++
 				if d.OverwriteRows {
-					overwriteDomain(ctx, d, &r, m.User.ID, account, existing, dm, poolIDs)
+					overwriteDomain(ctx, d, &r, m.User.ID, bundleUser, account, existing, dm, poolIDs)
 				}
 				continue
 			} else if err != nil && !errors.Is(err, repository.ErrNotFound) {
@@ -274,6 +274,9 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 				DNSSECEnabled:         dm.DNSSECEnabled,
 				CreatedAt:             now,
 				UpdatedAt:             now,
+			}
+			for _, p := range setRestoredWebSettings(row, dm, bundleUser, account) {
+				r.Errors = append(r.Errors, fmt.Sprintf("domain %s (%s): %s", dm.ID, dm.Name, p))
 			}
 			// Custom nginx directives are admin-only raw config, checked only by
 			// the relaxed admin rules. From an uploaded file they are config
@@ -318,12 +321,21 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 					r.Errors = append(r.Errors, fmt.Sprintf("domain %s (%s): its PHP pool was not restored; it uses the account's default PHP pool", dm.ID, dm.Name))
 				}
 			}
+			// These columns default on, and GORM's insert turns a false one
+			// into true, on the row as well. The update writes the backup's.
+			enabled, ssl, webmail := row.IsEnabled, row.SSLEnabled, row.WebmailEnabled
 			if err := d.Domains.Create(ctx, row); err != nil {
 				// Without the row its mailboxes, forwarders and app installs
 				// can't be stored either; skip them so this stays the error.
 				refused[dm.ID] = true
 				r.Errors = append(r.Errors, fmt.Sprintf("domain %s (%s): create: %v", dm.ID, dm.Name, err))
 				continue
+			}
+			if !enabled || !ssl || !webmail {
+				row.IsEnabled, row.SSLEnabled, row.WebmailEnabled = enabled, ssl, webmail
+				if err := d.Domains.Update(ctx, row); err != nil {
+					r.Errors = append(r.Errors, fmt.Sprintf("domain %s (%s): left on, as a new domain is (enabled, SSL, webmail): %v", dm.ID, dm.Name, err))
+				}
 			}
 			ownDomains[dm.ID] = true
 			domainIDs[dm.ID] = dm.ID
