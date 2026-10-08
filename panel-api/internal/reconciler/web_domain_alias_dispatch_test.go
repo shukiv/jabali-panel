@@ -21,6 +21,9 @@ func (f *fakeAliasRepo) FindByID(context.Context, string) (*models.WebDomainAlia
 func (f *fakeAliasRepo) ListByDomain(context.Context, string) ([]models.WebDomainAlias, error) {
 	return nil, nil
 }
+func (f *fakeAliasRepo) ListByDomainIDs(context.Context, []string) ([]models.WebDomainAlias, error) {
+	return nil, nil
+}
 func (f *fakeAliasRepo) FindByHostname(context.Context, string) (*models.WebDomainAlias, error) {
 	return nil, nil
 }
