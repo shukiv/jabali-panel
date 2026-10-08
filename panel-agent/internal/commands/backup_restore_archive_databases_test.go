@@ -120,6 +120,7 @@ func TestUploadRestore_APostgresRestoreClaimsNoMariaDBDatabase(t *testing.T) {
 	me := currentUsername(t)
 	withData, fresh := me+"_pgfull", me+"_pgnew"
 	keepExecRecorder(t, nil, nil, []string{withData})
+	pgLoads(t)
 	root := t.TempDir()
 	var stages []backup.ManifestStage
 	for _, db := range []string{withData, fresh} {

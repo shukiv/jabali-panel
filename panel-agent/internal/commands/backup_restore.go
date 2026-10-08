@@ -82,6 +82,25 @@ type restoreEnforcement struct {
 	// it when PostgreSQL is turned off on this server; each one is left out
 	// with a warning.
 	SkipPostgres bool
+	// Report collects what the restore did for the caller's reply, in every
+	// mode; nil records nothing.
+	Report *restoreReport
+}
+
+// restoreReport is what a restore reports back whatever its mode.
+type restoreReport struct {
+	// PostgresDatabases are the PostgreSQL databases the restore loaded (GH
+	// #1993). Each is a new database whose objects its holder role owns, and
+	// the panel grants each database user it has on one again: the first
+	// takes the objects over.
+	PostgresDatabases []string
+}
+
+// notePostgresLoaded records that the restore loaded PostgreSQL database db.
+func (e restoreEnforcement) notePostgresLoaded(db string) {
+	if e.Report != nil {
+		e.Report.PostgresDatabases = append(e.Report.PostgresDatabases, db)
+	}
 }
 
 // restoreClaims names the databases and docker app data an upload-mode
@@ -108,6 +127,18 @@ type restoreClaims struct {
 
 // loadRestoredMariaDBDump loads a restored database's dump; tests swap it.
 var loadRestoredMariaDBDump = loadMariaDBDumpScoped
+
+// loadRestoredPostgresDump loads a restored PostgreSQL database's dump; tests
+// swap it. The dump runs as a role with no server-wide rights, never as
+// postgres, and what it creates is owned by the database's holder role until
+// a database user granted on it takes it over (GH #1993). grantRoles get
+// access to the restored database.
+var loadRestoredPostgresDump = func(ctx context.Context, db string, dump *os.File, grantRoles []string) error {
+	if aerr := pgLoadScoped(ctx, db, dump, "", grantRoles, true); aerr != nil {
+		return aerr
+	}
+	return nil
+}
 
 func (e restoreEnforcement) claimDatabase(db string) {
 	if e.Claims != nil {
@@ -261,6 +292,9 @@ type backupRestoreResult struct {
 	// recovery. Empty when the snapshot has no meta stage (older
 	// snapshots, schema_version=1).
 	Metadata json.RawMessage `json:"metadata,omitempty"`
+	// RestoredPostgresDBs are the PostgreSQL databases the restore loaded
+	// (GH #1993); the panel grants each database user it has on them again.
+	RestoredPostgresDBs []string `json:"restored_postgres_databases"`
 }
 
 type backupRestoreStage struct {
@@ -378,7 +412,9 @@ func backupRestoreHandler(ctx context.Context, raw json.RawMessage) (any, error)
 	}
 	if apply {
 		stagingRoot := filepath.Join("/var/lib/jabali-backups/restore-staging", req.JobID)
-		applied, warnings := applyAccountRestore(ctx, stagingRoot, req.TargetUsername, manifest.User, manifest.Stages, out.Stages, restoreEnforcement{})
+		rep := &restoreReport{}
+		applied, warnings := applyAccountRestore(ctx, stagingRoot, req.TargetUsername, manifest.User, manifest.Stages, out.Stages, restoreEnforcement{Report: rep})
+		out.RestoredPostgresDBs = append([]string{}, rep.PostgresDatabases...)
 		out.Applied = applied
 		out.Warnings = warnings
 		// GH #1361: stage each FTP subaccount's captured /etc/shadow hash for
@@ -727,16 +763,15 @@ func applyAccountRestore(
 				continue
 			}
 			// PG dump first — backup_databases.go writes "<db>.pgdump"
-			// for postgres engine. If present, route to pg_restore.
+			// for postgres engine. If present, it loads through the
+			// scoped PostgreSQL loader.
 			pgPath := filepath.Join(stagingRoot, "db", db+".pgdump")
 			if stagedEntry(stagingRoot, pgPath, false) == nil {
 				if enf.SkipPostgres {
 					warnings = append(warnings, fmt.Sprintf("db %s (postgres): not restored: PostgreSQL is turned off on this server", db))
 					continue
 				}
-				// CREATE DATABASE if missing. PG has no
-				// IF NOT EXISTS for CREATE DATABASE pre-9.x but
-				// we accept an "already exists" error as success.
+				// Is there a database of this name here already?
 				createSQL := fmt.Sprintf("SELECT 1 FROM pg_database WHERE datname = '%s'", db)
 				probeCmd := execCommandContext(ctx, "sudo", "-u", "postgres",
 					"psql", "-XAtq", "-c", createSQL)
@@ -767,54 +802,47 @@ func applyAccountRestore(
 						archive = true
 					}
 				}
-				if !pgExists {
-					mkCmd := execCommandContext(ctx, "sudo", "-u", "postgres",
-						"createdb", "--encoding=UTF8", db)
-					if cOut, cErr := mkCmd.CombinedOutput(); cErr != nil {
-						warnings = append(warnings,
-							fmt.Sprintf("db %s (postgres): createdb: %v: %s",
-								db, cErr, strings.TrimSpace(string(cOut))))
+				// The dump loads into a new database that takes db's place
+				// (pgLoadScoped), so the roles that can connect to db now get
+				// the same access to it.
+				var keepGrants []string
+				if pgExists {
+					roles, gErr := pgConnectGrantees(ctx, db)
+					if gErr != nil {
+						warnings = append(warnings, fmt.Sprintf("db %s (postgres): not restored: couldn't read which database users can connect to it: %v", db, gErr))
 						continue
 					}
-					if rErr := pgRunSQL(ctx, pgRevokePublicSQL(db)); rErr != nil {
-						warnings = append(warnings,
-							fmt.Sprintf("db %s (postgres): revoke public access: %v; not loaded", db, rErr))
-						continue
+					for _, r := range roles {
+						if pgValidIdent(r) {
+							keepGrants = append(keepGrants, r)
+						} else {
+							warnings = append(warnings, fmt.Sprintf("db %s (postgres): role %q can connect to it now and won't after the restore: its name isn't one the panel uses", db, r))
+						}
 					}
 				}
-				enf.claimDatabase(db)
-				// pg_restore --clean --if-exists drops then re-creates
-				// every object in the dump. Idempotent on re-runs.
-				//
-				// The dump is fed via STDIN, not as a filename: pg_restore
-				// runs as the postgres user, and the staging tree is
-				// root-owned 0750, so a path argument dies with EACCES
-				// every time (found live on GH #1015's round-trip — this
-				// branch had never actually restored anything). Root opens
-				// the file; the child just inherits the fd, and the staging
-				// tree stays root-only. Same trust shape as the MariaDB
-				// branch below, which pipes for the same reason.
+				// The dump is opened by root and handed to the loader as an
+				// open file: the staging tree is root-only 0750, and the
+				// loader's processes never open its path.
 				pgFile, oErr := openStagedFile(stagingRoot, pgPath)
 				if oErr != nil {
 					warnings = append(warnings,
 						fmt.Sprintf("db %s (postgres): open dump: %v", db, oErr))
 					continue
 				}
-				restoreCmd := execCommandContext(ctx, "sudo", "-u", "postgres",
-					"pg_restore", "--clean", "--if-exists", "--no-owner",
-					"--no-privileges", "-d", db)
-				restoreCmd.Stdin = pgFile
-				rOut, rErr := restoreCmd.CombinedOutput()
+				lErr := loadRestoredPostgresDump(ctx, db, pgFile, keepGrants)
 				pgFile.Close()
-				if rErr != nil {
+				if lErr != nil {
 					warnings = append(warnings,
-						fmt.Sprintf("db %s (postgres): pg_restore: %v: %s",
-							db, rErr, strings.TrimSpace(string(rOut))))
+						fmt.Sprintf("db %s (postgres): not restored: %v", db, lErr))
 					continue
 				}
+				// A failed load leaves db as it was, so only now is it the
+				// restore's.
+				enf.claimDatabase(db)
 				if archive {
 					enf.claimArchivePostgresDB(db)
 				}
+				enf.notePostgresLoaded(db)
 				applied = append(applied, fmt.Sprintf("db → %s (postgres)", db))
 				continue
 			}

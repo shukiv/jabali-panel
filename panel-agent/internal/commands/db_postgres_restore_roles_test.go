@@ -199,12 +199,27 @@ func pgArgAfter(args []string, flag string) string {
 	return ""
 }
 
+// pgLoads swaps the PostgreSQL dump load: it fails for the databases in
+// fail.
+func pgLoads(t *testing.T, fail ...string) {
+	t.Helper()
+	prev := loadRestoredPostgresDump
+	loadRestoredPostgresDump = func(_ context.Context, db string, _ *os.File, _ []string) error {
+		if containsString(fail, db) {
+			return errors.New("restore load failed: pg_restore: error: could not execute query")
+		}
+		return nil
+	}
+	t.Cleanup(func() { loadRestoredPostgresDump = prev })
+}
+
 // pgRestoreWorld stubs PostgreSQL for a restore: the databases in existing
 // exist, holds answers the "does it hold anything" check for a database (a
 // shell script; "echo 0" when absent; the check fails on a database that
-// doesn't exist), and pg_restore fails for the databases in broken.
+// doesn't exist), and the load fails for the databases in broken.
 func pgRestoreWorld(t *testing.T, existing []string, holds map[string]func(query string) string, broken []string) {
 	t.Helper()
+	pgLoads(t, broken...)
 	prev := execCommandContext
 	execCommandContext = func(ctx context.Context, name string, args ...string) *exec.Cmd {
 		line := name + " " + strings.Join(args, " ")
@@ -227,10 +242,6 @@ func pgRestoreWorld(t *testing.T, existing []string, holds map[string]func(query
 			return exec.CommandContext(ctx, "echo", "0")
 		case strings.Contains(line, "pg_tables"):
 			return exec.CommandContext(ctx, "echo", "0")
-		case strings.Contains(line, "pg_restore"):
-			if containsString(broken, db) {
-				return exec.CommandContext(ctx, "sh", "-c", "echo 'pg_restore: error: could not execute query' >&2; exit 1")
-			}
 		}
 		return exec.CommandContext(ctx, "true")
 	}
