@@ -109,6 +109,8 @@ func (f *fakeDockerRepo) UpdateStatus(_ context.Context, id, status string, _ *s
 	return nil
 }
 
+func (f *fakeDockerRepo) UpdateCatalogVersion(context.Context, string, string) error { return nil }
+
 func (f *fakeDockerRepo) SumDataBytesByUserID(context.Context, string) (int64, error) {
 	return f.sumBytes, nil
 }

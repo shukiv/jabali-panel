@@ -31,15 +31,22 @@ type appEntry struct {
 	TagP    tagParts
 	Version string // version: field value
 	Mode    bumpMode
+	// Track is the entry's release track (GH #1956), "" when it has none.
+	// A tracked entry only moves within its track; a newer major is
+	// reported and left for a reviewed change.
+	Track string
 
 	// Skip is the human-readable reason this app cannot be auto-bumped
 	// (unversioned tag scheme, version/tag mismatch, parse failure).
 	Skip string
 }
 
+// The line patterns match top-level keys only, so a held track's indented
+// version and image_channel (GH #1956) are never read or rewritten.
 var (
 	imageChannelLineRe = regexp.MustCompile(`(?m)^image_channel: (\S+)$`)
 	versionLineRe      = regexp.MustCompile(`(?m)^version: "([^"]*)"$`)
+	trackLineRe        = regexp.MustCompile(`(?m)^track: "([^"]*)"$`)
 )
 
 // classify decides, offline, whether an app.yaml is auto-bumpable. Every
@@ -65,6 +72,9 @@ func classify(slug, path, raw string) appEntry {
 		return e
 	}
 	e.Version = vm[1]
+	if tm := trackLineRe.FindStringSubmatch(raw); tm != nil {
+		e.Track = tm[1]
+	}
 
 	p, ok := parseTag(ref.Tag)
 	if !ok {
@@ -115,21 +125,37 @@ func loadCatalog(dir string) ([]appEntry, error) {
 	return entries, nil
 }
 
-// rewriteAppYaml returns raw with the version: value and the image_channel
-// tag@digest replaced, leaving every other byte untouched.
+// rewriteAppYaml returns raw with the top-level version: value and
+// image_channel tag@digest replaced, leaving every other byte untouched.
 func rewriteAppYaml(raw string, e appEntry, newTag, newCore, newDigest string) (string, error) {
 	oldPin := ":" + e.Ref.Tag + "@" + e.Ref.Digest
 	newPin := ":" + newTag + "@" + newDigest
-	if !strings.Contains(raw, oldPin) {
+	out, ok := replaceInLine(raw, imageChannelLineRe, oldPin, newPin)
+	if !ok {
 		return "", fmt.Errorf("pin %q not found", oldPin)
 	}
-	out := strings.Replace(raw, oldPin, newPin, 1)
 
 	oldVer := `version: "` + e.Version + `"`
 	newVer := `version: "` + newCore + `"`
-	if !strings.Contains(out, oldVer) {
+	out, ok = replaceInLine(out, versionLineRe, oldVer, newVer)
+	if !ok {
 		return "", fmt.Errorf("version line %q not found", oldVer)
 	}
-	out = strings.Replace(out, oldVer, newVer, 1)
 	return out, nil
+}
+
+// replaceInLine replaces old with new inside the first line re matches.
+func replaceInLine(raw string, re *regexp.Regexp, old, new string) (string, bool) {
+	loc := re.FindStringIndex(raw)
+	if loc == nil || !strings.Contains(raw[loc[0]:loc[1]], old) {
+		return raw, false
+	}
+	return raw[:loc[0]] + strings.Replace(raw[loc[0]:loc[1]], old, new, 1) + raw[loc[1]:], true
+}
+
+// onTrack reports whether a version belongs to a track: "28.1.0" and "28.2"
+// are on "28", "1.27.3" is on "1.27" but not on "1.2". Mirrors
+// dockerapp.onTrack, which the panel uses to pick an install's image.
+func onTrack(v, track string) bool {
+	return track != "" && (v == track || strings.HasPrefix(v, track+"."))
 }

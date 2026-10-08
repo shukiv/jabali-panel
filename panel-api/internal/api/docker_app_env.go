@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -135,7 +136,7 @@ func (h *dockerAppHandler) putEnv(c *gin.Context) {
 	}
 
 	if err := h.applyEnv(ctx, app, merged); err != nil {
-		respondAgentErr(c, "apply_failed", err)
+		respondApplyEnvErr(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "applied"})
@@ -177,7 +178,7 @@ func (h *dockerAppHandler) regenerateEnv(c *gin.Context) {
 	delete(existing, body.Key) // absent → MaterialiseEnv generates a fresh value
 
 	if err := h.applyEnv(ctx, app, existing); err != nil {
-		respondAgentErr(c, "apply_failed", err)
+		respondApplyEnvErr(c, err)
 		return
 	}
 	// Read back so the UI can show the new secret once.
@@ -189,12 +190,23 @@ func (h *dockerAppHandler) regenerateEnv(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "applied", "key": body.Key, "value": after[body.Key]})
 }
 
+// respondApplyEnvErr maps an applyEnv failure. An install the catalog has
+// no image for any more (GH #1956) is the operator's to resolve, so it gets
+// a 409 that says how; anything else is the agent's.
+func respondApplyEnvErr(c *gin.Context, err error) {
+	if errors.Is(err, dockerapp.ErrNoUpdatePath) {
+		c.JSON(http.StatusConflict, gin.H{"error": "update_required", "detail": err.Error()})
+		return
+	}
+	respondAgentErr(c, "apply_failed", err)
+}
+
 // applyEnv re-renders the compose with the given env override set and
 // recreates the container via docker_app.update (which writes compose +
 // .env atomically, then recreates). Restores the running status on success.
 func (h *dockerAppHandler) applyEnv(ctx context.Context, app *models.DockerApp, overrideEnv map[string]string) error {
 	domain := h.installDomain(ctx, app.ID)
-	composeYML, envFile, tenantServices, err := h.renderInstallCompose(ctx, app, domain, overrideEnv)
+	composeYML, envFile, tenantServices, err := h.renderInstallCompose(ctx, app, domain, overrideEnv, false)
 	if err != nil {
 		return err
 	}
@@ -211,7 +223,7 @@ func (h *dockerAppHandler) applyEnv(ctx context.Context, app *models.DockerApp, 
 		return verr
 	}
 	setTenantServices(envUpdateParams, tenantServices)
-	_, callErr := h.cfg.Agent.Call(callCtx, "docker_app.update", envUpdateParams)
+	raw, callErr := h.cfg.Agent.Call(callCtx, "docker_app.update", envUpdateParams)
 	persistCtx, persistCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer persistCancel()
 	if callErr != nil {
@@ -220,6 +232,15 @@ func (h *dockerAppHandler) applyEnv(ctx context.Context, app *models.DockerApp, 
 		return callErr
 	}
 	_ = h.cfg.Repo.UpdateStatus(persistCtx, app.ID, models.DockerAppStatusRunning, nil)
+	// A recreate onto a new image keeps the version label on it (GH #1956).
+	var outcome struct {
+		Outcome string `json:"outcome"`
+	}
+	if json.Unmarshal(raw, &outcome) == nil && outcome.Outcome == "updated" {
+		if target, terr := h.installTarget(app, false); terr == nil && target.Version != "" && target.Version != app.CatalogVersion {
+			_ = h.cfg.Repo.UpdateCatalogVersion(persistCtx, app.ID, target.Version)
+		}
+	}
 	return nil
 }
 

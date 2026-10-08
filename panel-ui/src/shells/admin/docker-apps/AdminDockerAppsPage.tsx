@@ -84,11 +84,26 @@ export const AdminDockerAppsPage = () => {
   const installed = useQuery({ queryKey: ["docker-apps-installed"], queryFn: listInstalled });
 
   const updateImage = useMutation({
-    mutationFn: async (id: string) => updateApp(id),
-    onSuccess: () => {
+    mutationFn: async (r: InstalledApp) => updateApp(r.id),
+    onSuccess: (started, r) => {
       // Async: the server returned 202 (update started). The row shows the
       // "updating" spinner and the poll flips it to running/failed when the
-      // background pull + recreate finishes. The click handler already toasted.
+      // background pull + recreate finishes.
+      if (started.notice) {
+        // GH #1956: the app stays on its release track, or steps to the next
+        // major first; say why it isn't going to the catalog's newest.
+        message.warning(started.notice, 10);
+      } else {
+        // GH #794: catalog images are pinned to a reviewed digest, so a newer
+        // version only appears when the catalog is bumped. Tell the operator
+        // why "Update" won't change the version when already current.
+        const hasUpdate = !!r.available_digest && r.available_digest !== (r.image_sha ?? "");
+        message.info(
+          hasUpdate
+            ? "Update started — this can take a few minutes"
+            : "Already on the latest catalog version — re-applying catalog config, but there's no newer version to pull yet. New app versions arrive when the catalog is bumped.",
+        );
+      }
       qc.invalidateQueries({ queryKey: ["docker-apps-installed"] });
     },
     onError: (e: unknown) => message.error(e instanceof Error ? e.message : "Update failed"),
@@ -108,18 +123,9 @@ export const AdminDockerAppsPage = () => {
       key: "update",
       label: "Update",
       icon: <SyncOutlined />,
-      // GH #794: catalog images are pinned to a reviewed digest, so a newer
-      // version only appears when the catalog is bumped. Tell the operator
-      // up-front why "Update" won't change the version when already current.
-      onClick: () => {
-        const hasUpdate = !!r.available_digest && r.available_digest !== (r.image_sha ?? "");
-        message.info(
-          hasUpdate
-            ? "Update started — this can take a few minutes"
-            : "Already on the latest catalog version — re-applying catalog config, but there's no newer version to pull yet. New app versions arrive when the catalog is bumped.",
-        );
-        updateImage.mutate(r.id);
-      },
+      // The toast waits for the server: an update it refuses (GH #1956) only
+      // shows the refusal, and one that stays on its track says why.
+      onClick: () => updateImage.mutate(r),
     },
     { key: "exec", label: "Exec", icon: <CodeOutlined />, onClick: () => setExecAppId(r.id) },
     { key: "backups", label: "Backups", icon: <SaveOutlined />, onClick: () => setBackupsAppId(r.id) },

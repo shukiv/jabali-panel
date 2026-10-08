@@ -67,7 +67,7 @@ func cliApplyTenantValidate(ctx context.Context, app *models.DockerApp, params m
 }
 
 func applyDockerEnvWithBase(ctx context.Context, repo repository.DockerAppRepository, app *models.DockerApp, baseEnv map[string]string) error {
-	compose, envFile, tenantServices, err := renderInstallComposeCLI(ctx, repo, app, baseEnv)
+	compose, envFile, tenantServices, err := renderInstallComposeCLI(ctx, repo, app, baseEnv, false)
 	if err != nil {
 		return err
 	}
@@ -86,6 +86,19 @@ func applyDockerEnvWithBase(ctx context.Context, repo repository.DockerAppReposi
 	raw, err := sharedAgent.Call(ctx, "docker_app.update", params)
 	if err != nil {
 		return err
+	}
+	// A recreate onto a new image keeps the version label on it (GH #1956).
+	var outc struct {
+		Outcome string `json:"outcome"`
+	}
+	if json.Unmarshal(raw, &outc) == nil && outc.Outcome == "updated" {
+		if cat, cerr := loadDockerCatalogForCLI(); cerr == nil {
+			if entry, ok := cat.Get(app.Slug); ok {
+				if target, terr := entry.TargetFor(app.CatalogVersion, false); terr == nil && target.Version != "" && target.Version != app.CatalogVersion {
+					_ = repo.UpdateCatalogVersion(ctx, app.ID, target.Version)
+				}
+			}
+		}
 	}
 	os.Stdout.Write(raw)
 	os.Stdout.Write([]byte{'\n'})

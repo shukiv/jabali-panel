@@ -170,6 +170,8 @@ Two modes per install:
 
 **Why:** ships the minimum useful split. `auto` covers the "I just want it to stay current" operator; `manual` covers the "I want control" operator. The CVE-feed mode wraps both and can land later.
 
+**Amendment (GH #1956, 2026-10):** Update re-renders an install from the catalog, so a catalog bump to a new major reached every existing install. An entry may now declare a release track (`track`, `update_from`, `held_tracks`). Update moves an install only to a track it can take in place, keeps it on its own held track otherwise, and refuses (409 `update_blocked`) when the catalog has no image for it. The weekly bumper only moves a tracked entry within its track. See [Release tracks](../../install/docker-apps/README.md#release-tracks-major-versions).
+
 ---
 
 ## Decision 10 — Admin-only "Exec shell" / "Edit compose"
