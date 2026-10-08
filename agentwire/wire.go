@@ -85,6 +85,12 @@ const (
 // forever (GH #357).
 const MsgMailServerNotInstalled = "mail server not installed"
 
+// MsgCrowdSecNotInstalled is the CodeFailedPrecondition message a CrowdSec
+// verb returns on a box with no cscli (installed without the security
+// module). Asking again gets the same answer, so the panel's login allowlist
+// stops asking for the rest of its dedup window (GH #357).
+const MsgCrowdSecNotInstalled = "crowdsec not installed"
+
 // ErrMalformedResponse is raised by the client when response bytes don't
 // parse as a Response. Not a protocol-defined value — client-side sentinel.
 var ErrMalformedResponse = errors.New("agent: malformed response")

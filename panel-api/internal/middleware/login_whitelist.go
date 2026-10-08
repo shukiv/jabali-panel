@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"log/slog"
 	"net"
 	"strconv"
@@ -12,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
@@ -121,6 +123,16 @@ func WhitelistLoginIP(rdb *redis.Client, agentCli agent.AgentInterface, settings
 				"expiration": ttl,
 			})
 			if err != nil {
+				// GH #357: no CrowdSec on this box (installed without the
+				// security module). Keep the dedup guard: the next request
+				// would get the same answer, so ask once per dedup window, as
+				// with the toggle off. Before, every admin request made an
+				// agent call and logged a warning.
+				var ae *agent.AgentError
+				if errors.As(err, &ae) && ae.Code == agent.CodeFailedPrecondition && ae.Message == agentwire.MsgCrowdSecNotInstalled {
+					logger.Debug("login-whitelist: crowdsec not installed; skipped", "ip", ip)
+					return
+				}
 				// Roll back the dedup guard so the next request retries.
 				delCtx, delCancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 				defer delCancel()

@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"regexp"
 	"sort"
 	"strconv"
@@ -1126,6 +1128,12 @@ func csAllowlistsAddHandler(ctx context.Context, params json.RawMessage) (any, e
 		expArg = norm
 	}
 	if err := addToJabaliAllowlist(ctx, value, p.Reason, expArg); err != nil {
+		// GH #357: with no cscli on the box, say so with a distinct answer.
+		// A generic internal error made the panel's login allowlist ask
+		// again on every admin request.
+		if errors.Is(err, exec.ErrNotFound) {
+			return nil, &agentwire.AgentError{Code: agentwire.CodeFailedPrecondition, Message: agentwire.MsgCrowdSecNotInstalled}
+		}
 		return nil, csInternal("allowlist add", err)
 	}
 	return map[string]any{"value": value}, nil
