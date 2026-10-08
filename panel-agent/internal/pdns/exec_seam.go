@@ -2,9 +2,10 @@ package pdns
 
 import (
 	"os"
-	"path/filepath"
 	"sync"
 	"testing"
+
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-agent/internal/execstub"
 )
 
 // Test-safety for GH #994 / #1160.
@@ -37,13 +38,9 @@ var (
 
 func pdnsutilTestStub() string {
 	pdnsutilStubOnce.Do(func() {
-		dir, err := os.MkdirTemp("", "jabali-pdnsutil-stub-")
+		p, err := execstub.NoOpBinary("pdnsutil")
 		if err != nil {
 			panic("pdnsutil test stub: " + err.Error())
-		}
-		p := filepath.Join(dir, "pdnsutil")
-		if werr := os.WriteFile(p, []byte("#!/bin/sh\ncat >/dev/null 2>&1\nexit 0\n"), 0o700); werr != nil {
-			panic("pdnsutil test stub: " + werr.Error())
 		}
 		pdnsutilStubPath = p
 	})
