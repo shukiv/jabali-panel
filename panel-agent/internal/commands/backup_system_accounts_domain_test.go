@@ -197,7 +197,7 @@ func TestInsertDomain_RestoresTheDomainsSettings(t *testing.T) {
 	d := backup.MetadataDomain{
 		ID: "d1", Name: "alice.org",
 		PHPDisplayErrors: dsPtr(true), PHPErrorReporting: dsPtr(22527), PHPTimezone: dsPtr("Asia/Jerusalem"),
-		PHPLogErrors: dsPtr(false), PHPFileUploads: dsPtr(false), PHPShortOpenTag: dsPtr(true),
+		PHPLogErrors: dsPtr(true), PHPFileUploads: dsPtr(false), PHPShortOpenTag: dsPtr(true),
 		PHPAllowURLFopen: dsPtr(false), PHPSettingsComplete: true,
 		SSLMode: "self", SkipAutoSAN: true,
 		MailProvider: "m365", M365Onmicrosoft: dsPtr("alice"), GoogleDKIM: dsPtr("v=DKIM1; k=rsa; p=AAA"),
@@ -210,7 +210,7 @@ func TestInsertDomain_RestoresTheDomainsSettings(t *testing.T) {
 	row, _, _ := mariaInsert(t, captureDomainInsert(t, d))
 	want := map[string]string{
 		"php_display_errors": "1", "php_error_reporting": "22527", "php_timezone": "'Asia/Jerusalem'",
-		"php_log_errors": "0", "php_file_uploads": "0", "php_short_open_tag": "1", "php_allow_url_fopen": "0",
+		"php_log_errors": "1", "php_file_uploads": "0", "php_short_open_tag": "1", "php_allow_url_fopen": "0",
 		"ssl_mode": "'self'", "skip_auto_san": "1",
 		"mail_provider": "'m365'", "m365_onmicrosoft": "'alice'", "google_dkim": "'v=DKIM1; k=rsa; p=AAA'",
 		"dmarc_np": "'reject'", "dmarc_testing": "1", "caldav_host": "''", "carddav_host": "'dav.alice.org'",
@@ -265,5 +265,44 @@ func TestInsertDomain_Ownership(t *testing.T) {
 	b, _, _ := mariaInsert(t, captureDomainInsert(t, backup.MetadataDomain{ID: "d2", Name: "bob.org"}))
 	if a["ownership_token"] == b["ownership_token"] {
 		t.Fatal("two domains got the same ownership token")
+	}
+}
+
+// Each switch lands in its own column: with only one of them on, only its
+// column is 1.
+func TestInsertDomain_EachSwitchInItsOwnColumn(t *testing.T) {
+	switches := map[string]func(*backup.MetadataDomain){
+		"is_enabled":                 func(d *backup.MetadataDomain) { d.IsEnabled = true },
+		"ssl_enabled":                func(d *backup.MetadataDomain) { d.SSLEnabled = true },
+		"email_enabled":              func(d *backup.MetadataDomain) { d.EmailEnabled = true },
+		"is_panel_primary":           func(d *backup.MetadataDomain) { d.IsPanelPrimary = true },
+		"disclaimer_enabled":         func(d *backup.MetadataDomain) { d.DisclaimerEnabled = true },
+		"dnssec_enabled":             func(d *backup.MetadataDomain) { d.DNSSECEnabled = true },
+		"php_display_errors":         func(d *backup.MetadataDomain) { d.PHPDisplayErrors = dsPtr(true) },
+		"php_log_errors":             func(d *backup.MetadataDomain) { d.PHPLogErrors = dsPtr(true) },
+		"php_file_uploads":           func(d *backup.MetadataDomain) { d.PHPFileUploads = dsPtr(true) },
+		"php_short_open_tag":         func(d *backup.MetadataDomain) { d.PHPShortOpenTag = dsPtr(true) },
+		"php_allow_url_fopen":        func(d *backup.MetadataDomain) { d.PHPAllowURLFopen = dsPtr(true) },
+		"skip_auto_san":              func(d *backup.MetadataDomain) { d.SkipAutoSAN = true },
+		"dmarc_testing":              func(d *backup.MetadataDomain) { d.DmarcTesting = true },
+		"cache_enabled":              func(d *backup.MetadataDomain) { d.CacheEnabled = true },
+		"create_www":                 func(d *backup.MetadataDomain) { d.CreateWWW = dsPtr(true) },
+		"webmail_enabled":            func(d *backup.MetadataDomain) { d.WebmailEnabled = dsPtr(true) },
+		"temp_url_enabled":           func(d *backup.MetadataDomain) { d.TempURLEnabled = true },
+		"bot_challenge_exempt":       func(d *backup.MetadataDomain) { d.BotChallengeExempt = true },
+		"bot_challenge_include":      func(d *backup.MetadataDomain) { d.BotChallengeInclude = true },
+		"allow_subdomain_delegation": func(d *backup.MetadataDomain) { d.AllowSubdomainDelegation = true },
+		"web_disabled":               func(d *backup.MetadataDomain) { d.WebDisabled = true },
+		"dns_disabled":               func(d *backup.MetadataDomain) { d.DNSDisabled = true },
+	}
+	for on, set := range switches {
+		d := backup.MetadataDomain{ID: "d1", Name: "alice.org", CreateWWW: dsPtr(false), WebmailEnabled: dsPtr(false)}
+		set(&d)
+		row, _, _ := mariaInsert(t, captureDomainInsert(t, d))
+		for col := range switches {
+			if got, want := row[col] == "1", col == on; got != want {
+				t.Errorf("only %s on: %s = %s", on, col, row[col])
+			}
+		}
 	}
 }
