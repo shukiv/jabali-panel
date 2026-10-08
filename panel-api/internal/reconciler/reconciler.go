@@ -1229,29 +1229,6 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 		}
 	}
 
-	// Well-known nginx vhosts that ship with the distro — not managed by
-	// the panel, not interesting to log. Also: the panel's OWN API vhost
-	// (`jabali-panel` on :8443) and any `<domain>-mail` vhost (derived
-	// from email-enabled tenant domains and managed via
-	// reconcileWebmailVhosts below — never a standalone domain row).
-	// Before this list / the `-mail` suffix skip, every reconciler tick
-	// printed N+1 WARN lines for sites that are intentional, just not
-	// tracked as domain rows.
-	knownSystemSites := map[string]bool{
-		"default":         true,
-		"default-ssl":     true,
-		"000-default":     true,
-		"000-default-ssl": true,
-		"jabali-panel":    true,
-		// The *.preview.<hostname> catch-all vhost (preview_fallback_vhost.go)
-		// — a system site with no domain row, flagged as an orphan on every
-		// report since the sweep learned to aggregate (JAB-236). It is not
-		// deletable through the teardown executor either (no dot — fails the
-		// agent's domain validation), so listing it only invites a doomed
-		// manual cleanup attempt.
-		"jabali-preview-fallback": true,
-	}
-
 	// JAB-236: drive pending teardown tombstones FIRST — a site being torn
 	// down through its tombstone is handled, not orphaned, and must not
 	// show up in the orphan report below.
@@ -1259,34 +1236,7 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 
 	// 3. Orphan in agent set (no DB row) -> aggregate ONE warning (on set
 	// change only — see reportOrphanSites for the mandate), never auto-delete.
-	var orphanSites []string
-	for site := range agentSites {
-		if knownSystemSites[site] {
-			continue
-		}
-		// Derived mail vhosts (`<domain>-mail`) are written by
-		// reconcileWebmailVhosts when a tenant domain has email
-		// enabled. They have no domain row of their own and are
-		// not orphans.
-		if strings.HasSuffix(site, "-mail") {
-			continue
-		}
-		if _, found := enabledDomains[site]; !found {
-			if _, found := disabledDomains[site]; !found {
-				if !pendingTeardowns[site] {
-					orphanSites = append(orphanSites, site)
-				}
-				// M6.3: also drop the recursor forwarder — idempotent, so
-				// safe even if it was never added. Keeps the forwards file
-				// from accumulating stale zones when a domain gets deleted
-				// from the DB out-of-band. If the operator re-creates the
-				// domain, the next tick re-adds the forwarder via the
-				// enabledDomains loop.
-				r.reconcileRecursorForwardRemove(ctx, site)
-			}
-		}
-	}
-	r.reportOrphanSites(orphanSites)
+	r.sweepAgentSites(ctx, agentSites, enabledDomains, disabledDomains, pendingTeardowns)
 
 	tt.mark("disable_orphan_sweep")
 
@@ -4251,4 +4201,69 @@ func (r *Reconciler) reconcileEnabledDomain(ctx context.Context, name string, do
 		r.log.Error("reconcile: M6.5 phase domain reconciliation failed", "domain", name, "err", err)
 		// Log error but continue — one phase failure doesn't abort the entire domain.
 	}
+}
+
+// Well-known nginx vhosts that ship with the distro — not managed by
+// the panel, not interesting to log. Also: the panel's OWN API vhost
+// (`jabali-panel` on :8443) and any `<domain>-mail` vhost (derived
+// from email-enabled tenant domains and managed via
+// reconcileWebmailVhosts below — never a standalone domain row).
+// Before this list / the `-mail` suffix skip, every reconciler tick
+// printed N+1 WARN lines for sites that are intentional, just not
+// tracked as domain rows.
+var knownSystemSites = map[string]bool{
+	"default":         true,
+	"default-ssl":     true,
+	"000-default":     true,
+	"000-default-ssl": true,
+	"jabali-panel":    true,
+	// The *.preview.<hostname> catch-all vhost (preview_fallback_vhost.go)
+	// — a system site with no domain row, flagged as an orphan on every
+	// report since the sweep learned to aggregate (JAB-236). It is not
+	// deletable through the teardown executor either (no dot — fails the
+	// agent's domain validation), so listing it only invites a doomed
+	// manual cleanup attempt.
+	"jabali-preview-fallback": true,
+}
+
+// sweepAgentSites is step 3 of ReconcileAll: each agent site with no domain
+// row is an orphan, reported once per set change and never auto-deleted (see
+// reportOrphanSites), and its recursor forwarder is dropped. A domain's
+// derived vhosts (`<domain>-mail`, `<domain>-mta-sts`) are not orphans.
+func (r *Reconciler) sweepAgentSites(ctx context.Context, agentSites map[string]bool,
+	enabledDomains, disabledDomains map[string]*models.Domain, pendingTeardowns map[string]bool) {
+	hasRow := func(name string) bool {
+		_, enabled := enabledDomains[name]
+		_, disabled := disabledDomains[name]
+		return enabled || disabled
+	}
+	var orphanSites []string
+	for site := range agentSites {
+		if knownSystemSites[site] {
+			continue
+		}
+		// Derived mail vhosts (`<domain>-mail`) are written by
+		// reconcileWebmailVhosts when a tenant domain has email
+		// enabled. They have no domain row of their own and are
+		// not orphans.
+		if strings.HasSuffix(site, "-mail") {
+			continue
+		}
+		if r.sweepMTAStsSite(ctx, site, hasRow, pendingTeardowns) {
+			continue
+		}
+		if !hasRow(site) {
+			if !pendingTeardowns[site] {
+				orphanSites = append(orphanSites, site)
+			}
+			// M6.3: also drop the recursor forwarder — idempotent, so
+			// safe even if it was never added. Keeps the forwards file
+			// from accumulating stale zones when a domain gets deleted
+			// from the DB out-of-band. If the operator re-creates the
+			// domain, the next tick re-adds the forwarder via the
+			// enabledDomains loop.
+			r.reconcileRecursorForwardRemove(ctx, site)
+		}
+	}
+	r.reportOrphanSites(orphanSites)
 }

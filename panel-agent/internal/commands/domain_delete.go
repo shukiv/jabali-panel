@@ -56,6 +56,11 @@ func domainDeleteHandler(ctx context.Context, params json.RawMessage) (any, erro
 	// `jabali user delete` alike). Same `<domain>-mail.conf` convention
 	// webmail.vhost_remove uses; the single reload below covers it.
 	removeMailVhostFiles(p.Domain)
+	// And the MTA-STS vhost and policy (`<domain>-mta-sts.conf`), for the
+	// same reason. Left behind, the vhost keeps naming the domain's
+	// certificate, which removeDomainCertArtifacts below deletes: from then
+	// on `nginx -t` fails for the whole server, and nginx doesn't start.
+	removeMTAStsVhostFiles(p.Domain)
 
 	// JAB-230: reap the domain's relay credential (and re-point the owner's
 	// default.cred). Placed HERE — the shared chokepoint every delete path
@@ -151,6 +156,16 @@ func removeMailVhostFiles(domain string) bool {
 		}
 	}
 	return changed
+}
+
+// removeMTAStsVhostFiles reaps the domain's MTA-STS vhost from
+// sites-enabled and sites-available, and its policy dir, as
+// mail.mtasts.disable does. The caller drives the reload. domain is expected
+// pre-validated (domainRegex) by the caller.
+func removeMTAStsVhostFiles(domain string) {
+	_ = os.Remove(filepath.Join(mtaStsSitesEnabl, domain+"-mta-sts.conf"))
+	_ = os.Remove(filepath.Join(mtaStsSitesAvail, domain+"-mta-sts.conf"))
+	_ = os.RemoveAll(filepath.Join(mtaStsRoot, domain))
 }
 
 func init() {
