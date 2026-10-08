@@ -2,9 +2,11 @@ package api
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/domainops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
@@ -17,8 +19,16 @@ type rdcPreviews []models.Domain
 
 func (p rdcPreviews) ListPreviewEnabled(context.Context) ([]models.Domain, error) { return p, nil }
 
+// rdcOwnerOptions is a server that lets account owners set their domains'
+// nginx options (tenant_domain_options_enabled), or doesn't.
+type rdcOwnerOptions bool
+
+func (o rdcOwnerOptions) Get(context.Context) (*models.ServerSettings, error) {
+	return &models.ServerSettings{Hostname: "panel.example.net", TenantDomainOptionsEnabled: bool(o)}, nil
+}
+
 func webCheck(source RestoreSource, previews rdcPreviews) func(context.Context, *models.Domain, string) ([]string, error) {
-	return RestoreDomainCheck(rdcDomains{}, rdcAliases{}, rdcSettings{}, previews, source)
+	return RestoreDomainCheck(rdcDomains{}, rdcAliases{}, rdcOwnerOptions(true), previews, source)
 }
 
 func webRules() models.NginxRules {
@@ -201,7 +211,7 @@ type rwcRepoAliases struct {
 
 type rwcRepoSettings struct {
 	repository.ServerSettingsRepository
-	rdcSettings
+	rdcSettings domainops.MailSettingsReader
 }
 
 func (r rwcRepoDomains) FindByName(ctx context.Context, name string) (*models.Domain, error) {
@@ -227,7 +237,7 @@ func (r rwcRepoDomains) ListPreviewEnabled(ctx context.Context) ([]models.Domain
 func TestRestoreMetadataDeps_ChecksByWhereTheBackupComesFrom(t *testing.T) {
 	h := &backupHandler{cfg: BackupHandlerConfig{
 		Domains: rwcRepoDomains{rdcDomains: rdcDomains{}}, WebDomainAliases: rwcRepoAliases{rdcAliases: rdcAliases{}},
-		ServerSettings: rwcRepoSettings{},
+		ServerSettings: rwcRepoSettings{rdcSettings: rdcOwnerOptions(true)},
 	}}
 	for _, tc := range []struct {
 		name     string
@@ -246,4 +256,57 @@ func TestRestoreMetadataDeps_ChecksByWhereTheBackupComesFrom(t *testing.T) {
 			t.Errorf("%s: rules = %s, want %s", tc.name, got, tc.want)
 		}
 	}
+}
+
+// While the server doesn't let account owners set their domains' nginx
+// options, an uploaded file brings none of them back; a backup from the
+// server's own destination still does.
+func TestRestoreWebCheck_UploadNeedsOwnerDomainOptions(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		settings domainops.MailSettingsReader
+		source   RestoreSource
+		want     string
+	}{
+		{"upload, owners may not", rdcOwnerOptions(false), RestoreFromUpload, ""},
+		{"upload, owners may", rdcOwnerOptions(true), RestoreFromUpload, "rewrite,custom_header"},
+		{"own backup, owners may not", rdcOwnerOptions(false), RestoreFromOwnBackup, "rewrite,proxy_pass,custom_header,static_alias"},
+	} {
+		row := rdcRow("shop.org")
+		row.NginxRules = webRules()
+		row.NginxSafeOptions = models.NginxSafeOptions{MaxBodyMB: 64}
+		row.NginxTenantDirectives = strp("expires 1h;")
+		check := RestoreDomainCheck(rdcDomains{}, rdcAliases{}, tc.settings, nil, tc.source)
+		w, err := check(context.Background(), row, "alice")
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if got := ruleTypes(row.NginxRules); got != tc.want {
+			t.Errorf("%s: rules = %q, want %q", tc.name, got, tc.want)
+		}
+		kept := tc.want != ""
+		if (row.NginxSafeOptions.MaxBodyMB == 64) != kept || (row.NginxTenantDirectives != nil) != kept {
+			t.Errorf("%s: options %+v, directives %v; want kept=%v", tc.name, row.NginxSafeOptions, row.NginxTenantDirectives, kept)
+		}
+		if !kept && !strings.Contains(strings.Join(w, "\n"), "not restored from an uploaded backup") {
+			t.Errorf("%s: warnings lack the reason: %v", tc.name, w)
+		}
+	}
+}
+
+// Settings that can't be read restore none of them. (The name checks refuse
+// such a domain first; this holds the drop on its own.)
+func TestRestoreWebCheck_UnreadableSettingsRestoreNoDomainOptions(t *testing.T) {
+	row := rdcRow("shop.org")
+	row.NginxRules = webRules()
+	w := dropUnlessOwnersSetDomainOptions(context.Background(), row, rdcBrokenSettings{})
+	if len(row.NginxRules) != 0 || len(w) != 1 || !strings.Contains(w[0], "could not be read") {
+		t.Errorf("rules %v, warnings %v: want none kept and the read error named", row.NginxRules, w)
+	}
+}
+
+type rdcBrokenSettings struct{}
+
+func (rdcBrokenSettings) Get(context.Context) (*models.ServerSettings, error) {
+	return nil, errors.New("db down")
 }

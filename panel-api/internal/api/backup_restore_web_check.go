@@ -20,8 +20,11 @@ var restoredCachePathRe = regexp.MustCompile(`^/([A-Za-z0-9._~-]+(/[A-Za-z0-9._~
 // of the page that sets each one, clears what fails, and returns one warning
 // for each (GH #1993).
 func dropRestoredWebSettings(ctx context.Context, row *models.Domain, ownerUsername string,
-	previews domainops.PreviewDomainLister, source RestoreSource) []string {
+	settings domainops.MailSettingsReader, previews domainops.PreviewDomainLister, source RestoreSource) []string {
 	var warnings []string
+	if source == RestoreFromUpload {
+		warnings = append(warnings, dropUnlessOwnersSetDomainOptions(ctx, row, settings)...)
+	}
 	warnings = append(warnings, dropRestoredNginxRules(row, ownerUsername, source)...)
 	warnings = append(warnings, dropRestoredPageRedirects(row)...)
 
@@ -53,6 +56,32 @@ func dropRestoredWebSettings(ctx context.Context, row *models.Domain, ownerUsern
 		}
 	}
 	return warnings
+}
+
+// dropUnlessOwnersSetDomainOptions clears the typed nginx rules, nginx
+// options and advanced directives an uploaded file brings while the server
+// doesn't let an account's owner set them (tenant_domain_options_enabled),
+// as their pages would. A server whose settings can't be read restores none.
+func dropUnlessOwnersSetDomainOptions(ctx context.Context, row *models.Domain, settings domainops.MailSettingsReader) []string {
+	has := len(row.NginxRules) > 0 || row.NginxSafeOptions != (models.NginxSafeOptions{}) ||
+		(row.NginxTenantDirectives != nil && strings.TrimSpace(*row.NginxTenantDirectives) != "")
+	if !has {
+		return nil
+	}
+	reason := "this server doesn't let account owners set them"
+	if settings != nil {
+		st, err := settings.Get(ctx)
+		switch {
+		case err != nil:
+			reason = fmt.Sprintf("the server settings could not be read (%v)", err)
+		case st != nil && st.TenantDomainOptionsEnabled:
+			return nil
+		}
+	}
+	row.NginxRules = nil
+	row.NginxSafeOptions = models.NginxSafeOptions{}
+	row.NginxTenantDirectives = nil
+	return []string{"nginx rules, nginx options and advanced directives not restored from an uploaded backup: " + reason + "; review them and add them again in the domain's settings"}
 }
 
 func previewConflict(ctx context.Context, previews domainops.PreviewDomainLister, row *models.Domain) (string, error) {

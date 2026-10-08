@@ -41,7 +41,9 @@ var errRestoreChecksUnwired = errors.New("the restore domain checks are not full
 // sets each one, and what fails is dropped with a warning. From an uploaded
 // file (RestoreFromUpload) only what the account's owner could set comes
 // back: an admin-only nginx rule type or the bot-challenge opt-out is left
-// for the administrator to review and add again.
+// for the administrator to review and add again, and so are the typed rules,
+// nginx options and advanced directives while the server doesn't let owners
+// set those (tenant_domain_options_enabled).
 func RestoreDomainCheck(domains domainops.SuffixDomainFinder, aliases domainops.AliasHostnameFinder,
 	settings domainops.MailSettingsReader, previews domainops.PreviewDomainLister,
 	source RestoreSource) func(ctx context.Context, row *models.Domain, ownerUsername string) ([]string, error) {
@@ -79,7 +81,7 @@ func RestoreDomainCheck(domains domainops.SuffixDomainFinder, aliases domainops.
 			row.IndexPriority = p
 		}
 		warnings = append(warnings, dropRestoredPHPLimits(row)...)
-		warnings = append(warnings, dropRestoredWebSettings(ctx, row, ownerUsername, previews, source)...)
+		warnings = append(warnings, dropRestoredWebSettings(ctx, row, ownerUsername, settings, previews, source)...)
 		return warnings, nil
 	}
 }

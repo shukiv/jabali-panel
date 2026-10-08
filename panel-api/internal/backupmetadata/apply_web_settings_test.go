@@ -252,6 +252,11 @@ func wsOverwriteSetup(t *testing.T) *odFixture {
 	inner := f.deps.CheckDomain
 	f.deps.CheckDomain = func(ctx context.Context, row *models.Domain, owner string) ([]string, error) {
 		w, err := inner(ctx, row, owner)
+		// The real checks would drop the domain's own admin rules here,
+		// with lines about rules the overwrite doesn't touch.
+		if len(row.NginxRules) > 0 {
+			w = append(w, "checked nginx rules the overwrite keeps")
+		}
 		if row.BotChallengeExempt {
 			row.BotChallengeExempt = false
 			w = append(w, "bot challenge opt-out not restored")
@@ -285,6 +290,9 @@ func TestOverwrite_DomainTakesBackupWebSettings(t *testing.T) {
 		if !strings.Contains(joined, want) {
 			t.Errorf("report lacks %q:\n%s", want, joined)
 		}
+	}
+	if strings.Contains(joined, "checked nginx rules the overwrite keeps") {
+		t.Errorf("the checks ran on the domain's own nginx rules:\n%s", joined)
 	}
 	if len(got.PageRedirects) != 1 || got.NginxTenantDirectives == nil || got.NginxSafeOptions.MaxBodyMB != 64 {
 		t.Errorf("redirects %+v, directives %v, options %+v: want the backup's", got.PageRedirects, got.NginxTenantDirectives, got.NginxSafeOptions)
