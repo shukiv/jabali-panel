@@ -212,26 +212,40 @@ func TestApply_RefusedDomainGetsNoAliases(t *testing.T) {
 }
 
 // An existing domain of the account gets the backup's aliases it doesn't have,
-// in both restore modes; one it has stays as it is.
+// in both restore modes, whether the backup names it by its id here or by
+// another; one it has stays as it is.
 func TestApply_AliasesAttachToTheAccountsExistingDomain(t *testing.T) {
-	for _, overwrite := range []bool{false, true} {
-		f := odSetup("d-own", overwrite, "")
-		al := &alRepo{rows: []models.WebDomainAlias{alAlias("x1", "d-own", "shop.example.net", models.OwnershipVerified)}}
-		c := &alCheck{}
-		f.deps.WebDomainAliases, f.deps.CheckAlias = al, c.check
-		m := odMeta("d-bk")
-		m.Domains[0].Aliases = []internalbackup.MetadataDomainAlias{{Hostname: "SHOP.example.net"}, {Hostname: "new.example.net"}}
-		r := Apply(context.Background(), m, f.deps)
+	for _, backupID := range []string{"d-own", "d-bk"} {
+		for _, overwrite := range []bool{false, true} {
+			f := odSetup("d-own", overwrite, "")
+			al := &alRepo{rows: []models.WebDomainAlias{alAlias("x1", "d-own", "shop.example.net", models.OwnershipVerified)}}
+			c := &alCheck{}
+			f.deps.WebDomainAliases, f.deps.CheckAlias = al, c.check
+			m := odMeta(backupID)
+			m.Domains[0].Aliases = []internalbackup.MetadataDomainAlias{{Hostname: "SHOP.example.net"}, {Hostname: "new.example.net"}}
+			r := Apply(context.Background(), m, f.deps)
 
-		if strings.Join(c.seen, "|") != "d-own web new.example.net" || len(al.created) != 1 || al.created[0].DomainID != "d-own" || al.created[0].Hostname != "new.example.net" {
-			t.Fatalf("overwrite=%v: checked %v created %+v errors %v; want only new.example.net added to d-own", overwrite, c.seen, al.created, r.Errors)
+			if strings.Join(c.seen, "|") != "d-own web new.example.net" || len(al.created) != 1 || al.created[0].DomainID != "d-own" || al.created[0].Hostname != "new.example.net" {
+				t.Fatalf("backup id %s overwrite=%v: checked %v created %+v errors %v; want only new.example.net added to d-own", backupID, overwrite, c.seen, al.created, r.Errors)
+			}
+			scheduled := false
+			for _, id := range f.scheduled {
+				scheduled = scheduled || id == "d-own"
+			}
+			if !scheduled {
+				t.Fatalf("backup id %s overwrite=%v: scheduled %v; an added alias must reach the vhost and the certificate", backupID, overwrite, f.scheduled)
+			}
 		}
-		scheduled := false
-		for _, id := range f.scheduled {
-			scheduled = scheduled || id == "d-own"
-		}
-		if !scheduled {
-			t.Fatalf("overwrite=%v: scheduled %v; an added alias must reach the vhost and the certificate", overwrite, f.scheduled)
-		}
+	}
+}
+
+// A name the backup lists twice is added once, without a report line.
+func TestApply_AliasListedTwiceIsAddedOnce(t *testing.T) {
+	c, al := &alCheck{}, &alRepo{}
+	m := alMeta()
+	m.Domains[0].Aliases = []internalbackup.MetadataDomainAlias{{Hostname: "Shop.Example.net."}, {Hostname: "shop.example.net"}}
+	_, r := alApply(m, c, al, true)
+	if len(al.created) != 1 || len(c.seen) != 1 || hasError(r.Errors, "alias") {
+		t.Fatalf("checked %v created %d errors %v; want shop.example.net added once", c.seen, len(al.created), r.Errors)
 	}
 }

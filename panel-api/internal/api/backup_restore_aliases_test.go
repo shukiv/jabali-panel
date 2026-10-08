@@ -62,6 +62,38 @@ func TestRestoreAliasCheck_UnwiredRefuses(t *testing.T) {
 	}
 }
 
+// The admin and the tenant backup both carry the domains' aliases: each hands
+// its alias store to the shared builder, and the panel wires it into both.
+func TestBackupProducers_CarryTheAliases(t *testing.T) {
+	aliases := struct {
+		repository.WebDomainAliasRepository
+	}{}
+	if got := (BackupHandlerConfig{WebDomainAliases: aliases}).metadataDeps().WebDomainAliases; got != aliases {
+		t.Fatalf("admin backup: builder alias store %v, want the handler's", got)
+	}
+	if got := (MeBackupsHandlerConfig{WebDomainAliases: aliases}).metadataDeps().WebDomainAliases; got != aliases {
+		t.Fatalf("tenant backup: builder alias store %v, want the handler's", got)
+	}
+	src, err := os.ReadFile("../app/app.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(src)
+	for _, lit := range []string{"api.BackupHandlerConfig{", "api.MeBackupsHandlerConfig{"} {
+		// The literal runs to the "})" indented as the line that opens it.
+		i := strings.Index(s, lit)
+		if i < 0 {
+			t.Fatalf("app.go: no %s literal", lit)
+		}
+		line := s[strings.LastIndex(s[:i], "\n")+1 : i]
+		indent := line[:len(line)-len(strings.TrimLeft(line, "\t"))]
+		j := strings.Index(s[i:], "\n"+indent+"})")
+		if j < 0 || !strings.Contains(s[i:i+j], "WebDomainAliases:") {
+			t.Errorf("app.go: %s must wire WebDomainAliases", lit)
+		}
+	}
+}
+
 // Both restore doors restore aliases through the checks.
 func TestRestoreDoors_WireTheAliasChecks(t *testing.T) {
 	aliases := struct {
