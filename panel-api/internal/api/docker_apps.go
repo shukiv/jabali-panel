@@ -1654,6 +1654,9 @@ func (h *dockerAppHandler) updateImage(c *gin.Context) {
 	// `updating` above; the UI polls docker-app status every 8s and shows
 	// the spinner until the row flips to running / failed.
 	appID := app.ID
+	// The label may follow the target only when the compose was rendered
+	// from it; the on-disk fallback runs whatever that file names.
+	rendered := updateParams["compose_yml"] != nil
 	go func() {
 		bgCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Minute)
 		defer cancel()
@@ -1682,7 +1685,7 @@ func (h *dockerAppHandler) updateImage(c *gin.Context) {
 			// version label follows the version it now runs instead of
 			// freezing at the install-time value. That is the target's,
 			// which on a held release track isn't the catalog's newest.
-			if terr == nil && target.Version != "" {
+			if rendered && terr == nil && target.Version != "" {
 				_ = h.cfg.Repo.UpdateCatalogVersion(persistCtx, appID, target.Version)
 			}
 		case "no_change":
@@ -1692,6 +1695,12 @@ func (h *dockerAppHandler) updateImage(c *gin.Context) {
 			// so the recreate doesn't look like a failure. The UI explains
 			// up-front (before dispatching) when no update is available.
 			_ = h.cfg.Repo.UpdateStatus(persistCtx, appID, models.DockerAppStatusRunning, nil)
+			// It runs the target's image, so the label is the target's. That
+			// heals a label an earlier update left behind (GH #1956: the
+			// agent's old rollback kept the new image behind "rolled_back").
+			if rendered && terr == nil && target.Version != "" {
+				_ = h.cfg.Repo.UpdateCatalogVersion(persistCtx, appID, target.Version)
+			}
 		case "rolled_back":
 			detail := resp.Detail
 			_ = h.cfg.Repo.UpdateStatus(persistCtx, appID, models.DockerAppStatusRunning, &detail)

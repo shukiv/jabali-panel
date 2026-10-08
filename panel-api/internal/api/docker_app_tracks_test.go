@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -301,5 +302,56 @@ func TestEditDomainPorts_StaysOnTheInstallsTrack(t *testing.T) {
 		if _, versions := repo.snapshot(); strings.Join(versions, ",") != strings.Join(tc.labels, ",") {
 			t.Fatalf("%s: labels %v, want %v", tc.recorded, versions, tc.labels)
 		}
+	}
+}
+
+// no_change means the install already runs the target's image, so its label
+// is the target's. That heals a label the agent's old rollback left behind:
+// Nextcloud 35 running, recorded as 34.0.2.
+func TestUpdateImage_NoChangeHealsTheLabel(t *testing.T) {
+	h, repo, mock := trackHandler(t, "nextcloud", "34.0.2")
+	mock.On("docker_app.update", map[string]any{"outcome": "no_change"})
+	if w := trackRequest(t, h.updateImage, http.MethodPost, ""); w.Code != http.StatusAccepted {
+		t.Fatalf("status %d body %s", w.Code, w.Body)
+	}
+	if got := waitVersions(t, repo); len(got) != 1 || got[0] != "35.0.1" {
+		t.Fatalf("label %v, want 35.0.1", got)
+	}
+}
+
+// When the compose couldn't be rendered, the admin update runs the on-disk
+// one, whose image the target doesn't name: the label stays.
+func TestUpdateImage_OnDiskFallbackKeepsTheLabel(t *testing.T) {
+	h, repo, mock := trackHandler(t, "nextcloud", "34.0.2")
+	mock.OnError("docker_app.read_env", errors.New("agent: read env failed"))
+	if w := trackRequest(t, h.updateImage, http.MethodPost, ""); w.Code != http.StatusAccepted {
+		t.Fatalf("status %d body %s", w.Code, w.Body)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for agentCalls(mock, "docker_app.update") == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if _, versions := repo.snapshot(); len(versions) != 0 {
+		t.Fatalf("label rewritten to %v from an on-disk compose", versions)
+	}
+}
+
+// The agent puts the previous compose and .env back when the app doesn't
+// come up healthy, so an env edit that rolled back didn't take.
+func TestPutEnv_RolledBackIsAnError(t *testing.T) {
+	h, repo, mock := trackHandler(t, "nextcloud", "34.0.2")
+	mock.On("docker_app.update", map[string]any{"outcome": "rolled_back", "detail": "healthcheck did not converge to healthy within 5m0s"})
+	w := trackRequest(t, h.putEnv, http.MethodPut, `{"env":{"FOO":"bar"}}`)
+	if w.Code != http.StatusBadGateway {
+		t.Fatalf("status %d body %s, want 502", w.Code, w.Body)
+	}
+	var body struct{ Error, Detail string }
+	_ = json.Unmarshal(w.Body.Bytes(), &body)
+	if body.Error != "apply_rolled_back" || !strings.Contains(body.Detail, "previous one was put back: healthcheck did not converge") {
+		t.Fatalf("body %+v", body)
+	}
+	if _, versions := repo.snapshot(); len(versions) != 0 {
+		t.Fatalf("label rewritten to %v by an edit that rolled back", versions)
 	}
 }

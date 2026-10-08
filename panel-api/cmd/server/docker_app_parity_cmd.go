@@ -87,11 +87,18 @@ func applyDockerEnvWithBase(ctx context.Context, repo repository.DockerAppReposi
 	if err != nil {
 		return err
 	}
-	// A recreate onto a new image keeps the version label on it (GH #1956).
 	var outc struct {
 		Outcome string `json:"outcome"`
+		Detail  string `json:"detail"`
 	}
-	if json.Unmarshal(raw, &outc) == nil && outc.Outcome == "updated" {
+	_ = json.Unmarshal(raw, &outc)
+	// The agent puts the previous compose and .env back on a rollback
+	// (GH #1956), so the edit didn't take.
+	if outc.Outcome == "rolled_back" {
+		return fmt.Errorf("the app didn't come up healthy with the new environment, so its previous one was put back: %s", firstLine(outc.Detail))
+	}
+	// A recreate onto a new image keeps the version label on it (GH #1956).
+	if outc.Outcome == "updated" {
 		if cat, cerr := loadDockerCatalogForCLI(); cerr == nil {
 			if entry, ok := cat.Get(app.Slug); ok {
 				if target, terr := entry.TargetFor(app.CatalogVersion, false); terr == nil && target.Version != "" && target.Version != app.CatalogVersion {

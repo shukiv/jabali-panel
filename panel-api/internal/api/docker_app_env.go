@@ -198,7 +198,20 @@ func respondApplyEnvErr(c *gin.Context, err error) {
 		c.JSON(http.StatusConflict, gin.H{"error": "update_required", "detail": err.Error()})
 		return
 	}
+	var rb envRolledBackError
+	if errors.As(err, &rb) {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "apply_rolled_back", "detail": rb.Error()})
+		return
+	}
 	respondAgentErr(c, "apply_failed", err)
+}
+
+// envRolledBackError: the app didn't come up healthy with the new env, and
+// the agent put the previous compose and .env back.
+type envRolledBackError struct{ detail string }
+
+func (e envRolledBackError) Error() string {
+	return "the app didn't come up healthy with the new environment, so its previous one was put back: " + e.detail
 }
 
 // applyEnv re-renders the compose with the given env override set and
@@ -231,12 +244,21 @@ func (h *dockerAppHandler) applyEnv(ctx context.Context, app *models.DockerApp, 
 		_ = h.cfg.Repo.UpdateStatus(persistCtx, app.ID, models.DockerAppStatusFailed, &msg)
 		return callErr
 	}
-	_ = h.cfg.Repo.UpdateStatus(persistCtx, app.ID, models.DockerAppStatusRunning, nil)
-	// A recreate onto a new image keeps the version label on it (GH #1956).
 	var outcome struct {
 		Outcome string `json:"outcome"`
+		Detail  string `json:"detail"`
 	}
-	if json.Unmarshal(raw, &outcome) == nil && outcome.Outcome == "updated" {
+	_ = json.Unmarshal(raw, &outcome)
+	// The agent puts the previous compose and .env back on a rollback
+	// (GH #1956), so the edit didn't take: say so instead of "applied".
+	if outcome.Outcome == "rolled_back" {
+		detail := firstLineString(outcome.Detail)
+		_ = h.cfg.Repo.UpdateStatus(persistCtx, app.ID, models.DockerAppStatusRunning, &detail)
+		return envRolledBackError{detail: detail}
+	}
+	_ = h.cfg.Repo.UpdateStatus(persistCtx, app.ID, models.DockerAppStatusRunning, nil)
+	// A recreate onto a new image keeps the version label on it (GH #1956).
+	if outcome.Outcome == "updated" {
 		if target, terr := h.installTarget(app, false); terr == nil && target.Version != "" && target.Version != app.CatalogVersion {
 			_ = h.cfg.Repo.UpdateCatalogVersion(persistCtx, app.ID, target.Version)
 		}

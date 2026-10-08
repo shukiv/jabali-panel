@@ -37,6 +37,11 @@ func TestCLIDockerAppUpdate_FollowsTheReleaseTrack(t *testing.T) {
 	if !strings.Contains(update, `_ = repo.UpdateCatalogVersion(ctx, app.ID, target.Version)`) || strings.Contains(update, "entry.Version") {
 		t.Fatal("the update command must label the install with the target's version, not the catalog's")
 	}
+	// no_change heals the label too, but only after a re-render.
+	if !strings.Contains(update, `(outc.Outcome == "updated" || outc.Outcome == "no_change") &&
+				updateParams["compose_yml"] != nil && target.Version != ""`) {
+		t.Fatal("the update command must label on updated or no_change, and only after a re-render")
+	}
 	for file, snippets := range map[string][]string{
 		"docker_app_cmd.go": {
 			`return renderInstallComposeCLI(ctx, repo, app, existingEnv, true)`,
@@ -46,6 +51,10 @@ func TestCLIDockerAppUpdate_FollowsTheReleaseTrack(t *testing.T) {
 		"docker_app_parity_cmd.go": {
 			`renderInstallComposeCLI(ctx, repo, app, baseEnv, false)`,
 			`entry.TargetFor(app.CatalogVersion, false)`,
+			// The agent puts the previous env back on a rollback, so the
+			// edit didn't take.
+			`if outc.Outcome == "rolled_back" {
+		return fmt.Errorf(`,
 		},
 	} {
 		s := read(file)

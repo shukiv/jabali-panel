@@ -613,7 +613,10 @@ func newDockerAppUpdateCmd() *cobra.Command {
 			var outc struct {
 				Outcome string `json:"outcome"`
 			}
-			if json.Unmarshal(raw, &outc) == nil && outc.Outcome == "updated" && target.Version != "" {
+			// no_change means it already runs the target's image, which heals
+			// a label an earlier update left behind.
+			if json.Unmarshal(raw, &outc) == nil && (outc.Outcome == "updated" || outc.Outcome == "no_change") &&
+				updateParams["compose_yml"] != nil && target.Version != "" {
 				_ = repo.UpdateCatalogVersion(ctx, app.ID, target.Version)
 			}
 			os.Stdout.Write(raw)
