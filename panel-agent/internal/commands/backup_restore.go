@@ -412,9 +412,8 @@ func backupRestoreHandler(ctx context.Context, raw json.RawMessage) (any, error)
 	}
 	if apply {
 		stagingRoot := filepath.Join("/var/lib/jabali-backups/restore-staging", req.JobID)
-		rep := &restoreReport{}
-		applied, warnings := applyAccountRestore(ctx, stagingRoot, req.TargetUsername, manifest.User, manifest.Stages, out.Stages, restoreEnforcement{Report: rep})
-		out.RestoredPostgresDBs = append([]string{}, rep.PostgresDatabases...)
+		applied, warnings, pgDBs := applyAccountRestoreReporting(ctx, stagingRoot, req.TargetUsername, manifest.User, manifest.Stages, out.Stages, restoreEnforcement{})
+		out.RestoredPostgresDBs = pgDBs
 		out.Applied = applied
 		out.Warnings = warnings
 		// GH #1361: stage each FTP subaccount's captured /etc/shadow hash for
@@ -493,6 +492,22 @@ func materializedStages(manifestStages []backup.ManifestStage, stageResults []ba
 		}
 	}
 	return ok
+}
+
+// applyAccountRestoreReporting is applyAccountRestore that also returns the
+// PostgreSQL databases it loaded, as a list (GH #1993): every restore reply
+// carries them, and the panel grants their users again.
+func applyAccountRestoreReporting(
+	ctx context.Context,
+	stagingRoot, username string,
+	manifestUser backup.ManifestUser,
+	manifestStages []backup.ManifestStage,
+	stageResults []backupRestoreStage,
+	enf restoreEnforcement,
+) (applied, warnings, postgresDBs []string) {
+	enf.Report = &restoreReport{}
+	applied, warnings = applyAccountRestore(ctx, stagingRoot, username, manifestUser, manifestStages, stageResults, enf)
+	return applied, warnings, append([]string{}, enf.Report.PostgresDatabases...)
 }
 
 func applyAccountRestore(

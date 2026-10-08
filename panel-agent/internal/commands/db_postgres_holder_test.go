@@ -395,6 +395,34 @@ func TestPgHolderRole(t *testing.T) {
 	}
 }
 
+// The restore's reporting run names the PostgreSQL databases it loaded, and
+// an empty list when there are none: the replies carry it as it is.
+func TestApplyAccountRestoreReporting_NamesTheLoadedPostgresDatabases(t *testing.T) {
+	me := currentUsername(t)
+	pgLoads(t, me+"_pgbad")
+	newPgWorld(t, func(line string) (string, bool) {
+		out, _ := pgExistsReply(line, nil)
+		return out, false
+	})
+	root := t.TempDir()
+	var stages []backup.ManifestStage
+	var results []backupRestoreStage
+	for _, db := range []string{me + "_pgone", me + "_pgbad"} {
+		stages = append(stages, backup.ManifestStage{Name: backup.StageDB, Items: []string{db}})
+		results = append(results, backupRestoreStage{Name: backup.StageDB, Status: backup.StageStatusOK})
+		mustWrite(t, filepath.Join(root, "db", db+".pgdump"), "PGDMP")
+	}
+
+	_, _, got := applyAccountRestoreReporting(context.Background(), root, me, backup.ManifestUser{Username: me}, stages, results, restoreEnforcement{})
+	if strings.Join(got, ",") != me+"_pgone" {
+		t.Errorf("reported %v, want only %s_pgone", got, me)
+	}
+	_, _, none := applyAccountRestoreReporting(context.Background(), t.TempDir(), me, backup.ManifestUser{Username: me}, nil, nil, restoreEnforcement{})
+	if none == nil || len(none) != 0 {
+		t.Errorf("with nothing loaded the report is %#v, want an empty list", none)
+	}
+}
+
 // Every restore reply names the PostgreSQL databases it loaded, as a list:
 // the panel grants each database user it has on them again.
 func TestRestoreReplies_NameTheLoadedPostgresDatabases(t *testing.T) {

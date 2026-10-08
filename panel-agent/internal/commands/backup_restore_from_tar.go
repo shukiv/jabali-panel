@@ -279,9 +279,8 @@ func restoreAccountFromTar(ctx context.Context, jobID, tarPath, targetUsername s
 	if enf.upload() {
 		enf.Claims = &restoreClaims{}
 	}
-	enf.Report = &restoreReport{}
-	applied, warnings := applyAccountRestore(ctx, root, targetUsername, manifest.User, manifest.Stages, stageResults, enf)
-	out.RestoredPostgresDBs = append([]string{}, enf.Report.PostgresDatabases...)
+	applied, warnings, pgDBs := applyAccountRestoreReporting(ctx, root, targetUsername, manifest.User, manifest.Stages, stageResults, enf)
+	out.RestoredPostgresDBs = pgDBs
 	out.Applied = applied
 	out.Warnings = append(out.Warnings, warnings...)
 	if enf.Claims != nil {

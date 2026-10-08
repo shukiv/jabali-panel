@@ -248,9 +248,8 @@ func backupRestoreSelectiveHandler(ctx context.Context, raw json.RawMessage) (an
 			}
 			stageResults = append(stageResults, sr)
 		}
-		rep := &restoreReport{}
-		applied, warnings := applyAccountRestore(ctx, stagingRoot, p.TargetUsername, manifest.User, dbStages, stageResults, restoreEnforcement{Report: rep})
-		out.RestoredPostgresDBs = append([]string{}, rep.PostgresDatabases...)
+		applied, warnings, pgDBs := applyAccountRestoreReporting(ctx, stagingRoot, p.TargetUsername, manifest.User, dbStages, stageResults, restoreEnforcement{})
+		out.RestoredPostgresDBs = pgDBs
 		out.Applied = append(out.Applied, applied...)
 		out.Warnings = append(out.Warnings, warnings...)
 	}
