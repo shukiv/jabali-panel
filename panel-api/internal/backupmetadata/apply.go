@@ -988,6 +988,9 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 				continue
 			}
 			r.FtpAccounts++
+			if d.Untrusted && !d.FtpPasswordsStaged[a.Username] {
+				r.Errors = append(r.Errors, fmt.Sprintf("ftp_account %s: restored without its password; set a new one under FTP Accounts. An uploaded backup brings an FTP password back only into an account the restore created, from a backup that has it", a.Username))
+			}
 		}
 	}
 

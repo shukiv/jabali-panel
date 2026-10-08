@@ -52,11 +52,11 @@ func TestFtpRestoreCred_RoundTrip(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 	// Wrong uid → refused + file deleted (hijack guard).
-	if h, ok := consumeFtpRestoreCred("shop_deploy", u32(99999), now); ok || h != "" {
+	if h, ok := consumeFtpRestoreCred("shop_deploy", "t1", u32(99999), now); ok || h != "" {
 		t.Fatalf("uid mismatch must not return a hash, got %q ok=%v", h, ok)
 	}
 	// And it's gone now (one-shot delete even on mismatch).
-	if _, ok := consumeFtpRestoreCred("shop_deploy", u32(50001), now); ok {
+	if _, ok := consumeFtpRestoreCred("shop_deploy", "t1", u32(50001), now); ok {
 		t.Fatal("a mismatched consume must still delete the file")
 	}
 }
@@ -67,22 +67,22 @@ func TestFtpRestoreCred_MatchAndTTL(t *testing.T) {
 
 	// Matching uid within TTL → returns the hash and deletes.
 	_ = writeFtpRestoreCred("t1_web", u32(50002), "$6$a$b", base)
-	if h, ok := consumeFtpRestoreCred("t1_web", u32(50002), base.Add(time.Hour)); !ok || h != "$6$a$b" {
+	if h, ok := consumeFtpRestoreCred("t1_web", "t1", u32(50002), base.Add(time.Hour)); !ok || h != "$6$a$b" {
 		t.Fatalf("fresh matching consume failed: h=%q ok=%v", h, ok)
 	}
-	if _, ok := consumeFtpRestoreCred("t1_web", u32(50002), base); ok {
+	if _, ok := consumeFtpRestoreCred("t1_web", "t1", u32(50002), base); ok {
 		t.Fatal("consume must be one-shot")
 	}
 
 	// Stale (past TTL) → refused.
 	_ = writeFtpRestoreCred("t1_web", u32(50002), "$6$a$b", base)
-	if _, ok := consumeFtpRestoreCred("t1_web", u32(50002), base.Add(ftpRestoreCredTTL+time.Minute)); ok {
+	if _, ok := consumeFtpRestoreCred("t1_web", "t1", u32(50002), base.Add(ftpRestoreCredTTL+time.Minute)); ok {
 		t.Fatal("a stale staged credential must be refused")
 	}
 
 	// Legacy (nil uid) matches nil uid.
 	_ = writeFtpRestoreCred("t1_legacy", nil, "$6$c$d", base)
-	if h, ok := consumeFtpRestoreCred("t1_legacy", nil, base); !ok || h != "$6$c$d" {
+	if h, ok := consumeFtpRestoreCred("t1_legacy", "t1", nil, base); !ok || h != "$6$c$d" {
 		t.Fatalf("legacy nil-uid consume failed: h=%q ok=%v", h, ok)
 	}
 }
@@ -105,10 +105,10 @@ func TestSweepFtpRestoreCreds(t *testing.T) {
 	_ = writeFtpRestoreCred("t1_stale", u32(2), "$6$c$d", base.Add(-2*ftpRestoreCredTTL))
 	sweepFtpRestoreCreds(base)
 	// Fresh survives, stale gone.
-	if _, ok := consumeFtpRestoreCred("t1_fresh", u32(1), base); !ok {
+	if _, ok := consumeFtpRestoreCred("t1_fresh", "t1", u32(1), base); !ok {
 		t.Error("fresh credential must survive the sweep")
 	}
-	if _, ok := consumeFtpRestoreCred("t1_stale", u32(2), base); ok {
+	if _, ok := consumeFtpRestoreCred("t1_stale", "t1", u32(2), base); ok {
 		t.Error("stale credential must be swept")
 	}
 }
@@ -147,7 +147,7 @@ func TestStageFtpRestoreCredentials(t *testing.T) {
 	if len(skipped) != 1 {
 		t.Fatalf("expected 1 skipped (unsafe), got %v", skipped)
 	}
-	if h, ok := consumeFtpRestoreCred("t1_web", u32(50003), now); !ok || h != "$6$a$b" {
+	if h, ok := consumeFtpRestoreCred("t1_web", "t1", u32(50003), now); !ok || h != "$6$a$b" {
 		t.Fatalf("staged credential not consumable: h=%q ok=%v", h, ok)
 	}
 }

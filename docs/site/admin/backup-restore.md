@@ -304,6 +304,15 @@ it into the target account only (GH #1993):
   are left out, and so is one the account's hosting package lets only an
   administrator set. When the package can't be read, every limit is left out.
   The domain uses the server's defaults for them.
+- **FTP passwords** — an FTP or SFTP subaccount's password comes back only
+  into an account the restore created, whose home holds nothing but the
+  archive's data (GH #1993). It is taken only for the account's own
+  subaccounts (`<account>_<name>`) that aren't on this server yet. An FTP
+  subaccount restored into an account that was already here gets a new
+  password, and so does one from a backup made before Jabali kept FTP
+  passwords: the restore report lists each one, and the account sets a new
+  password under **FTP Accounts**. An account created by an earlier attempt
+  at the same restore counts as already here.
 - **Sign-in** — the account's sign-in from the backup (its password) is not
   imported. The account keeps the sign-in it has on this server; an account
   the restore creates gets a new password and needs a recovery link.

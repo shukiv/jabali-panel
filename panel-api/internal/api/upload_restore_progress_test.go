@@ -196,7 +196,7 @@ func TestRestoreUploadedAccount_ReportsTheDNSStepLast(t *testing.T) {
 			}
 			steps[p.Steps] = true
 		}
-		if _, err := h.restoreUploadedAccount(context.Background(), a.path, "alice", "T", c.components, uploadOverwrite, restoreSkips{}, report); err != nil {
+		if _, err := h.restoreUploadedAccount(context.Background(), a.path, "alice", "T", c.components, uploadOverwrite, false, restoreSkips{}, report); err != nil {
 			t.Fatal(err)
 		}
 		if strings.Join(labels, "|") != strings.Join(c.want, "|") || len(steps) != 1 || !steps[len(c.want)] {

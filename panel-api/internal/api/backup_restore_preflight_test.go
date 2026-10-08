@@ -243,7 +243,7 @@ func TestRestoreUploadedAccount_DNSTurnedOffSkipsTheDNSStep(t *testing.T) {
 		labels = append(labels, p.Label)
 		steps = p.Steps
 	}
-	if _, err := h.restoreUploadedAccount(context.Background(), a.path, "alice", "T", []string{"home"}, uploadOverwrite, restoreSkips{dns: true}, report); err != nil {
+	if _, err := h.restoreUploadedAccount(context.Background(), a.path, "alice", "T", []string{"home"}, uploadOverwrite, false, restoreSkips{dns: true}, report); err != nil {
 		t.Fatal(err)
 	}
 	for _, l := range labels {

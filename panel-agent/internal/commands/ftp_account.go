@@ -334,15 +334,16 @@ func chpasswdEncrypted(ctx context.Context, username, hash string) *agentwire.Ag
 // #1361); otherwise it sets the provided plaintext (the reconciler passes a
 // random throwaway on a restore with no staged credential). The uid pins the
 // staged file to this exact account identity — isolated accounts carry their
-// own uid, legacy shared-uid aliases carry none.
-func setFtpAccountPassword(ctx context.Context, p ftpAccountCreateParams) *agentwire.AgentError {
+// own uid, legacy shared-uid aliases carry none. tenant is the account's
+// owner: a hash staged for another tenant isn't taken (GH #1993).
+func setFtpAccountPassword(ctx context.Context, p ftpAccountCreateParams, tenant string) *agentwire.AgentError {
 	if p.PreferRestoreCredential {
 		var uid *uint32
 		if p.Isolated {
 			u := p.UID
 			uid = &u
 		}
-		if hash, ok := consumeFtpRestoreCred(p.Username, uid, time.Now()); ok {
+		if hash, ok := consumeFtpRestoreCred(p.Username, tenant, uid, time.Now()); ok {
 			return chpasswdEncrypted(ctx, p.Username, hash)
 		}
 	}
@@ -437,7 +438,7 @@ func ftpAccountCreateHandler(ctx context.Context, params json.RawMessage) (any, 
 		if aerr != nil {
 			return nil, aerr
 		}
-		if aerr := setFtpAccountPassword(ctx, p); aerr != nil {
+		if aerr := setFtpAccountPassword(ctx, p, tenant.Username); aerr != nil {
 			rollback()
 			return nil, aerr
 		}
@@ -510,7 +511,7 @@ func ftpAccountCreateHandler(ctx context.Context, params json.RawMessage) (any, 
 		rollback()
 		return nil, aerr
 	}
-	if aerr := setFtpAccountPassword(ctx, p); aerr != nil {
+	if aerr := setFtpAccountPassword(ctx, p, tenant.Username); aerr != nil {
 		rollback()
 		return nil, aerr
 	}

@@ -425,7 +425,7 @@ func (h *backupHandler) runFullRestore(containerPath, marker string, req fullRes
 		// A full server restore replaces each account's data, as before
 		// keep-existing, and leaves the rows it already has (GH #1993). It
 		// runs no preflight, so it leaves nothing out.
-		res, rerr := h.restoreUploadedAccount(ctx, u.InnerPath, u.Username, target.ID, nil, uploadReplaceData, restoreSkips{}, nil)
+		res, rerr := h.restoreUploadedAccount(ctx, u.InnerPath, u.Username, target.ID, nil, uploadReplaceData, userCreated, restoreSkips{}, nil)
 		if rerr != nil {
 			line := u.Username + ": " + rerr.Error()
 			if userCreated {

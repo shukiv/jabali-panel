@@ -141,6 +141,9 @@ type uploadedData struct {
 	// skipMail / skipPostgres: the restore leaves the backup's mail or
 	// PostgreSQL out, because it is turned off on this server.
 	skipMail, skipPostgres bool
+	// ftpPasswordsStaged are the FTP subaccounts whose password from the
+	// file the agent staged; nil when it named none.
+	ftpPasswordsStaged []string
 }
 
 // regrantRestoredPostgres grants the account's PostgreSQL database users on
@@ -175,6 +178,7 @@ type restoreFromTarReply struct {
 	ArchiveMariaDBs           []string        `json:"archive_mariadb_databases"`
 	ArchivePostgresDBs        []string        `json:"archive_postgres_databases"`
 	RestoredPostgresDBs       []string        `json:"restored_postgres_databases"`
+	FTPPasswordsStaged        []string        `json:"ftp_passwords_staged"`
 	Stages                    []struct {
 		Name string `json:"name"`
 	} `json:"stages"`
@@ -220,8 +224,13 @@ func uploadModeFor(overwrite bool) uploadRestoreMode {
 // skips leaves out the parts turned off on this server (GH #1993: the
 // preflight); the zero value leaves nothing out.
 //
+// userCreated says this restore created the account, so its home holds
+// nothing but the file's data. Only then does the agent restore the file's
+// FTP subaccount passwords (GH #1993): the file's author never gets a login
+// to data they didn't supply.
+//
 // report, when not nil, receives the restore's progress by step (GH #1993).
-func (h *backupHandler) restoreUploadedAccount(ctx context.Context, tarPath, username, targetID string, components []string, mode uploadRestoreMode, skips restoreSkips, report func(restoreProgress)) (uploadedAccountRestore, error) {
+func (h *backupHandler) restoreUploadedAccount(ctx context.Context, tarPath, username, targetID string, components []string, mode uploadRestoreMode, userCreated bool, skips restoreSkips, report func(restoreProgress)) (uploadedAccountRestore, error) {
 	var out uploadedAccountRestore
 	keepExisting := mode == uploadKeepExisting
 	mailSelected := len(components) == 0 || containsStr(components, "mail")
@@ -253,6 +262,9 @@ func (h *backupHandler) restoreUploadedAccount(ctx context.Context, tarPath, use
 	if skips.postgres {
 		params["skip_postgres"] = true
 	}
+	if userCreated {
+		params["ftp_passwords"] = true
+	}
 	first, err := h.restoreFromTarReporting(ctx, targetID, params,
 		restoreProgress{Step: 1, Steps: steps, Label: restoreStepFilesLabel}, report)
 	if err != nil {
@@ -273,7 +285,8 @@ func (h *backupHandler) restoreUploadedAccount(ctx context.Context, tarPath, use
 		uploadedData{databases: first.RestoredDatabases, dockerSlugs: first.RestoredDockerSlugs,
 			archiveMariaDBs: first.ArchiveMariaDBs, archivePostgresDBs: first.ArchivePostgresDBs,
 			keepExisting: keepExisting, overwriteRows: mode == uploadOverwrite,
-			skipMail: skips.mail, skipPostgres: skips.postgres})
+			skipMail: skips.mail, skipPostgres: skips.postgres,
+			ftpPasswordsStaged: first.FTPPasswordsStaged})
 	// GH #1993: the restored PostgreSQL databases' users get their access
 	// again, and the first takes over the restored objects.
 	pgErrs, pgNotes := h.regrantRestoredPostgres(ctx, targetID, first.RestoredPostgresDBs)
