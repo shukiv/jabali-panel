@@ -280,6 +280,8 @@ type restoreUploadedBackupRequest struct {
 	PackageID      *string  `json:"package_id,omitempty"`
 	// Overwrite: see restoreUploadApplyRequest.Overwrite.
 	Overwrite bool `json:"overwrite,omitempty"`
+	// KeepCertificates: see restoreUploadApplyRequest.KeepCertificates.
+	KeepCertificates bool `json:"keep_certificates,omitempty"`
 }
 
 // restoreUploadedBackup handles POST /admin/uploaded-backups/:id/restore. It
@@ -353,7 +355,9 @@ func (h *backupHandler) restoreUploadedBackup(c *gin.Context) {
 
 	c.Set("audit_target", req.TargetUsername)
 	c.Set("audit_target_type", "user")
-	go h.runUploadedBackupRestore(b, path, req.TargetUsername, target.ID, req.Components, userCreated, req.Overwrite, preflight.skips)
+	skips := preflight.skips
+	skips.certificates = !req.KeepCertificates
+	go h.runUploadedBackupRestore(b, path, req.TargetUsername, target.ID, req.Components, userCreated, req.Overwrite, skips)
 	c.JSON(http.StatusAccepted, gin.H{"status": models.UploadedBackupRestoring, "id": b.ID, "user_created": userCreated})
 }
 

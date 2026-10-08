@@ -280,6 +280,10 @@ type restoreUploadApplyRequest struct {
 	// the backup's. Off (the default), the restore adds only what is missing
 	// (GH #1993).
 	Overwrite bool `json:"overwrite,omitempty"`
+	// KeepCertificates installs the SSL certificates and keys the backup
+	// carries, when they pass the checks (GH #1993). Off (the default), Let's
+	// Encrypt issues new ones.
+	KeepCertificates bool `json:"keep_certificates,omitempty"`
 }
 
 // restoreUploadApply restores the uploaded archive into an EXISTING user.
@@ -357,6 +361,8 @@ func (h *backupHandler) restoreUploadApply(c *gin.Context) {
 
 	outcomePath := restoreUploadOutcomePath(adminID, req.UploadID)
 	writeRestoreUploadOutcome(outcomePath, "restoring", nil, nil, "")
+	skips := preflight.skips
+	skips.certificates = !req.KeepCertificates
 	go h.runUploadRestore(uploadRestoreArgs{
 		path:        path,
 		outcomePath: outcomePath,
@@ -365,7 +371,7 @@ func (h *backupHandler) restoreUploadApply(c *gin.Context) {
 		components:  req.Components,
 		userCreated: userCreated,
 		overwrite:   req.Overwrite,
-		skips:       preflight.skips,
+		skips:       skips,
 	})
 
 	c.JSON(http.StatusAccepted, gin.H{"status": "restoring", "upload_id": req.UploadID, "user_created": userCreated})

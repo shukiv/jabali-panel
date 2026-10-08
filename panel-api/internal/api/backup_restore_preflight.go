@@ -52,6 +52,11 @@ type restorePreflight struct {
 // are turned off on this server. The zero value skips nothing.
 type restoreSkips struct {
 	postgres, mail, dns, docker bool
+	// certificates: the restore doesn't install the SSL certificates and
+	// keys the backup carries (GH #1993); Let's Encrypt issues new ones. An
+	// uploaded file's are installed only when the admin chose to keep them
+	// (JAB-54: a source's private key is not trusted unasked).
+	certificates bool
 	// notes are the restore report's lines for what the backup has of the
 	// parts left out.
 	notes []string

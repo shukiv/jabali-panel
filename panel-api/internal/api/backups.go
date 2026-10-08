@@ -1339,6 +1339,10 @@ func (h *backupHandler) restoreMetadataDeps(uploaded *uploadedData) backupmetada
 		// GH #1898: a restored domain passes the create-time checks.
 		CheckDomain: RestoreDomainCheck(h.cfg.Domains, h.cfg.WebDomainAliases, h.cfg.ServerSettings, h.cfg.Domains, source),
 		Untrusted:   source == RestoreFromUpload,
+		// A backup from this server's own destinations brings its
+		// certificates back; an uploaded file's only when the admin chose
+		// to keep them (GH #1993, JAB-54).
+		RestoreCertificates: uploaded == nil || uploaded.keepCertificates,
 	}
 	if uploaded != nil {
 		deps.RestoredDatabases = stringSet(uploaded.databases)

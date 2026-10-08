@@ -527,6 +527,9 @@ func runMetadataStage(ctx context.Context, req backupCreateParams) backup.Manife
 	if xerr := enrichPHPExtensions(req.Metadata); xerr != nil {
 		st.Warnings = append(st.Warnings, "PHP extensions: "+xerr.Error())
 	}
+	// GH #1993: each domain's own certificate and key, so a restore on
+	// another server can serve it until Let's Encrypt takes over.
+	enrichSSLCertificates(req.Metadata)
 	body, err := json.Marshal(req.Metadata)
 	if err != nil {
 		st.Status = backup.StageStatusFailed

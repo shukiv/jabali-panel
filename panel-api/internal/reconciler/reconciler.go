@@ -3217,6 +3217,10 @@ func (r *Reconciler) reconcileSSLForDomain(ctx context.Context, domain *models.D
 		// retry_count to 0 and flips status back to pending).
 		case cert.Status == models.SSLStatusFailed && cert.RetryCount < acmeMaxRetries:
 			r.tryACMEOrFallback(ctx, domain, cert)
+		// GH #1993: a certificate a restore installed from a backup. certbot
+		// doesn't manage it, so its timer never renews it.
+		case cert.Status == models.SSLStatusIssued && cert.IssueMethod == models.SSLIssueMethodRestored:
+			r.handBackRestoredCert(ctx, domain, cert)
 		case cert.Status == models.SSLStatusRenewing:
 			r.sslRenewForDomain(ctx, domain, cert)
 		case cert.Status == models.SSLStatusSelfSigned:

@@ -88,6 +88,13 @@ func sslSANDriftEligible(row repository.SSLCertificateWithDomain) bool {
 	if row.Status != models.SSLStatusIssued || row.CertPath == nil || *row.CertPath == "" {
 		return false
 	}
+	// A certificate a restore installed (GH #1993) isn't certbot's: issuing
+	// clears its files first, and a failed attempt would leave the domain
+	// without HTTPS. The hand-back (handBackRestoredCert) replaces it when
+	// the name points here.
+	if row.IssueMethod == models.SSLIssueMethodRestored {
+		return false
+	}
 	return row.SSLMode == models.SSLModeLE || row.SSLMode == ""
 }
 

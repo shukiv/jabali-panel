@@ -264,7 +264,7 @@ func TestSSLCertificateRepository_ListAll(t *testing.T) {
 
 	// Expect a SELECT joining ssl_certificates, domains, and users
 	mock.ExpectQuery(
-		regexp.QuoteMeta("SELECT sc.id, sc.domain_id, d.name as domain_name,\n\t\t        d.user_id, u.username as user_username,\n\t\t        sc.status, sc.issued_at, sc.expires_at,\n\t\t        sc.renewal_count, sc.last_renewed_at, sc.last_error, sc.staging, sc.last_attempt_at,\n\t\t        sc.cert_path,\n\t\t        d.ssl_mode, d.email_enabled, d.skip_auto_san, d.create_www, d.mta_sts_enabled FROM ssl_certificates sc JOIN domains d ON sc.domain_id = d.id JOIN users u ON d.user_id = u.id WHERE sc.status <> ? ORDER BY sc.created_at DESC")).
+		regexp.QuoteMeta("SELECT sc.id, sc.domain_id, d.name as domain_name,\n\t\t        d.user_id, u.username as user_username,\n\t\t        sc.status, sc.issued_at, sc.expires_at,\n\t\t        sc.renewal_count, sc.last_renewed_at, sc.last_error, sc.staging, sc.last_attempt_at,\n\t\t        sc.cert_path, sc.issue_method,\n\t\t        d.ssl_mode, d.email_enabled, d.skip_auto_san, d.create_www, d.mta_sts_enabled FROM ssl_certificates sc JOIN domains d ON sc.domain_id = d.id JOIN users u ON d.user_id = u.id WHERE sc.status <> ? ORDER BY sc.created_at DESC")).
 		WithArgs("revoked").
 		WillReturnRows(
 			sqlmock.NewRows([]string{
@@ -274,6 +274,8 @@ func TestSSLCertificateRepository_ListAll(t *testing.T) {
 				// REAL path rather than assuming /etc/letsencrypt/live/<domain>/,
 				// which is wrong for an installed custom certificate.
 				"cert_path",
+				// GH #1993: the SAN-drift pass leaves a restored certificate alone.
+				"issue_method",
 			}).
 				AddRow(
 					"01ARWX4FRYXZ73AK7EQQ69G5NV",
@@ -290,6 +292,7 @@ func TestSSLCertificateRepository_ListAll(t *testing.T) {
 					false,
 					nil,
 					nil, // cert_path
+					"restored",
 				).
 				AddRow(
 					"01ARWX4FRYXZ73AK7EQQ69G5N0",
@@ -306,6 +309,7 @@ func TestSSLCertificateRepository_ListAll(t *testing.T) {
 					true,
 					nil,
 					nil, // cert_path
+					"",
 				),
 		)
 
@@ -313,6 +317,7 @@ func TestSSLCertificateRepository_ListAll(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, certs, 2)
 	assert.Equal(t, "example.com", certs[0].DomainName)
+	assert.Equal(t, "restored", certs[0].IssueMethod)
 	assert.Equal(t, "testuser", certs[0].UserUsername)
 	assert.Equal(t, "example2.com", certs[1].DomainName)
 	require.NoError(t, mock.ExpectationsWereMet())

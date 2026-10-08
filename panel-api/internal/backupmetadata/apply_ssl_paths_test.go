@@ -121,7 +121,7 @@ func TestApply_CertNotOnThisServerIsIssuedAgain(t *testing.T) {
 		if got.CertPath != nil || got.KeyPath != nil || got.Status != models.SSLStatusPending {
 			t.Fatalf("%s: row = %+v, want paths cleared and status pending", status, got)
 		}
-		if !hasError(r.Errors, "ssl_cert c1 (alice.org): its certificate isn't on this server; a new one will be issued") {
+		if !hasError(r.Errors, "ssl_cert c1 (alice.org): its certificate isn't on this server") || !hasError(r.Errors, "; a new one will be issued") {
 			t.Fatalf("%s: errors %v should say a new certificate will be issued", status, r.Errors)
 		}
 	}

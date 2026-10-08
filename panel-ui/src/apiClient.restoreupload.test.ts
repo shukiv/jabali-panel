@@ -20,4 +20,9 @@ describe("uploadedRestoreBody (GH #1993)", () => {
     });
     expect(uploadedRestoreBody({ createUser: true })).toEqual({ create_user: true, package_id: null });
   });
+
+  it("asks to keep the backup's SSL certificates only when it is chosen", () => {
+    expect(uploadedRestoreBody({ keepCertificates: true })).toEqual({ keep_certificates: true });
+    expect(uploadedRestoreBody({ keepCertificates: false, overwrite: true })).toEqual({ overwrite: true });
+  });
 });

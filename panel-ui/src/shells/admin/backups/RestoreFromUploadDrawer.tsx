@@ -101,6 +101,9 @@ export function RestoreFromUploadDrawer({ open, onClose, ownerMode, uploaded, on
   const [packageId, setPackageId] = useState<string | null>(null);
   // GH #1993: off = keep what the account already has, add what is missing.
   const [overwrite, setOverwrite] = useState(false);
+  // GH #1993: install the backup's SSL certificates (admin only; off by
+  // default, JAB-54: a source's private key is not trusted unasked).
+  const [keepCerts, setKeepCerts] = useState(false);
   // GH #1993: the backup checked against this server, and whether that check
   // is still running.
   const [preflight, setPreflight] = useState<RestorePreflight | null>(null);
@@ -122,6 +125,7 @@ export function RestoreFromUploadDrawer({ open, onClose, ownerMode, uploaded, on
     setKept(null);
     setProgress(null);
     setOverwrite(false);
+    setKeepCerts(false);
     setPreflight(null);
     setChecking(false);
   };
@@ -225,7 +229,11 @@ export function RestoreFromUploadDrawer({ open, onClose, ownerMode, uploaded, on
     // below polls its status until it seals. Tell the admin it's running so an
     // empty "applying" state doesn't look like nothing happened (GH #1408).
     feedback.message.info("Restore started — running in the background");
-    const opts = { ...(createUser ? { createUser: true, packageId } : {}), overwrite };
+    const opts = {
+      ...(createUser ? { createUser: true, packageId } : {}),
+      overwrite,
+      ...(!ownerMode && keepCerts ? { keepCertificates: true } : {}),
+    };
     try {
       const r = kept
         ? await restoreKeptUploadedBackup(kept.id, targetUser, selected, opts, setProgress)
@@ -440,6 +448,22 @@ export function RestoreFromUploadDrawer({ open, onClose, ownerMode, uploaded, on
                     : "Files, databases and Docker apps already in the account stay as they are, and so do its mailboxes' auto-replies. A database or Docker app that already has data is skipped, and the result lists what was kept. Mail already there is not copied twice."
                 }
               />
+            )}
+            {!ownerMode && (
+              <Space direction="vertical" size={4}>
+                <Checkbox
+                  checked={keepCerts}
+                  onChange={(e) => setKeepCerts(e.target.checked)}
+                  disabled={phase !== "ready"}
+                >
+                  Keep the backup&apos;s SSL certificates
+                </Checkbox>
+                <Typography.Text type="secondary">
+                  {keepCerts
+                    ? "Each domain's certificate and private key from the backup is installed when it covers the domain, is signed by a trusted certificate authority and is still valid. Let's Encrypt takes over before it expires, once the domain's DNS points to this server."
+                    : "Let's Encrypt issues new certificates once the domains' DNS points to this server. Choose this only for a backup you trust: it installs the private keys it carries."}
+                </Typography.Text>
+              </Space>
             )}
             {phase === "applying" && (
               <Alert

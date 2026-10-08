@@ -26,12 +26,42 @@ The agent restores in the same per-stage order the backup ran: files first, data
 
 ### SSL certificates
 
-An account backup doesn't include the domains' certificate files (a
-full-server backup does). When an account restore brings back a domain whose
-certificate isn't on this server, because the backup came from another server
-or the files are gone, the panel issues a new one as it does for a new
-domain: Let's Encrypt, once the domain's DNS points at this server
-(GH #1993). The restore report lists each domain this applies to.
+An account backup carries each domain's certificate and private key (GH #1993)
+when the certificate was issued by a certificate authority or uploaded on the
+custom certificate page, and covers only the account's own domains. A
+self-signed certificate isn't carried, and neither is one that also covers a
+name outside the account, such as a wildcard of the panel's own domain. A
+backup made before this release carries none. Keep downloaded backups private:
+they hold the domains' private keys.
+
+When an account restore brings back a domain whose certificate isn't on this
+server, because the backup came from another server or the files are gone:
+
+- **A backup from this server's destinations**, or `jabali account restore`,
+  installs the backup's certificate when it pairs with its key, covers the
+  domain, and is valid for at least another day.
+- **An uploaded file** installs it only when **Keep the backup's SSL
+  certificates** is checked in the restore drawer. It is off by default,
+  because the file's private keys come from outside this server. The
+  certificate must also be signed by a certificate authority this server
+  trusts. The account restores of a full-server restore don't install them.
+- A domain whose ownership isn't verified gets no restored certificate, except
+  one with a custom certificate.
+
+A restored certificate from Let's Encrypt or another certificate authority
+serves until 21 days before it expires. From then on, Let's Encrypt issues the
+domain's own certificate as soon as it can validate the name here: the
+domain's DNS points at this server, or this server can write its DNS-01
+record. A domain whose DNS still points at the old server, or one behind a
+proxy without DNS-01, keeps the restored certificate until it expires. A
+restored custom certificate stays the owner's to replace before it expires.
+
+Any other domain gets a new certificate as a new domain does: Let's Encrypt,
+once its DNS points at this server. A domain that used a shared certificate
+gets one of its own, because the shared certificate belongs to the server. A
+domain with a custom certificate that isn't installed switches to Let's
+Encrypt. The restore report says, for each domain, whether its certificate was
+installed and, if not, why.
 
 ### Database users and their passwords
 
@@ -336,7 +366,7 @@ refuses it (`agent_update_required`).
 
 ## What restore does *not* do
 
-- Re-issue Let's Encrypt certificates after a full-server restore — they are restored from the snapshot. Run `jabali ssl renew <domain>` for any cert whose expiry is near. (An account restore issues new ones when the files aren't on this server; see [SSL certificates](#ssl-certificates).)
+- Re-issue Let's Encrypt certificates after a full-server restore — they are restored from the snapshot. Run `jabali ssl renew <domain>` for any cert whose expiry is near. (An account restore installs the backup's certificates or issues new ones when the files aren't on this server; see [SSL certificates](#ssl-certificates).)
 - Reconcile listen IPs — if the new host has different IPs than the snapshot's host, the operator must update [IP Addresses](./ip-addresses.md) before the reconciler succeeds.
 - Restart third-party services not under the panel's control.
 

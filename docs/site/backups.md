@@ -95,6 +95,9 @@ databases, and mail — of their own account (GH #1408). A per-account download 
 prepared in the background with a live **"Preparing…"** indicator so a large
 account doesn't block the request. What the account already has is kept unless
 they check **Overwrite existing items with the backup** (GH #1993).
+A downloaded backup holds the account's SSL certificates and their private
+keys, so keep it private; an administrator's restore can install them on
+another server (see [SSL certificates](./admin/backup-restore.md#ssl-certificates)).
 
 ### Restore a single domain's document root
 

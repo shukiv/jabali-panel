@@ -109,6 +109,10 @@ func TestRunFullRestore_ReplacesTheDataButNotTheRows(t *testing.T) {
 	if len(got) != 1 || got[0].overwriteRows || got[0].keepExisting {
 		t.Fatalf("the rebuild got %+v, want the data replaced and the rows left alone", got)
 	}
+	// It has no "Keep the backup's SSL certificates" choice (GH #1993).
+	if got[0].keepCertificates {
+		t.Fatalf("the rebuild got %+v, want the backup's certificates left out", got)
+	}
 }
 
 // The rebuild changes an existing mailbox through the mailbox settings, so
