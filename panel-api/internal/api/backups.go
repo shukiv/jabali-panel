@@ -1350,6 +1350,7 @@ func (h *backupHandler) restoreMetadataDeps(uploaded *uploadedData) backupmetada
 		}
 		deps.OverwriteRows = uploaded.overwriteRows
 		deps.SkipMail, deps.SkipPostgres = uploaded.skipMail, uploaded.skipPostgres
+		deps.FtpPasswordsStaged = stringSet(uploaded.ftpPasswordsStaged)
 	}
 	if h.cfg.Mailboxes != nil {
 		deps.MailboxSettings = restoreMailboxSettings{mailboxes: h.cfg.Mailboxes, agent: h.cfg.Agent}

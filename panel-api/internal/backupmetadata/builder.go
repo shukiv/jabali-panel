@@ -123,6 +123,11 @@ type Deps struct {
 	// A name in one list says nothing about the other engine's database of
 	// that name. nil means the agent didn't say, and the file grants nothing.
 	ArchivePostgresDBs map[string]bool
+	// FtpPasswordsStaged are the FTP subaccounts whose password from the
+	// uploaded file the agent staged (GH #1993): it does that only for an
+	// account the restore created. With Untrusted, each other FTP subaccount
+	// Apply restores is listed in the report: it gets a new password.
+	FtpPasswordsStaged map[string]bool
 	// MailAddresses takes a restored mailbox's address off every Stalwart
 	// account before Apply stores the mailbox. Stalwart's registry keeps
 	// every alias it has seen, so a mailbox at an address that was once

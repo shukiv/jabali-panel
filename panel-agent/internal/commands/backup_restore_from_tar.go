@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/backup"
@@ -69,6 +70,10 @@ type backupRestoreFromTarParams struct {
 	// SkipPostgres (GH #1993): restore no PostgreSQL database; see
 	// restoreEnforcement.SkipPostgres.
 	SkipPostgres bool `json:"skip_postgres,omitempty"`
+	// FTPPasswords (GH #1993): stage the file's FTP subaccount passwords
+	// (stageUploadedFtpPasswords). The panel sets it only for an account the
+	// restore created. Upload mode only.
+	FTPPasswords bool `json:"ftp_passwords,omitempty"`
 }
 
 // enforcement is what the restore enforces for these params.
@@ -119,6 +124,9 @@ type backupRestoreFromTarResult struct {
 	// in every mode (restoreReport.PostgresDatabases). The panel grants each
 	// database user it has on them again.
 	RestoredPostgresDBs []string `json:"restored_postgres_databases"`
+	// FTPPasswordsStaged are the FTP subaccounts whose password from the file
+	// the restore staged (GH #1993). In upload mode it is always a list.
+	FTPPasswordsStaged []string `json:"ftp_passwords_staged"`
 }
 
 // setClaims puts what an upload-mode restore created or wrote into the reply.
@@ -154,13 +162,13 @@ func backupRestoreFromTarHandler(ctx context.Context, raw json.RawMessage) (any,
 		enf.OwnedDockerSlugs == nil || enf.ForeignDockerSlugs == nil) {
 		return nil, bkInvalidArg("mode=upload requires allowed_db_names, foreign_db_names, allowed_mail_domains, owned_docker_slugs and foreign_docker_slugs (may be empty, not null)")
 	}
-	return restoreAccountFromTar(ctx, p.JobID, p.TarPath, p.TargetUsername, p.Components, p.SkipComponents, apply, enf)
+	return restoreAccountFromTar(ctx, p.JobID, p.TarPath, p.TargetUsername, p.Components, p.SkipComponents, apply, p.FTPPasswords, enf)
 }
 
 // restoreAccountFromTar is the reusable core: extract an untrusted account backup
 // tar and apply it to targetUsername. Shared by the single-upload restore handler
 // and the full-server container restore (which calls it once per inner user tar).
-func restoreAccountFromTar(ctx context.Context, jobID, tarPath, targetUsername string, components, skipComponents []string, apply bool, enf restoreEnforcement) (*backupRestoreFromTarResult, error) {
+func restoreAccountFromTar(ctx context.Context, jobID, tarPath, targetUsername string, components, skipComponents []string, apply, ftpPasswords bool, enf restoreEnforcement) (*backupRestoreFromTarResult, error) {
 	if !jobIDRE.MatchString(jobID) {
 		return nil, bkInvalidArg("job_id must be a 26-char ULID")
 	}
@@ -286,6 +294,7 @@ func restoreAccountFromTar(ctx context.Context, jobID, tarPath, targetUsername s
 	if enf.Claims != nil {
 		out.setClaims(enf.Claims)
 	}
+	out.stageFtpPasswords(enf, targetUsername, ftpPasswords, time.Now())
 
 	if removeRestoreStaging(applied, enf) {
 		if rmErr := os.RemoveAll(staging); rmErr != nil {
@@ -298,6 +307,33 @@ func restoreAccountFromTar(ctx context.Context, jobID, tarPath, targetUsername s
 		out.StagingCleanup = "kept (no stages applied)"
 	}
 	return &out, nil
+}
+
+// stageFtpPasswords stages the file's FTP subaccount passwords for
+// targetUsername when the panel asked for them (ftpPasswords: the restore
+// created the account), and puts what it did in the reply (GH #1993). Upload
+// mode only: a tenant's own restore restores no FTP subaccount.
+func (r *backupRestoreFromTarResult) stageFtpPasswords(enf restoreEnforcement, targetUsername string, ftpPasswords bool, now time.Time) {
+	if !enf.upload() {
+		return
+	}
+	r.FTPPasswordsStaged = []string{}
+	if !ftpPasswords || len(r.Metadata) == 0 {
+		return
+	}
+	var meta backup.AccountMetadata
+	if err := json.Unmarshal(r.Metadata, &meta); err != nil {
+		r.Warnings = append(r.Warnings, "ftp: the backup's FTP passwords weren't read: "+err.Error())
+		return
+	}
+	staged, skipped := stageUploadedFtpPasswords(&meta, targetUsername, now)
+	r.FTPPasswordsStaged = staged
+	if len(staged) > 0 {
+		r.Applied = append(r.Applied, fmt.Sprintf("ftp: staged %d subaccount password(s) for restore", len(staged)))
+	}
+	for _, s := range skipped {
+		r.Warnings = append(r.Warnings, "ftp: password not restored for "+s)
+	}
 }
 
 // readExtractedUpload finds the per-stage root of an extracted upload and reads

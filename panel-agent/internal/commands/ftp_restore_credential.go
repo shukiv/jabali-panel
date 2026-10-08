@@ -13,12 +13,17 @@
 // consumed, the file is keyed by (username,uid) to prevent a stale hash being
 // handed to a later same-named account, and it carries a timestamp so an
 // orphan (account never reprovisioned) expires instead of lurking forever.
+//
+// GH #1993: a restore from an uploaded backup stages passwords too
+// (stageUploadedFtpPasswords). Its files also name the tenant, and only that
+// tenant's create takes them.
 package commands
 
 import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/user"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -61,6 +66,9 @@ type ftpRestoreCred struct {
 	UID  *uint32 `json:"uid,omitempty"`
 	Hash string  `json:"hash"`
 	TS   int64   `json:"ts"` // unix seconds when staged
+	// Tenant, when set, is the only tenant whose create may take the hash
+	// (GH #1993: an uploaded backup's). Empty binds none.
+	Tenant string `json:"tenant,omitempty"`
 }
 
 // credFilePath maps a username to its staging file. Caller MUST have validated
@@ -106,6 +114,12 @@ func sweepFtpRestoreCreds(now time.Time) {
 // logs + skips — never fatal to the restore). The uid pins the record to the
 // exact account identity so a same-named-later account can't consume it.
 func writeFtpRestoreCred(username string, uid *uint32, hash string, now time.Time) error {
+	return writeFtpRestoreCredFor(username, "", uid, hash, now)
+}
+
+// writeFtpRestoreCredFor is writeFtpRestoreCred for a hash only tenant's
+// create may take; an empty tenant binds none.
+func writeFtpRestoreCredFor(username, tenant string, uid *uint32, hash string, now time.Time) error {
 	if !validFtpUsername(username) {
 		return fmt.Errorf("ftp restore cred: unsafe username %q", username)
 	}
@@ -115,19 +129,20 @@ func writeFtpRestoreCred(username string, uid *uint32, hash string, now time.Tim
 	if err := os.MkdirAll(ftpRestoreCredDir, 0o700); err != nil {
 		return fmt.Errorf("ftp restore cred dir: %w", err)
 	}
-	body, err := json.Marshal(ftpRestoreCred{UID: uid, Hash: hash, TS: now.Unix()})
+	body, err := json.Marshal(ftpRestoreCred{UID: uid, Hash: hash, TS: now.Unix(), Tenant: tenant})
 	if err != nil {
 		return err
 	}
 	return os.WriteFile(credFilePath(username), body, 0o600)
 }
 
-// consumeFtpRestoreCred returns the staged shadow hash for (username,uid) and
-// deletes the file. It returns ok=false — and still deletes — when there is no
-// file, the uid does not match, the record is stale, or the value fails
-// re-validation. Fail-closed: any doubt means "no staged credential, use the
-// throwaway", never "hand over a maybe-wrong hash".
-func consumeFtpRestoreCred(username string, uid *uint32, now time.Time) (string, bool) {
+// consumeFtpRestoreCred returns the staged shadow hash for (username,uid),
+// created for tenant, and deletes the file. It returns ok=false — and still
+// deletes — when there is no file, the uid does not match, the record names
+// another tenant, the record is stale, or the value fails re-validation.
+// Fail-closed: any doubt means "no staged credential, use the throwaway",
+// never "hand over a maybe-wrong hash".
+func consumeFtpRestoreCred(username, tenant string, uid *uint32, now time.Time) (string, bool) {
 	if !validFtpUsername(username) {
 		return "", false
 	}
@@ -144,6 +159,9 @@ func consumeFtpRestoreCred(username string, uid *uint32, now time.Time) (string,
 		return "", false
 	}
 	if !uidEqual(c.UID, uid) {
+		return "", false
+	}
+	if c.Tenant != "" && c.Tenant != tenant {
 		return "", false
 	}
 	if now.Unix()-c.TS >= int64(ftpRestoreCredTTL.Seconds()) {
@@ -221,6 +239,61 @@ func stageFtpRestoreCredentials(meta *backup.AccountMetadata, now time.Time) (st
 			continue
 		}
 		staged++
+	}
+	return staged, skipped
+}
+
+// ftpUserExists reports whether a system user named name exists. A var so
+// tests can stub it.
+var ftpUserExists = func(name string) bool {
+	_, err := user.Lookup(name)
+	return err == nil
+}
+
+// stageUploadedFtpPasswords stages the FTP subaccount passwords of an
+// account restored from an uploaded backup (GH #1993), for the reconciler to
+// set when it creates each subaccount. The panel asks for it only when the
+// restore created the account, so its home holds nothing but the file's
+// data: the file's author never gets a login to data they didn't supply.
+//
+// The file names every subaccount and hash. So a hash is staged only for a
+// subaccount of tenant (<tenant>_<label>) that isn't on this server yet, and
+// only tenant's create may take it: a tenant name can contain '_', so the
+// name alone doesn't tell tenant bob's bob_x_web from tenant bob_x's.
+// staged names the subaccounts staged; skipped says why each other one with
+// a password wasn't.
+func stageUploadedFtpPasswords(meta *backup.AccountMetadata, tenant string, now time.Time) (staged, skipped []string) {
+	staged = []string{}
+	if meta == nil {
+		return staged, nil
+	}
+	swept := false
+	for _, a := range meta.FtpAccounts {
+		if a.PasswordShadow == "" {
+			continue // no captured password: the reconciler sets a throwaway
+		}
+		if validateFtpSubaccountName(tenant, a.Username) != nil {
+			skipped = append(skipped, fmt.Sprintf("%q: not an FTP account of %s", a.Username, tenant))
+			continue
+		}
+		if ftpUserExists(a.Username) {
+			skipped = append(skipped, fmt.Sprintf("%q: already on this server, so it keeps its password", a.Username))
+			continue
+		}
+		// The create takes a hash by uid only for an isolated subaccount.
+		var uid *uint32
+		if a.Isolated {
+			uid = a.UID
+		}
+		if !swept {
+			sweepFtpRestoreCreds(now)
+			swept = true
+		}
+		if err := writeFtpRestoreCredFor(a.Username, tenant, uid, a.PasswordShadow, now); err != nil {
+			skipped = append(skipped, fmt.Sprintf("%q: %v", a.Username, err))
+			continue
+		}
+		staged = append(staged, a.Username)
 	}
 	return staged, skipped
 }

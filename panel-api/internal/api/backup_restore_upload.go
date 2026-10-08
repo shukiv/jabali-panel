@@ -520,7 +520,7 @@ func (h *backupHandler) runUploadRestore(a uploadRestoreArgs) {
 	// (restoreUploadedAccount).
 	report, done := progressReporter(a.outcomePath)
 	defer done()
-	res, err := h.restoreUploadedAccount(ctx, a.path, a.username, a.targetID, a.components, uploadModeFor(a.overwrite), a.skips, report)
+	res, err := h.restoreUploadedAccount(ctx, a.path, a.username, a.targetID, a.components, uploadModeFor(a.overwrite), a.userCreated, a.skips, report)
 	if err != nil {
 		detail := err.Error()
 		if a.userCreated {
