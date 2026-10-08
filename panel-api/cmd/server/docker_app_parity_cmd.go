@@ -67,7 +67,7 @@ func cliApplyTenantValidate(ctx context.Context, app *models.DockerApp, params m
 }
 
 func applyDockerEnvWithBase(ctx context.Context, repo repository.DockerAppRepository, app *models.DockerApp, baseEnv map[string]string) error {
-	compose, envFile, tenantServices, err := renderInstallComposeCLI(ctx, repo, app, baseEnv)
+	compose, envFile, tenantServices, err := renderInstallComposeCLI(ctx, repo, app, baseEnv, false)
 	if err != nil {
 		return err
 	}
@@ -86,6 +86,26 @@ func applyDockerEnvWithBase(ctx context.Context, repo repository.DockerAppReposi
 	raw, err := sharedAgent.Call(ctx, "docker_app.update", params)
 	if err != nil {
 		return err
+	}
+	var outc struct {
+		Outcome string `json:"outcome"`
+		Detail  string `json:"detail"`
+	}
+	_ = json.Unmarshal(raw, &outc)
+	// The agent puts the previous compose and .env back on a rollback
+	// (GH #1956), so the edit didn't take.
+	if outc.Outcome == "rolled_back" {
+		return fmt.Errorf("the app didn't come up healthy with the new environment, so its previous one was put back: %s", firstLine(outc.Detail))
+	}
+	// A recreate onto a new image keeps the version label on it (GH #1956).
+	if outc.Outcome == "updated" {
+		if cat, cerr := loadDockerCatalogForCLI(); cerr == nil {
+			if entry, ok := cat.Get(app.Slug); ok {
+				if target, terr := entry.TargetFor(app.CatalogVersion, false); terr == nil && target.Version != "" && target.Version != app.CatalogVersion {
+					_ = repo.UpdateCatalogVersion(ctx, app.ID, target.Version)
+				}
+			}
+		}
 	}
 	os.Stdout.Write(raw)
 	os.Stdout.Write([]byte{'\n'})

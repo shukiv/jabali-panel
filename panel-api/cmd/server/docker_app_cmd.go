@@ -560,6 +560,23 @@ func newDockerAppUpdateCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// GH #1956: Update never moves an install across a major its app
+			// can't take in place. With no image for its version, refuse
+			// before anything changes, as the admin API does: the on-disk
+			// fallback below would otherwise "update" it and relabel it.
+			var target dockerapp.Target
+			cat, cerr := loadDockerCatalogForCLI()
+			if cerr == nil {
+				if entry, ok := cat.Get(app.Slug); ok {
+					var terr error
+					if target, terr = entry.TargetFor(app.CatalogVersion, true); terr != nil {
+						return terr
+					}
+					if target.Notice != "" {
+						fmt.Fprintln(os.Stderr, "note: "+target.Notice)
+					}
+				}
+			}
 			// Re-render the compose from the current catalog template so a
 			// catalog fix / version bump reaches this install (the agent
 			// otherwise reuses the stale on-disk compose). Secrets preserved
@@ -591,16 +608,16 @@ func newDockerAppUpdateCmd() *cobra.Command {
 				return err
 			}
 			// On a successful update the install was re-rendered from the
-			// current catalog, so refresh the stored version label.
+			// catalog, so the stored version label follows the version it now
+			// runs: the target's, which on a held track isn't the newest.
 			var outc struct {
 				Outcome string `json:"outcome"`
 			}
-			if json.Unmarshal(raw, &outc) == nil && outc.Outcome == "updated" {
-				if cat, cerr := loadDockerCatalogForCLI(); cerr == nil {
-					if entry, ok := cat.Get(app.Slug); ok && entry.Version != "" {
-						_ = repo.UpdateCatalogVersion(ctx, app.ID, entry.Version)
-					}
-				}
+			// no_change means it already runs the target's image, which heals
+			// a label an earlier update left behind.
+			if json.Unmarshal(raw, &outc) == nil && (outc.Outcome == "updated" || outc.Outcome == "no_change") &&
+				updateParams["compose_yml"] != nil && target.Version != "" {
+				_ = repo.UpdateCatalogVersion(ctx, app.ID, target.Version)
 			}
 			os.Stdout.Write(raw)
 			os.Stdout.Write([]byte{'\n'})
@@ -716,8 +733,8 @@ func markDockerAppTeardownFailed(ctx context.Context, repo dockerAppStatusUpdate
 }
 
 // rerenderInstallForCLI re-renders an install's compose from the current
-// catalog template, preserving its domain/ports/limits/secrets. Mirrors
-// api.(*dockerAppHandler).renderInstallCompose for the CLI update path.
+// catalog template for Update, preserving its domain/ports/limits/secrets.
+// Mirrors api.(*dockerAppHandler).renderInstallCompose for the CLI update path.
 // Returns the rendered compose + merged env file (never log either).
 // readInstallEnvCLI reads an install's on-disk .env (KEY=VALUE) back over the
 // agent so a re-render preserves generated secrets. Mirrors api.readInstallEnv.
@@ -740,7 +757,7 @@ func rerenderInstallForCLI(ctx context.Context, repo repository.DockerAppReposit
 	if err != nil {
 		return "", "", nil, err
 	}
-	return renderInstallComposeCLI(ctx, repo, app, existingEnv)
+	return renderInstallComposeCLI(ctx, repo, app, existingEnv, true)
 }
 
 // renderInstallComposeCLI re-renders an install's compose from the current
@@ -749,8 +766,9 @@ func rerenderInstallForCLI(ctx context.Context, repo repository.DockerAppReposit
 // A tenant app keeps its sandbox: the render re-applies the tenant hardening
 // and returns the service set the agent pins the compose to (GH #1903), as
 // api.renderInstallCompose does. Without it the CLI rewrote a tenant compose
-// as an unhardened admin compose.
-func renderInstallComposeCLI(ctx context.Context, repo repository.DockerAppRepository, app *models.DockerApp, baseEnv map[string]string) (string, string, tenantcompose.Services, error) {
+// as an unhardened admin compose. update is true for Update, which may move
+// the install to a newer release track; an edit keeps it on its own (GH #1956).
+func renderInstallComposeCLI(ctx context.Context, repo repository.DockerAppRepository, app *models.DockerApp, baseEnv map[string]string, update bool) (string, string, tenantcompose.Services, error) {
 	cat, err := loadDockerCatalogForCLI()
 	if err != nil {
 		return "", "", nil, fmt.Errorf("load catalog: %w", err)
@@ -758,6 +776,10 @@ func renderInstallComposeCLI(ctx context.Context, repo repository.DockerAppRepos
 	entry, ok := cat.Get(app.Slug)
 	if !ok {
 		return "", "", nil, fmt.Errorf("catalog entry %q not found", app.Slug)
+	}
+	target, err := entry.TargetFor(app.CatalogVersion, update)
+	if err != nil {
+		return "", "", nil, err
 	}
 	envMap, err := dockerapp.MaterialiseEnv(entry, baseEnv)
 	if err != nil {
@@ -803,7 +825,7 @@ func renderInstallComposeCLI(ctx context.Context, repo repository.DockerAppRepos
 		Slug:         app.EffectiveSlug(),
 		Name:         app.Name,
 		Domain:       domain,
-		ImageChannel: entry.ImageChannel,
+		ImageChannel: target.ImageChannel,
 		DataRoot:     "/var/lib/jabali/docker-apps/" + app.EffectiveSlug(),
 		CPULimit:     cpu,
 		MemoryLimit:  mem,

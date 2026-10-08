@@ -16,6 +16,7 @@ type result struct {
 	Major      bool
 	Refresh    bool   // same tag, upstream re-pushed it (new digest)
 	Unresolved bool   // track digest moved but no concrete tag matched it
+	HeldMajor  string // newer tag off the entry's release track, left alone
 	Truncated  bool   // tag listing hit the page cap
 	Err        string // registry-side failure (kept per-app, run continues)
 }
@@ -28,7 +29,7 @@ func (r result) action() string {
 	case r.Skip != "":
 		return "⏭ skipped: " + r.Skip
 	case r.NewTag == "":
-		return "✅ up to date"
+		s = "✅ up to date"
 	case r.Major:
 		s = "⚠ MAJOR bump — re-validate ports/env/volumes before merging"
 	case r.Refresh:
@@ -38,6 +39,9 @@ func (r result) action() string {
 	}
 	if r.Unresolved {
 		s += " — ⚠ resolved version unknown, version field left as-is; verify manually"
+	}
+	if r.HeldMajor != "" {
+		s += " — ⏸ new major `" + r.HeldMajor + "` held: the entry has a release track; moving it needs a reviewed change"
 	}
 	return s
 }
@@ -97,6 +101,22 @@ func checkApp(e appEntry, client *regClient, dryRun bool) result {
 		return r
 	}
 
+	// A tracked entry (GH #1956) only moves within its track. Update takes
+	// existing installs to the catalog's version, so crossing a major is a
+	// reviewed change; the newer major is only reported.
+	if e.Track != "" {
+		if heldTag, _, ok := pickBestTag(e.TagP, tags); ok && !tagOnTrack(heldTag, e.Track) {
+			r.HeldMajor = heldTag
+		}
+		var own []string
+		for _, t := range tags {
+			if tagOnTrack(t, e.Track) {
+				own = append(own, t)
+			}
+		}
+		tags = own
+	}
+
 	targetTag, targetParts := e.Ref.Tag, e.TagP
 	bestTag, bestParts, advance := pickBestTag(e.TagP, tags)
 	if advance {
@@ -142,6 +162,12 @@ func checkApp(e appEntry, client *regClient, dryRun bool) result {
 		r.NewTag, r.NewVersion, r.NewDigest = "", "", ""
 	}
 	return r
+}
+
+// tagOnTrack reports whether a tag's version core is on the track.
+func tagOnTrack(tag, track string) bool {
+	p, ok := parseTag(tag)
+	return ok && onTrack(p.coreString(), track)
 }
 
 func main() {

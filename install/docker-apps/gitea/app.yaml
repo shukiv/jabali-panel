@@ -2,7 +2,12 @@ slug: gitea
 popularity: 82
 name: Gitea
 tags: ["Developer tools"]
-version: "1.27.3"
+version: "28.1.0"
+# Release track (GH #1956): new installs get Gitea 28. Update moves a 1.27 or
+# 1.26 install to 28; Gitea migrates its database on start. Until then a 1.27
+# install keeps its own image on an env or domain edit.
+track: "28"
+update_from: ["1.27", "1.26"]
 description: |
   Lightweight self-hosted Git service. Bundled SQLite for v1; admin
   can flip to compose-managed Postgres post-install. Two ports: HTTP
@@ -12,7 +17,11 @@ icon: icon.svg
 upstream: https://github.com/go-gitea/gitea
 documentation: https://docs.gitea.com/
 
-image_channel: gitea/gitea:1.27@sha256:87a67ee09d3ae0d1df5fda5dcda3e2a1f9236a45b0a59025d6e00e46adc43bef
+image_channel: gitea/gitea:28.1@sha256:f505a0d3a41323b786e05942fc7a4075e07ae7c169fd9485649aa55ee543a21a
+held_tracks:
+  - track: "1.27"
+    version: "1.27.3"
+    image_channel: gitea/gitea:1.27@sha256:87a67ee09d3ae0d1df5fda5dcda3e2a1f9236a45b0a59025d6e00e46adc43bef
 volume_owner: "1000:1000"
 update_mode: manual
 

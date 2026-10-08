@@ -98,7 +98,7 @@ func TestRenderInstallCompose_PinsOnlyTenantApps(t *testing.T) {
 	}}
 	ctx := context.Background()
 
-	_, _, services, err := h.renderInstallCompose(ctx, &models.DockerApp{ID: "a1", Slug: "tdemo", UserID: &uid}, "", map[string]string{})
+	_, _, services, err := h.renderInstallCompose(ctx, &models.DockerApp{ID: "a1", Slug: "tdemo", UserID: &uid}, "", map[string]string{}, false)
 	if err != nil {
 		t.Fatalf("tenant re-render: %v", err)
 	}
@@ -106,7 +106,7 @@ func TestRenderInstallCompose_PinsOnlyTenantApps(t *testing.T) {
 		t.Fatalf("tenant re-render must return the pinned set: %v", err)
 	}
 
-	_, _, services, err = h.renderInstallCompose(ctx, &models.DockerApp{ID: "a2", Slug: "tdemo"}, "", map[string]string{})
+	_, _, services, err = h.renderInstallCompose(ctx, &models.DockerApp{ID: "a2", Slug: "tdemo"}, "", map[string]string{}, false)
 	if err != nil {
 		t.Fatalf("admin re-render: %v", err)
 	}

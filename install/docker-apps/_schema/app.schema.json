@@ -30,6 +30,56 @@
       "minLength": 1,
       "maxLength": 32
     },
+    "track": {
+      "type": "string",
+      "minLength": 1,
+      "description": "GH #1956: the release track new installs get (e.g. \"28\", \"1.27\"). version must be on it (equal, or start with track + \".\"). With a track, Update never moves an install to a track it can't take in place: see update_from and held_tracks."
+    },
+    "update_from": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "GH #1956: older tracks that Update may move to this entry's track. Needs track."
+    },
+    "held_tracks": {
+      "type": "array",
+      "description": "GH #1956: older release lines, newest first, still served to the installs on them. Each keeps the entry's compose template; only the image and version label differ. Needs track.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "track",
+          "version",
+          "image_channel"
+        ],
+        "properties": {
+          "track": {
+            "type": "string",
+            "minLength": 1
+          },
+          "version": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 32
+          },
+          "image_channel": {
+            "type": "string",
+            "description": "Digest-pinned image for this track: repo:tag@sha256:<digest>.",
+            "minLength": 3
+          },
+          "update_from": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "description": "Older tracks Update may move to this held track (a step on the way to the current one)."
+          }
+        }
+      }
+    },
     "popularity": {
       "type": "integer",
       "minimum": 0,

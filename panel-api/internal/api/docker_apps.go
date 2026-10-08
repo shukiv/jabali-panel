@@ -959,8 +959,10 @@ func (h *dockerAppHandler) applyTenantValidateParams(ctx context.Context, app *m
 // (via the on-disk .env). Used by update so catalog fixes + version bumps
 // reach existing installs. Returns the rendered compose + merged env file —
 // neither must be logged — and, for a tenant app, the service set the agent
-// pins the compose to (GH #1903; nil for an admin app).
-func (h *dockerAppHandler) renderInstallCompose(ctx context.Context, app *models.DockerApp, domain string, overrideEnv map[string]string) (string, string, tenantcompose.Services, error) {
+// pins the compose to (GH #1903; nil for an admin app). update is true for
+// Update, which may move the install to a newer release track; any other
+// re-render keeps it on its own (GH #1956).
+func (h *dockerAppHandler) renderInstallCompose(ctx context.Context, app *models.DockerApp, domain string, overrideEnv map[string]string, update bool) (string, string, tenantcompose.Services, error) {
 	if h.cfg.Catalog == nil {
 		return "", "", nil, fmt.Errorf("catalog unavailable")
 	}
@@ -968,9 +970,12 @@ func (h *dockerAppHandler) renderInstallCompose(ctx context.Context, app *models
 	if !ok {
 		return "", "", nil, fmt.Errorf("catalog entry %q not found", app.Slug)
 	}
+	target, err := entry.TargetFor(app.CatalogVersion, update)
+	if err != nil {
+		return "", "", nil, err
+	}
 	existingEnv := overrideEnv
 	if existingEnv == nil {
-		var err error
 		existingEnv, err = h.readInstallEnv(ctx, app.EffectiveSlug())
 		if err != nil {
 			return "", "", nil, fmt.Errorf("read env: %w", err)
@@ -1026,7 +1031,7 @@ func (h *dockerAppHandler) renderInstallCompose(ctx context.Context, app *models
 		Slug:            app.EffectiveSlug(),
 		Name:            app.Name,
 		Domain:          domain,
-		ImageChannel:    entry.ImageChannel,
+		ImageChannel:    target.ImageChannel,
 		DataRoot:        "/var/lib/jabali/docker-apps/" + app.EffectiveSlug(),
 		CPULimit:        cpu,
 		MemoryLimit:     mem,
@@ -1046,6 +1051,20 @@ func (h *dockerAppHandler) renderInstallCompose(ctx context.Context, app *models
 		return "", "", nil, fmt.Errorf("render: %w", err)
 	}
 	return composeYML, buildEnvFile(envMap), services, nil
+}
+
+// installTarget is the catalog image and version an install renders with
+// (GH #1956). Errors without a catalog entry; dockerapp.ErrNoUpdatePath when
+// the entry has no image for the install's version.
+func (h *dockerAppHandler) installTarget(app *models.DockerApp, update bool) (dockerapp.Target, error) {
+	if h.cfg.Catalog == nil {
+		return dockerapp.Target{}, fmt.Errorf("catalog unavailable")
+	}
+	entry, ok := h.cfg.Catalog.Get(app.Slug)
+	if !ok {
+		return dockerapp.Target{}, fmt.Errorf("catalog entry %q not found", app.Slug)
+	}
+	return entry.TargetFor(app.CatalogVersion, update)
 }
 
 // setTenantServices adds the pinned service set to a compose-writing agent
@@ -1213,6 +1232,12 @@ func (h *dockerAppHandler) editDomainPorts(ctx context.Context, app *models.Dock
 	if !ok {
 		return &dockerEditError{http.StatusInternalServerError, "catalog_entry_missing", "slug " + app.Slug + " no longer in /usr/local/share/jabali/docker-apps/"}
 	}
+	// GH #1956: the re-render below needs an image for this install's
+	// version. Check it before any port or domain row changes.
+	target, terr := entry.TargetFor(app.CatalogVersion, false)
+	if terr != nil {
+		return &dockerEditError{http.StatusConflict, "update_required", terr.Error()}
+	}
 
 	// --- ports ---
 	var runtimePorts map[string]dockerapp.RuntimePort
@@ -1342,7 +1367,7 @@ func (h *dockerAppHandler) editDomainPorts(ctx context.Context, app *models.Dock
 	}
 
 	// --- re-render compose + re-dispatch (tenant sandbox preserved) ---
-	composeYML, envFile, tenantServices, rerr := h.renderInstallCompose(ctx, app, newDomain, nil)
+	composeYML, envFile, tenantServices, rerr := h.renderInstallCompose(ctx, app, newDomain, nil, false)
 	_ = runtimePorts // ports already persisted above; helper reads them from the repo
 	if rerr != nil {
 		return &dockerEditError{http.StatusInternalServerError, "render_failed", rerr.Error()}
@@ -1369,6 +1394,10 @@ func (h *dockerAppHandler) editDomainPorts(ctx context.Context, app *models.Dock
 		setTenantServices(installParams, tenantServices)
 		if _, agentErr := h.cfg.Agent.Call(callCtx, "docker_app.install", installParams); agentErr != nil {
 			return &dockerEditError{http.StatusBadGateway, "agent_redispatch_failed", firstLineString(agentErr.Error())}
+		}
+		// The install now runs the target's image: keep its label on it.
+		if target.Version != "" && target.Version != app.CatalogVersion {
+			_ = h.cfg.Repo.UpdateCatalogVersion(ctx, app.ID, target.Version)
 		}
 	}
 	return nil
@@ -1566,6 +1595,15 @@ func (h *dockerAppHandler) updateImage(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "agent_unavailable"})
 		return
 	}
+	// GH #1956: Update never moves an install across a major its app can't
+	// take in place. With no image for the install's version, refuse before
+	// anything changes: the on-disk fallback below would otherwise "update"
+	// it and relabel it with the catalog's version.
+	target, terr := h.installTarget(app, true)
+	if errors.Is(terr, dockerapp.ErrNoUpdatePath) {
+		c.JSON(http.StatusConflict, gin.H{"error": "update_blocked", "detail": terr.Error()})
+		return
+	}
 
 	// Mark `updating` so the UI shows a spinner; restore on outcome.
 	_ = h.cfg.Repo.UpdateStatus(ctx, app.ID, models.DockerAppStatusUpdating, nil)
@@ -1581,7 +1619,7 @@ func (h *dockerAppHandler) updateImage(c *gin.Context) {
 		"healthcheck_timeout_seconds": 300,
 	}
 	domain := h.installDomain(ctx, app.ID)
-	if composeYML, envFile, tenantServices, rerr := h.renderInstallCompose(ctx, app, domain, nil); rerr != nil {
+	if composeYML, envFile, tenantServices, rerr := h.renderInstallCompose(ctx, app, domain, nil, true); rerr != nil {
 		// Gitea #527: for a tenant-owned app, falling back to the on-disk compose
 		// would recreate the container WITHOUT the tenant validation gate (the
 		// on-disk compose may be stale/restored/unsafe). Fail closed.
@@ -1616,7 +1654,9 @@ func (h *dockerAppHandler) updateImage(c *gin.Context) {
 	// `updating` above; the UI polls docker-app status every 8s and shows
 	// the spinner until the row flips to running / failed.
 	appID := app.ID
-	appSlug := app.Slug
+	// The label may follow the target only when the compose was rendered
+	// from it; the on-disk fallback runs whatever that file names.
+	rendered := updateParams["compose_yml"] != nil
 	go func() {
 		bgCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Minute)
 		defer cancel()
@@ -1641,13 +1681,12 @@ func (h *dockerAppHandler) updateImage(c *gin.Context) {
 				_ = h.cfg.Repo.UpdateImageSHA(persistCtx, appID, resp.NewImage)
 				_ = h.cfg.Repo.UpdateAvailableDigest(persistCtx, appID, resp.NewImage)
 			}
-			// The install was just re-rendered from the current catalog, so
-			// the version label tracks the catalog instead of freezing at
-			// the install-time value.
-			if h.cfg.Catalog != nil {
-				if entry, ok := h.cfg.Catalog.Get(appSlug); ok && entry.Version != "" {
-					_ = h.cfg.Repo.UpdateCatalogVersion(persistCtx, appID, entry.Version)
-				}
+			// The install was just re-rendered from the catalog, so the
+			// version label follows the version it now runs instead of
+			// freezing at the install-time value. That is the target's,
+			// which on a held release track isn't the catalog's newest.
+			if rendered && terr == nil && target.Version != "" {
+				_ = h.cfg.Repo.UpdateCatalogVersion(persistCtx, appID, target.Version)
 			}
 		case "no_change":
 			// GH #794: the image was already the catalog-pinned version, so
@@ -1656,6 +1695,12 @@ func (h *dockerAppHandler) updateImage(c *gin.Context) {
 			// so the recreate doesn't look like a failure. The UI explains
 			// up-front (before dispatching) when no update is available.
 			_ = h.cfg.Repo.UpdateStatus(persistCtx, appID, models.DockerAppStatusRunning, nil)
+			// It runs the target's image, so the label is the target's. That
+			// heals a label an earlier update left behind (GH #1956: the
+			// agent's old rollback kept the new image behind "rolled_back").
+			if rendered && terr == nil && target.Version != "" {
+				_ = h.cfg.Repo.UpdateCatalogVersion(persistCtx, appID, target.Version)
+			}
 		case "rolled_back":
 			detail := resp.Detail
 			_ = h.cfg.Repo.UpdateStatus(persistCtx, appID, models.DockerAppStatusRunning, &detail)
@@ -1664,7 +1709,11 @@ func (h *dockerAppHandler) updateImage(c *gin.Context) {
 		}
 	}()
 
-	c.JSON(http.StatusAccepted, gin.H{"status": "updating", "id": appID})
+	resp := gin.H{"status": "updating", "id": appID}
+	if target.Notice != "" {
+		resp["notice"] = target.Notice
+	}
+	c.JSON(http.StatusAccepted, resp)
 }
 
 // logs proxies docker_app.logs through. Query params: lines (int,

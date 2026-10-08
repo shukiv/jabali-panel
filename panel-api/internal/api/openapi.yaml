@@ -1551,7 +1551,9 @@ paths:
       summary: Update a Docker app's config (admin)
       security: [ { KratosSession: [] } ]
       parameters: [ { in: path, name: id, required: true, schema: { type: string, format: ulid } } ]
-      responses: { "200": { description: Updated } }
+      responses:
+        "200": { description: Updated }
+        "409": { description: "The container is running, or (`update_required`, GH #1956) the catalog has no image for the install's version any more; `detail` says what to do", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
     delete:
       tags: [Docker Apps]
       summary: Uninstall a Docker app (admin)
@@ -1583,7 +1585,9 @@ paths:
       summary: Set a Docker app's env (admin)
       security: [ { KratosSession: [] } ]
       parameters: [ { in: path, name: id, required: true, schema: { type: string, format: ulid } } ]
-      responses: { "200": { description: Saved } }
+      responses:
+        "200": { description: Saved }
+        "409": { description: "`update_required` (GH #1956): the catalog has no image for the install's version any more; `detail` says what to do", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
 
   /admin/docker-apps/{id}/env/regenerate:
     post:
@@ -1591,7 +1595,9 @@ paths:
       summary: Regenerate secrets in a Docker app's env (admin)
       security: [ { KratosSession: [] } ]
       parameters: [ { in: path, name: id, required: true, schema: { type: string, format: ulid } } ]
-      responses: { "200": { description: Regenerated } }
+      responses:
+        "200": { description: Regenerated }
+        "409": { description: "`update_required` (GH #1956): the catalog has no image for the install's version any more; `detail` says what to do", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
 
   /admin/docker-apps/{id}/backups:
     get:
@@ -1663,9 +1669,21 @@ paths:
     post:
       tags: [Docker Apps]
       summary: Update a Docker app image (admin)
+      description: "Re-renders the install from the catalog and recreates it in the background. An app with a release track (GH #1956) moves only to a version it can take in place."
       security: [ { KratosSession: [] } ]
       parameters: [ { in: path, name: id, required: true, schema: { type: string, format: ulid } } ]
-      responses: { "202": { description: Update queued } }
+      responses:
+        "202":
+          description: Update queued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [updating] }
+                  id: { type: string }
+                  notice: { type: string, description: "Set when the install doesn't move to the catalog's newest version (it stays on its release track, or steps to the next major first), saying why." }
+        "409": { description: "`update_blocked`: the catalog has no image for the install's version or one it can update to in place. Nothing changed; `detail` says why.", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
 
   # ---------------------------------------------------------- Python Apps ---
 

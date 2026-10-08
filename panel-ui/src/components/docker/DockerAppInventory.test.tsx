@@ -330,6 +330,31 @@ describe("admin docker inventory (privileged wiring)", () => {
     );
   });
 
+  // GH #1956: an update that keeps the app on its release track says why.
+  it("shows the server's notice when Update keeps the app on its track", async () => {
+    const notice = "Odoo 20.0 is for new installs. This install stays on Odoo 19.0.";
+    adminApi.updateApp.mockResolvedValue({ status: "updating", id: "j1", notice });
+    adminApi.listInstalled.mockResolvedValue([makeApp({ id: "j1", status: "stopped" })]);
+    renderAdapter(AdminDockerAppsPage);
+    await screen.findByText("alpha");
+    await openRowMenu();
+    fireEvent.click(screen.getByText("Update"));
+    expect(await screen.findByText(notice)).toBeInTheDocument();
+    expect(screen.queryByText(/Already on the latest catalog version/)).not.toBeInTheDocument();
+  });
+
+  // A refused update shows only the refusal, not a "started" toast first.
+  it("shows no started toast when the server refuses Update", async () => {
+    adminApi.updateApp.mockRejectedValue(new Error("Odoo can't update this install in place"));
+    adminApi.listInstalled.mockResolvedValue([makeApp({ id: "j1", status: "stopped" })]);
+    renderAdapter(AdminDockerAppsPage);
+    await screen.findByText("alpha");
+    await openRowMenu();
+    fireEvent.click(screen.getByText("Update"));
+    expect(await screen.findByText("Odoo can't update this install in place")).toBeInTheDocument();
+    expect(screen.queryByText(/Already on the latest catalog version|Update started/)).not.toBeInTheDocument();
+  });
+
   it("opens the exec drawer for a row", async () => {
     adminApi.listInstalled.mockResolvedValue([makeApp({ id: "j1", status: "stopped" })]);
     renderAdapter(AdminDockerAppsPage);

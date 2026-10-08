@@ -8,7 +8,11 @@ services:
         condition: service_healthy
     # --proxy-mode makes Odoo trust X-Forwarded-Proto/Host from the nginx
     # vhost so it derives https URLs + CSRF tokens correctly.
-    command: odoo --proxy-mode
+    # --http-interface=0.0.0.0: Odoo 20 listens on 127.0.0.1 inside the
+    # container by default, which the published port can't reach. The host
+    # side stays loopback-only (the port binding below). 18 and 19 already
+    # listened on every interface (GH #1956).
+    command: odoo --proxy-mode --http-interface=0.0.0.0
     environment:
       HOST: postgres
       PORT: "5432"

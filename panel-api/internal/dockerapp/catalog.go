@@ -74,6 +74,14 @@ type Entry struct {
 	// the bind-mounted volume on first launch (Gitea, Nextcloud,
 	// Linkwarden, ...) -- without this they crash-loop on EACCES.
 	VolumeOwner string `yaml:"volume_owner,omitempty"`
+	// Track is the release line new installs get (e.g. "28", "1.27");
+	// UpdateFrom lists the older tracks Update may move to it; HeldTracks,
+	// newest first, are older lines still served to the installs on them.
+	// See tracks.go (GH #1956). An entry without a track updates every
+	// install to its current version.
+	Track      string      `yaml:"track,omitempty"`
+	UpdateFrom []string    `yaml:"update_from,omitempty"`
+	HeldTracks []HeldTrack `yaml:"held_tracks,omitempty"`
 
 	// composeTmpl is the raw text of compose.yml.tmpl alongside the
 	// app.yaml. Held in memory so the agent verb that renders the
@@ -358,6 +366,9 @@ func (e Entry) validate() error {
 	}
 	if e.UpdateMode != "" && e.UpdateMode != "manual" && e.UpdateMode != "auto" {
 		return fmt.Errorf("update_mode %q: must be 'manual' or 'auto'", e.UpdateMode)
+	}
+	if err := e.validateTracks(); err != nil {
+		return err
 	}
 	// Tenant-installable apps may not declare a forbidden capability (Gitea
 	// #515): the catalog is the policy boundary, so reject the dangerous cap at

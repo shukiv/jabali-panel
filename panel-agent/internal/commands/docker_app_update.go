@@ -79,6 +79,10 @@ func dockerAppUpdateHandler(ctx context.Context, params json.RawMessage) (any, e
 		return nil, &agentwire.AgentError{Code: agentwire.CodeNotFound, Message: fmt.Sprintf("%s/compose.yml not found", dir)}
 	}
 
+	// Keep the files this update replaces, so a rollback brings the previous
+	// compose, and so the previous image, back up (GH #1956).
+	prev := readPriorComposeFiles(dir, p.ComposeYML != "", p.EnvFile != "")
+
 	// Re-render from the catalog: write the fresh compose.yml (+ .env) the
 	// panel rendered from the CURRENT template, so catalog fixes + version
 	// bumps reach this install. Atomic tmp+rename; .env stays 0600. Empty
@@ -130,7 +134,7 @@ func dockerAppUpdateHandler(ctx context.Context, params json.RawMessage) (any, e
 	if out, err := runDockerCompose(ctx, dir, "up", "-d"); err != nil {
 		// Compose refused. Try to rollback by re-pulling the old
 		// image (if we have a SHA) and bringing it back up.
-		_ = rollback(ctx, dir, oldImage)
+		_ = rollback(ctx, dir, oldImage, prev)
 		return dockerAppUpdateResponse{
 			Slug:       p.Slug,
 			Outcome:    "rolled_back",
@@ -143,7 +147,7 @@ func dockerAppUpdateHandler(ctx context.Context, params json.RawMessage) (any, e
 	// 5. Wait for healthy.
 	status, _ := waitHealthy(ctx, dir, p.Slug, timeout)
 	if status != "running" {
-		_ = rollback(ctx, dir, oldImage)
+		_ = rollback(ctx, dir, oldImage, prev)
 		return dockerAppUpdateResponse{
 			Slug:       p.Slug,
 			Outcome:    "rolled_back",
@@ -189,20 +193,48 @@ func dockerAppUpdateHandler(ctx context.Context, params json.RawMessage) (any, e
 
 // rollback re-pulls and re-ups the previous image. Best-effort —
 // we already have one failure path open by the time this runs.
-func rollback(ctx context.Context, dir, oldImage string) error {
-	if oldImage == "" {
-		// Nothing to rollback to; the operator gets a manual-fix
+// priorComposeFiles are the compose.yml and .env an update replaced; nil
+// when the update kept that file.
+type priorComposeFiles struct {
+	compose, env []byte
+}
+
+func readPriorComposeFiles(dir string, compose, env bool) priorComposeFiles {
+	var prev priorComposeFiles
+	if compose {
+		prev.compose, _ = os.ReadFile(filepath.Join(dir, "compose.yml"))
+	}
+	if env {
+		prev.env, _ = os.ReadFile(filepath.Join(dir, ".env"))
+	}
+	return prev
+}
+
+// rollback brings the install back up on the compose it ran before the
+// update. Catalog images are digest-pinned, so the previous compose names the
+// previous image, which is still on the host. Re-upping the new compose, as
+// rollback did, left the new image running behind a "rolled_back" outcome:
+// the panel kept the old version label on an install that had moved, and
+// rendered the old track's image over it on the next edit (GH #1956).
+//
+// Data the new version already migrated stays migrated; undoing that needs
+// the snapshot path (restic restore), which isn't wired yet.
+func rollback(ctx context.Context, dir, oldImage string, prev priorComposeFiles) error {
+	if prev.compose != nil {
+		if err := writeAtomicDockerApp(filepath.Join(dir, "compose.yml"), prev.compose, 0o640); err != nil {
+			return err
+		}
+	}
+	if prev.env != nil {
+		if err := writeAtomicDockerApp(filepath.Join(dir, ".env"), prev.env, 0o600); err != nil {
+			return err
+		}
+	}
+	if oldImage == "" && prev.compose == nil {
+		// Nothing to roll back to; the operator gets a manual-fix
 		// situation. The caller surfaces this in the response detail.
 		return nil
 	}
-	// We don't rewrite compose.yml — it pins the channel tag, not
-	// the digest, so `pull` followed by `up -d` will fetch whatever
-	// "latest" points at NOW. That's the same image we just pulled.
-	// True rollback needs the snapshot path (restic restore + up)
-	// once Phase 8 wires it up. For Phase 7 we accept that auto
-	// mode + a corrupt upstream image leaves the operator a
-	// minute behind on a notification, not in a permanent dead
-	// state -- they can pin a different channel via Edit compose.
 	_, _ = runDockerCompose(ctx, dir, "up", "-d")
 	return nil
 }

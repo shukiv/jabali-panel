@@ -616,12 +616,22 @@ func (r *Reconciler) pollImageUpdate(ctx context.Context, app *models.DockerApp)
 	if !ok {
 		return
 	}
+	// GH #1956: an install is offered the image Update would move it to,
+	// which on a held release track isn't the catalog's newest. One with no
+	// update path has nothing to be offered; it is still marked checked so
+	// the poller doesn't come back to it every tick.
+	target, terr := entry.TargetFor(app.CatalogVersion, true)
+	if terr != nil {
+		r.log.Debug("dockerapp: check_update skipped", "id", app.ID, "slug", app.Slug, "err", terr)
+		_ = r.dockerApps.MarkChecked(context.Background(), app.ID)
+		return
+	}
 
 	callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	raw, err := r.agent.Call(callCtx, "docker_app.check_update", map[string]any{
 		"slug":          app.EffectiveSlug(),
-		"image_channel": entry.ImageChannel,
+		"image_channel": target.ImageChannel,
 	})
 	// Always mark checked even on failure -- we don\'t want a
 	// permanently-failing registry to spin the poller hot.

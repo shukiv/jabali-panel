@@ -38,12 +38,21 @@ export async function lifecycleAction(
   await apiClient.post(`${BASE}/${id}/${action}`);
 }
 
-export async function updateApp(id: string): Promise<{ status: string; id: string }> {
+export interface UpdateStarted {
+  status: string;
+  id: string;
+  // GH #1956: set when the update doesn't take the app to the catalog's
+  // newest version (it stays on its release track, or steps to the next
+  // major first), saying why.
+  notice?: string;
+}
+
+export async function updateApp(id: string): Promise<UpdateStarted> {
   // The server now starts the update asynchronously and returns 202 with
   // { status: "updating" } — the pull + recreate runs in the background and
   // the row's status (polled every 8s) flips to running/failed. (Was
   // synchronous; long image pulls blew past nginx's proxy timeout -> 502.)
-  const { data } = await apiClient.post<{ status: string; id: string }>(`${BASE}/${id}/update`, undefined);
+  const { data } = await apiClient.post<UpdateStarted>(`${BASE}/${id}/update`, undefined);
   return data;
 }
 
