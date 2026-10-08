@@ -159,6 +159,9 @@ func computeOrphans(agentSites []string, knownDomain map[string]bool) []string {
 		"jabali-pma":       true, // phpMyAdmin
 		"jabali-adminer":   true,
 		"jabali-webmail":   true,
+		// The *.preview.<hostname> catch-all vhost; the reconciler's
+		// knownSystemSites lists it too.
+		"jabali-preview-fallback": true,
 	}
 	out := make([]string, 0, len(agentSites))
 	for _, site := range agentSites {

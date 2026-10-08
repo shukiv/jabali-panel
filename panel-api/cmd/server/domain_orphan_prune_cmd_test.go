@@ -44,6 +44,7 @@ func TestComputeOrphans_SkipsSystemSites(t *testing.T) {
 			"default", "default-ssl", "000-default", "000-default-ssl",
 			"jabali-panel", "jabali-panel-ssl",
 			"jabali-pma", "jabali-adminer", "jabali-webmail",
+			"jabali-preview-fallback",
 			"actual-orphan.com",
 		},
 		map[string]bool{}, // no DB rows
