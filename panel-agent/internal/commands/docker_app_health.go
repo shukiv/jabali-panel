@@ -42,7 +42,13 @@ func probeLoopbackPorts(dir string) []int {
 // not. The GET hits "/" — a deliberately generic liveness path that returns
 // <500 on every catalog app once it's up (even when it redirects to a login).
 func httpServing(ctx context.Context, ports []int) bool {
-	client := &http.Client{Timeout: 5 * time.Second}
+	// A redirect is the answer, not a link to follow: an app that sends "/"
+	// to https://<its domain>/login would otherwise send the probe to TLS on
+	// a plain-HTTP port, and an installed Nextcloud never passed (GH #1956).
+	client := &http.Client{
+		Timeout:       5 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
 	for _, p := range ports {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d/", p), nil)
 		if err != nil {
