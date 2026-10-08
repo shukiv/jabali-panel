@@ -88,15 +88,21 @@ func TestRestoreBundleDNS_PublishesNoMTAStsRecordsForADomainWithItOff(t *testing
 // Records already there stay as they are; a stale policy id is replaced.
 func TestRestoreBundleDNS_MTAStsRecordsAreKeptOrReplaced(t *testing.T) {
 	fastRestoreDNSWait(t, time.Second)
-	for name, txt := range map[string]string{"same": `"v=STSv1; id=1700000000"`, "stale": `"v=STSv1; id=1600000000"`} {
+	for name, txts := range map[string][]string{
+		"same":  {`"v=STSv1; id=1700000000"`},
+		"stale": {`"v=STSv1; id=1600000000"`},
+		"extra": {`"v=STSv1; id=1700000000"`, `"v=STSv1; id=1600000000"`},
+	} {
 		t.Run(name, func(t *testing.T) {
 			f := newRDFixture()
 			d := f.domains.rows["example.com"]
 			d.MTASTSEnabled, d.MTASTSId = true, 1700000000
 			marker := dnscompile.MTAStsRecordsManagedBy
 			f.records.rows = append(f.records.rows,
-				models.DNSRecord{ID: "m-a", ZoneID: "z1", Name: "mta-sts", Type: "A", Content: "203.0.113.10", Managed: true, ManagedBy: &marker, IsEnabled: true},
-				models.DNSRecord{ID: "m-t", ZoneID: "z1", Name: "_mta-sts", Type: "TXT", Content: txt, Managed: true, ManagedBy: &marker, IsEnabled: true})
+				models.DNSRecord{ID: "m-a", ZoneID: "z1", Name: "mta-sts", Type: "A", Content: "203.0.113.10", Managed: true, ManagedBy: &marker, IsEnabled: true})
+			for i, txt := range txts {
+				f.records.rows = append(f.records.rows, models.DNSRecord{ID: "m-t" + string(rune('0'+i)), ZoneID: "z1", Name: "_mta-sts", Type: "TXT", Content: txt, Managed: true, ManagedBy: &marker, IsEnabled: true})
+			}
 			_, warnings := f.runMTASts(t)
 			if got := strings.Join(f.records.mtaStsRows("z1"), "|"); got != rdMTAStsWant || len(warnings) != 0 {
 				t.Fatalf("MTA-STS records %q warnings %v, want %q", got, warnings, rdMTAStsWant)

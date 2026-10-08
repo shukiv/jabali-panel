@@ -185,9 +185,37 @@ func TestApply_OverwriteDomainTurnsMTASTSOnNeverOff(t *testing.T) {
 		t.Fatalf("MTA-STS %v writes %v scheduled %v errors %v; want it turned on and the domain scheduled", f.own("d-own").MTASTSEnabled, f.domains.writes, f.scheduled, r.Errors)
 	}
 
-	f, _ = msOverwrite(t, func(o *models.Domain) { o.MTASTSEnabled = true }, func(dm *internalbackup.MetadataDomain) { dm.MTASTSEnabled = false })
-	if !f.own("d-own").MTASTSEnabled || containsWrite(f.domains.writes, "mta-sts") {
-		t.Fatalf("MTA-STS %v writes %v; want it left on", f.own("d-own").MTASTSEnabled, f.domains.writes)
+	// On already: left as it is, so its policy id isn't rotated; off in the
+	// backup: left on.
+	for _, backupOn := range []bool{true, false} {
+		f, _ = msOverwrite(t, func(o *models.Domain) { o.MTASTSEnabled = true }, func(dm *internalbackup.MetadataDomain) { dm.MTASTSEnabled = backupOn })
+		if !f.own("d-own").MTASTSEnabled || containsWrite(f.domains.writes, "mta-sts") {
+			t.Fatalf("backup on=%v: MTA-STS %v writes %v; want it left on, unwritten", backupOn, f.own("d-own").MTASTSEnabled, f.domains.writes)
+		}
+	}
+}
+
+// A DAV host the checks refuse leaves the domain's own.
+func TestApply_OverwriteDomainKeepsTheDAVHostTheChecksRefuse(t *testing.T) {
+	f := odSetup("d-own", true, "")
+	f.deps.Domains = msOverwriteDomains{f.domains}
+	o := f.domains.rows["d-own"]
+	o.CalDAVHost = "dav.own.org"
+	f.domains.rows["d-own"] = o
+	check := f.deps.CheckDomain
+	f.deps.CheckDomain = func(ctx context.Context, row *models.Domain, owner string) ([]string, error) {
+		w, err := check(ctx, row, owner)
+		if row.CalDAVHost == "bad host" {
+			row.CalDAVHost = ""
+			w = append(w, "CalDAV host dropped: not a hostname")
+		}
+		return w, err
+	}
+	m := odMeta("d-own")
+	m.Domains[0].MailProvider, m.Domains[0].CalDAVHost, m.Domains[0].CardDAVHost = models.MailProviderJabali, "bad host", "card.example.net"
+	r := Apply(context.Background(), m, f.deps)
+	if got := f.own("d-own"); got.CalDAVHost != "dav.own.org" || got.CardDAVHost != "card.example.net" || !hasError(r.Errors, "CalDAV host dropped") {
+		t.Fatalf("caldav %q carddav %q errors %v; want the domain's own CalDAV host kept and the backup's CardDAV host taken", got.CalDAVHost, got.CardDAVHost, r.Errors)
 	}
 }
 
