@@ -2,9 +2,10 @@ package certbot
 
 import (
 	"os"
-	"path/filepath"
 	"sync"
 	"testing"
+
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-agent/internal/execstub"
 )
 
 // Test-safety for GH #994 / #1160.
@@ -42,13 +43,9 @@ var (
 // asserting parsed certbot output inject their own fake Binary instead.
 func certbotTestStub() string {
 	certbotStubOnce.Do(func() {
-		dir, err := os.MkdirTemp("", "jabali-certbot-stub-")
+		p, err := execstub.NoOpBinary("certbot")
 		if err != nil {
 			panic("certbot test stub: " + err.Error())
-		}
-		p := filepath.Join(dir, "certbot")
-		if werr := os.WriteFile(p, []byte("#!/bin/sh\ncat >/dev/null 2>&1\nexit 0\n"), 0o700); werr != nil {
-			panic("certbot test stub: " + werr.Error())
 		}
 		certbotStubPath = p
 	})
