@@ -99,7 +99,7 @@ func TestRunSelectiveRestoreJob_PersistsOutcomeForTheDrawer(t *testing.T) {
 		Agent: restoreAgent{reply: json.RawMessage(
 			`{"applied":["db → alice_pg (postgres)"],"skipped":[],"warnings":["mail: 1 message already existed"]}`)},
 	}}
-	h.runSelectiveRestoreJob("job-2", "snap", "alice",
+	h.runSelectiveRestoreJob("job-2", "snap", "alice", "",
 		meRestoreSelectiveRequest{Databases: []string{"alice_pg"}, Overwrite: true}, nil, nil)
 	jobs.wait(t)
 	if jobs.status != models.BackupJobStatusSucceeded {
@@ -125,7 +125,7 @@ func TestRunSelectiveRestoreJob_AgentFailureIsGenericOnTheRow(t *testing.T) {
 		Jobs:  jobs,
 		Agent: restoreAgent{err: errors.New("restic: /var/lib secret path leaked")},
 	}}
-	h.runSelectiveRestoreJob("job-3", "snap", "alice",
+	h.runSelectiveRestoreJob("job-3", "snap", "alice", "",
 		meRestoreSelectiveRequest{Databases: []string{"x"}, Overwrite: true}, nil, nil)
 	jobs.wait(t)
 	if jobs.status != models.BackupJobStatusFailed {
@@ -206,7 +206,7 @@ func TestRunSelectiveRestoreJob_SendsTheSourceDestinationRepo(t *testing.T) {
 	h := &meBackupHandler{cfg: MeBackupsHandlerConfig{Jobs: jobs, Agent: ag}}
 	dest := &models.BackupDestination{ID: "d1", Kind: "local", URL: "/var/lib/jabali-backups/custom"}
 
-	h.runSelectiveRestoreJob("job-4", "snap", "alice",
+	h.runSelectiveRestoreJob("job-4", "snap", "alice", "",
 		meRestoreSelectiveRequest{Databases: []string{"x"}, Overwrite: true}, nil, dest)
 	jobs.wait(t)
 

@@ -35,6 +35,10 @@ Each database row has **Download backup** and **Restore from file** actions, for
   per-database non-superuser scoped role and are built in a throwaway staging
   database, swapped onto the real name only on success (a bad upload never wipes
   the live database).
+- A restored PostgreSQL database's tables belong to its first database user.
+  When no user is granted on it, they belong to a role that can't sign in,
+  never to the server's `postgres` role, and the first user you grant on it
+  takes them over (GH #1993).
 
 See [Backups](./backups.md) for account- and server-level restore.
 

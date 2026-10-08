@@ -59,14 +59,34 @@ SCRAM-SHA-256 verifier.
 - A grant joins a database user and a database of the same engine only.
 - A PostgreSQL role gets the access the **Databases** page gives: all of each
   database it is granted, and that database's `public` schema with its tables
-  and sequences. The restored tables stay owned by the server's `postgres`
-  role, as in a database created on this server: the role can read and change
-  their rows and create tables of its own, but can't alter or drop the
-  restored ones.
+  and sequences.
 
 The server agent must be as new as the panel to create the accounts and
 roles. With an older agent the restored database users are left out and the
 report says to run `jabali update`.
+
+### PostgreSQL databases
+
+A restore loads each PostgreSQL database's dump as a role with no server-wide
+rights, never as the server's `postgres` role (GH #1993). The dump goes into a
+new database, which takes the old one's place only once the load succeeds. A
+dump that fails to load leaves the database as it was, and the restore report
+gives the loader's error. A dump that needs an extension only a superuser can
+create doesn't load.
+
+- **Who owns the restored tables.** A restored database's tables, views,
+  sequences and functions belong to its first database user: the first one
+  granted on it. That user can alter and drop them, so the site's migrations
+  run after a restore.
+- **A database with no database user.** Its restored tables belong to a role
+  that can't sign in, until a database user is granted on it: the first user
+  you grant on it under **Databases** takes them over. The restore report
+  lists each such database.
+- **Access.** The roles that could connect to the database before the restore
+  can connect to the restored one.
+- **Overwrite.** With **Overwrite existing items with the backup** on, a
+  database that already has data is replaced by the backup's: what isn't in
+  the backup is gone from it.
 
 ### DNS records
 
@@ -200,8 +220,10 @@ A restore from an uploaded archive adds only what the account is missing
 is off by default:
 
 - **Off** — files already in the home stay as they are; only missing files are
-  added. A database that already has tables, or a Docker app folder that
-  already has files, is skipped and listed in the restore report. An existing
+  added. A MariaDB database that already has tables, a PostgreSQL database
+  that already holds anything (a table, view, sequence, function or large
+  object), or a Docker app folder that already has files, is skipped and
+  listed in the restore report. An existing
   mailbox keeps its auto-reply. A PHP pool the account has keeps its process
   settings, and a PHP setting it has keeps its value; the backup's other PHP
   settings are added. Mail already there is not copied twice.

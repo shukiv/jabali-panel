@@ -29,6 +29,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/backupmetadata"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dbops"
 	ginctx "git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
@@ -274,6 +275,7 @@ func (h *meBackupHandler) restoreUploadApply(c *gin.Context) {
 	go h.runTenantUploadRestore(tenantUploadRestoreArgs{
 		path:           path,
 		outcomePath:    outcomePath,
+		userID:         userID,
 		username:       username,
 		components:     components,
 		allowedDBs:     allowedDBs,
@@ -286,6 +288,7 @@ func (h *meBackupHandler) restoreUploadApply(c *gin.Context) {
 type tenantUploadRestoreArgs struct {
 	path           string
 	outcomePath    string
+	userID         string
 	username       string
 	components     []string
 	allowedDBs     []string
@@ -335,6 +338,7 @@ func (h *meBackupHandler) runTenantUploadRestore(a tenantUploadRestoreArgs) {
 		Warnings              []string `json:"warnings"`
 		DBAllowlistEnforced   bool     `json:"db_allowlist_enforced"`
 		MailAllowlistEnforced bool     `json:"mail_allowlist_enforced"`
+		RestoredPostgresDBs   []string `json:"restored_postgres_databases"`
 	}
 	_ = json.Unmarshal(raw, &result)
 	// Belt-and-suspenders: the pre-apply inspect gate should have caught an old
@@ -351,6 +355,13 @@ func (h *meBackupHandler) runTenantUploadRestore(a tenantUploadRestoreArgs) {
 	// bundle (that path recreates domains/db rows from manifest data = a hijack
 	// vector). The caller's own rows already exist; the data restore is what a
 	// self-service restore needs.
+	//
+	// GH #1993: the restored PostgreSQL databases' users get their access
+	// again, and the first takes over the restored objects.
+	if h.cfg.Agent != nil {
+		pgErrs, pgNotes := dbops.RegrantRestoredPostgres(ctx, h.cfg.Agent, h.cfg.Databases, h.cfg.DatabaseGrants, h.cfg.DatabaseUsers, a.userID, result.RestoredPostgresDBs)
+		result.Warnings = append(append(result.Warnings, pgErrs...), pgNotes...)
+	}
 	_ = os.Remove(a.path)
 	writeRestoreUploadOutcome(a.outcomePath, "done", result.Applied, result.Warnings, "")
 }

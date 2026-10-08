@@ -32,6 +32,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/api"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/backupmetadata"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/backupwrapperhelpers"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dbops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/mailaddrowner"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
@@ -234,6 +235,31 @@ type accountManifestRow struct {
 // In recon mode (--apply=false) it writes nothing. The agent still returns
 // the metadata bundle, and reinstating it would rewrite live panel rows, Kratos
 // and Stalwart: exactly what a staging-only smoke test must not touch.
+// regrantRestoredPostgres is dbops.RegrantRestoredPostgres; tests swap it.
+var regrantRestoredPostgres = dbops.RegrantRestoredPostgres
+
+// regrantRestoredPostgresCLI grants the account's PostgreSQL database users
+// on the databases a backup.restore reply says it loaded again, so the first
+// takes over the restored objects (GH #1993; see
+// dbops.RegrantRestoredPostgres).
+func regrantRestoredPostgresCLI(ctx context.Context, w io.Writer, ag dbops.AgentCaller, raw json.RawMessage, accountID string) {
+	var resp struct {
+		RestoredPostgresDBs []string `json:"restored_postgres_databases"`
+	}
+	if json.Unmarshal(raw, &resp) != nil || len(resp.RestoredPostgresDBs) == 0 {
+		return
+	}
+	errs, notes := regrantRestoredPostgres(ctx, ag, repository.NewDatabaseRepository(sharedDB),
+		repository.NewDatabaseUserGrantRepository(sharedDB), repository.NewDatabaseUserRepository(sharedDB),
+		accountID, resp.RestoredPostgresDBs)
+	for _, e := range errs {
+		fmt.Fprintf(w, "WARNING: %s\n", e)
+	}
+	for _, n := range notes {
+		fmt.Fprintf(w, "  note: %s\n", n)
+	}
+}
+
 func handleRestoreReply(w io.Writer, raw json.RawMessage, apply bool,
 	applyMeta func(json.RawMessage), ensureUser func(accountRestoreUserBlock) error) {
 	var resp struct {
@@ -427,6 +453,9 @@ Examples:
 			handleRestoreReply(cmd.OutOrStdout(), raw, applyFlag,
 				func(meta json.RawMessage) { applyPanelMetadata(ctx, cmd, meta) },
 				func(u accountRestoreUserBlock) error { return ensurePanelUserRow(ctx, cmd, u) })
+			if applyFlag {
+				regrantRestoredPostgresCLI(ctx, cmd.OutOrStdout(), ag, raw, resolvedID)
+			}
 			return nil
 		},
 	}

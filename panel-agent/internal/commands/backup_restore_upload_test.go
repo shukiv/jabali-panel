@@ -375,6 +375,7 @@ func TestUploadRestore_ReportsTheNewPostgresDatabase(t *testing.T) {
 		return exec.CommandContext(ctx, "true")
 	}
 	t.Cleanup(func() { execCommandContext = prev })
+	pgLoads(t)
 	root := t.TempDir()
 	var stages []backup.ManifestStage
 	results := []backupRestoreStage{}

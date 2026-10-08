@@ -115,6 +115,10 @@ type backupRestoreFromTarResult struct {
 	// (restoreClaims.ArchivePostgresDBs), a separate list: a name restored
 	// as one engine says nothing about the other engine's database.
 	ArchivePostgresDBs []string `json:"archive_postgres_databases"`
+	// RestoredPostgresDBs are the PostgreSQL databases the restore loaded,
+	// in every mode (restoreReport.PostgresDatabases). The panel grants each
+	// database user it has on them again.
+	RestoredPostgresDBs []string `json:"restored_postgres_databases"`
 }
 
 // setClaims puts what an upload-mode restore created or wrote into the reply.
@@ -275,7 +279,8 @@ func restoreAccountFromTar(ctx context.Context, jobID, tarPath, targetUsername s
 	if enf.upload() {
 		enf.Claims = &restoreClaims{}
 	}
-	applied, warnings := applyAccountRestore(ctx, root, targetUsername, manifest.User, manifest.Stages, stageResults, enf)
+	applied, warnings, pgDBs := applyAccountRestoreReporting(ctx, root, targetUsername, manifest.User, manifest.Stages, stageResults, enf)
+	out.RestoredPostgresDBs = pgDBs
 	out.Applied = applied
 	out.Warnings = append(out.Warnings, warnings...)
 	if enf.Claims != nil {

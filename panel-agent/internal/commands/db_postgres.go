@@ -121,6 +121,8 @@ func dbPgDropHandler(ctx context.Context, params json.RawMessage) (any, error) {
 	if err := pgRunSQL(ctx, sql); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "drop db: " + err.Error()}
 	}
+	// A restore's holder role held only this database's objects (GH #1993).
+	pgDropIdleHolder(ctx, p.DBName)
 	return dbPgCreateResponse{OK: true}, nil
 }
 
@@ -297,6 +299,11 @@ func dbPgGrantHandler(ctx context.Context, params json.RawMessage) (any, error) 
 	}, "; ") + ";"
 	if err := pgRunSQLOnDB(ctx, p.DBName, schemaSQL); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "grant schema: " + err.Error()}
+	}
+	// GH #1993: the first user granted on a restored database takes over the
+	// objects its restore left with the database's holder role.
+	if _, err := pgAdoptRestoredObjects(ctx, p.DBName, p.Role); err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "take over restored objects: " + err.Error()}
 	}
 	return dbPgCreateResponse{OK: true}, nil
 }

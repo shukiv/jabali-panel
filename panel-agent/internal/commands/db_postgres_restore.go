@@ -61,8 +61,9 @@ import (
 //      re-apply DATABASE + table/sequence/default privileges to every granted
 //      role (MariaDB's GRANT ON db.* covers all tables — Postgres needs this
 //      explicitly); ALTER DATABASE OWNER TO postgres (jabali's create model);
-//      drop the shadow. When there are no granted roles, ownership falls to
-//      postgres.
+//      drop the shadow. When there are no granted roles, the objects go to the
+//      database's holder role (db_postgres_holder.go), never to postgres: the
+//      first role granted on the database later takes them over.
 //   4. swap: DROP the real db, RENAME <tmp> onto its name. A crash in the tiny
 //      gap between these leaves the restored data in the jbrt_* db (manually
 //      recoverable), never an empty database. CheckReserve guards the transient
@@ -163,11 +164,7 @@ func pgSuperExecInDB(ctx context.Context, db, sql string) error {
 // adds nothing, and ALTER DATABASE ... OWNER TO postgres then hands the
 // owner's ACL entry to postgres. The role was left with no CONNECT of its own
 // and reached its database only through PUBLIC, which the panel revokes.
-func pgRestorePostPass(ctx context.Context, tmpDB, shadow, ownerRole string, grantRoles []string) *agentwire.AgentError {
-	ownerTarget := ownerRole
-	if ownerTarget == "" {
-		ownerTarget = "postgres"
-	}
+func pgRestorePostPass(ctx context.Context, tmpDB, shadow, ownerTarget string, grantRoles []string) *agentwire.AgentError {
 	if err := pgSuperExecInDB(ctx, tmpDB, fmt.Sprintf(`REASSIGN OWNED BY "%s" TO "%s"`, shadow, ownerTarget)); err != nil {
 		return &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "reassign ownership: " + err.Error()}
 	}
@@ -205,6 +202,21 @@ func pgRestorePostPass(ctx context.Context, tmpDB, shadow, ownerRole string, gra
 	return nil
 }
 
+// pgLoaderProcAttr runs the dump's loader as the unprivileged OS user
+// nobody; tests swap it.
+var pgLoaderProcAttr = func() (*syscall.SysProcAttr, *agentwire.AgentError) {
+	nobody, err := user.Lookup("nobody")
+	if err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "lookup nobody: " + err.Error()}
+	}
+	uid, uerr := strconv.ParseUint(nobody.Uid, 10, 32)
+	gid, gerr := strconv.ParseUint(nobody.Gid, 10, 32)
+	if uerr != nil || gerr != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "parse nobody uid/gid"}
+	}
+	return &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: uint32(uid), Gid: uint32(gid)}}, nil
+}
+
 func dbPgRestoreHandler(ctx context.Context, params json.RawMessage) (any, error) {
 	var p dbPgRestoreParams
 	if err := json.Unmarshal(params, &p); err != nil {
@@ -222,12 +234,6 @@ func dbPgRestoreHandler(ctx context.Context, params json.RawMessage) (any, error
 		}
 	}
 
-	// Refuse to start loading when the PG data filesystem is already under the
-	// host reserve floor (mirrors db.restore's /var/lib/mysql check).
-	if err := hostreserve.CheckReserve("/var/lib/postgresql", 0); err != nil {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeUnavailable, Message: "database storage is under the host disk reserve: " + err.Error()}
-	}
-
 	// Open the dump escape-proof under an allowed root (same scope + roots as
 	// db.restore — Gitea #501 symlink hardening).
 	restoreScope, scErr := filesafe.NewScope("system", "system", []string{
@@ -243,21 +249,45 @@ func dbPgRestoreHandler(ctx context.Context, params json.RawMessage) (any, error
 	}
 	defer f.Close()
 
+	if aerr := pgLoadScoped(ctx, p.DBName, f, p.OwnerRole, p.GrantRoles); aerr != nil {
+		return nil, aerr
+	}
+
+	// Delete the uploaded dump through the scope (never a raw os.Remove — see
+	// db.restore for the Gitea #501 rationale).
+	_ = restoreScope.RemoveInScope(p.Path, false)
+
+	return dbPgRestoreResponse{OK: true}, nil
+}
+
+// pgLoadScoped loads the dump in f into PostgreSQL database db the way the
+// SECURITY MODEL above describes: as a non-superuser shadow role, into a
+// staging database swapped onto db only once the load and its post-pass
+// succeed. f is open and seekable. The restored objects go to ownerRole, or,
+// with none, to the database's holder role (see pgHolderRole). Each of
+// grantRoles gets the access db.postgres.grant gives.
+func pgLoadScoped(ctx context.Context, db string, f *os.File, ownerRole string, grantRoles []string) *agentwire.AgentError {
+	// Refuse to start loading when the PG data filesystem is already under the
+	// host reserve floor (mirrors db.restore's /var/lib/mysql check).
+	if err := hostreserve.CheckReserve("/var/lib/postgresql", 0); err != nil {
+		return &agentwire.AgentError{Code: agentwire.CodeUnavailable, Message: "database storage is under the host disk reserve: " + err.Error()}
+	}
+
 	// GH #1045: detect the dump format so pgAdmin's default CUSTOM (and TAR)
 	// archives restore via pg_restore, not just plain-SQL via psql. Read the
 	// header, then rewind so whichever loader gets a stream from offset 0.
 	hdr := make([]byte, 512)
 	nHdr, _ := io.ReadFull(f, hdr) // short read (small dump) is fine
 	if _, serr := f.Seek(0, io.SeekStart); serr != nil {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "rewind dump: " + serr.Error()}
+		return &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "rewind dump: " + serr.Error()}
 	}
 	isArchive := pgDumpIsArchive(hdr[:nHdr])
 
-	shadow := pgShadowRole(p.DBName)
-	tmpDB := pgRestoreTmpDB(p.DBName)
+	shadow := pgShadowRole(db)
+	tmpDB := pgRestoreTmpDB(db)
 	pb := make([]byte, 18)
 	if _, err := rand.Read(pb); err != nil {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "mint scoped restore password"}
+		return &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "mint scoped restore password"}
 	}
 	pwd := hex.EncodeToString(pb) // hex only — safe in a SQL string literal
 
@@ -276,7 +306,7 @@ BEGIN
   END IF;
 END $$;`, shadow, shadow, pwd, shadow, pwd)
 	if err := pgRunSQL(ctx, provision); err != nil {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "provision scoped restore role: " + err.Error()}
+		return &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "provision scoped restore role: " + err.Error()}
 	}
 	// Until the swap succeeds, tear down anything we created — the STAGING db
 	// and the shadow — never the tenant's real database. Dropping tmpDB first
@@ -294,14 +324,14 @@ END $$;`, shadow, shadow, pwd, shadow, pwd)
 	// create the dump's objects). DROP IF EXISTS first cleans up a tmpDB
 	// stranded by a crashed prior attempt.
 	if err := pgRunSQL(ctx, fmt.Sprintf(`DROP DATABASE IF EXISTS "%s" WITH (FORCE)`, tmpDB)); err != nil {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "clear staging database: " + err.Error()}
+		return &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "clear staging database: " + err.Error()}
 	}
 	if err := pgRunSQL(ctx, fmt.Sprintf(`CREATE DATABASE "%s" OWNER "%s" TEMPLATE template0`, tmpDB, shadow)); err != nil {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "create staging database: " + err.Error()}
+		return &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "create staging database: " + err.Error()}
 	}
 	// The staging db becomes the tenant's database at the swap, ACL included.
 	if err := pgRunSQL(ctx, pgRevokePublicSQL(tmpDB)); err != nil {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "revoke public access on staging database: " + err.Error()}
+		return &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "revoke public access on staging database: " + err.Error()}
 	}
 
 	// (3) Load the dump into the STAGING db as the shadow, unprivileged OS user,
@@ -309,16 +339,10 @@ END $$;`, shadow, shadow, pwd, shadow, pwd)
 	// the tenant's real db untouched — the defer just drops the staging db.
 	// Residual: `\!` in a dump runs as `nobody`, which can't touch the FS but
 	// isn't network-isolated — the same accepted residual as the MariaDB loader.
-	nobody, err := user.Lookup("nobody")
-	if err != nil {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "lookup nobody: " + err.Error()}
+	cred, aerr := pgLoaderProcAttr()
+	if aerr != nil {
+		return aerr
 	}
-	uid, uerr := strconv.ParseUint(nobody.Uid, 10, 32)
-	gid, gerr := strconv.ParseUint(nobody.Gid, 10, 32)
-	if uerr != nil || gerr != nil {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "parse nobody uid/gid"}
-	}
-	cred := &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: uint32(uid), Gid: uint32(gid)}}
 	if isArchive {
 		// pg_restore path (GH #1045) — a pgAdmin CUSTOM/TAR archive. The archive
 		// rides in on a SEEKABLE stdin: `nobody` inherits root's already-open file
@@ -341,7 +365,7 @@ END $$;`, shadow, shadow, pwd, shadow, pwd)
 		rest.Stdout = &out
 		rest.Stderr = &out
 		if err := rest.Run(); err != nil {
-			return nil, &agentwire.AgentError{Code: agentwire.CodeFailedPrecondition, Message: "restore load failed: " + pgTrimLoaderError(out.String())}
+			return &agentwire.AgentError{Code: agentwire.CodeFailedPrecondition, Message: "restore load failed: " + pgTrimLoaderError(out.String())}
 		}
 	} else {
 		load := execCommandContext(ctx, "psql",
@@ -362,7 +386,7 @@ END $$;`, shadow, shadow, pwd, shadow, pwd)
 		// here is lost.
 		pr, pw, perr := os.Pipe()
 		if perr != nil {
-			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "restore pipe: " + perr.Error()}
+			return &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "restore pipe: " + perr.Error()}
 		}
 		load.Stdin = pr
 		var out bytes.Buffer
@@ -371,23 +395,30 @@ END $$;`, shadow, shadow, pwd, shadow, pwd)
 		if err := load.Start(); err != nil {
 			_ = pr.Close()
 			_ = pw.Close()
-			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "restore start: " + err.Error()}
+			return &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "restore start: " + err.Error()}
 		}
 		_ = pr.Close() // child holds its own copy; parent closes so psql sees EOF
 		sanErr := sanitizePgPlainDump(f, pw)
 		_ = pw.Close() // signal EOF to psql whatever the sanitize outcome
 		if waitErr := load.Wait(); waitErr != nil {
-			return nil, &agentwire.AgentError{Code: agentwire.CodeFailedPrecondition, Message: "restore load failed (check the dump is a plain-SQL pg_dump): " + pgTrimLoaderError(out.String())}
+			return &agentwire.AgentError{Code: agentwire.CodeFailedPrecondition, Message: "restore load failed (check the dump is a plain-SQL pg_dump): " + pgTrimLoaderError(out.String())}
 		}
 		if sanErr != nil {
-			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "restore stream: " + sanErr.Error()}
+			return &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "restore stream: " + sanErr.Error()}
 		}
 	}
 
 	// (4) Superuser post-pass on the STAGING db — ownership + grants, none of it
 	// from dump content.
-	if aerr := pgRestorePostPass(ctx, tmpDB, shadow, p.OwnerRole, p.GrantRoles); aerr != nil {
-		return nil, aerr
+	ownerTarget := ownerRole
+	if ownerTarget == "" {
+		ownerTarget = pgHolderRole(db)
+		if aerr := pgEnsureHolder(ctx, ownerTarget); aerr != nil {
+			return aerr
+		}
+	}
+	if aerr := pgRestorePostPass(ctx, tmpDB, shadow, ownerTarget, grantRoles); aerr != nil {
+		return aerr
 	}
 
 	// (5) Atomic-ish swap: only now do we touch the tenant's real db — drop it
@@ -396,22 +427,22 @@ END $$;`, shadow, shadow, pwd, shadow, pwd)
 	// recoverable), never an empty database. Terminate real-db connections so
 	// the DROP can't block.
 	if err := pgRunSQL(ctx, fmt.Sprintf(
-		`SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '%s' AND pid <> pg_backend_pid()`, p.DBName)); err != nil {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "terminate db connections: " + err.Error()}
+		`SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '%s' AND pid <> pg_backend_pid()`, db)); err != nil {
+		return &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "terminate db connections: " + err.Error()}
 	}
-	if err := pgRunSQL(ctx, fmt.Sprintf(`DROP DATABASE IF EXISTS "%s" WITH (FORCE)`, p.DBName)); err != nil {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "drop target database: " + err.Error()}
+	if err := pgRunSQL(ctx, fmt.Sprintf(`DROP DATABASE IF EXISTS "%s" WITH (FORCE)`, db)); err != nil {
+		return &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "drop target database: " + err.Error()}
 	}
-	if err := pgRunSQL(ctx, fmt.Sprintf(`ALTER DATABASE "%s" RENAME TO "%s"`, tmpDB, p.DBName)); err != nil {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "swap restored database: " + err.Error()}
+	if err := pgRunSQL(ctx, fmt.Sprintf(`ALTER DATABASE "%s" RENAME TO "%s"`, tmpDB, db)); err != nil {
+		return &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "swap restored database: " + err.Error()}
 	}
 	success = true
-
-	// Delete the uploaded dump through the scope (never a raw os.Remove — see
-	// db.restore for the Gitea #501 rationale).
-	_ = restoreScope.RemoveInScope(p.Path, false)
-
-	return dbPgRestoreResponse{OK: true}, nil
+	if ownerRole != "" {
+		// A holder left by an earlier restore owned objects only in the
+		// database the swap just dropped.
+		pgDropIdleHolder(ctx, db)
+	}
+	return nil
 }
 
 func init() {

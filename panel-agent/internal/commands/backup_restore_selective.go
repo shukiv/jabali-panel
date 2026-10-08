@@ -63,6 +63,9 @@ type backupRestoreSelectiveResult struct {
 	Applied  []string `json:"applied"`
 	Skipped  []string `json:"skipped"`
 	Warnings []string `json:"warnings"`
+	// RestoredPostgresDBs are the PostgreSQL databases the restore loaded
+	// (GH #1993); the panel grants each database user it has on them again.
+	RestoredPostgresDBs []string `json:"restored_postgres_databases"`
 }
 
 func backupRestoreSelectiveHandler(ctx context.Context, raw json.RawMessage) (any, error) {
@@ -245,7 +248,8 @@ func backupRestoreSelectiveHandler(ctx context.Context, raw json.RawMessage) (an
 			}
 			stageResults = append(stageResults, sr)
 		}
-		applied, warnings := applyAccountRestore(ctx, stagingRoot, p.TargetUsername, manifest.User, dbStages, stageResults, restoreEnforcement{})
+		applied, warnings, pgDBs := applyAccountRestoreReporting(ctx, stagingRoot, p.TargetUsername, manifest.User, dbStages, stageResults, restoreEnforcement{})
+		out.RestoredPostgresDBs = pgDBs
 		out.Applied = append(out.Applied, applied...)
 		out.Warnings = append(out.Warnings, warnings...)
 	}
