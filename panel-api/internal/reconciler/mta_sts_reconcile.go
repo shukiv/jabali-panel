@@ -22,6 +22,7 @@ package reconciler
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
@@ -105,6 +106,32 @@ func (r *Reconciler) applyMTASts(ctx context.Context, domain *models.Domain) {
 		return
 	}
 	r.log.Info("mta-sts: applied", "domain", domain.Name, "id", domain.MTASTSId)
+}
+
+// sweepMTAStsSite reports whether site is a domain's MTA-STS vhost
+// (`<domain>-mta-sts`, written by mail.mtasts.apply). Such a vhost is not an
+// orphan while its domain has a row. When the domain has none and no teardown
+// is pending for it, the domain was deleted before domain.delete reaped the
+// vhost: it is removed here. Left in place it names the deleted domain's
+// certificate, which the teardown removed, so `nginx -t` fails for the whole
+// server and nginx doesn't start. The name pattern is only ever written by
+// Jabali, so this never reaches an operator's own site.
+func (r *Reconciler) sweepMTAStsSite(ctx context.Context, site string, hasRow func(string) bool, pendingTeardowns map[string]bool) bool {
+	domain, ok := strings.CutSuffix(site, "-mta-sts")
+	if !ok || domain == "" {
+		return false
+	}
+	if hasRow(domain) || pendingTeardowns[domain] {
+		return true
+	}
+	cctx, cancel := context.WithTimeout(ctx, mtaStsCallTimeout)
+	defer cancel()
+	if _, err := r.agent.Call(cctx, "mail.mtasts.disable", map[string]any{"domain": domain}); err != nil {
+		r.log.Warn("mta-sts: removing a deleted domain's vhost failed — will retry", "domain", domain, "err", err)
+		return true
+	}
+	r.log.Info("mta-sts: removed a deleted domain's vhost", "domain", domain)
+	return true
 }
 
 func (r *Reconciler) disableMTASts(ctx context.Context, domain *models.Domain) {

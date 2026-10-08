@@ -109,7 +109,7 @@ the Stalwart mail Domain row when applicable. It is irreversible.`,
 			fmt.Println()
 			fail := 0
 			for _, site := range orphans {
-				name := strings.TrimSuffix(site, "-mail")
+				name := orphanDomainName(site)
 				delCtx, delCancel := context.WithTimeout(ctx, 30*time.Second)
 				_, err := sharedAgent.Call(delCtx, "domain.delete", map[string]string{"domain": name})
 				delCancel()
@@ -137,6 +137,17 @@ the Stalwart mail Domain row when applicable. It is irreversible.`,
 // before the lookup.
 //
 // Pure function, no I/O — tested via TestComputeOrphans.
+// orphanDomainName is the domain an agent site belongs to: a domain's derived
+// vhosts (`<domain>-mail`, `<domain>-mta-sts`) belong to the domain.
+func orphanDomainName(site string) string {
+	for _, suffix := range []string{"-mail", "-mta-sts"} {
+		if name, ok := strings.CutSuffix(site, suffix); ok {
+			return name
+		}
+	}
+	return site
+}
+
 func computeOrphans(agentSites []string, knownDomain map[string]bool) []string {
 	systemSites := map[string]bool{
 		"default":          true,
@@ -148,14 +159,16 @@ func computeOrphans(agentSites []string, knownDomain map[string]bool) []string {
 		"jabali-pma":       true, // phpMyAdmin
 		"jabali-adminer":   true,
 		"jabali-webmail":   true,
+		// The *.preview.<hostname> catch-all vhost; the reconciler's
+		// knownSystemSites lists it too.
+		"jabali-preview-fallback": true,
 	}
 	out := make([]string, 0, len(agentSites))
 	for _, site := range agentSites {
 		if systemSites[site] {
 			continue
 		}
-		name := strings.TrimSuffix(site, "-mail")
-		if knownDomain[name] {
+		if knownDomain[orphanDomainName(site)] {
 			continue
 		}
 		out = append(out, site)

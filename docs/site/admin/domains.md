@@ -12,7 +12,7 @@ Filters: by owner, by package, by SSL state (issued / pending / failed / off), b
 
 - **Edit** — opens the domain edit page (the same component the user sees, with additional admin-only fields).
 - **Disable** — sets `is_disabled=1`; the reconciler returns 503 on every request to the domain.
-- **Delete** — destructive; removes the vhost, revokes the SSL certificate, drops the Stalwart domain entry (if mail was enabled), removes DNS zone records.
+- **Delete** — destructive; removes the vhost, revokes the SSL certificate, drops the Stalwart domain entry (if mail was enabled), removes DNS zone records. The domain's webmail and MTA-STS vhosts go with it. A server where a deleted domain's MTA-STS vhost was left behind by an earlier release has it removed by the reconciler within a minute of the update: that vhost names the deleted domain's certificate, so `nginx -t` failed for the whole server.
 
 ## Create
 

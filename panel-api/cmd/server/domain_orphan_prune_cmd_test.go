@@ -44,6 +44,7 @@ func TestComputeOrphans_SkipsSystemSites(t *testing.T) {
 			"default", "default-ssl", "000-default", "000-default-ssl",
 			"jabali-panel", "jabali-panel-ssl",
 			"jabali-pma", "jabali-adminer", "jabali-webmail",
+			"jabali-preview-fallback",
 			"actual-orphan.com",
 		},
 		map[string]bool{}, // no DB rows
@@ -103,5 +104,31 @@ func TestComputeOrphans_KnownDomainNotInAgent(t *testing.T) {
 	)
 	if len(got) != 0 {
 		t.Errorf("agent-side empty must produce no orphans; got %v", got)
+	}
+}
+
+func TestComputeOrphans_StripsMTAStsSuffix(t *testing.T) {
+	// foo.com-mta-sts is foo.com's MTA-STS vhost: not an orphan while foo.com
+	// has a row. --apply on it would tear down the live domain's policy vhost
+	// while the DB still says it is applied, so nothing would put it back.
+	got := computeOrphans(
+		[]string{"foo.com", "foo.com-mta-sts", "gone.com-mta-sts"},
+		map[string]bool{"foo.com": true},
+	)
+	want := []string{"gone.com-mta-sts"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+func TestOrphanDomainName(t *testing.T) {
+	// --apply tears an orphan down by its domain's name, which reaps the
+	// domain's derived vhosts with it.
+	for site, want := range map[string]string{
+		"gone.com": "gone.com", "gone.com-mail": "gone.com", "gone.com-mta-sts": "gone.com",
+	} {
+		if got := orphanDomainName(site); got != want {
+			t.Errorf("orphanDomainName(%q) = %q, want %q", site, got, want)
+		}
 	}
 }

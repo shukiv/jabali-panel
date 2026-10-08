@@ -41,13 +41,14 @@ import (
 // Each subdir contains the .well-known/mta-sts.txt nginx serves. The
 // root dir is created on first apply with 0755 + root:root ownership
 // — content is non-secret (public policy) and nginx reads as
-// www-data.
-const mtaStsRoot = "/var/www/jabali-mta-sts"
+// www-data. A var so tests can point it at a temp dir.
+var mtaStsRoot = "/var/www/jabali-mta-sts"
 
 // mtaStsVhostDir is the nginx sites-available/sites-enabled root the
 // agent already manages — same shape as the domain vhost files
 // written by writeVhost(). One `<domain>-mta-sts.conf` per domain.
-const (
+// Vars so tests can point them at temp dirs.
+var (
 	mtaStsSitesAvail = "/etc/nginx/sites-available"
 	mtaStsSitesEnabl = "/etc/nginx/sites-enabled"
 )
