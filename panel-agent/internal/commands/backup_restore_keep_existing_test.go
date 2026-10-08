@@ -57,8 +57,6 @@ func keepExecRecorder(t *testing.T, withTables, missing, pgWithTables []string) 
 					return exec.CommandContext(ctx, "echo", "1")
 				}
 			}
-		case strings.Contains(line, "pg_tables"):
-			return exec.CommandContext(ctx, "echo", "3")
 		}
 		return exec.CommandContext(ctx, "true")
 	}

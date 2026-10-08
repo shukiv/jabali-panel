@@ -796,8 +796,11 @@ func applyAccountRestore(
 					warnings = append(warnings, fmt.Sprintf("db %q: not restored: a database with this name already exists on this server and isn't this account's", db))
 					continue
 				}
+				// Keep-existing: the load replaces the whole database, so one
+				// that holds anything at all (a function or a view counts) is
+				// kept as it is.
 				if pgExists && enf.KeepExisting {
-					if has, hErr := pgHasTables(ctx, db); hErr != nil {
+					if has, hErr := pgHoldsObjects(ctx, db); hErr != nil {
 						warnings = append(warnings, fmt.Sprintf("db %s (postgres): kept: couldn't check whether it already has data: %v", db, hErr))
 						continue
 					} else if has {
@@ -1388,21 +1391,6 @@ func pgHoldsObjects(ctx context.Context, db string) (bool, error) {
 		return false, err
 	}
 	return objectCount(out)
-}
-
-// pgHasTables reports whether PostgreSQL database db has a table outside the
-// system schemas. db goes in as the -d argument: no SQL is built from it.
-func pgHasTables(ctx context.Context, db string) (bool, error) {
-	out, err := execCommandContext(ctx, "sudo", "-u", "postgres", "psql", "-XAtq", "-d", db, "-c",
-		"SELECT count(*) FROM pg_tables WHERE schemaname NOT IN ('pg_catalog', 'information_schema')").Output()
-	if err != nil {
-		return false, err
-	}
-	n, convErr := strconv.Atoi(strings.TrimSpace(string(out)))
-	if convErr != nil {
-		return false, fmt.Errorf("unexpected table count %q", strings.TrimSpace(string(out)))
-	}
-	return n > 0, nil
 }
 
 // dirHasEntries reports whether path is a directory with anything in it.

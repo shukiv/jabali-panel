@@ -220,8 +220,10 @@ A restore from an uploaded archive adds only what the account is missing
 is off by default:
 
 - **Off** — files already in the home stay as they are; only missing files are
-  added. A database that already has tables, or a Docker app folder that
-  already has files, is skipped and listed in the restore report. An existing
+  added. A MariaDB database that already has tables, a PostgreSQL database
+  that already holds anything (a table, view, sequence, function or large
+  object), or a Docker app folder that already has files, is skipped and
+  listed in the restore report. An existing
   mailbox keeps its auto-reply. A PHP pool the account has keeps its process
   settings, and a PHP setting it has keeps its value; the backup's other PHP
   settings are added. Mail already there is not copied twice.

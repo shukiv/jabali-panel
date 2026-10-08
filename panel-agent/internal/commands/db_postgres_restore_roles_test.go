@@ -240,8 +240,6 @@ func pgRestoreWorld(t *testing.T, existing []string, holds map[string]func(query
 				return exec.CommandContext(ctx, "sh", "-c", h(line))
 			}
 			return exec.CommandContext(ctx, "echo", "0")
-		case strings.Contains(line, "pg_tables"):
-			return exec.CommandContext(ctx, "echo", "0")
 		}
 		return exec.CommandContext(ctx, "true")
 	}

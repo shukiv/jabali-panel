@@ -238,6 +238,42 @@ func TestAccountRestore_KeepsTheAccessOfTheRolesThatCanConnect(t *testing.T) {
 	}
 }
 
+// Keep-existing keeps a database that holds anything, not only tables: the
+// load would replace the whole database, and a function or a view in it
+// with it.
+func TestAccountRestore_KeepExistingKeepsADatabaseWithOnlyAFunction(t *testing.T) {
+	me := currentUsername(t)
+	db := me + "_pgfn"
+	w := newPgWorld(t, func(line string) (string, bool) {
+		if out, ok := pgExistsReply(line, []string{db}); ok {
+			return out, false
+		}
+		switch {
+		case strings.Contains(line, "pg_tables"):
+			return "0", false
+		case strings.Contains(line, "pg_proc"):
+			return "1", false
+		}
+		return "", false
+	})
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "db", db+".pgdump"), "PGDMP")
+	claims := &restoreClaims{}
+	enf := restoreEnforcement{Mode: restoreModeUpload, DBPrefix: me + "_", AllowedDBNames: []string{db},
+		ForeignDBNames: []string{}, Claims: claims, KeepExisting: true}
+
+	_, warnings := applyAccountRestore(context.Background(), root, me, backup.ManifestUser{Username: me},
+		[]backup.ManifestStage{{Name: backup.StageDB, Items: []string{db}}},
+		[]backupRestoreStage{{Name: backup.StageDB, Status: backup.StageStatusOK}}, enf)
+
+	if i := w.ran("pg_restore"); i >= 0 {
+		t.Errorf("a database holding a function was replaced: %s", w.lines[i])
+	}
+	if len(claims.Databases) != 0 || !hasWarning(warnings, "db "+db+" (postgres): kept: ") {
+		t.Errorf("claims %v, warnings %v; want it kept and unclaimed", claims.Databases, warnings)
+	}
+}
+
 // A role named like the database's holder that can sign in, or has any
 // server-wide right, isn't a holder: the load stops and the database stays as
 // it was.
