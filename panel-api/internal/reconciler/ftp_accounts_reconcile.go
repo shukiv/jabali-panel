@@ -29,13 +29,16 @@ import (
 const ftpAccountsReDispatchInterval = 15 * time.Minute
 
 // desiredFtpHash covers every reconcile input: each row's identity +
-// flags + home, and the owning tenant's username (renames change the
-// rendered config without touching ftp_accounts rows).
+// flags + home, the owning tenant's username (renames change the
+// rendered config without touching ftp_accounts rows), and the owner's id:
+// an account deleted and restored under the same username comes back with
+// the same rows and a new id, and its subaccounts must be recreated on the
+// next pass, not at the gate's audit (GH #1993).
 func desiredFtpHash(rows []models.FtpAccount, tenantByUserID map[string]string) string {
 	lines := make([]string, 0, len(rows))
 	for _, a := range rows {
 		lines = append(lines, strings.Join([]string{
-			a.ID, a.Username, tenantByUserID[a.UserID], a.HomePath,
+			a.ID, a.Username, a.UserID, tenantByUserID[a.UserID], a.HomePath,
 			fmt.Sprintf("%t|%t|%t|%t", a.FTPAccess, a.SFTPAccess, a.WebDAVAccess, a.IsEnabled),
 			// GH #1145: isolation mode + jail path change the rendered sshd
 			// chroot and the recreate params, so they must move the hash.

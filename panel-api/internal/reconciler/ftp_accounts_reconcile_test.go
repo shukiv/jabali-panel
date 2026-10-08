@@ -282,6 +282,33 @@ func TestReconcileFtpAccounts_HashGateSkipsSteadyState(t *testing.T) {
 	}
 }
 
+// An account deleted and restored between two passes comes back under a new
+// user id with the same username and the same rows. Its subaccounts are gone
+// from the host, so the next pass must recreate them, not skip until the
+// gate's audit.
+func TestReconcileFtpAccounts_AccountRecreatedUnderTheSameNameIsNotSkipped(t *testing.T) {
+	agent := &fakeAgent{resultByMethod: map[string]json.RawMessage{
+		"ftpaccount.list":     hostListResult(t, []agentFtpListEntry{{Username: "shop_deploy"}}),
+		"ftpaccount.list_all": hostListAllResult(t, []agentFtpListEntry{{Username: "shop_deploy"}}),
+	}}
+	row := models.FtpAccount{
+		ID: "a1", UserID: "u1", Username: "shop_deploy",
+		HomePath: "/home/shop", SFTPAccess: true, IsEnabled: true,
+	}
+	r := ftpTestReconciler(t, agent, []models.FtpAccount{row}, map[string]string{"u1": "shop", "u2": "shop"})
+	r.reconcileFtpAccounts(context.Background())
+
+	row.UserID = "u2"
+	r.ftpAccounts.(*fakeFtpAccountRepo).rows = []models.FtpAccount{row}
+	agent.resultByMethod["ftpaccount.list"] = hostListResult(t, nil)
+	agent.resultByMethod["ftpaccount.list_all"] = hostListAllResult(t, nil)
+	before := len(ftpCallsByMethod(agent)["ftpaccount.create"])
+	r.reconcileFtpAccounts(context.Background())
+	if got := len(ftpCallsByMethod(agent)["ftpaccount.create"]) - before; got != 1 {
+		t.Fatalf("ftpaccount.create calls after the account came back = %d, want 1", got)
+	}
+}
+
 func TestReconcileFtpAccounts_FailureKeepsGateOpen(t *testing.T) {
 	agent := &fakeAgent{
 		failMethod: "ftpaccount.sshd_sync",
