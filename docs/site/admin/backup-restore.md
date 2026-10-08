@@ -313,6 +313,10 @@ it into the target account only (GH #1993):
   passwords: the restore report lists each one, and the account sets a new
   password under **FTP Accounts**. An account created by an earlier attempt
   at the same restore counts as already here.
+- **SSH keys** — restored only into an account the restore created, for the
+  same reason as FTP passwords (GH #1993). Into an account that was already
+  here, each key the account doesn't have is listed in the restore report:
+  check it, then add it under **SSH Keys**.
 - **Sign-in** — the account's sign-in from the backup (its password) is not
   imported. The account keeps the sign-in it has on this server; an account
   the restore creates gets a new password and needs a recovery link.

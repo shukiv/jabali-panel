@@ -144,6 +144,9 @@ type uploadedData struct {
 	// ftpPasswordsStaged are the FTP subaccounts whose password from the
 	// file the agent staged; nil when it named none.
 	ftpPasswordsStaged []string
+	// accountCreated: the restore created the account, so Apply restores
+	// the file's SSH keys.
+	accountCreated bool
 }
 
 // regrantRestoredPostgres grants the account's PostgreSQL database users on
@@ -226,8 +229,8 @@ func uploadModeFor(overwrite bool) uploadRestoreMode {
 //
 // userCreated says this restore created the account, so its home holds
 // nothing but the file's data. Only then does the agent restore the file's
-// FTP subaccount passwords (GH #1993): the file's author never gets a login
-// to data they didn't supply.
+// FTP subaccount passwords, and Apply its SSH keys (GH #1993): the file's
+// author never gets a login to data they didn't supply.
 //
 // report, when not nil, receives the restore's progress by step (GH #1993).
 func (h *backupHandler) restoreUploadedAccount(ctx context.Context, tarPath, username, targetID string, components []string, mode uploadRestoreMode, userCreated bool, skips restoreSkips, report func(restoreProgress)) (uploadedAccountRestore, error) {
@@ -286,7 +289,7 @@ func (h *backupHandler) restoreUploadedAccount(ctx context.Context, tarPath, use
 			archiveMariaDBs: first.ArchiveMariaDBs, archivePostgresDBs: first.ArchivePostgresDBs,
 			keepExisting: keepExisting, overwriteRows: mode == uploadOverwrite,
 			skipMail: skips.mail, skipPostgres: skips.postgres,
-			ftpPasswordsStaged: first.FTPPasswordsStaged})
+			ftpPasswordsStaged: first.FTPPasswordsStaged, accountCreated: userCreated})
 	// GH #1993: the restored PostgreSQL databases' users get their access
 	// again, and the first takes over the restored objects.
 	pgErrs, pgNotes := h.regrantRestoredPostgres(ctx, targetID, first.RestoredPostgresDBs)
