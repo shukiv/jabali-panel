@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/redis/go-redis/v9"
+
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/appsecops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dbops"
@@ -31,6 +33,12 @@ type AppDeleteDeps struct {
 	Domains       repository.DomainRepository
 	CRSExclusions repository.CRSRuleExclusionRepository
 	CRSHostModes  repository.CRSHostModeRepository
+	// Redis, CacheTokenSecret and CacheTokenSalts let a WordPress delete remove
+	// the site's cache keys and its per-install Redis ACL user. Optional: with
+	// Redis nil they stay until the panel's WP-cache cleanup reaps the user.
+	Redis            *redis.Client
+	CacheTokenSecret string
+	CacheTokenSalts  repository.CacheTokenSaltRepository
 }
 
 // AppDeleteArgs identifies the install being torn down plus the pre-resolved
@@ -153,6 +161,15 @@ func RunAppDelete(args AppDeleteArgs, deps AppDeleteDeps) error {
 	// way — deleting it before the databases row also releases the RESTRICT
 	// fk_wpinstalls_db.
 	deps.Installs.Delete(ctx, args.InstallID)
+
+	// A WordPress site's cache keys and per-install Redis ACL user go with it
+	// (keys first, through the user; ADR-0173). Best-effort: never fails the
+	// delete; the WP-cache cleanup reaps a user left behind.
+	if appType == "wordpress" {
+		if err := purgeAndRevokeInstallCache(ctx, deps.Redis, deps.CacheTokenSecret, deps.CacheTokenSalts, args.UserID, args.OSUser, args.InstallID); err != nil {
+			slog.WarnContext(ctx, "app delete: revoke the site's cache user", "err", err, "install_id", args.InstallID)
+		}
+	}
 
 	// GH #1650: with the install row gone, its Flarum WAF exclusion is stale.
 	// Remove it and apply that live. Best-effort: never fails the delete.

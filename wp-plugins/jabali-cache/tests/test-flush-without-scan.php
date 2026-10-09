@@ -236,6 +236,13 @@ fs_assert( null !== $rc->invoke( fs_page_request( $rk, $rg ), $pageb ), 'a page 
 $raw->set( $prefix . 'gen:p', '99999999999999999999' ); // the next purge.
 fs_assert( null === $rc->invoke( fs_page_request( $rk, $rg ), $pageb ), 'page generations past PHP_INT_MAX still tell purges apart' );
 
+// A flush or purge that Redis didn't record is reported, not claimed.
+$raw->set( $prefix . 'gen:p', 'unreadable' );
+fs_assert( false === ( new Jabali_Cache_Object_Cache() )->flush(), "flush() reports failure when the page generation can't be bumped" );
+fs_assert( false === ( new Jabali_Cache_Page_Cache() )->purge_all(), "purge_all() reports failure when its generation can't be bumped" );
+$raw->del( $prefix . 'gen:p' );
+fs_assert( true === ( new Jabali_Cache_Object_Cache() )->flush(), 'and flush() succeeds again once it can' );
+
 // Clean up the counters (the object keys can't be found without SCAN).
 $raw->del( $prefix . 'gen:o' );
 $raw->del( $prefix . 'gen:p' );

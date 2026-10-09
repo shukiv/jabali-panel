@@ -4,7 +4,7 @@ Tags: redis, object cache, cache, performance, page cache
 Requires at least: 5.6
 Tested up to: 7.0
 Requires PHP: 7.4
-Stable tag: 1.2.0
+Stable tag: 1.2.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -127,6 +127,9 @@ Only if your host does not already have one. On Jabali, nginx serves a FastCGI m
 Deactivating removes the `object-cache.php` drop-in cleanly, so WordPress reverts to its built-in non-persistent cache. Uninstalling removes the plugin's options. Your Redis data is just a cache and is safe to discard.
 
 == Changelog ==
+
+= 1.2.1 =
+* A flush or page purge that Redis didn't record is now reported as failed (`wp jabali-cache flush`, the settings page) instead of claiming success.
 
 = 1.2.0 =
 * Flushing the object cache and purging the page cache no longer depend on scanning Redis. Every cached item carries a generation number, and a flush moves the generation forward, so nothing cached before it is read again. Old items are still deleted right away when possible; otherwise they expire or are evicted.

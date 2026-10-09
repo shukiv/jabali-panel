@@ -1222,6 +1222,10 @@ func createDeleteAndKickAgent(parentCtx context.Context, installID, userID, appT
 		Domains:        cfg.Domains,
 		CRSExclusions:  cfg.CRSExclusions,
 		CRSHostModes:   cfg.CRSHostModes,
+		// The site's cache keys and Redis ACL user go with it (ADR-0173).
+		Redis:            cfg.Redis,
+		CacheTokenSecret: cfg.CacheTokenSecret,
+		CacheTokenSalts:  cfg.CacheTokenSalts,
 	})
 }
 

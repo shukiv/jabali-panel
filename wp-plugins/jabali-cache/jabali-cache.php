@@ -3,7 +3,7 @@
  * Plugin Name:       Jabali Cache
  * Plugin URI:        https://jabali-panel.com/
  * Description:        Redis-backed object cache (and optional full-page cache) tuned for the Jabali hosting panel. Uses the shared panel Redis over a unix socket with per-site key isolation. Works with or without the phpredis extension.
- * Version:           1.2.0
+ * Version:           1.2.1
  * Requires at least: 5.6
  * Requires PHP:      7.4
  * Author:            Jabali Panel
@@ -17,7 +17,7 @@
 defined( 'ABSPATH' ) || exit;
 
 if ( ! defined( 'JABALI_CACHE_VERSION' ) ) {
-	define( 'JABALI_CACHE_VERSION', '1.2.0' );
+	define( 'JABALI_CACHE_VERSION', '1.2.1' );
 }
 if ( ! defined( 'JABALI_CACHE_PLUGIN_FILE' ) ) {
 	define( 'JABALI_CACHE_PLUGIN_FILE', __FILE__ );

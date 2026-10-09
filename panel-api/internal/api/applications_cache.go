@@ -96,10 +96,10 @@ func revokeInstallACL(ctx context.Context, rdb *redis.Client, osUser, installID 
 	if rdb == nil || osUser == "" || installID == "" {
 		return nil
 	}
-	if err := rdb.Do(ctx, "ACL", "DELUSER", installACLUser(osUser, installID)).Err(); err != nil {
+	if err := wpCacheACL(ctx, rdb, "DELUSER", installACLUser(osUser, installID)); err != nil {
 		return err
 	}
-	return rdb.Do(ctx, "ACL", "SAVE").Err()
+	return wpCacheACL(ctx, rdb, "SAVE")
 }
 
 // RevokeAllUserCacheACLs removes EVERY cache ACL user of an OS user on the
@@ -395,8 +395,10 @@ func (h *wordPressHandler) setCacheCore(ctx context.Context, installID string, e
 	// logged, never fails the disable (the toggle already succeeded).
 	if !enabled {
 		// JAB-62: each install owns its per-install ACL user, so revoke exactly
-		// this one — no sibling coordination, siblings are untouched. Best-effort.
-		if rErr := revokeInstallACL(ctx, h.cfg.Redis, osUser, installID); rErr != nil {
+		// this one — no sibling coordination, siblings are untouched. Its keys
+		// go first, through the user itself: afterwards nothing could delete
+		// them (ADR-0173). Best-effort.
+		if rErr := purgeAndRevokeInstallCache(ctx, h.cfg.Redis, h.cfg.CacheTokenSecret, h.cfg.CacheTokenSalts, install.UserID, osUser, installID); rErr != nil {
 			slog.WarnContext(ctx, "cache: revoke install ACL", "err", rErr, "os_user", osUser, "install_id", installID)
 		}
 	}

@@ -348,6 +348,12 @@ func (h *wordPressHandler) cacheStats(c *gin.Context) {
 	if uErr := json.Unmarshal(res, &stats); uErr != nil || stats == nil {
 		stats = map[string]any{}
 	}
+	// The panel's WP-cache cleanup counts the site's keys on every pass
+	// (ADR-0173); its count wins over the plugin's. keys_at says how old it is.
+	if st, ok := wpCacheStatsFor(inst.ID); ok {
+		stats["keys"] = st.Keys
+		stats["keys_at"] = st.At.UTC().Format(time.RFC3339)
+	}
 	// GH #617: the tenant ACL can't run INFO, so fill the server-wide hit ratio +
 	// memory from the panel's privileged Redis client. ADMIN-ONLY: these numbers
 	// are Redis-instance-wide (shared across all tenants), so exposing them to a

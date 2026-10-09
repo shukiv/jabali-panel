@@ -1061,6 +1061,20 @@ func runServe(cmd *cobra.Command, args []string) error {
 		go reconciler.StartDBUsageTicker(ctx, sharedAgent, deps.Databases, log)
 	}
 
+	// ADR-0173: WP-cache cleanup. Removes keys from older cache generations,
+	// enforces each site's key budget, counts each site's keys for the cache
+	// drawer, and reaps per-install Redis users whose app is gone. No-op
+	// without Redis or the cache-token secret.
+	if deps.Redis != nil && deps.WordPressInstalls != nil && deps.Users != nil && deps.DB != nil {
+		go api.StartWPCacheGC(ctx, api.WPCacheGCConfig{
+			Redis:    deps.Redis,
+			Installs: deps.WordPressInstalls,
+			Users:    deps.Users,
+			Salts:    repository.NewCacheTokenSaltRepository(deps.DB),
+			Secret:   app.CacheHMACSecret(),
+		})
+	}
+
 	// Disk-usage sweeper: persists users.disk_used_kb so the admin Users
 	// list can sort by it. Optional — without it the column simply falls
 	// back to the per-row fetch and shows no sort control's worth of data.
