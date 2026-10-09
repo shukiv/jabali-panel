@@ -337,6 +337,12 @@ var tenantRedisUnlinker = func(panel *redis.Client, osUser, token string, db int
 // tenantRedisClientOptions copies where the panel's client connects to and
 // swaps in the tenant's credential and database.
 func tenantRedisClientOptions(base *redis.Options, osUser, token string, db int) *redis.Options {
+	return redisDBClientOptions(base, tenantRedisACLUser(osUser), token, db)
+}
+
+// redisDBClientOptions is a one-connection client on database db, connecting
+// where base connects, as username/password.
+func redisDBClientOptions(base *redis.Options, username, password string, db int) *redis.Options {
 	return &redis.Options{
 		Network:      base.Network,
 		Addr:         base.Addr,
@@ -344,8 +350,8 @@ func tenantRedisClientOptions(base *redis.Options, osUser, token string, db int)
 		DialTimeout:  base.DialTimeout,
 		ReadTimeout:  base.ReadTimeout,
 		WriteTimeout: base.WriteTimeout,
-		Username:     tenantRedisACLUser(osUser),
-		Password:     token,
+		Username:     username,
+		Password:     password,
 		DB:           db,
 		PoolSize:     1,
 	}
@@ -383,13 +389,13 @@ func tenantRedisFlushKeys(ctx context.Context, panel *redis.Client, osUser, toke
 }
 
 func tenantRedisFlushDB(ctx context.Context, panel *redis.Client, db int, prefix, osUser, token string) (int64, error) {
-	// A dedicated connection: SELECT must not change the database of a pooled
-	// connection the rest of the panel uses.
-	conn := panel.Conn()
+	// A separate client on database db, with the panel's credential. Never
+	// SELECT on the panel's own client: panel.Conn() hands its connection back
+	// to the shared pool on Close, still on the selected database, and the
+	// panel's later commands would run there.
+	base := panel.Options()
+	conn := redis.NewClient(redisDBClientOptions(base, base.Username, base.Password, db))
 	defer conn.Close()
-	if err := conn.Select(ctx, db).Err(); err != nil {
-		return 0, fmt.Errorf("select db %d: %w", db, err)
-	}
 	del := tenantRedisUnlinker(panel, osUser, token, db)
 	defer del.Close()
 

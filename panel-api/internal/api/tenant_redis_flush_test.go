@@ -366,3 +366,34 @@ func TestRedisFlushScope(t *testing.T) {
 		t.Error("read:redis must not be a known scope")
 	}
 }
+
+// The flush SELECTs other databases. That must never leak into the panel's own
+// client: its pooled connections must still be on the panel's database after a
+// flush (a connection returned to the pool on DB 15 would send the panel's
+// later commands to DB 15).
+func TestTenantRedisFlush_PanelPoolStaysOnItsDatabase(t *testing.T) {
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mr.Close()
+	stubFlushSeams(t, mr)
+	// One pooled connection, so a leaked SELECT would surely be reused.
+	panel := redis.NewClient(&redis.Options{Addr: mr.Addr(), PoolSize: 1})
+	defer panel.Close()
+	seed(t, mr, 0, "jabali:panel-key")
+	seed(t, mr, 15, "jt:bob:a")
+
+	if _, _, err := tenantRedisFlushKeys(context.Background(), panel, "bob", "tok"); err != nil {
+		t.Fatal(err)
+	}
+	if v, err := panel.Get(context.Background(), "jabali:panel-key").Result(); err != nil || v != "v" {
+		t.Fatalf("panel client no longer on db 0 after a flush: %q %v", v, err)
+	}
+	if err := panel.Set(context.Background(), "jabali:after", "1", 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if !mr.DB(0).Exists("jabali:after") {
+		t.Fatal("panel write after a flush landed outside db 0")
+	}
+}
