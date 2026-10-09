@@ -204,6 +204,7 @@ func deleteAppDirect(ctx context.Context, installID string) (*models.Application
 	// dropping every panel row regardless, which is how invisible host/DB
 	// orphans were made. It also tears down the app's auto-created cron jobs,
 	// which this CLI path never did.
+	cacheCfg, _ := buildAppDeps() // Redis + cache token secret/salts, best-effort
 	if err := api.RunAppDelete(api.AppDeleteArgs{
 		InstallID:      installID,
 		UserID:         install.UserID,
@@ -226,6 +227,11 @@ func deleteAppDirect(ctx context.Context, installID string) (*models.Application
 		Domains:       repository.NewDomainRepository(sharedDB),
 		CRSExclusions: repository.NewCRSRuleExclusionRepository(sharedDB),
 		CRSHostModes:  repository.NewCRSHostModeRepository(sharedDB),
+		// The site's cache keys and Redis ACL user go with it, as on the HTTP
+		// path (ADR-0173). Best-effort: no Redis leaves them to the cleanup.
+		Redis:            cacheCfg.Redis,
+		CacheTokenSecret: cacheCfg.CacheTokenSecret,
+		CacheTokenSalts:  cacheCfg.CacheTokenSalts,
 	}); err != nil {
 		return install, err
 	}

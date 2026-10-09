@@ -8,6 +8,11 @@ project adheres to [Semantic Versioning](https://semver.org/).
 
 Nothing yet.
 
+## [1.2.1] — 2026-10-09
+
+### Fixed
+- `flush()` returns false when the page-cache generation couldn't be bumped (cached pages would still be served), and `purge_all()` returns false when its bump fails, instead of reporting success. `wp jabali-cache flush` and the settings page show the failure.
+
 ## [1.2.0] — 2026-10-09
 
 ### Changed

@@ -369,13 +369,16 @@ class Jabali_Cache_Page_Cache {
 	 * Deleting the old pages right away is only a best-effort memory reclaim;
 	 * they expire on their own TTL anyway.
 	 *
-	 * @return int pages deleted by the reclaim.
+	 * @return int|false pages deleted by the reclaim, or false when the purge
+	 *                   couldn't be recorded (the pages are still served).
 	 */
 	public function purge_all() {
 		if ( ! $this->client->connect() ) {
 			return 0;
 		}
-		$this->client->bump_generation( $this->gen_key() );
+		if ( false === $this->client->bump_generation( $this->gen_key() ) ) {
+			return false;
+		}
 		return $this->client->delete_by_pattern( $this->cfg['prefix'] . 'page:*' );
 	}
 

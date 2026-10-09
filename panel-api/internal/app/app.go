@@ -1788,6 +1788,10 @@ func startRateLimiterSweeper(rl *middleware.RateLimiter) {
 // without stranding every tenant's wp-config cache token. Falls back to the
 // master token (with a one-time warning) for installs predating the dedicated
 // secret, so caching keeps working until install.sh provisions it.
+// CacheHMACSecret is cacheHMACSecret for the WP-cache cleanup, which serve.go
+// starts outside the route wiring and must derive the same install tokens.
+func CacheHMACSecret() string { return cacheHMACSecret() }
+
 func cacheHMACSecret() string {
 	if s := os.Getenv("JABALI_WP_CACHE_HMAC_SECRET"); s != "" {
 		return s

@@ -542,7 +542,8 @@ class Jabali_Cache_Object_Cache {
 	 * doesn't depend on SCAN; deleting the old keys right away is only a
 	 * best-effort memory reclaim.
 	 *
-	 * @return bool false when the flush couldn't be recorded in Redis.
+	 * @return bool false when the flush couldn't be recorded in Redis (for
+	 *              objects or for pages).
 	 */
 	public function flush() {
 		$this->cache = array();
@@ -550,15 +551,16 @@ class Jabali_Cache_Object_Cache {
 			return true; // runtime-only: nothing of ours is being read from Redis.
 		}
 		$this->redis_calls++;
-		$gen = $this->client->bump_generation( $this->prefix . 'gen:o' );
-		$this->client->bump_generation( $this->prefix . 'gen:p' );
+		$gen  = $this->client->bump_generation( $this->prefix . 'gen:o' );
+		$pgen = $this->client->bump_generation( $this->prefix . 'gen:p' );
 		if ( false === $gen ) {
 			return false;
 		}
 		$this->gen    = $gen;
 		$this->gen_at = microtime( true );
 		$this->client->delete_by_pattern( $this->prefix . '*', $this->prefix . 'gen:' );
-		return true;
+		// Cached pages are only cleared once gen:p moved too.
+		return false !== $pgen;
 	}
 
 	/**

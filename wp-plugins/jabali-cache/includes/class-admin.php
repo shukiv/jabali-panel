@@ -93,16 +93,21 @@ class Jabali_Cache_Admin {
 
 	public function handle_flush() {
 		$this->guard();
-		$n = 0;
+		$n  = 0;
+		$ok = true;
 		if ( function_exists( 'wp_cache_flush' ) ) {
-			wp_cache_flush();
+			$ok = false !== wp_cache_flush();
 		}
 		// Also purge page cache entries.
 		if ( class_exists( 'Jabali_Cache_Page_Cache' ) ) {
 			$pc = new Jabali_Cache_Page_Cache();
 			$n  = $pc->purge_all();
+			if ( false === $n ) {
+				$ok = false;
+				$n  = 0;
+			}
 		}
-		$this->redirect( 'flushed', array( 'pages' => $n ) );
+		$this->redirect( $ok ? 'flushed' : 'flush_failed', array( 'pages' => $n ) );
 	}
 
 	public function handle_dropins() {
@@ -683,6 +688,7 @@ class Jabali_Cache_Admin {
 		$map   = array(
 			'saved'             => array( 'success', 'Settings saved.' ),
 			'flushed'           => array( 'success', 'Cache flushed.' ),
+			'flush_failed'      => array( 'error', 'The cache flush could not be recorded in Redis. The site may still serve cached content; try again.' ),
 			'dropins_installed' => array( 'success', 'Drop-ins installed.' ),
 			'dropins_removed'   => array( 'success', 'Drop-ins removed.' ),
 			'dropins_failed'    => array( 'error', 'Could not install drop-ins (a foreign object-cache.php may be present, or wp-content is not writable).' ),

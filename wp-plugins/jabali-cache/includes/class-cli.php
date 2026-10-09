@@ -127,12 +127,15 @@ class Jabali_Cache_CLI {
 	 * @when after_wp_load
 	 */
 	public function flush( $args, $assoc ) {
-		if ( function_exists( 'wp_cache_flush' ) ) {
-			wp_cache_flush();
+		if ( function_exists( 'wp_cache_flush' ) && false === wp_cache_flush() ) {
+			\WP_CLI::error( 'Cache flush failed: Redis did not record it.' );
 		}
 		if ( isset( $assoc['pages'] ) && class_exists( 'Jabali_Cache_Page_Cache' ) ) {
 			$pc = new Jabali_Cache_Page_Cache();
 			$n  = $pc->purge_all();
+			if ( false === $n ) {
+				\WP_CLI::error( 'Page cache purge failed: Redis did not record it.' );
+			}
 			\WP_CLI::log( "Purged {$n} page cache entries." );
 		}
 		\WP_CLI::success( 'Cache flushed.' );
