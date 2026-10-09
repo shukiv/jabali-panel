@@ -782,6 +782,19 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 		return
 	}
 
+	// GH #2056: mail's install needs DNS. Refuse to turn mail on while DNS is
+	// off (settingsops owns the rule), or while DNS isn't installed and running
+	// yet (a host fact, asked of the agent), instead of starting an install that
+	// is sure to fail.
+	if err := settingsops.CheckModuleDependencies(&before, current); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "mail_requires_dns", "detail": err.Error()})
+		return
+	}
+	if !before.MailEnabled && current.MailEnabled && !h.dnsReadyForMail(ctx) {
+		c.JSON(http.StatusConflict, gin.H{"error": "dns_not_ready", "detail": dnsNotReadyDetail})
+		return
+	}
+
 	// Admin opt-in for tenant Docker apps. Enabling requires the engine; the
 	// host tenant setup itself is dispatched AFTER persist (below), detached
 	// from this request — see the background goroutine.
@@ -1288,6 +1301,13 @@ func isInstallableModule(key string) bool {
 type moduleStatusEntry struct {
 	Installed bool `json:"installed"`
 	Active    bool `json:"active"`
+	// GH #2056: an install queued or running, and why the last install failed
+	// (with its time and install log) while the module is not up. The agent
+	// keeps these; the Modules card shows them instead of a silent timeout.
+	Installing  bool   `json:"installing"`
+	LastError   string `json:"last_error,omitempty"`
+	LastErrorAt string `json:"last_error_at,omitempty"`
+	InstallLog  string `json:"install_log,omitempty"`
 }
 
 // moduleStatus proxies the agent's system.module.status for every installable
@@ -1397,8 +1417,37 @@ func (h *serverSettingsHandler) moduleInstall(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "agent_unavailable"})
 		return
 	}
+	if req.Key == "mail" && !h.dnsReadyForMail(c.Request.Context()) {
+		c.JSON(http.StatusConflict, gin.H{"error": "dns_not_ready", "detail": dnsNotReadyDetail})
+		return
+	}
 	h.dispatchModuleInstall(req.Key)
 	c.JSON(http.StatusAccepted, gin.H{"status": "installing", "key": req.Key})
+}
+
+// dnsNotReadyDetail is the reason given when mail is turned on, or retried,
+// before DNS is installed and running.
+const dnsNotReadyDetail = "Mail needs the DNS module running, and DNS isn't installed and running yet. Wait until DNS shows active, then turn on mail."
+
+// dnsReadyForMail reports whether DNS is installed and running, so a mail
+// install can succeed (GH #2056). When the agent can't say, it returns true:
+// the install then reports its own failure, and the reconciler doesn't
+// dispatch mail until DNS is up anyway.
+func (h *serverSettingsHandler) dnsReadyForMail(ctx context.Context) bool {
+	if h.cfg.Agent == nil {
+		return true
+	}
+	sctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	raw, err := h.cfg.Agent.Call(sctx, "system.module.status", map[string]any{"key": "dns"})
+	if err != nil {
+		return true
+	}
+	var st moduleStatusEntry
+	if err := json.Unmarshal(raw, &st); err != nil {
+		return true
+	}
+	return st.Installed && st.Active
 }
 
 // validateLogRetention checks a Server Settings -> Logs retention map: every key

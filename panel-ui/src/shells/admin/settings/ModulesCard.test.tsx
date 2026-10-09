@@ -3,17 +3,41 @@
 // an enabled module that isn't installed+active shows "not installed" + Retry,
 // while an installed+active one shows "active". This is the whole point of Step
 // 4 — surfacing that a flag-on module can still be down, and offering recovery.
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../../../apiClient", () => ({
   apiClient: { get: vi.fn(), patch: vi.fn(), post: vi.fn() },
 }));
 
+const errorToast = vi.hoisted(() => vi.fn());
+vi.mock("../../../lib/feedback", () => ({
+  feedback: { message: { success: vi.fn(), error: errorToast, info: vi.fn(), warning: vi.fn() } },
+}));
+
 import { apiClient } from "../../../apiClient";
 import { ModulesCard } from "./ModulesCard";
 
 const mockGet = apiClient.get as ReturnType<typeof vi.fn>;
+const mockPatch = apiClient.patch as ReturnType<typeof vi.fn>;
+
+type Flags = Partial<Record<"dns_enabled" | "mail_enabled" | "security_enabled" | "quota_enabled" | "api_enabled", boolean>>;
+
+// serve answers the card's two GETs with these flags and module statuses.
+const serve = (flags: Flags, modules: Record<string, Record<string, unknown>>) => {
+  mockGet.mockImplementation((url: string) => {
+    if (url === "/admin/settings") {
+      return Promise.resolve({
+        data: { dns_enabled: true, mail_enabled: true, security_enabled: true, quota_enabled: true, api_enabled: true, ...flags },
+      });
+    }
+    if (url === "/admin/settings/modules/status") return Promise.resolve({ data: { modules } });
+    return Promise.resolve({ data: {} });
+  });
+};
+
+const up = { installed: true, active: true };
+const mailSwitch = () => screen.getByRole("switch", { name: /Mail server/ });
 
 describe("ModulesCard install status", () => {
   beforeEach(() => vi.clearAllMocks());
@@ -47,3 +71,88 @@ describe("ModulesCard install status", () => {
     expect(screen.getByRole("button", { name: /retry/i })).toBeInTheDocument();
   });
 });
+
+// GH #2056: a failed install showed "installing" for five minutes, then "not
+// installed", with the reason only in the panel log.
+describe("ModulesCard install errors", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("shows why the last install failed and where its log is", async () => {
+    serve({}, {
+      dns: up,
+      mail: {
+        installed: false, active: false, installing: false,
+        last_error: "the DNS module must be installed first. Enable DNS, then mail.",
+        last_error_at: "2026-10-09T10:00:00Z",
+        install_log: "/var/log/jabali/install-2026-10-09_10-00-00.log",
+      },
+      security: up, quota: up,
+    });
+    render(<ModulesCard />);
+    expect(await screen.findByText(/the DNS module must be installed first\. Enable DNS, then mail\./)).toBeInTheDocument();
+    expect(screen.getByText("/var/log/jabali/install-2026-10-09_10-00-00.log")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /retry/i })).toBeInTheDocument();
+  });
+
+  it("shows an install the agent reports as running, even one this page didn't start", async () => {
+    serve({}, { dns: { installed: false, active: false, installing: true }, mail: up, security: up, quota: up });
+    render(<ModulesCard />);
+    expect(await screen.findByText(/installing/)).toBeInTheDocument();
+    expect(screen.queryByText("not installed")).not.toBeInTheDocument();
+  });
+
+  it("shows the server's reason when turning a module on is refused", async () => {
+    serve({ mail_enabled: false }, { dns: up, mail: { installed: false, active: false }, security: up, quota: up });
+    mockPatch.mockRejectedValue({ response: { status: 409, data: { error: "dns_not_ready", detail: "Mail needs the DNS module running." } } });
+    render(<ModulesCard />);
+    await waitFor(() => expect(mailSwitch()).not.toBeDisabled());
+    fireEvent.click(mailSwitch());
+    await waitFor(() => expect(errorToast).toHaveBeenCalledWith(expect.stringContaining("Mail needs the DNS module running.")));
+  });
+});
+
+// GH #2056: mail's install needs DNS installed and running, so the Mail switch
+// doesn't start an install that is sure to fail.
+describe("ModulesCard mail needs DNS", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("keeps Mail off while DNS is off", async () => {
+    serve({ dns_enabled: false, mail_enabled: false }, { dns: { installed: false, active: false }, mail: { installed: false, active: false }, security: up, quota: up });
+    render(<ModulesCard />);
+    expect(await screen.findByText(/Turn on DNS first/)).toBeInTheDocument();
+    expect(mailSwitch()).toBeDisabled();
+  });
+
+  it("keeps Mail off while DNS is on but not running yet", async () => {
+    serve({ mail_enabled: false }, { dns: { installed: true, active: false }, mail: { installed: false, active: false }, security: up, quota: up });
+    render(<ModulesCard />);
+    expect(await screen.findByText(/DNS isn't running yet/)).toBeInTheDocument();
+    expect(mailSwitch()).toBeDisabled();
+  });
+
+  it("lets Mail be turned on once DNS is running", async () => {
+    serve({ mail_enabled: false }, { dns: up, mail: { installed: false, active: false }, security: up, quota: up });
+    render(<ModulesCard />);
+    await waitFor(() => expect(mailSwitch()).not.toBeDisabled());
+    expect(screen.queryByText(/Turn on DNS first|DNS isn't running yet/)).not.toBeInTheDocument();
+  });
+
+  it("always lets Mail be turned off", async () => {
+    serve({ dns_enabled: false, mail_enabled: true }, { dns: { installed: false, active: false }, mail: up, security: up, quota: up });
+    render(<ModulesCard />);
+    await waitFor(() => expect(mailSwitch()).toBeChecked());
+    expect(mailSwitch()).not.toBeDisabled();
+  });
+
+  it("holds mail's Retry until DNS is running", async () => {
+    serve({}, { dns: { installed: true, active: false }, mail: { installed: false, active: false }, security: up, quota: up });
+    render(<ModulesCard />);
+    const retries = await screen.findAllByRole("button", { name: /retry/i });
+    // dns (down) and mail (down) both offer Retry; only mail's waits for DNS.
+    expect(retries).toHaveLength(2);
+    expect(retries[0]).not.toBeDisabled();
+    expect(retries[1]).toBeDisabled();
+    expect(screen.getByText(/DNS isn't running yet/)).toBeInTheDocument();
+  });
+});
+

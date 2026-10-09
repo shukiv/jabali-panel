@@ -142,6 +142,11 @@ func runSettingsSet(cmd *cobra.Command, args []string) error {
 	if s.DockerAppsForUsersEnabled && !before.DockerAppsForUsersEnabled && !s.DockerMarketplaceEnabled {
 		return fmt.Errorf("docker_apps_for_users_enabled requires docker_marketplace_enabled (enable the Docker marketplace first)")
 	}
+	// REST precondition (GH #2056): mail can't be turned on without DNS. The
+	// CLI has no dns/mail setters today; the shared rule keeps it in step.
+	if err := settingsops.CheckModuleDependencies(&before, s); err != nil {
+		return err
+	}
 
 	if err := repo.Upsert(ctx, s); err != nil {
 		return fmt.Errorf("persist settings: %w", err)

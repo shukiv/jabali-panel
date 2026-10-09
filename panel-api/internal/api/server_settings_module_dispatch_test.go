@@ -96,6 +96,8 @@ func TestServerSettingsPatch_ModuleLoop_Wire(t *testing.T) {
 		key := key
 		t.Run(key+" enable", func(t *testing.T) {
 			existing := &models.ServerSettings{ID: 1, SSHPort: 22}
+			// GH #2056: mail can only be turned on with DNS on.
+			existing.DNSEnabled = key == "mail"
 			m := patchSettings(t, existing, map[string]any{key + "_enabled": true}, "system.module.install")
 			require.Equal(t, map[string]any{"key": key}, moduleCallParams(t, m, "system.module.install"))
 		})
