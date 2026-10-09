@@ -53,6 +53,14 @@ class Jabali_Cache_Page_Cache {
 	private $holds_lock = false;
 
 	/**
+	 * Page-cache generation, stored in every payload. A purge only bumps it:
+	 * a payload from an older generation is a miss, so purging needs no SCAN.
+	 *
+	 * @var int
+	 */
+	private $pgen = 0;
+
+	/**
 	 * Stampede protection (JAB-90). A stored page carries an `expires_at`
 	 * freshness boundary but the Redis key lives STALE_WINDOW seconds longer, so
 	 * a stale copy can be served while exactly one request (the regen-lock
@@ -96,7 +104,15 @@ class Jabali_Cache_Page_Cache {
 		$this->hash = $this->request_hash();
 		$this->key  = $this->cfg['prefix'] . 'page:' . $this->hash;
 
-		$payload = $this->read_payload( $this->client->get( $this->key ) );
+		// The page and the current generation in one round trip.
+		$vals = $this->client->mget( array( $this->key, $this->gen_key() ) );
+		$gen  = $this->read_gen( $vals[ $this->gen_key() ] );
+		if ( false === $gen ) {
+			return; // can't tell a current page from a purged one: render normally.
+		}
+		$this->pgen = $gen;
+
+		$payload = $this->current( $this->read_payload( $vals[ $this->key ] ) );
 		if ( null !== $payload ) {
 			if ( $this->payload_is_fresh( $payload ) ) {
 				$this->serve( $payload ); // fresh HIT — serve() exits.
@@ -123,7 +139,7 @@ class Jabali_Cache_Page_Cache {
 		// through and render normally (rare cold-start race — correctness over a
 		// perfect single-flight here).
 		usleep( 50000 ); // 50ms.
-		$payload = $this->read_payload( $this->client->get( $this->key ) );
+		$payload = $this->current( $this->read_payload( $this->client->get( $this->key ) ) );
 		if ( null !== $payload && $this->payload_is_fresh( $payload ) ) {
 			$this->serve( $payload ); // serve() exits.
 		}
@@ -221,6 +237,36 @@ class Jabali_Cache_Page_Cache {
 		return $decoded;
 	}
 
+	/** @return string the page-cache generation key. */
+	private function gen_key() {
+		return $this->cfg['prefix'] . 'gen:p';
+	}
+
+	/**
+	 * @param string|false $raw the gen:p value from the MGET.
+	 * @return int|false the generation (created if missing), or false.
+	 */
+	private function read_gen( $raw ) {
+		if ( is_string( $raw ) && preg_match( '/^\d+$/', $raw ) ) {
+			return (int) $raw;
+		}
+		return $this->client->generation( $this->gen_key() );
+	}
+
+	/**
+	 * A payload from before the last purge (or from a version that didn't
+	 * record the generation) is a miss.
+	 *
+	 * @param array<string,mixed>|null $payload
+	 * @return array<string,mixed>|null
+	 */
+	private function current( $payload ) {
+		if ( null === $payload || ! isset( $payload['pgen'] ) || (int) $payload['pgen'] !== $this->pgen ) {
+			return null;
+		}
+		return $payload;
+	}
+
 	/**
 	 * @param array<string,mixed> $payload
 	 * @return bool true while the copy is within its (jittered) freshness window.
@@ -303,6 +349,7 @@ class Jabali_Cache_Page_Cache {
 			'created'    => time(),
 			'expires_at' => time() + $fresh_ttl,
 			'gen'        => defined( 'JABALI_CACHE_VERSION' ) ? JABALI_CACHE_VERSION : '1',
+			'pgen'       => $this->pgen,
 		);
 		// JAB-92: gzip large bodies before storing.
 		$payload = self::compress_payload_body( $payload );
@@ -317,12 +364,17 @@ class Jabali_Cache_Page_Cache {
 	 * Invalidate every cached page for this site (called from WP hooks on
 	 * post publish/update, comment, etc.).
 	 *
-	 * @return int
+	 * Bumping the generation is the purge: every stored page becomes a miss.
+	 * Deleting the old pages right away is only a best-effort memory reclaim;
+	 * they expire on their own TTL anyway.
+	 *
+	 * @return int pages deleted by the reclaim.
 	 */
 	public function purge_all() {
 		if ( ! $this->client->connect() ) {
 			return 0;
 		}
+		$this->client->bump_generation( $this->gen_key() );
 		return $this->client->delete_by_pattern( $this->cfg['prefix'] . 'page:*' );
 	}
 

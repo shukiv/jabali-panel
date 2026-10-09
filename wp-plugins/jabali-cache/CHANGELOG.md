@@ -8,6 +8,15 @@ project adheres to [Semantic Versioning](https://semver.org/).
 
 Nothing yet.
 
+## [1.2.0] — 2026-10-09
+
+### Changed
+- Flushing the object cache and purging the page cache no longer depend on scanning Redis (`SCAN`). The object cache puts a generation number in every key (`{prefix}o{gen}:…`) and the page cache stores one in every payload; a flush bumps the generation (`{prefix}gen:o`, `{prefix}gen:p`), so nothing cached before it is read again, and the flush itself is a counter bump instead of a walk over the shared Redis database. A new generation starts at the current time in milliseconds, so a counter evicted by Redis can't come back on an old generation. Deleting the old keys right away is now only a best-effort memory reclaim.
+- If the generation can't be read, the request uses the in-memory cache only, so a key without it never reaches Redis.
+- `wp_cache_supports( 'flush_group' )` is now false (WordPress core checks it before flushing a group). A direct `wp_cache_flush_group()` call flushes the whole object cache instead, so it never leaves stale data.
+- The budget trim never deletes the generation counters.
+- Keys and pages written by earlier versions are not read after the upgrade; the cache refills.
+
 ## [1.1.0] — 2026-07-19
 
 ### Security

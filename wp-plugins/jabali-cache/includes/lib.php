@@ -33,7 +33,7 @@ if ( defined( 'JABALI_CACHE_LIB_LOADED' ) ) {
 define( 'JABALI_CACHE_LIB_LOADED', true );
 
 if ( ! defined( 'JABALI_CACHE_VERSION' ) ) {
-	define( 'JABALI_CACHE_VERSION', '1.1.0' );
+	define( 'JABALI_CACHE_VERSION', '1.2.0' );
 }
 
 /**
@@ -996,13 +996,53 @@ class Jabali_Cache_Client {
 	}
 
 	/**
+	 * Read a generation counter, creating it first if it doesn't exist.
+	 *
+	 * Flushes bump a generation instead of deleting keys, so they don't need
+	 * SCAN. A new counter starts at the current time in milliseconds, not 0:
+	 * if Redis evicts a counter, the new one can't land on an old generation
+	 * and bring back data that was flushed.
+	 *
+	 * @param string $key
+	 * @return int|false the generation, or false when Redis can't be read.
+	 */
+	public function generation( $key ) {
+		$raw = $this->get( $key );
+		if ( false === $raw || null === $raw ) {
+			if ( ! $this->is_connected() ) {
+				return false;
+			}
+			$this->add( $key, (string) (int) floor( microtime( true ) * 1000 ), 0 );
+			$raw = $this->get( $key );
+		}
+		if ( ! is_string( $raw ) || ! preg_match( '/^\d+$/', $raw ) ) {
+			return false;
+		}
+		return (int) $raw;
+	}
+
+	/**
+	 * Move a generation counter forward (creating it first if needed).
+	 *
+	 * @param string $key
+	 * @return int|false the new generation.
+	 */
+	public function bump_generation( $key ) {
+		if ( false === $this->generation( $key ) ) {
+			return false;
+		}
+		return $this->incr( $key, 1 );
+	}
+
+	/**
 	 * Delete every key matching a glob-style pattern, using SCAN to avoid a
 	 * blocking KEYS sweep. NEVER use FLUSHDB — DB 1 is shared across tenants.
 	 *
 	 * @param string $pattern
+	 * @param string $keep_prefix keys starting with this are left alone ('' = none).
 	 * @return int number of keys deleted.
 	 */
-	public function delete_by_pattern( $pattern ) {
+	public function delete_by_pattern( $pattern, $keep_prefix = '' ) {
 		if ( ! $this->is_connected() ) {
 			return 0;
 		}
@@ -1012,6 +1052,7 @@ class Jabali_Cache_Client {
 				$it = null;
 				$this->redis->setOption( \Redis::OPT_SCAN, \Redis::SCAN_RETRY );
 				while ( false !== ( $keys = $this->redis->scan( $it, $pattern, 500 ) ) ) {
+					$keys = self::without_prefix( $keys, $keep_prefix );
 					if ( ! empty( $keys ) ) {
 						$deleted += (int) $this->redis->unlink( $keys );
 					}
@@ -1031,12 +1072,30 @@ class Jabali_Cache_Client {
 				break;
 			}
 			$cursor = (string) $res[0];
-			$batch  = is_array( $res[1] ) ? $res[1] : array();
+			$batch  = self::without_prefix( is_array( $res[1] ) ? $res[1] : array(), $keep_prefix );
 			if ( ! empty( $batch ) ) {
 				$deleted += $this->unlink( $batch );
 			}
 		} while ( '0' !== $cursor && ! $this->dead );
 		return $deleted;
+	}
+
+	/**
+	 * @param string[] $keys
+	 * @param string   $prefix
+	 * @return string[] $keys minus those starting with $prefix ('' = keep all).
+	 */
+	private static function without_prefix( array $keys, $prefix ) {
+		if ( '' === $prefix ) {
+			return $keys;
+		}
+		$out = array();
+		foreach ( $keys as $k ) {
+			if ( 0 !== strpos( (string) $k, $prefix ) ) {
+				$out[] = $k;
+			}
+		}
+		return $out;
 	}
 
 	/**
@@ -1191,7 +1250,7 @@ class Jabali_Cache_Client {
 				$this->redis->setOption( \Redis::OPT_SCAN, \Redis::SCAN_RETRY ); // see count_keys().
 				$it = null;
 				while ( false !== ( $batch = $this->redis->scan( $it, $pattern, 1000 ) ) ) {
-					foreach ( $batch as $k ) {
+					foreach ( self::without_prefix( $batch, $prefix . 'gen:' ) as $k ) {
 						$keys[] = $k;
 					}
 					if ( count( $keys ) >= $maxKeys + self::TRIM_MAX_PER_RUN || 0 === (int) $it ) {
@@ -1211,7 +1270,7 @@ class Jabali_Cache_Client {
 				}
 				$cursor = (string) $res[0];
 				if ( is_array( $res[1] ) ) {
-					foreach ( $res[1] as $k ) {
+					foreach ( self::without_prefix( $res[1], $prefix . 'gen:' ) as $k ) {
 						$keys[] = $k;
 					}
 				}
