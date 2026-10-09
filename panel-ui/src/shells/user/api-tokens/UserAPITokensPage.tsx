@@ -18,7 +18,14 @@ import type { ColumnsType } from "antd/es/table";
 
 // GH #245 / ADR-0144: per-area permissions. Empty scopes = full access (the
 // historical default). AREAS mirrors the panel-api scope vocabulary.
-const AREAS: { key: string; label: string }[] = [
+// `actions` overrides the default Read + Write checkboxes for an area that has
+// only some of them (GH #2003: Redis has write:redis = flush, and no read).
+type ScopeAction = { label: string; value: "read" | "write" };
+const DEFAULT_ACTIONS: ScopeAction[] = [
+  { label: "Read", value: "read" },
+  { label: "Write", value: "write" },
+];
+const AREAS: { key: string; label: string; actions?: ScopeAction[] }[] = [
   { key: "dns", label: "DNS" },
   { key: "mail", label: "Mail" },
   { key: "files", label: "Files" },
@@ -32,12 +39,14 @@ const AREAS: { key: string; label: string }[] = [
   { key: "backups", label: "Backups" },
   { key: "logs", label: "Logs" },
   { key: "notifications", label: "Notifications" },
+  { key: "redis", label: "Redis", actions: [{ label: "Flush", value: "write" }] },
 ];
 
 const SCOPE_LABELS: Record<string, string> = { ddns: "DDNS" };
 for (const a of AREAS) {
-  SCOPE_LABELS["read:" + a.key] = a.label + " read";
-  SCOPE_LABELS["write:" + a.key] = a.label + " write";
+  for (const act of a.actions ?? DEFAULT_ACTIONS) {
+    SCOPE_LABELS[`${act.value}:${a.key}`] = `${a.label} ${act.label.toLowerCase()}`;
+  }
 }
 import {
   DeleteOutlined,
@@ -411,10 +420,7 @@ export function UserAPITokensPage(): JSX.Element {
                   >
                     <span style={{ width: 120 }}>{a.label}</span>
                     <Checkbox.Group
-                      options={[
-                        { label: "Read", value: "read" },
-                        { label: "Write", value: "write" },
-                      ]}
+                      options={a.actions ?? DEFAULT_ACTIONS}
                       value={scopeSel[a.key] ?? []}
                       onChange={(v) =>
                         setScopeSel((prev) => ({ ...prev, [a.key]: v as string[] }))

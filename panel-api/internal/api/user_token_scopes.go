@@ -35,6 +35,12 @@ const (
 	ScopeWriteDNS = "write:dns"
 )
 
+// ScopeRedisFlush lets a token flush the owner's Redis keys and nothing else
+// (GH #2003), so an app can clear its cache without holding a full token.
+// There is no read:redis: GET /me/redis-access returns the Redis password, so
+// it stays unmapped and a scoped token can't fetch it.
+const ScopeRedisFlush = "write:redis"
+
 // knownUserScopes is the closed set the token-create API accepts. Rejecting
 // unknown scopes stops a typo'd scope from silently fail-closing a token.
 var knownUserScopes = map[string]bool{}
@@ -45,6 +51,7 @@ func init() {
 		knownUserScopes["write:"+a] = true
 	}
 	knownUserScopes[ScopeDDNS] = true
+	knownUserScopes[ScopeRedisFlush] = true
 }
 
 // recordScopeRe matches a per-record DDNS constraint scope (GH #245 phase 5):
@@ -97,6 +104,8 @@ func tokenAllowsRecord(scopes models.UserAPIScopes, recordID string) bool {
 var userScopeExact = map[string]string{
 	"/api/v1/domains":     "domains",
 	"/api/v1/domains/:id": "domains",
+	// GH #2003: POST only, so it resolves to write:redis (ScopeRedisFlush).
+	"/api/v1/me/redis-access/flush": "redis",
 }
 
 type areaRule struct{ prefix, area string }

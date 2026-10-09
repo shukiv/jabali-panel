@@ -4517,6 +4517,26 @@ paths:
       security: [ { KratosSession: [] } ]
       responses: { "200": { description: OK } }
 
+  /me/redis-access/flush:
+    post:
+      tags: [Me]
+      summary: Flush your Redis keys
+      description: |
+        Deletes every key under your prefix `jt:<osuser>:`, in every Redis
+        database (GH #2003). Use it instead of FLUSHALL/FLUSHDB, which your
+        Redis user can't run because they would delete every tenant's keys.
+        The panel finds the keys and deletes them with your own Redis
+        credential, so nothing outside your prefix is touched. Returns
+        `{deleted, complete}`; `complete: false` means the call hit its time
+        limit, so call it again. An API token needs the `write:redis` scope (or
+        no scopes). Rate-limited per user.
+      security: [ { KratosSession: [] }, { BearerToken: [] } ]
+      responses:
+        "200": { description: OK }
+        "409": { description: Admin account (no Linux user) }
+        "429": { description: Rate limited }
+        "503": { description: Redis not configured }
+
   /me/php-cli-version:
     get:
       tags: [Me]
@@ -6663,6 +6683,17 @@ paths:
       description: |
         Admin view of a specific tenant's scoped Redis credential (GH #1016).
         Same payload as /me/redis-access. Admin only.
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /users/{id}/redis-access/flush:
+    post:
+      tags: [Users]
+      summary: Flush a tenant's Redis keys (admin)
+      description: |
+        Admin version of /me/redis-access/flush for a specific tenant (GH #2003).
+        Deletes only the keys under that tenant's prefix. Admin only.
       security: [ { KratosSession: [] } ]
       parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
       responses: { "200": { description: OK } }

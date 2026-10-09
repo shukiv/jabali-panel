@@ -6,11 +6,23 @@
 // (idempotent) and returns the credential — so we don't fetch a secret until
 // the user asks for it.
 import { useState } from "react";
-import { Card, Button, Descriptions, Typography, Alert } from "antd";
+import { Card, Button, Descriptions, Typography, Alert, Popconfirm } from "antd";
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { apiClient } from "../../../apiClient";
 
 const { Text, Paragraph } = Typography;
+
+interface RedisFlushResult {
+  deleted: number;
+  complete: boolean;
+}
+
+// GH #2003: what the flush toast says. A flush that hit its time limit
+// (complete=false) asks for another run.
+export function redisFlushMessage(r: RedisFlushResult): string {
+  const n = `${r.deleted} key${r.deleted === 1 ? "" : "s"}`;
+  return r.complete ? `Deleted ${n}.` : `Deleted ${n} so far. Click Flush again to delete the rest.`;
+}
 
 interface RedisAccess {
   socket: string;
@@ -27,6 +39,21 @@ interface RedisAccess {
 export const RedisAccessCard = () => {
   const [creds, setCreds] = useState<RedisAccess | null>(null);
   const [loading, setLoading] = useState(false);
+  const [flushing, setFlushing] = useState(false);
+
+  // GH #2003: the tenant's Redis user can't run FLUSHALL/FLUSHDB. The panel
+  // deletes the keys under the tenant's prefix instead.
+  const flush = async () => {
+    setFlushing(true);
+    try {
+      const resp = await apiClient.post<RedisFlushResult>("/me/redis-access/flush");
+      feedback.message.success(redisFlushMessage(resp.data));
+    } catch {
+      feedback.message.error("Could not flush your Redis keys.");
+    } finally {
+      setFlushing(false);
+    }
+  };
 
   const reveal = async () => {
     setLoading(true);
@@ -111,6 +138,28 @@ export const RedisAccessCard = () => {
           />
         </>
       )}
+
+      <Typography.Title level={5} style={{ marginTop: 24 }}>
+        Flush your keys
+      </Typography.Title>
+      <Paragraph type="secondary">
+        <Text code>FLUSHALL</Text> and <Text code>FLUSHDB</Text> would delete every
+        user&apos;s keys, so your Redis user can&apos;t run them. Flush deletes only
+        the keys under your key prefix, in every database. An app can do the same
+        with <Text code>POST /api/v1/me/redis-access/flush</Text> and an API token
+        that has the Redis flush permission.
+      </Paragraph>
+      <Popconfirm
+        title="Delete all your Redis keys?"
+        description="Deletes every key under your key prefix. Other users' keys are not touched."
+        okText="Flush"
+        okButtonProps={{ danger: true }}
+        onConfirm={flush}
+      >
+        <Button danger loading={flushing}>
+          Flush my Redis keys
+        </Button>
+      </Popconfirm>
     </Card>
   );
 };

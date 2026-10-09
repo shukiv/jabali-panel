@@ -1520,8 +1520,11 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			api.RegisterApplicationRoutes(v1, appCfg)
 
 			// GH #1016: per-tenant Redis credentials (reuses appCfg's Redis +
-			// cache-token secret/salts + Users).
-			api.RegisterRedisAccessRoutes(v1, appCfg)
+			// cache-token secret/salts + Users). GH #2003: plus the tenant's
+			// scoped flush, per-user strict-tier limited.
+			redisCfg := appCfg
+			redisCfg.RedisFlushRateLimit = rl.StrictPerActor()
+			api.RegisterRedisAccessRoutes(v1, redisCfg)
 
 			// Log access routes (M13)
 			if deps.LogAccessStreams != nil && deps.Domains != nil && deps.Users != nil {
