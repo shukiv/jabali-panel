@@ -864,6 +864,14 @@ fi
 				"install -d -m 0755 /usr/local/share/jabali/docker-apps && "+
 					"rsync -a --delete --exclude=.git "+src+"/ /usr/local/share/jabali/docker-apps/")
 		}},
+		{"sync bundled jabali-cache plugin", func() error {
+			// The agent installs jabali-cache on sites from this bundle, and
+			// the refresh sweep below re-copies it to every cache-enabled
+			// site. The release-tarball step refreshes it, but a
+			// --from-source update skips that step, so sync it from the
+			// checkout here (as install.sh does) on every update.
+			return syncBundledCachePlugin(repoDir+"/wp-plugins/jabali-cache", bundledCachePluginDir, "root:root")
+		}},
 		{"reconcile crowdsec appsec config", func() error {
 			// install_crowdsec_appsec is the canonical writer of
 			// /etc/crowdsec/appsec-configs/jabali-appsec.yaml. Its
@@ -2054,10 +2062,10 @@ fi
 			return nil
 		}},
 		{"refresh jabali-cache plugin on cache-enabled sites (GH #613)", func() error {
-			// WordPress.org is the canonical plugin source (#613); existing
-			// cache-enabled sites only pick up a newly-published version on a
-			// cache re-toggle. Sweep them here so `jabali update` bumps every
-			// site to the latest WordPress.org release. Runs the just-installed
+			// Existing cache-enabled sites only pick up a new plugin version
+			// on a cache re-toggle. Sweep them here so `jabali update` bumps
+			// every site to the bundled plugin synced above (JAB-64: the
+			// bundle, not WordPress.org, is the default source). Runs the just-installed
 			// binary + restarted agent (so the wordpress.cache_plugin_refresh
 			// verb exists); best-effort + idempotent (a current site is a no-op).
 			if err := run("", defaultPanelBinPath, "app", "refresh-cache-plugin"); err != nil {

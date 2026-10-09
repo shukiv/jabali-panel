@@ -22,7 +22,7 @@ import (
 func newAppRefreshCachePluginCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:     "refresh-cache-plugin",
-		Short:   "Update the jabali-cache plugin to the latest WordPress.org release on every cache-enabled site",
+		Short:   "Re-install the bundled jabali-cache plugin on every cache-enabled WordPress site",
 		Args:    cobra.NoArgs,
 		PreRunE: requireDBAndAgent,
 		RunE: func(cmd *cobra.Command, args []string) error {
