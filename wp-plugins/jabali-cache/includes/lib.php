@@ -1006,8 +1006,12 @@ class Jabali_Cache_Client {
 	 * Redis round trip. Milliseconds aren't enough: a few quick flushes in a
 	 * row can outrun them.)
 	 *
+	 * The generation stays a digit string, never an int: on 32-bit PHP the
+	 * value doesn't fit, and an (int) cast would pin every generation to
+	 * PHP_INT_MAX, so a flush would change nothing.
+	 *
 	 * @param string $key
-	 * @return int|false the generation, or false when Redis can't be read.
+	 * @return string|false the generation (digits), or false when Redis can't be read.
 	 */
 	public function generation( $key ) {
 		$raw = $this->get( $key );
@@ -1015,26 +1019,28 @@ class Jabali_Cache_Client {
 			if ( ! $this->is_connected() ) {
 				return false;
 			}
-			$this->add( $key, (string) (int) floor( microtime( true ) * 1000000 ), 0 );
+			$this->add( $key, sprintf( '%.0f', floor( microtime( true ) * 1000000 ) ), 0 );
 			$raw = $this->get( $key );
 		}
 		if ( ! is_string( $raw ) || ! preg_match( '/^\d+$/', $raw ) ) {
 			return false;
 		}
-		return (int) $raw;
+		return $raw;
 	}
 
 	/**
 	 * Move a generation counter forward (creating it first if needed).
 	 *
 	 * @param string $key
-	 * @return int|false the new generation.
+	 * @return string|false the new generation (digits).
 	 */
 	public function bump_generation( $key ) {
-		if ( false === $this->generation( $key ) ) {
+		if ( false === $this->generation( $key ) || false === $this->incr( $key, 1 ) ) {
 			return false;
 		}
-		return $this->incr( $key, 1 );
+		// Read it back rather than trust INCR's reply, which 32-bit PHP
+		// can't hold as an int (see generation()).
+		return $this->generation( $key );
 	}
 
 	/**

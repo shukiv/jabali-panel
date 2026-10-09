@@ -55,10 +55,11 @@ class Jabali_Cache_Page_Cache {
 	/**
 	 * Page-cache generation, stored in every payload. A purge only bumps it:
 	 * a payload from an older generation is a miss, so purging needs no SCAN.
+	 * Digits, kept as a string (see Jabali_Cache_Client::generation()).
 	 *
-	 * @var int
+	 * @var string
 	 */
-	private $pgen = 0;
+	private $pgen = '';
 
 	/**
 	 * Stampede protection (JAB-90). A stored page carries an `expires_at`
@@ -244,11 +245,11 @@ class Jabali_Cache_Page_Cache {
 
 	/**
 	 * @param string|false $raw the gen:p value from the MGET.
-	 * @return int|false the generation (created if missing), or false.
+	 * @return string|false the generation (digits; created if missing), or false.
 	 */
 	private function read_gen( $raw ) {
 		if ( is_string( $raw ) && preg_match( '/^\d+$/', $raw ) ) {
-			return (int) $raw;
+			return $raw;
 		}
 		return $this->client->generation( $this->gen_key() );
 	}
@@ -261,7 +262,7 @@ class Jabali_Cache_Page_Cache {
 	 * @return array<string,mixed>|null
 	 */
 	private function current( $payload ) {
-		if ( null === $payload || ! isset( $payload['pgen'] ) || (int) $payload['pgen'] !== $this->pgen ) {
+		if ( null === $payload || ! isset( $payload['pgen'] ) || (string) $payload['pgen'] !== $this->pgen ) {
 			return null;
 		}
 		return $payload;

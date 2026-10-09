@@ -12,7 +12,8 @@
  *   JABALI_TEST_REDIS_USER=<acl user without SCAN> JABALI_TEST_REDIS_PASS=<pw> \
  *   JABALI_TEST_PREFIX=jc:nwtest: php tests/test-flush-without-scan.php
  *
- * The ACL user needs the WP-cache command set minus SCAN, fenced to
+ * The ACL user needs GET, SET, SETEX, SETNX, MGET, INCRBY, DEL, UNLINK,
+ * EXPIRE, TTL, EXISTS, SELECT, PING and AUTH, and no SCAN, fenced to
  * ~<JABALI_TEST_PREFIX>*. Skips (exit 0) without a live socket. Without SCAN
  * the test can't delete the object keys it wrote; they sit under its own
  * per-run prefix.
@@ -24,6 +25,10 @@ error_reporting( E_ALL );
 
 $tests  = 0;
 $failed = 0;
+// A generation: digits, seeded from the time in microseconds (16+ digits).
+function fs_gen_ok( $v ) {
+	return is_string( $v ) && 1 === preg_match( '/^\d{16,}$/', $v );
+}
 function fs_assert( $cond, $msg ) {
 	global $tests, $failed;
 	$tests++;
@@ -101,7 +106,7 @@ fs_assert( false === $c->get( 'k1', 'posts', true ), 'after flush() a new reques
 fs_assert( false === $c->get( 'k2', 'options', true ), 'after flush() a new request misses k2' );
 
 $gen = $raw->get( $prefix . 'gen:o' );
-fs_assert( is_string( $gen ) && (int) $gen > 1000000000000000, 'the object generation is seeded from the time in microseconds (' . var_export( $gen, true ) . ')' );
+fs_assert( fs_gen_ok( $gen ), 'the object generation is seeded from the time in microseconds (' . var_export( $gen, true ) . ')' );
 
 // flush_group isn't advertised; a direct call still never leaves stale data.
 fs_assert( false === $c->supports( 'flush_group' ), "supports( 'flush_group' ) is false" );
@@ -147,6 +152,39 @@ $after = new Jabali_Cache_Object_Cache();
 fs_assert( false === $after->get( 'off', 'posts', true ), 'nothing is written to Redis while the generation is unreadable' );
 $raw->del( $prefix . 'gen:o' );
 
+// Generations stay strings: values past PHP_INT_MAX (as any generation is on
+// 32-bit PHP) must still tell one flush from the next.
+$raw->set( $prefix . 'gen:o', '99999999999999999998' );
+$big = new Jabali_Cache_Object_Cache();
+$big->set( 'bg', 'v', 'posts' );
+$raw->set( $prefix . 'gen:o', '99999999999999999999' ); // the next flush.
+$big2 = new Jabali_Cache_Object_Cache();
+fs_assert( false === $big2->get( 'bg', 'posts', true ), 'object generations past PHP_INT_MAX still tell flushes apart' );
+$raw->del( $prefix . 'gen:o' );
+
+// When a long-running process sees another process's flush, it drops its
+// runtime copies from the old generation, but keeps non-persistent groups.
+$lr = new Jabali_Cache_Object_Cache();
+$lr->add_non_persistent_groups( array( 'np' ) );
+$lr->set( 'rt', 'old', 'posts' );
+$lr->set( 'n', 'keep', 'np' );
+( new Jabali_Cache_Object_Cache() )->flush();
+if ( isset( $rp ) ) {
+	$rp->setValue( $lr, microtime( true ) - 60 );
+}
+$lr->get( 'other', 'posts' ); // reads the new generation.
+$rcache = new ReflectionProperty( 'Jabali_Cache_Object_Cache', 'cache' );
+$rcache->setAccessible( true );
+$runtime = $rcache->getValue( $lr );
+$stale   = 0;
+foreach ( isset( $runtime['posts'] ) ? $runtime['posts'] : array() as $v ) {
+	if ( 'old' === $v ) {
+		$stale++;
+	}
+}
+fs_assert( 0 === $stale, 'a long-running process drops its runtime copies from the old generation' );
+fs_assert( 'keep' === $lr->get( 'n', 'np' ), 'and keeps its non-persistent groups' );
+
 // --- Page cache ---------------------------------------------------------------
 if ( ! method_exists( 'Jabali_Cache_Page_Cache', 'read_gen' ) ) {
 	fs_assert( false, 'the page cache keeps a generation' );
@@ -175,9 +213,10 @@ function fs_page_request( $rk, $rg ) {
 $raw->del( $prefix . 'gen:p' ); // the page cache creates its own counter.
 $pc   = fs_page_request( $rk, $rg );
 $pgen = $rk->getValue( $pc );
-fs_assert( is_int( $pgen ) && $pgen > 1000000000000000, 'a missing page generation is created, seeded from the time in microseconds' );
+fs_assert( fs_gen_ok( $pgen ), 'a missing page generation is created, seeded from the time in microseconds' );
 $page = array( 'body' => '<p>hi</p>', 'expires_at' => time() + 60, 'pgen' => $pgen );
 fs_assert( null !== $rc->invoke( $pc, $page ), 'a page from the current generation is served' );
+fs_assert( null !== $rc->invoke( fs_page_request( $rk, $rg ), $page ), 'and so is the next request (generation already stored)' );
 fs_assert( null === $rc->invoke( $pc, array( 'body' => 'x' ) ), 'a page without a generation (pre-1.2.0) is a miss' );
 
 $pc->purge_all();
@@ -188,6 +227,14 @@ $pc2   = fs_page_request( $rk, $rg );
 $page2 = array( 'body' => '<p>hi</p>', 'expires_at' => time() + 60, 'pgen' => $rk->getValue( $pc2 ) );
 ( new Jabali_Cache_Object_Cache() )->flush();
 fs_assert( null === $rc->invoke( fs_page_request( $rk, $rg ), $page2 ), 'an object-cache flush also clears cached pages' );
+
+// Page generations past PHP_INT_MAX still tell purges apart.
+$raw->set( $prefix . 'gen:p', '99999999999999999998' );
+$pcb   = fs_page_request( $rk, $rg );
+$pageb = array( 'body' => '<p>hi</p>', 'expires_at' => time() + 60, 'pgen' => $rk->getValue( $pcb ) );
+fs_assert( null !== $rc->invoke( fs_page_request( $rk, $rg ), $pageb ), 'a page is served under a generation past PHP_INT_MAX' );
+$raw->set( $prefix . 'gen:p', '99999999999999999999' ); // the next purge.
+fs_assert( null === $rc->invoke( fs_page_request( $rk, $rg ), $pageb ), 'page generations past PHP_INT_MAX still tell purges apart' );
 
 // Clean up the counters (the object keys can't be found without SCAN).
 $raw->del( $prefix . 'gen:o' );
