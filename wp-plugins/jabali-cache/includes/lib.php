@@ -999,9 +999,12 @@ class Jabali_Cache_Client {
 	 * Read a generation counter, creating it first if it doesn't exist.
 	 *
 	 * Flushes bump a generation instead of deleting keys, so they don't need
-	 * SCAN. A new counter starts at the current time in milliseconds, not 0:
+	 * SCAN. A new counter starts at the current time in microseconds, not 0:
 	 * if Redis evicts a counter, the new one can't land on an old generation
-	 * and bring back data that was flushed.
+	 * and bring back data that was flushed. (That would take more than one
+	 * bump per microsecond since the counter was created; each bump is a
+	 * Redis round trip. Milliseconds aren't enough: a few quick flushes in a
+	 * row can outrun them.)
 	 *
 	 * @param string $key
 	 * @return int|false the generation, or false when Redis can't be read.
@@ -1012,7 +1015,7 @@ class Jabali_Cache_Client {
 			if ( ! $this->is_connected() ) {
 				return false;
 			}
-			$this->add( $key, (string) (int) floor( microtime( true ) * 1000 ), 0 );
+			$this->add( $key, (string) (int) floor( microtime( true ) * 1000000 ), 0 );
 			$raw = $this->get( $key );
 		}
 		if ( ! is_string( $raw ) || ! preg_match( '/^\d+$/', $raw ) ) {

@@ -101,7 +101,7 @@ fs_assert( false === $c->get( 'k1', 'posts', true ), 'after flush() a new reques
 fs_assert( false === $c->get( 'k2', 'options', true ), 'after flush() a new request misses k2' );
 
 $gen = $raw->get( $prefix . 'gen:o' );
-fs_assert( is_string( $gen ) && (int) $gen > 1000000000000, 'the object generation is time-seeded (' . var_export( $gen, true ) . ')' );
+fs_assert( is_string( $gen ) && (int) $gen > 1000000000000000, 'the object generation is seeded from the time in microseconds (' . var_export( $gen, true ) . ')' );
 
 // flush_group isn't advertised; a direct call still never leaves stale data.
 fs_assert( false === $c->supports( 'flush_group' ), "supports( 'flush_group' ) is false" );
@@ -133,6 +133,20 @@ if ( property_exists( 'Jabali_Cache_Object_Cache', 'gen_at' ) ) {
 $long->flush_runtime();
 fs_assert( false === $long->get( 'lp', 'posts', true ), 'a long-running process re-reads the generation' );
 
+// While the generation can't be read, nothing is written to Redis: a key
+// built without it could be read back once the counter is readable again.
+$off = new Jabali_Cache_Object_Cache();
+$off->get( 'warm', 'posts' ); // reads the generation.
+$raw->set( $prefix . 'gen:o', 'unreadable' );
+if ( isset( $rp ) ) {
+	$rp->setValue( $off, microtime( true ) - 60 );
+}
+$off->set( 'off', 'v', 'posts' );
+$raw->set( $prefix . 'gen:o', '0' );
+$after = new Jabali_Cache_Object_Cache();
+fs_assert( false === $after->get( 'off', 'posts', true ), 'nothing is written to Redis while the generation is unreadable' );
+$raw->del( $prefix . 'gen:o' );
+
 // --- Page cache ---------------------------------------------------------------
 if ( ! method_exists( 'Jabali_Cache_Page_Cache', 'read_gen' ) ) {
 	fs_assert( false, 'the page cache keeps a generation' );
@@ -158,9 +172,10 @@ function fs_page_request( $rk, $rg ) {
 	return $pc;
 }
 
+$raw->del( $prefix . 'gen:p' ); // the page cache creates its own counter.
 $pc   = fs_page_request( $rk, $rg );
 $pgen = $rk->getValue( $pc );
-fs_assert( is_int( $pgen ) && $pgen > 1000000000000, 'the page generation is time-seeded' );
+fs_assert( is_int( $pgen ) && $pgen > 1000000000000000, 'a missing page generation is created, seeded from the time in microseconds' );
 $page = array( 'body' => '<p>hi</p>', 'expires_at' => time() + 60, 'pgen' => $pgen );
 fs_assert( null !== $rc->invoke( $pc, $page ), 'a page from the current generation is served' );
 fs_assert( null === $rc->invoke( $pc, array( 'body' => 'x' ) ), 'a page without a generation (pre-1.2.0) is a miss' );
