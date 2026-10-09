@@ -106,7 +106,8 @@ user wp_<osuser> on >$TENANT_TOKEN \
   nor the dispatcher's `jabali:notifications:*`. The cross-tenant/notification
   denial is automatic, not a blocklist we must maintain.
 - `-@dangerous` removes `FLUSHDB`/`FLUSHALL`/`KEYS`/`CONFIG`/`ACL`/`INFO`/`DEBUG`.
-  The plugin already never issues `FLUSHDB` (prefix-scoped `SCAN`+`DEL`); `SCAN`,
+  The plugin already never issues `FLUSHDB` (prefix-scoped `SCAN`+`DEL`; since
+  plugin 1.2.0 a flush bumps a generation counter instead, ADR-0173); `SCAN`,
   `GET/SET/SETEX/DEL/MGET/INCRBY/DECRBY` remain permitted. `SELECT`/`PING`/`AUTH`
   via `+@connection`.
 - The plugin receives `$TENANT_TOKEN` through its existing `JABALI_CACHE_PASSWORD`

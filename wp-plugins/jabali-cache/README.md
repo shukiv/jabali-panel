@@ -14,7 +14,7 @@ panel already provisions and follows the panel's shared-hosting security model.
 |---|---|
 | Redis at `unix:///run/redis/redis.sock`, **db 1 reserved for WP** (ADR-0059) | Default connection target; no host/port config needed. |
 | Redis runs `maxmemory-policy allkeys-lru` | Every read is best-effort; an evicted key is a normal miss, never an error. |
-| db 1 is **shared across all tenants** | Isolation is by per-site key **prefix**. The plugin **never** issues `FLUSHDB`; flushes are prefix-scoped via `SCAN` + `DEL`. |
+| db 1 is **shared across all tenants** | Isolation is by per-site key **prefix**. The plugin **never** issues `FLUSHDB`. A flush bumps the site's generation counter, which every key carries, so nothing cached before it is read again; the old keys are then reclaimed prefix-scoped (ADR-0173). |
 | Jabali installs the `redis` (phpredis) + `igbinary` PHP extensions by default (GH #606) | Uses phpredis with persistent `pconnect()`; the dependency-free pure-PHP RESP client is a portable fallback if the extension is ever absent. |
 | Tenant PHP-FPM runs as the site user, `open_basedir`-jailed | Connects gracefully; on failure it degrades to a per-request cache and prints the exact host fix. |
 | nginx fastcgi microcache already exists (ADR-0108) | WP full-page cache is **off by default** to avoid double-caching; object cache is the primary win. |
