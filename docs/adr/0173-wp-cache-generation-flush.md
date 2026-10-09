@@ -101,11 +101,41 @@ generation couldn't be bumped): `flush()` and `purge_all()` return false,
 `wp jabali-cache flush` exits with an error, and the admin page says the flush
 failed instead of "Cache flushed."
 
+### The site's Redis user no longer gets SCAN
+
+A flush is now a counter bump, and the panel removes old keys, enforces the
+key budget and counts each site's keys, so the plugin no longer needs `SCAN`.
+Least privilege: the per-install rule (`applyInstallACL`) no longer grants it.
+
+- **New and re-provisioned users.** A cache enable, `cache-doctor --repair`
+  and `cache-doctor --migrate-acl` write the rule without `SCAN`. These paths
+  also re-stage the bundled plugin, so the plugin and the rule change together.
+- **Existing users** keep their rule until `jabali app refresh-cache-plugin`,
+  which every `jabali update` runs, refreshes the site to a plugin that
+  flushes without `SCAN` (1.2.0 or later). It then re-applies the rule
+  (`ResyncInstallACL`). The rule resets the user's passwords, so the re-sync
+  first checks that the site's token still authenticates. If it doesn't, the
+  user is left alone.
+- **Decided from the bundle.** In the default (bundled) mode, the agent's
+  refresh runs nothing as the tenant: it skips a site without a
+  `wp-content/plugins` directory, stages the bundle, and reports the
+  bundle's version. A broken `wp` on a site, or the site's own WordPress or
+  wp-cli config, doesn't stop the ACL update.
+- **One way only.** A version the sweep can't parse, or an older one, leaves
+  the ACL as it is. Nothing in the panel adds `SCAN` back.
+- **The plugin's own SCAN uses.** Its reclaim and budget trim get `NOPERM`,
+  find nothing and carry on. Its key count reads 0, so the cache-stats API
+  drops it and sends `keys` only once the panel has counted. The cache drawer
+  shows "—" until then.
+- The opt-in `JABALI_WP_CACHE_SOURCE=wordpress-org` source assumes the
+  published plugin is 1.2.0 or later.
+
 ## Consequences
 
 **Positive**
 - A flush is O(1) and correct even when the reclaim does nothing.
 - A flush no longer costs every other site on the host a walk over DB 1.
+- A site's Redis user can do only what the plugin needs; `SCAN` is gone.
 
 **Negative**
 - Keys and pages written by 1.1.0 are not read after the upgrade; each site's
@@ -113,6 +143,8 @@ failed instead of "Cache flushed."
 - Keys from old generations stay in Redis until the panel's cleanup pass (up
   to 15 minutes), the plugin's reclaim, their TTL or LRU eviction removes them.
 - `wp_cache_flush_group()` is a full object flush.
+- The plugin's own admin page shows 0 keys for the site; the panel's cache
+  drawer has the count.
 
 ## Alternatives considered
 

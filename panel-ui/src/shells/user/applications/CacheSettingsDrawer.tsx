@@ -15,6 +15,7 @@ import { useEffect, useState } from "react";
 import { apiClient } from "../../../apiClient";
 import { extractApiError } from "../../../apiErrors";
 import { StandardDrawerFooter } from "../../../components/StandardActionFooter";
+import { shortDateTime } from "../../../utils/datetime";
 
 type CacheSettings = {
   url_exclusions?: string[];
@@ -31,7 +32,10 @@ type CacheProfile = { key: string; label: string; warning: string };
 type CacheStats = {
   connected?: boolean;
   hit_ratio?: number;
+  // The panel's count of this site's keys (ADR-0173), absent until it has
+  // counted; keys_at is when.
   keys?: number;
+  keys_at?: string;
   used_memory?: number;
   driver?: string;
   page_cache?: { available?: boolean; hit_ratio?: number; total?: number; bypass?: number };
@@ -242,7 +246,11 @@ export function CacheSettingsDrawer({
               {(stats.page_cache.hit_ratio ?? 0).toFixed(1)}% of {stats.page_cache.total} req
             </Descriptions.Item>
           ) : null}
-          <Descriptions.Item label="Keys (this site)">{stats.keys ?? 0}</Descriptions.Item>
+          <Descriptions.Item label="Keys (this site)">
+            {stats.keys === undefined
+              ? "—"
+              : `${stats.keys} (counted ${shortDateTime(stats.keys_at)})`}
+          </Descriptions.Item>
           {(stats.used_memory ?? 0) > 0 ? (
             <Descriptions.Item label="Hit ratio (server-wide)">
               {(stats.hit_ratio ?? 0).toFixed(1)}%

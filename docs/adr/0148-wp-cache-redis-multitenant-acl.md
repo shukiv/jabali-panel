@@ -107,9 +107,11 @@ user wp_<osuser> on >$TENANT_TOKEN \
   denial is automatic, not a blocklist we must maintain.
 - `-@dangerous` removes `FLUSHDB`/`FLUSHALL`/`KEYS`/`CONFIG`/`ACL`/`INFO`/`DEBUG`.
   The plugin already never issues `FLUSHDB` (prefix-scoped `SCAN`+`DEL`; since
-  plugin 1.2.0 a flush bumps a generation counter instead, ADR-0173); `SCAN`,
+  plugin 1.2.0 a flush bumps a generation counter instead, ADR-0173);
   `GET/SET/SETEX/DEL/MGET/INCRBY/DECRBY` remain permitted. `SELECT`/`PING`/`AUTH`
-  via `+@connection`.
+  via `+@connection`. (The per-install users that replaced this shared user use
+  an explicit command list instead of categories; since ADR-0173 it no longer
+  includes `SCAN`.)
 - The plugin receives `$TENANT_TOKEN` through its existing `JABALI_CACHE_PASSWORD`
   config knob (already implemented in `includes/lib.php` / `class-settings.php`).
 
@@ -175,7 +177,8 @@ and persisted; install.sh reads-or-creates.
 - Highest-risk regression is M14 notifications; gated by the sequencing + a
   mandatory post-lock round-trip check (and a documented rollback: `default on`).
 - `INFO` is denied to tenants (`-@dangerous`), so the plugin's admin "server info"
-  degrades to empty for the tenant view; key counts use `SCAN` and still work.
+  degrades to empty for the tenant view. (Key counts used `SCAN`; since ADR-0173
+  the panel's cleanup pass counts each site's keys instead.)
 
 **Neutral**
 - `maxmemory-policy allkeys-lru` is unchanged; tenant keys can still be evicted —

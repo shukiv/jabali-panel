@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"path"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -485,6 +486,11 @@ func (h *wordPressHandler) enableObjectCache(ctx context.Context, install *model
 }
 
 func (h *wordPressHandler) provisionInstallACL(ctx context.Context, osUser, installID, token string) error {
+	return applyInstallACL(ctx, h.cfg.Redis, osUser, installID, token)
+}
+
+// applyInstallACL writes an install's Redis ACL rule and persists it.
+func applyInstallACL(ctx context.Context, rdb *redis.Client, osUser, installID, token string) error {
 	user := installACLUser(osUser, installID)
 	// resetkeys/resetchannels make the rule absolute (idempotent re-apply); the
 	// keyspace is fenced to ~jc:<osuser>:* — no access to jabali:* / automation:*.
@@ -492,23 +498,75 @@ func (h *wordPressHandler) provisionInstallACL(ctx context.Context, osUser, inst
 	// category — @keyspace included RANDOMKEY/DBSIZE, which Redis ACLs do NOT
 	// pattern-scope, so a tenant could enumerate other tenants' key names /
 	// total key count past the ~jc:<osuser>:* fence. This is exactly the set the
-	// bundled object cache issues (GET/SET/SETEX/DEL/MGET/INCRBY/DECRBY/SCAN/
-	// SELECT/PING/AUTH) plus a little headroom — no RANDOMKEY, DBSIZE, KEYS, or
-	// FLUSH. `reset` first makes the rule fully authoritative on re-apply, so an
-	// already-provisioned user loses any prior @keyspace grant.
-	if err := h.cfg.Redis.Do(ctx, "ACL", "SETUSER", user,
+	// bundled object cache issues (GET/SET/SETEX/DEL/MGET/INCRBY/DECRBY/SELECT/
+	// PING/AUTH) plus a little headroom — no RANDOMKEY, DBSIZE, KEYS, SCAN, or
+	// FLUSH. SCAN went with jabali-cache 1.2.0: a flush bumps a generation
+	// counter, and the panel's WP-cache cleanup removes old keys, enforces the
+	// key budget and counts the site's keys (ADR-0173). `jabali app
+	// refresh-cache-plugin` re-applies this rule to sites provisioned earlier.
+	// `reset` first makes the rule fully authoritative on re-apply, so an
+	// already-provisioned user loses any prior grant.
+	if err := wpCacheACL(ctx, rdb, "SETUSER", user,
 		"reset",
 		"on", ">"+token,
 		installACLKeyPattern(osUser, installID),
 		"+GET", "+SET", "+SETEX", "+PSETEX", "+SETNX", "+DEL", "+UNLINK",
 		"+MGET", "+MSET", "+INCR", "+INCRBY", "+DECR", "+DECRBY",
 		"+EXPIRE", "+PEXPIRE", "+TTL", "+PTTL", "+PERSIST", "+TYPE", "+EXISTS",
-		"+SCAN", "+SELECT", "+PING", "+AUTH", "+HELLO",
-	).Err(); err != nil {
+		"+SELECT", "+PING", "+AUTH", "+HELLO",
+	); err != nil {
 		return err
 	}
 	// Persist to the aclfile so it survives a redis restart.
-	return h.cfg.Redis.Do(ctx, "ACL", "SAVE").Err()
+	return wpCacheACL(ctx, rdb, "SAVE")
+}
+
+// ResyncInstallACL re-applies an install's Redis ACL rule (applyInstallACL)
+// without touching the site, so a change to the rule reaches sites provisioned
+// before it. `jabali app refresh-cache-plugin` runs it once a site's plugin no
+// longer needs SCAN (ADR-0173). The rule resets the user's passwords, so it
+// first checks that the token the panel derives still authenticates as the
+// site's user; if not, the user is left alone (a cache re-toggle re-provisions
+// both the user and the site's token).
+func ResyncInstallACL(ctx context.Context, cfg ApplicationHandlerConfig, userID, osUser, installID string) error {
+	if cfg.Redis == nil || cfg.CacheTokenSecret == "" {
+		return errObjectCacheUnavailable
+	}
+	salt := ""
+	if cfg.CacheTokenSalts != nil {
+		s, err := cfg.CacheTokenSalts.GetOrCreate(ctx, userID)
+		if err != nil {
+			return fmt.Errorf("salt get/create: %w", err)
+		}
+		salt = s
+	}
+	token := cacheInstallToken(cfg.CacheTokenSecret, osUser, installID, salt)
+	p := wpCachePrincipalConn(cfg.Redis, installACLUser(osUser, installID), token)
+	defer p.Close()
+	if err := p.Get(ctx, "jc:"+osUser+":"+installID+":gen:o").Err(); err != nil && !errors.Is(err, redis.Nil) {
+		return fmt.Errorf("site credential check: %w", err)
+	}
+	return applyInstallACL(ctx, cfg.Redis, osUser, installID, token)
+}
+
+// CachePluginFlushesWithoutScan reports whether a jabali-cache version flushes
+// by bumping a generation counter (1.2.0 and later), so its Redis user doesn't
+// need SCAN. A version it can't parse is false: the caller then leaves the ACL
+// as it is.
+func CachePluginFlushesWithoutScan(version string) bool {
+	parts := strings.Split(strings.TrimSpace(version), ".")
+	if len(parts) < 2 {
+		return false
+	}
+	major, err := strconv.Atoi(parts[0])
+	if err != nil || major < 0 {
+		return false
+	}
+	minor, err := strconv.Atoi(parts[1])
+	if err != nil || minor < 0 {
+		return false
+	}
+	return major > 1 || (major == 1 && minor >= 2)
 }
 
 // cacheWarmupResult mirrors the agent's nginx.cache_warmup response (JAB-95

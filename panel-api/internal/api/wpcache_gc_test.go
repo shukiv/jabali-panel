@@ -463,7 +463,7 @@ func TestCacheStats_ThePanelKeyCountWins(t *testing.T) {
 	r, ag, _ := applicationsRouter(t, "user1", false, wpRepo, domRepo, userRepo, nil)
 	ag.callFn = func(_ context.Context, cmd string, _ any) (json.RawMessage, error) {
 		if cmd == "wordpress.cache_stats" {
-			return json.RawMessage(`{"keys":7,"driver":"phpredis"}`), nil
+			return json.RawMessage(`{"keys":7,"keys_approx":true,"driver":"phpredis"}`), nil
 		}
 		return json.RawMessage(`{}`), nil
 	}
@@ -484,12 +484,24 @@ func TestCacheStats_ThePanelKeyCountWins(t *testing.T) {
 		return body.Stats
 	}
 
-	if s := get(); s["keys"] != float64(7) || s["keys_at"] != nil {
-		t.Errorf("before a cleanup pass: keys=%v keys_at=%v, want the plugin's 7 and no keys_at", s["keys"], s["keys_at"])
+	// The plugin counts with SCAN, which its Redis user no longer has, so its
+	// count is never shown: no keys until the panel has counted.
+	s := get()
+	if _, ok := s["keys"]; ok {
+		t.Errorf("before a cleanup pass: keys=%v, want none", s["keys"])
+	}
+	if _, ok := s["keys_approx"]; ok {
+		t.Errorf("before a cleanup pass: keys_approx=%v, want none", s["keys_approx"])
+	}
+	if s["keys_at"] != nil || s["driver"] != "phpredis" {
+		t.Errorf("before a cleanup pass: keys_at=%v driver=%v, want no keys_at and the plugin's other stats", s["keys_at"], s["driver"])
 	}
 	wpCacheStats.Store(id, wpCacheSiteStats{Keys: 42, At: time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC), Complete: true})
 	if s := get(); s["keys"] != float64(42) || s["keys_at"] != "2026-10-09T12:00:00Z" {
 		t.Errorf("after a pass: keys=%v keys_at=%v, want the panel's 42 at 2026-10-09T12:00:00Z", s["keys"], s["keys_at"])
+	}
+	if _, ok := get()["keys_approx"]; ok {
+		t.Error("after a pass: the panel's count is exact, want no keys_approx")
 	}
 }
 

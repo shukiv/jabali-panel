@@ -17,6 +17,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -27,6 +28,10 @@ import (
 )
 
 const bundledWPCachePluginDir = "/usr/local/share/jabali/wp-plugins/jabali-cache"
+
+// bundledCachePluginSrc is where plugin staging copies from: the bundle, or a
+// temp copy in tests.
+var bundledCachePluginSrc = bundledWPCachePluginDir
 
 // redisClientsGroup gates /run/redis/redis.sock. Distinct from jabali-sockets
 // (which also fronts the root agent socket) so tenants get Redis but nothing else.
@@ -341,17 +346,17 @@ type wordpressCachePluginRefreshParams struct {
 }
 
 type wordpressCachePluginRefreshResult struct {
-	Refreshed bool   `json:"refreshed"` // false when the plugin wasn't installed (skipped)
+	Refreshed bool   `json:"refreshed"` // false when the site was skipped
 	Version   string `json:"version,omitempty"`
 	Detail    string `json:"detail,omitempty"`
 }
 
-// wordpressCachePluginRefreshHandler updates the jabali-cache plugin on one WP
-// install to the latest WordPress.org release (GH #613 made WP.org canonical).
-// Idempotent: a no-op when already current; a skip (not an error) when the
-// plugin isn't installed on that site. Used by the `jabali app
-// refresh-cache-plugin` sweep so a `jabali update` brings every cache-enabled
-// site to the published version without a manual cache re-toggle.
+// wordpressCachePluginRefreshHandler re-stages the jabali-cache plugin on one
+// WP install: the release bundle by default (JAB-64), the WordPress.org
+// release on the opt-in channel. Used by the `jabali app refresh-cache-plugin`
+// sweep so a `jabali update` brings every cache-enabled site to the current
+// plugin without a manual cache re-toggle. The panel tightens the site's Redis
+// ACL from the version reported here (ADR-0173).
 func wordpressCachePluginRefreshHandler(ctx context.Context, raw json.RawMessage) (any, error) {
 	var p wordpressCachePluginRefreshParams
 	if err := json.Unmarshal(raw, &p); err != nil {
@@ -364,8 +369,11 @@ func wordpressCachePluginRefreshHandler(ctx context.Context, raw json.RawMessage
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "os_user required"}
 	}
 
-	// Skip sites where the plugin isn't present — refresh only touches installs
-	// that actually have jabali-cache (cache-enabled ones).
+	if !strings.EqualFold(os.Getenv("JABALI_WP_CACHE_SOURCE"), "wordpress-org") {
+		return refreshBundledCachePlugin(ctx, p.InstallPath, p.OSUser)
+	}
+
+	// WordPress.org channel (opt-in): skip sites where the plugin isn't present.
 	if out, err := runWPAsTenantOut(ctx, p.OSUser, p.InstallPath, "plugin", "is-installed", "jabali-cache"); err != nil {
 		return wordpressCachePluginRefreshResult{Refreshed: false, Detail: "plugin not installed: " + truncateReason(out, 200)}, nil
 	}
@@ -376,22 +384,45 @@ func wordpressCachePluginRefreshHandler(ctx context.Context, raw json.RawMessage
 	// always fetches the *current* WordPress.org version and overwrites, so the
 	// sweep reliably converges every site to the published release (WP.org is
 	// canonical per #613). Reinstalling keeps the plugin's activation state.
-	// JAB-64: refresh re-stages the trusted release-bundled plugin by default;
-	// only the opt-in "latest" channel reinstalls from WordPress.org.
-	if strings.EqualFold(os.Getenv("JABALI_WP_CACHE_SOURCE"), "wordpress-org") {
-		if out, err := runWPAsTenantOut(ctx, p.OSUser, p.InstallPath, "plugin", "install", "jabali-cache", "--force"); err != nil {
-			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal,
-				Message: fmt.Sprintf("wp plugin install --force jabali-cache: %v: %s", err, out)}
-		}
-	} else {
-		dest := filepath.Join(p.InstallPath, "wp-content", "plugins", "jabali-cache")
-		if err := stageBundledCachePlugin(ctx, dest, p.OSUser); err != nil {
-			return nil, err
-		}
+	if out, err := runWPAsTenantOut(ctx, p.OSUser, p.InstallPath, "plugin", "install", "jabali-cache", "--force"); err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal,
+			Message: fmt.Sprintf("wp plugin install --force jabali-cache: %v: %s", err, out)}
 	}
 	// Report the resulting version (best-effort).
 	ver, _ := runWPAsTenantOut(ctx, p.OSUser, p.InstallPath, "plugin", "get", "jabali-cache", "--field=version")
 	return wordpressCachePluginRefreshResult{Refreshed: true, Version: strings.TrimSpace(ver)}, nil
+}
+
+// refreshBundledCachePlugin re-stages the release bundle on one site. It runs
+// nothing as the tenant, so neither the site's WordPress nor its wp-cli config
+// decides the outcome: the panel only sends cache-enabled installs, a site
+// without a plugins directory is skipped, and the version reported is the
+// root-owned bundle's, which is what the site now runs.
+func refreshBundledCachePlugin(ctx context.Context, installPath, osUser string) (wordpressCachePluginRefreshResult, error) {
+	plugins := filepath.Join(installPath, "wp-content", "plugins")
+	if fi, err := os.Stat(plugins); err != nil || !fi.IsDir() {
+		return wordpressCachePluginRefreshResult{Refreshed: false, Detail: "no wp-content/plugins directory"}, nil
+	}
+	if err := stageBundledCachePlugin(ctx, filepath.Join(plugins, "jabali-cache"), osUser); err != nil {
+		return wordpressCachePluginRefreshResult{}, err
+	}
+	return wordpressCachePluginRefreshResult{Refreshed: true, Version: bundledCachePluginVersion()}, nil
+}
+
+// pluginHeaderVersionRe matches the Version: line of a WordPress plugin header.
+var pluginHeaderVersionRe = regexp.MustCompile(`(?m)^[ \t/*]*Version:[ \t]*([0-9][0-9A-Za-z.+-]*)`)
+
+// bundledCachePluginVersion is the Version header of the bundle's main file,
+// or "" when it can't be read.
+func bundledCachePluginVersion() string {
+	b, err := os.ReadFile(filepath.Join(bundledCachePluginSrc, "jabali-cache.php"))
+	if err != nil {
+		return ""
+	}
+	if m := pluginHeaderVersionRe.FindSubmatch(b); m != nil {
+		return string(m[1])
+	}
+	return ""
 }
 
 // stageBundledCachePlugin installs the release-bundled jabali-cache plugin into
@@ -399,14 +430,14 @@ func wordpressCachePluginRefreshHandler(ctx context.Context, raw json.RawMessage
 // nginx (www-data) can read it. This is the DEFAULT trusted source (JAB-64):
 // panel-managed infra code must not come from a mutable external channel.
 func stageBundledCachePlugin(ctx context.Context, dest, osUser string) error {
-	if _, err := os.Stat(bundledWPCachePluginDir); err != nil {
+	if _, err := os.Stat(bundledCachePluginSrc); err != nil {
 		return &agentwire.AgentError{Code: agentwire.CodeFailedPrecondition,
-			Message: fmt.Sprintf("bundled jabali-cache missing at %s \u2014 re-run install.sh", bundledWPCachePluginDir)}
+			Message: fmt.Sprintf("bundled jabali-cache missing at %s \u2014 re-run install.sh", bundledCachePluginSrc)}
 	}
 	if err := execCommandContext(ctx, "rm", "-rf", dest).Run(); err != nil {
 		return bkInternal("clear old plugin", err)
 	}
-	if err := execCommandContext(ctx, "cp", "-a", bundledWPCachePluginDir, dest).Run(); err != nil {
+	if err := execCommandContext(ctx, "cp", "-a", bundledCachePluginSrc, dest).Run(); err != nil {
 		return bkInternal("stage plugin (bundled)", err)
 	}
 	if err := execCommandContext(ctx, "chown", "-R", osUser+":www-data", dest).Run(); err != nil {
