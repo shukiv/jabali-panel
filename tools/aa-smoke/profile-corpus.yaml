@@ -61,8 +61,9 @@ profiles:
       - /run/mysqld/mysqld.sock
       - /var/run/mysqld/mysqld.sock
 
-  # jabali-sendmail (JAB-230) — the PHP mail() shim. Child profile of
-  # jabali-fpm-app; dials the Stalwart submission listener over loopback
+  # jabali-sendmail (JAB-230) — the PHP mail() shim. jabali-fpm-app hands
+  # the shim to it (Px); its own profile file since GH #2001. Dials the
+  # Stalwart submission listener over loopback
   # TCP (tcp: prefix — the runner passes it through to aa-smoke, which
   # does a TCP dial for these instead of unix).
   - name: jabali-sendmail

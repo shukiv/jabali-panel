@@ -1,0 +1,61 @@
+# AppArmor profile — jabali-sendmail (JAB-230)
+#
+# Confines the PHP mail() submission shim. PHP's mail() runs sendmail_path
+# through `/bin/sh -c` in the per-user FPM worker, and the jabali-fpm-app
+# profile (usr.local.libexec.jabali.fpm-exec) hands the shim to this profile
+# with `Px -> jabali-sendmail`. Runs as the tenant uid (inherited from the FPM
+# worker). Needs exactly: read its own binary, read the relay-credential tree
+# (POSIX 0640 root:<usergroup> already scopes WHICH creds this uid can open;
+# the profile bounds the reachable paths), TCP to the local submission port,
+# TLS roots, and syslog. No exec, no writes, no /home.
+#
+# Its own file (GH #2001): aa-complain/aa-enforce operate per file, so while
+# this profile lived in the fpm-exec file it always had jabali-fpm-app's mode.
+# Here it can be enforced while jabali-fpm-app stays in complain, or the other
+# way round. apply_apparmor_profiles keeps the mode each profile is loaded in,
+# so the move doesn't relax a host where it was enforced with its parent.
+# `make aa-smoke` must pass before shipping any edit here.
+#
+# Same ABI pin as the fpm-exec file it came from (GH #705), so its rules mean
+# exactly what they meant there.
+abi <abi/3.0>,
+
+#include <tunables/global>
+
+profile jabali-sendmail /usr/local/libexec/jabali/jabali-sendmail flags=(attach_disconnected) {
+  #include <abstractions/base>
+  #include <abstractions/nameservice>
+  #include <abstractions/openssl>
+  #include <abstractions/ssl_certs>
+
+  /usr/local/libexec/jabali/jabali-sendmail mr,
+
+  # Go runtime introspection (GOMAXPROCS reads the cgroup limits at start).
+  # Observed as would-deny on the testserver soak; read-only metadata.
+  owner /proc/*/cgroup r,
+  owner /proc/*/mountinfo r,
+  /sys/fs/cgroup/ r,
+  /sys/fs/cgroup/** r,
+
+  # Relay credentials — traverse + read only.
+  /etc/jabali-panel/sendmail/ r,
+  /etc/jabali-panel/sendmail/*/ r,
+  /etc/jabali-panel/sendmail/*/*.cred r,
+
+  # Submission to Stalwart on 127.0.0.1:587 (STARTTLS).
+  network inet stream,
+  network inet6 stream,
+
+  # One syslog line per attempt (mail facility).
+  /dev/log w,
+
+  # A message-parsing bug must never become a filesystem primitive. The `r`
+  # matters twice: the shim inherits the FPM worker's open fd on the tenant's
+  # .php script (popen keeps parent fds), and an explicit deny both revokes
+  # that fd AND silences the per-send file_inherit audit noise it would
+  # otherwise log in enforce mode. The shim needs nothing from /home.
+  deny /home/** rwklx,
+  deny /etc/shadow r,
+  deny /etc/gshadow r,
+  deny /root/** rwklx,
+}

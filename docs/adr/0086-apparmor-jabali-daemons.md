@@ -303,3 +303,34 @@ socket-group gating) and the auditd `jabali_bin_tamper` watch. Revert
 when AA 4.x complain-mode unix mediation is fixed upstream. Profiles
 still shipped: jabali-panel, jabali-bulwark, stalwart-mail.
 **Status: accepted (amended).**
+
+## Amendment 2026-10-09 — jabali-sendmail in its own profile file (GH #2001)
+
+The PHP `mail()` shim's profile, `jabali-sendmail` (JAB-230), shipped in the
+same file as `jabali-fpm-app` (`usr.local.libexec.jabali.fpm-exec`).
+`aa-enforce` and `aa-complain` change every profile in the file they are
+given, so the shim's profile always had `jabali-fpm-app`'s mode, and the
+panel's mode switch refused it ("profile not in allowlist"). An admin who
+keeps `jabali-fpm-app` in complain (so tenant PHP can run `df`, `ls` and the
+like) could not enforce the shim.
+
+Decision: `jabali-sendmail` moves, unchanged and with the same `abi <abi/3.0>`
+pin, into `install/apparmor/usr.local.libexec.jabali.jabali-sendmail`. The
+parent keeps `Px -> jabali-sendmail`; named profiles are global, so the
+transition doesn't depend on which file defines the target. The agent's
+allowlist adds `jabali-sendmail`, so Security → AppArmor switches it on its
+own.
+
+- **No relaxing on update.** `apply_apparmor_profiles` used to read a
+  profile's previous mode only when its file already existed in
+  `/etc/apparmor.d`, and started a profile with no previous mode in
+  complain. On the first update after the move, the sendmail file is new, so
+  the shim would have dropped to complain on hosts where it was enforced with
+  its parent. The function now takes the label from the shipped file and
+  looks up the mode it is loaded in, whether or not the file existed.
+- **Not auto-promoted.** Like `jabali-fpm-app`, `jabali-sendmail` is not in
+  `jabali apparmor flip-mature`'s list, so the daily timer leaves it alone;
+  an admin switches it.
+- `install/tests/test_apparmor_profile_mode_preserved.sh` pins the mode
+  preservation; a Go test pins that every shipped profile file declares one
+  profile and that the agent can switch it.
