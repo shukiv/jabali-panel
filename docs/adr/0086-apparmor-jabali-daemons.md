@@ -328,6 +328,17 @@ own.
   the shim would have dropped to complain on hosts where it was enforced with
   its parent. The function now takes the label from the shipped file and
   looks up the mode it is loaded in, whether or not the file existed.
+- **The mode lookup itself was broken.** Since M40 (2026-04-30) it merged
+  `aa-status --json`'s `processes` entries by a `name` key they don't have
+  (AppArmor names it `profile`). Whenever a confined process was running,
+  which is always, it crashed and the profile was treated as complain. So
+  every `jabali update` put every jabali profile in complain, where
+  `aa-complain` was installed. The daily flip-mature timer put `jabali-panel`,
+  `jabali-bulwark` and `stalwart-mail` back once they were soak-clean;
+  `jabali-fpm-app` stayed in complain. The lookup now reads the `profiles`
+  map only, so an update keeps each profile's mode, as this ADR intended.
+  A profile edit shipped in a release now loads in the mode the profile is
+  already in.
 - **Not auto-promoted.** Like `jabali-fpm-app`, `jabali-sendmail` is not in
   `jabali apparmor flip-mature`'s list, so the daily timer leaves it alone;
   an admin switches it.

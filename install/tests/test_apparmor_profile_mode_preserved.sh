@@ -11,6 +11,11 @@
 # profile is loaded (from the old fpm-exec file) in jabali-fpm-app's mode. The
 # mode must come from the loaded profile, not from whether the file existed.
 #
+# The mode lookup also has to read real `aa-status --json` output. Its
+# "processes" entries name the profile under "profile"; a lookup that expected
+# "name" crashed whenever a confined process was running, and every update then
+# put every jabali profile in complain.
+#
 # This test runs apply_apparmor_profiles against the shipped profiles in a temp
 # apparmor.d, with aa-status, apparmor_parser, aa-enforce and aa-complain
 # stubbed, and checks which mode each profile file ends up in.
@@ -46,7 +51,8 @@ run_case() {
   for f in "$@"; do
     cp "install/apparmor/$f" "$aad/$f"
   done
-  printf '%s' "$status" >"$work/status.json"
+  # aa-status --json as AppArmor 4.0.1 prints it, with confined processes.
+  printf '{"version":"2","profiles":%s,"processes":%s}' "$status" "$processes" >"$work/status.json"
   : >"$calls"
   (
     STATUS="$work/status.json"
@@ -81,9 +87,12 @@ want() {
   fi
 }
 
-all_enforce='{"profiles":{"jabali-panel":"enforce","jabali-bulwark":"enforce","stalwart-mail":"enforce","jabali-fpm-app":"enforce","jabali-sendmail":"enforce"}}'
-all_complain='{"profiles":{"jabali-panel":"complain","jabali-bulwark":"complain","stalwart-mail":"complain","jabali-fpm-app":"complain","jabali-sendmail":"complain"}}'
-split_modes='{"profiles":{"jabali-panel":"enforce","jabali-bulwark":"enforce","stalwart-mail":"enforce","jabali-fpm-app":"complain","jabali-sendmail":"enforce"}}'
+# Loaded profiles, as aa-status --json's "profiles" map.
+all_enforce='{"jabali-panel":"enforce","jabali-bulwark":"enforce","stalwart-mail":"enforce","jabali-fpm-app":"enforce","jabali-sendmail":"enforce","rsyslogd":"enforce"}'
+all_complain='{"jabali-panel":"complain","jabali-bulwark":"complain","stalwart-mail":"complain","jabali-fpm-app":"complain","jabali-sendmail":"complain","rsyslogd":"enforce"}'
+split_modes='{"jabali-panel":"enforce","jabali-bulwark":"enforce","stalwart-mail":"enforce","jabali-fpm-app":"complain","jabali-sendmail":"enforce","rsyslogd":"enforce"}'
+# Confined processes, keyed by executable, with the profile under "profile".
+processes='{"/usr/sbin/rsyslogd":[{"profile":"rsyslogd","pid":"812","status":"enforce"}],"/opt/stalwart/stalwart":[{"profile":"stalwart-mail","pid":"3862508","status":"enforce"}]}'
 
 # 1. First update after the move, host with jabali-fpm-app (and so
 #    jabali-sendmail) enforced: sendmail stays enforced.
@@ -104,7 +113,7 @@ want "split modes" "$got" usr.local.libexec.jabali.fpm-exec complain
 want "split modes" "$got" "$sendmail_file" enforce
 
 # 4. A profile that isn't loaded starts in complain.
-got=$(run_case 0 '{"profiles":{"jabali-panel":"enforce"}}' "${existing[@]}")
+got=$(run_case 0 '{"jabali-panel":"enforce","rsyslogd":"enforce"}' "${existing[@]}")
 want "not loaded" "$got" "$sendmail_file" complain
 want "not loaded" "$got" usr.local.libexec.jabali.fpm-exec complain
 want "not loaded" "$got" usr.local.bin.jabali-panel-api enforce

@@ -12859,15 +12859,23 @@ apply_apparmor_profiles() {
     # (GH #2001: jabali-sendmail left the fpm-exec file; on the first update
     # after that its new file isn't here yet, but the profile is loaded,
     # enforced wherever jabali-fpm-app was).
+    #
+    # The mode is read from aa-status's "profiles" map, which lists every
+    # loaded profile. An earlier lookup also merged the "processes" entries
+    # by a "name" key they don't have (AppArmor names it "profile"), so it
+    # crashed whenever a confined process was running and every update put
+    # every jabali profile in complain. The label goes in as an argument,
+    # not into the python source.
     if command -v aa-status >/dev/null 2>&1; then
-      local profile_label
+      local profile_label loaded_mode
       profile_label=$(awk '/^profile / {print $2; exit}' "$profile" 2>/dev/null)
-      if [[ -n "$profile_label" ]] && aa-status --json 2>/dev/null | grep -q "\"$profile_label\""; then
-        if aa-status --json 2>/dev/null | python3 -c "import json,sys; d=json.load(sys.stdin); ps={**d.get('profiles',{}), **{p['name']:p['status'] for s in d.get('processes',{}).values() for p in s}}; print(ps.get('$profile_label','complain'))" 2>/dev/null | grep -q enforce; then
-          prev_mode=enforce
-        else
-          prev_mode=complain
-        fi
+      if [[ -n "$profile_label" ]]; then
+        loaded_mode=$(aa-status --json 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("profiles",{}).get(sys.argv[1],""))' "$profile_label" 2>/dev/null || true)
+        case "$loaded_mode" in
+          enforce) prev_mode=enforce ;;
+          "") ;;  # not loaded: starts in complain below
+          *) prev_mode=complain ;;
+        esac
       fi
     fi
 
