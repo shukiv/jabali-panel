@@ -12488,11 +12488,27 @@ UNIT
 # (Debian filename convention: dots replace slashes). install.sh
 # copies them to /etc/apparmor.d/ and reloads via apparmor_parser -r.
 
-install_apparmor() {
+# GH #2001: apparmor-utils is checked on its own. Stock Debian ships apparmor
+# but not apparmor-utils, and the old `dpkg -s apparmor` gate then skipped the
+# install. Without aa-complain/aa-enforce every jabali profile stayed in
+# enforce from the first load (the aa-complain below fails silently), and the
+# Security -> AppArmor switch and the flip-mature timer failed. install_apparmor
+# runs on `jabali update` too, so this heals hosts installed before the fix.
+# A failed apparmor-utils install warns instead of aborting, like the other
+# packages `jabali update` adds to existing hosts.
+install_apparmor_packages() {
   if ! dpkg -s apparmor >/dev/null 2>&1; then
     _spin "apt install apparmor + apparmor-utils" \
       apt-get install -y -qq --no-install-recommends apparmor apparmor-utils
+  elif ! dpkg -s apparmor-utils >/dev/null 2>&1; then
+    _log "apparmor-utils missing — installing (aa-complain/aa-enforce)"
+    apt-get install -y -qq --no-install-recommends apparmor-utils >/dev/null 2>&1 || \
+      _warn "apparmor-utils not installable — profiles stay in enforce and the AppArmor mode switch fails"
   fi
+}
+
+install_apparmor() {
+  install_apparmor_packages
   # apparmor-profiles-extra ships distro-curated profiles for mariadb,
   # postfix, etc. Best-effort install — Debian 13 includes it; if a
   # cloud minimal image lacks the package we just skip system-daemon
