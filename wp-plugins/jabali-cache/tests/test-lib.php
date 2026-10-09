@@ -91,6 +91,9 @@ if ( $live ) {
 				'socket'   => $live,
 				'database' => 1,
 				'timeout'  => 1.0,
+				// Optional ACL login, to run as a fenced user.
+				'username' => (string) getenv( 'JABALI_TEST_REDIS_USER' ),
+				'password' => (string) getenv( 'JABALI_TEST_REDIS_PASS' ),
 			)
 		)
 	);

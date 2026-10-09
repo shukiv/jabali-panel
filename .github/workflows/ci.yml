@@ -12,7 +12,8 @@
 # push-to-main (release.yml), schedule (nightly.yml), and workflow_dispatch
 # utilities.
 #
-# Jobs (all run unconditionally): Go tests+vet, install.sh lint, vitest+eslint,
+# Jobs (all run unconditionally): Go tests+vet, install.sh lint, jabali-cache
+# plugin tests, vitest+eslint,
 # Playwright E2E.
 
 name: CI
@@ -174,6 +175,35 @@ jobs:
             else
               echo "::endgroup::"
               echo "::error file=$t::$(basename "$t") failed"
+              failed=1
+            fi
+          done
+          exit "$failed"
+
+  wp-plugin-tests:
+    name: jabali-cache plugin tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Lint, version check, tests
+        # The bundled WordPress plugin is copied to every cache-enabled site,
+        # but its tests only ran by hand. Run them here in in-memory mode
+        # (the live-Redis checks skip without JABALI_TEST_REDIS); they pass
+        # with no PHP extensions, so the runner's stock PHP is enough.
+        working-directory: wp-plugins/jabali-cache
+        run: |
+          set -euo pipefail
+          php --version | head -1
+          find . -name '*.php' -print0 | xargs -0 -n1 php -l >/dev/null
+          bash bin/check-version.sh
+          failed=0
+          for t in tests/test-*.php; do
+            echo "::group::$(basename "$t")"
+            if php "$t"; then
+              echo "::endgroup::"
+            else
+              echo "::endgroup::"
+              echo "::error file=wp-plugins/jabali-cache/$t::$(basename "$t") failed"
               failed=1
             fi
           done

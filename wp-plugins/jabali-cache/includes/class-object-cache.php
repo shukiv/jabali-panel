@@ -67,6 +67,34 @@ class Jabali_Cache_Object_Cache {
 	/** @var string 'igbinary' | 'php' */
 	private $serializer = 'php';
 
+	/**
+	 * Object-cache generation. It is part of every key, so a flush only has to
+	 * bump it: the old keys stop being read and age out (no SCAN needed).
+	 * null until first read. Digits, kept as a string (see
+	 * Jabali_Cache_Client::generation()).
+	 *
+	 * @var string|null
+	 */
+	private $gen = null;
+
+	/** @var float when $gen was read (microtime). */
+	private $gen_at = 0.0;
+
+	/**
+	 * true once Redis (or the generation) couldn't be read. The rest of the
+	 * request is runtime-only, so no key built without the generation ever
+	 * reaches Redis.
+	 *
+	 * @var bool
+	 */
+	private $offline = false;
+
+	/**
+	 * A long-running process (WP-CLI, a queue worker) re-reads the generation
+	 * this often, so it sees a flush made by another process.
+	 */
+	const GEN_REFRESH_SECONDS = 5;
+
 	public function __construct() {
 		$this->cfg    = Jabali_Cache_Config::load();
 		$this->prefix = $this->cfg['prefix'];
@@ -508,18 +536,37 @@ class Jabali_Cache_Object_Cache {
 	 * Flush only THIS site's keys. Never FLUSHDB — DB 1 is shared across
 	 * every tenant on the host (ADR-0059).
 	 *
-	 * @return bool
+	 * The flush bumps the object generation, which every key carries, so no
+	 * key written before it is read again. It also bumps the page-cache
+	 * generation: a flush clears cached pages too, as it always has. Correctness
+	 * doesn't depend on SCAN; deleting the old keys right away is only a
+	 * best-effort memory reclaim.
+	 *
+	 * @return bool false when the flush couldn't be recorded in Redis.
 	 */
 	public function flush() {
 		$this->cache = array();
-		if ( $this->ensure() ) {
-			$this->redis_calls++;
-			$this->client->delete_by_pattern( $this->prefix . '*' );
+		if ( ! $this->ensure() ) {
+			return true; // runtime-only: nothing of ours is being read from Redis.
 		}
+		$this->redis_calls++;
+		$gen = $this->client->bump_generation( $this->prefix . 'gen:o' );
+		$this->client->bump_generation( $this->prefix . 'gen:p' );
+		if ( false === $gen ) {
+			return false;
+		}
+		$this->gen    = $gen;
+		$this->gen_at = microtime( true );
+		$this->client->delete_by_pattern( $this->prefix . '*', $this->prefix . 'gen:' );
 		return true;
 	}
 
 	/**
+	 * A group can't be flushed on its own without SCAN, so supports() says
+	 * no and well-behaved callers (WordPress core checks) don't call this. A
+	 * caller that does gets a full object flush: more than it asked for, but
+	 * never stale data. Cached pages are left alone.
+	 *
 	 * @param string $group
 	 * @return bool
 	 */
@@ -528,10 +575,17 @@ class Jabali_Cache_Object_Cache {
 		if ( $this->is_non_persistent( $group ) ) {
 			return true;
 		}
-		if ( $this->ensure() ) {
-			$this->redis_calls++;
-			$this->client->delete_by_pattern( $this->prefix . $this->group_token( $group ) . ':*' );
+		$this->cache = array();
+		if ( ! $this->ensure() ) {
+			return true;
 		}
+		$this->redis_calls++;
+		$gen = $this->client->bump_generation( $this->prefix . 'gen:o' );
+		if ( false === $gen ) {
+			return false;
+		}
+		$this->gen    = $gen;
+		$this->gen_at = microtime( true );
 		return true;
 	}
 
@@ -556,7 +610,6 @@ class Jabali_Cache_Object_Cache {
 			case 'get_multiple':
 			case 'delete_multiple':
 			case 'flush_runtime':
-			case 'flush_group':
 				return true;
 			default:
 				return false;
@@ -621,13 +674,23 @@ class Jabali_Cache_Object_Cache {
 	// Internals.
 	// ------------------------------------------------------------------
 
+	/**
+	 * Whether this request may use Redis. Reads the generation on first use,
+	 * so every key sent to Redis carries it.
+	 *
+	 * @return bool
+	 */
 	private function ensure() {
-		if ( $this->client->is_connected() ) {
-			return true;
+		if ( $this->offline ) {
+			return false;
 		}
-		$ok                  = $this->client->connect();
-		$this->is_persistent = $ok;
-		return $ok;
+		if ( null === $this->gen ) {
+			$this->current_gen();
+			if ( $this->offline ) {
+				return false;
+			}
+		}
+		return $this->client->is_connected();
 	}
 
 	private function has( $key, $group ) {
@@ -653,8 +716,9 @@ class Jabali_Cache_Object_Cache {
 
 	/**
 	 * Build the fully-qualified Redis key:
-	 *   {prefix}{group-token}:{blog?}{key}
-	 * Global groups are not blog-scoped.
+	 *   {prefix}o{generation}:{group-token}:{blog?}{key}
+	 * Global groups are not blog-scoped. Non-persistent groups never reach
+	 * Redis, so they don't need the generation.
 	 *
 	 * @param int|string $key
 	 * @param string     $group
@@ -664,8 +728,63 @@ class Jabali_Cache_Object_Cache {
 		if ( '' === $group ) {
 			$group = 'default';
 		}
+		$gen  = $this->is_non_persistent( $group ) ? '0' : $this->current_gen();
 		$blog = isset( $this->global_groups[ $group ] ) ? '' : ( $this->blog_prefix . ':' );
-		return $this->prefix . $this->group_token( $group ) . ':' . $blog . $key;
+		return $this->prefix . 'o' . $gen . ':' . $this->group_token( $group ) . ':' . $blog . $key;
+	}
+
+	/**
+	 * The object generation, read from Redis on first use and every
+	 * GEN_REFRESH_SECONDS after. Only key() refreshes it, so a key and the
+	 * Redis call that uses it always agree. When it can't be read, the request
+	 * goes offline (runtime-only) and this returns '0'. When another process
+	 * has flushed, the runtime copies from the old generation are dropped.
+	 *
+	 * @return string
+	 */
+	private function current_gen() {
+		if ( $this->offline ) {
+			return '0';
+		}
+		$now = microtime( true );
+		if ( null !== $this->gen && ( $now - $this->gen_at ) < self::GEN_REFRESH_SECONDS ) {
+			return $this->gen;
+		}
+		if ( ! $this->client->is_connected() && ! $this->client->connect() ) {
+			$this->go_offline();
+			return '0';
+		}
+		$gen = $this->client->generation( $this->prefix . 'gen:o' );
+		if ( false === $gen ) {
+			$this->go_offline();
+			return '0';
+		}
+		if ( null !== $this->gen && $gen !== $this->gen ) {
+			$this->drop_persistent_runtime();
+		}
+		$this->gen           = $gen;
+		$this->gen_at        = $now;
+		$this->is_persistent = true;
+		return $this->gen;
+	}
+
+	/**
+	 * Drop the runtime copies of persistent groups. Their keys carry an old
+	 * generation that will never be read again; a long-running process would
+	 * otherwise keep them for its whole life. Non-persistent groups never
+	 * reach Redis and stay.
+	 */
+	private function drop_persistent_runtime() {
+		foreach ( array_keys( $this->cache ) as $group ) {
+			if ( ! $this->is_non_persistent( $group ) ) {
+				unset( $this->cache[ $group ] );
+			}
+		}
+	}
+
+	private function go_offline() {
+		$this->offline       = true;
+		$this->is_persistent = false;
 	}
 
 	private function group_token( $group ) {

@@ -288,7 +288,7 @@ func installFromRelease(ctx context.Context, repoDir string, log func(string, ..
 	//     Best-effort: an older tarball without wp-plugins/ must not fail the
 	//     whole update (the binaries are already in).
 	if src := filepath.Join(extractDir, "wp-plugins", "jabali-cache"); dirExists(src) {
-		const dst = "/usr/local/share/jabali/wp-plugins/jabali-cache"
+		const dst = bundledCachePluginDir
 		_ = os.MkdirAll("/usr/local/share/jabali/wp-plugins", 0o755)
 		cmd := exec.CommandContext(ctx, "rsync", "-a", "--delete", "--exclude=.git", src+"/", dst+"/")
 		if out, err := cmd.CombinedOutput(); err != nil {

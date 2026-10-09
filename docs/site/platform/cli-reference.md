@@ -268,7 +268,7 @@ jabali app magic-link <install-id>
 
 #### `jabali app refresh-cache-plugin`
 
-Update the jabali-cache plugin to the latest WordPress.org release on every cache-enabled site
+Re-install the bundled jabali-cache plugin on every cache-enabled WordPress site
 
 ```
 jabali app refresh-cache-plugin
