@@ -490,3 +490,49 @@ func TestCacheStats_ThePanelKeyCountWins(t *testing.T) {
 		t.Errorf("after a pass: keys=%v keys_at=%v, want the panel's 42 at 2026-10-09T12:00:00Z", s["keys"], s["keys_at"])
 	}
 }
+
+func TestSetApplicationCache_DisableRemovesTheKeysThenTheUser(t *testing.T) {
+	ctx := context.Background()
+	mr, rdb := newMiniRedis(t)
+	defer mr.Close()
+	wpRepo, domRepo, userRepo := wpUserAndDomain() // user1 = alice
+	if err := wpRepo.Create(ctx, &models.WordPressInstall{ID: gcI, UserID: "user1", DomainID: "domain1", AppType: "wordpress", CacheEnabled: true, Status: "ready"}); err != nil {
+		t.Fatal(err)
+	}
+	g := stubGCRedis(t, mr, map[string]string{installACLUser("alice", gcI): cacheInstallToken(gcSecret, "alice", gcI, "salt-user1")})
+	p := "jc:alice:" + gcI + ":"
+	setKeys(t, mr, map[string]string{p + "gen:o": "5", p + "o5:posts:1:a": "v", "jc:alice:" + gcA + ":o1:x": "v"})
+	cfg := ApplicationHandlerConfig{
+		ApplicationInstalls: wpRepo, Domains: domRepo, Users: userRepo, Agent: &mockAgent{},
+		Redis: rdb, CacheTokenSecret: gcSecret, CacheTokenSalts: gcSalts{},
+	}
+
+	if err := SetApplicationCache(ctx, cfg, gcI, false, true, "user1"); err != nil {
+		t.Fatal(err)
+	}
+	if mr.DB(wpCacheDB).Exists(p+"gen:o") || mr.DB(wpCacheDB).Exists(p+"o5:posts:1:a") {
+		t.Error("disabling the cache must remove the site's keys")
+	}
+	if !mr.DB(wpCacheDB).Exists("jc:alice:" + gcA + ":o1:x") {
+		t.Error("another install's keys must stay")
+	}
+	if strings.Join(g.acl, "|") != "DELUSER wp_alice_"+gcI+"|SAVE" {
+		t.Errorf("acl = %v, want the site's cache user removed after its keys", g.acl)
+	}
+	if len(g.unlink) == 0 || g.unlink[0].user != installACLUser("alice", gcI) {
+		t.Errorf("keys must be deleted through the site's own user, got %+v", g.unlink)
+	}
+}
+
+func TestWPCacheGC_ForgetsStatsOfSitesNoLongerCached(t *testing.T) {
+	mr, rdb := newMiniRedis(t)
+	defer mr.Close()
+	stubGCRedis(t, mr, map[string]string{})
+	wpCacheStats.Store(gcC, wpCacheSiteStats{Keys: 9, At: time.Now()})
+
+	runWPCacheGC(context.Background(), gcConfig(rdb, gcInstall(gcC, false, "ready", "")))
+
+	if _, ok := wpCacheStatsFor(gcC); ok {
+		t.Error("stats of a site whose cache is off must be forgotten")
+	}
+}
