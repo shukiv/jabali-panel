@@ -5,6 +5,11 @@
 // WP.org install in wordpress.cache_set only touches sites when cache is
 // toggled). Idempotent + best-effort: a site already current is a no-op, a
 // site without the plugin is skipped, a single failure never aborts the sweep.
+//
+// After each refresh to a plugin that flushes without SCAN (1.2.0+), the
+// sweep re-applies that site's Redis ACL rule, which no longer grants SCAN
+// (ADR-0173). Sites provisioned before that change keep their old rule until
+// then.
 package main
 
 import (
@@ -16,8 +21,32 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/api"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
+
+// cachePluginRefreshResult is the agent's wordpress.cache_plugin_refresh reply.
+type cachePluginRefreshResult struct {
+	Refreshed bool   `json:"refreshed"`
+	Version   string `json:"version"`
+}
+
+// resyncInstallACL is api.ResyncInstallACL; a seam for tests.
+var resyncInstallACL = api.ResyncInstallACL
+
+// refreshResyncACL re-applies a refreshed site's Redis ACL rule when its new
+// plugin flushes without SCAN. The version is read from the site itself, so it
+// can only ever tighten the rule: any other version, or no Redis on this host,
+// leaves the ACL as it is.
+func refreshResyncACL(ctx context.Context, cfg api.ApplicationHandlerConfig, res cachePluginRefreshResult, userID, osUser, installID string) (bool, error) {
+	if !res.Refreshed || !api.CachePluginFlushesWithoutScan(res.Version) || cfg.Redis == nil {
+		return false, nil
+	}
+	if err := resyncInstallACL(ctx, cfg, userID, osUser, installID); err != nil {
+		return false, err
+	}
+	return true, nil
+}
 
 func newAppRefreshCachePluginCmd() *cobra.Command {
 	return &cobra.Command{
@@ -38,7 +67,11 @@ func newAppRefreshCachePluginCmd() *cobra.Command {
 				return fmt.Errorf("list installs: %w", err)
 			}
 
-			refreshed, skipped, failed := 0, 0, 0
+			// Redis + the cache token secret/salts for the ACL re-sync; without
+			// Redis the re-sync is skipped and the sweep only refreshes.
+			cacheCfg, _ := buildAppDeps()
+
+			refreshed, skipped, failed, aclSynced, aclFailed := 0, 0, 0, 0, 0
 			for i := range installs {
 				in := installs[i]
 				if in.AppType != "wordpress" || !in.CacheEnabled || in.Status != "ready" {
@@ -72,23 +105,31 @@ func newAppRefreshCachePluginCmd() *cobra.Command {
 					failed++
 					continue
 				}
-				var res struct {
-					Refreshed bool   `json:"refreshed"`
-					Version   string `json:"version"`
-				}
+				var res cachePluginRefreshResult
 				_ = json.Unmarshal(raw, &res)
 				if res.Refreshed {
 					fmt.Printf("  refreshed %s (%s) -> %s\n", in.ID, installPath, res.Version)
 					refreshed++
+					synced, aErr := refreshResyncACL(ctx, cacheCfg, res, in.UserID, *u.Username, in.ID)
+					switch {
+					case aErr != nil:
+						fmt.Printf("  FAIL %s: re-sync the site's Redis ACL: %v\n", in.ID, aErr)
+						aclFailed++
+					case synced:
+						aclSynced++
+					}
 				} else {
 					skipped++
 				}
 			}
 
-			fmt.Printf("done: %d refreshed, %d skipped, %d failed\n", refreshed, skipped, failed)
+			fmt.Printf("done: %d refreshed, %d skipped, %d failed; %d Redis ACLs re-synced, %d failed\n", refreshed, skipped, failed, aclSynced, aclFailed)
 			cliAuditOK(ctx, "app.refresh_cache_plugin", "app_install", "*", nil)
 			if failed > 0 {
 				return fmt.Errorf("%d site(s) failed to refresh", failed)
+			}
+			if aclFailed > 0 {
+				return fmt.Errorf("%d site(s) failed to re-sync their Redis ACL (they keep the previous rule)", aclFailed)
 			}
 			return nil
 		},

@@ -349,7 +349,11 @@ func (h *wordPressHandler) cacheStats(c *gin.Context) {
 		stats = map[string]any{}
 	}
 	// The panel's WP-cache cleanup counts the site's keys on every pass
-	// (ADR-0173); its count wins over the plugin's. keys_at says how old it is.
+	// (ADR-0173). The plugin counts with SCAN, which its Redis user no longer
+	// has, so its own count is dropped: keys appears once the panel has
+	// counted, and keys_at says how old that count is.
+	delete(stats, "keys")
+	delete(stats, "keys_approx")
 	if st, ok := wpCacheStatsFor(inst.ID); ok {
 		stats["keys"] = st.Keys
 		stats["keys_at"] = st.At.UTC().Format(time.RFC3339)
