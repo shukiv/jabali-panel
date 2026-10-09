@@ -58,6 +58,49 @@ update, before the `refresh-cache-plugin` sweep re-copies it to every
 cache-enabled site. Before, only install.sh and the release-tarball step did,
 so a `--from-source` update re-staged the old plugin.
 
+### Panel cleanup
+
+Old generations no longer have to be found by the plugin. The panel removes
+them itself (`panel-api/internal/api/wpcache_gc.go`):
+
+- **One pass every 15 minutes** (the first 2 minutes after start), at most
+  5 minutes long. A pass that runs out of time stops; the next one starts over.
+- **One walk for the host.** The pass runs a single `SCAN MATCH jc:*` over DB 1
+  as `jabali_panel`, instead of every site walking the database on each flush.
+- **Every read and delete as the site's own user.** For each cache-enabled,
+  ready WordPress install, the pass connects as `wp_<osuser>_<install>` with
+  that install's token. Redis fences that user to the install's own keys, so a
+  mistake in the pass can't touch another site's keys. A site whose token
+  doesn't authenticate is skipped, not cleaned as the panel.
+- **What is removed:** object keys whose generation is older than `gen:o`, and
+  1.1.0 keys (no generation) once the site has a `gen:o`. Counters (`gen:`),
+  locks (`lock:`) and the plugin's own `__jabali` keys are always kept. Pages
+  are counted and left to their TTL. A generation newer than the counter (a
+  flush that landed mid-pass) is kept.
+- **Key budget.** The same pass enforces the site's `redis_maxmemory_mb` budget
+  (GH #612) at ~2 KiB per key, removing at most 5000 keys per site per pass.
+- **Key count.** The pass records each site's key count and when it was taken.
+  The cache drawer's "Keys (this site)" shows that count instead of the
+  plugin's own.
+
+The per-install ACL user now leaves with the site:
+
+- **Disable and delete.** Turning a site's cache off, or deleting a WordPress
+  app (from the panel or `jabali app delete`), removes the site's keys first,
+  through its own user, then the user. A failed purge still removes the user;
+  the keys are then left to TTL and LRU.
+- **Orphan users.** The pass removes per-install users whose install row no
+  longer exists. It gives each one a fresh one-off password, removes its keys
+  through it, deletes the user and runs `ACL SAVE`. It only does this when it
+  read the full install list. A site with its cache off but its row present is
+  never treated as an orphan: an enable creates the user before it records the
+  flag.
+
+Plugin 1.2.1 reports a flush or page purge that Redis didn't record (the
+generation couldn't be bumped): `flush()` and `purge_all()` return false,
+`wp jabali-cache flush` exits with an error, and the admin page says the flush
+failed instead of "Cache flushed."
+
 ## Consequences
 
 **Positive**
@@ -67,8 +110,8 @@ so a `--from-source` update re-staged the old plugin.
 **Negative**
 - Keys and pages written by 1.1.0 are not read after the upgrade; each site's
   cache refills once.
-- Keys from old generations stay in Redis until the reclaim, their TTL or LRU
-  eviction removes them.
+- Keys from old generations stay in Redis until the panel's cleanup pass (up
+  to 15 minutes), the plugin's reclaim, their TTL or LRU eviction removes them.
 - `wp_cache_flush_group()` is a full object flush.
 
 ## Alternatives considered

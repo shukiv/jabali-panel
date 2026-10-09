@@ -419,7 +419,7 @@ class Jabali_Cache_Page_Cache {
 	 * scheme/host can't be derived (correctness over precision).
 	 *
 	 * @param array<int,string> $paths
-	 * @return int keys deleted (or the purge_all() count on fallback)
+	 * @return int|false keys deleted (or the purge_all() result on fallback)
 	 */
 	public function purge_paths( array $paths ) {
 		if ( ! $this->client->connect() ) {
