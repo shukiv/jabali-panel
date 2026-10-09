@@ -55,7 +55,9 @@ func (gcUsers) FindByID(_ context.Context, id string) (*models.User, error) {
 	return nil, repository.ErrNotFound
 }
 
-type gcSalts struct{ repository.CacheTokenSaltRepository }
+type gcSalts struct {
+	repository.CacheTokenSaltRepository
+}
 
 func (gcSalts) GetOrCreate(_ context.Context, userID string) (string, error) {
 	return "salt-" + userID, nil
@@ -200,8 +202,8 @@ func TestWPCacheGC_DeletesOnlyKeysNothingReadsAgain(t *testing.T) {
 		pA + "page:abc", pA + "lock:page:abc", pA + "__jabali_verify",
 		pB + "options:1:x", pB + "o5:posts:1:y", // 1.1.0 site: every key is live
 		pC + "o1:posts:1:z", pC + "posts:1:old", // cache off: not the cleanup's
-		pD + "posts:1:q",                        // not ready
-		"jc:alice:" + gcA + ":o1:posts:1:x",     // another user's name on the ID
+		pD + "posts:1:q",                    // not ready
+		"jc:alice:" + gcA + ":o1:posts:1:x", // another user's name on the ID
 		"jt:bob:a", "jabali:queue",
 	}
 	kv := map[string]string{pA + "gen:o": "1791000000000002", pA + "gen:p": "7"}
