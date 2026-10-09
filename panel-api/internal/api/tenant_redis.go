@@ -5,10 +5,14 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/middleware"
@@ -135,6 +139,14 @@ func RegisterRedisAccessRoutes(g *gin.RouterGroup, cfg ApplicationHandlerConfig)
 	h := &redisAccessHandler{cfg: cfg}
 	g.GET("/me/redis-access", h.meRedisAccess)
 	g.GET("/users/:id/redis-access", middleware.RequireAdmin(), h.userRedisAccess)
+
+	// GH #2003: a flush scans the whole keyspace, so it is rate-limited per user.
+	flushLimit := cfg.RedisFlushRateLimit
+	if flushLimit == nil {
+		flushLimit = func(c *gin.Context) { c.Next() }
+	}
+	g.POST("/me/redis-access/flush", flushLimit, h.meRedisFlush)
+	g.POST("/users/:id/redis-access/flush", middleware.RequireAdmin(), flushLimit, h.userRedisFlush)
 }
 
 func (h *redisAccessHandler) meRedisAccess(c *gin.Context) {
@@ -150,41 +162,52 @@ func (h *redisAccessHandler) userRedisAccess(c *gin.Context) {
 	h.serve(c, c.Param("id"))
 }
 
-// serve resolves the tenant, provisions (idempotently) their Redis ACL, and
-// returns the ready-to-use credentials.
-func (h *redisAccessHandler) serve(c *gin.Context, userID string) {
+// provisionTenant resolves the tenant's OS user, derives their token and
+// (idempotently) provisions their Redis ACL. On failure it has already written
+// the error response and returns ok=false.
+func (h *redisAccessHandler) provisionTenant(c *gin.Context, userID string) (osUser, token string, ok bool) {
 	ctx := c.Request.Context()
 	if h.cfg.Redis == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "redis_unavailable", "detail": "Redis is not configured on this host"})
-		return
+		return "", "", false
 	}
 	u, err := h.cfg.Users.FindByID(ctx, userID)
 	if err != nil || u == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "user_not_found"})
-		return
+		return "", "", false
 	}
 	// Redis access is a TENANT feature: it needs a Linux account to scope the
 	// keyspace to and to reach the socket. Admins have no OS user.
 	if u.Username == nil || *u.Username == "" {
 		c.JSON(http.StatusConflict, gin.H{"error": "no_linux_user", "detail": "Redis access is only available for hosting users (admins have no Linux account)"})
-		return
+		return "", "", false
 	}
-	osUser := *u.Username
+	osUser = *u.Username
 
 	salt := ""
 	if h.cfg.CacheTokenSalts != nil {
 		s, sErr := h.cfg.CacheTokenSalts.GetOrCreate(ctx, userID)
 		if sErr != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
-			return
+			return "", "", false
 		}
 		salt = s
 	}
-	token := tenantRedisToken(h.cfg.CacheTokenSecret, osUser, salt)
+	token = tenantRedisToken(h.cfg.CacheTokenSecret, osUser, salt)
 
 	if err := tenantRedisProvision(h, ctx, osUser, token); err != nil {
 		slog.ErrorContext(ctx, "tenant redis access: ACL provision failed", "user_id", userID, "err", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "acl_provision_failed"})
+		return "", "", false
+	}
+	return osUser, token, true
+}
+
+// serve resolves the tenant, provisions (idempotently) their Redis ACL, and
+// returns the ready-to-use credentials.
+func (h *redisAccessHandler) serve(c *gin.Context, userID string) {
+	osUser, token, ok := h.provisionTenant(c, userID)
+	if !ok {
 		return
 	}
 
@@ -240,3 +263,166 @@ var tenantRedisProvision = func(h *redisAccessHandler, ctx context.Context, osUs
 // The t_<osuser> user is torn down on account delete by RevokeAllUserCacheACLs
 // (applications_cache.go), which the userops delete cascade already invokes as
 // RevokeCacheACLs — so a recycled username can't inherit the old principal.
+
+// --- Tenant-scoped flush (GH #2003) -------------------------------------------
+//
+// A tenant can't run FLUSHALL/FLUSHDB (they would wipe every tenant) or SCAN
+// (it lists every tenant's key names). The panel does the flush instead: it
+// SCANs for the tenant's prefix as jabali_panel, which may SCAN, and deletes
+// what it finds with the tenant's OWN t_<osuser> credential. Redis then checks
+// every UNLINK against the tenant's ~jt:<osuser>:* fence, so a flush can never
+// delete a key outside it, even if the match were wrong.
+
+const (
+	// tenantRedisFlushBudget bounds one flush below the server's 30 s
+	// WriteTimeout. A tenant with more keys than one call can delete gets
+	// complete=false and calls again.
+	tenantRedisFlushBudget = 20 * time.Second
+	// tenantRedisFlushBatch is the SCAN COUNT hint and so the most keys one
+	// UNLINK carries.
+	tenantRedisFlushBatch = 500
+	// tenantRedisDatabases is redis.conf `databases` (the Debian default; jabali
+	// doesn't change it). The tenant has SELECT, so its keys can be in any DB.
+	tenantRedisDatabases = 16
+)
+
+type redisFlushResponse struct {
+	Deleted  int64 `json:"deleted"`
+	Complete bool  `json:"complete"`
+}
+
+func (h *redisAccessHandler) meRedisFlush(c *gin.Context) {
+	claims := ginctx.Claims(c)
+	if claims == nil || claims.UserID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+	h.flush(c, claims.UserID)
+}
+
+func (h *redisAccessHandler) userRedisFlush(c *gin.Context) {
+	h.flush(c, c.Param("id"))
+}
+
+// flush deletes every key under the tenant's prefix, in every database.
+func (h *redisAccessHandler) flush(c *gin.Context, userID string) {
+	osUser, token, ok := h.provisionTenant(c, userID)
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), tenantRedisFlushBudget)
+	defer cancel()
+	deleted, complete, err := tenantRedisFlushKeys(ctx, h.cfg.Redis, osUser, token)
+	if err != nil {
+		slog.ErrorContext(ctx, "tenant redis flush failed", "user_id", userID, "deleted", deleted, "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "flush_failed", "deleted": deleted})
+		return
+	}
+	slog.InfoContext(ctx, "tenant redis flush", "user_id", userID, "deleted", deleted, "complete", complete)
+	c.JSON(http.StatusOK, redisFlushResponse{Deleted: deleted, Complete: complete})
+}
+
+// redisUnlinker is the part of a Redis client the flush deletes through.
+type redisUnlinker interface {
+	Unlink(ctx context.Context, keys ...string) *redis.IntCmd
+	Close() error
+}
+
+// tenantRedisUnlinker opens a connection to database db authenticated as the
+// tenant. A seam so tests can watch which credential the deletes go through.
+var tenantRedisUnlinker = func(panel *redis.Client, osUser, token string, db int) redisUnlinker {
+	return redis.NewClient(tenantRedisClientOptions(panel.Options(), osUser, token, db))
+}
+
+// tenantRedisClientOptions copies where the panel's client connects to and
+// swaps in the tenant's credential and database.
+func tenantRedisClientOptions(base *redis.Options, osUser, token string, db int) *redis.Options {
+	return redisDBClientOptions(base, tenantRedisACLUser(osUser), token, db)
+}
+
+// redisDBClientOptions is a one-connection client on database db, connecting
+// where base connects, as username/password.
+func redisDBClientOptions(base *redis.Options, username, password string, db int) *redis.Options {
+	return &redis.Options{
+		Network:      base.Network,
+		Addr:         base.Addr,
+		Dialer:       base.Dialer,
+		DialTimeout:  base.DialTimeout,
+		ReadTimeout:  base.ReadTimeout,
+		WriteTimeout: base.WriteTimeout,
+		Username:     username,
+		Password:     password,
+		DB:           db,
+		PoolSize:     1,
+	}
+}
+
+// redisGlobEscape escapes the glob metacharacters SCAN MATCH understands, so a
+// prefix only ever matches itself.
+func redisGlobEscape(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		switch r {
+		case '*', '?', '[', ']', '\\':
+			b.WriteByte('\\')
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+// tenantRedisFlushKeys deletes the tenant's keys in every database. It returns
+// complete=false when ctx's budget ran out first.
+func tenantRedisFlushKeys(ctx context.Context, panel *redis.Client, osUser, token string) (deleted int64, complete bool, err error) {
+	prefix := tenantRedisKeyPrefix(osUser)
+	for db := 0; db < tenantRedisDatabases; db++ {
+		n, dbErr := tenantRedisFlushDB(ctx, panel, db, prefix, osUser, token)
+		deleted += n
+		if ctx.Err() != nil {
+			return deleted, false, nil
+		}
+		if dbErr != nil {
+			return deleted, false, dbErr
+		}
+	}
+	return deleted, true, nil
+}
+
+func tenantRedisFlushDB(ctx context.Context, panel *redis.Client, db int, prefix, osUser, token string) (int64, error) {
+	// A separate client on database db, with the panel's credential. Never
+	// SELECT on the panel's own client: panel.Conn() hands its connection back
+	// to the shared pool on Close, still on the selected database, and the
+	// panel's later commands would run there.
+	base := panel.Options()
+	conn := redis.NewClient(redisDBClientOptions(base, base.Username, base.Password, db))
+	defer conn.Close()
+	del := tenantRedisUnlinker(panel, osUser, token, db)
+	defer del.Close()
+
+	match := redisGlobEscape(prefix) + "*"
+	var deleted int64
+	var cursor uint64
+	for {
+		keys, next, err := conn.Scan(ctx, cursor, match, tenantRedisFlushBatch).Result()
+		if err != nil {
+			return deleted, fmt.Errorf("scan db %d: %w", db, err)
+		}
+		own := keys[:0]
+		for _, k := range keys {
+			if strings.HasPrefix(k, prefix) {
+				own = append(own, k)
+			}
+		}
+		if len(own) > 0 {
+			n, err := del.Unlink(ctx, own...).Result()
+			deleted += n
+			if err != nil {
+				return deleted, fmt.Errorf("unlink db %d: %w", db, err)
+			}
+		}
+		if next == 0 {
+			return deleted, nil
+		}
+		cursor = next
+	}
+}

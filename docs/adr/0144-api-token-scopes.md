@@ -29,6 +29,10 @@ Enforce user-token scopes, **fail-closed**, with backward compatibility:
   wildcards via the existing `Has`), plus a narrow `ddns` grant for the DynDNS
   shim only. All 13 areas are now mapped (dns, mail, files, databases, apps,
   domains, cron, ssl, php, ssh, logs, notifications, backups).
+- `write:redis` (GH #2003) grants only `POST /me/redis-access/flush`, so an app
+  can flush its Redis keys without a full token. There is no `read:redis`:
+  `GET /me/redis-access` returns the Redis password, so it stays unmapped and
+  scoped tokens are refused there.
 - The DDNS shim (`/nic/update`) accepts empty scopes, `ddns`, or `write:dns`;
   everything else is `badauth`. A `ddns`-only token can use the router shim but
   is 403'd on the DNS REST API.

@@ -69,6 +69,39 @@ dbname=<your-username>_<suffix>
 
 PHP applications use the same socket path implicitly when host is set to `localhost`.
 
+## Redis
+
+The **Redis access** card on this page gives you a Redis credential for your
+applications. Redis is reachable only over the unix socket
+`/run/redis/redis.sock`, as the user `t_<your-username>`. Your keys must start
+with the prefix `jt:<your-username>:`; set it as your client's key prefix (for
+example phpredis `Redis::OPT_PREFIX` or Laravel `REDIS_PREFIX`). The credential
+can read and write only keys under that prefix.
+
+Commands that work across every user's keys are not available: `KEYS`, `SCAN`,
+`FLUSHDB`, `FLUSHALL`, `CONFIG` and the other admin commands. A `FLUSHALL` from
+your application fails with `NOPERM`.
+
+### Flushing your keys
+
+To delete all your keys, use **Flush my Redis keys** on the card. It deletes
+every key under your prefix, in every Redis database, and nothing else.
+
+An application can do the same through the API. `<panel-address>` is the
+address you open the panel at, including the port if it has one:
+
+```
+curl -X POST -H "Authorization: Bearer <token>" \
+  https://<panel-address>/api/v1/me/redis-access/flush
+```
+
+Create the token under **API Tokens** with **Custom** permissions and only
+**Redis: Flush**. That token can flush your Redis keys and do nothing else.
+
+The response is `{"deleted": <n>, "complete": true}`. One call runs for at most
+20 seconds; if you have more keys than that, `complete` is `false` and you call
+it again. Flushes are rate-limited per user: about 5 a minute.
+
 ## Backups
 
 Database content is included in `account_full` backups. For a single database, use the per-row **Download backup** / **Restore from file** actions above, or phpMyAdmin's / Adminer's own **Export** feature.
