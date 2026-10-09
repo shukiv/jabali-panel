@@ -22,6 +22,7 @@ const PROFILE_DESC: Record<string, string> = {
   "jabali-bulwark": "Bulwark webmail fronting daemon (Node) — the untrusted-input boundary in front of Stalwart.",
   "stalwart-mail": "Stalwart mail server — SMTP/IMAP/JMAP submission + transport.",
   "jabali-fpm-app": "Per-user PHP-FPM tenant workloads (WordPress + other app PHP) via the fpm-exec wrapper.",
+  "jabali-sendmail": "PHP mail() shim — runs when a site's PHP sends mail; reads that site's relay credentials and submits to the local mail server. Switched separately from jabali-fpm-app.",
 };
 const MODE_TINT: Record<AppArmorProfile["mode"], "success" | "warning" | "error" | "default"> = {
   enforce: "success",

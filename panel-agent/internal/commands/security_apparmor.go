@@ -34,11 +34,15 @@ const apparmorCallTimeout = 10 * time.Second
 // connect() to mysqld.sock/pdns even in complain, breaking DNS + DB). They run
 // intentionally unconfined, so they are NOT listed here — otherwise the status
 // verb reports them as permanently "missing" (GH #679) which is a false alarm.
+// jabali-sendmail ships in its own file (GH #2001) so it can be switched
+// without jabali-fpm-app; aa-enforce/aa-complain change every profile in the
+// file they're given.
 var allowedProfiles = map[string]bool{
-	"jabali-panel":   true,
-	"jabali-bulwark": true,
-	"stalwart-mail":  true,
-	"jabali-fpm-app": true,
+	"jabali-panel":    true,
+	"jabali-bulwark":  true,
+	"stalwart-mail":   true,
+	"jabali-fpm-app":  true,
+	"jabali-sendmail": true,
 }
 
 // apparmorProfileFile maps a profile name to its on-disk file path.
@@ -56,6 +60,8 @@ func apparmorProfileFile(name string) string {
 		return "/etc/apparmor.d/usr.local.bin.stalwart-mail"
 	case "jabali-fpm-app":
 		return "/etc/apparmor.d/usr.local.libexec.jabali.fpm-exec"
+	case "jabali-sendmail":
+		return "/etc/apparmor.d/usr.local.libexec.jabali.jabali-sendmail"
 	}
 	return ""
 }
