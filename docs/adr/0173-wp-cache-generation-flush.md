@@ -116,9 +116,13 @@ Least privilege: the per-install rule (`applyInstallACL`) no longer grants it.
   (`ResyncInstallACL`). The rule resets the user's passwords, so the re-sync
   first checks that the site's token still authenticates. If it doesn't, the
   user is left alone.
-- **One way only.** The version comes from the site's own plugin file. A
-  version the sweep can't parse, or an older one, leaves the ACL as it is.
-  Nothing in the panel adds `SCAN` back.
+- **Decided from the bundle.** In the default (bundled) mode, the agent's
+  refresh runs nothing as the tenant: it skips a site without a
+  `wp-content/plugins` directory, stages the bundle, and reports the
+  bundle's version. A broken `wp` on a site, or the site's own WordPress or
+  wp-cli config, doesn't stop the ACL update.
+- **One way only.** A version the sweep can't parse, or an older one, leaves
+  the ACL as it is. Nothing in the panel adds `SCAN` back.
 - **The plugin's own SCAN uses.** Its reclaim and budget trim get `NOPERM`,
   find nothing and carry on. Its key count reads 0, so the cache-stats API
   drops it and sends `keys` only once the panel has counted. The cache drawer

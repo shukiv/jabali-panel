@@ -13,8 +13,8 @@ import (
 
 // After a site's plugin is refreshed to a version that flushes without SCAN,
 // the sweep re-applies the site's Redis ACL rule (which no longer grants it).
-// Anything else leaves the ACL as it is: the version string is read from the
-// site, so it may only ever tighten the rule, never decide to loosen it.
+// Anything else leaves the ACL as it is: the version may only ever tighten the
+// rule, never decide to loosen it.
 func TestRefreshResyncACL_OnlyAfterARefreshToAVersionThatNeedsNoScan(t *testing.T) {
 	rdb := redis.NewClient(&redis.Options{Addr: "127.0.0.1:0"})
 	defer rdb.Close()

@@ -35,9 +35,10 @@ type cachePluginRefreshResult struct {
 var resyncInstallACL = api.ResyncInstallACL
 
 // refreshResyncACL re-applies a refreshed site's Redis ACL rule when its new
-// plugin flushes without SCAN. The version is read from the site itself, so it
-// can only ever tighten the rule: any other version, or no Redis on this host,
-// leaves the ACL as it is.
+// plugin flushes without SCAN. It only ever tightens the rule: any other
+// version, or no Redis on this host, leaves the ACL as it is. (By default the
+// agent reports the version of the bundle it staged, not anything read from
+// the site.)
 func refreshResyncACL(ctx context.Context, cfg api.ApplicationHandlerConfig, res cachePluginRefreshResult, userID, osUser, installID string) (bool, error) {
 	if !res.Refreshed || !api.CachePluginFlushesWithoutScan(res.Version) || cfg.Redis == nil {
 		return false, nil

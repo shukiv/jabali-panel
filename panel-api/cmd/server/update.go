@@ -2069,7 +2069,7 @@ fi
 			// binary + restarted agent (so the wordpress.cache_plugin_refresh
 			// verb exists); best-effort + idempotent (a current site is a no-op).
 			if err := run("", defaultPanelBinPath, "app", "refresh-cache-plugin"); err != nil {
-				fmt.Printf("  (cache plugin refresh failed: %v -- sites keep their current plugin version)\n", err)
+				fmt.Printf("  (cache plugin refresh: %v -- the sites named above keep their current plugin or Redis ACL)\n", err)
 			}
 			return nil
 		}},
