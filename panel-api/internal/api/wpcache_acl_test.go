@@ -123,13 +123,16 @@ func TestResyncInstallACL_LeavesTheUserAloneWhenTheTokenDiffers(t *testing.T) {
 	}
 }
 
+// Without the secret every token is the same guessable HMAC; the re-sync must
+// refuse rather than write one, even where a user answers to it.
 func TestResyncInstallACL_NeedsRedisAndTheSecret(t *testing.T) {
 	mr, rdb := newMiniRedis(t)
 	defer mr.Close()
+	stubGCRedis(t, mr, map[string]string{installACLUser("bob", gcA): cacheInstallToken("", "bob", gcA, "salt-u1")})
 	calls := captureACL(t)
 	for name, cfg := range map[string]ApplicationHandlerConfig{
-		"no redis":  {CacheTokenSecret: gcSecret},
-		"no secret": {Redis: rdb},
+		"no redis":  {CacheTokenSecret: gcSecret, CacheTokenSalts: gcSalts{}},
+		"no secret": {Redis: rdb, CacheTokenSalts: gcSalts{}},
 	} {
 		if err := ResyncInstallACL(context.Background(), cfg, "u1", "bob", gcA); err == nil {
 			t.Errorf("%s: want an error", name)
