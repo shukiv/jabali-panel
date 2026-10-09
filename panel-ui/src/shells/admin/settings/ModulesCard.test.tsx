@@ -101,6 +101,41 @@ describe("ModulesCard install errors", () => {
     expect(screen.queryByText("not installed")).not.toBeInTheDocument();
   });
 
+  it("stops waiting and shows the reason as soon as the agent reports a new failed install", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const old = { installed: false, active: false, last_error: "an older failure", last_error_at: "2026-10-01T00:00:00Z" };
+      const at = (mail: object) => ({ dns: up, mail, security: up, quota: up });
+      const sequence = [
+        at(old), // page load
+        at(old), // the install hasn't started yet: the older failure is still the last one
+        at({ ...old, installing: true }), // running; the record still holds the older failure
+        at({ installed: false, active: false, installing: true, last_error: "the first attempt failed", last_error_at: "2026-10-09T19:59:00Z" }), // a second install queued behind a failed one
+        at({ installed: false, active: false, last_error: "stalwart download failed (exit 22)", last_error_at: "2026-10-09T20:00:00Z" }),
+      ];
+      let n = 0;
+      mockGet.mockImplementation((url: string) => {
+        if (url === "/admin/settings") return Promise.resolve({ data: { dns_enabled: true, mail_enabled: false, security_enabled: true, quota_enabled: true, api_enabled: true } });
+        if (url === "/admin/settings/modules/status") return Promise.resolve({ data: { modules: sequence[Math.min(n++, sequence.length - 1)] } });
+        return Promise.resolve({ data: {} });
+      });
+      mockPatch.mockResolvedValue({ data: {} });
+      render(<ModulesCard />);
+      await waitFor(() => expect(mailSwitch()).not.toBeDisabled());
+      fireEvent.click(mailSwitch());
+      for (let poll = 1; poll <= 3; poll += 1) {
+        await vi.advanceTimersByTimeAsync(5000);
+        expect(screen.getByText(/installing/)).toBeInTheDocument();
+        expect(screen.queryByText(/Last install failed/)).not.toBeInTheDocument();
+      }
+      await vi.advanceTimersByTimeAsync(5000); // the new failure
+      expect(await screen.findByText("Last install failed: stalwart download failed (exit 22)")).toBeInTheDocument();
+      expect(screen.queryByText(/installing/)).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("shows the server's reason when turning a module on is refused", async () => {
     serve({ mail_enabled: false }, { dns: up, mail: { installed: false, active: false }, security: up, quota: up });
     mockPatch.mockRejectedValue({ response: { status: 409, data: { error: "dns_not_ready", detail: "Mail needs the DNS module running." } } });
@@ -108,6 +143,15 @@ describe("ModulesCard install errors", () => {
     await waitFor(() => expect(mailSwitch()).not.toBeDisabled());
     fireEvent.click(mailSwitch());
     await waitFor(() => expect(errorToast).toHaveBeenCalledWith(expect.stringContaining("Mail needs the DNS module running.")));
+  });
+
+  it("shows the server's reason when a Retry is refused", async () => {
+    // DNS stopped after the card last looked: the card offers Retry, the panel refuses it.
+    serve({}, { dns: up, mail: { installed: false, active: false }, security: up, quota: up });
+    (apiClient.post as ReturnType<typeof vi.fn>).mockRejectedValue({ response: { status: 409, data: { error: "dns_not_ready", detail: "Wait until DNS shows active, then turn on mail." } } });
+    render(<ModulesCard />);
+    fireEvent.click(await screen.findByRole("button", { name: /retry/i }));
+    await waitFor(() => expect(errorToast).toHaveBeenCalledWith(expect.stringContaining("Wait until DNS shows active, then turn on mail.")));
   });
 });
 

@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // GH #2056: a failed module install only reached the panel log, so the Modules
@@ -23,6 +24,7 @@ const (
 		"\x1b[1;31m[✗]\x1b[0m install.sh --install-module mail: the DNS module must be installed first (pdns self-zone for 'panel.example.com' not found). Enable DNS, then mail.\n"
 	systemdRunOutput = "Failed to start transient service unit: Transaction for jabali-module-install-dns.service/start is destructive (reboot.target has 'start' job queued, but 'stop' is included in transaction).\n"
 	diedOutput       = "\x1b[1;34m[i]\x1b[0m install log: /var/log/jabali/install-2026-10-08_12-21-05.log (includes every step + wrapped command output)\n" +
+		"\x1b[1;31m[✗]\x1b[0m a non-fatal error (_err) printed before the crash\n" +
 		"\x1b[1;31m[jabali-install]\x1b[0m install.sh died:\n" +
 		"    exit_code : 1\n" +
 		"    function  : install_powerdns\n" +
@@ -53,7 +55,7 @@ func TestSummarizeModuleInstallFailure(t *testing.T) {
 			wantSummary: "Failed to start transient service unit: Transaction for jabali-module-install-dns.service/start is destructive (reboot.target has 'start' job queued, but 'stop' is included in transaction).",
 		},
 		{
-			name:        "install.sh died block wins over a [✗] line in the log tail",
+			name:        "install.sh died block wins over earlier [✗] lines and the log tail",
 			out:         diedOutput,
 			wantSummary: "install.sh stopped in install_powerdns (line 4733) at: systemctl restart pdns",
 			wantLog:     "/var/log/jabali/install-2026-10-08_12-21-05.log",
@@ -210,7 +212,7 @@ func TestMergeModuleInstallRecord(t *testing.T) {
 
 	ok := moduleStatusResponse{Key: "dns"}
 	mergeModuleInstallRecord(&ok, &moduleInstallRecord{OK: true, FinishedAt: "2026-10-09T10:00:00Z"})
-	if ok.LastError != "" {
+	if ok.LastError != "" || ok.LastErrorAt != "" {
 		t.Errorf("successful record: %+v, want no error", ok)
 	}
 	mergeModuleInstallRecord(&ok, nil)
@@ -245,5 +247,42 @@ func TestSystemModuleStatus_InstallingWhileTheUnitRuns(t *testing.T) {
 	moduleInstallEnd("mail")
 	if st := moduleStatusFor(t, "mail"); st.Installing {
 		t.Error("installing = true after the mail install ended")
+	}
+}
+
+// The install handler itself marks the module as installing from the moment
+// it is called until it returns, so the card shows it while the install runs.
+func TestSystemModuleInstall_StatusShowsItWhileItRuns(t *testing.T) {
+	fakeInstall(t, "", 0)
+	release := filepath.Join(t.TempDir(), "release")
+	prevExec := execCommandContext
+	execCommandContext = func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		if name == "systemd-run" {
+			return exec.CommandContext(ctx, "sh", "-c", `while [ ! -e "$1" ]; do sleep 0.01; done`, "sh", release)
+		}
+		return prevExec(ctx, name, args...)
+	}
+	raw, _ := json.Marshal(moduleStatusRequest{Key: "security"})
+	done := make(chan error, 1)
+	go func() {
+		_, err := systemModuleInstallHandler(context.Background(), raw)
+		done <- err
+	}()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for !moduleStatusFor(t, "security").Installing {
+		if time.Now().After(deadline) {
+			t.Fatal("installing = false while the security install runs")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err := os.WriteFile(release, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("install: %v", err)
+	}
+	if moduleStatusFor(t, "security").Installing {
+		t.Error("installing = true after the install returned")
 	}
 }
