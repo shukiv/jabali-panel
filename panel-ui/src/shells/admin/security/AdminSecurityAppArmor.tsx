@@ -11,6 +11,7 @@ import { useState } from "react";
 import {
   type AppArmorDenial,
   type AppArmorProfile,
+  appArmorFlipErrorMessage,
   useAppArmorStatus,
   useSetAppArmorMode,
 } from "../../../hooks/useSecurityAppArmor";
@@ -284,7 +285,7 @@ export const AdminSecurityAppArmor = () => {
                 feedback.message.success(`${pendingFlip.profile} → ${pendingFlip.nextMode}`);
                 setPendingFlip(null);
               },
-              onError: () => feedback.message.error("Flip failed — check agent logs"),
+              onError: (err) => feedback.message.error(appArmorFlipErrorMessage(err), 10),
             },
           );
         }}

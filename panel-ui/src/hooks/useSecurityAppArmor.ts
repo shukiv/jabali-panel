@@ -75,6 +75,16 @@ export function useFpmExecConfinement(): FpmExecConfinement | undefined {
   return fpmExecConfinement(q.data);
 }
 
+// GH #2001: a failed flip's reason (aa-complain or aa-enforce's own output)
+// comes back only in the error body's detail. The agent doesn't log it, so the
+// toast is where an admin sees it.
+export function appArmorFlipErrorMessage(err: unknown): string {
+  const e = err as { response?: { data?: { detail?: string; error?: string } }; message?: string };
+  const reason = (e?.response?.data?.detail || e?.response?.data?.error || e?.message || "").trim();
+  if (!reason) return "Flip failed";
+  return `Flip failed: ${reason.length > 600 ? `${reason.slice(0, 600)}…` : reason}`;
+}
+
 export function useSetAppArmorMode() {
   const qc = useQueryClient();
   return useMutation({
