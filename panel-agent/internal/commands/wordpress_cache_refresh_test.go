@@ -100,6 +100,23 @@ func TestRefreshBundledCachePlugin_StagesAndReportsTheBundleVersion(t *testing.T
 	}
 }
 
+// A site the agent couldn't stage must not report the bundle's version: the
+// panel would tighten the ACL of a site still running the old plugin.
+func TestRefreshBundledCachePlugin_AFailedStagingIsAnError(t *testing.T) {
+	prev := bundledCachePluginSrc
+	bundledCachePluginSrc = filepath.Join(t.TempDir(), "missing")
+	t.Cleanup(func() { bundledCachePluginSrc = prev })
+	site := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(site, "wp-content", "plugins"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := refreshBundledCachePlugin(context.Background(), site, "bob")
+	if err == nil || res.Refreshed || res.Version != "" {
+		t.Errorf("res=%+v err=%v, want an error and no version", res, err)
+	}
+}
+
 func TestRefreshBundledCachePlugin_SkipsASiteWithoutPlugins(t *testing.T) {
 	fakeCacheBundle(t, bundleHeader121)
 	calls := captureExec(t)
@@ -117,6 +134,8 @@ func TestBundledCachePluginVersion(t *testing.T) {
 		"<?php\n// no header\n":         "",
 		"<?php\n * Version:   \n":       "",
 		"<?php\n * Stable tag: 9.9.9\n": "",
+		"<?php\n * Description: Needs PHP Version: 7.4 or later\n * Version: 1.2.1\n": "1.2.1",
+		"<?php\n * Version: dev\n": "",
 	} {
 		fakeCacheBundle(t, header)
 		if got := bundledCachePluginVersion(); got != want {
