@@ -43,6 +43,15 @@ func (f *fakeSend) send(_ context.Context, c smarthost.Config, from string, to [
 	return nil
 }
 
+// sent returns a copy of what reached the fake smarthost so far: the relay
+// appends from its own goroutine, and a socket reply isn't a happens-before
+// edge for the race detector.
+func (f *fakeSend) sent() []sent {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]sent(nil), f.got...)
+}
+
 func writeConfig(t *testing.T, c Config) string {
 	t.Helper()
 	b, err := json.Marshal(c)
@@ -431,7 +440,8 @@ func TestSubmit_AddsTheDateAndMessageIDASiteLeftOut(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	m := f.got[0].msg
+	got := f.sent()
+	m := got[0].msg
 	date := headerLines(m, "Date")
 	if len(date) != 1 {
 		t.Fatalf("Date = %q, want one", date)
@@ -443,7 +453,7 @@ func TestSubmit_AddsTheDateAndMessageIDASiteLeftOut(t *testing.T) {
 	if len(id) != 1 || !strings.HasPrefix(id[0], "Message-ID: <") || !strings.HasSuffix(id[0], "@shop.example>") {
 		t.Fatalf("Message-ID = %q, want one <...@shop.example>, the sending domain", id)
 	}
-	if again := headerLines(f.got[1].msg, "Message-ID"); len(again) != 1 || again[0] == id[0] {
+	if again := headerLines(got[1].msg, "Message-ID"); len(again) != 1 || again[0] == id[0] {
 		t.Errorf("two messages got Message-IDs %q and %q", id[0], again)
 	}
 
@@ -452,7 +462,7 @@ func TestSubmit_AddsTheDateAndMessageIDASiteLeftOut(t *testing.T) {
 	if err := Submit(sock, []string{"x@example.org"}, []byte(own)); err != nil {
 		t.Fatal(err)
 	}
-	m = f.got[2].msg
+	m = f.sent()[2].msg
 	if d, i := headerLines(m, "Date"), headerLines(m, "Message-ID"); len(d) != 1 || d[0] != "Date: Mon, 2 Jan 2006 15:04:05 +0000" || len(i) != 1 || i[0] != "Message-Id: <abc@shop.example>" {
 		t.Errorf("the site's own headers: Date %q, Message-ID %q", d, i)
 	}
