@@ -120,6 +120,20 @@ func TestPackage_Update_PersistsWebmailEnabled(t *testing.T) {
 	updatePersistsColumn(t, "webmail_enabled")
 }
 
+// GH #2056: "Website sends email" goes through the same Select-allowlist
+// Update; missing from it, the admin's toggle would save and revert on reload.
+func TestPackage_Update_PersistsWebsiteSendsEmail(t *testing.T) {
+	updatePersistsColumn(t, "website_sends_email")
+}
+
+// GH #2056: the starter plans keep PHP mail() working on a fresh install, as
+// every package that existed before migration 000317 does.
+func TestDefaultPackages_SitesCanSendMail(t *testing.T) {
+	for _, p := range defaultPackages(time.Now()) {
+		require.True(t, p.WebsiteSendsEmail, "seeded package %s must let its sites send mail", p.Name)
+	}
+}
+
 // GH #1798: the per-package egress allowances go through the same Select-
 // allowlist Update. Missing from the allowlist, the admin's SSH-out / ICMP
 // toggles would save-with-success and revert on reload — the silent-drop class

@@ -61,6 +61,7 @@ export type PackageFormValues = {
   cgi_enabled: boolean;
   php_exec_enabled: boolean;
   webmail_enabled: boolean; // GH #1628 — defaults ON
+  website_sends_email: boolean; // GH #2056 — new packages start off
   fpm_user_can_edit: boolean;
   fpm_advanced_mode: boolean;
   fpm_max_children_cap: number;
@@ -301,6 +302,7 @@ export const PACKAGE_DEFAULTS: PackageFormValues = {
   cgi_enabled: false,
   php_exec_enabled: false,
   webmail_enabled: true, // GH #1628 — webmail is included by default
+  website_sends_email: false, // GH #2056 — a new package's sites can't send mail unless allowed
   fpm_user_can_edit: false,
   fpm_advanced_mode: false,
   fpm_max_children_cap: 20,

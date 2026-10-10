@@ -12,7 +12,8 @@
 #     /run/mysqld/mysqld.sock + /var/run/mysqld/mysqld.sock.
 #
 # When you add a new profile or a new socket the daemon learns about,
-# add a row here. CI will catch the drift.
+# add a row here. CI will catch the drift. Prefix `opt:` for the socket of
+# a service that only runs in some setups: it is skipped when missing.
 
 profiles:
   # M40.1 jabali-agent — privileged orchestrator. Talks to MariaDB
@@ -66,6 +67,11 @@ profiles:
   # Stalwart submission listener over loopback
   # TCP (tcp: prefix — the runner passes it through to aa-smoke, which
   # does a TCP dial for these instead of unix).
+  #
+  # GH #2056: in smarthost mode the shim hands the message to the website
+  # mail relay instead. The relay only runs in that mode (opt: skips the
+  # socket when it isn't there; run once with the smarthost selected).
   - name: jabali-sendmail
     sockets:
       - tcp:127.0.0.1:587
+      - opt:/run/jabali-mailrelay/relay.sock

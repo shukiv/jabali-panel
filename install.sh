@@ -3318,6 +3318,66 @@ install_mariadb_skip_networking() {
   ensure_mariadb_socket_acl_for_jabali
 }
 
+# ensure_jabali_mailrelay — GH #2056 (ADR 0174): the website mail relay's
+# system user, config dir and unit. The relay sends the sites' PHP mail()
+# through the admin's smarthost. It is NOT enabled here: the agent
+# (mail.relay.apply) enables and starts it only when the smarthost is selected.
+# Runs on install and on every update; idempotent. A changed unit restarts a
+# running relay; a stopped one stays stopped.
+ensure_jabali_mailrelay() {
+  if ! grep -q '^jabali-mailrelay:' /etc/group; then
+    groupadd --system jabali-mailrelay
+  fi
+  if ! grep -q '^jabali-mailrelay:' /etc/passwd; then
+    useradd --system --gid jabali-mailrelay --no-create-home --home-dir /nonexistent \
+      --shell /usr/sbin/nologin jabali-mailrelay
+    _ok "jabali-mailrelay system user created (GH #2056)"
+  fi
+  # The relay holds the smarthost password, and the account owns its config:
+  # only the dedicated local system account may have it. An account of that
+  # name from somewhere else (a directory service, a login user, one sharing
+  # its group) leaves the relay off rather than handing it the password.
+  if ! mailrelay_account_ok; then
+    _warn "the jabali-mailrelay account isn't the dedicated system user; website mail through a smarthost stays off until it is fixed"
+    systemctl disable --now jabali-mailrelay.service 2>/dev/null || true
+    return 0
+  fi
+  mkdir -p /etc/jabali-panel
+  install -d -m 0750 -o root -g jabali-mailrelay /etc/jabali-panel/mailrelay
+  local src="$REPO_DIR/install/systemd/jabali-mailrelay.service"
+  local dst=/etc/systemd/system/jabali-mailrelay.service
+  if [[ ! -f "$src" ]]; then
+    _warn "jabali-mailrelay.service missing from the checkout; website mail through a smarthost unavailable"
+    return 0
+  fi
+  if ! cmp -s "$src" "$dst"; then
+    install -m 0644 -o root -g root "$src" "$dst"
+    systemctl daemon-reload
+    systemctl try-restart jabali-mailrelay.service 2>/dev/null || true
+    _ok "jabali-mailrelay.service installed (GH #2056)"
+  fi
+}
+
+# mailrelay_account_ok — the jabali-mailrelay user and group are local
+# (/etc/passwd, /etc/group), a system uid that isn't root, the user's primary
+# group is that group, the group has no other members, and no one can log in.
+mailrelay_account_ok() {
+  local pw gr uid gid shell ggid members sys_max
+  pw=$(grep '^jabali-mailrelay:' /etc/passwd) || return 1
+  gr=$(grep '^jabali-mailrelay:' /etc/group) || return 1
+  IFS=: read -r _ _ uid gid _ _ shell <<<"$pw"
+  IFS=: read -r _ _ ggid members <<<"$gr"
+  sys_max=$(awk '$1 == "SYS_UID_MAX" {print $2}' /etc/login.defs 2>/dev/null)
+  [[ "$sys_max" =~ ^[0-9]+$ ]] || sys_max=999
+  [[ "$uid" =~ ^[0-9]+$ && "$uid" -gt 0 && "$uid" -le "$sys_max" ]] || return 1
+  [[ "$gid" == "$ggid" && -z "$members" ]] || return 1
+  case "$shell" in
+    */nologin|*/false) ;;
+    *) return 1 ;;
+  esac
+  return 0
+}
+
 # ensure_jabali_sendmail_binary — JAB-230 two-hop-update closer. The shim
 # binary is normally installed by build_backend / update.go, but the FIRST
 # `jabali update` onto a JAB-230 build runs the PREVIOUS binary's update
@@ -16788,6 +16848,10 @@ EOF
   if declare -f ensure_jabali_sendmail_binary >/dev/null 2>&1; then
     ensure_jabali_sendmail_binary
   fi
+  # GH #2056 — the website mail relay's user, config dir and unit.
+  if declare -f ensure_jabali_mailrelay >/dev/null 2>&1; then
+    ensure_jabali_mailrelay
+  fi
 
   # JAB-213 — free-hostname helper scripts + heartbeat units live under
   # install_jabali_slices, which the trimmed update path does NOT call. Without
@@ -17073,6 +17137,7 @@ main() {
   install_jabali_slices
   install_kratos
   install_php_pool_template
+  ensure_jabali_mailrelay   # GH #2056: website mail relay user + unit (not enabled)
   run_if_module python_apps install_python_apps_runtime
   build_frontend
   build_backend
@@ -17278,6 +17343,7 @@ EOF
   local svc
   for svc in \
     jabali-panel.service \
+    jabali-mailrelay.service \
     jabali-agent.service \
     jabali-kratos.service \
     jabali-stalwart.service \
@@ -17316,6 +17382,7 @@ EOF
   _log "removing jabali systemd unit files + drop-ins"
   rm -f  /etc/systemd/system/jabali-panel.service
   rm -f  /etc/systemd/system/jabali-agent.service
+  rm -f  /etc/systemd/system/jabali-mailrelay.service
   rm -f  /etc/systemd/system/jabali-kratos.service
   rm -f  /etc/systemd/system/jabali-stalwart.service
   rm -f  /etc/systemd/system/jabali-webmail.service

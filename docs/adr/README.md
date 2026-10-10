@@ -166,6 +166,7 @@ This directory contains Architecture Decision Records (ADRs) documenting signifi
 | [0161](0161-ioncube-loader-server-wide.md) | ionCube Loader — server-wide per PHP version, composed into PHP Extensions | Accepted |
 | [0172](0172-system-jobs-catalog.md) | System jobs come from a fixed catalog; no disable from the list (GH #1686) | Accepted |
 | [0173](0173-wp-cache-generation-flush.md) | WP cache flushes bump a generation counter | Accepted |
+| [0174](0174-website-mail-smarthost-relay.md) | Website mail through the operator's smarthost (GH #2056) | Accepted |
 <!-- 0133-0140: numbers reserved during planning, no ADR file was ever written (JAB-161). -->
 <!-- /AUTO-GENERATED -->
 

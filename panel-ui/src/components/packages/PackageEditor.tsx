@@ -369,6 +369,21 @@ export const PackageEditor = ({ title, initialValue, isLoading, submitting, onSu
           <Typography.Text>Webmail Enabled</Typography.Text>
         </div>
 
+        {/* GH #2056: whether this package's sites may send email with PHP
+            mail() (contact forms, WordPress), through the local mail server or
+            the smarthost picked under Server Settings > Email. */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 24 }}>
+          <Form.Item
+            name="website_sends_email"
+            valuePropName="checked"
+            tooltip="Lets the sites on this package send email with PHP mail(), which contact forms and WordPress use. Users with no package can still send through the local mail server, but not through a smarthost."
+            noStyle
+          >
+            <Switch aria-label="Websites can send email" checkedChildren={<CheckOutlined />} unCheckedChildren={<CloseOutlined />} />
+          </Form.Item>
+          <Typography.Text>Websites can send email</Typography.Text>
+        </div>
+
         {/* GH #1701: the package's disabled PHP functions. Replaces the old
             all-or-nothing "Allow PHP exec functions" switch; the backend still
             reports php_exec_enabled, derived from this list. */}

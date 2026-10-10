@@ -37,7 +37,7 @@ import (
 const sendmailRelayLocalPart = "noreply"
 
 func (r *Reconciler) reconcileSendmailCreds(ctx context.Context) {
-	if r.domains == nil || r.users == nil || r.agent == nil || r.mailboxes == nil || r.serverSettings == nil || r.sendmailSSOKey == nil {
+	if r.domains == nil || r.users == nil || r.agent == nil || r.mailboxes == nil || r.serverSettings == nil || r.sendmailSSOKey == nil || r.packages == nil {
 		return
 	}
 	sctx, scancel := context.WithTimeout(ctx, 5*time.Second)
@@ -71,8 +71,21 @@ func (r *Reconciler) reconcileSendmailCreds(ctx context.Context) {
 	}
 	r.sendmailMu.Unlock()
 
-	// Username cache — many domains share an owner.
+	// GH #2056: which packages let their sites send email. Unreadable →
+	// change nothing this tick.
+	pkgs, _, err := r.packages.List(ctx, repository.ListOptions{Limit: 10000})
+	if err != nil {
+		r.log.Warn("sendmail-cred: list packages failed", "error", err)
+		return
+	}
+	pkgSends := make(map[string]bool, len(pkgs))
+	for _, p := range pkgs {
+		pkgSends[p.ID] = p.WebsiteSendsEmail
+	}
+
+	// Username and owner caches — many domains share an owner.
 	usernames := make(map[string]string)
+	owners := make(map[string]*models.User)
 
 	for i := range domains {
 		d := &domains[i]
@@ -81,6 +94,18 @@ func (r *Reconciler) reconcileSendmailCreds(ctx context.Context) {
 		if ownershipPending(d) {
 			if err := r.retireSendmailCred(ctx, d, usernames); err != nil {
 				r.log.Warn("sendmail-cred: retire for pending domain failed", "domain", d.Name, "error", err)
+			}
+			continue
+		}
+		// GH #2056: nor for a site whose package doesn't let it send email.
+		allowed, err := r.sendmailPackageAllows(ctx, d, owners, pkgSends)
+		if err != nil {
+			r.log.Warn("sendmail-cred: owner lookup failed", "domain", d.Name, "error", err)
+			continue
+		}
+		if !allowed {
+			if err := r.retireSendmailCred(ctx, d, usernames); err != nil {
+				r.log.Warn("sendmail-cred: retire for a package without website mail failed", "domain", d.Name, "error", err)
 			}
 			continue
 		}
@@ -155,6 +180,28 @@ func (r *Reconciler) ensureSendmailCred(ctx context.Context, d *models.Domain, m
 	r.sendmailDone[d.ID] = fingerprintWant
 	r.sendmailMu.Unlock()
 	return nil
+}
+
+// sendmailPackageAllows reports whether d's owner may send website mail
+// (GH #2056): their hosting package has "Website sends email" on. A user with
+// no package (or one pointing at a package that no longer exists) keeps
+// sending through the local mail server: only the smarthost is a privileged
+// feature (GH #282).
+func (r *Reconciler) sendmailPackageAllows(ctx context.Context, d *models.Domain, owners map[string]*models.User, pkgSends map[string]bool) (bool, error) {
+	u, ok := owners[d.UserID]
+	if !ok {
+		found, err := r.users.FindByID(ctx, d.UserID)
+		if err != nil {
+			return false, err
+		}
+		u = found
+		owners[d.UserID] = u
+	}
+	if u.PackageID == nil || *u.PackageID == "" {
+		return true, nil
+	}
+	sends, known := pkgSends[*u.PackageID]
+	return !known || sends, nil
 }
 
 // sendmailOwner resolves the Linux username whose PHP uses d's cred file.

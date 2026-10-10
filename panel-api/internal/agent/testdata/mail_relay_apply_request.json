@@ -1,0 +1,18 @@
+{
+  "mode": "smarthost",
+  "smarthost": {
+    "host": "smtp.example.net",
+    "port": 587,
+    "tls": "starttls",
+    "username": "relay@example.net",
+    "password": "REDACTED-FIXTURE-VALUE",
+    "helo": "panel.example.net"
+  },
+  "senders": [
+    {
+      "username": "alice",
+      "domains": ["alice.example", "shop.example"],
+      "default": "alice.example"
+    }
+  ]
+}

@@ -7,7 +7,8 @@
 # worker). Needs exactly: read its own binary, read the relay-credential tree
 # (POSIX 0640 root:<usergroup> already scopes WHICH creds this uid can open;
 # the profile bounds the reachable paths), TCP to the local submission port,
-# TLS roots, and syslog. No exec, no writes, no /home.
+# TLS roots, syslog, and (GH #2056) the website mail relay's socket. No exec,
+# no writes, no /home.
 #
 # Its own file (GH #2001): aa-complain/aa-enforce operate per file, so while
 # this profile lived in the fpm-exec file it always had jabali-fpm-app's mode.
@@ -45,6 +46,16 @@ profile jabali-sendmail /usr/local/libexec/jabali/jabali-sendmail flags=(attach_
   # Submission to Stalwart on 127.0.0.1:587 (STARTTLS).
   network inet stream,
   network inet6 stream,
+
+  # GH #2056: with a smarthost selected, the message goes to the website
+  # mail relay instead. The mode file says which; the relay (jabali-agent
+  # mailrelay, unconfined) listens on its own socket. With the 3.0 ABI pin
+  # these kernels skip unix mediation for this profile; the unix rule is for
+  # kernels that do mediate it (same pair as the stalwart-mail profile).
+  /etc/jabali-panel/sendmail/website-mail.mode r,
+  /run/jabali-mailrelay/relay.sock rw,
+  network unix stream,
+  unix (connect, send, receive) type=stream peer=(label=unconfined),
 
   # One syslog line per attempt (mail facility).
   /dev/log w,

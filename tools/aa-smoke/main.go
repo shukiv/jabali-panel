@@ -37,7 +37,7 @@ func main() {
 	flag.Parse()
 	args := flag.Args()
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: aa-smoke [--timeout=2s] <socket-path|tcp:host:port> [...]")
+		fmt.Fprintln(os.Stderr, "usage: aa-smoke [--timeout=2s] <socket-path|opt:socket-path|tcp:host:port> [...]")
 		os.Exit(2)
 	}
 	for _, p := range args {
@@ -47,6 +47,16 @@ func main() {
 		network, addr := "unix", p
 		if rest, ok := strings.CutPrefix(p, "tcp:"); ok {
 			network, addr = "tcp", rest
+		}
+		// GH #2056: `opt:` marks the socket of a service that only runs in
+		// some setups (the website mail relay runs only in smarthost mode).
+		// A missing socket is skipped; one that exists must still dial.
+		if rest, ok := strings.CutPrefix(p, "opt:"); ok {
+			addr = rest
+			if _, err := os.Stat(addr); os.IsNotExist(err) {
+				fmt.Printf("SKIP: %s — not running here\n", addr)
+				continue
+			}
 		}
 		c, err := net.DialTimeout(network, addr, *timeout)
 		if err != nil {

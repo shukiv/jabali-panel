@@ -62,6 +62,64 @@ Distribution lists are re-applied to Stalwart by the reconciler whenever the lis
 Buttons:
 - **Rotate DKIM** — generate a new DKIM key, publish DNS record, retire the old key on the configured grace period.
 
+## Website mail: local mail server or a smarthost (GH #2056)
+
+Sites send email with PHP `mail()`, which contact forms and WordPress use. PHP
+runs the `jabali-sendmail` shim as the site's user. **Server Settings → Email →
+Website mail** picks where the shim's mail goes:
+
+- **The local mail server** (the default). The shim logs in to the mail
+  module's Stalwart as `noreply@<domain>`, a send-only identity the panel
+  creates for each domain. This needs the mail module; the card warns when it
+  is off.
+- **A smarthost**: your own mail relay (an SMTP server, or a service such as
+  Amazon SES, Mailgun or your mail provider). Use it when the server doesn't
+  run the mail module, or when outgoing mail must leave through your own mail
+  system. Ports 25, 465, 587 and 2525. Encryption is STARTTLS (required, never
+  opportunistic), TLS from the start, or none; a login is never sent without
+  encryption, and the certificate is always checked. Saving tests the
+  smarthost first and saves nothing if the test fails; **Test** checks the
+  form without saving. The password is stored encrypted and never shown again;
+  it is only used with the host and username it was saved for.
+
+How the smarthost mode works (ADR 0174):
+
+- The shim can't hold the smarthost login: anything it can read, the site's
+  PHP can read too. It hands the message to the **website mail relay**
+  (`jabali-mailrelay.service`, the agent binary run as `jabali-agent
+  mailrelay`) over `/run/jabali-mailrelay/relay.sock`. The relay runs as its
+  own `jabali-mailrelay` system user, never root, and only it can read the
+  login (`/etc/jabali-panel/mailrelay/relay.json`, 0640
+  root:jabali-mailrelay). The agent starts the relay when the smarthost is
+  selected and stops it, deleting the login, when it isn't.
+- The relay learns which account sent a message from the socket (the caller's
+  UID), never from the message. The envelope sender is `noreply@` one of that
+  account's domains: the From domain when the account owns it, otherwise its
+  oldest domain.
+- The From header is restricted too, because the smarthost can't tell which
+  site sent a message. A message keeps its From only when that is one address
+  in a domain the account owns. Otherwise From becomes the `noreply@` address
+  (the display name is kept) and the original address moves to Reply-To, so a
+  contact form that puts the visitor in From still gets replies to the
+  visitor. Like sendmail, the relay adds a `Date` and a `Message-ID` when the
+  message has none (PHP's `mail()` writes neither, and some providers refuse
+  mail without a Message-ID).
+- Who can send through the smarthost: accounts with a Linux user and a hosting
+  package whose **Websites can send email** switch is on, that aren't admins
+  or suspended, with their enabled, ownership-verified domains. Accounts
+  without a package can't (#282). The card shows how many accounts can send,
+  and after a save lists the ones the server left out with the reason.
+- An account can have two messages in flight at once, and a message must
+  arrive within 30 seconds, so one site can't hold the relay for the others.
+  There is no local queue: if the smarthost is down or answers 4xx, `mail()`
+  returns false and the failure is logged. One line per message goes to the
+  journal (`journalctl -u jabali-mailrelay`), without the message content.
+- SPF and DKIM for the sites' domains are the smarthost's job: add the
+  smarthost to each domain's SPF record as your provider documents.
+
+The **Websites can send email** package switch applies to the local mail
+server too: a site whose package has it off gets no `noreply@` relay identity.
+
 ## Outbound throttles
 
 `/jabali-admin/mail/throttles` (M47 Wave 3) — per-sender + per-domain rate limit (msgs / minute, msgs / hour, recipients / message). Bulwark enforces; CrowdSec sees throttle hits and can escalate.

@@ -1,0 +1,7 @@
+{
+  "ok": true,
+  "mode": "smarthost",
+  "changed": true,
+  "senders": 1,
+  "skipped": ["ghost: no such system user"]
+}

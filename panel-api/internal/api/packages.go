@@ -112,7 +112,10 @@ type createPackageRequest struct {
 	// WebmailEnabled (GH #1628) is a pointer, unlike the plain-bool toggles
 	// above, because webmail defaults ON: a nil (field omitted by the client)
 	// must mean "use the ON default", which a plain bool can't express.
-	WebmailEnabled     *bool  `json:"webmail_enabled"`
+	WebmailEnabled *bool `json:"webmail_enabled"`
+	// WebsiteSendsEmail (GH #2056): a new package starts with it off, so an
+	// omitted field means off.
+	WebsiteSendsEmail  bool   `json:"website_sends_email"`
 	FpmMaxChildrenCap  uint32 `json:"fpm_max_children_cap"`
 	FpmWorkerMemMb     uint32 `json:"fpm_worker_mem_mb"`
 	FpmUserCanEdit     bool   `json:"fpm_user_can_edit"`
@@ -159,7 +162,8 @@ type updatePackageRequest struct {
 	EgressSSHOut       *bool   `json:"egress_ssh_out"`
 	EgressSSHOutCIDRs  *string `json:"egress_ssh_out_cidrs"`
 	EgressICMP         *bool   `json:"egress_icmp"`
-	WebmailEnabled     *bool   `json:"webmail_enabled"` // GH #1628
+	WebmailEnabled     *bool   `json:"webmail_enabled"`     // GH #1628
+	WebsiteSendsEmail  *bool   `json:"website_sends_email"` // GH #2056
 	FpmMaxChildrenCap  *uint32 `json:"fpm_max_children_cap"`
 	FpmWorkerMemMb     *uint32 `json:"fpm_worker_mem_mb"`
 	FpmUserCanEdit     *bool   `json:"fpm_user_can_edit"`
@@ -287,6 +291,7 @@ func (h *packageHandler) create(c *gin.Context) {
 		// GH #1628: webmail defaults ON. nil (omitted) or explicit true -> true;
 		// only an explicit false turns it off.
 		WebmailEnabled:     req.WebmailEnabled == nil || *req.WebmailEnabled,
+		WebsiteSendsEmail:  req.WebsiteSendsEmail, // GH #2056: off unless asked
 		FpmMaxChildrenCap:  req.FpmMaxChildrenCap,
 		FpmWorkerMemMb:     req.FpmWorkerMemMb,
 		FpmUserCanEdit:     req.FpmUserCanEdit,
@@ -447,6 +452,9 @@ func (h *packageHandler) update(c *gin.Context) {
 	}
 	if req.WebmailEnabled != nil { // GH #1628
 		pkg.WebmailEnabled = *req.WebmailEnabled
+	}
+	if req.WebsiteSendsEmail != nil { // GH #2056
+		pkg.WebsiteSendsEmail = *req.WebsiteSendsEmail
 	}
 	if len(req.PHPDisabledFunctions) > 0 { // GH #1701; wins over php_exec_enabled
 		if string(bytes.TrimSpace(req.PHPDisabledFunctions)) == "null" {

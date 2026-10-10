@@ -577,10 +577,41 @@ type ServerSettings struct {
 	// address.
 	FTPPasvAddress string `gorm:"column:ftp_pasv_address;type:text;not null;default:''" json:"ftp_pasv_address"`
 
+	// Website mail (GH #2056, ADR 0174): where PHP mail() from the sites goes.
+	// WebsiteMailMode is WebsiteMailLocal (the jabali-sendmail shim submits to
+	// the local Stalwart, the default) or WebsiteMailSmarthost (the
+	// operator's own relay, for a server without the mail module). The
+	// /admin/settings/website-mail endpoints are the only writers; they
+	// validate the smarthost and test it before switching to it.
+	// SmarthostPasswordEnc is the login password sealed with ssokey; json:"-"
+	// keeps it out of every response.
+	WebsiteMailMode      string `gorm:"column:website_mail_mode;type:text;not null;default:'local'" json:"website_mail_mode"`
+	SmarthostHost        string `gorm:"column:smarthost_host;type:text;not null;default:''" json:"smarthost_host"`
+	SmarthostPort        int    `gorm:"column:smarthost_port;type:int;not null;default:587" json:"smarthost_port"`
+	SmarthostTLS         string `gorm:"column:smarthost_tls;type:text;not null;default:'starttls'" json:"smarthost_tls"`
+	SmarthostUsername    string `gorm:"column:smarthost_username;type:text;not null;default:''" json:"smarthost_username"`
+	SmarthostPasswordEnc []byte `gorm:"column:smarthost_password_enc;type:blob" json:"-"`
+
 	UpdatedAt time.Time `gorm:"type:datetime(6);not null"             json:"updated_at"`
 }
 
 func (ServerSettings) TableName() string { return "server_settings" }
+
+// Website mail modes (ServerSettings.WebsiteMailMode, GH #2056).
+const (
+	WebsiteMailLocal     = "local"
+	WebsiteMailSmarthost = "smarthost"
+)
+
+// EffectiveWebsiteMailMode reads WebsiteMailMode, treating anything but
+// "smarthost" (an empty value from a row read before migration 000316
+// included) as local.
+func EffectiveWebsiteMailMode(s *ServerSettings) string {
+	if s != nil && s.WebsiteMailMode == WebsiteMailSmarthost {
+		return WebsiteMailSmarthost
+	}
+	return WebsiteMailLocal
+}
 
 // EffectiveDNSTTL returns the operator-configured default DNS record TTL, or
 // 300s when unset/nil. GH #527: apply the default consistently to auto-created

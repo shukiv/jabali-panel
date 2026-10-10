@@ -1100,6 +1100,18 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Log:    deps.Log,
 				SSOKey: deps.SSOKey,
 			})
+			// GH #2056: website mail through the local mail server or a smarthost.
+			api.RegisterWebsiteMailRoutes(v1, api.WebsiteMailHandlerConfig{
+				Repo:            deps.ServerSettings,
+				SSOKey:          deps.SSOKey,
+				Recorder:        deps.AuditRecorder,
+				StrictRateLimit: rl.StrictPerActor(),
+				Log:             deps.Log,
+				Agent:           deps.Agent,
+				Users:           deps.Users,
+				Domains:         deps.Domains,
+				Packages:        deps.Packages,
+			})
 			// M28 — admin logo upload/delete. Public GET lives on the
 			// root router above so it's reachable pre-auth.
 			api.RegisterBrandingRoutes(v1, api.BrandingHandlerConfig{

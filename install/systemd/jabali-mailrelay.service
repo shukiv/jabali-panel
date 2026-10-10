@@ -1,0 +1,62 @@
+# Website mail relay (GH #2056, ADR 0174).
+#
+# Sends the sites' PHP mail() through the admin's smarthost when it is picked
+# under Server Settings > Email > Website mail. The jabali-sendmail shim runs as
+# the site's user and hands each message to this socket; the relay holds the
+# smarthost login and decides the sender from the caller's UID. It runs from
+# the agent binary, under its own user, never root.
+#
+# install.sh installs this unit but does not enable it: the agent
+# (mail.relay.apply) enables and starts it when the smarthost is selected, and
+# stops and disables it when it isn't. PartOf: an agent restart (every update)
+# restarts a running relay onto the new binary; the agent starts it again at
+# its own start when the smarthost is selected.
+[Unit]
+Description=Jabali website mail relay (smarthost)
+After=network-online.target
+Wants=network-online.target
+PartOf=jabali-agent.service
+
+[Service]
+Type=simple
+User=jabali-mailrelay
+Group=jabali-mailrelay
+ExecStart=/usr/local/bin/jabali-agent mailrelay
+Restart=on-failure
+RestartSec=2s
+# The socket dir: every site user must reach the socket (who may send is
+# decided per caller), so the dir is traversable; the relay makes the socket
+# 0666 itself.
+RuntimeDirectory=jabali-mailrelay
+RuntimeDirectoryMode=0755
+UMask=0077
+
+# It reads its config and TLS roots and talks to the smarthost; nothing else.
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+MemoryMax=512M
+
+[Install]
+WantedBy=multi-user.target

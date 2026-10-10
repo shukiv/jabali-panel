@@ -63,12 +63,13 @@ func newPackageListCmd() *cobra.Command {
 				return nil
 			}
 			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(w, "ID\tNAME\tDISK_MB\tBW_MB\tDOMAINS\tDBS\tSSH\tCGI\tWEBMAIL")
+			fmt.Fprintln(w, "ID\tNAME\tDISK_MB\tBW_MB\tDOMAINS\tDBS\tSSH\tCGI\tWEBMAIL\tWEBSITE_MAIL")
 			for _, p := range pkgs {
-				fmt.Fprintf(w, "%s\t%s\t%d\t%d\t%d\t%d\t%s\t%s\t%s\n",
+				fmt.Fprintf(w, "%s\t%s\t%d\t%d\t%d\t%d\t%s\t%s\t%s\t%s\n",
 					p.ID, p.Name, p.DiskQuotaMB, p.BandwidthQuotaMB,
 					p.MaxDomains, p.MaxDatabases,
-					boolYN(p.SSHEnabled), boolYN(p.CGIEnabled), boolYN(p.WebmailEnabled))
+					boolYN(p.SSHEnabled), boolYN(p.CGIEnabled), boolYN(p.WebmailEnabled),
+					boolYN(p.WebsiteSendsEmail))
 			}
 			return w.Flush()
 		},
@@ -96,6 +97,7 @@ type packageCreateFlags struct {
 
 	sshEnabled, cgiEnabled, phpExec bool
 	webmailEnabled                  bool // GH #1628; defaults ON
+	websiteSendsEmail               bool // GH #2056; defaults OFF
 
 	// GH #1798: per-package egress allowances (default false = DENY).
 	egressSSHOut, egressICMP bool
@@ -148,6 +150,8 @@ func buildPackageFromCreateFlags(f packageCreateFlags) (*models.HostingPackage, 
 		SSHEnabled:     f.sshEnabled,
 		CGIEnabled:     f.cgiEnabled,
 		WebmailEnabled: f.webmailEnabled, // GH #1628
+		// GH #2056: a new package's sites can't send mail unless asked.
+		WebsiteSendsEmail: f.websiteSendsEmail,
 
 		EgressSSHOut:      f.egressSSHOut, // GH #1798
 		EgressSSHOutCIDRs: f.egressSSHOutCIDRs,
@@ -306,6 +310,8 @@ func registerPackageCreateFlags(cmd *cobra.Command, f *packageCreateFlags) {
 	// --webmail=false to withhold webmail from the plan). Mirrors the REST
 	// create handler's nil->true default.
 	fl.BoolVar(&f.webmailEnabled, "webmail", true, "enable webmail (Bulwark UI) for this package")
+	// GH #2056: off for a new package, like the REST create.
+	fl.BoolVar(&f.websiteSendsEmail, "website-mail", false, "let the sites on this package send email with PHP mail()")
 	fl.Uint32Var(&f.fpmMaxChildren, "fpm-max-children", 0, "FPM pm.max_children cap (0=default 20)")
 	fl.Uint32Var(&f.fpmWorkerMemMB, "fpm-worker-mem-mb", 0, "FPM advisory per-worker memory budget in MB (0=default 64)")
 	fl.BoolVar(&f.fpmUserCanEdit, "fpm-user-can-edit", false, "let tenants pick an FPM performance mode")
@@ -337,6 +343,7 @@ type packageEditFlags struct {
 	// tri-state toggles.
 	sshEnabled, cgiEnabled, phpExec               string
 	webmailEnabled                                string // GH #1628
+	websiteSendsEmail                             string // GH #2056
 	scheduledBackups, fpmUserCanEdit, fpmAdvanced string
 	// GH #1798: per-package egress allowances. The two flags are tri-state
 	// (true/false/unset); the CIDR scope is a plain string.
@@ -430,9 +437,10 @@ func applyPackageEditFlags(changed func(string) bool, p *models.HostingPackage, 
 			p.SetPHPDisabledFunctions(models.SetPHPExecOnList(models.EffectivePHPDisabledFunctions(p), execAllowed))
 		}
 	}
-	tri("webmail", &p.WebmailEnabled, f.webmailEnabled)    // GH #1628
-	tri("egress-ssh-out", &p.EgressSSHOut, f.egressSSHOut) // GH #1798
-	tri("egress-icmp", &p.EgressICMP, f.egressICMP)        // GH #1798
+	tri("webmail", &p.WebmailEnabled, f.webmailEnabled)            // GH #1628
+	tri("website-mail", &p.WebsiteSendsEmail, f.websiteSendsEmail) // GH #2056
+	tri("egress-ssh-out", &p.EgressSSHOut, f.egressSSHOut)         // GH #1798
+	tri("egress-icmp", &p.EgressICMP, f.egressICMP)                // GH #1798
 	tri("scheduled-backups", &p.ScheduledBackupsEnabled, f.scheduledBackups)
 	tri("fpm-user-can-edit", &p.FpmUserCanEdit, f.fpmUserCanEdit)
 	tri("fpm-advanced", &p.FpmAdvancedMode, f.fpmAdvanced)
@@ -612,7 +620,8 @@ func registerPackageEditFlags(cmd *cobra.Command, f *packageEditFlags) {
 	fl.StringVar(&f.cgiEnabled, "cgi", "", "CGI access (true/false)")
 	fl.StringVar(&f.phpExec, "php-exec", "", "PHP command-exec opt-out (true/false)")
 	fl.StringVar(&f.phpDisabledFunctions, "php-disabled-functions", "", phpDisabledFunctionsFlagHelp)
-	fl.StringVar(&f.webmailEnabled, "webmail", "", "webmail Bulwark UI (true/false)") // GH #1628
+	fl.StringVar(&f.webmailEnabled, "webmail", "", "webmail Bulwark UI (true/false)")                           // GH #1628
+	fl.StringVar(&f.websiteSendsEmail, "website-mail", "", "sites may send email with PHP mail() (true/false)") // GH #2056
 	fl.StringVar(&f.egressSSHOut, "egress-ssh-out", "", "allow outbound SSH :22 for enforced tenants (true/false) — GH #1798")
 	fl.StringVar(&f.egressICMP, "egress-icmp", "", "allow outbound ICMP ping for enforced tenants (true/false) — GH #1798")
 	fl.StringVar(&f.egressSSHOutCIDRs, "egress-ssh-out-cidrs", "", `JSON array of CIDRs scoping outbound SSH (empty=anywhere) — GH #1798`)

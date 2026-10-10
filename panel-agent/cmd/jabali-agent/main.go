@@ -53,6 +53,13 @@ const (
 )
 
 func main() {
+	// GH #2056: the website mail relay runs from this binary under its own
+	// user (jabali-mailrelay.service), so every build, update and rollback
+	// ships it.
+	if len(os.Args) > 1 && os.Args[1] == "mailrelay" {
+		os.Exit(runMailRelay(os.Args[2:]))
+	}
+
 	var (
 		socketPath = flag.String("socket", envOr("JABALI_AGENT_SOCKET", defaultSocketPath), "path to the unix socket to listen on")
 		socketGID  = flag.Int("gid", envInt("JABALI_AGENT_GID", -1), "chown socket to root:<gid> after bind; -1 to skip")
@@ -191,6 +198,10 @@ func main() {
 	// (reconciler only applies pending/error pools, so a restart converges
 	// active ones). Best-effort, runs once at boot.
 	commands.BackfillUserCLIPHP(log)
+
+	// GH #2056: the website mail relay is PartOf this unit, so an agent stop
+	// took it down; start it again when the smarthost is selected.
+	commands.StartMailRelayIfSelected(ctx, log)
 
 	// GH #594: re-render the CRS "before" exclusion plugin on boot so a shipped
 	// AppSec exclusion change self-heals on the `jabali update` restart, on

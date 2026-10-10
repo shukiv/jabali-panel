@@ -113,6 +113,11 @@ func sendmailTestReconciler(agent *fakeSendmailAgent, mailboxes *fakeSendmailMai
 			"u3": {ID: "u3", Username: strPtr("user_01krhrna2zmp"), IsAdmin: true},
 		}},
 		serverSettings: &fakeSettingsRepo{srv: &models.ServerSettings{Hostname: "panel.example.tld", MailEnabled: true}},
+		// GH #2056: "Website sends email" per package.
+		packages: &wmPackageRepo{rows: []models.HostingPackage{
+			{ID: "p-on", WebsiteSendsEmail: true},
+			{ID: "p-off", WebsiteSendsEmail: false},
+		}},
 		agent:          agent,
 		mailboxes:      mailboxes,
 		sendmailSSOKey: &key,
@@ -390,5 +395,62 @@ func TestReconcileSendmailCreds_NoHostnameNoop(t *testing.T) {
 	r.reconcileSendmailCreds(context.Background())
 	if len(agent.calls) != 0 {
 		t.Fatalf("no hostname must be a no-op, calls=%v", agent.calls)
+	}
+}
+
+// GH #2056: a site whose package doesn't let it send email gets no relay
+// identity: its cred file is removed and the relay password rotated (the old
+// one sat in a file the site could read). Turning the package flag back on
+// hands the rotated password to a new cred file. No package at all keeps the
+// identity: only the smarthost is a privileged feature.
+func TestSendmailCreds_FollowThePackagesWebsiteMailFlag(t *testing.T) {
+	agent := &fakeSendmailAgent{}
+	mailboxes := &fakeSendmailMailboxRepo{
+		byEmail:     map[string]*models.Mailbox{},
+		domainNames: map[string]string{"d1": "site.tld"},
+	}
+	r := sendmailTestReconciler(agent, mailboxes, []models.Domain{
+		{OwnershipState: verifiedOwnership, ID: "d1", Name: "site.tld", UserID: "u1"},
+	})
+	owner := r.users.(*fakeSendmailUserRepo).users["u1"]
+	ctx := context.Background()
+
+	owner.PackageID = strPtr("p-on")
+	r.reconcileSendmailCreds(ctx)
+	ensures := agent.byMethod("sendmail.cred.ensure")
+	if len(ensures) != 1 {
+		t.Fatalf("a package with website mail: %d ensures, want 1", len(ensures))
+	}
+	oldPassword := ensures[0].params["password"]
+
+	owner.PackageID = strPtr("p-off")
+	r.reconcileSendmailCreds(ctx)
+	if removes := agent.byMethod("sendmail.cred.remove"); len(removes) != 1 || removes[0].params["domain"] != "site.tld" {
+		t.Fatalf("a package without website mail must lose the cred file, got %+v", removes)
+	}
+	if len(mailboxes.rotated) != 1 {
+		t.Fatalf("its relay password must be rotated, got %d rotations", len(mailboxes.rotated))
+	}
+
+	owner.PackageID = strPtr("p-on")
+	r.reconcileSendmailCreds(ctx)
+	ensures = agent.byMethod("sendmail.cred.ensure")
+	if len(ensures) != 2 || ensures[1].params["password"] == oldPassword {
+		t.Fatalf("turning website mail back on must restore the cred with the rotated password, got %d ensures", len(ensures))
+	}
+}
+
+// GH #2056: without the package list the loop changes nothing (fail closed),
+// rather than provisioning identities it can't check.
+func TestSendmailCreds_NoPackageListChangesNothing(t *testing.T) {
+	agent := &fakeSendmailAgent{}
+	mailboxes := &fakeSendmailMailboxRepo{byEmail: map[string]*models.Mailbox{}, domainNames: map[string]string{"d1": "site.tld"}}
+	r := sendmailTestReconciler(agent, mailboxes, []models.Domain{
+		{OwnershipState: verifiedOwnership, ID: "d1", Name: "site.tld", UserID: "u1"},
+	})
+	r.packages = nil
+	r.reconcileSendmailCreds(context.Background())
+	if n := len(agent.byMethod("sendmail.cred.ensure")); n != 0 {
+		t.Fatalf("ensures = %d, want 0", n)
 	}
 }

@@ -2,6 +2,7 @@ package reconciler
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -35,6 +36,12 @@ var steadyTickObservations = map[string]bool{
 func steadyStateFixture(t *testing.T, webmailOn bool) (*Reconciler, *fakeAgent) {
 	t.Helper()
 	r, ag, dom := plannerFixture(t)
+	// GH #2056: a converged host answers the website-mail apply, so the
+	// second tick finds it cached.
+	if ag.resultByMethod == nil {
+		ag.resultByMethod = map[string]json.RawMessage{}
+	}
+	ag.resultByMethod["mail.relay.apply"] = json.RawMessage(`{"ok":true,"mode":"local"}`)
 	settings := r.serverSettings.(*fakeServerSettingsRepo).settings
 	settings.Hostname = "panel.example.com"
 	settings.WebmailEnabled = webmailOn

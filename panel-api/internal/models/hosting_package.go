@@ -101,6 +101,13 @@ type HostingPackage struct {
 	// the row still sees the right opt-out.
 	PHPExecEnabled bool `gorm:"column:php_exec_enabled;type:tinyint(1);not null;default:0" json:"php_exec_enabled"`
 
+	// WebsiteSendsEmail (GH #2056, ADR 0174) lets the sites of users on this
+	// package send mail with PHP mail(), through the local mail server or the
+	// operator's smarthost. Migration 000317 turned it on for every package
+	// that existed then; new packages start with it off. Users with no
+	// package send through the local mail server only (GH #282).
+	WebsiteSendsEmail bool `gorm:"column:website_sends_email;type:tinyint(1);not null;default:0" json:"website_sends_email"`
+
 	// PHPDisabledFunctions (GH #1701) is the disable_functions list this
 	// package's pools run with, canonical comma-separated form. nil = the
 	// GH #401 lockdown default (or no list at all when PHPExecEnabled is set on

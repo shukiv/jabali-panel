@@ -15,6 +15,7 @@ package sendmailshim
 import (
 	"bufio"
 	"bytes"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"io"
@@ -22,7 +23,9 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // MaxMessageBytes caps the stdin read. PHP post_max_size defaults to 512M but
@@ -327,12 +330,126 @@ func readCredFile(path string) (*Cred, error) {
 	return c, nil
 }
 
+// RestrictFrom is for mail leaving through the operator's smarthost (GH #2056),
+// where nothing downstream knows which account sent it. The message's From
+// address is kept only when the message has one From field naming one address
+// in a domain owned accepts; otherwise fallback is used, and the original
+// address goes to Reply-To when the message has none, so replies still reach
+// it. Either way the From field is written fresh from the parsed address, so
+// comments, groups or quirks another parser might read differently never
+// reach the smarthost, and a display name that carries an address is dropped.
+// Any Sender field is dropped: EnsureSender adds the honest one.
+func RestrictFrom(msg *Message, owned func(domain string) bool, fallback string) *Message {
+	header, body := splitHeaderBody(msg.Raw)
+	fields := parseHeaderFields(header)
+	var froms []headerField
+	hasReplyTo := false
+	for _, f := range fields {
+		switch strings.ToLower(f.name) {
+		case "from":
+			froms = append(froms, f)
+		case "reply-to":
+			hasReplyTo = true
+		}
+	}
+	var list []*mail.Address
+	if len(froms) > 0 {
+		list, _ = mail.ParseAddressList(froms[0].value)
+	}
+	keep := len(froms) == 1 && len(list) == 1 && owned(addrDomain(list[0].Address))
+
+	from := &mail.Address{Address: fallback}
+	if keep {
+		from.Address = list[0].Address
+	}
+	if len(list) > 0 {
+		from.Name = displayName(list[0].Name)
+	}
+	var buf bytes.Buffer
+	buf.Grow(len(msg.Raw) + 128)
+	fmt.Fprintf(&buf, "From: %s\n", from.String())
+	if !keep && !hasReplyTo && len(list) > 0 {
+		fmt.Fprintf(&buf, "Reply-To: %s\n", (&mail.Address{Address: list[0].Address}).String())
+	}
+	for _, f := range fields {
+		switch strings.ToLower(f.name) {
+		case "from", "sender":
+			continue
+		}
+		buf.Write(f.raw)
+	}
+	buf.Write(body)
+	return &Message{
+		Raw:              buf.Bytes(),
+		FromDomain:       addrDomain(from.Address),
+		HasFrom:          true,
+		FromAddr:         from.Address,
+		HeaderRecipients: msg.HeaderRecipients,
+	}
+}
+
+// displayName keeps a From display name only when it can't pass for an
+// address.
+func displayName(name string) string {
+	name = strings.TrimSpace(strings.Map(dropControl, name))
+	if strings.Contains(name, "@") {
+		return ""
+	}
+	return name
+}
+
+func addrDomain(addr string) string {
+	if at := strings.LastIndexByte(addr, '@'); at >= 0 {
+		return strings.ToLower(addr[at+1:])
+	}
+	return ""
+}
+
+func dropControl(r rune) rune {
+	if r < 0x20 || r == 0x7f {
+		return -1
+	}
+	return r
+}
+
 // EnsureSender guarantees the outgoing header block is honest about the real
 // submitter: when the message's From differs from the authenticated identity,
 // a Sender: field with the credential address is prepended (RFC 5322 §3.6.2),
 // and any tenant-supplied Sender is dropped (it would be a spoof vector).
 // When there is no From at all, one is added — Stalwart and most receivers
 // reject From-less mail outright.
+// AddMissingHeaders adds the Date and Message-ID fields a message lacks, the
+// way sendmail does for local mail: PHP's mail() writes neither, and not every
+// smarthost adds them for a remote client (some receivers refuse mail without
+// a Message-ID). The Message-ID is random, at domain. Fields the message has
+// are kept as they are.
+func AddMissingHeaders(raw []byte, domain string, now time.Time) []byte {
+	header, body := splitHeaderBody(raw)
+	hasDate, hasID := false, false
+	for _, f := range parseHeaderFields(header) {
+		switch strings.ToLower(f.name) {
+		case "date":
+			hasDate = true
+		case "message-id":
+			hasID = true
+		}
+	}
+	if hasDate && hasID {
+		return raw
+	}
+	var buf bytes.Buffer
+	buf.Grow(len(raw) + 128)
+	if !hasDate {
+		fmt.Fprintf(&buf, "Date: %s\n", now.Format(time.RFC1123Z))
+	}
+	if !hasID {
+		fmt.Fprintf(&buf, "Message-ID: <%s.%s@%s>\n", strconv.FormatInt(now.Unix(), 36), rand.Text(), domain)
+	}
+	buf.Write(header)
+	buf.Write(body)
+	return buf.Bytes()
+}
+
 func EnsureSender(msg *Message, credEmail string) []byte {
 	raw := msg.Raw
 	if strings.EqualFold(msg.FromAddr, credEmail) && msg.HasFrom {

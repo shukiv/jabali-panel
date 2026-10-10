@@ -115,6 +115,8 @@ func (r *packageRepo) Update(ctx context.Context, p *models.HostingPackage) erro
 		// GH #1628: webmail package entitlement — must be listed or the admin's
 		// webmail toggle saves-with-success and reverts on reload.
 		"webmail_enabled",
+		// GH #2056: "Website sends email" entitlement — same silent-drop scar.
+		"website_sends_email",
 		// GH #339: FPM performance-policy columns were missing from the Select
 		// allowlist, so GORM silently dropped them on update and the policy never
 		// persisted (the "allowlist silent drop" scar again).
@@ -176,8 +178,11 @@ func defaultPackages(now time.Time) []models.HostingPackage {
 			// GH #1628: seeded default packages ship with webmail ON (a plain
 			// bool can't fall back to the column DEFAULT, so set it explicitly).
 			WebmailEnabled: true,
-			CreatedAt:      now,
-			UpdatedAt:      now,
+			// GH #2056: the starter plans keep PHP mail() working on a fresh
+			// install, as every existing package does after migration 000317.
+			WebsiteSendsEmail: true,
+			CreatedAt:         now,
+			UpdatedAt:         now,
 		}
 	}
 	return []models.HostingPackage{

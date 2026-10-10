@@ -250,3 +250,30 @@ describe("PackageEditor command execution vs AppArmor (GH #2001)", () => {
   });
 });
 
+
+// GH #2056: "Websites can send email" — a new package starts with it off
+// (existing packages got it on in the migration); a stored package loads its
+// value in edit mode.
+describe("PackageEditor website mail (GH #2056)", () => {
+  it("renders the switch defaulting OFF for a new package", () => {
+    renderEditor();
+    const sw = screen.getByRole("switch", { name: "Websites can send email" });
+    expect(sw.getAttribute("aria-checked")).toBe("false");
+  });
+
+  it("loads a stored package's value (edit mode)", async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <PackageEditor
+          title="Edit package"
+          initialValue={{ ...PACKAGE_DEFAULTS, id: "pkg-1", name: "Basic", website_sends_email: true }}
+          submitting={false}
+          onSubmit={vi.fn()}
+        />
+      </QueryClientProvider>,
+    );
+    const sw = await screen.findByRole("switch", { name: "Websites can send email" });
+    expect(sw.getAttribute("aria-checked")).toBe("true");
+  });
+});

@@ -46,6 +46,7 @@ var packageFieldFlag = map[string]string{
 	"egress_ssh_out_cidrs":             "egress-ssh-out-cidrs", // GH #1798
 	"egress_icmp":                      "egress-icmp",          // GH #1798
 	"webmail_enabled":                  "webmail",              // GH #1628
+	"website_sends_email":              "website-mail",         // GH #2056
 	"fpm_max_children_cap":             "fpm-max-children",
 	"fpm_worker_mem_mb":                "fpm-worker-mem-mb",
 	"fpm_user_can_edit":                "fpm-user-can-edit",
@@ -397,4 +398,17 @@ func TestApplyPackageEditFlags_PHPDisabledFunctions(t *testing.T) {
 		_, err = applyPackageEditFlags(changedSet("php-disabled-functions"), p, packageEditFlags{phpDisabledFunctions: bad})
 		require.Error(t, err, bad)
 	}
+}
+
+// GH #2056: a new package's sites can't send mail unless the admin asks, so
+// `package create --website-mail` defaults off, like the REST create.
+func TestPackageCLI_WebsiteMailCreateFlagDefaultsOff(t *testing.T) {
+	create := newPackageCreateCmd()
+	fl := create.Flags().Lookup("website-mail")
+	require.NotNil(t, fl, "create --website-mail flag must be registered")
+	require.Equal(t, "false", fl.DefValue, "create --website-mail must default off (GH #2056)")
+
+	p, err := buildPackageFromCreateFlags(packageCreateFlags{name: "x", webmailEnabled: true, websiteSendsEmail: true})
+	require.NoError(t, err)
+	require.True(t, p.WebsiteSendsEmail, "websiteSendsEmail flows onto the built row")
 }
