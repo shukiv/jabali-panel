@@ -135,6 +135,8 @@ type Deps struct {
 	Autoresponders repository.EmailAutoresponderRepository
 	Forwarders     repository.EmailForwarderRepository
 	MailboxShares  repository.MailboxShareRepository
+	// MailboxTrustedSenders: the senders each mailbox trusts (GH #2017).
+	MailboxTrustedSenders repository.MailboxTrustedSenderRepository
 	// DNSSECKeys caches DNSSEC public-key metadata (ADR-0076).
 	DNSSECKeys repository.DNSSECKeyRepository
 	// PanelCerts is the M32 singleton panel_certificate repo. NewWithDeps
@@ -950,8 +952,10 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			srRepo = repository.NewSharedResourceRepository(deps.DB)
 		}
 		var sendDelegRepo repository.MailboxSendDelegationRepository
+		var trustedSendersRepo repository.MailboxTrustedSenderRepository
 		if deps.DB != nil {
 			sendDelegRepo = repository.NewMailboxSendDelegationRepository(deps.DB)
+			trustedSendersRepo = repository.NewMailboxTrustedSenderRepository(deps.DB)
 		}
 		api.RegisterM65Routes(mailGroup, api.M65RouteDeps{
 			Agent:           deps.Agent,
@@ -963,6 +967,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			MailboxShares:   deps.MailboxShares,
 			SharedResources: srRepo,
 			SendDelegations: sendDelegRepo,
+			TrustedSenders:  trustedSendersRepo,
 			Addresses:       deps.MailAddresses,
 		})
 		// GH #873 round 4 — tenant-scoped mail traffic (own domains only).
@@ -1325,6 +1330,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Forwarders:     deps.Forwarders,
 				Autoresponders: deps.Autoresponders,
 				MailboxShares:  deps.MailboxShares,
+				TrustedSenders: deps.MailboxTrustedSenders,
 				DNSSECKeys:     deps.DNSSECKeys,
 				SSHKeys:        deps.SSHKeys,
 				CronJobs:       deps.CronJobs,
@@ -1371,6 +1377,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Forwarders:     deps.Forwarders,
 				Autoresponders: deps.Autoresponders,
 				MailboxShares:  deps.MailboxShares,
+				TrustedSenders: deps.MailboxTrustedSenders,
 				DNSSECKeys:     deps.DNSSECKeys,
 				SSHKeys:        deps.SSHKeys,
 				CronJobs:       deps.CronJobs,

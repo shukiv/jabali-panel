@@ -563,6 +563,11 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 						}
 					}
 				}
+				// GH #2017: the senders the mailbox trusts. The reconciler
+				// writes them into Stalwart on its next tick.
+				if d.TrustedSenders != nil && len(mb.TrustedSenders) > 0 {
+					restoreTrustedSenders(ctx, d, &r, mbID, mb.ID, mb.TrustedSenders)
+				}
 			}
 		}
 		if d.Forwarders != nil {
