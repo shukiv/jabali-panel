@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net"
 	"os"
 	"os/user"
@@ -255,5 +256,23 @@ func TestMailRelayApply_MissingRelayUser(t *testing.T) {
 	var ae *agentwire.AgentError
 	if !errors.As(err, &ae) || ae.Code != agentwire.CodeFailedPrecondition {
 		t.Fatalf("err = %v, want failed_precondition", err)
+	}
+}
+
+func TestStartMailRelayIfSelected(t *testing.T) {
+	f := setupMailRelay(t)
+	StartMailRelayIfSelected(context.Background(), slog.Default())
+	if len(f.calls) != 0 {
+		t.Errorf("started the relay with no smarthost selected: %q", f.calls)
+	}
+	if err := os.MkdirAll(filepath.Dir(mailRelayModePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(mailRelayModePath, []byte("smarthost\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	StartMailRelayIfSelected(context.Background(), slog.Default())
+	if strings.Join(f.calls, "|") != "start --no-block jabali-mailrelay.service" {
+		t.Errorf("systemctl calls = %q", f.calls)
 	}
 }

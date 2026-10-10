@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -278,6 +279,19 @@ func mailRelayWaitSocket(ctx context.Context) error {
 			return &agentwire.AgentError{Code: agentwire.CodeDeadlineExceeded, Message: "waiting for the mail relay: " + ctx.Err().Error()}
 		case <-time.After(100 * time.Millisecond):
 		}
+	}
+}
+
+// StartMailRelayIfSelected runs at agent start. The relay is PartOf the agent,
+// so stopping the agent stops it, but starting the agent again doesn't: bring
+// it back when the smarthost is selected. --no-block, because the agent's own
+// start job is still running.
+func StartMailRelayIfSelected(ctx context.Context, log *slog.Logger) {
+	if mailrelay.ReadMode(mailRelayModePath) != mailrelay.ModeSmarthost {
+		return
+	}
+	if out, err := runSystemctl(ctx, "start", "--no-block", mailRelayUnit); err != nil {
+		log.Warn("website mail relay didn't start", "detail", systemctlDetail(out))
 	}
 }
 

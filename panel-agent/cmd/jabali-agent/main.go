@@ -199,6 +199,10 @@ func main() {
 	// active ones). Best-effort, runs once at boot.
 	commands.BackfillUserCLIPHP(log)
 
+	// GH #2056: the website mail relay is PartOf this unit, so an agent stop
+	// took it down; start it again when the smarthost is selected.
+	commands.StartMailRelayIfSelected(ctx, log)
+
 	// GH #594: re-render the CRS "before" exclusion plugin on boot so a shipped
 	// AppSec exclusion change self-heals on the `jabali update` restart, on
 	// every server, with no operator step. Write-on-diff; best-effort.
