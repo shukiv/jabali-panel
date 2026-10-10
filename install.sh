@@ -14300,6 +14300,15 @@ _install_stalwart_apply_plan() {
   # resolves share targets through the same query — accepted, because
   # cross-tenant enumeration is a data-isolation leak.
   #
+  # The same patch disables API keys (sysApiKey*). Stalwart checks a
+  # mailbox's API keys itself, not against the panel's database, so a key
+  # kept working after the panel changed the password, disabled the mailbox
+  # or suspended its owner; the panel offers no use for them. The reconciler
+  # removes any that exist. App passwords stay enabled: the panel's webmail
+  # sign-in ("Open webmail", admin impersonation) creates one for the
+  # mailbox, and the panel removes them itself on those changes. The patch
+  # replaces the whole set, so every disabled permission is listed here.
+  #
   # Resolve the built-in User role by description (its id is not guaranteed
   # stable) instead of hardcoding it. Runs on every install/update run,
   # regardless of skip_apply, like the convergers above.
@@ -14321,12 +14330,12 @@ print(u[0]["id"] if u else "")' 2>/dev/null || true)"
   else
     # Object-of-bools is how Stalwart serializes a set<Permission> (see
     # `stalwart-cli get x:Role <id> --json`); an array is rejected.
-    local princ_patch='{"disabledPermissions":{"jmapPrincipalQuery":true,"jmapPrincipalQueryChanges":true,"jmapPrincipalChanges":true,"davPrincipalList":true,"davPrincipalMatch":true,"davPrincipalSearch":true,"davPrincipalSearchPropSet":true}}'
+    local princ_patch='{"disabledPermissions":{"jmapPrincipalQuery":true,"jmapPrincipalQueryChanges":true,"jmapPrincipalChanges":true,"davPrincipalList":true,"davPrincipalMatch":true,"davPrincipalSearch":true,"davPrincipalSearchPropSet":true,"sysApiKeyCreate":true,"sysApiKeyUpdate":true,"sysApiKeyGet":true,"sysApiKeyQuery":true,"sysApiKeyDestroy":true}}'
     if STALWART_URL="http://127.0.0.1:${jmap_port}" \
       STALWART_USER="admin" \
       STALWART_PASSWORD="$admin_token" \
       /usr/local/bin/stalwart-cli update x:Role "$user_role_id" --json "$princ_patch" >/dev/null 2>&1; then
-      _ok "Stalwart User role: cross-domain principal enumeration disabled (id=${user_role_id}; GH #1581)"
+      _ok "Stalwart User role: cross-domain principal enumeration and API keys disabled (id=${user_role_id}; GH #1581)"
     else
       _warn "Stalwart User-role principal lockdown failed for id ${user_role_id} — cross-domain enumeration may persist; inspect with 'stalwart-cli get x:Role ${user_role_id} --json'"
     fi
