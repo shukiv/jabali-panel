@@ -115,6 +115,15 @@ create doesn't load.
   that can't sign in, until a database user is granted on it: the first user
   you grant on it under **Databases** takes them over. The restore report
   lists each such database.
+- **Databases restored by an earlier release.** A restore before GH #1993
+  left what it created owned by `postgres`, so the database's user couldn't
+  alter its own tables or run `TRUNCATE ... RESTART IDENTITY` on them
+  (GH #2004). The panel hands those objects to the database's user (or, with
+  none, to the role that can't sign in) when it starts, whenever a database
+  or its user changes, and once a day. It leaves two things for an admin,
+  and logs each with a `pg-reown:` warning: a database with an event trigger
+  is left as it is, and a function in a language only a superuser can use
+  (such as C) stays owned by `postgres`.
 - **Access.** The roles that could connect to the database before the restore
   can connect to the restored one.
 - **Overwrite.** With **Overwrite existing items with the backup** on, a

@@ -40,6 +40,8 @@ If an extension you need is not enabled, contact your administrator.
 
 PostgreSQL databases are included in `account_full` backups via per-database `pg_dump`. There is also a per-row **Download backup** / **Restore from file** action: plain-SQL dumps replay via `psql`, and pgAdmin custom / tar archives via `pg_restore` — both through a non-superuser scoped loader into a staging database (GH #1045).
 
+A restored database's tables, sequences and functions belong to its database user, so the user can alter them and run `TRUNCATE ... RESTART IDENTITY`. Databases restored by an earlier release are converted when the panel updates (GH #2004).
+
 ## Tuning
 
 Per-database tuning (work_mem, shared_buffers per-tenant) is not exposed at the tenant level. Server-wide tuning is operator-controlled under [Database Tuning](../admin/database-tuning.md).

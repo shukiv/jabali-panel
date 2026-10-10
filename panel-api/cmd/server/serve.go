@@ -608,6 +608,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 		rec.WithPingAccess(repository.NewPingAccessRepository(sharedDB))
 		rec.WithDBGrantEscape()
 		rec.WithPGPublicAccess(repository.NewPGDatabaseGrantRepository(sharedDB))
+		// GH #2004: objects a restore left owned by postgres go to the
+		// database's user.
+		rec.WithPGReown(repository.NewPGDatabaseOwnerRepository(sharedDB))
 		// M36: per-domain IP allow/deny ACLs. Reconciler threads ACLs into
 		// agent's domain.create payload; agent renders nginx directives
 		// inside the server block.

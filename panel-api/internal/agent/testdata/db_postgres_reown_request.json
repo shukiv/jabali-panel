@@ -1,0 +1,6 @@
+{
+  "databases": {
+    "alice_shop": "alice_app",
+    "bob_blog": ""
+  }
+}

@@ -328,6 +328,9 @@ type Reconciler struct {
 	// pgPublicAccess lists the panel's Postgres database grants for the
 	// PUBLIC access pass. nil disables the pass.
 	pgPublicAccess repository.PGDatabaseGrantRepository
+	// pgReown lists the panel's Postgres databases with each one's user for
+	// the superuser-owned objects pass (GH #2004). nil disables the pass.
+	pgReown repository.PGDatabaseOwnerRepository
 	// M34 deep stats — per-tick drop samples drive the 24h sparkline.
 	// Optional; nil disables sample persistence (drop_count_24h still
 	// updates on the policy row).
@@ -1061,6 +1064,7 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 	// Postgres databases created before the panel revoked PUBLIC's CONNECT
 	// let any tenant role connect. Converted once, then re-checked hourly.
 	r.reconcilePGPublicAccess(ctx)
+	r.reconcilePGReown(ctx)
 	// GH #1053: converge FTP/SFTP subaccounts (passwd aliases, group
 	// membership, lock state, sshd jabali-xfer drop-in). Hash-gated no-op
 	// in steady state.
