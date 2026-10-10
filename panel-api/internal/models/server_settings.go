@@ -592,6 +592,16 @@ type ServerSettings struct {
 	SmarthostUsername    string `gorm:"column:smarthost_username;type:text;not null;default:''" json:"smarthost_username"`
 	SmarthostPasswordEnc []byte `gorm:"column:smarthost_password_enc;type:blob" json:"-"`
 
+	// The mail server's spam score thresholds (GH #2017, mailspam.Scores). A
+	// message scoring at or above SpamJunkScore goes to the Junk folder; at
+	// or above SpamRejectScore it is refused at SMTP time; at or above
+	// SpamDiscardScore it is dropped. 0 turns reject or discard off. The
+	// reconciler converges them into Stalwart's SpamSettings; install.sh no
+	// longer sets them, so an update keeps the admin's values.
+	SpamJunkScore    float64 `gorm:"column:spam_junk_score;type:double;not null;default:5" json:"spam_junk_score"`
+	SpamRejectScore  float64 `gorm:"column:spam_reject_score;type:double;not null;default:15" json:"spam_reject_score"`
+	SpamDiscardScore float64 `gorm:"column:spam_discard_score;type:double;not null;default:20" json:"spam_discard_score"`
+
 	UpdatedAt time.Time `gorm:"type:datetime(6);not null"             json:"updated_at"`
 }
 

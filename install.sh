@@ -14251,9 +14251,15 @@ _install_stalwart_apply_plan() {
   # singleton. Run an explicit update here every install/update run.
   # All fields are mutable per `stalwart-cli describe SpamSettings`, so
   # this is safe to re-issue.
-  _log "converging Stalwart SpamSettings (pinned rules URL + score thresholds)"
+  # GH #2017: the score thresholds (scoreSpam / scoreReject / scoreDiscard)
+  # are NOT in this patch. The panel owns them (server_settings, set in
+  # Server Settings → Email) and its reconciler converges them; re-applying
+  # them here put an admin's thresholds back to 5 / 15 / 20 on every update.
+  # The apply plan still sets 5 / 15 / 20 on a fresh install, matching the
+  # migration defaults (TestDefaultsAgree).
+  _log "converging Stalwart SpamSettings (pinned rules URL)"
   local spam_patch
-  spam_patch='{"enable":true,"trustContacts":true,"trustReplies":true,"scoreSpam":5.0,"scoreReject":15.0,"scoreDiscard":20.0,"spamFilterRulesUrl":"file:///opt/stalwart/share/spam-filter-rules.json.gz"}'
+  spam_patch='{"enable":true,"trustContacts":true,"trustReplies":true,"spamFilterRulesUrl":"file:///opt/stalwart/share/spam-filter-rules.json.gz"}'
   if STALWART_URL="http://127.0.0.1:${jmap_port}" \
     STALWART_USER="admin" \
     STALWART_PASSWORD="$admin_token" \

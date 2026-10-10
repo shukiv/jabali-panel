@@ -40,6 +40,7 @@ Tunables persist to `server_settings` and are applied by the agent's `nginx.tuna
 
 - **Mail hostname** — the name mail clients and webmail use, `mail.<panel-hostname>` by default. See [Mail Hostname](./mail-hostname.md).
 - **Recovery sender** — the `From:` for Kratos password-recovery email.
+- **Spam filter** — the scores at which incoming mail goes to Junk, is rejected or is discarded (defaults 5 / 15 / 20; reject and discard can be off). See [Spam filter](../mail.md#spam-filter-gh-2017).
 - **Outbound throttles** — defaults (see [Mail Throttles](./mail-throttles.md)).
 - **MTA-STS policy mode** — `enforce` or `testing`.
 - **Stalwart expression filters** — admin-defined routing / drop / quarantine expressions (M47 Wave 3v2).

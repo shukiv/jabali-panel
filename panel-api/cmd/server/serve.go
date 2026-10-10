@@ -407,6 +407,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 		stalwartClient := stalwartadmin.NewClient()
 		mailThrottles := stalwartadmin.Throttles{Client: stalwartClient}
 		rec.WithMailThrottles(mailOutboundPolicyRepo, mailThrottles)
+		// GH #2017: the mail server's spam score thresholds follow Server
+		// Settings → Email (install.sh no longer sets them).
+		rec.WithMailSpamScores(stalwartadmin.SpamScores{Client: stalwartClient})
 		// M52 (ADR-0133) — shared resources convergence (host principals +
 		// per-collection shareWith). Grant grantees resolve via the mailbox +
 		// mail-group repos.

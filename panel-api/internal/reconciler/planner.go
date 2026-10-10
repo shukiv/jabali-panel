@@ -126,6 +126,10 @@ var (
 	// and API keys against the mailboxes that may sign in. One entry for the
 	// host; it runs again when a mailbox's password, state or owner changes.
 	PhaseMailCredentials = Phase{Name: "mail.credentials", AuditInterval: 10 * time.Minute}
+	// PhaseMailSpamScores is the mail server's spam score thresholds
+	// (GH #2017). One entry for the host; the interval puts back a
+	// threshold changed on the mail server by hand.
+	PhaseMailSpamScores = Phase{Name: "mail.spam_scores", AuditInterval: 10 * time.Minute}
 )
 
 // runDependency is one ordering a run keeps for a domain: the Agent call
