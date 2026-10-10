@@ -305,3 +305,18 @@ func TestSweep_RefusesAKeyThatIsNotAPosition(t *testing.T) {
 		}
 	}
 }
+
+// An account without an address is not a mailbox that may sign in, even when
+// the database lists an empty address (a row whose address was never
+// filled in).
+func TestSweep_AnAccountWithoutAnAddressMayNotSignIn(t *testing.T) {
+	reg := &fakeRegistry{accounts: map[string]*account{
+		"n9": {ID: "n9", EmailAddress: "", Credentials: creds(password(), appPassword(at(time.Hour)))},
+	}}
+	if _, err := Sweep(context.Background(), reg, map[string]time.Time{"": changed}); err != nil {
+		t.Fatal(err)
+	}
+	if got := reg.left("n9"); !reflect.DeepEqual(got, []string{"Password@"}) {
+		t.Errorf("left %v", got)
+	}
+}
