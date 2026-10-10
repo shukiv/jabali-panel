@@ -45,6 +45,12 @@ mail and DNS elsewhere had no way to let the sites send.
    only senders on its list may send. One account may hold at most two
    connections at a time, and a sending slot is taken only once its whole
    message has arrived, so one site can't hold the relay for the others.
+   Both `install.sh` and the agent (before it writes the password) check that
+   `jabali-mailrelay` is the dedicated account, read from `/etc/passwd` and
+   `/etc/group` only, never from a directory service: a system uid, its own
+   primary group, no group members and no login shell. Either one refuses
+   otherwise, so `install.sh` switching the relay off isn't undone by the
+   next apply.
 5. **The envelope sender is unchanged**: `noreply@` a domain the calling user
    owns (the From domain when the user owns it, else the user's primary domain),
    the same rule the shim follows with Stalwart. SPF and DKIM for those domains
