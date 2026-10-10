@@ -67,7 +67,12 @@ mail and DNS elsewhere had no way to let the sites send.
 7. **A "Website sends email" package flag** applies in both modes.
    - A migration sets it on for every existing package, so nothing changes for
      existing sites.
-   - New packages start with it off; the package editor shows it.
+   - New packages start with it off; the package editor shows it. The seeded
+     starter plans and Plesk imports have it on: they stand for sites that
+     already send mail today.
+   - With the local mail server, a site whose package has it off gets no
+     `noreply@` relay identity (cred file removed, relay password rotated).
+     With the smarthost, its user is left off the relay's sender list.
    - Users with no package (GH #282) may send through the local mail server, as
      today, but not through the smarthost: the relay sends with the operator's
      login and reputation, which makes it a privileged feature.
