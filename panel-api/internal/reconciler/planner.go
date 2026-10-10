@@ -118,6 +118,10 @@ var (
 	// Postgres database. One entry for the host; the interval catches a
 	// database created outside the panel.
 	PhasePGPublicAccess = Phase{Name: "db.postgres.revoke_public_access", AuditInterval: time.Hour}
+	// PhasePGReown hands superuser-owned objects in the panel's Postgres
+	// databases to each database's user (GH #2004). One entry for the host;
+	// the interval catches objects a superuser created since.
+	PhasePGReown = Phase{Name: "db.postgres.reown_superuser_objects", AuditInterval: 24 * time.Hour}
 )
 
 // runDependency is one ordering a run keeps for a domain: the Agent call

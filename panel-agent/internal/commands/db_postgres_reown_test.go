@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -230,5 +231,37 @@ func TestPgReown_EventTriggerAtHandOverStopsIt(t *testing.T) {
 	}
 	if len(resp.Reowned) != 0 || !strings.Contains(resp.Failed["alice_shop"], "event trigger") {
 		t.Errorf("response = %+v", resp)
+	}
+}
+
+// The panel's side of the db.postgres.reown_superuser_objects contract (GH
+// #2004): the request the panel sends decodes into this handler's params with
+// every field kept, and the response the panel reads is what this handler
+// returns. The panel's reconciler decodes the same fixtures.
+func TestPgReown_PanelContract(t *testing.T) {
+	dir := "../../../panel-api/internal/agent/testdata/"
+	for _, c := range []struct {
+		file string
+		into any
+	}{
+		{"db_postgres_reown_request.json", &dbPgReownParams{}},
+		{"db_postgres_reown_response.json", &dbPgReownResponse{}},
+	} {
+		raw, err := os.ReadFile(dir + c.file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		dec := json.NewDecoder(strings.NewReader(string(raw)))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(c.into); err != nil {
+			t.Fatalf("%s: %v", c.file, err)
+		}
+		again, _ := json.Marshal(c.into)
+		var got, want any
+		_ = json.Unmarshal(again, &got)
+		_ = json.Unmarshal(raw, &want)
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: the agent drops or renames fields:\nwant %s\ngot  %s", c.file, raw, again)
+		}
 	}
 }

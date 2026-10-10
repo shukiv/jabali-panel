@@ -1,0 +1,11 @@
+{
+  "reowned": {
+    "alice_shop": 3
+  },
+  "left": {
+    "carol_data": ["public.shell(text) (language c)"]
+  },
+  "failed": {
+    "dave_app": "the database has an event trigger; an admin has to review it before its objects are handed over"
+  }
+}
