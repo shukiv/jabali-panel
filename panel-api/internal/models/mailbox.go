@@ -45,6 +45,11 @@ type Mailbox struct {
 	LastUsageAt    *time.Time `gorm:"type:datetime(6)" json:"last_usage_at,omitempty"`
 	CreatedAt      time.Time  `gorm:"type:datetime(6);not null" json:"created_at"`
 	UpdatedAt      time.Time  `gorm:"type:datetime(6);not null" json:"updated_at"`
+
+	// PasswordChangedAt is when the password was last set (migration
+	// 000318). The mail server keeps app passwords apart from this password;
+	// the reconciler removes the ones made at or before this time.
+	PasswordChangedAt *time.Time `gorm:"column:password_changed_at;type:datetime(6)" json:"-"`
 }
 
 func (Mailbox) TableName() string { return "mailboxes" }
