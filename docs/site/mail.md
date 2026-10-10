@@ -132,6 +132,38 @@ How the smarthost mode works (ADR 0174):
 The **Websites can send email** package switch applies to the local mail
 server too: a site whose package has it off gets no `noreply@` relay identity.
 
+## Spam filter (GH #2017)
+
+Stalwart gives every incoming message a spam score. **Server Settings → Email
+→ Spam filter** sets what happens at each score:
+
+| Threshold | Default | At or above it, the message |
+|---|---|---|
+| Move to Junk | 5 | goes to the mailbox's Junk folder |
+| Reject | 15 | is refused at SMTP time; the sending server gets an error, so the sender knows |
+| Discard | 20 | is dropped without telling anyone |
+
+- Each threshold is at most 100. Reject and discard can be turned off (stored
+  as 0); when on, each must be above the Junk threshold.
+- Stalwart checks reject before discard. With rejecting on, a discard
+  threshold at or above the reject threshold never applies (the defaults are
+  like this: mail scoring 20 is rejected, not discarded).
+- A higher Junk threshold files fewer real messages as Junk and lets more spam
+  reach the Inbox.
+- The thresholds are server-wide. The panel stores them and the reconciler
+  applies them to Stalwart within a minute, followed by a settings reload
+  (Stalwart keeps the old thresholds until it reloads). An install or
+  `jabali update` no longer sets them, so an admin's values stay. A threshold
+  changed directly on Stalwart is put back within ten minutes.
+- A message's `X-Spam-Status` and `X-Spam-Result` headers show its score and
+  the rules behind it.
+
+Mail from a sender in the mailbox's contacts (any of its address books in
+webmail) is not treated as spam (`X-Spam-Status: No, reason=card-exists`),
+as long as the sender's domain passes SPF or DMARC; a forged sender with the
+same address still goes through the filter. A mailbox's own filter rules
+(Sieve) can't move a message out of Junk.
+
 ## Outbound throttles
 
 `/jabali-admin/mail/throttles` (M47 Wave 3) — per-sender + per-domain rate limit (msgs / minute, msgs / hour, recipients / message). Bulwark enforces; CrowdSec sees throttle hits and can escalate.
