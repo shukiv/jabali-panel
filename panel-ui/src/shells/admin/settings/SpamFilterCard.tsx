@@ -112,7 +112,8 @@ export const SpamFilterCard = () => {
       <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
         The mail server gives every incoming message a spam score. A higher threshold files less mail as
         spam, so fewer real messages end up in Junk and more spam reaches the Inbox. Mail from a sender in
-        the mailbox&apos;s contacts is not treated as spam when the sender&apos;s domain passes SPF or DMARC.
+        the mailbox&apos;s contacts, or on its Trusted senders list (Edit mailbox), is not treated as spam when
+        the sender&apos;s domain passes SPF or DMARC.
       </Typography.Paragraph>
 
       {!mailEnabled && (

@@ -45,6 +45,18 @@ The mail server keeps a record of every alias it has delivered to, on the mailbo
 
 If the mail server is down when an alias moves, the panel finishes the move within 10 minutes of it coming back. An alias that was deleted while the mail server was down can keep delivering to its old mailbox until the address is used again.
 
+## Trusted senders
+
+**Edit** a mailbox → **Trusted senders**. Mail from an address on this list is not treated as spam: it reaches the Inbox even when its spam score is over the Junk threshold.
+
+- The message has to pass SPF or DMARC. A message that only claims to come from a trusted address, sent from a server the sender's domain does not allow, is still filtered.
+- The address must match exactly, ignoring case. A +tag address, like `name+news@example.com`, is a different sender, so add it as it appears in the From line.
+- A mailbox can trust up to 500 senders.
+- The panel keeps the list as contacts in a **Trusted senders** address book of the mailbox. It shows up in webmail under Contacts. Contacts you save there yourself are left alone. If you delete one of the panel's contacts in webmail, the panel adds it back within an hour, so remove a sender here instead.
+- Any contact saved in webmail is trusted the same way. Adding a sender to your contacts trusts it too.
+- If the mail server is down when you add a sender, the panel saves it, says so, and keeps trying until the mail server takes it. Removing a sender needs the mail server: while it is down, the sender stays trusted and the panel says so.
+- A backup includes the list, and a restore brings it back.
+
 ## Where the mail lives
 
 Mailbox storage lives inside Stalwart's data directory (`/var/lib/stalwart/`). The panel does not expose direct filesystem access. To migrate a mailbox elsewhere, use the **IMAP sync** option in a third-party tool (`imapsync`, Thunderbird's "Move Folder", Apple Mail's "Move Mailbox") between the new and old IMAP endpoints.

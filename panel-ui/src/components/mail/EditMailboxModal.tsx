@@ -13,6 +13,7 @@ import { useUpdateMailbox, type Mailbox } from "../../hooks/useMailboxes";
 import { MailboxForwardingSection } from "./MailboxForwardingSection";
 import { MailboxGroupsSection } from "./MailboxGroupsSection";
 import { MailboxSendAsSection } from "./MailboxSendAsSection";
+import { MailboxTrustedSendersSection } from "./MailboxTrustedSendersSection";
 
 const MIB = 1024 * 1024;
 const QUOTA_MIN_MIB = 16;
@@ -161,6 +162,11 @@ export function EditMailboxModal({ open, mailbox, onClose }: EditMailboxModalPro
         key: "sendas",
         label: "Send As",
         children: <MailboxSendAsSection mailboxId={mailbox.id} domainId={mailbox.domain_id} />,
+      },
+      {
+        key: "trusted",
+        label: "Trusted senders",
+        children: <MailboxTrustedSendersSection mailboxId={mailbox.id} />,
       },
     );
   }
