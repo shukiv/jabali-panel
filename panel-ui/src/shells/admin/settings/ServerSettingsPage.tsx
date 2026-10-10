@@ -68,6 +68,7 @@ import { PageTemplatesCard } from "./PageTemplatesCard";
 import { AccountSkeletonCard } from "./AccountSkeletonCard";
 import { PanelSSLCard } from "./PanelSSLCard";
 import { CloudflareTokenCard } from "./CloudflareTokenCard";
+import { WebsiteMailCard } from "./WebsiteMailCard";
 import { NspawnImagesCard } from "./NspawnImagesCard";
 import { SSOMaintenanceCard } from "./SSOMaintenanceCard";
 import { TenantDomainOptionsCard } from "./TenantDomainOptionsCard";
@@ -1047,6 +1048,7 @@ export const ServerSettingsPage = () => {
       children: (
         <>
           <EmailCard />
+          <WebsiteMailCard />
           <WebmailToggleCard />
           <Dkim2ToggleCard />
           <StalwartWebadminCard />
