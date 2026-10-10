@@ -23,6 +23,10 @@ interface WebsiteMail {
   password_set: boolean;
   mail_module_enabled: boolean;
   allowed_ports: number[];
+  // Smarthost mode: how many accounts may send through it, and (after a
+  // save) the accounts the server left out, with the reason.
+  senders?: number;
+  skipped?: string[];
 }
 
 const TLS_OPTIONS: { value: TLSMode; label: string }[] = [
@@ -211,6 +215,31 @@ export function WebsiteMailCard() {
             autoComplete="new-password"
           />
         </Space>
+      )}
+
+      {loaded?.mode === "smarthost" && mode === "smarthost" && loaded.senders !== undefined && (
+        <Typography.Paragraph type="secondary" style={{ marginTop: 12, marginBottom: 0 }}>
+          {loaded.senders === 1
+            ? "1 account can send through the smarthost."
+            : `${loaded.senders} accounts can send through the smarthost.`}{" "}
+          Accounts without a hosting package can&apos;t.
+        </Typography.Paragraph>
+      )}
+
+      {loaded?.skipped && loaded.skipped.length > 0 && (
+        <Alert
+          type="warning"
+          showIcon
+          style={{ marginTop: 12 }}
+          message="Some accounts can't send through the smarthost"
+          description={
+            <ul style={{ margin: 0, paddingLeft: 18 }}>
+              {loaded.skipped.map((s) => (
+                <li key={s}>{s}</li>
+              ))}
+            </ul>
+          }
+        />
       )}
 
       {result && (

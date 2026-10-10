@@ -312,3 +312,36 @@ func TestMailRelayApply_RelayAccountMustBeTheSystemUser(t *testing.T) {
 		})
 	}
 }
+
+// The panel's side of the mail.relay.apply contract (GH #2056): the request
+// the panel sends decodes into this handler's params with every field kept,
+// and the response the panel expects is what this handler returns.
+func TestMailRelayApply_PanelContract(t *testing.T) {
+	dir := "../../../panel-api/internal/agent/testdata/"
+	for _, c := range []struct {
+		file string
+		into any
+	}{
+		{"mail_relay_apply_request.json", &mailRelayApplyParams{}},
+		{"mail_relay_apply_response.json", &mailRelayApplyResponse{}},
+	} {
+		raw, err := os.ReadFile(dir + c.file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		dec := json.NewDecoder(strings.NewReader(string(raw)))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(c.into); err != nil {
+			t.Fatalf("%s: %v", c.file, err)
+		}
+		again, _ := json.Marshal(c.into)
+		var got, want any
+		_ = json.Unmarshal(again, &got)
+		_ = json.Unmarshal(raw, &want)
+		gb, _ := json.Marshal(got)
+		wb, _ := json.Marshal(want)
+		if string(gb) != string(wb) {
+			t.Errorf("%s: the agent drops or renames fields:\nwant %s\ngot  %s", c.file, wb, gb)
+		}
+	}
+}

@@ -162,6 +162,9 @@ type Reconciler struct {
 	sendmailSSOKey *ssokey.Key
 	sendmailMu     sync.Mutex
 	sendmailDone   map[string]string
+	// websiteMail caches the last website-mail apply (GH #2056,
+	// website_mail_reconcile.go).
+	websiteMail websiteMailState
 	// sieveForwarders + sieveAutoresponders back the GH #1795 backfill sweep
 	// (mailbox_sieve_reconcile.go): every mailbox with an external forwarder or
 	// an autoresponder is re-converged into its single active standard
@@ -1016,6 +1019,10 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 	// cred file for the jabali-sendmail shim. Fingerprint-gated noop in
 	// steady state; doubles as the fleet backfill after `jabali update`.
 	r.reconcileSendmailCreds(ctx)
+
+	// GH #2056: website mail through the local mail server or the smarthost
+	// relay; in smarthost mode the relay's sender list follows the sites.
+	r.reconcileWebsiteMail(ctx)
 
 	// GH #1795: every mailbox with an external forwarder or autoresponder is
 	// re-converged into its single active standard SieveScript (the store

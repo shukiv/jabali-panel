@@ -1194,7 +1194,7 @@ paths:
         whether a password is stored. The password is sealed at rest
         (sso.key AES-256-GCM) and never returned by any endpoint.
       responses:
-        "200": { description: "{ mode, host, port, tls, username, password_set, mail_module_enabled, allowed_ports }" }
+        "200": { description: "{ mode, host, port, tls, username, password_set, mail_module_enabled, allowed_ports, senders? } (senders: in smarthost mode, how many accounts may send through it)" }
     put:
       tags: [Server Settings]
       summary: Choose the local mail server or a smarthost for website mail (admin, GH #2056)
@@ -1204,7 +1204,9 @@ paths:
         port must be 25, 465, 587 or 2525. An empty password keeps the stored
         one; an empty username removes the login. Switching to the smarthost,
         or editing it while in use, tests it first and saves nothing when the
-        test fails. mode "local" with no host clears the smarthost.
+        test fails. mode "local" with no host clears the smarthost. The
+        server is switched (website mail relay started or stopped) before
+        anything is saved, so a save the server can't apply changes nothing.
       requestBody:
         required: true
         content:
@@ -1220,8 +1222,9 @@ paths:
                 username: { type: string }
                 password: { type: string }
       responses:
-        "200": { description: The saved settings (same shape as GET) }
+        "200": { description: "The saved settings (same shape as GET); in smarthost mode also skipped: the accounts the server left out, with the reason" }
         "422": { description: "invalid_mode / invalid_smarthost / smarthost_test_failed (with stage: connect, tls, auth or smtp)" }
+        "502": { description: "apply_failed: the server couldn't switch website mail (detail says why); nothing was saved" }
         "503": { description: "sso.key unavailable, so a password can't be stored securely" }
   /admin/settings/website-mail/test:
     post:

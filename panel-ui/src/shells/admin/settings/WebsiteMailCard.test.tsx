@@ -30,6 +30,17 @@ const base = {
   password_set: false,
   mail_module_enabled: true,
   allowed_ports: [25, 465, 587, 2525],
+} as {
+  mode: string;
+  host: string;
+  port: number;
+  tls: string;
+  username: string;
+  password_set: boolean;
+  mail_module_enabled: boolean;
+  allowed_ports: number[];
+  senders?: number;
+  skipped?: string[];
 };
 
 const serve = (over: Partial<typeof base>) => mockGet.mockResolvedValue({ data: { ...base, ...over } });
@@ -114,6 +125,18 @@ describe("WebsiteMailCard", () => {
     expect(await screen.findByText("login failed: 535 5.7.8 Authentication credentials invalid")).toBeInTheDocument();
     expect(mockPost).toHaveBeenCalledWith("/admin/settings/website-mail/test", expect.objectContaining({ host: "smtp.example.com" }));
     expect(mockPut).not.toHaveBeenCalled();
+  });
+
+  it("says how many accounts can send, and who the server left out", async () => {
+    serve({ mode: "smarthost", host: "smtp.example.com", senders: 3 });
+    mockPut.mockResolvedValue({
+      data: { ...base, mode: "smarthost", host: "smtp.example.com", senders: 2, skipped: ["ghost: no such system user"] },
+    });
+    render(<WebsiteMailCard />);
+    expect(await screen.findByText(/3 accounts can send through the smarthost\./)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText(/2 accounts can send through the smarthost\./)).toBeInTheDocument();
+    expect(screen.getByText("ghost: no such system user")).toBeInTheDocument();
   });
 
   it("shows why a save was refused", async () => {

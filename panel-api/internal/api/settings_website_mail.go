@@ -11,11 +11,13 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/smarthost"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/audit"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/middleware"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ssokey"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/websitemail"
 )
 
 // GH #2056, ADR 0174 — where the sites' PHP mail() goes: the local mail
@@ -27,7 +29,8 @@ import (
 // (server_settings.smarthost_password_enc), written ONLY through these
 // endpoints, and NEVER returned; GET reports password_set yes/no. An empty
 // password on PUT keeps the stored one. Switching to the smarthost tests it
-// first, so a typo can't silently stop every site's mail.
+// first, so a typo can't silently stop every site's mail, and the box is
+// switched (agent mail.relay.apply) before anything is saved.
 
 // WebsiteMailHandlerConfig wires the website-mail endpoints.
 type WebsiteMailHandlerConfig struct {
@@ -42,6 +45,12 @@ type WebsiteMailHandlerConfig struct {
 	// Probe overrides smarthost.Probe in tests.
 	Probe func(ctx context.Context, c smarthost.Config) error
 	Log   *slog.Logger
+	// Agent applies the setting on the box (mail.relay.apply) before it is
+	// saved, so a save that couldn't switch the box changes nothing. Users
+	// and Domains list the sites allowed to send through the smarthost.
+	Agent   agent.AgentInterface
+	Users   repository.UserRepository
+	Domains repository.DomainRepository
 }
 
 // RegisterWebsiteMailRoutes mounts /admin/settings/website-mail under v1.
@@ -70,6 +79,11 @@ type websiteMailView struct {
 	PasswordSet       bool   `json:"password_set"`
 	MailModuleEnabled bool   `json:"mail_module_enabled"`
 	AllowedPorts      []int  `json:"allowed_ports"`
+	// Senders is how many accounts may send through the smarthost (smarthost
+	// mode only). Skipped names accounts the server left out on the last
+	// save, with the reason.
+	Senders *int     `json:"senders,omitempty"`
+	Skipped []string `json:"skipped,omitempty"`
 }
 
 // websiteMailRequest is the PUT and test body. An empty password keeps the
@@ -83,7 +97,10 @@ type websiteMailRequest struct {
 	Password string `json:"password"`
 }
 
-const websiteMailProbeTimeout = 30 * time.Second
+const (
+	websiteMailProbeTimeout = 30 * time.Second
+	websiteMailApplyTimeout = 60 * time.Second
+)
 
 func viewWebsiteMail(s *models.ServerSettings) websiteMailView {
 	port, tlsMode := s.SmarthostPort, s.SmarthostTLS
@@ -120,12 +137,54 @@ func (h *websiteMailHandler) settings(ctx context.Context) (*models.ServerSettin
 }
 
 func (h *websiteMailHandler) get(c *gin.Context) {
-	s, err := h.settings(c.Request.Context())
+	ctx := c.Request.Context()
+	s, err := h.settings(ctx)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "settings_read_failed", "detail": "could not read server settings"})
 		return
 	}
-	c.JSON(http.StatusOK, viewWebsiteMail(s))
+	view := viewWebsiteMail(s)
+	if view.Mode == models.WebsiteMailSmarthost && h.cfg.Users != nil && h.cfg.Domains != nil {
+		if senders, err := websitemail.Senders(ctx, h.deps()); err == nil {
+			n := len(senders)
+			view.Senders = &n
+		}
+	}
+	c.JSON(http.StatusOK, view)
+}
+
+func (h *websiteMailHandler) deps() websitemail.Deps {
+	return websitemail.Deps{Users: h.cfg.Users, Domains: h.cfg.Domains}
+}
+
+// apply switches the box to s (agent mail.relay.apply). With no agent wired
+// (tests of the form alone) there is nothing to switch.
+func (h *websiteMailHandler) apply(ctx context.Context, s *models.ServerSettings) (*websitemail.ApplyResponse, int, gin.H) {
+	if h.cfg.Agent == nil {
+		return nil, 0, nil
+	}
+	if models.EffectiveWebsiteMailMode(s) == models.WebsiteMailSmarthost && (h.cfg.Users == nil || h.cfg.Domains == nil) {
+		return nil, http.StatusServiceUnavailable, gin.H{"error": "apply_failed", "detail": "the sender list is unavailable"}
+	}
+	req, err := websitemail.Request(ctx, h.deps(), s, h.cfg.SSOKey)
+	if errors.Is(err, websitemail.ErrNoKey) {
+		return nil, http.StatusServiceUnavailable, ssoKeyMissing()
+	}
+	if err != nil {
+		return nil, http.StatusInternalServerError, gin.H{"error": "apply_failed", "detail": "could not build the website mail settings for the server"}
+	}
+	actx, cancel := context.WithTimeout(ctx, websiteMailApplyTimeout)
+	defer cancel()
+	resp, err := websitemail.Apply(actx, h.cfg.Agent, req)
+	if err != nil {
+		detail := "the server couldn't switch website mail"
+		var ae *agent.AgentError
+		if errors.As(err, &ae) && ae.Message != "" {
+			detail += ": " + ae.Message
+		}
+		return nil, http.StatusBadGateway, gin.H{"error": "apply_failed", "detail": detail}
+	}
+	return resp, 0, nil
 }
 
 // resolve turns a request into the smarthost to use: the stored password
@@ -275,8 +334,20 @@ func (h *websiteMailHandler) put(c *gin.Context) {
 		}
 	}
 
+	// Switch the box first: a save it couldn't apply changes nothing.
+	applied, status, body := h.apply(ctx, &next)
+	if status != 0 {
+		h.record(actor, mode, next.SmarthostHost, models.AuditResultError)
+		c.JSON(status, body)
+		return
+	}
 	if err := h.cfg.Repo.Upsert(ctx, &next); err != nil {
 		h.record(actor, mode, next.SmarthostHost, models.AuditResultError)
+		// Put the box back on what is saved; the reconciler retries if this
+		// fails too.
+		if _, st, _ := h.apply(ctx, s); st != 0 && h.cfg.Log != nil {
+			h.cfg.Log.Warn("website mail: could not switch the server back after a failed save")
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "settings_write_failed", "detail": "could not save the website mail settings"})
 		return
 	}
@@ -284,7 +355,13 @@ func (h *websiteMailHandler) put(c *gin.Context) {
 	if h.cfg.Log != nil {
 		h.cfg.Log.Info("website mail settings saved", "mode", mode, "smarthost", next.SmarthostHost, "login", next.SmarthostUsername != "")
 	}
-	c.JSON(http.StatusOK, viewWebsiteMail(&next))
+	view := viewWebsiteMail(&next)
+	if applied != nil && applied.Mode == models.WebsiteMailSmarthost {
+		n := applied.Senders
+		view.Senders = &n
+		view.Skipped = applied.Skipped
+	}
+	c.JSON(http.StatusOK, view)
 }
 
 func (h *websiteMailHandler) record(actor, mode, host, result string) {
