@@ -79,6 +79,14 @@ else
   fn=${fn//\/etc\/group/$tmp\/group}
   fn=${fn//\/etc\/login.defs/$tmp\/login.defs}
   eval "$fn"
+  # A directory service (LDAP, sssd) that knows a valid-looking
+  # jabali-mailrelay: the check must never take its word for it.
+  getent() {
+    case "$1" in
+      passwd) echo "jabali-mailrelay:x:990:990::/nonexistent:/usr/sbin/nologin" ;;
+      group) echo "jabali-mailrelay:x:990:" ;;
+    esac
+  }
   check() { # <want 0|1> <passwd line> <group line> <case>
     printf '%s\n' "root:x:0:0::/root:/bin/bash" "$2" >"$tmp/passwd"
     printf '%s\n' "root:x:0:" "$3" >"$tmp/group"
@@ -96,6 +104,8 @@ else
   check 1 "jabali-mailrelay:x:990:33::/nonexistent:/usr/sbin/nologin" "jabali-mailrelay:x:990:" "another primary group"
   check 1 "jabali-mailrelay:x:990:990::/nonexistent:/usr/sbin/nologin" "jabali-mailrelay:x:990:alice" "a group with members"
   check 1 "otheruser:x:990:990::/nonexistent:/usr/sbin/nologin" "jabali-mailrelay:x:990:" "no local account (a directory service's)"
+  check 1 "jabali-mailrelay:x:990:990::/nonexistent:/usr/sbin/nologin" "othergroup:x:990:" "no local group (a directory service's)"
+  unset -f getent
 fi
 
 if [[ "$fail" -ne 0 ]]; then

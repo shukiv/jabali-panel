@@ -173,6 +173,8 @@ func TestSubmit_Refusals(t *testing.T) {
 		{"root is not a site user", 0, []string{"x@example.org"}, sendmailshim.ExitNoPerm},
 		{"no recipients", 2001, []string{" "}, sendmailshim.ExitDataErr},
 		{"a recipient that isn't an address", 2001, []string{"x@example.org", "not an address"}, sendmailshim.ExitDataErr},
+		// net/mail unquotes "a>b"@x to a>b@x, which would break out of RCPT TO:<...>.
+		{"a recipient with an angle bracket", 2001, []string{`"a>b"@example.org`}, sendmailshim.ExitDataErr},
 		{"too many recipients", 2001, tooMany, sendmailshim.ExitDataErr},
 	}
 	for _, tc := range cases {
