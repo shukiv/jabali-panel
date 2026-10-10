@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/kratosclient"
@@ -171,7 +172,16 @@ func sweepMailCredentials(ctx context.Context, d Deps) string {
 	}
 	sctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	if _, err := d.MailCredentials.SweepMailCredentials(sctx); err != nil {
+	removed, err := d.MailCredentials.SweepMailCredentials(sctx)
+	log := d.Log
+	if log == nil {
+		log = slog.Default()
+	}
+	for _, rm := range removed {
+		log.Info("mail-credentials: removed a credential from a mail account",
+			"account", rm.Account, "type", rm.Type, "reason", rm.Reason, "door", "suspend")
+	}
+	if err != nil {
 		return "mail_credentials_sweep_failed: " + err.Error()
 	}
 	return ""
