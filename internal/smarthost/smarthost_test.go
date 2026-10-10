@@ -75,6 +75,11 @@ type fakeServer struct {
 	offerSTARTTLS bool
 	offerAUTH     bool
 	rejectAuth    bool
+	rejectRcpt    string // a RCPT TO address answered with 550
+
+	from  string
+	rcpts []string
+	data  string
 
 	port int
 	mu   sync.Mutex
@@ -201,6 +206,45 @@ func (s *fakeServer) start(t *testing.T, untrusted bool) {
 					continue
 				}
 				say("235 2.7.0 ok")
+			case strings.HasPrefix(cmd, "MAIL FROM:"):
+				s.record("MAIL")
+				s.mu.Lock()
+				arg := strings.TrimSpace(line[len("MAIL FROM:"):])
+				if i := strings.IndexByte(arg, '>'); i >= 0 {
+					arg = arg[:i]
+				}
+				s.from = strings.TrimPrefix(arg, "<")
+				s.mu.Unlock()
+				say("250 ok")
+			case strings.HasPrefix(cmd, "RCPT TO:"):
+				s.record("RCPT")
+				rcpt := strings.Trim(strings.TrimSpace(line[len("RCPT TO:"):]), "<>")
+				if rcpt == s.rejectRcpt {
+					say("550 5.1.1 no such user")
+					continue
+				}
+				s.mu.Lock()
+				s.rcpts = append(s.rcpts, rcpt)
+				s.mu.Unlock()
+				say("250 ok")
+			case cmd == "DATA":
+				s.record("DATA")
+				say("354 go ahead")
+				var b strings.Builder
+				for {
+					dl, err := r.ReadString('\n')
+					if err != nil {
+						return
+					}
+					if strings.TrimRight(dl, "\r\n") == "." {
+						break
+					}
+					b.WriteString(dl)
+				}
+				s.mu.Lock()
+				s.data = b.String()
+				s.mu.Unlock()
+				say("250 queued")
 			case cmd == "QUIT":
 				s.record("QUIT")
 				say("221 bye")
@@ -350,5 +394,51 @@ func TestProbe_InvalidConfigIsNotDialed(t *testing.T) {
 func TestConfigAddress(t *testing.T) {
 	if got := (Config{Host: "2001:db8::25", Port: 587}).Address(); got != "[2001:db8::25]:"+strconv.Itoa(587) {
 		t.Errorf("Address = %s", got)
+	}
+}
+
+func send(t *testing.T, s *fakeServer, c Config, from string, to []string, msg string) error {
+	t.Helper()
+	prev := AllowedPorts
+	AllowedPorts = append([]int{s.port}, prev...)
+	t.Cleanup(func() { AllowedPorts = prev })
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return Send(ctx, c, from, to, []byte(msg))
+}
+
+func TestSend(t *testing.T) {
+	s := &fakeServer{offerSTARTTLS: true, offerAUTH: true}
+	s.start(t, false)
+	msg := "From: Shop <shop@example.com>\nSubject: Order\n\nThanks.\n"
+	if err := send(t, s, s.config(TLSStartTLS, true), "noreply@example.com", []string{"a@example.org", "b@example.org"}, msg); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.from != "noreply@example.com" || strings.Join(s.rcpts, ",") != "a@example.org,b@example.org" {
+		t.Errorf("envelope from=%q rcpts=%v", s.from, s.rcpts)
+	}
+	if s.data != strings.ReplaceAll(msg, "\n", "\r\n") {
+		t.Errorf("data = %q", s.data)
+	}
+	if !s.tlsd {
+		t.Error("logged in before TLS")
+	}
+}
+
+func TestSend_RecipientRefused(t *testing.T) {
+	s := &fakeServer{offerSTARTTLS: true, offerAUTH: true, rejectRcpt: "nobody@example.org"}
+	s.start(t, false)
+	err := send(t, s, s.config(TLSStartTLS, true), "noreply@example.com", []string{"nobody@example.org"}, "Subject: x\n\nx\n")
+	var e *Error
+	if !errors.As(err, &e) || e.Stage != StageSMTP || !strings.Contains(err.Error(), "550") {
+		t.Fatalf("err = %v, want an smtp-stage error with the 550", err)
+	}
+}
+
+func TestSend_NoRecipients(t *testing.T) {
+	if err := Send(context.Background(), Config{}, "noreply@example.com", nil, nil); stageOf(err) != StageConfig {
+		t.Fatalf("err = %v", err)
 	}
 }

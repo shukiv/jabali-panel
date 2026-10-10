@@ -264,3 +264,43 @@ func Probe(ctx context.Context, c Config) error {
 	}
 	return nil
 }
+
+// Send delivers one message through the smarthost: from is the envelope
+// sender, to the envelope recipients, msg the message as it should arrive.
+// Errors are *Error; at the smtp stage Err is the server's reply (a
+// *textproto.Error carrying the code) when the server refused.
+func Send(ctx context.Context, c Config, from string, to []string, msg []byte) error {
+	if len(to) == 0 {
+		return &Error{Stage: StageConfig, Err: errors.New("no recipients")}
+	}
+	client, err := Dial(ctx, c)
+	if err != nil {
+		return err
+	}
+	fail := func(err error) error {
+		client.Close()
+		return &Error{Stage: StageSMTP, Err: err}
+	}
+	if err := client.Mail(from); err != nil {
+		return fail(err)
+	}
+	for _, rcpt := range to {
+		if err := client.Rcpt(rcpt); err != nil {
+			return fail(err)
+		}
+	}
+	w, err := client.Data()
+	if err != nil {
+		return fail(err)
+	}
+	if _, err := w.Write(msg); err != nil {
+		return fail(err)
+	}
+	if err := w.Close(); err != nil {
+		return fail(err)
+	}
+	if err := client.Quit(); err != nil {
+		client.Close()
+	}
+	return nil
+}
