@@ -11,6 +11,8 @@
 #      when the admin picks the smarthost.
 #   3. provision_new_software (every update) calls ensure_jabali_mailrelay,
 #      and main() (fresh install) does too.
+#   4. The relay only runs as the dedicated local system account
+#      (mailrelay_account_ok): it holds the smarthost password.
 #
 # Run from repo root:
 #     bash install/tests/test_mailrelay_unit.sh
@@ -62,6 +64,38 @@ mainbody=$(awk '/^main\(\) *\{/ {inside = 1; next} inside && /^\}/ {exit} inside
 if ! grep -q 'ensure_jabali_mailrelay' <<<"$mainbody"; then
   echo "FAIL: main() doesn't call ensure_jabali_mailrelay — fresh installs never get the relay user + unit"
   fail=1
+fi
+
+# 4. mailrelay_account_ok accepts only the dedicated local system account.
+fn=$(sed -n '/^mailrelay_account_ok() *{/,/^}/p' install.sh)
+if [[ -z "$fn" ]]; then
+  echo "FAIL: mailrelay_account_ok not found in install.sh"
+  fail=1
+else
+  tmp=$(mktemp -d)
+  trap 'rm -rf "$tmp"' EXIT
+  printf 'SYS_UID_MAX\t999\n' >"$tmp/login.defs"
+  fn=${fn//\/etc\/passwd/$tmp\/passwd}
+  fn=${fn//\/etc\/group/$tmp\/group}
+  fn=${fn//\/etc\/login.defs/$tmp\/login.defs}
+  eval "$fn"
+  check() { # <want 0|1> <passwd line> <group line> <case>
+    printf '%s\n' "root:x:0:0::/root:/bin/bash" "$2" >"$tmp/passwd"
+    printf '%s\n' "root:x:0:" "$3" >"$tmp/group"
+    local got=0
+    mailrelay_account_ok || got=1
+    if [[ "$got" != "$1" ]]; then
+      echo "FAIL: mailrelay_account_ok for $4: got $got, want $1"
+      fail=1
+    fi
+  }
+  check 0 "jabali-mailrelay:x:990:990::/nonexistent:/usr/sbin/nologin" "jabali-mailrelay:x:990:" "the dedicated account"
+  check 1 "jabali-mailrelay:x:0:990::/nonexistent:/usr/sbin/nologin" "jabali-mailrelay:x:990:" "uid 0"
+  check 1 "jabali-mailrelay:x:1500:1500::/home/x:/usr/sbin/nologin" "jabali-mailrelay:x:1500:" "a login-range uid"
+  check 1 "jabali-mailrelay:x:990:990::/nonexistent:/bin/bash" "jabali-mailrelay:x:990:" "a login shell"
+  check 1 "jabali-mailrelay:x:990:33::/nonexistent:/usr/sbin/nologin" "jabali-mailrelay:x:990:" "another primary group"
+  check 1 "jabali-mailrelay:x:990:990::/nonexistent:/usr/sbin/nologin" "jabali-mailrelay:x:990:alice" "a group with members"
+  check 1 "otheruser:x:990:990::/nonexistent:/usr/sbin/nologin" "jabali-mailrelay:x:990:" "no local account (a directory service's)"
 fi
 
 if [[ "$fail" -ne 0 ]]; then

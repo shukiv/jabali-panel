@@ -125,13 +125,9 @@ func mailRelayApplySmarthost(ctx context.Context, p mailRelayApplyParams) (any, 
 			return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "invalid helo name"}
 		}
 	}
-	grp, err := mailRelayLookupGroup(mailRelayGroup)
+	gid, err := mailRelayAccountGID()
 	if err != nil {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeFailedPrecondition, Message: "the jabali-mailrelay user is missing; run jabali update"}
-	}
-	gid, err := strconv.Atoi(grp.Gid)
-	if err != nil {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("gid of %s: %v", mailRelayGroup, err)}
+		return nil, err
 	}
 
 	cfg := mailrelay.Config{Smarthost: sh, Senders: map[string]mailrelay.Sender{}}
@@ -186,6 +182,32 @@ func mailRelayApplySmarthost(ctx context.Context, p mailRelayApplyParams) (any, 
 	}, nil
 }
 
+// mailRelayAccountGID is the relay group's gid, once the relay account is
+// known to be the dedicated system user: a system uid that isn't root, whose
+// primary group is the relay group. The config holds the smarthost password,
+// and that group may read it.
+func mailRelayAccountGID() (int, error) {
+	missing := &agentwire.AgentError{Code: agentwire.CodeFailedPrecondition, Message: "the jabali-mailrelay user is missing; run jabali update"}
+	u, err := mailRelayLookupUser(mailRelayGroup)
+	if err != nil {
+		return 0, missing
+	}
+	grp, err := mailRelayLookupGroup(mailRelayGroup)
+	if err != nil {
+		return 0, missing
+	}
+	uid, uerr := strconv.Atoi(u.Uid)
+	gid, gerr := strconv.Atoi(grp.Gid)
+	if uerr != nil || gerr != nil || uid <= 0 || uid >= mailRelayFirstLoginUID || u.Gid != grp.Gid {
+		return 0, &agentwire.AgentError{Code: agentwire.CodeFailedPrecondition, Message: "the jabali-mailrelay account isn't the dedicated system user; run jabali update"}
+	}
+	return gid, nil
+}
+
+// mailRelayFirstLoginUID is where login accounts start (UID_MIN). Site users
+// are at or above it; system accounts below it never send website mail.
+const mailRelayFirstLoginUID = 1000
+
 // mailRelayResolveSender checks one sender and finds its UID. why is set
 // when the sender is left out.
 func mailRelayResolveSender(s mailRelaySender) (uid string, sender mailrelay.Sender, why string) {
@@ -213,11 +235,12 @@ func mailRelayResolveSender(s mailRelaySender) (uid string, sender mailrelay.Sen
 	if err != nil {
 		return "", sender, "no such system user"
 	}
-	if u.Uid == "0" {
-		return "", sender, "root may not send"
-	}
-	if _, err := strconv.ParseUint(u.Uid, 10, 32); err != nil {
+	n, err := strconv.ParseUint(u.Uid, 10, 32)
+	if err != nil {
 		return "", sender, "bad uid"
+	}
+	if n < mailRelayFirstLoginUID || n == 65534 {
+		return "", sender, "a system account may not send"
 	}
 	return u.Uid, mailrelay.Sender{User: s.Username, Domains: domains, Default: def}, ""
 }

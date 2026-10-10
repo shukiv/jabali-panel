@@ -71,6 +71,10 @@ func setupMailRelay(t *testing.T) *mailRelayFixture {
 			return &user.User{Uid: "2002", Username: name}, nil
 		case "toor":
 			return &user.User{Uid: "0", Username: name}, nil
+		case "www_data":
+			return &user.User{Uid: "33", Username: name}, nil
+		case "jabali-mailrelay":
+			return &user.User{Uid: "990", Gid: "990", Username: name}, nil
 		}
 		return nil, user.UnknownUserError(name)
 	}
@@ -112,6 +116,7 @@ func smarthostParams() map[string]any {
 			{"username": "bob", "domains": []string{"bob.example"}, "default": "other.example"},
 			{"username": "ghost", "domains": []string{"ghost.example"}},
 			{"username": "toor", "domains": []string{"root.example"}},
+			{"username": "www_data", "domains": []string{"www.example"}},
 			{"username": "carol", "domains": []string{"bad domain"}},
 		},
 	}
@@ -126,8 +131,8 @@ func TestMailRelayApply_SmarthostWritesSendersStartsRelayThenSwitches(t *testing
 	if resp.Mode != "smarthost" || !resp.Changed || resp.Senders != 2 {
 		t.Errorf("response = %+v", resp)
 	}
-	if len(resp.Skipped) != 3 {
-		t.Errorf("skipped = %q, want ghost, toor and carol", resp.Skipped)
+	if len(resp.Skipped) != 4 {
+		t.Errorf("skipped = %q, want ghost, toor, www_data and carol", resp.Skipped)
 	}
 
 	cfg, err := mailrelay.LoadConfig(mailRelayConfigPath)
@@ -274,5 +279,36 @@ func TestStartMailRelayIfSelected(t *testing.T) {
 	StartMailRelayIfSelected(context.Background(), slog.Default())
 	if strings.Join(f.calls, "|") != "start --no-block jabali-mailrelay.service" {
 		t.Errorf("systemctl calls = %q", f.calls)
+	}
+}
+
+func TestMailRelayApply_RelayAccountMustBeTheSystemUser(t *testing.T) {
+	cases := map[string]*user.User{
+		"root":               {Uid: "0", Gid: "990"},
+		"a login account":    {Uid: "1500", Gid: "990"},
+		"another prim group": {Uid: "990", Gid: "33"},
+	}
+	for name, u := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := setupMailRelay(t)
+			base := mailRelayLookupUser
+			mailRelayLookupUser = func(n string) (*user.User, error) {
+				if n == "jabali-mailrelay" {
+					return u, nil
+				}
+				return base(n)
+			}
+			_, err := callMailRelay(t, smarthostParams())
+			var ae *agentwire.AgentError
+			if !errors.As(err, &ae) || ae.Code != agentwire.CodeFailedPrecondition {
+				t.Fatalf("err = %v, want failed_precondition", err)
+			}
+			if _, err := os.Stat(mailRelayConfigPath); !os.IsNotExist(err) {
+				t.Error("the password was written for an account that isn't the relay's")
+			}
+			if len(f.calls) != 0 {
+				t.Errorf("systemctl ran: %q", f.calls)
+			}
+		})
 	}
 }

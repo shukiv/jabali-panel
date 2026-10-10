@@ -3325,10 +3325,22 @@ install_mariadb_skip_networking() {
 # Runs on install and on every update; idempotent. A changed unit restarts a
 # running relay; a stopped one stays stopped.
 ensure_jabali_mailrelay() {
-  if ! getent passwd jabali-mailrelay >/dev/null; then
-    useradd --system --user-group --no-create-home --home-dir /nonexistent \
+  if ! grep -q '^jabali-mailrelay:' /etc/group; then
+    groupadd --system jabali-mailrelay
+  fi
+  if ! grep -q '^jabali-mailrelay:' /etc/passwd; then
+    useradd --system --gid jabali-mailrelay --no-create-home --home-dir /nonexistent \
       --shell /usr/sbin/nologin jabali-mailrelay
     _ok "jabali-mailrelay system user created (GH #2056)"
+  fi
+  # The relay holds the smarthost password, and the account owns its config:
+  # only the dedicated local system account may have it. An account of that
+  # name from somewhere else (a directory service, a login user, one sharing
+  # its group) leaves the relay off rather than handing it the password.
+  if ! mailrelay_account_ok; then
+    _warn "the jabali-mailrelay account isn't the dedicated system user; website mail through a smarthost stays off until it is fixed"
+    systemctl disable --now jabali-mailrelay.service 2>/dev/null || true
+    return 0
   fi
   mkdir -p /etc/jabali-panel
   install -d -m 0750 -o root -g jabali-mailrelay /etc/jabali-panel/mailrelay
@@ -3344,6 +3356,26 @@ ensure_jabali_mailrelay() {
     systemctl try-restart jabali-mailrelay.service 2>/dev/null || true
     _ok "jabali-mailrelay.service installed (GH #2056)"
   fi
+}
+
+# mailrelay_account_ok — the jabali-mailrelay user and group are local
+# (/etc/passwd, /etc/group), a system uid that isn't root, the user's primary
+# group is that group, the group has no other members, and no one can log in.
+mailrelay_account_ok() {
+  local pw gr uid gid shell ggid members sys_max
+  pw=$(grep '^jabali-mailrelay:' /etc/passwd) || return 1
+  gr=$(grep '^jabali-mailrelay:' /etc/group) || return 1
+  IFS=: read -r _ _ uid gid _ _ shell <<<"$pw"
+  IFS=: read -r _ _ ggid members <<<"$gr"
+  sys_max=$(awk '$1 == "SYS_UID_MAX" {print $2}' /etc/login.defs 2>/dev/null)
+  [[ "$sys_max" =~ ^[0-9]+$ ]] || sys_max=999
+  [[ "$uid" =~ ^[0-9]+$ && "$uid" -gt 0 && "$uid" -le "$sys_max" ]] || return 1
+  [[ "$gid" == "$ggid" && -z "$members" ]] || return 1
+  case "$shell" in
+    */nologin|*/false) ;;
+    *) return 1 ;;
+  esac
+  return 0
 }
 
 # ensure_jabali_sendmail_binary — JAB-230 two-hop-update closer. The shim
