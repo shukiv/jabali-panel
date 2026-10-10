@@ -101,7 +101,9 @@ How the smarthost mode works (ADR 0174):
   in a domain the account owns. Otherwise From becomes the `noreply@` address
   (the display name is kept) and the original address moves to Reply-To, so a
   contact form that puts the visitor in From still gets replies to the
-  visitor.
+  visitor. Like sendmail, the relay adds a `Date` and a `Message-ID` when the
+  message has none (PHP's `mail()` writes neither, and some providers refuse
+  mail without a Message-ID).
 - Who can send through the smarthost: accounts with a Linux user and a hosting
   package whose **Websites can send email** switch is on, that aren't admins
   or suspended, with their enabled, ownership-verified domains. Accounts
