@@ -77,6 +77,8 @@ func billingUserOpsDeps(cfg AutomationConfig) userops.Deps {
 		KratosClient:    cfg.KratosClient,
 		BcryptCost:      cfg.BcryptCost,
 		Log:             cfg.Log,
+
+		MailCredentials: cfg.MailCredentials,
 	}
 }
 

@@ -86,6 +86,11 @@ type UserHandlerConfig struct {
 	// identity; if the client is nil (dev-without-Kratos), the identity
 	// write is skipped and the panel row is created in isolation.
 	KratosClient *kratosclient.Client
+
+	// MailCredentials removes the suspended user's mail app passwords and API
+	// keys at once (mailcreds.Sweeper). Optional: nil leaves it to the
+	// reconciler's next tick.
+	MailCredentials userops.MailCredentialSweeper
 }
 
 // kratosEnabled reports whether the Kratos client is wired up on this handler

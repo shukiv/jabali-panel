@@ -34,6 +34,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/eventsources"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/mailaddrowner"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/mailcreds"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/mailscan"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/middleware"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
@@ -427,6 +428,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 		// database no longer gives them to; the relay mailbox create
 		// clears its address through the same client.
 		rec.WithMailAddressOwners(stalwartClient, repository.NewMailAddressOwnerRepository(sharedDB))
+		// The mail server's app passwords and API keys follow the panel:
+		// removed from mailboxes that may not sign in and when made before
+		// the mailbox's password last changed.
+		mailLogins := repository.NewMailLoginRepository(sharedDB)
+		rec.WithMailCredentials(stalwartClient, mailLogins)
 		// JAB-235 — DNS-01 fallback for CDN-fronted domains. The same sso.key
 		// unseals the stored Cloudflare API token; nil key keeps Cloudflare
 		// DNS-01 unavailable (pdns-authoritative zones still work).
@@ -452,6 +458,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 		// A mailbox or alias takes its address off the other Stalwart
 		// accounts first; mailbox creates refuse without it.
 		deps.MailAddresses = mailaddrowner.Releaser{Registry: stalwartClient}
+		// A password change, mailbox disable or suspension removes the
+		// mail app passwords at once instead of on the next tick.
+		deps.MailCredentials = mailcreds.Sweeper{Registry: stalwartClient, Logins: mailLogins}
 		deps.BWDaily = repository.NewBWDailyRepository(sharedDB)
 		deps.DomainIPACLs = repository.NewDomainIPACLRepository(sharedDB)
 		deps.WebDomainAliases = repository.NewWebDomainAliasRepository(sharedDB)

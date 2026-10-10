@@ -23,6 +23,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ssokey"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/userops"
 )
 
 // MailboxHandlerConfig plugs the mailbox HTTP handlers into the router.
@@ -45,6 +46,10 @@ type MailboxHandlerConfig struct {
 	// create: a stale registry alias would sign the new mailbox in to
 	// another account.
 	Addresses MailAddressReleaser
+	// MailCredentials removes the mail server's app passwords and API keys a
+	// mailbox may no longer use (mailcreds.Sweeper) when one is disabled.
+	// Optional: nil leaves it to the reconciler's next tick.
+	MailCredentials userops.MailCredentialSweeper
 }
 
 // MailAddressReleaser takes an address off the Stalwart accounts that still
@@ -412,6 +417,16 @@ func (h *mailboxHandler) update(c *gin.Context) {
 		}
 		mb.IsDisabled = *req.IsDisabled
 		if *req.IsDisabled {
+			// The mail server checks the app passwords and API keys a mailbox
+			// made itself, so they kept working after a disable. Best-effort:
+			// the reconciler's mail.credentials pass is the backstop.
+			if h.cfg.MailCredentials != nil {
+				sctx, cancel := context.WithTimeout(ctx, mailboxAgentTimeout)
+				if _, err := h.cfg.MailCredentials.SweepMailCredentials(sctx); err != nil {
+					slog.Warn("mailbox disable: mail credentials sweep failed", "err", err)
+				}
+				cancel()
+			}
 			h.notifyAgent(ctx, "mail.auth_cache.flush", map[string]any{})
 		}
 	}
@@ -466,6 +481,22 @@ func (h *mailboxHandler) rotatePassword(c *gin.Context) {
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
+	}
+
+	// The mail server checks the app passwords a mailbox made itself, so they
+	// kept working after a password change. Remove the ones made before it,
+	// then flush the login cache that would still answer them. Best-effort:
+	// the reconciler's mail.credentials pass is the backstop.
+	if h.cfg.MailCredentials != nil {
+		sctx, cancel := context.WithTimeout(ctx, mailboxAgentTimeout)
+		removed, err := h.cfg.MailCredentials.SweepMailCredentials(sctx)
+		cancel()
+		if err != nil {
+			slog.Warn("mailbox password change: mail credentials sweep failed", "err", err)
+		}
+		if len(removed) > 0 {
+			h.notifyAgent(ctx, "mail.auth_cache.flush", map[string]any{})
+		}
 	}
 
 	c.JSON(http.StatusOK, rotateMailboxPasswordResponse{Password: generated})

@@ -23,6 +23,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dockerapp"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/mailaddrowner"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/mailcreds"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/nginxrules"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/notifications"
@@ -262,6 +263,10 @@ type Reconciler struct {
 	mailAddrOwners   mailaddrowner.Owners
 	mailAddrMu       sync.Mutex
 	mailAddrLastRun  time.Time
+	// The mail server's app passwords and API keys
+	// (mail_credentials_reconcile.go). nil on either disables the pass.
+	mailCredRegistry mailcreds.Registry
+	mailCredLogins   mailcreds.Logins
 	// M52 (ADR-0133) — shared resources convergence. All three required for
 	// reconcileSharedResources; nil on any disables the pass. srMailboxes +
 	// srMailGroups resolve a grant's polymorphic grantee → target email(s).
@@ -1300,6 +1305,10 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 	// Take stale aliases off Stalwart accounts the panel's database no
 	// longer gives them to (every 10 minutes).
 	r.reconcileMailAddressOwners(ctx)
+
+	// The mail server's app passwords and API keys follow the mailboxes:
+	// none on one that may not sign in, none older than its password.
+	r.reconcileMailCredentials(ctx)
 
 	tt.mark("post_sweeps")
 

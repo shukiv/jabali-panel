@@ -23,6 +23,7 @@ import (
 
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/kratosclient"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/mailcreds"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
@@ -31,6 +32,11 @@ import (
 // One method — Call — keeps tests trivial.
 type AgentCaller interface {
 	Call(ctx context.Context, method string, params any) (json.RawMessage, error)
+}
+
+// MailCredentialSweeper is the slice of mailcreds.Sweeper Suspend needs.
+type MailCredentialSweeper interface {
+	SweepMailCredentials(ctx context.Context) ([]mailcreds.Removal, error)
 }
 
 // Deps wires the collaborator repos + kratos client + agent. Repo
@@ -98,6 +104,12 @@ type Deps struct {
 	KratosClient *kratosclient.Client
 	BcryptCost   int
 	Log          *slog.Logger
+
+	// MailCredentials removes the mail server's app passwords and API keys a
+	// mailbox may no longer use (mailcreds.Sweeper), so Suspend takes them
+	// off the user's mailboxes at once. Optional: nil skips it (the
+	// reconciler's mail.credentials pass removes them on its next tick).
+	MailCredentials MailCredentialSweeper
 }
 
 // CreateInput is the shared input shape. Both callers (REST + the

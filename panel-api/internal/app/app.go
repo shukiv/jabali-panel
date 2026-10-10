@@ -88,6 +88,10 @@ type Deps struct {
 	// mailbox or alias takes them (mailaddrowner.Releaser). Mailbox creates
 	// refuse without it.
 	MailAddresses api.MailAddressReleaser
+	// MailCredentials removes the mail server's app passwords and API keys a
+	// mailbox may no longer use (mailcreds.Sweeper) when the panel changes a
+	// password, disables a mailbox or suspends its owner.
+	MailCredentials userops.MailCredentialSweeper
 	BWDaily               repository.BWDailyRepository
 	DomainIPACLs          repository.DomainIPACLRepository
 	// GH #1625 — additional hostnames served from a web domain's vhost.
@@ -487,6 +491,8 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				DiskSnapshots:    repository.NewDiskUsageSnapshotRepository(deps.DB),
 				BWDaily:          deps.BWDaily,
 				Log:              deps.Log,
+				// Suspend removes the user's mail app passwords at once.
+				MailCredentials: deps.MailCredentials,
 				// JAB-233: the exact deps the GUI domain handler uses (mirrors
 				// the DomainHandlerConfig below), so account-create with a
 				// `domain` runs createDomainOp with identical semantics.
@@ -701,6 +707,8 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				AuditEvents: repository.NewAuditEventRepository(deps.DB),
 				// M20: atomic Kratos identity creation on POST /users.
 				KratosClient: deps.KratosClient,
+				// Suspend removes the user's mail app passwords at once.
+				MailCredentials: deps.MailCredentials,
 			})
 		}
 		if deps.Packages != nil {
@@ -899,6 +907,9 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				SSOKey:    deps.SSOKey,
 				SSOTokens: deps.MailboxSSOTokens,
 				Addresses: deps.MailAddresses,
+				// A password change or disable removes the mailbox's app
+				// passwords at once.
+				MailCredentials: deps.MailCredentials,
 			})
 		}
 		if deps.MailGroups != nil && deps.Mailboxes != nil && deps.Domains != nil {

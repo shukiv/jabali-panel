@@ -148,8 +148,33 @@ func Suspend(ctx context.Context, d Deps, user *models.User, reason string) (Sus
 		ftpsync.SyncFtpHostAccess(ctx, d.Agent, d.FtpAccounts, d.Users, d.Packages, d.Log, *user.Username)
 	}
 
+	// The mail server checks the app passwords and API keys a mailbox made
+	// itself, not against the panel, so they kept working for a suspended
+	// user's mailboxes. Remove them before the login cache flush.
+	credWarning := sweepMailCredentials(ctx, d)
 	res.MailWarning = flushMailLogins(ctx, d)
+	if credWarning != "" {
+		if res.MailWarning != "" {
+			credWarning += "; " + res.MailWarning
+		}
+		res.MailWarning = credWarning
+	}
 	return res, nil
+}
+
+// sweepMailCredentials removes the mail server's app passwords and API keys
+// a mailbox may no longer use. Returns a warning, "" on success or when it is
+// not wired (the reconciler removes them on its next tick).
+func sweepMailCredentials(ctx context.Context, d Deps) string {
+	if d.MailCredentials == nil {
+		return ""
+	}
+	sctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	if _, err := d.MailCredentials.SweepMailCredentials(sctx); err != nil {
+		return "mail_credentials_sweep_failed: " + err.Error()
+	}
+	return ""
 }
 
 // Unsuspend reverses the cascade: flag off, Kratos active, domains re-enabled,
