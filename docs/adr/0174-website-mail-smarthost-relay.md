@@ -36,15 +36,27 @@ mail and DNS elsewhere had no way to let the sites send.
    Nothing is saved when the test fails, so a typo can't silently stop every
    site's mail. A separate Test button checks the form without saving. The
    shared client is `internal/smarthost`, used by both the panel and the relay.
-4. **A root-side relay, `jabali-mailrelay`, holds the password.** The shim runs
+4. **A separate relay, `jabali-mailrelay`, holds the password.** The shim runs
    as the site's user, so anything it can read, the site's PHP can read too:
    the shim must not hold the smarthost login. In smarthost mode the shim hands
-   the message to the relay over a unix socket. The relay learns the caller's
-   UID from the socket (SO_PEERCRED), and only senders on its list may send.
+   the message to the relay over a unix socket. The relay runs as
+   `jabali-agent mailrelay` under its own `jabali-mailrelay` user (never root,
+   never the agent), learns the caller's UID from the socket (SO_PEERCRED), and
+   only senders on its list may send. One account may hold at most two
+   connections at a time, and a sending slot is taken only once its whole
+   message has arrived, so one site can't hold the relay for the others.
 5. **The envelope sender is unchanged**: `noreply@` a domain the calling user
    owns (the From domain when the user owns it, else the user's primary domain),
    the same rule the shim follows with Stalwart. SPF and DKIM for those domains
    are the smarthost's job.
+   - **The From header is restricted too.** With Stalwart, its sender check
+     stops a site from writing someone else's address in From. The smarthost
+     can't tell which site sent a message, so the relay does it: a message
+     keeps its From only when that is one header naming one address in a
+     domain the user owns. Otherwise From becomes the envelope address (the
+     display name is kept) and the original address moves to Reply-To when the
+     message has none, so a contact form that puts the visitor in From still
+     gets replies to the visitor. A site's own Sender header is dropped.
 6. **No local queue in v1.** If the smarthost is down or answers 4xx, `mail()`
    returns false and the failure is logged. A spool can follow if needed.
 7. **A "Website sends email" package flag** applies in both modes.
@@ -71,10 +83,9 @@ mail and DNS elsewhere had no way to let the sites send.
 
 - Operators without the mail module can let their sites send, through their
   own mail system.
-- A new root-side service and a socket that every site's user can reach. Its
-  only input is a message and a recipient list. The sender comes from the
-  caller's UID: the message's From header can only pick among that UID's own
-  domains.
+- A new service and a socket that every site's user can reach. Its only
+  input is a message and a recipient list. The sender comes from the caller's
+  UID: the message's From header can only name one of that UID's own domains.
 - The smarthost password lives in the panel database (sealed) and in the
   relay's root-owned config (plaintext, 0640 root:jabali-mailrelay), like the
   Stalwart and restic credentials the box already holds.

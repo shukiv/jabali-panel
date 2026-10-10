@@ -68,15 +68,31 @@ func baseConfig() Config {
 // as uid.
 func startRelay(t *testing.T, cfgPath string, uid uint32, f *fakeSend) string {
 	t.Helper()
-	sock := filepath.Join(t.TempDir(), "relay.sock")
-	ln, err := Listen(sock)
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := &Server{
+	return startServer(t, &Server{
 		ConfigPath: cfgPath,
 		Send:       f.send,
 		PeerUID:    func(net.Conn) (uint32, error) { return uid, nil },
+	})
+}
+
+// sockDir is a short directory for a socket: t.TempDir() carries the test
+// name, and a unix socket path can't be longer than 107 bytes.
+func sockDir(t *testing.T) string {
+	t.Helper()
+	d, err := os.MkdirTemp("", "mr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(d) })
+	return d
+}
+
+func startServer(t *testing.T, s *Server) string {
+	t.Helper()
+	sock := filepath.Join(sockDir(t), "relay.sock")
+	ln, err := Listen(sock)
+	if err != nil {
+		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -259,7 +275,7 @@ func TestSubmit_RelayDown(t *testing.T) {
 }
 
 func TestPeerUID_RealSocket(t *testing.T) {
-	sock := filepath.Join(t.TempDir(), "p.sock")
+	sock := filepath.Join(sockDir(t), "p.sock")
 	ln, err := Listen(sock)
 	if err != nil {
 		t.Fatal(err)
@@ -306,5 +322,247 @@ func TestReadMode(t *testing.T) {
 		if got := ReadMode(p); got != want {
 			t.Errorf("ReadMode(%q) = %q, want %q", content, got, want)
 		}
+	}
+}
+
+// headerLines returns a sent message's header lines with that name.
+func headerLines(msg, name string) []string {
+	head := msg
+	if i := strings.Index(msg, "\n\n"); i >= 0 {
+		head = msg[:i]
+	}
+	var out []string
+	for _, l := range strings.Split(head, "\n") {
+		if strings.HasPrefix(strings.ToLower(l), strings.ToLower(name)+":") {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+// Nothing downstream of the relay knows which account sent a message, so a
+// site can't put someone else's address in From: the smarthost would send it
+// with the operator's reputation.
+func TestSubmit_FromIsAlwaysOneOwnAddress(t *testing.T) {
+	cases := []struct {
+		name      string
+		msg       string
+		wantFrom  string
+		wantReply []string
+	}{
+		{
+			name:      "own address kept",
+			msg:       "From: Shop <orders@shop.example>\nTo: x@example.org\n\nhi\n",
+			wantFrom:  "From: Shop <orders@shop.example>",
+			wantReply: nil,
+		},
+		{
+			name:      "foreign address replaced, replies still reach it",
+			msg:       "From: \"Bank CEO\" <ceo@bank.example>\nTo: x@example.org\n\nhi\n",
+			wantFrom:  "From: \"Bank CEO\" <noreply@alice.example>",
+			wantReply: []string{"Reply-To: <ceo@bank.example>"},
+		},
+		{
+			name:      "a second From can't ride along",
+			msg:       "From: orders@shop.example\nFrom: ceo@bank.example\nTo: x@example.org\n\nhi\n",
+			wantFrom:  "From: <noreply@shop.example>",
+			wantReply: []string{"Reply-To: <orders@shop.example>"},
+		},
+		{
+			name:      "an address list can't smuggle a foreign address",
+			msg:       "From: orders@shop.example, ceo@bank.example\nTo: x@example.org\n\nhi\n",
+			wantFrom:  "From: <noreply@alice.example>",
+			wantReply: []string{"Reply-To: <orders@shop.example>"},
+		},
+		{
+			name:      "the site's own Reply-To is kept",
+			msg:       "From: visitor@gmail.example\nReply-To: visitor@gmail.example\nTo: x@example.org\n\nhi\n",
+			wantFrom:  "From: <noreply@alice.example>",
+			wantReply: []string{"Reply-To: visitor@gmail.example"},
+		},
+		{
+			name:      "no From at all",
+			msg:       "To: x@example.org\nSubject: hi\n\nhi\n",
+			wantFrom:  "From: <noreply@alice.example>",
+			wantReply: nil,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := &fakeSend{}
+			sock := startRelay(t, writeConfig(t, baseConfig()), 2001, f)
+			if err := Submit(sock, []string{"x@example.org"}, []byte(tc.msg)); err != nil {
+				t.Fatalf("Submit: %v", err)
+			}
+			got := f.got[0].msg
+			if froms := headerLines(got, "From"); len(froms) != 1 || froms[0] != tc.wantFrom {
+				t.Errorf("From headers = %q, want [%q]\n%s", froms, tc.wantFrom, got)
+			}
+			if rt := headerLines(got, "Reply-To"); strings.Join(rt, "|") != strings.Join(tc.wantReply, "|") {
+				t.Errorf("Reply-To headers = %q, want %q", rt, tc.wantReply)
+			}
+		})
+	}
+}
+
+func TestSubmit_SiteSenderHeaderNeverSurvives(t *testing.T) {
+	f := &fakeSend{}
+	sock := startRelay(t, writeConfig(t, baseConfig()), 2001, f)
+	msg := "From: <noreply@shop.example>\nSender: ceo@bank.example\nTo: x@example.org\n\nhi\n"
+	if err := Submit(sock, []string{"x@example.org"}, []byte(msg)); err != nil {
+		t.Fatal(err)
+	}
+	if s := headerLines(f.got[0].msg, "Sender"); len(s) != 0 {
+		t.Errorf("the site's Sender header reached the smarthost: %q", s)
+	}
+}
+
+// One site holding connections open must not stop another site's mail.
+func TestServe_IdleConnectionsDontBlockOtherSites(t *testing.T) {
+	c := baseConfig()
+	c.Senders["2002"] = Sender{User: "bob", Domains: []string{"bob.example"}, Default: "bob.example"}
+	f := &fakeSend{}
+	var calls sync.Mutex
+	n := 0
+	sock := startServer(t, &Server{
+		ConfigPath:    writeConfig(t, c),
+		Send:          f.send,
+		MaxConcurrent: 2,
+		PeerUID: func(net.Conn) (uint32, error) {
+			calls.Lock()
+			defer calls.Unlock()
+			n++
+			if n <= 2 {
+				return 2002, nil
+			}
+			return 2001, nil
+		},
+	})
+	for i := 0; i < 2; i++ {
+		idle, err := net.Dial("unix", sock)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer idle.Close()
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		calls.Lock()
+		seen := n
+		calls.Unlock()
+		if seen >= 2 || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- Submit(sock, []string{"x@example.org"}, []byte(contactForm)) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Submit: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("another site's idle connections blocked this message")
+	}
+}
+
+// countingPeer reports uid for every caller and counts the calls.
+type countingPeer struct {
+	mu  sync.Mutex
+	n   int
+	uid uint32
+}
+
+func (c *countingPeer) peer(net.Conn) (uint32, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.n++
+	return c.uid, nil
+}
+
+func (c *countingPeer) waitFor(t *testing.T, n int) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		c.mu.Lock()
+		seen := c.n
+		c.mu.Unlock()
+		if seen >= n {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("the relay saw fewer than %d callers", n)
+}
+
+func TestServe_OneAccountCantHoldMoreThanItsShare(t *testing.T) {
+	cp := &countingPeer{uid: 2001}
+	f := &fakeSend{}
+	sock := startServer(t, &Server{
+		ConfigPath:  writeConfig(t, baseConfig()),
+		Send:        f.send,
+		PeerUID:     cp.peer,
+		MaxPerUser:  2,
+		ReadTimeout: 10 * time.Second,
+	})
+	for i := 0; i < 2; i++ {
+		idle, err := net.Dial("unix", sock)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer idle.Close()
+	}
+	cp.waitFor(t, 2)
+	err := Submit(sock, []string{"x@example.org"}, []byte(contactForm))
+	if got := exitCode(err); got != sendmailshim.ExitTempFail {
+		t.Errorf("exit code = %d (%v), want %d", got, err, sendmailshim.ExitTempFail)
+	}
+	if len(f.got) != 0 {
+		t.Error("a third connection from the same account was served")
+	}
+}
+
+func TestHandle_SlowCallerTimesOut(t *testing.T) {
+	sock := startServer(t, &Server{
+		ConfigPath:  writeConfig(t, baseConfig()),
+		Send:        (&fakeSend{}).send,
+		PeerUID:     func(net.Conn) (uint32, error) { return 2001, nil },
+		ReadTimeout: 200 * time.Millisecond,
+	})
+	conn, err := net.Dial("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	var rep Reply
+	if err := json.NewDecoder(conn).Decode(&rep); err != nil {
+		t.Fatalf("no reply: %v", err)
+	}
+	if rep.Code != sendmailshim.ExitTempFail {
+		t.Errorf("code = %d, want %d", rep.Code, sendmailshim.ExitTempFail)
+	}
+}
+
+func TestHandle_ShortMessageIsRefused(t *testing.T) {
+	sock := startRelay(t, writeConfig(t, baseConfig()), 2001, &fakeSend{})
+	conn, err := net.Dial("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	head, _ := json.Marshal(Request{Recipients: []string{"x@example.org"}, Size: 1000})
+	_, _ = conn.Write(append(head, '\n'))
+	_, _ = conn.Write([]byte(contactForm))
+	_ = conn.(*net.UnixConn).CloseWrite()
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	var rep Reply
+	if err := json.NewDecoder(conn).Decode(&rep); err != nil {
+		t.Fatalf("no reply: %v", err)
+	}
+	if rep.Code != sendmailshim.ExitDataErr {
+		t.Errorf("code = %d (%s), want %d", rep.Code, rep.Error, sendmailshim.ExitDataErr)
 	}
 }

@@ -7,7 +7,8 @@
 // instead. The relay runs as `jabali-agent mailrelay` under its own system
 // user, holds the login, and decides the envelope sender itself from the
 // caller's UID (SO_PEERCRED): noreply@ one of that user's own domains. The
-// message's From header only picks among those domains.
+// smarthost can't tell which site sent a message, so the relay also keeps the
+// From header to one address in one of those domains (RestrictFrom).
 //
 // Wire protocol, one message per connection:
 //
@@ -33,6 +34,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -61,10 +63,12 @@ const (
 )
 
 const (
-	maxHeaderLine  = 64 << 10
-	maxRecipients  = 100
-	connTimeout    = 2 * time.Minute
-	defaultMaxConc = 8
+	maxHeaderLine      = 64 << 10
+	maxRecipients      = 100
+	connTimeout        = 2 * time.Minute
+	defaultMaxConc     = 8
+	defaultMaxPerUser  = 2
+	defaultReadTimeout = 30 * time.Second
 )
 
 // Config is relay.json.
@@ -117,17 +121,42 @@ type Server struct {
 	Send func(ctx context.Context, c smarthost.Config, from string, to []string, msg []byte) error
 	// PeerUID overrides the SO_PEERCRED lookup in tests.
 	PeerUID func(net.Conn) (uint32, error)
-	// MaxConcurrent bounds the messages handled at once (default 8).
+	// MaxConcurrent bounds the messages being sent at once (default 8).
 	MaxConcurrent int
+	// MaxPerUser bounds one account's connections at once (default 2), so
+	// one site can't hold the relay for everyone else.
+	MaxPerUser int
+	// ReadTimeout bounds receiving the request and the message (default 30s).
+	ReadTimeout time.Duration
+
+	once     sync.Once
+	slots    chan struct{}
+	mu       sync.Mutex
+	inFlight map[uint32]int
 }
 
-// Serve accepts connections until ctx ends or the listener fails.
+func (s *Server) init() {
+	s.once.Do(func() {
+		n := s.MaxConcurrent
+		if n <= 0 {
+			n = defaultMaxConc
+		}
+		s.slots = make(chan struct{}, n)
+		s.inFlight = map[uint32]int{}
+		if s.MaxPerUser <= 0 {
+			s.MaxPerUser = defaultMaxPerUser
+		}
+		if s.ReadTimeout <= 0 {
+			s.ReadTimeout = defaultReadTimeout
+		}
+	})
+}
+
+// Serve accepts connections until ctx ends or the listener closes. Every
+// connection gets its own goroutine: a sending slot is only taken once the
+// caller is known and its whole message has arrived.
 func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
-	n := s.MaxConcurrent
-	if n <= 0 {
-		n = defaultMaxConc
-	}
-	slots := make(chan struct{}, n)
+	s.init()
 	go func() {
 		<-ctx.Done()
 		ln.Close()
@@ -135,21 +164,15 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
-			if ctx.Err() != nil {
+			if ctx.Err() != nil || errors.Is(err, net.ErrClosed) {
 				return nil
 			}
-			return err
+			// Out of file descriptors and the like: back off, keep serving.
+			s.log().Warn("mail relay accept failed", "err", err)
+			time.Sleep(100 * time.Millisecond)
+			continue
 		}
-		select {
-		case slots <- struct{}{}:
-		case <-ctx.Done():
-			conn.Close()
-			return nil
-		}
-		go func() {
-			defer func() { <-slots }()
-			s.Handle(ctx, conn)
-		}()
+		go s.Handle(ctx, conn)
 	}
 }
 
@@ -160,15 +183,44 @@ func (s *Server) log() *slog.Logger {
 	return slog.Default()
 }
 
+// claim counts one more connection for uid; false when it has too many.
+func (s *Server) claim(uid uint32) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.inFlight[uid] >= s.MaxPerUser {
+		return false
+	}
+	s.inFlight[uid]++
+	return true
+}
+
+func (s *Server) release(uid uint32) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.inFlight[uid] <= 1 {
+		delete(s.inFlight, uid)
+		return
+	}
+	s.inFlight[uid]--
+}
+
 // Handle serves one connection: one message.
 func (s *Server) Handle(ctx context.Context, conn net.Conn) {
+	s.init()
 	defer conn.Close()
-	_ = conn.SetDeadline(time.Now().Add(connTimeout))
+	_ = conn.SetDeadline(time.Now().Add(s.ReadTimeout))
 	ctx, cancel := context.WithTimeout(ctx, connTimeout)
 	defer cancel()
 
-	reply := s.relay(ctx, conn)
-	b, _ := json.Marshal(reply)
+	res := s.relayOne(ctx, conn)
+	attrs := []any{"uid", res.uid, "user", res.user, "from", res.from, "rcpts", res.rcpts, "code", res.reply.Code}
+	if res.reason != nil {
+		s.log().Warn("website mail not sent", append(attrs, "reason", res.reason.Error())...)
+	} else {
+		s.log().Info("website mail sent", attrs...)
+	}
+	b, _ := json.Marshal(res.reply)
+	_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 	_, _ = conn.Write(append(b, '\n'))
 }
 
@@ -182,21 +234,20 @@ type result struct {
 	reason error
 }
 
-func (s *Server) relay(ctx context.Context, conn net.Conn) Reply {
-	res := s.relayOne(ctx, conn)
-	attrs := []any{"uid", res.uid, "user", res.user, "from", res.from, "rcpts", res.rcpts, "code", res.reply.Code}
-	if res.reason != nil {
-		s.log().Warn("website mail not sent", append(attrs, "reason", res.reason.Error())...)
-	} else {
-		s.log().Info("website mail sent", attrs...)
-	}
-	return res.reply
-}
-
 func refuse(res result, code int, err error) result {
 	res.reply = Reply{Code: code, Error: err.Error()}
 	res.reason = err
 	return res
+}
+
+// readCode is the exit code for a failed read: a caller too slow to send its
+// message can try again, anything else is a bad request.
+func readCode(err error) int {
+	var ne net.Error
+	if errors.As(err, &ne) && ne.Timeout() {
+		return sendmailshim.ExitTempFail
+	}
+	return sendmailshim.ExitDataErr
 }
 
 func (s *Server) relayOne(ctx context.Context, conn net.Conn) result {
@@ -210,6 +261,10 @@ func (s *Server) relayOne(ctx context.Context, conn net.Conn) result {
 		return refuse(res, sendmailshim.ExitNoPerm, fmt.Errorf("can't identify the caller: %w", err))
 	}
 	res.uid = strconv.FormatUint(uint64(uid), 10)
+	if !s.claim(uid) {
+		return refuse(res, sendmailshim.ExitTempFail, errors.New("too many messages at once from this account"))
+	}
+	defer s.release(uid)
 
 	cfg, err := LoadConfig(s.ConfigPath)
 	if err != nil {
@@ -224,16 +279,20 @@ func (s *Server) relayOne(ctx context.Context, conn net.Conn) result {
 	r := bufio.NewReaderSize(conn, 32<<10)
 	req, err := readRequest(r)
 	if err != nil {
-		return refuse(res, sendmailshim.ExitDataErr, err)
+		return refuse(res, readCode(err), err)
 	}
 	rcpts, err := cleanRecipients(req.Recipients)
 	if err != nil {
 		return refuse(res, sendmailshim.ExitDataErr, err)
 	}
 	res.rcpts = len(rcpts)
-	raw := make([]byte, req.Size)
-	if _, err := io.ReadFull(r, raw); err != nil {
-		return refuse(res, sendmailshim.ExitDataErr, fmt.Errorf("read message: %w", err))
+	// Memory follows the bytes that actually arrive, not the declared size.
+	raw, err := io.ReadAll(io.LimitReader(r, int64(req.Size)))
+	if err != nil {
+		return refuse(res, readCode(err), fmt.Errorf("read message: %w", err))
+	}
+	if len(raw) != req.Size {
+		return refuse(res, sendmailshim.ExitDataErr, fmt.Errorf("message ended after %d of %d bytes", len(raw), req.Size))
 	}
 
 	msg, err := sendmailshim.ParseMessage(bytes.NewReader(raw), false)
@@ -245,7 +304,16 @@ func (s *Server) relayOne(ctx context.Context, conn net.Conn) result {
 		return refuse(res, sendmailshim.ExitConfig, errors.New("this account has no domain to send from"))
 	}
 	res.from = "noreply@" + domain
+	msg = sendmailshim.RestrictFrom(msg, sender.owns, res.from)
 	body := sendmailshim.EnsureSender(msg, res.from)
+
+	select {
+	case s.slots <- struct{}{}:
+		defer func() { <-s.slots }()
+	case <-ctx.Done():
+		return refuse(res, sendmailshim.ExitTempFail, errors.New("the relay is busy"))
+	}
+	_ = conn.SetDeadline(time.Now().Add(connTimeout))
 
 	send := s.Send
 	if send == nil {
@@ -256,6 +324,16 @@ func (s *Server) relayOne(ctx context.Context, conn net.Conn) result {
 	}
 	res.reply = Reply{Code: sendmailshim.ExitOK}
 	return res
+}
+
+// owns reports whether domain is one of the user's.
+func (s Sender) owns(domain string) bool {
+	for _, d := range s.Domains {
+		if strings.EqualFold(d, domain) {
+			return true
+		}
+	}
+	return false
 }
 
 // pick is the sending domain: the From domain when it is one of the user's,

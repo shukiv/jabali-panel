@@ -327,6 +327,81 @@ func readCredFile(path string) (*Cred, error) {
 	return c, nil
 }
 
+// RestrictFrom is for mail leaving through the operator's smarthost (GH #2056),
+// where nothing downstream knows which account sent it. The message keeps its
+// From only when that is one From field naming one address in a domain owned
+// accepts. Otherwise every From field is replaced by one carrying fallback
+// (with the original display name), and the original address goes to Reply-To
+// when the message has none, so replies still reach it. Any Sender field is
+// dropped: EnsureSender adds the honest one.
+func RestrictFrom(msg *Message, owned func(domain string) bool, fallback string) *Message {
+	header, body := splitHeaderBody(msg.Raw)
+	fields := parseHeaderFields(header)
+	var froms []headerField
+	hasReplyTo := false
+	for _, f := range fields {
+		switch strings.ToLower(f.name) {
+		case "from":
+			froms = append(froms, f)
+		case "reply-to":
+			hasReplyTo = true
+		}
+	}
+	var list []*mail.Address
+	if len(froms) > 0 {
+		list, _ = mail.ParseAddressList(froms[0].value)
+	}
+	keep := len(froms) == 1 && len(list) == 1 && owned(addrDomain(list[0].Address))
+
+	var buf bytes.Buffer
+	buf.Grow(len(msg.Raw) + 128)
+	from := &mail.Address{Address: fallback}
+	if keep {
+		from = list[0]
+	} else {
+		if len(list) > 0 {
+			from.Name = strings.Map(dropControl, list[0].Name)
+		}
+		fmt.Fprintf(&buf, "From: %s\n", from.String())
+		if !hasReplyTo && len(list) > 0 {
+			fmt.Fprintf(&buf, "Reply-To: %s\n", (&mail.Address{Address: list[0].Address}).String())
+		}
+	}
+	for _, f := range fields {
+		switch strings.ToLower(f.name) {
+		case "sender":
+			continue
+		case "from":
+			if !keep {
+				continue
+			}
+		}
+		buf.Write(f.raw)
+	}
+	buf.Write(body)
+	return &Message{
+		Raw:              buf.Bytes(),
+		FromDomain:       addrDomain(from.Address),
+		HasFrom:          true,
+		FromAddr:         from.Address,
+		HeaderRecipients: msg.HeaderRecipients,
+	}
+}
+
+func addrDomain(addr string) string {
+	if at := strings.LastIndexByte(addr, '@'); at >= 0 {
+		return strings.ToLower(addr[at+1:])
+	}
+	return ""
+}
+
+func dropControl(r rune) rune {
+	if r < 0x20 || r == 0x7f {
+		return -1
+	}
+	return r
+}
+
 // EnsureSender guarantees the outgoing header block is honest about the real
 // submitter: when the message's From differs from the authenticated identity,
 // a Sender: field with the credential address is prepended (RFC 5322 §3.6.2),
