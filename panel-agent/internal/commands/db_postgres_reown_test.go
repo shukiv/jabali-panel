@@ -87,6 +87,11 @@ func TestPgReown_HandsSuperuserObjectsToTheDatabaseUser(t *testing.T) {
 	if !strings.Contains(s, "NOT (rolsuper OR rolcreaterole OR rolreplication OR rolbypassrls)") || !strings.Contains(s, `\if :role_plain`) {
 		t.Errorf("the script doesn't check the role:\n%s", s)
 	}
+	// Nor while the database has an event trigger, checked again in the
+	// session that moves the objects.
+	if !strings.Contains(s, "FROM pg_event_trigger") || !strings.Contains(s, `\if :no_event_triggers`+"\nBEGIN;") {
+		t.Errorf("the script doesn't check for event triggers before it moves anything:\n%s", s)
+	}
 	for _, want := range []string{"ALTER SCHEMA", "MATERIALIZED VIEW", "ALTER ROUTINE", "DOMAIN", "ALTER LARGE OBJECT",
 		"ALTER STATISTICS", "ALTER COLLATION", "ALTER CONVERSION", "ALTER OPERATOR", "TEXT SEARCH CONFIGURATION", "TEXT SEARCH DICTIONARY"} {
 		if !strings.Contains(s, want) {
@@ -194,6 +199,39 @@ func TestPgReown_EventTriggersLeaveTheDatabaseAlone(t *testing.T) {
 	}
 	if w.script(t, "BEGIN;") >= 0 {
 		t.Error("handed objects over in a database with an event trigger")
+	}
+}
+
+// A count without the event-trigger line isn't read as "none": the
+// database is left as it is.
+func TestPgReown_CountWithoutEventTriggersMovesNothing(t *testing.T) {
+	w := reownWorld(t, []string{"alice_shop"}, pgReownCountMarker+" 2\n"+pgReownDoneMarker+"\n")
+	resp, err := callPgReown(t, map[string]string{"alice_shop": "alice_app"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Reowned) != 0 || resp.Failed["alice_shop"] == "" {
+		t.Errorf("response = %+v", resp)
+	}
+	if w.script(t, "BEGIN;") >= 0 {
+		t.Error("handed objects over without knowing the database's event triggers")
+	}
+}
+
+// A hand-over that doesn't confirm it committed isn't counted as done.
+func TestPgReown_UnconfirmedHandOverIsAFailure(t *testing.T) {
+	newPgWorld(t, func(line string) (string, bool) {
+		if strings.Contains(line, "SELECT datname FROM pg_database") {
+			return "alice_shop\n", false
+		}
+		return pgReownCountMarker + " 2\n" + pgReownEventTriggerMarker + " 0\n", false
+	})
+	resp, err := callPgReown(t, map[string]string{"alice_shop": "alice_app"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Reowned) != 0 || !strings.Contains(resp.Failed["alice_shop"], "no confirmation") {
+		t.Errorf("response = %+v", resp)
 	}
 }
 

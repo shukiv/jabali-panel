@@ -91,10 +91,10 @@ func TestReconcilePGReown_NoDatabasesSendsNothing(t *testing.T) {
 	}
 }
 
-// A failed read sends nothing: a database sent without its user would go
-// to its holder instead.
+// A failed read sends nothing, even what it read before failing: a database
+// sent without its user would go to its holder instead.
 func TestReconcilePGReown_ListErrorSendsNothing(t *testing.T) {
-	r, ag := pgReownFixture(true, &fakePGOwnerRepo{err: errors.New("db down")})
+	r, ag := pgReownFixture(true, &fakePGOwnerRepo{owners: map[string]string{"alice_shop": ""}, err: errors.New("db down")})
 	r.reconcilePGReown(context.Background())
 	if calls := pgReownCalls(ag); len(calls) != 0 {
 		t.Fatalf("calls = %v, want none", calls)

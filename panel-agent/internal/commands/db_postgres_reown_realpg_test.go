@@ -98,6 +98,7 @@ ORDER BY 1`)
 // pgReownFixture is what a pre-GH #1993 restore left: everything created by
 // postgres, an extension's objects too.
 const pgReownFixture = `
+ALTER SCHEMA public OWNER TO postgres;
 CREATE EXTENSION citext;
 CREATE TABLE t (id serial PRIMARY KEY, v text);
 CREATE TABLE ident (id int GENERATED ALWAYS AS IDENTITY, v text);
@@ -138,7 +139,12 @@ CREATE ROLE carol_admin LOGIN CREATEROLE;`)
 	pg.sql(t, "alice_shop", pgReownFixture)
 	pg.sql(t, "bob_blog", "CREATE TABLE b (id serial PRIMARY KEY);")
 	pg.sql(t, "carol_db", "CREATE TABLE c (id int);")
+	// public is owned by postgres, as in a database created before
+	// PostgreSQL 15: it stays that way.
 	publicBefore := pg.owners(t, "alice_shop")["schema public"]
+	if publicBefore != "postgres" {
+		t.Fatalf("public owned by %q before the hand-over, want postgres", publicBefore)
+	}
 
 	resp, err := callPgReown(t, map[string]string{"alice_shop": "alice_app", "bob_blog": "", "carol_db": "carol_admin", "gone_db": "alice_app"})
 	if err != nil {
