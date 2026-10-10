@@ -93,9 +93,17 @@ describe("SpamFilterCard", () => {
   });
 
   it("explains that a discard threshold at or above the reject one never applies", async () => {
-    serve({ spam_discard_score: 20 });
+    // Equal counts: reject is checked first.
+    serve({ spam_reject_score: 15, spam_discard_score: 15 });
     render(<SpamFilterCard />);
     expect(await screen.findByText(/rejects it before it could be discarded/)).toBeInTheDocument();
+  });
+
+  it("says nothing about discard when it sits below the reject threshold", async () => {
+    serve({ spam_reject_score: 30, spam_discard_score: 20 });
+    render(<SpamFilterCard />);
+    await screen.findByLabelText("Junk threshold");
+    expect(screen.queryByText(/rejects it before it could be discarded/)).not.toBeInTheDocument();
   });
 
   it("shows the server's reason when it refuses", async () => {

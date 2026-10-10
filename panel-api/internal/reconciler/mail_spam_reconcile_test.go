@@ -134,6 +134,21 @@ func TestReconcileMailSpamScores_RetriesTheReload(t *testing.T) {
 	if len(ap.calls) != 2 {
 		t.Fatalf("calls = %+v after the reload succeeded", ap.calls)
 	}
+	// And the next change is a plain write: the pending reload was cleared.
+	r.serverSettings.(*spamSettingsRepo).srv.SpamJunkScore = 7
+	r.reconcileMailSpamScores(ctx)
+	if len(ap.calls) != 3 || ap.calls[2].reload {
+		t.Fatalf("calls = %+v; want the next change without a reload request", ap.calls)
+	}
+}
+
+// ReconcileAll runs the pass.
+func TestReconcileAll_RunsTheMailSpamScoresPass(t *testing.T) {
+	r, ap, _ := spamFixture(spamSrv(5, 15, 20))
+	_ = r.ReconcileAll(context.Background())
+	if len(ap.calls) != 1 {
+		t.Fatalf("calls = %+v, want the pass to run once", ap.calls)
+	}
 }
 
 // A failed write retries the write, with no reload of its own.
