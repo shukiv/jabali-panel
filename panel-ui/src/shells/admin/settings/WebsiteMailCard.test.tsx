@@ -83,6 +83,17 @@ describe("WebsiteMailCard", () => {
     expect(mockPut.mock.calls[0][1]).toMatchObject({ username: "relay@example.com", password: "" });
   });
 
+  it("asks for the password again when the host changes", async () => {
+    serve({ mode: "smarthost", host: "smtp.example.com", username: "relay@example.com", password_set: true });
+    render(<WebsiteMailCard />);
+    const pw = await screen.findByLabelText("Smarthost password");
+    expect(pw).toHaveAttribute("placeholder", "Stored. Leave empty to keep it.");
+    fireEvent.change(screen.getByLabelText("Smarthost host"), { target: { value: "smtp.other.example" } });
+    expect(pw).toHaveAttribute("placeholder", "Enter the password again for this host and username");
+    fireEvent.change(screen.getByLabelText("Smarthost host"), { target: { value: "SMTP.example.com" } });
+    expect(pw).toHaveAttribute("placeholder", "Stored. Leave empty to keep it.");
+  });
+
   it("never sends a login without encryption", async () => {
     serve({ mode: "smarthost", host: "10.0.0.25", port: 25, tls: "none", username: "relay", password_set: true });
     mockPost.mockResolvedValue({ data: { ok: true } });

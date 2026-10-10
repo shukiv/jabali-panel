@@ -273,7 +273,7 @@ func TestWebsiteMail_TestUsesTheFormAndSavesNothing(t *testing.T) {
 	key := testSSOKey(t)
 	sealed, _ := key.Seal([]byte("stored-pw"))
 	repo := &mockServerSettingsRepo{
-		getResult: &models.ServerSettings{ID: 1, Hostname: "panel.example.com", SmarthostUsername: "relay@example.com", SmarthostPasswordEnc: sealed},
+		getResult: &models.ServerSettings{ID: 1, Hostname: "panel.example.com", SmarthostHost: "smtp.example.com", SmarthostUsername: "relay@example.com", SmarthostPasswordEnc: sealed},
 		upsertErr: errMustNotPersist,
 	}
 	p := &probeRecorder{}
@@ -306,5 +306,56 @@ func TestWebsiteMail_AdminOnly(t *testing.T) {
 	}
 	if len(p.calls) != 0 {
 		t.Error("a tenant made the panel dial a smarthost")
+	}
+}
+
+// The stored password is only sent to the host and username it was saved
+// with. A Test or save that points an empty password at another host must not
+// log in there with the stored one (that would hand it to whoever runs the
+// host), and must ask for the password again instead.
+func TestWebsiteMail_StoredPasswordNeverGoesToANewHost(t *testing.T) {
+	key := testSSOKey(t)
+	sealed, _ := key.Seal([]byte("stored-pw"))
+	stored := func() *models.ServerSettings {
+		return &models.ServerSettings{
+			ID: 1, WebsiteMailMode: "smarthost", SmarthostHost: "smtp.example.com", SmarthostPort: 587,
+			SmarthostTLS: "starttls", SmarthostUsername: "relay@example.com", SmarthostPasswordEnc: sealed,
+		}
+	}
+	for _, tc := range []struct {
+		name string
+		edit func(map[string]any)
+	}{
+		{"another host", func(r map[string]any) { r["host"] = "smtp.attacker.example" }},
+		{"another username", func(r map[string]any) { r["username"] = "someone@example.com" }},
+	} {
+		for _, call := range []struct{ method, path string }{{http.MethodPost, "/test"}, {http.MethodPut, ""}} {
+			t.Run(tc.name+" "+call.method, func(t *testing.T) {
+				repo := &mockServerSettingsRepo{getResult: stored(), upsertErr: errMustNotPersist}
+				p := &probeRecorder{}
+				req := smarthostRequest()
+				req["password"] = ""
+				tc.edit(req)
+				w := websiteMailCall(t, websiteMailRouter(t, repo, key, p, true), call.method, call.path, req)
+				if w.Code != http.StatusUnprocessableEntity || websiteMailBody(t, w)["error"] != "password_required" {
+					t.Fatalf("status %d: %s", w.Code, w.Body.String())
+				}
+				for _, c := range p.calls {
+					if c.Password == "stored-pw" {
+						t.Fatalf("the stored password was sent to %s as %s", c.Host, c.Username)
+					}
+				}
+			})
+		}
+	}
+
+	// The same host in another letter case is the same host.
+	repo := &mockServerSettingsRepo{getResult: stored(), upsertErr: errMustNotPersist}
+	p := &probeRecorder{}
+	req := smarthostRequest()
+	req["password"] = ""
+	req["host"] = "SMTP.Example.com"
+	if w := websiteMailCall(t, websiteMailRouter(t, repo, key, p, true), http.MethodPost, "/test", req); w.Code != http.StatusOK || p.calls[0].Password != "stored-pw" {
+		t.Fatalf("same host, other case: %d %s", w.Code, w.Body.String())
 	}
 }

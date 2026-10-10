@@ -132,6 +132,12 @@ func (h *websiteMailHandler) get(c *gin.Context) {
 // fills in an empty one, and clearing the username drops the password. It
 // returns the HTTP status and body to answer with when the request can't be
 // used.
+//
+// The stored password is only ever sent to the host, as the username, it was
+// saved with. Otherwise a Test or save pointed at another host with an empty
+// password would hand the stored password to whoever runs that host (the
+// panel logs in with it), so anyone holding an admin session could read it
+// out. A new host or username needs the password typed again.
 func (h *websiteMailHandler) resolve(req websiteMailRequest, s *models.ServerSettings) (smarthost.Config, int, gin.H) {
 	cfg := smarthost.Config{
 		Host:     strings.TrimSpace(req.Host),
@@ -142,6 +148,9 @@ func (h *websiteMailHandler) resolve(req websiteMailRequest, s *models.ServerSet
 		HeloName: s.Hostname,
 	}
 	if cfg.Username != "" && cfg.Password == "" && len(s.SmarthostPasswordEnc) > 0 {
+		if !strings.EqualFold(cfg.Host, s.SmarthostHost) || cfg.Username != s.SmarthostUsername {
+			return cfg, http.StatusUnprocessableEntity, gin.H{"error": "password_required", "detail": "enter the password again: the stored one is only used with the host and username it was saved for"}
+		}
 		if h.cfg.SSOKey == nil {
 			return cfg, http.StatusServiceUnavailable, ssoKeyMissing()
 		}

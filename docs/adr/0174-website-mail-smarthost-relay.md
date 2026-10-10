@@ -28,7 +28,10 @@ mail and DNS elsewhere had no way to let the sites send.
 2. **The password is stored sealed** with the panel's sso key
    (`server_settings.smarthost_password_enc`, AES-256-GCM), like the Cloudflare
    token (JAB-235). The API never returns it; an empty password on save keeps
-   the stored one.
+   the stored one, but only for the host and username it was saved with. A
+   test or save aimed at another host needs the password typed again, so an
+   admin session can't be used to send the stored password to a host it
+   chooses and read it there.
 3. **Switching to the smarthost tests it first**: connect, TLS, login, quit.
    Nothing is saved when the test fails, so a typo can't silently stop every
    site's mail. A separate Test button checks the form without saving. The
@@ -69,8 +72,9 @@ mail and DNS elsewhere had no way to let the sites send.
 - Operators without the mail module can let their sites send, through their
   own mail system.
 - A new root-side service and a socket that every site's user can reach. Its
-  only input is a message and a recipient list; the sender is decided from the
-  caller's UID, never from the message.
+  only input is a message and a recipient list. The sender comes from the
+  caller's UID: the message's From header can only pick among that UID's own
+  domains.
 - The smarthost password lives in the panel database (sealed) and in the
   relay's root-owned config (plaintext, 0640 root:jabali-mailrelay), like the
   Stalwart and restic credentials the box already holds.

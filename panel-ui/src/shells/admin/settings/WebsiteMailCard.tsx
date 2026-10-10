@@ -118,6 +118,12 @@ export function WebsiteMailCard() {
   };
 
   const showSmarthost = mode === "smarthost" || host !== "";
+  // The stored password is only used with the host and username it was saved
+  // for; the server asks for it again otherwise.
+  const storedPasswordApplies =
+    !!loaded?.password_set &&
+    host.trim().toLowerCase() === loaded.host.toLowerCase() &&
+    username.trim() === loaded.username;
 
   return (
     <Card
@@ -192,7 +198,13 @@ export function WebsiteMailCard() {
           <Input.Password
             aria-label="Smarthost password"
             addonBefore="Password"
-            placeholder={loaded?.password_set ? "Stored. Leave empty to keep it." : "Required with a username"}
+            placeholder={
+              storedPasswordApplies
+                ? "Stored. Leave empty to keep it."
+                : loaded?.password_set
+                  ? "Enter the password again for this host and username"
+                  : "Required with a username"
+            }
             value={loginAllowed ? password : ""}
             disabled={!loginAllowed}
             onChange={(e) => setPassword(e.target.value)}
