@@ -51,11 +51,21 @@ func (s wmDomains) List(context.Context, repository.ListOptions) ([]models.Domai
 	return s.rows, int64(len(s.rows)), nil
 }
 
-func wmSites() (wmUsers, wmDomains) {
+type wmPackages struct {
+	repository.PackageRepository
+	rows []models.HostingPackage
+}
+
+func (s wmPackages) List(context.Context, repository.ListOptions) ([]models.HostingPackage, int64, error) {
+	return s.rows, int64(len(s.rows)), nil
+}
+
+func wmSites() (wmUsers, wmDomains, wmPackages) {
 	alice, pkg := "alice", "p1"
 	return wmUsers{rows: []models.User{{ID: "u1", Username: &alice, PackageID: &pkg}}},
 		wmDomains{rows: []models.Domain{{ID: "d1", UserID: "u1", Name: "alice.example", IsEnabled: true,
-			OwnershipState: models.OwnershipState{OwnershipStatus: models.OwnershipVerified}}}}
+			OwnershipState: models.OwnershipState{OwnershipStatus: models.OwnershipVerified}}}},
+		wmPackages{rows: []models.HostingPackage{{ID: "p1", WebsiteSendsEmail: true}}}
 }
 
 func websiteMailApplyRouter(t *testing.T, repo *mockServerSettingsRepo, key *ssokey.Key, a *agent.MockClient) *gin.Engine {
@@ -65,10 +75,10 @@ func websiteMailApplyRouter(t *testing.T, repo *mockServerSettingsRepo, key *sso
 	r.Use(func(c *gin.Context) {
 		ginctx.SetClaims(c, &auth.AccessClaims{UserID: "test-admin", IsAdmin: true})
 	})
-	users, domains := wmSites()
+	users, domains, packages := wmSites()
 	RegisterWebsiteMailRoutes(r.Group("/api/v1"), WebsiteMailHandlerConfig{
 		Repo: repo, SSOKey: key, Probe: (&probeRecorder{}).probe,
-		Agent: a, Users: users, Domains: domains,
+		Agent: a, Users: users, Domains: domains, Packages: packages,
 	})
 	return r
 }

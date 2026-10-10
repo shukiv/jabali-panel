@@ -222,7 +222,8 @@ export function WebsiteMailCard() {
           {loaded.senders === 1
             ? "1 account can send through the smarthost."
             : `${loaded.senders} accounts can send through the smarthost.`}{" "}
-          Accounts without a hosting package can&apos;t.
+          An account can when its hosting package has &quot;Websites can send
+          email&quot; on.
         </Typography.Paragraph>
       )}
 

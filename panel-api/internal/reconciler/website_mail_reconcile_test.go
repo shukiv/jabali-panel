@@ -33,6 +33,15 @@ func (s *wmUserRepo) FindByIDs(_ context.Context, ids []string) ([]models.User, 
 	return out, nil
 }
 
+type wmPackageRepo struct {
+	repository.PackageRepository
+	rows []models.HostingPackage
+}
+
+func (s *wmPackageRepo) List(context.Context, repository.ListOptions) ([]models.HostingPackage, int64, error) {
+	return s.rows, int64(len(s.rows)), nil
+}
+
 type wmDomainRepo struct {
 	repository.DomainRepository
 	rows []models.Domain
@@ -65,6 +74,7 @@ func websiteMailReconciler(t *testing.T, srv *models.ServerSettings, a agent.Age
 	return &Reconciler{
 		domains:        domains,
 		users:          &wmUserRepo{rows: []models.User{{ID: "u1", Username: strPtr("alice"), PackageID: &pkg}}},
+		packages:       &wmPackageRepo{rows: []models.HostingPackage{{ID: "p1", WebsiteSendsEmail: true}}},
 		serverSettings: &fakeSettingsRepo{srv: srv},
 		agent:          a,
 		sendmailSSOKey: &key,

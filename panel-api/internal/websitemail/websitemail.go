@@ -59,23 +59,39 @@ type ApplyResponse struct {
 	Skipped []string `json:"skipped,omitempty"`
 }
 
-// Deps are the lookups the sender list needs.
+// Deps are the lookups the sender list needs. All three are required: a
+// missing one fails closed (no sender list), never open.
 type Deps struct {
-	Users   repository.UserRepository
-	Domains repository.DomainRepository
+	Users    repository.UserRepository
+	Domains  repository.DomainRepository
+	Packages repository.PackageRepository
 }
 
 // ErrNoKey: the smarthost has a login but the panel can't open the sealed
 // password.
 var ErrNoKey = errors.New("the panel's sso.key is not configured, so the smarthost password can't be read")
 
+// ErrDepsMissing: a lookup the sender list needs isn't wired.
+var ErrDepsMissing = errors.New("the website mail sender list is unavailable")
+
 // Senders lists who may send website mail through the smarthost: users with a
-// Linux account and a hosting package, not admins, not suspended, with their
-// enabled domains whose ownership is verified (GH #1816). A user's default
-// domain is their oldest. Users without a package are left out (GH #282): the
-// smarthost sends with the operator's login and reputation, a privileged
-// feature.
+// Linux account and a hosting package that lets its sites send email, not
+// admins, not suspended, with their enabled domains whose ownership is
+// verified (GH #1816). A user's default domain is their oldest. Users without
+// a package are left out (GH #282): the smarthost sends with the operator's
+// login and reputation, a privileged feature.
 func Senders(ctx context.Context, d Deps) ([]Sender, error) {
+	if d.Users == nil || d.Domains == nil || d.Packages == nil {
+		return nil, ErrDepsMissing
+	}
+	pkgs, _, err := d.Packages.List(ctx, repository.ListOptions{Limit: 10000})
+	if err != nil {
+		return nil, fmt.Errorf("list packages: %w", err)
+	}
+	sends := map[string]bool{}
+	for _, p := range pkgs {
+		sends[p.ID] = p.WebsiteSendsEmail
+	}
 	domains, _, err := d.Domains.List(ctx, repository.ListOptions{Limit: 10000, OmitHeavyColumns: true})
 	if err != nil {
 		return nil, fmt.Errorf("list domains: %w", err)
@@ -100,7 +116,7 @@ func Senders(ctx context.Context, d Deps) ([]Sender, error) {
 
 	out := []Sender{}
 	for _, u := range users {
-		if u.IsAdmin || u.Suspended || u.Username == nil || *u.Username == "" || u.PackageID == nil || *u.PackageID == "" {
+		if u.IsAdmin || u.Suspended || u.Username == nil || *u.Username == "" || u.PackageID == nil || !sends[*u.PackageID] {
 			continue
 		}
 		doms := byUser[u.ID]

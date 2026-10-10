@@ -25,7 +25,7 @@ type websiteMailState struct {
 }
 
 func (r *Reconciler) reconcileWebsiteMail(ctx context.Context) {
-	if r.agent == nil || r.serverSettings == nil || r.users == nil || r.domains == nil {
+	if r.agent == nil || r.serverSettings == nil {
 		return
 	}
 	sctx, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -34,7 +34,7 @@ func (r *Reconciler) reconcileWebsiteMail(ctx context.Context) {
 	if err != nil || srv == nil {
 		return
 	}
-	req, err := websitemail.Request(ctx, websitemail.Deps{Users: r.users, Domains: r.domains}, srv, r.sendmailSSOKey)
+	req, err := websitemail.Request(ctx, websitemail.Deps{Users: r.users, Domains: r.domains, Packages: r.packages}, srv, r.sendmailSSOKey)
 	if err != nil {
 		r.log.Warn("website-mail: can't build the relay settings", "error", err)
 		return

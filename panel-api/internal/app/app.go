@@ -1110,6 +1110,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Agent:           deps.Agent,
 				Users:           deps.Users,
 				Domains:         deps.Domains,
+				Packages:        deps.Packages,
 			})
 			// M28 — admin logo upload/delete. Public GET lives on the
 			// root router above so it's reachable pre-auth.

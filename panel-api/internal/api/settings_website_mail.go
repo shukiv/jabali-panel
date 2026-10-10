@@ -46,11 +46,13 @@ type WebsiteMailHandlerConfig struct {
 	Probe func(ctx context.Context, c smarthost.Config) error
 	Log   *slog.Logger
 	// Agent applies the setting on the box (mail.relay.apply) before it is
-	// saved, so a save that couldn't switch the box changes nothing. Users
-	// and Domains list the sites allowed to send through the smarthost.
-	Agent   agent.AgentInterface
-	Users   repository.UserRepository
-	Domains repository.DomainRepository
+	// saved, so a save that couldn't switch the box changes nothing. Users,
+	// Domains and Packages list the sites allowed to send through the
+	// smarthost.
+	Agent    agent.AgentInterface
+	Users    repository.UserRepository
+	Domains  repository.DomainRepository
+	Packages repository.PackageRepository
 }
 
 // RegisterWebsiteMailRoutes mounts /admin/settings/website-mail under v1.
@@ -144,7 +146,7 @@ func (h *websiteMailHandler) get(c *gin.Context) {
 		return
 	}
 	view := viewWebsiteMail(s)
-	if view.Mode == models.WebsiteMailSmarthost && h.cfg.Users != nil && h.cfg.Domains != nil {
+	if view.Mode == models.WebsiteMailSmarthost {
 		if senders, err := websitemail.Senders(ctx, h.deps()); err == nil {
 			n := len(senders)
 			view.Senders = &n
@@ -154,7 +156,7 @@ func (h *websiteMailHandler) get(c *gin.Context) {
 }
 
 func (h *websiteMailHandler) deps() websitemail.Deps {
-	return websitemail.Deps{Users: h.cfg.Users, Domains: h.cfg.Domains}
+	return websitemail.Deps{Users: h.cfg.Users, Domains: h.cfg.Domains, Packages: h.cfg.Packages}
 }
 
 // apply switches the box to s (agent mail.relay.apply). With no agent wired
@@ -163,12 +165,12 @@ func (h *websiteMailHandler) apply(ctx context.Context, s *models.ServerSettings
 	if h.cfg.Agent == nil {
 		return nil, 0, nil
 	}
-	if models.EffectiveWebsiteMailMode(s) == models.WebsiteMailSmarthost && (h.cfg.Users == nil || h.cfg.Domains == nil) {
-		return nil, http.StatusServiceUnavailable, gin.H{"error": "apply_failed", "detail": "the sender list is unavailable"}
-	}
 	req, err := websitemail.Request(ctx, h.deps(), s, h.cfg.SSOKey)
 	if errors.Is(err, websitemail.ErrNoKey) {
 		return nil, http.StatusServiceUnavailable, ssoKeyMissing()
+	}
+	if errors.Is(err, websitemail.ErrDepsMissing) {
+		return nil, http.StatusServiceUnavailable, gin.H{"error": "apply_failed", "detail": "the sender list is unavailable"}
 	}
 	if err != nil {
 		return nil, http.StatusInternalServerError, gin.H{"error": "apply_failed", "detail": "could not build the website mail settings for the server"}

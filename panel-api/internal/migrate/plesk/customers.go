@@ -149,6 +149,8 @@ func PlanToHostingPackage(p PleskPlan) models.HostingPackage {
 		// GH #1628: webmail defaults ON (Plesk has no per-plan webmail toggle);
 		// a plain bool can't fall back to the column DEFAULT, so set it.
 		WebmailEnabled: true,
+		// GH #2056: the sites came from a server where PHP mail() worked.
+		WebsiteSendsEmail: true,
 	}
 }
 

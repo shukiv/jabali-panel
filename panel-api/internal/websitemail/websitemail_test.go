@@ -22,6 +22,15 @@ func (s stubDomains) List(context.Context, repository.ListOptions) ([]models.Dom
 	return s.rows, int64(len(s.rows)), nil
 }
 
+type stubPackages struct {
+	repository.PackageRepository
+	rows []models.HostingPackage
+}
+
+func (s stubPackages) List(context.Context, repository.ListOptions) ([]models.HostingPackage, int64, error) {
+	return s.rows, int64(len(s.rows)), nil
+}
+
 type stubUsers struct {
 	repository.UserRepository
 	rows []models.User
@@ -64,6 +73,12 @@ func fixture() Deps {
 			{ID: "u-susp", Username: str("susp"), PackageID: str("p1"), Suspended: true},
 			{ID: "u-admin", Username: str("admin"), PackageID: str("p1"), IsAdmin: true},
 			{ID: "u-nolinux", PackageID: str("p1")},
+			{ID: "u-nomail", Username: str("nomail"), PackageID: str("p-nomail")},
+			{ID: "u-gonepkg", Username: str("gonepkg"), PackageID: str("p-deleted")},
+		}},
+		Packages: stubPackages{rows: []models.HostingPackage{
+			{ID: "p1", WebsiteSendsEmail: true},
+			{ID: "p-nomail", WebsiteSendsEmail: false},
 		}},
 		Domains: stubDomains{rows: []models.Domain{
 			domain("d1", "u-alice", "Shop.Example", 2, true, true),
@@ -76,7 +91,17 @@ func fixture() Deps {
 			domain("d8", "u-admin", "panel.example", 0, true, true),
 			domain("d9", "u-nolinux", "nolinux.example", 0, true, true),
 			domain("d10", "u-gone", "orphan.example", 0, true, true),
+			domain("d11", "u-nomail", "nomail.example", 0, true, true),
+			domain("d12", "u-gonepkg", "gonepkg.example", 0, true, true),
 		}},
+	}
+}
+
+func TestSenders_MissingLookupFailsClosed(t *testing.T) {
+	d := fixture()
+	d.Packages = nil
+	if got, err := Senders(context.Background(), d); !errors.Is(err, ErrDepsMissing) || got != nil {
+		t.Errorf("senders = %v, %v; want none and ErrDepsMissing", got, err)
 	}
 }
 
