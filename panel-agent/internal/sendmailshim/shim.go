@@ -328,12 +328,14 @@ func readCredFile(path string) (*Cred, error) {
 }
 
 // RestrictFrom is for mail leaving through the operator's smarthost (GH #2056),
-// where nothing downstream knows which account sent it. The message keeps its
-// From only when that is one From field naming one address in a domain owned
-// accepts. Otherwise every From field is replaced by one carrying fallback
-// (with the original display name), and the original address goes to Reply-To
-// when the message has none, so replies still reach it. Any Sender field is
-// dropped: EnsureSender adds the honest one.
+// where nothing downstream knows which account sent it. The message's From
+// address is kept only when the message has one From field naming one address
+// in a domain owned accepts; otherwise fallback is used, and the original
+// address goes to Reply-To when the message has none, so replies still reach
+// it. Either way the From field is written fresh from the parsed address, so
+// comments, groups or quirks another parser might read differently never
+// reach the smarthost, and a display name that carries an address is dropped.
+// Any Sender field is dropped: EnsureSender adds the honest one.
 func RestrictFrom(msg *Message, owned func(domain string) bool, fallback string) *Message {
 	header, body := splitHeaderBody(msg.Raw)
 	fields := parseHeaderFields(header)
@@ -353,28 +355,23 @@ func RestrictFrom(msg *Message, owned func(domain string) bool, fallback string)
 	}
 	keep := len(froms) == 1 && len(list) == 1 && owned(addrDomain(list[0].Address))
 
-	var buf bytes.Buffer
-	buf.Grow(len(msg.Raw) + 128)
 	from := &mail.Address{Address: fallback}
 	if keep {
-		from = list[0]
-	} else {
-		if len(list) > 0 {
-			from.Name = strings.Map(dropControl, list[0].Name)
-		}
-		fmt.Fprintf(&buf, "From: %s\n", from.String())
-		if !hasReplyTo && len(list) > 0 {
-			fmt.Fprintf(&buf, "Reply-To: %s\n", (&mail.Address{Address: list[0].Address}).String())
-		}
+		from.Address = list[0].Address
+	}
+	if len(list) > 0 {
+		from.Name = displayName(list[0].Name)
+	}
+	var buf bytes.Buffer
+	buf.Grow(len(msg.Raw) + 128)
+	fmt.Fprintf(&buf, "From: %s\n", from.String())
+	if !keep && !hasReplyTo && len(list) > 0 {
+		fmt.Fprintf(&buf, "Reply-To: %s\n", (&mail.Address{Address: list[0].Address}).String())
 	}
 	for _, f := range fields {
 		switch strings.ToLower(f.name) {
-		case "sender":
+		case "from", "sender":
 			continue
-		case "from":
-			if !keep {
-				continue
-			}
 		}
 		buf.Write(f.raw)
 	}
@@ -386,6 +383,16 @@ func RestrictFrom(msg *Message, owned func(domain string) bool, fallback string)
 		FromAddr:         from.Address,
 		HeaderRecipients: msg.HeaderRecipients,
 	}
+}
+
+// displayName keeps a From display name only when it can't pass for an
+// address.
+func displayName(name string) string {
+	name = strings.TrimSpace(strings.Map(dropControl, name))
+	if strings.Contains(name, "@") {
+		return ""
+	}
+	return name
 }
 
 func addrDomain(addr string) string {

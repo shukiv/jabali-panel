@@ -57,6 +57,11 @@ mail and DNS elsewhere had no way to let the sites send.
      display name is kept) and the original address moves to Reply-To when the
      message has none, so a contact form that puts the visitor in From still
      gets replies to the visitor. A site's own Sender header is dropped.
+   - The relay writes the From header fresh from the parsed address, so a
+     comment or group another parser might read differently never reaches
+     the smarthost, and a display name that carries an address is dropped.
+     A bare CR becomes a line break before anything is parsed, so the relay,
+     the SMTP client and the smarthost all see the same lines.
 6. **No local queue in v1.** If the smarthost is down or answers 4xx, `mail()`
    returns false and the failure is logged. A spool can follow if needed.
 7. **A "Website sends email" package flag** applies in both modes.

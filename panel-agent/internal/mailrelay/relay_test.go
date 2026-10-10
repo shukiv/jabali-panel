@@ -353,7 +353,7 @@ func TestSubmit_FromIsAlwaysOneOwnAddress(t *testing.T) {
 		{
 			name:      "own address kept",
 			msg:       "From: Shop <orders@shop.example>\nTo: x@example.org\n\nhi\n",
-			wantFrom:  "From: Shop <orders@shop.example>",
+			wantFrom:  "From: \"Shop\" <orders@shop.example>",
 			wantReply: nil,
 		},
 		{
@@ -564,5 +564,79 @@ func TestHandle_ShortMessageIsRefused(t *testing.T) {
 	}
 	if rep.Code != sendmailshim.ExitDataErr {
 		t.Errorf("code = %d (%s), want %d", rep.Code, rep.Error, sendmailshim.ExitDataErr)
+	}
+}
+
+// The relay's header parser, the SMTP client and the smarthost must agree on
+// where lines end, or a header can hide from the From check.
+func TestSubmit_NoParserDifferentials(t *testing.T) {
+	cases := []struct {
+		name      string
+		msg       string
+		wantFrom  string
+		wantReply []string
+	}{
+		{
+			name:      "a bare CR can't hide a second From",
+			msg:       "From: orders@shop.example\nSubject: hi\rFrom: ceo@bank.example\nTo: x@example.org\n\nhi\n",
+			wantFrom:  "From: <noreply@shop.example>",
+			wantReply: []string{"Reply-To: <orders@shop.example>"},
+		},
+		{
+			name:     "a comment in an own From is dropped",
+			msg:      "From: orders@shop.example (ceo@bank.example)\nTo: x@example.org\n\nhi\n",
+			wantFrom: "From: <orders@shop.example>",
+		},
+		{
+			name:     "an address in an own From's display name is dropped",
+			msg:      "From: \"ceo@bank.example\" <orders@shop.example>\nTo: x@example.org\n\nhi\n",
+			wantFrom: "From: <orders@shop.example>",
+		},
+		{
+			name:      "an address in a replaced From's display name is dropped",
+			msg:       "From: \"billing@bank.example\" <ceo@bank.example>\nTo: x@example.org\n\nhi\n",
+			wantFrom:  "From: <noreply@alice.example>",
+			wantReply: []string{"Reply-To: <ceo@bank.example>"},
+		},
+		{
+			name:     "an encoded address in a display name is dropped too",
+			msg:      "From: =?utf-8?q?ceo=40bank.example?= <orders@shop.example>\nTo: x@example.org\n\nhi\n",
+			wantFrom: "From: <orders@shop.example>",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := &fakeSend{}
+			sock := startRelay(t, writeConfig(t, baseConfig()), 2001, f)
+			if err := Submit(sock, []string{"x@example.org"}, []byte(tc.msg)); err != nil {
+				t.Fatalf("Submit: %v", err)
+			}
+			got := f.got[0].msg
+			if strings.Contains(strings.ReplaceAll(got, "\r\n", ""), "\r") {
+				t.Errorf("a bare CR reached the smarthost: %q", got)
+			}
+			if froms := headerLines(got, "From"); len(froms) != 1 || froms[0] != tc.wantFrom {
+				t.Errorf("From headers = %q, want [%q]\n%q", froms, tc.wantFrom, got)
+			}
+			if rt := headerLines(got, "Reply-To"); strings.Join(rt, "|") != strings.Join(tc.wantReply, "|") {
+				t.Errorf("Reply-To headers = %q, want %q", rt, tc.wantReply)
+			}
+		})
+	}
+}
+
+// A bare CR in the body could end the message early at a smarthost that
+// reads it as a line break, and what follows would run as SMTP commands in
+// the operator's session.
+func TestSubmit_BodyBareCRIsNormalized(t *testing.T) {
+	f := &fakeSend{}
+	sock := startRelay(t, writeConfig(t, baseConfig()), 2001, f)
+	msg := "From: orders@shop.example\nTo: x@example.org\n\nhi\r.\rMAIL FROM:<ceo@bank.example>\r\n"
+	if err := Submit(sock, []string{"x@example.org"}, []byte(msg)); err != nil {
+		t.Fatal(err)
+	}
+	got := f.got[0].msg
+	if strings.Contains(strings.ReplaceAll(got, "\r\n", ""), "\r") {
+		t.Errorf("a bare CR reached the smarthost: %q", got)
 	}
 }

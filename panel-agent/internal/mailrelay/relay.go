@@ -295,7 +295,7 @@ func (s *Server) relayOne(ctx context.Context, conn net.Conn) result {
 		return refuse(res, sendmailshim.ExitDataErr, fmt.Errorf("message ended after %d of %d bytes", len(raw), req.Size))
 	}
 
-	msg, err := sendmailshim.ParseMessage(bytes.NewReader(raw), false)
+	msg, err := sendmailshim.ParseMessage(bytes.NewReader(bareCRToLF(raw)), false)
 	if err != nil {
 		return refuse(res, sendmailshim.ExitCode(err), err)
 	}
@@ -324,6 +324,26 @@ func (s *Server) relayOne(ctx context.Context, conn net.Conn) result {
 	}
 	res.reply = Reply{Code: sendmailshim.ExitOK}
 	return res
+}
+
+// bareCRToLF turns every CR that doesn't start a CRLF into a line break, so
+// the relay's header parsing, the SMTP client's dot-stuffing and the
+// smarthost all see the same lines: a bare CR can't hide a header from the
+// From check, or end the message early at a smarthost that reads it as a line
+// break and run what follows as commands in the operator's session.
+func bareCRToLF(raw []byte) []byte {
+	if !bytes.Contains(raw, []byte{'\r'}) {
+		return raw
+	}
+	out := make([]byte, 0, len(raw))
+	for i, c := range raw {
+		if c == '\r' && (i+1 >= len(raw) || raw[i+1] != '\n') {
+			out = append(out, '\n')
+			continue
+		}
+		out = append(out, c)
+	}
+	return out
 }
 
 // owns reports whether domain is one of the user's.
