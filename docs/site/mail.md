@@ -6,7 +6,7 @@ Mail is an optional module (Server Settings → Modules). It needs the DNS modul
 
 ## Per-mailbox
 
-- Authentication: per-mailbox Argon2id-hashed password stored by Stalwart.
+- Authentication: per-mailbox password, bcrypt-hashed in the panel's database. Stalwart reads it through a read-only SQL directory, so the password is changed in the panel (the account owner under Email → Mailboxes, or an admin). Webmail's password change is refused (GH #2072).
 - Quota: per-mailbox MiB, enforced by Stalwart.
 - Webmail: **Bulwark** at `https://mail.<domain>/`. One-click SSO from `/jabali-panel/mail/mailboxes` uses the M22 self-deleting `jabali-sso-*.php` file (not the failed M22 magic-link/mu-plugin path).
 - IMAP / SMTP submission: `imap.<panel-hostname>:993` (TLS), `smtp.<panel-hostname>:465` (TLS) or `:587` (STARTTLS).
