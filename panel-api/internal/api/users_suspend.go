@@ -28,6 +28,8 @@ func (h *userHandler) suspendDeps() userops.Deps {
 		Agent:        h.cfg.Agent,
 		KratosClient: h.cfg.KratosClient,
 		Log:          slog.Default(),
+
+		MailCredentials: h.cfg.MailCredentials,
 	}
 }
 

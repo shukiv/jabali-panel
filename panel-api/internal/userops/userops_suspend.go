@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/kratosclient"
@@ -148,8 +149,42 @@ func Suspend(ctx context.Context, d Deps, user *models.User, reason string) (Sus
 		ftpsync.SyncFtpHostAccess(ctx, d.Agent, d.FtpAccounts, d.Users, d.Packages, d.Log, *user.Username)
 	}
 
+	// The mail server checks the app passwords and API keys a mailbox made
+	// itself, not against the panel, so they kept working for a suspended
+	// user's mailboxes. Remove them before the login cache flush.
+	credWarning := sweepMailCredentials(ctx, d)
 	res.MailWarning = flushMailLogins(ctx, d)
+	if credWarning != "" {
+		if res.MailWarning != "" {
+			credWarning += "; " + res.MailWarning
+		}
+		res.MailWarning = credWarning
+	}
 	return res, nil
+}
+
+// sweepMailCredentials removes the mail server's app passwords and API keys
+// a mailbox may no longer use. Returns a warning, "" on success or when it is
+// not wired (the reconciler removes them on its next tick).
+func sweepMailCredentials(ctx context.Context, d Deps) string {
+	if d.MailCredentials == nil {
+		return ""
+	}
+	sctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	removed, err := d.MailCredentials.SweepMailCredentials(sctx)
+	log := d.Log
+	if log == nil {
+		log = slog.Default()
+	}
+	for _, rm := range removed {
+		log.Info("mail-credentials: removed a credential from a mail account",
+			"account", rm.Account, "type", rm.Type, "reason", rm.Reason, "door", "suspend")
+	}
+	if err != nil {
+		return "mail_credentials_sweep_failed: " + err.Error()
+	}
+	return ""
 }
 
 // Unsuspend reverses the cascade: flag off, Kratos active, domains re-enabled,

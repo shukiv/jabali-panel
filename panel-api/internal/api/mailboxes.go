@@ -19,10 +19,12 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/mailboxops"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/mailcreds"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/middleware"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ssokey"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/userops"
 )
 
 // MailboxHandlerConfig plugs the mailbox HTTP handlers into the router.
@@ -45,6 +47,10 @@ type MailboxHandlerConfig struct {
 	// create: a stale registry alias would sign the new mailbox in to
 	// another account.
 	Addresses MailAddressReleaser
+	// MailCredentials removes the mail server's app passwords and API keys a
+	// mailbox may no longer use (mailcreds.Sweeper) when one is disabled.
+	// Optional: nil leaves it to the reconciler's next tick.
+	MailCredentials userops.MailCredentialSweeper
 }
 
 // MailAddressReleaser takes an address off the Stalwart accounts that still
@@ -412,6 +418,18 @@ func (h *mailboxHandler) update(c *gin.Context) {
 		}
 		mb.IsDisabled = *req.IsDisabled
 		if *req.IsDisabled {
+			// The mail server checks the app passwords and API keys a mailbox
+			// made itself, so they kept working after a disable. Best-effort:
+			// the reconciler's mail.credentials pass is the backstop.
+			if h.cfg.MailCredentials != nil {
+				sctx, cancel := context.WithTimeout(ctx, mailboxAgentTimeout)
+				removed, err := h.cfg.MailCredentials.SweepMailCredentials(sctx)
+				cancel()
+				logMailCredentialRemovals(removed, "mailbox disable")
+				if err != nil {
+					slog.Warn("mailbox disable: mail credentials sweep failed", "err", err)
+				}
+			}
 			h.notifyAgent(ctx, "mail.auth_cache.flush", map[string]any{})
 		}
 	}
@@ -466,6 +484,25 @@ func (h *mailboxHandler) rotatePassword(c *gin.Context) {
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
+	}
+
+	// The mail server checks the app passwords a mailbox made itself, so they
+	// kept working after a password change. Remove the ones made before it
+	// (and in the minute after it, while the login cache may still take the
+	// old password), then flush the login cache that would still answer
+	// them. Best-effort: the reconciler's mail.credentials pass is the
+	// backstop, and runs again once that minute has passed.
+	if h.cfg.MailCredentials != nil {
+		sctx, cancel := context.WithTimeout(ctx, mailboxAgentTimeout)
+		removed, err := h.cfg.MailCredentials.SweepMailCredentials(sctx)
+		cancel()
+		logMailCredentialRemovals(removed, "mailbox password change")
+		if err != nil {
+			slog.Warn("mailbox password change: mail credentials sweep failed", "err", err)
+		}
+		if len(removed) > 0 {
+			h.notifyAgent(ctx, "mail.auth_cache.flush", map[string]any{})
+		}
 	}
 
 	c.JSON(http.StatusOK, rotateMailboxPasswordResponse{Password: generated})
@@ -625,6 +662,15 @@ func (h *mailboxHandler) writeLoadErr(c *gin.Context, err error) {
 // error — per ADR-0013 inline-best-effort. If the agent is nil (tests)
 // this is a no-op. Errors are swallowed; the panel's reconciler is
 // responsible for re-asserting state agents dropped.
+// logMailCredentialRemovals records each app password or API key a door's
+// sweep took off a mail account, the same line the reconciler logs.
+func logMailCredentialRemovals(removed []mailcreds.Removal, door string) {
+	for _, rm := range removed {
+		slog.Info("mail-credentials: removed a credential from a mail account",
+			"account", rm.Account, "type", rm.Type, "reason", rm.Reason, "door", door)
+	}
+}
+
 func (h *mailboxHandler) notifyAgent(ctx context.Context, command string, params any) {
 	if h.cfg.Agent == nil {
 		return

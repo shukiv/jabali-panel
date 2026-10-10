@@ -102,6 +102,11 @@ type AutomationConfig struct {
 	DiskSnapshots repository.DiskUsageSnapshotRepository
 	BWDaily       repository.BWDailyRepository
 	Log           *slog.Logger
+
+	// MailCredentials removes a suspended account's mail app passwords and
+	// API keys at once (mailcreds.Sweeper). Optional: nil leaves it to the
+	// reconciler's next tick.
+	MailCredentials userops.MailCredentialSweeper
 }
 
 func RegisterAutomation(rg *gin.RouterGroup, cfg AutomationConfig) {

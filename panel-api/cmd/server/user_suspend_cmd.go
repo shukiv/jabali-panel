@@ -10,6 +10,9 @@ import (
 	"github.com/spf13/cobra"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/kratosclient"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/mailcreds"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/stalwartadmin"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/userops"
 )
 
@@ -34,6 +37,14 @@ func cliSuspendDeps() userops.Deps {
 	// Guard the typed-nil trap: only set Agent when the shared client exists.
 	if sharedAgent != nil {
 		d.Agent = sharedAgent
+	}
+	// A suspension removes the user's mail app passwords and API keys at
+	// once, like the admin API (the panel's reconciler is the backstop).
+	if sharedDB != nil {
+		d.MailCredentials = mailcreds.Sweeper{
+			Registry: stalwartadmin.NewClient(),
+			Logins:   repository.NewMailLoginRepository(sharedDB),
+		}
 	}
 	return d
 }

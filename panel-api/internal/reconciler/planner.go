@@ -122,6 +122,10 @@ var (
 	// databases to each database's user (GH #2004). One entry for the host;
 	// the interval catches objects a superuser created since.
 	PhasePGReown = Phase{Name: "db.postgres.reown_superuser_objects", AuditInterval: 24 * time.Hour}
+	// PhaseMailCredentials is the sweep of the mail server's app passwords
+	// and API keys against the mailboxes that may sign in. One entry for the
+	// host; it runs again when a mailbox's password, state or owner changes.
+	PhaseMailCredentials = Phase{Name: "mail.credentials", AuditInterval: 10 * time.Minute}
 )
 
 // runDependency is one ordering a run keeps for a domain: the Agent call

@@ -356,6 +356,9 @@ func (r *mailboxRepo) CountByDomainID(ctx context.Context, domainID string) (int
 // computes it as CONCAT(local_part, '@', domain.name). Setting it
 // from Go is harmless (the trigger overwrites it anyway), but the
 // caller should not RELY on that value.
+// Create inserts a mailbox. PasswordChangedAt stays as given, normally
+// unset: a new mailbox has no earlier password, and the mail credentials
+// sweep goes by created_at for it.
 func (r *mailboxRepo) Create(ctx context.Context, mb *models.Mailbox) error {
 	return mapAddressInUse(mapPostmasterReserved(r.db.WithContext(ctx).Create(mb).Error))
 }
@@ -364,25 +367,32 @@ func (r *mailboxRepo) Delete(ctx context.Context, id string) error {
 	return r.db.WithContext(ctx).Where("id = ?", id).Delete(&models.Mailbox{}).Error
 }
 
+// UpdatePasswordHash sets a new password hash and records when it changed:
+// the reconciler removes the mailbox's app passwords made before then.
 func (r *mailboxRepo) UpdatePasswordHash(ctx context.Context, id string, hash string) error {
+	now := time.Now().UTC()
 	return r.db.WithContext(ctx).Model(&models.Mailbox{}).
 		Where("id = ?", id).
 		Updates(map[string]any{
-			"password_hash": hash,
-			"updated_at":    time.Now().UTC(),
+			"password_hash":       hash,
+			"password_changed_at": now,
+			"updated_at":          now,
 		}).Error
 }
 
 // UpdatePasswordHashAndEnc atomically sets both bcrypt hash + plaintext
 // cipher envelope. Callers hand in the already-sealed bytes from
-// ssokey.Key.Seal; the repository never touches plaintext.
+// ssokey.Key.Seal; the repository never touches plaintext. Like
+// UpdatePasswordHash it records when the password changed.
 func (r *mailboxRepo) UpdatePasswordHashAndEnc(ctx context.Context, id string, hash string, enc []byte) error {
+	now := time.Now().UTC()
 	return r.db.WithContext(ctx).Model(&models.Mailbox{}).
 		Where("id = ?", id).
 		Updates(map[string]any{
-			"password_hash": hash,
-			"password_enc":  enc,
-			"updated_at":    time.Now().UTC(),
+			"password_hash":       hash,
+			"password_enc":        enc,
+			"password_changed_at": now,
+			"updated_at":          now,
 		}).Error
 }
 
