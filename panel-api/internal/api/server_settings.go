@@ -16,6 +16,7 @@ import (
 	internalbackup "git.jabali-panel.com/shukivaknin/jabali2/internal/backup"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/mailspam"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/middleware"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
@@ -178,6 +179,11 @@ type updateServerSettingsRequest struct {
 	InterceptAppErrorsDefault *bool `json:"intercept_app_errors_default,omitempty"`
 	// GH #648: opt-in DKIM2 signing alongside classic DKIM (default off).
 	DKIM2SigningEnabled *bool `json:"dkim2_signing_enabled,omitempty"`
+	// GH #2017: the mail server's spam score thresholds (mailspam.Scores).
+	// 0 turns reject or discard off. Checked together after the merge.
+	SpamJunkScore    *float64 `json:"spam_junk_score,omitempty"`
+	SpamRejectScore  *float64 `json:"spam_reject_score,omitempty"`
+	SpamDiscardScore *float64 `json:"spam_discard_score,omitempty"`
 	// TenantNotificationKinds — admin-configurable tenant channel-kind allowlist
 	// (phase 4b).
 	TenantNotificationKinds *models.TenantNotificationKinds `json:"tenant_notification_kinds,omitempty"`
@@ -602,6 +608,26 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 	}
 	if req.DKIM2SigningEnabled != nil {
 		current.DKIM2SigningEnabled = *req.DKIM2SigningEnabled
+	}
+	if req.SpamJunkScore != nil || req.SpamRejectScore != nil || req.SpamDiscardScore != nil {
+		// Merge first, then check the three together: raising all three in
+		// one PATCH must not be refused against the old values. The
+		// reconciler applies them to the mail server on its next tick.
+		scores := mailspam.Scores{Junk: current.SpamJunkScore, Reject: current.SpamRejectScore, Discard: current.SpamDiscardScore}
+		if req.SpamJunkScore != nil {
+			scores.Junk = *req.SpamJunkScore
+		}
+		if req.SpamRejectScore != nil {
+			scores.Reject = *req.SpamRejectScore
+		}
+		if req.SpamDiscardScore != nil {
+			scores.Discard = *req.SpamDiscardScore
+		}
+		if err := scores.Validate(); err != nil {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "validation_failed", "detail": err.Error()})
+			return
+		}
+		current.SpamJunkScore, current.SpamRejectScore, current.SpamDiscardScore = scores.Junk, scores.Reject, scores.Discard
 	}
 	if req.TenantNotificationKinds != nil {
 		// Sanitize drops unknown kinds, so a PATCH can never smuggle an

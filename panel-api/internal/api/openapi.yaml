@@ -1274,6 +1274,22 @@ paths:
                   minimum: 60
                   maximum: 86400
                   description: "Server-wide default TTL for new DNS records (seconds)."
+                spam_junk_score:
+                  type: number
+                  minimum: 0
+                  exclusiveMinimum: true
+                  maximum: 100
+                  description: "Mail at or above this spam score goes to the Junk folder (GH #2017). Default 5."
+                spam_reject_score:
+                  type: number
+                  minimum: 0
+                  maximum: 100
+                  description: "Mail at or above this spam score is refused at SMTP time. 0 = off; otherwise above spam_junk_score. Default 15. Checked together with the other two after the merge; a violation is 422 validation_failed."
+                spam_discard_score:
+                  type: number
+                  minimum: 0
+                  maximum: 100
+                  description: "Mail at or above this spam score is dropped. 0 = off; otherwise above spam_junk_score. The mail server checks reject first. Default 20."
       responses: { "200": { description: Updated } }
 
   # -------------------------------------------------------------- Egress ---

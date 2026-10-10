@@ -268,6 +268,11 @@ type Reconciler struct {
 	mailCredRegistry mailcreds.Registry
 	mailCredLogins   mailcreds.Logins
 	mailCredNow      func() time.Time // nil: time.Now; tests set it
+	// The mail server's spam score thresholds (mail_spam_reconcile.go).
+	// nil disables the pass. mailSpamReloadPending: a write landed but its
+	// settings reload failed, so the next run reloads even if nothing differs.
+	mailSpamScores        SpamScoresApplier
+	mailSpamReloadPending atomic.Bool
 	// M52 (ADR-0133) — shared resources convergence. All three required for
 	// reconcileSharedResources; nil on any disables the pass. srMailboxes +
 	// srMailGroups resolve a grant's polymorphic grantee → target email(s).
@@ -1310,6 +1315,10 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 	// The mail server's app passwords and API keys follow the mailboxes:
 	// none on one that may not sign in, none older than its password.
 	r.reconcileMailCredentials(ctx)
+
+	// GH #2017: the mail server's spam score thresholds follow Server
+	// Settings → Email. Fingerprint-gated noop in steady state.
+	r.reconcileMailSpamScores(ctx)
 
 	tt.mark("post_sweeps")
 
