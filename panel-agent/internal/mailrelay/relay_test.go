@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/mail"
 	"net/textproto"
 	"os"
 	"path/filepath"
@@ -416,6 +417,44 @@ func TestSubmit_SiteSenderHeaderNeverSurvives(t *testing.T) {
 	}
 	if s := headerLines(f.got[0].msg, "Sender"); len(s) != 0 {
 		t.Errorf("the site's Sender header reached the smarthost: %q", s)
+	}
+}
+
+// Like sendmail, the relay adds the Date and Message-ID a site's mail()
+// leaves out: PHP doesn't write them, a Postfix smarthost adds them only for
+// its own local clients, and Gmail refuses mail without a Message-ID.
+func TestSubmit_AddsTheDateAndMessageIDASiteLeftOut(t *testing.T) {
+	f := &fakeSend{}
+	sock := startRelay(t, writeConfig(t, baseConfig()), 2001, f)
+	for range 2 {
+		if err := Submit(sock, []string{"x@example.org"}, []byte(contactForm)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m := f.got[0].msg
+	date := headerLines(m, "Date")
+	if len(date) != 1 {
+		t.Fatalf("Date = %q, want one", date)
+	}
+	if _, err := mail.ParseDate(strings.TrimSpace(date[0][len("Date:"):])); err != nil {
+		t.Errorf("Date %q doesn't parse: %v", date[0], err)
+	}
+	id := headerLines(m, "Message-ID")
+	if len(id) != 1 || !strings.HasPrefix(id[0], "Message-ID: <") || !strings.HasSuffix(id[0], "@shop.example>") {
+		t.Fatalf("Message-ID = %q, want one <...@shop.example>, the sending domain", id)
+	}
+	if again := headerLines(f.got[1].msg, "Message-ID"); len(again) != 1 || again[0] == id[0] {
+		t.Errorf("two messages got Message-IDs %q and %q", id[0], again)
+	}
+
+	// A site's own are kept, not doubled.
+	own := "Date: Mon, 2 Jan 2006 15:04:05 +0000\nMessage-Id: <abc@shop.example>\nFrom: <noreply@shop.example>\nTo: x@example.org\n\nhi\n"
+	if err := Submit(sock, []string{"x@example.org"}, []byte(own)); err != nil {
+		t.Fatal(err)
+	}
+	m = f.got[2].msg
+	if d, i := headerLines(m, "Date"), headerLines(m, "Message-ID"); len(d) != 1 || d[0] != "Date: Mon, 2 Jan 2006 15:04:05 +0000" || len(i) != 1 || i[0] != "Message-Id: <abc@shop.example>" {
+		t.Errorf("the site's own headers: Date %q, Message-ID %q", d, i)
 	}
 }
 

@@ -305,7 +305,7 @@ func (s *Server) relayOne(ctx context.Context, conn net.Conn) result {
 	}
 	res.from = "noreply@" + domain
 	msg = sendmailshim.RestrictFrom(msg, sender.owns, res.from)
-	body := sendmailshim.EnsureSender(msg, res.from)
+	body := sendmailshim.AddMissingHeaders(sendmailshim.EnsureSender(msg, res.from), domain, time.Now())
 
 	select {
 	case s.slots <- struct{}{}:

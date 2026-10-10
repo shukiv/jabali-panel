@@ -15,6 +15,7 @@ package sendmailshim
 import (
 	"bufio"
 	"bytes"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"io"
@@ -22,7 +23,9 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // MaxMessageBytes caps the stdin read. PHP post_max_size defaults to 512M but
@@ -415,6 +418,38 @@ func dropControl(r rune) rune {
 // and any tenant-supplied Sender is dropped (it would be a spoof vector).
 // When there is no From at all, one is added — Stalwart and most receivers
 // reject From-less mail outright.
+// AddMissingHeaders adds the Date and Message-ID fields a message lacks, the
+// way sendmail does for local mail: PHP's mail() writes neither, and not every
+// smarthost adds them for a remote client (some receivers refuse mail without
+// a Message-ID). The Message-ID is random, at domain. Fields the message has
+// are kept as they are.
+func AddMissingHeaders(raw []byte, domain string, now time.Time) []byte {
+	header, body := splitHeaderBody(raw)
+	hasDate, hasID := false, false
+	for _, f := range parseHeaderFields(header) {
+		switch strings.ToLower(f.name) {
+		case "date":
+			hasDate = true
+		case "message-id":
+			hasID = true
+		}
+	}
+	if hasDate && hasID {
+		return raw
+	}
+	var buf bytes.Buffer
+	buf.Grow(len(raw) + 128)
+	if !hasDate {
+		fmt.Fprintf(&buf, "Date: %s\n", now.Format(time.RFC1123Z))
+	}
+	if !hasID {
+		fmt.Fprintf(&buf, "Message-ID: <%s.%s@%s>\n", strconv.FormatInt(now.Unix(), 36), rand.Text(), domain)
+	}
+	buf.Write(header)
+	buf.Write(body)
+	return buf.Bytes()
+}
+
 func EnsureSender(msg *Message, credEmail string) []byte {
 	raw := msg.Raw
 	if strings.EqualFold(msg.FromAddr, credEmail) && msg.HasFrom {
