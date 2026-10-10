@@ -42,18 +42,26 @@ func pgHolderRole(db string) string {
 	return "jbro_" + hex.EncodeToString(sum[:])[:16]
 }
 
+// pgPinSearchPath starts every superuser script: names resolve in
+// pg_catalog only. Inside a tenant's database the tenant can create
+// functions and operators (in public, or in a schema named after the session
+// user, "postgres"), and one that matches a call more closely than
+// pg_catalog's would run with the superuser's rights (CVE-2018-1058). GH #2004.
+const pgPinSearchPath = "SET search_path = pg_catalog, pg_temp;\n"
+
 // pgRunScript runs a psql script as the postgres superuser, connected to db
 // (the maintenance database when db is empty), and returns its output. The
 // script reaches psql on stdin and takes its values as psql variables, so no
 // SQL is built from them; each value passed pgValidIdent or is a derived
-// name, so \set takes it as it is.
+// name, so \set takes it as it is. It runs with the search path pinned to
+// pg_catalog (pgPinSearchPath).
 func pgRunScript(ctx context.Context, db, script string) (string, error) {
 	args := []string{"-u", "postgres", "psql", "-X", "-q", "-v", "ON_ERROR_STOP=1"}
 	if db != "" {
 		args = append(args, "-d", db)
 	}
 	cmd := execCommandContext(ctx, "sudo", append(args, "-f", "-")...)
-	cmd.Stdin = strings.NewReader(script)
+	cmd.Stdin = strings.NewReader(pgPinSearchPath + script)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return string(out), fmt.Errorf("psql: %w (%s)", err, pgErrorLines(string(out)))

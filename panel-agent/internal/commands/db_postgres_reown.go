@@ -38,14 +38,23 @@ import (
 // REASSIGN OWNED can't do this: it refuses the bootstrap superuser outright.
 // Each database is changed in one transaction, so a failure leaves it as it
 // was.
+//
+// The scripts run as postgres inside the tenant's database, so they look
+// names up in pg_catalog only (pgPinSearchPath, in pgRunScript): a tenant's
+// function must never run in this session. A database with an event trigger
+// is left alone and reported: every ALTER here would fire it with the
+// superuser's rights, and handing its function over would let the tenant
+// rewrite what it runs. Only a superuser can create one, so an admin decides.
 
 // Markers the reown scripts print.
 const (
-	pgReownCountMarker   = "JABALI_SUPEROWNED"
-	pgReownLeftBegin     = "JABALI_LEFT_BEGIN"
-	pgReownLeftEnd       = "JABALI_LEFT_END"
-	pgReownDoneMarker    = "JABALI_REOWNED"
-	pgReownRefusedMarker = "JABALI_REOWN_REFUSED"
+	pgReownCountMarker        = "JABALI_SUPEROWNED"
+	pgReownLeftBegin          = "JABALI_LEFT_BEGIN"
+	pgReownLeftEnd            = "JABALI_LEFT_END"
+	pgReownDoneMarker         = "JABALI_REOWNED"
+	pgReownRefusedMarker      = "JABALI_REOWN_REFUSED"
+	pgReownEventTriggerMarker = "JABALI_EVENT_TRIGGERS"
+	pgReownEventTriggerStop   = "JABALI_REOWN_EVENT_TRIGGER"
 )
 
 // pgUserSchema is true of a namespace n that isn't one of the system's.
@@ -146,8 +155,8 @@ var pgReownLeftQuery = "SELECT format('%s (language %s)', p.oid::regprocedure, l
 	" WHERE NOT " + pgRoutineMoves + " AND " + pgUserSchema + " AND " + pgNotExtensionMember("pg_proc", "p.oid") +
 	" ORDER BY 1;\n"
 
-// pgReownCountScript counts what the reown would move in a database and
-// lists what it would leave.
+// pgReownCountScript counts what the reown would move in a database and its
+// event triggers, and lists what it would leave.
 func pgReownCountScript() string {
 	parts := make([]string, len(pgReownKinds))
 	for i, k := range pgReownKinds {
@@ -155,24 +164,28 @@ func pgReownCountScript() string {
 	}
 	return "SELECT " + strings.Join(parts, " + ") + " AS superowned \\gset\n" +
 		"\\echo " + pgReownCountMarker + " :superowned\n" +
+		"SELECT count(*) AS event_triggers FROM pg_event_trigger \\gset\n" +
+		"\\echo " + pgReownEventTriggerMarker + " :event_triggers\n" +
 		"\\pset tuples_only on\n\\pset format unaligned\n" +
 		"\\echo " + pgReownLeftBegin + "\n" + pgReownLeftQuery + "\\echo " + pgReownLeftEnd + "\n"
 }
 
 // pgReownScript hands what a superuser owns in the database to role, in one
-// transaction. Nothing moves unless role exists without server-wide rights.
-// role is a pgValidIdent name or a derived holder name, so \set takes it as
-// it is.
+// transaction. Nothing moves unless role exists without server-wide rights,
+// or while the database has an event trigger. role is a pgValidIdent name or
+// a derived holder name, so \set takes it as it is.
 func pgReownScript(role string) string {
 	var b strings.Builder
 	b.WriteString("\\set role '" + role + "'\n")
 	b.WriteString("SELECT (count(*) > 0)::int AS role_plain FROM pg_roles WHERE rolname = :'role'" +
 		" AND NOT (rolsuper OR rolcreaterole OR rolreplication OR rolbypassrls) \\gset\n")
-	b.WriteString("\\if :role_plain\nBEGIN;\n")
+	b.WriteString("SELECT (count(*) = 0)::int AS no_event_triggers FROM pg_event_trigger \\gset\n")
+	b.WriteString("\\if :role_plain\n\\if :no_event_triggers\nBEGIN;\n")
 	for _, k := range pgReownKinds {
 		b.WriteString("SELECT " + k.stmt + " FROM " + k.from + " \\gexec\n")
 	}
 	b.WriteString("COMMIT;\n\\echo " + pgReownDoneMarker + "\n")
+	b.WriteString("\\else\n\\echo " + pgReownEventTriggerStop + "\n\\endif\n")
 	b.WriteString("\\else\n\\echo " + pgReownRefusedMarker + "\n\\endif\n")
 	return b.String()
 }
@@ -193,6 +206,9 @@ type dbPgReownResponse struct {
 	// Failed is, per database, why nothing moved there.
 	Failed map[string]string `json:"failed"`
 }
+
+// pgReownEventTriggerReason is why a database with an event trigger is left.
+const pgReownEventTriggerReason = "the database has an event trigger, which runs with a superuser's rights; nothing was handed over (an admin should review it)"
 
 // pgSystemDatabase is true of the databases PostgreSQL itself keeps.
 func pgSystemDatabase(db string) bool {
@@ -216,13 +232,13 @@ func pgExistingDatabases(ctx context.Context) (map[string]bool, error) {
 }
 
 // pgReownCount runs the count script in db: how many objects would move,
-// and the routines that would stay.
-func pgReownCount(ctx context.Context, db string) (int, []string, error) {
+// how many event triggers it has, and the routines that would stay.
+func pgReownCount(ctx context.Context, db string) (int, int, []string, error) {
 	out, err := pgRunScript(ctx, db, pgReownCountScript())
 	if err != nil {
-		return 0, nil, err
+		return 0, 0, nil, err
 	}
-	n := -1
+	n, evt := -1, -1
 	var left []string
 	inLeft := false
 	for _, ln := range strings.Split(out, "\n") {
@@ -232,6 +248,10 @@ func pgReownCount(ctx context.Context, db string) (int, []string, error) {
 			if v, cErr := strconv.Atoi(strings.TrimPrefix(ln, pgReownCountMarker+" ")); cErr == nil {
 				n = v
 			}
+		case strings.HasPrefix(ln, pgReownEventTriggerMarker+" "):
+			if v, cErr := strconv.Atoi(strings.TrimPrefix(ln, pgReownEventTriggerMarker+" ")); cErr == nil {
+				evt = v
+			}
 		case ln == pgReownLeftBegin:
 			inLeft = true
 		case ln == pgReownLeftEnd:
@@ -240,10 +260,10 @@ func pgReownCount(ctx context.Context, db string) (int, []string, error) {
 			left = append(left, ln)
 		}
 	}
-	if n < 0 {
-		return 0, nil, fmt.Errorf("no count in the output")
+	if n < 0 || evt < 0 {
+		return 0, 0, nil, fmt.Errorf("no count in the output")
 	}
-	return n, left, nil
+	return n, evt, left, nil
 }
 
 func dbPgReownHandler(ctx context.Context, params json.RawMessage) (any, error) {
@@ -275,7 +295,7 @@ func dbPgReownHandler(ctx context.Context, params json.RawMessage) (any, error) 
 		if !have[db] {
 			continue // gone from the server; nothing to hand over
 		}
-		n, left, cErr := pgReownCount(ctx, db)
+		n, evt, left, cErr := pgReownCount(ctx, db)
 		if cErr != nil {
 			resp.Failed[db] = "count superuser-owned objects: " + cErr.Error()
 			continue
@@ -284,6 +304,10 @@ func dbPgReownHandler(ctx context.Context, params json.RawMessage) (any, error) 
 			resp.Left[db] = left
 		}
 		if n == 0 {
+			continue
+		}
+		if evt > 0 {
+			resp.Failed[db] = pgReownEventTriggerReason
 			continue
 		}
 		role := (*p.Databases)[db]
@@ -300,6 +324,8 @@ func dbPgReownHandler(ctx context.Context, params json.RawMessage) (any, error) 
 			resp.Failed[db] = "hand objects over: " + rErr.Error()
 		case strings.Contains(out, pgReownRefusedMarker):
 			resp.Failed[db] = "role " + role + " isn't on this server, or has server-wide rights"
+		case strings.Contains(out, pgReownEventTriggerStop):
+			resp.Failed[db] = pgReownEventTriggerReason
 		case !strings.Contains(out, pgReownDoneMarker):
 			resp.Failed[db] = "hand objects over: no confirmation in the output"
 		default:

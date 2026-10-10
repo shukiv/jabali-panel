@@ -66,7 +66,7 @@ func TestPgReown_Refusals(t *testing.T) {
 
 func TestPgReown_HandsSuperuserObjectsToTheDatabaseUser(t *testing.T) {
 	w := reownWorld(t, []string{"postgres", "alice_shop"},
-		pgReownCountMarker+" 3\n"+pgReownLeftBegin+"\n"+pgReownLeftEnd+"\n"+pgReownDoneMarker+"\n")
+		pgReownCountMarker+" 3\n"+pgReownEventTriggerMarker+" 0\n"+pgReownLeftBegin+"\n"+pgReownLeftEnd+"\n"+pgReownDoneMarker+"\n")
 	resp, err := callPgReown(t, map[string]string{"alice_shop": "alice_app"})
 	if err != nil {
 		t.Fatal(err)
@@ -98,7 +98,7 @@ func TestPgReown_HandsSuperuserObjectsToTheDatabaseUser(t *testing.T) {
 }
 
 func TestPgReown_NothingSuperuserOwnedChangesNothing(t *testing.T) {
-	w := reownWorld(t, []string{"alice_shop", "bob_blog"}, pgReownCountMarker+" 0\n"+pgReownLeftBegin+"\n"+pgReownLeftEnd+"\n")
+	w := reownWorld(t, []string{"alice_shop", "bob_blog"}, pgReownCountMarker+" 0\n"+pgReownEventTriggerMarker+" 0\n"+pgReownLeftBegin+"\n"+pgReownLeftEnd+"\n")
 	resp, err := callPgReown(t, map[string]string{"alice_shop": "alice_app", "bob_blog": ""})
 	if err != nil {
 		t.Fatal(err)
@@ -112,7 +112,7 @@ func TestPgReown_NothingSuperuserOwnedChangesNothing(t *testing.T) {
 }
 
 func TestPgReown_DatabaseWithoutAUserGoesToItsHolder(t *testing.T) {
-	w := reownWorld(t, []string{"bob_blog"}, pgReownCountMarker+" 2\n"+pgReownDoneMarker+"\n")
+	w := reownWorld(t, []string{"bob_blog"}, pgReownCountMarker+" 2\n"+pgReownEventTriggerMarker+" 0\n"+pgReownDoneMarker+"\n")
 	resp, err := callPgReown(t, map[string]string{"bob_blog": ""})
 	if err != nil {
 		t.Fatal(err)
@@ -129,7 +129,7 @@ func TestPgReown_DatabaseWithoutAUserGoesToItsHolder(t *testing.T) {
 }
 
 func TestPgReown_RefusedRoleMovesNothing(t *testing.T) {
-	reownWorld(t, []string{"alice_shop"}, pgReownCountMarker+" 4\n"+pgReownRefusedMarker+"\n")
+	reownWorld(t, []string{"alice_shop"}, pgReownCountMarker+" 4\n"+pgReownEventTriggerMarker+" 0\n"+pgReownRefusedMarker+"\n")
 	resp, err := callPgReown(t, map[string]string{"alice_shop": "alice_app"})
 	if err != nil {
 		t.Fatal(err)
@@ -144,7 +144,7 @@ func TestPgReown_ScriptFailureIsReported(t *testing.T) {
 		if strings.Contains(line, "SELECT datname FROM pg_database") {
 			return "alice_shop\n", false
 		}
-		return pgReownCountMarker + " 1\n", strings.HasSuffix(line, "-f -")
+		return pgReownCountMarker + " 1\n" + pgReownEventTriggerMarker + " 0\n", strings.HasSuffix(line, "-f -")
 	})
 	resp, err := callPgReown(t, map[string]string{"alice_shop": "alice_app"})
 	if err != nil {
@@ -171,12 +171,64 @@ func TestPgReown_DatabaseGoneFromTheServerIsSkipped(t *testing.T) {
 
 func TestPgReown_ReportsWhatStays(t *testing.T) {
 	reownWorld(t, []string{"alice_shop"},
-		pgReownCountMarker+" 0\n"+pgReownLeftBegin+"\nshell(text) (language c)\n"+pgReownLeftEnd+"\n")
+		pgReownCountMarker+" 0\n"+pgReownEventTriggerMarker+" 0\n"+pgReownLeftBegin+"\nshell(text) (language c)\n"+pgReownLeftEnd+"\n")
 	resp, err := callPgReown(t, map[string]string{"alice_shop": "alice_app"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(resp.Left, map[string][]string{"alice_shop": {"shell(text) (language c)"}}) {
 		t.Errorf("left = %+v", resp.Left)
+	}
+}
+
+func TestPgReown_EventTriggersLeaveTheDatabaseAlone(t *testing.T) {
+	w := reownWorld(t, []string{"alice_shop"},
+		pgReownCountMarker+" 5\n"+pgReownEventTriggerMarker+" 1\n"+pgReownDoneMarker+"\n")
+	resp, err := callPgReown(t, map[string]string{"alice_shop": "alice_app"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Reowned) != 0 || !strings.Contains(resp.Failed["alice_shop"], "event trigger") {
+		t.Errorf("response = %+v", resp)
+	}
+	if w.script(t, "BEGIN;") >= 0 {
+		t.Error("handed objects over in a database with an event trigger")
+	}
+}
+
+// Every script runs with pg_catalog as the only schema it looks names up in.
+func TestPgReown_ScriptsPinTheSearchPath(t *testing.T) {
+	w := reownWorld(t, []string{"alice_shop"}, pgReownCountMarker+" 1\n"+pgReownEventTriggerMarker+" 0\n"+pgReownDoneMarker+"\n")
+	if _, err := callPgReown(t, map[string]string{"alice_shop": ""}); err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for i, l := range w.lines {
+		if strings.HasSuffix(l, "-f -") {
+			n++
+			if s := w.stdin(t, i); !strings.HasPrefix(s, pgPinSearchPath) {
+				t.Errorf("script %d doesn't start by pinning the search path:\n%s", i, s)
+			}
+		}
+	}
+	if n != 3 { // count, holder, reown
+		t.Errorf("ran %d scripts: %q", n, w.lines)
+	}
+}
+
+// An event trigger created between the count and the hand-over stops it too.
+func TestPgReown_EventTriggerAtHandOverStopsIt(t *testing.T) {
+	newPgWorld(t, func(line string) (string, bool) {
+		if strings.Contains(line, "SELECT datname FROM pg_database") {
+			return "alice_shop\n", false
+		}
+		return pgReownCountMarker + " 2\n" + pgReownEventTriggerMarker + " 0\n" + pgReownEventTriggerStop + "\n", false
+	})
+	resp, err := callPgReown(t, map[string]string{"alice_shop": "alice_app"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Reowned) != 0 || !strings.Contains(resp.Failed["alice_shop"], "event trigger") {
+		t.Errorf("response = %+v", resp)
 	}
 }

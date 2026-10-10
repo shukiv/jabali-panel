@@ -218,7 +218,7 @@ CREATE ROLE carol_admin LOGIN CREATEROLE;`)
 	if resp.Reowned["alice_shop"] == 0 || resp.Reowned["bob_blog"] != 1 || resp.Failed["carol_db"] == "" || len(resp.Failed) != 1 {
 		t.Errorf("response = %+v", resp)
 	}
-	if !reflect.DeepEqual(resp.Left["alice_shop"], []string{"cfun(integer,integer) (language internal)"}) {
+	if !reflect.DeepEqual(resp.Left["alice_shop"], []string{"public.cfun(integer,integer) (language internal)"}) {
 		t.Errorf("left = %+v", resp.Left)
 	}
 
@@ -229,5 +229,67 @@ CREATE ROLE carol_admin LOGIN CREATEROLE;`)
 	}
 	if len(again.Reowned) != 0 || len(again.Failed) != 0 {
 		t.Errorf("second run = %+v", again)
+	}
+}
+
+// The reown runs as postgres inside the tenant's database, where the tenant
+// can create functions (public, or a schema named for the session user). A
+// closer match for a function the script calls would run with a superuser's
+// rights; the script must only ever call pg_catalog's.
+func TestPgReown_RealPostgres_TenantFunctionsNeverRunAsSuperuser(t *testing.T) {
+	pg := startRealPG(t)
+	pg.sql(t, "postgres", `
+CREATE ROLE alice_app LOGIN;
+CREATE DATABASE alice_shop OWNER postgres;
+GRANT ALL ON DATABASE alice_shop TO alice_app;`)
+	pg.sql(t, "alice_shop", `
+GRANT ALL ON SCHEMA public TO alice_app;
+CREATE TABLE t (id serial PRIMARY KEY);
+CREATE SCHEMA app;
+SET ROLE alice_app;
+CREATE SCHEMA postgres;
+CREATE FUNCTION public.format(text, name, text) RETURNS text LANGUAGE plpgsql AS
+  $$BEGIN EXECUTE 'ALTER ROLE alice_app SUPERUSER'; RETURN pg_catalog.format($1, $2, $3); END$$;
+CREATE FUNCTION postgres.format(text, text, regclass, text) RETURNS text LANGUAGE plpgsql AS
+  $$BEGIN EXECUTE 'ALTER ROLE alice_app SUPERUSER'; RETURN pg_catalog.format($1, $2, $3, $4); END$$;`)
+
+	resp, err := callPgReown(t, map[string]string{"alice_shop": "alice_app"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if su := pg.sql(t, "postgres", "SELECT rolsuper FROM pg_roles WHERE rolname = 'alice_app'"); su != "f" {
+		t.Fatalf("alice_app became a superuser (rolsuper = %q): a tenant function ran in the superuser's session", su)
+	}
+	if o := pg.sql(t, "alice_shop", "SELECT relowner::regrole FROM pg_class WHERE relname = 't'"); o != "alice_app" || resp.Reowned["alice_shop"] == 0 {
+		t.Errorf("t owned by %q; response %+v", o, resp)
+	}
+}
+
+// An event trigger runs on every ALTER the reown would send, with the
+// superuser's rights. Only a superuser can create one, so a database that
+// has one is left for an admin, untouched.
+func TestPgReown_RealPostgres_DatabaseWithEventTriggersIsLeftAlone(t *testing.T) {
+	pg := startRealPG(t)
+	pg.sql(t, "postgres", `
+CREATE ROLE alice_app LOGIN;
+CREATE DATABASE alice_shop OWNER postgres;`)
+	pg.sql(t, "alice_shop", `
+CREATE TABLE t (id int);
+CREATE TABLE fired (n int);
+CREATE FUNCTION evt() RETURNS event_trigger LANGUAGE plpgsql AS $$BEGIN INSERT INTO fired VALUES (1); END$$;
+CREATE EVENT TRIGGER et ON ddl_command_end EXECUTE FUNCTION evt();`)
+
+	resp, err := callPgReown(t, map[string]string{"alice_shop": "alice_app"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(resp.Failed["alice_shop"], "event trigger") || len(resp.Reowned) != 0 {
+		t.Errorf("response = %+v", resp)
+	}
+	if n := pg.sql(t, "alice_shop", "SELECT count(*) FROM fired"); n != "0" {
+		t.Errorf("the event trigger fired %s times", n)
+	}
+	if o := pg.sql(t, "alice_shop", "SELECT proowner::regrole FROM pg_proc WHERE proname = 'evt'"); o != "postgres" {
+		t.Errorf("the event trigger's function went to %q", o)
 	}
 }
