@@ -7,6 +7,9 @@
 // credentials under /etc/jabali-panel/sendmail/<user>/ (0640 root:<usergroup>)
 // and the shim submits to Stalwart on 127.0.0.1:587 (STARTTLS, verified) with
 // the envelope sender forced to the credential identity.
+//
+// When the admin sends website mail through a smarthost instead (GH #2056,
+// ADR 0174), the shim hands the message to the jabali-mailrelay socket.
 package main
 
 import (
@@ -16,6 +19,7 @@ import (
 	"os/user"
 	"strconv"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-agent/internal/mailrelay"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-agent/internal/sendmailshim"
 )
 
@@ -53,6 +57,15 @@ func run() error {
 	recipients := append([]string{}, opts.Recipients...)
 	if opts.ReadRecipientsFromHeaders {
 		recipients = append(recipients, msg.HeaderRecipients...)
+	}
+
+	// GH #2056: with a smarthost selected, the relay sends the message. It
+	// holds the smarthost login and picks the sender from this process's UID,
+	// so nothing here needs a credential.
+	if mailrelay.ReadMode(mailrelay.ModePath) == mailrelay.ModeSmarthost {
+		err = mailrelay.Submit(mailrelay.SocketPath, recipients, msg.Raw)
+		logLine(username, msg.FromDomain, "smarthost-relay", len(recipients), err)
+		return err
 	}
 
 	cred, err := sendmailshim.LoadCred(credRoot+"/"+username, msg.FromDomain)
