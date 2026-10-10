@@ -36,12 +36,13 @@ const (
 
 // Test seams.
 var (
-	mailRelayConfigPath  = mailrelay.ConfigPath
-	mailRelayModePath    = mailrelay.ModePath
-	mailRelaySocketPath  = mailrelay.SocketPath
-	mailRelayLookupUser  = user.Lookup
-	mailRelayLookupGroup = user.LookupGroup
-	mailRelaySocketWait  = 10 * time.Second
+	mailRelayConfigPath = mailrelay.ConfigPath
+	mailRelayModePath   = mailrelay.ModePath
+	mailRelaySocketPath = mailrelay.SocketPath
+	mailRelayLookupUser = user.Lookup
+	mailRelaySocketWait = 10 * time.Second
+	mailRelayPasswdPath = "/etc/passwd"
+	mailRelayGroupPath  = "/etc/group"
 )
 
 var mailRelayMu sync.Mutex
@@ -188,20 +189,45 @@ func mailRelayApplySmarthost(ctx context.Context, p mailRelayApplyParams) (any, 
 // and that group may read it.
 func mailRelayAccountGID() (int, error) {
 	missing := &agentwire.AgentError{Code: agentwire.CodeFailedPrecondition, Message: "the jabali-mailrelay user is missing; run jabali update"}
-	u, err := mailRelayLookupUser(mailRelayGroup)
+	// The local files only, the way install.sh's mailrelay_account_ok reads
+	// them: os/user goes through NSS on a cgo build, and a directory service
+	// that answers for jabali-mailrelay must not get the password.
+	pw, err := mailRelayLocalEntry(mailRelayPasswdPath, 7)
 	if err != nil {
 		return 0, missing
 	}
-	grp, err := mailRelayLookupGroup(mailRelayGroup)
+	gr, err := mailRelayLocalEntry(mailRelayGroupPath, 4)
 	if err != nil {
 		return 0, missing
 	}
-	uid, uerr := strconv.Atoi(u.Uid)
-	gid, gerr := strconv.Atoi(grp.Gid)
-	if uerr != nil || gerr != nil || uid <= 0 || uid >= mailRelayFirstLoginUID || u.Gid != grp.Gid {
+	uid, uerr := strconv.Atoi(pw[2])
+	gid, gerr := strconv.Atoi(gr[2])
+	shell := pw[6]
+	nologin := strings.HasSuffix(shell, "/nologin") || strings.HasSuffix(shell, "/false")
+	if uerr != nil || gerr != nil || uid <= 0 || uid >= mailRelayFirstLoginUID || pw[3] != gr[2] || gr[3] != "" || !nologin {
 		return 0, &agentwire.AgentError{Code: agentwire.CodeFailedPrecondition, Message: "the jabali-mailrelay account isn't the dedicated system user; run jabali update"}
 	}
 	return gid, nil
+}
+
+// mailRelayLocalEntry returns the jabali-mailrelay line of a passwd or group
+// file split into its fields, or an error when the file has no such line
+// with the expected number of fields.
+func mailRelayLocalEntry(path string, fields int) ([]string, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		f := strings.Split(line, ":")
+		if f[0] == mailRelayGroup {
+			if len(f) != fields {
+				return nil, fmt.Errorf("%s: malformed %s entry", path, mailRelayGroup)
+			}
+			return f, nil
+		}
+	}
+	return nil, os.ErrNotExist
 }
 
 // mailRelayFirstLoginUID is where login accounts start (UID_MIN). Site users

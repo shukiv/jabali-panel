@@ -37,15 +37,16 @@ func setupMailRelay(t *testing.T) *mailRelayFixture {
 
 	prev := struct {
 		cfg, mode, sock string
+		passwd, group   string
 		lu              func(string) (*user.User, error)
-		lg              func(string) (*user.Group, error)
 		wait            time.Duration
 		chown           func(string, int, int) error
 		sysctl          func(context.Context, ...string) ([]byte, error)
-	}{mailRelayConfigPath, mailRelayModePath, mailRelaySocketPath, mailRelayLookupUser, mailRelayLookupGroup, mailRelaySocketWait, sendmailChown, runSystemctl}
+	}{mailRelayConfigPath, mailRelayModePath, mailRelaySocketPath, mailRelayPasswdPath, mailRelayGroupPath, mailRelayLookupUser, mailRelaySocketWait, sendmailChown, runSystemctl}
 	t.Cleanup(func() {
 		mailRelayConfigPath, mailRelayModePath, mailRelaySocketPath = prev.cfg, prev.mode, prev.sock
-		mailRelayLookupUser, mailRelayLookupGroup = prev.lu, prev.lg
+		mailRelayPasswdPath, mailRelayGroupPath = prev.passwd, prev.group
+		mailRelayLookupUser = prev.lu
 		mailRelaySocketWait, sendmailChown, runSystemctl = prev.wait, prev.chown, prev.sysctl
 		if f.ln != nil {
 			f.ln.Close()
@@ -56,13 +57,10 @@ func setupMailRelay(t *testing.T) *mailRelayFixture {
 	mailRelayModePath = filepath.Join(dir, "sendmail", "website-mail.mode")
 	mailRelaySocketPath = filepath.Join(dir, "relay.sock")
 	mailRelaySocketWait = 300 * time.Millisecond
+	mailRelayPasswdPath = filepath.Join(dir, "passwd")
+	mailRelayGroupPath = filepath.Join(dir, "group")
+	writeRelayAccount(t, relayPasswdLine, relayGroupLine)
 	sendmailChown = func(string, int, int) error { return nil }
-	mailRelayLookupGroup = func(name string) (*user.Group, error) {
-		if name != "jabali-mailrelay" {
-			return nil, errors.New("unknown group")
-		}
-		return &user.Group{Gid: "990", Name: name}, nil
-	}
 	mailRelayLookupUser = func(name string) (*user.User, error) {
 		switch name {
 		case "alice":
@@ -73,8 +71,8 @@ func setupMailRelay(t *testing.T) *mailRelayFixture {
 			return &user.User{Uid: "0", Username: name}, nil
 		case "www_data":
 			return &user.User{Uid: "33", Username: name}, nil
-		case "jabali-mailrelay":
-			return &user.User{Uid: "990", Gid: "990", Username: name}, nil
+		case "nobody":
+			return &user.User{Uid: "65534", Username: name}, nil
 		}
 		return nil, user.UnknownUserError(name)
 	}
@@ -97,6 +95,23 @@ func setupMailRelay(t *testing.T) *mailRelayFixture {
 	return f
 }
 
+// The relay account as install.sh creates it: a local system user with its
+// own group, no members and no login shell.
+const (
+	relayPasswdLine = "jabali-mailrelay:x:990:990::/nonexistent:/usr/sbin/nologin"
+	relayGroupLine  = "jabali-mailrelay:x:990:"
+)
+
+func writeRelayAccount(t *testing.T, passwd, group string) {
+	t.Helper()
+	if err := os.WriteFile(mailRelayPasswdPath, []byte("root:x:0:0:root:/root:/bin/bash\n"+passwd+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(mailRelayGroupPath, []byte("root:x:0:\n"+group+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func callMailRelay(t *testing.T, p any) (mailRelayApplyResponse, error) {
 	t.Helper()
 	raw, _ := json.Marshal(p)
@@ -117,6 +132,7 @@ func smarthostParams() map[string]any {
 			{"username": "ghost", "domains": []string{"ghost.example"}},
 			{"username": "toor", "domains": []string{"root.example"}},
 			{"username": "www_data", "domains": []string{"www.example"}},
+			{"username": "nobody", "domains": []string{"nobody.example"}},
 			{"username": "carol", "domains": []string{"bad domain"}},
 		},
 	}
@@ -131,8 +147,8 @@ func TestMailRelayApply_SmarthostWritesSendersStartsRelayThenSwitches(t *testing
 	if resp.Mode != "smarthost" || !resp.Changed || resp.Senders != 2 {
 		t.Errorf("response = %+v", resp)
 	}
-	if len(resp.Skipped) != 4 {
-		t.Errorf("skipped = %q, want ghost, toor, www_data and carol", resp.Skipped)
+	if len(resp.Skipped) != 5 || !strings.Contains(strings.Join(resp.Skipped, "|"), "nobody: a system account may not send") {
+		t.Errorf("skipped = %q, want ghost, toor, www_data, nobody and carol", resp.Skipped)
 	}
 
 	cfg, err := mailrelay.LoadConfig(mailRelayConfigPath)
@@ -256,11 +272,13 @@ func TestMailRelayApply_Refusals(t *testing.T) {
 
 func TestMailRelayApply_MissingRelayUser(t *testing.T) {
 	setupMailRelay(t)
-	mailRelayLookupGroup = func(string) (*user.Group, error) { return nil, errors.New("unknown group") }
+	if err := os.WriteFile(mailRelayGroupPath, []byte("root:x:0:\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	_, err := callMailRelay(t, smarthostParams())
 	var ae *agentwire.AgentError
-	if !errors.As(err, &ae) || ae.Code != agentwire.CodeFailedPrecondition {
-		t.Fatalf("err = %v, want failed_precondition", err)
+	if !errors.As(err, &ae) || ae.Code != agentwire.CodeFailedPrecondition || !strings.Contains(ae.Message, "missing") {
+		t.Fatalf("err = %v, want failed_precondition: the user is missing", err)
 	}
 }
 
@@ -282,22 +300,25 @@ func TestStartMailRelayIfSelected(t *testing.T) {
 	}
 }
 
+// The agent applies the same rules as install.sh's mailrelay_account_ok, from
+// the local files only: install.sh switching the relay off is undone by the
+// next apply unless this gate refuses too. A directory service (LDAP, sssd)
+// that answers for jabali-mailrelay is never taken at its word.
 func TestMailRelayApply_RelayAccountMustBeTheSystemUser(t *testing.T) {
-	cases := map[string]*user.User{
-		"root":               {Uid: "0", Gid: "990"},
-		"a login account":    {Uid: "1500", Gid: "990"},
-		"another prim group": {Uid: "990", Gid: "33"},
+	cases := map[string][2]string{
+		"root":                    {"jabali-mailrelay:x:0:990::/nonexistent:/usr/sbin/nologin", relayGroupLine},
+		"a login account":         {"jabali-mailrelay:x:1500:990::/nonexistent:/usr/sbin/nologin", relayGroupLine},
+		"another primary group":   {"jabali-mailrelay:x:990:33::/nonexistent:/usr/sbin/nologin", relayGroupLine},
+		"a login shell":           {"jabali-mailrelay:x:990:990::/nonexistent:/bin/bash", relayGroupLine},
+		"a group with members":    {relayPasswdLine, "jabali-mailrelay:x:990:alice"},
+		"no local account":        {"otheruser:x:990:990::/nonexistent:/usr/sbin/nologin", relayGroupLine},
+		"no local group":          {relayPasswdLine, "othergroup:x:990:"},
+		"a truncated passwd line": {"jabali-mailrelay:x:990:990", relayGroupLine},
 	}
-	for name, u := range cases {
+	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
 			f := setupMailRelay(t)
-			base := mailRelayLookupUser
-			mailRelayLookupUser = func(n string) (*user.User, error) {
-				if n == "jabali-mailrelay" {
-					return u, nil
-				}
-				return base(n)
-			}
+			writeRelayAccount(t, c[0], c[1])
 			_, err := callMailRelay(t, smarthostParams())
 			var ae *agentwire.AgentError
 			if !errors.As(err, &ae) || ae.Code != agentwire.CodeFailedPrecondition {
