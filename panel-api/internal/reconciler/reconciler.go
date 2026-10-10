@@ -267,6 +267,7 @@ type Reconciler struct {
 	// (mail_credentials_reconcile.go). nil on either disables the pass.
 	mailCredRegistry mailcreds.Registry
 	mailCredLogins   mailcreds.Logins
+	mailCredNow      func() time.Time // nil: time.Now; tests set it
 	// M52 (ADR-0133) — shared resources convergence. All three required for
 	// reconcileSharedResources; nil on any disables the pass. srMailboxes +
 	// srMailGroups resolve a grant's polymorphic grantee → target email(s).

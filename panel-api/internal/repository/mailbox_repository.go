@@ -356,13 +356,10 @@ func (r *mailboxRepo) CountByDomainID(ctx context.Context, domainID string) (int
 // computes it as CONCAT(local_part, '@', domain.name). Setting it
 // from Go is harmless (the trigger overwrites it anyway), but the
 // caller should not RELY on that value.
-// Create inserts a mailbox. A mailbox without a PasswordChangedAt gets the
-// current time: its password is set now.
+// Create inserts a mailbox. PasswordChangedAt stays as given, normally
+// unset: a new mailbox has no earlier password, and the mail credentials
+// sweep goes by created_at for it.
 func (r *mailboxRepo) Create(ctx context.Context, mb *models.Mailbox) error {
-	if mb.PasswordChangedAt == nil {
-		now := time.Now().UTC()
-		mb.PasswordChangedAt = &now
-	}
 	return mapAddressInUse(mapPostmasterReserved(r.db.WithContext(ctx).Create(mb).Error))
 }
 

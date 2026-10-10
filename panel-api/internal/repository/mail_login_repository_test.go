@@ -40,18 +40,18 @@ func TestMailboxPasswordWrites_StampPasswordChangedAt(t *testing.T) {
 	}
 }
 
-func TestMailboxCreate_StampsPasswordChangedAt(t *testing.T) {
+// A new mailbox has no earlier password whose login a credential could have
+// been made with: its time stays unset, and the sweep goes by created_at.
+func TestMailboxCreate_LeavesPasswordChangedAtUnset(t *testing.T) {
 	db, mock, raw := newMockDB(t)
 	defer raw.Close()
 	mock.ExpectBegin()
-	mock.ExpectExec("INSERT INTO `mailboxes` .*`password_changed_at`").WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec("INSERT INTO `mailboxes`").WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 
-	before := time.Now().UTC().Add(-time.Second)
 	mb := &models.Mailbox{ID: "mb1", DomainID: "dom1", LocalPart: "bob", PasswordHash: "$2b$12$hash"}
 	require.NoError(t, NewMailboxRepository(db).Create(context.Background(), mb))
-	require.NotNil(t, mb.PasswordChangedAt)
-	require.True(t, mb.PasswordChangedAt.After(before), "stamped %v", mb.PasswordChangedAt)
+	require.Nil(t, mb.PasswordChangedAt)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -71,23 +71,30 @@ func TestMailboxCreate_KeepsAGivenPasswordChangedAt(t *testing.T) {
 
 // The mailboxes that may sign in are the ones the mail server's queryLogin
 // lets in: enabled, on a verified domain, whose owner isn't suspended. Each
-// comes with when its password last changed, or when it was created.
+// comes with the cutoff for its app passwords: a minute after its password
+// last changed (the mail server still takes the old password from its login
+// cache until the panel's flush reaches it, so an app password made in that
+// window may have been made with the old one), or when it was created.
 func TestMailLogins_ListsTheMailboxesThatMaySignIn(t *testing.T) {
 	db, mock, raw := newMockDB(t)
 	defer raw.Close()
 	changed := time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
 	created := time.Date(2026, 9, 1, 8, 30, 0, 0, time.UTC)
-	mock.ExpectQuery("(?s)SELECT m.email_cached AS address, COALESCE\\(m.password_changed_at, m.created_at\\) AS changed_at " +
+	mock.ExpectQuery("(?s)SELECT m.email_cached AS address, m.password_changed_at AS changed_at, m.created_at AS created_at " +
 		"FROM mailboxes m JOIN domains d ON d.id = m.domain_id " +
 		"WHERE m.is_disabled = 0 AND d.ownership_status = 'verified' " +
 		"AND NOT EXISTS \\(SELECT 1 FROM users u WHERE u.id = d.user_id AND u.suspended = 1\\)").
-		WillReturnRows(sqlmock.NewRows([]string{"address", "changed_at"}).
-			AddRow("Alice@Example.com", changed).
-			AddRow("bob@example.com", created))
+		WillReturnRows(sqlmock.NewRows([]string{"address", "changed_at", "created_at"}).
+			AddRow("Alice@Example.com", changed, created).
+			AddRow("bob@example.com", nil, created))
 
 	got, err := NewMailLoginRepository(db).ListMailLogins(context.Background())
 	require.NoError(t, err)
-	require.Equal(t, map[string]time.Time{"alice@example.com": changed, "bob@example.com": created}, got)
+	require.Equal(t, map[string]time.Time{
+		"alice@example.com": changed.Add(PasswordChangeGrace),
+		"bob@example.com":   created,
+	}, got)
+	require.Equal(t, time.Minute, PasswordChangeGrace)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

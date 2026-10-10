@@ -13,8 +13,10 @@
 //   - every API key (the panel has no use for them, and Stalwart's User role
 //     no longer lets a mailbox create one);
 //   - every app password, when the account is not a mailbox that may sign in;
-//   - each app password created at or before the mailbox's password last
-//     changed.
+//   - each app password created at or before the mailbox's cutoff: a
+//     minute after its password last changed (the mail server still takes
+//     the old password from its login cache until the panel's flush reaches
+//     it), or when the mailbox was created.
 //
 // A credential of any other type, the mailbox's password included, is never
 // touched.
@@ -40,7 +42,7 @@ type Registry interface {
 }
 
 // Logins lists the mailboxes that may sign in (repository.MailLoginRepository):
-// lower-cased address → when its password last changed.
+// lower-cased address → the cutoff for its app passwords.
 type Logins interface {
 	ListMailLogins(ctx context.Context) (map[string]time.Time, error)
 }
@@ -71,9 +73,9 @@ type account struct {
 }
 
 // mustGo says whether credential c goes from an account and why. mayLogin is
-// whether the account is a mailbox that may sign in; changedAt is when its
-// password last changed.
-func mustGo(c credential, mayLogin bool, changedAt time.Time) (string, bool) {
+// whether the account is a mailbox that may sign in; cutoff is the time at
+// or before which its app passwords go.
+func mustGo(c credential, mayLogin bool, cutoff time.Time) (string, bool) {
 	switch c.Type {
 	case typeAPIKey:
 		return "API key", true
@@ -85,46 +87,49 @@ func mustGo(c credential, mayLogin bool, changedAt time.Time) (string, bool) {
 		if err != nil {
 			return "no readable creation time", true
 		}
-		if !created.After(changedAt) {
-			return "made before the password last changed", true
+		if !created.After(cutoff) {
+			return "made at or before the cutoff for the last password change", true
 		}
 	}
 	return "", false
 }
 
 // Sweep removes, on every registry account, the credentials mustGo names.
-// logins is the database's list of mailboxes that may sign in. It stops at
-// the first registry error and returns what it removed so far.
+// logins is the database's list of mailboxes that may sign in. An account
+// that fails does not stop the others: Sweep returns everything it removed
+// and every error.
 func Sweep(ctx context.Context, reg Registry, logins map[string]time.Time) ([]Removal, error) {
 	raws, err := reg.Query(ctx, "Account", nil, []string{"emailAddress", "credentials"})
 	if err != nil {
 		return nil, fmt.Errorf("mailcreds: list accounts: %w", err)
 	}
 	var removed []Removal
+	var errs []error
 	for _, raw := range raws {
 		var a account
 		if err := json.Unmarshal(raw, &a); err != nil {
-			return removed, fmt.Errorf("mailcreds: decode account: %w", err)
+			errs = append(errs, fmt.Errorf("mailcreds: decode account: %w", err))
+			continue
 		}
 		address := strings.ToLower(a.EmailAddress)
-		changedAt, mayLogin := logins[address]
+		cutoff, mayLogin := logins[address]
 		if address == "" {
 			mayLogin = false
 		}
-		if _, _, ok := next(a, mayLogin, changedAt); !ok {
+		if _, _, ok := next(a, mayLogin, cutoff); !ok {
 			continue
 		}
-		got, err := strip(ctx, reg, a.ID, mayLogin, changedAt)
+		got, err := strip(ctx, reg, a.ID, mayLogin, cutoff)
 		removed = append(removed, got...)
 		if err != nil {
-			return removed, err
+			errs = append(errs, err)
 		}
 	}
-	return removed, nil
+	return removed, errors.Join(errs...)
 }
 
 // next returns the first credential of a, by position, that must go.
-func next(a account, mayLogin bool, changedAt time.Time) (string, credential, bool) {
+func next(a account, mayLogin bool, cutoff time.Time) (string, credential, bool) {
 	keys := make([]string, 0, len(a.Credentials))
 	for k := range a.Credentials {
 		keys = append(keys, k)
@@ -138,7 +143,7 @@ func next(a account, mayLogin bool, changedAt time.Time) (string, credential, bo
 		return ni < nj
 	})
 	for _, k := range keys {
-		if _, ok := mustGo(a.Credentials[k], mayLogin, changedAt); ok {
+		if _, ok := mustGo(a.Credentials[k], mayLogin, cutoff); ok {
 			return k, a.Credentials[k], true
 		}
 	}
@@ -154,7 +159,7 @@ var removeMu sync.Mutex
 // an account's credentials by position: removing one renumbers the ones
 // after it, the same as its aliases (mailaddrowner). So the account is read
 // again before each removal and the key taken from that read.
-func strip(ctx context.Context, reg Registry, id string, mayLogin bool, changedAt time.Time) ([]Removal, error) {
+func strip(ctx context.Context, reg Registry, id string, mayLogin bool, cutoff time.Time) ([]Removal, error) {
 	removeMu.Lock()
 	defer removeMu.Unlock()
 	var removed []Removal
@@ -171,7 +176,7 @@ func strip(ctx context.Context, reg Registry, id string, mayLogin bool, changedA
 		if limit < 0 {
 			limit = len(a.Credentials)
 		}
-		key, c, ok := next(a, mayLogin, changedAt)
+		key, c, ok := next(a, mayLogin, cutoff)
 		if !ok {
 			return removed, nil
 		}
@@ -184,7 +189,7 @@ func strip(ctx context.Context, reg Registry, id string, mayLogin bool, changedA
 		if err := reg.Update(ctx, "Account", id, map[string]any{"credentials/" + key: nil}); err != nil {
 			return removed, fmt.Errorf("mailcreds: remove credential %s from account %s: %w", key, id, err)
 		}
-		reason, _ := mustGo(c, mayLogin, changedAt)
+		reason, _ := mustGo(c, mayLogin, cutoff)
 		removed = append(removed, Removal{AccountID: id, Account: strings.ToLower(a.EmailAddress), Type: c.Type, Reason: reason})
 	}
 }
@@ -205,8 +210,8 @@ func validKey(key string) bool {
 
 // Sweeper runs a sweep against the database's current list of mailboxes
 // that may sign in. The reconciler runs one every pass where that list
-// changed; the doors that disable a mailbox or suspend a user run one at
-// once.
+// changed; the doors that change a mailbox's password, disable a mailbox or
+// suspend a user run one at once.
 type Sweeper struct {
 	Registry Registry
 	Logins   Logins

@@ -252,3 +252,56 @@ func TestSweeper_ReadsTheLoginsFirst(t *testing.T) {
 		t.Error("an unwired sweeper reported success")
 	}
 }
+
+// One account that can't be swept does not shield the others: the sweep
+// goes on and reports the failure.
+func TestSweep_GoesOnPastAFailedAccount(t *testing.T) {
+	reg := &fakeRegistry{failOn: "n2", accounts: map[string]*account{
+		"n2": {ID: "n2", EmailAddress: "alice@example.com", Credentials: creds(password(), apiKey(at(0)))},
+		"n3": {ID: "n3", EmailAddress: "bob@example.com", Credentials: creds(password(), apiKey(at(0)))},
+	}}
+	removed, err := Sweep(context.Background(), reg, map[string]time.Time{"alice@example.com": changed})
+	if err == nil {
+		t.Fatal("no error for the account that failed")
+	}
+	if got := reg.left("n3"); !reflect.DeepEqual(got, []string{"Password@"}) || len(removed) != 1 || removed[0].AccountID != "n3" {
+		t.Errorf("n3 left %v, removed %+v", got, removed)
+	}
+}
+
+// stuckRegistry accepts every removal and keeps the credential.
+type stuckRegistry struct {
+	fakeRegistry
+	updates int
+}
+
+func (s *stuckRegistry) Update(context.Context, string, string, any) error {
+	s.updates++
+	return nil
+}
+
+// A mail server that keeps a credential it said it removed stops the sweep
+// of that account after as many removals as it held credentials, with an
+// error, instead of looping.
+func TestSweep_StopsOnACredentialThatStays(t *testing.T) {
+	reg := &stuckRegistry{fakeRegistry: fakeRegistry{accounts: map[string]*account{
+		"n2": {ID: "n2", EmailAddress: "alice@example.com", Credentials: creds(password(), apiKey(at(0)))},
+	}}}
+	_, err := Sweep(context.Background(), reg, map[string]time.Time{"alice@example.com": changed})
+	if err == nil || reg.updates != 2 {
+		t.Fatalf("err %v after %d removals, want an error after 2", err, reg.updates)
+	}
+}
+
+// A credential under a key that is not a list position is never patched:
+// the key goes into the patch path.
+func TestSweep_RefusesAKeyThatIsNotAPosition(t *testing.T) {
+	for _, key := range []string{"x", "1/0", "", "1234567890"} {
+		reg := &fakeRegistry{accounts: map[string]*account{
+			"n2": {ID: "n2", EmailAddress: "alice@example.com", Credentials: map[string]credential{key: apiKey(at(0))}},
+		}}
+		if _, err := Sweep(context.Background(), reg, map[string]time.Time{}); err == nil || len(reg.updates) != 0 {
+			t.Errorf("key %q: err %v, updates %v", key, err, reg.updates)
+		}
+	}
+}

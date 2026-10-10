@@ -202,3 +202,29 @@ func TestReconcileMailCredentials_SkipsWhenMailIsOff(t *testing.T) {
 		t.Fatalf("queries = %d with the mail module on, want 1", reg.queries)
 	}
 }
+
+// An app password made within a minute after a password change may have been
+// made with the old password, which the mail server's login cache takes
+// until the flush reaches it: the cutoff lies in the future then. The pass
+// runs again once it has passed, and removes what was made before it.
+func TestReconcileMailCredentials_RunsAgainWhenACutoffPasses(t *testing.T) {
+	now := credChanged
+	cutoff := credChanged.Add(time.Minute)
+	reg := &credFakeRegistry{address: map[string]string{"n2": "alice@example.com"}, creds: map[string][]string{"n2": {"Password@"}}}
+	r, _ := mailCredFixture(reg, &credFakeLogins{logins: map[string]time.Time{"alice@example.com": cutoff}})
+	r.mailCredNow = func() time.Time { return now }
+
+	r.reconcileMailCredentials(context.Background())
+	// Made 30s after the change, with the old password still cached.
+	reg.creds["n2"] = append(reg.creds["n2"], "AppPassword@"+credChanged.Add(30*time.Second).Format(time.RFC3339))
+	now = credChanged.Add(40 * time.Second)
+	r.reconcileMailCredentials(context.Background())
+	if reg.queries != 1 {
+		t.Fatalf("queries = %d before the cutoff passed, want 1", reg.queries)
+	}
+	now = cutoff.Add(time.Second)
+	r.reconcileMailCredentials(context.Background())
+	if reg.queries != 2 || len(reg.creds["n2"]) != 1 {
+		t.Fatalf("queries = %d, left %v after the cutoff passed", reg.queries, reg.creds["n2"])
+	}
+}

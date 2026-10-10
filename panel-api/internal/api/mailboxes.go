@@ -484,9 +484,11 @@ func (h *mailboxHandler) rotatePassword(c *gin.Context) {
 	}
 
 	// The mail server checks the app passwords a mailbox made itself, so they
-	// kept working after a password change. Remove the ones made before it,
-	// then flush the login cache that would still answer them. Best-effort:
-	// the reconciler's mail.credentials pass is the backstop.
+	// kept working after a password change. Remove the ones made before it
+	// (and in the minute after it, while the login cache may still take the
+	// old password), then flush the login cache that would still answer
+	// them. Best-effort: the reconciler's mail.credentials pass is the
+	// backstop, and runs again once that minute has passed.
 	if h.cfg.MailCredentials != nil {
 		sctx, cancel := context.WithTimeout(ctx, mailboxAgentTimeout)
 		removed, err := h.cfg.MailCredentials.SweepMailCredentials(sctx)

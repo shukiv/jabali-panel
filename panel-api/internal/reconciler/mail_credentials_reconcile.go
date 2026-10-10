@@ -6,13 +6,14 @@
 // password, disabled the mailbox or suspended its owner. This pass removes
 // every API key, every app password of an account that is not a mailbox
 // that may sign in, and each app password created at or before the
-// mailbox's password last changed (mailcreds.Sweep).
+// mailbox's cutoff, a minute after its password last changed
+// (mailcreds.Sweep).
 //
-// PhaseMailCredentials runs it on the first tick (the first pass after the
-// 000318 migration removes the app passwords made before the update), on
-// every tick where the list of mailboxes that may sign in or their password
-// times changed, and every audit interval. A failed run is retried on the
-// next tick.
+// PhaseMailCredentials runs it on the first tick (the first passes after
+// the 000318 migration remove the app passwords made before the update), on
+// every tick where the list of mailboxes that may sign in or their cutoffs
+// changed, once a cutoff still ahead has passed, and every audit interval. A
+// failed run is retried on the next tick.
 package reconciler
 
 import (
@@ -56,7 +57,23 @@ func (r *Reconciler) reconcileMailCredentials(ctx context.Context) {
 		r.log.Warn("mail-credentials: list the mailboxes that may sign in failed; nothing removed", "error", err)
 		return
 	}
-	_, _ = r.project(ctx, PhaseMailCredentials, "all", fingerprint(logins), false, func() error {
+	// A cutoff still ahead (a password changed in the last minute) passes
+	// later; counting them in the fingerprint runs the pass again then.
+	now := time.Now()
+	if r.mailCredNow != nil {
+		now = r.mailCredNow()
+	}
+	ahead := 0
+	for _, cutoff := range logins {
+		if cutoff.After(now) {
+			ahead++
+		}
+	}
+	desired := struct {
+		Logins map[string]time.Time
+		Ahead  int
+	}{logins, ahead}
+	_, _ = r.project(ctx, PhaseMailCredentials, "all", fingerprint(desired), false, func() error {
 		cctx, cancel := context.WithTimeout(ctx, mailCredentialsTimeout)
 		defer cancel()
 		removed, err := mailcreds.Sweep(cctx, r.mailCredRegistry, logins)

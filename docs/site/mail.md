@@ -17,9 +17,9 @@ Mail is an optional module (Server Settings → Modules). It needs the DNS modul
 
 Webmail's **Settings → Security** lets a mailbox create app passwords for its mail apps. Stalwart checks an app password itself, apart from the mailbox password the panel keeps, so the panel removes app passwords when they must stop working:
 
-- **Password changed in the panel**: the app passwords made before the change are removed.
+- **Password changed in the panel**: the app passwords made before the change, or in the minute after it, are removed. Until the panel's flush of Stalwart's login cache reaches it, webmail and JMAP still take the old password for a few seconds, so an app password made in that minute may have been made with the old one. Webmail opened from the panel in that minute is signed out about a minute later; open it again.
 - **Mailbox disabled, or its owner suspended**: all of the mailbox's app passwords are removed. Enabling the mailbox or unsuspending the owner does not bring them back; the user creates new ones.
-- The reconciler's `mail.credentials` pass checks every mailbox when the panel starts, when a mailbox's password or sign-in state changes, and every 10 minutes, and removes what the rules above would. It also covers changes made outside these actions, such as a domain that is no longer verified. The first start after the update that added it removes every app password made before the update.
+- The reconciler's `mail.credentials` pass checks every mailbox when the panel starts, when a mailbox's password or sign-in state changes, a minute after a password change, and every 10 minutes, and removes what the rules above would. It also covers changes made outside these actions, such as a domain that is no longer verified. The first start after the update that added it removes every app password made before the update.
 
 Opening webmail from the panel signs in with a short-lived app password of the same kind, so the same rules apply to it.
 
