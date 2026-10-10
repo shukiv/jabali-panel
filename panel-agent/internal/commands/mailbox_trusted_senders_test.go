@@ -29,6 +29,9 @@ type trustFake struct {
 	accountSets  int
 	refuseCreate bool
 	queryCalls   int
+	// phantom adds that many ids after the real cards to every
+	// ContactCard/query, for an account too big to hold in the fake.
+	phantom int
 }
 
 func newTrustFake() *trustFake {
@@ -130,10 +133,19 @@ func (f *trustFake) routes() map[string]jmapHandler {
 				ids = append(ids, id)
 			}
 			sort.Strings(ids)
-			if a.Position >= len(ids) {
+			total := len(ids) + f.phantom
+			if a.Position >= total {
 				return jmapQueryResult{}, nil
 			}
-			return jmapQueryResult{IDs: ids[a.Position:min(a.Position+a.Limit, len(ids))]}, nil
+			page := make([]string, 0, a.Limit)
+			for i := a.Position; i < min(a.Position+a.Limit, total); i++ {
+				if i < len(ids) {
+					page = append(page, ids[i])
+				} else {
+					page = append(page, fmt.Sprintf("phantom%06d", i))
+				}
+			}
+			return jmapQueryResult{IDs: page}, nil
 		},
 		"ContactCard/get": func(args json.RawMessage) (any, *jmapFakeError) {
 			var a struct {
@@ -332,6 +344,43 @@ func TestTrustedSendersApply_RemovesBeforeItAdds(t *testing.T) {
 	}
 	if len(f.cards) != 0 {
 		t.Fatalf("cards = %v, want the removed card gone", f.state())
+	}
+}
+
+// A card of ours whose address differs only in case is left as it is.
+// Stalwart matches without case, so rewriting it would change nothing and
+// write on every apply.
+func TestTrustedSendersApply_CaseOnlyDifferenceNotRewritten(t *testing.T) {
+	f := newTrustFake()
+	f.books["tb9"] = "Trusted senders"
+	f.addCard(trustPrefix+"keep@x.com", "Keep@X.com", "tb9")
+	if _, err := runTrustedApply(t, f, "me@example.com", []string{"keep@x.com"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.ops) != 0 {
+		t.Fatalf("rewrote a card that differs only in case: %v", f.ops)
+	}
+}
+
+// An account with more contacts than the verb reads is refused before
+// anything is written: a card of ours past the limit would stay trusted.
+// An account at the limit is read whole.
+func TestTrustedSendersApply_AccountTooBigToScanRefused(t *testing.T) {
+	f := newTrustFake()
+	f.phantom = trustedCardsMaxScan + 1
+	_, err := runTrustedApply(t, f, "me@example.com", []string{"bob@x.com"})
+	var ae *agentwire.AgentError
+	if !errors.As(err, &ae) || ae.Code != agentwire.CodeFailedPrecondition {
+		t.Fatalf("err = %v, want failed precondition", err)
+	}
+	if len(f.ops) != 0 || f.bookCreates != 0 {
+		t.Fatalf("wrote to an account it could not read whole: ops=%v books=%d", f.ops, f.bookCreates)
+	}
+
+	f = newTrustFake()
+	f.phantom = trustedCardsMaxScan
+	if _, err := runTrustedApply(t, f, "me@example.com", []string{"bob@x.com"}); err != nil {
+		t.Fatalf("account at the limit: %v", err)
 	}
 }
 

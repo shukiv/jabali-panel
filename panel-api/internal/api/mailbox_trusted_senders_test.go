@@ -275,13 +275,20 @@ func TestTrustedSenders_DeleteKeepsTheRowWhenTheMailServerFails(t *testing.T) {
 	}
 }
 
+// An id that is not one of the mailbox's rows is not found, and the mail
+// server is not asked to change anything.
 func TestTrustedSenders_DeleteUnknown(t *testing.T) {
 	r, repo, ag := tsFixture(tsOwner)
-	repo.rows = []models.MailboxTrustedSender{{ID: "z", MailboxID: "other", Address: "zed@example.com"}}
-	if w := tsDo(r, "DELETE", "/mailboxes/mb1/trusted-senders/z", ""); w.Code != http.StatusNotFound {
-		t.Fatalf("another mailbox's row: status %d", w.Code)
+	repo.rows = []models.MailboxTrustedSender{
+		{ID: "a", MailboxID: "mb1", Address: "alice@example.com"},
+		{ID: "z", MailboxID: "other", Address: "zed@example.com"},
 	}
-	if len(ag.calls) != 0 || len(repo.rows) != 1 {
+	for _, id := range []string{"z", "nope"} {
+		if w := tsDo(r, "DELETE", "/mailboxes/mb1/trusted-senders/"+id, ""); w.Code != http.StatusNotFound {
+			t.Fatalf("%s: status %d", id, w.Code)
+		}
+	}
+	if len(ag.calls) != 0 || len(repo.rows) != 2 {
 		t.Fatalf("calls %+v rows %+v", ag.calls, repo.rows)
 	}
 }
