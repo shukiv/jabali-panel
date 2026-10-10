@@ -2,6 +2,8 @@
 
 Jabali's mail stack is [**Stalwart**](https://stalw.art) (SMTP submission + MTA + JMAP + IMAP, single process) + **Bulwark**, a Next.js JMAP webmail served per-tenant on `mail.<domain>`.
 
+Mail is an optional module (Server Settings → Modules). It needs the DNS module installed and running first, so the Mail switch stays off until DNS shows **active** ([DNS](./dns.md)).
+
 ## Per-mailbox
 
 - Authentication: per-mailbox Argon2id-hashed password stored by Stalwart.

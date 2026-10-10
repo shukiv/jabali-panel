@@ -34,7 +34,22 @@ const MODULES: { key: ModuleKey; label: string; desc: string }[] = [
   { key: "api_enabled", label: "REST API (API keys)", desc: "Remote-management API keys + the Personal API Tokens page." },
 ];
 
-type ModuleStatus = { installed: boolean; active: boolean };
+// installing / last_error* / install_log (GH #2056): the agent reports an install
+// queued or running, and why the last install failed while the module is down.
+type ModuleStatus = {
+  installed: boolean;
+  active: boolean;
+  installing?: boolean;
+  last_error?: string;
+  last_error_at?: string;
+  install_log?: string;
+};
+
+// errorDetail is the reason the panel gave for refusing a request, if any.
+const errorDetail = (err: unknown): string | undefined => {
+  const data = (err as { response?: { data?: { detail?: string; error?: string } } })?.response?.data;
+  return data?.detail ?? data?.error;
+};
 
 const POLL_INTERVAL_MS = 5000;
 const POLL_MAX_ATTEMPTS = 60; // ~5 minutes; apt + downloads can be slow
@@ -55,11 +70,14 @@ export const ModulesCard = () => {
 
   const mounted = useRef(true);
   const polling = useRef<Set<string>>(new Set());
+  // The latest status, for code that runs outside a render (the poll loop).
+  const statusRef = useRef<Record<string, ModuleStatus>>({});
 
   const fetchStatus = async (): Promise<Record<string, ModuleStatus>> => {
     try {
       const resp = await apiClient.get<{ modules: Record<string, ModuleStatus> }>("/admin/settings/modules/status");
       const modules = resp.data?.modules ?? {};
+      statusRef.current = modules;
       if (mounted.current) setStatus(modules);
       return modules;
     } catch {
@@ -93,9 +111,11 @@ export const ModulesCard = () => {
     };
   }, []);
 
-  // Poll a module's status until it is installed+active, or until the attempt
-  // budget is exhausted (leaving the "failed — retry" state visible).
-  const pollUntilUp = async (statusKey: string) => {
+  // Poll a module's status until it is installed+active, until the agent
+  // reports a new failed install (GH #2056: its reason then shows on the card),
+  // or until the attempt budget is exhausted. errorAtBefore is the last failure's
+  // time from before this install started; a different value is a new failure.
+  const pollUntilUp = async (statusKey: string, errorAtBefore: string | undefined) => {
     if (polling.current.has(statusKey)) return;
     polling.current.add(statusKey);
     setInstalling((p) => ({ ...p, [statusKey]: true }));
@@ -106,6 +126,7 @@ export const ModulesCard = () => {
         const modules = await fetchStatus();
         const s = modules[statusKey];
         if (s?.installed && s?.active) return; // converged
+        if (s?.last_error_at && s.last_error_at !== errorAtBefore && !s.installing) return; // failed
       }
     } finally {
       polling.current.delete(statusKey);
@@ -115,37 +136,52 @@ export const ModulesCard = () => {
 
   const onToggle = async (key: ModuleKey, label: string, next: boolean) => {
     setSaving(key);
+    const statusKey = STATUS_KEY[key];
+    const errorAtBefore = statusKey ? statusRef.current[statusKey]?.last_error_at : undefined;
     try {
       await apiClient.patch("/admin/settings", { [key]: next });
       setState((prev) => ({ ...prev, [key]: next }));
-      const statusKey = STATUS_KEY[key];
       feedback.message.success(`${`${label} ${next ? "enabled" : "disabled"}`}: ${next && statusKey
             ? "Installing the module in the background — this can take a few minutes."
             : next
               ? "The module's pages are now available."
               : "The module's pages are hidden; its endpoints return 409."}`);
-      if (next && statusKey) void pollUntilUp(statusKey);
-    } catch {
-      feedback.message.error(`Failed to update ${label}`);
+      if (next && statusKey) void pollUntilUp(statusKey, errorAtBefore);
+    } catch (err) {
+      const detail = errorDetail(err);
+      feedback.message.error(detail ? `${label}: ${detail}` : `Failed to update ${label}`);
     } finally {
       setSaving(null);
     }
   };
 
   const onRetry = async (statusKey: string, label: string) => {
+    const errorAtBefore = statusRef.current[statusKey]?.last_error_at;
     try {
       await apiClient.post("/admin/settings/modules/install", { key: statusKey });
       feedback.message.info(`Reinstalling ${label}…`);
-      void pollUntilUp(statusKey);
-    } catch {
-      feedback.message.error(`Failed to start install for ${label}`);
+      void pollUntilUp(statusKey, errorAtBefore);
+    } catch (err) {
+      const detail = errorDetail(err);
+      feedback.message.error(detail ? `${label}: ${detail}` : `Failed to start install for ${label}`);
     }
   };
+
+  // GH #2056: mail's install needs DNS installed and running (install.sh stops
+  // without DNS's own zone). mailWaitsForDNS is the reason mail can't be turned
+  // on or retried yet, or null. A DNS status the agent didn't report doesn't
+  // block: the panel checks again when mail is turned on.
+  const dnsStatus = status.dns;
+  const mailWaitsForDNS = !state.dns_enabled
+    ? "Turn on DNS first; mail needs it."
+    : dnsStatus && !(dnsStatus.installed && dnsStatus.active)
+      ? "DNS isn't running yet. Mail can be turned on once DNS shows active."
+      : null;
 
   const renderStatus = (m: { key: ModuleKey; label: string }) => {
     const statusKey = STATUS_KEY[m.key];
     if (!statusKey || !state[m.key]) return null; // api-only, or module off
-    if (installing[statusKey]) {
+    if (installing[statusKey] || status[statusKey]?.installing) {
       return (
         <Tag color="processing" style={{ marginInlineEnd: 0 }}>
           installing… <Spin size="small" style={{ marginInlineStart: 6 }} />
@@ -157,14 +193,56 @@ export const ModulesCard = () => {
       return <Tag color="success" style={{ marginInlineEnd: 0 }}>active</Tag>;
     }
     // Enabled but not installed+active — the "flag on, service down" state. Offer
-    // a retry so the operator isn't stuck.
+    // a retry so the operator isn't stuck (mail's waits for DNS).
     return (
       <Space size="small">
         <Tag color="error" style={{ marginInlineEnd: 0 }}>not installed</Tag>
-        <Button size="small" icon={<ReloadOutlined />} onClick={() => onRetry(statusKey, m.label)}>
+        <Button
+          size="small"
+          icon={<ReloadOutlined />}
+          disabled={m.key === "mail_enabled" && !!mailWaitsForDNS}
+          onClick={() => onRetry(statusKey, m.label)}
+        >
           Retry
         </Button>
       </Space>
+    );
+  };
+
+  // renderNotes shows, under a module's description, why its last install
+  // failed and where the full log is, and why mail can't be turned on yet.
+  const renderNotes = (m: { key: ModuleKey }) => {
+    const statusKey = STATUS_KEY[m.key];
+    const s = statusKey ? status[statusKey] : undefined;
+    const busy = statusKey ? installing[statusKey] || s?.installing : false;
+    const failed = state[m.key] && s?.last_error && !busy && !(s.installed && s.active);
+    const waits = m.key === "mail_enabled" && mailWaitsForDNS && !(state.mail_enabled && s?.installed && s?.active);
+    if (!failed && !waits) return null;
+    return (
+      <>
+        {failed && (
+          <div style={{ marginTop: 4 }}>
+            <Typography.Text type="danger" style={{ fontSize: 12 }}>
+              Last install failed: {s?.last_error}
+            </Typography.Text>
+            {s?.install_log && (
+              <>
+                <br />
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  Full log: <Typography.Text code style={{ fontSize: 12 }}>{s.install_log}</Typography.Text>
+                </Typography.Text>
+              </>
+            )}
+          </div>
+        )}
+        {waits && (
+          <div style={{ marginTop: 4 }}>
+            <Typography.Text type="warning" style={{ fontSize: 12 }}>
+              {mailWaitsForDNS}
+            </Typography.Text>
+          </div>
+        )}
+      </>
     );
   };
 
@@ -177,25 +255,34 @@ export const ModulesCard = () => {
       </Typography.Paragraph>
       <Space direction="vertical" size="middle" style={{ width: "100%" }}>
         {MODULES.map((m) => (
-          <Space key={m.key} align="start" style={{ width: "100%", justifyContent: "space-between" }}>
-            <div style={{ maxWidth: 520 }}>
+          // Wraps on narrow screens: the controls drop below the text instead of
+          // squeezing it (an install error can be a long line).
+          <div
+            key={m.key}
+            style={{ display: "flex", flexWrap: "wrap", alignItems: "flex-start", justifyContent: "space-between", gap: 8, width: "100%" }}
+          >
+            <div style={{ flex: "1 1 260px", maxWidth: 520, minWidth: 0, overflowWrap: "anywhere" }}>
               <Typography.Text strong>{m.label}</Typography.Text>
               <br />
               <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                 {m.desc}
               </Typography.Text>
+              {renderNotes(m)}
             </div>
             <Space align="center" size="middle">
               {renderStatus(m)}
               <Switch
+                aria-label={m.label}
                 checked={state[m.key]}
                 loading={saving === m.key}
+                // Mail can always be turned off; turning it on waits for DNS.
+                disabled={m.key === "mail_enabled" && !state.mail_enabled && !!mailWaitsForDNS}
                 onChange={(next) => onToggle(m.key, m.label, next)}
                 checkedChildren="On"
                 unCheckedChildren="Off"
               />
             </Space>
-          </Space>
+          </div>
         ))}
       </Space>
     </Card>

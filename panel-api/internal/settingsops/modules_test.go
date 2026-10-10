@@ -1,6 +1,7 @@
 package settingsops
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -134,4 +135,34 @@ func withModule(key string, v bool) *models.ServerSettings {
 		s.FTPEnabled = v
 	}
 	return s
+}
+
+// GH #2056: mail's install needs the DNS module, so turning mail on while DNS
+// is (or goes) off is refused before anything is saved or installed. Only the
+// off→on transition is checked: mail that is already on, or is being turned
+// off, is never blocked.
+func TestCheckModuleDependencies(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		before, after models.ServerSettings
+		wantErr       bool
+	}{
+		{"mail on, DNS off", models.ServerSettings{}, models.ServerSettings{MailEnabled: true}, true},
+		{"mail on, DNS turned off in the same change", models.ServerSettings{DNSEnabled: true}, models.ServerSettings{MailEnabled: true}, true},
+		{"mail on, DNS on", models.ServerSettings{DNSEnabled: true}, models.ServerSettings{DNSEnabled: true, MailEnabled: true}, false},
+		{"mail and DNS on together", models.ServerSettings{}, models.ServerSettings{DNSEnabled: true, MailEnabled: true}, false},
+		{"mail already on, DNS off", models.ServerSettings{MailEnabled: true}, models.ServerSettings{MailEnabled: true}, false},
+		{"mail turned off", models.ServerSettings{MailEnabled: true}, models.ServerSettings{}, false},
+		{"nothing changes", models.ServerSettings{}, models.ServerSettings{}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := CheckModuleDependencies(&tc.before, &tc.after)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("err = %v, want error %v", err, tc.wantErr)
+			}
+			if tc.wantErr && !errors.Is(err, ErrMailNeedsDNS) {
+				t.Errorf("err = %v, want ErrMailNeedsDNS", err)
+			}
+		})
+	}
 }

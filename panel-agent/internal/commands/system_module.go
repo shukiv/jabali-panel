@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
 )
@@ -84,6 +85,13 @@ type moduleStatusResponse struct {
 	Key       string `json:"key"`
 	Installed bool   `json:"installed"`
 	Active    bool   `json:"active"`
+	// GH #2056: an install queued or running, and the last failed install's
+	// reason, time and install log while the module is not up (see
+	// system_module_record.go).
+	Installing  bool   `json:"installing"`
+	LastError   string `json:"last_error,omitempty"`
+	LastErrorAt string `json:"last_error_at,omitempty"`
+	InstallLog  string `json:"install_log,omitempty"`
 }
 
 func probeModule(ctx context.Context, key string) moduleStatusResponse {
@@ -127,7 +135,10 @@ func systemModuleStatusHandler(ctx context.Context, raw json.RawMessage) (any, e
 			Message: fmt.Sprintf("unknown module key %q (want: dns|mail|security|quota)", req.Key),
 		}
 	}
-	return probeModule(ctx, req.Key), nil
+	resp := probeModule(ctx, req.Key)
+	resp.Installing = moduleInstalling(ctx, req.Key)
+	mergeModuleInstallRecord(&resp, readModuleInstallRecord(req.Key))
+	return resp, nil
 }
 
 // systemModuleInstallHandler shells to install.sh --install-module <key>. The
@@ -147,12 +158,16 @@ func systemModuleInstallHandler(ctx context.Context, raw json.RawMessage) (any, 
 			Message: fmt.Sprintf("unknown module key %q (want: dns|mail|security|quota)", req.Key),
 		}
 	}
-	if _, err := os.Stat(installShPath); err != nil {
-		return nil, &agentwire.AgentError{
-			Code:    agentwire.CodeInternal,
-			Message: fmt.Sprintf("install.sh missing at %s", installShPath),
-		}
+	if _, err := os.Stat(moduleInstallScript); err != nil {
+		msg := fmt.Sprintf("install.sh missing at %s", moduleInstallScript)
+		recordModuleInstallFailure(req.Key, msg)
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: msg}
 	}
+
+	// GH #2056: status reports the install as running from here on, including
+	// while it waits on aptMu behind another module's install.
+	moduleInstallBegin(req.Key)
+	defer moduleInstallEnd(req.Key)
 
 	// Serialize installs across the agent so a toggle-triggered install and the
 	// convergence pass don't run apt concurrently (dpkg global lock).
@@ -166,15 +181,17 @@ func systemModuleInstallHandler(ctx context.Context, raw json.RawMessage) (any, 
 		"--pipe", "--wait", "--quiet", "--collect",
 		"--unit="+unit,
 		"--service-type=oneshot",
-		"--", "bash", installShPath, "--install-module", req.Key)
+		"--", "bash", moduleInstallScript, "--install-module", req.Key)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
+		recordModuleInstallFailure(req.Key, string(out))
 		return nil, &agentwire.AgentError{
 			Code: agentwire.CodeInternal,
 			Message: fmt.Sprintf("install.sh --install-module %s failed: %v: %s",
 				req.Key, err, strings.TrimSpace(string(out))),
 		}
 	}
+	writeModuleInstallRecord(req.Key, moduleInstallRecord{OK: true, FinishedAt: time.Now().UTC().Format(time.RFC3339)})
 	return probeModule(ctx, req.Key), nil
 }
 

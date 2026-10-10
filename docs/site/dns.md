@@ -9,6 +9,8 @@ Split-port setup (ADR-0047): the recursor binds the loopback so local processes 
 
 DNS is an optional module (the DNS module in Server Settings, `server_settings.dns_enabled`). With it off, the panel still keeps each domain's zone records in its database, but it publishes nothing: no zone push to PowerDNS and no recursor forwarders. Turning the module on installs PowerDNS, and the panel publishes every zone once PowerDNS is up. Leave it off when your domains' DNS is hosted elsewhere (a registrar, Cloudflare, another provider).
 
+The mail module needs DNS: its install stops without the server's own zone. On the Modules card, Mail can be turned on only once DNS is on and shows **active**; until then the card says why (GH #2056). If a module's install fails, the card shows the reason and the path of its install log under the module, and **Retry** runs the install again.
+
 ## Zones
 
 Each hosted domain gets an authoritative zone in PowerDNS. Default records:

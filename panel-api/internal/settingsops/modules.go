@@ -1,6 +1,7 @@
 package settingsops
 
 import (
+	"errors"
 	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
@@ -181,4 +182,21 @@ func ftpConfigDiffers(before, after *models.ServerSettings) bool {
 		after.FTPMaxClients != before.FTPMaxClients ||
 		after.FTPMaxPerIP != before.FTPMaxPerIP ||
 		after.FTPLocalMaxRateKBs != before.FTPLocalMaxRateKBs
+}
+
+// ErrMailNeedsDNS is returned when a change turns mail on while DNS stays, or
+// goes, off.
+var ErrMailNeedsDNS = errors.New("mail needs the DNS module: turn on DNS first, wait until it is running, then turn on mail")
+
+// CheckModuleDependencies rejects a change that turns a module on without the
+// module it needs (GH #2056). Mail's install needs DNS: install.sh stops
+// without the pdns self-zone and the jabali_pdns database. Only the off→on
+// transition is checked, so mail that is already on, or is being turned off,
+// is never blocked. Whether DNS is actually installed and running is a host
+// fact; the REST adapter checks that separately through the agent.
+func CheckModuleDependencies(before, after *models.ServerSettings) error {
+	if !before.MailEnabled && after.MailEnabled && !after.DNSEnabled {
+		return ErrMailNeedsDNS
+	}
+	return nil
 }
