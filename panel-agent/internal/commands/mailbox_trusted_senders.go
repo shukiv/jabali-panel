@@ -128,8 +128,9 @@ func mailboxTrustedSendersApplyHandler(ctx context.Context, params json.RawMessa
 		if len(p.Addresses) == 0 {
 			return trustedSendersApplyResult{Ok: true, Skipped: true}, nil
 		}
-		// Nobody has signed in to the mailbox yet. Make its account, as
-		// mailbox.set_password does, so the first message is already trusted.
+		// The mailbox has no account yet: mailbox.create makes one only
+		// best-effort, and an older mailbox can predate that. Make it now, so
+		// the next message is already trusted.
 		if err := accountEnsureInRegistry(ctx, p.Email); err != nil {
 			return nil, err
 		}

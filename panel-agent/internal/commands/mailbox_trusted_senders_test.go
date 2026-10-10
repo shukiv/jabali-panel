@@ -399,9 +399,9 @@ func TestTrustedSendersApply_ScansEveryPage(t *testing.T) {
 	}
 }
 
-// A mailbox that never signed in has no account yet; one is made so the
-// sender is trusted from the first message. With nothing to trust, no
-// account is made.
+// A mailbox with no account in Stalwart (mailbox.create's ensure failed, or
+// an older mailbox) gets one, so the sender is trusted from the next
+// message. With nothing to trust, no account is made.
 func TestTrustedSendersApply_AccountNotYetInStalwart(t *testing.T) {
 	f := newTrustFake()
 	res, err := runTrustedApply(t, f, "fresh@example.com", []string{})
