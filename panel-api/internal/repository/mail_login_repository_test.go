@@ -2,6 +2,10 @@ package repository
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -85,4 +89,31 @@ func TestMailLogins_ListsTheMailboxesThatMaySignIn(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, map[string]time.Time{"alice@example.com": changed, "bob@example.com": created}, got)
 	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// Stalwart signs in an app password without asking the SQL directory, so the
+// sweep's list of mailboxes that may sign in must be exactly the directory's
+// login query (install.sh's converger carries it): a mailbox the directory
+// refuses must lose its app passwords. The two WHERE clauses agree, but for
+// the directory's lookup of the one address.
+func TestMailLoginQuery_MatchesTheMailServerLoginQuery(t *testing.T) {
+	dir, err := os.Getwd()
+	require.NoError(t, err)
+	var raw []byte
+	for {
+		if raw, err = os.ReadFile(filepath.Join(dir, "install.sh")); err == nil {
+			break
+		}
+		parent := filepath.Dir(dir)
+		require.NotEqual(t, dir, parent, "install.sh not found above the package")
+		dir = parent
+	}
+	m := regexp.MustCompile(`local query_login="([^"]*)"`).FindSubmatch(raw)
+	require.NotNil(t, m, "install.sh: no local query_login")
+
+	_, login, ok := strings.Cut(string(m[1]), " WHERE m.email_cached = ? AND ")
+	require.True(t, ok, "queryLogin no longer looks up m.email_cached first: %s", m[1])
+	_, ours, ok := strings.Cut(mailLoginQuery, " WHERE ")
+	require.True(t, ok)
+	require.Equal(t, login, ours)
 }
