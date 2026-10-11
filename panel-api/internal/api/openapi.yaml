@@ -1166,7 +1166,9 @@ paths:
         Verifies the token against Cloudflare (/user/tokens/verify) before
         storing it sealed. The token needs Zone:DNS:Edit + Zone:Read on the
         customer zones it should cover; a dedicated scoped token is advised.
-        The response reports how many zones the token can see.
+        The response reports how many zones the token can see. A domain
+        owner's own token (/me/cloudflare-token, GH #2032) is tried first for
+        that owner's domains; this one is the fallback.
       requestBody:
         required: true
         content:
@@ -1183,6 +1185,53 @@ paths:
     delete:
       tags: [Server Settings]
       summary: Clear the stored Cloudflare API token (admin, JAB-235)
+      responses:
+        "200": { description: "{ configured: false }" }
+  /me/cloudflare-token:
+    get:
+      tags: [Me]
+      summary: Whether the caller has their own Cloudflare API token for DNS-01 (GH #2032)
+      description: |
+        Reports configured and when the token last passed Verify & Save. The
+        token is sealed at rest (sso.key AES-256-GCM) and never returned.
+      security: [ { KratosSession: [] } ]
+      responses:
+        "200": { description: "{ configured: bool, verified_at?: time }" }
+    put:
+      tags: [Me]
+      summary: Verify and store the caller's own Cloudflare API token for DNS-01 (GH #2032)
+      description: |
+        Let's Encrypt DNS-01 for the caller's domains whose DNS is at
+        Cloudflare writes the challenge with this token first, then with the
+        server's (Settings, SSL). It is used only for the caller's own
+        domains on the caller's own certificates.
+
+        Nothing is stored unless every check passes: Cloudflare says the
+        token is valid and active; it can see an active zone holding one of
+        the caller's domains; and in each such zone (up to 10) it can create
+        and delete a TXT record _jabali-dns01-check.<zone>. Zones holding
+        none of the caller's domains are never written to. The token needs
+        Zone:Read and Zone:DNS:Edit on those zones. Rate limited per user.
+      security: [ { KratosSession: [] } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token: { type: string, maxLength: 256, pattern: "^[A-Za-z0-9_-]+$" }
+      responses:
+        "200": { description: "{ configured: true, verified_at, zones: [checked zone names], zones_not_checked?: n }" }
+        "400": { description: "invalid_request | invalid_token" }
+        "422": { description: "token_verify_failed | no_domains | zone_list_failed | no_zone_for_domains | token_cannot_write | token_cannot_delete" }
+        "429": { description: Rate limited }
+        "503": { description: "sso.key unavailable: cannot store securely" }
+    delete:
+      tags: [Me]
+      summary: Remove the caller's own Cloudflare API token (GH #2032)
+      security: [ { KratosSession: [] } ]
       responses:
         "200": { description: "{ configured: false }" }
   /admin/settings/website-mail:

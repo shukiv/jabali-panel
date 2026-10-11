@@ -38,12 +38,14 @@ type ZoneFinder interface {
 }
 
 // Config carries the decision inputs. LookupNS is dnsverify.LookupNSExternal
-// in production; tests substitute a table. CF is nil when no Cloudflare API
-// token is configured.
+// in production; tests substitute a table.
 type Config struct {
 	LookupNS   func(ctx context.Context, name string) (hosts []string, queried bool)
 	OurNSHosts []string // server_settings ns1/ns2 names, matched case-insensitively
-	CF         ZoneFinder
+	// CF lists the Cloudflare API tokens that may write the challenge, in
+	// order: the domain owner's own token, then the server's (GH #2032). The
+	// first that can see the zone is used. Empty when none is configured.
+	CF []ZoneFinder
 }
 
 // Route is the outcome: which provider owns the zone that serves name, and —
@@ -54,7 +56,10 @@ type Route struct {
 	Provider Provider
 	Zone     string // the delegation point the decision anchored on
 	CFZoneID string
-	Reason   string
+	// CFIndex is which of Config.CF found the zone, so the challenge is
+	// written with that same token.
+	CFIndex int
+	Reason  string
 }
 
 // AuthoritativeRoute walks name's parent chain (name, then each parent,
@@ -91,20 +96,27 @@ func classify(ctx context.Context, cfg Config, zone string, hosts []string) Rout
 	}
 	hosts = normalized
 	if hostsHaveSuffix(hosts, cloudflareNSSuffix) {
-		if cfg.CF == nil {
+		if len(cfg.CF) == 0 {
 			return Route{Provider: ProviderNone, Zone: zone,
-				Reason: fmt.Sprintf("zone %s is hosted at Cloudflare but no Cloudflare API token is configured (Settings → SSL)", zone)}
+				Reason: fmt.Sprintf("zone %s is hosted at Cloudflare but no Cloudflare API token is configured: neither the domain owner's (SSL → Cloudflare DNS-01) nor the server's (Settings → SSL)", zone)}
 		}
-		id, err := cfg.CF.FindZoneID(ctx, zone)
-		if err != nil {
+		var failed []string
+		for i, cf := range cfg.CF {
+			id, err := cf.FindZoneID(ctx, zone)
+			if err != nil {
+				failed = append(failed, err.Error())
+				continue
+			}
+			if id != "" {
+				return Route{Provider: ProviderCloudflare, Zone: zone, CFZoneID: id, CFIndex: i}
+			}
+		}
+		if len(failed) > 0 {
 			return Route{Provider: ProviderNone, Zone: zone,
-				Reason: fmt.Sprintf("zone %s: Cloudflare zone lookup failed: %v", zone, err)}
+				Reason: fmt.Sprintf("zone %s: Cloudflare zone lookup failed: %s", zone, strings.Join(failed, "; "))}
 		}
-		if id == "" {
-			return Route{Provider: ProviderNone, Zone: zone,
-				Reason: fmt.Sprintf("zone %s is hosted at Cloudflare but the configured API token has no access to it — the customer must grant the token access (or move NS)", zone)}
-		}
-		return Route{Provider: ProviderCloudflare, Zone: zone, CFZoneID: id}
+		return Route{Provider: ProviderNone, Zone: zone,
+			Reason: fmt.Sprintf("zone %s is hosted at Cloudflare but no configured API token has access to it — the domain owner can add a token that covers it, or move NS", zone)}
 	}
 	if hostsMatchOurs(hosts, cfg.OurNSHosts) {
 		return Route{Provider: ProviderPDNS, Zone: zone}

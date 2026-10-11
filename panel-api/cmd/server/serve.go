@@ -443,6 +443,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 		// unseals the stored Cloudflare API token; nil key keeps Cloudflare
 		// DNS-01 unavailable (pdns-authoritative zones still work).
 		rec.WithDNS01Key(ssoKeyPtr)
+		// GH #2032 — a tenant's own Cloudflare token, tried before the
+		// server's for the domains that tenant owns.
+		userCFTokens := repository.NewUserCloudflareTokenRepository(sharedDB)
+		rec.WithCloudflareTokens(userCFTokens)
+		deps.UserCloudflareTokens = userCFTokens
 		// JAB-236 — retry engine for durable domain deletion.
 		rec.WithDomainTeardowns(deps.DomainTeardowns)
 		deps.ManagedIPs = managedIPRepo

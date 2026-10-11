@@ -11,8 +11,10 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/hostedsvc"
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/dnsverify"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/cftoken"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dns01"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ssokey"
 )
 
@@ -61,7 +63,10 @@ const (
 )
 
 type dns01CachedRoute struct {
-	route   dns01.Route
+	route dns01.Route
+	// version is the cftoken.Set version the route was decided with: a
+	// token saved, replaced or removed since makes the entry stale.
+	version string
 	expires time.Time
 }
 
@@ -70,6 +75,14 @@ type dns01CachedRoute struct {
 // zones simply report "no token configured".
 func (r *Reconciler) WithDNS01Key(key *ssokey.Key) *Reconciler {
 	r.dns01SSOKey = key
+	return r
+}
+
+// WithCloudflareTokens wires tenants' own Cloudflare tokens (GH #2032),
+// tried before the server's for the domains each tenant owns. Nil-safe:
+// without it only the server token is used, as before.
+func (r *Reconciler) WithCloudflareTokens(repo repository.UserCloudflareTokenRepository) *Reconciler {
+	r.dns01UserTokens = repo
 	return r
 }
 
@@ -88,9 +101,18 @@ func frontedByCDN(apexAddrs, ourAddrs []string) bool {
 // dns01Route decides (with a TTL cache) who can host the _acme-challenge
 // record for name. The same dns01.AuthoritativeRoute powers the acme-hook
 // CLI, so the routing decision and the record write can never disagree.
+// The tokens come from cftoken with the domain's name as the lineage —
+// the domain's certificate is issued as --cert-name <domain> — so the
+// hook, resolving them again at issue time, picks the same ones.
 func (r *Reconciler) dns01Route(ctx context.Context, srv *models.ServerSettings, name string) dns01.Route {
+	tokens := cftoken.Resolver{Domains: r.domains, Tokens: r.dns01UserTokens, Key: r.dns01SSOKey}
+	set, tokErr := tokens.For(ctx, srv, name, name)
+	if tokErr != nil {
+		r.log.Error("ssl: cannot read every Cloudflare API token — DNS-01 uses the ones that could be read", "domain", name, "err", tokErr)
+	}
+
 	r.dns01RouteMu.Lock()
-	if cached, ok := r.dns01RouteCache[name]; ok && time.Now().Before(cached.expires) {
+	if cached, ok := r.dns01RouteCache[name]; ok && cached.version == set.Version && time.Now().Before(cached.expires) {
 		r.dns01RouteMu.Unlock()
 		return cached.route
 	}
@@ -103,20 +125,28 @@ func (r *Reconciler) dns01Route(ctx context.Context, srv *models.ServerSettings,
 	if r.dns01LookupNS != nil { // test seam
 		cfg.LookupNS = r.dns01LookupNS
 	}
-	if len(srv.CFAPITokenEnc) > 0 && r.dns01SSOKey != nil {
-		if tok, err := r.dns01SSOKey.Open(srv.CFAPITokenEnc); err == nil {
-			cfg.CF = hostedsvc.NewCloudflareAPI(string(tok))
-		} else {
-			r.log.Error("ssl: cannot unseal the Cloudflare API token — DNS-01 via Cloudflare unavailable", "err", err)
-		}
+	newFinder := func(token string) dns01.ZoneFinder { return hostedsvc.NewCloudflareAPI(token) }
+	if r.dns01NewFinder != nil { // test seam
+		newFinder = r.dns01NewFinder
+	}
+	for _, c := range set.Candidates {
+		cfg.CF = append(cfg.CF, newFinder(c.Token))
 	}
 	if r.dns01ZoneFinder != nil { // test seam
-		cfg.CF = r.dns01ZoneFinder
+		cfg.CF = []dns01.ZoneFinder{r.dns01ZoneFinder}
 	}
 
 	routeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	route := dns01.AuthoritativeRoute(routeCtx, cfg, name)
 	cancel()
+	if route.Provider == dns01.ProviderCloudflare && route.CFIndex > 0 && route.CFIndex < len(set.Candidates) &&
+		set.Candidates[0].Source == cftoken.SourceOwner {
+		r.log.Warn("ssl: the domain owner's Cloudflare token cannot reach the zone — using the server's token",
+			"domain", name, "zone", route.Zone)
+	}
+	if tokErr != nil {
+		return route // decided without every token: not cached
+	}
 
 	ttl := dns01RouteCacheTTL
 	if route.Provider == dns01.ProviderNone {
@@ -126,7 +156,7 @@ func (r *Reconciler) dns01Route(ctx context.Context, srv *models.ServerSettings,
 	if r.dns01RouteCache == nil {
 		r.dns01RouteCache = map[string]dns01CachedRoute{}
 	}
-	r.dns01RouteCache[name] = dns01CachedRoute{route: route, expires: time.Now().Add(ttl)}
+	r.dns01RouteCache[name] = dns01CachedRoute{route: route, version: set.Version, expires: time.Now().Add(ttl)}
 	r.dns01RouteMu.Unlock()
 	return route
 }
@@ -324,6 +354,7 @@ func (r *Reconciler) recordDNS01Issued(ctx context.Context, domain *models.Domai
 // JAB-235 surface in one file; the struct lives in reconciler.go).
 type dns01State struct {
 	dns01SSOKey     *ssokey.Key
+	dns01UserTokens repository.UserCloudflareTokenRepository
 	dns01RouteMu    sync.Mutex
 	dns01RouteCache map[string]dns01CachedRoute
 	// JAB-237 fronted-apex cache for the vhost path — see apexFronted.
@@ -331,7 +362,8 @@ type dns01State struct {
 	frontedCache map[string]frontedEntry
 	// test seams — nil in production
 	dns01LookupNS   func(ctx context.Context, name string) ([]string, bool)
-	dns01ZoneFinder dns01.ZoneFinder
+	dns01ZoneFinder dns01.ZoneFinder // replaces every token's finder
+	dns01NewFinder  func(token string) dns01.ZoneFinder
 }
 
 // frontedCacheTTL bounds how long an apex-fronted decision is reused by the

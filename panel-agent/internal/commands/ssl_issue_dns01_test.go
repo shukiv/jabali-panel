@@ -72,3 +72,30 @@ func TestSSLIssueDNS01_AcceptsSingleWildcardSAN(t *testing.T) {
 		t.Fatalf("valid params rejected at validation: %s", ae.Message)
 	}
 }
+
+// GH #2032: the hooks carry the lineage so the panel can tell whose
+// certificate a challenge belongs to. certbot stores these strings in the
+// renewal conf and runs them through the shell on every renewal.
+func TestACMEDNSHooks_CarryTheLineage(t *testing.T) {
+	auth, cleanup := acmeDNSHooks("example.com")
+	if auth != "JABALI_ACME_LINEAGE=example.com /usr/local/bin/jabali-panel dns acme-hook auth" {
+		t.Errorf("auth hook = %q", auth)
+	}
+	if cleanup != "JABALI_ACME_LINEAGE=example.com /usr/local/bin/jabali-panel dns acme-hook cleanup" {
+		t.Errorf("cleanup hook = %q", cleanup)
+	}
+}
+
+// The lineage lands in a shell command line, so a cert_name that could
+// break out of it never reaches certbot.
+func TestSSLIssueDNS01_RejectsShellInCertName(t *testing.T) {
+	for _, name := range []string{"example.com;reboot", "example.com reboot", "$(id).example.com", "example.com`id`", "a.com|x", "a.com&&x"} {
+		_, err := callDNS01(t, `{"cert_name":`+strconvQuote(name)+`,"sans":["example.com"],"email":"a@b.co"}`)
+		wantInvalidArgument(t, err, "cert_name")
+	}
+}
+
+func strconvQuote(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
+}

@@ -3,6 +3,7 @@ package dns01
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -111,13 +112,58 @@ func TestAuthoritativeRoute(t *testing.T) {
 		},
 	}
 	for _, c := range cases {
-		cfg := Config{LookupNS: c.ns.lookup, OurNSHosts: ourNS, CF: c.cf}
+		cfg := Config{LookupNS: c.ns.lookup, OurNSHosts: ourNS, CF: finders(c.cf)}
 		got := AuthoritativeRoute(context.Background(), cfg, c.domain)
 		if got.Provider != c.want || got.Zone != c.wantZone || got.CFZoneID != c.wantID {
 			t.Errorf("%s: got %+v, want provider=%s zone=%s id=%s", c.name, got, c.want, c.wantZone, c.wantID)
 		}
 		if got.Provider == ProviderNone && got.Reason == "" {
 			t.Errorf("%s: ProviderNone must carry a reason", c.name)
+		}
+	}
+}
+
+// finders wraps one token's finder as the ordered list Config takes; nil
+// means no token at all.
+func finders(f ZoneFinder) []ZoneFinder {
+	if f == nil {
+		return nil
+	}
+	return []ZoneFinder{f}
+}
+
+// GH #2032: the tokens are tried in order, the domain owner's before the
+// server's, and the route says which one found the zone so the hook writes
+// with that same token.
+func TestAuthoritativeRoute_TokensInOrder(t *testing.T) {
+	ns := nsTable{answers: map[string][]string{"shop.example": {"kip.ns.cloudflare.com", "amy.ns.cloudflare.com"}}}
+	owner := fakeZones{ids: map[string]string{"shop.example": "zone-owner"}}
+	server := fakeZones{ids: map[string]string{"shop.example": "zone-server"}}
+	noAccess := fakeZones{ids: map[string]string{}}
+	revoked := fakeZones{err: errors.New("Invalid API Token")}
+
+	cases := []struct {
+		name    string
+		cf      []ZoneFinder
+		want    Provider
+		wantID  string
+		wantIdx int
+		reason  string // substring of Reason when ProviderNone
+	}{
+		{"the owner's token wins when it covers the zone", []ZoneFinder{owner, server}, ProviderCloudflare, "zone-owner", 0, ""},
+		{"the server's token when the owner's has no access", []ZoneFinder{noAccess, server}, ProviderCloudflare, "zone-server", 1, ""},
+		{"the server's token when the owner's is rejected", []ZoneFinder{revoked, server}, ProviderCloudflare, "zone-server", 1, ""},
+		{"no token covers the zone", []ZoneFinder{noAccess, noAccess}, ProviderNone, "", 0, "no configured API token has access"},
+		{"a rejected token with no other access names the failure", []ZoneFinder{revoked, noAccess}, ProviderNone, "", 0, "Invalid API Token"},
+		{"no token at all", nil, ProviderNone, "", 0, "no Cloudflare API token is configured"},
+	}
+	for _, c := range cases {
+		got := AuthoritativeRoute(context.Background(), Config{LookupNS: ns.lookup, CF: c.cf}, "www.shop.example")
+		if got.Provider != c.want || got.CFZoneID != c.wantID || got.CFIndex != c.wantIdx {
+			t.Errorf("%s: got %+v, want provider=%s id=%q index=%d", c.name, got, c.want, c.wantID, c.wantIdx)
+		}
+		if c.reason != "" && !strings.Contains(got.Reason, c.reason) {
+			t.Errorf("%s: reason %q, want it to mention %q", c.name, got.Reason, c.reason)
 		}
 	}
 }
