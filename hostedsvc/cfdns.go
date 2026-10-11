@@ -52,18 +52,30 @@ type cfRecord struct {
 
 type cfListResp struct {
 	Success bool       `json:"success"`
-	Errors  []cfErr    `json:"errors"`
+	Errors  cfErrs     `json:"errors"`
 	Result  []cfRecord `json:"result"`
 }
 
 type cfWriteResp struct {
-	Success bool    `json:"success"`
-	Errors  []cfErr `json:"errors"`
+	Success bool   `json:"success"`
+	Errors  cfErrs `json:"errors"`
 }
 
 type cfErr struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
+}
+
+// cfErrs prints as "message (code N); …". These errors reach the user's
+// screen (GH #2032 Verify & Save), so not as Go's struct formatting.
+type cfErrs []cfErr
+
+func (es cfErrs) String() string {
+	parts := make([]string, 0, len(es))
+	for _, e := range es {
+		parts = append(parts, fmt.Sprintf("%s (code %d)", e.Message, e.Code))
+	}
+	return strings.Join(parts, "; ")
 }
 
 func (c *CloudflareDNS) do(ctx context.Context, method, path string, body any) (*http.Response, error) {
@@ -248,7 +260,7 @@ type cfZone struct {
 
 type cfZoneListResp struct {
 	Success    bool     `json:"success"`
-	Errors     []cfErr  `json:"errors"`
+	Errors     cfErrs   `json:"errors"`
 	Result     []cfZone `json:"result"`
 	ResultInfo struct {
 		TotalCount int `json:"total_count"`

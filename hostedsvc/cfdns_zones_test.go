@@ -33,6 +33,22 @@ func zonePager(t *testing.T, zones []cfZone, totalPages int, queries *[]string) 
 	return c
 }
 
+// GH #2032: a refusal reaches the user's screen, so it reads as text, not
+// as Go's struct formatting ("[{6003 Invalid request headers}]").
+func TestCloudflareDNS_VerifyTokenRefusalReads(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"success":false,"errors":[{"code":6003,"message":"Invalid request headers"},{"code":6111,"message":"Invalid format for Authorization header"}],"result":null}`))
+	}))
+	defer srv.Close()
+	c := NewCloudflareAPI("test-token")
+	c.api = srv.URL
+	_, err := c.VerifyToken(context.Background())
+	want := "cloudflare rejected the token: Invalid request headers (code 6003); Invalid format for Authorization header (code 6111)"
+	if err == nil || err.Error() != want {
+		t.Errorf("err = %v, want %q", err, want)
+	}
+}
+
 // GH #2032: Verify & Save probes the tenant's zones the token can see, so
 // a zone on a later page must not be missed, and only active zones count
 // (FindZoneID, which routes issuance, also asks for status=active).
