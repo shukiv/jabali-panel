@@ -3,6 +3,8 @@ package commands
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -79,11 +81,30 @@ func TestSSLIssueDNS01_AcceptsSingleWildcardSAN(t *testing.T) {
 // renewal conf and runs them through the shell on every renewal.
 func TestACMEDNSHooks_CarryTheLineage(t *testing.T) {
 	auth, cleanup := acmeDNSHooks("example.com")
-	if auth != "JABALI_ACME_LINEAGE=example.com /usr/local/bin/jabali-panel dns acme-hook auth" {
+	if auth != "/usr/bin/env JABALI_ACME_LINEAGE=example.com /usr/local/bin/jabali-panel dns acme-hook auth" {
 		t.Errorf("auth hook = %q", auth)
 	}
-	if cleanup != "JABALI_ACME_LINEAGE=example.com /usr/local/bin/jabali-panel dns acme-hook cleanup" {
+	if cleanup != "/usr/bin/env JABALI_ACME_LINEAGE=example.com /usr/local/bin/jabali-panel dns acme-hook cleanup" {
 		t.Errorf("cleanup hook = %q", cleanup)
+	}
+}
+
+// certbot refuses a hook whose first word is not an executable file
+// (validate_hook in certbot/_internal/hooks.py; seen with certbot 2.9 on
+// the .60 test box): a bare JABALI_ACME_LINEAGE=... prefix failed every
+// DNS-01 issue with HookCommandNotFound. Same check as certbot's.
+func TestACMEDNSHooks_CertbotFindsTheProgram(t *testing.T) {
+	auth, cleanup := acmeDNSHooks("example.com")
+	for _, hook := range []string{auth, cleanup} {
+		prog := strings.Fields(hook)[0]
+		if !filepath.IsAbs(prog) {
+			t.Errorf("hook %q starts with %q, not a program path", hook, prog)
+			continue
+		}
+		fi, err := os.Stat(prog)
+		if err != nil || fi.IsDir() || fi.Mode()&0o111 == 0 {
+			t.Errorf("hook %q starts with %q, not an executable file (%v)", hook, prog, err)
+		}
 	}
 }
 

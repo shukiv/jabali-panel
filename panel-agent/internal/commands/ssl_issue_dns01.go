@@ -27,11 +27,13 @@ const (
 // it is answering for: a tenant's own Cloudflare token is used only on
 // that tenant's certificate (GH #2032). certbot runs hooks through the
 // shell, and certName has passed sslDomainRegex ([a-zA-Z0-9.-] only), so
-// it cannot break out of the command line. An env prefix rather than a
+// it cannot break out of the command line. An env variable rather than a
 // flag: a panel binary from before GH #2032 ignores the variable, where
-// an unknown flag would fail every renewal after a rollback.
+// an unknown flag would fail every renewal after a rollback. It goes
+// through /usr/bin/env because certbot refuses a hook whose first word
+// is not an executable file, and a bare VAR=value prefix is not one.
 func acmeDNSHooks(certName string) (auth, cleanup string) {
-	prefix := "JABALI_ACME_LINEAGE=" + certName + " "
+	prefix := "/usr/bin/env JABALI_ACME_LINEAGE=" + certName + " "
 	return prefix + acmeDNSHookAuth, prefix + acmeDNSHookCleanup
 }
 
