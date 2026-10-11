@@ -386,10 +386,11 @@ func TestWebmailVhostApply_EmptyDocRootServesPanelACME(t *testing.T) {
 	wireNginxReload(t)
 
 	params, _ := json.Marshal(webmailVhostApplyParams{
-		DomainName:  "jabali-panel.local",
-		SSLCertPath: "/etc/jabali/tls/panel.crt",
-		SSLKeyPath:  "/etc/jabali/tls/panel.key",
-		DocRoot:     "", // panel-primary: no docroot
+		DomainName:     "jabali-panel.local",
+		SSLCertPath:    "/etc/jabali/tls/panel.crt",
+		SSLKeyPath:     "/etc/jabali/tls/panel.key",
+		DocRoot:        "", // panel-primary: no docroot
+		IsPanelPrimary: true,
 	})
 	if _, err := webmailVhostApplyHandler(context.Background(), params); err != nil {
 		t.Fatalf("apply: %v", err)
@@ -417,6 +418,45 @@ func TestWebmailVhostApply_EmptyDocRootServesPanelACME(t *testing.T) {
 		t.Errorf("panel-primary vhost must not emit @acme_docroot location:\n%s", s)
 	}
 	// MUST still emit the :80 → :443 redirect for non-ACME plain-HTTP.
+	if !strings.Contains(s, "return 301 https://$host$request_uri;") {
+		t.Errorf("vhost missing :80 → :443 redirect:\n%s", s)
+	}
+}
+
+// TestWebmailVhostApply_MailOnlyTenantServesMailCertWebroot is the GH #2082
+// regression guard. A mail-only tenant domain (GH #1449: web off) has no
+// docroot either, but it is NOT the panel's own row: its mail certificate is
+// the M6.6 per-domain one, which ssl.mail.issue validates with -w
+// /var/www/jabali-acme. Before the fix the empty docroot sent it down the
+// panel-primary branch (/var/www/jabali-panel-acme), so the challenge 404'd
+// and mail.<domain> never got a certificate.
+func TestWebmailVhostApply_MailOnlyTenantServesMailCertWebroot(t *testing.T) {
+	avail, _ := wireMailVhostPaths(t)
+	wireNginxReload(t)
+
+	params, _ := json.Marshal(webmailVhostApplyParams{
+		DomainName:  "client.example",
+		SSLCertPath: "/etc/ssl/jabali-selfsigned/client.example/fullchain.pem",
+		SSLKeyPath:  "/etc/ssl/jabali-selfsigned/client.example/privkey.pem",
+		DocRoot:     "", // web off: no docroot
+	})
+	if _, err := webmailVhostApplyHandler(context.Background(), params); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	b, err := os.ReadFile(filepath.Join(avail, "client.example-mail.conf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	if !strings.Contains(s, "root /var/www/jabali-acme;") {
+		t.Errorf("mail-only vhost ACME location must serve the mail certificate's webroot /var/www/jabali-acme:\n%s", s)
+	}
+	if strings.Contains(s, "root /var/www/jabali-panel-acme;") {
+		t.Errorf("mail-only vhost must not serve the panel certificate's webroot:\n%s", s)
+	}
+	if strings.Contains(s, "location @acme_docroot {") || strings.Contains(s, "root ;") {
+		t.Errorf("mail-only vhost has no docroot to fall back to:\n%s", s)
+	}
 	if !strings.Contains(s, "return 301 https://$host$request_uri;") {
 		t.Errorf("vhost missing :80 → :443 redirect:\n%s", s)
 	}

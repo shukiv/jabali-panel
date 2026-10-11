@@ -156,6 +156,22 @@ func (r *Reconciler) reconcileOneMailCert(ctx context.Context, row *models.MailC
 		return
 	}
 
+	// GH #2082: Let's Encrypt checks mail.<domain> over HTTP, and only the
+	// domain's mail vhost answers that check on :80. Without it the check
+	// lands on the server's default block and fails, which cost a new domain
+	// a failed order and a 3h backoff. Wait for the webmail pass to put the
+	// vhost in place; the status stays as it is, with the reason on the row.
+	if !r.mailVhostIsLive(domainName) {
+		msg := "waiting for the web server block for mail." + domainName +
+			", which answers Let's Encrypt's check; the panel sets it up with the domain's webmail"
+		if row.LastError == nil || *row.LastError != msg {
+			if err := r.mailCerts.UpdateStatus(ctx, row.ID, row.Status, &msg); err != nil {
+				r.log.Warn("mail-cert reconcile failed to record wait", "id", row.ID, "error", err)
+			}
+		}
+		return
+	}
+
 	// Rate-limit guard. Only counts FIRST-issuance attempts; existing
 	// renewals (row.IssuedAt set) are exempt because LE doesn't count
 	// them against new-order quota.
