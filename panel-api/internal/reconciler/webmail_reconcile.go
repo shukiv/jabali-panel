@@ -450,15 +450,22 @@ func keepDomainCertForMail(status, certPath, domainName string) bool {
 	return false
 }
 
-// issuedMailCertPaths returns the fullchain + privkey of the domain's issued
-// per-domain mail certificate (M6.6), whose lineage_path is the certbot
-// lineage directory.
+// issuedMailCertPaths returns the fullchain + privkey of the domain's
+// per-domain mail certificate (M6.6) while one is valid on disk: a certbot
+// lineage directory with an expiry still ahead. The status is not the test —
+// a renewal flips the row to issuing before the agent call and a failed one
+// leaves it failed, yet the lineage keeps serving until it expires, and
+// keying on "issued" would swap webmail to the placeholder and back on every
+// renewal. Only a certificate the operator disabled is never used.
 func (r *Reconciler) issuedMailCertPaths(ctx context.Context, domainID string) (string, string, bool) {
 	if r.mailCerts == nil {
 		return "", "", false
 	}
 	row, err := r.mailCerts.GetByDomain(ctx, domainID)
-	if err != nil || row == nil || row.Status != models.MailCertStatusIssued || row.LineagePath == "" {
+	if err != nil || row == nil || row.Status == models.MailCertStatusDisabled || row.LineagePath == "" {
+		return "", "", false
+	}
+	if row.ExpiresAt == nil || !row.ExpiresAt.After(time.Now()) {
 		return "", "", false
 	}
 	return filepath.Join(row.LineagePath, "fullchain.pem"), filepath.Join(row.LineagePath, "privkey.pem"), true
