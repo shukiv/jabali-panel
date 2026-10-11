@@ -25,7 +25,7 @@ import (
 // GH #2032 — a tenant's own Cloudflare API token for DNS-01.
 //
 // The reconciler and the certbot hook try it before the server's token
-// (Settings → SSL) for the tenant's own domains on the tenant's own
+// (Server Settings → General) for the tenant's own domains on the tenant's own
 // certificates (internal/cftoken). The secret is handled as the server's
 // is (ssl_cloudflare_token.go): sealed with the sso key, written only
 // here, never returned or logged. The audit middleware records each change
