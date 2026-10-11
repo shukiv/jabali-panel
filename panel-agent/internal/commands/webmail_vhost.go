@@ -226,10 +226,17 @@ server {
   # Panel-primary rows (M6.4 / ADR-0048) are mail-only — no docroot.
   # The panel-cert reconciler (ssl.panel.issue kind=mail) owns
   # mail.<panel-hostname> cert renewal and validates HTTP-01 with
-  # -w /var/www/jabali-panel-acme, so the empty-DocRoot branch below
+  # -w /var/www/jabali-panel-acme, so the panel-primary branch below
   # serves THAT webroot (it must not fall through to the 301, or the
   # challenge redirects to https and 404s — GH #268). It omits the
   # {{.DocRoot}} fallback (no docroot) to avoid a bare root directive.
+  #
+  # A mail-only TENANT domain (GH #1449: web off) has no docroot either,
+  # but its mail.<domain> certificate is the M6.6 per-domain one, which
+  # ssl.mail.issue validates with -w /var/www/jabali-acme. It gets that
+  # webroot alone. Keying the panel branch on the empty docroot sent
+  # these domains to the panel's webroot instead, so their challenge
+  # 404'd and mail.<domain> never got a certificate (GH #2082).
   #
   # When DocRoot IS set (tenant domain) the location serves TWO
   # webroots in priority order:
@@ -260,7 +267,7 @@ server {
   location / {
     return 301 https://$host$request_uri;
   }
-{{ else }}  # Panel-primary mail vhost (M6.4 / ADR-0048): mail-only, no per-domain
+{{ else if .IsPanelPrimary }}  # Panel-primary mail vhost (M6.4 / ADR-0048): mail-only, no per-domain
   # docroot. The panel mail cert (ssl.panel.issue kind=mail) validates
   # mail.<panel-hostname> over HTTP-01 with -w /var/www/jabali-panel-acme,
   # so this :80 block MUST serve that webroot — otherwise the challenge
@@ -269,6 +276,17 @@ server {
   location ^~ /.well-known/acme-challenge/ {
     default_type "text/plain";
     root /var/www/jabali-panel-acme;
+    try_files $uri =404;
+  }
+
+  location / {
+    return 301 https://$host$request_uri;
+  }
+{{ else }}  # Mail-only tenant domain (GH #1449 web off, GH #2082): the M6.6 mail
+  # certificate's webroot, and no docroot to fall back to.
+  location ^~ /.well-known/acme-challenge/ {
+    default_type "text/plain";
+    root /var/www/jabali-acme;
     try_files $uri =404;
   }
 
