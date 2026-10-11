@@ -21,6 +21,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"golang.org/x/sync/errgroup"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/fsusage"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/middleware"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
@@ -502,14 +503,16 @@ func synthesizeAlerts(results map[string]json.RawMessage, errMap map[string]stri
 		}
 	}
 
-	// Disk usage thresholds: > 80% warning, > 95% critical. Disk data
-	// lives inside system.info → host.partitions.
+	// Disk usage thresholds: >= 80% warning, >= 95% critical, of df's Use%
+	// (fsusage.UsedPercent, GH #2029). Disk data lives inside system.info →
+	// host.partitions.
 	if rawHost, ok := results["host"]; ok {
 		var payload struct {
 			Partitions []struct {
 				MountPoint string `json:"mount_point"`
 				TotalBytes uint64 `json:"total_bytes"`
 				UsedBytes  uint64 `json:"used_bytes"`
+				FreeBytes  uint64 `json:"free_bytes"`
 			} `json:"partitions"`
 			LoadAvg  [3]float64 `json:"load_avg"`
 			CPUCount int        `json:"cpu_count"`
@@ -519,7 +522,7 @@ func synthesizeAlerts(results map[string]json.RawMessage, errMap map[string]stri
 				if p.TotalBytes == 0 {
 					continue
 				}
-				pct := float64(p.UsedBytes) * 100.0 / float64(p.TotalBytes)
+				pct := fsusage.UsedPercent(p.UsedBytes, p.FreeBytes)
 				switch {
 				case pct >= 95:
 					alerts = append(alerts, ServerStatusAlert{

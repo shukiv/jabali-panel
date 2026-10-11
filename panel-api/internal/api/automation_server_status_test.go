@@ -24,7 +24,7 @@ func (a *ssAgent) Call(_ context.Context, cmd string, _ any) (json.RawMessage, e
 	atomic.AddInt32(&a.calls, 1)
 	switch cmd {
 	case "system.info":
-		return json.RawMessage(`{"load_avg":[0.5,0.4,0.3],"mem_total_kb":8000000,"mem_used_kb":4000000,"partitions":[{"mount_point":"/","total_bytes":100,"used_bytes":40}]}`), nil
+		return json.RawMessage(`{"load_avg":[0.5,0.4,0.3],"mem_total_kb":8000000,"mem_used_kb":4000000,"partitions":[{"mount_point":"/","total_bytes":100,"used_bytes":40,"free_bytes":55}]}`), nil
 	case "system.cpu_usage":
 		if a.failCPU {
 			return nil, errors.New("cpu boom")
@@ -77,6 +77,12 @@ func TestServerStatus_NormalizedShape(t *testing.T) {
 	p0 := parts[0].(map[string]any)
 	if p0["mount_point"] != "/" || p0["used_bytes"].(float64) != 40 || p0["total_bytes"].(float64) != 100 {
 		t.Errorf("partition shape wrong: %v", p0)
+	}
+	// GH #2029: free_bytes too, so a monitor can compute df's Use%
+	// (used / (used + free)); used + free is less than total when root
+	// has blocks in reserve.
+	if free, _ := p0["free_bytes"].(float64); free != 55 {
+		t.Errorf("free_bytes = %v, want 55", p0["free_bytes"])
 	}
 	if _, hasIO := body["io"]; hasIO {
 		t.Errorf("io must be omitted when no collector (got %v)", body["io"])

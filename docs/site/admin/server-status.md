@@ -19,7 +19,7 @@ Each row shows:
 
 - CPU usage and 1-minute load average
 - Memory: used / free / cache, swap usage
-- Disk: per-mount used / free, including `/var/lib/mysql`, `/var/lib/stalwart`, `/home`
+- Disk: per-mount used / free, including `/var/lib/mysql`, `/var/lib/stalwart`, `/home`. The numbers are the ones `df` shows. **Used** is what files take and **Free** is what non-root can still write. Blocks the filesystem reserves for root (5% on ext4 by default) count as neither, so Used + Free is less than the size. The percent is `df`'s Use%: Used / (Used + Free), rounded up. A mount turns amber at 80% and red at 95%, and the same marks raise the Server Status disk alerts and the `disk.full.warn` / `disk.full.crit` notifications.
 - Network: in / out per interface
 
 ### Queues card

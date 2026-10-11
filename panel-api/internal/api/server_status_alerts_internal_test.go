@@ -150,3 +150,44 @@ func TestSynthesizeAlerts_AppArmorDegraded(t *testing.T) {
 		}
 	})
 }
+
+// GH #2029: a disk's percent is of the space non-root can use, as df's Use%:
+// used / (used + free). The root-reserved blocks count neither as used nor as
+// free, so a disk is 100% full when nothing is left to non-root.
+func TestSynthesizeAlerts_DiskPercentOfUsableSpace(t *testing.T) {
+	hostResult := func(total, used, free uint64) map[string]json.RawMessage {
+		b, _ := json.Marshal(map[string]any{"partitions": []map[string]any{{
+			"mount_point": "/", "total_bytes": total, "used_bytes": used, "free_bytes": free,
+		}}})
+		return map[string]json.RawMessage{"host": b}
+	}
+	cases := []struct {
+		name              string
+		total, used, free uint64
+		want              string // "" = no disk alert
+	}{
+		// The reporter's root filesystem: 5% used, ~29 GiB reserved.
+		{"reporter's disk", 760740884480, 32386052096, 697378873344, ""},
+		{"under 80% of usable space", 100_000, 75_000, 20_000, ""},
+		{"80% of usable space", 100_000, 76_000, 19_000, "warning"},
+		{"95% of usable space", 100_000, 90_500, 4_500, "critical"},
+		{"nothing left to non-root", 100_000, 95_000, 0, "critical"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var got []string
+			for _, a := range synthesizeAlerts(hostResult(tc.total, tc.used, tc.free), map[string]string{}) {
+				if a.Kind == "disk" {
+					got = append(got, a.Level)
+				}
+			}
+			want := []string(nil)
+			if tc.want != "" {
+				want = []string{tc.want}
+			}
+			if strings.Join(got, ",") != strings.Join(want, ",") {
+				t.Errorf("disk alerts %q, want %q", got, want)
+			}
+		})
+	}
+}

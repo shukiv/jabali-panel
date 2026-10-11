@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"syscall"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -241,4 +242,21 @@ func TestInContainer_PID1Environ(t *testing.T) {
 		procRoot = dir
 		assert.False(t, inContainer())
 	})
+}
+
+// GH #2029: Used is what df reports, so the root-reserved blocks of an ext4
+// filesystem are not counted as used. The numbers are the reporter's root
+// filesystem (df -B1: 760740884480 total, 32386052096 used, 697378873344
+// available).
+func TestPartitionFromStatfs_ReservedBlocksAreNotUsed(t *testing.T) {
+	st := syscall.Statfs_t{Bsize: 4096, Blocks: 185727755, Bfree: 177821004, Bavail: 170258514}
+
+	p := partitionFromStatfs("/", &st)
+
+	assert.Equal(t, PartitionInfo{
+		MountPoint: "/",
+		TotalBytes: 760740884480,
+		UsedBytes:  32386052096,
+		FreeBytes:  697378873344,
+	}, p)
 }
