@@ -1,6 +1,6 @@
 # SSL / TLS
 
-Let's Encrypt-only. HTTP-01 challenge over the domain's existing port-80 nginx vhost; no DNS-01.
+Let's Encrypt-only. HTTP-01 over the domain's existing port-80 nginx vhost, or DNS-01 for a domain behind a CDN (see [Domains behind Cloudflare](#domains-behind-cloudflare-dns-01)).
 
 ## Per-domain certificates
 
@@ -12,6 +12,29 @@ Toggle SSL on a domain (admin: Domains → Edit → SSL; user: Domains → Edit 
 4. Reloads nginx.
 
 Issuance latency: ≤60 s typical. Failures retry every 3 hours (reconciler interval).
+
+## Domains behind Cloudflare (DNS-01)
+
+When a domain's address is a CDN rather than this server (Cloudflare's orange cloud), the CDN answers the HTTP-01 check itself and the certificate cannot be issued that way. The panel then uses DNS-01: it writes the `_acme-challenge` TXT record where the zone is really hosted.
+
+- **This server's DNS**, when it is authoritative for the zone.
+- **Cloudflare**, through an API token. For each name, the panel tries, in order:
+  1. the domain owner's own token (user: **SSL → Cloudflare DNS check**);
+  2. the server's token (admin: **Server Settings → General → Cloudflare DNS-01**).
+
+A user's token is used only for that user's domains, on that user's certificates. If one user's domain sits under another user's (subdomain delegation), neither user's token is used for the other's names.
+
+With no usable token, the certificate stays self-signed with the reason shown, and the panel re-checks daily. No Let's Encrypt attempt is spent while it waits.
+
+**Verify & Save** (user token). Nothing is stored unless:
+
+1. Cloudflare says the token is valid and active;
+2. it can see an active zone that holds one of the user's domains;
+3. in each such zone (up to 10) it can add and delete a TXT record `_jabali-dns01-check.<zone>`.
+
+The token needs `Zone:Read` and `Zone:DNS:Edit` on those zones. Verify & Save proves the token, not the delegation: a zone whose nameservers are not at Cloudflare yet still passes, and issuance then reports it as delegated elsewhere. Both tokens are stored encrypted with the panel's sso key and never shown again.
+
+**Renewal.** certbot stores the challenge hooks with each certificate, and renewals (the timer, **Renew**) reuse them. A certificate issued before tenant tokens existed therefore keeps renewing with the server's token only, even after its owner saves a token. Keep the server token set while such certificates exist.
 
 ## Renewal
 

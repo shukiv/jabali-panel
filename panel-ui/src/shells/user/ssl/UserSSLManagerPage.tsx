@@ -1,6 +1,7 @@
 import { Card, Typography } from "antd";
 import { ShieldCheckOutlined } from "@icons";
 import { SSLManagerTable } from "../../../components/ssl/SSLManagerTable";
+import { UserCloudflareTokenCard } from "./UserCloudflareTokenCard";
 
 export const UserSSLManagerPage = () => {
   return (
@@ -9,9 +10,12 @@ export const UserSSLManagerPage = () => {
         <ShieldCheckOutlined /> SSL Manager
       </Typography.Title>
 
-      <Card>
+      <Card style={{ marginBottom: 16 }}>
         <SSLManagerTable endpoint="/ssl-certificates" showOwner={false} adminActions={false} />
       </Card>
+
+      {/* GH #2032: the user's own Cloudflare token for proxied domains. */}
+      <UserCloudflareTokenCard />
     </div>
   );
 };
