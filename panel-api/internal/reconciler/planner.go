@@ -99,6 +99,9 @@ var (
 	// PhaseMailDirectory is one mail domain's directory address book: its
 	// cards and who may read it (GH #1637). Keyed by the domain ID.
 	PhaseMailDirectory = Phase{Name: "mail.directory", AuditInterval: time.Hour}
+	// PhaseMailboxTrustedSenders is one mailbox's trusted senders, as contact
+	// cards in its Stalwart account (GH #2017). Keyed by the mailbox ID.
+	PhaseMailboxTrustedSenders = Phase{Name: "mailbox.trusted_senders", AuditInterval: time.Hour}
 	// PhasePingAccess is the jabali-ping group's member list and the
 	// ping_group_range that goes with it (GH #1798). One entry for the host;
 	// the interval repairs a group or range changed by hand.

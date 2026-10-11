@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"sort"
 
 	internalbackup "git.jabali-panel.com/shukivaknin/jabali2/internal/backup"
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/kratosclient"
@@ -50,6 +51,8 @@ type Deps struct {
 	Forwarders     repository.EmailForwarderRepository
 	Autoresponders repository.EmailAutoresponderRepository
 	MailboxShares  repository.MailboxShareRepository
+	// TrustedSenders are the senders each mailbox trusts (GH #2017).
+	TrustedSenders repository.MailboxTrustedSenderRepository
 	DNSSECKeys     repository.DNSSECKeyRepository
 	DNSZones       repository.DNSZoneRepository
 	DNSRecords     repository.DNSRecordRepository
@@ -397,6 +400,20 @@ func Build(ctx context.Context, user *models.User, d Deps) *internalbackup.Accou
 			}
 		}
 
+		trustedByMailbox := map[string][]string{}
+		if d.TrustedSenders != nil && len(allMailboxIDs) > 0 {
+			trusted, terr := d.TrustedSenders.ListByMailboxIDs(ctx, allMailboxIDs)
+			if terr != nil {
+				d.warn("metadata: list trusted senders (batch)", terr, "user_id", user.ID)
+			}
+			for _, ts := range trusted {
+				trustedByMailbox[ts.MailboxID] = append(trustedByMailbox[ts.MailboxID], ts.Address)
+			}
+			for _, addrs := range trustedByMailbox {
+				sort.Strings(addrs)
+			}
+		}
+
 		sharesByMailbox := map[string][]models.MailboxShare{}
 		if d.MailboxShares != nil {
 			// No Limit: the old per-mailbox FindByOwnerID capped 1000/mailbox; an
@@ -572,6 +589,7 @@ func Build(ctx context.Context, user *models.User, d Deps) *internalbackup.Accou
 							CreatedAt: timeRFC(sh.CreatedAt),
 						})
 				}
+				mbRow.TrustedSenders = trustedByMailbox[mb.ID]
 				dRow.Mailboxes = append(dRow.Mailboxes, mbRow)
 			}
 			for _, fw := range fwdByDomain[dom.ID] {

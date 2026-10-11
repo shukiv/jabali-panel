@@ -164,6 +164,39 @@ as long as the sender's domain passes SPF or DMARC; a forged sender with the
 same address still goes through the filter. A mailbox's own filter rules
 (Sieve) can't move a message out of Junk.
 
+### Trusted senders (per mailbox)
+
+Each mailbox has a list of senders it trusts: **Edit mailbox → Trusted
+senders**, or `GET` / `POST` / `DELETE /api/v1/mailboxes/{id}/trusted-senders`.
+The rows live in `mailbox_trusted_senders` (migration 000320). The agent verb
+`mailbox.trusted_senders.apply` writes them as contact cards in a **Trusted
+senders** address book of the mailbox's Stalwart account, and the spam filter
+trusts them like any contact (above).
+
+- **Matching.** Stalwart matches a sender to a card exactly, ignoring case
+  (tested on Stalwart 0.16.24). So addresses are stored lowercased, with the
+  domain in punycode, and keep a +tag: `news+weekly@x.com` and `news@x.com`
+  are different senders.
+- **Limit.** A mailbox can trust up to 500 senders.
+- **Which cards the panel manages.** Only the cards it wrote, marked by uid
+  `urn:jabali:trusted:<address>`. A card of the panel's that the user moved
+  to another address book is moved back. The user's own contacts are left
+  alone, even at a trusted address.
+- **Adding.** The panel sends the mailbox's list to Stalwart at once. If
+  that fails, the row is kept and the answer carries a `warning`.
+- **Removing.** The panel sends the list to Stalwart first, and deletes the
+  row only after Stalwart has taken it. If Stalwart can't, the answer is
+  `502 mail_server_unavailable` and the sender stays on the list. So the
+  list never shows a sender as removed while Stalwart still trusts it.
+- **Reconciler.** The `mailbox.trusted_senders` pass retries failed pushes
+  and re-applies each mailbox's list every hour. It runs only for domains
+  whose mail Jabali hosts.
+- **New mailboxes.** A mailbox that has never signed in gets its Stalwart
+  account created, so the first message from a trusted sender is already
+  trusted.
+- **Backups.** A backup carries each mailbox's list (`trusted_senders`). A
+  restore adds it back, checking each address the way the API does.
+
 ## Outbound throttles
 
 `/jabali-admin/mail/throttles` (M47 Wave 3) — per-sender + per-domain rate limit (msgs / minute, msgs / hour, recipients / message). Bulwark enforces; CrowdSec sees throttle hits and can escalate.

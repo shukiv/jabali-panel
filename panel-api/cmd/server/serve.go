@@ -423,6 +423,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 		// GH #1637 (ADR-0171) — each mail domain's directory address book,
 		// shared read-only with the domain's mailboxes.
 		rec.WithMailDirectory(mailboxRepo, mailGroupRepo, repository.NewSharedResourceRepository(sharedDB))
+		// GH #2017 — each mailbox's trusted senders, as contact cards
+		// Stalwart's spam filter trusts (retry of failed pushes + audit).
+		rec.WithMailboxTrustedSenders(repository.NewMailboxTrustedSenderRepository(sharedDB), mailboxRepo)
 		// JAB-230 — noreply@ relay identities + shim cred files. Needs the
 		// sso.key to seal/unseal the relay passwords; nil key (fresh install
 		// mid-bootstrap) just disables the loop until the key exists.
@@ -487,6 +490,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		// MailboxShares in Step 4. Until each lands, nil + handler guards.
 		deps.Autoresponders = repository.NewEmailAutoresponderRepository(sharedDB)
 		deps.MailboxShares = repository.NewMailboxShareRepository(sharedDB)
+		deps.MailboxTrustedSenders = repository.NewMailboxTrustedSenderRepository(sharedDB)
 		deps.Forwarders = repository.NewEmailForwarderRepository(sharedDB)
 		// GH #1795 — backfill sweep: re-converge every mailbox's external
 		// forwarders + autoresponder into its single active standard SieveScript
@@ -1136,6 +1140,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		Forwarders:     deps.Forwarders,
 		Autoresponders: deps.Autoresponders,
 		MailboxShares:  deps.MailboxShares,
+		TrustedSenders: deps.MailboxTrustedSenders,
 		DNSSECKeys:     deps.DNSSECKeys,
 		DNSZones:       deps.DNSZones,
 		DNSRecords:     deps.DNSRecords,

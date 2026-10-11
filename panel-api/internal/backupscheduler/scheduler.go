@@ -88,6 +88,7 @@ type Deps struct {
 	Forwarders     repository.EmailForwarderRepository
 	Autoresponders repository.EmailAutoresponderRepository
 	MailboxShares  repository.MailboxShareRepository
+	TrustedSenders repository.MailboxTrustedSenderRepository
 	DNSSECKeys     repository.DNSSECKeyRepository
 	DNSZones       repository.DNSZoneRepository
 	DNSRecords     repository.DNSRecordRepository
@@ -872,6 +873,7 @@ func scheduleMetaDeps(deps Deps, logger *slog.Logger) backupmetadata.Deps {
 		Forwarders:     deps.Forwarders,
 		Autoresponders: deps.Autoresponders,
 		MailboxShares:  deps.MailboxShares,
+		TrustedSenders: deps.TrustedSenders,
 		DNSSECKeys:     deps.DNSSECKeys,
 		DNSZones:       deps.DNSZones,
 		DNSRecords:     deps.DNSRecords,

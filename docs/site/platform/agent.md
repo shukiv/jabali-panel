@@ -53,6 +53,7 @@ Newline-delimited JSON over the Unix socket, one request per connection. The env
 - `mail.disclaimer.set`
 - `mail.shared_folder.*`
 - `mail.directory.apply` (a mail domain's read-only [directory](../user/email.md#the-domain-directory) address book, ADR-0171)
+- `mailbox.trusted_senders.apply` (a mailbox's [trusted senders](../user/mailboxes.md#trusted-senders), as contact cards in its Stalwart account, GH #2017)
 - `mail.mtasts.*`
 
 **DB**

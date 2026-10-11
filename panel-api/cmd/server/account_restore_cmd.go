@@ -67,6 +67,7 @@ func applyPanelMetadata(ctx context.Context, cmd *cobra.Command, raw json.RawMes
 		Forwarders:     repository.NewEmailForwarderRepository(sharedDB),
 		Autoresponders: repository.NewEmailAutoresponderRepository(sharedDB),
 		MailboxShares:  repository.NewMailboxShareRepository(sharedDB),
+		TrustedSenders: repository.NewMailboxTrustedSenderRepository(sharedDB),
 		DNSZones:       repository.NewDNSZoneRepository(sharedDB),
 		DNSRecords:     repository.NewDNSRecordRepository(sharedDB),
 		KratosClient:   kratosclient.NewClient(sharedCfg.Auth.Kratos.PublicURL, sharedCfg.Auth.Kratos.AdminURL),

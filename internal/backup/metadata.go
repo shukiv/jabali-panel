@@ -334,6 +334,10 @@ type MetadataMailbox struct {
 	CreatedAt     string                 `json:"created_at,omitempty"`
 	Autoresponder *MetadataAutoresponder `json:"autoresponder,omitempty"`
 	SharedWith    []MetadataMailboxShare `json:"shared_with,omitempty"`
+
+	// TrustedSenders are the addresses the mailbox trusts (GH #2017),
+	// canonical, sorted.
+	TrustedSenders []string `json:"trusted_senders,omitempty"`
 }
 
 // MetadataForwarder mirrors models.EmailForwarder. Each forwarder

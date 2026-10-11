@@ -92,6 +92,7 @@ func fullDeps() Deps {
 		Autoresponders: repository.NewEmailAutoresponderRepository(db),
 		Forwarders: repository.NewEmailForwarderRepository(db),
 		MailboxShares: repository.NewMailboxShareRepository(db),
+		MailboxTrustedSenders: repository.NewMailboxTrustedSenderRepository(db),
 		DNSSECKeys: repository.NewDNSSECKeyRepository(db),
 		PanelCerts: repository.NewPanelCertificateRepository(db),
 		UpdateState: repository.NewUpdateStateRepository(db),

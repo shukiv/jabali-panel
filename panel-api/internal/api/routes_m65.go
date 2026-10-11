@@ -19,6 +19,7 @@ type M65RouteDeps struct {
 	MailboxShares   repository.MailboxShareRepository
 	SharedResources repository.SharedResourceRepository
 	SendDelegations repository.MailboxSendDelegationRepository
+	TrustedSenders  repository.MailboxTrustedSenderRepository
 	// Addresses: see MailboxForwarderHandlerConfig.Addresses.
 	Addresses MailAddressReleaser
 }
@@ -35,6 +36,7 @@ func RegisterM65Routes(g *gin.RouterGroup, deps M65RouteDeps) {
 	registerMailLogRoutes(g, deps)
 	registerSharedResourceRoutes(g, deps)
 	registerSendAsRoutes(g, deps)
+	registerTrustedSenderRoutes(g, deps)
 }
 
 // GH #347: send-as delegation.
@@ -44,6 +46,16 @@ func registerSendAsRoutes(g *gin.RouterGroup, deps M65RouteDeps) {
 		Domains:         deps.Domains,
 		SendDelegations: deps.SendDelegations,
 		Agent:           deps.Agent,
+	})
+}
+
+// GH #2017: the senders a mailbox trusts.
+func registerTrustedSenderRoutes(g *gin.RouterGroup, deps M65RouteDeps) {
+	RegisterMailboxTrustedSenderRoutes(g, MailboxTrustedSenderHandlerConfig{
+		Mailboxes:      deps.Mailboxes,
+		Domains:        deps.Domains,
+		TrustedSenders: deps.TrustedSenders,
+		Agent:          deps.Agent,
 	})
 }
 

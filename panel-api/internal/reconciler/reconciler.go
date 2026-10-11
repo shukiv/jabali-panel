@@ -200,6 +200,14 @@ type Reconciler struct {
 	mailDirResources repository.SharedResourceRepository
 	mailDirMu        sync.Mutex
 	mailDirRetryAt   map[string]time.Time
+	// trustedSenders* back the GH #2017 pass (mailbox_trusted_senders_reconcile.go):
+	// each mailbox's trusted senders as Stalwart contact cards. RetryAt backs
+	// off a mailbox whose last push failed; Seen is last tick's mailboxes with
+	// rows, whose ledger entries go when their rows do. Nil rows = pass disabled.
+	trustedSenders        repository.MailboxTrustedSenderRepository
+	trustedSendersMu      sync.Mutex
+	trustedSendersRetryAt map[string]time.Time
+	trustedSendersSeen    map[string]bool
 	// wordPressInstalls holds reference to the WordPress installs repository
 	wordPressInstalls repository.WordPressInstallRepository
 	// sshKeys holds reference to the SSH keys repository
@@ -1062,6 +1070,9 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 	// GH #1637: each mail domain's directory address book, shared read-only
 	// with the domain's mailboxes. Ledger-gated no-op in steady state.
 	r.reconcileMailDirectories(ctx)
+	// GH #2017: each mailbox's trusted senders, as contact cards Stalwart's
+	// spam filter trusts. Ledger-gated no-op in steady state.
+	r.reconcileMailboxTrustedSenders(ctx)
 
 	// M34: per-user PHP-FPM egress firewall. Cheap noop when the repo
 	// isn't wired (test fixtures) or when there are zero policies.

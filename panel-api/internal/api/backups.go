@@ -68,6 +68,7 @@ type BackupHandlerConfig struct {
 	Forwarders     repository.EmailForwarderRepository
 	Autoresponders repository.EmailAutoresponderRepository
 	MailboxShares  repository.MailboxShareRepository
+	TrustedSenders repository.MailboxTrustedSenderRepository
 	DNSSECKeys     repository.DNSSECKeyRepository
 	DNSZones       repository.DNSZoneRepository
 	DNSRecords     repository.DNSRecordRepository
@@ -1331,6 +1332,7 @@ func (h *backupHandler) restoreMetadataDeps(uploaded *uploadedData) backupmetada
 		Forwarders:     h.cfg.Forwarders,
 		Autoresponders: h.cfg.Autoresponders,
 		MailboxShares:  h.cfg.MailboxShares,
+		TrustedSenders: h.cfg.TrustedSenders,
 		DNSZones:       h.cfg.DNSZones,
 		DNSRecords:     h.cfg.DNSRecords,
 		KratosClient:   h.cfg.KratosClient,
@@ -1427,6 +1429,7 @@ func (cfg BackupHandlerConfig) metadataDeps() backupmetadata.Deps {
 		Domains: cfg.Domains, Mailboxes: cfg.Mailboxes, AppInstalls: cfg.AppInstalls, DockerApps: cfg.DockerApps,
 		SSLCerts: cfg.SSLCerts, PHPPools: cfg.PHPPools, PHPPoolIni: cfg.PHPPoolIni,
 		Forwarders: cfg.Forwarders, Autoresponders: cfg.Autoresponders, MailboxShares: cfg.MailboxShares,
+		TrustedSenders: cfg.TrustedSenders,
 		DNSSECKeys: cfg.DNSSECKeys, DNSZones: cfg.DNSZones, DNSRecords: cfg.DNSRecords, SSHKeys: cfg.SSHKeys, CronJobs: cfg.CronJobs, FtpAccounts: cfg.FtpAccounts,
 		LimitOverrides: cfg.LimitOverrides, EgressPolicies: cfg.EgressPolicies, EgressRequests: cfg.EgressRequests,
 		WebDomainAliases: cfg.WebDomainAliases,
@@ -1465,6 +1468,7 @@ type MeBackupsHandlerConfig struct {
 	Forwarders     repository.EmailForwarderRepository
 	Autoresponders repository.EmailAutoresponderRepository
 	MailboxShares  repository.MailboxShareRepository
+	TrustedSenders repository.MailboxTrustedSenderRepository
 	DNSSECKeys     repository.DNSSECKeyRepository
 	DNSZones       repository.DNSZoneRepository
 	DNSRecords     repository.DNSRecordRepository
@@ -1513,6 +1517,7 @@ func (cfg MeBackupsHandlerConfig) metadataDeps() backupmetadata.Deps {
 		Domains: cfg.Domains, Mailboxes: cfg.Mailboxes, AppInstalls: cfg.AppInstalls, DockerApps: cfg.DockerApps,
 		SSLCerts: cfg.SSLCerts, PHPPools: cfg.PHPPools, PHPPoolIni: cfg.PHPPoolIni,
 		Forwarders: cfg.Forwarders, Autoresponders: cfg.Autoresponders, MailboxShares: cfg.MailboxShares,
+		TrustedSenders: cfg.TrustedSenders,
 		DNSSECKeys: cfg.DNSSECKeys, DNSZones: cfg.DNSZones, DNSRecords: cfg.DNSRecords, SSHKeys: cfg.SSHKeys, CronJobs: cfg.CronJobs, FtpAccounts: cfg.FtpAccounts,
 		LimitOverrides: cfg.LimitOverrides, EgressPolicies: cfg.EgressPolicies, EgressRequests: cfg.EgressRequests,
 		WebDomainAliases: cfg.WebDomainAliases,
