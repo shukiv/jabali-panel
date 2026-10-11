@@ -20,7 +20,7 @@ When a domain's address is a CDN rather than this server (Cloudflare's orange cl
 - **This server's DNS**, when it is authoritative for the zone.
 - **Cloudflare**, through an API token. For each name, the panel tries, in order:
   1. the domain owner's own token (user: **SSL → Cloudflare DNS check**);
-  2. the server's token (admin: **Server Settings → Cloudflare DNS-01**).
+  2. the server's token (admin: **Server Settings → General → Cloudflare DNS-01**).
 
 A user's token is used only for that user's domains, on that user's certificates. If one user's domain sits under another user's (subdomain delegation), neither user's token is used for the other's names.
 
@@ -34,7 +34,7 @@ With no usable token, the certificate stays self-signed with the reason shown, a
 
 The token needs `Zone:Read` and `Zone:DNS:Edit` on those zones. Verify & Save proves the token, not the delegation: a zone whose nameservers are not at Cloudflare yet still passes, and issuance then reports it as delegated elsewhere. Both tokens are stored encrypted with the panel's sso key and never shown again.
 
-**Renewal.** certbot stores the challenge hooks with each certificate. A certificate issued before tenant tokens existed keeps using the server's token until the panel issues it again.
+**Renewal.** certbot stores the challenge hooks with each certificate, and renewals (the timer, **Renew**) reuse them. A certificate issued before tenant tokens existed therefore keeps renewing with the server's token only, even after its owner saves a token. Keep the server token set while such certificates exist.
 
 ## Renewal
 
