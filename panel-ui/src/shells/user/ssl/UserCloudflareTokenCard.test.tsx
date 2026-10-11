@@ -82,7 +82,9 @@ describe("UserCloudflareTokenCard", () => {
     render(<UserCloudflareTokenCard />);
     expect(await screen.findByText("Token saved")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Remove token/ }));
-    fireEvent.click(await screen.findByRole("button", { name: "Remove" }));
+    const confirm = await screen.findByRole("button", { name: "Remove" });
+    expect(mockDelete).not.toHaveBeenCalled();
+    fireEvent.click(confirm);
 
     await waitFor(() => expect(mockDelete).toHaveBeenCalledWith("/me/cloudflare-token"));
     expect(await screen.findByText("Not set")).toBeInTheDocument();
