@@ -81,6 +81,8 @@ func fullDeps() Deps {
 		PHPPools: repository.NewPHPPoolRepository(db),
 		PHPPoolIniOverrides: repository.NewPHPPoolIniOverrideRepository(db),
 		PHPPerformanceModes: repository.NewPHPPerformanceModeRepository(db),
+		// GH #2032
+		UserCloudflareTokens: repository.NewUserCloudflareTokenRepository(db),
 		WordPressInstalls: repository.NewWordPressInstallRepository(db),
 		ManagedIPs: repository.NewManagedIPRepository(db),
 		CronJobs: repository.NewCronJobRepository(db),

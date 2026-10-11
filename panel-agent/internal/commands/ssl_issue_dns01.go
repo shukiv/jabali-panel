@@ -22,6 +22,21 @@ const (
 	acmeDNSHookCleanup = "/usr/local/bin/jabali-panel dns acme-hook cleanup"
 )
 
+// acmeDNSHooks returns the hook commands for one lineage. The lineage
+// rides along as JABALI_ACME_LINEAGE so the hook knows whose certificate
+// it is answering for: a tenant's own Cloudflare token is used only on
+// that tenant's certificate (GH #2032). certbot runs hooks through the
+// shell, and certName has passed sslDomainRegex ([a-zA-Z0-9.-] only), so
+// it cannot break out of the command line. An env variable rather than a
+// flag: a panel binary from before GH #2032 ignores the variable, where
+// an unknown flag would fail every renewal after a rollback. It goes
+// through /usr/bin/env because certbot refuses a hook whose first word
+// is not an executable file, and a bare VAR=value prefix is not one.
+func acmeDNSHooks(certName string) (auth, cleanup string) {
+	prefix := "/usr/bin/env JABALI_ACME_LINEAGE=" + certName + " "
+	return prefix + acmeDNSHookAuth, prefix + acmeDNSHookCleanup
+}
+
 // sslIssueDNS01Params is the input shape for ssl.issue_dns01.
 //
 // CertName pins the certbot lineage (must be a plain FQDN-ish label —
@@ -44,6 +59,11 @@ type sslIssueDNS01Response struct {
 	ExpiresAt string `json:"expires_at"`
 	Staging   bool   `json:"staging"`
 	Skipped   bool   `json:"skipped"`
+}
+
+// issueDNS01 runs certbot. A var so a test can see what it is handed.
+var issueDNS01 = func(certName string, sans []string, email string, staging bool, authHook, cleanupHook string) (*certbot.Result, error) {
+	return certbot.NewRunner().IssueDNS01(certName, sans, email, staging, authHook, cleanupHook)
 }
 
 func sslIssueDNS01Handler(ctx context.Context, params json.RawMessage) (any, error) {
@@ -88,8 +108,8 @@ func sslIssueDNS01Handler(ctx context.Context, params json.RawMessage) (any, err
 		}
 	}
 
-	runner := certbot.NewRunner()
-	result, err := runner.IssueDNS01(p.CertName, p.SANs, p.Email, p.Staging, acmeDNSHookAuth, acmeDNSHookCleanup)
+	authHook, cleanupHook := acmeDNSHooks(p.CertName)
+	result, err := issueDNS01(p.CertName, p.SANs, p.Email, p.Staging, authHook, cleanupHook)
 	if err != nil {
 		msg := fmt.Sprintf("dns-01 issue failed: %v", err)
 		if result != nil && result.Reason != "" {

@@ -52,18 +52,30 @@ type cfRecord struct {
 
 type cfListResp struct {
 	Success bool       `json:"success"`
-	Errors  []cfErr    `json:"errors"`
+	Errors  cfErrs     `json:"errors"`
 	Result  []cfRecord `json:"result"`
 }
 
 type cfWriteResp struct {
-	Success bool    `json:"success"`
-	Errors  []cfErr `json:"errors"`
+	Success bool   `json:"success"`
+	Errors  cfErrs `json:"errors"`
 }
 
 type cfErr struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
+}
+
+// cfErrs prints as "message (code N); …". These errors reach the user's
+// screen (GH #2032 Verify & Save), so not as Go's struct formatting.
+type cfErrs []cfErr
+
+func (es cfErrs) String() string {
+	parts := make([]string, 0, len(es))
+	for _, e := range es {
+		parts = append(parts, fmt.Sprintf("%s (code %d)", e.Message, e.Code))
+	}
+	return strings.Join(parts, "; ")
 }
 
 func (c *CloudflareDNS) do(ctx context.Context, method, path string, body any) (*http.Response, error) {
@@ -247,12 +259,55 @@ type cfZone struct {
 }
 
 type cfZoneListResp struct {
-	Success    bool    `json:"success"`
-	Errors     []cfErr `json:"errors"`
+	Success    bool     `json:"success"`
+	Errors     cfErrs   `json:"errors"`
 	Result     []cfZone `json:"result"`
 	ResultInfo struct {
 		TotalCount int `json:"total_count"`
+		TotalPages int `json:"total_pages"`
 	} `json:"result_info"`
+}
+
+// CloudflareZone is one zone a token can see.
+type CloudflareZone struct {
+	ID   string
+	Name string
+}
+
+// cfListZonesMaxPages bounds ListZones at 1000 zones (50 a page).
+const cfListZonesMaxPages = 20
+
+// ListZones returns every active zone the token can see (GH #2032: the
+// tenant's Verify & Save probes the ones holding the tenant's domains). A
+// token that sees more than cfListZonesMaxPages pages is refused: a
+// tenant's token should be scoped to the tenant's own zones.
+func (c *CloudflareDNS) ListZones(ctx context.Context) ([]CloudflareZone, error) {
+	var out []CloudflareZone
+	for page := 1; ; page++ {
+		if page > cfListZonesMaxPages {
+			return nil, fmt.Errorf("the token can see more than %d zones — scope it to the zones it is for", cfListZonesMaxPages*50)
+		}
+		q := url.Values{"status": {"active"}, "per_page": {"50"}, "page": {fmt.Sprint(page)}}
+		resp, err := c.do(ctx, http.MethodGet, "/zones?"+q.Encode(), nil)
+		if err != nil {
+			return nil, fmt.Errorf("cf zone list: %w", err)
+		}
+		var zr cfZoneListResp
+		derr := json.NewDecoder(resp.Body).Decode(&zr)
+		resp.Body.Close()
+		if derr != nil {
+			return nil, fmt.Errorf("cf zone list decode: %w", derr)
+		}
+		if !zr.Success {
+			return nil, fmt.Errorf("cf zone list: %v", zr.Errors)
+		}
+		for _, z := range zr.Result {
+			out = append(out, CloudflareZone{ID: z.ID, Name: z.Name})
+		}
+		if page >= zr.ResultInfo.TotalPages {
+			return out, nil
+		}
+	}
 }
 
 // FindZoneID resolves the zone id for an EXACT zone name via the stored
@@ -288,7 +343,12 @@ func (c *CloudflareDNS) VerifyToken(ctx context.Context) (zones int, err error) 
 	if err != nil {
 		return 0, fmt.Errorf("cf token verify: %w", err)
 	}
-	var vr cfWriteResp
+	var vr struct {
+		cfWriteResp
+		Result struct {
+			Status string `json:"status"`
+		} `json:"result"`
+	}
 	verr := json.NewDecoder(resp.Body).Decode(&vr)
 	resp.Body.Close()
 	if verr != nil {
@@ -296,6 +356,11 @@ func (c *CloudflareDNS) VerifyToken(ctx context.Context) (zones int, err error) 
 	}
 	if !vr.Success {
 		return 0, fmt.Errorf("cloudflare rejected the token: %v", vr.Errors)
+	}
+	// A disabled or expired token still verifies with success:true; the
+	// status says so (GH #2032).
+	if s := vr.Result.Status; s != "" && s != "active" {
+		return 0, fmt.Errorf("cloudflare says the token is %s, not active", s)
 	}
 	zresp, err := c.do(ctx, http.MethodGet, "/zones?per_page=1", nil)
 	if err != nil {

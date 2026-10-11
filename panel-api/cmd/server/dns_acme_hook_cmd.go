@@ -12,6 +12,7 @@ import (
 
 	"git.jabali-panel.com/shukivaknin/jabali2/hostedsvc"
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/dnsverify"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/cftoken"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dns01"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dnscompile"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/domainops"
@@ -46,21 +47,12 @@ func newDNSAcmeHookCmd() *cobra.Command {
 		Short:  "certbot manual DNS-01 hooks (writes _acme-challenge TXT via panel DNS)",
 		Hidden: true, // machine-invoked by certbot, not an operator surface
 	}
-	mk := func(use string, fn func(ctx context.Context, domain, validation string) error) *cobra.Command {
+	mk := func(use string, fn func(ctx context.Context, lineage, domain, validation string) error) *cobra.Command {
 		return &cobra.Command{
 			Use:     use,
 			Args:    cobra.NoArgs,
 			PreRunE: requireDBAndAgent,
-			RunE: func(cmd *cobra.Command, _ []string) error {
-				domain := strings.TrimPrefix(strings.TrimSpace(os.Getenv("CERTBOT_DOMAIN")), "*.")
-				validation := strings.TrimSpace(os.Getenv("CERTBOT_VALIDATION"))
-				if domain == "" || validation == "" {
-					return fmt.Errorf("CERTBOT_DOMAIN and CERTBOT_VALIDATION must be set (certbot invokes this hook)")
-				}
-				ctx, cancel := context.WithTimeout(cmd.Context(), 90*time.Second)
-				defer cancel()
-				return fn(ctx, domain, validation)
-			},
+			RunE:    acmeHookRunE(fn),
 		}
 	}
 	cmd.AddCommand(
@@ -68,6 +60,42 @@ func newDNSAcmeHookCmd() *cobra.Command {
 		mk("cleanup", acmeHookCleanup),
 	)
 	return cmd
+}
+
+// acmeHookRunE runs fn with what certbot and the agent put in the
+// environment.
+func acmeHookRunE(fn func(ctx context.Context, lineage, domain, validation string) error) func(*cobra.Command, []string) error {
+	return func(cmd *cobra.Command, _ []string) error {
+		in, err := acmeHookEnv(os.Getenv)
+		if err != nil {
+			return err
+		}
+		ctx, cancel := context.WithTimeout(cmd.Context(), 90*time.Second)
+		defer cancel()
+		return fn(ctx, in.lineage, in.domain, in.validation)
+	}
+}
+
+// acmeHookInput is what certbot and the agent hand the hook.
+type acmeHookInput struct {
+	// lineage is the certificate's --cert-name, which the agent prefixes
+	// to the hook as JABALI_ACME_LINEAGE (GH #2032). Empty for a renewal
+	// conf written before that: the server's Cloudflare token only, as then.
+	lineage    string
+	domain     string
+	validation string
+}
+
+func acmeHookEnv(getenv func(string) string) (acmeHookInput, error) {
+	in := acmeHookInput{
+		lineage:    strings.TrimSpace(getenv("JABALI_ACME_LINEAGE")),
+		domain:     strings.TrimPrefix(strings.TrimSpace(getenv("CERTBOT_DOMAIN")), "*."),
+		validation: strings.TrimSpace(getenv("CERTBOT_VALIDATION")),
+	}
+	if in.domain == "" || in.validation == "" {
+		return in, fmt.Errorf("CERTBOT_DOMAIN and CERTBOT_VALIDATION must be set (certbot invokes this hook)")
+	}
+	return in, nil
 }
 
 // findZoneForName walks the name's parent chain until a local dns_zones
@@ -160,31 +188,37 @@ func waitForChallengeTXT(
 }
 
 // hookDNS01Setup builds the shared provider-decision config (JAB-235). The
-// Cloudflare client is non-nil only when a token is stored AND the sso key
-// can unseal it; without it the decision degrades to pdns-or-nothing
-// exactly as before this feature.
-func hookDNS01Setup(ctx context.Context) (dns01.Config, *hostedsvc.CloudflareDNS) {
+// Cloudflare candidates are the tokens cftoken offers for domain on the
+// lineage's certificate (GH #2032): the domain owner's own, then the
+// server's. clients[i] is cfg.CF[i]. Without a readable token the decision
+// degrades to pdns-or-nothing exactly as before Cloudflare support.
+func hookDNS01Setup(ctx context.Context, lineage, domain string) (dns01.Config, []cftoken.Candidate, []*hostedsvc.CloudflareDNS) {
 	cfg := dns01.Config{LookupNS: dnsverify.LookupNSExternal}
 	srv, err := repository.NewServerSettingsRepository(sharedDB).Get(ctx)
 	if err != nil || srv == nil {
-		return cfg, nil
+		return cfg, nil, nil
 	}
 	cfg.OurNSHosts = []string{srv.NS1Name, srv.NS2Name}
-	if len(srv.CFAPITokenEnc) == 0 {
-		return cfg, nil
-	}
 	key := ssoKeyForCLI()
 	if key == nil {
-		return cfg, nil
+		return cfg, nil, nil
 	}
-	tok, err := key.Open(srv.CFAPITokenEnc)
+	tokens := cftoken.Resolver{
+		Domains: domainRepoFromDB(),
+		Tokens:  repository.NewUserCloudflareTokenRepository(sharedDB),
+		Key:     key,
+	}
+	set, err := tokens.For(ctx, srv, lineage, domain)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "acme-hook: cannot unseal the Cloudflare API token — falling back to panel DNS only")
-		return cfg, nil
+		fmt.Fprintf(os.Stderr, "acme-hook: %v — trying the Cloudflare tokens that could be read\n", err)
 	}
-	cf := hostedsvc.NewCloudflareAPI(string(tok))
-	cfg.CF = cf
-	return cfg, cf
+	clients := make([]*hostedsvc.CloudflareDNS, 0, len(set.Candidates))
+	for _, c := range set.Candidates {
+		cf := hostedsvc.NewCloudflareAPI(c.Token)
+		clients = append(clients, cf)
+		cfg.CF = append(cfg.CF, cf)
+	}
+	return cfg, set.Candidates, clients
 }
 
 // hookRoute decides where this hook writes the challenge for domain.
@@ -195,10 +229,15 @@ func hookDNS01Setup(ctx context.Context) (dns01.Config, *hostedsvc.CloudflareDNS
 // TXT that only exists in our pdns. Everything else (jabali-authoritative,
 // inconclusive NS, resolver outage) keeps the pre-JAB-235 behaviour: use
 // the local zone when there is one, else fail with a clear reason.
-func hookRoute(ctx context.Context, zones repository.DNSZoneRepository, domain string) (dns01.Route, *hostedsvc.CloudflareDNS, *models.DNSZone, error) {
-	cfg, cf := hookDNS01Setup(ctx)
+func hookRoute(ctx context.Context, zones repository.DNSZoneRepository, lineage, domain string) (dns01.Route, *hostedsvc.CloudflareDNS, *models.DNSZone, error) {
+	cfg, cands, clients := hookDNS01Setup(ctx, lineage, domain)
 	route := dns01.AuthoritativeRoute(ctx, cfg, domain)
 	if route.Provider == dns01.ProviderCloudflare {
+		cf, whose, err := routeClient(route, cands, clients)
+		if err != nil {
+			return route, nil, nil, fmt.Errorf("%s: %w", domain, err)
+		}
+		fmt.Printf("acme-hook: %s is at Cloudflare (zone %s) — writing with %s API token\n", domain, route.Zone, whose)
 		return route, cf, nil, nil
 	}
 	zone, err := findZoneForName(ctx, zones, domain)
@@ -211,11 +250,24 @@ func hookRoute(ctx context.Context, zones repository.DNSZoneRepository, domain s
 	return dns01.Route{Provider: dns01.ProviderPDNS, Zone: zone.Name}, nil, zone, nil
 }
 
-func acmeHookAuth(ctx context.Context, domain, validation string) error {
+// routeClient returns the client whose token found the zone, and whose
+// token it is for the log. clients[i] belongs to cands[i].
+func routeClient(route dns01.Route, cands []cftoken.Candidate, clients []*hostedsvc.CloudflareDNS) (*hostedsvc.CloudflareDNS, string, error) {
+	if route.CFIndex < 0 || route.CFIndex >= len(clients) || route.CFIndex >= len(cands) {
+		return nil, "", fmt.Errorf("cloudflare route names token %d of %d", route.CFIndex, len(clients))
+	}
+	whose := "the server's"
+	if cands[route.CFIndex].Source == cftoken.SourceOwner {
+		whose = "the domain owner's"
+	}
+	return clients[route.CFIndex], whose, nil
+}
+
+func acmeHookAuth(ctx context.Context, lineage, domain, validation string) error {
 	zones := dnsZoneRepoFromDB()
 	records := dnsRecordRepoFromDB()
 
-	route, cf, zone, err := hookRoute(ctx, zones, domain)
+	route, cf, zone, err := hookRoute(ctx, zones, lineage, domain)
 	if err != nil {
 		return err
 	}
@@ -267,11 +319,11 @@ func acmeHookAuth(ctx context.Context, domain, validation string) error {
 	return nil
 }
 
-func acmeHookCleanup(ctx context.Context, domain, validation string) error {
+func acmeHookCleanup(ctx context.Context, lineage, domain, validation string) error {
 	zones := dnsZoneRepoFromDB()
 	records := dnsRecordRepoFromDB()
 
-	route, cf, zone, err := hookRoute(ctx, zones, domain)
+	route, cf, zone, err := hookRoute(ctx, zones, lineage, domain)
 	if err != nil {
 		return err
 	}

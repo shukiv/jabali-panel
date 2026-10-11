@@ -5,6 +5,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
+
+	"git.jabali-panel.com/shukivaknin/jabali2/hostedsvc"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/cftoken"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dns01"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
@@ -144,5 +149,68 @@ func TestWaitForChallengeTXT_CancelledContext(t *testing.T) {
 		"_acme-challenge.example.com", "the-value",
 		lookupNS, lookupTXT, time.Hour, time.Hour) {
 		t.Fatal("expected cancelled context to return false promptly")
+	}
+}
+
+// GH #2032: the hook reads the lineage the agent put in front of it. A
+// renewal conf written before has none: the server's token only.
+func TestAcmeHookEnv(t *testing.T) {
+	env := map[string]string{
+		"CERTBOT_DOMAIN":      " *.example.com ",
+		"CERTBOT_VALIDATION":  " v4l ",
+		"JABALI_ACME_LINEAGE": " example.com ",
+	}
+	get := func(k string) string { return env[k] }
+
+	in, err := acmeHookEnv(get)
+	if err != nil || in.lineage != "example.com" || in.domain != "example.com" || in.validation != "v4l" {
+		t.Fatalf("acmeHookEnv = %+v, %v", in, err)
+	}
+	delete(env, "JABALI_ACME_LINEAGE")
+	if in, err = acmeHookEnv(get); err != nil || in.lineage != "" {
+		t.Fatalf("without a lineage: %+v, %v", in, err)
+	}
+	delete(env, "CERTBOT_VALIDATION")
+	if _, err = acmeHookEnv(get); err == nil {
+		t.Fatal("want an error without CERTBOT_VALIDATION")
+	}
+}
+
+// The challenge is written with the token that found the zone.
+func TestRouteClient(t *testing.T) {
+	owner, server := hostedsvc.NewCloudflareAPI("owner"), hostedsvc.NewCloudflareAPI("server")
+	cands := []cftoken.Candidate{{Source: cftoken.SourceOwner}, {Source: cftoken.SourceServer}}
+	clients := []*hostedsvc.CloudflareDNS{owner, server}
+	for i, want := range []struct {
+		cf    *hostedsvc.CloudflareDNS
+		whose string
+	}{{owner, "the domain owner's"}, {server, "the server's"}} {
+		cf, whose, err := routeClient(dns01.Route{Provider: dns01.ProviderCloudflare, CFIndex: i}, cands, clients)
+		if err != nil || cf != want.cf || whose != want.whose {
+			t.Fatalf("index %d: %v %q %v", i, cf == owner, whose, err)
+		}
+	}
+	if _, _, err := routeClient(dns01.Route{Provider: dns01.ProviderCloudflare, CFIndex: 2}, cands, clients); err == nil {
+		t.Fatal("want an error for an index past the tokens")
+	}
+}
+
+// The command hands the hook the lineage from its environment.
+func TestAcmeHookRunE_PassesTheLineage(t *testing.T) {
+	t.Setenv("CERTBOT_DOMAIN", "www.example.com")
+	t.Setenv("CERTBOT_VALIDATION", "v4l")
+	t.Setenv("JABALI_ACME_LINEAGE", "example.com")
+	var got []string
+	run := acmeHookRunE(func(_ context.Context, lineage, domain, validation string) error {
+		got = []string{lineage, domain, validation}
+		return nil
+	})
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+	if err := run(cmd, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 || got[0] != "example.com" || got[1] != "www.example.com" || got[2] != "v4l" {
+		t.Fatalf("hook got %v", got)
 	}
 }

@@ -197,6 +197,9 @@ type Deps struct {
 	QuotaMount string
 	SSO        *sso.Service
 	SSOKey     *ssokey.Key
+	// UserCloudflareTokens holds tenants' own Cloudflare DNS-01 tokens
+	// (GH #2032). Nil leaves /me/cloudflare-token unmounted.
+	UserCloudflareTokens repository.UserCloudflareTokenRepository
 	// WebmailSSOMinter signs the JWT consumed by Bulwark's
 	// /api/auth/impersonate endpoint (M6.6). Nil disables /sso/webmail
 	// — handler surfaces 503 in that case. Loaded by serve.go from
@@ -1662,6 +1665,17 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				SSHKeys:    deps.SSHKeys,
 				Reconciler: deps.Reconciler,
 				Logger:     deps.Log,
+			})
+		}
+
+		// GH #2032: a tenant's own Cloudflare token for DNS-01.
+		if deps.UserCloudflareTokens != nil && deps.Domains != nil {
+			api.RegisterUserCloudflareTokenRoutes(v1, api.UserCloudflareTokenHandlerConfig{
+				Tokens:          deps.UserCloudflareTokens,
+				Domains:         deps.Domains,
+				SSOKey:          deps.SSOKey,
+				Log:             deps.Log,
+				StrictRateLimit: rl.StrictPerActor(),
 			})
 		}
 
