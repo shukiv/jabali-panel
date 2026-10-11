@@ -10,7 +10,6 @@ import (
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/backup"
-	"git.jabali-panel.com/shukivaknin/jabali2/internal/hostreserve"
 )
 
 // system.fullbackup.pack — GH #1408 / #502. Package a whole Full Server backup
@@ -98,7 +97,7 @@ func systemFullbackupPackHandler(ctx context.Context, raw json.RawMessage) (any,
 			continue
 		}
 		// Gate each job on the host reserve so a big run can't wedge the box.
-		if err := hostreserve.CheckReserve("/var/lib/jabali-backups", 0); err != nil {
+		if err := checkHostReserve("/var/lib/jabali-backups", 0); err != nil {
 			return nil, &agentwire.AgentError{Code: agentwire.CodeUnavailable, Message: "packaging paused: under host disk reserve: " + err.Error()}
 		}
 		innerTar := filepath.Join(stage, j.Label+".tar.zst")

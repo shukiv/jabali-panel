@@ -18,7 +18,6 @@ import (
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/filesafe"
-	"git.jabali-panel.com/shukivaknin/jabali2/internal/hostreserve"
 )
 
 // db.postgres.restore — load a tenant-uploaded .sql dump into a Postgres
@@ -269,7 +268,7 @@ func dbPgRestoreHandler(ctx context.Context, params json.RawMessage) (any, error
 func pgLoadScoped(ctx context.Context, db string, f *os.File, ownerRole string, grantRoles []string) *agentwire.AgentError {
 	// Refuse to start loading when the PG data filesystem is already under the
 	// host reserve floor (mirrors db.restore's /var/lib/mysql check).
-	if err := hostreserve.CheckReserve("/var/lib/postgresql", 0); err != nil {
+	if err := checkHostReserve("/var/lib/postgresql", 0); err != nil {
 		return &agentwire.AgentError{Code: agentwire.CodeUnavailable, Message: "database storage is under the host disk reserve: " + err.Error()}
 	}
 

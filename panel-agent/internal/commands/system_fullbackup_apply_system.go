@@ -14,7 +14,6 @@ import (
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/backup"
-	"git.jabali-panel.com/shukivaknin/jabali2/internal/hostreserve"
 )
 
 const (
@@ -73,7 +72,7 @@ func systemFullbackupApplySystemHandler(ctx context.Context, raw json.RawMessage
 	if aerr != nil {
 		return nil, aerr
 	}
-	if err := hostreserve.CheckReserve("/var/lib/jabali-backups", 0); err != nil {
+	if err := checkHostReserve("/var/lib/jabali-backups", 0); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeUnavailable, Message: "system-restore staging is under the host disk reserve: " + err.Error()}
 	}
 	// A defer only reaps a live agent; the fleet agent auto-restarts nightly and a

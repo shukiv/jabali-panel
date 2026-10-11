@@ -44,6 +44,10 @@ func TestMain(m *testing.M) {
 	execCommand = func(name string, args ...string) *exec.Cmd {
 		return exec.Command(stub, append([]string{name}, args...)...)
 	}
+	// The free space of the machine running the tests is not a test input:
+	// with the real check, a nearly full disk failed every test that got past
+	// a reserve check. A test of the refusal sets its own (refuseHostReserve).
+	checkHostReserve = func(string, int64) error { return nil }
 
 	code := m.Run()
 	_ = os.RemoveAll(dir)
