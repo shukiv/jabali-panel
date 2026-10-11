@@ -131,10 +131,15 @@ host topology:
     "mem_used_kb": 4000000,
     "mem_total_kb": 8000000,
     "load_avg": [0.5, 0.4, 0.3],
-    "partitions": [ { "mount_point": "/", "used_bytes": 40, "total_bytes": 100 } ]
+    "partitions": [ { "mount_point": "/", "used_bytes": 40, "free_bytes": 55, "total_bytes": 100 } ]
   }
 }
 ```
+
+A partition's `used_bytes` and `free_bytes` are `df`'s Used and Available. Blocks
+reserved for root are in neither, so `used_bytes + free_bytes` can be less than
+`total_bytes`. To show the percent `df` and the panel show, use
+`used_bytes / (used_bytes + free_bytes)`, rounded up.
 
 Each slice degrades on its own: if one collector fails, the rest still render
 and the failure is reported under `errors`. Results are cached for a few seconds,

@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"text/tabwriter"
 	"time"
 
 	"github.com/spf13/cobra"
+
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/fsusage"
 )
 
 func requireAgent(cmd *cobra.Command, args []string) error {
@@ -57,19 +60,14 @@ func newSystemInfoCmd() *cobra.Command {
 			}
 
 			var info struct {
-				Hostname      string     `json:"hostname"`
-				UptimeSeconds float64    `json:"uptime_seconds"`
-				LoadAvg       [3]float64 `json:"load_avg"`
-				CPUCount      int        `json:"cpu_count"`
-				MemTotalKB    uint64     `json:"mem_total_kb"`
-				MemAvailKB    uint64     `json:"mem_available_kb"`
-				MemUsedKB     uint64     `json:"mem_used_kb"`
-				Partitions    []struct {
-					MountPoint string `json:"mount_point"`
-					TotalBytes uint64 `json:"total_bytes"`
-					UsedBytes  uint64 `json:"used_bytes"`
-					FreeBytes  uint64 `json:"free_bytes"`
-				} `json:"partitions"`
+				Hostname      string         `json:"hostname"`
+				UptimeSeconds float64        `json:"uptime_seconds"`
+				LoadAvg       [3]float64     `json:"load_avg"`
+				CPUCount      int            `json:"cpu_count"`
+				MemTotalKB    uint64         `json:"mem_total_kb"`
+				MemAvailKB    uint64         `json:"mem_available_kb"`
+				MemUsedKB     uint64         `json:"mem_used_kb"`
+				Partitions    []cliPartition `json:"partitions"`
 			}
 			if err := json.Unmarshal(raw, &info); err != nil {
 				return fmt.Errorf("parse system.info: %w", err)
@@ -86,22 +84,35 @@ func newSystemInfoCmd() *cobra.Command {
 			fmt.Println()
 
 			if len(info.Partitions) > 0 {
-				w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-				fmt.Fprintln(w, "MOUNT\tTOTAL\tUSED\tFREE\tUSAGE")
-				for _, p := range info.Partitions {
-					pct := float64(p.UsedBytes) / float64(p.TotalBytes) * 100
-					fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%.0f%%\n",
-						p.MountPoint,
-						formatBytes(p.TotalBytes),
-						formatBytes(p.UsedBytes),
-						formatBytes(p.FreeBytes),
-						pct)
-				}
-				w.Flush()
+				printPartitions(os.Stdout, info.Partitions)
 			}
 			return nil
 		},
 	}
+}
+
+// cliPartition is one of system.info's partitions.
+type cliPartition struct {
+	MountPoint string `json:"mount_point"`
+	TotalBytes uint64 `json:"total_bytes"`
+	UsedBytes  uint64 `json:"used_bytes"`
+	FreeBytes  uint64 `json:"free_bytes"`
+}
+
+// printPartitions prints the disk table. USAGE is df's Use% (GH #2029), so
+// it matches df on a filesystem with blocks reserved for root.
+func printPartitions(out io.Writer, parts []cliPartition) {
+	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "MOUNT\tTOTAL\tUSED\tFREE\tUSAGE")
+	for _, p := range parts {
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d%%\n",
+			p.MountPoint,
+			formatBytes(p.TotalBytes),
+			formatBytes(p.UsedBytes),
+			formatBytes(p.FreeBytes),
+			fsusage.UsedPercent(p.UsedBytes, p.FreeBytes))
+	}
+	w.Flush()
 }
 
 // ---- services ----

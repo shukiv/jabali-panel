@@ -610,6 +610,7 @@ type ssHostInfo struct {
 		MountPoint string `json:"mount_point"`
 		TotalBytes uint64 `json:"total_bytes"`
 		UsedBytes  uint64 `json:"used_bytes"`
+		FreeBytes  uint64 `json:"free_bytes"`
 	} `json:"partitions"`
 }
 
@@ -686,9 +687,13 @@ func (s *automationServerStatus) handle(c *gin.Context) {
 		if json.Unmarshal(infoRaw, &hi) == nil {
 			parts := make([]gin.H, 0, len(hi.Partitions))
 			for _, p := range hi.Partitions {
+				// free_bytes is what non-root can still write. With blocks
+				// reserved for root, used + free < total; df's Use% is
+				// used / (used + free) (GH #2029).
 				parts = append(parts, gin.H{
 					"mount_point": p.MountPoint,
 					"used_bytes":  p.UsedBytes,
+					"free_bytes":  p.FreeBytes,
 					"total_bytes": p.TotalBytes,
 				})
 			}

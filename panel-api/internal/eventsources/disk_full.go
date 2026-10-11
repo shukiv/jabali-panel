@@ -6,6 +6,7 @@ import (
 	"syscall"
 	"time"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/fsusage"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/notifications"
 )
@@ -49,16 +50,12 @@ func runDiskFull(ctx context.Context, d Deps) {
 
 func diskFullPass(ctx context.Context, d Deps) {
 	for _, mount := range diskFullMounts {
-		used, total, err := diskUsage(mount)
-		if err != nil {
+		pct, ok := diskUsedPercent(mount)
+		if !ok {
 			// Missing mount (dev box without /var/lib/mysql, for
 			// instance) is not an error — skip quietly.
 			continue
 		}
-		if total == 0 {
-			continue
-		}
-		pct := float64(used) / float64(total) * 100.0
 		switch {
 		case pct >= diskCritPercent:
 			// Critical matches the seed kind metadata; "error" was a
@@ -71,7 +68,7 @@ func diskFullPass(ctx context.Context, d Deps) {
 	}
 }
 
-func fireDiskEvent(ctx context.Context, d Deps, mount string, pct float64, kind, severity string) {
+func fireDiskEvent(ctx context.Context, d Deps, mount string, pct int, kind, severity string) {
 	tag := "mount:" + mount
 	if !shouldFire(ctx, d, kind, tag, diskFullCoolOff) {
 		return
@@ -79,8 +76,8 @@ func fireDiskEvent(ctx context.Context, d Deps, mount string, pct float64, kind,
 	_, err := d.Queue.Publish(ctx, notifications.Envelope{
 		EventKind: kind,
 		Severity:  severity,
-		Title:     fmt.Sprintf("%s at %.0f%% full", mount, pct),
-		Body:      fmt.Sprintf("Filesystem %s is %.1f%% full. (%s)", mount, pct, tag),
+		Title:     fmt.Sprintf("%s at %d%% full", mount, pct),
+		Body:      fmt.Sprintf("Filesystem %s is %d%% full. (%s)", mount, pct, tag),
 		Deeplink:  "/admin/system",
 	})
 	if err != nil {
@@ -88,20 +85,22 @@ func fireDiskEvent(ctx context.Context, d Deps, mount string, pct float64, kind,
 	}
 }
 
-// diskUsage wraps syscall.Statfs with 64-bit block math so the caller
-// doesn't juggle Bavail/Blocks/Bsize pointers. Returns (used, total)
-// in bytes; an error means the mount doesn't exist or we can't stat it.
-//
-// Note: we use Blocks - Bavail for "used" rather than Blocks - Bfree so
-// the number reflects what a non-root process sees — reserved blocks
-// aren't usable by the panel anyway.
-func diskUsage(mount string) (used, total uint64, err error) {
+// statfs is syscall.Statfs; tests replace it.
+var statfs = syscall.Statfs
+
+// diskUsedPercent is how full mount is, as df's Use% (GH #2029): used as a
+// share of the space a non-root process can use, so the blocks ext4 reserves
+// for root count as neither used nor free, and the disk is 100% full when
+// nothing is left to non-root. ok is false when the mount can't be read
+// (it doesn't exist) or has no size.
+func diskUsedPercent(mount string) (pct int, ok bool) {
 	var st syscall.Statfs_t
-	if err := syscall.Statfs(mount, &st); err != nil {
-		return 0, 0, err
+	if err := statfs(mount, &st); err != nil {
+		return 0, false
 	}
-	total = uint64(st.Blocks) * uint64(st.Bsize)
-	avail := uint64(st.Bavail) * uint64(st.Bsize)
-	used = total - avail
-	return used, total, nil
+	total, used, avail := fsusage.FromStatfs(&st)
+	if total == 0 {
+		return 0, false
+	}
+	return fsusage.UsedPercent(used, avail), true
 }

@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/fsusage"
 )
 
 // SystemInfoResponse is the payload for system.info.
@@ -436,24 +438,31 @@ func collectPartitions(mounts []string) []PartitionInfo {
 		if err := syscall.Statfs(mp, &stat); err != nil {
 			continue
 		}
-		total := stat.Blocks * uint64(stat.Bsize)
-		free := stat.Bavail * uint64(stat.Bsize)
-		if total == 0 {
+		p := partitionFromStatfs(mp, &stat)
+		if p.TotalBytes == 0 {
 			continue
 		}
-		k := key{total, free}
+		k := key{p.TotalBytes, p.FreeBytes}
 		if seen[k] && mp != "/" {
 			continue
 		}
 		seen[k] = true
-		out = append(out, PartitionInfo{
-			MountPoint: mp,
-			TotalBytes: total,
-			FreeBytes:  free,
-			UsedBytes:  total - free,
-		})
+		out = append(out, p)
 	}
 	return out
+}
+
+// partitionFromStatfs reports a mount the way df does (GH #2029): Used is
+// what files take, Free is what non-root can still write. The blocks ext4
+// reserves for root count as neither.
+func partitionFromStatfs(mp string, st *syscall.Statfs_t) PartitionInfo {
+	total, used, avail := fsusage.FromStatfs(st)
+	return PartitionInfo{
+		MountPoint: mp,
+		TotalBytes: total,
+		FreeBytes:  avail,
+		UsedBytes:  used,
+	}
 }
 
 func init() {
