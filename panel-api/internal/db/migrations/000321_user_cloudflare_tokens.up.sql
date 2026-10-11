@@ -1,9 +1,9 @@
 -- GH #2032: a tenant's own Cloudflare API token for ACME DNS-01. For each
 -- certificate name, the panel writes the _acme-challenge record with the
 -- token of the user who owns the name's domain, and falls back to the
--- server's token (server_settings.cf_api_token_enc, JAB-235) only when that
--- token cannot reach the zone. One tenant's token is never used for another
--- tenant's names.
+-- server's token (server_settings.cf_api_token_enc, JAB-235) when the owner
+-- has none or it cannot reach the zone. One tenant's token is never used for
+-- another tenant's names or certificates.
 --
 -- token_enc is the token sealed with the sso key (AES-256-GCM), the same
 -- envelope as cf_api_token_enc; the plaintext is never stored or returned.
