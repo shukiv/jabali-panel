@@ -162,16 +162,21 @@ func TestMailChallengeVhost_NoChallengeWithoutMail(t *testing.T) {
 // The :80 block binds the domain's IP like the full vhost does (M24), or it
 // lands in nginx's wildcard pool, which is never consulted for that IP.
 func TestMailChallengeVhost_KeepsTheDomainsListenIP(t *testing.T) {
-	ag := &challengeAgent{}
-	d := mailDomain()
-	d.WebmailEnabled = false
-	ipID := uint64(7)
-	d.ListenIPv4ID = &ipID
-	r, _ := newChallengeReconciler(t, ag, d, nil, &models.User{ID: "u1"})
-	r = r.WithManagedIPs(&fakeManagedIPs{rows: []models.ManagedIP{{ID: 7, Address: "198.51.100.7", Family: "ipv4"}}})
+	for _, webmail := range []bool{false, true} {
+		t.Run(map[bool]string{false: "challenge-only", true: "full vhost"}[webmail], func(t *testing.T) {
+			ag := &challengeAgent{}
+			d := mailDomain()
+			d.WebmailEnabled = webmail
+			ipID := uint64(7)
+			d.ListenIPv4ID = &ipID
+			r, _ := newChallengeReconciler(t, ag, d, nil, &models.User{ID: "u1"})
+			r = r.WithManagedIPs(&fakeManagedIPs{rows: []models.ManagedIP{{ID: 7, Address: "198.51.100.7", Family: "ipv4"}}})
 
-	r.reconcileWebmailVhosts(context.Background())
-	applies := ag.of("webmail.vhost_apply")
-	require.Len(t, applies, 1)
-	assert.Equal(t, "198.51.100.7", applies[0]["listen_ipv4"])
+			r.reconcileWebmailVhosts(context.Background())
+			applies := ag.of("webmail.vhost_apply")
+			require.Len(t, applies, 1)
+			assert.Equal(t, "198.51.100.7", applies[0]["listen_ipv4"])
+			assert.Equal(t, !webmail, applies[0]["challenge_only"] == true)
+		})
+	}
 }
