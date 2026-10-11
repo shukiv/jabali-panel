@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
+
 	"git.jabali-panel.com/shukivaknin/jabali2/hostedsvc"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/cftoken"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dns01"
@@ -190,5 +192,25 @@ func TestRouteClient(t *testing.T) {
 	}
 	if _, _, err := routeClient(dns01.Route{Provider: dns01.ProviderCloudflare, CFIndex: 2}, cands, clients); err == nil {
 		t.Fatal("want an error for an index past the tokens")
+	}
+}
+
+// The command hands the hook the lineage from its environment.
+func TestAcmeHookRunE_PassesTheLineage(t *testing.T) {
+	t.Setenv("CERTBOT_DOMAIN", "www.example.com")
+	t.Setenv("CERTBOT_VALIDATION", "v4l")
+	t.Setenv("JABALI_ACME_LINEAGE", "example.com")
+	var got []string
+	run := acmeHookRunE(func(_ context.Context, lineage, domain, validation string) error {
+		got = []string{lineage, domain, validation}
+		return nil
+	})
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+	if err := run(cmd, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 || got[0] != "example.com" || got[1] != "www.example.com" || got[2] != "v4l" {
+		t.Fatalf("hook got %v", got)
 	}
 }

@@ -37,9 +37,12 @@ func TestUserCloudflareTokenPut_Upserts(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(1, 2))
 	mock.ExpectCommit()
 
-	row := &models.UserCloudflareToken{UserID: "01HZUSER00000000000000000A", TokenEnc: []byte("sealed"), VerifiedAt: time.Now().UTC()}
+	// A row carrying an old UpdatedAt (one read back and saved again) is
+	// stamped anew: the route cache keys on it.
+	row := &models.UserCloudflareToken{UserID: "01HZUSER00000000000000000A", TokenEnc: []byte("sealed"),
+		VerifiedAt: time.Now().UTC(), UpdatedAt: time.Unix(1, 0)}
 	require.NoError(t, NewUserCloudflareTokenRepository(db).Put(context.Background(), row))
-	require.False(t, row.UpdatedAt.IsZero(), "Put must stamp UpdatedAt")
+	require.WithinDuration(t, time.Now(), row.UpdatedAt, time.Minute, "Put must stamp UpdatedAt")
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

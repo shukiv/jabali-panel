@@ -59,6 +59,11 @@ type sslIssueDNS01Response struct {
 	Skipped   bool   `json:"skipped"`
 }
 
+// issueDNS01 runs certbot. A var so a test can see what it is handed.
+var issueDNS01 = func(certName string, sans []string, email string, staging bool, authHook, cleanupHook string) (*certbot.Result, error) {
+	return certbot.NewRunner().IssueDNS01(certName, sans, email, staging, authHook, cleanupHook)
+}
+
 func sslIssueDNS01Handler(ctx context.Context, params json.RawMessage) (any, error) {
 	if len(params) == 0 {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "params required"}
@@ -101,9 +106,8 @@ func sslIssueDNS01Handler(ctx context.Context, params json.RawMessage) (any, err
 		}
 	}
 
-	runner := certbot.NewRunner()
 	authHook, cleanupHook := acmeDNSHooks(p.CertName)
-	result, err := runner.IssueDNS01(p.CertName, p.SANs, p.Email, p.Staging, authHook, cleanupHook)
+	result, err := issueDNS01(p.CertName, p.SANs, p.Email, p.Staging, authHook, cleanupHook)
 	if err != nil {
 		msg := fmt.Sprintf("dns-01 issue failed: %v", err)
 		if result != nil && result.Reason != "" {

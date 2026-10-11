@@ -52,15 +52,7 @@ func newDNSAcmeHookCmd() *cobra.Command {
 			Use:     use,
 			Args:    cobra.NoArgs,
 			PreRunE: requireDBAndAgent,
-			RunE: func(cmd *cobra.Command, _ []string) error {
-				in, err := acmeHookEnv(os.Getenv)
-				if err != nil {
-					return err
-				}
-				ctx, cancel := context.WithTimeout(cmd.Context(), 90*time.Second)
-				defer cancel()
-				return fn(ctx, in.lineage, in.domain, in.validation)
-			},
+			RunE:    acmeHookRunE(fn),
 		}
 	}
 	cmd.AddCommand(
@@ -68,6 +60,20 @@ func newDNSAcmeHookCmd() *cobra.Command {
 		mk("cleanup", acmeHookCleanup),
 	)
 	return cmd
+}
+
+// acmeHookRunE runs fn with what certbot and the agent put in the
+// environment.
+func acmeHookRunE(fn func(ctx context.Context, lineage, domain, validation string) error) func(*cobra.Command, []string) error {
+	return func(cmd *cobra.Command, _ []string) error {
+		in, err := acmeHookEnv(os.Getenv)
+		if err != nil {
+			return err
+		}
+		ctx, cancel := context.WithTimeout(cmd.Context(), 90*time.Second)
+		defer cancel()
+		return fn(ctx, in.lineage, in.domain, in.validation)
+	}
 }
 
 // acmeHookInput is what certbot and the agent hand the hook.

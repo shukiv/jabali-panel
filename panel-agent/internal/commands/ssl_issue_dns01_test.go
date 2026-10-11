@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-agent/internal/certbot"
 )
 
 // Validation-layer tests only — the certbot invocation itself is covered
@@ -98,4 +99,25 @@ func TestSSLIssueDNS01_RejectsShellInCertName(t *testing.T) {
 func strconvQuote(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
+}
+
+// certbot is handed the hooks that carry the lineage, so the renewal conf
+// it writes keeps them.
+func TestSSLIssueDNS01_PassesTheLineageHooks(t *testing.T) {
+	orig := issueDNS01
+	t.Cleanup(func() { issueDNS01 = orig })
+	var gotAuth, gotCleanup string
+	issueDNS01 = func(_ string, _ []string, _ string, _ bool, authHook, cleanupHook string) (*certbot.Result, error) {
+		gotAuth, gotCleanup = authHook, cleanupHook
+		return &certbot.Result{}, nil
+	}
+	if _, err := callDNS01(t, `{"cert_name":"example.com","sans":["example.com","www.example.com"],"email":"a@b.co"}`); err != nil {
+		t.Fatal(err)
+	}
+	if want, _ := acmeDNSHooks("example.com"); gotAuth != want {
+		t.Errorf("auth hook = %q, want %q", gotAuth, want)
+	}
+	if _, want := acmeDNSHooks("example.com"); gotCleanup != want {
+		t.Errorf("cleanup hook = %q, want %q", gotCleanup, want)
+	}
 }
