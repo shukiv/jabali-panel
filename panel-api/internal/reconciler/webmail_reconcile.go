@@ -272,6 +272,7 @@ func (r *Reconciler) applyWebmailVhost(ctx context.Context, d *models.Domain) {
 		// reconcile pass will retry once the cert materialises.
 		r.log.Debug("webmail reconcile: skipping vhost — no usable SSL cert on file",
 			"domain_id", d.ID, "domain", d.Name)
+		r.setMailVhostLive(d.Name, false)
 		return
 	}
 
@@ -306,7 +307,7 @@ func (r *Reconciler) applyWebmailVhost(ctx context.Context, d *models.Domain) {
 	addPanelMailHostnameParams(params, settings, d)
 	// JAB-369: gated by the webmail.vhost phase. params is exactly what the
 	// Agent receives, so any input to the vhost changes the fingerprint.
-	_, _ = r.project(ctx, PhaseWebmailVhost, d.Name, fingerprint(params), false, func() error {
+	_, err := r.project(ctx, PhaseWebmailVhost, d.Name, fingerprint(params), false, func() error {
 		callCtx, cancel := context.WithTimeout(ctx, webmailAgentTimeout)
 		defer cancel()
 		if _, err := r.agent.Call(callCtx, "webmail.vhost_apply", params); err != nil {
@@ -316,6 +317,9 @@ func (r *Reconciler) applyWebmailVhost(ctx context.Context, d *models.Domain) {
 		}
 		return nil
 	})
+	// A skip means the Agent already holds this vhost; a failed apply may
+	// have left none (the Agent drops a vhost that fails nginx -t).
+	r.setMailVhostLive(d.Name, err == nil)
 }
 
 // removeWebmailVhost removes a domain's mail vhost. JAB-369: same
@@ -326,6 +330,7 @@ func (r *Reconciler) removeWebmailVhost(ctx context.Context, domainName string) 
 	if domainName == "" {
 		return
 	}
+	r.setMailVhostLive(domainName, false)
 	params := map[string]any{"domain_name": domainName}
 	_, _ = r.project(ctx, PhaseWebmailVhost, domainName, fingerprint(map[string]any{"remove": params}), false, func() error {
 		callCtx, cancel := context.WithTimeout(ctx, webmailAgentTimeout)
@@ -339,6 +344,30 @@ func (r *Reconciler) removeWebmailVhost(ctx context.Context, domainName string) 
 		}
 		return nil
 	})
+}
+
+// setMailVhostLive records whether domainName's mail vhost is in place, for
+// the mail certificate pass (GH #2082).
+func (r *Reconciler) setMailVhostLive(domainName string, live bool) {
+	key := strings.ToLower(strings.TrimSpace(domainName))
+	r.mailVhostMu.Lock()
+	defer r.mailVhostMu.Unlock()
+	if !live {
+		delete(r.mailVhostLive, key)
+		return
+	}
+	if r.mailVhostLive == nil {
+		r.mailVhostLive = map[string]bool{}
+	}
+	r.mailVhostLive[key] = true
+}
+
+// mailVhostIsLive reports whether the webmail pass has domainName's mail
+// vhost in place, so mail.<domain> answers Let's Encrypt's HTTP check here.
+func (r *Reconciler) mailVhostIsLive(domainName string) bool {
+	r.mailVhostMu.Lock()
+	defer r.mailVhostMu.Unlock()
+	return r.mailVhostLive[strings.ToLower(strings.TrimSpace(domainName))]
 }
 
 // webmailSettings returns the server settings row, or nil when settings

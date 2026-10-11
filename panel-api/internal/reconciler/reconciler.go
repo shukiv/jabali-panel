@@ -166,6 +166,14 @@ type Reconciler struct {
 	// websiteMail caches the last website-mail apply (GH #2056,
 	// website_mail_reconcile.go).
 	websiteMail websiteMailState
+	// mailVhostLive records the domains (lower-cased name) whose mail.<domain>
+	// vhost the webmail pass has in place (webmail_reconcile.go). Let's
+	// Encrypt's HTTP check for the per-domain mail certificate lands on that
+	// vhost's :80 block, so the mail certificate pass orders only for these
+	// (GH #2082). Process-local like the ledger; the webmail pass refills it
+	// on the first tick.
+	mailVhostMu   sync.Mutex
+	mailVhostLive map[string]bool
 	// sieveForwarders + sieveAutoresponders back the GH #1795 backfill sweep
 	// (mailbox_sieve_reconcile.go): every mailbox with an external forwarder or
 	// an autoresponder is re-converged into its single active standard
@@ -1055,9 +1063,6 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 
 	tt.mark("certs_updates_modules")
 
-	// M6.6 — per-domain mail TLS. Sits next to panel-cert so the
-	// two cert flows share the same admin email/public IP context.
-	r.reconcileMailCertificates(ctx)
 	r.reconcileSharedResources(ctx)
 	// GH #1818: distribution groups → Stalwart mailing lists (converts the old
 	// Group-account projection; heals failed applies). Hash-gated no-op in
@@ -1280,6 +1285,10 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 	// domains.email_enabled. Self-scoping — no-op when sslCerts isn't
 	// wired; per-domain errors don't abort the sweep.
 	r.reconcileWebmailVhosts(ctx)
+	// M6.6 — per-domain mail TLS. Runs after the webmail pass (GH #2082):
+	// Let's Encrypt checks mail.<domain> over HTTP on that pass's vhost, so a
+	// new domain's first order goes out once its vhost is up in the same tick.
+	r.reconcileMailCertificates(ctx)
 	r.reconcileBotChallengeExempt(ctx)
 
 	r.reconcileCronJobs(ctx)
