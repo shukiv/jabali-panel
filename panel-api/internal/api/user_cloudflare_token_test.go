@@ -75,6 +75,7 @@ type fakeCFProbe struct {
 	clearErr  map[string]error
 	sets      []string // "zoneID name"
 	clears    []string
+	onSet     func()
 }
 
 func (f *fakeCFProbe) VerifyToken(context.Context) (int, error) { return len(f.zones), f.verifyErr }
@@ -86,6 +87,9 @@ func (f *fakeCFProbe) SetChallengeTXT(_ context.Context, zoneID, name, value str
 		return errors.New("empty value")
 	}
 	f.sets = append(f.sets, zoneID+" "+name)
+	if f.onSet != nil {
+		f.onSet()
+	}
 	return f.setErr[zoneID]
 }
 func (f *fakeCFProbe) ClearChallengeTXT(ctx context.Context, zoneID, name string) error {
@@ -103,6 +107,7 @@ type cfTokenFixture struct {
 	key     *ssokey.Key
 	clients int
 	cfg     UserCloudflareTokenHandlerConfig
+	reqCtx  context.Context
 }
 
 func newCFTokenFixture() *cfTokenFixture {
@@ -140,6 +145,9 @@ func (f *cfTokenFixture) do(t *testing.T, method, uid, body string) (int, map[st
 	})
 	RegisterUserCloudflareTokenRoutes(r.Group("/api/v1"), f.cfg)
 	req := httptest.NewRequest(method, "/api/v1/me/cloudflare-token", bytes.NewBufferString(body))
+	if f.reqCtx != nil {
+		req = req.WithContext(f.reqCtx)
+	}
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -312,5 +320,39 @@ func TestUserCFToken_NeedsAUser(t *testing.T) {
 	}
 	if f.clients != 0 {
 		t.Fatal("a Cloudflare client was made without a user")
+	}
+}
+
+// The check record is deleted even when the request goes away right after
+// it was written.
+func TestUserCFToken_ProbeDeleteSurvivesADroppedRequest(t *testing.T) {
+	f := newCFTokenFixture()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f.reqCtx = ctx
+	f.probe.onSet = cancel
+	f.do(t, http.MethodPut, "u1", putBody(goodCFToken))
+	if len(f.probe.clears) == 0 || f.probe.clears[0] != "z1 _jabali-dns01-check.example.com" {
+		t.Fatalf("clears = %v, want the first check record deleted", f.probe.clears)
+	}
+}
+
+// Verify & Save calls Cloudflare with a credential the caller supplies, so
+// PUT sits behind the per-user limiter; reading and removing do not.
+func TestUserCFToken_PutIsRateLimited(t *testing.T) {
+	f := newCFTokenFixture()
+	f.cfg.StrictRateLimit = func(c *gin.Context) {
+		c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{"error": "rate_limited"})
+	}
+	if code, _, _ := f.do(t, http.MethodPut, "u1", putBody(goodCFToken)); code != http.StatusTooManyRequests {
+		t.Fatalf("PUT = %d, want 429", code)
+	}
+	if f.clients != 0 {
+		t.Fatal("a limited PUT still called Cloudflare")
+	}
+	for _, m := range []string{http.MethodGet, http.MethodDelete} {
+		if code, _, _ := f.do(t, m, "u1", ""); code != http.StatusOK {
+			t.Errorf("%s = %d, want 200", m, code)
+		}
 	}
 }
