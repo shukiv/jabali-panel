@@ -2,7 +2,8 @@
 // fallback (JAB-235). A CDN-fronted customer domain cannot pass HTTP-01
 // (the edge answers the challenge path), so the panel writes the
 // _acme-challenge TXT straight into the customer's Cloudflare zone through
-// this token. Write-only surface: the field is masked, the server verifies
+// this token. Since GH #2032 each user can save their own token (SSL page);
+// theirs is tried first for their domains and this one is the fallback. Write-only surface: the field is masked, the server verifies
 // the token against Cloudflare before storing it sealed, and status only
 // ever reports configured yes/no — the token is never displayed back.
 import { useCallback, useEffect, useState } from "react";
@@ -98,10 +99,12 @@ export function CloudflareTokenCard() {
         certificate check, so they are stranded on a self-signed certificate.
         With an API token stored here, the panel completes the DNS challenge
         directly in the customer&apos;s Cloudflare zone and issues a real
-        Let&apos;s Encrypt certificate for the origin. Use a dedicated token
-        scoped to <code>Zone:DNS:Edit</code> + <code>Zone:Read</code> on the
-        zones it should cover — it is a powerful credential, stored encrypted,
-        and never shown again after saving.
+        Let&apos;s Encrypt certificate for the origin. Each user can also save
+        their own token on their SSL page; theirs is tried first for their
+        domains, and this one is the fallback. Use a dedicated token scoped to{" "}
+        <code>Zone:DNS:Edit</code> + <code>Zone:Read</code> on the zones it
+        should cover — it is a powerful credential, stored encrypted, and never
+        shown again after saving.
       </Typography.Paragraph>
       <Space.Compact style={{ width: "100%", maxWidth: 480 }}>
         <Input.Password
@@ -119,7 +122,7 @@ export function CloudflareTokenCard() {
         <div style={{ marginTop: 12 }}>
           <Popconfirm
             title="Clear the stored token?"
-            description="Cloudflare-hosted zones lose the DNS-01 fallback until a new token is saved."
+            description="Cloudflare-hosted domains whose owner has no token of their own lose DNS-01 until a new token is saved."
             onConfirm={() => void clear()}
           >
             <Button danger loading={clearing}>
@@ -132,7 +135,7 @@ export function CloudflareTokenCard() {
           style={{ marginTop: 12 }}
           type="info"
           showIcon
-          message="Without a token, Cloudflare-fronted domains are parked with a clear reason instead of retrying Let's Encrypt."
+          message="Without a token here, Cloudflare-fronted domains whose owner has no token of their own are parked with a clear reason instead of retrying Let's Encrypt."
         />
       )}
     </Card>
