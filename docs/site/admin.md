@@ -4,7 +4,7 @@ Lives at `/jabali-admin`. Top-level pages:
 
 | Page | Path | Purpose |
 |---|---|---|
-| Dashboard | `/jabali-admin/dashboard` | Counts (users, domains, mailboxes), recent activity, health summary, version. |
+| Dashboard | `/jabali-admin/dashboard` | Host health, meters and build; counts (users, domains, mailboxes, applications); tabs for recent activity, users / domains / databases, packages, backups and alerts; services status. |
 | Users | `/jabali-admin/users` | Create / edit / delete panel users; reset password; reset 2FA; suspend; assign package; rename username in place; impersonate (scoped, time-bounded, audited); at-a-glance resource counts + monthly bandwidth. |
 | Packages | `/jabali-admin/packages` | Bundles of quotas (disk, bandwidth, mailboxes, domains, DBs, PHP-INI overrides). |
 | Domains | `/jabali-admin/domains` | All hosted domains across all users; per-domain settings (PHP, SSL, DNSSEC, listen IP, redirects, aliases, cache). |
