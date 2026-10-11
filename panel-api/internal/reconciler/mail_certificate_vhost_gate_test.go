@@ -266,6 +266,37 @@ func TestMailCert_NoOrderWhileTheMailVhostCannotServe(t *testing.T) {
 	}
 }
 
+// A domain deleted and re-created under the same name between two passes
+// lost its mail vhost with the old row. The webmail pass must send it again
+// rather than skip it as unchanged, and the new domain's order waits for it.
+func TestMailCert_DomainRecreatedUnderSameName(t *testing.T) {
+	ag := &mailCertGateAgent{}
+	repo := &gateMailCertRepo{rows: map[string]*models.MailCertificate{}}
+	r, dr := newMailCertGateReconciler(t, ag, repo)
+	ctx := context.Background()
+
+	r.reconcileWebmailVhosts(ctx)
+	require.Equal(t, 1, ag.count("webmail.vhost_apply"))
+
+	// Deleted (its vhost and mail certificate row go with it) and re-created.
+	old := dr.domains["d1"]
+	delete(dr.domains, "d1")
+	delete(repo.rows, "d1")
+	recreated := *old
+	recreated.ID = "d2"
+	dr.domains["d2"] = &recreated
+	certs := r.sslCerts.(*fakeSSLCertRepo)
+	placeholder := *certs.byDomain["d1"]
+	placeholder.DomainID = "d2"
+	certs.byDomain["d2"] = &placeholder
+
+	r.reconcileWebmailVhosts(ctx)
+	assert.Equal(t, 2, ag.count("webmail.vhost_apply"), "the re-created domain's vhost is sent again")
+	r.reconcileMailCertificates(ctx)
+	assert.Equal(t, 1, ag.count("ssl.mail.issue"))
+	assert.Less(t, ag.index("webmail.vhost_apply"), ag.index("ssl.mail.issue"))
+}
+
 // The wait message is written once, not on every tick.
 func TestMailCert_WaitMessageWrittenOnce(t *testing.T) {
 	ag := &mailCertGateAgent{}

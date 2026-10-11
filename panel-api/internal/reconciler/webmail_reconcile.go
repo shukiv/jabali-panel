@@ -306,8 +306,11 @@ func (r *Reconciler) applyWebmailVhost(ctx context.Context, d *models.Domain) {
 	}
 	addPanelMailHostnameParams(params, settings, d)
 	// JAB-369: gated by the webmail.vhost phase. params is exactly what the
-	// Agent receives, so any input to the vhost changes the fingerprint.
-	_, err := r.project(ctx, PhaseWebmailVhost, d.Name, fingerprint(params), false, func() error {
+	// Agent receives, so any input to the vhost changes the fingerprint. The
+	// domain's ID is in it too (GH #2082): a domain deleted and re-created
+	// under the same name between two passes lost its vhost with the old row,
+	// and must not be skipped as unchanged.
+	_, err := r.project(ctx, PhaseWebmailVhost, d.Name, fingerprint(map[string]any{"domain_id": d.ID, "params": params}), false, func() error {
 		callCtx, cancel := context.WithTimeout(ctx, webmailAgentTimeout)
 		defer cancel()
 		if _, err := r.agent.Call(callCtx, "webmail.vhost_apply", params); err != nil {
