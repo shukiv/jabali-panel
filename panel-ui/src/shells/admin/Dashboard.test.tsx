@@ -51,7 +51,16 @@ const mockGet = vi.fn(async (url: string) => {
             started_at: "2026-10-11T04:00:00Z",
           },
         ],
-        manual: [],
+        // A manual job newer than the run: rows are merged newest first.
+        manual: [
+          {
+            id: "j1",
+            kind: "account_restore",
+            content: "database",
+            status: "succeeded",
+            created_at: "2026-10-11T09:00:00Z",
+          },
+        ],
       },
     };
   }
@@ -191,8 +200,8 @@ describe("admin Dashboard (GH #1249 Option 7)", () => {
   it("shows a dash, not 0%, while the CPU sample is warming up", () => {
     env.cpu = { ...env.cpu!, warming_up: true, usage_percent: 0 };
     renderDash();
-    expect(screen.queryByText("0%")).not.toBeInTheDocument();
-    expect(screen.getAllByText("—").length).toBeGreaterThan(0);
+    expect(screen.getByText("CPU").parentElement).toHaveTextContent(/^CPU—$/);
+    expect(screen.getByText("Memory").parentElement).toHaveTextContent(/^Memory61%$/);
   });
 
   it("fetches only the Activity rows on landing", async () => {
@@ -212,6 +221,10 @@ describe("admin Dashboard (GH #1249 Option 7)", () => {
     expect(await screen.findByText("1 failed")).toBeInTheDocument();
     expect(screen.getByText("41 succeeded")).toBeInTheDocument();
     expect(requested("/admin/backup-runs")).toBe(true);
+    const rows = screen.getAllByRole("row");
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toHaveTextContent("Database Restore");
+    expect(rows[1]).toHaveTextContent("1 failed");
     expect(screen.queryByText("shuki")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("tab", { name: /Domains \/ Users \/ Databases/ }));
@@ -231,6 +244,14 @@ describe("admin Dashboard (GH #1249 Option 7)", () => {
       "crowdsec.service has failed",
       "Disk / is 81% full",
     ]);
+  });
+
+  it("opens the Alerts tab from the host card's health tag", async () => {
+    renderDash();
+    await screen.findByText("shuki");
+    fireEvent.click(screen.getByText("1 critical"));
+    expect(await screen.findByText("crowdsec.service has failed")).toBeInTheDocument();
+    expect(screen.queryByText("shuki")).not.toBeInTheDocument();
   });
 
   it("opens the tab named in ?tab=, and Activity for an unknown one", async () => {
