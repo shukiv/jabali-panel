@@ -53,18 +53,13 @@ func newDNSAcmeHookCmd() *cobra.Command {
 			Args:    cobra.NoArgs,
 			PreRunE: requireDBAndAgent,
 			RunE: func(cmd *cobra.Command, _ []string) error {
-				domain := strings.TrimPrefix(strings.TrimSpace(os.Getenv("CERTBOT_DOMAIN")), "*.")
-				validation := strings.TrimSpace(os.Getenv("CERTBOT_VALIDATION"))
-				if domain == "" || validation == "" {
-					return fmt.Errorf("CERTBOT_DOMAIN and CERTBOT_VALIDATION must be set (certbot invokes this hook)")
+				in, err := acmeHookEnv(os.Getenv)
+				if err != nil {
+					return err
 				}
-				// The agent prefixes the hook with the certificate's lineage
-				// (GH #2032). Empty for a renewal conf written before that:
-				// the server's Cloudflare token only, as then.
-				lineage := strings.TrimSpace(os.Getenv("JABALI_ACME_LINEAGE"))
 				ctx, cancel := context.WithTimeout(cmd.Context(), 90*time.Second)
 				defer cancel()
-				return fn(ctx, lineage, domain, validation)
+				return fn(ctx, in.lineage, in.domain, in.validation)
 			},
 		}
 	}
@@ -73,6 +68,28 @@ func newDNSAcmeHookCmd() *cobra.Command {
 		mk("cleanup", acmeHookCleanup),
 	)
 	return cmd
+}
+
+// acmeHookInput is what certbot and the agent hand the hook.
+type acmeHookInput struct {
+	// lineage is the certificate's --cert-name, which the agent prefixes
+	// to the hook as JABALI_ACME_LINEAGE (GH #2032). Empty for a renewal
+	// conf written before that: the server's Cloudflare token only, as then.
+	lineage    string
+	domain     string
+	validation string
+}
+
+func acmeHookEnv(getenv func(string) string) (acmeHookInput, error) {
+	in := acmeHookInput{
+		lineage:    strings.TrimSpace(getenv("JABALI_ACME_LINEAGE")),
+		domain:     strings.TrimPrefix(strings.TrimSpace(getenv("CERTBOT_DOMAIN")), "*."),
+		validation: strings.TrimSpace(getenv("CERTBOT_VALIDATION")),
+	}
+	if in.domain == "" || in.validation == "" {
+		return in, fmt.Errorf("CERTBOT_DOMAIN and CERTBOT_VALIDATION must be set (certbot invokes this hook)")
+	}
+	return in, nil
 }
 
 // findZoneForName walks the name's parent chain until a local dns_zones
@@ -210,15 +227,12 @@ func hookRoute(ctx context.Context, zones repository.DNSZoneRepository, lineage,
 	cfg, cands, clients := hookDNS01Setup(ctx, lineage, domain)
 	route := dns01.AuthoritativeRoute(ctx, cfg, domain)
 	if route.Provider == dns01.ProviderCloudflare {
-		if route.CFIndex < 0 || route.CFIndex >= len(clients) {
-			return route, nil, nil, fmt.Errorf("cloudflare route for %s names token %d of %d", domain, route.CFIndex, len(clients))
-		}
-		whose := "the server's"
-		if cands[route.CFIndex].Source == cftoken.SourceOwner {
-			whose = "the domain owner's"
+		cf, whose, err := routeClient(route, cands, clients)
+		if err != nil {
+			return route, nil, nil, fmt.Errorf("%s: %w", domain, err)
 		}
 		fmt.Printf("acme-hook: %s is at Cloudflare (zone %s) — writing with %s API token\n", domain, route.Zone, whose)
-		return route, clients[route.CFIndex], nil, nil
+		return route, cf, nil, nil
 	}
 	zone, err := findZoneForName(ctx, zones, domain)
 	if err != nil {
@@ -228,6 +242,19 @@ func hookRoute(ctx context.Context, zones repository.DNSZoneRepository, lineage,
 		return route, nil, nil, err
 	}
 	return dns01.Route{Provider: dns01.ProviderPDNS, Zone: zone.Name}, nil, zone, nil
+}
+
+// routeClient returns the client whose token found the zone, and whose
+// token it is for the log. clients[i] belongs to cands[i].
+func routeClient(route dns01.Route, cands []cftoken.Candidate, clients []*hostedsvc.CloudflareDNS) (*hostedsvc.CloudflareDNS, string, error) {
+	if route.CFIndex < 0 || route.CFIndex >= len(clients) || route.CFIndex >= len(cands) {
+		return nil, "", fmt.Errorf("cloudflare route names token %d of %d", route.CFIndex, len(clients))
+	}
+	whose := "the server's"
+	if cands[route.CFIndex].Source == cftoken.SourceOwner {
+		whose = "the domain owner's"
+	}
+	return clients[route.CFIndex], whose, nil
 }
 
 func acmeHookAuth(ctx context.Context, lineage, domain, validation string) error {

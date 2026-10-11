@@ -2,6 +2,7 @@ package reconciler
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -13,9 +14,13 @@ import (
 
 type fakeUserCFTokens struct {
 	rows map[string]*models.UserCloudflareToken
+	err  error
 }
 
 func (f *fakeUserCFTokens) Get(_ context.Context, uid string) (*models.UserCloudflareToken, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
 	if row, ok := f.rows[uid]; ok {
 		return row, nil
 	}
@@ -59,5 +64,35 @@ func TestDNS01Route_OwnerToken(t *testing.T) {
 	tokens.rows["u2"] = &models.UserCloudflareToken{UserID: "u2", TokenEnc: sealed, UpdatedAt: time.Now()}
 	if got := r.dns01Route(ctx, srv, dom.Name); got.Provider != dns01.ProviderNone {
 		t.Fatalf("only another user's token: route = %+v, want none", got)
+	}
+}
+
+// A decision made while a token could not be read is not cached: once the
+// read works again the owner's token routes the domain at once, not after
+// the negative TTL.
+func TestDNS01Route_TokenReadFailureNotCached(t *testing.T) {
+	r, _, _, dom := dns01Fixture(t, []string{"kip.ns.cloudflare.com", "lia.ns.cloudflare.com"}, "")
+	key := &ssokey.Key{}
+	sealed, err := key.Seal([]byte("owner-token"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tokens := &fakeUserCFTokens{
+		rows: map[string]*models.UserCloudflareToken{dom.UserID: {UserID: dom.UserID, TokenEnc: sealed, UpdatedAt: time.Now()}},
+		err:  errors.New("db down"),
+	}
+	r.WithDNS01Key(key).WithCloudflareTokens(tokens)
+	r.dns01NewFinder = func(string) dns01.ZoneFinder { return fixedZoneFinder{id: "zone-owner"} }
+	srv := &models.ServerSettings{}
+
+	if got := r.dns01Route(context.Background(), srv, dom.Name); got.Provider != dns01.ProviderNone {
+		t.Fatalf("token unreadable: route = %+v, want none", got)
+	}
+	if _, cached := r.dns01RouteCache[dom.Name]; cached {
+		t.Fatal("a decision made without every token was cached")
+	}
+	tokens.err = nil
+	if got := r.dns01Route(context.Background(), srv, dom.Name); got.Provider != dns01.ProviderCloudflare {
+		t.Fatalf("token readable again: route = %+v, want Cloudflare", got)
 	}
 }
