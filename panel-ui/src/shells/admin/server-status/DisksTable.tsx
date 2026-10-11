@@ -3,6 +3,7 @@ import { HddOutlined } from "@ant-design/icons";
 
 import { humanBytes } from "../../../utils/bytes";
 import type { Partition } from "../../../hooks/useServerStatus";
+import { diskColor, diskUsePct as pctOf } from "./usage";
 
 interface Props {
   partitions: Partition[];
@@ -58,20 +59,3 @@ export function DisksTable({ partitions }: Props) {
     </Card>
   );
 }
-
-// pctOf is df's Use% (GH #2029): used as a share of the space non-root can
-// use, rounded up. Blocks ext4 reserves for root count as neither used nor
-// free, so used + free is less than the size. The panel's disk alerts use the
-// same number (internal/fsusage).
-function pctOf(p: Partition): number {
-  const usable = p.used_bytes + p.free_bytes;
-  if (!usable) return 0;
-  return Math.ceil((p.used_bytes * 100) / usable);
-}
-
-function diskColor(pct: number): string {
-  if (pct >= 95) return "#cf1322";
-  if (pct >= 80) return "#fa8c16";
-  return "#52c41a";
-}
-

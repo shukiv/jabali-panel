@@ -7,12 +7,7 @@ import { Card, Progress, Space, Tooltip, Typography } from "antd";
 import { ApiOutlined, DatabaseOutlined } from "@ant-design/icons";
 
 import type { CPUSlice, HostSlice } from "../../../hooks/useServerStatus";
-
-const usageColor = (pct: number): string => {
-  if (pct >= 90) return "#cf1322";
-  if (pct >= 70) return "#fa8c16";
-  return "#52c41a";
-};
+import { usageColor } from "./usage";
 
 interface MeterProps {
   host: HostSlice | null;
