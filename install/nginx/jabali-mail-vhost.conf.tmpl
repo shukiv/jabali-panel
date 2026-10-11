@@ -203,6 +203,13 @@ server {
 # www.<domain>, mail.<domain>, autoconfig.<domain>] all hits the
 # same writable directory. Incident 2026-04-26: jabali.site cert
 # stuck because mail.jabali.site:80 redirected to https → 404.
+#
+# The agent renders three forms of this block: with a docroot (this
+# form); the panel's own domain, which serves /var/www/jabali-panel-acme
+# alone (GH #268); and a domain without a site, which serves
+# /var/www/jabali-acme alone (GH #2082). A domain with mail but no
+# webmail gets this :80 block alone, without the :443 server above, so
+# its mail certificate can still be issued (GH #2082).
 server {
   ${LISTEN_80}
   server_name mail.${DOMAIN} autoconfig.${DOMAIN} autodiscover.${DOMAIN} mta-sts.${DOMAIN} ${EXTRA_SERVER_NAMES};

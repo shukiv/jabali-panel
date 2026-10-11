@@ -45,7 +45,7 @@ import (
 const mailVhostTemplate = `# Rendered by panel-agent webmail.vhost_apply (M6 Step 8).
 # DO NOT EDIT — changes belong in install/nginx/jabali-mail-vhost.conf.tmpl.
 
-server {
+{{ if not .ChallengeOnly }}server {
 {{ if .ListenIPv4 }}  listen {{.ListenIPv4}}:443 ssl{{.HTTP2Param}};
 {{ else }}  listen 443 ssl{{.HTTP2Param}};
 {{ end }}{{ if .ListenIPv6 }}  listen [{{.ListenIPv6}}]:443 ssl{{.HTTP2Param}};
@@ -208,7 +208,7 @@ server {
   }
 }
 
-server {
+{{ end }}server {
 {{ if .ListenIPv4 }}  listen {{.ListenIPv4}}:80;
 {{ else }}  listen 80;
 {{ end }}{{ if .ListenIPv6 }}  listen [{{.ListenIPv6}}]:80;
@@ -348,6 +348,11 @@ type webmailVhostApplyParams struct {
 	ExtraServerNames []string `json:"extra_server_names,omitempty"`
 	// SubFilterHost is the resolved sub_filter target; set by the handler.
 	SubFilterHost string `json:"-"`
+	// ChallengeOnly renders the :80 block alone, for a domain with mail but
+	// no webmail (GH #2082): mail.<domain> still answers Let's Encrypt's
+	// check for its mail certificate, and nothing else is served. No
+	// certificate is needed.
+	ChallengeOnly bool `json:"challenge_only,omitempty"`
 }
 
 // vhostServerNameRe matches a lower-case DNS name of two or more labels.
@@ -426,7 +431,7 @@ func webmailVhostApplyHandler(ctx context.Context, params json.RawMessage) (any,
 	if err := validateDomainNameForShell(p.DomainName); err != nil {
 		return nil, err
 	}
-	if p.SSLCertPath == "" || p.SSLKeyPath == "" {
+	if !p.ChallengeOnly && (p.SSLCertPath == "" || p.SSLKeyPath == "") {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInvalidArgument,
 			Message: "ssl_cert_path and ssl_key_path are required",

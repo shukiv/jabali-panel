@@ -60,7 +60,9 @@ func (r *Reconciler) reconcileWebmailVhosts(ctx context.Context) {
 			if r.domains != nil {
 				if domains, err := r.listWebmailDomains(ctx); err == nil {
 					for i := range domains {
-						if domains[i].EmailEnabled {
+						if mailChallengeWanted(&domains[i]) {
+							r.applyMailChallengeVhost(ctx, &domains[i])
+						} else if domains[i].EmailEnabled {
 							r.removeWebmailVhost(ctx, domains[i].Name)
 						}
 					}
@@ -149,6 +151,10 @@ func (r *Reconciler) reconcileWebmailVhosts(ctx context.Context) {
 			// public WAF-bypass target — it's the panel itself and
 			// already covered by the /api/v1/ allowlist.
 			webmailHosts = append(webmailHosts, "mail."+d.Name, "autoconfig."+d.Name, "autodiscover."+d.Name)
+		} else if mailChallengeWanted(d) {
+			// Mail without webmail (GH #2082): no webmail host, so nothing
+			// joins the AppSec allowlist.
+			r.applyMailChallengeVhost(ctx, d)
 		} else {
 			r.removeWebmailVhost(ctx, d.Name)
 		}
@@ -291,19 +297,7 @@ func (r *Reconciler) applyWebmailVhost(ctx context.Context, d *models.Domain) {
 		// default vhost and returns 500.
 		"is_panel_primary": d.IsPanelPrimary,
 	}
-	// listen_ipv4 / listen_ipv6 — same resolution as the apex vhost
-	// (M24). When the apex vhost binds a specific IP, the mail vhost
-	// MUST also bind that IP or it falls into nginx's wildcard pool
-	// (which gets ignored on IPs with at least one specific listener)
-	// and SNI for mail.<domain> lands on the wrong tenant's cert.
-	if r.managedIPs != nil {
-		if v4 := r.resolveListenIPAddress(ctx, d.ListenIPv4ID, "ipv4"); v4 != "" {
-			params["listen_ipv4"] = v4
-		}
-		if v6 := r.resolveListenIPAddress(ctx, d.ListenIPv6ID, "ipv6"); v6 != "" {
-			params["listen_ipv6"] = v6
-		}
-	}
+	r.addMailVhostListenParams(ctx, d, params)
 	addPanelMailHostnameParams(params, settings, d)
 	// JAB-369: gated by the webmail.vhost phase. params is exactly what the
 	// Agent receives, so any input to the vhost changes the fingerprint. The
@@ -322,6 +316,59 @@ func (r *Reconciler) applyWebmailVhost(ctx context.Context, d *models.Domain) {
 	})
 	// A skip means the Agent already holds this vhost; a failed apply may
 	// have left none (the Agent drops a vhost that fails nginx -t).
+	r.setMailVhostLive(d.Name, err == nil)
+}
+
+// addMailVhostListenParams sets listen_ipv4 / listen_ipv6 — same resolution
+// as the apex vhost (M24). When the apex vhost binds a specific IP, the mail
+// vhost MUST also bind that IP or it falls into nginx's wildcard pool (which
+// gets ignored on IPs with at least one specific listener) and SNI for
+// mail.<domain> lands on the wrong tenant's cert.
+func (r *Reconciler) addMailVhostListenParams(ctx context.Context, d *models.Domain, params map[string]any) {
+	if r.managedIPs == nil {
+		return
+	}
+	if v4 := r.resolveListenIPAddress(ctx, d.ListenIPv4ID, "ipv4"); v4 != "" {
+		params["listen_ipv4"] = v4
+	}
+	if v6 := r.resolveListenIPAddress(ctx, d.ListenIPv6ID, "ipv6"); v6 != "" {
+		params["listen_ipv6"] = v6
+	}
+}
+
+// mailChallengeWanted reports whether a domain without a webmail vhost still
+// needs mail.<domain>:80 for Let's Encrypt (GH #2082): it has mail, its name
+// is proven (GH #1816), and it is not the panel's own domain, whose mail
+// certificate is the panel's and is checked on the server's default block.
+func mailChallengeWanted(d *models.Domain) bool {
+	return d.EmailEnabled && !ownershipPending(d) && !d.IsPanelPrimary
+}
+
+// applyMailChallengeVhost puts up mail.<domain>'s :80 block alone for a
+// domain with mail but no webmail (GH #2082). With the vhost removed, Let's
+// Encrypt's check for the domain's mail certificate landed on the server's
+// default block and failed, so IMAP and SMTP on mail.<domain> never got a
+// certificate naming it. The block serves the challenge webroots and
+// redirects everything else; no webmail, DAV or autoconfig is served, and no
+// certificate is needed. Same webmail.vhost ledger entry as the full vhost,
+// so switching between the two is never skipped.
+func (r *Reconciler) applyMailChallengeVhost(ctx context.Context, d *models.Domain) {
+	params := map[string]any{
+		"domain_name":    d.Name,
+		"doc_root":       d.DocRoot,
+		"challenge_only": true,
+	}
+	r.addMailVhostListenParams(ctx, d, params)
+	_, err := r.project(ctx, PhaseWebmailVhost, d.Name, fingerprint(map[string]any{"domain_id": d.ID, "params": params}), false, func() error {
+		callCtx, cancel := context.WithTimeout(ctx, webmailAgentTimeout)
+		defer cancel()
+		if _, err := r.agent.Call(callCtx, "webmail.vhost_apply", params); err != nil {
+			r.log.Error("webmail reconcile: challenge-only vhost_apply failed",
+				"domain_id", d.ID, "domain", d.Name, "err", err)
+			return err
+		}
+		return nil
+	})
 	r.setMailVhostLive(d.Name, err == nil)
 }
 

@@ -162,8 +162,7 @@ func (r *Reconciler) reconcileOneMailCert(ctx context.Context, row *models.MailC
 	// a failed order and a 3h backoff. Wait for the webmail pass to put the
 	// vhost in place; the status stays as it is, with the reason on the row.
 	if !r.mailVhostIsLive(domainName) {
-		msg := "waiting for the web server block for mail." + domainName +
-			", which answers Let's Encrypt's check; the panel sets it up with the domain's webmail"
+		msg := "waiting for the web server block for mail." + domainName + ", which answers Let's Encrypt's check"
 		if row.LastError == nil || *row.LastError != msg {
 			if err := r.mailCerts.UpdateStatus(ctx, row.ID, row.Status, &msg); err != nil {
 				r.log.Warn("mail-cert reconcile failed to record wait", "id", row.ID, "error", err)
