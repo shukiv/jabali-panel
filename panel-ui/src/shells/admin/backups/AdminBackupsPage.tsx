@@ -26,6 +26,7 @@ import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { BackupStatusTag } from "../../../components/backups/BackupStatusTag";
+import { RunStatusSummary } from "../../../components/backups/RunStatusSummary";
 import {
   backupArtifactEligibility,
   isRestoreKind,
@@ -124,29 +125,6 @@ const formatBytes = (n: number): string => {
     i += 1;
   }
   return `${v.toFixed(1)} ${units[i]}`;
-};
-
-// Run summary collapses 6 status counters into a single Tag stack so
-// the row at a glance answers "is this run still working / did any
-// fail?" — full breakdown lives in the expanded child table.
-const RunStatusSummary = ({ run }: { run: BackupRun }) => {
-  const tags: { color: string; text: string }[] = [];
-  if (run.running > 0) tags.push({ color: "blue", text: `${run.running} running` });
-  if (run.queued > 0) tags.push({ color: "default", text: `${run.queued} queued` });
-  if (run.failed > 0) tags.push({ color: "red", text: `${run.failed} failed` });
-  if (run.partial > 0) tags.push({ color: "gold", text: `${run.partial} partial` });
-  if (run.cancelled > 0) tags.push({ color: "default", text: `${run.cancelled} cancelled` });
-  if (run.succeeded > 0) tags.push({ color: "green", text: `${run.succeeded} succeeded` });
-  if (tags.length === 0) tags.push({ color: "default", text: `${run.total} jobs` });
-  return (
-    <Space size={4} wrap>
-      {tags.map((t) => (
-        <Tag key={t.text} color={t.color}>
-          {t.text}
-        </Tag>
-      ))}
-    </Space>
-  );
 };
 
 export const AdminBackupsPage = () => {

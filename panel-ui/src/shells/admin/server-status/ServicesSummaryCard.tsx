@@ -6,13 +6,11 @@
 // those requests are 403'd at the API anyway. Destructive verbs
 // (stop/disable/restart) show a confirm Modal first.
 import { useState } from "react";
-import { Card, Modal, Table, Tag } from "antd";
+import { Card, Modal, Table } from "antd";
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import {
-  CheckCircleOutlined,
-  CloseOutlined,
   PauseCircleOutlined,
   PlayCircleOutlined,
   PoweroffOutlined,
@@ -25,6 +23,7 @@ import { RowActions } from "../../../components/RowActions";
 import { apiClient } from "../../../apiClient";
 import { useServerCapabilities } from "../../../hooks/useServerCapabilities";
 import type { ServiceDetail } from "../../../hooks/useServerStatus";
+import { isRunConfigured, prettyName, statusTag, visibleServicesFor } from "./serviceHelpers";
 
 interface Props {
   services: ServiceDetail[];
@@ -74,15 +73,7 @@ const destructiveActions = new Set<Action>(["stop", "disable", "restart"]);
 export function ServicesSummaryCard({ services }: Props) {
   const qc = useQueryClient();
   const { data: caps } = useServerCapabilities();
-  // Hide optional engines the operator hasn't enabled as a feature — an
-  // inactive postgresql/docker with Start/Enable buttons is noise when the
-  // server doesn't use them. Gate on the capability, not just runtime state.
-  const visibleServices = services.filter((s) => {
-    const name = s.unit.replace(/\.service$/, "");
-    if (name === "postgresql" && !caps?.postgres_enabled) return false;
-    if (name === "docker" && !caps?.docker_marketplace_enabled) return false;
-    return true;
-  });
+  const visibleServices = visibleServicesFor(services, caps);
   const [pending, setPending] = useState<{ unit: string; action: Action } | null>(null);
 
   const ctl = useMutation({
@@ -209,55 +200,6 @@ function ServiceActions({ service, onAction }: ServiceActionsProps) {
       ]}
     />
   );
-}
-
-function prettyName(unit: string): string {
-  const base = unit.replace(/\.service$/, "");
-  return base.replace(/^jabali-/, "");
-}
-
-// isRunConfigured reports whether a unit's systemd UnitFileState means the
-// operator expects it to be running (mirrors the backend's unitShouldBeRunning).
-// disabled / indirect / masked / "" are intentionally-idle / on-demand units.
-function isRunConfigured(state?: string): boolean {
-  return (
-    state === "enabled" ||
-    state === "enabled-runtime" ||
-    state === "static" ||
-    state === "alias"
-  );
-}
-
-// statusTag renders the status cell. An inactive unit that isn't run-configured
-// (disabled / on-demand — e.g. jabali-webmail, which the reconciler starts only
-// once a domain enables email) is idle BY DESIGN, so show it neutral rather than
-// as a red failure that reads like something broke.
-function statusTag(service: ServiceDetail) {
-  if (service.active === "inactive" && !isRunConfigured(service.unit_file_state)) {
-    return (
-      <Tag color="default" icon={<PauseCircleOutlined />} bordered={false}>
-        idle
-      </Tag>
-    );
-  }
-  return statusIcon(service.active);
-}
-
-function statusIcon(state: string) {
-  switch (state) {
-    case "active":
-      return <Tag color="green" icon={<CheckCircleOutlined />} bordered={false}>active</Tag>;
-    case "failed":
-      return <Tag color="red" icon={<CloseOutlined />} bordered={false}>failed</Tag>;
-    case "inactive":
-      return <Tag color="red" icon={<CloseOutlined />} bordered={false}>inactive</Tag>;
-    case "activating":
-      return <Tag color="orange" icon={<SyncOutlined spin />} bordered={false}>activating</Tag>;
-    case "deactivating":
-      return <Tag color="orange" icon={<SyncOutlined spin />} bordered={false}>deactivating</Tag>;
-    default:
-      return <Tag color="default">{state}</Tag>;
-  }
 }
 
 function capitalize(s: string): string {

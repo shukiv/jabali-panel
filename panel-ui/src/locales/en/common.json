@@ -113,7 +113,8 @@
     "stats": {
       "users": "Total Users",
       "domains": "Active Web Domains",
-      "mailboxes": "Mailboxes"
+      "mailboxes": "Mailboxes",
+      "applications": "Applications"
     },
     "health": {
       "healthy": "Healthy",
@@ -133,7 +134,8 @@
       "users": "No users yet",
       "domains": "No web domains yet",
       "apps": "No applications yet",
-      "packages": "No packages yet"
+      "packages": "No packages yet",
+      "databases": "No databases yet"
     },
     "col": {
       "username": "Username",
@@ -165,6 +167,51 @@
       "body_auto": "Auto-update will apply these at {{time}}. No action needed.",
       "action": "Review and update",
       "action_auto": "Open Updates"
+    },
+    "host": {
+      "build": "Jabali {{sha}}",
+      "uptime_days_one": "up {{count}} day",
+      "uptime_days_other": "up {{count}} days",
+      "uptime_hours_one": "up {{count}} hour",
+      "uptime_hours_other": "up {{count}} hours",
+      "uptime_minutes_one": "up {{count}} minute",
+      "uptime_minutes_other": "up {{count}} minutes"
+    },
+    "meter": {
+      "cpu": "CPU",
+      "memory": "Memory",
+      "disk": "Disk"
+    },
+    "tabs": {
+      "activity": "Activity",
+      "inventory": "Domains / Users / Databases",
+      "packages": "Hosting Packages",
+      "backups": "Backups",
+      "alerts": "Alerts"
+    },
+    "recent_databases": "Recent Databases",
+    "packages_open": "Manage packages",
+    "activity": {
+      "empty": "No activity recorded yet",
+      "open": "Open the Audit Log"
+    },
+    "backups": {
+      "empty": "No backups have run yet",
+      "open": "Open Backups"
+    },
+    "alerts": {
+      "empty": "No alerts: every check Server Status runs is passing.",
+      "open": "Open Server Status",
+      "critical": "critical",
+      "warning": "warning",
+      "count_one": "{{count}} alert",
+      "count_other": "{{count}} alerts"
+    },
+    "services": {
+      "title": "Services",
+      "running": "{{running}} of {{total}} running",
+      "manage": "Manage on Server Status",
+      "empty": "No services reported"
     }
   },
   "users": {

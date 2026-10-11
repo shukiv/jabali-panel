@@ -1,11 +1,12 @@
 // admin_counts.go — single-shot resource totals for the admin Dashboard.
 //
-// The Dashboard landing card needs three small numbers (users / domains
-// / mailboxes). Routing each through its own list endpoint with limit=1
-// works for users + domains but mailboxes only ships per-domain lists,
-// so the SPA would have to N+1 across domains. /admin/counts collapses
-// that into a single round-trip: one SELECT with three scalar COUNT(*)
-// subqueries (JAB-148), instead of three sequential COUNT statements.
+// The Dashboard count cards need four small numbers (users / domains /
+// mailboxes / applications). Routing each through its own list endpoint
+// with limit=1 works for users + domains but mailboxes only ships
+// per-domain lists, so the SPA would have to N+1 across domains.
+// /admin/counts collapses that into a single round-trip: one SELECT with
+// one scalar COUNT(*) subquery per total (JAB-148), instead of sequential
+// COUNT statements. GH #1249 added applications for the fourth card.
 
 package api
 
@@ -29,9 +30,10 @@ type AdminCountsHandlerConfig struct {
 
 // adminCountsResponse is the wire shape the Dashboard reads.
 type adminCountsResponse struct {
-	Users     int64 `json:"users"`
-	Domains   int64 `json:"domains"`
-	Mailboxes int64 `json:"mailboxes"`
+	Users        int64 `json:"users"`
+	Domains      int64 `json:"domains"`
+	Mailboxes    int64 `json:"mailboxes"`
+	Applications int64 `json:"applications"`
 }
 
 // RegisterAdminCountsRoutes mounts GET /admin/counts behind RequireAdmin.
@@ -50,15 +52,18 @@ type adminCountsHandler struct {
 func (h *adminCountsHandler) get(c *gin.Context) {
 	ctx := c.Request.Context()
 
-	// JAB-148: one round-trip via scalar subqueries instead of three
-	// sequential COUNT(*) statements. The column aliases match the response
-	// field names, so GORM scans them straight into the struct.
+	// JAB-148: one round-trip via scalar subqueries instead of sequential
+	// COUNT(*) statements. The column aliases match the response field
+	// names, so GORM scans them straight into the struct. applications
+	// counts application_installs, the same rows the admin Applications
+	// list shows.
 	var resp adminCountsResponse
 	if err := h.cfg.DB.WithContext(ctx).Raw(
 		"SELECT " +
 			"(SELECT COUNT(*) FROM users) AS users, " +
 			"(SELECT COUNT(*) FROM domains) AS domains, " +
-			"(SELECT COUNT(*) FROM mailboxes) AS mailboxes",
+			"(SELECT COUNT(*) FROM mailboxes) AS mailboxes, " +
+			"(SELECT COUNT(*) FROM application_installs) AS applications",
 	).Scan(&resp).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return

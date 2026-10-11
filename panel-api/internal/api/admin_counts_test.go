@@ -27,17 +27,18 @@ func newCountsMockDB(t *testing.T) (*gorm.DB, sqlmock.Sqlmock, *sql.DB) {
 	return gdb, mock, raw
 }
 
-// JAB-148: /admin/counts must issue ONE round-trip (a single SELECT with three
-// scalar COUNT subqueries) and scan the aliased columns straight into the
-// response — not silently return zeros.
+// JAB-148: /admin/counts must issue ONE round-trip (a single SELECT with one
+// scalar COUNT subquery per total) and scan the aliased columns straight into
+// the response — not silently return zeros. GH #1249 added applications for
+// the Dashboard's fourth count card.
 func TestAdminCounts_SingleQueryScans(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db, mock, raw := newCountsMockDB(t)
 	defer raw.Close()
 
-	mock.ExpectQuery(`SELECT .*\(SELECT COUNT\(\*\) FROM users\) AS users.*\(SELECT COUNT\(\*\) FROM domains\) AS domains.*\(SELECT COUNT\(\*\) FROM mailboxes\) AS mailboxes`).
-		WillReturnRows(sqlmock.NewRows([]string{"users", "domains", "mailboxes"}).
-			AddRow(int64(7), int64(4), int64(19)))
+	mock.ExpectQuery(`SELECT .*\(SELECT COUNT\(\*\) FROM users\) AS users.*\(SELECT COUNT\(\*\) FROM domains\) AS domains.*\(SELECT COUNT\(\*\) FROM mailboxes\) AS mailboxes.*\(SELECT COUNT\(\*\) FROM application_installs\) AS applications`).
+		WillReturnRows(sqlmock.NewRows([]string{"users", "domains", "mailboxes", "applications"}).
+			AddRow(int64(7), int64(4), int64(19), int64(3)))
 
 	h := &adminCountsHandler{cfg: AdminCountsHandlerConfig{DB: db}}
 	w := httptest.NewRecorder()
@@ -52,5 +53,6 @@ func TestAdminCounts_SingleQueryScans(t *testing.T) {
 	require.Equal(t, int64(7), resp.Users)
 	require.Equal(t, int64(4), resp.Domains)
 	require.Equal(t, int64(19), resp.Mailboxes)
+	require.Equal(t, int64(3), resp.Applications)
 	require.NoError(t, mock.ExpectationsWereMet())
 }

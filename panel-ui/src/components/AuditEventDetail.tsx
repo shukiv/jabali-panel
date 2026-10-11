@@ -92,9 +92,15 @@ const VERB: Record<string, string> = {
   GET: "View",
 };
 
+// Path segments that end in "s" without being plurals.
+const NOT_PLURAL = new Set(["dns", "mta-sts"]);
+
 function singularize(noun: string): string {
+  if (NOT_PLURAL.has(noun)) return noun;
   if (noun.endsWith("ies")) return `${noun.slice(0, -3)}y`;
-  if (/(s|x|z)es$/.test(noun)) return noun.slice(0, -2);
+  // "-es" is the plural ending only after these (processes, mailboxes,
+  // batches, aliases); databases and services drop just the "s".
+  if (/(ss|x|z|ch|sh|ias)es$/.test(noun)) return noun.slice(0, -2);
   if (noun.endsWith("s") && !noun.endsWith("ss")) return noun.slice(0, -1);
   return noun;
 }
@@ -113,7 +119,7 @@ export function humanizeAction(r: AuditRow): string {
     .split("/")
     .filter((s) => s && s !== "api" && s !== "v1" && !s.startsWith(":"));
   if (segs.length === 0) return r.action;
-  const noun = singularize(segs[segs.length - 1].replace(/-/g, " "));
+  const noun = singularize(segs[segs.length - 1]).replace(/-/g, " ");
   return `${verb} ${noun}`;
 }
 
