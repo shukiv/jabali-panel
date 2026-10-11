@@ -266,6 +266,35 @@ func TestMailCert_NoOrderWhileTheMailVhostCannotServe(t *testing.T) {
 	}
 }
 
+// An existing domain's row goes ahead once its mail vhost is in place: the
+// reporter's domain sat in failed backoff behind the wrong vhost, and after
+// the upgrade its retry must go out.
+func TestMailCert_DueRowOrdersOnceTheVhostIsUp(t *testing.T) {
+	past := time.Now().Add(-time.Minute)
+	issued := time.Now().Add(-80 * 24 * time.Hour)
+	expires := time.Now().Add(10 * 24 * time.Hour)
+	rows := map[string]*models.MailCertificate{
+		"pending": {ID: "mc-d1", DomainID: "d1", Status: models.MailCertStatusPending},
+		"failed retry due": {ID: "mc-d1", DomainID: "d1", Status: models.MailCertStatusFailed, NextRetryAt: &past,
+			LastError: wmPtr("certbot issue failed (unknown): ... 404")},
+		"dns_missing retry due": {ID: "mc-d1", DomainID: "d1", Status: models.MailCertStatusDNSMissing, NextRetryAt: &past},
+		"renewal due": {ID: "mc-d1", DomainID: "d1", Status: models.MailCertStatusIssued,
+			LineagePath: "/etc/letsencrypt/live/mail.client.example", IssuedAt: &issued, ExpiresAt: &expires},
+	}
+	for name, row := range rows {
+		t.Run(name, func(t *testing.T) {
+			ag := &mailCertGateAgent{}
+			repo := &gateMailCertRepo{rows: map[string]*models.MailCertificate{"d1": row}}
+			r, _ := newMailCertGateReconciler(t, ag, repo)
+
+			r.reconcileWebmailVhosts(context.Background())
+			r.reconcileMailCertificates(context.Background())
+			assert.Equal(t, 1, ag.count("ssl.mail.issue"))
+			assert.Equal(t, models.MailCertStatusIssued, row.Status)
+		})
+	}
+}
+
 // A domain deleted and re-created under the same name between two passes
 // lost its mail vhost with the old row. The webmail pass must send it again
 // rather than skip it as unchanged, and the new domain's order waits for it.
