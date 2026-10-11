@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
-	"git.jabali-panel.com/shukivaknin/jabali2/internal/hostreserve"
 )
 
 // system_fullbackup.extract — GH #1408 slice 2 (create-from-manifest for the
@@ -71,7 +70,7 @@ func systemFullbackupExtractUploadedHandler(_ context.Context, raw json.RawMessa
 	if aerr != nil {
 		return nil, aerr
 	}
-	if err := hostreserve.CheckReserve("/var/lib/jabali-backups", 0); err != nil {
+	if err := checkHostReserve("/var/lib/jabali-backups", 0); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeUnavailable, Message: "restore staging is under the host disk reserve: " + err.Error()}
 	}
 	evictStaleFullRestoreStages()

@@ -11,7 +11,6 @@ import (
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/backup"
-	"git.jabali-panel.com/shukivaknin/jabali2/internal/hostreserve"
 )
 
 // backup.restore_from_tar — GH #1408. Restore an account from a re-UPLOADED
@@ -199,7 +198,7 @@ func restoreAccountFromTar(ctx context.Context, jobID, tarPath, targetUsername s
 
 	// Refuse to stage under the host disk reserve (same guard the DB/PG restore
 	// paths use) so a large archive can't wedge the box.
-	if err := hostreserve.CheckReserve("/var/lib/jabali-backups", 0); err != nil {
+	if err := checkHostReserve("/var/lib/jabali-backups", 0); err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeUnavailable,
 			Message: "restore staging is under the host disk reserve: " + err.Error(),

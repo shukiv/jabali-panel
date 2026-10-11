@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"git.jabali-panel.com/shukivaknin/jabali2/internal/hostreserve"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -393,7 +392,7 @@ func dbPgDumpHandler(ctx context.Context, params json.RawMessage) (any, error) {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeUnavailable, Message: "too many concurrent database backups — retry shortly"}
 	}
 	defer release()
-	if err := hostreserve.CheckReserve(filepath.Dir(p.OutPath), 0); err != nil {
+	if err := checkHostReserve(filepath.Dir(p.OutPath), 0); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeUnavailable, Message: "backup staging is under the host disk reserve: " + err.Error()}
 	}
 	cmd := execCommandContext(ctx, "sudo", "-u", "postgres", "pg_dump",

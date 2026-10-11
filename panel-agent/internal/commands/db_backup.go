@@ -165,7 +165,7 @@ func dbBackupHandler(ctx context.Context, params json.RawMessage) (any, error) {
 		}
 	}
 	defer release()
-	if err := hostreserve.CheckReserve(dbBackupStagingDir, 0); err != nil {
+	if err := checkHostReserve(dbBackupStagingDir, 0); err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeUnavailable,
 			Message: "backup staging is under the host disk reserve: " + err.Error(),

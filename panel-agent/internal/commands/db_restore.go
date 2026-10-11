@@ -1,7 +1,6 @@
 package commands
 
 import (
-	"git.jabali-panel.com/shukivaknin/jabali2/internal/hostreserve"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -49,7 +48,7 @@ func dbRestoreHandler(ctx context.Context, params json.RawMessage) (any, error) 
 	// project-quota work (tracked on the ticket); until then, at least
 	// refuse to START loading tenant SQL when the DB filesystem is
 	// already below the host reserve floor.
-	if err := hostreserve.CheckReserve("/var/lib/mysql", 0); err != nil {
+	if err := checkHostReserve("/var/lib/mysql", 0); err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeUnavailable,
 			Message: "database storage is under the host disk reserve: " + err.Error(),
