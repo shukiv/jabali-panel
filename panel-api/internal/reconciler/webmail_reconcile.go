@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/appseccfg"
@@ -245,7 +247,7 @@ func fileReadable(p string) bool {
 
 func (r *Reconciler) applyWebmailVhost(ctx context.Context, d *models.Domain) {
 	settings := r.webmailSettings(ctx)
-	certPath, keyPath, ok := r.webmailSSLPaths(ctx, d.ID)
+	certPath, keyPath, ok := r.webmailSSLPaths(ctx, d)
 	if _, custom := panelPrimaryExtraMailName(settings, d); custom &&
 		fileReadable(panelMailCertPair[0]) && fileReadable(panelMailCertPair[1]) {
 		// JAB-390: this vhost also answers the applied custom mail
@@ -395,22 +397,69 @@ func panelPrimaryExtraMailName(s *models.ServerSettings, d *models.Domain) (stri
 	return applied, true
 }
 
-// webmailSSLPaths returns the cert + key paths for a domain if a usable
-// certificate is on file. Mirrors the allow-list used by ReconcileOne
-// when rendering the main vhost: accept anything not REVOKED with both
-// paths populated.
-func (r *Reconciler) webmailSSLPaths(ctx context.Context, domainID string) (string, string, bool) {
+// webmailSSLPaths returns the cert + key paths for a domain's webmail vhost.
+// The domain's own certificate is the default: anything not REVOKED with both
+// paths populated, the allow-list ReconcileOne uses for the main vhost.
+//
+// GH #2082: this vhost answers mail.<domain>. When the domain's website lives
+// elsewhere (Wix, a CDN, another host) the apex never validates here, so the
+// domain's own certificate stays a self-signed placeholder, while the
+// per-domain mail certificate (M6.6) is a real one for mail.<domain>. The
+// domain's certificate is therefore kept only when it is a real certificate
+// naming mail.<domain>; otherwise an issued mail certificate wins. A real
+// certificate that cannot be read is kept, as before.
+func (r *Reconciler) webmailSSLPaths(ctx context.Context, d *models.Domain) (string, string, bool) {
 	sslCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	cert, err := r.sslCerts.FindByDomainID(sslCtx, domainID)
-	if err != nil || cert == nil {
+	cert, err := r.sslCerts.FindByDomainID(sslCtx, d.ID)
+	if err == nil && cert != nil && cert.Status == models.SSLStatusRevoked {
 		return "", "", false
 	}
-	if cert.Status == models.SSLStatusRevoked {
-		return "", "", false
+	haveDomain := err == nil && cert != nil && cert.CertPath != nil && cert.KeyPath != nil
+	if haveDomain && keepDomainCertForMail(cert.Status, *cert.CertPath, d.Name) {
+		return *cert.CertPath, *cert.KeyPath, true
 	}
-	if cert.CertPath == nil || cert.KeyPath == nil {
+	if certPath, keyPath, ok := r.issuedMailCertPaths(sslCtx, d.ID); ok {
+		return certPath, keyPath, true
+	}
+	if !haveDomain {
 		return "", "", false
 	}
 	return *cert.CertPath, *cert.KeyPath, true
+}
+
+// keepDomainCertForMail reports whether the domain's own certificate should
+// keep serving mail.<domain>: it is a real certificate (issued, renewing or an
+// uploaded custom one) and its leaf names mail.<domain>, or it cannot be read.
+func keepDomainCertForMail(status, certPath, domainName string) bool {
+	switch status {
+	case models.SSLStatusIssued, models.SSLStatusRenewing, models.SSLStatusCustom:
+	default:
+		return false
+	}
+	names, err := certDNSNames(certPath)
+	if err != nil {
+		return true
+	}
+	want := "mail." + strings.ToLower(domainName)
+	for _, n := range names {
+		if n == want {
+			return true
+		}
+	}
+	return false
+}
+
+// issuedMailCertPaths returns the fullchain + privkey of the domain's issued
+// per-domain mail certificate (M6.6), whose lineage_path is the certbot
+// lineage directory.
+func (r *Reconciler) issuedMailCertPaths(ctx context.Context, domainID string) (string, string, bool) {
+	if r.mailCerts == nil {
+		return "", "", false
+	}
+	row, err := r.mailCerts.GetByDomain(ctx, domainID)
+	if err != nil || row == nil || row.Status != models.MailCertStatusIssued || row.LineagePath == "" {
+		return "", "", false
+	}
+	return filepath.Join(row.LineagePath, "fullchain.pem"), filepath.Join(row.LineagePath, "privkey.pem"), true
 }
