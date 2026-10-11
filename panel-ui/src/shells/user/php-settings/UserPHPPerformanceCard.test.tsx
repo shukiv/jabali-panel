@@ -12,8 +12,16 @@ import { UserPHPPerformanceCard } from "./UserPHPPerformanceCard";
 vi.mock("../../../apiClient", () => ({
   apiClient: { get: vi.fn(), put: vi.fn(), post: vi.fn(), delete: vi.fn() },
 }));
+// Without the mock a toast renders through antd's static message, in a React
+// root of its own that cleanup never unmounts. Fired at the end of the last
+// test, it once committed after the test environment was gone ("window is not
+// defined"), failing CI with every test passing.
+vi.mock("../../../lib/feedback", () => ({
+  feedback: { message: { success: vi.fn(), error: vi.fn() } },
+}));
 
 import { apiClient } from "../../../apiClient";
+import { feedback } from "../../../lib/feedback";
 
 const mocked = apiClient as unknown as {
   get: ReturnType<typeof vi.fn>;
@@ -119,6 +127,10 @@ describe("GH #1332 — UserPHPPerformanceCard per-version tuning", () => {
         php_version: "8.4",
         mode: "balanced",
       }),
+    );
+    // The test ends only once the write has settled.
+    await waitFor(() =>
+      expect(feedback.message.success).toHaveBeenCalledWith("Performance mode set to balanced"),
     );
   });
 });
