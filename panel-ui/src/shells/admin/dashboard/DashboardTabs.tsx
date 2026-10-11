@@ -82,7 +82,12 @@ export function DashboardTabs({ alerts }: Props) {
       size="small"
       activeTabKey={active}
       onTabChange={onChange}
-      tabList={TAB_KEYS.map((key) => ({ key, label: labels[key] }))}
+      // nowrap: on a phone a long label wrapped onto three lines; unwrapped,
+      // the tabs that do not fit move into the tab bar's overflow menu.
+      tabList={TAB_KEYS.map((key) => ({
+        key,
+        label: <span style={{ whiteSpace: "nowrap" }}>{labels[key]}</span>,
+      }))}
     >
       {active === "activity" && <ActivityPane />}
       {active === "inventory" && <InventoryPane />}

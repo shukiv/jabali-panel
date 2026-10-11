@@ -96,7 +96,7 @@ export const Dashboard = () => {
       <HostCard env={env} caps={caps} currentSha={updateState.data?.jabali_current_sha} />
       <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
         {cards.map((c) => (
-          <Col key={c.key} xs={12} lg={24 / cards.length}>
+          <Col key={c.key} xs={12} xl={24 / cards.length}>
             <StatCard
               label={c.label}
               value={formatCount(c.value)}
@@ -107,11 +107,13 @@ export const Dashboard = () => {
           </Col>
         ))}
       </Row>
+      {/* Side by side from xl only: at lg the sidebar leaves the content
+          about 720px wide, too narrow for five tabs beside a rail. */}
       <Row gutter={[16, 16]}>
-        <Col xs={24} lg={16} xxl={17}>
+        <Col xs={24} xl={16} xxl={17}>
           <DashboardTabs alerts={env?.alerts ?? []} />
         </Col>
-        <Col xs={24} lg={8} xxl={7}>
+        <Col xs={24} xl={8} xxl={7}>
           <ServicesRail services={env ? env.services?.services ?? [] : undefined} />
         </Col>
       </Row>

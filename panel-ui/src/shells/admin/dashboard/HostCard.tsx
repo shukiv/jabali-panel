@@ -77,7 +77,7 @@ export function HostCard({ env, caps, currentSha }: Props) {
   return (
     <Card style={{ marginBottom: 16 }}>
       <Row gutter={[24, 16]} align="middle">
-        <Col xs={24} lg={9}>
+        <Col xs={24} xl={9}>
           <Space orientation="vertical" size={6} style={{ width: "100%" }}>
             <Space size={8} wrap>
               <Typography.Title level={4} style={{ margin: 0, wordBreak: "break-all" }}>
@@ -107,7 +107,7 @@ export function HostCard({ env, caps, currentSha }: Props) {
             )}
           </Space>
         </Col>
-        <Col xs={24} sm={16} lg={10}>
+        <Col xs={24} md={16} xl={10}>
           <Row gutter={16}>
             <Col span={8}>
               <Meter label={t("dashboard.meter.cpu")} pct={cpuPct} color={usageColor} />
@@ -120,7 +120,7 @@ export function HostCard({ env, caps, currentSha }: Props) {
             </Col>
           </Row>
         </Col>
-        <Col xs={24} sm={8} lg={5} style={{ textAlign: "right" }}>
+        <Col xs={24} md={8} xl={5} style={{ textAlign: "right" }}>
           <Link to="/jabali-admin/server-status">
             <Button type="primary" icon={<ServerOutlined />}>
               {t("dashboard.view_server_status")}

@@ -45,11 +45,6 @@ export function ServicesRail({ services }: Props) {
           </Tag>
         )
       }
-      actions={[
-        <Link key="manage" to="/jabali-admin/server-status">
-          {t("dashboard.services.manage")}
-        </Link>,
-      ]}
     >
       {visible.map((s) => (
         <div
@@ -71,6 +66,9 @@ export function ServicesRail({ services }: Props) {
       {services !== undefined && visible.length === 0 && (
         <Typography.Text type="secondary">{t("dashboard.services.empty")}</Typography.Text>
       )}
+      <div style={{ textAlign: "right", marginTop: 8 }}>
+        <Link to="/jabali-admin/server-status">{t("dashboard.services.manage")}</Link>
+      </div>
     </Card>
   );
 }
