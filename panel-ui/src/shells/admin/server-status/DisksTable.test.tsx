@@ -41,4 +41,9 @@ describe("DisksTable", () => {
     expect(within(rowOf("/home")).getByText("96%")).toBeInTheDocument();
     expect(within(rowOf("/home")).getByText("critical")).toBeInTheDocument();
   });
+
+  it("shows 0% for a mount with nothing used and nothing free to non-root", () => {
+    render(<DisksTable partitions={[{ mount_point: "/boot", total_bytes: 1000, used_bytes: 0, free_bytes: 0 }]} />);
+    expect(within(rowOf("/boot")).getByText("0%")).toBeInTheDocument();
+  });
 });

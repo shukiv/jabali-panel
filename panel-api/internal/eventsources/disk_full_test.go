@@ -37,7 +37,8 @@ func TestDiskUsedPercent_NothingLeftToNonRootIsFull(t *testing.T) {
 }
 
 func TestDiskUsedPercent_SkipsMissingAndSizeless(t *testing.T) {
-	stubStatfs(t, syscall.Statfs_t{}, errors.New("no such file or directory"))
+	// The error alone decides: whatever the struct holds is not read.
+	stubStatfs(t, syscall.Statfs_t{Bsize: 4096, Blocks: 1000, Bfree: 500, Bavail: 450}, errors.New("no such file or directory"))
 	if _, ok := diskUsedPercent("/var/lib/mysql"); ok {
 		t.Error("a missing mount was not skipped")
 	}
