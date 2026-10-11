@@ -98,7 +98,7 @@ func classify(ctx context.Context, cfg Config, zone string, hosts []string) Rout
 	if hostsHaveSuffix(hosts, cloudflareNSSuffix) {
 		if len(cfg.CF) == 0 {
 			return Route{Provider: ProviderNone, Zone: zone,
-				Reason: fmt.Sprintf("zone %s is hosted at Cloudflare but no Cloudflare API token is configured: neither the domain owner's (SSL → Cloudflare DNS check) nor the server's (Server Settings → General → Cloudflare DNS-01)", zone)}
+				Reason: fmt.Sprintf("zone %s is hosted at Cloudflare but no Cloudflare API token applies to this name: neither the domain owner's (SSL → Cloudflare DNS check, used only on the owner's own certificates) nor the server's (Server Settings → General → Cloudflare DNS-01)", zone)}
 		}
 		var failed []string
 		for i, cf := range cfg.CF {

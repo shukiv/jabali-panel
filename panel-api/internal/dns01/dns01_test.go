@@ -155,9 +155,11 @@ func TestAuthoritativeRoute_TokensInOrder(t *testing.T) {
 		{"the server's token when the owner's is rejected", []ZoneFinder{revoked, server}, ProviderCloudflare, "zone-server", 1, ""},
 		{"no token covers the zone", []ZoneFinder{noAccess, noAccess}, ProviderNone, "", 0, "no configured API token has access"},
 		{"a rejected token with no other access names the failure", []ZoneFinder{revoked, noAccess}, ProviderNone, "", 0, "Invalid API Token"},
-		{"no token at all", nil, ProviderNone, "", 0, "no Cloudflare API token is configured"},
+		// No candidates also means an owner's token was withheld because the
+		// certificate is someone else's, so the reason must not say none is set.
+		{"no token at all", nil, ProviderNone, "", 0, "no Cloudflare API token applies to this name"},
 		// The reason reaches the user, so it names the cards as the UI does.
-		{"no token at all names where to set one", nil, ProviderNone, "", 0, "(SSL → Cloudflare DNS check) nor the server's (Server Settings → General → Cloudflare DNS-01)"},
+		{"no token at all names where to set one", nil, ProviderNone, "", 0, "(SSL → Cloudflare DNS check, used only on the owner's own certificates) nor the server's (Server Settings → General → Cloudflare DNS-01)"},
 	}
 	for _, c := range cases {
 		got := AuthoritativeRoute(context.Background(), Config{LookupNS: ns.lookup, CF: c.cf}, "www.shop.example")
