@@ -9,10 +9,15 @@ Each installed PHP version (Sury packages, currently 8.1 through 8.5+) shows:
 - Version number
 - Number of user pools currently using this version
 - Default tunables (`pm`, `pm.max_children`, `pm.start_servers`, `pm.min_spare_servers`, `pm.max_spare_servers`)
-- Per-version OPcache settings (`opcache.memory_consumption`, `opcache.max_accelerated_files`)
-- JIT toggle (default off)
-
 Editing a default propagates to every user pool of that version through the reconciler.
+
+OPcache and JIT are not set here. The server's defaults are reconciled by `jabali update`:
+- a cache sized to the host's memory;
+- up to 50,000 files;
+- file checks every 60 seconds;
+- JIT off.
+
+An account changes them for one PHP version on its **PHP Settings → OPcache & JIT** tab. That tab needs a package with **Users can pick a PHP Performance Mode** on ([PHP Settings](../user/php-settings.md#opcache)).
 
 ## Adding a new PHP version
 

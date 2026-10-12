@@ -66,13 +66,21 @@ Switching the domain to another PHP version also takes effect within a few secon
 
 ## OpCache
 
-OPcache is enabled per-version with operator-chosen defaults (typically 128 MiB cache, 10000 files). Tenant tuning of OpCache is not exposed; ask the operator if you need a larger cache for a code base with many files.
+OPcache is on for every PHP version. By default it holds up to 50,000 files in a cache sized to the server's memory, and checks a PHP file for changes at most every 60 seconds. So an edited file can take up to a minute to show.
+
+The **OPcache & JIT** tab on this page sets OPcache for one PHP version of your account:
+- OPcache on or off;
+- memory and the maximum number of files;
+- timestamp validation;
+- how often it checks files for changes (**Revalidate freq**: 0, 2, 5, 30 or 60 seconds).
+
+While you develop, set **Revalidate freq** to 0 seconds, so each saved change shows on the next request. Checking on every request costs a little speed, so set it back when the site is live. The settings apply to every domain of yours on that PHP version, and saving restarts that PHP pool. The tab works when your hosting package lets you pick a PHP performance mode (the administrator's **Users can pick a PHP Performance Mode** switch).
 
 **Reset OPcache** on the domain's **PHP Settings** tab clears the cached code after you deploy files that PHP does not pick up on its own. The reset restarts the PHP pool that serves the domain, so every site on that pool sees a short restart; the panel asks you to confirm first. The button shows only when your hosting package lets you edit PHP-FPM settings. Administrators, also while impersonating, can always reset.
 
 ## JIT
 
-JIT is off by default. Your application is unlikely to benefit from JIT for typical web-request workloads (the per-request setup cost outweighs the runtime gain on short requests). Enable per-version under the operator's [PHP Manager](../admin/php-manager.md); the operator decides at the version level.
+JIT is off by default. Your application is unlikely to benefit from JIT for typical web-request workloads (the per-request setup cost outweighs the runtime gain on short requests). To try it, turn it on for one PHP version on the **OPcache & JIT** tab, which needs the same package setting as OPcache above.
 
 ## Choosing the right values
 
