@@ -29,9 +29,12 @@
 
 # /var/log/jabali/ — canonical dir for install logs and any future
 # operator-facing log a jabali script writes locally. install.sh
-# writes install-<ts>.log per run; weekly rotation keeps 8 weeks of
-# history (long enough to diagnose a regression after a quiet box).
-# nocreate because each install run touches its own timestamped file.
+# writes install-<ts>.log per run, so each one is rotated once, to
+# install-<ts>.log.1, and `rotate 8` never applies to it. install.sh's
+# prune_old_install_logs (run on every `jabali update`) deletes rotated
+# install logs after 8 weeks (long enough to diagnose a regression after
+# a quiet box). nocreate because each install run touches its own
+# timestamped file.
 /var/log/jabali/*.log {
     weekly
     rotate 8
