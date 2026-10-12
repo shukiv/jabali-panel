@@ -39,7 +39,16 @@ func (a *aaAgent) Call(_ context.Context, cmd string, _ any) (json.RawMessage, e
 	return json.RawMessage(`{"ok":true}`), nil
 }
 
+// aaAudit keeps the audit events recorded.
+type aaAudit struct{ events []*models.AuditEvent }
+
+func (a *aaAudit) Record(e *models.AuditEvent) { a.events = append(a.events, e) }
+
 func newAppArmorRouter(ag *aaAgent, acks *fakeAppArmorAcks) *gin.Engine {
+	return newAppArmorRouterAudited(ag, acks, nil)
+}
+
+func newAppArmorRouterAudited(ag *aaAgent, acks *fakeAppArmorAcks, rec *aaAudit) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	v1 := r.Group("/v1")
@@ -47,7 +56,11 @@ func newAppArmorRouter(ag *aaAgent, acks *fakeAppArmorAcks) *gin.Engine {
 		ginctx.SetClaims(c, &auth.AccessClaims{UserID: "01HZADMIN0000000000000000A", IsAdmin: true})
 		c.Next()
 	})
-	RegisterSecurityAppArmorRoutes(v1, ag, acks)
+	cfg := SecurityAppArmorConfig{Agent: ag, Acks: acks}
+	if rec != nil {
+		cfg.Audit = rec
+	}
+	RegisterSecurityAppArmorRoutes(v1, cfg)
 	return r
 }
 
@@ -161,5 +174,35 @@ func TestAppArmorStatus_ListsTheAcknowledgementsThatStillHold(t *testing.T) {
 	}
 	if !reflect.DeepEqual(acks.deleted, []string{"jabali-sendmail"}) {
 		t.Fatalf("deleted = %v", acks.deleted)
+	}
+}
+
+// The audit log names the profile for each change; the request log alone
+// shows only the route.
+func TestAppArmorRoutes_AuditNamesTheProfile(t *testing.T) {
+	rec := &aaAudit{}
+	r := newAppArmorRouterAudited(&aaAgent{modes: map[string]string{"jabali-fpm-app": "complain"}}, &fakeAppArmorAcks{}, rec)
+
+	aaDo(r, http.MethodPost, "/v1/admin/security/apparmor/profiles/jabali-fpm-app/acknowledge", "")
+	aaDo(r, http.MethodDelete, "/v1/admin/security/apparmor/profiles/jabali-fpm-app/acknowledge", "")
+	aaDo(r, http.MethodPost, "/v1/admin/security/apparmor/profiles/jabali-fpm-app/mode", `{"mode":"enforce"}`)
+	aaDo(r, http.MethodPost, "/v1/admin/security/apparmor/profiles/jabali-panel/acknowledge", "") // refused: not recorded
+
+	type ev struct{ action, target, actor string }
+	var got []ev
+	for _, e := range rec.events {
+		actor := ""
+		if e.ActorUserID != nil {
+			actor = *e.ActorUserID
+		}
+		got = append(got, ev{e.Action, e.TargetID, actor})
+	}
+	want := []ev{
+		{"security.apparmor.acknowledge", "jabali-fpm-app", "01HZADMIN0000000000000000A"},
+		{"security.apparmor.unacknowledge", "jabali-fpm-app", "01HZADMIN0000000000000000A"},
+		{"security.apparmor.set_mode", "jabali-fpm-app", "01HZADMIN0000000000000000A"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("audit events = %v\nwant %v", got, want)
 	}
 }

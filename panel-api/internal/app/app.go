@@ -1277,7 +1277,11 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			api.RegisterSecurityUFWRoutes(securityGroup, deps.Agent)
 			// M40 (ADR-0086) AppArmor admin status + per-profile mode flip, and
 			// the complain-mode acknowledgements (GH #2078).
-			api.RegisterSecurityAppArmorRoutes(securityGroup, deps.Agent, appArmorAcks)
+			api.RegisterSecurityAppArmorRoutes(securityGroup, api.SecurityAppArmorConfig{
+				Agent: deps.Agent,
+				Acks:  appArmorAcks,
+				Audit: deps.AuditRecorder,
+			})
 			// M42 (ADR-0087) AIDE FIM read-only status + manual check trigger.
 			api.RegisterSecurityAideRoutes(securityGroup, deps.Agent)
 			// M43 (ADR-0089) Trust test bench — "would this IP be blocked?" admin endpoint.

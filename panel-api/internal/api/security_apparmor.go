@@ -13,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/audit"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/middleware"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
@@ -31,11 +32,34 @@ const apparmorCallTimeout = 10 * time.Second
 // is then checked against the profiles the agent reports.
 var apparmorProfileNameRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 
-// RegisterSecurityAppArmorRoutes mounts the AppArmor admin routes. acks may be
-// nil (no database): the acknowledge routes are then not mounted and the
-// status carries no "acknowledged" list.
-func RegisterSecurityAppArmorRoutes(rg *gin.RouterGroup, cli agent.AgentInterface, acks repository.AppArmorModeAckRepository) {
+// SecurityAppArmorConfig wires the AppArmor admin routes.
+type SecurityAppArmorConfig struct {
+	Agent agent.AgentInterface
+	// Acks holds the complain-mode acknowledgements (GH #2078). Nil (no
+	// database): the acknowledge routes are not mounted and the status carries
+	// no "acknowledged" list.
+	Acks repository.AppArmorModeAckRepository
+	// Audit records each mode change, acknowledgement and withdrawal with the
+	// profile it was for. Optional.
+	Audit audit.Recorder
+}
+
+// RegisterSecurityAppArmorRoutes mounts the AppArmor admin routes.
+func RegisterSecurityAppArmorRoutes(rg *gin.RouterGroup, cfg SecurityAppArmorConfig) {
+	cli, acks := cfg.Agent, cfg.Acks
 	g := rg.Group("/admin/security/apparmor", middleware.RequireAdmin())
+	// record writes an audit event naming the profile; the request log alone
+	// shows only the route.
+	record := func(c *gin.Context, action, profile, mode string) {
+		if cfg.Audit == nil {
+			return
+		}
+		actor := ""
+		if cl := ginctx.Claims(c); cl != nil {
+			actor = cl.UserID
+		}
+		cfg.Audit.Record(audit.AppArmorProfile(actor, action, profile, mode, c.ClientIP(), ginctx.RequestID(c)))
+	}
 
 	g.GET("/status", func(c *gin.Context) {
 		ctx, cancel := context.WithTimeout(c.Request.Context(), apparmorCallTimeout)
@@ -76,6 +100,7 @@ func RegisterSecurityAppArmorRoutes(rg *gin.RouterGroup, cli agent.AgentInterfac
 			c.JSON(status, errBody)
 			return
 		}
+		record(c, "security.apparmor.set_mode", name, body.Mode)
 		// GH #2078: an acknowledgement ends when the profile's mode changes.
 		if acks != nil {
 			if err := acks.Delete(c.Request.Context(), name); err != nil {
@@ -132,6 +157,7 @@ func RegisterSecurityAppArmorRoutes(rg *gin.RouterGroup, cli agent.AgentInterfac
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 			return
 		}
+		record(c, "security.apparmor.acknowledge", name, mode)
 		c.JSON(http.StatusOK, gin.H{"profile": name, "mode": mode, "acknowledged": true})
 	})
 
@@ -146,6 +172,7 @@ func RegisterSecurityAppArmorRoutes(rg *gin.RouterGroup, cli agent.AgentInterfac
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 			return
 		}
+		record(c, "security.apparmor.unacknowledge", name, "")
 		c.JSON(http.StatusOK, gin.H{"profile": name, "acknowledged": false})
 	})
 }

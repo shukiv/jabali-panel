@@ -111,6 +111,24 @@ func SecurityToggle(adminUserID, subsystem, state, sourceIP, requestID string) *
 	}
 }
 
+// AppArmorProfile — an administrator changed an AppArmor profile's mode, or
+// acknowledged or withdrew its complain-mode acknowledgement (GH #2078). action
+// is "security.apparmor.set_mode", "security.apparmor.acknowledge" or
+// "security.apparmor.unacknowledge"; mode is the mode set or acknowledged ("" on
+// a withdrawal). Server-scoped (subject NULL) → admin-only visibility.
+func AppArmorProfile(adminUserID, action, profile, mode, sourceIP, requestID string) *models.AuditEvent {
+	var meta map[string]any
+	if mode != "" {
+		meta = map[string]any{"mode": mode}
+	}
+	return &models.AuditEvent{
+		ActorUserID: sp(adminUserID), ActorKind: models.AuditActorAdmin,
+		Action: action, TargetType: "apparmor_profile", TargetID: profile,
+		Result: models.AuditResultOK, SourceIP: sp(sourceIP), RequestID: sp(requestID),
+		Meta: metaJSON(meta),
+	}
+}
+
 // DomainOwnership — an administrator approved or revoked the ownership proof
 // of a domain or a web alias, or switched the proof requirement (GH #1816 /
 // ADR-0170). subjectUserID is the owner of the affected name ("" for the
