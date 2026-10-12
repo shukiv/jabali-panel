@@ -2,6 +2,10 @@ package api
 
 import (
 	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -76,5 +80,41 @@ func TestBackupJobOwnerName(t *testing.T) {
 				t.Fatalf("backupJobOwnerName = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// materializeAgent answers backup.materialize with a directory the test made,
+// as the agent does with the restored snapshot, and accepts the cleanup call.
+type materializeAgent struct{ path string }
+
+func (m *materializeAgent) Call(_ context.Context, command string, _ any) (json.RawMessage, error) {
+	if command == "backup.materialize" {
+		return json.Marshal(map[string]string{"path": m.path})
+	}
+	return json.RawMessage(`{}`), nil
+}
+
+// The name reaches the browser: streamBackupArtifact puts the base name in
+// Content-Disposition, with the extension of the archive it actually builds,
+// and falls back to the job ID when it has no name.
+func TestStreamBackupArtifact_DownloadName(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "01JOBNAME")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "manifest.json"), []byte(`{}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ base, want string }{
+		{"backup_alice_2026-10-11_0430", "backup_alice_2026-10-11_0430.tar"},
+		{"", "01JOBNAME.tar"},
+	} {
+		c, w := newGateCtx()
+		job := &models.BackupJob{ID: "01JOBNAME", Status: models.BackupJobStatusSucceeded, SnapshotID: "snap1"}
+		streamBackupArtifact(c, &materializeAgent{path: dir}, job, tc.base, nil, noopLogErr)
+		cd := w.Header().Get("Content-Disposition")
+		if w.Code != 200 || !strings.Contains(cd, `filename="`+tc.want) {
+			t.Fatalf("base %q: code %d, Content-Disposition %q, want a filename starting %q", tc.base, w.Code, cd, tc.want)
+		}
 	}
 }
