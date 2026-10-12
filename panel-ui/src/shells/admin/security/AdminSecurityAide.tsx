@@ -8,6 +8,8 @@ import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 
 import {
   type AideSampleRow,
+  type AideStatus,
+  aideErrorMessage,
   useAideStatus,
   useRunAideCheck,
   useRunAideRebuild,
@@ -38,6 +40,53 @@ function humanizeAge(seconds: number): string {
   return `${m}m`;
 }
 
+// GH #2079: the rebuild and the check run in the background; these say what is
+// running, and why the last run failed.
+function AideRunAlerts({ data }: { data?: AideStatus }) {
+  const rebuild = data?.rebuild;
+  const check = data?.check;
+  return (
+    <>
+      {rebuild?.running && (
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 12 }}
+          message="Rebuilding the baseline…"
+          description={`${rebuild.started_at ? `Started ${rebuild.started_at}. ` : ""}A rebuild reads every watched file and takes a few minutes. This page updates when it's done.`}
+        />
+      )}
+      {rebuild && !rebuild.running && rebuild.ok === false && (
+        <Alert
+          type="error"
+          showIcon
+          style={{ marginBottom: 12 }}
+          message="The last baseline rebuild failed"
+          description={rebuild.error || "No reason was recorded."}
+        />
+      )}
+      {check?.running && (
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 12 }}
+          message="Checking the files against the baseline…"
+          description="A check takes a few minutes. This page updates when it's done."
+        />
+      )}
+      {check?.failed && (
+        <Alert
+          type="error"
+          showIcon
+          style={{ marginBottom: 12 }}
+          message="The last check failed"
+          description="See journalctl -u jabali-aide-check.service on the server."
+        />
+      )}
+    </>
+  );
+}
+
 export const AdminSecurityAide = () => {
   const { t } = useTranslation();
   const { data, isLoading, refetch } = useAideStatus();
@@ -57,6 +106,7 @@ export const AdminSecurityAide = () => {
   if (!data?.enabled) {
     return (
       <Card title={t("adminsecurityaide.aide_file_integrity_monitor")} size="small">
+        <AideRunAlerts data={data} />
         <Alert
           type="warning"
           showIcon
@@ -68,6 +118,8 @@ export const AdminSecurityAide = () => {
   }
 
   const total = data.summary.added + data.summary.changed + data.summary.removed;
+  const rebuildRunning = !!data.rebuild?.running;
+  const checkRunning = !!data.check?.running;
 
   return (
     <Card
@@ -107,11 +159,13 @@ export const AdminSecurityAide = () => {
           <Button
             size="small"
             type="primary"
-            loading={runCheck.isPending}
+            loading={runCheck.isPending || checkRunning}
+            disabled={rebuildRunning}
             onClick={() =>
               runCheck.mutate(undefined, {
-                onSuccess: () => feedback.message.success("Check complete"),
-                onError: () => feedback.message.error("Check failed — see agent logs"),
+                onSuccess: () =>
+                  feedback.message.info("Check started. It takes a few minutes; this page updates when it's done."),
+                onError: (err) => feedback.message.error(aideErrorMessage("The check didn't start", err)),
               })
             }
           >
@@ -122,7 +176,7 @@ export const AdminSecurityAide = () => {
             loading={runRebuild.isPending}
             onClick={() =>
               runRebuild.mutate(true, {
-                onSuccess: (d) => feedback.message.info(`Dry run: would run ${d.plan ?? "aideinit -y -f"}`),
+                onSuccess: (d) => feedback.message.info(`Dry run: would run ${d.plan ?? "aide --init"}`),
                 onError: () => feedback.message.error("Dry run failed — see agent logs"),
               })
             }
@@ -136,12 +190,18 @@ export const AdminSecurityAide = () => {
             okButtonProps={{ danger: true }}
             onConfirm={() =>
               runRebuild.mutate(false, {
-                onSuccess: () => feedback.message.success("Baseline rebuilt"),
-                onError: () => feedback.message.error("Rebuild failed — see agent logs"),
+                onSuccess: () =>
+                  feedback.message.info("Rebuild started. It takes a few minutes; this page updates when it's done."),
+                onError: (err) => feedback.message.error(aideErrorMessage("The rebuild didn't start", err)),
               })
             }
           >
-            <Button size="small" danger loading={runRebuild.isPending}>
+            <Button
+              size="small"
+              danger
+              loading={runRebuild.isPending || rebuildRunning}
+              disabled={checkRunning}
+            >
               Rebuild baseline
             </Button>
           </Popconfirm>
@@ -157,6 +217,8 @@ export const AdminSecurityAide = () => {
         <code>jabali-aide-check.timer</code> runs at 04:30 UTC + jitter.
       </Typography.Paragraph>
 
+      <AideRunAlerts data={data} />
+
       <Space size="large" style={{ marginBottom: 16 }}>
         <Statistic title={t("adminsecurityaide.db_age")} value={humanizeAge(data.db_age_seconds)} />
         <Statistic title={t("adminsecurityaide.last_check")} value={data.last_check_ts || "—"} />
@@ -165,7 +227,15 @@ export const AdminSecurityAide = () => {
         <Statistic title={t("adminsecurityaide.removed")} value={data.summary.removed} />
       </Space>
 
-      {total > 0 ? (
+      {data.baseline_rebuilt_at ? (
+        <Alert
+          type="info"
+          showIcon
+          message="The baseline was rebuilt"
+          description={`Rebuilt ${data.baseline_rebuilt_at}. No check has run since; run a check to compare the files against the new baseline.`}
+          style={{ marginBottom: 12 }}
+        />
+      ) : total > 0 ? (
         <Alert
           type="warning"
           showIcon
@@ -283,9 +353,9 @@ export const AdminSecurityAide = () => {
       />
 
       <Typography.Paragraph type="secondary" style={{ marginTop: 16, marginBottom: 0 }}>
-        <Badge status="processing" /> Re-baseline after a deliberate change with{" "}
-        <code>jabali aide rebuild --full</code>. <code>jabali update</code>{" "}
-        re-baselines panel binaries automatically.
+        <Badge status="processing" /> After a deliberate change (a package or kernel update, an edit under{" "}
+        <code>/etc</code>), review the changes, then rebuild the baseline here or with{" "}
+        <code>jabali aide rebuild --full</code>.
       </Typography.Paragraph>
     </Card>
   );

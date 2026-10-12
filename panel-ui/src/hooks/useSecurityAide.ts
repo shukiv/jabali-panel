@@ -23,6 +23,21 @@ export interface AideStatus {
   };
   sample: AideSampleRow[];
   categories?: Record<string, number>;
+  // GH #2079: the rebuild and the check run in the background.
+  rebuild?: AideRebuild;
+  check?: { running: boolean; failed?: boolean };
+  // Set instead of last_check_ts when the last aide run was the rebuild.
+  baseline_rebuilt_at?: string;
+}
+
+// AideRebuild is the baseline rebuild started from the panel: running now, or
+// how the last one ended (ok, or error says why).
+export interface AideRebuild {
+  running: boolean;
+  ok?: boolean;
+  error?: string;
+  started_at?: string;
+  finished_at?: string;
 }
 
 // apiClient baseURL is already "/api/v1" — paths must be relative
@@ -37,28 +52,39 @@ export function useAideStatus() {
       const { data } = await apiClient.get<AideStatus>(`${BASE}/status`);
       return data;
     },
-    refetchInterval: 60_000,
+    // Poll faster while a rebuild or a check runs, so the page shows the end.
+    refetchInterval: (query) =>
+      query.state.data?.rebuild?.running || query.state.data?.check?.running ? 5_000 : 60_000,
   });
+}
+
+// GH #2079: the reason a start failed (a rebuild or a check already running,
+// systemd-run's error) is in the error body's detail.
+export function aideErrorMessage(prefix: string, err: unknown): string {
+  const e = err as { response?: { data?: { detail?: string; error?: string } }; message?: string };
+  const reason = (e?.response?.data?.detail || e?.response?.data?.error || e?.message || "").trim();
+  if (!reason) return prefix;
+  return `${prefix}: ${reason.length > 600 ? `${reason.slice(0, 600)}…` : reason}`;
 }
 
 export function useRunAideCheck() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async () => {
-      const { data } = await apiClient.post<AideStatus>(`${BASE}/check`);
+      const { data } = await apiClient.post<{ started?: boolean }>(`${BASE}/check`);
       return data;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["security", "aide"] }),
   });
 }
 
-// useRunAideRebuild rebuilds the AIDE baseline (aideinit). dryRun returns the
-// plan only. Gitea #561.
+// useRunAideRebuild starts a rebuild of the AIDE baseline in the background
+// (GH #2079); the status reports it. dryRun returns the plan only. Gitea #561.
 export function useRunAideRebuild() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (dryRun: boolean) => {
-      const { data } = await apiClient.post<{ rebuilt?: boolean; dry_run?: boolean; plan?: string }>(
+      const { data } = await apiClient.post<{ started?: boolean; dry_run?: boolean; plan?: string }>(
         `${BASE}/rebuild`,
         // GH #683: real rebuild requires the confirmation token; the Rebuild
         // button is already behind a confirm dialog.

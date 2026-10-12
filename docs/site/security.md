@@ -97,6 +97,8 @@ PHP runtime hardening, built for every installed PHP version and loaded into PHP
 
 A daily timer (`jabali-aide-check.timer`) compares the host against the AIDE database. Changes outside the panel's drop-in paths fire the `aide.tamper.detected` notification.
 
+Security → AIDE runs a check, or rebuilds the baseline, in the background; the page shows each while it runs and says why a rebuild failed. See [AIDE](./admin/aide.md).
+
 ## Per-user egress firewall (M34)
 
 ADR-0084. nftables + cgroup v2 vmap. Each user's processes run in their slice; the nftables ruleset matches by cgroup ID and decides:
