@@ -29,9 +29,11 @@ func respondAgentErr(c *gin.Context, code string, err error) {
 // the message is an actionable SSH error (auth rejected, host key, dial) the
 // admin needs to fix their credentials, not root daemon stderr. Mirrors the
 // tenant pull-source path which already returns the detail. (GH #327)
+// It answers 422, not 502: Cloudflare replaces an origin's 502 with its own
+// error page, which hid the detail on a panel behind it (GH #2077).
 func respondMigrateConnectErr(c *gin.Context, err error) {
 	logAgentError(c, "connect_failed", err)
-	c.JSON(http.StatusBadGateway, gin.H{"error": "connect_failed", "detail": err.Error()})
+	c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "connect_failed", "detail": err.Error()})
 }
 
 func respondAgentErrStatus(c *gin.Context, code string, err error) {

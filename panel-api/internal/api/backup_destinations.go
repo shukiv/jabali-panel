@@ -535,7 +535,9 @@ func (h *backupDestinationHandler) test(c *gin.Context) {
 	}
 	// GH #2077: the answer must outlive the server's WriteTimeout (30 s),
 	// or a long test loses it and the browser gets a closed connection
-	// (Cloudflare's "invalid or incomplete response").
+	// (Cloudflare's "invalid or incomplete response"). A test that fails or
+	// runs out of time answers 422, not 502 or 504: Cloudflare replaces an
+	// origin's 502 or 504 with its own error page, which hid the reason.
 	extendWriteDeadline(c, backupDestTestBudget+backupDestTestWriteSlack)
 	ctx, cancel := context.WithTimeout(c.Request.Context(), backupDestTestBudget)
 	defer cancel()
@@ -560,7 +562,7 @@ func (h *backupDestinationHandler) test(c *gin.Context) {
 	if err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			logAgentError(c, "backup_dest_test_timeout", err)
-			c.JSON(http.StatusGatewayTimeout, gin.H{
+			c.JSON(http.StatusUnprocessableEntity, gin.H{
 				"status": "error",
 				"error":  "test_timeout",
 				"detail": fmt.Sprintf("The destination didn't answer within %d seconds. Check the host and the port, and that this server can reach it: a firewall that drops the connection looks like this.", int(backupDestTestBudget/time.Second)),
@@ -581,7 +583,9 @@ func (h *backupDestinationHandler) test(c *gin.Context) {
 		return
 	}
 	if resp.Status != "ok" {
-		c.JSON(http.StatusBadGateway, gin.H{
+		slog.WarnContext(c.Request.Context(), "backup destination test failed",
+			"destination_id", d.ID, "kind", d.Kind, "detail", resp.Detail)
+		c.JSON(http.StatusUnprocessableEntity, gin.H{
 			"status": "error",
 			"error":  "restic_test_failed",
 			"detail": resp.Detail,

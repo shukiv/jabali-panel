@@ -86,7 +86,9 @@ func (h *adminMigrationsHandler) probeIMAP(c *gin.Context) {
 		slog.WarnContext(ctx, "imap migration probe failed",
 			"host", req.Host, "port", req.Port, "starttls", req.STARTTLS,
 			"user", req.User, "code", code, "err", err)
-		status := http.StatusBadGateway
+		// 422, not 502: Cloudflare replaces an origin's 502 with its own
+		// error page, which would hide the hint (GH #2077).
+		status := http.StatusUnprocessableEntity
 		if code == "auth_failed" {
 			status = http.StatusUnauthorized
 		}

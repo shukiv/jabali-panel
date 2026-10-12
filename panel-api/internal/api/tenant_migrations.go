@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -464,7 +465,7 @@ func (h *tenantMigrationsHandler) verify(c *gin.Context) {
 	}
 	sess, err := wordpressssh.Connect(ctx, job.SourceHost, 0, sshUser, migrate.SecretRef{Path: secretPath, ExpectedHostKey: job.ExpectedHostKey}, allowPrivate)
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "connect_failed", "detail": "SSH connect failed — check host + credentials: " + err.Error()})
+		respondMigrateConnectErr(c, fmt.Errorf("SSH connect failed — check host + credentials: %w", err))
 		return
 	}
 	defer sess.Close()

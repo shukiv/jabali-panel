@@ -5,6 +5,11 @@ package api
 // panel's HTTP server gives a response 30 s (WriteTimeout): a test that ran
 // longer (a first restic init over a slow link, an unreachable host) lost its
 // answer and the connection was closed.
+//
+// A test that fails, or runs out of time, answers 422, not 502 or 504:
+// Cloudflare replaces an origin's 502 or 504 with its own error page, so a
+// panel behind it showed Cloudflare's "invalid or incomplete response" instead
+// of the SFTP or restic error (GH #2077, after the first fix).
 
 import (
 	"context"
@@ -92,8 +97,8 @@ func TestBackupDestTest_TimeoutSaysTheDestinationDidntAnswer(t *testing.T) {
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusGatewayTimeout {
-		t.Fatalf("status %d %s, want 504", resp.StatusCode, body)
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("status %d %s, want 422 (a proxy like Cloudflare replaces a 504's body)", resp.StatusCode, body)
 	}
 	var out map[string]string
 	if err := json.Unmarshal(body, &out); err != nil {
@@ -101,5 +106,26 @@ func TestBackupDestTest_TimeoutSaysTheDestinationDidntAnswer(t *testing.T) {
 	}
 	if out["error"] != "test_timeout" || !strings.Contains(out["detail"], "didn't answer within") {
 		t.Fatalf("body %s, want test_timeout with a reason the admin can act on", body)
+	}
+}
+
+func TestBackupDestTest_FailedTestKeepsItsReasonPastAProxy(t *testing.T) {
+	url := serveDestTest(t, &slowTestAgent{resp: `{"status":"error","detail":"init_failed: exit status 1","stderr":"ssh: connect to host backup.example port 22: Connection refused"}`}, time.Second)
+
+	resp, err := http.Post(url, "application/json", nil)
+	if err != nil {
+		t.Fatalf("no answer: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("status %d %s, want 422 (a proxy like Cloudflare replaces a 502's body)", resp.StatusCode, body)
+	}
+	var out map[string]string
+	if err := json.Unmarshal(body, &out); err != nil {
+		t.Fatal(err)
+	}
+	if out["error"] != "restic_test_failed" || out["detail"] != "init_failed: exit status 1" || !strings.Contains(out["stderr"], "Connection refused") {
+		t.Fatalf("body %s, want restic_test_failed with the agent's detail and stderr", body)
 	}
 }

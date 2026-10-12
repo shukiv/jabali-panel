@@ -170,8 +170,10 @@ func TestProbeIMAPClassifiesConnectError(t *testing.T) {
 	}
 	h, _ := newIMAPHandler(fakeIMAPAgent{})
 	w := postJSON(h.probeIMAP, `{"host":"h","user":"u","password":"pw"}`)
-	if w.Code != http.StatusBadGateway {
-		t.Fatalf("code = %d, want 502; body=%s", w.Code, w.Body.String())
+	// 422, not 502: Cloudflare replaces an origin's 502 with its own page,
+	// which would hide the hint (GH #2077).
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("code = %d, want 422; body=%s", w.Code, w.Body.String())
 	}
 	body := w.Body.String()
 	if !strings.Contains(body, "blocked_host") {
