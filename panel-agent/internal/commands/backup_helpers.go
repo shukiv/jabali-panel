@@ -616,18 +616,9 @@ func bkEnsureRepoReady(ctx context.Context, repoURL, credentialsRef, destKind, p
 			}
 			return errors.New(repoUnopenableMessage(cls, repoURL, pwFile, lower, keys, listErr))
 		}
-		if destKind == "sftp" && sftp != nil && sftp.Host != "" {
-			if _, err := backup.MkdirRemoteSFTP(ctx, backup.SFTPInputs{
-				Host:    sftp.Host,
-				User:    sftp.User,
-				Port:    sftp.Port,
-				Path:    sftp.Path,
-				Auth:    sftp.Auth,
-				KeyPath: sftp.KeyPath,
-			}, extraEnv); err != nil {
-				return fmt.Errorf("ssh mkdir: %w", err)
-			}
-		}
+		// restic init creates the repository folder and its parents over SFTP
+		// itself; no shell command runs first, which an SFTP-only account
+		// refuses (GH #2077).
 		// Init with the SAME password the probe used: a fresh repo for a
 		// destination that carries its own sealed password must be created under
 		// that password, or every later open fails.

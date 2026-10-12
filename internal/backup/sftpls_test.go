@@ -5,12 +5,11 @@ import (
 	"testing"
 )
 
-// TestBuildSSHMkdirArgs_Pin freezes the exact argv buildSSHMkdirArgs produces
-// for every auth mode BEFORE the shared-base refactor (JAB-405 Part 2a extracts
-// buildSSHConnArgs, shared with the new ls builder). If the extraction changes
-// any argv element — most importantly the `--` separator that stops ssh from
-// treating the remote command as more of its own options — this pin goes red.
-func TestBuildSSHMkdirArgs_Pin(t *testing.T) {
+// TestBuildSSHConnArgs_Pin freezes the connection prefix buildSSHConnArgs
+// produces for every auth mode; the ls and rename builders append their
+// command to it. (It pinned the remote mkdir's argv until GH #2077 removed
+// that shell command: restic init creates the folder over SFTP.)
+func TestBuildSSHConnArgs_Pin(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
@@ -26,7 +25,7 @@ func TestBuildSSHMkdirArgs_Pin(t *testing.T) {
 				"-o", "StrictHostKeyChecking=accept-new",
 				"-o", "PreferredAuthentications=password",
 				"-o", "PubkeyAuthentication=no",
-				"u@h", "--", "mkdir", "-p", "/p",
+				"u@h",
 			},
 		},
 		{
@@ -36,7 +35,7 @@ func TestBuildSSHMkdirArgs_Pin(t *testing.T) {
 				"ssh", "-i", "/k", "-o", "IdentitiesOnly=yes",
 				"-o", "StrictHostKeyChecking=accept-new",
 				"-o", "BatchMode=yes",
-				"u@h", "--", "mkdir", "-p", "/p",
+				"u@h",
 			},
 		},
 		{
@@ -46,7 +45,7 @@ func TestBuildSSHMkdirArgs_Pin(t *testing.T) {
 				"ssh",
 				"-o", "StrictHostKeyChecking=accept-new",
 				"-o", "BatchMode=yes",
-				"u@h", "--", "mkdir", "-p", "/p",
+				"u@h",
 			},
 		},
 		{
@@ -57,13 +56,13 @@ func TestBuildSSHMkdirArgs_Pin(t *testing.T) {
 				"-o", "StrictHostKeyChecking=accept-new",
 				"-o", "BatchMode=yes",
 				"-p", "2222",
-				"u@h", "--", "mkdir", "-p", "/p",
+				"u@h",
 			},
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := buildSSHMkdirArgs(tc.in)
+			got := buildSSHConnArgs(tc.in)
 			if !reflect.DeepEqual(got, tc.want) {
 				t.Errorf("argv mismatch\n got: %#v\nwant: %#v", got, tc.want)
 			}

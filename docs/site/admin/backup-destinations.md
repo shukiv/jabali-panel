@@ -7,7 +7,7 @@ Backups → Destinations. The list of repositories the panel can write restic sn
 | Type | Configuration |
 |---|---|
 | **Local** | Filesystem path on the panel host. Cheapest, no off-host disaster recovery. |
-| **SFTP** | Host, user, SSH key path. Off-host on a server you control. |
+| **SFTP** | Host, user, SSH key path or password. Off-host on a server you control, or an SFTP-only account (a storage box or NAS user without shell access). |
 | **S3** | Endpoint, region, bucket, access key, secret key. Works against AWS S3, MinIO, Wasabi, Cloudflare R2, any S3-compatible service. |
 | **Backblaze B2** | Account ID, application key, bucket. |
 | **Azure Blob** | Account name, account key, container. |
@@ -33,6 +33,8 @@ Each destination's restic repository password is stored AES-256-GCM-sealed on it
 A schedule may target multiple destinations. Restic writes to each in turn. Bandwidth and storage cost are paid once per destination; deduplication happens per repository, not across repositories.
 
 ## Health
+
+The first test or backup of an empty SFTP destination creates the repository there, folder and parent folders included, over SFTP, so the account needs no shell access for it (GH #2077).
 
 The panel tests a destination only when you click **Test** or run `jabali backup destination test`. It does not re-test destinations on a schedule. A test that fails shows the SFTP or restic error, including on a panel behind Cloudflare, and the panel logs it as `backup destination test failed` with the destination ID (GH #2077). A backup that fails fires `backup.fail` ([Notifications Events](./notifications-events.md)).
 
