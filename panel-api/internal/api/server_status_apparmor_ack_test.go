@@ -4,11 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"sort"
 	"strings"
 	"testing"
 
+	"github.com/gin-gonic/gin"
+
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/auth"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 )
 
@@ -138,4 +145,39 @@ func TestServerStatusAppArmorAcks_EndWhenTheModeChanges(t *testing.T) {
 			t.Fatalf("acked = %v, want nil", got)
 		}
 	})
+}
+
+// Through the handler: the Server Status alert leaves out a profile whose
+// acknowledgement holds, and still names the other one.
+func TestServerStatus_AcknowledgedProfileLeavesTheAlert(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	mock := agent.NewMockClient().On("security.apparmor.summary", map[string]any{
+		"enabled": true,
+		"profiles": []map[string]string{
+			{"name": "jabali-fpm-app", "mode": "complain"},
+			{"name": "jabali-sendmail", "mode": "complain"},
+		},
+	})
+	acks := &fakeAppArmorAcks{rows: []models.AppArmorModeAck{{Profile: "jabali-fpm-app", Mode: "complain"}}}
+	r := gin.New()
+	v1 := r.Group("/api/v1")
+	v1.Use(func(c *gin.Context) {
+		ginctx.SetClaims(c, &auth.AccessClaims{UserID: "adm", IsAdmin: true})
+		c.Next()
+	})
+	RegisterAdminServerStatusRoutes(v1, AdminServerStatusHandlerConfig{Agent: mock, AppArmorAcks: acks})
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/admin/server-status?view=health", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d", rec.Code)
+	}
+	var env ServerStatusEnvelope
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatal(err)
+	}
+	a := appArmorAlert(env.Alerts)
+	if a == nil || a.Detail != "1 AppArmor profile not enforcing: jabali-sendmail (complain)" {
+		t.Fatalf("apparmor alert = %+v", a)
+	}
 }
