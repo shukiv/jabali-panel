@@ -78,6 +78,8 @@ All three endpoints are admin-only.
 
 ## CLI
 
+Run these as root on the panel host: `jabali` is the server's administration command. A hosting account that runs it gets an error saying it must run as root, and manages its own cron jobs under **Cron Jobs** in the panel instead (GH #2093). `jabali cron list` names each job's account in its `USER` column: the username, or the email of an admin (`--json` keeps `user_id`). `--user` takes a user id, email or username.
+
 ```bash
 jabali cron list --user <id>
 jabali cron add --user <id> --schedule "0 3 * * *" --command "wp cron event run --due-now --url=https://example.com"

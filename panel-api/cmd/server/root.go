@@ -2,7 +2,9 @@ package main
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"strings"
@@ -18,7 +20,8 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
-const defaultEnvFile = "/etc/jabali/panel.env"
+// defaultEnvFile is a var only so tests can point it at a file of their own.
+var defaultEnvFile = "/etc/jabali/panel.env"
 
 // cliVersionString feeds cobra's --version output. Reuses the link-time
 // Version baked into panel-api/internal/api/health.go so HTTP /health
@@ -78,6 +81,9 @@ func newRootCmd() *cobra.Command {
 		// is worth it. Individual commands can set SilenceUsage=true
 		// locally if their error paths are already self-explanatory.
 		SilenceUsage: false,
+		// main prints the error. Cobra printing it too showed every error
+		// twice (GH #2093).
+		SilenceErrors: true,
 	}
 
 	cmd.PersistentFlags().StringVar(&cfgPath, "config", "", "config file path (default: /etc/jabali/config.toml)")
@@ -184,7 +190,7 @@ func initConfig() error {
 	}
 
 	// Load the systemd env file so CLI commands see DATABASE_URL, JWT_SECRET, etc.
-	loadEnvFile(defaultEnvFile)
+	envFileErr = loadEnvFile(defaultEnvFile)
 
 	path := cfgPath
 	if path == "" {
@@ -196,10 +202,10 @@ func initConfig() error {
 
 	cfg, err := config.Load(path)
 	if err != nil {
-		return fmt.Errorf("load config: %w", err)
+		return needsRoot(fmt.Errorf("load config: %w", err))
 	}
 	if err := cfg.Validate(); err != nil {
-		return fmt.Errorf("validate config: %w", err)
+		return needsRoot(fmt.Errorf("validate config: %w", err))
 	}
 
 	sharedCfg = cfg
@@ -208,13 +214,51 @@ func initConfig() error {
 	return nil
 }
 
+// envFileErr is set when defaultEnvFile exists but this user may not read
+// it, as when a hosting account runs jabali (GH #2093). A command that then
+// fails for want of what the file holds says it needs root, instead of
+// naming the missing setting.
+var envFileErr error
+
+// runAsRootError says the jabali command needs root: it could not read the
+// file at Path.
+type runAsRootError struct {
+	Path string
+	Err  error
+}
+
+func (e *runAsRootError) Error() string {
+	return "jabali is the server's administration command and must run as root: cannot read " +
+		e.Path + " (permission denied). Hosting accounts manage their own cron jobs, websites and mail in the panel."
+}
+
+func (e *runAsRootError) Unwrap() error { return e.Err }
+
+// needsRoot returns a runAsRootError when err comes from a file this user may
+// not read, or when the env file was one. Any other error comes back as is.
+func needsRoot(err error) error {
+	var pe *fs.PathError
+	if errors.Is(err, fs.ErrPermission) && errors.As(err, &pe) {
+		return &runAsRootError{Path: pe.Path, Err: err}
+	}
+	if errors.As(envFileErr, &pe) {
+		return &runAsRootError{Path: pe.Path, Err: envFileErr}
+	}
+	return err
+}
+
 // loadEnvFile reads a KEY=VALUE file (like systemd EnvironmentFile) and
 // sets each pair via os.Setenv. Existing env vars are NOT overwritten so
 // explicit exports still win. Silently skips if the file doesn't exist.
-func loadEnvFile(path string) {
+// It returns an error only when the file exists but this user may not read
+// it; the caller carries on without it, as before.
+func loadEnvFile(path string) error {
 	f, err := os.Open(path)
 	if err != nil {
-		return
+		if errors.Is(err, fs.ErrPermission) {
+			return err
+		}
+		return nil
 	}
 	defer f.Close()
 
@@ -235,6 +279,7 @@ func loadEnvFile(path string) {
 			os.Setenv(k, v)
 		}
 	}
+	return nil
 }
 
 // initDB opens the database. Requires initConfig first.
@@ -246,7 +291,7 @@ func initDB() error {
 		return fmt.Errorf("initDB: config not loaded")
 	}
 	if sharedCfg.Database.URL == "" || sharedCfg.Database.URL == "placeholder-until-phase-3" {
-		return fmt.Errorf("DATABASE_URL not configured")
+		return needsRoot(fmt.Errorf("DATABASE_URL not configured"))
 	}
 
 	gdb, err := db.Open(db.Options{

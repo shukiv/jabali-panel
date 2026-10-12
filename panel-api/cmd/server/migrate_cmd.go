@@ -45,7 +45,7 @@ func newMigrateUpCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg := sharedCfg
 			if cfg.Database.URL == "" || cfg.Database.URL == "placeholder-until-phase-3" {
-				return fmt.Errorf("DATABASE_URL not configured")
+				return needsRoot(fmt.Errorf("DATABASE_URL not configured"))
 			}
 
 			// GH #1094/#1103: `jabali update` runs this (via the freshly-installed
@@ -99,7 +99,7 @@ func newMigrateStatusCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg := sharedCfg
 			if cfg.Database.URL == "" || cfg.Database.URL == "placeholder-until-phase-3" {
-				return fmt.Errorf("DATABASE_URL not configured")
+				return needsRoot(fmt.Errorf("DATABASE_URL not configured"))
 			}
 			st, err := db.State(cfg.Database.URL)
 			if err != nil {
@@ -149,7 +149,7 @@ func newMigrateForceCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg := sharedCfg
 			if cfg.Database.URL == "" || cfg.Database.URL == "placeholder-until-phase-3" {
-				return fmt.Errorf("DATABASE_URL not configured")
+				return needsRoot(fmt.Errorf("DATABASE_URL not configured"))
 			}
 			v, err := strconv.Atoi(args[0])
 			if err != nil || v < 0 {

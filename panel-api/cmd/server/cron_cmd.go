@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"text/tabwriter"
 	"time"
@@ -78,25 +79,67 @@ func newCronListCmd() *cobra.Command {
 				fmt.Println("No cron jobs.")
 				return nil
 			}
-			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(w, "ID\tUSER_ID\tNAME\tSCHEDULE\tENABLED\tLAST_RUN\tLAST_EXIT")
-			for _, j := range rows {
-				last := "-"
-				if j.LastRunAt != nil {
-					last = j.LastRunAt.Format(time.RFC3339)
-				}
-				ec := "-"
-				if j.LastExitCode != nil {
-					ec = fmt.Sprintf("%d", *j.LastExitCode)
-				}
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-					j.ID, j.UserID, j.Name, j.Schedule, boolYN(j.Enabled), last, ec)
+			owners, err := userRepo().FindByIDs(ctx, cronJobOwnerIDs(rows))
+			if err != nil {
+				return fmt.Errorf("look up cron job owners: %w", err)
 			}
-			return w.Flush()
+			return renderCronJobs(os.Stdout, rows, cronOwnerNames(owners))
 		},
 	}
 	cmd.Flags().StringVar(&userLookup, "user", "", "filter by user (id|email|username); empty = all")
 	return cmd
+}
+
+// cronJobOwnerIDs returns the distinct owners of rows.
+func cronJobOwnerIDs(rows []*models.CronJob) []string {
+	seen := make(map[string]bool, len(rows))
+	ids := make([]string, 0, len(rows))
+	for _, j := range rows {
+		if !seen[j.UserID] {
+			seen[j.UserID] = true
+			ids = append(ids, j.UserID)
+		}
+	}
+	return ids
+}
+
+// cronOwnerNames maps each user id to the name the cron table shows for it:
+// the account's username, or the email of an admin, who has none.
+func cronOwnerNames(users []models.User) map[string]string {
+	names := make(map[string]string, len(users))
+	for _, u := range users {
+		if u.Username != nil && *u.Username != "" {
+			names[u.ID] = *u.Username
+		} else {
+			names[u.ID] = u.Email
+		}
+	}
+	return names
+}
+
+// renderCronJobs prints the cron table. The USER column names each job's
+// account, so an admin can tell whose jobs are whose (GH #2093); a job whose
+// account is gone shows the user id it still carries.
+func renderCronJobs(out io.Writer, rows []*models.CronJob, owners map[string]string) error {
+	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "ID\tUSER\tNAME\tSCHEDULE\tENABLED\tLAST_RUN\tLAST_EXIT")
+	for _, j := range rows {
+		owner := owners[j.UserID]
+		if owner == "" {
+			owner = j.UserID
+		}
+		last := "-"
+		if j.LastRunAt != nil {
+			last = j.LastRunAt.Format(time.RFC3339)
+		}
+		ec := "-"
+		if j.LastExitCode != nil {
+			ec = fmt.Sprintf("%d", *j.LastExitCode)
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			j.ID, owner, j.Name, j.Schedule, boolYN(j.Enabled), last, ec)
+	}
+	return w.Flush()
 }
 
 func newCronAddCmd() *cobra.Command {
