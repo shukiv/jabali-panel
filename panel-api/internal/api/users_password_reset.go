@@ -1,16 +1,14 @@
 package api
 
 import (
-	"context"
 	"crypto/rand"
 	"errors"
 	"net/http"
-	"time"
 
 	"github.com/gin-gonic/gin"
-	"golang.org/x/crypto/bcrypt"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/kratosclient"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/userops"
 )
 
 // resetPassword handles POST /admin/users/:id/password/reset (M54).
@@ -18,9 +16,14 @@ import (
 // Under username-only login the email is a plain trait, so Kratos self-service
 // recovery does not exist (spike-proven). The only working reset is an admin
 // directly setting a fresh strong password and handing it to the user. This
-// generates a temp password, bcrypts it, sets it on the Kratos identity, and
-// returns the plaintext EXACTLY ONCE (reveal-once, like mailbox / db-user /
+// generates a temp password, rotates it through userops.RotatePassword (Kratos,
+// then the Linux account, then the stored hash, the same pipeline as Edit User),
+// and returns the plaintext EXACTLY ONCE (reveal-once, like mailbox / db-user /
 // automation-token secrets). Admin-only (route registration).
+//
+// GH #2058: this used to set the Kratos password only. SSH and SFTP kept the
+// old password, and the stored hash stayed old, so the user's own password
+// change (which checks current_password against it) refused the new one.
 func (h *userHandler) resetPassword(c *gin.Context) {
 	userID := c.Param("id")
 	if userID == "" {
@@ -49,19 +52,18 @@ func (h *userHandler) resetPassword(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "password generation failed"})
 		return
 	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(temp), h.cfg.BcryptCost)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "hash failed"})
+	rotateErr := userops.RotatePassword(c.Request.Context(), h.userOpsDeps(), user, temp)
+	switch {
+	case rotateErr == nil, errors.Is(rotateErr, userops.ErrAgentPassword):
+		// Kratos holds the new password in both cases.
+	case errors.Is(rotateErr, kratosclient.ErrIdentityNotFound):
+		c.JSON(http.StatusNotFound, gin.H{"error": "kratos identity not found"})
 		return
-	}
-	kctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
-	defer cancel()
-	if err := h.cfg.KratosClient.SetPassword(kctx, *user.KratosIdentityID, string(hash)); err != nil {
-		if errors.Is(err, kratosclient.ErrIdentityNotFound) {
-			c.JSON(http.StatusNotFound, gin.H{"error": "kratos identity not found"})
-			return
-		}
+	case errors.Is(rotateErr, userops.ErrKratosSetPassword):
 		c.JSON(http.StatusBadGateway, gin.H{"error": "kratos_error", "detail": "failed to set password"})
+		return
+	default:
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
 
@@ -70,6 +72,14 @@ func (h *userHandler) resetPassword(c *gin.Context) {
 	h.cfg.KratosClient.InvalidateIdentity(*user.KratosIdentityID)
 
 	// reveal-once: plaintext returned now, never persisted, never logged.
+	if rotateErr != nil {
+		// The panel login already uses the new password, so withholding it
+		// would lock the user out. The Linux account (SSH, SFTP) still has the
+		// old one; a new reset retries it. The agent's error is logged by
+		// RotatePassword and never echoed.
+		c.JSON(http.StatusOK, gin.H{"password": temp, "os_synced": false})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"password": temp})
 }
 
