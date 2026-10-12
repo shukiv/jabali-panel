@@ -101,7 +101,7 @@ func TestUserDelete_AbortsWhenDatabaseDropFails(t *testing.T) {
 		DatabaseUsers: &oneDatabaseUserRepo{username: "victim_shop"},
 	}, admin.ID, victim.ID)
 
-	require.Equal(t, http.StatusBadGateway, code,
+	require.Equal(t, http.StatusInternalServerError, code,
 		"a failed db.drop must abort the delete, not report success")
 
 	got, err := repo.FindByID(context.Background(), victim.ID)
@@ -119,7 +119,7 @@ func TestUserDelete_AbortsWhenDatabaseUserDropFails(t *testing.T) {
 		DatabaseUsers: &oneDatabaseUserRepo{username: "victim_shop"},
 	}, admin.ID, victim.ID)
 
-	require.Equal(t, http.StatusBadGateway, code,
+	require.Equal(t, http.StatusInternalServerError, code,
 		"a failed db_user.drop must abort the delete")
 
 	got, err := repo.FindByID(context.Background(), victim.ID)
@@ -138,7 +138,7 @@ func TestUserDelete_AbortsWhenMysqladminShadowDropFails(t *testing.T) {
 		Agent: &cascadeDropAgent{failCmd: "db_user.drop"},
 	}, admin.ID, victim.ID)
 
-	require.Equal(t, http.StatusBadGateway, code,
+	require.Equal(t, http.StatusInternalServerError, code,
 		"a failed <osuser>_mysqladmin drop must abort — that login has a valid password and no row would be left to find it")
 
 	got, err := repo.FindByID(context.Background(), victim.ID)

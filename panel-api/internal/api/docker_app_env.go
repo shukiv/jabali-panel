@@ -200,7 +200,7 @@ func respondApplyEnvErr(c *gin.Context, err error) {
 	}
 	var rb envRolledBackError
 	if errors.As(err, &rb) {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "apply_rolled_back", "detail": rb.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "apply_rolled_back", "detail": rb.Error()})
 		return
 	}
 	respondAgentErr(c, "apply_failed", err)

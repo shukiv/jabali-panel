@@ -152,7 +152,7 @@ func TestResetPassword_KratosFailureChangesNothing(t *testing.T) {
 	ag := &pwResetAgent{}
 
 	rec := doJSON(t, pwResetRouter(repo, kratos.URL, ag, adminID), http.MethodPost, "/api/v1/admin/users/"+tenantID+"/password/reset", nil)
-	assert.Equal(t, http.StatusBadGateway, rec.Code)
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
 	assert.NotContains(t, rec.Body.String(), `"password"`)
 	assert.Empty(t, ag.cmds, "the Linux password is not touched when Kratos refused")
 	stored, err := repo.FindByID(context.Background(), tenantID)

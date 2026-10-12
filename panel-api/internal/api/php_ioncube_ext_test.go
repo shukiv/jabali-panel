@@ -121,15 +121,15 @@ func TestExtApply_IonCubeRemove_Blocked409(t *testing.T) {
 	}
 }
 
-// TestExtApply_IonCubeInstall_FetchFailure_502.
-func TestExtApply_IonCubeInstall_FetchFailure_502(t *testing.T) {
+// TestExtApply_IonCubeInstall_FetchFailure_422.
+func TestExtApply_IonCubeInstall_FetchFailure_422(t *testing.T) {
 	r := icExtRouter(agent.NewMockClient(), icFetcher{err: errors.New("net down")})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/php/versions/8.4/extensions/ioncube/apply",
 		strings.NewReader(`{"action":"install"}`))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
-	if rec.Code != http.StatusBadGateway {
-		t.Fatalf("fetch-fail code = %d want 502", rec.Code)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("fetch-fail code = %d want 422", rec.Code)
 	}
 }

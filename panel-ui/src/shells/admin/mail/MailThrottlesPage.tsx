@@ -62,7 +62,7 @@ export const MailThrottlesPage = () => {
     onError: (e: any) => feedback.message.error(e?.response?.data?.error ?? "update failed"),
   });
 
-  // A 502 stalwart_delete_failed keeps the row, disabled, so refetch either
+  // A 500 stalwart_delete_failed keeps the row, disabled, so refetch either
   // way and say why.
   const deleteMut = useMutation({
     mutationFn: (id: string) => apiClient.delete(`/admin/mail/throttles/${id}`),

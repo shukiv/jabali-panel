@@ -370,7 +370,7 @@ func (h *userDockerAppHandler) delete(c *gin.Context) {
 			_ = h.cfg.Repo.UpdateStatus(ctx, app.ID, models.DockerAppStatusFailed, &msg)
 			slog.Warn("tenant docker delete: agent teardown failed, keeping row visible",
 				"app_id", app.ID, "slug", app.EffectiveSlug(), "err", err)
-			c.JSON(http.StatusBadGateway, gin.H{"error": "teardown_failed", "detail": msg})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "teardown_failed", "detail": msg})
 			return
 		}
 	}
@@ -840,7 +840,7 @@ func (h *userDockerAppHandler) getEnv(c *gin.Context) {
 	}
 	env, err := h.admin.readInstallEnv(c.Request.Context(), app.EffectiveSlug())
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "read_env_failed", "detail": firstLineString(err.Error())})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "read_env_failed", "detail": firstLineString(err.Error())})
 		return
 	}
 	out := make([]envVarView, 0, len(env))

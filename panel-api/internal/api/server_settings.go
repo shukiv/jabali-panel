@@ -1095,7 +1095,7 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 		current.StalwartWebadminAllowCIDRs != prevWebadminCIDRs
 	if webadminChanged && h.cfg.Agent != nil {
 		if aerr := h.applyStalwartWebadmin(ctx, current); aerr != nil {
-			c.JSON(http.StatusBadGateway, gin.H{"error": "webadmin_apply_failed", "detail": firstLineString(aerr.Error())})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "webadmin_apply_failed", "detail": firstLineString(aerr.Error())})
 			return
 		}
 	}
@@ -1226,7 +1226,7 @@ func (h *serverSettingsHandler) stalwartAdminCredential(c *gin.Context) {
 	defer cancel()
 	raw, err := h.cfg.Agent.Call(callCtx, "mail.admin_cred.manage", map[string]any{"action": req.Action})
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "admin_cred_failed", "detail": firstLineString(err.Error())})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "admin_cred_failed", "detail": firstLineString(err.Error())})
 		return
 	}
 	var resp struct {

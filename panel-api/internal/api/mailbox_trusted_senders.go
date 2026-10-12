@@ -187,7 +187,7 @@ func (h *trustedSenderHandler) del(c *gin.Context) {
 	// left is not swept, so a card the push missed would stay trusted.
 	if err := h.push(ctx, mb, id); err != nil {
 		slog.Warn("trusted_senders.remove: mail server push failed", "mailbox", mb.EmailCached, "err", err)
-		c.JSON(http.StatusBadGateway, gin.H{
+		c.JSON(http.StatusInternalServerError, gin.H{
 			"error":  "mail_server_unavailable",
 			"detail": "The mail server could not remove the sender, so it is still trusted. Try again.",
 		})

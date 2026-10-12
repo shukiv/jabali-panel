@@ -324,7 +324,7 @@ func (h *notificationsChannelsHandler) test(c *gin.Context) {
 			return
 		}
 		if serr := sender.Send(ctx, *ch, env); serr != nil {
-			c.JSON(http.StatusBadGateway, gin.H{"error": "delivery failed: " + serr.Error(), "channel_id": ch.ID})
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "delivery failed: " + serr.Error(), "channel_id": ch.ID})
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{"delivered": true, "channel_id": ch.ID})
@@ -333,7 +333,7 @@ func (h *notificationsChannelsHandler) test(c *gin.Context) {
 
 	streamID, err := h.cfg.Queue.Publish(ctx, env)
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "publish: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "publish: " + err.Error()})
 		return
 	}
 	c.JSON(http.StatusAccepted, gin.H{"id": streamID, "channel_id": ch.ID})
@@ -377,7 +377,7 @@ func (h *notificationsChannelsHandler) broadcast(c *gin.Context) {
 	}
 	streamID, err := h.cfg.Queue.Publish(c.Request.Context(), env)
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "publish: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "publish: " + err.Error()})
 		return
 	}
 	c.JSON(http.StatusAccepted, gin.H{"id": streamID})

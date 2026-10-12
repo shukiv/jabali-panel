@@ -315,14 +315,14 @@ func TestShareDelete_RevokesOnStalwartThenDeletesTheRow(t *testing.T) {
 }
 
 // When Stalwart does not accept the revoke, the panel must not claim it
-// happened: 502, and the row stays so the list still shows the live share.
+// happened: 500, and the row stays so the list still shows the live share.
 func TestShareDelete_AgentFailureKeepsTheRow(t *testing.T) {
 	s := newShStore()
 	s.shares["s1"] = models.MailboxShare{ID: "s1", OwnerMailboxID: "alice", SharedWithMailboxID: "bob", Rights: models.Rights{MayRead: true}}
 	ag := &shAgent{err: errors.New("stalwart down")}
 	w := shareRequest(newShareHandlerFake(s, ag), http.MethodDelete, "alice", "s1", "", tenantU1)
-	if w.Code != http.StatusBadGateway || !strings.Contains(w.Body.String(), "share_apply_failed") {
-		t.Fatalf("status %d body %s, want 502 share_apply_failed", w.Code, w.Body.String())
+	if w.Code != http.StatusInternalServerError || !strings.Contains(w.Body.String(), "share_apply_failed") {
+		t.Fatalf("status %d body %s, want 500 share_apply_failed", w.Code, w.Body.String())
 	}
 	if _, ok := s.shares["s1"]; !ok {
 		t.Fatal("row deleted although the revoke never reached Stalwart")
@@ -337,8 +337,8 @@ func TestShareDelete_AdminFailureCarriesTheAgentError(t *testing.T) {
 	s.shares["s1"] = models.MailboxShare{ID: "s1", OwnerMailboxID: "alice", SharedWithMailboxID: "bob", Rights: models.Rights{MayRead: true}}
 	ag := &shAgent{err: errors.New("stalwart down")}
 	w := shareRequest(newShareHandlerFake(s, ag), http.MethodDelete, "alice", "s1", "", &auth.AccessClaims{UserID: "admin", IsAdmin: true})
-	if w.Code != http.StatusBadGateway || !strings.Contains(w.Body.String(), "stalwart down") {
-		t.Fatalf("status %d body %s, want 502 with the agent error for an admin", w.Code, w.Body.String())
+	if w.Code != http.StatusInternalServerError || !strings.Contains(w.Body.String(), "stalwart down") {
+		t.Fatalf("status %d body %s, want 500 with the agent error for an admin", w.Code, w.Body.String())
 	}
 	if _, ok := s.shares["s1"]; !ok {
 		t.Fatal("row deleted although the revoke never reached Stalwart")

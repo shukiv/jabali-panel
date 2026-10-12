@@ -206,7 +206,7 @@ func (h *adminMailThrottlesHandler) del(c *gin.Context) {
 			}
 		}
 		if err := errors.Join(errs...); err != nil {
-			c.JSON(http.StatusBadGateway, gin.H{
+			c.JSON(http.StatusInternalServerError, gin.H{
 				"error":   "stalwart_delete_failed",
 				"details": "the throttle is disabled and kept until Stalwart removes it: " + err.Error(),
 			})

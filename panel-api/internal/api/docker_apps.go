@@ -1393,7 +1393,7 @@ func (h *dockerAppHandler) editDomainPorts(ctx context.Context, app *models.Dock
 		}
 		setTenantServices(installParams, tenantServices)
 		if _, agentErr := h.cfg.Agent.Call(callCtx, "docker_app.install", installParams); agentErr != nil {
-			return &dockerEditError{http.StatusBadGateway, "agent_redispatch_failed", firstLineString(agentErr.Error())}
+			return &dockerEditError{http.StatusInternalServerError, "agent_redispatch_failed", firstLineString(agentErr.Error())}
 		}
 		// The install now runs the target's image: keep its label on it.
 		if target.Version != "" && target.Version != app.CatalogVersion {
@@ -1626,7 +1626,7 @@ func (h *dockerAppHandler) updateImage(c *gin.Context) {
 		if app.UserID != nil {
 			msg := "re-render failed; refusing to update tenant app from unvalidated on-disk compose: " + firstLineString(rerr.Error())
 			_ = h.cfg.Repo.UpdateStatus(ctx, app.ID, models.DockerAppStatusFailed, &msg)
-			c.JSON(http.StatusBadGateway, gin.H{"error": "rerender_failed", "detail": msg})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "rerender_failed", "detail": msg})
 			return
 		}
 		// Admin/server app: fall back to the on-disk compose so a transient

@@ -201,7 +201,7 @@ func (h *phpUserTuningHandler) setOpcache(c *gin.Context) {
 		if fresh.LastError != nil {
 			detail = *fresh.LastError
 		}
-		c.JSON(http.StatusBadGateway, gin.H{"error": "pool_apply_failed", "detail": detail})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "pool_apply_failed", "detail": detail})
 		return
 	}
 

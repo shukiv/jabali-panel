@@ -414,7 +414,7 @@ func (h *backupHandler) resolveOrCreateUserFromTar(ctx context.Context, tarPath,
 	}
 	ins, raw, err := h.inspectUpload(ctx, tarPath)
 	if err != nil && raw == nil {
-		return nil, &createBundleError{http.StatusBadGateway, "inspect_failed", restoreFailureDetail(err)}
+		return nil, &createBundleError{http.StatusInternalServerError, "inspect_failed", restoreFailureDetail(err)}
 	}
 	if err != nil {
 		return nil, &createBundleError{http.StatusBadRequest, "bundle_unreadable", ""}

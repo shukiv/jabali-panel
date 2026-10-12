@@ -450,7 +450,7 @@ func (h *meNotificationsHandler) testChannel(c *gin.Context) {
 		Deeplink:  "/me/notifications",
 	}
 	if serr := sender.Send(c.Request.Context(), *ch, env); serr != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "delivery failed: " + serr.Error(), "channel_id": ch.ID})
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "delivery failed: " + serr.Error(), "channel_id": ch.ID})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"delivered": true, "channel_id": ch.ID})

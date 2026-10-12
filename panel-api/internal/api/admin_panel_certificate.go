@@ -222,7 +222,7 @@ func (h *adminPanelCertHandler) issue(c *gin.Context) {
 			failReason = services.HumanizePanelCertError(row.Hostname, failReason)
 		}
 		_ = h.cfg.PanelCerts.MarkPendingRetryKind(ctx, kind, failReason, 3*time.Hour)
-		c.JSON(http.StatusBadGateway, gin.H{"error": "issue_failed", "details": failReason})
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "issue_failed", "details": failReason})
 		return
 	}
 	var resp struct {

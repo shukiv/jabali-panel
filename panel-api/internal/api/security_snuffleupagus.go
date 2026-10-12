@@ -94,7 +94,7 @@ func RegisterSecuritySnuffleupagusRoutes(rg *gin.RouterGroup, cfg SecuritySnuffl
 		}
 		if cfg.Reconciler != nil {
 			if err := cfg.Reconciler.Reconcile(ctx); err != nil {
-				c.JSON(http.StatusBadGateway, gin.H{
+				c.JSON(http.StatusInternalServerError, gin.H{
 					"error":  "reconcile_failed",
 					"detail": err.Error(),
 				})
@@ -176,7 +176,7 @@ func RegisterSecuritySnuffleupagusRoutes(rg *gin.RouterGroup, cfg SecuritySnuffl
 		}
 		if cfg.Reconciler != nil {
 			if err := cfg.Reconciler.Reconcile(ctx); err != nil {
-				c.JSON(http.StatusBadGateway, gin.H{
+				c.JSON(http.StatusInternalServerError, gin.H{
 					"error":  "reconcile_failed",
 					"detail": err.Error(),
 				})

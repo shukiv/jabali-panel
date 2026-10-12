@@ -618,8 +618,8 @@ func TestFtpAPIDelete_HostFirstRowKeptOnFailure(t *testing.T) {
 	r := ftpTestRouter(t, repo, mock, ftpPkg(3))
 
 	rec := doReq(t, r, http.MethodDelete, "/me/ftp-accounts/a1", "")
-	if rec.Code != http.StatusBadGateway {
-		t.Fatalf("expected 502, got %d", rec.Code)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", rec.Code)
 	}
 	if _, ok := repo.rows["a1"]; !ok {
 		t.Fatal("row must be KEPT when the host delete fails — it is the only handle")
