@@ -2355,7 +2355,7 @@ paths:
         "400": { description: Malformed JSON }
         "409": { description: "An exclusion for this host, path and rule exists" }
         "422": { description: "Invalid exclusion, or the exclusion limit is reached" }
-        "502": { description: The WAF could not be updated; see detail and rolled_back }
+        "500": { description: The WAF could not be updated; see detail and rolled_back }
 
   /admin/security/crowdsec/appsec/exclusions/{id}:
     delete:
@@ -2373,7 +2373,7 @@ paths:
       responses:
         "200": { description: Removed and applied }
         "404": { description: No such exclusion }
-        "502": { description: The WAF could not be updated; see detail and rolled_back }
+        "500": { description: The WAF could not be updated; see detail and rolled_back }
 
   /admin/security/crowdsec/country-exemption:
     get:

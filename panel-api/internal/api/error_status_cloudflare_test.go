@@ -30,6 +30,9 @@ var badGatewayBodyAllowed = map[string]string{
 	// (AppSecExclusionsCard), so it still works behind Cloudflare; the 502 is
 	// an agent reply the panel can't decode.
 	"security_appsec_exclusions.go:appsecEventsHandler": "UI keys on the 504 status",
+	// An agent that runs out of time answers 504 (its message is lost behind
+	// Cloudflare, the status isn't); the AppSec card reads it from the status.
+	"health_agent.go:translateAgentError": "agent timeout, 504 by status",
 	// Internal route: the agent posts over the local socket, never through
 	// Cloudflare.
 	"notifications_internal.go:RegisterNotificationsInternalRoutes": "internal route",
@@ -61,6 +64,14 @@ func TestBadGatewayBodiesCarryOnlyACode(t *testing.T) {
 			}
 			site := f + ":" + fn.Name.Name
 			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				// A 502 or 504 kept in a variable: this test can't see the body
+				// it goes out with, so it counts as carrying one.
+				if as, ok := n.(*ast.AssignStmt); ok && hasGatewayStatus(as.Rhs) {
+					if _, ok := badGatewayBodyAllowed[site]; !ok {
+						bad = append(bad, fmt.Sprintf("%s (line %d): a 502/504 kept in a variable", site, fset.Position(n.Pos()).Line))
+					}
+					return true
+				}
 				var items []ast.Expr
 				positional := false
 				switch x := n.(type) {

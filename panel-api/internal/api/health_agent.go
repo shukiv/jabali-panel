@@ -44,10 +44,16 @@ func RegisterAgentHealthRoute(r *gin.Engine, cli agent.AgentInterface) {
 // translateAgentError maps the typed *agent.AgentError (or any other error)
 // onto an HTTP status + JSON body. Unknown errors become 500 — we never
 // leak a raw error string to the caller without a code.
+//
+// An agent failure without a mapped code answers 500, not 502: its detail
+// is the agent's message (why UFW, AppArmor or a package refused), and
+// Cloudflare replaces an origin's 502 with its own error page (GH #2077).
+// A timeout stays 504: its message is lost behind Cloudflare but the status
+// isn't, and the AppSec card reads it from the status.
 func translateAgentError(err error) (int, gin.H) {
 	var ae *agent.AgentError
 	if errors.As(err, &ae) {
-		status := http.StatusBadGateway
+		status := http.StatusInternalServerError
 		switch ae.Code {
 		case agent.CodeUnavailable:
 			status = http.StatusServiceUnavailable
