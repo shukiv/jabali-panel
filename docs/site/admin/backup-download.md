@@ -16,6 +16,10 @@ Backups → Download. Generate a single on-demand `account_full` snapshot and of
 4. The page displays the snapshot id and a link to download the restic snapshot as a tarball.
 5. The download link is short-lived (15 minutes by default) and accessible only to the requesting admin.
 
+## File name
+
+A download is named for the account and the time the backup was made (UTC), for example `backup_alice_2026-10-11_0430.tar.zst`. A system backup uses `system` in place of the account, and a Files, Database or Folders backup adds its content (`backup_alice_files_2026-10-11_0430.tar.zst`). If the account no longer exists, the job ID takes its place. On a server without `zstd`, the archive is an uncompressed `.tar`.
+
 ## What the tarball contains
 
 - `files/` — the user's home directory tree.
