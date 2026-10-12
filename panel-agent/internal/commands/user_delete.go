@@ -123,16 +123,8 @@ func userDeleteHandler(ctx context.Context, params json.RawMessage) (any, error)
 	}
 
 	// Delete user. Capture stderr for diagnostics.
-	var deleteCmd *exec.Cmd
-	if p.RemoveHome {
-		deleteCmd = execCommandContext(ctx, "userdel", "--remove", p.Username)
-	} else {
-		deleteCmd = execCommandContext(ctx, "userdel", p.Username)
-	}
-	var stderr bytes.Buffer
-	deleteCmd.Stderr = &stderr
-
-	if err := deleteCmd.Run(); err != nil {
+	stderr, err := runUserdel(ctx, p.Username, p.RemoveHome)
+	if err != nil {
 		// userdel(8) exit 12 = "can't remove home directory". The /etc/passwd
 		// + /etc/shadow + /etc/group entries are already gone by the time
 		// userdel reaches the home-removal step. Fall back to manual rm so
@@ -166,6 +158,45 @@ func userDeleteHandler(ctx context.Context, params json.RawMessage) (any, error)
 		RemovedHome:    p.RemoveHome,
 		SliceLeftovers: sliceLeftovers,
 	}, nil
+}
+
+// userdelAttempts is how many times runUserdel runs userdel while the account
+// is still in use; userdelRetryWait is the pause between two runs.
+const userdelAttempts = 3
+
+var userdelRetryWait = time.Second
+
+// runUserdel runs userdel for username and returns its stderr. Between the
+// pool reap in userDeleteHandler and userdel, the panel's reconciler can start
+// the user's PHP pool again: the user's row is still there and the pool's
+// socket is gone (JAB-388). userdel then exits 8, "user ... is currently used
+// by process". The account is being removed, so its pools are stopped and its
+// processes ended again, and userdel runs again.
+func runUserdel(ctx context.Context, username string, removeHome bool) (*bytes.Buffer, error) {
+	args := []string{username}
+	if removeHome {
+		args = []string{"--remove", username}
+	}
+	for attempt := 1; ; attempt++ {
+		var stderr bytes.Buffer
+		cmd := execCommandContext(ctx, "userdel", args...)
+		cmd.Stderr = &stderr
+		err := cmd.Run()
+		var exitErr *exec.ExitError
+		if err == nil || !errors.As(err, &exitErr) || exitErr.ExitCode() != 8 || attempt == userdelAttempts {
+			return &stderr, err
+		}
+		slog.InfoContext(ctx, "userdel: account still in use; stopping its processes and trying again",
+			"username", username, "attempt", attempt, "userdel_stderr", stderr.String())
+		reapUserFPMPools(ctx, username)
+		// pkill exits 1 when nothing matched; that is fine.
+		_ = execCommandContext(ctx, "pkill", "-KILL", "-u", username).Run()
+		select {
+		case <-ctx.Done():
+			return &stderr, err
+		case <-time.After(userdelRetryWait):
+		}
+	}
 }
 
 func init() {
