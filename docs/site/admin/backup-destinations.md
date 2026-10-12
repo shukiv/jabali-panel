@@ -34,7 +34,7 @@ A schedule may target multiple destinations. Restic writes to each in turn. Band
 
 ## Health
 
-The panel tests a destination only when you click **Test** or run `jabali backup destination test`. It does not re-test destinations on a schedule. A backup that fails fires `backup.fail` ([Notifications Events](./notifications-events.md)).
+The panel tests a destination only when you click **Test** or run `jabali backup destination test`. It does not re-test destinations on a schedule. A test that fails shows the SFTP or restic error, including on a panel behind Cloudflare, and the panel logs it as `backup destination test failed` with the destination ID (GH #2077). A backup that fails fires `backup.fail` ([Notifications Events](./notifications-events.md)).
 
 ## Removing a destination
 
