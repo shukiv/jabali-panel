@@ -998,7 +998,7 @@ func TestUsers_Create_KratosRejects_PanelRolledBack(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Kratos returns 409 conflict (identity with that email already exists
-		// upstream). Our handler should undo the panel row and surface 502.
+		// upstream). Our handler should undo the panel row and surface 500.
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusConflict)
 		_, _ = w.Write([]byte(`{"error":"conflict"}`))
@@ -1014,7 +1014,7 @@ func TestUsers_Create_KratosRejects_PanelRolledBack(t *testing.T) {
 		"email":    "dup@example.com",
 		"password": "password123",
 	})
-	require.Equal(t, http.StatusBadGateway, rec.Code, "kratos rejection must be 502 to the caller")
+	require.Equal(t, http.StatusInternalServerError, rec.Code, "kratos rejection must be 500 to the caller")
 	assert.Contains(t, rec.Body.String(), "identity_provider_failed")
 
 	// Critical invariant: no panel row survives a failed Kratos create.
@@ -1041,7 +1041,7 @@ func TestUsers_Create_KratosUnreachable_PanelRolledBack(t *testing.T) {
 		"email":    "noroute@example.com",
 		"password": "password123",
 	})
-	assert.Equal(t, http.StatusBadGateway, rec.Code)
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
 
 	all, _, err := repo.List(context.Background(), repository.ListOptions{Limit: 100})
 	require.NoError(t, err)

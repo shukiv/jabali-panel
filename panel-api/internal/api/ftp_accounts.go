@@ -477,7 +477,7 @@ func mapFtpAgentError(err error, fallback string) (int, gin.H) {
 			return http.StatusServiceUnavailable, gin.H{"error": "isolation_unavailable", "detail": ae.Message}
 		}
 	}
-	return http.StatusBadGateway, gin.H{"error": fallback, "detail": "host operation failed — try again or contact the administrator"}
+	return http.StatusInternalServerError, gin.H{"error": fallback, "detail": "host operation failed — try again or contact the administrator"}
 }
 
 // mapAgentErr logs the raw agent failure (op + code + detail) server-side so a

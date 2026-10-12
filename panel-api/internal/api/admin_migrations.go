@@ -1399,7 +1399,8 @@ func (h *adminMigrationsHandler) submitDraft(c *gin.Context) {
 //
 //	501 Not Implemented — Discoverer for this source_kind doesn't
 //	    implement SizeProber. Falls back to "discovery returned 0".
-//	502 Bad Gateway     — SSH connect / du failed upstream.
+//	422 Unprocessable   — SSH connect failed (connect_failed + detail).
+//	502 Bad Gateway     — du failed upstream (probe_failed).
 //	412 Precondition    — secret missing (POST /:id/secrets first).
 //	404 Not Found       — draft job missing.
 //	409 Conflict        — job not in draft/pending state.
@@ -1529,7 +1530,7 @@ func (h *adminMigrationsHandler) refresh(c *gin.Context) {
 		SrcDocroot: body.SourceDocroot, SrcSQL: body.SourceSQL, OldURL: body.OldURL, NewURL: body.NewURL,
 	}, time.Now().UTC())
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "refresh_failed", "detail": err.Error(), "result": res})
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "refresh_failed", "detail": err.Error(), "result": res})
 		return
 	}
 	c.JSON(http.StatusOK, res)

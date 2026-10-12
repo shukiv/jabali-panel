@@ -101,8 +101,8 @@ func TestMailThrottleDelete_KeepsTheRowWhenStalwartCannotRemoveAThrottle(t *test
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodDelete, "/admin/mail/throttles/p1", nil))
 
-	if w.Code != http.StatusBadGateway {
-		t.Fatalf("status %d, want 502; body %s", w.Code, w.Body.String())
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status %d, want 500; body %s", w.Code, w.Body.String())
 	}
 	if repo.deleted {
 		t.Fatal("the row was deleted although its daily throttle is still in Stalwart")

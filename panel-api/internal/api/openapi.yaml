@@ -1126,7 +1126,7 @@ paths:
                 email: { type: string }
       responses:
         "200": { description: Code sent }
-        "422": { description: Invalid email }
+        "422": { description: "Invalid email, or register_failed: the hostname service refused the registration (message says why)" }
         "429": { description: Rate limited }
         "502": { description: Hostname service unreachable }
   /admin/settings/free-hostname/claim:
@@ -1273,7 +1273,7 @@ paths:
       responses:
         "200": { description: "The saved settings (same shape as GET); in smarthost mode also skipped: the accounts the server left out, with the reason" }
         "422": { description: "invalid_mode / invalid_smarthost / smarthost_test_failed (with stage: connect, tls, auth or smtp)" }
-        "502": { description: "apply_failed: the server couldn't switch website mail (detail says why); nothing was saved" }
+        "500": { description: "apply_failed: the server couldn't switch website mail (detail says why); nothing was saved" }
         "503": { description: "sso.key unavailable, so a password can't be stored securely" }
   /admin/settings/website-mail/test:
     post:
@@ -4221,7 +4221,7 @@ paths:
       responses:
         "204": { description: Deleted }
         "404": { description: not_found }
-        "502": { description: "stalwart_delete_failed: a throttle could not be removed from Stalwart; the row is kept, turned off" }
+        "500": { description: "stalwart_delete_failed: a throttle could not be removed from Stalwart; the row is kept, turned off" }
     put:
       tags: [Mail]
       summary: Update throttle
@@ -4511,7 +4511,7 @@ paths:
         "204": { description: Removed }
         "403": { description: Not the mailbox's owner or an admin }
         "404": { description: Mailbox or sender not found }
-        "502": { description: "mail_server_unavailable: the mail server could not remove the sender, so it is still trusted" }
+        "500": { description: "mail_server_unavailable: the mail server could not remove the sender, so it is still trusted" }
 
   /mailboxes/{mbid}/shares:
     get:
@@ -7454,7 +7454,7 @@ paths:
       responses:
         "200": { description: "{ id, status: deleted }" }
         "404": { description: Not found }
-        "502": { description: "teardown_failed: the host could not remove the app; it stays listed" }
+        "500": { description: "teardown_failed: the host could not remove the app; it stays listed" }
 
   /docker-apps/{id}/start:
     post:

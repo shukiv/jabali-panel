@@ -95,7 +95,7 @@ func (h *domainPathBrowseHandler) browse(c *gin.Context) {
 		"path":     abs,
 	})
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "list failed", "detail": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "list failed", "detail": err.Error()})
 		return
 	}
 	var agentResp struct {

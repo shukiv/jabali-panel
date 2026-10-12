@@ -60,7 +60,7 @@ func (h *userHandler) resetPassword(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "kratos identity not found"})
 		return
 	case errors.Is(rotateErr, userops.ErrKratosSetPassword):
-		c.JSON(http.StatusBadGateway, gin.H{"error": "kratos_error", "detail": "failed to set password"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "kratos_error", "detail": "failed to set password"})
 		return
 	default:
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})

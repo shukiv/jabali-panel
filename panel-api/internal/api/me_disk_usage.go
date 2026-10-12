@@ -282,7 +282,7 @@ func (h *meDiskUsageHandler) filesTree(c *gin.Context) {
 		"path":     path,
 	})
 	if derr != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "files_du_failed", "detail": firstLineString(derr.Error())})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "files_du_failed", "detail": firstLineString(derr.Error())})
 		return
 	}
 	var v struct {

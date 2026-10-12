@@ -267,7 +267,7 @@ func TestTrustedSenders_DeleteKeepsTheRowWhenTheMailServerFails(t *testing.T) {
 	repo.rows = []models.MailboxTrustedSender{{ID: "a", MailboxID: "mb1", Address: "alice@example.com"}}
 	ag.err = errors.New("agent down")
 	w := tsDo(r, "DELETE", "/mailboxes/mb1/trusted-senders/a", "")
-	if w.Code != http.StatusBadGateway || !bytes.Contains(w.Body.Bytes(), []byte(`"mail_server_unavailable"`)) {
+	if w.Code != http.StatusInternalServerError || !bytes.Contains(w.Body.Bytes(), []byte(`"mail_server_unavailable"`)) {
 		t.Fatalf("status %d: %s", w.Code, w.Body.String())
 	}
 	if len(repo.rows) != 1 {

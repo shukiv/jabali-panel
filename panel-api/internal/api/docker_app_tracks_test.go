@@ -343,8 +343,8 @@ func TestPutEnv_RolledBackIsAnError(t *testing.T) {
 	h, repo, mock := trackHandler(t, "nextcloud", "34.0.2")
 	mock.On("docker_app.update", map[string]any{"outcome": "rolled_back", "detail": "healthcheck did not converge to healthy within 5m0s"})
 	w := trackRequest(t, h.putEnv, http.MethodPut, `{"env":{"FOO":"bar"}}`)
-	if w.Code != http.StatusBadGateway {
-		t.Fatalf("status %d body %s, want 502", w.Code, w.Body)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status %d body %s, want 500", w.Code, w.Body)
 	}
 	var body struct{ Error, Detail string }
 	_ = json.Unmarshal(w.Body.Bytes(), &body)

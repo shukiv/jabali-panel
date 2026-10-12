@@ -359,7 +359,7 @@ func userOpsRESTError(c *gin.Context, log *slog.Logger, err error) {
 	case errors.Is(err, userops.ErrEmailTaken):
 		c.JSON(http.StatusConflict, gin.H{"error": "email_taken"})
 	case errors.Is(err, userops.ErrKratosFailed):
-		c.JSON(http.StatusBadGateway, gin.H{
+		c.JSON(http.StatusInternalServerError, gin.H{
 			"error":  "identity_provider_failed",
 			"detail": err.Error(),
 		})
@@ -483,7 +483,7 @@ func (h *userHandler) update(c *gin.Context) {
 	// Password rotation. Order: hash -> Kratos -> OS (agent) -> DB.
 	// Kratos is the authoritative auth backend post-M20; if it fails the
 	// DB hash stays old so login keeps working with the previous password.
-	// OS sync is best-effort; failure surfaces as 502 with detail but the
+	// OS sync is best-effort; failure surfaces as 500 with detail but the
 	// Kratos+DB sides have already converged so login still works.
 	if req.Password != nil && *req.Password != "" {
 		// Re-authentication (GH #482): a non-admin owner changing their OWN
@@ -518,7 +518,7 @@ func (h *userHandler) update(c *gin.Context) {
 			case errors.Is(err, userops.ErrKratosUnavailable):
 				c.JSON(http.StatusServiceUnavailable, gin.H{"error": "kratos_unavailable"})
 			case errors.Is(err, userops.ErrKratosSetPassword):
-				c.JSON(http.StatusBadGateway, gin.H{
+				c.JSON(http.StatusInternalServerError, gin.H{
 					"error":  "kratos_error",
 					"detail": errDetail(err, userops.ErrKratosSetPassword),
 				})
@@ -529,7 +529,7 @@ func (h *userHandler) update(c *gin.Context) {
 				// agent error would hand a tenant the root daemon's raw stderr
 				// and filesystem paths. The sync flags below are the part the
 				// client legitimately needs.
-				c.JSON(http.StatusBadGateway, gin.H{
+				c.JSON(http.StatusInternalServerError, gin.H{
 					"error":         "agent_error",
 					"kratos_synced": true,
 					"db_synced":     false,
@@ -606,7 +606,7 @@ func (h *userHandler) delete(c *gin.Context) {
 		// login. Report which objects and keep the row addressable for a retry.
 		var dbe *userops.DBCleanupError
 		if errors.As(err, &dbe) {
-			c.JSON(http.StatusBadGateway, gin.H{
+			c.JSON(http.StatusInternalServerError, gin.H{
 				"error":   "db_cleanup_failed",
 				"objects": dbe.Objects,
 				"detail": "the MariaDB database(s)/user(s) listed could not be dropped, so the account was kept; " +

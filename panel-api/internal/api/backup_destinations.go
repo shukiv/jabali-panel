@@ -665,7 +665,7 @@ func (h *backupDestinationHandler) rotatePassword(c *gin.Context) {
 		"new_password":    newPassword,
 	}
 	if _, err := h.agent.Call(ctx, "backup.repo.password.rotate", rotateParams); err != nil {
-		c.JSON(http.StatusBadGateway,
+		c.JSON(http.StatusInternalServerError,
 			gin.H{"status": "error", "error": "agent_rotate_failed", "detail": err.Error()})
 		return
 	}

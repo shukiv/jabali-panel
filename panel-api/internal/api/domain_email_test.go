@@ -777,21 +777,21 @@ func TestDomainEmail_RotateDKIM_AgentUnconfigured_503(t *testing.T) {
 	require.Contains(t, w.Body.String(), "agent_unconfigured")
 }
 
-func TestDomainEmail_RotateDKIM_AgentFailed_502(t *testing.T) {
+func TestDomainEmail_RotateDKIM_AgentFailed_500(t *testing.T) {
 	ma := &mockAgent{callErr: errors.New("dial: connection refused")}
 	r, _ := dkimRotateRouter(t, ma, true, true)
 	w := doRotate(t, r)
-	require.Equal(t, http.StatusBadGateway, w.Code)
+	require.Equal(t, http.StatusInternalServerError, w.Code)
 	require.Contains(t, w.Body.String(), "agent_rotate_failed")
 }
 
-func TestDomainEmail_RotateDKIM_BadResponse_502(t *testing.T) {
+func TestDomainEmail_RotateDKIM_BadResponse_500(t *testing.T) {
 	ma := &mockAgent{callFn: func(context.Context, string, any) (json.RawMessage, error) {
 		return json.RawMessage(`{"old_dkim_public_key":"p=OLD","new_dkim_public_key":""}`), nil
 	}}
 	r, _ := dkimRotateRouter(t, ma, true, true)
 	w := doRotate(t, r)
-	require.Equal(t, http.StatusBadGateway, w.Code)
+	require.Equal(t, http.StatusInternalServerError, w.Code)
 	require.Contains(t, w.Body.String(), "agent_bad_response")
 }
 

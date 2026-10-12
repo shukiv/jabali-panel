@@ -365,7 +365,7 @@ func (h *ipHandler) delete(c *gin.Context) {
 	// Step 4 wires the agent ip.unbind call here.
 	if h.cfg.AgentIPCommandsEnabled && h.cfg.Agent != nil && row.IsBound {
 		if err := h.unbindOnAgent(ctx, row); err != nil {
-			c.JSON(http.StatusBadGateway, gin.H{
+			c.JSON(http.StatusInternalServerError, gin.H{
 				"error":  "agent_unbind_failed",
 				"detail": "kernel binding removal failed: " + err.Error() + "; retry or unbind manually with `ip addr del`",
 			})

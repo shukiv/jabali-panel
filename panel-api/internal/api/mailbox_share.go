@@ -218,7 +218,7 @@ func (h *shareHandler) del(c *gin.Context) {
 	// acts on a share owned by mb.
 	//
 	// The revoke reaches Stalwart before the row goes: when Stalwart does not
-	// accept it, the answer is 502 and the row (and the live share) stay.
+	// accept it, the answer is 500 and the row (and the live share) stay.
 	if err := mailshareops.Delete(ctx, h.deps(), mb.ID, c.Param("shareId")); err != nil {
 		switch {
 		case errors.Is(err, mailshareops.ErrNotFound):
@@ -229,7 +229,7 @@ func (h *shareHandler) del(c *gin.Context) {
 			if claims.IsAdmin {
 				detail = err.Error()
 			}
-			c.JSON(http.StatusBadGateway, gin.H{"error": "share_apply_failed", "detail": detail})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "share_apply_failed", "detail": detail})
 		default:
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "detail": "the server could not complete the request"})
 		}

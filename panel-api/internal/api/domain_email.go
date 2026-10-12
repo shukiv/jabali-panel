@@ -121,9 +121,9 @@ func (h *domainEmailHandler) rotateDKIM(c *gin.Context) {
 		case errors.Is(err, domainmailops.ErrAgentUnconfigured):
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "agent_unconfigured"})
 		case errors.Is(err, domainmailops.ErrAgentFailed):
-			c.JSON(http.StatusBadGateway, gin.H{"error": "agent_rotate_failed", "detail": firstLineString(err.Error())})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "agent_rotate_failed", "detail": firstLineString(err.Error())})
 		case errors.Is(err, domainmailops.ErrAgentBadResponse):
-			c.JSON(http.StatusBadGateway, gin.H{"error": "agent_bad_response", "detail": "agent returned no new DKIM key"})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "agent_bad_response", "detail": "agent returned no new DKIM key"})
 		case errors.Is(err, domainmailops.ErrPersistFailed):
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "persist_failed", "detail": firstLineString(err.Error())})
 		default:

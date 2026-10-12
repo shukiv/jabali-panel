@@ -178,7 +178,7 @@ func applyIonCube(c *gin.Context, cli agent.AgentInterface, fetcher LoaderFetche
 		defer fcancel()
 		data, err := fetcher.FetchLoader(fetchCtx, version)
 		if err != nil {
-			c.JSON(http.StatusBadGateway, gin.H{"status": "error", "error": "loader_fetch_failed", "detail": err.Error()})
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"status": "error", "error": "loader_fetch_failed", "detail": err.Error()})
 			return
 		}
 		ctx, cancel := context.WithTimeout(c.Request.Context(), adminActionTimeout)

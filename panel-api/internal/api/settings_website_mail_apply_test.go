@@ -127,7 +127,7 @@ func TestWebsiteMail_SaveTheServerCouldntApplyChangesNothing(t *testing.T) {
 	repo := &mockServerSettingsRepo{getResult: &models.ServerSettings{ID: 1, Hostname: "panel.example.com"}, upsertErr: errMustNotPersist}
 	a := agent.NewMockClient().OnError("mail.relay.apply", &agent.AgentError{Code: "internal", Message: "the mail relay didn't start; see journalctl -u jabali-mailrelay.service"})
 	w := websiteMailCall(t, websiteMailApplyRouter(t, repo, testSSOKey(t), a), http.MethodPut, "", smarthostRequest())
-	if w.Code != http.StatusBadGateway {
+	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("status %d: %s", w.Code, w.Body.String())
 	}
 	if !strings.Contains(w.Body.String(), "the mail relay didn't start") {

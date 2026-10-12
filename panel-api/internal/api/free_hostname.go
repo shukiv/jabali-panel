@@ -75,7 +75,7 @@ func (h *serverSettingsHandler) freeHostnameRegister(c *gin.Context) {
 	case http.StatusTooManyRequests:
 		c.JSON(http.StatusTooManyRequests, gin.H{"error": "rate_limited", "message": "a code was just sent — wait a minute"})
 	default:
-		c.JSON(http.StatusBadGateway, gin.H{"error": "register_failed", "message": jsonField(body, "message")})
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "register_failed", "message": jsonField(body, "message")})
 	}
 }
 

@@ -184,7 +184,7 @@ func (h *websiteMailHandler) apply(ctx context.Context, s *models.ServerSettings
 		if errors.As(err, &ae) && ae.Message != "" {
 			detail += ": " + ae.Message
 		}
-		return nil, http.StatusBadGateway, gin.H{"error": "apply_failed", "detail": detail}
+		return nil, http.StatusInternalServerError, gin.H{"error": "apply_failed", "detail": detail}
 	}
 	return resp, 0, nil
 }
