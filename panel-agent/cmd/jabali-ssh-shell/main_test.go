@@ -83,9 +83,19 @@ func TestBuildBwrapArgv_ForwardsCommandAndIsolates(t *testing.T) {
 		"--ro-bind-try /etc/jabali/snuffleupagus /etc/jabali/snuffleupagus",
 		"--tmpfs /run", "--proc /proc",
 		"--ro-bind-try /run/mysqld/mysqld.sock /run/mysqld/mysqld.sock", // GH #285: shell DB access
+		"--ro-bind-try /run/redis/redis.sock /run/redis/redis.sock",     // GH #2059: CLI/cron Redis
 	} {
 		if !strings.Contains(joined, must) {
 			t.Errorf("argv missing %q in: %s", must, joined)
+		}
+	}
+	// Only the sockets: the directories around them (pid files, other
+	// sockets) stay hidden.
+	for _, dir := range []string{"/run/redis", "/run/mysqld"} {
+		for _, a := range argv {
+			if a == dir {
+				t.Errorf("argv binds the whole %s: %s", dir, joined)
+			}
 		}
 	}
 	if argv[len(argv)-2] != "/bin/bash" || argv[len(argv)-1] != "-l" {
