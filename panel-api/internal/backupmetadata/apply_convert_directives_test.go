@@ -85,3 +85,26 @@ func TestApply_UploadedBackupNothingToConvert(t *testing.T) {
 		t.Fatalf("errors %v should say nothing was converted", r.Errors)
 	}
 }
+
+// A whole server block of directives the import can't convert lists the first
+// 20 and counts the rest, so the restore report stays readable.
+func TestConvertUploadedDirectives_CapsTheUnconvertedLines(t *testing.T) {
+	var lines []string
+	for i := 0; i < 25; i++ {
+		lines = append(lines, "client_max_body_size 64m;")
+	}
+	raw := strings.Join(lines, "\n")
+	row := &models.Domain{NginxCustomDirectives: &raw}
+
+	notes := convertUploadedDirectives(row)
+
+	listed := 0
+	for _, n := range notes {
+		if strings.HasPrefix(n, "custom nginx directive not converted (line ") {
+			listed++
+		}
+	}
+	if listed != 20 || notes[len(notes)-1] != "5 more custom nginx directives not converted" {
+		t.Fatalf("listed %d lines, last note %q; want 20 and a count of the other 5", listed, notes[len(notes)-1])
+	}
+}
