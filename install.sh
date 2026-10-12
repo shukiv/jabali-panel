@@ -675,6 +675,14 @@ install_module_dns() {
      || ! dpkg -s pdns-recursor    >/dev/null 2>&1; then
     _install_dns_packages
   fi
+  # A full install or `jabali update` that ran while DNS was off masked pdns
+  # and pdns-recursor (converge_pdns_masking, GH #447). A masked unit can't
+  # start, so turning DNS on, or Retry, died on "Unit pdns.service is masked"
+  # until a nightly update unmasked it (GH #2101). This install is the
+  # request for DNS: unmask before the config functions start the services.
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl unmask pdns.service pdns-recursor.service >/dev/null 2>&1 || true
+  fi
   install_powerdns
   bootstrap_pdns_self_zone
   install_pdns_recursor
