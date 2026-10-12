@@ -74,7 +74,7 @@ func TestApply_UploadedBackupDropsCustomNginxDirectives(t *testing.T) {
 			t.Fatalf("untrusted=%v: domains = %+v (errors %v), want alice.org", untrusted, doms.created, r.Errors)
 		}
 		got := doms.created[0].NginxCustomDirectives
-		if untrusted && (got != nil || !hasError(r.Errors, "custom nginx directives not restored from an uploaded backup")) {
+		if untrusted && (got != nil || !hasError(r.Errors, "custom nginx directives are not restored as raw config from an uploaded backup")) {
 			t.Fatalf("uploaded backup: directives = %v, errors %v; want dropped with a note", got, r.Errors)
 		}
 		if !untrusted && (got == nil || *got != raw) {
