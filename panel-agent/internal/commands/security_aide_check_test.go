@@ -1,0 +1,85 @@
+package commands
+
+// GH #2079: "Run check now" ran aide --check inside the agent call. A check
+// takes minutes, longer than the panel's request may last, and its output went
+// back in the response only, so the page (which reads the report log) never
+// changed. It now starts jabali-aide-check.service, the unit of the daily
+// check, which appends to the report log; security.aide.status reports it.
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"strings"
+	"testing"
+
+	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
+)
+
+func TestAideCheck_StartsTheCheckUnit(t *testing.T) {
+	cmds := aideUnitsExec(t, nil)
+
+	out, err := mwAideCheckHandler(context.Background(), json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m, _ := out.(map[string]any); m["started"] != true {
+		t.Fatalf("response %v, want started", out)
+	}
+	var started bool
+	for _, c := range *cmds {
+		if c == "systemctl start --no-block "+aideCheckUnit {
+			started = true
+		}
+		if strings.Contains(c, "aide --") {
+			t.Fatalf("ran aide inside the call: %q", c)
+		}
+	}
+	if !started {
+		t.Fatalf("commands %q, want the check unit started without waiting", *cmds)
+	}
+}
+
+func TestAideCheck_RefusesWhileOneIsRunning(t *testing.T) {
+	cmds := aideUnitsExec(t, map[string]string{aideCheckUnit: "activating"})
+
+	_, err := mwAideCheckHandler(context.Background(), json.RawMessage(`{}`))
+	var ae *agentwire.AgentError
+	if !errors.As(err, &ae) || ae.Code != agentwire.CodeFailedPrecondition {
+		t.Fatalf("err %v, want a failed-precondition agent error", err)
+	}
+	for _, c := range *cmds {
+		if strings.HasPrefix(c, "systemctl start") {
+			t.Fatalf("started a second check: %q", c)
+		}
+	}
+}
+
+func TestAideCheckStatus(t *testing.T) {
+	cases := []struct {
+		state   string
+		wantNil bool
+		running bool
+		failed  bool
+	}{
+		{state: "inactive", wantNil: true},
+		{state: "activating", running: true},
+		{state: "active", running: true},
+		{state: "failed", failed: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.state, func(t *testing.T) {
+			aideUnitsExec(t, map[string]string{aideCheckUnit: tc.state})
+			st := readAideCheckStatus(context.Background())
+			if tc.wantNil {
+				if st != nil {
+					t.Fatalf("status %+v, want none", st)
+				}
+				return
+			}
+			if st == nil || st.Running != tc.running || st.Failed != tc.failed {
+				t.Fatalf("status %+v, want running=%v failed=%v", st, tc.running, tc.failed)
+			}
+		})
+	}
+}
