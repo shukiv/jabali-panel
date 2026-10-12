@@ -59,24 +59,10 @@ func backupDestTestHandler(ctx context.Context, raw json.RawMessage) (any, error
 		lower := strings.ToLower(stderrStr)
 		if strings.Contains(lower, "repository does not exist") ||
 			strings.Contains(lower, "unable to open config file") {
-			// SFTP: pre-create the parent path on the remote — restic
-			// init does NOT mkdir -p the parent chain itself.
-			if p.SFTP != nil && p.SFTP.Host != "" {
-				if mkOut, mkErr := backup.MkdirRemoteSFTP(ctx, backup.SFTPInputs{
-					Host:    p.SFTP.Host,
-					User:    p.SFTP.User,
-					Port:    p.SFTP.Port,
-					Path:    p.SFTP.Path,
-					Auth:    p.SFTP.Auth,
-					KeyPath: p.SFTP.KeyPath,
-				}, extraEnv); mkErr != nil {
-					return backupDestTestResult{
-						Status: "error",
-						Detail: "remote_mkdir_failed: " + mkErr.Error(),
-						Stderr: strings.TrimSpace(string(mkOut)),
-					}, nil
-				}
-			}
+			// restic init creates the repository folder and its parents over
+			// SFTP itself. No shell command runs first: an SFTP-only account
+			// (nologin shell, storage box) refuses one, which failed the test
+			// with remote_mkdir_failed even for a folder that existed (GH #2077).
 			// Serialize this init against the scheduler's per-account init
 			// (bkEnsureRepoReady) and any concurrent test-connection on the same
 			// destination — two restic inits on one empty repo corrupt it

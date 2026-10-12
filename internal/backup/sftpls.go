@@ -21,9 +21,7 @@ import (
 // buildSSHConnArgs assembles the argv prefix shared by every remote ssh exec:
 // `[sshpass -e] ssh [-i KEY -o IdentitiesOnly=yes] -o StrictHostKeyChecking=...
 // [auth opts] [-p PORT] user@host`. The caller appends `--` and the remote
-// command. Extracted from buildSSHMkdirArgs so mkdir and ls share one auth path;
-// TestBuildSSHMkdirArgs_Pin holds the mkdir argv byte-for-byte across the
-// extraction.
+// command. TestBuildSSHConnArgs_Pin holds it byte-for-byte.
 func buildSSHConnArgs(in SFTPInputs) []string {
 	parts := []string{}
 	if in.Auth == "password" {
