@@ -235,3 +235,22 @@ func TestTenantMigration_LaunchGateAdmitFlipsState(t *testing.T) {
 		t.Fatal("agent not called after admission")
 	}
 }
+
+// A source host the panel can't connect to answers 422 with the SSH error, not
+// 502: Cloudflare replaces an origin's 502 with its own error page, which hid
+// the reason on a panel behind it (GH #2077).
+func TestTenantMigration_VerifyConnectFailureKeepsTheReason(t *testing.T) {
+	h, jobs, _ := newTMHandler()
+	uid := "USERA"
+	jobs.jobs["JOBA"] = &models.MigrationJob{ID: "JOBA", SourceKind: models.MigrationSourceWordPressSSH, SourceHost: "127.0.0.1", TargetUserID: &uid, State: "validating"}
+	c, w := ctxAs(uid, `{}`, "JOBA")
+
+	h.verify(c)
+
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("code = %d, want 422; body=%s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `"error":"connect_failed"`) || !strings.Contains(w.Body.String(), "SSH connect failed — check host + credentials: ") {
+		t.Fatalf("body %s, want connect_failed with the SSH error", w.Body.String())
+	}
+}

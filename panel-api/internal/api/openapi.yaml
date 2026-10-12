@@ -2796,7 +2796,7 @@ paths:
       summary: Test backup destinations
       security: [ { KratosSession: [] } ]
       parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
-      responses: { "200": { description: OK } }
+      responses: { "200": { description: OK }, "422": { description: "The test ran and failed (restic_test_failed: detail and stderr say why), or the destination didn't answer in time (test_timeout)" } }
 
 
   # --- Backup Encryption Key (auto) ---
@@ -4888,7 +4888,7 @@ paths:
       tags: [Migrations]
       summary: Create probe
       security: [ { KratosSession: [] } ]
-      responses: { "200": { description: OK } }
+      responses: { "200": { description: OK }, "422": { description: "The mail host couldn't be reached; error is a stable code, detail a hint" } }
 
   /admin/migrations/refresh:
     post:
@@ -4925,7 +4925,7 @@ paths:
       summary: Get account size
       security: [ { KratosSession: [] } ]
       parameters: [ { in: path, name: id, required: true, schema: { type: string } }, { in: path, name: user, required: true, schema: { type: string } } ]
-      responses: { "200": { description: OK } }
+      responses: { "200": { description: OK }, "422": { description: "connect_failed: the panel couldn't connect to the source host over SSH; detail has the SSH error" } }
 
   /admin/migrations/{id}/describe-account:
     post:
@@ -4933,7 +4933,7 @@ paths:
       summary: Describe Account migrations
       security: [ { KratosSession: [] } ]
       parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
-      responses: { "200": { description: OK } }
+      responses: { "200": { description: OK }, "422": { description: "connect_failed: the panel couldn't connect to the source host over SSH; detail has the SSH error" } }
 
   /admin/migrations/{id}/destroy:
     post:
@@ -4949,7 +4949,7 @@ paths:
       summary: Discover Accounts migrations
       security: [ { KratosSession: [] } ]
       parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
-      responses: { "200": { description: OK } }
+      responses: { "200": { description: OK }, "422": { description: "connect_failed: the panel couldn't connect to the source host over SSH; detail has the SSH error" } }
 
   /admin/migrations/{id}/import:
     post:
@@ -5043,7 +5043,7 @@ paths:
       summary: Test Connection migrations
       security: [ { KratosSession: [] } ]
       parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
-      responses: { "200": { description: OK } }
+      responses: { "200": { description: OK }, "422": { description: "connect_failed or handshake_failed: the panel couldn't reach the source host over SSH, or its migration plugin; detail says why" } }
 
   /migrations/wordpress:
     post:
@@ -5084,7 +5084,7 @@ paths:
       summary: Scan Wp migrations
       security: [ { KratosSession: [] } ]
       parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
-      responses: { "200": { description: OK } }
+      responses: { "200": { description: OK }, "422": { description: "connect_failed: the panel couldn't connect to the source host over SSH; detail has the SSH error" } }
 
   /migrations/{id}/secrets:
     post:
@@ -5108,7 +5108,7 @@ paths:
       summary: Verify migrations
       security: [ { KratosSession: [] } ]
       parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
-      responses: { "200": { description: OK } }
+      responses: { "200": { description: OK }, "422": { description: "connect_failed or handshake_failed: the panel couldn't reach the source host over SSH, or its migration plugin; detail says why" } }
 
 
   # --- Mta Sts (auto) ---
