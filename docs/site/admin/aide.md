@@ -21,7 +21,7 @@ Not watched: `/var`, `/run`, `/tmp`, `/home`, `/proc`, `/sys`, `/dev`, `/mnt`, `
 
 - The age of the baseline (DB age) and the time of the last check.
 - The number of added, changed and removed files in the last check, grouped by likely source (for example system package, panel-managed, security control, unknown).
-- A list of up to 50 changed files, with a filter by source and by change type, and the old and new values when the report has them. **Download full diff** saves the whole report.
+- A list of up to 50 changed files, with a filter by source and by change type, and the old and new values when the report has them. **Download full diff** saves the report, from the top, up to 8 MB.
 
 ## Actions
 

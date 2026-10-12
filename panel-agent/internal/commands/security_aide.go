@@ -201,25 +201,54 @@ func mwAideStatusHandler(ctx context.Context, _ json.RawMessage) (any, error) {
 		return resp, nil
 	}
 
-	// Parse the last report — `aide --check` appends to aide.report.log
-	// on every timer run. We tail the last block, look for the
-	// "AIDE found differences" header + "added entries" / "changed
-	// entries" / "removed entries" counters.
-	if f, err := os.Open(aideReportPath); err == nil {
-		defer f.Close()
-		// GH #678: aide --check APPENDS each run to the report log, so the LATEST
-		// report is at the END. Seek to the last 4 MiB (not the first) so we parse
-		// the newest block, not a stale report frozen at the front of the log.
-		const window = int64(4 * 1024 * 1024)
-		if fi, sErr := f.Stat(); sErr == nil && fi.Size() > window {
-			_, _ = f.Seek(fi.Size()-window, io.SeekStart)
-		}
-		buf := make([]byte, window)
-		n, _ := f.Read(buf)
-		applyAideReport(string(buf[:n]), &resp)
+	// Parse the last report: the "AIDE found differences" header and the
+	// added / changed / removed counters at its top, then every entry.
+	if data, err := readLastAideReport(aideReportPath); err == nil {
+		applyAideReport(data, &resp)
 	}
 
 	return resp, nil
+}
+
+// aideReportReadMax bounds how much of the last report the status reads.
+const aideReportReadMax = 64 << 20
+
+// readLastAideReport returns the last report in the report log, from its
+// "Start timestamp:" line (or the whole log when it has none), up to
+// aideReportReadMax.
+//
+// GH #678 read the last 4 MiB, on the belief that each check appends to the
+// log; the newest report is then at the end. But aide opens report_url=file:
+// with truncation, so the log holds one report (the daily unit appends aide's
+// stdout copy after it), and its summary and entries are at the TOP. A report
+// over 4 MiB (148k changes on .60 made 19.5 MB) then read as 0 changes: the
+// page said no tamper was detected, and aide.tamper.detected never fired.
+func readLastAideReport(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 64*1024), 1024*1024)
+	var off, start int64
+	for sc.Scan() {
+		if strings.HasPrefix(sc.Text(), "Start timestamp:") {
+			start = off
+		}
+		off += int64(len(sc.Bytes())) + 1
+	}
+	if err := sc.Err(); err != nil {
+		return "", err
+	}
+	if _, err := f.Seek(start, io.SeekStart); err != nil {
+		return "", err
+	}
+	b, err := io.ReadAll(io.LimitReader(f, aideReportReadMax))
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
 }
 
 // applyAideReport fills resp from the tail of the report log.
@@ -457,14 +486,16 @@ func parseAideReport(text string, resp *aideStatusResponse) {
 // bloat the report); keeps the tail (newest block) when oversized.
 func mwAideReportHandler(_ context.Context, _ json.RawMessage) (any, error) {
 	const maxReport = 8 << 20
-	b, err := os.ReadFile(aideReportPath)
+	report, err := readLastAideReport(aideReportPath)
 	if err != nil {
 		return map[string]any{"report": "", "available": false, "reason": err.Error()}, nil
 	}
-	if len(b) > maxReport {
-		b = b[len(b)-maxReport:]
+	// The summary and the entries come first; a report over the cap loses the
+	// end of its details, not its top.
+	if len(report) > maxReport {
+		report = report[:maxReport]
 	}
-	return map[string]any{"report": string(b), "available": true}, nil
+	return map[string]any{"report": report, "available": true}, nil
 }
 
 // aideCheckUnit is the daily check's unit (install/systemd); "Run check now"
@@ -473,8 +504,8 @@ const aideCheckUnit = "jabali-aide-check.service"
 
 // mwAideCheckHandler starts a check and returns. GH #2079: it ran aide --check
 // inside the call, which takes minutes, longer than the panel's request may
-// last, and its output went back in the response only, so the status (read
-// from the report log) never changed. security.aide.status reports the run.
+// last, so the page got no answer while the check went on.
+// security.aide.status reports the run.
 func mwAideCheckHandler(ctx context.Context, _ json.RawMessage) (any, error) {
 	if aideUnitRunning(ctx, aideCheckUnit) {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeFailedPrecondition, Message: "a check is already running"}

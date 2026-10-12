@@ -1,10 +1,10 @@
 package commands
 
 // GH #2079: "Run check now" ran aide --check inside the agent call. A check
-// takes minutes, longer than the panel's request may last, and its output went
-// back in the response only, so the page (which reads the report log) never
-// changed. It now starts jabali-aide-check.service, the unit of the daily
-// check, which appends to the report log; security.aide.status reports it.
+// takes minutes, longer than the panel's request may last, so the page got no
+// answer (on .60, nothing in 90 s) while the check went on. It now starts
+// jabali-aide-check.service, the unit of the daily check, and returns;
+// security.aide.status says while it runs.
 
 import (
 	"context"
