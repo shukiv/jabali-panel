@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -116,5 +117,30 @@ func TestStreamBackupArtifact_DownloadName(t *testing.T) {
 		if w.Code != 200 || !strings.Contains(cd, `filename="`+tc.want) {
 			t.Fatalf("base %q: code %d, Content-Disposition %q, want a filename starting %q", tc.base, w.Code, cd, tc.want)
 		}
+	}
+}
+
+// Without zstd the archive is a plain tar, and keeps its name: the PATH holds
+// only tar, so this covers the branch a host with zstd never takes.
+func TestStreamBackupArtifact_DownloadNameWithoutZstd(t *testing.T) {
+	tarPath, err := exec.LookPath("tar")
+	if err != nil {
+		t.Skip("tar not installed")
+	}
+	bin := t.TempDir()
+	if err := os.Symlink(tarPath, filepath.Join(bin, "tar")); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	dir := filepath.Join(t.TempDir(), "01JOBNAME")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	c, w := newGateCtx()
+	job := &models.BackupJob{ID: "01JOBNAME", Status: models.BackupJobStatusSucceeded, SnapshotID: "snap1"}
+	streamBackupArtifact(c, &materializeAgent{path: dir}, job, "backup_alice_2026-10-11_0430", nil, noopLogErr)
+	cd := w.Header().Get("Content-Disposition")
+	if w.Code != 200 || !strings.Contains(cd, `filename="backup_alice_2026-10-11_0430.tar"`) {
+		t.Fatalf("code %d, Content-Disposition %q, want backup_alice_2026-10-11_0430.tar", w.Code, cd)
 	}
 }
