@@ -72,9 +72,9 @@ func TestBuildSSHConnArgs_Pin(t *testing.T) {
 
 // TestBuildSSHListArgs pins the ls argv: the shared connection prefix, then a
 // `--` separator (so ssh stops parsing its own options), then `ls -1` and the
-// remote path as ONE argv element — a path with spaces or metacharacters can
-// never split into extra arguments. Falsify by dropping the `--`, or by joining
-// the remote command into a single string.
+// remote path as ONE argv element, quoted for the remote shell when it holds a
+// character a shell treats specially. Falsify by dropping the `--`, or by
+// joining the remote command into a single string.
 func TestBuildSSHListArgs(t *testing.T) {
 	t.Parallel()
 
@@ -93,10 +93,11 @@ func TestBuildSSHListArgs(t *testing.T) {
 		t.Errorf("ls argv mismatch\n got: %#v\nwant: %#v", got, want)
 	}
 
-	// A path with a space stays a single argv element (argv exec, no shell).
+	// The remote shell parses the command, so a path with a space is quoted
+	// to stay one argument there (TestListRemoteSFTP_PathStaysOneArgumentOnTheRemoteShell).
 	spaced := buildSSHListArgs(SFTPInputs{User: "u", Host: "h"}, "/a b/keys")
-	if last := spaced[len(spaced)-1]; last != "/a b/keys" {
-		t.Errorf("remote path split into extra args: last argv element = %q", last)
+	if last := spaced[len(spaced)-1]; last != "'/a b/keys'" {
+		t.Errorf("remote path not quoted for the remote shell: last argv element = %q", last)
 	}
 }
 
@@ -170,9 +171,10 @@ func TestBuildSSHRenameArgs(t *testing.T) {
 		})
 	}
 
-	// src and dst with spaces stay two distinct single argv elements.
+	// src and dst with spaces are each quoted to stay one argument on the
+	// remote shell (TestRenameRemoteSFTP_PathsStayOneArgumentEachOnTheRemoteShell).
 	spaced := buildSSHRenameArgs(SFTPInputs{User: "u", Host: "h"}, "/a b/keys/K", "/a b/K aside")
-	if spaced[len(spaced)-2] != "/a b/keys/K" || spaced[len(spaced)-1] != "/a b/K aside" {
-		t.Errorf("src/dst split into extra args: tail = %#v", spaced[len(spaced)-2:])
+	if spaced[len(spaced)-2] != "'/a b/keys/K'" || spaced[len(spaced)-1] != "'/a b/K aside'" {
+		t.Errorf("src/dst not quoted for the remote shell: tail = %#v", spaced[len(spaced)-2:])
 	}
 }
