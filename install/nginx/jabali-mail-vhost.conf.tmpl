@@ -208,8 +208,11 @@ server {
 # form); the panel's own domain, which serves /var/www/jabali-panel-acme
 # alone (GH #268); and a domain without a site, which serves
 # /var/www/jabali-acme alone (GH #2082). A domain with mail but no
-# webmail gets this :80 block alone, without the :443 server above, so
-# its mail certificate can still be issued (GH #2082).
+# webmail keeps the :443 server above without the webmail app: no
+# Bulwark `location /` (it answers 404) and no /sso/webmail, while JMAP,
+# CalDAV/CardDAV and autoconfig/autodiscover stay. With no certificate to
+# serve on :443, it gets this :80 block alone, so its mail certificate
+# can still be issued (GH #2082).
 server {
   ${LISTEN_80}
   server_name mail.${DOMAIN} autoconfig.${DOMAIN} autodiscover.${DOMAIN} mta-sts.${DOMAIN} ${EXTRA_SERVER_NAMES};

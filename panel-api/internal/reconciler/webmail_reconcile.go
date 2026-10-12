@@ -39,6 +39,10 @@ import (
 // vhosts because worker shutdown is serial).
 const webmailAgentTimeout = 30 * time.Second
 
+// webmailHostsPath is the AppSec webmail-hosts state file; a var so tests
+// can point it at a temp file.
+var webmailHostsPath = appseccfg.WebmailHostsPath
+
 // reconcileWebmailVhosts is invoked from ReconcileAll. Errors are
 // logged per-domain and don't abort the sweep; the next tick retries.
 // listWebmailDomains lists all domains for the webmail reconcile pass.
@@ -49,47 +53,41 @@ func (r *Reconciler) listWebmailDomains(ctx context.Context) ([]models.Domain, e
 
 func (r *Reconciler) reconcileWebmailVhosts(ctx context.Context) {
 	// GH #316 / #760: webmail disabled server-wide → stop AND disable the
-	// Bulwark daemon, clear the AppSec allowlist, tear down vhosts. This runs
-	// BEFORE the sslCerts/domains guards below: those guard only vhost
-	// RENDERING, but the daemon must be stopped regardless — otherwise, on an
-	// install without ACME/SSL wired (sslCerts == nil), disabling webmail left
-	// the Node process running (#760). `disable` (not just stop) so it also
-	// stays down across reboots.
+	// Bulwark daemon on every way out of this pass, including an install
+	// without ACME/SSL wired (sslCerts == nil) — otherwise disabling webmail
+	// left the Node process running (#760). `disable` (not just stop) so it
+	// also stays down across reboots. The domains keep their mail vhosts,
+	// without the webmail app (GH #2082).
+	serverOff := false
 	if r.serverSettings != nil && r.agent != nil {
 		if s, sErr := r.settingsGet(ctx); sErr == nil && s != nil && !s.WebmailEnabled {
-			if r.domains != nil {
-				if domains, err := r.listWebmailDomains(ctx); err == nil {
-					for i := range domains {
-						if mailChallengeWanted(&domains[i]) {
-							r.applyMailChallengeVhost(ctx, &domains[i])
-						} else if domains[i].EmailEnabled {
-							r.removeWebmailVhost(ctx, domains[i].Name)
-						}
-					}
-				}
-			}
-			if _, werr := appseccfg.WriteWebmailHosts(appseccfg.WebmailHostsPath, nil); werr != nil {
-				r.log.Warn("webmail reconcile: clear webmail-hosts.list", "err", werr)
-			}
-			r.convergeWebmailDaemon(ctx, false)
-			return
+			serverOff = true
 		}
 	}
 
 	if r.sslCerts == nil {
-		// Without SSL cert paths we can't render the vhost (ssl_certificate
-		// directive is required). In an M5-less install this hook is a
-		// no-op — operators running without ACME won't have webmail
-		// either. (The disabled-teardown above already ran.)
+		// Without SSL cert paths we can't render a :443 server (ssl_certificate
+		// is required). With webmail off server-wide, a domain with mail still
+		// keeps the :80 block its mail certificate needs (GH #2082).
+		if serverOff {
+			r.keepMailChallengesWithoutSSL(ctx)
+			r.convergeWebmailDaemon(ctx, false)
+		}
 		return
 	}
 	if r.domains == nil {
+		if serverOff {
+			r.convergeWebmailDaemon(ctx, false)
+		}
 		return
 	}
 
 	domains, err := r.listWebmailDomains(ctx)
 	if err != nil {
 		r.log.Error("webmail reconcile: list domains", "err", err)
+		if serverOff {
+			r.convergeWebmailDaemon(ctx, false)
+		}
 		return
 	}
 
@@ -136,28 +134,33 @@ func (r *Reconciler) reconcileWebmailVhosts(ctx context.Context) {
 		}
 	}
 
-	anyEmailEnabled := false
+	anyWebmail := false
 	webmailHosts := make([]string, 0, len(domains)*2)
 	for i := range domains {
 		d := &domains[i]
-		// GH #1816: no webmail vhost (mail.<name>) for an unproven name.
-		if d.EmailEnabled && d.WebmailEnabled && !webmailOffUsers[d.UserID] && !ownershipPending(d) {
-			anyEmailEnabled = true
-			r.applyWebmailVhost(ctx, d)
-			// Mirror what the agent's mail vhost template emits as
-			// server_name: mail.<dom> + autoconfig.<dom> + autodiscover.<dom>.
-			// Panel-primary
-			// also serves the bare panel hostname but that's never a
-			// public WAF-bypass target — it's the panel itself and
-			// already covered by the /api/v1/ allowlist.
-			webmailHosts = append(webmailHosts, "mail."+d.Name, "autoconfig."+d.Name, "autodiscover."+d.Name)
-		} else if mailChallengeWanted(d) {
-			// Mail without webmail (GH #2082): no webmail host, so nothing
-			// joins the AppSec allowlist.
-			r.applyMailChallengeVhost(ctx, d)
-		} else {
+		// GH #1816: no mail vhost (mail.<name>) for an unproven name.
+		if !d.EmailEnabled || ownershipPending(d) {
 			r.removeWebmailVhost(ctx, d.Name)
+			continue
 		}
+		// GH #2082: with webmail off the domain keeps its mail vhost without
+		// the webmail app, so mail apps still find autoconfig, CalDAV/CardDAV
+		// and JMAP on mail.<domain>.
+		webmail := !serverOff && d.WebmailEnabled && !webmailOffUsers[d.UserID]
+		anyWebmail = anyWebmail || webmail
+		if r.applyWebmailVhost(ctx, d, webmail) {
+			// The :80 block alone has nothing for AppSec to exempt.
+			continue
+		}
+		// Mirror what the agent's mail vhost template emits as
+		// server_name: mail.<dom> + autoconfig.<dom> + autodiscover.<dom>.
+		// Panel-primary
+		// also serves the bare panel hostname but that's never a
+		// public WAF-bypass target — it's the panel itself and
+		// already covered by the /api/v1/ allowlist. Without webmail the
+		// exemption is still needed: CalDAV/CardDAV methods (PROPFIND,
+		// REPORT) otherwise trip CRS rule 911100.
+		webmailHosts = append(webmailHosts, "mail."+d.Name, "autoconfig."+d.Name, "autodiscover."+d.Name)
 	}
 
 	// Write the AppSec webmail-allowlist state file every pass.
@@ -168,19 +171,43 @@ func (r *Reconciler) reconcileWebmailVhosts(ctx context.Context) {
 	// steady-state cost is a single stat + memcmp. Errors here
 	// don't fail the reconcile sweep: the AppSec config still has
 	// the previous allowlist on disk, which is the safe state.
-	if _, err := appseccfg.WriteWebmailHosts(appseccfg.WebmailHostsPath, webmailHosts); err != nil {
+	if _, err := appseccfg.WriteWebmailHosts(webmailHostsPath, webmailHosts); err != nil {
 		r.log.Warn("webmail reconcile: write webmail-hosts.list", "err", err)
 	}
 
 	// Ensure the Bulwark daemon itself is running whenever any tenant
-	// has email enabled. domain.email_enable starts it the first time,
+	// has webmail. domain.email_enable starts it the first time,
 	// but on a clean exit (Restart=on-failure used to leave the unit
 	// inactive — fixed alongside this loop by switching to
 	// Restart=always) or a manual stop, nothing else converges. The
 	// agent's service.start verb is idempotent: a no-op when the unit
 	// is already active.
-	if anyEmailEnabled {
+	if serverOff {
+		r.convergeWebmailDaemon(ctx, false)
+	} else if anyWebmail {
 		r.convergeWebmailDaemon(ctx, true)
+	}
+}
+
+// keepMailChallengesWithoutSSL handles webmail off server-wide on an install
+// without SSL wired: no :443 server can be rendered, so a domain with mail
+// keeps the :80 block alone for its mail certificate (GH #2082), any other
+// mail vhost goes, and the AppSec webmail allowlist is cleared.
+func (r *Reconciler) keepMailChallengesWithoutSSL(ctx context.Context) {
+	if r.domains == nil {
+		return
+	}
+	if domains, err := r.listWebmailDomains(ctx); err == nil {
+		for i := range domains {
+			if mailChallengeWanted(&domains[i]) {
+				r.applyMailChallengeVhost(ctx, &domains[i])
+			} else if domains[i].EmailEnabled {
+				r.removeWebmailVhost(ctx, domains[i].Name)
+			}
+		}
+	}
+	if _, werr := appseccfg.WriteWebmailHosts(webmailHostsPath, nil); werr != nil {
+		r.log.Warn("webmail reconcile: clear webmail-hosts.list", "err", werr)
 	}
 }
 
@@ -251,9 +278,16 @@ func fileReadable(p string) bool {
 	return true
 }
 
-func (r *Reconciler) applyWebmailVhost(ctx context.Context, d *models.Domain) {
+// applyWebmailVhost converges a mail domain's mail.<domain> vhost. With
+// webmail off (GH #2082) the vhost leaves out the webmail app but keeps what
+// mail apps use there: autoconfig/autodiscover, CalDAV/CardDAV, JMAP and the
+// ACME challenge. When there is definitively no certificate to serve on :443,
+// a domain with webmail off keeps the :80 block alone so its mail certificate
+// can still be issued; a failed lookup changes nothing this tick. It reports
+// whether the :80 block alone was chosen.
+func (r *Reconciler) applyWebmailVhost(ctx context.Context, d *models.Domain, webmail bool) bool {
 	settings := r.webmailSettings(ctx)
-	certPath, keyPath, ok := r.webmailSSLPaths(ctx, d)
+	certPath, keyPath, ok, lookupErr := r.webmailSSLPaths(ctx, d)
 	if _, custom := panelPrimaryExtraMailName(settings, d); custom &&
 		fileReadable(panelMailCertPair[0]) && fileReadable(panelMailCertPair[1]) {
 		// JAB-390: this vhost also answers the applied custom mail
@@ -273,13 +307,17 @@ func (r *Reconciler) applyWebmailVhost(ctx context.Context, d *models.Domain) {
 		certPath, keyPath, ok = panelPrimaryWebmailSSLPaths()
 	}
 	if !ok {
+		if !webmail && lookupErr == nil && mailChallengeWanted(d) {
+			r.applyMailChallengeVhost(ctx, d)
+			return true
+		}
 		// No live cert on disk yet — the domain's ACME issuance may be
 		// in-flight or M5 might not have run. Skip this tick; the next
 		// reconcile pass will retry once the cert materialises.
 		r.log.Debug("webmail reconcile: skipping vhost — no usable SSL cert on file",
-			"domain_id", d.ID, "domain", d.Name)
+			"domain_id", d.ID, "domain", d.Name, "lookup_err", lookupErr)
 		r.setMailVhostLive(d.Name, false)
-		return
+		return false
 	}
 
 	params := map[string]any{
@@ -296,6 +334,9 @@ func (r *Reconciler) applyWebmailVhost(ctx context.Context, d *models.Domain) {
 		// correctly. Without this, server-side fetch falls to nginx
 		// default vhost and returns 500.
 		"is_panel_primary": d.IsPanelPrimary,
+	}
+	if !webmail {
+		params["no_webmail"] = true
 	}
 	r.addMailVhostListenParams(ctx, d, params)
 	addPanelMailHostnameParams(params, settings, d)
@@ -317,6 +358,7 @@ func (r *Reconciler) applyWebmailVhost(ctx context.Context, d *models.Domain) {
 	// A skip means the Agent already holds this vhost; a failed apply may
 	// have left none (the Agent drops a vhost that fails nginx -t).
 	r.setMailVhostLive(d.Name, err == nil)
+	return false
 }
 
 // addMailVhostListenParams sets listen_ipv4 / listen_ipv6 — same resolution
@@ -487,24 +529,31 @@ func panelPrimaryExtraMailName(s *models.ServerSettings, d *models.Domain) (stri
 // domain's certificate is therefore kept only when it is a real certificate
 // naming mail.<domain>; otherwise an issued mail certificate wins. A real
 // certificate that cannot be read is kept, as before.
-func (r *Reconciler) webmailSSLPaths(ctx context.Context, d *models.Domain) (string, string, bool) {
+//
+// The error reports a failed lookup, which is not "no certificate": the
+// caller must not treat a database blip as a domain without one.
+func (r *Reconciler) webmailSSLPaths(ctx context.Context, d *models.Domain) (string, string, bool, error) {
 	sslCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	cert, err := r.sslCerts.FindByDomainID(sslCtx, d.ID)
+	if err != nil && !errors.Is(err, repository.ErrNotFound) {
+		return "", "", false, err
+	}
 	if err == nil && cert != nil && cert.Status == models.SSLStatusRevoked {
-		return "", "", false
+		return "", "", false, nil
 	}
 	haveDomain := err == nil && cert != nil && cert.CertPath != nil && cert.KeyPath != nil
 	if haveDomain && keepDomainCertForMail(cert.Status, *cert.CertPath, d.Name) {
-		return *cert.CertPath, *cert.KeyPath, true
+		return *cert.CertPath, *cert.KeyPath, true, nil
 	}
-	if certPath, keyPath, ok := r.issuedMailCertPaths(sslCtx, d.ID); ok {
-		return certPath, keyPath, true
+	certPath, keyPath, ok, mailErr := r.issuedMailCertPaths(sslCtx, d.ID)
+	if ok {
+		return certPath, keyPath, true, nil
 	}
 	if !haveDomain {
-		return "", "", false
+		return "", "", false, mailErr
 	}
-	return *cert.CertPath, *cert.KeyPath, true
+	return *cert.CertPath, *cert.KeyPath, true, nil
 }
 
 // keepDomainCertForMail reports whether the domain's own certificate should
@@ -536,16 +585,22 @@ func keepDomainCertForMail(status, certPath, domainName string) bool {
 // leaves it failed, yet the lineage keeps serving until it expires, and
 // keying on "issued" would swap webmail to the placeholder and back on every
 // renewal. Only a certificate the operator disabled is never used.
-func (r *Reconciler) issuedMailCertPaths(ctx context.Context, domainID string) (string, string, bool) {
+func (r *Reconciler) issuedMailCertPaths(ctx context.Context, domainID string) (string, string, bool, error) {
 	if r.mailCerts == nil {
-		return "", "", false
+		return "", "", false, nil
 	}
 	row, err := r.mailCerts.GetByDomain(ctx, domainID)
-	if err != nil || row == nil || row.Status == models.MailCertStatusDisabled || row.LineagePath == "" {
-		return "", "", false
+	if errors.Is(err, repository.ErrNotFound) {
+		return "", "", false, nil
+	}
+	if err != nil {
+		return "", "", false, err
+	}
+	if row == nil || row.Status == models.MailCertStatusDisabled || row.LineagePath == "" {
+		return "", "", false, nil
 	}
 	if row.ExpiresAt == nil || !row.ExpiresAt.After(time.Now()) {
-		return "", "", false
+		return "", "", false, nil
 	}
-	return filepath.Join(row.LineagePath, "fullchain.pem"), filepath.Join(row.LineagePath, "privkey.pem"), true
+	return filepath.Join(row.LineagePath, "fullchain.pem"), filepath.Join(row.LineagePath, "privkey.pem"), true, nil
 }

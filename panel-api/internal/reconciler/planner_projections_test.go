@@ -243,11 +243,11 @@ func TestWebmail_ChangesStillReachTheAgent(t *testing.T) {
 		t.Fatalf("turning webmail off server-wide must stop and disable the daemon: stop=%d disable=%d",
 			countOf(calls, "service.stop"), countOf(calls, "service.disable"))
 	}
-	// GH #2082: the domain still has mail, so its webmail vhost gives way to
-	// the challenge-only :80 block rather than going away.
+	// GH #2082: the domain still has mail, so its vhost stays without the
+	// webmail app rather than going away.
 	if idx := indexesOf(calls, "webmail.vhost_apply", "domain_name", "example.com"); len(idx) != 1 ||
-		calls[idx[0]].params.(map[string]any)["challenge_only"] != true {
-		t.Fatal("turning webmail off server-wide must replace the domain's webmail vhost with its challenge-only block")
+		calls[idx[0]].params.(map[string]any)["no_webmail"] != true {
+		t.Fatal("turning webmail off server-wide must re-apply the domain's mail vhost without the webmail app")
 	}
 
 	settings.WebmailEnabled = true

@@ -18,7 +18,7 @@
 
 `https://mail.<domain>/` provides **Bulwark** (Next.js JMAP) webmail. The Mailboxes tab has a one-click **Open Webmail** button per mailbox that authenticates you via a single-use self-deleting SSO file (M22 pattern; ADR-0040).
 
-The **Settings** tab has a per-domain webmail switch. Turning it off drops just the `mail.<domain>` webmail vhost for that domain — IMAP, SMTP, and mail delivery are unaffected. Webmail also has to be enabled in your hosting plan, so turning it on here has no effect while your plan has webmail off. The change applies on the next reconcile.
+The **Settings** tab has a per-domain webmail switch. Turning it off removes webmail from `mail.<domain>` for that domain. IMAP, SMTP and mail delivery are unaffected, and mail apps still set themselves up and sync calendars and contacts through `mail.<domain>` (autoconfig/autodiscover, CalDAV/CardDAV, JMAP). Webmail also has to be enabled in your hosting plan, so turning it on here has no effect while your plan has webmail off. The change applies on the next reconcile.
 
 ## The domain directory
 

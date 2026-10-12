@@ -74,7 +74,12 @@ const mailVhostTemplate = `# Rendered by panel-agent webmail.vhost_apply (M6 Ste
   sub_filter_once off;
   sub_filter "{{.SubFilterHost}}" $host;
 
-{{ end }}  # Intentionally no X-Forwarded-Proto on this location — Next.js
+{{ end }}{{ if .NoWebmail }}  # Webmail is off for this domain (GH #2082): mail.<domain> serves the
+  # mail-app endpoints below and nothing else.
+  location / {
+    return 404;
+  }
+{{ else }}  # Intentionally no X-Forwarded-Proto on this location — Next.js
   # middleware-rewrite uses it to build internal proxy URLs, and with
   # "https" would try to TLS-connect to Bulwark's plain-HTTP upstream.
   # See the source-of-truth template in install/nginx/jabali-mail-vhost.conf.tmpl.
@@ -93,7 +98,7 @@ const mailVhostTemplate = `# Rendered by panel-agent webmail.vhost_apply (M6 Ste
     proxy_read_timeout 3600s;
     proxy_send_timeout 3600s;
   }
-
+{{ end }}
   location /jmap {
     proxy_pass http://127.0.0.1:8446;
     proxy_set_header Host $host;
@@ -145,7 +150,7 @@ const mailVhostTemplate = `# Rendered by panel-agent webmail.vhost_apply (M6 Ste
     proxy_read_timeout 3600s;
     client_max_body_size 50m;
   }
-
+{{ if not .NoWebmail }}
   # /api/* intentionally routes to Bulwark (catch-all /) — Bulwark owns
   # its own API endpoints (/api/auth/session, etc.) and proxies
   # Stalwart admin internally via STALWART_API_URL. Routing /api → 8446
@@ -164,7 +169,7 @@ const mailVhostTemplate = `# Rendered by panel-agent webmail.vhost_apply (M6 Ste
     proxy_set_header X-Forwarded-Proto https;
     proxy_http_version 1.1;
   }
-
+{{ end }}
   # Mail-client autoconfiguration (GH #1039). panel-api renders the config
   # documents from the domain's mail settings (mail.<domain>, IMAPS 993 /
   # SMTPS 465). Host is forwarded so panel-api derives the domain from
@@ -353,6 +358,11 @@ type webmailVhostApplyParams struct {
 	// check for its mail certificate, and nothing else is served. No
 	// certificate is needed.
 	ChallengeOnly bool `json:"challenge_only,omitempty"`
+	// NoWebmail renders the vhost without the Bulwark webmail app and its SSO
+	// landing, for a domain with mail but webmail off (GH #2082): mail apps
+	// still find autoconfig/autodiscover, CalDAV/CardDAV and JMAP on
+	// mail.<domain>, and / answers 404. ChallengeOnly wins over it.
+	NoWebmail bool `json:"no_webmail,omitempty"`
 }
 
 // vhostServerNameRe matches a lower-case DNS name of two or more labels.
