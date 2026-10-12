@@ -230,6 +230,9 @@ type Reconciler struct {
 	ftpAccounts repository.FtpAccountRepository
 	// cronJobs holds reference to the cron jobs repository
 	cronJobs repository.CronJobRepository
+	// cronOrphanSweepDone is set once a sweep of every account's cron units
+	// has run without errors; see sweepCronOrphansOnce.
+	cronOrphanSweepDone atomic.Bool
 	// pythonApps holds the python_apps repository (ADR-0131).
 	pythonApps repository.PythonAppRepository
 	// pyFrameworks is the loaded JAB-164 framework marketplace catalog. When a

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/user"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -133,7 +132,7 @@ func cronApplyHandler(ctx context.Context, params json.RawMessage) (any, error) 
 	}
 
 	// Resolve user's UID
-	u, err := user.Lookup(p.Username)
+	u, err := lookupCronUser(p.Username)
 	if err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeNotFound,
@@ -165,7 +164,7 @@ func cronApplyHandler(ctx context.Context, params json.RawMessage) (any, error) 
 	// chown the tree so the user manager can read it.
 	uidN, _ := strconv.Atoi(u.Uid)
 	gidN, _ := strconv.Atoi(u.Gid)
-	unitsDir := filepath.Join(u.HomeDir, ".config", "systemd", "user")
+	unitsDir := cronUnitsDir(u)
 	// All ~/.config/systemd/user writes go through a filesafe scope rooted at
 	// the user's home (Gitea #475). The agent is root, so if .config or any
 	// component is a tenant-planted symlink, plain MkdirAll/Chown/write/Rename
@@ -195,8 +194,8 @@ func cronApplyHandler(ctx context.Context, params json.RawMessage) (any, error) 
 	}
 	// Best-effort: clean up units stranded in the old non-search-path
 	// location from before this fix so they don't linger on disk.
-	_ = os.RemoveAll(fmt.Sprintf("/etc/jabali-panel/cron-units/%s/jabali-cron-%s.service", p.Username, p.JobID))
-	_ = os.RemoveAll(fmt.Sprintf("/etc/jabali-panel/cron-units/%s/jabali-cron-%s.timer", p.Username, p.JobID))
+	_ = os.RemoveAll(filepath.Join(legacyCronUnitsRoot, p.Username, fmt.Sprintf("jabali-cron-%s.service", p.JobID)))
+	_ = os.RemoveAll(filepath.Join(legacyCronUnitsRoot, p.Username, fmt.Sprintf("jabali-cron-%s.timer", p.JobID)))
 
 	// Generate unit file paths
 	servicePath := filepath.Join(unitsDir, fmt.Sprintf("jabali-cron-%s.service", p.JobID))
