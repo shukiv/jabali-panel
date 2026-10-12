@@ -897,7 +897,7 @@ connect_from_port_20=YES
 idle_session_timeout=300
 data_connection_timeout=120
 pam_service_name=vsftpd-jabali
-# JAB-263 phase D: open a PAM session so the vsftpd-jabali `session` stack runs
+# JAB-263 phase D: open a PAM session so the vsftpd-jabali \`session\` stack runs
 # — that is what fires jabali-ftp-session-cgroup to place the worker in the
 # tenant slice. vsftpd defaults session_support=NO and then SKIPS the session
 # stack entirely, so the hook never runs without this.
@@ -909,7 +909,7 @@ chroot_local_user=YES
 allow_writeable_chroot=YES
 # GH #1720: honour a "/./" marker in the passwd home so an ISOLATED subaccount
 # chroots to its root-owned jail root and then lands in the bind-mounted /data —
-# the same start dir sshd gives via `internal-sftp -d /data`. Without this,
+# the same start dir sshd gives via \`internal-sftp -d /data\`. Without this,
 # vsftpd (unlike sshd) has no per-user start dir and dumps the user at the empty,
 # unwritable jail root, which reads as a locked directory. A no-op for legacy
 # same-uid aliases: their passwd home has no "/./", so chroot_local_user still
@@ -4741,7 +4741,7 @@ local-address=${pdns_local_addresses}
 # client transfer every managed zone (bulk enumeration of hostnames, MX/service
 # topology, and TXT metadata — verified reproducible). This drop-in is read
 # after the main pdns.conf, so this line overrides such a permissive value and
-# repairs the host on the next `jabali update` (config change → pdns restart).
+# repairs the host on the next \`jabali update\` (config change → pdns restart).
 # Configured secondaries still transfer via their per-zone ALLOW-AXFR-FROM
 # metadata, which is unioned with this global; loopback stays allowed for local
 # operator troubleshooting (dig AXFR @127.0.0.1).
@@ -4761,7 +4761,7 @@ disable-axfr-rectify=no
 # 4.9 (verified: DLRediscoverHandler → UeberBackend::updateZoneCache in
 # the 4.9.x source), but calling it is what trips PowerDNS/pdns#11416 —
 # a concurrent rediscover + periodic refresh run replace() at the same
-# time and AuthZoneCache asserts (`pending->d_replacePending`), SIGABRT,
+# time and AuthZoneCache asserts (\`pending->d_replacePending\`), SIGABRT,
 # pdns down. Observed in production on 4.9.16 during bulk zone upserts.
 #
 # 0 disables the zone cache entirely: every zone lookup then hits the
@@ -6176,6 +6176,33 @@ ensure_maintenance_isolation() {
       /etc/systemd/system/jabali-backup-retention.timer
   fi
   systemctl daemon-reload 2>/dev/null || true
+}
+
+# ensure_pdns_conf_no_stray_lines — GH #2056, #2101: the PowerDNS template in
+# install_powerdns is an unquoted heredoc, and a comment in it held a
+# backticked `jabali update`. Turning DNS on from Server Settings → Modules
+# (install_module_dns) therefore ran a nested `jabali update` and pasted its
+# progress lines ("→ ensure mail ACME webroot …", a commit hash) into
+# 01-jabali-mysql.conf, and pdns refused to start ("Trying to set unknown
+# setting"). The template is fixed, but install_powerdns does not run on
+# `jabali update`, so a host that already has the lines keeps a dead pdns.
+# Every line jabali writes there is a comment, blank, or key=value: comment
+# out anything else, then restart pdns if it is enabled (reset-failed first —
+# the crash loop has hit the start limit). A masked pdns (DNS module off) is
+# left alone.
+ensure_pdns_conf_no_stray_lines() {
+  local conf=/etc/powerdns/pdns.d/01-jabali-mysql.conf
+  [[ -f "$conf" ]] || return 0   # dns module never installed here
+  grep -qvE '^[[:space:]]*(#|$)|^[a-z0-9-]+=' "$conf" || return 0
+  sed -i -E '/^[[:space:]]*(#|$)|^[a-z0-9-]+=/!s/^/# stray line, commented out (GH #2056): /' "$conf"
+  if systemctl is-enabled --quiet pdns 2>/dev/null; then
+    systemctl reset-failed pdns >/dev/null 2>&1 || true
+    systemctl restart pdns \
+      && _ok "pdns config: stray lines from a nested jabali update commented out; pdns restarted (GH #2056)" \
+      || _warn "pdns config: stray lines commented out, but pdns restart failed — check 'journalctl -u pdns'"
+  else
+    _log "pdns config: stray lines commented out in $conf (pdns not enabled, not restarted)"
+  fi
 }
 
 # ensure_pdns_zone_cache — converge PowerDNS's zone cache OFF on EXISTING
@@ -8173,7 +8200,7 @@ server {
     ${_NGX_H2_DIR}
     # JAB-389: the nginx.panel_landing_rehost agent verb re-points this
     # server_name on a live panel hostname change. It matches a single-value
-    # `server_name <host>;` on this line — keep it one host, no www. alias, the
+    # \`server_name <host>;\` on this line — keep it one host, no www. alias, the
     # semicolon on the same line, or the verb silently no-ops on every rename.
     server_name ${JABALI_SRV_HOSTNAME};
 
@@ -16345,6 +16372,9 @@ provision_new_software() {
   # boxes that only ever update — install_powerdns (whose template now
   # ships it) does not run
   # on this path.
+  # GH #2056/#2101: first heal a config that a nested `jabali update` wrote
+  # stray lines into, so pdns starts again.
+  ensure_pdns_conf_no_stray_lines
   ensure_pdns_zone_cache
   # JAB-350: same reasoning — pin the global AXFR ACL to loopback on update so a
   # permissive global on an existing host stops leaving zones internet-transferable.
