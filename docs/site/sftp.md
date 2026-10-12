@@ -56,6 +56,15 @@ every connect — no sshd reload needed to switch.
 - **Network egress stays open** so those tools work.
 - `scp`, `rsync`, and `git-over-ssh` work (the wrapper forwards the SSH
   command into the sandbox).
+- Two host sockets, both gated by their own login:
+  - MariaDB, `/run/mysqld/mysqld.sock` (GH #285): `mysql -u <dbuser> -p <db>`
+    and `.sql` imports work with the database user's password, and reach only
+    the databases that user is granted.
+  - Redis, `/run/redis/redis.sock` (GH #2059): CLI and cron apps (queue
+    workers, `artisan`, `wp-cli` with the object cache) connect with the
+    account's Redis credential (Databases → **Redis access**), and reach only
+    its own keys.
+    Without a credential, Redis answers `NOAUTH`.
 
 ### What it hides
 
@@ -65,10 +74,8 @@ every connect — no sshd reload needed to switch.
   the connecting user, so other tenants can't be enumerated.
 - Other tenants' **processes** (private PID namespace — `ps` shows only
   the session's own processes).
-- Every host **Unix socket** (PHP-FPM, MariaDB, the agent, Kratos, …):
-  `/run` is a fresh tmpfs. In-sandbox `mysql` / `wp-cli db` therefore
-  cannot reach MariaDB over its socket — use the panel's database tools
-  or phpMyAdmin SSO for DB work.
+- Every other host **Unix socket** (PHP-FPM, the agent, Kratos, …):
+  `/run` is a fresh tmpfs that holds only the two sockets above.
 
 ### Failure mode
 

@@ -78,6 +78,10 @@ with the prefix `jt:<your-username>:`; set it as your client's key prefix (for
 example phpredis `Redis::OPT_PREFIX` or Laravel `REDIS_PREFIX`). The credential
 can read and write only keys under that prefix.
 
+The socket works from your website, from your SSH shell and from your cron
+jobs (GH #2059), so queue workers and CLI commands such as `php artisan` use
+the same credential.
+
 Commands that work across every user's keys are not available: `KEYS`, `SCAN`,
 `FLUSHDB`, `FLUSHALL`, `CONFIG` and the other admin commands. A `FLUSHALL` from
 your application fails with `NOPERM`.

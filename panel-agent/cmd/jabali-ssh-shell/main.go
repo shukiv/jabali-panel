@@ -266,6 +266,13 @@ func buildBwrapArgv(name, home string, passwdFD, groupFD uintptr, shell string, 
 		// tenant still needs valid DB credentials and only reaches DBs their user
 		// is granted — same path phpMyAdmin uses. Nothing else under /run leaks.
 		"--ro-bind-try", "/run/mysqld/mysqld.sock", "/run/mysqld/mysqld.sock",
+		// The panel Redis socket, for CLI and cron apps (queue workers,
+		// artisan, wp-cli with the object cache) that FPM can already reach as
+		// the same uid (GH #2059). Redis auth gates it like MariaDB's: the
+		// `default` user is off (ADR-0148), so a connection needs a tenant's
+		// own ACL credential (t_<user>, GH #1016) and reaches only its keys.
+		// The socket's group ACL (jabali-redis-clients) still applies.
+		"--ro-bind-try", "/run/redis/redis.sock", "/run/redis/redis.sock",
 		"--bind", home, home,
 		"--chdir", home,
 		// Isolate everything, then re-share only the network so egress

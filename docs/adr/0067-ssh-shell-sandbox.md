@@ -70,6 +70,19 @@ services only via TCP/HTTP on host interfaces. Implication: in-sandbox
 escapes: panel UI, phpMyAdmin SSO, Applications "Run command". A scoped
 TCP proxy is deferred to a future ADR.
 
+**Amendments.** Two sockets are now bound into the bubblewrap jail, each
+gated by its own authentication, so the jail adds no access the tenant's
+PHP-FPM pool (same uid) doesn't already have:
+
+- `/run/mysqld/mysqld.sock` (GH #285): MariaDB auth and grants gate it.
+- `/run/redis/redis.sock` (GH #2059): the Redis `default` user is off
+  (ADR-0148). A connection needs the tenant's own ACL credential
+  (`t_<user>`, GH #1016), which reaches only `jt:<user>:*`. The socket's
+  group ACL (`jabali-redis-clients`) still applies.
+
+Only the socket files are bound, not their directories. Every other host
+socket stays hidden.
+
 ## Alternatives considered
 
 **`Match User <u>` with `ForceCommand /usr/local/bin/jabali-ssh-shell`.**
