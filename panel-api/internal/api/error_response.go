@@ -36,6 +36,16 @@ func respondMigrateConnectErr(c *gin.Context, err error) {
 	c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "connect_failed", "detail": err.Error()})
 }
 
+// respondMigrateHandshakeErr surfaces a failed handshake with a migration
+// source's Jabali Migrate plugin WITH its detail, for the same reason as
+// respondMigrateConnectErr: the error comes from the source site (wrong URL,
+// wrong token, the plugin missing), and the admin or tenant has to fix it.
+// 422, not 502, so Cloudflare doesn't replace it (GH #2077).
+func respondMigrateHandshakeErr(c *gin.Context, err error) {
+	logAgentError(c, "handshake_failed", err)
+	c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "handshake_failed", "detail": "cannot reach the plugin — check the site URL and token: " + err.Error()})
+}
+
 func respondAgentErrStatus(c *gin.Context, code string, err error) {
 	logAgentError(c, code, err)
 	c.JSON(http.StatusBadGateway, gin.H{"status": "error", "error": code})

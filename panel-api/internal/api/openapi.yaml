@@ -5043,7 +5043,7 @@ paths:
       summary: Test Connection migrations
       security: [ { KratosSession: [] } ]
       parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
-      responses: { "200": { description: OK }, "422": { description: "connect_failed: the panel couldn't connect to the source host over SSH; detail has the SSH error" } }
+      responses: { "200": { description: OK }, "422": { description: "connect_failed or handshake_failed: the panel couldn't reach the source host over SSH, or its migration plugin; detail says why" } }
 
   /migrations/wordpress:
     post:
@@ -5108,7 +5108,7 @@ paths:
       summary: Verify migrations
       security: [ { KratosSession: [] } ]
       parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
-      responses: { "200": { description: OK }, "422": { description: "connect_failed: the panel couldn't connect to the source host over SSH; detail has the SSH error" } }
+      responses: { "200": { description: OK }, "422": { description: "connect_failed or handshake_failed: the panel couldn't reach the source host over SSH, or its migration plugin; detail says why" } }
 
 
   # --- Mta Sts (auto) ---

@@ -440,7 +440,7 @@ func (h *tenantMigrationsHandler) verify(c *gin.Context) {
 		cli := wordpressplugin.New(siteURL, token, allowPrivate)
 		ping, err := cli.PingInfo(ctx)
 		if err != nil {
-			c.JSON(http.StatusBadGateway, gin.H{"error": "handshake_failed", "detail": "cannot reach the plugin — check the site URL and token: " + err.Error()})
+			respondMigrateHandshakeErr(c, err)
 			return
 		}
 		facts, err := cli.Manifest(ctx)

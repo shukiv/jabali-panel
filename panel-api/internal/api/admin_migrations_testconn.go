@@ -100,7 +100,7 @@ func (h *adminMigrationsHandler) testConnection(c *gin.Context) {
 		cli := wordpressplugin.New(site, token, allowPrivate)
 		ping, err := cli.PingInfo(ctx)
 		if err != nil {
-			respondAgentErr(c, "handshake_failed", err)
+			respondMigrateHandshakeErr(c, err)
 			return
 		}
 		facts, err := cli.Manifest(ctx)
