@@ -19,8 +19,11 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
 )
 
-// aideUnitsExec fakes systemctl/systemd-run. states maps a unit to what
-// `systemctl is-active` prints for it; an unlisted unit is inactive.
+// aideUnitsExec fakes systemctl/systemd-run. states maps a loaded unit to its
+// active state, as `systemctl list-units` shows it; an unlisted unit isn't
+// loaded (list-units prints nothing). `systemctl is-active` fails the test:
+// on a transient unit that is gone it makes systemd log "Failed to open
+// /run/systemd/transient/…" on every status poll (seen on .60).
 func aideUnitsExec(t *testing.T, states map[string]string) *[]string {
 	t.Helper()
 	var cmds []string
@@ -28,16 +31,15 @@ func aideUnitsExec(t *testing.T, states map[string]string) *[]string {
 	execCommandContext = func(ctx context.Context, name string, args ...string) *exec.Cmd {
 		line := name + " " + strings.Join(args, " ")
 		cmds = append(cmds, line)
-		if name == "systemctl" && len(args) == 2 && args[0] == "is-active" {
-			state := states[args[1]]
-			if state == "" {
-				state = "inactive"
+		if name == "systemctl" && len(args) > 0 && args[0] == "is-active" {
+			t.Errorf("ran %q; read the state with list-units", line)
+		}
+		if name == "systemctl" && len(args) > 0 && args[0] == "list-units" {
+			unit := args[len(args)-1]
+			if state, ok := states[unit]; ok {
+				return exec.CommandContext(ctx, "echo", unit, "loaded", state, "running", "Jabali", "unit")
 			}
-			code := "3"
-			if state == "active" {
-				code = "0"
-			}
-			return exec.CommandContext(ctx, "sh", "-c", "echo "+state+"; exit "+code)
+			return exec.CommandContext(ctx, "true")
 		}
 		return exec.CommandContext(ctx, "true")
 	}
@@ -121,9 +123,6 @@ func TestAideRebuild_SaysWhenTheUnitDidNotStart(t *testing.T) {
 	execCommandContext = func(ctx context.Context, name string, args ...string) *exec.Cmd {
 		if name == "systemd-run" {
 			return exec.CommandContext(ctx, "sh", "-c", "echo 'Failed to start transient service unit: Unit jabali-aide-rebuild.service already exists.' >&2; exit 1")
-		}
-		if name == "systemctl" && len(args) > 0 && args[0] == "is-active" {
-			return exec.CommandContext(ctx, "sh", "-c", "echo inactive; exit 3")
 		}
 		return exec.CommandContext(ctx, "true")
 	}

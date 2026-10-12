@@ -15,8 +15,11 @@ IOSchedulingClass=idle
 # GH #2079: skip the run while a baseline rebuild started from the panel runs
 # (jabali-aide-rebuild.service). aide refuses a second run while the rebuild
 # holds the database (exit 21), so the check would fail. Runs the check when
-# systemctl can't answer.
-ExecCondition=/bin/sh -c '! systemctl is-active --quiet jabali-aide-rebuild.service'
+# systemctl can't answer. Exit 100, not 1: SuccessExitStatus below applies to
+# ExecCondition too, and counts 1 as success, which runs the check. list-units,
+# not is-active: is-active on the transient unit once it is gone makes systemd
+# log "Failed to open /run/systemd/transient/jabali-aide-rebuild.service".
+ExecCondition=/bin/sh -c 'if systemctl list-units --plain --no-legend --state=active,activating,deactivating,reloading jabali-aide-rebuild.service | grep -q .; then exit 100; fi'
 ExecStart=/usr/bin/aide --check --config=/etc/aide/aide.conf
 StandardOutput=append:/var/log/aide/aide.report.log
 StandardError=append:/var/log/aide/aide.report.log

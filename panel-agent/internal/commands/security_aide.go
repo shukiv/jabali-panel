@@ -626,11 +626,19 @@ type aideRebuildStatus struct {
 	FinishedAt string `json:"finished_at,omitempty"`
 }
 
-// aideUnitState is what `systemctl is-active` prints for unit. It exits
-// non-zero for every state but active, so read the output, not the status.
+// aideUnitState is unit's active state (active, activating, failed, …), or
+// "inactive" when it isn't loaded. It reads list-units, not is-active:
+// is-active loads a unit that isn't loaded, and for the transient rebuild
+// unit, gone once it ends, systemd then logs "Failed to open
+// /run/systemd/transient/jabali-aide-rebuild.service" on every status poll.
 func aideUnitState(ctx context.Context, unit string) string {
-	out, _ := execCommandContext(ctx, "systemctl", "is-active", unit).Output()
-	return strings.TrimSpace(string(out))
+	out, _ := execCommandContext(ctx, "systemctl", "list-units", "--all", "--plain", "--no-legend", "--full", unit).Output()
+	// UNIT LOAD ACTIVE SUB DESCRIPTION
+	f := strings.Fields(string(out))
+	if len(f) < 3 || f[0] != unit {
+		return "inactive"
+	}
+	return f[2]
 }
 
 func aideUnitRunning(ctx context.Context, unit string) bool {

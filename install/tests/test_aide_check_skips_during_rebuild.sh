@@ -34,12 +34,23 @@ if [[ -z "$cond" ]]; then
 fi
 grep -qF "$rebuild_unit" <<<"$cond" || { echo "FAIL: ExecCondition doesn't name $rebuild_unit: $cond"; fail=1; }
 
-# Run the condition with a fake systemctl that exits with $FAKE_RC.
+# is-active loads a unit that isn't loaded; for the transient rebuild unit,
+# gone once it ends, systemd then logs "Failed to open
+# /run/systemd/transient/…" (seen on .60). list-units doesn't load it.
+if grep -q "is-active" <<<"$cond"; then
+  echo "FAIL: ExecCondition uses systemctl is-active; read the state with list-units"; fail=1
+fi
+
+# Run the condition with a fake systemctl: FAKE=active lists the rebuild unit
+# as running, FAKE=none lists nothing, FAKE=error fails.
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
-cat >"$tmp/systemctl" <<'EOF'
+cat >"$tmp/systemctl" <<EOF
 #!/bin/sh
-exit "$FAKE_RC"
+case "\$FAKE" in
+  active) echo "$rebuild_unit loaded active running Jabali AIDE baseline rebuild" ;;
+  error) exit 1 ;;
+esac
 EOF
 chmod +x "$tmp/systemctl"
 # ExecCondition=/bin/sh -c '<script>': run the script part the same way.
@@ -48,14 +59,22 @@ if [[ -z "$script" ]]; then
   echo "FAIL: ExecCondition isn't /bin/sh -c '…': $cond"
   exit 1
 fi
-run_cond() { FAKE_RC="$1" PATH="$tmp:$PATH" /bin/sh -c "$script"; }
+cond_rc() { FAKE="$1" PATH="$tmp:$PATH" /bin/sh -c "$script" >/dev/null && echo 0 || echo $?; }
 
-# systemd: ExecCondition exit 0 runs the unit, 1-254 skips it.
-if run_cond 0; then
-  echo "FAIL: the check runs while the rebuild unit is active"; fail=1
-fi
-run_cond 3 || { echo "FAIL: the check is skipped while no rebuild runs"; fail=1; }
-run_cond 1 || { echo "FAIL: the check is skipped when systemctl can't answer"; fail=1; }
+# systemd skips the unit when ExecCondition exits 1-254, unless that code is a
+# clean exit: SuccessExitStatus= applies to ExecCondition too. On .60 the
+# condition exited 1, which this unit's SuccessExitStatus=0 1 … 7 counts as
+# success, so the check ran during the rebuild anyway.
+success=" 0 $(sed -n 's/^SuccessExitStatus=//p' "$UNIT") "
+skips() { [[ "$1" -ge 1 && "$1" -le 254 && "$success" != *" $1 "* ]]; }
+runs() { [[ "$success" == *" $1 "* ]]; }
+
+rc=$(cond_rc active)
+skips "$rc" || { echo "FAIL: the check runs while the rebuild unit is active (condition exit $rc; clean exits:$success)"; fail=1; }
+rc=$(cond_rc none)
+runs "$rc" || { echo "FAIL: the check is skipped while no rebuild runs (condition exit $rc)"; fail=1; }
+rc=$(cond_rc error)
+runs "$rc" || { echo "FAIL: the check is skipped when systemctl can't answer (condition exit $rc)"; fail=1; }
 
 if [[ "$fail" -ne 0 ]]; then
   echo "RESULT: FAIL"
