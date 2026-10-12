@@ -45,11 +45,33 @@ func buildSSHConnArgs(in SFTPInputs) []string {
 	return parts
 }
 
+// remoteShellArg makes s one word for the remote shell. ssh joins the remote
+// command's arguments with spaces and the remote user's shell runs that string,
+// so a path with a space split into more arguments and one with `;` ran a
+// second command on the backup host. A path made only of characters no shell
+// treats specially passes as-is, so a plain path reaches the remote shell byte
+// for byte as before; any other path is single-quoted. A leading `-` gets a
+// `./` so ls and mv don't read the path as an option.
+func remoteShellArg(s string) string {
+	if strings.HasPrefix(s, "-") {
+		s = "./" + s
+	}
+	for _, r := range s {
+		if !strings.ContainsRune(remoteShellSafe, r) {
+			return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+		}
+	}
+	return s
+}
+
+const remoteShellSafe = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/._-+,:@%="
+
 // buildSSHListArgs assembles the argv for `[conn] -- ls -1 <remotePath>`.
-// remotePath is passed as a single argv element (no shell), so spaces or shell
-// metacharacters in the repository path cannot split into extra arguments.
+// remotePath goes through remoteShellArg: the remote shell parses the command,
+// so a path with spaces or shell metacharacters must be quoted to stay one
+// argument.
 func buildSSHListArgs(in SFTPInputs, remotePath string) []string {
-	return append(buildSSHConnArgs(in), "--", "ls", "-1", remotePath)
+	return append(buildSSHConnArgs(in), "--", "ls", "-1", remoteShellArg(remotePath))
 }
 
 // ListRemoteSFTP runs `ssh user@host -- ls -1 <remotePath>` over the same auth
@@ -74,12 +96,12 @@ func ListRemoteSFTP(ctx context.Context, in SFTPInputs, remotePath string, extra
 }
 
 // buildSSHRenameArgs assembles the argv for `[conn] -- mv -n <src> <dst>`. src
-// and dst are each a single argv element (no shell), so spaces or shell
-// metacharacters in the repository path cannot split into extra arguments. -n
+// and dst each go through remoteShellArg, so a repository path with spaces or
+// shell metacharacters stays one argument on the remote shell. -n
 // (no-clobber) is belt-and-braces: the JAB-405 caller builds dst from a
 // nanosecond timestamp, so the destination never pre-exists.
 func buildSSHRenameArgs(in SFTPInputs, src, dst string) []string {
-	return append(buildSSHConnArgs(in), "--", "mv", "-n", src, dst)
+	return append(buildSSHConnArgs(in), "--", "mv", "-n", remoteShellArg(src), remoteShellArg(dst))
 }
 
 // RenameRemoteSFTP runs `ssh user@host -- mv -n <src> <dst>` over the same auth
