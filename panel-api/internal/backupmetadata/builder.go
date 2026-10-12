@@ -320,8 +320,17 @@ func Build(ctx context.Context, user *models.User, d Deps) *internalbackup.Accou
 		}
 	}
 
+	// GH #1993: every pool of the account, the default first (ListByUserID
+	// orders by created_at). A domain on another PHP version is bound to that
+	// version's pool (GH #329); kept only the default, the domain came back
+	// on the default version.
 	if d.PHPPools != nil {
-		if pool, err := d.PHPPools.FindByUserID(ctx, user.ID); err == nil && pool != nil {
+		pools, err := d.PHPPools.ListByUserID(ctx, user.ID)
+		if err != nil {
+			d.warn("metadata: list php pools", err, "user_id", user.ID)
+		}
+		for i := range pools {
+			pool := &pools[i]
 			poolRow := internalbackup.MetadataPHPPool{
 				ID: pool.ID, PHPVersion: pool.PHPVersion,
 				PmMode: pool.PmMode, PmMaxChildren: pool.PmMaxChildren,
