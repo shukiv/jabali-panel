@@ -500,6 +500,16 @@ func (h *backupDestinationHandler) delete(c *gin.Context) {
 // the stored creds. Used by the admin "Test" button on the destination
 // drawer. Returns the snapshot count on success; on failure returns
 // the restic error verbatim so the operator can fix bad creds.
+// backupDestTestBudget bounds a destination test. A first test of an empty
+// destination runs restic init, which over SFTP creates the repository's
+// folders one round trip at a time, so it can take tens of seconds on a slow
+// link. The response's write deadline is extended past it by
+// backupDestTestWriteSlack. Both stay under Cloudflare's 100 s. A var so tests
+// can shorten it.
+var backupDestTestBudget = 60 * time.Second
+
+const backupDestTestWriteSlack = 15 * time.Second
+
 func (h *backupDestinationHandler) test(c *gin.Context) {
 	id := c.Param("id")
 	d, err := h.repo.Get(c.Request.Context(), id)
@@ -523,7 +533,11 @@ func (h *backupDestinationHandler) test(c *gin.Context) {
 	if d.CredentialsRef != nil {
 		credsRef = *d.CredentialsRef
 	}
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 60_000_000_000)
+	// GH #2077: the answer must outlive the server's WriteTimeout (30 s),
+	// or a long test loses it and the browser gets a closed connection
+	// (Cloudflare's "invalid or incomplete response").
+	extendWriteDeadline(c, backupDestTestBudget+backupDestTestWriteSlack)
+	ctx, cancel := context.WithTimeout(c.Request.Context(), backupDestTestBudget)
 	defer cancel()
 	payload := map[string]any{
 		"url":             d.URL,
@@ -544,6 +558,15 @@ func (h *backupDestinationHandler) test(c *gin.Context) {
 	}
 	raw, err := h.agent.Call(ctx, "backup.dest.test", payload)
 	if err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			logAgentError(c, "backup_dest_test_timeout", err)
+			c.JSON(http.StatusGatewayTimeout, gin.H{
+				"status": "error",
+				"error":  "test_timeout",
+				"detail": fmt.Sprintf("The destination didn't answer within %d seconds. Check the host and the port, and that this server can reach it: a firewall that drops the connection looks like this.", int(backupDestTestBudget/time.Second)),
+			})
+			return
+		}
 		respondAgentErrStatus(c, "agent_call", err)
 		return
 	}
