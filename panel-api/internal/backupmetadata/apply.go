@@ -157,6 +157,7 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 				r.Errors = append(r.Errors, fmt.Sprintf("php_pool %s: lookup PHP %s pool: %v", p.ID, p.PHPVersion, err))
 				continue
 			}
+			createdAt := defaultAt.Add(time.Duration(i) * time.Microsecond)
 			pool := &models.PHPPool{
 				ID:                        p.ID,
 				UserID:                    m.User.ID,
@@ -165,8 +166,8 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 				PmMaxChildren:             p.PmMaxChildren,
 				ProcessIdleTimeoutSeconds: p.ProcessIdleTimeoutSeconds,
 				Status:                    "pending",
-				CreatedAt:                 defaultAt.Add(time.Duration(i) * time.Microsecond),
-				UpdatedAt:                 now,
+				CreatedAt:                 createdAt,
+				UpdatedAt:                 createdAt,
 			}
 			if d.Untrusted {
 				notes, err := restoredPoolTuning(ctx, d, m.User.ID, pool)
