@@ -155,6 +155,68 @@ describe("ModulesCard install errors", () => {
   });
 });
 
+// GH #2101: when the card couldn't read the settings, it showed every module On
+// and "not installed" (REST API too), which was not the server's state.
+describe("ModulesCard when the panel doesn't answer", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("says the settings couldn't be loaded instead of showing every module On, and Reload reads them again", async () => {
+    let settingsFail = true;
+    mockGet.mockImplementation((url: string) => {
+      if (url === "/admin/settings") {
+        if (settingsFail) return Promise.reject({ response: { status: 502 } });
+        return Promise.resolve({ data: { dns_enabled: false, mail_enabled: false, security_enabled: true, quota_enabled: true, api_enabled: false } });
+      }
+      if (url === "/admin/settings/modules/status") return Promise.resolve({ data: { modules: { security: up, quota: up } } });
+      return Promise.resolve({ data: {} });
+    });
+    render(<ModulesCard />);
+    expect(await screen.findByText(/Couldn't load the module settings/)).toBeInTheDocument();
+    expect(screen.queryAllByRole("switch")).toHaveLength(0);
+    expect(screen.queryByText("not installed")).not.toBeInTheDocument();
+
+    settingsFail = false;
+    fireEvent.click(screen.getByRole("button", { name: /reload/i }));
+    await waitFor(() => expect(screen.getByRole("switch", { name: /REST API/ })).not.toBeChecked());
+    expect(screen.getByRole("switch", { name: /DNS server/ })).not.toBeChecked();
+    expect(screen.getByRole("switch", { name: /Security/ })).toBeChecked();
+    expect(screen.queryByText(/Couldn't load the module settings/)).not.toBeInTheDocument();
+  });
+
+  it("treats a reply without the module settings as a failed load", async () => {
+    mockGet.mockImplementation((url: string) => {
+      if (url === "/admin/settings") return Promise.resolve({ data: "<html>502 Bad Gateway</html>" });
+      if (url === "/admin/settings/modules/status") return Promise.resolve({ data: { modules: {} } });
+      return Promise.resolve({ data: {} });
+    });
+    render(<ModulesCard />);
+    expect(await screen.findByText(/Couldn't load the module settings/)).toBeInTheDocument();
+    expect(screen.queryAllByRole("switch")).toHaveLength(0);
+  });
+
+  it("shows 'status unknown' for a module the agent didn't report, without a Retry", async () => {
+    // The panel leaves out a module whose agent probe failed.
+    serve({ mail_enabled: false }, { dns: up, security: up });
+    render(<ModulesCard />);
+    expect(await screen.findByText("status unknown")).toBeInTheDocument();
+    expect(screen.queryByText("not installed")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /retry/i })).not.toBeInTheDocument();
+  });
+
+  it("shows 'status unknown' for every enabled module when the status can't be read", async () => {
+    mockGet.mockImplementation((url: string) => {
+      if (url === "/admin/settings") {
+        return Promise.resolve({ data: { dns_enabled: true, mail_enabled: true, security_enabled: true, quota_enabled: true, api_enabled: true } });
+      }
+      if (url === "/admin/settings/modules/status") return Promise.reject({ response: { status: 502 } });
+      return Promise.resolve({ data: {} });
+    });
+    render(<ModulesCard />);
+    await waitFor(() => expect(screen.getAllByText("status unknown")).toHaveLength(4));
+    expect(screen.queryByText("not installed")).not.toBeInTheDocument();
+  });
+});
+
 // GH #2056: mail's install needs DNS installed and running, so the Mail switch
 // doesn't start an install that is sure to fail.
 describe("ModulesCard mail needs DNS", () => {
