@@ -18,6 +18,8 @@ Internally each cron row becomes:
 
 Both are owned by the user. `loginctl enable-linger <user>` runs at user creation so timers fire without an active session.
 
+Disabling a job stops its timer and removes both files; enabling it writes them again. Deleting a job removes them before the row. Before the November 2026 release, deleting or disabling a tenant's job left its timer running, because the removal looked in an old location (`/etc/jabali-panel/cron-units/<user>/`). After the update, the panel removes every `jabali-cron-<id>` timer in an account's home that has no cron job behind it: on the first pass after the panel starts, then hourly. It skips admin accounts.
+
 ## Why not crontab?
 
 systemd-user timers give:

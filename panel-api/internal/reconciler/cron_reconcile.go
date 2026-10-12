@@ -3,6 +3,7 @@ package reconciler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
@@ -62,6 +63,12 @@ func (r *Reconciler) reconcileCronJobs(ctx context.Context) {
 			continue
 		}
 
+		// A job with a row is never an orphan, whatever its apply or remove
+		// does this tick: a failed apply must not cost the job its timer.
+		for _, job := range userJobs {
+			delete(onDisk, job.ID)
+		}
+
 		for _, job := range userJobs {
 			if !job.Enabled {
 				continue
@@ -71,7 +78,6 @@ func (r *Reconciler) reconcileCronJobs(ctx context.Context) {
 				continue
 			}
 			applied++
-			delete(onDisk, job.ID)
 			// Harvest the last autonomous (timer) run so the panel's
 			// "Last Run" reflects scheduled fires, not just Run-now.
 			r.cronHarvestLastRun(ctx, userID, username, job)
@@ -86,18 +92,12 @@ func (r *Reconciler) reconcileCronJobs(ctx context.Context) {
 				continue
 			}
 			removed++
-			delete(onDisk, job.ID)
 		}
 
-		for orphanID := range onDisk {
-			if err := r.cronRemoveOne(ctx, userID, username, orphanID); err != nil {
-				r.log.Warn("reconcile: failed to clean orphan cron unit", "job_id", orphanID, "err", err)
-				continue
-			}
-			r.log.Info("reconcile: removed orphan cron unit", "job_id", orphanID, "user_id", userID)
-			orphans++
-		}
+		n, _ := r.removeCronOrphans(ctx, userID, username, onDisk)
+		orphans += n
 	}
+	orphans += r.sweepCronOrphans(ctx, byUser)
 
 	// Demote to Debug when nothing changed — this fires every tick
 	// (~60s) and was the dominant remaining log noise after the
@@ -110,6 +110,69 @@ func (r *Reconciler) reconcileCronJobs(ctx context.Context) {
 		r.log.Info("reconcile: cron jobs pass complete",
 			"applied", applied, "removed", removed, "orphans_removed", orphans)
 	}
+}
+
+// cronOrphanSweepEvery is how often the reconciler sweeps the cron units of
+// accounts with no cron rows. A var so tests can change it.
+var cronOrphanSweepEvery = time.Hour
+
+// sweepCronOrphans removes the cron units of accounts with no cron rows, which
+// the loop above never visits. cron.remove used to look in the wrong
+// directory (GH #273 moved the units, it did not follow), so a deleted job's
+// timer kept running, and an account whose last job was deleted kept them
+// all. The sweep runs on the first tick after the panel starts, then hourly;
+// a pass with an error runs again on the next tick.
+func (r *Reconciler) sweepCronOrphans(ctx context.Context, withRows map[string][]*models.CronJob) int {
+	if last := r.cronOrphanSweptAt.Load(); last != 0 && time.Since(time.Unix(0, last)) < cronOrphanSweepEvery {
+		return 0
+	}
+	users, _, err := r.users.List(ctx, repository.ListOptions{Limit: 10000})
+	if err != nil {
+		r.log.Warn("reconcile: cron orphan sweep could not list users", "err", err)
+		return 0
+	}
+	removed, failed := 0, false
+	for _, u := range users {
+		if _, ok := withRows[u.ID]; ok || u.IsAdmin || u.Username == nil || *u.Username == "" {
+			continue
+		}
+		onDisk, err := r.cronListOnDisk(ctx, u.ID, *u.Username)
+		if err != nil {
+			r.log.Warn("reconcile: cron orphan sweep: agent cron.list failed", "user_id", u.ID, "err", err)
+			failed = true
+			continue
+		}
+		n, f := r.removeCronOrphans(ctx, u.ID, *u.Username, onDisk)
+		removed += n
+		failed = failed || f
+	}
+	if !failed {
+		r.cronOrphanSweptAt.Store(time.Now().UnixNano())
+	}
+	return removed
+}
+
+// removeCronOrphans removes the account's timers that have no cron row. A job
+// created since this pass read the rows keeps its timer, and so does one whose
+// row cannot be looked up. failed reports any error.
+func (r *Reconciler) removeCronOrphans(ctx context.Context, userID, username string, onDisk map[string]struct{}) (removed int, failed bool) {
+	for jobID := range onDisk {
+		if _, err := r.cronJobs.FindByID(ctx, jobID); err == nil {
+			continue
+		} else if !errors.Is(err, repository.ErrNotFound) {
+			r.log.Warn("reconcile: cron orphan: look up job", "job_id", jobID, "err", err)
+			failed = true
+			continue
+		}
+		if err := r.cronRemoveOne(ctx, userID, username, jobID); err != nil {
+			r.log.Warn("reconcile: failed to clean orphan cron unit", "job_id", jobID, "err", err)
+			failed = true
+			continue
+		}
+		r.log.Info("reconcile: removed orphan cron unit", "job_id", jobID, "user_id", userID)
+		removed++
+	}
+	return removed, failed
 }
 
 func (r *Reconciler) ownedTargetsFor(ctx context.Context, userID string) (docroots, domainNames []string, err error) {

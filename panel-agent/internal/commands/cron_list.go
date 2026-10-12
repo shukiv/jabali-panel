@@ -3,12 +3,16 @@ package commands
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/filesafe"
 )
 
 // cronListParams represents the input to cron.list.
@@ -40,39 +44,67 @@ func cronListHandler(ctx context.Context, params json.RawMessage) (any, error) {
 		}
 	}
 
-	// Build the cron-units directory path
-	unitsDir := filepath.Join("/etc/jabali-panel/cron-units", p.Username)
-
-	// List all .timer files in the directory
-	entries, err := os.ReadDir(unitsDir)
-	if err != nil {
-		// Directory may not exist yet (user has no jobs); return empty list
-		if os.IsNotExist(err) {
-			return &cronListResponse{UnitFiles: []string{}}, nil
+	// Look where cron.apply writes the units: the user's systemd search path
+	// (GH #273). This read the old /etc/jabali-panel/cron-units directory
+	// instead, so the reconciler never saw a unit to sweep. The home is
+	// tenant-writable, so it is read through a home-rooted scope that refuses
+	// a planted symlink (GH #475). An account with no home on this box has
+	// nothing there. Units written before #273 may still sit in the legacy
+	// directory, which root owns.
+	ids := map[string]bool{}
+	if u, err := lookupCronUser(p.Username); err == nil {
+		scope, err := filesafe.NewScope(p.Username, p.Username, []string{u.HomeDir})
+		if err != nil {
+			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "scope init: " + err.Error()}
 		}
+		entries, err := scope.ReadDirInScope(cronUnitsDir(u))
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return nil, &agentwire.AgentError{
+				Code:    agentwire.CodeInternal,
+				Message: fmt.Sprintf("failed to read %s: %v", cronUnitsDir(u), err),
+			}
+		}
+		for _, e := range entries {
+			if id := cronTimerJobID(e.Name); id != "" && !e.IsDir {
+				ids[id] = true
+			}
+		}
+	}
+
+	legacyDir := filepath.Join(legacyCronUnitsRoot, p.Username)
+	entries, err := os.ReadDir(legacyDir)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,
 			Message: fmt.Sprintf("failed to read cron-units directory: %v", err),
 		}
 	}
-
-	var jobIDs []string
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-
-		name := entry.Name()
-		// Match pattern: jabali-cron-<id>.timer
-		if strings.HasPrefix(name, "jabali-cron-") && strings.HasSuffix(name, ".timer") {
-			// Extract job ID from "jabali-cron-<id>.timer"
-			jobID := strings.TrimPrefix(name, "jabali-cron-")
-			jobID = strings.TrimSuffix(jobID, ".timer")
-			jobIDs = append(jobIDs, jobID)
+	for _, e := range entries {
+		if id := cronTimerJobID(e.Name()); id != "" && !e.IsDir() {
+			ids[id] = true
 		}
 	}
 
+	jobIDs := make([]string, 0, len(ids))
+	for id := range ids {
+		jobIDs = append(jobIDs, id)
+	}
+	sort.Strings(jobIDs)
 	return &cronListResponse{UnitFiles: jobIDs}, nil
+}
+
+// cronTimerJobID returns the job id of a "jabali-cron-<id>.timer" file name,
+// or "" for any other name. Only ULIDs count: cron.remove refuses anything
+// else, so a stray file would otherwise fail the sweep every tick.
+func cronTimerJobID(name string) string {
+	if !strings.HasPrefix(name, "jabali-cron-") || !strings.HasSuffix(name, ".timer") {
+		return ""
+	}
+	id := strings.TrimSuffix(strings.TrimPrefix(name, "jabali-cron-"), ".timer")
+	if !ulidRE.MatchString(id) {
+		return ""
+	}
+	return id
 }
 
 // init registers the cron.list command.
