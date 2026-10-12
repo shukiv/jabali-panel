@@ -123,13 +123,14 @@ systemctl() {
 }
 _ok() { :; }
 _log() { :; }
-_warn() { :; }
+_warn() { echo "warn $*" >>"$tmp/systemctl.log"; }
 # The install that wrote the stray lines died at its pdns restart, before
 # bootstrap_pdns_self_zone, so Mail refuses to install until the self-zone
 # exists. The heal runs it (it is idempotent) once pdns is back.
 reconstruct_server_env_from_db() { echo "reconstruct" >>"$tmp/systemctl.log"; }
 bootstrap_pdns_self_zone() { echo "bootstrap_pdns_self_zone" >>"$tmp/systemctl.log"; }
-eval "${fn_src//\/etc\/powerdns\/pdns.d\/01-jabali-mysql.conf/$tmp/heal.conf}"
+fn_src=${fn_src//\/etc\/powerdns\/pdns.d\/01-jabali-mysql.conf/$tmp/heal.conf}
+eval "${fn_src//\/etc\/powerdns\/recursor.conf/$tmp/recursor.conf}"
 
 broken='launch=gmysql
 gmysql-password=secret
@@ -156,6 +157,18 @@ grep -q 'reset-failed pdns' "$tmp/systemctl.log" || { echo "FAIL: heal didn't re
 grep -q 'bootstrap_pdns_self_zone' "$tmp/systemctl.log" || { echo "FAIL: heal didn't create the pdns self-zone the dead install never reached (Mail stays blocked)"; fail=1; }
 awk '/restart pdns/{r=NR} /bootstrap_pdns_self_zone/{b=NR} END{exit !(r && b > r)}' "$tmp/systemctl.log" \
   || { echo "FAIL: heal must create the self-zone after pdns is restarted"; fail=1; }
+# The dead install never reached install_pdns_recursor. The heal does not run
+# it (it repoints the system resolver), but must say so: DNS reads as
+# installed once pdns runs, so nothing else would.
+grep -q 'warn pdns-recursor was never configured' "$tmp/systemctl.log" \
+  || { echo "FAIL: heal didn't warn that the recursor setup never ran"; fail=1; }
+
+printf '%s\n' "$broken" >"$tmp/heal.conf"
+printf '%s\n' '# Managed by jabali-panel install.sh (M6.3). Hand edits will be overwritten' 'local-address=127.0.0.1, ::1' >"$tmp/recursor.conf"
+: >"$tmp/systemctl.log"
+ensure_pdns_conf_no_stray_lines
+grep -q 'warn pdns-recursor' "$tmp/systemctl.log" && { echo "FAIL: heal warned about a recursor install.sh already configured"; fail=1; }
+rm -f "$tmp/recursor.conf"
 
 printf '%s\n' "$broken" >"$tmp/heal.conf"
 : >"$tmp/systemctl.log"

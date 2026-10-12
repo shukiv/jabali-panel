@@ -6206,6 +6206,12 @@ ensure_pdns_conf_no_stray_lines() {
       # row is left alone.
       reconstruct_server_env_from_db
       bootstrap_pdns_self_zone || _warn "pdns self-zone bootstrap failed — press Retry on DNS in Server Settings → Modules"
+      # The dead install never reached install_pdns_recursor either. It is
+      # not run here: it repoints the system resolver at 127.0.0.1 and
+      # restarts systemd-resolved, too much for an unattended update. DNS
+      # reads as installed once pdns runs, so nothing else would say so.
+      [[ "$(head -n 1 /etc/powerdns/recursor.conf 2>/dev/null)" == "# Managed by jabali-panel install.sh"* ]] \
+        || _warn "pdns-recursor was never configured (the DNS install stopped before it) — run '/opt/jabali-panel/install.sh --install-module dns' to finish it"
     else
       _warn "pdns config: stray lines commented out, but pdns restart failed — check 'journalctl -u pdns'"
     fi
