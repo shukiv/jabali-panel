@@ -3,7 +3,8 @@ package reconciler
 // Until cron.remove looked where cron.apply writes a tenant's units, deleting
 // a job left its timer running. The orphan sweep only visited accounts that
 // still had cron rows, so an account whose last job was deleted kept every
-// leaked timer. The sweep now visits every account once per panel start.
+// leaked timer. The sweep now visits every account, on the first tick after
+// the panel starts and then hourly.
 
 import (
 	"context"
@@ -52,11 +53,12 @@ func (f *fakeCronRepo) Delete(context.Context, string) error { return nil }
 // cronDiskAgent holds each account's cron timers on disk and records what the
 // reconciler lists and removes.
 type cronDiskAgent struct {
-	mu       sync.Mutex
-	onDisk   map[string][]string
-	listFail map[string]bool
-	listed   []string
-	removed  []string
+	mu        sync.Mutex
+	onDisk    map[string][]string
+	listFail  map[string]bool
+	applyFail map[string]bool
+	listed    []string
+	removed   []string
 }
 
 func (a *cronDiskAgent) Call(_ context.Context, method string, params interface{}) (json.RawMessage, error) {
@@ -65,6 +67,10 @@ func (a *cronDiskAgent) Call(_ context.Context, method string, params interface{
 	p, _ := params.(map[string]any)
 	username, _ := p["username"].(string)
 	switch method {
+	case "cron.apply":
+		if a.applyFail[username] {
+			return nil, fmt.Errorf("apply refused")
+		}
 	case "cron.list":
 		a.listed = append(a.listed, username)
 		if a.listFail[username] {
@@ -124,14 +130,15 @@ func newCronSweepReconciler(ag *cronDiskAgent, cron *fakeCronRepo, users ...*mod
 
 func TestCronSweep_RemovesLeakedTimersOfAccountsWithNoJobsLeft(t *testing.T) {
 	aliceJob := &models.CronJob{ID: "01JOBALICE0000000000000000", UserID: "u-alice", Enabled: true}
-	// erin's job was created after this pass read the cron rows.
+	// Created after this pass read the cron rows.
+	aliceNew := &models.CronJob{ID: "01JOBALICENEW0000000000000", UserID: "u-alice", Enabled: true}
 	erinJob := &models.CronJob{ID: "01JOBERINNEW00000000000000", UserID: "u-erin", Enabled: true}
 	cron := &fakeCronRepo{
 		listed: []*models.CronJob{aliceJob},
-		byID:   map[string]*models.CronJob{aliceJob.ID: aliceJob, erinJob.ID: erinJob},
+		byID:   map[string]*models.CronJob{aliceJob.ID: aliceJob, aliceNew.ID: aliceNew, erinJob.ID: erinJob},
 	}
 	ag := &cronDiskAgent{onDisk: map[string][]string{
-		"alice": {aliceJob.ID, "01JOBALICEGONE000000000000"},
+		"alice": {aliceJob.ID, aliceNew.ID, "01JOBALICEGONE000000000000"},
 		"bob":   {"01JOBBOBGONE10000000000000", "01JOBBOBGONE20000000000000"},
 		"carol": {"01JOBCAROLADMIN00000000000"},
 		"erin":  {erinJob.ID},
@@ -156,10 +163,43 @@ func TestCronSweep_RemovesLeakedTimersOfAccountsWithNoJobsLeft(t *testing.T) {
 		t.Errorf("alice, who has cron rows, listed %d times in one tick, want once", n)
 	}
 
-	// Done for this process: the next tick does not visit bob again.
+	// Not again within the hour.
 	r.reconcileCronJobs(context.Background())
 	if n := ag.listedCount("bob"); n != 1 {
 		t.Errorf("bob listed %d times over two ticks, want once", n)
+	}
+}
+
+func TestCronSweep_RunsAgainOnceTheIntervalHasPassed(t *testing.T) {
+	prev := cronOrphanSweepEvery
+	t.Cleanup(func() { cronOrphanSweepEvery = prev })
+	cronOrphanSweepEvery = 0
+	cron := &fakeCronRepo{byID: map[string]*models.CronJob{}}
+	ag := &cronDiskAgent{onDisk: map[string][]string{}}
+	r := newCronSweepReconciler(ag, cron, cronSweepUser("u-bob", "bob", false))
+
+	r.reconcileCronJobs(context.Background())
+	ag.onDisk["bob"] = []string{"01JOBBOBLATER0000000000000"} // leaked after the first sweep
+	r.reconcileCronJobs(context.Background())
+	if got := ag.removedSorted(); fmt.Sprint(got) != "[bob/01JOBBOBLATER0000000000000]" {
+		t.Errorf("removed %v, want the timer leaked after the first sweep", got)
+	}
+}
+
+// A job whose apply fails this tick still has its row: its running timer is
+// not an orphan.
+func TestCronReconcile_FailedApplyKeepsTheTimer(t *testing.T) {
+	job := &models.CronJob{ID: "01JOBALICE0000000000000000", UserID: "u-alice", Enabled: true}
+	cron := &fakeCronRepo{listed: []*models.CronJob{job}, byID: map[string]*models.CronJob{}}
+	ag := &cronDiskAgent{
+		onDisk:    map[string][]string{"alice": {job.ID}},
+		applyFail: map[string]bool{"alice": true},
+	}
+	r := newCronSweepReconciler(ag, cron, cronSweepUser("u-alice", "alice", false))
+
+	r.reconcileCronJobs(context.Background())
+	if got := ag.removedSorted(); len(got) != 0 {
+		t.Errorf("removed %v after its apply failed", got)
 	}
 }
 
