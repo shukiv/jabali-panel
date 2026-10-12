@@ -262,3 +262,117 @@ describe("ModulesCard mail needs DNS", () => {
   });
 });
 
+
+// GH #2101: DNS and Mail stayed on "installing…" after their installs finished,
+// until the page was reloaded. The card stopped reading the status once the
+// service was up, but the install was still running (the agent said
+// installing), so the last read it kept said installing.
+describe("ModulesCard follows an install to its end", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const dnsSwitch = () => screen.getByRole("switch", { name: /DNS server/ });
+
+  // serveSequence answers each status read with the next DNS status, then
+  // keeps answering with the last one. It returns the number of status reads.
+  const serveSequence = (flags: Flags, dns: object[]) => {
+    let n = 0;
+    mockGet.mockImplementation((url: string) => {
+      if (url === "/admin/settings") {
+        return Promise.resolve({
+          data: { dns_enabled: true, mail_enabled: false, security_enabled: true, quota_enabled: true, api_enabled: true, ...flags },
+        });
+      }
+      if (url === "/admin/settings/modules/status") {
+        const d = dns[Math.min(n++, dns.length - 1)];
+        return Promise.resolve({ data: { modules: { dns: d, mail: { installed: false, active: false }, security: up, quota: up } } });
+      }
+      return Promise.resolve({ data: {} });
+    });
+    mockPatch.mockResolvedValue({ data: {} });
+    return () => n;
+  };
+
+  const expectDNSActive = () =>
+    waitFor(() => {
+      expect(screen.queryByText(/installing/)).not.toBeInTheDocument();
+      // dns, security and quota
+      expect(screen.getAllByText("active")).toHaveLength(3);
+    });
+
+  it("keeps reading the status while the install runs on after the service is up", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const down = { installed: false, active: false };
+      serveSequence({ dns_enabled: false }, [
+        down, // page load
+        { ...up, installing: true }, // PowerDNS started; the install is still running
+        { ...up, installing: true },
+        up, // the install finished
+      ]);
+      render(<ModulesCard />);
+      await waitFor(() => expect(dnsSwitch()).not.toBeDisabled());
+      fireEvent.click(dnsSwitch());
+      for (let poll = 1; poll <= 2; poll += 1) {
+        await vi.advanceTimersByTimeAsync(5000);
+        expect(screen.getByText(/installing/)).toBeInTheDocument();
+      }
+      await vi.advanceTimersByTimeAsync(5000);
+      await expectDNSActive();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("follows an install that was already running when the page opened", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      serveSequence({}, [
+        { installed: false, active: false, installing: true }, // page load
+        { ...up, installing: true },
+        up,
+      ]);
+      render(<ModulesCard />);
+      expect(await screen.findByText(/installing/)).toBeInTheDocument();
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(screen.getByText(/installing/)).toBeInTheDocument();
+      await vi.advanceTimersByTimeAsync(5000);
+      await expectDNSActive();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps following an install that runs longer than five minutes", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const running = { installed: false, active: false, installing: true };
+      serveSequence({ dns_enabled: false }, [{ installed: false, active: false }, ...Array(70).fill(running), up]);
+      render(<ModulesCard />);
+      await waitFor(() => expect(dnsSwitch()).not.toBeDisabled());
+      fireEvent.click(dnsSwitch());
+      await vi.advanceTimersByTimeAsync(70 * 5000);
+      expect(screen.getByText(/installing/)).toBeInTheDocument();
+      await vi.advanceTimersByTimeAsync(5000);
+      await expectDNSActive();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stops reading after five minutes when the agent never reports the install", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const reads = serveSequence({ dns_enabled: false }, [{ installed: false, active: false }]);
+      render(<ModulesCard />);
+      await waitFor(() => expect(dnsSwitch()).not.toBeDisabled());
+      fireEvent.click(dnsSwitch());
+      await vi.advanceTimersByTimeAsync(60 * 5000);
+      expect(await screen.findByText("not installed")).toBeInTheDocument();
+      const after = reads();
+      await vi.advanceTimersByTimeAsync(10 * 5000);
+      expect(reads()).toBe(after);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

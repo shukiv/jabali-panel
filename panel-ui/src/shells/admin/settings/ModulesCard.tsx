@@ -52,7 +52,10 @@ const errorDetail = (err: unknown): string | undefined => {
 };
 
 const POLL_INTERVAL_MS = 5000;
-const POLL_MAX_ATTEMPTS = 60; // ~5 minutes; apt + downloads can be slow
+// ~5 minutes of reads in which the agent reports no install running: an install
+// it hasn't picked up. Reads while it reports one running don't count; apt and
+// downloads can take longer than that.
+const POLL_MAX_ATTEMPTS = 60;
 
 export const ModulesCard = () => {
   const { t } = useTranslation();
@@ -89,10 +92,11 @@ export const ModulesCard = () => {
     setLoading(true);
     setLoadFailed(false);
     try {
-      const [settingsResp] = await Promise.all([
+      const settled = await Promise.all([
         apiClient.get<Partial<Record<ModuleKey, boolean>>>("/admin/settings"),
         fetchStatus(),
       ]);
+      const [settingsResp, modules] = settled;
       const data = settingsResp.data as Partial<Record<ModuleKey, unknown>> | undefined;
       const next = {} as Record<ModuleKey, boolean>;
       for (const m of MODULES) {
@@ -101,6 +105,11 @@ export const ModulesCard = () => {
         next[m.key] = v;
       }
       if (mounted.current) setState(next);
+      // An install that was already running when the page opened (or was
+      // reloaded) is followed to its end too (GH #2101).
+      for (const [key, st] of Object.entries(modules)) {
+        if (st.installing) void pollUntilUp(key, st.last_error_at);
+      }
     } catch {
       if (mounted.current) {
         setState(null);
@@ -121,22 +130,28 @@ export const ModulesCard = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Poll a module's status until it is installed+active, until the agent
-  // reports a new failed install (GH #2056: its reason then shows on the card),
-  // or until the attempt budget is exhausted. errorAtBefore is the last failure's
-  // time from before this install started; a different value is a new failure.
+  // Poll a module's status until its install has finished with the module
+  // installed+active, until the agent reports a new failed install (GH #2056:
+  // its reason then shows on the card), or until the attempt budget is
+  // exhausted. errorAtBefore is the last failure's time from before this install
+  // started; a different value is a new failure. GH #2101: a service can be up
+  // while its install still runs (PowerDNS starts before the install ends), so
+  // "installed+active" alone isn't the end; stopping there kept a read that said
+  // installing on the card until the page was reloaded.
   const pollUntilUp = async (statusKey: string, errorAtBefore: string | undefined) => {
     if (polling.current.has(statusKey)) return;
     polling.current.add(statusKey);
     setInstalling((p) => ({ ...p, [statusKey]: true }));
     try {
-      for (let attempt = 0; attempt < POLL_MAX_ATTEMPTS; attempt += 1) {
+      for (let attempt = 0; attempt < POLL_MAX_ATTEMPTS; ) {
         await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
         if (!mounted.current) return;
         const modules = await fetchStatus();
         const s = modules[statusKey];
+        if (s?.installing) continue; // still running: doesn't use up the budget
         if (s?.installed && s?.active) return; // converged
-        if (s?.last_error_at && s.last_error_at !== errorAtBefore && !s.installing) return; // failed
+        if (s?.last_error_at && s.last_error_at !== errorAtBefore) return; // failed
+        attempt += 1;
       }
     } finally {
       polling.current.delete(statusKey);
