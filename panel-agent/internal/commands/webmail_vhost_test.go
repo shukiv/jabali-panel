@@ -526,6 +526,76 @@ func TestWebmailVhostApply_ChallengeOnly(t *testing.T) {
 	}
 }
 
+// With webmail off, mail.<domain> still serves what mail apps use there —
+// autoconfig/autodiscover, CalDAV/CardDAV, JMAP and the ACME challenge — but
+// not the Bulwark webmail app or its SSO landing (GH #2082). With the Bulwark
+// upstream not referenced, nginx -t no longer depends on it (GH #114).
+func TestWebmailVhostApply_NoWebmail(t *testing.T) {
+	avail, _ := wireMailVhostPaths(t)
+	wireNginxReload(t)
+
+	params, _ := json.Marshal(webmailVhostApplyParams{
+		DomainName:    "client.example",
+		SSLCertPath:   "/etc/letsencrypt/live/mail.client.example/fullchain.pem",
+		SSLKeyPath:    "/etc/letsencrypt/live/mail.client.example/privkey.pem",
+		DocRoot:       "/home/client/public_html",
+		PanelHostname: "mx.jabali-panel.com",
+		NoWebmail:     true,
+	})
+	if _, err := webmailVhostApplyHandler(context.Background(), params); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	b, err := os.ReadFile(filepath.Join(avail, "client.example-mail.conf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	for _, w := range []string{
+		"listen 443 ssl",
+		"ssl_certificate /etc/letsencrypt/live/mail.client.example/fullchain.pem;",
+		"server_name mail.client.example autoconfig.client.example autodiscover.client.example mta-sts.client.example;",
+		`sub_filter "mail.mx.jabali-panel.com" $host;`,
+		"location /jmap {",
+		"location /.well-known/jmap {",
+		"location = /.well-known/caldav {",
+		"location /dav/cal {",
+		"location /dav/card {",
+		"location = /mail/config-v1.1.xml {",
+		"location = /autodiscover/autodiscover.xml {",
+		"location = /Autodiscover/Autodiscover.xml {",
+		"location / {\n    return 404;\n  }",
+		"root /var/www/jabali-acme;",
+		"location @acme_docroot {",
+	} {
+		if !strings.Contains(s, w) {
+			t.Errorf("missing %q:\n%s", w, s)
+		}
+	}
+	for _, w := range []string{"proxy_pass http://jabali_bulwark", "/sso/webmail", "proxy_read_timeout 3600s;\n    proxy_send_timeout"} {
+		if strings.Contains(s, w) {
+			t.Errorf("webmail is off, must not contain %q:\n%s", w, s)
+		}
+	}
+}
+
+// challenge_only wins over no_webmail: the :80 block alone.
+func TestWebmailVhostApply_ChallengeOnlyWinsOverNoWebmail(t *testing.T) {
+	avail, _ := wireMailVhostPaths(t)
+	wireNginxReload(t)
+
+	params, _ := json.Marshal(webmailVhostApplyParams{DomainName: "client.example", ChallengeOnly: true, NoWebmail: true})
+	if _, err := webmailVhostApplyHandler(context.Background(), params); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	b, err := os.ReadFile(filepath.Join(avail, "client.example-mail.conf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := string(b); strings.Contains(s, ":443") || strings.Contains(s, "location /jmap") {
+		t.Errorf("challenge-only must render the :80 block alone:\n%s", s)
+	}
+}
+
 // TestWebmailVhostApply_DocRootServesBothACMEWebroots is the GH #132
 // regression guard. When a tenant domain has a docroot, the :80 ACME
 // location must serve BOTH the shared panel webroot (/var/www/jabali-
