@@ -110,7 +110,16 @@ type BackupRunSummary struct {
 	// Accounts is the number of per-account snapshots in the run (GH #502) — so
 	// the UI can label a Full Server run "system + N accounts" on the collapsed
 	// row instead of making the admin expand it to count.
-	Accounts      int       `json:"accounts"`
+	Accounts int `json:"accounts"`
+	// UserID is the run's account when every job belongs to one (a system-only
+	// run: "system"); nil for a run over several accounts. DestinationID is the
+	// run's destination when every job shares one, nil when that one is the
+	// implicit local repo or the jobs differ; Destinations tells those apart
+	// (distinct destinations, NULL counted as local). The Admin Backups list
+	// names both on the collapsed row (GH #2089).
+	UserID        *string   `json:"user_id,omitempty"`
+	DestinationID *string   `json:"destination_id,omitempty"`
+	Destinations  int       `json:"destinations"`
 	Total         int       `json:"total"`
 	Succeeded     int       `json:"succeeded"`
 	Failed        int       `json:"failed"`
@@ -323,6 +332,9 @@ func (r *backupJobRepo) ListRuns(ctx context.Context, limit, offset int) ([]Back
 		Content       string
 		HasAccounts   bool
 		Accounts      int
+		UserID        *string
+		DestinationID *string
+		Destinations  int
 		Total         int
 		Succeeded     int
 		Failed        int
@@ -344,6 +356,9 @@ SELECT run_id                                                             AS run
             ELSE 'full' END                                              AS content,
        SUM(kind = 'account_backup') > 0                                  AS has_accounts,
        SUM(kind = 'account_backup')                                      AS accounts,
+       CASE WHEN COUNT(DISTINCT user_id) = 1 THEN MAX(user_id) END       AS user_id,
+       CASE WHEN COUNT(DISTINCT COALESCE(destination_id, '')) = 1 THEN MAX(destination_id) END AS destination_id,
+       COUNT(DISTINCT COALESCE(destination_id, ''))                      AS destinations,
        COUNT(*)                                                           AS total,
        SUM(status = 'succeeded')                                          AS succeeded,
        SUM(status = 'failed')                                             AS failed,
@@ -374,6 +389,9 @@ SELECT run_id                                                             AS run
 			Content:       x.Content,
 			HasAccounts:   x.HasAccounts,
 			Accounts:      x.Accounts,
+			UserID:        x.UserID,
+			DestinationID: x.DestinationID,
+			Destinations:  x.Destinations,
 			Total:         x.Total,
 			Succeeded:     x.Succeeded,
 			Failed:        x.Failed,

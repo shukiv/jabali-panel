@@ -13,6 +13,10 @@ Subject to the administrator allowing tenant-initiated backups for your package.
 3. When complete, a download link appears on the page (and you receive an in-app notification).
 4. The link is short-lived (15 minutes by default) and accessible only to your panel session.
 
+## File name
+
+The download is named for your account and the time the backup was made (UTC), for example `backup_alice_2026-10-11_0430.tar.zst`. A Files, Database or Folders backup adds its content: `backup_alice_files_2026-10-11_0430.tar.zst`.
+
 ## What the tarball contains
 
 - `files/` — your home directory tree.

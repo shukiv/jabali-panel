@@ -872,23 +872,69 @@ func (h *backupHandler) download(c *gin.Context) {
 				}
 				destParams["password_file"] = passwordFile
 			}
-			streamBackupArtifact(c, h.cfg.Agent, job, destParams, h.cfg.logErr)
+			streamBackupArtifact(c, h.cfg.Agent, job, backupDownloadBase(job, backupJobOwnerName(c.Request.Context(), h.cfg.Users, job)), destParams, h.cfg.logErr)
 			return nil
 		})
+}
+
+// backupJobOwnerName is the name a backup download is filed under (GH #2089):
+// "system" for a system backup or restore, else the account's username. ""
+// when the account is gone or has no username, so the caller falls back to
+// the job ID.
+func backupJobOwnerName(ctx context.Context, users repository.UserRepository, job *models.BackupJob) string {
+	if job.Kind == models.BackupJobKindSystemBackup || job.Kind == models.BackupJobKindSystemRestore {
+		return "system"
+	}
+	if users == nil {
+		return ""
+	}
+	u, err := users.FindByID(ctx, job.UserID)
+	if err != nil || u == nil || u.Username == nil {
+		return ""
+	}
+	return *u.Username
+}
+
+// backupDownloadBase names a backup download without its extension (GH #2089):
+// backup_<owner>[_<content>]_<YYYY-MM-DD>_<HHMM>, the time in UTC. A folder of
+// downloads used to be a list of job IDs. Content is named only when it isn't
+// a full backup. Every part is reduced to [A-Za-z0-9_-] (contentDisposition
+// adds its own escaping on top), and an empty owner falls back to the job ID.
+func backupDownloadBase(job *models.BackupJob, owner string) string {
+	safe := func(s string) string {
+		var b strings.Builder
+		for _, r := range s {
+			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
+				b.WriteRune(r)
+			}
+		}
+		return b.String()
+	}
+	who := safe(owner)
+	if who == "" {
+		who = safe(job.ID)
+	}
+	parts := []string{"backup", who}
+	if content := safe(job.Content); content != "" && content != models.BackupContentFull {
+		parts = append(parts, content)
+	}
+	parts = append(parts, job.CreatedAt.UTC().Format("2006-01-02_1504"))
+	return strings.Join(parts, "_")
 }
 
 // streamBackupArtifact materializes a SUCCEEDED backup job's restic snapshot
 // via the agent and streams it to the client as a tar.zst attachment. Shared
 // by the admin (/backups/:job_id/download) and tenant (/me/backups/:id/download
 // — GH #266) handlers; the CALLER must load the job and authorize the request
-// (admin vs owner) before calling this.
+// (admin vs owner) before calling this. baseName is the download's file name
+// without its extension (backupDownloadBase); "" falls back to the job ID.
 //
 // panel-api runs as the jabali user and can read neither
 // /etc/jabali-panel/restic-repo.password nor /var/lib/jabali-backups/repo (both
 // 0600/0700 root:root), so the restic restore is dispatched to the agent, which
 // materializes the snapshot under /var/lib/jabali-backups/downloads/<job_id>/ as
 // root:jabali 0750 for the tar to read without elevated privileges.
-func streamBackupArtifact(c *gin.Context, ag agent.AgentInterface, job *models.BackupJob, destParams map[string]any, logErr func(string, error, ...any)) {
+func streamBackupArtifact(c *gin.Context, ag agent.AgentInterface, job *models.BackupJob, baseName string, destParams map[string]any, logErr func(string, error, ...any)) {
 	// A `partial` backup still produced a valid manifest snapshot (one
 	// non-critical stage failed but the rest, incl. the manifest, were
 	// captured) — the operator must be able to download it (GH #502): the
@@ -968,7 +1014,10 @@ func streamBackupArtifact(c *gin.Context, ag agent.AgentInterface, job *models.B
 	if _, lerr := exec.LookPath("zstd"); lerr == nil {
 		useZstd = true
 	}
-	filename := job.ID + ".tar"
+	if baseName == "" {
+		baseName = job.ID
+	}
+	filename := baseName + ".tar"
 	contentType := "application/x-tar"
 
 	// GH #462 round 3: build the archive as a Go pipeline (tar -> zstd), NOT
@@ -983,7 +1032,7 @@ func streamBackupArtifact(c *gin.Context, ag agent.AgentInterface, job *models.B
 
 	streamCmd := tarCmd // the process whose stdout is streamed to the client
 	if useZstd {
-		filename = job.ID + ".tar.zst"
+		filename = baseName + ".tar.zst"
 		contentType = "application/zstd"
 		zstdCmd := exec.CommandContext(c.Request.Context(), "zstd", "-c", "-")
 		zstdCmd.Stderr = &zstdErr
@@ -3028,7 +3077,7 @@ func (h *meBackupHandler) download(c *gin.Context) {
 				}
 				destParams["password_file"] = passwordFile
 			}
-			streamBackupArtifact(c, h.cfg.Agent, job, destParams, h.cfg.logErr)
+			streamBackupArtifact(c, h.cfg.Agent, job, backupDownloadBase(job, backupJobOwnerName(c.Request.Context(), h.cfg.Users, job)), destParams, h.cfg.logErr)
 			return nil
 		})
 }

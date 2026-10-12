@@ -32,9 +32,13 @@ The installer creates no schedules by default; the operator picks the cadence pe
 
 ## Run history
 
-Each row: started at, kind, target (user or whole-system), destination, status (`ok` / `fail`), bytes written (deduplicated), duration.
+The Backups tab lists every backup and restore. A scheduled or Full Server run is one row that expands to its jobs.
 
-Click for the detailed stage-by-stage log.
+- **User**: the account, `System`, or a run's scope (`system + 12 accounts`).
+- **Destination**: the destination's name and kind, for example `Offsite (SFTP)`. `Local` is the server's own repository, `Uploaded file` a restore from an uploaded backup, `Several` a run that wrote to more than one destination, and `Deleted destination` one that has been removed since.
+- **Type**, **Status**, the data added after deduplication, the logical size, and when it started.
+
+Expanding a row lists its jobs with the full job ID (with a copy button) and when each was created, plus Download, Log, Restore, Cancel and Delete. **Log** shows the job's stage-by-stage log.
 
 ## Uploaded backups
 

@@ -1,7 +1,7 @@
 // AdminBackupsPage — admin overview of every backup run.
 // Scheduler-fired jobs roll up under their run_id (one parent row,
 // expandable to per-user children). Manual creates render flat.
-import { Badge, Button, Card, Space, Table, Tag, Tooltip, Typography } from "antd";
+import { Badge, Button, Card, Space, Table, Tag, Typography } from "antd";
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { useBackupDownloadPrepare } from "../../../utils/backupDownload";
 import { backupTypeColor, backupTypeLabel, runScopeSummary } from "../../../utils/backupType";
@@ -72,6 +72,12 @@ interface BackupRun {
   schedule_id?: string;
   has_accounts?: boolean;
   accounts?: number;
+  // GH #2089: the run's account when every job belongs to one ("system" for a
+  // system-only run), and its destination when every job shares one;
+  // destinations counts them, the implicit local repo included.
+  user_id?: string;
+  destination_id?: string;
+  destinations?: number;
   kind: string;
   content?: string;
   total: number;
@@ -127,6 +133,17 @@ const formatBytes = (n: number): string => {
   return `${v.toFixed(1)} ${units[i]}`;
 };
 
+// Short names for backup destination kinds (DestinationsTab's BackendKind).
+const DEST_KIND_LABEL: Record<string, string> = {
+  local: "Local",
+  sftp: "SFTP",
+  s3: "S3",
+  b2: "B2",
+  azure: "Azure",
+  gcs: "GCS",
+  rest: "REST",
+};
+
 export const AdminBackupsPage = () => {
   const dl = useBackupDownloadPrepare("admin"); // GH #1408: prepare-then-download
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -168,11 +185,29 @@ export const AdminBackupsPage = () => {
     params: { pageSize: 100 },
     enabled: activeTab === "backups",
   });
-  const destNameById = (id?: string): string => {
-    if (!id) return "—";
+  // GH #2089: say where a backup is stored. No destination_id is the implicit
+  // local repo for a backup, and an uploaded file for an account restore (a
+  // restore from an upload is the one created without a destination). An ID
+  // with no destination row means the destination was deleted.
+  const destLabel = (kind: string, id?: string): string => {
+    if (!id) {
+      if (kind === "account_restore") return "Uploaded file";
+      return kind === "system_restore" ? "—" : "Local";
+    }
     const d = (destQuery.items ?? []).find((x) => x.id === id);
-    return d?.name ?? id.slice(0, 8) + "…";
+    if (!d) return destQuery.isLoading ? "…" : "Deleted destination";
+    return `${d.name} (${DEST_KIND_LABEL[d.kind] ?? d.kind.toUpperCase()})`;
   };
+  const runDestLabel = (r: BackupRun): string =>
+    (r.destinations ?? 1) > 1 ? "Several" : destLabel(r.kind, r.destination_id);
+  // GH #2089: whose backup a row is — the account, "System", or a run's scope
+  // when it spans accounts ("system + 12 accounts").
+  const ownerLabel = (kind: string, userID?: string): string =>
+    userID === "system" || kind === "system_backup" || kind === "system_restore"
+      ? "System"
+      : usernameById(userID ?? "");
+  const runOwnerLabel = (r: BackupRun): string =>
+    r.user_id ? ownerLabel(r.kind, r.user_id) : runScopeSummary(r.total, r.accounts ?? 0) || "System";
 
   const reload = async () => {
     setLoading(true);
@@ -347,34 +382,49 @@ export const AdminBackupsPage = () => {
     return aT < bT ? 1 : aT > bT ? -1 : 0;
   });
 
-  const renderChildJobs = (jobs: BackupJob[]) => (
+  // showUser is off under a single manual job: its row already names the
+  // account (GH #2089).
+  const renderChildJobs = (jobs: BackupJob[], showUser = true) => (
     <Table<BackupJob>
       rowKey="id"
       dataSource={jobs}
       pagination={false}
       size="small"
+      scroll={{ x: "max-content" }}
       columns={[
         {
+          // GH #2089: the full ID, selectable and copyable, not a truncated tooltip.
           title: "Job ID",
           dataIndex: "id",
           sorter: (a, b) => a.id.localeCompare(b.id),
           render: (id: string) => (
-            <Tooltip title={id}>
-              <code>{id.slice(0, 8)}…</code>
-            </Tooltip>
+            <Typography.Text code copyable={{ text: id }}>
+              {id}
+            </Typography.Text>
           ),
         },
+        ...(showUser
+          ? [
+              {
+                title: "User",
+                dataIndex: "user_id",
+                sorter: (a: BackupJob, b: BackupJob) =>
+                  ownerLabel(a.kind, a.user_id).localeCompare(ownerLabel(b.kind, b.user_id)),
+                render: (_: string, row: BackupJob) => ownerLabel(row.kind, row.user_id),
+              },
+            ]
+          : []),
         {
-          title: "User",
-          dataIndex: "user_id",
-          sorter: (a, b) => usernameById(a.user_id).localeCompare(usernameById(b.user_id)),
-          render: (id: string) => usernameById(id),
+          title: "Created",
+          dataIndex: "created_at",
+          sorter: (a, b) => +new Date(a.created_at) - +new Date(b.created_at),
+          render: (ts: string) => shortDateTime(ts),
         },
         {
           title: "Destination",
           dataIndex: "destination_id",
-          sorter: (a, b) => (a.destination_id ?? "").localeCompare(b.destination_id ?? ""),
-          render: (id?: string) => destNameById(id),
+          sorter: (a, b) => destLabel(a.kind, a.destination_id).localeCompare(destLabel(b.kind, b.destination_id)),
+          render: (_: string | undefined, row: BackupJob) => destLabel(row.kind, row.destination_id),
         },
         {
           title: "Status",
@@ -564,21 +614,20 @@ export const AdminBackupsPage = () => {
                     <Typography.Text type="secondary">Loading…</Typography.Text>
                   )
                 ) : (
-                  renderChildJobs([row.job])
+                  renderChildJobs([row.job], false)
                 ),
             }}
             columns={[
               {
-                title: "ID",
-                sorter: (a, b) => (a.isRun ? a.run.run_id : a.job.id).localeCompare(b.isRun ? b.run.run_id : b.job.id),
-                render: (_: unknown, row: TableRow) => {
-                  const id = row.isRun ? row.run.run_id : row.job.id;
-                  return (
-                    <Tooltip title={id}>
-                      <code>{id.slice(0, 8)}…</code>
-                    </Tooltip>
-                  );
-                },
+                // GH #2089: whose backup it is, not a truncated ID (the full
+                // job ID is in the expanded row).
+                title: "User",
+                sorter: (a, b) =>
+                  (a.isRun ? runOwnerLabel(a.run) : ownerLabel(a.job.kind, a.job.user_id)).localeCompare(
+                    b.isRun ? runOwnerLabel(b.run) : ownerLabel(b.job.kind, b.job.user_id),
+                  ),
+                render: (_: unknown, row: TableRow) =>
+                  row.isRun ? runOwnerLabel(row.run) : ownerLabel(row.job.kind, row.job.user_id),
               },
               {
                 title: "Source",
@@ -602,18 +651,18 @@ export const AdminBackupsPage = () => {
                   const kind = row.isRun ? row.run.kind : row.job.kind;
                   const content = row.isRun ? row.run.content : row.job.content;
                   const hasAccounts = row.isRun ? row.run.has_accounts : false;
-                  const scope = row.isRun ? runScopeSummary(row.run.total, row.run.accounts ?? 0) : "";
-                  return (
-                    <Space direction="vertical" size={0}>
-                      <Tag color={backupTypeColor(kind, content)}>{backupTypeLabel(kind, content, hasAccounts)}</Tag>
-                      {scope && (
-                        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                          {scope}
-                        </Typography.Text>
-                      )}
-                    </Space>
-                  );
+                  // A run's scope ("system + 12 accounts") is in the User column.
+                  return <Tag color={backupTypeColor(kind, content)}>{backupTypeLabel(kind, content, hasAccounts)}</Tag>;
                 },
+              },
+              {
+                title: "Destination",
+                sorter: (a, b) =>
+                  (a.isRun ? runDestLabel(a.run) : destLabel(a.job.kind, a.job.destination_id)).localeCompare(
+                    b.isRun ? runDestLabel(b.run) : destLabel(b.job.kind, b.job.destination_id),
+                  ),
+                render: (_: unknown, row: TableRow) =>
+                  row.isRun ? runDestLabel(row.run) : destLabel(row.job.kind, row.job.destination_id),
               },
               {
                 title: "Status",

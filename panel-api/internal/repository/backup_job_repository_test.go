@@ -201,3 +201,45 @@ func TestBackupJobRepository_ListFinishedBackupsForDestination(t *testing.T) {
 	require.Empty(t, rows)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
+
+// GH #2089: the Admin Backups list names a run's account and destination on
+// the collapsed row. ListRuns reports user_id only when every job of the run
+// belongs to one account (else NULL), destination_id when every job shares
+// one destination (NULL also when that one destination is the implicit local
+// repo), and destinations, the number of distinct destinations with NULL
+// counted as local, so the UI can tell "Local" from "several".
+func TestBackupJob_ListRuns_UserAndDestination(t *testing.T) {
+	db, mock, raw := newMockBackupDB(t)
+	defer raw.Close()
+	repo := NewBackupJobRepository(db)
+
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT COUNT(DISTINCT run_id) FROM backup_jobs WHERE run_id IS NOT NULL")).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(3))
+	mock.ExpectQuery(`(?s)CASE WHEN COUNT\(DISTINCT user_id\) = 1 THEN MAX\(user_id\) END\s+AS user_id.*` +
+		`CASE WHEN COUNT\(DISTINCT COALESCE\(destination_id, ''\)\) = 1 THEN MAX\(destination_id\) END\s+AS destination_id.*` +
+		`COUNT\(DISTINCT COALESCE\(destination_id, ''\)\)\s+AS destinations.*GROUP BY run_id`).
+		WithArgs(50, 0).
+		WillReturnRows(sqlmock.NewRows([]string{"run_id", "kind", "user_id", "destination_id", "destinations"}).
+			AddRow("run-one-account", "account_backup", "u1", "dest1", 1).
+			AddRow("run-full-server", "system_backup", nil, nil, 1).
+			AddRow("run-mixed-dest", "account_backup", "u1", nil, 2))
+
+	runs, total, err := repo.ListRuns(context.Background(), 0, 0)
+	require.NoError(t, err)
+	require.Equal(t, int64(3), total)
+	require.Len(t, runs, 3)
+
+	require.NotNil(t, runs[0].UserID)
+	require.Equal(t, "u1", *runs[0].UserID)
+	require.NotNil(t, runs[0].DestinationID)
+	require.Equal(t, "dest1", *runs[0].DestinationID)
+	require.Equal(t, 1, runs[0].Destinations)
+
+	require.Nil(t, runs[1].UserID, "a run over several accounts names none")
+	require.Nil(t, runs[1].DestinationID)
+	require.Equal(t, 1, runs[1].Destinations, "one destination, the implicit local repo")
+
+	require.Nil(t, runs[2].DestinationID)
+	require.Equal(t, 2, runs[2].Destinations)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
