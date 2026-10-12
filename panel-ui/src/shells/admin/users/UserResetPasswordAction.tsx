@@ -5,7 +5,7 @@
 // parent (UserList RowActions) drives `open`.
 import { useTranslation } from "react-i18next";
 import { useState } from "react";
-import { Modal, Typography } from "antd";
+import { Alert, Modal, Typography } from "antd";
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 
 import { apiClient } from "../../../apiClient";
@@ -22,14 +22,18 @@ export const UserResetPasswordAction = ({ userId, userLabel, open, onClose }: Pr
   const { t } = useTranslation();
   const [isLoading, setIsLoading] = useState(false);
   const [tempPassword, setTempPassword] = useState<string | null>(null);
+  // GH #2058: false when the panel password changed but the server account's
+  // (SSH, SFTP) didn't.
+  const [osSynced, setOsSynced] = useState(true);
 
   const handleReset = async () => {
     setIsLoading(true);
     try {
-      const res = await apiClient.post<{ password: string }>(
+      const res = await apiClient.post<{ password: string; os_synced?: boolean }>(
         `/admin/users/${encodeURIComponent(userId)}/password/reset`,
       );
       setTempPassword(res.data.password);
+      setOsSynced(res.data.os_synced !== false);
       feedback.message.success(`Password reset for "${userLabel}"`);
     } catch (err: unknown) {
       feedback.message.error(err instanceof Error ? err.message : "Failed to reset password");
@@ -40,6 +44,7 @@ export const UserResetPasswordAction = ({ userId, userLabel, open, onClose }: Pr
 
   const close = () => {
     setTempPassword(null);
+    setOsSynced(true);
     onClose();
   };
 
@@ -55,8 +60,18 @@ export const UserResetPasswordAction = ({ userId, userLabel, open, onClose }: Pr
       >
         <p>
           Hand this temporary password to <strong>{userLabel}</strong>. It is shown
-          only once. They sign in with it and should change it from their profile.
+          only once. They sign in with it (the panel, and SSH or SFTP) and should
+          change it from their profile.
         </p>
+        {!osSynced && (
+          <Alert
+            type="warning"
+            showIcon
+            style={{ marginBottom: 12 }}
+            message="SSH and SFTP still use the old password"
+            description="The panel password changed, but the server account's password couldn't be updated. Reset again to retry; the panel log has the reason."
+          />
+        )}
         <Typography.Paragraph copyable strong style={{ fontSize: 16 }}>
           {tempPassword}
         </Typography.Paragraph>

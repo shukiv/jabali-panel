@@ -100,7 +100,9 @@ func RotatePassword(ctx context.Context, d Deps, user *models.User, password str
 		if d.Log != nil {
 			d.Log.Warn("kratos SetPassword failed", "user_id", user.ID, "err", err)
 		}
-		return fmt.Errorf("%w: %v", ErrKratosSetPassword, err)
+		// %w twice: callers can still tell a missing identity
+		// (kratosclient.ErrIdentityNotFound) from any other refusal.
+		return fmt.Errorf("%w: %w", ErrKratosSetPassword, err)
 	}
 	kcancel()
 	if !user.IsAdmin && user.Username != nil && *user.Username != "" && d.Agent != nil {
