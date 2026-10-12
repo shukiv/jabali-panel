@@ -134,6 +134,13 @@ func TestCronRemove_RemovesTheUnitsCronApplyWrote(t *testing.T) {
 	env := newCronTestEnv(t)
 	plant(t, env.unitsDir(), cronTestJob, true)
 	plant(t, env.unitsDir(), cronTestJob2, true) // another job, kept
+	reloadSawTimer := false
+	env.fail = func(args []string) string {
+		if args[len(args)-1] == "daemon-reload" && lexists(filepath.Join(env.unitsDir(), "jabali-cron-"+cronTestJob+".timer")) {
+			reloadSawTimer = true
+		}
+		return ""
+	}
 
 	resp, err := cronRemove(t, cronTestJob)
 	if err != nil {
@@ -157,6 +164,9 @@ func TestCronRemove_RemovesTheUnitsCronApplyWrote(t *testing.T) {
 	got := strings.Join(env.systemctlCalls(), " | ")
 	if got != "disable --now jabali-cron-"+cronTestJob+".timer | daemon-reload" {
 		t.Errorf("systemctl --user calls = %q, want the timer disabled then a daemon-reload", got)
+	}
+	if reloadSawTimer {
+		t.Error("daemon-reload ran before the unit files were removed, so the manager keeps the unit loaded")
 	}
 }
 

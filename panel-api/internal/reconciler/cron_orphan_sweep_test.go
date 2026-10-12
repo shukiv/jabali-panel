@@ -25,10 +25,15 @@ import (
 type fakeCronRepo struct {
 	listed []*models.CronJob
 	byID   map[string]*models.CronJob
+	// errID makes FindByID fail for that id.
+	errID string
 }
 
 func (f *fakeCronRepo) Create(context.Context, *models.CronJob) error { return nil }
 func (f *fakeCronRepo) FindByID(_ context.Context, id string) (*models.CronJob, error) {
+	if id == f.errID {
+		return nil, fmt.Errorf("db down")
+	}
 	if j, ok := f.byID[id]; ok {
 		return j, nil
 	}
@@ -147,6 +152,9 @@ func TestCronSweep_RemovesLeakedTimersOfAccountsWithNoJobsLeft(t *testing.T) {
 	if ag.listedCount("carol") != 0 || ag.listedCount("") != 0 {
 		t.Errorf("listed an admin or an account without a Linux username: %v", ag.listed)
 	}
+	if n := ag.listedCount("alice"); n != 1 {
+		t.Errorf("alice, who has cron rows, listed %d times in one tick, want once", n)
+	}
 
 	// Done for this process: the next tick does not visit bob again.
 	r.reconcileCronJobs(context.Background())
@@ -177,5 +185,23 @@ func TestCronSweep_RetriesUntilAPassSucceeds(t *testing.T) {
 	r.reconcileCronJobs(context.Background())
 	if n := ag.listedCount("bob"); n != 2 {
 		t.Errorf("bob listed %d times, want twice (the failed pass, then the clean one)", n)
+	}
+}
+
+// A job the sweep cannot look up might be live: its timer stays, and the
+// sweep runs again next tick.
+func TestCronSweep_KeepsATimerItCannotLookUp(t *testing.T) {
+	cron := &fakeCronRepo{byID: map[string]*models.CronJob{}, errID: "01JOBBOBUNKNOWN00000000000"}
+	ag := &cronDiskAgent{onDisk: map[string][]string{"bob": {"01JOBBOBUNKNOWN00000000000"}}}
+	r := newCronSweepReconciler(ag, cron, cronSweepUser("u-bob", "bob", false))
+
+	r.reconcileCronJobs(context.Background())
+	if got := ag.removedSorted(); len(got) != 0 {
+		t.Errorf("removed %v without knowing whether the job exists", got)
+	}
+	cron.errID = ""
+	r.reconcileCronJobs(context.Background())
+	if n := ag.listedCount("bob"); n != 2 {
+		t.Errorf("bob listed %d times, want the sweep to run again after the failed lookup", n)
 	}
 }
