@@ -42,9 +42,8 @@ RFC1918 / ULA / cloud-metadata address, pins the validated IP so DNS cannot
 rebind, then issues a hardened curl GET discarding the body. Exit 0 = the
 endpoint was reached (HTTP <400); non-zero = blocked host, DNS failure, or
 HTTP error.`,
-		Args:          cobra.ExactArgs(1),
-		SilenceUsage:  true, // invoked by systemd; usage noise is pointless
-		SilenceErrors: false,
+		Args:         cobra.ExactArgs(1),
+		SilenceUsage: true, // invoked by systemd; usage noise is pointless
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 45*time.Second)
 			defer cancel()
