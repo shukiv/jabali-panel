@@ -13275,6 +13275,19 @@ RESTARTCONF
 #
 # Idempotent: writes the helper script + template unit unconditionally,
 # only daemon-reloads when content changed.
+# prune_old_install_logs — every install.sh run, and every `source install.sh`
+# step of `jabali update`, writes its own install-<ts>.log. logrotate renames
+# each one to install-<ts>.log.1, and since no file keeps that name,
+# `rotate 8` never applies: the rotated files were kept forever (5,983 on .60
+# since May; tens of thousands on a host in a module-install retry loop,
+# GH #2056). Delete rotated install logs older than the 8 weeks the logrotate
+# drop-in keeps. Logs not yet rotated are left to logrotate.
+prune_old_install_logs() {
+  local dir="${1:-/var/log/jabali}"
+  [[ -d "$dir" ]] || return 0
+  find "$dir" -maxdepth 1 -type f -name 'install-*.log.*' -mtime +56 -delete 2>/dev/null || true
+}
+
 install_logrotate() {
   _log "installing logrotate drop-in"
   local src="${REPO_DIR}/install/logrotate/jabali"
@@ -13332,6 +13345,7 @@ install_logrotate() {
   # each install/update tick — the only events that create them — so they
   # can't accumulate forever on hosts with weak /tmp cleanup.
   find /tmp -maxdepth 1 -name 'jabali_install-*.log' -type f -mtime +14 -delete 2>/dev/null || true
+  prune_old_install_logs
 }
 
 install_pdns_local_address_helper() {
