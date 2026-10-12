@@ -502,7 +502,8 @@ export const AdminBackupsPage = () => {
           <SaveOutlined style={{ marginRight: 8 }} />
           Backups
         </Typography.Title>
-        <Space>
+        {/* wrap: the three buttons are wider than a phone screen */}
+        <Space wrap>
           <Button
             icon={<HardDriveUploadOutlined />}
             onClick={() => setUploadRestoreOpen(true)}
