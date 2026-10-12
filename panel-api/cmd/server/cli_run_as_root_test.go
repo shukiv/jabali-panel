@@ -25,13 +25,15 @@ import (
 // initConfig.
 func resetCLIGlobals(t *testing.T) {
 	t.Helper()
-	savedPath, savedCfg, savedDB, savedEnvFile := cfgPath, sharedCfg, sharedDB, defaultEnvFile
+	savedPath, savedCfg, savedDB := cfgPath, sharedCfg, sharedDB
+	savedEnvFile, savedEnvFileErr := defaultEnvFile, envFileErr
 	savedLogger := slog.Default()
 	t.Cleanup(func() {
-		cfgPath, sharedCfg, sharedDB, defaultEnvFile = savedPath, savedCfg, savedDB, savedEnvFile
+		cfgPath, sharedCfg, sharedDB = savedPath, savedCfg, savedDB
+		defaultEnvFile, envFileErr = savedEnvFile, savedEnvFileErr
 		slog.SetDefault(savedLogger)
 	})
-	cfgPath, sharedCfg, sharedDB = "", nil, nil
+	cfgPath, sharedCfg, sharedDB, envFileErr = "", nil, nil, nil
 	defaultEnvFile = filepath.Join(t.TempDir(), "no-panel.env")
 	unsetEnv(t, "DATABASE_URL")
 	unsetEnv(t, "PANEL_ENV")
@@ -195,5 +197,13 @@ func TestRenderCronJobs_NamesEachJobsAccount(t *testing.T) {
 	}
 	if strings.Contains(out.String(), users[0].ID) {
 		t.Errorf("the table still shows the account's user id:\n%s", out.String())
+	}
+}
+
+func TestCronJobOwnerIDs_EachOwnerOnce(t *testing.T) {
+	rows := []*models.CronJob{{UserID: "u1"}, {UserID: "u2"}, {UserID: "u1"}, {UserID: "u3"}}
+	got := cronJobOwnerIDs(rows)
+	if strings.Join(got, ",") != "u1,u2,u3" {
+		t.Errorf("owners = %v, want [u1 u2 u3]", got)
 	}
 }
