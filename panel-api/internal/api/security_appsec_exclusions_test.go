@@ -272,7 +272,7 @@ func TestAppSecExclusions_AddApplyFailureLeavesNoRow(t *testing.T) {
 	r := appsecExclRouter(t, m, store, true)
 
 	rec := appsecDo(r, http.MethodPost, appsecBase+"/exclusions", `{"host":"blog.example.com","uri_prefix":"/x/","rule_id":"942100"}`)
-	assert.Equal(t, http.StatusBadGateway, rec.Code)
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
 	assert.Empty(t, store.rows)
 	var body map[string]any
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))

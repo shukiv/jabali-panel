@@ -96,3 +96,29 @@ func TestHealthAgent_UntypedError500(t *testing.T) {
 	r.ServeHTTP(rec, req)
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
 }
+
+// An agent failure that isn't one of the mapped codes answers 500 with the
+// agent's message, not 502: Cloudflare replaces an origin's 502 with its own
+// error page, which hid the message on a panel behind it (GH #2077).
+func TestHealthAgent_AgentFailure500KeepsTheMessage(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	m := agent.NewMockClient().OnError("agent.version", &agent.AgentError{
+		Code:    agent.CodeInternal,
+		Message: "ufw: could not load the rules",
+	})
+
+	r := gin.New()
+	api.RegisterAgentHealthRoute(r, m)
+
+	req := httptest.NewRequest(http.MethodGet, "/health/agent", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusInternalServerError, rec.Code)
+	var body map[string]string
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, string(agent.CodeInternal), body["error"])
+	assert.Equal(t, "ufw: could not load the rules", body["detail"])
+}

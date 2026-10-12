@@ -73,7 +73,7 @@ func TestPHPVersions_AgentError(t *testing.T) {
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
-	require.Equal(t, http.StatusBadGateway, rec.Code)
+	require.Equal(t, http.StatusInternalServerError, rec.Code)
 	var body map[string]interface{}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	assert.NotNil(t, body["error"])

@@ -192,10 +192,10 @@ func TestExtensions_Apply_AgentFailedPreconditionMapsTo409(t *testing.T) {
 	require.Equal(t, http.StatusConflict, rec.Code)
 }
 
-func TestExtensions_Apply_AgentInternalMapsTo502(t *testing.T) {
+func TestExtensions_Apply_AgentInternalMapsTo500(t *testing.T) {
 	t.Parallel()
-	// translateAgentError defaults unknown *AgentError codes to 502 BadGateway.
-	// CodeInternal is not in the explicit switch, so it falls through to 502.
+	// translateAgentError defaults unknown *AgentError codes to 500 (GH #2077:
+	// Cloudflare replaces a 502). CodeInternal falls through to 500.
 	mock := agent.NewMockClient().OnError("php.ext.apply", &agent.AgentError{
 		Code: agent.CodeInternal, Message: "dpkg-query exploded",
 	})
@@ -207,5 +207,5 @@ func TestExtensions_Apply_AgentInternalMapsTo502(t *testing.T) {
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
-	require.Equal(t, http.StatusBadGateway, rec.Code)
+	require.Equal(t, http.StatusInternalServerError, rec.Code)
 }
