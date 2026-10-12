@@ -40,27 +40,32 @@ func TestApply_RestoresEveryPoolInTheBackupsOrder(t *testing.T) {
 }
 
 // The account created for the restore can already have its default pool,
-// made by the reconciler after the restore began. A pool restored next to it
-// is still created after it, or it would become the account's default.
+// made by the reconciler after the restore began: under its own id, or under
+// the backup's (a restore run again). A pool restored next to it is still
+// created after it, or it would become the account's default.
 func TestApply_RestoredPoolIsCreatedAfterTheAccountsDefault(t *testing.T) {
-	local := models.PHPPool{ID: "p-local", UserID: "u1", PHPVersion: "8.4", CreatedAt: time.Now().UTC().Add(time.Hour)}
-	pools := &ppPools{rows: []models.PHPPool{local}}
-	doms := &ppDomains{pools: pools}
-	meta := ppMeta()
-	p83 := "p-src-83"
-	meta.PHPPools = append(meta.PHPPools, internalbackup.MetadataPHPPool{ID: p83, PHPVersion: "8.3", PmMode: "ondemand", PmMaxChildren: 5})
-	meta.Domains[0].PHPPoolID = &p83
+	for _, id := range []string{"p-local", "p-src"} {
+		t.Run(id, func(t *testing.T) {
+			local := models.PHPPool{ID: id, UserID: "u1", PHPVersion: "8.4", CreatedAt: time.Now().UTC().Add(time.Hour)}
+			pools := &ppPools{rows: []models.PHPPool{local}}
+			doms := &ppDomains{pools: pools}
+			meta := ppMeta()
+			p83 := "p-src-83"
+			meta.PHPPools = append(meta.PHPPools, internalbackup.MetadataPHPPool{ID: p83, PHPVersion: "8.3", PmMode: "ondemand", PmMaxChildren: 5})
+			meta.Domains[0].PHPPoolID = &p83
 
-	r := Apply(context.Background(), meta, ppDeps(pools, doms, &dcMailboxes{}))
+			r := Apply(context.Background(), meta, ppDeps(pools, doms, &dcMailboxes{}))
 
-	if len(r.Errors) != 0 {
-		t.Fatalf("errors: %v", r.Errors)
-	}
-	if len(pools.rows) != 2 || pools.rows[1].PHPVersion != "8.3" {
-		t.Fatalf("pools = %+v, want the account's 8.4 pool and a new 8.3 one", pools.rows)
-	}
-	if !pools.rows[0].CreatedAt.Before(pools.rows[1].CreatedAt) {
-		t.Errorf("the 8.3 pool (%v) is created before the account's default (%v): it would become the default",
-			pools.rows[1].CreatedAt, pools.rows[0].CreatedAt)
+			if len(r.Errors) != 0 {
+				t.Fatalf("errors: %v", r.Errors)
+			}
+			if len(pools.rows) != 2 || pools.rows[1].PHPVersion != "8.3" {
+				t.Fatalf("pools = %+v, want the account's 8.4 pool and a new 8.3 one", pools.rows)
+			}
+			if !pools.rows[0].CreatedAt.Before(pools.rows[1].CreatedAt) {
+				t.Errorf("the 8.3 pool (%v) is created before the account's default (%v): it would become the default",
+					pools.rows[1].CreatedAt, pools.rows[0].CreatedAt)
+			}
+		})
 	}
 }
