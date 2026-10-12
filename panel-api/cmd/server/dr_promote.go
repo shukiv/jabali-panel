@@ -89,8 +89,7 @@ func newDRPromoteCmd() *cobra.Command {
 					return cerr
 				}
 				if !ok {
-					fmt.Println("Aborted.")
-					return nil
+					return notConfirmed(cmd, "--yes")
 				}
 			}
 

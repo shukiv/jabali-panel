@@ -220,8 +220,7 @@ name collision under the new owner. Postgres databases are not supported yet.`,
 					return cerr
 				}
 				if !ok {
-					fmt.Println("Aborted.")
-					return nil
+					return notConfirmed(cmd, "--yes")
 				}
 			}
 

@@ -212,12 +212,8 @@ func newUserDeleteCmd() *cobra.Command {
 				home := "/home/" + strOr(target.Username, "<no-home>")
 				msg := fmt.Sprintf("Delete user %s (%s)? This will permanently remove %s, all owned domains, databases, mailboxes, cron jobs, and the OS account.",
 					target.ID, target.Email, home)
-				fmt.Print(msg + " [y/N]: ")
-				var confirm string
-				fmt.Scanln(&confirm)
-				if confirm != "y" && confirm != "Y" {
-					fmt.Println("Cancelled.")
-					return nil
+				if err := confirmOrAbort(cmd, os.Stdin, msg, "--force"); err != nil {
+					return err
 				}
 			}
 

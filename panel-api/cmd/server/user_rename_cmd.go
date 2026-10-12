@@ -69,8 +69,7 @@ and DB SSO shadow roles keep the old-username prefix (the panel keys them by id)
 					return cerr
 				}
 				if !ok {
-					fmt.Println("Aborted.")
-					return nil
+					return notConfirmed(cmd, "--yes")
 				}
 			}
 
