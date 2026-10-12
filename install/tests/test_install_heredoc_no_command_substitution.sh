@@ -17,8 +17,10 @@
 #      lines and key=value settings.
 #   3. ensure_pdns_conf_no_stray_lines heals a host that already has the
 #      stray lines: it comments them out, keeps every setting, restarts pdns
-#      only when it is enabled, no-ops on a clean file, and skips a host
-#      without the file. `jabali update` (provision_new_software) calls it.
+#      only when it is enabled, then creates the pdns self-zone the dead
+#      install never reached (Mail needs it); no-ops on a clean file, and
+#      skips a host without the file. `jabali update` (provision_new_software)
+#      calls it.
 #
 # Run from repo root:
 #     bash install/tests/test_install_heredoc_no_command_substitution.sh
@@ -122,6 +124,11 @@ systemctl() {
 _ok() { :; }
 _log() { :; }
 _warn() { :; }
+# The install that wrote the stray lines died at its pdns restart, before
+# bootstrap_pdns_self_zone, so Mail refuses to install until the self-zone
+# exists. The heal runs it (it is idempotent) once pdns is back.
+reconstruct_server_env_from_db() { echo "reconstruct" >>"$tmp/systemctl.log"; }
+bootstrap_pdns_self_zone() { echo "bootstrap_pdns_self_zone" >>"$tmp/systemctl.log"; }
 eval "${fn_src//\/etc\/powerdns\/pdns.d\/01-jabali-mysql.conf/$tmp/heal.conf}"
 
 broken='launch=gmysql
@@ -146,19 +153,23 @@ for s in launch=gmysql gmysql-password=secret 'allow-axfr-ips=127.0.0.0/8,::1' z
 done
 grep -q 'restart pdns' "$tmp/systemctl.log" || { echo "FAIL: heal didn't restart an enabled pdns"; fail=1; }
 grep -q 'reset-failed pdns' "$tmp/systemctl.log" || { echo "FAIL: heal didn't reset-failed pdns (a crash loop hits the start limit)"; fail=1; }
+grep -q 'bootstrap_pdns_self_zone' "$tmp/systemctl.log" || { echo "FAIL: heal didn't create the pdns self-zone the dead install never reached (Mail stays blocked)"; fail=1; }
+awk '/restart pdns/{r=NR} /bootstrap_pdns_self_zone/{b=NR} END{exit !(r && b > r)}' "$tmp/systemctl.log" \
+  || { echo "FAIL: heal must create the self-zone after pdns is restarted"; fail=1; }
 
 printf '%s\n' "$broken" >"$tmp/heal.conf"
 : >"$tmp/systemctl.log"
 pdns_enabled=0
 ensure_pdns_conf_no_stray_lines
 grep -q 'restart pdns' "$tmp/systemctl.log" && { echo "FAIL: heal restarted pdns while it is disabled/masked"; fail=1; }
+grep -q 'bootstrap_pdns_self_zone' "$tmp/systemctl.log" && { echo "FAIL: heal touched the self-zone while pdns is disabled/masked"; fail=1; }
 
 cp "$tmp/heal.conf" "$tmp/clean.before"
 : >"$tmp/systemctl.log"
 pdns_enabled=1
 ensure_pdns_conf_no_stray_lines
 cmp -s "$tmp/clean.before" "$tmp/heal.conf" || { echo "FAIL: heal changed an already clean file"; fail=1; }
-grep -q 'restart' "$tmp/systemctl.log" && { echo "FAIL: heal restarted pdns for a clean file"; fail=1; }
+grep -q 'restart\|bootstrap' "$tmp/systemctl.log" && { echo "FAIL: heal acted on a clean file"; fail=1; }
 
 rm -f "$tmp/heal.conf"
 ensure_pdns_conf_no_stray_lines || { echo "FAIL: heal failed on a host without the file"; fail=1; }

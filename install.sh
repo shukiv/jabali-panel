@@ -6188,8 +6188,8 @@ ensure_maintenance_isolation() {
 # `jabali update`, so a host that already has the lines keeps a dead pdns.
 # Every line jabali writes there is a comment, blank, or key=value: comment
 # out anything else, then restart pdns if it is enabled (reset-failed first —
-# the crash loop has hit the start limit). A masked pdns (DNS module off) is
-# left alone.
+# the crash loop has hit the start limit) and create the self-zone the dead
+# install never reached. A masked pdns (DNS module off) is left alone.
 ensure_pdns_conf_no_stray_lines() {
   local conf=/etc/powerdns/pdns.d/01-jabali-mysql.conf
   [[ -f "$conf" ]] || return 0   # dns module never installed here
@@ -6197,9 +6197,18 @@ ensure_pdns_conf_no_stray_lines() {
   sed -i -E '/^[[:space:]]*(#|$)|^[a-z0-9-]+=/!s/^/# stray line, commented out (GH #2056): /' "$conf"
   if systemctl is-enabled --quiet pdns 2>/dev/null; then
     systemctl reset-failed pdns >/dev/null 2>&1 || true
-    systemctl restart pdns \
-      && _ok "pdns config: stray lines from a nested jabali update commented out; pdns restarted (GH #2056)" \
-      || _warn "pdns config: stray lines commented out, but pdns restart failed — check 'journalctl -u pdns'"
+    if systemctl restart pdns; then
+      _ok "pdns config: stray lines from a nested jabali update commented out; pdns restarted (GH #2056)"
+      # The install that wrote these lines died at its pdns restart, before
+      # bootstrap_pdns_self_zone, and Mail refuses to install without the
+      # self-zone ("the DNS module must be installed first"). Both calls are
+      # idempotent: the env is filled only where unset, and an existing zone
+      # row is left alone.
+      reconstruct_server_env_from_db
+      bootstrap_pdns_self_zone || _warn "pdns self-zone bootstrap failed — press Retry on DNS in Server Settings → Modules"
+    else
+      _warn "pdns config: stray lines commented out, but pdns restart failed — check 'journalctl -u pdns'"
+    fi
   else
     _log "pdns config: stray lines commented out in $conf (pdns not enabled, not restarted)"
   fi
