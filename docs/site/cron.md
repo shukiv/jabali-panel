@@ -87,7 +87,7 @@ jabali cron list --user <id>
 jabali cron add --user <id> --schedule "0 3 * * *" --command "wp cron event run --due-now --url=https://example.com"
 jabali cron update <job-id> --schedule "*/15 * * * *"
 jabali cron delete <job-id>
-jabali cron run-now <job-id>     # synchronous, ignores schedule
+jabali cron run-now <job-id>     # ignores schedule; waits up to 4 min, a longer run keeps going
 ```
 
 ## Failures

@@ -1049,6 +1049,10 @@ export interface CronRunNowResponse {
   exit_code: number;
   stdout: string;
   stderr: string;
+  /** Combined stdout+stderr of a run that went through the job's unit (GH #2122). */
+  output?: string;
+  /** The run outlived Run now's wait and keeps running in the background (HTTP 202). */
+  running?: boolean;
 }
 
 export interface CronLogResponse {
@@ -1173,7 +1177,9 @@ export async function deleteCronJob(id: string): Promise<void> {
 }
 
 /**
- * Run a cron job immediately
+ * Run a cron job immediately. Waits about 20 s; a job still running then keeps
+ * running in the background (`running`). 409 `already_running` when a run of
+ * the job is already under way.
  */
 export async function runCronJobNow(id: string): Promise<CronRunNowResponse> {
   const resp = await apiClient.post<CronRunNowResponse>(`/cron/${id}/run-now`);

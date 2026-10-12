@@ -8,8 +8,22 @@ interface RunNowResultModalProps {
     exit_code: number;
     stdout: string;
     stderr: string;
+    output?: string;
+    running?: boolean;
   } | null;
 }
+
+const outputStyle = {
+  fontFamily: "monospace",
+  margin: 0,
+  maxHeight: "300px",
+  overflow: "auto",
+  backgroundColor: "var(--ant-color-bg-container)",
+  padding: "12px",
+  borderRadius: "4px",
+  whiteSpace: "pre-wrap",
+  wordWrap: "break-word",
+} as const;
 
 export const RunNowResultModal = ({
   open,
@@ -32,30 +46,33 @@ export const RunNowResultModal = ({
       width={700}
     >
       <Space direction="vertical" style={{ width: "100%" }}>
-        <Alert
-          title={isSuccess ? "Execution Successful" : "Execution Failed"}
-          description={`Exit code: ${result.exit_code}`}
-          type={isSuccess ? "success" : "error"}
-          showIcon
-        />
+        {result.running ? (
+          // GH #2122: the run outlived Run now's wait and keeps running in the
+          // background; there is no exit code yet.
+          <Alert
+            title={t("runnowresultmodal.still_running")}
+            description={t("runnowresultmodal.still_running_detail")}
+            type="info"
+            showIcon
+          />
+        ) : (
+          <Alert
+            title={isSuccess ? "Execution Successful" : "Execution Failed"}
+            description={`Exit code: ${result.exit_code}`}
+            type={isSuccess ? "success" : "error"}
+            showIcon
+          />
+        )}
+
+        {result.output && (
+          <Card title={t("runnowresultmodal.output")}>
+            <pre style={outputStyle}>{result.output}</pre>
+          </Card>
+        )}
 
         {result.stdout && (
           <Card title={t("runnowresultmodal.standard_output")}>
-            <pre
-              style={{
-                fontFamily: "monospace",
-                margin: 0,
-                maxHeight: "300px",
-                overflow: "auto",
-                backgroundColor: "var(--ant-color-bg-container)",
-                padding: "12px",
-                borderRadius: "4px",
-                whiteSpace: "pre-wrap",
-                wordWrap: "break-word",
-              }}
-            >
-              {result.stdout}
-            </pre>
+            <pre style={outputStyle}>{result.stdout}</pre>
           </Card>
         )}
 

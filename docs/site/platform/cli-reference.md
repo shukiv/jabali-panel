@@ -850,7 +850,7 @@ jabali cron list [flags]
 
 #### `jabali cron run-now`
 
-Run a cron job immediately via the agent (synchronous)
+Run a cron job immediately; a run still going after 4 minutes keeps running
 
 ```
 jabali cron run-now <job-id>

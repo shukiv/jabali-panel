@@ -119,7 +119,12 @@ export function CronJobWorkspace({ audience }: { audience: CronWorkspaceAudience
       // Refetch to pick up the new last_run_at / last_exit_code once the run lands.
       setTimeout(() => refetch(), 2000);
     } catch (e) {
-      surfaceErr(e, "Failed to run cron job");
+      const resp = (e as { response?: { status?: number; data?: { error?: string } } })?.response;
+      if (resp?.status === 409 && resp.data?.error === "already_running") {
+        antMessage.info(t("runnowresultmodal.already_running"));
+      } else {
+        surfaceErr(e, "Failed to run cron job");
+      }
     } finally {
       setRunningId(null);
     }

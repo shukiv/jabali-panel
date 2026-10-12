@@ -314,19 +314,28 @@ func newCronDeleteCmd() *cobra.Command {
 	return cmd
 }
 
+// cronRunNowCLIWaitSeconds is how long `jabali cron run-now` waits for the run
+// before reporting that it is still running (GH #2122). It stays inside the
+// command's 5-minute agent call.
+const cronRunNowCLIWaitSeconds = 240
+
 func newCronRunNowCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "run-now <job-id>",
-		Short: "Run a cron job immediately via the agent (synchronous)",
-		Long: `Runs the job's command immediately as the target user via the agent
-(synchronous), returning its real exit code plus stdout/stderr.
+		Short: "Run a cron job immediately; a run still going after 4 minutes keeps running",
+		Long: `Runs the job once, now, as the target user via the agent, and prints its
+exit code and output.
 
-The agent executes it with ` + "`runuser`" + ` -- a plain setuid/setgid drop --
-so run-now does NOT depend on the system D-Bus bus, the user's
-systemd-user manager, or linger being up (GH #296). It works from any
-non-interactive context (cron, CI, headless ssh) regardless of host
-shape. (The scheduled timer run still fires inside the user manager;
-this one-shot does not need the slice.)`,
+A job whose systemd-user unit is installed runs through that unit, exactly
+like a scheduled run. The command waits up to 4 minutes for it; a run still
+going then keeps running in the background (GH #2122), its output goes to
+the job's log, and Last run is recorded when it ends. A run of the job that
+is already under way is not started again (exit 1).
+
+A job without an installed unit yet, or on a host where the user's systemd
+manager can't be reached, runs directly with ` + "`runuser`" + ` -- a plain
+setuid/setgid drop that needs no D-Bus, user manager or linger (GH #296) --
+and is stopped when the command's 5-minute limit ends.`,
 		Args:    cobra.ExactArgs(1),
 		PreRunE: requireDBAndAgent,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -362,20 +371,39 @@ this one-shot does not need the slice.)`,
 				"job_id":         job.ID,
 				"command":        job.Command,
 				"owned_docroots": docroots,
+				// GH #2122: wait most of this command's 5 minutes; a run that
+				// is still going then carries on in the job's unit.
+				"wait_seconds": cronRunNowCLIWaitSeconds,
 			})
 			if err != nil {
 				return fmt.Errorf("cron.run_now: %w", err)
 			}
 			var resp struct {
-				ExitCode int    `json:"exit_code"`
-				Stdout   string `json:"stdout,omitempty"`
-				Stderr   string `json:"stderr,omitempty"`
+				ExitCode       int    `json:"exit_code"`
+				Stdout         string `json:"stdout,omitempty"`
+				Stderr         string `json:"stderr,omitempty"`
+				Output         string `json:"output,omitempty"`
+				Running        bool   `json:"running,omitempty"`
+				AlreadyRunning bool   `json:"already_running,omitempty"`
 			}
 			_ = json.Unmarshal(raw, &resp)
 			if jsonOutput {
 				return printJSON(resp)
 			}
+			if resp.AlreadyRunning {
+				return fmt.Errorf("cron job %s is already running; nothing was started", job.ID)
+			}
+			if resp.Running {
+				fmt.Printf("Still running after %d seconds; it carries on in the background.\n", cronRunNowCLIWaitSeconds)
+				fmt.Println("Its output goes to the job's log in the panel. To follow it here:")
+				fmt.Printf("  journalctl -f _SYSTEMD_USER_UNIT=jabali-cron-%s.service\n", job.ID)
+				return nil
+			}
 			fmt.Printf("Exit: %d\n", resp.ExitCode)
+			if resp.Output != "" {
+				fmt.Println("--- output ---")
+				fmt.Println(resp.Output)
+			}
 			if resp.Stdout != "" {
 				fmt.Println("--- stdout ---")
 				fmt.Println(resp.Stdout)

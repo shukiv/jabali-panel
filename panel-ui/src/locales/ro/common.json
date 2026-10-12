@@ -1350,9 +1350,13 @@
     "cron_job_log": ""
   },
   "runnowresultmodal": {
+    "already_running": "",
     "cron_job_execution_result": "",
+    "output": "",
     "standard_error": "",
-    "standard_output": ""
+    "standard_output": "",
+    "still_running": "",
+    "still_running_detail": ""
   },
   "usercronlist": {
     "search_by_name_command_or_schedule": ""

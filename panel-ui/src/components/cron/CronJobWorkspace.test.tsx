@@ -157,6 +157,44 @@ const commonActionMatrix = (label: string, opts: MatrixOpts) => {
       expect(await screen.findByText(/Exit code: 0/)).toBeInTheDocument();
     });
 
+    // GH #2122: Run now waits about 20 s; a job still running then keeps
+    // running in the background, so the overlay must say so, not report an
+    // exit code for a run that hasn't ended.
+    it("says a long run keeps going instead of showing an exit code", async () => {
+      setList(opts.listMock, [makeRow({ id: "j1" })]);
+      api.runCronJobNow.mockResolvedValue({ exit_code: 0, stdout: "", stderr: "", running: true });
+      renderAdapter(opts.Adapter);
+      await screen.findByText("alpha");
+      fireEvent.click(screen.getByText(opts.runLabel));
+      expect(await screen.findByText("runnowresultmodal.still_running")).toBeInTheDocument();
+      expect(screen.getByText("runnowresultmodal.still_running_detail")).toBeInTheDocument();
+      expect(screen.queryByText(/Exit code/)).not.toBeInTheDocument();
+    });
+
+    it("shows a finished run's combined output", async () => {
+      setList(opts.listMock, [makeRow({ id: "j1" })]);
+      api.runCronJobNow.mockResolvedValue({ exit_code: 3, stdout: "", stderr: "", output: "importing\nTraceback: boom" });
+      renderAdapter(opts.Adapter);
+      await screen.findByText("alpha");
+      fireEvent.click(screen.getByText(opts.runLabel));
+      expect(await screen.findByText(/Exit code: 3/)).toBeInTheDocument();
+      expect(screen.getByText("runnowresultmodal.output")).toBeInTheDocument();
+      expect(screen.getByText(/Traceback: boom/)).toBeInTheDocument();
+    });
+
+    it("tells the user a run is already in progress", async () => {
+      setList(opts.listMock, [makeRow({ id: "j1" })]);
+      api.runCronJobNow.mockRejectedValue({
+        message: "Request failed with status code 409",
+        response: { status: 409, data: { error: "already_running" } },
+      });
+      renderAdapter(opts.Adapter);
+      await screen.findByText("alpha");
+      fireEvent.click(screen.getByText(opts.runLabel));
+      expect(await screen.findByText("runnowresultmodal.already_running")).toBeInTheDocument();
+      expect(screen.queryByText(/status code 409/)).not.toBeInTheDocument();
+    });
+
     it("surfaces the backend detail on a failed action", async () => {
       setList(opts.listMock, [makeRow({ id: "j1", enabled: true })]);
       api.updateCronJob.mockRejectedValue({ response: { data: { detail: "boom from backend" } } });
