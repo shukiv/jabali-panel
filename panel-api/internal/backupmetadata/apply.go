@@ -299,10 +299,12 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 			}
 			// Custom nginx directives are admin-only raw config, checked only by
 			// the relaxed admin rules. From an uploaded file they are config
-			// written by whoever made it (GH #1993).
+			// written by whoever made it (GH #1993): what the import can convert
+			// becomes typed rules, which CheckDomain holds to the owner's rules.
 			if d.Untrusted && row.NginxCustomDirectives != nil && strings.TrimSpace(*row.NginxCustomDirectives) != "" {
-				row.NginxCustomDirectives = nil
-				r.Errors = append(r.Errors, fmt.Sprintf("domain %s (%s): custom nginx directives not restored from an uploaded backup; re-add them in the domain's settings after reviewing them", dm.ID, dm.Name))
+				for _, n := range convertUploadedDirectives(row) {
+					r.Errors = append(r.Errors, fmt.Sprintf("domain %s (%s): %s", dm.ID, dm.Name, n))
+				}
 			}
 			for _, n := range setRestoredSSLMode(row, dm) {
 				r.Errors = append(r.Errors, fmt.Sprintf("domain %s (%s): %s", dm.ID, dm.Name, n))

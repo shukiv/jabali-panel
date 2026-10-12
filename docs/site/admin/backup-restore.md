@@ -402,8 +402,16 @@ it into the target account only (GH #1993):
 - **Symbolic links** — restored inside the account's home and an app's data
   folder, as the backup has them. An archive with a symbolic link anywhere
   else is refused before anything is restored.
-- **Custom nginx directives** on a domain are left out. Re-add them in the
-  domain's settings after reviewing them.
+- **Custom nginx directives** on a domain the restore creates are not restored
+  as written. They go through the same converter as **Import from an nginx
+  config** on the domain's Rewrite rules tab. What it can convert (`rewrite`,
+  `add_header`, a `deny` or `expires` block by file extension, a front
+  controller) becomes the domain's nginx rules, after the backup's own. Those
+  rules are then held to what the account's owner may set: they are kept only
+  while **Tenant Domain Options** is on in Server Settings, and only the rule
+  kinds an owner can add. The restore report lists each directive that wasn't
+  converted. Re-add those in the domain's settings after reviewing them. A
+  domain that already exists keeps its own rules.
 - **Index priority** on a domain that the domain page doesn't offer is left
   out; the domain gets the default.
 - **PHP settings** on a domain (the limits, error display and reporting, time
