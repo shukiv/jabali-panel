@@ -250,6 +250,8 @@ what happens to it after the restore:
 Each entry shows the account, the file and its size, when it was uploaded, how
 long it is kept, and its last restore. **Restore** restores it again; when its
 account is not on this server, the account can be created from the backup.
+An account with no email is created without one. A backup whose email another
+account here already has is refused: restore it into that account instead.
 **Delete** removes the file (accounts already restored from it are not
 changed). One backup can't be
 restored twice at once, or deleted while a restore of it runs.
@@ -267,7 +269,12 @@ when the restore starts, so a backup the check blocks is never restored.
 
 - **PHP versions** — every PHP version the account's sites use must be
   installed here. A missing one blocks the restore: install it under **PHP
-  Versions**, then restore.
+  Versions**, then restore. A backup holds each of the account's PHP pools:
+  the default one, and one for each other version a domain runs on. Each
+  domain comes back on its own version (GH #1993). A backup made before Jabali
+  kept every pool holds only the default one. A domain on another version
+  comes back on the default version, and the restore report names it: set its
+  version again in the domain's PHP settings.
 - **PHP extensions** — the extensions the source server had enabled for those
   versions, other than the ones built into PHP. One this server lacks is a
   warning: the restore runs, and a site that needs it doesn't work until you

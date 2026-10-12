@@ -439,13 +439,14 @@ func (h *backupHandler) createUserFromInspect(ctx context.Context, ins uploadIns
 	if ins.User.IsAdmin {
 		return nil, &createBundleError{http.StatusForbidden, "admin_bundle_refused", "refusing to create an admin account from a backup"}
 	}
-	if ins.User.Email == "" {
-		return nil, &createBundleError{http.StatusBadRequest, "bundle_no_email", "the backup carries no user email — create the user manually, then restore into it"}
-	}
 	// Don't hijack an existing identity: an email collision is the admin's to
-	// resolve (restore into the existing user, or create manually).
-	if existing, _ := h.cfg.Users.FindByEmail(ctx, ins.User.Email); existing != nil {
-		return nil, &createBundleError{http.StatusConflict, "email_taken", "a user with that email already exists — restore into it instead"}
+	// resolve (restore into the existing user, or create manually). An account
+	// with no email is created without one (GH #1993): the email is optional
+	// (userops.Create), and no other account's "" is a collision.
+	if ins.User.Email != "" {
+		if existing, _ := h.cfg.Users.FindByEmail(ctx, ins.User.Email); existing != nil {
+			return nil, &createBundleError{http.StatusConflict, "email_taken", "a user with that email already exists — restore into it instead"}
+		}
 	}
 
 	pw, perr := randomRestorePassword()

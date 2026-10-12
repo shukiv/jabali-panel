@@ -116,8 +116,13 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 	// poolIDs maps each backup pool id to the pool that stands for it on this
 	// server; a backup pool missing from it was not restored (GH #1993).
 	poolIDs := map[string]string{}
+	// GH #1993: the account's default pool is its earliest-created one, and
+	// the backup lists the default first. defaultAt is when the pool that
+	// stands for it here was created (it can be a pool the reconciler made
+	// after now); every other pool is created after it, in the backup's order.
+	defaultAt := now
 	if d.PHPPools != nil {
-		for _, p := range m.PHPPools {
+		for i, p := range m.PHPPools {
 			if existing, err := d.PHPPools.FindByID(ctx, p.ID); err == nil && existing != nil {
 				// SECURITY: an uploaded bundle is untrusted. A pool with this id
 				// that another account owns runs PHP as that account's user;
@@ -126,6 +131,9 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 				if existing.UserID != m.User.ID {
 					r.Errors = append(r.Errors, fmt.Sprintf("php_pool %s: not restored: a pool with this id belongs to another account", p.ID))
 					continue
+				}
+				if i == 0 && existing.CreatedAt.After(defaultAt) {
+					defaultAt = existing.CreatedAt
 				}
 				poolIDs[p.ID] = existing.ID
 				restoreExistingPool(ctx, d, &r, m.User.ID, existing, p)
@@ -139,6 +147,9 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 			// another id. One pool per (user, version) is allowed, so the
 			// backup's pool of that version is this one.
 			if existing, err := d.PHPPools.FindByUserAndVersion(ctx, m.User.ID, p.PHPVersion); err == nil && existing != nil {
+				if i == 0 && existing.CreatedAt.After(defaultAt) {
+					defaultAt = existing.CreatedAt
+				}
 				poolIDs[p.ID] = existing.ID
 				restoreExistingPool(ctx, d, &r, m.User.ID, existing, p)
 				continue
@@ -146,6 +157,7 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 				r.Errors = append(r.Errors, fmt.Sprintf("php_pool %s: lookup PHP %s pool: %v", p.ID, p.PHPVersion, err))
 				continue
 			}
+			createdAt := defaultAt.Add(time.Duration(i) * time.Microsecond)
 			pool := &models.PHPPool{
 				ID:                        p.ID,
 				UserID:                    m.User.ID,
@@ -154,8 +166,8 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 				PmMaxChildren:             p.PmMaxChildren,
 				ProcessIdleTimeoutSeconds: p.ProcessIdleTimeoutSeconds,
 				Status:                    "pending",
-				CreatedAt:                 now,
-				UpdatedAt:                 now,
+				CreatedAt:                 createdAt,
+				UpdatedAt:                 createdAt,
 			}
 			if d.Untrusted {
 				notes, err := restoredPoolTuning(ctx, d, m.User.ID, pool)
