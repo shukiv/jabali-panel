@@ -12,6 +12,11 @@ Type=oneshot
 Slice=jabali-maintenance.slice
 Nice=19
 IOSchedulingClass=idle
+# GH #2079: skip the run while a baseline rebuild started from the panel runs
+# (jabali-aide-rebuild.service). aide refuses a second run while the rebuild
+# holds the database (exit 21), so the check would fail. Runs the check when
+# systemctl can't answer.
+ExecCondition=/bin/sh -c '! systemctl is-active --quiet jabali-aide-rebuild.service'
 ExecStart=/usr/bin/aide --check --config=/etc/aide/aide.conf
 StandardOutput=append:/var/log/aide/aide.report.log
 StandardError=append:/var/log/aide/aide.report.log

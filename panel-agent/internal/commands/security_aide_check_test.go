@@ -83,3 +83,33 @@ func TestAideCheckStatus(t *testing.T) {
 		})
 	}
 }
+
+// aide refuses a second run while another holds the database (exit 21, seen on
+// .60): a check started during a rebuild just fails. Each refuses, with a
+// reason, while the other runs.
+func TestAideCheckAndRebuild_DontRunTogether(t *testing.T) {
+	withAideRebuildResult(t, nil)
+
+	cmds := aideUnitsExec(t, map[string]string{agentwire.AideRebuildUnit: "active"})
+	_, err := mwAideCheckHandler(context.Background(), json.RawMessage(`{}`))
+	var ae *agentwire.AgentError
+	if !errors.As(err, &ae) || ae.Code != agentwire.CodeFailedPrecondition || !strings.Contains(ae.Message, "rebuild") {
+		t.Fatalf("check during a rebuild: err %v, want a failed-precondition that names the rebuild", err)
+	}
+	for _, c := range *cmds {
+		if strings.HasPrefix(c, "systemctl start") {
+			t.Fatalf("started a check during a rebuild: %q", c)
+		}
+	}
+
+	cmds = aideUnitsExec(t, map[string]string{aideCheckUnit: "activating"})
+	_, err = mwAideRebuildHandler(context.Background(), json.RawMessage(`{}`))
+	if !errors.As(err, &ae) || ae.Code != agentwire.CodeFailedPrecondition || !strings.Contains(ae.Message, "check") {
+		t.Fatalf("rebuild during a check: err %v, want a failed-precondition that names the check", err)
+	}
+	for _, c := range *cmds {
+		if strings.HasPrefix(c, "systemd-run ") {
+			t.Fatalf("started a rebuild during a check: %q", c)
+		}
+	}
+}

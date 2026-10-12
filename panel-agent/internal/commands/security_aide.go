@@ -510,6 +510,11 @@ func mwAideCheckHandler(ctx context.Context, _ json.RawMessage) (any, error) {
 	if aideUnitRunning(ctx, aideCheckUnit) {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeFailedPrecondition, Message: "a check is already running"}
 	}
+	// aide refuses a second run while a rebuild holds the database (exit 21,
+	// seen on .60), so the check would just fail.
+	if aideUnitRunning(ctx, agentwire.AideRebuildUnit) {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeFailedPrecondition, Message: "a baseline rebuild is running; check after it ends"}
+	}
 	out, err := execCommandContext(ctx, "systemctl", "start", "--no-block", aideCheckUnit).CombinedOutput()
 	if err != nil {
 		return nil, mwInternal("systemctl start "+aideCheckUnit+": "+strings.TrimSpace(string(out)), err)
@@ -556,6 +561,9 @@ func mwAideRebuildHandler(ctx context.Context, payload json.RawMessage) (any, er
 	}
 	if aideUnitRunning(ctx, agentwire.AideRebuildUnit) {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeFailedPrecondition, Message: "a baseline rebuild is already running"}
+	}
+	if aideUnitRunning(ctx, aideCheckUnit) {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeFailedPrecondition, Message: "a check is running; rebuild after it ends"}
 	}
 	// Record the start before the unit runs: if the rebuild dies before it
 	// writes anything (an older jabali without --result-file), the status
