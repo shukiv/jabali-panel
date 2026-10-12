@@ -119,12 +119,8 @@ func newPdnsDNSSECDisableCmd() *cobra.Command {
 				return fmt.Errorf("lookup domain %q: %w", args[0], err)
 			}
 			if !force {
-				fmt.Printf("Disable DNSSEC for %s? Resolvers will validate as bogus until DS is removed at registrar. [y/N]: ", dom.Name)
-				var c string
-				fmt.Scanln(&c)
-				if c != "y" && c != "Y" {
-					fmt.Println("Cancelled.")
-					return nil
+				if err := confirmOrAbort(cmd, os.Stdin, fmt.Sprintf("Disable DNSSEC for %s? Resolvers will validate as bogus until DS is removed at registrar.", dom.Name), "--force"); err != nil {
+					return err
 				}
 			}
 			if _, err := sharedAgent.Call(ctx, "dns.dnssec_disable", map[string]any{"domain_name": dom.Name}); err != nil {

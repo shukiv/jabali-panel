@@ -652,12 +652,8 @@ func newPackageDeleteCmd() *cobra.Command {
 				return err
 			}
 			if !force {
-				fmt.Printf("Delete package %s (%s)? [y/N]: ", p.ID, p.Name)
-				var confirm string
-				fmt.Scanln(&confirm)
-				if confirm != "y" && confirm != "Y" {
-					fmt.Println("Cancelled.")
-					return nil
+				if err := confirmOrAbort(cmd, os.Stdin, fmt.Sprintf("Delete package %s (%s)?", p.ID, p.Name), "--force"); err != nil {
+					return err
 				}
 			}
 			if err := repo.Delete(ctx, p.ID); err != nil {

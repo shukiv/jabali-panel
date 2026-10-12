@@ -49,8 +49,7 @@ first (a cross-tenant credential leak otherwise).`,
 					return cerr
 				}
 				if !ok {
-					fmt.Println("Aborted.")
-					return nil
+					return notConfirmed(cmd, "--yes")
 				}
 			}
 

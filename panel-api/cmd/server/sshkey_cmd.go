@@ -187,12 +187,8 @@ func newSSHKeyDeleteCmd() *cobra.Command {
 				return fmt.Errorf("lookup key: %w", err)
 			}
 			if !force {
-				fmt.Printf("Delete SSH key %s (%s, fp=%s)? [y/N]: ", k.ID, k.Name, k.Fingerprint)
-				var c string
-				fmt.Scanln(&c)
-				if c != "y" && c != "Y" {
-					fmt.Println("Cancelled.")
-					return nil
+				if err := confirmOrAbort(cmd, os.Stdin, fmt.Sprintf("Delete SSH key %s (%s, fp=%s)?", k.ID, k.Name, k.Fingerprint), "--force"); err != nil {
+					return err
 				}
 			}
 			if err := sshkeyops.RemoveKey(ctx, deps, k); err != nil {

@@ -426,12 +426,8 @@ func newBackupDestinationDeleteCmd() *cobra.Command {
 				return err
 			}
 			if !force {
-				fmt.Printf("Delete destination %s (%s)? Schedules referencing it will lose this destination. [y/N]: ", d.ID, d.Name)
-				var c string
-				fmt.Scanln(&c)
-				if c != "y" && c != "Y" {
-					fmt.Println("Cancelled.")
-					return nil
+				if err := confirmOrAbort(cmd, os.Stdin, fmt.Sprintf("Delete destination %s (%s)? Schedules referencing it will lose this destination.", d.ID, d.Name), "--force"); err != nil {
+					return err
 				}
 			}
 			if err := deleteBackupDestinationDirect(ctx, sharedAgent.Call, backupDestinationRepoFromDB(), d, os.Stderr); err != nil {

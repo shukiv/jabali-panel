@@ -388,12 +388,8 @@ func newBackupScheduleDeleteCmd() *cobra.Command {
 				return fmt.Errorf("get: %w", err)
 			}
 			if !force {
-				fmt.Printf("Delete schedule %s (%s, cron=%s)? [y/N]: ", s.ID, s.Kind, s.CronExpr)
-				var c string
-				fmt.Scanln(&c)
-				if c != "y" && c != "Y" {
-					fmt.Println("Cancelled.")
-					return nil
+				if err := confirmOrAbort(cmd, os.Stdin, fmt.Sprintf("Delete schedule %s (%s, cron=%s)?", s.ID, s.Kind, s.CronExpr), "--force"); err != nil {
+					return err
 				}
 			}
 			if err := repo.Delete(ctx, s.ID); err != nil {

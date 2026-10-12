@@ -288,12 +288,8 @@ func newCronDeleteCmd() *cobra.Command {
 				return fmt.Errorf("find: %w", err)
 			}
 			if !force {
-				fmt.Printf("Delete cron job %s (%s, %s)? [y/N]: ", job.ID, job.Name, job.Schedule)
-				var c string
-				fmt.Scanln(&c)
-				if c != "y" && c != "Y" {
-					fmt.Println("Cancelled.")
-					return nil
+				if err := confirmOrAbort(cmd, os.Stdin, fmt.Sprintf("Delete cron job %s (%s, %s)?", job.ID, job.Name, job.Schedule), "--force"); err != nil {
+					return err
 				}
 			}
 			// JAB-293: shared safe delete — synchronously removes the host timer
