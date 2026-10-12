@@ -15,7 +15,7 @@ func TestSynthesizeAlerts_NginxInvalidIsCritical(t *testing.T) {
 	errMap := map[string]string{
 		"nginx": "nginx not running: state=failed",
 	}
-	alerts := synthesizeAlerts(map[string]json.RawMessage{}, errMap)
+	alerts := synthesizeAlerts(map[string]json.RawMessage{}, errMap, nil)
 
 	var crit *ServerStatusAlert
 	for i := range alerts {
@@ -38,7 +38,7 @@ func TestSynthesizeAlerts_NginxInvalidIsCritical(t *testing.T) {
 
 // a non-nginx errMap entry still produces the generic agent warning.
 func TestSynthesizeAlerts_OtherErrStillGenericWarning(t *testing.T) {
-	alerts := synthesizeAlerts(map[string]json.RawMessage{}, map[string]string{"cpu": "timeout"})
+	alerts := synthesizeAlerts(map[string]json.RawMessage{}, map[string]string{"cpu": "timeout"}, nil)
 	found := false
 	for _, a := range alerts {
 		if a.Kind == "agent" && a.Level == "warning" && strings.Contains(a.Detail, "'cpu'") {

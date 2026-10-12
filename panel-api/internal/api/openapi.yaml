@@ -5692,10 +5692,37 @@ paths:
 
   # --- Security Apparmor (auto) ---
 
+  /admin/security/apparmor/profiles/{name}/acknowledge:
+    post:
+      tags: [Security Apparmor]
+      summary: Acknowledge a profile kept in complain mode
+      description: >-
+        GH #2078. Records that the profile is in complain mode on purpose, so
+        the Server Status "not enforcing" alert stops naming it. The
+        acknowledgement ends when the profile's mode changes. Only a profile
+        currently in complain mode can be acknowledged.
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: name, required: true, schema: { type: string } } ]
+      responses:
+        "200": { description: Acknowledged }
+        "400": { description: "invalid_profile: not a profile name" }
+        "404": { description: "unknown_profile: the agent doesn't report this profile" }
+        "422": { description: "not_in_complain_mode, or apparmor_inactive; detail says which" }
+    delete:
+      tags: [Security Apparmor]
+      summary: Withdraw a profile's acknowledgement
+      description: GH #2078. The Server Status alert names the profile again while it isn't enforcing.
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: name, required: true, schema: { type: string } } ]
+      responses:
+        "200": { description: Withdrawn (also when there was none) }
+        "400": { description: "invalid_profile: not a profile name" }
+
   /admin/security/apparmor/profiles/{name}/mode:
     post:
       tags: [Security Apparmor]
       summary: Mode profiles
+      description: Sets the profile to complain or enforce, and ends its acknowledgement (GH #2078).
       security: [ { KratosSession: [] } ]
       parameters: [ { in: path, name: name, required: true, schema: { type: string } } ]
       responses: { "200": { description: OK } }
@@ -5704,6 +5731,10 @@ paths:
     get:
       tags: [Security Apparmor]
       summary: List status
+      description: >-
+        The agent's profile modes, denials and complain-mode violations, plus
+        `acknowledged`, the profiles whose complain-mode acknowledgement still
+        holds (GH #2078).
       security: [ { KratosSession: [] } ]
       responses: { "200": { description: OK } }
 
