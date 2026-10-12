@@ -202,6 +202,28 @@ func TestMailVhost_CertificateLookupErrorLeavesTheVhost(t *testing.T) {
 	}
 }
 
+// errMailCertRepo fails the mail certificate lookup.
+type errMailCertRepo struct{ gateMailCertRepo }
+
+func (errMailCertRepo) GetByDomain(context.Context, string) (*models.MailCertificate, error) {
+	return nil, errors.New("db down")
+}
+
+// The same holds for the mail certificate lookup when the domain has no
+// certificate row of its own.
+func TestMailVhost_MailCertificateLookupErrorLeavesTheVhost(t *testing.T) {
+	ag := &challengeAgent{}
+	d := mailDomain()
+	d.WebmailEnabled = false
+	r, _ := newChallengeReconciler(t, ag, d, nil, &models.User{ID: "u1"})
+	delete(r.sslCerts.(*fakeSSLCertRepo).byDomain, "d1")
+	r = r.WithMailCertificates(&errMailCertRepo{})
+
+	r.reconcileWebmailVhosts(context.Background())
+	assert.Empty(t, ag.of("webmail.vhost_apply"))
+	assert.Empty(t, ag.of("webmail.vhost_remove"))
+}
+
 // Webmail back on: the webmail app returns to mail.<domain>.
 func TestMailVhost_WebmailBackOnRestoresWebmail(t *testing.T) {
 	ag := &challengeAgent{}
