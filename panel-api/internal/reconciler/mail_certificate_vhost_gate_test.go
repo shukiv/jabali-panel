@@ -222,18 +222,6 @@ func TestMailCert_NoOrderWhileTheMailVhostCannotServe(t *testing.T) {
 			r.reconcileWebmailVhosts(context.Background())
 			require.Equal(t, 1, ag.count("webmail.vhost_apply"))
 		},
-		"webmail turned off for the domain": func(t *testing.T, r *Reconciler, dr *fakeDomainRepo, ag *mailCertGateAgent) {
-			r.reconcileWebmailVhosts(context.Background())
-			dr.domains["d1"].WebmailEnabled = false
-			r.reconcileWebmailVhosts(context.Background())
-			require.Equal(t, 1, ag.count("webmail.vhost_remove"))
-		},
-		"webmail turned off server-wide": func(t *testing.T, r *Reconciler, _ *fakeDomainRepo, ag *mailCertGateAgent) {
-			r.reconcileWebmailVhosts(context.Background())
-			r.serverSettings.(*fakeServerSettingsRepo).settings.WebmailEnabled = false
-			r.reconcileWebmailVhosts(context.Background())
-			require.Equal(t, 1, ag.count("webmail.vhost_remove"))
-		},
 		"no certificate on file to render the vhost": func(t *testing.T, r *Reconciler, _ *fakeDomainRepo, ag *mailCertGateAgent) {
 			r.reconcileWebmailVhosts(context.Background())
 			require.Equal(t, 1, ag.count("webmail.vhost_apply"))
@@ -324,6 +312,19 @@ func TestMailCert_DomainRecreatedUnderSameName(t *testing.T) {
 	r.reconcileMailCertificates(ctx)
 	assert.Equal(t, 1, ag.count("ssl.mail.issue"))
 	assert.Less(t, ag.index("webmail.vhost_apply"), ag.index("ssl.mail.issue"))
+}
+
+// A removed mail vhost no longer counts as in place.
+func TestMailCert_RemovedVhostIsNotLive(t *testing.T) {
+	ag := &mailCertGateAgent{}
+	r, dr := newMailCertGateReconciler(t, ag, &gateMailCertRepo{rows: map[string]*models.MailCertificate{}})
+	r.reconcileWebmailVhosts(context.Background())
+	require.True(t, r.mailVhostIsLive("client.example"))
+
+	dr.domains["d1"].EmailEnabled = false
+	r.reconcileWebmailVhosts(context.Background())
+	require.Equal(t, 1, ag.count("webmail.vhost_remove"))
+	assert.False(t, r.mailVhostIsLive("client.example"))
 }
 
 // The wait message is written once, not on every tick.

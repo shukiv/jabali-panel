@@ -462,6 +462,70 @@ func TestWebmailVhostApply_MailOnlyTenantServesMailCertWebroot(t *testing.T) {
 	}
 }
 
+// A domain with mail but no webmail (its toggle, its package, or server-wide
+// off) still needs mail.<domain>:80 to answer Let's Encrypt's check for its
+// mail certificate (GH #2082). challenge_only renders that :80 block alone:
+// no :443 server, no webmail or DAV proxy, and no certificate needed.
+func TestWebmailVhostApply_ChallengeOnly(t *testing.T) {
+	cases := []struct {
+		name     string
+		params   webmailVhostApplyParams
+		want     []string
+		wantNone []string
+	}{
+		{
+			name:   "mail-only domain",
+			params: webmailVhostApplyParams{DomainName: "client.example", ChallengeOnly: true},
+			want: []string{
+				"listen 80;",
+				"listen [::]:80;",
+				"server_name mail.client.example autoconfig.client.example autodiscover.client.example mta-sts.client.example;",
+				"root /var/www/jabali-acme;",
+				"return 301 https://$host$request_uri;",
+			},
+			wantNone: []string{"location @acme_docroot {", "root /var/www/jabali-panel-acme;"},
+		},
+		{
+			name: "domain with a site keeps the docroot fallback and its listen IPs",
+			params: webmailVhostApplyParams{DomainName: "client.example", ChallengeOnly: true,
+				DocRoot: "/home/client/public_html", ListenIPv4: "203.0.113.10", ListenIPv6: "2001:db8::10"},
+			want: []string{
+				"listen 203.0.113.10:80;",
+				"listen [2001:db8::10]:80;",
+				"root /var/www/jabali-acme;",
+				"location @acme_docroot {",
+				"root /home/client/public_html;",
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			avail, _ := wireMailVhostPaths(t)
+			wireNginxReload(t)
+
+			params, _ := json.Marshal(tc.params)
+			if _, err := webmailVhostApplyHandler(context.Background(), params); err != nil {
+				t.Fatalf("apply without a certificate: %v", err)
+			}
+			b, err := os.ReadFile(filepath.Join(avail, "client.example-mail.conf"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			s := string(b)
+			for _, w := range tc.want {
+				if !strings.Contains(s, w) {
+					t.Errorf("missing %q:\n%s", w, s)
+				}
+			}
+			for _, w := range append(tc.wantNone, ":443", "ssl_certificate", "proxy_pass", "/dav/", "autodiscover.xml") {
+				if strings.Contains(s, w) {
+					t.Errorf("challenge-only vhost must not contain %q:\n%s", w, s)
+				}
+			}
+		})
+	}
+}
+
 // TestWebmailVhostApply_DocRootServesBothACMEWebroots is the GH #132
 // regression guard. When a tenant domain has a docroot, the :80 ACME
 // location must serve BOTH the shared panel webroot (/var/www/jabali-

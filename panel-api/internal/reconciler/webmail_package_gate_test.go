@@ -7,7 +7,9 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
@@ -34,7 +36,7 @@ func wmPtr(s string) *string { return &s }
 // wmGateReconciler builds a webmail reconciler wired with the given domain,
 // user, and package fakes plus SSL (required — reconcileWebmailVhosts returns
 // early when sslCerts is nil) and a server-wide-enabled settings row.
-func wmGateReconciler(dr *fakeDomainRepo, ur *fakeUserRepo, pr repository.PackageRepository, ag *fakeWebmailAgent) *Reconciler {
+func wmGateReconciler(dr *fakeDomainRepo, ur *fakeUserRepo, pr repository.PackageRepository, ag agent.AgentInterface) *Reconciler {
 	r := New(dr, ur, ag, slog.Default(), Config{}).WithSSLCerts(newFakeSSLCertRepo()).WithPackages(pr)
 	r.serverSettings = &fakeServerSettingsRepo{settings: &models.ServerSettings{WebmailEnabled: true}}
 	return r
@@ -46,7 +48,7 @@ func wmGateReconciler(dr *fakeDomainRepo, ur *fakeUserRepo, pr repository.Packag
 // Before slice 2 the reconciler ignored the package field, so this domain got
 // a vhost_apply and the daemon started — RED until the package AND-gate lands.
 func TestWebmail_PackageEntitlementOff_RemovesVhost(t *testing.T) {
-	ag := &fakeWebmailAgent{}
+	ag := &paramsWebmailAgent{}
 	dr := newFakeDomainRepo()
 	dr.domains["d1"] = &models.Domain{OwnershipState: verifiedOwnership, ID: "d1", Name: "example.com", UserID: "u1", EmailEnabled: true, WebmailEnabled: true}
 	ur := &fakeUserRepo{users: map[string]*models.User{
@@ -56,7 +58,11 @@ func TestWebmail_PackageEntitlementOff_RemovesVhost(t *testing.T) {
 
 	wmGateReconciler(dr, ur, pr, ag).reconcileWebmailVhosts(context.Background())
 
-	assert.True(t, ag.has("webmail.vhost_remove"), "package webmail OFF must remove the domain's mail vhost")
+	// GH #2082: the domain still has mail, so only the challenge-only :80
+	// block stays — no webmail, and no :443 server.
+	require.Len(t, ag.applies, 1, "package webmail OFF leaves only the challenge-only block")
+	assert.Equal(t, true, ag.applies[0]["challenge_only"])
+	assert.NotContains(t, ag.applies[0], "ssl_cert_path")
 	assert.False(t, ag.has("service.start"), "no webmail domain remains active → daemon must not start")
 }
 
