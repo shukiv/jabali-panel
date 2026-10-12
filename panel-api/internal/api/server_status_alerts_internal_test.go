@@ -13,7 +13,7 @@ import (
 )
 
 func TestSynthesizeAlerts_HealthyServerReturnsEmptyNotNil(t *testing.T) {
-	got := synthesizeAlerts(map[string]json.RawMessage{}, map[string]string{})
+	got := synthesizeAlerts(map[string]json.RawMessage{}, map[string]string{}, nil)
 	if got == nil {
 		t.Fatal("synthesizeAlerts returned nil on a healthy server → marshals as JSON null")
 	}
@@ -65,7 +65,7 @@ func TestSynthesizeAlerts_AppArmorDegraded(t *testing.T) {
 		got := synthesizeAlerts(aaResult(true,
 			[2]string{"jabali-bulwark", "enforce"},
 			[2]string{"jabali-panel", "enforce"},
-		), map[string]string{})
+		), map[string]string{}, nil)
 		if a := findAA(got); a != nil {
 			t.Fatalf("enforce-only must not alert, got %q", a.Detail)
 		}
@@ -75,7 +75,7 @@ func TestSynthesizeAlerts_AppArmorDegraded(t *testing.T) {
 		got := synthesizeAlerts(aaResult(true,
 			[2]string{"jabali-bulwark", "complain"},
 			[2]string{"jabali-panel", "enforce"},
-		), map[string]string{})
+		), map[string]string{}, nil)
 		a := findAA(got)
 		if a == nil {
 			t.Fatal("complain profile must raise an apparmor alert")
@@ -94,7 +94,7 @@ func TestSynthesizeAlerts_AppArmorDegraded(t *testing.T) {
 	t.Run("missing → warning", func(t *testing.T) {
 		got := synthesizeAlerts(aaResult(true,
 			[2]string{"jabali-fpm-app", "missing"},
-		), map[string]string{})
+		), map[string]string{}, nil)
 		if findAA(got) == nil {
 			t.Fatal("a missing profile must alert")
 		}
@@ -104,7 +104,7 @@ func TestSynthesizeAlerts_AppArmorDegraded(t *testing.T) {
 		got := synthesizeAlerts(aaResult(true,
 			[2]string{"jabali-bulwark", "kernel-gated"},
 			[2]string{"jabali-panel", "kernel-gated"},
-		), map[string]string{})
+		), map[string]string{}, nil)
 		if a := findAA(got); a != nil {
 			t.Fatalf("kernel-gated is working-as-designed, must not alert, got %q", a.Detail)
 		}
@@ -113,14 +113,14 @@ func TestSynthesizeAlerts_AppArmorDegraded(t *testing.T) {
 	t.Run("enabled=false → no alert", func(t *testing.T) {
 		got := synthesizeAlerts(aaResult(false,
 			[2]string{"jabali-bulwark", "complain"},
-		), map[string]string{})
+		), map[string]string{}, nil)
 		if a := findAA(got); a != nil {
 			t.Fatalf("no-AppArmor host must not alert, got %q", a.Detail)
 		}
 	})
 
 	t.Run("failed agent call → silent (no apparmor OR agent alert)", func(t *testing.T) {
-		got := synthesizeAlerts(map[string]json.RawMessage{}, map[string]string{"apparmor": "timeout"})
+		got := synthesizeAlerts(map[string]json.RawMessage{}, map[string]string{"apparmor": "timeout"}, nil)
 		for _, a := range got {
 			if a.Kind == "apparmor" {
 				t.Fatalf("a failed summary call must not raise an apparmor alert, got %q", a.Detail)
@@ -136,7 +136,7 @@ func TestSynthesizeAlerts_AppArmorDegraded(t *testing.T) {
 			[2]string{"jabali-panel", "complain"},
 			[2]string{"jabali-bulwark", "missing"},
 			[2]string{"stalwart-mail", "enforce"},
-		), map[string]string{})
+		), map[string]string{}, nil)
 		a := findAA(got)
 		if a == nil {
 			t.Fatal("two degraded profiles must alert")
@@ -176,7 +176,7 @@ func TestSynthesizeAlerts_DiskPercentOfUsableSpace(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			var got []string
-			for _, a := range synthesizeAlerts(hostResult(tc.total, tc.used, tc.free), map[string]string{}) {
+			for _, a := range synthesizeAlerts(hostResult(tc.total, tc.used, tc.free), map[string]string{}, nil) {
 				if a.Kind == "disk" {
 					got = append(got, a.Level)
 				}

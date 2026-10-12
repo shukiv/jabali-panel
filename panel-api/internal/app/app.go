@@ -316,6 +316,13 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		}
 	}
 
+	// GH #2078: AppArmor profiles acknowledged in complain mode, read by the
+	// AppArmor routes and by the Server Status alert. Nil without a database.
+	var appArmorAcks repository.AppArmorModeAckRepository
+	if deps.DB != nil {
+		appArmorAcks = repository.NewAppArmorModeAckRepository(deps.DB)
+	}
+
 	r := gin.New()
 	r.HandleMethodNotAllowed = true
 
@@ -1033,6 +1040,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			Agent:          deps.Agent,
 			Redis:          deps.Redis,
 			ServerSettings: deps.ServerSettings,
+			AppArmorAcks:   appArmorAcks,
 		})
 		// Admin: connection Speed Test endpoints backing the Server Status
 		// card (GH #252). No deps — pure HTTP, RequireAdmin-gated.
@@ -1267,8 +1275,13 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			}
 			api.RegisterSecurityAppSecExclusionRoutes(securityGroup, appsecExclCfg)
 			api.RegisterSecurityUFWRoutes(securityGroup, deps.Agent)
-			// M40 (ADR-0086) AppArmor admin status + per-profile mode flip.
-			api.RegisterSecurityAppArmorRoutes(securityGroup, deps.Agent)
+			// M40 (ADR-0086) AppArmor admin status + per-profile mode flip, and
+			// the complain-mode acknowledgements (GH #2078).
+			api.RegisterSecurityAppArmorRoutes(securityGroup, api.SecurityAppArmorConfig{
+				Agent: deps.Agent,
+				Acks:  appArmorAcks,
+				Audit: deps.AuditRecorder,
+			})
 			// M42 (ADR-0087) AIDE FIM read-only status + manual check trigger.
 			api.RegisterSecurityAideRoutes(securityGroup, deps.Agent)
 			// M43 (ADR-0089) Trust test bench — "would this IP be blocked?" admin endpoint.

@@ -12,9 +12,18 @@ import {
   type AppArmorDenial,
   type AppArmorProfile,
   appArmorFlipErrorMessage,
+  useAcknowledgeAppArmor,
   useAppArmorStatus,
   useSetAppArmorMode,
 } from "../../../hooks/useSecurityAppArmor";
+
+// appArmorAckErrorMessage is the toast for a failed acknowledge or withdraw:
+// the panel's reason when it gave one.
+const appArmorAckErrorMessage = (err: unknown): string => {
+  const e = err as { response?: { data?: { detail?: string; error?: string } }; message?: string };
+  const reason = (e?.response?.data?.detail || e?.response?.data?.error || e?.message || "").trim();
+  return reason ? `Couldn't change the acknowledgement: ${reason}` : "Couldn't change the acknowledgement";
+};
 
 // GH #715: what each profile protects, for the detail drawer.
 const PROFILE_DESC: Record<string, string> = {
@@ -35,6 +44,7 @@ export const AdminSecurityAppArmor = () => {
   const { t } = useTranslation();
   const { data, isLoading, refetch } = useAppArmorStatus();
   const setMode = useSetAppArmorMode();
+  const acknowledge = useAcknowledgeAppArmor();
   const [pendingFlip, setPendingFlip] = useState<{ profile: string; nextMode: "enforce" | "complain" } | null>(null);
   const [ackRisk, setAckRisk] = useState(false); // GH #715: confirm gate for enforce-with-would-denies
   const [detail, setDetail] = useState<string | null>(null);
@@ -61,6 +71,9 @@ export const AdminSecurityAppArmor = () => {
     );
   }
 
+  // GH #2078: profiles acknowledged in complain mode.
+  const acked = new Set(data.acknowledged ?? []);
+
   return (
     <Card
       title={t("adminsecurityapparmor.apparmor")}
@@ -76,7 +89,9 @@ export const AdminSecurityAppArmor = () => {
         New profiles ship in <Tag color="warning">complain</Tag> mode for a
         7-day burn-in soak; flip to <Tag color="success">enforce</Tag> per
         profile after the soak (or via{" "}
-        <code>jabali apparmor flip-mature</code>).
+        <code>jabali apparmor flip-mature</code>). A profile you keep in
+        complain mode on purpose can be acknowledged: the Server Status alert
+        then leaves it out until its mode changes.
       </Typography.Paragraph>
       {(data?.violations?.length ?? 0) > 0 ? (
         <Alert
@@ -132,8 +147,15 @@ export const AdminSecurityAppArmor = () => {
             title: "Mode",
             dataIndex: "mode",
             width: 140,
-            render: (mode: AppArmorProfile["mode"]) => (
-              <Badge status={MODE_TINT[mode]} text={mode} />
+            render: (mode: AppArmorProfile["mode"], row: AppArmorProfile) => (
+              <Space size={4} wrap>
+                <Badge status={MODE_TINT[mode]} text={mode} />
+                {mode === "complain" && acked.has(row.name) && (
+                  <Tooltip title="Acknowledged: the Server Status alert leaves this profile out until its mode changes.">
+                    <Tag style={{ marginInlineEnd: 0 }}>acknowledged</Tag>
+                  </Tooltip>
+                )}
+              </Space>
             ),
           },
           {
@@ -151,25 +173,42 @@ export const AdminSecurityAppArmor = () => {
           },
           {
             title: "Action",
-            width: 200,
+            width: 340,
             render: (_: unknown, row: AppArmorProfile) =>
               row.mode === "missing" ? (
                 <Typography.Text type="danger">not loaded</Typography.Text>
               ) : row.mode === "kernel-gated" ? (
                 <Typography.Text type="secondary">kernel-gated</Typography.Text>
               ) : (
-                <Button
-                  size="small"
-                  type={row.mode === "complain" ? "primary" : "default"}
-                  onClick={() =>
-                    setPendingFlip({
-                      profile: row.name,
-                      nextMode: row.mode === "complain" ? "enforce" : "complain",
-                    })
-                  }
-                >
-                  Flip to {row.mode === "complain" ? "enforce" : "complain"}
-                </Button>
+                <Space size="small" wrap>
+                  <Button
+                    size="small"
+                    type={row.mode === "complain" ? "primary" : "default"}
+                    onClick={() =>
+                      setPendingFlip({
+                        profile: row.name,
+                        nextMode: row.mode === "complain" ? "enforce" : "complain",
+                      })
+                    }
+                  >
+                    Flip to {row.mode === "complain" ? "enforce" : "complain"}
+                  </Button>
+                  {/* GH #2078: only complain can be acknowledged. */}
+                  {row.mode === "complain" && data.acknowledged !== undefined && (
+                    <Button
+                      size="small"
+                      loading={acknowledge.isPending && acknowledge.variables?.profile === row.name}
+                      onClick={() =>
+                        acknowledge.mutate(
+                          { profile: row.name, acknowledge: !acked.has(row.name) },
+                          { onError: (err) => feedback.message.error(appArmorAckErrorMessage(err)) },
+                        )
+                      }
+                    >
+                      {acked.has(row.name) ? "Show warning again" : "Acknowledge"}
+                    </Button>
+                  )}
+                </Space>
               ),
           },
         ]}

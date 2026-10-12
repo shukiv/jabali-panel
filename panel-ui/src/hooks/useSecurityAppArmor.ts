@@ -28,6 +28,9 @@ export interface AppArmorStatus {
   profiles: AppArmorProfile[];
   denials: AppArmorDenial[];
   violations: AppArmorDenial[];
+  // GH #2078: profiles acknowledged in complain mode. The Server Status alert
+  // leaves them out until their mode changes. Absent on a panel without them.
+  acknowledged?: string[];
 }
 
 // apiClient baseURL is already "/api/v1" — paths must be relative
@@ -96,5 +99,24 @@ export function useSetAppArmorMode() {
       return data;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["security", "apparmor"] }),
+  });
+}
+
+// GH #2078: acknowledge a profile kept in complain mode on purpose, or withdraw
+// the acknowledgement. Refreshes the AppArmor status and the Server Status
+// alerts (the header badge), so the alert goes or comes back at once.
+export function useAcknowledgeAppArmor() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (args: { profile: string; acknowledge: boolean }) => {
+      const path = `${BASE}/profiles/${encodeURIComponent(args.profile)}/acknowledge`;
+      const { data } = args.acknowledge ? await apiClient.post(path) : await apiClient.delete(path);
+      return data;
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["security", "apparmor"] });
+      void qc.invalidateQueries({ queryKey: ["admin", "server-status"] });
+      void qc.invalidateQueries({ queryKey: ["admin", "server-health"] });
+    },
   });
 }

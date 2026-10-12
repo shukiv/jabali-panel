@@ -41,6 +41,10 @@ type AdminServerStatusHandlerConfig struct {
 	// notification dispatcher queue depths (main stream, DLQ, pending
 	// consumer-group count). Nil ⇒ Queues is omitted.
 	Redis *redis.Client
+	// AppArmorAcks holds the AppArmor profiles an administrator acknowledged
+	// in complain mode (GH #2078); the AppArmor alert leaves them out. Nil ⇒
+	// every non-enforcing profile is named.
+	AppArmorAcks repository.AppArmorModeAckRepository
 }
 
 // RegisterAdminServerStatusRoutes mounts GET /admin/server-status.
@@ -329,7 +333,7 @@ func (h *adminServerStatusHandler) get(c *gin.Context) {
 	// data is display-only — feeding it here would let a 3-minute-old snapshot
 	// raise a phantom outage or paper over a real one. The failed refresh still
 	// reaches alerts through errMap, exactly as before.
-	env.Alerts = synthesizeAlerts(fresh, errMap)
+	env.Alerts = synthesizeAlerts(fresh, errMap, h.appArmorAcks(ctx, fresh["apparmor"]))
 	if queues != nil {
 		// Queue-depth alerts: a permanently-growing main stream means the
 		// dispatcher is stuck; a DLQ above zero means at least one
@@ -392,7 +396,11 @@ func (h *adminServerStatusHandler) cacheMetrics(c *gin.Context) {
 // those three (e.g. a zombie-process or pending-update alert), the header will
 // silently never show it — add it to the Health projection's slice set in
 // get() (server_status.go) too, or the badge and the full-page banner diverge.
-func synthesizeAlerts(results map[string]json.RawMessage, errMap map[string]string) []ServerStatusAlert {
+//
+// acked maps an AppArmor profile to the mode an administrator acknowledged it
+// in (GH #2078). A profile in complain mode with a complain acknowledgement is
+// left out of the AppArmor alert; nothing else is. nil means none.
+func synthesizeAlerts(results map[string]json.RawMessage, errMap map[string]string, acked map[string]string) []ServerStatusAlert {
 	// Init non-nil: a HEALTHY server produces no alerts, and a nil slice marshals
 	// as JSON `null`, not `[]` (feedback_go_nil_slice_json_null_spa_crash). The SPA
 	// guards `alerts` with `?? []`, but non-SPA API clients (jabali-mcp,
@@ -448,6 +456,9 @@ func synthesizeAlerts(results map[string]json.RawMessage, errMap map[string]stri
 			for _, p := range payload.Profiles {
 				switch p.Mode {
 				case "complain", "missing", "unconfined":
+					if appArmorAcknowledged(p.Mode, acked[p.Name]) {
+						continue
+					}
 					degraded = append(degraded, p.Name+" ("+p.Mode+")")
 				}
 			}
@@ -632,4 +643,10 @@ func (h *adminServerStatusHandler) filterModuleServices(ctx context.Context, raw
 		return raw
 	}
 	return out
+}
+
+// appArmorAcks returns the acknowledged AppArmor profiles that still hold for
+// the freshly read summary (GH #2078); see currentAppArmorAcks.
+func (h *adminServerStatusHandler) appArmorAcks(ctx context.Context, summary json.RawMessage) map[string]string {
+	return currentAppArmorAcks(ctx, h.cfg.AppArmorAcks, summary)
 }
