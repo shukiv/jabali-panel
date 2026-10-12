@@ -1,6 +1,6 @@
 import { useTranslation } from "react-i18next";
 import { useEffect, useRef, useState } from "react";
-import { Button, Card, Space, Spin, Switch, Tag, Typography } from "antd";
+import { Alert, Button, Card, Space, Spin, Switch, Tag, Typography } from "antd";
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { ReloadOutlined } from "@ant-design/icons";
 
@@ -56,16 +56,14 @@ const POLL_MAX_ATTEMPTS = 60; // ~5 minutes; apt + downloads can be slow
 
 export const ModulesCard = () => {
   const { t } = useTranslation();
-  const [state, setState] = useState<Record<ModuleKey, boolean>>({
-    dns_enabled: true,
-    mail_enabled: true,
-    security_enabled: true,
-    quota_enabled: true,
-    api_enabled: true,
-  });
+  // null until the settings are read. GH #2101: the card used to start with every
+  // module On and keep that when the read failed, which looked like the server's
+  // state.
+  const [state, setState] = useState<Record<ModuleKey, boolean> | null>(null);
   const [status, setStatus] = useState<Record<string, ModuleStatus>>({});
   const [installing, setInstalling] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [saving, setSaving] = useState<ModuleKey | null>(null);
 
   const mounted = useRef(true);
@@ -85,30 +83,42 @@ export const ModulesCard = () => {
     }
   };
 
+  // load reads the module flags and their status. A reply without every flag
+  // (an error page, a panel mid-restart) is a failed read, not "all On".
+  const load = async () => {
+    setLoading(true);
+    setLoadFailed(false);
+    try {
+      const [settingsResp] = await Promise.all([
+        apiClient.get<Partial<Record<ModuleKey, boolean>>>("/admin/settings"),
+        fetchStatus(),
+      ]);
+      const data = settingsResp.data as Partial<Record<ModuleKey, unknown>> | undefined;
+      const next = {} as Record<ModuleKey, boolean>;
+      for (const m of MODULES) {
+        const v = data?.[m.key];
+        if (typeof v !== "boolean") throw new Error(`no ${m.key} in the settings`);
+        next[m.key] = v;
+      }
+      if (mounted.current) setState(next);
+    } catch {
+      if (mounted.current) {
+        setState(null);
+        setLoadFailed(true);
+      }
+    } finally {
+      if (mounted.current) setLoading(false);
+    }
+  };
+
   useEffect(() => {
     mounted.current = true;
-    (async () => {
-      try {
-        const [settingsResp] = await Promise.all([
-          apiClient.get<Partial<Record<ModuleKey, boolean>>>("/admin/settings"),
-          fetchStatus(),
-        ]);
-        if (mounted.current) {
-          setState((prev) => {
-            const next = { ...prev };
-            for (const m of MODULES) next[m.key] = settingsResp.data[m.key] !== false;
-            return next;
-          });
-        }
-      } catch {
-        if (mounted.current) feedback.message.error("Failed to load module settings");
-      } finally {
-        if (mounted.current) setLoading(false);
-      }
-    })();
+    void load();
     return () => {
       mounted.current = false;
     };
+    // Load once on mount; Reload calls load() again.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Poll a module's status until it is installed+active, until the agent
@@ -140,7 +150,7 @@ export const ModulesCard = () => {
     const errorAtBefore = statusKey ? statusRef.current[statusKey]?.last_error_at : undefined;
     try {
       await apiClient.patch("/admin/settings", { [key]: next });
-      setState((prev) => ({ ...prev, [key]: next }));
+      setState((prev) => (prev ? { ...prev, [key]: next } : prev));
       feedback.message.success(`${`${label} ${next ? "enabled" : "disabled"}`}: ${next && statusKey
             ? "Installing the module in the background — this can take a few minutes."
             : next
@@ -172,15 +182,15 @@ export const ModulesCard = () => {
   // on or retried yet, or null. A DNS status the agent didn't report doesn't
   // block: the panel checks again when mail is turned on.
   const dnsStatus = status.dns;
-  const mailWaitsForDNS = !state.dns_enabled
+  const mailWaitsForDNS = !state?.dns_enabled
     ? "Turn on DNS first; mail needs it."
     : dnsStatus && !(dnsStatus.installed && dnsStatus.active)
       ? "DNS isn't running yet. Mail can be turned on once DNS shows active."
       : null;
 
-  const renderStatus = (m: { key: ModuleKey; label: string }) => {
+  const renderStatus = (flags: Record<ModuleKey, boolean>, m: { key: ModuleKey; label: string }) => {
     const statusKey = STATUS_KEY[m.key];
-    if (!statusKey || !state[m.key]) return null; // api-only, or module off
+    if (!statusKey || !flags[m.key]) return null; // api-only, or module off
     if (installing[statusKey] || status[statusKey]?.installing) {
       return (
         <Tag color="processing" style={{ marginInlineEnd: 0 }}>
@@ -189,7 +199,13 @@ export const ModulesCard = () => {
       );
     }
     const s = status[statusKey];
-    if (s?.installed && s?.active) {
+    // The panel leaves out a module the agent didn't answer for, and has no
+    // status at all when its own status read failed. Neither says the module
+    // isn't installed, so don't offer a reinstall.
+    if (!s) {
+      return <Tag style={{ marginInlineEnd: 0 }}>status unknown</Tag>;
+    }
+    if (s.installed && s.active) {
       return <Tag color="success" style={{ marginInlineEnd: 0 }}>active</Tag>;
     }
     // Enabled but not installed+active — the "flag on, service down" state. Offer
@@ -211,12 +227,12 @@ export const ModulesCard = () => {
 
   // renderNotes shows, under a module's description, why its last install
   // failed and where the full log is, and why mail can't be turned on yet.
-  const renderNotes = (m: { key: ModuleKey }) => {
+  const renderNotes = (flags: Record<ModuleKey, boolean>, m: { key: ModuleKey }) => {
     const statusKey = STATUS_KEY[m.key];
     const s = statusKey ? status[statusKey] : undefined;
     const busy = statusKey ? installing[statusKey] || s?.installing : false;
-    const failed = state[m.key] && s?.last_error && !busy && !(s.installed && s.active);
-    const waits = m.key === "mail_enabled" && mailWaitsForDNS && !(state.mail_enabled && s?.installed && s?.active);
+    const failed = flags[m.key] && s?.last_error && !busy && !(s.installed && s.active);
+    const waits = m.key === "mail_enabled" && mailWaitsForDNS && !(flags.mail_enabled && s?.installed && s?.active);
     if (!failed && !waits) return null;
     return (
       <>
@@ -253,6 +269,19 @@ export const ModulesCard = () => {
         the background (the panel hides a module's pages when it's off; existing
         data is not removed). Core services (web, database, panel) are always on.
       </Typography.Paragraph>
+      {loadFailed && (
+        <Alert
+          type="error"
+          showIcon
+          message="Couldn't load the module settings. The panel may be restarting; try again in a moment."
+          action={
+            <Button size="small" icon={<ReloadOutlined />} onClick={() => void load()}>
+              Reload
+            </Button>
+          }
+        />
+      )}
+      {state && (
       <Space direction="vertical" size="middle" style={{ width: "100%" }}>
         {MODULES.map((m) => (
           // Wraps on narrow screens: the controls drop below the text instead of
@@ -267,10 +296,10 @@ export const ModulesCard = () => {
               <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                 {m.desc}
               </Typography.Text>
-              {renderNotes(m)}
+              {renderNotes(state, m)}
             </div>
             <Space align="center" size="middle">
-              {renderStatus(m)}
+              {renderStatus(state, m)}
               <Switch
                 aria-label={m.label}
                 checked={state[m.key]}
@@ -285,6 +314,7 @@ export const ModulesCard = () => {
           </div>
         ))}
       </Space>
+      )}
     </Card>
   );
 };
