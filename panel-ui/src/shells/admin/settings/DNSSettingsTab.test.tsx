@@ -75,6 +75,8 @@ describe("DNSSettingsTab secondary DNS servers (GH #2131)", () => {
     );
 
     await waitFor(() => expect(mocked.get).toHaveBeenCalled());
+    // An empty list shows the placeholder, not a blank tag.
+    await waitFor(() => expect(screen.getByText("192.0.2.53")).toBeInTheDocument());
     const save = await screen.findByRole("button", { name: /Save DNS Settings/ });
     await waitFor(() => expect(save).not.toBeDisabled());
     fireEvent.click(save);
