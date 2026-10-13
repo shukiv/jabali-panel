@@ -109,8 +109,13 @@ describe("UserDomainDrawer custom DNS template picker (GH #1627)", () => {
     // Uncheck Add DNS Zone → the template option must be disabled.
     fireEvent.click(await screen.findByRole("checkbox", { name: /add dns zone/i }));
     fireEvent.mouseDown(await screen.findByText("None (no external mail)"));
-    const option = await screen.findByText("Acme SaaS");
-    const optionEl = option.closest(".ant-select-item-option");
-    expect(optionEl?.className).toContain("ant-select-item-option-disabled");
+    await screen.findByText("Acme SaaS");
+    // The option can paint before the unchecked box reaches it: wait for the
+    // disabled state rather than reading the first render (a CI flake).
+    await waitFor(() =>
+      expect(
+        screen.getByText("Acme SaaS").closest(".ant-select-item-option")?.className,
+      ).toContain("ant-select-item-option-disabled"),
+    );
   });
 });
