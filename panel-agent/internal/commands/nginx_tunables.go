@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -17,15 +18,21 @@ import (
 //
 // Two destinations, because nginx config has two kinds of directive here:
 //
-//   - DIRECTIVES DEBIAN/UBUNTU SHIP IN nginx.conf (server_tokens, gzip,
+//   - DIRECTIVES nginx.conf MAY DECLARE (server_tokens, gzip,
 //     keepalive_timeout) + the worker knobs (worker_processes main-scope,
-//     worker_connections events-scope): these are REPLACED IN PLACE in
-//     /etc/nginx/nginx.conf. They can't go in a conf.d fragment because that
-//     fragment is included inside http{} where nginx.conf already declares
-//     them — a second declaration is a hard `nginx -t` "directive is
-//     duplicate" error (caught live on a real box, GH#172 follow-up). We
-//     replace the first matching line only (a stray copy inside a nested
-//     server{} is left alone) and skip silently if the directive is absent.
+//     worker_connections events-scope): where nginx.conf declares one, it is
+//     REPLACED IN PLACE in /etc/nginx/nginx.conf. It can't also go in the
+//     conf.d fragment, which is included inside the same http{} — a second
+//     declaration is a hard `nginx -t` "directive is duplicate" error (caught
+//     live on a real box, GH#172 follow-up). We replace the first matching
+//     line only (a stray copy inside a nested server{} is left alone).
+//
+//   - Where nginx.conf does NOT declare one of the three http{}-scope ones,
+//     it goes in the fragment instead (see httpDirectivesForFragment). Stock
+//     Debian and Ubuntu ship `# server_tokens off;` commented out, and Ubuntu
+//     24.04 has no keepalive_timeout line, so patching in place alone left
+//     nginx on its built-in `server_tokens on` while the page said off. The
+//     worker knobs have no such fallback: they belong outside http{}.
 //
 //   - GENUINELY-ADDITIVE DIRECTIVES (client_max_body_size, the client/send
 //     timeouts, the proxy timeouts, plus the admin free-form block): these
@@ -42,11 +49,13 @@ import (
 // CustomHTTP is length-capped + NUL-screened but otherwise gated only by
 // nginx -t (the documented "advanced, can destabilize" contract).
 
-const (
+// Variables so tests can point them at a temp dir.
+var (
 	nginxTunablesFragmentPath = "/etc/nginx/conf.d/05-jabali-tunables.conf"
 	nginxMainConfPath         = "/etc/nginx/nginx.conf"
-	nginxCustomHTTPMaxLen     = 4000
 )
+
+const nginxCustomHTTPMaxLen = 4000
 
 var nginxSizeRe = regexp.MustCompile(`^[0-9]+[kKmMgG]?$`)
 var nginxTimeRe = regexp.MustCompile(`^[0-9]+(ms|s|m|h)?$`)
@@ -86,10 +95,9 @@ func nginxTunablesApplyHandler(ctx context.Context, params json.RawMessage) (any
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: err.Error()}
 	}
 
-	fragment := BuildNginxTunablesFragment(&p)
-
 	liveMain, _ := os.ReadFile(nginxMainConfPath)
 	newMain, mainChanged := patchNginxMainConf(liveMain, &p)
+	fragment := BuildNginxTunablesFragment(&p, httpDirectivesForFragment(liveMain, otherConfDFiles(), &p))
 
 	liveFragment, _ := os.ReadFile(nginxTunablesFragmentPath)
 	fragmentChanged := !bytes.Equal(liveFragment, []byte(fragment))
@@ -175,10 +183,10 @@ func swapFile(path string, content []byte, rollbacks *[]func()) error {
 // declarations and fail nginx -t). Every directive is REPLACE-IN-PLACE,
 // first-match-only, skip-if-absent — never inserted, because getting scope
 // placement wrong (worker_connections must be inside events{}, etc.) on an
-// unusual nginx.conf could break the whole config. Debian/Ubuntu stock
-// nginx.conf ships server_tokens/gzip/worker_* so those always apply;
-// keepalive_timeout is occasionally absent, in which case it silently no-ops
-// (nginx's built-in default stands). Returns new bytes + whether anything
+// unusual nginx.conf could break the whole config. Stock nginx.conf ships
+// the worker lines and gzip; server_tokens is commented out and
+// keepalive_timeout is sometimes absent, and those two then go in the
+// fragment (httpDirectivesForFragment). Returns new bytes + whether anything
 // changed.
 func patchNginxMainConf(conf []byte, p *nginxTunablesApplyParams) ([]byte, bool) {
 	if len(conf) == 0 {
@@ -220,7 +228,7 @@ func boolOnOff(b bool) string {
 // untouched (changed=false). Go's regexp has no ReplaceFirst, so we splice by
 // submatch index.
 func setDirectiveFirst(conf, name, value string) (string, bool) {
-	re := regexp.MustCompile(`(?m)^([ \t]*)` + regexp.QuoteMeta(name) + `[ \t][^;\n]*;`)
+	re := directiveLineRE(name)
 	loc := re.FindStringSubmatchIndex(conf)
 	if loc == nil {
 		return conf, false
@@ -230,12 +238,68 @@ func setDirectiveFirst(conf, name, value string) (string, bool) {
 	return out, out != conf
 }
 
+// directiveLineRE matches an active (uncommented) `name value;` line.
+func directiveLineRE(name string) *regexp.Regexp {
+	return regexp.MustCompile(`(?m)^([ \t]*)` + regexp.QuoteMeta(name) + `[ \t][^;\n]*;`)
+}
+
+// httpDirectivesForFragment returns the server_tokens / gzip /
+// keepalive_timeout lines the fragment must carry because nothing else in the
+// http block declares them: not nginx.conf, not another conf.d file, not the
+// admin's custom directives. A second declaration in the same block fails
+// nginx -t and rolls the whole apply back, so when nginx.conf could not be
+// read nothing is added.
+func httpDirectivesForFragment(liveMain []byte, confD [][]byte, p *nginxTunablesApplyParams) []string {
+	if len(liveMain) == 0 {
+		return nil
+	}
+	declared := func(name string) bool {
+		re := directiveLineRE(name)
+		if re.Match(liveMain) || re.MatchString(p.CustomHTTP) {
+			return true
+		}
+		for _, conf := range confD {
+			if re.Match(conf) {
+				return true
+			}
+		}
+		return false
+	}
+	var lines []string
+	for _, d := range []struct{ name, value string }{
+		{"server_tokens", boolOnOff(p.ServerTokens)},
+		{"gzip", boolOnOff(p.Gzip)},
+		{"keepalive_timeout", p.KeepaliveTimeout},
+	} {
+		if d.value != "" && !declared(d.name) {
+			lines = append(lines, d.name+" "+d.value+";")
+		}
+	}
+	return lines
+}
+
+// otherConfDFiles reads the other *.conf files in the fragment's directory;
+// nginx includes them into the same http block.
+func otherConfDFiles() [][]byte {
+	matches, _ := filepath.Glob(filepath.Join(filepath.Dir(nginxTunablesFragmentPath), "*.conf"))
+	var out [][]byte
+	for _, m := range matches {
+		if m == nginxTunablesFragmentPath {
+			continue
+		}
+		if b, err := os.ReadFile(m); err == nil {
+			out = append(out, b)
+		}
+	}
+	return out
+}
+
 // BuildNginxTunablesFragment renders the http{}-scope fragment of
 // genuinely-additive directives (those NOT in stock nginx.conf). Pure +
 // deterministic so the idempotent read-compare in the handler works.
-// server_tokens / gzip / keepalive_timeout are intentionally NOT here — they
-// live in nginx.conf and are patched there (see patchNginxMainConf).
-func BuildNginxTunablesFragment(p *nginxTunablesApplyParams) string {
+// server_tokens / gzip / keepalive_timeout appear only as httpLines, the ones
+// nothing else in the http block declares (httpDirectivesForFragment).
+func BuildNginxTunablesFragment(p *nginxTunablesApplyParams, httpLines []string) string {
 	var b strings.Builder
 	b.WriteString("# Auto-generated by jabali — do not edit.\n")
 	b.WriteString("# Server-wide nginx tunables (Server Settings → Nginx, M55).\n")
@@ -261,6 +325,13 @@ func BuildNginxTunablesFragment(p *nginxTunablesApplyParams) string {
 	}
 	if p.ProxySendTimeout != "" {
 		fmt.Fprintf(&b, "proxy_send_timeout %s;\n", p.ProxySendTimeout)
+	}
+
+	if len(httpLines) > 0 {
+		b.WriteString("\n# Not set in nginx.conf, so set here:\n")
+		for _, l := range httpLines {
+			b.WriteString(l + "\n")
+		}
 	}
 
 	custom := strings.TrimRight(p.CustomHTTP, " \t\r\n")

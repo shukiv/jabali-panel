@@ -16,7 +16,7 @@ func TestBuildNginxTunablesFragment(t *testing.T) {
 		ProxySendTimeout:    "300s",
 		CustomHTTP:          "add_header X-Demo 1;",
 	}
-	got := BuildNginxTunablesFragment(p)
+	got := BuildNginxTunablesFragment(p, nil)
 	for _, want := range []string{
 		"client_max_body_size 50m;",
 		"client_body_timeout 60s;",
@@ -28,8 +28,9 @@ func TestBuildNginxTunablesFragment(t *testing.T) {
 			t.Errorf("fragment missing %q\n--- got ---\n%s", want, got)
 		}
 	}
-	// server_tokens / gzip / keepalive_timeout live in nginx.conf, NOT the
-	// fragment — they'd duplicate Debian's stock declarations.
+	// server_tokens / gzip / keepalive_timeout appear only when passed as
+	// httpLines (nothing else declares them, nginx_tunables_http_scope_test.go);
+	// otherwise they'd duplicate nginx.conf's declarations.
 	for _, banned := range []string{"server_tokens", "gzip", "keepalive_timeout"} {
 		if strings.Contains(got, banned) {
 			t.Errorf("fragment must NOT contain %q (it's patched into nginx.conf):\n%s", banned, got)
@@ -38,7 +39,7 @@ func TestBuildNginxTunablesFragment(t *testing.T) {
 }
 
 func TestBuildNginxTunablesFragment_EmptyCustom(t *testing.T) {
-	got := BuildNginxTunablesFragment(&nginxTunablesApplyParams{ClientMaxBodySize: "50m"})
+	got := BuildNginxTunablesFragment(&nginxTunablesApplyParams{ClientMaxBodySize: "50m"}, nil)
 	if strings.Contains(got, "Admin custom directives") {
 		t.Errorf("empty custom snippet should not emit Advanced header:\n%s", got)
 	}
@@ -71,9 +72,9 @@ func TestValidateNginxTunables(t *testing.T) {
 }
 
 func TestPatchNginxMainConf(t *testing.T) {
-	// Mirrors a Debian stock nginx.conf: worker lines + server_tokens + gzip
-	// present, keepalive_timeout absent, plus a trailing comment to prove it
-	// survives.
+	// An nginx.conf that declares server_tokens (stock Debian and Ubuntu ship
+	// it commented out; see nginx_tunables_http_scope_test.go) and gzip, with
+	// keepalive_timeout absent, plus a trailing comment to prove it survives.
 	conf := []byte("user www-data;\nworker_processes auto;\npid /run/nginx.pid;\nevents {\n\tworker_connections 768;\n}\nhttp {\n\tserver_tokens off; # Recommended practice is to turn this off\n\tgzip on;\n}\n")
 
 	p := &nginxTunablesApplyParams{WorkerProcesses: "4", WorkerConnections: 2048, ServerTokens: true, Gzip: false, KeepaliveTimeout: "90s"}
