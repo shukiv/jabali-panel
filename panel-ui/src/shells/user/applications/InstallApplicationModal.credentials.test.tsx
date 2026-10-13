@@ -5,7 +5,7 @@
 // generator are mocked.
 import { App } from "antd";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ThemeModeProvider } from "../../../theme/ThemeModeContext";
@@ -29,14 +29,20 @@ const mocked = apiClient as unknown as {
   post: ReturnType<typeof vi.fn>;
 };
 
-function renderWith(schema: Record<string, ParamSpec>) {
+// The drawer clears every field and applies the defaults in an effect once the
+// app is selected, and on a busy runner that effect can run after the fields
+// first paint, wiping what a test already typed. A password field gets its
+// default only from that effect, so once this one shows it, typing is safe.
+const SETTLED: ParamSpec = { type: "password", default: "settled" };
+
+async function renderWith(schema: Record<string, ParamSpec>) {
   const descriptor: AppDescriptor = {
     name: "demo",
     display_name: "Demo",
     default_subdirectory: "",
     requires_db: true,
     root_only: true,
-    install_param_schema: schema,
+    install_param_schema: { ...schema, settled: SETTLED },
   };
   vi.mocked(useAppRegistry).mockReturnValue({
     data: [descriptor],
@@ -58,6 +64,7 @@ function renderWith(schema: Record<string, ParamSpec>) {
       </ThemeModeProvider>
     </QueryClientProvider>,
   );
+  await waitFor(() => expect(screen.getByLabelText("Settled")).toHaveValue("settled"));
 }
 
 async function fill(label: string, value: string) {
@@ -89,7 +96,7 @@ beforeEach(() => {
 
 describe("InstallApplicationModal admin credentials", () => {
   it("refuses a password the app's pattern rejects and does not POST", async () => {
-    renderWith({ admin_password: { type: "password", pattern: "^(.{12,})?$" } });
+    await renderWith({ admin_password: { type: "password", pattern: "^(.{12,})?$" } });
     await fill("Admin password", "short");
     await install();
     expect(await screen.findByText(/does not meet this app's password rules/i)).toBeInTheDocument();
@@ -98,7 +105,7 @@ describe("InstallApplicationModal admin credentials", () => {
 
   it("counts characters the way the API does, not UTF-16 units", async () => {
     // 3 emoji are 6 UTF-16 units but 3 characters: under the 5 minimum.
-    renderWith({ admin_password: { type: "password", pattern: "^(.{5,20})?$" } });
+    await renderWith({ admin_password: { type: "password", pattern: "^(.{5,20})?$" } });
     await fill("Admin password", "😀😀😀");
     await install();
     expect(await screen.findByText(/does not meet this app's password rules/i)).toBeInTheDocument();
@@ -106,7 +113,7 @@ describe("InstallApplicationModal admin credentials", () => {
   });
 
   it("accepts 11 emoji under a 20-character maximum and POSTs them", async () => {
-    renderWith({ admin_password: { type: "password", pattern: "^(.{5,20})?$" } });
+    await renderWith({ admin_password: { type: "password", pattern: "^(.{5,20})?$" } });
     const pw = "😀".repeat(11);
     await fill("Admin password", pw);
     await install();
@@ -115,7 +122,7 @@ describe("InstallApplicationModal admin credentials", () => {
   });
 
   it("refuses a reserved username in any case and does not POST", async () => {
-    renderWith({
+    await renderWith({
       admin_username: { type: "string", reserved: ["admin", "osticket"] },
     });
     await fill("Admin username", "OsTicket");
@@ -129,8 +136,9 @@ describe("InstallApplicationModal admin credentials", () => {
     vi.mocked(generatePassword)
       .mockReturnValueOnce("has=equals1234AB")
       .mockReturnValueOnce("noequals1234ABcd");
-    renderWith({ admin_password: { type: "password", pattern: "^[^=\\r\\n]*$" } });
-    fireEvent.click(await screen.findByRole("button", { name: "Generate strong password" }));
+    await renderWith({ admin_password: { type: "password", pattern: "^[^=\\r\\n]*$" } });
+    const field = screen.getByLabelText("Admin password").closest(".ant-space-compact") as HTMLElement;
+    fireEvent.click(within(field).getByRole("button", { name: "Generate strong password" }));
     await waitFor(() =>
       expect(screen.getByLabelText("Admin password")).toHaveValue("noequals1234ABcd"),
     );
