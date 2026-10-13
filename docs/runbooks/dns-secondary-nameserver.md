@@ -50,11 +50,17 @@ provider's transfer addresses (its documentation lists them) under
 
 ## Option C — hidden primary
 
-The panel keeps the zones, and only the secondaries answer the public:
-the registrar delegates to the provider's nameservers, never to this
-server. Leave `ns2` empty, list every secondary's transfer address under
-**Secondary DNS servers (AXFR + NOTIFY)**, and make sure each zone's NS
-records name the provider's nameservers.
+The panel keeps the zones, and only the provider's nameservers answer
+the public: the registrar delegates to them, never to this server.
+
+1. Every zone's NS records come from the `ns1 hostname` and `ns2
+   hostname` fields in **Server Settings → DNS**. Set them to two of the
+   provider's nameservers. The panel puts only these two names in each
+   zone.
+2. List every transfer address of the provider under **Secondary DNS
+   servers (AXFR + NOTIFY)**. `ns2 IPv4` can stay empty.
+3. At the provider, add each zone as a secondary with this server's
+   public IP as its primary.
 
 ## Secondary DNS servers (AXFR + NOTIFY)
 
