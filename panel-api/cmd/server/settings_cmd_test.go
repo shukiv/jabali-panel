@@ -34,6 +34,12 @@ func TestSettingsRegistryApply(t *testing.T) {
 			}
 		}},
 		{name: "bool invalid", key: "webmail_enabled", val: "maybe", wantErr: true},
+		// GH #2131: stored in the same form the REST PATCH stores it.
+		{name: "dns secondaries normalized", key: "dns_secondary_ips", val: " 192.0.2.53 2001:DB8::0:53,", check: func(t *testing.T, s *models.ServerSettings) {
+			if s.DNSSecondaryIPs != "192.0.2.53,2001:db8::53" {
+				t.Fatalf("want 192.0.2.53,2001:db8::53 got %q", s.DNSSecondaryIPs)
+			}
+		}},
 		{name: "nginx str", key: "nginx_client_max_body_size", val: "50m", check: func(t *testing.T, s *models.ServerSettings) {
 			if s.NginxClientMaxBodySize != "50m" {
 				t.Fatalf("want 50m got %q", s.NginxClientMaxBodySize)

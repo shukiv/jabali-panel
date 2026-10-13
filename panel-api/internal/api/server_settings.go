@@ -117,6 +117,7 @@ type updateServerSettingsRequest struct {
 	NS1IPv4                  *string          `json:"ns1_ipv4,omitempty"`
 	NS2Name                  *string          `json:"ns2_name,omitempty"`
 	NS2IPv4                  *string          `json:"ns2_ipv4,omitempty"`
+	DNSSecondaryIPs          *string          `json:"dns_secondary_ips,omitempty"`
 	AdminEmail               *string          `json:"admin_email,omitempty"`
 	LogRetention             *json.RawMessage `json:"log_retention,omitempty"`
 	Timezone                 *string          `json:"timezone,omitempty"`
@@ -361,6 +362,9 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 	}
 	if req.NS2IPv4 != nil {
 		current.NS2IPv4 = strings.TrimSpace(*req.NS2IPv4)
+	}
+	if req.DNSSecondaryIPs != nil {
+		current.DNSSecondaryIPs = settingsops.NormalizeIPList(*req.DNSSecondaryIPs)
 	}
 	if req.AdminEmail != nil {
 		current.AdminEmail = strings.TrimSpace(*req.AdminEmail)

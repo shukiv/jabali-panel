@@ -89,6 +89,7 @@ type ServerSettings = {
   ns1_ipv4: string;
   ns2_name: string;
   ns2_ipv4: string;
+  dns_secondary_ips: string;
   admin_email: string;
   default_dns_ttl: number;
   timezone: string;
@@ -377,10 +378,15 @@ const GeneralSettingsTab = () => {
   );
 };
 
+// The API stores dns_secondary_ips as one comma-separated string; the form
+// keeps that string and the tags input works on the list.
+const splitIPList = (v: string | undefined) =>
+  (v ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+
 // DNSSettingsTab — DNS Nameservers card. Independent form + Save button;
 // PATCH /admin/settings only writes the ns* fields it sends so this
 // doesn't clobber identity/SSH/timezone settings.
-const DNSSettingsTab = () => {
+export const DNSSettingsTab = () => {
   const { t } = useTranslation();
   const [form] = Form.useForm<ServerSettings>();
   const [loading, setLoading] = useState(true);
@@ -414,6 +420,7 @@ const DNSSettingsTab = () => {
         ns1_ipv4: values.ns1_ipv4 || "",
         ns2_name: values.ns2_name || "",
         ns2_ipv4: values.ns2_ipv4 || "",
+        dns_secondary_ips: values.dns_secondary_ips || "",
       });
       notify({ type: "success", message: "DNS nameservers saved" });
       form.setFieldsValue(resp.data);
@@ -472,6 +479,22 @@ const DNSSettingsTab = () => {
             </Form.Item>
           </Col>
         </Row>
+
+        <Form.Item
+          label="Secondary DNS servers (AXFR + NOTIFY)"
+          name="dns_secondary_ips"
+          extra="Servers that may copy every zone on this server (AXFR) and are told when a zone changes (NOTIFY) — a hidden-primary setup or a secondary DNS provider. ns2's IPv4 is included without listing it here. IP addresses only, up to 16."
+          getValueProps={(v: string | undefined) => ({ value: splitIPList(v) })}
+          normalize={(v: string[]) => v.join(",")}
+        >
+          <Select
+            mode="tags"
+            open={false}
+            tokenSeparators={[",", " "]}
+            placeholder="192.0.2.53"
+            aria-label="Secondary DNS servers"
+          />
+        </Form.Item>
       </Card>
 
       <Card title={t("settings.dns_record_defaults")} style={{ marginBottom: 16 }}>

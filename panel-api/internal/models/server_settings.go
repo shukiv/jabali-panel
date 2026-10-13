@@ -2,6 +2,7 @@ package models
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 )
 
@@ -41,7 +42,15 @@ type ServerSettings struct {
 	NS1IPv4      string  `gorm:"type:varchar(45);not null;default:''"  json:"ns1_ipv4"`
 	NS2Name      string  `gorm:"type:varchar(253);not null;default:''" json:"ns2_name"`
 	NS2IPv4      string  `gorm:"type:varchar(45);not null;default:''"  json:"ns2_ipv4"`
-	AdminEmail   string  `gorm:"type:varchar(320);not null;default:''" json:"admin_email"`
+	// DNSSecondaryIPs (GH #2131) lists, comma-separated, the IP addresses of
+	// secondary DNS servers that may transfer every hosted zone (AXFR) and
+	// are sent a NOTIFY when one changes — besides ns2_ipv4. It lets the
+	// panel run as a hidden primary for a secondary DNS provider whose
+	// transfer servers are not its public nameservers. Plain IP literals
+	// (PowerDNS's ALSO-NOTIFY takes no netmask); settingsops validates them.
+	// TEXT for the server_settings row-size ceiling.
+	DNSSecondaryIPs string `gorm:"column:dns_secondary_ips;type:text;not null;default:''" json:"dns_secondary_ips"`
+	AdminEmail      string `gorm:"type:varchar(320);not null;default:''" json:"admin_email"`
 	// DefaultDNSTTL is the TTL (seconds) applied to newly-created DNS
 	// records when the API caller doesn't pass one. Editable via
 	// Server Settings → DNS in the admin UI. Range 60–86400 enforced
@@ -632,6 +641,22 @@ func EffectiveDNSTTL(s *ServerSettings) int {
 		return int(s.DefaultDNSTTL)
 	}
 	return 300
+}
+
+// DNSSecondaryIPList splits dns_secondary_ips (GH #2131) into its entries,
+// trimmed, empty ones dropped. Entries are not checked here; settingsops
+// validates the list on every write.
+func DNSSecondaryIPList(s *ServerSettings) []string {
+	if s == nil {
+		return nil
+	}
+	var out []string
+	for _, v := range strings.Split(s.DNSSecondaryIPs, ",") {
+		if v = strings.TrimSpace(v); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 // Log-retention category keys (Server Settings -> Logs). Each groups one or more

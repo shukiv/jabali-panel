@@ -57,6 +57,10 @@ func Validate(s *models.ServerSettings) error {
 			return fmt.Errorf("%s: invalid hostname", label)
 		}
 	}
+	// GH #2131: secondary DNS servers (AXFR + NOTIFY).
+	if err := validateDNSSecondaryIPs(s); err != nil {
+		return err
+	}
 	// Admin email
 	if s.AdminEmail != "" {
 		if _, err := mail.ParseAddress(s.AdminEmail); err != nil {

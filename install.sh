@@ -4756,6 +4756,16 @@ local-address=${pdns_local_addresses}
 allow-axfr-ips=127.0.0.0/8,::1
 disable-axfr-rectify=no
 
+# NOTIFY (GH #2131). After every zone push the agent runs pdns_control notify
+# for the zone, and PowerDNS refuses that unless it runs as a primary. Zones
+# stay NATIVE. only-notify is empty on purpose: NOTIFY goes only to the zone's
+# ALSO-NOTIFY targets (ns2 and the secondary DNS servers set in Server
+# Settings > DNS), never to the hosts a tenant puts in the zone's NS records,
+# so a tenant cannot point this server's NOTIFY packets at an address of
+# their choosing.
+primary=yes
+only-notify=
+
 # GH #896: a freshly created domain gets its OWN pdns zone, inserted
 # straight into the gmysql backend. PowerDNS caches the LIST of zones
 # (the "zone cache") and only re-reads it every zone-cache-refresh-
@@ -6312,6 +6322,39 @@ AXFRDENY
       || _warn "pdns restart failed after AXFR config — new setting applies on next pdns restart"
   else
     _log "pdns not active — AXFR ACL staged in $conf for next start"
+  fi
+}
+
+# GH #2131: let PowerDNS send NOTIFY on EXISTING boxes. The agent runs
+# pdns_control notify after every zone push, and PowerDNS refuses it ("not
+# configured as primary") unless primary=yes, so secondaries — ns2 and the
+# secondary DNS servers from Server Settings → DNS — only caught up at the
+# zone's SOA refresh. The template in install_powerdns has both lines, but
+# install_powerdns does not run on update. only-notify= (empty) is the
+# security half: NOTIFY then goes only to each zone's ALSO-NOTIFY targets,
+# never to the hosts a tenant names in the zone's NS records. Both lines are
+# rewritten together, so primary=yes is never live without it.
+ensure_pdns_primary() {
+  local conf=/etc/powerdns/pdns.d/01-jabali-mysql.conf
+  [[ -f "$conf" ]] || return 0   # dns module never installed here
+  if grep -Fxq 'primary=yes' "$conf" && grep -Fxq 'only-notify=' "$conf"; then
+    return 0
+  fi
+  sed -i -E '/^(primary|only-notify)=/d' "$conf"
+  cat >> "$conf" <<'PDNSPRIMARY'
+
+# GH #2131: send NOTIFY to each zone's ALSO-NOTIFY targets (ns2 and the
+# secondary DNS servers), and to nobody else. Appended by ensure_pdns_primary
+# on update.
+primary=yes
+only-notify=
+PDNSPRIMARY
+  if systemctl is-active --quiet pdns 2>/dev/null; then
+    systemctl restart pdns \
+      && _ok "pdns primary=yes applied (GH #2131 — zone changes now NOTIFY ns2 and the secondary DNS servers)" \
+      || _warn "pdns restart failed after NOTIFY config — new setting applies on next pdns restart"
+  else
+    _log "pdns not active — NOTIFY config staged in $conf for next start"
   fi
 }
 
@@ -16418,6 +16461,9 @@ provision_new_software() {
   # JAB-350: same reasoning — pin the global AXFR ACL to loopback on update so a
   # permissive global on an existing host stops leaving zones internet-transferable.
   ensure_pdns_axfr_deny
+  # GH #2131: same reasoning — primary=yes + only-notify= so zone pushes
+  # NOTIFY the configured secondaries.
+  ensure_pdns_primary
   # GH #1459: same reasoning — widen jabali_pdns.records.content to utf8mb4 on
   # update so a UTF-8 TXT / IDN record stops rolling back the whole zone's
   # atomic upsert (the stock pdns schema is latin1; install_powerdns, which

@@ -388,12 +388,9 @@ func pushZoneToPdns(ctx context.Context, zone *models.DNSZone) error {
 	zone.Serial = time.Now().UTC().Unix()
 	_ = zones.Update(ctx, zone)
 
-	var allowAXFR, alsoNotify []string
-	if srv != nil && srv.NS2IPv4 != "" {
-		allowAXFR = []string{srv.NS2IPv4}
-		alsoNotify = []string{srv.NS2IPv4}
-	}
-	allowAXFR = append(allowAXFR, "127.0.0.1")
+	// The same lists the reconciler's zone push sends: a push that left out
+	// the secondaries would drop their ALLOW-AXFR-FROM/ALSO-NOTIFY metadata.
+	allowAXFR, alsoNotify := dnscompile.TransferTargets(srv)
 
 	pushCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()

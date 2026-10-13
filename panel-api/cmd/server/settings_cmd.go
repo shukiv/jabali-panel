@@ -365,6 +365,12 @@ var settableKeys = map[string]settingDef{
 			return nil
 		},
 	},
+	// GH #2131: secondary DNS servers allowed to transfer every hosted zone
+	// and sent a NOTIFY when one changes. Same normalization as the REST
+	// PATCH; settingsops.Validate checks each address.
+	"dns_secondary_ips": strKey("secondary DNS server IPs for AXFR + NOTIFY, comma-separated (empty clears)", func(s *models.ServerSettings, v string) {
+		s.DNSSecondaryIPs = settingsops.NormalizeIPList(v)
+	}),
 	"dns_user_record_policy_preset": settingDef{
 		help: "set the DNS user-record policy from a named preset (e.g. hosting-safe, locked-down)",
 		apply: func(s *models.ServerSettings, raw string) error {
