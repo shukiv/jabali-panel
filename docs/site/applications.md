@@ -43,7 +43,7 @@ Deleting the app removes Nextcloud's code, its database, the cron job, the firew
 
 Every app uses the same 6-step pipeline:
 
-1. **Pre-flight** — verify the destination directory is empty, the chosen DB engine is available, the user has quota headroom, the chosen path is not already an install.
+1. **Pre-flight** — verify the destination directory is empty, the chosen DB engine is available, the user has quota headroom, the chosen path is not already an install. The admin username and password you type must meet the app's own rules: its username characters and length, its password length or banned characters, and names it refuses (osTicket won't take `admin`). The form shows each rule under the field and checks it before anything is created. Blank fields get a generated value that always passes.
 2. **DB provisioning** — create DB + DB user via the agent.
 3. **Download** — fetch the app from upstream (cached on the panel host for repeat installs).
 4. **Configure** — write the app's config file with DB creds + admin user + site URL.

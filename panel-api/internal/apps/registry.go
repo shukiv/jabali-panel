@@ -20,7 +20,7 @@ import (
 // ParamSpec describes one per-app form field beyond the generic
 // (domain, subdirectory, admin_email) ones the framework already asks
 // for. The UI in step 5 reads Type to pick the AntD control; the API
-// in step 3 validates against Required, Pattern, and Values.
+// in step 3 validates against Required, Pattern, Reserved and Values.
 type ParamSpec struct {
 	// Type is one of "string", "email", "password", "enum", "bool". The
 	// validator and the UI both switch on this string — adding a new
@@ -31,6 +31,10 @@ type ParamSpec struct {
 	// Pattern is an optional anchored regex applied to "string" values
 	// (and the local-part of "email" values). Nil = no extra check.
 	Pattern *string `json:"pattern,omitempty"`
+	// Reserved lists values a "string" or "password" field may not take,
+	// compared ignoring case (an app's banned admin usernames). Blank is
+	// never reserved.
+	Reserved []string `json:"reserved,omitempty"`
 	// Values is the closed set of acceptable values for Type=="enum".
 	// Ignored for other types.
 	Values []string `json:"values,omitempty"`
@@ -170,6 +174,9 @@ func (r *Registry) List() []App {
 // startup panic via Register's error return — a developer mistake, not
 // a runtime branch.
 func validateParamSpec(field string, s ParamSpec) error {
+	if len(s.Reserved) > 0 && s.Type != "string" && s.Type != "password" {
+		return fmt.Errorf("param %q: Reserved only valid for string and password", field)
+	}
 	switch s.Type {
 	case "string", "email", "password", "bool":
 		if len(s.Values) > 0 {

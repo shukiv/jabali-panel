@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
 )
@@ -307,10 +308,12 @@ func opencartInstallHandler(ctx context.Context, params json.RawMessage) (any, e
 			Message: "admin_user must be 3-20 chars of letters, digits, dot, dash, underscore, or @",
 		}
 	}
-	if len(req.AdminPass) < 4 {
+	// cli_install.php refuses a password outside 5-20 characters (oc_strlen,
+	// so characters, not bytes) and still exits 0, so check it here.
+	if n := utf8.RuneCountInString(req.AdminPass); n < 5 || n > 20 {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInvalidArgument,
-			Message: "admin_pass must be at least 4 characters (OpenCart minimum)",
+			Message: "admin_pass must be 5 to 20 characters (OpenCart's limit)",
 		}
 	}
 	if req.AdminEmail == "" {

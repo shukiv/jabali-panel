@@ -137,6 +137,23 @@ func TestParamSpec_NonEnumRejectsValues(t *testing.T) {
 	}
 }
 
+func TestParamSpec_ReservedOnlyOnStringOrPassword(t *testing.T) {
+	r := New()
+	err := r.Register(App{
+		Name:               "demo",
+		InstallParamSchema: map[string]ParamSpec{"e": {Type: "email", Reserved: []string{"x@example.com"}}},
+	})
+	if err == nil {
+		t.Fatal("expected error for Reserved on an email field")
+	}
+	if err := r.Register(App{
+		Name:               "demo2",
+		InstallParamSchema: map[string]ParamSpec{"s": {Type: "string", Reserved: []string{"admin"}}},
+	}); err != nil {
+		t.Fatalf("Reserved on a string field: %v", err)
+	}
+}
+
 func TestRegisterDefaults_RegistersWordPress(t *testing.T) {
 	r := New()
 	if err := RegisterDefaults(r); err != nil {

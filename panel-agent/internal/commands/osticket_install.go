@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -43,6 +44,20 @@ const (
 	osticketTarballSHA  = "a4187df5f52dd41625e6b61b322245853542e12b5969a45f0a6d81f7ab8151a7"
 	osticketTablePrefix = "ost_"
 	osticketLangID      = "en_US"
+)
+
+// The admin rules osTicket 1.18.4's own installer applies, after the database
+// exists (setup/inc/class.installer.php, Validator::is_username,
+// osTicketPasswordPolicy::onSet). The handler checks them first so a refused
+// value fails with a message naming the field, not the installer's error list.
+var (
+	// Validator::is_username: /^[\p{L}\d._-]+$/u, at least 2 bytes (2
+	// characters here, which is never fewer bytes).
+	osticketAdminUserPattern = regexp.MustCompile(`^[\p{L}\d._-]{2,}$`)
+	// PHP 8 numeric strings: is_username refuses any is_numeric() name.
+	osticketNumericUsernamePattern = regexp.MustCompile(`^[ \t\n\r\v\f]*[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?[ \t\n\r\v\f]*$`)
+	// The installer's "not very predictable" check, compared lowercased.
+	osticketReservedUsernames = []string{"admin", "admins", "username", "osticket"}
 )
 
 type osticketInstallReq struct {
@@ -127,6 +142,17 @@ func osticketInstallHandler(ctx context.Context, params json.RawMessage) (any, e
 	// Catch it here with a clear message rather than a cryptic installer error.
 	if strings.EqualFold(strings.TrimSpace(req.HelpdeskEmail), strings.TrimSpace(req.AdminEmail)) {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "helpdesk_email must be different from admin_email"}
+	}
+	if !osticketAdminUserPattern.MatchString(req.AdminUsername) || osticketNumericUsernamePattern.MatchString(req.AdminUsername) {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "admin_username must be at least 2 letters, digits, dots, underscores or hyphens, and not a number (osTicket's rule)"}
+	}
+	for _, r := range osticketReservedUsernames {
+		if strings.EqualFold(req.AdminUsername, r) {
+			return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "admin_username cannot be admin, admins, username or osticket (osTicket's rule)"}
+		}
+	}
+	if n := len(req.AdminPass); n < 6 || n > 128 {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "admin_pass must be 6 to 128 bytes (osTicket's rule)"}
 	}
 	if req.HelpdeskName == "" {
 		req.HelpdeskName = "Support"

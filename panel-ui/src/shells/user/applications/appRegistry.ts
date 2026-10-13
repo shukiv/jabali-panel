@@ -12,6 +12,9 @@ export type ParamSpec = {
   type: "string" | "email" | "password" | "enum" | "bool";
   required?: boolean;
   pattern?: string;
+  // reserved lists values the field may not take, compared ignoring case
+  // (an app's banned admin usernames). Blank is never reserved.
+  reserved?: string[];
   values?: string[];
   // value_labels maps an enum value to its display label ("IL" →
   // "Israel (IL)"). The Select filters on the label, so large enums are

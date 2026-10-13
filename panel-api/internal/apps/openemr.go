@@ -34,10 +34,7 @@ var OpenEMR = App{
 			Required:    true,
 			Description: "Administrator email, stored on the admin account.",
 		},
-		"admin_password": {
-			Type:        "password",
-			Required:    false,
-			Description: "Initial admin password. Leave blank to generate one and show it once.",
-		},
+		"admin_password": adminPasswordParam(`^[^=\r\n]*$`,
+			"Initial admin password, without \"=\" or line breaks. Leave blank to generate one and show it once."),
 	},
 }

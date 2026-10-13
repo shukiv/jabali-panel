@@ -573,6 +573,7 @@ func TestValidateInstallParams_TableDriven(t *testing.T) {
 		"email":  {Type: "email", Required: false},
 		"flag":   {Type: "bool", Required: false},
 		"choice": {Type: "enum", Values: []string{"a", "b"}, Required: true},
+		"login":  {Type: "string", Reserved: []string{"admin"}},
 	}
 	cases := []struct {
 		name    string
@@ -586,6 +587,9 @@ func TestValidateInstallParams_TableDriven(t *testing.T) {
 		{"wrong type bool", map[string]any{"name": "abc", "choice": "a", "flag": "yes"}, "expected bool"},
 		{"unknown field", map[string]any{"name": "abc", "choice": "a", "extra": 1}, "unknown param"},
 		{"bad email", map[string]any{"name": "abc", "choice": "a", "email": "no-at-sign"}, "invalid email"},
+		{"reserved in any case", map[string]any{"name": "abc", "choice": "a", "login": "AdMiN"}, "reserved"},
+		{"blank is never reserved", map[string]any{"name": "abc", "choice": "a", "login": ""}, ""},
+		{"not reserved", map[string]any{"name": "abc", "choice": "a", "login": "admins"}, ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

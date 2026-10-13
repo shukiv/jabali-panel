@@ -1,5 +1,9 @@
 package apps
 
+// osticketAdminUsernamePattern is AdminUsernameParam's rule starting with a
+// letter, which no PHP numeric string does.
+var osticketAdminUsernamePattern = `^([a-zA-Z][a-zA-Z0-9_-]{1,31})?$`
+
 // OSTicket is the descriptor for osTicket — a widely-used open-source
 // support-ticket system (GH #962, JAB-231). RequiresDB=true.
 //
@@ -66,17 +70,18 @@ var OSTicket = App{
 		"admin_username": {
 			Type:     "string",
 			Required: false,
-			Pattern:  &adminUsernamePattern,
+			// Letter first: osTicket refuses any name PHP reads as a number.
+			Pattern:  &osticketAdminUsernamePattern,
+			Reserved: []string{"admin", "admins", "username", "osticket"},
 			// No default: blank means the service's generated username is
 			// used AND stored — a "sysadmin" default here diverged from the
 			// generated credential the UI displays (JAB-231 E2E).
 			// osTicket bans admin/admins/username/osticket as the login name.
-			Description: "Administrator login username for the agent panel (/scp). Leave blank for a random one. Cannot be 'admin', 'admins', 'username' or 'osticket'.",
+			Description: "Administrator login username for the agent panel (/scp): 2 to 32 letters, digits, underscores or hyphens, starting with a letter. Leave blank for a random one. Cannot be 'admin', 'admins', 'username' or 'osticket'.",
 		},
-		"admin_password": {
-			Type:        "password",
-			Required:    false,
-			Description: "Initial admin password. Leave blank to have one generated. osTicket requires a strong password; the generator satisfies that.",
-		},
+		// osTicket's policy counts bytes, so past 32 non-ASCII characters
+		// its 128 cap can bite before this one does.
+		"admin_password": adminPasswordParam(`^(.{6,128})?$`,
+			"Initial admin password, 6 to 128 characters. Leave blank to have one generated."),
 	},
 }

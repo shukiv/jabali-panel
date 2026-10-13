@@ -28,7 +28,8 @@ var MediaWiki = App{
 	// 6-letter username; either way the first letter is uppercased to
 	// satisfy MediaWiki's username-must-start-with-uppercase rule.
 	InstallParamSchema: map[string]ParamSpec{
-		"admin_username": AdminUsernameParam,
+		"admin_username": adminUsernameParamMatching(`^([a-zA-Z][a-zA-Z0-9_]{1,31})?$`,
+			"2 to 32 letters, digits or underscores, starting with a letter (MediaWiki capitalizes it)"),
 		"site_title": {
 			Type:        "string",
 			Required:    true,
@@ -40,11 +41,8 @@ var MediaWiki = App{
 			Required:    true,
 			Description: "Administrator email — used by MediaWiki for password resets.",
 		},
-		"admin_password": {
-			Type:        "password",
-			Required:    false,
-			Description: "Initial admin password. Leave blank to have one generated. MediaWiki requires ≥10 chars; the generator produces a ULID which satisfies that.",
-		},
+		"admin_password": adminPasswordParam(`^(.{10,})?$`,
+			"Initial admin password, at least 10 characters. Leave blank to have one generated."),
 		"language": {
 			Type:        "string",
 			Required:    false,

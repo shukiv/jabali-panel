@@ -23,7 +23,17 @@ type InputPasswordProps = ComponentProps<typeof Input.Password>;
 interface PasswordInputProps extends Omit<InputPasswordProps, "suffix"> {
   /** Length passed to generatePassword. Default 16. */
   generatorLength?: number;
+  /**
+   * Field-specific rule a generated password must pass (an app that bans
+   * "=", say). The generator retries a few times and leaves the field alone
+   * if nothing passes.
+   */
+  accepts?: (password: string) => boolean;
 }
+
+// One generated password in five or so contains a given symbol, so 20
+// tries is plenty for any rule that bans a character or two.
+const GENERATE_TRIES = 20;
 
 // Dice icon for the "generate password" affordance. Matches AntD icon
 // sizing conventions: 1em × 1em, currentColor, aria-hidden. The five-pip
@@ -56,10 +66,16 @@ export function PasswordInput({
   value,
   onChange,
   generatorLength = 16,
+  accepts,
   ...rest
 }: PasswordInputProps) {
   const handleGenerate = () => {
-    const pw = generatePassword(generatorLength);
+    let pw: string | undefined;
+    for (let i = 0; i < GENERATE_TRIES && pw === undefined; i++) {
+      const candidate = generatePassword(generatorLength);
+      if (!accepts || accepts(candidate)) pw = candidate;
+    }
+    if (pw === undefined) return;
     // Forward a minimal ChangeEvent-shaped object so Form.Item (which
     // calls the child's onChange with whatever the child emits) lands
     // the value in form state the same way native keystrokes do.

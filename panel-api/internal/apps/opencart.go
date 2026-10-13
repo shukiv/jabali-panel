@@ -20,16 +20,14 @@ var OpenCart = App{
 	AgentDeleteCmd:       "app.delete",
 	AgentCloneCmd:        "",
 	InstallParamSchema: map[string]ParamSpec{
-		"admin_username": AdminUsernameParam,
+		"admin_username": adminUsernameParamMatching(`^([a-zA-Z0-9][a-zA-Z0-9_-]{2,19})?$`,
+			"3 to 20 letters, digits, underscores or hyphens, starting with a letter or digit"),
 		"admin_email": {
 			Type:        "email",
 			Required:    true,
 			Description: "Administrator email — used by OpenCart for password resets and as the default From-address for transactional emails.",
 		},
-		"admin_password": {
-			Type:        "password",
-			Required:    false,
-			Description: "Initial admin password. Leave blank to have one generated. OpenCart requires ≥4 chars; the ULID generator satisfies that.",
-		},
+		"admin_password": adminPasswordParam(`^(.{5,20})?$`,
+			"Initial admin password, 5 to 20 characters (OpenCart's limit). Leave blank to have one generated."),
 	},
 }
