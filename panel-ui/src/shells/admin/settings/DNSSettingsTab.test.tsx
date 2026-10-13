@@ -82,3 +82,26 @@ describe("DNSSettingsTab secondary DNS servers (GH #2131)", () => {
     expect(mocked.patch.mock.calls[0][1].dns_secondary_ips).toBe("");
   });
 });
+
+describe("DNSSettingsTab default record TTL", () => {
+  // The TTL card sat in this form since the setting was added, but Save
+  // never sent it: the toast said saved and the old TTL came back.
+  it("saves the default record TTL", async () => {
+    mocked.get.mockResolvedValue({ status: 200, data: settings });
+    mocked.patch.mockImplementation((_url: string, body: Record<string, unknown>) =>
+      Promise.resolve({ status: 200, data: { ...settings, ...body } }),
+    );
+    render(
+      <App>
+        <DNSSettingsTab />
+      </App>,
+    );
+
+    const ttl = await screen.findByLabelText(/Default record TTL/i);
+    await waitFor(() => expect(ttl).toHaveValue("3600"));
+    fireEvent.change(ttl, { target: { value: "300" } });
+    fireEvent.click(screen.getByRole("button", { name: /Save DNS Settings/ }));
+    await waitFor(() => expect(mocked.patch).toHaveBeenCalledTimes(1));
+    expect(mocked.patch.mock.calls[0][1].default_dns_ttl).toBe(300);
+  });
+});

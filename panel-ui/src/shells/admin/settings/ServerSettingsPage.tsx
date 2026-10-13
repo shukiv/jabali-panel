@@ -421,8 +421,9 @@ export const DNSSettingsTab = () => {
         ns2_name: values.ns2_name || "",
         ns2_ipv4: values.ns2_ipv4 || "",
         dns_secondary_ips: values.dns_secondary_ips || "",
+        default_dns_ttl: values.default_dns_ttl,
       });
-      notify({ type: "success", message: "DNS nameservers saved" });
+      notify({ type: "success", message: "DNS settings saved" });
       form.setFieldsValue(resp.data);
     } catch (err) {
       notifyError(notify, "Failed to save", err);
