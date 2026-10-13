@@ -22,3 +22,14 @@ func TestRenderPythonUnit_TenantSlice(t *testing.T) {
 		t.Errorf("unit missing User=alice")
 	}
 }
+
+// TestRenderPythonUnit_NoSystemBus asserts tenant app code cannot reach the
+// system D-Bus, like tenant PHP under the jabali-fpm-app profile.
+func TestRenderPythonUnit_NoSystemBus(t *testing.T) {
+	unit := renderPythonUnit(pythonAppApplyParams{AppID: "01ABC", Username: "alice", AppType: "wsgi"},
+		"/home/alice/app", "/home/alice/app/.env", "/usr/bin/true")
+	svc := unit[strings.Index(unit, "[Service]"):strings.Index(unit, "[Install]")]
+	if !strings.Contains(svc, "\nInaccessiblePaths=-/run/dbus/system_bus_socket\n") {
+		t.Errorf("[Service] does not make the system bus inaccessible:\n%s", svc)
+	}
+}

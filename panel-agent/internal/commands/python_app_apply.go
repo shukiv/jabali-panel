@@ -300,6 +300,10 @@ func renderPythonUnit(p pythonAppApplyParams, appRoot, envPath, start string) st
 	fmt.Fprintf(&b, "EnvironmentFile=%s\n", envPath)
 	fmt.Fprintf(&b, "ExecStart=%s\n", start)
 	b.WriteString("Restart=on-failure\nRestartSec=3\nNoNewPrivileges=true\nPrivateTmp=true\n")
+	// No system D-Bus: tenant code has no use for systemd, logind or any other
+	// system service on it (tenant PHP is denied it by the jabali-fpm-app
+	// AppArmor profile). "-" keeps the unit starting where the bus is absent.
+	b.WriteString("InaccessiblePaths=-/run/dbus/system_bus_socket\n")
 	if p.MemoryLimit != "" {
 		fmt.Fprintf(&b, "MemoryMax=%s\n", p.MemoryLimit)
 	}
