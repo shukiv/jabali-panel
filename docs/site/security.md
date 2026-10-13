@@ -177,6 +177,11 @@ PHP. Only uids from 1000 up are matched, so system daemons are never filtered.
 - **Country exemption from local MaxMind** (PR #1083) — country-based
   allow/exempt CIDRs are derived from a local MaxMind mmdb plus supplemental
   CIDRs, with no external lookup at request time.
+- **Installer credentials on stdin** — the one-click app installers hand the
+  database and admin passwords to each app's installer on stdin, never as
+  command-line options or environment variables of the `systemd-run` unit it
+  runs in. Each transient unit's description names only its binary, so command
+  lines stay out of the journal.
 - **Secret-rotation tooling** (JAB-357) — `jabali secrets rotate <name>`
   (operator-only) rolls the panel DB app-user password, the Redis panel token,
   and the PowerDNS DB password live (each with its own verify + rollback), plus

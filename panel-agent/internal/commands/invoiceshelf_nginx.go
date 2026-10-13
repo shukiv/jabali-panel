@@ -15,30 +15,6 @@ func buildSystemdRunShell(ctx context.Context, osUser, script string) *exec.Cmd 
 	return buildSystemdRunCmd(ctx, osUser, "bash", "-c", script)
 }
 
-// buildSystemdRunCmdEnv is buildSystemdRunCmd plus extra --setenv=K=V pairs,
-// spliced in before the target binary so a secret (e.g. an admin password
-// for `artisan tinker`) is passed via the transient unit's environment
-// rather than argv — argv is world-readable via /proc without hidepid.
-func buildSystemdRunCmdEnv(ctx context.Context, osUser string, setenv []string, args ...string) *exec.Cmd {
-	cmd := buildSystemdRunCmd(ctx, osUser, args...)
-	// cmd.Args = [systemd-run --quiet --uid=… … --collect <binary> <args…>].
-	// Insert the --setenv flags right after "--collect" so they apply to the
-	// unit. Find --collect; fall back to inserting after the first arg.
-	insertAt := 1
-	for i, a := range cmd.Args {
-		if a == "--collect" {
-			insertAt = i + 1
-			break
-		}
-	}
-	flags := make([]string, 0, len(setenv))
-	for _, kv := range setenv {
-		flags = append(flags, "--setenv="+kv)
-	}
-	cmd.Args = append(cmd.Args[:insertAt], append(flags, cmd.Args[insertAt:]...)...)
-	return cmd
-}
-
 // invoiceShelfSnippetPath mirrors flarumSnippetPath — a per-install nginx
 // include keyed by the subdir (or "root" for a docroot install).
 func invoiceShelfSnippetPath(domain, subdir string) string {
