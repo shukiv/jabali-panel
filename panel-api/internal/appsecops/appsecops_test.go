@@ -600,3 +600,24 @@ func TestManagesApp(t *testing.T) {
 		}
 	}
 }
+
+// An operator's exclusion for ANOTHER rule on the same host and path does not
+// cover the install's: the managed 911100 row is still added beside it.
+func TestSyncInstall_OtherRuleOnSamePathDoesNotCoverIt(t *testing.T) {
+	e := newEnv()
+	e.excl.rows = []models.CRSRuleExclusion{{ID: "op", Host: "cloud.example.net", URIPrefix: "/remote.php/dav/", RuleID: "942100", Note: "op"}}
+	e.addNextcloud("n1", "d3")
+	if _, err := SyncInstall(context.Background(), e.deps, "n1"); err != nil {
+		t.Fatal(err)
+	}
+	got := hosts(e.agent.last(t))
+	found := false
+	for _, h := range got {
+		if h == "cloud.example.net/remote.php/dav/#911100" {
+			found = true
+		}
+	}
+	if !found || len(got) != 5 {
+		t.Fatalf("applied %v, want the operator row plus all four managed rows", got)
+	}
+}
