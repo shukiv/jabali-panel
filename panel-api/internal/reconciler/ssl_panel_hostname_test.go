@@ -67,11 +67,12 @@ func agentCalledWith(ag *fakeAgent, method string) []map[string]any {
 // says why.
 func TestTryACMEOrFallback_NoDocRoot_NeverSendsEmptyWebroot(t *testing.T) {
 	r, ag, sc, _ := sslWebrootFixture(t, nil)
+	// Not a docker-app domain: that one answers from the shared ACME root
+	// (acmeWebroot).
 	dom := &models.Domain{
 		OwnershipState: verifiedOwnership,
 		ID:             "d2", Name: "app.example.com", UserID: "u1",
 		DocRoot: "", SSLMode: models.SSLModeLE, IsEnabled: true,
-		ManagedBy: models.DomainManagedByDockerApp,
 	}
 	r.domains.(*fakeDomainRepo).domains[dom.ID] = dom
 	past := time.Now().UTC().Add(-time.Minute)
