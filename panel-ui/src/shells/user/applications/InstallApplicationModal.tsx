@@ -151,14 +151,15 @@ function compilePattern(pattern: string): RegExp {
 }
 
 // reservedRule refuses the descriptor's reserved values in any case, as the
-// API does. Blank stays allowed (blank = generated).
+// API does. Blank stays allowed (blank = generated). The message never repeats
+// the value: the rule can sit on a password field.
 function reservedRule(spec: ParamSpec): Record<string, unknown> | undefined {
   if (!spec.reserved?.length) return undefined;
   const reserved = spec.reserved.map((r) => r.toLowerCase());
   return {
     validator: (_: unknown, value: unknown) =>
       typeof value === "string" && value !== "" && reserved.includes(value.toLowerCase())
-        ? Promise.reject(new Error(`"${value}" is reserved by this app`))
+        ? Promise.reject(new Error("This value is reserved by the app"))
         : Promise.resolve(),
   };
 }

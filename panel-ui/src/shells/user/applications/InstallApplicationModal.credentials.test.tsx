@@ -120,7 +120,8 @@ describe("InstallApplicationModal admin credentials", () => {
     });
     await fill("Admin username", "OsTicket");
     await install();
-    expect(await screen.findByText(/reserved by this app/i)).toBeInTheDocument();
+    expect(await screen.findByText("This value is reserved by the app")).toBeInTheDocument();
+    expect(screen.queryByText(/OsTicket/)).toBeNull();
     expect(mocked.post).not.toHaveBeenCalled();
   });
 
