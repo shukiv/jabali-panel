@@ -115,6 +115,7 @@ func phpPoolRemoveHandler(ctx context.Context, params json.RawMessage) (any, err
 		_ = execCommandContext(ctx, "systemctl", "stop", serviceName).Run()
 		_ = execCommandContext(ctx, "systemctl", "disable", "--quiet", serviceName).Run()
 	}
+	removePoolRuntimeDir(slug)
 
 	// The pool's own PHP Defense rules, if its package lifted the exec bans
 	// (GH #1701).

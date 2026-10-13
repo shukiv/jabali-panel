@@ -318,3 +318,22 @@ func AddPoolDisableFunctions(params map[string]any, pkg *models.HostingPackage) 
 		params["disable_functions"] = *disable
 	}
 }
+
+// RemoveSlug is the agent slug of pool, one of username's pools: the user's
+// earliest pool is the default and keeps slug == username, any other is
+// <username>-php<X.Y> (GH #329). php.pool.remove without a slug removes the
+// default pool, so a caller deleting a pool resolves this first, while the
+// pool's row still exists (the earliest pool is picked among the rows there
+// are). An error leaves the slug unknown: the caller must not guess.
+func RemoveSlug(ctx context.Context, pools interface {
+	ListByUserID(ctx context.Context, userID string) ([]models.PHPPool, error)
+}, username string, pool *models.PHPPool) (string, error) {
+	list, err := pools.ListByUserID(ctx, pool.UserID)
+	if err != nil {
+		return "", fmt.Errorf("list the pools of %s: %w", username, err)
+	}
+	if len(list) == 0 {
+		return "", fmt.Errorf("%s has no pools", username)
+	}
+	return models.PoolSlug(username, pool.PHPVersion, list[0].ID == pool.ID), nil
+}

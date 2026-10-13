@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -106,6 +107,14 @@ func (m *mockPHPPoolRepo) ListByUserID(ctx context.Context, userID string) ([]mo
 			result = append(result, *p)
 		}
 	}
+	// The real repository orders by created_at, then id: the earliest pool is
+	// the user's default (GH #329).
+	sort.Slice(result, func(i, j int) bool {
+		if !result[i].CreatedAt.Equal(result[j].CreatedAt) {
+			return result[i].CreatedAt.Before(result[j].CreatedAt)
+		}
+		return result[i].ID < result[j].ID
+	})
 	return result, nil
 }
 

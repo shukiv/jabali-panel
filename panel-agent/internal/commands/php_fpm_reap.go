@@ -36,6 +36,22 @@ func usernameForSlug(slug string) string {
 	return slug
 }
 
+// removePoolRuntimeDir removes a pool's runtime dir, /run/php/jabali-<slug>
+// (socket, pid, phpver), which fpm-pre-start makes on each start. Left behind
+// it lingers until reboot and, once the account's UID is reused, belongs to
+// whoever gets that UID next. Call it once the pool's master is stopped;
+// RemoveAll removes a link inside the dir rather than following it.
+func removePoolRuntimeDir(slug string) {
+	if !phpPoolSlugRegex.MatchString(slug) || strings.Contains(slug, "..") {
+		return
+	}
+	root := os.Getenv("JABALI_PHP_RUN_ROOT")
+	if root == "" {
+		root = "/run/php"
+	}
+	_ = os.RemoveAll(filepath.Join(root, "jabali-"+slug))
+}
+
 // reapFPMPoolArtifacts stops+disables the slug's FPM master and removes its
 // on-disk artifacts (pool.d confs, per-user fpm conf, version-pin file, and —
 // for a versioned slug — its systemd drop-in dir). Best-effort: every step
@@ -54,6 +70,7 @@ func reapFPMPoolArtifacts(ctx context.Context, slug string) {
 		_ = execCommandContext(ctx, "systemctl", "stop", svc).Run()
 		_ = execCommandContext(ctx, "systemctl", "disable", "--quiet", svc).Run()
 	}
+	removePoolRuntimeDir(slug)
 
 	// pool.d confs across all installed PHP versions.
 	if matches, err := filepath.Glob(fmt.Sprintf("/etc/php/*/fpm/pool.d/jabali-%s.conf", slug)); err == nil {
