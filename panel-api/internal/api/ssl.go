@@ -158,6 +158,10 @@ func (h *sslHandler) enableSSL(c *gin.Context) {
 
 	ctx := c.Request.Context()
 
+	if refusePanelHostnameCert(c, domain) {
+		return
+	}
+
 	// JAB-356: this legacy endpoint is "enable ACME" (GH #246). A domain already
 	// serving an operator-provided certificate — a `custom` uploaded pair or a
 	// `shared` cert — must NOT be switched to `le`: that clobbers the custom cert
@@ -382,6 +386,14 @@ func (h *sslHandler) renewSSL(c *gin.Context) {
 
 	ctx := c.Request.Context()
 
+	domain := h.loadDomainOwned(c, domainID)
+	if domain == nil {
+		return
+	}
+	if refusePanelHostnameCert(c, domain) {
+		return
+	}
+
 	// Load certificate row
 	cert, err := h.cfg.SSLCerts.FindByDomainID(ctx, domainID)
 	if err != nil {
@@ -423,6 +435,14 @@ func (h *sslHandler) retrySSL(c *gin.Context) {
 	}
 
 	ctx := c.Request.Context()
+
+	domain := h.loadDomainOwned(c, domainID)
+	if domain == nil {
+		return
+	}
+	if refusePanelHostnameCert(c, domain) {
+		return
+	}
 
 	// Load certificate row
 	cert, err := h.cfg.SSLCerts.FindByDomainID(ctx, domainID)
@@ -623,6 +643,24 @@ func (h *sslHandler) loadDomainOwned(c *gin.Context, domainID string) *models.Do
 	}
 
 	return domain
+}
+
+// refusePanelHostnameCert answers 409 for the panel hostname's own domain row
+// (is_panel_primary) on the per-domain certificate doors — enable, renew,
+// retry — and reports whether it did (GH #2126). That certificate is the
+// panel's (panel_certificate, Server Settings → Panel SSL); the row has no
+// document root and no vhost, so a per-domain certificate for it could only
+// fail ("invalid webroot \"\"") until it hit the retry cap. The CLI doors
+// refuse the same way (cmd/server/ssl_cmd.go sslPanelHostnameRefusal).
+func refusePanelHostnameCert(c *gin.Context, domain *models.Domain) bool {
+	if !domain.IsPanelPrimary {
+		return false
+	}
+	c.JSON(http.StatusConflict, gin.H{
+		"error":  "panel_hostname_certificate",
+		"detail": "This is the panel's hostname; its certificate is managed in Server Settings → Panel SSL.",
+	})
+	return true
 }
 
 // sslListRow is a cert row plus the two fields GH #195 adds to the SSL

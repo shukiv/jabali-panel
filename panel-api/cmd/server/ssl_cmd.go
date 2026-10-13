@@ -53,6 +53,20 @@ func sslDisableRefusal(dom *models.Domain) error {
 	return nil
 }
 
+// sslPanelHostnameRefusal refuses the per-domain certificate doors (enable,
+// renew, retry) for the panel hostname's own domain row (GH #2126). Its
+// certificate is the panel's (panel_certificate); the row has no document root
+// and no vhost, so a per-domain certificate for it could only fail ("invalid
+// webroot \"\"") until it hit the retry cap. Mirrors the HTTP doors
+// (internal/api/ssl.go refusePanelHostnameCert).
+func sslPanelHostnameRefusal(dom *models.Domain) error {
+	if dom.IsPanelPrimary {
+		return fmt.Errorf("%s is the panel's hostname: its certificate is the panel's own — "+
+			"manage it with `jabali panel-cert status|issue` or in Server Settings → Panel SSL", dom.Name)
+	}
+	return nil
+}
+
 // sslEnableAlreadyIssued reports whether `ssl enable` is a no-op because the
 // domain is already enabled on Let's Encrypt with a valid, comfortably
 // unexpired certificate. AC3 (JAB-356): enabling with a valid issued cert must
@@ -193,6 +207,9 @@ func newSSLEnableCmd() *cobra.Command {
 					return fmt.Errorf("domain %q not found", args[0])
 				}
 				return fmt.Errorf("lookup domain: %w", err)
+			}
+			if err := sslPanelHostnameRefusal(dom); err != nil {
+				return err
 			}
 			repo := sslRepoFromDB()
 			cert, err := repo.FindByDomainID(ctx, dom.ID)
@@ -431,6 +448,9 @@ func newSSLRenewCmd() *cobra.Command {
 				}
 				return fmt.Errorf("lookup domain: %w", err)
 			}
+			if err := sslPanelHostnameRefusal(dom); err != nil {
+				return err
+			}
 			cert, cerr := sslRepoFromDB().FindByDomainID(ctx, dom.ID)
 			if cerr != nil && !errors.Is(cerr, repository.ErrNotFound) {
 				return fmt.Errorf("lookup cert: %w", cerr)
@@ -499,6 +519,9 @@ func newSSLRetryCmd() *cobra.Command {
 					return fmt.Errorf("domain %q not found", args[0])
 				}
 				return fmt.Errorf("lookup domain: %w", err)
+			}
+			if err := sslPanelHostnameRefusal(dom); err != nil {
+				return err
 			}
 			cert, cerr := sslRepoFromDB().FindByDomainID(ctx, dom.ID)
 			if cerr != nil {

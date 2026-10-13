@@ -3396,6 +3396,16 @@ func (r *Reconciler) tryACMEOrFallback(ctx context.Context, domain *models.Domai
 		}
 	}
 
+	// GH #2126: HTTP-01 answers from the document root, and a domain without
+	// one (the panel hostname's row; a docker-app proxy domain) has none to
+	// hand the agent — which rejects webroot "" anyway. Fall back to
+	// self-signed with a reason that says so, instead of a call that can only
+	// fail. (A CDN-fronted one already took DNS-01 above.)
+	if domain.DocRoot == "" {
+		r.fallbackToSelfSignAndRetry(ctx, domain, cert, "no document root to answer the Let's Encrypt HTTP-01 challenge from")
+		return
+	}
+
 	// Try ACME with 60s timeout
 	issueCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
@@ -3703,10 +3713,46 @@ func (r *Reconciler) RetrySSLDueForACME(ctx context.Context) {
 			r.log.Error("ssl: find domain failed for retry", "domain_id", cert.DomainID, "err", err)
 			continue
 		}
+		// GH #2126: the panel hostname's certificate is the panel's own
+		// (panel_certificate). A per-domain row for it can't be issued — the
+		// domain loop removes it (dropPanelHostnameACMERow).
+		if domain.IsPanelPrimary {
+			continue
+		}
 
 		r.log.Debug("ssl: retrying acme issuance", "domain", domain.Name, "retry_count", cert.RetryCount)
 		r.tryACMEOrFallback(ctx, domain, &cert)
 	}
+}
+
+// dropPanelHostnameACMERow removes a per-domain Let's Encrypt certificate row
+// from the panel hostname's domain row (GH #2126). `ssl enable|renew|retry`
+// could create one before they refused the panel hostname; its certificate is
+// the panel's own (panel_certificate), and with no document root the row could
+// only fail until the retry cap, leaving "invalid webroot" in the SSL Manager.
+//
+// Only a row still trying (pending, pending_acme_retry) or given up (failed)
+// on Let's Encrypt is removed. An issued, self-signed, renewing or revoked
+// row, and any row on a custom/shared/self/none domain, stays.
+func (r *Reconciler) dropPanelHostnameACMERow(ctx context.Context, domain *models.Domain) {
+	if r.sslCerts == nil || (domain.SSLMode != models.SSLModeLE && domain.SSLMode != "") {
+		return
+	}
+	cert, err := r.sslCerts.FindByDomainID(ctx, domain.ID)
+	if err != nil || cert == nil {
+		return
+	}
+	switch cert.Status {
+	case models.SSLStatusPending, models.SSLStatusPendingACMERetry, models.SSLStatusFailed:
+	default:
+		return
+	}
+	if err := r.sslCerts.DeleteByDomainID(ctx, domain.ID); err != nil {
+		r.log.Warn("ssl: remove the panel hostname's per-domain certificate row failed", "domain", domain.Name, "err", err)
+		return
+	}
+	r.log.Info("ssl: removed the panel hostname's per-domain certificate row (the panel manages its own certificate)",
+		"domain", domain.Name, "status", cert.Status)
 }
 
 // parseSSLIssueResult decodes the agent's ssl.issue / ssl.renew response
@@ -4181,6 +4227,7 @@ func (r *Reconciler) reconcileEnabledDomain(ctx context.Context, name string, do
 	if domain.IsPanelPrimary {
 		r.reconcileRecursorForward(ctx, name, false)
 		r.ensurePanelPrimaryDKIM(ctx, domain)
+		r.dropPanelHostnameACMERow(ctx, domain)
 		return
 	}
 
