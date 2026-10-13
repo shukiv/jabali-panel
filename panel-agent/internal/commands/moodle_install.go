@@ -182,6 +182,28 @@ func extractMoodleTarball(ctx context.Context, osUser, tarballPath, installPath 
 // installer takes the DB and admin passwords only as options, so they reach it
 // through the PHP runner on stdin, never on a command line
 // (php_script_run.go).
+// prepareMoodleDataRoot makes the data root (moodledata), outside the docroot
+// so it is never web-served, and keeps it the tenant's alone. Every step runs
+// as the tenant, so a link the tenant planted can't redirect it.
+//
+// The domain directory is setgid www-data, so .moodledata and the data root
+// would be group www-data, and Moodle chmods the data root to its directory
+// mode: the web server's group could write every stored file. Nothing but the
+// tenant's PHP pool and cron, which run as the tenant, needs it.
+func prepareMoodleDataRoot(ctx context.Context, osUser, dataRoot string) error {
+	parent := filepath.Dir(dataRoot)
+	for _, args := range [][]string{
+		{"mkdir", "-p", "-m", "0770", dataRoot},
+		{"chgrp", "--no-dereference", osUser, parent, dataRoot},
+		{"chmod", "0750", parent},
+	} {
+		if out, err := runBoundedOutput(buildSystemdRunCmd(ctx, osUser, args...), 0); err != nil {
+			return &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("set up moodledata: %v (output: %s)", err, truncateStr(string(out), 256))}
+		}
+	}
+	return nil
+}
+
 func runMoodleCLIInstaller(ctx context.Context, req moodleInstallReq, installPath, dataRoot string) error {
 	out, err := moodleInstallRun(req, installPath, dataRoot).run(ctx)
 	if err != nil {
@@ -214,6 +236,10 @@ func moodleInstallRun(req moodleInstallReq, installPath, dataRoot string) phpScr
 			"--lang=" + lang,
 			"--wwwroot=" + strings.TrimSuffix(req.SiteURL, "/"),
 			"--dataroot=" + dataRoot,
+			// Directories Moodle creates in the data root, and through the
+			// umask it derives from this, its files (0660). Its default, 2777,
+			// makes both writable by everyone.
+			"--chmod=2770",
 			"--dbtype=mariadb",
 			"--dbhost=" + dbHost,
 			"--dbname=" + req.DBName,
@@ -281,12 +307,8 @@ func moodleInstallHandler(ctx context.Context, params json.RawMessage) (any, err
 			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("mkdir %s: %v (output: %s)", installPath, err, truncateStr(string(out), 256))}
 		}
 	}
-	// moodledata: created as the owner, mode 0770 (Moodle wants the web user to
-	// own it; nginx/php-fpm run as the owner). Outside the docroot so it is
-	// never web-served.
-	dataCmd := buildSystemdRunCmd(ctx, req.OSUser, "mkdir", "-p", "-m", "0770", dataRoot)
-	if out, err := runBoundedOutput(dataCmd, 0); err != nil {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("mkdir moodledata: %v (output: %s)", err, truncateStr(string(out), 256))}
+	if err := prepareMoodleDataRoot(ctx, req.OSUser, dataRoot); err != nil {
+		return nil, err
 	}
 
 	removePlaceholderIndex(ctx, installPath)

@@ -17,7 +17,7 @@ Every app runs on the account's own PHP-FPM pool. An app that needs a database g
 | Flarum | Forum | MariaDB | Gets a managed WAF exclusion for its API (CRS 920450). |
 | OpenCart | E-commerce | MariaDB | `cli_install.php` failure-mode caveat handled (26-char ULID truncated to ≤20). |
 | PrestaShop | E-commerce | MariaDB | |
-| Moodle | LMS | MariaDB | Heavy. Recommend ≥2 GB RAM on the install's docroot user. |
+| Moodle | LMS | MariaDB | Heavy. Recommend ≥2 GB RAM on the install's docroot user. Course files live in `.moodledata/` beside the docroot, readable and writable by the account only. |
 | ITFlow | CRM / project management | MariaDB | Domain root only. The admin signs in by email. |
 | InvoiceShelf | Invoicing | MariaDB | |
 | OpenEMR | Health records | MariaDB | |
