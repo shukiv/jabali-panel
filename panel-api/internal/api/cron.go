@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 
@@ -141,6 +142,13 @@ type runNowResponse struct {
 	ExitCode int    `json:"exit_code"`
 	Stdout   string `json:"stdout"`
 	Stderr   string `json:"stderr"`
+	// Output is the combined stdout+stderr of a run that went through the
+	// job's unit (the journal keeps one stream); Stdout/Stderr stay empty.
+	Output string `json:"output,omitempty"`
+	// Running: the run outlived the wait and carries on in the background
+	// (GH #2122); its output goes to the job's log.
+	Running        bool `json:"running,omitempty"`
+	AlreadyRunning bool `json:"already_running,omitempty"`
 }
 
 type cronLogResponse struct {
@@ -162,6 +170,7 @@ type cronRunNowAgentParams struct {
 	Command       string   `json:"command"`
 	OwnedDocroots []string `json:"owned_docroots"`
 	OwnedDomains  []string `json:"owned_domains"`
+	WaitSeconds   int      `json:"wait_seconds,omitempty"`
 }
 
 type cronTailLogAgentParams struct {
@@ -465,9 +474,15 @@ func (h *cronHandler) runNow(c *gin.Context) {
 			}
 		}
 	}
-	result, err := h.cfg.Agent.Call(ctx, "cron.run_now", cronRunNowAgentParams{
+	// GH #2122: the agent waits cronRunNowWaitSeconds for the run, then answers
+	// that it is still running and leaves it running. Bounding the call here
+	// keeps that answer inside the HTTP server's 30 s write timeout.
+	callCtx, cancel := context.WithTimeout(ctx, cronRunNowCallTimeout)
+	defer cancel()
+	result, err := h.cfg.Agent.Call(callCtx, "cron.run_now", cronRunNowAgentParams{
 		UserID: job.UserID, Username: username, JobID: job.ID,
 		Command: job.Command, OwnedDocroots: docroots, OwnedDomains: domains,
+		WaitSeconds: cronRunNowWaitSeconds,
 	})
 	if err != nil {
 		respondAgentErr(c, "agent_run_now_failed", err)
@@ -478,6 +493,17 @@ func (h *cronHandler) runNow(c *gin.Context) {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "agent_response_invalid"})
 		return
 	}
+	if resp.AlreadyRunning {
+		c.JSON(http.StatusConflict, gin.H{"error": "already_running"})
+		return
+	}
+	if resp.Running {
+		// Last run is NOT written here: the reconciler's cron.status harvest
+		// records the run when it ends, and it only writes a newer timestamp,
+		// so a "now, exit 0" written for an unfinished run would stick.
+		c.JSON(http.StatusAccepted, resp)
+		return
+	}
 	// Persist the run outcome so the UI's "Last Run" / "Last Exit" columns
 	// reflect a manual Run-now (previously nothing ever called UpdateStatus,
 	// so Last Run stayed "Never" even after a successful run). Best-effort.
@@ -485,12 +511,41 @@ func (h *cronHandler) runNow(c *gin.Context) {
 		lastErr := ""
 		if resp.ExitCode != 0 {
 			lastErr = resp.Stderr
+			if lastErr == "" {
+				lastErr = resp.Output
+			}
+			lastErr = cronLastErrorTail(lastErr)
 		}
 		if uErr := h.cfg.CronJobs.UpdateStatus(ctx, job.ID, time.Now().UTC(), resp.ExitCode, lastErr); uErr != nil {
 			h.cfg.Log.Warn("cron run_now: persist last-run failed", "job_id", job.ID, "err", uErr)
 		}
 	}
 	c.JSON(http.StatusOK, resp)
+}
+
+// cronRunNowWaitSeconds is how long Run now waits for a run before answering
+// that it is still running (GH #2122); cronRunNowCallTimeout bounds the whole
+// agent call. Both stay under the HTTP server's 30 s write timeout.
+const (
+	cronRunNowWaitSeconds = 20
+	cronRunNowCallTimeout = 27 * time.Second
+)
+
+// cronLastErrorMax is cron_jobs.last_error's VARCHAR(1024), in bytes so a
+// multi-byte character can't push it over.
+const cronLastErrorMax = 1024
+
+// cronLastErrorTail keeps the end of a failed run's output — where the error
+// usually is — within last_error's size, cut on a character boundary.
+func cronLastErrorTail(s string) string {
+	if len(s) <= cronLastErrorMax {
+		return s
+	}
+	s = s[len(s)-cronLastErrorMax:]
+	for len(s) > 0 && !utf8.RuneStart(s[0]) {
+		s = s[1:]
+	}
+	return s
 }
 
 func (h *cronHandler) readLog(c *gin.Context) {

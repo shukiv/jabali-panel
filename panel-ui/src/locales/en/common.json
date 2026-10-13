@@ -1598,9 +1598,13 @@
     "cron_job_log": "Cron Job Log"
   },
   "runnowresultmodal": {
+    "already_running": "This job is already running. Run it again once it has finished.",
     "cron_job_execution_result": "Cron Job Execution Result",
+    "output": "Output",
     "standard_error": "Standard Error",
-    "standard_output": "Standard Output"
+    "standard_output": "Standard Output",
+    "still_running": "Still running",
+    "still_running_detail": "The job is taking longer than 20 seconds, so it keeps running in the background. Its output goes to the job's log, and Last run updates within a minute of it finishing."
   },
   "usercronlist": {
     "search_by_name_command_or_schedule": "Search by name, command, or schedule"

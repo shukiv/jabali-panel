@@ -253,6 +253,14 @@ components:
         within 5 minutes of the server clock (at most 30 seconds ahead), and a
         signature is accepted once. Bodies are capped at 1 MiB.
   schemas:
+    CronRunNowResult:
+      type: object
+      properties:
+        exit_code: { type: integer, description: "Exit code of the finished run (0 while `running`)." }
+        stdout: { type: string, description: "Output of a run made without the job's systemd unit." }
+        stderr: { type: string }
+        output: { type: string, description: "Combined stdout and stderr of a run made through the job's unit." }
+        running: { type: boolean, description: "The run outlived the wait and keeps running in the background." }
     EgressDestination:
       type: object
       properties:
@@ -3336,9 +3344,25 @@ paths:
     post:
       tags: [Cron]
       summary: Run Now cron
+      description: |
+        Runs the job once, now. Waits up to about 20 seconds for it to finish.
+        A job still running then keeps running in the background (202); its
+        output goes to the job's log and Last run is updated when it ends.
       security: [ { KratosSession: [] } ]
       parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
-      responses: { "200": { description: OK } }
+      responses:
+        "200":
+          description: The run finished within the wait.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CronRunNowResult" }
+        "202":
+          description: The run is still going and carries on in the background (`running` is true).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CronRunNowResult" }
+        "409":
+          description: "`job_disabled`, `user_has_no_linux_account`, or `already_running` (a run of this job is under way)."
 
 
   # --- Database User Grants (auto) ---

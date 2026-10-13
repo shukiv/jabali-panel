@@ -67,6 +67,7 @@ func cronStatusHandler(ctx context.Context, params json.RawMessage) (any, error)
 		"systemctl", "--user", "show", unit,
 		"-p", "ExecMainStartTimestamp",
 		"-p", "ExecMainStatus",
+		"-p", "ActiveState",
 		"--no-pager")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -81,6 +82,14 @@ func cronStatusHandler(ctx context.Context, params json.RawMessage) (any, error)
 		if eq := strings.IndexByte(line, '='); eq > 0 {
 			props[line[:eq]] = strings.TrimSpace(line[eq+1:])
 		}
+	}
+
+	// GH #2122: while a run is under way the unit already shows its start
+	// time and a placeholder ExecMainStatus=0. Reporting that would record
+	// "exit 0" for a run that hasn't ended, and the harvest's newer-than
+	// check would then never replace it with the real result.
+	if cronUnitRunning(props["ActiveState"]) {
+		return cronStatusResult{HasRun: false}, nil
 	}
 
 	ts := props["ExecMainStartTimestamp"]
