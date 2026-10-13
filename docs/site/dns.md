@@ -27,6 +27,10 @@ Each hosted domain gets an authoritative zone in PowerDNS. Default records:
 
 Add / edit / delete custom records on the DNS page: click the domain's name to open its records.
 
+## Secondary nameservers
+
+Server Settings → DNS sets ns2 and up to 16 more **Secondary DNS servers (AXFR + NOTIFY)**: a secondary DNS provider's transfer addresses, or the secondaries of a hidden-primary setup. Each listed address may transfer every zone and is sent a NOTIFY when a zone changes. Nobody else can transfer a zone, and NOTIFY never goes to the hosts in a zone's NS records. CLI: `jabali settings set dns_secondary_ips=<ip>,<ip>`. Setup steps: the `dns-secondary-nameserver` runbook (GH #2131).
+
 ## DNSSEC
 
 Per-domain, from the domain's **⋯** menu on the DNS page (**Enable DNSSEC** / **Disable DNSSEC**). When enabled:

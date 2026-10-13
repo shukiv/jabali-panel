@@ -2856,16 +2856,9 @@ func (r *Reconciler) reconcileDNSZone(ctx context.Context, domain *models.Domain
 	}
 	compiled := dnscompile.Compile(zone, records, srv)
 
-	// Derive AXFR and NOTIFY lists from ServerSettings.
-	var allowAXFR, alsoNotify []string
-	if srv != nil && srv.NS2IPv4 != "" {
-		allowAXFR = []string{srv.NS2IPv4}
-		alsoNotify = []string{srv.NS2IPv4}
-	}
-	// ns1 is the master, so it doesn't need AXFR permission for itself.
-	// Localhost allow is only needed for manual ops troubleshooting via
-	// `dig AXFR @127.0.0.1` — add that for debugging.
-	allowAXFR = append(allowAXFR, "127.0.0.1")
+	// Derive AXFR and NOTIFY lists from ServerSettings (ns2 + the secondary
+	// DNS servers, GH #2131).
+	allowAXFR, alsoNotify := dnscompile.TransferTargets(srv)
 
 	// GH #1820: with the DNS module off there is no PowerDNS to push to. Keep
 	// the zone rows above converged in the panel DB, but send nothing: every
