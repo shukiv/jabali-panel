@@ -36,6 +36,7 @@ import { feedback } from "../../../lib/feedback";
 import { RowActionButton } from "../../../components/RowActionButton";
 import { RowDeleteButton } from "../../../components/RowDeleteButton";
 import { SearchableTableStringQ } from "../../../components/SearchableTable";
+import { appDisplayName } from "../../user/applications/CmsIcon";
 import {
   APPSEC_EVENTS_LIMITS,
   useAddAppSecExclusion,
@@ -312,6 +313,9 @@ const InlineBlocks = ({ blocks, total }: { blocks: AppSecInlineBlockGroup[]; tot
 
 const ExclusionsCard = ({ onAdd }: { onAdd: () => void }) => {
   const { t } = useTranslation();
+  // The app the panel manages a row for (Flarum, Nextcloud).
+  const managedAppName = (r: AppSecExclusion): string =>
+    r.managed_app ? appDisplayName(r.managed_app) : t("appsecexclusionscard.managed_tag");
   const list = useAppSecExclusions();
   const remove = useRemoveAppSecExclusion();
   const [query, setQuery] = useState("");
@@ -389,8 +393,8 @@ const ExclusionsCard = ({ onAdd }: { onAdd: () => void }) => {
           render={(_, r) => (
             <Space size={4} wrap>
               {r.managed_install_id ? (
-                <Tooltip title={t("appsecexclusionscard.managed_tip", { id: r.managed_install_id })}>
-                  <Tag color="blue">{t("appsecexclusionscard.managed_tag")}</Tag>
+                <Tooltip title={t("appsecexclusionscard.managed_tip", { app: managedAppName(r), id: r.managed_install_id })}>
+                  <Tag color="blue">{managedAppName(r)}</Tag>
                 </Tooltip>
               ) : null}
               <Typography.Text type="secondary" ellipsis={{ tooltip: r.note }} style={{ maxWidth: 320 }}>
@@ -412,7 +416,7 @@ const ExclusionsCard = ({ onAdd }: { onAdd: () => void }) => {
             <RowDeleteButton
               confirmTitle={
                 r.managed_install_id
-                  ? t("appsecexclusionscard.remove_managed_confirm")
+                  ? t("appsecexclusionscard.remove_managed_confirm", { app: managedAppName(r) })
                   : t("appsecexclusionscard.remove_confirm", { rule: r.rule_id, host: r.host, path: r.uri_prefix })
               }
               successMessage={t("appsecexclusionscard.removed")}

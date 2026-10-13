@@ -329,3 +329,32 @@ func TestListExclusions_MarksManagedFlarumRows(t *testing.T) {
 		t.Errorf("managed ids = %q, %q; want inst1 and none", got[0].ManagedInstallID, got[1].ManagedInstallID)
 	}
 }
+
+func TestListExclusions_NamesTheManagedApp(t *testing.T) {
+	e, _ := exclEnv()
+	xs, err := NextcloudExclusions("nc1", "cloud.example.net", false, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	flarum, err := FlarumExclusion("f1", "forum.example.com", false, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.excl.rows = []models.CRSRuleExclusion{
+		{ID: "a", Host: xs[0].Host, URIPrefix: xs[0].URIPrefix, RuleID: xs[0].RuleID, Note: xs[0].Note},
+		{ID: "b", Host: flarum.Host, URIPrefix: flarum.URIPrefix, RuleID: flarum.RuleID, Note: flarum.Note},
+		// The Nextcloud note on another rule is not a managed row.
+		{ID: "c", Host: xs[0].Host, URIPrefix: xs[0].URIPrefix, RuleID: "942100", Note: xs[0].Note},
+	}
+	got, err := ListExclusions(context.Background(), e.deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	type pair struct{ id, app string }
+	want := []pair{{"nc1", "nextcloud"}, {"f1", "flarum"}, {"", ""}}
+	for i, g := range got {
+		if (pair{g.ManagedInstallID, g.ManagedApp}) != want[i] {
+			t.Errorf("row %d: got (%q, %q), want %v", i, g.ManagedInstallID, g.ManagedApp, want[i])
+		}
+	}
+}

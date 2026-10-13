@@ -582,15 +582,16 @@ func runServe(cmd *cobra.Command, args []string) error {
 					log.Warn("sendas boot-reconcile: agent push failed", "err", err)
 				}
 			}()
-			// GH #1650: drop the WAF exclusion of any Flarum install that is gone.
-			// A domain or account delete cascades the install row away with no
-			// Flarum event, so the exclusion would otherwise outlive the forum.
+			// GH #1650, Discussion #1032: drop the managed WAF exclusions of any
+			// Flarum or Nextcloud install that is gone. A domain or account delete
+			// cascades the install row away with no app event, so the exclusions
+			// would otherwise outlive the app.
 			// Remove-only: this never adds an exclusion, and it calls the agent
 			// only when it removed one.
 			go func() {
 				rctx, rcancel := context.WithTimeout(context.Background(), 60*time.Second)
 				defer rcancel()
-				changed, _, err := appsecops.PruneFlarum(rctx, appsecops.Deps{
+				changed, _, err := appsecops.Prune(rctx, appsecops.Deps{
 					Agent:      sharedAgent,
 					Exclusions: repository.NewCRSRuleExclusionRepository(sharedDB),
 					HostModes:  repository.NewCRSHostModeRepository(sharedDB),
@@ -599,9 +600,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 				})
 				switch {
 				case err != nil:
-					log.Warn("flarum WAF exclusion boot-prune failed", "err", err)
+					log.Warn("app WAF exclusion boot-prune failed", "err", err)
 				case changed:
-					log.Info("flarum WAF exclusion boot-prune removed stale exclusions")
+					log.Info("app WAF exclusion boot-prune removed stale exclusions")
 				}
 			}()
 		}

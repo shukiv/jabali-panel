@@ -1,26 +1,43 @@
 # Applications Framework
 
-15 apps, one wizard, one install pipeline. ADR-0033.
+16 PHP apps, one wizard, one install pipeline. ADR-0033.
 
 ## Registry
 
-| App | What | DB | Notes |
+Every app runs on the account's own PHP-FPM pool. An app that needs a database gets its own MariaDB database and user.
+
+| App | What | Database | Notes |
 |---|---|---|---|
-| WordPress | CMS | MariaDB | Primary citizen (M10). Magic SSO file. Clone supported. |
-| Moodle | LMS | MariaDB / PostgreSQL | Heavy. Recommend ≥2 GB RAM on the install's docroot user. |
-| Drupal | CMS | MariaDB / PostgreSQL | Composer-based install. |
+| WordPress | CMS / blog / shop | MariaDB | Primary citizen (M10). Magic SSO file. Clone supported. |
+| Drupal | CMS | MariaDB | |
 | Joomla | CMS | MariaDB | |
-| NextCloud | File sync + collab | MariaDB | Requires Redis + cron — both auto-wired. |
 | MediaWiki | Wiki | MariaDB | |
-| PrestaShop | E-commerce | MariaDB | |
-| OpenCart | E-commerce | MariaDB | `cli_install.php` failure-mode caveat handled (26-char ULID truncated to ≤20). |
+| DokuWiki | Wiki | none (flat files) | |
 | phpBB | Forum | MariaDB | |
-| Matomo | Analytics | MariaDB | |
-| MyBB | Forum | MariaDB | |
-| Pixelfed | Photo sharing (Fediverse) | MariaDB | |
-| Mautic | Marketing automation | MariaDB | |
-| Mahara | E-portfolio | MariaDB | |
-| SuiteCRM | CRM | MariaDB | |
+| Flarum | Forum | MariaDB | Gets a managed WAF exclusion for its API (CRS 920450). |
+| OpenCart | E-commerce | MariaDB | `cli_install.php` failure-mode caveat handled (26-char ULID truncated to ≤20). |
+| PrestaShop | E-commerce | MariaDB | |
+| Moodle | LMS | MariaDB | Heavy. Recommend ≥2 GB RAM on the install's docroot user. |
+| ITFlow | CRM / project management | MariaDB | Domain root only. The admin signs in by email. |
+| InvoiceShelf | Invoicing | MariaDB | |
+| OpenEMR | Health records | MariaDB | |
+| osTicket | Helpdesk | MariaDB | Domain root only. |
+| Nextcloud | File sync, calendars, contacts | MariaDB | Domain root only. PHP 8.3 to 8.5. See [Nextcloud](#nextcloud). |
+| PrivateBin | Encrypted pastebin | none (flat files) | |
+
+## Nextcloud
+
+Nextcloud installs at the root of a domain or subdomain, for example `cloud.example.com`. It needs PHP 8.3, 8.4 or 8.5 on that domain. On any other version the install stops with a message before downloading anything. Switch the domain's PHP version and install again.
+
+What the install sets up:
+
+- **Files.** Nextcloud's code is in the docroot. The files people store are in `nextcloud-data`, beside the docroot (`/home/<user>/domains/<domain>/nextcloud-data`), so the web server can never serve them.
+- **Background jobs.** Nextcloud runs them from a cron job, `Nextcloud Cron`, every 5 minutes. You can see it on the Cron page.
+- **Web server.** Nextcloud's own routes, calendar and contact discovery (`/.well-known/caldav`, `/.well-known/carddav`) and its JavaScript modules are set up for you. Its code, config and data folders are never served. Uploads up to 512 MB go through in one request; the desktop and mobile apps upload bigger files in parts.
+- **Firewall.** The Files app, the sync clients and calendar/contact sync use WebDAV methods (PROPFIND, PUT, MOVE…). The web application firewall blocks those methods everywhere else. A Nextcloud install gets a managed exclusion for that one rule (CRS 911100), on its own domain and its WebDAV paths only. Admins see it under `/jabali-admin/security` → CrowdSec → **WAF exclusions**.
+- **Host.** Nextcloud answers on the domain it was installed on. It does not answer on `www.` + that domain.
+
+Deleting the app removes Nextcloud's code, its database, the cron job, the firewall exclusion, and the `nextcloud-data` folder with every file stored in it. Download anything you need first.
 
 ## Install pipeline
 

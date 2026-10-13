@@ -154,6 +154,7 @@ func newEnv() *env {
 		Domains: fakeDomains{
 			"d1": {ID: "d1", Name: "Forum.Example.com"},
 			"d2": {ID: "d2", Name: "other.example.org"},
+			"d3": {ID: "d3", Name: "Cloud.Example.net"},
 		},
 	}
 	return e
@@ -163,6 +164,12 @@ func (e *env) addFlarum(id, domainID, sub string, www bool) {
 	e.installs.mu.Lock()
 	defer e.installs.mu.Unlock()
 	e.installs.byID[id] = &models.ApplicationInstall{ID: id, DomainID: domainID, AppType: AppTypeFlarum, Subdirectory: sub, UseWWW: www}
+}
+
+func (e *env) addNextcloud(id, domainID string) {
+	e.installs.mu.Lock()
+	defer e.installs.mu.Unlock()
+	e.installs.byID[id] = &models.ApplicationInstall{ID: id, DomainID: domainID, AppType: AppTypeNextcloud}
 }
 
 func (e *env) dropInstall(id string) {
@@ -248,19 +255,19 @@ func TestFlarumExclusion_HostAndPath(t *testing.T) {
 			if x.Host != tc.host || x.URIPrefix != tc.prefix || x.RuleID != "920450" {
 				t.Fatalf("got %+v", x)
 			}
-			if managedFlarumInstallID(models.CRSRuleExclusion{RuleID: x.RuleID, Note: x.Note}) != "01ABC" {
+			if flarumApp.installID(models.CRSRuleExclusion{RuleID: x.RuleID, Note: x.Note}) != "01ABC" {
 				t.Fatalf("note does not round-trip the install id: %q", x.Note)
 			}
 		})
 	}
 }
 
-// ---- SyncFlarum ----
+// ---- SyncInstall ----
 
 func TestSyncFlarum_AddsScopedExclusionAndApplies(t *testing.T) {
 	e := newEnv()
 	e.addFlarum("i1", "d1", "forum", false)
-	if _, err := SyncFlarum(context.Background(), e.deps, "i1"); err != nil {
+	if _, err := SyncInstall(context.Background(), e.deps, "i1"); err != nil {
 		t.Fatal(err)
 	}
 	want := []string{"forum.example.com/forum/api/#920450"}
@@ -269,7 +276,7 @@ func TestSyncFlarum_AddsScopedExclusionAndApplies(t *testing.T) {
 	}
 
 	// Again: no duplicate row.
-	if _, err := SyncFlarum(context.Background(), e.deps, "i1"); err != nil {
+	if _, err := SyncInstall(context.Background(), e.deps, "i1"); err != nil {
 		t.Fatal(err)
 	}
 	if n := len(e.excl.rows); n != 1 {
@@ -283,14 +290,14 @@ func TestSyncFlarum_RespectsOperatorRow(t *testing.T) {
 	e := newEnv()
 	e.excl.rows = []models.CRSRuleExclusion{{ID: "op", Host: "forum.example.com", URIPrefix: "/api/", RuleID: "920450", Note: "added by hand"}}
 	e.addFlarum("i1", "d1", "", false)
-	if _, err := SyncFlarum(context.Background(), e.deps, "i1"); err != nil {
+	if _, err := SyncInstall(context.Background(), e.deps, "i1"); err != nil {
 		t.Fatal(err)
 	}
 	if n := len(e.excl.rows); n != 1 {
 		t.Fatalf("want only the operator's row, got %d rows", n)
 	}
 	e.dropInstall("i1")
-	if _, err := SyncFlarum(context.Background(), e.deps, ""); err != nil {
+	if _, err := SyncInstall(context.Background(), e.deps, ""); err != nil {
 		t.Fatal(err)
 	}
 	if len(e.excl.rows) != 1 || e.excl.rows[0].ID != "op" {
@@ -307,12 +314,12 @@ func TestSyncFlarum_RemovesRowOfGoneInstall(t *testing.T) {
 	e.addFlarum("i1", "d1", "forum", false)
 	e.addFlarum("i2", "d2", "", true)
 	for _, id := range []string{"i1", "i2"} {
-		if _, err := SyncFlarum(context.Background(), e.deps, id); err != nil {
+		if _, err := SyncInstall(context.Background(), e.deps, id); err != nil {
 			t.Fatal(err)
 		}
 	}
 	e.dropInstall("i1")
-	if _, err := SyncFlarum(context.Background(), e.deps, ""); err != nil {
+	if _, err := SyncInstall(context.Background(), e.deps, ""); err != nil {
 		t.Fatal(err)
 	}
 	want := []string{"shop.example.com/wp-json/x/#931120", "www.other.example.org/api/#920450"}
@@ -325,11 +332,11 @@ func TestSyncFlarum_RemovesRowOfGoneInstall(t *testing.T) {
 func TestSyncFlarum_RemovesRowThatNoLongerMatches(t *testing.T) {
 	e := newEnv()
 	e.addFlarum("i1", "d1", "forum", false)
-	if _, err := SyncFlarum(context.Background(), e.deps, "i1"); err != nil {
+	if _, err := SyncInstall(context.Background(), e.deps, "i1"); err != nil {
 		t.Fatal(err)
 	}
 	e.addFlarum("i1", "d1", "board", false) // same install, other path
-	if _, err := SyncFlarum(context.Background(), e.deps, ""); err != nil {
+	if _, err := SyncInstall(context.Background(), e.deps, ""); err != nil {
 		t.Fatal(err)
 	}
 	if got := hosts(e.agent.last(t)); len(got) != 0 {
@@ -340,7 +347,7 @@ func TestSyncFlarum_RemovesRowThatNoLongerMatches(t *testing.T) {
 func TestSyncFlarum_IgnoresOtherApps(t *testing.T) {
 	e := newEnv()
 	e.installs.byID["wp"] = &models.ApplicationInstall{ID: "wp", DomainID: "d1", AppType: "wordpress"}
-	if _, err := SyncFlarum(context.Background(), e.deps, "wp"); err != nil {
+	if _, err := SyncInstall(context.Background(), e.deps, "wp"); err != nil {
 		t.Fatal(err)
 	}
 	if len(e.excl.rows) != 0 {
@@ -353,12 +360,12 @@ func TestSyncFlarum_IgnoresOtherApps(t *testing.T) {
 func TestSyncFlarum_LookupFailureRemovesNothing(t *testing.T) {
 	e := newEnv()
 	e.addFlarum("i1", "d1", "", false)
-	if _, err := SyncFlarum(context.Background(), e.deps, "i1"); err != nil {
+	if _, err := SyncInstall(context.Background(), e.deps, "i1"); err != nil {
 		t.Fatal(err)
 	}
 	calls := e.agent.calls
 	e.installs.err = errors.New("db down")
-	if _, err := SyncFlarum(context.Background(), e.deps, ""); err == nil {
+	if _, err := SyncInstall(context.Background(), e.deps, ""); err == nil {
 		t.Fatal("want an error")
 	}
 	if len(e.excl.rows) != 1 || e.agent.calls != calls {
@@ -366,26 +373,26 @@ func TestSyncFlarum_LookupFailureRemovesNothing(t *testing.T) {
 	}
 }
 
-// ---- PruneFlarum ----
+// ---- Prune ----
 
 func TestPruneFlarum_OnlyRemovesAndOnlyAppliesOnChange(t *testing.T) {
 	e := newEnv()
 	e.addFlarum("i1", "d1", "", false)
 	e.addFlarum("i2", "d2", "", false)
-	if _, err := SyncFlarum(context.Background(), e.deps, "i1"); err != nil {
+	if _, err := SyncInstall(context.Background(), e.deps, "i1"); err != nil {
 		t.Fatal(err)
 	}
 	calls := e.agent.calls
 
 	// i2 has no row; prune must not add one, and with nothing stale it must
 	// not call the agent.
-	changed, _, err := PruneFlarum(context.Background(), e.deps)
+	changed, _, err := Prune(context.Background(), e.deps)
 	if err != nil || changed || e.agent.calls != calls || len(e.excl.rows) != 1 {
 		t.Fatalf("no-op prune: changed=%v err=%v calls=%d rows=%d", changed, err, e.agent.calls-calls, len(e.excl.rows))
 	}
 
 	e.dropInstall("i1")
-	changed, _, err = PruneFlarum(context.Background(), e.deps)
+	changed, _, err = Prune(context.Background(), e.deps)
 	if err != nil || !changed || len(e.excl.rows) != 0 {
 		t.Fatalf("stale prune: changed=%v err=%v rows=%d", changed, err, len(e.excl.rows))
 	}
@@ -410,10 +417,10 @@ func TestSyncFlarum_OverlappingSyncsLandInOrder(t *testing.T) {
 
 	var wg sync.WaitGroup
 	wg.Add(2)
-	go func() { defer wg.Done(); _, _ = SyncFlarum(context.Background(), e.deps, "i1") }()
+	go func() { defer wg.Done(); _, _ = SyncInstall(context.Background(), e.deps, "i1") }()
 	<-e.excl.created
 	<-e.agent.entered // first apply is in flight
-	go func() { defer wg.Done(); _, _ = SyncFlarum(context.Background(), e.deps, "i2") }()
+	go func() { defer wg.Done(); _, _ = SyncInstall(context.Background(), e.deps, "i2") }()
 	select {
 	case <-e.excl.created: // unserialised: the second sync ran while the first was in flight
 	case <-time.After(300 * time.Millisecond): // serialised: it is waiting
@@ -479,7 +486,7 @@ func TestSyncFlarumInstalls_OneApplyForMany(t *testing.T) {
 		{ID: "stale", Host: gone.Host, URIPrefix: gone.URIPrefix, RuleID: gone.RuleID, Note: gone.Note},
 	}
 
-	added, res, err := SyncFlarumInstalls(context.Background(), e.deps, []string{"i1", "i2", "wp"})
+	added, res, err := SyncInstalls(context.Background(), e.deps, []string{"i1", "i2", "wp"})
 	if err != nil || !res.Changed {
 		t.Fatalf("got %+v, %v", res, err)
 	}
@@ -492,5 +499,125 @@ func TestSyncFlarumInstalls_OneApplyForMany(t *testing.T) {
 	want := []string{"forum.example.com/forum/api/#920450", "www.other.example.org/api/#920450"}
 	if got := hosts(e.agent.last(t)); !equal(got, want) {
 		t.Fatalf("applied %v, want %v", got, want)
+	}
+}
+
+// ---- Nextcloud (Discussion #1032) ----
+
+func TestNextcloudExclusions_HostAndPaths(t *testing.T) {
+	xs, err := NextcloudExclusions("01NC", "Cloud.Example.net", false, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, x := range xs {
+		got = append(got, x.Host+x.URIPrefix+"#"+x.RuleID)
+		if nextcloudApp.installID(models.CRSRuleExclusion{RuleID: x.RuleID, Note: x.Note}) != "01NC" {
+			t.Fatalf("note does not round-trip the install id: %q", x.Note)
+		}
+	}
+	want := []string{
+		"cloud.example.net/remote.php/dav/#911100",
+		"cloud.example.net/remote.php/webdav/#911100",
+		"cloud.example.net/public.php/dav/#911100",
+		"cloud.example.net/public.php/webdav/#911100",
+	}
+	if !equal(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
+// A Nextcloud install gets CRS 911100 dropped on its four DAV endpoints, on its
+// own host only, and a repeat sync adds no duplicate.
+func TestSyncInstall_NextcloudAddsDAVExclusionsAndApplies(t *testing.T) {
+	e := newEnv()
+	e.addNextcloud("n1", "d3")
+	if _, err := SyncInstall(context.Background(), e.deps, "n1"); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"cloud.example.net/public.php/dav/#911100",
+		"cloud.example.net/public.php/webdav/#911100",
+		"cloud.example.net/remote.php/dav/#911100",
+		"cloud.example.net/remote.php/webdav/#911100",
+	}
+	if got := hosts(e.agent.last(t)); !equal(got, want) {
+		t.Fatalf("applied %v, want %v", got, want)
+	}
+	if _, err := SyncInstall(context.Background(), e.deps, "n1"); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(e.excl.rows); n != 4 {
+		t.Fatalf("want 4 rows after a repeat sync, got %d", n)
+	}
+}
+
+// Deleting the Nextcloud install removes all four of its rows and nothing else:
+// a Flarum install's row and an operator's row stay.
+func TestSyncInstall_NextcloudRowsGoWithTheInstall(t *testing.T) {
+	e := newEnv()
+	e.excl.rows = []models.CRSRuleExclusion{{ID: "op", Host: "cloud.example.net", URIPrefix: "/remote.php/dav/", RuleID: "942100", Note: "op"}}
+	e.addNextcloud("n1", "d3")
+	e.addFlarum("f1", "d1", "", false)
+	for _, id := range []string{"n1", "f1"} {
+		if _, err := SyncInstall(context.Background(), e.deps, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	e.dropInstall("n1")
+	if _, err := SyncInstall(context.Background(), e.deps, ""); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"cloud.example.net/remote.php/dav/#942100", "forum.example.com/api/#920450"}
+	if got := hosts(e.agent.last(t)); !equal(got, want) {
+		t.Fatalf("applied %v, want %v", got, want)
+	}
+}
+
+// Rows written before the sync was generalised carry the Flarum note verbatim.
+// They must still be recognised: kept while the forum exists, pruned once it
+// is gone.
+func TestPrune_RecognisesStoredFlarumNote(t *testing.T) {
+	e := newEnv()
+	e.excl.rows = []models.CRSRuleExclusion{{
+		ID: "old", Host: "forum.example.com", URIPrefix: "/api/", RuleID: "920450",
+		Note: "Flarum X-HTTP-Method-Override (CRS 920450 false positive), managed for Flarum install f1 (GH #1650)",
+	}}
+	e.addFlarum("f1", "d1", "", false)
+	if changed, _, err := Prune(context.Background(), e.deps); err != nil || changed || len(e.excl.rows) != 1 {
+		t.Fatalf("live forum: changed=%v err=%v rows=%d", changed, err, len(e.excl.rows))
+	}
+	e.dropInstall("f1")
+	if changed, _, err := Prune(context.Background(), e.deps); err != nil || !changed || len(e.excl.rows) != 0 {
+		t.Fatalf("gone forum: changed=%v err=%v rows=%d", changed, err, len(e.excl.rows))
+	}
+}
+
+func TestManagesApp(t *testing.T) {
+	for app, want := range map[string]bool{"flarum": true, "nextcloud": true, "wordpress": false, "": false} {
+		if got := ManagesApp(app); got != want {
+			t.Errorf("ManagesApp(%q) = %v, want %v", app, got, want)
+		}
+	}
+}
+
+// An operator's exclusion for ANOTHER rule on the same host and path does not
+// cover the install's: the managed 911100 row is still added beside it.
+func TestSyncInstall_OtherRuleOnSamePathDoesNotCoverIt(t *testing.T) {
+	e := newEnv()
+	e.excl.rows = []models.CRSRuleExclusion{{ID: "op", Host: "cloud.example.net", URIPrefix: "/remote.php/dav/", RuleID: "942100", Note: "op"}}
+	e.addNextcloud("n1", "d3")
+	if _, err := SyncInstall(context.Background(), e.deps, "n1"); err != nil {
+		t.Fatal(err)
+	}
+	got := hosts(e.agent.last(t))
+	found := false
+	for _, h := range got {
+		if h == "cloud.example.net/remote.php/dav/#911100" {
+			found = true
+		}
+	}
+	if !found || len(got) != 5 {
+		t.Fatalf("applied %v, want the operator row plus all four managed rows", got)
 	}
 }

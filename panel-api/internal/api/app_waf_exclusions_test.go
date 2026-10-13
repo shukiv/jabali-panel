@@ -3,6 +3,8 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"sort"
 	"sync"
 	"testing"
@@ -13,8 +15,9 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
-// GH #1650 wiring: the Flarum install kicker and RunAppDelete drive the scoped
-// CRS 920450 exclusion. The fakes share one event log so ordering is visible.
+// GH #1650 / Discussion #1032 wiring: the Flarum and Nextcloud install kickers
+// and RunAppDelete drive the scoped CRS exclusions (920450 for Flarum, 911100
+// for Nextcloud). The fakes share one event log so ordering is visible.
 
 type wafLog struct {
 	mu     sync.Mutex
@@ -204,6 +207,111 @@ func TestRunAppDelete_OtherAppsLeaveWAFAlone(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(ag.applied) != 0 {
-		t.Fatalf("a non-Flarum delete touched the WAF: %v", log.events)
+		t.Fatalf("a delete of an app without managed exclusions touched the WAF: %v", log.events)
+	}
+}
+
+// A finished Nextcloud install registers CRS 911100 for its four WebDAV
+// endpoints, on its own host, and applies them before the ready flip.
+func TestNextcloudKicker_RegistersDAVExclusionsBeforeReady(t *testing.T) {
+	log := &wafLog{}
+	excl := &wafExclStore{}
+	installs := &wafInstalls{log: log, byID: map[string]*models.ApplicationInstall{
+		"nc1": {ID: "nc1", DomainID: "dom1", AppType: "nextcloud"},
+	}}
+	ag := &wafAgent{log: log}
+	createNextcloudInstallAndKickAgent(context.Background(), nextcloudKickArgs{
+		InstallID: "nc1", OSUser: "bob", DocRoot: "/home/bob/domains/example.com/public_html",
+		SiteURL: "https://example.com",
+	}, ApplicationHandlerConfig{
+		ApplicationInstalls: installs,
+		Domains:             wafDomains{},
+		Agent:               ag,
+		CRSExclusions:       excl,
+		CRSHostModes:        wafModes{},
+	})
+
+	if len(ag.applied) != 1 {
+		t.Fatalf("want one apply, got %d (events %v)", len(ag.applied), log.events)
+	}
+	want := []string{
+		"example.com/public.php/dav/#911100",
+		"example.com/public.php/webdav/#911100",
+		"example.com/remote.php/dav/#911100",
+		"example.com/remote.php/webdav/#911100",
+	}
+	if got := appliedKeys(ag.applied[0]); !sameKeys(got, want) {
+		t.Fatalf("applied %v, want %v", got, want)
+	}
+	apply, ready := -1, -1
+	for i, e := range log.events {
+		switch e {
+		case "agent:" + appseccfg.OperatorApplyVerb:
+			apply = i
+		case "status:ready":
+			ready = i
+		}
+	}
+	if apply < 0 || ready < 0 || apply > ready {
+		t.Fatalf("the apply must land before the ready flip: %v", log.events)
+	}
+}
+
+// A failed Nextcloud install registers no exclusion: there is nothing to serve.
+func TestNextcloudKicker_FailedInstallLeavesWAFAlone(t *testing.T) {
+	log := &wafLog{}
+	installs := &wafInstalls{log: log, byID: map[string]*models.ApplicationInstall{
+		"nc1": {ID: "nc1", DomainID: "dom1", AppType: "nextcloud"},
+	}}
+	ag := &failingInstallAgent{wafAgent: wafAgent{log: log}}
+	createNextcloudInstallAndKickAgent(context.Background(), nextcloudKickArgs{
+		InstallID: "nc1", OSUser: "bob", DocRoot: "/home/bob/domains/example.com/public_html",
+	}, ApplicationHandlerConfig{
+		ApplicationInstalls: installs, Domains: wafDomains{}, Agent: ag,
+		CRSExclusions: &wafExclStore{}, CRSHostModes: wafModes{},
+	})
+	if len(ag.applied) != 0 {
+		t.Fatalf("a failed install touched the WAF: %v", log.events)
+	}
+}
+
+type failingInstallAgent struct{ wafAgent }
+
+func (a *failingInstallAgent) Call(ctx context.Context, cmd string, params any) (json.RawMessage, error) {
+	if cmd == "app.install" {
+		a.log.add("agent:" + cmd)
+		return nil, errors.New("install boom")
+	}
+	return a.wafAgent.Call(ctx, cmd, params)
+}
+
+// Deleting a Nextcloud install removes all four of its managed exclusions and
+// applies that. An operator's own rows stay.
+func TestRunAppDelete_NextcloudRemovesItsExclusions(t *testing.T) {
+	managed, err := appsecops.NextcloudExclusions("nc1", "example.com", false, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := []models.CRSRuleExclusion{{ID: "op", Host: "shop.example.com", URIPrefix: "/wp-json/x/", RuleID: "931120", Note: "by hand"}}
+	for i, m := range managed {
+		rows = append(rows, models.CRSRuleExclusion{ID: fmt.Sprintf("m%d", i), Host: m.Host, URIPrefix: m.URIPrefix, RuleID: m.RuleID, Note: m.Note})
+	}
+	excl := &wafExclStore{rows: rows}
+	log := &wafLog{}
+	installs := &wafInstalls{log: log, byID: map[string]*models.ApplicationInstall{
+		"nc1": {ID: "nc1", DomainID: "dom1", AppType: "nextcloud"},
+	}}
+	ag := &wafAgent{log: log}
+	if err := RunAppDelete(AppDeleteArgs{InstallID: "nc1", UserID: "u1", AppType: "nextcloud", OSUser: "bob",
+		Docroot: "/home/bob/domains/example.com/public_html", DomainName: "example.com"}, AppDeleteDeps{
+		Installs: installs, Agent: ag, Domains: wafDomains{}, CRSExclusions: excl, CRSHostModes: wafModes{},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(excl.rows) != 1 || excl.rows[0].ID != "op" {
+		t.Fatalf("want only the operator row left, got %+v", excl.rows)
+	}
+	if len(ag.applied) != 1 {
+		t.Fatalf("want the removal applied once, got %d", len(ag.applied))
 	}
 }

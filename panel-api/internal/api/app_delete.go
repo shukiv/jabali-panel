@@ -113,7 +113,7 @@ func RunAppDelete(args AppDeleteArgs, deps AppDeleteDeps) error {
 	switch appType {
 	case "itflow":
 		removeITFlowCrons(ctx, deps, args.UserID, args.OSUser, appInstallPath(args.Docroot, args.Subdirectory))
-	case "wordpress", "joomla", "mediawiki":
+	case "wordpress", "joomla", "mediawiki", "moodle", "osticket", "nextcloud":
 		removeAppCrons(ctx, deps, args.UserID, args.OSUser, appType, appInstallPath(args.Docroot, args.Subdirectory))
 	}
 
@@ -171,10 +171,11 @@ func RunAppDelete(args AppDeleteArgs, deps AppDeleteDeps) error {
 		}
 	}
 
-	// GH #1650: with the install row gone, its Flarum WAF exclusion is stale.
-	// Remove it and apply that live. Best-effort: never fails the delete.
-	if appType == appsecops.AppTypeFlarum {
-		syncFlarumWAF(ctx, flarumWAFDeps(deps.Agent, deps.CRSExclusions, deps.CRSHostModes, deps.Installs, deps.Domains), "")
+	// GH #1650, Discussion #1032: with the install row gone, the WAF exclusions
+	// the panel manages for it (Flarum, Nextcloud) are stale. Remove them and
+	// apply that live. Best-effort: never fails the delete.
+	if appsecops.ManagesApp(appType) {
+		syncAppWAF(ctx, appWAFDeps(deps.Agent, deps.CRSExclusions, deps.CRSHostModes, deps.Installs, deps.Domains), appType, "")
 	}
 
 	if dropFailed {

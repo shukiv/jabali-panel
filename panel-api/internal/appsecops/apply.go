@@ -43,7 +43,7 @@ type DomainFinder interface {
 }
 
 // Deps are the stores and the agent the operations need. Apply needs Agent,
-// Exclusions and HostModes; SyncFlarum also needs Installs and Domains.
+// Exclusions and HostModes; SyncInstall also needs Installs and Domains.
 type Deps struct {
 	Agent      agent.AgentInterface
 	Exclusions ExclusionStore

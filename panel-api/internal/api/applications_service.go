@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/appsecops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 )
@@ -609,6 +610,27 @@ func dispatchInstallKicker(ctx context.Context, appName string, k kickContext, d
 			UseWWW:       k.UseWWW,
 		}, deps)
 		adminPassword = mwPass
+	case appsecops.AppTypeNextcloud:
+		ncPass := paramOr(k.Params, "admin_password", "")
+		if ncPass == "" {
+			ncPass = ids.NewSecret()
+		}
+		go createNextcloudInstallAndKickAgent(ctx, nextcloudKickArgs{
+			InstallID:  k.InstallID,
+			UserID:     k.UserID,
+			OSUser:     k.OSUser,
+			DocRoot:    k.DocRoot,
+			SiteURL:    k.SiteURL,
+			DBName:     k.Chain.DBName,
+			DBUser:     k.Chain.DBUsername,
+			DBPassword: k.Chain.DBPassword,
+			// k.AdminUsername is the stored install credential (generated, or
+			// the operator's admin_username), so the login the UI shows works.
+			AdminUser:  k.AdminUsername,
+			AdminPass:  ncPass,
+			AdminEmail: k.AdminEmail,
+		}, deps)
+		adminPassword = ncPass
 	case "moodle":
 		moodlePass := paramOr(k.Params, "admin_password", "")
 		if moodlePass == "" {
