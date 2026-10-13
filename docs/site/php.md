@@ -24,7 +24,7 @@ Per-user pools mean:
 
 ## Per-domain version
 
-Each Domain row has a `php_pool_id` foreign key into `php_pools`. The vhost `fastcgi_pass` line is rendered from that pool's socket path. Change the version per-domain via Domains → Edit → PHP Version.
+Each Domain row has a `php_pool_id` foreign key into `php_pools`. The vhost `fastcgi_pass` line is rendered from that pool's socket path. Change the version per-domain via Domains → Edit → PHP Version. One-click apps with their own nginx rules (subdirectory installs, osTicket, OpenEMR, InvoiceShelf, Flarum, Nextcloud) pass PHP to the same pool, and follow the domain when its version changes.
 
 ## User-facing PHP settings
 
