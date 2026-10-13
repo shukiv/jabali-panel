@@ -199,6 +199,10 @@ func main() {
 	// active ones). Best-effort, runs once at boot.
 	commands.BackfillUserCLIPHP(log)
 
+	// Moodle installs made before the data root became owner-only: take the
+	// web server's group off .moodledata. Best-effort, a read once healed.
+	commands.LockMoodleDataParents(ctx, log)
+
 	// GH #2056: the website mail relay is PartOf this unit, so an agent stop
 	// took it down; start it again when the smarthost is selected.
 	commands.StartMailRelayIfSelected(ctx, log)
