@@ -82,12 +82,13 @@ func userCronScope(username, uid string) cronUnitScope {
 				"systemctl", "--user",
 			}, args...)
 		},
+		// The job's output is read as root, limited to the tenant's entries by
+		// the journal's trusted _UID field (GH #2120). `journalctl --user` as
+		// the tenant sees only the tenant's own journal file, and journald
+		// splits one out per user only when the journal is stored
+		// persistently: with a volatile journal the run's output was lost.
 		journalctl: func(args ...string) (string, []string) {
-			return "sudo", append([]string{
-				"-u", username,
-				"env", "XDG_RUNTIME_DIR=" + runtimeDir,
-				"journalctl", "--user",
-			}, args...)
+			return "journalctl", append([]string{"_UID=" + uid}, args...)
 		},
 		unitField: "_SYSTEMD_USER_UNIT",
 	}

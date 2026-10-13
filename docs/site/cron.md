@@ -29,6 +29,8 @@ systemd-user timers give:
 - `RandomizedDelaySec=` — natural jitter without operators having to add `sleep $RANDOM`.
 - No per-user `crontab -e` shell access (we don't grant interactive shell to panel users).
 
+A tenant job's output goes to the journal like any unit's. **Run now** and the job's log read it as root, limited to the job owner's entries by the journal's `_UID` field, so they work whether the journal is stored persistently or not. Before the November 2026 release they read it with `journalctl --user` run as the tenant. That sees only the tenant's own journal file, and journald keeps one per user only when the journal is stored persistently. On a server with a volatile journal (`Storage=volatile`, or `Storage=auto` with no `/var/log/journal`), Run now showed "Exit code 0" with no output and the job's log was empty, although the job had run (GH #2120).
+
 ## Command allowlist
 
 Only commands the admin has marked allowed can be scheduled. The default allowlist (`/internal/cronvalidate/`) is the shared validator used by both the REST API and the CLI (`Cron Job Intake` — the single ingest path, per CONTEXT.md). Alongside `php` and `wp`, the validator accepts **`python` and `node`** scripts located under the owner's home (GH #1435), and an **ordered sequence** of `wp`/`php` steps in one job (GH #1437). Custom shell scripts are not allowed by default — admins can extend the allowlist.

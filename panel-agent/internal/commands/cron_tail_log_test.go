@@ -54,7 +54,7 @@ func TestCronTailLogUnknownUser(t *testing.T) {
 	params := json.RawMessage(`{
 		"user_id": "999",
 		"username": "nonexistentuser12345",
-		"job_id": "job1"
+		"job_id": "01JRVNNMW0000000000000TEST"
 	}`)
 
 	_, err := cronTailLogHandler(context.Background(), params)
@@ -79,7 +79,7 @@ func TestCronTailLogDefaultLines(t *testing.T) {
 	params := json.RawMessage(fmt.Sprintf(`{
 		"user_id": "1",
 		"username": "%s",
-		"job_id": "test-job"
+		"job_id": "01JRVNNMW0000000000000TEST"
 	}`, currentUser))
 
 	result, err := cronTailLogHandler(context.Background(), params)
@@ -123,7 +123,7 @@ func TestCronTailLogCustomLines(t *testing.T) {
 	params := json.RawMessage(fmt.Sprintf(`{
 		"user_id": "1",
 		"username": "%s",
-		"job_id": "test-job",
+		"job_id": "01JRVNNMW0000000000000TEST",
 		"lines": %d
 	}`, currentUser, lines))
 

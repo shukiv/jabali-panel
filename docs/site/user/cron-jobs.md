@@ -62,6 +62,10 @@ work); what's hidden is the host's internals (other tenants, server config),
 which a cron never needs. This is why a script can't reach outside your account
 even if it shells out.
 
+## Working directory
+
+A job runs in your home directory (`/home/<you>`), not in the folder of the script it runs. `php8.3 /home/<you>/domains/example.com/public_html/task.php` from cron therefore behaves differently from `php8.3 task.php` typed inside that folder when the script uses relative paths. For example, `file_put_contents('cache/state.json', …)` looks for `cache/` under your home, not next to the script. Build paths from `__DIR__`, or call `chdir(__DIR__);` at the top of the script.
+
 ## Why systemd-user, not crontab
 
 - Per-job journal logs (`journalctl --user -u jabali-cron-<id>`).
@@ -77,7 +81,7 @@ Per-row **Edit** changes the schedule or command. **Delete** removes both unit f
 
 Per-row **Run now** runs the job once, immediately, through its own service unit, the same way the timer does. Useful for testing a new cron job without waiting for the next scheduled fire.
 
-The panel waits up to 20 seconds and shows the exit code and the output. A job still running after that keeps running in the background: the panel says so, the output goes to the job's log, and Last Run updates within a minute of the job finishing. A job that is already running, from its schedule or an earlier Run now, is not started a second time.
+The panel waits up to 20 seconds and shows the exit code and the output. The output includes both stdout and stderr. A job still running after that keeps running in the background: the panel says so, the output goes to the job's log, and Last Run updates within a minute of the job finishing. A job that is already running, from its schedule or an earlier Run now, is not started a second time.
 
 Right after you create a job, before the panel has installed its timer (within a minute), Run now runs the command directly instead, and stops it after about 25 seconds.
 
