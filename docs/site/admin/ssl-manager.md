@@ -27,6 +27,8 @@ Successful issuance typically completes within 60 seconds. Failures retry every 
 
 The panel itself uses a Let's Encrypt certificate for the configured panel hostname. The row appears at the top of the list, marked **Panel hostname**. The deploy hook reloads nginx, then the panel API, then Bulwark, in that order. A failure here falls back to a self-signed certificate to keep the UI reachable; the failure reason is visible on the row and on the Server Settings → General → Panel SSL card.
 
+The per-domain certificate actions refuse the panel hostname: `jabali ssl enable|renew|retry` exit with an error, and the API answers 409 `panel_hostname_certificate`. Its certificate is the one on this row, managed under Server Settings → Panel SSL or with `jabali panel-cert status|issue`. Before GH #2126 those actions created a per-domain certificate for it that could only fail with `invalid webroot ""` and end as "manual retry required"; the panel now removes such a row on its own.
+
 See also: [Panel Certificate](./panel-certificate.md), [SSL](../ssl.md).
 
 ## Per-domain mail certificates
