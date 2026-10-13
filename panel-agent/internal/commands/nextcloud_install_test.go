@@ -298,3 +298,48 @@ func TestNextcloudTopLevel_StaysInsideTheDocroot(t *testing.T) {
 		}
 	}
 }
+
+// The data directory is made as the tenant and moved to the tenant's own
+// group: the domain directory is setgid www-data, and Nextcloud's 0770 would
+// otherwise let the web server's group write every stored file.
+func TestPrepareNextcloudDataDir_TenantGroupOwnerOnly(t *testing.T) {
+	var ran []string
+	prev := execCommandContext
+	execCommandContext = func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		ran = append(ran, name+" "+strings.Join(args, " "))
+		return exec.CommandContext(ctx, "true")
+	}
+	t.Cleanup(func() { execCommandContext = prev })
+
+	dataDir := filepath.Join(t.TempDir(), "nextcloud-data") // does not exist yet
+	if err := prepareNextcloudDataDir(context.Background(), "bob", dataDir); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"mkdir -m 0770 " + dataDir, "chgrp --no-dereference bob " + dataDir, "chmod 0770 " + dataDir}
+	if len(ran) != len(want) {
+		t.Fatalf("ran %q, want %q", ran, want)
+	}
+	for i, w := range want {
+		if !strings.Contains(ran[i], "--uid=bob") || !strings.HasSuffix(ran[i], w) {
+			t.Errorf("step %d ran %q, want %q as the tenant", i, ran[i], w)
+		}
+	}
+
+	// A directory that already holds files is refused, and nothing runs.
+	full := t.TempDir()
+	if err := os.WriteFile(filepath.Join(full, "x"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ran = nil
+	if err := prepareNextcloudDataDir(context.Background(), "bob", full); err == nil || len(ran) != 0 {
+		t.Fatalf("a non-empty data directory was used: err=%v ran=%q", err, ran)
+	}
+	// So is a link in its place.
+	link := filepath.Join(t.TempDir(), "nextcloud-data")
+	if err := os.Symlink(t.TempDir(), link); err != nil {
+		t.Fatal(err)
+	}
+	if err := prepareNextcloudDataDir(context.Background(), "bob", link); err == nil {
+		t.Fatal("a link was used as the data directory")
+	}
+}

@@ -236,6 +236,38 @@ func nextcloudOCC(ctx context.Context, osUser, phpBin, installPath string, args 
 	return nil
 }
 
+// prepareNextcloudDataDir makes the data directory, owner-only. It must be new
+// (or empty): never install over another install's files. It is checked
+// without following a link, and created and set up as the tenant, so a link
+// the tenant planted can't redirect it.
+//
+// The domain directory is setgid www-data, so a new directory inherits group
+// www-data, and Nextcloud wants 0770: that would let the web server's group
+// write every stored file. The tenant's own group keeps it owner-only, and
+// what Nextcloud creates inside inherits that group.
+func prepareNextcloudDataDir(ctx context.Context, osUser, dataDir string) error {
+	if fi, lerr := os.Lstat(dataDir); lerr == nil {
+		if !fi.IsDir() {
+			return &agentwire.AgentError{Code: agentwire.CodeFailedPrecondition, Message: fmt.Sprintf("%s exists and is not a directory", dataDir)}
+		}
+		entries, rerr := os.ReadDir(dataDir)
+		if rerr != nil || len(entries) > 0 {
+			return &agentwire.AgentError{Code: agentwire.CodeFailedPrecondition, Message: fmt.Sprintf("%s already holds files; move them away first", dataDir)}
+		}
+	} else if out, err := runBoundedOutput(buildSystemdRunCmd(ctx, osUser, "mkdir", "-m", "0770", dataDir), 0); err != nil {
+		return &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("create data directory: %v (%s)", err, truncateStr(string(out), 512))}
+	}
+	for _, args := range [][]string{
+		{"chgrp", "--no-dereference", osUser, dataDir},
+		{"chmod", "0770", dataDir},
+	} {
+		if out, err := runBoundedOutput(buildSystemdRunCmd(ctx, osUser, args...), 0); err != nil {
+			return &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("set up data directory: %v (%s)", err, truncateStr(string(out), 512))}
+		}
+	}
+	return nil
+}
+
 func nextcloudInstallHandler(ctx context.Context, params json.RawMessage) (any, error) {
 	var req nextcloudInstallReq
 	if err := json.Unmarshal(params, &req); err != nil {
@@ -274,18 +306,8 @@ func nextcloudInstallHandler(ctx context.Context, params json.RawMessage) (any, 
 		return nil, &agentwire.AgentError{Code: agentwire.CodeFailedPrecondition, Message: fmt.Sprintf("php%s CLI is not installed", pool.PHPVersion)}
 	}
 
-	// The data directory must be new (or empty): never install over another
-	// install's files. Checked without following a link; created as the tenant.
-	if fi, lerr := os.Lstat(dataDir); lerr == nil {
-		if !fi.IsDir() {
-			return nil, &agentwire.AgentError{Code: agentwire.CodeFailedPrecondition, Message: fmt.Sprintf("%s exists and is not a directory", dataDir)}
-		}
-		entries, rerr := os.ReadDir(dataDir)
-		if rerr != nil || len(entries) > 0 {
-			return nil, &agentwire.AgentError{Code: agentwire.CodeFailedPrecondition, Message: fmt.Sprintf("%s already holds files; move them away first", dataDir)}
-		}
-	} else if out, err := runBoundedOutput(buildSystemdRunCmd(ctx, req.OSUser, "mkdir", "-m", "0770", dataDir), 0); err != nil {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("create data directory: %v (%s)", err, truncateStr(string(out), 512))}
+	if err := prepareNextcloudDataDir(ctx, req.OSUser, dataDir); err != nil {
+		return nil, err
 	}
 
 	removePlaceholderIndex(ctx, installPath)
