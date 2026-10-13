@@ -42,6 +42,9 @@ func TestRenderPHPPinParams(t *testing.T) {
 // Every PHP location of every app snippet gets the include, right after its
 // fastcgi_params and at its indentation; the transform is idempotent.
 func TestSnippetWithPHPPins_EveryGenerator(t *testing.T) {
+	old := nginxSitesDir
+	nginxSitesDir = t.TempDir() // no vhost: the sockets stay as written
+	t.Cleanup(func() { nginxSitesDir = old })
 	for name, body := range map[string][]byte{
 		"drupal subdir":       drupalSubdirSnippet(t),
 		"openemr subdir":      []byte(openemrNginxConf("alice", "emr")),
@@ -50,7 +53,7 @@ func TestSnippetWithPHPPins_EveryGenerator(t *testing.T) {
 		"osticket":            []byte(osticketNginxConf("alice")),
 	} {
 		t.Run(name, func(t *testing.T) {
-			got := string(snippetWithPHPPins(body, pinsTestDomain))
+			got := string(snippetWithPHPPins(body, pinsTestDomain, "alice"))
 			passes := strings.Count(got, "fastcgi_pass ")
 			if passes == 0 {
 				t.Fatalf("fixture has no PHP location:\n%s", got)
@@ -71,7 +74,7 @@ func TestSnippetWithPHPPins_EveryGenerator(t *testing.T) {
 					t.Fatalf("include indentation differs from fastcgi_params:\n%s", got)
 				}
 			}
-			if again := string(snippetWithPHPPins([]byte(got), pinsTestDomain)); again != got {
+			if again := string(snippetWithPHPPins([]byte(got), pinsTestDomain, "alice")); again != got {
 				t.Fatal("a second pass changed the snippet")
 			}
 		})
@@ -109,7 +112,7 @@ func TestPlanPHPPinFiles(t *testing.T) {
 	}
 	params := "fastcgi_param PHP_VALUE \"display_errors=Off\";\n"
 
-	changes := planPHPPinFiles(dir, pinsTestDomain, params)
+	changes := planPHPPinFiles(dir, pinsTestDomain, "alice", params, "")
 	if len(changes) != 2 {
 		t.Fatalf("want the pins file and one snippet, got %d changes", len(changes))
 	}
@@ -127,20 +130,20 @@ func TestPlanPHPPinFiles(t *testing.T) {
 	if b, _ := os.ReadFile(outside); !bytes.Equal(b, old) {
 		t.Fatal("the symlink target was changed")
 	}
-	if again := planPHPPinFiles(dir, pinsTestDomain, params); len(again) != 0 {
+	if again := planPHPPinFiles(dir, pinsTestDomain, "alice", params, ""); len(again) != 0 {
 		t.Fatalf("after apply, %d changes remain", len(again))
 	}
 
-	changed := planPHPPinFiles(dir, pinsTestDomain, "fastcgi_param PHP_VALUE \"display_errors=On\";\n")
+	changed := planPHPPinFiles(dir, pinsTestDomain, "alice", "fastcgi_param PHP_VALUE \"display_errors=On\";\n", "")
 	if len(changed) != 1 || changed[0].path != filepath.Join(dir, phpPinsFileName) {
 		t.Fatalf("a changed value: want one pins file change, got %+v", changed)
 	}
 
-	gone := planPHPPinFiles(dir, pinsTestDomain, "")
+	gone := planPHPPinFiles(dir, pinsTestDomain, "alice", "", "")
 	if len(gone) != 1 || !gone[0].remove {
 		t.Fatalf("a vhost without PHP: want the pins file removed, got %+v", gone)
 	}
-	if none := planPHPPinFiles(filepath.Join(dir, "missing"), "b.test", ""); len(none) != 0 {
+	if none := planPHPPinFiles(filepath.Join(dir, "missing"), "b.test", "alice", "", ""); len(none) != 0 {
 		t.Fatalf("no directory and no PHP: got %d changes", len(none))
 	}
 }
@@ -154,7 +157,7 @@ func TestRevertPinFileChanges(t *testing.T) {
 	if err := os.WriteFile(snippet, old, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	changes := planPHPPinFiles(dir, pinsTestDomain, "fastcgi_param PHP_VALUE \"display_errors=Off\";\n")
+	changes := planPHPPinFiles(dir, pinsTestDomain, "alice", "fastcgi_param PHP_VALUE \"display_errors=Off\";\n", "")
 	if err := applyPinFileChanges(changes); err != nil {
 		t.Fatal(err)
 	}

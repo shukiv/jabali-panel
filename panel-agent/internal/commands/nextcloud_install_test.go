@@ -15,7 +15,10 @@ import (
 
 func TestNextcloudNginxConf(t *testing.T) {
 	const sock = "/run/php/jabali-bob-php8.4/fpm.sock"
-	conf := string(snippetWithPHPPins([]byte(nextcloudNginxConf(sock)), "cloud.example.com"))
+	old := nginxSitesDir
+	nginxSitesDir = t.TempDir()
+	t.Cleanup(func() { nginxSitesDir = old })
+	conf := string(snippetWithPHPPins([]byte(nextcloudNginxConf(sock)), "cloud.example.com", "bob"))
 
 	for _, want := range []string{
 		// The code/config/data trees and the CLI entry points never serve.
