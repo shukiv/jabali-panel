@@ -62,6 +62,10 @@ work); what's hidden is the host's internals (other tenants, server config),
 which a cron never needs. This is why a script can't reach outside your account
 even if it shells out.
 
+## Working directory
+
+A job runs in your home directory (`/home/<you>`), not in the folder of the script it runs. `php8.3 /home/<you>/domains/example.com/public_html/task.php` from cron therefore behaves differently from `php8.3 task.php` typed inside that folder when the script uses relative paths. For example, `file_put_contents('cache/state.json', …)` looks for `cache/` under your home, not next to the script. Build paths from `__DIR__`, or call `chdir(__DIR__);` at the top of the script.
+
 ## Why systemd-user, not crontab
 
 - Per-job journal logs (`journalctl --user -u jabali-cron-<id>`).
