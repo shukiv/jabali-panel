@@ -138,6 +138,32 @@ function orderedFields(schema: Record<string, ParamSpec>): string[] {
   });
 }
 
+// compilePattern builds a descriptor pattern the way the API's Go regexp reads
+// it: the "u" flag matches by code point, so a length rule like ^(.{8,})?$
+// counts an emoji once, as the server does. A pattern the "u" grammar refuses
+// falls back to the plain flags.
+function compilePattern(pattern: string): RegExp {
+  try {
+    return new RegExp(pattern, "u");
+  } catch {
+    return new RegExp(pattern);
+  }
+}
+
+// reservedRule refuses the descriptor's reserved values in any case, as the
+// API does. Blank stays allowed (blank = generated). The message never repeats
+// the value: the rule can sit on a password field.
+function reservedRule(spec: ParamSpec): Record<string, unknown> | undefined {
+  if (!spec.reserved?.length) return undefined;
+  const reserved = spec.reserved.map((r) => r.toLowerCase());
+  return {
+    validator: (_: unknown, value: unknown) =>
+      typeof value === "string" && value !== "" && reserved.includes(value.toLowerCase())
+        ? Promise.reject(new Error("This value is reserved by the app"))
+        : Promise.resolve(),
+  };
+}
+
 // renderParamField produces an AntD <Form.Item> for one descriptor
 // param. Unknown types render as plain Input so a future server can
 // add a type without breaking older bundles, with a console hint so
@@ -181,13 +207,15 @@ function renderParamField(
   }
 
   switch (spec.type) {
-    case "string":
+    case "string": {
       if (spec.pattern) {
         baseRules.push({
-          pattern: new RegExp(spec.pattern),
+          pattern: compilePattern(spec.pattern),
           message: "Does not match expected format",
         });
       }
+      const reserved = reservedRule(spec);
+      if (reserved) baseRules.push(reserved);
       return (
         <Form.Item
           key={name}
@@ -205,6 +233,7 @@ function renderParamField(
           />
         </Form.Item>
       );
+    }
     case "email":
       baseRules.push({ type: "email", message: "Must be a valid email" });
       return (
@@ -219,7 +248,15 @@ function renderParamField(
           <Input autoComplete="off" />
         </Form.Item>
       );
-    case "password":
+    case "password": {
+      // The app installer's own rule (length, forbidden characters): the
+      // description under the field spells it out.
+      const pattern = spec.pattern ? compilePattern(spec.pattern) : undefined;
+      if (pattern) {
+        baseRules.push({ pattern, message: "Does not meet this app's password rules" });
+      }
+      const reserved = reservedRule(spec);
+      if (reserved) baseRules.push(reserved);
       return (
         <Form.Item
           key={name}
@@ -236,9 +273,11 @@ function renderParamField(
           <PasswordInput
             autoComplete="new-password"
             placeholder={required ? undefined : "(auto-generated)"}
+            accepts={pattern ? (pw) => pattern.test(pw) : undefined}
           />
         </Form.Item>
       );
+    }
     case "enum":
       return (
         <Form.Item

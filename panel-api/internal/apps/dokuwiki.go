@@ -25,7 +25,8 @@ var DokuWiki = App{
 	// admin_username is optional (GH #228): leave it blank and the API
 	// generates a 6-letter username; fill it to choose one.
 	InstallParamSchema: map[string]ParamSpec{
-		"admin_username": AdminUsernameParam,
+		"admin_username": adminUsernameParamMatching(`^([a-z0-9][a-z0-9_]{1,31})?$`,
+			"2 to 32 lowercase letters, digits or underscores, starting with a letter or digit"),
 		"site_title": {
 			Type:        "string",
 			Required:    true,

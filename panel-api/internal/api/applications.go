@@ -273,6 +273,11 @@ func validateOne(field string, spec apps.ParamSpec, raw any) error {
 				return fmt.Errorf("param %q: does not match pattern", field)
 			}
 		}
+		for _, r := range spec.Reserved {
+			if s != "" && strings.EqualFold(s, r) {
+				return fmt.Errorf("param %q: this value is reserved by the app", field)
+			}
+		}
 	case "email":
 		s, ok := raw.(string)
 		if !ok {

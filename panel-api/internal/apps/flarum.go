@@ -39,7 +39,8 @@ var Flarum = App{
 	// other apps. The generated value surfaces once in the reveal
 	// panel on install.
 	InstallParamSchema: map[string]ParamSpec{
-		"admin_username": AdminUsernameParam,
+		"admin_username": adminUsernameParamMatching(`^([a-zA-Z0-9][a-zA-Z0-9_-]{2,29})?$`,
+			"3 to 30 letters, digits, underscores or hyphens, starting with a letter or digit"),
 		"site_title": {
 			Type:        "string",
 			Required:    true,
@@ -51,10 +52,7 @@ var Flarum = App{
 			Required:    true,
 			Description: "Administrator email — Flarum uses it for password resets and admin notices.",
 		},
-		"admin_password": {
-			Type:        "password",
-			Required:    false,
-			Description: "Initial admin password. Leave blank to have one generated. Flarum requires ≥8 chars; the generator satisfies that.",
-		},
+		"admin_password": adminPasswordParam(`^(.{8,})?$`,
+			"Initial admin password, at least 8 characters. Leave blank to have one generated."),
 	},
 }

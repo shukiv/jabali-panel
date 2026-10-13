@@ -17,3 +17,28 @@ var AdminUsernameParam = ParamSpec{
 	Pattern:     &adminUsernamePattern,
 	Description: "Administrator username. Leave blank for a random one.",
 }
+
+// adminUsernameParamMatching is AdminUsernameParam narrowed to an app
+// installer's own username rule, so the API refuses a name the installer would
+// reject instead of failing the install after the database exists. pattern
+// must still accept "" (blank = random); rule describes it for the form.
+func adminUsernameParamMatching(pattern, rule string) ParamSpec {
+	return ParamSpec{
+		Type:        "string",
+		Required:    false,
+		Pattern:     &pattern,
+		Description: "Administrator username: " + rule + ". Leave blank for a random one.",
+	}
+}
+
+// adminPasswordParam is the optional admin password with an app installer's
+// own rule as an anchored pattern, which must still accept "" (blank =
+// generated). The panel's generated passwords satisfy every rule.
+func adminPasswordParam(pattern, description string) ParamSpec {
+	return ParamSpec{
+		Type:        "password",
+		Required:    false,
+		Pattern:     &pattern,
+		Description: description,
+	}
+}

@@ -25,7 +25,8 @@ var PhpBB = App{
 	// admin_username intentionally NOT in this schema — see WordPress
 	// descriptor for the rationale.
 	InstallParamSchema: map[string]ParamSpec{
-		"admin_username": AdminUsernameParam,
+		"admin_username": adminUsernameParamMatching(`^([a-zA-Z0-9][a-zA-Z0-9_-]{2,19})?$`,
+			"3 to 20 letters, digits, underscores or hyphens, starting with a letter or digit"),
 		"site_title": {
 			Type:        "string",
 			Required:    true,
@@ -43,11 +44,8 @@ var PhpBB = App{
 			Required:    true,
 			Description: "Administrator email — phpBB uses it for password resets and bounce returns.",
 		},
-		"admin_password": {
-			Type:        "password",
-			Required:    false,
-			Description: "Initial admin password. Leave blank to have one generated. phpBB requires ≥6 chars; the ULID generator satisfies that.",
-		},
+		"admin_password": adminPasswordParam(`^(.{6,})?$`,
+			"Initial admin password, at least 6 characters. Leave blank to have one generated."),
 		"language": {
 			Type:        "string",
 			Required:    false,

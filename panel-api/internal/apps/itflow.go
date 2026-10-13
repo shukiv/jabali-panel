@@ -50,11 +50,8 @@ var ITFlow = App{
 			Required:    true,
 			Description: "Administrator email — this is the ITFlow login.",
 		},
-		"admin_password": {
-			Type:        "password",
-			Required:    false,
-			Description: "Initial admin password. Leave blank to have one generated. ITFlow requires ≥8 chars; the generator satisfies that.",
-		},
+		"admin_password": adminPasswordParam(`^(.{8,})?$`,
+			"Initial admin password, at least 8 characters. Leave blank to have one generated."),
 		"repo_branch": {
 			Type:     "enum",
 			Required: false,

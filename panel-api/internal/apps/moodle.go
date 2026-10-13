@@ -34,11 +34,8 @@ var Moodle = App{
 			Required:    true,
 			Description: "Site administrator email — used by Moodle for notifications + password resets.",
 		},
-		"admin_password": {
-			Type:        "password",
-			Required:    false,
-			Description: "Initial admin password. Leave blank to generate one. Moodle's default policy needs ≥8 chars with upper, lower, digit and a symbol.",
-		},
+		"admin_password": adminPasswordParam(`^(.{8,})?$`,
+			"Initial admin password, at least 8 characters. Leave blank to generate one. Moodle's default policy also wants upper and lower case, a digit and a symbol for later password changes."),
 		"language": {
 			Type:        "string",
 			Required:    false,

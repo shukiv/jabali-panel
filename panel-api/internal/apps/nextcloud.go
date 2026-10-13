@@ -40,10 +40,7 @@ var Nextcloud = App{
 			Required:    false,
 			Description: "Administrator email — used for password resets and notifications. Optional.",
 		},
-		"admin_password": {
-			Type:        "password",
-			Required:    false,
-			Description: "Initial admin password. Leave blank to have one generated.",
-		},
+		"admin_password": adminPasswordParam(`^[^\x00\r\n]*$`,
+			"Initial admin password, without line breaks. Leave blank to have one generated."),
 	},
 }

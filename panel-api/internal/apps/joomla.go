@@ -39,11 +39,8 @@ var Joomla = App{
 			Required:    true,
 			Description: "Administrator email — used by Joomla for password resets and admin notices.",
 		},
-		"admin_password": {
-			Type:        "password",
-			Required:    false,
-			Description: "Initial admin password. Leave blank to have one generated. Joomla requires ≥12 chars; the ULID generator satisfies that.",
-		},
+		"admin_password": adminPasswordParam(`^(.{12,})?$`,
+			"Initial admin password, at least 12 characters. Leave blank to have one generated."),
 		"admin_full_name": {
 			Type:        "string",
 			Required:    false,
