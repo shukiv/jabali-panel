@@ -452,7 +452,10 @@ func TestRetrySSL(t *testing.T) {
 		sched := &retryTestScheduler{}
 		mockCerts.On("FindByDomainID", mock.Anything, "domain-1").Return(cert, nil)
 		mockCerts.On("ResetForRetry", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-		cfg := SSLHandlerConfig{SSLCerts: mockCerts, Reconciler: sched}
+		// GH #2126: retry loads the domain first (it refuses the panel hostname).
+		mockDomains := new(MockDomainRepository)
+		mockDomains.On("FindByID", mock.Anything, "domain-1").Return(&models.Domain{ID: "domain-1", Name: "site.example.com", UserID: "u1"}, nil)
+		cfg := SSLHandlerConfig{Domains: mockDomains, SSLCerts: mockCerts, Reconciler: sched}
 		return newSSLHandler(cfg), mockCerts, sched
 	}
 	// c.Writer.Status() is used rather than w.Code: the success path replies with

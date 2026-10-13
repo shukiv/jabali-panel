@@ -28,7 +28,10 @@ func TestReconcileSSL_ModeRouting(t *testing.T) {
 		ss := &fakeServerSettingsRepo{settings: &models.ServerSettings{Hostname: "host.example.com", AdminEmail: "admin@example.com"}}
 		r := New(dr, nil, ag, slog.Default(), Config{}).WithSSLCerts(sc)
 		r.serverSettings = ss
-		dom := &models.Domain{OwnershipState: verifiedOwnership, ID: "d1", Name: "example.com", SSLMode: mode}
+		// GH #2126: a web domain has a document root; without one ACME is
+		// not attempted at all (there is nothing to answer HTTP-01 from).
+		dom := &models.Domain{OwnershipState: verifiedOwnership, ID: "d1", Name: "example.com", SSLMode: mode,
+			DocRoot: "/home/u1/domains/example.com/public_html"}
 		if cert != nil {
 			cert.DomainID = "d1"
 			sc.byDomain["d1"] = cert

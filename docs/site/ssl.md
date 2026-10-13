@@ -76,6 +76,7 @@ issuance retries run on their own, and the tab says so.
 | `urn:ietf:params:acme:error:rateLimited` | Hit LE rate limit | Wait the window (typically 1 hour). |
 | Cert issued but browser shows old cert | nginx not reloaded | `systemctl reload nginx` or trigger reconciler. |
 | Panel cert never issues | Bulwark serving on `:80` | Reconciler should fix; check `journalctl -u jabali-agent -f`. |
+| `invalid webroot ""` on the panel hostname, capped at 20 attempts | A per-domain certificate was requested for the panel hostname (GH #2126) | Nothing: the panel removes that row on its own. The hostname's certificate is under Server Settings → Panel SSL (`jabali panel-cert status`). |
 
 ## CLI
 
