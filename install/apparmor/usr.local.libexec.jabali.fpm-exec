@@ -122,4 +122,11 @@ profile jabali-fpm-app /usr/local/libexec/jabali/fpm-exec flags=(attach_disconne
   deny /root/** rwklx,
   deny /home/*/.ssh/** rwklx,
   deny /etc/jabali-panel/migration-secrets/** rwklx,
+
+  # The system D-Bus. Tenant PHP has no use for systemd, logind or any other
+  # system service on it (abstractions/nameservice would allow the socket
+  # through dbus-strict). An explicit deny holds in complain mode too, so this
+  # applies whatever mode the profile is in.
+  deny /run/dbus/system_bus_socket rw,
+  deny /var/run/dbus/system_bus_socket rw,
 }
