@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"os/user"
 	"regexp"
 	"strconv"
@@ -52,6 +51,11 @@ func cronTailLogHandler(ctx context.Context, params json.RawMessage) (any, error
 			Message: "job_id required",
 		}
 	}
+	// The job id names the unit whose log is read; hold it to the ULID shape
+	// cron.apply enforces rather than trusting the caller.
+	if !ulidRE.MatchString(p.JobID) {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "job_id must be a 26-char ULID"}
+	}
 
 	// Default lines to 50 if not provided
 	lines := 50
@@ -72,36 +76,27 @@ func cronTailLogHandler(ctx context.Context, params json.RawMessage) (any, error
 		}
 	}
 
-	uid, _ := strconv.Atoi(u.Uid)
-	runtimeDir := fmt.Sprintf("/run/user/%d", uid)
-
-	// Query journalctl for the service logs
-	cmd := execCommandContext(ctx, "sudo", "-u", p.Username)
-	cmd.Env = append(os.Environ(),
-		fmt.Sprintf("XDG_RUNTIME_DIR=%s", runtimeDir),
-	)
-	cmd.Args = append(cmd.Args,
-		"journalctl", "--user",
-		"-u", fmt.Sprintf("jabali-cron-%s.service", p.JobID),
-		"-n", fmt.Sprintf("%d", lines),
+	// Read as root, limited to the tenant's entries by the journal's trusted
+	// _UID field (GH #2120). `journalctl --user` as the tenant saw only the
+	// tenant's own journal file, which journald keeps only when the journal is
+	// stored persistently: with a volatile journal the log was empty. The
+	// job's own lines carry _SYSTEMD_USER_UNIT; the user manager's
+	// "Starting…" / "Finished…" lines about it carry USER_UNIT.
+	unit := fmt.Sprintf("jabali-cron-%s.service", p.JobID)
+	owner := "_UID=" + u.Uid
+	cmd := execCommandContext(ctx, "journalctl",
+		owner, "_SYSTEMD_USER_UNIT="+unit, "+", owner, "USER_UNIT="+unit,
+		"-n", strconv.Itoa(lines),
 		// short-iso (not cat): the log is useless for "did my hourly job run
 		// at :00" questions without timestamps (GH #856). The hostname/unit
 		// prefix it adds is stripped per line below.
 		"-o", "short-iso",
+		"--no-pager",
 	)
-
-	var stdout, stderr bytes.Buffer
+	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
-		// If journalctl fails (e.g., no logs yet), return empty log or error
-		// Most common: "No entries found" which is not an error condition
-		return &cronTailLogResponse{
-			Log: stripJournalPrefix(stdout.String()),
-		}, nil
-	}
-
+	// No entries yet is not an error: return what there is.
+	_ = cmd.Run()
 	return &cronTailLogResponse{
 		Log: strings.TrimSpace(stripJournalPrefix(stdout.String())),
 	}, nil

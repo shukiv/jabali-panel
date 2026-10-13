@@ -77,7 +77,7 @@ Per-row **Edit** changes the schedule or command. **Delete** removes both unit f
 
 Per-row **Run now** runs the job once, immediately, through its own service unit, the same way the timer does. Useful for testing a new cron job without waiting for the next scheduled fire.
 
-The panel waits up to 20 seconds and shows the exit code and the output. A job still running after that keeps running in the background: the panel says so, the output goes to the job's log, and Last Run updates within a minute of the job finishing. A job that is already running, from its schedule or an earlier Run now, is not started a second time.
+The panel waits up to 20 seconds and shows the exit code and the output. The output includes both stdout and stderr. A job still running after that keeps running in the background: the panel says so, the output goes to the job's log, and Last Run updates within a minute of the job finishing. A job that is already running, from its schedule or an earlier Run now, is not started a second time.
 
 Right after you create a job, before the panel has installed its timer (within a minute), Run now runs the command directly instead, and stops it after about 25 seconds.
 
