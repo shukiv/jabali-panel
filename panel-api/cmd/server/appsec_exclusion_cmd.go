@@ -2,15 +2,17 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
+	"io"
 	"text/tabwriter"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/appseccfg"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/appsecops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
@@ -98,25 +100,42 @@ func newAppSecExclusionListCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 15*time.Second)
 			defer cancel()
-			rows, err := crsExclRepo().List(ctx)
-			if err != nil {
-				return fmt.Errorf("list exclusions: %w", err)
-			}
-			if jsonOutput {
-				return printJSON(map[string]any{"exclusions": rows, "total": len(rows)})
-			}
-			if len(rows) == 0 {
-				fmt.Fprintln(cmd.OutOrStdout(), "No operator CRS exclusions.")
-				return nil
-			}
-			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(w, "ID\tHOST\tURI PREFIX\tRULE\tNOTE")
-			for _, r := range rows {
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", r.ID, r.Host, r.URIPrefix, r.RuleID, r.Note)
-			}
-			return w.Flush()
+			return listAppSecExclusions(ctx, appsecops.Deps{Exclusions: crsExclRepo()}, cmd.OutOrStdout(), jsonOutput)
 		},
 	}
+}
+
+// listAppSecExclusions prints the stored exclusions the way the panel's API
+// lists them: a row an app install carries (Flarum, Nextcloud) names that
+// install and its app. Such a row is put back by the install's next sync, so
+// removing it by hand does not last.
+func listAppSecExclusions(ctx context.Context, d appsecops.Deps, out io.Writer, asJSON bool) error {
+	rows, err := appsecops.ListExclusions(ctx, d)
+	if err != nil {
+		return fmt.Errorf("list exclusions: %w", err)
+	}
+	if asJSON {
+		b, err := json.MarshalIndent(map[string]any{"exclusions": rows, "total": len(rows)}, "", "  ")
+		if err != nil {
+			return fmt.Errorf("json encode: %w", err)
+		}
+		_, err = fmt.Fprintln(out, string(b))
+		return err
+	}
+	if len(rows) == 0 {
+		fmt.Fprintln(out, "No operator CRS exclusions.")
+		return nil
+	}
+	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "ID\tHOST\tURI PREFIX\tRULE\tMANAGED BY\tNOTE")
+	for _, r := range rows {
+		managedBy := "-"
+		if r.ManagedApp != "" {
+			managedBy = r.ManagedApp + " install " + r.ManagedInstallID
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", r.ID, r.Host, r.URIPrefix, r.RuleID, managedBy, r.Note)
+	}
+	return w.Flush()
 }
 
 func newAppSecExclusionRmCmd() *cobra.Command {
