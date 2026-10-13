@@ -25,7 +25,7 @@ See [Database Tuning](./database-tuning.md) for the per-key reference.
 
 Server-wide nginx tunables (M55). Applied at `http{}` scope so they default for every site; individual vhosts may still override per-directive. Every change is validated with `nginx -t` and rolled back automatically if the test fails.
 
-- **Max upload size** (`client_max_body_size`) — largest request body nginx accepts before returning 413. Default `50m`. Raise it for big-upload apps (ownCloud, Nextcloud); this is also what lets reverse-proxied apps accept uploads.
+- **Max upload size** (`client_max_body_size`) — largest request body nginx accepts before returning 413. Default `512m`, the same as the PHP pool's `post_max_size`. Raise it for big-upload apps (ownCloud, Nextcloud); this is also what lets reverse-proxied apps accept uploads.
 - **Show nginx version** (`server_tokens`) — off by default (hides the version from responses and error pages).
 - **Gzip compression** — on by default.
 - **Keepalive timeout**, **client body / header timeouts**, **send timeout** — slow-client tuning.
@@ -34,7 +34,7 @@ Server-wide nginx tunables (M55). Applied at `http{}` scope so they default for 
 - **Page cache capacity** — the shared FastCGI page cache used by every cache-enabled site: `max_size` (GB, default 4), `keys_zone` (MB, default 64), and `inactive` (minutes, default 1440 = 24 hours, maximum 1440). `inactive` is how long a cached page is kept without being requested. An expired page is still served while it refreshes in the background, and WordPress purges a page when it is edited, so a long window keeps low-traffic pages fast without serving outdated content. After the Jabali Cache plugin purges a page, the agent fetches it again at once, so the next visitor gets a cached copy.
 - **Advanced** — a free-form box for raw `http{}`-scope directives. Gated by `nginx -t` only; a syntactically valid but wrong directive can still destabilize the server, so it carries a red warning. Leave empty unless you know exactly what you are adding.
 
-Tunables persist to `server_settings` and are applied by the agent's `nginx.tunables.apply` verb: additive directives render into `/etc/nginx/conf.d/05-jabali-tunables.conf`, while the worker knobs and the directives nginx already ships in `nginx.conf` (`server_tokens`, `gzip`, `keepalive_timeout`) are patched in place.
+Tunables persist to `server_settings` and are applied by the agent's `nginx.tunables.apply` verb: additive directives render into `/etc/nginx/conf.d/05-jabali-tunables.conf`, while the worker knobs and the directives nginx already ships in `nginx.conf` (`server_tokens`, `gzip`, `keepalive_timeout`) are patched in place. The panel applies the saved values again each time it starts, so these files follow this page even on a server that has never saved it; nothing is rewritten when they already match.
 
 ## Mail
 

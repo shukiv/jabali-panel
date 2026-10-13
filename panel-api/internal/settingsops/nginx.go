@@ -84,7 +84,7 @@ type NginxPlan struct {
 func NginxEffects(before, after *models.ServerSettings, touched NginxTouched) NginxPlan {
 	return NginxPlan{
 		Tunables: effect(touched.Tunables, "nginx.tunables.apply",
-			nginxTunablesParams(before), nginxTunablesParams(after), nginxApplyTimeout),
+			NginxTunablesParams(before), NginxTunablesParams(after), nginxApplyTimeout),
 		Cache: effect(touched.Cache, "nginx.cache.capacity_apply",
 			nginxCacheParams(before), nginxCacheParams(after), nginxApplyTimeout),
 	}
@@ -123,9 +123,10 @@ func diffEffect(method string, beforeParams, afterParams map[string]any, timeout
 	}
 }
 
-// nginxTunablesParams is the exact nginx.tunables.apply wire (13 keys). This is
-// the single source both adapters previously copied verbatim.
-func nginxTunablesParams(s *models.ServerSettings) map[string]any {
+// NginxTunablesParams is the exact nginx.tunables.apply wire (13 keys). This is
+// the single source both adapters previously copied verbatim, and what the
+// panel re-applies at start (cmd/server resyncNginxTunables).
+func NginxTunablesParams(s *models.ServerSettings) map[string]any {
 	return map[string]any{
 		"client_max_body_size":  s.NginxClientMaxBodySize,
 		"keepalive_timeout":     s.NginxKeepaliveTimeout,
