@@ -531,6 +531,22 @@ func (h *phpPoolHandler) delete(c *gin.Context) {
 		}
 	}
 
+	// Which pool to remove on the host, resolved while its row exists: without
+	// a slug php.pool.remove removes the user's default pool (GH #329).
+	user, err := h.cfg.Users.FindByID(ctx, pool.UserID)
+	if err != nil || user == nil || user.Username == nil {
+		slog.ErrorContext(ctx, "failed to find the pool owner", "error", err, "pool_id", pool.ID)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	username := *user.Username
+	slug, err := phppoolops.RemoveSlug(ctx, h.cfg.PHPPools, username, pool)
+	if err != nil {
+		slog.ErrorContext(ctx, "failed to identify the pool on the host", "error", err, "pool_id", pool.ID)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+
 	// Delete all ini overrides first
 	overrides, err := h.cfg.PHPPoolIniOverrides.ListByPool(ctx, poolID)
 	if err != nil {
@@ -560,16 +576,9 @@ func (h *phpPoolHandler) delete(c *gin.Context) {
 		agentCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		// Load user details
-		user, err := h.cfg.Users.FindByID(agentCtx, pool.UserID)
-		if err != nil {
-			slog.ErrorContext(agentCtx, "failed to find user for removal", "error", err)
-			return
-		}
-
-		// Call agent to remove the pool
-		_, err = h.cfg.Agent.Call(agentCtx, "php.pool.remove", map[string]any{
-			"username": user.Username,
+		_, err := h.cfg.Agent.Call(agentCtx, "php.pool.remove", map[string]any{
+			"username": username,
+			"slug":     slug,
 		})
 		if err != nil {
 			slog.ErrorContext(agentCtx, "agent failed to remove pool", "error", err)

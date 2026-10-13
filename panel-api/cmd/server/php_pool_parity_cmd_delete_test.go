@@ -29,4 +29,13 @@ func TestPHPPoolDelete_GuardsBoundDomainsAndRemovesHostPool(t *testing.T) {
 	if !strings.Contains(s, `"php.pool.remove"`) {
 		t.Fatal("pool delete must remove the live FPM pool on the host via php.pool.remove, not just the DB rows (JAB-342)")
 	}
+	// GH #329: without a slug php.pool.remove removes the user's DEFAULT pool,
+	// so deleting a per-version pool took the default one down instead.
+	if !strings.Contains(s, "phppoolops.RemoveSlug(ctx, poolRepo, *owner.Username, pool)") ||
+		!strings.Contains(s, `"slug": slug`) {
+		t.Fatal("pool delete must tell php.pool.remove which pool (its slug), resolved before the row is deleted")
+	}
+	if strings.Index(s, "phppoolops.RemoveSlug(") > strings.Index(s, "poolRepo.Delete(ctx, pool.ID)") {
+		t.Fatal("the slug must be resolved before the pool row is deleted")
+	}
 }

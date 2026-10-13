@@ -390,3 +390,32 @@ func TestValidIniOverrideValue(t *testing.T) {
 		}
 	}
 }
+
+type listErrPools struct{ fakePools }
+
+func (listErrPools) ListByUserID(context.Context, string) ([]models.PHPPool, error) {
+	return nil, errors.New("db down")
+}
+
+// The earliest pool is the default (slug == username); any other gets its
+// versioned slug; without the list the slug is unknown, never guessed.
+func TestRemoveSlug(t *testing.T) {
+	def := models.PHPPool{ID: "p84", UserID: "u1", PHPVersion: "8.4"}
+	ver := models.PHPPool{ID: "p83", UserID: "u1", PHPVersion: "8.3"}
+	pools := &fakePools{list: []models.PHPPool{def, ver}}
+	for _, tc := range []struct {
+		pool models.PHPPool
+		want string
+	}{{def, "alice"}, {ver, "alice-php8.3"}} {
+		got, err := phppoolops.RemoveSlug(context.Background(), pools, "alice", &tc.pool)
+		if err != nil || got != tc.want {
+			t.Errorf("pool %s: got %q, %v; want %q", tc.pool.ID, got, err, tc.want)
+		}
+	}
+	if got, err := phppoolops.RemoveSlug(context.Background(), &fakePools{}, "alice", &ver); err == nil {
+		t.Errorf("no pools: got %q, want an error", got)
+	}
+	if got, err := phppoolops.RemoveSlug(context.Background(), listErrPools{}, "alice", &ver); err == nil {
+		t.Errorf("list error: got %q, want an error", got)
+	}
+}

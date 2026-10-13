@@ -182,6 +182,12 @@ func newPHPPoolDeleteCmd() *cobra.Command {
 			if uerr != nil || owner == nil || owner.Username == nil {
 				return fmt.Errorf("resolve pool owner: %w", uerr)
 			}
+			// Which pool to remove on the host, resolved while its row exists:
+			// without a slug php.pool.remove removes the user's default pool.
+			slug, serr := phppoolops.RemoveSlug(ctx, poolRepo, *owner.Username, pool)
+			if serr != nil {
+				return fmt.Errorf("identify the pool on the host: %w", serr)
+			}
 			ovRepo := repository.NewPHPPoolIniOverrideRepository(sharedDB)
 			if ovs, lerr := ovRepo.ListByPool(ctx, pool.ID); lerr == nil {
 				for _, o := range ovs {
@@ -195,7 +201,7 @@ func newPHPPoolDeleteCmd() *cobra.Command {
 			// JAB-342: remove the live FPM pool on the host too, mirroring the HTTP
 			// handler's php.pool.remove. Without this the pool's socket + config
 			// linger under the FPM tree after its row is gone (orphaned config).
-			if _, aerr := sharedAgent.Call(ctx, "php.pool.remove", map[string]any{"username": *owner.Username}); aerr != nil {
+			if _, aerr := sharedAgent.Call(ctx, "php.pool.remove", map[string]any{"username": *owner.Username, "slug": slug}); aerr != nil {
 				return fmt.Errorf("pool row deleted but host pool removal failed (re-run to retry): %w", aerr)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Deleted pool %s (host pool removed)\n", pool.ID)
