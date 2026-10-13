@@ -7804,8 +7804,10 @@ install_nginx_tunables() {
   #
   # SEED-IF-ABSENT only: once an admin edits Server Settings -> Nginx the agent
   # owns this file; install.sh must not clobber their values on `jabali update`.
-  # The byte content below matches BuildNginxTunablesFragment's default output
-  # so the agent's idempotent compare sees no-change on the first save.
+  # The content below is BuildNginxTunablesFragment's default output for an
+  # nginx.conf that declares server_tokens, gzip and keepalive_timeout. Stock
+  # nginx.conf leaves server_tokens commented out, so the agent adds it here on
+  # the panel's first start (it re-applies Server Settings -> Nginx at boot).
   local dst="/etc/nginx/conf.d/05-jabali-tunables.conf"
   if [[ -f "$dst" ]]; then
     _log "nginx tunables fragment already present; leaving admin-managed $dst alone"
