@@ -38,7 +38,7 @@ func runFlarumSync(ctx context.Context, listIDs func(context.Context, string) ([
 	if len(ids) == 0 {
 		return rep, nil
 	}
-	added, res, err := appsecops.SyncFlarumInstalls(ctx, d, ids)
+	added, res, err := appsecops.SyncInstalls(ctx, d, ids)
 	if added != nil {
 		rep.Added = added
 	}

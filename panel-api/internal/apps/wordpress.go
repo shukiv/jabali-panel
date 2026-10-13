@@ -118,5 +118,8 @@ func RegisterDefaults(r *Registry) error {
 	if err := r.Register(OSTicket); err != nil {
 		return err
 	}
+	if err := r.Register(Nextcloud); err != nil {
+		return err
+	}
 	return nil
 }

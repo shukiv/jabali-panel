@@ -12,6 +12,7 @@ import flarumLogo from "../../../icons/brand/apps/flarum.svg";
 import itflowLogo from "../../../icons/brand/apps/itflow.svg";
 import moodleLogo from "../../../icons/brand/apps/moodle.svg";
 import dokuwikiLogo from "../../../icons/brand/apps/dokuwiki.svg";
+import nextcloudLogo from "../../../icons/brand/apps/nextcloud.svg";
 // Theme-aware variants: "<name>-<theme>.svg" is the logo shown FOR that theme
 // (a light-coloured mark for dark mode, a dark-coloured mark for light mode).
 import prestashopDark from "../../../icons/brand/apps/prestashop-dark.svg";
@@ -39,6 +40,7 @@ const APP_LOGOS: Record<string, string> = {
   itflow: itflowLogo,
   moodle: moodleLogo,
   dokuwiki: dokuwikiLogo,
+  nextcloud: nextcloudLogo,
 };
 
 // Apps whose logo differs per theme. Keyed by app_type → { dark, light }
@@ -54,7 +56,7 @@ const APP_DISPLAY_NAMES: Record<string, string> = {
   wordpress: "WordPress", moodle: "Moodle", dokuwiki: "DokuWiki",
   mediawiki: "MediaWiki", drupal: "Drupal", joomla: "Joomla", phpbb: "phpBB",
   opencart: "OpenCart", prestashop: "PrestaShop", flarum: "Flarum",
-  itflow: "ITFlow",
+  itflow: "ITFlow", nextcloud: "Nextcloud",
 };
 export function appDisplayName(appType?: string): string {
   if (!appType) return "WordPress";

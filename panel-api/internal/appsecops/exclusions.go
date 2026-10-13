@@ -62,16 +62,24 @@ func (e *ApplyError) Error() string {
 
 func (e *ApplyError) Unwrap() error { return e.Err }
 
-// ExclusionView is a stored exclusion. ManagedInstallID names the Flarum
-// install a row was created for (see flarum.go); it is empty for a row an
-// operator added.
+// ExclusionView is a stored exclusion. ManagedInstallID names the install a
+// row was created for and ManagedApp that install's app (see managed.go); both
+// are empty for a row an operator added.
 type ExclusionView struct {
 	models.CRSRuleExclusion
 	ManagedInstallID string `json:"managed_install_id,omitempty"`
+	ManagedApp       string `json:"managed_app,omitempty"`
 }
 
 func viewOf(r models.CRSRuleExclusion) ExclusionView {
-	return ExclusionView{CRSRuleExclusion: r, ManagedInstallID: managedFlarumInstallID(r)}
+	v := ExclusionView{CRSRuleExclusion: r}
+	for _, a := range managedApps {
+		if id := a.installID(r); id != "" {
+			v.ManagedInstallID, v.ManagedApp = id, a.appType
+			break
+		}
+	}
+	return v
 }
 
 // applyTimeout bounds one apply. The agent verb allows itself 30s for the

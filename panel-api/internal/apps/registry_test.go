@@ -319,6 +319,33 @@ func TestRegisterDefaults_RegistersPrestaShop(t *testing.T) {
 	}
 }
 
+// Nextcloud (Discussion #1032) installs at the domain root only, needs a
+// database, and supports only the PHP versions Nextcloud 35 runs on.
+func TestRegisterDefaults_RegistersNextcloud(t *testing.T) {
+	r := New()
+	if err := RegisterDefaults(r); err != nil {
+		t.Fatalf("RegisterDefaults: %v", err)
+	}
+	n, ok := r.Get("nextcloud")
+	if !ok {
+		t.Fatal("nextcloud not registered after RegisterDefaults")
+	}
+	if !n.RequiresDB || !n.RootOnly || n.DefaultSubdirectory != "" {
+		t.Errorf("nextcloud: RequiresDB=%v RootOnly=%v DefaultSubdirectory=%q; want true, true, \"\"", n.RequiresDB, n.RootOnly, n.DefaultSubdirectory)
+	}
+	if got := strings.Join(n.SupportedPHPVersions, ","); got != "8.3,8.4,8.5" {
+		t.Errorf("nextcloud PHP versions = %q, want 8.3,8.4,8.5", got)
+	}
+	for _, want := range []string{"admin_username", "admin_email", "admin_password"} {
+		spec, ok := n.InstallParamSchema[want]
+		if !ok {
+			t.Errorf("nextcloud schema missing %q", want)
+		} else if spec.Required {
+			t.Errorf("nextcloud %q should be optional", want)
+		}
+	}
+}
+
 func TestRegister_ConcurrentSafe(t *testing.T) {
 	// Race detector trips here if Register's mutex disappears.
 	r := New()

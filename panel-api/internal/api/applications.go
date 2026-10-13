@@ -17,6 +17,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/apps"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/appsecops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/cronops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
@@ -1004,7 +1005,7 @@ func createFlarumInstallAndKickAgent(parentCtx context.Context, args flarumKickA
 	// X-HTTP-Method-Override, which CRS 920450 blocks. Register the forum's
 	// scoped exclusion and apply it live. Done before the "ready" flip so a CLI
 	// --wait caller cannot exit mid-apply. Best-effort: never fails the install.
-	syncFlarumWAF(ctx, flarumWAFDeps(cfg.Agent, cfg.CRSExclusions, cfg.CRSHostModes, cfg.ApplicationInstalls, cfg.Domains), args.InstallID)
+	syncAppWAF(ctx, appWAFDeps(cfg.Agent, cfg.CRSExclusions, cfg.CRSHostModes, cfg.ApplicationInstalls, cfg.Domains), appsecops.AppTypeFlarum, args.InstallID)
 
 	cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "ready", nil, &version)
 }
@@ -1221,6 +1222,115 @@ func createOsTicketCron(ctx context.Context, args osticketKickArgs, cfg Applicat
 		Enabled:  true,
 	}); err != nil {
 		slog.WarnContext(ctx, "osticket: create cron failed", "command", cmd, "err", err)
+	}
+}
+
+// nextcloudKickArgs bundles the Nextcloud install inputs (Discussion #1032).
+type nextcloudKickArgs struct {
+	InstallID  string
+	UserID     string
+	OSUser     string
+	DocRoot    string
+	SiteURL    string
+	DBName     string
+	DBUser     string
+	DBPassword string
+	AdminUser  string
+	AdminPass  string
+	AdminEmail string
+}
+
+// nextcloudInstallTimeout bounds the whole install: a ~250 MB release download,
+// its extract, and occ maintenance:install.
+const nextcloudInstallTimeout = 20 * time.Minute
+
+// createNextcloudInstallAndKickAgent flips the row to "installing", installs
+// Nextcloud via the agent (download + occ maintenance:install + nginx drop-in),
+// creates its background-job cron, registers its WebDAV WAF exclusions, and
+// flips the row to "ready"/"failed".
+func createNextcloudInstallAndKickAgent(parentCtx context.Context, args nextcloudKickArgs, cfg ApplicationHandlerConfig) {
+	ctx, cancel := context.WithTimeout(context.Background(), nextcloudInstallTimeout)
+	defer cancel()
+
+	if err := cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "installing", nil, nil); err != nil {
+		return
+	}
+	if cfg.Agent == nil {
+		errMsg := "agent not configured"
+		cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "failed", &errMsg, nil)
+		return
+	}
+
+	agentResp, err := cfg.Agent.Call(ctx, "app.install", map[string]any{
+		"app_type":    appsecops.AppTypeNextcloud,
+		"os_user":     args.OSUser,
+		"docroot":     args.DocRoot,
+		"site_url":    args.SiteURL,
+		"db_name":     args.DBName,
+		"db_user":     args.DBUser,
+		"db_password": args.DBPassword,
+		"db_host":     "localhost",
+		"admin_user":  args.AdminUser,
+		"admin_pass":  args.AdminPass,
+		"admin_email": args.AdminEmail,
+	})
+	if err != nil {
+		errMsg := truncateError(fmt.Sprintf("agent install failed: %v", err), 1024)
+		cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "failed", &errMsg, nil)
+		return
+	}
+	var resp struct {
+		Version    string `json:"version"`
+		PHPVersion string `json:"php_version"`
+	}
+	if err := json.Unmarshal(agentResp, &resp); err != nil {
+		errMsg := truncateError(fmt.Sprintf("failed to parse agent response: %v", err), 1024)
+		cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "failed", &errMsg, nil)
+		return
+	}
+
+	// Background jobs run from cron (the agent set Nextcloud to cron mode).
+	// Best-effort: the app is installed and usable; a cron failure is logged.
+	createNextcloudCron(ctx, args, cfg, resp.PHPVersion)
+
+	// Discussion #1032: Nextcloud's Files app, sync clients and CalDAV/CardDAV
+	// speak WebDAV, which CRS 911100 blocks. Register the install's scoped
+	// exclusions and apply them live, before the "ready" flip so a CLI --wait
+	// caller cannot exit mid-apply. Best-effort: never fails the install.
+	syncAppWAF(ctx, appWAFDeps(cfg.Agent, cfg.CRSExclusions, cfg.CRSHostModes, cfg.ApplicationInstalls, cfg.Domains), appsecops.AppTypeNextcloud, args.InstallID)
+
+	version := resp.Version
+	cfg.ApplicationInstalls.UpdateStatus(ctx, args.InstallID, "ready", nil, &version)
+}
+
+// nextcloudCronCommand runs an install's background jobs. It pins the PHP
+// version the install's pool runs (as the agent reported it), so a different
+// CLI default can never run cron.php on a PHP Nextcloud refuses. An unexpected
+// version string falls back to the plain php.
+func nextcloudCronCommand(installPath, phpVersion string) string {
+	php := "php"
+	if dot := strings.IndexByte(phpVersion, '.'); dot > 0 && dot < len(phpVersion)-1 &&
+		isDigits(phpVersion[:dot]) && isDigits(phpVersion[dot+1:]) {
+		php += phpVersion
+	}
+	return fmt.Sprintf("%s %s/cron.php", php, installPath)
+}
+
+// createNextcloudCron registers Nextcloud's cron.php (every 5 minutes).
+func createNextcloudCron(ctx context.Context, args nextcloudKickArgs, cfg ApplicationHandlerConfig, phpVersion string) {
+	if cfg.CronJobs == nil || cfg.Users == nil || cfg.Domains == nil {
+		return
+	}
+	deps := cronops.Deps{Users: cfg.Users, Domains: cfg.Domains, CronJobs: cfg.CronJobs, Agent: cfg.Agent}
+	cmd := nextcloudCronCommand(appInstallPath(args.DocRoot, ""), phpVersion)
+	if _, err := cronops.Create(ctx, deps, cronops.CreateInput{
+		UserID:   args.UserID,
+		Name:     "Nextcloud Cron",
+		Schedule: "*/5 * * * *",
+		Command:  cmd,
+		Enabled:  true,
+	}); err != nil {
+		slog.WarnContext(ctx, "nextcloud: create cron failed", "command", cmd, "err", err)
 	}
 }
 

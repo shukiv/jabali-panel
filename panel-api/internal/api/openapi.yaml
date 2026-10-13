@@ -2334,8 +2334,9 @@ paths:
       tags: [CrowdSec]
       summary: List operator CRS exclusions (GH #1649)
       description: |
-        `{data, total}`. `managed_install_id` is set on a row the panel manages
-        for a Flarum install (GH #1650).
+        `{data, total}`. `managed_install_id` and `managed_app` are set on a row
+        the panel manages for an app install: Flarum (GH #1650) or Nextcloud
+        (Discussion #1032).
       security: [ { KratosSession: [] } ]
       responses: { "200": { description: OK } }
     post:

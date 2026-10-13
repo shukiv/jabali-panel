@@ -613,8 +613,10 @@ export type AppSecExclusion = {
   note: string;
   created_at: string;
   updated_at: string;
-  /** Set on a row the panel manages for a Flarum install (GH #1650). */
+  /** Set on a row the panel manages for an app install: Flarum (GH #1650),
+   * Nextcloud (Discussion #1032). managed_app names the app. */
   managed_install_id?: string;
+  managed_app?: string;
 };
 
 export type AppSecApplyResult = { changed?: boolean; reloaded?: boolean; skipped?: string };

@@ -61,9 +61,17 @@ challenges traffic on a domain the operator didn't choose.
   exclusion always names a host, a path prefix and one rule. **Exclude…** on a
   block prefills all three. Every add and remove applies to the WAF at once.
   If crowdsec cannot be reloaded, the change is undone and the error says so.
-- A row tagged **Flarum** is managed for a Flarum forum (GH #1650). Removing it
-  works, but the next change to that forum or `jabali appsec flarum-sync` adds
-  it again.
+- A row tagged with an app name is managed for that app's install:
+  - **Flarum** (GH #1650): rule 920450 on the forum's API path. Removing it
+    works, but the next change to that forum or `jabali appsec flarum-sync`
+    adds it again.
+  - **Nextcloud** (Discussion #1032): rule 911100 on the install's four WebDAV
+    paths (`/remote.php/dav/`, `/remote.php/webdav/`, `/public.php/dav/`,
+    `/public.php/webdav/`), so the Files app, sync clients and calendar/contact
+    sync can use WebDAV methods. Removing one blocks those clients again.
+
+  The panel removes a managed row when its install is deleted, and at start-up
+  for any install that is gone.
 
 The same data is on the CLI: `jabali appsec explain` and
 `jabali appsec exclusion add|list|rm`. The CLI stores the row only; run

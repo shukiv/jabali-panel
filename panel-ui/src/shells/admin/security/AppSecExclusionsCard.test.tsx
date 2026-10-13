@@ -84,9 +84,21 @@ const exclusionsBody = {
       created_at: "2026-09-27T10:00:00Z",
       updated_at: "2026-09-27T10:00:00Z",
       managed_install_id: "inst1",
+      managed_app: "flarum",
+    },
+    {
+      id: "01HXB",
+      host: "cloud.example.com",
+      uri_prefix: "/remote.php/dav/",
+      rule_id: "911100",
+      note: "Nextcloud WebDAV methods (CRS 911100), managed for Nextcloud install nc1 (Discussion #1032)",
+      created_at: "2026-10-13T10:00:00Z",
+      updated_at: "2026-10-13T10:00:00Z",
+      managed_install_id: "nc1",
+      managed_app: "nextcloud",
     },
   ],
-  total: 1,
+  total: 2,
 };
 
 function renderPanel() {
@@ -128,6 +140,13 @@ describe("GH #1649 — AppSec exclusions panel", () => {
     renderPanel();
     const row = (await screen.findByText("forum.example.com")).closest("tr") as HTMLElement;
     expect(within(row).getByText("Flarum")).toBeInTheDocument();
+  });
+
+  it("names the app a managed row belongs to (Discussion #1032)", async () => {
+    renderPanel();
+    const row = (await screen.findByText("cloud.example.com")).closest("tr") as HTMLElement;
+    expect(within(row).getByText("Nextcloud")).toBeInTheDocument();
+    expect(within(row).queryByText("Flarum")).toBeNull();
   });
 
   it("offers no exclusion for a block only infrastructure rules matched", async () => {
