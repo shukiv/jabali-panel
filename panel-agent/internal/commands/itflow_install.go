@@ -1,10 +1,12 @@
 package commands
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -161,37 +163,16 @@ func cloneITFlow(ctx context.Context, osUser, installPath, branch, pin string) e
 
 // runITFlowSetupCLI drives scripts/setup_cli.php headlessly. The script
 // chdir()s to its own dir and resolves ../config.php + ../db.sql, so cwd
-// only has to be installPath. Secrets land on /proc/<pid>/cmdline for the
-// install window — same exposure as wp-cli / drush, acceptable on a
-// single-tenant slice.
+// only has to be installPath. Its options carry the DB and admin
+// passwords; they reach it on stdin, never on a command line (see
+// itflowSetupShim).
 func runITFlowSetupCLI(ctx context.Context, req itflowInstallReq, installPath, baseURL string) error {
-	branch, _ := itflowResolveBranch(req.RepoBranch)
-	dbHost := req.DBHost
-	if dbHost == "" {
-		dbHost = "localhost"
-	}
-	args := []string{
-		"--working-directory=" + installPath,
-		phpCLIFor(req.OSUser),
-		"scripts/setup_cli.php",
-		"--host=" + dbHost,
-		"--username=" + req.DBUser,
-		"--password=" + req.DBPassword,
-		"--database=" + req.DBName,
-		"--base-url=" + baseURL,
-		"--locale=en_US",
-		"--timezone=UTC",
-		"--currency=USD",
-		"--company-name=" + req.CompanyName,
-		"--country=United States",
-		"--user-name=" + req.AdminName,
-		"--user-email=" + req.AdminEmail,
-		"--user-password=" + req.AdminPass,
-		"--repo-branch=" + branch,
-		"--non-interactive",
-	}
-	cmd := buildSystemdRunCmd(ctx, req.OSUser, args...)
-	out, err := runBoundedOutput(cmd, 0)
+	out, err := runStagedPHPShim("itflow-setup.php", itflowSetupShim, func(shimPath string) (*exec.Cmd, error) {
+		return itflowSetupCmd(ctx, req, installPath, baseURL, shimPath)
+	})
+	// The shim removes its copy of setup_cli.php when PHP exits; this covers
+	// a run killed before that.
+	_, _ = runBoundedOutput(buildSystemdRunCmd(ctx, req.OSUser, "rm", "-f", filepath.Join(installPath, "scripts", itflowSetupCopyName)), 0)
 	if err != nil {
 		return fmt.Errorf("setup_cli.php: %w (output: %s)", err, truncateStr(string(out), 1024))
 	}
@@ -205,6 +186,95 @@ func runITFlowSetupCLI(ctx context.Context, req itflowInstallReq, installPath, b
 		return fmt.Errorf("setup_cli.php reported failure: %s", truncateStr(o, 512))
 	}
 	return nil
+}
+
+// itflowSetupCopyName is the copy of setup_cli.php the shim runs, beside the
+// original (setup_cli.php chdir()s to its own directory).
+const itflowSetupCopyName = ".jabali-setup-cli.php"
+
+// itflowSetupGetopt is the one line of setup_cli.php that reads its options.
+const itflowSetupGetopt = `$options = getopt($shortopts, $longopts);`
+
+// itflowSetupShim runs ITFlow's scripts/setup_cli.php with the options it
+// reads as JSON on stdin. setup_cli.php parses its options with getopt(),
+// which reads the real process argv, so the PHP runner's $argv cannot feed
+// it. Instead the shim, as the tenant, writes a copy of setup_cli.php beside
+// it whose getopt() line takes the options from stdin, runs that copy, and
+// deletes it when PHP exits. If the line is not there exactly once (a new
+// pinned commit changed it), it refuses to run.
+const itflowSetupShim = `<?php
+// Jabali headless ITFlow setup. Runs scripts/setup_cli.php with the options
+// read as JSON on stdin instead of the command line.
+if (PHP_SAPI !== "cli") { exit(2); }
+$jabali_in = json_decode(stream_get_contents(STDIN), true);
+if (!is_array($jabali_in) || !isset($jabali_in["install_path"], $jabali_in["options"]) || !is_string($jabali_in["install_path"]) || substr($jabali_in["install_path"], 0, 1) !== "/" || !is_array($jabali_in["options"])) {
+  fwrite(STDERR, "SETUP_FAIL: unreadable input\n"); exit(2);
+}
+$jabali_src = $jabali_in["install_path"] . "/scripts/setup_cli.php";
+$jabali_code = file_get_contents($jabali_src);
+$jabali_getopt = '` + itflowSetupGetopt + `';
+if ($jabali_code === false || substr_count($jabali_code, $jabali_getopt) !== 1) {
+  fwrite(STDERR, "SETUP_FAIL: scripts/setup_cli.php does not read its options the expected way\n"); exit(3);
+}
+$jabali_copy = dirname($jabali_src) . "/` + itflowSetupCopyName + `";
+@unlink($jabali_copy);
+$jabali_fh = fopen($jabali_copy, "x");
+if ($jabali_fh === false) { fwrite(STDERR, "SETUP_FAIL: cannot write the setup copy\n"); exit(3); }
+register_shutdown_function(function () use ($jabali_copy) { @unlink($jabali_copy); });
+fwrite($jabali_fh, str_replace($jabali_getopt, '$options = $GLOBALS["jabali_itflow_options"];', $jabali_code));
+fclose($jabali_fh);
+$jabali_itflow_options = $jabali_in["options"];
+$argv = [$jabali_src];
+$argc = 1;
+$_SERVER["argv"] = $argv;
+$_SERVER["argc"] = 1;
+unset($jabali_in, $jabali_src, $jabali_code, $jabali_getopt, $jabali_fh);
+require $jabali_copy;
+`
+
+// itflowSetupInput is what itflowSetupShim reads on stdin.
+type itflowSetupInput struct {
+	InstallPath string         `json:"install_path"`
+	Options     map[string]any `json:"options"`
+}
+
+// itflowSetupOptions are setup_cli.php's options for req, as getopt() would
+// return them: a string per --name=value option, false for a bare flag.
+func itflowSetupOptions(req itflowInstallReq, baseURL string) map[string]any {
+	branch, _ := itflowResolveBranch(req.RepoBranch)
+	dbHost := req.DBHost
+	if dbHost == "" {
+		dbHost = "localhost"
+	}
+	return map[string]any{
+		"host":            dbHost,
+		"username":        req.DBUser,
+		"password":        req.DBPassword,
+		"database":        req.DBName,
+		"base-url":        baseURL,
+		"locale":          "en_US",
+		"timezone":        "UTC",
+		"currency":        "USD",
+		"company-name":    req.CompanyName,
+		"country":         "United States",
+		"user-name":       req.AdminName,
+		"user-email":      req.AdminEmail,
+		"user-password":   req.AdminPass,
+		"repo-branch":     branch,
+		"non-interactive": false,
+	}
+}
+
+// itflowSetupCmd builds the setup run: the shim as the tenant in
+// installPath, the options on stdin.
+func itflowSetupCmd(ctx context.Context, req itflowInstallReq, installPath, baseURL, shimPath string) (*exec.Cmd, error) {
+	in, err := json.Marshal(itflowSetupInput{InstallPath: installPath, Options: itflowSetupOptions(req, baseURL)})
+	if err != nil {
+		return nil, err
+	}
+	cmd := buildSystemdRunCmd(ctx, req.OSUser, "--working-directory="+installPath, phpCLIFor(req.OSUser), shimPath)
+	cmd.Stdin = bytes.NewReader(in)
+	return cmd, nil
 }
 
 func itflowInstallHandler(ctx context.Context, params json.RawMessage) (any, error) {

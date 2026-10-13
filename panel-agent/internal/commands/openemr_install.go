@@ -132,30 +132,8 @@ func openemrInstallHandler(ctx context.Context, params json.RawMessage) (any, er
 	}
 
 	// Headless install via InstallerAuto.php (no_root_db_access mode — uses
-	// the jabali-provisioned db + user on the pre-created database). The
-	// script is gated behind OPENEMR_ENABLE_INSTALLER_AUTO=1; passed via the
-	// unit environment, not argv. iuserpass rides argv (like Moodle's
-	// installer) — /proc hidepid (GH #499) keeps it unreadable to other
-	// tenants for the brief install window.
-	php := phpCLIFor(req.OSUser)
-	args := []string{
-		php, "-d", "memory_limit=512M", "-d", "max_input_vars=5000",
-		filepath.Join(installPath, "contrib", "util", "installScripts", "InstallerAuto.php"),
-		"server=" + dbHost,
-		"port=3306",
-		"login=" + req.DBUser,
-		"pass=" + req.DBPassword,
-		"dbname=" + req.DBName,
-		"no_root_db_access=1",
-		"site=default",
-		"iuser=" + req.AdminUser,
-		"iuname=Administrator",
-		"iuserpass=" + req.AdminPass,
-		"igroup=" + req.SiteTitle,
-	}
-	cmd := buildSystemdRunCmdEnv(ctx, req.OSUser, []string{"OPENEMR_ENABLE_INSTALLER_AUTO=1"}, args...)
-	cmd.Dir = installPath
-	out, runErr := runBoundedOutput(cmd, 0)
+	// the jabali-provisioned db + user on the pre-created database).
+	out, runErr := openemrInstallRun(req, installPath, dbHost).run(ctx)
 	// InstallerAuto prints "ERROR: ..." on failure but exits 0, so scan
 	// stdout too (silent-exit-0 class).
 	if runErr != nil || strings.Contains(string(out), "ERROR:") {
@@ -167,6 +145,35 @@ func openemrInstallHandler(ctx context.Context, params json.RawMessage) (any, er
 	}
 
 	return openemrInstallResp{Version: openemrVersion}, nil
+}
+
+// openemrInstallRun is the InstallerAuto.php run for req. InstallerAuto
+// takes the DB and admin passwords as name=value arguments, and runs only
+// with OPENEMR_ENABLE_INSTALLER_AUTO=1 in its environment; all of it reaches
+// the script through the PHP runner on stdin, never on a command line or in
+// the unit's environment (php_script_run.go).
+func openemrInstallRun(req openemrInstallReq, installPath, dbHost string) phpScriptRun {
+	return phpScriptRun{
+		OSUser:   req.OSUser,
+		PHP:      phpCLIFor(req.OSUser),
+		PHPFlags: []string{"-d", "memory_limit=512M", "-d", "max_input_vars=5000"},
+		Script:   filepath.Join(installPath, "contrib", "util", "installScripts", "InstallerAuto.php"),
+		Args: []string{
+			"server=" + dbHost,
+			"port=3306",
+			"login=" + req.DBUser,
+			"pass=" + req.DBPassword,
+			"dbname=" + req.DBName,
+			"no_root_db_access=1",
+			"site=default",
+			"iuser=" + req.AdminUser,
+			"iuname=Administrator",
+			"iuserpass=" + req.AdminPass,
+			"igroup=" + req.SiteTitle,
+		},
+		Env: map[string]string{"OPENEMR_ENABLE_INSTALLER_AUTO": "1"},
+		Dir: installPath,
+	}
 }
 
 // siteDomainOrEmpty derives the domain from site_url, returning "" on

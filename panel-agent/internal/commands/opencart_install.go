@@ -221,35 +221,11 @@ func extractOpenCartZip(ctx context.Context, osUser, zipPath, installPath, stagi
 
 // runOpenCartCLIInstaller drives `php install/cli_install.php install`.
 // OpenCart's CLI installer materialises the schema, writes both
-// config.php files, and creates the admin user in one shot.
+// config.php files, and creates the admin user in one shot. It takes the
+// DB and admin passwords only as options, so they reach it through the PHP
+// runner on stdin, never on a command line (php_script_run.go).
 func runOpenCartCLIInstaller(ctx context.Context, req opencartInstallReq, installPath string) error {
-	dbHost := req.DBHost
-	if dbHost == "" {
-		dbHost = "localhost"
-	}
-	httpServer := req.SiteURL
-	if !strings.HasSuffix(httpServer, "/") {
-		httpServer += "/"
-	}
-
-	args := []string{
-		phpCLIFor(req.OSUser), filepath.Join(installPath, "install", "cli_install.php"),
-		"install",
-		"--db_hostname", dbHost,
-		"--db_username", req.DBUser,
-		"--db_password", req.DBPassword,
-		"--db_database", req.DBName,
-		"--db_driver", "mysqli",
-		"--db_port", "3306",
-		"--db_prefix", "oc_",
-		"--username", req.AdminUser,
-		"--password", req.AdminPass,
-		"--email", req.AdminEmail,
-		"--http_server", httpServer,
-	}
-	cmd := buildSystemdRunCmd(ctx, req.OSUser, args...)
-	cmd.Dir = installPath
-	out, err := runBoundedOutput(cmd, 0)
+	out, err := opencartInstallRun(req, installPath).run(ctx)
 	if err != nil {
 		return fmt.Errorf("install/cli_install.php install: %w (output: %s)", err, truncateStr(string(out), 1024))
 	}
@@ -263,6 +239,39 @@ func runOpenCartCLIInstaller(ctx context.Context, req opencartInstallReq, instal
 		return fmt.Errorf("install/cli_install.php rejected: %s", truncateStr(outStr, 1024))
 	}
 	return nil
+}
+
+// opencartInstallRun is the install/cli_install.php install run for req.
+func opencartInstallRun(req opencartInstallReq, installPath string) phpScriptRun {
+	dbHost := req.DBHost
+	if dbHost == "" {
+		dbHost = "localhost"
+	}
+	httpServer := req.SiteURL
+	if !strings.HasSuffix(httpServer, "/") {
+		httpServer += "/"
+	}
+
+	return phpScriptRun{
+		OSUser: req.OSUser,
+		PHP:    phpCLIFor(req.OSUser),
+		Script: filepath.Join(installPath, "install", "cli_install.php"),
+		Args: []string{
+			"install",
+			"--db_hostname", dbHost,
+			"--db_username", req.DBUser,
+			"--db_password", req.DBPassword,
+			"--db_database", req.DBName,
+			"--db_driver", "mysqli",
+			"--db_port", "3306",
+			"--db_prefix", "oc_",
+			"--username", req.AdminUser,
+			"--password", req.AdminPass,
+			"--email", req.AdminEmail,
+			"--http_server", httpServer,
+		},
+		Dir: installPath,
+	}
 }
 
 // removeOpenCartInstallDir deletes the `install/` directory after a

@@ -273,7 +273,9 @@ func invoiceshelfInstallHandler(ctx context.Context, params json.RawMessage) (an
 	// onboarding complete. The stock UsersTableSeeder created a working
 	// admin/company/roles; we only rewrite the login credentials and the
 	// company name, then flip profile_complete so the wizard is skipped.
-	// Password + title travel via env (never argv) into the tinker script.
+	// Password + title reach the tinker script as environment variables
+	// that the PHP runner sets in-process from stdin, never on a command
+	// line or in the unit's environment (php_script_run.go).
 	//
 	// psysh (tinker's REPL) insists on a writable config dir under
 	// $XDG_CONFIG_HOME and exits 1 BEFORE running the script when it
@@ -287,12 +289,7 @@ func invoiceshelfInstallHandler(ctx context.Context, params json.RawMessage) (an
 	if out, err := runBoundedOutput(buildSystemdRunCmd(ctx, req.OSUser, "mkdir", "-m", "0700", "-p", psyshHome), 0); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("psysh config dir: %v (%s)", err, truncateStr(string(out), 256))}
 	}
-	tinker := invoiceshelfFinaliseTinker(req.AdminEmail)
-	tinkerCmd := buildSystemdRunCmdEnv(ctx, req.OSUser,
-		[]string{"IS_ADMIN_PASS=" + req.AdminPass, "IS_SITE_TITLE=" + req.SiteTitle, "IS_CURRENCY=" + req.Currency, "IS_COUNTRY=" + req.Country, "XDG_CONFIG_HOME=" + psyshHome},
-		php, filepath.Join(installPath, "artisan"), "tinker", "--execute="+tinker)
-	tinkerCmd.Dir = installPath
-	if out, err := runBoundedOutput(tinkerCmd, 0); err != nil {
+	if out, err := invoiceshelfFinaliseRun(req, php, installPath, psyshHome).run(ctx); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("finalise admin: %v (%s)", err, truncateStr(string(out), 1024))}
 	}
 
@@ -365,6 +362,25 @@ func invoiceshelfDownload(ctx context.Context, dest string) error {
 
 func init() {
 	RegisterAppInstaller("invoiceshelf", invoiceshelfInstallHandler)
+}
+
+// invoiceshelfFinaliseRun is the `artisan tinker` run that finalises the
+// admin, reading the password and site settings with getenv().
+func invoiceshelfFinaliseRun(req invoiceshelfInstallReq, php, installPath, psyshHome string) phpScriptRun {
+	return phpScriptRun{
+		OSUser: req.OSUser,
+		PHP:    php,
+		Script: filepath.Join(installPath, "artisan"),
+		Args:   []string{"tinker", "--execute=" + invoiceshelfFinaliseTinker(req.AdminEmail)},
+		Env: map[string]string{
+			"IS_ADMIN_PASS":   req.AdminPass,
+			"IS_SITE_TITLE":   req.SiteTitle,
+			"IS_CURRENCY":     req.Currency,
+			"IS_COUNTRY":      req.Country,
+			"XDG_CONFIG_HOME": psyshHome,
+		},
+		Dir: installPath,
+	}
 }
 
 // invoiceshelfFinaliseTinker builds the post-seed finalisation script. Only

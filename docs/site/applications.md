@@ -47,7 +47,7 @@ Every app uses the same 6-step pipeline:
 2. **DB provisioning** — create DB + DB user via the agent.
 3. **Download** — fetch the app from upstream (cached on the panel host for repeat installs).
 4. **Configure** — write the app's config file with DB creds + admin user + site URL.
-5. **Install** — call the app's `cli_install` / `wp core install` / equivalent. Scan stdout for `ERROR:` markers and a "success" sentinel (silent-exit-0 scar — OpenCart in particular exits 0 on failure).
+5. **Install** — call the app's `cli_install` / `wp core install` / equivalent. Scan stdout for `ERROR:` markers and a "success" sentinel (silent-exit-0 scar — OpenCart in particular exits 0 on failure). The database and admin passwords reach the installer on stdin, never as command-line options or environment variables of the systemd unit it runs in.
 6. **Magic SSO** — write the self-deleting `jabali-sso-*.php` shim into the install dir.
 
 ## Admin controls

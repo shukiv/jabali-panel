@@ -215,12 +215,21 @@ func installDrushViaComposer(ctx context.Context, osUser, installPath string) er
 	return nil
 }
 
-// runDrushSiteInstall drives drush's site:install command. The
-// --account-pass / --db-url flags both contain secrets that briefly
-// appear on /proc/<pid>/cmdline while the install runs — same
-// exposure window as wp-cli's --admin_password and MediaWiki's
-// --pass. Acceptable on a single-tenant slice.
+// runDrushSiteInstall drives drush's site:install command. --db-url and
+// --account-pass both carry secrets, so they reach drush through the PHP
+// runner on stdin, never on a command line (php_script_run.go).
 func runDrushSiteInstall(ctx context.Context, req drupalInstallReq, installPath string) error {
+	out, err := drushSiteInstallRun(req, installPath).run(ctx)
+	if err != nil {
+		return fmt.Errorf("drush site:install: %w (output: %s)", err, truncateStr(string(out), 1024))
+	}
+	return nil
+}
+
+// drushSiteInstallRun is the drush site:install run for req. drush ran as
+// `env COMPOSER_HOME=… vendor/bin/drush`, whose #!/usr/bin/env php picked the
+// PHP on PATH, so the runner uses that same `php`.
+func drushSiteInstallRun(req drupalInstallReq, installPath string) phpScriptRun {
 	dbHost := req.DBHost
 	if dbHost == "" {
 		dbHost = "localhost"
@@ -241,28 +250,24 @@ func runDrushSiteInstall(ctx context.Context, req drupalInstallReq, installPath 
 		req.DBName,
 	)
 
-	composerHome := filepath.Join(installPath, ".composer")
-	args := []string{
-		"env",
-		"COMPOSER_HOME=" + composerHome,
-		filepath.Join(installPath, "vendor", "bin", "drush"),
-		"site:install",
-		profile,
-		"--db-url=" + dbURL,
-		"--account-name=" + req.AdminUser,
-		"--account-pass=" + req.AdminPass,
-		"--account-mail=" + req.AdminEmail,
-		"--site-name=" + req.SiteTitle,
-		"--site-mail=" + siteMail,
-		"--yes",
+	return phpScriptRun{
+		OSUser: req.OSUser,
+		PHP:    "php",
+		Script: filepath.Join(installPath, "vendor", "bin", "drush"),
+		Args: []string{
+			"site:install",
+			profile,
+			"--db-url=" + dbURL,
+			"--account-name=" + req.AdminUser,
+			"--account-pass=" + req.AdminPass,
+			"--account-mail=" + req.AdminEmail,
+			"--site-name=" + req.SiteTitle,
+			"--site-mail=" + siteMail,
+			"--yes",
+		},
+		Env: map[string]string{"COMPOSER_HOME": filepath.Join(installPath, ".composer")},
+		Dir: installPath,
 	}
-	cmd := buildSystemdRunCmd(ctx, req.OSUser, args...)
-	cmd.Dir = installPath
-	out, err := runBoundedOutput(cmd, 0)
-	if err != nil {
-		return fmt.Errorf("drush site:install: %w (output: %s)", err, truncateStr(string(out), 1024))
-	}
-	return nil
 }
 
 // runDrushDisableAssetAggregation turns off Drupal's CSS/JS preprocessing

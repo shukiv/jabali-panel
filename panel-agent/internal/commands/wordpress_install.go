@@ -132,6 +132,19 @@ func buildSystemdRunCmd(ctx context.Context, osUser string, args ...string) *exe
 			args = append([]string{resolved}, args[1:]...)
 		}
 	}
+	// Name the unit after the binary only. Without --description the unit's
+	// Description, and the journal's "Started run-uN.service - …" line, is
+	// the whole command line. A command line is no place for a secret either
+	// way (see php_script_run.go).
+	desc := "jabali-agent task"
+	for _, a := range args {
+		// Skip systemd-run options a caller put first (--working-directory=…).
+		if !strings.HasPrefix(a, "-") {
+			desc += ": " + filepath.Base(a)
+			break
+		}
+	}
+	cmdArgs = append(cmdArgs, "--description="+desc)
 	cmdArgs = append(cmdArgs, args...)
 	return execCommandContext(ctx, cmdArgs[0], cmdArgs[1:]...)
 }

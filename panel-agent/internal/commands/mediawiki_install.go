@@ -199,12 +199,19 @@ func extractMediaWikiTarball(ctx context.Context, osUser, tarballPath, installPa
 // in the install root containing the DB credentials + every config
 // flag MediaWiki needs at runtime.
 //
-// `--pass` is read from the command line (on /proc/<pid>/cmdline)
-// briefly while the installer runs — the trade is that MediaWiki's
-// installer does not read passwords from stdin or env. Same exposure
-// window as wp-cli's `--admin_password` flag the WordPress installer
-// already uses; on a single-tenant slice that's acceptable.
+// The DB and admin passwords are options of install.php, so they reach it
+// through the PHP runner on stdin, never on a command line
+// (php_script_run.go).
 func runMediaWikiCLIInstaller(ctx context.Context, req mediawikiInstallReq, installPath string) error {
+	out, err := mediawikiInstallRun(req, installPath).run(ctx)
+	if err != nil {
+		return fmt.Errorf("php maintenance/install.php: %w (output: %s)", err, truncateStr(string(out), 1024))
+	}
+	return nil
+}
+
+// mediawikiInstallRun is the maintenance/install.php run for req.
+func mediawikiInstallRun(req mediawikiInstallReq, installPath string) phpScriptRun {
 	scriptPath := computeMediaWikiScriptPath(req.Subdirectory)
 	server := computeMediaWikiServerURL(req.SiteURL)
 
@@ -217,33 +224,31 @@ func runMediaWikiCLIInstaller(ctx context.Context, req mediawikiInstallReq, inst
 		lang = "en"
 	}
 
-	args := []string{
-		phpCLIFor(req.OSUser), filepath.Join(installPath, "maintenance", "install.php"),
-		"--dbtype=mysql",
-		"--dbserver=" + dbHost,
-		"--dbname=" + req.DBName,
-		"--dbuser=" + req.DBUser,
-		"--dbpass=" + req.DBPassword,
-		"--installdbuser=" + req.DBUser,
-		"--installdbpass=" + req.DBPassword,
-		"--server=" + server,
-		"--scriptpath=" + strings.TrimSuffix(scriptPath, "/"),
-		"--lang=" + lang,
-		"--pass=" + req.AdminPass,
-		// LocalSettings.php is generated in the working directory by
-		// default; force it to install_path so a docroot-relative
-		// install lands the file in the right place.
-		"--confpath=" + installPath,
-		req.SiteTitle,
-		req.AdminUser,
+	return phpScriptRun{
+		OSUser: req.OSUser,
+		PHP:    phpCLIFor(req.OSUser),
+		Script: filepath.Join(installPath, "maintenance", "install.php"),
+		Args: []string{
+			"--dbtype=mysql",
+			"--dbserver=" + dbHost,
+			"--dbname=" + req.DBName,
+			"--dbuser=" + req.DBUser,
+			"--dbpass=" + req.DBPassword,
+			"--installdbuser=" + req.DBUser,
+			"--installdbpass=" + req.DBPassword,
+			"--server=" + server,
+			"--scriptpath=" + strings.TrimSuffix(scriptPath, "/"),
+			"--lang=" + lang,
+			"--pass=" + req.AdminPass,
+			// LocalSettings.php is generated in the working directory by
+			// default; force it to install_path so a docroot-relative
+			// install lands the file in the right place.
+			"--confpath=" + installPath,
+			req.SiteTitle,
+			req.AdminUser,
+		},
+		Dir: installPath,
 	}
-	cmd := buildSystemdRunCmd(ctx, req.OSUser, args...)
-	cmd.Dir = installPath
-	out, err := runBoundedOutput(cmd, 0)
-	if err != nil {
-		return fmt.Errorf("php maintenance/install.php: %w (output: %s)", err, truncateStr(string(out), 1024))
-	}
-	return nil
 }
 
 func mediawikiInstallHandler(ctx context.Context, params json.RawMessage) (any, error) {

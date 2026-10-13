@@ -160,10 +160,19 @@ func extractJoomlaTarball(ctx context.Context, osUser, tarballPath, installPath 
 }
 
 // runJoomlaCLIInstaller drives the headless installer Joomla 4+ ships.
-// Same `--admin-password` exposure window on /proc/<pid>/cmdline as
-// the wp-cli / drush / mediawiki installers — acceptable on a single-
-// tenant slice.
+// It takes the admin and DB passwords only as options, so they reach it
+// through the PHP runner on stdin, never on a command line
+// (php_script_run.go).
 func runJoomlaCLIInstaller(ctx context.Context, req joomlaInstallReq, installPath string) error {
+	out, err := joomlaInstallRun(req, installPath).run(ctx)
+	if err != nil {
+		return fmt.Errorf("php installation/joomla.php install: %w (output: %s)", err, truncateStr(string(out), 1024))
+	}
+	return nil
+}
+
+// joomlaInstallRun is the installation/joomla.php install run for req.
+func joomlaInstallRun(req joomlaInstallReq, installPath string) phpScriptRun {
 	dbHost := req.DBHost
 	if dbHost == "" {
 		dbHost = "localhost"
@@ -173,28 +182,26 @@ func runJoomlaCLIInstaller(ctx context.Context, req joomlaInstallReq, installPat
 		adminFullName = "Super User"
 	}
 
-	args := []string{
-		phpCLIFor(req.OSUser), filepath.Join(installPath, "installation", "joomla.php"),
-		"install",
-		"--site-name=" + req.SiteTitle,
-		"--admin-email=" + req.AdminEmail,
-		"--admin-username=" + req.AdminUser,
-		"--admin-user=" + adminFullName,
-		"--admin-password=" + req.AdminPass,
-		"--db-type=mysqli",
-		"--db-host=" + dbHost,
-		"--db-user=" + req.DBUser,
-		"--db-pass=" + req.DBPassword,
-		"--db-name=" + req.DBName,
-		"--db-prefix=jos_",
+	return phpScriptRun{
+		OSUser: req.OSUser,
+		PHP:    phpCLIFor(req.OSUser),
+		Script: filepath.Join(installPath, "installation", "joomla.php"),
+		Args: []string{
+			"install",
+			"--site-name=" + req.SiteTitle,
+			"--admin-email=" + req.AdminEmail,
+			"--admin-username=" + req.AdminUser,
+			"--admin-user=" + adminFullName,
+			"--admin-password=" + req.AdminPass,
+			"--db-type=mysqli",
+			"--db-host=" + dbHost,
+			"--db-user=" + req.DBUser,
+			"--db-pass=" + req.DBPassword,
+			"--db-name=" + req.DBName,
+			"--db-prefix=jos_",
+		},
+		Dir: installPath,
 	}
-	cmd := buildSystemdRunCmd(ctx, req.OSUser, args...)
-	cmd.Dir = installPath
-	out, err := runBoundedOutput(cmd, 0)
-	if err != nil {
-		return fmt.Errorf("php installation/joomla.php install: %w (output: %s)", err, truncateStr(string(out), 1024))
-	}
-	return nil
 }
 
 // removeJoomlaInstallationDir deletes the `installation/` folder

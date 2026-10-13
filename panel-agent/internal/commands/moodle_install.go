@@ -178,11 +178,20 @@ func extractMoodleTarball(ctx context.Context, osUser, tarballPath, installPath 
 }
 
 // runMoodleCLIInstaller drives admin/cli/install.php headless. Moodle is
-// strict about --wwwroot matching the URL the site is served on. The DB +
-// admin passwords ride argv only for the brief install window (Moodle's CLI
-// installer reads neither from env nor stdin) — /proc hidepid (GH #499)
-// keeps them unreadable by other tenants.
+// strict about --wwwroot matching the URL the site is served on. Moodle's CLI
+// installer takes the DB and admin passwords only as options, so they reach it
+// through the PHP runner on stdin, never on a command line
+// (php_script_run.go).
 func runMoodleCLIInstaller(ctx context.Context, req moodleInstallReq, installPath, dataRoot string) error {
+	out, err := moodleInstallRun(req, installPath, dataRoot).run(ctx)
+	if err != nil {
+		return fmt.Errorf("php admin/cli/install.php: %w (output: %s)", err, truncateStr(string(out), 1024))
+	}
+	return nil
+}
+
+// moodleInstallRun is the admin/cli/install.php run for req.
+func moodleInstallRun(req moodleInstallReq, installPath, dataRoot string) phpScriptRun {
 	dbHost := req.DBHost
 	if dbHost == "" {
 		dbHost = "localhost"
@@ -191,38 +200,34 @@ func runMoodleCLIInstaller(ctx context.Context, req moodleInstallReq, installPat
 	if lang == "" {
 		lang = "en"
 	}
-	args := []string{
+	return phpScriptRun{
+		OSUser: req.OSUser,
+		PHP:    phpCLIFor(req.OSUser),
 		// CLI php.ini ships max_input_vars=1000; Moodle's environment check
 		// requires >=5000. The per-domain FPM pool sets this for the runtime,
 		// but the CLI installer uses the CLI ini, so override inline.
-		phpCLIFor(req.OSUser),
-		"-d", "max_input_vars=5000",
-		"-d", "memory_limit=256M",
-		filepath.Join(installPath, "admin", "cli", "install.php"),
-		"--non-interactive",
-		"--agree-license",
-		"--lang=" + lang,
-		"--wwwroot=" + strings.TrimSuffix(req.SiteURL, "/"),
-		"--dataroot=" + dataRoot,
-		"--dbtype=mariadb",
-		"--dbhost=" + dbHost,
-		"--dbname=" + req.DBName,
-		"--dbuser=" + req.DBUser,
-		"--dbpass=" + req.DBPassword,
-		"--fullname=" + req.SiteTitle,
-		"--shortname=" + moodleShortName(req.SiteTitle),
-		"--summary=",
-		"--adminuser=" + req.AdminUser,
-		"--adminpass=" + req.AdminPass,
-		"--adminemail=" + req.AdminEmail,
+		PHPFlags: []string{"-d", "max_input_vars=5000", "-d", "memory_limit=256M"},
+		Script:   filepath.Join(installPath, "admin", "cli", "install.php"),
+		Args: []string{
+			"--non-interactive",
+			"--agree-license",
+			"--lang=" + lang,
+			"--wwwroot=" + strings.TrimSuffix(req.SiteURL, "/"),
+			"--dataroot=" + dataRoot,
+			"--dbtype=mariadb",
+			"--dbhost=" + dbHost,
+			"--dbname=" + req.DBName,
+			"--dbuser=" + req.DBUser,
+			"--dbpass=" + req.DBPassword,
+			"--fullname=" + req.SiteTitle,
+			"--shortname=" + moodleShortName(req.SiteTitle),
+			"--summary=",
+			"--adminuser=" + req.AdminUser,
+			"--adminpass=" + req.AdminPass,
+			"--adminemail=" + req.AdminEmail,
+		},
+		Dir: installPath,
 	}
-	cmd := buildSystemdRunCmd(ctx, req.OSUser, args...)
-	cmd.Dir = installPath
-	out, err := runBoundedOutput(cmd, 0)
-	if err != nil {
-		return fmt.Errorf("php admin/cli/install.php: %w (output: %s)", err, truncateStr(string(out), 1024))
-	}
-	return nil
 }
 
 func moodleInstallHandler(ctx context.Context, params json.RawMessage) (any, error) {

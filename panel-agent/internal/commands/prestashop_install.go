@@ -170,8 +170,19 @@ func extractPrestaShopZip(ctx context.Context, osUser, outerZip, installPath, st
 // runPrestaShopCLIInstaller drives `php install/index_cli.php`. The
 // installer reads its config from --flag=value pairs, materialises
 // the schema, writes app/config/parameters.php, and creates the
-// admin user in one shot.
+// admin user in one shot. The DB and admin passwords are among those
+// pairs, so they reach it through the PHP runner on stdin, never on a
+// command line (php_script_run.go).
 func runPrestaShopCLIInstaller(ctx context.Context, req prestashopInstallReq, installPath string) error {
+	out, err := prestashopInstallRun(req, installPath).run(ctx)
+	if err != nil {
+		return fmt.Errorf("install/index_cli.php: %w (output: %s)", err, truncateStr(string(out), 1024))
+	}
+	return nil
+}
+
+// prestashopInstallRun is the install/index_cli.php run for req.
+func prestashopInstallRun(req prestashopInstallReq, installPath string) phpScriptRun {
 	dbHost := req.DBHost
 	if dbHost == "" {
 		dbHost = "localhost"
@@ -205,35 +216,33 @@ func runPrestaShopCLIInstaller(ctx context.Context, req prestashopInstallReq, in
 		}
 	}
 
-	args := []string{
-		phpCLIFor(req.OSUser), filepath.Join(installPath, "install", "index_cli.php"),
-		"--step=all",
-		"--language=" + language,
-		"--country=" + country,
-		"--domain=" + domain,
-		"--base_uri=" + baseURI,
-		"--db_server=" + dbHost,
-		"--db_name=" + req.DBName,
-		"--db_user=" + req.DBUser,
-		"--db_password=" + req.DBPassword,
-		"--prefix=ps_",
-		"--engine=InnoDB",
-		"--name=" + req.SiteTitle,
-		"--activity=10",
-		"--firstname=" + firstName,
-		"--lastname=" + lastName,
-		"--password=" + req.AdminPass,
-		"--email=" + req.AdminEmail,
-		"--newsletter=0",
-		"--send_email=0",
+	return phpScriptRun{
+		OSUser: req.OSUser,
+		PHP:    phpCLIFor(req.OSUser),
+		Script: filepath.Join(installPath, "install", "index_cli.php"),
+		Args: []string{
+			"--step=all",
+			"--language=" + language,
+			"--country=" + country,
+			"--domain=" + domain,
+			"--base_uri=" + baseURI,
+			"--db_server=" + dbHost,
+			"--db_name=" + req.DBName,
+			"--db_user=" + req.DBUser,
+			"--db_password=" + req.DBPassword,
+			"--prefix=ps_",
+			"--engine=InnoDB",
+			"--name=" + req.SiteTitle,
+			"--activity=10",
+			"--firstname=" + firstName,
+			"--lastname=" + lastName,
+			"--password=" + req.AdminPass,
+			"--email=" + req.AdminEmail,
+			"--newsletter=0",
+			"--send_email=0",
+		},
+		Dir: installPath,
 	}
-	cmd := buildSystemdRunCmd(ctx, req.OSUser, args...)
-	cmd.Dir = installPath
-	out, err := runBoundedOutput(cmd, 0)
-	if err != nil {
-		return fmt.Errorf("install/index_cli.php: %w (output: %s)", err, truncateStr(string(out), 1024))
-	}
-	return nil
 }
 
 // removePrestaShopInstallDir deletes the install/ directory after

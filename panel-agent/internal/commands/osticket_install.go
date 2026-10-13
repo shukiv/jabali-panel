@@ -200,28 +200,12 @@ func osticketInstallHandler(ctx context.Context, params json.RawMessage) (any, e
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: err.Error()}
 	}
 
-	// Run the installer as the OS user. Every value via env — no argv, no
-	// interpolation. cwd=installPath so relative paths anchor at the webroot.
-	php := phpCLIFor(req.OSUser)
-	env := []string{
-		"OST_NAME=" + req.HelpdeskName,
-		"OST_SYSEMAIL=" + req.HelpdeskEmail,
-		"OST_FNAME=" + req.AdminFirst,
-		"OST_LNAME=" + req.AdminLast,
-		"OST_ADMINEMAIL=" + req.AdminEmail,
-		"OST_USERNAME=" + req.AdminUsername,
-		"OST_PW=" + req.AdminPass,
-		"OST_PREFIX=" + osticketTablePrefix,
-		"OST_DBHOST=" + dbHost,
-		"OST_DBNAME=" + req.DBName,
-		"OST_DBUSER=" + req.DBUser,
-		"OST_DBPASS=" + req.DBPassword,
-		"OST_LANG=" + osticketLangID,
-		"OST_HTTP_HOST=" + domain,
-	}
-	runCmd := buildSystemdRunCmdEnv(ctx, req.OSUser, env, php, filepath.Join(installPath, "setup", "install-cli.php"))
-	runCmd.Dir = installPath
-	out, runErr := runBoundedOutput(runCmd, 0)
+	// Run the installer as the OS user. Every value reaches it as an
+	// environment variable set in-process by the PHP runner, which reads them
+	// on stdin: none is on a command line or in the unit's environment
+	// (php_script_run.go). No interpolation. cwd=installPath so relative
+	// paths anchor at the webroot.
+	out, runErr := osticketInstallRun(req, installPath, dbHost, domain).run(ctx)
 	if runErr != nil || !strings.Contains(string(out), "INSTALL_OK") {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("osticket install: %v (%s)", runErr, truncateStr(string(out), 1024))}
 	}
@@ -329,4 +313,31 @@ func osticketDownload(ctx context.Context, dest string) error {
 
 func init() {
 	RegisterAppInstaller("osticket", osticketInstallHandler)
+}
+
+// osticketInstallRun is the setup/install-cli.php run for req;
+// osticketInstallCLI reads each value with getenv().
+func osticketInstallRun(req osticketInstallReq, installPath, dbHost, domain string) phpScriptRun {
+	return phpScriptRun{
+		OSUser: req.OSUser,
+		PHP:    phpCLIFor(req.OSUser),
+		Script: filepath.Join(installPath, "setup", "install-cli.php"),
+		Env: map[string]string{
+			"OST_NAME":       req.HelpdeskName,
+			"OST_SYSEMAIL":   req.HelpdeskEmail,
+			"OST_FNAME":      req.AdminFirst,
+			"OST_LNAME":      req.AdminLast,
+			"OST_ADMINEMAIL": req.AdminEmail,
+			"OST_USERNAME":   req.AdminUsername,
+			"OST_PW":         req.AdminPass,
+			"OST_PREFIX":     osticketTablePrefix,
+			"OST_DBHOST":     dbHost,
+			"OST_DBNAME":     req.DBName,
+			"OST_DBUSER":     req.DBUser,
+			"OST_DBPASS":     req.DBPassword,
+			"OST_LANG":       osticketLangID,
+			"OST_HTTP_HOST":  domain,
+		},
+		Dir: installPath,
+	}
 }
