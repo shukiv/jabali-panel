@@ -171,6 +171,7 @@ type cronRunNowAgentParams struct {
 	OwnedDocroots []string `json:"owned_docroots"`
 	OwnedDomains  []string `json:"owned_domains"`
 	WaitSeconds   int      `json:"wait_seconds,omitempty"`
+	RunAsRoot     bool     `json:"run_as_root,omitempty"`
 }
 
 type cronTailLogAgentParams struct {
@@ -178,6 +179,8 @@ type cronTailLogAgentParams struct {
 	Username string `json:"username"`
 	JobID    string `json:"job_id"`
 	Lines    int    `json:"lines,omitempty"`
+	// RunAsRoot: a root job's log is in the system journal (JAB-293).
+	RunAsRoot bool `json:"run_as_root,omitempty"`
 }
 
 // ---- helpers ----
@@ -212,6 +215,32 @@ func (h *cronHandler) linuxUsername(ctx context.Context, userID string) (string,
 		return "", err
 	}
 	return uname, nil
+}
+
+// jobAccount names the account Run now and the log act as for a job. A root
+// job (JAB-293) is root, reached through its system unit — but only while
+// its owner is an admin: a tenant-owned root row (from before cronops held
+// that invariant) would otherwise have root run a command the tenant can
+// edit, so it is refused here as cronops refuses to edit it. ok is false
+// once the response has been written.
+func (h *cronHandler) jobAccount(ctx context.Context, c *gin.Context, job *models.CronJob) (username string, runAsRoot, ok bool) {
+	if job.RunAsRoot {
+		owner, err := h.cfg.Users.FindByID(ctx, job.UserID)
+		if err != nil || owner == nil || !owner.IsAdmin {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{
+				"error":  "root_cron_owner_not_admin",
+				"detail": "a root cron job must be owned by an admin account; delete it and recreate it as an admin",
+			})
+			return "", false, false
+		}
+		return "root", true, true
+	}
+	username, err := h.linuxUsername(ctx, job.UserID)
+	if err != nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "user_has_no_linux_account"})
+		return "", false, false
+	}
+	return username, false, true
 }
 
 func (h *cronHandler) fetchAndAuthorize(ctx context.Context, c *gin.Context, id string) (*models.CronJob, bool) {
@@ -453,9 +482,8 @@ func (h *cronHandler) runNow(c *gin.Context) {
 		c.JSON(http.StatusConflict, gin.H{"error": "job_disabled"})
 		return
 	}
-	username, err := h.linuxUsername(ctx, job.UserID)
-	if err != nil {
-		c.JSON(http.StatusConflict, gin.H{"error": "user_has_no_linux_account"})
+	username, runAsRoot, ok := h.jobAccount(ctx, c, job)
+	if !ok {
 		return
 	}
 
@@ -482,7 +510,7 @@ func (h *cronHandler) runNow(c *gin.Context) {
 	result, err := h.cfg.Agent.Call(callCtx, "cron.run_now", cronRunNowAgentParams{
 		UserID: job.UserID, Username: username, JobID: job.ID,
 		Command: job.Command, OwnedDocroots: docroots, OwnedDomains: domains,
-		WaitSeconds: cronRunNowWaitSeconds,
+		WaitSeconds: cronRunNowWaitSeconds, RunAsRoot: runAsRoot,
 	})
 	if err != nil {
 		respondAgentErr(c, "agent_run_now_failed", err)
@@ -554,9 +582,8 @@ func (h *cronHandler) readLog(c *gin.Context) {
 	if !ok {
 		return
 	}
-	username, err := h.linuxUsername(ctx, job.UserID)
-	if err != nil {
-		c.JSON(http.StatusConflict, gin.H{"error": "user_has_no_linux_account"})
+	username, runAsRoot, ok := h.jobAccount(ctx, c, job)
+	if !ok {
 		return
 	}
 
@@ -572,6 +599,7 @@ func (h *cronHandler) readLog(c *gin.Context) {
 
 	result, err := h.cfg.Agent.Call(ctx, "cron.tail_log", cronTailLogAgentParams{
 		UserID: job.UserID, Username: username, JobID: job.ID, Lines: lines,
+		RunAsRoot: runAsRoot,
 	})
 	if err != nil {
 		respondAgentErr(c, "agent_tail_log_failed", err)

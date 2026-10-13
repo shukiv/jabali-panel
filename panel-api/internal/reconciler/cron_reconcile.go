@@ -44,7 +44,13 @@ func (r *Reconciler) reconcileCronJobs(ctx context.Context) {
 
 	for userID, userJobs := range byUser {
 		u, err := r.users.FindByID(ctx, userID)
-		if err != nil || u == nil || u.Username == nil || *u.Username == "" || u.IsAdmin {
+		if err == nil && u != nil && u.IsAdmin {
+			a, rm := r.reconcileRootCronJobs(ctx, userID, userJobs)
+			applied += a
+			removed += rm
+			continue
+		}
+		if err != nil || u == nil || u.Username == nil || *u.Username == "" {
 			r.log.Warn("reconcile: skipping cron jobs — user missing or has no linux username",
 				"user_id", userID, "err", err)
 			continue
@@ -73,21 +79,21 @@ func (r *Reconciler) reconcileCronJobs(ctx context.Context) {
 			if !job.Enabled {
 				continue
 			}
-			if err := r.cronApplyOne(ctx, userID, username, job, docroots, domains); err != nil {
+			if err := r.cronApplyOne(ctx, userID, username, job, docroots, domains, false); err != nil {
 				r.log.Error("reconcile: agent cron.apply failed", "job_id", job.ID, "err", err)
 				continue
 			}
 			applied++
 			// Harvest the last autonomous (timer) run so the panel's
 			// "Last Run" reflects scheduled fires, not just Run-now.
-			r.cronHarvestLastRun(ctx, userID, username, job)
+			r.cronHarvestLastRun(ctx, userID, username, job, false)
 		}
 
 		for _, job := range userJobs {
 			if job.Enabled {
 				continue
 			}
-			if err := r.cronRemoveOne(ctx, userID, username, job.ID); err != nil {
+			if err := r.cronRemoveOne(ctx, userID, username, job.ID, false); err != nil {
 				r.log.Warn("reconcile: agent cron.remove (disabled) failed", "job_id", job.ID, "err", err)
 				continue
 			}
@@ -164,7 +170,7 @@ func (r *Reconciler) removeCronOrphans(ctx context.Context, userID, username str
 			failed = true
 			continue
 		}
-		if err := r.cronRemoveOne(ctx, userID, username, jobID); err != nil {
+		if err := r.cronRemoveOne(ctx, userID, username, jobID, false); err != nil {
 			r.log.Warn("reconcile: failed to clean orphan cron unit", "job_id", jobID, "err", err)
 			failed = true
 			continue
@@ -225,16 +231,17 @@ func (r *Reconciler) cronListOnDisk(ctx context.Context, userID, username string
 // value, so a recent manual Run-now (#275) isn't clobbered by an older
 // scheduled-fire poll (and vice-versa). Best-effort: any failure is
 // logged at Debug and the pass continues (display-only).
-func (r *Reconciler) cronHarvestLastRun(ctx context.Context, userID, username string, job *models.CronJob) {
+func (r *Reconciler) cronHarvestLastRun(ctx context.Context, userID, username string, job *models.CronJob, runAsRoot bool) {
 	if r.cronJobs == nil {
 		return
 	}
 	agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	raw, err := r.agent.Call(agentCtx, "cron.status", map[string]any{
-		"user_id":  userID,
-		"username": username,
-		"job_id":   job.ID,
+		"user_id":     userID,
+		"username":    username,
+		"job_id":      job.ID,
+		"run_as_root": runAsRoot,
 	})
 	if err != nil {
 		r.log.Debug("reconcile: cron.status failed", "job_id", job.ID, "err", err)
@@ -261,7 +268,7 @@ func (r *Reconciler) cronHarvestLastRun(ctx context.Context, userID, username st
 	}
 }
 
-func (r *Reconciler) cronApplyOne(ctx context.Context, userID, username string, job *models.CronJob, docroots, domains []string) error {
+func (r *Reconciler) cronApplyOne(ctx context.Context, userID, username string, job *models.CronJob, docroots, domains []string, runAsRoot bool) error {
 	agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	_, err := r.agent.Call(agentCtx, "cron.apply", map[string]any{
@@ -273,17 +280,54 @@ func (r *Reconciler) cronApplyOne(ctx context.Context, userID, username string, 
 		"schedule":       job.Schedule,
 		"owned_docroots": docroots,
 		"owned_domains":  domains,
+		"run_as_root":    runAsRoot,
 	})
 	return err
 }
 
-func (r *Reconciler) cronRemoveOne(ctx context.Context, userID, username, jobID string) error {
+func (r *Reconciler) cronRemoveOne(ctx context.Context, userID, username, jobID string, runAsRoot bool) error {
 	agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	_, err := r.agent.Call(agentCtx, "cron.remove", map[string]any{
-		"user_id":  userID,
-		"username": username,
-		"job_id":   jobID,
+		"user_id":     userID,
+		"username":    username,
+		"job_id":      jobID,
+		"run_as_root": runAsRoot,
 	})
 	return err
+}
+
+// reconcileRootCronJobs converges an admin's root jobs (JAB-293): system
+// units that run as root, so they need no Linux account of the admin's. The
+// loop above skips admin owners for that reason, which left these never
+// re-applied (a unit kept whatever it was first written with) and their Last
+// run never harvested. Only an admin's root jobs are handled here; a root row
+// owned by a tenant stays on the tenant path and never runs as root. An
+// admin's other jobs stay skipped, as before.
+func (r *Reconciler) reconcileRootCronJobs(ctx context.Context, userID string, jobs []*models.CronJob) (applied, removed int) {
+	docroots, domains, err := r.ownedTargetsFor(ctx, userID)
+	if err != nil {
+		r.log.Warn("reconcile: failed to list owned docroots for root cron", "user_id", userID, "err", err)
+		return 0, 0
+	}
+	for _, job := range jobs {
+		if !job.RunAsRoot {
+			continue
+		}
+		if !job.Enabled {
+			if err := r.cronRemoveOne(ctx, userID, "root", job.ID, true); err != nil {
+				r.log.Warn("reconcile: agent cron.remove (disabled root job) failed", "job_id", job.ID, "err", err)
+				continue
+			}
+			removed++
+			continue
+		}
+		if err := r.cronApplyOne(ctx, userID, "root", job, docroots, domains, true); err != nil {
+			r.log.Error("reconcile: agent cron.apply (root job) failed", "job_id", job.ID, "err", err)
+			continue
+		}
+		applied++
+		r.cronHarvestLastRun(ctx, userID, "root", job, true)
+	}
+	return applied, removed
 }

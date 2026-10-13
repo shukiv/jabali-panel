@@ -3336,9 +3336,13 @@ paths:
     get:
       tags: [Cron]
       summary: Log cron
+      description: The job's recent log lines. A root job's come from the system journal.
       security: [ { KratosSession: [] } ]
       parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
-      responses: { "200": { description: OK } }
+      responses:
+        "200": { description: OK }
+        "409": { description: "`user_has_no_linux_account`" }
+        "422": { description: "`root_cron_owner_not_admin`: a root job owned by a non-admin account." }
 
   /cron/{id}/run-now:
     post:
@@ -3363,6 +3367,8 @@ paths:
               schema: { $ref: "#/components/schemas/CronRunNowResult" }
         "409":
           description: "`job_disabled`, `user_has_no_linux_account`, or `already_running` (a run of this job is under way)."
+        "422":
+          description: "`root_cron_owner_not_admin`: a root job owned by a non-admin account is never run as root."
 
 
   # --- Database User Grants (auto) ---

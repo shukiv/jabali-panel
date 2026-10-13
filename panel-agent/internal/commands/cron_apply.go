@@ -569,9 +569,11 @@ func applyRootCron(ctx context.Context, p cronApplyParams) (any, error) {
 //     ReadWritePaths. The operator can lift those by editing the
 //     unit (defaults are intentionally restrictive).
 //   - NoNewPrivileges=true.
-//   - StandardOutput/Error journald + the per-job logs live in
-//     /var/log/jabali/cron/root/<jobid>.log (kept in sync with
-//     the per-user layout under /var/log/jabali/cron/<user>/).
+//   - Output goes to the journal (systemd's default), where the panel's
+//     log view and Run now read it, as for a tenant job. It used to be
+//     appended to /var/log/jabali/cron/root/<jobid>.log, a directory
+//     nothing created, so every run failed with 209/STDOUT before the
+//     command started.
 func buildRootCronServiceContent(jobID, name, command string) string {
 	// GH #1435: one ExecStart per command line (Type=oneshot runs them in order,
 	// stops at the first failure). Each line was validated by the panel; splitting
@@ -598,12 +600,10 @@ ProtectSystem=strict
 ProtectHome=read-only
 NoNewPrivileges=true
 ReadWritePaths=/var/log /var/lib /var/cache /tmp
-StandardOutput=append:/var/log/jabali/cron/root/%s.log
-StandardError=append:/var/log/jabali/cron/root/%s.log
 
 [Install]
 WantedBy=multi-user.target
-`, name, execStart, jobID, jobID)
+`, name, execStart)
 }
 
 func init() {

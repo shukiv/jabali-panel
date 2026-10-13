@@ -365,9 +365,20 @@ and is stopped when the command's 5-minute limit ends.`,
 					}
 				}
 			}
+			// A root job (JAB-293) runs as root through its system unit, and
+			// only while its owner is an admin (cronops' invariant: a
+			// tenant-owned root row must never have root run its command).
+			username := derefStr(u.Username)
+			if job.RunAsRoot {
+				if !u.IsAdmin {
+					return fmt.Errorf("cron job %s is a root job owned by a non-admin account; delete it and recreate it as an admin", job.ID)
+				}
+				username = "root"
+			}
 			raw, err := sharedAgent.Call(ctx, "cron.run_now", map[string]any{
 				"user_id":        u.ID,
-				"username":       derefStr(u.Username),
+				"username":       username,
+				"run_as_root":    job.RunAsRoot,
 				"job_id":         job.ID,
 				"command":        job.Command,
 				"owned_docroots": docroots,
