@@ -20,6 +20,9 @@ type cronTailLogParams struct {
 	Username string `json:"username"`
 	JobID    string `json:"job_id"`
 	Lines    *int   `json:"lines,omitempty"` // Defaults to 50 if not provided
+	// RunAsRoot: an admin's root job (JAB-293). Its unit is a system one, so
+	// its output is in the system journal, not a user's.
+	RunAsRoot bool `json:"run_as_root,omitempty"`
 }
 
 // cronTailLogResponse is the output from cron.tail_log.
@@ -54,6 +57,10 @@ func cronTailLogHandler(ctx context.Context, params json.RawMessage) (any, error
 	lines := 50
 	if p.Lines != nil {
 		lines = *p.Lines
+	}
+
+	if p.RunAsRoot {
+		return cronTailRootLog(ctx, p.JobID, lines)
 	}
 
 	// Resolve user's UID
@@ -98,6 +105,28 @@ func cronTailLogHandler(ctx context.Context, params json.RawMessage) (any, error
 	return &cronTailLogResponse{
 		Log: strings.TrimSpace(stripJournalPrefix(stdout.String())),
 	}, nil
+}
+
+// cronTailRootLog reads a root job's log from the system journal: the same
+// short-iso lines, manager lines included, as a tenant job's log.
+func cronTailRootLog(ctx context.Context, jobID string, lines int) (any, error) {
+	// The job id names a unit in the system journal; hold it to the ULID
+	// shape cron.apply enforces so no other unit's log can be asked for.
+	if !ulidRE.MatchString(jobID) {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "job_id must be a 26-char ULID"}
+	}
+	scope := systemCronScope()
+	cmd := scope.command(ctx, scope.journalctl,
+		"-u", fmt.Sprintf("jabali-cron-%s.service", jobID),
+		"-n", strconv.Itoa(lines),
+		"-o", "short-iso",
+		"--no-pager",
+	)
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	// No entries yet is not an error: return what there is.
+	_ = cmd.Run()
+	return &cronTailLogResponse{Log: strings.TrimSpace(stripJournalPrefix(stdout.String()))}, nil
 }
 
 // journalShortISORe matches one short-iso journal line:

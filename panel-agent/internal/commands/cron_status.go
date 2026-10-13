@@ -1,13 +1,11 @@
 package commands
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"os/user"
 	"strconv"
-	"strings"
 	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
@@ -18,6 +16,8 @@ type cronStatusParams struct {
 	UserID   string `json:"user_id"`
 	Username string `json:"username"`
 	JobID    string `json:"job_id"`
+	// RunAsRoot: an admin's root job (JAB-293), whose unit is a system one.
+	RunAsRoot bool `json:"run_as_root,omitempty"`
 }
 
 // cronStatusResult reports the last completion of a user cron's systemd
@@ -52,36 +52,25 @@ func cronStatusHandler(ctx context.Context, params json.RawMessage) (any, error)
 	if p.Username == "" || p.JobID == "" {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "username and job_id required"}
 	}
-
-	u, err := user.Lookup(p.Username)
-	if err != nil {
-		return cronStatusResult{HasRun: false}, nil
+	// The job id names the unit read below, a system one for a root job.
+	if !ulidRE.MatchString(p.JobID) {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "job_id must be a 26-char ULID"}
 	}
-	runtimeDir := fmt.Sprintf("/run/user/%s", u.Uid)
+
+	scope := systemCronScope()
+	if !p.RunAsRoot {
+		u, err := user.Lookup(p.Username)
+		if err != nil {
+			return cronStatusResult{HasRun: false}, nil
+		}
+		scope = userCronScope(p.Username, u.Uid)
+	}
 	unit := fmt.Sprintf("jabali-cron-%s.service", p.JobID)
 
-	cmd := execCommandContext(ctx, "sudo", "-u", p.Username,
-		"env",
-		"XDG_RUNTIME_DIR="+runtimeDir,
-		"DBUS_SESSION_BUS_ADDRESS=unix:path="+runtimeDir+"/bus",
-		"systemctl", "--user", "show", unit,
-		"-p", "ExecMainStartTimestamp",
-		"-p", "ExecMainStatus",
-		"-p", "ActiveState",
-		"--no-pager")
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
+	props, err := cronUnitProps(ctx, scope, unit, "ExecMainStartTimestamp", "ExecMainStatus", "ActiveState")
+	if err != nil {
 		// Unit not loaded / user manager down → best-effort no-op.
 		return cronStatusResult{HasRun: false}, nil
-	}
-
-	props := map[string]string{}
-	for _, line := range strings.Split(stdout.String(), "\n") {
-		if eq := strings.IndexByte(line, '='); eq > 0 {
-			props[line[:eq]] = strings.TrimSpace(line[eq+1:])
-		}
 	}
 
 	// GH #2122: while a run is under way the unit already shows its start

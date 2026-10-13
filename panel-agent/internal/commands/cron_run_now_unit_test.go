@@ -45,8 +45,11 @@ func (f *cronExecFake) install(t *testing.T) {
 		f.mu.Lock()
 		f.calls = append(f.calls, append([]string{name}, args...))
 		script, arg := "true", ""
+		// A tenant job's commands go through sudo to the user's manager; a
+		// root job's call systemctl/journalctl directly.
 		switch {
-		case name == "sudo" && argsHave(args, "show"):
+		case argsHave(args, "--sync"):
+		case (name == "sudo" || name == "systemctl") && argsHave(args, "show"):
 			f.shows++
 			script, arg = `printf '%s\n' "$1"`, f.showBefore
 			if f.shows > 1 {
@@ -55,9 +58,9 @@ func (f *cronExecFake) install(t *testing.T) {
 			if f.showFails {
 				script = "echo 'Failed to connect to bus' >&2; exit 1"
 			}
-		case name == "sudo" && argsHave(args, "start"):
+		case (name == "sudo" || name == "systemctl") && argsHave(args, "start"):
 			script = f.startScript
-		case name == "sudo" && argsHave(args, "journalctl"):
+		case name == "journalctl" || (name == "sudo" && argsHave(args, "journalctl")):
 			script, arg = `printf '%s\n' "$1"`, f.journal
 		case name == "runuser":
 			script = "echo via-runuser"

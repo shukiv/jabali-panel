@@ -40,6 +40,16 @@ func TestCronAgentParamsWireShape(t *testing.T) {
 			want:    []string{"command", "job_id", "owned_docroots", "owned_domains", "user_id", "username", "wait_seconds"},
 		},
 		{
+			name:    "cron.run_now_root_job",
+			payload: cronRunNowAgentParams{UserID: "u", Username: "root", JobID: "j", Command: "python3 /root/x.py", RunAsRoot: true},
+			want:    []string{"command", "job_id", "owned_docroots", "owned_domains", "run_as_root", "user_id", "username"},
+		},
+		{
+			name:    "cron.tail_log_root_job",
+			payload: cronTailLogAgentParams{UserID: "u", Username: "root", JobID: "j", RunAsRoot: true},
+			want:    []string{"job_id", "run_as_root", "user_id", "username"},
+		},
+		{
 			name:    "cron.tail_log_with_lines",
 			payload: cronTailLogAgentParams{UserID: "u", Username: "shuki", JobID: "j", Lines: 100},
 			want:    []string{"job_id", "lines", "user_id", "username"},

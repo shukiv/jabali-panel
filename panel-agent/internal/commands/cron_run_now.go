@@ -24,6 +24,10 @@ type cronRunNowParams struct {
 	// WaitSeconds is how long to wait for the run to end before answering
 	// that it is still running (GH #2122). 0 means cronRunNowDefaultWait.
 	WaitSeconds int `json:"wait_seconds,omitempty"`
+	// RunAsRoot marks an admin's root job (JAB-293): its unit is the system
+	// one cron.apply installs under /etc/systemd/system, and Username must be
+	// "root".
+	RunAsRoot bool `json:"run_as_root,omitempty"`
 }
 
 // cronRunNowResponse is the output from cron.run_now.
@@ -47,9 +51,10 @@ type cronRunNowResponse struct {
 // A tenant job with an installed unit runs through that unit (cronRunViaUnit,
 // GH #2122): the handler waits up to wait_seconds and returns the exit code
 // and output, or reports that the run is still going and carries on in the
-// unit. A job without a loaded unit, a host whose user manager can't be
-// reached, and a root job run the command directly via runuser and return
-// its exit code + output, bounded by the call's deadline.
+// unit. A root job (run_as_root) runs through its system unit the same way.
+// A job without a loaded unit, or on a host whose user manager can't be
+// reached, runs the command directly via runuser and returns its exit code +
+// output, bounded by the call's deadline.
 func cronRunNowHandler(ctx context.Context, params json.RawMessage) (any, error) {
 	var p cronRunNowParams
 	if err := json.Unmarshal(params, &p); err != nil {
@@ -71,6 +76,9 @@ func cronRunNowHandler(ctx context.Context, params json.RawMessage) (any, error)
 	}
 	if p.Command == "" {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "command required"}
+	}
+	if p.RunAsRoot && p.Username != "root" {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "a root job runs as root: username must be root"}
 	}
 
 	// Defense-in-depth: re-validate the command against the user's owned
@@ -102,8 +110,19 @@ func cronRunNowHandler(ctx context.Context, params json.RawMessage) (any, error)
 	// stdout/stderr exactly the same, and works on every host shape.
 	// (The scheduled timer run still executes inside the user manager; this
 	// is only the manual "Run now" one-shot, which does not need the slice.)
-	if p.Username != "root" {
-		resp, handled, rErr := cronRunViaUnit(ctx, p.Username, u.Uid, p.JobID, cronRunNowWait(ctx, p.WaitSeconds))
+	// A root job's unit is the system one; a tenant job's lives in the user's
+	// manager. Root without run_as_root has no unit to start.
+	var scope *cronUnitScope
+	switch {
+	case p.RunAsRoot:
+		sc := systemCronScope()
+		scope = &sc
+	case p.Username != "root":
+		sc := userCronScope(p.Username, u.Uid)
+		scope = &sc
+	}
+	if scope != nil {
+		resp, handled, rErr := cronRunViaUnit(ctx, *scope, p.JobID, cronRunNowWait(ctx, p.WaitSeconds))
 		if handled {
 			if rErr != nil {
 				return nil, rErr

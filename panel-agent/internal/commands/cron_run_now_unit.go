@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os/exec"
 	"strconv"
 	"strings"
 	"syscall"
@@ -14,11 +15,12 @@ import (
 
 // GH #2122: "Run now" used to run the job as a child of this call, so the
 // call's deadline (the panel's agent timeout, 30 s by default) killed any job
-// that ran longer, and the panel answered 502. A tenant job now runs through
-// its own unit, the one the timer fires: the run belongs to the user's
-// systemd manager, not to this call, so it keeps running after the call
-// answers (and across an agent restart). Its output lands in the job's log
-// and the reconciler's cron.status harvest records Last run when it ends.
+// that ran longer, and the panel answered 502. A job now runs through its own
+// unit, the one the timer fires: the run belongs to the systemd manager (the
+// user's for a tenant job, the system's for a root job), not to this call, so
+// it keeps running after the call answers (and across an agent restart). Its
+// output lands in the job's log and the reconciler's cron.status harvest
+// records Last run when it ends.
 
 // cronRunNowDefaultWait is how long Run now waits for a run to finish before
 // answering that it is still running, when the caller names no wait.
@@ -50,32 +52,74 @@ func cronRunNowWait(ctx context.Context, requestedSeconds int) time.Duration {
 	return wait
 }
 
-// cronUserSystemctlArgs is the sudo argv that runs `systemctl --user <args>`
-// against the user's own manager, the same transport cron.apply and
-// cron.status use (systemctlUserExec explains why the bus env is spelled out).
-func cronUserSystemctlArgs(username, runtimeDir string, args ...string) []string {
-	full := []string{
-		"-u", username,
-		"env",
-		"XDG_RUNTIME_DIR=" + runtimeDir,
-		"DBUS_SESSION_BUS_ADDRESS=unix:path=" + runtimeDir + "/bus",
-		"systemctl", "--user",
-	}
-	return append(full, args...)
+// cronUnitScope says where a job's unit lives and how to reach it: a tenant
+// job's in the user's own systemd manager, a root job's (JAB-293) in the
+// system manager, as cron.apply installs them.
+type cronUnitScope struct {
+	// systemctl returns the command that runs `systemctl <args>` against
+	// the manager that owns the unit.
+	systemctl func(args ...string) (string, []string)
+	// journalctl returns the command that runs `journalctl <args>` over the
+	// journal that holds the unit's output.
+	journalctl func(args ...string) (string, []string)
+	// unitField is the journal field naming the unit's own processes. The
+	// manager's "Starting…" / "Finished…" lines carry it under another name.
+	unitField string
 }
 
-// cronUnitProps reads the named properties of a user unit.
-func cronUnitProps(ctx context.Context, username, runtimeDir, unit string, props ...string) (map[string]string, error) {
+// userCronScope reaches a tenant's unit through the user's own manager, the
+// same transport cron.apply and cron.status use (systemctlUserExec explains
+// why the bus env is spelled out).
+func userCronScope(username, uid string) cronUnitScope {
+	runtimeDir := "/run/user/" + uid
+	return cronUnitScope{
+		systemctl: func(args ...string) (string, []string) {
+			return "sudo", append([]string{
+				"-u", username,
+				"env",
+				"XDG_RUNTIME_DIR=" + runtimeDir,
+				"DBUS_SESSION_BUS_ADDRESS=unix:path=" + runtimeDir + "/bus",
+				"systemctl", "--user",
+			}, args...)
+		},
+		journalctl: func(args ...string) (string, []string) {
+			return "sudo", append([]string{
+				"-u", username,
+				"env", "XDG_RUNTIME_DIR=" + runtimeDir,
+				"journalctl", "--user",
+			}, args...)
+		},
+		unitField: "_SYSTEMD_USER_UNIT",
+	}
+}
+
+// systemCronScope reaches a root job's unit, which lives in the system
+// manager under /etc/systemd/system.
+func systemCronScope() cronUnitScope {
+	return cronUnitScope{
+		systemctl:  func(args ...string) (string, []string) { return "systemctl", args },
+		journalctl: func(args ...string) (string, []string) { return "journalctl", args },
+		unitField:  "_SYSTEMD_UNIT",
+	}
+}
+
+func (s cronUnitScope) command(ctx context.Context, build func(...string) (string, []string), args ...string) *exec.Cmd {
+	name, argv := build(args...)
+	return execCommandContext(ctx, name, argv...)
+}
+
+// cronUnitProps reads the named properties of a job's unit.
+func cronUnitProps(ctx context.Context, scope cronUnitScope, unit string, props ...string) (map[string]string, error) {
 	args := []string{"show", unit, "--no-pager"}
 	for _, p := range props {
 		args = append(args, "-p", p)
 	}
-	cmd := execCommandContext(ctx, "sudo", cronUserSystemctlArgs(username, runtimeDir, args...)...)
+	cmd := scope.command(ctx, scope.systemctl, args...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("systemctl --user show %s: %v: %s", unit, err, strings.TrimSpace(stderr.String()))
+		return nil, fmt.Errorf("systemctl show %s: %v: %s", unit, err, strings.TrimSpace(stderr.String()))
 	}
 	out := map[string]string{}
 	for _, line := range strings.Split(stdout.String(), "\n") {
@@ -122,16 +166,14 @@ func cronUnitExitCode(props map[string]string) int {
 
 // cronUnitOutput returns what the run started at `since` wrote. The journal
 // keeps stdout and stderr as one stream, so this is the combined output.
-func cronUnitOutput(ctx context.Context, username, runtimeDir, unit string, since time.Time) string {
+func cronUnitOutput(ctx context.Context, scope cronUnitScope, unit string, since time.Time) string {
 	// journald reads the job's output asynchronously; flush it so the last
 	// lines written before the job ended are in the journal before reading.
 	_ = execCommandContext(ctx, "journalctl", "--sync").Run()
-	cmd := execCommandContext(ctx, "sudo", "-u", username,
-		"env", "XDG_RUNTIME_DIR="+runtimeDir,
-		"journalctl", "--user",
+	cmd := scope.command(ctx, scope.journalctl,
 		// The job's own processes only: the manager's "Starting…" /
-		// "Finished…" lines carry USER_UNIT, not _SYSTEMD_USER_UNIT.
-		"_SYSTEMD_USER_UNIT="+unit,
+		// "Finished…" lines name the unit in another field.
+		scope.unitField+"="+unit,
 		"--since", fmt.Sprintf("@%d", since.Unix()),
 		"-n", strconv.Itoa(cronRunNowOutputLines),
 		"-o", "cat",
@@ -143,16 +185,15 @@ func cronUnitOutput(ctx context.Context, username, runtimeDir, unit string, sinc
 	return strings.TrimSpace(stdout.String())
 }
 
-// cronRunViaUnit runs a tenant job by starting its own user unit. handled is
-// false when the job has no loaded unit or the user's manager can't be
-// reached (a job created moments ago, before the reconciler installed it, or
-// a host where the user manager is down — GH #296); the caller then runs the
-// command directly as before.
-func cronRunViaUnit(ctx context.Context, username, uid, jobID string, wait time.Duration) (resp *cronRunNowResponse, handled bool, err error) {
-	runtimeDir := "/run/user/" + uid
+// cronRunViaUnit runs a job by starting its own unit. handled is false when
+// the job has no loaded unit or its manager can't be reached (a job created
+// moments ago, before the reconciler installed it, or a host where the user
+// manager is down — GH #296); the caller then runs the command directly as
+// before.
+func cronRunViaUnit(ctx context.Context, scope cronUnitScope, jobID string, wait time.Duration) (resp *cronRunNowResponse, handled bool, err error) {
 	unit := fmt.Sprintf("jabali-cron-%s.service", jobID)
 
-	before, err := cronUnitProps(ctx, username, runtimeDir, unit, "LoadState", "ActiveState")
+	before, err := cronUnitProps(ctx, scope, unit, "LoadState", "ActiveState")
 	if err != nil || before["LoadState"] != "loaded" {
 		return nil, false, nil
 	}
@@ -166,9 +207,9 @@ func cronRunViaUnit(ctx context.Context, username, uid, jobID string, wait time.
 	waitCtx, cancel := context.WithTimeout(ctx, wait)
 	defer cancel()
 	// `systemctl start` on a Type=oneshot unit returns when the run ends.
-	start := execCommandContext(waitCtx, "sudo", cronUserSystemctlArgs(username, runtimeDir, "start", unit)...)
-	// When the wait is over, stop only this waiting client: SIGTERM lets sudo
-	// pass it on to systemctl, and the run carries on in the user's manager.
+	start := scope.command(waitCtx, scope.systemctl, "start", unit)
+	// When the wait is over, stop only this waiting client (SIGTERM, which
+	// sudo passes on to systemctl); the run carries on in its manager.
 	start.Cancel = func() error { return start.Process.Signal(syscall.SIGTERM) }
 	start.WaitDelay = 2 * time.Second
 	var startErr bytes.Buffer
@@ -178,7 +219,7 @@ func cronRunViaUnit(ctx context.Context, username, uid, jobID string, wait time.
 		return &cronRunNowResponse{Running: true}, true, nil
 	}
 
-	after, err := cronUnitProps(ctx, username, runtimeDir, unit,
+	after, err := cronUnitProps(ctx, scope, unit,
 		"Result", "ExecMainCode", "ExecMainStatus", "ConditionResult")
 	if err != nil {
 		return nil, true, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: err.Error()}
@@ -199,6 +240,6 @@ func cronRunViaUnit(ctx context.Context, username, uid, jobID string, wait time.
 	}
 	return &cronRunNowResponse{
 		ExitCode: cronUnitExitCode(after),
-		Output:   cronUnitOutput(ctx, username, runtimeDir, unit, since),
+		Output:   cronUnitOutput(ctx, scope, unit, since),
 	}, true, nil
 }
