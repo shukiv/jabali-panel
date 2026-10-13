@@ -814,6 +814,16 @@ func runServe(cmd *cobra.Command, args []string) error {
 				ccancel()
 			}
 
+			// Server Settings → Nginx reaches nginx on a save only, so a box that
+			// never saved it keeps whatever install.sh seeded, or nothing at all.
+			// Re-apply it at start; the agent no-ops when nothing differs. Off the
+			// startup path (nginx -t on a box with many vhosts takes seconds), on
+			// a copy because the row is filled and saved below.
+			if row != nil && sharedAgent != nil {
+				snap := *row
+				go resyncNginxTunables(context.Background(), sharedAgent, &snap, created, log)
+			}
+
 			mutated := created
 			fillIfEmpty := func(target *string, source string) {
 				if *target == "" && source != "" {

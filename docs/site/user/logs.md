@@ -48,4 +48,4 @@ If you expect to see lines but the log is empty:
 
 - **`504 Gateway Timeout`** — your PHP script took longer than `max_execution_time`. Raise the limit under [PHP Settings](./php-settings.md) or optimise the script.
 - **`502 Bad Gateway`** — PHP-FPM is unable to accept connections; usually pool exhaustion. Reduce concurrency or ask the administrator to raise the pool's `pm.max_children`.
-- **`413 Payload Too Large`** — the upload exceeds nginx's body limit (set from `client_max_body_size`, which the reconciler renders from `post_max_size`). Raise `post_max_size` first; the body limit follows automatically.
+- **`413 Payload Too Large`** — the upload exceeds nginx's body limit. The administrator sets it for the whole server (512 MB by default), and **Domain options** can set a different maximum upload size for one domain. PHP has its own limits too: raise `post_max_size` and `upload_max_filesize` under [PHP Settings](./php-settings.md) to match.

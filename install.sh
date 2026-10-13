@@ -7797,7 +7797,7 @@ install_nginx_tunables() {
   # M55 Server Settings -> Nginx. Seed the http{}-scope tunables fragment with
   # the same defaults as migration 000165 / the agent's nginx.tunables.apply
   # render, so a fresh install has the secure/upload-friendly defaults live
-  # (client_max_body_size 50m + sane timeouts) before any UI save. The
+  # (client_max_body_size 512m + sane timeouts) before any UI save. The
   # server_tokens/gzip/keepalive/worker knobs live in nginx.conf and are
   # patched there by the agent on first save (Debian's defaults already match
   # ours, so a fresh install needs no nginx.conf edit).

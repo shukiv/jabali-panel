@@ -74,7 +74,7 @@ func Compile(d *models.Domain) string {
 			//     uploads / slow apps don't 504
 			// The request-body SIZE cap comes from the http{}-scope
 			// client_max_body_size set by Server Settings -> Nginx
-			// (default 50m); admins raise it there for big-upload apps.
+			// (default 512m); admins raise it there for big-upload apps.
 			// proxy_buffering stays ON (default) -- disabling it is an
 			// opt-in concern, not a safe default.
 			fmt.Fprintf(&b,
