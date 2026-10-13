@@ -367,7 +367,7 @@ func nextcloudInstallHandler(ctx context.Context, params json.RawMessage) (any, 
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("chgrp config.php: %v (%s)", err, truncateStr(string(out), 512))}
 	}
 
-	if err := writeNextcloudNginx(ctx, domain, pool.Socket); err != nil {
+	if err := writeNextcloudNginx(ctx, domain, req.OSUser, pool.Socket); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("nginx snippet: %v", err)}
 	}
 

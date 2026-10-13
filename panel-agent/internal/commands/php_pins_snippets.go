@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -61,10 +62,80 @@ type pinFileChange struct {
 	existed bool
 }
 
+// GH #329: a domain bound to a per-version pool passes PHP to that pool's own
+// socket, but every app snippet generator writes the owner's default pool
+// socket, so an app's PHP ran on the default pool (its PHP version, its
+// settings). The vhost is the source of truth: a snippet's fastcgi_pass to one
+// of the owner's pools follows the vhost's socket, when the snippet is written
+// at install and on every vhost write after (so a later PHP version change
+// carries over). A pass anywhere else (another account's pool, the distro pool,
+// a TCP backend) is left alone, and nothing moves unless the vhost's socket is
+// one of the owner's own pools: a domain's PHP never reaches another account.
+var snippetFastCGIPassRE = regexp.MustCompile(`(?m)^(\s*fastcgi_pass\s+unix:)(\S+?)(;)`)
+
+// ownerPoolSocket reports whether socket is one of owner's jabali pools: the
+// default /run/php/jabali-<owner>/fpm.sock or a per-version
+// /run/php/jabali-<owner>-php<X.Y>/fpm.sock.
+func ownerPoolSocket(socket, owner string) bool {
+	m := fpmSocketRE.FindStringSubmatch(socket)
+	if m == nil || owner == "" {
+		return false
+	}
+	if m[1] == owner {
+		return true
+	}
+	ver, ok := strings.CutPrefix(m[1], owner+"-php")
+	if !ok {
+		return false
+	}
+	_, _, ok = splitPHPVersion(ver)
+	return ok
+}
+
+// withVhostFPMSocket points every fastcgi_pass of a snippet that targets one
+// of owner's pools at socket, the vhost's. (nil, false) when socket is not one
+// of owner's pools or every such pass already targets it.
+func withVhostFPMSocket(body []byte, owner, socket string) ([]byte, bool) {
+	if !ownerPoolSocket(socket, owner) {
+		return nil, false
+	}
+	changed := false
+	out := snippetFastCGIPassRE.ReplaceAllFunc(body, func(line []byte) []byte {
+		m := snippetFastCGIPassRE.FindSubmatch(line)
+		if cur := string(m[2]); cur == socket || !ownerPoolSocket(cur, owner) {
+			return line
+		}
+		changed = true
+		return []byte(string(m[1]) + socket + string(m[3]))
+	})
+	if !changed {
+		return nil, false
+	}
+	return out, true
+}
+
+// vhostPoolSocket is the socket the domain's vhost passes PHP to; "" when the
+// vhost cannot be read or runs no PHP.
+func vhostPoolSocket(domain string) string {
+	if !domainRegex.MatchString(domain) {
+		return ""
+	}
+	vhost, err := os.ReadFile(filepath.Join(nginxSitesDir, domain+".conf"))
+	if err != nil {
+		return ""
+	}
+	if m := vhostFastCGIPassRE.FindSubmatch(vhost); m != nil {
+		return string(m[1])
+	}
+	return ""
+}
+
 // planPHPPinFiles returns the changes that bring dir (/etc/nginx/jabali/<domain>)
-// in line: the pins file holds params (removed when the vhost has no PHP), and
-// every snippet PHP location includes it. Nothing when all is already so.
-func planPHPPinFiles(dir, domain string, params string) []pinFileChange {
+// in line: the pins file holds params (removed when the vhost has no PHP), every
+// snippet PHP location includes it, and every snippet passes to socket, the
+// vhost's pool ("" for a vhost without PHP: no snippet socket moves). owner is
+// the domain's account. Nothing when all is already so.
+func planPHPPinFiles(dir, domain, owner, params, socket string) []pinFileChange {
 	var out []pinFileChange
 	pinsPath := filepath.Join(dir, phpPinsFileName)
 	prev, err := os.ReadFile(pinsPath)
@@ -90,8 +161,15 @@ func planPHPPinFiles(dir, domain string, params string) []pinFileChange {
 		if err != nil {
 			continue
 		}
-		if patched, ok := withPHPPinsInclude(body, domain); ok {
-			out = append(out, pinFileChange{path: p, want: patched, prev: body, existed: true})
+		want := body
+		if moved, ok := withVhostFPMSocket(want, owner, socket); ok {
+			want = moved
+		}
+		if patched, ok := withPHPPinsInclude(want, domain); ok {
+			want = patched
+		}
+		if !bytes.Equal(want, body) {
+			out = append(out, pinFileChange{path: p, want: want, prev: body, existed: true})
 		}
 	}
 	return out
@@ -127,9 +205,14 @@ func withPHPPinsInclude(body []byte, domain string) ([]byte, bool) {
 	return []byte(b.String()), true
 }
 
-// snippetWithPHPPins is an app snippet as written at install: with the pins
-// include in its PHP locations, so it is pinned from the first request.
-func snippetWithPHPPins(body []byte, domain string) []byte {
+// snippetWithPHPPins is an app snippet as written at install by owner's
+// domain: passing to the vhost's pool, with the pins include in its PHP
+// locations, so it is right from the first request. Without a readable PHP
+// vhost the socket stays as written; the next vhost write settles it.
+func snippetWithPHPPins(body []byte, domain, owner string) []byte {
+	if moved, ok := withVhostFPMSocket(body, owner, vhostPoolSocket(domain)); ok {
+		body = moved
+	}
 	if patched, ok := withPHPPinsInclude(body, domain); ok {
 		return patched
 	}

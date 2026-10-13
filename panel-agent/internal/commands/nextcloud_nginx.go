@@ -74,7 +74,7 @@ func nextcloudNginxConf(socket string) string {
 	return b.String()
 }
 
-func writeNextcloudNginx(ctx context.Context, domain, socket string) error {
+func writeNextcloudNginx(ctx context.Context, domain, osUser, socket string) error {
 	if !domainRegex.MatchString(domain) {
 		return fmt.Errorf("invalid domain %q", domain)
 	}
@@ -86,7 +86,7 @@ func writeNextcloudNginx(ctx context.Context, domain, socket string) error {
 		return fmt.Errorf("mkdir %s: %w", domainDir, err)
 	}
 	dest := nextcloudSnippetPath(domain)
-	if err := os.WriteFile(dest, snippetWithPHPPins([]byte(nextcloudNginxConf(socket)), domain), 0o644); err != nil {
+	if err := os.WriteFile(dest, snippetWithPHPPins([]byte(nextcloudNginxConf(socket)), domain, osUser), 0o644); err != nil {
 		return fmt.Errorf("write %s: %w", dest, err)
 	}
 	return reloadNginxAfterSnippet(ctx, dest)

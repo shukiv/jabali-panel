@@ -1373,9 +1373,14 @@ func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redi
 		linkOK = true
 	}
 	// GH #1701: the app snippets' PHP locations carry the same per-domain PHP
-	// values as the vhost's (php_pins_snippets.go). Their files ride the same
-	// gate, nginx -t and rollback as the vhost.
-	pinChanges := planPHPPinFiles(filepath.Join(nginxJabaliDir, domain), domain, renderPHPPinParams(vhostData))
+	// values as the vhost's, and (GH #329) pass to the vhost's pool
+	// (php_pins_snippets.go). Their files ride the same gate, nginx -t and
+	// rollback as the vhost.
+	snippetSocket := ""
+	if vhostData.HasPHP {
+		snippetSocket = vhostData.FPMSocket
+	}
+	pinChanges := planPHPPinFiles(filepath.Join(nginxJabaliDir, domain), domain, username, renderPHPPinParams(vhostData), snippetSocket)
 	if readErr == nil && bytes.Equal(existingBytes, wantBytes) && linkOK && len(pinChanges) == 0 {
 		return configPath, nil
 	}
