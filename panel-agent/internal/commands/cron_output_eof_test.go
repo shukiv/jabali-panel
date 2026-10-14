@@ -89,3 +89,34 @@ func assertNoManagerLines(t *testing.T, call []string) {
 		}
 	}
 }
+
+// A root job's last line keeps _SYSTEMD_UNIT (journald trusts the unit name a
+// root stream announces), so its Run now read stays on the unit alone: no
+// term another account could match by setting a field it controls.
+func TestCronRunNow_RootJobReadStaysOnItsUnit(t *testing.T) {
+	f := &cronExecFake{
+		showBefore:  "LoadState=loaded\nActiveState=inactive",
+		startScript: "true",
+		showAfter:   "Result=success\nExecMainCode=1\nExecMainStatus=0\nConditionResult=yes",
+		journal:     "report written",
+	}
+	f.install(t)
+
+	if _, err := rootRunNow(t, nil); err != nil {
+		t.Fatalf("run_now: %v", err)
+	}
+	call := f.journalCall()
+	if call == nil {
+		t.Fatal("the run's output was never read from the journal")
+	}
+	since := -1
+	for i, a := range call {
+		if a == "--since" {
+			since = i
+		}
+	}
+	want := []string{"journalctl", "_SYSTEMD_UNIT=jabali-cron-" + runNowTestJobID + ".service"}
+	if since != len(want) || !hasSeq(call, want) {
+		t.Fatalf("a root job's output must be read by its unit alone; got %q", call)
+	}
+}
