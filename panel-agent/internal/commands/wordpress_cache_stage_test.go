@@ -207,3 +207,10 @@ func TestCacheSet_WordPressOrgChownRefusesALinkedPluginsDir(t *testing.T) {
 	}
 	assertOtherTreeUntouched(t, filepath.Join(other, "jabali-cache"))
 }
+
+// The plugin files belong to the account, never to root.
+func TestCachePluginOwnerIDs_RefusesRoot(t *testing.T) {
+	if _, _, err := cachePluginOwnerIDs("root"); err == nil {
+		t.Error("root accepted as the plugin owner")
+	}
+}
