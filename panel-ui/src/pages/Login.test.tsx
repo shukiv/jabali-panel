@@ -322,4 +322,65 @@ describe("LoginPage", () => {
       ).toBeInTheDocument();
     });
   });
+
+  // A Kratos session the panel can't map to an account (identity_not_linked)
+  // used to end on an empty aal2 step with no way out. The page now says what
+  // happened and offers to sign out.
+  describe("with a session that has no panel account", () => {
+    const realLocation = window.location;
+    const assign = vi.fn();
+
+    beforeEach(() => {
+      assign.mockReset();
+      Object.defineProperty(window, "location", {
+        configurable: true,
+        value: {
+          href: "https://panel.example.com/login",
+          origin: "https://panel.example.com",
+          pathname: "/login",
+          search: "",
+          hash: "",
+          hostname: "panel.example.com",
+          assign,
+        },
+      });
+    });
+
+    afterEach(() => {
+      Object.defineProperty(window, "location", { configurable: true, value: realLocation });
+    });
+
+    it("says the sign-in has no panel account and signs out on request", async () => {
+      vi.spyOn(kratos, "initLoginFlow").mockRejectedValue(new kratos.SessionNotLinkedError());
+      const logout = vi
+        .spyOn(kratos, "logoutBrowser")
+        .mockResolvedValue("/.ory/self-service/logout?token=t");
+
+      renderLogin();
+
+      await waitFor(() => {
+        expect(screen.getByText(/no Jabali Panel account/i)).toBeInTheDocument();
+      });
+      expect(screen.queryByText(/could not start the sign-in flow/i)).toBeNull();
+
+      fireEvent.click(screen.getByRole("button", { name: /sign out/i }));
+      await waitFor(() => expect(assign).toHaveBeenCalledWith("/.ory/self-service/logout?token=t"));
+      expect(logout).toHaveBeenCalledTimes(1);
+    });
+
+    it("offers to sign out on a step with no method in it", async () => {
+      const flow = passwordFlow();
+      flow.ui.nodes = flow.ui.nodes.filter((n) => n.group === "default");
+      vi.spyOn(kratos, "initLoginFlow").mockResolvedValue(flow);
+      vi.spyOn(kratos, "logoutBrowser").mockResolvedValue("/.ory/self-service/logout?token=t");
+
+      renderLogin();
+
+      await waitFor(() => {
+        expect(screen.getByText(/no credential method/i)).toBeInTheDocument();
+      });
+      fireEvent.click(screen.getByRole("button", { name: /sign out/i }));
+      await waitFor(() => expect(assign).toHaveBeenCalledWith("/.ory/self-service/logout?token=t"));
+    });
+  });
 });

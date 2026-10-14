@@ -12,7 +12,7 @@
 // new group (usually "totp"). The renderer reads node.group and groups
 // the form visually — each non-default group becomes its own submit
 // button, matching the M5c behaviour the legacy panel had.
-import { lazy, Suspense, useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router";
 import {
   Alert,
@@ -47,7 +47,9 @@ import {
   flowMessages,
   getLoginFlow,
   initLoginFlow,
+  logoutBrowser,
   renderableFields,
+  SessionNotLinkedError,
   submitLoginFlow,
   type KratosFlow,
   type RenderableField,
@@ -85,6 +87,10 @@ export const LoginPage = () => {
   const [loadingFlow, setLoadingFlow] = useState(true);
   const [initError, setInitError] = useState<string | null>(null);
   const [passkeyBusy, setPasskeyBusy] = useState(false);
+  // The browser holds a Kratos session with no panel account behind it
+  // (SessionNotLinkedError): offer to sign out instead of a login form.
+  const [notLinked, setNotLinked] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
 
   // GH#177 / GH#1411: Kratos is same-origin — login cookies, CSRF tokens
   // and allowed return URLs are all bound to the panel hostname. Reaching
@@ -120,8 +126,12 @@ export const LoginPage = () => {
         if (cancelled) return;
         setFlow(f);
       })
-      .catch(() => {
+      .catch((err) => {
         if (cancelled) return;
+        if (err instanceof SessionNotLinkedError) {
+          setNotLinked(true);
+          return;
+        }
         setInitError(t("login.flowError"));
       })
       .finally(() => {
@@ -217,6 +227,29 @@ export const LoginPage = () => {
     // the renderer path handles it uniformly.
     showFlowError(result.message);
   };
+
+  // Ends the current Kratos session. A browser-flow logout is a top-level
+  // navigation to logout_url (see logoutBrowser); Kratos then returns the
+  // browser to /login with no session, where the normal form shows.
+  const onSignOut = async () => {
+    setSigningOut(true);
+    try {
+      const url = await logoutBrowser();
+      sessionStorage.removeItem("post_login_return_to");
+      window.location.assign(url);
+    } catch {
+      setSigningOut(false);
+      setInitError(
+        t("login.signOutError", "Could not sign out. Clear this site's cookies, then reload the page."),
+      );
+    }
+  };
+
+  const signOutButton = (
+    <Button size="small" loading={signingOut} onClick={() => void onSignOut()}>
+      {t("login.signOut", "Sign out")}
+    </Button>
+  );
 
   // GH #917: passwordless passkey sign-in. Runs the WebAuthn discoverable-login
   // ceremony (no username typed — the authenticator supplies the user handle),
@@ -323,6 +356,18 @@ export const LoginPage = () => {
             <Alert message={initError} type="error" showIcon />
           )}
 
+          {notLinked && (
+            <Alert
+              type="warning"
+              showIcon
+              message={t(
+                "login.sessionNotLinked",
+                "You are signed in with an identity that has no Jabali Panel account. Sign out, then sign in with your panel account.",
+              )}
+              action={signOutButton}
+            />
+          )}
+
           {loadingFlow && !initError && (
             <div style={{ textAlign: "center", padding: 24 }}>
               <Spin />
@@ -343,6 +388,7 @@ export const LoginPage = () => {
               flow={flow}
               onFinish={onFinish}
               ceremonyAvailable={passkeyAvailable || webauthn2faAvailable}
+              signOutButton={signOutButton}
             />
           )}
 
@@ -390,6 +436,9 @@ type FlowFormProps = {
   // Suppresses the "no credential method" warning for ceremony-only flows
   // (e.g. an AAL2 step whose only method is a security key).
   ceremonyAvailable?: boolean;
+  // Shown with the "no credential method" warning, so a step with nothing
+  // to fill in still has a way out.
+  signOutButton?: ReactNode;
 };
 
 /**
@@ -400,7 +449,7 @@ type FlowFormProps = {
  * render as the active section; the "default" nodes are included as
  * hidden inputs on submission.
  */
-function FlowForm({ flow, onFinish, ceremonyAvailable }: FlowFormProps) {
+function FlowForm({ flow, onFinish, ceremonyAvailable, signOutButton }: FlowFormProps) {
   const { t } = useTranslation();
   const topErrors = flowMessages(flow);
   const activeGroup = pickActiveGroup(flow);
@@ -423,6 +472,7 @@ function FlowForm({ flow, onFinish, ceremonyAvailable }: FlowFormProps) {
         message={t("login.noCredentialMethod")}
         type="warning"
         showIcon
+        action={signOutButton}
       />
     );
   }
