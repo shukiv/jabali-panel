@@ -185,6 +185,11 @@ type updateServerSettingsRequest struct {
 	SpamJunkScore    *float64 `json:"spam_junk_score,omitempty"`
 	SpamRejectScore  *float64 `json:"spam_reject_score,omitempty"`
 	SpamDiscardScore *float64 `json:"spam_discard_score,omitempty"`
+	// The "Ask Jabali" support chat, per panel (default off), and the admin
+	// dashboard banner that announces it (dismissed server-wide).
+	SupportChatAdmin           *bool `json:"support_chat_admin,omitempty"`
+	SupportChatClients         *bool `json:"support_chat_clients,omitempty"`
+	SupportChatNoticeDismissed *bool `json:"support_chat_notice_dismissed,omitempty"`
 	// TenantNotificationKinds — admin-configurable tenant channel-kind allowlist
 	// (phase 4b).
 	TenantNotificationKinds *models.TenantNotificationKinds `json:"tenant_notification_kinds,omitempty"`
@@ -612,6 +617,16 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 	}
 	if req.DKIM2SigningEnabled != nil {
 		current.DKIM2SigningEnabled = *req.DKIM2SigningEnabled
+	}
+	supportChatTouched := req.SupportChatAdmin != nil || req.SupportChatClients != nil
+	if req.SupportChatAdmin != nil {
+		current.SupportChatAdmin = *req.SupportChatAdmin
+	}
+	if req.SupportChatClients != nil {
+		current.SupportChatClients = *req.SupportChatClients
+	}
+	if req.SupportChatNoticeDismissed != nil {
+		current.SupportChatNoticeDismissed = *req.SupportChatNoticeDismissed
 	}
 	if req.SpamJunkScore != nil || req.SpamRejectScore != nil || req.SpamDiscardScore != nil {
 		// Merge first, then check the three together: raising all three in
@@ -1089,6 +1104,21 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 		if call := nginxPlan.Cache.Call; call != nil {
 			go h.dispatchSettingsCall(*call, "agent nginx cache capacity apply failed")
 		}
+	}
+
+	// Support chat: the panel's CSP allows the chat's origin while it is on in
+	// either panel. A failed enable reverts both switches (the module decides
+	// when, see settingsops.SupportChatEffect).
+	supportChatPlan := settingsops.SupportChatEffect(&before, current, supportChatTouched)
+	if call := supportChatPlan.Call; call != nil && h.cfg.Agent != nil {
+		var revert func(*models.ServerSettings)
+		if supportChatPlan.RevertOnFailure {
+			revert = func(cur *models.ServerSettings) {
+				cur.SupportChatAdmin = before.SupportChatAdmin
+				cur.SupportChatClients = before.SupportChatClients
+			}
+		}
+		go h.dispatchReverting(*call, "agent panel CSP apply failed", revert)
 	}
 
 	h.cfg.Log.Info("event=audit kind=server_settings_updated actor_id=" + claims.UserID)

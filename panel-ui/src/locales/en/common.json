@@ -215,6 +215,13 @@
       "running": "{{running}} of {{total}} running",
       "manage": "Manage on Server Status",
       "empty": "No services reported"
+    },
+    "support_chat_notice": {
+      "title": "New: \"Ask Jabali\" AI support chat",
+      "body": "You can add an AI support chat to the admin panel, the client panels, or both. It answers questions about using Jabali Panel and stays off until you turn it on.",
+      "action": "Open settings",
+      "close": "Close",
+      "dismiss_error": "Couldn't save that the banner was closed. It will show again."
     }
   },
   "users": {
@@ -2019,7 +2026,18 @@
     "ssh_port": "SSH Port",
     "this_is_the_highest_risk_feature_in_the_panel_le": "This is the highest-risk feature in the panel. Leave off unless actively needed.",
     "timezone": "Timezone",
-    "working_folder": "Working Folder"
+    "working_folder": "Working Folder",
+    "support_chat": {
+      "title": "Support chat (Ask Jabali)",
+      "body": "Adds the \"Ask Jabali\" AI support chat to the panel. It answers questions about using Jabali Panel. Off until you turn it on.",
+      "privacy": "The chat is a widget from support.jabali-panel.com. While it is on, the panel allows that site: its script runs in the panel page, and what people type in the chat is sent there. The panel doesn't pass account details to it; like any website chat, it sees the page address and the browser.",
+      "admin": "Admin panel",
+      "clients": "Client panels",
+      "saved_on": "Support chat turned on. It shows from the next page load.",
+      "saved_off": "Support chat turned off.",
+      "load_error": "Failed to load the support chat setting",
+      "save_error": "Failed to update the support chat setting"
+    }
   },
   "dr": {
     "standby_banner_title": "DR standby — read-only replica",

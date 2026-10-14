@@ -68,7 +68,7 @@ func (h *meExtHandler) serverCapabilities(c *gin.Context) {
 	settings, err := h.cfg.ServerSettings.Get(ctx)
 	if errors.Is(err, repository.ErrNotFound) {
 		// Pre-seed install — every flag defaults to false.
-		c.JSON(http.StatusOK, gin.H{"postgres_enabled": false, "docker_marketplace_enabled": false, "docker_apps_user_enabled": false, "python_apps_enabled": false, "tenant_domain_options_enabled": false, "tenant_docroot_editable": false, "dns_enabled": true, "mail_enabled": true, "security_enabled": true, "quota_enabled": true, "api_enabled": true, "root_terminal_enabled": false, "admin_file_manager_enabled": false, "public_ipv4": "", "public_ipv6": "", "is_standby": false, "dr_peer_label": "", "ftp_accounts_enabled": false, "ftp_server_enabled": false, "ftp_isolation_available": false})
+		c.JSON(http.StatusOK, gin.H{"postgres_enabled": false, "docker_marketplace_enabled": false, "docker_apps_user_enabled": false, "python_apps_enabled": false, "tenant_domain_options_enabled": false, "tenant_docroot_editable": false, "dns_enabled": true, "mail_enabled": true, "security_enabled": true, "quota_enabled": true, "api_enabled": true, "root_terminal_enabled": false, "admin_file_manager_enabled": false, "public_ipv4": "", "public_ipv6": "", "is_standby": false, "dr_peer_label": "", "ftp_accounts_enabled": false, "ftp_server_enabled": false, "ftp_isolation_available": false, "support_chat_admin": false, "support_chat_clients": false})
 		return
 	} else if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
@@ -143,6 +143,10 @@ func (h *meExtHandler) serverCapabilities(c *gin.Context) {
 		// UI defaults the "Isolated" toggle off when false. Only probed for
 		// FTP-eligible tenants so a probe never runs for users without the page.
 		"ftp_isolation_available": ftpAccounts && h.ftpIsolationAvailable(ctx),
+		// The "Ask Jabali" support chat: the admin layout loads the widget when
+		// support_chat_admin is on, the user layout when support_chat_clients is.
+		"support_chat_admin":   settings.SupportChatAdmin,
+		"support_chat_clients": settings.SupportChatClients,
 	})
 }
 

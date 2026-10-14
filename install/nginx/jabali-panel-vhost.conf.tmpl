@@ -80,8 +80,11 @@ server {
   add_header Referrer-Policy "strict-origin-when-cross-origin" always;
   # CSP: unsafe-inline needed for AntD emotion CSS-in-JS; img allows
   # Gravatar + Libravatar avatars (Libravatar uploads serve from seccdn,
-  # Gravatar-federated ones redirect to gravatar.com).
-  add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://gravatar.com https://secure.gravatar.com https://www.gravatar.com https://seccdn.libravatar.org; font-src 'self' data:; connect-src 'self' wss:; frame-ancestors 'none'; form-action 'self';" always;
+  # Gravatar-federated ones redirect to gravatar.com). The header lives in a
+  # snippet because Server Settings -> Support chat adds the support chat's
+  # origin to it while the chat is on (agent nginx.panel_csp.apply rewrites
+  # it). install_nginx_panel_vhost seeds the chat-off copy when it is missing.
+  include /etc/nginx/snippets/jabali-panel-csp.conf;
 
   # M37: phpMyAdmin + Adminer share this vhost so the SSO redirect
   # (mint endpoint hands the browser a URL on the panel's :8443

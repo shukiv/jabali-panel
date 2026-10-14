@@ -611,7 +611,25 @@ type ServerSettings struct {
 	SpamRejectScore  float64 `gorm:"column:spam_reject_score;type:double;not null;default:15" json:"spam_reject_score"`
 	SpamDiscardScore float64 `gorm:"column:spam_discard_score;type:double;not null;default:20" json:"spam_discard_score"`
 
+	// The "Ask Jabali" AI support chat (a Chatwoot widget served from
+	// support.jabali-panel.com), opted into separately for the admin panel
+	// and for the client panels. Both off by default: the widget is a script
+	// from another server running in the panel page, and what users type in
+	// it goes to that server. While either is on, the panel's nginx CSP
+	// allows that origin (nginx.panel_csp.apply); with both off it doesn't.
+	// SupportChatNoticeDismissed hides the admin dashboard banner that
+	// announces the chat, for every admin, once any admin closes it.
+	SupportChatAdmin           bool `gorm:"column:support_chat_admin;type:tinyint(1);not null;default:0" json:"support_chat_admin"`
+	SupportChatClients         bool `gorm:"column:support_chat_clients;type:tinyint(1);not null;default:0" json:"support_chat_clients"`
+	SupportChatNoticeDismissed bool `gorm:"column:support_chat_notice_dismissed;type:tinyint(1);not null;default:0" json:"support_chat_notice_dismissed"`
+
 	UpdatedAt time.Time `gorm:"type:datetime(6);not null"             json:"updated_at"`
+}
+
+// SupportChatEnabled reports whether the support chat is on in any panel, and
+// so whether the panel's CSP must allow its origin.
+func (s *ServerSettings) SupportChatEnabled() bool {
+	return s.SupportChatAdmin || s.SupportChatClients
 }
 
 func (ServerSettings) TableName() string { return "server_settings" }

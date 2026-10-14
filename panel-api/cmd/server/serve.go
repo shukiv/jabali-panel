@@ -822,6 +822,8 @@ func runServe(cmd *cobra.Command, args []string) error {
 			if row != nil && sharedAgent != nil {
 				snap := *row
 				go resyncNginxTunables(context.Background(), sharedAgent, &snap, created, log)
+				// Same for Server Settings -> Support chat and the panel's CSP.
+				go resyncPanelCSP(context.Background(), sharedAgent, &snap, log)
 			}
 
 			mutated := created

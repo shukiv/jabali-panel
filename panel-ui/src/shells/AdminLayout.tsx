@@ -12,6 +12,7 @@ import { useServerCapabilities } from "../hooks/useServerCapabilities";
 import { useNavCounts, navCountForKey } from "../hooks/useNavCounts";
 import { navLabelWithBadge } from "./navBadge";
 import { DRStandbyBanner } from "../components/DRStandbyBanner";
+import { SupportChatWidget } from "../components/SupportChatWidget";
 import { JabaliFooter } from "../components/JabaliFooter";
 import { JabaliHeader } from "../components/JabaliHeader";
 import { JabaliTitle } from "../components/JabaliTitle";
@@ -213,6 +214,7 @@ export function AdminLayout() {
             }}
           >
             <DRStandbyBanner />
+            <SupportChatWidget enabled={!!caps?.support_chat_admin} />
             <BreadcrumbProvider>
               <RouteBreadcrumb nav={adminNav} homePath="/jabali-admin/dashboard" homeLabel="Dashboard" />
               <Outlet />

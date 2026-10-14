@@ -4892,6 +4892,7 @@ jabali repair [flags]
 - `--ondrej-nginx-ppa` — Fix only: stale ondrej/nginx PPA in apt sources (404 on noble)
 - `--orphan-migration-staging` — Fix only: /var/lib/jabali-migrations/* dirs for jobs already terminal in DB
 - `--orphan-slices` — Fix only: jabali-user-*.slice units exist for deleted unix users
+- `--panel-csp-snippet` — Fix only: panel :8443 vhost includes a missing CSP snippet (jabali-panel-csp.conf) — nginx -t fails, nothing on 8443
 - `--uploads-dir` — Fix only: /var/lib/jabali-uploads missing or wrong perms
 - `--yes` — Skip interactive confirmation for destructive repairs
 
