@@ -77,29 +77,10 @@ func cronTailLogHandler(ctx context.Context, params json.RawMessage) (any, error
 	}
 
 	// Read as root, limited to the tenant's entries by the journal's trusted
-	// _UID field (GH #2120). `journalctl --user` as the tenant saw only the
-	// tenant's own journal file, which journald keeps only when the journal is
-	// stored persistently: with a volatile journal the log was empty. The
-	// job's own lines carry _SYSTEMD_USER_UNIT; the user manager's
-	// "Starting…" / "Finished…" lines about it carry USER_UNIT.
-	unit := fmt.Sprintf("jabali-cron-%s.service", p.JobID)
-	owner := "_UID=" + u.Uid
-	cmd := execCommandContext(ctx, "journalctl",
-		owner, "_SYSTEMD_USER_UNIT="+unit, "+", owner, "USER_UNIT="+unit,
-		"-n", strconv.Itoa(lines),
-		// short-iso (not cat): the log is useless for "did my hourly job run
-		// at :00" questions without timestamps (GH #856). The hostname/unit
-		// prefix it adds is stripped per line below.
-		"-o", "short-iso",
-		"--no-pager",
-	)
-	var stdout bytes.Buffer
-	cmd.Stdout = &stdout
-	// No entries yet is not an error: return what there is.
-	_ = cmd.Run()
-	return &cronTailLogResponse{
-		Log: strings.TrimSpace(stripJournalPrefix(stdout.String())),
-	}, nil
+	// _UID field (cronUnitScope says why). logMatch takes the job's own
+	// lines, including a last line written without a newline, and the user
+	// manager's "Starting…" / "Finished…" lines about the unit.
+	return cronReadLog(ctx, userCronScope(p.Username, u.Uid), p.JobID, lines), nil
 }
 
 // cronTailRootLog reads a root job's log from the system journal: the same
@@ -110,18 +91,25 @@ func cronTailRootLog(ctx context.Context, jobID string, lines int) (any, error) 
 	if !ulidRE.MatchString(jobID) {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "job_id must be a 26-char ULID"}
 	}
-	scope := systemCronScope()
-	cmd := scope.command(ctx, scope.journalctl,
-		"-u", fmt.Sprintf("jabali-cron-%s.service", jobID),
+	return cronReadLog(ctx, systemCronScope(), jobID, lines), nil
+}
+
+// cronReadLog reads the last lines of a job's log.
+func cronReadLog(ctx context.Context, scope cronUnitScope, jobID string, lines int) *cronTailLogResponse {
+	args := append(scope.logMatch(jobID),
 		"-n", strconv.Itoa(lines),
+		// short-iso (not cat): the log is useless for "did my hourly job run
+		// at :00" questions without timestamps (GH #856). The hostname/unit
+		// prefix it adds is stripped per line below.
 		"-o", "short-iso",
 		"--no-pager",
 	)
+	cmd := execCommandContext(ctx, "journalctl", args...)
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
 	// No entries yet is not an error: return what there is.
 	_ = cmd.Run()
-	return &cronTailLogResponse{Log: strings.TrimSpace(stripJournalPrefix(stdout.String()))}, nil
+	return &cronTailLogResponse{Log: strings.TrimSpace(stripJournalPrefix(stdout.String()))}
 }
 
 // journalShortISORe matches one short-iso journal line:

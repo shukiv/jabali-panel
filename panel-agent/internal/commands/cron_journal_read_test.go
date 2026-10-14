@@ -129,8 +129,14 @@ func TestCronTailLog_TenantLogReadAsRootByUID(t *testing.T) {
 		t.Fatalf("the log must be read as root from the whole journal, got %q", call)
 	}
 	unit := "jabali-cron-" + runNowTestJobID + ".service"
-	// (owner AND the job's own lines) OR (owner AND the manager's lines about it).
-	want := []string{"_UID=" + me.Uid, "_SYSTEMD_USER_UNIT=" + unit, "+", "_UID=" + me.Uid, "USER_UNIT=" + unit}
+	// (owner AND the job's own lines) OR (owner AND the job's identifier, which
+	// a last line written without a newline carries alone) OR (owner AND the
+	// manager's lines about it).
+	want := []string{
+		"_UID=" + me.Uid, "_SYSTEMD_USER_UNIT=" + unit, "+",
+		"_UID=" + me.Uid, "SYSLOG_IDENTIFIER=jabali-cron-" + runNowTestJobID, "+",
+		"_UID=" + me.Uid, "USER_UNIT=" + unit,
+	}
 	if len(call) < 1+len(want) {
 		t.Fatalf("journal read %q: want matches %q first", call, want)
 	}

@@ -52,19 +52,38 @@ func cronRunNowWait(ctx context.Context, requestedSeconds int) time.Duration {
 	return wait
 }
 
+// cronSyslogIdentifier is the identifier cron.apply gives a job's unit
+// (SyslogIdentifier=), so every line the job writes to the journal carries it.
+func cronSyslogIdentifier(jobID string) string {
+	return "jabali-cron-" + jobID
+}
+
+// cronUnitName is the name of a job's service unit.
+func cronUnitName(jobID string) string {
+	return fmt.Sprintf("jabali-cron-%s.service", jobID)
+}
+
 // cronUnitScope says where a job's unit lives and how to reach it: a tenant
 // job's in the user's own systemd manager, a root job's (JAB-293) in the
 // system manager, as cron.apply installs them.
+//
+// A job's journal is read as root, a tenant job's too (GH #2120):
+// `journalctl --user` as the tenant sees only the tenant's own journal file,
+// and journald splits one out per user only when the journal is stored
+// persistently, so with a volatile journal the output was lost.
 type cronUnitScope struct {
 	// systemctl returns the command that runs `systemctl <args>` against
 	// the manager that owns the unit.
 	systemctl func(args ...string) (string, []string)
-	// journalctl returns the command that runs `journalctl <args>` over the
-	// journal that holds the unit's output.
-	journalctl func(args ...string) (string, []string)
-	// unitField is the journal field naming the unit's own processes. The
-	// manager's "Starting…" / "Finished…" lines carry it under another name.
-	unitField string
+	// owner is the journal match for the uid the job runs as. journald
+	// fills _UID from the writer's credentials; a process can't set it.
+	owner string
+	// unitMatch selects the entries journald attributed to the unit's own
+	// processes.
+	unitMatch func(unit string) []string
+	// managerMatch selects the manager's "Starting…" / "Finished…" lines
+	// about the unit.
+	managerMatch func(unit string) []string
 }
 
 // userCronScope reaches a tenant's unit through the user's own manager, the
@@ -72,6 +91,7 @@ type cronUnitScope struct {
 // why the bus env is spelled out).
 func userCronScope(username, uid string) cronUnitScope {
 	runtimeDir := "/run/user/" + uid
+	owner := "_UID=" + uid
 	return cronUnitScope{
 		systemctl: func(args ...string) (string, []string) {
 			return "sudo", append([]string{
@@ -82,15 +102,11 @@ func userCronScope(username, uid string) cronUnitScope {
 				"systemctl", "--user",
 			}, args...)
 		},
-		// The job's output is read as root, limited to the tenant's entries by
-		// the journal's trusted _UID field (GH #2120). `journalctl --user` as
-		// the tenant sees only the tenant's own journal file, and journald
-		// splits one out per user only when the journal is stored
-		// persistently: with a volatile journal the run's output was lost.
-		journalctl: func(args ...string) (string, []string) {
-			return "journalctl", append([]string{"_UID=" + uid}, args...)
-		},
-		unitField: "_SYSTEMD_USER_UNIT",
+		owner: owner,
+		// Every term is held to the tenant's _UID: root reads the whole
+		// journal.
+		unitMatch:    func(unit string) []string { return []string{owner, "_SYSTEMD_USER_UNIT=" + unit} },
+		managerMatch: func(unit string) []string { return []string{owner, "USER_UNIT=" + unit} },
 	}
 }
 
@@ -98,10 +114,40 @@ func userCronScope(username, uid string) cronUnitScope {
 // manager under /etc/systemd/system.
 func systemCronScope() cronUnitScope {
 	return cronUnitScope{
-		systemctl:  func(args ...string) (string, []string) { return "systemctl", args },
-		journalctl: func(args ...string) (string, []string) { return "journalctl", args },
-		unitField:  "_SYSTEMD_UNIT",
+		systemctl: func(args ...string) (string, []string) { return "systemctl", args },
+		owner:     "_UID=0",
+		// _SYSTEMD_UNIT comes from the writer's cgroup, so it needs no owner
+		// term (a root job may run a command as another user). These two
+		// terms are what `journalctl -u` matches for a system unit; -u can't
+		// be ORed with another term.
+		unitMatch:    func(unit string) []string { return []string{"_SYSTEMD_UNIT=" + unit} },
+		managerMatch: func(unit string) []string { return []string{"_PID=1", "UNIT=" + unit} },
 	}
+}
+
+// outputMatch returns the journalctl matches (terms joined by "+") for
+// everything a job's own processes wrote.
+//
+// journald attributes an entry to its unit by looking up the writer's cgroup
+// when it logs the entry. The last line a job writes without a trailing
+// newline is logged only when the output stream closes, after the job has
+// exited, so it carries no unit field (GH #2120): a script whose output has
+// no final newline (`echo "done<br>";`) showed nothing. The unit's
+// SyslogIdentifier= travels with the stream itself, so the second term
+// catches that line. SYSLOG_IDENTIFIER is a field any process can set, so
+// that term is held to the job owner's _UID: only the owner can put lines
+// into its own job's output. The first term keeps runs logged before the
+// unit had the identifier.
+func (s cronUnitScope) outputMatch(jobID string) []string {
+	m := s.unitMatch(cronUnitName(jobID))
+	return append(m, "+", s.owner, "SYSLOG_IDENTIFIER="+cronSyslogIdentifier(jobID))
+}
+
+// logMatch is outputMatch plus the manager's lines about the unit, for the
+// job's log.
+func (s cronUnitScope) logMatch(jobID string) []string {
+	m := append(s.outputMatch(jobID), "+")
+	return append(m, s.managerMatch(cronUnitName(jobID))...)
 }
 
 func (s cronUnitScope) command(ctx context.Context, build func(...string) (string, []string), args ...string) *exec.Cmd {
@@ -167,19 +213,19 @@ func cronUnitExitCode(props map[string]string) int {
 
 // cronUnitOutput returns what the run started at `since` wrote. The journal
 // keeps stdout and stderr as one stream, so this is the combined output.
-func cronUnitOutput(ctx context.Context, scope cronUnitScope, unit string, since time.Time) string {
+func cronUnitOutput(ctx context.Context, scope cronUnitScope, jobID string, since time.Time) string {
 	// journald reads the job's output asynchronously; flush it so the last
 	// lines written before the job ended are in the journal before reading.
 	_ = execCommandContext(ctx, "journalctl", "--sync").Run()
-	cmd := scope.command(ctx, scope.journalctl,
-		// The job's own processes only: the manager's "Starting…" /
-		// "Finished…" lines name the unit in another field.
-		scope.unitField+"="+unit,
+	// The job's own output only: not the manager's "Starting…" /
+	// "Finished…" lines.
+	args := append(scope.outputMatch(jobID),
 		"--since", fmt.Sprintf("@%d", since.Unix()),
 		"-n", strconv.Itoa(cronRunNowOutputLines),
 		"-o", "cat",
 		"--no-pager",
 	)
+	cmd := execCommandContext(ctx, "journalctl", args...)
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
 	_ = cmd.Run()
@@ -192,7 +238,7 @@ func cronUnitOutput(ctx context.Context, scope cronUnitScope, unit string, since
 // manager is down — GH #296); the caller then runs the command directly as
 // before.
 func cronRunViaUnit(ctx context.Context, scope cronUnitScope, jobID string, wait time.Duration) (resp *cronRunNowResponse, handled bool, err error) {
-	unit := fmt.Sprintf("jabali-cron-%s.service", jobID)
+	unit := cronUnitName(jobID)
 
 	before, err := cronUnitProps(ctx, scope, unit, "LoadState", "ActiveState")
 	if err != nil || before["LoadState"] != "loaded" {
@@ -241,6 +287,6 @@ func cronRunViaUnit(ctx context.Context, scope cronUnitScope, jobID string, wait
 	}
 	return &cronRunNowResponse{
 		ExitCode: cronUnitExitCode(after),
-		Output:   cronUnitOutput(ctx, scope, unit, since),
+		Output:   cronUnitOutput(ctx, scope, jobID, since),
 	}, true, nil
 }
