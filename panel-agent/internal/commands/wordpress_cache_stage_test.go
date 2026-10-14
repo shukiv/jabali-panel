@@ -19,10 +19,10 @@ import (
 func stageEnv(t *testing.T) (homes, site string) {
 	t.Helper()
 	homes = t.TempDir()
-	prevHome, prevOwner := tenantHomeDir, cachePluginOwnerIDs
-	tenantHomeDir = func(osUser string) string { return filepath.Join(homes, osUser) }
+	prevHomes, prevOwner := homesRoot, cachePluginOwnerIDs
+	homesRoot = homes
 	cachePluginOwnerIDs = func(string) (int, int, error) { return os.Getuid(), os.Getgid(), nil }
-	t.Cleanup(func() { tenantHomeDir, cachePluginOwnerIDs = prevHome, prevOwner })
+	t.Cleanup(func() { homesRoot, cachePluginOwnerIDs = prevHomes, prevOwner })
 
 	fakeCacheBundle(t, bundleHeader121)
 	if err := os.MkdirAll(filepath.Join(bundledCachePluginSrc, "includes"), 0o755); err != nil {

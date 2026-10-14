@@ -37,9 +37,11 @@ const bundledWPCachePluginDir = "/usr/local/share/jabali/wp-plugins/jabali-cache
 // temp copy in tests.
 var bundledCachePluginSrc = bundledWPCachePluginDir
 
+// homesRoot holds the account homes. A var so tests can use a temp dir.
+var homesRoot = "/home"
+
 // tenantHomeDir is the account's home, the only tree plugin staging may touch.
-// A var so tests can point it at a temp dir.
-var tenantHomeDir = func(osUser string) string { return filepath.Join("/home", osUser) }
+func tenantHomeDir(osUser string) string { return filepath.Join(homesRoot, osUser) }
 
 // cachePluginOwnerIDs is who owns the staged plugin: the account, with group
 // www-data so nginx can read the files the account's PHP-FPM pool serves.
@@ -95,8 +97,8 @@ func wordpressCacheSetHandler(ctx context.Context, raw json.RawMessage) (any, er
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: fmt.Sprintf("parse params: %v", err)}
 	}
-	if !strings.HasPrefix(p.InstallPath, "/home/") || strings.Contains(p.InstallPath, "..") {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "install_path must be under /home/ with no .."}
+	if !strings.HasPrefix(p.InstallPath, homesRoot+"/") || strings.Contains(p.InstallPath, "..") {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "install_path must be under " + homesRoot + "/ with no .."}
 	}
 	if p.OSUser == "" {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "os_user required"}
@@ -404,8 +406,8 @@ func wordpressCachePluginRefreshHandler(ctx context.Context, raw json.RawMessage
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: fmt.Sprintf("parse params: %v", err)}
 	}
-	if !strings.HasPrefix(p.InstallPath, "/home/") || strings.Contains(p.InstallPath, "..") {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "install_path must be under /home/ with no .."}
+	if !strings.HasPrefix(p.InstallPath, homesRoot+"/") || strings.Contains(p.InstallPath, "..") {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "install_path must be under " + homesRoot + "/ with no .."}
 	}
 	if p.OSUser == "" {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "os_user required"}
