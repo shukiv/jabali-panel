@@ -1,12 +1,14 @@
 // SystemUpdatesPage — admin Updates Center (M53, ADR-0118).
 //
-// Layout mirrors the product mockup: a row of 4 stat cards, then a 2-up grid
-// of Jabali Panel + System Packages, then Automatic Updates + Recent History,
-// then the Changelog. Data auto-loads on mount (jabali + apt checks fire once)
-// so the page shows real numbers immediately instead of empty placeholders.
+// Layout mirrors the product mockup: a row of 4 stat cards, then the cards in
+// two independently stacked columns (Masonry): Jabali Panel, Repair Center,
+// PowerDNS orphans and Automatic Updates on the left; System Packages, Domain
+// repair and Recent History on the right. Data auto-loads on mount (jabali +
+// apt checks fire once) so the page shows real numbers immediately instead of
+// empty placeholders.
 import { useTranslation } from "react-i18next";
 import { useEffect, useState, type CSSProperties } from "react";
-import { Alert, Button, Card, Checkbox, Collapse, Col, Empty, Modal, Row, Segmented, Space, Spin, Switch, Table, Tag, TimePicker, Timeline, Tooltip, Typography } from "antd";
+import { Alert, Button, Card, Checkbox, Collapse, Col, Empty, Masonry, Modal, Row, Segmented, Space, Spin, Switch, Table, Tag, TimePicker, Timeline, Tooltip, Typography } from "antd";
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { RebootServerButton } from "../server-status/RebootServerButton";
 import dayjs from "dayjs";
@@ -176,35 +178,28 @@ export const SystemUpdatesPage = () => {
           checking={jabali.isPending || apt.isPending}
           onCheckNow={onCheckNow}
         />
-        <Row gutter={[16, 16]}>
-          <Col xs={24} xl={12}>
-            <JabaliPanelCard check={jabali} />
-          </Col>
-          <Col xs={24} xl={12}>
-            <SystemPackagesCard check={apt} />
-          </Col>
-        </Row>
-        <Row gutter={[16, 16]}>
-          <Col xs={24} xl={12}>
-            <RepairCard />
-          </Col>
-          <Col xs={24} xl={12}>
-            <DomainRepairCard />
-          </Col>
-        </Row>
-        <Row gutter={[16, 16]}>
-          <Col xs={24} xl={12}>
-            <DNSOrphanRepairCard />
-          </Col>
-        </Row>
-        <Row gutter={[16, 16]}>
-          <Col xs={24} xl={12}>
-            <AutomaticUpdatesCard />
-          </Col>
-          <Col xs={24} xl={12}>
-            <RecentHistoryCard />
-          </Col>
-        </Row>
+        {/* Two columns that stack independently. Rows of Col pairs left a hole
+            under the shorter card of each pair (Repair Center beside the taller
+            Domain repair). Each card keeps its column (`column`), so a card
+            that grows after a scan or check pushes only its own column down
+            and nothing jumps sides; `fresh` re-measures a card when it
+            resizes, without which a grown card would overlap the one below
+            (Masonry positions items absolutely). Below xl the single column
+            keeps this order. Masonry renders only `items`, not children. */}
+        <Masonry
+          columns={{ xs: 1, xl: 2 }}
+          gutter={16}
+          fresh
+          items={[
+            { key: "jabali", column: 0, data: null, children: <JabaliPanelCard check={jabali} /> },
+            { key: "apt", column: 1, data: null, children: <SystemPackagesCard check={apt} /> },
+            { key: "repair", column: 0, data: null, children: <RepairCard /> },
+            { key: "domain-repair", column: 1, data: null, children: <DomainRepairCard /> },
+            { key: "dns-orphans", column: 0, data: null, children: <DNSOrphanRepairCard /> },
+            { key: "autoupdate", column: 0, data: null, children: <AutomaticUpdatesCard /> },
+            { key: "history", column: 1, data: null, children: <RecentHistoryCard /> },
+          ]}
+        />
       </Space>
     </div>
   );
