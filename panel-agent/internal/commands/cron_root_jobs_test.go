@@ -147,10 +147,8 @@ func TestCronTailLog_RootJobReadsTheSystemJournal(t *testing.T) {
 	if out["log"] != "2026-10-13T00:01:30+0000 report written" {
 		t.Errorf("log: got %q", out["log"])
 	}
-	unit := "jabali-cron-" + runNowTestJobID + ".service"
-	want := "journalctl _SYSTEMD_UNIT=" + unit + " + _UID=0 SYSLOG_IDENTIFIER=jabali-cron-" + runNowTestJobID +
-		" + _PID=1 UNIT=" + unit + " -n 50 -o short-iso --no-pager"
-	if got := callLine(f, "journalctl", "-n"); got != want {
+	want := "journalctl -u jabali-cron-" + runNowTestJobID + ".service -n 50 -o short-iso --no-pager"
+	if got := callLine(f, "journalctl", "-u"); got != want {
 		t.Fatalf("got %q want %q", got, want)
 	}
 

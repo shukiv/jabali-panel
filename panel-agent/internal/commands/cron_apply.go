@@ -368,7 +368,7 @@ func buildCronServiceContent(jobID, name string, cmds []*cronvalidate.Command, u
 	searchPath := binDir + ":/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin"
 	// SyslogIdentifier= tags every line the job writes, so Run now and the
 	// log find a last line written without a newline, which journald can't
-	// tie to the unit (GH #2120; see cronUnitScope.outputMatch).
+	// tie to the unit (GH #2120; see userCronScope).
 	return fmt.Sprintf(`[Unit]
 Description=Jabali cron job %s (%s)
 After=default.target
@@ -592,7 +592,6 @@ func buildRootCronServiceContent(jobID, name, command string) string {
 		execLines = append(execLines, "ExecStart=/bin/sh -c "+singleQuote(line))
 	}
 	execStart := strings.Join(execLines, "\n")
-	// SyslogIdentifier=: as for a tenant unit (buildCronServiceContent).
 	return fmt.Sprintf(`[Unit]
 Description=Jabali root cron: %s
 After=network-online.target
@@ -600,7 +599,6 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-SyslogIdentifier=%s
 %s
 PrivateTmp=true
 ProtectSystem=strict
@@ -610,7 +608,7 @@ ReadWritePaths=/var/log /var/lib /var/cache /tmp
 
 [Install]
 WantedBy=multi-user.target
-`, name, cronSyslogIdentifier(jobID), execStart)
+`, name, execStart)
 }
 
 func init() {

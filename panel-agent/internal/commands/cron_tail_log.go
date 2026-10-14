@@ -77,7 +77,7 @@ func cronTailLogHandler(ctx context.Context, params json.RawMessage) (any, error
 	}
 
 	// Read as root, limited to the tenant's entries by the journal's trusted
-	// _UID field (cronUnitScope says why). logMatch takes the job's own
+	// _UID field (userCronScope says why). logMatch takes the job's own
 	// lines, including a last line written without a newline, and the user
 	// manager's "Starting…" / "Finished…" lines about the unit.
 	return cronReadLog(ctx, userCronScope(p.Username, u.Uid), p.JobID, lines), nil
