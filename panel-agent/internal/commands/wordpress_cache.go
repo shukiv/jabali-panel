@@ -12,10 +12,12 @@ package commands
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
+	"os/user"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -25,6 +27,8 @@ import (
 	"golang.org/x/sys/unix"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/filesafe"
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/fsperm"
 )
 
 const bundledWPCachePluginDir = "/usr/local/share/jabali/wp-plugins/jabali-cache"
@@ -32,6 +36,36 @@ const bundledWPCachePluginDir = "/usr/local/share/jabali/wp-plugins/jabali-cache
 // bundledCachePluginSrc is where plugin staging copies from: the bundle, or a
 // temp copy in tests.
 var bundledCachePluginSrc = bundledWPCachePluginDir
+
+// homesRoot holds the account homes. A var so tests can use a temp dir.
+var homesRoot = "/home"
+
+// tenantHomeDir is the account's home, the only tree plugin staging may touch.
+func tenantHomeDir(osUser string) string { return filepath.Join(homesRoot, osUser) }
+
+// cachePluginOwnerIDs is who owns the staged plugin: the account, with group
+// www-data so nginx can read the files the account's PHP-FPM pool serves.
+// A var so tests can use their own uid/gid.
+var cachePluginOwnerIDs = func(osUser string) (uid, gid int, err error) {
+	u, err := user.Lookup(osUser)
+	if err != nil {
+		return 0, 0, err
+	}
+	g, err := user.LookupGroup("www-data")
+	if err != nil {
+		return 0, 0, err
+	}
+	if uid, err = strconv.Atoi(u.Uid); err != nil {
+		return 0, 0, err
+	}
+	if gid, err = strconv.Atoi(g.Gid); err != nil {
+		return 0, 0, err
+	}
+	if uid == 0 {
+		return 0, 0, fmt.Errorf("refusing to give root the plugin files of %q", osUser)
+	}
+	return uid, gid, nil
+}
 
 // redisClientsGroup gates /run/redis/redis.sock. Distinct from jabali-sockets
 // (which also fronts the root agent socket) so tenants get Redis but nothing else.
@@ -63,8 +97,8 @@ func wordpressCacheSetHandler(ctx context.Context, raw json.RawMessage) (any, er
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: fmt.Sprintf("parse params: %v", err)}
 	}
-	if !strings.HasPrefix(p.InstallPath, "/home/") || strings.Contains(p.InstallPath, "..") {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "install_path must be under /home/ with no .."}
+	if !strings.HasPrefix(p.InstallPath, homesRoot+"/") || strings.Contains(p.InstallPath, "..") {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "install_path must be under " + homesRoot + "/ with no .."}
 	}
 	if p.OSUser == "" {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "os_user required"}
@@ -87,7 +121,10 @@ func wordpressCacheSetHandler(ctx context.Context, raw json.RawMessage) (any, er
 	//    when the tenant can't reach wordpress.org (per-user egress policy /
 	//    offline host / WP.org outage) or when explicitly forced via
 	//    JABALI_WP_CACHE_SOURCE=bundled (debug/override path).
-	dest := filepath.Join(p.InstallPath, "wp-content", "plugins", "jabali-cache")
+	home, dest, err := cachePluginTarget(p.InstallPath, p.OSUser)
+	if err != nil {
+		return nil, err
+	}
 	staged := false
 	// JAB-64: the release-bundled plugin is the DEFAULT trusted artifact. Cache
 	// enable must NOT pull mutable PHP into tenant installs from WordPress.org by
@@ -103,15 +140,22 @@ func wordpressCacheSetHandler(ctx context.Context, raw json.RawMessage) (any, er
 				"os_user", p.OSUser, "install_path", p.InstallPath, "detail", truncateReason(out, 300))
 		}
 	}
-	if !staged {
-		if err := stageBundledCachePlugin(ctx, dest, p.OSUser); err != nil {
-			return nil, err
+	if staged {
+		// wp-cli installed it as the tenant. Give the files group www-data so
+		// nginx can read what the per-user PHP-FPM pool serves. This runs as root
+		// in the tenant's tree: fsperm.ChownTree walks from the home by file
+		// descriptor and fails on a symlink on the way, where a path-based
+		// chown -R would follow one into another tree.
+		uid, gid, err := cachePluginOwnerIDs(p.OSUser)
+		if err != nil {
+			return nil, bkInternal("look up the plugin owner", err)
 		}
-	}
-	// Normalize ownership regardless of source: nginx (www-data) must be able to
-	// read the plugin files the per-user PHP-FPM pool serves.
-	if err := execCommandContext(ctx, "chown", "-R", p.OSUser+":www-data", dest).Run(); err != nil {
-		return nil, bkInternal("chown plugin", err)
+		if err := fsperm.ChownTree(home, dest, uid, gid); err != nil {
+			return nil, cacheStageErr("chown plugin", dest, err)
+		}
+	} else if err := stageBundledCachePlugin(ctx, p.InstallPath, p.OSUser); err != nil {
+		// The bundled copy is created with that ownership.
+		return nil, err
 	}
 
 	socket := p.RedisSocket
@@ -362,8 +406,8 @@ func wordpressCachePluginRefreshHandler(ctx context.Context, raw json.RawMessage
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: fmt.Sprintf("parse params: %v", err)}
 	}
-	if !strings.HasPrefix(p.InstallPath, "/home/") || strings.Contains(p.InstallPath, "..") {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "install_path must be under /home/ with no .."}
+	if !strings.HasPrefix(p.InstallPath, homesRoot+"/") || strings.Contains(p.InstallPath, "..") {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "install_path must be under " + homesRoot + "/ with no .."}
 	}
 	if p.OSUser == "" {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "os_user required"}
@@ -403,7 +447,7 @@ func refreshBundledCachePlugin(ctx context.Context, installPath, osUser string) 
 	if fi, err := os.Stat(plugins); err != nil || !fi.IsDir() {
 		return wordpressCachePluginRefreshResult{Refreshed: false, Detail: "no wp-content/plugins directory"}, nil
 	}
-	if err := stageBundledCachePlugin(ctx, filepath.Join(plugins, "jabali-cache"), osUser); err != nil {
+	if err := stageBundledCachePlugin(ctx, installPath, osUser); err != nil {
 		return wordpressCachePluginRefreshResult{}, err
 	}
 	return wordpressCachePluginRefreshResult{Refreshed: true, Version: bundledCachePluginVersion()}, nil
@@ -425,25 +469,78 @@ func bundledCachePluginVersion() string {
 	return ""
 }
 
+// cacheOSUserRe is a Linux account name. It builds the home path, so it can't
+// hold a "/" or be "." or "..".
+var cacheOSUserRe = regexp.MustCompile(`^[a-z_][a-z0-9_-]{0,31}$`)
+
+// cachePluginTarget returns the account's home and the plugin directory
+// <installPath>/wp-content/plugins/jabali-cache, which must be inside that home:
+// staging runs as root and must not reach another account's tree.
+func cachePluginTarget(installPath, osUser string) (home, dest string, err error) {
+	if !cacheOSUserRe.MatchString(osUser) {
+		return "", "", &agentwire.AgentError{Code: agentwire.CodeInvalidArgument,
+			Message: fmt.Sprintf("os_user %q is not an account name", osUser)}
+	}
+	home = filepath.Clean(tenantHomeDir(osUser))
+	dest = filepath.Join(installPath, "wp-content", "plugins", "jabali-cache")
+	if !strings.HasPrefix(dest, home+"/") {
+		return "", "", &agentwire.AgentError{Code: agentwire.CodeInvalidArgument,
+			Message: fmt.Sprintf("install_path %q is not inside %s", installPath, home)}
+	}
+	return home, dest, nil
+}
+
 // stageBundledCachePlugin installs the release-bundled jabali-cache plugin into
-// dest (rm + cp -a) and normalizes ownership so the per-user PHP-FPM pool and
-// nginx (www-data) can read it. This is the DEFAULT trusted source (JAB-64):
-// panel-managed infra code must not come from a mutable external channel.
-func stageBundledCachePlugin(ctx context.Context, dest, osUser string) error {
-	if _, err := os.Stat(bundledCachePluginSrc); err != nil {
+// <installPath>/wp-content/plugins/jabali-cache, owned by the account with group
+// www-data so the per-user PHP-FPM pool and nginx can read it. This is the
+// DEFAULT trusted source (JAB-64): panel-managed infra code must not come from
+// a mutable external channel.
+//
+// It runs as root in a tree the tenant owns, so it works by file descriptor,
+// never by path: filesafe resolves every path with openat2 RESOLVE_BENEATH from
+// the account's home. A symlink in wp-content, plugins or jabali-cache that
+// leads out of the home makes the call fail; it can't make root delete, write
+// or chown in another tree, as the old rm -rf / cp -a / chown -R by path did.
+// A jabali-cache symlink itself is removed, not followed.
+func stageBundledCachePlugin(ctx context.Context, installPath, osUser string) error {
+	src := filepath.Clean(bundledCachePluginSrc)
+	if _, err := os.Stat(src); err != nil {
 		return &agentwire.AgentError{Code: agentwire.CodeFailedPrecondition,
-			Message: fmt.Sprintf("bundled jabali-cache missing at %s \u2014 re-run install.sh", bundledCachePluginSrc)}
+			Message: fmt.Sprintf("bundled jabali-cache missing at %s \u2014 re-run install.sh", src)}
 	}
-	if err := execCommandContext(ctx, "rm", "-rf", dest).Run(); err != nil {
-		return bkInternal("clear old plugin", err)
+	home, dest, err := cachePluginTarget(installPath, osUser)
+	if err != nil {
+		return err
 	}
-	if err := execCommandContext(ctx, "cp", "-a", bundledCachePluginSrc, dest).Run(); err != nil {
-		return bkInternal("stage plugin (bundled)", err)
+	uid, gid, err := cachePluginOwnerIDs(osUser)
+	if err != nil {
+		return bkInternal("look up the plugin owner", err)
 	}
-	if err := execCommandContext(ctx, "chown", "-R", osUser+":www-data", dest).Run(); err != nil {
-		return bkInternal("chown plugin", err)
+	// Two roots: the account's home, the only place written, and the
+	// root-owned directory that holds the bundle, only read.
+	scope, err := filesafe.NewScope("", osUser, []string{home, filepath.Dir(src)})
+	if err != nil {
+		return bkInternal("plugin staging scope", err)
+	}
+	if err := scope.RemoveAllInScope(ctx, dest); err != nil {
+		return cacheStageErr("clear old plugin", dest, err)
+	}
+	if _, err := scope.CopyTreeInScope(ctx, src, dest, uid, gid); err != nil {
+		return cacheStageErr("stage plugin (bundled)", dest, err)
 	}
 	return nil
+}
+
+// cacheStageErr names a refused path, so an operator can tell it from a fault:
+// openat2 RESOLVE_BENEATH answers EXDEV for a symlink out of the home, and an
+// O_NOFOLLOW step answers ELOOP, or ENOTDIR with O_DIRECTORY, for a symlink on
+// the way.
+func cacheStageErr(step, dest string, err error) error {
+	if errors.Is(err, unix.EXDEV) || errors.Is(err, unix.ELOOP) || errors.Is(err, unix.ENOTDIR) {
+		return &agentwire.AgentError{Code: agentwire.CodeFailedPrecondition,
+			Message: fmt.Sprintf("%s: the way to %s in the account's home has a symlink or a non-directory; the plugin was not staged there", step, dest)}
+	}
+	return bkInternal(step, err)
 }
 
 func init() {
