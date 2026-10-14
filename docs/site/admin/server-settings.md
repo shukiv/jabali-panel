@@ -11,6 +11,7 @@
 - **Locale** — default UI locale for new users; users may override per-account.
 - **Tenant domain options** — off by default. When on, non-admin domain owners get three extra tabs on their own domains: *Domain options* (a curated, safe set of nginx options — max upload size, HSTS, security headers, gzip — each rendered as a fixed, vetted directive), *Rewrite rules* (structured `rewrite` and `custom_header` rules, each validated; a `rewrite` target is forced to a local path so it can't become an open redirect or proxy; plus the file-extension *Deny paths* and *Static cache* rules, and a *Front controller* that only changes which `.php` script in the site's own folder handles requests that match no file), and *Advanced directives* (a raw box confined to `add_header` / `expires` / `etag` only — one statement per line, no blocks or backslashes, panel-managed response headers rejected). `proxy_pass`, `root`/`alias`, `location` blocks, IP access, and PHP settings stay admin-only regardless. Surfaced to tenants on the [Domains](../user/domains.md#nginx-options-and-rewrite-rules) page. A tenant's advanced directives are visible to you (with a **Clear** button) on the domain's **Nginx** tab — disabling this toggle does not deactivate a snippet a tenant already saved, so clear it there if you need to remove one.
 - **Tenant document-root editing** — on by default. Lets non-admin owners repoint a domain's document root to a folder inside that domain's own tree (e.g. a framework's `public/` subdir); confined server-side so it can't escape the domain.
+- **Support chat (Ask Jabali)** — an AI support chat for the admin panel and the client panels, off by default. See [Support chat](#support-chat-ask-jabali) before you turn it on.
 
 ## Database
 
@@ -81,7 +82,7 @@ The chat is a [Chatwoot](https://www.chatwoot.com/) widget served from `support.
 
 The script loads after the page has finished loading and the browser is idle, so it doesn't slow the panel down. A CSP applies to the page it came with: after you turn the chat on, it shows from the next page load. Turning it off hides it at once.
 
-The CSP lives in `/etc/nginx/snippets/jabali-panel-csp.conf`, which the panel vhost includes. The agent's `nginx.panel_csp.apply` verb rewrites it, checks it with `nginx -t` and reloads nginx; a failed check restores the old file, and a failed turn-on also turns the switches back off. The panel applies the saved switches again each time it starts. Don't edit the snippet by hand: the next save or panel start overwrites it.
+The CSP lives in `/etc/nginx/snippets/jabali-panel-csp.conf`, which the panel vhost includes. The agent's `nginx.panel_csp.apply` verb rewrites it, checks it with `nginx -t` and reloads nginx; a failed check restores the old file, and a failed turn-on also turns the switches back off. The panel applies the saved switches again each time it starts. Don't edit the snippet by hand: the next save or panel start overwrites it. If the snippet goes missing, `nginx -t` fails; `jabali repair` (check `panel-csp-snippet`) writes the chat-off policy back, never an empty file.
 
 The admin dashboard shows a banner about the chat until an admin closes it or turns the chat on. Closing it hides it for every admin.
 

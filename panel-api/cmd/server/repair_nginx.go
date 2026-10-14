@@ -239,6 +239,85 @@ func fixNginxMissingIncludes(_ repairCtx) error {
 	return nil
 }
 
+// ---------- panel-csp-snippet ----------
+//
+// The panel :8443 vhost takes its Content-Security-Policy from a snippet the
+// agent owns (nginx.panel_csp.apply, Server Settings -> Support chat). Like the
+// GH #217 includes, a missing target fails nginx -t. It is NOT one of the empty
+// placeholders above: an empty CSP snippet would serve the panel with no CSP at
+// all. The fix writes the chat-off policy from install.sh's PANEL_CSP_OFF
+// heredoc (pinned byte-identical to the agent's rendering by the agent's
+// TestPanelCSP_InstallSeedMatchesTheAgent); the next panel start re-applies the
+// saved switches.
+
+const panelCSPSnippetPath = "/etc/nginx/snippets/jabali-panel-csp.conf"
+const panelCSPIncludeMarker = "include " + panelCSPSnippetPath + ";"
+
+var panelCSPSeedRE = regexp.MustCompile(`(?s)<<'PANEL_CSP_OFF'\n(.*?)\nPANEL_CSP_OFF\n`)
+
+// panelCSPSeed returns the chat-off snippet install.sh seeds. It refuses an
+// installer without one, or one whose seed carries no CSP, rather than ever
+// writing a snippet that drops the panel's policy.
+func panelCSPSeed(installSh []byte) ([]byte, error) {
+	m := panelCSPSeedRE.FindSubmatch(installSh)
+	if m == nil {
+		return nil, fmt.Errorf("install.sh has no PANEL_CSP_OFF seed")
+	}
+	seed := append(append([]byte{}, m[1]...), '\n')
+	if !strings.Contains(string(seed), "add_header Content-Security-Policy \"default-src 'self';") {
+		return nil, fmt.Errorf("install.sh's PANEL_CSP_OFF seed carries no Content-Security-Policy")
+	}
+	return seed, nil
+}
+
+// panelCSPSnippetMissing: the vhost includes the snippet and it is absent.
+// Pure (vhost text + exists predicate) so it is unit-testable.
+func panelCSPSnippetMissing(vhost string, exists func(string) bool) bool {
+	return strings.Contains(vhost, panelCSPIncludeMarker) && !exists(panelCSPSnippetPath)
+}
+
+func detectPanelCSPSnippet(_ repairCtx) (bool, string, error) {
+	if _, err := exec.LookPath("nginx"); err != nil {
+		return false, "", nil
+	}
+	b, err := os.ReadFile(jabaliPanelVhost)
+	if err != nil {
+		return false, "", nil // no panel vhost — not applicable
+	}
+	missing := panelCSPSnippetMissing(string(b), func(p string) bool {
+		_, err := os.Stat(p)
+		return err == nil
+	})
+	if !missing {
+		return false, "", nil
+	}
+	return true, "panel :8443 vhost includes " + panelCSPSnippetPath + ", which is missing — nginx -t fails, nothing on 8443", nil
+}
+
+func fixPanelCSPSnippet(ctx repairCtx) error {
+	raw, err := os.ReadFile(filepath.Join(ctx.repoDir, "install.sh"))
+	if err != nil {
+		return fmt.Errorf("read install.sh for the CSP seed: %w", err)
+	}
+	seed, err := panelCSPSeed(raw)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(panelCSPSnippetPath), 0o755); err != nil {
+		return fmt.Errorf("mkdir for %s: %w", panelCSPSnippetPath, err)
+	}
+	if err := os.WriteFile(panelCSPSnippetPath, seed, 0o644); err != nil {
+		return fmt.Errorf("write %s: %w", panelCSPSnippetPath, err)
+	}
+	if out, err := exec.Command("nginx", "-t").CombinedOutput(); err != nil {
+		return fmt.Errorf("nginx -t still failing after seeding the CSP snippet (not reloading):\n%s", string(out))
+	}
+	if out, err := exec.Command("systemctl", "reload", "nginx").CombinedOutput(); err != nil {
+		return fmt.Errorf("nginx -t passed but reload failed: %v\n%s", err, string(out))
+	}
+	return nil
+}
+
 // ---------- automation-443-include ----------
 //
 // GH #1161: the opt-in "Automation API on :443" feature needs the panel-hostname

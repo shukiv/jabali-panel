@@ -399,6 +399,12 @@ func repairSteps() []repairStep {
 			fix:    fixNginxMissingIncludes,
 		},
 		{
+			id:     "panel-csp-snippet",
+			label:  "panel :8443 vhost includes a missing CSP snippet (jabali-panel-csp.conf) — nginx -t fails, nothing on 8443",
+			detect: detectPanelCSPSnippet,
+			fix:    fixPanelCSPSnippet,
+		},
+		{
 			id:     "automation-443-include",
 			label:  "panel-hostname :443 vhost missing the GH #1161 automation-API include (admin can't opt into API-on-443 for firewalled billing hosts)",
 			detect: detectAutomation443Include,
