@@ -67,6 +67,24 @@ Panel self-update is not set here. Turn it on under [Server Updates](./server-up
 The diagnostic bundle has no settings. See [Support](./support.md).
 - **Recipient email** — overrides `webmaster@jabali-panel.com`.
 
+### Support chat (Ask Jabali)
+
+**General** tab. An AI support chat that answers questions about using Jabali Panel. It has two switches, both off by default:
+
+- **Admin panel** — the chat button shows on every admin page.
+- **Client panels** — the chat button shows on every client (user) page.
+
+The chat is a [Chatwoot](https://www.chatwoot.com/) widget served from `support.jabali-panel.com`. Before you turn it on, know what that means:
+
+- A script from `support.jabali-panel.com` runs in the panel page. While either switch is on, the panel's `Content-Security-Policy` allows that one origin in `script-src`, `connect-src` and `frame-src`. With both off, the CSP is the same as on a panel without the chat.
+- What people type in the chat goes to `support.jabali-panel.com`. The panel doesn't pass account details to the widget. Like any website chat, the widget sees the page address and the browser.
+
+The script loads after the page has finished loading and the browser is idle, so it doesn't slow the panel down. A CSP applies to the page it came with: after you turn the chat on, it shows from the next page load. Turning it off hides it at once.
+
+The CSP lives in `/etc/nginx/snippets/jabali-panel-csp.conf`, which the panel vhost includes. The agent's `nginx.panel_csp.apply` verb rewrites it, checks it with `nginx -t` and reloads nginx; a failed check restores the old file, and a failed turn-on also turns the switches back off. The panel applies the saved switches again each time it starts. Don't edit the snippet by hand: the next save or panel start overwrites it.
+
+The admin dashboard shows a banner about the chat until an admin closes it or turns the chat on. Closing it hides it for every admin.
+
 ## Convergence
 
 Server settings persist to the `server_settings` table. Most changes take effect immediately; the few that require host-side work (panel hostname, certificate, MariaDB tuning) are scheduled with the reconciler and converge within 60 seconds.

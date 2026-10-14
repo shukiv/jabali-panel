@@ -9,6 +9,7 @@ import { ConfigProvider, Drawer, Grid, Layout, Menu, theme, type MenuProps } fro
 import { Outlet, useLocation, useNavigate } from "react-router";
 
 import { DRStandbyBanner } from "../components/DRStandbyBanner";
+import { SupportChatWidget } from "../components/SupportChatWidget";
 import { JabaliFooter } from "../components/JabaliFooter";
 import { ImpersonationBanner } from "../components/ImpersonationBanner";
 import { JabaliHeader } from "../components/JabaliHeader";
@@ -279,6 +280,7 @@ export function UserLayout() {
             }}
           >
             <DRStandbyBanner />
+            <SupportChatWidget enabled={!!caps?.support_chat_clients} />
             <BreadcrumbProvider>
               <RouteBreadcrumb nav={userNav} homePath="/jabali-panel/dashboard" homeLabel="Dashboard" />
               <Outlet />

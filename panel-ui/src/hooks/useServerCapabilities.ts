@@ -38,6 +38,10 @@ export interface ServerCapabilities {
   /** GH #1171: isolated (separate-uid, quota-capped) FTP accounts can be provisioned
    * here (filesystem disk quota is enabled). Drives the create form's Isolated default. */
   ftp_isolation_available: boolean;
+  /** The "Ask Jabali" support chat in the admin panel (Server Settings -> General). */
+  support_chat_admin: boolean;
+  /** The "Ask Jabali" support chat in the client panels. */
+  support_chat_clients: boolean;
 }
 
 export function useServerCapabilities() {
@@ -66,6 +70,8 @@ export function useServerCapabilities() {
         ftp_accounts_enabled: !!data.ftp_accounts_enabled,
         ftp_server_enabled: !!data.ftp_server_enabled,
         ftp_isolation_available: !!data.ftp_isolation_available,
+        support_chat_admin: !!data.support_chat_admin,
+        support_chat_clients: !!data.support_chat_clients,
       };
     },
     staleTime: 60_000,

@@ -78,6 +78,7 @@ import { DNSTemplatesCard } from "./DNSTemplatesCard";
 import { TenantNotificationsCard } from "./TenantNotificationsCard";
 import { NginxSettingsCard } from "./NginxSettingsCard";
 import { LogRetentionCard } from "./LogRetentionCard";
+import { SupportChatCard } from "./SupportChatCard";
 
 type ServerSettings = {
   id: number;
@@ -1043,6 +1044,7 @@ export const ServerSettingsPage = () => {
           <GeneralSettingsTab />
           <FreeHostnameCard />
           <TenantNotificationsCard />
+          <SupportChatCard />
         </>
       ),
     },

@@ -8064,6 +8064,19 @@ d}" "$panel_vhost_file"
   # nginx -t below or the whole panel vhost fails validation. Content is keyed on
   # the live cert kind (self-signed → empty header; CA → HSTS on).
   _write_panel_hsts_snippet "$tls_cert"
+  # The vhost takes its Content-Security-Policy from this snippet. The agent
+  # (nginx.panel_csp.apply) owns it once it exists: the panel re-applies Server
+  # Settings -> Support chat on every start, so only seed the chat-off copy
+  # here, never overwrite. Byte-identical to the agent's chat-off rendering
+  # (TestPanelCSP_InstallSeedMatchesTheAgent).
+  if [[ ! -f /etc/nginx/snippets/jabali-panel-csp.conf ]]; then
+    cat > /etc/nginx/snippets/jabali-panel-csp.conf <<'PANEL_CSP_OFF'
+# Managed by jabali-agent (nginx.panel_csp.apply): Server Settings -> Support chat.
+# Included by the panel vhost. Edits here are overwritten.
+add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://gravatar.com https://secure.gravatar.com https://www.gravatar.com https://seccdn.libravatar.org; font-src 'self' data:; connect-src 'self' wss:; frame-ancestors 'none'; form-action 'self';" always;
+PANEL_CSP_OFF
+    chmod 0644 /etc/nginx/snippets/jabali-panel-csp.conf
+  fi
 
   # GH #1146: the panel vhost's /dav/ location references limit_req zone
   # `jabali_webdav`, which is declared at http{} scope — install it into conf.d

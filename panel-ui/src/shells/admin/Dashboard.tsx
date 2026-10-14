@@ -16,6 +16,7 @@ import { useServerStatus } from "../../hooks/useServerStatus";
 import { useServerCapabilities } from "../../hooks/useServerCapabilities";
 import { useUpdateState } from "../../hooks/useSystemUpdates";
 import { UpdatesPendingBanner, OsSecurityUpdatesBanner } from "./updates/UpdatesPendingBanner";
+import { SupportChatBanner } from "./SupportChatBanner";
 import { DashboardTabs } from "./dashboard/DashboardTabs";
 import { HostCard } from "./dashboard/HostCard";
 import { ServicesRail } from "./dashboard/ServicesRail";
@@ -93,6 +94,7 @@ export const Dashboard = () => {
           fix. */}
       <UpdatesPendingBanner />
       <OsSecurityUpdatesBanner />
+      <SupportChatBanner />
       <HostCard env={env} caps={caps} currentSha={updateState.data?.jabali_current_sha} />
       <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
         {cards.map((c) => (
