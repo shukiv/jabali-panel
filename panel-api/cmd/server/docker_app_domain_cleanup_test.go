@@ -43,12 +43,17 @@ func dptr(s string) *string { return &s }
 type cleanupFakeAgent struct {
 	agent.AgentInterface
 	vhostRemoved []string
+	purged       []string
 }
 
 func (f *cleanupFakeAgent) Call(_ context.Context, cmd string, params any) (json.RawMessage, error) {
 	if cmd == "docker_app.vhost_remove" {
-		if m, ok := params.(map[string]string); ok {
-			f.vhostRemoved = append(f.vhostRemoved, m["domain_name"])
+		if m, ok := params.(map[string]any); ok {
+			name, _ := m["domain_name"].(string)
+			f.vhostRemoved = append(f.vhostRemoved, name)
+			if purge, _ := m["purge_certificates"].(bool); purge {
+				f.purged = append(f.purged, name)
+			}
 		}
 	}
 	return nil, nil
@@ -85,5 +90,9 @@ func TestCleanupDockerAppDomains_DeletesManagedDetachesUserOwned(t *testing.T) {
 	}
 	if len(ag.vhostRemoved) != 1 || ag.vhostRemoved[0] != "auto.example.com" {
 		t.Fatalf("expected vhost_remove for the managed domain only; got %v", ag.vhostRemoved)
+	}
+	// The row is gone for good, so its certificate files go too.
+	if len(ag.purged) != 1 || ag.purged[0] != "auto.example.com" {
+		t.Fatalf("expected the managed domain's certificates purged; got %v", ag.purged)
 	}
 }

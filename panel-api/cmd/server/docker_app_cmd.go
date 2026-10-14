@@ -17,6 +17,7 @@ import (
 
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/tenantcompose"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/api"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dockerapp"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
@@ -491,15 +492,8 @@ func cleanupDockerAppDomains(ctx context.Context, domRepo repository.DomainRepos
 		}
 		if d.ManagedBy == models.DomainManagedByDockerApp {
 			// Hostname we auto-created for this app at install — remove the row
-			// and tear down its proxy vhost.
-			domName := d.Name
-			_ = domRepo.Delete(ctx, d.ID)
-			if ag != nil && domName != "" {
-				rmCtx, rmCancel := context.WithTimeout(ctx, 30*time.Second)
-				_, _ = ag.Call(rmCtx, "docker_app.vhost_remove",
-					map[string]string{"domain_name": domName})
-				rmCancel()
-			}
+			// and tear down its proxy vhost and certificate.
+			api.RemoveManagedDockerDomain(ctx, domRepo, ag, d)
 		} else {
 			// The tenant's own pre-existing domain — keep the row, just detach
 			// the app link + clear the injected proxy_pass rule.
