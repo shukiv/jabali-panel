@@ -85,6 +85,8 @@ The script loads after the page has finished loading and the browser is idle, so
 
 The CSP lives in `/etc/nginx/snippets/jabali-panel-csp.conf`, which the panel vhost includes. The agent's `nginx.panel_csp.apply` verb rewrites it, checks it with `nginx -t` and reloads nginx; a failed check restores the old file, and a failed turn-on also turns the switches back off. The panel applies the saved switches again each time it starts. Don't edit the snippet by hand: the next save or panel start overwrites it. If the snippet goes missing, `nginx -t` fails; `jabali repair` (check `panel-csp-snippet`) writes the chat-off policy back, never an empty file.
 
+From the shell, as root, set the same two switches with `jabali settings set support_chat_admin=on support_chat_clients=off` (`on`/`off` or `true`/`false`). It updates the CSP the same way and waits for the result; a failed turn-on switches the chat back off and exits with an error.
+
 The admin dashboard shows a banner about the chat until an admin closes it or turns the chat on. Closing it hides it for every admin.
 
 ## Convergence

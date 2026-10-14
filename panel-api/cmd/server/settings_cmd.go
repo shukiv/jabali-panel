@@ -250,6 +250,27 @@ func applySettingsSideEffects(ctx context.Context, cmd *cobra.Command, repo repo
 			return fmt.Errorf("DB updated, but %s failed: %w", call.Method, err)
 		}
 	}
+
+	// Support chat: the panel CSP allows the chat's origin while it is on in
+	// either panel. settingsops owns the wire and the revert decision, shared
+	// with the REST PATCH; a failed enable puts both switches back, as there.
+	chatPlan := settingsops.SupportChatEffect(&before, s, supportChatDirty)
+	if call := chatPlan.Call; call != nil {
+		fmt.Fprintln(out, "Applying the panel CSP for the support chat (validated with nginx -t)…")
+		if err := dispatchSettingsAgentCall(ctx, *call); err != nil {
+			if chatPlan.RevertOnFailure {
+				rctx, rcancel := context.WithTimeout(context.Background(), 15*time.Second)
+				if cur, gerr := repo.Get(rctx); gerr == nil && cur != nil {
+					cur.SupportChatAdmin = before.SupportChatAdmin
+					cur.SupportChatClients = before.SupportChatClients
+					_ = repo.Upsert(rctx, cur)
+				}
+				rcancel()
+				return fmt.Errorf("DB updated, but %s failed (support chat switched back): %w", call.Method, err)
+			}
+			return fmt.Errorf("DB updated, but %s failed: %w", call.Method, err)
+		}
+	}
 	return nil
 }
 
@@ -270,6 +291,10 @@ func callAgentTimeout(ctx context.Context, d time.Duration, method string, param
 // nginxDirty is set by any nginx-key setter so the nginx side effect fires.
 // Reset is unnecessary: each CLI process applies a single `set`.
 var nginxDirty bool
+
+// supportChatDirty is set by either support-chat setter so the panel CSP side
+// effect fires, also when the value doesn't change (a re-save re-applies).
+var supportChatDirty bool
 
 // settingDef is one settable key: a human help string and a parser/setter.
 type settingDef struct {
@@ -309,6 +334,18 @@ func nginxStrKey(help string, set func(*models.ServerSettings, string)) settingD
 	return settingDef{help: help, apply: func(s *models.ServerSettings, raw string) error {
 		set(s, strings.TrimSpace(raw))
 		nginxDirty = true
+		return nil
+	}}
+}
+
+func supportChatKey(help string, set func(*models.ServerSettings, bool)) settingDef {
+	return settingDef{help: help, apply: func(s *models.ServerSettings, raw string) error {
+		b, err := parseBool(raw)
+		if err != nil {
+			return err
+		}
+		set(s, b)
+		supportChatDirty = true
 		return nil
 	}}
 }
@@ -354,6 +391,10 @@ var settableKeys = map[string]settingDef{
 	"docker_apps_for_users_enabled": boolKey("enable/disable tenant Docker apps (runs host tenant setup)", func(s *models.ServerSettings, b bool) { s.DockerAppsForUsersEnabled = b }),
 	"python_apps_enabled":           boolKey("enable/disable Python apps (installs the runtime on enable)", func(s *models.ServerSettings, b bool) { s.PythonAppsEnabled = b }),
 	"tenant_domain_options_enabled": boolKey("expose per-domain options to tenants (DB flag)", func(s *models.ServerSettings, b bool) { s.TenantDomainOptionsEnabled = b }),
+	// Ask Jabali support chat (#2146): the panel CSP allows the chat's origin
+	// while either switch is on (agent nginx.panel_csp.apply).
+	"support_chat_admin":   supportChatKey("Ask Jabali support chat in the admin panel (updates the panel CSP)", func(s *models.ServerSettings, b bool) { s.SupportChatAdmin = b }),
+	"support_chat_clients": supportChatKey("Ask Jabali support chat in the client panels (updates the panel CSP)", func(s *models.ServerSettings, b bool) { s.SupportChatClients = b }),
 	"release_channel": settingDef{
 		help: "release channel: stable|development (GUI Updates page shares this contract)",
 		apply: func(s *models.ServerSettings, raw string) error {
