@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -71,12 +70,8 @@ func TestCachePluginRefresh_BundledSkipsASiteWithoutPluginsWithoutRunningWP(t *t
 // It stages the root-owned bundle and reports the bundle's version, which is
 // what the site now runs and what the panel tightens the site's ACL from.
 func TestRefreshBundledCachePlugin_StagesAndReportsTheBundleVersion(t *testing.T) {
-	fakeCacheBundle(t, bundleHeader121)
+	_, site := stageEnv(t)
 	calls := captureExec(t)
-	site := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(site, "wp-content", "plugins"), 0o755); err != nil {
-		t.Fatal(err)
-	}
 
 	res, err := refreshBundledCachePlugin(context.Background(), site, "bob")
 	if err != nil {
@@ -89,14 +84,9 @@ func TestRefreshBundledCachePlugin_StagesAndReportsTheBundleVersion(t *testing.T
 		t.Errorf("ran as the tenant: %v", *calls)
 	}
 	dest := filepath.Join(site, "wp-content", "plugins", "jabali-cache")
-	var cp bool
-	for _, c := range *calls {
-		if c[0] == "cp" && strings.Join(c[1:], " ") == "-a "+bundledCachePluginSrc+" "+dest {
-			cp = true
-		}
-	}
-	if !cp {
-		t.Errorf("calls = %v, want the bundle copied to %s", *calls, dest)
+	b, err := os.ReadFile(filepath.Join(dest, "jabali-cache.php"))
+	if err != nil || string(b) != bundleHeader121 {
+		t.Errorf("staged main file = %q (err %v), want the bundle's", b, err)
 	}
 }
 
