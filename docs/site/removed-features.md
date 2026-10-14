@@ -60,7 +60,7 @@ If you have docs that say "the panel uses Refine" — update.
 - **Plesk-style live console** — there is a `/jabali-admin/terminal`, but the per-user live shell-over-web isn't surfaced for tenants.
 - **Add-on domains as a first-class concept** — alias domains exist; "add-on" with its own docroot is currently modeled as a separate Domain row.
 - **Per-domain bandwidth meters per-day** — we report monthly bandwidth, not per-day; the old PHP graph isn't ported.
-- **Spamassassin + ClamAV-on-delivery scanning of every inbound mail** — Stalwart handles spam scoring; ClamAV is on-demand only (M33 chose on-demand over the daemon to keep RAM usage predictable on small VPS). Async post-delivery YARA (M33.2) catches the high-priority class.
+- **Spamassassin + ClamAV-on-delivery scanning of every inbound mail** — Stalwart handles spam scoring. ClamAV is gone: Linux Malware Detect with YARA-X replaced it (M33), and an update removes ClamAV from servers that still have it. Async post-delivery YARA (M33.2) catches the high-priority class. See [Security](security.md).
 
 ## What's deferred (planned, not removed)
 

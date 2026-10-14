@@ -25,7 +25,6 @@ Disabling a job stops its timer and removes both files; enabling it writes them 
 systemd-user timers give:
 
 - Per-job journal logs (`journalctl --user -u jabali-cron-<id>`).
-- `OnFailure=` hook → notification dispatcher.
 - `RandomizedDelaySec=` — natural jitter without operators having to add `sleep $RANDOM`.
 - No per-user `crontab -e` shell access (we don't grant interactive shell to panel users).
 
@@ -98,4 +97,4 @@ jabali cron run-now <job-id>     # ignores schedule; waits up to 4 min, a longer
 
 ## Failures
 
-If a job exits non-zero, the `OnFailure=jabali-cron-notify@%n.service` unit fires and the notifications dispatcher (M14) sends an alert via the user's configured channels (in-app bell, email, etc.).
+The panel does not send a notification when a job fails. The cron list shows each job's last exit code, and the job's log shows its output.

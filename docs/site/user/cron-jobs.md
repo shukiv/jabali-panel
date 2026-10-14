@@ -69,7 +69,6 @@ A job runs in your home directory (`/home/<you>`), not in the folder of the scri
 ## Why systemd-user, not crontab
 
 - Per-job journal logs (`journalctl --user -u jabali-cron-<id>`).
-- `OnFailure=` triggers a notification through the M14 dispatcher.
 - `RandomizedDelaySec=` provides natural jitter without adding `sleep $RANDOM` to your command.
 - You do not need an interactive shell to manage your cron jobs (and you do not have one).
 
