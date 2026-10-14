@@ -214,3 +214,49 @@ func TestCachePluginOwnerIDs_RefusesRoot(t *testing.T) {
 		t.Error("root accepted as the plugin owner")
 	}
 }
+
+// A relative symlink that climbs out of the home is refused too, not only an
+// absolute one.
+func TestStageBundledCachePlugin_RefusesARelativeLinkThatClimbsOutOfTheHome(t *testing.T) {
+	homes, site := stageEnv(t)
+	other := filepath.Join(homes, "alice", "plugins")
+	writeFile(t, filepath.Join(other, "jabali-cache", "keep.php"))
+	plugins := filepath.Join(site, "wp-content", "plugins")
+	if err := os.RemoveAll(plugins); err != nil {
+		t.Fatal(err)
+	}
+	rel, err := filepath.Rel(filepath.Dir(plugins), other)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(rel, plugins); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := stageBundledCachePlugin(context.Background(), site, "bob"); err == nil {
+		t.Errorf("staging through %s -> %s succeeded", plugins, rel)
+	}
+	assertOtherTreeUntouched(t, filepath.Join(other, "jabali-cache"))
+}
+
+// Cache enable on the default channel stages the release bundle.
+func TestCacheSet_DefaultChannelStagesTheBundle(t *testing.T) {
+	_, site := stageEnv(t)
+	t.Setenv("JABALI_WP_CACHE_SOURCE", "")
+	captureExec(t)
+	if err := os.WriteFile(filepath.Join(site, "wp-config.php"), []byte("<?php\n/* That's all, stop editing! */\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	raw, _ := json.Marshal(wordpressCacheSetParams{InstallPath: site, OSUser: "bob", Enable: true, Prefix: "bob:1"})
+	if _, err := wordpressCacheSetHandler(context.Background(), raw); err != nil {
+		t.Fatal(err)
+	}
+	dest := filepath.Join(site, "wp-content", "plugins", "jabali-cache")
+	if _, err := os.Stat(filepath.Join(dest, "jabali-cache.php")); err != nil {
+		t.Errorf("bundle not staged: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dest, "old.php")); !os.IsNotExist(err) {
+		t.Errorf("old plugin file still there (err=%v)", err)
+	}
+}
