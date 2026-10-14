@@ -72,6 +72,30 @@ export type KratosFlow = {
 // ---------------------------------------------------------------------------
 
 /**
+ * Thrown by initLoginFlow when the browser holds a Kratos session that the
+ * panel can't map to an account (panel-api answers 401 identity_not_linked).
+ */
+export class SessionNotLinkedError extends Error {
+  constructor() {
+    super("session_not_linked");
+    this.name = "SessionNotLinkedError";
+  }
+}
+
+// sessionNotLinked asks panel-api about the current Kratos session. A plain
+// axios call, not apiClient: its interceptors redirect on some errors, and
+// this runs on the login page itself.
+async function sessionNotLinked(): Promise<boolean> {
+  try {
+    await axios.get("/api/v1/me", { withCredentials: true, timeout: 10_000 });
+    return false;
+  } catch (err) {
+    const ax = err as AxiosError<{ error?: string }>;
+    return ax.response?.status === 401 && ax.response?.data?.error === "identity_not_linked";
+  }
+}
+
+/**
  * Initialise a login flow. Kratos issues a CSRF token and builds the UI node
  * tree for whichever credential method(s) the identity schema allows. On the
  * browser endpoint, GET redirects to our UI by default — we set
@@ -103,6 +127,14 @@ export async function initLoginFlow(): Promise<KratosFlow> {
       errorId === "session_already_available" ||
       errorId === "browser_location_change_required"
     ) {
+      // A session the panel can't map to an account (identity_not_linked,
+      // e.g. a passkey enrolled on an identity whose panel user is gone)
+      // is not a second-factor case. Escalating it gives an aal2 flow with
+      // no method in it: a dead end with no way to sign out. Let the page
+      // offer to sign out instead.
+      if (errorId === "session_already_available" && (await sessionNotLinked())) {
+        throw new SessionNotLinkedError();
+      }
       const target =
         ax.response?.data?.redirect_browser_to ??
         "/.ory/self-service/login/browser?aal=aal2";
