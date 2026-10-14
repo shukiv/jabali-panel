@@ -366,6 +366,9 @@ func buildCronServiceContent(jobID, name string, cmds []*cronvalidate.Command, u
 	// ExecSearchPath. (GH #184, #256, #299, JAB-182.)
 	binDir := "/home/" + username + "/.jabali/bin"
 	searchPath := binDir + ":/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin"
+	// SyslogIdentifier= tags every line the job writes, so Run now and the
+	// log find a last line written without a newline, which journald can't
+	// tie to the unit (GH #2120; see userCronScope).
 	return fmt.Sprintf(`[Unit]
 Description=Jabali cron job %s (%s)
 After=default.target
@@ -378,10 +381,12 @@ RemainAfterExit=no
 ExecSearchPath=%s
 Environment=PATH=%s
 WorkingDirectory=%%h
+SyslogIdentifier=%s
 %s
 `, jobID, name, condDocroot,
 		searchPath,
 		searchPath,
+		cronSyslogIdentifier(jobID),
 		execStart)
 }
 
