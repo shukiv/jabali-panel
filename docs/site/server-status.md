@@ -20,9 +20,7 @@ signal without opening the full Server Status page.
 
 ## Per-service controls
 
-Each card has start / stop / restart buttons. Disabled by default — flip the **off-toggle** in Server Settings → General to enable for admins who want to react from the UI instead of SSH.
-
-When enabled, clicking restart fires `systemctl restart <unit>` via the agent. Audited.
+Each service row has Start, Restart, Reload, Stop, Enable at boot and Disable at boot buttons, depending on the unit's state. They are always on for admins; there is no setting that turns them off. The agent runs the action and the panel audits it. The panel refuses Stop and Disable on the units that serve the panel itself (`403 self_destruct_blocked`). See [Server Status](admin/server-status.md#service-controls).
 
 ## Why polling, not WebSocket
 

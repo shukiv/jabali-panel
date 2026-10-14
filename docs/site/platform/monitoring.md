@@ -26,7 +26,7 @@ jabali audit verify                    # check the hash chain for tampering
 
 ## 2. Notifications
 
-`/jabali-admin/notifications`. Event sources fan out to 6 channels (see [notifications.md](../notifications.md)).
+`/jabali-admin/notifications`. Event sources fan out to the configured channels: email, Slack, Discord, Telegram, ntfy, webhook, SMS and Web Push (see [notifications.md](../notifications.md)).
 
 Use for: human-attention-needed alerts in real time.
 

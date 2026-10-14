@@ -26,7 +26,7 @@ Comprehensive English docs for the current (Go) generation of Jabali Panel. Desi
 | [security.md](./security.md) | CrowdSec, AppSec, AppArmor, Snuffleupagus, AIDE, egress, malware. |
 | [firewall.md](./firewall.md) | UFW (port baseline) + CrowdSec (IP trust). |
 | [resource-limits.md](./resource-limits.md) | Quota + cgroup v2 + nginx limit_req. |
-| [notifications.md](./notifications.md) | 6 channels + event sources + routing. |
+| [notifications.md](./notifications.md) | Channels + event sources + routing. |
 | [server-status.md](./server-status.md) | The Server Status dashboard. |
 | [updates.md](./updates.md) | `jabali update` flow. |
 | [support.md](./support.md) | Encrypted diag bundle. |
