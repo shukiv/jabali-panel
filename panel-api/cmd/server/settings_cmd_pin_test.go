@@ -19,13 +19,13 @@ func TestSettingsCLI_RoutesThroughSettingsops(t *testing.T) {
 	}
 	s := string(src)
 
-	for _, want := range []string{"settingsops.NginxEffects(", "settingsops.Validate("} {
+	for _, want := range []string{"settingsops.NginxEffects(", "settingsops.Validate(", "settingsops.SupportChatEffect("} {
 		if !strings.Contains(s, want) {
 			t.Fatalf("CLI must route through %s (JAB-290)", want)
 		}
 	}
 	// The hand-copied wire must be gone: no literal verb, no per-key param map.
-	for _, gone := range []string{`"nginx.tunables.apply"`, `"client_max_body_size":`} {
+	for _, gone := range []string{`"nginx.tunables.apply"`, `"client_max_body_size":`, `"nginx.panel_csp.apply"`, `"support_chat":`} {
 		if strings.Contains(s, gone) {
 			t.Fatalf("CLI must not rebuild the nginx wire (%s) — settingsops owns it (JAB-290)", gone)
 		}
