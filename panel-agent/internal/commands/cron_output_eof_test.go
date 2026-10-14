@@ -80,6 +80,18 @@ func TestCronRunNow_ReadsTheLineAJobWritesAsItExits(t *testing.T) {
 			t.Errorf("journal read %q lacks the term %q", call, want)
 		}
 	}
+	assertNoManagerLines(t, call)
+}
+
+// assertNoManagerLines fails when a Run now read would take the manager's
+// "Starting…" / "Finished…" lines: the output is the job's own.
+func assertNoManagerLines(t *testing.T, call []string) {
+	t.Helper()
+	for _, a := range call[1:] {
+		if strings.HasPrefix(a, "USER_UNIT=") || strings.HasPrefix(a, "UNIT=") {
+			t.Errorf("Run now output must not take the manager's lines (%q): %q", a, call)
+		}
+	}
 }
 
 func TestCronRunNow_RootJobReadsTheLineItWritesAsItExits(t *testing.T) {
@@ -106,6 +118,7 @@ func TestCronRunNow_RootJobReadsTheLineItWritesAsItExits(t *testing.T) {
 			t.Errorf("journal read %q lacks the term %q", call, want)
 		}
 	}
+	assertNoManagerLines(t, call)
 }
 
 func TestCronTailLog_RootJobReadsEveryLineOfItsUnit(t *testing.T) {
