@@ -78,6 +78,7 @@ The diagnostic bundle has no settings. See [Support](./support.md).
 The chat is a [Chatwoot](https://www.chatwoot.com/) widget served from `support.jabali-panel.com`. Before you turn it on, know what that means:
 
 - A script from `support.jabali-panel.com` runs in the panel page. While either switch is on, the panel's `Content-Security-Policy` allows that one origin in `script-src`, `connect-src` and `frame-src`. With both off, the CSP is the same as on a panel without the chat.
+- The panel adds one script tag, `https://support.jabali-panel.com/ask_jabali.js`. The widget's code (its settings, the reply sound, the Jabali button, the light/dark theme) lives in that script on `support.jabali-panel.com`. Its operators can change the widget there without a panel update.
 - What people type in the chat goes to `support.jabali-panel.com`. The panel doesn't pass account details to the widget. Like any website chat, the widget sees the page address and the browser.
 
 The script loads after the page has finished loading and the browser is idle, so it doesn't slow the panel down. A CSP applies to the page it came with: after you turn the chat on, it shows from the next page load. Turning it off hides it at once.

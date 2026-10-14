@@ -19,7 +19,8 @@ import (
 // any third-party script, so the snippet allows that one origin, and only
 // while the chat is on in at least one panel:
 //
-//   - script-src: the widget's SDK (/packs/js/sdk.js);
+//   - script-src: the widget's loader (/ask_jabali.js), the widget code it
+//     loads (/embed/) and the SDK (/packs/js/sdk.js);
 //   - frame-src: the SDK opens the chat in an iframe from that origin;
 //   - connect-src: the SDK fetches its notification sound from it.
 //
