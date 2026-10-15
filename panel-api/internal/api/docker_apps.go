@@ -1229,6 +1229,13 @@ func (h *dockerAppHandler) update(c *gin.Context) {
 		if claims := ginctx.Claims(c); claims != nil {
 			uid, isAdmin = claims.UserID, claims.IsAdmin
 		}
+		// The edit rebuilds the app's domain row under uid. A tenant's app
+		// keeps its domain under the tenant: an admin acts for the owner with
+		// admin authority, as `jabali docker-app edit` does. Passing the
+		// admin's own id handed the tenant's domain to the admin on every save.
+		if isAdmin && app.UserID != nil && *app.UserID != "" {
+			uid = *app.UserID
+		}
 		if e := h.editDomainPorts(ctx, app, req.Domain, req.Ports, uid, isAdmin); e != nil {
 			if de, ok := e.(*dockerEditError); ok {
 				resp := gin.H{"error": de.Code}
@@ -1324,6 +1331,16 @@ func (h *dockerAppHandler) editDomainPorts(ctx context.Context, app *models.Dock
 	}
 
 	// --- domain ---
+	// A ports-only edit keeps the app's domain, as the GUI's edit (which
+	// always sends it) does: the domain's proxy_pass is rebuilt on the new
+	// port below, and the compose is rendered with the domain. Before, the
+	// row kept the old host port, so its vhost was skipped and the domain
+	// stopped serving the app, and the compose lost the domain.
+	if reqDomain == nil {
+		if current := h.installDomain(ctx, app.ID); current != "" {
+			reqDomain = &current
+		}
+	}
 	newDomain := ""
 	if reqDomain != nil {
 		newDomain = strings.TrimSpace(*reqDomain)
@@ -1457,6 +1474,13 @@ func (h *dockerAppHandler) editDomainPorts(ctx context.Context, app *models.Dock
 		if _, agentErr := h.cfg.Agent.Call(callCtx, "docker_app.install", installParams); agentErr != nil {
 			return &dockerEditError{http.StatusInternalServerError, "agent_redispatch_failed", firstLineString(agentErr.Error())}
 		}
+		// The redispatch brought the stack up. Without a status write the row
+		// kept the one it had: a failed install fixed by an edit stayed failed
+		// for good, since the reconciler doesn't poll failed rows. installing
+		// hands the row to the reconciler's status poll, which moves it on to
+		// running once the stack is healthy; the stale error goes.
+		cleared := ""
+		_ = h.cfg.Repo.UpdateStatus(ctx, app.ID, models.DockerAppStatusInstalling, &cleared)
 		// The install now runs the target's image: keep its label on it.
 		if target.Version != "" && target.Version != app.CatalogVersion {
 			_ = h.cfg.Repo.UpdateCatalogVersion(ctx, app.ID, target.Version)
@@ -1618,18 +1642,26 @@ func (h *dockerAppHandler) lifecycle(action string) gin.HandlerFunc {
 		// row just didn't follow). Rebuild rewrites the stack via
 		// docker compose up --force-recreate so the container ends
 		// up running too.
-		var newStatus string
-		switch action {
-		case "start", "restart", "rebuild":
-			newStatus = models.DockerAppStatusRunning
-		case "stop":
-			newStatus = models.DockerAppStatusStopped
-		}
-		if newStatus != "" {
+		if newStatus := DockerAppLifecycleStatus(action); newStatus != "" {
 			_ = h.cfg.Repo.UpdateStatus(ctx, app.ID, newStatus, nil)
 		}
 		c.Data(http.StatusOK, "application/json; charset=utf-8", raw)
 	}
+}
+
+// DockerAppLifecycleStatus is the status an app's row takes once the agent ran
+// lifecycle action: start, restart and rebuild leave the stack running, stop
+// leaves it stopped. Any other action leaves the row as it is (""). The admin
+// lifecycle door and `jabali docker-app <verb>` share it, so the edit gate
+// (status running means the container is up) holds right after either.
+func DockerAppLifecycleStatus(action string) string {
+	switch action {
+	case "start", "restart", "rebuild":
+		return models.DockerAppStatusRunning
+	case "stop":
+		return models.DockerAppStatusStopped
+	}
+	return ""
 }
 
 // updateImage handles POST /:id/update. Dispatches docker_app.update
