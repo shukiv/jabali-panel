@@ -89,11 +89,16 @@ func (f *fakeDockerRepo) Delete(_ context.Context, id string) error {
 
 func (f *fakeDockerRepo) CreatePort(context.Context, *models.DockerAppPublishedPort) error { return nil }
 
-func (f *fakeDockerRepo) FindFreeHostPort(context.Context, string, string) (int, error) {
-	return 10000, nil
+func (f *fakeDockerRepo) FindFreeHostPort(_ context.Context, _ string, skip func(int) bool) (int, error) {
+	for p := 10000; p <= 19999; p++ {
+		if skip == nil || !skip(p) {
+			return p, nil
+		}
+	}
+	return 0, repository.ErrNotFound
 }
 
-func (f *fakeDockerRepo) HostPortInUse(context.Context, string, string, int, string) (bool, error) {
+func (f *fakeDockerRepo) HostPortInUse(context.Context, string, int, string) (bool, error) {
 	return false, nil
 }
 

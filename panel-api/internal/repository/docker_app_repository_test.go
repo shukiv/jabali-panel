@@ -73,3 +73,51 @@ func TestDockerApp_FindByIDForUser_WrongOwnerIsNotFound(t *testing.T) {
 	require.Nil(t, app)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
+
+// A host port is one per protocol on the server: 127.0.0.1:P and 0.0.0.0:P
+// collide, so the allocator counts every bind interface's rows. skip lets the
+// caller pass over ports it knows are taken (the request's own picks, ports
+// in use on the host).
+func TestDockerApp_FindFreeHostPort_CountsEveryBindInterface(t *testing.T) {
+	db, mock, raw := newMockPackageDB(t)
+	defer raw.Close()
+	repo := NewDockerAppRepository(db)
+
+	mock.ExpectQuery(`SELECT .host_port. FROM .docker_app_published_ports. WHERE protocol = \? ORDER BY host_port ASC`).
+		WithArgs("tcp").
+		WillReturnRows(sqlmock.NewRows([]string{"host_port"}).AddRow(10000).AddRow(10001))
+
+	got, err := repo.FindFreeHostPort(context.Background(), "tcp", func(p int) bool { return p == 10002 })
+	require.NoError(t, err)
+	require.Equal(t, 10003, got)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestDockerApp_FindFreeHostPort_ExhaustedPool(t *testing.T) {
+	db, mock, raw := newMockPackageDB(t)
+	defer raw.Close()
+	repo := NewDockerAppRepository(db)
+
+	mock.ExpectQuery(`SELECT .host_port. FROM .docker_app_published_ports. WHERE protocol = \?`).
+		WithArgs("udp").
+		WillReturnRows(sqlmock.NewRows([]string{"host_port"}))
+
+	_, err := repo.FindFreeHostPort(context.Background(), "udp", func(int) bool { return true })
+	require.ErrorIs(t, err, ErrNotFound)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestDockerApp_HostPortInUse_CountsEveryBindInterface(t *testing.T) {
+	db, mock, raw := newMockPackageDB(t)
+	defer raw.Close()
+	repo := NewDockerAppRepository(db)
+
+	mock.ExpectQuery(`SELECT count\(\*\) FROM .docker_app_published_ports. WHERE \(protocol = \? AND host_port = \?\) AND app_id <> \?`).
+		WithArgs("tcp", 10000, "a1").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+
+	inUse, err := repo.HostPortInUse(context.Background(), "tcp", 10000, "a1")
+	require.NoError(t, err)
+	require.True(t, inUse)
+	require.NoError(t, mock.ExpectationsWereMet())
+}

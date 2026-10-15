@@ -55,6 +55,7 @@ func (f *installingDockerRepo) FindByID(context.Context, string) (*models.Docker
 func TestTenantDocker_InstallSendsPinnedServiceSet(t *testing.T) {
 	mock := agent.NewMockClient()
 	mock.On("docker_app.install", map[string]any{"status": "running"})
+	mock.On("net.loopback_listener_uid", map[string]any{"bound": false, "uid": -1})
 	cfg := dockerCgroupCfg(t, mock, models.DockerAppStatusStopped)
 	cfg.Repo = &installingDockerRepo{cfg.Repo.(*fakeDockerRepo)}
 	cfg.Domains = &attachingDomainRepo{fakeDomainRepo{byName: map[string]*models.Domain{"x.example.com": {ID: "d1", UserID: "u1", Name: "x.example.com"}}}}

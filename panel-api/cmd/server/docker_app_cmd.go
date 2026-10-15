@@ -109,6 +109,17 @@ func newDockerAppCatalogCmd() *cobra.Command {
 //
 // Resource limits, update-mode, and env overrides ARE wired so a
 // scripted ops install can pin the install to specific values.
+// dockerHostPortAgent is the agent the host-port allocator asks whether a port
+// is in use on the server. A nil client stays a nil interface (a nil
+// *agent.Client in the interface would not be nil); the install commands run
+// requireDBAndAgent, so it is set there.
+func dockerHostPortAgent() agent.AgentInterface {
+	if sharedAgent == nil {
+		return nil
+	}
+	return sharedAgent
+}
+
 func newDockerAppInstallCmd() *cobra.Command {
 	var (
 		name        string
@@ -195,6 +206,7 @@ func newDockerAppInstallCmd() *cobra.Command {
 			// Resolve catalog-default ports + persist them.
 			rows := make([]*models.DockerAppPublishedPort, 0, len(entry.Ports))
 			runtime := make(map[string]dockerapp.RuntimePort, len(entry.Ports))
+			taken := map[int]bool{}
 			for _, p := range entry.Ports {
 				if !p.DefaultEnabled {
 					continue
@@ -203,7 +215,7 @@ func newDockerAppInstallCmd() *cobra.Command {
 				if bind == "" {
 					bind = "loopback"
 				}
-				host, err := repo.FindFreeHostPort(ctx, bind, p.Protocol)
+				host, err := api.AllocateDockerHostPort(ctx, repo, dockerHostPortAgent(), p.Protocol, taken)
 				if err != nil {
 					_ = repo.Delete(ctx, app.ID)
 					return fmt.Errorf("allocate host port for %q: %w", p.Name, err)

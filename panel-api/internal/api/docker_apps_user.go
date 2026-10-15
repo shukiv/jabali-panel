@@ -584,7 +584,8 @@ func (h *userDockerAppHandler) install(c *gin.Context) {
 	resolvedPorts, runtimePorts, err := h.admin.resolvePorts(ctx, entry, nil, app.ID)
 	if err != nil {
 		_ = h.cfg.Repo.Delete(ctx, app.ID)
-		c.JSON(http.StatusBadRequest, gin.H{"error": "port_resolution_failed", "detail": err.Error()})
+		status, code := dockerPortErrorStatus(err)
+		c.JSON(status, gin.H{"error": code, "detail": err.Error()})
 		return
 	}
 	for _, p := range resolvedPorts {

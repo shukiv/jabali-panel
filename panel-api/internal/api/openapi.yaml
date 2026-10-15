@@ -1639,6 +1639,8 @@ paths:
       responses:
         "201": { description: "The install: DockerApp with ports" }
         "400": { description: "invalid_request, invalid_name, invalid_update_mode or another validation error" }
+        "409": { description: "host_port_in_use: a host_port the request sets is held by another install, or something on the server already uses it" }
+        "503": { description: "host_port_unavailable: no free host port, or the server couldn't be asked whether one is free" }
 
   /admin/docker-apps/catalog:
     get:
@@ -1690,7 +1692,8 @@ paths:
       parameters: [ { in: path, name: id, required: true, schema: { type: string, format: ulid } } ]
       responses:
         "200": { description: Updated }
-        "409": { description: "The container is running, or (`update_required`, GH #1956) the catalog has no image for the install's version any more; `detail` says what to do", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "409": { description: "The container is running, or (`update_required`, GH #1956) the catalog has no image for the install's version any more, or (`host_port_in_use`) a host_port the request sets is held by another install or already used on the server; `detail` says what to do", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "503": { description: "host_port_unavailable: no free host port, or the server couldn't be asked whether one is free", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
     delete:
       tags: [Docker Apps]
       summary: Uninstall a Docker app (admin)
@@ -7475,6 +7478,7 @@ paths:
         "400": { description: "invalid_request, invalid_name, domain_required, invalid_domain, unknown_slug, invalid_env or port_resolution_failed" }
         "403": { description: "docker_tenant_not_enabled, no_account, docker_apps_require_package, no_package or docker_apps_not_in_package" }
         "409": { description: "docker_app_quota_exceeded, disk_quota_exceeded, domain_in_use or already_installed" }
+        "503": { description: "host_port_unavailable: no free host port, or the server couldn't be asked whether one is free" }
 
   /docker-apps/catalog:
     get:

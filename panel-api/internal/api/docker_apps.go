@@ -558,7 +558,8 @@ func (h *dockerAppHandler) install(c *gin.Context) {
 	resolvedPorts, runtimePorts, err := h.resolvePorts(ctx, entry, req.Ports, app.ID)
 	if err != nil {
 		_ = h.cfg.Repo.Delete(ctx, app.ID)
-		c.JSON(http.StatusBadRequest, gin.H{"error": "port_resolution_failed", "detail": err.Error()})
+		status, code := dockerPortErrorStatus(err)
+		c.JSON(status, gin.H{"error": code, "detail": err.Error()})
 		return
 	}
 	for _, p := range resolvedPorts {
@@ -799,69 +800,82 @@ func (h *dockerAppHandler) resolvePorts(
 
 	rows := make([]*models.DockerAppPublishedPort, 0)
 	runtime := make(map[string]dockerapp.RuntimePort, len(entry.Ports))
+	// taken holds the host ports this install already has, so two of its
+	// ports never share one. Pinned ports go first, so an auto port can't
+	// take a port the request pins further down the list.
+	taken := map[int]bool{}
+	slots := make([]*models.DockerAppPublishedPort, len(entry.Ports))
 
-	for _, p := range entry.Ports {
-		o, hasOverride := overrideByName[p.Name]
-		enabled := p.DefaultEnabled
-		if hasOverride && o.Enabled != nil {
-			enabled = *o.Enabled
-		}
-		if !enabled {
-			continue
-		}
-		bind := p.DefaultBind
-		if hasOverride && o.BindInterface != "" {
-			bind = o.BindInterface
-		}
-		rp := p.DefaultReverseProxy
-		if hasOverride && o.ReverseProxy != nil {
-			rp = *o.ReverseProxy
-		}
-		// Allocate or pin host port.
-		hostPort := 0
-		if hasOverride && o.HostPort > 0 {
-			hostPort = o.HostPort
-			// Reject the well-known reserved ports a tenant install
-			// must never bind: the panel + its dependencies own these
-			// across every fresh deploy. The list lives next to the
-			// resolver so a future tweak doesn't require chasing a
-			// separate consts file.
-			if isReservedHostPort(hostPort) {
-				return nil, nil, fmt.Errorf("host port %d is reserved (port %s)", hostPort, p.Name)
+	for pass := 0; pass < 2; pass++ {
+		pinned := pass == 0
+		for i, p := range entry.Ports {
+			o, hasOverride := overrideByName[p.Name]
+			if (hasOverride && o.HostPort > 0) != pinned {
+				continue
 			}
-			// DB uniqueness on (bind_interface, host_port, protocol) is
-			// enforced at insert. Surface the conflict as a clear error
-			// instead of a generic 'port_persist_failed' the user can't
-			// diagnose.
-			if taken, terr := h.cfg.Repo.HostPortInUse(ctx, bindInterfaceForDB(bind), p.Protocol, hostPort, appID); terr != nil {
-				return nil, nil, terr
-			} else if taken {
-				return nil, nil, fmt.Errorf("host port %d/%s on %s is already bound by another install (port %s)", hostPort, p.Protocol, bindInterfaceForDB(bind), p.Name)
+			enabled := p.DefaultEnabled
+			if hasOverride && o.Enabled != nil {
+				enabled = *o.Enabled
 			}
-		} else {
-			free, err := h.cfg.Repo.FindFreeHostPort(ctx, bindInterfaceForDB(bind), p.Protocol)
-			if err != nil {
-				return nil, nil, err
+			if !enabled {
+				continue
 			}
-			hostPort = free
+			bind := p.DefaultBind
+			if hasOverride && o.BindInterface != "" {
+				bind = o.BindInterface
+			}
+			rp := p.DefaultReverseProxy
+			if hasOverride && o.ReverseProxy != nil {
+				rp = *o.ReverseProxy
+			}
+			// Allocate or pin host port.
+			hostPort := 0
+			if pinned {
+				hostPort = o.HostPort
+				// Reject the well-known reserved ports a tenant install
+				// must never bind: the panel + its dependencies own these
+				// across every fresh deploy. The list lives next to the
+				// resolver so a future tweak doesn't require chasing a
+				// separate consts file.
+				if isReservedHostPort(hostPort) {
+					return nil, nil, fmt.Errorf("host port %d is reserved (port %s)", hostPort, p.Name)
+				}
+				// Surface a port held by another install, or by something on
+				// the server, as a clear error instead of a generic
+				// 'port_persist_failed' or a container that fails to start.
+				if err := checkPinnedHostPort(ctx, h.cfg.Repo, h.cfg.Agent, p.Protocol, hostPort, appID, p.Name, taken); err != nil {
+					return nil, nil, err
+				}
+			} else {
+				free, err := AllocateDockerHostPort(ctx, h.cfg.Repo, h.cfg.Agent, p.Protocol, taken)
+				if err != nil {
+					return nil, nil, fmt.Errorf("allocate host port for %s: %w", p.Name, err)
+				}
+				hostPort = free
+			}
+			slots[i] = &models.DockerAppPublishedPort{
+				ID:            ulid.Make().String(),
+				AppID:         appID,
+				PortName:      p.Name,
+				ContainerPort: p.ContainerPort,
+				BindInterface: bindInterfaceForDB(bind),
+				HostPort:      hostPort,
+				Protocol:      p.Protocol,
+				ReverseProxy:  rp,
+				Enabled:       true,
+			}
+			runtime[p.Name] = dockerapp.RuntimePort{
+				HostPort:      hostPort,
+				ContainerPort: p.ContainerPort,
+				BindInterface: bindInterfaceForRuntime(bind),
+				Protocol:      p.Protocol,
+			}
 		}
-		row := &models.DockerAppPublishedPort{
-			ID:            ulid.Make().String(),
-			AppID:         appID,
-			PortName:      p.Name,
-			ContainerPort: p.ContainerPort,
-			BindInterface: bindInterfaceForDB(bind),
-			HostPort:      hostPort,
-			Protocol:      p.Protocol,
-			ReverseProxy:  rp,
-			Enabled:       true,
-		}
-		rows = append(rows, row)
-		runtime[p.Name] = dockerapp.RuntimePort{
-			HostPort:      hostPort,
-			ContainerPort: p.ContainerPort,
-			BindInterface: bindInterfaceForRuntime(bind),
-			Protocol:      p.Protocol,
+	}
+	// Rows in catalog order, as before.
+	for _, row := range slots {
+		if row != nil {
+			rows = append(rows, row)
 		}
 	}
 	return rows, runtime, nil
@@ -1281,7 +1295,8 @@ func (h *dockerAppHandler) editDomainPorts(ctx context.Context, app *models.Dock
 		}
 		resolved, runtime, perr := h.resolvePorts(ctx, entry, reqPorts, app.ID)
 		if perr != nil {
-			return &dockerEditError{http.StatusBadRequest, "port_resolution_failed", perr.Error()}
+			status, code := dockerPortErrorStatus(perr)
+			return &dockerEditError{status, code, perr.Error()}
 		}
 		for _, row := range resolved {
 			if err := h.cfg.Repo.CreatePort(ctx, row); err != nil {
