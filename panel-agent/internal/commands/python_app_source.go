@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -114,6 +115,9 @@ func fetchPythonSource(ctx context.Context, url, want string) (string, error) {
 // attempt of the same pin unpacked (its marker names that pin).
 func checkPythonSourceRoot(appRoot, sum string) error {
 	entries, err := os.ReadDir(appRoot)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil // a fresh install: the venv step creates it
+	}
 	if err != nil {
 		return fmt.Errorf("read app directory: %w", err)
 	}

@@ -39,6 +39,9 @@ default_env:
     required: true
   - key: DJANGO_ALLOWED_HOSTS
     description: Comma-separated hostnames sic serves.
+  - key: DJANGO_SETTINGS_MODULE
+    default: sic.local.jabali_settings
+    description: sic's settings plus Jabali's overrides (written at install).
   - key: SIC_ADMIN_EMAIL
     description: Email of the first admin account (username admin), made at install. Empty means admin@ the first allowed host. Changing it later does nothing.
   - key: SIC_ADMIN_PASSWORD

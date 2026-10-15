@@ -1,9 +1,12 @@
 # sic install (GH #2156). sic reads its settings from two files it leaves to
 # the operator: sic/local/secret_settings.py (SECRET_KEY) and
-# sic/local/settings_local.py (imported last). Write both so every value comes
-# from the app's env at run time, then migrate, point the Sites row at the
-# domain and make the first admin. Runs AS THE TENANT in app_root; no upstream
-# file is changed.
+# sic/local/settings_local.py (imported near the end). Write both so every
+# value comes from the app's env at run time. sic's settings.py then pins
+# CSRF_TRUSTED_ORIGINS to sic.pm's own hosts, after that import, so the app
+# runs under sic/local/jabali_settings.py (DJANGO_SETTINGS_MODULE), which
+# imports sic's settings and resets it. Then migrate, point the Sites row at
+# the domain and make the first admin. Runs AS THE TENANT in app_root; no
+# upstream file is changed.
 import os
 import re
 import sys
@@ -51,9 +54,18 @@ with open(os.path.join(local, "settings_local.py"), "w") as f:
         "SERVER_EMAIL = DEFAULT_FROM_EMAIL\n" % static_root
     )
 
+with open(os.path.join(local, "jabali_settings.py"), "w") as f:
+    f.write(
+        "# Written by Jabali. sic's settings.py trusts https://*.sic.pm for CSRF\n"
+        "# after it imports settings_local; this instance trusts only its own host.\n"
+        "from sic.settings import *  # noqa: F401,F403\n"
+        "\n"
+        "CSRF_TRUSTED_ORIGINS = []\n"
+    )
+
 # The script's own directory (app_root) is first on sys.path, so the sic
 # package imports from here.
-os.environ.setdefault("DJANGO_SETTINGS_MODULE", "sic.settings")
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "sic.local.jabali_settings")
 import django  # noqa: E402
 
 django.setup()

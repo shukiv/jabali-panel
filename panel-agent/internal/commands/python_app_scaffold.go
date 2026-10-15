@@ -127,6 +127,15 @@ func pythonAppScaffoldHandler(ctx context.Context, params json.RawMessage) (any,
 		return pythonScaffoldResult{Skipped: true}, nil
 	}
 
+	// GH #2156: refuse a directory holding the tenant's own files before
+	// anything is set up for it (venv, system libraries, pip). Step 3 checks
+	// again right before unpacking.
+	if p.ScaffoldKind == "source" {
+		if err := checkPythonSourceRoot(p.AppRoot, p.SourceSHA256); err != nil {
+			return nil, err
+		}
+	}
+
 	venv := filepath.Join(p.AppRoot, "venv")
 	// GH #357: resolve the interpreter via the user's PATH (matching
 	// python_app_apply.go) rather than hardcoding /usr/bin. app.python.versions

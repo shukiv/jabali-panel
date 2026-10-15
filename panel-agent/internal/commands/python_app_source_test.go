@@ -115,8 +115,8 @@ func TestFetchPythonSource_RefusesRedirectsErrorsAndOversize(t *testing.T) {
 	if _, err := fetchPythonSource(context.Background(), srv.URL+"/moved", sum); err == nil || !strings.Contains(err.Error(), "redirect") {
 		t.Fatalf("a redirect: err %v, want it refused", err)
 	}
-	if _, err := fetchPythonSource(context.Background(), srv.URL+"/gone", sum); err == nil {
-		t.Fatal("a 404 was accepted")
+	if _, err := fetchPythonSource(context.Background(), srv.URL+"/gone", sum); err == nil || !strings.Contains(err.Error(), "404") {
+		t.Fatalf("a 404: err %v, want it named", err)
 	}
 	prev := pythonSourceMaxBytes
 	pythonSourceMaxBytes = int64(len(archive) - 1)
@@ -225,6 +225,35 @@ func TestPythonScaffold_SourceUnpacksAsTheTenant(t *testing.T) {
 	if untar == "" || !strings.Contains(untar, "--strip-components=1") || !strings.Contains(untar, "-C "+appRoot) {
 		t.Fatalf("the archive wasn't unpacked by tar as the tenant into app_root: %q", untar)
 	}
+	if !strings.Contains(untar, "--no-same-owner") || !strings.Contains(untar, "--no-same-permissions") {
+		t.Fatalf("tar must not take owners or modes from the archive: %q", untar)
+	}
+}
+
+func TestPythonScaffold_SourceInstallsItsSystemLibs(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+	archive, sum := sourceArchive(t, map[string]string{"manage.py": "print('sic')\n"})
+	srv := sourceServer(t, archive)
+	asTenantExec(t)
+	l := &libExec{pkgnames: []string{"libmagickwand-6.q16-7t64"}}
+	l.install(t)
+	p := sourceScaffoldParams(t.TempDir(), srv.URL+"/a.tar.gz", sum)
+	p.SystemLibs = []string{"magickwand"}
+	raw, _ := json.Marshal(p)
+	if _, err := pythonAppScaffoldHandler(context.Background(), raw); err != nil {
+		t.Fatalf("scaffold: %v", err)
+	}
+	if len(l.installs) != 1 || !strings.HasSuffix(strings.Join(l.installs[0], " "), " libmagickwand-6.q16-7t64") {
+		t.Fatalf("installs = %v, want libmagickwand-6.q16-7t64 once", l.installs)
+	}
+}
+
+// An absent app directory is an empty one: on a fresh install the venv step
+// creates it.
+func TestCheckPythonSourceRoot_MissingDirIsEmpty(t *testing.T) {
+	if err := checkPythonSourceRoot(filepath.Join(t.TempDir(), "new"), strings.Repeat("a", 64)); err != nil {
+		t.Fatalf("missing dir: %v", err)
+	}
 }
 
 func TestPythonScaffold_SourceRefusesATenantsDirectory(t *testing.T) {
@@ -232,17 +261,26 @@ func TestPythonScaffold_SourceRefusesATenantsDirectory(t *testing.T) {
 	archive, sum := sourceArchive(t, map[string]string{"manage.py": "print('sic')\n"})
 	srv := sourceServer(t, archive)
 	calls := asTenantExec(t)
+	l := &libExec{pkgnames: []string{"libmagickwand-6.q16-7t64"}}
+	l.install(t)
 	appRoot := t.TempDir()
 	os.WriteFile(filepath.Join(appRoot, "index.php"), []byte("<?php"), 0o644)
 
-	raw, _ := json.Marshal(sourceScaffoldParams(appRoot, srv.URL+"/a.tar.gz", sum))
+	p := sourceScaffoldParams(appRoot, srv.URL+"/a.tar.gz", sum)
+	p.SystemLibs = []string{"magickwand"}
+	raw, _ := json.Marshal(p)
 	if _, err := pythonAppScaffoldHandler(context.Background(), raw); err == nil || !strings.Contains(err.Error(), "not empty") {
 		t.Fatalf("err %v, want the non-empty directory refused", err)
 	}
+	// Refused before anything is set up for it: no venv in the tenant's
+	// directory, no pip, no system package.
 	for _, c := range *calls {
-		if strings.Contains(c, " tar ") {
-			t.Fatalf("tar ran into the tenant's directory: %q", c)
+		if strings.Contains(c, " tar ") || strings.Contains(c, " venv ") || strings.Contains(c, "pip") {
+			t.Fatalf("a refused directory still ran %q", c)
 		}
+	}
+	if len(l.installs) != 0 {
+		t.Fatalf("a refused directory still installed %v", l.installs)
 	}
 	if _, err := os.Stat(filepath.Join(appRoot, "manage.py")); err == nil {
 		t.Fatal("the archive was unpacked over the tenant's files")
@@ -279,6 +317,8 @@ type libExec struct {
 	present  bool     // ldconfig lists libMagickWand
 	pkgnames []string // apt-cache pkgnames output
 	installs [][]string
+	// staysMissing: the install "succeeds" but the library never appears.
+	staysMissing bool
 }
 
 func (l *libExec) install(t *testing.T) {
@@ -296,7 +336,7 @@ func (l *libExec) install(t *testing.T) {
 			return exec.CommandContext(ctx, "printf", "%s", strings.Join(l.pkgnames, "\n")+"\n")
 		case "systemd-run":
 			l.installs = append(l.installs, args)
-			l.present = true
+			l.present = !l.staysMissing
 			return exec.CommandContext(ctx, "true")
 		}
 		return prev(ctx, name, args...)
@@ -328,6 +368,32 @@ func TestEnsurePythonSystemLibs_InstallsTheDistrosRuntimePackage(t *testing.T) {
 		if !strings.Contains(args, "--setenv=DEBIAN_FRONTEND=noninteractive") || strings.Contains(args, "bash") {
 			t.Fatalf("%s: systemd-run %q: want --setenv and no shell", distro, args)
 		}
+	}
+}
+
+// A host whose apt knows two runtime generations gets the newest.
+func TestEnsurePythonSystemLibs_PicksTheNewestRuntime(t *testing.T) {
+	l := &libExec{pkgnames: []string{"libmagickwand-7.q16-10", "libmagickwand-6.q16-7t64", "libmagickwand-6.q16-6"}}
+	l.install(t)
+	if err := ensurePythonSystemLibs(context.Background(), []string{"magickwand"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(l.installs) != 1 || !strings.HasSuffix(strings.Join(l.installs[0], " "), " libmagickwand-7.q16-10") {
+		t.Fatalf("installs = %v, want libmagickwand-7.q16-10", l.installs)
+	}
+	for _, c := range [][2]string{{"libmagickwand-6.q16-6", "libmagickwand-6.q16-7t64"}, {"libmagickwand-6.q16-7t64", "libmagickwand-7.q16-10"}} {
+		if !versionLess(c[0], c[1]) || versionLess(c[1], c[0]) {
+			t.Errorf("versionLess(%s, %s) wrong", c[0], c[1])
+		}
+	}
+}
+
+// apt saying it installed the package isn't enough: the library must show up.
+func TestEnsurePythonSystemLibs_FailsWhenTheLibStaysMissing(t *testing.T) {
+	l := &libExec{pkgnames: []string{"libmagickwand-6.q16-7t64"}, staysMissing: true}
+	l.install(t)
+	if err := ensurePythonSystemLibs(context.Background(), []string{"magickwand"}); err == nil || !strings.Contains(err.Error(), "ldconfig lists no") {
+		t.Fatalf("err %v, want the missing library reported", err)
 	}
 }
 

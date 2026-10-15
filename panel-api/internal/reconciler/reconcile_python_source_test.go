@@ -73,6 +73,11 @@ func TestScaffoldPythonApp_Source(t *testing.T) {
 	if env["DJANGO_ALLOWED_HOSTS"] != "news.example.com" || env["JAB_STATIC_ROOT"] != "staticfiles" || env["JAB_PROJECT"] != "sic" {
 		t.Errorf("patch env = %v", env)
 	}
+	// sic's settings.py trusts https://*.sic.pm for CSRF after its local
+	// import; the app runs under the module the patch writes, which resets it.
+	if env["DJANGO_SETTINGS_MODULE"] != "sic.local.jabali_settings" {
+		t.Errorf("DJANGO_SETTINGS_MODULE = %q, want sic.local.jabali_settings", env["DJANGO_SETTINGS_MODULE"])
+	}
 	gen, _ := ag.params["generate"].([]string)
 	if !reflect.DeepEqual(gen, []string{"DJANGO_SECRET_KEY", "SIC_ADMIN_PASSWORD"}) {
 		t.Errorf("generate = %v", gen)
