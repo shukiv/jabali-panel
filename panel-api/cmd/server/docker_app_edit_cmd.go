@@ -19,6 +19,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/api"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dockerapp"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
@@ -71,13 +72,7 @@ func newDockerAppEditCmd() *cobra.Command {
 			if cerr != nil {
 				return fmt.Errorf("load docker catalog: %w", cerr)
 			}
-			cfg := api.DockerAppHandlerConfig{
-				Repo:    dockerAppRepoFromDB(),
-				Catalog: cat,
-				Domains: repository.NewDomainRepository(sharedDB),
-				Agent:   sharedAgent,
-				Users:   userRepo(),
-			}
+			cfg := cliDockerEditConfig(cat)
 			// Operator acts on the app's behalf: attribute any new domain row to
 			// the app OWNER, with admin authority so the ownership check passes.
 			updated, eerr := api.DockerAppEditDomainPorts(ctx, cfg, app.ID, domainPtr, ports, *app.UserID, true)
@@ -148,4 +143,20 @@ func parsePortSpecs(specs []string) ([]api.DockerAppPortEdit, error) {
 		out = append(out, pe)
 	}
 	return out, nil
+}
+
+// cliDockerEditConfig wires the edit the way the admin API does, including
+// the repositories behind the domain checks (alias, panel hostname and mail
+// hostname, ownership state). Without them those checks pass every name.
+func cliDockerEditConfig(cat *dockerapp.Catalog) api.DockerAppHandlerConfig {
+	return api.DockerAppHandlerConfig{
+		Repo:             dockerAppRepoFromDB(),
+		Catalog:          cat,
+		Domains:          repository.NewDomainRepository(sharedDB),
+		DomainOwnership:  repository.NewDomainOwnershipRepository(sharedDB),
+		ServerSettings:   repository.NewServerSettingsRepository(sharedDB),
+		WebDomainAliases: repository.NewWebDomainAliasRepository(sharedDB),
+		Agent:            sharedAgent,
+		Users:            userRepo(),
+	}
 }
