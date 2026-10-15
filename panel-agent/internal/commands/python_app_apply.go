@@ -69,6 +69,10 @@ type pythonAppApplyParams struct {
 	MemoryLimit   string            `json:"memory_limit,omitempty"`
 	CPULimit      string            `json:"cpu_limit,omitempty"`
 	PIDsLimit     int               `json:"pids_limit,omitempty"`
+	// SystemLibs are shared libraries the app's catalog entry needs (GH
+	// #2156), installed when missing, e.g. after the app is restored onto
+	// another server.
+	SystemLibs []string `json:"system_libs,omitempty"`
 }
 
 type pythonAppApplyResult struct {
@@ -126,6 +130,9 @@ func pythonAppApplyHandler(ctx context.Context, params json.RawMessage) (any, er
 	if !regexp.MustCompile(`^[A-Za-z0-9_.]+:[A-Za-z0-9_]+$`).MatchString(p.Entrypoint) {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "entrypoint must be module:callable"}
 	}
+	if err := validPythonSystemLibs(p.SystemLibs); err != nil {
+		return nil, err
+	}
 
 	// Scope-validate app_root under the owner's home.
 	homeDir := "/home/" + p.Username
@@ -174,6 +181,13 @@ func pythonAppApplyHandler(ctx context.Context, params json.RawMessage) (any, er
 	// pip forever. Gate each expensive/disruptive step on real change and only
 	// restart when something actually changed. `needsRestart` accumulates that.
 	needsRestart := false
+
+	// 0) shared libraries the app's catalog entry needs (GH #2156). A no-op
+	// once they are there; after a restore onto another server it installs them
+	// before the app is built and started.
+	if err := ensurePythonSystemLibs(ctx, p.SystemLibs); err != nil {
+		return nil, err
+	}
 
 	// 1-2) venv + requirements.txt + app server, in the background. GH #357: a
 	// first install of a real requirements.txt takes minutes, longer than the

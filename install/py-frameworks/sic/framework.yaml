@@ -1,0 +1,60 @@
+slug: sic
+name: sic
+version: "9bef6ed"
+description: A community link aggregator (like Lobsters or Hacker News) built on Django, served by gunicorn.
+icon: /framework-icons/sic.svg
+tags: [wsgi, community, django]
+popularity: 20
+upstream: https://github.com/epilys/sic
+docs: https://sic.pm/
+app_type: wsgi
+server: gunicorn
+# Django 6 needs Python 3.12 or newer.
+python_min: "3.12"
+# sic pins its own versions in requirements.txt; Wand is pinned to the newest
+# 0.6 release inside its >=0.6.6,<0.7 range.
+pip_requirements:
+  - Django==6.0.3
+  - Wand==0.6.13
+  - linkify-it-py==1.0
+  - markdown-it-py[linkify]==1.1.0
+  - pymemcache==4.0.0
+  - gunicorn==23.0.0
+# GH #2156: sic has no releases, so the code is one pinned commit. Moving the
+# pin is a hand edit of url + sha256 together; a changed archive fails closed.
+scaffold:
+  kind: source
+  url: https://codeload.github.com/epilys/sic/tar.gz/9bef6edad2f78e93265739969e1974236127ee7d
+  sha256: 30d334b170115bb5346c6f974a7a40175630fa1dee8c7b01d590a92c8b7fe926
+  project: sic
+# Wand loads ImageMagick's libMagickWand at import time (avatars).
+system_libs: [magickwand]
+entrypoint_template: "{{.Project}}.wsgi:application"
+needs_db: sqlite
+static_url: /static/
+static_root: staticfiles
+default_env:
+  - key: DJANGO_SECRET_KEY
+    generate: secret_key
+    required: true
+  - key: DJANGO_ALLOWED_HOSTS
+    description: Comma-separated hostnames sic serves.
+  - key: SIC_ADMIN_EMAIL
+    description: Email of the first admin account (username admin), made at install. Empty means admin@ the first allowed host. Changing it later does nothing.
+  - key: SIC_ADMIN_PASSWORD
+    generate: hex32
+    description: Initial password of the first admin account. Sign in as admin and change it in sic; changing it here later does nothing.
+  - key: SIC_EMAIL_HOST
+    default: localhost
+    description: SMTP host sic sends mail through (sign-up and password-reset links).
+  - key: SIC_EMAIL_PORT
+    default: "25"
+  - key: SIC_EMAIL_HOST_USER
+  - key: SIC_EMAIL_HOST_PASSWORD
+  - key: SIC_EMAIL_USE_TLS
+    default: "false"
+  - key: SIC_DEFAULT_FROM_EMAIL
+    description: From address of sic's mail. Empty means noreply@ the first allowed host.
+post_install:
+  - migrate
+  - collectstatic

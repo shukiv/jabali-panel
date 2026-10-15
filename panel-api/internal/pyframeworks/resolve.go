@@ -17,9 +17,15 @@ type CreateSpec struct {
 	Requirements []string // pinned pip deps written to requirements.txt
 	Project      string   // scaffold project name (cmd scaffolds)
 
-	ScaffoldKind    string            // cmd | template
-	ScaffoldCommand []string          // argv for a cmd scaffold (rendered); nil for template
-	TemplateFiles   map[string]string // relpath->content for a template scaffold; nil for cmd
+	ScaffoldKind    string            // cmd | template | source
+	ScaffoldCommand []string          // argv for a cmd scaffold (rendered); nil otherwise
+	TemplateFiles   map[string]string // relpath->content for a template scaffold; nil otherwise
+	// SourceURL + SourceSHA256 are a source scaffold's pinned upstream tarball.
+	SourceURL    string
+	SourceSHA256 string
+	// SystemLibs are the shared libraries (KnownSystemLibs names) the agent
+	// installs on demand before the app is scaffolded or applied.
+	SystemLibs []string
 
 	// HardenSettings requests the Django-style settings.py rewrite (SECRET_KEY +
 	// ALLOWED_HOSTS from env, STATIC_ROOT). Derived from a secret_key generator.
@@ -68,7 +74,7 @@ func (e Entry) ResolveCreate() (CreateSpec, error) {
 	if project == "" {
 		project = "app"
 	}
-	if e.Scaffold.Kind == "cmd" && !projectRe.MatchString(project) {
+	if (e.Scaffold.Kind == "cmd" || e.Scaffold.Kind == "source") && !projectRe.MatchString(project) {
 		return CreateSpec{}, fmt.Errorf("scaffold.project %q: must be an importable identifier ^[a-z][a-z0-9_]{0,31}$", project)
 	}
 
@@ -91,13 +97,20 @@ func (e Entry) ResolveCreate() (CreateSpec, error) {
 		MediaRoot:    e.MediaRoot,
 		PostInstall:  append([]string(nil), e.PostInstall...),
 	}
-	if e.Scaffold.Kind == "cmd" {
+	switch e.Scaffold.Kind {
+	case "cmd":
 		spec.ScaffoldCommand = strings.Fields(renderProject(e.Scaffold.Command, project))
 		if len(spec.ScaffoldCommand) == 0 {
 			return CreateSpec{}, fmt.Errorf("scaffold.command rendered empty")
 		}
-	} else {
+	case "source":
+		spec.SourceURL = e.Scaffold.URL
+		spec.SourceSHA256 = e.Scaffold.SHA256
+	default:
 		spec.TemplateFiles = e.TemplateFiles
+	}
+	if len(e.SystemLibs) > 0 {
+		spec.SystemLibs = append([]string(nil), e.SystemLibs...)
 	}
 	spec.PatchScript = e.PatchScript
 	spec.Env = append([]EnvVar(nil), e.DefaultEnv...)
