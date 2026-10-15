@@ -1457,6 +1457,13 @@ func (h *dockerAppHandler) editDomainPorts(ctx context.Context, app *models.Dock
 		if _, agentErr := h.cfg.Agent.Call(callCtx, "docker_app.install", installParams); agentErr != nil {
 			return &dockerEditError{http.StatusInternalServerError, "agent_redispatch_failed", firstLineString(agentErr.Error())}
 		}
+		// The redispatch brought the stack up. Without a status write the row
+		// kept the one it had: a failed install fixed by an edit stayed failed
+		// for good, since the reconciler doesn't poll failed rows. installing
+		// hands the row to the reconciler's status poll, which moves it on to
+		// running once the stack is healthy; the stale error goes.
+		cleared := ""
+		_ = h.cfg.Repo.UpdateStatus(ctx, app.ID, models.DockerAppStatusInstalling, &cleared)
 		// The install now runs the target's image: keep its label on it.
 		if target.Version != "" && target.Version != app.CatalogVersion {
 			_ = h.cfg.Repo.UpdateCatalogVersion(ctx, app.ID, target.Version)
