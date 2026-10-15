@@ -3394,7 +3394,8 @@ func (r *Reconciler) tryACMEOrFallback(ctx context.Context, domain *models.Domai
 	// hand the agent — which rejects webroot "" anyway. Fall back to
 	// self-signed with a reason that says so, instead of a call that can only
 	// fail. (A CDN-fronted one already took DNS-01 above.)
-	if domain.DocRoot == "" {
+	webroot := acmeWebroot(domain)
+	if webroot == "" {
 		r.fallbackToSelfSignAndRetry(ctx, domain, cert, "no document root to answer the Let's Encrypt HTTP-01 challenge from")
 		return
 	}
@@ -3405,7 +3406,7 @@ func (r *Reconciler) tryACMEOrFallback(ctx context.Context, domain *models.Domai
 
 	params := map[string]any{
 		"domain":  domain.Name,
-		"webroot": domain.DocRoot,
+		"webroot": webroot,
 		"email":   srv.AdminEmail,
 		"staging": staging,
 	}
@@ -3716,6 +3717,21 @@ func (r *Reconciler) RetrySSLDueForACME(ctx context.Context) {
 		r.log.Debug("ssl: retrying acme issuance", "domain", domain.Name, "retry_count", cert.RetryCount)
 		r.tryACMEOrFallback(ctx, domain, &cert)
 	}
+}
+
+// acmeWebroot is the directory an HTTP-01 challenge for domain is answered
+// from, or "" when it has none (the panel hostname's row). A docker-app proxy
+// domain has no document root, but its vhost serves
+// /.well-known/acme-challenge/ from the shared ACME root
+// (panel-agent docker_app_vhost.go), the one the per-domain mail certificates
+// use too (mail_certificate_reconciler.go). Handing ssl.issue its empty
+// DocRoot instead meant the agent refused every attempt and the domain stayed
+// self-signed unless a CDN sent it to DNS-01.
+func acmeWebroot(domain *models.Domain) string {
+	if domain.ManagedBy == models.DomainManagedByDockerApp {
+		return "/var/www/jabali-acme"
+	}
+	return domain.DocRoot
 }
 
 // dropPanelHostnameACMERow removes a per-domain Let's Encrypt certificate row

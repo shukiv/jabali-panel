@@ -238,7 +238,7 @@ func (r *Reconciler) expandCertSANsForDrift(ctx context.Context, cert repository
 
 	params := map[string]any{
 		"domain":    dom.Name,
-		"webroot":   dom.DocRoot,
+		"webroot":   acmeWebroot(dom),
 		"email":     srv.AdminEmail,
 		"staging":   cert.Staging,
 		"hostnames": request,
