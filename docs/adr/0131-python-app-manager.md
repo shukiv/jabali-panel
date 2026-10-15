@@ -113,3 +113,36 @@ Known limit: an ASGI framework mounted at a sub-path `base_uri` relies on
 ASGI/Channels, Starlette, Litestar, Quart); root (`/`) mounts are unaffected.
 WSGI apps (gunicorn `SCRIPT_NAME`: Flask, Django, Wagtail, Dash, Bottle) handle
 sub-paths cleanly.
+
+## Addendum — Full-app entries, shared libraries, python_min (GH #2156, 2026-10)
+
+A catalog entry can install a complete upstream application instead of a
+framework starter: `scaffold.kind: source` with `url` (only
+`https://codeload.github.com/<owner>/<repo>/tar.gz/<40-hex commit>`) and
+`sha256`. Both the catalog loader and the agent validate the shape. The agent
+downloads the archive as root into a 0600 temp file (redirects refused, 64 MiB
+cap, 5-minute timeout), checks the sha256, and unpacks it AS THE TENANT
+(`tar --strip-components=1 --no-same-owner --no-same-permissions`) into an app
+root that holds only the venv. A mismatched archive fails closed and nothing is
+unpacked. A `.jabali-source` marker naming the hash lets an interrupted
+scaffold re-run over its own partial tree.
+
+`system_libs` names shared libraries the app loads (known set: `magickwand`).
+The agent installs the distro package on demand, at scaffold and again on
+every apply, through a transient `systemd-run` `apt-get install -y
+--no-install-recommends` of the newest `libmagickwand-<N>.q16-<M>[t64]` the
+host's apt offers. It is not in install.sh, so only servers that run such an
+app carry ImageMagick, and a host that lost the library (restore, distro
+upgrade) gets it back on the next apply.
+
+`python_min` is now enforced: `POST /python-apps` answers 400
+`python_version_too_old`, the CLI refuses, and the install dialog offers only
+supported runtimes.
+
+First entry: sic (AGPL-3.0, no releases) pinned at commit `9bef6ed`. Its
+`patch.py` writes only `sic/local/secret_settings.py` and
+`sic/local/settings_local.py`, both reading env at run time, then migrates,
+points the Sites row at the domain and creates the first admin (username
+`admin`, initial password generated into `SIC_ADMIN_PASSWORD`). Moving the pin
+is a hand edit of `url` and `sha256` together.
+

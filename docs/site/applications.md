@@ -77,6 +77,32 @@ When a Python app is created, or its `requirements.txt` changes, the panel build
 - Each pip step stops after 8 minutes. A build that never finishes in that time shows **failed** with `timed out`.
 - Restarting the agent stops a build that is running; the next pass starts it again, and pip keeps what it already installed.
 
+## Python apps — sic
+
+The Python Apps catalog includes **sic** (GH #2156), a community link
+aggregator in the style of Lobsters or Hacker News, built on Django. Unlike the
+framework entries it installs a complete app: the code of one pinned upstream
+commit, checked against a pinned sha256 before it is unpacked. It needs
+Python 3.12 or newer.
+
+- Install it into a new, empty app directory. The install stops with an
+  error if the directory already holds files.
+- sic resizes avatars with ImageMagick. The first sic install on a server
+  installs the distro's `libmagickwand` package; servers without a sic app
+  never get it.
+- The install makes the first admin account. Sign in as `admin` (or the
+  address in `SIC_ADMIN_EMAIL`) with the initial password in
+  `SIC_ADMIN_PASSWORD` (Env drawer), then change the password in sic.
+  Changing either variable later does not change the account.
+- sic sends sign-up and password-reset mail through `SIC_EMAIL_HOST`
+  (default `localhost`, port 25), from `SIC_DEFAULT_FROM_EMAIL` (default
+  `noreply@<domain>`).
+
+Known limits: sic writes `http://` into the absolute links in its mail. Its
+job that saves a text copy of each submitted page (for search) needs a helper
+binary sic does not ship, so that job fails; stories, comments, tags and
+accounts are not affected.
+
 ## Python apps — media directory
 
 A Python app can serve a per-app **media directory straight from nginx** (GH
