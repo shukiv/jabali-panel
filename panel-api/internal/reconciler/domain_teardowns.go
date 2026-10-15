@@ -82,7 +82,9 @@ func (r *Reconciler) processDomainTeardowns(ctx context.Context) map[string]bool
 // row for — an agent-known site with no DB row cannot be distinguished
 // from out-of-band operator work with certainty, and deleting a serving
 // site on a guess is worse than leaving it. Tombstoned deletes are the
-// self-healing path; everything else is surfaced once, actionably.
+// self-healing path; everything else is surfaced once, actionably. A
+// domain's derived vhosts never reach this report: only Jabali writes them,
+// and sweepAgentSites handles them first.
 func (r *Reconciler) reportOrphanSites(orphans []string) {
 	sort.Strings(orphans)
 	key := strings.Join(orphans, ",")

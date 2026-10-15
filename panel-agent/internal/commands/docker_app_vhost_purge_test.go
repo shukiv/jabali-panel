@@ -202,3 +202,63 @@ func TestDomainDelete_ReapsTheDockerAppVhost(t *testing.T) {
 		}
 	}
 }
+
+// A docker-app domain can share its certificate name with another vhost's:
+// an app on mail.<domain> shares the lineage of that domain's mail vhost
+// (`<domain>-mail.conf`). The purge keeps files any enabled vhost still names,
+// or `nginx -t` fails for the whole server. A name that only starts the same
+// way doesn't count.
+func TestDockerAppVhostRemove_PurgeKeepsCertificatesAnotherVhostNames(t *testing.T) {
+	_, en := withDockerAppVhostTestDirs(t)
+	const dom, longer = "mail.live.example.com", "mail.live.example.com.au"
+	selfRoot, leRoot := certFixture(t, dom, longer)
+	applyDockerVhost(t, dom)
+	applyDockerVhost(t, longer)
+	mailVhost := "server {\n  ssl_certificate " + filepath.Join(leRoot, "live", dom, "fullchain.pem") + ";\n}\n"
+	if err := os.WriteFile(filepath.Join(en, "live.example.com-mail.conf"), []byte(mailVhost), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	selfVhost := "server {\n  ssl_certificate_key " + filepath.Join(selfRoot, longer+"x", "privkey.pem") + ";\n}\n"
+	if err := os.WriteFile(filepath.Join(en, "other.example.com.conf"), []byte(selfVhost), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := removeDockerVhost(t, dom, true); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+	for _, d := range certDirs(selfRoot, leRoot, dom) {
+		if _, err := os.Stat(d); err != nil {
+			t.Errorf("%s removed while live.example.com-mail.conf still names the lineage: %v", d, err)
+		}
+	}
+
+	if err := removeDockerVhost(t, longer, true); err != nil {
+		t.Fatalf("remove %s: %v", longer, err)
+	}
+	for _, d := range certDirs(selfRoot, leRoot, longer) {
+		if _, err := os.Stat(d); !os.IsNotExist(err) {
+			t.Errorf("%s kept because another vhost names a longer name (err=%v)", d, err)
+		}
+	}
+}
+
+// The self-signed directory counts as named too.
+func TestDockerAppVhostRemove_PurgeKeepsASelfSignedDirAnotherVhostNames(t *testing.T) {
+	_, en := withDockerAppVhostTestDirs(t)
+	const dom = "app.example.org"
+	selfRoot, leRoot := certFixture(t, dom)
+	applyDockerVhost(t, dom)
+	v := "server {\n  ssl_certificate " + filepath.Join(selfRoot, dom, "fullchain.pem") + ";\n}\n"
+	if err := os.WriteFile(filepath.Join(en, "app.example.org-mail.conf"), []byte(v), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := removeDockerVhost(t, dom, true); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+	for _, d := range certDirs(selfRoot, leRoot, dom) {
+		if _, err := os.Stat(d); err != nil {
+			t.Errorf("%s removed while another vhost names the self-signed directory: %v", d, err)
+		}
+	}
+}

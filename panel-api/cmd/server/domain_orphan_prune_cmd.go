@@ -138,9 +138,10 @@ the Stalwart mail Domain row when applicable. It is irreversible.`,
 //
 // Pure function, no I/O — tested via TestComputeOrphans.
 // orphanDomainName is the domain an agent site belongs to: a domain's derived
-// vhosts (`<domain>-mail`, `<domain>-mta-sts`) belong to the domain.
+// vhosts (`<domain>-mail`, `<domain>-mta-sts`, a Docker app's
+// `<domain>-dockerapp`) belong to the domain.
 func orphanDomainName(site string) string {
-	for _, suffix := range []string{"-mail", "-mta-sts"} {
+	for _, suffix := range []string{"-mail", "-mta-sts", "-dockerapp"} {
 		if name, ok := strings.CutSuffix(site, suffix); ok {
 			return name
 		}
