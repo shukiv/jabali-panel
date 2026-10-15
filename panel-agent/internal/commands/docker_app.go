@@ -374,12 +374,21 @@ func deleteDockerAppAt(ctx context.Context, dir string, p dockerAppLifecyclePara
 	// purge below has to run first. The error is surfaced afterwards.
 	var downErr *agentwire.AgentError
 	if _, err := os.Stat(filepath.Join(dir, "compose.yml")); err == nil {
+		// `down -v` misses the anonymous volumes a recreate carried over
+		// (composeAnonymousVolumes). A purge removes them once down has
+		// removed the containers; a keep-volumes delete keeps them.
+		var anon []string
+		if p.PurgeVolumes {
+			anon = composeAnonymousVolumes(ctx, dir)
+		}
 		if out, err := runDockerCompose(ctx, dir, "down", "-v"); err != nil {
 			downErr = &agentwire.AgentError{
 				Code:    agentwire.CodeInternal,
 				Message: fmt.Sprintf("docker compose down failed: %v", err),
 				Details: json.RawMessage(fmt.Sprintf(`{"stderr": %q}`, redactComposeOutput(out))),
 			}
+		} else {
+			removeDockerVolumes(ctx, anon)
 		}
 	}
 	if p.PurgeVolumes {
