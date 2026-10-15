@@ -5,9 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dockerapp"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
@@ -228,5 +231,68 @@ func TestDockerPortErrorStatus(t *testing.T) {
 		if status != tc.status || code != tc.code {
 			t.Errorf("%v: %d %s, want %d %s", tc.err, status, code, tc.status, tc.code)
 		}
+	}
+}
+
+// editPortRepo lets an edit re-resolve its ports on the tracks fixture.
+type editPortRepo struct{ *trackRepo }
+
+func (r *editPortRepo) HostPortInUse(context.Context, string, int, string) (bool, error) {
+	return false, nil
+}
+func (r *editPortRepo) FindFreeHostPort(_ context.Context, _ string, skip func(int) bool) (int, error) {
+	for p := 10000; p <= 19999; p++ {
+		if skip == nil || !skip(p) {
+			return p, nil
+		}
+	}
+	return 0, repository.ErrNotFound
+}
+func (r *editPortRepo) CreatePort(context.Context, *models.DockerAppPublishedPort) error { return nil }
+
+// An edit answers 409 for a pinned host port in use on the server and 503
+// when the server can't be asked.
+func TestEditDomainPorts_HostPortErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		probe  any // nil: the agent has no answer for the probe
+		ports  []installPortRequest
+		status int
+		code   string
+	}{
+		{"pinned in use", map[string]any{"bound": true, "uid": 0}, []installPortRequest{{Name: "http", HostPort: 12000}}, http.StatusConflict, "host_port_in_use"},
+		{"probe fails", nil, []installPortRequest{{Name: "http", Enabled: boolPtr(true)}}, http.StatusServiceUnavailable, "host_port_unavailable"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, repo, mock := trackHandler(t, "nextcloud", "34.0.3")
+			if tc.probe != nil {
+				mock.On("net.loopback_listener_uid", tc.probe)
+			}
+			h.cfg.Repo = &editPortRepo{repo}
+			err := h.editDomainPorts(context.Background(), repo.app, nil, tc.ports, "admin", true)
+			var de *dockerEditError
+			if !errors.As(err, &de) || de.Status != tc.status || de.Code != tc.code {
+				t.Fatalf("err = %#v, want %d %s", err, tc.status, tc.code)
+			}
+		})
+	}
+}
+
+// The tenant install answers 503 when the server can't be asked whether a
+// port is free, and creates nothing.
+func TestTenantDocker_InstallRefusedWhenAHostPortCantBeChecked(t *testing.T) {
+	mock := agent.NewMockClient()
+	mock.On("docker_app.install", map[string]any{"status": "running"})
+	cfg := dockerCgroupCfg(t, mock, models.DockerAppStatusStopped)
+	cfg.Repo = &installingDockerRepo{cfg.Repo.(*fakeDockerRepo)}
+	cfg.Domains = &attachingDomainRepo{fakeDomainRepo{byName: map[string]*models.Domain{"x.example.com": {ID: "d1", UserID: "u1", Name: "x.example.com"}}}}
+	r := tenantRouter(t, cfg, true)
+
+	rec := post(r, `{"slug":"tdemo","name":"x","domain":"x.example.com"}`)
+	if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), `"host_port_unavailable"`) {
+		t.Fatalf("install = %d %s, want 503 host_port_unavailable", rec.Code, rec.Body.String())
+	}
+	if agentCalls(mock, "docker_app.install") != 0 {
+		t.Fatal("the install went ahead")
 	}
 }
