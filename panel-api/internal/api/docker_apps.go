@@ -1295,6 +1295,12 @@ func (h *dockerAppHandler) editDomainPorts(ctx context.Context, app *models.Dock
 		}
 		resolved, runtime, perr := h.resolvePorts(ctx, entry, reqPorts, app.ID)
 		if perr != nil {
+			// The app keeps the ports it had: without rows the reconciler
+			// finds no upstream for its domain and the next start publishes
+			// nothing.
+			for _, p := range prior {
+				_ = h.cfg.Repo.CreatePort(ctx, p)
+			}
 			status, code := dockerPortErrorStatus(perr)
 			return &dockerEditError{status, code, perr.Error()}
 		}

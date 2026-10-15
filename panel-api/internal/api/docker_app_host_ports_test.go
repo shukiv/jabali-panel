@@ -234,8 +234,12 @@ func TestDockerPortErrorStatus(t *testing.T) {
 	}
 }
 
-// editPortRepo lets an edit re-resolve its ports on the tracks fixture.
-type editPortRepo struct{ *trackRepo }
+// editPortRepo lets an edit re-resolve its ports on the tracks fixture and
+// records the port rows it creates.
+type editPortRepo struct {
+	*trackRepo
+	created []string
+}
 
 func (r *editPortRepo) HostPortInUse(context.Context, string, int, string) (bool, error) {
 	return false, nil
@@ -248,10 +252,14 @@ func (r *editPortRepo) FindFreeHostPort(_ context.Context, _ string, skip func(i
 	}
 	return 0, repository.ErrNotFound
 }
-func (r *editPortRepo) CreatePort(context.Context, *models.DockerAppPublishedPort) error { return nil }
+func (r *editPortRepo) CreatePort(_ context.Context, p *models.DockerAppPublishedPort) error {
+	r.created = append(r.created, p.ID)
+	return nil
+}
 
 // An edit answers 409 for a pinned host port in use on the server and 503
-// when the server can't be asked.
+// when the server can't be asked. The app keeps the port rows it had: the
+// edit drops them before it resolves the new ones.
 func TestEditDomainPorts_HostPortErrors(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -268,11 +276,15 @@ func TestEditDomainPorts_HostPortErrors(t *testing.T) {
 			if tc.probe != nil {
 				mock.On("net.loopback_listener_uid", tc.probe)
 			}
-			h.cfg.Repo = &editPortRepo{repo}
+			ports := &editPortRepo{trackRepo: repo}
+			h.cfg.Repo = ports
 			err := h.editDomainPorts(context.Background(), repo.app, nil, tc.ports, "admin", true)
 			var de *dockerEditError
 			if !errors.As(err, &de) || de.Status != tc.status || de.Code != tc.code {
 				t.Fatalf("err = %#v, want %d %s", err, tc.status, tc.code)
+			}
+			if repo.portDrops != 1 || strings.Join(ports.created, ",") != "p1" {
+				t.Fatalf("dropped %d rows, created %v; want the prior row p1 back", repo.portDrops, ports.created)
 			}
 		})
 	}
