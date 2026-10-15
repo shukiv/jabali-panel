@@ -1284,6 +1284,8 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 
 	// 3. Orphan in agent set (no DB row) -> aggregate ONE warning (on set
 	// change only — see reportOrphanSites for the mandate), never auto-delete.
+	// A domain's derived vhosts, which only Jabali writes, are not orphans;
+	// the MTA-STS and Docker app ones are removed once their row is gone.
 	r.sweepAgentSites(ctx, agentSites, enabledDomains, disabledDomains, pendingTeardowns)
 
 	tt.mark("disable_orphan_sweep")
@@ -4346,7 +4348,8 @@ var knownSystemSites = map[string]bool{
 // row is an orphan, reported once per set change and never auto-deleted (see
 // reportOrphanSites), and its recursor forwarder is dropped. A domain's
 // derived vhosts (`<domain>-mail`, `<domain>-mta-sts`, `<domain>-dockerapp`)
-// are not orphans.
+// are not orphans. Only Jabali writes them, so the MTA-STS and Docker app ones
+// are removed once their row is gone (sweepMTAStsSite, sweepDockerAppSite).
 func (r *Reconciler) sweepAgentSites(ctx context.Context, agentSites map[string]bool,
 	enabledDomains, disabledDomains map[string]*models.Domain, pendingTeardowns map[string]bool) {
 	rowFor := func(name string) *models.Domain {

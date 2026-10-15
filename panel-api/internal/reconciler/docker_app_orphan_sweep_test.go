@@ -16,9 +16,9 @@ import (
 // A Docker app's proxy vhost (`<domain>-dockerapp`) belongs to its Docker-app
 // domain row, enabled or disabled. It is not an orphan site, and its name gets
 // no recursor forwarder removal. Left over from a row deleted before its vhost
-// (an app domain change or delete on an older release), it proxies to a
-// loopback port the panel hands to the next app installed: once it has had no
-// Docker-app row for dockerAppOrphanGrace it is removed.
+// (an app domain change or delete on an older release), it keeps serving its
+// old name: once it has had no Docker-app row for dockerAppOrphanGrace it is
+// removed.
 
 type fakeSharedCertList struct {
 	repository.SharedCertificateRepository

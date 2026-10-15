@@ -34,9 +34,9 @@ type dockerAppOrphan struct {
 //   - a Docker-app row of its name, enabled or disabled, owns it;
 //   - a pending teardown of its name removes it (domain.delete reaps it);
 //   - otherwise it was left behind by a row deleted before its vhost (an app's
-//     domain change or delete on an older release). It proxies to a loopback
-//     port the panel hands to the next app installed, so once it has had no
-//     Docker-app row for dockerAppOrphanGrace it is removed.
+//     domain change or delete on an older release). Nothing else removes it,
+//     and it keeps serving its old name, so once it has had no Docker-app row
+//     for dockerAppOrphanGrace it is removed.
 //
 // With no row of its name at all, the removal takes the name's certificate
 // files too, unless claimed reports that the panel holds a certificate under
