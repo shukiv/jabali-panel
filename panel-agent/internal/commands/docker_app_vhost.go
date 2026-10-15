@@ -211,6 +211,12 @@ func dockerAppVhostApplyHandler(ctx context.Context, params json.RawMessage) (an
 
 type dockerAppVhostRemoveParams struct {
 	DomainName string `json:"domain_name"`
+	// PurgeCertificates also removes the domain's certificate files once the
+	// vhost is gone: the self-signed directory and the Let's Encrypt lineage.
+	// The panel sets it when the domain row is deleted, never when the domain
+	// is only disabled (the reconciler's call), which must keep its
+	// certificate for when it is enabled again.
+	PurgeCertificates bool `json:"purge_certificates,omitempty"`
 }
 
 func dockerAppVhostRemoveHandler(ctx context.Context, params json.RawMessage) (any, error) {
@@ -229,20 +235,9 @@ func dockerAppVhostRemoveHandler(ctx context.Context, params json.RawMessage) (a
 	nginxOpMu.Lock()
 	defer nginxOpMu.Unlock()
 
-	configPath, enabledPath := dockerAppVhostPaths(p.DomainName)
-
-	changed := false
-	if _, err := os.Lstat(enabledPath); err == nil {
-		if err := os.Remove(enabledPath); err != nil {
-			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("rm enabled: %v", err)}
-		}
-		changed = true
-	}
-	if _, err := os.Stat(configPath); err == nil {
-		if err := os.Remove(configPath); err != nil {
-			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("rm available: %v", err)}
-		}
-		changed = true
+	changed, err := removeDockerAppVhostFiles(p.DomainName)
+	if err != nil {
+		return nil, err
 	}
 
 	if changed {
@@ -250,7 +245,49 @@ func dockerAppVhostRemoveHandler(ctx context.Context, params json.RawMessage) (a
 			return nil, err
 		}
 	}
+	// Only now, with nginx no longer loading the vhost: removing a certificate
+	// a loaded vhost still names fails `nginx -t` for the whole server.
+	if p.PurgeCertificates {
+		purgeDockerAppDomainCerts(ctx, p.DomainName)
+	}
 	return webmailVhostResponse{Ok: true, Changed: changed}, nil
+}
+
+// removeDockerAppVhostFiles removes a docker-app proxy vhost
+// (`<domain>-dockerapp.conf`) from sites-enabled and sites-available and
+// reports whether either was there. The caller reloads nginx.
+func removeDockerAppVhostFiles(domain string) (bool, error) {
+	configPath, enabledPath := dockerAppVhostPaths(domain)
+
+	changed := false
+	if _, err := os.Lstat(enabledPath); err == nil {
+		if err := os.Remove(enabledPath); err != nil {
+			return changed, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("rm enabled: %v", err)}
+		}
+		changed = true
+	}
+	if _, err := os.Stat(configPath); err == nil {
+		if err := os.Remove(configPath); err != nil {
+			return changed, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("rm available: %v", err)}
+		}
+		changed = true
+	}
+	return changed, nil
+}
+
+// purgeDockerAppDomainCerts removes the certificate files of a deleted
+// docker-app domain: its self-signed directory and its Let's Encrypt lineage,
+// for that exact name only. Left behind, the lineage keeps a renewal that
+// certbot retries for a name the server no longer serves, and the key stays
+// on disk. A web vhost of the same name (`<domain>.conf`) still uses those
+// files, so nothing is removed while one is enabled.
+func purgeDockerAppDomainCerts(ctx context.Context, domain string) {
+	if _, err := os.Lstat(filepath.Join(mailVhostSitesEnabled, domain+".conf")); err == nil {
+		return
+	}
+	_ = os.RemoveAll(filepath.Join(baseSelfSignDir, domain))
+	cleanupCertbotLineage(ctx, sslLERoot, domain)
+	removeUntrackedLineage(sslLERoot, domain)
 }
 
 func init() {

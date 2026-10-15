@@ -103,7 +103,11 @@ func stampDockerDomainOwnership(ctx context.Context, domains repository.DomainRe
 		dom, actorIsAdmin, time.Now().UTC())
 }
 
-func (h *dockerAppHandler) clearDockerAppCorpse(ctx context.Context, existing *models.DockerApp, domScope []models.Domain) error {
+// clearDockerAppCorpse removes a failed or deleted install before its name is
+// reused. reuseDomain is the domain the new install asks for: a managed domain
+// of that name is about to be created again, so only its row goes; any other
+// managed domain of the corpse goes with its vhost and certificate files.
+func (h *dockerAppHandler) clearDockerAppCorpse(ctx context.Context, existing *models.DockerApp, domScope []models.Domain, reuseDomain string) error {
 	ports, _ := h.cfg.Repo.ListPortsForApp(ctx, existing.ID)
 	for _, p := range ports {
 		_ = h.cfg.Repo.DeletePort(ctx, p.ID)
@@ -111,11 +115,40 @@ func (h *dockerAppHandler) clearDockerAppCorpse(ctx context.Context, existing *m
 	if h.cfg.Domains != nil {
 		for _, dom := range domScope {
 			if dom.ManagedBy == models.DomainManagedByDockerApp && dom.DockerAppID != nil && *dom.DockerAppID == existing.ID {
-				_ = h.cfg.Domains.Delete(ctx, dom.ID)
+				if sameDomainName(dom.Name, reuseDomain) {
+					_ = h.cfg.Domains.Delete(ctx, dom.ID)
+				} else {
+					RemoveManagedDockerDomain(ctx, h.cfg.Domains, h.cfg.Agent, dom)
+				}
 			}
 		}
 	}
 	return h.cfg.Repo.Delete(ctx, existing.ID)
+}
+
+// RemoveManagedDockerDomain deletes a domain row a Docker app created and
+// removes its proxy vhost and its certificate files (docker_app.vhost_remove
+// with purge_certificates). Every path that drops such a row for good uses
+// it: the row is the only thing that names the vhost, so a vhost left behind
+// keeps proxying to a loopback port the panel hands to the next app installed,
+// and its Let's Encrypt lineage keeps renewing. Not for a domain that is only
+// disabled (the reconciler removes the vhost and keeps the certificate), nor
+// for a row recreated under the same name at once.
+func RemoveManagedDockerDomain(ctx context.Context, domains repository.DomainRepository, ag agent.AgentInterface, dom models.Domain) {
+	_ = domains.Delete(ctx, dom.ID)
+	if ag == nil || dom.Name == "" {
+		return
+	}
+	rmCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	_, _ = ag.Call(rmCtx, "docker_app.vhost_remove", map[string]any{
+		"domain_name":        dom.Name,
+		"purge_certificates": true,
+	})
+}
+
+func sameDomainName(a, b string) bool {
+	return strings.EqualFold(strings.TrimSpace(a), strings.TrimSpace(b))
 }
 
 // RegisterDockerAppRoutes mounts the admin docker-app surface.
@@ -435,7 +468,7 @@ func (h *dockerAppHandler) install(c *gin.Context) {
 			if h.cfg.Domains != nil {
 				domScope, _, _ = h.cfg.Domains.List(ctx, repository.ListOptions{})
 			}
-			if derr := h.clearDockerAppCorpse(ctx, existing, domScope); derr != nil {
+			if derr := h.clearDockerAppCorpse(ctx, existing, domScope, req.Domain); derr != nil {
 				c.JSON(http.StatusConflict, gin.H{"error": "already_installed", "id": existing.ID})
 				return
 			}
@@ -1277,7 +1310,15 @@ func (h *dockerAppHandler) editDomainPorts(ctx context.Context, app *models.Dock
 			domList, _, _ := h.cfg.Domains.List(ctx, repository.ListOptions{})
 			for _, d := range domList {
 				if d.ManagedBy == models.DomainManagedByDockerApp && d.DockerAppID != nil && *d.DockerAppID == app.ID {
-					_ = h.cfg.Domains.Delete(ctx, d.ID)
+					// The new domain's row is created again below. A name the
+					// app no longer uses goes with its vhost and certificate,
+					// or it keeps serving the app (and, once the app is gone,
+					// whatever gets its port next).
+					if sameDomainName(d.Name, newDomain) {
+						_ = h.cfg.Domains.Delete(ctx, d.ID)
+					} else {
+						RemoveManagedDockerDomain(ctx, h.cfg.Domains, h.cfg.Agent, d)
+					}
 				}
 			}
 			if newDomain != "" {
@@ -1489,16 +1530,9 @@ func (h *dockerAppHandler) delete(c *gin.Context) {
 			}
 			if dom.ManagedBy == models.DomainManagedByDockerApp {
 				// We created this row at install time -- nuke it, and
-				// tear down its proxy vhost (the reconciler can't, the
-				// row is gone after this).
-				domName := dom.Name
-				_ = h.cfg.Domains.Delete(ctx, dom.ID)
-				if h.cfg.Agent != nil && domName != "" {
-					rmCtx, rmCancel := context.WithTimeout(ctx, 30*time.Second)
-					_, _ = h.cfg.Agent.Call(rmCtx, "docker_app.vhost_remove",
-						map[string]string{"domain_name": domName})
-					rmCancel()
-				}
+				// tear down its proxy vhost and certificate (the
+				// reconciler can't, the row is gone after this).
+				RemoveManagedDockerDomain(ctx, h.cfg.Domains, h.cfg.Agent, dom)
 			} else {
 				// Tenant-owned row that the install handler attached
 				// to. Don't delete it -- the tenant still owns the

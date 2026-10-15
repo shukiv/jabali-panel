@@ -389,15 +389,8 @@ func (h *userDockerAppHandler) delete(c *gin.Context) {
 			}
 			if dom.ManagedBy == models.DomainManagedByDockerApp {
 				// Hostname we auto-created for this app at install time —
-				// remove the row and tear down its proxy vhost.
-				domName := dom.Name
-				_ = h.cfg.Domains.Delete(ctx, dom.ID)
-				if h.cfg.Agent != nil && domName != "" {
-					rmCtx, rmCancel := context.WithTimeout(ctx, 30*time.Second)
-					_, _ = h.cfg.Agent.Call(rmCtx, "docker_app.vhost_remove",
-						map[string]string{"domain_name": domName})
-					rmCancel()
-				}
+				// remove the row and tear down its proxy vhost and certificate.
+				RemoveManagedDockerDomain(ctx, h.cfg.Domains, h.cfg.Agent, dom)
 			} else {
 				// The tenant's own pre-existing domain — keep it, just
 				// detach the app link and clear the injected proxy_pass rule.
@@ -525,7 +518,7 @@ func (h *userDockerAppHandler) install(c *gin.Context) {
 			if h.cfg.Domains != nil {
 				domScope, _, _ = h.cfg.Domains.ListByUserID(ctx, claims.UserID, repository.ListOptions{Limit: diskUsageListLimit})
 			}
-			if derr := h.admin.clearDockerAppCorpse(ctx, existing, domScope); derr != nil {
+			if derr := h.admin.clearDockerAppCorpse(ctx, existing, domScope, req.Domain); derr != nil {
 				c.JSON(http.StatusConflict, gin.H{"error": "already_installed", "id": existing.ID})
 				return
 			}

@@ -61,6 +61,12 @@ func domainDeleteHandler(ctx context.Context, params json.RawMessage) (any, erro
 	// certificate, which removeDomainCertArtifacts below deletes: from then
 	// on `nginx -t` fails for the whole server, and nginx doesn't start.
 	removeMTAStsVhostFiles(p.Domain)
+	// And the proxy vhost of a domain a Docker app created
+	// (`<domain>-dockerapp.conf`): a user delete or a delete on the Domains
+	// page reaches that domain only here. Left behind, it names the
+	// certificate removed below, and it keeps proxying to a loopback port the
+	// panel hands to the next app installed.
+	_, _ = removeDockerAppVhostFiles(p.Domain)
 
 	// JAB-230: reap the domain's relay credential (and re-point the owner's
 	// default.cred). Placed HERE — the shared chokepoint every delete path
