@@ -150,6 +150,18 @@ func resolveTenantUser(ctx context.Context, ref string) (*models.User, error) {
 
 // runTenantDockerInstall installs a tenant-owned Docker app under the policy
 // gates from docker_apps_user.go.
+// cliTenantDomainCheck runs the GUI install's checks (alias, panel hostname
+// and mail hostname) on a name the install will create a domain row for,
+// before anything is created. An existing domain is attached, not created.
+// Root acts as an administrator here.
+func cliTenantDomainCheck(ctx context.Context, existing *models.Domain, domain, userID string,
+	aliases repository.WebDomainAliasRepository, settings repository.ServerSettingsRepository, domains repository.DomainRepository) error {
+	if existing != nil {
+		return nil
+	}
+	return api.DockerDomainClaimCheck(ctx, aliases, settings, domains, domain, userID, true)
+}
+
 func runTenantDockerInstall(ctx context.Context, slug, name, userRef, domain, updateMode string, cpuFlag, memFlag string, pidsFlag int, envPairs []string) error {
 	if !nameRE.MatchString(name) {
 		return fmt.Errorf("invalid --name %q (must match ^[a-z0-9-]{1,32}$)", name)
@@ -220,14 +232,9 @@ func runTenantDockerInstall(ctx context.Context, slug, name, userRef, domain, up
 	if existingDom != nil && existingDom.UserID != user.ID {
 		return fmt.Errorf("domain %q belongs to another user", domain)
 	}
-	// A name the app's new domain row will claim gets the GUI install's
-	// checks (alias, panel hostname and mail hostname), before anything is
-	// created. Root acts as an administrator here.
-	if existingDom == nil {
-		if cerr := api.DockerDomainClaimCheck(ctx, repository.NewWebDomainAliasRepository(sharedDB),
-			repository.NewServerSettingsRepository(sharedDB), domRepo, domain, user.ID, true); cerr != nil {
-			return fmt.Errorf("domain %q: %w", domain, cerr)
-		}
+	if cerr := cliTenantDomainCheck(ctx, existingDom, domain, user.ID, repository.NewWebDomainAliasRepository(sharedDB),
+		repository.NewServerSettingsRepository(sharedDB), domRepo); cerr != nil {
+		return fmt.Errorf("domain %q: %w", domain, cerr)
 	}
 
 	username := *user.Username
