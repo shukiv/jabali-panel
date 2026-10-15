@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
@@ -35,4 +36,27 @@ func TestDockerDomainClaimCheck_Refusals(t *testing.T) {
 	if err := DockerDomainClaimCheck(ctx, aliases, settings, h.cfg.Domains, "corp.example.com", "u1", true); err != nil {
 		t.Fatalf("admin refused over another tenant's subdomain: %v", err)
 	}
+}
+
+// aliasesDown and subsDown can't be read.
+type aliasesDown struct{ aliasHit }
+
+func (aliasesDown) FindByHostname(context.Context, string) (*models.WebDomainAlias, error) {
+	return nil, errors.New("database is down")
+}
+
+type subsDown struct{ guardDomainRepo }
+
+func (subsDown) FindStrictSubdomains(context.Context, string) ([]models.Domain, error) {
+	return nil, errors.New("database is down")
+}
+
+// A lookup that fails refuses the name; it never reads as "no clash".
+func TestDockerDomainClaimCheck_AnUnreadableLookupFailsClosed(t *testing.T) {
+	h, _, _ := tenantEditHandler(t)
+	settings := &fakeSettingsRepo{s: &models.ServerSettings{Hostname: "panel.example.com"}}
+	ctx := context.Background()
+	wantEditRefused(t, DockerDomainClaimCheck(ctx, aliasesDown{}, settings, h.cfg.Domains, "wiki.example.com", "u1", true), "db_alias_lookup")
+	down := subsDown{h.cfg.Domains.(guardDomainRepo)}
+	wantEditRefused(t, DockerDomainClaimCheck(ctx, aliasHit{}, settings, down, "wiki.example.com", "u1", false), "db_suffix_lookup")
 }
