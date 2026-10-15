@@ -203,3 +203,27 @@ func TestEditDomainPorts_ANameOverAnotherTenantKeepsTheOldDomain(t *testing.T) {
 		t.Fatalf("the refused edit removed vhosts %+v", got)
 	}
 }
+
+// settingsDown can't be read.
+type settingsDown struct{ fakeSettingsRepo }
+
+func (*settingsDown) Get(context.Context) (*models.ServerSettings, error) {
+	return nil, errors.New("database is down")
+}
+
+// Moving onto the tenant's own existing domain attaches the app to it; the
+// name-claim checks (which fail closed on a lookup error) are for names the
+// app would create, so they don't stand in its way.
+func TestEditDomainPorts_AttachingToAnOwnDomainSkipsTheNameClaimChecks(t *testing.T) {
+	h, dom, _ := tenantEditHandler(t, managedDomain("cur", "notes.example.com", "a1"))
+	h.cfg.ServerSettings = &settingsDown{}
+	dom.byName["blog.example.com"] = &models.Domain{ID: "blog", UserID: "u1", Name: "blog.example.com"}
+
+	name := "blog.example.com"
+	if err := h.editDomainPorts(context.Background(), h.cfg.Repo.(movedPortRepo).app, &name, nil, "u1", false); err != nil {
+		t.Fatalf("edit: %v", err)
+	}
+	if _, ok := dom.attached["blog"]; !ok {
+		t.Fatalf("attached %v, want the app on blog.example.com", dom.attached)
+	}
+}
