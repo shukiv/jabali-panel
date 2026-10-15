@@ -18,6 +18,7 @@ import (
 
 	"github.com/oklog/ulid/v2"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/api"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dockerapp"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/domainops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
@@ -264,6 +265,7 @@ func runTenantDockerInstall(ctx context.Context, slug, name, userRef, domain, up
 	// Catalog-default loopback ports.
 	runtime := make(map[string]dockerapp.RuntimePort, len(entry.Ports))
 	var loopbackPort *models.DockerAppPublishedPort
+	taken := map[int]bool{}
 	for _, p := range entry.Ports {
 		if !p.DefaultEnabled {
 			continue
@@ -272,7 +274,7 @@ func runTenantDockerInstall(ctx context.Context, slug, name, userRef, domain, up
 		if bind == "" {
 			bind = "loopback"
 		}
-		host, herr := repo.FindFreeHostPort(ctx, bind, p.Protocol)
+		host, herr := api.AllocateDockerHostPort(ctx, repo, dockerHostPortAgent(), p.Protocol, taken)
 		if herr != nil {
 			_ = repo.Delete(ctx, app.ID)
 			return fmt.Errorf("allocate host port for %q: %w", p.Name, herr)

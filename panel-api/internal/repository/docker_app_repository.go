@@ -59,16 +59,16 @@ type DockerAppRepository interface {
 	DeletePort(ctx context.Context, id string) error
 
 	// FindFreeHostPort scans the 10000..19999 pool and returns the lowest
-	// host_port not currently bound to (bindInterface, protocol). Returns
-	// ErrNotFound when the pool is exhausted (which would mean ~10k
-	// concurrent published ports on a single interface+protocol — never
-	// going to happen in practice, but the caller should still surface
-	// a clean 503 rather than a 500).
-	FindFreeHostPort(ctx context.Context, bindInterface, protocol string) (int, error)
-	// HostPortInUse reports whether (bindInterface, protocol, hostPort)
-	// is already bound by ANOTHER docker_app install. excludeAppID lets
+	// host_port no install holds for protocol, on any bind interface, and
+	// that skip (nil: none) doesn't pass over. Returns ErrNotFound when the
+	// pool is exhausted (which would mean ~10k concurrent published ports
+	// for one protocol — never going to happen in practice, but the caller
+	// should still surface a clean 503 rather than a 500).
+	FindFreeHostPort(ctx context.Context, protocol string, skip func(port int) bool) (int, error)
+	// HostPortInUse reports whether (protocol, hostPort) is already held by
+	// ANOTHER docker_app install, on any bind interface. excludeAppID lets
 	// the same app keep its ports during a PATCH-driven re-render.
-	HostPortInUse(ctx context.Context, bindInterface, protocol string, hostPort int, excludeAppID string) (bool, error)
+	HostPortInUse(ctx context.Context, protocol string, hostPort int, excludeAppID string) (bool, error)
 
 	// --- docker_app_backups ----------------------------------------------
 	CreateBackup(ctx context.Context, b *models.DockerAppBackup) error
@@ -303,13 +303,17 @@ const (
 	hostPortPoolMax = 19999
 )
 
-func (r *dockerAppRepo) FindFreeHostPort(ctx context.Context, bindInterface, protocol string) (int, error) {
-	// Pull the set of (host_port) values currently bound to this
-	// (bindInterface, protocol). Sort and walk to find the lowest gap.
+// FindFreeHostPort and HostPortInUse ignore bind_interface: the loopback bind
+// is 127.0.0.1 and every public one is 0.0.0.0 today, and 0.0.0.0:P collides
+// with 127.0.0.1:P. The DB unique index is on (bind_interface, host_port,
+// protocol); these checks are stricter than it.
+func (r *dockerAppRepo) FindFreeHostPort(ctx context.Context, protocol string, skip func(port int) bool) (int, error) {
+	// Pull the set of host_port values held for protocol. Sort and walk to
+	// find the lowest gap.
 	var used []int
 	if err := r.db.WithContext(ctx).
 		Model(&models.DockerAppPublishedPort{}).
-		Where("bind_interface = ? AND protocol = ?", bindInterface, protocol).
+		Where("protocol = ?", protocol).
 		Order("host_port ASC").
 		Pluck("host_port", &used).Error; err != nil {
 		return 0, err
@@ -319,9 +323,13 @@ func (r *dockerAppRepo) FindFreeHostPort(ctx context.Context, bindInterface, pro
 		usedSet[p] = struct{}{}
 	}
 	for p := hostPortPoolMin; p <= hostPortPoolMax; p++ {
-		if _, taken := usedSet[p]; !taken {
-			return p, nil
+		if _, taken := usedSet[p]; taken {
+			continue
 		}
+		if skip != nil && skip(p) {
+			continue
+		}
+		return p, nil
 	}
 	return 0, ErrNotFound
 }
@@ -354,14 +362,13 @@ func (r *dockerAppRepo) DeleteBackup(ctx context.Context, id string) error {
 // uniform across the package.
 var _ = errors.New
 
-// HostPortInUse mirrors the (bind_interface, host_port, protocol) DB
-// uniqueness so the install handler can surface a friendly error
-// instead of letting the INSERT fail with a constraint-violation
-// string the operator can't parse.
-func (r *dockerAppRepo) HostPortInUse(ctx context.Context, bindInterface, protocol string, hostPort int, excludeAppID string) (bool, error) {
+// HostPortInUse lets the install handler surface a friendly error instead of
+// letting the INSERT fail with a constraint-violation string the operator
+// can't parse, or compose fail to bind a port another install holds.
+func (r *dockerAppRepo) HostPortInUse(ctx context.Context, protocol string, hostPort int, excludeAppID string) (bool, error) {
 	var count int64
 	q := r.db.WithContext(ctx).Model(&models.DockerAppPublishedPort{}).
-		Where("bind_interface = ? AND protocol = ? AND host_port = ?", bindInterface, protocol, hostPort)
+		Where("protocol = ? AND host_port = ?", protocol, hostPort)
 	if excludeAppID != "" {
 		q = q.Where("app_id <> ?", excludeAppID)
 	}
