@@ -137,3 +137,32 @@ func TestClearDockerAppCorpse_PurgesTheMailOfNamesNotReused(t *testing.T) {
 	}
 	wantMailPurged(t, mock, "gone.example.com")
 }
+
+// The delete goes by id, the cleanup by name. A name added again since (here
+// by another account, after the row was already gone) keeps its vhost,
+// certificate and mail.
+func TestRemoveManagedDockerDomain_ANameInUseAgainKeepsEverything(t *testing.T) {
+	mock := purgeMock()
+	fake := &fakeDomainRepo{byName: map[string]*models.Domain{
+		"app.example.com": {ID: "new", UserID: "u2", Name: "app.example.com"},
+	}}
+	RemoveManagedDockerDomain(context.Background(), deleteFailsRepo{fake, repository.ErrNotFound}, mock, managedDomain("d1", "app.example.com", "a1"))
+	if calls := mock.Calls(); len(calls) != 0 {
+		t.Fatalf("the agent was called %+v for a name another row holds", calls)
+	}
+}
+
+// nameLookupFails can't tell whether the name is held.
+type nameLookupFails struct{ *fakeDomainRepo }
+
+func (nameLookupFails) FindByName(context.Context, string) (*models.Domain, error) {
+	return nil, errors.New("database is down")
+}
+
+func TestRemoveManagedDockerDomain_AnUncheckableNameKeepsEverything(t *testing.T) {
+	mock := purgeMock()
+	RemoveManagedDockerDomain(context.Background(), nameLookupFails{&fakeDomainRepo{}}, mock, managedDomain("d1", "app.example.com", "a1"))
+	if calls := mock.Calls(); len(calls) != 0 {
+		t.Fatalf("the agent was called %+v though the name could not be checked", calls)
+	}
+}

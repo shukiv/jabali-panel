@@ -142,8 +142,8 @@ func (h *dockerAppHandler) clearDockerAppCorpse(ctx context.Context, existing *m
 // behind, they stay on the server after the domain is gone. Best effort, like
 // the vhost: a failure is logged and nothing retries it.
 //
-// Nothing host-side runs for a row the delete did not remove: it still names
-// its vhost, certificate and mail.
+// Nothing host-side runs for a row the delete did not remove (it still names
+// its vhost, certificate and mail), nor while another row holds the name.
 func RemoveManagedDockerDomain(ctx context.Context, domains repository.DomainRepository, ag agent.AgentInterface, dom models.Domain) {
 	if err := domains.Delete(ctx, dom.ID); err != nil && !errors.Is(err, repository.ErrNotFound) {
 		slog.Warn("docker-app domain: row delete failed — vhost, certificate and mail kept",
@@ -151,6 +151,14 @@ func RemoveManagedDockerDomain(ctx context.Context, domains repository.DomainRep
 		return
 	}
 	if ag == nil || dom.Name == "" {
+		return
+	}
+	// The cleanup below is keyed on the name, the delete on the id: nothing
+	// runs while a row holds the name again (added since, by this owner or
+	// another). Fail closed on a lookup error.
+	if live, ferr := domains.FindByName(ctx, dom.Name); live != nil || (ferr != nil && !errors.Is(ferr, repository.ErrNotFound)) {
+		slog.Warn("docker-app domain: the name is in use again or could not be checked — vhost, certificate and mail kept",
+			"domain", dom.Name, "err", ferr)
 		return
 	}
 	rmCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
