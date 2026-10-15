@@ -1618,18 +1618,26 @@ func (h *dockerAppHandler) lifecycle(action string) gin.HandlerFunc {
 		// row just didn't follow). Rebuild rewrites the stack via
 		// docker compose up --force-recreate so the container ends
 		// up running too.
-		var newStatus string
-		switch action {
-		case "start", "restart", "rebuild":
-			newStatus = models.DockerAppStatusRunning
-		case "stop":
-			newStatus = models.DockerAppStatusStopped
-		}
-		if newStatus != "" {
+		if newStatus := DockerAppLifecycleStatus(action); newStatus != "" {
 			_ = h.cfg.Repo.UpdateStatus(ctx, app.ID, newStatus, nil)
 		}
 		c.Data(http.StatusOK, "application/json; charset=utf-8", raw)
 	}
+}
+
+// DockerAppLifecycleStatus is the status an app's row takes once the agent ran
+// lifecycle action: start, restart and rebuild leave the stack running, stop
+// leaves it stopped. Any other action leaves the row as it is (""). The admin
+// lifecycle door and `jabali docker-app <verb>` share it, so the edit gate
+// (status running means the container is up) holds right after either.
+func DockerAppLifecycleStatus(action string) string {
+	switch action {
+	case "start", "restart", "rebuild":
+		return models.DockerAppStatusRunning
+	case "stop":
+		return models.DockerAppStatusStopped
+	}
+	return ""
 }
 
 // updateImage handles POST /:id/update. Dispatches docker_app.update

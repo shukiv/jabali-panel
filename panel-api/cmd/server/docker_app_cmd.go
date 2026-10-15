@@ -437,6 +437,9 @@ func newDockerAppLifecycleCmd(verb, short string) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if err := recordDockerAppLifecycle(ctx, repo, app.ID, verb); err != nil {
+				return err
+			}
 			fmt.Printf("ok: %s -> %s\n", verb, app.EffectiveSlug())
 			os.Stdout.Write(raw)
 			os.Stdout.Write([]byte{'\n'})
@@ -736,6 +739,23 @@ func markDockerAppTeardownFailed(ctx context.Context, repo dockerAppStatusUpdate
 	msg := "teardown failed: " + firstLine(cause.Error())
 	_ = repo.UpdateStatus(ctx, appID, models.DockerAppStatusFailed, &msg)
 	return fmt.Errorf("agent delete: %s", msg)
+}
+
+// recordDockerAppLifecycle writes the status a lifecycle verb leaves the app
+// in (api.DockerAppLifecycleStatus), as the API lifecycle door does. Without
+// it the row kept its prior status until the reconciler's next status poll:
+// `jabali docker-app edit` was refused right after a stop, and allowed right
+// after a start while the container was up. A failed write is returned, not
+// swallowed: the verb ran, but the panel would still show the old status.
+func recordDockerAppLifecycle(ctx context.Context, repo dockerAppStatusUpdater, appID, verb string) error {
+	status := api.DockerAppLifecycleStatus(verb)
+	if status == "" {
+		return nil
+	}
+	if err := repo.UpdateStatus(ctx, appID, status, nil); err != nil {
+		return fmt.Errorf("%s ran, but the app's status could not be set to %s: %w", verb, status, err)
+	}
+	return nil
 }
 
 // rerenderInstallForCLI re-renders an install's compose from the current
