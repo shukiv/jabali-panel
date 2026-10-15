@@ -121,11 +121,26 @@ func TestComputeOrphans_StripsMTAStsSuffix(t *testing.T) {
 	}
 }
 
+func TestComputeOrphans_StripsDockerAppSuffix(t *testing.T) {
+	// app.com-dockerapp is the proxy vhost of a Docker app's domain app.com:
+	// not an orphan while app.com has a row. --apply on it took a live app
+	// offline.
+	got := computeOrphans(
+		[]string{"app.com-dockerapp", "gone.com-dockerapp"},
+		map[string]bool{"app.com": true},
+	)
+	want := []string{"gone.com-dockerapp"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
 func TestOrphanDomainName(t *testing.T) {
 	// --apply tears an orphan down by its domain's name, which reaps the
 	// domain's derived vhosts with it.
 	for site, want := range map[string]string{
 		"gone.com": "gone.com", "gone.com-mail": "gone.com", "gone.com-mta-sts": "gone.com",
+		"gone.com-dockerapp": "gone.com",
 	} {
 		if got := orphanDomainName(site); got != want {
 			t.Errorf("orphanDomainName(%q) = %q, want %q", site, got, want)

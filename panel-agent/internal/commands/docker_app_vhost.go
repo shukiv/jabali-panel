@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -280,14 +282,50 @@ func removeDockerAppVhostFiles(domain string) (bool, error) {
 // for that exact name only. Left behind, the lineage keeps a renewal that
 // certbot retries for a name the server no longer serves, and the key stays
 // on disk. A web vhost of the same name (`<domain>.conf`) still uses those
-// files, so nothing is removed while one is enabled.
+// files, so nothing is removed while one is enabled. Nor while any other
+// enabled vhost names them: an app on mail.<domain> shares the lineage of that
+// domain's mail vhost, and removing a certificate a loaded vhost names fails
+// `nginx -t` for the whole server.
 func purgeDockerAppDomainCerts(ctx context.Context, domain string) {
 	if _, err := os.Lstat(filepath.Join(mailVhostSitesEnabled, domain+".conf")); err == nil {
 		return
 	}
-	_ = os.RemoveAll(filepath.Join(baseSelfSignDir, domain))
+	selfDir := filepath.Join(baseSelfSignDir, domain)
+	liveDir := filepath.Join(sslLERoot, "live", domain)
+	if enabledVhostNames(selfDir+"/", liveDir+"/") {
+		return
+	}
+	_ = os.RemoveAll(selfDir)
 	cleanupCertbotLineage(ctx, sslLERoot, domain)
 	removeUntrackedLineage(sslLERoot, domain)
+}
+
+// enabledVhostNames reports whether any file in sites-enabled contains one of
+// the given paths. It reports true when sites-enabled or a file in it can't be
+// read, so a caller about to remove files keeps them.
+func enabledVhostNames(paths ...string) bool {
+	entries, err := os.ReadDir(mailVhostSitesEnabled)
+	if err != nil {
+		return true
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		body, err := os.ReadFile(filepath.Join(mailVhostSitesEnabled, e.Name()))
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				continue // a dangling symlink isn't loaded
+			}
+			return true
+		}
+		for _, p := range paths {
+			if bytes.Contains(body, []byte(p)) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func init() {

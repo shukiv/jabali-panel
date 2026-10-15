@@ -79,6 +79,13 @@ type Reconciler struct {
 	domainTeardowns repository.DomainTeardownRepository
 	lastOrphanKey   string
 
+	// dockerAppOrphanSeen holds the Docker app proxy vhosts the orphan sweep
+	// found with no Docker-app domain row, by domain name (see
+	// docker_app_orphan_sweep.go). Guarded by dockerAppOrphanMu: the admin
+	// reconcile endpoint runs a pass alongside the loop's.
+	dockerAppOrphanMu   sync.Mutex
+	dockerAppOrphanSeen map[string]*dockerAppOrphan
+
 	// sslIssueMu serialises certbot-touching work across the JAB-205
 	// domain worker pool AND the out-of-band ReconcileOne path: certbot
 	// holds a global /var/lib/letsencrypt lock, so two concurrent runs
@@ -4200,7 +4207,7 @@ func (r *Reconciler) reconcileEnabledDomain(ctx context.Context, name string, do
 	// createDomainOnAgent). Branch out high, run only {SSL, proxy
 	// vhost}, like the IsPanelPrimary row below.
 	if domain.ManagedBy == models.DomainManagedByDockerApp {
-		if !agentSites[name] {
+		if !agentSites[name+dockerAppVhostSuffix] {
 			r.log.Info("reconcile: docker-app proxy domain", "domain", name)
 		}
 		sslCtx, sslCancel := context.WithTimeout(ctx, 2*time.Minute)
@@ -4338,14 +4345,20 @@ var knownSystemSites = map[string]bool{
 // sweepAgentSites is step 3 of ReconcileAll: each agent site with no domain
 // row is an orphan, reported once per set change and never auto-deleted (see
 // reportOrphanSites), and its recursor forwarder is dropped. A domain's
-// derived vhosts (`<domain>-mail`, `<domain>-mta-sts`) are not orphans.
+// derived vhosts (`<domain>-mail`, `<domain>-mta-sts`, `<domain>-dockerapp`)
+// are not orphans.
 func (r *Reconciler) sweepAgentSites(ctx context.Context, agentSites map[string]bool,
 	enabledDomains, disabledDomains map[string]*models.Domain, pendingTeardowns map[string]bool) {
-	hasRow := func(name string) bool {
-		_, enabled := enabledDomains[name]
-		_, disabled := disabledDomains[name]
-		return enabled || disabled
+	rowFor := func(name string) *models.Domain {
+		if d, ok := enabledDomains[name]; ok {
+			return d
+		}
+		return disabledDomains[name]
 	}
+	hasRow := func(name string) bool { return rowFor(name) != nil }
+	certNameClaimed := r.certNameClaimedFunc(ctx, hasRow)
+	dockerAppOrphans := map[string]bool{}
+	defer r.keepDockerAppOrphans(dockerAppOrphans)
 	var orphanSites []string
 	for site := range agentSites {
 		if knownSystemSites[site] {
@@ -4359,6 +4372,9 @@ func (r *Reconciler) sweepAgentSites(ctx context.Context, agentSites map[string]
 			continue
 		}
 		if r.sweepMTAStsSite(ctx, site, hasRow, pendingTeardowns) {
+			continue
+		}
+		if r.sweepDockerAppSite(ctx, site, rowFor, pendingTeardowns, dockerAppOrphans, certNameClaimed) {
 			continue
 		}
 		if !hasRow(site) {
