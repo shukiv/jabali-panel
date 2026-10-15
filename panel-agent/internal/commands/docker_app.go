@@ -359,9 +359,14 @@ func dockerAppDeleteHandler(ctx context.Context, params json.RawMessage) (any, e
 	if err := validateSlug(p.Slug); err != nil {
 		return nil, err
 	}
-	dir := filepath.Join(dockerAppDataRoot, p.Slug)
 	// JAB-121: drop this app's host logrotate snippet (best-effort).
 	removeDockerAppLogrotate(p.Slug)
+	return deleteDockerAppAt(ctx, filepath.Join(dockerAppDataRoot, p.Slug), p)
+}
+
+// deleteDockerAppAt takes down the install in dir and, with PurgeVolumes,
+// removes its data. dir is always dockerAppDataRoot/<validated slug>.
+func deleteDockerAppAt(ctx context.Context, dir string, p dockerAppLifecycleParams) (any, error) {
 	// docker compose down. -v removes named volumes too; we use bind
 	// mounts under DataRoot so this is mostly defensive. A `down` failure
 	// is remembered, NOT returned early: a failed/half-broken install still
@@ -379,7 +384,7 @@ func dockerAppDeleteHandler(ctx context.Context, params json.RawMessage) (any, e
 	}
 	if p.PurgeVolumes {
 		// Defensive: only ever remove paths under dockerAppDataRoot.
-		// validateSlug above bounds the slug to the allowed charset.
+		// validateSlug in the handler bounds the slug to the allowed charset.
 		if err := os.RemoveAll(dir); err != nil {
 			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("rm -rf %s: %v", dir, err)}
 		}
