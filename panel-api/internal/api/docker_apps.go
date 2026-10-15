@@ -1256,6 +1256,59 @@ func (h *dockerAppHandler) update(c *gin.Context) {
 // dockerEditError carries the HTTP status + code/detail the docker-app
 // domain/port edit path returns, so both the gin handler and the CLI map to the
 // exact same response. (#546)
+// checkEditDomain runs the checks a Docker app edit applies to the name it
+// moves to, without changing anything: another user's domain or another
+// app's (domain_in_use), or, for a name the app will own, another domain's
+// alias (GH #1625), the
+// panel's hostname or mail hostname (JAB-390) and, for a tenant, another
+// account's zone (GH #1789). Every lookup error fails closed.
+func (h *dockerAppHandler) checkEditDomain(ctx context.Context, appID, newDomain, userID string, isAdmin bool) *dockerEditError {
+	existingDom, _ := h.cfg.Domains.FindByName(ctx, newDomain)
+	if existingDom != nil && existingDom.ManagedBy != models.DomainManagedByDockerApp {
+		if existingDom.UserID != userID && !isAdmin {
+			return &dockerEditError{http.StatusConflict, "domain_in_use", "domain " + newDomain + " belongs to another user"}
+		}
+		return nil // attached, not created: the domain already passed these checks
+	}
+	// Another live app's row keeps its name; the edit's create would fail on
+	// it. An orphan row (its app gone) is cleared by the edit below.
+	// Fail closed: an unreadable owner must not pass for a missing one.
+	if existingDom != nil && existingDom.DockerAppID != nil && *existingDom.DockerAppID != appID {
+		other, ferr := h.cfg.Repo.FindByID(ctx, *existingDom.DockerAppID)
+		if ferr != nil && !errors.Is(ferr, repository.ErrNotFound) {
+			return &dockerEditError{http.StatusInternalServerError, "db_app_lookup", "could not verify which app uses domain " + newDomain}
+		}
+		if other != nil {
+			return &dockerEditError{http.StatusConflict, "domain_in_use", "domain " + newDomain + " is used by another app"}
+		}
+	}
+	// GH #1625: cross-tenant hijack guard (see the install path).
+	if hit, clash, cerr := AliasCollision(ctx, h.cfg.WebDomainAliases, newDomain); cerr != nil {
+		return &dockerEditError{http.StatusInternalServerError, "db_alias_lookup", "could not verify the domain name against existing aliases"}
+	} else if clash {
+		return &dockerEditError{http.StatusConflict, "domain_conflicts_alias", "the name " + hit + " is already used as an alias of another domain"}
+	}
+	// JAB-390: never the panel's custom mail hostname or a parent zone of it.
+	// Fail CLOSED on a lookup error.
+	if clash, cerr := MailHostnameCollision(ctx, h.cfg.ServerSettings, newDomain); cerr != nil {
+		return &dockerEditError{http.StatusInternalServerError, "db_mail_hostname_lookup", "could not verify the domain name against the panel mail hostname"}
+	} else if clash {
+		return &dockerEditError{http.StatusConflict, "domain_conflicts_mail_hostname", "the name conflicts with the panel's hostname or mail hostname"}
+	}
+	// GH #1789: cross-tenant DNS subdomain-hijack guard (see the install
+	// path). Non-admin only; fail CLOSED on a lookup error.
+	if !isAdmin {
+		// Generic detail on purpose (GH #1789): naming the conflicting
+		// domain would leak another tenant's existence.
+		if _, clash, cerr := CrossTenantSuffixCollision(ctx, h.cfg.Domains, newDomain, userID); cerr != nil {
+			return &dockerEditError{http.StatusInternalServerError, "db_suffix_lookup", "could not verify the domain name against existing domains"}
+		} else if clash {
+			return &dockerEditError{http.StatusConflict, "domain_conflicts_tenant", "the name conflicts with a domain owned by another account"}
+		}
+	}
+	return nil
+}
+
 type dockerEditError struct {
 	Status int
 	Code   string
@@ -1345,6 +1398,23 @@ func (h *dockerAppHandler) editDomainPorts(ctx context.Context, app *models.Dock
 	if reqDomain != nil {
 		newDomain = strings.TrimSpace(*reqDomain)
 		if h.cfg.Domains != nil {
+			var loopbackPort *models.DockerAppPublishedPort
+			latest, _ := h.cfg.Repo.ListPortsForApp(ctx, app.ID)
+			for _, p := range latest {
+				if p.ReverseProxy && p.Protocol == "tcp" {
+					loopbackPort = p
+					break
+				}
+			}
+			// Every check on the new name runs before the app's current
+			// domain row is dropped below: a refused edit used to leave the
+			// app without its domain (and, for a name it was leaving, without
+			// its vhost and certificate).
+			if newDomain != "" && loopbackPort != nil && userID != "" {
+				if eerr := h.checkEditDomain(ctx, app.ID, newDomain, userID, isAdmin); eerr != nil {
+					return eerr
+				}
+			}
 			domList, _, _ := h.cfg.Domains.List(ctx, repository.ListOptions{})
 			for _, d := range domList {
 				if d.ManagedBy == models.DomainManagedByDockerApp && d.DockerAppID != nil && *d.DockerAppID == app.ID {
@@ -1371,14 +1441,6 @@ func (h *dockerAppHandler) editDomainPorts(ctx context.Context, app *models.Dock
 						_ = h.cfg.Domains.Delete(ctx, existingDom.ID)
 					}
 				}
-				var loopbackPort *models.DockerAppPublishedPort
-				latest, _ := h.cfg.Repo.ListPortsForApp(ctx, app.ID)
-				for _, p := range latest {
-					if p.ReverseProxy && p.Protocol == "tcp" {
-						loopbackPort = p
-						break
-					}
-				}
 				if loopbackPort != nil && userID != "" {
 					target := "http://127.0.0.1:" + intToStr(loopbackPort.HostPort)
 					truePtr := true
@@ -1397,30 +1459,7 @@ func (h *dockerAppHandler) editDomainPorts(ctx context.Context, app *models.Dock
 							return &dockerEditError{http.StatusConflict, "domain_attach_failed", aerr.Error()}
 						}
 					} else {
-						// GH #1625: cross-tenant hijack guard (see the install path).
-						if hit, clash, cerr := AliasCollision(ctx, h.cfg.WebDomainAliases, newDomain); cerr != nil {
-							return &dockerEditError{http.StatusInternalServerError, "db_alias_lookup", "could not verify the domain name against existing aliases"}
-						} else if clash {
-							return &dockerEditError{http.StatusConflict, "domain_conflicts_alias", "the name " + hit + " is already used as an alias of another domain"}
-						}
-						// JAB-390: never the panel's custom mail hostname or a
-						// parent zone of it. Fail CLOSED on a lookup error.
-						if clash, cerr := MailHostnameCollision(ctx, h.cfg.ServerSettings, newDomain); cerr != nil {
-							return &dockerEditError{http.StatusInternalServerError, "db_mail_hostname_lookup", "could not verify the domain name against the panel mail hostname"}
-						} else if clash {
-							return &dockerEditError{http.StatusConflict, "domain_conflicts_mail_hostname", "the name conflicts with the panel's hostname or mail hostname"}
-						}
-						// GH #1789: cross-tenant DNS subdomain-hijack guard (see the
-						// install path). Non-admin only; fail CLOSED on a lookup error.
-						if !isAdmin {
-							// Generic detail on purpose (GH #1789): naming the
-							// conflicting domain would leak another tenant's existence.
-							if _, clash, cerr := CrossTenantSuffixCollision(ctx, h.cfg.Domains, newDomain, userID); cerr != nil {
-								return &dockerEditError{http.StatusInternalServerError, "db_suffix_lookup", "could not verify the domain name against existing domains"}
-							} else if clash {
-								return &dockerEditError{http.StatusConflict, "domain_conflicts_tenant", "the name conflicts with a domain owned by another account"}
-							}
-						}
+						// The name passed checkEditDomain above.
 						dom := &models.Domain{
 							ID:          ulid.Make().String(),
 							UserID:      userID,
