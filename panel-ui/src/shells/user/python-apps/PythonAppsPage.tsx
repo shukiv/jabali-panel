@@ -34,6 +34,7 @@ import {
   usePythonApps,
   usePythonVersions,
   useSetPythonAppStatic,
+  versionsForFramework,
 } from "./usePythonApps";
 
 type DomainRow = { id: string; name: string };
@@ -96,6 +97,11 @@ export function PythonAppsPage() {
   // are derived from the catalog entry, so those fields are hidden (JAB-164).
   const [installFw, setInstallFw] = useState<Framework | null>(null);
   const [form] = Form.useForm<CreatePythonAppInput>();
+  // A framework install only offers the runtimes its pinned deps support.
+  const createVersionOptions = useMemo(
+    () => versionsForFramework(versionOptions, installFw?.python_min),
+    [versionOptions, installFw],
+  );
   const openCreate = (fw?: Framework) => {
     form.resetFields();
     setInstallFw(fw ?? null);
@@ -105,12 +111,15 @@ export function PythonAppsPage() {
   // interpreter actually installed on this host.
   useEffect(() => {
     if (!createOpen) return;
+    const host = pyVersions.data?.default;
     const def =
-      pyVersions.data?.default || versionOptions[versionOptions.length - 1];
+      host && createVersionOptions.includes(host)
+        ? host
+        : createVersionOptions[createVersionOptions.length - 1];
     if (def && !form.getFieldValue("python_version")) {
       form.setFieldValue("python_version", def);
     }
-  }, [createOpen, pyVersions.data, versionOptions, form]);
+  }, [createOpen, pyVersions.data, createVersionOptions, form]);
   const [logsApp, setLogsApp] = useState<PythonApp | null>(null);
   const [logsText, setLogsText] = useState("");
   const [envApp, setEnvApp] = useState<PythonApp | null>(null);
@@ -357,8 +366,12 @@ export function PythonAppsPage() {
               <Select
                 style={{ width: 120 }}
                 loading={pyVersions.isLoading}
-                options={versionOptions.map((v) => ({ value: v, label: v }))}
-                notFoundContent="No Python runtime installed on this server"
+                options={createVersionOptions.map((v) => ({ value: v, label: v }))}
+                notFoundContent={
+                  installFw?.python_min
+                    ? `${installFw.name} needs Python ${installFw.python_min} or newer, which is not installed on this server`
+                    : "No Python runtime installed on this server"
+                }
               />
             </Form.Item>
             {!installFw && (

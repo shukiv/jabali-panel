@@ -97,3 +97,23 @@ func TestResolveCreate_SourceScaffold(t *testing.T) {
 		t.Fatalf("SystemLibs = %v", spec.SystemLibs)
 	}
 }
+
+// python_min was only shown, never enforced: sic needs Django 6, which needs
+// Python 3.12, so a 3.11 app would only fail later inside pip.
+func TestRunsOn(t *testing.T) {
+	e := Entry{PythonMin: "3.12"}
+	for v, want := range map[string]bool{
+		"3.11": false, "3.9": false, "3.12": true, "3.13": true, "3.100": false,
+		"": false, "3": false, "3.x": false, "2.13": false, "4.0": false,
+	} {
+		if got := e.RunsOn(v); got != want {
+			t.Errorf("python_min 3.12, RunsOn(%q) = %v, want %v", v, got, want)
+		}
+	}
+	if !(Entry{}).RunsOn("3.8") {
+		t.Errorf("an entry without python_min must run on any 3.x")
+	}
+	if (Entry{}).RunsOn("bogus") {
+		t.Errorf("a malformed version must never pass")
+	}
+}

@@ -3,6 +3,7 @@ package pyframeworks
 import (
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -123,4 +124,26 @@ func (e Entry) ResolveCreate() (CreateSpec, error) {
 		}
 	}
 	return spec, nil
+}
+
+// RunsOn reports whether the entry supports a Python runtime version such as
+// "3.12": true when the entry names no python_min, or the version is at least
+// python_min. A malformed version never passes. The create paths check it so
+// an app isn't made on a runtime its pinned deps refuse (GH #2156: sic's
+// Django 6 needs 3.12).
+func (e Entry) RunsOn(version string) bool {
+	if !pyVerRe.MatchString(version) {
+		return false
+	}
+	if e.PythonMin == "" {
+		return true
+	}
+	return pyMinor(version) >= pyMinor(e.PythonMin)
+}
+
+// pyMinor returns the minor number of a "3.N" version already matched by
+// pyVerRe.
+func pyMinor(v string) int {
+	n, _ := strconv.Atoi(strings.TrimPrefix(v, "3."))
+	return n
 }

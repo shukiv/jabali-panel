@@ -200,6 +200,7 @@ func (h *pythonAppHandler) create(c *gin.Context) {
 	}
 	// JAB-164: a framework install derives app_type + entrypoint from the
 	// catalog entry and carries the static split for the nginx alias.
+	var fw *pyframeworks.Entry
 	if req.Framework != "" {
 		if h.cfg.Catalog == nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "framework_catalog_unavailable"})
@@ -215,6 +216,7 @@ func (h *pythonAppHandler) create(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "resolve_framework", "detail": serr.Error()})
 			return
 		}
+		fw = &fe
 		req.AppType = spec.AppType
 		req.Entrypoint = spec.Entrypoint
 		req.StaticURL, req.StaticRoot = spec.StaticURL, spec.StaticRoot
@@ -247,6 +249,15 @@ func (h *pythonAppHandler) create(c *gin.Context) {
 			"error":     "python_version_not_available",
 			"detail":    "Python " + req.PythonVersion + " is not installed on this server",
 			"available": avail,
+		})
+		return
+	}
+	// GH #2156: the framework's pinned deps need at least python_min (sic's
+	// Django 6 needs 3.12); refuse here rather than fail later inside pip.
+	if fw != nil && !fw.RunsOn(req.PythonVersion) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":  "python_version_too_old",
+			"detail": fw.Name + " needs Python " + fw.PythonMin + " or newer",
 		})
 		return
 	}
