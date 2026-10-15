@@ -140,9 +140,12 @@ upgrade) gets it back on the next apply.
 supported runtimes.
 
 First entry: sic (AGPL-3.0, no releases) pinned at commit `9bef6ed`. Its
-`patch.py` writes only `sic/local/secret_settings.py` and
-`sic/local/settings_local.py`, both reading env at run time, then migrates,
-points the Sites row at the domain and creates the first admin (username
-`admin`, initial password generated into `SIC_ADMIN_PASSWORD`). Moving the pin
-is a hand edit of `url` and `sha256` together.
+`patch.py` writes only under `sic/local/`: `secret_settings.py` and
+`settings_local.py` (both read env at run time), and `jabali_settings.py`, the
+app's `DJANGO_SETTINGS_MODULE`, which imports sic's settings and clears
+`CSRF_TRUSTED_ORIGINS` (upstream pins it to `https://*.sic.pm` after its local
+import). It then migrates, points the Sites row at the domain and creates the
+first admin (username `admin`, initial password generated into
+`SIC_ADMIN_PASSWORD`). Moving the pin is a hand edit of `url` and `sha256`
+together.
 
