@@ -216,8 +216,18 @@ func runTenantDockerInstall(ctx context.Context, slug, name, userRef, domain, up
 
 	// Domain ownership: must be unowned or owned by this user (criterion #3).
 	domRepo := domainRepoFromDB()
-	if dom, _ := domRepo.FindByName(ctx, domain); dom != nil && dom.UserID != user.ID {
+	existingDom, _ := domRepo.FindByName(ctx, domain)
+	if existingDom != nil && existingDom.UserID != user.ID {
 		return fmt.Errorf("domain %q belongs to another user", domain)
+	}
+	// A name the app's new domain row will claim gets the GUI install's
+	// checks (alias, panel hostname and mail hostname), before anything is
+	// created. Root acts as an administrator here.
+	if existingDom == nil {
+		if cerr := api.DockerDomainClaimCheck(ctx, repository.NewWebDomainAliasRepository(sharedDB),
+			repository.NewServerSettingsRepository(sharedDB), domRepo, domain, user.ID, true); cerr != nil {
+			return fmt.Errorf("domain %q: %w", domain, cerr)
+		}
 	}
 
 	username := *user.Username
