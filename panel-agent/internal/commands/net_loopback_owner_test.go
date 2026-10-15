@@ -129,6 +129,14 @@ func TestScanProcNet_MissingAndUnreadable(t *testing.T) {
 	if _, _, err := scanProcNet(unreadable, 10000, true, true); err == nil {
 		t.Fatal("an unreadable file must be an error")
 	}
+	// A file that can't be opened (here ENOTDIR, which root gets too).
+	notDir := filepath.Join(dir, "plain")
+	if err := os.WriteFile(notDir, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := scanProcNet(filepath.Join(notDir, "tcp"), 10000, false, true); err == nil {
+		t.Fatal("a file that can't be opened must be an error")
+	}
 }
 
 func withProcNetDir(t *testing.T, dir string) {
