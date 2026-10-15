@@ -98,6 +98,13 @@ func (r *Reconciler) reconcileOnePythonApp(ctx context.Context, app *models.Pyth
 	if app.PIDsLimit != nil {
 		params["pids_limit"] = *app.PIDsLimit
 	}
+	// GH #2156: name the app's shared libraries on every apply, not only at
+	// scaffold, so a host that lost one (restore, distro upgrade) gets it back.
+	if app.Framework != "" && r.pyFrameworks != nil {
+		if entry, ok := r.pyFrameworks.Get(app.Framework); ok && len(entry.SystemLibs) > 0 {
+			params["system_libs"] = append([]string(nil), entry.SystemLibs...)
+		}
+	}
 
 	raw, err := r.agent.Call(ctx, "app.python.apply", params)
 	if err != nil {
@@ -201,11 +208,20 @@ func (r *Reconciler) scaffoldPythonApp(ctx context.Context, app *models.PythonAp
 		"requirements":   spec.Requirements,
 		"scaffold_kind":  spec.ScaffoldKind,
 	}
-	if spec.ScaffoldKind == "cmd" {
+	switch spec.ScaffoldKind {
+	case "cmd":
 		params["scaffold_argv"] = spec.ScaffoldCommand
 		params["project"] = spec.Project
-	} else {
+	case "source":
+		// GH #2156: a full upstream app at a pinned commit; the agent checks
+		// the archive against the sha256 before unpacking it.
+		params["source_url"] = spec.SourceURL
+		params["source_sha256"] = spec.SourceSHA256
+	default:
 		params["template_files"] = spec.TemplateFiles
+	}
+	if len(spec.SystemLibs) > 0 {
+		params["system_libs"] = spec.SystemLibs
 	}
 	if spec.PatchScript != "" {
 		// Framework-specific settings surgery (Wagtail/Channels): the agent runs

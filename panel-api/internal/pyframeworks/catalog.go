@@ -87,6 +87,11 @@ type Entry struct {
 	// PostInstall are ordered steps run after pip install (e.g. migrate,
 	// collectstatic). Free-form tokens the scaffolder maps to framework actions.
 	PostInstall []string `yaml:"post_install,omitempty"`
+	// SystemLibs are shared libraries the app loads at runtime, by the names
+	// the agent knows (KnownSystemLibs). The agent installs the distro's
+	// package on demand when the app is scaffolded or applied, so a library
+	// one app needs isn't put on every server (GH #2156: Wand → libMagickWand).
+	SystemLibs []string `yaml:"system_libs,omitempty"`
 
 	// TemplateFiles is relpath->content for a kind=template scaffold, loaded from
 	// <slug>/template/** by LoadDir (NOT the YAML). Kept in-memory on the entry so
@@ -102,14 +107,29 @@ type Entry struct {
 
 // Scaffold is how a starter project is generated.
 type Scaffold struct {
-	Kind    string `yaml:"kind"`              // "cmd" | "template"
+	Kind    string `yaml:"kind"`              // "cmd" | "template" | "source"
 	Command string `yaml:"command,omitempty"` // for kind=cmd, {{.Project}} templated
 	Project string `yaml:"project,omitempty"` // default project name for cmd scaffolds
+	// URL + SHA256 are for kind=source: a full upstream app instead of a
+	// starter (GH #2156). The code is a GitHub commit tarball, checked against
+	// the pinned sha256 before it is unpacked into app_root. Project names the
+	// app's settings package.
+	URL    string `yaml:"url,omitempty"`
+	SHA256 string `yaml:"sha256,omitempty"`
 }
+
+// KnownSystemLibs are the system_libs names an entry may list; the agent maps
+// each to the distro package that ships it.
+var KnownSystemLibs = map[string]bool{"magickwand": true}
 
 var (
 	slugRe  = regexp.MustCompile(`^[a-z][a-z0-9-]{1,31}$`)
 	pyVerRe = regexp.MustCompile(`^3\.[0-9]{1,2}$`)
+	// SourceURLRe is the only source a kind=source entry may name: a GitHub
+	// commit tarball (a 40-hex commit, never a branch that moves). The agent
+	// re-checks the same pattern.
+	SourceURLRe = regexp.MustCompile(`^https://codeload\.github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/tar\.gz/[0-9a-f]{40}$`)
+	sha256Re    = regexp.MustCompile(`^[0-9a-f]{64}$`)
 	// wsgiServers/asgiServers gate server-vs-type consistency.
 	wsgiServers = map[string]bool{"gunicorn": true}
 	asgiServers = map[string]bool{"uvicorn": true, "hypercorn": true, "daphne": true}
@@ -156,8 +176,28 @@ func (e Entry) validate() error {
 		if len(e.TemplateFiles) == 0 {
 			return errors.New("scaffold.kind=template requires a non-empty template/ dir")
 		}
+	case "source":
+		if !SourceURLRe.MatchString(e.Scaffold.URL) {
+			return fmt.Errorf("scaffold.url %q: must be https://codeload.github.com/<owner>/<repo>/tar.gz/<commit>", e.Scaffold.URL)
+		}
+		if !sha256Re.MatchString(e.Scaffold.SHA256) {
+			return errors.New("scaffold.sha256 must be the archive's lowercase hex sha256")
+		}
+		if !projectRe.MatchString(e.Scaffold.Project) {
+			return fmt.Errorf("scaffold.project %q: kind=source names the app's settings package", e.Scaffold.Project)
+		}
 	default:
-		return fmt.Errorf("scaffold.kind %q: must be cmd or template", e.Scaffold.Kind)
+		return fmt.Errorf("scaffold.kind %q: must be cmd, template, or source", e.Scaffold.Kind)
+	}
+	seenLib := map[string]bool{}
+	for _, lib := range e.SystemLibs {
+		if !KnownSystemLibs[lib] {
+			return fmt.Errorf("system_libs %q: unknown library", lib)
+		}
+		if seenLib[lib] {
+			return fmt.Errorf("system_libs %q: listed twice", lib)
+		}
+		seenLib[lib] = true
 	}
 	if e.EntrypointTemplate == "" {
 		return errors.New("entrypoint_template is required")

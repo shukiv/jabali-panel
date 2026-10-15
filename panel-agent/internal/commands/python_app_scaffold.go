@@ -36,7 +36,14 @@ type pythonScaffoldParams struct {
 	PythonVersion string   `json:"python_version"`
 	Server        string   `json:"server"` // gunicorn|uvicorn|hypercorn|daphne
 	Requirements  []string `json:"requirements"`
-	ScaffoldKind  string   `json:"scaffold_kind"` // cmd|template
+	ScaffoldKind  string   `json:"scaffold_kind"` // cmd|template|source
+	// SourceURL + SourceSHA256 are a kind=source app's pinned GitHub commit
+	// tarball (GH #2156), unpacked into app_root once its sha256 matches.
+	SourceURL    string `json:"source_url,omitempty"`
+	SourceSHA256 string `json:"source_sha256,omitempty"`
+	// SystemLibs are shared libraries the app loads (pythonSystemLibs names),
+	// installed before anything imports the app.
+	SystemLibs []string `json:"system_libs,omitempty"`
 	// ScaffoldArgv is the scaffold command for kind=cmd, e.g.
 	// ["django-admin","startproject","config","."]; argv[0] is resolved inside
 	// the venv (django-admin ships with django once requirements install).
@@ -99,16 +106,34 @@ func pythonAppScaffoldHandler(ctx context.Context, params json.RawMessage) (any,
 	if !filepath.IsAbs(p.AppRoot) || strings.Contains(p.AppRoot, "..") || hasCtrl(p.AppRoot) {
 		return nil, csInvalidArg("bad app_root")
 	}
-	if p.ScaffoldKind != "cmd" && p.ScaffoldKind != "template" {
+	switch p.ScaffoldKind {
+	case "cmd", "template":
+	case "source":
+		if err := validPythonSource(p.SourceURL, p.SourceSHA256); err != nil {
+			return nil, err
+		}
+	default:
 		return nil, csInvalidArg("bad scaffold_kind")
 	}
 	if len(p.Requirements) == 0 {
 		return nil, csInvalidArg("requirements required")
 	}
+	if err := validPythonSystemLibs(p.SystemLibs); err != nil {
+		return nil, err
+	}
 
 	marker := filepath.Join(p.AppRoot, ".jabali-scaffolded")
 	if _, err := os.Stat(marker); err == nil {
 		return pythonScaffoldResult{Skipped: true}, nil
+	}
+
+	// GH #2156: refuse a directory holding the tenant's own files before
+	// anything is set up for it (venv, system libraries, pip). Step 3 checks
+	// again right before unpacking.
+	if p.ScaffoldKind == "source" {
+		if err := checkPythonSourceRoot(p.AppRoot, p.SourceSHA256); err != nil {
+			return nil, err
+		}
 	}
 
 	venv := filepath.Join(p.AppRoot, "venv")
@@ -132,6 +157,12 @@ func pythonAppScaffoldHandler(ctx context.Context, params json.RawMessage) (any,
 		}
 	}
 	pip := filepath.Join(venv, "bin", "pip")
+
+	// 1b) shared libraries the app loads (GH #2156): before anything imports
+	// it — the migrate post-install runs Django's checks, which import views.
+	if err := ensurePythonSystemLibs(ctx, p.SystemLibs); err != nil {
+		return nil, err
+	}
 
 	// 2) install the pinned deps (framework + server) BY NAME, not via a
 	//    requirements.txt file: some scaffolders (`wagtail start`) refuse to run
@@ -171,6 +202,10 @@ func pythonAppScaffoldHandler(ctx context.Context, params json.RawMessage) (any,
 			if err := writeAsUser(ctx, p.Username, dst, content); err != nil {
 				return nil, scaffoldErr("write %s: %v", rel, err)
 			}
+		}
+	case "source":
+		if err := scaffoldPythonSource(ctx, p); err != nil {
+			return nil, err
 		}
 	}
 

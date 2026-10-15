@@ -60,6 +60,15 @@ export type Framework = {
   docs?: string;
 };
 
+// versionsForFramework keeps the installed runtimes a framework can run on:
+// those at or above its python_min (GH #2156: sic's Django 6 needs 3.12). The
+// API refuses the rest too; this only keeps them out of the picker.
+export function versionsForFramework(versions: string[], pythonMin?: string): string[] {
+  if (!pythonMin) return versions;
+  const minor = (v: string) => Number(v.split(".")[1]);
+  return versions.filter((v) => minor(v) >= minor(pythonMin));
+}
+
 export function useFrameworks() {
   return useQuery({
     queryKey: ["python-app-frameworks"],

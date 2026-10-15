@@ -71,11 +71,13 @@ func newPythonAppCreateCmd() *cobra.Command {
 			// JAB-164: a framework install derives app_type/entrypoint (and a
 			// default python version) from the catalog entry; the reconciler then
 			// scaffolds the starter + deps + generated secrets before first apply.
+			var fw *pyframeworks.Entry
 			if framework != "" {
 				fe, ok := loadPyFrameworkCatalogCLI().Get(framework)
 				if !ok {
 					return fmt.Errorf("unknown --framework %q (run `python-app frameworks` to list)", framework)
 				}
+				fw = &fe
 				spec, serr := fe.ResolveCreate()
 				if serr != nil {
 					return fmt.Errorf("resolve framework %q: %w", framework, serr)
@@ -97,6 +99,10 @@ func newPythonAppCreateCmd() *cobra.Command {
 			}
 			if !cliPyVersionRe.MatchString(pyVersion) {
 				return fmt.Errorf("invalid --python-version %q (e.g. 3.11, 3.12)", pyVersion)
+			}
+			// GH #2156: same python_min gate as the API.
+			if fw != nil && !fw.RunsOn(pyVersion) {
+				return fmt.Errorf("--framework %s needs Python %s or newer (got --python-version %s)", framework, fw.PythonMin, pyVersion)
 			}
 			if appType != "wsgi" && appType != "asgi" {
 				return fmt.Errorf("invalid --app-type %q (wsgi|asgi)", appType)
