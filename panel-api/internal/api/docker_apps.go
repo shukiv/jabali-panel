@@ -1229,6 +1229,13 @@ func (h *dockerAppHandler) update(c *gin.Context) {
 		if claims := ginctx.Claims(c); claims != nil {
 			uid, isAdmin = claims.UserID, claims.IsAdmin
 		}
+		// The edit rebuilds the app's domain row under uid. A tenant's app
+		// keeps its domain under the tenant: an admin acts for the owner with
+		// admin authority, as `jabali docker-app edit` does. Passing the
+		// admin's own id handed the tenant's domain to the admin on every save.
+		if isAdmin && app.UserID != nil && *app.UserID != "" {
+			uid = *app.UserID
+		}
 		if e := h.editDomainPorts(ctx, app, req.Domain, req.Ports, uid, isAdmin); e != nil {
 			if de, ok := e.(*dockerEditError); ok {
 				resp := gin.H{"error": de.Code}
@@ -1324,6 +1331,16 @@ func (h *dockerAppHandler) editDomainPorts(ctx context.Context, app *models.Dock
 	}
 
 	// --- domain ---
+	// A ports-only edit keeps the app's domain, as the GUI's edit (which
+	// always sends it) does: the domain's proxy_pass is rebuilt on the new
+	// port below, and the compose is rendered with the domain. Before, the
+	// row kept the old host port, so its vhost was skipped and the domain
+	// stopped serving the app, and the compose lost the domain.
+	if reqDomain == nil {
+		if current := h.installDomain(ctx, app.ID); current != "" {
+			reqDomain = &current
+		}
+	}
 	newDomain := ""
 	if reqDomain != nil {
 		newDomain = strings.TrimSpace(*reqDomain)
