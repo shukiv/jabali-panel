@@ -215,6 +215,7 @@ type dockerAppVhostRemoveParams struct {
 	DomainName string `json:"domain_name"`
 	// PurgeCertificates also removes the domain's certificate files once the
 	// vhost is gone: the self-signed directory and the Let's Encrypt lineage.
+	// It removes the domain's relay credential file too.
 	// The panel sets it when the domain row is deleted, never when the domain
 	// is only disabled (the reconciler's call), which must keep its
 	// certificate for when it is enabled again.
@@ -251,8 +252,20 @@ func dockerAppVhostRemoveHandler(ctx context.Context, params json.RawMessage) (a
 	// a loaded vhost still names fails `nginx -t` for the whole server.
 	if p.PurgeCertificates {
 		purgeDockerAppDomainCerts(ctx, p.DomainName)
+		purgeDockerAppDomainRelayCred(p.DomainName)
 	}
 	return webmailVhostResponse{Ok: true, Changed: changed}, nil
+}
+
+// purgeDockerAppDomainRelayCred removes the relay credential the sendmail loop
+// wrote for a deleted docker-app domain (`<user>/<domain>.cred`), as
+// domain.delete does for any other domain. Not while a web vhost of the same
+// name is enabled: that domain still sends with it.
+func purgeDockerAppDomainRelayCred(domain string) {
+	if _, err := os.Lstat(filepath.Join(mailVhostSitesEnabled, domain+".conf")); err == nil {
+		return
+	}
+	removeSendmailCredForDomain(domain)
 }
 
 // removeDockerAppVhostFiles removes a docker-app proxy vhost

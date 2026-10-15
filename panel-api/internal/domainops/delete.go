@@ -154,11 +154,8 @@ func ExecuteTeardown(ctx context.Context, ag agent.AgentInterface, name string) 
 			// GH #357: a box without the mail module has no Stalwart and no
 			// accounts. Permanent, like the missing PowerDNS backend below —
 			// without this the purge failed every retry and the steps after
-			// it (the vhost, the zone) never ran. Only this exact answer
-			// counts: a missing token on a box that HAS Stalwart stays an
-			// error, so the old owner's mail is never left behind.
-			var ae *agent.AgentError
-			if errors.As(err, &ae) && ae.Code == agent.CodeFailedPrecondition && ae.Message == agentwire.MsgMailServerNotInstalled {
+			// it (the vhost, the zone) never ran.
+			if MailServerNotInstalled(err) {
 				return nil
 			}
 			return err
@@ -204,6 +201,15 @@ func ExecuteTeardown(ctx context.Context, ag agent.AgentInterface, name string) 
 		}
 	}
 	return nil
+}
+
+// MailServerNotInstalled reports the agent's answer for a box without the
+// mail module (GH #357): no Stalwart, so no accounts to purge. Only this exact
+// answer counts: a missing token on a box that HAS Stalwart stays an error, so
+// the old owner's mail is never left behind.
+func MailServerNotInstalled(err error) bool {
+	var ae *agent.AgentError
+	return errors.As(err, &ae) && ae.Code == agent.CodeFailedPrecondition && ae.Message == agentwire.MsgMailServerNotInstalled
 }
 
 // PurgeDomainMail destroys EVERY Stalwart registry account under a domain. It

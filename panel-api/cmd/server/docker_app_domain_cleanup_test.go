@@ -30,6 +30,14 @@ func (f *cleanupFakeDomains) Delete(_ context.Context, id string) error {
 	f.deleted[id] = true
 	return nil
 }
+func (f *cleanupFakeDomains) FindByName(_ context.Context, name string) (*models.Domain, error) {
+	for i := range f.list {
+		if f.list[i].Name == name && !f.deleted[f.list[i].ID] {
+			return &f.list[i], nil
+		}
+	}
+	return nil, repository.ErrNotFound
+}
 func (f *cleanupFakeDomains) DetachDockerApp(_ context.Context, id string, _ bool) error {
 	if f.detached == nil {
 		f.detached = map[string]bool{}
@@ -44,6 +52,7 @@ type cleanupFakeAgent struct {
 	agent.AgentInterface
 	vhostRemoved []string
 	purged       []string
+	mailPurged   []string
 }
 
 func (f *cleanupFakeAgent) Call(_ context.Context, cmd string, params any) (json.RawMessage, error) {
@@ -54,6 +63,12 @@ func (f *cleanupFakeAgent) Call(_ context.Context, cmd string, params any) (json
 			if purge, _ := m["purge_certificates"].(bool); purge {
 				f.purged = append(f.purged, name)
 			}
+		}
+	}
+	if cmd == "mail.domain.purge_accounts" {
+		if m, ok := params.(map[string]any); ok {
+			name, _ := m["domain"].(string)
+			f.mailPurged = append(f.mailPurged, name)
 		}
 	}
 	return nil, nil
@@ -94,5 +109,9 @@ func TestCleanupDockerAppDomains_DeletesManagedDetachesUserOwned(t *testing.T) {
 	// The row is gone for good, so its certificate files go too.
 	if len(ag.purged) != 1 || ag.purged[0] != "auto.example.com" {
 		t.Fatalf("expected the managed domain's certificates purged; got %v", ag.purged)
+	}
+	// And its mail.
+	if len(ag.mailPurged) != 1 || ag.mailPurged[0] != "auto.example.com" {
+		t.Fatalf("expected the managed domain's mail purged; got %v", ag.mailPurged)
 	}
 }
