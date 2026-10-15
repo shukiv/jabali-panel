@@ -134,8 +134,22 @@ func (h *dockerAppHandler) clearDockerAppCorpse(ctx context.Context, existing *m
 // and its Let's Encrypt lineage keeps renewing. Not for a domain that is only
 // disabled (the reconciler removes the vhost and keeps the certificate), nor
 // for a row recreated under the same name at once.
+//
+// The domain's mail goes too, as domainops.Delete's teardown removes it for
+// any other domain: the mail server's accounts under the name (the sendmail
+// relay's noreply@), its DKIM signatures and the mail server's domain, and the
+// relay credential file (the agent removes it with the certificates). Left
+// behind, they stay on the server after the domain is gone. Best effort, like
+// the vhost: a failure is logged and nothing retries it.
+//
+// Nothing host-side runs for a row the delete did not remove: it still names
+// its vhost, certificate and mail.
 func RemoveManagedDockerDomain(ctx context.Context, domains repository.DomainRepository, ag agent.AgentInterface, dom models.Domain) {
-	_ = domains.Delete(ctx, dom.ID)
+	if err := domains.Delete(ctx, dom.ID); err != nil && !errors.Is(err, repository.ErrNotFound) {
+		slog.Warn("docker-app domain: row delete failed — vhost, certificate and mail kept",
+			"domain", dom.Name, "domain_id", dom.ID, "err", err)
+		return
+	}
 	if ag == nil || dom.Name == "" {
 		return
 	}
@@ -145,6 +159,10 @@ func RemoveManagedDockerDomain(ctx context.Context, domains repository.DomainRep
 		"domain_name":        dom.Name,
 		"purge_certificates": true,
 	})
+	if err := domainops.PurgeDomainMail(ctx, ag, dom.Name); err != nil && !domainops.MailServerNotInstalled(err) {
+		slog.Warn("docker-app domain: mail purge failed — the name's accounts stay on the mail server",
+			"domain", dom.Name, "err", err)
+	}
 }
 
 func sameDomainName(a, b string) bool {
