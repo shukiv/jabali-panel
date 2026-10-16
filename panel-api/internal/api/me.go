@@ -9,6 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/paneltime"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
@@ -205,13 +206,23 @@ func meHandlerWithConfig(cfg MeHandlerConfig) gin.HandlerFunc {
 		// reject oversize files client-side with an accurate message
 		// (server_settings.upload_max_size_mb; #211). Read-only — the
 		// admin sets it in Server Settings.
+		//
+		// GH #2164: the panel's clock, for every signed-in user's SPA (admin,
+		// reseller and tenant alike): times show in the Server Settings
+		// timezone, with the date format the admin picked next to it.
+		resp["timezone"] = paneltime.Name()
+		dateFormat := paneltime.DefaultDateFormat
 		if cfg.ServerSettings != nil {
 			uploadMB := uint32(1024)
-			if ss, serr := cfg.ServerSettings.Get(c.Request.Context()); serr == nil && ss != nil && ss.UploadMaxSizeMB > 0 {
-				uploadMB = ss.UploadMaxSizeMB
+			if ss, serr := cfg.ServerSettings.Get(c.Request.Context()); serr == nil && ss != nil {
+				if ss.UploadMaxSizeMB > 0 {
+					uploadMB = ss.UploadMaxSizeMB
+				}
+				dateFormat = paneltime.EffectiveDateFormat(ss.DateFormat)
 			}
 			resp["upload_max_size_mb"] = uploadMB
 		}
+		resp["date_format"] = dateFormat
 		if cfg.Users == nil {
 			c.JSON(http.StatusOK, resp)
 			return

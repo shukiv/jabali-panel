@@ -8,8 +8,10 @@
 // the single-slot model gave the admin while letting a tenant run several
 // differently-scoped backups.
 //
-// All arithmetic is UTC minute-of-day. Cadence is a fixed allow-list mapped to
-// an interval (never free cron), so a tenant can never choose a stampede minute.
+// The window is minute-of-day on the panel's clock (GH #2164: the Server
+// Settings timezone, the time the panel shows; it was UTC before). Instants in
+// and out stay UTC. Cadence is a fixed allow-list mapped to an interval (never
+// free cron), so a tenant can never choose a stampede minute.
 package backup
 
 import (
@@ -17,6 +19,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/paneltime"
 )
 
 // Tenant backup cadences (GH #454 7B). Each maps to a fixed interval; the window
@@ -58,15 +62,28 @@ func CadenceInterval(c string) time.Duration {
 	}
 }
 
-// TenantWindow is the admin maintenance window as UTC minutes since midnight,
-// both in [0,1440). StartMin == EndMin means the window spans the whole day (no
-// gating). StartMin > EndMin is a wrap-around window (e.g. 22:00–04:00).
+// TenantWindow is the admin maintenance window as minutes since midnight on the
+// panel's clock, both in [0,1440). StartMin == EndMin means the window spans the
+// whole day (no gating). StartMin > EndMin is a wrap-around window (e.g.
+// 22:00–04:00).
 type TenantWindow struct {
 	StartMin int
 	EndMin   int
+	// Loc is the clock the minutes are read on. nil = the panel's clock
+	// (paneltime.Location()).
+	Loc *time.Location
 }
 
-// DefaultTenantWindow matches the migration column defaults (02:00–05:00 UTC).
+// clock is the zone the window's minutes are read in.
+func (w TenantWindow) clock() *time.Location {
+	if w.Loc != nil {
+		return w.Loc
+	}
+	return paneltime.Location()
+}
+
+// DefaultTenantWindow matches the migration column defaults (02:00–05:00 server
+// time).
 // Returned whenever a stored window value can't be parsed, so a corrupt settings
 // row degrades to a safe gated window rather than to "no window / fire anytime".
 var DefaultTenantWindow = TenantWindow{StartMin: 2 * 60, EndMin: 5 * 60}
@@ -115,13 +132,15 @@ func (w TenantWindow) spanMinutes() int {
 	return (24 * 60) - w.StartMin + w.EndMin // wrap-around
 }
 
-// Contains reports whether t's UTC minute-of-day is inside the window. The start
-// is inclusive, the end exclusive. A whole-day window contains every instant.
+// Contains reports whether t's minute-of-day on the window's clock is inside the
+// window. The start is inclusive, the end exclusive. A whole-day window contains
+// every instant.
 func (w TenantWindow) Contains(t time.Time) bool {
 	if w.StartMin == w.EndMin {
 		return true
 	}
-	m := t.UTC().Hour()*60 + t.UTC().Minute()
+	lt := t.In(w.clock())
+	m := lt.Hour()*60 + lt.Minute()
 	if w.EndMin > w.StartMin {
 		return m >= w.StartMin && m < w.EndMin
 	}
@@ -129,20 +148,30 @@ func (w TenantWindow) Contains(t time.Time) bool {
 	return m >= w.StartMin || m < w.EndMin
 }
 
-// NextOpen returns the earliest instant >= t at which the window is open. When t
-// is already inside the window it returns t unchanged (truncated to the minute).
+// NextOpen returns the earliest instant >= t at which the window is open, in
+// UTC. When t is already inside the window it returns t unchanged (truncated to
+// the minute).
 func (w TenantWindow) NextOpen(t time.Time) time.Time {
 	t = t.UTC().Truncate(time.Minute)
 	if w.Contains(t) {
 		return t
 	}
-	// Candidate = today's start boundary; roll forward a day until it is >= t.
-	midnight := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
-	open := midnight.Add(time.Duration(w.StartMin) * time.Minute)
-	for open.Before(t) {
-		open = open.Add(24 * time.Hour)
+	// Candidate = today's start boundary on the window's clock; roll forward a
+	// calendar day until it is >= t. time.Date per day, not +24h, so a DST
+	// change keeps the opening at the same wall-clock minute. Tomorrow's opening
+	// is always >= t; the third day is only a backstop.
+	lt := t.In(w.clock())
+	for d := 0; d < 2; d++ {
+		if open := w.openOn(lt, d); !open.Before(t) {
+			return open
+		}
 	}
-	return open
+	return w.openOn(lt, 2)
+}
+
+// openOn is the window's start on the calendar day `days` after lt's, in UTC.
+func (w TenantWindow) openOn(lt time.Time, days int) time.Time {
+	return time.Date(lt.Year(), lt.Month(), lt.Day()+days, w.StartMin/60, w.StartMin%60, 0, 0, w.clock()).UTC()
 }
 
 // smearOffset returns a deterministic per-schedule offset in [0, capMinutes)

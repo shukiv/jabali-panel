@@ -23,6 +23,7 @@ import (
 	"time"
 
 	internalbackup "git.jabali-panel.com/shukivaknin/jabali2/internal/backup"
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/paneltime"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/backupmetadata"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/backupwrapperhelpers"
@@ -118,6 +119,10 @@ type Scheduler struct {
 	// dispatcher's admission decisions (per-destination cap + breaker) without
 	// running the full per-job machinery. nil → dispatchOne.
 	dispatch func(context.Context, models.BackupJob)
+	// timedFor is the panel zone the stored cron next-runs were last timed
+	// for (GH #2164). "" until the first tick, so a fresh process re-times
+	// once; that pass is a no-op unless the zone moved.
+	timedFor string
 }
 
 // New returns a configured scheduler. Returns nil if any required dep
@@ -187,7 +192,67 @@ func (s *Scheduler) standbyInert(ctx context.Context) bool {
 	return err == nil && set != nil && set.IsStandby()
 }
 
+// syncClock keeps the panel clock on the Server Settings timezone (GH #2164)
+// and, when the zone is not the one the stored cron next-runs were timed for,
+// times them again: after the upgrade from the UTC-only scheduler, after an
+// admin changes the timezone, and after a DR restore brings another box's
+// settings. A standby only follows the clock; it writes no schedule rows.
+func (s *Scheduler) syncClock(ctx context.Context) {
+	if s.deps.Settings != nil {
+		set, err := s.deps.Settings.Get(ctx)
+		if err != nil || set == nil {
+			return
+		}
+		paneltime.Set(set.Timezone)
+		if set.IsStandby() {
+			return
+		}
+	}
+	zone := paneltime.Name()
+	if zone == s.timedFor {
+		return
+	}
+	n, err := s.retimeCronSchedules(ctx, time.Now().UTC())
+	if err != nil {
+		s.deps.Log.Warn("backup scheduler: re-time to the panel timezone failed; retrying next tick", "zone", zone, "err", err)
+		return
+	}
+	if n > 0 {
+		s.deps.Log.Info("backup schedules re-timed to the panel timezone", "zone", zone, "count", n)
+	}
+	s.timedFor = zone
+}
+
+// retimeCronSchedules recomputes the next run of every cron-governed schedule
+// whose next run is still ahead, on the current panel clock. In steady state
+// that is a no-op: the next run after the last firing is the next run after
+// now. It only moves rows timed on another zone. Overdue rows are left for the
+// enqueue pass, and window-governed tenant schedules (Cadence != "") re-check
+// the window when they come due. Returns how many rows moved.
+func (s *Scheduler) retimeCronSchedules(ctx context.Context, now time.Time) (int, error) {
+	all, err := s.deps.Schedules.List(ctx)
+	if err != nil {
+		return 0, err
+	}
+	moved := 0
+	for _, sc := range all {
+		if sc.Cadence != "" || sc.NextRunAt == nil || !sc.NextRunAt.After(now) {
+			continue
+		}
+		next, ferr := internalbackup.NextFire(sc.CronExpr, now)
+		if ferr != nil || next.Equal(*sc.NextRunAt) {
+			continue
+		}
+		if err := s.deps.Schedules.UpdateNextRun(ctx, sc.ID, next); err != nil {
+			return moved, err
+		}
+		moved++
+	}
+	return moved, nil
+}
+
 func (s *Scheduler) tickEnqueue(ctx context.Context) {
+	s.syncClock(ctx)
 	if s.standbyInert(ctx) {
 		return
 	}

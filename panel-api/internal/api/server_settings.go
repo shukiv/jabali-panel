@@ -14,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	internalbackup "git.jabali-panel.com/shukivaknin/jabali2/internal/backup"
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/paneltime"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/mailspam"
@@ -83,21 +84,14 @@ func (h *serverSettingsHandler) get(c *gin.Context) {
 	// Timezone fallback: when the DB column is empty (admin never picked
 	// one yet), surface the OS-configured zone so the UI dropdown shows
 	// the actual current value instead of blank. Doesn't write back —
-	// the row stays empty until the admin saves explicitly.
-	if s.Timezone == "" && h.cfg.Agent != nil {
-		infoCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		defer cancel()
-		if raw, err := h.cfg.Agent.Call(infoCtx, "system.info", nil); err == nil {
-			var info struct {
-				Timezone string `json:"timezone"`
-			}
-			if jsonErr := json.Unmarshal(raw, &info); jsonErr == nil && info.Timezone != "" {
-				s.Timezone = info.Timezone
-			}
-		} else {
-			h.cfg.Log.Debug("agent system.info failed during timezone fallback", "err", err)
-		}
+	// the row stays empty until the admin saves explicitly. The panel
+	// runs on the host, so it reads the same /etc files the agent's
+	// system.info does (GH #2164: no agent round-trip per GET).
+	if s.Timezone == "" {
+		s.Timezone = paneltime.OSZoneName()
 	}
+	// GH #2164: "" or a format this release doesn't know shows as the default.
+	s.DateFormat = paneltime.EffectiveDateFormat(s.DateFormat)
 
 	// Surface the EFFECTIVE tenant channel-kind allowlist: an empty column means
 	// "safe defaults", so show them rather than a blank list. Doesn't write back.
@@ -121,6 +115,7 @@ type updateServerSettingsRequest struct {
 	AdminEmail               *string          `json:"admin_email,omitempty"`
 	LogRetention             *json.RawMessage `json:"log_retention,omitempty"`
 	Timezone                 *string          `json:"timezone,omitempty"`
+	DateFormat               *string          `json:"date_format,omitempty"`
 	SSHPort                  *uint16          `json:"ssh_port,omitempty"`
 	SSHPasswordAuth          *bool            `json:"ssh_password_auth,omitempty"`
 	SSHUserPasswordAuth      *bool            `json:"ssh_user_password_auth,omitempty"`
@@ -375,7 +370,26 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 		current.AdminEmail = strings.TrimSpace(*req.AdminEmail)
 	}
 	if req.Timezone != nil {
-		current.Timezone = strings.TrimSpace(*req.Timezone)
+		tz := strings.TrimSpace(*req.Timezone)
+		// GH #2164: the panel shows every time in this zone and reads backup
+		// crons in it, so a new value must be a zone this host can load, not
+		// just a well-formed name. Only a change is checked: a stored value
+		// the host lost must not block saving other settings.
+		if tz != "" && tz != current.Timezone {
+			if _, ok := paneltime.LoadZone(tz); !ok {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_settings", "detail": "timezone: unknown zone"})
+				return
+			}
+		}
+		current.Timezone = tz
+	}
+	if req.DateFormat != nil {
+		f := strings.TrimSpace(*req.DateFormat)
+		if !paneltime.ValidDateFormat(f) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_settings", "detail": "date_format: must be one of " + strings.Join(paneltime.DateFormats, ", ")})
+			return
+		}
+		current.DateFormat = f
 	}
 	if req.LogRetention != nil {
 		if err := validateLogRetention(*req.LogRetention); err != nil {
@@ -853,6 +867,10 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
+	// GH #2164: the panel clock follows the saved zone at once (GET /me hands
+	// it to every SPA); the backup scheduler re-times stored next-runs on its
+	// next tick.
+	paneltime.Set(current.Timezone)
 
 	// Apply hostname to the OS via agent, best-effort. If the agent isn't
 	// reachable we still report success — the DB has the truth and a later

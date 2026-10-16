@@ -1326,6 +1326,13 @@ paths:
               type: object
               properties:
                 hostname: { type: string }
+                timezone:
+                  type: string
+                  description: "IANA zone the panel shows times in and reads backup crons in (GH #2164). Empty = the OS zone. A new value must be a zone this host can load, else 400 invalid_settings."
+                date_format:
+                  type: string
+                  enum: ["DD/MM/YY HH:mm", "DD/MM/YYYY HH:mm", "DD.MM.YYYY HH:mm", "YYYY-MM-DD HH:mm", "MM/DD/YYYY hh:mm A", "DD MMM YYYY, HH:mm"]
+                  description: "How the panel shows a date with time (dayjs pattern, GH #2164). Default DD/MM/YY HH:mm. Anything else is 400 invalid_settings."
                 default_dns_ttl:
                   type: integer
                   minimum: 60
@@ -4584,6 +4591,11 @@ paths:
     get:
       tags: [Me]
       summary: List me
+      description: |
+        The signed-in user. Also carries the panel's clock for the SPA (GH #2164):
+        timezone (IANA name of the Server Settings timezone, else the OS zone,
+        else UTC) and date_format (the dayjs pattern the admin picked). Every
+        timestamp in the API itself stays UTC ISO 8601.
       security: [ { KratosSession: [] } ]
       responses: { "200": { description: OK } }
 
