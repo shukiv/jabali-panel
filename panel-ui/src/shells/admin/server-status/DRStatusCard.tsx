@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import { Card, Descriptions, Tag, Tooltip, Typography } from "antd";
 
 import { apiClient } from "../../../apiClient";
+import { shortDateTime } from "../../../utils/datetime";
 
 interface DRStatus {
   role: string;
@@ -114,7 +115,7 @@ export function DRStatusCard() {
         {status.is_standby && (
           <Descriptions.Item label="Last sync">
             {status.last_sync_at ? (
-              <Tooltip title={status.last_sync_at}>{humanizeAge(status.sync_age_seconds)}</Tooltip>
+              <Tooltip title={shortDateTime(status.last_sync_at)}>{humanizeAge(status.sync_age_seconds)}</Tooltip>
             ) : (
               "never (since pairing)"
             )}

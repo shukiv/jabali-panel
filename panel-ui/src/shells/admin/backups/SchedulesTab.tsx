@@ -607,7 +607,7 @@ export function SchedulesTab() {
         <Table.Column
           dataIndex="next_run_at"
           title={t("schedulestab.next_run")}
-          render={(v: string | null) => v ?? "—"}
+          render={(v: string | null) => <Timestamp value={v} />}
         />
         <Table.Column
           dataIndex="last_run_at"

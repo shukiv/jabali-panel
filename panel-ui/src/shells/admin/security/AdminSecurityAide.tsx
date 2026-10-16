@@ -14,6 +14,7 @@ import {
   useRunAideCheck,
   useRunAideRebuild,
 } from "../../../hooks/useSecurityAide";
+import { shortDateTime } from "../../../utils/datetime";
 
 const CATEGORY_COLOR: Record<string, string> = {
   "security-control": "red",
@@ -53,7 +54,7 @@ function AideRunAlerts({ data }: { data?: AideStatus }) {
           showIcon
           style={{ marginBottom: 12 }}
           message="Rebuilding the baseline…"
-          description={`${rebuild.started_at ? `Started ${rebuild.started_at}. ` : ""}A rebuild reads every watched file and takes a few minutes. This page updates when it's done.`}
+          description={`${rebuild.started_at ? `Started ${shortDateTime(rebuild.started_at)}. ` : ""}A rebuild reads every watched file and takes a few minutes. This page updates when it's done.`}
         />
       )}
       {rebuild && !rebuild.running && rebuild.ok === false && (
@@ -232,7 +233,7 @@ export const AdminSecurityAide = () => {
           type="info"
           showIcon
           message="The baseline was rebuilt"
-          description={`Rebuilt ${data.baseline_rebuilt_at}. No check has run since; run a check to compare the files against the new baseline.`}
+          description={`Rebuilt ${shortDateTime(data.baseline_rebuilt_at)}. No check has run since; run a check to compare the files against the new baseline.`}
           style={{ marginBottom: 12 }}
         />
       ) : total > 0 ? (

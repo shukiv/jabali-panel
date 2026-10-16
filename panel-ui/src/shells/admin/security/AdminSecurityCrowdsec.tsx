@@ -305,7 +305,7 @@ export const AdminSecurityCrowdsec = () => {
                     locale={{ emptyText: "No matching alerts in the loaded window" }}
                     columns={[
                       { title: "Scenario", dataIndex: "scenario", ellipsis: true },
-                      { title: "When", dataIndex: "created_at", width: 180, render: (v: string) => v || "—" },
+                      { title: "When", dataIndex: "created_at", width: 180, render: (v: string) => <Timestamp value={v} /> },
                     ]}
                   />
                 </>
@@ -2054,7 +2054,7 @@ const EngineIdentityCard = () => {
               <Typography.Text type="secondary" style={{ fontSize: 11 }}>
                 Daemon uptime since
               </Typography.Text>
-              <div style={{ fontSize: 13 }}>{startedAt}</div>
+              <div style={{ fontSize: 13 }}><Timestamp value={startedAt} /></div>
             </Col>
           )}
         </Row>
