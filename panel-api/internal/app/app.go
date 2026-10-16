@@ -545,12 +545,10 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		// CSRF: same-origin guard for cookie-authenticated mutations (GH #460),
 		// before scope enforcement. Bearer/automation auth is exempt inside it.
 		v1 := r.Group("/api/v1", combinedAuth, api.EnforceSameOriginForCookieMutations(), api.EnforceUserTokenScopes())
-		// Register the user-facing token management endpoints. These
-		// reject token-auth callers themselves (you can't mint new
-		// tokens from a token), so even though v1 accepts both auth
-		// modes, the /me/api-tokens routes are Kratos-only at the
-		// handler level.
-		api.RegisterMeAPITokensRoutes(v1, api.MeAPITokensConfig{Tokens: deps.UserAPITokens})
+		// Routes go on v1 only after the last v1.Use below: gin gives a route
+		// the group's middleware as it is when the route is registered, so a
+		// route registered here would miss ResolveImpersonation, the audit and
+		// the standby guard (GH #2159).
 
 		// API docs (OpenAPI spec). Mounts at /api/v1/_meta/openapi.{json,yaml}
 		// under the engine root, NOT inside the auth-protected v1 group —
@@ -599,6 +597,15 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		if deps.ServerSettings != nil {
 			v1.Use(middleware.StandbyReadOnly(deps.ServerSettings, deps.Log))
 		}
+
+		// Register the user-facing token management endpoints. These
+		// reject token-auth callers themselves (you can't mint new
+		// tokens from a token), so even though v1 accepts both auth
+		// modes, the /me/api-tokens routes are Kratos-only at the
+		// handler level. GH #2159: registered after the middleware above,
+		// so an admin acting as a user (ADR-0128) manages that user's
+		// tokens, audited with the admin as actor, never the admin's own.
+		api.RegisterMeAPITokensRoutes(v1, api.MeAPITokensConfig{Tokens: deps.UserAPITokens})
 
 		// M353 Phase 1 (GH #353): module guards. A disabled module's routes must
 		// 409, not just be hidden in the UI. Build one guard factory (shared TTL
