@@ -18,6 +18,7 @@ import { KeyOutlined, PlusOutlined, DeleteOutlined } from "@icons";
 
 import { apiClient } from "../../../apiClient";
 import { CopyableInput } from "../../../components/CopyableInput";
+import { shortDateTime } from "../../../utils/datetime";
 
 type Token = {
   id: string;
@@ -62,8 +63,7 @@ function famPrefix(wildcard: string): string {
 
 function fmt(iso?: string | null): string {
   if (!iso) return "—";
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString();
+  return Number.isNaN(new Date(iso).getTime()) ? iso : shortDateTime(iso);
 }
 
 export const AdminAutomationTokensPage = () => {

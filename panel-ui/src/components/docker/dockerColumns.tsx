@@ -27,6 +27,7 @@ import { humanBytes } from "../../utils/bytes";
 import { RowActions, type RowAction } from "../RowActions";
 import type { InstalledApp } from "../../shells/admin/docker-apps/types";
 import { TRANSITIONAL_STATUSES } from "./dockerStatus";
+import { shortDateTime } from "../../utils/datetime";
 
 // Admin's superset palette — the tenant screen previously lacked stopped=orange
 // and rolling_back=purple; consolidating takes the richer set for both.
@@ -187,7 +188,7 @@ const diskColumn = () => ({
     <Tooltip
       title={
         r.size_checked_at
-          ? `Persistent data on disk · checked ${new Date(r.size_checked_at).toLocaleString()}`
+          ? `Persistent data on disk · checked ${shortDateTime(r.size_checked_at)}`
           : "Persistent data size — not measured yet"
       }
     >

@@ -16,6 +16,7 @@
 // every non-admin user.
 import { apiClient } from "./apiClient";
 import { queryClient } from "./query";
+import { setPanelClock } from "./utils/datetime";
 
 export type Identity = {
   id: string;
@@ -45,6 +46,9 @@ type MeResponse = {
   package_id?: string;
   package_name?: string;
   upload_max_size_mb?: number;
+  /** GH #2164: the panel's clock (Server Settings timezone + date format). */
+  timezone?: string;
+  date_format?: string;
 };
 
 let cached: Identity | null = null;
@@ -67,6 +71,7 @@ export async function getIdentity(): Promise<Identity | null> {
     try {
       const { data } = await apiClient.get<MeResponse>("/me");
       if (!data?.id) return null;
+      setPanelClock(data.timezone, data.date_format);
       cached = {
         id: data.id,
         email: data.email ?? "",

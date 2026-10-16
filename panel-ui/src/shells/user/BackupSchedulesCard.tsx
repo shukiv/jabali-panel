@@ -14,8 +14,8 @@ import { useQuery } from "@tanstack/react-query";
 
 import { apiClient } from "../../apiClient";
 import { extractApiError } from "../../apiErrors";
-import { shortDateTimeUTC } from "../../utils/datetime";
 import { MyProfileScheduleCard } from "./MyProfileScheduleCard";
+import { Timestamp, usePanelClock } from "../../components/Timestamp";
 
 interface ScheduleRow {
   id: string;
@@ -73,6 +73,7 @@ interface DrawerForm {
 
 export const BackupSchedulesCard = () => {
   const { t } = useTranslation();
+  const tz = usePanelClock().timezone;
   const [form] = Form.useForm<DrawerForm>();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -189,7 +190,7 @@ export const BackupSchedulesCard = () => {
       dataIndex: "next_run_at",
       key: "next_run_at",
       render: (n?: string | null) =>
-        n ? shortDateTimeUTC(n) : <Typography.Text type="secondary">—</Typography.Text>,
+        n ? <Timestamp value={n} /> : <Typography.Text type="secondary">—</Typography.Text>,
     },
     {
       title: "Enabled",
@@ -238,7 +239,7 @@ export const BackupSchedulesCard = () => {
               <>
                 Your host runs scheduled backups between{" "}
                 <strong>
-                  {view?.window_start}–{view?.window_end} UTC
+                  {view?.window_start}–{view?.window_end} ({tz})
                 </strong>
                 . You choose what to back up, where, and how often — your host sets the window they run in.{" "}
               </>

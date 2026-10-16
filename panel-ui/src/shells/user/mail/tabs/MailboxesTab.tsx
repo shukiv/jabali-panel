@@ -41,6 +41,8 @@ import { useListQuery } from "../../../../hooks/useQueries";
 import { useTableURL } from "../../../../hooks/useTableURL";
 import type { Domain } from "../../../../components/domains/types";
 import { EditMailboxModal } from "../../../../components/mail/EditMailboxModal";
+import { shortDate } from "../../../../utils/datetime";
+import { Timestamp } from "../../../../components/Timestamp";
 
 type MailboxRow = Mailbox & { domain_name: string };
 type GroupMembership = {
@@ -282,7 +284,7 @@ export const MailboxesTab = ({ domainId }: { domainId?: string } = {}) => {
               if (!ar?.enabled)
                 return <Typography.Text type="secondary">—</Typography.Text>;
               const fmt = (d: string | null) =>
-                d ? new Date(d).toLocaleDateString() : "—";
+                d ? shortDate(d) : "—";
               const dates =
                 ar.from_date || ar.to_date
                   ? `${fmt(ar.from_date)} → ${fmt(ar.to_date)}`
@@ -336,7 +338,7 @@ export const MailboxesTab = ({ domainId }: { domainId?: string } = {}) => {
             width: 160,
             render: (v: string | null | undefined) =>
               v ? (
-                new Date(v).toLocaleString()
+                <Timestamp value={v} />
               ) : (
                 <Typography.Text type="secondary">never</Typography.Text>
               ),

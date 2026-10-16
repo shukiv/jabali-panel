@@ -6,7 +6,6 @@ import { useTranslation } from "react-i18next";
 import { useBackupDownloadPrepare } from "../../utils/backupDownload";
 import { Button, Card, Grid, Input, Select, Space, Table, Tag, Tooltip, Typography } from "antd";
 import { feedback } from "../../lib/feedback"; // GH #970: themed toasts
-import { shortDateTime } from "../../utils/datetime";
 import { backupTypeColor, backupTypeLabel } from "../../utils/backupType";
 import { RowActions } from "../../components/RowActions";
 import { BackupStatusTag } from "../../components/backups/BackupStatusTag";
@@ -22,6 +21,7 @@ import { useListQuery } from "../../hooks/useQueries";
 import { extractApiError } from "../../apiErrors";
 import { humanBytes as formatBytes } from "../../utils/bytes";
 import { RestoreDrawer } from "./RestoreDrawer";
+import { Timestamp } from "../../components/Timestamp";
 
 type MyBackup = {
   id: string;
@@ -197,7 +197,7 @@ export const MyProfileBackupCard = () => {
           {
             title: "Created",
             dataIndex: "created_at",
-            render: (t: string) => shortDateTime(t),
+            render: (t: string) => <Timestamp value={t} />,
           },
           {
             // GH #454: show what each backup captured (full / database /

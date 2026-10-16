@@ -22,6 +22,7 @@ import { getSSLTag } from "../../../../utils/sslState";
 import { daysUntil, modeTag } from "../../../../components/ssl/sslHealth";
 import { SSLCertViewModal } from "../../../../components/ssl/SSLCertViewModal";
 import type { Domain } from "../../../../components/domains/types";
+import { Timestamp } from "../../../../components/Timestamp";
 
 // The owner-scoped GET /domains/:id/ssl payload (mirrors the admin section's
 // read — the API wraps the certificate in `.ssl`, and 404 means none issued).
@@ -106,11 +107,11 @@ export const SSLTab = ({ domain }: { domain: Domain }) => {
           <Descriptions.Item label="Issuer">{domain.ssl.issuer}</Descriptions.Item>
         ) : null}
         {isIssued && cert?.issued_at ? (
-          <Descriptions.Item label="Issued">{new Date(cert.issued_at).toLocaleString()}</Descriptions.Item>
+          <Descriptions.Item label="Issued"><Timestamp value={cert.issued_at} /></Descriptions.Item>
         ) : null}
         {isIssued && cert?.expires_at ? (
           <Descriptions.Item label="Expires">
-            {new Date(cert.expires_at).toLocaleString()}
+            <Timestamp value={cert.expires_at} />
             {days !== null ? (
               <Tag color={days < 15 ? "orange" : "default"} style={{ marginLeft: 8 }}>
                 in {days} day{days === 1 ? "" : "s"}

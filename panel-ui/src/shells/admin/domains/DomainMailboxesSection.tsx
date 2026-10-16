@@ -33,6 +33,7 @@ import {
   useMailboxes,
   type Mailbox,
 } from "../../../hooks/useMailboxes";
+import { Timestamp } from "../../../components/Timestamp";
 
 type Props = {
   domainId: string;
@@ -258,7 +259,7 @@ export const DomainMailboxesSection = ({
               dataIndex: "last_usage_at",
               width: 140,
               render: (v: string | null) =>
-                v ? new Date(v).toLocaleString() : (
+                v ? <Timestamp value={v} /> : (
                   <Typography.Text type="secondary">never</Typography.Text>
                 ),
             },

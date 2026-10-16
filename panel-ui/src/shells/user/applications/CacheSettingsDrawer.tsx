@@ -16,6 +16,7 @@ import { apiClient } from "../../../apiClient";
 import { extractApiError } from "../../../apiErrors";
 import { StandardDrawerFooter } from "../../../components/StandardActionFooter";
 import { shortDateTime } from "../../../utils/datetime";
+import { Timestamp } from "../../../components/Timestamp";
 
 type CacheSettings = {
   url_exclusions?: string[];
@@ -290,7 +291,7 @@ export function CacheSettingsDrawer({
           <Switch checked={autoWarm} onChange={setAutoWarm} />
           {lastWarm?.at ? (
             <span style={{ marginLeft: 12, color: "#888" }}>
-              Last warmed {new Date(lastWarm.at).toLocaleString()}
+              Last warmed <Timestamp value={lastWarm.at} />
               {lastWarm.urls ? ` (${lastWarm.urls} URLs)` : ""}
             </span>
           ) : null}

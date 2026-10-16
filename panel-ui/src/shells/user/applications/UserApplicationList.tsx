@@ -6,7 +6,6 @@
 // the install/scan/migrate/clone/cache actions, the StatCards, and the Tabs.
 import { useTranslation } from "react-i18next";
 import { useState } from "react";
-import { shortDateTime } from "../../../utils/datetime";
 import { useTabParam } from "../../../hooks/useTabParam";
 import { Button, Tabs, Col, Empty, Row, Space, Switch, Table, Tag, Typography, Tooltip } from "antd";
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
@@ -49,6 +48,7 @@ import { CatalogTab } from "./CatalogTab";
 import { appDisplayName } from "./CmsIcon";
 import { useAppRegistry } from "./appRegistry";
 import { StatCard } from "../../../components/StatCard";
+import { Timestamp } from "../../../components/Timestamp";
 
 interface ActionsCellProps {
   record: ApplicationInstall;
@@ -439,7 +439,7 @@ export const UserApplicationList = () => {
             responsive={["lg"]}
             key="created_at"
             sorter
-            render={(date: string) => shortDateTime(date)}
+            render={(date: string) => <Timestamp value={date} />}
           />
           <Table.Column<ApplicationInstall>
             title={t("userapplicationlist.cache")}

@@ -5,7 +5,6 @@ import { Badge, Button, Card, Space, Table, Tag, Typography } from "antd";
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { useBackupDownloadPrepare } from "../../../utils/backupDownload";
 import { backupTypeColor, backupTypeLabel, runScopeSummary } from "../../../utils/backupType";
-import { shortDateTime } from "../../../utils/datetime";
 import { useTabParam } from "../../../hooks/useTabParam";
 import { RowActions } from "../../../components/RowActions";
 import {
@@ -49,6 +48,7 @@ import { DestinationsTab } from "./DestinationsTab";
 import { EncryptionKeyCard } from "./EncryptionKeyCard";
 import { SchedulesTab } from "./SchedulesTab";
 import { RecoveryHandoffTab } from "./RecoveryHandoffTab";
+import { Timestamp } from "../../../components/Timestamp";
 
 interface BackupJob {
   id: string;
@@ -418,7 +418,7 @@ export const AdminBackupsPage = () => {
           title: "Created",
           dataIndex: "created_at",
           sorter: (a, b) => +new Date(a.created_at) - +new Date(b.created_at),
-          render: (ts: string) => shortDateTime(ts),
+          render: (ts: string) => <Timestamp value={ts} />,
         },
         {
           title: "Destination",
@@ -695,8 +695,9 @@ export const AdminBackupsPage = () => {
                 sorter: (a, b) =>
                   ((a.isRun ? a.run.started_at : a.job.created_at) ? +new Date(a.isRun ? a.run.started_at : a.job.created_at) : 0) -
                   ((b.isRun ? b.run.started_at : b.job.created_at) ? +new Date(b.isRun ? b.run.started_at : b.job.created_at) : 0),
-                render: (_: unknown, row: TableRow) =>
-                  shortDateTime(row.isRun ? row.run.started_at : row.job.created_at),
+                render: (_: unknown, row: TableRow) => (
+                  <Timestamp value={row.isRun ? row.run.started_at : row.job.created_at} />
+                ),
               },
               {
                 title: "Actions",

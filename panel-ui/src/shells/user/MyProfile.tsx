@@ -29,6 +29,7 @@ import {
   type RenderableField,
 } from "../../kratos";
 import { MyProfileUsageCard } from "./MyProfileUsageCard";
+import { Timestamp } from "../../components/Timestamp";
 
 export function MyProfile() {
   const { t } = useTranslation();
@@ -192,7 +193,7 @@ export function MyProfile() {
               </Descriptions.Item>
               {me.createdAt && (
                 <Descriptions.Item label={t("myprofile.member_since")}>
-                  {new Date(me.createdAt).toLocaleDateString()}
+                  <Timestamp value={me.createdAt} dateOnly />
                 </Descriptions.Item>
               )}
             </Descriptions>

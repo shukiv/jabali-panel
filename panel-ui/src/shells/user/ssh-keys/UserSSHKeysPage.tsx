@@ -1,6 +1,5 @@
 import { useTranslation } from "react-i18next";
 import { useMemo, useState } from "react";
-import { shortDateTime } from "../../../utils/datetime";
 import { StandardDrawerFooter } from "../../../components/StandardActionFooter";
 import {
   Alert,
@@ -38,6 +37,7 @@ import {
   type SSHKey,
 } from "../../../apiClient";
 import { useQuery } from "@tanstack/react-query";
+import { Timestamp } from "../../../components/Timestamp";
 
 const SSH_KEY_PREFIXES = ["ssh-rsa ", "ssh-ed25519 ", "ecdsa-sha2-"];
 
@@ -346,7 +346,7 @@ export const UserSSHKeysPage = () => {
               sorter: (a, b) =>
                 new Date(a.created_at).getTime() -
                 new Date(b.created_at).getTime(),
-              render: (date: string) => shortDateTime(date),
+              render: (date: string) => <Timestamp value={date} />,
             },
             {
               title: "Actions",

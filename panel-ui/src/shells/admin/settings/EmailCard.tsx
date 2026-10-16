@@ -23,6 +23,7 @@ import {
   type SettingsEmailReady,
 } from "../../../hooks/useSettingsEmail";
 import { useServerCapabilities } from "../../../hooks/useServerCapabilities";
+import { shortDateTime } from "../../../utils/datetime";
 
 export const EmailCard = () => {
   const { t } = useTranslation();
@@ -76,7 +77,7 @@ export const EmailCard = () => {
 
   // state === "ready"
   const enabledAtLabel = data.emailEnabledAt
-    ? new Date(data.emailEnabledAt).toLocaleString()
+    ? shortDateTime(data.emailEnabledAt)
     : "—";
 
   return (
@@ -294,7 +295,7 @@ const SwitchoverStatus = ({
           <>
             <div>{sw.lastError}</div>
             {sw.nextRetryAt && (
-              <div>{t("emailcard.switchover_retry_at", { time: new Date(sw.nextRetryAt).toLocaleString() })}</div>
+              <div>{t("emailcard.switchover_retry_at", { time: shortDateTime(sw.nextRetryAt) })}</div>
             )}
           </>
         }

@@ -7,7 +7,6 @@
 // (drops the whole user, cascading all grants).
 import { useTranslation } from "react-i18next";
 import { useState } from "react";
-import { shortDateTime } from "../../../utils/datetime";
 import { Button, Card, Space, Table, Tag, Typography } from "antd";
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { KeyOutlined, PlusOutlined, UserOutlined, DeleteOutlined } from "@icons";
@@ -25,6 +24,7 @@ import { sorterToParams } from "../../../utils/tableSorter";
 import { EngineTag } from "../../../components/EngineTag";
 import { DatabaseUserDrawer } from "./DatabaseUserDrawer";
 import { grantLabel, type Grant } from "./grantLabel";
+import { Timestamp } from "../../../components/Timestamp";
 
 export type { Grant };
 
@@ -240,7 +240,7 @@ export const DatabaseUsersList = () => {
             dataIndex="created_at"
             title={t("databaseuserslist.created")}
             sorter
-            render={(date: string) => shortDateTime(date)}
+            render={(date: string) => <Timestamp value={date} />}
             width={120}
           />
           <Table.Column<DatabaseUser>

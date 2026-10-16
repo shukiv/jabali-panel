@@ -12,6 +12,7 @@ import { Drawer, Empty, Spin, Timeline, Typography } from "antd";
 import { feedback } from "../../../../lib/feedback"; // GH #970: themed toasts
 
 import { apiClient } from "../../../../apiClient";
+import { Timestamp } from "../../../../components/Timestamp";
 
 interface DetailEvent {
   timestamp: string;
@@ -87,7 +88,7 @@ export const MailLogDetailDrawer = ({ queueId, open, onClose }: Props) => {
               children: (
                 <div>
                   <Typography.Text style={{ fontSize: 12 }} type="secondary">
-                    {new Date(e.timestamp).toLocaleString()}
+                    <Timestamp value={e.timestamp} seconds />
                   </Typography.Text>
                   <div>{e.message || e.event}</div>
                   {e.detail ? (

@@ -10,6 +10,7 @@ import dayjs from "dayjs";
 import relativeTime from "dayjs/plugin/relativeTime";
 
 import { createBackup, listBackups, restoreBackup, type BackupRow } from "./api";
+import { Timestamp } from "../../../components/Timestamp";
 
 dayjs.extend(relativeTime);
 
@@ -99,7 +100,7 @@ export const BackupsDrawer = ({ open, appId, onClose }: Props) => {
                 <Space direction="vertical" size={0}>
                   <Typography.Text>{dayjs(t).fromNow()}</Typography.Text>
                   <Typography.Text type="secondary" style={{ fontSize: 11 }}>
-                    {dayjs(t).format("YYYY-MM-DD HH:mm")}
+                    <Timestamp value={t} />
                   </Typography.Text>
                 </Space>
               ),

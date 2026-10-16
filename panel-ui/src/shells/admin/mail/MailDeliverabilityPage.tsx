@@ -8,6 +8,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Alert, Card, Descriptions, Progress, Skeleton, Tag, Typography } from "antd";
 
 import { apiClient } from "../../../apiClient";
+import { Timestamp } from "../../../components/Timestamp";
 
 type Component = {
   name: string;
@@ -56,7 +57,7 @@ export const MailDeliverabilityPage = () => {
           {data.severity.toUpperCase()}
         </Tag>
         <Typography.Text type="secondary" style={{ marginLeft: 16 }}>
-          generated {new Date(data.generated_at).toLocaleString()}
+          generated <Timestamp value={data.generated_at} />
         </Typography.Text>
       </div>
       <Descriptions bordered column={1} size="middle">

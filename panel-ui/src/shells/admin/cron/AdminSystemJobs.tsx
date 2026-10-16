@@ -24,6 +24,7 @@ import { feedback } from "../../../lib/feedback";
 import { RowActions } from "../../../components/RowActions";
 import { CronLogDrawer } from "../../../components/cron/CronLogDrawer";
 import { humanizeSchedule } from "../../../utils/cronSchedule";
+import { shortDateTime } from "../../../utils/datetime";
 
 dayjs.extend(relativeTime);
 
@@ -52,7 +53,7 @@ const RESULT_COLOR: Record<string, string> = { success: "green", failed: "red" }
 const errorCode = (e: unknown): string | undefined =>
   (e as { response?: { data?: { error?: string } } })?.response?.data?.error;
 
-const exact = (ts: string) => dayjs(ts).format("YYYY-MM-DD HH:mm");
+const exact = (ts: string) => shortDateTime(ts);
 
 export const AdminSystemJobs = () => {
   const navigate = useNavigate();

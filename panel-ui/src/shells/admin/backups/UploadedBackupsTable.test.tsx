@@ -97,7 +97,7 @@ describe("UploadedBackupsTable (GH #1993)", () => {
     expect(within(rowOf("keep1.tar.zst")).getByText("Until deleted")).toBeTruthy();
     expect(within(rowOf("keep1.tar.zst")).getByText("Not restored yet")).toBeTruthy();
     expect(within(rowOf("keep1.tar.zst")).getByText("3.0 GB")).toBeTruthy();
-    expect(within(rowOf("week1.tar.zst")).getByText(/^Until 13 Oct 2026/)).toBeTruthy();
+    expect(within(rowOf("week1.tar.zst")).getByText("Until 13/10/26 10:00")).toBeTruthy();
     expect(within(rowOf("gone1.tar.zst")).getByText("Deleted after the restore")).toBeTruthy();
     expect(within(rowOf("gone1.tar.zst")).getByText("Restored into alice")).toBeTruthy();
     expect(within(rowOf("fail1.tar.zst")).getByText("Restore into bob failed")).toBeTruthy();

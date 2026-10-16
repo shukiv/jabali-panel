@@ -9,7 +9,6 @@
 // depends on the other. This adapter keeps the admin deltas: the owner column,
 // the created_at-desc default sort, and a read-only action set (login + delete).
 import { useTranslation } from "react-i18next";
-import { shortDateTime } from "../../../utils/datetime";
 import { Card, Input, Space, Table, Typography } from "antd";
 import { AppstoreOutlined, SearchOutlined } from "@icons";
 import { RowActions } from "../../../components/RowActions";
@@ -28,6 +27,7 @@ import {
   openApplicationLogin,
   type ApplicationInstall,
 } from "../../../components/applications/applicationInventory";
+import { Timestamp } from "../../../components/Timestamp";
 
 interface AdminActionsCellProps {
   record: ApplicationInstall;
@@ -178,7 +178,7 @@ export const AdminApplicationList = () => {
             key="created_at"
             sorter
             defaultSortOrder="descend"
-            render={(date: string) => shortDateTime(date)}
+            render={(date: string) => <Timestamp value={date} />}
           />
           <Table.Column<ApplicationInstall>
             title={t("adminapplicationlist.actions")}

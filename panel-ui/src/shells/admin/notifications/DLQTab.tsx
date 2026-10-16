@@ -14,6 +14,7 @@ import { DeleteOutlined, ReloadOutlined, RedoOutlined } from "@icons";
 import { RowActions } from "../../../components/RowActions";
 
 import { apiClient } from "../../../apiClient";
+import { shortDateTimeSeconds } from "../../../utils/datetime";
 
 type DLQEntry = {
   id: string;
@@ -35,9 +36,8 @@ const severityColor: Record<string, string> = {
 
 function formatTs(iso: string): string {
   if (!iso) return "—";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString();
+  if (Number.isNaN(new Date(iso).getTime())) return iso;
+  return shortDateTimeSeconds(iso);
 }
 
 export const DLQTab = () => {

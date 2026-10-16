@@ -320,6 +320,15 @@ All CRUD flows through `src/hooks/useQueries.ts`:
 
 Wrapper pattern: cross-resource side effects (e.g. "after domain create, invalidate SSL list") go in the component's `onSuccess` callback, not a new hook.
 
+### Showing a time
+
+Every timestamp a person reads goes through the panel clock (GH #2164): the Server Settings timezone and date format, which GET /me hands to `setPanelClock`.
+
+- In markup: `<Timestamp value={ts} />` (`seconds` for logs, `dateOnly` for days). It shows the UTC instant on hover.
+- Where markup can't go (template strings, Select labels, tooltips): `shortDateTime` / `shortDateTimeSeconds` / `shortDate` / `shortTime` from `utils/datetime`.
+- Never `toLocaleString()`, `toLocaleDateString()`, `Intl.DateTimeFormat` or `dayjs(ts).format(...)` on a timestamp: they use the browser's zone and locale. Relative times (`dayjs(ts).fromNow()`) are fine; give them the exact time in a tooltip.
+- The API keeps UTC ISO 8601. Backup crons and the tenant backup window are read on the panel clock (`internal/paneltime`).
+
 ### Responsive
 
 - Every admin/user table: `scroll={{ x: "max-content" }}`.
@@ -384,6 +393,7 @@ These have bitten us. Don't repeat:
 | Use `@icons` and inline `@ant-design/icons` in the same file | Import confusion; every icon goes through the shim | — |
 | Register an internal route off `v1` | `RequireKratosSession` blocks the agent; internal routes mount off root `r` | M14 Step 4 |
 | Dispatch sub-agents for well-specified work | Drift from plan contracts; rework cost > just doing it | `feedback_never_agents` |
+| Format a timestamp with `toLocaleString()` / `dayjs(ts).format()` | Shows the viewer's browser zone and locale, so an admin and a tenant read different times for the same event | GH #2164 |
 | Commit to `main` from a feature worktree | Dispatcher is the only pushing entity; agents must branch | CLAUDE.md |
 | Skip the pre-merge rebase | Phantom "N ahead" reports + merge conflicts surface at push time | `feedback_fetch_rebase_before_deploy` |
 | Hand-roll a SQL query string | GORM parameters only; any `WHERE ... = '" + id + "'"` fails code review | security.md |

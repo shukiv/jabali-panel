@@ -35,6 +35,7 @@ import { UserResetPasswordAction } from "./UserResetPasswordAction";
 import { UserSuspendAction } from "./UserSuspendAction";
 import { UserRenameAction } from "./UserRenameAction";
 import { AdminSessionsPage } from "../sessions/AdminSessionsPage";
+import { Timestamp } from "../../../components/Timestamp";
 
 type User = {
   id: string;
@@ -71,7 +72,7 @@ type User = {
 
 type HostingPackage = { id: string; name: string };
 
-const renderCreated = (ts: string) => shortDateTime(ts);
+const renderCreated = (ts: string) => <Timestamp value={ts} />;
 
 // Shared row-action buttons for both tables. Wired to react-router
 // directly — no <EditButton> wrapper around a plain <Button>.
@@ -347,7 +348,7 @@ function UsersShellTable({
                         <div>
                           <b>{t("users.suspended")}</b>
                           {r.suspended_at
-                            ? ` ${t("users.suspended_on", { date: new Date(r.suspended_at).toLocaleString() })}`
+                            ? ` ${t("users.suspended_on", { date: shortDateTime(r.suspended_at) })}`
                             : ""}
                         </div>
                         {r.suspend_reason ? (

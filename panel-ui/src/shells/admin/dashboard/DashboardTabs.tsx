@@ -18,10 +18,10 @@ import { apiClient } from "../../../apiClient";
 import {
   AuditActionLabel,
   type AuditRow,
-  fmtTSInTz,
   resultTag,
-  useServerTz,
 } from "../../../components/AuditEventDetail";
+import { usePanelClock } from "../../../components/Timestamp";
+import { shortDateTimeSeconds } from "../../../utils/datetime";
 import { BackupStatusTag } from "../../../components/backups/BackupStatusTag";
 import {
   RunStatusSummary,
@@ -115,7 +115,7 @@ function PaneFooter({ to, label }: { to: string; label: string }) {
 // ActivityPane — the newest audit rows, the same store as the Audit Log page.
 function ActivityPane() {
   const { t } = useTranslation();
-  const tz = useServerTz();
+  const tz = usePanelClock().timezone;
   const q = useListQuery<AuditRow>({
     resource: "admin/audit",
     params: { pageSize: ACTIVITY_LIMIT, sort: "ts", order: "desc" },
@@ -160,7 +160,7 @@ function ActivityPane() {
             key: "ts",
             align: "right" as const,
             render: (_: unknown, r: AuditRow) => (
-              <Tooltip title={`${fmtTSInTz(r.ts, tz)} (${tz})`}>
+              <Tooltip title={`${shortDateTimeSeconds(r.ts)} (${tz})`}>
                 <Typography.Text type="secondary" style={{ fontSize: 12, whiteSpace: "nowrap" }}>
                   {relative(r.ts)}
                 </Typography.Text>

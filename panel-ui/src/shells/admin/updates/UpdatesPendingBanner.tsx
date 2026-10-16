@@ -18,11 +18,11 @@
 //   auto-update OFF — warning. Nothing will fix this on its own.
 //   auto-update ON  — info. It converges tonight; say when, and stop nagging.
 import { Alert, Button, Space, Typography } from "antd";
-import dayjs from "dayjs";
 import { Link } from "react-router";
 import { useTranslation } from "react-i18next";
 
 import { useAutoupdateConfig, useUpdateState } from "../../../hooks/useSystemUpdates";
+import { shortDate } from "../../../utils/datetime";
 
 export const UpdatesPendingBanner = () => {
   const { t } = useTranslation();
@@ -98,7 +98,7 @@ export const OsSecurityUpdatesBanner = () => {
       : `${pendingSecurity} OS security update${pendingSecurity === 1 ? "" : "s"} pending`;
 
   const patchAge = lastApplied
-    ? `Last applied ${dayjs(lastApplied).format("MMM D, YYYY")}.`
+    ? `Last applied ${shortDate(lastApplied)}.`
     : "OS security patches have never been applied automatically on this host.";
 
   return (

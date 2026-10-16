@@ -8,6 +8,7 @@ import type { UploadFile } from "antd";
 import { DeleteOutlined, PlusOutlined, SafetyCertificateOutlined, UploadOutlined } from "@icons";
 
 import { apiClient } from "../../apiClient";
+import { shortDate } from "../../utils/datetime";
 
 // SharedCertificatesCard — admin surface for JAB-170 shared wildcard/multi-SAN
 // certificates: upload one cert, serve it from many domains. Sibling of the
@@ -40,12 +41,7 @@ const daysUntil = (iso?: string): number | null => {
 
 const formatExpiry = (iso?: string): JSX.Element => {
   if (!iso) return <span>—</span>;
-  const date = new Date(iso);
-  const dateStr = date.toLocaleDateString("en-US", {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
+  const dateStr = shortDate(iso);
   const days = daysUntil(iso);
   if (days === null) return <span>{dateStr}</span>;
   const label = days < 0 ? "expired" : days === 0 ? "today" : `in ${days} days`;

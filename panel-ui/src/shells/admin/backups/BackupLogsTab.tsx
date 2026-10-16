@@ -1,6 +1,5 @@
 import { useTranslation } from "react-i18next";
 import { useState } from "react";
-import { shortDateTime } from "../../../utils/datetime";
 import { backupTypeColor, backupTypeLabel } from "../../../utils/backupType";
 import {
   Alert,
@@ -19,6 +18,7 @@ import { ReloadOutlined, FileTextOutlined } from "@ant-design/icons";
 import dayjs, { Dayjs } from "dayjs";
 import { useListQuery } from "../../../hooks/useQueries";
 import { apiClient } from "../../../apiClient";
+import { Timestamp } from "../../../components/Timestamp";
 
 interface BackupLogEntry {
   id: string;
@@ -254,13 +254,13 @@ export const BackupLogsTab = () => {
             title: "Created",
             dataIndex: "created_at",
             width: 180,
-            render: (v: string) => shortDateTime(v),
+            render: (v: string) => <Timestamp value={v} />,
           },
           {
             title: "Finished",
             dataIndex: "finished_at",
             width: 180,
-            render: (v?: string) => v ? new Date(v).toLocaleString() : "—",
+            render: (v?: string) => v ? <Timestamp value={v} /> : "—",
           },
           {
             title: "Actions",
@@ -325,7 +325,7 @@ export const BackupLogsTab = () => {
                 </>
               )}
               <Typography.Text strong>Fetched:</Typography.Text>
-              <Typography.Text>{new Date(logDetails.fetched_at).toLocaleString()}</Typography.Text>
+              <Typography.Text><Timestamp value={logDetails.fetched_at} /></Typography.Text>
             </Space>
             <Typography.Title level={5}>Log Output:</Typography.Title>
             <pre

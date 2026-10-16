@@ -16,6 +16,7 @@ import {
   useAppArmorStatus,
   useSetAppArmorMode,
 } from "../../../hooks/useSecurityAppArmor";
+import { Timestamp } from "../../../components/Timestamp";
 
 // appArmorAckErrorMessage is the toast for a failed acknowledge or withdraw:
 // the panel's reason when it gave one.
@@ -254,7 +255,7 @@ export const AdminSecurityAppArmor = () => {
                 title: "When",
                 dataIndex: "timestamp",
                 width: 180,
-                render: (v: string) => v ? new Date(v).toLocaleString() : "—",
+                render: (v: string) => v ? <Timestamp value={v} seconds /> : "—",
               },
               {
                 title: "Profile",

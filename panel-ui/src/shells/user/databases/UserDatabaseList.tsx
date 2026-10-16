@@ -7,7 +7,6 @@
 // / mysql) and PostgreSQL (pg_dump / privilege-scoped psql loader).
 import { useTranslation } from "react-i18next";
 import { useRef, useState, type ChangeEvent } from "react";
-import { shortDateTime } from "../../../utils/datetime";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button, Card, Space, Table, Typography } from "antd";
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
@@ -41,6 +40,7 @@ import {
   RestoreProgressModal,
   type RestoreProgress,
 } from "./RestoreProgressModal";
+import { Timestamp } from "../../../components/Timestamp";
 
 export type Database = {
   id: string;
@@ -375,7 +375,7 @@ export const UserDatabaseList = () => {
             title={t("userdatabaselist.created")}
             key="created_at"
             sorter
-            render={(date: string) => shortDateTime(date)}
+            render={(date: string) => <Timestamp value={date} />}
           />
           <Table.Column<Database>
             title={t("userdatabaselist.actions")}

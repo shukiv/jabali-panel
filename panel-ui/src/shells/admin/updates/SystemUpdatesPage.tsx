@@ -125,6 +125,7 @@ import {
   type JabaliCheckResult,
   type UpdateHistoryRow,
 } from "../../../hooks/useSystemUpdates";
+import { Timestamp } from "../../../components/Timestamp";
 
 const { Text, Title } = Typography;
 
@@ -342,7 +343,7 @@ function StatCards({ state, jabali, apt, checking, onCheckNow }: StatCardsProps)
                 <Text strong style={{ fontSize: 18 }}>{timeAgo(lastChecked)}</Text>
               </div>
               <Text type="secondary" style={{ fontSize: 12 }}>
-                {lastChecked ? dayjs(lastChecked).format("MMM D, YYYY HH:mm") : "—"}
+                {lastChecked ? <Timestamp value={lastChecked} /> : "—"}
               </Text>
             </div>
           </div>
@@ -532,7 +533,7 @@ function CommitList({
               {c.sha}
             </Text>{" "}
             <Text type="secondary" style={{ fontSize: 11 }}>
-              {c.date ? dayjs(c.date).format("MMM D") : ""}
+              {c.date ? <Timestamp value={c.date} dateOnly /> : ""}
             </Text>
           </li>
         ))}
@@ -959,7 +960,7 @@ function AutomaticUpdatesCard() {
               <div style={{ marginTop: 4 }}>
                 <Text type="secondary" style={{ fontSize: 12 }}>
                   Last applied:{" "}
-                  {lastApplied ? dayjs(lastApplied).format("MMM D, YYYY HH:mm") : "never"}
+                  {lastApplied ? <Timestamp value={lastApplied} /> : "never"}
                   {typeof pendingSecurity === "number" && pendingSecurity > 0 && (
                     <> · <Tag color="red" style={{ marginInlineStart: 4 }}>{pendingSecurity} security pending</Tag></>
                   )}
@@ -1073,7 +1074,7 @@ function RecentHistoryCard() {
             children: (
               <Space direction="vertical" size={0}>
                 <Space>
-                  <Text>{dayjs(r.started_at).format("MMM D, YYYY HH:mm")}</Text>
+                  <Text><Timestamp value={r.started_at} /></Text>
                   {historyStatusTag(r.status)}
                 </Space>
                 <Text type="secondary">

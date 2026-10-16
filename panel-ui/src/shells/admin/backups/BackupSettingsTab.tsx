@@ -15,7 +15,7 @@ interface BackupSettingsShape {
   // GH #454: the admin-owned time tenant scheduled backups run at. Tenants pick
   // content + destination; only the admin sets the cron.
   tenant_backup_cron: string;
-  // GH #454 7B: admin maintenance window (UTC HH:MM) that tenant multi-schedules
+  // GH #454 7B: admin maintenance window (HH:MM server time, GH #2164) that tenant multi-schedules
   // fire inside. Governs plans with max_backup_schedules > 1; the cron above
   // still governs legacy single-schedule plans.
   tenant_backup_window_start: string;
@@ -96,7 +96,7 @@ export const BackupSettingsTab = () => {
           name="default_local_backups_enabled"
           valuePropName="checked"
           label="Automatic daily local backups for all users"
-          tooltip="Off by default. When on, the panel keeps a managed schedule that backs up every user (files + databases + mail) to the local repo daily at 05:00 UTC, keeping 3 days. New users are covered automatically. Uses local disk + IO — prefer a remote destination if disk is tight. Turning it off disables the managed schedule but never removes users' own schedules."
+          tooltip="Off by default. When on, the panel keeps a managed schedule that backs up every user (files + databases + mail) to the local repo daily at 05:00 server time, keeping 3 days. New users are covered automatically. Uses local disk + IO — prefer a remote destination if disk is tight. Turning it off disables the managed schedule but never removes users' own schedules."
         >
           <Switch />
         </Form.Item>
@@ -113,7 +113,7 @@ export const BackupSettingsTab = () => {
           label={t("backupsettingstab.tenant_scheduled_backup_time_cron")}
           tooltip={t("backupsettingstab.tenants_choose_what_to_back_up_and_where_you")}
           rules={[{ required: true, message: "A cron expression is required" }]}
-          extra="Runs in UTC (server time) — e.g. 0 3 * * * fires at 03:00 UTC. The tenant view shows the same UTC time."
+          extra="Runs on the server's clock (Server Settings → Server Time) — e.g. 0 3 * * * fires at 03:00 server time. Tenants see the same time."
         >
           <Input placeholder="0 3 * * *" style={{ fontFamily: "monospace" }} />
         </Form.Item>
@@ -121,7 +121,7 @@ export const BackupSettingsTab = () => {
           name="tenant_backup_window_enforce"
           valuePropName="checked"
           label="Restrict tenant backups to a maintenance window"
-          tooltip="Off by default. When off, a tenant's Hourly / 6-hourly / 12-hourly / Daily schedule runs on its own interval. Turn on to confine all tenant scheduled backups to the UTC window below (e.g. to bound server load)."
+          tooltip="Off by default. When off, a tenant's Hourly / 6-hourly / 12-hourly / Daily schedule runs on its own interval. Turn on to confine all tenant scheduled backups to the window below (server time) (e.g. to bound server load)."
         >
           <Switch />
         </Form.Item>
@@ -129,15 +129,15 @@ export const BackupSettingsTab = () => {
           name="tenant_backup_window_start"
           label={t("backupsettingstab.tenant_backup_window_start")}
           tooltip={t("backupsettingstab.the_maintenance_window_multischedule_tenants")}
-          rules={[{ required: true, pattern: HHMM, message: "Use HH:MM (UTC)" }]}
-          extra="UTC. Only used when the restriction above is on — the scheduler fires (and spreads) tenant backups within this window."
+          rules={[{ required: true, pattern: HHMM, message: "Use HH:MM" }]}
+          extra="Server time. Only used when the restriction above is on — the scheduler fires (and spreads) tenant backups within this window."
         >
           <Input placeholder="02:00" style={{ fontFamily: "monospace" }} disabled={!enforceWindow} />
         </Form.Item>
         <Form.Item
           name="tenant_backup_window_end"
           label={t("backupsettingstab.tenant_backup_window_end")}
-          rules={[{ required: true, pattern: HHMM, message: "Use HH:MM (UTC)" }]}
+          rules={[{ required: true, pattern: HHMM, message: "Use HH:MM" }]}
         >
           <Input placeholder="05:00" style={{ fontFamily: "monospace" }} disabled={!enforceWindow} />
         </Form.Item>

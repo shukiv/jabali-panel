@@ -11,6 +11,7 @@ import { SafetyOutlined } from "@icons";
 import { Button, Card, Input, Popconfirm, Space, Tag, Typography } from "antd";
 import { apiClient } from "../../../apiClient";
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
+import { Timestamp } from "../../../components/Timestamp";
 
 interface TokenStatus {
   configured: boolean;
@@ -120,7 +121,7 @@ export function UserCloudflareTokenCard() {
       </Space.Compact>
       {configured && status?.verified_at ? (
         <Typography.Paragraph type="secondary" style={{ marginTop: 12, marginBottom: 0 }}>
-          Verified {new Date(status.verified_at).toLocaleString()}.
+          Verified <Timestamp value={status.verified_at} />.
           {notChecked > 0
             ? ` ${notChecked} more zone${notChecked === 1 ? "" : "s"} holding your domains ${notChecked === 1 ? "was" : "were"} not checked.`
             : ""}

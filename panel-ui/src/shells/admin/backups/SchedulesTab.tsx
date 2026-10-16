@@ -4,7 +4,6 @@ import { useTranslation } from "react-i18next";
 import { Alert, Button, Checkbox, Drawer, Form, InputNumber, Radio, Segmented, Select, Space, Switch, Table, Tag, TimePicker, Tooltip, Typography } from "antd";
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { RowActions } from "../../../components/RowActions";
-import { shortDateTime } from "../../../utils/datetime";
 import dayjs, { type Dayjs } from "dayjs";
 import {
   CalendarCheckOutlined,
@@ -17,6 +16,7 @@ import { useEffect, useState } from "react";
 
 import { apiClient } from "../../../apiClient";
 import { extractApiError } from "../../../apiErrors";
+import { Timestamp } from "../../../components/Timestamp";
 
 interface BackupSchedule {
   id: string;
@@ -612,7 +612,7 @@ export function SchedulesTab() {
         <Table.Column
           dataIndex="last_run_at"
           title={t("schedulestab.last_run")}
-          render={(v: string | null) => shortDateTime(v)}
+          render={(v: string | null) => <Timestamp value={v} />}
         />
         <Table.Column<BackupSchedule>
           title={t("schedulestab.actions")}

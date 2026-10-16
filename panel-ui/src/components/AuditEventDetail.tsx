@@ -14,7 +14,7 @@
 import type { ReactNode } from "react";
 import { Descriptions, Tag, Typography } from "antd";
 
-import { useServerStatus } from "../hooks/useServerStatus";
+import { Timestamp, usePanelClock } from "./Timestamp";
 
 // Superset row shape covering both /admin/audit (full) and
 // /me/activity (no actor_user_id / request_id). Everything past the
@@ -42,46 +42,16 @@ export const resultTag = (r: AuditRow["result"]) => (
 
 export const dash = <Typography.Text type="secondary">—</Typography.Text>;
 
-// The audit store keeps UTC; operators want their server's wall clock
-// (Server Settings → Timezone, surfaced by the admin server-status
-// host slice). Admin-only endpoint, so the user feed falls back to the
-// viewer's browser tz — either way the column header names the tz in
-// use, so the rendered time is never ambiguous.
-export function useServerTz(): string {
-  const { data } = useServerStatus();
-  return data?.host?.timezone || browserTz();
-}
-
-export function browserTz(): string {
-  try {
-    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-  } catch {
-    return "UTC";
-  }
-}
-
-// "YYYY-MM-DD HH:MM:SS" rendered in `tz`. Falls back to the raw ISO
-// string if the timestamp or the tz is unparseable (never throws into
-// a table cell).
-export function fmtTSInTz(ts: string, tz: string): string {
-  const d = new Date(ts);
-  if (Number.isNaN(d.getTime())) return ts;
-  try {
-    return new Intl.DateTimeFormat("en-CA", {
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-      hour12: false,
-      timeZone: tz,
-    })
-      .format(d)
-      .replace(", ", " ");
-  } catch {
-    return d.toISOString().replace("T", " ").replace(/\.\d+Z$/, "Z");
-  }
+// The audit store keeps UTC. Both feeds show the server's wall clock with
+// seconds (GH #2164: the Server Settings timezone and date format, for the
+// admin log and the user's own feed alike); the column header names the zone,
+// and hovering a time shows it in UTC.
+export function AuditTime({ ts }: { ts: string }) {
+  return (
+    <code>
+      <Timestamp value={ts} seconds />
+    </code>
+  );
 }
 
 const VERB: Record<string, string> = {
@@ -153,12 +123,12 @@ export function AuditActionLabel({ row, prefix }: AuditActionLabelProps) {
 
 interface AuditDetailProps {
   row: AuditRow;
-  tz: string;
 }
 
 // expandedRowRender body: every field actually recorded for the event,
 // inline beneath its row.
-export function AuditDetail({ row, tz }: AuditDetailProps) {
+export function AuditDetail({ row }: AuditDetailProps) {
+  const tz = usePanelClock().timezone;
   const meta = metaText(row.meta);
   const actor = row.actor_name || row.actor_user_id || `(${row.actor_kind})`;
   const subject = row.subject_name || row.subject_user_id;
@@ -166,7 +136,7 @@ export function AuditDetail({ row, tz }: AuditDetailProps) {
   return (
     <Descriptions column={1} size="small" bordered>
       <Descriptions.Item label="When">
-        <code>{fmtTSInTz(row.ts, tz)}</code>{" "}
+        <AuditTime ts={row.ts} />{" "}
         <Typography.Text type="secondary">({tz})</Typography.Text>
         <br />
         <Typography.Text type="secondary" style={{ fontSize: 12 }}>

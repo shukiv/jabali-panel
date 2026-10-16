@@ -17,6 +17,7 @@ import { useSetBreadcrumbs } from "../../../components/admin/BreadcrumbContext";
 import { adminLinks } from "../../../components/admin/entityLinks";
 import { RowActionButton } from "../../../components/RowActionButton";
 import { OWNERSHIP_RESULT_TEXT, type OwnershipView } from "../../../components/domains/ownership";
+import { Timestamp } from "../../../components/Timestamp";
 
 type PendingDomain = { id: string; name: string; user_id: string; username?: string; ownership: OwnershipView };
 type PendingAlias = {
@@ -208,7 +209,7 @@ export const DomainOwnershipPage = () => {
             <Table.Column<PendingDomain> title="Owner" render={(_, row) => ownerCell(row.user_id, row.username)} />
             <Table.Column<PendingDomain>
               title="Pending since"
-              render={(_, row) => shortDateTime(row.ownership.pending_since ?? null)}
+              render={(_, row) => <Timestamp value={row.ownership.pending_since ?? null} />}
             />
             <Table.Column<PendingDomain> title="Last check" render={(_, row) => resultCell(row.ownership)} />
             <Table.Column<PendingDomain> title="Removed on" render={(_, row) => expiresCell(row.ownership)} />

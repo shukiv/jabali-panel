@@ -8,7 +8,7 @@ Backups → Schedules. The cron expressions that drive periodic backup runs.
 - **Kind** — `account_full` or `system_backup`.
 - **Subject** — for `account_full`, one user, a set of users, or "all users". For `system_backup`, the panel host (single subject).
 - **Destination(s)** — one or more from [Destinations](./backup-destinations.md). Restic writes to each.
-- **Cron expression** — standard 5-field cron (`min hour day month dow`).
+- **Cron expression** — standard 5-field cron (`min hour day month dow`), read in the server's timezone ([Server Settings → Server Time](./server-settings.md#server-time)): `0 3 * * *` runs at 03:00 server time.
 - **Retention** — `--keep-daily N`, `--keep-weekly N`, `--keep-monthly N`, with restic's meaning. A schedule with none set keeps every backup.
 - **Enabled** — schedule may be paused without deletion.
 
