@@ -92,6 +92,18 @@ describe("panel clock", () => {
     expect(utcISO(Date.UTC(2026, 9, 16, 6, 36, 12))).toBe("2026-10-16T06:36:12Z");
   });
 
+  it("isolates a time left-to-right in a right-to-left page", () => {
+    // Hebrew/Arabic: without an isolate "16/10/26 06:36" reads "06:36 16/10/26".
+    document.documentElement.dir = "rtl";
+    try {
+      expect(shortDateTime("2026-10-16T06:36:00Z")).toBe("\u206616/10/26 06:36\u2069");
+      expect(shortDate(null)).toBe("—");
+    } finally {
+      document.documentElement.dir = "";
+    }
+    expect(shortDateTime("2026-10-16T06:36:00Z")).toBe("16/10/26 06:36");
+  });
+
   it("formats an explicit pattern in the panel zone", () => {
     setPanelClock("Asia/Tokyo", undefined);
     expect(formatPattern("2026-10-16T00:00:00Z", "HH:mm")).toBe("09:00");

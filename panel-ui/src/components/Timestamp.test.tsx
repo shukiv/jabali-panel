@@ -34,6 +34,19 @@ describe("Timestamp", () => {
     expect(container.textContent).toBe("10/16/2026 06:36 AM");
   });
 
+  it("reads left to right in a right-to-left page", () => {
+    document.documentElement.dir = "rtl";
+    try {
+      const { container } = render(<Timestamp value="2026-10-16T06:36:00Z" />);
+      const el = container.querySelector("time");
+      expect(el?.getAttribute("dir")).toBe("ltr");
+      // dir="ltr" isolates it; no isolate characters in the text.
+      expect(el?.textContent).toBe("16/10/26 06:36");
+    } finally {
+      document.documentElement.dir = "";
+    }
+  });
+
   it("renders a dash and no <time> for no value", () => {
     const { container } = render(<Timestamp value={null} />);
     expect(container.textContent).toBe("—");

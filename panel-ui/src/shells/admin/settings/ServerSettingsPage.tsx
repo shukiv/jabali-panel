@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { useTabParam } from "../../../hooks/useTabParam";
 import { IANA_TIMEZONES } from "../../../data/timezones";
 import { DATE_FORMAT_PRESETS, DEFAULT_DATE_FORMAT } from "../../../utils/dateFormats";
-import { formatPattern } from "../../../utils/datetime";
+import { formatStamp } from "../../../utils/datetime";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   BgColorsOutlined,
@@ -345,7 +345,8 @@ export const GeneralSettingsTab = () => {
         >
           <Select
             options={DATE_FORMAT_PRESETS.map((p) => ({
-              label: `${formatPattern(Date.now(), p.dateTime)}  (${p.dateTime})`,
+              // Left to right in every locale: a date reorders in RTL.
+              label: <span dir="ltr">{`${formatStamp(Date.now(), "dateTime", p)}  (${p.dateTime})`}</span>,
               value: p.dateTime,
             }))}
           />

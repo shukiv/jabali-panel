@@ -6,10 +6,8 @@
 import { useSyncExternalStore } from "react";
 
 import {
+  formatStamp,
   getPanelClock,
-  shortDate,
-  shortDateTime,
-  shortDateTimeSeconds,
   subscribePanelClock,
   utcISO,
   type PanelClock,
@@ -27,11 +25,13 @@ interface TimestampProps {
 export function Timestamp({ value, seconds, dateOnly }: TimestampProps) {
   // Re-render when the admin changes the zone or the format.
   useSyncExternalStore(subscribePanelClock, getPanelClock);
-  const text = dateOnly ? shortDate(value) : seconds ? shortDateTimeSeconds(value) : shortDateTime(value);
+  const text = formatStamp(value, dateOnly ? "date" : seconds ? "dateTimeSeconds" : "dateTime");
   const iso = utcISO(value);
   if (!iso) return <>{text}</>;
+  // dir="ltr" isolates the time: in a right-to-left page the numbers would
+  // otherwise reorder ("06:36 16/10/26").
   return (
-    <time dateTime={iso} title={`${iso} (UTC)`}>
+    <time dateTime={iso} dir="ltr" title={`${iso} (UTC)`}>
       {text}
     </time>
   );

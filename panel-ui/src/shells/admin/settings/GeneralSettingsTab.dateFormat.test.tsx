@@ -70,8 +70,10 @@ describe("GeneralSettingsTab date format (GH #2164)", () => {
     });
 
     fireEvent.mouseDown(field);
-    const option = await screen.findByText(/\(YYYY-MM-DD HH:mm\)$/, { selector: ".ant-select-item-option-content" });
-    // Each option shows the current time in that format.
+    const option = await screen.findByText(/\(YYYY-MM-DD HH:mm\)$/, { selector: ".ant-select-item-option-content span" });
+    // Each option shows the current time in that format, left to right in
+    // every locale (a date reorders in a right-to-left page).
+    expect(option.getAttribute("dir")).toBe("ltr");
     expect(option.textContent).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2} {2}\(YYYY-MM-DD HH:mm\)$/);
     fireEvent.click(option);
 

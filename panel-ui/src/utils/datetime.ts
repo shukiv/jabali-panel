@@ -87,35 +87,51 @@ function inPanelZone(ts: Stamp): dayjs.Dayjs | null {
   }
 }
 
-function render(ts: Stamp, pattern: (p: DateFormatPreset) => string): string {
+/** Which of the admin's date forms to render. */
+export type StampKind = keyof DateFormatPreset;
+
+// formatStamp renders a stamp in the panel zone with one of the admin's date
+// forms (or another preset's, for a preview), with no bidi isolation. For
+// markup that sets dir="ltr" itself (<Timestamp>, the format picker);
+// everything else uses the short* helpers below.
+export function formatStamp(ts: Stamp, kind: StampKind, preset: DateFormatPreset = clock.preset): string {
   const d = inPanelZone(ts);
-  return d ? d.format(pattern(clock.preset)) : DASH;
+  return d ? d.format(preset[kind]) : DASH;
+}
+
+// A time always reads left to right. In a right-to-left page (Hebrew, Arabic)
+// the bidi algorithm reorders runs of numbers, so "16/10/26 06:36" would show
+// as "06:36 16/10/26". There, string output is wrapped in a left-to-right
+// isolate (U+2066 ... U+2069); <Timestamp> uses dir="ltr" instead.
+export function ltr(s: string): string {
+  if (s === DASH || typeof document === "undefined" || document.documentElement.dir !== "rtl") return s;
+  return "\u2066" + s + "\u2069";
 }
 
 // shortDateTime: date and time, the admin's format. e.g. "16/10/26 06:36".
 export function shortDateTime(ts: Stamp): string {
-  return render(ts, (p) => p.dateTime);
+  return ltr(formatStamp(ts, "dateTime"));
 }
 
 // shortDateTimeSeconds: with seconds, for logs and the audit log.
 // e.g. "16/10/26 06:36:12".
 export function shortDateTimeSeconds(ts: Stamp): string {
-  return render(ts, (p) => p.dateTimeSeconds);
+  return ltr(formatStamp(ts, "dateTimeSeconds"));
 }
 
 // shortDate: date only. e.g. "16/10/26".
 export function shortDate(ts: Stamp): string {
-  return render(ts, (p) => p.date);
+  return ltr(formatStamp(ts, "date"));
 }
 
 // shortTime: time only. e.g. "06:36".
 export function shortTime(ts: Stamp): string {
-  return render(ts, (p) => p.time);
+  return ltr(formatStamp(ts, "time"));
 }
 
 // shortTimeSeconds: time with seconds. e.g. "06:36:12".
 export function shortTimeSeconds(ts: Stamp): string {
-  return render(ts, (p) => p.timeSeconds);
+  return ltr(formatStamp(ts, "timeSeconds"));
 }
 
 // utcISO: the exact instant in UTC, ISO 8601 without fractions, for hover
@@ -130,7 +146,7 @@ export function utcISO(ts: Stamp): string {
 // names). Prefer the short* helpers for anything a person reads in a table.
 export function formatPattern(ts: Stamp, pattern: string): string {
   const d = inPanelZone(ts);
-  return d ? d.format(pattern) : DASH;
+  return d ? ltr(d.format(pattern)) : DASH;
 }
 
 // panelNow is the current instant in the panel zone, for previews of the
