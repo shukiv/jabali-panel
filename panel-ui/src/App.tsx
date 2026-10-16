@@ -41,6 +41,7 @@ import { ThemeModeProvider, useThemeMode } from "./theme/ThemeModeContext";
 import { useApplyBrandingToTitle, useBranding } from "./hooks/useBranding";
 import { PANEL_COLORS } from "./lib/panelColors";
 import { CapabilityRoute } from "./components/CapabilityRoute";
+import { IndexRedirect } from "./components/IndexRedirect";
 import { LoginPage } from "./pages/Login";
 
 // JAB-145: route-level code splitting — each page is its own lazy chunk
@@ -238,7 +239,7 @@ const ThemedApp = () => {
               </RequireAdmin>
             }
           >
-            <Route index element={<Navigate to="dashboard" replace />} />
+            <Route index element={<IndexRedirect to="dashboard" />} />
             <Route path="dashboard" element={<Dashboard />} />
             <Route path="cache" element={<CacheOverviewPage />} />
             {/* JAB-126: Sessions moved into the Users page as a tab.
@@ -341,7 +342,7 @@ const ThemedApp = () => {
             <Route path="migrations/:id" element={<AdminMigrationDetailPage />} />
             <Route path="backups" element={<AdminBackupsPage />} />
             <Route path="notifications">
-              <Route index element={<Navigate to="channels" replace />} />
+              <Route index element={<IndexRedirect to="channels" />} />
               <Route path=":tab" element={<NotificationsTabsPage />} />
             </Route>
             {/* Admin profile — same MyProfile component as user shell.
@@ -372,7 +373,7 @@ const ThemedApp = () => {
               </RequireUser>
             }
           >
-            <Route index element={<Navigate to="dashboard" replace />} />
+            <Route index element={<IndexRedirect to="dashboard" />} />
             <Route path="dashboard" element={<UserDashboard />} />
             {/* Profile stays reachable via the header dropdown — no
                 longer a sidebar entry as of the dashboard addition. */}
