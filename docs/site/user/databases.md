@@ -103,8 +103,9 @@ Create the token under **API Tokens** with **Custom** permissions and only
 **Redis: Flush**. That token can flush your Redis keys and do nothing else.
 
 The flush deletes the keys of the account the token belongs to, so create the
-token while you are signed in as that hosting account. An admin account has no
-Linux account and no Redis keys: its token gets `409 no_linux_user` (GH #2159).
+token as that hosting account; an admin can create it while acting as the
+user. An admin account has no Linux account and no Redis keys: its own token
+gets `409 no_linux_user` (GH #2159).
 
 The response is `{"deleted": <n>, "complete": true}`. One call runs for at most
 20 seconds; if you have more keys than that, `complete` is `false` and you call

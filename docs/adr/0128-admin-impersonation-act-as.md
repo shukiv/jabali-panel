@@ -96,6 +96,21 @@ The exception is narrow:
 Do not "fix" this handler to match point 2 without first giving admins
 another way to set admin-only PHP directives from the panel.
 
+### API tokens during act-as (GH #2159)
+
+`/me/api-tokens` follows the target like every other user endpoint: an admin
+acting as a user lists, creates and revokes that user's tokens, and the audit
+records the admin as actor. A token created this way belongs to the user and
+is a freshly generated secret shown once (point 5).
+
+Until GH #2159 these routes were registered on the v1 group before this
+middleware was added to it. gin binds a route to the group's middleware when
+the route is registered, so they ran without act-as, the audit and the standby
+guard: act-as showed the admin's own tokens, and a token created there was an
+admin token. Routes go on v1 only after its last `Use`;
+`TestV1MeRoutesCarryTheFullMiddlewareChain` fails when a `/me` route misses
+part of the chain.
+
 This is a deliberate, audited **carve-out around ADR-0034**: Kratos remains
 the sole *authenticator*; impersonation is an *authorization* overlay for
 an already-authenticated admin, fully logged and reversible.
