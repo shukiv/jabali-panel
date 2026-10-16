@@ -3,12 +3,12 @@
 // so update logs live alongside the other log surfaces. The Updates page
 // keeps a "Recent Update History" timeline; this is the full table view.
 import { Card, Table, Tag, Typography } from "antd";
-import dayjs from "dayjs";
 
 import {
   useUpdateHistory,
   type UpdateHistoryRow,
 } from "../../../hooks/useSystemUpdates";
+import { Timestamp } from "../../../components/Timestamp";
 
 const { Text } = Typography;
 
@@ -34,7 +34,7 @@ export const UpdatesLogTab = () => {
           {
             title: "Time",
             dataIndex: "started_at",
-            render: (v: string) => dayjs(v).format("MMM D, YYYY HH:mm"),
+            render: (v: string) => <Timestamp value={v} />,
             sorter: (a, b) => a.started_at.localeCompare(b.started_at),
             defaultSortOrder: "descend",
           },

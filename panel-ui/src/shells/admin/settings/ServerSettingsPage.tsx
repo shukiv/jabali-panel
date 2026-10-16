@@ -2,6 +2,9 @@ import { useTranslation } from "react-i18next";
 import { useEffect, useState } from "react";
 import { useTabParam } from "../../../hooks/useTabParam";
 import { IANA_TIMEZONES } from "../../../data/timezones";
+import { DATE_FORMAT_PRESETS, DEFAULT_DATE_FORMAT } from "../../../utils/dateFormats";
+import { formatStamp } from "../../../utils/datetime";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   BgColorsOutlined,
   CheckOutlined,
@@ -94,6 +97,7 @@ type ServerSettings = {
   admin_email: string;
   default_dns_ttl: number;
   timezone: string;
+  date_format: string;
   ssh_port: number;
   ssh_password_auth: boolean;
   ssh_user_password_auth: boolean;
@@ -129,13 +133,14 @@ function notifyError(notify: NotifyFn, title: string, err: unknown) {
 // GeneralSettingsTab — Identity + Server Time + Root Terminal. Owns its own
 // form + Save button; PATCH /admin/settings supports partial updates so
 // sending only this tab's fields doesn't disturb DNS settings.
-const GeneralSettingsTab = () => {
+export const GeneralSettingsTab = () => {
   const { t } = useTranslation();
   const [form] = Form.useForm<ServerSettings>();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [originalHostname, setOriginalHostname] = useState("");
   const notify = useNotify();
+  const queryClient = useQueryClient();
 
   useEffect(() => {
     let cancelled = false;
@@ -167,6 +172,7 @@ const GeneralSettingsTab = () => {
         public_ipv6: values.public_ipv6 || "",
         admin_email: values.admin_email || "",
         timezone: values.timezone || "",
+        date_format: values.date_format || DEFAULT_DATE_FORMAT,
         // Root Terminal toggle lives on General (next to SSH/identity)
         // rather than Storage — moved 2026-06-04 because operators kept
         // missing it under the Storage tab where it logically didn't
@@ -176,6 +182,9 @@ const GeneralSettingsTab = () => {
       notify({ type: "success", message: "Settings saved" });
       form.setFieldsValue(resp.data);
       setOriginalHostname(resp.data.hostname);
+      // GH #2164: GET /me carries the panel clock; refetch it so a new
+      // timezone or date format shows at once.
+      void queryClient.invalidateQueries({ queryKey: ["whoami"] });
     } catch (err) {
       notifyError(notify, "Failed to save", err);
     } finally {
@@ -312,7 +321,7 @@ const GeneralSettingsTab = () => {
           label={t("settings.timezone")}
           name="timezone"
           rules={[{ required: false }]}
-          extra="Select your server's timezone. Changes take effect immediately."
+          extra={t("settings.timezone_extra")}
         >
           <Select
             placeholder={t("settings.select_timezone")}
@@ -325,6 +334,20 @@ const GeneralSettingsTab = () => {
             options={IANA_TIMEZONES.map((tz) => ({
               label: tz,
               value: tz,
+            }))}
+          />
+        </Form.Item>
+        {/* GH #2164: the admin picks how every time in the panel reads. */}
+        <Form.Item
+          label={t("settings.date_format")}
+          name="date_format"
+          extra={t("settings.date_format_extra")}
+        >
+          <Select
+            options={DATE_FORMAT_PRESETS.map((p) => ({
+              // Left to right in every locale: a date reorders in RTL.
+              label: <span dir="ltr">{`${formatStamp(Date.now(), "dateTime", p)}  (${p.dateTime})`}</span>,
+              value: p.dateTime,
             }))}
           />
         </Form.Item>

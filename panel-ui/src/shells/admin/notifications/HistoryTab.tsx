@@ -15,6 +15,7 @@ import { CheckOutlined, DeleteOutlined, EyeOutlined } from "@icons";
 import { RowActionButton } from "../../../components/RowActionButton";
 
 import { apiClient } from "../../../apiClient";
+import { shortDateTimeSeconds } from "../../../utils/datetime";
 
 type NotificationHistoryRow = {
   id: string;
@@ -56,9 +57,8 @@ const outcomeColor: Record<NotificationHistoryRow["outcome"], string> = {
 };
 
 function formatTs(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString();
+  if (Number.isNaN(new Date(iso).getTime())) return iso;
+  return shortDateTimeSeconds(iso);
 }
 
 export const HistoryTab = () => {

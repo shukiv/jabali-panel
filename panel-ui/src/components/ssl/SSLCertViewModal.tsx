@@ -5,6 +5,7 @@ import { Alert, Button, Descriptions, Modal, Spin, Typography } from "antd";
 import { useQuery } from "@tanstack/react-query";
 
 import { apiClient } from "../../apiClient";
+import { Timestamp } from "../Timestamp";
 
 type CertDetails = {
   subject: string;
@@ -73,10 +74,10 @@ export function SSLCertViewModal({
               {data.sans?.length ? data.sans.join(", ") : "—"}
             </Descriptions.Item>
             <Descriptions.Item label="Valid from">
-              {new Date(data.not_before).toLocaleString()}
+              <Timestamp value={data.not_before} />
             </Descriptions.Item>
             <Descriptions.Item label="Valid to">
-              {new Date(data.not_after).toLocaleString()}
+              <Timestamp value={data.not_after} />
             </Descriptions.Item>
             <Descriptions.Item label="Serial">
               <Typography.Text style={{ fontFamily: "monospace", fontSize: 12, wordBreak: "break-all" }}>

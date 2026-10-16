@@ -12,6 +12,7 @@ import { extractApiError } from "../../../apiErrors";
 import { shortDateTime } from "../../../utils/datetime";
 import type { UploadedBackup } from "../../../apiClient";
 import { RestoreProgressView } from "./RestoreProgressView";
+import { Timestamp } from "../../../components/Timestamp";
 
 export const UPLOADED_BACKUPS_RESOURCE = "admin/uploaded-backups";
 
@@ -58,7 +59,7 @@ function LastRestore({ b }: { b: UploadedBackup }) {
         <Space direction="vertical" size={0}>
           <Tag color="green">Restored into {b.restore_target}</Tag>
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            {shortDateTime(b.restored_at)}
+            <Timestamp value={b.restored_at} />
           </Typography.Text>
         </Space>
       );
@@ -69,7 +70,7 @@ function LastRestore({ b }: { b: UploadedBackup }) {
             <Tag color="red">Restore into {b.restore_target} failed</Tag>
           </Tooltip>
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            {shortDateTime(b.restored_at)}
+            <Timestamp value={b.restored_at} />
           </Typography.Text>
         </Space>
       );
@@ -147,7 +148,7 @@ export function UploadedBackupsTable({ onRestore }: { onRestore: (b: UploadedBac
           },
           {
             title: "Uploaded",
-            render: (_: unknown, b) => shortDateTime(b.created_at),
+            render: (_: unknown, b) => <Timestamp value={b.created_at} />,
           },
           {
             title: "Kept",

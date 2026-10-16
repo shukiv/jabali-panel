@@ -327,10 +327,10 @@
   "backupsettingstab": {
     "max_concurrent_backup_jobs": "Max concurrent backup jobs",
     "tenant_scheduled_backup_time_cron": "Tenant scheduled-backup time (cron)",
-    "tenants_choose_what_to_back_up_and_where_you": "Tenants choose what to back up and where; you own when. 5-field cron (min hour day-of-month month day-of-week), e.g. '0 3 * * *' = daily at 03:00 UTC.",
+    "tenants_choose_what_to_back_up_and_where_you": "Tenants choose what to back up and where; you own when. 5-field cron (min hour day-of-month month day-of-week), e.g. '0 3 * * *' = daily at 03:00 server time (Server Settings → Server Time).",
     "the_dispatcher_runs_at_most_this_many_backup": "The dispatcher runs at most this many backup_jobs at once. Scheduled jobs queue and start as slots free.",
-    "tenant_backup_window_start": "Tenant backup window start (UTC)",
-    "tenant_backup_window_end": "Tenant backup window end (UTC)",
+    "tenant_backup_window_start": "Tenant backup window start (server time)",
+    "tenant_backup_window_end": "Tenant backup window end (server time)",
     "the_maintenance_window_multischedule_tenants": "The maintenance window multi-schedule tenants' backups fire inside. The scheduler only runs (and spreads) tenant backups within this window."
   },
   "createbackupdrawer": {
@@ -2026,6 +2026,9 @@
     "ssh_port": "SSH Port",
     "this_is_the_highest_risk_feature_in_the_panel_le": "This is the highest-risk feature in the panel. Leave off unless actively needed.",
     "timezone": "Timezone",
+    "timezone_extra": "The panel shows every time in this zone, for admins and clients, and backup schedules run on it. Changes take effect immediately.",
+    "date_format": "Date format",
+    "date_format_extra": "How the panel shows dates and times. Logs add seconds. Hover a time to see it in UTC.",
     "working_folder": "Working Folder",
     "support_chat": {
       "title": "Support chat (Ask Jabali)",

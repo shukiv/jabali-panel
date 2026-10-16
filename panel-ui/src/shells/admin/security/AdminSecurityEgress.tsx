@@ -7,7 +7,6 @@ import { useTranslation } from "react-i18next";
 import { Alert, Button, Card, Drawer, Form, Input, InputNumber, Select, Space, Statistic, Table, Tag, Typography } from "antd";
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { CheckOutlined, CloseOutlined } from "@icons";
-import { shortDateTime } from "../../../utils/datetime";
 import { RowActions } from "../../../components/RowActions";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -26,6 +25,7 @@ import {
   useUpdateUserEgress,
   useUserEgressPolicy,
 } from "../../../hooks/useUserEgress";
+import { Timestamp } from "../../../components/Timestamp";
 
 type UserRow = {
   id: string;
@@ -456,7 +456,7 @@ const PendingRequestsTable = ({ rows }: { rows: EgressRequest[] }) => {
       <Table.Column<EgressRequest>
         title={t("adminsecurityegress.submitted")}
         dataIndex="created_at"
-        render={(s: string) => shortDateTime(s)}
+        render={(s: string) => <Timestamp value={s} />}
       />
       <Table.Column<EgressRequest>
         title={t("adminsecurityegress.actions")}

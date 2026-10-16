@@ -14,8 +14,8 @@ import { SearchableTableStringQ } from "../../../components/SearchableTable";
 import { EmptyWithCTA } from "../../../components/EmptyWithCTA";
 import { useDeleteMutation } from "../../../hooks/useQueries";
 import { useTableURL } from "../../../hooks/useTableURL";
-import { shortDateTime } from "../../../utils/datetime";
 import { disabledFunctionsSummary } from "../../../components/packages/phpDisabledFunctions";
+import { Timestamp } from "../../../components/Timestamp";
 
 type Package = {
   id: string;
@@ -194,7 +194,7 @@ export const PackageList = () => {
             title={t("packagelist.created")}
             key="created_at"
             sorter
-            render={(ts: string) => shortDateTime(ts)}
+            render={(ts: string) => <Timestamp value={ts} />}
           />
           <Table.Column
             title={t("packagelist.actions")}

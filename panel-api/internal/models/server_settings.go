@@ -62,8 +62,15 @@ type ServerSettings struct {
 	// Admin changes it via POST /admin/php/versions/:version/default; agent
 	// php.version.status reports it in default_version. Schema default '8.4'.
 	DefaultPHPVersion string `gorm:"type:varchar(8);not null;default:'8.4'" json:"default_php_version"`
-	Timezone          string `gorm:"type:varchar(64);not null;default:''"   json:"timezone"`
-	SSHPort           uint16 `gorm:"type:int unsigned;not null;default:22"  json:"ssh_port"`
+	// Timezone is the server's IANA zone, applied to the OS with timedatectl.
+	// The panel shows times in it and reads backup crons in it (GH #2164,
+	// paneltime). "" = the OS zone. TEXT since 000325 (row-size ceiling).
+	Timezone string `gorm:"type:text;not null;default:''" json:"timezone"`
+	// DateFormat is the dayjs pattern the panel shows a date with time in,
+	// one of paneltime.DateFormats (GH #2164). "" or an unknown value reads
+	// as paneltime.DefaultDateFormat.
+	DateFormat string `gorm:"column:date_format;type:text;not null" json:"date_format"`
+	SSHPort    uint16 `gorm:"type:int unsigned;not null;default:22"  json:"ssh_port"`
 	// SSHPasswordAuth governs the GLOBAL PasswordAuthentication directive
 	// in /etc/ssh/sshd_config.d/jabali-sshd.conf. In practice this only
 	// affects users NOT in the jabali-sftp group (root, admin shell users)

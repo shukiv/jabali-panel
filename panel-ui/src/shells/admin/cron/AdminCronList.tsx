@@ -24,6 +24,7 @@ import {
 import { AdminCreateCronModal } from "./AdminCreateCronModal";
 import { AdminSystemJobs } from "./AdminSystemJobs";
 import { humanizeSchedule } from "../../../utils/cronSchedule";
+import { shortDateTime } from "../../../utils/datetime";
 
 dayjs.extend(relativeTime);
 
@@ -99,7 +100,7 @@ export const AdminCronList = () => {
         width: 160,
         render: (ts: string | null, row: CronWorkspaceRow) =>
           ts ? (
-            <Tooltip title={`exit=${row.last_exit_code ?? "?"}${row.last_error ? "\n" + row.last_error : ""}`}>
+            <Tooltip title={`${shortDateTime(ts)} · exit=${row.last_exit_code ?? "?"}${row.last_error ? "\n" + row.last_error : ""}`}>
               <Tag color={row.last_exit_code === 0 ? "green" : row.last_exit_code === null ? "default" : "red"}>
                 {dayjs(ts).fromNow()}
               </Tag>

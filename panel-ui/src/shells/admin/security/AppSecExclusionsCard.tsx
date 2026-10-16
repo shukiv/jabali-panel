@@ -57,11 +57,11 @@ import {
   type ExclusionFormValues,
   type ExclusionPrefill,
 } from "./appsecExclusion";
+import { shortDateTime } from "../../../utils/datetime";
 
 const fmtTime = (s?: string): string => {
   if (!s) return "—";
-  const d = new Date(s);
-  return Number.isNaN(d.getTime()) ? s : d.toLocaleString();
+  return Number.isNaN(new Date(s).getTime()) ? s : shortDateTime(s);
 };
 
 export const AppSecExclusionsPanel = () => {

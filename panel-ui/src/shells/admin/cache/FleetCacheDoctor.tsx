@@ -23,7 +23,7 @@ import { ReloadOutlined, ThunderboltOutlined, ToolOutlined } from "@icons";
 
 import { apiClient } from "../../../apiClient";
 import { extractApiError } from "../../../apiErrors";
-import { shortDateTime } from "../../../utils/datetime";
+import { Timestamp } from "../../../components/Timestamp";
 
 type Kind = "doctor" | "repair" | "refresh";
 
@@ -268,7 +268,7 @@ export function FleetCacheDoctor() {
         pagination={{ defaultPageSize: 10, hideOnSinglePage: true }}
         onRow={(r) => ({ onClick: () => setActiveRunId(r.id), style: { cursor: "pointer" } })}
         columns={[
-          { title: "When", dataIndex: "created_at", render: (v: string) => shortDateTime(v) },
+          { title: "When", dataIndex: "created_at", render: (v: string) => <Timestamp value={v} /> },
           { title: "Kind", dataIndex: "kind", render: (k: Kind) => KIND_LABEL[k] },
           {
             title: "State",

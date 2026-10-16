@@ -4,7 +4,6 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button, Card, Space, Table, Tag, Typography } from "antd";
-import { shortDateTime } from "../../../utils/datetime";
 import { useNavigate } from "react-router";
 import { sorterToParams } from "../../../utils/tableSorter";
 
@@ -15,6 +14,7 @@ import { EmptyWithCTA } from "../../../components/EmptyWithCTA";
 import { useDeleteMutation } from "../../../hooks/useQueries";
 import { useTableURL } from "../../../hooks/useTableURL";
 import { DatabaseChownAction } from "./DatabaseChownAction";
+import { Timestamp } from "../../../components/Timestamp";
 
 export type Database = {
   id: string;
@@ -136,7 +136,7 @@ export const DatabaseList = () => {
             title={t("databaselist.created")}
             key="created_at"
             sorter
-            render={(date: string) => shortDateTime(date)}
+            render={(date: string) => <Timestamp value={date} />}
           />
           <Table.Column<Database>
             title={t("databaselist.actions")}

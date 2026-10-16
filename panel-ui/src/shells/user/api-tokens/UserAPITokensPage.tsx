@@ -58,6 +58,7 @@ import { CopyableInput } from "../../../components/CopyableInput";
 import { APIDocsPage } from "../../shared/APIDocsPage";
 import { DDNSSetupGuide } from "./DDNSSetupGuide";
 import { MCPSetupGuide } from "./MCPSetupGuide";
+import { Timestamp } from "../../../components/Timestamp";
 
 type UserAPIToken = {
   id: string;
@@ -77,16 +78,11 @@ type CreateResponse = {
   secret: string;
 };
 
-// fmtDate prints ISO timestamps as "YYYY-MM-DD HH:mm" UTC for
-// consistency across browsers (Intl.DateTimeFormat locale formats
-// drift between Chrome / Safari / Firefox locales).
-function fmtDate(s: string | null): string {
+// fmtDate shows a token time on the panel clock (GH #2164: the server's
+// timezone and date format, the same in every browser), UTC on hover.
+function fmtDate(s: string | null) {
   if (!s) return "—";
-  const d = new Date(s);
-  if (Number.isNaN(d.getTime())) return s;
-  return (
-    d.toISOString().slice(0, 16).replace("T", " ") + " UTC"
-  );
+  return <Timestamp value={s} />;
 }
 
 // statusTag projects (revoked, expires_at) into a single coloured tag.

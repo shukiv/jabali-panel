@@ -2,16 +2,19 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"gorm.io/gorm"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/paneltime"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/api"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/config"
@@ -305,7 +308,21 @@ func initDB() error {
 		return fmt.Errorf("ping db: %w", err)
 	}
 	sharedDB = gdb
+	setPanelClock(gdb)
 	return nil
+}
+
+// setPanelClock sets the panel clock from Server Settings (GH #2164), so the
+// server and every CLI command read backup crons in the same zone the panel
+// shows times in. An unreadable row leaves the OS zone, then UTC.
+func setPanelClock(gdb *gorm.DB) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	tz := ""
+	if st, err := repository.NewServerSettingsRepository(gdb).Get(ctx); err == nil && st != nil {
+		tz = st.Timezone
+	}
+	paneltime.Set(tz)
 }
 
 // initAgent sets up the agent client. Requires initConfig first.

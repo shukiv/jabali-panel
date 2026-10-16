@@ -17,6 +17,7 @@ import {
 
 import { apiClient } from "../../apiClient";
 import { humanBytes } from "../../utils/bytes";
+import { shortDateTime } from "../../utils/datetime";
 
 type Effective = {
   DiskQuotaMB: number;
@@ -143,7 +144,7 @@ export function MyProfileUsageCard({ userId }: { userId: string }) {
   const diskUsed = data.disk_used ? data.disk_used.bytes : (current?.disk?.used_kb ?? 0) * 1024;
   // The snapshot figure is as-of the last Disk Usage refresh, not live — say so.
   const diskHint = data.disk_used?.computed_at
-    ? `Home usage measured ${new Date(data.disk_used.computed_at).toLocaleString()}`
+    ? `Home usage measured ${shortDateTime(data.disk_used.computed_at)}`
     : undefined;
   const diskLimitKB =
     (current?.disk?.limit_kb ?? 0) > 0 ? (current?.disk?.limit_kb ?? 0) : effective.DiskQuotaMB * 1024;

@@ -6,7 +6,7 @@
 
 Every privileged action that affected your account. Each row contains:
 
-- Timestamp (UTC).
+- Timestamp — in the server's timezone, with seconds. Hover it to see UTC.
 - Actor — typically yourself, or "system" for reconciler-initiated changes, or "admin (`<username>`)" when an administrator acted on your behalf.
 - Action — namespaced identifier (e.g. `mailbox.passwd`, `domain.create`, `ssl.issue`).
 - Target — the affected resource (mailbox address, domain, database).

@@ -17,6 +17,7 @@ import {
   useSnuffleupagusStatus,
   useToggleSnuffleupagusRule,
 } from "../../../hooks/useSecuritySnuffleupagus";
+import { Timestamp } from "../../../components/Timestamp";
 
 const { Text, Paragraph } = Typography;
 
@@ -83,7 +84,7 @@ export function AdminSecuritySnuffleupagus() {
             <>
               <br />
               <Text type="secondary">
-                Last applied: {new Date(data.last_applied_at).toLocaleString()}
+                Last applied: <Timestamp value={data.last_applied_at} />
               </Text>
             </>
           )}
@@ -163,7 +164,7 @@ export function AdminSecuritySnuffleupagus() {
                 title: "When",
                 dataIndex: "ts",
                 width: 160,
-                render: (ts: string) => new Date(ts).toLocaleString(),
+                render: (ts: string) => <Timestamp value={ts} seconds />,
               },
               {
                 title: "Action",
@@ -274,7 +275,7 @@ export function AdminSecuritySnuffleupagus() {
         {detailIncident ? (
           <>
             <Descriptions column={1} size="small" bordered>
-              <Descriptions.Item label={t("adminsecuritysnuffleupagus.when")}>{new Date(detailIncident.ts).toLocaleString()}</Descriptions.Item>
+              <Descriptions.Item label={t("adminsecuritysnuffleupagus.when")}><Timestamp value={detailIncident.ts} seconds /></Descriptions.Item>
               <Descriptions.Item label={t("adminsecuritysnuffleupagus.action")}>{detailIncident.action}</Descriptions.Item>
               <Descriptions.Item label={t("adminsecuritysnuffleupagus.rule")}>{detailIncident.rule_name}</Descriptions.Item>
               <Descriptions.Item label={t("adminsecuritysnuffleupagus.domain_tenant")}>{detailIncident.domain || "—"}</Descriptions.Item>
@@ -300,7 +301,7 @@ export function AdminSecuritySnuffleupagus() {
                     rowKey="id"
                     dataSource={hist}
                     columns={[
-                      { title: "When", dataIndex: "ts", width: 170, render: (t: string) => new Date(t).toLocaleString() },
+                      { title: "When", dataIndex: "ts", width: 170, render: (t: string) => <Timestamp value={t} seconds /> },
                       { title: "Action", dataIndex: "action", width: 110, render: (a: string) => <Tag color={ACTION_COLOR[a] ?? "default"}>{a}</Tag> },
                       { title: "Domain", dataIndex: "domain", render: (v?: string) => v || "—" },
                       { title: "URI", dataIndex: "request_uri", ellipsis: true, render: (v?: string) => v || "—" },

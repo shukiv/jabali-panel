@@ -7,9 +7,8 @@
 // only ever shows the caller's own rows. Same useTableURL +
 // SearchableTableStringQ shape as the admin view, friendlier columns.
 //
-// Timestamps render in the viewer's browser timezone: the server tz
-// lives behind an admin-only endpoint, and the column header names the
-// tz so the rendered time is never ambiguous.
+// Timestamps render in the server's timezone (GH #2164, from GET /me), and
+// the column header names the tz so the rendered time is never ambiguous.
 import { useTranslation } from "react-i18next";
 import { Card, Space, Table, Tag, Typography } from "antd";
 import { FileTextOutlined } from "@icons";
@@ -18,17 +17,17 @@ import { SearchableTableStringQ } from "../../../components/SearchableTable";
 import {
   AuditActionLabel,
   AuditDetail,
+  AuditTime,
   type AuditRow,
-  browserTz,
   dash,
-  fmtTSInTz,
   resultTag,
 } from "../../../components/AuditEventDetail";
+import { usePanelClock } from "../../../components/Timestamp";
 import { useTableURL } from "../../../hooks/useTableURL";
 
 export const AccountActivity = () => {
   const { t } = useTranslation();
-  const tz = browserTz();
+  const tz = usePanelClock().timezone;
   const query = useTableURL<AuditRow>({
     resource: "me/activity",
     defaultSort: "ts",
@@ -71,7 +70,7 @@ export const AccountActivity = () => {
           scroll={{ x: "max-content" }}
           expandable={{
             expandedRowRender: (r: AuditRow) => (
-              <AuditDetail row={r} tz={tz} />
+              <AuditDetail row={r} />
             ),
           }}
         >
@@ -79,7 +78,7 @@ export const AccountActivity = () => {
             dataIndex="ts"
             title={`When (${tz})`}
             key="ts"
-            render={(ts: string) => <code>{fmtTSInTz(ts, tz)}</code>}
+            render={(ts: string) => <AuditTime ts={ts} />}
           />
           <Table.Column
             title={t("accountactivity.what")}

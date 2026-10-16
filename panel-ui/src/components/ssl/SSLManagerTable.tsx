@@ -18,6 +18,8 @@ import { apiClient } from "../../apiClient";
 import { columnSearchProps } from "../columnSearch";
 import { RowActionButton } from "../RowActionButton";
 import { expiryFraction, matchesFilter, modeTag, type SSLFilter } from "./sslHealth";
+import { shortDate, shortDateTime } from "../../utils/datetime";
+import { Timestamp } from "../Timestamp";
 
 interface SSLCertificate {
   id: string;
@@ -84,16 +86,7 @@ const STATUS_ICONS: Record<string, JSX.Element | null> = {
 
 const formatDate = (dateStr: string | null): string => {
   if (!dateStr) return "—";
-  try {
-    const date = new Date(dateStr);
-    return date.toLocaleDateString("en-US", {
-      year: "numeric",
-      month: "short",
-      day: "numeric",
-    });
-  } catch {
-    return "—";
-  }
+  return shortDate(dateStr);
 };
 
 const daysUntilExpiry = (expiresAt: string | null): number | null => {
@@ -399,7 +392,7 @@ export const SSLManagerTable = ({
         const metaParts = [
           record.issued_at ? `issued ${formatDate(record.issued_at)}` : null,
           record.last_attempt_at
-            ? `checked ${new Date(record.last_attempt_at).toLocaleString()}`
+            ? `checked ${shortDateTime(record.last_attempt_at)}`
             : null,
         ].filter(Boolean);
         const meta = metaParts.length > 0 && (
@@ -424,7 +417,7 @@ export const SSLManagerTable = ({
         // retry schedule instead (was buried in the status tooltip).
         if (record.status === "failed" || record.status === "pending_acme_retry") {
           const retryAt = record.next_retry_at
-            ? new Date(record.next_retry_at).toLocaleString()
+            ? shortDateTime(record.next_retry_at)
             : null;
           return withMeta(
             <Typography.Text type="secondary">
@@ -632,7 +625,7 @@ export const SSLManagerTable = ({
               </Descriptions.Item>
               <Descriptions.Item label={t("sslmanagertable.last_attempt")}>
                 {errorRow.last_attempt_at
-                  ? new Date(errorRow.last_attempt_at).toLocaleString()
+                  ? <Timestamp value={errorRow.last_attempt_at} />
                   : "—"}
               </Descriptions.Item>
               <Descriptions.Item label={t("sslmanagertable.retry_count")}>
@@ -640,7 +633,7 @@ export const SSLManagerTable = ({
               </Descriptions.Item>
               <Descriptions.Item label={t("sslmanagertable.next_retry")}>
                 {errorRow.next_retry_at
-                  ? new Date(errorRow.next_retry_at).toLocaleString()
+                  ? <Timestamp value={errorRow.next_retry_at} />
                   : "—"}
               </Descriptions.Item>
             </Descriptions>

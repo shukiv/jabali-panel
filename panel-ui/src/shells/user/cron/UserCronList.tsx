@@ -12,6 +12,7 @@ import { CronJobWorkspace, type CronWorkspaceAudience } from "../../../component
 import { cronActionsColumn, cronEnabledColumn } from "../../../components/cron/cronColumns";
 import { CreateCronModal } from "./CreateCronModal";
 import { humanizeSchedule } from "../../../utils/cronSchedule";
+import { shortDateTime } from "../../../utils/datetime";
 
 dayjs.extend(relativeTime);
 
@@ -60,7 +61,8 @@ export const UserCronList = () => {
         dataIndex: "last_run_at",
         sorter: (a, b) =>
           (a.last_run_at ? +new Date(a.last_run_at) : 0) - (b.last_run_at ? +new Date(b.last_run_at) : 0),
-        render: (lastRunAt: string | null) => (lastRunAt ? dayjs(lastRunAt).fromNow() : "Never"),
+        render: (lastRunAt: string | null) =>
+          lastRunAt ? <Tooltip title={shortDateTime(lastRunAt)}>{dayjs(lastRunAt).fromNow()}</Tooltip> : "Never",
       },
       {
         title: "Last Exit",

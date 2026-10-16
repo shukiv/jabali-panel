@@ -6,6 +6,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { apiClient } from "../../../apiClient";
 import { extractApiError } from "../../../apiErrors";
+import { shortDateTime } from "../../../utils/datetime";
 
 interface SessionRow {
   id: string;
@@ -22,8 +23,7 @@ interface SessionRow {
 
 const fmt = (s: string): string => {
   if (!s) return "—";
-  const d = new Date(s);
-  return Number.isNaN(d.getTime()) ? s : d.toLocaleString();
+  return Number.isNaN(new Date(s).getTime()) ? s : shortDateTime(s);
 };
 
 export function AdminSessionsPage() {

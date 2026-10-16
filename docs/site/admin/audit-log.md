@@ -6,7 +6,7 @@
 
 Every action that changes state writes one row. Each row contains:
 
-- **Timestamp** — UTC.
+- **Timestamp** — stored in UTC, shown in the server's timezone and date format with seconds ([Server Settings → Server Time](./server-settings.md#server-time)). Hover it to see UTC.
 - **Actor** — the user (administrator or tenant) who initiated the action; may be `system` for reconciler-initiated changes.
 - **Subject** — the user being acted on (frequently the same as the actor, but distinct for admin-on-user actions).
 - **Source** — `ui`, `cli`, `reconciler`, or `agent`.

@@ -29,12 +29,12 @@ import { SearchableTableStringQ } from "../../../components/SearchableTable";
 import {
   AuditActionLabel,
   AuditDetail,
+  AuditTime,
   type AuditRow,
   dash,
-  fmtTSInTz,
   resultTag,
-  useServerTz,
 } from "../../../components/AuditEventDetail";
+import { usePanelClock } from "../../../components/Timestamp";
 import { useTableURL } from "../../../hooks/useTableURL";
 import { sorterToParams } from "../../../utils/tableSorter";
 
@@ -136,7 +136,7 @@ const AuditMaintenanceCard = () => {
 
 export const AdminAuditList = () => {
   const { t } = useTranslation();
-  const tz = useServerTz();
+  const tz = usePanelClock().timezone;
   const query = useTableURL<AuditRow>({
     resource: "admin/audit",
     defaultSort: "ts",
@@ -180,7 +180,7 @@ export const AdminAuditList = () => {
           scroll={{ x: "max-content" }}
           expandable={{
             expandedRowRender: (r: AuditRow) => (
-              <AuditDetail row={r} tz={tz} />
+              <AuditDetail row={r} />
             ),
           }}
         >
@@ -190,7 +190,7 @@ export const AdminAuditList = () => {
             key="ts"
             sorter
             defaultSortOrder="descend"
-            render={(ts: string) => <code>{fmtTSInTz(ts, tz)}</code>}
+            render={(ts: string) => <AuditTime ts={ts} />}
           />
           <Table.Column
             title={t("adminauditlist.actor")}

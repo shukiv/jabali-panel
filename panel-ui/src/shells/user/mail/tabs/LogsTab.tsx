@@ -17,6 +17,7 @@ import type { Dayjs } from "dayjs";
 
 import { useMailLogs } from "../../../../hooks/useMailLogs";
 import { MailLogDetailDrawer } from "./MailLogDetailDrawer";
+import { Timestamp } from "../../../../components/Timestamp";
 
 interface Filters {
   from?: Dayjs | null;
@@ -123,7 +124,7 @@ export const LogsTab = ({ domainName }: { domainName?: string } = {}) => {
             // GH #1365: client-side column sort (sorts the current page).
             sorter: (a, b) => a.timestamp.localeCompare(b.timestamp),
             defaultSortOrder: "descend" as const,
-            render: (v: string) => new Date(v).toLocaleString(),
+            render: (v: string) => <Timestamp value={v} seconds />,
           },
           {
             title: "From",

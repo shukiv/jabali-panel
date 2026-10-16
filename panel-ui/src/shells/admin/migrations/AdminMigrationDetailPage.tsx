@@ -28,6 +28,7 @@ import { useNavigate, useParams } from "react-router";
 
 import { apiClient } from "../../../apiClient";
 import { humanBytes as formatBytes } from "../../../utils/bytes";
+import { Timestamp } from "../../../components/Timestamp";
 
 type MigrationJob = {
   id: string;
@@ -181,10 +182,10 @@ export const AdminMigrationDetailPage = () => {
             {job.source_kind}
           </Descriptions.Item>
           <Descriptions.Item label={t("adminmigrationdetailpage.started")}>
-            {new Date(job.started_at).toLocaleString()}
+            <Timestamp value={job.started_at} />
           </Descriptions.Item>
           <Descriptions.Item label={t("adminmigrationdetailpage.ended")}>
-            {job.ended_at ? new Date(job.ended_at).toLocaleString() : "—"}
+            {job.ended_at ? <Timestamp value={job.ended_at} /> : "—"}
           </Descriptions.Item>
           <Descriptions.Item label={t("adminmigrationdetailpage.target_user_id")}>
             {job.target_user_id ? (
@@ -273,11 +274,11 @@ export const AdminMigrationDetailPage = () => {
                   <Descriptions size="small" column={{ xs: 1, sm: 2 }}>
                     <Descriptions.Item label={t("adminmigrationdetailpage.started")}>
                       {s.started_at
-                        ? new Date(s.started_at).toLocaleString()
+                        ? <Timestamp value={s.started_at} />
                         : "—"}
                     </Descriptions.Item>
                     <Descriptions.Item label={t("adminmigrationdetailpage.ended")}>
-                      {s.ended_at ? new Date(s.ended_at).toLocaleString() : "—"}
+                      {s.ended_at ? <Timestamp value={s.ended_at} /> : "—"}
                     </Descriptions.Item>
                     <Descriptions.Item label={t("adminmigrationdetailpage.bytes_processed")}>
                       {s.bytes_processed.toLocaleString()}

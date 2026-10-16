@@ -16,6 +16,7 @@ import {
 } from "antd";
 
 import { apiClient } from "../apiClient";
+import { shortDateTime } from "../utils/datetime";
 
 export type DomainInfoTarget = {
   id: string;
@@ -49,8 +50,7 @@ type WhoisResponse = {
 
 const fmtDate = (s?: string) => {
   if (!s) return "—";
-  const d = new Date(s);
-  return isNaN(d.getTime()) ? s : d.toLocaleString();
+  return isNaN(new Date(s).getTime()) ? s : shortDateTime(s);
 };
 
 export const DomainInfoButton = ({

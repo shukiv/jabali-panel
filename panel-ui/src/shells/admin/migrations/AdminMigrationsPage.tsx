@@ -12,7 +12,6 @@
 // 5981541a).
 import { useTranslation } from "react-i18next";
 import { useEffect, useState } from "react";
-import { shortDateTime } from "../../../utils/datetime";
 import { Grid, Alert, Button, Card, Empty, List, Popconfirm, Space, Switch, Table, Tag, Tooltip, Typography } from "antd";
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -26,6 +25,7 @@ import { RefreshMigrationModal } from "./RefreshMigrationModal";
 import { CreateMigrationDrawer } from "./CreateMigrationDrawer";
 import { CreateMigrationWizard } from "./CreateMigrationWizard";
 import { MigrateImapDrawer } from "./MigrateImapDrawer";
+import { Timestamp } from "../../../components/Timestamp";
 
 type MigrationJob = {
   id: string;
@@ -309,8 +309,8 @@ export const AdminMigrationsPage = () => {
               {r.source_user}@{r.source_host}
             </Typography.Text>
             <div style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 12 }}>
-              <Typography.Text type="secondary">Started {shortDateTime(r.started_at)}</Typography.Text>
-              <Typography.Text type="secondary">Ended {r.ended_at ? shortDateTime(r.ended_at) : "\u2014"}</Typography.Text>
+              <Typography.Text type="secondary">Started <Timestamp value={r.started_at} /></Typography.Text>
+              <Typography.Text type="secondary">Ended {r.ended_at ? <Timestamp value={r.ended_at} /> : "\u2014"}</Typography.Text>
             </div>
             {r.batch_id ? (
               <Popconfirm
@@ -458,14 +458,14 @@ export const AdminMigrationsPage = () => {
             title={t("adminmigrationspage.started")}
             dataIndex="started_at"
             sorter={(a, b) => (a.started_at ? +new Date(a.started_at) : 0) - (b.started_at ? +new Date(b.started_at) : 0)}
-            render={(s: string) => shortDateTime(s)}
+            render={(s: string) => <Timestamp value={s} />}
           />
           <Table.Column<MigrationJob>
             title={t("adminmigrationspage.ended")}
             dataIndex="ended_at"
             sorter={(a, b) => (a.ended_at ? +new Date(a.ended_at) : 0) - (b.ended_at ? +new Date(b.ended_at) : 0)}
             render={(s: string | null) =>
-              s ? shortDateTime(s) : "—"
+              s ? <Timestamp value={s} /> : "—"
             }
           />
           <Table.Column<MigrationJob>

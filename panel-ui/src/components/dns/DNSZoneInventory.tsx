@@ -32,6 +32,7 @@ import { DNSZoneEnableButton } from "./DNSZoneEnableButton";
 import { SearchableTableStringQ } from "../SearchableTable";
 import { useTableURL } from "../../hooks/useTableURL";
 import { sorterToParams } from "../../utils/tableSorter";
+import { shortDate } from "../../utils/datetime";
 
 // DnsZoneRow is one row of the batched GET /dns/zones inventory (JAB-377):
 // the domain plus its provisioning state, record count, and effective TTL,
@@ -320,7 +321,7 @@ const ZoneTable = ({ audience }: { audience: DnsZoneInventoryAudience }) => {
             render={(d: string | null | undefined) =>
               d ? (
                 <Tooltip title={t("dnszonesoverviewpage.domain_registration_expiry_from_whois")}>
-                  {new Date(d).toLocaleDateString()}
+                  {shortDate(d)}
                 </Tooltip>
               ) : (
                 <Typography.Text type="secondary">—</Typography.Text>

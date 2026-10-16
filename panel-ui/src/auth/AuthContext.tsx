@@ -24,6 +24,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { apiClient } from "../apiClient";
 import { logoutBrowser } from "../kratos";
+import { setPanelClock } from "../utils/datetime";
 
 export type MeUser = {
   id: string;
@@ -37,6 +38,9 @@ type MeResponse = {
   id: string;
   email: string;
   is_admin: boolean;
+  /** GH #2164: the panel's clock (Server Settings timezone + date format). */
+  timezone?: string;
+  date_format?: string;
   full_name?: string;
   username?: string;
 };
@@ -55,6 +59,10 @@ async function fetchMe(): Promise<MeUser | null> {
   try {
     const { data } = await apiClient.get<MeResponse>("/me");
     if (!data?.id) return null;
+    // GH #2164: set the panel clock here, before RequireAuth lets any page
+    // render, so the first paint already shows server time in the admin's
+    // date format.
+    setPanelClock(data.timezone, data.date_format);
     return {
       id: data.id,
       email: data.email ?? "",

@@ -70,6 +70,8 @@ import {
   type CrowdsecScenarioItem,
   type CrowdsecScope,
 } from "../../../hooks/useSecurityCrowdsec";
+import { shortDateTime } from "../../../utils/datetime";
+import { Timestamp } from "../../../components/Timestamp";
 
 const SCOPE_OPTIONS: Array<{ value: CrowdsecScope | "all"; label: string }> = [
   { value: "all", label: "All scopes" },
@@ -103,7 +105,7 @@ type AddDecisionFormValues = {
   reason: string;
 };
 
-const fmtTime = (s?: string): string => (s ? new Date(s).toLocaleString() : "—");
+const fmtTime = (s?: string): string => (s ? shortDateTime(s) : "—");
 
 
 export const AdminSecurityCrowdsec = () => {
@@ -303,7 +305,7 @@ export const AdminSecurityCrowdsec = () => {
                     locale={{ emptyText: "No matching alerts in the loaded window" }}
                     columns={[
                       { title: "Scenario", dataIndex: "scenario", ellipsis: true },
-                      { title: "When", dataIndex: "created_at", width: 180, render: (v: string) => v || "—" },
+                      { title: "When", dataIndex: "created_at", width: 180, render: (v: string) => <Timestamp value={v} /> },
                     ]}
                   />
                 </>
@@ -829,7 +831,7 @@ const BlocklistsCard = () => {
             title: "Latest expiry",
             dataIndex: "latest_end",
             key: "latest_end",
-            render: (v: string) => (v ? new Date(v).toLocaleString() : "—"),
+            render: (v: string) => (v ? <Timestamp value={v} /> : "—"),
           },
         ]}
       />
@@ -1962,7 +1964,7 @@ const RecentChangesCard = () => {
         dataSource={q.data ?? []}
         locale={{ emptyText: "No recent CrowdSec config changes recorded" }}
         columns={[
-          { title: "When", dataIndex: "ts", width: 170, render: (v: string) => new Date(v).toLocaleString() },
+          { title: "When", dataIndex: "ts", width: 170, render: (v: string) => <Timestamp value={v} seconds /> },
           { title: "Action", dataIndex: "action", ellipsis: true },
           { title: "Target", dataIndex: "target_id", ellipsis: true, render: (v: string) => v || "—" },
           { title: "By", dataIndex: "actor_kind", width: 90 },
@@ -2052,7 +2054,7 @@ const EngineIdentityCard = () => {
               <Typography.Text type="secondary" style={{ fontSize: 11 }}>
                 Daemon uptime since
               </Typography.Text>
-              <div style={{ fontSize: 13 }}>{startedAt}</div>
+              <div style={{ fontSize: 13 }}><Timestamp value={startedAt} /></div>
             </Col>
           )}
         </Row>
