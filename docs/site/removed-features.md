@@ -47,6 +47,11 @@ target's own account activity (`GET /api/v1/me/activity`, subject-scoped and
 IDOR-safe). It is no longer a removed feature — this entry is kept only to
 correct earlier docs that listed it as gone.
 
+While acting as a user, the **API Tokens** page shows, creates and revokes
+that user's tokens, and the audit log records the admin as the actor. Before
+GH #2159 the page ignored act-as: it showed the admin's own tokens, and a
+token created there belonged to the admin account.
+
 ### Refine → TanStack Query + AntD + react-router (M21)
 
 `@refinedev/*` was removed; the UI is now built directly on TanStack Query + AntD + react-router. ADR-0037. Production JS dropped from 2.2 MB to 1.6 MB.

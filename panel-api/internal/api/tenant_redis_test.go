@@ -152,6 +152,22 @@ func TestMeRedisAccess_AdminHasNoLinuxUser(t *testing.T) {
 	}
 }
 
+// GH #2159: an admin whose row has a username still has no Linux account.
+func TestMeRedisAccess_AdminWithUsernameHasNoLinuxUser(t *testing.T) {
+	mr, rdb := newMiniRedis(t)
+	defer mr.Close()
+	cfg := ApplicationHandlerConfig{
+		Redis: rdb,
+		Users: &redisAccessStubUsers{user: &models.User{ID: "admin-1", IsAdmin: true, Username: ptr("admin")}},
+	}
+	r := newRedisAccessRouter(t, cfg, &auth.AccessClaims{UserID: "admin-1", IsAdmin: true})
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/me/redis-access", nil))
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "no_linux_user") {
+		t.Fatalf("want 409 no_linux_user, got %d %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestMeRedisAccess_RedisUnavailable(t *testing.T) {
 	cfg := ApplicationHandlerConfig{
 		Redis: nil,

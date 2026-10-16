@@ -177,8 +177,11 @@ func (h *redisAccessHandler) provisionTenant(c *gin.Context, userID string) (osU
 		return "", "", false
 	}
 	// Redis access is a TENANT feature: it needs a Linux account to scope the
-	// keyspace to and to reach the socket. Admins have no OS user.
-	if u.Username == nil || *u.Username == "" {
+	// keyspace to and to reach the socket. Admins have no OS user, even when
+	// their row has a username (the default admin is "admin"; userops makes
+	// Linux accounts for non-admins only). GH #2159: an admin token's flush
+	// provisioned t_admin, scanned jt:admin:* and answered deleted 0.
+	if u.IsAdmin || u.Username == nil || *u.Username == "" {
 		c.JSON(http.StatusConflict, gin.H{"error": "no_linux_user", "detail": "Redis access is only available for hosting users (admins have no Linux account)"})
 		return "", "", false
 	}
