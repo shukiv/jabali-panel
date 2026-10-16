@@ -194,6 +194,38 @@ func TestMeRedisFlush_Refusals(t *testing.T) {
 			t.Fatalf("want 409 no_linux_user, got %d %s", rec.Code, rec.Body.String())
 		}
 	})
+	// GH #2159: an admin's row can carry a username (the default admin is
+	// "admin") with no Linux account behind it. Its token's flush provisioned
+	// t_admin, scanned jt:admin:* and answered {"deleted":0,"complete":true}.
+	t.Run("admin with a username has no Linux user", func(t *testing.T) {
+		prev := tenantRedisProvision
+		t.Cleanup(func() { tenantRedisProvision = prev })
+		provisioned := ""
+		tenantRedisProvision = func(_ *redisAccessHandler, _ context.Context, osUser, _ string) error {
+			provisioned = osUser
+			return nil
+		}
+		cfg := ApplicationHandlerConfig{
+			Redis: rdb,
+			Users: &redisAccessStubUsers{user: &models.User{ID: "a1", IsAdmin: true, Username: ptr("admin")}},
+		}
+		for _, tc := range []struct {
+			path   string
+			claims *auth.AccessClaims
+		}{
+			{"/api/v1/me/redis-access/flush", &auth.AccessClaims{UserID: "a1", IsAdmin: true}},
+			{"/api/v1/users/a1/redis-access/flush", &auth.AccessClaims{UserID: "a2", IsAdmin: true}},
+		} {
+			r := newRedisAccessRouter(t, cfg, tc.claims)
+			rec := postFlush(r, tc.path)
+			if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "no_linux_user") {
+				t.Fatalf("%s: want 409 no_linux_user, got %d %s", tc.path, rec.Code, rec.Body.String())
+			}
+		}
+		if provisioned != "" {
+			t.Fatalf("a Redis user was provisioned for the admin (%q)", provisioned)
+		}
+	})
 	t.Run("redis not configured", func(t *testing.T) {
 		cfg := ApplicationHandlerConfig{
 			Users: &redisAccessStubUsers{user: &models.User{ID: "u1", Username: ptr("bob")}},
