@@ -394,6 +394,7 @@ These have bitten us. Don't repeat:
 | Register an internal route off `v1` | `RequireKratosSession` blocks the agent; internal routes mount off root `r` | M14 Step 4 |
 | Dispatch sub-agents for well-specified work | Drift from plan contracts; rework cost > just doing it | `feedback_never_agents` |
 | Format a timestamp with `toLocaleString()` / `dayjs(ts).format()` | Shows the viewer's browser zone and locale, so an admin and a tenant read different times for the same event | GH #2164 |
+| Use a bare `<Navigate>` as an index route's element | It fires once, on mount. A second navigation to the same route (sign-in navigates to the shell root twice) leaves it mounted with the same target, so it never fires again and the page stays blank. Use `IndexRedirect`, which is keyed on the location; `IndexRedirect.test.tsx` checks App.tsx | blank dashboard after sign-in |
 | Commit to `main` from a feature worktree | Dispatcher is the only pushing entity; agents must branch | CLAUDE.md |
 | Skip the pre-merge rebase | Phantom "N ahead" reports + merge conflicts surface at push time | `feedback_fetch_rebase_before_deploy` |
 | Hand-roll a SQL query string | GORM parameters only; any `WHERE ... = '" + id + "'"` fails code review | security.md |
