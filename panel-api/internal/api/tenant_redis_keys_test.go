@@ -344,6 +344,29 @@ func TestTenantRedisListKeys_StopsAndResumes(t *testing.T) {
 	}
 }
 
+// A batch asks Redis to look at about as many entries as the page still
+// needs: on a keyspace that is all the tenant's, a 1000 batch would return
+// 1000 keys for a page of 100. Sparse keys grow the batch to the maximum.
+func TestTenantRedisScanCount(t *testing.T) {
+	for _, tc := range []struct {
+		want, found, examined int
+		count                 int64
+	}{
+		{100, 0, 0, 100},     // first batch: what the page wants
+		{20, 0, 0, 100},      // never below the minimum
+		{500, 0, 0, 500},     // a bigger page
+		{50, 50, 100, 100},   // dense: half the entries were ours, 50 more needed
+		{90, 10, 1000, 1000}, // sparse: 1% ours, grow to the maximum
+		{100, 0, 1000, 1000}, // nothing found yet: the maximum
+		{10, 990, 1000, 100}, // nearly done on a dense keyspace
+		{400, 100, 100, 400}, // all ours: exactly what is still wanted
+	} {
+		if got := tenantRedisScanCount(tc.want, tc.found, tc.examined); got != tc.count {
+			t.Errorf("want=%d found=%d examined=%d: count %d, want %d", tc.want, tc.found, tc.examined, got, tc.count)
+		}
+	}
+}
+
 // The real tenant connection authenticates as t_<osuser> with the tenant's
 // token. A wrong token fails the listing instead of falling back to the panel.
 func TestTenantRedisListKeys_ReadsThroughTenantCredential(t *testing.T) {

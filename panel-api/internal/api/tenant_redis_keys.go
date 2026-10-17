@@ -36,10 +36,12 @@ const (
 	// looks for before it stops scanning. One SCAN batch can overshoot it.
 	tenantRedisKeysDefaultLimit = 100
 	tenantRedisKeysMaxLimit     = 500
-	// tenantRedisKeysScanCount is the SCAN COUNT hint of one batch.
-	tenantRedisKeysScanCount = 1000
-	// tenantRedisKeysMaxScans bounds the SCAN calls of one listing call
-	// (about 50,000 keyspace entries), however few of them are the tenant's.
+	// tenantRedisKeysScanCount bounds the SCAN COUNT hint of one batch (see
+	// tenantRedisScanCount).
+	tenantRedisKeysScanCountMin = 100
+	tenantRedisKeysScanCount    = 1000
+	// tenantRedisKeysMaxScans bounds the SCAN calls of one listing call (at
+	// most about 50,000 keyspace entries), however few of them are the tenant's.
 	tenantRedisKeysMaxScans = 50
 	// tenantRedisKeysBudget bounds one listing call's scanning time.
 	tenantRedisKeysBudget = 5 * time.Second
@@ -217,6 +219,27 @@ func (r *redisTenantKeyConn) Unlink(ctx context.Context, keys ...string) (int64,
 
 func (r *redisTenantKeyConn) Close() error { return r.c.Close() }
 
+// tenantRedisScanCount sizes the next SCAN batch. COUNT is how many keyspace
+// entries Redis looks at, and every one that matches comes back, so on a
+// keyspace that is mostly the tenant's a 1000 batch returns 1000 keys for a
+// page of 100. The batch is sized from how dense the tenant's keys were so far:
+// about what is still wanted, growing to the maximum on a sparse keyspace.
+func tenantRedisScanCount(want, found, examined int) int64 {
+	n := tenantRedisKeysScanCount
+	if found > 0 && examined > 0 {
+		n = want * examined / found
+	} else if examined == 0 {
+		n = want
+	}
+	if n < tenantRedisKeysScanCountMin {
+		n = tenantRedisKeysScanCountMin
+	}
+	if n > tenantRedisKeysScanCount {
+		n = tenantRedisKeysScanCount
+	}
+	return int64(n)
+}
+
 // tenantRedisListKeys scans for the tenant's keys from q's position and
 // describes what it found. next is where the following call starts, "" when
 // every database (or q's one database) was scanned.
@@ -233,7 +256,7 @@ func tenantRedisListKeys(ctx context.Context, panel *redis.Client, osUser, token
 
 	found := map[int][]string{}
 	var order []int
-	total, scans := 0, 0
+	total, scans, examined := 0, 0, 0
 	db, cursor := q.db, q.cursor
 	next := ""
 	stop := func() bool {
@@ -247,7 +270,8 @@ scan:
 		base := panel.Options()
 		conn := redis.NewClient(redisDBClientOptions(base, base.Username, base.Password, db))
 		for {
-			keys, nextCursor, err := conn.Scan(scanCtx, cursor, match, tenantRedisKeysScanCount).Result()
+			count := tenantRedisScanCount(q.limit-total, total, examined)
+			keys, nextCursor, err := conn.Scan(scanCtx, cursor, match, count).Result()
 			scans++
 			if err != nil {
 				_ = conn.Close()
@@ -267,6 +291,7 @@ scan:
 					total++
 				}
 			}
+			examined += int(count)
 			cursor = nextCursor
 			if cursor == 0 {
 				break
