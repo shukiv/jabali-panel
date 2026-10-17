@@ -21,12 +21,20 @@ import (
 type fakeDNS struct {
 	addr   string
 	answer func(q dnsmessage.Question, tcp bool) (dnsmessage.Header, []dnsmessage.Resource)
+	// replyQ, when set, rewrites the question echoed in the reply.
+	replyQ func(q dnsmessage.Question) dnsmessage.Question
+	// foreignID answers with an ID that is never the query's.
+	foreignID bool
+	// strayFirst sends a reply with a foreign ID before the real one (UDP).
+	strayFirst bool
+	// udpOnly refuses TCP.
+	udpOnly bool
 
 	mu    sync.Mutex
 	asked []string // "<name> <type> <udp|tcp>"
 }
 
-func startFakeDNS(t *testing.T, answer func(q dnsmessage.Question, tcp bool) (dnsmessage.Header, []dnsmessage.Resource)) *fakeDNS {
+func startFakeDNS(t *testing.T, answer func(q dnsmessage.Question, tcp bool) (dnsmessage.Header, []dnsmessage.Resource), opts ...func(*fakeDNS)) *fakeDNS {
 	t.Helper()
 	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
@@ -38,6 +46,12 @@ func startFakeDNS(t *testing.T, answer func(q dnsmessage.Question, tcp bool) (dn
 		t.Skipf("tcp port taken: %v", err)
 	}
 	f := &fakeDNS{addr: pc.LocalAddr().String(), answer: answer}
+	for _, o := range opts {
+		o(f)
+	}
+	if f.udpOnly {
+		_ = ln.Close()
+	}
 	t.Cleanup(func() { _ = pc.Close(); _ = ln.Close() })
 
 	go func() {
@@ -47,9 +61,16 @@ func startFakeDNS(t *testing.T, answer func(q dnsmessage.Question, tcp bool) (dn
 			if err != nil {
 				return
 			}
-			if out := f.reply(buf[:n], false); out != nil {
-				_, _ = pc.WriteTo(out, from)
+			out := f.reply(buf[:n], false)
+			if out == nil {
+				continue
 			}
+			if f.strayFirst {
+				stray := slices.Clone(out)
+				stray[0] ^= 0xff // another ID
+				_, _ = pc.WriteTo(stray, from)
+			}
+			_, _ = pc.WriteTo(out, from)
 		}
 	}()
 	go func() {
@@ -102,8 +123,9 @@ func (f *fakeDNS) reply(req []byte, tcp bool) []byte {
 	f.mu.Unlock()
 
 	rh, answers := f.answer(q, tcp)
-	if rh.ID == 0 {
-		rh.ID = h.ID
+	rh.ID = h.ID
+	if f.foreignID {
+		rh.ID = h.ID ^ 0xffff
 	}
 	rh.Response = true
 	rh.RecursionDesired = h.RecursionDesired
@@ -111,7 +133,11 @@ func (f *fakeDNS) reply(req []byte, tcp bool) []byte {
 	b := dnsmessage.NewBuilder(nil, rh)
 	b.EnableCompression()
 	_ = b.StartQuestions()
-	_ = b.Question(q)
+	if f.replyQ != nil {
+		_ = b.Question(f.replyQ(q))
+	} else {
+		_ = b.Question(q)
+	}
 	_ = b.StartAnswers()
 	for _, rr := range answers {
 		switch body := rr.Body.(type) {
@@ -152,6 +178,13 @@ func aRR(owner string, ip [4]byte) dnsmessage.Resource {
 	}
 }
 
+func aaaaRR(owner string, ip [16]byte) dnsmessage.Resource {
+	return dnsmessage.Resource{
+		Header: dnsmessage.ResourceHeader{Name: name(owner), Type: dnsmessage.TypeAAAA, Class: dnsmessage.ClassINET, TTL: 60},
+		Body:   &dnsmessage.AAAAResource{AAAA: ip},
+	}
+}
+
 func cnameRR(owner, target string) dnsmessage.Resource {
 	return dnsmessage.Resource{
 		Header: dnsmessage.ResourceHeader{Name: name(owner), Type: dnsmessage.TypeCNAME, Class: dnsmessage.ClassINET, TTL: 60},
@@ -180,13 +213,14 @@ func TestLookupHostExternalResult_IgnoresEtcHosts(t *testing.T) {
 		if q.Type == dnsmessage.TypeA {
 			return dnsmessage.Header{}, []dnsmessage.Resource{aRR(q.Name.String(), [4]byte{203, 0, 113, 7})}
 		}
-		return dnsmessage.Header{}, nil // AAAA: no data
+		v6 := [16]byte{0x20, 0x01, 0x0d, 0xb8, 15: 7}
+		return dnsmessage.Header{}, []dnsmessage.Resource{aaaaRR(q.Name.String(), v6)}
 	})
 	useResolvers(t, f.addr)
 
 	addrs, queried := lookupFake(t, "localhost")
-	if !queried || !slices.Equal(addrs, []string{"203.0.113.7"}) {
-		t.Fatalf("got %v queried=%v, want the public answer [203.0.113.7] (not /etc/hosts)", addrs, queried)
+	if !queried || !slices.Equal(addrs, []string{"203.0.113.7", "2001:db8::7"}) {
+		t.Fatalf("got %v queried=%v, want the public answer [203.0.113.7 2001:db8::7] (not /etc/hosts)", addrs, queried)
 	}
 	if !slices.Contains(f.questions(), "localhost. TypeA udp") {
 		t.Fatalf("the public resolver was never asked: %v", f.questions())
@@ -259,6 +293,48 @@ func TestLookupHostExternalResult_Answers(t *testing.T) {
 				t.Fatalf("got %v queried=%v, want %v queried=%v (asked %v)", addrs, queried, tc.want, tc.queried, f.questions())
 			}
 		})
+	}
+}
+
+// A reply that isn't for our query (another ID, another question) is never
+// used: with nothing else answering, the lookup is inconclusive.
+func TestLookupHostExternalResult_IgnoresForeignReplies(t *testing.T) {
+	answer := func(q dnsmessage.Question, _ bool) (dnsmessage.Header, []dnsmessage.Resource) {
+		return dnsmessage.Header{}, []dnsmessage.Resource{aRR(q.Name.String(), [4]byte{192, 0, 2, 66})}
+	}
+	t.Run("another ID", func(t *testing.T) {
+		f := startFakeDNS(t, answer, func(f *fakeDNS) { f.foreignID = true })
+		useResolvers(t, f.addr)
+		if addrs, queried := lookupFake(t, "www.example.test"); queried || len(addrs) != 0 {
+			t.Fatalf("got %v queried=%v, want a reply with another ID ignored", addrs, queried)
+		}
+	})
+	t.Run("another question", func(t *testing.T) {
+		f := startFakeDNS(t, answer, func(f *fakeDNS) {
+			f.replyQ = func(q dnsmessage.Question) dnsmessage.Question {
+				q.Name = name("evil.example.test.")
+				return q
+			}
+		})
+		useResolvers(t, f.addr)
+		if addrs, queried := lookupFake(t, "www.example.test"); queried || len(addrs) != 0 {
+			t.Fatalf("got %v queried=%v, want a reply for another name ignored", addrs, queried)
+		}
+	})
+}
+
+// A stray datagram (another ID) before the real reply is skipped, not taken
+// as the answer or as a failure.
+func TestLookupHostExternalResult_SkipsStrayDatagram(t *testing.T) {
+	f := startFakeDNS(t, func(q dnsmessage.Question, _ bool) (dnsmessage.Header, []dnsmessage.Resource) {
+		if q.Type == dnsmessage.TypeA {
+			return dnsmessage.Header{}, []dnsmessage.Resource{aRR(q.Name.String(), [4]byte{198, 51, 100, 8})}
+		}
+		return dnsmessage.Header{}, nil
+	}, func(f *fakeDNS) { f.strayFirst, f.udpOnly = true, true })
+	useResolvers(t, f.addr)
+	if addrs, queried := lookupFake(t, "www.example.test"); !queried || !slices.Equal(addrs, []string{"198.51.100.8"}) {
+		t.Fatalf("got %v queried=%v, want the real reply after the stray one", addrs, queried)
 	}
 }
 

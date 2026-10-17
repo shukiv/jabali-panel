@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -241,13 +242,20 @@ func TestPanelCertRoutability_EtcHostsLoopback(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
+			var calls atomic.Int32
 			p := &PanelCertRoutability{
-				Resolver:     stubResolver{addrs: []string{"127.0.1.1"}},
-				PublicLookup: tc.public,
+				Resolver: stubResolver{addrs: []string{"127.0.1.1"}},
+				PublicLookup: func(ctx context.Context, host string) ([]string, bool) {
+					calls.Add(1)
+					return tc.public(ctx, host)
+				},
 			}
 			got, err := p.Check(context.Background(), "panel.example.test", want, tc.requirePublic)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
+			}
+			if n := calls.Load(); n != 1 {
+				t.Fatalf("public DNS asked %d times, want once", n)
 			}
 			if got.Routable != tc.wantRoute {
 				t.Fatalf("Routable: got %v want %v (reason=%q)", got.Routable, tc.wantRoute, got.Reason)
