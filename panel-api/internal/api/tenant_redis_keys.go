@@ -240,6 +240,10 @@ func tenantRedisScanCount(want, found, examined int) int64 {
 	return int64(n)
 }
 
+// tenantRedisScanCountFor is the batch sizing the scan loop calls; a seam so a
+// test can see what the loop passes it (miniredis ignores COUNT).
+var tenantRedisScanCountFor = tenantRedisScanCount
+
 // tenantRedisListKeys scans for the tenant's keys from q's position and
 // describes what it found. next is where the following call starts, "" when
 // every database (or q's one database) was scanned.
@@ -270,7 +274,7 @@ scan:
 		base := panel.Options()
 		conn := redis.NewClient(redisDBClientOptions(base, base.Username, base.Password, db))
 		for {
-			count := tenantRedisScanCount(q.limit-total, total, examined)
+			count := tenantRedisScanCountFor(q.limit-total, total, examined)
 			keys, nextCursor, err := conn.Scan(scanCtx, cursor, match, count).Result()
 			scans++
 			if err != nil {

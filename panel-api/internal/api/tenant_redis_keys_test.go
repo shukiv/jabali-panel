@@ -367,6 +367,46 @@ func TestTenantRedisScanCount(t *testing.T) {
 	}
 }
 
+// The scan loop sizes each batch from the call so far: what the page still
+// needs, the keys found and every entry the earlier batches looked at, across
+// databases too.
+func TestTenantRedisListKeys_SizesBatchesFromTheCallSoFar(t *testing.T) {
+	mr, rdb := newMiniRedis(t)
+	defer mr.Close()
+	stubKeySeams(t, mr)
+	seed(t, mr, 0, "jt:bob:a", "other:1")
+	seed(t, mr, 1, "jt:bob:b", "other:2")
+	seed(t, mr, 2, "jt:bob:c", "other:3")
+
+	type sizing struct{ want, found, examined int }
+	var got []sizing
+	var counts []int64
+	orig := tenantRedisScanCountFor
+	tenantRedisScanCountFor = func(want, found, examined int) int64 {
+		got = append(got, sizing{want, found, examined})
+		n := orig(want, found, examined)
+		counts = append(counts, n)
+		return n
+	}
+	t.Cleanup(func() { tenantRedisScanCountFor = orig })
+
+	rows, _, err := tenantRedisListKeys(context.Background(), rdb, "bob", "tok", redisKeysQuery{match: "*", limit: 100})
+	if err != nil || len(rows) != 3 {
+		t.Fatalf("got %v err=%v, want bob's 3 keys", rowNames(rows), err)
+	}
+	if len(got) < 3 {
+		t.Fatalf("%d batches, want one per database at least", len(got))
+	}
+	examined := 0
+	for i, s := range got {
+		found := min(i, 3) // one key of bob's in each of databases 0-2
+		if s != (sizing{100 - found, found, examined}) {
+			t.Fatalf("batch %d sized from %+v, want want=%d found=%d examined=%d", i, s, 100-found, found, examined)
+		}
+		examined += int(counts[i])
+	}
+}
+
 // The real tenant connection authenticates as t_<osuser> with the tenant's
 // token. A wrong token fails the listing instead of falling back to the panel.
 func TestTenantRedisListKeys_ReadsThroughTenantCredential(t *testing.T) {
