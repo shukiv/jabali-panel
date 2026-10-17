@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/net/dns/dnsmessage"
@@ -24,10 +25,13 @@ var errTruncated = errors.New("dns answer truncated")
 // file without asking the server, and applies the resolv.conf search list
 // (GH #2166). The answer here is the server's alone.
 //
-// NXDOMAIN returns a *net.DNSError with IsNotFound; a name with no A or AAAA
-// returns no addresses and a nil error. Any other error (no connection,
-// timeout, SERVFAIL, REFUSED, a truncated UDP answer, a reply that doesn't
-// match the query) means this server and transport gave no usable answer.
+// The A and AAAA queries run together. Like Go's resolver, the addresses of
+// one family are returned even when the other family's query failed.
+// Without any address: NXDOMAIN returns a *net.DNSError with IsNotFound; a
+// name with no A or AAAA returns a nil error. Any other error (no
+// connection, timeout, SERVFAIL, REFUSED, a truncated UDP answer, a reply
+// that doesn't match the query) means this server and transport gave no
+// usable answer.
 func lookupHostDirect(ctx context.Context, server, proto, host string) ([]string, error) {
 	fqdn := strings.TrimSpace(host)
 	if fqdn == "" || fqdn == "." {
@@ -40,19 +44,38 @@ func lookupHostDirect(ctx context.Context, server, proto, host string) ([]string
 	if err != nil {
 		return nil, err
 	}
-	var addrs []string
-	for _, qtype := range []dnsmessage.Type{dnsmessage.TypeA, dnsmessage.TypeAAAA} {
-		got, err := queryDirect(ctx, server, proto, qname, qtype)
-		if err != nil {
-			var derr *net.DNSError
-			if errors.As(err, &derr) {
-				derr.Name = host
-			}
-			return nil, err
-		}
-		addrs = append(addrs, got...)
+	qtypes := []dnsmessage.Type{dnsmessage.TypeA, dnsmessage.TypeAAAA}
+	addrs := make([][]string, len(qtypes))
+	errs := make([]error, len(qtypes))
+	var wg sync.WaitGroup
+	for i, qtype := range qtypes {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			addrs[i], errs[i] = queryDirect(ctx, server, proto, qname, qtype)
+		}()
 	}
-	return addrs, nil
+	wg.Wait()
+
+	var out []string
+	for _, a := range addrs {
+		out = append(out, a...)
+	}
+	if len(out) > 0 {
+		return out, nil
+	}
+	var firstErr error
+	for _, err := range errs {
+		var derr *net.DNSError
+		if errors.As(err, &derr) && derr.IsNotFound {
+			derr.Name = host
+			return nil, derr
+		}
+		if err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return nil, firstErr
 }
 
 // queryDirect sends one question to server and returns the addresses of

@@ -278,6 +278,17 @@ func TestLookupHostExternalResult_Answers(t *testing.T) {
 			queried: true,
 		},
 		{
+			name: "an AAAA failure doesn't hide the A records",
+			answer: func(q dnsmessage.Question, _ bool) (dnsmessage.Header, []dnsmessage.Resource) {
+				if q.Type == dnsmessage.TypeA {
+					return dnsmessage.Header{}, []dnsmessage.Resource{aRR("www.example.test.", [4]byte{198, 51, 100, 9})}
+				}
+				return dnsmessage.Header{RCode: dnsmessage.RCodeServerFailure}, nil
+			},
+			want:    []string{"198.51.100.9"},
+			queried: true,
+		},
+		{
 			name: "SERVFAIL everywhere is inconclusive",
 			answer: func(dnsmessage.Question, bool) (dnsmessage.Header, []dnsmessage.Resource) {
 				return dnsmessage.Header{RCode: dnsmessage.RCodeServerFailure}, nil
