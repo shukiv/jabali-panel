@@ -31,6 +31,12 @@ type RateLimiterConfig struct {
 	// /auth/* strict-tier traffic can't starve the login bucket and vice versa.
 	KratosRate  rate.Limit
 	KratosBurst int
+	// ScanRate/ScanBurst gate routes that walk the shared Redis keyspace for one
+	// user (GH #2165, the tenant key browser), per user. Looser than Strict so
+	// browsing and searching keys works, tighter than Default because every call
+	// runs SCANs. Unset, ScanPerActor falls back to the Strict tier.
+	ScanRate  rate.Limit
+	ScanBurst int
 }
 
 // RateLimiter holds per-IP, per-tier token buckets and returns middleware
@@ -54,6 +60,7 @@ const (
 	tierDefault tier = iota
 	tierStrict
 	tierKratos
+	tierScan
 )
 
 type entry struct {
@@ -84,13 +91,19 @@ func (l *RateLimiter) Strict() gin.HandlerFunc { return l.handler(tierStrict) }
 // regardless of source IP. Falls back to the client IP when the request is
 // unauthenticated (no claims), so the middleware is still safe if mounted
 // before auth.
-func (l *RateLimiter) StrictPerActor() gin.HandlerFunc {
+func (l *RateLimiter) StrictPerActor() gin.HandlerFunc { return l.perActor(tierStrict) }
+
+// ScanPerActor enforces the scan tier keyed by the authenticated user, like
+// StrictPerActor, in a bucket of its own (GH #2165).
+func (l *RateLimiter) ScanPerActor() gin.HandlerFunc { return l.perActor(tierScan) }
+
+func (l *RateLimiter) perActor(t tier) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		key := clientIP(c)
 		if claims := ginctx.Claims(c); claims != nil && claims.UserID != "" {
 			key = "user:" + claims.UserID
 		}
-		l.enforce(c, key, tierStrict)
+		l.enforce(c, key, t)
 	}
 }
 
@@ -186,6 +199,12 @@ func (l *RateLimiter) limiterFor(ip string, t tier) *rate.Limiter {
 }
 
 func (l *RateLimiter) tierSettings(t tier) (rate.Limit, int) {
+	if t == tierScan {
+		if l.cfg.ScanBurst > 0 {
+			return l.cfg.ScanRate, l.cfg.ScanBurst
+		}
+		t = tierStrict
+	}
 	if t == tierStrict && l.cfg.StrictBurst > 0 {
 		return l.cfg.StrictRate, l.cfg.StrictBurst
 	}

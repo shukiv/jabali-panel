@@ -351,7 +351,8 @@ func TestRedisGlobEscape(t *testing.T) {
 
 // A write:redis token can flush and do nothing else. In particular it can't
 // fetch the Redis password from GET /me/redis-access (unmapped, so a scoped
-// token is refused there). read:redis doesn't exist.
+// token is refused there). GH #2165's read:redis is covered in
+// TestRedisKeysScope.
 func TestRedisFlushScope(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	route := func(tok *models.UserAPIToken) *gin.Engine {
@@ -393,9 +394,6 @@ func TestRedisFlushScope(t *testing.T) {
 
 	if bad, ok := ValidateUserScopes(models.UserAPIScopes{ScopeRedisFlush}); !ok {
 		t.Errorf("write:redis rejected at mint (%q)", bad)
-	}
-	if _, ok := ValidateUserScopes(models.UserAPIScopes{"read:redis"}); ok {
-		t.Error("read:redis must not be a known scope")
 	}
 }
 

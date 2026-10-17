@@ -239,3 +239,68 @@ func TestKratosFlows_GatesRecovery(t *testing.T) {
 		t.Error("3rd recovery POST should be 429")
 	}
 }
+
+// GH #2165: ScanPerActor gates routes that walk the shared Redis keyspace (the
+// tenant key browser). It is keyed on the user like StrictPerActor, with its
+// own bucket, so browsing keys doesn't spend the flush budget and vice versa.
+func TestScanPerActor_OwnBucketPerUser(t *testing.T) {
+	t.Parallel()
+
+	rl := middleware.NewRateLimiter(middleware.RateLimiterConfig{
+		DefaultRate:  rate.Limit(100),
+		DefaultBurst: 100,
+		StrictRate:   rate.Limit(0.001),
+		StrictBurst:  1,
+		ScanRate:     rate.Limit(0.001),
+		ScanBurst:    2,
+	})
+	r := gin.New()
+	withUser := func(uid string) gin.HandlerFunc {
+		return func(c *gin.Context) { ginctx.SetClaims(c, &auth.AccessClaims{UserID: uid}); c.Next() }
+	}
+	ok := func(c *gin.Context) { c.String(http.StatusOK, "ok") }
+	r.GET("/scan/u1", withUser("u1"), rl.ScanPerActor(), ok)
+	r.GET("/scan/u2", withUser("u2"), rl.ScanPerActor(), ok)
+	r.POST("/strict/u1", withUser("u1"), rl.StrictPerActor(), ok)
+
+	hit := func(method, path, ip string) int {
+		req := httptest.NewRequest(method, path, nil)
+		req.RemoteAddr = ip + ":1000"
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, req)
+		return rec.Code
+	}
+
+	// The scan burst (2) holds across the user's addresses, then 429.
+	assert.Equal(t, http.StatusOK, hit("GET", "/scan/u1", "10.0.0.1"))
+	assert.Equal(t, http.StatusOK, hit("GET", "/scan/u1", "10.0.0.2"))
+	assert.Equal(t, http.StatusTooManyRequests, hit("GET", "/scan/u1", "10.0.0.3"))
+	// The strict bucket is separate: u1 can still flush once.
+	assert.Equal(t, http.StatusOK, hit("POST", "/strict/u1", "10.0.0.1"))
+	// Another user has their own scan bucket.
+	assert.Equal(t, http.StatusOK, hit("GET", "/scan/u2", "10.0.0.1"))
+}
+
+// An unconfigured scan tier falls back to the strict tier, never to the much
+// looser default one.
+func TestScanPerActor_UnconfiguredFallsBackToStrict(t *testing.T) {
+	t.Parallel()
+
+	rl := middleware.NewRateLimiter(middleware.RateLimiterConfig{
+		DefaultRate:  rate.Limit(100),
+		DefaultBurst: 100,
+		StrictRate:   rate.Limit(0.001),
+		StrictBurst:  1,
+	})
+	r := gin.New()
+	r.GET("/scan", func(c *gin.Context) { ginctx.SetClaims(c, &auth.AccessClaims{UserID: "u1"}); c.Next() },
+		rl.ScanPerActor(), func(c *gin.Context) { c.String(http.StatusOK, "ok") })
+
+	hit := func() int {
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/scan", nil))
+		return rec.Code
+	}
+	assert.Equal(t, http.StatusOK, hit())
+	assert.Equal(t, http.StatusTooManyRequests, hit())
+}

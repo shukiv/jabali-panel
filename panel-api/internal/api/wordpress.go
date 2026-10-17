@@ -49,6 +49,9 @@ type ApplicationHandlerConfig struct {
 	// RedisFlushRateLimit gates the tenant Redis flush (GH #2003), which scans
 	// the whole keyspace. Optional; nil = no limit (tests).
 	RedisFlushRateLimit gin.HandlerFunc
+	// RedisKeysRateLimit gates the tenant key listing (GH #2165), which also
+	// scans the shared keyspace. Optional; nil = no limit (tests).
+	RedisKeysRateLimit gin.HandlerFunc
 	// CacheWarmupRuns persists warmup run records (JAB-95 Phase 3). Optional;
 	// nil disables run recording (warmup still runs).
 	CacheWarmupRuns repository.CacheWarmupRunRepository
