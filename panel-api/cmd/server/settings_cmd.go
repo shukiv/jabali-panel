@@ -175,16 +175,22 @@ func runSettingsSet(cmd *cobra.Command, args []string) error {
 func applySettingsSideEffects(ctx context.Context, cmd *cobra.Command, repo repository.ServerSettingsRepository, s *models.ServerSettings, before models.ServerSettings) error {
 	out := cmd.OutOrStdout()
 
-	// Hostname → apply to the OS. Mirrors the REST PATCH, which dispatches
-	// system.set_hostname when Hostname changes (there in a background
-	// goroutine; here synchronous like the rest of this command so the operator
-	// sees the result inline). The panel-cert reconciler reissues the panel
-	// certificate for the new name on its next pass — same as the UI flow.
-	if s.Hostname != before.Hostname {
-		fmt.Fprintf(out, "Applying hostname change (system.set_hostname %s)…\n", s.Hostname)
-		if err := callAgentTimeout(ctx, 30*time.Second, "system.set_hostname", map[string]any{"hostname": s.Hostname}); err != nil {
-			return fmt.Errorf("DB updated, but system.set_hostname failed: %w", err)
+	// Hostname → apply on the host. settingsops.HostnameEffects owns the calls
+	// (the OS name, /etc/hosts and config.toml; the :443 landing vhost), shared
+	// with the REST PATCH and the free-hostname claim; here synchronous like the
+	// rest of this command so the operator sees the result inline. The calls are
+	// independent, so a failed set_hostname still re-points the landing vhost;
+	// the first failure is returned. The panel-cert reconciler reissues the
+	// panel certificate for the new name on its next pass — same as the UI flow.
+	var hostnameErr error
+	for _, call := range settingsops.HostnameEffects(&before, s).Calls() {
+		fmt.Fprintf(out, "Applying hostname change (%s %s)…\n", call.Method, s.Hostname)
+		if err := dispatchSettingsAgentCall(ctx, call); err != nil && hostnameErr == nil {
+			hostnameErr = fmt.Errorf("DB updated, but %s failed: %w", call.Method, err)
 		}
+	}
+	if hostnameErr != nil {
+		return hostnameErr
 	}
 
 	// Optional-module lifecycle. settingsops.ModuleEffects owns every verb, its
@@ -370,12 +376,12 @@ var settableKeys = map[string]settingDef{
 	// free-hostname (JAB-213) conversion couldn't be driven headlessly — the
 	// panel only serves on a name once its stored hostname is that name, and
 	// that write lived only behind the settings PATCH / free-hostname claim
-	// endpoints (admin session). Setting it here runs the same OS apply
-	// (system.set_hostname) the REST PATCH fires; the panel-cert reconciler then
+	// endpoints (admin session). Setting it here runs the same host apply
+	// (settingsops.HostnameEffects) the REST PATCH fires; the panel-cert reconciler then
 	// reissues the panel cert for the new name, exactly as the UI path does.
 	// FQDN-format validation is enforced by settingsops.Validate below.
 	"hostname": settingDef{
-		help: "panel hostname / FQDN (applies to the OS via system.set_hostname; the panel-cert reconciler reissues the cert)",
+		help: "panel hostname / FQDN (applies to the OS, /etc/hosts, config.toml and the landing vhost; the panel-cert reconciler reissues the cert)",
 		apply: func(s *models.ServerSettings, raw string) error {
 			v := strings.TrimSpace(raw)
 			if v == "" {
