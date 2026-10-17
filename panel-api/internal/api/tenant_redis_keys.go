@@ -36,7 +36,8 @@ const (
 	// tenantRedisKeysDefaultLimit: how many keys a listing call looks for
 	// before it stops scanning, when the call doesn't say. One SCAN batch can
 	// overshoot it. The most a call may ask for, and the most keys one delete
-	// call takes, is the user's package's RedisKeysPerCall (keysPerCall).
+	// call takes, is the user's package's RedisKeysPerCall (keysPerCall);
+	// the default never looks for more than that.
 	tenantRedisKeysDefaultLimit = 100
 	// tenantRedisKeysScanCount bounds the SCAN COUNT hint of one batch (see
 	// tenantRedisScanCount).
@@ -94,7 +95,7 @@ type redisKeysQuery struct {
 // the caller may ask for. On failure it returns the error code and detail for
 // a 422.
 func parseRedisKeysQuery(c *gin.Context, maxLimit int) (redisKeysQuery, string, string) {
-	q := redisKeysQuery{match: "*", limit: tenantRedisKeysDefaultLimit}
+	q := redisKeysQuery{match: "*", limit: min(tenantRedisKeysDefaultLimit, maxLimit)}
 
 	if v := c.Query("match"); v != "" {
 		if len(v) > tenantRedisKeysMaxMatch {

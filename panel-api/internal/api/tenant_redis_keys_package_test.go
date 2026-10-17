@@ -5,9 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
+
+	"github.com/gin-gonic/gin"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/auth"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
@@ -99,6 +102,23 @@ func TestRedisKeys_PerPackageMaximum(t *testing.T) {
 				t.Errorf("delete of %d keys: want 422 %q, got %d %s", tc.want+1, wantDetail, rec.Code, rec.Body.String())
 			}
 		})
+	}
+}
+
+// A call that doesn't say how many keys it wants never looks for more than
+// the package allows, whatever the default page is.
+func TestParseRedisKeysQuery_DefaultWithinMaximum(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, maxLimit := range []int{models.RedisKeysPerCallMin, models.RedisKeysPerCallDefault, models.RedisKeysPerCallMax} {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/me/redis-access/keys", nil)
+		q, code, detail := parseRedisKeysQuery(c, maxLimit)
+		if code != "" {
+			t.Fatalf("no limit at %d: want ok, got %s %s", maxLimit, code, detail)
+		}
+		if q.limit < 1 || q.limit > maxLimit {
+			t.Errorf("no limit at %d: looks for %d keys", maxLimit, q.limit)
+		}
 	}
 }
 
