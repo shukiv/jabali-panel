@@ -41,9 +41,9 @@ type PanelCertRoutability struct {
 	Resolver Resolver
 	// PublicLookup resolves a name via external public resolvers and
 	// reports whether any gave a definitive answer (see
-	// dnsverify.LookupHostExternalResult). Used only on the
-	// requirePublic path. Defaults to dnsverify.LookupHostExternalResult;
-	// tests inject a stub.
+	// dnsverify.LookupHostExternalResult). Used on the requirePublic
+	// path and when the local lookup answers only loopback (/etc/hosts).
+	// Defaults to dnsverify.LookupHostExternalResult; tests inject a stub.
 	PublicLookup func(ctx context.Context, host string) (addrs []string, queried bool)
 }
 
@@ -69,9 +69,12 @@ func NewPanelCertRoutability() *PanelCertRoutability {
 //     routable; reason "non-routable hostname suffix". Browsers and
 //     LE both refuse these.
 //  3. DNS A lookup returns nothing or fails → not routable; reason
-//     "dns lookup failed: …".
+//     "dns lookup failed: …". Only loopback (an /etc/hosts line) →
+//     public DNS is asked instead; no public address → not routable,
+//     with a reason that names /etc/hosts.
 //  4. None of the resolved addresses match publicIPv4 → not routable;
-//     reason "dns points elsewhere (got X.X.X.X, want Y.Y.Y.Y)".
+//     reason "dns points elsewhere (got X.X.X.X, want Y.Y.Y.Y); …",
+//     with a hint for a CDN-proxied record.
 //
 // Otherwise routable.
 func (p *PanelCertRoutability) Check(ctx context.Context, hostname, publicIPv4 string, requirePublic bool) (RoutabilityResult, error) {
@@ -103,22 +106,30 @@ func (p *PanelCertRoutability) Check(ctx context.Context, hostname, publicIPv4 s
 	// /etc/hosts shadow guard: if every result is loopback (Debian
 	// seeds `127.0.1.1 <hostname>` on first boot and never strips it),
 	// the default resolver is misleading us — public DNS likely
-	// resolves elsewhere. Retry against external public DNS resolvers
-	// that bypass /etc/hosts entirely. We cycle through three popular
-	// resolvers (Cloudflare, Quad9, Google) over UDP first then TCP
-	// so a carrier that blocks outbound UDP/53 (some LXC providers
-	// do) still gets a real answer over TCP/53. First non-empty
-	// response wins; on total failure we keep the loopback addrs so
-	// the caller surfaces a clear "dns points elsewhere" message
-	// instead of a generic resolver error.
+	// resolves elsewhere. Ask external public DNS resolvers instead
+	// (Cloudflare, Quad9, Google; UDP then TCP so a carrier that blocks
+	// outbound UDP/53 still gets an answer), which never read
+	// /etc/hosts (GH #2166). The reason then reports what public DNS
+	// said; the loopback address is never shown as the DNS answer.
 	//
 	// install.sh strips the stale 127.0.1.1 line on every run, but
 	// this guard catches operators who edit /etc/hosts by hand AND
 	// keeps the gate robust on hosts where install.sh hasn't been
 	// re-run since the strip landed.
+	public := false
 	if onlyLoopback(addrs) {
-		if extAddrs := dnsverify.LookupHostExternal(ctx, host); len(extAddrs) > 0 {
-			addrs = extAddrs
+		extAddrs, queried := p.publicLookup()(ctx, host)
+		switch {
+		case len(extAddrs) > 0:
+			addrs, public = extAddrs, true
+		case queried:
+			return RoutabilityResult{Routable: false, Reason: fmt.Sprintf(
+				"no public A record: %s resolves to %s only through this server's /etc/hosts, and public DNS has no address for it",
+				host, strings.Join(addrs, ","))}, nil
+		default:
+			return RoutabilityResult{Routable: false, Reason: fmt.Sprintf(
+				"%s resolves to %s only through this server's /etc/hosts, and public DNS could not be reached to check it",
+				host, strings.Join(addrs, ","))}, nil
 		}
 	}
 
@@ -139,7 +150,7 @@ func (p *PanelCertRoutability) Check(ctx context.Context, hostname, publicIPv4 s
 		}
 		ipv4Got = append(ipv4Got, ip.String())
 		if ip.String() == want {
-			if !requirePublic {
+			if !requirePublic || public {
 				return RoutabilityResult{Routable: true}, nil
 			}
 			return p.verifyPublic(ctx, host, want), nil
@@ -151,8 +162,18 @@ func (p *PanelCertRoutability) Check(ctx context.Context, hostname, publicIPv4 s
 	}
 	return RoutabilityResult{
 		Routable: false,
-		Reason:   fmt.Sprintf("dns points elsewhere (got %s, want %s)", strings.Join(ipv4Got, ","), want),
+		Reason: fmt.Sprintf(
+			"dns points elsewhere (got %s, want %s); if %s is proxied by a CDN such as Cloudflare, set its record to DNS only: Let's Encrypt can't validate the panel through the proxy",
+			strings.Join(ipv4Got, ","), want, host),
 	}, nil
+}
+
+// publicLookup is PublicLookup, or the production external lookup.
+func (p *PanelCertRoutability) publicLookup() func(ctx context.Context, host string) ([]string, bool) {
+	if p.PublicLookup != nil {
+		return p.PublicLookup
+	}
+	return dnsverify.LookupHostExternalResult
 }
 
 // verifyPublic confirms that external public resolvers also see `host`
@@ -170,11 +191,7 @@ func (p *PanelCertRoutability) Check(ctx context.Context, hostname, publicIPv4 s
 //	                                certbot be the judge (its error is then
 //	                                humanized by HumanizePanelCertError).
 func (p *PanelCertRoutability) verifyPublic(ctx context.Context, host, want string) RoutabilityResult {
-	lookup := p.PublicLookup
-	if lookup == nil {
-		lookup = dnsverify.LookupHostExternalResult
-	}
-	extAddrs, queried := lookup(ctx, host)
+	extAddrs, queried := p.publicLookup()(ctx, host)
 	if !queried {
 		return RoutabilityResult{Routable: true}
 	}

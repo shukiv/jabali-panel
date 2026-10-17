@@ -193,6 +193,77 @@ func TestPanelCertRoutability_RequirePublic(t *testing.T) {
 	}
 }
 
+// GH #2166. The local lookup answers from /etc/hosts (Debian's 127.0.1.1
+// line), so the gate asks public DNS instead, and the reason says what public
+// DNS said, not the loopback address.
+func TestPanelCertRoutability_EtcHostsLoopback(t *testing.T) {
+	t.Parallel()
+
+	const want = "203.0.113.5"
+	cases := []struct {
+		name          string
+		requirePublic bool
+		public        func(ctx context.Context, host string) ([]string, bool)
+		wantRoute     bool
+		wantReason    []string
+	}{
+		{
+			name:      "public DNS shows this server",
+			public:    func(context.Context, string) ([]string, bool) { return []string{want}, true },
+			wantRoute: true,
+		},
+		{
+			name:          "public DNS shows this server, mail gate",
+			requirePublic: true,
+			public:        func(context.Context, string) ([]string, bool) { return []string{want}, true },
+			wantRoute:     true,
+		},
+		{
+			name:   "public DNS shows a CDN",
+			public: func(context.Context, string) ([]string, bool) { return []string{"104.21.1.1", "172.67.1.1"}, true },
+			wantReason: []string{
+				"dns points elsewhere (got 104.21.1.1,172.67.1.1, want 203.0.113.5)",
+				"proxied by a CDN such as Cloudflare",
+			},
+		},
+		{
+			name:       "no public record",
+			public:     func(context.Context, string) ([]string, bool) { return nil, true },
+			wantReason: []string{"no public A record", "/etc/hosts"},
+		},
+		{
+			name:       "public DNS unreachable",
+			public:     func(context.Context, string) ([]string, bool) { return nil, false },
+			wantReason: []string{"could not be reached", "/etc/hosts"},
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			p := &PanelCertRoutability{
+				Resolver:     stubResolver{addrs: []string{"127.0.1.1"}},
+				PublicLookup: tc.public,
+			}
+			got, err := p.Check(context.Background(), "panel.example.test", want, tc.requirePublic)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got.Routable != tc.wantRoute {
+				t.Fatalf("Routable: got %v want %v (reason=%q)", got.Routable, tc.wantRoute, got.Reason)
+			}
+			for _, w := range tc.wantReason {
+				if !strings.Contains(got.Reason, w) {
+					t.Fatalf("Reason: got %q want substring %q", got.Reason, w)
+				}
+			}
+			if got.Reason != "" && strings.Contains(got.Reason, "got 127.0.1.1") {
+				t.Fatalf("Reason shows the /etc/hosts address as the DNS answer: %q", got.Reason)
+			}
+		})
+	}
+}
+
 func TestHumanizePanelCertError(t *testing.T) {
 	t.Parallel()
 	name := "mail.panel.example.com"

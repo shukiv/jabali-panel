@@ -21,7 +21,9 @@ The "Use Let's Encrypt" toggle is **disabled** in the UI when the gate refuses. 
 - `non-routable hostname suffix` — `localhost`, `*.local`, `*.localdomain`. LE refuses these and so do we.
 - `dns lookup failed: …` — `<hostname>` doesn't resolve from the panel server. Check the registrar A-record.
 - `dns lookup returned no IPv4 records` — only AAAA records returned. M32.1 may add IPv6-only support.
-- `dns points elsewhere (got X.X.X.X, want Y.Y.Y.Y)` — the A-record points at a different IP than the panel's `public_ipv4`. Either fix the registrar record or update Server Settings.
+- `dns points elsewhere (got X.X.X.X, want Y.Y.Y.Y); …` — the A-record points at a different IP than the panel's `public_ipv4`. Either fix the registrar record or update Server Settings. When `got` is a CDN's addresses (a Cloudflare record with the proxy on, the orange cloud), set the record to **DNS only**: the proxy answers Let's Encrypt's HTTP check itself instead of passing it to this server. Keeping the proxy means keeping the self-signed certificate, with Cloudflare's SSL mode set to Full.
+- `no public A record: <hostname> resolves to 127.0.1.1 only through this server's /etc/hosts, …` — locally the name resolves only through an `/etc/hosts` line (Debian adds `127.0.1.1 <hostname>`), and public DNS has no address for it. Add the public A-record. The `/etc/hosts` line itself doesn't matter: when the local answer is loopback, the gate asks public resolvers (1.1.1.1, 9.9.9.9, 8.8.8.8) directly, and they never read `/etc/hosts`.
+- `<hostname> resolves to 127.0.1.1 only through this server's /etc/hosts, and public DNS could not be reached to check it` — the same `/etc/hosts` line, and outbound DNS (UDP and TCP port 53) to those resolvers is blocked. Allow outbound port 53, or map the hostname to the public IP in `/etc/hosts`.
 
 ## First-time issuance
 

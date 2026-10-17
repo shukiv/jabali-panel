@@ -18,6 +18,11 @@
 // Resolver list: Cloudflare, Quad9, Google. Each tried over UDP first
 // then TCP so carriers that block outbound UDP/53 (some LXC providers
 // do) still succeed.
+//
+// Address lookups send raw A/AAAA queries (external_raw.go): a Go resolver
+// answers a name in /etc/hosts from the file even with a custom Dial, so it
+// can't show the world's view of the panel hostname or mail.<hostname>,
+// which install.sh and Debian put in /etc/hosts (GH #2166).
 package dnsverify
 
 import (
@@ -51,9 +56,8 @@ func LookupHostExternal(ctx context.Context, host string) []string {
 func LookupHostExternalResult(ctx context.Context, host string) (addrs []string, queried bool) {
 	for _, addr := range externalResolvers {
 		for _, proto := range []string{"udp", "tcp"} {
-			r := newDirectResolver(addr, proto)
 			lookupCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
-			out, err := r.LookupHost(lookupCtx, host)
+			out, err := lookupHostDirect(lookupCtx, addr, proto, host)
 			cancel()
 			if err == nil {
 				if len(out) > 0 {
@@ -76,9 +80,10 @@ func LookupHostExternalResult(ctx context.Context, host string) (addrs []string,
 	return nil, false
 }
 
-// newDirectResolver returns a pure-Go resolver that bypasses
-// /etc/hosts by dialing the given DNS server:port over the given
-// transport ("udp" or "tcp") directly.
+// newDirectResolver returns a pure-Go resolver that sends its queries to
+// the given DNS server:port. It is for NS and TXT lookups only, which never
+// read /etc/hosts: for a name in /etc/hosts, LookupHost on it answers from
+// the file without asking the server (use lookupHostDirect).
 func newDirectResolver(serverAddr, proto string) *net.Resolver {
 	return &net.Resolver{
 		PreferGo: true,
