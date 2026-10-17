@@ -5,6 +5,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/json"
@@ -181,6 +182,71 @@ func TestPanelSelfSign_PreservesLECert(t *testing.T) {
 	}
 	if *reloaded {
 		t.Fatalf("reload/restart fired for a preserved cert (needless churn)")
+	}
+}
+
+// GH #2166: an EXPIRED Let's Encrypt cert is no longer a live cert to
+// preserve; it is replaced with a self-signed one for the hostname.
+func TestPanelSelfSign_ReplacesExpiredLECert(t *testing.T) {
+	certPath, keyPath, reloaded := setupPanelSelfSign(t)
+	writeTestCert(t, certPath, keyPath, "Let's Encrypt", "host.example.com",
+		[]string{"host.example.com"}, time.Now().Add(-time.Hour))
+
+	resp, err := callPanelSelfSign(t, "host.example.com", "")
+	if err != nil {
+		t.Fatalf("handler err: %v", err)
+	}
+	if !resp.Regenerated {
+		t.Fatalf("expired LE cert kept (%q) — must be replaced", resp.Reason)
+	}
+	cert, cn := readCertCN_SANs(t, certPath)
+	if cn != "host.example.com" || len(cert.Issuer.Organization) == 0 || cert.Issuer.Organization[0] != "Jabali Panel" {
+		t.Fatalf("got CN %q issuer %v, want a self-signed cert for host.example.com", cn, cert.Issuer.Organization)
+	}
+	if !*reloaded {
+		t.Fatalf("no reload after replacing the cert")
+	}
+}
+
+// GH #2166: the reconciler and the admin's Regenerate action can dispatch at
+// once. A second run waits for the first, then finds its cert up to date, so
+// the cert and key on disk always belong together.
+func TestPanelSelfSign_RunsOneAtATime(t *testing.T) {
+	certPath, keyPath, _ := setupPanelSelfSign(t)
+	release := make(chan struct{})
+	entered := make(chan struct{}, 2)
+	panelSelfSignReloadFn = func(context.Context) {
+		entered <- struct{}{}
+		<-release
+	}
+
+	first := make(chan error, 1)
+	go func() { _, err := callPanelSelfSign(t, "host.example.com", ""); first <- err }()
+	<-entered
+
+	second := make(chan sslPanelSelfSignResponse, 1)
+	go func() {
+		resp, err := callPanelSelfSign(t, "host.example.com", "")
+		if err != nil {
+			t.Errorf("second run: %v", err)
+		}
+		second <- resp
+	}()
+	select {
+	case resp := <-second:
+		t.Fatalf("second run finished while the first was still reloading: %+v", resp)
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	close(release)
+	if err := <-first; err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+	if resp := <-second; resp.Regenerated {
+		t.Fatalf("second run regenerated again (%q); want up to date", resp.Reason)
+	}
+	if _, err := tls.LoadX509KeyPair(certPath, keyPath); err != nil {
+		t.Fatalf("cert and key don't match: %v", err)
 	}
 }
 

@@ -147,6 +147,24 @@ func TestPanelSelfSignedDrift_PreservesLECert(t *testing.T) {
 	}
 }
 
+// GH #2166: with Let's Encrypt off, an EXPIRED Let's Encrypt cert is not a
+// live cert to preserve; the panel replaces it with a self-signed one (the
+// toggle keeps an LE cert "until expiry", not forever).
+func TestPanelSelfSignedDrift_ExpiredLECertDispatches(t *testing.T) {
+	pem := makeSelfSignPEM(t, "Let's Encrypt", "host.example.com",
+		[]string{"host.example.com"}, time.Now().Add(-time.Hour))
+	fa := &fakeAgent{}
+	r := newSelfSignReconciler(fa, pem, nil)
+	row := &models.PanelCertificate{CertPEMPath: "/etc/jabali/tls/panel.crt"}
+	if drift, reason := r.panelSelfSignedCertDrifted(row.CertPEMPath, "host.example.com"); !drift {
+		t.Fatalf("expired LE cert not reported as drift, reason=%q", reason)
+	}
+	r.reconcilePanelSelfSignedCert(context.Background(), row, "host.example.com", "")
+	if n, _ := countCalls(fa, "ssl.panel.selfsign"); n != 1 {
+		t.Fatalf("expected a dispatch over the expired LE cert, got %d", n)
+	}
+}
+
 func TestPanelSelfSignedDrift_MissingCertDispatches(t *testing.T) {
 	fa := &fakeAgent{}
 	r := newSelfSignReconciler(fa, nil, os.ErrNotExist)
@@ -159,7 +177,6 @@ func TestPanelSelfSignedDrift_MissingCertDispatches(t *testing.T) {
 		t.Fatalf("expected dispatch for missing cert, got %d", n)
 	}
 }
-
 
 func TestPanelSelfSignedDrift_ExpiredCoveringCertDispatches(t *testing.T) {
 	// Cert covers the FQDN but is expired → must self-heal (symmetry with the
