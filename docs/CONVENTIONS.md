@@ -117,6 +117,8 @@ Every paginated list returns:
 
 **Not** `{items,total}`. See `feedback_verify_wire_contract` — this was a real drift in M21. Panel-ui's `useListQuery` reads `.data`.
 
+A list read from a Redis SCAN (the tenant key browser, GH #2165) has no page or total: Redis can't count without scanning everything. It returns `{data, next_cursor}`, with `next_cursor` `""` at the end, and the UI pages with `useInfiniteQuery`.
+
 ### Repository pattern
 
 One file per aggregate at `panel-api/internal/repository/<aggregate>_repository.go`.
