@@ -890,6 +890,7 @@
     "max_email_accounts": "Max Email Accounts",
     "max_python_apps": "Max Python Apps",
     "max_ftp_accounts": "Max FTP/SFTP Accounts",
+    "redis_keys_per_call": "Redis Keys per Call",
     "max_tasks": "Max Tasks",
     "memory_limit_mb": "Memory Limit (MB)",
     "name": "Name",

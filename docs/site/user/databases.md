@@ -109,10 +109,16 @@ curl -H "Authorization: Bearer <token>" \
 - `match` is a Redis glob for the part of the name after your prefix. It
   defaults to `*`.
 - `db` limits the listing to one database (0 to 15).
-- `limit` (1 to 500, default 100) is how many keys a call looks for before it
-  stops. It is not a hard cap: one scan batch can return more.
+- `limit` (default 100) is how many keys a call looks for before it stops. It
+  is not a hard cap: one scan batch can return more. The most you can ask for
+  is set by your hosting package: 500 unless your provider changed it (100 to
+  5000). The response's `max_limit` says what yours is.
 
-The response is `{"data": [...], "next_cursor": "<db>:<cursor>"}`. Each key has
+A call also stops after about 5 seconds of scanning, so it can return fewer
+keys than `limit` together with a `next_cursor`. Keep passing `next_cursor` back
+until it is `""`; a short page is not the end.
+
+The response is `{"data": [...], "next_cursor": "<db>:<cursor>", "max_limit": <n>}`. Each key has
 `db`, `key` (the full name), `name` (without your prefix), `type`, `ttl_ms` (-1
 for no expiry) and `expires_at` (UTC, or `null`). Pass `next_cursor` back as
 `cursor` for the next page; it is `""` when every database was scanned. A page
@@ -126,7 +132,8 @@ curl -X POST -H "Authorization: Bearer <token>" -H "Content-Type: application/js
   https://<panel-address>/api/v1/me/redis-access/keys/delete
 ```
 
-Up to 500 keys a call. A key outside your prefix refuses the whole call before
+Up to your `max_limit` keys a call (500 unless your package changes it), in a
+body of at most 1 MiB. A key outside your prefix refuses the whole call before
 anything is deleted. The response is `{"deleted": <n>}`.
 
 For the token, choose **Custom** permissions under **API Tokens**. **Redis: List
