@@ -11,6 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/settingsops"
 )
 
@@ -156,14 +157,16 @@ func (h *serverSettingsHandler) freeHostnameClaim(c *gin.Context) {
 	// Switch the panel hostname to the claimed name and apply it on the host
 	// with the same plan the settings PATCH runs (settingsops.HostnameEffects:
 	// the OS name, /etc/hosts and config.toml; the :443 landing vhost),
-	// detached and best-effort like there.
+	// detached and best-effort like there. The plan runs even when the row
+	// already holds the name: the claim's one purpose is to serve on it, and
+	// a prior claim may have stored it while its detached apply failed (the
+	// calls are idempotent), so the "before" row has no hostname.
 	if cur, gerr := h.cfg.Repo.Get(applyCtx); gerr == nil && cur != nil {
-		prev := *cur
 		cur.Hostname = claim.FQDN
 		if uerr := h.cfg.Repo.Upsert(applyCtx, cur); uerr != nil {
 			h.cfg.Log.Error("free-hostname: hostname update failed", "err", uerr)
 		} else {
-			for _, call := range settingsops.HostnameEffects(&prev, cur).Calls() {
+			for _, call := range settingsops.HostnameEffects(&models.ServerSettings{}, cur).Calls() {
 				go func(call settingsops.AgentCall) {
 					bg, cancel := context.WithTimeout(context.Background(), call.Timeout)
 					defer cancel()

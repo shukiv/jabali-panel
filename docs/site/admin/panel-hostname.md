@@ -21,10 +21,10 @@ The installer prompts for the hostname at install time. The default is the curre
    - Re-points the `:443` landing vhost to the new name.
    - Re-renders the panel nginx vhost with the new `server_name`.
    - Calls `ssl.panel.issue` to obtain a Let's Encrypt cert for the new hostname.
-   - Updates Stalwart's primary domain (M6.4).
+   - Leaves mail where it is: the mail hostname does not follow a panel rename (see [Mail Hostname](./mail-hostname.md#panel-rename)).
    - Re-renders Bulwark's autoconfig endpoints.
    - Reloads nginx, panel API, Bulwark.
-3. The page returns once the cert is issued (typically under 60 seconds).
+3. The page saves at once and the host changes run in the background. The certificate for the new name is issued on the panel's next certificate pass.
 
 ## DNS prerequisites
 
