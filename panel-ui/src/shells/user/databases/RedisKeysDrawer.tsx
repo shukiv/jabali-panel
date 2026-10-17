@@ -166,6 +166,7 @@ export function RedisKeysDrawer({ open, onClose }: Props) {
         <Popconfirm
           title={`Delete ${selected.length} key${selected.length === 1 ? "" : "s"}?`}
           description="Only your own keys can be deleted."
+          placement="bottom"
           okText="Delete"
           okButtonProps={{ danger: true }}
           onConfirm={deleteSelected}
