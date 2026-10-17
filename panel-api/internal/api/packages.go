@@ -115,7 +115,10 @@ type createPackageRequest struct {
 	WebmailEnabled *bool `json:"webmail_enabled"`
 	// WebsiteSendsEmail (GH #2056): a new package starts with it off, so an
 	// omitted field means off.
-	WebsiteSendsEmail  bool   `json:"website_sends_email"`
+	WebsiteSendsEmail bool `json:"website_sends_email"`
+	// RedisKeysPerCall (GH #2165) is a pointer so an omitted field gets the
+	// default (500) while an explicit 0 is refused, not taken as "unlimited".
+	RedisKeysPerCall   *int   `json:"redis_keys_per_call"`
 	FpmMaxChildrenCap  uint32 `json:"fpm_max_children_cap"`
 	FpmWorkerMemMb     uint32 `json:"fpm_worker_mem_mb"`
 	FpmUserCanEdit     bool   `json:"fpm_user_can_edit"`
@@ -164,6 +167,7 @@ type updatePackageRequest struct {
 	EgressICMP         *bool   `json:"egress_icmp"`
 	WebmailEnabled     *bool   `json:"webmail_enabled"`     // GH #1628
 	WebsiteSendsEmail  *bool   `json:"website_sends_email"` // GH #2056
+	RedisKeysPerCall   *int    `json:"redis_keys_per_call"` // GH #2165
 	FpmMaxChildrenCap  *uint32 `json:"fpm_max_children_cap"`
 	FpmWorkerMemMb     *uint32 `json:"fpm_worker_mem_mb"`
 	FpmUserCanEdit     *bool   `json:"fpm_user_can_edit"`
@@ -292,6 +296,7 @@ func (h *packageHandler) create(c *gin.Context) {
 		// only an explicit false turns it off.
 		WebmailEnabled:     req.WebmailEnabled == nil || *req.WebmailEnabled,
 		WebsiteSendsEmail:  req.WebsiteSendsEmail, // GH #2056: off unless asked
+		RedisKeysPerCall:   models.RedisKeysPerCallDefault,
 		FpmMaxChildrenCap:  req.FpmMaxChildrenCap,
 		FpmWorkerMemMb:     req.FpmWorkerMemMb,
 		FpmUserCanEdit:     req.FpmUserCanEdit,
@@ -303,6 +308,9 @@ func (h *packageHandler) create(c *gin.Context) {
 		UpdatedAt:          now,
 	}
 	pkg.SetPHPDisabledFunctions(disabledFns)
+	if req.RedisKeysPerCall != nil { // GH #2165; packageops.Validate bounds it
+		pkg.RedisKeysPerCall = *req.RedisKeysPerCall
+	}
 	if v := strings.TrimSpace(req.NspawnImageVersion); v != "" {
 		if !isImageNamePattern(v) {
 			c.JSON(http.StatusBadRequest, gin.H{
@@ -455,6 +463,9 @@ func (h *packageHandler) update(c *gin.Context) {
 	}
 	if req.WebsiteSendsEmail != nil { // GH #2056
 		pkg.WebsiteSendsEmail = *req.WebsiteSendsEmail
+	}
+	if req.RedisKeysPerCall != nil { // GH #2165; packageops.Validate bounds it
+		pkg.RedisKeysPerCall = *req.RedisKeysPerCall
 	}
 	if len(req.PHPDisabledFunctions) > 0 { // GH #1701; wins over php_exec_enabled
 		if string(bytes.TrimSpace(req.PHPDisabledFunctions)) == "null" {

@@ -14,6 +14,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 )
 
 // --- Tenant key browser (GH #2165) --------------------------------------------
@@ -32,10 +33,11 @@ import (
 // to carry on from, so a page costs the same however big the keyspace is.
 
 const (
-	// tenantRedisKeysDefaultLimit / MaxLimit: how many keys a listing call
-	// looks for before it stops scanning. One SCAN batch can overshoot it.
+	// tenantRedisKeysDefaultLimit: how many keys a listing call looks for
+	// before it stops scanning, when the call doesn't say. One SCAN batch can
+	// overshoot it. The most a call may ask for, and the most keys one delete
+	// call takes, is the user's package's RedisKeysPerCall (keysPerCall).
 	tenantRedisKeysDefaultLimit = 100
-	tenantRedisKeysMaxLimit     = 500
 	// tenantRedisKeysScanCount bounds the SCAN COUNT hint of one batch (see
 	// tenantRedisScanCount).
 	tenantRedisKeysScanCountMin = 100
@@ -50,8 +52,6 @@ const (
 	// (fixed in Redis 7.0.9); a short pattern plus the per-user scan rate limit
 	// bounds what one tenant can make Redis do.
 	tenantRedisKeysMaxMatch = 128
-	// tenantRedisKeysMaxDelete is the most keys one delete call takes.
-	tenantRedisKeysMaxDelete = 500
 )
 
 // redisKeyRow is one of the tenant's keys.
@@ -76,6 +76,9 @@ type redisKeysResponse struct {
 	Data []redisKeyRow `json:"data"`
 	// NextCursor continues the listing; "" when every database was scanned.
 	NextCursor string `json:"next_cursor"`
+	// MaxLimit is the most keys this user's calls may ask for (`limit`) or
+	// delete: their hosting package's setting.
+	MaxLimit int `json:"max_limit"`
 }
 
 // redisKeysQuery is a validated listing request.
@@ -87,9 +90,10 @@ type redisKeysQuery struct {
 	onlyDB bool   // scan db only
 }
 
-// parseRedisKeysQuery validates the listing query. On failure it returns the
-// error code and detail for a 422.
-func parseRedisKeysQuery(c *gin.Context) (redisKeysQuery, string, string) {
+// parseRedisKeysQuery validates the listing query; maxLimit is the most keys
+// the caller may ask for. On failure it returns the error code and detail for
+// a 422.
+func parseRedisKeysQuery(c *gin.Context, maxLimit int) (redisKeysQuery, string, string) {
 	q := redisKeysQuery{match: "*", limit: tenantRedisKeysDefaultLimit}
 
 	if v := c.Query("match"); v != "" {
@@ -105,8 +109,8 @@ func parseRedisKeysQuery(c *gin.Context) (redisKeysQuery, string, string) {
 	}
 	if v := c.Query("limit"); v != "" {
 		n, err := strconv.Atoi(v)
-		if err != nil || n < 1 || n > tenantRedisKeysMaxLimit {
-			return q, "invalid_limit", fmt.Sprintf("limit is 1 to %d", tenantRedisKeysMaxLimit)
+		if err != nil || n < 1 || n > maxLimit {
+			return q, "invalid_limit", fmt.Sprintf("limit is 1 to %d", maxLimit)
 		}
 		q.limit = n
 	}
@@ -147,23 +151,43 @@ func (h *redisAccessHandler) userRedisKeys(c *gin.Context) {
 
 // listKeys returns one page of the tenant's keys.
 func (h *redisAccessHandler) listKeys(c *gin.Context, userID string) {
-	q, code, detail := parseRedisKeysQuery(c)
-	if code != "" {
-		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": code, "detail": detail})
-		return
-	}
-	osUser, token, ok := h.provisionTenant(c, userID)
+	u, ok := h.tenantUser(c, userID)
 	if !ok {
 		return
 	}
 	ctx := c.Request.Context()
+	maxLimit := h.keysPerCall(ctx, u)
+	q, code, detail := parseRedisKeysQuery(c, maxLimit)
+	if code != "" {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": code, "detail": detail})
+		return
+	}
+	osUser, token, ok := h.provisionUser(c, u)
+	if !ok {
+		return
+	}
 	rows, next, err := tenantRedisListKeys(ctx, h.cfg.Redis, osUser, token, q)
 	if err != nil {
 		slog.ErrorContext(ctx, "tenant redis key listing failed", "user_id", userID, "err", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "list_failed"})
 		return
 	}
-	c.JSON(http.StatusOK, redisKeysResponse{Data: rows, NextCursor: next})
+	c.JSON(http.StatusOK, redisKeysResponse{Data: rows, NextCursor: next, MaxLimit: maxLimit})
+}
+
+// keysPerCall is how many keys one key browser call may list or delete for u:
+// their hosting package's RedisKeysPerCall. No package, or a package that
+// can't be read, gets the default (models.EffectiveRedisKeysPerCall).
+func (h *redisAccessHandler) keysPerCall(ctx context.Context, u *models.User) int {
+	if u.PackageID == nil || *u.PackageID == "" || h.cfg.Packages == nil {
+		return models.EffectiveRedisKeysPerCall(nil)
+	}
+	p, err := h.cfg.Packages.FindByID(ctx, *u.PackageID)
+	if err != nil {
+		slog.WarnContext(ctx, "tenant redis keys: package lookup failed, using the default page size", "user_id", u.ID, "err", err)
+		return models.EffectiveRedisKeysPerCall(nil)
+	}
+	return models.EffectiveRedisKeysPerCall(p)
 }
 
 // tenantKeyConn is the tenant-credential connection the key browser reads and
@@ -383,11 +407,15 @@ func (h *redisAccessHandler) deleteKeys(c *gin.Context, userID string) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request"})
 		return
 	}
-	if len(req.Keys) == 0 || len(req.Keys) > tenantRedisKeysMaxDelete {
-		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "invalid_keys", "detail": fmt.Sprintf("send 1 to %d keys", tenantRedisKeysMaxDelete)})
+	u, ok := h.tenantUser(c, userID)
+	if !ok {
 		return
 	}
-	osUser, token, ok := h.provisionTenant(c, userID)
+	if maxKeys := h.keysPerCall(c.Request.Context(), u); len(req.Keys) == 0 || len(req.Keys) > maxKeys {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "invalid_keys", "detail": fmt.Sprintf("send 1 to %d keys", maxKeys)})
+		return
+	}
+	osUser, token, ok := h.provisionUser(c, u)
 	if !ok {
 		return
 	}

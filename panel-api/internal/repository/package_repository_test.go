@@ -134,6 +134,19 @@ func TestDefaultPackages_SitesCanSendMail(t *testing.T) {
 	}
 }
 
+// GH #2165: Redis keys per call goes through the same Select-allowlist Update;
+// missing from it, the admin's value would save and revert on reload.
+func TestPackage_Update_PersistsRedisKeysPerCall(t *testing.T) {
+	updatePersistsColumn(t, "redis_keys_per_call")
+}
+
+// GH #2165: the starter plans get the default Redis keys per call.
+func TestDefaultPackages_RedisKeysPerCall(t *testing.T) {
+	for _, p := range defaultPackages(time.Now()) {
+		require.Equal(t, models.RedisKeysPerCallDefault, p.RedisKeysPerCall, "seeded package %s", p.Name)
+	}
+}
+
 // GH #1798: the per-package egress allowances go through the same Select-
 // allowlist Update. Missing from the allowlist, the admin's SSH-out / ICMP
 // toggles would save-with-success and revert on reload — the silent-drop class

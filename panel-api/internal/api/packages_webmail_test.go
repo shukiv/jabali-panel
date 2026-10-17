@@ -80,7 +80,7 @@ func updatePackageForTest(t *testing.T, h *packageHandler, id, body string) *htt
 
 func seededPkgRepo() *mockPackageRepo {
 	return &mockPackageRepo{packages: map[string]*models.HostingPackage{
-		"p1": {ID: "p1", Name: "p1", WebmailEnabled: true},
+		"p1": {ID: "p1", Name: "p1", WebmailEnabled: true, RedisKeysPerCall: models.RedisKeysPerCallDefault},
 	}}
 }
 

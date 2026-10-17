@@ -36,7 +36,7 @@ func TestPackageCreate_RefusesAPolicyThatWeakensTheFloor(t *testing.T) {
 
 func TestPackageUpdate_PHPSettingsPolicy(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	repo := &mockPackageRepo{packages: map[string]*models.HostingPackage{"p1": {ID: "p1", Name: "p"}}}
+	repo := &mockPackageRepo{packages: map[string]*models.HostingPackage{"p1": {ID: "p1", Name: "p", RedisKeysPerCall: models.RedisKeysPerCallDefault}}}
 	h := &packageHandler{cfg: PackageHandlerConfig{Repo: repo}}
 
 	rec := updatePackageForTest(t, h, "p1", `{"php_settings_policy":"{\"memory_limit\":\"admin_only\"}"}`)

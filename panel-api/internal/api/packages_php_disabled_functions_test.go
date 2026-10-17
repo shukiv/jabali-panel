@@ -41,6 +41,7 @@ func (r *pkgMembersRepo) List(context.Context, repository.ListOptions) ([]models
 
 func newDisabledFnsHandler(pkg *models.HostingPackage) (*packageHandler, *poolReapplyRecorder) {
 	pkgID := pkg.ID
+	pkg.RedisKeysPerCall = models.RedisKeysPerCallDefault // the column default a stored row has
 	rec := &poolReapplyRecorder{reapplied: make(chan string, 4)}
 	users := &pkgMembersRepo{list: []models.User{{ID: "u1", PackageID: &pkgID}}}
 	h := &packageHandler{cfg: PackageHandlerConfig{

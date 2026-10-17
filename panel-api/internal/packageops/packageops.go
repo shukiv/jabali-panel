@@ -39,6 +39,9 @@ var (
 	// ErrInvalidNspawnImage is returned when nspawn_image_version is set but is
 	// not the [a-z0-9-]+ shape.
 	ErrInvalidNspawnImage = errors.New("invalid nspawn image version")
+	// ErrInvalidRedisKeysPerCall is returned when redis_keys_per_call is
+	// outside models.RedisKeysPerCallMin..RedisKeysPerCallMax (GH #2165).
+	ErrInvalidRedisKeysPerCall = errors.New("invalid redis_keys_per_call")
 )
 
 // Validate reports the first invariant a hosting package row violates, or nil
@@ -83,6 +86,11 @@ func Validate(p *models.HostingPackage) error {
 	}
 	if p.NspawnImageVersion != nil && !isImageNamePattern(*p.NspawnImageVersion) {
 		return fmt.Errorf("%w: %q (must match [a-z0-9-]+)", ErrInvalidNspawnImage, *p.NspawnImageVersion)
+	}
+	// Not a "0 = unlimited" limit: a create adapter fills the default before
+	// this runs (the GORM column default would come too late).
+	if p.RedisKeysPerCall < models.RedisKeysPerCallMin || p.RedisKeysPerCall > models.RedisKeysPerCallMax {
+		return fmt.Errorf("%w: %d (must be %d to %d)", ErrInvalidRedisKeysPerCall, p.RedisKeysPerCall, models.RedisKeysPerCallMin, models.RedisKeysPerCallMax)
 	}
 	return nil
 }
