@@ -4758,6 +4758,79 @@ paths:
         "429": { description: Rate limited }
         "503": { description: Redis not configured }
 
+  /me/redis-access/keys:
+    get:
+      tags: [Me]
+      summary: List your Redis keys
+      description: |
+        Lists the keys under your prefix `jt:<osuser>:` (GH #2165): each key's
+        database, full name, name without the prefix, type, time to live and
+        expiry time. No values. Your Redis user can't run SCAN, which would
+        list every tenant's key names, so the panel scans for your prefix and
+        reads each key's type and TTL with your own Redis credential.
+
+        One call scans a bounded part of the keyspace. It stops once it has
+        found about `limit` keys (one scan batch can add more) and returns
+        `next_cursor`; pass it back as `cursor` to carry on. `next_cursor` is
+        "" when every database was scanned. A page can be empty and still
+        have a cursor. This list has no page or total: Redis can't count your
+        keys without scanning them all.
+
+        Returns `{data: [{db, key, name, type, ttl_ms, expires_at, binary?}],
+        next_cursor}`. `ttl_ms` is -1 and `expires_at` null for a key with no
+        expiry. `binary` marks a name that isn't valid UTF-8; it is shown
+        approximately and can't be deleted through this API. An API token
+        needs the `read:redis` scope (or no scopes). Rate-limited per user.
+      security: [ { KratosSession: [] }, { BearerToken: [] } ]
+      parameters:
+        - { in: query, name: match, required: false, schema: { type: string, maxLength: 128, default: "*" }, description: "Redis glob for the part after your prefix, e.g. session:*" }
+        - { in: query, name: db, required: false, schema: { type: integer, minimum: 0, maximum: 15 }, description: "Scan only this database (default: all 16)" }
+        - { in: query, name: limit, required: false, schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }
+        - { in: query, name: cursor, required: false, schema: { type: string }, description: "next_cursor of the previous page" }
+      responses:
+        "200": { description: OK }
+        "409": { description: Admin account (no Linux user) }
+        "422": { description: "Invalid match, db, limit or cursor" }
+        "429": { description: Rate limited }
+        "503": { description: Redis not configured }
+
+  /me/redis-access/keys/delete:
+    post:
+      tags: [Me]
+      summary: Delete some of your Redis keys
+      description: |
+        Deletes the listed keys (GH #2165) with your own Redis credential.
+        Body: `{keys: [{db, key}]}`, 1 to 500 keys, each the full name with
+        your prefix. A key outside your prefix refuses the whole call (422
+        `key_outside_prefix`) before anything is deleted. Returns `{deleted}`;
+        a key that no longer exists isn't counted. An API token needs the
+        `write:redis` scope (or no scopes).
+      security: [ { KratosSession: [] }, { BearerToken: [] } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [keys]
+              properties:
+                keys:
+                  type: array
+                  minItems: 1
+                  maxItems: 500
+                  items:
+                    type: object
+                    required: [db, key]
+                    properties:
+                      db: { type: integer, minimum: 0, maximum: 15 }
+                      key: { type: string }
+      responses:
+        "200": { description: OK }
+        "400": { description: Malformed JSON }
+        "409": { description: Admin account (no Linux user) }
+        "422": { description: "No keys, too many keys, a database out of range or a key outside your prefix" }
+        "503": { description: Redis not configured }
+
   /me/php-cli-version:
     get:
       tags: [Me]
@@ -6946,6 +7019,33 @@ paths:
       description: |
         Admin version of /me/redis-access/flush for a specific tenant (GH #2003).
         Deletes only the keys under that tenant's prefix. Admin only.
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /users/{id}/redis-access/keys:
+    get:
+      tags: [Users]
+      summary: List a tenant's Redis keys (admin)
+      description: |
+        Admin version of /me/redis-access/keys for a specific tenant (GH #2165).
+        Same query and payload. Admin only.
+      security: [ { KratosSession: [] } ]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+        - { in: query, name: match, required: false, schema: { type: string, maxLength: 128, default: "*" } }
+        - { in: query, name: db, required: false, schema: { type: integer, minimum: 0, maximum: 15 } }
+        - { in: query, name: limit, required: false, schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }
+        - { in: query, name: cursor, required: false, schema: { type: string } }
+      responses: { "200": { description: OK } }
+
+  /users/{id}/redis-access/keys/delete:
+    post:
+      tags: [Users]
+      summary: Delete some of a tenant's Redis keys (admin)
+      description: |
+        Admin version of /me/redis-access/keys/delete for a specific tenant
+        (GH #2165). Every key must carry that tenant's prefix. Admin only.
       security: [ { KratosSession: [] } ]
       parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
       responses: { "200": { description: OK } }

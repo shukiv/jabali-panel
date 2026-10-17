@@ -147,6 +147,17 @@ func RegisterRedisAccessRoutes(g *gin.RouterGroup, cfg ApplicationHandlerConfig)
 	}
 	g.POST("/me/redis-access/flush", flushLimit, h.meRedisFlush)
 	g.POST("/users/:id/redis-access/flush", middleware.RequireAdmin(), flushLimit, h.userRedisFlush)
+
+	// GH #2165: the key browser. A listing scans the keyspace too, so it is
+	// rate-limited per user; a delete names its keys and scans nothing.
+	keysLimit := cfg.RedisKeysRateLimit
+	if keysLimit == nil {
+		keysLimit = func(c *gin.Context) { c.Next() }
+	}
+	g.GET("/me/redis-access/keys", keysLimit, h.meRedisKeys)
+	g.GET("/users/:id/redis-access/keys", middleware.RequireAdmin(), keysLimit, h.userRedisKeys)
+	g.POST("/me/redis-access/keys/delete", h.meRedisKeysDelete)
+	g.POST("/users/:id/redis-access/keys/delete", middleware.RequireAdmin(), h.userRedisKeysDelete)
 }
 
 func (h *redisAccessHandler) meRedisAccess(c *gin.Context) {

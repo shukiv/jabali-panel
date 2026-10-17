@@ -278,6 +278,13 @@ const (
 	rateKratosPerSec = 15.0 / 60.0
 	rateKratosBurst  = 10
 
+	// Scan tier: per-user routes that walk the shared Redis keyspace (GH #2165,
+	// the tenant key browser). One call a second sustained with a burst of 20
+	// lets a tenant page through and search their keys; every call is bounded
+	// to a fixed number of SCANs.
+	rateScanPerSec = 1.0
+	rateScanBurst  = 20
+
 	rateLimiterIdleCleanup = 10 * time.Minute
 	rateLimiterSweepEvery  = 5 * time.Minute
 )
@@ -343,6 +350,8 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		StrictBurst:  rateStrictBurst,
 		KratosRate:   rate.Limit(rateKratosPerSec),
 		KratosBurst:  rateKratosBurst,
+		ScanRate:     rate.Limit(rateScanPerSec),
+		ScanBurst:    rateScanBurst,
 	})
 	startRateLimiterSweeper(rl)
 	r.Use(rl.Default())
@@ -1574,9 +1583,11 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 
 			// GH #1016: per-tenant Redis credentials (reuses appCfg's Redis +
 			// cache-token secret/salts + Users). GH #2003: plus the tenant's
-			// scoped flush, per-user strict-tier limited.
+			// scoped flush, per-user strict-tier limited. GH #2165: plus the
+			// key browser, per-user scan-tier limited.
 			redisCfg := appCfg
 			redisCfg.RedisFlushRateLimit = rl.StrictPerActor()
+			redisCfg.RedisKeysRateLimit = rl.ScanPerActor()
 			api.RegisterRedisAccessRoutes(v1, redisCfg)
 
 			// Log access routes (M13)

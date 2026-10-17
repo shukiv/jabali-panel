@@ -86,6 +86,54 @@ Commands that work across every user's keys are not available: `KEYS`, `SCAN`,
 `FLUSHDB`, `FLUSHALL`, `CONFIG` and the other admin commands. A `FLUSHALL` from
 your application fails with `NOPERM`.
 
+### Browsing your keys
+
+`SCAN` and `KEYS` aren't available to you, because they list every user's
+keys. To see yours, use **Browse my keys** on the card. The panel lists every
+key under your prefix, in every Redis database: its name, database, type and
+when it expires. You can search the names, show one database, and delete one
+key or several selected keys. Values aren't shown; read them with your
+credential, for example `redis-cli` from your SSH shell.
+
+The list is built as you scroll: the panel scans part of the server's keys at
+a time, and **Load more** carries on. A name that isn't valid UTF-8 is tagged
+`binary`; delete it with `redis-cli`.
+
+An application can list and delete keys through the API:
+
+```
+curl -H "Authorization: Bearer <token>" \
+  "https://<panel-address>/api/v1/me/redis-access/keys?match=session:*&limit=100"
+```
+
+- `match` is a Redis glob for the part of the name after your prefix. It
+  defaults to `*`.
+- `db` limits the listing to one database (0 to 15).
+- `limit` (1 to 500, default 100) is how many keys a call looks for before it
+  stops. It is not a hard cap: one scan batch can return more.
+
+The response is `{"data": [...], "next_cursor": "<db>:<cursor>"}`. Each key has
+`db`, `key` (the full name), `name` (without your prefix), `type`, `ttl_ms` (-1
+for no expiry) and `expires_at` (UTC, or `null`). Pass `next_cursor` back as
+`cursor` for the next page; it is `""` when every database was scanned. A page
+can be empty and still have a cursor.
+
+To delete keys, send their full names:
+
+```
+curl -X POST -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
+  -d '{"keys":[{"db":0,"key":"jt:<your-username>:session:1"}]}' \
+  https://<panel-address>/api/v1/me/redis-access/keys/delete
+```
+
+Up to 500 keys a call. A key outside your prefix refuses the whole call before
+anything is deleted. The response is `{"deleted": <n>}`.
+
+For the token, choose **Custom** permissions under **API Tokens**. **Redis: List
+keys** allows the listing only. **Redis: Delete keys** allows the delete and the
+flush. Neither one can read your Redis password. Listing is rate-limited per
+user: about one call a second, with bursts of up to 20.
+
 ### Flushing your keys
 
 To delete all your keys, use **Flush my Redis keys** on the card. It deletes
@@ -100,7 +148,8 @@ curl -X POST -H "Authorization: Bearer <token>" \
 ```
 
 Create the token under **API Tokens** with **Custom** permissions and only
-**Redis: Flush**. That token can flush your Redis keys and do nothing else.
+**Redis: Delete keys**. That token can delete your Redis keys and do nothing
+else.
 
 The flush deletes the keys of the account the token belongs to, so create the
 token as that hosting account; an admin can create it while acting as the

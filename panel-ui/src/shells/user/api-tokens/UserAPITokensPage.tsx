@@ -19,7 +19,8 @@ import type { ColumnsType } from "antd/es/table";
 // GH #245 / ADR-0144: per-area permissions. Empty scopes = full access (the
 // historical default). AREAS mirrors the panel-api scope vocabulary.
 // `actions` overrides the default Read + Write checkboxes for an area that has
-// only some of them (GH #2003: Redis has write:redis = flush, and no read).
+// only some of them, or other names for them (GH #2003, #2165: Redis read lists
+// key names, write deletes keys; nothing reveals the Redis password).
 type ScopeAction = { label: string; value: "read" | "write" };
 const DEFAULT_ACTIONS: ScopeAction[] = [
   { label: "Read", value: "read" },
@@ -39,7 +40,14 @@ const AREAS: { key: string; label: string; actions?: ScopeAction[] }[] = [
   { key: "backups", label: "Backups" },
   { key: "logs", label: "Logs" },
   { key: "notifications", label: "Notifications" },
-  { key: "redis", label: "Redis", actions: [{ label: "Flush", value: "write" }] },
+  {
+    key: "redis",
+    label: "Redis",
+    actions: [
+      { label: "List keys", value: "read" },
+      { label: "Delete keys", value: "write" },
+    ],
+  },
 ];
 
 const SCOPE_LABELS: Record<string, string> = { ddns: "DDNS" };
