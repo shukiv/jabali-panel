@@ -35,6 +35,23 @@ export interface PanelCertificate {
   routable_reason?: string;
 }
 
+// PanelSelfSignResult answers the hostname's Issue while Let's Encrypt is
+// off (GH #2166): the panel regenerates its self-signed cert instead of
+// asking Let's Encrypt. 202 regenerating, or 200 with nothing to do
+// (expires_at is then the current cert's expiry).
+export interface PanelSelfSignResult {
+  self_signed: true;
+  regenerating: boolean;
+  detail: string;
+  expires_at?: string;
+}
+
+export type PanelCertIssueResult = PanelCertificate | PanelSelfSignResult;
+
+export function isPanelSelfSignResult(r: PanelCertIssueResult | undefined): r is PanelSelfSignResult {
+  return !!r && (r as PanelSelfSignResult).self_signed === true;
+}
+
 interface PanelCertListResponse {
   certs: PanelCertificate[];
 }
@@ -75,7 +92,7 @@ export function usePanelCertificateIssue() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (kind: PanelCertKind = "hostname") => {
-      const r = await apiClient.post<PanelCertificate>(
+      const r = await apiClient.post<PanelCertIssueResult>(
         `/admin/panel-certificate/issue?kind=${encodeURIComponent(kind)}`,
       );
       return r.data;

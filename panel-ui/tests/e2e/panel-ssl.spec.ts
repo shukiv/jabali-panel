@@ -75,6 +75,43 @@ test.describe("admin panel SSL card", () => {
     ).toBeVisible();
   });
 
+  // GH #2166: with Let's Encrypt off the hostname's action regenerates the
+  // self-signed cert (no routability check), even behind a proxy.
+  test("Let's Encrypt off: the hostname regenerates the self-signed cert", async ({ page }) => {
+    await mockApi(page, { me: admin });
+    await page.route("**/api/v1/admin/panel-certificate", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: body({ routable: false, routable_reason: "dns points elsewhere" }),
+      }),
+    );
+    let issued: string | null = null;
+    await page.route("**/api/v1/admin/panel-certificate/issue**", (route) => {
+      issued = route.request().url();
+      return route.fulfill({
+        status: 202,
+        contentType: "application/json",
+        body: JSON.stringify({
+          self_signed: true,
+          regenerating: true,
+          detail: "Regenerating the self-signed certificate for panel.example.com.",
+        }),
+      });
+    });
+    await signIn(page, admin);
+    await page.goto("/jabali-admin/settings");
+
+    await page.getByRole("button", { name: /Regenerate self-signed/ }).click();
+    const confirm = page.locator(".ant-popconfirm", { hasText: "Regenerate the self-signed certificate?" });
+    await expect(confirm).toBeVisible();
+    await confirm.getByRole("button", { name: "OK" }).click();
+    await expect.poll(() => issued).toContain("kind=hostname");
+    await expect(page.getByText("Regenerating the self-signed certificate for panel.example.com.")).toBeVisible();
+    // The mail cert stays a Let's Encrypt action.
+    await expect(page.getByRole("button", { name: /Issue \/ retry/ })).toHaveCount(1);
+  });
+
   test("issued hostname cert shows expiry hint", async ({ page }) => {
     const future = new Date(Date.now() + 60 * 24 * 3600 * 1000).toISOString();
     await mockApi(page, { me: admin });
