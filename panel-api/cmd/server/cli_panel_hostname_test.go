@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"database/sql/driver"
 	"errors"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -11,6 +13,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/config"
 )
 
@@ -94,4 +97,57 @@ func TestCLIPanelHostname(t *testing.T) {
 			t.Fatalf("placeholder email %q, want alice@new.example.com", email)
 		}
 	})
+}
+
+// recordingConverter records every SQL argument the mock receives.
+type recordingConverter struct{ args *[]string }
+
+func (c recordingConverter) ConvertValue(v any) (driver.Value, error) {
+	if s, ok := v.(string); ok {
+		*c.args = append(*c.args, s)
+	}
+	return driver.DefaultParameterConverter.ConvertValue(v)
+}
+
+// Through the real create path: `jabali user create` without --email stores
+// a placeholder on the panel's own hostname, not config.toml's.
+func TestCreateUserDirect_PlaceholderEmailUsesTheSettingsRow(t *testing.T) {
+	var args []string
+	raw, mock, err := sqlmock.New(
+		sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp),
+		sqlmock.ValueConverterOption(recordingConverter{&args}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT VERSION()")).
+		WillReturnRows(sqlmock.NewRows([]string{"VERSION()"}).AddRow("10.11.6-MariaDB"))
+	gdb, err := gorm.Open(mysql.New(mysql.Config{Conn: raw}), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mock.ExpectQuery("SELECT \\* FROM `server_settings`").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "hostname"}).AddRow(1, "new.example.com"))
+	stop := errors.New("stop after the insert")
+	mock.ExpectBegin()
+	mock.ExpectExec("INSERT INTO `users`").WillReturnError(stop)
+	mock.ExpectRollback()
+
+	savedDB, savedCfg, savedAgent := sharedDB, sharedCfg, sharedAgent
+	defer func() { sharedDB, sharedCfg, sharedAgent = savedDB, savedCfg, savedAgent }()
+	sharedDB = gdb
+	cfg := &config.Config{}
+	cfg.Server.Hostname = "old.example.com"
+	sharedCfg = cfg
+	sharedAgent = &agent.Client{} // set, so initAgent doesn't dial; an admin never reaches it
+
+	_, _, err = createUserDirect(context.Background(), cliUserInput{Username: "alice", Password: "0123456789abc", IsAdmin: true})
+	if err == nil || !strings.Contains(err.Error(), stop.Error()) {
+		t.Fatalf("createUserDirect err = %v, want the stubbed insert failure", err)
+	}
+	got := strings.Join(args, " ")
+	if !strings.Contains(got, "alice@new.example.com") || strings.Contains(got, "old.example.com") {
+		t.Fatalf("users insert args %q, want the placeholder alice@new.example.com", got)
+	}
 }

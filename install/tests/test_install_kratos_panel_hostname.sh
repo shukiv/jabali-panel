@@ -25,6 +25,12 @@ if [[ -z "$fn_src" ]]; then
   exit 1
 fi
 
+kratos_src=$(awk '/^install_kratos\(\) \{$/,/^\}$/' "$INSTALL_SH")
+if ! grep -q 'panel_hostname="$(_kratos_panel_hostname "$panel_cfg")"' <<<"$kratos_src"; then
+  echo "FAIL: install_kratos does not take its hostname from _kratos_panel_hostname"
+  fail=1
+fi
+
 cfg="$tmp/config.toml"
 printf '[server]\naddr        = "unix:/run/x.sock"\nhostname    = "old.example.com"\n' >"$cfg"
 
