@@ -112,7 +112,7 @@ func createUserDirect(ctx context.Context, in cliUserInput) (*models.User, strin
 		return nil, "", fmt.Errorf("password must be at least 10 characters")
 	}
 
-	effectiveUsername, email, err := resolveCreateIdentity(in.Username, in.Email, sharedCfg.Server.Hostname)
+	effectiveUsername, email, err := resolveCreateIdentity(in.Username, in.Email, cliPanelHostname(ctx))
 	if err != nil {
 		return nil, "", err
 	}

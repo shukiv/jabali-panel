@@ -50,9 +50,10 @@ var hostnameAllowedRE = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA
 //     and so are the old name's lines: the panel mail hostname doesn't follow
 //     a rename (#1546), so mail.<old> must keep resolving here;
 //  3. /etc/jabali/config.toml: the [server] hostname follows the rename.
-//     `jabali update` renders kratos.yml from it (install_kratos), and the
-//     CLI builds its SSO base URL and the placeholder email of a user created
-//     without --email from it; a stale value undoes the rename on every update.
+//     It is the install-time seed: install_kratos (under `jabali update`) and
+//     the CLI's SSO base URL and placeholder email fall back to it when the
+//     server_settings row can't be read, and kratos.yml used to be rendered
+//     from it on every update, so it must not keep the old name.
 func systemSetHostnameHandler(ctx context.Context, params json.RawMessage) (any, error) {
 	var p systemSetHostnameParams
 	if err := json.Unmarshal(params, &p); err != nil {

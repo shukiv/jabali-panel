@@ -214,14 +214,31 @@ func adminerBaseURLForCLI() string {
 }
 
 func panelHTTPSBaseForCLI() string {
-	host := ""
-	if sharedCfg != nil {
-		host = strings.TrimSpace(sharedCfg.Server.Hostname)
-	}
+	host := cliPanelHostname(context.Background())
 	if host == "" {
 		host = "localhost"
 	}
 	return "https://" + host
+}
+
+// cliPanelHostname is the panel hostname for CLI output: the server_settings
+// row, which is what the panel serves on, else config.toml's [server]
+// hostname. config.toml is only the install-time seed. A box renamed before
+// system.set_hostname kept it in step still has the old name there.
+func cliPanelHostname(ctx context.Context) string {
+	if sharedDB != nil {
+		rctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		if s, err := repository.NewServerSettingsRepository(sharedDB).Get(rctx); err == nil && s != nil {
+			if h := strings.TrimSpace(s.Hostname); h != "" {
+				return h
+			}
+		}
+	}
+	if sharedCfg != nil {
+		return strings.TrimSpace(sharedCfg.Server.Hostname)
+	}
+	return ""
 }
 
 func ssoKeyPathForMessage() string {

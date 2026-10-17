@@ -15311,6 +15311,33 @@ EOF
 
 # ---------- step 8: Kratos identity provider (M20) ---------------------------
 
+# _kratos_panel_hostname <panel_cfg> — the panel hostname install_kratos
+# renders into kratos.yml. An exported JABALI_SRV_HOSTNAME (the installer's
+# prompt) wins. Otherwise (`jabali update` runs install_kratos without it) the
+# server_settings row: the name the panel serves on, and the one the panel's
+# kratos reconciler converges kratos.yml to. config.toml's [server] hostname
+# is only the install-time seed. A box renamed before system.set_hostname kept
+# it in step still has the old name there, and reading it first put Kratos
+# back on the old origin on every update. The row is read in a subshell, so
+# the other JABALI_SRV_* values stay unset here. A value that isn't a hostname
+# is ignored (it lands in a sed replacement). Then config.toml, then
+# `hostname -f`.
+_kratos_panel_hostname() {
+  local panel_cfg="$1"
+  local h="${JABALI_SRV_HOSTNAME:-}"
+  if [[ -z "$h" ]]; then
+    h="$(reconstruct_server_env_from_db; printf '%s' "${JABALI_SRV_HOSTNAME:-}")"
+    [[ "$h" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$ ]] || h=""
+  fi
+  if [[ -z "$h" && -n "$panel_cfg" ]]; then
+    h="$(awk -F'[= "]+' '/^[[:space:]]*hostname[[:space:]]*=/{print $2; exit}' "$panel_cfg")"
+  fi
+  if [[ -z "$h" ]]; then
+    h="$(hostname -f 2>/dev/null || hostname 2>/dev/null || echo 'localhost')"
+  fi
+  printf '%s\n' "$h"
+}
+
 install_kratos() {
   # M25.1 DSN went unix-socket; Kratos needs mysql group on Ubuntu
   # where the socket is 0660 mysql:mysql. Do this BEFORE the unit may
@@ -15448,13 +15475,8 @@ install_kratos() {
     panel_cfg="/etc/jabali-panel/config.toml"
   fi
 
-  local panel_hostname="${JABALI_SRV_HOSTNAME:-}"
-  if [[ -z "$panel_hostname" && -n "$panel_cfg" ]]; then
-    panel_hostname="$(awk -F'[= "]+' '/^[[:space:]]*hostname[[:space:]]*=/{print $2; exit}' "$panel_cfg")"
-  fi
-  if [[ -z "$panel_hostname" ]]; then
-    panel_hostname="$(hostname -f 2>/dev/null || hostname 2>/dev/null || echo 'localhost')"
-  fi
+  local panel_hostname
+  panel_hostname="$(_kratos_panel_hostname "$panel_cfg")"
 
   # GH #429: public port. When the panel is fronted by a reverse proxy on 443
   # (e.g. a Cloudflare tunnel), Kratos must emit PORT-LESS URLs so the browser's

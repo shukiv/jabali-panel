@@ -153,9 +153,9 @@ func TestSystemSetHostname_EtcHosts(t *testing.T) {
 	}
 }
 
-// config.toml's [server] hostname follows the rename: `jabali update` renders
-// kratos.yml from it (install_kratos), and the CLI builds its SSO base URL and
-// the placeholder email of a user created without --email from it.
+// config.toml's [server] hostname follows the rename: install_kratos (under
+// `jabali update`) and the CLI fall back to it when the server_settings row
+// can't be read.
 func TestSystemSetHostname_ConfigToml(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
