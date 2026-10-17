@@ -631,7 +631,7 @@ func registerPackageEditFlags(cmd *cobra.Command, f *packageEditFlags) {
 	fl.StringVar(&f.phpDisabledFunctions, "php-disabled-functions", "", phpDisabledFunctionsFlagHelp)
 	fl.StringVar(&f.webmailEnabled, "webmail", "", "webmail Bulwark UI (true/false)")                           // GH #1628
 	fl.StringVar(&f.websiteSendsEmail, "website-mail", "", "sites may send email with PHP mail() (true/false)") // GH #2056
-	fl.IntVar(&f.redisKeysPerCall, "redis-keys-per-call", 0, redisKeysPerCallFlagHelp)                          // GH #2165
+	fl.IntVar(&f.redisKeysPerCall, "redis-keys-per-call", 0, redisKeysPerCallEditFlagHelp)                      // GH #2165
 	fl.StringVar(&f.egressSSHOut, "egress-ssh-out", "", "allow outbound SSH :22 for enforced tenants (true/false) — GH #1798")
 	fl.StringVar(&f.egressICMP, "egress-icmp", "", "allow outbound ICMP ping for enforced tenants (true/false) — GH #1798")
 	fl.StringVar(&f.egressSSHOutCIDRs, "egress-ssh-out-cidrs", "", `JSON array of CIDRs scoping outbound SSH (empty=anywhere) — GH #1798`)
@@ -773,6 +773,9 @@ func boolYN(b bool) string {
 // and edit (GH #2165).
 var redisKeysPerCallFlagHelp = fmt.Sprintf("most keys one Redis key browser API call may list or delete for users on this package (%d to %d, default %d)",
 	models.RedisKeysPerCallMin, models.RedisKeysPerCallMax, models.RedisKeysPerCallDefault)
+
+var redisKeysPerCallEditFlagHelp = fmt.Sprintf("most keys one Redis key browser API call may list or delete for users on this package (%d to %d); unchanged unless given",
+	models.RedisKeysPerCallMin, models.RedisKeysPerCallMax)
 
 // phpDisabledFunctionsFlagHelp documents --php-disabled-functions on both
 // package create and edit (GH #1701).
