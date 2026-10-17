@@ -5520,9 +5520,36 @@ paths:
   /admin/panel-certificate/issue:
     post:
       tags: [Panel Certificate]
-      summary: Create issue
+      summary: Issue a panel certificate now
+      description: |
+        Requests the panel's Let's Encrypt certificate for `kind` now,
+        without waiting for the next retry. It first checks that the name
+        resolves publicly to this server (424 `not_routable` when it
+        doesn't). Returns the updated certificate row.
+
+        With "Use Let's Encrypt for the panel" off, `kind=hostname`
+        regenerates the panel's self-signed certificate instead (GH #2166):
+        no public DNS check, no Let's Encrypt, no admin email. It returns
+        `{self_signed: true, regenerating, detail, expires_at?}`:
+        - 202, `regenerating: true`: the certificate is being regenerated.
+          The panel restarts a few seconds later to serve it, and a browser
+          asks to accept the new certificate.
+        - 200, `regenerating: false`: nothing to do. The panel already
+          serves a self-signed certificate for the hostname, or a live
+          certificate from a CA, which is kept until it expires.
+          `expires_at` is the current certificate's expiry.
+
+        `kind=mail` stays a Let's Encrypt request either way.
       security: [ { KratosSession: [] } ]
-      responses: { "200": { description: OK } }
+      parameters:
+        - { in: query, name: kind, required: false, schema: { type: string, enum: [hostname, mail], default: hostname } }
+      responses:
+        "200": { description: "The issued certificate row, or (Let's Encrypt off) nothing to regenerate" }
+        "202": { description: "Let's Encrypt off: regenerating the self-signed certificate" }
+        "400": { description: "Invalid kind, no hostname, or (Let's Encrypt) no admin email" }
+        "422": { description: Let's Encrypt refused the request }
+        "424": { description: "Not routable: the name doesn't resolve publicly to this server" }
+        "503": { description: Agent unavailable }
 
   /admin/panel-certificate/toggle:
     post:
