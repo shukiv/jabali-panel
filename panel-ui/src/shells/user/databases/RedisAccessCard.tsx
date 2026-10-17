@@ -9,6 +9,7 @@ import { useState } from "react";
 import { Card, Button, Descriptions, Typography, Alert, Popconfirm } from "antd";
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { apiClient } from "../../../apiClient";
+import { RedisKeysDrawer } from "./RedisKeysDrawer";
 
 const { Text, Paragraph } = Typography;
 
@@ -40,6 +41,7 @@ export const RedisAccessCard = () => {
   const [creds, setCreds] = useState<RedisAccess | null>(null);
   const [loading, setLoading] = useState(false);
   const [flushing, setFlushing] = useState(false);
+  const [keysOpen, setKeysOpen] = useState(false);
 
   // GH #2003: the tenant's Redis user can't run FLUSHALL/FLUSHDB. The panel
   // deletes the keys under the tenant's prefix instead.
@@ -140,6 +142,20 @@ export const RedisAccessCard = () => {
       )}
 
       <Typography.Title level={5} style={{ marginTop: 24 }}>
+        Your keys
+      </Typography.Title>
+      <Paragraph type="secondary">
+        Your Redis user can&apos;t run <Text code>SCAN</Text> or <Text code>KEYS</Text>,
+        which would list every user&apos;s keys. The panel lists yours instead: each
+        key&apos;s name, database, type and expiry, in every database. You can delete
+        keys from the list. An app can do the same with{" "}
+        <Text code>GET /api/v1/me/redis-access/keys</Text> and an API token that has
+        the Redis list keys permission.
+      </Paragraph>
+      <Button onClick={() => setKeysOpen(true)}>Browse my keys</Button>
+      {keysOpen && <RedisKeysDrawer open onClose={() => setKeysOpen(false)} />}
+
+      <Typography.Title level={5} style={{ marginTop: 24 }}>
         Flush your keys
       </Typography.Title>
       <Paragraph type="secondary">
@@ -147,7 +163,7 @@ export const RedisAccessCard = () => {
         user&apos;s keys, so your Redis user can&apos;t run them. Flush deletes only
         the keys under your key prefix, in every database. An app can do the same
         with <Text code>POST /api/v1/me/redis-access/flush</Text> and an API token
-        that has the Redis flush permission.
+        that has the Redis delete keys permission.
       </Paragraph>
       <Popconfirm
         title="Delete all your Redis keys?"
