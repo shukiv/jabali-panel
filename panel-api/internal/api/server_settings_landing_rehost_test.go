@@ -85,3 +85,32 @@ func TestServerSettingsPatch_NoHostnameChange_SkipsLandingRehost(t *testing.T) {
 		}
 	}
 }
+
+// The rename hands system.set_hostname the server's public IPv4, so the agent
+// maps the new name to it in /etc/hosts (not Debian's 127.0.1.1).
+func TestServerSettingsPatch_HostnameChange_SendsPublicIPv4(t *testing.T) {
+	existing := &models.ServerSettings{ID: 1, Hostname: "old.example.com", PublicIPv4: "192.0.2.1", SSHPort: 22}
+	mockAgent := agent.NewMockClient()
+	mockAgent.On("system.set_hostname", map[string]any{"status": "ok"})
+	mockAgent.On("nginx.panel_landing_rehost", map[string]any{"status": "ok"})
+	r := settingsRouter(true, &mockServerSettingsRepo{getResult: existing}, mockAgent)
+
+	body, _ := json.Marshal(map[string]any{"hostname": "new.example.com"})
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/admin/settings", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var params map[string]any
+	require.Eventually(t, func() bool {
+		for _, c := range mockAgent.Calls() {
+			if c.Command == "system.set_hostname" {
+				require.NoError(t, json.Unmarshal(c.Params, &params))
+				return true
+			}
+		}
+		return false
+	}, 2*time.Second, 5*time.Millisecond, "system.set_hostname was never dispatched")
+	require.Equal(t, map[string]any{"hostname": "new.example.com", "public_ipv4": "192.0.2.1"}, params)
+}

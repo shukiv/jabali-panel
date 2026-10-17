@@ -224,3 +224,25 @@ func TestApplySideEffects_RESTOnlyModulesSkippedByCLI(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, *calls, "REST-only module loop must not dispatch from the CLI")
 }
+
+// A hostname change through `jabali settings set hostname=` applies the same
+// plan as the REST PATCH: the OS name with the public IP for /etc/hosts, and
+// the :443 landing vhost's server_name. A failed set_hostname still re-points
+// the landing vhost (the DB row is the truth), and the error is returned.
+func TestApplySideEffects_HostnameChange(t *testing.T) {
+	before := models.ServerSettings{ID: 1, SSHPort: 22, Hostname: "old.example.com", PublicIPv4: "203.0.113.5"}
+	s := before
+	s.Hostname = "new.example.com"
+
+	calls := stubSettingsDispatch(t, nil)
+	require.NoError(t, applySettingsSideEffects(context.Background(), applyCmd(), nil, &s, before))
+	require.Equal(t, []settingsops.AgentCall{
+		{Method: "system.set_hostname", Params: map[string]any{"hostname": "new.example.com", "public_ipv4": "203.0.113.5"}, Timeout: 30 * time.Second},
+		{Method: "nginx.panel_landing_rehost", Params: map[string]any{"hostname": "new.example.com"}, Timeout: 30 * time.Second},
+	}, *calls)
+
+	calls = stubSettingsDispatch(t, errors.New("agent down"))
+	err := applySettingsSideEffects(context.Background(), applyCmd(), nil, &s, before)
+	require.ErrorContains(t, err, "system.set_hostname")
+	require.Len(t, *calls, 2, "the landing vhost is re-pointed even when set_hostname fails")
+}

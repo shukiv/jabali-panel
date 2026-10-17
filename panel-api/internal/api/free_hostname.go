@@ -10,6 +10,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/settingsops"
 )
 
 // Free-hostname activation from Server Settings (JAB-213). Lets an admin turn
@@ -18,7 +21,8 @@ import (
 // — the agent never talks to third parties); the observed source IP is this
 // box's public IP, which is exactly the box that gets the label. On a
 // successful claim the agent persists the token file + turns on the lifecycle,
-// and the hostname is switched through the existing system.set_hostname path.
+// and the hostname is switched through the settings hostname plan
+// (settingsops.HostnameEffects).
 
 // freeHostnameAPI is the service base URL; overridable for tests.
 var freeHostnameAPI = "https://api.jabalihosted.com"
@@ -150,20 +154,27 @@ func (h *serverSettingsHandler) freeHostnameClaim(c *gin.Context) {
 		return
 	}
 
-	// Switch the panel hostname to the claimed name, reusing the same
-	// system.set_hostname cascade the settings PATCH uses.
+	// Switch the panel hostname to the claimed name and apply it on the host
+	// with the same plan the settings PATCH runs (settingsops.HostnameEffects:
+	// the OS name, /etc/hosts and config.toml; the :443 landing vhost),
+	// detached and best-effort like there. The plan runs even when the row
+	// already holds the name: the claim's one purpose is to serve on it, and
+	// a prior claim may have stored it while its detached apply failed (the
+	// calls are idempotent), so the "before" row has no hostname.
 	if cur, gerr := h.cfg.Repo.Get(applyCtx); gerr == nil && cur != nil {
 		cur.Hostname = claim.FQDN
 		if uerr := h.cfg.Repo.Upsert(applyCtx, cur); uerr != nil {
 			h.cfg.Log.Error("free-hostname: hostname update failed", "err", uerr)
 		} else {
-			go func(host string) {
-				bg, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-				defer cancel()
-				if _, err := h.cfg.Agent.Call(bg, "system.set_hostname", map[string]any{"hostname": host}); err != nil {
-					h.cfg.Log.Error("free-hostname: set_hostname failed", "err", err)
-				}
-			}(claim.FQDN)
+			for _, call := range settingsops.HostnameEffects(&models.ServerSettings{}, cur).Calls() {
+				go func(call settingsops.AgentCall) {
+					bg, cancel := context.WithTimeout(context.Background(), call.Timeout)
+					defer cancel()
+					if _, err := h.cfg.Agent.Call(bg, call.Method, call.Params); err != nil {
+						h.cfg.Log.Error("free-hostname: "+call.Method+" failed", "err", err)
+					}
+				}(call)
+			}
 		}
 	}
 

@@ -872,34 +872,18 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 	// next tick.
 	paneltime.Set(current.Timezone)
 
-	// Apply hostname to the OS via agent, best-effort. If the agent isn't
-	// reachable we still report success — the DB has the truth and a later
-	// reconciliation can sync.
-	if current.Hostname != prevHostname && h.cfg.Agent != nil {
-		go func() {
-			bgCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			if _, err := h.cfg.Agent.Call(bgCtx, "system.set_hostname", map[string]any{
-				"hostname": current.Hostname,
-			}); err != nil {
-				h.cfg.Log.Error("agent set_hostname failed", "err", err)
-			}
-		}()
-		// JAB-389: the GH#135 dedicated :443 landing vhost keeps its server_name
-		// on the old FQDN after a rename (install.sh renders it; nothing
-		// re-renders it live), so https://<new-fqdn>/ falls to the return-444
-		// default block. Re-point it to the new hostname. Dispatched
-		// independently of set_hostname — the DB row is the truth, so the
-		// landing vhost should track it even if hostnamectl failed.
-		go func() {
-			bgCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			if _, err := h.cfg.Agent.Call(bgCtx, "nginx.panel_landing_rehost", map[string]any{
-				"hostname": current.Hostname,
-			}); err != nil {
-				h.cfg.Log.Error("agent nginx.panel_landing_rehost failed", "err", err)
-			}
-		}()
+	// Apply a hostname change on the host via the agent, best-effort. If the
+	// agent isn't reachable we still report success — the DB has the truth and
+	// a later reconciliation can sync. settingsops.HostnameEffects owns the
+	// calls (the OS name, /etc/hosts and config.toml; the JAB-389 :443 landing
+	// vhost), shared with the CLI and the free-hostname claim. Each runs on its
+	// own, so the landing vhost follows the DB row even if hostnamectl failed.
+	if h.cfg.Agent != nil {
+		prev := *current
+		prev.Hostname = prevHostname
+		for _, call := range settingsops.HostnameEffects(&prev, current).Calls() {
+			go h.dispatchSettingsCall(call, "agent "+call.Method+" failed")
+		}
 	}
 
 	// Optional-module lifecycle (JAB-294). settingsops.ModuleEffects is the single

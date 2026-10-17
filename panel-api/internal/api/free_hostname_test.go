@@ -6,8 +6,10 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
@@ -119,5 +121,49 @@ func TestFreeHostnameClaim_BadCodeSurfacesReasonNoAgentCall(t *testing.T) {
 	}
 	if len(mockAgent.Calls()) != 0 {
 		t.Error("no agent call should happen on a failed claim")
+	}
+}
+
+// Claiming a free hostname is a rename like any other: the landing vhost is
+// re-pointed and set_hostname gets the public IP (the same plan as the PATCH).
+func TestFreeHostnameClaim_AppliesTheHostnamePlan(t *testing.T) {
+	// A re-claim of the name the row already holds still applies it: the
+	// claim's one purpose is "serve on this name", and a prior claim may have
+	// persisted the row while its detached apply failed.
+	for _, prior := range []string{"old.local", "45-79-1-9.jabalihosted.com"} {
+		t.Run("row holds "+prior, func(t *testing.T) {
+			defer withFakeService(t, func(w http.ResponseWriter, r *http.Request) {
+				w.Write([]byte(`{"label":"45-79-1-9","fqdn":"45-79-1-9.jabalihosted.com","token":"tok123"}`))
+			})()
+			mockAgent := agent.NewMockClient().
+				On("hostname.free.apply", map[string]any{"ok": true}).
+				On("system.set_hostname", map[string]any{"ok": true}).
+				On("nginx.panel_landing_rehost", map[string]any{"ok": true})
+			repo := &mockServerSettingsRepo{getResult: &models.ServerSettings{ID: 1, Hostname: prior, PublicIPv4: "45.79.1.9"}}
+			router := settingsRouter(true, repo, mockAgent)
+
+			if w := postFH(t, router, "/api/v1/admin/settings/free-hostname/claim", `{"email":"op@example.com","code":"123456"}`); w.Code != 200 {
+				t.Fatalf("claim HTTP %d: %s", w.Code, w.Body.String())
+			}
+			got := map[string]map[string]any{}
+			deadline := time.Now().Add(2 * time.Second)
+			for time.Now().Before(deadline) && len(got) < 2 {
+				for _, call := range mockAgent.Calls() {
+					if call.Command == "system.set_hostname" || call.Command == "nginx.panel_landing_rehost" {
+						var m map[string]any
+						_ = json.Unmarshal(call.Params, &m)
+						got[call.Command] = m
+					}
+				}
+				time.Sleep(5 * time.Millisecond)
+			}
+			want := map[string]map[string]any{
+				"system.set_hostname":        {"hostname": "45-79-1-9.jabalihosted.com", "public_ipv4": "45.79.1.9"},
+				"nginx.panel_landing_rehost": {"hostname": "45-79-1-9.jabalihosted.com"},
+			}
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("agent calls %v, want %v", got, want)
+			}
+		})
 	}
 }

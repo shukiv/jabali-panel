@@ -13,15 +13,18 @@ The installer prompts for the hostname at install time. The default is the curre
 
 ## Changing the hostname
 
-1. Server Settings → General → Panel Hostname → enter the new FQDN.
+1. Server Settings → General → Panel Hostname → enter the new FQDN. `jabali settings set hostname=<fqdn>` and claiming a free hostname run the same steps.
 2. The agent:
    - Updates `/etc/hostname` and runs `hostnamectl set-hostname`.
+   - Updates `/etc/hosts` the way the installer does: removes every `127.0.1.1` line and maps the new name to the server's public IPv4, unless a line already maps that exact name (an address you set yourself, for example behind NAT, is kept). The old name's lines stay, because the mail hostname does not follow a panel rename.
+   - Sets `hostname` under `[server]` in `/etc/jabali/config.toml`. That value is the install-time seed. `jabali update` (for the login, Kratos, config) and the CLI (for SSO links and the placeholder email of a user created without `--email`) use the hostname from Server Settings, and fall back to config.toml only when they can't read it.
+   - Re-points the `:443` landing vhost to the new name.
    - Re-renders the panel nginx vhost with the new `server_name`.
    - Calls `ssl.panel.issue` to obtain a Let's Encrypt cert for the new hostname.
-   - Updates Stalwart's primary domain (M6.4).
+   - Leaves mail where it is: the mail hostname does not follow a panel rename (see [Mail Hostname](./mail-hostname.md#panel-rename)).
    - Re-renders Bulwark's autoconfig endpoints.
    - Reloads nginx, panel API, Bulwark.
-3. The page returns once the cert is issued (typically under 60 seconds).
+3. The page saves at once and the host changes run in the background. The certificate for the new name is issued on the panel's next certificate pass.
 
 ## DNS prerequisites
 
