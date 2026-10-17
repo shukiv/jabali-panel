@@ -277,3 +277,41 @@ describe("PackageEditor website mail (GH #2056)", () => {
     expect(sw.getAttribute("aria-checked")).toBe("true");
   });
 });
+
+describe("PackageEditor Redis keys per call (GH #2165)", () => {
+  it("starts a new package at 500", () => {
+    renderEditor();
+    const input = screen
+      .getByText("packageedit.redis_keys_per_call")
+      .closest(".ant-form-item")
+      ?.querySelector("input");
+    expect(input?.value).toBe("500");
+  });
+
+  it("saves a stored package's value (edit mode)", async () => {
+    const { fireEvent, waitFor } = await import("@testing-library/react");
+    const onSubmit = vi.fn();
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <PackageEditor
+          title="Edit package"
+          initialValue={{ ...PACKAGE_DEFAULTS, id: "pkg-1", name: "Basic", redis_keys_per_call: 2000 }}
+          submitting={false}
+          onSubmit={onSubmit}
+        />
+      </QueryClientProvider>,
+    );
+    await waitFor(() =>
+      expect(
+        screen
+          .getByText("packageedit.redis_keys_per_call")
+          .closest(".ant-form-item")
+          ?.querySelector("input")?.value,
+      ).toBe("2000"),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    expect(onSubmit.mock.calls[0][0].redis_keys_per_call).toBe(2000);
+  });
+});

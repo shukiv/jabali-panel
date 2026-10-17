@@ -108,6 +108,12 @@ type HostingPackage struct {
 	// package send through the local mail server only (GH #282).
 	WebsiteSendsEmail bool `gorm:"column:website_sends_email;type:tinyint(1);not null;default:0" json:"website_sends_email"`
 
+	// RedisKeysPerCall (GH #2165) is how many keys one call of the Redis key
+	// browser API may list (its `limit`) or delete, RedisKeysPerCallMin to
+	// RedisKeysPerCallMax. Unlike the other limits, 0 is not "unlimited": it
+	// is invalid. Read it through EffectiveRedisKeysPerCall.
+	RedisKeysPerCall int `gorm:"column:redis_keys_per_call;not null;default:500" json:"redis_keys_per_call"`
+
 	// PHPDisabledFunctions (GH #1701) is the disable_functions list this
 	// package's pools run with, canonical comma-separated form. nil = the
 	// GH #401 lockdown default (or no list at all when PHPExecEnabled is set on
@@ -248,4 +254,25 @@ func IsValidBackupRetentionPolicy(s string) bool {
 // tenant data on a misconfiguration.
 func (p HostingPackage) BackupRetentionPrunes() bool {
 	return p.BackupRetentionPolicy == BackupRetentionPrune
+}
+
+// The bounds of HostingPackage.RedisKeysPerCall (GH #2165). The default is
+// what every package had before it was a setting, and what a user with no
+// package gets.
+const (
+	RedisKeysPerCallMin     = 100
+	RedisKeysPerCallDefault = 500
+	RedisKeysPerCallMax     = 5000
+)
+
+// EffectiveRedisKeysPerCall is how many keys one Redis key browser call may
+// list or delete for a user on package p. No package, or a stored value
+// outside RedisKeysPerCallMin..RedisKeysPerCallMax (validation keeps them
+// out, a direct DB edit does not), gets the default: never the ceiling, and
+// never unbounded.
+func EffectiveRedisKeysPerCall(p *HostingPackage) int {
+	if p == nil || p.RedisKeysPerCall < RedisKeysPerCallMin || p.RedisKeysPerCall > RedisKeysPerCallMax {
+		return RedisKeysPerCallDefault
+	}
+	return p.RedisKeysPerCall
 }

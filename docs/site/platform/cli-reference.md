@@ -4120,6 +4120,7 @@ jabali package create [flags]
 - `--php-disabled-functions` — PHP functions disabled for this package's sites, comma-separated (GH #1701). "default" = the command-exec lockdown (exec,passthru,shell_exec,system,proc_open,popen,pcntl_exec,pcntl_fork,proc_nice,dl); "none" = nothing disabled. Allowing system/exec/shell_exec/passthru/popen/proc_open/pcntl_exec also lifts the PHP Defense ban on it for these sites. Wins over --php-exec.
 - `--php-exec` — opt out of the PHP command-exec lockdown (exec/proc_open work)
 - `--php-settings-policy` — JSON object of php.ini directive to level (admin_only / tenant_allowed; tenant_privileged for security-sensitive directives) saying who may set it on the per-domain PHP Settings page — GH #1701. Empty = defaults (tenants may set every directive they can today). The CLI and admins are not limited by it. e.g. '{"memory_limit":"admin_only"}'
+- `--redis-keys-per-call` — most keys one Redis key browser API call may list or delete for users on this package (100 to 5000, default 500) (default `500`)
 - `--scheduled-backups` — allow tenant scheduled backups
 - `--ssh` — enable SSH access
 - `--webmail` — enable webmail (Bulwark UI) for this package (default `true`)
@@ -4180,6 +4181,7 @@ jabali package edit <package-id> [flags]
 - `--php-disabled-functions` — PHP functions disabled for this package's sites, comma-separated (GH #1701). "default" = the command-exec lockdown (exec,passthru,shell_exec,system,proc_open,popen,pcntl_exec,pcntl_fork,proc_nice,dl); "none" = nothing disabled. Allowing system/exec/shell_exec/passthru/popen/proc_open/pcntl_exec also lifts the PHP Defense ban on it for these sites. Wins over --php-exec.
 - `--php-exec` — PHP command-exec opt-out (true/false)
 - `--php-settings-policy` — JSON object of php.ini directive to level (admin_only / tenant_allowed; tenant_privileged for security-sensitive directives) saying who may set it on the per-domain PHP Settings page — GH #1701. Empty = defaults (tenants may set every directive they can today). The CLI and admins are not limited by it. e.g. '{"memory_limit":"admin_only"}'
+- `--redis-keys-per-call` — most keys one Redis key browser API call may list or delete for users on this package (100 to 5000); unchanged unless given (default `0`)
 - `--scheduled-backups` — tenant scheduled backups (true/false)
 - `--ssh` — SSH access (true/false)
 - `--webmail` — webmail Bulwark UI (true/false)

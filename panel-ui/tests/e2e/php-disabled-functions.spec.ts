@@ -33,6 +33,7 @@ test("admin package editor: uncheck shell_exec and disable mail, the save sends 
     max_ftp_accounts: 0,
     max_backups: 0,
     max_backup_schedules: 1,
+    redis_keys_per_call: 500,
     scheduled_backups_enabled: false,
     allowed_backup_destination_kinds: "",
     backup_retention_policy: "reject",

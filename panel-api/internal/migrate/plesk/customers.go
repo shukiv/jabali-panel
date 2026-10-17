@@ -151,6 +151,7 @@ func PlanToHostingPackage(p PleskPlan) models.HostingPackage {
 		WebmailEnabled: true,
 		// GH #2056: the sites came from a server where PHP mail() worked.
 		WebsiteSendsEmail: true,
+		RedisKeysPerCall:  models.RedisKeysPerCallDefault, // GH #2165
 	}
 }
 

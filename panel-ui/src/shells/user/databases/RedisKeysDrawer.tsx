@@ -28,10 +28,23 @@ export interface RedisKeyRow {
 interface RedisKeysPage {
   data: RedisKeyRow[];
   next_cursor: string;
+  // The most keys one call may ask for or delete: the user's hosting
+  // package's Redis keys per call (GH #2165).
+  max_limit?: number;
 }
 
-// How many keys one call looks for.
+// How many keys one call looks for, at most: never more than the page's
+// max_limit.
 const PAGE_LIMIT = 200;
+// The lowest Redis keys per call a package can set, so a call may always ask
+// for this many. The first page uses it, before the panel has said the
+// user's max_limit.
+const MIN_KEYS_PER_CALL = 100;
+
+interface PageParam {
+  cursor: string;
+  maxLimit: number;
+}
 // A page can come back empty when the scan budget ran out before it found any
 // of the tenant's keys. Carry on by itself this many times before waiting for
 // "Load more".
@@ -71,20 +84,22 @@ export function RedisKeysDrawer({ open, onClose }: Props) {
   const query = useInfiniteQuery({
     queryKey,
     enabled: open,
-    initialPageParam: "",
+    initialPageParam: { cursor: "", maxLimit: MIN_KEYS_PER_CALL } as PageParam,
     queryFn: async ({ pageParam }) => {
-      const params: Record<string, string | number> = { limit: PAGE_LIMIT };
-      if (pageParam) params.cursor = pageParam;
+      const params: Record<string, string | number> = { limit: Math.min(PAGE_LIMIT, pageParam.maxLimit) };
+      if (pageParam.cursor) params.cursor = pageParam.cursor;
       if (match) params.match = match;
       if (db !== "all") params.db = db;
       const resp = await apiClient.get<RedisKeysPage>("/me/redis-access/keys", { params });
       return resp.data;
     },
-    getNextPageParam: (last) => last.next_cursor || undefined,
+    getNextPageParam: (last): PageParam | undefined =>
+      last.next_cursor ? { cursor: last.next_cursor, maxLimit: last.max_limit ?? MIN_KEYS_PER_CALL } : undefined,
   });
 
   const pages = query.data?.pages ?? [];
   const rows = pages.flatMap((p) => p.data);
+  const maxPerCall = pages[pages.length - 1]?.max_limit ?? MIN_KEYS_PER_CALL;
 
   // Empty pages with a cursor: keep scanning a little on our own.
   let trailingEmpty = 0;
@@ -100,7 +115,7 @@ export function RedisKeysDrawer({ open, onClose }: Props) {
   useEffect(() => setSelected([]), [match, db]);
 
   const removeLocally = (gone: Set<string>) => {
-    qc.setQueryData<InfiniteData<RedisKeysPage, string>>(queryKey, (old) =>
+    qc.setQueryData<InfiniteData<RedisKeysPage, PageParam>>(queryKey, (old) =>
       old ? { ...old, pages: old.pages.map((p) => ({ ...p, data: p.data.filter((r) => !gone.has(rowKey(r))) })) } : old,
     );
     setSelected((s) => s.filter((k) => !gone.has(k)));
@@ -119,7 +134,12 @@ export function RedisKeysDrawer({ open, onClose }: Props) {
     if (targets.length === 0) return;
     setDeleting(true);
     try {
-      const n = await deleteKeys(targets);
+      // One call takes at most max_limit keys; a selection across pages can
+      // hold more.
+      let n = 0;
+      for (let i = 0; i < targets.length; i += maxPerCall) {
+        n += await deleteKeys(targets.slice(i, i + maxPerCall));
+      }
       feedback.message.success(`Deleted ${n} key${n === 1 ? "" : "s"}.`);
     } catch {
       feedback.message.error("Could not delete the selected keys.");

@@ -36,8 +36,8 @@ const row = (db: number, name: string, extra: Partial<RedisKeyRow> = {}): RedisK
   ...extra,
 });
 
-function page(data: RedisKeyRow[], next_cursor = "") {
-  return { status: 200, data: { data, next_cursor } };
+function page(data: RedisKeyRow[], next_cursor = "", max_limit = 500) {
+  return { status: 200, data: { data, next_cursor, max_limit } };
 }
 
 function renderDrawer() {
@@ -70,7 +70,9 @@ describe("RedisKeysDrawer (GH #2165)", () => {
     renderDrawer();
 
     expect(await screen.findByText("session:1")).toBeInTheDocument();
-    expect(mocked.get).toHaveBeenCalledWith("/me/redis-access/keys", { params: { limit: 200 } });
+    // The first page asks for the lowest Redis keys per call a package can
+    // set: the user's max_limit isn't known yet (GH #2165).
+    expect(mocked.get).toHaveBeenCalledWith("/me/redis-access/keys", { params: { limit: 100 } });
     const cacheRow = screen.getByText("cache:2").closest("tr") as HTMLElement;
     expect(within(cacheRow).getByText("hash")).toBeInTheDocument();
     expect(within(cacheRow).getByText("3")).toBeInTheDocument();
@@ -94,6 +96,15 @@ describe("RedisKeysDrawer (GH #2165)", () => {
     expect(screen.getByText("2 keys.")).toBeInTheDocument();
   });
 
+  it("never asks for more than the package's max_limit (GH #2165)", async () => {
+    mocked.get.mockResolvedValueOnce(page([row(0, "a")], "0:55", 150)).mockResolvedValueOnce(page([row(1, "b")], "", 150));
+    renderDrawer();
+    await screen.findByText("a");
+    fireEvent.click(screen.getByRole("button", { name: /load more/i }));
+    await screen.findByText("b");
+    expect(lastParams()).toEqual({ limit: 150, cursor: "0:55" });
+  });
+
   it("keeps scanning by itself past pages that found nothing", async () => {
     mocked.get
       .mockResolvedValueOnce(page([], "0:10"))
@@ -112,11 +123,11 @@ describe("RedisKeysDrawer (GH #2165)", () => {
     const search = screen.getByLabelText("Search key names");
     fireEvent.change(search, { target: { value: "a*b" } });
     fireEvent.keyDown(search, { key: "Enter", code: "Enter", keyCode: 13 });
-    await waitFor(() => expect(lastParams()).toEqual({ limit: 200, match: "*a\\*b*" }));
+    await waitFor(() => expect(lastParams()).toEqual({ limit: 100, match: "*a\\*b*" }));
 
     fireEvent.mouseDown(screen.getByLabelText("Database"));
     fireEvent.click(await screen.findByText("Database 3"));
-    await waitFor(() => expect(lastParams()).toEqual({ limit: 200, match: "*a\\*b*", db: 3 }));
+    await waitFor(() => expect(lastParams()).toEqual({ limit: 100, match: "*a\\*b*", db: 3 }));
   });
 
   it("deletes one key after confirming and drops it from the list", async () => {
@@ -162,6 +173,24 @@ describe("RedisKeysDrawer (GH #2165)", () => {
     );
     await waitFor(() => expect(toastOK).toHaveBeenCalledWith("Deleted 2 keys."));
     expect(screen.getByText("c")).toBeInTheDocument();
+  });
+
+  it("deletes a selection bigger than max_limit in calls of max_limit keys (GH #2165)", async () => {
+    mocked.get.mockResolvedValueOnce(page([row(0, "a"), row(3, "b"), row(0, "c")], "", 2));
+    mocked.post.mockResolvedValueOnce({ status: 200, data: { deleted: 2 } }).mockResolvedValueOnce({ status: 200, data: { deleted: 1 } });
+    renderDrawer();
+    await screen.findByText("a");
+
+    for (const name of ["a", "b", "c"]) {
+      const tr = screen.getByText(name).closest("tr") as HTMLElement;
+      fireEvent.click(within(tr).getByRole("checkbox"));
+    }
+    fireEvent.click(screen.getByRole("button", { name: /delete selected/i }));
+    const confirm = (await screen.findAllByRole("button", { name: /^delete$/i })).find((b) => b.closest(".ant-popover"));
+    fireEvent.click(confirm as HTMLElement);
+
+    await waitFor(() => expect(toastOK).toHaveBeenCalledWith("Deleted 3 keys."));
+    expect(mocked.post.mock.calls.map((c) => c[1].keys.length)).toEqual([2, 1]);
   });
 
   it("can't select or delete a key whose name isn't UTF-8", async () => {

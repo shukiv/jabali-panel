@@ -47,6 +47,7 @@ var packageFieldFlag = map[string]string{
 	"egress_icmp":                      "egress-icmp",          // GH #1798
 	"webmail_enabled":                  "webmail",              // GH #1628
 	"website_sends_email":              "website-mail",         // GH #2056
+	"redis_keys_per_call":              "redis-keys-per-call",  // GH #2165
 	"fpm_max_children_cap":             "fpm-max-children",
 	"fpm_worker_mem_mb":                "fpm-worker-mem-mb",
 	"fpm_user_can_edit":                "fpm-user-can-edit",
@@ -411,4 +412,37 @@ func TestPackageCLI_WebsiteMailCreateFlagDefaultsOff(t *testing.T) {
 	p, err := buildPackageFromCreateFlags(packageCreateFlags{name: "x", webmailEnabled: true, websiteSendsEmail: true})
 	require.NoError(t, err)
 	require.True(t, p.WebsiteSendsEmail, "websiteSendsEmail flows onto the built row")
+}
+
+// GH #2165: `package create` defaults --redis-keys-per-call to 500, like the
+// REST create; edit changes it only when named; Validate bounds both.
+func TestPackageCLI_RedisKeysPerCall(t *testing.T) {
+	create := newPackageCreateCmd()
+	fl := create.Flags().Lookup("redis-keys-per-call")
+	require.NotNil(t, fl)
+	require.Equal(t, "500", fl.DefValue, "create defaults to what every package had before")
+
+	p, err := buildPackageFromCreateFlags(packageCreateFlags{name: "x", redisKeysPerCall: 2000})
+	require.NoError(t, err)
+	require.Equal(t, 2000, p.RedisKeysPerCall)
+	require.NoError(t, packageops.Validate(p))
+
+	p, err = buildPackageFromCreateFlags(packageCreateFlags{name: "x", redisKeysPerCall: 0})
+	require.NoError(t, err)
+	require.ErrorIs(t, packageops.Validate(p), packageops.ErrInvalidRedisKeysPerCall, "0 is not unlimited")
+
+	p = &models.HostingPackage{RedisKeysPerCall: 1500}
+	changed, err := applyPackageEditFlags(changedSet("disk-mb"), p, packageEditFlags{diskMB: 1, redisKeysPerCall: 0})
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, 1500, p.RedisKeysPerCall, "an unnamed --redis-keys-per-call never changes")
+
+	changed, err = applyPackageEditFlags(changedSet("redis-keys-per-call"), p, packageEditFlags{redisKeysPerCall: 3000})
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, 3000, p.RedisKeysPerCall)
+
+	_, err = applyPackageEditFlags(changedSet("redis-keys-per-call"), p, packageEditFlags{redisKeysPerCall: 50})
+	require.NoError(t, err)
+	require.ErrorIs(t, packageops.Validate(p), packageops.ErrInvalidRedisKeysPerCall)
 }

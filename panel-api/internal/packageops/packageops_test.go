@@ -27,6 +27,7 @@ func TestValidate(t *testing.T) {
 			FpmWorkerMemMb:        64,
 			FpmVersionDefaults:    "{}",
 			BackupRetentionPolicy: models.BackupRetentionReject,
+			RedisKeysPerCall:      models.RedisKeysPerCallDefault,
 		}
 	}
 
@@ -37,6 +38,12 @@ func TestValidate(t *testing.T) {
 		is      error // when set, the returned error must errors.Is this
 	}{
 		{"all zero limits pass (unlimited is legal)", func(p *models.HostingPackage) {}, false, nil},
+		// GH #2165: Redis keys per call is 100..5000; 0 is not "unlimited".
+		{"redis keys per call at the floor", func(p *models.HostingPackage) { p.RedisKeysPerCall = models.RedisKeysPerCallMin }, false, nil},
+		{"redis keys per call at the ceiling", func(p *models.HostingPackage) { p.RedisKeysPerCall = models.RedisKeysPerCallMax }, false, nil},
+		{"redis keys per call 0 is rejected", func(p *models.HostingPackage) { p.RedisKeysPerCall = 0 }, true, ErrInvalidRedisKeysPerCall},
+		{"redis keys per call under the floor", func(p *models.HostingPackage) { p.RedisKeysPerCall = models.RedisKeysPerCallMin - 1 }, true, ErrInvalidRedisKeysPerCall},
+		{"redis keys per call over the ceiling", func(p *models.HostingPackage) { p.RedisKeysPerCall = models.RedisKeysPerCallMax + 1 }, true, ErrInvalidRedisKeysPerCall},
 		{"sane limits pass", func(p *models.HostingPackage) {
 			p.DiskQuotaMB, p.CPUQuotaPercent, p.MemoryLimitMB, p.MaxTasks = 5120, 200, 4096, 500
 		}, false, nil},

@@ -488,7 +488,7 @@ func TestMeRedisKeysDelete_Refusals(t *testing.T) {
 	seedTenantKeys(t, mr)
 	r := newRedisAccessRouter(t, bobKeysConfig(rdb), &auth.AccessClaims{UserID: "u1"})
 
-	many := make([]string, tenantRedisKeysMaxDelete+1)
+	many := make([]string, models.RedisKeysPerCallDefault+1)
 	for i := range many {
 		many[i] = fmt.Sprintf(`{"db":0,"key":"jt:bob:k%d"}`, i)
 	}

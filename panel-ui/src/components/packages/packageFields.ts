@@ -49,6 +49,7 @@ export type PackageFormValues = {
   max_docker_apps: number;
   max_python_apps: number;
   max_ftp_accounts: number;
+  redis_keys_per_call: number; // GH #2165 — 100..5000, not "0 = unlimited"
   // Tenant backup limits (GH #454). allowed_backup_destination_kinds is a CSV
   // string on the wire; the multi-Select binds an array (converted on load/save,
   // like docker_app_slugs).
@@ -255,6 +256,21 @@ export const PACKAGE_LIMIT_FIELDS = [
     tooltipText: "0 = FTP/SFTP accounts not included in this package",
     group: "quota",
   },
+  {
+    // GH #2165: the most keys one Redis key browser API call may list or
+    // delete. Unlike the limits above, 0 is not "unlimited": the backend
+    // refuses anything outside 100..5000.
+    name: "redis_keys_per_call",
+    labelKey: "redis_keys_per_call",
+    min: 100,
+    max: 5000,
+    width: "100%",
+    required: true,
+    requiredMsg: "Redis keys per call is required (100 to 5000)",
+    tooltipText:
+      "Most keys one call of the Redis key browser API may list or delete for users on this package. 100 to 5000; the default is 500.",
+    group: "quota",
+  },
   // Backups (GH #454). The switch and the two Selects are rendered explicitly
   // between these numerics to preserve the row's order.
   {
@@ -321,6 +337,7 @@ export const PACKAGE_DEFAULTS: PackageFormValues = {
   max_docker_apps: 0,
   max_python_apps: 0,
   max_ftp_accounts: 0,
+  redis_keys_per_call: 500, // GH #2165 — what every package had before
   max_backups: 0,
   max_backup_schedules: 1,
   scheduled_backups_enabled: false,

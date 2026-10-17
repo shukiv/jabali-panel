@@ -4777,7 +4777,10 @@ paths:
         keys without scanning them all.
 
         Returns `{data: [{db, key, name, type, ttl_ms, expires_at, binary?}],
-        next_cursor}`. `ttl_ms` is -1 and `expires_at` null for a key with no
+        next_cursor, max_limit}`. `max_limit` is the most keys your calls may
+        ask for (`limit`) or delete: your hosting package's "Redis keys per
+        call", 100 to 5000, 500 unless the admin changed it or with no
+        package. `ttl_ms` is -1 and `expires_at` null for a key with no
         expiry. `binary` marks a name that isn't valid UTF-8; it is shown
         approximately and can't be deleted through this API. An API token
         needs the `read:redis` scope (or no scopes). Rate-limited per user.
@@ -4785,7 +4788,7 @@ paths:
       parameters:
         - { in: query, name: match, required: false, schema: { type: string, maxLength: 128, default: "*" }, description: "Redis glob for the part after your prefix, e.g. session:*" }
         - { in: query, name: db, required: false, schema: { type: integer, minimum: 0, maximum: 15 }, description: "Scan only this database (default: all 16)" }
-        - { in: query, name: limit, required: false, schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }
+        - { in: query, name: limit, required: false, schema: { type: integer, minimum: 1, maximum: 5000, default: 100 }, description: "At most max_limit: the user's hosting package's Redis keys per call" }
         - { in: query, name: cursor, required: false, schema: { type: string }, description: "next_cursor of the previous page" }
       responses:
         "200": { description: OK }
@@ -4800,8 +4803,10 @@ paths:
       summary: Delete some of your Redis keys
       description: |
         Deletes the listed keys (GH #2165) with your own Redis credential.
-        Body: `{keys: [{db, key}]}`, 1 to 500 keys, each the full name with
-        your prefix. A key outside your prefix refuses the whole call (422
+        Body: `{keys: [{db, key}]}`, 1 key up to your `max_limit` (your
+        hosting package's "Redis keys per call", 500 unless changed), each the
+        full name with your prefix. A body over 1 MiB is refused (413); split
+        it. A key outside your prefix refuses the whole call (422
         `key_outside_prefix`) before anything is deleted. Returns `{deleted}`;
         a key that no longer exists isn't counted. An API token needs the
         `write:redis` scope (or no scopes).
@@ -4817,7 +4822,7 @@ paths:
                 keys:
                   type: array
                   minItems: 1
-                  maxItems: 500
+                  maxItems: 5000
                   items:
                     type: object
                     required: [db, key]
@@ -7035,7 +7040,7 @@ paths:
         - { in: path, name: id, required: true, schema: { type: string } }
         - { in: query, name: match, required: false, schema: { type: string, maxLength: 128, default: "*" } }
         - { in: query, name: db, required: false, schema: { type: integer, minimum: 0, maximum: 15 } }
-        - { in: query, name: limit, required: false, schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }
+        - { in: query, name: limit, required: false, schema: { type: integer, minimum: 1, maximum: 5000, default: 100 }, description: "At most max_limit: the user's hosting package's Redis keys per call" }
         - { in: query, name: cursor, required: false, schema: { type: string } }
       responses: { "200": { description: OK } }
 

@@ -16,6 +16,7 @@ import (
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/middleware"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 )
 
 // Tenant Redis access (GH #1016). Jabali locks Redis behind ACL auth (ADR-0148):
@@ -177,15 +178,24 @@ func (h *redisAccessHandler) userRedisAccess(c *gin.Context) {
 // (idempotently) provisions their Redis ACL. On failure it has already written
 // the error response and returns ok=false.
 func (h *redisAccessHandler) provisionTenant(c *gin.Context, userID string) (osUser, token string, ok bool) {
-	ctx := c.Request.Context()
-	if h.cfg.Redis == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "redis_unavailable", "detail": "Redis is not configured on this host"})
+	u, ok := h.tenantUser(c, userID)
+	if !ok {
 		return "", "", false
 	}
-	u, err := h.cfg.Users.FindByID(ctx, userID)
+	return h.provisionUser(c, u)
+}
+
+// tenantUser resolves userID to a hosting user with a Linux account. On
+// failure it has already written the error response and returns ok=false.
+func (h *redisAccessHandler) tenantUser(c *gin.Context, userID string) (*models.User, bool) {
+	if h.cfg.Redis == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "redis_unavailable", "detail": "Redis is not configured on this host"})
+		return nil, false
+	}
+	u, err := h.cfg.Users.FindByID(c.Request.Context(), userID)
 	if err != nil || u == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "user_not_found"})
-		return "", "", false
+		return nil, false
 	}
 	// Redis access is a TENANT feature: it needs a Linux account to scope the
 	// keyspace to and to reach the socket. Admins have no OS user, even when
@@ -194,8 +204,16 @@ func (h *redisAccessHandler) provisionTenant(c *gin.Context, userID string) (osU
 	// provisioned t_admin, scanned jt:admin:* and answered deleted 0.
 	if u.IsAdmin || u.Username == nil || *u.Username == "" {
 		c.JSON(http.StatusConflict, gin.H{"error": "no_linux_user", "detail": "Redis access is only available for hosting users (admins have no Linux account)"})
-		return "", "", false
+		return nil, false
 	}
+	return u, true
+}
+
+// provisionUser derives the tenantUser's token and (idempotently) provisions
+// their Redis ACL. On failure it has already written the error response.
+func (h *redisAccessHandler) provisionUser(c *gin.Context, u *models.User) (osUser, token string, ok bool) {
+	ctx := c.Request.Context()
+	userID := u.ID
 	osUser = *u.Username
 
 	salt := ""
