@@ -8,6 +8,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"math/big"
+	"strings"
 	"testing"
 	"time"
 )
@@ -75,5 +76,55 @@ func TestCheck(t *testing.T) {
 				t.Errorf("NotAfter not set for a readable cert")
 			}
 		})
+	}
+}
+
+// GH #2166: the panel's self-signed mail certificate is checked against its
+// own names: the mail row's name and mail.<hostname>.
+func TestCheckNames_Mail(t *testing.T) {
+	now := time.Now()
+	later := now.AddDate(1, 0, 0)
+	names := MailNames("mail.panel.example.com", "panel.example.com")
+	custom := MailNames("mx.example.net", "panel.example.com")
+
+	for _, tc := range []struct {
+		name   string
+		pem    []byte
+		cn     string
+		names  []string
+		want   Action
+		reason string
+	}{
+		{name: "self-signed mail cert, current", pem: makePEM(t, SelfSignOrg, "mail.panel.example.com", names, later), cn: "mail.panel.example.com", names: names, want: UpToDate, reason: "up to date for mail.panel.example.com"},
+		{name: "the hostname cert is not the mail cert", pem: makePEM(t, SelfSignOrg, "panel.example.com", []string{"panel.example.com", "mail.panel.example.com"}, later), cn: "mail.panel.example.com", names: names, want: Regenerate, reason: "CN panel.example.com != mail.panel.example.com"},
+		{name: "custom mail hostname also needs mail.<hostname>", pem: makePEM(t, SelfSignOrg, "mx.example.net", []string{"mx.example.net"}, later), cn: "mx.example.net", names: custom, want: Regenerate, reason: "missing SAN mail.panel.example.com"},
+		{name: "live Let's Encrypt mail cert kept", pem: makePEM(t, "Let's Encrypt", "mail.panel.example.com", []string{"mail.panel.example.com"}, later), cn: "mail.panel.example.com", names: names, want: KeepCA},
+		{name: "expired Let's Encrypt mail cert replaced", pem: makePEM(t, "Let's Encrypt", "mail.panel.example.com", []string{"mail.panel.example.com"}, now.Add(-time.Hour)), cn: "mail.panel.example.com", names: names, want: Regenerate, reason: "cert issued by Let's Encrypt expired"},
+		{name: "missing", pem: nil, cn: "mail.panel.example.com", names: names, want: Regenerate, reason: "cert missing or unreadable"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			v := CheckNames(tc.pem, tc.cn, tc.names, now)
+			if v.Action != tc.want || (tc.reason != "" && v.Reason != tc.reason) {
+				t.Errorf("got %d %q, want %d %q", v.Action, v.Reason, tc.want, tc.reason)
+			}
+		})
+	}
+}
+
+func TestMailNames(t *testing.T) {
+	for _, tc := range []struct{ mail, host, want string }{
+		{"mail.panel.example.com", "panel.example.com", "mail.panel.example.com"},
+		{"mx.example.net", "panel.example.com", "mx.example.net mail.panel.example.com"},
+		// JAB-389: a mail cert pinned to the old hostname's name also
+		// covers mail.<new hostname>.
+		{"mail.old.example.com", "panel.example.com", "mail.old.example.com mail.panel.example.com"},
+		{"MX.Example.NET", "Panel.Example.com", "mx.example.net mail.panel.example.com"},
+		{"", "panel.example.com", "mail.panel.example.com"},
+		{"mx.example.net", "", "mx.example.net"},
+		{"", "", ""},
+	} {
+		if got := strings.Join(MailNames(tc.mail, tc.host), " "); got != tc.want {
+			t.Errorf("MailNames(%q, %q) = %q, want %q", tc.mail, tc.host, got, tc.want)
+		}
 	}
 }

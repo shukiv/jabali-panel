@@ -198,8 +198,13 @@ func TestPanelCert_MarkPendingRetry_Hostname(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-// GH #2166: the self-signed state update only touches a row with use_le
-// off, so a reconciler tick can't undo an admin turning Let's Encrypt on.
+// GH #2166: the self-signed state update changes a row only while Let's
+// Encrypt is off for the panel. That is the hostname row's use_le, which
+// governs both certs: the toggle writes only that row, so the mail row's own
+// flag can be stale. The hostname row is locked for the update, so a tick
+// can't undo an admin turning Let's Encrypt on.
+const pcLockHost = `SELECT .use_le. FROM .panel_certificate. WHERE kind = \? LIMIT \? FOR UPDATE`
+
 func TestPanelCert_SetSelfSignedState_OnlyWithLEOff(t *testing.T) {
 	t.Parallel()
 	gdb, mock, raw := newMockDB(t)
@@ -208,11 +213,50 @@ func TestPanelCert_SetSelfSignedState_OnlyWithLEOff(t *testing.T) {
 
 	exp := time.Date(2026, 12, 25, 21, 45, 53, 0, time.UTC)
 	mock.ExpectBegin()
-	mock.ExpectExec(`UPDATE .panel_certificate. SET .attempt_count.=\?,.expires_at.=\?,.last_error.=\?,.next_retry_at.=\?,.status.=\?,.updated_at.=\? WHERE kind = \? AND use_le = \?`).
-		WithArgs(0, exp, "", nil, models.PanelCertStatusIssued, sqlmock.AnyArg(), "hostname", false).
+	mock.ExpectQuery(pcLockHost).WithArgs("hostname", 1).
+		WillReturnRows(sqlmock.NewRows([]string{"use_le"}).AddRow(false))
+	mock.ExpectExec(`UPDATE .panel_certificate. SET .attempt_count.=\?,.expires_at.=\?,.last_error.=\?,.next_retry_at.=\?,.status.=\?,.updated_at.=\? WHERE kind = \?$`).
+		WithArgs(0, exp, "", nil, models.PanelCertStatusIssued, sqlmock.AnyArg(), "hostname").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
 	require.NoError(t, repo.SetSelfSignedState(context.Background(), models.PanelCertKindHostname, models.PanelCertStatusIssued, &exp))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// The mail row follows its cert with Let's Encrypt off even when its own
+// use_le is stale: the hostname row's flag decides.
+func TestPanelCert_SetSelfSignedState_MailFollowsTheHostnameFlag(t *testing.T) {
+	t.Parallel()
+	gdb, mock, raw := newMockDB(t)
+	defer raw.Close()
+	repo := repository.NewPanelCertificateRepository(gdb)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(pcLockHost).WithArgs("hostname", 1).
+		WillReturnRows(sqlmock.NewRows([]string{"use_le"}).AddRow(false))
+	mock.ExpectExec(`UPDATE .panel_certificate. SET .attempt_count.=\?,.last_error.=\?,.next_retry_at.=\?,.status.=\?,.updated_at.=\? WHERE kind = \?$`).
+		WithArgs(0, "", nil, models.PanelCertStatusSelfSigned, sqlmock.AnyArg(), "mail").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	require.NoError(t, repo.SetSelfSignedState(context.Background(), models.PanelCertKindMail, models.PanelCertStatusSelfSigned, nil))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// With Let's Encrypt on, nothing is written.
+func TestPanelCert_SetSelfSignedState_LEOnWritesNothing(t *testing.T) {
+	t.Parallel()
+	gdb, mock, raw := newMockDB(t)
+	defer raw.Close()
+	repo := repository.NewPanelCertificateRepository(gdb)
+
+	for _, kind := range []string{models.PanelCertKindHostname, models.PanelCertKindMail} {
+		mock.ExpectBegin()
+		mock.ExpectQuery(pcLockHost).WithArgs("hostname", 1).
+			WillReturnRows(sqlmock.NewRows([]string{"use_le"}).AddRow(true))
+		mock.ExpectCommit()
+		require.NoError(t, repo.SetSelfSignedState(context.Background(), kind, models.PanelCertStatusSelfSigned, nil))
+	}
 	require.NoError(t, mock.ExpectationsWereMet())
 }

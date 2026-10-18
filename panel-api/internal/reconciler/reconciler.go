@@ -132,6 +132,9 @@ type Reconciler struct {
 	// warnings so a mid-rollout agent (missing ssl.panel.selfsign) does not
 	// log at Warn every tick.
 	panelSelfSignLastErr string
+	// panelMailSelfSignLastErr does the same for the GH #2166 self-signed
+	// panel mail cert (ssl.panel.mail_selfsign).
+	panelMailSelfSignLastErr string
 	// mailHostSwitchover is the JAB-390 panel mail hostname switchover
 	// request. Nil disables the switchover engine (the JMAP URL assert
 	// still runs).

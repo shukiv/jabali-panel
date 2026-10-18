@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 )
@@ -28,8 +29,8 @@ type PanelCertificateRepository interface {
 	MarkPendingRetryKind(ctx context.Context, kind, errMsg string, retryAfter time.Duration) error
 	// SetSelfSignedState brings a row in line with self-signed mode (GH
 	// #2166, models.SelfSignedState): status, expires_at when non-nil, and
-	// no Let's Encrypt retry state. It changes the row only while its use_le
-	// is off, so it can't undo an admin turning Let's Encrypt on.
+	// no Let's Encrypt retry state. It changes the row only while Let's
+	// Encrypt is off for the panel, so it can't undo an admin turning it on.
 	SetSelfSignedState(ctx context.Context, kind, status string, expiresAt *time.Time) error
 }
 
@@ -241,8 +242,23 @@ func (r *panelCertRepo) SetSelfSignedState(ctx context.Context, kind, status str
 	if expiresAt != nil {
 		updates["expires_at"] = expiresAt.UTC()
 	}
-	return r.db.WithContext(ctx).
-		Model(&models.PanelCertificate{}).
-		Where("kind = ? AND use_le = ?", kindOrHostname(kind), false).
-		Updates(updates).Error
+	// The hostname row's use_le governs both certs: the toggle writes only
+	// that row, so the mail row's own flag can be stale. Locking it holds
+	// back a toggle until the update commits, and a toggle that committed
+	// first is seen here.
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var host models.PanelCertificate
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Select("use_le").
+			Where("kind = ?", models.PanelCertKindHostname).
+			Take(&host).Error; err != nil {
+			return err
+		}
+		if host.UseLE {
+			return nil
+		}
+		return tx.Model(&models.PanelCertificate{}).
+			Where("kind = ?", kindOrHostname(kind)).
+			Updates(updates).Error
+	})
 }

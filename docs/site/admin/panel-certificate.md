@@ -49,7 +49,13 @@ A Let's Encrypt certificate that is still valid when you turn Let's Encrypt off 
 
 Behind a Cloudflare proxy, set Cloudflare's SSL/TLS mode to **Full**: Full (strict) doesn't accept a self-signed certificate.
 
-The mail certificate's button stays **Issue / retry**, a Let's Encrypt request. `mail.<hostname>` can't be proxied, so it can have a Let's Encrypt certificate while the panel hostname is proxied.
+### The mail certificate
+
+The mail certificate follows the same switch. With Let's Encrypt off, and email enabled on the panel hostname, the panel serves a self-signed certificate for the mail name (`mail.<hostname>`, or the custom mail hostname, plus `mail.<hostname>`). It has its own key, separate from the panel hostname's. Webmail serves it, and so does the mail server on IMAPS and submission. Before this, a panel that never had a Let's Encrypt mail certificate left the mail server on a built-in certificate named `localhost`, which mail apps reject.
+
+The mail card's button is **Regenerate self-signed** too, with the same rules: it writes a new certificate only when the current one no longer fits the mail names or has expired, and a Let's Encrypt certificate that is still valid is kept until it expires. After writing one, the mail server restarts to load it (open IMAP connections reconnect), and mail apps ask you to accept the new certificate. Compare its SHA-256 fingerprint on the card with the one your mail app shows.
+
+With email off on the panel hostname, nothing serves the mail name, and its certificate is left alone.
 
 ## Operator notes
 

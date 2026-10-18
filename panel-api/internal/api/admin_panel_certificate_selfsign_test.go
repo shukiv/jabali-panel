@@ -73,13 +73,13 @@ func (m *memPanelCerts) MarkPendingRetryKind(_ context.Context, kind, errMsg str
 	return nil
 }
 
-// SetSelfSignedState mirrors the repository: it changes only a row whose
-// use_le is off.
+// SetSelfSignedState mirrors the repository: it changes a row only while
+// Let's Encrypt is off for the panel, i.e. the hostname row's use_le.
 func (m *memPanelCerts) SetSelfSignedState(_ context.Context, kind, status string, expiresAt *time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	row := m.rows[kind]
-	if row == nil || row.UseLE {
+	row, host := m.rows[kind], m.rows[models.PanelCertKindHostname]
+	if row == nil || host == nil || host.UseLE {
 		return nil
 	}
 	row.Status, row.LastError, row.AttemptCount, row.NextRetryAt = status, "", 0, nil
@@ -355,10 +355,112 @@ func TestPanelCertIssue_LEOffNoAgent(t *testing.T) {
 	}
 }
 
-// Unchanged: the mail cert stays a Let's Encrypt action with the panel's
-// Let's Encrypt off (mail.<hostname> can't sit behind an HTTP proxy).
-func TestPanelCertIssue_LEOffMailStillUsesLetsEncrypt(t *testing.T) {
+// mailFixture: the reporter's setup with Let's Encrypt off for the panel.
+// The mail row's own use_le is on (stale: the toggle writes only the
+// hostname row, which governs both certs), and its last Let's Encrypt
+// attempt failed.
+func mailFixture(t *testing.T, mailCertPath string) *panelCertFixture {
+	t.Helper()
 	f := newPanelCertFixture(t, panelCertOpts{})
+	retry := time.Now().Add(time.Hour)
+	mail := f.certs.rows[models.PanelCertKindMail]
+	mail.UseLE, mail.CertPEMPath = true, mailCertPath
+	mail.Status, mail.LastError, mail.AttemptCount, mail.NextRetryAt =
+		models.PanelCertStatusPendingACMERetry, "not routable: dns points elsewhere", 2, &retry
+	return f
+}
+
+// GH #2166: the mail cert follows the toggle. With Let's Encrypt off for the
+// panel, its action regenerates the self-signed mail cert: no public DNS, no
+// Let's Encrypt, whatever the mail row's own stale use_le says.
+func TestPanelCertIssue_LEOffMailRegeneratesSelfSigned(t *testing.T) {
+	f := mailFixture(t, filepath.Join(t.TempDir(), "panel-mail.crt"))
+	rec, body := f.issue(t, "mail")
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("want 202, got %d %s", rec.Code, rec.Body.String())
+	}
+	if m := f.waitCall(2 * time.Second); m != "ssl.panel.mail_selfsign" {
+		t.Fatalf("agent call %q, want ssl.panel.mail_selfsign", m)
+	}
+	f.agent.mu.Lock()
+	names, _ := json.Marshal(f.agent.params[0]["names"])
+	f.agent.mu.Unlock()
+	if string(names) != `["mail.panel.example.com"]` {
+		t.Errorf("names %s", names)
+	}
+	if body["self_signed"] != true || body["regenerating"] != true ||
+		!strings.Contains(detail(body), "Regenerating the self-signed mail certificate for mail.panel.example.com") {
+		t.Errorf("body %v", body)
+	}
+	if f.lookup.count() != 0 || len(f.certs.pendingKind) != 0 {
+		t.Errorf("Let's Encrypt path ran: lookups=%d pending=%v", f.lookup.count(), f.certs.pendingKind)
+	}
+	mail := f.certs.get(models.PanelCertKindMail)
+	if mail.Status != models.PanelCertStatusSelfSigned || mail.LastError != "" || mail.NextRetryAt != nil || mail.AttemptCount != 0 {
+		t.Errorf("mail row kept its Let's Encrypt state: %+v", mail)
+	}
+}
+
+// A custom mail hostname (JAB-390) is covered along with mail.<hostname>.
+func TestPanelCertIssue_LEOffMailCustomName(t *testing.T) {
+	f := mailFixture(t, filepath.Join(t.TempDir(), "panel-mail.crt"))
+	f.certs.rows[models.PanelCertKindMail].Hostname = "mx.example.net"
+	if rec, _ := f.issue(t, "mail"); rec.Code != http.StatusAccepted {
+		t.Fatalf("want 202, got %d", rec.Code)
+	}
+	f.waitCall(2 * time.Second)
+	f.agent.mu.Lock()
+	names, _ := json.Marshal(f.agent.params[0]["names"])
+	f.agent.mu.Unlock()
+	if string(names) != `["mx.example.net","mail.panel.example.com"]` {
+		t.Errorf("names %s", names)
+	}
+}
+
+func TestPanelCertIssue_LEOffMailKeepsLiveLECert(t *testing.T) {
+	exp := time.Now().AddDate(0, 2, 0).UTC().Truncate(time.Second)
+	f := mailFixture(t, writePanelCertPEM(t, "Let's Encrypt", "mail.panel.example.com", []string{"mail.panel.example.com"}, exp))
+	rec, body := f.issue(t, "mail")
+	if rec.Code != http.StatusOK || body["regenerating"] != false {
+		t.Fatalf("want 200 kept, got %d %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(detail(body), "Mail serves a certificate issued by Let's Encrypt. It is kept until it expires") ||
+		body["expires_at"] != exp.Format(time.RFC3339) {
+		t.Errorf("body %v", body)
+	}
+	if m := f.waitCall(100 * time.Millisecond); m != "" {
+		t.Errorf("agent called (%s) for a live CA cert", m)
+	}
+	mail := f.certs.get(models.PanelCertKindMail)
+	if mail.Status != models.PanelCertStatusIssued || mail.ExpiresAt == nil || !mail.ExpiresAt.Equal(exp) || mail.LastError != "" {
+		t.Errorf("mail row %+v, want issued with the cert's expiry", mail)
+	}
+}
+
+func TestPanelCertIssue_LEOffMailAlreadySelfSigned(t *testing.T) {
+	f := mailFixture(t, writePanelCertPEM(t, "Jabali Panel", "mail.panel.example.com", []string{"mail.panel.example.com"}, time.Now().AddDate(10, 0, 0)))
+	rec, body := f.issue(t, "mail")
+	if rec.Code != http.StatusOK || !strings.Contains(detail(body), "Mail already serves a self-signed certificate for mail.panel.example.com") {
+		t.Fatalf("got %d %s", rec.Code, rec.Body.String())
+	}
+	if m := f.waitCall(100 * time.Millisecond); m != "" {
+		t.Errorf("agent called (%s) for an up-to-date cert", m)
+	}
+}
+
+func TestPanelCertIssue_LEOffMailNoAgent(t *testing.T) {
+	f := mailFixture(t, filepath.Join(t.TempDir(), "panel-mail.crt"))
+	f.router = newPanelCertFixture(t, panelCertOpts{noAgent: true}).router
+	rec, _ := f.issue(t, "mail")
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("want 503, got %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// Unchanged: with Let's Encrypt on, the mail issue is a Let's Encrypt
+// request that checks routability.
+func TestPanelCertIssue_LEOnMailStillUsesLetsEncrypt(t *testing.T) {
+	f := newPanelCertFixture(t, panelCertOpts{useLE: true})
 	rec, _ := f.issue(t, "mail")
 	if rec.Code != http.StatusFailedDependency {
 		t.Fatalf("want 424 not routable, got %d %s", rec.Code, rec.Body.String())

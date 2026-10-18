@@ -115,11 +115,12 @@ func (f *fakePanelCertRepo) MarkPendingRetryKind(context.Context, string, string
 	return nil
 }
 
-// SetSelfSignedState mirrors the repository: it changes only a row whose
-// use_le is off.
+// SetSelfSignedState mirrors the repository: it changes a row only while
+// Let's Encrypt is off for the panel, i.e. the hostname row's use_le.
 func (f *fakePanelCertRepo) SetSelfSignedState(_ context.Context, kind, status string, expiresAt *time.Time) error {
 	row, ok := f.rows[kind]
-	if !ok || row.UseLE {
+	host, hok := f.rows[models.PanelCertKindHostname]
+	if !ok || !hok || host.UseLE {
 		return nil
 	}
 	row.Status, row.LastError, row.AttemptCount, row.NextRetryAt = status, "", 0, nil

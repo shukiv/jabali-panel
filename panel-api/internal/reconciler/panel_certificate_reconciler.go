@@ -3,6 +3,7 @@ package reconciler
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/panelcert"
@@ -51,6 +52,17 @@ func (r *Reconciler) reconcilePanelCertificate(ctx context.Context) {
 		// listener caches the cert and must restart to serve the new one)
 		// can kill this reconciler mid-RPC without stranding a row status:
 		// the next tick reads the regenerated cert and the row follows it.
+		//
+		// The mail cert follows the toggle too (GH #2166), when the panel
+		// hostname serves mail. It goes first: the hostname's regenerate
+		// restarts the panel, which cuts this tick short.
+		if r.panelServesMail(ctx, settings.Hostname) {
+			if mailRow, merr := r.panelCerts.GetByKind(ctx, models.PanelCertKindMail); merr == nil {
+				r.reconcilePanelMailSelfSignedCert(ctx, mailRow, settings.Hostname)
+			} else {
+				r.log.Warn("panel-cert reconcile load row", "kind", models.PanelCertKindMail, "error", merr)
+			}
+		}
 		r.reconcilePanelSelfSignedCert(ctx, hostRow, settings.Hostname, settings.PublicIPv4)
 		return
 	}
@@ -65,12 +77,7 @@ func (r *Reconciler) reconcilePanelCertificate(ctx context.Context) {
 	// default: email_enabled=0) has no mail.<hostname> DNS, so the mail cert
 	// parks in pending_acme_retry forever and shows as a perpetual "processing"
 	// task (GH #295). Enabling email on the panel hostname turns it back on.
-	panelMailEnabled := false
-	if r.domains != nil {
-		if d, derr := r.domains.FindByName(ctx, settings.Hostname); derr == nil && d != nil {
-			panelMailEnabled = d.EmailEnabled
-		}
-	}
+	panelMailEnabled := r.panelServesMail(ctx, settings.Hostname)
 
 	for _, kind := range []string{models.PanelCertKindHostname, models.PanelCertKindMail} {
 		row, gerr := r.panelCerts.GetByKind(ctx, kind)
@@ -95,6 +102,16 @@ func (r *Reconciler) reconcilePanelCertificate(ctx context.Context) {
 		}
 		r.reconcileOnePanelCert(ctx, kind, row, settings.AdminEmail, settings.PublicIPv4)
 	}
+}
+
+// panelServesMail reports whether the panel hostname serves mail: email is
+// enabled on its domain, the same gate the webmail vhost uses (GH #295).
+func (r *Reconciler) panelServesMail(ctx context.Context, hostname string) bool {
+	if r.domains == nil {
+		return false
+	}
+	d, err := r.domains.FindByName(ctx, hostname)
+	return err == nil && d != nil && d.EmailEnabled
 }
 
 // reconcileOnePanelCert runs the ADR-0066 state machine for one kind.
@@ -206,8 +223,8 @@ const panelSelfSignOrgMarker = panelcert.SelfSignOrg
 // panel's current hostname while the panel is in self-signed mode (JAB-389).
 // It reads and parses the cert locally — no agent round-trip to DECIDE — and
 // dispatches ssl.panel.selfsign only when the cert has drifted from hostname.
-// It is stateless with respect to the panel_certificate row (see the caller):
-// the on-disk cert is the only convergence signal.
+// The on-disk cert is the only convergence signal: the panel_certificate row
+// is set from it, never from the dispatch's outcome (see the caller).
 func (r *Reconciler) reconcilePanelSelfSignedCert(ctx context.Context, row *models.PanelCertificate, hostname, publicIPv4 string) {
 	if hostname == "" {
 		return
@@ -250,6 +267,53 @@ func (r *Reconciler) reconcilePanelSelfSignedCert(ctx context.Context, row *mode
 	}
 	r.panelSelfSignLastErr = ""
 	r.log.Info("panel self-signed cert regen dispatched", "hostname", hostname, "reason", reason)
+}
+
+// reconcilePanelMailSelfSignedCert does for the panel mail cert what
+// reconcilePanelSelfSignedCert does for the hostname cert (GH #2166): with
+// Let's Encrypt off the mail cert follows the toggle too. It is checked
+// against panelcert.MailNames, the row follows it, and ssl.panel.mail_selfsign
+// is dispatched only when it must be regenerated, so Stalwart is never
+// restarted on a tick with nothing to do. A live CA cert is kept until it
+// expires.
+func (r *Reconciler) reconcilePanelMailSelfSignedCert(ctx context.Context, row *models.PanelCertificate, hostname string) {
+	names := panelcert.MailNames(row.Hostname, hostname)
+	if len(names) == 0 {
+		return
+	}
+	certPath := row.CertPEMPath
+	if certPath == "" {
+		certPath = panelcert.DefaultMailCertPath
+	}
+	data, err := r.readCertFile(certPath)
+	if err != nil {
+		data = nil
+	}
+	v := panelcert.CheckNames(data, names[0], names, time.Now())
+	if r.panelCerts != nil {
+		if status, exp, changed := models.SelfSignedState(row, v); changed {
+			if err := r.panelCerts.SetSelfSignedState(ctx, models.PanelCertKindMail, status, exp); err != nil {
+				r.log.Warn("panel mail self-signed cert: row update failed", "error", err)
+			}
+		}
+	}
+	if v.Action != panelcert.Regenerate || r.agent == nil {
+		return
+	}
+	if _, err := r.agent.Call(ctx, "ssl.panel.mail_selfsign", map[string]any{"names": names}); err != nil {
+		// Debounced like the hostname dispatch: an old agent without the
+		// verb during a rollout fails every tick.
+		key := strings.Join(names, ",") + "|" + err.Error()
+		if r.panelMailSelfSignLastErr == key {
+			r.log.Debug("panel mail self-signed cert regen still failing", "names", names, "error", err)
+			return
+		}
+		r.panelMailSelfSignLastErr = key
+		r.log.Warn("panel mail self-signed cert regen dispatch failed", "names", names, "error", err)
+		return
+	}
+	r.panelMailSelfSignLastErr = ""
+	r.log.Info("panel mail self-signed cert regenerated", "names", names, "reason", v.Reason)
 }
 
 // panelSelfSignedCertDrifted reports whether the self-signed panel cert at

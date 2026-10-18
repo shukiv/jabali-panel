@@ -1,7 +1,7 @@
 // PanelSSLSelfSign.test.tsx — GH #2166. With "Use Let's Encrypt for the
-// panel" off, the hostname cert's action regenerates the self-signed cert
+// panel" off, each panel cert's action regenerates its self-signed cert
 // instead of asking Let's Encrypt, on SSL Manager → Panel SSL, where the
-// panel's certs are managed. The mail cert stays a Let's Encrypt action.
+// panel's certs are managed. The hostname row's use_le governs both certs.
 // Server Settings → Panel SSL only shows their status and links there.
 // apiClient and the toasts are mocked; the real AntD Popconfirm renders.
 import { App } from "antd";
@@ -46,8 +46,10 @@ function cert(kind: "hostname" | "mail", useLE: boolean) {
   };
 }
 
-function renderWith(node: React.ReactNode, useLE: boolean) {
-  mocked.get.mockResolvedValue({ status: 200, data: { certs: [cert("hostname", useLE), cert("mail", useLE)] } });
+// mailUseLE is the mail row's own flag, which the toggle doesn't write: it
+// can disagree with the hostname row's.
+function renderWith(node: React.ReactNode, useLE: boolean, mailUseLE = useLE) {
+  mocked.get.mockResolvedValue({ status: 200, data: { certs: [cert("hostname", useLE), cert("mail", mailUseLE)] } });
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <MemoryRouter>
@@ -96,7 +98,8 @@ for (const [name, node] of [["SSL Manager → Panel SSL", <PanelSSLTab key="tab"
       });
       renderWith(node, false);
 
-      fireEvent.click(await screen.findByRole("button", { name: /Regenerate self-signed/ }));
+      // The first card is the hostname's.
+      fireEvent.click((await screen.findAllByRole("button", { name: /Regenerate self-signed/ }))[0]);
       expect(await screen.findByText("Regenerate the self-signed certificate?")).toBeInTheDocument();
       expect(screen.getByText(/your browser asks you to accept the new certificate/)).toBeInTheDocument();
       fireEvent.click(screen.getByRole("button", { name: "OK" }));
@@ -105,12 +108,32 @@ for (const [name, node] of [["SSL Manager → Panel SSL", <PanelSSLTab key="tab"
       await waitFor(() =>
         expect(toastOK).toHaveBeenCalledWith("Regenerating the self-signed certificate for panel.example.com.", 10),
       );
-      // The mail cert is still a Let's Encrypt action.
-      expect(screen.getAllByRole("button", { name: /Issue \/ retry/ })).toHaveLength(1);
+      // The mail cert follows the toggle too: no Let's Encrypt action left.
+      expect(screen.queryByRole("button", { name: /Issue \/ retry/ })).not.toBeInTheDocument();
     });
 
-    it("with Let's Encrypt on, both certs are Let's Encrypt actions", async () => {
-      renderWith(node, true);
+    it("with Let's Encrypt off, the mail cert regenerates its self-signed cert, whatever its own stale flag", async () => {
+      mocked.post.mockResolvedValue({
+        status: 202,
+        data: { self_signed: true, regenerating: true, detail: "Regenerating the self-signed mail certificate for mail.panel.example.com." },
+      });
+      renderWith(node, false, true);
+
+      const buttons = await screen.findAllByRole("button", { name: /Regenerate self-signed/ });
+      expect(buttons).toHaveLength(2);
+      fireEvent.click(buttons[1]);
+      expect(await screen.findByText("Regenerate the self-signed mail certificate?")).toBeInTheDocument();
+      expect(screen.getByText(/Webmail and the mail server then serve it/)).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "OK" }));
+
+      await waitFor(() => expect(mocked.post).toHaveBeenCalledWith("/admin/panel-certificate/issue?kind=mail"));
+      await waitFor(() =>
+        expect(toastOK).toHaveBeenCalledWith("Regenerating the self-signed mail certificate for mail.panel.example.com.", 10),
+      );
+    });
+
+    it("with Let's Encrypt on, both certs are Let's Encrypt actions, whatever the mail row's stale flag", async () => {
+      renderWith(node, true, false);
       expect(await screen.findAllByRole("button", { name: /Issue \/ retry/ })).toHaveLength(2);
       expect(screen.queryByRole("button", { name: /Regenerate self-signed/ })).not.toBeInTheDocument();
     });

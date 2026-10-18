@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/services"
 )
 
 func selfSignTestLogger() *slog.Logger {
@@ -238,5 +239,141 @@ func TestPanelSelfSignedDrift_ExpiredCoveringCertDispatches(t *testing.T) {
 	r.reconcilePanelSelfSignedCert(context.Background(), row, "host.example.com", "")
 	if n, _ := countCalls(fa, "ssl.panel.selfsign"); n != 1 {
 		t.Fatalf("expected dispatch for expired cert, got %d", n)
+	}
+}
+
+// mailSelfSignReconciler: Let's Encrypt off for the panel (the hostname row's
+// use_le), the hostname cert current, and the given mail cert on disk. The
+// mail row's own use_le is on (stale: the toggle writes only the hostname
+// row) and its last Let's Encrypt attempt failed.
+func mailSelfSignReconciler(t *testing.T, mailPEM []byte, emailOnPanel bool) (*Reconciler, *fakeAgent, *fakePanelCertRepo) {
+	t.Helper()
+	hostPEM := makeSelfSignPEM(t, panelSelfSignOrgMarker, "host.example.com",
+		[]string{"host.example.com", "mail.host.example.com"}, time.Now().AddDate(5, 0, 0))
+	retry := time.Now().Add(time.Hour)
+	repo := &fakePanelCertRepo{rows: map[string]*models.PanelCertificate{
+		models.PanelCertKindHostname: {Kind: models.PanelCertKindHostname, Hostname: "host.example.com",
+			CertPEMPath: "/etc/jabali/tls/panel.crt", Status: models.PanelCertStatusSelfSigned},
+		models.PanelCertKindMail: {Kind: models.PanelCertKindMail, Hostname: "mail.host.example.com", UseLE: true,
+			CertPEMPath: "/etc/jabali/tls/panel-mail.crt", Status: models.PanelCertStatusPendingACMERetry,
+			LastError: "not routable: dns points elsewhere", AttemptCount: 2, NextRetryAt: &retry},
+	}}
+	fa := &fakeAgent{}
+	r := &Reconciler{
+		agent:                fa,
+		log:                  selfSignTestLogger(),
+		panelCerts:           repo,
+		panelCertRoutability: &services.PanelCertRoutability{},
+		serverSettings:       &fakeSettingsRepo{srv: &models.ServerSettings{Hostname: "host.example.com", PublicIPv4: "203.0.113.10"}},
+		domains: &fakeDomainRepo{domains: map[string]*models.Domain{
+			"d1": {ID: "d1", Name: "host.example.com", IsPanelPrimary: true, EmailEnabled: emailOnPanel},
+		}},
+		readCertFile: func(path string) ([]byte, error) {
+			switch path {
+			case "/etc/jabali/tls/panel.crt":
+				return hostPEM, nil
+			case "/etc/jabali/tls/panel-mail.crt":
+				if mailPEM == nil {
+					return nil, os.ErrNotExist
+				}
+				return mailPEM, nil
+			}
+			return nil, os.ErrNotExist
+		},
+	}
+	return r, fa, repo
+}
+
+// GH #2166: the mail cert follows the toggle. With Let's Encrypt off, a
+// missing mail cert is regenerated self-signed for the mail names, and the
+// mail row loses its Let's Encrypt retry state, whatever its own use_le.
+func TestPanelMailSelfSigned_LEOffRegenerates(t *testing.T) {
+	r, fa, repo := mailSelfSignReconciler(t, nil, true)
+	r.reconcilePanelCertificate(context.Background())
+
+	n, params := countCalls(fa, "ssl.panel.mail_selfsign")
+	if n != 1 {
+		t.Fatalf("ssl.panel.mail_selfsign dispatched %d times, want 1", n)
+	}
+	if names, _ := params["names"].([]string); len(names) != 1 || names[0] != "mail.host.example.com" {
+		t.Errorf("names %v", params["names"])
+	}
+	if n, _ := countCalls(fa, "ssl.panel.selfsign"); n != 0 {
+		t.Errorf("the current hostname cert was regenerated")
+	}
+	mail := repo.rows[models.PanelCertKindMail]
+	if mail.Status != models.PanelCertStatusSelfSigned || mail.LastError != "" || mail.NextRetryAt != nil || mail.AttemptCount != 0 {
+		t.Errorf("mail row %+v, want self_signed with no Let's Encrypt retry state", mail)
+	}
+}
+
+// A live Let's Encrypt mail cert is kept until it expires; the row shows it.
+func TestPanelMailSelfSigned_KeepsLiveLECert(t *testing.T) {
+	exp := time.Now().AddDate(0, 2, 0)
+	r, fa, repo := mailSelfSignReconciler(t,
+		makeSelfSignPEM(t, "Let's Encrypt", "mail.host.example.com", []string{"mail.host.example.com"}, exp), true)
+	r.reconcilePanelCertificate(context.Background())
+
+	if n, _ := countCalls(fa, "ssl.panel.mail_selfsign"); n != 0 {
+		t.Fatalf("dispatched for a live CA cert")
+	}
+	mail := repo.rows[models.PanelCertKindMail]
+	if mail.Status != models.PanelCertStatusIssued || mail.ExpiresAt == nil || mail.ExpiresAt.Sub(exp).Abs() > 2*time.Second || mail.LastError != "" {
+		t.Errorf("mail row %+v, want issued with the kept cert's expiry", mail)
+	}
+}
+
+// No churn: a current self-signed mail cert means no dispatch, so Stalwart
+// isn't restarted every tick.
+func TestPanelMailSelfSigned_CoveredNoDispatch(t *testing.T) {
+	r, fa, _ := mailSelfSignReconciler(t,
+		makeSelfSignPEM(t, panelSelfSignOrgMarker, "mail.host.example.com", []string{"mail.host.example.com"}, time.Now().AddDate(5, 0, 0)), true)
+	r.reconcilePanelCertificate(context.Background())
+	if n, _ := countCalls(fa, "ssl.panel.mail_selfsign"); n != 0 {
+		t.Fatalf("dispatched %d times for a current cert", n)
+	}
+}
+
+// GH #295 gate: a panel hostname without email serves no mail, so its mail
+// cert and row are left alone.
+func TestPanelMailSelfSigned_SkipsWhenThePanelDoesNoMail(t *testing.T) {
+	r, fa, repo := mailSelfSignReconciler(t, nil, false)
+	r.reconcilePanelCertificate(context.Background())
+	if n, _ := countCalls(fa, "ssl.panel.mail_selfsign"); n != 0 {
+		t.Fatalf("dispatched with email off on the panel hostname")
+	}
+	if repo.rows[models.PanelCertKindMail].Status != models.PanelCertStatusPendingACMERetry {
+		t.Errorf("mail row changed: %+v", repo.rows[models.PanelCertKindMail])
+	}
+}
+
+// The mail cert goes first: the hostname's regenerate restarts the panel,
+// which cuts the tick short.
+func TestPanelMailSelfSigned_BeforeTheHostname(t *testing.T) {
+	r, fa, _ := mailSelfSignReconciler(t, nil, true)
+	r.readCertFile = func(string) ([]byte, error) { return nil, os.ErrNotExist }
+	r.reconcilePanelCertificate(context.Background())
+
+	fa.mu.Lock()
+	defer fa.mu.Unlock()
+	var order []string
+	for _, c := range fa.calls {
+		order = append(order, c.method)
+	}
+	if len(order) != 2 || order[0] != "ssl.panel.mail_selfsign" || order[1] != "ssl.panel.selfsign" {
+		t.Fatalf("calls %v, want the mail cert first", order)
+	}
+}
+
+// With Let's Encrypt on, the self-signed path doesn't run for mail.
+func TestPanelMailSelfSigned_LEOnNoSelfSign(t *testing.T) {
+	r, fa, repo := mailSelfSignReconciler(t, nil, true)
+	repo.rows[models.PanelCertKindHostname].UseLE = true
+	repo.rows[models.PanelCertKindHostname].Status = models.PanelCertStatusIssued
+	repo.rows[models.PanelCertKindMail].Status = models.PanelCertStatusIssued
+	r.serverSettings = &fakeSettingsRepo{srv: &models.ServerSettings{Hostname: "host.example.com", AdminEmail: "a@example.com"}}
+	r.reconcilePanelCertificate(context.Background())
+	if n, _ := countCalls(fa, "ssl.panel.mail_selfsign"); n != 0 {
+		t.Fatalf("mail self-signed with Let's Encrypt on")
 	}
 }
