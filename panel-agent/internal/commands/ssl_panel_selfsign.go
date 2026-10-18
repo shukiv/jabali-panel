@@ -17,9 +17,11 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/panelcert"
 )
 
 // ssl.panel.selfsign regenerates the panel's self-signed hostname cert at
@@ -38,12 +40,14 @@ import (
 // the panel is in self-signed mode.
 //
 // Invariants ported verbatim from install.sh provision_tls_cert:
-//   - PRESERVE any cert whose issuer Organization is neither empty nor
-//     panelSelfSignOrg ("Jabali Panel"): that is a deployed Let's Encrypt
+//   - PRESERVE any unexpired cert whose issuer Organization is neither empty
+//     nor panelSelfSignOrg ("Jabali Panel"): that is a deployed Let's Encrypt
 //     or custom cert. The 2026-05-09 regression clobbered a live LE cert
 //     with a self-signed one; the reconciler's drift check applies the same
-//     guard, and this handler re-checks so a stale reconciler dispatch can
-//     never destroy a real CA cert.
+//     guard (both use panelcert.Check), and this handler re-checks so a stale
+//     dispatch can never destroy a live CA cert. An EXPIRED CA cert is
+//     replaced (GH #2166): it is no live cert, and with Let's Encrypt off
+//     nothing else would ever replace it.
 //   - No-churn: when the existing self-signed cert already covers the FQDN
 //     (CN + the hostname and mail.<hostname> SANs) and is unexpired, do
 //     nothing — no regenerate, no nginx reload, no panel restart.
@@ -63,7 +67,7 @@ type sslPanelSelfSignResponse struct {
 
 // Overridable in tests.
 var (
-	panelSelfSignCertPath = "/etc/jabali/tls/panel.crt"
+	panelSelfSignCertPath = panelcert.DefaultCertPath
 	panelSelfSignKeyPath  = "/etc/jabali/tls/panel.key"
 	// panelSelfSignReloadFn applies the freshly written cert to the running
 	// services. Seam so unit tests don't spawn systemctl.
@@ -91,7 +95,12 @@ func writePanelHSTSSnippetOff() {
 // self-signed panel cert (matches install.sh's -subj "…/O=Jabali Panel").
 // The preserve-guard keys off this exact string, so it MUST stay in sync
 // with install.sh provision_tls_cert.
-const panelSelfSignOrg = "Jabali Panel"
+const panelSelfSignOrg = panelcert.SelfSignOrg
+
+// panelSelfSignMu serializes ssl.panel.selfsign. The reconciler and the
+// admin's "Regenerate self-signed" action can both dispatch it; two runs at
+// once could write one run's cert next to the other's key.
+var panelSelfSignMu sync.Mutex
 
 // defaultPanelSelfSignReload reloads nginx and restarts jabali-panel.
 //
@@ -141,28 +150,30 @@ func sslPanelSelfSignHandler(ctx context.Context, params json.RawMessage) (any, 
 		ipSANs = append(ipSANs, ip)
 	}
 
-	// Inspect the current cert: preserve a real CA cert; skip a self-signed
-	// cert that already covers the FQDN and is unexpired.
-	if data, err := os.ReadFile(panelSelfSignCertPath); err == nil {
-		if block, _ := pem.Decode(data); block != nil {
-			if cert, perr := x509.ParseCertificate(block.Bytes); perr == nil {
-				if o := panelCertIssuerOrg(cert); o != "" && o != panelSelfSignOrg {
-					return sslPanelSelfSignResponse{
-						Regenerated: false,
-						Reason:      "preserved: cert issued by " + o,
-						CertPath:    panelSelfSignCertPath,
-					}, nil
-				}
-				if panelSelfSignedCertCovers(cert, p.Hostname) && cert.NotAfter.After(time.Now()) {
-					return sslPanelSelfSignResponse{
-						Regenerated: false,
-						Reason:      "up to date for " + p.Hostname,
-						CertPath:    panelSelfSignCertPath,
-						ExpiresAt:   cert.NotAfter.UTC().Format(time.RFC3339),
-					}, nil
-				}
-			}
-		}
+	panelSelfSignMu.Lock()
+	defer panelSelfSignMu.Unlock()
+
+	// Inspect the current cert: preserve a live real-CA cert; skip a
+	// self-signed cert that already covers the FQDN and is unexpired.
+	data, err := os.ReadFile(panelSelfSignCertPath)
+	if err != nil {
+		data = nil
+	}
+	switch v := panelcert.Check(data, p.Hostname, time.Now()); v.Action {
+	case panelcert.KeepCA:
+		return sslPanelSelfSignResponse{
+			Regenerated: false,
+			Reason:      "preserved: cert issued by " + v.Issuer,
+			CertPath:    panelSelfSignCertPath,
+			ExpiresAt:   v.NotAfter.UTC().Format(time.RFC3339),
+		}, nil
+	case panelcert.UpToDate:
+		return sslPanelSelfSignResponse{
+			Regenerated: false,
+			Reason:      v.Reason,
+			CertPath:    panelSelfSignCertPath,
+			ExpiresAt:   v.NotAfter.UTC().Format(time.RFC3339),
+		}, nil
 	}
 
 	expiresAt, err := generatePanelSelfSignedCert(p.Hostname, dnsSANs, ipSANs, panelSelfSignCertPath, panelSelfSignKeyPath)
@@ -197,30 +208,7 @@ func sslPanelSelfSignHandler(ctx context.Context, params json.RawMessage) (any, 
 // panelCertIssuerOrg returns the first issuer Organization of cert, trimmed,
 // or "" when absent. Empty and "Jabali Panel" both mean "our self-signed
 // bootstrap" (regenerable); anything else is a real CA cert to preserve.
-func panelCertIssuerOrg(cert *x509.Certificate) string {
-	if len(cert.Issuer.Organization) > 0 {
-		return strings.TrimSpace(cert.Issuer.Organization[0])
-	}
-	return ""
-}
-
-// panelSelfSignedCertCovers reports whether cert already presents the panel
-// FQDN: CN == hostname AND the hostname + mail.<hostname> SANs are present.
-func panelSelfSignedCertCovers(cert *x509.Certificate, hostname string) bool {
-	if !strings.EqualFold(cert.Subject.CommonName, hostname) {
-		return false
-	}
-	have := make(map[string]struct{}, len(cert.DNSNames))
-	for _, d := range cert.DNSNames {
-		have[strings.ToLower(d)] = struct{}{}
-	}
-	for _, need := range []string{hostname, "mail." + hostname} {
-		if _, ok := have[strings.ToLower(need)]; !ok {
-			return false
-		}
-	}
-	return true
-}
+func panelCertIssuerOrg(cert *x509.Certificate) string { return panelcert.IssuerOrg(cert) }
 
 // generatePanelSelfSignedCert writes an ECDSA P-256 self-signed cert +
 // PKCS#8 key to certPath/keyPath, valid 10 years, Subject CN=cn

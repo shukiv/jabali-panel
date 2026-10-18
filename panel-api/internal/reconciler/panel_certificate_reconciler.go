@@ -2,12 +2,10 @@ package reconciler
 
 import (
 	"context"
-	"crypto/x509"
 	"encoding/json"
-	"encoding/pem"
-	"strings"
 	"time"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/panelcert"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/services"
 )
@@ -200,14 +198,9 @@ func (r *Reconciler) reconcileOnePanelCert(ctx context.Context, kind string, row
 	r.log.Info("panel-cert issued", "kind", kind, "name", name, "expires_at", expiresAt)
 }
 
-
-// panelSelfSignOrgMarker is the issuer Organization our self-signed panel
-// cert carries (ssl.panel.selfsign / install.sh provision_tls_cert stamp
-// "/O=Jabali Panel"). A cert whose issuer Organization is neither empty nor
-// this marker is a real CA cert (Let's Encrypt / custom) and must never be
-// clobbered — the same guard install.sh applies after the 2026-05-09
-// LE-clobber incident.
-const panelSelfSignOrgMarker = "Jabali Panel"
+// panelSelfSignOrgMarker is the issuer Organization of the panel's own
+// self-signed cert (panelcert.SelfSignOrg).
+const panelSelfSignOrgMarker = panelcert.SelfSignOrg
 
 // reconcilePanelSelfSignedCert converges /etc/jabali/tls/panel.crt to the
 // panel's current hostname while the panel is in self-signed mode (JAB-389).
@@ -216,17 +209,28 @@ const panelSelfSignOrgMarker = "Jabali Panel"
 // It is stateless with respect to the panel_certificate row (see the caller):
 // the on-disk cert is the only convergence signal.
 func (r *Reconciler) reconcilePanelSelfSignedCert(ctx context.Context, row *models.PanelCertificate, hostname, publicIPv4 string) {
-	if r.agent == nil || hostname == "" {
+	if hostname == "" {
 		return
 	}
 	certPath := row.CertPEMPath
 	if certPath == "" {
-		certPath = "/etc/jabali/tls/panel.crt"
+		certPath = panelcert.DefaultCertPath
 	}
-	drift, reason := r.panelSelfSignedCertDrifted(certPath, hostname)
-	if !drift {
+	v := r.panelSelfSignedVerdict(certPath, hostname)
+	// GH #2166: the row follows the cert too, so the Panel SSL card doesn't
+	// show a Let's Encrypt retry or error that doesn't apply with Let's
+	// Encrypt off. SetSelfSignedState leaves a row with use_le on alone.
+	if r.panelCerts != nil {
+		if status, exp, changed := models.SelfSignedState(row, v); changed {
+			if err := r.panelCerts.SetSelfSignedState(ctx, models.PanelCertKindHostname, status, exp); err != nil {
+				r.log.Warn("panel self-signed cert: row update failed", "error", err)
+			}
+		}
+	}
+	if v.Action != panelcert.Regenerate || r.agent == nil {
 		return
 	}
+	reason := v.Reason
 	if _, err := r.agent.Call(ctx, "ssl.panel.selfsign", map[string]any{
 		"hostname": hostname,
 		"ip":       publicIPv4,
@@ -250,56 +254,21 @@ func (r *Reconciler) reconcilePanelSelfSignedCert(ctx context.Context, row *mode
 
 // panelSelfSignedCertDrifted reports whether the self-signed panel cert at
 // certPath needs regenerating for hostname, plus a short reason for logging.
-// A missing/unparseable cert drifts (regenerate). A cert issued by a real CA
-// (issuer Organization neither empty nor panelSelfSignOrgMarker) is PRESERVED
-// — never reported as drift — so a stale self-signed dispatch cannot clobber
-// a deployed Let's Encrypt cert.
+// panelcert.Check decides, the same way the admin's "Regenerate self-signed"
+// action and the agent do: a missing, unparseable, mismatched or expired cert
+// drifts. A real CA's cert is PRESERVED until it expires, so a stale
+// self-signed dispatch cannot clobber a live Let's Encrypt cert.
 func (r *Reconciler) panelSelfSignedCertDrifted(certPath, hostname string) (bool, string) {
-	data, err := r.readCertFile(certPath)
-	if err != nil {
-		return true, "cert missing or unreadable"
-	}
-	block, _ := pem.Decode(data)
-	if block == nil {
-		return true, "cert not PEM"
-	}
-	cert, err := x509.ParseCertificate(block.Bytes)
-	if err != nil {
-		return true, "cert unparseable"
-	}
-	if o := panelCertIssuerOrg(cert); o != "" && o != panelSelfSignOrgMarker {
-		return false, ""
-	}
-	if !strings.EqualFold(cert.Subject.CommonName, hostname) {
-		return true, "CN " + cert.Subject.CommonName + " != " + hostname
-	}
-	for _, need := range []string{hostname, "mail." + hostname} {
-		found := false
-		for _, d := range cert.DNSNames {
-			if strings.EqualFold(d, need) {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return true, "missing SAN " + need
-		}
-	}
-	// Expiry symmetry with the agent's no-churn check: an expired self-signed
-	// cert still covering the hostname must self-heal, else the reconciler
-	// would say "no drift" and never ask the agent to regenerate. The fresh
-	// cert passes this check, so there is no per-tick regen loop.
-	if !cert.NotAfter.After(time.Now()) {
-		return true, "cert expired"
-	}
-	return false, ""
+	v := r.panelSelfSignedVerdict(certPath, hostname)
+	return v.Action == panelcert.Regenerate, v.Reason
 }
 
-// panelCertIssuerOrg returns the first issuer Organization of cert, trimmed,
-// or "" when absent.
-func panelCertIssuerOrg(cert *x509.Certificate) string {
-	if len(cert.Issuer.Organization) > 0 {
-		return strings.TrimSpace(cert.Issuer.Organization[0])
+// panelSelfSignedVerdict reads the cert at certPath and classifies it for
+// hostname with panelcert.Check.
+func (r *Reconciler) panelSelfSignedVerdict(certPath, hostname string) panelcert.Verdict {
+	data, err := r.readCertFile(certPath)
+	if err != nil {
+		data = nil
 	}
-	return ""
+	return panelcert.Check(data, hostname, time.Now())
 }

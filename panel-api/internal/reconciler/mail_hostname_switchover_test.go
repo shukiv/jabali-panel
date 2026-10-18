@@ -115,6 +115,21 @@ func (f *fakePanelCertRepo) MarkPendingRetryKind(context.Context, string, string
 	return nil
 }
 
+// SetSelfSignedState mirrors the repository: it changes only a row whose
+// use_le is off.
+func (f *fakePanelCertRepo) SetSelfSignedState(_ context.Context, kind, status string, expiresAt *time.Time) error {
+	row, ok := f.rows[kind]
+	if !ok || row.UseLE {
+		return nil
+	}
+	row.Status, row.LastError, row.AttemptCount, row.NextRetryAt = status, "", 0, nil
+	if expiresAt != nil {
+		exp := *expiresAt
+		row.ExpiresAt = &exp
+	}
+	return nil
+}
+
 // swResolver answers A lookups from a map, both locally and publicly.
 type swResolver map[string]string
 

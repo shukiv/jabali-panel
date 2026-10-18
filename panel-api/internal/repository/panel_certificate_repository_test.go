@@ -197,3 +197,22 @@ func TestPanelCert_MarkPendingRetry_Hostname(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
+
+// GH #2166: the self-signed state update only touches a row with use_le
+// off, so a reconciler tick can't undo an admin turning Let's Encrypt on.
+func TestPanelCert_SetSelfSignedState_OnlyWithLEOff(t *testing.T) {
+	t.Parallel()
+	gdb, mock, raw := newMockDB(t)
+	defer raw.Close()
+	repo := repository.NewPanelCertificateRepository(gdb)
+
+	exp := time.Date(2026, 12, 25, 21, 45, 53, 0, time.UTC)
+	mock.ExpectBegin()
+	mock.ExpectExec(`UPDATE .panel_certificate. SET .attempt_count.=\?,.expires_at.=\?,.last_error.=\?,.next_retry_at.=\?,.status.=\?,.updated_at.=\? WHERE kind = \? AND use_le = \?`).
+		WithArgs(0, exp, "", nil, models.PanelCertStatusIssued, sqlmock.AnyArg(), "hostname", false).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	require.NoError(t, repo.SetSelfSignedState(context.Background(), models.PanelCertKindHostname, models.PanelCertStatusIssued, &exp))
+	require.NoError(t, mock.ExpectationsWereMet())
+}

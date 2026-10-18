@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/gin-gonic/gin"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/panelcert"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/middleware"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
@@ -33,7 +36,10 @@ type AdminPanelCertificateHandlerConfig struct {
 //
 //	GET  /admin/panel-certificate          — current state + routability
 //	POST /admin/panel-certificate/toggle   — flip use_le / staging flags
-//	POST /admin/panel-certificate/issue    — force an immediate attempt
+//	POST /admin/panel-certificate/issue    — force an immediate attempt;
+//	                                         with Let's Encrypt off, the
+//	                                         hostname's regenerates the
+//	                                         self-signed cert (GH #2166)
 //
 // All gated by RequireAdmin. The reconciler picks up state changes
 // on its own tick; toggle/issue endpoints can also synchronously
@@ -131,9 +137,9 @@ func (h *adminPanelCertHandler) toggle(c *gin.Context) {
 	if req.UseLE != nil {
 		row.UseLE = *req.UseLE
 		// Turning off use_le doesn't tear down the existing LE cert
-		// — we leave it in place until expiry, then provision_tls_cert
-		// regenerates self-signed at next install.sh run. Avoids cert
-		// churn for an admin who toggles by accident.
+		// — we leave it in place until expiry, then the reconciler
+		// replaces it with a self-signed one (panelcert.Check, GH
+		// #2166). Avoids cert churn for an admin who toggles by accident.
 		if !*req.UseLE && row.Status == models.PanelCertStatusPendingACMERetry {
 			// Stop the retry loop when admin gives up. Status flips
 			// to self_signed so the reconciler skips it; cert files
@@ -175,10 +181,6 @@ func (h *adminPanelCertHandler) issue(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "missing_hostname", "details": "set Server Settings → General → Hostname first"})
 		return
 	}
-	if settings.AdminEmail == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "missing_admin_email", "details": "set Server Settings → General → Admin email first (required for Let's Encrypt registration)"})
-		return
-	}
 	if _, err := h.cfg.PanelCerts.EnsureDefault(ctx, settings.Hostname); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "panel_cert_load_failed"})
 		return
@@ -186,6 +188,18 @@ func (h *adminPanelCertHandler) issue(c *gin.Context) {
 	row, err := h.cfg.PanelCerts.GetByKind(ctx, kind)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "panel_cert_load_failed", "details": err.Error()})
+		return
+	}
+	// GH #2166: with Let's Encrypt off the panel serves a self-signed
+	// hostname cert, so the hostname's action regenerates it. The mail cert
+	// stays a Let's Encrypt action: mail.<hostname> can't sit behind an HTTP
+	// proxy, so it can be issued while the panel hostname is proxied.
+	if kind == models.PanelCertKindHostname && !row.UseLE {
+		h.selfSign(c, settings, row)
+		return
+	}
+	if settings.AdminEmail == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "missing_admin_email", "details": "set Server Settings → General → Admin email first (required for Let's Encrypt registration)"})
 		return
 	}
 	// Per-kind routability: mail checks mail.<hostname>. A failure
@@ -250,6 +264,82 @@ func (h *adminPanelCertHandler) issue(c *gin.Context) {
 		updated = row
 	}
 	c.JSON(http.StatusOK, updated)
+}
+
+// panelSelfSignResponse answers the hostname's Issue action while Let's
+// Encrypt is off. Detail is for the admin; ExpiresAt is the current cert's
+// expiry when it is kept, for the UI to show in the admin's date format.
+type panelSelfSignResponse struct {
+	SelfSigned   bool   `json:"self_signed"`
+	Regenerating bool   `json:"regenerating"`
+	Detail       string `json:"detail"`
+	ExpiresAt    string `json:"expires_at,omitempty"`
+}
+
+// selfSign is the hostname's Issue action while Let's Encrypt is off (GH
+// #2166). It regenerates the panel's self-signed cert instead of asking Let's
+// Encrypt, so it needs neither public DNS nor an admin email. panelcert.Check
+// decides, as it does for the reconciler and the agent: a live CA cert is
+// kept until it expires, a current self-signed cert is left alone.
+//
+// A regenerate is dispatched detached and answered 202. ssl.panel.selfsign
+// restarts jabali-panel to serve the new cert, and the restart waits for
+// in-flight requests to drain, so a synchronous call would hold this request
+// until the shutdown timeout. The agent reloads on its own context, so the
+// panel stopping mid-call doesn't cut the reload short.
+func (h *adminPanelCertHandler) selfSign(c *gin.Context, settings *models.ServerSettings, row *models.PanelCertificate) {
+	certPath := row.CertPEMPath
+	if certPath == "" {
+		certPath = panelcert.DefaultCertPath
+	}
+	data, err := os.ReadFile(certPath)
+	if err != nil {
+		data = nil
+	}
+	v := panelcert.Check(data, settings.Hostname, time.Now())
+	if v.Action == panelcert.Regenerate && h.cfg.Agent == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "agent_unavailable"})
+		return
+	}
+	// The row loses the Let's Encrypt state a manual attempt left on it
+	// (models.SelfSignedState). SetSelfSignedState leaves a row with use_le
+	// on alone, so a toggle racing this can't be undone.
+	if status, exp, changed := models.SelfSignedState(row, v); changed {
+		if err := h.cfg.PanelCerts.SetSelfSignedState(c.Request.Context(), models.PanelCertKindHostname, status, exp); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "panel_cert_save_failed"})
+			return
+		}
+	}
+
+	host := settings.Hostname
+	switch v.Action {
+	case panelcert.UpToDate:
+		c.JSON(http.StatusOK, panelSelfSignResponse{
+			SelfSigned: true,
+			Detail:     "The panel already serves a self-signed certificate for " + host + ".",
+			ExpiresAt:  v.NotAfter.UTC().Format(time.RFC3339),
+		})
+	case panelcert.KeepCA:
+		c.JSON(http.StatusOK, panelSelfSignResponse{
+			SelfSigned: true,
+			Detail:     "The panel serves a certificate issued by " + v.Issuer + ". It is kept until it expires, then replaced with a self-signed certificate.",
+			ExpiresAt:  v.NotAfter.UTC().Format(time.RFC3339),
+		})
+	default:
+		agentClient, ip := h.cfg.Agent, settings.PublicIPv4
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+			defer cancel()
+			if _, err := agentClient.Call(ctx, "ssl.panel.selfsign", map[string]any{"hostname": host, "ip": ip}); err != nil {
+				slog.Warn("panel self-signed cert regen failed", "hostname", host, "reason", v.Reason, "error", err)
+			}
+		}()
+		c.JSON(http.StatusAccepted, panelSelfSignResponse{
+			SelfSigned:   true,
+			Regenerating: true,
+			Detail:       "Regenerating the self-signed certificate for " + host + ". The panel restarts in a few seconds to serve it: reload the page, then accept the new certificate in your browser.",
+		})
+	}
 }
 
 // errPanelCertNoSettings is exported for the reconciler's logging path

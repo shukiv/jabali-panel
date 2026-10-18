@@ -8,13 +8,20 @@ import { Alert, Button, Card, Popconfirm, Space, Switch, Tooltip, Typography } f
 import { ReloadOutlined } from "@icons";
 import { feedback } from "../../lib/feedback"; // GH #970: themed toasts
 import {
+  isPanelSelfSignResult,
   type PanelCertKind,
   type PanelCertificate,
   usePanelCertificate,
   usePanelCertificateIssue,
   usePanelCertificateToggle,
 } from "../../hooks/usePanelCertificate";
-import { panelCertExpiryHint, panelCertStatusTag } from "./panelCertStatus";
+import {
+  panelCertActionConfirm,
+  panelCertActionLabel,
+  panelCertExpiryHint,
+  panelCertIssueMessage,
+  panelCertStatusTag,
+} from "./panelCertStatus";
 
 function BandCert({
   cert,
@@ -26,6 +33,7 @@ function BandCert({
   issuing: boolean;
 }) {
   const expiry = panelCertExpiryHint(cert);
+  const confirm = panelCertActionConfirm(cert, cert.kind);
   return (
     <Space size={8} wrap>
       <code>{cert.hostname || "<unset>"}</code>
@@ -42,9 +50,9 @@ function BandCert({
           </Typography.Text>
         </Tooltip>
       )}
-      <Popconfirm title={`Issue the ${cert.kind} cert now?`} onConfirm={onIssue}>
+      <Popconfirm title={confirm.title} description={confirm.description} onConfirm={onIssue}>
         <Button size="small" icon={<ReloadOutlined />} loading={issuing}>
-          Issue / retry
+          {panelCertActionLabel(cert)}
         </Button>
       </Popconfirm>
     </Space>
@@ -82,7 +90,8 @@ export function PanelSSLBand() {
 
   const doIssue = (kind: PanelCertKind) =>
     issue.mutate(kind, {
-      onSuccess: () => feedback.message.success(`${kind} cert: issued`),
+      onSuccess: (r) =>
+        feedback.message.success(panelCertIssueMessage(kind, r), isPanelSelfSignResult(r) ? 10 : undefined),
       onError: (e) =>
         feedback.message.error(`${kind} cert: issue failed: ${String((e as Error).message)}`),
     });

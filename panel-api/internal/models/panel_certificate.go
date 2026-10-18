@@ -5,6 +5,8 @@ import (
 	"net"
 	"strings"
 	"time"
+
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/panelcert"
 )
 
 // Panel certificate status state machine. See ADR-0066.
@@ -171,3 +173,21 @@ type PanelCertificate struct {
 // Without this GORM would pluralise PanelCertificate to
 // "panel_certificates", which doesn't exist.
 func (PanelCertificate) TableName() string { return "panel_certificate" }
+
+// SelfSignedState is what the hostname row shows in self-signed mode (Let's
+// Encrypt off, GH #2166) for the cert on disk, as panelcert.Check classified
+// it: issued, with that cert's expiry, for a CA cert kept until it expires;
+// self_signed otherwise. Pending, retry and failed are Let's Encrypt states
+// that don't apply there, and neither does their error. changed reports
+// whether row differs from it.
+func SelfSignedState(row *PanelCertificate, v panelcert.Verdict) (status string, expiresAt *time.Time, changed bool) {
+	status = PanelCertStatusSelfSigned
+	if v.Action == panelcert.KeepCA {
+		status = PanelCertStatusIssued
+		exp := v.NotAfter.UTC()
+		expiresAt = &exp
+	}
+	changed = row.Status != status || row.LastError != "" || row.NextRetryAt != nil || row.AttemptCount != 0 ||
+		(expiresAt != nil && (row.ExpiresAt == nil || !row.ExpiresAt.Equal(*expiresAt)))
+	return status, expiresAt, changed
+}

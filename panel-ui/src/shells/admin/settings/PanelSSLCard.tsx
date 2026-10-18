@@ -14,6 +14,7 @@ import {
 import { Alert, Button, Card, Popconfirm, Space, Switch, Tag, Typography } from "antd";
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import {
+  isPanelSelfSignResult,
   type PanelCertKind,
   type PanelCertificate,
   usePanelCertificate,
@@ -21,7 +22,10 @@ import {
   usePanelCertificateToggle,
 } from "../../../hooks/usePanelCertificate";
 import {
+  panelCertActionConfirm,
+  panelCertActionLabel,
   panelCertExpiryHint,
+  panelCertIssueMessage,
   panelCertStatusTag,
 } from "../../../components/ssl/panelCertStatus";
 
@@ -37,6 +41,7 @@ function CertRow({
   retrying: boolean;
 }) {
   const expiry = panelCertExpiryHint(cert);
+  const confirm = panelCertActionConfirm(cert, label);
   return (
     <div style={{ borderTop: "1px solid rgba(255,255,255,0.08)", paddingTop: 12 }}>
       <Space direction="vertical" size={6} style={{ width: "100%" }}>
@@ -65,11 +70,12 @@ function CertRow({
             <Tag color={expiry === "Expired" ? "error" : undefined}>{expiry}</Tag>
           )}
           <Popconfirm
-            title={`Issue the ${label.toLowerCase()} cert now?`}
+            title={confirm.title}
+            description={confirm.description}
             onConfirm={onRetry}
           >
             <Button size="small" icon={<ReloadOutlined />} loading={retrying}>
-              Issue / retry
+              {panelCertActionLabel(cert)}
             </Button>
           </Popconfirm>
         </Space>
@@ -122,7 +128,8 @@ export function PanelSSLCard() {
 
   const doIssue = (kind: PanelCertKind) =>
     issue.mutate(kind, {
-      onSuccess: () => feedback.message.success(`${kind} cert: issued`),
+      onSuccess: (r) =>
+        feedback.message.success(panelCertIssueMessage(kind, r), isPanelSelfSignResult(r) ? 10 : undefined),
       onError: (e) =>
         feedback.message.error(`${`${kind} cert: issue failed`}: ${String((e as Error).message)}`),
     });
