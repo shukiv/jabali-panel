@@ -1,5 +1,6 @@
 import { useTranslation } from "react-i18next";
 import { useMemo, useState } from "react";
+import { Link } from "react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Dropdown, Input, Table, Tag, Button, Empty, Space, Tooltip, Typography, Modal, Descriptions } from "antd";
 import { feedback } from "../../lib/feedback"; // GH #970: themed toasts
@@ -18,6 +19,7 @@ import { apiClient } from "../../apiClient";
 import { columnSearchProps } from "../columnSearch";
 import { RowActionButton } from "../RowActionButton";
 import { expiryFraction, matchesFilter, modeTag, type SSLFilter } from "./sslHealth";
+import { PANEL_SSL_TAB } from "./panelCertStatus";
 import { shortDate, shortDateTime } from "../../utils/datetime";
 import { Timestamp } from "../Timestamp";
 
@@ -52,7 +54,7 @@ interface SSLManagerTableProps {
   showOwner: boolean;
   /** Health-bucket filter driven by the admin summary tiles. Default "all". */
   statusFilter?: SSLFilter;
-  /** Drop panel-cert:* synthetic rows — the admin SYSTEM band shows them instead. */
+  /** Drop panel-cert:* synthetic rows — the admin Panel SSL tab shows them instead. */
   hideSystemRows?: boolean;
   /**
    * Offer Renew and Retry. Their endpoints (POST /domains/:id/ssl/renew and
@@ -269,7 +271,7 @@ export const SSLManagerTable = ({
             <Space size={4}>
               <span style={{ fontFamily: "monospace" }}>{text}</span>
               {isPanelCert && (
-                <Tooltip title={t("sslmanagertable.panel_cert_managed_via_server_settings_panel")}>
+                <Tooltip title={t("sslmanagertable.panel_cert_managed_in_panel_ssl")}>
                   <Tag color="purple">panel</Tag>
                 </Tooltip>
               )}
@@ -482,9 +484,9 @@ export const SSLManagerTable = ({
         // pointer instead of broken buttons.
         if (record.id.startsWith("panel-cert:")) {
           return (
-            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              Manage in Server Settings &rarr; Panel SSL
-            </Typography.Text>
+            <Link to={PANEL_SSL_TAB} style={{ fontSize: 12 }}>
+              Manage in SSL Manager &rarr; Panel SSL
+            </Link>
           );
         }
         // Per-domain mail cert (mail_certificate table) — only a Reissue

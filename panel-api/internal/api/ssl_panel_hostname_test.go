@@ -14,7 +14,7 @@ import (
 )
 
 // ssl_panel_hostname_test.go — GH #2126. The panel hostname's certificate is
-// the panel's own (Server Settings → Panel SSL). The per-domain doors created
+// the panel's own (SSL Manager → Panel SSL). The per-domain doors created
 // a certificate row for it that the reconciler could only fail on — the row
 // has no document root — so they refuse it before touching anything.
 

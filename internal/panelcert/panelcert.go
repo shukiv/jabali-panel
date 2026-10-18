@@ -18,6 +18,10 @@ import (
 // DefaultCertPath is where the panel's hostname certificate lives.
 const DefaultCertPath = "/etc/jabali/tls/panel.crt"
 
+// DefaultMailCertPath is where the panel's mail certificate lives, beside it
+// (ADR-0105).
+const DefaultMailCertPath = "/etc/jabali/tls/panel-mail.crt"
+
 // SelfSignOrg is the issuer Organization of the panel's own self-signed
 // certificate (ssl.panel.selfsign, and install.sh provision_tls_cert's
 // "/O=Jabali Panel"). A certificate with another, non-empty issuer

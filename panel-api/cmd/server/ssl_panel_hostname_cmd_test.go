@@ -13,8 +13,8 @@ import (
 // ssl_panel_hostname_cmd_test.go — GH #2126. `jabali ssl enable|renew|retry`
 // on the panel hostname made a per-domain certificate row the reconciler could
 // only fail on (the row has no document root: "invalid webroot \"\""). The
-// panel's own certificate is managed with `jabali panel-cert` / Server
-// Settings → Panel SSL, so these doors refuse it.
+// panel's own certificate is managed with `jabali panel-cert` / SSL
+// Manager → Panel SSL, so these doors refuse it.
 
 func TestSSLPanelHostnameRefusal(t *testing.T) {
 	err := sslPanelHostnameRefusal(&models.Domain{Name: "panel.example.com", IsPanelPrimary: true})

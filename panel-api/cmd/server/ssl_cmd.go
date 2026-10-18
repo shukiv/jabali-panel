@@ -62,7 +62,7 @@ func sslDisableRefusal(dom *models.Domain) error {
 func sslPanelHostnameRefusal(dom *models.Domain) error {
 	if dom.IsPanelPrimary {
 		return fmt.Errorf("%s is the panel's hostname: its certificate is the panel's own — "+
-			"manage it with `jabali panel-cert status|issue` or in Server Settings → Panel SSL", dom.Name)
+			"manage it with `jabali panel-cert status|issue` or in SSL Manager → Panel SSL", dom.Name)
 	}
 	return nil
 }

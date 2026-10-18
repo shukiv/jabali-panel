@@ -33,6 +33,21 @@ export interface PanelCertificate {
   // Live fields layered on by the GET handler — not stored.
   routable: boolean;
   routable_reason?: string;
+  // The certificate file this kind serves (GH #2166), or why there is none.
+  served?: PanelServedCert | null;
+  served_error?: string;
+}
+
+// PanelServedCert describes the certificate file a kind serves, read on each
+// GET: the row's status can't tell a self-signed cert from a kept CA cert.
+export interface PanelServedCert {
+  type: "self_signed" | "lets_encrypt" | "lets_encrypt_staging" | "ca";
+  issuer: string;
+  subject: string;
+  names: string[];
+  not_before: string;
+  not_after: string;
+  fingerprint_sha256: string;
 }
 
 // PanelSelfSignResult answers the hostname's Issue while Let's Encrypt is

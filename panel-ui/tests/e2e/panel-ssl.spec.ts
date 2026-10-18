@@ -1,7 +1,12 @@
-// panel-ssl.spec.ts — admin Server Settings → General → Panel SSL
-// card (M32.x, ADR-0105). Mocks /admin/panel-certificate which now
-// returns {certs:[hostname,mail]} so the spec needs no live panel-api.
+// panel-ssl.spec.ts — admin SSL Manager → Panel SSL tab (M32.x, ADR-0105,
+// GH #2166), where the panel's own certs are managed, and the Server
+// Settings → General summary card that links there. Mocks
+// /admin/panel-certificate, which returns {certs:[hostname,mail]}, so the
+// spec needs no live panel-api.
+import type { Page } from "@playwright/test";
 import { admin, expect, mockApi, signIn, test } from "./fixtures";
+
+const PANEL_TAB = "/jabali-admin/ssl?tab=panel";
 
 function cert(kind: "hostname" | "mail", over: Record<string, unknown> = {}) {
   return {
@@ -28,16 +33,28 @@ function body(hostOver = {}, mailOver = {}) {
   });
 }
 
-test.describe("admin panel SSL card", () => {
+// mockCerts answers the panel cert GET with certs, and the SSL Manager's
+// other lists with nothing.
+async function mockCerts(page: Page, certs: string) {
+  await page.route("**/api/v1/admin/panel-certificate", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: certs }),
+  );
+  await page.route("**/api/v1/admin/ssl-certificates**", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [] }) }),
+  );
+  await page.route("**/api/v1/admin/certificates/shared**", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: [] }) }),
+  );
+}
+
+test.describe("admin SSL Manager → Panel SSL", () => {
   test("renders self-signed status + routable + toggle", async ({ page }) => {
     await mockApi(page, { me: admin });
-    await page.route("**/api/v1/admin/panel-certificate", (route) =>
-      route.fulfill({ status: 200, contentType: "application/json", body: body() }),
-    );
+    await mockCerts(page, body());
     await signIn(page, admin);
-    await page.goto("/jabali-admin/settings");
+    await page.goto(PANEL_TAB);
 
-    // Two CertRows → "Self-signed" tag appears per kind; scope to the
+    // Two cert cards → "Self-signed" tag appears per kind; scope to the
     // AntD Tag and assert at least one is visible (strict-mode safe).
     await expect(
       page.locator(".ant-tag", { hasText: "Self-signed" }).first(),
@@ -48,24 +65,23 @@ test.describe("admin panel SSL card", () => {
     await expect(
       page.getByText("Use Let's Encrypt for the panel"),
     ).toBeVisible();
+    // GH #2166: the compact SYSTEM band above the tabs is gone.
+    await expect(page.getByText("SYSTEM", { exact: true })).toHaveCount(0);
   });
 
   test("toggle is disabled when hostname not routable", async ({ page }) => {
     await mockApi(page, { me: admin });
-    await page.route("**/api/v1/admin/panel-certificate", (route) =>
-      route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        // hostname not routable (governs the toggle); mail routable
-        // so its "Not routable" doesn't double the match.
-        body: body(
-          { routable: false, routable_reason: "non-routable hostname suffix" },
-          { routable: true },
-        ),
-      }),
+    // hostname not routable (governs the toggle); mail routable so its
+    // "Not routable" doesn't double the match.
+    await mockCerts(
+      page,
+      body(
+        { routable: false, routable_reason: "non-routable hostname suffix" },
+        { routable: true },
+      ),
     );
     await signIn(page, admin);
-    await page.goto("/jabali-admin/settings");
+    await page.goto(PANEL_TAB);
 
     await expect(
       page.locator(".ant-tag", { hasText: "Not routable" }).first(),
@@ -73,19 +89,14 @@ test.describe("admin panel SSL card", () => {
     await expect(
       page.getByText(/non-routable hostname suffix/).first(),
     ).toBeVisible();
+    await expect(page.getByRole("switch").first()).toBeDisabled();
   });
 
   // GH #2166: with Let's Encrypt off the hostname's action regenerates the
   // self-signed cert (no routability check), even behind a proxy.
   test("Let's Encrypt off: the hostname regenerates the self-signed cert", async ({ page }) => {
     await mockApi(page, { me: admin });
-    await page.route("**/api/v1/admin/panel-certificate", (route) =>
-      route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: body({ routable: false, routable_reason: "dns points elsewhere" }),
-      }),
-    );
+    await mockCerts(page, body({ routable: false, routable_reason: "dns points elsewhere" }));
     let issued: string | null = null;
     await page.route("**/api/v1/admin/panel-certificate/issue**", (route) => {
       issued = route.request().url();
@@ -100,7 +111,7 @@ test.describe("admin panel SSL card", () => {
       });
     });
     await signIn(page, admin);
-    await page.goto("/jabali-admin/settings");
+    await page.goto(PANEL_TAB);
 
     await page.getByRole("button", { name: /Regenerate self-signed/ }).click();
     const confirm = page.locator(".ant-popconfirm", { hasText: "Regenerate the self-signed certificate?" });
@@ -115,23 +126,29 @@ test.describe("admin panel SSL card", () => {
   test("issued hostname cert shows expiry hint", async ({ page }) => {
     const future = new Date(Date.now() + 60 * 24 * 3600 * 1000).toISOString();
     await mockApi(page, { me: admin });
-    await page.route("**/api/v1/admin/panel-certificate", (route) =>
-      route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: body(
-          {
-            status: "issued",
-            use_le: true,
-            issued_at: new Date().toISOString(),
-            expires_at: future,
+    await mockCerts(
+      page,
+      body(
+        {
+          status: "issued",
+          use_le: true,
+          issued_at: new Date().toISOString(),
+          expires_at: future,
+          served: {
+            type: "lets_encrypt",
+            issuer: "Let's Encrypt",
+            subject: "panel.example.com",
+            names: ["panel.example.com"],
+            not_before: new Date().toISOString(),
+            not_after: future,
+            fingerprint_sha256: "AB:CD",
           },
-          { status: "pending_acme_retry", use_le: true },
-        ),
-      }),
+        },
+        { status: "pending_acme_retry", use_le: true },
+      ),
     );
     await signIn(page, admin);
-    await page.goto("/jabali-admin/settings");
+    await page.goto(PANEL_TAB);
 
     await expect(
       page.getByText(/Issued by Let's Encrypt/).first(),
@@ -142,5 +159,48 @@ test.describe("admin panel SSL card", () => {
     await expect(
       page.locator(".ant-tag", { hasText: "Pending retry" }).first(),
     ).toBeVisible();
+  });
+
+  // GH #2166: the details come from the cert file the panel serves.
+  test("shows the served cert's details", async ({ page }) => {
+    await mockApi(page, { me: admin });
+    await mockCerts(
+      page,
+      body({
+        served: {
+          type: "self_signed",
+          issuer: "Jabali Panel",
+          subject: "panel.example.com",
+          names: ["panel.example.com", "mail.panel.example.com", "203.0.113.10"],
+          not_before: "2026-10-17T06:00:00Z",
+          not_after: "2036-10-17T06:00:00Z",
+          fingerprint_sha256: "AB:CD:EF:01",
+        },
+      }),
+    );
+    await signIn(page, admin);
+    await page.goto(PANEL_TAB);
+
+    const host = page.locator(".ant-card", { has: page.locator(".ant-card-head code", { hasText: /^panel\.example\.com$/ }) });
+    await expect(host.getByText("Jabali Panel")).toBeVisible();
+    await expect(host.locator(".ant-tag code", { hasText: "203.0.113.10" })).toBeVisible();
+    await expect(host.getByText("AB:CD:EF:01")).toBeVisible();
+    await expect(host.getByText("SHA-256 fingerprint")).toBeVisible();
+  });
+});
+
+test.describe("admin Server Settings → Panel SSL", () => {
+  test("shows each cert's status and links to the SSL Manager tab", async ({ page }) => {
+    await mockApi(page, { me: admin });
+    await mockCerts(page, body());
+    await signIn(page, admin);
+    await page.goto("/jabali-admin/settings");
+
+    const card = page.locator(".ant-card", { has: page.locator(".ant-card-head", { hasText: "Panel SSL" }) });
+    await expect(card.getByText("panel.example.com", { exact: true })).toBeVisible();
+    await expect(card.getByRole("button")).toHaveCount(0);
+    await card.getByRole("link", { name: "Manage in SSL Manager" }).click();
+    await expect(page).toHaveURL(/\/jabali-admin\/ssl\?tab=panel$/);
+    await expect(page.getByText("Use Let's Encrypt for the panel")).toBeVisible();
   });
 });

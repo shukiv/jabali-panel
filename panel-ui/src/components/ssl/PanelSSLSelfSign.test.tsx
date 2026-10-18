@@ -1,7 +1,8 @@
 // PanelSSLSelfSign.test.tsx — GH #2166. With "Use Let's Encrypt for the
 // panel" off, the hostname cert's action regenerates the self-signed cert
-// instead of asking Let's Encrypt, on both doors: the SSL Manager band and
-// Server Settings → Panel SSL. The mail cert stays a Let's Encrypt action.
+// instead of asking Let's Encrypt, on SSL Manager → Panel SSL, where the
+// panel's certs are managed. The mail cert stays a Let's Encrypt action.
+// Server Settings → Panel SSL only shows their status and links there.
 // apiClient and the toasts are mocked; the real AntD Popconfirm renders.
 import { App } from "antd";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -20,7 +21,7 @@ import { apiClient } from "../../apiClient";
 import { feedback } from "../../lib/feedback";
 import { PanelSSLCard } from "../../shells/admin/settings/PanelSSLCard";
 import { setPanelClock } from "../../utils/datetime";
-import { PanelSSLBand } from "./PanelSSLBand";
+import { PanelSSLTab } from "./PanelSSLTab";
 import { panelCertIssueMessage } from "./panelCertStatus";
 
 const mocked = apiClient as unknown as {
@@ -86,10 +87,7 @@ describe("panelCertIssueMessage (GH #2166)", () => {
   });
 });
 
-for (const [name, node] of [
-  ["SSL Manager band", <PanelSSLBand key="band" />],
-  ["Server Settings card", <PanelSSLCard key="card" />],
-] as const) {
+for (const [name, node] of [["SSL Manager → Panel SSL", <PanelSSLTab key="tab" />]] as const) {
   describe(`${name} (GH #2166)`, () => {
     it("with Let's Encrypt off, the hostname regenerates the self-signed cert", async () => {
       mocked.post.mockResolvedValue({
@@ -118,3 +116,20 @@ for (const [name, node] of [
     });
   });
 }
+
+// The Settings card keeps the certs in sight and sends the admin to the tab:
+// no switches or actions of its own, so the two can never disagree.
+describe("Server Settings → Panel SSL (GH #2166)", () => {
+  it("shows each cert's status and links to SSL Manager → Panel SSL", async () => {
+    renderWith(<PanelSSLCard />, false);
+    expect(await screen.findByText("panel.example.com")).toBeInTheDocument();
+    expect(screen.getByText("mail.panel.example.com")).toBeInTheDocument();
+    expect(screen.getAllByText("Self-signed")).toHaveLength(2);
+    const links = screen.getAllByRole("link");
+    expect(links.length).toBeGreaterThan(0);
+    for (const l of links) expect(l).toHaveAttribute("href", "/jabali-admin/ssl?tab=panel");
+    expect(screen.getByRole("link", { name: "SSL Manager → Panel SSL" })).toBeInTheDocument();
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+    expect(screen.queryByRole("switch")).not.toBeInTheDocument();
+  });
+});

@@ -44,7 +44,7 @@ certbot's own systemd timer renews. The agent's deploy-hook reloads nginx automa
 
 The panel itself runs on a Let's Encrypt cert for the **Panel Hostname** (Server Settings → General). Cert lives in the singleton `panel_certificate` table; the agent's `ssl.panel.issue` action handles issuance via the same HTTP-01 path (with a `/.well-known/acme-challenge/` location on the panel-hostname nginx vhost). Deploy hook reloads **nginx → panel-api → Bulwark** in that order.
 
-If issuance fails, the panel falls back to a self-signed cert so the UI stays reachable; the SSL card in Server Settings shows the failure reason. Hit "Retry" or wait for the next reconciler tick.
+If issuance fails, the panel falls back to a self-signed cert so the UI stays reachable; SSL Manager → **Panel SSL** shows the failure reason. Hit **Issue / retry** or wait for the next reconciler tick.
 
 ## Custom certificates
 
@@ -64,6 +64,8 @@ cert known to the panel with issuer, expiry (Issued + Last-check folded into the
   validity dates (GH #1355).
 - **Retry** — force a fresh issuance attempt.
 
+The panel's own certificates are on the **Panel SSL** tab; see [Panel Certificate](./admin/panel-certificate.md#the-panel-ssl-tab).
+
 Renew and Retry are admin actions. A tenant's SSL Manager and a domain's SSL
 tab show the certificate and its state but not those buttons: renewal and
 issuance retries run on their own, and the tab says so.
@@ -76,7 +78,7 @@ issuance retries run on their own, and the tab says so.
 | `urn:ietf:params:acme:error:rateLimited` | Hit LE rate limit | Wait the window (typically 1 hour). |
 | Cert issued but browser shows old cert | nginx not reloaded | `systemctl reload nginx` or trigger reconciler. |
 | Panel cert never issues | Bulwark serving on `:80` | Reconciler should fix; check `journalctl -u jabali-agent -f`. |
-| `invalid webroot ""` on the panel hostname, capped at 20 attempts | A per-domain certificate was requested for the panel hostname (GH #2126) | Nothing: the panel removes that row on its own. The hostname's certificate is under Server Settings → Panel SSL (`jabali panel-cert status`). |
+| `invalid webroot ""` on the panel hostname, capped at 20 attempts | A per-domain certificate was requested for the panel hostname (GH #2126) | Nothing: the panel removes that row on its own. The hostname's certificate is under SSL Manager → Panel SSL (`jabali panel-cert status`). |
 
 ## CLI
 

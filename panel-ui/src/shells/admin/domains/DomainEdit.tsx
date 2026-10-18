@@ -22,6 +22,7 @@ import { DomainListenIPSection } from "./DomainListenIPSection";
 import { DomainMailboxesSection } from "./DomainMailboxesSection";
 import { DomainNginxSection } from "../../DomainSettingsButton";
 import { DomainSSLSection } from "./DomainSSLSection";
+import { PANEL_SSL_TAB } from "../../../components/ssl/panelCertStatus";
 import { DomainOwnershipPanel } from "../../../components/domains/DomainOwnershipPanel";
 import { DomainSkipAutoSANToggle } from "./DomainSkipAutoSANToggle";
 import { DomainCacheSection } from "../../../components/DomainCacheSection";
@@ -346,8 +347,8 @@ export const DomainEdit = () => {
                 This row backs the panel hostname's mail service (DKIM,
                 Stalwart, MTA-STS). It has no HTTP vhost, docroot, or
                 per-domain SSL cert. Manage the panel's TLS cert at{" "}
-                <Link to="/jabali-admin/settings">
-                  Server Settings &rarr; Panel SSL
+                <Link to={PANEL_SSL_TAB}>
+                  SSL Manager &rarr; Panel SSL
                 </Link>
                 . Caching, listen IPs, IP ACLs, and Directory Privacy
                 don't apply here and are hidden.

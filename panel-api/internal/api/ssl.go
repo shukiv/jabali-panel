@@ -648,7 +648,7 @@ func (h *sslHandler) loadDomainOwned(c *gin.Context, domainID string) *models.Do
 // refusePanelHostnameCert answers 409 for the panel hostname's own domain row
 // (is_panel_primary) on the per-domain certificate doors — enable, renew,
 // retry — and reports whether it did (GH #2126). That certificate is the
-// panel's (panel_certificate, Server Settings → Panel SSL); the row has no
+// panel's (panel_certificate, SSL Manager → Panel SSL); the row has no
 // document root and no vhost, so a per-domain certificate for it could only
 // fail ("invalid webroot \"\"") until it hit the retry cap. The CLI doors
 // refuse the same way (cmd/server/ssl_cmd.go sslPanelHostnameRefusal).
@@ -658,7 +658,7 @@ func refusePanelHostnameCert(c *gin.Context, domain *models.Domain) bool {
 	}
 	c.JSON(http.StatusConflict, gin.H{
 		"error":  "panel_hostname_certificate",
-		"detail": "This is the panel's hostname; its certificate is managed in Server Settings → Panel SSL.",
+		"detail": "This is the panel's hostname; its certificate is managed in SSL Manager → Panel SSL.",
 	})
 	return true
 }

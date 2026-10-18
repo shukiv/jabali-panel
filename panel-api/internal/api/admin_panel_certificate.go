@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"time"
@@ -70,6 +72,43 @@ type panelCertGetResponse struct {
 	*models.PanelCertificate
 	Routable       bool   `json:"routable"`
 	RoutableReason string `json:"routable_reason,omitempty"`
+	// Served describes the certificate file the kind serves, for the
+	// Panel SSL tab (GH #2166): the row's status alone can't tell a
+	// self-signed cert from a kept CA cert, nor give its names or real
+	// expiry. ServedError says why it is absent.
+	Served      *panelcert.Details `json:"served,omitempty"`
+	ServedError string             `json:"served_error,omitempty"`
+}
+
+// servedPanelCert describes the certificate file behind row. Only a
+// certificate is ever described (panelcert.Describe refuses anything else),
+// so whatever the path holds, no key reaches the response.
+func servedPanelCert(row *models.PanelCertificate) (*panelcert.Details, string) {
+	path := row.CertPEMPath
+	if path == "" {
+		path = panelcert.DefaultCertPath
+		if row.Kind == models.PanelCertKindMail {
+			path = panelcert.DefaultMailCertPath
+		}
+	}
+	data, err := os.ReadFile(path)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return nil, "No certificate at " + path
+	case err != nil:
+		return nil, "Can't read " + path
+	}
+	d, err := panelcert.Describe(data)
+	if err != nil {
+		return nil, path + " holds no valid certificate"
+	}
+	// JAB-179: the self-signed cert names the box's public IP.
+	for i, n := range d.Names {
+		if net.ParseIP(n) != nil {
+			d.Names[i] = demoMaskIP(n)
+		}
+	}
+	return d, ""
 }
 
 func (h *adminPanelCertHandler) get(c *gin.Context) {
@@ -100,6 +139,7 @@ func (h *adminPanelCertHandler) get(c *gin.Context) {
 		rr, _ := h.cfg.Routability.Check(ctx, row.Hostname, settings.PublicIPv4, false)
 		res.Routable = rr.Routable
 		res.RoutableReason = rr.Reason
+		res.Served, res.ServedError = servedPanelCert(row)
 		certs = append(certs, res)
 	}
 	c.JSON(http.StatusOK, gin.H{"certs": certs})
