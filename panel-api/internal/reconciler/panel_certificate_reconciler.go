@@ -45,12 +45,12 @@ func (r *Reconciler) reconcilePanelCertificate(ctx context.Context) {
 		// cert to the CURRENT hostname (JAB-389). On a panel hostname change
 		// nothing else regenerates the openssl cert install.sh produced, so
 		// :8443 keeps serving the OLD hostname's cert until LE is enabled.
-		// Disk state is the ONLY state here — we deliberately never touch the
-		// panel_certificate row, so the panel restart the agent performs (the
-		// Go TLS listener caches the cert and must restart to serve the new
-		// one) can kill this reconciler mid-RPC without stranding a row
-		// status: the next tick's drift check on the regenerated cert is the
-		// success signal.
+		// Disk state is the ONLY source of truth here: the panel_certificate
+		// row is set from the cert on disk (GH #2166), never from the RPC's
+		// outcome, so the panel restart the agent performs (the Go TLS
+		// listener caches the cert and must restart to serve the new one)
+		// can kill this reconciler mid-RPC without stranding a row status:
+		// the next tick reads the regenerated cert and the row follows it.
 		r.reconcilePanelSelfSignedCert(ctx, hostRow, settings.Hostname, settings.PublicIPv4)
 		return
 	}
@@ -217,7 +217,7 @@ func (r *Reconciler) reconcilePanelSelfSignedCert(ctx context.Context, row *mode
 		certPath = panelcert.DefaultCertPath
 	}
 	v := r.panelSelfSignedVerdict(certPath, hostname)
-	// GH #2166: the row follows the cert too, so the Panel SSL card doesn't
+	// GH #2166: the row follows the cert too, so the Panel SSL tab doesn't
 	// show a Let's Encrypt retry or error that doesn't apply with Let's
 	// Encrypt off. SetSelfSignedState leaves a row with use_le on alone.
 	if r.panelCerts != nil {

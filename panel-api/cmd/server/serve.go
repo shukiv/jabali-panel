@@ -507,8 +507,8 @@ func runServe(cmd *cobra.Command, args []string) error {
 		// M32 (ADR-0066): singleton panel_certificate repo + reconciler.
 		// Without this wiring, /admin/panel-certificate routes are
 		// skipped (RegisterAdminPanelCertificateRoutes returns early
-		// when PanelCerts is nil) and the Server Settings → General
-		// → Panel SSL card 404s with "Failed to load panel SSL state".
+		// when PanelCerts is nil) and SSL Manager → Panel SSL (and the
+		// Server Settings card) 404s with "Failed to load panel SSL state".
 		// Surfaced 2026-04-26 on first VPS install at mx.jabali-panel.com.
 		panelCertRepo := repository.NewPanelCertificateRepository(sharedDB)
 		deps.PanelCerts = panelCertRepo

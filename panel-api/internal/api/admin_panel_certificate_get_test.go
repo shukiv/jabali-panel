@@ -95,9 +95,7 @@ func writeCertWithIP(t *testing.T, ip string, notAfter time.Time) string {
 func TestPanelCertGet_DescribesTheServedCerts(t *testing.T) {
 	hostExp := time.Now().AddDate(10, 0, 0).UTC().Truncate(time.Second)
 	mailExp := time.Now().AddDate(0, 2, 0).UTC().Truncate(time.Second)
-	f := newPanelCertFixture(t, panelCertOpts{
-		certPath: writePanelCertPEM(t, "Jabali Panel", "panel.example.com", panelCertBothNames, hostExp),
-	})
+	f := newPanelCertFixture(t, panelCertOpts{certPath: writeCertWithIP(t, "198.51.100.7", hostExp)})
 	f.certs.rows[models.PanelCertKindMail].CertPEMPath =
 		writePanelCertPEM(t, "Let's Encrypt", "mail.panel.example.com", []string{"mail.panel.example.com"}, mailExp)
 
@@ -108,7 +106,7 @@ func TestPanelCertGet_DescribesTheServedCerts(t *testing.T) {
 	}
 	if host.served.Type != "self_signed" || host.served.Issuer != "Jabali Panel" ||
 		host.served.Subject != "panel.example.com" || !host.served.NotAfter.Equal(hostExp) ||
-		strings.Join(host.served.Names, ",") != strings.Join(panelCertBothNames, ",") {
+		strings.Join(host.served.Names, ",") != strings.Join(append(panelCertBothNames, "198.51.100.7"), ",") {
 		t.Errorf("hostname served %+v", host.served)
 	}
 	if mail.served.Type != "lets_encrypt" || mail.served.Issuer != "Let's Encrypt" ||
