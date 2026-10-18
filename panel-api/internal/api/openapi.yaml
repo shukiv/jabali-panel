@@ -5514,6 +5514,14 @@ paths:
     get:
       tags: [Panel Certificate]
       summary: List panel certificate
+      description: |
+        Returns `{certs: [...]}`: the panel hostname and mail certificate
+        rows, each with its live `routable` / `routable_reason`, and what
+        its certificate file holds (GH #2166):
+        `served: {type, issuer, subject, names, not_before, not_after,
+        fingerprint_sha256}`. `type` is `self_signed`, `lets_encrypt`,
+        `lets_encrypt_staging` or `ca`. When the file is missing or holds no
+        certificate, `served` is absent and `served_error` says why.
       security: [ { KratosSession: [] } ]
       responses: { "200": { description: OK } }
 

@@ -1,12 +1,14 @@
 // SSLManagerPage — the admin "Certificate console".
 //
 // Layout (2026-08 redesign, mockup-approved): four clickable summary
-// tiles (health buckets, disjoint — see sslHealth.ts), the compact
-// SYSTEM band for the panel's own certs (full management stays on
-// Server Settings → Panel SSL), and one tabbed card holding the domain
-// certificates table + the shared wildcard/multi-SAN certificates
-// (JAB-170) that used to be a separate card below the fold.
+// tiles (health buckets, disjoint — see sslHealth.ts) and one tabbed card
+// holding the domain certificates table, the shared wildcard/multi-SAN
+// certificates (JAB-170) that used to be a separate card below the fold,
+// and Panel SSL: the panel's own certs, managed in full there (GH #2166;
+// it replaced a compact SYSTEM band above the tabs). The tab is kept in
+// ?tab= so Server Settings and other pages can link to Panel SSL.
 import { useMemo, useState } from "react";
+import { useSearchParams } from "react-router";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
 import { Card, Tabs, Typography } from "antd";
@@ -18,7 +20,7 @@ import {
 } from "@icons";
 
 import { apiClient } from "../../../apiClient";
-import { PanelSSLBand } from "../../../components/ssl/PanelSSLBand";
+import { PanelSSLTab } from "../../../components/ssl/PanelSSLTab";
 import { SSLManagerTable } from "../../../components/ssl/SSLManagerTable";
 import { SharedCertificatesCard } from "../../../components/ssl/SharedCertificatesCard";
 import {
@@ -28,6 +30,9 @@ import {
 } from "../../../components/ssl/sslHealth";
 
 const ENDPOINT = "/admin/ssl-certificates";
+
+const TAB_KEYS = ["domains", "shared", "panel"] as const;
+type TabKey = (typeof TAB_KEYS)[number];
 
 interface TileSpec {
   key: Exclude<SSLFilter, "all" | "other">;
@@ -75,6 +80,15 @@ interface CertRow extends SSLHealthRow {
 export const SSLManagerPage = () => {
   const { t } = useTranslation();
   const [filter, setFilter] = useState<SSLFilter>("all");
+  const [params, setParams] = useSearchParams();
+  const raw = params.get("tab");
+  const tab: TabKey = TAB_KEYS.includes(raw as TabKey) ? (raw as TabKey) : "domains";
+  const setTab = (key: string) => {
+    const next = new URLSearchParams(params);
+    if (key === "domains") next.delete("tab");
+    else next.set("tab", key);
+    setParams(next, { replace: true });
+  };
 
   // Same queryKey as SSLManagerTable — one request feeds both the tiles
   // and the table via the react-query cache.
@@ -87,7 +101,7 @@ export const SSLManagerPage = () => {
   });
 
   const counts = useMemo(() => {
-    // Panel-cert rows live in the SYSTEM band, not the table — keep the
+    // Panel-cert rows live on the Panel SSL tab, not the table — keep the
     // tile counts aligned with what the table below actually shows.
     const rows = (certRows ?? []).filter((r) => !r.id.startsWith("panel-cert:"));
     return countBuckets(rows);
@@ -110,7 +124,8 @@ export const SSLManagerPage = () => {
       </Typography.Title>
 
       {/* Summary tiles double as filters: click to filter the table to
-          that bucket, click again to clear. */}
+          that bucket, click again to clear. The table is on the domains
+          tab, so a click there opens it. */}
       <div
         style={{
           display: "grid",
@@ -126,7 +141,10 @@ export const SSLManagerPage = () => {
               key={tile.key}
               hoverable
               size="small"
-              onClick={() => setFilter(active ? "all" : tile.key)}
+              onClick={() => {
+                setFilter(active ? "all" : tile.key);
+                if (tab !== "domains") setTab("domains");
+              }}
               style={
                 active
                   ? { borderColor: "#1677ff", boxShadow: "0 0 0 2px rgba(22,119,255,0.15)" }
@@ -167,13 +185,10 @@ export const SSLManagerPage = () => {
         })}
       </div>
 
-      <div style={{ marginBottom: 16 }}>
-        <PanelSSLBand />
-      </div>
-
       <Card styles={{ body: { paddingTop: 8 } }}>
         <Tabs
-          defaultActiveKey="domains"
+          activeKey={tab}
+          onChange={setTab}
           items={[
             {
               key: "domains",
@@ -191,6 +206,11 @@ export const SSLManagerPage = () => {
               key: "shared",
               label: `Shared certificates${sharedCerts ? ` (${sharedCerts.length})` : ""}`,
               children: <SharedCertificatesCard embedded />,
+            },
+            {
+              key: "panel",
+              label: t("panelsslcard.panel_ssl"),
+              children: <PanelSSLTab />,
             },
           ]}
         />

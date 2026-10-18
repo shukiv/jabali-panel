@@ -1648,7 +1648,7 @@
     "last_attempt": "",
     "next_retry": "",
     "no_ssl_certificates_yet": "",
-    "panel_cert_managed_via_server_settings_panel": "",
+    "panel_cert_managed_in_panel_ssl": "",
     "renew_certificate": "",
     "retry_count": "",
     "revoke_certificate": "",

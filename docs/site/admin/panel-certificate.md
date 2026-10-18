@@ -1,13 +1,24 @@
 # Panel Certificate
 
-The Let's Encrypt certificate used by the panel itself for the configured panel hostname. Managed through Server Settings → General → **Panel SSL** and, for cross-row visibility, through [SSL Manager](./ssl-manager.md).
+The Let's Encrypt certificate used by the panel itself for the configured panel hostname, and its mail certificate for `mail.<hostname>`. Managed on the **Panel SSL** tab of [SSL Manager](./ssl-manager.md) (`/jabali-admin/ssl?tab=panel`). Server Settings → General → **Panel SSL** shows each certificate's status and links there.
+
+## The Panel SSL tab
+
+SSL Manager → **Panel SSL** holds the **Use Let's Encrypt for the panel** and **Staging** switches, which govern both certificates, and one card per certificate: the panel hostname and the mail name. Each card shows:
+
+- **Status** — the certificate's state in the panel (self-signed, issuing, issued, pending retry, failed) and whether its name resolves to this server.
+- What the certificate file on disk holds, read each time the tab loads: **Type** (self-signed, Let's Encrypt, Let's Encrypt staging, or another authority), **Issuer**, **Names**, **Valid from** and **Valid until** (a warning from 30 days before expiry), and the **SHA-256 fingerprint**. Compare the fingerprint with the one your browser shows before you accept a self-signed certificate.
+- Its action: **Issue / retry**, or **Regenerate self-signed** on the hostname with Let's Encrypt off.
+- The last error and the next retry, when an issue failed.
+
+When the file is missing or holds no certificate, the card says so instead.
 
 ## Why it is special
 
 The panel hostname certificate differs from a tenant domain's certificate in three ways:
 
 1. **One per host** — the `panel_certificate` table is a singleton; the hostname change replaces the existing row.
-2. **Self-signed fallback** — on the very first boot, or after an issuance failure, the panel serves a self-signed certificate so the operator can reach the UI to diagnose. With Let's Encrypt on, **Issue / retry** on the Panel SSL card triggers a fresh attempt. With it off, the button is **Regenerate self-signed**; see [Self-signed mode](#self-signed-mode-lets-encrypt-off).
+2. **Self-signed fallback** — on the very first boot, or after an issuance failure, the panel serves a self-signed certificate so the operator can reach the UI to diagnose. With Let's Encrypt on, **Issue / retry** on the Panel SSL tab triggers a fresh attempt. With it off, the button is **Regenerate self-signed**; see [Self-signed mode](#self-signed-mode-lets-encrypt-off).
 3. **Three-service deploy hook** — after a successful issuance or renewal, the agent reloads, in order: nginx → panel API → Bulwark. This sequencing avoids a window in which one component is using the new certificate and another is still using the old, which would surface as TLS handshake failures on the SPA.
 
 ## Issuance path
@@ -23,7 +34,7 @@ certbot's own systemd timer (`certbot.timer`) handles renewal. The deploy hook r
 If issuance fails, the panel:
 
 1. Falls back to a self-signed certificate to keep the UI reachable.
-2. Records the failure on the Panel SSL card with the certbot error string.
+2. Records the failure on the Panel SSL tab with the certbot error string.
 3. Schedules a retry every three hours.
 
 Common failure causes are the same as tenant-domain failures: the panel hostname does not resolve to one of the server's IPs, the firewall blocks inbound `:80`, or the Let's Encrypt rate limit has been hit. See [SSL Manager](./ssl-manager.md) for the diagnostic mapping.

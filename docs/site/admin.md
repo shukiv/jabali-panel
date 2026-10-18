@@ -9,7 +9,7 @@ Lives at `/jabali-admin`. Top-level pages:
 | Packages | `/jabali-admin/packages` | Bundles of quotas (disk, bandwidth, mailboxes, domains, DBs, PHP-INI overrides). |
 | Domains | `/jabali-admin/domains` | All hosted domains across all users; per-domain settings (PHP, SSL, DNSSEC, listen IP, redirects, aliases, cache). |
 | DNS | `/jabali-admin/dns` | All DNS zones; per-domain DNSSEC enable + DS record display. |
-| SSL | `/jabali-admin/ssl` | Cross-user SSL state; LE issuance retry buttons; panel-hostname cert. |
+| SSL | `/jabali-admin/ssl` | Cross-user SSL state; LE issuance retry buttons; the panel's own certs on the Panel SSL tab (`?tab=panel`). |
 | Mail | `/jabali-admin/mail/deliverability`, `/throttles` | Deliverability dashboard (DKIM / SPF / DMARC / MTA-STS state per domain), outbound throttle policy. |
 | Databases (Admin Ops) | Server Settings → Database | Root password rotation, curated config tune (`innodb_buffer_pool_size`, etc.), maintenance, processlist + kill, admin phpMyAdmin SSO. |
 | IPs | `/jabali-admin/ips` | Manage the IPv4 pool exposed for per-domain listen-IP selection. |

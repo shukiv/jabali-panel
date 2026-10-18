@@ -132,7 +132,7 @@ export function useWebPushSubscription(): WebPushState {
       // still fails with SecurityError. Surface that explicitly so the
       // operator stops staring at a button that "does nothing".
       setError(
-        "Service worker is not registered. This usually means the panel hostname is using a self-signed certificate; install a Let's Encrypt cert from Server Settings → General → Panel SSL.",
+        "Service worker is not registered. This usually means the panel hostname is using a self-signed certificate; install a Let's Encrypt cert from SSL Manager → Panel SSL.",
       );
       return;
     }
@@ -211,13 +211,13 @@ export function useWebPushSubscription(): WebPushState {
 function friendlyWebPushError(err: unknown, op: "register" | "subscribe" | "unsubscribe"): string {
   const raw = err instanceof Error ? err.message : String(err);
   if (/SSL certificate|certificate error|InsecureContext/i.test(raw)) {
-    return "The panel is served with an untrusted certificate, so the browser refuses to register the push service worker. Install a Let's Encrypt cert from Server Settings → General → Panel SSL.";
+    return "The panel is served with an untrusted certificate, so the browser refuses to register the push service worker. Install a Let's Encrypt cert from SSL Manager → Panel SSL.";
   }
   if (/Permission denied|NotAllowedError/i.test(raw)) {
     return "Notifications are blocked. Allow them in your browser's site settings.";
   }
   if (/insecure context/i.test(raw)) {
-    return "Browser push requires HTTPS with a trusted certificate. Install a Let's Encrypt cert from Server Settings → General → Panel SSL.";
+    return "Browser push requires HTTPS with a trusted certificate. Install a Let's Encrypt cert from SSL Manager → Panel SSL.";
   }
   return `Could not ${op} for browser push: ${raw}`;
 }

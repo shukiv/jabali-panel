@@ -29,6 +29,7 @@ Implementation (M32, 6 steps):
     - `POST /admin/panel-certificate/issue` — force an immediate dispatch.
 6. **Reconciler hook** (`Reconciler.reconcilePanelCertificate`, called from `ReconcileAll`) drives the periodic state machine: dispatches on `self_signed → pending_acme`, retries every 3h on `pending_acme_retry`, leaves `issued` rows alone (certbot's daily timer + deploy-hook handle renewal).
 7. **Admin UI** — new `PanelSSLCard` embedded in Server Settings → General tab, between SSH Access and the Save button. Status tag, routability badge, expiry hint, two switches (`use_le` and `staging`), and a "Retry now" button gated to failed/retry states.
+   *Amended 2026-10-18 (GH #2166):* the controls moved to the **Panel SSL** tab of SSL Manager (`/jabali-admin/ssl?tab=panel`), with the served certificate's type, issuer, names, validity and fingerprint. The Server Settings card now shows each certificate's status and links there.
 
 ## Alternatives Considered
 
