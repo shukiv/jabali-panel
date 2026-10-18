@@ -301,8 +301,11 @@ func (h *adminPanelCertHandler) selfSign(c *gin.Context, settings *models.Server
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "agent_unavailable"})
 		return
 	}
-	if resetPanelCertForSelfSigned(row, v) {
-		if err := h.cfg.PanelCerts.Upsert(c.Request.Context(), row); err != nil {
+	// The row loses the Let's Encrypt state a manual attempt left on it
+	// (models.SelfSignedState). SetSelfSignedState leaves a row with use_le
+	// on alone, so a toggle racing this can't be undone.
+	if status, exp, changed := models.SelfSignedState(row, v); changed {
+		if err := h.cfg.PanelCerts.SetSelfSignedState(c.Request.Context(), models.PanelCertKindHostname, status, exp); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "panel_cert_save_failed"})
 			return
 		}
@@ -337,26 +340,6 @@ func (h *adminPanelCertHandler) selfSign(c *gin.Context, settings *models.Server
 			Detail:       "Regenerating the self-signed certificate for " + host + ". The panel restarts in a few seconds to serve it: reload the page, then accept the new certificate in your browser.",
 		})
 	}
-}
-
-// resetPanelCertForSelfSigned brings the hostname row in line with
-// self-signed mode and reports whether it changed. A Let's Encrypt state on
-// the row (pending, a retry, a failure and its error) doesn't apply there; a
-// manual attempt while the hostname wasn't routable left one. A kept CA cert
-// shows as issued, with its real expiry.
-func resetPanelCertForSelfSigned(row *models.PanelCertificate, v panelcert.Verdict) bool {
-	want := models.PanelCertStatusSelfSigned
-	if v.Action == panelcert.KeepCA {
-		want = models.PanelCertStatusIssued
-	}
-	changed := row.Status != want || row.LastError != "" || row.NextRetryAt != nil || row.AttemptCount != 0
-	row.Status, row.LastError, row.NextRetryAt, row.AttemptCount = want, "", nil, 0
-	if v.Action == panelcert.KeepCA && (row.ExpiresAt == nil || !row.ExpiresAt.Equal(v.NotAfter)) {
-		exp := v.NotAfter
-		row.ExpiresAt = &exp
-		changed = true
-	}
-	return changed
 }
 
 // errPanelCertNoSettings is exported for the reconciler's logging path

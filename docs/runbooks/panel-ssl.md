@@ -64,7 +64,7 @@ mariadb -uroot jabali_panel \
 
 Flip "Use Let's Encrypt" OFF in the UI. The existing LE cert stays on disk until it expires; the reconciler stops scheduling renewals via this code path (certbot's own timer keeps renewing the lineage on disk, but nothing copies it back to `/etc/jabali/tls/` once `use_le=0`). Once it expires, the reconciler replaces it with a self-signed cert (GH #2166).
 
-With `use_le=0` the reconciler keeps the self-signed cert matched to the hostname (`ssl.panel.selfsign`): it regenerates when the cert is missing, no longer covers `<hostname>` and `mail.<hostname>`, or has expired. It never replaces a CA cert that is still valid. **Regenerate self-signed** on the hostname row does the same now, without public DNS or an admin email, and answers 202 while it regenerates (the panel restarts a few seconds later) or 200 with what is already served.
+With `use_le=0` the reconciler keeps the self-signed cert matched to the hostname (`ssl.panel.selfsign`): it regenerates when the cert is missing, no longer covers `<hostname>` and `mail.<hostname>`, or has expired. It never replaces a CA cert that is still valid. On the same tick the hostname row follows the cert: a Let's Encrypt retry or error left from a manual attempt clears, and a kept CA cert shows as `issued` with its expiry. **Regenerate self-signed** on the hostname row does the same now, without public DNS or an admin email, and answers 202 while it regenerates (the panel restarts a few seconds later) or 200 with what is already served.
 
 To replace a still-valid LE cert with self-signed right away:
 

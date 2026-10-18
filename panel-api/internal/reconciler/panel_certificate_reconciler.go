@@ -209,17 +209,28 @@ const panelSelfSignOrgMarker = panelcert.SelfSignOrg
 // It is stateless with respect to the panel_certificate row (see the caller):
 // the on-disk cert is the only convergence signal.
 func (r *Reconciler) reconcilePanelSelfSignedCert(ctx context.Context, row *models.PanelCertificate, hostname, publicIPv4 string) {
-	if r.agent == nil || hostname == "" {
+	if hostname == "" {
 		return
 	}
 	certPath := row.CertPEMPath
 	if certPath == "" {
 		certPath = panelcert.DefaultCertPath
 	}
-	drift, reason := r.panelSelfSignedCertDrifted(certPath, hostname)
-	if !drift {
+	v := r.panelSelfSignedVerdict(certPath, hostname)
+	// GH #2166: the row follows the cert too, so the Panel SSL card doesn't
+	// show a Let's Encrypt retry or error that doesn't apply with Let's
+	// Encrypt off. SetSelfSignedState leaves a row with use_le on alone.
+	if r.panelCerts != nil {
+		if status, exp, changed := models.SelfSignedState(row, v); changed {
+			if err := r.panelCerts.SetSelfSignedState(ctx, models.PanelCertKindHostname, status, exp); err != nil {
+				r.log.Warn("panel self-signed cert: row update failed", "error", err)
+			}
+		}
+	}
+	if v.Action != panelcert.Regenerate || r.agent == nil {
 		return
 	}
+	reason := v.Reason
 	if _, err := r.agent.Call(ctx, "ssl.panel.selfsign", map[string]any{
 		"hostname": hostname,
 		"ip":       publicIPv4,
@@ -248,10 +259,16 @@ func (r *Reconciler) reconcilePanelSelfSignedCert(ctx context.Context, row *mode
 // drifts. A real CA's cert is PRESERVED until it expires, so a stale
 // self-signed dispatch cannot clobber a live Let's Encrypt cert.
 func (r *Reconciler) panelSelfSignedCertDrifted(certPath, hostname string) (bool, string) {
+	v := r.panelSelfSignedVerdict(certPath, hostname)
+	return v.Action == panelcert.Regenerate, v.Reason
+}
+
+// panelSelfSignedVerdict reads the cert at certPath and classifies it for
+// hostname with panelcert.Check.
+func (r *Reconciler) panelSelfSignedVerdict(certPath, hostname string) panelcert.Verdict {
 	data, err := r.readCertFile(certPath)
 	if err != nil {
 		data = nil
 	}
-	v := panelcert.Check(data, hostname, time.Now())
-	return v.Action == panelcert.Regenerate, v.Reason
+	return panelcert.Check(data, hostname, time.Now())
 }

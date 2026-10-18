@@ -26,6 +26,11 @@ type PanelCertificateRepository interface {
 	MarkPendingRetry(ctx context.Context, errMsg string, retryAfter time.Duration) error
 	MarkIssuedKind(ctx context.Context, kind string, issuedAt, expiresAt time.Time) error
 	MarkPendingRetryKind(ctx context.Context, kind, errMsg string, retryAfter time.Duration) error
+	// SetSelfSignedState brings a row in line with self-signed mode (GH
+	// #2166, models.SelfSignedState): status, expires_at when non-nil, and
+	// no Let's Encrypt retry state. It changes the row only while its use_le
+	// is off, so it can't undo an admin turning Let's Encrypt on.
+	SetSelfSignedState(ctx context.Context, kind, status string, expiresAt *time.Time) error
 }
 
 type panelCertRepo struct{ db *gorm.DB }
@@ -224,4 +229,20 @@ func (r *panelCertRepo) MarkIssuedKind(ctx context.Context, kind string, issuedA
 
 func (r *panelCertRepo) MarkPendingRetryKind(ctx context.Context, kind, errMsg string, retryAfter time.Duration) error {
 	return r.markPendingRetry(ctx, kind, errMsg, retryAfter)
+}
+
+func (r *panelCertRepo) SetSelfSignedState(ctx context.Context, kind, status string, expiresAt *time.Time) error {
+	updates := map[string]any{
+		"status":        status,
+		"last_error":    "",
+		"attempt_count": 0,
+		"next_retry_at": nil,
+	}
+	if expiresAt != nil {
+		updates["expires_at"] = expiresAt.UTC()
+	}
+	return r.db.WithContext(ctx).
+		Model(&models.PanelCertificate{}).
+		Where("kind = ? AND use_le = ?", kindOrHostname(kind), false).
+		Updates(updates).Error
 }

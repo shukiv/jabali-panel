@@ -73,6 +73,23 @@ func (m *memPanelCerts) MarkPendingRetryKind(_ context.Context, kind, errMsg str
 	return nil
 }
 
+// SetSelfSignedState mirrors the repository: it changes only a row whose
+// use_le is off.
+func (m *memPanelCerts) SetSelfSignedState(_ context.Context, kind, status string, expiresAt *time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	row := m.rows[kind]
+	if row == nil || row.UseLE {
+		return nil
+	}
+	row.Status, row.LastError, row.AttemptCount, row.NextRetryAt = status, "", 0, nil
+	if expiresAt != nil {
+		exp := *expiresAt
+		row.ExpiresAt = &exp
+	}
+	return nil
+}
+
 // callsAgent records every agent call and signals it on calls.
 type callsAgent struct {
 	mu      sync.Mutex
