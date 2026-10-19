@@ -43,6 +43,7 @@ interface NginxSettings {
   nginx_cache_max_size_gb: number;
   nginx_cache_keyzone_mb: number;
   nginx_cache_inactive_min: number;
+  nginx_proxy_allow_internal: boolean;
 }
 
 // nginx value grammars — mirror the API + agent regex so the UI rejects bad
@@ -192,6 +193,16 @@ export function NginxSettingsCard() {
             <InputNumber min={1} max={1440} style={{ width: 140 }} />
           </Form.Item>
         </Space>
+
+        <Divider plain>{t("nginxsettingscard.reverse_proxy_rules")}</Divider>
+        <Form.Item
+          name="nginx_proxy_allow_internal"
+          label={t("nginxsettingscard.allow_proxy_to_internal_addresses")}
+          tooltip={t("nginxsettingscard.allow_proxy_to_internal_addresses_tip")}
+          valuePropName="checked"
+        >
+          <Switch checkedChildren="on" unCheckedChildren="off" />
+        </Form.Item>
 
         <Divider plain>
           Advanced
