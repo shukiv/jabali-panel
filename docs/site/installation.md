@@ -35,13 +35,57 @@ The installer is idempotent — safe to re-run. It writes drop-ins, never overwr
 | `JABALI_PANEL_HOSTNAME=<fqdn>` | Pre-seed Server Settings → Panel Hostname so the Let's Encrypt cert and Stalwart primary mail domain land on the right FQDN from first boot. |
 | `JABALI_SKIP_*` (various) | Skip individual install steps. Generally avoid — supported only for debugging. |
 
+## Choosing modules
+
+The core always installs: nginx with PHP-FPM, MariaDB, Redis, the panel, its agent, and Kratos for sign-in. Everything else is a module you choose.
+
+**Interactive install.** The one-line install opens the installer. Pick a profile, then adjust the module list:
+
+| Profile | Modules |
+|---|---|
+| Minimal | none |
+| Web host | `dns`, `security`, `quota` |
+| Mail server | `dns`, `mail`, `security` |
+| Full | every module |
+| Custom | starts from Web host |
+
+**Unattended install.** Set `JABALI_MODULES` to a comma list of module keys. The installer then skips its screens and installs that list:
+
+```bash
+curl -fsSL https://get.jabali-panel.com | JABALI_MODULES=dns,mail,security bash
+```
+
+Left unset, `JABALI_MODULES` gives the Web host profile. Set but empty, it gives Minimal.
+
+| Key | Installs |
+|---|---|
+| `dns` | PowerDNS: authoritative DNS and per-domain records. |
+| `mail` | Stalwart mail server and Bulwark webmail. Needs `dns`, which is added when missing. |
+| `security` | CrowdSec, malware scanning (Linux Malware Detect, YARA-X), the UFW firewall and AppArmor. |
+| `docker` | Docker engine and the admin's 1-click Docker apps. |
+| `docker_apps` | Docker apps for hosting users. Needs `docker`, which is added when missing. It doesn't work in an unprivileged container. |
+| `python_apps` | The runtime for users' Python apps. |
+| `postgres` | PostgreSQL alongside MariaDB. |
+| `quota` | Per-user disk quotas. |
+| `api` | The REST API and its keys. |
+
+To see what a selection installs without changing anything, add `--dry-run`:
+
+```bash
+curl -fsSL https://get.jabali-panel.com | JABALI_MODULES=dns,mail,security bash -s -- --dry-run
+```
+
+If `docker`, `docker_apps` or `postgres` fails to install, the installer warns and finishes the rest. That module's switch in the panel stays off, so you can turn it on there later.
+
+**After the install.** Server Settings → Modules turns `dns`, `mail`, `security`, `quota` and `api` on or off. Docker, Docker apps for users and Python apps are under Server Settings → Apps; PostgreSQL is under Server Settings → Databases. From the shell, `install.sh --install-module KEY` installs `dns`, `mail`, `security`, `quota` or `ftp` on an installed server.
+
 ## What the installer does
 
 1. Verifies Debian 13, root, no conflicting cPanel/Plesk/CyberPanel install.
 2. Adds Sury PHP repository (PHP 8.1–8.5+) and PackageCloud for CrowdSec.
 3. **Purges sury-nginx** if present — Jabali uses Debian-native nginx (Sury dropped nginx in 2026; this is defensive).
-4. Installs system packages: nginx, mariadb, postgresql, php-fpm (all current Sury versions), pdns-server, pdns-recursor, redis, Stalwart, crowdsec, ufw, fail2ban-substitute (CrowdSec), nftables, certbot, restic, Linux Malware Detect (LMD), YARA-X.
-5. Installs Kratos and Bulwark (Node SPA bridge) on Unix sockets — no TCP `:4433/:4434/:3000` exposure.
+4. Installs system packages: nginx, mariadb, php-fpm (all current Sury versions), redis, certbot, restic, ufw. The modules add their own: pdns-server and pdns-recursor for `dns`; Stalwart for `mail`; CrowdSec, Linux Malware Detect (LMD) and YARA-X for `security`, which also sets up the UFW firewall; Docker for `docker`; postgresql for `postgres`.
+5. Installs Kratos, and with `mail` Bulwark (Node SPA bridge), on Unix sockets — no TCP `:4433/:4434/:3000` exposure.
 6. Builds `jabali-panel-api` (Go) and `jabali-agent` (Go), writes systemd units, starts services.
 7. Runs DB migrations.
 8. Issues an admin one-time-login URL.

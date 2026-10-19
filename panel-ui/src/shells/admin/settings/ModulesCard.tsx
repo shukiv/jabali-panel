@@ -29,7 +29,7 @@ const STATUS_KEY: Partial<Record<ModuleKey, string>> = {
 const MODULES: { key: ModuleKey; label: string; desc: string }[] = [
   { key: "dns_enabled", label: "DNS server (PowerDNS)", desc: "Authoritative DNS + the domain records / DNSSEC pages." },
   { key: "mail_enabled", label: "Mail server (Stalwart + Bulwark)", desc: "Mailboxes, forwarders, webmail, and the Mail pages." },
-  { key: "security_enabled", label: "Security (CrowdSec, malware/ClamAV, AppArmor)", desc: "Intrusion detection, malware scanning, and the Security page." },
+  { key: "security_enabled", label: "Security (CrowdSec, malware scanning, AppArmor)", desc: "Intrusion detection, malware scanning, and the Security page." },
   { key: "quota_enabled", label: "Filesystem quota", desc: "Per-user disk quota enforcement + the quota fields." },
   { key: "api_enabled", label: "REST API (API keys)", desc: "Remote-management API keys + the Personal API Tokens page." },
 ];

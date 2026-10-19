@@ -101,7 +101,8 @@ Both run the same engine. `install.sh` fetches Go 1.26, builds the panel + agent
 binaries, builds the SPA with Vite, writes systemd units, provisions MariaDB +
 Redis + PowerDNS + Stalwart + Bulwark + CrowdSec (per the selected modules), and
 smoke-tests `/health`. Idempotent — re-run to upgrade. Set `JABALI_MODULES=…`
-(comma list) or leave the TUI to build it for a minimal / modular install.
+(comma list) or leave the TUI to build it for a minimal / modular install. The
+profiles and module keys are in [Choosing modules](docs/site/installation.md#choosing-modules).
 
 Optional flags:
 

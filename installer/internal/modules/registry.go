@@ -29,10 +29,11 @@ type Module struct {
 // Registry is the ordered list of optional modules. Order = display order.
 var Registry = []Module{
 	{Key: "dns", Title: "DNS server (PowerDNS)", Desc: "Authoritative DNS + per-domain record management.", Tier: TierRecommended},
-	{Key: "mail", Title: "Mail server (Stalwart + Bulwark)", Desc: "Mailboxes, forwarders, webmail.", Tier: TierOptional, Requires: nil},
-	{Key: "security", Title: "Security suite", Desc: "CrowdSec IDS + malware/ClamAV + AppArmor.", Tier: TierRecommended, Conflicts: []string{"fail2ban"}},
-	{Key: "docker", Title: "Docker engine", Desc: "Container runtime (needed for Docker apps).", Tier: TierOptional},
-	{Key: "docker_apps", Title: "Docker apps", Desc: "1-click container apps (needs Docker).", Tier: TierOptional, Requires: []string{"docker"}},
+	// Mail's install stops without the DNS module (GH #2056).
+	{Key: "mail", Title: "Mail server (Stalwart + Bulwark)", Desc: "Mailboxes, forwarders, webmail (needs DNS).", Tier: TierOptional, Requires: []string{"dns"}},
+	{Key: "security", Title: "Security suite", Desc: "CrowdSec IDS + malware scanning (LMD, YARA-X) + AppArmor.", Tier: TierRecommended, Conflicts: []string{"fail2ban"}},
+	{Key: "docker", Title: "Docker engine", Desc: "Container runtime + the admin's 1-click Docker apps.", Tier: TierOptional},
+	{Key: "docker_apps", Title: "Docker apps for users", Desc: "Hosting users run 1-click Docker apps (needs Docker).", Tier: TierOptional, Requires: []string{"docker"}},
 	{Key: "python_apps", Title: "Python apps", Desc: "Per-user Python app runtime.", Tier: TierOptional},
 	{Key: "postgres", Title: "PostgreSQL", Desc: "PostgreSQL engine alongside MariaDB.", Tier: TierOptional},
 	{Key: "quota", Title: "Filesystem quota", Desc: "Per-user disk-quota enforcement.", Tier: TierRecommended},
