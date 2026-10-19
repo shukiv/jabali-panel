@@ -12913,9 +12913,12 @@ cleanup_apparmor_legacy() {
 # SOAK-CLEAN complain profiles to enforce automatically.
 #
 # It is SAFE to auto-run: `jabali apparmor flip-mature` flips ONLY a profile
-# with ZERO AppArmor DENIED events in the soak window and SKIPS any profile
-# still denying (surfacing the pending denials) — so it can never enforce a
-# profile that would then EACCES its daemon (the #705 crash-loop). Mirrors the
+# with ZERO AppArmor violations in the soak window — DENIED events, and the
+# ALLOWED events a complain-mode profile logs for each access it would deny,
+# read from the audit log (/var/log/audit/audit.log*) and the journal — and
+# SKIPS any profile still violating (surfacing the pending events), so it can
+# never enforce a profile that would then EACCES its daemon (the #705
+# crash-loop). Mirrors the
 # per-user-egress flip-mature timer. Idempotent; runs on every install + update
 # (install_apparmor is on both paths).
 install_apparmor_flip_timer() {

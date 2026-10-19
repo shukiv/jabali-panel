@@ -314,9 +314,9 @@ jabali apparmor flip-mature [flags]
 **Flags:**
 
 - `--dry-run` — show what would change without invoking aa-enforce
-- `--force` — flip even if recent denials exist (DANGEROUS — this is how #705 crash-looped mx)
+- `--force` — flip even if recent violations exist (DANGEROUS — this is how #705 crash-looped mx)
 - `--profile` — Flip a single profile only
-- `--soak-days` — denial-scan window in days; a profile with any AppArmor DENIED in this window is not flipped (default `7`)
+- `--soak-days` — violation-scan window in days; a profile with any AppArmor DENIED or complain-mode ALLOWED event in this window is not flipped (default `7`)
 
 #### `jabali apparmor status`
 
