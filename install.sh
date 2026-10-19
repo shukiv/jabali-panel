@@ -410,6 +410,34 @@ apply_default_modules() {
   fi
 }
 
+# MODULE_REQUIRES — "module:needed-module" pairs, the Requires rules of the
+# installer TUI's registry (installer/internal/modules/registry.go; a Go test
+# keeps the two the same). Mail needs DNS: its install stops without the pdns
+# self-zone and the jabali_pdns database (GH #2056). Docker apps for users need
+# Docker.
+MODULE_REQUIRES=("mail:dns" "docker_apps:docker")
+
+# apply_module_requirements — add each selected module's requirement to
+# JABALI_MODULES, as the TUI does on every toggle. A headless or preset
+# selection never goes through the TUI, so without this JABALI_MODULES=mail,…
+# installed mail without DNS and failed. Unset JABALI_MODULES (every module on)
+# and an empty one (Minimal) are left alone.
+apply_module_requirements() {
+  [[ -n "${JABALI_MODULES:-}" ]] || return 0
+  local pair key req changed=1
+  while (( changed )); do
+    changed=0
+    for pair in "${MODULE_REQUIRES[@]}"; do
+      key="${pair%%:*}"; req="${pair##*:}"
+      if is_module_enabled "$key" && ! is_module_enabled "$req"; then
+        export JABALI_MODULES="${JABALI_MODULES},${req}"
+        _log "module '${key}' needs '${req}' — adding it to JABALI_MODULES"
+        changed=1
+      fi
+    done
+  done
+}
+
 # run_if_module <module-key> <install-fn> [args…] — run the install function only
 # when its module is enabled (see is_module_enabled), else log a skip. Used to
 # gate the OPTIONAL install steps in the fresh-install flow. On `jabali update`
@@ -728,7 +756,7 @@ install_module_mail() {
 
 # install_module_security — runtime install of the security module (CrowdSec +
 # AppSec + nginx bouncer + login-allowlist + jabali scenarios + blocklists +
-# malware/ClamAV/YARA stack + UFW + AppArmor + AIDE) on an already-installed
+# malware stack (LMD + YARA-X) + UFW + AppArmor + AIDE) on an already-installed
 # host. Standalone equivalent of main()'s `run_if_module security …` block, minus
 # the intervening non-security steps (cleanup_modsecurity, clone_or_update_repo,
 # etc. — already done on an installed host). No hostname/server env dependency
@@ -1092,9 +1120,10 @@ seed_module_flags() {
   [[ -z "${JABALI_MODULES+x}" ]] && return 0
   command -v mariadb >/dev/null 2>&1 || return 0
   local flag key sets=""
-  # map: server_settings column -> JABALI_MODULES key
+  # map: server_settings column -> JABALI_MODULES key. python_apps: main()
+  # installs the runtime, and the panel's switch (default off) follows it.
   for pair in "dns_enabled:dns" "mail_enabled:mail" "security_enabled:security" \
-              "quota_enabled:quota" "api_enabled:api"; do
+              "quota_enabled:quota" "api_enabled:api" "python_apps_enabled:python_apps"; do
     flag="${pair%%:*}"; key="${pair##*:}"
     if is_module_enabled "$key"; then val=1; else val=0; fi
     sets+="${flag}=${val},"
@@ -1105,6 +1134,80 @@ seed_module_flags() {
   else
     _warn "could not seed module flags (server_settings) — set them in Server Settings → Modules"
   fi
+}
+
+# run_install_step FN — run install.sh's function FN in a bash of its own, the
+# way the panel's module switches run it (docker.install, db.postgres.install).
+# There set -e and the ERR trap work in full, so FN stops at its first failing
+# command, and its failure comes back here as a status instead of ending this
+# install: in this shell the ERR trap exits, and an `if`/`||` around a function
+# would switch set -e off inside it. FN and the script path are arguments,
+# never part of the command text. They're moved out of the positional
+# parameters before the source: a source with no arguments of its own hands
+# install.sh the caller's, and its top-level option loop would shift FN away.
+run_install_step() {
+  bash -c '_step_script=$1 _step_fn=$2; set --; source "$_step_script" && "$_step_fn"' \
+    jabali-install-step "${REPO_DIR}/install.sh" "$1"
+}
+
+# install_docker_module — the installer's Docker choice (module key docker),
+# which does what Server Settings → Apps → Docker App Marketplace does
+# (docker.install): Docker CE and compose, the daemon enabled and started, then
+# the marketplace switch on. A failure warns and leaves the switch off, to turn
+# on from the panel later; the install goes on.
+install_docker_module() {
+  if run_install_step install_docker_engine && systemctl enable --now docker >/dev/null 2>&1; then
+    if mariadb jabali_panel -e "UPDATE server_settings SET docker_marketplace_enabled=1 WHERE id=1;" 2>/dev/null; then
+      _ok "Docker installed — the Docker app marketplace is on"
+    else
+      _warn "Docker installed, but its panel switch couldn't be set — turn it on in Server Settings → Apps"
+    fi
+    return 0
+  fi
+  _warn "Docker didn't install — turn it on later in Server Settings → Apps (the install log above has the error)"
+  return 0
+}
+
+# install_docker_apps_module — the installer's "Docker apps for users" choice
+# (module key docker_apps, which needs docker), which does what Server
+# Settings → Apps → "Enable Docker Apps for users" does (docker.tenant_set):
+# `jabali docker enable-tenant --yes` (userns-remap), then the switch on. It
+# fails in an unprivileged container (GH #272); like a failure there, the
+# switch stays off and the install goes on.
+install_docker_apps_module() {
+  if ! systemctl is-active --quiet docker; then
+    _warn "Docker apps for users skipped: Docker isn't running — turn them on later in Server Settings → Apps"
+    return 0
+  fi
+  local cli
+  cli="$(command -v jabali || echo /usr/local/bin/jabali)"
+  if "$cli" docker enable-tenant --yes; then
+    if mariadb jabali_panel -e "UPDATE server_settings SET docker_apps_for_users_enabled=1 WHERE id=1;" 2>/dev/null; then
+      _ok "Docker apps for users are on"
+    else
+      _warn "Docker apps for users set up, but the panel switch couldn't be set — turn it on in Server Settings → Apps"
+    fi
+    return 0
+  fi
+  _warn "Docker apps for users didn't set up — turn them on later in Server Settings → Apps (the install log above has the error)"
+  return 0
+}
+
+# install_postgres_module — the installer's PostgreSQL choice (module key
+# postgres), which does what Server Settings → Databases → PostgreSQL does
+# (db.postgres.install): the engine and php-pgsql, the service enabled and
+# started, then the switch on. A failure warns and leaves the switch off.
+install_postgres_module() {
+  if run_install_step install_postgres && systemctl enable --now postgresql >/dev/null 2>&1; then
+    if mariadb jabali_panel -e "UPDATE server_settings SET postgres_enabled=1 WHERE id=1;" 2>/dev/null; then
+      _ok "PostgreSQL installed and on"
+    else
+      _warn "PostgreSQL installed, but its panel switch couldn't be set — turn it on in Server Settings → Databases"
+    fi
+    return 0
+  fi
+  _warn "PostgreSQL didn't install — turn it on later in Server Settings → Databases (the install log above has the error)"
+  return 0
 }
 
 # seed_default_local_backups — GH #1240. Optional opt-in: automatic daily local
@@ -1139,7 +1242,8 @@ seed_default_local_backups() {
 print_module_plan() {
   printf '\n=== Jabali install plan (dry run) ===\n'
   if [[ -z "${JABALI_MODULES+x}" ]]; then
-    printf 'JABALI_MODULES: (unset) → ALL modules enabled (default install)\n'
+    # main() sets the 'webhost' default before this; unset means every module.
+    printf 'JABALI_MODULES: (unset) → every module\n'
   elif [[ -z "${JABALI_MODULES}" ]]; then
     printf 'JABALI_MODULES: (empty) → minimal — no optional modules\n'
   else
@@ -1150,23 +1254,31 @@ print_module_plan() {
   local key label
   for pair in "dns:PowerDNS (DNS server)" \
               "mail:Stalwart + Bulwark (mail)" \
-              "security:CrowdSec + malware/ClamAV + AppArmor" \
+              "security:CrowdSec + malware scanning (LMD, YARA-X) + AppArmor" \
+              "docker:Docker engine + app marketplace" \
+              "docker_apps:Docker apps for users" \
               "python_apps:Python app runtime" \
+              "postgres:PostgreSQL" \
               "quota:Filesystem quota" \
               "api:REST API (API keys)"; do
     key="${pair%%:*}"; label="${pair#*:}"
     if is_module_enabled "$key"; then
-      printf '  [x] %-10s %s\n' "$key" "$label"
+      printf '  [x] %-11s %s\n' "$key" "$label"
     else
-      printf '  [ ] %-10s %s (skipped)\n' "$key" "$label"
+      printf '  [ ] %-11s %s (skipped)\n' "$key" "$label"
     fi
   done
   printf '\nserver_settings flags that would be seeded:\n'
   local flag k
   for pair in "dns_enabled:dns" "mail_enabled:mail" "security_enabled:security" \
-              "quota_enabled:quota" "api_enabled:api"; do
+              "quota_enabled:quota" "api_enabled:api" "python_apps_enabled:python_apps"; do
     flag="${pair%%:*}"; k="${pair##*:}"
-    if is_module_enabled "$k"; then printf '  %-18s = 1\n' "$flag"; else printf '  %-18s = 0\n' "$flag"; fi
+    if is_module_enabled "$k"; then printf '  %-19s = 1\n' "$flag"; else printf '  %-19s = 0\n' "$flag"; fi
+  done
+  for pair in "docker_marketplace_enabled:docker" "docker_apps_for_users_enabled:docker_apps" \
+              "postgres_enabled:postgres"; do
+    flag="${pair%%:*}"; k="${pair##*:}"
+    if is_module_enabled "$k"; then printf '  %-29s = 1 once it installs\n' "$flag"; fi
   done
   printf '\nNo changes made. Re-run without --dry-run to install.\n\n'
 }
@@ -17150,6 +17262,8 @@ main() {
   # (mail/docker/python/postgres/api opt-in). Must run BEFORE the dry-run print
   # so the plan shows the real default. No-op when JABALI_MODULES is set.
   apply_default_modules
+  # A headless selection gets the TUI's Requires rules too (mail needs DNS).
+  apply_module_requirements
   # --dry-run: print the module plan (which optional modules install vs skip for
   # the current JABALI_MODULES) and exit before any system change. M353 GH #353.
   if [[ -n "${_cli_dry_run:-}${JABALI_DRY_RUN:-}" ]]; then
@@ -17382,6 +17496,13 @@ main() {
   # GH #1240: optional opt-in for automatic daily local backups (same point —
   # the server_settings row exists after first boot). Off unless chosen.
   seed_default_local_backups
+  # Docker, Docker apps for users and PostgreSQL, when chosen in the installer.
+  # Each does what its panel switch does and turns that switch on once it
+  # worked, so these run after first boot too. A failure warns and the install
+  # goes on; the panel can retry. Docker apps for users need Docker running.
+  run_if_module docker install_docker_module
+  run_if_module docker_apps install_docker_apps_module
+  run_if_module postgres install_postgres_module
   # First-phase Stalwart bootstrap (binary download, service user,
   # stalwart-cli, admin token, MariaDB password file, apply plan render,
   # unit file install). Safe to run after start_and_verify — doesn't
