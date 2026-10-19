@@ -158,4 +158,18 @@ describe("SSL Manager → Panel SSL details (GH #2166)", () => {
     renderTab([cert("hostname", { use_le: true, served: served() }), cert("mail", { use_le: true })]);
     expect(await screen.findByText(/Let's Encrypt issues and renews two independent certificates/)).toBeInTheDocument();
   });
+
+  // GH #2166: on a server without the mail module the API lists no mail
+  // cert, so there is no mail card, no mail action, and no mail name in the
+  // explanation.
+  it("shows only the hostname cert on a server without mail", async () => {
+    for (const useLE of [false, true]) {
+      renderTab([cert("hostname", { use_le: useLE, served: served({ names: ["panel.example.com", "localhost"] }) })]);
+      expect(await certCard("panel.example.com")).toBeInTheDocument();
+      expect(screen.queryByText("mail.panel.example.com")).not.toBeInTheDocument();
+      expect(screen.queryByText(/mail/i)).not.toBeInTheDocument();
+      expect(screen.getAllByRole("button", { name: useLE ? /Issue \/ retry/ : /Regenerate self-signed/ })).toHaveLength(1);
+      cleanup();
+    }
+  });
 });

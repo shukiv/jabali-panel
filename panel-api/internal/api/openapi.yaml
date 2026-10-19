@@ -5522,6 +5522,7 @@ paths:
         fingerprint_sha256}`. `type` is `self_signed`, `lets_encrypt`,
         `lets_encrypt_staging` or `ca`. When the file is missing or holds no
         certificate, `served` is absent and `served_error` says why.
+        With the mail module off, the list has no mail row.
       security: [ { KratosSession: [] } ]
       responses: { "200": { description: OK } }
 
@@ -5551,7 +5552,8 @@ paths:
         the mail row's name and `mail.<hostname>`: 202 while it is regenerated
         (webmail and the mail server serve it within a minute), or 200 when
         a self-signed or live CA certificate is already served. The hostname
-        row's `use_le` decides for both kinds.
+        row's `use_le` decides for both kinds. With the mail module off there
+        is no mail certificate: `kind=mail` returns 409 `module_disabled`.
       security: [ { KratosSession: [] } ]
       parameters:
         - { in: query, name: kind, required: false, schema: { type: string, enum: [hostname, mail], default: hostname } }
@@ -5559,6 +5561,7 @@ paths:
         "200": { description: "The issued certificate row, or (Let's Encrypt off) nothing to regenerate" }
         "202": { description: "Let's Encrypt off: regenerating the self-signed certificate" }
         "400": { description: "Invalid kind, no hostname, or (Let's Encrypt) no admin email" }
+        "409": { description: "`kind=mail` with the mail module off (`module_disabled`)" }
         "422": { description: Let's Encrypt refused the request }
         "424": { description: "Not routable: the name doesn't resolve publicly to this server" }
         "503": { description: Agent unavailable }

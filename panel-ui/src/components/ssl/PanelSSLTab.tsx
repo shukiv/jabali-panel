@@ -231,7 +231,20 @@ export function PanelSSLTab() {
       </Space>
 
       <Typography.Paragraph type="secondary" style={{ margin: 0 }}>
-        {host.use_le ? (
+        {!mail ? (
+          // GH #2166: a server without the mail module has no mail cert.
+          host.use_le ? (
+            <>
+              Let&apos;s Encrypt issues and renews the panel&apos;s certificate for <code>{hostName}</code>.
+            </>
+          ) : (
+            <>
+              Let&apos;s Encrypt is off: the panel serves its own self-signed certificate for <code>{hostName}</code>.
+              Browsers ask you to accept it. A certificate from Let&apos;s Encrypt or another authority is kept until
+              it expires.
+            </>
+          )
+        ) : host.use_le ? (
           <>
             Let&apos;s Encrypt issues and renews two independent certificates for the panel:{" "}
             <code>{hostName}</code> (panel hostname) and <code>{mailName}</code> (mail). Each issues and retries on

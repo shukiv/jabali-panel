@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -218,9 +219,12 @@ func TestPanelMailSelfSign_RunsOneAtATime(t *testing.T) {
 	}
 }
 
-// Stalwart loads certificates only at startup: the push comes before the
-// restart, as in the deploy hook. nginx reloads for webmail.
-func TestPanelMailSelfSign_ReloadOrder(t *testing.T) {
+// recordPanelMailReload stubs the commands the reload runs and points the
+// push-cert helper and the Stalwart binary at temp files, with the Stalwart
+// user set to the test's own user, so the box looks like it has the mail
+// server. It returns the push-cert path and the commands run so far.
+func recordPanelMailReload(t *testing.T) (push string, ran func() []string) {
+	t.Helper()
 	var got []string
 	prev := execCommandContext
 	execCommandContext = func(ctx context.Context, name string, args ...string) *exec.Cmd {
@@ -228,13 +232,30 @@ func TestPanelMailSelfSign_ReloadOrder(t *testing.T) {
 		return exec.CommandContext(ctx, "true")
 	}
 	t.Cleanup(func() { execCommandContext = prev })
-	push := filepath.Join(t.TempDir(), "push-cert")
-	if err := os.WriteFile(push, []byte("#!/bin/sh\n"), 0o755); err != nil {
+	dir := t.TempDir()
+	push = filepath.Join(dir, "push-cert")
+	bin := filepath.Join(dir, "stalwart")
+	for _, p := range []string{push, bin} {
+		if err := os.WriteFile(p, []byte("#!/bin/sh\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	me, err := user.Current()
+	if err != nil {
 		t.Fatal(err)
 	}
-	oldPush := panelMailPushCertPath
-	panelMailPushCertPath = push
-	t.Cleanup(func() { panelMailPushCertPath = oldPush })
+	oldPush, oldUser, oldBin := panelMailPushCertPath, panelMailStalwartUser, panelMailStalwartBinary
+	panelMailPushCertPath, panelMailStalwartUser, panelMailStalwartBinary = push, me.Username, bin
+	t.Cleanup(func() {
+		panelMailPushCertPath, panelMailStalwartUser, panelMailStalwartBinary = oldPush, oldUser, oldBin
+	})
+	return push, func() []string { return got }
+}
+
+// Stalwart loads certificates only at startup: the push comes before the
+// restart, as in the deploy hook. nginx reloads for webmail.
+func TestPanelMailSelfSign_ReloadOrder(t *testing.T) {
+	push, ran := recordPanelMailReload(t)
 
 	defaultPanelMailSelfSignReload(context.Background())
 	want := []string{
@@ -243,7 +264,33 @@ func TestPanelMailSelfSign_ReloadOrder(t *testing.T) {
 		push,
 		"systemctl restart jabali-stalwart",
 	}
-	if strings.Join(got, " | ") != strings.Join(want, " | ") {
+	if got := ran(); strings.Join(got, " | ") != strings.Join(want, " | ") {
 		t.Fatalf("ran %q, want %q", got, want)
+	}
+}
+
+// GH #2166: a box without the mail server still has jabali-stalwart.service
+// (`jabali update` installs it everywhere), but not the user it runs as or
+// its binary. Starting it there fails at step USER and restarts in a loop,
+// each failure a "Stalwart is down" alert. The reload leaves Stalwart alone
+// unless both are there; nginx still reloads.
+func TestPanelMailSelfSign_NoMailServerLeavesStalwartAlone(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		unset func()
+	}{
+		{"no stalwart user", func() { panelMailStalwartUser = "jabali-no-such-user-2166" }},
+		{"no stalwart binary", func() { panelMailStalwartBinary = filepath.Join(t.TempDir(), "absent") }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, ran := recordPanelMailReload(t)
+			tc.unset()
+
+			defaultPanelMailSelfSignReload(context.Background())
+			want := []string{"systemctl reload nginx"}
+			if got := ran(); strings.Join(got, " | ") != strings.Join(want, " | ") {
+				t.Fatalf("ran %q, want %q", got, want)
+			}
+		})
 	}
 }

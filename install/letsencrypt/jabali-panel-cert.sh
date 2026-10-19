@@ -77,6 +77,17 @@ panel_cert_kind() {
   echo ""
 }
 
+# stalwart_installed — whether this box has the mail server: the user
+# jabali-stalwart.service runs as and its binary. `jabali update` installs the
+# unit on every box, so the unit alone proves nothing. Starting it on a box
+# without the mail module fails at step USER and restarts in a loop, each
+# failure a "Stalwart is down" alert (GH #2166).
+STALWART_USER="jabali-mail"
+STALWART_BIN="/usr/local/bin/stalwart"
+stalwart_installed() {
+  getent passwd "$STALWART_USER" >/dev/null 2>&1 && [[ -x "$STALWART_BIN" ]]
+}
+
 # Library mode for install/tests: define the functions, run nothing.
 if [[ "${JABALI_PANEL_CERT_HOOK_LIB:-}" == "1" ]]; then
   return 0
@@ -130,13 +141,18 @@ case "$kind" in
     # during the JAB-357 key rotation). The mail-domain arm below has the
     # same order. `start` first (a no-op when running) so the push can
     # reach the management API even if Stalwart was down; the script
-    # waits for it to answer.
-    systemctl start jabali-stalwart   || echo "jabali-panel-cert.sh: jabali-stalwart start failed (continuing)" >&2
-    if [[ -x /usr/local/bin/jabali-stalwart-push-cert ]]; then
-      /usr/local/bin/jabali-stalwart-push-cert || \
-        echo "jabali-panel-cert.sh: jabali-stalwart-push-cert non-zero (continuing)" >&2
+    # waits for it to answer. A box without the mail server has nothing to
+    # push to (GH #2166).
+    if stalwart_installed; then
+      systemctl start jabali-stalwart   || echo "jabali-panel-cert.sh: jabali-stalwart start failed (continuing)" >&2
+      if [[ -x /usr/local/bin/jabali-stalwart-push-cert ]]; then
+        /usr/local/bin/jabali-stalwart-push-cert || \
+          echo "jabali-panel-cert.sh: jabali-stalwart-push-cert non-zero (continuing)" >&2
+      fi
+      systemctl restart jabali-stalwart || echo "jabali-panel-cert.sh: jabali-stalwart restart failed (continuing)" >&2
+    else
+      echo "jabali-panel-cert.sh: no mail server on this box; Stalwart left alone" >&2
     fi
-    systemctl restart jabali-stalwart || echo "jabali-panel-cert.sh: jabali-stalwart restart failed (continuing)" >&2
     ;;
   mail-domain)
     # M6.6: per-tenant-domain mail cert. JABALI_MAIL_DOMAIN_ID is

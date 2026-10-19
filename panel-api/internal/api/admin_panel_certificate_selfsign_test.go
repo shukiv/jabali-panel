@@ -162,6 +162,7 @@ type panelCertOpts struct {
 	certPath     string // "" = a path with no cert
 	noAgent      bool
 	noAdminEmail bool
+	mailOff      bool // the mail module is off (server_settings.mail_enabled=0)
 }
 
 type panelCertFixture struct {
@@ -196,7 +197,8 @@ func newPanelCertFixture(t *testing.T, o panelCertOpts) *panelCertFixture {
 		agent:  &callsAgent{calls: make(chan string, 4)},
 		lookup: &countingLookup{},
 	}
-	settings := &models.ServerSettings{Hostname: "panel.example.com", AdminEmail: "admin@example.com", PublicIPv4: "203.0.113.10"}
+	settings := &models.ServerSettings{Hostname: "panel.example.com", AdminEmail: "admin@example.com", PublicIPv4: "203.0.113.10",
+		MailEnabled: !o.mailOff}
 	if o.noAdminEmail {
 		settings.AdminEmail = ""
 	}
@@ -454,6 +456,42 @@ func TestPanelCertIssue_LEOffMailNoAgent(t *testing.T) {
 	rec, _ := f.issue(t, "mail")
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("want 503, got %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// GH #2166: a server without the mail module runs no mail server, so there
+// is no mail certificate to issue, self-signed or from Let's Encrypt. The
+// self-signed push started a Stalwart that wasn't installed, and each
+// failed start was a "Stalwart is down" alert.
+func TestPanelCertIssue_MailModuleOff(t *testing.T) {
+	for _, useLE := range []bool{false, true} {
+		f := newPanelCertFixture(t, panelCertOpts{useLE: useLE, mailOff: true})
+		before := *f.certs.get(models.PanelCertKindMail)
+		rec, body := f.issue(t, "mail")
+		if rec.Code != http.StatusConflict || body["error"] != "module_disabled" || body["module"] != "mail" {
+			t.Fatalf("use_le=%v: want 409 module_disabled for mail, got %d %s", useLE, rec.Code, rec.Body.String())
+		}
+		if m := f.waitCall(200 * time.Millisecond); m != "" {
+			t.Errorf("use_le=%v: agent called %q", useLE, m)
+		}
+		if f.lookup.count() != 0 || len(f.certs.pendingKind) != 0 {
+			t.Errorf("use_le=%v: Let's Encrypt path ran: lookups=%d pending=%v", useLE, f.lookup.count(), f.certs.pendingKind)
+		}
+		if after := *f.certs.get(models.PanelCertKindMail); after.Status != before.Status || after.LastError != before.LastError {
+			t.Errorf("use_le=%v: mail row changed: %+v", useLE, after)
+		}
+	}
+}
+
+// The hostname cert is unaffected by the mail module.
+func TestPanelCertIssue_HostnameWithTheMailModuleOff(t *testing.T) {
+	f := newPanelCertFixture(t, panelCertOpts{mailOff: true})
+	rec, _ := f.issue(t, "hostname")
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("want 202, got %d %s", rec.Code, rec.Body.String())
+	}
+	if m := f.waitCall(2 * time.Second); m != "ssl.panel.selfsign" {
+		t.Fatalf("agent call %q, want ssl.panel.selfsign", m)
 	}
 }
 

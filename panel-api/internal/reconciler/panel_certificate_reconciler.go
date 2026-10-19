@@ -56,7 +56,7 @@ func (r *Reconciler) reconcilePanelCertificate(ctx context.Context) {
 		// The mail cert follows the toggle too (GH #2166), when the panel
 		// hostname serves mail. It goes first: the hostname's regenerate
 		// restarts the panel, which cuts this tick short.
-		if r.panelServesMail(ctx, settings.Hostname) {
+		if r.panelServesMail(ctx, settings) {
 			if mailRow, merr := r.panelCerts.GetByKind(ctx, models.PanelCertKindMail); merr == nil {
 				r.reconcilePanelMailSelfSignedCert(ctx, mailRow, settings.Hostname)
 			} else {
@@ -77,7 +77,8 @@ func (r *Reconciler) reconcilePanelCertificate(ctx context.Context) {
 	// default: email_enabled=0) has no mail.<hostname> DNS, so the mail cert
 	// parks in pending_acme_retry forever and shows as a perpetual "processing"
 	// task (GH #295). Enabling email on the panel hostname turns it back on.
-	panelMailEnabled := r.panelServesMail(ctx, settings.Hostname)
+	// A box without the mail module has no mail server for it either.
+	panelMailEnabled := r.panelServesMail(ctx, settings)
 
 	for _, kind := range []string{models.PanelCertKindHostname, models.PanelCertKindMail} {
 		row, gerr := r.panelCerts.GetByKind(ctx, kind)
@@ -93,6 +94,9 @@ func (r *Reconciler) reconcilePanelCertificate(ctx context.Context) {
 			if row.Status == models.PanelCertStatusPendingACME || row.Status == models.PanelCertStatusPendingACMERetry {
 				row.Status = models.PanelCertStatusSelfSigned
 				row.LastError = "mail not enabled on the panel hostname — enable email there to request mail.<hostname> TLS"
+				if !settings.MailEnabled {
+					row.LastError = "the mail module is off — this server runs no mail server for mail.<hostname>"
+				}
 				row.NextRetryAt = nil
 				if uerr := r.panelCerts.Upsert(ctx, row); uerr != nil {
 					r.log.Warn("panel-cert reconcile: failed to idle mail row", "error", uerr)
@@ -104,13 +108,16 @@ func (r *Reconciler) reconcilePanelCertificate(ctx context.Context) {
 	}
 }
 
-// panelServesMail reports whether the panel hostname serves mail: email is
-// enabled on its domain, the same gate the webmail vhost uses (GH #295).
-func (r *Reconciler) panelServesMail(ctx context.Context, hostname string) bool {
-	if r.domains == nil {
+// panelServesMail reports whether the panel hostname serves mail: the mail
+// module is on and email is enabled on the hostname's domain, the same gate
+// the webmail vhost uses (GH #295). A domain can keep email_enabled with the
+// module off, and on such a box a mail cert push would start a Stalwart that
+// isn't installed (GH #2166).
+func (r *Reconciler) panelServesMail(ctx context.Context, settings *models.ServerSettings) bool {
+	if r.domains == nil || !settings.MailEnabled {
 		return false
 	}
-	d, err := r.domains.FindByName(ctx, hostname)
+	d, err := r.domains.FindByName(ctx, settings.Hostname)
 	return err == nil && d != nil && d.EmailEnabled
 }
 

@@ -57,6 +57,8 @@ The mail card's button is **Regenerate self-signed** too, with the same rules: i
 
 With email off on the panel hostname, nothing serves the mail name, and its certificate is left alone.
 
+A server without the mail module (Server Settings → Modules) runs no mail server, so it has no mail certificate. The Panel SSL tab shows only the panel hostname's card, and the panel neither requests nor generates a mail certificate. The API answers 409 `module_disabled` to `issue?kind=mail`. Before GH #2166, a self-signed mail certificate was pushed on such a server too, which started a mail server that isn't installed. Each failed start raised a "Stalwart is down" alert. To clear that state left over from before the fix, run `systemctl reset-failed jabali-stalwart`.
+
 ## Operator notes
 
 - Changing the panel hostname triggers a fresh issuance against the new hostname. The old certificate is retained for one renewal cycle to ease rollback.
