@@ -293,6 +293,10 @@ type updateServerSettingsRequest struct {
 	NginxWorkerProcesses     *string `json:"nginx_worker_processes,omitempty"`
 	NginxWorkerConnections   *uint32 `json:"nginx_worker_connections,omitempty"`
 	NginxCustomHTTP          *string `json:"nginx_custom_http,omitempty"`
+
+	// Validation policy for proxy_pass rules; not an nginx tunable, so it
+	// does not count toward nginxTouched.
+	NginxProxyAllowInternal *bool `json:"nginx_proxy_allow_internal,omitempty"`
 }
 
 func (h *serverSettingsHandler) update(c *gin.Context) {
@@ -824,6 +828,9 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 	}
 	if req.NginxCustomHTTP != nil {
 		current.NginxCustomHTTP = strings.TrimSpace(*req.NginxCustomHTTP)
+	}
+	if req.NginxProxyAllowInternal != nil {
+		current.NginxProxyAllowInternal = *req.NginxProxyAllowInternal
 	}
 	if req.NginxCacheMaxSizeGB != nil {
 		current.NginxCacheMaxSizeGB = *req.NginxCacheMaxSizeGB

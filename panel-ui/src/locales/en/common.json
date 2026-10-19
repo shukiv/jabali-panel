@@ -1359,6 +1359,8 @@
     "modules": "Modules"
   },
   "nginxsettingscard": {
+    "allow_proxy_to_internal_addresses": "Allow proxy_pass to local / private addresses",
+    "allow_proxy_to_internal_addresses_tip": "Lets a domain's proxy_pass rule target localhost, 127.0.0.1 or a private-range IP (10.x, 172.16-31.x, 192.168.x). Off by default to block SSRF to internal services. Unix sockets and link-local addresses (169.254.x, cloud metadata) stay blocked.",
     "cache_key_metadata_zone_8000_keys_mb": "Cache key metadata zone (~8000 keys/MB)",
     "custom_http_directives": "Custom http{} directives",
     "evict_entries_not_accessed_within_this_windo": "Evict entries not accessed within this window",
@@ -1369,6 +1371,7 @@
     "nginx": "Nginx",
     "off_hides_the_nginx_version_in_responses_err": "Off hides the nginx version in responses + error pages (recommended).",
     "raw_nginx_directives_can_make_the_server_uns": "Raw nginx directives — can make the server unstable",
+    "reverse_proxy_rules": "Reverse-proxy rules",
     "shared_fastcgi_cache_max_on_disk_size": "Shared FastCGI cache max on-disk size",
     "show_nginx_version_server_tokens": "Show nginx version (server_tokens)"
   },

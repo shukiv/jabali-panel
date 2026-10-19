@@ -1024,7 +1024,13 @@ func (h *domainHandler) update(c *gin.Context) {
 		}
 
 		if req.NginxRules != nil {
-			if err := validateNginxRules(*req.NginxRules); err != nil {
+			allowInternalProxy := false
+			if h.cfg.ServerSettings != nil {
+				if st, sErr := h.cfg.ServerSettings.Get(ctx); sErr == nil && st != nil {
+					allowInternalProxy = st.NginxProxyAllowInternal
+				}
+			}
+			if err := validateNginxRulesWith(*req.NginxRules, allowInternalProxy); err != nil {
 				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 				return
 			}
@@ -2160,6 +2166,12 @@ func isValidNginxRuleType(s string) bool {
 const maxNginxRules = 500
 
 func validateNginxRules(rules models.NginxRules) error {
+	return validateNginxRulesWith(rules, false)
+}
+
+// validateNginxRulesWith is validateNginxRules with the server's
+// nginx_proxy_allow_internal policy applied to proxy_pass targets.
+func validateNginxRulesWith(rules models.NginxRules, allowInternalProxy bool) error {
 	if len(rules) > maxNginxRules {
 		return fmt.Errorf("too many rules (max %d)", maxNginxRules)
 	}
@@ -2202,7 +2214,7 @@ func validateNginxRules(rules models.NginxRules) error {
 			if !strings.HasPrefix(r.Target, "http://") && !strings.HasPrefix(r.Target, "https://") {
 				return fmt.Errorf("rule %d: target must be an http(s) URL", i)
 			}
-			if err := validateProxyPassTarget(r.Target); err != nil {
+			if err := validateProxyPassTargetWith(r.Target, allowInternalProxy); err != nil {
 				return fmt.Errorf("rule %d: %v", i, err)
 			}
 			if r.ReadTimeout != "" && !isNginxDuration(r.ReadTimeout) {
@@ -2492,6 +2504,15 @@ func validateRewritePattern(pattern string, maxLen int) error {
 // (resolution is TOCTOU vs DNS-rebind) — the literal-address classes are the
 // ones the acceptance criteria enumerate.
 func validateProxyPassTarget(target string) error {
+	return validateProxyPassTargetWith(target, false)
+}
+
+// validateProxyPassTargetWith applies the same checks, but with allowInternal
+// (Server Settings → Nginx, nginx_proxy_allow_internal) it admits localhost
+// and loopback / private-range IPs — for apps the admin runs on this host or
+// the LAN. Unix sockets, link-local (169.254.169.254 cloud metadata) and the
+// unspecified address stay rejected, as does the directive-smuggling check.
+func validateProxyPassTargetWith(target string, allowInternal bool) error {
 	// nginx's unix upstream form is `http://unix:/path:/`; url.Parse mangles it,
 	// so match the scheme token directly before parsing.
 	if strings.Contains(strings.ToLower(target), "unix:") {
@@ -2514,12 +2535,15 @@ func validateProxyPassTarget(target string) error {
 	if host == "" {
 		return fmt.Errorf("target has no host")
 	}
-	if strings.EqualFold(host, "localhost") {
+	if strings.EqualFold(host, "localhost") && !allowInternal {
 		return fmt.Errorf("target may not be localhost")
 	}
 	if ip := net.ParseIP(host); ip != nil {
-		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
+		if ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
 			return fmt.Errorf("target may not point at an internal address (%s)", host)
+		}
+		if !allowInternal && (ip.IsLoopback() || ip.IsPrivate()) {
+			return fmt.Errorf("target may not point at an internal address (%s); allow it in Server Settings → Nginx", host)
 		}
 	}
 	return nil
