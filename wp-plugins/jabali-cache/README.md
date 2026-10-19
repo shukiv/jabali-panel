@@ -99,4 +99,4 @@ JABALI_TEST_REDIS=/run/redis/redis.sock php wp-plugins/jabali-cache/tests/test-l
 
 ## License
 
-Dedicated to the public domain under [CC0 1.0 Universal](https://creativecommons.org/publicdomain/zero/1.0/): see [LICENSE](LICENSE).
+To the extent possible under law, Shuki Vaknin has waived all copyright and related or neighboring rights to Jabali Cache. It is dedicated to the public domain under [CC0 1.0 Universal](https://creativecommons.org/publicdomain/zero/1.0/): see [LICENSE](LICENSE).

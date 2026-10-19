@@ -523,7 +523,7 @@ jabali-panel/
 
 ## License
 
-Jabali Panel is dedicated to the public domain under [CC0 1.0 Universal](https://creativecommons.org/publicdomain/zero/1.0/): see [LICENSE](LICENSE).
+To the extent possible under law, Shuki Vaknin has waived all copyright and related or neighboring rights to Jabali Panel. It is dedicated to the public domain under [CC0 1.0 Universal](https://creativecommons.org/publicdomain/zero/1.0/): see [LICENSE](LICENSE).
 
 The software the installer sets up beside the panel keeps its own license. Stalwart and Bulwark, for example, are AGPL-3.0, and PowerDNS is GPL-2.0.
 
