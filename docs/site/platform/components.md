@@ -8,8 +8,8 @@ Version pins shown are the values in `install.sh` at the time of writing. Run `j
 
 | Component | Version | Role | Upstream license |
 |---|---|---|---|
-| **jabali-panel** | this repo | Go + Gin HTTP panel API; serves the React SPA; the only writer to the panel DB | AGPL-3.0 |
-| **jabali-agent** | this repo | Root-privileged process; performs every privileged host operation over `/run/jabali/agent.sock` | AGPL-3.0 |
+| **jabali-panel** | this repo | Go + Gin HTTP panel API; serves the React SPA; the only writer to the panel DB | CC0-1.0 |
+| **jabali-agent** | this repo | Root-privileged process; performs every privileged host operation over `/run/jabali/agent.sock` | CC0-1.0 |
 | **Stalwart Mail** | 0.16.24 | SMTP + IMAP + JMAP + mailbox store (single binary) | AGPL-3.0 |
 | **Bulwark** | 1.12.0 (GitHub release tarball) | Node + Next.js standalone JMAP webmail on `mail.<domain>`, plus autoconfig / autodiscover and the magic-link bridge | own |
 | **Ory Kratos** | 26.2.0 | Identity (login, 2FA, recovery); Unix sockets only | Apache-2.0 |

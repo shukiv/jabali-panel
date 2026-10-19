@@ -26,7 +26,7 @@ export function JabaliFooter() {
   // vertically and center so the brand block and version block don't
   // hug the left edge on narrow shells.
   const isWide = screens.lg !== false;
-  // Tagline + AGPL link stay visible from sm upward (tablet still has
+  // Tagline + license link stay visible from sm upward (tablet still has
   // room); only true phone xs hides them.
   const showExtras = screens.sm !== false;
   const logoSrc =
@@ -94,12 +94,12 @@ export function JabaliFooter() {
             <Typography.Text type="secondary">·</Typography.Text>
             <Typography.Text type="secondary">
               <a
-                href="https://www.gnu.org/licenses/agpl-3.0.html"
+                href="https://creativecommons.org/publicdomain/zero/1.0/"
                 target="_blank"
                 rel="noreferrer"
                 style={{ color: "inherit" }}
               >
-                AGPL-3.0
+                CC0 1.0
               </a>
             </Typography.Text>
           </>

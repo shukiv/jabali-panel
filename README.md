@@ -31,7 +31,7 @@
   <img src="https://img.shields.io/badge/Ant_Design-5-0170FE?logo=antdesign&logoColor=white" alt="Ant Design 5">
   <img src="https://img.shields.io/badge/MariaDB-11-003545?logo=mariadb&logoColor=white" alt="MariaDB 11">
   <img src="https://img.shields.io/badge/Debian-13-A81D33?logo=debian&logoColor=white" alt="Debian 13">
-  <img src="https://img.shields.io/badge/License-AGPL--3.0-blue" alt="AGPL-3.0">
+  <img src="https://img.shields.io/badge/License-CC0_1.0-lightgrey" alt="CC0 1.0">
 </p>
 
 <p>
@@ -523,7 +523,9 @@ jabali-panel/
 
 ## License
 
-AGPL-3.0 — see [LICENSE](LICENSE).
+Jabali Panel is dedicated to the public domain under [CC0 1.0 Universal](https://creativecommons.org/publicdomain/zero/1.0/): see [LICENSE](LICENSE).
+
+The software the installer sets up beside the panel keeps its own license. Stalwart and Bulwark, for example, are AGPL-3.0, and PowerDNS is GPL-2.0.
 
 ## Mail Subdomain
 

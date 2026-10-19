@@ -5,8 +5,8 @@ Requires at least: 5.6
 Tested up to: 7.0
 Requires PHP: 7.4
 Stable tag: 1.2.1
-License: GPLv2 or later
-License URI: https://www.gnu.org/licenses/gpl-2.0.html
+License: CC0-1.0
+License URI: https://creativecommons.org/publicdomain/zero/1.0/
 
 Persistent Redis object cache for WordPress. Zero-config on the Jabali panel, works without the phpredis extension, and always fails safe.
 

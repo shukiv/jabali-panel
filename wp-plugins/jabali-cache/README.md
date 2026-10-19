@@ -99,4 +99,4 @@ JABALI_TEST_REDIS=/run/redis/redis.sock php wp-plugins/jabali-cache/tests/test-l
 
 ## License
 
-GPL-2.0-or-later.
+Dedicated to the public domain under [CC0 1.0 Universal](https://creativecommons.org/publicdomain/zero/1.0/): see [LICENSE](LICENSE).
