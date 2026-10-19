@@ -124,6 +124,16 @@ func TestCountApparmorViolations_ComplainAllowedCounts(t *testing.T) {
 	}
 }
 
+// auditd's ENRICHED log format appends interpreted fields after 0x1d; the
+// sample shown to the operator stops at the raw record.
+func TestCountApparmorViolations_SampleDropsEnrichedFields(t *testing.T) {
+	line := avcLine(time.Now().Unix(), 4, "ALLOWED", "stalwart-mail", "/x") + "\x1dFSUID=\"jabali-mail\" OUID=\"root\""
+	_, sample := countText(t, line, "stalwart-mail")
+	if strings.Contains(sample, "\x1d") || strings.Contains(sample, "FSUID=") || !strings.HasSuffix(sample, "ouid=0") {
+		t.Fatalf("sample %q, want the raw record only", sample)
+	}
+}
+
 func TestCountApparmorViolations_WindowAndDedupe(t *testing.T) {
 	now := time.Now()
 	recent, old := now.Add(-time.Hour).Unix(), now.Add(-10*24*time.Hour).Unix()

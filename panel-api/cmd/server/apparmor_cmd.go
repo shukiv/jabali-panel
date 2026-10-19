@@ -340,7 +340,10 @@ func countApparmorViolations(r io.Reader, profile string, since time.Time, seen 
 		}
 		count++
 		if sample == "" {
-			sample = strings.TrimSpace(line)
+			// auditd's ENRICHED format appends interpreted fields after a
+			// 0x1d separator; the raw record before it is the useful part.
+			raw, _, _ := strings.Cut(line, "\x1d")
+			sample = strings.TrimSpace(raw)
 		}
 	}
 	if err := scanner.Err(); err != nil {
