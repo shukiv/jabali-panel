@@ -62,9 +62,11 @@ mariadb -uroot jabali_panel \
 
 ## Roll back to self-signed
 
-Flip "Use Let's Encrypt" OFF in the UI. The existing LE cert stays on disk until it expires; the reconciler stops scheduling renewals via this code path (certbot's own timer keeps renewing the lineage on disk, but nothing copies it back to `/etc/jabali/tls/` once `use_le=0`). Once it expires, the reconciler replaces it with a self-signed cert (GH #2166).
+Flip "Use Let's Encrypt" OFF in the UI. The existing LE cert stays on disk until it expires, and the reconciler stops requesting new ones. certbot's own timer still renews the lineage, and the deploy hook (`jabali-panel-cert.sh`, which routes by lineage name, not by `use_le`) installs each successful renewal. A renewal behind a proxy that blocks the challenge fails, so the cert expires. Once it expires, the reconciler replaces it with a self-signed cert (GH #2166).
 
 With `use_le=0` the reconciler keeps the self-signed cert matched to the hostname (`ssl.panel.selfsign`): it regenerates when the cert is missing, no longer covers `<hostname>` and `mail.<hostname>`, or has expired. It never replaces a CA cert that is still valid. On the same tick the hostname row follows the cert: a Let's Encrypt retry or error left from a manual attempt clears, and a kept CA cert shows as `issued` with its expiry. **Regenerate self-signed** on the hostname row does the same now, without public DNS or an admin email, and answers 202 while it regenerates (the panel restarts a few seconds later) or 200 with what is already served.
+
+The mail cert follows the same switch (`ssl.panel.mail_selfsign`), when email is enabled on the panel hostname. It is checked against the mail row's name and `mail.<hostname>`, and regenerated with its own key (never `panel.key`) at `/etc/jabali/tls/panel-mail.{crt,key}` (0640 root:jabali). Then nginx reloads for webmail, and the cert is pushed into Stalwart (`jabali-stalwart-push-cert`) before Stalwart restarts. The same rules apply: a valid CA cert is kept until it expires, and a current self-signed cert is left alone, so no tick restarts Stalwart for nothing. The mail row follows the cert, and **Regenerate self-signed** on the mail card dispatches it (202) or answers what is served (200). The lineage record `panel-mail.lineage` is left alone, so a later Let's Encrypt renewal still deploys over it.
 
 To replace a still-valid LE cert with self-signed right away:
 

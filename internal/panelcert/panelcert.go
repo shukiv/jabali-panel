@@ -1,8 +1,10 @@
 // Package panelcert decides what the panel's self-signed mode does with the
-// hostname certificate at /etc/jabali/tls/panel.crt (JAB-389, GH #2166). The
-// panel reconciler, the admin's "Regenerate self-signed" action and the
-// agent's ssl.panel.selfsign all classify the certificate with Check, so the
-// panel can never answer "regenerating" while the agent answers "kept".
+// hostname certificate at /etc/jabali/tls/panel.crt (JAB-389, GH #2166) and
+// the mail certificate at /etc/jabali/tls/panel-mail.crt. The panel
+// reconciler, the admin's "Regenerate self-signed" action and the agent's
+// ssl.panel.selfsign and ssl.panel.mail_selfsign all classify a certificate
+// with Check or CheckNames, so the panel can never answer "regenerating"
+// while the agent answers "kept".
 //
 // Self-signed mode is "Use Let's Encrypt for the panel" off. Nothing here runs
 // while it is on.
@@ -58,13 +60,21 @@ type Verdict struct {
 }
 
 // Check classifies certPEM, the current certificate (nil or empty when the
-// file is missing or unreadable), for hostname at now.
+// file is missing or unreadable), for hostname at now. The panel hostname
+// certificate names hostname and mail.<hostname>.
 //
 // An expired real-CA certificate is replaced (GH #2166): turning Let's Encrypt
 // off keeps its certificate until it expires, not forever, and an expired
 // certificate is no live certificate to protect. With Let's Encrypt off its
 // renewals can also fail for good, e.g. behind a Cloudflare proxy.
 func Check(certPEM []byte, hostname string, now time.Time) Verdict {
+	return CheckNames(certPEM, hostname, []string{hostname, "mail." + hostname}, now)
+}
+
+// CheckNames is Check for a certificate whose CommonName must be cn and that
+// must name each of names. The panel mail certificate is checked with its
+// MailNames (GH #2166).
+func CheckNames(certPEM []byte, cn string, names []string, now time.Time) Verdict {
 	if len(certPEM) == 0 {
 		return Verdict{Action: Regenerate, Reason: "cert missing or unreadable"}
 	}
@@ -86,11 +96,11 @@ func Check(certPEM []byte, hostname string, now time.Time) Verdict {
 		v.Action, v.Reason = KeepCA, "cert issued by "+v.Issuer
 		return v
 	}
-	if !strings.EqualFold(cert.Subject.CommonName, hostname) {
-		v.Action, v.Reason = Regenerate, "CN "+cert.Subject.CommonName+" != "+hostname
+	if !strings.EqualFold(cert.Subject.CommonName, cn) {
+		v.Action, v.Reason = Regenerate, "CN "+cert.Subject.CommonName+" != "+cn
 		return v
 	}
-	for _, need := range []string{hostname, "mail." + hostname} {
+	for _, need := range names {
 		if !hasDNSName(cert, need) {
 			v.Action, v.Reason = Regenerate, "missing SAN "+need
 			return v
@@ -100,8 +110,32 @@ func Check(certPEM []byte, hostname string, now time.Time) Verdict {
 		v.Action, v.Reason = Regenerate, "cert expired"
 		return v
 	}
-	v.Action, v.Reason = UpToDate, "up to date for "+hostname
+	v.Action, v.Reason = UpToDate, "up to date for "+cn
 	return v
+}
+
+// MailNames are the names the panel's self-signed mail certificate covers,
+// lowercased: mailHost, the mail cert row's name (mail.<hostname>, the name
+// it was pinned to on a panel rename, JAB-389, or the applied custom mail
+// hostname, JAB-390), then mail.<panelHost>, which stays served. The Let's
+// Encrypt mail certificate covers the same pair. Its first name is the
+// certificate's CommonName.
+func MailNames(mailHost, panelHost string) []string {
+	var names []string
+	for _, n := range []string{mailHost, mailOf(panelHost)} {
+		n = strings.ToLower(strings.TrimSpace(n))
+		if n != "" && (len(names) == 0 || names[0] != n) {
+			names = append(names, n)
+		}
+	}
+	return names
+}
+
+func mailOf(host string) string {
+	if strings.TrimSpace(host) == "" {
+		return ""
+	}
+	return "mail." + host
 }
 
 // IssuerOrg returns the certificate's first issuer Organization, trimmed, or

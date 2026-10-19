@@ -5547,7 +5547,11 @@ paths:
           certificate from a CA, which is kept until it expires.
           `expires_at` is the current certificate's expiry.
 
-        `kind=mail` stays a Let's Encrypt request either way.
+        `kind=mail` does the same for the panel's mail certificate, for
+        the mail row's name and `mail.<hostname>`: 202 while it is regenerated
+        (webmail and the mail server serve it within a minute), or 200 when
+        a self-signed or live CA certificate is already served. The hostname
+        row's `use_le` decides for both kinds.
       security: [ { KratosSession: [] } ]
       parameters:
         - { in: query, name: kind, required: false, schema: { type: string, enum: [hostname, mail], default: hostname } }

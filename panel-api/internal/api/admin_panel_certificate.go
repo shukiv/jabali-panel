@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -39,8 +40,8 @@ type AdminPanelCertificateHandlerConfig struct {
 //	GET  /admin/panel-certificate          — current state + routability
 //	POST /admin/panel-certificate/toggle   — flip use_le / staging flags
 //	POST /admin/panel-certificate/issue    — force an immediate attempt;
-//	                                         with Let's Encrypt off, the
-//	                                         hostname's regenerates the
+//	                                         with Let's Encrypt off, it
+//	                                         regenerates the kind's
 //	                                         self-signed cert (GH #2166)
 //
 // All gated by RequireAdmin. The reconciler picks up state changes
@@ -230,12 +231,23 @@ func (h *adminPanelCertHandler) issue(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "panel_cert_load_failed", "details": err.Error()})
 		return
 	}
-	// GH #2166: with Let's Encrypt off the panel serves a self-signed
-	// hostname cert, so the hostname's action regenerates it. The mail cert
-	// stays a Let's Encrypt action: mail.<hostname> can't sit behind an HTTP
-	// proxy, so it can be issued while the panel hostname is proxied.
-	if kind == models.PanelCertKindHostname && !row.UseLE {
-		h.selfSign(c, settings, row)
+	// GH #2166: with Let's Encrypt off the panel serves self-signed certs, so
+	// each kind's action regenerates its own. The hostname row's use_le
+	// governs both: the toggle writes only that row, so the mail row's own
+	// flag can be stale.
+	hostRow := row
+	if kind == models.PanelCertKindMail {
+		if hostRow, err = h.cfg.PanelCerts.GetByKind(ctx, models.PanelCertKindHostname); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "panel_cert_load_failed", "details": err.Error()})
+			return
+		}
+	}
+	if !hostRow.UseLE {
+		if kind == models.PanelCertKindMail {
+			h.mailSelfSign(c, settings, row)
+		} else {
+			h.selfSign(c, settings, row)
+		}
 		return
 	}
 	if settings.AdminEmail == "" {
@@ -378,6 +390,68 @@ func (h *adminPanelCertHandler) selfSign(c *gin.Context, settings *models.Server
 			SelfSigned:   true,
 			Regenerating: true,
 			Detail:       "Regenerating the self-signed certificate for " + host + ". The panel restarts in a few seconds to serve it: reload the page, then accept the new certificate in your browser.",
+		})
+	}
+}
+
+// mailSelfSign is the mail cert's Issue action while Let's Encrypt is off
+// (GH #2166): the mail cert follows the toggle like the hostname one. It
+// regenerates the self-signed mail cert for the mail row's name and
+// mail.<hostname> (panelcert.MailNames), by the same rules: a live CA cert
+// is kept until it expires, a current self-signed cert is left alone.
+//
+// A regenerate is dispatched detached and answered 202 too:
+// ssl.panel.mail_selfsign waits for Stalwart to take the certificate and
+// restarts it, which can outlast the request.
+func (h *adminPanelCertHandler) mailSelfSign(c *gin.Context, settings *models.ServerSettings, row *models.PanelCertificate) {
+	names := panelcert.MailNames(row.Hostname, settings.Hostname)
+	certPath := row.CertPEMPath
+	if certPath == "" {
+		certPath = panelcert.DefaultMailCertPath
+	}
+	data, err := os.ReadFile(certPath)
+	if err != nil {
+		data = nil
+	}
+	v := panelcert.CheckNames(data, names[0], names, time.Now())
+	if v.Action == panelcert.Regenerate && h.cfg.Agent == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "agent_unavailable"})
+		return
+	}
+	if status, exp, changed := models.SelfSignedState(row, v); changed {
+		if err := h.cfg.PanelCerts.SetSelfSignedState(c.Request.Context(), models.PanelCertKindMail, status, exp); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "panel_cert_save_failed"})
+			return
+		}
+	}
+
+	covered := strings.Join(names, " and ")
+	switch v.Action {
+	case panelcert.UpToDate:
+		c.JSON(http.StatusOK, panelSelfSignResponse{
+			SelfSigned: true,
+			Detail:     "Mail already serves a self-signed certificate for " + covered + ".",
+			ExpiresAt:  v.NotAfter.UTC().Format(time.RFC3339),
+		})
+	case panelcert.KeepCA:
+		c.JSON(http.StatusOK, panelSelfSignResponse{
+			SelfSigned: true,
+			Detail:     "Mail serves a certificate issued by " + v.Issuer + ". It is kept until it expires, then replaced with a self-signed certificate.",
+			ExpiresAt:  v.NotAfter.UTC().Format(time.RFC3339),
+		})
+	default:
+		agentClient := h.cfg.Agent
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+			defer cancel()
+			if _, err := agentClient.Call(ctx, "ssl.panel.mail_selfsign", map[string]any{"names": names}); err != nil {
+				slog.Warn("panel mail self-signed cert regen failed", "names", names, "reason", v.Reason, "error", err)
+			}
+		}()
+		c.JSON(http.StatusAccepted, panelSelfSignResponse{
+			SelfSigned:   true,
+			Regenerating: true,
+			Detail:       "Regenerating the self-signed mail certificate for " + covered + ". Webmail and the mail server serve it within a minute; mail apps and browsers ask you to accept the new certificate.",
 		})
 	}
 }

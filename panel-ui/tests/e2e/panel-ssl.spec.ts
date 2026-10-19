@@ -113,14 +113,45 @@ test.describe("admin SSL Manager → Panel SSL", () => {
     await signIn(page, admin);
     await page.goto(PANEL_TAB);
 
-    await page.getByRole("button", { name: /Regenerate self-signed/ }).click();
+    // The hostname's card comes first.
+    await page.getByRole("button", { name: /Regenerate self-signed/ }).first().click();
     const confirm = page.locator(".ant-popconfirm", { hasText: "Regenerate the self-signed certificate?" });
     await expect(confirm).toBeVisible();
     await confirm.getByRole("button", { name: "OK" }).click();
     await expect.poll(() => issued).toContain("kind=hostname");
     await expect(page.getByText("Regenerating the self-signed certificate for panel.example.com.")).toBeVisible();
-    // The mail cert stays a Let's Encrypt action.
-    await expect(page.getByRole("button", { name: /Issue \/ retry/ })).toHaveCount(1);
+    // The mail cert follows the toggle too.
+    await expect(page.getByRole("button", { name: /Regenerate self-signed/ })).toHaveCount(2);
+    await expect(page.getByRole("button", { name: /Issue \/ retry/ })).toHaveCount(0);
+  });
+
+  // GH #2166: the mail cert follows the toggle. The hostname row's use_le
+  // governs both, even when the mail row's own flag is stale.
+  test("Let's Encrypt off: the mail cert regenerates its self-signed cert", async ({ page }) => {
+    await mockApi(page, { me: admin });
+    await mockCerts(page, body({}, { use_le: true }));
+    let issued: string | null = null;
+    await page.route("**/api/v1/admin/panel-certificate/issue**", (route) => {
+      issued = route.request().url();
+      return route.fulfill({
+        status: 202,
+        contentType: "application/json",
+        body: JSON.stringify({
+          self_signed: true,
+          regenerating: true,
+          detail: "Regenerating the self-signed mail certificate for mail.panel.example.com.",
+        }),
+      });
+    });
+    await signIn(page, admin);
+    await page.goto(PANEL_TAB);
+
+    await page.getByRole("button", { name: /Regenerate self-signed/ }).nth(1).click();
+    const confirm = page.locator(".ant-popconfirm", { hasText: "Regenerate the self-signed mail certificate?" });
+    await expect(confirm).toBeVisible();
+    await confirm.getByRole("button", { name: "OK" }).click();
+    await expect.poll(() => issued).toContain("kind=mail");
+    await expect(page.getByText("Regenerating the self-signed mail certificate for mail.panel.example.com.")).toBeVisible();
   });
 
   test("issued hostname cert shows expiry hint", async ({ page }) => {

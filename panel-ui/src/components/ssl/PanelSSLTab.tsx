@@ -113,15 +113,18 @@ function servedItems(cert: PanelCertificate): DescriptionsProps["items"] {
 function CertCard({
   label,
   cert,
+  leOn,
   onIssue,
   issuing,
 }: {
   label: string;
   cert: PanelCertificate;
+  // The hostname row's use_le, which governs both certs.
+  leOn: boolean;
   onIssue: () => void;
   issuing: boolean;
 }) {
-  const confirm = panelCertActionConfirm(cert, label);
+  const confirm = panelCertActionConfirm(cert, label, leOn);
   return (
     <Card
       size="small"
@@ -135,7 +138,7 @@ function CertCard({
       extra={
         <Popconfirm title={confirm.title} description={confirm.description} onConfirm={onIssue}>
           <Button size="small" icon={<ReloadOutlined />} loading={issuing}>
-            {panelCertActionLabel(cert)}
+            {panelCertActionLabel(leOn)}
           </Button>
         </Popconfirm>
       }
@@ -236,9 +239,9 @@ export function PanelSSLTab() {
           </>
         ) : (
           <>
-            Let&apos;s Encrypt is off: the panel serves its own self-signed certificate for <code>{hostName}</code>,
-            and browsers ask you to accept it. A certificate from Let&apos;s Encrypt or another authority is kept
-            until it expires. The mail cert for <code>{mailName}</code> stays a Let&apos;s Encrypt action.
+            Let&apos;s Encrypt is off: the panel serves its own self-signed certificates for <code>{hostName}</code>{" "}
+            and, when the panel hostname handles mail, <code>{mailName}</code>. Browsers and mail apps ask you to
+            accept them. A certificate from Let&apos;s Encrypt or another authority is kept until it expires.
           </>
         )}
       </Typography.Paragraph>
@@ -259,11 +262,18 @@ export function PanelSSLTab() {
       <CertCard
         label={t("panelsslcard.hostname")}
         cert={host}
+        leOn={host.use_le}
         issuing={issue.isPending}
         onIssue={() => doIssue("hostname")}
       />
       {mail && (
-        <CertCard label={t("panelsslcard.mail")} cert={mail} issuing={issue.isPending} onIssue={() => doIssue("mail")} />
+        <CertCard
+          label={t("panelsslcard.mail")}
+          cert={mail}
+          leOn={host.use_le}
+          issuing={issue.isPending}
+          onIssue={() => doIssue("mail")}
+        />
       )}
     </Space>
   );

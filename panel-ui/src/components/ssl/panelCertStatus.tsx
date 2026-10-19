@@ -73,20 +73,32 @@ export function panelCertExpiryHint(c: PanelCertificate): string | null {
   return `Expires in ${days} day${days === 1 ? "" : "s"}`;
 }
 
-// GH #2166: with Let's Encrypt off the panel serves a self-signed hostname
-// cert, so the hostname row's action regenerates it instead of asking Let's
-// Encrypt. The mail row stays a Let's Encrypt action.
-export function panelCertRegeneratesSelfSigned(c: PanelCertificate): boolean {
-  return c.kind === "hostname" && !c.use_le;
+// GH #2166: with Let's Encrypt off the panel serves self-signed certs, so
+// each cert's action regenerates its own instead of asking Let's Encrypt.
+// leOn is the hostname row's use_le, which governs both certs: the toggle
+// writes only that row, so the mail row's own flag can be stale.
+export function panelCertRegeneratesSelfSigned(leOn: boolean): boolean {
+  return !leOn;
 }
 
-export function panelCertActionLabel(c: PanelCertificate): string {
-  return panelCertRegeneratesSelfSigned(c) ? "Regenerate self-signed" : "Issue / retry";
+export function panelCertActionLabel(leOn: boolean): string {
+  return panelCertRegeneratesSelfSigned(leOn) ? "Regenerate self-signed" : "Issue / retry";
 }
 
-export function panelCertActionConfirm(c: PanelCertificate, label: string): { title: string; description?: string } {
-  if (!panelCertRegeneratesSelfSigned(c)) {
+export function panelCertActionConfirm(
+  c: PanelCertificate,
+  label: string,
+  leOn: boolean,
+): { title: string; description?: string } {
+  if (!panelCertRegeneratesSelfSigned(leOn)) {
     return { title: `Issue the ${label.toLowerCase()} cert now?` };
+  }
+  if (c.kind === "mail") {
+    return {
+      title: "Regenerate the self-signed mail certificate?",
+      description:
+        "The panel regenerates it only when it no longer fits the mail names or has expired. Webmail and the mail server then serve it, and mail apps and browsers ask you to accept the new certificate.",
+    };
   }
   return {
     title: "Regenerate the self-signed certificate?",
