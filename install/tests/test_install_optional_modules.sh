@@ -79,9 +79,9 @@ fi
 if need run_install_step; then
   repo="$tmp/repo"
   mkdir -p "$repo" "$tmp/mark"
+  # No ERR trap in this stand-in: its set -e alone has to stop step_fail.
   cat >"$repo/install.sh" <<'EOF'
 set -Eeuo pipefail
-trap 'exit 3' ERR
 step_ok() { : >"$MARK/ok"; }
 step_fail() { false; : >"$MARK/after_fail"; }
 if [[ "${BASH_SOURCE[0]:-$0}" == "$0" ]]; then : >"$MARK/main"; fi
