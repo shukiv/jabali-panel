@@ -3,8 +3,10 @@ package reconciler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 )
 
@@ -224,11 +226,35 @@ func (r *Reconciler) convergeModule(ctx context.Context, key, dependsOn string) 
 		ictx, icancel := context.WithTimeout(context.Background(), 12*time.Minute)
 		defer icancel()
 		if _, err := r.agent.Call(ictx, "system.module.install", map[string]any{"key": key}); err != nil {
+			if serverInstallerRunning(err) {
+				// install.sh's full install is still running and installs this
+				// module itself. Drop the attempt so the next tick looks again
+				// as soon as it ends, instead of 15 minutes later.
+				r.forgetModuleInstallAttempt(key)
+				r.log.Info("module convergence waits for the server installer", "key", key)
+				return
+			}
 			r.log.Error("module convergence install failed", "key", key, "err", err)
 			return
 		}
 		r.log.Info("module convergence install dispatched", "key", key)
 	}()
+}
+
+// serverInstallerRunning reports the agent's answer while install.sh's full
+// install runs: the panel first boots in the middle of one, before mail is
+// installed, and a repair install beside it left two SQL directories in
+// Stalwart.
+func serverInstallerRunning(err error) bool {
+	var ae *agentwire.AgentError
+	return errors.As(err, &ae) && ae.Code == agentwire.CodeFailedPrecondition && ae.Message == agentwire.MsgServerInstallerRunning
+}
+
+// forgetModuleInstallAttempt clears a module's backoff record.
+func (r *Reconciler) forgetModuleInstallAttempt(key string) {
+	r.moduleInstallMu.Lock()
+	defer r.moduleInstallMu.Unlock()
+	delete(r.moduleInstallAttempt, key)
 }
 
 // moduleStatus probes one module's {installed, active} via the agent. ok=false

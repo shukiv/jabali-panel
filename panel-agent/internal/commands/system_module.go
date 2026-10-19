@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -29,6 +30,56 @@ import (
 // Installs are serialized behind aptMu (shared with php-ext) so a toggle and
 // the convergence pass never run apt concurrently and collide on the dpkg
 // global lock (the M29 apt-lock scar).
+
+// serverInstallerMarker is where install.sh's main() (a full install, or a
+// re-run of it) keeps "<pid> <starttime>" of its shell while it runs. A var so
+// tests can point it at a temp file.
+var serverInstallerMarker = "/run/jabali-installer.pid"
+
+// serverInstallerRunning reports a full install still running. The panel
+// first boots in the middle of one, and its module repair would otherwise
+// install mail beside install.sh's own Stalwart steps: the two applies left
+// two SQL directories in Stalwart. The marker counts only while its PID is a
+// process that started at the recorded tick, so a marker a crashed install
+// left behind never matches a reused PID.
+func serverInstallerRunning() bool {
+	raw, err := os.ReadFile(serverInstallerMarker)
+	if err != nil {
+		return false
+	}
+	fields := strings.Fields(string(raw))
+	if len(fields) != 2 {
+		return false
+	}
+	pid, err := strconv.Atoi(fields[0])
+	if err != nil || pid <= 0 {
+		return false
+	}
+	if _, err := strconv.ParseUint(fields[1], 10, 64); err != nil {
+		return false
+	}
+	start, ok := readProcStartTime(pid)
+	return ok && start == fields[1]
+}
+
+// readProcStartTime returns the start time (field 22 of /proc/<pid>/stat, in
+// clock ticks since boot). The fields are counted from the last ")", since
+// the command name before it may hold spaces and parentheses.
+func readProcStartTime(pid int) (string, bool) {
+	raw, err := os.ReadFile(filepath.Join(procDir, strconv.Itoa(pid), "stat"))
+	if err != nil {
+		return "", false
+	}
+	end := strings.LastIndexByte(string(raw), ')')
+	if end < 0 {
+		return "", false
+	}
+	fields := strings.Fields(string(raw)[end+1:])
+	if len(fields) < 20 {
+		return "", false
+	}
+	return fields[19], true
+}
 
 // moduleInstallKeys is the allowlist of module keys the agent will pass to
 // install.sh. Never interpolate an arbitrary string into the shell — validate
@@ -157,6 +208,11 @@ func systemModuleInstallHandler(ctx context.Context, raw json.RawMessage) (any, 
 			Code:    agentwire.CodeInvalidArgument,
 			Message: fmt.Sprintf("unknown module key %q (want: dns|mail|security|quota)", req.Key),
 		}
+	}
+	// Before the record and the in-flight count: the running installer does
+	// this install, so nothing failed and nothing is installing here.
+	if serverInstallerRunning() {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeFailedPrecondition, Message: agentwire.MsgServerInstallerRunning}
 	}
 	if _, err := os.Stat(moduleInstallScript); err != nil {
 		msg := fmt.Sprintf("install.sh missing at %s", moduleInstallScript)

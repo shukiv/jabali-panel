@@ -32,13 +32,20 @@ _warn() { :; }
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
-# Fake stalwart-cli: one SQL directory; records the update patch and actions.
+# Fake stalwart-cli: the SQL directories in $FAKE_DIRS (NDJSON, default one,
+# dir1) and an Authentication that signs in through $FAKE_AUTH_DIR (default
+# dir1; FAKE_AUTH_FAILS makes the get fail). Records the updated id, the
+# update patch and actions.
 cat >"$tmp/stalwart-cli" <<'EOF'
 #!/usr/bin/env bash
 case "$1 $2" in
-  "query Directory") echo '{"@type":"Sql","id":"dir1"}' ;;
+  "query Directory") printf '%s\n' "${FAKE_DIRS:-{\"@type\":\"Sql\",\"id\":\"dir1\"\}}" ;;
+  "get Authentication")
+    [[ -n "${FAKE_AUTH_FAILS:-}" ]] && exit 1
+    printf '{"directoryId":"%s","passwordMinLength":8}\n' "${FAKE_AUTH_DIR:-dir1}" ;;
   "update Directory")
     [[ -n "${FAKE_UPDATE_FAILS:-}" ]] && exit 1
+    printf '%s' "$3" >"$FAKE_DIR/updated_id"
     printf '%s' "$5" >"$FAKE_DIR/patch.json" ;;
   "create Action") printf '%s\n' "$4" >>"$FAKE_DIR/actions" ;;
 esac
@@ -104,6 +111,31 @@ if FAKE_UPDATE_FAILS=1 FAKE_COLUMN=1 converge_stalwart_directory_queries 8446 to
   echo "FAIL: a failed Directory update returned success"
   fail=1
 fi
+
+# 4. two SQL directories (a mail install that ran beside the installer made a
+# second one): the queries go to the directory sign-in uses, wherever it is in
+# the list. Without a readable Authentication, or with one on a directory that
+# isn't SQL, the first SQL directory is used, as before.
+two_dirs=$'{"@type":"Sql","id":"dirA"}\n{"@type":"Internal","id":"dirI"}\n{"@type":"Sql","id":"dirB"}'
+updated_for() { # updated_for DESC WANT [ENV=VALUE...]
+  local desc="$1" want="$2"
+  shift 2
+  rm -f "$tmp/updated_id"
+  env FAKE_DIRS="$two_dirs" FAKE_COLUMN=1 "$@" bash -c "$fn_src"'
+    _log() { :; }; _ok() { :; }; _warn() { :; }; mariadb() { echo "${FAKE_COLUMN:-0}"; }
+    converge_stalwart_directory_queries 8446 token' || true
+  local got
+  got="$(cat "$tmp/updated_id" 2>/dev/null || echo none)"
+  if [[ "$got" != "$want" ]]; then
+    echo "FAIL: $desc: updated directory '$got', want '$want'"
+    fail=1
+  fi
+}
+updated_for "sign-in uses the second SQL directory" dirB FAKE_AUTH_DIR=dirB
+updated_for "sign-in uses the first SQL directory" dirA FAKE_AUTH_DIR=dirA
+updated_for "Authentication can't be read" dirA FAKE_AUTH_FAILS=1
+updated_for "sign-in uses a directory that isn't SQL" dirA FAKE_AUTH_DIR=dirI
+updated_for "sign-in names a directory that doesn't exist" dirA FAKE_AUTH_DIR=gone
 
 if [[ "$fail" -eq 0 ]]; then
   echo "PASS: the Directory converger writes the ownership filters only once the column exists, and reloads Stalwart"
