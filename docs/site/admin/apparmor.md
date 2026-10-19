@@ -34,6 +34,12 @@ For each profile, the page shows:
 - **Acknowledge** (complain mode only) — records that you keep the profile in complain mode on purpose, for example `jabali-fpm-app` so a site's PHP can run `df` or `ls`. The Server Status alert ("AppArmor profile not enforcing") and the header badge then leave the profile out. The page still shows its mode, with an **acknowledged** tag. The acknowledgement ends when the profile's mode changes: at once when you flip it on this page, and on the panel's next read of the profile modes (the header checks every 30 seconds while an admin is signed in) when `jabali apparmor flip-mature` or a manual `aa-enforce` changed it. A profile that later goes back to complain is then named again. **Show warning again** withdraws it. A profile that is missing or unconfined can't be acknowledged: that is a fault, not a choice (GH #2078).
 - **Disable** — unload the profile entirely. Only do this temporarily.
 
+## Automatic enforce
+
+A daily timer, `jabali-apparmor-flip-mature.timer`, runs `jabali apparmor flip-mature`. It switches a profile on its list (`jabali-panel`, `jabali-agent`, `jabali-bulwark`, `jabali-kratos`, `stalwart-mail`) from complain to enforce once the profile has had no violations for 7 days.
+
+A violation is a `DENIED` event, or the `ALLOWED` event a complain-mode profile logs for each access it would deny. The command reads them from the audit log (`/var/log/audit/audit.log` and its rotations) and from the journal. A profile that is still violating stays in complain mode, and `journalctl -u jabali-apparmor-flip-mature` shows its events. `jabali-fpm-app` and `jabali-sendmail` are never switched automatically.
+
 ## Diagnosing a denial
 
 ```bash

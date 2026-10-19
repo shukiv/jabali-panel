@@ -345,3 +345,28 @@ own.
 - `install/tests/test_apparmor_profile_mode_preserved.sh` pins the mode
   preservation; a Go test pins that every shipped profile file declares one
   profile and that the agent can switch it.
+
+## Amendment 2026-10-19 — flip-mature reads the audit log and counts complain-mode ALLOWED
+
+The soak gate (JAB-17) that the daily timer (JAB-349) relies on counted only
+`apparmor="DENIED"` lines in `journalctl -k`. It could not see a violation on
+a jabali box, for two reasons:
+
+- With auditd running (ADR-0085), the kernel hands AppArmor records to the
+  audit subsystem. They land in `/var/log/audit/audit.log` and never reach the
+  kernel journal. On the .60 test box, `journalctl -k` held no AppArmor line
+  over 7 days while the audit log held thousands.
+- A profile in complain mode doesn't log DENIED for an access its rules don't
+  allow. It logs ALLOWED, and those are exactly the accesses that fail once
+  the profile is enforced.
+
+So every complain-mode profile on the list read as soak-clean, and the timer
+could enforce a profile that was still violating. That is the #705 crash-loop
+the gate exists to prevent.
+
+`jabali apparmor flip-mature` now counts DENIED and ALLOWED events for the
+profile. It reads them from the audit log and its rotations (`.gz` ones
+through gzip) and from the journal's kernel and audit records, and an event in
+both counts once. As before, the gate fails closed: a source it can't read, or
+a scan cut short, skips the flip.
+
