@@ -1142,9 +1142,12 @@ seed_module_flags() {
 # command, and its failure comes back here as a status instead of ending this
 # install: in this shell the ERR trap exits, and an `if`/`||` around a function
 # would switch set -e off inside it. FN and the script path are arguments,
-# never part of the command text.
+# never part of the command text. They're moved out of the positional
+# parameters before the source: a source with no arguments of its own hands
+# install.sh the caller's, and its top-level option loop would shift FN away.
 run_install_step() {
-  bash -c 'source "$1" && "$2"' jabali-install-step "${REPO_DIR}/install.sh" "$1"
+  bash -c '_step_script=$1 _step_fn=$2; set --; source "$_step_script" && "$_step_fn"' \
+    jabali-install-step "${REPO_DIR}/install.sh" "$1"
 }
 
 # install_docker_module — the installer's Docker choice (module key docker),

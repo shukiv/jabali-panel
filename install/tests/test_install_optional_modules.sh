@@ -79,9 +79,19 @@ fi
 if need run_install_step; then
   repo="$tmp/repo"
   mkdir -p "$repo" "$tmp/mark"
-  # No ERR trap in this stand-in: its set -e alone has to stop step_fail.
+  # No ERR trap in this stand-in: its set -e alone has to stop step_fail. Its
+  # top level takes its arguments the way install.sh's does, so a step that
+  # handed install.sh the caller's arguments would lose the function name.
   cat >"$repo/install.sh" <<'EOF'
 set -Eeuo pipefail
+_positional=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --*) shift ;;
+    *) _positional+=("$1"); shift ;;
+  esac
+done
+[[ ${#_positional[@]} -eq 0 ]] || : >"$MARK/saw_args"
 step_ok() { : >"$MARK/ok"; }
 step_fail() { false; : >"$MARK/after_fail"; }
 if [[ "${BASH_SOURCE[0]:-$0}" == "$0" ]]; then : >"$MARK/main"; fi
@@ -100,6 +110,7 @@ EOF
   [[ -e "$tmp/mark/after_fail" ]] && { echo "FAIL: the step ran on past its failing command (set -e off)"; fail=1; }
   [[ -e "$tmp/mark/ok" ]] || { echo "FAIL: the passing step didn't run"; fail=1; }
   [[ -e "$tmp/mark/main" ]] && { echo "FAIL: sourcing install.sh for a step ran its main"; fail=1; }
+  [[ -e "$tmp/mark/saw_args" ]] && { echo "FAIL: install.sh got the step's own arguments when sourced"; fail=1; }
 fi
 
 # --- the module steps, against stubs ---
