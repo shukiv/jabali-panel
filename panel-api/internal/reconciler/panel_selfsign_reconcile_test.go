@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"math/big"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -264,7 +265,7 @@ func mailSelfSignReconciler(t *testing.T, mailPEM []byte, emailOnPanel bool) (*R
 		log:                  selfSignTestLogger(),
 		panelCerts:           repo,
 		panelCertRoutability: &services.PanelCertRoutability{},
-		serverSettings:       &fakeSettingsRepo{srv: &models.ServerSettings{Hostname: "host.example.com", PublicIPv4: "203.0.113.10"}},
+		serverSettings:       &fakeSettingsRepo{srv: &models.ServerSettings{Hostname: "host.example.com", PublicIPv4: "203.0.113.10", MailEnabled: true}},
 		domains: &fakeDomainRepo{domains: map[string]*models.Domain{
 			"d1": {ID: "d1", Name: "host.example.com", IsPanelPrimary: true, EmailEnabled: emailOnPanel},
 		}},
@@ -371,9 +372,65 @@ func TestPanelMailSelfSigned_LEOnNoSelfSign(t *testing.T) {
 	repo.rows[models.PanelCertKindHostname].UseLE = true
 	repo.rows[models.PanelCertKindHostname].Status = models.PanelCertStatusIssued
 	repo.rows[models.PanelCertKindMail].Status = models.PanelCertStatusIssued
-	r.serverSettings = &fakeSettingsRepo{srv: &models.ServerSettings{Hostname: "host.example.com", AdminEmail: "a@example.com"}}
+	r.serverSettings = &fakeSettingsRepo{srv: &models.ServerSettings{Hostname: "host.example.com", AdminEmail: "a@example.com", MailEnabled: true}}
 	r.reconcilePanelCertificate(context.Background())
 	if n, _ := countCalls(fa, "ssl.panel.mail_selfsign"); n != 0 {
 		t.Fatalf("mail self-signed with Let's Encrypt on")
+	}
+}
+
+// GH #2166: with the mail module off there is no mail server to give the
+// certificate, even when the panel hostname's domain still has email on.
+// Pushing one started a Stalwart that wasn't installed, and every failed
+// start was a "Stalwart is down" alert.
+func TestPanelMailSelfSigned_SkipsWithTheMailModuleOff(t *testing.T) {
+	r, fa, repo := mailSelfSignReconciler(t, nil, true)
+	r.serverSettings = &fakeSettingsRepo{srv: &models.ServerSettings{Hostname: "host.example.com", PublicIPv4: "203.0.113.10"}}
+	r.reconcilePanelCertificate(context.Background())
+	if n, _ := countCalls(fa, "ssl.panel.mail_selfsign"); n != 0 {
+		t.Fatalf("dispatched with the mail module off")
+	}
+	if repo.rows[models.PanelCertKindMail].Status != models.PanelCertStatusPendingACMERetry {
+		t.Errorf("mail row changed: %+v", repo.rows[models.PanelCertKindMail])
+	}
+}
+
+// upsertRecordingPanelCerts records Upserts, which fakePanelCertRepo drops.
+type upsertRecordingPanelCerts struct {
+	*fakePanelCertRepo
+	upserted []models.PanelCertificate
+}
+
+func (u *upsertRecordingPanelCerts) Upsert(_ context.Context, row *models.PanelCertificate) error {
+	u.upserted = append(u.upserted, *row)
+	return nil
+}
+
+// With Let's Encrypt on and the mail module off, the mail cert isn't
+// requested either, and a stale retry row is idled with the reason.
+func TestPanelMailCert_LEOnSkipsWithTheMailModuleOff(t *testing.T) {
+	r, fa, repo := mailSelfSignReconciler(t, nil, true)
+	repo.rows[models.PanelCertKindHostname].UseLE = true
+	repo.rows[models.PanelCertKindHostname].Status = models.PanelCertStatusIssued
+	rec := &upsertRecordingPanelCerts{fakePanelCertRepo: repo}
+	r.panelCerts = rec
+	r.serverSettings = &fakeSettingsRepo{srv: &models.ServerSettings{Hostname: "host.example.com", AdminEmail: "a@example.com"}}
+	r.reconcilePanelCertificate(context.Background())
+
+	fa.mu.Lock()
+	for _, c := range fa.calls {
+		if m, ok := c.params.(map[string]any); ok && m["hostname"] == "mail.host.example.com" {
+			t.Errorf("%s dispatched for the mail cert with the mail module off", c.method)
+		}
+	}
+	fa.mu.Unlock()
+	var mail *models.PanelCertificate
+	for i := range rec.upserted {
+		if rec.upserted[i].Kind == models.PanelCertKindMail {
+			mail = &rec.upserted[i]
+		}
+	}
+	if mail == nil || mail.Status != models.PanelCertStatusSelfSigned || mail.NextRetryAt != nil || !strings.Contains(mail.LastError, "mail module is off") {
+		t.Errorf("mail row upsert %+v, want idled with the mail-module reason", mail)
 	}
 }

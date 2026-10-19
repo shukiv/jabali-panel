@@ -64,6 +64,10 @@ var (
 	panelMailSelfSignReloadFn = defaultPanelMailSelfSignReload
 	// panelMailPushCertPath pushes panel-mail.{crt,key} into Stalwart.
 	panelMailPushCertPath = "/usr/local/bin/jabali-stalwart-push-cert"
+	// panelMailStalwartUser and panelMailStalwartBinary are what
+	// jabali-stalwart.service runs: its User= and its ExecStart binary.
+	panelMailStalwartUser   = "jabali-mail"
+	panelMailStalwartBinary = "/usr/local/bin/stalwart"
 )
 
 // panelMailSelfSignMu serializes ssl.panel.mail_selfsign: the reconciler and
@@ -76,15 +80,33 @@ var panelMailSelfSignMu sync.Mutex
 // only at startup, so a push after the restart would sit unloaded. The
 // context is detached from the caller's so a caller giving up can't leave
 // the push done and the restart not.
+//
+// Stalwart is left alone on a box without the mail server (GH #2166).
 func defaultPanelMailSelfSignReload(_ context.Context) {
 	bg, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	_ = execCommandContext(bg, "systemctl", "reload", "nginx").Run()
+	if !panelMailStalwartInstalled() {
+		return
+	}
 	_ = execCommandContext(bg, "systemctl", "start", "jabali-stalwart").Run()
 	if _, err := os.Stat(panelMailPushCertPath); err == nil {
 		_ = execCommandContext(bg, panelMailPushCertPath).Run()
 	}
 	_ = execCommandContext(bg, "systemctl", "restart", "jabali-stalwart").Run()
+}
+
+// panelMailStalwartInstalled reports whether this box has the mail server:
+// the user jabali-stalwart.service runs as and its binary. The unit file
+// alone proves nothing, since `jabali update` installs it on every box. On a
+// box without the mail module, starting the unit fails at step USER, and
+// each restart of the loop that follows sends a "Stalwart is down" alert.
+func panelMailStalwartInstalled() bool {
+	if _, err := user.Lookup(panelMailStalwartUser); err != nil {
+		return false
+	}
+	_, err := os.Stat(panelMailStalwartBinary)
+	return err == nil
 }
 
 func sslPanelMailSelfSignHandler(ctx context.Context, params json.RawMessage) (any, error) {

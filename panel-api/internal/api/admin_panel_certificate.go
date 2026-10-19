@@ -133,6 +133,11 @@ func (h *adminPanelCertHandler) get(c *gin.Context) {
 	// each cert's own reachability independently (ADR-0105).
 	certs := make([]panelCertGetResponse, 0, len(rows))
 	for _, row := range rows {
+		// GH #2166: a server without the mail module has no mail
+		// certificate, so the tab shows no mail card to act on.
+		if row.Kind == models.PanelCertKindMail && !settings.MailEnabled {
+			continue
+		}
 		res := panelCertGetResponse{PanelCertificate: row}
 		// Display-only: local check (no external DNS per card open). The
 		// authoritative public-resolvability gate runs at issue/reconcile
@@ -220,6 +225,14 @@ func (h *adminPanelCertHandler) issue(c *gin.Context) {
 	}
 	if settings.Hostname == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "missing_hostname", "details": "set Server Settings → General → Hostname first"})
+		return
+	}
+	// GH #2166: without the mail module there is no mail server to give a
+	// mail certificate. Pushing one started a Stalwart that isn't installed,
+	// and every failed start was a "Stalwart is down" alert.
+	if kind == models.PanelCertKindMail && !settings.MailEnabled {
+		c.JSON(http.StatusConflict, gin.H{"error": "module_disabled", "module": "mail",
+			"details": "The mail module is off on this server (Server Settings → Modules), so there is no mail certificate to issue."})
 		return
 	}
 	if _, err := h.cfg.PanelCerts.EnsureDefault(ctx, settings.Hostname); err != nil {

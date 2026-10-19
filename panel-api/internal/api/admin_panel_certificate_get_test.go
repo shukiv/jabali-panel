@@ -170,3 +170,16 @@ func TestServedPanelCert_DefaultPathPerKind(t *testing.T) {
 		}
 	}
 }
+
+// GH #2166: with the mail module off there is no mail certificate to show,
+// so the Panel SSL tab offers no mail card and no action for it.
+func TestPanelCertGet_OmitsMailWithTheModuleOff(t *testing.T) {
+	f := newPanelCertFixture(t, panelCertOpts{mailOff: true})
+	got := f.getCerts(t)
+	if _, ok := got[models.PanelCertKindMail]; ok {
+		t.Errorf("mail cert listed with the mail module off: %+v", got)
+	}
+	if _, ok := got[models.PanelCertKindHostname]; !ok {
+		t.Errorf("hostname cert missing: %+v", got)
+	}
+}
