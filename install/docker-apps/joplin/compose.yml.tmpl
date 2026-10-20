@@ -36,7 +36,8 @@ services:
           cpus: "{{ .CPULimit }}"
           memory: {{ .MemoryLimit }}
     healthcheck:
-      test: ["CMD-SHELL", "wget --spider -q http://127.0.0.1:22300/api/ping || exit 1"]
+      # The image has no wget or curl, only Node.
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:22300/api/ping', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
       interval: 30s
       timeout: 10s
       retries: 5

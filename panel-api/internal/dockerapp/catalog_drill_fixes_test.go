@@ -2,8 +2,11 @@ package dockerapp
 
 import (
 	"encoding/base64"
+	"regexp"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 // Fixes from installing every catalog app on a test host (2026-10-20).
@@ -108,5 +111,101 @@ func TestFailureSummary_KeepsTheComposeError(t *testing.T) {
 	long := "first\nError: " + strings.Repeat("é", 400)
 	if got := FailureSummary(long); len([]rune(got)) != len([]rune("first: "))+300+1 {
 		t.Fatalf("long line not cut at 300 characters: %d", len([]rune(got)))
+	}
+}
+
+func renderDrill(t *testing.T, slug string) string {
+	t.Helper()
+	cat, _ := LoadDir(repoCatalogDir(t))
+	e, ok := cat.Get(slug)
+	if !ok {
+		t.Fatalf("%s missing from catalog", slug)
+	}
+	env, err := MaterialiseEnv(e, nil)
+	if err != nil {
+		t.Fatalf("%s materialise: %v", slug, err)
+	}
+	out, err := Render(e, RenderParams{
+		Slug: slug, Name: "drill", Domain: "drill.example.com",
+		ImageChannel: e.ImageChannel,
+		DataRoot:     "/var/lib/jabali/docker-apps/" + slug,
+		CPULimit:     "1", MemoryLimit: "1g",
+		Ports: map[string]RuntimePort{"http": {HostPort: 10091, ContainerPort: 80, BindInterface: "127.0.0.1", Protocol: "tcp"}},
+		Env:   env,
+	})
+	if err != nil {
+		t.Fatalf("%s render: %v", slug, err)
+	}
+	return out
+}
+
+// ClickHouse 25 refuses the passwordless default user over the network, so
+// Plausible exited on "Authentication failed". ClickHouse gets a generated
+// password, and Plausible's URL carries it.
+func TestPlausible_ClickHouseLoginHasAPassword(t *testing.T) {
+	out := renderDrill(t, "plausible")
+	m := regexp.MustCompile(`CLICKHOUSE_PASSWORD: "([^"]+)"`).FindStringSubmatch(out)
+	if m == nil {
+		t.Fatalf("clickhouse has no password:\n%s", out)
+	}
+	mustContain(t, out, `CLICKHOUSE_DATABASE_URL: "http://default:`+m[1]+`@clickhouse:8123/plausible_events_db"`)
+}
+
+// The bind mount over sites/ hid sqlconf.php, so OpenEMR never ran its setup.
+// A one-shot step copies the image's sites/ into the mount first.
+func TestOpenEMR_SitesAreSeededBeforeTheAppStarts(t *testing.T) {
+	out := renderDrill(t, "openemr")
+	var doc struct {
+		Services map[string]struct {
+			Volumes   []string                  `yaml:"volumes"`
+			DependsOn map[string]map[string]any `yaml:"depends_on"`
+		} `yaml:"services"`
+	}
+	if err := yaml.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	seed, ok := doc.Services["init-seed"]
+	if !ok || len(seed.Volumes) != 1 || seed.Volumes[0] != "/var/lib/jabali/docker-apps/openemr/sites:/seed" {
+		t.Fatalf("init-seed missing or mounts %v", seed.Volumes)
+	}
+	mustContain(t, out, "tar xf - --skip-old-files -C /seed")
+	if c := doc.Services["openemr"].DependsOn["init-seed"]["condition"]; c != "service_completed_successfully" {
+		t.Fatalf("openemr depends on init-seed with %v", c)
+	}
+}
+
+// These images have no wget, and their health check called it, so the app
+// never turned healthy. Each one now runs a tool its image has.
+func TestCatalog_HealthChecksDoNotCallWgetWhereTheImageHasNone(t *testing.T) {
+	for slug, services := range map[string][]string{
+		"freshrss":      {"freshrss"},
+		"uptime-kuma":   {"uptime-kuma"},
+		"mediacms":      {"mediacms"},
+		"immich":        {"immich-server", "immich-machine-learning"},
+		"vaultwarden":   {"vaultwarden"},
+		"joplin":        {"joplin"},
+		"mealie":        {"mealie"},
+		"paperless-ngx": {"paperless-ngx"},
+	} {
+		var doc struct {
+			Services map[string]struct {
+				Healthcheck struct {
+					Test []string `yaml:"test"`
+				} `yaml:"healthcheck"`
+			} `yaml:"services"`
+		}
+		if err := yaml.Unmarshal([]byte(renderDrill(t, slug)), &doc); err != nil {
+			t.Fatalf("%s parse: %v", slug, err)
+		}
+		for _, svc := range services {
+			s, ok := doc.Services[svc]
+			if !ok {
+				t.Errorf("%s: no service %q", slug, svc)
+				continue
+			}
+			if test := strings.Join(s.Healthcheck.Test, " "); test == "" || strings.Contains(test, "wget") {
+				t.Errorf("%s/%s health check %q", slug, svc, test)
+			}
+		}
 	}
 }

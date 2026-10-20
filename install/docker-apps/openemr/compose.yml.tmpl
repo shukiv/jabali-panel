@@ -1,10 +1,28 @@
 services:
+  # The host bind mount hides the image's sites/ (sqlconf.php and the default
+  # site), so OpenEMR never ran its setup and exited on every start. Copy it
+  # into the mount once (--skip-old-files: an existing site is never
+  # overwritten). tar as root keeps the image's owner (apache).
+  init-seed:
+    image: {{ .ImageChannel }}
+    container_name: jabali-app-{{ .Slug }}-init
+    user: "0:0"
+    entrypoint:
+      - sh
+      - -c
+      - "cd /var/www/localhost/htdocs/openemr/sites && tar cf - . | tar xf - --skip-old-files -C /seed"
+    volumes:
+      - {{ .DataRoot }}/sites:/seed
+
   openemr:
     image: {{ .ImageChannel }}
     container_name: jabali-app-{{ .Slug }}
     restart: unless-stopped
     depends_on:
-      - db
+      init-seed:
+        condition: service_completed_successfully
+      db:
+        condition: service_healthy
     environment:
       MYSQL_HOST: "db"
       MYSQL_ROOT_PASS: {{ q (index .Env "MYSQL_ROOT_PASSWORD") }}
