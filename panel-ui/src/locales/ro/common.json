@@ -1113,6 +1113,8 @@
     "modules": ""
   },
   "nginxsettingscard": {
+    "allow_proxy_to_internal_addresses": "",
+    "allow_proxy_to_internal_addresses_tip": "",
     "cache_key_metadata_zone_8000_keys_mb": "",
     "custom_http_directives": "",
     "evict_entries_not_accessed_within_this_windo": "",
@@ -1123,6 +1125,7 @@
     "nginx": "",
     "off_hides_the_nginx_version_in_responses_err": "",
     "raw_nginx_directives_can_make_the_server_uns": "",
+    "reverse_proxy_rules": "",
     "shared_fastcgi_cache_max_on_disk_size": "",
     "show_nginx_version_server_tokens": ""
   },

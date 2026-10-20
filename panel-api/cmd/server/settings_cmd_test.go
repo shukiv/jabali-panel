@@ -51,6 +51,12 @@ func TestSettingsRegistryApply(t *testing.T) {
 			}
 		}},
 		{name: "nginx worker_connections invalid", key: "nginx_worker_connections", val: "lots", wantErr: true},
+		// PR #2180: validation policy only, so nginx isn't re-applied, as on REST.
+		{name: "nginx proxy allow internal", key: "nginx_proxy_allow_internal", val: "on", check: func(t *testing.T, s *models.ServerSettings) {
+			if !s.NginxProxyAllowInternal || nginxDirty {
+				t.Fatalf("want flag on and nginx untouched, got flag=%v nginxDirty=%v", s.NginxProxyAllowInternal, nginxDirty)
+			}
+		}},
 		{name: "dns preset valid", key: "dns_user_record_policy_preset", val: "hosting-safe"},
 		{name: "dns preset invalid", key: "dns_user_record_policy_preset", val: "nope", wantErr: true},
 		{name: "hostname fqdn", key: "hostname", val: "  182-54-236-60-b.jabalihosted.com  ", check: func(t *testing.T, s *models.ServerSettings) {

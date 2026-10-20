@@ -441,6 +441,7 @@ var settableKeys = map[string]settingDef{
 	"nginx_proxy_read_timeout":    nginxStrKey("nginx proxy_read_timeout (e.g. 60s)", func(s *models.ServerSettings, v string) { s.NginxProxyReadTimeout = v }),
 	"nginx_proxy_send_timeout":    nginxStrKey("nginx proxy_send_timeout (e.g. 60s)", func(s *models.ServerSettings, v string) { s.NginxProxySendTimeout = v }),
 	"nginx_worker_processes":      nginxStrKey("nginx worker_processes ('auto' or 1-99)", func(s *models.ServerSettings, v string) { s.NginxWorkerProcesses = v }),
+	"nginx_proxy_allow_internal":  boolKey("let proxy_pass rules target loopback/private addresses (DB flag)", func(s *models.ServerSettings, b bool) { s.NginxProxyAllowInternal = b }),
 	"nginx_custom_http":           nginxStrKey("nginx custom http{} snippet (<=4000 chars)", func(s *models.ServerSettings, v string) { s.NginxCustomHTTP = v }),
 	"nginx_worker_connections": settingDef{
 		help: "nginx worker_connections (<=1048576)",

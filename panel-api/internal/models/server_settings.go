@@ -550,6 +550,11 @@ type ServerSettings struct {
 	NginxCacheKeyzoneMB   int `gorm:"column:nginx_cache_keyzone_mb;type:int;not null;default:64"    json:"nginx_cache_keyzone_mb"`
 	NginxCacheInactiveMin int `gorm:"column:nginx_cache_inactive_min;type:int;not null;default:1440"  json:"nginx_cache_inactive_min"`
 
+	// NginxProxyAllowInternal (migration 000327) lets a proxy_pass rule target a
+	// loopback / private-range address or localhost. Off = the JAB-65 SSRF
+	// guard. Panel-side validation policy only; nothing renders into nginx.
+	NginxProxyAllowInternal bool `gorm:"column:nginx_proxy_allow_internal;type:tinyint(1);not null;default:0" json:"nginx_proxy_allow_internal"`
+
 	// LogRetention holds operator-configured retention windows for the log/report
 	// tables, as a { category: days } JSON map (Server Settings -> Logs). An
 	// absent/invalid category falls back to DefaultLogRetentionDays. Read via

@@ -25,7 +25,13 @@ func dropRestoredWebSettings(ctx context.Context, row *models.Domain, ownerUsern
 	if source == RestoreFromUpload {
 		warnings = append(warnings, dropUnlessOwnersSetDomainOptions(ctx, row, settings)...)
 	}
-	warnings = append(warnings, dropRestoredNginxRules(row, ownerUsername, source)...)
+	allowInternalProxy := false
+	if settings != nil {
+		if st, err := settings.Get(ctx); err == nil && st != nil {
+			allowInternalProxy = st.NginxProxyAllowInternal
+		}
+	}
+	warnings = append(warnings, dropRestoredNginxRules(row, ownerUsername, source, allowInternalProxy)...)
 	warnings = append(warnings, dropRestoredPageRedirects(row)...)
 
 	if row.NginxTenantDirectives != nil && strings.TrimSpace(*row.NginxTenantDirectives) != "" {
@@ -95,7 +101,7 @@ func previewConflict(ctx context.Context, previews domainops.PreviewDomainLister
 // builder would accept, in order. An uploaded file keeps only the types a
 // tenant may set (validateTenantNginxRules); an alias folder must sit in the
 // account's own home.
-func dropRestoredNginxRules(row *models.Domain, ownerUsername string, source RestoreSource) []string {
+func dropRestoredNginxRules(row *models.Domain, ownerUsername string, source RestoreSource, allowInternalProxy bool) []string {
 	if len(row.NginxRules) == 0 {
 		return nil
 	}
@@ -114,7 +120,7 @@ func dropRestoredNginxRules(row *models.Domain, ownerUsername string, source Res
 			}
 			err = validateTenantNginxRules(one)
 		} else {
-			err = validateNginxRules(one)
+			err = validateNginxRulesWith(one, allowInternalProxy)
 		}
 		switch {
 		case err != nil:

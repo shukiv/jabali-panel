@@ -1024,7 +1024,13 @@ func (h *domainHandler) update(c *gin.Context) {
 		}
 
 		if req.NginxRules != nil {
-			if err := validateNginxRules(*req.NginxRules); err != nil {
+			allowInternalProxy := false
+			if h.cfg.ServerSettings != nil {
+				if st, sErr := h.cfg.ServerSettings.Get(ctx); sErr == nil && st != nil {
+					allowInternalProxy = st.NginxProxyAllowInternal
+				}
+			}
+			if err := validateNginxRulesWith(*req.NginxRules, allowInternalProxy); err != nil {
 				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 				return
 			}
@@ -2160,6 +2166,12 @@ func isValidNginxRuleType(s string) bool {
 const maxNginxRules = 500
 
 func validateNginxRules(rules models.NginxRules) error {
+	return validateNginxRulesWith(rules, false)
+}
+
+// validateNginxRulesWith is validateNginxRules with the server's
+// nginx_proxy_allow_internal policy applied to proxy_pass targets.
+func validateNginxRulesWith(rules models.NginxRules, allowInternalProxy bool) error {
 	if len(rules) > maxNginxRules {
 		return fmt.Errorf("too many rules (max %d)", maxNginxRules)
 	}
@@ -2202,7 +2214,7 @@ func validateNginxRules(rules models.NginxRules) error {
 			if !strings.HasPrefix(r.Target, "http://") && !strings.HasPrefix(r.Target, "https://") {
 				return fmt.Errorf("rule %d: target must be an http(s) URL", i)
 			}
-			if err := validateProxyPassTarget(r.Target); err != nil {
+			if err := validateProxyPassTargetWith(r.Target, allowInternalProxy); err != nil {
 				return fmt.Errorf("rule %d: %v", i, err)
 			}
 			if r.ReadTimeout != "" && !isNginxDuration(r.ReadTimeout) {
@@ -2492,6 +2504,15 @@ func validateRewritePattern(pattern string, maxLen int) error {
 // (resolution is TOCTOU vs DNS-rebind) — the literal-address classes are the
 // ones the acceptance criteria enumerate.
 func validateProxyPassTarget(target string) error {
+	return validateProxyPassTargetWith(target, false)
+}
+
+// validateProxyPassTargetWith applies the same checks, but with allowInternal
+// (Server Settings → Nginx, nginx_proxy_allow_internal) it admits localhost
+// and loopback / private-range IPs — for apps the admin runs on this host or
+// the LAN. Unix sockets, link-local (169.254.169.254 cloud metadata) and the
+// unspecified address stay rejected, as does the directive-smuggling check.
+func validateProxyPassTargetWith(target string, allowInternal bool) error {
 	// nginx's unix upstream form is `http://unix:/path:/`; url.Parse mangles it,
 	// so match the scheme token directly before parsing.
 	if strings.Contains(strings.ToLower(target), "unix:") {
@@ -2514,15 +2535,56 @@ func validateProxyPassTarget(target string) error {
 	if host == "" {
 		return fmt.Errorf("target has no host")
 	}
-	if strings.EqualFold(host, "localhost") {
+	// A zone (fe80::1%eth0) scopes an address to an interface; no upstream
+	// needs one, and ParseIP doesn't read it, so it would skip the checks below.
+	if strings.Contains(host, "%") {
+		return fmt.Errorf("target may not carry an IPv6 zone")
+	}
+	// nginx resolves the host with getaddrinfo, which also reads the inet_aton
+	// forms (127.1, 2130706433, 0x7f000001, 0177.0.0.1) as IPv4. ParseIP
+	// doesn't, so they would skip the address checks below: a numeric host must
+	// be written as four decimal numbers.
+	if net.ParseIP(host) == nil && isNumericHost(host) {
+		return fmt.Errorf("write the target address as four decimal numbers (a.b.c.d), not %q", host)
+	}
+	if isLocalhostName(host) && !allowInternal {
 		return fmt.Errorf("target may not be localhost")
 	}
 	if ip := net.ParseIP(host); ip != nil {
-		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
+		if ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
 			return fmt.Errorf("target may not point at an internal address (%s)", host)
+		}
+		if !allowInternal && (ip.IsLoopback() || ip.IsPrivate()) {
+			return fmt.Errorf("target may not point at an internal address (%s); allow it in Server Settings → Nginx", host)
 		}
 	}
 	return nil
+}
+
+// numericHostPart is one part of a host an IPv4 parser might read as a number:
+// decimal or octal digits, or 0x and hex digits (an empty 0x included).
+var numericHostPart = regexp.MustCompile(`^(0[xX][0-9a-fA-F]*|[0-9]+)$`)
+
+// isNumericHost reports whether every dot-separated part of host (an optional
+// trailing dot aside) looks like a number. It is wider than glibc's inet_aton
+// on purpose (any part count, octal 8/9, empty 0x), so a resolver that reads
+// more forms than glibc can't turn one into an address that skips the checks.
+// No real hostname is all numbers: a top-level domain has a letter.
+func isNumericHost(host string) bool {
+	for _, p := range strings.Split(strings.TrimSuffix(host, "."), ".") {
+		if !numericHostPart.MatchString(p) {
+			return false
+		}
+	}
+	return true
+}
+
+// isLocalhostName reports whether the resolver answers host with loopback:
+// localhost and any *.localhost name, in any case, with or without the
+// trailing dot.
+func isLocalhostName(host string) bool {
+	h := strings.ToLower(strings.TrimSuffix(host, "."))
+	return h == "localhost" || strings.HasSuffix(h, ".localhost")
 }
 
 // tenantSafeNginxRuleTypes are the Rule Builder types a non-admin owner may set
