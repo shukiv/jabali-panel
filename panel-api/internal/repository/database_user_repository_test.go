@@ -249,3 +249,20 @@ func TestDatabaseUserRepository_ExistsByUserAndUsername_NotExists(t *testing.T) 
 	require.False(t, exists)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
+
+// CountByEngineAndUsername counts the rows of every panel user, not only one.
+func TestDatabaseUserRepository_CountByEngineAndUsername(t *testing.T) {
+	db, mock, raw := newMockDB(t)
+	defer raw.Close()
+
+	repo := NewDatabaseUserRepository(db)
+
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT count(*) FROM `database_users` WHERE engine = ? AND username = ?")).
+		WithArgs("mariadb", "alice_x_app").
+		WillReturnRows(sqlmock.NewRows([]string{"count(*)"}).AddRow(2))
+
+	n, err := repo.CountByEngineAndUsername(context.Background(), "mariadb", "alice_x_app")
+	require.NoError(t, err)
+	require.Equal(t, int64(2), n)
+	require.NoError(t, mock.ExpectationsWereMet())
+}

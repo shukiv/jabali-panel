@@ -2,7 +2,9 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -11,6 +13,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dbops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
@@ -534,20 +537,44 @@ func (h *databaseUserHandler) create(c *gin.Context) {
 		}
 	}
 
+	// The account is server-wide: refuse a name another tenant's row (or a
+	// phpMyAdmin/Adminer sign-in account) already has, not only this user's.
+	if err := dbops.CheckNewAccount(ctx, h.cfg.DatabaseUsers, engine, finalUsername); err != nil {
+		switch {
+		case errors.Is(err, dbops.ErrAccountNameReserved):
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_username", "detail": "names ending in _mysqladmin or _pgadmin are reserved for phpMyAdmin and Adminer sign-in"})
+		case errors.Is(err, dbops.ErrAccountNameTaken):
+			c.JSON(http.StatusConflict, gin.H{"error": "username_exists"})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		}
+		return
+	}
+
+	// create_only: the agent refuses an account that already exists on the
+	// engine instead of taking it over (CREATE USER IF NOT EXISTS would leave
+	// it as it is and give this user a row for it).
 	agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	if engine == "mariadb" {
 		_, err = h.cfg.Agent.Call(agentCtx, "db_user.create", map[string]any{
 			"db_user_name": finalUsername,
 			"password":     plainPassword,
+			"create_only":  true,
 		})
 	} else {
 		_, err = h.cfg.Agent.Call(agentCtx, "db.postgres.create_role", map[string]any{
-			"role":     finalUsername,
-			"password": plainPassword,
+			"role":        finalUsername,
+			"password":    plainPassword,
+			"create_only": true,
 		})
 	}
 	if err != nil {
+		var ae *agent.AgentError
+		if errors.As(err, &ae) && ae.Code == agent.CodeAlreadyExists {
+			c.JSON(http.StatusConflict, gin.H{"error": "username_exists"})
+			return
+		}
 		respondAgentErr(c, "agent_failed", err)
 		return
 	}
@@ -848,14 +875,26 @@ func (h *databaseUserHandler) delete(c *gin.Context) {
 		}
 	}
 
-	// Drop user from the engine it lives on.
-	agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-
-	_, err = h.cfg.Agent.Call(agentCtx, dbUserCmd(du.Engine, "drop"), dbUserDropParams(du.Engine, du.Username))
+	// Drop user from the engine it lives on — only when this row alone names
+	// the account. Another row for the same account, or a sign-in account's
+	// name, means the account may be someone else's: delete the row only.
+	sole, err := dbops.SoleAccountRow(ctx, h.cfg.DatabaseUsers, du.Engine, du.Username)
 	if err != nil {
-		respondAgentErr(c, "agent_failed", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
+	}
+	if sole {
+		agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+
+		_, err = h.cfg.Agent.Call(agentCtx, dbUserCmd(du.Engine, "drop"), dbUserDropParams(du.Engine, du.Username))
+		if err != nil {
+			respondAgentErr(c, "agent_failed", err)
+			return
+		}
+	} else {
+		slog.WarnContext(ctx, "database user delete: account not solely this row's — row deleted, account kept",
+			"database_user_id", du.ID, "db_user_name", du.Username, "engine", du.Engine)
 	}
 
 	// Delete grants and user in transaction
@@ -915,6 +954,18 @@ func (h *databaseUserHandler) rotatePassword(c *gin.Context) {
 	// Check authorization
 	if !claims.IsAdmin && du.UserID != claims.UserID {
 		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		return
+	}
+
+	// A row that does not alone name its account must not set the
+	// account's password: the account may be another tenant's.
+	sole, err := dbops.SoleAccountRow(ctx, h.cfg.DatabaseUsers, du.Engine, du.Username)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	if !sole {
+		c.JSON(http.StatusConflict, gin.H{"error": "account_shared", "detail": "another database user has this name; an administrator has to resolve it"})
 		return
 	}
 

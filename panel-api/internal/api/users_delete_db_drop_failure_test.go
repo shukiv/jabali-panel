@@ -66,6 +66,11 @@ func (r *oneDatabaseUserRepo) ListByUserID(_ context.Context, userID string, _ r
 	return []models.DatabaseUser{{ID: "dbuser-1", UserID: userID, Username: r.username}}, 1, nil
 }
 
+// The login is this tenant's alone.
+func (r *oneDatabaseUserRepo) CountByEngineAndUsername(context.Context, string, string) (int64, error) {
+	return 1, nil
+}
+
 func runUserDelete(t *testing.T, cfg api.UserHandlerConfig, adminID, victimID string) int {
 	t.Helper()
 	gin.SetMode(gin.TestMode)

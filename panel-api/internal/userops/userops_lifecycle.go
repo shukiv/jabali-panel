@@ -391,6 +391,22 @@ func DeleteCascade(ctx context.Context, d Deps, dd DeleteDeps, target *models.Us
 			}
 			for i := range dbus {
 				duName := dbus[i].Username
+				// Only a row that alone names its account drops it. Another
+				// row for the same account, or a sign-in account's name, means
+				// the account may be another tenant's: the row goes with the
+				// user, the account stays.
+				sole, soleErr := dbops.SoleAccountRow(ctx, dd.DatabaseUsers, dbus[i].Engine, duName)
+				if soleErr != nil {
+					undropped = append(undropped, duName)
+					logError(d, "cascade delete: database user owner check failed — aborting so the row stays addressable",
+						"user_id", id, "db_user_name", duName, "engine", dbus[i].Engine, "err", soleErr)
+					continue
+				}
+				if !sole {
+					logWarn(d, "cascade delete: database user account not solely this row's — row removed, account kept",
+						"user_id", id, "db_user_name", duName, "engine", dbus[i].Engine)
+					continue
+				}
 				// A Postgres ROLE is not dropped by db_user.drop, and the
 				// payload key differs too. Route the login drop through the one
 				// lifecycle operation so the engine dispatch is not copied here

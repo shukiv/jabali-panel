@@ -31,11 +31,19 @@ import (
 // fixed set of login rows to reap; only ListByUserID is exercised.
 type cascadeDBUsers struct {
 	repository.DatabaseUserRepository
-	rows []models.DatabaseUser
+	rows   []models.DatabaseUser
+	shared map[string]bool // usernames another tenant's row also names
 }
 
 func (r *cascadeDBUsers) ListByUserID(context.Context, string, repository.ListOptions) ([]models.DatabaseUser, int64, error) {
 	return r.rows, int64(len(r.rows)), nil
+}
+
+func (r *cascadeDBUsers) CountByEngineAndUsername(_ context.Context, _, username string) (int64, error) {
+	if r.shared[username] {
+		return 2, nil
+	}
+	return 1, nil
 }
 
 // GH #1013, behavioral: deleting a tenant whose account still owns a Postgres
@@ -132,5 +140,46 @@ func TestCascade_NoInlinedDatabaseDropLiteral(t *testing.T) {
 		if strings.Contains(string(src), fn) {
 			t.Errorf("userops_lifecycle.go still defines %s — the login dispatch moved to dbops.DropDatabaseUserHost (JAB-275 AC6); route through it instead of re-adding the helper", fn)
 		}
+	}
+}
+
+// A login row another tenant's row also names may be someone else's account:
+// the cascade removes this tenant's row but never drops the account.
+func TestDeleteCascade_SharedLoginIsNotDropped(t *testing.T) {
+	ag := &recCascadeAgent{}
+	users := &fakeCascadeUsers{}
+	target := &models.User{ID: "u1", Username: strptr("alice")}
+	dbus := &cascadeDBUsers{
+		rows: []models.DatabaseUser{
+			{ID: "d1", UserID: "u1", Username: "alice_x_app", Engine: "mariadb"},
+			{ID: "d2", UserID: "u1", Username: "alice_x_mysqladmin", Engine: "mariadb"},
+			{ID: "d3", UserID: "u1", Username: "alice_app", Engine: "mariadb"},
+		},
+		shared: map[string]bool{"alice_x_app": true},
+	}
+	if err := DeleteCascade(context.Background(), Deps{Users: users, Agent: ag}, DeleteDeps{DatabaseUsers: dbus}, target, "test"); err != nil {
+		t.Fatalf("cascade: %v", err)
+	}
+	ag.mu.Lock()
+	defer ag.mu.Unlock()
+	for i, c := range ag.calls {
+		if c != "db_user.drop" || i >= len(ag.params) {
+			continue
+		}
+		if n := ag.params[i]["db_user_name"]; n == "alice_x_app" || n == "alice_x_mysqladmin" {
+			t.Errorf("dropped %v, which may be another tenant's account", n)
+		}
+	}
+	found := false
+	for i, c := range ag.calls {
+		if c == "db_user.drop" && i < len(ag.params) && ag.params[i]["db_user_name"] == "alice_app" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("alice_app, this tenant's own login, was not dropped: %v", ag.calls)
+	}
+	if users.deleted != "u1" {
+		t.Errorf("user row should be deleted, got %q", users.deleted)
 	}
 }

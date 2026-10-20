@@ -13,6 +13,8 @@ You may have many DB users (typical pattern: one DB user per app, one DB per app
 
 DB user names are prefixed with your panel username, just like database names: `dbuser_wp` becomes `<your-username>_dbuser_wp`.
 
+A database user name is unique on the server. A name that another database user already has is refused, and so is one ending in `_mysqladmin` or `_pgadmin`: those are the accounts phpMyAdmin and Adminer sign in with.
+
 ## Creating a DB user
 
 Click **Create DB user**, supply:

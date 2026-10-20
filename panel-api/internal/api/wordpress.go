@@ -374,6 +374,7 @@ func (h *wordPressHandler) create(c *gin.Context) {
 		if _, acErr := h.cfg.Agent.Call(agentCtx, "db_user.create", map[string]any{
 			"db_user_name": dbUsername,
 			"password":     adminPassword,
+			"create_only":  true, // never take over an existing account
 		}); acErr != nil {
 			// Roll back the MariaDB db we just created.
 			h.cfg.Agent.Call(ctx, "db.drop", map[string]any{"db_name": dbName})
@@ -914,6 +915,7 @@ func (h *wordPressHandler) cloneCore(ctx context.Context, sourceInstallID, destD
 		if _, acErr := h.cfg.Agent.Call(agentCtx, "db_user.create", map[string]any{
 			"db_user_name": destDBUsername,
 			"password":     plainPassword,
+			"create_only":  true, // never take over an existing account
 		}); acErr != nil {
 			h.cfg.Agent.Call(ctx, "db.drop", map[string]any{"db_name": destDBName})
 			rollbackPanelRows()
@@ -1469,11 +1471,13 @@ func allocateAppDBNames(ctx context.Context, dbs repository.DatabaseRepository, 
 		if e != nil {
 			return "", "", e
 		}
-		usrTaken, e := users.ExistsByUserAndUsername(ctx, userID, name)
+		// A database account is server-wide: the name must be free across
+		// every tenant's rows, not only this user's (dbops.CheckNewAccount).
+		usrRows, e := users.CountByEngineAndUsername(ctx, "mariadb", name)
 		if e != nil {
 			return "", "", e
 		}
-		if !dbTaken && !usrTaken {
+		if !dbTaken && usrRows == 0 {
 			return name, name, nil
 		}
 	}

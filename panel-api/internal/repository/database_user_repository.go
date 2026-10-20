@@ -25,6 +25,11 @@ type DatabaseUserRepository interface {
 	// half-moved row. The engine-level RENAME USER is done by the agent first.
 	TransferOwner(ctx context.Context, id, newUserID, newUsername string) error
 	ExistsByUserAndUsername(ctx context.Context, userID string, username string) (bool, error)
+	// CountByEngineAndUsername counts the rows, of every panel user, that
+	// name the one engine account (engine, username). A database account is
+	// server-wide, so more than one row means more than one tenant points at
+	// it.
+	CountByEngineAndUsername(ctx context.Context, engine, username string) (int64, error)
 }
 
 type databaseUserRepo struct{ db *gorm.DB }
@@ -128,4 +133,12 @@ func (r *databaseUserRepo) ExistsByUserAndUsername(ctx context.Context, userID s
 		return false, err
 	}
 	return count > 0, nil
+}
+
+func (r *databaseUserRepo) CountByEngineAndUsername(ctx context.Context, engine, username string) (int64, error) {
+	var count int64
+	if err := r.db.WithContext(ctx).Model(&models.DatabaseUser{}).Where("engine = ? AND username = ?", engine, username).Count(&count).Error; err != nil {
+		return 0, err
+	}
+	return count, nil
 }
