@@ -15848,94 +15848,22 @@ GOACCESS_EOF
     _log "GoAccess config already exists at $goaccess_config"
   fi
 
-  # Create directory for GoAccess reports
-  local reports_dir="/var/lib/jabali-goaccess"
-  if [[ ! -d "$reports_dir" ]]; then
-    _log "creating reports directory at $reports_dir"
-    install -d -m 0755 -o jabali -g jabali "$reports_dir"
+  # The jabali-goaccess timer used to render an HTML report of every
+  # *.access.log into /var/lib/jabali-goaccess every 15 minutes. Nothing ever
+  # read them: the panel's own vhost logs matched, the tenants'
+  # <domain>-access.log did not. Domain statistics now come from the nightly
+  # bandwidth scan and the Logs tab's live report, so take the timer down on
+  # hosts that still have it.
+  if [[ -e /etc/systemd/system/jabali-goaccess.timer || -e /etc/systemd/system/jabali-goaccess.service \
+        || -e /usr/local/bin/jabali-goaccess-generator || -d /var/lib/jabali-goaccess ]]; then
+    _log "removing the unused jabali-goaccess report timer"
+    systemctl disable --now jabali-goaccess.timer >/dev/null 2>&1 || true
+    systemctl stop jabali-goaccess.service >/dev/null 2>&1 || true
+    rm -f /etc/systemd/system/jabali-goaccess.timer /etc/systemd/system/jabali-goaccess.service \
+          /usr/local/bin/jabali-goaccess-generator
+    rm -rf /var/lib/jabali-goaccess
+    systemctl daemon-reload >/dev/null 2>&1 || true
   fi
-
-  # Create systemd timer for periodic report generation
-  local timer_dir="/etc/systemd/system"
-  local timer_unit="$timer_dir/jabali-goaccess.timer"
-  local service_unit="$timer_dir/jabali-goaccess.service"
-
-  # Service unit
-  if [[ ! -f "$service_unit" ]]; then
-    _log "creating GoAccess service unit"
-    cat > "$service_unit" << 'SERVICE_EOF'
-[Unit]
-Description=Generate GoAccess reports for jabali domains
-After=network.target
-
-[Service]
-Type=oneshot
-User=jabali
-Group=jabali
-ExecStart=/usr/local/bin/jabali-goaccess-generator
-PrivateTmp=yes
-ProtectHome=yes
-ProtectSystem=strict
-ReadWritePaths=/var/lib/jabali-goaccess
-ReadOnlyPaths=/var/log/nginx
-SERVICE_EOF
-  fi
-
-  # Timer unit
-  if [[ ! -f "$timer_unit" ]]; then
-    _log "creating GoAccess timer unit"
-    cat > "$timer_unit" << 'TIMER_EOF'
-[Unit]
-Description=Run GoAccess report generation every 15 minutes
-Requires=jabali-goaccess.service
-
-[Timer]
-OnCalendar=*:0/15
-Persistent=true
-
-[Install]
-WantedBy=timers.target
-TIMER_EOF
-  fi
-
-  # Create the generator script
-  local generator_script="/usr/local/bin/jabali-goaccess-generator"
-  if [[ ! -f "$generator_script" ]]; then
-    _log "creating GoAccess report generator script"
-    cat > "$generator_script" << 'SCRIPT_EOF'
-#!/bin/bash
-set -euo pipefail
-
-# Generate GoAccess reports for all domains
-REPORTS_DIR="/var/lib/jabali-goaccess"
-NGINX_LOG_DIR="/var/log/nginx"
-
-# Ensure reports directory exists
-mkdir -p "$REPORTS_DIR"
-
-# Generate reports for each domain
-for access_log in "$NGINX_LOG_DIR"/*.access.log; do
-    if [[ -f "$access_log" ]]; then
-        domain=$(basename "$access_log" .access.log)
-        output_file="$REPORTS_DIR/${domain}.html"
-
-        # Skip if no new log entries since last generation
-        if [[ -f "$output_file" ]] && [[ ! "$access_log" -nt "$output_file" ]]; then
-            continue
-        fi
-
-        # Generate HTML report
-        goaccess "$access_log" -o "$output_file" --log-format=COMBINED --date-format='%d/%b/%Y' --time-format='%T' --html --real-time-html 2>/dev/null || true
-    fi
-done
-SCRIPT_EOF
-    chmod 755 "$generator_script"
-  fi
-
-  # Enable and start the timer
-  systemctl daemon-reload
-  systemctl enable --quiet jabali-goaccess.timer
-  systemctl start jabali-goaccess.timer
 
   _ok "GoAccess log analyzer installed and configured"
 }
