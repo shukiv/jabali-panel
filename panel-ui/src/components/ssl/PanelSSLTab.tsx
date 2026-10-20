@@ -233,16 +233,6 @@ export function PanelSSLTab() {
         </Button>
       </Space>
 
-      {/* GH #2166: with Let's Encrypt off, an unroutable hostname only keeps
-          the switch off; the self-signed certificates don't need it. */}
-      {!host.use_le && !host.routable && (
-        <Typography.Text type="secondary">
-          {`Let's Encrypt can be turned on once ${hostName} resolves publicly to this server.${
-            host.routable_reason ? ` Now: ${host.routable_reason}.` : ""
-          } Point its DNS A record at this server's public IP, then click Refresh.`}
-        </Typography.Text>
-      )}
-
       <Typography.Paragraph type="secondary" style={{ margin: 0 }}>
         {!mail ? (
           // GH #2166: a server without the mail module has no mail cert.
@@ -271,6 +261,16 @@ export function PanelSSLTab() {
           </>
         )}
       </Typography.Paragraph>
+
+      {/* GH #2166: with Let's Encrypt off, an unroutable hostname only keeps
+          the switch off; the self-signed certificates don't need it. */}
+      {!host.use_le && !host.routable && (
+        <Typography.Text type="secondary">
+          {`Let's Encrypt can be turned on once ${hostName} resolves publicly to this server.${
+            host.routable_reason ? ` Now: ${host.routable_reason}.` : ""
+          } Point its DNS A record at this server's public IP, then click Refresh.`}
+        </Typography.Text>
+      )}
 
       {host.use_le && !host.routable && (
         <Alert
