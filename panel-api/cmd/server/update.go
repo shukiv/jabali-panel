@@ -165,6 +165,11 @@ func runUpdate(cmd *cobra.Command, args []string) (retErr error) {
 	var releaseSHA string
 	_ = releaseSHA // currently unused; reserved for future logging
 
+	// The signed release the git step verified for the commit it reset the
+	// checkout to (ADR-0162). The release step installs this same tarball.
+	var verifiedRelease *stagedRelease
+	defer func() { verifiedRelease.cleanup() }()
+
 	// Byte copies of the binaries as they were before this update replaced
 	// them, so a failed `migrate up` can put them back (JAB-210). Taken by
 	// whichever install path runs — release tarball or source build — and
@@ -489,6 +494,40 @@ chmod 0750 "$WR"`)
 					fmt.Println("  " + note)
 				}
 				resetRef = target
+			}
+			// Everything after the reset runs from the checkout as root, so on
+			// a build with the release key the target commit has to be the
+			// build of a signed release before it becomes the working tree
+			// (update_release_staged.go).
+			if resetRef != "HEAD" && releaseSignatureRequired() {
+				gitOut := func(args ...string) (string, error) {
+					return asUserOut(repoDir, "git", args...)
+				}
+				targetSHA, tErr := gitSHA(gitOut, "rev-parse", "--verify", "--quiet", resetRef+"^{commit}")
+				if tErr != nil {
+					return tErr
+				}
+				currentSHA, cErr := gitSHA(gitOut, "rev-parse", "HEAD")
+				if cErr != nil {
+					return cErr
+				}
+				webBase := os.Getenv("JABALI_RELEASE_WEB_BASE")
+				if webBase == "" {
+					webBase = defaultReleaseWebBase
+				}
+				staged, stay, vErr := verifyResetTarget(cmd.Context(), releaseSigningPublicKey, webBase,
+					releaseStageParent, targetSHA, currentSHA, urlExists, func(format string, args ...any) {
+						fmt.Printf("  "+format+"\n", args...)
+					})
+				if vErr != nil {
+					return fmt.Errorf("refusing to update to %s: %w", shortSHA7(targetSHA), vErr)
+				}
+				if stay {
+					fmt.Printf("  no signed release for %s yet — staying on the current build; the next update retries\n",
+						shortSHA7(targetSHA))
+					resetRef = "HEAD"
+				}
+				verifiedRelease = staged
 			}
 			// Show diffstat of any local drift vs HEAD before we reset so
 			// the operator can see what was clobbered. Silent on clean tree.
@@ -1155,7 +1194,7 @@ fi
 			}
 			ctx := cmd.Context()
 			snapshotBeforeSwap()
-			installed, sha, err := installFromRelease(ctx, repoDir, func(format string, args ...any) {
+			installed, sha, err := installFromRelease(ctx, repoDir, verifiedRelease, func(format string, args ...any) {
 				fmt.Printf("  "+format+"\n", args...)
 			})
 			if err != nil {

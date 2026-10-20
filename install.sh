@@ -367,6 +367,40 @@ curl_ipv4_retry() {
   curl -4 "$@"
 }
 
+# _require_gpg_key_fingerprint <key file> <expected fingerprint> <label> dies
+# unless the downloaded apt signing key file holds exactly one primary key and
+# that key has the expected fingerprint. Without a pin, whoever can answer the
+# key URL (a compromised vendor site, CDN or mirror) chooses which packages
+# this host trusts as root.
+#
+# Matching the fingerprint somewhere in gpg's output is not enough: a file
+# with the real key AND an extra key appended would pass, and apt trusts every
+# key in a signed-by file. So every primary key is listed and there must be
+# exactly one. Subkeys are fine; apt only accepts the ones the primary signed.
+#
+# When a vendor rotates its key this fails closed on fresh installs until the
+# new fingerprint ships here. Hosts that already have the keyring are not
+# re-checked: they never download it again.
+_require_gpg_key_fingerprint() {
+  local file="$1" want="$2" label="$3" gh out primaries
+  gh="$(mktemp -d)"
+  if ! out="$(GNUPGHOME="$gh" gpg --no-default-keyring --no-tty --batch --with-colons --show-keys "$file" 2>&1)"; then
+    rm -rf "$gh"
+    _err "gpg --show-keys failed on the ${label} signing key; output was:"
+    printf '%s\n' "$out" >&2
+    _die "cannot parse the ${label} signing key"
+  fi
+  rm -rf "$gh"
+  primaries="$(awk -F: '$1=="pub"{p=1; next} $1=="fpr" && p {print $10} {p=0}' <<<"$out")"
+  if [[ "$primaries" != "$want" ]]; then
+    _err "the ${label} signing key is not the one this installer pins."
+    _err "  expected: ${want}"
+    _err "  got:      ${primaries//$'\n'/ }"
+    _die "${label} signing key fingerprint mismatch — refusing to trust it"
+  fi
+  _ok "${label} signing key fingerprint verified"
+}
+
 # is_module_enabled — M353 (GH #353) modular install. Returns 0 (enabled) when
 # the given optional-module key should be installed. JABALI_MODULES is a comma
 # list emitted by the TUI (installer/) or set for a headless install.
@@ -2863,18 +2897,7 @@ _install_sury_source() {
         -o /usr/share/keyrings/sury-php.gpg \
       || _die "failed to fetch ondrej/php signing key from keyserver.ubuntu.com"
 
-    local lp_gpg_out
-    if ! lp_gpg_out="$(GNUPGHOME="$(mktemp -d)" gpg --no-default-keyring --no-tty --batch --show-keys /usr/share/keyrings/sury-php.gpg 2>&1)"; then
-      _err "gpg --show-keys failed; output was:"
-      printf '%s\n' "$lp_gpg_out" >&2
-      _die "cannot parse PPA key at /usr/share/keyrings/sury-php.gpg"
-    fi
-    if ! grep -q "$LP_GPG_FINGERPRINT" <<< "$lp_gpg_out"; then
-      _err "gpg parsed the key but the fingerprint doesn't match. gpg output:"
-      printf '%s\n' "$lp_gpg_out" >&2
-      _die "ondrej/php PPA key fingerprint mismatch. Expected: $LP_GPG_FINGERPRINT"
-    fi
-    _ok "ondrej/php PPA signing key validated"
+    _require_gpg_key_fingerprint /usr/share/keyrings/sury-php.gpg "$LP_GPG_FINGERPRINT" "ondrej/php PPA"
 
     cat > /etc/apt/sources.list.d/sury-php.list <<EOF
 deb [signed-by=/usr/share/keyrings/sury-php.gpg] https://ppa.launchpadcontent.net/ondrej/php/ubuntu ${codename} main
@@ -2892,23 +2915,10 @@ EOF
     || _die "curl failed to fetch Sury GPG key from packages.sury.org — check egress / DNS from this host"
 
   _log "verifying Sury GPG key fingerprint"
-  # Capture gpg output + exit code independently so we can surface both
-  # to the operator if anything goes wrong. The `if ! cmd` form disables
-  # set -e just for the capture. GNUPGHOME=mktemp skips any ~/.gnupg /
-  # gpg-agent startup, which hangs silently on first-gpg invocation
-  # inside minimal LXC containers.
-  local sury_gpg_out
-  if ! sury_gpg_out="$(GNUPGHOME="$(mktemp -d)" gpg --no-default-keyring --no-tty --batch --show-keys /usr/share/keyrings/sury-php.gpg 2>&1)"; then
-    _err "gpg --show-keys failed; output was:"
-    printf '%s\n' "$sury_gpg_out" >&2
-    _die "cannot parse Sury GPG key at /usr/share/keyrings/sury-php.gpg"
-  fi
-  if ! grep -q "$SURY_GPG_FINGERPRINT" <<< "$sury_gpg_out"; then
-    _err "gpg parsed the key but the fingerprint doesn't match. gpg output:"
-    printf '%s\n' "$sury_gpg_out" >&2
-    _die "Sury GPG key fingerprint mismatch. Expected: $SURY_GPG_FINGERPRINT"
-  fi
-  _ok "Sury GPG key validated"
+  # GNUPGHOME is a fresh temp dir inside the helper: it skips any ~/.gnupg /
+  # gpg-agent startup, which hangs silently on first-gpg invocation inside
+  # minimal LXC containers.
+  _require_gpg_key_fingerprint /usr/share/keyrings/sury-php.gpg "$SURY_GPG_FINGERPRINT" "Sury PHP"
 
   cat > /etc/apt/sources.list.d/sury-php.list <<EOF
 deb [signed-by=/usr/share/keyrings/sury-php.gpg] https://packages.sury.org/php/ ${codename} main
@@ -3414,6 +3424,8 @@ _install_nodesource_source() {
   curl_ipv4_retry -fsSL --connect-timeout 15 --max-time 60 \
     https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key -o "$ns_armored" \
     || _die "curl failed to fetch NodeSource GPG key from deb.nodesource.com — check egress / DNS from this host"
+  # NSolid <nsolid-gpg@nodesource.com>, the key deb.nodesource.com signs with.
+  _require_gpg_key_fingerprint "$ns_armored" "6F71F525282841EEDAF851B42F59B5F99B1BE0B4" "NodeSource"
   local ns_gpg_out
   if ! ns_gpg_out="$(GNUPGHOME="$(mktemp -d)" gpg --no-default-keyring --no-tty --batch --dearmor --yes -o /etc/apt/keyrings/nodesource.gpg "$ns_armored" 2>&1)"; then
     _err "gpg --dearmor failed on NodeSource key; output was:"
@@ -4076,8 +4088,16 @@ install_docker_engine() {
 
     install -d -m 0755 /etc/apt/keyrings
     if [[ ! -f /etc/apt/keyrings/docker.asc ]]; then
-      curl_ipv4_retry -fsSL "https://download.docker.com/linux/${docker_distro}/gpg" -o /etc/apt/keyrings/docker.asc
-      chmod a+r /etc/apt/keyrings/docker.asc
+      # Download beside the keyring, verify, then move it into place, so a
+      # key that fails the pin never sits where apt reads signed-by from.
+      # The Debian and Ubuntu trees serve the same Docker Release (CE deb) key.
+      local docker_key
+      docker_key="$(mktemp /etc/apt/keyrings/.docker.asc.XXXXXX)"
+      curl_ipv4_retry -fsSL "https://download.docker.com/linux/${docker_distro}/gpg" -o "$docker_key" \
+        || { rm -f "$docker_key"; _die "curl failed to fetch the Docker GPG key from download.docker.com"; }
+      _require_gpg_key_fingerprint "$docker_key" "9DC858229FC7DD38854AE2D88D81803C0EBFCD88" "Docker"
+      chmod 0644 "$docker_key"
+      mv -f "$docker_key" /etc/apt/keyrings/docker.asc
     fi
     local docker_list="/etc/apt/sources.list.d/docker.list"
     local desired
@@ -10117,6 +10137,8 @@ add_crowdsec_apt_source() {
       rm -f "$tmp_key"
       _die "failed to fetch CrowdSec signing key from $key_url"
     fi
+    # packagecloud's per-repository key for crowdsec/crowdsec.
+    _require_gpg_key_fingerprint "$tmp_key" "6A89E3C2303A901A889971D3376ED5326E93CD0C" "CrowdSec"
     gpg --batch --yes --dearmor -o "$keyring" "$tmp_key"
     rm -f "$tmp_key"
     chmod 0644 "$keyring"
