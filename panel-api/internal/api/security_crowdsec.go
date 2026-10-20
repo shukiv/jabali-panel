@@ -368,6 +368,11 @@ func RegisterSecurityCrowdSecRoutes(rg *gin.RouterGroup, cli agent.AgentInterfac
 	// jabali update. CAPI community blocklist pull is independent and
 	// still works.
 
+	// The admin's extra IP blocklists (internal/blocklists).
+	if settings != nil {
+		registerCrowdsecListRoutes(g, cli, settings)
+	}
+
 	// M27 Step 5 — captcha remediation. DB is truth for the toggle +
 	// creds (secret NEVER returned). Agent rewrites the four bouncer-
 	// conf keys (CAPTCHA_PROVIDER/SITE_KEY/SECRET_KEY/FALLBACK_REMEDIATION)

@@ -2267,6 +2267,51 @@ paths:
       requestBody: { content: { application/json: { schema: { type: object } } } }
       responses: { "202": { description: OK } }
 
+  /admin/security/crowdsec/blocklists/feeds:
+    get:
+      tags: [CrowdSec]
+      summary: Extra IP blocklists (catalog, which are on, last run)
+      description: |
+        The FireHOL lists the admin can add to CrowdSec on top of its
+        community blocklist. `status` is the agent's report of its last run
+        (per list: fetched, imported, dropped_reserved, dropped_protected,
+        dropped_duplicate, dropped_over_cap, invalid, error), or null when the
+        agent could not be asked.
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: "{ lists: [{key, name, description, enabled}], status }" } }
+    put:
+      tags: [CrowdSec]
+      summary: Choose the extra IP blocklists
+      description: |
+        Saves the set; the reconciler sends it to the agent within a minute.
+        The agent then imports each list that is on as 48 h ban decisions
+        (private and reserved ranges, the server's own addresses and
+        allowlisted addresses left out) and removes the bans of each list
+        that is off. A key not in the catalog is 400 invalid_blocklists.
+      security: [ { KratosSession: [] } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled:
+                  type: array
+                  items: { type: string, enum: [firehol_level1, firehol_level2, firehol_level3] }
+      responses:
+        "200": { description: "Same body as GET" }
+        "400": { description: "invalid_json / invalid_blocklists" }
+
+  /admin/security/crowdsec/blocklists/feeds/refresh:
+    post:
+      tags: [CrowdSec]
+      summary: Download the extra IP blocklists again now
+      description: "Starts a background run with the saved set; GET /admin/security/crowdsec/blocklists/feeds shows its result."
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: "{ queued: true }" } }
+
   /admin/security/crowdsec/bouncers:
     get:
       tags: [CrowdSec]
