@@ -5,9 +5,9 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
-	"regexp"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/dbshadow"
 )
 
 // dbMysqladminEnsureParams is the input shape for db.mysqladmin.ensure.
@@ -25,7 +25,9 @@ type dbMysqladminEnsureResponse struct {
 // panelUsernameRegex validates panel username format. Must start with a
 // lowercase letter; letters, digits, and underscores only; 1–32 chars so
 // the "_mysqladmin" suffix stays under MariaDB's 80-char user-name limit.
-var panelUsernameRegex = regexp.MustCompile(`^[a-z][a-z0-9_]{0,31}$`)
+// The rule lives in internal/dbshadow: the panel's user delete reads it to
+// know which shadow-admin names can exist.
+var panelUsernameRegex = dbshadow.PanelUsername
 
 // passwordCharset is the character set used for mysqladmin passwords.
 // 64 chars keeps `byte % 64` bias-free (256 is an exact multiple of 64).
