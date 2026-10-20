@@ -76,6 +76,11 @@ func TestValidateProxyPassTarget_NumericAndLocalhostForms(t *testing.T) {
 		"http://0xa9.0xfe.0xa9.0xfe/",         // 169.254.169.254
 		"http://169.254.43518/",               // 169.254.169.254
 		"http://[fe80::1%25eth0]/",            // link-local, with a zone
+		// Forms glibc refuses but another resolver may not: refused too.
+		"http://0x7f.0x.0x.1/",
+		"http://0x.0x.0x.0/",
+		"http://127.0.0.08/",
+		"http://1.2.3.4.5/",
 	}
 	for _, allow := range []bool{false, true} {
 		for _, tg := range alwaysRejected {

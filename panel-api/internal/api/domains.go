@@ -2544,7 +2544,7 @@ func validateProxyPassTargetWith(target string, allowInternal bool) error {
 	// forms (127.1, 2130706433, 0x7f000001, 0177.0.0.1) as IPv4. ParseIP
 	// doesn't, so they would skip the address checks below: a numeric host must
 	// be written as four decimal numbers.
-	if net.ParseIP(host) == nil && isInetAtonIPv4(host) {
+	if net.ParseIP(host) == nil && isNumericHost(host) {
 		return fmt.Errorf("write the target address as four decimal numbers (a.b.c.d), not %q", host)
 	}
 	if isLocalhostName(host) && !allowInternal {
@@ -2561,16 +2561,18 @@ func validateProxyPassTargetWith(target string, allowInternal bool) error {
 	return nil
 }
 
-// isInetAtonIPv4 reports whether glibc's inet_aton reads host as an IPv4
-// address: one to four dot-separated parts, each decimal, octal (leading 0) or
-// hex (0x), with an optional trailing dot as the resolver allows.
-func isInetAtonIPv4(host string) bool {
-	parts := strings.Split(strings.TrimSuffix(host, "."), ".")
-	if len(parts) > 4 {
-		return false
-	}
-	for _, p := range parts {
-		if _, err := strconv.ParseUint(p, 0, 32); err != nil {
+// numericHostPart is one part of a host an IPv4 parser might read as a number:
+// decimal or octal digits, or 0x and hex digits (an empty 0x included).
+var numericHostPart = regexp.MustCompile(`^(0[xX][0-9a-fA-F]*|[0-9]+)$`)
+
+// isNumericHost reports whether every dot-separated part of host (an optional
+// trailing dot aside) looks like a number. It is wider than glibc's inet_aton
+// on purpose (any part count, octal 8/9, empty 0x), so a resolver that reads
+// more forms than glibc can't turn one into an address that skips the checks.
+// No real hostname is all numbers: a top-level domain has a letter.
+func isNumericHost(host string) bool {
+	for _, p := range strings.Split(strings.TrimSuffix(host, "."), ".") {
+		if !numericHostPart.MatchString(p) {
 			return false
 		}
 	}
