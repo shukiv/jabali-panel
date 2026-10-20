@@ -487,6 +487,9 @@ components:
         ssl_enabled: { type: boolean }
         doc_root:    { type: string }
         php_version: { type: string, example: "8.4" }
+        block_ai_crawlers: { type: boolean, description: "The site answers 403 to AI crawlers and assistants that name themselves in the User-Agent header." }
+        rate_limit_rps:    { type: integer, minimum: 0, description: "Requests per second per visitor IP (burst to twice this, then 503). 0 = off." }
+        connection_limit:  { type: integer, minimum: 0, description: "Open connections per visitor IP (past it, 503). 0 = off." }
         created_at:  { type: string, format: date-time }
     Mailbox:
       type: object
@@ -763,6 +766,29 @@ paths:
     patch:
       tags: [Domains]
       parameters: [ { in: path, name: id, required: true, schema: { type: string, format: ulid } } ]
+      description: |
+        Partial update — only fields present in the body are applied. Among
+        them: is_enabled, doc_root, temp_url_enabled, bot_challenge_include,
+        allow_subdomain_delegation, nginx_safe_options, and the fields below.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                block_ai_crawlers:
+                  type: boolean
+                  description: "Owner or admin. The site answers 403 to AI crawlers and assistants that name themselves (GPTBot, ClaudeBot, CCBot, PerplexityBot and others). Search engines are not blocked."
+                rate_limit_rps:
+                  type: integer
+                  minimum: 0
+                  maximum: 10000
+                  description: "Admin only; ignored for the owner. Requests per second per visitor IP; 0 = off. Above 10000 is 400 invalid_rate_limit."
+                connection_limit:
+                  type: integer
+                  minimum: 0
+                  maximum: 10000
+                  description: "Admin only; ignored for the owner. Open connections per visitor IP; 0 = off. Above 10000 is 400 invalid_rate_limit."
       responses: { "200": { description: Updated } }
     delete:
       tags: [Domains]
@@ -1354,6 +1380,9 @@ paths:
                   minimum: 0
                   maximum: 100
                   description: "Mail at or above this spam score is dropped. 0 = off; otherwise above spam_junk_score. The mail server checks reject first. Default 20."
+                blocked_user_agents:
+                  type: string
+                  description: "User agents every hosted site answers 403, one per line, matched case-insensitively as part of the User-Agent header. Each 3-128 characters of letters, digits, space and . _ / + -; at most 200; blank lines and repeats are dropped. Anything else is 400 invalid_blocked_user_agents."
       responses: { "200": { description: Updated } }
 
   # -------------------------------------------------------------- Egress ---

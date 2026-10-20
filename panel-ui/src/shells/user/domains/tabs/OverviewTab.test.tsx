@@ -99,3 +99,26 @@ describe("OverviewTab subdomain delegation toggle (GH #1812)", () => {
     expect(screen.getByText(/Turning this off stops new ones/)).toBeInTheDocument();
   });
 });
+
+describe("OverviewTab AI-crawler block", () => {
+  it("renders the switch reflecting the stored flag", () => {
+    renderTab({ ...base, block_ai_crawlers: true } as Domain);
+    const sw = screen.getByRole("switch", { name: "Block AI crawlers" });
+    expect(sw.getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("PATCHes block_ai_crawlers when the owner turns it on", async () => {
+    const { apiClient } = await import("../../../../apiClient");
+    const patch = vi.mocked(apiClient.patch);
+    patch.mockClear();
+    renderTab({ ...base, block_ai_crawlers: false } as Domain);
+    fireEvent.click(screen.getByRole("switch", { name: "Block AI crawlers" }));
+    await vi.waitFor(() => expect(patch).toHaveBeenCalledWith("/domains/d1", { block_ai_crawlers: true }));
+  });
+
+  it("says search engines are not blocked and only self-named bots are stopped", () => {
+    renderTab({ ...base } as Domain);
+    expect(screen.getByText(/Googlebot and Bingbot still crawl/)).toBeInTheDocument();
+    expect(screen.getByText(/Only bots that name themselves are stopped/)).toBeInTheDocument();
+  });
+});

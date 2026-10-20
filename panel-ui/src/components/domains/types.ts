@@ -82,6 +82,11 @@ export type Domain = {
   temp_url_enabled?: boolean;
   temp_url?: string | null;
   bot_challenge_include?: boolean;
+  // The vhost refuses (403) AI crawlers that name themselves.
+  block_ai_crawlers?: boolean;
+  // Per visitor IP; 0 = off. Admin-only to change.
+  rate_limit_rps?: number;
+  connection_limit?: number;
   // GH #1812: the owner lets other accounts create subdomains under this domain.
   allow_subdomain_delegation?: boolean;
   // GH #1816 / ADR-0170: ownership proof. Anything but "verified" is pending

@@ -1,7 +1,8 @@
 // OverviewTab — the landing pane of the tenant Web Domain page (GH #1543).
 // Shows the domain's key facts and the instant per-domain toggles: the two
 // that were previously buried in the row's "Actions" menu (preview URL, bot
-// challenge) and subdomain delegation (GH #1812). Each PATCHes /domains/:id and
+// challenge), subdomain delegation (GH #1812) and the AI-crawler block. Each
+// PATCHes /domains/:id and
 // invalidates the single-row + list caches so the badge and the list stay in
 // step, mirroring the DomainInventory row handlers.
 import { useState } from "react";
@@ -28,11 +29,11 @@ const stripHomePrefix = (path: string): string => {
 export const OverviewTab = ({ domain }: { domain: Domain }) => {
   const qc = useQueryClient();
   const navigate = useNavigate();
-  const [busy, setBusy] = useState<null | "preview" | "bot" | "delegation">(null);
+  const [busy, setBusy] = useState<null | "preview" | "bot" | "delegation" | "ai">(null);
   const [viewCert, setViewCert] = useState(false);
 
   const patch = async (
-    field: "preview" | "bot" | "delegation",
+    field: "preview" | "bot" | "delegation" | "ai",
     body: Record<string, unknown>,
     success: string,
     errorPrefix: string,
@@ -86,6 +87,16 @@ export const OverviewTab = ({ domain }: { domain: Domain }) => {
         ? "Other accounts can now create subdomains of this domain"
         : "Other accounts can no longer create new subdomains of this domain",
       "Failed to change subdomain delegation",
+    );
+
+  // Refuses (403) the AI crawlers and assistants that name themselves in the
+  // User-Agent header. Search engines are not on the list.
+  const toggleAICrawlers = (next: boolean) =>
+    patch(
+      "ai",
+      { block_ai_crawlers: next },
+      next ? "AI crawlers blocked — live within a minute" : "AI crawlers allowed again",
+      "Failed to change the AI-crawler block",
     );
 
   const ssl = getSSLTag(domain.ssl_state);
@@ -164,6 +175,23 @@ export const OverviewTab = ({ domain }: { domain: Domain }) => {
             <Typography.Text strong>Bot-detection challenge</Typography.Text>
             <Typography.Paragraph type="secondary" style={{ margin: 0, fontSize: 13 }}>
               Challenge suspicious visitors when the server runs in Selected-domains mode.
+            </Typography.Paragraph>
+          </div>
+        </Space>
+
+        <Space align="center">
+          <Switch
+            checked={!!domain.block_ai_crawlers}
+            loading={busy === "ai"}
+            onChange={toggleAICrawlers}
+            aria-label="Block AI crawlers"
+          />
+          <div>
+            <Typography.Text strong>Block AI crawlers</Typography.Text>
+            <Typography.Paragraph type="secondary" style={{ margin: 0, fontSize: 13 }}>
+              Refuse the crawlers and assistants of AI companies (GPTBot, ClaudeBot, CCBot,
+              PerplexityBot and others). Search engines such as Googlebot and Bingbot still crawl
+              the site. Only bots that name themselves are stopped.
             </Typography.Paragraph>
           </div>
         </Space>

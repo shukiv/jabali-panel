@@ -49,6 +49,27 @@ A domain that is never verified is removed from your account after **14 days**, 
 
 Open **Edit** → **Delete**. Destructive: the vhost is torn down, the certificate is revoked, the DNS zone is removed, and any mailboxes in the domain are deleted. Asks twice.
 
+## Blocking AI crawlers
+
+On the domain's **Overview** tab, **Block AI crawlers** makes the site answer
+403 to the crawlers and assistants of AI companies (GPTBot, ClaudeBot, CCBot,
+PerplexityBot, Bytespider and others). Search engines such as Googlebot and
+Bingbot still crawl the site. It stops only bots that name themselves in their
+User-Agent header; the server's CrowdSec protection deals with bots that do
+not. It takes effect within a minute.
+
+Google's and Apple's AI training opt-outs (`Google-Extended`,
+`Applebot-Extended`) are not crawlers of their own: Googlebot and Applebot read
+them from your `robots.txt`. To opt out of those, add to `robots.txt`:
+
+```
+User-agent: Google-Extended
+Disallow: /
+
+User-agent: Applebot-Extended
+Disallow: /
+```
+
 ## Subdomains
 
 Subdomains are first-class domains in the panel. Add a subdomain by creating a new domain with the subdomain name (e.g. `blog.example.com`). The DNS zone for `blog.example.com` is created independently from `example.com` — you may need to delegate via `NS` records if both zones are hosted here.

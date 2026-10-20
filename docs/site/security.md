@@ -42,6 +42,52 @@ A CrowdSec 1.8 AppSec **bot-detection challenge** is available, **off by default
 Because it is default-off and per-domain scoped, enabling it never silently
 challenges traffic on a domain the operator didn't choose.
 
+### Blocking bots
+
+Several layers turn bots away. The first four are on for every site without
+any setting:
+
+- **CrowdSec bad user agents** (`crowdsecurity/http-bad-user-agent`): a client
+  whose User-Agent is on CrowdSec's list of several hundred known bad agents
+  (scanners, attack tools, some crawlers such as MJ12bot, DotBot and PetalBot)
+  gets its address banned on every site.
+- **CrowdSec behaviour scenarios**: clients that crawl too fast
+  (`http-crawl-non_statics`), probe for missing or sensitive paths
+  (`http-probing`, `http-sensitive-files`) or scan WordPress are banned, whatever
+  user agent they send.
+- **Community blocklist**: addresses other CrowdSec users reported (see
+  [Firewall → Blocklists](firewall.md#blocklists)).
+- **AppSec WAF**: requests that look like attacks are refused.
+
+Off by default:
+
+- **AppSec bot detection** (above): a JavaScript / proof-of-work challenge for
+  visitors that look like bots. Verified search engines and AI crawlers pass
+  it, so it does not stop AI crawlers.
+- **Block AI crawlers**, per domain: the site answers 403 to the crawlers and
+  assistants of AI companies that name themselves in the User-Agent header
+  (GPTBot, ClaudeBot, CCBot, PerplexityBot, Bytespider and others). The tenant
+  turns it on on the domain's **Overview** tab; the admin also has it under
+  Admin → Domains → Edit. Search engines such as Googlebot and Bingbot are not
+  on the list. Google's and Apple's AI training opt-outs (`Google-Extended`,
+  `Applebot-Extended`) are robots.txt tokens, not user agents, so a site that
+  wants those adds them to its `robots.txt`.
+- **Blocked user agents**, server-wide: Admin → Security → CrowdSec → Bot
+  Detection → **Blocked user agents**. Every site answers 403 to a request
+  whose User-Agent contains one of the entries (one per line, case does not
+  matter, up to 200). Unlike the CrowdSec list, nothing is banned: each
+  matching request is refused.
+- **Rate limits**, per domain (admin only): see
+  [Resource limits](resource-limits.md#3-nginx-request-and-connection-limits-per-domain).
+
+The two user-agent blocks live in `/etc/nginx/conf.d/00-jabali-bots.conf`.
+A site's vhost refers to them only when that site uses them, so with both off
+the vhosts are unchanged.
+
+A user-agent block stops only a bot that says who it is. A bot that sends a
+browser's user agent is caught, if at all, by the CrowdSec scenarios, the WAF
+or the bot-detection challenge.
+
 ### WAF false positives and rule exclusions
 
 `/jabali-admin/security` → CrowdSec → **WAF exclusions** (GH #1649) answers
