@@ -29,6 +29,7 @@ import { DomainCacheSection } from "../../../components/DomainCacheSection";
 import { DomainMTASTSSection } from "./DomainMTASTSSection";
 import { DomainMailTLSSection } from "./DomainMailTLSSection";
 import { DomainDeliverabilitySection } from "./DomainDeliverabilitySection";
+import { DomainStatsPanel } from "../../../components/domains/DomainStatsPanel";
 
 export type DomainEditInput = {
   is_enabled?: boolean;
@@ -315,6 +316,8 @@ export const DomainEdit = () => {
     ? [{ key: "general", label: "General", children: generalTab }, emailTab]
     : [
         { key: "general", label: "General", children: generalTab },
+        // Requests and bandwidth per day and visitors by country.
+        { key: "statistics", label: "Statistics", children: <DomainStatsPanel domainId={domain.id} /> },
         sslTab,
         cacheTab,
         networkTab,
