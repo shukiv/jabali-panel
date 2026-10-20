@@ -7,9 +7,11 @@ After=jabali-panel.service jabali-agent.service mariadb.service
 # started proves nothing about socket readiness. Persistent=true means
 # it can fire at boot, which is exactly when mariadb may still be
 # starting (measured: 44s on a 2 GB / 2 vCPU host).
-# No Requires= — same rationale as jabali-sso-reaper.service: this timer is
-# enabled before the panel/agent units are written on first install. After=
-# keeps boot ordering; a transient failure while they're down is tolerated.
+# No Requires= — same rationale as jabali-sso-reaper.service: a sweep that
+# runs while the panel or agent is down fails once and the next hourly run
+# picks up. After= keeps boot ordering. A fresh install starts this timer only
+# after the panel's first boot, which creates the cache_doctor_runs table the
+# sweep writes to.
 
 [Service]
 Type=oneshot
