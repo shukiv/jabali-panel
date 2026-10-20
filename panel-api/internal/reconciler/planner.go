@@ -78,6 +78,8 @@ var (
 
 	// PhaseNginxRateLimits is the shared rate-limit zone fragment.
 	PhaseNginxRateLimits = Phase{Name: "nginx.ratelimits", AuditInterval: domainReDispatchInterval}
+	// PhaseNginxBots is the shared blocked-user-agent fragment.
+	PhaseNginxBots = Phase{Name: "nginx.bots", AuditInterval: domainReDispatchInterval}
 	// PhaseDNSRecursor is one zone's pdns-recursor forwarder, added or
 	// removed. Keyed by zone name, so an add and a removal of the same zone
 	// share one entry and each replaces the other.

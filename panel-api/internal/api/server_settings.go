@@ -15,6 +15,7 @@ import (
 
 	internalbackup "git.jabali-panel.com/shukivaknin/jabali2/internal/backup"
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/paneltime"
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/useragents"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/mailspam"
@@ -297,6 +298,10 @@ type updateServerSettingsRequest struct {
 	// Validation policy for proxy_pass rules; not an nginx tunable, so it
 	// does not count toward nginxTouched.
 	NginxProxyAllowInternal *bool `json:"nginx_proxy_allow_internal,omitempty"`
+
+	// BlockedUserAgents — user agents every site refuses, one per line
+	// (internal/useragents rules). Applied by the reconciler within a minute.
+	BlockedUserAgents *string `json:"blocked_user_agents,omitempty"`
 }
 
 func (h *serverSettingsHandler) update(c *gin.Context) {
@@ -831,6 +836,14 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 	}
 	if req.NginxProxyAllowInternal != nil {
 		current.NginxProxyAllowInternal = *req.NginxProxyAllowInternal
+	}
+	if req.BlockedUserAgents != nil {
+		list, err := useragents.Normalize(strings.Split(*req.BlockedUserAgents, "\n"))
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_blocked_user_agents", "detail": err.Error()})
+			return
+		}
+		current.BlockedUserAgents = strings.Join(list, "\n")
 	}
 	if req.NginxCacheMaxSizeGB != nil {
 		current.NginxCacheMaxSizeGB = *req.NginxCacheMaxSizeGB
