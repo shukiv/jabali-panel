@@ -5,7 +5,9 @@
 // the panel DB, and upserts a row into bw_daily keyed by (domain_id,
 // day). Non-existent domains in the agent response (e.g. logs left
 // behind by a recently-deleted domain whose nginx site hasn't been
-// pruned yet) are skipped silently.
+// pruned yet) are skipped silently. When the agent also reports the
+// day's traffic per country (hosts with the GeoIP database), those
+// rows replace the day's rows in bw_daily_country.
 package reconciler
 
 import (
@@ -66,6 +68,27 @@ func StartBandwidthTicker(ctx context.Context, ag agent.AgentInterface, domainRe
 	}
 }
 
+// bwScanResponse is the bandwidth.scan_day reply. The agent's handler
+// (panel-agent bandwidth_scan_day.go) decodes the same fixture,
+// internal/agent/testdata/bandwidth_scan_day_response.json, so a field
+// renamed on either side fails a test.
+type bwScanResponse struct {
+	Stats []struct {
+		Domain        string `json:"domain"`
+		BytesTotal    uint64 `json:"bytes_total"`
+		RequestsTotal uint64 `json:"requests_total"`
+		Day           string `json:"day"` // YYYY-MM-DD
+		// Countries is absent from an older agent and on hosts without
+		// the GeoIP database.
+		Countries []struct {
+			Code          string `json:"code"`
+			RequestsTotal uint64 `json:"requests_total"`
+			BytesTotal    uint64 `json:"bytes_total"`
+		} `json:"countries,omitempty"`
+	} `json:"stats"`
+	Skipped []string `json:"skipped"`
+}
+
 func scanBandwidth(ctx context.Context, ag agent.AgentInterface, domainRepo repository.DomainRepository, bwRepo repository.BWDailyRepository, log bwTickerLogger) {
 	callCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
@@ -75,15 +98,7 @@ func scanBandwidth(ctx context.Context, ag agent.AgentInterface, domainRepo repo
 		log.Warn("bw_ticker: agent bandwidth.scan_day failed", "err", err)
 		return
 	}
-	var resp struct {
-		Stats []struct {
-			Domain        string `json:"domain"`
-			BytesTotal    uint64 `json:"bytes_total"`
-			RequestsTotal uint64 `json:"requests_total"`
-			Day           string `json:"day"` // YYYY-MM-DD
-		} `json:"stats"`
-		Skipped []string `json:"skipped"`
-	}
+	var resp bwScanResponse
 	if err := json.Unmarshal(raw, &resp); err != nil {
 		log.Error("bw_ticker: parse agent response failed", "err", err)
 		return
@@ -119,6 +134,31 @@ func scanBandwidth(ctx context.Context, ag agent.AgentInterface, domainRepo repo
 			continue
 		}
 		written++
+
+		// No countries means the scan had no GeoIP data, not that the day
+		// had no visitors, so the day's rows from an earlier scan stay.
+		countries := make([]models.BWDailyCountry, 0, len(s.Countries))
+		for _, c := range s.Countries {
+			if !isCountryCode(c.Code) {
+				continue
+			}
+			countries = append(countries, models.BWDailyCountry{
+				CountryCode:   c.Code,
+				BytesTotal:    c.BytesTotal,
+				RequestsTotal: c.RequestsTotal,
+			})
+		}
+		if len(countries) > 0 {
+			if err := bwRepo.ReplaceCountriesForDay(callCtx, dom.ID, day, countries); err != nil {
+				log.Warn("bw_ticker: country rows failed", "domain", s.Domain, "err", err)
+			}
+		}
 	}
 	log.Info("bw_ticker: scan complete", "domains", len(resp.Stats), "written", written, "skipped", len(resp.Skipped))
+}
+
+// isCountryCode accepts the agent's two-letter upper-case country codes
+// (ISO 3166-1 alpha-2, or ZZ). Anything else is dropped rather than stored.
+func isCountryCode(c string) bool {
+	return len(c) == 2 && c[0] >= 'A' && c[0] <= 'Z' && c[1] >= 'A' && c[1] <= 'Z'
 }

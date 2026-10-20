@@ -116,7 +116,7 @@ func mustWriteFile(t *testing.T, path string, data []byte) {
 // fatals on goaccess 1.9.x ("unknown option") and silently zeroed bandwidth
 // stats. The correct JSON-to-stdout flag is `-o json`.
 func TestGoaccessScanArgs_UsesDashOJson(t *testing.T) {
-	args := goaccessScanArgs("/var/log/nginx/example.com-access.log.1")
+	args := goaccessScanArgs("/var/log/nginx/example.com-access.log.1", "")
 
 	for _, a := range args {
 		if a == "--output-format=json" || a == "--output-format" {

@@ -40,6 +40,16 @@ type BWDailyRepository interface {
 	// single domain over [from, to]. Drives sparkline charts on the
 	// Domain detail card.
 	SumPerDayForDomain(ctx context.Context, domainID string, from, to time.Time) ([]DailyPoint, error)
+
+	// ReplaceCountriesForDay writes one domain's per-country rows for one
+	// day, replacing the rows that day already had (a re-scan of the same
+	// log).
+	ReplaceCountriesForDay(ctx context.Context, domainID string, day time.Time, rows []models.BWDailyCountry) error
+
+	// SumCountriesForDomain returns one domain's traffic per country over
+	// [from, to], most requests first. Inclusive on both ends; zero `to`
+	// means "now".
+	SumCountriesForDomain(ctx context.Context, domainID string, from, to time.Time) ([]CountryPoint, error)
 }
 
 // DailyPoint is one day's data point for sparkline + chart rendering.
@@ -47,6 +57,13 @@ type DailyPoint struct {
 	Day           time.Time `json:"day"`
 	BytesTotal    uint64    `json:"bytes_total"`
 	RequestsTotal uint64    `json:"requests_total"`
+}
+
+// CountryPoint is one country's share of a domain's traffic over a window.
+type CountryPoint struct {
+	CountryCode   string `json:"country_code"`
+	BytesTotal    uint64 `json:"bytes_total"`
+	RequestsTotal uint64 `json:"requests_total"`
 }
 
 type bwDailyRepo struct{ db *gorm.DB }
@@ -140,6 +157,42 @@ func (r *bwDailyRepo) SumPerDayForDomain(ctx context.Context, domainID string, f
 		Where("domain_id = ?", domainID).
 		Where("day >= ?", from).
 		Order("day ASC")
+	if !to.IsZero() {
+		q = q.Where("day <= ?", to)
+	}
+	if err := q.Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+func (r *bwDailyRepo) ReplaceCountriesForDay(ctx context.Context, domainID string, day time.Time, rows []models.BWDailyCountry) error {
+	now := time.Now().UTC()
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("domain_id = ? AND day = ?", domainID, day).
+			Delete(&models.BWDailyCountry{}).Error; err != nil {
+			return err
+		}
+		if len(rows) == 0 {
+			return nil
+		}
+		for i := range rows {
+			rows[i].DomainID = domainID
+			rows[i].Day = day
+			rows[i].UpdatedAt = now
+		}
+		return tx.Create(&rows).Error
+	})
+}
+
+func (r *bwDailyRepo) SumCountriesForDomain(ctx context.Context, domainID string, from, to time.Time) ([]CountryPoint, error) {
+	var rows []CountryPoint
+	q := r.db.WithContext(ctx).Table("bw_daily_country").
+		Select("country_code, COALESCE(SUM(bytes_total),0) AS bytes_total, COALESCE(SUM(requests_total),0) AS requests_total").
+		Where("domain_id = ?", domainID).
+		Where("day >= ?", from).
+		Group("country_code").
+		Order("requests_total DESC, country_code ASC")
 	if !to.IsZero() {
 		q = q.Where("day <= ?", to)
 	}

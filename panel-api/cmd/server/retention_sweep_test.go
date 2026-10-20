@@ -100,4 +100,9 @@ func TestRetentionTargets_P2MigrationAndBandwidth(t *testing.T) {
 	if bw.category != "bandwidth" {
 		t.Errorf("bw_daily category = %q, want bandwidth", bw.category)
 	}
+	// Its per-country rows are pruned on the same window.
+	bwc, ok := byTable["bw_daily_country"]
+	if !ok || bwc.category != "bandwidth" {
+		t.Errorf("bw_daily_country must be pruned with bw_daily (category bandwidth), got %+v ok=%v", bwc, ok)
+	}
 }

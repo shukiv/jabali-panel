@@ -66,6 +66,8 @@ var retentionTargets = []retentionTarget{
 	{"db_admin_audit", "ts", models.RetentionCatDBAdminAudit, 365 * retentionDay, "", "legacy DB-admin audit — security (JAB-105)"},
 	// JAB-124: per-domain daily bandwidth ledger. Plain age-prune on the date.
 	{"bw_daily", "day", models.RetentionCatBandwidth, 90 * retentionDay, "", "per-domain daily bandwidth ledger (JAB-124)"},
+	// The same ledger by country (domain Statistics tab), kept as long as bw_daily.
+	{"bw_daily_country", "day", models.RetentionCatBandwidth, 90 * retentionDay, "", "per-domain daily traffic by country"},
 	// JAB-102: terminal migration jobs (stages cascade via ON DELETE CASCADE).
 	// Only terminal states + rows with ended_at set — never touches an in-flight
 	// job. reap-secrets already wiped their secrets/staging.

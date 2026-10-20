@@ -2700,8 +2700,17 @@ func domainLinuxUser(email string) string {
 //	  "daily": [
 //	    {"day": "2026-05-08", "bytes_total": 1234, "requests_total": 56},
 //	    ...
+//	  ],
+//	  "countries": [
+//	    {"country_code": "US", "bytes_total": 900, "requests_total": 40},
+//	    ...
 //	  ]
 //	}
+//
+// countries is the window's traffic per country, most requests first, and
+// is empty on hosts without the GeoIP database. Its requests are the
+// requests goaccess counts as valid, so they can sum to less than
+// requests_total. The window is at most bwMaxWindowDays long.
 //
 // Authorization mirrors GET /domains/:id: admins read any, users only
 // their own. Domain ownership is verified via the existing FindByID
@@ -2744,6 +2753,9 @@ func (h *domainHandler) bandwidth(c *gin.Context) {
 			to = t
 		}
 	}
+	if earliest := to.AddDate(0, 0, -(bwMaxWindowDays - 1)); from.Before(earliest) {
+		from = earliest
+	}
 
 	bytesTotal, reqsTotal, err := h.cfg.BWDaily.SumForDomain(c.Request.Context(), dom.ID, from, to)
 	if err != nil {
@@ -2763,6 +2775,14 @@ func (h *domainHandler) bandwidth(c *gin.Context) {
 	if daily == nil {
 		daily = []repository.DailyPoint{}
 	}
+	countries, err := h.cfg.BWDaily.SumCountriesForDomain(c.Request.Context(), dom.ID, from, to)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	if countries == nil {
+		countries = []repository.CountryPoint{}
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"domain_id":      dom.ID,
@@ -2771,8 +2791,14 @@ func (h *domainHandler) bandwidth(c *gin.Context) {
 		"bytes_total":    bytesTotal,
 		"requests_total": reqsTotal,
 		"daily":          daily,
+		"countries":      countries,
 	})
 }
+
+// bwMaxWindowDays bounds the bandwidth window a caller can ask for. The
+// ledger is pruned at 90 days by default; a year leaves room for a longer
+// retention setting.
+const bwMaxWindowDays = 366
 
 // isNginxDuration accepts nginx's standard duration shape: a positive
 // integer followed by one of `ms s m h d` (or none = seconds). Used to
