@@ -26,9 +26,14 @@ Edit a domain via `/jabali-admin/domains/edit/:id` (admin) or `/jabali-panel/dom
 
 ```
 create  → DB row inserted → reconciler builds vhost, requests cert if SSL=on
-suspend → DB flag set       → reconciler returns 503 page
+disable → is_enabled=0      → reconciler serves the shared "Site Disabled" page
 delete  → DB row removed    → reconciler tears down vhost, revokes cert, drops Stalwart domain
 ```
+
+A disabled domain's vhost serves one page shared by every disabled domain
+(Admin → Server Settings → Page templates → **Disabled site**) instead of the
+docroot; its mail keeps working. A bandwidth suspension disables the domain
+the same way (see [Resource limits](resource-limits.md#bandwidth-limit)).
 
 The reconciler is the only thing that re-applies vhosts; never edit nginx site files by hand — they'll be overwritten on the next tick.
 

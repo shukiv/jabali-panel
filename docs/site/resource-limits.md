@@ -60,20 +60,56 @@ Inside each vhost: `limit_req zone=jabali_<user> burst=<package_req_burst> nodel
 
 A **Package** carries:
 
-- `disk_quota_mib`
-- `bandwidth_quota_gib` (monthly; tracked separately)
-- `memory_limit_mib`
-- `cpu_pct`
-- `tasks_max`
-- `req_per_sec`, `req_burst`
-- `max_domains`, `max_mailboxes`, `max_databases`, `max_database_users` (JAB-329)
+- `disk_quota_mb`
+- `bandwidth_quota_mb` (monthly; see [Bandwidth limit](#bandwidth-limit))
+- `memory_limit_mb`
+- `cpu_quota_percent`
+- `io_read_mbps`, `io_write_mbps`
+- `max_tasks`
+- `max_domains`, `max_email_accounts`, `max_databases`, `max_database_users` (JAB-329)
 - `max_ftp_accounts` (FTP/SFTP subaccount cap, when the module is enabled)
 - PHP-INI overrides (`memory_limit`, `upload_max_filesize`, etc.)
 
 Edit packages: `/jabali-admin/packages`. Users on a package get the new limits applied on the next reconciler tick.
 
-## Suspension
+## Bandwidth limit
 
-If a user exceeds bandwidth: the reconciler sets `is_quota_suspended=1` on the user; vhosts return a "Bandwidth limit reached" page. Suspension auto-clears at the start of the next billing month (or admin clears manually).
+A package's `bandwidth_quota_mb` is the account's monthly web traffic: the
+bytes served by all of its domains since the 1st of the calendar month (UTC).
+0 means unlimited. The panel counts it once a day from the nginx access logs,
+so the figure is up to the end of yesterday.
 
-(The "domain.Update allowlist silent drop" scar bit us here once — `is_quota_suspended` needed its own dedicated update method per column instead of a generic field-allowlist update. Fixed in PR#74.)
+The admin gets a notification when an account passes 80% of its limit
+(**Bandwidth quota — 80%**) and when it passes 100% (**Bandwidth quota —
+100%**). Those are sent whether or not suspension is on.
+
+### Suspension (opt-in)
+
+Nothing is suspended unless the admin turns on **Bandwidth Quota
+Auto-Suspend** under Admin → Server Settings. It is off by default. With it on,
+the panel checks every hour:
+
+- **At or over 100%**: every enabled domain of the account is disabled and
+  marked as suspended for bandwidth. Visitors get the "Site Disabled" page
+  instead of the site. It is one page shared by every disabled domain; the
+  admin edits it as **Disabled site** under Admin → Server Settings → Page
+  templates. Because usage is counted once a day, the suspension lands about
+  a day after the account crosses its limit.
+- **At or under 80%**: the domains suspended for bandwidth are enabled again.
+  In practice that happens early on the 1st, when the month's count starts
+  over, or within the hour after the admin raises the package limit.
+- **Between 80% and 100%**: nothing changes. A suspended account stays
+  suspended until it is back under 80%.
+
+Only the website is suspended. Mail for the domain keeps working: mailboxes
+send, receive and log in as before. The tenant's mail domain list marks the
+domain **Suspended**, and the admin's domain list tags it **Suspended
+(quota)**.
+
+A domain the admin disabled by hand is not touched: the panel does not mark it
+as suspended for bandwidth, and does not enable it when usage drops. Admin
+accounts and accounts without a package are never suspended.
+
+To lift a suspension early, raise the account's limit (edit the package, or
+move the account to a bigger one). The domains come back within the hour,
+once usage is at or under 80% of the new limit.
