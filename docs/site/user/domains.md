@@ -60,7 +60,7 @@ By default only you (and the administrator) can add a subdomain of a domain you 
 A domain's **Statistics** tab shows its web traffic for the last 7, 30 or 90 days:
 
 - **Requests** and **Bandwidth** per day, as a chart (switch between the two) and as a table under **Daily values**. Requests count every request in the site's access log, known bots and crawlers included. Bandwidth counts what was sent to visitors; responses to known bots are left out. This is the same figure your package's monthly bandwidth limit uses.
-- **Visitors by country**: each country's requests, its share and its bandwidth. Known bots are not counted, and *Unknown / other* holds addresses with no known country (for example private networks) and, on a busy site, the countries past the 30 busiest of each day. The country comes from the GeoLite2 database by MaxMind. It appears only on servers that have it (it is installed with CrowdSec); without it the table says there is no country data.
+- **Visitors by country**: each country's requests, its share and its bandwidth. Known bots are not counted, and *Unknown / other* holds addresses with no known country (for example private networks) and, on a busy site, the countries past the 29 busiest of each day. The country comes from the GeoLite2 database by MaxMind. It appears only on servers that have it (it is installed with CrowdSec); without it the table says there is no country data.
 
 The panel counts each day once, on the day after, from that day's access log, so today is not in the statistics yet. For today's traffic, open the **Logs** tab. The statistics are kept as long as the server's bandwidth ledger (90 days unless your administrator changed it).
 

@@ -88,7 +88,8 @@ function niceMax(measure: Measure, max: number): number {
 function countryName(code: string, locale: string): string {
   if (code === "ZZ") return "Unknown / other";
   try {
-    return new Intl.DisplayNames([locale, "en"], { type: "region" }).of(code) ?? code;
+    // The UI's language codes use "_" (pt_BR, zh_Hans); Intl wants BCP 47.
+    return new Intl.DisplayNames([locale.replace("_", "-"), "en"], { type: "region" }).of(code) ?? code;
   } catch {
     return code;
   }

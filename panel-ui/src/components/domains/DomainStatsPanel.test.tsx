@@ -77,6 +77,19 @@ describe("DomainStatsPanel", () => {
     expect(mockGet.mock.calls[1][1].params.from).toBe(new Date(Date.now() - 7 * day).toISOString().slice(0, 10));
   });
 
+  it("names countries in a language whose code has an underscore", async () => {
+    const { default: i18n } = await import("i18next");
+    const prev = i18n.language;
+    await i18n.changeLanguage("pt_BR");
+    try {
+      mockGet.mockResolvedValue({ data: withTraffic });
+      renderPanel();
+      expect(await screen.findByText("Alemanha")).toBeInTheDocument();
+    } finally {
+      await i18n.changeLanguage(prev);
+    }
+  });
+
   it("says when nothing has been counted and when there is no country data", async () => {
     mockGet.mockResolvedValue({
       data: { ...withTraffic, bytes_total: 0, requests_total: 0, daily: [], countries: [] },
