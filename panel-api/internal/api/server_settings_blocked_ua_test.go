@@ -45,3 +45,14 @@ func TestServerSettingsPatch_BlockedUserAgentsRefused(t *testing.T) {
 	require.Contains(t, rec.Body.String(), "invalid_blocked_user_agents")
 	require.Equal(t, "zgrab", repo.getResult.BlockedUserAgents)
 }
+
+// An entry that would also refuse Let's Encrypt or every browser is refused,
+// with the reason, and nothing is saved.
+func TestServerSettingsPatch_BlockedUserAgentsRefusesEssentialClients(t *testing.T) {
+	repo := &mockServerSettingsRepo{getResult: &models.ServerSettings{ID: 1, SSHPort: 22, BlockedUserAgents: "zgrab"}}
+	rec := patchBlockedUA(t, repo, "AhrefsBot\ncompatible")
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), "invalid_blocked_user_agents")
+	require.Contains(t, rec.Body.String(), "would also block")
+	require.Equal(t, "zgrab", repo.getResult.BlockedUserAgents)
+}

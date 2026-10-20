@@ -42,3 +42,19 @@ func TestNormalize(t *testing.T) {
 		t.Fatalf("%d entries accepted, cap is %d", len(many), MaxBlocked)
 	}
 }
+
+// An entry that is part of a browser's, Let's Encrypt's or a major search
+// engine's user agent would refuse them on every site (the 403 runs before
+// any location, /.well-known/acme-challenge/ included), so it is refused.
+func TestNormalize_RefusesEntriesThatMatchEssentialClients(t *testing.T) {
+	for _, e := range []string{"compatible", "Mozilla", "mozilla/5.0", "Chrome/", "Safari", "Gecko", "Encrypt validation", "bot", "Googlebot", "bingbot", "x64"} {
+		if _, err := Normalize([]string{e}); err == nil {
+			t.Errorf("Normalize(%q) accepted an entry that blocks an essential client", e)
+		}
+	}
+	for _, e := range []string{"AhrefsBot", "SemrushBot", "MJ12bot", "Semrush Bot/1.0", "python-requests"} {
+		if _, err := Normalize([]string{e}); err != nil {
+			t.Errorf("Normalize(%q) = %v, want accepted", e, err)
+		}
+	}
+}

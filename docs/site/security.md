@@ -76,7 +76,10 @@ Off by default:
   Detection → **Blocked user agents**. Every site answers 403 to a request
   whose User-Agent contains one of the entries (one per line, case does not
   matter, up to 200). Unlike the CrowdSec list, nothing is banned: each
-  matching request is refused.
+  matching request is refused. The refusal comes before any other rule,
+  Let's Encrypt validation included, so an entry that is part of a
+  browser's, Let's Encrypt's, Googlebot's or Bingbot's user agent (such as
+  `compatible`, `Mozilla` or `bot`) is not accepted.
 - **Rate limits**, per domain (admin only): see
   [Resource limits](resource-limits.md#3-nginx-request-and-connection-limits-per-domain).
 

@@ -1382,7 +1382,7 @@ paths:
                   description: "Mail at or above this spam score is dropped. 0 = off; otherwise above spam_junk_score. The mail server checks reject first. Default 20."
                 blocked_user_agents:
                   type: string
-                  description: "User agents every hosted site answers 403, one per line, matched case-insensitively as part of the User-Agent header. Each 3-128 characters of letters, digits, space and . _ / + -; at most 200; blank lines and repeats are dropped. Anything else is 400 invalid_blocked_user_agents."
+                  description: "User agents every hosted site answers 403, one per line, matched case-insensitively as part of the User-Agent header. Each 3-128 characters of letters, digits, space and . _ / + -; at most 200; blank lines and repeats are dropped. An entry that is part of a browser's, Let's Encrypt's, Googlebot's or Bingbot's user agent is refused. Anything refused is 400 invalid_blocked_user_agents."
       responses: { "200": { description: Updated } }
 
   # -------------------------------------------------------------- Egress ---
