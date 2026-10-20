@@ -138,6 +138,11 @@ func newDockerAppInstallCmd() *cobra.Command {
 		PreRunE: requireDBAndAgent,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			slug := args[0]
+			// --domain used to be dropped without a word when --user was
+			// not given.
+			if tenantDom != "" && tenantUser == "" {
+				return errors.New("--domain needs --user: an admin install from the CLI cannot attach a domain; install from the panel's Docker apps page to attach one")
+			}
 			if tenantUser != "" {
 				ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Minute)
 				defer cancel()
@@ -160,6 +165,9 @@ func newDockerAppInstallCmd() *cobra.Command {
 			entry, ok := cat.Get(slug)
 			if !ok {
 				return fmt.Errorf("slug %q not in catalog", slug)
+			}
+			if entry.RequiresDomain {
+				return fmt.Errorf("%s does not start without a domain, and an admin install from the CLI cannot attach one: install it from the panel's Docker apps page and pick a domain", entry.Name)
 			}
 
 			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Minute)
@@ -294,9 +302,10 @@ func newDockerAppInstallCmd() *cobra.Command {
 				"wait_healthy":                true,
 				"healthcheck_timeout_seconds": 120,
 			}); err != nil {
-				msg := firstLine(err.Error())
+				msg := dockerapp.FailureSummary(err.Error())
 				_ = repo.UpdateStatus(context.Background(), app.ID, models.DockerAppStatusFailed, &msg)
-				return fmt.Errorf("agent install: %s", msg)
+				// The whole message: docker compose's own lines say why.
+				return fmt.Errorf("agent install: %s", err.Error())
 			}
 			_ = repo.UpdateStatus(ctx, app.ID, models.DockerAppStatusRunning, nil)
 			cliAuditOK(ctx, "docker_app.install", "docker_app", app.ID, nil)

@@ -500,6 +500,15 @@ func MaterialiseEnv(entry Entry, overrides map[string]string) (map[string]string
 // secretRandRead is crypto/rand.Read; a var so tests can choose the bytes.
 var secretRandRead = rand.Read
 
+// secretSchemes are the generate: values generateSecret knows; the catalog
+// loader refuses any other.
+var secretSchemes = map[string]bool{
+	"password32":  true,
+	"password64":  true,
+	"laravel_key": true,
+	"base64_32":   true,
+}
+
 func generateSecret(scheme string) (string, error) {
 	var nbytes int
 	switch scheme {
@@ -515,6 +524,14 @@ func generateSecret(scheme string) (string, error) {
 			return "", err
 		}
 		return "base64:" + base64.StdEncoding.EncodeToString(buf), nil
+	case "base64_32":
+		// Standard padded base64 of exactly 32 random bytes, the shape
+		// `openssl rand -base64 32` prints (Plausible's TOTP_VAULT_KEY).
+		buf := make([]byte, 32)
+		if _, err := rand.Read(buf); err != nil {
+			return "", err
+		}
+		return base64.StdEncoding.EncodeToString(buf), nil
 	default:
 		return "", fmt.Errorf("unknown secret scheme %q", scheme)
 	}

@@ -49,7 +49,9 @@ env:
     generate: password64
   - name: TOTP_VAULT_KEY
     secret: true
-    generate: password64
+    # Plausible refuses to start unless this is standard base64 of exactly
+    # 32 bytes ("TOTP_VAULT_KEY must be Base64 encoded 32 bytes").
+    generate: base64_32
   - name: DATABASE_URL
     value: ""
   - name: CLICKHOUSE_DATABASE_URL

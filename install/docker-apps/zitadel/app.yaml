@@ -10,6 +10,9 @@ documentation: https://zitadel.com/docs
 
 image_channel: ghcr.io/zitadel/zitadel:v4.19.4@sha256:90a3045b80a2b5b395e1e770302076906af3a5911225af7c464b4f3bd00d0a1b
 update_mode: manual
+# Builds its public URL from the install's domain and does not start
+# without one.
+requires_domain: true
 
 resources:
   cpu: "1.0"

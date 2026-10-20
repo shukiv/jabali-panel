@@ -472,6 +472,7 @@
   "editdrawer": {
     "cpu": "CPU",
     "domain": "Domain",
+    "domain_required": "{{name}} does not start without a domain. Pick another domain instead of removing it.",
     "limits_update_mode_can_still_be_saved_ports": "Limits + update mode can still be saved; ports/domain edits will return 409 conflict while the container is running.",
     "memory": "Memory",
     "pick_from_the_panel_s_domains_list_leave_emp": "Pick from the panel's domains list. Leave empty to drop the managed-domain row.",
@@ -497,6 +498,7 @@
     "backup_destination": "Backup destination",
     "cpu": "CPU",
     "domain": "Domain",
+    "domain_required": "{{name}} builds its address from its domain and does not start without one. Pick a domain.",
     "hostname_to_attach_to_the_loopback_bound_por": "Hostname to attach to the loopback-bound port via nginx. Pick from the panel's domains list -- a vhost gets auto-rendered on save.",
     "inherit_env_var_fallback": "Inherit env-var fallback",
     "install_name": "Install name",

@@ -13,6 +13,9 @@ documentation: https://ghost.org/docs/
 
 image_channel: ghost:6-alpine@sha256:1f7ecf094d54363014636c3540dbe9c368394504abaa283914e4fcf8d699f331
 update_mode: manual
+# Builds its public URL from the install's domain and does not start
+# without one.
+requires_domain: true
 tenant_installable: true
 
 resources:

@@ -22,7 +22,8 @@ services:
           cpus: "{{ .CPULimit }}"
           memory: {{ .MemoryLimit }}
     healthcheck:
-      test: ["CMD-SHELL", "wget --spider -q http://127.0.0.1/ || exit 1"]
+      # The image has no wget or curl; FreshRSS ships its own probe.
+      test: ["CMD", "php", "/var/www/FreshRSS/cli/health.php"]
       interval: 30s
       timeout: 5s
       retries: 3
