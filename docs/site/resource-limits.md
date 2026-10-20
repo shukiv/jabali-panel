@@ -102,7 +102,7 @@ the panel checks every hour:
   suspended until it is back under 80%.
 
 Only the website is suspended. Mail for the domain keeps working: mailboxes
-send, receive and log in as before. The tenant's mail domain list marks the
+send, receive and log in as before, and webmail stays up. The tenant's mail domain list marks the
 domain **Suspended**, and the admin's domain list tags it **Suspended
 (quota)**.
 
