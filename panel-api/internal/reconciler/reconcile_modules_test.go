@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 )
@@ -23,6 +24,7 @@ type moduleStubAgent struct {
 	installCalls int
 	configStatus map[string]any // canned ftp.config_status response
 	configErr    error          // if set, ftp.config_status returns this error
+	installErr   error          // if set, system.module.install returns this error
 
 	mu      sync.Mutex
 	methods []string // every method seen (guarded; detached dispatch races the test)
@@ -45,6 +47,9 @@ func (m *moduleStubAgent) Call(_ context.Context, method string, params any) (js
 		return json.Marshal(st)
 	case "system.module.install":
 		m.installCalls++
+		if m.installErr != nil {
+			return nil, m.installErr
+		}
 		return json.Marshal(m.status[key])
 	case "ftp.config_status":
 		if m.configErr != nil {
@@ -302,5 +307,53 @@ func TestConvergedModulesWiring(t *testing.T) {
 		if deps[indep] != "" {
 			t.Errorf("%s dependsOn = %q, want none", indep, deps[indep])
 		}
+	}
+}
+
+// The panel first boots in the middle of a full install, before install.sh has
+// installed mail. The agent refuses the repair's install while the installer
+// runs; the repair then drops its attempt, so the next tick looks again as
+// soon as the installer ends instead of 15 minutes later. Any other failure
+// keeps the backoff.
+func TestConvergeModule_WaitsForTheServerInstaller(t *testing.T) {
+	for name, tc := range map[string]struct {
+		err        error
+		wantForget bool
+	}{
+		"installer running":  {&agent.AgentError{Code: agent.CodeFailedPrecondition, Message: agentwire.MsgServerInstallerRunning}, true},
+		"other failure":      {errStub, false},
+		"other precondition": {&agent.AgentError{Code: agent.CodeFailedPrecondition, Message: "the DNS module must be installed first"}, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			ag := &moduleStubAgent{
+				status:     map[string]map[string]any{"dns": up(), "mail": down()},
+				installErr: tc.err,
+			}
+			r := discardReconciler(ag)
+			r.convergeModule(context.Background(), "mail", "dns")
+
+			deadline := time.Now().Add(2 * time.Second)
+			for ag.methodCount("system.module.install") == 0 && time.Now().Before(deadline) {
+				time.Sleep(5 * time.Millisecond)
+			}
+			if ag.methodCount("system.module.install") != 1 {
+				t.Fatalf("want one install dispatch, got %d", ag.methodCount("system.module.install"))
+			}
+			attempted := func() bool {
+				r.moduleInstallMu.Lock()
+				defer r.moduleInstallMu.Unlock()
+				_, ok := r.moduleInstallAttempt["mail"]
+				return ok
+			}
+			for attempted() == tc.wantForget && time.Now().Before(deadline) {
+				time.Sleep(5 * time.Millisecond)
+			}
+			if !tc.wantForget {
+				time.Sleep(100 * time.Millisecond) // give a wrong forget time to happen
+			}
+			if got := !attempted(); got != tc.wantForget {
+				t.Errorf("attempt forgotten = %v, want %v", got, tc.wantForget)
+			}
+		})
 	}
 }

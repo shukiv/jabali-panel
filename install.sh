@@ -14269,7 +14269,21 @@ converge_stalwart_directory_queries() {
   fi
 
   _log "converging Stalwart Directory query fields (ADR-0073)"
-  local sql_dir_id
+  # The queries go to the directory sign-in uses (Authentication.directoryId).
+  # A mail install that ran beside the installer applied the plan twice and
+  # left two SQL directories, and the first one listed need not be the one in
+  # use. Without a readable Authentication, or with one on a directory that
+  # isn't SQL, the first SQL directory is used.
+  local auth_dir_id sql_dir_id
+  auth_dir_id="$(STALWART_URL="http://127.0.0.1:${jmap_port}" \
+    STALWART_USER="admin" \
+    STALWART_PASSWORD="$admin_token" \
+    "$cli" get Authentication --json 2>/dev/null \
+    | python3 -c 'import json,sys
+try:
+    print(json.load(sys.stdin).get("directoryId") or "")
+except Exception:
+    print("")' 2>/dev/null || true)"
   sql_dir_id="$(STALWART_URL="http://127.0.0.1:${jmap_port}" \
     STALWART_USER="admin" \
     STALWART_PASSWORD="$admin_token" \
@@ -14279,8 +14293,8 @@ converge_stalwart_directory_queries() {
 # json.load() would raise "Extra data" and the id never resolved, silently
 # skipping query-field convergence. Parse line-by-line.
 data = [json.loads(l) for l in sys.stdin if l.strip()]
-sql = [d for d in data if d.get("@type") == "Sql"]
-print(sql[0]["id"] if sql else "")' 2>/dev/null || true)"
+sql = [d["id"] for d in data if d.get("@type") == "Sql"]
+print(sys.argv[1] if sys.argv[1] in sql else (sql[0] if sql else ""))' "$auth_dir_id" 2>/dev/null || true)"
   if [[ -z "$sql_dir_id" ]]; then
     _warn "could not resolve SQL Directory id — skipping query-field convergence"
     return 1
@@ -17256,6 +17270,34 @@ check_ptr_rdns() {
   fi
 }
 
+# INSTALLER_MARKER — while main() runs, "<pid> <starttime>" of its shell (the
+# start time is field 22 of /proc/<pid>/stat). main() starts the panel before
+# it installs Stalwart, and the panel's module repair then saw mail on with no
+# Stalwart and installed mail beside this run: the plan was applied twice and
+# Stalwart got two SQL directories. The agent's system.module.install refuses
+# while the marker names a live process that started at that tick, so a file
+# a crashed run left behind never matches a reused PID; /run is cleared at
+# boot. panel-agent's serverInstallerMarker reads this path.
+INSTALLER_MARKER=/run/jabali-installer.pid
+
+# mark_installer_running — write INSTALLER_MARKER for this shell. Best-effort:
+# without it the install still works, only the repair may run beside it.
+mark_installer_running() {
+  local stat start
+  local -a fields
+  stat="$(cat "/proc/$$/stat" 2>/dev/null)" || return 0
+  read -r -a fields <<<"${stat##*) }"
+  start="${fields[19]:-}"
+  [[ "$start" =~ ^[0-9]+$ ]] || return 0
+  { printf '%s %s\n' "$$" "$start" >"$INSTALLER_MARKER"; } 2>/dev/null || true
+}
+
+# clear_installer_marker — main()'s last step: the install is done, the
+# panel's module repair may install again.
+clear_installer_marker() {
+  rm -f "$INSTALLER_MARKER" 2>/dev/null || true
+}
+
 main() {
   print_banner
   # GH #760: default a fresh, no-selection install to the lean "webhost" profile
@@ -17270,6 +17312,9 @@ main() {
     print_module_plan
     exit 0
   fi
+  # From here on the panel's module repair waits for this run (see
+  # INSTALLER_MARKER).
+  mark_installer_running
   # Set the system hostname up front so every downstream step (certs, mail,
   # DNS, panel identity) uses it.
   apply_system_hostname
@@ -17575,6 +17620,7 @@ main() {
   # End-of-install advisory: warn if reverse DNS (PTR) does not match the
   # hostname (mail deliverability).
   check_ptr_rdns
+  clear_installer_marker
 }
 
 # ---------- uninstall flow --------------------------------------------------

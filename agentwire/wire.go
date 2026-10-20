@@ -85,6 +85,12 @@ const (
 // forever (GH #357).
 const MsgMailServerNotInstalled = "mail server not installed"
 
+// MsgServerInstallerRunning is the CodeFailedPrecondition message
+// system.module.install returns while install.sh's full install is still
+// running. That run installs the module itself, so the panel's module repair
+// waits for it instead of installing the same module beside it.
+const MsgServerInstallerRunning = "the server installer is still running and installs this module itself"
+
 // MsgCrowdSecNotInstalled is the CodeFailedPrecondition message a CrowdSec
 // verb returns on a box with no cscli (installed without the security
 // module). Asking again gets the same answer, so the panel's login allowlist
