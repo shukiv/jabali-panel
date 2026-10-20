@@ -7,7 +7,7 @@ Security → CrowdSec → **Decisions**. Live and historic list of every BAN, CA
 - IP (IPv4 or IPv6)
 - Decision type (`ban`, `captcha`, `allowlist`)
 - Scenario that triggered the decision (e.g. `crowdsecurity/ssh-bf`, `crowdsecurity/http-probing`)
-- Origin (`local`, `console`, `manual`)
+- Origin (`crowdsec`, `cscli`, `CAPI`, `cscli-import`; see [Sources](#sources))
 - Duration remaining
 - First seen, last seen
 
@@ -41,13 +41,14 @@ Each scenario has a configurable severity, leakspeed (decay rate), and capacity 
 
 Decisions are enforced by per-service bouncers:
 
-- `cs-nginx-bouncer` — drops requests from banned IPs at the nginx layer; presents the configured CAPTCHA HTML for `captcha` decisions.
-- `cs-firewall-bouncer` — drops packets in nftables for non-HTTP traffic.
-- `cs-stalwart-bouncer` — rejects IMAP / SMTP connections.
+- `crowdsec-nginx-bouncer` — refuses HTTP requests from banned IPs at the nginx layer and presents the configured CAPTCHA page for `captcha` decisions.
+- `crowdsec-firewall-bouncer` — drops packets from banned IPs in nftables, for every port, so mail (SMTP, IMAP, POP3) and SSH are covered too.
 
-## Console sync
+## Sources
 
-If the admin has enrolled with the central CrowdSec console (Server Settings → Security), decisions sync bidirectionally: locally-produced decisions appear in the console, and console-pushed decisions (community blocklists) appear here marked `origin=console`.
+Each decision has an origin: `crowdsec` (detected on this server), `cscli` (added by hand), `CAPI` (the CrowdSec community blocklist) or `cscli-import` (imported with `cscli decisions import`). The **Blocklists** tab counts active decisions per source.
+
+The panel is not connected to the CrowdSec console; console enrolment was removed (ADR-0113), so no decisions are synced with it.
 
 ## CLI
 

@@ -6,7 +6,7 @@
 
 | Tab | What it covers |
 |---|---|
-| **CrowdSec** | Decisions, scenarios, allowlists, console enrolment, test-IP card. See [CrowdSec](./crowdsec-decisions.md). |
+| **CrowdSec** | Decisions, scenarios, blocklists, allowlists, test-IP card. See [CrowdSec](./crowdsec-decisions.md). |
 | **AppSec** | The CrowdSec AppSec WAF replacing the removed ModSecurity stack (M27). See [AppSec](./appsec.md). |
 | **AppArmor** | Per-profile status (enforce / complain / disabled) for shipped profiles. See [AppArmor](./apparmor.md). |
 | **Snuffleupagus** | PHP runtime hardening rule packs and per-app exception files. See [Snuffleupagus](./snuffleupagus.md). |

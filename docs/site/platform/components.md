@@ -28,7 +28,7 @@ Version pins shown are the values in `install.sh` at the time of writing. Run `j
 | Component | Source | Role |
 |---|---|---|
 | `crowdsec` + `crowdsec-nginx-bouncer` + `cs-firewall-bouncer` + AppSec | packagecloud + hub | IP bans, scenarios, WAF |
-| CrowdSec community blocklists | `cscli hub` | Pushed blocklists synced via console |
+| CrowdSec community blocklist | CAPI | Free community IP blocklist, pulled by the engine; no console enrolment |
 | **Snuffleupagus** | repo | PHP runtime hardening (Zend extension) |
 | **AppArmor** + `apparmor-profiles-extra` + `apparmor-utils` | Debian | Per-process MAC; profiles shipped for every Jabali service |
 | **AIDE** + `aide-common` | Debian | Daily host-integrity scan |

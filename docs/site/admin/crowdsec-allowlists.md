@@ -28,10 +28,6 @@ The Scenario Overrides tab lets the operator tune these without editing `/etc/cr
 
 `crowdsec.ban.spike` fires on an unusually large burst of new bans in a short window. It goes to the bell and to every enabled channel; see [Routing](./notifications-routing.md).
 
-## Console-pushed allowlists
-
-If the panel is enrolled with the central console, allowlists may be pushed from the console down to the host. Console allowlists are read-only on this page; remove them from the console UI.
-
 ## Operator workflow
 
 1. After a false positive, click **Add to allowlist** on the affected decision row in [Decisions](./crowdsec-decisions.md).

@@ -10,7 +10,6 @@ Security → CrowdSec → **Test IP**. Verify what would happen to a given IP ad
 
 - Whether the IP is currently subject to any decision (ban, captcha, allowlist) and, if so, the scenario that produced it.
 - Whether the IP is on any allowlist entry, and which one.
-- Whether the IP is part of a community blocklist pushed by the central CrowdSec console.
 - Reverse DNS, ASN, country (from the local GeoIP database, if installed).
 
 ## When to use

@@ -62,7 +62,6 @@ Tunables persist to `server_settings` and are applied by the agent's `nginx.tuna
 
 ## Security
 
-- **CrowdSec console enrolment** — enrol once to sync decisions, alerts, and allowlists with the central console.
 - **AppSec policy** — log only / block (default).
 - **Default per-user egress policy** — `default-restricted` / `unrestricted`.
 - **AIDE schedule** — daily / weekly / off.
