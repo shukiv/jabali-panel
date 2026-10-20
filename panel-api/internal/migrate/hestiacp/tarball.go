@@ -182,7 +182,9 @@ func classifyHestia(p *HestiaParsedTarball, path, abs string) {
 	}
 	switch parts[0] {
 	case "db":
-		if strings.HasSuffix(path, ".sql") {
+		if isPostgresDump(path) {
+			p.Skipped = append(p.Skipped, "postgres_unsupported:"+path)
+		} else if strings.HasSuffix(path, ".sql") {
 			p.MySQLDumps = append(p.MySQLDumps, abs)
 		}
 	case "user.conf":
@@ -224,8 +226,14 @@ func hydrateHestiaZstd(extractDir string, out *HestiaParsedTarball) {
 		}
 	}
 	// DB: db/<name>/*.sql.zst -> decompress to *.sql + record for import.
+	// A PostgreSQL database's dump (<name>.pgsql.sql.zst) is not restored.
 	dbs, _ := filepath.Glob(filepath.Join(extractDir, "db", "*", "*.sql.zst"))
 	for _, a := range dbs {
+		if isPostgresDump(a) {
+			rel, _ := filepath.Rel(extractDir, a)
+			out.Skipped = append(out.Skipped, "postgres_unsupported:"+rel)
+			continue
+		}
 		dst := strings.TrimSuffix(a, ".zst") // <name>.mysql.sql
 		if err := decompressZstd(a, dst); err != nil {
 			out.Skipped = append(out.Skipped, "zstd-db:"+a+":"+err.Error())
@@ -248,6 +256,13 @@ func hydrateHestiaZstd(extractDir string, out *HestiaParsedTarball) {
 			}
 		}
 	}
+}
+
+// isPostgresDump reports whether path is a PostgreSQL database's dump. Hestia
+// names a database's dump <name>.<type>.sql, type mysql or pgsql, and
+// zstd-compresses it on newer versions.
+func isPostgresDump(path string) bool {
+	return strings.HasSuffix(strings.TrimSuffix(path, ".zst"), ".pgsql.sql")
 }
 
 // Bounds for nested-archive hydration (untrusted-ish migration input): a ctx
