@@ -93,6 +93,60 @@ func (c DBCredential) writable(configUser string) bool {
 	return c.Password != "" || c.preservesUser(configUser)
 }
 
+// importDBIDs returns the ids of the MariaDB database rows this import holds:
+// the ones it restored (restored, name to id) and, on a resume, the ones an
+// earlier run restored (resumed names).
+func importDBIDs(ctx context.Context, dbsRepo repository.DatabaseRepository, ownerID string,
+	restored map[string]string, resumed map[string]bool) (map[string]bool, error) {
+	held := map[string]bool{}
+	for _, id := range restored {
+		if id != "" {
+			held[id] = true
+		}
+	}
+	if len(resumed) == 0 {
+		return held, nil
+	}
+	dbs, _, err := dbsRepo.ListByUserID(ctx, ownerID, repository.ListOptions{Limit: 10000})
+	if err != nil {
+		return nil, err
+	}
+	for i := range dbs {
+		if dbs[i].Engine == "mariadb" && resumed[dbs[i].Name] {
+			held[dbs[i].ID] = true
+		}
+	}
+	return held, nil
+}
+
+// compatPasswordRefusal says why the archive's hash may not be set on row, an
+// existing account whose sole row is the target's, or "". As for a backup
+// overwrite, every grant the account has must be on a database this import
+// holds (held, from importDBIDs): an account that can open any other
+// database keeps its password.
+func compatPasswordRefusal(ctx context.Context, grantsRepo repository.DatabaseUserGrantRepository,
+	row *models.DatabaseUser, held map[string]bool, heldErr error) string {
+	switch {
+	case grantsRepo == nil:
+		return "the grant records are not wired"
+	case heldErr != nil:
+		return fmt.Sprintf("look up this import's databases: %v", heldErr)
+	}
+	grants, err := grantsRepo.ListByDatabaseUserID(ctx, row.ID)
+	if err != nil {
+		return fmt.Sprintf("list its grants: %v", err)
+	}
+	if len(grants) == 0 {
+		return "it is one of this account's database users and can open no database this import restored"
+	}
+	for _, g := range grants {
+		if !held[g.DatabaseID] {
+			return "it is one of this account's database users and can open a database this import did not restore"
+		}
+	}
+	return ""
+}
+
 // recordImportedGrant records a grant the import made on database dbName as a
 // database_user_grants row, so the panel shows it. A grant already recorded
 // (the user this import made for that database, or an earlier run's) is left
@@ -226,6 +280,8 @@ func ImportDatabases(
 	sourceToFinalDB := map[string]string{}
 	// Destination database name → its row id, for the compat users' grant rows.
 	finalDBIDs := map[string]string{}
+	// Destination databases an earlier run restored (resume).
+	resumedDBs := map[string]bool{}
 	for _, dumpPath := range parsed.MySQLDumps {
 		finalName, base, ok := deriveDestDBName(dumpPath, targetUsername)
 		if !ok {
@@ -245,6 +301,7 @@ func ImportDatabases(
 		}
 		if exists {
 			res.AlreadyPresent++
+			resumedDBs[finalName] = true
 			res.Skipped = append(res.Skipped, fmt.Sprintf(
 				"%s: %q verified existing — left in place, not re-imported", dumpPath, finalName))
 			// GH #723 resume gap: this DB was imported by an earlier run, so we
@@ -517,6 +574,9 @@ func ImportDatabases(
 			len(compatUsers)))
 	} else if len(compatUsers) > 0 {
 		compatCreated := 0
+		// The database rows this import holds, taken before the grant rows
+		// below look up others.
+		heldDBs, heldErr := importDBIDs(ctx, dbsRepo, targetUserID, finalDBIDs, resumedDBs)
 		for _, u := range compatUsers {
 			if !IsNativePasswordHash(u.Hash) {
 				res.Skipped = append(res.Skipped, fmt.Sprintf("compat_user %s: skipped — unsupported hash format", u.Name))
@@ -525,8 +585,9 @@ func ImportDatabases(
 			// The name and hash come from the archive. The hash path sets the
 			// password of an account that exists, so it may only reach an
 			// account whose sole row is the target's (the panel-managed user
-			// this import made, GH #633); any other name is created only if
-			// the server has no such account.
+			// this import made, GH #633) and that can open only databases this
+			// import holds; any other name is created only if the server has
+			// no such account.
 			if dbUsersRepo == nil {
 				res.Skipped = append(res.Skipped, fmt.Sprintf("compat_user %s: not recreated: the database user checks are not wired", u.Name))
 				continue
@@ -535,6 +596,12 @@ func ImportDatabases(
 			if accErr != nil {
 				res.Skipped = append(res.Skipped, fmt.Sprintf("compat_user %s: not recreated: %s", u.Name, accountRefusal(accErr)))
 				continue
+			}
+			if duRow != nil {
+				if why := compatPasswordRefusal(ctx, dbGrantsRepo, duRow, heldDBs, heldErr); why != "" {
+					res.Skipped = append(res.Skipped, fmt.Sprintf("compat_user %s: not recreated: %s; its password is kept", u.Name, why))
+					continue
+				}
 			}
 			ucParams := map[string]any{"db_user_name": u.Name, "password_hash": u.Hash}
 			if duRow == nil {

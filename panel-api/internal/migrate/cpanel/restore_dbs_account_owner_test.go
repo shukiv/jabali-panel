@@ -134,6 +134,10 @@ func (r *grantRows) FindByDBAndDBUser(_ context.Context, dbID, duID string) (*mo
 	return nil, repository.ErrNotFound
 }
 
+func (r *grantRows) ListByDatabaseUserID(_ context.Context, duID string) ([]models.DatabaseUserGrant, error) {
+	return r.of(duID), nil
+}
+
 func (r *grantRows) of(duID string) []models.DatabaseUserGrant {
 	var out []models.DatabaseUserGrant
 	for _, g := range r.rows {
@@ -301,6 +305,65 @@ func TestImportDatabases_CompatUserNeverTakesAnExistingAccount(t *testing.T) {
 	}
 }
 
+// A compat user named like one of the target's own database users takes the
+// archive's hash only when that user can open no database but the ones this
+// import holds, as for a backup overwrite. A user that can open another of the
+// target's databases, or none, keeps its password and gets no grant.
+func TestImportDatabases_CompatUserKeepsTheTargetsOtherUsersPassword(t *testing.T) {
+	rows := &ownerRows{rows: []models.DatabaseUser{
+		{ID: "du-live", UserID: ownerAlice, Username: "alice_live", Engine: "mariadb"},
+		{ID: "du-idle", UserID: ownerAlice, Username: "alice_idle", Engine: "mariadb"},
+	}}
+	grants := &grantRows{rows: []models.DatabaseUserGrant{
+		{ID: "g-live", DatabaseID: "db-alice-other", DatabaseUserID: "du-live", GrantLevel: "rw", Privileges: "ALL"},
+	}}
+	ag := &engineAgent{accounts: map[string]string{"alice_live": oldHash, "alice_idle": oldHash}}
+	dir, dumps := writeDumps(t, "alice_wp.sql")
+	compat := func(name string) CompatUser {
+		return CompatUser{Name: name, Host: "localhost", Hash: sourceHash,
+			Grant: []CompatGrant{{SourceDB: "alice_wp", Privs: []string{"ALL"}}}}
+	}
+	parsed := &ParsedTarball{ExtractDir: dir, SourceUser: "alice", MySQLDumps: dumps, CompatUsers: []CompatUser{
+		compat("alice_live"), compat("alice_idle"), compat("alice_wp"),
+	}}
+
+	res, err := ImportDatabases(context.Background(), gh723DBRepo{}, rows, grants, ag,
+		parsed, ownerAlice, "alice", true)
+	if err != nil {
+		t.Fatalf("ImportDatabases: %v", err)
+	}
+	for _, name := range []string{"alice_live", "alice_idle"} {
+		if ag.accounts[name] != oldHash {
+			t.Errorf("%s: password changed to %q", name, ag.accounts[name])
+		}
+		if ag.granted(name) {
+			t.Errorf("%s was granted the imported database", name)
+		}
+		if res.Credentials["alice_wp"].preservesUser(name) {
+			t.Errorf("%s marked preserved", name)
+		}
+	}
+	if g := grants.of("du-live"); len(g) != 1 {
+		t.Errorf("alice_live grant rows %+v, want only its own", g)
+	}
+	if g := grants.of("du-idle"); len(g) != 0 {
+		t.Errorf("alice_idle grant rows %+v, want none", g)
+	}
+	// alice_wp is the user this import made for alice_wp (GH #633): it can
+	// open only that database, so it takes the archive's hash.
+	if ag.accounts["alice_wp"] != sourceHash || !res.Credentials["alice_wp"].preservesUser("alice_wp") {
+		t.Errorf("alice_wp: password %q, credential %+v; want the source's hash, preserved", ag.accounts["alice_wp"], res.Credentials["alice_wp"])
+	}
+	for _, want := range []string{
+		"compat_user alice_live: not recreated: it is one of this account's database users and can open a database this import did not restore; its password is kept",
+		"compat_user alice_idle: not recreated: it is one of this account's database users and can open no database this import restored; its password is kept",
+	} {
+		if !skippedHas(res, want) {
+			t.Errorf("no report line %q: %v", want, res.Skipped)
+		}
+	}
+}
+
 // On a resume, a compat user that already exists with no row is refused like
 // any other. The credential the resume seeded then has no password and no
 // preserved user, and the app config is left as it is rather than given an
@@ -326,14 +389,16 @@ func TestImportDatabases_ResumeRefusedCompatUserLeavesConfig(t *testing.T) {
 	}
 }
 
-// A resume after this import recorded a source user as the target's: the row
-// says the account is the target's, so the import sets its hash again, grants
-// it the database and keeps the app config's credentials.
+// A resume after this import recorded a source user as the target's, with its
+// grant on the database the earlier run restored: the import sets its hash
+// again, grants it the database and keeps the app config's credentials.
 func TestImportDatabases_ResumeTakesBackItsOwnCompatUser(t *testing.T) {
 	rows := &ownerRows{rows: []models.DatabaseUser{
 		{ID: "du-notary", UserID: ownerAlice, Username: "notary_45635", Engine: "mariadb"},
 	}}
-	grants := &grantRows{}
+	grants := &grantRows{rows: []models.DatabaseUserGrant{
+		{ID: "g-notary", DatabaseID: "db-resumed", DatabaseUserID: "du-notary", GrantLevel: "rw", Privileges: "ALL"},
+	}}
 	ag := &engineAgent{accounts: map[string]string{"notary_45635": oldHash}}
 	dir, dumps := writeDumps(t, "notary_45635.mysql.sql")
 	parsed := &ParsedTarball{ExtractDir: dir, SourceUser: "notary", MySQLDumps: dumps, CompatUsers: []CompatUser{{
@@ -372,11 +437,9 @@ func (pgNamesakeDBRepo) ListByUserID(_ context.Context, userID string, _ reposit
 // A resumed import's grant row goes on the MariaDB database it restored,
 // never on a PostgreSQL database of the same name.
 func TestImportDatabases_ResumeGrantRowSkipsPostgresNamesake(t *testing.T) {
-	rows := &ownerRows{rows: []models.DatabaseUser{
-		{ID: "du-notary", UserID: ownerAlice, Username: "notary_45635", Engine: "mariadb"},
-	}}
+	rows := &ownerRows{}
 	grants := &grantRows{}
-	ag := &engineAgent{accounts: map[string]string{"notary_45635": oldHash}}
+	ag := &engineAgent{accounts: map[string]string{}}
 	dir, dumps := writeDumps(t, "notary_45635.mysql.sql")
 	parsed := &ParsedTarball{ExtractDir: dir, SourceUser: "notary", MySQLDumps: dumps, CompatUsers: []CompatUser{{
 		Name: "notary_45635", Host: "localhost", Hash: sourceHash,
