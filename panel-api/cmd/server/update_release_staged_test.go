@@ -7,10 +7,12 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -101,6 +103,8 @@ func headOK(ctx context.Context, url string) bool { return urlExists(ctx, url) }
 
 func noLog(string, ...any) {}
 
+func notBehind(string) (bool, error) { return false, nil }
+
 func TestVerifyResetTarget_NoKeyOrSameCommitVerifiesNothing(t *testing.T) {
 	host := &fakeReleaseHost{tarball: releaseTarball(t, stagedTargetSHA)}
 	srv := host.serve(t, stagedTargetSHA)
@@ -112,7 +116,7 @@ func TestVerifyResetTarget_NoKeyOrSameCommitVerifiesNothing(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			staged, stay, err := verifyResetTarget(context.Background(), tc.key, srv.URL, t.TempDir(),
-				stagedTargetSHA, tc.current, headOK, noLog)
+				stagedTargetSHA, tc.current, notBehind, headOK, noLog)
 			if err != nil || stay || staged != nil {
 				t.Fatalf("got staged=%v stay=%v err=%v, want nothing verified and the reset allowed", staged, stay, err)
 			}
@@ -130,7 +134,7 @@ func TestVerifyResetTarget_SignedReleaseForTargetAllowsReset(t *testing.T) {
 	srv := host.serve(t, stagedTargetSHA)
 
 	staged, stay, err := verifyResetTarget(context.Background(), pub, srv.URL, t.TempDir(),
-		stagedTargetSHA, stagedOtherSHA, headOK, noLog)
+		stagedTargetSHA, stagedOtherSHA, notBehind, headOK, noLog)
 	if err != nil || stay || staged == nil {
 		t.Fatalf("got staged=%v stay=%v err=%v, want the verified release", staged, stay, err)
 	}
@@ -154,7 +158,7 @@ func TestVerifyResetTarget_NothingSignedYetStaysWithoutDownloading(t *testing.T)
 		srv := host.serve(t, stagedOtherSHA)
 		pub, _ := signFor(t, host.tarball)
 		staged, stay, err := verifyResetTarget(context.Background(), pub, srv.URL, t.TempDir(),
-			stagedTargetSHA, stagedOtherSHA, headOK, noLog)
+			stagedTargetSHA, stagedOtherSHA, notBehind, headOK, noLog)
 		if err != nil || !stay || staged != nil {
 			t.Fatalf("got staged=%v stay=%v err=%v, want stay on the current build", staged, stay, err)
 		}
@@ -167,7 +171,7 @@ func TestVerifyResetTarget_NothingSignedYetStaysWithoutDownloading(t *testing.T)
 		srv := host.serve(t, stagedTargetSHA)
 		pub, _ := signFor(t, host.tarball)
 		staged, stay, err := verifyResetTarget(context.Background(), pub, srv.URL, t.TempDir(),
-			stagedTargetSHA, stagedOtherSHA, headOK, noLog)
+			stagedTargetSHA, stagedOtherSHA, notBehind, headOK, noLog)
 		if err != nil || !stay || staged != nil {
 			t.Fatalf("got staged=%v stay=%v err=%v, want stay on the current build", staged, stay, err)
 		}
@@ -202,7 +206,7 @@ func TestVerifyResetTarget_FailedChecksRefuseTheUpdate(t *testing.T) {
 			srv := tc.host.serve(t, stagedTargetSHA)
 			parent := t.TempDir()
 			staged, stay, err := verifyResetTarget(context.Background(), tc.key, srv.URL, parent,
-				stagedTargetSHA, stagedOtherSHA, headOK, noLog)
+				stagedTargetSHA, stagedOtherSHA, notBehind, headOK, noLog)
 			if err == nil || stay || staged != nil {
 				t.Fatalf("got staged=%v stay=%v err=%v, want the update refused", staged, stay, err)
 			}
@@ -213,6 +217,31 @@ func TestVerifyResetTarget_FailedChecksRefuseTheUpdate(t *testing.T) {
 				t.Fatalf("a refused release left %d staging entries behind", len(left))
 			}
 		})
+	}
+}
+
+// A signature says a build is genuine, not that it is current: an old signed
+// release must not move a host back onto code with known holes.
+func TestVerifyResetTarget_OlderTargetStaysWithoutDownloading(t *testing.T) {
+	host := &fakeReleaseHost{tarball: releaseTarball(t, stagedTargetSHA)}
+	pub, sig := signFor(t, host.tarball)
+	host.sig = sig
+	srv := host.serve(t, stagedTargetSHA)
+
+	older := func(sha string) (bool, error) { return sha == stagedTargetSHA, nil }
+	staged, stay, err := verifyResetTarget(context.Background(), pub, srv.URL, t.TempDir(),
+		stagedTargetSHA, stagedOtherSHA, older, headOK, noLog)
+	if err != nil || !stay || staged != nil {
+		t.Fatalf("got staged=%v stay=%v err=%v, want stay on the current build", staged, stay, err)
+	}
+	if host.downloadedTarball() {
+		t.Fatal("downloaded a release older than the current build")
+	}
+
+	broken := func(string) (bool, error) { return false, errors.New("merge-base failed") }
+	if _, _, err := verifyResetTarget(context.Background(), pub, srv.URL, t.TempDir(),
+		stagedTargetSHA, stagedOtherSHA, broken, headOK, noLog); err == nil {
+		t.Fatal("an ancestry check that failed did not stop the update")
 	}
 }
 
@@ -232,6 +261,12 @@ func TestUpdateGitStep_VerifiesTargetBeforeReset(t *testing.T) {
 	}
 	if verify > reset {
 		t.Fatal("update.go verifies the target commit AFTER `git reset --hard` — the checkout would already be untrusted code")
+	}
+	if !regexp.MustCompile(`if stay \{[^}]*resetRef = "HEAD"`).MatchString(s) {
+		t.Fatal("update.go no longer keeps the checkout where it is when there is no signed release to move to")
+	}
+	if !strings.Contains(s, "resetRef = targetSHA") {
+		t.Fatal("update.go no longer resets to the exact commit it verified")
 	}
 	if !strings.Contains(s, "installFromRelease(ctx, repoDir, verifiedRelease,") {
 		t.Fatal("the release step no longer installs the tarball the git step verified")

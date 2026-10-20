@@ -123,11 +123,26 @@ func stageSignedRelease(ctx context.Context, webBase, pubKey, fullSHA, stagePare
 //     install that same tarball later (staged, false, nil).
 //   - No signed release for the target yet: do not reset; stay on the
 //     current build until one is published (nil, true, nil).
+//   - The target is older than the build this host runs: stay
+//     (nil, true, nil). A signature says a build is genuine, not that it is
+//     current, so an old signed release must not be usable to move a host
+//     back onto code with fixed holes. behind reports whether the target is an
+//     ancestor of the checked-out commit.
 //   - Anything else: stop the update (nil, false, err).
 func verifyResetTarget(ctx context.Context, pubKey, webBase, stageParent, targetSHA, currentSHA string,
-	head func(context.Context, string) bool, log func(string, ...any)) (staged *stagedRelease, stay bool, err error) {
+	behind func(targetSHA string) (bool, error), head func(context.Context, string) bool,
+	log func(string, ...any)) (staged *stagedRelease, stay bool, err error) {
 	if pubKey == "" || targetSHA == currentSHA {
 		return nil, false, nil
+	}
+	older, err := behind(targetSHA)
+	if err != nil {
+		return nil, false, fmt.Errorf("compare %s with the current build: %w", shortSHA7(targetSHA), err)
+	}
+	if older {
+		log("release: %s is older than the build this server runs (%s) — not moving backwards",
+			shortSHA7(targetSHA), shortSHA7(currentSHA))
+		return nil, true, nil
 	}
 	staged, err = stageSignedRelease(ctx, webBase, pubKey, targetSHA, stageParent, head, log)
 	if err != nil {

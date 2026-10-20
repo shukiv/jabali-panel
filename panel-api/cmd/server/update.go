@@ -515,15 +515,16 @@ chmod 0750 "$WR"`)
 				if webBase == "" {
 					webBase = defaultReleaseWebBase
 				}
+				behind := func(sha string) (bool, error) { return refBehindHead(gitOut, sha) }
 				staged, stay, vErr := verifyResetTarget(cmd.Context(), releaseSigningPublicKey, webBase,
-					releaseStageParent, targetSHA, currentSHA, urlExists, func(format string, args ...any) {
+					releaseStageParent, targetSHA, currentSHA, behind, urlExists, func(format string, args ...any) {
 						fmt.Printf("  "+format+"\n", args...)
 					})
 				if vErr != nil {
 					return fmt.Errorf("refusing to update to %s: %w", shortSHA7(targetSHA), vErr)
 				}
 				if stay {
-					fmt.Printf("  no signed release for %s yet — staying on the current build; the next update retries\n",
+					fmt.Printf("  not moving to %s — staying on the current build; the next update retries\n",
 						shortSHA7(targetSHA))
 					resetRef = "HEAD"
 				}
