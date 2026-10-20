@@ -104,17 +104,22 @@ func recordImportedGrant(ctx context.Context, dbsRepo repository.DatabaseReposit
 	}
 	dbID, ok := dbIDs[dbName]
 	if !ok {
-		// A database an earlier run restored (resume): look up its row.
+		// A database an earlier run restored (resume): look up its row. Only
+		// a MariaDB one: a PostgreSQL database may have the same name.
 		dbs, _, err := dbsRepo.ListByUserID(ctx, ownerID, repository.ListOptions{Limit: 10000})
 		if err != nil {
 			return fmt.Sprintf("look up its database: %v", err)
 		}
 		for i := range dbs {
-			dbIDs[dbs[i].Name] = dbs[i].ID
+			if _, have := dbIDs[dbs[i].Name]; !have && dbs[i].Engine == "mariadb" {
+				dbIDs[dbs[i].Name] = dbs[i].ID
+			}
 		}
-		if dbID, ok = dbIDs[dbName]; !ok {
-			return "its database has no row"
-		}
+		dbID = dbIDs[dbName]
+		dbIDs[dbName] = dbID // "" remembers a miss
+	}
+	if dbID == "" {
+		return "its database has no row"
 	}
 	canonical, level, err := dbops.CanonicalDBGrant(privs, "")
 	if err != nil {

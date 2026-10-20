@@ -361,6 +361,40 @@ func TestImportDatabases_ResumeTakesBackItsOwnCompatUser(t *testing.T) {
 	}
 }
 
+// pgNamesakeDBRepo is a resume whose only database row of that name is a
+// PostgreSQL one.
+type pgNamesakeDBRepo struct{ gh723ResumeDBRepo }
+
+func (pgNamesakeDBRepo) ListByUserID(_ context.Context, userID string, _ repository.ListOptions) ([]models.Database, int64, error) {
+	return []models.Database{{ID: "db-pg", UserID: userID, Name: "sewickley_45635", Engine: "postgres"}}, 1, nil
+}
+
+// A resumed import's grant row goes on the MariaDB database it restored,
+// never on a PostgreSQL database of the same name.
+func TestImportDatabases_ResumeGrantRowSkipsPostgresNamesake(t *testing.T) {
+	rows := &ownerRows{rows: []models.DatabaseUser{
+		{ID: "du-notary", UserID: ownerAlice, Username: "notary_45635", Engine: "mariadb"},
+	}}
+	grants := &grantRows{}
+	ag := &engineAgent{accounts: map[string]string{"notary_45635": oldHash}}
+	dir, dumps := writeDumps(t, "notary_45635.mysql.sql")
+	parsed := &ParsedTarball{ExtractDir: dir, SourceUser: "notary", MySQLDumps: dumps, CompatUsers: []CompatUser{{
+		Name: "notary_45635", Host: "localhost", Hash: sourceHash,
+		Grant: []CompatGrant{{SourceDB: "notary_45635", Privs: []string{"ALL"}}},
+	}}}
+	res, err := ImportDatabases(context.Background(), pgNamesakeDBRepo{}, rows, grants, ag,
+		parsed, ownerAlice, "sewickley", true)
+	if err != nil {
+		t.Fatalf("ImportDatabases: %v", err)
+	}
+	if len(grants.rows) != 0 {
+		t.Errorf("grant rows %+v, want none on the PostgreSQL database", grants.rows)
+	}
+	if !skippedHas(res, "compat_user notary_45635: the grant on sewickley_45635 is not shown in the panel: its database has no row") {
+		t.Errorf("no report line: %v", res.Skipped)
+	}
+}
+
 // A source user whose row can't be written is dropped again: no login is
 // left that no row names.
 func TestImportDatabases_CompatUserRowFailureDropsTheLogin(t *testing.T) {
