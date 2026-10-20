@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -103,7 +104,7 @@ func headOK(ctx context.Context, url string) bool { return urlExists(ctx, url) }
 
 func noLog(string, ...any) {}
 
-func notBehind(string) (bool, error) { return false, nil }
+func descendant(string) (bool, error) { return true, nil }
 
 func TestVerifyResetTarget_NoKeyOrSameCommitVerifiesNothing(t *testing.T) {
 	host := &fakeReleaseHost{tarball: releaseTarball(t, stagedTargetSHA)}
@@ -116,7 +117,7 @@ func TestVerifyResetTarget_NoKeyOrSameCommitVerifiesNothing(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			staged, stay, err := verifyResetTarget(context.Background(), tc.key, srv.URL, t.TempDir(),
-				stagedTargetSHA, tc.current, notBehind, headOK, noLog)
+				stagedTargetSHA, tc.current, descendant, headOK, noLog)
 			if err != nil || stay || staged != nil {
 				t.Fatalf("got staged=%v stay=%v err=%v, want nothing verified and the reset allowed", staged, stay, err)
 			}
@@ -134,7 +135,7 @@ func TestVerifyResetTarget_SignedReleaseForTargetAllowsReset(t *testing.T) {
 	srv := host.serve(t, stagedTargetSHA)
 
 	staged, stay, err := verifyResetTarget(context.Background(), pub, srv.URL, t.TempDir(),
-		stagedTargetSHA, stagedOtherSHA, notBehind, headOK, noLog)
+		stagedTargetSHA, stagedOtherSHA, descendant, headOK, noLog)
 	if err != nil || stay || staged == nil {
 		t.Fatalf("got staged=%v stay=%v err=%v, want the verified release", staged, stay, err)
 	}
@@ -158,7 +159,7 @@ func TestVerifyResetTarget_NothingSignedYetStaysWithoutDownloading(t *testing.T)
 		srv := host.serve(t, stagedOtherSHA)
 		pub, _ := signFor(t, host.tarball)
 		staged, stay, err := verifyResetTarget(context.Background(), pub, srv.URL, t.TempDir(),
-			stagedTargetSHA, stagedOtherSHA, notBehind, headOK, noLog)
+			stagedTargetSHA, stagedOtherSHA, descendant, headOK, noLog)
 		if err != nil || !stay || staged != nil {
 			t.Fatalf("got staged=%v stay=%v err=%v, want stay on the current build", staged, stay, err)
 		}
@@ -171,7 +172,7 @@ func TestVerifyResetTarget_NothingSignedYetStaysWithoutDownloading(t *testing.T)
 		srv := host.serve(t, stagedTargetSHA)
 		pub, _ := signFor(t, host.tarball)
 		staged, stay, err := verifyResetTarget(context.Background(), pub, srv.URL, t.TempDir(),
-			stagedTargetSHA, stagedOtherSHA, notBehind, headOK, noLog)
+			stagedTargetSHA, stagedOtherSHA, descendant, headOK, noLog)
 		if err != nil || !stay || staged != nil {
 			t.Fatalf("got staged=%v stay=%v err=%v, want stay on the current build", staged, stay, err)
 		}
@@ -206,7 +207,7 @@ func TestVerifyResetTarget_FailedChecksRefuseTheUpdate(t *testing.T) {
 			srv := tc.host.serve(t, stagedTargetSHA)
 			parent := t.TempDir()
 			staged, stay, err := verifyResetTarget(context.Background(), tc.key, srv.URL, parent,
-				stagedTargetSHA, stagedOtherSHA, notBehind, headOK, noLog)
+				stagedTargetSHA, stagedOtherSHA, descendant, headOK, noLog)
 			if err == nil || stay || staged != nil {
 				t.Fatalf("got staged=%v stay=%v err=%v, want the update refused", staged, stay, err)
 			}
@@ -228,9 +229,9 @@ func TestVerifyResetTarget_OlderTargetStaysWithoutDownloading(t *testing.T) {
 	host.sig = sig
 	srv := host.serve(t, stagedTargetSHA)
 
-	older := func(sha string) (bool, error) { return sha == stagedTargetSHA, nil }
+	notNewer := func(string) (bool, error) { return false, nil }
 	staged, stay, err := verifyResetTarget(context.Background(), pub, srv.URL, t.TempDir(),
-		stagedTargetSHA, stagedOtherSHA, older, headOK, noLog)
+		stagedTargetSHA, stagedOtherSHA, notNewer, headOK, noLog)
 	if err != nil || !stay || staged != nil {
 		t.Fatalf("got staged=%v stay=%v err=%v, want stay on the current build", staged, stay, err)
 	}
@@ -270,5 +271,49 @@ func TestUpdateGitStep_VerifiesTargetBeforeReset(t *testing.T) {
 	}
 	if !strings.Contains(s, "installFromRelease(ctx, repoDir, verifiedRelease,") {
 		t.Fatal("the release step no longer installs the tarball the git step verified")
+	}
+}
+
+// Real git: only a commit built on HEAD counts as newer. An ancestor is older,
+// and a commit on a line that split off earlier lacks HEAD's later fixes.
+func TestCommitDescendsFrom(t *testing.T) {
+	dir := t.TempDir()
+	git := func(args ...string) string {
+		t.Helper()
+		c := exec.Command("git", append([]string{"-C", dir, "-c", "user.email=t@example.invalid",
+			"-c", "user.name=t", "-c", "commit.gpgsign=false"}, args...)...)
+		out, err := c.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	git("init", "-q", "-b", "main")
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	base := git("rev-parse", "HEAD")
+	git("commit", "-q", "--allow-empty", "-m", "head")
+	head := git("rev-parse", "HEAD")
+	git("commit", "-q", "--allow-empty", "-m", "newer")
+	newer := git("rev-parse", "HEAD")
+	git("checkout", "-q", "-b", "side", base)
+	git("commit", "-q", "--allow-empty", "-m", "side")
+	side := git("rev-parse", "HEAD")
+
+	gitOut := func(args ...string) (string, error) {
+		out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
+		return string(out), err
+	}
+	for name, tc := range map[string]struct {
+		target string
+		want   bool
+	}{
+		"descendant of HEAD":    {newer, true},
+		"ancestor of HEAD":      {base, false},
+		"split off before HEAD": {side, false},
+	} {
+		got, err := commitDescendsFrom(gitOut, head, tc.target)
+		if err != nil || got != tc.want {
+			t.Errorf("%s: got %v err=%v, want %v", name, got, err, tc.want)
+		}
 	}
 }

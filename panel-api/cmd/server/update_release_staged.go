@@ -113,6 +113,17 @@ func stageSignedRelease(ctx context.Context, webBase, pubKey, fullSHA, stagePare
 	return staged, nil
 }
 
+// commitDescendsFrom reports whether target is base itself or a commit built on
+// it: their merge-base is base. An ancestor of base, or a commit on a line that
+// split off before base, is not.
+func commitDescendsFrom(gitOut gitOutFunc, base, target string) (bool, error) {
+	mb, err := gitSHA(gitOut, "merge-base", base, target)
+	if err != nil {
+		return false, err
+	}
+	return mb == base, nil
+}
+
 // verifyResetTarget decides whether the git step may reset the checkout to
 // targetSHA.
 //
@@ -123,24 +134,26 @@ func stageSignedRelease(ctx context.Context, webBase, pubKey, fullSHA, stagePare
 //     install that same tarball later (staged, false, nil).
 //   - No signed release for the target yet: do not reset; stay on the
 //     current build until one is published (nil, true, nil).
-//   - The target is older than the build this host runs: stay
+//   - The target does not build on the commit this host runs: stay
 //     (nil, true, nil). A signature says a build is genuine, not that it is
 //     current, so an old signed release must not be usable to move a host
-//     back onto code with fixed holes. behind reports whether the target is an
-//     ancestor of the checked-out commit.
+//     back onto code with fixed holes. Only a descendant of HEAD counts as
+//     newer. An ancestor is older, and a commit on a line that split off
+//     earlier lacks whatever was fixed on HEAD's line since. descends reports
+//     whether the target is a descendant of the checked-out commit.
 //   - Anything else: stop the update (nil, false, err).
 func verifyResetTarget(ctx context.Context, pubKey, webBase, stageParent, targetSHA, currentSHA string,
-	behind func(targetSHA string) (bool, error), head func(context.Context, string) bool,
+	descends func(targetSHA string) (bool, error), head func(context.Context, string) bool,
 	log func(string, ...any)) (staged *stagedRelease, stay bool, err error) {
 	if pubKey == "" || targetSHA == currentSHA {
 		return nil, false, nil
 	}
-	older, err := behind(targetSHA)
+	newer, err := descends(targetSHA)
 	if err != nil {
 		return nil, false, fmt.Errorf("compare %s with the current build: %w", shortSHA7(targetSHA), err)
 	}
-	if older {
-		log("release: %s is older than the build this server runs (%s) — not moving backwards",
+	if !newer {
+		log("release: %s does not build on the commit this server runs (%s) — not moving to it",
 			shortSHA7(targetSHA), shortSHA7(currentSHA))
 		return nil, true, nil
 	}

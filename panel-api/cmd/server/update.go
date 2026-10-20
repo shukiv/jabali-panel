@@ -515,9 +515,9 @@ chmod 0750 "$WR"`)
 				if webBase == "" {
 					webBase = defaultReleaseWebBase
 				}
-				behind := func(sha string) (bool, error) { return refBehindHead(gitOut, sha) }
+				descends := func(sha string) (bool, error) { return commitDescendsFrom(gitOut, currentSHA, sha) }
 				staged, stay, vErr := verifyResetTarget(cmd.Context(), releaseSigningPublicKey, webBase,
-					releaseStageParent, targetSHA, currentSHA, behind, urlExists, func(format string, args ...any) {
+					releaseStageParent, targetSHA, currentSHA, descends, urlExists, func(format string, args ...any) {
 						fmt.Printf("  "+format+"\n", args...)
 					})
 				if vErr != nil {

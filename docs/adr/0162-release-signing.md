@@ -127,10 +127,11 @@ working tree** (`verifyResetTarget`, `panel-api/cmd/server/update_release_staged
    verified tarball; it is not downloaded a second time.
 4. If the commit has no published release, or the release has no `.minisig`
    yet, the checkout is not moved and the box stays on its current build.
-   The same happens on every channel when the commit is older than the build
-   the box runs (an ancestor of HEAD). A signature says a build is genuine,
-   not that it is current, so an old signed release must not move a box back
-   onto code whose holes have since been fixed.
+   The same happens on every channel when the commit does not build on the
+   one the box runs (it is not a descendant of HEAD). A signature says a build
+   is genuine, not that it is current, so an old signed release must not move
+   a box back onto code whose holes have since been fixed. That covers an
+   ancestor of HEAD and a commit on a line that split off before it.
 5. A signature that fails, a key mismatch, a checksum mismatch, or a signed
    release whose MANIFEST names another commit stops the update. The last case
    is an old signed release served under a new name, or a publishing mistake.
