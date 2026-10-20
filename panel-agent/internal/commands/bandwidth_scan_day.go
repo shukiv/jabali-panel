@@ -249,6 +249,10 @@ func writeScanState(state map[string]scannedLog) {
 //
 // geoDB, when set, adds the GeoIP database so the output carries the
 // geolocation panel.
+//
+// No --ignore-crawlers: what is sent to search engines and other bots is
+// bandwidth the site used, so it counts toward the package's monthly limit
+// like any other response. goaccess.conf leaves ignore-crawlers false.
 func goaccessScanArgs(path, geoDB string) []string {
 	args := []string{
 		path,
@@ -256,7 +260,6 @@ func goaccessScanArgs(path, geoDB string) []string {
 		"-o", "json",
 		"--no-progress",
 		"--no-html-last-updated",
-		"--ignore-crawlers",
 	}
 	if geoDB != "" {
 		args = append(args, "--geoip-database="+geoDB)

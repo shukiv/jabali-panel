@@ -4,9 +4,9 @@
 // Edit Domain page. Reads GET /domains/:id/bandwidth, which is owner-scoped.
 //
 // The scan counts a day the next day (yesterday's rotated log), so today is
-// never in the chart. Requests include known crawlers; bandwidth and the
-// country breakdown leave them out (goaccess --ignore-crawlers). Countries
-// come only on hosts with the GeoLite2 database CrowdSec downloads.
+// never in the chart. Requests, bandwidth and countries all include known
+// crawlers, as the package's bandwidth limit does. Countries come only on
+// hosts with the GeoLite2 database CrowdSec downloads.
 //
 // One measure at a time in the chart (Requests or Bandwidth), never two
 // y-scales. Each column is its own hover/focus target; the same numbers are
@@ -291,7 +291,7 @@ export function DomainStatsPanel({ domainId }: { domainId: string }) {
           <Card size="small" loading={q.isLoading}>
             <Statistic title="Requests" value={data?.requests_total ?? 0} />
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              All requests, known bots included
+              All requests, bots included
             </Typography.Text>
           </Card>
         </Col>
@@ -299,7 +299,7 @@ export function DomainStatsPanel({ domainId }: { domainId: string }) {
           <Card size="small" loading={q.isLoading}>
             <Statistic title="Bandwidth" value={humanBytes(data?.bytes_total ?? 0)} />
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              Sent to visitors; known bots not counted
+              Everything sent, bots included
             </Typography.Text>
           </Card>
         </Col>
@@ -433,7 +433,7 @@ export function DomainStatsPanel({ domainId }: { domainId: string }) {
               ]}
             />
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              Requests from visitors, known bots not counted. This product includes GeoLite2 data created by
+              Requests by country, bots included. This product includes GeoLite2 data created by
               MaxMind, available from{" "}
               <Typography.Link href="https://www.maxmind.com" target="_blank" rel="noopener noreferrer">
                 https://www.maxmind.com

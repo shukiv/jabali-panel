@@ -139,3 +139,15 @@ func TestGoaccessScanArgs_UsesDashOJson(t *testing.T) {
 		t.Fatalf("expected the log path as the first arg, got: %v", args)
 	}
 }
+
+// Responses to crawlers are bandwidth the site used and count toward the
+// package's limit, so the scan must not drop them.
+func TestGoaccessScanArgs_CountsCrawlers(t *testing.T) {
+	for _, geo := range []string{"", "/var/lib/jabali/GeoLite2-City.mmdb"} {
+		for _, a := range goaccessScanArgs("/var/log/nginx/example.com-access.log.1", geo) {
+			if a == "--ignore-crawlers" || a == "--crawlers-only" {
+				t.Fatalf("goaccess args drop crawler traffic (%s): %v", a, goaccessScanArgs("x", geo))
+			}
+		}
+	}
+}
