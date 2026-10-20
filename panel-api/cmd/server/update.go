@@ -528,6 +528,11 @@ chmod 0750 "$WR"`)
 					resetRef = "HEAD"
 				}
 				verifiedRelease = staged
+				if staged != nil {
+					// Reset to the commit that was verified, not to a ref
+					// that is resolved again at reset time.
+					resetRef = targetSHA
+				}
 			}
 			// Show diffstat of any local drift vs HEAD before we reset so
 			// the operator can see what was clobbered. Silent on clean tree.
