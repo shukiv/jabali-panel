@@ -6,10 +6,10 @@ The Let's Encrypt certificate used by the panel itself for the configured panel 
 
 SSL Manager → **Panel SSL** holds the **Use Let's Encrypt for the panel** and **Staging** switches, which govern both certificates, and one card per certificate: the panel hostname and the mail name. Each card shows:
 
-- **Status** — the certificate's state in the panel (self-signed, issuing, issued, pending retry, failed) and whether its name resolves to this server.
+- **Status** — with Let's Encrypt on, the certificate's state in the panel (self-signed, issuing, issued, pending retry, failed) and whether its name resolves to this server. With it off, the certificate the panel serves: **Issued (self-signed)**, or **Issued by** the authority of a certificate kept until it expires.
 - What the certificate file on disk holds, read each time the tab loads: **Type** (self-signed, Let's Encrypt, Let's Encrypt staging, or another authority), **Issuer**, **Names**, **Valid from** and **Valid until** (a warning from 30 days before expiry), and the **SHA-256 fingerprint**. Compare the fingerprint with the one your browser shows before you accept a self-signed certificate.
-- Its action: **Issue / retry**, or **Regenerate self-signed** on the hostname with Let's Encrypt off.
-- The last error and the next retry, when an issue failed.
+- Its action: **Issue / retry**, or **Regenerate self-signed** with Let's Encrypt off.
+- With Let's Encrypt on, the last error and the next retry, when an issue failed.
 
 When the file is missing or holds no certificate, the card says so instead.
 
@@ -46,6 +46,8 @@ With **Use Let's Encrypt for the panel** off, the panel serves its own self-sign
 On the hostname row, the button is **Regenerate self-signed** instead of **Issue / retry**. It doesn't check public DNS and doesn't ask Let's Encrypt, so it works while the hostname is behind a proxy such as Cloudflare. The panel writes a new certificate only when the current one no longer fits the hostname or has expired; otherwise it says what it already serves, and until when. After writing one, the panel restarts to serve it, and your browser asks you to accept the new certificate.
 
 A Let's Encrypt certificate that is still valid when you turn Let's Encrypt off is kept until it expires. The panel then replaces it with a self-signed one.
+
+The Panel SSL tab then shows no Let's Encrypt state: no routability, no last error and no next retry. If the panel hostname doesn't resolve publicly to this server, the **Use Let's Encrypt for the panel** switch can't be turned on, and a line under it gives the reason. Before GH #2166 the tab showed "Let's Encrypt is unavailable for the panel" and "Not routable" in this mode, although the self-signed certificate was in use.
 
 Behind a Cloudflare proxy, set Cloudflare's SSL/TLS mode to **Full**: Full (strict) doesn't accept a self-signed certificate.
 

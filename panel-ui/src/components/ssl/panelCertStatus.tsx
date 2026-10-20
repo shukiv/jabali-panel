@@ -13,7 +13,28 @@ import { shortDate } from "../../utils/datetime";
 // PANEL_SSL_TAB is where the panel's own certs are managed (GH #2166).
 export const PANEL_SSL_TAB = "/jabali-admin/ssl?tab=panel";
 
-export function panelCertStatusTag(c: PanelCertificate) {
+// leOn is the hostname row's use_le, which governs both certs. With Let's
+// Encrypt off (GH #2166) the panel serves its own certificates, so the tag
+// names the certificate the file holds: the row's Let's Encrypt state (a
+// retry, a failure) no longer applies, and the mail row can keep one from
+// before the toggle, which writes only the hostname row.
+export function panelCertStatusTag(c: PanelCertificate, leOn: boolean) {
+  const s = c.served;
+  if (!leOn) {
+    if (!s) return <Tag>Self-signed</Tag>;
+    switch (s.type) {
+      case "self_signed":
+        return <Tag color="success">Issued (self-signed)</Tag>;
+      case "ca":
+        return <Tag color="success">Issued by {s.issuer}</Tag>;
+      default:
+        return (
+          <Tag color="success">
+            Issued by Let&apos;s Encrypt{s.type === "lets_encrypt_staging" ? " (staging)" : ""}
+          </Tag>
+        );
+    }
+  }
   switch (c.status) {
     case "issued":
       // A kept CA cert (Let's Encrypt off, GH #2166) is "issued" too: name

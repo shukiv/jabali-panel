@@ -50,7 +50,8 @@ async function mockCerts(page: Page, certs: string) {
 test.describe("admin SSL Manager → Panel SSL", () => {
   test("renders self-signed status + routable + toggle", async ({ page }) => {
     await mockApi(page, { me: admin });
-    await mockCerts(page, body());
+    // Routability is shown while Let's Encrypt is on (GH #2166).
+    await mockCerts(page, body({ use_le: true }, { use_le: true }));
     await signIn(page, admin);
     await page.goto(PANEL_TAB);
 
@@ -69,15 +70,47 @@ test.describe("admin SSL Manager → Panel SSL", () => {
     await expect(page.getByText("SYSTEM", { exact: true })).toHaveCount(0);
   });
 
+  // GH #2166: with Let's Encrypt off, an unroutable hostname only keeps the
+  // switch off. The self-signed certs show as issued, with no Let's Encrypt
+  // warning or routability error.
   test("toggle is disabled when hostname not routable", async ({ page }) => {
     await mockApi(page, { me: admin });
-    // hostname not routable (governs the toggle); mail routable so its
-    // "Not routable" doesn't double the match.
+    const selfSigned = {
+      type: "self_signed",
+      issuer: "Jabali Panel",
+      subject: "panel.example.com",
+      names: ["panel.example.com"],
+      not_before: "2026-10-17T06:00:00Z",
+      not_after: "2036-10-17T06:00:00Z",
+      fingerprint_sha256: "AB:CD",
+    };
     await mockCerts(
       page,
       body(
-        { routable: false, routable_reason: "non-routable hostname suffix" },
-        { routable: true },
+        { routable: false, routable_reason: "dns points elsewhere", served: selfSigned },
+        { routable: false, routable_reason: "dns points elsewhere", served: selfSigned },
+      ),
+    );
+    await signIn(page, admin);
+    await page.goto(PANEL_TAB);
+
+    await expect(page.getByRole("switch").first()).toBeDisabled();
+    await expect(
+      page.getByText(/Let's Encrypt can be turned on once panel\.example\.com resolves publicly to this server\. Now: dns points elsewhere\./),
+    ).toBeVisible();
+    await expect(page.locator(".ant-tag", { hasText: "Issued (self-signed)" })).toHaveCount(2);
+    await expect(page.locator(".ant-tag", { hasText: "routable" })).toHaveCount(0);
+    await expect(page.getByText("Let's Encrypt is unavailable for the panel")).toHaveCount(0);
+  });
+
+  test("Let's Encrypt on: an unroutable hostname shows the warning", async ({ page }) => {
+    await mockApi(page, { me: admin });
+    // mail routable so its "Not routable" doesn't double the match.
+    await mockCerts(
+      page,
+      body(
+        { use_le: true, routable: false, routable_reason: "non-routable hostname suffix" },
+        { use_le: true, routable: true },
       ),
     );
     await signIn(page, admin);
@@ -86,10 +119,12 @@ test.describe("admin SSL Manager → Panel SSL", () => {
     await expect(
       page.locator(".ant-tag", { hasText: "Not routable" }).first(),
     ).toBeVisible();
+    await expect(page.getByText("Let's Encrypt is unavailable for the panel")).toBeVisible();
     await expect(
       page.getByText(/non-routable hostname suffix/).first(),
     ).toBeVisible();
-    await expect(page.getByRole("switch").first()).toBeDisabled();
+    // On, the switch can always be turned off.
+    await expect(page.getByRole("switch").first()).toBeEnabled();
   });
 
   // GH #2166: with Let's Encrypt off the hostname's action regenerates the
