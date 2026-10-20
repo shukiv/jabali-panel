@@ -107,16 +107,6 @@ Auto-init: the test action runs `restic init` if the repository doesn't exist. W
 
 ## Full teardown
 
-Jabali has no uninstall command. Intended path: redeploy the VM.
+Redeploying the VM is the cleanest teardown. To keep the host, run `bash install.sh --uninstall` as root. [Installation → Uninstall](./installation.md#uninstall) lists what it removes, what it asks before removing, and what it leaves.
 
-If you must keep the host:
-
-```bash
-systemctl disable --now jabali-panel jabali-agent jabali-stalwart jabali-webmail jabali-kratos pdns pdns-recursor crowdsec
-apt purge -y crowdsec
-trash /etc/jabali /var/lib/jabali /var/lib/jabali-* /etc/nginx/sites-*/jabali-* /etc/php/*/fpm/pool.d/jabali-* /etc/systemd/system/jabali-* /etc/letsencrypt
-userdel -r jabali
-# DB still has panel data; drop it manually.
-```
-
-Then reboot. The host won't be Jabali-clean (CrowdSec data dirs, restic caches, etc. linger) but the panel won't run.
+It deletes the local backups in `/var/lib/jabali-backups` and all mail in `/var/lib/stalwart` without asking. Copy what you want to keep first.

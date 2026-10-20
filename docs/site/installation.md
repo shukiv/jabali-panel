@@ -107,7 +107,42 @@ jabali system diagnostic   # upload an encrypted support bundle; prints a link a
 
 ## Uninstall
 
-There is no `--uninstall` flag. The intended teardown is to redeploy the VM. If you must keep the host, the manual path is documented in [troubleshooting.md](./troubleshooting.md#full-teardown).
+Redeploying the VM is the cleanest teardown. To keep the host, run the installer's uninstall as root, from a downloaded copy of `install.sh`:
+
+```bash
+bash install.sh --uninstall                          # asks before each destructive step
+bash install.sh --uninstall --yes                    # no prompts
+bash install.sh --uninstall --purge-packages --yes   # also purge the OS packages
+```
+
+Its prompts read the terminal, so don't pipe it from `curl` unless you pass `--yes`. Each step is best-effort: a step that fails is skipped and the uninstall goes on, so it also cleans up after an install that stopped half-way.
+
+It removes, without asking:
+
+- the jabali-* services and timers with their drop-ins, and the drop-ins Jabali added to nginx, MariaDB, CrowdSec and Redis;
+- the Jabali binaries, and `/etc/jabali/`, `/etc/jabali-panel/` and `/etc/stalwart/`, including the panel's own certificates;
+- `/var/lib/jabali*`, `/opt/jabali*` and `/var/log/jabali*`. This includes the **local backups** in `/var/lib/jabali-backups`: copy any you want to keep first;
+- the mail store in `/var/lib/stalwart`, so **all mail in every mailbox**;
+- Redis and its data. Redis is purged even without `--purge-packages`;
+- the nginx vhosts Jabali wrote, its PHP-FPM pools and AppArmor profiles, and its CrowdSec, audit, nftables, sysctl, SSH and DNS drop-ins;
+- the system accounts `jabali`, `jabali-mail`, `jabali-webmail` and `stalwart`, and their groups.
+
+It asks before:
+
+- dropping the panel's databases `jabali_panel`, `jabali_pdns`, `jabali_kratos` and `stalwart_smtp`, with their MariaDB users. `--yes` drops them.
+- removing users with a home directory under `/home`: all of them, none, or one by one. The list holds every account with a UID of 1000 or more, not only the ones Jabali created. `--yes` never removes them; remove any you want with `userdel -r <user>` afterwards.
+- purging the OS packages Jabali installed. With `--purge-packages` it purges them without asking. With `--yes` alone it keeps them.
+
+It leaves:
+
+- the customers' own databases, and the MariaDB server unless you purge the packages;
+- `/var/www`, apart from `/var/www/jabali-disabled`;
+- `/etc/letsencrypt`;
+- the users and their `/home` directories, unless you chose to remove them.
+
+`--purge-packages` purges nginx, MariaDB, PowerDNS, PHP (every installed version), Node.js, certbot, CrowdSec and its bouncers, auditd, AppArmor, AIDE, UFW, restic and the other tools Jabali installed, then runs `apt autoremove --purge`. Generic tools such as git, curl and rsync stay. Purging MariaDB can delete every database on the host, the customers' too: back them up first.
+
+There is no `jabali` command for this: only `install.sh --uninstall`.
 
 ## Known good install paths
 
