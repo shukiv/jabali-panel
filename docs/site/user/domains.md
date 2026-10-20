@@ -53,8 +53,8 @@ Open **Edit** → **Delete**. Destructive: the vhost is torn down, the certifica
 
 On the domain's **Overview** tab, **Block AI crawlers** makes the site answer
 403 to the crawlers and assistants of AI companies (GPTBot, ClaudeBot, CCBot,
-PerplexityBot, Bytespider and others). Search engines such as Googlebot and
-Bingbot still crawl the site. It stops only bots that name themselves in their
+PerplexityBot, Bytespider and others). Google's and Bing's crawlers are never
+blocked, Google's AI fetchers included. It stops only bots that name themselves in their
 User-Agent header; the server's CrowdSec protection deals with bots that do
 not. It takes effect within a minute.
 

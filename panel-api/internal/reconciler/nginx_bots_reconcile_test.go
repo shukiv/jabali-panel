@@ -76,3 +76,14 @@ func TestReconcileNginxBots_SendsListOnce(t *testing.T) {
 		t.Fatalf("last call %s %v, want nginx.bots.apply with an empty list", last.method, last.params)
 	}
 }
+
+// An entry that would block a Google or Bing crawler (saved before the guard
+// knew that crawler) is left out on its own; the rest of the list applies.
+func TestBlockedUserAgents_DropsOnlyProtectedEntries(t *testing.T) {
+	r, _, _, _ := frontedVhostFixture(t, selfSignedCertPath, selfSignedKeyPath, cfEdgeAddrs, true)
+	s, _ := r.serverSettings.Get(context.Background())
+	s.BlockedUserAgents = "AhrefsBot\nAdsBot-Google\nGooglebot-News\nmsnbot\nSemrushBot"
+	if got := r.blockedUserAgents(context.Background()); !slices.Equal(got, []string{"AhrefsBot", "SemrushBot"}) {
+		t.Fatalf("blockedUserAgents = %v, want [AhrefsBot SemrushBot]", got)
+	}
+}

@@ -40,7 +40,8 @@ var nginxBotsFragment = nginxBotsFragmentPath
 // aiCrawlerUserAgents are user-agent tokens that AI companies publish for
 // their crawlers and assistants. Only tokens sent in the User-Agent header:
 // robots.txt-only tokens (Google-Extended, Applebot-Extended) never reach
-// nginx and are left out.
+// nginx and are left out. Google's and Bing's crawlers are never on it, AI
+// ones included (useragents.Protected; TestAICrawlerList_NeverMatchesProtectedClients).
 var aiCrawlerUserAgents = []string{
 	"AI2Bot",
 	"Amazonbot",
@@ -56,7 +57,6 @@ var aiCrawlerUserAgents = []string{
 	"Diffbot",
 	"DuckAssistBot",
 	"FacebookBot",
-	"Google-CloudVertexBot",
 	"GPTBot",
 	"ImagesiftBot",
 	"meta-externalagent",

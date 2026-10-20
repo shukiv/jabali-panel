@@ -85,9 +85,10 @@ export const BlockedUserAgentsCard = () => {
         />
         <Typography.Text type="secondary" style={{ fontSize: 12 }}>
           {list.length} of {MAX_BLOCKED_USER_AGENTS}. Letters, digits, spaces and . _ / + -, 3 to 128
-          characters each. An entry that would also match a browser, Let&apos;s Encrypt, Googlebot or
-          Bingbot (for example <Typography.Text code>compatible</Typography.Text> or{" "}
-          <Typography.Text code>bot</Typography.Text>) is refused.
+          characters each. An entry that would also match a browser, Let&apos;s Encrypt or any Google
+          or Bing crawler (for example <Typography.Text code>compatible</Typography.Text>,{" "}
+          <Typography.Text code>bot</Typography.Text> or <Typography.Text code>Google</Typography.Text>)
+          is refused: Google and Bing are never blocked.
         </Typography.Text>
         {bad.length > 0 && (
           <Alert

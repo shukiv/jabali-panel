@@ -68,8 +68,8 @@ Off by default:
   assistants of AI companies that name themselves in the User-Agent header
   (GPTBot, ClaudeBot, CCBot, PerplexityBot, Bytespider and others). The tenant
   turns it on on the domain's **Overview** tab; the admin also has it under
-  Admin → Domains → Edit. Search engines such as Googlebot and Bingbot are not
-  on the list. Google's and Apple's AI training opt-outs (`Google-Extended`,
+  Admin → Domains → Edit. No Google or Bing crawler is on the list, Google's
+  AI fetchers included. Google's and Apple's AI training opt-outs (`Google-Extended`,
   `Applebot-Extended`) are robots.txt tokens, not user agents, so a site that
   wants those adds them to its `robots.txt`.
 - **Blocked user agents**, server-wide: Admin → Security → CrowdSec → Bot
@@ -78,8 +78,11 @@ Off by default:
   matter, up to 200). Unlike the CrowdSec list, nothing is banned: each
   matching request is refused. The refusal comes before any other rule,
   Let's Encrypt validation included, so an entry that is part of a
-  browser's, Let's Encrypt's, Googlebot's or Bingbot's user agent (such as
-  `compatible`, `Mozilla` or `bot`) is not accepted.
+  browser's or Let's Encrypt's user agent, or that would match any Google or
+  Bing crawler (such as `compatible`, `Mozilla`, `bot`, `AdsBot` or `Google`),
+  is not accepted. Google and Bing are never blocked. An entry saved before a
+  newer release protected the crawler it matches is left out on its own, and
+  the rest of the list still applies.
 - **Rate limits**, per domain (admin only): see
   [Resource limits](resource-limits.md#3-nginx-request-and-connection-limits-per-domain).
 

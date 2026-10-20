@@ -11,8 +11,9 @@ import (
 
 // blockedUserAgents is the admin's server-wide blocked list from Server
 // Settings. The API stores only checked entries; an entry that no longer
-// passes the rules (edited in the DB by hand) is left out rather than sent
-// to nginx.
+// passes the rules (edited in the DB by hand, or saved before a newer
+// release protected the client it matches) is left out on its own rather
+// than sent to nginx, and the rest of the list still applies.
 func (r *Reconciler) blockedUserAgents(ctx context.Context) []string {
 	if r.serverSettings == nil {
 		return nil
@@ -23,9 +24,15 @@ func (r *Reconciler) blockedUserAgents(ctx context.Context) []string {
 	}
 	var out []string
 	for _, line := range strings.Split(s.BlockedUserAgents, "\n") {
-		if e := strings.TrimSpace(line); e != "" && useragents.Valid(e) {
-			out = append(out, e)
+		e := strings.TrimSpace(line)
+		if e == "" || !useragents.Valid(e) {
+			continue
 		}
+		if name := useragents.Protected(e); name != "" {
+			r.log.Warn("reconcile nginx-bots: blocked user agent left out", "entry", e, "would_block", name)
+			continue
+		}
+		out = append(out, e)
 	}
 	list, err := useragents.Normalize(out)
 	if err != nil {

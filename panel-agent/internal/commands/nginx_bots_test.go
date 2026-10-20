@@ -174,3 +174,13 @@ func TestNginxBotsApply_RefusesBadInput(t *testing.T) {
 		t.Fatal("refused input still wrote the fragment or ran nginx")
 	}
 }
+
+// No AI token may match a Google or Bing crawler: the "Block AI crawlers"
+// switch must never block Google or Bing.
+func TestAICrawlerList_NeverMatchesProtectedClients(t *testing.T) {
+	for _, tok := range aiCrawlerUserAgents {
+		if name := useragents.Protected(tok); name != "" {
+			t.Errorf("AI token %q would also block %s", tok, name)
+		}
+	}
+}

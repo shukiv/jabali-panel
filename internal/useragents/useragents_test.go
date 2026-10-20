@@ -47,12 +47,17 @@ func TestNormalize(t *testing.T) {
 // engine's user agent would refuse them on every site (the 403 runs before
 // any location, /.well-known/acme-challenge/ included), so it is refused.
 func TestNormalize_RefusesEntriesThatMatchEssentialClients(t *testing.T) {
-	for _, e := range []string{"compatible", "Mozilla", "mozilla/5.0", "Chrome/", "Safari", "Gecko", "Encrypt validation", "bot", "Googlebot", "bingbot", "x64"} {
+	for _, e := range []string{"compatible", "Mozilla", "mozilla/5.0", "Chrome/", "Safari", "Gecko", "Encrypt validation", "bot", "Googlebot", "bingbot", "x64",
+		// Every Google and Bing crawler, by its own token or a part of it.
+		"Google", "Googlebot-News", "Googlebot-Image", "AdsBot", "AdsBot-Google-Mobile", "Storebot", "Mediapartners", "FeedFetcher",
+		"GoogleOther", "Google-Agent", "Google-InspectionTool", "Google-CloudVertexBot", "GoogleProducer", "Google-Read-Aloud",
+		"APIs-Google", "Google-Safety", "google-speakr", "Google-Site-Verification",
+		"adidxbot", "MicrosoftPreview", "BingPreview", "BingVideoPreview", "msnbot", "bing.com/bingbot.htm", "Nexus 5X"} {
 		if _, err := Normalize([]string{e}); err == nil {
 			t.Errorf("Normalize(%q) accepted an entry that blocks an essential client", e)
 		}
 	}
-	for _, e := range []string{"AhrefsBot", "SemrushBot", "MJ12bot", "Semrush Bot/1.0", "python-requests"} {
+	for _, e := range []string{"AhrefsBot", "SemrushBot", "MJ12bot", "Semrush Bot/1.0", "python-requests", "YandexBot", "Baiduspider", "PetalBot", "DotBot", "DataForSeoBot"} {
 		if _, err := Normalize([]string{e}); err != nil {
 			t.Errorf("Normalize(%q) = %v, want accepted", e, err)
 		}
