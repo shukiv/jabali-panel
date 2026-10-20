@@ -731,6 +731,10 @@ func (h *dockerAppHandler) install(c *gin.Context) {
 	// without this two installs of the same catalog entry collide
 	// on dir + container name.
 	dataRoot := "/var/lib/jabali/docker-apps/" + instanceSlug
+	pidsLimit := 0
+	if pids != nil {
+		pidsLimit = *pids
+	}
 	composeYML, err := dockerapp.Render(entry, dockerapp.RenderParams{
 		Slug:         instanceSlug,
 		Name:         req.Name,
@@ -739,6 +743,7 @@ func (h *dockerAppHandler) install(c *gin.Context) {
 		DataRoot:     dataRoot,
 		CPULimit:     cpu,
 		MemoryLimit:  mem,
+		PIDsLimit:    pidsLimit,
 		Ports:        runtimePorts,
 		Env:          envMap,
 	})

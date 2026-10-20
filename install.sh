@@ -3964,6 +3964,11 @@ install_docker_engine() {
   # on the next install/update while /etc/jabali/docker-tenant-enabled stays —
   # silently running tenant containers as host root. Re-add it whenever the
   # tenant flag exists OR the current daemon.json already has it.
+  #
+  # "icc": false: containers on Docker's default bridge cannot talk to each
+  # other (CIS Docker 2.1). Panel apps run on their own compose networks and are
+  # unaffected; this only fences containers an admin starts by hand. Adding the
+  # key restarts docker once per host; live-restore keeps containers running.
   local want_userns="no"
   if [[ -f /etc/jabali/docker-tenant-enabled ]] || { [[ -f "$dropin" ]] && grep -q '"userns-remap"' "$dropin"; }; then
     want_userns="yes"
@@ -3974,6 +3979,7 @@ install_docker_engine() {
 {
   "userns-remap": "default",
   "live-restore": true,
+  "icc": false,
   "log-driver": "journald",
   "default-ulimits": {
     "nofile": { "Name": "nofile", "Soft": 8192, "Hard": 8192 }
@@ -3985,6 +3991,7 @@ DOCKER_EOF
     desired_json=$(cat <<'DOCKER_EOF'
 {
   "live-restore": true,
+  "icc": false,
   "log-driver": "journald",
   "default-ulimits": {
     "nofile": { "Name": "nofile", "Soft": 8192, "Hard": 8192 }
