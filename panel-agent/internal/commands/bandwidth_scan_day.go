@@ -28,6 +28,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
@@ -43,6 +44,13 @@ type bandwidthScanDayParams struct {
 // geoip-enrich parser keeps up to date. The agent runs as root, so it reads
 // the root-only file in place. Without it the country list is empty.
 var geoIPCityDB = "/var/lib/crowdsec/data/GeoLite2-City.mmdb"
+
+// Seams for tests: the clock that picks "yesterday", and where the scan
+// remembers which rotated log it counted for which day.
+var (
+	bandwidthNow           = time.Now
+	bandwidthScanStatePath = "/var/lib/jabali/bandwidth-scan-state.json"
+)
 
 // maxScanCountries caps the countries kept per domain and day. The rest are
 // added to "ZZ" with the addresses that have no country, so a busy site does
@@ -123,7 +131,7 @@ func bandwidthScanDayHandler(ctx context.Context, params json.RawMessage) (any, 
 
 	// Yesterday in UTC. logrotate's `daily` rotates on calendar day
 	// transition; a scan at 00:30 UTC sees yesterday's full file.
-	yesterday := time.Now().UTC().AddDate(0, 0, -1).Format("2006-01-02")
+	yesterday := bandwidthNow().UTC().AddDate(0, 0, -1).Format("2006-01-02")
 
 	// Rotated logs are <domain>-access.log.1 thanks to delaycompress.
 	pattern := filepath.Join(logDir, "*-access.log.1")
@@ -143,12 +151,25 @@ func bandwidthScanDayHandler(ctx context.Context, params json.RawMessage) (any, 
 		geoDB = geoIPCityDB
 	}
 
+	counted := readScanState()
+	nextState := map[string]scannedLog{}
 	for _, file := range matches {
 		base := filepath.Base(file)
 		// "<domain>-access.log.1" → "<domain>"
 		name := strings.TrimSuffix(base, "-access.log.1")
 		if name == "" || name == base {
 			skipped = append(skipped, base)
+			continue
+		}
+
+		// nginx's logrotate has notifempty: after a day without requests
+		// the log is not rotated and .log.1 is still the last day that had
+		// traffic. A file already counted for an earlier day is not
+		// yesterday's; counting it again would add that day's traffic once
+		// more every quiet day.
+		id := logFileID(file)
+		if prev, ok := counted[name]; ok && id != "" && prev.ID == id && prev.Day != yesterday {
+			nextState[name] = prev
 			continue
 		}
 
@@ -160,9 +181,62 @@ func bandwidthScanDayHandler(ctx context.Context, params json.RawMessage) (any, 
 		st.Domain = name
 		st.Day = yesterday
 		stats = append(stats, st)
+		if id != "" {
+			nextState[name] = scannedLog{ID: id, Day: yesterday}
+		}
 	}
+	writeScanState(nextState)
 
 	return bandwidthScanDayResponse{Stats: stats, Skipped: skipped}, nil
+}
+
+// scannedLog is the rotated log a scan counted for a domain, and the day it
+// was counted for.
+type scannedLog struct {
+	ID  string `json:"id"`
+	Day string `json:"day"`
+}
+
+// logFileID identifies one rotated log: device, inode, size and mtime. A
+// rotation puts a new file at .log.1, so the ID changes; a day without
+// rotation leaves it as it was. "" when the file cannot be read.
+func logFileID(path string) string {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return ""
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok {
+		return ""
+	}
+	return fmt.Sprintf("%d:%d:%d:%d", st.Dev, st.Ino, fi.Size(), fi.ModTime().UnixNano())
+}
+
+// readScanState returns what the last scans counted; empty when there is no
+// state yet (a missing or unreadable file only means the next quiet day may
+// be counted once more, as before this check existed).
+func readScanState() map[string]scannedLog {
+	out := map[string]scannedLog{}
+	raw, err := os.ReadFile(bandwidthScanStatePath)
+	if err != nil {
+		return out
+	}
+	_ = json.Unmarshal(raw, &out)
+	return out
+}
+
+// writeScanState replaces the state with this scan's domains, so a removed
+// domain drops out. Best effort: a failed write is the same as no state.
+func writeScanState(state map[string]scannedLog) {
+	raw, err := json.Marshal(state)
+	if err != nil {
+		return
+	}
+	tmp := bandwidthScanStatePath + ".new"
+	if err := os.WriteFile(tmp, raw, 0o600); err != nil {
+		return
+	}
+	_ = os.Rename(tmp, bandwidthScanStatePath)
 }
 
 // goaccessScanArgs builds the goaccess CLI args for a single access log.
