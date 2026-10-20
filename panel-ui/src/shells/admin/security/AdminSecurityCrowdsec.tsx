@@ -30,6 +30,7 @@ import { ISO3166_COUNTRIES } from "../../../data/iso3166";
 import { CrowdsecTestIPCard } from "./CrowdsecTestIPCard";
 import { AppSecExclusionsPanel } from "./AppSecExclusionsCard";
 import { BlockedUserAgentsCard } from "./BlockedUserAgentsCard";
+import { ExtraBlocklistsCard } from "./ExtraBlocklistsCard";
 import { Sparkline } from "../../../components/Sparkline";
 
 import {
@@ -352,7 +353,16 @@ export const AdminSecurityCrowdsec = () => {
           },
           { key: "wafexclusions", label: "WAF exclusions", children: <AppSecExclusionsPanel /> },
           { key: "settings", label: "Settings", children: <SettingsPanel /> },
-          { key: "blocklists", label: "Blocklists", children: <BlocklistsCard /> },
+          {
+            key: "blocklists",
+            label: "Blocklists",
+            children: (
+              <>
+                <ExtraBlocklistsCard />
+                <BlocklistsCard />
+              </>
+            ),
+          },
         ]}
       />
 
