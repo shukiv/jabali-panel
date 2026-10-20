@@ -3,9 +3,12 @@ services:
     image: {{ .ImageChannel }}
     container_name: jabali-app-{{ .Slug }}
     restart: unless-stopped
+    # Started before ClickHouse answered, Plausible exited once.
     depends_on:
-      - postgres
-      - clickhouse
+      postgres:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
     environment:
 {{- if (index .Env "SMTP_HOST") }}
       # Operator-supplied SMTP (GH #322) — values q-escaped so special chars

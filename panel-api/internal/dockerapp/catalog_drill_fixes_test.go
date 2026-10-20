@@ -168,7 +168,7 @@ func TestOpenEMR_SitesAreSeededBeforeTheAppStarts(t *testing.T) {
 	if !ok || len(seed.Volumes) != 1 || seed.Volumes[0] != "/var/lib/jabali/docker-apps/openemr/sites:/seed" {
 		t.Fatalf("init-seed missing or mounts %v", seed.Volumes)
 	}
-	mustContain(t, out, "tar xf - --skip-old-files -C /seed")
+	mustContain(t, out, "tar xf - --skip-old-files -C /seed && chown apache:root /seed && chmod 0755 /seed")
 	if c := doc.Services["openemr"].DependsOn["init-seed"]["condition"]; c != "service_completed_successfully" {
 		t.Fatalf("openemr depends on init-seed with %v", c)
 	}
@@ -206,6 +206,29 @@ func TestCatalog_HealthChecksDoNotCallWgetWhereTheImageHasNone(t *testing.T) {
 			if test := strings.Join(s.Healthcheck.Test, " "); test == "" || strings.Contains(test, "wget") {
 				t.Errorf("%s/%s health check %q", slug, svc, test)
 			}
+		}
+	}
+}
+
+// Joplin answers 404 "Invalid origin" to a probe whose Host is not
+// APP_BASE_URL's, so the app never turned healthy.
+func TestJoplin_ProbeSendsTheSiteHost(t *testing.T) {
+	mustContain(t, renderDrill(t, "joplin"), "headers: {Host: 'drill.example.com'}")
+}
+
+// Plausible started before ClickHouse answered and exited once.
+func TestPlausible_WaitsForItsDatabases(t *testing.T) {
+	var doc struct {
+		Services map[string]struct {
+			DependsOn map[string]map[string]any `yaml:"depends_on"`
+		} `yaml:"services"`
+	}
+	if err := yaml.Unmarshal([]byte(renderDrill(t, "plausible")), &doc); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	for _, db := range []string{"postgres", "clickhouse"} {
+		if c := doc.Services["plausible"].DependsOn[db]["condition"]; c != "service_healthy" {
+			t.Errorf("plausible depends on %s with %v", db, c)
 		}
 	}
 }
