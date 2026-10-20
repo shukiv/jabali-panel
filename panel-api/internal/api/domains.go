@@ -2535,7 +2535,19 @@ func validateProxyPassTargetWith(target string, allowInternal bool) error {
 	if host == "" {
 		return fmt.Errorf("target has no host")
 	}
-	if strings.EqualFold(host, "localhost") && !allowInternal {
+	// A zone (fe80::1%eth0) scopes an address to an interface; no upstream
+	// needs one, and ParseIP doesn't read it, so it would skip the checks below.
+	if strings.Contains(host, "%") {
+		return fmt.Errorf("target may not carry an IPv6 zone")
+	}
+	// nginx resolves the host with getaddrinfo, which also reads the inet_aton
+	// forms (127.1, 2130706433, 0x7f000001, 0177.0.0.1) as IPv4. ParseIP
+	// doesn't, so they would skip the address checks below: a numeric host must
+	// be written as four decimal numbers.
+	if net.ParseIP(host) == nil && isInetAtonIPv4(host) {
+		return fmt.Errorf("write the target address as four decimal numbers (a.b.c.d), not %q", host)
+	}
+	if isLocalhostName(host) && !allowInternal {
 		return fmt.Errorf("target may not be localhost")
 	}
 	if ip := net.ParseIP(host); ip != nil {
@@ -2547,6 +2559,30 @@ func validateProxyPassTargetWith(target string, allowInternal bool) error {
 		}
 	}
 	return nil
+}
+
+// isInetAtonIPv4 reports whether glibc's inet_aton reads host as an IPv4
+// address: one to four dot-separated parts, each decimal, octal (leading 0) or
+// hex (0x), with an optional trailing dot as the resolver allows.
+func isInetAtonIPv4(host string) bool {
+	parts := strings.Split(strings.TrimSuffix(host, "."), ".")
+	if len(parts) > 4 {
+		return false
+	}
+	for _, p := range parts {
+		if _, err := strconv.ParseUint(p, 0, 32); err != nil {
+			return false
+		}
+	}
+	return true
+}
+
+// isLocalhostName reports whether the resolver answers host with loopback:
+// localhost and any *.localhost name, in any case, with or without the
+// trailing dot.
+func isLocalhostName(host string) bool {
+	h := strings.ToLower(strings.TrimSuffix(host, "."))
+	return h == "localhost" || strings.HasSuffix(h, ".localhost")
 }
 
 // tenantSafeNginxRuleTypes are the Rule Builder types a non-admin owner may set
