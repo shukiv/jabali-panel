@@ -78,6 +78,23 @@ describe("ExtraBlocklistsCard", () => {
     expect(screen.getByText(/Last run failed: download failed: HTTP 503/)).toBeInTheDocument();
   });
 
+  // On a phone the header has room for the title and one button; the last-run
+  // time beside them squeezed the title down to "E…".
+  it("keeps the last-run time out of the card header", async () => {
+    mocked.get.mockResolvedValue({
+      data: {
+        lists: lists(["firehol_level1"]),
+        status: { running: true, last_run: "2026-10-20T04:00:00Z", lists: [result("firehol_level1")] },
+      },
+    });
+    const { container } = renderCard();
+    expect(await screen.findByText(/^Last run/)).toBeInTheDocument();
+    expect(screen.getByText("Updating")).toBeInTheDocument();
+    const header = container.querySelector(".ant-card-head");
+    expect(header?.textContent).not.toMatch(/Last run|Updating/);
+    expect(header?.textContent).toMatch(/Download now/);
+  });
+
   it("asks before adding a list, then PUTs the chosen keys", async () => {
     mocked.get.mockResolvedValue({ data: { lists: lists([]), status: null } });
     mocked.put.mockResolvedValue({ data: { lists: lists(["firehol_level1"]), status: null } });

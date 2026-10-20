@@ -112,23 +112,16 @@ export const ExtraBlocklistsCard = () => {
       loading={q.isLoading}
       style={{ marginBottom: 16 }}
       extra={
-        <Space size={12}>
-          {running && <Tag color="processing">Updating</Tag>}
-          {q.data?.status?.last_run && (
-            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              Last run <Timestamp value={q.data.status.last_run} />
-            </Typography.Text>
-          )}
-          <Button
-            size="small"
-            icon={<ReloadOutlined />}
-            loading={refreshing}
-            disabled={saved.length === 0 || dirty}
-            onClick={refresh}
-          >
-            Download now
-          </Button>
-        </Space>
+        // Only the button: on a phone the header has no room for more beside the title.
+        <Button
+          size="small"
+          icon={<ReloadOutlined />}
+          loading={refreshing}
+          disabled={saved.length === 0 || dirty}
+          onClick={refresh}
+        >
+          Download now
+        </Button>
       }
     >
       <Space direction="vertical" size="middle" style={{ width: "100%" }}>
@@ -138,6 +131,16 @@ export const ExtraBlocklistsCard = () => {
           Private and reserved ranges, this server&apos;s own addresses and allowlisted addresses are
           never banned. Turning a list off lifts its bans within a minute.
         </Typography.Paragraph>
+        {(running || q.data?.status?.last_run) && (
+          <Space size={12} wrap>
+            {running && <Tag color="processing">Updating</Tag>}
+            {q.data?.status?.last_run && (
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                Last run <Timestamp value={q.data.status.last_run} />
+              </Typography.Text>
+            )}
+          </Space>
+        )}
         {q.isError && <Alert type="error" showIcon message={`Could not load the lists: ${errorText(q.error)}`} />}
         {(q.data?.lists ?? []).map((l) => {
           const r = results.get(l.key);
