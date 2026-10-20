@@ -99,4 +99,22 @@ describe("DomainStatsPanel", () => {
     expect(screen.getByText(/No country data for this period/)).toBeInTheDocument();
     expect(screen.queryByText(/MaxMind/)).not.toBeInTheDocument();
   });
+
+  it("tops the chart at the next clean number above the busiest day", async () => {
+    const busiest = { day: "2026-10-19T00:00:00Z", bytes_total: 1000, requests_total: 2295 };
+    mockGet.mockResolvedValue({ data: { ...withTraffic, daily: [busiest] } });
+    // happy-dom has no layout; the chart draws only once it has a width.
+    const width = vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(800);
+    try {
+      const { container } = renderPanel();
+      await screen.findByText("Requests per day");
+      await waitFor(() => expect(container.querySelectorAll("svg text").length).toBeGreaterThan(0));
+      const ticks = Array.from(container.querySelectorAll("svg text")).map((t) => t.textContent);
+      // 3K, not 5K: an axis twice the data's height leaves half the chart empty.
+      expect(ticks).toContain("3K");
+      expect(ticks).not.toContain("5K");
+    } finally {
+      width.mockRestore();
+    }
+  });
 });

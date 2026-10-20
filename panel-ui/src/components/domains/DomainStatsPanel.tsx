@@ -72,15 +72,18 @@ function formatTick(measure: Measure, n: number): string {
   return measure === "bytes" ? humanBytes(n) : compact.format(n);
 }
 
-// niceMax rounds the axis top up to 1, 2 or 5 × a power of ten (bytes to a
-// power of 1024 times the same), so the ticks are clean numbers.
+// niceMax rounds the axis top up to 1, 1.5, 2, 3, 4, 5, 6 or 8 × a power of
+// ten (bytes: of a power of 1024 times the same, never past the next unit),
+// so the ticks are clean numbers and the busiest day fills most of the chart.
 function niceMax(measure: Measure, max: number): number {
   if (max <= 0) return 1;
   const base = measure === "bytes" ? 1024 : 10;
   const exp = measure === "bytes" ? Math.floor(Math.log(max) / Math.log(1024)) : Math.floor(Math.log10(max));
   const unit = Math.pow(base, Math.max(0, exp));
-  for (const step of [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000]) {
-    if (step * unit >= max) return step * unit;
+  const pow10 = Math.pow(10, Math.floor(Math.log10(max / unit)));
+  for (const step of [1, 1.5, 2, 3, 4, 5, 6, 8, 10]) {
+    const top = Math.min(step * pow10, base) * unit;
+    if (top >= max) return top;
   }
   return Math.ceil(max / unit) * unit;
 }
