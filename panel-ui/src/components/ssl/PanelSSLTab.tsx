@@ -39,7 +39,9 @@ import {
   panelCertValidity,
 } from "./panelCertStatus";
 
-function servedItems(cert: PanelCertificate): DescriptionsProps["items"] {
+// leOn is the hostname row's use_le. Routability and the next retry are Let's
+// Encrypt's concerns, so with it off (GH #2166) the card leaves them out.
+function servedItems(cert: PanelCertificate, leOn: boolean): DescriptionsProps["items"] {
   const s = cert.served;
   const items: DescriptionsProps["items"] = [
     {
@@ -47,17 +49,18 @@ function servedItems(cert: PanelCertificate): DescriptionsProps["items"] {
       label: "Status",
       children: (
         <Space size={4} wrap>
-          {panelCertStatusTag(cert)}
-          {cert.routable ? (
-            <Tag icon={<CheckCircleOutlined />} color="success">
-              Routable
-            </Tag>
-          ) : (
-            <Tag icon={<CloseOutlined />} style={{ whiteSpace: "normal", maxWidth: "100%", height: "auto" }}>
-              Not routable
-              {cert.routable_reason ? ` — ${cert.routable_reason}` : ""}
-            </Tag>
-          )}
+          {panelCertStatusTag(cert, leOn)}
+          {leOn &&
+            (cert.routable ? (
+              <Tag icon={<CheckCircleOutlined />} color="success">
+                Routable
+              </Tag>
+            ) : (
+              <Tag icon={<CloseOutlined />} style={{ whiteSpace: "normal", maxWidth: "100%", height: "auto" }}>
+                Not routable
+                {cert.routable_reason ? ` — ${cert.routable_reason}` : ""}
+              </Tag>
+            ))}
         </Space>
       ),
     },
@@ -104,7 +107,7 @@ function servedItems(cert: PanelCertificate): DescriptionsProps["items"] {
       },
     );
   }
-  if (cert.next_retry_at) {
+  if (leOn && cert.next_retry_at) {
     items.push({ key: "retry", label: "Next retry", children: shortDateTime(cert.next_retry_at) });
   }
   return items;
@@ -144,9 +147,9 @@ function CertCard({
       }
     >
       <Space orientation="vertical" size={8} style={{ width: "100%" }}>
-        <Descriptions size="small" bordered column={{ xs: 1, sm: 1, md: 2 }} items={servedItems(cert)} />
+        <Descriptions size="small" bordered column={{ xs: 1, sm: 1, md: 2 }} items={servedItems(cert, leOn)} />
         {cert.served_error && <Alert type="warning" showIcon title={cert.served_error} />}
-        {(cert.status === "pending_acme_retry" || cert.status === "failed") && cert.last_error && (
+        {leOn && (cert.status === "pending_acme_retry" || cert.status === "failed") && cert.last_error && (
           <Alert
             type="warning"
             showIcon
@@ -230,6 +233,16 @@ export function PanelSSLTab() {
         </Button>
       </Space>
 
+      {/* GH #2166: with Let's Encrypt off, an unroutable hostname only keeps
+          the switch off; the self-signed certificates don't need it. */}
+      {!host.use_le && !host.routable && (
+        <Typography.Text type="secondary">
+          {`Let's Encrypt can be turned on once ${hostName} resolves publicly to this server.${
+            host.routable_reason ? ` Now: ${host.routable_reason}.` : ""
+          } Point its DNS A record at this server's public IP, then click Refresh.`}
+        </Typography.Text>
+      )}
+
       <Typography.Paragraph type="secondary" style={{ margin: 0 }}>
         {!mail ? (
           // GH #2166: a server without the mail module has no mail cert.
@@ -259,7 +272,7 @@ export function PanelSSLTab() {
         )}
       </Typography.Paragraph>
 
-      {!host.routable && (
+      {host.use_le && !host.routable && (
         <Alert
           type="warning"
           showIcon

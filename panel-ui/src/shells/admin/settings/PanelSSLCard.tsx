@@ -13,7 +13,8 @@ import {
   panelCertStatusTag,
 } from "../../../components/ssl/panelCertStatus";
 
-function CertLine({ label, cert }: { label: string; cert: PanelCertificate }) {
+// leOn is the hostname row's use_le, which governs both certs.
+function CertLine({ label, cert, leOn }: { label: string; cert: PanelCertificate; leOn: boolean }) {
   const expiry = panelCertExpiryHint(cert);
   return (
     <Space size={8} wrap>
@@ -21,7 +22,7 @@ function CertLine({ label, cert }: { label: string; cert: PanelCertificate }) {
         {label}
       </Typography.Text>
       <code>{cert.hostname || "<unset>"}</code>
-      {panelCertStatusTag(cert)}
+      {panelCertStatusTag(cert, leOn)}
       {expiry && <Typography.Text type={expiry === "Expired" ? "danger" : "secondary"}>{expiry}</Typography.Text>}
     </Space>
   );
@@ -55,8 +56,8 @@ export function PanelSSLCard() {
           />
         ) : host ? (
           <>
-            <CertLine label={t("panelsslcard.hostname")} cert={host} />
-            {mail && <CertLine label={t("panelsslcard.mail")} cert={mail} />}
+            <CertLine label={t("panelsslcard.hostname")} cert={host} leOn={host.use_le} />
+            {mail && <CertLine label={t("panelsslcard.mail")} cert={mail} leOn={host.use_le} />}
           </>
         ) : (
           <Alert type="info" showIcon title={t("panelsslcard.panel_certificate_not_initialised_yet")} />
