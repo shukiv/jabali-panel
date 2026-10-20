@@ -189,14 +189,17 @@ var adminDroppedCaps = []string{"NET_RAW", "MKNOD"}
 // install gets the full applyTenantHardening profile instead. An admin app is
 // installed by a trusted admin from the curated catalog, but it still runs
 // internet-facing code. Without user-namespace remapping (hosts without tenant
-// Docker), root in its container is root on the host. So the parts that cost
-// no app anything are applied to every service:
+// Docker), root in its container is root on the host. So these are applied
+// to every service:
 //
 //   - no-new-privileges, so a setuid binary in the image cannot raise a
 //     process's privileges;
 //   - drop NET_RAW and MKNOD;
 //   - the install's PIDs limit. It was stored and shown in the panel, but no
-//     template used it, so it had no effect.
+//     template used it, so it had no effect. It applies to each service, so
+//     the catalog's pids value must fit the app's busiest service: plausible's
+//     ClickHouse runs about 670 threads idle and crashes when it cannot start
+//     one.
 //
 // Entries the template already sets are kept: a service's own security_opt
 // and cap_drop are extended, not replaced, and a cap_add the template asked
