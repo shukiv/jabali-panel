@@ -75,9 +75,10 @@ Edit packages: `/jabali-admin/packages`. Users on a package get the new limits a
 ## Bandwidth limit
 
 A package's `bandwidth_quota_mb` is the account's monthly web traffic: the
-bytes served by all of its domains since the 1st of the calendar month (UTC).
-0 means unlimited. The panel counts it once a day from the nginx access logs,
-so the figure is up to the end of yesterday.
+bytes its domains sent to visitors since the 1st of the calendar month (UTC).
+Responses to known crawlers and bots are not counted. 0 means unlimited. The
+panel counts it once a day from the nginx access logs, so the figure is up to
+the end of yesterday.
 
 The admin gets a notification when an account passes 80% of its limit
 (**Bandwidth quota — 80%**) and when it passes 100% (**Bandwidth quota —

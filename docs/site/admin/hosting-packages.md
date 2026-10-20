@@ -8,7 +8,7 @@
 |---|---|---|
 | Name, slug, description | — | Identifier and display label |
 | `disk_quota_mb` | MiB | POSIX disk quota applied to `/home/<user>` |
-| `bandwidth_quota_mb` | MiB / month | Monthly web traffic of all the user's domains. The admin is notified at 80% and 100%; the websites are suspended only when **Bandwidth Quota Auto-Suspend** is on (see [Resource limits](../resource-limits.md#bandwidth-limit)). 0 = unlimited |
+| `bandwidth_quota_mb` | MiB / month | Monthly web traffic the user's domains sent to visitors (known crawlers and bots are not counted). The admin is notified at 80% and 100%; the websites are suspended only when **Bandwidth Quota Auto-Suspend** is on (see [Resource limits](../resource-limits.md#bandwidth-limit)). 0 = unlimited |
 | `memory_limit_mb` | MiB | `MemoryMax=` on the user's systemd slice |
 | `cpu_quota_percent` | % | `CPUQuota=` on the user's systemd slice |
 | `io_read_mbps`, `io_write_mbps` | MB/s | `IOReadBandwidthMax=` / `IOWriteBandwidthMax=` on the user's systemd slice |
