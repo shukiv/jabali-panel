@@ -155,4 +155,39 @@ describe("Server Settings → Panel SSL (GH #2166)", () => {
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
     expect(screen.queryByRole("switch")).not.toBeInTheDocument();
   });
+
+  // The hostname row's use_le governs both: the mail row, which the toggle
+  // doesn't write, can keep use_le on and a Let's Encrypt retry.
+  it("with Let's Encrypt off, shows the cert each serves, whatever the mail row's stale state", async () => {
+    const served = {
+      type: "self_signed",
+      issuer: "Jabali Panel",
+      subject: "panel.example.com",
+      names: ["panel.example.com"],
+      not_before: "2026-10-17T06:00:00Z",
+      not_after: "2036-10-17T06:00:00Z",
+      fingerprint_sha256: "AB:CD",
+    };
+    mocked.get.mockResolvedValue({
+      status: 200,
+      data: {
+        certs: [
+          { ...cert("hostname", false), served },
+          { ...cert("mail", true), status: "pending_acme_retry", served },
+        ],
+      },
+    });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <MemoryRouter>
+        <QueryClientProvider client={qc}>
+          <App>
+            <PanelSSLCard />
+          </App>
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+    expect(await screen.findAllByText("Issued (self-signed)")).toHaveLength(2);
+    expect(screen.queryByText("Pending retry")).not.toBeInTheDocument();
+  });
 });
