@@ -23,7 +23,10 @@ func (gh723ResumeDBRepo) ExistsByUserAndName(context.Context, string, string) (b
 // it → without a credential the rewriter no-ops and the config keeps the dead
 // source DB name. Under --preserve-source-state the resume must still seed the
 // namespaced credential so the compat pass keeps the source creds and the
-// config is namespaced.
+// config is namespaced. recordingAgent creates any account; the real agent
+// refuses (create_only) a source user that already exists with no row, as one
+// the earlier run made under another name does: see
+// TestImportDatabases_ResumeRefusedCompatUserLeavesConfig.
 func TestGH723_Resume_PreserveOn_RecoversCredential(t *testing.T) {
 	extract := t.TempDir()
 	if err := os.WriteFile(filepath.Join(extract, "notary_45635.mysql.sql"), []byte("-- dump\n"), 0o644); err != nil {

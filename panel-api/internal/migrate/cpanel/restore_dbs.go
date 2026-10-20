@@ -305,6 +305,14 @@ func ImportDatabases(
 			continue
 		}
 		res.Created++
+		// A credential with no password until this database's user is made.
+		// It keeps the key, so a config naming this database is left as it is
+		// (writable) when no user can be made, rather than taking the only
+		// other database's credential (the rewriters' single-entry fallback).
+		if res.Credentials == nil {
+			res.Credentials = map[string]DBCredential{}
+		}
+		res.Credentials[base] = DBCredential{DBName: finalName}
 
 		// Best-effort: create a MariaDB user with the same name as
 		// the DB and GRANT ALL. Failure records a warning but never

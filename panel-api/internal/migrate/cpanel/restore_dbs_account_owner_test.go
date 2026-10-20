@@ -168,9 +168,15 @@ func TestImportDatabases_PanelUserNeverTakesAnExistingAccount(t *testing.T) {
 		t.Error("alice_new, a free name, got no grant")
 	}
 	for _, base := range []string{"cp_x_app", "cp_blog", "cp_shop"} {
-		if _, ok := res.Credentials[base]; ok {
-			t.Errorf("%s: credential recorded for a database that got no user", base)
+		if cred := res.Credentials[base]; cred.Password != "" || cred.DBUser != "" {
+			t.Errorf("%s: credential %+v for a database that got no user", base, cred)
 		}
+	}
+	// The app config of a database with no user is left as it is: it must not
+	// take alice_new's credential, the only one with a password.
+	cfg := "<?php\ndefine( 'DB_NAME', 'cp_x_app' );\ndefine( 'DB_USER', 'cp_x_app' );\ndefine( 'DB_PASSWORD', 'source-pw' );\ndefine( 'DB_HOST', 'localhost' );\n"
+	if out, changed := rewriteWordPress(cfg, res.Credentials); changed {
+		t.Errorf("wp-config of cp_x_app rewritten:\n%s", out)
 	}
 	if !skippedHas(res, "alice_x_app: database user not created") {
 		t.Errorf("no report line for alice_x_app: %v", res.Skipped)
