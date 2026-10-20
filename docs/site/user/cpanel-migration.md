@@ -9,7 +9,7 @@ The administrator handles the import. Once your account is restored on the new p
 - Your Linux home directory, with files at their original paths.
 - Hosted domains.
 - DNS zones (translated to PowerDNS records).
-- MySQL databases, each with its own database user. WordPress, Joomla, Drupal and Magento configurations are pointed at the new database and user. If the administrator carries over source passwords, your original MySQL users come along too, with their passwords.
+- MySQL databases, each with its own database user. WordPress, Joomla, Drupal and Magento configurations are pointed at the new database and user. If the administrator carries over source passwords, your original MySQL users come along too, with their passwords, and appear under [Database Users](./db-users.md).
 - Email accounts — recreated in Stalwart. **Email passwords are reset** because cPanel's Dovecot password hash format cannot be imported into Stalwart. You receive new generated passwords; communicate them to mailbox owners.
 - DKIM keys.
 - Cron jobs (those whose commands pass the [Cron allowlist](./cron-jobs.md)).

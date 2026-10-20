@@ -146,7 +146,7 @@ func (m *mockDatabaseUserRepo) CountByEngineAndUsername(ctx context.Context, eng
 	return 0, nil
 }
 
-func (m *mockDatabaseUserRepo) OwnersByEngineAndUsername(ctx context.Context, engine, username string) ([]string, error) {
+func (m *mockDatabaseUserRepo) ListByEngineAndUsername(ctx context.Context, engine, username string) ([]models.DatabaseUser, error) {
 	return nil, nil
 }
 

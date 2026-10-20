@@ -117,7 +117,7 @@ func (gh723DBUserRepo) CountByEngineAndUsername(context.Context, string, string)
 	return 0, nil
 }
 
-func (gh723DBUserRepo) OwnersByEngineAndUsername(context.Context, string, string) ([]string, error) {
+func (gh723DBUserRepo) ListByEngineAndUsername(context.Context, string, string) ([]models.DatabaseUser, error) {
 	return nil, nil
 }
 
@@ -126,6 +126,9 @@ type gh723GrantRepo struct {
 }
 
 func (gh723GrantRepo) Create(context.Context, *models.DatabaseUserGrant) error { return nil }
+func (gh723GrantRepo) FindByDBAndDBUser(context.Context, string, string) (*models.DatabaseUserGrant, error) {
+	return nil, repository.ErrNotFound
+}
 
 // TestGH723_ImportDatabases_CredentialsKeyedBySourceName guards the fix at the
 // seam that actually had the bug: ImportDatabases must key res.Credentials by

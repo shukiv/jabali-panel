@@ -30,9 +30,9 @@ type DatabaseUserRepository interface {
 	// server-wide, so more than one row means more than one tenant points at
 	// it.
 	CountByEngineAndUsername(ctx context.Context, engine, username string) (int64, error)
-	// OwnersByEngineAndUsername returns the panel user id of each row that
-	// names the engine account (engine, username).
-	OwnersByEngineAndUsername(ctx context.Context, engine, username string) ([]string, error)
+	// ListByEngineAndUsername returns the rows, of every panel user, that
+	// name the engine account (engine, username).
+	ListByEngineAndUsername(ctx context.Context, engine, username string) ([]models.DatabaseUser, error)
 }
 
 type databaseUserRepo struct{ db *gorm.DB }
@@ -146,10 +146,10 @@ func (r *databaseUserRepo) CountByEngineAndUsername(ctx context.Context, engine,
 	return count, nil
 }
 
-func (r *databaseUserRepo) OwnersByEngineAndUsername(ctx context.Context, engine, username string) ([]string, error) {
-	var owners []string
-	if err := r.db.WithContext(ctx).Model(&models.DatabaseUser{}).Where("engine = ? AND username = ?", engine, username).Pluck("user_id", &owners).Error; err != nil {
+func (r *databaseUserRepo) ListByEngineAndUsername(ctx context.Context, engine, username string) ([]models.DatabaseUser, error) {
+	var rows []models.DatabaseUser
+	if err := r.db.WithContext(ctx).Where("engine = ? AND username = ?", engine, username).Find(&rows).Error; err != nil {
 		return nil, err
 	}
-	return owners, nil
+	return rows, nil
 }

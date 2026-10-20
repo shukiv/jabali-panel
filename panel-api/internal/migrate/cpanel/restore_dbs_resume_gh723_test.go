@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
@@ -16,6 +17,11 @@ type gh723ResumeDBRepo struct{ repository.DatabaseRepository }
 
 func (gh723ResumeDBRepo) ExistsByUserAndName(context.Context, string, string) (bool, error) {
 	return true, nil
+}
+
+// ListByUserID returns the database the earlier run restored.
+func (gh723ResumeDBRepo) ListByUserID(_ context.Context, userID string, _ repository.ListOptions) ([]models.Database, int64, error) {
+	return []models.Database{{ID: "db-resumed", UserID: userID, Name: "sewickley_45635", Engine: "mariadb"}}, 1, nil
 }
 
 // GH #723 resume gap: an earlier run imported the DB but died before the

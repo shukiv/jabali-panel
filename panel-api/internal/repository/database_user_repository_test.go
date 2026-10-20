@@ -267,20 +267,24 @@ func TestDatabaseUserRepository_CountByEngineAndUsername(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-// OwnersByEngineAndUsername returns the owner of each row naming the account,
-// of every panel user.
-func TestDatabaseUserRepository_OwnersByEngineAndUsername(t *testing.T) {
+// ListByEngineAndUsername returns each row naming the account, of every panel
+// user.
+func TestDatabaseUserRepository_ListByEngineAndUsername(t *testing.T) {
 	db, mock, raw := newMockDB(t)
 	defer raw.Close()
 
 	repo := NewDatabaseUserRepository(db)
 
-	mock.ExpectQuery(regexp.QuoteMeta("SELECT `user_id` FROM `database_users` WHERE engine = ? AND username = ?")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT * FROM `database_users` WHERE engine = ? AND username = ?")).
 		WithArgs("mariadb", "alice_x_app").
-		WillReturnRows(sqlmock.NewRows([]string{"user_id"}).AddRow("u-alice").AddRow("u-alice-x"))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "user_id", "username", "engine"}).
+			AddRow("du-1", "u-alice", "alice_x_app", "mariadb").
+			AddRow("du-2", "u-alice-x", "alice_x_app", "mariadb"))
 
-	owners, err := repo.OwnersByEngineAndUsername(context.Background(), "mariadb", "alice_x_app")
+	rows, err := repo.ListByEngineAndUsername(context.Background(), "mariadb", "alice_x_app")
 	require.NoError(t, err)
-	require.Equal(t, []string{"u-alice", "u-alice-x"}, owners)
+	require.Len(t, rows, 2)
+	require.Equal(t, "u-alice", rows[0].UserID)
+	require.Equal(t, "du-2", rows[1].ID)
 	require.NoError(t, mock.ExpectationsWereMet())
 }

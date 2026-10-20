@@ -3,7 +3,10 @@ package dbops
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
+
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 )
 
 type countRows map[string]int64
@@ -43,8 +46,12 @@ func TestSoleAccountRow(t *testing.T) {
 
 type ownerRows map[string][]string
 
-func (r ownerRows) OwnersByEngineAndUsername(_ context.Context, engine, username string) ([]string, error) {
-	return r[engine+"|"+username], nil
+func (r ownerRows) ListByEngineAndUsername(_ context.Context, engine, username string) ([]models.DatabaseUser, error) {
+	var out []models.DatabaseUser
+	for i, owner := range r[engine+"|"+username] {
+		out = append(out, models.DatabaseUser{ID: fmt.Sprintf("du-%d", i), UserID: owner, Username: username, Engine: engine})
+	}
+	return out, nil
 }
 
 func TestImportedAccount(t *testing.T) {
@@ -67,9 +74,12 @@ func TestImportedAccount(t *testing.T) {
 		{"bob_mysqladmin", false, ErrAccountNameReserved},
 		{"alice_PGADMIN", false, ErrAccountNameReserved},
 	} {
-		existing, err := ImportedAccount(context.Background(), rows, "mariadb", c.name, "u-alice")
-		if existing != c.wantExisting || !errors.Is(err, c.want) {
-			t.Errorf("ImportedAccount(%q) = %v, %v; want %v, %v", c.name, existing, err, c.wantExisting, c.want)
+		row, err := ImportedAccount(context.Background(), rows, "mariadb", c.name, "u-alice")
+		if (row != nil) != c.wantExisting || !errors.Is(err, c.want) {
+			t.Errorf("ImportedAccount(%q) = %+v, %v; want existing %v, %v", c.name, row, err, c.wantExisting, c.want)
+		}
+		if row != nil && (row.UserID != "u-alice" || row.Username != c.name) {
+			t.Errorf("ImportedAccount(%q) row %+v, want alice's", c.name, row)
 		}
 	}
 }

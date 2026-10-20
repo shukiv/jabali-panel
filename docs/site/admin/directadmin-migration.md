@@ -22,7 +22,7 @@ The resulting tarballs land under `/home/admin/admin_backups/`.
 | Home directory | Copied to `/home/<user>/`. |
 | Domains and subdomains | Created as Domain rows. DirectAdmin's `subdomain` directories are translated to subdomain Domain rows, not aliases. |
 | DNS zones | Translated from DirectAdmin's BIND-style files to PowerDNS rows. |
-| MySQL databases | Restored with password hashes preserved where the source used a hash format MariaDB accepts. |
+| MySQL databases | Restored. Each database gets its own database user, `<user>_<database>`, with a new password, and WordPress, Joomla, Drupal, Magento and ITFlow configs are pointed at it. DirectAdmin's own database users and their passwords are not carried over. |
 | Email accounts | Created in Stalwart; passwords reset (DirectAdmin uses Exim+Dovecot password hash formats Stalwart cannot import). |
 | Forwarders, autoresponders, catch-all | Translated to Stalwart equivalents. |
 | Cron jobs | Translated to systemd-user timers if the command is on the [Cron allowlist](../cron.md). |

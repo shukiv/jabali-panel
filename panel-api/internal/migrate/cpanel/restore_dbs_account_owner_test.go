@@ -70,10 +70,14 @@ func (a *engineAgent) granted(user string) bool {
 // ownerRows is database_users, with its (user_id, username) unique key.
 type ownerRows struct {
 	repository.DatabaseUserRepository
-	rows []models.DatabaseUser
+	rows       []models.DatabaseUser
+	failCreate bool
 }
 
 func (r *ownerRows) Create(_ context.Context, du *models.DatabaseUser) error {
+	if r.failCreate {
+		return errors.New("insert failed")
+	}
 	for _, row := range r.rows {
 		if row.UserID == du.UserID && row.Username == du.Username {
 			return errors.New("Error 1062: Duplicate entry for key 'uniq_user_username'")
@@ -83,24 +87,61 @@ func (r *ownerRows) Create(_ context.Context, du *models.DatabaseUser) error {
 	return nil
 }
 
-func (r *ownerRows) OwnersByEngineAndUsername(_ context.Context, engine, username string) ([]string, error) {
-	var owners []string
+func (r *ownerRows) ListByEngineAndUsername(_ context.Context, engine, username string) ([]models.DatabaseUser, error) {
+	var out []models.DatabaseUser
 	for _, row := range r.rows {
 		if row.Engine == engine && row.Username == username {
-			owners = append(owners, row.UserID)
+			out = append(out, row)
 		}
 	}
-	return owners, nil
+	return out, nil
 }
 
 func (r *ownerRows) CountByEngineAndUsername(ctx context.Context, engine, username string) (int64, error) {
-	owners, err := r.OwnersByEngineAndUsername(ctx, engine, username)
-	return int64(len(owners)), err
+	rows, err := r.ListByEngineAndUsername(ctx, engine, username)
+	return int64(len(rows)), err
 }
 
-func (r *ownerRows) count(username string) int {
-	owners, _ := r.OwnersByEngineAndUsername(context.Background(), "mariadb", username)
-	return len(owners)
+// named returns the rows naming username.
+func (r *ownerRows) named(username string) []models.DatabaseUser {
+	rows, _ := r.ListByEngineAndUsername(context.Background(), "mariadb", username)
+	return rows
+}
+
+func (r *ownerRows) count(username string) int { return len(r.named(username)) }
+
+// grantRows is database_user_grants, with its (database_id, database_user_id)
+// unique key.
+type grantRows struct {
+	repository.DatabaseUserGrantRepository
+	rows []models.DatabaseUserGrant
+}
+
+func (r *grantRows) Create(_ context.Context, g *models.DatabaseUserGrant) error {
+	if _, err := r.FindByDBAndDBUser(context.Background(), g.DatabaseID, g.DatabaseUserID); err == nil {
+		return errors.New("Error 1062: Duplicate entry for key 'uniq_db_user'")
+	}
+	r.rows = append(r.rows, *g)
+	return nil
+}
+
+func (r *grantRows) FindByDBAndDBUser(_ context.Context, dbID, duID string) (*models.DatabaseUserGrant, error) {
+	for i := range r.rows {
+		if r.rows[i].DatabaseID == dbID && r.rows[i].DatabaseUserID == duID {
+			return &r.rows[i], nil
+		}
+	}
+	return nil, repository.ErrNotFound
+}
+
+func (r *grantRows) of(duID string) []models.DatabaseUserGrant {
+	var out []models.DatabaseUserGrant
+	for _, g := range r.rows {
+		if g.DatabaseUserID == duID {
+			out = append(out, g)
+		}
+	}
+	return out
 }
 
 func writeDumps(t *testing.T, names ...string) (string, []string) {
@@ -201,7 +242,8 @@ func TestImportDatabases_CompatUserNeverTakesAnExistingAccount(t *testing.T) {
 		compat("bob_wp"), compat("carol_old"), compat("bob_mysqladmin"), compat("alice_wp"), compat("alice_legacy"),
 	}}
 
-	res, err := ImportDatabases(context.Background(), gh723DBRepo{}, rows, gh723GrantRepo{}, ag,
+	grants := &grantRows{}
+	res, err := ImportDatabases(context.Background(), gh723DBRepo{}, rows, grants, ag,
 		parsed, ownerAlice, "alice", true)
 	if err != nil {
 		t.Fatalf("ImportDatabases: %v", err)
@@ -227,6 +269,26 @@ func TestImportDatabases_CompatUserNeverTakesAnExistingAccount(t *testing.T) {
 	}
 	if !res.Credentials["alice_wp"].preservesUser("alice_wp") {
 		t.Errorf("alice_wp not preserved: %+v", res.Credentials["alice_wp"])
+	}
+	// Each account the import holds is one of alice's database users, with
+	// its grant shown once: alice_wp is the user it made for alice_wp, and
+	// alice_legacy is new.
+	for _, name := range []string{"alice_wp", "alice_legacy"} {
+		got := rows.named(name)
+		if len(got) != 1 || got[0].UserID != ownerAlice {
+			t.Fatalf("%s rows %+v, want one of alice's", name, got)
+		}
+		if g := grants.of(got[0].ID); len(g) != 1 || g[0].GrantLevel != "rw" || g[0].Privileges != "ALL" {
+			t.Errorf("%s grant rows %+v, want one rw ALL", name, g)
+		}
+	}
+	if h := rows.named("alice_legacy")[0].PasswordHash; h != "" {
+		t.Errorf("alice_legacy row hash %q: the panel never knew its password", h)
+	}
+	for name, want := range map[string]int{"bob_wp": 1, "carol_old": 0, "bob_mysqladmin": 0} {
+		if got := rows.count(name); got != want {
+			t.Errorf("%s: %d rows, want %d", name, got, want)
+		}
 	}
 	for _, want := range []string{
 		"compat_user bob_wp: not recreated: a database user of this name belongs to another account",
@@ -261,6 +323,61 @@ func TestImportDatabases_ResumeRefusedCompatUserLeavesConfig(t *testing.T) {
 	}
 	if out, changed := rewriteWordPress(gh723PreserveWPConfig, res.Credentials); changed {
 		t.Errorf("wp-config rewritten with no password to write:\n%s", out)
+	}
+}
+
+// A resume after this import recorded a source user as the target's: the row
+// says the account is the target's, so the import sets its hash again, grants
+// it the database and keeps the app config's credentials.
+func TestImportDatabases_ResumeTakesBackItsOwnCompatUser(t *testing.T) {
+	rows := &ownerRows{rows: []models.DatabaseUser{
+		{ID: "du-notary", UserID: ownerAlice, Username: "notary_45635", Engine: "mariadb"},
+	}}
+	grants := &grantRows{}
+	ag := &engineAgent{accounts: map[string]string{"notary_45635": oldHash}}
+	dir, dumps := writeDumps(t, "notary_45635.mysql.sql")
+	parsed := &ParsedTarball{ExtractDir: dir, SourceUser: "notary", MySQLDumps: dumps, CompatUsers: []CompatUser{{
+		Name: "notary_45635", Host: "localhost", Hash: sourceHash,
+		Grant: []CompatGrant{{SourceDB: "notary_45635", Privs: []string{"ALL"}}},
+	}}}
+
+	res, err := ImportDatabases(context.Background(), gh723ResumeDBRepo{}, rows, grants, ag,
+		parsed, ownerAlice, "sewickley", true)
+	if err != nil {
+		t.Fatalf("ImportDatabases: %v", err)
+	}
+	if ag.accounts["notary_45635"] != sourceHash || !ag.granted("notary_45635") {
+		t.Errorf("notary_45635: password %q, grants %v; want the source's hash and a grant", ag.accounts["notary_45635"], ag.grants)
+	}
+	if rows.count("notary_45635") != 1 {
+		t.Errorf("rows %+v, want the one row", rows.named("notary_45635"))
+	}
+	if g := grants.of("du-notary"); len(g) != 1 || g[0].DatabaseID != "db-resumed" {
+		t.Errorf("grant rows %+v, want one on the resumed database", g)
+	}
+	out, changed := rewriteWordPress(gh723PreserveWPConfig, res.Credentials)
+	if !changed || !strings.Contains(out, "define( 'DB_PASSWORD', 'e4eb22f97bb143151c95' );") {
+		t.Errorf("wp-config must keep the source credentials (changed=%v):\n%s", changed, out)
+	}
+}
+
+// A source user whose row can't be written is dropped again: no login is
+// left that no row names.
+func TestImportDatabases_CompatUserRowFailureDropsTheLogin(t *testing.T) {
+	ag := &engineAgent{accounts: map[string]string{}}
+	parsed := &ParsedTarball{ExtractDir: t.TempDir(), SourceUser: "alice", CompatUsers: []CompatUser{{
+		Name: "alice_legacy", Host: "localhost", Hash: sourceHash,
+	}}}
+	res, err := ImportDatabases(context.Background(), gh723DBRepo{}, &ownerRows{failCreate: true}, &grantRows{}, ag,
+		parsed, ownerAlice, "alice", true)
+	if err != nil {
+		t.Fatalf("ImportDatabases: %v", err)
+	}
+	if _, ok := ag.accounts["alice_legacy"]; ok || len(ag.drops) != 1 {
+		t.Errorf("alice_legacy left on the engine (drops %v)", ag.drops)
+	}
+	if !skippedHas(res, "compat_user alice_legacy: database_users row failed; MariaDB user rolled back") {
+		t.Errorf("no report line: %v", res.Skipped)
 	}
 }
 
