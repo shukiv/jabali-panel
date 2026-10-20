@@ -25,11 +25,20 @@ var (
 	ErrAccountNameReserved = errors.New("dbops: names ending in _mysqladmin or _pgadmin are reserved for phpMyAdmin and Adminer sign-in")
 	// ErrAccountNameTaken: another database user row already names the account.
 	ErrAccountNameTaken = errors.New("dbops: a database user with this name already exists")
+	// ErrAccountNotOwned: another panel user's row, or more than one row,
+	// names the account.
+	ErrAccountNotOwned = errors.New("dbops: a database user with this name belongs to another account")
 )
 
 // AccountRows is the slice of the database-user repository the checks need.
 type AccountRows interface {
 	CountByEngineAndUsername(ctx context.Context, engine, username string) (int64, error)
+}
+
+// AccountOwners is the slice of the database-user repository ImportedAccount
+// needs.
+type AccountOwners interface {
+	OwnersByEngineAndUsername(ctx context.Context, engine, username string) ([]string, error)
 }
 
 // accountEngine is the engine a database_users row stores: "" is MariaDB.
@@ -79,4 +88,27 @@ func SoleAccountRow(ctx context.Context, rows AccountRows, engine, name string) 
 		return false, err
 	}
 	return n <= 1, nil
+}
+
+// ImportedAccount says how an import into panel user ownerID may use an
+// account name read from the imported files. existing=false: no row names it,
+// so the import may only create it, with create_only, which the agent refuses
+// for an account the engine already has. existing=true: the only row naming
+// it is ownerID's, so the import may set its password. A sign-in account's
+// name, and one another panel user's row names, are refused.
+func ImportedAccount(ctx context.Context, rows AccountOwners, engine, name, ownerID string) (existing bool, err error) {
+	if SignInAccountName(name) {
+		return false, ErrAccountNameReserved
+	}
+	owners, err := rows.OwnersByEngineAndUsername(ctx, accountEngine(engine), name)
+	if err != nil {
+		return false, err
+	}
+	switch {
+	case len(owners) == 0:
+		return false, nil
+	case len(owners) == 1 && owners[0] == ownerID:
+		return true, nil
+	}
+	return false, ErrAccountNotOwned
 }

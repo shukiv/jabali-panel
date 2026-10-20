@@ -2,6 +2,7 @@ package cpanel
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"regexp"
@@ -11,6 +12,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dbops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
@@ -80,6 +82,29 @@ func (c DBCredential) preservesUser(configUser string) bool {
 		return false
 	}
 	return c.PreservedUsers[configUser]
+}
+
+// writable reports whether c has credentials to write into an app config
+// whose DB user is configUser: a password, or that user kept as a preserved
+// compat user. A resume seeds an entry with no password for the compat pass;
+// when that pass recreated none of the config's users, the config is left as
+// it is rather than given an empty password.
+func (c DBCredential) writable(configUser string) bool {
+	return c.Password != "" || c.preservesUser(configUser)
+}
+
+// accountRefusal is the report's reason for a database account name an
+// import may not use.
+func accountRefusal(err error) string {
+	switch {
+	case errors.Is(err, dbops.ErrAccountNameReserved):
+		return "names ending in _mysqladmin or _pgadmin are phpMyAdmin and Adminer sign-in accounts"
+	case errors.Is(err, dbops.ErrAccountNameTaken):
+		return "a database user of this name already exists on this server"
+	case errors.Is(err, dbops.ErrAccountNotOwned):
+		return "a database user of this name belongs to another account on this server"
+	}
+	return "checking the name failed: " + err.Error()
 }
 
 // dbRestoreNameRe mirrors the agent's db.restore validation
@@ -285,6 +310,14 @@ func ImportDatabases(
 		// the DB and GRANT ALL. Failure records a warning but never
 		// rolls back the already-restored DB.
 		if dbUsersRepo != nil && dbGrantsRepo != nil {
+			// A database account is server-wide: the name must be free in
+			// every panel user's rows, and on the engine (create_only).
+			if accErr := dbops.CheckNewAccount(ctx, dbUsersRepo, "mariadb", finalName); accErr != nil {
+				res.Skipped = append(res.Skipped, fmt.Sprintf(
+					"%s: database user not created: %s; create one in the panel and set it in the app's config",
+					finalName, accountRefusal(accErr)))
+				continue
+			}
 			plainPwd := ids.NewULID()
 			hash, hashErr := bcrypt.GenerateFromPassword([]byte(plainPwd), bcrypt.DefaultCost)
 			if hashErr != nil {
@@ -294,6 +327,7 @@ func ImportDatabases(
 				_, userErr := agentClient.Call(userCtx, "db_user.create", map[string]any{
 					"db_user_name": finalName,
 					"password":     plainPwd,
+					"create_only":  true,
 				})
 				userCancel()
 				if userErr != nil {
@@ -430,12 +464,34 @@ func ImportDatabases(
 				res.Skipped = append(res.Skipped, fmt.Sprintf("compat_user %s: skipped — unsupported hash format", u.Name))
 				continue
 			}
+			// The name and hash come from the archive. The hash path sets the
+			// password of an account that exists, so it may only reach an
+			// account whose sole row is the target's (the panel-managed user
+			// this import made, GH #633); any other name is created only if
+			// the server has no such account.
+			if dbUsersRepo == nil {
+				res.Skipped = append(res.Skipped, fmt.Sprintf("compat_user %s: not recreated: the database user checks are not wired", u.Name))
+				continue
+			}
+			existing, accErr := dbops.ImportedAccount(ctx, dbUsersRepo, "mariadb", u.Name, targetUserID)
+			if accErr != nil {
+				res.Skipped = append(res.Skipped, fmt.Sprintf("compat_user %s: not recreated: %s", u.Name, accountRefusal(accErr)))
+				continue
+			}
+			ucParams := map[string]any{"db_user_name": u.Name, "password_hash": u.Hash}
+			if !existing {
+				ucParams["create_only"] = true
+			}
 			ucCtx, ucCancel := context.WithTimeout(ctx, 30*time.Second)
-			_, ucErr := agentClient.Call(ucCtx, "db_user.create", map[string]any{
-				"db_user_name":  u.Name,
-				"password_hash": u.Hash,
-			})
+			_, ucErr := agentClient.Call(ucCtx, "db_user.create", ucParams)
 			ucCancel()
+			var ae *agent.AgentError
+			if errors.As(ucErr, &ae) && ae.Code == agent.CodeAlreadyExists {
+				res.Skipped = append(res.Skipped, fmt.Sprintf(
+					"compat_user %s: not recreated: a MariaDB account of this name already exists and no database user of this account names it; if an earlier run of this import made it, drop it in MariaDB and run the import again",
+					u.Name))
+				continue
+			}
 			if ucErr != nil {
 				res.Skipped = append(res.Skipped, fmt.Sprintf("compat_user %s: db_user.create: %v", u.Name, ucErr))
 				continue

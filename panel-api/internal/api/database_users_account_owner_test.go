@@ -213,7 +213,7 @@ type provGrants struct {
 }
 
 func (provGrants) Create(context.Context, *models.DatabaseUserGrant) error { return nil }
-func (provGrants) Delete(context.Context, string) error                   { return nil }
+func (provGrants) Delete(context.Context, string) error                    { return nil }
 
 // An app install whose login create is refused (create_only: the account
 // exists, possibly another tenant's) must not drop that login while it

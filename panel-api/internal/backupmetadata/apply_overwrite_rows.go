@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	internalbackup "git.jabali-panel.com/shukivaknin/jabali2/internal/backup"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dbops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/mailboxops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 )
@@ -109,6 +110,16 @@ func dbUserPasswordRefusal(ctx context.Context, d Deps, accountID string, row *m
 		return "the database checks are not wired"
 	case archive == nil:
 		return "this server's agent is too old to tell whether its databases hold only the uploaded backup's data; run jabali update and restore again"
+	}
+	// One account to one row, as for a password rotation: the account of a
+	// row another row shares, or of a sign-in name, keeps its password.
+	if dbops.SignInAccountName(row.Username) {
+		return "it is a phpMyAdmin or Adminer sign-in account"
+	}
+	if sole, err := dbops.SoleAccountRow(ctx, d.DatabaseUsers, engine, row.Username); err != nil {
+		return fmt.Sprintf("check its account: %v", err)
+	} else if !sole {
+		return "another database user on this server names the same account"
 	}
 	// The grants after this restore: the ones it had, and the ones added.
 	grants, err := d.DatabaseGrants.ListByDatabaseUserID(ctx, row.ID)

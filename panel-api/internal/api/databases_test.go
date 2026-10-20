@@ -146,6 +146,10 @@ func (m *mockDatabaseUserRepo) CountByEngineAndUsername(ctx context.Context, eng
 	return 0, nil
 }
 
+func (m *mockDatabaseUserRepo) OwnersByEngineAndUsername(ctx context.Context, engine, username string) ([]string, error) {
+	return nil, nil
+}
+
 type mockUserRepo struct {
 	users map[string]*models.User
 }

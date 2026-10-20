@@ -112,6 +112,15 @@ type gh723DBUserRepo struct {
 
 func (gh723DBUserRepo) Create(context.Context, *models.DatabaseUser) error { return nil }
 
+// No row names any account, so the import's name checks pass.
+func (gh723DBUserRepo) CountByEngineAndUsername(context.Context, string, string) (int64, error) {
+	return 0, nil
+}
+
+func (gh723DBUserRepo) OwnersByEngineAndUsername(context.Context, string, string) ([]string, error) {
+	return nil, nil
+}
+
 type gh723GrantRepo struct {
 	repository.DatabaseUserGrantRepository
 }

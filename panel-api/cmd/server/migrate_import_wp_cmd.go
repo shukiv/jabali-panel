@@ -129,9 +129,10 @@ func importWordPressSSH(ctx context.Context, out io.Writer,
 	}); err != nil {
 		return fail(fmt.Errorf("db.create: %w", err))
 	}
-	if _, err := sharedAgent.Call(ctx, "db_user.create", map[string]any{
-		"db_user_name": dbName, "password": pwd,
-	}); err != nil {
+	// create_only: an account of this name that already exists is not this
+	// import's to take over.
+	ucCmd, ucParams := dbUserCreateAgentCall("mariadb", dbName, pwd)
+	if _, err := sharedAgent.Call(ctx, ucCmd, ucParams); err != nil {
 		return fail(fmt.Errorf("db_user.create: %w", err))
 	}
 	if _, err := sharedAgent.Call(ctx, "db_user.grant", map[string]any{

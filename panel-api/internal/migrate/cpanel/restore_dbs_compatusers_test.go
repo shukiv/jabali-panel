@@ -33,7 +33,7 @@ func TestImportDatabases_UsesParsedCompatUsers(t *testing.T) {
 			// No cpmove mysql.sql on disk — the ONLY source of compat users is
 			// parsed.CompatUsers (the Hestia adapter path).
 			parsed := &ParsedTarball{ExtractDir: t.TempDir(), SourceUser: "alice", CompatUsers: compat}
-			if _, err := ImportDatabases(context.Background(), &nopDBRepo{}, nil, nil, ag,
+			if _, err := ImportDatabases(context.Background(), &nopDBRepo{}, gh723DBUserRepo{}, nil, ag,
 				parsed, "01USERULID0000000000000000", "alice", tc.preserve); err != nil {
 				t.Fatalf("ImportDatabases: %v", err)
 			}

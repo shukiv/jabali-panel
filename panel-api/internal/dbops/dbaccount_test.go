@@ -40,3 +40,36 @@ func TestSoleAccountRow(t *testing.T) {
 		}
 	}
 }
+
+type ownerRows map[string][]string
+
+func (r ownerRows) OwnersByEngineAndUsername(_ context.Context, engine, username string) ([]string, error) {
+	return r[engine+"|"+username], nil
+}
+
+func TestImportedAccount(t *testing.T) {
+	rows := ownerRows{
+		"mariadb|alice_wp":    {"u-alice"},
+		"mariadb|bob_wp":      {"u-bob"},
+		"mariadb|alice_x_app": {"u-alice", "u-alice-x"},
+		"postgres|alice_pg":   {"u-bob"},
+	}
+	for _, c := range []struct {
+		name         string
+		wantExisting bool
+		want         error
+	}{
+		{"notary_45635", false, nil},               // no row: create only
+		{"alice_wp", true, nil},                    // alice's own sole row
+		{"bob_wp", false, ErrAccountNotOwned},      // another tenant's row
+		{"alice_x_app", false, ErrAccountNotOwned}, // two rows, one alice's
+		{"alice_pg", false, nil},                   // another engine's account
+		{"bob_mysqladmin", false, ErrAccountNameReserved},
+		{"alice_PGADMIN", false, ErrAccountNameReserved},
+	} {
+		existing, err := ImportedAccount(context.Background(), rows, "mariadb", c.name, "u-alice")
+		if existing != c.wantExisting || !errors.Is(err, c.want) {
+			t.Errorf("ImportedAccount(%q) = %v, %v; want %v, %v", c.name, existing, err, c.wantExisting, c.want)
+		}
+	}
+}
