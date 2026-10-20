@@ -2,7 +2,8 @@ package api
 
 import (
 	"context"
-	"fmt"
+	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dbops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
@@ -87,89 +89,10 @@ func parsePrivilegesFromString(s string) []string {
 	return result
 }
 
-// privilegesToCanonicalString converts a privileges slice to the canonical form:
-// ["SELECT","INSERT","UPDATE","DELETE","CREATE","DROP","ALTER","INDEX"] → "SELECT,INSERT,UPDATE,DELETE,CREATE,DROP,ALTER,INDEX"
-// ["ALL"] → "ALL"
-// Returns empty string if the slice is empty or contains only whitespace.
-func privilegesToCanonicalString(privs []string) (string, error) {
-	if len(privs) == 0 {
-		return "", nil
-	}
-
-	// Check if "ALL" is present.
-	for _, p := range privs {
-		if p == "ALL" {
-			return "ALL", nil
-		}
-	}
-
-	// Canonical order and valid tokens.
-	canonicalOrder := []string{"SELECT", "INSERT", "UPDATE", "DELETE", "CREATE", "DROP", "ALTER", "INDEX"}
-	validTokens := map[string]bool{
-		"SELECT": true,
-		"INSERT": true,
-		"UPDATE": true,
-		"DELETE": true,
-		"CREATE": true,
-		"DROP":   true,
-		"ALTER":  true,
-		"INDEX":  true,
-	}
-
-	// Validate and collect seen privileges.
-	seen := make(map[string]bool)
-	for _, p := range privs {
-		if !validTokens[p] {
-			return "", fmt.Errorf("invalid privilege: %s", p)
-		}
-		seen[p] = true
-	}
-
-	// Build canonical string in order.
-	var result []string
-	for _, canonical := range canonicalOrder {
-		if seen[canonical] {
-			result = append(result, canonical)
-		}
-	}
-
-	if len(result) == 0 {
-		return "", nil
-	}
-
-	return strings.Join(result, ","), nil
-}
-
-// CanonicalDBGrant resolves a grant's privilege inputs into the stored
-// canonical privilege string + the computed grant_level, applying the same
-// validation the REST handler and the operator CLI both use (JAB-284) so the
-// two adapters can never drift. Exactly one of an explicit privileges list or a
-// rw/ro level must be supplied: rw = ALL, ro = SELECT; a custom list that is
-// not exactly ALL/SELECT stores with level "custom".
+// CanonicalDBGrant is dbops.CanonicalDBGrant: the REST handler, the CLI and
+// the migration import resolve a grant's privileges in one place (JAB-284).
 func CanonicalDBGrant(privileges []string, level string) (canonical, computedLevel string, err error) {
-	switch {
-	case len(privileges) > 0:
-		canonical, err = privilegesToCanonicalString(privileges)
-		if err != nil {
-			return "", "", err
-		}
-	case level == "rw":
-		canonical = "ALL"
-	case level == "ro":
-		canonical = "SELECT"
-	case level != "":
-		return "", "", fmt.Errorf("grant_level must be 'rw' or 'ro' (got %q)", level)
-	default:
-		return "", "", fmt.Errorf("either privileges or grant_level must be provided")
-	}
-	computedLevel = "custom"
-	switch canonical {
-	case "ALL":
-		computedLevel = "rw"
-	case "SELECT":
-		computedLevel = "ro"
-	}
-	return canonical, computedLevel, nil
+	return dbops.CanonicalDBGrant(privileges, level)
 }
 
 // coerceEngineGrant collapses a PostgreSQL grant to full access (rw/ALL)
@@ -534,20 +457,44 @@ func (h *databaseUserHandler) create(c *gin.Context) {
 		}
 	}
 
+	// The account is server-wide: refuse a name another tenant's row (or a
+	// phpMyAdmin/Adminer sign-in account) already has, not only this user's.
+	if err := dbops.CheckNewAccount(ctx, h.cfg.DatabaseUsers, engine, finalUsername); err != nil {
+		switch {
+		case errors.Is(err, dbops.ErrAccountNameReserved):
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_username", "detail": "names ending in _mysqladmin or _pgadmin are reserved for phpMyAdmin and Adminer sign-in"})
+		case errors.Is(err, dbops.ErrAccountNameTaken):
+			c.JSON(http.StatusConflict, gin.H{"error": "username_exists"})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		}
+		return
+	}
+
+	// create_only: the agent refuses an account that already exists on the
+	// engine instead of taking it over (CREATE USER IF NOT EXISTS would leave
+	// it as it is and give this user a row for it).
 	agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	if engine == "mariadb" {
 		_, err = h.cfg.Agent.Call(agentCtx, "db_user.create", map[string]any{
 			"db_user_name": finalUsername,
 			"password":     plainPassword,
+			"create_only":  true,
 		})
 	} else {
 		_, err = h.cfg.Agent.Call(agentCtx, "db.postgres.create_role", map[string]any{
-			"role":     finalUsername,
-			"password": plainPassword,
+			"role":        finalUsername,
+			"password":    plainPassword,
+			"create_only": true,
 		})
 	}
 	if err != nil {
+		var ae *agent.AgentError
+		if errors.As(err, &ae) && ae.Code == agent.CodeAlreadyExists {
+			c.JSON(http.StatusConflict, gin.H{"error": "username_exists"})
+			return
+		}
 		respondAgentErr(c, "agent_failed", err)
 		return
 	}
@@ -848,14 +795,26 @@ func (h *databaseUserHandler) delete(c *gin.Context) {
 		}
 	}
 
-	// Drop user from the engine it lives on.
-	agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-
-	_, err = h.cfg.Agent.Call(agentCtx, dbUserCmd(du.Engine, "drop"), dbUserDropParams(du.Engine, du.Username))
+	// Drop user from the engine it lives on — only when this row alone names
+	// the account. Another row for the same account, or a sign-in account's
+	// name, means the account may be someone else's: delete the row only.
+	sole, err := dbops.SoleAccountRow(ctx, h.cfg.DatabaseUsers, du.Engine, du.Username)
 	if err != nil {
-		respondAgentErr(c, "agent_failed", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
+	}
+	if sole {
+		agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+
+		_, err = h.cfg.Agent.Call(agentCtx, dbUserCmd(du.Engine, "drop"), dbUserDropParams(du.Engine, du.Username))
+		if err != nil {
+			respondAgentErr(c, "agent_failed", err)
+			return
+		}
+	} else {
+		slog.WarnContext(ctx, "database user delete: account not solely this row's — row deleted, account kept",
+			"database_user_id", du.ID, "db_user_name", du.Username, "engine", du.Engine)
 	}
 
 	// Delete grants and user in transaction
@@ -915,6 +874,18 @@ func (h *databaseUserHandler) rotatePassword(c *gin.Context) {
 	// Check authorization
 	if !claims.IsAdmin && du.UserID != claims.UserID {
 		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		return
+	}
+
+	// A row that does not alone name its account must not set the
+	// account's password: the account may be another tenant's.
+	sole, err := dbops.SoleAccountRow(ctx, h.cfg.DatabaseUsers, du.Engine, du.Username)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	if !sole {
+		c.JSON(http.StatusConflict, gin.H{"error": "account_shared", "detail": "another database user has this name; an administrator has to resolve it"})
 		return
 	}
 

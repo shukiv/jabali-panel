@@ -82,6 +82,15 @@ func (r *maDBUsers) Delete(_ context.Context, id string) error {
 	delete(r.rows, id)
 	return nil
 }
+func (r *maDBUsers) CountByEngineAndUsername(_ context.Context, engine, username string) (int64, error) {
+	var n int64
+	for _, u := range r.rows {
+		if dbEngine(u.Engine) == engine && u.Username == username {
+			n++
+		}
+	}
+	return n, nil
+}
 
 type maGrants struct {
 	repository.DatabaseUserGrantRepository

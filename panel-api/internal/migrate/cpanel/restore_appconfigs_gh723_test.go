@@ -112,11 +112,23 @@ type gh723DBUserRepo struct {
 
 func (gh723DBUserRepo) Create(context.Context, *models.DatabaseUser) error { return nil }
 
+// No row names any account, so the import's name checks pass.
+func (gh723DBUserRepo) CountByEngineAndUsername(context.Context, string, string) (int64, error) {
+	return 0, nil
+}
+
+func (gh723DBUserRepo) ListByEngineAndUsername(context.Context, string, string) ([]models.DatabaseUser, error) {
+	return nil, nil
+}
+
 type gh723GrantRepo struct {
 	repository.DatabaseUserGrantRepository
 }
 
 func (gh723GrantRepo) Create(context.Context, *models.DatabaseUserGrant) error { return nil }
+func (gh723GrantRepo) FindByDBAndDBUser(context.Context, string, string) (*models.DatabaseUserGrant, error) {
+	return nil, repository.ErrNotFound
+}
 
 // TestGH723_ImportDatabases_CredentialsKeyedBySourceName guards the fix at the
 // seam that actually had the bug: ImportDatabases must key res.Credentials by

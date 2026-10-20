@@ -56,7 +56,7 @@ func TestImportDatabases_CompatUsersInertByDefault(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ag := &recordingAgent{}
 			parsed := &ParsedTarball{ExtractDir: extract, SourceUser: "alice"} // no MySQLDumps
-			if _, err := ImportDatabases(context.Background(), &nopDBRepo{}, nil, nil, ag,
+			if _, err := ImportDatabases(context.Background(), &nopDBRepo{}, gh723DBUserRepo{}, nil, ag,
 				parsed, "01USERULID0000000000000000", "alice", tc.preserve); err != nil {
 				t.Fatalf("ImportDatabases: %v", err)
 			}

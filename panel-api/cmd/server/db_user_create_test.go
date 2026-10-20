@@ -34,6 +34,14 @@ type fakeCreateDBUsers struct {
 	exists     bool
 	failCreate bool
 	created    *models.DatabaseUser
+	taken      map[string]bool // "<engine>|<username>" another tenant's row has
+}
+
+func (f *fakeCreateDBUsers) CountByEngineAndUsername(_ context.Context, engine, username string) (int64, error) {
+	if f.taken[engine+"|"+username] {
+		return 1, nil
+	}
+	return 0, nil
 }
 
 func (f *fakeCreateDBUsers) ExistsByUserAndUsername(_ context.Context, _, _ string) (bool, error) {
@@ -165,3 +173,29 @@ func (s okServerSettings) Get(_ context.Context) (*models.ServerSettings, error)
 }
 
 func (f *fakeCreateDBUsers) UpdateUsername(context.Context, string, string) error { return nil }
+
+// A database account is server-wide: alice asking for "x_app" names tenant
+// alice_x's alice_x_app. The CLI refuses it before any engine call, and asks
+// the agent not to take over an existing account.
+func TestDBUserCreate_RefusesAnotherTenantsAccount(t *testing.T) {
+	ag := &recCreateAgent{}
+	dbu := &fakeCreateDBUsers{taken: map[string]bool{"mariadb|alice_x_app": true}}
+	if _, _, err := dbUserCreate(context.Background(), createDeps(ag, dbu, fakeCreatePackages{}),
+		dbUserCreateInput{panelUser: packagedUser(), name: "x_app"}); err == nil {
+		t.Fatal("expected a refusal for a name another tenant's row has")
+	}
+	if _, _, err := dbUserCreate(context.Background(), createDeps(ag, dbu, fakeCreatePackages{}),
+		dbUserCreateInput{panelUser: packagedUser(), name: "x_mysqladmin"}); err == nil {
+		t.Fatal("expected a refusal for a sign-in account name")
+	}
+	if len(ag.calls) != 0 {
+		t.Fatalf("no engine call may be made, got %v", ag.calls)
+	}
+	if _, _, err := dbUserCreate(context.Background(), createDeps(ag, dbu, fakeCreatePackages{}),
+		dbUserCreateInput{panelUser: packagedUser(), name: "app"}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if len(ag.params) != 1 || ag.params[0]["create_only"] != true {
+		t.Fatalf("want create_only on db_user.create, got %v", ag.params)
+	}
+}

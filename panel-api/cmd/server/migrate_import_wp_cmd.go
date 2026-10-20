@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/crypto/bcrypt"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate"
@@ -129,9 +130,10 @@ func importWordPressSSH(ctx context.Context, out io.Writer,
 	}); err != nil {
 		return fail(fmt.Errorf("db.create: %w", err))
 	}
-	if _, err := sharedAgent.Call(ctx, "db_user.create", map[string]any{
-		"db_user_name": dbName, "password": pwd,
-	}); err != nil {
+	// create_only: an account of this name that already exists is not this
+	// import's to take over.
+	ucCmd, ucParams := dbUserCreateAgentCall("mariadb", dbName, pwd)
+	if _, err := sharedAgent.Call(ctx, ucCmd, ucParams); err != nil {
 		return fail(fmt.Errorf("db_user.create: %w", err))
 	}
 	if _, err := sharedAgent.Call(ctx, "db_user.grant", map[string]any{
@@ -158,7 +160,16 @@ func importWordPressSSH(ctx context.Context, out io.Writer,
 		Engine: "mariadb", Charset: "utf8mb4", Collation: "utf8mb4_unicode_ci",
 		CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
 	}
-	_ = repository.NewDatabaseRepository(sharedDB).Create(ctx, dbRow)
+	dbRowID := dbRow.ID
+	if err := repository.NewDatabaseRepository(sharedDB).Create(ctx, dbRow); err != nil {
+		dbRowID = ""
+	}
+	// The database user too: the panel then shows it, can rotate its password
+	// and drops it with the account.
+	if err := recordWPMigDBUser(ctx, repository.NewDatabaseUserRepository(sharedDB), repository.NewDatabaseUserGrantRepository(sharedDB),
+		targetUserID, dbRowID, dbName, pwd); err != nil {
+		pf("  ! database user %s is not shown in the panel: %v\n", dbName, err)
+	}
 	// GH #670: link the migrated app to the DB it created.
 	if installID != "" {
 		_ = sharedDB.WithContext(ctx).Model(&models.ApplicationInstall{}).
@@ -262,6 +273,28 @@ func importWordPressSSH(ctx context.Context, out io.Writer,
 	_ = os.Remove(filepath.Join(migrate.SecretsDir, job.ID+".env"))
 	pf("  \u2713 imported into %s (DB %s).\n", docroot, dbName)
 	return nil
+}
+
+// recordWPMigDBUser records the import's database user as one of ownerID's,
+// with its grant on the database row dbID ("" when that row was not written).
+func recordWPMigDBUser(ctx context.Context, users repository.DatabaseUserRepository, grants repository.DatabaseUserGrantRepository,
+	ownerID, dbID, name, pwd string) error {
+	hash, err := bcrypt.GenerateFromPassword([]byte(pwd), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("bcrypt: %w", err)
+	}
+	now := time.Now().UTC()
+	du := &models.DatabaseUser{ID: ids.NewULID(), UserID: ownerID, Username: name, Engine: "mariadb", PasswordHash: string(hash), CreatedAt: now, UpdatedAt: now}
+	if err := users.Create(ctx, du); err != nil {
+		return err
+	}
+	if dbID == "" {
+		return nil
+	}
+	return grants.Create(ctx, &models.DatabaseUserGrant{
+		ID: ids.NewULID(), DatabaseID: dbID, DatabaseUserID: du.ID,
+		GrantLevel: "rw", Privileges: "ALL", CreatedAt: now, UpdatedAt: now,
+	})
 }
 
 // wpMigDBName builds a valid Jabali DB name (^[a-z][a-z0-9_]{1,29}$) from the OS

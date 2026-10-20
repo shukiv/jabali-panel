@@ -2,6 +2,7 @@ package cpanel
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"regexp"
@@ -11,6 +12,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dbops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
@@ -80,6 +82,130 @@ func (c DBCredential) preservesUser(configUser string) bool {
 		return false
 	}
 	return c.PreservedUsers[configUser]
+}
+
+// writable reports whether c has credentials to write into an app config
+// whose DB user is configUser: a password, or that user kept as a preserved
+// compat user. A resume seeds an entry with no password for the compat pass;
+// when that pass recreated none of the config's users, the config is left as
+// it is rather than given an empty password.
+func (c DBCredential) writable(configUser string) bool {
+	return c.Password != "" || c.preservesUser(configUser)
+}
+
+// importDBIDs returns the ids of the MariaDB database rows this import holds:
+// the ones it restored (restored, name to id) and, on a resume, the ones an
+// earlier run restored (resumed names).
+func importDBIDs(ctx context.Context, dbsRepo repository.DatabaseRepository, ownerID string,
+	restored map[string]string, resumed map[string]bool) (map[string]bool, error) {
+	held := map[string]bool{}
+	for _, id := range restored {
+		if id != "" {
+			held[id] = true
+		}
+	}
+	if len(resumed) == 0 {
+		return held, nil
+	}
+	dbs, _, err := dbsRepo.ListByUserID(ctx, ownerID, repository.ListOptions{Limit: 10000})
+	if err != nil {
+		return nil, err
+	}
+	for i := range dbs {
+		if dbs[i].Engine == "mariadb" && resumed[dbs[i].Name] {
+			held[dbs[i].ID] = true
+		}
+	}
+	return held, nil
+}
+
+// compatPasswordRefusal says why the archive's hash may not be set on row, an
+// existing account whose sole row is the target's, or "". As for a backup
+// overwrite, every grant the account has must be on a database this import
+// holds (held, from importDBIDs): an account that can open any other
+// database keeps its password.
+func compatPasswordRefusal(ctx context.Context, grantsRepo repository.DatabaseUserGrantRepository,
+	row *models.DatabaseUser, held map[string]bool, heldErr error) string {
+	switch {
+	case grantsRepo == nil:
+		return "the grant records are not wired"
+	case heldErr != nil:
+		return fmt.Sprintf("look up this import's databases: %v", heldErr)
+	}
+	grants, err := grantsRepo.ListByDatabaseUserID(ctx, row.ID)
+	if err != nil {
+		return fmt.Sprintf("list its grants: %v", err)
+	}
+	if len(grants) == 0 {
+		return "it is one of this account's database users and can open no database this import restored"
+	}
+	for _, g := range grants {
+		if !held[g.DatabaseID] {
+			return "it is one of this account's database users and can open a database this import did not restore"
+		}
+	}
+	return ""
+}
+
+// recordImportedGrant records a grant the import made on database dbName as a
+// database_user_grants row, so the panel shows it. A grant already recorded
+// (the user this import made for that database, or an earlier run's) is left
+// as it is. It returns why the row could not be written, or "".
+func recordImportedGrant(ctx context.Context, dbsRepo repository.DatabaseRepository, grantsRepo repository.DatabaseUserGrantRepository,
+	dbIDs map[string]string, ownerID, dbName, dbUserID string, privs []string) string {
+	if grantsRepo == nil {
+		return "the grant records are not wired"
+	}
+	dbID, ok := dbIDs[dbName]
+	if !ok {
+		// A database an earlier run restored (resume): look up its row. Only
+		// a MariaDB one: a PostgreSQL database may have the same name.
+		dbs, _, err := dbsRepo.ListByUserID(ctx, ownerID, repository.ListOptions{Limit: 10000})
+		if err != nil {
+			return fmt.Sprintf("look up its database: %v", err)
+		}
+		for i := range dbs {
+			if _, have := dbIDs[dbs[i].Name]; !have && dbs[i].Engine == "mariadb" {
+				dbIDs[dbs[i].Name] = dbs[i].ID
+			}
+		}
+		dbID = dbIDs[dbName]
+		dbIDs[dbName] = dbID // "" remembers a miss
+	}
+	if dbID == "" {
+		return "its database has no row"
+	}
+	canonical, level, err := dbops.CanonicalDBGrant(privs, "")
+	if err != nil {
+		return err.Error()
+	}
+	if _, err := grantsRepo.FindByDBAndDBUser(ctx, dbID, dbUserID); err == nil {
+		return ""
+	} else if !errors.Is(err, repository.ErrNotFound) {
+		return fmt.Sprintf("look up its grant: %v", err)
+	}
+	now := time.Now().UTC()
+	if err := grantsRepo.Create(ctx, &models.DatabaseUserGrant{
+		ID: ids.NewULID(), DatabaseID: dbID, DatabaseUserID: dbUserID,
+		GrantLevel: level, Privileges: canonical, CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		return err.Error()
+	}
+	return ""
+}
+
+// accountRefusal is the report's reason for a database account name an
+// import may not use.
+func accountRefusal(err error) string {
+	switch {
+	case errors.Is(err, dbops.ErrAccountNameReserved):
+		return "names ending in _mysqladmin or _pgadmin are phpMyAdmin and Adminer sign-in accounts"
+	case errors.Is(err, dbops.ErrAccountNameTaken):
+		return "a database user of this name already exists on this server"
+	case errors.Is(err, dbops.ErrAccountNotOwned):
+		return "a database user of this name belongs to another account on this server"
+	}
+	return "checking the name failed: " + err.Error()
 }
 
 // dbRestoreNameRe mirrors the agent's db.restore validation
@@ -152,6 +278,10 @@ func ImportDatabases(
 	// compat-user path, fix for the "migrated app sees Access denied"
 	// scar).
 	sourceToFinalDB := map[string]string{}
+	// Destination database name → its row id, for the compat users' grant rows.
+	finalDBIDs := map[string]string{}
+	// Destination databases an earlier run restored (resume).
+	resumedDBs := map[string]bool{}
 	for _, dumpPath := range parsed.MySQLDumps {
 		finalName, base, ok := deriveDestDBName(dumpPath, targetUsername)
 		if !ok {
@@ -171,6 +301,7 @@ func ImportDatabases(
 		}
 		if exists {
 			res.AlreadyPresent++
+			resumedDBs[finalName] = true
 			res.Skipped = append(res.Skipped, fmt.Sprintf(
 				"%s: %q verified existing — left in place, not re-imported", dumpPath, finalName))
 			// GH #723 resume gap: this DB was imported by an earlier run, so we
@@ -280,11 +411,28 @@ func ImportDatabases(
 			continue
 		}
 		res.Created++
+		finalDBIDs[finalName] = row.ID
+		// A credential with no password until this database's user is made.
+		// It keeps the key, so a config naming this database is left as it is
+		// (writable) when no user can be made, rather than taking the only
+		// other database's credential (the rewriters' single-entry fallback).
+		if res.Credentials == nil {
+			res.Credentials = map[string]DBCredential{}
+		}
+		res.Credentials[base] = DBCredential{DBName: finalName}
 
 		// Best-effort: create a MariaDB user with the same name as
 		// the DB and GRANT ALL. Failure records a warning but never
 		// rolls back the already-restored DB.
 		if dbUsersRepo != nil && dbGrantsRepo != nil {
+			// A database account is server-wide: the name must be free in
+			// every panel user's rows, and on the engine (create_only).
+			if accErr := dbops.CheckNewAccount(ctx, dbUsersRepo, "mariadb", finalName); accErr != nil {
+				res.Skipped = append(res.Skipped, fmt.Sprintf(
+					"%s: database user not created: %s; create one in the panel and set it in the app's config",
+					finalName, accountRefusal(accErr)))
+				continue
+			}
 			plainPwd := ids.NewULID()
 			hash, hashErr := bcrypt.GenerateFromPassword([]byte(plainPwd), bcrypt.DefaultCost)
 			if hashErr != nil {
@@ -294,6 +442,7 @@ func ImportDatabases(
 				_, userErr := agentClient.Call(userCtx, "db_user.create", map[string]any{
 					"db_user_name": finalName,
 					"password":     plainPwd,
+					"create_only":  true,
 				})
 				userCancel()
 				if userErr != nil {
@@ -425,20 +574,68 @@ func ImportDatabases(
 			len(compatUsers)))
 	} else if len(compatUsers) > 0 {
 		compatCreated := 0
+		// The database rows this import holds, taken before the grant rows
+		// below look up others.
+		heldDBs, heldErr := importDBIDs(ctx, dbsRepo, targetUserID, finalDBIDs, resumedDBs)
 		for _, u := range compatUsers {
 			if !IsNativePasswordHash(u.Hash) {
 				res.Skipped = append(res.Skipped, fmt.Sprintf("compat_user %s: skipped — unsupported hash format", u.Name))
 				continue
 			}
+			// The name and hash come from the archive. The hash path sets the
+			// password of an account that exists, so it may only reach an
+			// account whose sole row is the target's (the panel-managed user
+			// this import made, GH #633) and that can open only databases this
+			// import holds; any other name is created only if the server has
+			// no such account.
+			if dbUsersRepo == nil {
+				res.Skipped = append(res.Skipped, fmt.Sprintf("compat_user %s: not recreated: the database user checks are not wired", u.Name))
+				continue
+			}
+			duRow, accErr := dbops.ImportedAccount(ctx, dbUsersRepo, "mariadb", u.Name, targetUserID)
+			if accErr != nil {
+				res.Skipped = append(res.Skipped, fmt.Sprintf("compat_user %s: not recreated: %s", u.Name, accountRefusal(accErr)))
+				continue
+			}
+			if duRow != nil {
+				if why := compatPasswordRefusal(ctx, dbGrantsRepo, duRow, heldDBs, heldErr); why != "" {
+					res.Skipped = append(res.Skipped, fmt.Sprintf("compat_user %s: not recreated: %s; its password is kept", u.Name, why))
+					continue
+				}
+			}
+			ucParams := map[string]any{"db_user_name": u.Name, "password_hash": u.Hash}
+			if duRow == nil {
+				ucParams["create_only"] = true
+			}
 			ucCtx, ucCancel := context.WithTimeout(ctx, 30*time.Second)
-			_, ucErr := agentClient.Call(ucCtx, "db_user.create", map[string]any{
-				"db_user_name":  u.Name,
-				"password_hash": u.Hash,
-			})
+			_, ucErr := agentClient.Call(ucCtx, "db_user.create", ucParams)
 			ucCancel()
+			var ae *agent.AgentError
+			if errors.As(ucErr, &ae) && ae.Code == agent.CodeAlreadyExists {
+				res.Skipped = append(res.Skipped, fmt.Sprintf(
+					"compat_user %s: not recreated: a MariaDB account of this name already exists and is not one of this account's database users; if an import made it before imports kept a database user for it, drop it in MariaDB and run the import again",
+					u.Name))
+				continue
+			}
 			if ucErr != nil {
 				res.Skipped = append(res.Skipped, fmt.Sprintf("compat_user %s: db_user.create: %v", u.Name, ucErr))
 				continue
+			}
+			if duRow == nil {
+				// The account is new: it becomes one of the target's database
+				// users, so the panel shows it, can rotate its password, and
+				// drops it with the account. The panel never knew its password
+				// (only the source's hash), so the row's hash is empty.
+				now := time.Now().UTC()
+				duRow = &models.DatabaseUser{ID: ids.NewULID(), UserID: targetUserID, Username: u.Name, Engine: "mariadb", CreatedAt: now, UpdatedAt: now}
+				if rowErr := dbUsersRepo.Create(ctx, duRow); rowErr != nil {
+					// JAB-57: no login without a row. This call made it.
+					dropCtx, dropCancel := context.WithTimeout(ctx, 30*time.Second)
+					_, _ = agentClient.Call(dropCtx, "db_user.drop", map[string]any{"db_user_name": u.Name})
+					dropCancel()
+					res.Skipped = append(res.Skipped, fmt.Sprintf("compat_user %s: database_users row failed; MariaDB user rolled back: %v", u.Name, rowErr))
+					continue
+				}
 			}
 			// JAB-207 / GH #723. This compat user was created with the source's
 			// native password hash. db_user.create runs an unconditional ALTER
@@ -483,6 +680,10 @@ func ImportDatabases(
 					continue
 				}
 				grantedDBs++
+				if why := recordImportedGrant(ctx, dbsRepo, dbGrantsRepo, finalDBIDs, targetUserID, finalDB, duRow.ID, privs); why != "" {
+					res.Skipped = append(res.Skipped, fmt.Sprintf(
+						"compat_user %s: the grant on %s is not shown in the panel: %s", u.Name, finalDB, why))
+				}
 				// The recreated user now has both the source password hash and a
 				// grant on this DB's namespaced destination — so an app config
 				// pointing at (this DB, this user) keeps its original credentials.

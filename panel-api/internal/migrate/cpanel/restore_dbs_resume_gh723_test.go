@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
@@ -18,12 +19,20 @@ func (gh723ResumeDBRepo) ExistsByUserAndName(context.Context, string, string) (b
 	return true, nil
 }
 
+// ListByUserID returns the database the earlier run restored.
+func (gh723ResumeDBRepo) ListByUserID(_ context.Context, userID string, _ repository.ListOptions) ([]models.Database, int64, error) {
+	return []models.Database{{ID: "db-resumed", UserID: userID, Name: "sewickley_45635", Engine: "mariadb"}}, 1, nil
+}
+
 // GH #723 resume gap: an earlier run imported the DB but died before the
 // app-config rewrite. On resume the DB is AlreadyPresent → the dump loop skips
 // it → without a credential the rewriter no-ops and the config keeps the dead
 // source DB name. Under --preserve-source-state the resume must still seed the
 // namespaced credential so the compat pass keeps the source creds and the
-// config is namespaced.
+// config is namespaced. recordingAgent creates any account; the real agent
+// refuses (create_only) a source user that already exists with no row, as one
+// the earlier run made under another name does: see
+// TestImportDatabases_ResumeRefusedCompatUserLeavesConfig.
 func TestGH723_Resume_PreserveOn_RecoversCredential(t *testing.T) {
 	extract := t.TempDir()
 	if err := os.WriteFile(filepath.Join(extract, "notary_45635.mysql.sql"), []byte("-- dump\n"), 0o644); err != nil {

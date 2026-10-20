@@ -333,6 +333,37 @@ func TestApply_OverwriteKeepsADatabaseUsersPassword(t *testing.T) {
 	}
 }
 
+// The account set is this server's row's, whatever name the file gives it.
+// When another account's row names that same account (made before names were
+// unique on the server), the file's author would get that account's login:
+// it keeps its password.
+func TestApply_OverwriteKeepsASharedAccountsPassword(t *testing.T) {
+	f := newMAFixture()
+	owrExistingDBUser(f, "alice_live", "mariadb")
+	f.users.rows["du-x"] = &models.DatabaseUser{ID: "du-x", UserID: "u2", Username: "alice_live", Engine: "mariadb", PasswordHash: owrHere}
+	o := owrDBApply(f, owrBackupDBUser(maHash), true, "alice_wp")
+	if calls := o.passwordCalls(); len(calls) != 0 || len(o.users.hashes) != 0 {
+		t.Fatalf("password calls %+v hashes %v, want the password kept", calls, o.users.hashes)
+	}
+	if !strings.Contains(strings.Join(o.result.Errors, "|"), "db_user du1 (alice_live): kept its password: another database user on this server names the same account") {
+		t.Fatalf("errors %v", o.result.Errors)
+	}
+}
+
+// A row named like a phpMyAdmin sign-in account never takes a password from a
+// file: that login opens every database of its account.
+func TestApply_OverwriteKeepsASignInAccountsPassword(t *testing.T) {
+	f := newMAFixture()
+	owrExistingDBUser(f, "alice_mysqladmin", "mariadb")
+	o := owrDBApply(f, owrBackupDBUser(maHash), true, "alice_wp")
+	if calls := o.passwordCalls(); len(calls) != 0 || len(o.users.hashes) != 0 {
+		t.Fatalf("password calls %+v hashes %v, want the password kept", calls, o.users.hashes)
+	}
+	if !strings.Contains(strings.Join(o.result.Errors, "|"), "db_user du1 (alice_mysqladmin): kept its password: it is a phpMyAdmin or Adminer sign-in account") {
+		t.Fatalf("errors %v", o.result.Errors)
+	}
+}
+
 // The panel row follows MariaDB: when the agent can't set the password, the
 // row keeps the old one.
 func TestApply_OverwriteKeepsThePanelHashWhenMariaDBRefuses(t *testing.T) {

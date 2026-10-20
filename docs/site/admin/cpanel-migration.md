@@ -18,7 +18,7 @@ For server-wide migration, produce a separate cpmove per account or feed a WHM-l
 | Subdomains | Created as Domain rows (or aliases, per heuristic on the cPanel `addon_domains` map). |
 | DNS zones | Translated to PowerDNS schema rows. |
 | MySQL databases | Restored via `mysql` against panel-managed MariaDB. |
-| **MySQL users + bcrypt password hashes** | **Preserved** — the panel stores the bcrypt hash directly so migrated apps keep authenticating without password reset. See commit `be788a87`. |
+| MySQL users | Each restored database gets its own database user, `<user>_<database>`, with a new password, and WordPress, Joomla, Drupal, Magento and ITFlow configs are pointed at it. With **Carry over source passwords** on (`--preserve-source-state` on the CLI), the source's MySQL users are also recreated with their original password hash and their grants on the restored databases, so app configs keep their credentials. They become database users of the account: the panel shows them, can change their passwords, and removes them with the account. The import never takes over a MariaDB account that already exists on this server, other than one it made for this account: such a database gets no user of its own, such a source user is not recreated, and the migration report lists each one. |
 | Email accounts | Created in Stalwart. Cleartext passwords are not preserved (cPanel uses Dovecot/CRAM-MD5 which Stalwart's Argon2id store rejects); generated passwords are printed in the migration report for out-of-band delivery. |
 | DKIM keys | Imported as-is so mail flow is uninterrupted. |
 | Mailing lists | Not migrated — Mailman is not currently in the panel; the affected accounts surface in the migration report. |

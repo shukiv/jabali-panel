@@ -24,6 +24,7 @@ import (
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/api"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dbops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
@@ -170,11 +171,14 @@ type dbUserCreateInput struct {
 // command + param mapping the ticket flags as copied across REST, CLI, and
 // teardown. Param shapes match the REST handler (dbUserCmd/dbUserDropParams):
 // MariaDB uses db_user_name, Postgres uses role.
+//
+// create_only: the agent refuses an account that already exists on the engine
+// instead of taking it over.
 func dbUserCreateAgentCall(engine, finalName, pw string) (string, map[string]any) {
 	if engine == "postgres" {
-		return "db.postgres.create_role", map[string]any{"role": finalName, "password": pw}
+		return "db.postgres.create_role", map[string]any{"role": finalName, "password": pw, "create_only": true}
 	}
-	return "db_user.create", map[string]any{"db_user_name": finalName, "password": pw}
+	return "db_user.create", map[string]any{"db_user_name": finalName, "password": pw, "create_only": true}
 }
 
 func dbUserDropAgentCall(engine, finalName string) (string, map[string]any) {
@@ -257,6 +261,12 @@ func dbUserCreate(ctx context.Context, d dbUserCreateDeps, in dbUserCreateInput)
 		}
 	}
 
+	// The account is server-wide: refuse a name another tenant's row (or a
+	// phpMyAdmin/Adminer sign-in account) already has, as REST does.
+	if err := dbops.CheckNewAccount(ctx, d.dbUsers, engine, finalName); err != nil {
+		return nil, "", fmt.Errorf("db user %q: %w", finalName, err)
+	}
+
 	pw := in.password
 	if pw == "" {
 		pw = ids.NewSecret()
@@ -319,7 +329,15 @@ func newDBUserDeleteCmd() *cobra.Command {
 			if du.Engine == "postgres" {
 				cmdName = "db.postgres.drop_role"
 			}
-			if _, err := sharedAgent.Call(ctx, cmdName, map[string]any{
+			// Only a row that alone names its account drops it; otherwise the
+			// account may be another tenant's, and only the row goes.
+			sole, err := dbops.SoleAccountRow(ctx, repo, du.Engine, du.Username)
+			if err != nil {
+				return fmt.Errorf("check account rows: %w", err)
+			}
+			if !sole {
+				fmt.Fprintf(os.Stderr, "Another database user row has the name %s (or it is a sign-in account's): deleting this row only, the account stays\n", du.Username)
+			} else if _, err := sharedAgent.Call(ctx, cmdName, map[string]any{
 				"db_user_name": du.Username,
 				"role":         du.Username, // postgres path uses "role"
 			}); err != nil {

@@ -438,9 +438,21 @@ func provisionDBChain(ctx context.Context, cfg ApplicationHandlerConfig, userID,
 		if _, acErr := cfg.Agent.Call(agentCtx, "db_user.create", map[string]any{
 			"db_user_name": dbUsername,
 			"password":     dbPassword,
+			"create_only":  true, // never take over an existing account
 		}); acErr != nil {
-			cfg.Agent.Call(ctx, "db.drop", map[string]any{"db_name": dbName})
-			rollbackDBChain(ctx, cfg, chain)
+			// No account was made here: create_only refuses one that already
+			// exists, and that one may be another tenant's. Drop only the
+			// database this call created, never the login (rollbackDBChain
+			// would), and keep the rows if the drop fails, as rollbackDBChain
+			// does.
+			if _, err := cfg.Agent.Call(ctx, "db.drop", map[string]any{"db_name": dbName}); err != nil {
+				slog.ErrorContext(ctx, "app install rollback: db.drop failed — keeping the panel rows so the database stays visible instead of becoming an orphan",
+					"err", err, "db_name", dbName)
+			} else {
+				cfg.DatabaseGrants.Delete(ctx, chain.GrantID)
+				cfg.DatabaseUsers.Delete(ctx, chain.DBUserID)
+				cfg.Databases.Delete(ctx, chain.DBID)
+			}
 			return provisionedDB{}, fmt.Errorf("agent db_user.create: %w", acErr)
 		}
 

@@ -7,7 +7,7 @@ If you are moving from DirectAdmin to Jabali, the operator handles the per-user 
 - Linux home directory.
 - Web domains and subdomains. DirectAdmin's per-subdomain document roots are translated to subdomain Domain rows (separate vhosts).
 - DNS zones (translated from DirectAdmin's BIND-style format).
-- MySQL databases and DB users. Password hashes import where the source format is one MariaDB accepts.
+- MySQL databases, each with its own database user and a new password. WordPress, Joomla, Drupal and Magento configurations are pointed at the new database and user. Your old database users and their passwords do not carry over.
 - Email accounts in Stalwart — **passwords reset** (DirectAdmin uses Exim+Dovecot password hash formats Stalwart cannot import).
 - Forwarders, autoresponders, catch-all settings.
 - Cron jobs (those passing the [Cron allowlist](./cron-jobs.md)).

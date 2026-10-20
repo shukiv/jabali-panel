@@ -340,7 +340,7 @@ func rewriteWordPress(text string, creds map[string]DBCredential) (string, bool)
 			}
 		}
 	}
-	if !ok {
+	if !ok || !cred.writable(sourceUser) {
 		return text, false
 	}
 	// GH #647: delegate the actual rewrite to the shared migrate.RewriteWPConfigDB
@@ -386,7 +386,7 @@ func rewriteJoomla(text string, creds map[string]DBCredential) (string, bool) {
 			ok = true
 		}
 	}
-	if !ok {
+	if !ok || !cred.writable(sourceUser) {
 		return text, false
 	}
 	// JAB-207 / GH #723: keep the original user + password when they were
@@ -465,7 +465,7 @@ func rewriteITFlow(text string, creds map[string]DBCredential) (string, bool) {
 			ok = true
 		}
 	}
-	if !ok {
+	if !ok || !cred.writable(sourceUser) {
 		return text, false
 	}
 	// JAB-207 / GH #723: keep the original user + password when they were
@@ -522,7 +522,7 @@ func rewriteDrupal(text string, creds map[string]DBCredential) (string, bool) {
 			ok = true
 		}
 	}
-	if !ok {
+	if !ok || !cred.writable(sourceUser) {
 		return text, false
 	}
 	// JAB-207 / GH #723: keep the original user + password when they were
@@ -582,7 +582,7 @@ func rewriteMagento(text string, creds map[string]DBCredential) (string, bool) {
 			ok = true
 		}
 	}
-	if !ok {
+	if !ok || !cred.writable(sourceUser) {
 		return text, false
 	}
 	// JAB-207 / GH #723: keep the original user + password when they were

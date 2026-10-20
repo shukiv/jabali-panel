@@ -15,6 +15,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/api"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dbops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
@@ -32,6 +33,15 @@ func newDBUserRotatePasswordCmd() *cobra.Command {
 			du, err := repo.FindByID(ctx, args[0])
 			if err != nil {
 				return fmt.Errorf("find db user: %w", err)
+			}
+			// Same rule as REST: a row that does not alone name its account
+			// never sets the account's password.
+			sole, err := dbops.SoleAccountRow(ctx, repo, du.Engine, du.Username)
+			if err != nil {
+				return fmt.Errorf("check account rows: %w", err)
+			}
+			if !sole {
+				return fmt.Errorf("db user %s: another database user row has this name, or it is a sign-in account's; not rotating", du.Username)
 			}
 			plain := ids.NewSecret()
 			hash, err := bcrypt.GenerateFromPassword([]byte(plain), bcrypt.DefaultCost)
