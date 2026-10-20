@@ -10,10 +10,11 @@ package dbshadow
 import "regexp"
 
 // PanelUsername is the panel usernames a shadow-admin is made for: a lowercase
-// letter first, then lowercase letters, digits and underscores, 1–32 chars so
-// the "_mysqladmin" suffix stays under MariaDB's 80-char user-name limit. A
-// panel username may also hold "-" or start with "_"; those get no shadow.
-var PanelUsername = regexp.MustCompile(`^[a-z][a-z0-9_]{0,31}$`)
+// letter first, then lowercase letters, digits, underscores and hyphens, 1–32
+// chars so the "_mysqladmin" suffix stays inside the agent's 64-char database
+// user rule. A panel username may also start with "_"; that one gets no
+// shadow, as the agent's database user names start with a letter.
+var PanelUsername = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
 
 // MysqladminSuffix ends every MariaDB shadow-admin user name.
 const MysqladminSuffix = "_mysqladmin"

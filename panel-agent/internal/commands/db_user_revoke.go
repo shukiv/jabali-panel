@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"regexp"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
 )
@@ -23,7 +22,7 @@ type dbUserRevokeResponse struct {
 	OK bool `json:"ok"`
 }
 
-var dbUserRevokeNameRegex = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_]{0,63}$`)
+var dbUserRevokeNameRegex = dbUserNameRegex
 
 func dbUserRevokeHandler(ctx context.Context, params json.RawMessage) (any, error) {
 	var p dbUserRevokeParams
@@ -34,8 +33,8 @@ func dbUserRevokeHandler(ctx context.Context, params json.RawMessage) (any, erro
 		}
 	}
 
-	// Validate db_name format.
-	if !dbUserRevokeNameRegex.MatchString(p.DBName) {
+	// Validate db_name format: db.create's rule, which allows "-".
+	if !dbNameRegex.MatchString(p.DBName) {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInvalidArgument,
 			Message: "invalid database name",

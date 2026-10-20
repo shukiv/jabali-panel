@@ -34,18 +34,18 @@ func TestDBUserCreateHandler(t *testing.T) {
 			wantCode:  agentwire.CodeInvalidArgument,
 		},
 		{
-			name: "invalid: contains dash",
+			name: "invalid: contains quote",
 			input: dbUserCreateParams{
-				DBUserName: "bad-user",
+				DBUserName: "bad'user",
 				Password:   "SecurePassword123!",
 			},
 			wantError: true,
 			wantCode:  agentwire.CodeInvalidArgument,
 		},
 		{
-			name: "invalid: contains dash",
+			name: "invalid: contains dot",
 			input: dbUserCreateParams{
-				DBUserName: "test-user",
+				DBUserName: "test.user",
 				Password:   "SecurePassword123!",
 			},
 			wantError: true,

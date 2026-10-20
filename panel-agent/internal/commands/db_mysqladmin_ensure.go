@@ -23,8 +23,8 @@ type dbMysqladminEnsureResponse struct {
 }
 
 // panelUsernameRegex validates panel username format. Must start with a
-// lowercase letter; letters, digits, and underscores only; 1–32 chars so
-// the "_mysqladmin" suffix stays under MariaDB's 80-char user-name limit.
+// lowercase letter; letters, digits, underscores and hyphens only; 1–32
+// chars so the "_mysqladmin" suffix stays inside dbUserNameRegex.
 // The rule lives in internal/dbshadow: the panel's user delete reads it to
 // know which shadow-admin names can exist.
 var panelUsernameRegex = dbshadow.PanelUsername

@@ -37,10 +37,12 @@ type dbUserCreateResponse struct {
 	OK bool `json:"ok"`
 }
 
-// dbUserNameRegex validates MariaDB database user name format.
-// Must start with letter, contain only letters, digits, underscores.
-// Max 63 chars to leave room for @localhost suffix.
-var dbUserNameRegex = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_]{0,63}$`)
+// dbUserNameRegex validates MariaDB database user name format, for every
+// db_user.* command. Must start with a letter, then letters, digits,
+// underscores and hyphens: a tenant's names are <panel username>_<name>, and
+// a panel username may hold "-". The name only ever reaches SQL as a quoted
+// literal (EscapeMariaDBLiteral), so "-" cannot change a statement.
+var dbUserNameRegex = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_-]{0,63}$`)
 
 func dbUserCreateHandler(ctx context.Context, params json.RawMessage) (any, error) {
 	var p dbUserCreateParams

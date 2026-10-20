@@ -23,14 +23,33 @@ func shadowDrops(a *recCascadeAgent) []string {
 	return out
 }
 
-// A panel username may hold "-", but the agent never makes a shadow-admin for
-// one and refuses to drop "<name>_mysqladmin" (db_user.drop name rule). Asking
-// it anyway failed the drop, and the cascade kept the account forever.
-func TestDeleteCascade_HyphenUsername_NoShadowDropAsked(t *testing.T) {
-	// failOn mirrors the real agent, which rejects the hyphenated name.
-	ag := &recCascadeAgent{failOn: map[string]bool{"db_user.drop": true}}
+// A panel username may hold "-", and so may its shadow-admin: the cascade
+// drops "<name>_mysqladmin" like any other.
+func TestDeleteCascade_HyphenUsername_DropsShadow(t *testing.T) {
+	ag := &recCascadeAgent{}
 	users := &fakeCascadeUsers{}
 	target := &models.User{ID: "u1", Username: strptr("claude-uitest")}
+
+	if err := DeleteCascade(context.Background(), Deps{Users: users, Agent: ag}, DeleteDeps{}, target, "test"); err != nil {
+		t.Fatalf("cascade: %v", err)
+	}
+	if got := shadowDrops(ag); len(got) != 1 || got[0] != "claude-uitest_mysqladmin" {
+		t.Errorf("drops = %v, want [claude-uitest_mysqladmin]", got)
+	}
+	if users.deleted != "u1" {
+		t.Errorf("user row should be deleted, got %q", users.deleted)
+	}
+}
+
+// A panel username may start with "_", but the agent never makes a
+// shadow-admin for one and refuses to drop "<name>_mysqladmin" (db_user.drop
+// name rule). Asking it anyway failed the drop, and the cascade kept the
+// account forever.
+func TestDeleteCascade_UnderscoreUsername_NoShadowDropAsked(t *testing.T) {
+	// failOn mirrors the real agent, which rejects the name.
+	ag := &recCascadeAgent{failOn: map[string]bool{"db_user.drop": true}}
+	users := &fakeCascadeUsers{}
+	target := &models.User{ID: "u1", Username: strptr("_svc")}
 
 	if err := DeleteCascade(context.Background(), Deps{Users: users, Agent: ag}, DeleteDeps{}, target, "test"); err != nil {
 		t.Fatalf("cascade: %v", err)
@@ -43,12 +62,13 @@ func TestDeleteCascade_HyphenUsername_NoShadowDropAsked(t *testing.T) {
 	}
 }
 
-// A rename onto a "-" username renames the shadow with it, and the agent
-// cannot drop that name. The account is kept rather than orphan the login.
-func TestDeleteCascade_RenamedHyphenShadow_KeepsAccount(t *testing.T) {
+// A rename onto a username starting with "_" renames the shadow with it, and
+// the agent cannot drop that name. The account is kept rather than orphan the
+// login.
+func TestDeleteCascade_RenamedUnderscoreShadow_KeepsAccount(t *testing.T) {
 	ag := &recCascadeAgent{}
 	users := &fakeCascadeUsers{}
-	target := &models.User{ID: "u1", Username: strptr("alice-x"), MysqladminUsername: strptr("alice-x_mysqladmin")}
+	target := &models.User{ID: "u1", Username: strptr("_svc"), MysqladminUsername: strptr("_svc_mysqladmin")}
 
 	err := DeleteCascade(context.Background(), Deps{Users: users, Agent: ag}, DeleteDeps{}, target, "test")
 	var ce *DBCleanupError

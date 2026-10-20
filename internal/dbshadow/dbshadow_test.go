@@ -10,8 +10,8 @@ func TestMysqladminUser(t *testing.T) {
 	}{
 		{"alice", "alice_mysqladmin", true},
 		{"a1_b2", "a1_b2_mysqladmin", true},
-		{"claude-uitest", "", false}, // "-" is a legal panel username, never a shadow
-		{"_svc", "", false},
+		{"claude-uitest", "claude-uitest_mysqladmin", true},
+		{"_svc", "", false}, // a legal panel username, never a shadow
 		{"Alice", "", false},
 		{"", "", false},
 		{"a234567890123456789012345678901b", "a234567890123456789012345678901b_mysqladmin", true}, // 32 chars

@@ -437,8 +437,8 @@ func DeleteCascade(ctx context.Context, d Deps, dd DeleteDeps, target *models.Us
 	// The name is derived, never read from the row: users.mysqladmin_username
 	// can arrive from an uploaded backup, and a forged one would drop another
 	// account's login. No name is asked when the agent never makes a shadow
-	// for the username (one with "-", say): db_user.drop refuses such a name,
-	// and asking it anyway kept the account from ever being deleted.
+	// for the username (one starting with "_"): db_user.drop refuses such a
+	// name, and asking it anyway kept the account from ever being deleted.
 	if d.Agent != nil && username != "" {
 		derived := username + dbshadow.MysqladminSuffix
 		stored := ""
@@ -458,9 +458,10 @@ func DeleteCascade(ctx context.Context, d Deps, dd DeleteDeps, target *models.Us
 					"user_id", id, "mysqladmin_user", derived, "err", dropErr)
 			}
 		} else if stored == derived {
-			// A rename onto a "-" username renames the shadow with it
-			// (db.rename_user allows "-"), but db_user.drop refuses that name.
-			// Keep the account rather than orphan a live login.
+			// A rename onto a username starting with "_" renames the shadow
+			// with it (db.rename_user allows a leading "_"), but db_user.drop
+			// refuses that name. Keep the account rather than orphan a live
+			// login.
 			undropped = append(undropped, derived)
 			logError(d, "cascade delete: mysqladmin shadow name the agent cannot drop — aborting so the login is not orphaned",
 				"user_id", id, "mysqladmin_user", derived)

@@ -34,9 +34,9 @@ func TestDBUserRotatePasswordHandler(t *testing.T) {
 			wantCode:  agentwire.CodeInvalidArgument,
 		},
 		{
-			name: "invalid: username contains dash",
+			name: "invalid: username contains space",
 			input: dbUserRotatePasswordParams{
-				DBUserName:  "test-user",
+				DBUserName:  "test user",
 				NewPassword: "NewSecurePassword123!",
 			},
 			wantError: true,

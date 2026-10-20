@@ -32,9 +32,9 @@ func TestDBUserDropHandler(t *testing.T) {
 			wantCode:  agentwire.CodeInvalidArgument,
 		},
 		{
-			name: "invalid: contains dash",
+			name: "invalid: contains quote",
 			input: dbUserDropParams{
-				DBUserName: "test-user",
+				DBUserName: "test'user",
 			},
 			wantError: true,
 			wantCode:  agentwire.CodeInvalidArgument,
