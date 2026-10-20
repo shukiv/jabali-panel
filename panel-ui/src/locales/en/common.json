@@ -1360,7 +1360,7 @@
   },
   "nginxsettingscard": {
     "allow_proxy_to_internal_addresses": "Allow proxy_pass to local / private addresses",
-    "allow_proxy_to_internal_addresses_tip": "Lets a domain's proxy_pass rule target localhost, 127.0.0.1 or a private-range IP (10.x, 172.16-31.x, 192.168.x). Off by default to block SSRF to internal services. Unix sockets and link-local addresses (169.254.x, cloud metadata) stay blocked.",
+    "allow_proxy_to_internal_addresses_tip": "Lets a domain's Proxy Pass rule target localhost, 127.0.0.1 or a private-range IP (10.x, 172.16-31.x, 192.168.x). Off by default, so a hijacked admin session can't publish an internal service. Unix sockets and link-local addresses (169.254.x, cloud metadata) stay blocked. Turning it off doesn't remove rules saved while it was on.",
     "cache_key_metadata_zone_8000_keys_mb": "Cache key metadata zone (~8000 keys/MB)",
     "custom_http_directives": "Custom http{} directives",
     "evict_entries_not_accessed_within_this_windo": "Evict entries not accessed within this window",
