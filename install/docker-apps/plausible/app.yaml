@@ -18,7 +18,10 @@ update_mode: manual
 resources:
   cpu: "2.0"
   memory: "2g"
-  pids: 500
+  # The limit applies to each service. ClickHouse runs about 670 threads
+  # when idle and reached 923 under parallel queries on a test host; a
+  # limit of 500 crashed it at start (exit 139).
+  pids: 2048
 
 volumes:
   - name: postgres

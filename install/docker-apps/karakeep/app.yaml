@@ -13,6 +13,9 @@ documentation: https://docs.karakeep.app
 
 image_channel: ghcr.io/karakeep-app/karakeep:0.33.2@sha256:b069e4307dec06ea06d16989c6861c30a1ff208568be44ed5fb5d422cd3e950c
 update_mode: manual
+# NEXTAUTH_URL is built from the install's domain; without one the app
+# exits on "Invalid URL".
+requires_domain: true
 
 resources:
   cpu: "1.0"

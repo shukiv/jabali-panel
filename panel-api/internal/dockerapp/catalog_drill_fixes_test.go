@@ -64,10 +64,11 @@ func TestEntry_Validate_RejectsUnknownGenerateScheme(t *testing.T) {
 
 // Each of these exited on an install without a domain: Ghost
 // ERR_INVALID_URL, PeerTube "https://undefined", Vaultwarden "empty host",
-// ZITADEL "admin@" missing its domain, InvoiceShelf "Invalid URI".
+// ZITADEL "admin@" missing its domain, InvoiceShelf "Invalid URI", Karakeep
+// NEXTAUTH_URL "Invalid URL".
 func TestCatalog_AppsThatNeedADomainSaySo(t *testing.T) {
 	cat, _ := LoadDir(repoCatalogDir(t))
-	for _, slug := range []string{"ghost", "peertube", "vaultwarden", "zitadel", "invoiceshelf"} {
+	for _, slug := range []string{"ghost", "peertube", "vaultwarden", "zitadel", "invoiceshelf", "karakeep"} {
 		e, ok := cat.Get(slug)
 		if !ok {
 			t.Errorf("%s missing from catalog", slug)
@@ -230,5 +231,52 @@ func TestPlausible_WaitsForItsDatabases(t *testing.T) {
 		if c := doc.Services["plausible"].DependsOn[db]["condition"]; c != "service_healthy" {
 			t.Errorf("plausible depends on %s with %v", db, c)
 		}
+	}
+}
+
+// The install's PIDs limit applies to each service. ClickHouse runs about 670
+// threads when idle and reached 923 under parallel queries on a test host, and
+// crashed at start (exit 139) under the old limit of 500.
+func TestPlausible_PIDsLimitFitsClickHouse(t *testing.T) {
+	const clickhousePeak = 923
+	cat, _ := LoadDir(repoCatalogDir(t))
+	e, ok := cat.Get("plausible")
+	if !ok {
+		t.Fatal("plausible missing from catalog")
+	}
+	env, err := MaterialiseEnv(e, nil)
+	if err != nil {
+		t.Fatalf("materialise: %v", err)
+	}
+	out, err := Render(e, RenderParams{
+		Slug: "plausible", Name: "drill", Domain: "drill.example.com",
+		ImageChannel: e.ImageChannel,
+		DataRoot:     "/var/lib/jabali/docker-apps/plausible",
+		Ports:        map[string]RuntimePort{"http": {HostPort: 10091, ContainerPort: 8000, BindInterface: "127.0.0.1", Protocol: "tcp"}},
+		Env:          env,
+		TenantHardening: &TenantHardening{
+			CgroupParent: "jabali-user-drill.slice",
+			PIDsLimit:    e.Resources.PIDs,
+		},
+	})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	var doc struct {
+		Services map[string]struct {
+			Deploy struct {
+				Resources struct {
+					Limits struct {
+						PIDs int `yaml:"pids"`
+					} `yaml:"limits"`
+				} `yaml:"resources"`
+			} `yaml:"deploy"`
+		} `yaml:"services"`
+	}
+	if err := yaml.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if got := doc.Services["clickhouse"].Deploy.Resources.Limits.PIDs; got < 2*clickhousePeak {
+		t.Fatalf("clickhouse pids limit %d, want at least %d (twice the measured peak)", got, 2*clickhousePeak)
 	}
 }
