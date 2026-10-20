@@ -5,13 +5,18 @@ import (
 	"encoding/json"
 	"errors"
 	"net"
+	"net/http"
+	"net/netip"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/blocklists"
 )
 
 // listsFake stands in for cscli and the network. imports maps a reason to
@@ -27,8 +32,11 @@ type listsFake struct {
 func installListsFake(t *testing.T, f *listsFake, allowlists string) {
 	t.Helper()
 	f.imports = map[string][]string{}
-	prevFetch, prevAddrs, prevExec := listFetch, listInterfaceAddrs, execCommandContext
-	t.Cleanup(func() { listFetch, listInterfaceAddrs, execCommandContext = prevFetch, prevAddrs, prevExec })
+	prevFetch, prevAddrs, prevExec, prevState := listFetch, listInterfaceAddrs, execCommandContext, listsCustomState
+	t.Cleanup(func() {
+		listFetch, listInterfaceAddrs, execCommandContext, listsCustomState = prevFetch, prevAddrs, prevExec, prevState
+	})
+	listsCustomState = filepath.Join(t.TempDir(), "crowdsec-custom-lists.json")
 	listFetch = func(_ context.Context, url string) ([]byte, error) {
 		f.mu.Lock()
 		defer f.mu.Unlock()
@@ -224,5 +232,119 @@ func TestListsApply_RunsInBackgroundAndReports(t *testing.T) {
 	s := st.(listsStatusResponse)
 	if s.Running || s.LastRun == "" || len(s.Lists) != 3 || s.Lists[0].Imported != 1 {
 		t.Fatalf("status %+v: want a finished run with level 1 imported", s)
+	}
+}
+
+// A custom list is fetched from its URL and banned under its own key; once
+// the admin removes the URL, the next run lifts its bans.
+func TestRunLists_CustomListImportedThenRemoved(t *testing.T) {
+	const u = "https://lists.example.org/drop.txt"
+	f := &listsFake{bodies: map[string]string{u: "203.0.114.9\n198.51.100.7\n10.0.0.0/8\n# comment\n"}}
+	installListsFake(t, f, "[]")
+	key := blocklists.CustomKey(u)
+
+	res := runLists(context.Background(), listsApplyParams{Custom: []string{u}})
+	last := res[len(res)-1]
+	if last.Key != key || last.URL != u || last.Imported != 1 || last.DroppedReserved != 2 || last.Error != "" {
+		t.Fatalf("custom result = %+v", last)
+	}
+	if got := f.imports[blocklists.Reason(key)]; !slices.Equal(got, []string{"203.0.114.9"}) {
+		t.Fatalf("imported %v under %s", got, blocklists.Reason(key))
+	}
+
+	f.deletes = nil
+	runLists(context.Background(), listsApplyParams{})
+	if !slices.Contains(f.deletes, blocklists.Reason(key)) {
+		t.Fatalf("removing the URL did not lift its bans: deletes %v", f.deletes)
+	}
+	if keys := readCustomListKeys(); len(keys) != 0 {
+		t.Fatalf("state still holds %v", keys)
+	}
+}
+
+func TestListsApply_RefusesBadCustomURL(t *testing.T) {
+	for _, u := range []string{"http://lists.example.org/x", "https://127.0.0.1/x", "https://localhost/x"} {
+		raw, _ := json.Marshal(listsApplyParams{Custom: []string{u}})
+		if _, err := listsApplyHandler(context.Background(), raw); err == nil {
+			t.Errorf("apply accepted %q", u)
+		}
+	}
+}
+
+// A list may be downloaded only from a public address that is not this
+// server's.
+func TestListFetchAllowed(t *testing.T) {
+	own := []netip.Prefix{netip.MustParsePrefix("46.4.1.10/32")}
+	for s, want := range map[string]bool{
+		"8.8.8.8": true, "2606:4700::1111": true, "203.0.114.9": true,
+		"127.0.0.1": false, "10.1.2.3": false, "172.16.0.1": false, "192.168.1.1": false,
+		"169.254.169.254": false, "100.64.0.1": false, "0.0.0.0": false, "224.0.0.1": false,
+		"::1": false, "fd00::1": false, "fe80::1": false, "::ffff:127.0.0.1": false,
+		"46.4.1.10": false,
+	} {
+		if got := listFetchAllowed(netip.MustParseAddr(s), own); got != want {
+			t.Errorf("listFetchAllowed(%s) = %v, want %v", s, got, want)
+		}
+	}
+}
+
+// The dial refuses an inside host before connecting, whatever the URL said.
+func TestListDial_RefusesInsideHosts(t *testing.T) {
+	for _, addr := range []string{"127.0.0.1:443", "localhost:443", "[::1]:443", "169.254.169.254:443"} {
+		c, err := listDial(context.Background(), "tcp", addr)
+		if err == nil {
+			c.Close()
+			t.Errorf("listDial(%s) connected", addr)
+			continue
+		}
+		if !strings.Contains(err.Error(), "may not be downloaded from") {
+			t.Errorf("listDial(%s): %v", addr, err)
+		}
+	}
+}
+
+func TestListCheckRedirect(t *testing.T) {
+	mk := func(s string) *http.Request {
+		r, _ := http.NewRequest(http.MethodGet, s, nil)
+		return r
+	}
+	if err := listCheckRedirect(mk("https://lists.example.org/b"), []*http.Request{mk("https://a")}); err != nil {
+		t.Errorf("an https redirect was refused: %v", err)
+	}
+	if err := listCheckRedirect(mk("http://lists.example.org/b"), []*http.Request{mk("https://a")}); err == nil {
+		t.Error("a redirect to http was followed")
+	}
+	five := []*http.Request{mk("https://a"), mk("https://a"), mk("https://a"), mk("https://a"), mk("https://a")}
+	if err := listCheckRedirect(mk("https://lists.example.org/b"), five); err == nil {
+		t.Error("a sixth redirect was followed")
+	}
+}
+
+func TestListFetch_RefusesPlainHTTP(t *testing.T) {
+	if _, err := listFetch(context.Background(), "http://lists.example.org/x"); err == nil {
+		t.Fatal("listFetch downloaded over plain http")
+	}
+}
+
+// Spamhaus DROP: ; comments and a note after each range.
+func TestParseIPList_TrailingNotesAndSemicolonComments(t *testing.T) {
+	body := "; Spamhaus DROP List 2026/10/20\n; https://www.spamhaus.org/drop/drop.txt\n1.10.16.0/20 ; SBL256894\n2.56.192.0/22 ; SBL459831\n5.42.92.7\tnote\n"
+	got, invalid, err := parseIPList([]byte(body))
+	if err != nil || invalid != 0 || len(got) != 3 || got[0].String() != "1.10.16.0/20" || got[2].String() != "5.42.92.7/32" {
+		t.Fatalf("parseIPList = %v, %d, %v", got, invalid, err)
+	}
+}
+
+// The panel's public IP may be on no interface (1:1 NAT); a run's protected
+// addresses are refused as download sources too.
+func TestListDial_RefusesTheRunsProtectedAddresses(t *testing.T) {
+	ctx := context.WithValue(context.Background(), listDenyKey{}, []netip.Prefix{netip.MustParsePrefix("8.8.8.8/32")})
+	c, err := listDial(ctx, "tcp", "8.8.8.8:443")
+	if err == nil {
+		c.Close()
+		t.Fatal("listDial connected to a protected address")
+	}
+	if !strings.Contains(err.Error(), "may not be downloaded from") {
+		t.Fatalf("listDial: %v", err)
 	}
 }

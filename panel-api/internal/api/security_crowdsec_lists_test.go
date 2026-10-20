@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/blocklists"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/auth"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
@@ -88,14 +89,15 @@ func TestCrowdsecListFeeds_RefusesUnknownList(t *testing.T) {
 // Refresh sends the saved set and the public IPs straight to the agent.
 func TestCrowdsecListFeeds_RefreshSendsSavedSet(t *testing.T) {
 	repo := &mockServerSettingsRepo{getResult: &models.ServerSettings{ID: 1, SSHPort: 22,
-		CrowdsecBlocklists: "firehol_level2,removed_list", PublicIPv4: "185.10.20.30", PublicIPv6: "not-an-ip"}}
+		CrowdsecBlocklists: "firehol_level2,removed_list", PublicIPv4: "185.10.20.30", PublicIPv6: "not-an-ip",
+		CrowdsecCustomBlocklists: "https://lists.example.org/drop.txt\nhttp://was-saved-by-hand.example/x"}}
 	m := agent.NewMockClient().On("security.crowdsec.lists.apply", map[string]any{"queued": true})
 	r := crowdsecListsRouter(m, repo, true)
 	rec := feedsDo(r, http.MethodPost, feedsPath+"/refresh", nil)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	calls := m.Calls()
 	require.Len(t, calls, 1)
-	require.JSONEq(t, `{"enabled":["firehol_level2"],"protect":["185.10.20.30"]}`, string(calls[0].Params))
+	require.JSONEq(t, `{"enabled":["firehol_level2"],"custom":["https://lists.example.org/drop.txt"],"protect":["185.10.20.30"]}`, string(calls[0].Params))
 }
 
 func TestCrowdsecListFeeds_AdminOnly(t *testing.T) {
@@ -108,4 +110,46 @@ func TestCrowdsecListFeeds_AdminOnly(t *testing.T) {
 		require.Equal(t, http.StatusForbidden, rec.Code, "%s %s", c.method, c.path)
 	}
 	require.Equal(t, "", repo.getResult.CrowdsecBlocklists)
+}
+
+// The admin's own list URLs are checked, saved one per line and shown with
+// the key the agent reports them under; a PUT without "custom" keeps them.
+func TestCrowdsecListFeeds_CustomLists(t *testing.T) {
+	repo := &mockServerSettingsRepo{getResult: &models.ServerSettings{ID: 1, SSHPort: 22}}
+	m := agent.NewMockClient().On("security.crowdsec.lists.status", map[string]any{"running": false, "lists": []any{}})
+	r := crowdsecListsRouter(m, repo, true)
+
+	urls := []string{"https://lists.example.org/a.txt", " https://lists.example.org/b.txt "}
+	rec := feedsDo(r, http.MethodPut, feedsPath, map[string]any{"enabled": []string{}, "custom": urls})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Equal(t, "https://lists.example.org/a.txt\nhttps://lists.example.org/b.txt", repo.getResult.CrowdsecCustomBlocklists)
+	var got struct {
+		Custom []struct {
+			URL string `json:"url"`
+			Key string `json:"key"`
+		} `json:"custom"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	require.Len(t, got.Custom, 2)
+	require.Equal(t, blocklists.CustomKey("https://lists.example.org/a.txt"), got.Custom[0].Key)
+
+	rec = feedsDo(r, http.MethodPut, feedsPath, map[string]any{"enabled": []string{"firehol_level1"}})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Equal(t, "https://lists.example.org/a.txt\nhttps://lists.example.org/b.txt", repo.getResult.CrowdsecCustomBlocklists, "no custom field keeps the URLs")
+
+	for _, bad := range []string{"http://lists.example.org/a.txt", "https://169.254.169.254/latest/meta-data", "https://localhost/x"} {
+		rec = feedsDo(r, http.MethodPut, feedsPath, map[string]any{"enabled": []string{}, "custom": []string{bad}})
+		require.Equal(t, http.StatusBadRequest, rec.Code, bad)
+		require.Contains(t, rec.Body.String(), "invalid_custom_blocklists")
+	}
+	require.Equal(t, "firehol_level1", repo.getResult.CrowdsecBlocklists, "a refused PUT saves nothing")
+}
+
+func TestCrowdsecListFeeds_RefusesTheServersOwnAddress(t *testing.T) {
+	repo := &mockServerSettingsRepo{getResult: &models.ServerSettings{ID: 1, SSHPort: 22, PublicIPv4: "185.10.20.30"}}
+	r := crowdsecListsRouter(agent.NewMockClient(), repo, true)
+	rec := feedsDo(r, http.MethodPut, feedsPath, map[string]any{"enabled": []string{}, "custom": []string{"https://185.10.20.30/list.txt"}})
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), "own address")
+	require.Empty(t, repo.getResult.CrowdsecCustomBlocklists)
 }

@@ -15,6 +15,7 @@ func TestReconcileCrowdsecLists_SendsTheSet(t *testing.T) {
 	s.SecurityEnabled = true
 	s.PublicIPv4 = "185.10.20.30"
 	s.CrowdsecBlocklists = "firehol_level3, gone_list,firehol_level1"
+	s.CrowdsecCustomBlocklists = "https://lists.example.org/drop.txt\nhttps://10.0.0.5/edited-in-by-hand"
 
 	run := func() {
 		ctx, rr := ensureRun(context.Background(), RunNormal)
@@ -29,6 +30,9 @@ func TestReconcileCrowdsecLists_SendsTheSet(t *testing.T) {
 	p := call.params.(map[string]any)
 	if got := p["enabled"].([]string); !slices.Equal(got, []string{"firehol_level1", "firehol_level3"}) {
 		t.Fatalf("enabled = %v, want [firehol_level1 firehol_level3]", got)
+	}
+	if got := p["custom"].([]string); !slices.Equal(got, []string{"https://lists.example.org/drop.txt"}) {
+		t.Fatalf("custom = %v, want only the URL that passes the rules", got)
 	}
 	if got := p["protect"].([]string); !slices.Equal(got, []string{"185.10.20.30"}) {
 		t.Fatalf("protect = %v, want the public IP", got)

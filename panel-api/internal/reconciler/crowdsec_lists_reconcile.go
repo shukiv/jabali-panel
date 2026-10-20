@@ -37,6 +37,7 @@ func (r *Reconciler) reconcileCrowdsecLists(ctx context.Context) {
 	}
 	params := map[string]any{
 		"enabled": crowdsecBlocklists(s.CrowdsecBlocklists),
+		"custom":  blocklists.ValidCustom(strings.Split(s.CrowdsecCustomBlocklists, "\n")),
 		"protect": selfPublicIPs(s.PublicIPv4, s.PublicIPv6),
 	}
 	_, _ = r.project(ctx, PhaseCrowdsecLists, "all", fingerprint(params), false, func() error {

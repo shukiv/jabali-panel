@@ -2270,15 +2270,17 @@ paths:
   /admin/security/crowdsec/blocklists/feeds:
     get:
       tags: [CrowdSec]
-      summary: Extra IP blocklists (catalog, which are on, last run)
+      summary: Extra IP blocklists (catalog, which are on, custom URLs, last run)
       description: |
         The FireHOL lists the admin can add to CrowdSec on top of its
-        community blocklist. `status` is the agent's report of its last run
-        (per list: fetched, imported, dropped_reserved, dropped_protected,
+        community blocklist, and the admin's own list URLs (`custom`, each
+        with the `key` the agent reports it under). `status` is the agent's
+        report of its last run (per list: key, url for a custom list,
+        fetched, imported, dropped_reserved, dropped_protected,
         dropped_duplicate, dropped_over_cap, invalid, error), or null when the
         agent could not be asked.
       security: [ { KratosSession: [] } ]
-      responses: { "200": { description: "{ lists: [{key, name, description, enabled}], status }" } }
+      responses: { "200": { description: "{ lists: [{key, name, description, enabled}], custom: [{url, key}], status }" } }
     put:
       tags: [CrowdSec]
       summary: Choose the extra IP blocklists
@@ -2288,6 +2290,12 @@ paths:
         (private and reserved ranges, the server's own addresses and
         allowlisted addresses left out) and removes the bans of each list
         that is off. A key not in the catalog is 400 invalid_blocklists.
+        `custom` replaces the admin's own list URLs (left out = unchanged):
+        at most 10, each https, no user name or password, at most 2048
+        characters, and not an address or host that is private, loopback,
+        link-local or reserved; otherwise 400 invalid_custom_blocklists. The
+        agent downloads them only from a public address that is not the
+        server's own, on every redirect too.
       security: [ { KratosSession: [] } ]
       requestBody:
         required: true
@@ -2300,9 +2308,13 @@ paths:
                 enabled:
                   type: array
                   items: { type: string, enum: [firehol_level1, firehol_level2, firehol_level3] }
+                custom:
+                  type: array
+                  maxItems: 10
+                  items: { type: string, format: uri, maxLength: 2048, pattern: "^https://" }
       responses:
         "200": { description: "Same body as GET" }
-        "400": { description: "invalid_json / invalid_blocklists" }
+        "400": { description: "invalid_json / invalid_blocklists / invalid_custom_blocklists" }
 
   /admin/security/crowdsec/blocklists/feeds/refresh:
     post:

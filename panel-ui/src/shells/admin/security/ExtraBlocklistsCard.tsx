@@ -1,10 +1,11 @@
 // ExtraBlocklistsCard — the public IP blocklists (FireHOL levels 1-3) the
-// admin can add to CrowdSec on top of its community blocklist. Saving only
+// admin can add to CrowdSec on top of its community blocklist, and the
+// admin's own list URLs (https, up to 10; the server checks them). Saving only
 // stores the choice; the reconciler hands it to the agent within a minute,
 // and the agent downloads, filters and imports the lists in the background.
 // The card polls the agent's last-run report while a run is going.
 import { useEffect, useMemo, useState } from "react";
-import { Alert, Button, Card, Checkbox, Popconfirm, Space, Tag, Typography } from "antd";
+import { Alert, Button, Card, Checkbox, Input, Popconfirm, Space, Tag, Typography } from "antd";
 import { ReloadOutlined } from "@icons";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -16,9 +17,14 @@ const BASE = "/admin/security/crowdsec/blocklists/feeds";
 const KEY = ["security", "crowdsec", "blocklist-feeds"] as const;
 
 type ListView = { key: string; name: string; description: string; enabled: boolean };
+type CustomView = { url: string; key: string };
+
+// The server's limit on custom lists (internal/blocklists.MaxCustom).
+const MAX_CUSTOM = 10;
 
 type ListResult = {
   key: string;
+  url?: string;
   enabled: boolean;
   at: string;
   fetched: number;
@@ -33,6 +39,7 @@ type ListResult = {
 
 type FeedsResponse = {
   lists: ListView[];
+  custom?: CustomView[];
   status: { running: boolean; last_run?: string; lists: ListResult[] } | null;
 };
 
@@ -65,23 +72,37 @@ export const ExtraBlocklistsCard = () => {
     refetchInterval: (query) => (query.state.data?.status?.running ? 10_000 : false),
   });
   const saved = useMemo(() => (q.data?.lists ?? []).filter((l) => l.enabled).map((l) => l.key), [q.data]);
+  const savedCustom = useMemo(() => (q.data?.custom ?? []).map((c) => c.url), [q.data]);
   const [chosen, setChosen] = useState<string[]>([]);
+  const [customText, setCustomText] = useState("");
   const [saving, setSaving] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     setChosen(saved);
   }, [saved]);
+  useEffect(() => {
+    setCustomText(savedCustom.join("\n"));
+  }, [savedCustom]);
 
-  const dirty = chosen.length !== saved.length || chosen.some((k) => !saved.includes(k));
-  const adding = chosen.some((k) => !saved.includes(k));
+  const custom = [...new Set(customText.split("\n").map((l) => l.trim()).filter(Boolean))];
+  const badCustom = custom.filter((u) => !/^https:\/\/[^\s/]+/.test(u));
+  const customError =
+    badCustom.length > 0
+      ? `Not an https:// URL: ${badCustom.join(", ")}`
+      : custom.length > MAX_CUSTOM
+        ? `${custom.length} lists; at most ${MAX_CUSTOM}`
+        : "";
+  const customDirty = custom.length !== savedCustom.length || custom.some((u, i) => u !== savedCustom[i]);
+  const dirty = chosen.length !== saved.length || chosen.some((k) => !saved.includes(k)) || customDirty;
+  const adding = chosen.some((k) => !saved.includes(k)) || custom.some((u) => !savedCustom.includes(u));
   const results = new Map((q.data?.status?.lists ?? []).map((r) => [r.key, r]));
   const running = !!q.data?.status?.running;
 
   const save = async () => {
     setSaving(true);
     try {
-      const { data } = await apiClient.put<FeedsResponse>(BASE, { enabled: chosen });
+      const { data } = await apiClient.put<FeedsResponse>(BASE, { enabled: chosen, custom });
       qc.setQueryData(KEY, data);
       feedback.message.success("Blocklists saved — applied within a minute");
       // The reconciler starts the run within a minute; look again then.
@@ -117,7 +138,7 @@ export const ExtraBlocklistsCard = () => {
           size="small"
           icon={<ReloadOutlined />}
           loading={refreshing}
-          disabled={saved.length === 0 || dirty}
+          disabled={(saved.length === 0 && savedCustom.length === 0) || dirty}
           onClick={refresh}
         >
           Download now
@@ -170,6 +191,45 @@ export const ExtraBlocklistsCard = () => {
             </div>
           );
         })}
+        <div>
+          <Typography.Text strong>Your own lists</Typography.Text>
+          <Typography.Paragraph type="secondary" style={{ margin: "2px 0 6px", fontSize: 13 }}>
+            One https:// URL per line, up to {MAX_CUSTOM}. Each must be a plain text list with one IP
+            address or CIDR range per line (# comments are skipped). The same filters apply, and a list
+            on a private or this server&apos;s own address is refused.
+          </Typography.Paragraph>
+          <Input.TextArea
+            aria-label="Your own blocklist URLs"
+            value={customText}
+            onChange={(e) => setCustomText(e.target.value)}
+            autoSize={{ minRows: 2, maxRows: 10 }}
+            placeholder="https://www.spamhaus.org/drop/drop.txt"
+            spellCheck={false}
+            style={{ fontFamily: "monospace" }}
+            status={customError ? "error" : undefined}
+          />
+          {customError && (
+            <Typography.Text type="danger" style={{ fontSize: 12 }}>
+              {customError}
+            </Typography.Text>
+          )}
+          {(q.data?.custom ?? []).map((c) => {
+            const r = results.get(c.key);
+            if (!r) return null;
+            return (
+              <Typography.Paragraph
+                key={c.key}
+                type={r.error ? "danger" : "secondary"}
+                style={{ margin: "4px 0 0", fontSize: 12, overflowWrap: "anywhere" }}
+              >
+                <Typography.Text code>{c.url}</Typography.Text>{" "}
+                {r.error
+                  ? `Last run failed: ${r.error}. Bans from the run before stay until they expire.`
+                  : lastRunLine(r)}
+              </Typography.Paragraph>
+            );
+          })}
+        </div>
         <Space>
           {adding ? (
             <Popconfirm
@@ -178,16 +238,25 @@ export const ExtraBlocklistsCard = () => {
               okText="Save"
               onConfirm={save}
             >
-              <Button type="primary" loading={saving}>
+              <Button type="primary" loading={saving} disabled={!!customError}>
                 Save
               </Button>
             </Popconfirm>
           ) : (
-            <Button type="primary" loading={saving} disabled={!dirty} onClick={save}>
+            <Button type="primary" loading={saving} disabled={!dirty || !!customError} onClick={save}>
               Save
             </Button>
           )}
-          {dirty && <Button onClick={() => setChosen(saved)}>Reset</Button>}
+          {dirty && (
+            <Button
+              onClick={() => {
+                setChosen(saved);
+                setCustomText(savedCustom.join("\n"));
+              }}
+            >
+              Reset
+            </Button>
+          )}
         </Space>
       </Space>
     </Card>

@@ -1,6 +1,7 @@
 // ExtraBlocklistsCard.test.tsx — the admin's extra IP blocklists: shows the
 // catalog with what is on and what the last run did, asks before adding a
-// list, and PUTs the chosen keys. Only apiClient is mocked.
+// list, and PUTs the chosen keys and the admin's own list URLs. Only
+// apiClient is mocked.
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -106,7 +107,10 @@ describe("ExtraBlocklistsCard", () => {
     const confirm = screen.getAllByRole("button", { name: "Save" }).at(-1)!;
     fireEvent.click(confirm);
     await waitFor(() =>
-      expect(mocked.put).toHaveBeenCalledWith("/admin/security/crowdsec/blocklists/feeds", { enabled: ["firehol_level1"] }),
+      expect(mocked.put).toHaveBeenCalledWith("/admin/security/crowdsec/blocklists/feeds", {
+        enabled: ["firehol_level1"],
+        custom: [],
+      }),
     );
   });
 
@@ -117,7 +121,7 @@ describe("ExtraBlocklistsCard", () => {
     fireEvent.click(await screen.findByRole("checkbox", { name: "FireHOL level 2" }));
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() =>
-      expect(mocked.put).toHaveBeenCalledWith("/admin/security/crowdsec/blocklists/feeds", { enabled: [] }),
+      expect(mocked.put).toHaveBeenCalledWith("/admin/security/crowdsec/blocklists/feeds", { enabled: [], custom: [] }),
     );
   });
 
@@ -126,5 +130,46 @@ describe("ExtraBlocklistsCard", () => {
     renderCard();
     expect(await screen.findByText(/on every port: websites, mail and SSH/)).toBeInTheDocument();
     expect(screen.getByText(/allowlisted addresses are\s+never banned/)).toBeInTheDocument();
+  });
+
+  it("adds the admin's own list URLs, asking first", async () => {
+    mocked.get.mockResolvedValue({ data: { lists: lists([]), custom: [], status: null } });
+    mocked.put.mockResolvedValue({ data: { lists: lists([]), custom: [], status: null } });
+    renderCard();
+    const box = await screen.findByRole("textbox", { name: "Your own blocklist URLs" });
+    fireEvent.change(box, { target: { value: " https://lists.example.org/a.txt \n\nhttps://lists.example.org/a.txt" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText("Ban these lists on every port?")).toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole("button", { name: "Save" }).at(-1)!);
+    await waitFor(() =>
+      expect(mocked.put).toHaveBeenCalledWith("/admin/security/crowdsec/blocklists/feeds", {
+        enabled: [],
+        custom: ["https://lists.example.org/a.txt"],
+      }),
+    );
+  });
+
+  it("refuses an own list that is not an https URL", async () => {
+    mocked.get.mockResolvedValue({ data: { lists: lists([]), custom: [], status: null } });
+    renderCard();
+    const box = await screen.findByRole("textbox", { name: "Your own blocklist URLs" });
+    fireEvent.change(box, { target: { value: "http://lists.example.org/a.txt" } });
+    expect(screen.getByText(/Not an https:\/\/ URL: http:\/\/lists.example.org\/a.txt/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+  });
+
+  it("shows what the last run did with an own list", async () => {
+    const url = "https://lists.example.org/a.txt";
+    mocked.get.mockResolvedValue({
+      data: {
+        lists: lists([]),
+        custom: [{ url, key: "custom-0123456789ab" }],
+        status: { running: false, last_run: "2026-10-20T04:00:00Z", lists: [result("custom-0123456789ab", { url })] },
+      },
+    });
+    renderCard();
+    expect(await screen.findByRole("textbox", { name: "Your own blocklist URLs" })).toHaveValue(url);
+    expect(screen.getByText(/4,600 addresses or ranges banned/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Download now/ })).toBeEnabled();
   });
 });

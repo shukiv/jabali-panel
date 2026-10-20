@@ -7,14 +7,25 @@
 //
 //   - off: its decisions are deleted, so turning a list off lifts its bans
 //     at once instead of when they expire.
-//   - on: it is downloaded from the catalog URL (never a URL the panel
-//     sends), each line is checked to be one IP or CIDR, and an entry is
+//   - on: it is downloaded from the catalog URL, each line is checked to be
+//     one IP or CIDR, and an entry is
 //     dropped when it is a private or reserved range, wider than /8 (IPv4)
 //     or /32 (IPv6), or overlaps an address that must stay reachable: the
 //     server's own addresses, the ones the panel sends, and every CrowdSec
 //     allowlist entry. The list's old decisions are then replaced by the
 //     new ones. A list that fails to download or does not look like an IP
 //     list keeps its old decisions until they expire.
+//
+// The admin's custom lists (blocklists.NormalizeCustom URLs) go through the
+// same steps after the catalog. A custom list is named by its URL
+// (blocklists.CustomKey); the keys imported are kept in listsCustomState, so
+// a URL the admin removed has its bans lifted on the next run.
+//
+// Every download, catalog or custom, goes through listHTTPClient: https only,
+// no proxy, at most 5 redirects, each https, and a host that resolves to a
+// private, loopback, link-local or reserved address, or one of this server's,
+// is refused when the connection is made (listDial), so a redirect or a
+// changed DNS answer cannot point it inside.
 //
 // FireHOL level 1 carries 0.0.0.0/8, 10.0.0.0/8, 127.0.0.0/8, 172.16.0.0/12,
 // 192.168.0.0/16 and 224.0.0.0/3 (fullbogons); without the filter, those
@@ -30,6 +41,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -72,6 +84,99 @@ func mustPrefixes(ss ...string) []netip.Prefix {
 	return out
 }
 
+// listHTTPClient downloads every list. See the package comment.
+var listHTTPClient = &http.Client{
+	Transport: &http.Transport{
+		Proxy:                 nil,
+		DialContext:           listDial,
+		TLSHandshakeTimeout:   15 * time.Second,
+		ResponseHeaderTimeout: 30 * time.Second,
+		ForceAttemptHTTP2:     true,
+	},
+	CheckRedirect: listCheckRedirect,
+}
+
+// listDenyKey carries a run's protected addresses (the panel's public IPs,
+// which behind NAT are on no interface, and the allowlists) to listDial.
+type listDenyKey struct{}
+
+// listDial resolves the host itself and connects only when every address it
+// resolves to is one a list may come from, to one of those addresses, so a
+// second lookup cannot answer differently.
+func listDial(ctx context.Context, network, addr string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, err
+	}
+	ips, err := net.DefaultResolver.LookupNetIP(ctx, "ip", host)
+	if err != nil {
+		return nil, err
+	}
+	own := listOwnAddrs()
+	if deny, ok := ctx.Value(listDenyKey{}).([]netip.Prefix); ok {
+		own = append(own, deny...)
+	}
+	for _, ip := range ips {
+		if !listFetchAllowed(ip, own) {
+			return nil, fmt.Errorf("%s resolves to %s, which a list may not be downloaded from", host, ip.Unmap())
+		}
+	}
+	d := &net.Dialer{Timeout: 15 * time.Second}
+	var lastErr error
+	for _, ip := range ips {
+		c, err := d.DialContext(ctx, network, net.JoinHostPort(ip.Unmap().String(), port))
+		if err == nil {
+			return c, nil
+		}
+		lastErr = err
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("%s has no address", host)
+	}
+	return nil, lastErr
+}
+
+// listFetchAllowed is true for a public address that is not this server's.
+func listFetchAllowed(ip netip.Addr, own []netip.Prefix) bool {
+	ip = ip.Unmap()
+	if !ip.IsValid() || !ip.IsGlobalUnicast() || ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() {
+		return false
+	}
+	p := netip.PrefixFrom(ip, ip.BitLen())
+	return !overlapsAny(p, listReserved) && !overlapsAny(p, own)
+}
+
+// listOwnAddrs is this server's interface addresses.
+func listOwnAddrs() []netip.Prefix {
+	var out []netip.Prefix
+	if addrs, err := listInterfaceAddrs(); err == nil {
+		for _, a := range addrs {
+			if ipn, ok := a.(*net.IPNet); ok {
+				if ip, ok := netip.AddrFromSlice(ipn.IP); ok {
+					ip = ip.Unmap()
+					out = append(out, netip.PrefixFrom(ip, ip.BitLen()))
+				}
+			}
+		}
+	}
+	return out
+}
+
+// listCheckRedirect follows at most 5 redirects, each to an https URL; the
+// dial check above applies to each.
+func listCheckRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 5 {
+		return errors.New("too many redirects")
+	}
+	if req.URL.Scheme != "https" {
+		return fmt.Errorf("redirect to a URL that is not https")
+	}
+	return nil
+}
+
+// listsCustomState holds the custom list keys whose bans may be in CrowdSec.
+var listsCustomState = "/var/lib/jabali/crowdsec-custom-lists.json"
+
 // Seams for tests.
 var (
 	listFetch = func(ctx context.Context, url string) ([]byte, error) {
@@ -81,8 +186,11 @@ var (
 		if err != nil {
 			return nil, err
 		}
+		if req.URL.Scheme != "https" {
+			return nil, fmt.Errorf("not an https URL")
+		}
 		req.Header.Set("User-Agent", "jabali-agent (blocklist refresh)")
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := listHTTPClient.Do(req)
 		if err != nil {
 			return nil, err
 		}
@@ -104,6 +212,7 @@ var (
 
 type listsApplyParams struct {
 	Enabled []string `json:"enabled"`
+	Custom  []string `json:"custom"`
 	Protect []string `json:"protect"`
 }
 
@@ -114,6 +223,7 @@ type listsApplyResponse struct {
 // listResult is what the last run did with one list.
 type listResult struct {
 	Key              string `json:"key"`
+	URL              string `json:"url,omitempty"` // custom lists only
 	Enabled          bool   `json:"enabled"`
 	At               string `json:"at"`
 	Fetched          int    `json:"fetched"`
@@ -152,10 +262,14 @@ func listsApplyHandler(_ context.Context, raw json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, csInvalidArg(err.Error())
 	}
+	custom, err := blocklists.NormalizeCustom(p.Custom)
+	if err != nil {
+		return nil, csInvalidArg(err.Error())
+	}
 	if _, err := parseProtected(p.Protect); err != nil {
 		return nil, csInvalidArg(err.Error())
 	}
-	want := &listsApplyParams{Enabled: enabled, Protect: p.Protect}
+	want := &listsApplyParams{Enabled: enabled, Custom: custom, Protect: p.Protect}
 
 	listsMu.Lock()
 	listsWant = want
@@ -205,17 +319,19 @@ func listsStatusHandler(context.Context, json.RawMessage) (any, error) {
 	return out, nil
 }
 
-// runLists does one pass over the catalog and reports each list.
+// runLists does one pass over the catalog and the custom lists and reports
+// each list.
 func runLists(ctx context.Context, p listsApplyParams) []listResult {
 	on := map[string]bool{}
 	for _, k := range p.Enabled {
 		on[k] = true
 	}
 	protect := listProtected(ctx, p.Protect)
+	ctx = context.WithValue(ctx, listDenyKey{}, protect)
 	seen := map[netip.Prefix]bool{}
 	total := 0
 	now := time.Now().UTC().Format(time.RFC3339)
-	results := make([]listResult, 0, len(blocklists.Catalog))
+	results := make([]listResult, 0, len(blocklists.Catalog)+len(p.Custom))
 	for _, l := range blocklists.Catalog {
 		res := listResult{Key: l.Key, Enabled: on[l.Key], At: now}
 		if !on[l.Key] {
@@ -225,58 +341,119 @@ func runLists(ctx context.Context, p listsApplyParams) []listResult {
 			results = append(results, res)
 			continue
 		}
-		body, err := listFetch(ctx, l.URL)
-		if err != nil {
-			res.Error = "download failed: " + err.Error()
-			results = append(results, res)
-			continue
-		}
-		entries, invalid, err := parseIPList(body)
-		res.Fetched, res.Invalid = len(entries), invalid
-		if err != nil {
-			res.Error = err.Error()
-			results = append(results, res)
-			continue
-		}
-		keep := make([]netip.Prefix, 0, len(entries))
-		for _, e := range entries {
-			switch {
-			case listIsReserved(e):
-				res.DroppedReserved++
-			case overlapsAny(e, protect):
-				res.DroppedProtected++
-			case seen[e]:
-				res.DroppedDuplicate++
-			case len(keep) >= listMaxEntries || total+len(keep) >= listsMaxTotal:
-				res.DroppedOverCap++
-			default:
-				seen[e] = true
-				keep = append(keep, e)
-			}
-		}
-		if err := deleteListDecisions(ctx, l.Key); err != nil {
-			res.Error = err.Error()
-			results = append(results, res)
-			continue
-		}
-		if len(keep) > 0 {
-			if err := importListDecisions(ctx, l.Key, keep); err != nil {
-				res.Error = err.Error()
-				results = append(results, res)
-				continue
-			}
-		}
-		res.Imported = len(keep)
-		total += len(keep)
-		results = append(results, res)
+		results = append(results, runOneList(ctx, res, l.URL, protect, seen, &total))
 	}
+
+	// Custom lists: lift the bans of a URL the admin removed, then run each
+	// one that is set. A key whose bans could not be removed stays in the
+	// state, so the next run tries again.
+	wantCustom := map[string]bool{}
+	for _, u := range p.Custom {
+		wantCustom[blocklists.CustomKey(u)] = true
+	}
+	keep := []string{}
+	for _, k := range readCustomListKeys() {
+		if wantCustom[k] {
+			continue
+		}
+		if err := deleteListDecisions(ctx, k); err != nil {
+			keep = append(keep, k)
+		}
+	}
+	for _, u := range p.Custom {
+		k := blocklists.CustomKey(u)
+		keep = append(keep, k)
+		res := listResult{Key: k, URL: u, Enabled: true, At: now}
+		results = append(results, runOneList(ctx, res, u, protect, seen, &total))
+	}
+	writeCustomListKeys(keep)
 	return results
 }
 
-// parseIPList reads one IP or CIDR per line; blank lines and # comments are
-// skipped. A file where more than 1% of the lines (plus 10) are something
-// else is not an IP list (an error page, a changed format) and is refused
-// whole.
+// runOneList downloads one list that is on, filters it and replaces its
+// decisions. On any failure the list's old decisions stay.
+func runOneList(ctx context.Context, res listResult, url string, protect []netip.Prefix, seen map[netip.Prefix]bool, total *int) listResult {
+	body, err := listFetch(ctx, url)
+	if err != nil {
+		res.Error = "download failed: " + err.Error()
+		return res
+	}
+	entries, invalid, err := parseIPList(body)
+	res.Fetched, res.Invalid = len(entries), invalid
+	if err != nil {
+		res.Error = err.Error()
+		return res
+	}
+	keep := make([]netip.Prefix, 0, len(entries))
+	for _, e := range entries {
+		switch {
+		case listIsReserved(e):
+			res.DroppedReserved++
+		case overlapsAny(e, protect):
+			res.DroppedProtected++
+		case seen[e]:
+			res.DroppedDuplicate++
+		case len(keep) >= listMaxEntries || *total+len(keep) >= listsMaxTotal:
+			res.DroppedOverCap++
+		default:
+			seen[e] = true
+			keep = append(keep, e)
+		}
+	}
+	if err := deleteListDecisions(ctx, res.Key); err != nil {
+		res.Error = err.Error()
+		return res
+	}
+	if len(keep) > 0 {
+		if err := importListDecisions(ctx, res.Key, keep); err != nil {
+			res.Error = err.Error()
+			return res
+		}
+	}
+	res.Imported = len(keep)
+	*total += len(keep)
+	return res
+}
+
+// readCustomListKeys is the custom keys the last run left bans for. A missing
+// or unreadable state is none.
+func readCustomListKeys() []string {
+	raw, err := os.ReadFile(listsCustomState)
+	if err != nil {
+		return nil
+	}
+	var keys []string
+	if json.Unmarshal(raw, &keys) != nil {
+		return nil
+	}
+	out := keys[:0]
+	for _, k := range keys {
+		if blocklists.IsCustomKey(k) {
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
+// writeCustomListKeys replaces the state. Best effort: a failed write only
+// means a later removal is not lifted until its bans expire (48 h).
+func writeCustomListKeys(keys []string) {
+	raw, err := json.Marshal(keys)
+	if err != nil {
+		return
+	}
+	tmp := listsCustomState + ".new"
+	if err := os.WriteFile(tmp, raw, 0o600); err != nil {
+		return
+	}
+	_ = os.Rename(tmp, listsCustomState)
+}
+
+// parseIPList reads one IP or CIDR per line, from the line's first field, so
+// a trailing note ("1.10.16.0/20 ; SBL256894", Spamhaus DROP) is skipped;
+// blank lines and # or ; comments are skipped too. A file where more than 1%
+// of the lines (plus 10) are something else is not an IP list (an error
+// page, a changed format) and is refused whole.
 func parseIPList(body []byte) ([]netip.Prefix, int, error) {
 	var out []netip.Prefix
 	invalid := 0
@@ -284,10 +461,11 @@ func parseIPList(body []byte) ([]netip.Prefix, int, error) {
 	sc.Buffer(make([]byte, 0, 4096), 4096)
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
+		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, ";") {
 			continue
 		}
-		pfx, ok := parseIPOrPrefix(line)
+		field := strings.TrimRight(strings.Fields(line)[0], ";,")
+		pfx, ok := parseIPOrPrefix(field)
 		if !ok {
 			invalid++
 			continue
@@ -363,16 +541,7 @@ func parseProtected(in []string) ([]netip.Prefix, error) {
 // covers loopback and private space.
 func listProtected(ctx context.Context, fromPanel []string) []netip.Prefix {
 	out, _ := parseProtected(fromPanel)
-	if addrs, err := listInterfaceAddrs(); err == nil {
-		for _, a := range addrs {
-			if ipn, ok := a.(*net.IPNet); ok {
-				if ip, ok := netip.AddrFromSlice(ipn.IP); ok {
-					ip = ip.Unmap()
-					out = append(out, netip.PrefixFrom(ip, ip.BitLen()))
-				}
-			}
-		}
-	}
+	out = append(out, listOwnAddrs()...)
 	if raw, err := runCscliJSON(ctx, "allowlists", "list"); err == nil {
 		var lists []struct {
 			Items []struct {
