@@ -17484,7 +17484,6 @@ main() {
   bootstrap_tenant_env
   install_sso_key
   install_sso_reaper_timer
-  install_cache_doctor_timer
   install_migration_secrets_reaper
   install_journald_cap
   install_disk_maintenance_timer
@@ -17532,6 +17531,12 @@ main() {
   write_systemd_unit
   start_and_verify_agent
   start_and_verify
+  # The cache-doctor timer starts only now: its first sweep writes a
+  # cache_doctor_runs row, and the panel's first boot (start_and_verify) is
+  # what creates that table. On a box up longer than the timer's
+  # OnBootSec=15min, an earlier `enable --now` fired it at once and the unit
+  # stayed failed for up to an hour.
+  install_cache_doctor_timer
   # M353 (GH #353): seed the per-module server_settings flags from the install
   # selection, so the panel hides the pages + 409s the endpoints for whatever
   # wasn't installed. Runs AFTER start_and_verify (first boot migrated the schema
