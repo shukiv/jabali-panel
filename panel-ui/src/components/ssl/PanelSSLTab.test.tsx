@@ -210,7 +210,15 @@ describe("SSL Manager → Panel SSL details (GH #2166)", () => {
     expect(screen.getAllByRole("switch")[0]).toBeDisabled();
     expect(
       screen.getByText(
-        `Let's Encrypt can be turned on once panel.example.com resolves publicly to this server. Now: ${reason}. Point its DNS A record at this server's public IP, then click Refresh.`,
+        `Let's Encrypt can be turned on once panel.example.com resolves publicly to this server. Now: ${reason}. After changing the DNS record, click Refresh.`,
+      ),
+    ).toBeInTheDocument();
+    cleanup();
+    renderTab([cert("hostname", { routable: false, served: served() })]);
+    await certCard("panel.example.com");
+    expect(
+      screen.getByText(
+        "Let's Encrypt can be turned on once panel.example.com resolves publicly to this server. Point its DNS A record at this server's public IP, then click Refresh.",
       ),
     ).toBeInTheDocument();
   });

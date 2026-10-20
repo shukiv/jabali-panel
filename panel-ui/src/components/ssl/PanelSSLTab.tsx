@@ -266,9 +266,12 @@ export function PanelSSLTab() {
           the switch off; the self-signed certificates don't need it. */}
       {!host.use_le && !host.routable && (
         <Typography.Text type="secondary">
-          {`Let's Encrypt can be turned on once ${hostName} resolves publicly to this server.${
-            host.routable_reason ? ` Now: ${host.routable_reason}.` : ""
-          } Point its DNS A record at this server's public IP, then click Refresh.`}
+          {/* The reason carries its own hint, e.g. for a CDN-proxied record. */}
+          {`Let's Encrypt can be turned on once ${hostName} resolves publicly to this server. ${
+            host.routable_reason
+              ? `Now: ${host.routable_reason}. After changing the DNS record, click Refresh.`
+              : "Point its DNS A record at this server's public IP, then click Refresh."
+          }`}
         </Typography.Text>
       )}
 
