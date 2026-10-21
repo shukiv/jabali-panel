@@ -84,6 +84,9 @@ type dockerAppInstallParams struct {
 	// logrotate snippet at install so their file logs — which bypass Docker's
 	// journald driver — stay bounded on tenant disk. Empty = no snippet.
 	LogRotate []dockerAppLogRotate `json:"log_rotate,omitempty"`
+	// StopFirst (the catalog's stop_before_recreate) pulls, then stops the
+	// containers of an install being re-rendered, before up; see recreatePrep.
+	StopFirst bool `json:"stop_first,omitempty"`
 }
 
 // dockerAppLogRotate is one persistent log volume's retention policy (JAB-121).
@@ -251,6 +254,11 @@ func dockerAppInstallHandler(ctx context.Context, params json.RawMessage) (any, 
 	// `--pull missing` so the install pulls that one image if the admin hasn't
 	// pre-provisioned it, instead of failing with a confusing "never started"
 	// (was `--pull never`, which stranded every un-provisioned tenant install).
+	if p.StopFirst {
+		if step, out, err := recreatePrep(ctx, dir, true); err != nil {
+			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: composeFailMessage(step, out, err)}
+		}
+	}
 	upArgs := []string{"up", "-d"}
 	if p.TenantValidate {
 		upArgs = append(upArgs, "--pull", "missing")

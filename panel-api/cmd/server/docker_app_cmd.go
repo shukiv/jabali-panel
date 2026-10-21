@@ -621,6 +621,7 @@ func newDockerAppUpdateCmd() *cobra.Command {
 			if verr := cliApplyTenantValidate(ctx, app, updateParams); verr != nil {
 				return verr
 			}
+			cliSetStopFirst(app, updateParams)
 			raw, err := sharedAgent.Call(ctx, "docker_app.update", updateParams)
 			if err != nil {
 				return err

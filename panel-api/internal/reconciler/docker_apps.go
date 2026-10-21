@@ -692,6 +692,9 @@ func (r *Reconciler) pollImageUpdate(ctx context.Context, app *models.DockerApp)
 			"slug":                        app.EffectiveSlug(),
 			"healthcheck_timeout_seconds": 300,
 		}
+		if entry.StopBeforeRecreate {
+			updateParams["stop_first"] = true
+		}
 		// Tenant-owned app (Gitea #510): make the agent re-run the tenant
 		// compose safety gate on the on-disk compose before `up`, so an
 		// auto-update can never bring up an unhardened/unsafe compose — it

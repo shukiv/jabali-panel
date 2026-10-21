@@ -95,6 +95,24 @@ Rules for the entry:
 - Every held `image_channel` is digest-pinned, like the entry's own.
 - The weekly `catalog-bump` job moves a tracked entry only within its track, and reports a newer major as held ("⏸ new major … held"). Moving the track, and refreshing a held track's pin, are reviewed changes.
 
+## Moving data before the database starts
+
+A new version sometimes needs its data moved before its database can open it: Rocket.Chat 8 needs MongoDB 8.0, which cannot open a MongoDB 6.0 database. The entry's compose does the move with one-shot services the database `depends_on` (`condition: service_completed_successfully`), and the entry sets:
+
+```yaml
+stop_before_recreate: true
+```
+
+Compose recreates a service only when it reaches it, so without the flag the old database still holds the data files, and the old app still writes them, while the one-shots run. With it, every recreate (Update, an env, domain or port edit, the auto-update, `jabali docker-app update` and `env set`) pulls the new images, then stops the old containers, then brings the new ones up. The app is down from the stop until the new version is serving.
+
+Rules for the one-shots:
+
+- Leave the old data where it is and write the new copy beside it, so a rollback to the previous compose still finds what it ran on. A rollback removes the services only the new compose had, so a one-shot still running is stopped.
+- Do nothing when there is nothing to move (a fresh install) or the move is done. Write a marker when it finishes, and move again only when the old data was written after the marker (the old compose ran again after a rollback).
+- Refuse to overwrite data the one-shot did not write.
+
+`install/docker-apps/rocketchat/compose.yml.tmpl` is the worked example.
+
 ## Why a static catalog, not dynamic discovery
 
 Per ADR-0116 Decision 11, the catalog ships with the panel. New apps land via `jabali update`. We don't have a community-submission story yet — the design space (signing, sandbox testing, malware scanning of upstream images) is significant, and v1 ships without it.

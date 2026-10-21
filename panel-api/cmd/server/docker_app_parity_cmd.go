@@ -66,6 +66,19 @@ func cliApplyTenantValidate(ctx context.Context, app *models.DockerApp, params m
 	return nil
 }
 
+// cliSetStopFirst has the agent stop the old containers before the recreate
+// when the app's catalog entry says so (stop_before_recreate), as the admin
+// API's doors do.
+func cliSetStopFirst(app *models.DockerApp, params map[string]any) {
+	cat, err := loadDockerCatalogForCLI()
+	if err != nil {
+		return
+	}
+	if entry, ok := cat.Get(app.Slug); ok && entry.StopBeforeRecreate {
+		params["stop_first"] = true
+	}
+}
+
 func applyDockerEnvWithBase(ctx context.Context, repo repository.DockerAppRepository, app *models.DockerApp, baseEnv map[string]string) error {
 	compose, envFile, tenantServices, err := renderInstallComposeCLI(ctx, repo, app, baseEnv, false)
 	if err != nil {
@@ -83,6 +96,7 @@ func applyDockerEnvWithBase(ctx context.Context, repo repository.DockerAppReposi
 	if tenantServices != nil {
 		params["tenant_services"] = tenantServices
 	}
+	cliSetStopFirst(app, params)
 	raw, err := sharedAgent.Call(ctx, "docker_app.update", params)
 	if err != nil {
 		return err

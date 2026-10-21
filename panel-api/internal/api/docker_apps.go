@@ -1151,6 +1151,17 @@ func (h *dockerAppHandler) installTarget(app *models.DockerApp, update bool) (do
 	return entry.TargetFor(app.CatalogVersion, update)
 }
 
+// setStopFirst asks the agent to stop the install's old containers between
+// the pull and up when its catalog entry says so (stop_before_recreate).
+func (h *dockerAppHandler) setStopFirst(app *models.DockerApp, params map[string]any) {
+	if h.cfg.Catalog == nil {
+		return
+	}
+	if entry, ok := h.cfg.Catalog.Get(app.Slug); ok && entry.StopBeforeRecreate {
+		params["stop_first"] = true
+	}
+}
+
 // setTenantServices adds the pinned service set to a compose-writing agent
 // call for a tenant app (GH #1903). The agent refuses a tenant compose write
 // without it, so a door that forgot to call this fails closed.
@@ -1566,6 +1577,7 @@ func (h *dockerAppHandler) editDomainPorts(ctx context.Context, app *models.Dock
 			return &dockerEditError{http.StatusInternalServerError, "tenant_validation_unavailable", firstLineString(verr.Error())}
 		}
 		setTenantServices(installParams, tenantServices)
+		h.setStopFirst(app, installParams)
 		if _, agentErr := h.cfg.Agent.Call(callCtx, "docker_app.install", installParams); agentErr != nil {
 			return &dockerEditError{http.StatusInternalServerError, "agent_redispatch_failed", firstLineString(agentErr.Error())}
 		}
@@ -1826,6 +1838,7 @@ func (h *dockerAppHandler) updateImage(c *gin.Context) {
 		}
 		setTenantServices(updateParams, tenantServices)
 	}
+	h.setStopFirst(app, updateParams)
 
 	// docker_app.update pulls a new image + recreates containers, which can
 	// take minutes. Running it on the request goroutine held the HTTP

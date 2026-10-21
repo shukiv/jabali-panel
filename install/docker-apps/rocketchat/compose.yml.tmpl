@@ -45,13 +45,97 @@ services:
       retries: 10
       start_period: 120s
 
-  mongodb:
+  # Rocket.Chat 8 needs MongoDB 8.0. Installs from before 2026-08 keep their
+  # database in mongo/ on MongoDB 6.0, which 8.0 cannot open. The two one-shots
+  # below copy the rocketchat database into mongo8/ once: mongo-export dumps it
+  # with MongoDB 6.0, mongo-import restores it with 8.0, and Rocket.Chat then
+  # runs its own migrations (it has every one since 6.13.1). mongo/ keeps its
+  # data, so a rollback to the old compose still finds it. The agent stops
+  # the old containers first (stop_before_recreate), so nothing writes to
+  # mongo/ while it is copied. Both exit at once when there is nothing to do.
+  mongo-export:
     image: mongo:6.0@sha256:8b6d8f5bbedb25cb73517b65cf99f13aeb75ad5b157a56c479287a840bbad3ac
-    container_name: jabali-app-{{ .Slug }}-mongo
-    restart: unless-stopped
-    command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
+    container_name: jabali-app-{{ .Slug }}-mongo-export
+    restart: "no"
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        set -eu
+        if [ ! -e /data/db/WiredTiger ]; then
+          echo "no MongoDB 6.0 database to move"; exit 0
+        fi
+        # mongo/ is copied again when it was written after the last copy
+        # (the old compose ran again after a rollback).
+        if [ -e /mongo8/.jabali-imported ] && [ ! /data/db/WiredTiger.turtle -nt /mongo8/.jabali-imported ]; then
+          echo "already moved to MongoDB 8.0"; exit 0
+        fi
+        # The image's own entrypoint, skipped here, gives the files to mongodb.
+        find /data/db \! -user mongodb -exec chown mongodb:mongodb '{}' +
+        gosu mongodb mongod --dbpath /data/db --bind_ip 127.0.0.1 --fork --logpath /tmp/mongod.log
+        for i in $$(seq 1 120); do
+          mongosh --quiet --eval 'quit(db.adminCommand({ping: 1}).ok ? 0 : 1)' >/dev/null 2>&1 && break
+          sleep 1
+        done
+        rm -f /upgrade/rocketchat.archive.new
+        mongodump --db rocketchat --archive=/upgrade/rocketchat.archive.new --gzip
+        gosu mongodb mongod --dbpath /data/db --shutdown
+        mv /upgrade/rocketchat.archive.new /upgrade/rocketchat.archive
+        echo "exported the MongoDB 6.0 database"
     volumes:
       - {{ .DataRoot }}/mongo:/data/db
+      - {{ .DataRoot }}/mongo8:/mongo8:ro
+      - {{ .DataRoot }}/mongo-upgrade:/upgrade
+
+  mongo-import:
+    image: mongo:8.0@sha256:4a4ab5d4834207389e0d7270fac988e21ffedccecba77991a552f755df229907
+    container_name: jabali-app-{{ .Slug }}-mongo-import
+    restart: "no"
+    depends_on:
+      mongo-export:
+        condition: service_completed_successfully
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        set -eu
+        a=/upgrade/rocketchat.archive
+        if [ ! -e "$$a" ]; then
+          echo "nothing to import"; exit 0
+        fi
+        if [ -e /data/db/.jabali-imported ] && [ ! "$$a" -nt /data/db/.jabali-imported ]; then
+          echo "already imported"; exit 0
+        fi
+        # Only a database this step made, finished or not, is replaced.
+        if [ -n "$$(ls -A /data/db)" ] && [ ! -e /data/db/.jabali-imported ] && [ ! -e /data/db/.jabali-import-running ]; then
+          echo "mongo8/ holds a database this import did not make; not replacing it" >&2; exit 1
+        fi
+        find /data/db -mindepth 1 -delete
+        touch /data/db/.jabali-import-running
+        chown -R mongodb:mongodb /data/db
+        gosu mongodb mongod --dbpath /data/db --bind_ip 127.0.0.1 --fork --logpath /tmp/mongod.log
+        for i in $$(seq 1 120); do
+          mongosh --quiet --eval 'quit(db.adminCommand({ping: 1}).ok ? 0 : 1)' >/dev/null 2>&1 && break
+          sleep 1
+        done
+        mongorestore --archive="$$a" --gzip --nsInclude='rocketchat.*'
+        gosu mongodb mongod --dbpath /data/db --shutdown
+        rm /data/db/.jabali-import-running
+        touch /data/db/.jabali-imported
+        rm "$$a"
+        echo "imported into MongoDB 8.0"
+    volumes:
+      - {{ .DataRoot }}/mongo8:/data/db
+      - {{ .DataRoot }}/mongo-upgrade:/upgrade
+
+  mongodb:
+    image: mongo:8.0@sha256:4a4ab5d4834207389e0d7270fac988e21ffedccecba77991a552f755df229907
+    container_name: jabali-app-{{ .Slug }}-mongo
+    restart: unless-stopped
+    depends_on:
+      mongo-import:
+        condition: service_completed_successfully
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
+    volumes:
+      - {{ .DataRoot }}/mongo8:/data/db
     healthcheck:
       # Initiate the single-node replica set on first boot, then report
       # healthy once it's PRIMARY. Idempotent — re-running rs.initiate on an

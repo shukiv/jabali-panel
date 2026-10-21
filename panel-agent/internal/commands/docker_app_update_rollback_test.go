@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -45,7 +46,7 @@ func TestRollback_RestoresThePreviousCompose(t *testing.T) {
 	var upWith []string
 	prevExec := execCommandContext
 	execCommandContext = func(ctx context.Context, name string, args ...string) *exec.Cmd {
-		if name == "docker" && strings.Join(args, " ") == "compose up -d" {
+		if name == "docker" && strings.Join(args, " ") == "compose up -d --remove-orphans" {
 			b, _ := os.ReadFile(filepath.Join(dir, "compose.yml"))
 			e, _ := os.ReadFile(filepath.Join(dir, ".env"))
 			upWith = append(upWith, string(b)+string(e))
@@ -76,7 +77,7 @@ func TestRollback_KeptFilesStayAsTheyAre(t *testing.T) {
 	ups := 0
 	prevExec := execCommandContext
 	execCommandContext = func(ctx context.Context, name string, args ...string) *exec.Cmd {
-		if name == "docker" && strings.Join(args, " ") == "compose up -d" {
+		if name == "docker" && strings.Join(args, " ") == "compose up -d --remove-orphans" {
 			ups++
 		}
 		return exec.CommandContext(ctx, "true")
@@ -87,6 +88,35 @@ func TestRollback_KeptFilesStayAsTheyAre(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(filepath.Join(dir, "compose.yml")); string(b) != "image: app:1\n" {
 		t.Fatalf("compose changed: %q", b)
+	}
+}
+
+// An env edit gives the update the caller's deadline, and a stop_first has
+// the old containers down by the time it passes. The rollback then ran its
+// compose up on the expired context, which failed at once and left the app
+// stopped.
+func TestRollback_RunsAfterTheCallersDeadline(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "compose.yml"), []byte("image: app:1\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	prev := readPriorComposeFiles(dir, true, false)
+	var upErr error = errors.New("compose up never ran")
+	prevExec := execCommandContext
+	execCommandContext = func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		if name == "docker" && strings.Join(args, " ") == "compose up -d --remove-orphans" {
+			upErr = ctx.Err()
+		}
+		return exec.Command("true")
+	}
+	t.Cleanup(func() { execCommandContext = prevExec })
+	expired, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := rollback(expired, dir, "sha256:old", prev); err != nil {
+		t.Fatal(err)
+	}
+	if upErr != nil {
+		t.Fatalf("rollback compose up ran on a dead context: %v", upErr)
 	}
 }
 
@@ -104,7 +134,44 @@ func TestDockerAppUpdate_KeepsThePriorFilesForRollback(t *testing.T) {
 	if read < 0 || write < 0 || read > write {
 		t.Fatalf("the prior files must be read before the new compose is written (read at %d, write at %d)", read, write)
 	}
-	if n := strings.Count(src, "_ = rollback(ctx, dir, oldImage, prev)"); n != 2 {
-		t.Fatalf("%d rollbacks get the prior files, want 2", n)
+	// The stop before a recreate, compose up and the health wait.
+	if n := strings.Count(src, "_ = rollback(ctx, dir, oldImage, prev)"); n != 3 {
+		t.Fatalf("%d rollbacks get the prior files, want 3", n)
+	}
+}
+
+// An app whose new compose moves its data before its database starts
+// (Rocket.Chat, MongoDB 6.0 → 8.0) has its old containers stopped after the
+// pull, so the old database no longer holds the files and the old app no
+// longer writes while the move runs. Without the flag nothing is stopped.
+func TestRecreatePrep_StopsTheOldContainersAfterThePull(t *testing.T) {
+	for _, tc := range []struct {
+		stopFirst bool
+		failOn    string
+		want      []string
+		wantStep  string
+	}{
+		{stopFirst: false, want: []string{"compose pull"}},
+		{stopFirst: true, want: []string{"compose pull", "compose stop"}},
+		{stopFirst: true, failOn: "compose pull", want: []string{"compose pull"}, wantStep: "pull"},
+		{stopFirst: true, failOn: "compose stop", want: []string{"compose pull", "compose stop"}, wantStep: "stop"},
+	} {
+		var ran []string
+		prevExec := execCommandContext
+		execCommandContext = func(ctx context.Context, name string, args ...string) *exec.Cmd {
+			cmd := strings.Join(args, " ")
+			if name == "docker" {
+				ran = append(ran, cmd)
+			}
+			if cmd == tc.failOn {
+				return exec.CommandContext(ctx, "false")
+			}
+			return exec.CommandContext(ctx, "true")
+		}
+		step, _, err := recreatePrep(context.Background(), t.TempDir(), tc.stopFirst)
+		execCommandContext = prevExec
+		if strings.Join(ran, ",") != strings.Join(tc.want, ",") || step != tc.wantStep || (err != nil) != (tc.wantStep != "") {
+			t.Errorf("stopFirst=%v failOn=%q: ran %v, step %q, err %v; want %v, step %q", tc.stopFirst, tc.failOn, ran, step, err, tc.want, tc.wantStep)
+		}
 	}
 }
