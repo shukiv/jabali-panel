@@ -129,4 +129,10 @@ profile jabali-fpm-app /usr/local/libexec/jabali/fpm-exec flags=(attach_disconne
   # applies whatever mode the profile is in.
   deny /run/dbus/system_bus_socket rw,
   deny /var/run/dbus/system_bus_socket rw,
+
+  # Site-specific rules, kept across updates: jabali update overwrites this
+  # file but not /etc/apparmor.d/local/usr.local.libexec.jabali.fpm-exec. After editing that
+  # file, reload with: apparmor_parser -r /etc/apparmor.d/usr.local.libexec.jabali.fpm-exec
+  # A deny rule above still wins over an allow rule added there.
+  include if exists <local/usr.local.libexec.jabali.fpm-exec>
 }
