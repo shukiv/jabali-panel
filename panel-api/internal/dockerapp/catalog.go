@@ -73,6 +73,11 @@ type Entry struct {
 	// ERR_INVALID_URL, Vaultwarden "empty host"). An install without a domain
 	// is refused instead of crash-looping.
 	RequiresDomain bool `yaml:"requires_domain,omitempty"`
+	// Retired says why the app left the catalog (e.g. an image it needs is
+	// no longer published). A retired entry is not listed and new installs
+	// are refused. It stays in the catalog because installs made before keep
+	// running and are still edited, updated and deleted through it.
+	Retired string `yaml:"retired,omitempty"`
 	// VolumeOwner is an optional "uid:gid" pair the agent applies
 	// to /var/lib/jabali/docker-apps/<slug>/<volume>/ before docker
 	// compose up runs. Empty = leave the dirs root:root. Set for
@@ -184,6 +189,18 @@ func (c *Catalog) All() []Entry {
 	out := make([]Entry, 0, len(c.order))
 	for _, s := range c.order {
 		out = append(out, c.bySlug[s])
+	}
+	return out
+}
+
+// Listed returns the entries offered for new installs: All without the
+// retired ones.
+func (c *Catalog) Listed() []Entry {
+	out := make([]Entry, 0, c.Len())
+	for _, e := range c.All() {
+		if e.Retired == "" {
+			out = append(out, e)
+		}
 	}
 	return out
 }

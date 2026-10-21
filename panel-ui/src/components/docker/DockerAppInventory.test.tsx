@@ -178,6 +178,16 @@ const commonMatrix = (label: string, opts: MatrixOpts) => {
       expect(await screen.findByText("alpha")).toBeInTheDocument();
     });
 
+    it("says on the card when the app's catalog entry is retired", async () => {
+      opts.api.listInstalled.mockResolvedValue([
+        makeApp({ id: "j1", name: "books", retired: "its images are no longer published" }),
+        makeApp({ id: "j2", name: "notes" }),
+      ]);
+      renderAdapter(opts.Adapter);
+      expect(await screen.findByText("Retired from the catalog: its images are no longer published")).toBeInTheDocument();
+      expect(screen.getAllByText(/^Retired from the catalog/)).toHaveLength(1);
+    });
+
     it("filters by name / slug / domain", async () => {
       opts.api.listInstalled.mockResolvedValue([
         makeApp({ id: "j1", name: "alpha", slug: "notes", domain: "a.example.com" }),

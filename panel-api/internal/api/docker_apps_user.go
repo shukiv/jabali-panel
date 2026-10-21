@@ -181,7 +181,7 @@ func (h *userDockerAppHandler) listCatalog(c *gin.Context) {
 	claims := ginctx.Claims(c)
 	out := make([]catalogEntryResponse, 0)
 	set, all := h.tenantAllowSet(c.Request.Context(), claims.UserID)
-	for _, e := range h.cfg.Catalog.All() {
+	for _, e := range h.cfg.Catalog.Listed() {
 		if tenantInstallable(e) && (all || set[e.Slug]) {
 			out = append(out, catalogEntryToResponse(e))
 		}
@@ -246,6 +246,7 @@ func (h *userDockerAppHandler) list(c *gin.Context) {
 				break
 			}
 		}
+		resp.Retired = catalogRetired(h.cfg.Catalog, a.Slug)
 		out = append(out, resp)
 	}
 	c.JSON(http.StatusOK, gin.H{"items": out})
@@ -269,7 +270,7 @@ func (h *userDockerAppHandler) get(c *gin.Context) {
 		return
 	}
 	ports, _ := h.cfg.Repo.ListPortsForApp(c.Request.Context(), app.ID)
-	c.JSON(http.StatusOK, installedResponse{DockerApp: *app, Ports: ports})
+	c.JSON(http.StatusOK, installedResponse{DockerApp: *app, Ports: ports, Retired: catalogRetired(h.cfg.Catalog, app.Slug)})
 }
 
 // dockerDiskGateForStart (JAB-245): admission for bring-up lifecycle
@@ -439,6 +440,10 @@ func (h *userDockerAppHandler) install(c *gin.Context) {
 	allowSet, allowAll := h.tenantAllowSet(c.Request.Context(), claims.UserID)
 	if !ok || !tenantInstallable(entry) || !(allowAll || allowSet[req.Slug]) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "unknown_slug", "detail": "not installable on your hosting package"})
+		return
+	}
+	if entry.Retired != "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "app_retired", "detail": entry.Name + " is retired and cannot be installed: " + entry.Retired})
 		return
 	}
 

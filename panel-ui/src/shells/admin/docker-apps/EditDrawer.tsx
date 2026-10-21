@@ -54,7 +54,7 @@ export const EditDrawer = ({ open, app, onClose }: Props) => {
   }, [hostCPUs, watchedCPU]);
   const [ports, setPorts] = useState<PortRow[]>([]);
 
-  const catalogQ = useQuery({ queryKey: ["docker-apps-catalog"], queryFn: listCatalog });
+  const catalogQ = useQuery({ queryKey: ["docker-apps-catalog", "with-retired"], queryFn: () => listCatalog(true) });
   const entry: CatalogEntry | undefined = useMemo(
     () => (catalogQ.data ?? []).find((e) => e.slug === app?.slug),
     [catalogQ.data, app?.slug],

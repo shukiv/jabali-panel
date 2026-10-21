@@ -126,3 +126,17 @@ go test ./panel-api/internal/dockerapp/...
 ```
 
 The `TestCatalogLoad_ValidatesAllEntries` test walks every directory in `install/docker-apps/` and asserts the entry parses + matches the schema; a malformed `app.yaml` fails CI.
+
+## Retiring an app
+
+An app that can no longer be installed, for example because an image it needs is no longer published, is retired rather than deleted:
+
+```yaml
+retired: "the MinIO images it stores attachments in are no longer published, so a new install cannot start. Installs made before keep running."
+```
+
+The value says why, and the panel shows it.
+
+- The catalog list, the tenant catalog and `jabali docker-app catalog` leave the entry out. Every install door (REST, tenant REST, `jabali docker-app install`, with or without `--user`) refuses it: 400 `app_retired`.
+- Installs made before keep their entry, so they are still listed, edited, updated and deleted as before. Their card says the app is retired and why. The admin edit drawer reads the entry with `GET /admin/docker-apps/catalog?include_retired=1`.
+- Deleting the directory instead would break those installs: `install.sh` syncs the catalog with `rsync --delete`, and an install whose entry is gone can't be edited (`catalog_entry_missing`) or updated (`catalog entry "<slug>" not found`).

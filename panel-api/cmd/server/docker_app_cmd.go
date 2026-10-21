@@ -81,7 +81,7 @@ func newDockerAppCatalogCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			entries := cat.All()
+			entries := cat.Listed()
 			if jsonOutput {
 				return json.NewEncoder(os.Stdout).Encode(entries)
 			}
@@ -165,6 +165,9 @@ func newDockerAppInstallCmd() *cobra.Command {
 			entry, ok := cat.Get(slug)
 			if !ok {
 				return fmt.Errorf("slug %q not in catalog", slug)
+			}
+			if entry.Retired != "" {
+				return fmt.Errorf("%s is retired and cannot be installed: %s", entry.Name, entry.Retired)
 			}
 			if entry.RequiresDomain {
 				return fmt.Errorf("%s does not start without a domain, and an admin install from the CLI cannot attach one: install it from the panel's Docker apps page and pick a domain", entry.Name)

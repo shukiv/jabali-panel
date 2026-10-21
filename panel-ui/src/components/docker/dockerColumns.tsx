@@ -82,6 +82,16 @@ const nameColumn = (ctx: DockerColumnContext) => ({
             {r.domain}
           </Typography.Link>
         )}
+        {r.retired && (
+          <Alert
+            type="warning"
+            showIcon
+            style={{ marginTop: 6, padding: "4px 8px", maxWidth: 320 }}
+            message={
+              <Typography.Text style={{ fontSize: 11, whiteSpace: "normal" }}>Retired from the catalog: {r.retired}</Typography.Text>
+            }
+          />
+        )}
         {r.post_install_note && (
           <Alert
             type="info"

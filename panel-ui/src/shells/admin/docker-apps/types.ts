@@ -45,6 +45,9 @@ export interface CatalogEntry {
   env?: CatalogEnvVar[];
   // The app does not start without a domain; installs need one.
   requires_domain?: boolean;
+  // Why the entry was retired; set only when the list was asked for retired
+  // entries (an install made before is edited through it).
+  retired?: string;
 }
 
 export interface InstalledPort {
@@ -94,6 +97,9 @@ export interface InstalledApp {
   // operators know the first-run step (e.g. Pocket ID: create the admin at
   // https://<domain>/setup). Absent when the catalog entry has no note.
   post_install_note?: string;
+  // Why the app's catalog entry was retired: no new installs. Shown on the
+  // card. Absent while the entry is still offered.
+  retired?: string;
   ports: InstalledPort[];
 }
 

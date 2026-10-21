@@ -8,8 +8,12 @@ import type {
 
 const BASE = "/admin/docker-apps";
 
-export async function listCatalog(): Promise<CatalogEntry[]> {
-  const { data } = await apiClient.get<{ items: CatalogEntry[] }>(`${BASE}/catalog`);
+// listCatalog is the entries offered for new installs; includeRetired adds the
+// retired ones, which an install made before still edits through.
+export async function listCatalog(includeRetired = false): Promise<CatalogEntry[]> {
+  const { data } = await apiClient.get<{ items: CatalogEntry[] }>(`${BASE}/catalog`, {
+    params: includeRetired ? { include_retired: "1" } : undefined,
+  });
   return data.items || [];
 }
 
