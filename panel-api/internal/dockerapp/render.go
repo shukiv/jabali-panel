@@ -497,6 +497,9 @@ func MaterialiseEnv(entry Entry, overrides map[string]string) (map[string]string
 	return out, nil
 }
 
+// secretRandRead is crypto/rand.Read; a var so tests can choose the bytes.
+var secretRandRead = rand.Read
+
 func generateSecret(scheme string) (string, error) {
 	var nbytes int
 	switch scheme {
@@ -508,16 +511,24 @@ func generateSecret(scheme string) (string, error) {
 		// Laravel APP_KEY: literal "base64:" + standard-base64 of exactly 32
 		// random bytes (Snipe-IT and other Laravel apps validate this shape).
 		buf := make([]byte, 32)
-		if _, err := rand.Read(buf); err != nil {
+		if _, err := secretRandRead(buf); err != nil {
 			return "", err
 		}
 		return "base64:" + base64.StdEncoding.EncodeToString(buf), nil
 	default:
 		return "", fmt.Errorf("unknown secret scheme %q", scheme)
 	}
+	// A secret starting with "-" reads as an option when a container passes
+	// it on a command line (owncloud: occ maintenance:install --admin-pass
+	// "$PW" fails with `The "-j" option does not exist`). base64url starts
+	// one secret in 64 that way, so draw again.
 	buf := make([]byte, nbytes)
-	if _, err := rand.Read(buf); err != nil {
-		return "", err
+	for {
+		if _, err := secretRandRead(buf); err != nil {
+			return "", err
+		}
+		if s := base64.RawURLEncoding.EncodeToString(buf); !strings.HasPrefix(s, "-") {
+			return s, nil
+		}
 	}
-	return base64.RawURLEncoding.EncodeToString(buf), nil
 }
