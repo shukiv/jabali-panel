@@ -1,0 +1,22 @@
+{
+  "stats": [
+    {
+      "domain": "example.com",
+      "bytes_total": 4631606,
+      "requests_total": 1443,
+      "day": "2026-10-19",
+      "countries": [
+        {"code": "US", "requests_total": 489, "bytes_total": 2658828},
+        {"code": "BE", "requests_total": 233, "bytes_total": 1144054},
+        {"code": "ZZ", "requests_total": 5, "bytes_total": 500}
+      ]
+    },
+    {
+      "domain": "no-geoip.example",
+      "bytes_total": 900,
+      "requests_total": 9,
+      "day": "2026-10-19"
+    }
+  ],
+  "skipped": ["broken.example-access.log.1 (err: goaccess exit: exit status 1)"]
+}

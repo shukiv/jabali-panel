@@ -13,15 +13,22 @@
 // (incl. failed) are what we need. We don't need the full hosts/urls
 // breakdown for this M13.1 scope; agent returns just the totals so the
 // panel can build per-user / per-month aggregations from cheap rows.
+//
+// When the GeoLite2 City database CrowdSec downloads is present, the scan
+// also returns the day's requests and bytes per country, from goaccess's
+// geolocation panel, for the domain Statistics tab.
 package commands
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
@@ -33,6 +40,27 @@ type bandwidthScanDayParams struct {
 	LogDir string `json:"log_dir,omitempty"`
 }
 
+// geoIPCityDB is the MaxMind GeoLite2 City database that CrowdSec's
+// geoip-enrich parser keeps up to date. The agent runs as root, so it reads
+// the root-only file in place. Without it the country list is empty.
+var geoIPCityDB = "/var/lib/crowdsec/data/GeoLite2-City.mmdb"
+
+// Seams for tests: the clock that picks "yesterday", and where the scan
+// remembers which rotated log it counted for which day.
+var (
+	bandwidthNow           = time.Now
+	bandwidthScanStatePath = "/var/lib/jabali/bandwidth-scan-state.json"
+)
+
+// maxScanCountries caps the countries kept per domain and day. The rest are
+// added to "ZZ" with the addresses that have no country, so a busy site does
+// not write a row for every country there is.
+const maxScanCountries = 30
+
+// unknownCountry is the code for requests whose country is unknown (private
+// and unlisted addresses) or that fell outside maxScanCountries.
+const unknownCountry = "ZZ"
+
 type bandwidthDomainStats struct {
 	Domain        string `json:"domain"`
 	BytesTotal    uint64 `json:"bytes_total"`
@@ -40,6 +68,17 @@ type bandwidthDomainStats struct {
 	// Day is the date the traffic occurred (YYYY-MM-DD UTC). Computed
 	// as `now-1d` since logrotate runs at 00:00 UTC and we scan .log.1.
 	Day string `json:"day"`
+	// Countries is the day's traffic per country, most requests first.
+	// Empty without the GeoIP database. Its requests are the requests
+	// goaccess counts as valid, so they can sum to less than RequestsTotal.
+	Countries []bandwidthCountryStats `json:"countries,omitempty"`
+}
+
+type bandwidthCountryStats struct {
+	// Code is the ISO 3166-1 alpha-2 country code, or unknownCountry.
+	Code          string `json:"code"`
+	RequestsTotal uint64 `json:"requests_total"`
+	BytesTotal    uint64 `json:"bytes_total"`
 }
 
 type bandwidthScanDayResponse struct {
@@ -58,6 +97,24 @@ type goaccessJSON struct {
 		Bandwidth     json.Number `json:"bandwidth"`
 		TotalRequests json.Number `json:"total_requests"`
 	} `json:"general"`
+	// Geolocation is present only when goaccess ran with a GeoIP
+	// database: continents, each with its countries as items.
+	Geolocation struct {
+		Data []struct {
+			Items []goaccessGeoItem `json:"items"`
+		} `json:"data"`
+	} `json:"geolocation"`
+}
+
+type goaccessGeoItem struct {
+	// Data is "<code> <name>", e.g. "DE Germany", or "Unknown".
+	Data string `json:"data"`
+	Hits struct {
+		Count json.Number `json:"count"`
+	} `json:"hits"`
+	Bytes struct {
+		Count json.Number `json:"count"`
+	} `json:"bytes"`
 }
 
 func bandwidthScanDayHandler(ctx context.Context, params json.RawMessage) (any, error) {
@@ -74,7 +131,7 @@ func bandwidthScanDayHandler(ctx context.Context, params json.RawMessage) (any, 
 
 	// Yesterday in UTC. logrotate's `daily` rotates on calendar day
 	// transition; a scan at 00:30 UTC sees yesterday's full file.
-	yesterday := time.Now().UTC().AddDate(0, 0, -1).Format("2006-01-02")
+	yesterday := bandwidthNow().UTC().AddDate(0, 0, -1).Format("2006-01-02")
 
 	// Rotated logs are <domain>-access.log.1 thanks to delaycompress.
 	pattern := filepath.Join(logDir, "*-access.log.1")
@@ -89,6 +146,13 @@ func bandwidthScanDayHandler(ctx context.Context, params json.RawMessage) (any, 
 	stats := make([]bandwidthDomainStats, 0, len(matches))
 	skipped := []string{}
 
+	geoDB := ""
+	if fi, err := os.Stat(geoIPCityDB); err == nil && fi.Mode().IsRegular() && fi.Size() > 0 {
+		geoDB = geoIPCityDB
+	}
+
+	counted := readScanState()
+	nextState := map[string]scannedLog{}
 	for _, file := range matches {
 		base := filepath.Base(file)
 		// "<domain>-access.log.1" → "<domain>"
@@ -98,21 +162,81 @@ func bandwidthScanDayHandler(ctx context.Context, params json.RawMessage) (any, 
 			continue
 		}
 
-		bytesTotal, reqsTotal, err := scanLogFile(ctx, file)
+		// nginx's logrotate has notifempty: after a day without requests
+		// the log is not rotated and .log.1 is still the last day that had
+		// traffic. A file already counted for an earlier day is not
+		// yesterday's; counting it again would add that day's traffic once
+		// more every quiet day.
+		id := logFileID(file)
+		if prev, ok := counted[name]; ok && id != "" && prev.ID == id && prev.Day != yesterday {
+			nextState[name] = prev
+			continue
+		}
+
+		st, err := scanLogFile(ctx, file, geoDB)
 		if err != nil {
 			skipped = append(skipped, fmt.Sprintf("%s (err: %v)", base, err))
 			continue
 		}
-
-		stats = append(stats, bandwidthDomainStats{
-			Domain:        name,
-			BytesTotal:    bytesTotal,
-			RequestsTotal: reqsTotal,
-			Day:           yesterday,
-		})
+		st.Domain = name
+		st.Day = yesterday
+		stats = append(stats, st)
+		if id != "" {
+			nextState[name] = scannedLog{ID: id, Day: yesterday}
+		}
 	}
+	writeScanState(nextState)
 
 	return bandwidthScanDayResponse{Stats: stats, Skipped: skipped}, nil
+}
+
+// scannedLog is the rotated log a scan counted for a domain, and the day it
+// was counted for.
+type scannedLog struct {
+	ID  string `json:"id"`
+	Day string `json:"day"`
+}
+
+// logFileID identifies one rotated log: device, inode, size and mtime. A
+// rotation puts a new file at .log.1, so the ID changes; a day without
+// rotation leaves it as it was. "" when the file cannot be read.
+func logFileID(path string) string {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return ""
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok {
+		return ""
+	}
+	return fmt.Sprintf("%d:%d:%d:%d", st.Dev, st.Ino, fi.Size(), fi.ModTime().UnixNano())
+}
+
+// readScanState returns what the last scans counted; empty when there is no
+// state yet (a missing or unreadable file only means the next quiet day may
+// be counted once more, as before this check existed).
+func readScanState() map[string]scannedLog {
+	out := map[string]scannedLog{}
+	raw, err := os.ReadFile(bandwidthScanStatePath)
+	if err != nil {
+		return out
+	}
+	_ = json.Unmarshal(raw, &out)
+	return out
+}
+
+// writeScanState replaces the state with this scan's domains, so a removed
+// domain drops out. Best effort: a failed write is the same as no state.
+func writeScanState(state map[string]scannedLog) {
+	raw, err := json.Marshal(state)
+	if err != nil {
+		return
+	}
+	tmp := bandwidthScanStatePath + ".new"
+	if err := os.WriteFile(tmp, raw, 0o600); err != nil {
+		return
+	}
+	_ = os.Rename(tmp, bandwidthScanStatePath)
 }
 
 // goaccessScanArgs builds the goaccess CLI args for a single access log.
@@ -122,23 +246,45 @@ func bandwidthScanDayHandler(ctx context.Context, params json.RawMessage) (any, 
 // takes a format keyword or a filename, e.g. `-o csv`, `-o out.json`).
 // `--output-format=json` fatals on goaccess 1.9.x ("unknown option") and
 // silently broke the M13.1 bandwidth scan on hosts shipping that version.
-func goaccessScanArgs(path string) []string {
-	return []string{
+//
+// geoDB, when set, adds the GeoIP database so the output carries the
+// geolocation panel.
+//
+// No --ignore-crawlers: what is sent to search engines and other bots is
+// bandwidth the site used, so it counts toward the package's monthly limit
+// like any other response. goaccess.conf leaves ignore-crawlers false.
+func goaccessScanArgs(path, geoDB string) []string {
+	args := []string{
 		path,
 		"--log-format=COMBINED",
 		"-o", "json",
+		"--no-progress",
 		"--no-html-last-updated",
-		"--ignore-crawlers",
 	}
+	if geoDB != "" {
+		args = append(args, "--geoip-database="+geoDB)
+	}
+	return args
 }
 
-func scanLogFile(ctx context.Context, path string) (uint64, uint64, error) {
+// scanLogFile runs goaccess on one log. With geoDB set and goaccess failing,
+// it runs again without it: a goaccess built without GeoIP support refuses
+// the flag, and the day's totals matter more than its countries.
+func scanLogFile(ctx context.Context, path, geoDB string) (bandwidthDomainStats, error) {
+	st, err := runGoaccessScan(ctx, path, geoDB)
+	if err != nil && geoDB != "" {
+		return runGoaccessScan(ctx, path, "")
+	}
+	return st, err
+}
+
+func runGoaccessScan(ctx context.Context, path, geoDB string) (bandwidthDomainStats, error) {
 	// Bound the goaccess invocation to 90s to prevent a runaway scan
 	// holding the agent socket open across timer ticks.
 	scanCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
 
-	cmd := execCommandContext(scanCtx, "goaccess", goaccessScanArgs(path)...)
+	cmd := execCommandContext(scanCtx, "goaccess", goaccessScanArgs(path, geoDB)...)
 	out, err := cmd.Output()
 	if err != nil {
 		// goaccess exits non-zero on parse errors; emit the file basename
@@ -153,23 +299,92 @@ func scanLogFile(ctx context.Context, path string) (uint64, uint64, error) {
 		} else {
 			msg = fmt.Sprintf("goaccess: %v", err)
 		}
-		return 0, 0, fmt.Errorf("%s", msg)
+		return bandwidthDomainStats{}, fmt.Errorf("%s", msg)
 	}
+	return parseGoaccessScan(out)
+}
 
+// parseGoaccessScan reads the totals, and the countries when present, from
+// goaccess's JSON output.
+func parseGoaccessScan(out []byte) (bandwidthDomainStats, error) {
 	var doc goaccessJSON
 	if err := json.Unmarshal(out, &doc); err != nil {
-		return 0, 0, fmt.Errorf("parse goaccess json: %w", err)
+		return bandwidthDomainStats{}, fmt.Errorf("parse goaccess json: %w", err)
 	}
-	bytesTotal, _ := doc.General.Bandwidth.Int64()
-	reqsTotal, _ := doc.General.TotalRequests.Int64()
-	if bytesTotal < 0 {
-		bytesTotal = 0
+	var items []goaccessGeoItem
+	for _, c := range doc.Geolocation.Data {
+		items = append(items, c.Items...)
 	}
-	if reqsTotal < 0 {
-		reqsTotal = 0
-	}
-	return uint64(bytesTotal), uint64(reqsTotal), nil
+	return bandwidthDomainStats{
+		BytesTotal:    nonNegative(doc.General.Bandwidth),
+		RequestsTotal: nonNegative(doc.General.TotalRequests),
+		Countries:     countryStats(items),
+	}, nil
 }
+
+func nonNegative(n json.Number) uint64 {
+	v, _ := n.Int64()
+	if v < 0 {
+		return 0
+	}
+	return uint64(v)
+}
+
+// countryStats merges goaccess's country items by code, most requests first,
+// keeping at most maxScanCountries entries; the rest count as unknownCountry.
+func countryStats(items []goaccessGeoItem) []bandwidthCountryStats {
+	if len(items) == 0 {
+		return nil
+	}
+	byCode := map[string]*bandwidthCountryStats{}
+	for _, it := range items {
+		code := geoCountryCode(it.Data)
+		c := byCode[code]
+		if c == nil {
+			c = &bandwidthCountryStats{Code: code}
+			byCode[code] = c
+		}
+		c.RequestsTotal += nonNegative(it.Hits.Count)
+		c.BytesTotal += nonNegative(it.Bytes.Count)
+	}
+	other := byCode[unknownCountry]
+	delete(byCode, unknownCountry)
+	if other == nil {
+		other = &bandwidthCountryStats{Code: unknownCountry}
+	}
+	list := make([]bandwidthCountryStats, 0, len(byCode)+1)
+	for _, c := range byCode {
+		list = append(list, *c)
+	}
+	sort.Slice(list, func(i, j int) bool {
+		if list[i].RequestsTotal != list[j].RequestsTotal {
+			return list[i].RequestsTotal > list[j].RequestsTotal
+		}
+		return list[i].Code < list[j].Code
+	})
+	if len(list) > maxScanCountries-1 {
+		for _, c := range list[maxScanCountries-1:] {
+			other.RequestsTotal += c.RequestsTotal
+			other.BytesTotal += c.BytesTotal
+		}
+		list = list[:maxScanCountries-1]
+	}
+	if other.RequestsTotal > 0 || other.BytesTotal > 0 {
+		list = append(list, *other)
+	}
+	return list
+}
+
+// geoCountryCode returns the country code that starts a goaccess
+// geolocation label ("DE Germany"), or unknownCountry ("Unknown").
+func geoCountryCode(label string) string {
+	if len(label) >= 3 && label[2] == ' ' && isUpperASCII(label[0]) && isUpperASCII(label[1]) {
+		return label[:2]
+	}
+	return unknownCountry
+}
+
+func isUpperASCII(b byte) bool { return b >= 'A' && b <= 'Z' }
 
 func init() {
 	Default.Register("bandwidth.scan_day", bandwidthScanDayHandler)

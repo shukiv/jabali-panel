@@ -3153,10 +3153,39 @@ paths:
   /domains/{id}/bandwidth:
     get:
       tags: [Bandwidth]
-      summary: Bandwidth domains
+      summary: A domain's web traffic per day and per country
+      description: |
+        Daily requests and bytes from the nightly access-log scan, and the
+        window's traffic per country (ISO 3166-1 alpha-2; ZZ = unknown or
+        other). countries is empty on hosts without the GeoIP database, and
+        its requests are the valid requests, so they can sum to less than
+        requests_total. Owner or admin only. The window defaults to the last
+        30 days and is at most 366 days.
       security: [ { KratosSession: [] } ]
-      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
-      responses: { "200": { description: OK } }
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+        - { in: query, name: from, required: false, schema: { type: string, format: date }, description: "First day (YYYY-MM-DD, UTC). Default: 29 days before to." }
+        - { in: query, name: to, required: false, schema: { type: string, format: date }, description: "Last day (YYYY-MM-DD, UTC). Default: today." }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  domain_id: { type: string }
+                  from: { type: string, format: date }
+                  to: { type: string, format: date }
+                  bytes_total: { type: integer }
+                  requests_total: { type: integer }
+                  daily:
+                    type: array
+                    items: { type: object, properties: { day: { type: string, format: date-time }, bytes_total: { type: integer }, requests_total: { type: integer } } }
+                  countries:
+                    type: array
+                    items: { type: object, properties: { country_code: { type: string }, bytes_total: { type: integer }, requests_total: { type: integer } } }
+        "404": { description: Domain not found, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
 
   /domains/{id}/rename:
     post:

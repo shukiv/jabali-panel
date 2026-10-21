@@ -48,6 +48,9 @@ func TestMain(m *testing.M) {
 	// with the real check, a nearly full disk failed every test that got past
 	// a reserve check. A test of the refusal sets its own (refuseHostReserve).
 	checkHostReserve = func(string, int64) error { return nil }
+	// The bandwidth scan remembers which rotated log it counted; keep that
+	// state out of /var/lib/jabali.
+	bandwidthScanStatePath = filepath.Join(dir, "bandwidth-scan-state.json")
 
 	code := m.Run()
 	_ = os.RemoveAll(dir)

@@ -125,3 +125,66 @@ func TestBWDaily_SumPerDayForDomain_OrdersAsc(t *testing.T) {
 	require.Equal(t, uint64(300), got[2].BytesTotal)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
+
+// A re-scan replaces the day's country rows: delete then insert, in one
+// transaction, stamped with the domain and day.
+func TestBWDaily_ReplaceCountriesForDay_DeletesThenInserts(t *testing.T) {
+	db, mock, raw := newMockBackupDB(t)
+	defer raw.Close()
+	repo := NewBWDailyRepository(db)
+
+	mock.ExpectBegin()
+	mock.ExpectExec("DELETE FROM `bw_daily_country` WHERE domain_id = \\? AND day = \\?").
+		WillReturnResult(sqlmock.NewResult(0, 3))
+	mock.ExpectExec("INSERT INTO `bw_daily_country`").
+		WillReturnResult(sqlmock.NewResult(0, 2))
+	mock.ExpectCommit()
+
+	day := time.Date(2026, 10, 19, 0, 0, 0, 0, time.UTC)
+	rows := []models.BWDailyCountry{
+		{CountryCode: "US", RequestsTotal: 489, BytesTotal: 2658828},
+		{CountryCode: "ZZ", RequestsTotal: 5, BytesTotal: 500},
+	}
+	require.NoError(t, repo.ReplaceCountriesForDay(context.Background(), "01J5DOMAIN0000000000000000", day, rows))
+	for _, r := range rows {
+		require.Equal(t, "01J5DOMAIN0000000000000000", r.DomainID)
+		require.True(t, r.Day.Equal(day))
+		require.False(t, r.UpdatedAt.IsZero())
+	}
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestBWDaily_ReplaceCountriesForDay_EmptyOnlyDeletes(t *testing.T) {
+	db, mock, raw := newMockBackupDB(t)
+	defer raw.Close()
+	repo := NewBWDailyRepository(db)
+
+	mock.ExpectBegin()
+	mock.ExpectExec("DELETE FROM `bw_daily_country`").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectCommit()
+
+	require.NoError(t, repo.ReplaceCountriesForDay(context.Background(), "d1", time.Now().UTC(), nil))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestBWDaily_SumCountriesForDomain_GroupsByCountry(t *testing.T) {
+	db, mock, raw := newMockBackupDB(t)
+	defer raw.Close()
+	repo := NewBWDailyRepository(db)
+
+	mock.ExpectQuery("FROM `bw_daily_country` WHERE domain_id = \\? AND day >= \\? AND day <= \\? GROUP BY `country_code` ORDER BY requests_total DESC, country_code ASC").
+		WillReturnRows(sqlmock.NewRows([]string{"country_code", "bytes_total", "requests_total"}).
+			AddRow("US", 3000, 500).
+			AddRow("DE", 70, 9))
+
+	from := time.Date(2026, 9, 20, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 10, 19, 0, 0, 0, 0, time.UTC)
+	got, err := repo.SumCountriesForDomain(context.Background(), "d1", from, to)
+	require.NoError(t, err)
+	require.Equal(t, []CountryPoint{
+		{CountryCode: "US", BytesTotal: 3000, RequestsTotal: 500},
+		{CountryCode: "DE", BytesTotal: 70, RequestsTotal: 9},
+	}, got)
+	require.NoError(t, mock.ExpectationsWereMet())
+}

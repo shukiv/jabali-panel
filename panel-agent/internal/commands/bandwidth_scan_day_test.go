@@ -116,7 +116,7 @@ func mustWriteFile(t *testing.T, path string, data []byte) {
 // fatals on goaccess 1.9.x ("unknown option") and silently zeroed bandwidth
 // stats. The correct JSON-to-stdout flag is `-o json`.
 func TestGoaccessScanArgs_UsesDashOJson(t *testing.T) {
-	args := goaccessScanArgs("/var/log/nginx/example.com-access.log.1")
+	args := goaccessScanArgs("/var/log/nginx/example.com-access.log.1", "")
 
 	for _, a := range args {
 		if a == "--output-format=json" || a == "--output-format" {
@@ -137,5 +137,17 @@ func TestGoaccessScanArgs_UsesDashOJson(t *testing.T) {
 
 	if args[0] != "/var/log/nginx/example.com-access.log.1" {
 		t.Fatalf("expected the log path as the first arg, got: %v", args)
+	}
+}
+
+// Responses to crawlers are bandwidth the site used and count toward the
+// package's limit, so the scan must not drop them.
+func TestGoaccessScanArgs_CountsCrawlers(t *testing.T) {
+	for _, geo := range []string{"", "/var/lib/jabali/GeoLite2-City.mmdb"} {
+		for _, a := range goaccessScanArgs("/var/log/nginx/example.com-access.log.1", geo) {
+			if a == "--ignore-crawlers" || a == "--crawlers-only" {
+				t.Fatalf("goaccess args drop crawler traffic (%s): %v", a, goaccessScanArgs("x", geo))
+			}
+		}
 	}
 }

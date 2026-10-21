@@ -5,7 +5,7 @@
 // the browser Back button walks the tabs.
 //
 // Tabs here: Overview (facts + the preview-URL / bot-challenge toggles), Logs,
-// SSL, PHP Settings, Redirects, Index Files, Caching
+// Statistics, SSL, PHP Settings, Redirects, Index Files, Caching
 // and Directory Privacy, plus three tabs gated on the same caps as the old row
 // menu — Domain options and Rewrite rules (tenant_domain_options_enabled) and
 // Document root (tenant_docroot_editable). The tenant row menu is now just
@@ -42,6 +42,7 @@ import { DomainPHPSettingsPanel } from "../../../components/domains/DomainPHPSet
 import { RenameDomainButton } from "../../../components/domains/RenameDomainButton";
 import { DomainEnvVarsCard } from "../php-settings/DomainEnvVarsCard";
 import { DomainOwnershipPanel } from "../../../components/domains/DomainOwnershipPanel";
+import { DomainStatsPanel } from "../../../components/domains/DomainStatsPanel";
 import { OverviewTab } from "./tabs/OverviewTab";
 import { SSLTab } from "./tabs/SSLTab";
 
@@ -139,6 +140,9 @@ export const WebDomainPage = () => {
     // "is the site up" — so it sits second, before the editors. It exists for
     // every web domain, so it is not cap-gated.
     { key: "logs", label: "Logs", node: <DomainLogsPanel domainId={domain.id} /> },
+    // Statistics — requests and bandwidth per day and visitors by country,
+    // from the nightly access-log count. Read-only, so it sits with Logs.
+    { key: "statistics", label: "Statistics", node: <DomainStatsPanel domainId={domain.id} /> },
     // SSL — this domain's certificate: status / expiry, view the issued cert,
     // renew or retry issuance (GH #1543, lxsdevcode). Certificate mode is shown
     // read-only; switching mode is an admin action.

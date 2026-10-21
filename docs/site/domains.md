@@ -20,6 +20,7 @@ Edit a domain via `/jabali-admin/domains/edit/:id` (admin) or `/jabali-panel/dom
 | **Document root** | Set the docroot when adding the domain, confined to the owner's home tree (GH #1413). |
 | **Environment variables** | Per-domain env vars passed to the FPM pool (GH #1332). |
 | **Web / Mail / DNS** | Each service is an **independent per-domain flag** (GH #1449) — a domain can run any combination. Turning **Mail** on adds DKIM keys + MX hint + Stalwart Domain entry; **DNS** on manages the zone in PowerDNS; **Web** on builds the nginx vhost. |
+| **Statistics** | Requests and bandwidth per day and visitors by country for the last 7, 30 or 90 days, from the nightly access-log count (country only on hosts with CrowdSec's GeoLite2 database). Same tab for the admin (Edit Domain) and the tenant (Web Domain page); see [Domains (User) → Statistics](user/domains.md#statistics). |
 | **Reverse proxy** | Instead of serving files, proxy the domain to a local app on a chosen loopback port. Tenants pick the port through an SSRF-safe validator with an agent-side bind check (GH #1175, #1401); ports come from a shared loopback-port allocator so two tenants can't collide. |
 
 ## Domain lifecycle
