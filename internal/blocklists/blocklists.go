@@ -2,8 +2,8 @@
 // add to CrowdSec on top of its community blocklist, and the rules for the
 // admin's own (custom) list URLs. panel-api stores and shows the choice; the
 // agent fetches each catalog list from the URL here and each custom list from
-// a URL NormalizeCustom accepts, drops what must not be banned, and imports
-// the rest as CrowdSec ban decisions.
+// a URL NormalizeCustom accepts, drops what must not be banned, and bans the
+// rest in its own nftables table.
 package blocklists
 
 import (
@@ -49,7 +49,8 @@ var Catalog = []List{
 }
 
 // ReasonPrefix starts the reason (shown as the scenario) of every decision
-// a list imports, followed by the list's key.
+// an older agent imported for a list, followed by the list's key. The agent
+// deletes them by it.
 const ReasonPrefix = "jabali-list:"
 
 // Reason is the decision reason for list key.
@@ -97,7 +98,7 @@ const maxCustomURL = 2048
 const customKeyPrefix = "custom-"
 
 // CustomKey names a custom list by its URL, so one URL always has one key and
-// the decisions it imported can be found again when the URL is removed.
+// its bans can be found again when the URL is removed.
 func CustomKey(rawURL string) string {
 	sum := sha256.Sum256([]byte(rawURL))
 	return customKeyPrefix + hex.EncodeToString(sum[:6])

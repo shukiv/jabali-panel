@@ -67,21 +67,38 @@ the community blocklist. All are off by default.
   CIDR per line (`#` and `;` comments are skipped). The URL may not point
   at a private address or at this server.
 
-The panel downloads each list that is on once a day and bans every entry on
-every port (websites, mail and SSH) for 48 hours, so a host whose panel is
-down for a day keeps its lists. These are never banned: private and
-reserved ranges, entries wider than /8 (IPv4) or /32 (IPv6), this server's
-own addresses, CrowdSec allowlist entries, and the addresses Google and
-Bing publish for their crawlers. If the crawler addresses cannot be loaded
-and no earlier copy is on the server, the lists are not refreshed that day
-and their bans stay until they expire.
+The panel downloads each list that is on once a day and bans every entry,
+whole networks included, on every port (websites, mail and SSH) for 48 hours
+from that download, so a host whose panel is down for a day keeps its lists.
+These are never banned: private and reserved ranges, entries wider than /8
+(IPv4) or /32 (IPv6), this server's own addresses, CrowdSec allowlist
+entries, and the addresses Google and Bing publish for their crawlers. If
+the crawler addresses cannot be loaded and no earlier copy is on the server,
+the lists are not refreshed that day and their bans stay until they expire.
 
-Turning a list off, or removing one of your own, lifts its bans within a
-minute. A visitor wrongly listed stays blocked until you turn the list off
-or add them to an allowlist. The card shows, for each list, how many
-entries the last run banned and how many it left out and why. These bans
-show under **Blocklists** as `cscli-import`, with the scenario
-`jabali-list:<list>`.
+Turning a list off, or removing one of your own, lifts its bans when the
+run finishes, within a minute or two. An address added to a CrowdSec
+allowlist is let in within a few seconds. A visitor wrongly listed stays
+blocked until you turn the list off or allowlist them. The card shows, for
+each list, how many entries the last run banned and how many it left out
+and why.
+
+These bans are not CrowdSec decisions, so they do not show under
+**Blocklists**. The agent loads them into its own nftables table, which
+drops traffic from the listed addresses on input and forward:
+
+```bash
+nft list table inet jabali_lists
+```
+
+The agent rebuilds the table when it starts, so the lists survive a reboot.
+If the CrowdSec allowlists cannot be read, the table is left as it was, and
+the card says the firewall was not updated.
+
+Earlier versions imported the lists as CrowdSec decisions (origin
+`cscli-import`, scenario `jabali-list:<list>`), which banned only the first
+address of each network. After the update, those of a list that is still on
+expire within 48 hours; those of a list that is off are deleted.
 
 ## Migrating from old `ufw deny` rules
 

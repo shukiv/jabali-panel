@@ -22,8 +22,8 @@ func crowdsecBlocklists(stored string) []string {
 }
 
 // reconcileCrowdsecLists sends the admin's extra blocklists to the agent's
-// security.crowdsec.lists.apply, which imports the lists that are on and
-// removes the bans of the ones that are off, in the background. The set and
+// security.crowdsec.lists.apply, which bans the lists that are on in the
+// firewall and lifts the bans of the ones that are off, in the background. The set and
 // this host's public IPs are the fingerprint, so a change is sent on the
 // next run; the phase's daily interval re-sends it, which refreshes every
 // list. With no list on, the agent only removes bans a list left behind.

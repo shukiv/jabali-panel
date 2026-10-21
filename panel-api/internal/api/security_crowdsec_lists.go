@@ -46,7 +46,7 @@ type crowdsecListsResponse struct {
 //	                                reconciler sends it to the agent within a minute
 //	POST /blocklists/feeds/refresh  downloads the lists that are on again now
 //
-// The agent imports and removes the lists in the background, so neither
+// The agent downloads and applies the lists in the background, so neither
 // write waits for a download.
 func registerCrowdsecListRoutes(g *gin.RouterGroup, cli agent.AgentInterface, settings repository.ServerSettingsRepository) {
 	g.GET("/blocklists/feeds", func(c *gin.Context) {

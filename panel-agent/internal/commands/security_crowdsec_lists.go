@@ -5,22 +5,29 @@
 // run then does the work, so a slow download never holds the panel's
 // reconciler. For each list in the catalog:
 //
-//   - off: its decisions are deleted, so turning a list off lifts its bans
-//     at once instead of when they expire.
+//   - off: it is left out of the firewall, so turning a list off lifts its
+//     bans at once instead of when they expire.
 //   - on: it is downloaded from the catalog URL, each line is checked to be
 //     one IP or CIDR, and an entry is
 //     dropped when it is a private or reserved range, wider than /8 (IPv4)
 //     or /32 (IPv6), or overlaps an address that must stay reachable: the
 //     server's own addresses, the ones the panel sends, every CrowdSec
 //     allowlist entry, and the addresses Google's and Bing's crawlers use
-//     (listCrawlerURLs). The list's old decisions are then replaced by the
-//     new ones. A list that fails to download or does not look like an IP
-//     list keeps its old decisions until they expire.
+//     (listCrawlerURLs). What is left replaces the list's bans. A list that
+//     fails to download or does not look like an IP list keeps its last bans
+//     until they expire.
+//
+// The bans go into the agent's own nftables table, not CrowdSec decisions:
+// see security_crowdsec_lists_nft.go. An older agent imported them as
+// decisions (reason "jabali-list:<key>"). Each run deletes those of a list
+// that is off. Those of a list that is on are left to expire, as the table
+// bans the same addresses: deleting them all at once on the update would
+// stall the firewall bouncer for minutes.
 //
 // The admin's custom lists (blocklists.NormalizeCustom URLs) go through the
 // same steps after the catalog. A custom list is named by its URL
-// (blocklists.CustomKey); the keys imported are kept in listsCustomState, so
-// a URL the admin removed has its bans lifted on the next run.
+// (blocklists.CustomKey); listsCustomState keeps the custom keys an older
+// agent imported, so a URL the admin removes has those decisions deleted.
 //
 // Every download, catalog or custom, goes through listHTTPClient: https only,
 // no proxy, at most 5 redirects, each https, and a host that resolves to a
@@ -32,9 +39,9 @@
 // 192.168.0.0/16 and 224.0.0.0/3 (fullbogons); without the filter, those
 // would ban loopback, docker and LAN traffic on every port.
 //
-// Decisions last listDecisionDuration, twice the panel's daily refresh, so
-// a host whose panel is down for a day keeps its lists. A refresh replaces
-// a list's decisions, so an address the list dropped is unbanned then.
+// Bans last listLifetime from their list's download, twice the panel's daily
+// refresh, so a host whose panel is down for a day keeps its lists. A refresh
+// replaces a list's bans, so an address the list dropped is unbanned then.
 package commands
 
 import (
@@ -49,7 +56,6 @@ import (
 	"net/http"
 	"net/netip"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -58,12 +64,11 @@ import (
 )
 
 const (
-	listFetchTimeout     = 90 * time.Second
-	listMaxBytes         = 8 << 20
-	listMaxEntries       = 50000
-	listsMaxTotal        = 80000 // the Blocklists tab counts at most 100000 per origin
-	listDecisionDuration = "48h"
-	listsRunTimeout      = 20 * time.Minute
+	listFetchTimeout = 90 * time.Second
+	listMaxBytes     = 8 << 20
+	listMaxEntries   = 50000
+	listsMaxTotal    = 80000
+	listsRunTimeout  = 20 * time.Minute
 )
 
 // listReserved are the ranges no list may ban: private, loopback,
@@ -175,7 +180,8 @@ func listCheckRedirect(req *http.Request, via []*http.Request) error {
 	return nil
 }
 
-// listsCustomState holds the custom list keys whose bans may be in CrowdSec.
+// listsCustomState holds the custom list keys an older agent may have left
+// CrowdSec decisions for.
 var listsCustomState = "/var/lib/jabali/crowdsec-custom-lists.json"
 
 // listCrawlerURLs are the files where Google and Bing publish the addresses
@@ -337,85 +343,109 @@ func listsStatusHandler(context.Context, json.RawMessage) (any, error) {
 	return out, nil
 }
 
-// runLists does one pass over the catalog and the custom lists and reports
-// each list.
+// runLists does one pass over the catalog and the custom lists, puts what the
+// lists that are on ban into the firewall, and reports each list.
 func runLists(ctx context.Context, p listsApplyParams) []listResult {
 	on := map[string]bool{}
 	for _, k := range p.Enabled {
 		on[k] = true
 	}
-	protect := listProtected(ctx, p.Protect)
+	// A failure to read the allowlists is reported by the render below,
+	// which then leaves the firewall as it is.
+	protect, _ := listProtected(ctx, p.Protect)
 	ctx = context.WithValue(ctx, listDenyKey{}, protect)
-	// Without the crawler addresses no list that is on is refreshed: its
-	// old bans stay until they expire, rather than new ones that may hold
-	// a search engine's address.
+	// Without the crawler addresses no list that is on is refreshed: it
+	// keeps its last bans until they expire, rather than new ones that may
+	// hold a search engine's address.
 	var crawlers []netip.Prefix
 	var crawlerErr error
 	if len(p.Enabled) > 0 || len(p.Custom) > 0 {
 		crawlers, crawlerErr = listCrawlerRanges(ctx)
 	}
+	prev := readListsState()
+	st := listsState{Protect: p.Protect, Lists: map[string]listEntries{}}
+	now := time.Now().UTC()
+	// refresh downloads a list that is on. One that could not be refreshed
+	// keeps the bans it had.
 	refresh := func(res listResult, url string, seen map[netip.Prefix]bool, total *int) listResult {
+		var keep []netip.Prefix
 		if crawlerErr != nil {
 			res.Error = "not refreshed, its bans stay until they expire: Google's and Bing's crawler addresses could not be loaded (" + crawlerErr.Error() + ")"
+		} else {
+			res, keep = runOneList(ctx, res, url, protect, crawlers, seen, total)
+		}
+		if res.Error != "" {
+			if old, ok := prev.Lists[res.Key]; ok {
+				st.Lists[res.Key] = old
+			}
 			return res
 		}
-		return runOneList(ctx, res, url, protect, crawlers, seen, total)
+		entries := make([]string, 0, len(keep))
+		for _, e := range keep {
+			entries = append(entries, e.String())
+		}
+		st.Lists[res.Key] = listEntries{At: now, Entries: entries}
+		return res
 	}
 	seen := map[netip.Prefix]bool{}
 	total := 0
-	now := time.Now().UTC().Format(time.RFC3339)
+	at := now.Format(time.RFC3339)
 	results := make([]listResult, 0, len(blocklists.Catalog)+len(p.Custom))
 	for _, l := range blocklists.Catalog {
-		res := listResult{Key: l.Key, Enabled: on[l.Key], At: now}
-		if !on[l.Key] {
-			if err := deleteListDecisions(ctx, l.Key); err != nil {
-				res.Error = err.Error()
-			}
-			results = append(results, res)
-			continue
+		res := listResult{Key: l.Key, Enabled: on[l.Key], At: at}
+		if on[l.Key] {
+			res = refresh(res, l.URL, seen, &total)
+		} else if err := deleteListDecisions(ctx, l.Key); err != nil {
+			res.Error = err.Error()
 		}
-		results = append(results, refresh(res, l.URL, seen, &total))
+		results = append(results, res)
 	}
 
-	// Custom lists: lift the bans of a URL the admin removed, then run each
-	// one that is set. A key whose bans could not be removed stays in the
-	// state, so the next run tries again.
-	wantCustom := map[string]bool{}
+	// Custom lists. An old key whose URL is still on, or whose decisions
+	// could not be deleted, stays in listsCustomState for a later run.
+	wanted := map[string]bool{}
 	for _, u := range p.Custom {
-		wantCustom[blocklists.CustomKey(u)] = true
+		wanted[blocklists.CustomKey(u)] = true
 	}
-	keep := []string{}
+	keepKeys := []string{}
 	for _, k := range readCustomListKeys() {
-		if wantCustom[k] {
-			continue
-		}
-		if err := deleteListDecisions(ctx, k); err != nil {
-			keep = append(keep, k)
+		if wanted[k] || deleteListDecisions(ctx, k) != nil {
+			keepKeys = append(keepKeys, k)
 		}
 	}
+	writeCustomListKeys(keepKeys)
 	for _, u := range p.Custom {
-		k := blocklists.CustomKey(u)
-		keep = append(keep, k)
-		res := listResult{Key: k, URL: u, Enabled: true, At: now}
+		res := listResult{Key: blocklists.CustomKey(u), URL: u, Enabled: true, At: at}
 		results = append(results, refresh(res, u, seen, &total))
 	}
-	writeCustomListKeys(keep)
+
+	err := writeListsState(st)
+	if err == nil {
+		err = renderLists(ctx)
+	}
+	if err != nil {
+		for i := range results {
+			if results[i].Enabled && results[i].Error == "" {
+				results[i].Error = "the firewall was not updated: " + err.Error()
+			}
+		}
+	}
 	return results
 }
 
-// runOneList downloads one list that is on, filters it and replaces its
-// decisions. On any failure the list's old decisions stay.
-func runOneList(ctx context.Context, res listResult, url string, protect, crawlers []netip.Prefix, seen map[netip.Prefix]bool, total *int) listResult {
+// runOneList downloads one list that is on and filters it, and returns what
+// it bans. res.Error says why when it could not.
+func runOneList(ctx context.Context, res listResult, url string, protect, crawlers []netip.Prefix, seen map[netip.Prefix]bool, total *int) (listResult, []netip.Prefix) {
 	body, err := listFetch(ctx, url)
 	if err != nil {
 		res.Error = "download failed: " + err.Error()
-		return res
+		return res, nil
 	}
 	entries, invalid, err := parseIPList(body)
 	res.Fetched, res.Invalid = len(entries), invalid
 	if err != nil {
 		res.Error = err.Error()
-		return res
+		return res, nil
 	}
 	keep := make([]netip.Prefix, 0, len(entries))
 	for _, e := range entries {
@@ -435,19 +465,9 @@ func runOneList(ctx context.Context, res listResult, url string, protect, crawle
 			keep = append(keep, e)
 		}
 	}
-	if err := deleteListDecisions(ctx, res.Key); err != nil {
-		res.Error = err.Error()
-		return res
-	}
-	if len(keep) > 0 {
-		if err := importListDecisions(ctx, res.Key, keep); err != nil {
-			res.Error = err.Error()
-			return res
-		}
-	}
 	res.Imported = len(keep)
 	*total += len(keep)
-	return res
+	return res, keep
 }
 
 // readCustomListKeys is the custom keys the last run left bans for. A missing
@@ -677,74 +697,38 @@ func parseProtected(in []string) ([]netip.Prefix, error) {
 // server's own interface addresses, and the CrowdSec allowlists' entries.
 // A source that cannot be read is skipped; the reserved-range filter still
 // covers loopback and private space.
-func listProtected(ctx context.Context, fromPanel []string) []netip.Prefix {
+func listProtected(ctx context.Context, fromPanel []string) ([]netip.Prefix, error) {
 	out, _ := parseProtected(fromPanel)
 	out = append(out, listOwnAddrs()...)
-	if raw, err := runCscliJSON(ctx, "allowlists", "list"); err == nil {
-		var lists []struct {
-			Items []struct {
-				Value string `json:"value"`
-			} `json:"items"`
-		}
-		if json.Unmarshal(raw, &lists) == nil {
-			for _, l := range lists {
-				for _, it := range l.Items {
-					if p, ok := parseIPOrPrefix(strings.TrimSpace(it.Value)); ok {
-						out = append(out, p)
-					}
-				}
+	raw, err := runCscliJSON(ctx, "allowlists", "list")
+	if err != nil {
+		return out, fmt.Errorf("read the CrowdSec allowlists: %v", err)
+	}
+	var lists []struct {
+		Items []struct {
+			Value string `json:"value"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(raw, &lists); err != nil {
+		return out, fmt.Errorf("read the CrowdSec allowlists: %v", err)
+	}
+	for _, l := range lists {
+		for _, it := range l.Items {
+			if p, ok := parseIPOrPrefix(strings.TrimSpace(it.Value)); ok {
+				out = append(out, p)
 			}
 		}
 	}
-	return out
+	return out, nil
 }
 
-// deleteListDecisions removes every decision list key imported.
+// deleteListDecisions removes every decision an older agent imported for list
+// key.
 func deleteListDecisions(ctx context.Context, key string) error {
 	cmd := execCommandContext(ctx, "cscli", "decisions", "delete",
 		"--origin", "cscli-import", "--scenario", blocklists.Reason(key))
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("remove the list's bans: %s", strings.TrimSpace(string(out)))
-	}
-	return nil
-}
-
-type listDecision struct {
-	Duration string `json:"duration"`
-	Reason   string `json:"reason"`
-	Scope    string `json:"scope"`
-	Type     string `json:"type"`
-	Value    string `json:"value"`
-}
-
-// importListDecisions bans entries as list key's decisions.
-func importListDecisions(ctx context.Context, key string, entries []netip.Prefix) error {
-	decisions := make([]listDecision, 0, len(entries))
-	for _, e := range entries {
-		d := listDecision{Duration: listDecisionDuration, Reason: blocklists.Reason(key), Type: "ban"}
-		if e.IsSingleIP() {
-			d.Scope, d.Value = "ip", e.Addr().String()
-		} else {
-			d.Scope, d.Value = "range", e.String()
-		}
-		decisions = append(decisions, d)
-	}
-	data, err := json.Marshal(decisions)
-	if err != nil {
-		return err
-	}
-	dir, err := os.MkdirTemp("", "jabali-list-")
-	if err != nil {
-		return fmt.Errorf("import: %v", err)
-	}
-	defer os.RemoveAll(dir)
-	path := filepath.Join(dir, key+".json")
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		return fmt.Errorf("import: %v", err)
-	}
-	cmd := execCommandContext(ctx, "cscli", "decisions", "import", "-i", path, "--format", "json")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("import the list: %s", strings.TrimSpace(string(out)))
 	}
 	return nil
 }

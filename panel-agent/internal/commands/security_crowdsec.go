@@ -1191,6 +1191,9 @@ func addToAllowlist(ctx context.Context, name, value, reason, expiration string)
 		}
 		return fmt.Errorf("cscli allowlists add: %s: %w", msg, err)
 	}
+	// The extra blocklists' table leaves allowlisted addresses out; render
+	// it again so this one is let in now rather than on the next refresh.
+	requestListsRerender()
 	return nil
 }
 
@@ -1365,6 +1368,13 @@ func csCountryAllowlistSyncHandler(ctx context.Context, params json.RawMessage) 
 		removed++
 	}
 	added := 0
+	// The extra blocklists' table leaves allowlisted addresses out; render it
+	// again for what was added, even when a later batch fails.
+	defer func() {
+		if added > 0 {
+			requestListsRerender()
+		}
+	}()
 	byComment := map[string][]string{}
 	order := []string{}
 	for _, a := range p.Adds {
