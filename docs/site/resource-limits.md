@@ -76,7 +76,7 @@ Edit packages: `/jabali-admin/packages`. Users on a package get the new limits a
 
 A package's `bandwidth_quota_mb` is the account's monthly web traffic: the
 bytes its domains sent to visitors since the 1st of the calendar month (UTC).
-Responses to known crawlers and bots are not counted. 0 means unlimited. The
+Responses to search engines and other bots are counted too. 0 means unlimited. The
 panel counts it once a day from the nginx access logs, so the figure is up to
 the end of yesterday.
 
