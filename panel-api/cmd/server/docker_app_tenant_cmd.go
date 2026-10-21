@@ -184,6 +184,9 @@ func runTenantDockerInstall(ctx context.Context, slug, name, userRef, domain, up
 	if !cliTenantInstallable(entry) {
 		return fmt.Errorf("%q is not tenant-installable (flag off or declares a public port)", slug)
 	}
+	if entry.Retired != "" {
+		return fmt.Errorf("%s is retired and cannot be installed: %s", entry.Name, entry.Retired)
+	}
 
 	user, err := resolveTenantUser(ctx, userRef)
 	if err != nil {

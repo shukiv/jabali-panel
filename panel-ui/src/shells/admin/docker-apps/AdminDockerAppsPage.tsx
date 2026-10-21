@@ -64,7 +64,7 @@ export const AdminDockerAppsPage = () => {
 
   const catalog = useQuery({
     queryKey: ["docker-apps-catalog"],
-    queryFn: listCatalog,
+    queryFn: () => listCatalog(),
   });
 
   const allCatalogTags = useMemo(() => {

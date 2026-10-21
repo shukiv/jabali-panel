@@ -239,6 +239,7 @@ type catalogEntryResponse struct {
 	Env               []catalogEnvVarResponse `json:"env,omitempty"`
 	TenantInstallable bool                    `json:"tenant_installable"`
 	RequiresDomain    bool                    `json:"requires_domain"`
+	Retired           string                  `json:"retired,omitempty"`
 }
 
 type catalogEnvVarResponse struct {
@@ -253,7 +254,12 @@ func (h *dockerAppHandler) listCatalog(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"items": []catalogEntryResponse{}})
 		return
 	}
-	entries := h.cfg.Catalog.All()
+	// Retired entries are left out of the install list; the edit drawer of an
+	// install made before asks for them with include_retired=1.
+	entries := h.cfg.Catalog.Listed()
+	if c.Query("include_retired") == "1" {
+		entries = h.cfg.Catalog.All()
+	}
 	out := make([]catalogEntryResponse, 0, len(entries))
 	for _, e := range entries {
 		out = append(out, catalogEntryToResponse(e))
@@ -351,6 +357,7 @@ func catalogEntryToResponse(e dockerapp.Entry) catalogEntryResponse {
 		Ports:             e.Ports,
 		TenantInstallable: e.TenantInstallable,
 		RequiresDomain:    e.RequiresDomain,
+		Retired:           e.Retired,
 		Env:               env,
 	}
 }
@@ -367,6 +374,15 @@ type installedResponse struct {
 	// hint on the installed-app card so operators know the first-run step
 	// (e.g. Pocket ID: create the first admin at https://<domain>/setup).
 	PostInstallNote string `json:"post_install_note,omitempty"`
+	// Retired is why the app's catalog entry was retired: no new installs,
+	// and the UI says so on the card. Empty for an entry still offered.
+	Retired string `json:"retired,omitempty"`
+}
+
+// catalogRetired is the retired reason of slug's catalog entry, or "".
+func catalogRetired(cat *dockerapp.Catalog, slug string) string {
+	e, _ := cat.Get(slug)
+	return e.Retired
 }
 
 // postInstallNoteFor returns the catalog entry's post-install note with the
@@ -421,6 +437,7 @@ func (h *dockerAppHandler) list(c *gin.Context) {
 			}
 		}
 		resp.PostInstallNote = h.postInstallNoteFor(a.Slug, resp.Domain)
+		resp.Retired = catalogRetired(h.cfg.Catalog, a.Slug)
 		out = append(out, resp)
 	}
 	c.JSON(http.StatusOK, gin.H{"items": out})
@@ -467,6 +484,10 @@ func (h *dockerAppHandler) install(c *gin.Context) {
 	entry, ok := h.cfg.Catalog.Get(req.Slug)
 	if !ok {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "unknown_slug", "slug": req.Slug})
+		return
+	}
+	if entry.Retired != "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "app_retired", "detail": entry.Name + " is retired and cannot be installed: " + entry.Retired})
 		return
 	}
 	if entry.RequiresDomain && strings.TrimSpace(req.Domain) == "" {
@@ -1212,6 +1233,7 @@ func (h *dockerAppHandler) get(c *gin.Context) {
 		}
 	}
 	resp.PostInstallNote = h.postInstallNoteFor(app.Slug, resp.Domain)
+	resp.Retired = catalogRetired(h.cfg.Catalog, app.Slug)
 	c.JSON(http.StatusOK, resp)
 }
 

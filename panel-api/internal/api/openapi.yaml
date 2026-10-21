@@ -1674,7 +1674,7 @@ paths:
                 backup_destination_id: { type: string }
       responses:
         "201": { description: "The install: DockerApp with ports" }
-        "400": { description: "invalid_request, invalid_name, invalid_update_mode or another validation error" }
+        "400": { description: "invalid_request, invalid_name, invalid_update_mode, app_retired (the catalog entry is retired) or another validation error" }
         "409": { description: "host_port_in_use: a host_port the request sets is held by another install, or something on the server already uses it" }
         "503": { description: "host_port_unavailable: no free host port, or the server couldn't be asked whether one is free" }
 
@@ -1682,7 +1682,9 @@ paths:
     get:
       tags: [Docker Apps]
       summary: List the Docker app catalog (admin)
+      description: "Retired entries (an entry's `retired` says why) are left out; include_retired=1 adds them, for installs made before."
       security: [ { KratosSession: [] } ]
+      parameters: [ { in: query, name: include_retired, required: false, schema: { type: string, enum: ["1"] } } ]
       responses: { "200": { description: "{ items: [ catalog entry ] }" } }
 
   /admin/docker-apps/catalog/{slug}/icon:
@@ -7749,7 +7751,7 @@ paths:
                 env: { type: object, additionalProperties: { type: string }, description: Overrides for the catalog entry's environment variables. }
       responses:
         "201": { description: "The install (DockerApp with ports and domain), in status installing; the install runs in the background, so poll GET /docker-apps/{id}" }
-        "400": { description: "invalid_request, invalid_name, domain_required, invalid_domain, unknown_slug, invalid_env or port_resolution_failed" }
+        "400": { description: "invalid_request, invalid_name, domain_required, invalid_domain, unknown_slug, app_retired, invalid_env or port_resolution_failed" }
         "403": { description: "docker_tenant_not_enabled, no_account, docker_apps_require_package, no_package or docker_apps_not_in_package" }
         "409": { description: "docker_app_quota_exceeded, disk_quota_exceeded, domain_in_use or already_installed" }
         "503": { description: "host_port_unavailable: no free host port, or the server couldn't be asked whether one is free" }
