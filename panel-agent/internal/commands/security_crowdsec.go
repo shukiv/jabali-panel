@@ -1228,6 +1228,9 @@ func csAllowlistsRemoveHandler(ctx context.Context, params json.RawMessage) (any
 		}
 		return nil, csInternal(fmt.Sprintf("cscli allowlists remove: %s", strings.TrimSpace(string(out))), err)
 	}
+	// An address no longer allowlisted is banned again by the extra
+	// blocklists' table if a list holds it.
+	requestListsRerender()
 	return map[string]any{}, nil
 }
 
@@ -1354,7 +1357,14 @@ func csCountryAllowlistSyncHandler(ctx context.Context, params json.RawMessage) 
 	if err := ensureAllowlist(ctx, jabaliCountryAllowlistName, allowlistDescription(jabaliCountryAllowlistName)); err != nil {
 		return nil, csInternal("ensure country allowlist", err)
 	}
-	removed := 0
+	removed, added := 0, 0
+	// The extra blocklists' table leaves allowlisted addresses out; render it
+	// again for what changed, even when a later step fails.
+	defer func() {
+		if added > 0 || removed > 0 {
+			requestListsRerender()
+		}
+	}()
 	for _, r := range p.Removes {
 		cmd := execCommandContext(ctx, "cscli", "allowlists", "remove",
 			jabaliCountryAllowlistName, strings.TrimSpace(r))
@@ -1367,14 +1377,6 @@ func csCountryAllowlistSyncHandler(ctx context.Context, params json.RawMessage) 
 		}
 		removed++
 	}
-	added := 0
-	// The extra blocklists' table leaves allowlisted addresses out; render it
-	// again for what was added, even when a later batch fails.
-	defer func() {
-		if added > 0 {
-			requestListsRerender()
-		}
-	}()
 	byComment := map[string][]string{}
 	order := []string{}
 	for _, a := range p.Adds {

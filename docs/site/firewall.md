@@ -85,7 +85,9 @@ lists are not refreshed that day and their bans stay until they expire.
 
 Turning a list off, or removing one of your own, lifts its bans when the
 run finishes, within a minute or two. An address added to a CrowdSec
-allowlist is let in within a few seconds. A visitor wrongly listed stays
+allowlist is let in within a few seconds, and banned again within a few
+seconds of its removal if a list still holds it; an entry that expires is
+banned again on the next refresh. A visitor wrongly listed stays
 blocked until you turn the list off or allowlist them. The card shows, for
 each list, how many entries the last run banned and how many it left out
 and why.

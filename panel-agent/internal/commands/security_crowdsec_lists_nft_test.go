@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/netip"
@@ -69,9 +70,28 @@ func TestRenderListsRuleset_Chunks(t *testing.T) {
 	}
 }
 
+// waitRender waits for an nft script after the first n.
+func (f *listsFake) waitRender(t *testing.T, n int, what string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		f.mu.Lock()
+		done := len(f.scripts) > n
+		f.mu.Unlock()
+		if done {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%s did not render the lists again", what)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 // An address allowlisted after its list was downloaded is let in when the
-// allowlist entry is added, without waiting for the next refresh.
-func TestAddToAllowlist_LetsTheAddressIn(t *testing.T) {
+// allowlist entry is added, and banned again when it is removed, without
+// waiting for the next refresh.
+func TestAllowlistChange_RendersTheListsAgain(t *testing.T) {
 	f := &listsFake{bodies: map[string]string{level1URL: "5.188.10.0/24\n80.94.95.81\n"}}
 	installListsFake(t, f, `[]`)
 	prevDelay := listsRerenderDelay
@@ -90,22 +110,41 @@ func TestAddToAllowlist_LetsTheAddressIn(t *testing.T) {
 	if err := addToAllowlist(context.Background(), jabaliAllowlistName, "80.94.95.81", "admin", ""); err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		f.mu.Lock()
-		done := len(f.scripts) > n
-		f.mu.Unlock()
-		if done {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("adding to the allowlist did not render the lists again")
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	f.waitRender(t, n, "adding to the allowlist")
 	if got := f.banned(); !slices.Equal(got, []string{"5.188.10.0/24"}) {
 		t.Fatalf("firewall bans %v after the allowlist add, want 80.94.95.81 let in", got)
 	}
+
+	f.mu.Lock()
+	f.allowlists = `[]`
+	n = len(f.scripts)
+	f.mu.Unlock()
+	if _, err := csAllowlistsRemoveHandler(context.Background(), json.RawMessage(`{"value":"80.94.95.81"}`)); err != nil {
+		t.Fatal(err)
+	}
+	f.waitRender(t, n, "removing from the allowlist")
+	if got := f.banned(); !slices.Equal(got, []string{"5.188.10.0/24", "80.94.95.81/32"}) {
+		t.Fatalf("firewall bans %v after the allowlist removal, want 80.94.95.81 banned again", got)
+	}
+}
+
+// A country allowlist sync renders the lists again when it removes entries,
+// not only when it adds them.
+func TestCountryAllowlistSync_RemovalRendersTheListsAgain(t *testing.T) {
+	f := &listsFake{bodies: map[string]string{level1URL: "80.94.95.0/24\n"}}
+	installListsFake(t, f, `[]`)
+	prevDelay := listsRerenderDelay
+	listsRerenderDelay = 10 * time.Millisecond
+	t.Cleanup(func() { listsRerenderDelay = prevDelay })
+	runLists(context.Background(), listsApplyParams{Enabled: []string{"firehol_level1"}})
+
+	f.mu.Lock()
+	n := len(f.scripts)
+	f.mu.Unlock()
+	if _, err := csCountryAllowlistSyncHandler(context.Background(), json.RawMessage(`{"removes":["80.94.95.0/24"]}`)); err != nil {
+		t.Fatal(err)
+	}
+	f.waitRender(t, n, "a country allowlist removal")
 }
 
 // When the allowlists cannot be read the firewall is left as it is, rather

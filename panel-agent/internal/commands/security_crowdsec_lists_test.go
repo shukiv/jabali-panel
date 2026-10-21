@@ -95,7 +95,8 @@ func installListsFake(t *testing.T, f *listsFake, allowlists string) {
 				return exec.CommandContext(ctx, "false")
 			}
 			return exec.CommandContext(ctx, "printf", "%s", f.allowlists)
-		case strings.HasPrefix(joined, "allowlists inspect"), strings.HasPrefix(joined, "allowlists add"):
+		case strings.HasPrefix(joined, "allowlists inspect"), strings.HasPrefix(joined, "allowlists add"),
+			strings.HasPrefix(joined, "allowlists remove"):
 			return exec.CommandContext(ctx, "true")
 		case strings.HasPrefix(joined, "decisions delete"):
 			f.deletes = append(f.deletes, args[len(args)-1])

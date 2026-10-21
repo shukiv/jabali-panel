@@ -14,7 +14,7 @@
 // the 48 h decisions did, so a list that fails to download keeps its bans
 // until then. renderLists runs after each run, when the agent starts (an
 // nftables table does not survive a reboot) and after an allowlist entry is
-// added, which then takes effect at once.
+// added or removed, which then takes effect at once.
 package commands
 
 import (
@@ -233,8 +233,9 @@ func StartCrowdsecLists(ctx context.Context) {
 }
 
 // requestListsRerender renders the lists again shortly after an allowlist
-// change, so an address just allowlisted is let in at once. Changes in quick
-// succession (a country sync) make one render.
+// change, so an address just allowlisted is let in at once, and one just
+// removed is banned again. Changes in quick succession (a country sync) make
+// one render.
 func requestListsRerender() {
 	if _, err := os.Stat(listsEntriesState); err != nil {
 		return
