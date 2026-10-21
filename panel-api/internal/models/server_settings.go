@@ -275,7 +275,7 @@ type ServerSettings struct {
 	// ONLY domains flagged bot_challenge_include). TEXT off-page (row ceiling).
 	AppSecBotDetectionScope string `gorm:"column:appsec_bot_detection_scope;type:text;not null;default:'all'" json:"appsec_bot_detection_scope"`
 
-	// BlockedUserAgents (migration 000328) — user agents every site refuses
+	// BlockedUserAgents (migration 000329) — user agents every site refuses
 	// (403), one per line, each a case-insensitive substring of the
 	// User-Agent header (rules: internal/useragents). Rendered by the agent's
 	// nginx.bots.apply into 00-jabali-bots.conf. Empty = none. TEXT off-page

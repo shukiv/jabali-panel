@@ -660,7 +660,7 @@ type Domain struct {
 	// Admin-only, opt-in (default 0). Inert in scope "all".
 	BotChallengeInclude bool `gorm:"column:bot_challenge_include;type:tinyint(1);not null" json:"bot_challenge_include"`
 
-	// BlockAICrawlers (migration 000328) — the vhost refuses (403) AI
+	// BlockAICrawlers (migration 000329) — the vhost refuses (403) AI
 	// crawlers and AI assistants that say who they are in their User-Agent,
 	// from the agent's list in 00-jabali-bots.conf. Owner or admin: it only
 	// turns visitors away from the owner's own site. Off by default.
