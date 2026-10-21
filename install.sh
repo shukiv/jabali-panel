@@ -3075,6 +3075,71 @@ EOF
   _ok "per-user CLI PHP wrapper wired into login-shell PATH (/etc/profile.d/jabali-php-cli.sh)"
 }
 
+# ensure_php_security_updates [upgrade_now] — keep PHP patched, and make a
+# patched PHP the one that runs.
+#
+# PHP comes from Sury: packages.sury.org on Debian, ppa:ondrej/php on Ubuntu.
+# The stock unattended-upgrades config allows only the distro's own origins,
+# so a PHP security release never reached a box by itself. And upgrading the
+# packages does not replace the running PHP: the package restarts
+# php<v>-fpm.service, which is masked (ADR-0025), so the per-user
+# jabali-fpm@<user> masters keep the old binary until they are reloaded.
+#
+#   - 52jabali-php-updates adds both Sury origins to unattended-upgrades.
+#   - jabali-php-fpm-refresh, run by a DPkg::Post-Invoke hook after every apt
+#     or dpkg run, reloads each master whose PHP binary was replaced.
+#   - With upgrade_now=1 (jabali update), the installed PHP packages are
+#     upgraded at once, keeping our config files.
+#
+# Never fails the caller: a box that cannot reach the repo keeps its PHP.
+ensure_php_security_updates() {
+  local upgrade_now="${1:-0}"
+  local refresh_src="${REPO_DIR:-/opt/jabali-panel}/install/php/jabali-php-fpm-refresh"
+  local refresh=/usr/local/sbin/jabali-php-fpm-refresh
+  local uu_conf=/etc/apt/apt.conf.d/52jabali-php-updates
+  local hook_conf=/etc/apt/apt.conf.d/99jabali-php-fpm-refresh
+  if [[ ! -f "$refresh_src" ]]; then
+    _warn "PHP-FPM refresh script missing at $refresh_src — PHP update wiring skipped"
+    return 0
+  fi
+  install -d -m 0755 /usr/local/sbin /etc/apt/apt.conf.d
+  install -m 0755 -o root -g root "$refresh_src" "$refresh"
+  cat >"$uu_conf" <<'JABALI_PHP_UU_EOF'
+// Managed by jabali (ensure_php_security_updates in install.sh); rewritten on
+// every jabali update. Lets unattended-upgrades apply PHP updates from Sury:
+// packages.sury.org on Debian, ppa:ondrej/php on Ubuntu.
+Unattended-Upgrade::Origins-Pattern {
+        "origin=deb.sury.org,codename=${distro_codename}";
+        "origin=LP-PPA-ondrej-php,codename=${distro_codename}";
+};
+JABALI_PHP_UU_EOF
+  cat >"$hook_conf" <<'JABALI_PHP_HOOK_EOF'
+// Managed by jabali (ensure_php_security_updates in install.sh). After every
+// apt or dpkg run, reload the per-user PHP-FPM masters still running a PHP
+// binary the run replaced. Never fails apt.
+DPkg::Post-Invoke { "[ -x /usr/local/sbin/jabali-php-fpm-refresh ] && /usr/local/sbin/jabali-php-fpm-refresh || true"; };
+JABALI_PHP_HOOK_EOF
+  chmod 0644 "$uu_conf" "$hook_conf"
+
+  if [[ "$upgrade_now" == 1 ]]; then
+    local pkgs=()
+    mapfile -t pkgs < <(dpkg-query -W -f='${db:Status-Abbrev} ${Package}\n' 'php*' 2>/dev/null | awk '$1 == "ii" {print $2}')
+    if ((${#pkgs[@]} > 0)); then
+      apt-get update -qq >/dev/null 2>&1 || _warn "apt update failed; upgrading PHP from the cached package lists"
+      if DEBIAN_FRONTEND=noninteractive timeout 1800 apt-get install -y -qq --only-upgrade \
+           -o DPkg::Lock::Timeout=300 \
+           -o Dpkg::Options::=--force-confold -o Dpkg::Options::=--force-confdef \
+           "${pkgs[@]}" >>"${LOG_FILE:-/dev/null}" 2>&1; then
+        _ok "installed PHP packages are up to date"
+      else
+        _warn "PHP package upgrade failed — run: apt-get install --only-upgrade ${pkgs[*]}"
+      fi
+    fi
+  fi
+  "$refresh" || true
+  _ok "PHP updates: Sury allowed in unattended-upgrades; FPM masters reload after a PHP upgrade"
+}
+
 
 # ---------- systemd slices: jabali root + user container ----------------------
 
@@ -16524,6 +16589,11 @@ provision_new_software() {
   # anything else in the provision chain touches PHP.
   ensure_jabali_panel_dir_traversable
   ensure_snuffleupagus_loadable
+  # Upgrade the installed PHP packages now and reload the FPM masters onto
+  # the new binary; from then on unattended-upgrades and the apt hook keep
+  # PHP current (CVE-2026-109618 / CVE-2026-109619 fixed in the October 21
+  # PHP releases).
+  ensure_php_security_updates 1
   # Also on UPDATE, not just fresh install: `jabali update` runs this trimmed
   # path, not main(), so wiring the call only into main() left every EXISTING
   # host — the ones that have been downloading to predictable /tmp paths for
@@ -17308,6 +17378,7 @@ main() {
   tune_mariadb_for_ram
   install_php_opcache_tuning   # #597: opcache defaults for multi-tenant WP
   install_php_cli_sendmail_path  # JAB-230: CLI mail() through the shim
+  ensure_php_security_updates  # PHP updates via unattended-upgrades + FPM reload
   # M48 Phase 8 (opt-in): install_docker_engine no longer runs on
   # fresh install. Operator flips server_settings.docker_marketplace_enabled
   # in Server Settings; panel-api dispatches docker.install which
@@ -17793,6 +17864,9 @@ RESOLV
   rm -f  /etc/apt/sources.list.d/sury-php.list
   rm -f  /usr/share/keyrings/sury-php.gpg
   rm -f  /etc/apt/apt.conf.d/98-jabali-sury-ua.conf
+  rm -f  /etc/apt/apt.conf.d/52jabali-php-updates
+  rm -f  /etc/apt/apt.conf.d/99jabali-php-fpm-refresh
+  rm -f  /usr/local/sbin/jabali-php-fpm-refresh
   rm -f  /etc/apt/sources.list.d/crowdsec.list
   rm -f  /etc/apt/keyrings/crowdsec.gpg
   rm -f  /etc/sysctl.d/60-jabali-malware.conf

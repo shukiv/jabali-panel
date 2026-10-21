@@ -1,0 +1,31 @@
+#!/bin/bash
+# jabali-php-fpm-refresh — reload each per-user PHP-FPM master that still runs
+# a PHP binary a package upgrade has replaced.
+#
+# Jabali runs one FPM master per hosting user (jabali-fpm@<user>.service) and
+# masks the distro's php<v>-fpm.service (ADR-0025). A PHP package upgrade
+# restarts only that masked unit, so the masters would keep the old binary,
+# security holes included, until their next restart. A reload sends SIGUSR2
+# (the unit's ExecReload): php-fpm lets the running requests finish and
+# re-executes itself from disk.
+#
+# Installed to /usr/local/sbin by ensure_php_security_updates (install.sh),
+# which also runs it after every apt/dpkg run through a DPkg::Post-Invoke
+# hook. Cheap when nothing changed. Always exits 0, so it never fails apt.
+set -u
+command -v systemctl >/dev/null 2>&1 || exit 0
+while read -r unit _; do
+  [[ "$unit" == jabali-fpm@*.service ]] || continue
+  pid=$(systemctl show -p MainPID --value "$unit" 2>/dev/null) || continue
+  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || continue
+  exe=$(readlink "/proc/$pid/exe" 2>/dev/null) || continue
+  [[ "$exe" == *" (deleted)" ]] || continue
+  if systemctl reload "$unit" 2>/dev/null; then
+    logger -t jabali-php-fpm-refresh "reloaded $unit: its PHP binary was upgraded" 2>/dev/null || true
+  elif systemctl restart "$unit" 2>/dev/null; then
+    logger -t jabali-php-fpm-refresh "restarted $unit: its PHP binary was upgraded and reload failed" 2>/dev/null || true
+  else
+    logger -t jabali-php-fpm-refresh "could not reload or restart $unit; it still runs the old PHP binary" 2>/dev/null || true
+  fi
+done < <(systemctl list-units --no-legend --plain --state=running 'jabali-fpm@*.service' 2>/dev/null)
+exit 0
