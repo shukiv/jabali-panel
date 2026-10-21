@@ -13,7 +13,7 @@
 # utilities.
 #
 # Jobs (all run unconditionally): Go tests+vet, install.sh lint, jabali-cache
-# plugin tests, vitest+eslint,
+# plugin tests, vitest+eslint, secret scan (gitleaks),
 # Playwright E2E.
 
 name: CI
@@ -145,6 +145,58 @@ jobs:
               echo '```'
             fi
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # Secret scan of the commits a PR adds. A token, key or password pushed to
+  # this public repo can be read by anyone the moment it lands, so this is a
+  # gate. Only the PR's own commits are scanned, so the test fixtures and doc
+  # placeholders already in the tree are not reported again; --redact keeps a
+  # found value out of the public job log.
+  #
+  # A false positive: add a `gitleaks:allow` comment on that line, or add the
+  # finding's fingerprint from the job summary to .gitleaksignore.
+  secrets:
+    name: secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+      - name: Install gitleaks
+        run: go install github.com/zricethezav/gitleaks/v8@v8.30.1
+      - name: gitleaks
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          # A PR: its commits. workflow_dispatch has no PR: the last commit.
+          if [ -n "$BASE" ]; then range="$BASE..HEAD"; else range="-1 HEAD"; fi
+          "$(go env GOPATH)/bin/gitleaks" git --no-banner --redact --exit-code 1 \
+            --report-format json --report-path gitleaks.json \
+            --log-opts="$range" .
+      - name: Summarise
+        if: always()
+        run: |
+          python3 - <<'EOF' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          try:
+              found = json.load(open("gitleaks.json"))
+          except (OSError, ValueError):
+              found = None
+          print("### Secret scan (gitleaks)\n")
+          if found is None:
+              print("No report: the scan did not run.")
+          elif not found:
+              print("No secrets in this PR's commits.")
+          else:
+              print("| File | Line | Rule | Commit | Fingerprint |")
+              print("|---|---|---|---|---|")
+              for f in found:
+                  print(f"| `{f['File']}` | {f['StartLine']} | {f['RuleID']} | {f['Commit'][:9]} | `{f['Fingerprint']}` |")
+              print("\nRemove the secret from the PR's commits and rotate it. A false positive: add a `gitleaks:allow` comment on the line, or its fingerprint to `.gitleaksignore`.")
+          EOF
 
   install-sh-lint:
     name: install.sh phantom-function lint
