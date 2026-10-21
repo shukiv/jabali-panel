@@ -4,7 +4,12 @@
 # Mustache slots below are substituted by sed during install — the post-render
 # check in install_kratos() fails the install if any unexpanded slot remains.
 
-dsn: "mysql://{{.KratosDatabaseUser}}:{{.KratosDatabasePassword}}@unix(/var/run/mysqld/mysqld.sock)/{{.KratosDatabaseName}}?parseTime=true&sql_mode=NO_ENGINE_SUBSTITUTION"
+# time_zone pins Kratos's MariaDB session to UTC ('+00:00', URL-escaped).
+# Kratos keeps recovery and verification code times in TIMESTAMP columns,
+# which MariaDB converts with the session time zone, and it sends them in
+# UTC. Following the server's zone, a time-zone change made every outstanding
+# code invalid (moving west) or last longer (moving east).
+dsn: "mysql://{{.KratosDatabaseUser}}:{{.KratosDatabasePassword}}@unix(/var/run/mysqld/mysqld.sock)/{{.KratosDatabaseName}}?parseTime=true&sql_mode=NO_ENGINE_SUBSTITUTION&time_zone=%27%2B00%3A00%27"
 
 serve:
   public:
