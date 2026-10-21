@@ -528,7 +528,7 @@ func generateSecret(scheme string) (string, error) {
 		// Standard padded base64 of exactly 32 random bytes, the shape
 		// `openssl rand -base64 32` prints (Plausible's TOTP_VAULT_KEY).
 		buf := make([]byte, 32)
-		if _, err := rand.Read(buf); err != nil {
+		if _, err := secretRandRead(buf); err != nil {
 			return "", err
 		}
 		return base64.StdEncoding.EncodeToString(buf), nil
