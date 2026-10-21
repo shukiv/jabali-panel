@@ -92,7 +92,23 @@ type RuntimePort struct {
 // indicate a malformed catalog entry — the agent NEVER sees an
 // unrenderable template because catalog loading runs validate()
 // before exposing the entry.
+//
+// Every render is hardened: a tenant install (TenantHardening set) gets the
+// tenant profile, and an admin install gets the admin baseline.
 func Render(entry Entry, params RenderParams) (string, error) {
+	raw, err := renderTemplate(entry, params)
+	if err != nil {
+		return "", err
+	}
+	if params.TenantHardening != nil {
+		return applyTenantHardening(raw, *params.TenantHardening)
+	}
+	return applyAdminHardening(raw, params.PIDsLimit)
+}
+
+// renderTemplate executes the catalog template and checks the result is
+// valid YAML. It applies no hardening.
+func renderTemplate(entry Entry, params RenderParams) (string, error) {
 	// SECURITY (GH #1790): reject a domain carrying any byte outside the FQDN
 	// alphabet before it reaches the template. The catalog templates substitute
 	// {{ .Domain }} unescaped inside double-quoted YAML scalars, so a quote /
@@ -160,10 +176,180 @@ func Render(entry Entry, params RenderParams) (string, error) {
 	if err := yaml.Unmarshal(buf.Bytes(), &probe); err != nil {
 		return "", fmt.Errorf("rendered compose for %q is not valid YAML: %w", entry.Slug, err)
 	}
-	if params.TenantHardening != nil {
-		return applyTenantHardening(buf.String(), *params.TenantHardening)
-	}
 	return buf.String(), nil
+}
+
+// adminDroppedCaps are capabilities Docker grants every container by default
+// that no catalog web app needs. NET_RAW lets a container forge packets on the
+// bridge (ARP/DNS spoofing of its neighbours); MKNOD lets it create device
+// nodes.
+var adminDroppedCaps = []string{"NET_RAW", "MKNOD"}
+
+// applyAdminHardening is the baseline every admin-installed app gets. A tenant
+// install gets the full applyTenantHardening profile instead. An admin app is
+// installed by a trusted admin from the curated catalog, but it still runs
+// internet-facing code. Without user-namespace remapping (hosts without tenant
+// Docker), root in its container is root on the host. So these are applied
+// to every service:
+//
+//   - no-new-privileges, so a setuid binary in the image cannot raise a
+//     process's privileges;
+//   - drop NET_RAW and MKNOD;
+//   - the install's PIDs limit. It was stored and shown in the panel, but no
+//     template used it, so it had no effect. It applies to each service, so
+//     the catalog's pids value must fit the app's busiest service: plausible's
+//     ClickHouse runs about 670 threads idle and crashes when it cannot start
+//     one.
+//
+// Entries the template already sets are kept: a service's own security_opt
+// and cap_drop are extended, not replaced, and a cap_add the template asked
+// for explicitly is not dropped. The compose is edited as a YAML node tree,
+// not decoded into a map and re-encoded, so the template's key order, quoting
+// and comments survive: the file the agent writes stays the template output
+// plus these keys.
+func applyAdminHardening(composeYAML string, pidsLimit int) (string, error) {
+	var root yaml.Node
+	if err := yaml.Unmarshal([]byte(composeYAML), &root); err != nil {
+		return "", fmt.Errorf("parse rendered compose for hardening: %w", err)
+	}
+	if root.Kind != yaml.DocumentNode || len(root.Content) != 1 || root.Content[0].Kind != yaml.MappingNode {
+		return "", fmt.Errorf("rendered compose is not a mapping")
+	}
+	svcs := mappingValue(root.Content[0], "services")
+	if svcs == nil {
+		return "", fmt.Errorf("rendered compose has no services block")
+	}
+	if svcs.Kind != yaml.MappingNode {
+		return "", fmt.Errorf("compose services block is not a mapping")
+	}
+	for i := 0; i+1 < len(svcs.Content); i += 2 {
+		name, svc := svcs.Content[i].Value, svcs.Content[i+1]
+		if svc.Kind != yaml.MappingNode {
+			return "", fmt.Errorf("compose service %q is not a mapping", name)
+		}
+		if err := ensureInSequence(svc, "security_opt", "no-new-privileges:true"); err != nil {
+			return "", fmt.Errorf("service %q: %w", name, err)
+		}
+		added := map[string]bool{}
+		if ca := mappingValue(svc, "cap_add"); ca != nil && ca.Kind == yaml.SequenceNode {
+			for _, c := range ca.Content {
+				added[strings.ToUpper(strings.TrimPrefix(c.Value, "CAP_"))] = true
+			}
+		}
+		for _, c := range adminDroppedCaps {
+			if added[c] {
+				continue
+			}
+			if err := ensureInSequence(svc, "cap_drop", c); err != nil {
+				return "", fmt.Errorf("service %q: %w", name, err)
+			}
+		}
+		if pidsLimit > 0 {
+			// deploy.resources.limits.pids, never the legacy top-level key:
+			// compose v5 rejects both together (GH #284).
+			limits, err := ensureMapping(svc, "deploy", "resources", "limits")
+			if err != nil {
+				return "", fmt.Errorf("service %q: %w", name, err)
+			}
+			setMappingScalar(limits, "pids", strconv.Itoa(pidsLimit), "!!int")
+			deleteMappingKey(svc, "pids_limit")
+		}
+	}
+	literalMultiline(&root)
+	var out bytes.Buffer
+	enc := yaml.NewEncoder(&out)
+	enc.SetIndent(2)
+	if err := enc.Encode(&root); err != nil {
+		return "", fmt.Errorf("re-encode hardened compose: %w", err)
+	}
+	if err := enc.Close(); err != nil {
+		return "", fmt.Errorf("re-encode hardened compose: %w", err)
+	}
+	return out.String(), nil
+}
+
+// literalMultiline re-styles every multi-line string as a literal block. A
+// template's multi-line command written as a folded double-quoted scalar does
+// not survive yaml.v3 re-encoding in its own style: the encoder re-folds it and
+// the value changes (an extra newline inside plausible's and erpnext's
+// commands). A literal block holds the value exactly.
+func literalMultiline(n *yaml.Node) {
+	if n.Kind == yaml.ScalarNode && n.Tag == "!!str" && strings.Contains(n.Value, "\n") {
+		n.Style = yaml.LiteralStyle
+	}
+	for _, c := range n.Content {
+		literalMultiline(c)
+	}
+}
+
+// mappingValue returns the value node for key in a mapping node, or nil.
+func mappingValue(m *yaml.Node, key string) *yaml.Node {
+	for i := 0; i+1 < len(m.Content); i += 2 {
+		if m.Content[i].Value == key {
+			return m.Content[i+1]
+		}
+	}
+	return nil
+}
+
+// ensureInSequence makes key a sequence in mapping m that holds v, keeping
+// whatever it already held.
+func ensureInSequence(m *yaml.Node, key, v string) error {
+	seq := mappingValue(m, key)
+	if seq == nil {
+		seq = &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
+		m.Content = append(m.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key}, seq)
+	}
+	if seq.Kind != yaml.SequenceNode {
+		return fmt.Errorf("%s is not a list", key)
+	}
+	for _, e := range seq.Content {
+		if e.Value == v {
+			return nil
+		}
+	}
+	seq.Content = append(seq.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: v})
+	return nil
+}
+
+// ensureMapping walks (creating as needed) nested mappings under m along path
+// and returns the last one.
+func ensureMapping(m *yaml.Node, path ...string) (*yaml.Node, error) {
+	cur := m
+	for _, key := range path {
+		next := mappingValue(cur, key)
+		if next == nil {
+			next = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+			cur.Content = append(cur.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key}, next)
+		}
+		if next.Kind != yaml.MappingNode {
+			return nil, fmt.Errorf("%s is not a mapping", key)
+		}
+		cur = next
+	}
+	return cur, nil
+}
+
+// setMappingScalar sets key in mapping m to a scalar, replacing any value.
+func setMappingScalar(m *yaml.Node, key, value, tag string) {
+	v := &yaml.Node{Kind: yaml.ScalarNode, Tag: tag, Value: value}
+	for i := 0; i+1 < len(m.Content); i += 2 {
+		if m.Content[i].Value == key {
+			m.Content[i+1] = v
+			return
+		}
+	}
+	m.Content = append(m.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key}, v)
+}
+
+// deleteMappingKey removes key from mapping m if present.
+func deleteMappingKey(m *yaml.Node, key string) {
+	for i := 0; i+1 < len(m.Content); i += 2 {
+		if m.Content[i].Value == key {
+			m.Content = append(m.Content[:i], m.Content[i+2:]...)
+			return
+		}
+	}
 }
 
 // normalizeMemoryLimit appends "m" to an all-digit memory limit so the
