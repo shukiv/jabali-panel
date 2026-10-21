@@ -52,6 +52,9 @@ type dockerAppUpdateParams struct {
 	// Required with TenantValidate whenever ComposeYML re-renders the install;
 	// panel-api never sends it for an image-only update of the on-disk file.
 	TenantServices tenantcompose.Services `json:"tenant_services,omitempty"`
+	// StopFirst (the catalog's stop_before_recreate) stops the old
+	// containers between pull and up; see recreatePrep.
+	StopFirst bool `json:"stop_first,omitempty"`
 }
 
 type dockerAppUpdateResponse struct {
@@ -121,13 +124,23 @@ func dockerAppUpdateHandler(ctx context.Context, params json.RawMessage) (any, e
 	// 2. Capture the current image SHA so we can rollback if needed.
 	oldImage := currentImage(ctx, p.Slug)
 
-	// 3. docker compose pull
-	if out, err := runDockerCompose(ctx, dir, "pull"); err != nil {
-		return nil, &agentwire.AgentError{
-			Code:    agentwire.CodeInternal,
-			Message: fmt.Sprintf("docker compose pull failed: %v", err),
-			Details: json.RawMessage(fmt.Sprintf(`{"stderr": %q}`, out)),
+	// 3. docker compose pull, and (StopFirst) stop the old containers
+	if step, out, err := recreatePrep(ctx, dir, p.StopFirst); err != nil {
+		if step == "pull" {
+			return nil, &agentwire.AgentError{
+				Code:    agentwire.CodeInternal,
+				Message: fmt.Sprintf("docker compose pull failed: %v", err),
+				Details: json.RawMessage(fmt.Sprintf(`{"stderr": %q}`, out)),
+			}
 		}
+		_ = rollback(ctx, dir, oldImage, prev)
+		return dockerAppUpdateResponse{
+			Slug:       p.Slug,
+			Outcome:    "rolled_back",
+			OldImage:   oldImage,
+			SnapshotID: snapshotID,
+			Detail:     fmt.Sprintf("docker compose %s failed: %v; stderr=%s", step, err, out),
+		}, nil
 	}
 
 	// 4. docker compose up -d (rolls forward to the new image)
@@ -189,6 +202,25 @@ func dockerAppUpdateHandler(ctx context.Context, params json.RawMessage) (any, e
 		SnapshotID: snapshotID,
 		Detail:     detail,
 	}, nil
+}
+
+// recreatePrep pulls the re-rendered compose's images and, when stopFirst
+// (the catalog's stop_before_recreate), then stops the old containers. An app
+// whose new compose runs one-shots on its data before its database starts
+// (Rocket.Chat's MongoDB 6.0 → 8.0 move) needs this: compose recreates a
+// service only when it reaches it, so until then the old database holds the
+// data files and the old app goes on writing. The pull comes first, so the
+// app is down for the recreate only. It returns the step that failed.
+func recreatePrep(ctx context.Context, dir string, stopFirst bool) (string, string, error) {
+	if out, err := runDockerCompose(ctx, dir, "pull"); err != nil {
+		return "pull", out, err
+	}
+	if stopFirst {
+		if out, err := runDockerCompose(ctx, dir, "stop"); err != nil {
+			return "stop", out, err
+		}
+	}
+	return "", "", nil
 }
 
 // rollback re-pulls and re-ups the previous image. Best-effort —

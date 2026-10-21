@@ -104,7 +104,44 @@ func TestDockerAppUpdate_KeepsThePriorFilesForRollback(t *testing.T) {
 	if read < 0 || write < 0 || read > write {
 		t.Fatalf("the prior files must be read before the new compose is written (read at %d, write at %d)", read, write)
 	}
-	if n := strings.Count(src, "_ = rollback(ctx, dir, oldImage, prev)"); n != 2 {
-		t.Fatalf("%d rollbacks get the prior files, want 2", n)
+	// The stop before a recreate, compose up and the health wait.
+	if n := strings.Count(src, "_ = rollback(ctx, dir, oldImage, prev)"); n != 3 {
+		t.Fatalf("%d rollbacks get the prior files, want 3", n)
+	}
+}
+
+// An app whose new compose moves its data before its database starts
+// (Rocket.Chat, MongoDB 6.0 → 8.0) has its old containers stopped after the
+// pull, so the old database no longer holds the files and the old app no
+// longer writes while the move runs. Without the flag nothing is stopped.
+func TestRecreatePrep_StopsTheOldContainersAfterThePull(t *testing.T) {
+	for _, tc := range []struct {
+		stopFirst bool
+		failOn    string
+		want      []string
+		wantStep  string
+	}{
+		{stopFirst: false, want: []string{"compose pull"}},
+		{stopFirst: true, want: []string{"compose pull", "compose stop"}},
+		{stopFirst: true, failOn: "compose pull", want: []string{"compose pull"}, wantStep: "pull"},
+		{stopFirst: true, failOn: "compose stop", want: []string{"compose pull", "compose stop"}, wantStep: "stop"},
+	} {
+		var ran []string
+		prevExec := execCommandContext
+		execCommandContext = func(ctx context.Context, name string, args ...string) *exec.Cmd {
+			cmd := strings.Join(args, " ")
+			if name == "docker" {
+				ran = append(ran, cmd)
+			}
+			if cmd == tc.failOn {
+				return exec.CommandContext(ctx, "false")
+			}
+			return exec.CommandContext(ctx, "true")
+		}
+		step, _, err := recreatePrep(context.Background(), t.TempDir(), tc.stopFirst)
+		execCommandContext = prevExec
+		if strings.Join(ran, ",") != strings.Join(tc.want, ",") || step != tc.wantStep || (err != nil) != (tc.wantStep != "") {
+			t.Errorf("stopFirst=%v failOn=%q: ran %v, step %q, err %v; want %v, step %q", tc.stopFirst, tc.failOn, ran, step, err, tc.want, tc.wantStep)
+		}
 	}
 }
