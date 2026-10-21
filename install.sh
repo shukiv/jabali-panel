@@ -11098,6 +11098,9 @@ EOF
   fi
   rm -f "$tmp"
 
+  # Needs the Lua module the bouncer package loads, so it goes in here.
+  ensure_nginx_host_match
+
   # Validate + reload nginx. The bouncer package drops
   # /etc/nginx/conf.d/crowdsec_nginx.conf; nginx-t catches any
   # postinst that didn't run (Debian quirk after kernel update).
@@ -11119,6 +11122,59 @@ EOF
       _warn "$tmpl_dir/$tmpl missing — captcha remediation will render empty until reinstalled"
     fi
   done
+}
+
+# ensure_nginx_host_match — install install/nginx/jabali-host-match.conf,
+# which refuses a request whose Host header names a different host from the
+# one nginx serves it for (the file says why). It is Lua, so it goes only
+# where the CrowdSec nginx bouncer's conf, which loads the Lua module, is
+# present, and is removed where that conf is gone. Runs from
+# install_crowdsec_nginx_bouncer and provision_new_software (jabali update).
+# A config nginx -t refuses is put back as it was: never leave nginx broken.
+ensure_nginx_host_match() {
+  local src="${REPO_DIR:-/opt/jabali-panel}/install/nginx/jabali-host-match.conf"
+  local dst=/etc/nginx/conf.d/jabali-host-match.conf
+  local bouncer_nginx=/etc/nginx/conf.d/crowdsec_nginx.conf
+  if [[ ! -f "$bouncer_nginx" ]]; then
+    if [[ -f "$dst" ]]; then
+      rm -f "$dst"
+      if nginx -t >/dev/null 2>&1; then
+        systemctl reload nginx 2>/dev/null || true
+      fi
+      _log "removed $dst: the CrowdSec nginx bouncer is not installed"
+    fi
+    return 0
+  fi
+  if [[ ! -f "$src" ]]; then
+    _warn "nginx Host check source missing at $src — skipping"
+    return 0
+  fi
+  # Idempotent: already current → no rewrite, no reload.
+  if [[ -f "$dst" ]] && cmp -s "$src" "$dst"; then
+    return 0
+  fi
+  local prev=""
+  if [[ -f "$dst" ]]; then
+    prev=$(mktemp)
+    cp -p "$dst" "$prev"
+  fi
+  install -m 0644 -o root -g root "$src" "$dst"
+  if ! nginx -t >/dev/null 2>&1; then
+    if [[ -n "$prev" ]]; then
+      install -m 0644 -o root -g root "$prev" "$dst"
+      rm -f "$prev"
+    else
+      rm -f "$dst"
+    fi
+    _warn "nginx -t failed with $dst — left as it was; the Host check is NOT updated (see 'nginx -t')"
+    return 0
+  fi
+  [[ -n "$prev" ]] && rm -f "$prev"
+  if systemctl reload nginx 2>/dev/null || systemctl restart nginx 2>/dev/null; then
+    _ok "nginx Host check installed: $dst"
+  else
+    _warn "installed $dst but nginx reload failed — it applies on the next nginx restart"
+  fi
 }
 
 ensure_crowdsec_db_ordering() {
@@ -16999,6 +17055,11 @@ EOF
   if declare -f ensure_crowdsec_diag_isolation >/dev/null 2>&1; then
     ensure_crowdsec_diag_isolation
   fi
+
+  # nginx refuses a Host header that disagrees with the request line's
+  # host. install_crowdsec_nginx_bouncer runs when the security module is
+  # installed, not on update.
+  ensure_nginx_host_match
 
   # Cloudflare real-IP rewrite. Without this, every CF-fronted hit logs
   # the proxy IP (172.6x.x.x, etc) as the client — breaks per-IP rate
