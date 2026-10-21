@@ -31,6 +31,7 @@ type ListResult = {
   imported: number;
   dropped_reserved: number;
   dropped_protected: number;
+  dropped_crawler?: number; // absent from an agent older than the field
   dropped_duplicate: number;
   dropped_over_cap: number;
   invalid: number;
@@ -50,12 +51,14 @@ const errorText = (err: unknown) => {
 
 // lastRunLine says what the last run did with one list that is on.
 const lastRunLine = (r: ListResult) => {
-  const left = r.dropped_reserved + r.dropped_protected + r.dropped_duplicate + r.dropped_over_cap;
+  const crawler = r.dropped_crawler ?? 0;
+  const left = r.dropped_reserved + r.dropped_protected + crawler + r.dropped_duplicate + r.dropped_over_cap;
   const parts = [`${r.imported.toLocaleString()} addresses or ranges banned`];
   if (left > 0) {
     const why = [
       r.dropped_reserved && `${r.dropped_reserved.toLocaleString()} private or reserved`,
       r.dropped_protected && `${r.dropped_protected.toLocaleString()} this server's or allowlisted`,
+      crawler && `${crawler.toLocaleString()} Google's or Bing's crawlers`,
       r.dropped_duplicate && `${r.dropped_duplicate.toLocaleString()} already on another list`,
       r.dropped_over_cap && `${r.dropped_over_cap.toLocaleString()} over the limit`,
     ].filter(Boolean);
@@ -149,8 +152,9 @@ export const ExtraBlocklistsCard = () => {
         <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
           CrowdSec already bans the addresses on its community blocklist. A list turned on here is
           banned too, on every port: websites, mail and SSH. Each list is downloaded again once a day.
-          Private and reserved ranges, this server&apos;s own addresses and allowlisted addresses are
-          never banned. Turning a list off lifts its bans within a minute.
+          Private and reserved ranges, this server&apos;s own addresses, allowlisted addresses and
+          Google&apos;s and Bing&apos;s crawlers are never banned. Turning a list off lifts its bans
+          within a minute.
         </Typography.Paragraph>
         {(running || q.data?.status?.last_run) && (
           <Space size={12} wrap>

@@ -2276,7 +2276,7 @@ paths:
         community blocklist, and the admin's own list URLs (`custom`, each
         with the `key` the agent reports it under). `status` is the agent's
         report of its last run (per list: key, url for a custom list,
-        fetched, imported, dropped_reserved, dropped_protected,
+        fetched, imported, dropped_reserved, dropped_protected, dropped_crawler,
         dropped_duplicate, dropped_over_cap, invalid, error), or null when the
         agent could not be asked.
       security: [ { KratosSession: [] } ]

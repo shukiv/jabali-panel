@@ -129,7 +129,20 @@ describe("ExtraBlocklistsCard", () => {
     mocked.get.mockResolvedValue({ data: { lists: lists([]), status: null } });
     renderCard();
     expect(await screen.findByText(/on every port: websites, mail and SSH/)).toBeInTheDocument();
-    expect(screen.getByText(/allowlisted addresses are\s+never banned/)).toBeInTheDocument();
+    expect(screen.getByText(/Google's and Bing's crawlers are never banned/)).toBeInTheDocument();
+  });
+
+  it("says how many crawler addresses a run left out", async () => {
+    mocked.get.mockResolvedValue({
+      data: {
+        lists: lists(["firehol_level2"]),
+        status: { running: false, lists: [result("firehol_level2", { dropped_protected: 0, dropped_crawler: 21 })] },
+      },
+    });
+    renderCard();
+    expect(
+      await screen.findByText(/4,600 addresses or ranges banned; 32 left out \(11 private or reserved, 21 Google's or Bing's crawlers\)/),
+    ).toBeInTheDocument();
   });
 
   it("adds the admin's own list URLs, asking first", async () => {
