@@ -240,12 +240,18 @@
             "type": "string",
             "enum": [
               "password32",
-              "password64"
+              "password64",
+              "laravel_key",
+              "base64_32"
             ],
             "description": "Auto-generate at install time if value not supplied."
           }
         }
       }
+    },
+    "requires_domain": {
+      "type": "boolean",
+      "description": "The app cannot start without the install's domain (its compose builds URLs from .Domain); installs without one are refused."
     },
     "tenant_installable": {
       "type": "boolean",

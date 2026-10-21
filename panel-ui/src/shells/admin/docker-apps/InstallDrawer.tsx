@@ -268,6 +268,7 @@ export const InstallDrawer = ({ open, entry, onClose, onInstalled }: Props) => {
             label={t("installdrawer.domain")}
             name="domain"
             tooltip={t("installdrawer.hostname_to_attach_to_the_loopback_bound_por")}
+            rules={entry.requires_domain ? [{ required: true, message: t("installdrawer.domain_required", { name: entry.name }) }] : []}
           >
             <Select
               showSearch

@@ -67,6 +67,12 @@ type Entry struct {
 	// "DAC_OVERRIDE"] for images that chown-then-drop). Established by actually
 	// running the app under drop-ALL, NOT guessed. Empty = needs no caps.
 	TenantCaps []string `yaml:"tenant_caps,omitempty"`
+	// RequiresDomain marks an app that cannot start without the install's
+	// domain: its compose builds the public URL, cookie domain or first admin
+	// address from {{ .Domain }} and the app exits on an empty one (Ghost
+	// ERR_INVALID_URL, Vaultwarden "empty host"). An install without a domain
+	// is refused instead of crash-looping.
+	RequiresDomain bool `yaml:"requires_domain,omitempty"`
 	// VolumeOwner is an optional "uid:gid" pair the agent applies
 	// to /var/lib/jabali/docker-apps/<slug>/<volume>/ before docker
 	// compose up runs. Empty = leave the dirs root:root. Set for
@@ -369,6 +375,13 @@ func (e Entry) validate() error {
 	}
 	if err := e.validateTracks(); err != nil {
 		return err
+	}
+	// An unknown generate: scheme would otherwise surface only when an
+	// install materialises the env and fails.
+	for _, v := range e.Env {
+		if v.Generate != "" && !secretSchemes[v.Generate] {
+			return fmt.Errorf("env %s: unknown generate scheme %q", v.Name, v.Generate)
+		}
 	}
 	// Tenant-installable apps may not declare a forbidden capability (Gitea
 	// #515): the catalog is the policy boundary, so reject the dangerous cap at

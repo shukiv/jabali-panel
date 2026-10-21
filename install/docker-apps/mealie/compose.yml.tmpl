@@ -36,7 +36,8 @@ services:
           cpus: "{{ .CPULimit }}"
           memory: {{ .MemoryLimit }}
     healthcheck:
-      test: ["CMD-SHELL", "wget --spider -q http://127.0.0.1:9000/api/app/about || exit 1"]
+      # The image has no wget.
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:9000/api/app/about"]
       interval: 30s
       timeout: 10s
       retries: 5

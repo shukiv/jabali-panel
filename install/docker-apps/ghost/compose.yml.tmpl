@@ -33,7 +33,10 @@ services:
           cpus: "{{ .CPULimit }}"
           memory: {{ .MemoryLimit }}
     healthcheck:
-      test: ["CMD-SHELL", "wget --spider -q http://127.0.0.1:2368/ghost/api/v3/admin/site/ || exit 1"]
+      # Ghost answers a plain-http request with a 301 to https://<domain>,
+      # which wget followed out of the container. Any answer below 500
+      # means Ghost is up; the redirect is not followed.
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:2368/ghost/api/admin/site/', r => process.exit(r.statusCode < 500 ? 0 : 1)).on('error', () => process.exit(1))"]
       interval: 30s
       timeout: 10s
       retries: 5

@@ -27,7 +27,9 @@ services:
           cpus: "{{ .CPULimit }}"
           memory: {{ .MemoryLimit }}
     healthcheck:
-      test: ["CMD-SHELL", "wget --spider -q http://127.0.0.1:2283/api/server-info/ping || exit 1"]
+      # The image has no wget (and /api/server-info/ping is gone); this is
+      # the probe its own HEALTHCHECK runs (/api/server/ping).
+      test: ["CMD", "immich-healthcheck"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -40,7 +42,8 @@ services:
     volumes:
       - {{ .DataRoot }}/model-cache:/cache
     healthcheck:
-      test: ["CMD-SHELL", "wget --spider -q http://127.0.0.1:3003/ping || exit 1"]
+      # The image has no wget; this is the probe its own HEALTHCHECK runs.
+      test: ["CMD", "python3", "/usr/src/healthcheck.py"]
       interval: 30s
       timeout: 10s
       retries: 5

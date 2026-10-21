@@ -31,17 +31,21 @@ services:
       retries: 5
       start_period: 45s
 
+  # gcr.io/zenika-hub/alpine-chrome no longer serves pulls (the registry
+  # answers "billing must be enabled"). Karakeep's own image, as upstream's
+  # compose uses: its entrypoint runs Chrome headless with --no-sandbox and
+  # forwards :9222 to the DevTools port, so the command adds only flags.
   chrome:
-    image: gcr.io/zenika-hub/alpine-chrome:124@sha256:1a0046448e0bb6c275c88f86e01faf0de62b02ec8572901256ada0a8c08be23f
+    image: ghcr.io/karakeep-app/karakeep-chrome:154.0.8037.57-r1@sha256:c51a8c8e6c3c1040a50fa0ecfd0b2fc298401b4229262636552458151f6f18fa
     container_name: jabali-app-{{ .Slug }}-chrome
     restart: unless-stopped
+    init: true
     command:
-      - --no-sandbox
       - --disable-gpu
       - --disable-dev-shm-usage
-      - --remote-debugging-address=0.0.0.0
-      - --remote-debugging-port=9222
       - --hide-scrollbars
+      - --disable-blink-features=AutomationControlled
+      - --window-size=1440,900
     deploy:
       resources:
         limits:

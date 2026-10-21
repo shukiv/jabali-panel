@@ -18,7 +18,10 @@ update_mode: manual
 resources:
   cpu: "2.0"
   memory: "2g"
-  pids: 500
+  # The limit applies to each service. ClickHouse runs about 670 threads
+  # when idle and reached 923 under parallel queries on a test host; a
+  # limit of 500 crashed it at start (exit 139).
+  pids: 2048
 
 volumes:
   - name: postgres
@@ -49,12 +52,17 @@ env:
     generate: password64
   - name: TOTP_VAULT_KEY
     secret: true
-    generate: password64
+    # Plausible refuses to start unless this is standard base64 of exactly
+    # 32 bytes ("TOTP_VAULT_KEY must be Base64 encoded 32 bytes").
+    generate: base64_32
   - name: DATABASE_URL
     value: ""
   - name: CLICKHOUSE_DATABASE_URL
     value: ""
   - name: POSTGRES_PASSWORD
+    secret: true
+    generate: password32
+  - name: CLICKHOUSE_PASSWORD
     secret: true
     generate: password32
 

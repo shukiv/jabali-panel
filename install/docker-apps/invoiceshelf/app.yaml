@@ -14,6 +14,9 @@ documentation: https://docs.invoiceshelf.com/
 
 image_channel: invoiceshelf/invoiceshelf:2.4.6@sha256:3cefda59e53ea027b52cd142b5339683afecaec3463db7c1af8462a661db6019
 update_mode: manual
+# Builds its public URL from the install's domain and does not start
+# without one.
+requires_domain: true
 tenant_installable: true
 
 resources:

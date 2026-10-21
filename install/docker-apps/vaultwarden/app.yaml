@@ -14,6 +14,9 @@ documentation: https://github.com/dani-garcia/vaultwarden/wiki
 
 image_channel: vaultwarden/server:1.37.3@sha256:1587c45feaa479f1f5e8af3b00eded36bff77bcf1880cf8dbf0541706dd470e0
 update_mode: manual
+# Builds its public URL from the install's domain and does not start
+# without one.
+requires_domain: true
 
 resources:
   cpu: "0.5"

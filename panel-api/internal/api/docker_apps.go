@@ -238,6 +238,7 @@ type catalogEntryResponse struct {
 	Ports             []dockerapp.PortSpec    `json:"ports"`
 	Env               []catalogEnvVarResponse `json:"env,omitempty"`
 	TenantInstallable bool                    `json:"tenant_installable"`
+	RequiresDomain    bool                    `json:"requires_domain"`
 }
 
 type catalogEnvVarResponse struct {
@@ -349,6 +350,7 @@ func catalogEntryToResponse(e dockerapp.Entry) catalogEntryResponse {
 		Volumes:           e.Volumes,
 		Ports:             e.Ports,
 		TenantInstallable: e.TenantInstallable,
+		RequiresDomain:    e.RequiresDomain,
 		Env:               env,
 	}
 }
@@ -465,6 +467,10 @@ func (h *dockerAppHandler) install(c *gin.Context) {
 	entry, ok := h.cfg.Catalog.Get(req.Slug)
 	if !ok {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "unknown_slug", "slug": req.Slug})
+		return
+	}
+	if entry.RequiresDomain && strings.TrimSpace(req.Domain) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "domain_required", "detail": entry.Name + " builds its address from its domain and does not start without one: pick a domain"})
 		return
 	}
 	req.Name = strings.TrimSpace(req.Name)
@@ -796,7 +802,7 @@ func (h *dockerAppHandler) install(c *gin.Context) {
 			persistCtx, persistCancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer persistCancel()
 			if agentErr != nil {
-				msg := firstLineString(agentErr.Error())
+				msg := dockerapp.FailureSummary(agentErr.Error())
 				_ = h.cfg.Repo.UpdateStatus(persistCtx, appID, models.DockerAppStatusFailed, &msg)
 				return
 			}
@@ -1389,6 +1395,11 @@ func (h *dockerAppHandler) editDomainPorts(ctx context.Context, app *models.Dock
 	target, terr := entry.TargetFor(app.CatalogVersion, false)
 	if terr != nil {
 		return &dockerEditError{http.StatusConflict, "update_required", terr.Error()}
+	}
+	// Removing the domain of an app that needs one would leave a compose
+	// that does not start. Checked before any port row changes.
+	if entry.RequiresDomain && reqDomain != nil && strings.TrimSpace(*reqDomain) == "" {
+		return &dockerEditError{http.StatusBadRequest, "domain_required", entry.Name + " does not start without a domain: pick another domain instead of removing it"}
 	}
 
 	// --- ports ---

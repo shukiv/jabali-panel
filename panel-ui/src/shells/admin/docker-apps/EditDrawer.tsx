@@ -255,10 +255,15 @@ export const EditDrawer = ({ open, app, onClose }: Props) => {
           />
         </Form.Item>
 
-        <Form.Item label={t("editdrawer.domain")} name="domain" tooltip={t("editdrawer.pick_from_the_panel_s_domains_list_leave_emp")}>
+        <Form.Item
+          label={t("editdrawer.domain")}
+          name="domain"
+          tooltip={t("editdrawer.pick_from_the_panel_s_domains_list_leave_emp")}
+          rules={entry?.requires_domain ? [{ required: true, message: t("editdrawer.domain_required", { name: entry.name }) }] : []}
+        >
           <Select
             showSearch
-            allowClear
+            allowClear={!entry?.requires_domain}
             disabled={running}
             placeholder={t("editdrawer.select_a_domain")}
             optionFilterProp="label"

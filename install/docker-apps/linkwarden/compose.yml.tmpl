@@ -3,8 +3,10 @@ services:
     image: {{ .ImageChannel }}
     container_name: jabali-app-{{ .Slug }}
     restart: unless-stopped
+    # Started before Postgres accepted connections, the app exited once.
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     environment:
 {{- if (index .Env "SMTP_HOST") }}
       # Operator-supplied SMTP (GH #322) — values q-escaped so special chars

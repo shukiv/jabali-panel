@@ -43,7 +43,8 @@ services:
           cpus: "{{ .CPULimit }}"
           memory: {{ .MemoryLimit }}
     healthcheck:
-      test: ["CMD-SHELL", "wget --spider -q http://127.0.0.1:8000/ || exit 1"]
+      # The image has no wget; this is the probe its own HEALTHCHECK runs.
+      test: ["CMD", "curl", "-fsS", "-L", "--max-time", "2", "-o", "/dev/null", "http://localhost:8000"]
       interval: 30s
       timeout: 10s
       retries: 5

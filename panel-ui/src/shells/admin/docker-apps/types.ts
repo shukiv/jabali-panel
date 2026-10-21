@@ -26,7 +26,7 @@ export interface CatalogEnvVar {
   name: string;
   value?: string;
   secret?: boolean;
-  generate?: "password32" | "password64";
+  generate?: "password32" | "password64" | "laravel_key" | "base64_32";
 }
 
 export interface CatalogEntry {
@@ -43,6 +43,8 @@ export interface CatalogEntry {
   volumes: CatalogVolume[];
   ports: CatalogPortSpec[];
   env?: CatalogEnvVar[];
+  // The app does not start without a domain; installs need one.
+  requires_domain?: boolean;
 }
 
 export interface InstalledPort {
