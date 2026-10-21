@@ -83,4 +83,10 @@ profile stalwart-mail /opt/stalwart/stalwart {
   deny /etc/shadow rwklx,
   deny /home/** rwlkx,
   deny /root/** rwlkx,
+
+  # Site-specific rules, kept across updates: jabali update overwrites this
+  # file but not /etc/apparmor.d/local/usr.local.bin.stalwart-mail. After editing that
+  # file, reload with: apparmor_parser -r /etc/apparmor.d/usr.local.bin.stalwart-mail
+  # A deny rule above still wins over an allow rule added there.
+  include if exists <local/usr.local.bin.stalwart-mail>
 }

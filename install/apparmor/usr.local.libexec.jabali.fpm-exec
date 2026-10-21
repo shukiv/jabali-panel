@@ -121,6 +121,12 @@ profile jabali-fpm-app /usr/local/libexec/jabali/fpm-exec flags=(attach_disconne
   deny /root/** rwklx,
   deny /home/*/.ssh/** rwklx,
   deny /etc/jabali-panel/migration-secrets/** rwklx,
+
+  # Site-specific rules, kept across updates: jabali update overwrites this
+  # file but not /etc/apparmor.d/local/usr.local.libexec.jabali.fpm-exec. After editing that
+  # file, reload with: apparmor_parser -r /etc/apparmor.d/usr.local.libexec.jabali.fpm-exec
+  # A deny rule above still wins over an allow rule added there.
+  include if exists <local/usr.local.libexec.jabali.fpm-exec>
 }
 
 # jabali-sendmail (JAB-230) — child profile for the PHP mail() shim. Runs as

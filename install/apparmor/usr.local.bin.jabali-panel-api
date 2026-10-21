@@ -349,4 +349,10 @@ profile jabali-panel flags=(attach_disconnected) {
   deny /var/log/audit/** rwklx,
   deny /var/spool/cron/** rwklx,
   deny /etc/cron.d/** wlkx,
+
+  # Site-specific rules, kept across updates: jabali update overwrites this
+  # file but not /etc/apparmor.d/local/usr.local.bin.jabali-panel-api. After editing that
+  # file, reload with: apparmor_parser -r /etc/apparmor.d/usr.local.bin.jabali-panel-api
+  # A deny rule above still wins over an allow rule added there.
+  include if exists <local/usr.local.bin.jabali-panel-api>
 }

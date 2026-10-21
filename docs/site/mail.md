@@ -72,6 +72,36 @@ Stalwart ingests inbound TLS-RPT, MTA-STS-RPT, and DMARC aggregate reports (M47 
 
 Admin-defined Stalwart expressions for routing / drop / quarantine. UI under Server Settings → Mail.
 
+## Mail storage on another disk
+
+Stalwart keeps all mail, message bodies included, in `/var/lib/stalwart`. To put it on another disk, mount the disk there, or bind-mount a directory of it there. Don't point Stalwart at a new path: its systemd sandbox lets it write only to `/var/lib/stalwart`, `/etc/stalwart` and `/etc/jabali-panel`, and its AppArmor profile allows only the same. With the disk mounted at `/var/lib/stalwart`, neither needs a change, and the system backup, which copies `/var/lib/stalwart`, still includes the mail.
+
+1. Stop Stalwart: `systemctl stop jabali-stalwart`.
+2. Copy the directory onto the new disk, keeping owners and permissions:
+   ```bash
+   rsync -aHAX /var/lib/stalwart/ /mnt/maildisk/stalwart/
+   ```
+3. Move the old directory aside, create an empty one, and bind-mount the copy over it:
+   ```bash
+   mv /var/lib/stalwart /var/lib/stalwart.old
+   mkdir /var/lib/stalwart
+   echo '/mnt/maildisk/stalwart /var/lib/stalwart none bind 0 0' >> /etc/fstab
+   systemctl daemon-reload
+   mount /var/lib/stalwart
+   ```
+4. Make Stalwart wait for the mount, so it never starts on the empty directory, and start it:
+   ```bash
+   mkdir -p /etc/systemd/system/jabali-stalwart.service.d
+   printf '[Unit]\nRequiresMountsFor=/var/lib/stalwart\n' > /etc/systemd/system/jabali-stalwart.service.d/30-mail-disk.conf
+   systemctl daemon-reload
+   systemctl start jabali-stalwart
+   ```
+5. Once mail works, delete `/var/lib/stalwart.old`.
+
+`jabali update` keeps the fstab line and the drop-in. Account backups export each mailbox through Stalwart, so they include its mail wherever it is stored.
+
+If Stalwart's blob store already points at a path outside `/var/lib/stalwart`, that path needs three things: a `ReadWritePaths=` and a `RequiresMountsFor=` line in a drop-in like the one above, and a rule in `/etc/apparmor.d/local/usr.local.bin.stalwart-mail` (see [AppArmor → Custom rules](./admin/apparmor.md#custom-rules)). The system backup doesn't include that path.
+
 ## Architecture choices
 
 - **DB-as-truth, reconciler-converged.** Mailboxes / forwarders / autoresponders are panel-DB rows; Stalwart's JMAP API is called by the agent on every change.
