@@ -11,8 +11,9 @@
 //     one IP or CIDR, and an entry is
 //     dropped when it is a private or reserved range, wider than /8 (IPv4)
 //     or /32 (IPv6), or overlaps an address that must stay reachable: the
-//     server's own addresses, the ones the panel sends, and every CrowdSec
-//     allowlist entry. The list's old decisions are then replaced by the
+//     server's own addresses, the ones the panel sends, every CrowdSec
+//     allowlist entry, and the addresses Google's and Bing's crawlers use
+//     (listCrawlerURLs). The list's old decisions are then replaced by the
 //     new ones. A list that fails to download or does not look like an IP
 //     list keeps its old decisions until they expire.
 //
@@ -177,6 +178,22 @@ func listCheckRedirect(req *http.Request, via []*http.Request) error {
 // listsCustomState holds the custom list keys whose bans may be in CrowdSec.
 var listsCustomState = "/var/lib/jabali/crowdsec-custom-lists.json"
 
+// listCrawlerURLs are the files where Google and Bing publish the addresses
+// their crawlers and fetchers come from. No list bans those addresses, so
+// search engines always reach the sites: the attack reports behind FireHOL
+// level 2 and 3 carry some Googlebot and Bingbot addresses on most days.
+var listCrawlerURLs = []string{
+	"https://developers.google.com/static/crawling/ipranges/common-crawlers.json",
+	"https://developers.google.com/static/crawling/ipranges/special-crawlers.json",
+	"https://developers.google.com/static/crawling/ipranges/user-triggered-fetchers.json",
+	"https://developers.google.com/static/crawling/ipranges/user-triggered-fetchers-google.json",
+	"https://www.bing.com/toolbox/bingbot.json",
+}
+
+// listsCrawlerCache keeps the last good copy of each listCrawlerURLs file,
+// for a run in which one cannot be downloaded.
+var listsCrawlerCache = "/var/lib/jabali/crowdsec-crawler-ranges.json"
+
 // Seams for tests.
 var (
 	listFetch = func(ctx context.Context, url string) ([]byte, error) {
@@ -230,6 +247,7 @@ type listResult struct {
 	Imported         int    `json:"imported"`
 	DroppedReserved  int    `json:"dropped_reserved"`
 	DroppedProtected int    `json:"dropped_protected"`
+	DroppedCrawler   int    `json:"dropped_crawler"`
 	DroppedDuplicate int    `json:"dropped_duplicate"`
 	DroppedOverCap   int    `json:"dropped_over_cap"`
 	Invalid          int    `json:"invalid"`
@@ -328,6 +346,21 @@ func runLists(ctx context.Context, p listsApplyParams) []listResult {
 	}
 	protect := listProtected(ctx, p.Protect)
 	ctx = context.WithValue(ctx, listDenyKey{}, protect)
+	// Without the crawler addresses no list that is on is refreshed: its
+	// old bans stay until they expire, rather than new ones that may hold
+	// a search engine's address.
+	var crawlers []netip.Prefix
+	var crawlerErr error
+	if len(p.Enabled) > 0 || len(p.Custom) > 0 {
+		crawlers, crawlerErr = listCrawlerRanges(ctx)
+	}
+	refresh := func(res listResult, url string, seen map[netip.Prefix]bool, total *int) listResult {
+		if crawlerErr != nil {
+			res.Error = "not refreshed, its bans stay until they expire: Google's and Bing's crawler addresses could not be loaded (" + crawlerErr.Error() + ")"
+			return res
+		}
+		return runOneList(ctx, res, url, protect, crawlers, seen, total)
+	}
 	seen := map[netip.Prefix]bool{}
 	total := 0
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -341,7 +374,7 @@ func runLists(ctx context.Context, p listsApplyParams) []listResult {
 			results = append(results, res)
 			continue
 		}
-		results = append(results, runOneList(ctx, res, l.URL, protect, seen, &total))
+		results = append(results, refresh(res, l.URL, seen, &total))
 	}
 
 	// Custom lists: lift the bans of a URL the admin removed, then run each
@@ -364,7 +397,7 @@ func runLists(ctx context.Context, p listsApplyParams) []listResult {
 		k := blocklists.CustomKey(u)
 		keep = append(keep, k)
 		res := listResult{Key: k, URL: u, Enabled: true, At: now}
-		results = append(results, runOneList(ctx, res, u, protect, seen, &total))
+		results = append(results, refresh(res, u, seen, &total))
 	}
 	writeCustomListKeys(keep)
 	return results
@@ -372,7 +405,7 @@ func runLists(ctx context.Context, p listsApplyParams) []listResult {
 
 // runOneList downloads one list that is on, filters it and replaces its
 // decisions. On any failure the list's old decisions stay.
-func runOneList(ctx context.Context, res listResult, url string, protect []netip.Prefix, seen map[netip.Prefix]bool, total *int) listResult {
+func runOneList(ctx context.Context, res listResult, url string, protect, crawlers []netip.Prefix, seen map[netip.Prefix]bool, total *int) listResult {
 	body, err := listFetch(ctx, url)
 	if err != nil {
 		res.Error = "download failed: " + err.Error()
@@ -391,6 +424,8 @@ func runOneList(ctx context.Context, res listResult, url string, protect []netip
 			res.DroppedReserved++
 		case overlapsAny(e, protect):
 			res.DroppedProtected++
+		case overlapsAny(e, crawlers):
+			res.DroppedCrawler++
 		case seen[e]:
 			res.DroppedDuplicate++
 		case len(keep) >= listMaxEntries || *total+len(keep) >= listsMaxTotal:
@@ -447,6 +482,109 @@ func writeCustomListKeys(keys []string) {
 		return
 	}
 	_ = os.Rename(tmp, listsCustomState)
+}
+
+// listCrawlerRanges is every address in the listCrawlerURLs files. A file
+// that cannot be downloaded or read is taken from its last good copy; with
+// no copy either, it is an error.
+func listCrawlerRanges(ctx context.Context) ([]netip.Prefix, error) {
+	cache := readCrawlerCache()
+	changed := false
+	var out []netip.Prefix
+	for _, u := range listCrawlerURLs {
+		got, err := fetchCrawlerRanges(ctx, u)
+		if err == nil {
+			ss := make([]string, len(got))
+			for i, p := range got {
+				ss[i] = p.String()
+			}
+			cache[u] = ss
+			changed = true
+			out = append(out, got...)
+			continue
+		}
+		cached, ok := cache[u]
+		if !ok {
+			return nil, fmt.Errorf("%s: %v", u, err)
+		}
+		for _, s := range cached {
+			if p, perr := netip.ParsePrefix(s); perr == nil {
+				out = append(out, p)
+			}
+		}
+	}
+	if changed {
+		writeCrawlerCache(cache)
+	}
+	return out, nil
+}
+
+func fetchCrawlerRanges(ctx context.Context, url string) ([]netip.Prefix, error) {
+	body, err := listFetch(ctx, url)
+	if err != nil {
+		return nil, err
+	}
+	return parseCrawlerRanges(body)
+}
+
+// parseCrawlerRanges reads Google's and Bing's format:
+// {"prefixes":[{"ipv4Prefix":"66.249.64.0/27"},{"ipv6Prefix":"2001:4860:4801:10::/64"}]}.
+// A file with a bad prefix or none at all is refused whole, so a broken
+// download never replaces a good copy.
+func parseCrawlerRanges(body []byte) ([]netip.Prefix, error) {
+	var f struct {
+		Prefixes []struct {
+			IPv4 string `json:"ipv4Prefix"`
+			IPv6 string `json:"ipv6Prefix"`
+		} `json:"prefixes"`
+	}
+	if err := json.Unmarshal(body, &f); err != nil {
+		return nil, errors.New("not a crawler address file")
+	}
+	out := make([]netip.Prefix, 0, len(f.Prefixes))
+	for _, e := range f.Prefixes {
+		s := e.IPv4
+		if s == "" {
+			s = e.IPv6
+		}
+		p, err := netip.ParsePrefix(strings.TrimSpace(s))
+		if err != nil {
+			return nil, fmt.Errorf("not a crawler address file: bad prefix %q", s)
+		}
+		out = append(out, p.Masked())
+	}
+	if len(out) == 0 {
+		return nil, errors.New("not a crawler address file: no prefixes")
+	}
+	return out, nil
+}
+
+// readCrawlerCache is the last good copy of each crawler file, by URL. A
+// missing or unreadable cache is empty.
+func readCrawlerCache() map[string][]string {
+	out := map[string][]string{}
+	raw, err := os.ReadFile(listsCrawlerCache)
+	if err != nil {
+		return out
+	}
+	if json.Unmarshal(raw, &out) != nil {
+		return map[string][]string{}
+	}
+	return out
+}
+
+// writeCrawlerCache replaces the cache. Best effort: a failed write only
+// means a later run without the network has no copy to fall back on.
+func writeCrawlerCache(cache map[string][]string) {
+	raw, err := json.Marshal(cache)
+	if err != nil {
+		return
+	}
+	tmp := listsCrawlerCache + ".new"
+	if err := os.WriteFile(tmp, raw, 0o600); err != nil {
+		return
+	}
+	_ = os.Rename(tmp, listsCrawlerCache)
 }
 
 // parseIPList reads one IP or CIDR per line, from the line's first field, so

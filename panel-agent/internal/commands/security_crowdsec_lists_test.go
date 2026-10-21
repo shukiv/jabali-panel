@@ -27,16 +27,28 @@ type listsFake struct {
 	fetched []string
 	imports map[string][]string
 	deletes []string
+	// noCrawlerDefaults leaves the crawler files out of bodies, so their
+	// downloads fail.
+	noCrawlerDefaults bool
 }
 
 func installListsFake(t *testing.T, f *listsFake, allowlists string) {
 	t.Helper()
 	f.imports = map[string][]string{}
-	prevFetch, prevAddrs, prevExec, prevState := listFetch, listInterfaceAddrs, execCommandContext, listsCustomState
+	prevFetch, prevAddrs, prevExec, prevState, prevCrawlers := listFetch, listInterfaceAddrs, execCommandContext, listsCustomState, listsCrawlerCache
 	t.Cleanup(func() {
-		listFetch, listInterfaceAddrs, execCommandContext, listsCustomState = prevFetch, prevAddrs, prevExec, prevState
+		listFetch, listInterfaceAddrs, execCommandContext, listsCustomState, listsCrawlerCache = prevFetch, prevAddrs, prevExec, prevState, prevCrawlers
 	})
-	listsCustomState = filepath.Join(t.TempDir(), "crowdsec-custom-lists.json")
+	dir := t.TempDir()
+	listsCustomState = filepath.Join(dir, "crowdsec-custom-lists.json")
+	listsCrawlerCache = filepath.Join(dir, "crowdsec-crawler-ranges.json")
+	// Each crawler file holds one documentation range unless the test says
+	// otherwise; a test drops a URL from bodies to make it fail.
+	for _, u := range listCrawlerURLs {
+		if _, ok := f.bodies[u]; !ok && !f.noCrawlerDefaults {
+			f.bodies[u] = `{"prefixes":[{"ipv4Prefix":"198.51.100.0/24"}]}`
+		}
+	}
 	listFetch = func(_ context.Context, url string) ([]byte, error) {
 		f.mu.Lock()
 		defer f.mu.Unlock()
@@ -346,5 +358,96 @@ func TestListDial_RefusesTheRunsProtectedAddresses(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "may not be downloaded from") {
 		t.Fatalf("listDial: %v", err)
+	}
+}
+
+// An address in Google's or Bing's published crawler ranges is never
+// banned, from a catalog list or a custom one, so search engines always
+// reach the sites. FireHOL level 2 and 3 carry some on most days.
+func TestRunLists_NeverBansGoogleOrBingCrawlers(t *testing.T) {
+	const custom = "https://lists.example.org/attackers.txt"
+	f := &listsFake{bodies: map[string]string{
+		listCrawlerURLs[0]: `{"creationTime":"2026-10-20T14:46:18.000000","prefixes":[{"ipv4Prefix":"66.249.64.0/27"},{"ipv6Prefix":"2001:4860:4801:10::/64"}]}`,
+		listCrawlerURLs[4]: `{"creationTime":"2024-01-03T10:00:00.121331","prefixes":[{"ipv4Prefix":"157.55.39.0/24"}]}`,
+		level2URL: strings.Join([]string{
+			"66.249.64.5",          // Googlebot
+			"2001:4860:4801:10::1", // Googlebot, IPv6
+			"157.55.39.0/24",       // Bingbot
+			"157.55.0.0/16",        // holds Bingbot's range
+			"80.94.95.81",          // kept
+		}, "\n"),
+		custom: "66.249.64.9\n45.155.205.233\n",
+	}}
+	installListsFake(t, f, `[]`)
+
+	res := runLists(context.Background(), listsApplyParams{Enabled: []string{"firehol_level2"}, Custom: []string{custom}})
+
+	if got := f.imports["jabali-list:firehol_level2"]; !slices.Equal(got, []string{"80.94.95.81"}) {
+		t.Fatalf("level 2 imported %v, want only 80.94.95.81", got)
+	}
+	if r := res[1]; r.DroppedCrawler != 4 || r.Imported != 1 || r.Error != "" {
+		t.Fatalf("level 2 result %+v: want 4 crawler addresses left out and 1 imported", r)
+	}
+	if got := f.imports[blocklists.Reason(blocklists.CustomKey(custom))]; !slices.Equal(got, []string{"45.155.205.233"}) {
+		t.Fatalf("custom list imported %v, want only 45.155.205.233", got)
+	}
+}
+
+// A crawler file that cannot be downloaded, or comes back as something
+// else, is taken from the last good copy.
+func TestRunLists_CrawlerFileDownUsesLastCopy(t *testing.T) {
+	f := &listsFake{bodies: map[string]string{
+		listCrawlerURLs[4]: `{"prefixes":[{"ipv4Prefix":"157.55.39.0/24"}]}`,
+		level1URL:          "157.55.39.10\n5.188.10.0/24\n",
+	}}
+	installListsFake(t, f, `[]`)
+	runLists(context.Background(), listsApplyParams{Enabled: []string{"firehol_level1"}})
+
+	for _, body := range []string{"", "<html><body>Service unavailable</body></html>"} {
+		if body == "" {
+			delete(f.bodies, listCrawlerURLs[4])
+		} else {
+			f.bodies[listCrawlerURLs[4]] = body
+		}
+		f.imports = map[string][]string{}
+		res := runLists(context.Background(), listsApplyParams{Enabled: []string{"firehol_level1"}})
+		if got := f.imports["jabali-list:firehol_level1"]; !slices.Equal(got, []string{"5.188.10.0/24"}) {
+			t.Fatalf("Bing's file %q: imported %v, want only 5.188.10.0/24", body, got)
+		}
+		if res[0].DroppedCrawler != 1 || res[0].Error != "" {
+			t.Fatalf("Bing's file %q: result %+v, want 1 crawler address left out", body, res[0])
+		}
+	}
+}
+
+// With a crawler file that cannot be read and no earlier copy, no list that
+// is on is refreshed: its old bans stay. A list that is off still loses its
+// bans.
+func TestRunLists_NoCrawlerAddressesKeepsOldBans(t *testing.T) {
+	f := &listsFake{noCrawlerDefaults: true, bodies: map[string]string{level1URL: "5.188.10.0/24\n"}}
+	installListsFake(t, f, `[]`)
+
+	res := runLists(context.Background(), listsApplyParams{Enabled: []string{"firehol_level1"}})
+
+	if slices.Contains(f.deletes, "jabali-list:firehol_level1") || len(f.imports) != 0 {
+		t.Fatalf("deleted %v, imported %v: level 1 must keep its old bans", f.deletes, f.imports)
+	}
+	if !strings.Contains(res[0].Error, "crawler addresses could not be loaded") {
+		t.Fatalf("level 1 result %+v: want the crawler error", res[0])
+	}
+	if !slices.Contains(f.deletes, "jabali-list:firehol_level2") {
+		t.Fatalf("deleted %v: level 2 is off and must lose its bans", f.deletes)
+	}
+}
+
+func TestParseCrawlerRanges(t *testing.T) {
+	got, err := parseCrawlerRanges([]byte(`{"prefixes":[{"ipv4Prefix":"66.249.64.1/27"},{"ipv6Prefix":"2001:4860:4801:10::/64"}]}`))
+	if err != nil || len(got) != 2 || got[0].String() != "66.249.64.0/27" || got[1].String() != "2001:4860:4801:10::/64" {
+		t.Fatalf("parseCrawlerRanges = %v, %v", got, err)
+	}
+	for _, bad := range []string{`{"prefixes":[]}`, `<html></html>`, `{"prefixes":[{"ipv4Prefix":"nope"}]}`, `{"prefixes":[{}]}`} {
+		if _, err := parseCrawlerRanges([]byte(bad)); err == nil {
+			t.Errorf("parseCrawlerRanges(%s): want an error", bad)
+		}
 	}
 }
