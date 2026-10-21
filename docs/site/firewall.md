@@ -63,6 +63,12 @@ the community blocklist. All are off by default.
 - **FireHOL level 3**: addresses reported in the last 30 days
   (BruteForceBlocker, CI Army, DShield, VXVault and others). Catches more,
   with more false positives.
+- **IPsum level 3**: addresses found on at least 3 of the 30 or more public
+  attack and malware lists [IPsum](https://github.com/stamparm/ipsum) merges
+  each day. Few false positives.
+- **Spamhaus DROP (IPv6)**: IPv6 networks hijacked or run by spammers and
+  cybercriminals. The IPv4 DROP list is part of FireHOL level 1. Very few
+  false positives.
 - **Your own lists**: up to 10 https URLs of plain-text lists, one IP or
   CIDR per line (`#` and `;` comments are skipped). The URL may not point
   at a private address or at this server.
@@ -71,10 +77,11 @@ The panel downloads each list that is on once a day and bans every entry,
 whole networks included, on every port (websites, mail and SSH) for 48 hours
 from that download, so a host whose panel is down for a day keeps its lists.
 These are never banned: private and reserved ranges, entries wider than /8
-(IPv4) or /32 (IPv6), this server's own addresses, CrowdSec allowlist
-entries, and the addresses Google and Bing publish for their crawlers. If
-the crawler addresses cannot be loaded and no earlier copy is on the server,
-the lists are not refreshed that day and their bans stay until they expire.
+(IPv4) or /29 (IPv6), this server's own addresses, CrowdSec allowlist
+entries, and the addresses Google and Bing publish for their crawlers. A
+listed network that holds one of these addresses is left out whole. If the
+crawler addresses cannot be loaded and no earlier copy is on the server, the
+lists are not refreshed that day and their bans stay until they expire.
 
 Turning a list off, or removing one of your own, lifts its bans when the
 run finishes, within a minute or two. An address added to a CrowdSec

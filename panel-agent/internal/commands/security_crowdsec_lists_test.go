@@ -150,7 +150,8 @@ func TestRunLists_DropsReservedAndProtectedAddresses(t *testing.T) {
 		"5.188.10.0/24",    // kept
 		"45.155.205.233",   // kept
 		"::1", "fe80::/10", // IPv6 reserved
-		"2a0e:1c80::/29",   // wider than /32
+		"2a0e:1c00::/28",   // wider than /29
+		"2a06:e480::/29",   // kept: a whole provider allocation, as on Spamhaus's IPv6 DROP
 		"2a0e:1c80:1::/48", // kept
 	}, "\n")}}
 	installListsFake(t, f, `[{"name":"jabali-admin-allowlist","items":[{"value":"91.198.174.192/27"}]}]`)
@@ -158,7 +159,7 @@ func TestRunLists_DropsReservedAndProtectedAddresses(t *testing.T) {
 	res := runLists(context.Background(), listsApplyParams{Enabled: []string{"firehol_level1"}, Protect: []string{"185.10.20.30"}})
 
 	got := f.stored("firehol_level1")
-	want := []string{"5.188.10.0/24", "45.155.205.233/32", "2a0e:1c80:1::/48"}
+	want := []string{"5.188.10.0/24", "45.155.205.233/32", "2a06:e480::/29", "2a0e:1c80:1::/48"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("kept %v\nwant  %v", got, want)
 	}
@@ -166,8 +167,8 @@ func TestRunLists_DropsReservedAndProtectedAddresses(t *testing.T) {
 		t.Fatalf("firewall bans %v\nwant          %v", got, want)
 	}
 	r := res[0]
-	if r.Key != "firehol_level1" || r.Imported != 3 || r.DroppedReserved != 10 || r.DroppedProtected != 3 || r.Error != "" {
-		t.Fatalf("result %+v: want 3 imported, 10 reserved, 3 protected", r)
+	if r.Key != "firehol_level1" || r.Imported != 4 || r.DroppedReserved != 10 || r.DroppedProtected != 3 || r.Error != "" {
+		t.Fatalf("result %+v: want 4 imported, 10 reserved, 3 protected", r)
 	}
 }
 
@@ -190,7 +191,10 @@ func TestRunLists_ListTurnedOffLosesItsBans(t *testing.T) {
 	if len(f.fetched) != 0 {
 		t.Fatalf("downloaded %v with every list off", f.fetched)
 	}
-	want := []string{"jabali-list:firehol_level1", "jabali-list:firehol_level2", "jabali-list:firehol_level3"}
+	var want []string
+	for _, l := range blocklists.Catalog {
+		want = append(want, "jabali-list:"+l.Key)
+	}
 	if !slices.Equal(f.deletes, want) {
 		t.Fatalf("deleted %v, want %v", f.deletes, want)
 	}
@@ -296,7 +300,7 @@ func TestListsApply_RunsInBackgroundAndReports(t *testing.T) {
 	}
 	st, _ := listsStatusHandler(context.Background(), nil)
 	s := st.(listsStatusResponse)
-	if s.Running || s.LastRun == "" || len(s.Lists) != 3 || s.Lists[0].Imported != 1 {
+	if s.Running || s.LastRun == "" || len(s.Lists) != len(blocklists.Catalog) || s.Lists[0].Imported != 1 {
 		t.Fatalf("status %+v: want a finished run with level 1 imported", s)
 	}
 }

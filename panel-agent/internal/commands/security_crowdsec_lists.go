@@ -10,7 +10,7 @@
 //   - on: it is downloaded from the catalog URL, each line is checked to be
 //     one IP or CIDR, and an entry is
 //     dropped when it is a private or reserved range, wider than /8 (IPv4)
-//     or /32 (IPv6), or overlaps an address that must stay reachable: the
+//     or /29 (IPv6), or overlaps an address that must stay reachable: the
 //     server's own addresses, the ones the panel sends, every CrowdSec
 //     allowlist entry, and the addresses Google's and Bing's crawlers use
 //     (listCrawlerURLs). What is left replaces the list's bans. A list that
@@ -659,9 +659,11 @@ func parseIPOrPrefix(s string) (netip.Prefix, bool) {
 }
 
 // listIsReserved is true for an entry that is, or overlaps, reserved space,
-// or that is wider than /8 (IPv4) or /32 (IPv6).
+// or that is wider than /8 (IPv4) or /29 (IPv6). /29 is a whole provider's
+// IPv6 allocation (RIPE's default), the size of the widest networks on
+// Spamhaus's IPv6 DROP list.
 func listIsReserved(p netip.Prefix) bool {
-	if p.Addr().Is4() && p.Bits() < 8 || p.Addr().Is6() && p.Bits() < 32 {
+	if p.Addr().Is4() && p.Bits() < 8 || p.Addr().Is6() && p.Bits() < 29 {
 		return true
 	}
 	return overlapsAny(p, listReserved)

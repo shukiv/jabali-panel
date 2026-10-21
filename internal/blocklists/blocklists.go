@@ -26,7 +26,8 @@ type List struct {
 // Catalog is every list the admin can turn on, in the order they are shown.
 // FireHOL's three levels go from few false positives (level 1) to more
 // coverage and more false positives (level 3); a higher level does not
-// include the lower ones.
+// include the lower ones. FireHOL level 1 carries Spamhaus's IPv4 DROP list;
+// Spamhaus's IPv6 one is its own entry.
 var Catalog = []List{
 	{
 		Key:         "firehol_level1",
@@ -45,6 +46,18 @@ var Catalog = []List{
 		Name:        "FireHOL level 3",
 		Description: "Addresses reported for attacks, spyware or viruses in the last 30 days (BruteForceBlocker, CI Army, DShield, VXVault and others). Catches more, with more false positives.",
 		URL:         "https://iplists.firehol.org/files/firehol_level3.netset",
+	},
+	{
+		Key:         "ipsum_level3",
+		Name:        "IPsum level 3",
+		Description: "Addresses found on at least 3 of the 30 or more public attack and malware lists IPsum merges each day. Few false positives.",
+		URL:         "https://raw.githubusercontent.com/stamparm/ipsum/master/levels/3.txt",
+	},
+	{
+		Key:         "spamhaus_dropv6",
+		Name:        "Spamhaus DROP (IPv6)",
+		Description: "IPv6 networks hijacked or run by spammers and cybercriminals. The IPv4 DROP list is part of FireHOL level 1. Very few false positives.",
+		URL:         "https://www.spamhaus.org/drop/dropv6.txt",
 	},
 }
 
