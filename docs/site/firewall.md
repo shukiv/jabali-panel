@@ -38,9 +38,9 @@ Add / remove ports at `/jabali-admin/security` → UFW.
 ## Blocklists
 
 Besides its own detections, CrowdSec pulls the free CrowdSec community
-blocklist (CAPI) and the bouncers drop the IPs on it. That is the only list
-the panel subscribes to. Security → CrowdSec → **Blocklists** shows how many
-active decisions each source holds.
+blocklist (CAPI) and the bouncers drop the IPs on it. The admin can add more
+lists (see [Extra blocklists](#extra-blocklists)). Security → CrowdSec →
+**Blocklists** shows how many active decisions each source holds.
 
 The panel does not use the CrowdSec console (app.crowdsec.net): console
 enrolment was removed, and `jabali update` turns console alert forwarding off
