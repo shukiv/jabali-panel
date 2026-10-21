@@ -275,6 +275,13 @@ type ServerSettings struct {
 	// ONLY domains flagged bot_challenge_include). TEXT off-page (row ceiling).
 	AppSecBotDetectionScope string `gorm:"column:appsec_bot_detection_scope;type:text;not null;default:'all'" json:"appsec_bot_detection_scope"`
 
+	// BlockedUserAgents (migration 000329) — user agents every site refuses
+	// (403), one per line, each a case-insensitive substring of the
+	// User-Agent header (rules: internal/useragents). Rendered by the agent's
+	// nginx.bots.apply into 00-jabali-bots.conf. Empty = none. TEXT off-page
+	// (row ceiling).
+	BlockedUserAgents string `gorm:"column:blocked_user_agents;type:text;not null;default:''" json:"blocked_user_agents"`
+
 	// Country ban exemption (ADR-0166, migration 000262). Countries whose
 	// IPs must never be blocked by CrowdSec from any decision source
 	// (scenario bans, AppSec inband, CAPI/console blocklists, captchas).

@@ -46,15 +46,33 @@ systemctl show jabali-user-<username>.slice -p TasksCurrent -p TasksMax
 systemd-cgls --no-pager -u jabali-user-<username>.slice
 ```
 
-## 3. nginx `limit_req`
+## 3. nginx request and connection limits (per domain)
 
-Per-user request rate cap on the user's vhosts. Default zone:
+Off by default. The admin sets them per domain under Admin → Domains → Edit →
+**Security → Rate limits**; the tenant cannot change them, and packages do not
+set them. Both are counted per visitor IP address, and 0 turns a limit off.
+
+- **Requests per second** (`rate_limit_rps`): a visitor may burst to twice the
+  rate without delay; requests past that get 503.
+- **Open connections** (`connection_limit`): connections past it get 503.
+
+The zones are declared in `/etc/nginx/conf.d/00-jabali-ratelimits.conf`, one
+per limited domain:
 
 ```nginx
-limit_req_zone $binary_remote_addr zone=jabali_<user>:10m rate=<package_req_per_sec>r/s;
+limit_req_zone $binary_remote_addr zone=rl_<domain_id>:<size>k rate=<rps>r/s;
+limit_conn_zone $binary_remote_addr zone=cn_<domain_id>:<size>k;
 ```
 
-Inside each vhost: `limit_req zone=jabali_<user> burst=<package_req_burst> nodelay;`. Override per-domain via Domains → Edit (planned).
+and the domain's vhost uses them:
+
+```nginx
+limit_req zone=rl_<domain_id> burst=<2 × rps> nodelay;
+limit_conn cn_<domain_id> <connections>;
+```
+
+A domain without limits has none of these lines. To turn away bots by user
+agent instead, see [Blocking bots](security.md#blocking-bots).
 
 ## Package fields
 

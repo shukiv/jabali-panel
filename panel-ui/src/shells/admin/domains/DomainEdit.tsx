@@ -30,6 +30,7 @@ import { DomainMTASTSSection } from "./DomainMTASTSSection";
 import { DomainMailTLSSection } from "./DomainMailTLSSection";
 import { DomainDeliverabilitySection } from "./DomainDeliverabilitySection";
 import { DomainStatsPanel } from "../../../components/domains/DomainStatsPanel";
+import { DomainRateLimitSection } from "./DomainRateLimitSection";
 
 export type DomainEditInput = {
   is_enabled?: boolean;
@@ -37,6 +38,7 @@ export type DomainEditInput = {
   temp_url_enabled?: boolean;
   bot_challenge_exempt?: boolean;
   bot_challenge_include?: boolean;
+  block_ai_crawlers?: boolean;
 };
 
 export const DomainEdit = () => {
@@ -69,6 +71,7 @@ export const DomainEdit = () => {
         temp_url_enabled: domain.temp_url_enabled,
         bot_challenge_exempt: domain.bot_challenge_exempt,
         bot_challenge_include: domain.bot_challenge_include,
+        block_ai_crawlers: domain.block_ai_crawlers,
       });
     }
   }, [domain, form]);
@@ -190,6 +193,25 @@ export const DomainEdit = () => {
         </Typography.Text>
       </div>
 
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 24 }}>
+        <Form.Item name="block_ai_crawlers" valuePropName="checked" noStyle>
+          <Switch
+            aria-label="Block AI crawlers"
+            checkedChildren={<CheckOutlined />}
+            unCheckedChildren={<CloseOutlined />}
+          />
+        </Form.Item>
+        <Typography.Text>
+          Block AI crawlers
+          <Typography.Text type="secondary" style={{ display: "block", fontSize: 12 }}>
+            Refuse (403) the crawlers and assistants of AI companies (GPTBot,
+            ClaudeBot, CCBot, PerplexityBot and others). Search engines such as
+            Googlebot and Bingbot still crawl the site. Only bots that name
+            themselves are stopped. The owner can change this too.
+          </Typography.Text>
+        </Typography.Text>
+      </div>
+
       <Form.Item>
         <Button type="primary" htmlType="submit" loading={updateMutation.isPending}>
           Save
@@ -258,6 +280,14 @@ export const DomainEdit = () => {
             IP Allow / Deny
           </Typography.Title>
           <DomainIPACLSection domainId={domain.id} />
+        </div>
+        <div>
+          <Typography.Title level={5}>Rate limits</Typography.Title>
+          <DomainRateLimitSection
+            domainId={domain.id}
+            rateLimitRPS={domain.rate_limit_rps ?? 0}
+            connectionLimit={domain.connection_limit ?? 0}
+          />
         </div>
         <div>
           <Typography.Title level={5}>Directory Privacy</Typography.Title>

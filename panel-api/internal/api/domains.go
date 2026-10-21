@@ -335,6 +335,16 @@ type updateDomainRequest struct {
 	// opting a site in only adds protection. Set in the owner-or-admin section
 	// of update, not the admin-only block.
 	BotChallengeInclude *bool `json:"bot_challenge_include,omitempty"`
+	// BlockAICrawlers — refuse AI crawlers that identify themselves. Owner or
+	// admin: it only turns visitors away from the owner's own site.
+	BlockAICrawlers *bool `json:"block_ai_crawlers,omitempty"`
+	// RateLimitRPS / ConnectionLimit — M18 per-domain nginx request rate
+	// (requests per second per client IP, burst twice that) and concurrent
+	// connections per client IP. 0 = no limit. ADMIN-ONLY, silently ignored
+	// for a tenant like the other admin fields; an anti-noise filter, not a
+	// security control (ADR-0089).
+	RateLimitRPS    *uint32 `json:"rate_limit_rps,omitempty"`
+	ConnectionLimit *uint32 `json:"connection_limit,omitempty"`
 	// GH #648 (DMARCbis): per-domain settable np (non-existent subdomain
 	// policy) + t=y testing tag, folded into the canonical _dmarc record.
 	DmarcNP      *string `json:"dmarc_np,omitempty"`
@@ -975,6 +985,28 @@ func (h *domainHandler) update(c *gin.Context) {
 	if req.BotChallengeInclude != nil {
 		domain.BotChallengeInclude = *req.BotChallengeInclude
 	}
+	if req.BlockAICrawlers != nil {
+		domain.BlockAICrawlers = *req.BlockAICrawlers
+	}
+
+	// Request limits: admin-only, written by their own repo method below
+	// (Domain.Update's allowlist leaves them out). Checked before any write.
+	var rateLimits *[2]uint32
+	if claims.IsAdmin && (req.RateLimitRPS != nil || req.ConnectionLimit != nil) {
+		rl := [2]uint32{domain.RateLimitRPS, domain.ConnectionLimit}
+		if req.RateLimitRPS != nil {
+			rl[0] = *req.RateLimitRPS
+		}
+		if req.ConnectionLimit != nil {
+			rl[1] = *req.ConnectionLimit
+		}
+		if rl[0] > maxDomainRateLimit || rl[1] > maxDomainRateLimit {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_rate_limit",
+				"detail": fmt.Sprintf("rate_limit_rps and connection_limit are 0 (no limit) to %d", maxDomainRateLimit)})
+			return
+		}
+		rateLimits = &rl
+	}
 
 	// Preview URL toggle — owner or admin. Enabling re-checks the slug
 	// collision (see previewSlugConflict).
@@ -1261,6 +1293,13 @@ func (h *domainHandler) update(c *gin.Context) {
 	txErr := h.cfg.Domains.Transaction(ctx, func(tx repository.DomainRepository) error {
 		if err := tx.Update(ctx, domain); err != nil {
 			return err
+		}
+
+		if rateLimits != nil {
+			if err := tx.SetRateLimits(ctx, domain.ID, rateLimits[0], rateLimits[1]); err != nil {
+				return err
+			}
+			domain.RateLimitRPS, domain.ConnectionLimit = rateLimits[0], rateLimits[1]
 		}
 
 		// Listen IPs are written via dedicated repo method — Domain.Update's
@@ -2799,6 +2838,10 @@ func (h *domainHandler) bandwidth(c *gin.Context) {
 // ledger is pruned at 90 days by default; a year leaves room for a longer
 // retention setting.
 const bwMaxWindowDays = 366
+
+// maxDomainRateLimit bounds rate_limit_rps and connection_limit. nginx takes
+// more, but past this a limit no longer filters anything.
+const maxDomainRateLimit = 10000
 
 // isNginxDuration accepts nginx's standard duration shape: a positive
 // integer followed by one of `ms s m h d` (or none = seconds). Used to

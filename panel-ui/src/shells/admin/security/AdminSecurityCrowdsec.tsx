@@ -29,6 +29,7 @@ import { SearchableTableStringQ } from "../../../components/SearchableTable";
 import { ISO3166_COUNTRIES } from "../../../data/iso3166";
 import { CrowdsecTestIPCard } from "./CrowdsecTestIPCard";
 import { AppSecExclusionsPanel } from "./AppSecExclusionsCard";
+import { BlockedUserAgentsCard } from "./BlockedUserAgentsCard";
 import { Sparkline } from "../../../components/Sparkline";
 
 import {
@@ -339,7 +340,16 @@ export const AdminSecurityCrowdsec = () => {
           { key: "alerts", label: "Alerts", children: <AlertsCard /> },
           { key: "captcha", label: "Captcha", children: <CaptchaPanel /> },
           { key: "appsec", label: "Block Country", children: <AppSecGeoblockCard /> },
-          { key: "botdetection", label: "Bot Detection", children: <AppSecBotDetectionCard /> },
+          {
+            key: "botdetection",
+            label: "Bot Detection",
+            children: (
+              <>
+                <AppSecBotDetectionCard />
+                <BlockedUserAgentsCard />
+              </>
+            ),
+          },
           { key: "wafexclusions", label: "WAF exclusions", children: <AppSecExclusionsPanel /> },
           { key: "settings", label: "Settings", children: <SettingsPanel /> },
           { key: "blocklists", label: "Blocklists", children: <BlocklistsCard /> },

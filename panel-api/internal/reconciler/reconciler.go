@@ -1165,6 +1165,9 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 	// further down handles the reverse transition (rate_limit_rps → 0:
 	// vhost stops referencing first, then the fragment drops the zone).
 	r.ReconcileNginxRateLimits(ctx)
+	// The admin's blocked user agents, before the vhosts that may start
+	// refusing them in this run.
+	r.ReconcileNginxBots(ctx)
 
 	tt.mark("ips_quota_ratelimits")
 
@@ -1453,6 +1456,7 @@ func (r *Reconciler) ReconcileAllForce(ctx context.Context) error {
 	// Vhost-side limit_req references must find their zones already
 	// declared or the agent's nginx -t will abort domain.create.
 	r.ReconcileNginxRateLimits(ctx)
+	r.ReconcileNginxBots(ctx)
 
 	allDomains, _, err := r.domains.List(ctx, repository.ListOptions{Limit: 10000})
 	if err != nil {
@@ -2361,6 +2365,10 @@ func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Dom
 	params["domain_id"] = domain.ID
 	params["rate_limit_rps"] = domain.RateLimitRPS
 	params["connection_limit"] = domain.ConnectionLimit
+	// User-agent blocks (00-jabali-bots.conf). Both false (the default)
+	// renders the vhost as before.
+	params["block_ai_crawlers"] = domain.BlockAICrawlers
+	params["block_listed_user_agents"] = len(r.blockedUserAgents(ctx)) > 0
 
 	params["index_priority"] = domain.IndexPriority
 

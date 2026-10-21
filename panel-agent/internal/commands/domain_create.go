@@ -157,6 +157,11 @@ type domainCreateParams struct {
 	DomainID        string `json:"domain_id,omitempty"`
 	RateLimitRPS    uint32 `json:"rate_limit_rps,omitempty"`
 	ConnectionLimit uint32 `json:"connection_limit,omitempty"`
+	// BlockAICrawlers refuses the AI crawlers in 00-jabali-bots.conf
+	// ($jabali_ai_crawler); BlockListedUserAgents the admin's server-wide
+	// list ($jabali_blocked_ua). Both false renders no directive.
+	BlockAICrawlers       bool `json:"block_ai_crawlers,omitempty"`
+	BlockListedUserAgents bool `json:"block_listed_user_agents,omitempty"`
 	// M24 per-domain listen IPs. Empty string ⇒ "all interfaces" (the
 	// pre-M24 listen 80 / listen [::]:80 behaviour). When set, the
 	// renderer emits explicit listen <ipv4>:80; / listen [<ipv6>]:80;
@@ -1189,6 +1194,25 @@ func buildCacheGate(paths []string, fallback string) string {
 	return "(" + strings.Join(valid, "|") + ")"
 }
 
+// limitDirectives renders the vhost's server-level request limits: the rate
+// and connection limits, then the user-agent blocks, which ride in the same
+// template slot. A user-agent block needs 00-jabali-bots.conf to exist, so
+// it is written (with an empty admin list) when it does not yet.
+func limitDirectives(p domainCreateParams) (string, error) {
+	out := BuildRateLimitDirectives(p.DomainID, p.RateLimitRPS, p.ConnectionLimit)
+	bots := BuildBotDirectives(p.BlockAICrawlers, p.BlockListedUserAgents)
+	if bots == "" {
+		return out, nil
+	}
+	if err := ensureNginxBotsFragment(); err != nil {
+		return "", &agentwire.AgentError{
+			Code:    agentwire.CodeInternal,
+			Message: fmt.Sprintf("write %s: %v", nginxBotsFragment, err),
+		}
+	}
+	return out + bots, nil
+}
+
 func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redirectDirectives, ruleDirectives, customDirectives, rateLimitDirectives, ipACLDirectives, dirPrivacyDirectives, indexPriority string, isEnabled, hasPHP bool, sslCertPath, sslKeyPath, phpMemLimit, phpUploadMax, phpPostMax string, phpMaxInputVars, phpMaxExecTime, phpMaxInputTime int, phpDisplayErrors bool, phpErrorReporting *int, phpTimezone string, envVars []domainEnvVarParam, listenIPv4, listenIPv6 string, cacheEnabled bool, cachePath string, cachePaths []string, cacheBypassPaths []string, cacheTTLSeconds int, cacheQueryAllowlist []string, fpmSocket string, previewHost, previewCertPath, previewKeyPath string, interceptErrors, pathInfo, redirectHTTPS, serveHTTPS bool, aliases []string, phpFlags phpFlagPins, ownershipGate, phpFallback string) (string, error) {
 	// GH #1625: re-sanitize the panel-supplied aliases HERE (trust
 	// boundary) into the server_name suffix — never render them raw.
@@ -1664,7 +1688,10 @@ func domainCreateHandler(ctx context.Context, params json.RawMessage) (any, erro
 		isEnabled = *p.IsEnabled
 	}
 
-	rateLimitDirectives := BuildRateLimitDirectives(p.DomainID, p.RateLimitRPS, p.ConnectionLimit)
+	rateLimitDirectives, err := limitDirectives(p)
+	if err != nil {
+		return nil, err
+	}
 	ipACLDirectives := buildIPACLDirectives(p.IPACLs)
 	// M50: write htpasswd files first; on failure, do NOT write the vhost
 	// (leaves nginx pointing at non-existent files = nginx -t fails).
