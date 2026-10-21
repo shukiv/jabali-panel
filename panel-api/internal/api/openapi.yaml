@@ -2309,7 +2309,7 @@ paths:
               properties:
                 enabled:
                   type: array
-                  items: { type: string, enum: [firehol_level1, firehol_level2, firehol_level3] }
+                  items: { type: string, enum: [firehol_level1, firehol_level2, firehol_level3, ipsum_level3, spamhaus_dropv6] }
                 custom:
                   type: array
                   maxItems: 10

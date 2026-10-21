@@ -176,6 +176,9 @@ func main() {
 	// CrowdSec blocklists snapshot refresher — 5-min ticker so the
 	// Security UI reads pre-computed data without per-click cscli.
 	commands.StartBlocklistsRefresher(ctx)
+	// The extra blocklists' nftables table does not survive a reboot; put
+	// the stored lists back.
+	commands.StartCrowdsecLists(ctx)
 
 	// GH #598: tail sshd success logs and time-box each successful SSH login's
 	// source IP into the jabali CrowdSec allowlist (panel-owned toggle/TTL via

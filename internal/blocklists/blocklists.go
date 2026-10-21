@@ -2,8 +2,8 @@
 // add to CrowdSec on top of its community blocklist, and the rules for the
 // admin's own (custom) list URLs. panel-api stores and shows the choice; the
 // agent fetches each catalog list from the URL here and each custom list from
-// a URL NormalizeCustom accepts, drops what must not be banned, and imports
-// the rest as CrowdSec ban decisions.
+// a URL NormalizeCustom accepts, drops what must not be banned, and bans the
+// rest in its own nftables table.
 package blocklists
 
 import (
@@ -26,7 +26,8 @@ type List struct {
 // Catalog is every list the admin can turn on, in the order they are shown.
 // FireHOL's three levels go from few false positives (level 1) to more
 // coverage and more false positives (level 3); a higher level does not
-// include the lower ones.
+// include the lower ones. FireHOL level 1 carries Spamhaus's IPv4 DROP list;
+// Spamhaus's IPv6 one is its own entry.
 var Catalog = []List{
 	{
 		Key:         "firehol_level1",
@@ -46,10 +47,23 @@ var Catalog = []List{
 		Description: "Addresses reported for attacks, spyware or viruses in the last 30 days (BruteForceBlocker, CI Army, DShield, VXVault and others). Catches more, with more false positives.",
 		URL:         "https://iplists.firehol.org/files/firehol_level3.netset",
 	},
+	{
+		Key:         "ipsum_level3",
+		Name:        "IPsum level 3",
+		Description: "Addresses found on at least 3 of the 30 or more public attack and malware lists IPsum merges each day. Few false positives.",
+		URL:         "https://raw.githubusercontent.com/stamparm/ipsum/master/levels/3.txt",
+	},
+	{
+		Key:         "spamhaus_dropv6",
+		Name:        "Spamhaus DROP (IPv6)",
+		Description: "IPv6 networks hijacked or run by spammers and cybercriminals. The IPv4 DROP list is part of FireHOL level 1. Very few false positives.",
+		URL:         "https://www.spamhaus.org/drop/dropv6.txt",
+	},
 }
 
 // ReasonPrefix starts the reason (shown as the scenario) of every decision
-// a list imports, followed by the list's key.
+// an older agent imported for a list, followed by the list's key. The agent
+// deletes them by it.
 const ReasonPrefix = "jabali-list:"
 
 // Reason is the decision reason for list key.
@@ -97,7 +111,7 @@ const maxCustomURL = 2048
 const customKeyPrefix = "custom-"
 
 // CustomKey names a custom list by its URL, so one URL always has one key and
-// the decisions it imported can be found again when the URL is removed.
+// its bans can be found again when the URL is removed.
 func CustomKey(rawURL string) string {
 	sum := sha256.Sum256([]byte(rawURL))
 	return customKeyPrefix + hex.EncodeToString(sum[:6])

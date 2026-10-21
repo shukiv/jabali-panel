@@ -19,14 +19,20 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/blocklists"
 )
 
-// listsFake stands in for cscli and the network. imports maps a reason to
-// the values its import file held; deletes lists each deleted reason.
+// listsFake stands in for cscli, nft and the network. deletes lists each
+// decision reason cscli was asked to delete; scripts holds each nft script
+// applied.
 type listsFake struct {
 	mu      sync.Mutex
 	bodies  map[string]string // URL -> body; missing = download error
 	fetched []string
-	imports map[string][]string
 	deletes []string
+	scripts []string
+	// allowlists is what cscli allowlists list prints; allowlistsErr makes
+	// it fail. nftErr makes nft -f fail.
+	allowlists    string
+	allowlistsErr bool
+	nftErr        error
 	// noCrawlerDefaults leaves the crawler files out of bodies, so their
 	// downloads fail.
 	noCrawlerDefaults bool
@@ -34,14 +40,28 @@ type listsFake struct {
 
 func installListsFake(t *testing.T, f *listsFake, allowlists string) {
 	t.Helper()
-	f.imports = map[string][]string{}
+	f.allowlists = allowlists
 	prevFetch, prevAddrs, prevExec, prevState, prevCrawlers := listFetch, listInterfaceAddrs, execCommandContext, listsCustomState, listsCrawlerCache
+	prevEntries, prevNftPath, prevApply := listsEntriesState, listsNftPath, listNftApply
 	t.Cleanup(func() {
 		listFetch, listInterfaceAddrs, execCommandContext, listsCustomState, listsCrawlerCache = prevFetch, prevAddrs, prevExec, prevState, prevCrawlers
+		listsEntriesState, listsNftPath, listNftApply = prevEntries, prevNftPath, prevApply
 	})
 	dir := t.TempDir()
 	listsCustomState = filepath.Join(dir, "crowdsec-custom-lists.json")
 	listsCrawlerCache = filepath.Join(dir, "crowdsec-crawler-ranges.json")
+	listsEntriesState = filepath.Join(dir, "crowdsec-lists.json")
+	listsNftPath = filepath.Join(dir, "crowdsec-lists.nft")
+	listNftApply = func(_ context.Context, path string) error {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Errorf("nft script: %v", err)
+		}
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		f.scripts = append(f.scripts, string(raw))
+		return f.nftErr
+	}
 	// Each crawler file holds one documentation range unless the test says
 	// otherwise; a test drops a URL from bodies to make it fail.
 	for _, u := range listCrawlerURLs {
@@ -67,36 +87,19 @@ func installListsFake(t *testing.T, f *listsFake, allowlists string) {
 	}
 	execCommandContext = func(ctx context.Context, name string, args ...string) *exec.Cmd {
 		joined := strings.Join(args, " ")
+		f.mu.Lock()
+		defer f.mu.Unlock()
 		switch {
 		case strings.HasPrefix(joined, "allowlists list"):
-			return exec.CommandContext(ctx, "printf", "%s", allowlists)
-		case strings.HasPrefix(joined, "decisions delete"):
-			f.mu.Lock()
-			f.deletes = append(f.deletes, args[len(args)-1])
-			f.mu.Unlock()
+			if f.allowlistsErr {
+				return exec.CommandContext(ctx, "false")
+			}
+			return exec.CommandContext(ctx, "printf", "%s", f.allowlists)
+		case strings.HasPrefix(joined, "allowlists inspect"), strings.HasPrefix(joined, "allowlists add"),
+			strings.HasPrefix(joined, "allowlists remove"):
 			return exec.CommandContext(ctx, "true")
-		case strings.HasPrefix(joined, "decisions import"):
-			raw, err := os.ReadFile(args[slices.Index(args, "-i")+1])
-			if err != nil {
-				t.Errorf("import file: %v", err)
-			}
-			var ds []listDecision
-			if err := json.Unmarshal(raw, &ds); err != nil {
-				t.Errorf("import file is not JSON decisions: %v", err)
-			}
-			var vals []string
-			for _, d := range ds {
-				if d.Type != "ban" || d.Duration != listDecisionDuration {
-					t.Errorf("decision %+v: want a %s ban", d, listDecisionDuration)
-				}
-				if (d.Scope == "ip") == strings.Contains(d.Value, "/") {
-					t.Errorf("decision %+v: scope does not match the value", d)
-				}
-				vals = append(vals, d.Value)
-			}
-			f.mu.Lock()
-			f.imports[ds[0].Reason] = vals
-			f.mu.Unlock()
+		case strings.HasPrefix(joined, "decisions delete"):
+			f.deletes = append(f.deletes, args[len(args)-1])
 			return exec.CommandContext(ctx, "true")
 		}
 		t.Errorf("unexpected command %s %s", name, joined)
@@ -104,12 +107,39 @@ func installListsFake(t *testing.T, f *listsFake, allowlists string) {
 	}
 }
 
+// stored is what list key bans, as the last run kept it.
+func (f *listsFake) stored(key string) []string {
+	return readListsState().Lists[key].Entries
+}
+
+// banned is every element the last nft script put in the table, without its
+// timeout.
+func (f *listsFake) banned() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.scripts) == 0 {
+		return nil
+	}
+	var out []string
+	for _, line := range strings.Split(f.scripts[len(f.scripts)-1], "\n") {
+		_, els, ok := strings.Cut(line, "{ ")
+		if !strings.HasPrefix(line, "add element ") || !ok {
+			continue
+		}
+		for _, el := range strings.Split(strings.TrimSuffix(els, " }"), ", ") {
+			addr, _, _ := strings.Cut(el, " timeout ")
+			out = append(out, addr)
+		}
+	}
+	return out
+}
+
 const level1URL = "https://iplists.firehol.org/files/firehol_level1.netset"
 const level2URL = "https://iplists.firehol.org/files/firehol_level2.netset"
 
 // The list's private, loopback, multicast and over-wide ranges, the server's
 // own address, the panel's protected address and allowlist entries are never
-// imported.
+// banned.
 func TestRunLists_DropsReservedAndProtectedAddresses(t *testing.T) {
 	f := &listsFake{bodies: map[string]string{level1URL: strings.Join([]string{
 		"# firehol_level1", "",
@@ -121,35 +151,59 @@ func TestRunLists_DropsReservedAndProtectedAddresses(t *testing.T) {
 		"5.188.10.0/24",    // kept
 		"45.155.205.233",   // kept
 		"::1", "fe80::/10", // IPv6 reserved
-		"2a0e:1c80::/29",   // wider than /32
+		"2a0e:1c00::/28",   // wider than /29
+		"2a06:e480::/29",   // kept: a whole provider allocation, as on Spamhaus's IPv6 DROP
 		"2a0e:1c80:1::/48", // kept
 	}, "\n")}}
 	installListsFake(t, f, `[{"name":"jabali-admin-allowlist","items":[{"value":"91.198.174.192/27"}]}]`)
 
 	res := runLists(context.Background(), listsApplyParams{Enabled: []string{"firehol_level1"}, Protect: []string{"185.10.20.30"}})
 
-	got := f.imports["jabali-list:firehol_level1"]
-	want := []string{"5.188.10.0/24", "45.155.205.233", "2a0e:1c80:1::/48"}
+	got := f.stored("firehol_level1")
+	want := []string{"5.188.10.0/24", "45.155.205.233/32", "2a06:e480::/29", "2a0e:1c80:1::/48"}
 	if !slices.Equal(got, want) {
-		t.Fatalf("imported %v\nwant      %v", got, want)
+		t.Fatalf("kept %v\nwant  %v", got, want)
+	}
+	if got := f.banned(); !slices.Equal(got, want) {
+		t.Fatalf("firewall bans %v\nwant          %v", got, want)
 	}
 	r := res[0]
-	if r.Key != "firehol_level1" || r.Imported != 3 || r.DroppedReserved != 10 || r.DroppedProtected != 3 || r.Error != "" {
-		t.Fatalf("result %+v: want 3 imported, 10 reserved, 3 protected", r)
+	if r.Key != "firehol_level1" || r.Imported != 4 || r.DroppedReserved != 10 || r.DroppedProtected != 3 || r.Error != "" {
+		t.Fatalf("result %+v: want 4 imported, 10 reserved, 3 protected", r)
 	}
 }
 
-// A list that is off has its bans removed, and is not downloaded.
+// A list that is off is not downloaded and its bans leave the firewall at
+// once. The decisions an older agent imported for it are deleted; those of a
+// list that is on are left to expire.
 func TestRunLists_ListTurnedOffLosesItsBans(t *testing.T) {
-	f := &listsFake{bodies: map[string]string{}}
+	f := &listsFake{bodies: map[string]string{level1URL: "5.188.10.0/24\n"}}
 	installListsFake(t, f, `[]`)
+	runLists(context.Background(), listsApplyParams{Enabled: []string{"firehol_level1"}})
+	if slices.Contains(f.deletes, "jabali-list:firehol_level1") {
+		t.Fatalf("deleted the old decisions of level 1, which is on: %v", f.deletes)
+	}
+	if got := f.banned(); !slices.Equal(got, []string{"5.188.10.0/24"}) {
+		t.Fatalf("firewall bans %v, want level 1's", got)
+	}
+
+	f.fetched, f.deletes = nil, nil
 	res := runLists(context.Background(), listsApplyParams{})
 	if len(f.fetched) != 0 {
 		t.Fatalf("downloaded %v with every list off", f.fetched)
 	}
-	want := []string{"jabali-list:firehol_level1", "jabali-list:firehol_level2", "jabali-list:firehol_level3"}
+	var want []string
+	for _, l := range blocklists.Catalog {
+		want = append(want, "jabali-list:"+l.Key)
+	}
 	if !slices.Equal(f.deletes, want) {
 		t.Fatalf("deleted %v, want %v", f.deletes, want)
+	}
+	if got := f.banned(); len(got) != 0 {
+		t.Fatalf("firewall still bans %v", got)
+	}
+	if last := f.scripts[len(f.scripts)-1]; !strings.Contains(last, "delete table inet jabali_lists") {
+		t.Fatalf("last script does not remove the table:\n%s", last)
 	}
 	for _, r := range res {
 		if r.Enabled || r.Error != "" {
@@ -161,25 +215,30 @@ func TestRunLists_ListTurnedOffLosesItsBans(t *testing.T) {
 // A list that cannot be downloaded, or is not an IP list, keeps the bans it
 // has; the other lists go on.
 func TestRunLists_FailedDownloadKeepsOldBans(t *testing.T) {
-	f := &listsFake{bodies: map[string]string{
-		level2URL: "<html><body>\n" + strings.Repeat("<p>Service unavailable</p>\n", 20) + "1.2.3.4\n</body></html>",
-	}}
+	f := &listsFake{bodies: map[string]string{level1URL: "5.188.10.0/24\n", level2URL: "80.94.95.81\n"}}
 	installListsFake(t, f, `[]`)
-	res := runLists(context.Background(), listsApplyParams{Enabled: []string{"firehol_level1", "firehol_level2"}})
-	for _, reason := range f.deletes {
-		if reason == "jabali-list:firehol_level1" || reason == "jabali-list:firehol_level2" {
-			t.Fatalf("deleted %s although its new copy could not be used", reason)
-		}
-	}
-	if len(f.imports) != 0 {
-		t.Fatalf("imported %v from failed downloads", f.imports)
-	}
+	both := listsApplyParams{Enabled: []string{"firehol_level1", "firehol_level2"}}
+	runLists(context.Background(), both)
+	before := readListsState()
+
+	delete(f.bodies, level1URL)
+	f.bodies[level2URL] = "<html><body>\n" + strings.Repeat("<p>Service unavailable</p>\n", 20) + "1.2.3.4\n</body></html>"
+	res := runLists(context.Background(), both)
 	if !strings.Contains(res[0].Error, "download failed") || !strings.Contains(res[1].Error, "not an IP list") {
 		t.Fatalf("results %+v / %+v: want a download error and a not-an-IP-list error", res[0], res[1])
 	}
+	after := readListsState()
+	for _, k := range []string{"firehol_level1", "firehol_level2"} {
+		if !after.Lists[k].At.Equal(before.Lists[k].At) || !slices.Equal(after.Lists[k].Entries, before.Lists[k].Entries) {
+			t.Fatalf("%s: kept %+v, want the earlier download %+v", k, after.Lists[k], before.Lists[k])
+		}
+	}
+	if got := f.banned(); !slices.Equal(got, []string{"5.188.10.0/24", "80.94.95.81/32"}) {
+		t.Fatalf("firewall bans %v, want both lists' earlier bans", got)
+	}
 }
 
-// An address on two lists is imported once, by the first.
+// An address on two lists is kept once, by the first.
 func TestRunLists_AddressOnTwoListsImportedOnce(t *testing.T) {
 	f := &listsFake{bodies: map[string]string{
 		level1URL: "5.188.10.0/24\n45.155.205.233\n",
@@ -187,8 +246,8 @@ func TestRunLists_AddressOnTwoListsImportedOnce(t *testing.T) {
 	}}
 	installListsFake(t, f, `[]`)
 	res := runLists(context.Background(), listsApplyParams{Enabled: []string{"firehol_level1", "firehol_level2"}})
-	if got := f.imports["jabali-list:firehol_level2"]; !slices.Equal(got, []string{"80.94.95.81"}) {
-		t.Fatalf("level 2 imported %v, want only 80.94.95.81", got)
+	if got := f.stored("firehol_level2"); !slices.Equal(got, []string{"80.94.95.81/32"}) {
+		t.Fatalf("level 2 kept %v, want only 80.94.95.81", got)
 	}
 	if res[1].DroppedDuplicate != 1 {
 		t.Fatalf("level 2 result %+v: want 1 duplicate", res[1])
@@ -242,14 +301,14 @@ func TestListsApply_RunsInBackgroundAndReports(t *testing.T) {
 	}
 	st, _ := listsStatusHandler(context.Background(), nil)
 	s := st.(listsStatusResponse)
-	if s.Running || s.LastRun == "" || len(s.Lists) != 3 || s.Lists[0].Imported != 1 {
+	if s.Running || s.LastRun == "" || len(s.Lists) != len(blocklists.Catalog) || s.Lists[0].Imported != 1 {
 		t.Fatalf("status %+v: want a finished run with level 1 imported", s)
 	}
 }
 
 // A custom list is fetched from its URL and banned under its own key; once
 // the admin removes the URL, the next run lifts its bans.
-func TestRunLists_CustomListImportedThenRemoved(t *testing.T) {
+func TestRunLists_CustomListBannedThenRemoved(t *testing.T) {
 	const u = "https://lists.example.org/drop.txt"
 	f := &listsFake{bodies: map[string]string{u: "203.0.114.9\n198.51.100.7\n10.0.0.0/8\n# comment\n"}}
 	installListsFake(t, f, "[]")
@@ -260,14 +319,39 @@ func TestRunLists_CustomListImportedThenRemoved(t *testing.T) {
 	if last.Key != key || last.URL != u || last.Imported != 1 || last.DroppedReserved != 2 || last.Error != "" {
 		t.Fatalf("custom result = %+v", last)
 	}
-	if got := f.imports[blocklists.Reason(key)]; !slices.Equal(got, []string{"203.0.114.9"}) {
-		t.Fatalf("imported %v under %s", got, blocklists.Reason(key))
+	if got := f.banned(); !slices.Equal(got, []string{"203.0.114.9/32"}) {
+		t.Fatalf("firewall bans %v", got)
 	}
 
-	f.deletes = nil
+	runLists(context.Background(), listsApplyParams{})
+	if got := f.banned(); len(got) != 0 {
+		t.Fatalf("removing the URL left %v banned", got)
+	}
+	if _, ok := readListsState().Lists[key]; ok {
+		t.Fatalf("state still holds %s", key)
+	}
+}
+
+// The decisions an older agent imported for a custom list stay while its URL
+// is on, and are deleted once the admin removes it.
+func TestRunLists_OldCustomDecisionsDeletedWhenRemoved(t *testing.T) {
+	const u = "https://lists.example.org/drop.txt"
+	f := &listsFake{bodies: map[string]string{u: "203.0.114.9\n"}}
+	installListsFake(t, f, "[]")
+	key := blocklists.CustomKey(u)
+	writeCustomListKeys([]string{key})
+
+	runLists(context.Background(), listsApplyParams{Custom: []string{u}})
+	if slices.Contains(f.deletes, blocklists.Reason(key)) {
+		t.Fatalf("deleted the decisions of a custom list that is on: %v", f.deletes)
+	}
+	if keys := readCustomListKeys(); !slices.Equal(keys, []string{key}) {
+		t.Fatalf("state holds %v, want %s kept for later", keys, key)
+	}
+
 	runLists(context.Background(), listsApplyParams{})
 	if !slices.Contains(f.deletes, blocklists.Reason(key)) {
-		t.Fatalf("removing the URL did not lift its bans: deletes %v", f.deletes)
+		t.Fatalf("removing the URL did not delete its old decisions: deletes %v", f.deletes)
 	}
 	if keys := readCustomListKeys(); len(keys) != 0 {
 		t.Fatalf("state still holds %v", keys)
@@ -382,14 +466,17 @@ func TestRunLists_NeverBansGoogleOrBingCrawlers(t *testing.T) {
 
 	res := runLists(context.Background(), listsApplyParams{Enabled: []string{"firehol_level2"}, Custom: []string{custom}})
 
-	if got := f.imports["jabali-list:firehol_level2"]; !slices.Equal(got, []string{"80.94.95.81"}) {
-		t.Fatalf("level 2 imported %v, want only 80.94.95.81", got)
+	if got := f.stored("firehol_level2"); !slices.Equal(got, []string{"80.94.95.81/32"}) {
+		t.Fatalf("level 2 kept %v, want only 80.94.95.81", got)
 	}
 	if r := res[1]; r.DroppedCrawler != 4 || r.Imported != 1 || r.Error != "" {
-		t.Fatalf("level 2 result %+v: want 4 crawler addresses left out and 1 imported", r)
+		t.Fatalf("level 2 result %+v: want 4 crawler addresses left out and 1 kept", r)
 	}
-	if got := f.imports[blocklists.Reason(blocklists.CustomKey(custom))]; !slices.Equal(got, []string{"45.155.205.233"}) {
-		t.Fatalf("custom list imported %v, want only 45.155.205.233", got)
+	if got := f.stored(blocklists.CustomKey(custom)); !slices.Equal(got, []string{"45.155.205.233/32"}) {
+		t.Fatalf("custom list kept %v, want only 45.155.205.233", got)
+	}
+	if got := f.banned(); !slices.Equal(got, []string{"45.155.205.233/32", "80.94.95.81/32"}) {
+		t.Fatalf("firewall bans %v", got)
 	}
 }
 
@@ -409,10 +496,9 @@ func TestRunLists_CrawlerFileDownUsesLastCopy(t *testing.T) {
 		} else {
 			f.bodies[listCrawlerURLs[4]] = body
 		}
-		f.imports = map[string][]string{}
 		res := runLists(context.Background(), listsApplyParams{Enabled: []string{"firehol_level1"}})
-		if got := f.imports["jabali-list:firehol_level1"]; !slices.Equal(got, []string{"5.188.10.0/24"}) {
-			t.Fatalf("Bing's file %q: imported %v, want only 5.188.10.0/24", body, got)
+		if got := f.stored("firehol_level1"); !slices.Equal(got, []string{"5.188.10.0/24"}) {
+			t.Fatalf("Bing's file %q: kept %v, want only 5.188.10.0/24", body, got)
 		}
 		if res[0].DroppedCrawler != 1 || res[0].Error != "" {
 			t.Fatalf("Bing's file %q: result %+v, want 1 crawler address left out", body, res[0])
@@ -421,22 +507,26 @@ func TestRunLists_CrawlerFileDownUsesLastCopy(t *testing.T) {
 }
 
 // With a crawler file that cannot be read and no earlier copy, no list that
-// is on is refreshed: its old bans stay. A list that is off still loses its
-// bans.
+// is on is refreshed: it keeps the bans it had. A list that is off still
+// loses its old decisions.
 func TestRunLists_NoCrawlerAddressesKeepsOldBans(t *testing.T) {
 	f := &listsFake{noCrawlerDefaults: true, bodies: map[string]string{level1URL: "5.188.10.0/24\n"}}
 	installListsFake(t, f, `[]`)
+	old := listsState{Lists: map[string]listEntries{"firehol_level1": {At: time.Now().Add(-time.Hour).UTC(), Entries: []string{"45.155.205.0/24"}}}}
+	if err := writeListsState(old); err != nil {
+		t.Fatal(err)
+	}
 
 	res := runLists(context.Background(), listsApplyParams{Enabled: []string{"firehol_level1"}})
 
-	if slices.Contains(f.deletes, "jabali-list:firehol_level1") || len(f.imports) != 0 {
-		t.Fatalf("deleted %v, imported %v: level 1 must keep its old bans", f.deletes, f.imports)
-	}
 	if !strings.Contains(res[0].Error, "crawler addresses could not be loaded") {
 		t.Fatalf("level 1 result %+v: want the crawler error", res[0])
 	}
-	if !slices.Contains(f.deletes, "jabali-list:firehol_level2") {
-		t.Fatalf("deleted %v: level 2 is off and must lose its bans", f.deletes)
+	if got := f.banned(); !slices.Equal(got, []string{"45.155.205.0/24"}) {
+		t.Fatalf("firewall bans %v, want level 1's earlier bans", got)
+	}
+	if slices.Contains(f.deletes, "jabali-list:firehol_level1") || !slices.Contains(f.deletes, "jabali-list:firehol_level2") {
+		t.Fatalf("deleted %v: want level 2's old decisions only", f.deletes)
 	}
 }
 

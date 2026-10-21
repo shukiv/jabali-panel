@@ -1,4 +1,4 @@
-// ExtraBlocklistsCard — the public IP blocklists (FireHOL levels 1-3) the
+// ExtraBlocklistsCard — the public IP blocklists (internal/blocklists Catalog) the
 // admin can add to CrowdSec on top of its community blocklist, and the
 // admin's own list URLs (https, up to 10; the server checks them). Saving only
 // stores the choice; the reconciler hands it to the agent within a minute,

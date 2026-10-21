@@ -69,7 +69,7 @@ func TestCrowdsecListFeeds_SaveAndShow(t *testing.T) {
 		Status map[string]any `json:"status"`
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
-	require.Len(t, got.Lists, 3)
+	require.Len(t, got.Lists, len(blocklists.Catalog))
 	require.True(t, got.Lists[0].Enabled)
 	require.False(t, got.Lists[1].Enabled)
 	require.True(t, got.Lists[2].Enabled)
