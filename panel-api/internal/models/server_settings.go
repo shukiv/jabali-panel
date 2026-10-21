@@ -332,10 +332,10 @@ type ServerSettings struct {
 	CrowdSecCaptchaSiteKey   string `gorm:"column:crowdsec_captcha_site_key;type:text;not null;default:''"    json:"crowdsec_captcha_site_key"`
 	CrowdSecCaptchaSecretKey string `gorm:"column:crowdsec_captcha_secret_key;type:text;not null;default:''"  json:"-"`
 
-	// CrowdsecBlocklists (migration 000328) — the extra IP blocklists, as
+	// CrowdsecBlocklists (migration 000330) — the extra IP blocklists, as
 	// comma-separated internal/blocklists catalog keys. Empty = none.
 	CrowdsecBlocklists string `gorm:"column:crowdsec_blocklists;type:text;not null;default:''" json:"crowdsec_blocklists"`
-	// CrowdsecCustomBlocklists (migration 000328) — the admin's own list
+	// CrowdsecCustomBlocklists (migration 000330) — the admin's own list
 	// URLs, one per line (blocklists.NormalizeCustom). Written only through
 	// PUT /blocklists/feeds, which checks them; the reconciler and the agent
 	// check again.
