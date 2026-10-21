@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -45,7 +46,7 @@ func TestRollback_RestoresThePreviousCompose(t *testing.T) {
 	var upWith []string
 	prevExec := execCommandContext
 	execCommandContext = func(ctx context.Context, name string, args ...string) *exec.Cmd {
-		if name == "docker" && strings.Join(args, " ") == "compose up -d" {
+		if name == "docker" && strings.Join(args, " ") == "compose up -d --remove-orphans" {
 			b, _ := os.ReadFile(filepath.Join(dir, "compose.yml"))
 			e, _ := os.ReadFile(filepath.Join(dir, ".env"))
 			upWith = append(upWith, string(b)+string(e))
@@ -76,7 +77,7 @@ func TestRollback_KeptFilesStayAsTheyAre(t *testing.T) {
 	ups := 0
 	prevExec := execCommandContext
 	execCommandContext = func(ctx context.Context, name string, args ...string) *exec.Cmd {
-		if name == "docker" && strings.Join(args, " ") == "compose up -d" {
+		if name == "docker" && strings.Join(args, " ") == "compose up -d --remove-orphans" {
 			ups++
 		}
 		return exec.CommandContext(ctx, "true")
@@ -87,6 +88,35 @@ func TestRollback_KeptFilesStayAsTheyAre(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(filepath.Join(dir, "compose.yml")); string(b) != "image: app:1\n" {
 		t.Fatalf("compose changed: %q", b)
+	}
+}
+
+// An env edit gives the update the caller's deadline, and a stop_first has
+// the old containers down by the time it passes. The rollback then ran its
+// compose up on the expired context, which failed at once and left the app
+// stopped.
+func TestRollback_RunsAfterTheCallersDeadline(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "compose.yml"), []byte("image: app:1\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	prev := readPriorComposeFiles(dir, true, false)
+	var upErr error = errors.New("compose up never ran")
+	prevExec := execCommandContext
+	execCommandContext = func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		if name == "docker" && strings.Join(args, " ") == "compose up -d --remove-orphans" {
+			upErr = ctx.Err()
+		}
+		return exec.Command("true")
+	}
+	t.Cleanup(func() { execCommandContext = prevExec })
+	expired, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := rollback(expired, dir, "sha256:old", prev); err != nil {
+		t.Fatal(err)
+	}
+	if upErr != nil {
+		t.Fatalf("rollback compose up ran on a dead context: %v", upErr)
 	}
 }
 

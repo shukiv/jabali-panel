@@ -267,9 +267,21 @@ func rollback(ctx context.Context, dir, oldImage string, prev priorComposeFiles)
 		// situation. The caller surfaces this in the response detail.
 		return nil
 	}
-	_, _ = runDockerCompose(ctx, dir, "up", "-d")
+	// The caller's deadline may be what failed the update (an env edit
+	// waits for it), and after a stop_first the old containers are down,
+	// so the rollback gets a deadline of its own. --remove-orphans removes
+	// the services only the new compose had, such as a one-shot still
+	// working on the app's data, so they do not hold it while the old
+	// version starts.
+	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), dockerAppRollbackTimeout)
+	defer cancel()
+	_, _ = runDockerCompose(rctx, dir, "up", "-d", "--remove-orphans")
 	return nil
 }
+
+// dockerAppRollbackTimeout bounds the compose up that brings the previous
+// version back.
+const dockerAppRollbackTimeout = 10 * time.Minute
 
 // resticSnapshotIfConfigured runs `restic snapshot <dir>` against
 // the operator's configured repo. When restic isn't installed or
