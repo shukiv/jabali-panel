@@ -49,9 +49,9 @@ func TestDBMysqladminEnsureHandler(t *testing.T) {
 			wantCode:  agentwire.CodeInvalidArgument,
 		},
 		{
-			name: "invalid: contains dash",
+			name: "invalid: contains dot",
 			input: dbMysqladminEnsureParams{
-				PanelUsername: "alice-test",
+				PanelUsername: "alice.test",
 			},
 			wantError: true,
 			wantCode:  agentwire.CodeInvalidArgument,

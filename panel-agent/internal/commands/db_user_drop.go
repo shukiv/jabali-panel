@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"regexp"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
 )
@@ -21,7 +20,7 @@ type dbUserDropResponse struct {
 }
 
 // dbUserDropNameRegex validates MariaDB database user name format.
-var dbUserDropNameRegex = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_]{0,63}$`)
+var dbUserDropNameRegex = dbUserNameRegex
 
 func dbUserDropHandler(ctx context.Context, params json.RawMessage) (any, error) {
 	var p dbUserDropParams

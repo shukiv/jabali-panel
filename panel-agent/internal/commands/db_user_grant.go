@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"regexp"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
 )
@@ -22,7 +21,7 @@ type dbUserGrantResponse struct {
 	OK bool `json:"ok"`
 }
 
-var dbUserGrantNameRegex = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_]{0,63}$`)
+var dbUserGrantNameRegex = dbUserNameRegex
 
 // Whitelist of valid privilege tokens.
 const privilegeWhitelist = "SELECT,INSERT,UPDATE,DELETE,CREATE,DROP,ALTER,INDEX,ALL"
@@ -98,8 +97,8 @@ func dbUserGrantHandler(ctx context.Context, params json.RawMessage) (any, error
 		}
 	}
 
-	// Validate db_name format.
-	if !dbUserGrantNameRegex.MatchString(p.DBName) {
+	// Validate db_name format: db.create's rule, which allows "-".
+	if !dbNameRegex.MatchString(p.DBName) {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInvalidArgument,
 			Message: "invalid database name",

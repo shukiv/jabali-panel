@@ -36,9 +36,9 @@ func TestDBUserGrantHandler(t *testing.T) {
 			wantCode:  agentwire.CodeInvalidArgument,
 		},
 		{
-			name: "invalid: db_name contains dash",
+			name: "invalid: db_name contains semicolon",
 			input: dbUserGrantParams{
-				DBName:     "test-db",
+				DBName:     "test;db",
 				DBUserName: "testuser",
 				GrantLevel: "rw",
 			},

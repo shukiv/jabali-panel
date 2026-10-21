@@ -18,6 +18,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/dbshadow"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dbops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/domainops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ftpops"
@@ -433,18 +434,41 @@ func DeleteCascade(ctx context.Context, d Deps, dd DeleteDeps, target *models.Us
 	// Drop the per-user MariaDB shadow-admin (<osuser>_mysqladmin) — not a
 	// database_users row, so the loop above never reaps it. db_user.drop is
 	// an idempotent DROP USER IF EXISTS; no shadow account = harmless no-op.
+	// The name is derived, never read from the row: users.mysqladmin_username
+	// can arrive from an uploaded backup, and a forged one would drop another
+	// account's login. No name is asked when the agent never makes a shadow
+	// for the username (one starting with "_"): db_user.drop refuses such a
+	// name, and asking it anyway kept the account from ever being deleted.
 	if d.Agent != nil && username != "" {
-		shadowUser := username + "_mysqladmin"
-		agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		_, dropErr := d.Agent.Call(agentCtx, "db_user.drop", map[string]any{"db_user_name": shadowUser})
-		cancel()
-		if dropErr != nil {
-			// Counts toward the abort like any other login: it has a valid
-			// password and is not a database_users row, so nothing downstream
-			// would ever find it again — the exact orphan class this guards.
-			undropped = append(undropped, shadowUser)
-			logError(d, "cascade delete: mysqladmin shadow drop failed — aborting so the login is not orphaned",
-				"user_id", id, "mysqladmin_user", shadowUser, "err", dropErr)
+		derived := username + dbshadow.MysqladminSuffix
+		stored := ""
+		if target.MysqladminUsername != nil {
+			stored = *target.MysqladminUsername
+		}
+		if _, droppable := dbshadow.MysqladminUser(username); droppable {
+			agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			_, dropErr := d.Agent.Call(agentCtx, "db_user.drop", map[string]any{"db_user_name": derived})
+			cancel()
+			if dropErr != nil {
+				// Counts toward the abort like any other login: it has a valid
+				// password and is not a database_users row, so nothing downstream
+				// would ever find it again — the exact orphan class this guards.
+				undropped = append(undropped, derived)
+				logError(d, "cascade delete: mysqladmin shadow drop failed — aborting so the login is not orphaned",
+					"user_id", id, "mysqladmin_user", derived, "err", dropErr)
+			}
+		} else if stored == derived {
+			// A rename onto a username starting with "_" renames the shadow
+			// with it (db.rename_user allows a leading "_"), but db_user.drop
+			// refuses that name. Keep the account rather than orphan a live
+			// login.
+			undropped = append(undropped, derived)
+			logError(d, "cascade delete: mysqladmin shadow name the agent cannot drop — aborting so the login is not orphaned",
+				"user_id", id, "mysqladmin_user", derived)
+		}
+		if stored != "" && stored != derived {
+			logWarn(d, "cascade delete: stored mysqladmin name is not this account's — not dropped",
+				"user_id", id, "mysqladmin_user", stored)
 		}
 	}
 
