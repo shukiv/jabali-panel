@@ -623,6 +623,13 @@ failed stage. Already-done stages are skipped.`,
 							})
 						}
 					}
+					// The PostgreSQL dumps the parser left out: the databases
+					// stage reports them.
+					for _, s := range h.Skipped {
+						if strings.HasPrefix(s, "postgres_unsupported:") {
+							parsed.Skipped = append(parsed.Skipped, s)
+						}
+					}
 				} else if _, statErr := os.Stat(hTarPath); statErr == nil {
 					// GH #327: the tar is PRESENT but unparseable — do NOT
 					// silently fall through to an empty import + mark the job
@@ -1012,6 +1019,18 @@ func dbDumpsAllSkipped(dumps, created, alreadyPresent int) bool {
 }
 func mailFoundNonePushed(found int, pushed int64) bool { return found > 0 && pushed == 0 }
 
+// postgresNotMigrated turns the parser's postgres_unsupported entries into
+// report lines: the archive's PostgreSQL databases are not migrated.
+func postgresNotMigrated(skipped []string) []string {
+	var out []string
+	for _, s := range skipped {
+		if path, ok := strings.CutPrefix(s, "postgres_unsupported:"); ok {
+			out = append(out, fmt.Sprintf("databases: %s: PostgreSQL database not migrated (PostgreSQL databases are not carried over)", path))
+		}
+	}
+	return out
+}
+
 // shouldDowngradeToDegraded gates the done→degraded transition: the runner
 // stamped done but the restore recorded at least one core-area failure.
 func shouldDowngradeToDegraded(state string, criticals []string) bool {
@@ -1197,6 +1216,7 @@ func cpanelRestoreCallback(
 			warnings = append(warnings, fmt.Sprintf("databases: created=%d verified_existing=%d",
 				dbsRes.Created, dbsRes.AlreadyPresent))
 			warnings = append(warnings, dbsRes.Skipped...)
+			warnings = append(warnings, postgresNotMigrated(p.parsed.Skipped)...)
 			// JAB-31: DB dumps present but none imported is a core failure, not a
 			// warning — a "done" job here has no databases.
 			if dbDumpsAllSkipped(len(p.parsed.MySQLDumps), dbsRes.Created, dbsRes.AlreadyPresent) {
