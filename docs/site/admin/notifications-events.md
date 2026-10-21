@@ -57,8 +57,8 @@ Each event has one of four severities: `info`, `warning`, `error` or `critical`.
 | `agent.unreachable` | error | yes | Agent unreachable. panel-api couldn't reach /run/jabali/agent.sock. Usually means jabali-agent.service crashed or is restart-looping; check `systemctl status jabali-agent`. |
 | `notifications.dlq.nonzero` | warning | yes | Notifications DLQ non-empty. The M14 dead-letter queue has unprocessed envelopes. Means at least one channel send (Slack/email/web push) failed after the dispatcher retry budget. DLQ is a marker of channel rot — operator should inspect and either reset or disable the offending channel. |
 | `panel.api.error` | warning | no | panel-api 5xx. An HTTP request to /api/v1/* returned 5xx. Bucketed per endpoint+status pair; one envelope per bucket per 30-min window. |
-| `bandwidth.quota.warn` | warning | yes | Bandwidth quota — 80%. User crossed 80% of their package's monthly BandwidthQuotaMB. Per-user dedupe via 6h cooldown. |
-| `bandwidth.quota.crit` | critical | yes | Bandwidth quota — 100%. User crossed their package's monthly BandwidthQuotaMB. v1 does not auto-suspend; admin decides. |
+| `bandwidth.quota.warn` | warning | yes | Bandwidth quota — 80%. User crossed 80% of their package's monthly BandwidthQuotaMB. Per-user dedupe via 6h cooldown. Also sent when websites suspended for bandwidth are restored. |
+| `bandwidth.quota.crit` | critical | yes | Bandwidth quota — 100%. User crossed their package's monthly BandwidthQuotaMB. With Bandwidth Quota Auto-Suspend on (Server Settings, off by default) their websites are also suspended until usage is back under 80%; mail keeps working. |
 | `digest.daily` | info | no | Daily digest. One summary email a day: alerts by severity, backup outcomes, certificates expiring soon, and fleet counts for the last 24 hours. |
 | `update.completed` | info | no | Panel update applied. The panel finished updating to a new release. Informational; noisy on the development channel. |
 | `aide.tamper.detected` | error | yes | File integrity tamper. AIDE detected an unexpected change to a monitored system file. Security-relevant — investigate. |

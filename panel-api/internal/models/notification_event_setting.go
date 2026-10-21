@@ -258,14 +258,14 @@ var AllNotificationEventKinds = []NotificationEventKindMeta{
 	{
 		Kind:        "bandwidth.quota.warn",
 		Label:       "Bandwidth quota — 80%",
-		Description: "User crossed 80% of their package's monthly BandwidthQuotaMB. Per-user dedupe via 6h cooldown.",
+		Description: "User crossed 80% of their package's monthly BandwidthQuotaMB. Per-user dedupe via 6h cooldown. Also sent when websites suspended for bandwidth are restored.",
 		Severity:    "warning",
 		DefaultOn:   true,
 	},
 	{
 		Kind:        "bandwidth.quota.crit",
 		Label:       "Bandwidth quota — 100%",
-		Description: "User crossed their package's monthly BandwidthQuotaMB. v1 does not auto-suspend; admin decides.",
+		Description: "User crossed their package's monthly BandwidthQuotaMB. With Bandwidth Quota Auto-Suspend on (Server Settings, off by default) their websites are also suspended until usage is back under 80%; mail keeps working.",
 		Severity:    "critical",
 		DefaultOn:   true,
 	},

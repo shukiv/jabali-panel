@@ -122,7 +122,10 @@ func (r *Reconciler) suspendUserDomains(ctx context.Context, userID string, user
 	count := 0
 	for i := range userDomains {
 		d := &userDomains[i]
-		if d.IsQuotaSuspended {
+		// A domain that is already off was disabled by hand (or already
+		// suspended here). Marking it would make the restore below switch a
+		// manual disable back on.
+		if d.IsQuotaSuspended || !d.IsEnabled {
 			continue
 		}
 		d.IsEnabled = false

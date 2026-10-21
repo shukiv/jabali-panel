@@ -995,7 +995,7 @@
     "add_crowdsec_decision_manual_ban": "Add CrowdSec decision (manual ban)",
     "add_to_allowlist": "Add to allowlist",
     "added": "Added",
-    "aggregates_every_active_decision_by_origin_s": "Aggregates every active decision by (origin/scenario). CAPI = pulled from app.crowdsec.net; cscli-import = manually imported; crowdsec = local detection. Subscribe to community blocklists at app.crowdsec.net → Blocklists.",
+    "aggregates_every_active_decision_by_origin_s": "Active decisions by origin (or scenario). CAPI = the CrowdSec community blocklist; crowdsec = detected on this server; cscli = added by hand; cscli-import = imported with cscli decisions import.",
     "alert_not_found": "Alert not found",
     "alerts_last_24h": "Alerts (last 24h)",
     "all_time_alerts_since_crowdsec_started": "All-time alerts since CrowdSec started",

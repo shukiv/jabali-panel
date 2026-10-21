@@ -6,10 +6,10 @@ Layered. CrowdSec is the IP-trust source; UFW handles the port baseline; AppSec 
 
 ADR-0089. CrowdSec is the only thing that decides whether an IP gets blocked.
 
-- **Bouncers**: nginx (rate-limit + AppSec inspect), Stalwart (SMTP/IMAP), Bulwark, sshd.
+- **Bouncers**: nginx (bans, CAPTCHA, AppSec WAF) and the nftables firewall bouncer, which drops banned IPs on every port, so mail (SMTP, IMAP, POP3) and SSH are covered too.
 - **Scenarios**: HTTP probe/scan, SSH bruteforce, IMAP/SMTP auth flood, app-specific WP/Drupal scan, malware-upload attempt.
 - **Decisions**: BAN, CAPTCHA, ALLOWLIST.
-- **Console**: enrol via `/jabali-admin/security` → CrowdSec → Console; central per-org view at `app.crowdsec.net`.
+- **Blocklist**: the free CrowdSec community blocklist (CAPI). The panel does not use the CrowdSec console; enrolment was removed (ADR-0113). See [Firewall → Blocklists](firewall.md#blocklists).
 
 UFW is **demoted**: only port-open/port-close baseline. Old `ufw deny from <ip>` rules are migrated into CrowdSec decisions by `jabali ufw migrate-ip-bans`.
 

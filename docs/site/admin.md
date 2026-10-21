@@ -13,14 +13,14 @@ Lives at `/jabali-admin`. Top-level pages:
 | Mail | `/jabali-admin/mail/deliverability`, `/throttles` | Deliverability dashboard (DKIM / SPF / DMARC / MTA-STS state per domain), outbound throttle policy. |
 | Databases (Admin Ops) | Server Settings → Database | Root password rotation, curated config tune (`innodb_buffer_pool_size`, etc.), maintenance, processlist + kill, admin phpMyAdmin SSO. |
 | IPs | `/jabali-admin/ips` | Manage the IPv4 pool exposed for per-domain listen-IP selection. |
-| Security | `/jabali-admin/security` | CrowdSec console + decisions + allowlists + alerts; AppSec WAF; AppArmor profile status; Snuffleupagus PHP hardening; AIDE host-integrity; per-user egress firewall; malware scans; UFW port baseline; CrowdSec test-IP card. |
+| Security | `/jabali-admin/security` | CrowdSec decisions + blocklists + allowlists + alerts; AppSec WAF; AppArmor profile status; Snuffleupagus PHP hardening; AIDE host-integrity; per-user egress firewall; malware scans; UFW port baseline; CrowdSec test-IP card. |
 | Server Status | `/jabali-admin/server-status` | Errgroup-aggregated live status of all services with 5 s polling; per-service start/stop/restart controls (behind an off-toggle). |
 | Resource Limits | (per-user under Users → Edit) | POSIX quota + cgroup v2 slice + nginx `limit_req` per user. |
 | PHP | `/jabali-admin/php-pools` | Installed PHP versions, per-version FPM tuning, server-wide extension manager (M9.6). |
 | Applications | `/jabali-admin/applications` | App registry (WP + 14 others); per-app version pin and global enable. |
 | Logs | `/jabali-admin/logs` | Tail panel / agent / nginx / Stalwart / Kratos / Bulwark / PowerDNS / CrowdSec. |
 | Audit | `/jabali-admin/audit` | Append-only audit log (every privileged mutation; ADR-0106). |
-| Server Settings | `/jabali-admin/settings` | Panel hostname; primary mail domain; default IP pool; DB admin sections; notifications channels; AppSec policy; CrowdSec console enrol; updates source. |
+| Server Settings | `/jabali-admin/settings` | Panel hostname; primary mail domain; default IP pool; DB admin sections; notifications channels; AppSec policy; updates source. |
 | Notifications | `/jabali-admin/notifications/{channels,events,routing,test}` | Configure channels (in-app, email, Slack, Telegram, Discord, ntfy, Web Push, SMS, webhook); per-event routing (category rail); test send; owns an **Owner** column for tenant-owned channels. |
 | Updates | `/jabali-admin/updates` | Run `jabali update` from the UI as a transient systemd unit (survives panel restart mid-update); Update Center reports OS security-update state. |
 | Support | `/jabali-admin/support` | Generate an encrypted diag bundle (enclosed.cc), `mailto:` ticket. |

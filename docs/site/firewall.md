@@ -35,13 +35,21 @@ ALLOW OUT ALL    # outbound left open by default (constrained per-user by nftabl
 
 Add / remove ports at `/jabali-admin/security` → UFW.
 
-## CrowdSec console
+## Blocklists
 
-Enrol once at `/jabali-admin/security` → CrowdSec → Console. Once enrolled:
+Besides its own detections, CrowdSec pulls the free CrowdSec community
+blocklist (CAPI) and the bouncers drop the IPs on it. That is the only list
+the panel subscribes to. Security → CrowdSec → **Blocklists** shows how many
+active decisions each source holds.
 
-- Decisions sync to / from the CrowdSec central console.
-- Alerts visible in the panel + in the console.
-- Allowlists shared with the console.
+The panel does not use the CrowdSec console (app.crowdsec.net): console
+enrolment was removed, and `jabali update` turns console alert forwarding off
+on hosts that had enrolled (ADR-0113). Blocklists that are subscribed through
+the console are not received.
+
+IPs imported with `cscli decisions import` are enforced like any other
+decision and show under **Blocklists** as `cscli-import`. The panel does not
+remove them; they expire with the duration given at import.
 
 ## Migrating from old `ufw deny` rules
 
