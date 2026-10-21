@@ -4,7 +4,7 @@
 // stores the choice; the reconciler hands it to the agent within a minute,
 // and the agent downloads, filters and imports the lists in the background.
 // The card polls the agent's last-run report while a run is going.
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Alert, Button, Card, Checkbox, Input, Popconfirm, Space, Tag, Typography } from "antd";
 import { ReloadOutlined } from "@icons";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -76,17 +76,15 @@ export const ExtraBlocklistsCard = () => {
   });
   const saved = useMemo(() => (q.data?.lists ?? []).filter((l) => l.enabled).map((l) => l.key), [q.data]);
   const savedCustom = useMemo(() => (q.data?.custom ?? []).map((c) => c.url), [q.data]);
-  const [chosen, setChosen] = useState<string[]>([]);
-  const [customText, setCustomText] = useState("");
+  // A draft is null until the admin changes something, and the form shows
+  // what is saved. A copy made in an effect lagged the first render, so a
+  // click in between added a list a second time instead of turning it off.
+  const [chosenDraft, setChosenDraft] = useState<string[] | null>(null);
+  const [customDraft, setCustomDraft] = useState<string | null>(null);
+  const chosen = chosenDraft ?? saved;
+  const customText = customDraft ?? savedCustom.join("\n");
   const [saving, setSaving] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-
-  useEffect(() => {
-    setChosen(saved);
-  }, [saved]);
-  useEffect(() => {
-    setCustomText(savedCustom.join("\n"));
-  }, [savedCustom]);
 
   const custom = [...new Set(customText.split("\n").map((l) => l.trim()).filter(Boolean))];
   const badCustom = custom.filter((u) => !/^https:\/\/[^\s/]+/.test(u));
@@ -107,6 +105,8 @@ export const ExtraBlocklistsCard = () => {
     try {
       const { data } = await apiClient.put<FeedsResponse>(BASE, { enabled: chosen, custom });
       qc.setQueryData(KEY, data);
+      setChosenDraft(null);
+      setCustomDraft(null);
       feedback.message.success("Blocklists saved — applied within a minute");
       // The reconciler starts the run within a minute; look again then.
       window.setTimeout(() => qc.invalidateQueries({ queryKey: KEY }), 65_000);
@@ -173,9 +173,10 @@ export const ExtraBlocklistsCard = () => {
             <div key={l.key}>
               <Checkbox
                 checked={chosen.includes(l.key)}
-                onChange={(e) =>
-                  setChosen((prev) => (e.target.checked ? [...prev, l.key] : prev.filter((k) => k !== l.key)))
-                }
+                onChange={(e) => {
+                  const rest = chosen.filter((k) => k !== l.key);
+                  setChosenDraft(e.target.checked ? [...rest, l.key] : rest);
+                }}
               >
                 <Typography.Text strong>{l.name}</Typography.Text>
               </Checkbox>
@@ -205,7 +206,7 @@ export const ExtraBlocklistsCard = () => {
           <Input.TextArea
             aria-label="Your own blocklist URLs"
             value={customText}
-            onChange={(e) => setCustomText(e.target.value)}
+            onChange={(e) => setCustomDraft(e.target.value)}
             autoSize={{ minRows: 2, maxRows: 10 }}
             placeholder="https://www.spamhaus.org/drop/drop.txt"
             spellCheck={false}
@@ -254,8 +255,8 @@ export const ExtraBlocklistsCard = () => {
           {dirty && (
             <Button
               onClick={() => {
-                setChosen(saved);
-                setCustomText(savedCustom.join("\n"));
+                setChosenDraft(null);
+                setCustomDraft(null);
               }}
             >
               Reset

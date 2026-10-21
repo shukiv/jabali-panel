@@ -3,7 +3,7 @@
 // list, and PUTs the chosen keys and the admin's own list URLs. Only
 // apiClient is mocked.
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../../../apiClient", () => ({
@@ -119,6 +119,30 @@ describe("ExtraBlocklistsCard", () => {
     mocked.put.mockResolvedValue({ data: { lists: lists([]), status: null } });
     renderCard();
     fireEvent.click(await screen.findByRole("checkbox", { name: "FireHOL level 2" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() =>
+      expect(mocked.put).toHaveBeenCalledWith("/admin/security/crowdsec/blocklists/feeds", { enabled: [], custom: [] }),
+    );
+  });
+
+  // While a run is going the card fetches its data every 10 s; the copy of
+  // the saved lists made in an effect overwrote an unsaved change each time.
+  it("keeps an unsaved change when the card's data is fetched again", async () => {
+    mocked.get.mockResolvedValue({ data: { lists: lists(["firehol_level2"]), status: null } });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <ExtraBlocklistsCard />
+      </QueryClientProvider>,
+    );
+    fireEvent.click(await screen.findByRole("checkbox", { name: "FireHOL level 2" }));
+    act(() => {
+      qc.setQueryData(["security", "crowdsec", "blocklist-feeds"], {
+        lists: lists(["firehol_level2"]),
+        status: { running: true, lists: [] },
+      });
+    });
+    expect(screen.getByRole("checkbox", { name: "FireHOL level 2" })).not.toBeChecked();
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() =>
       expect(mocked.put).toHaveBeenCalledWith("/admin/security/crowdsec/blocklists/feeds", { enabled: [], custom: [] }),
