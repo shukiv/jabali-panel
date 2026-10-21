@@ -6,14 +6,19 @@ version: "8.8.1"
 description: |
   Self-hosted team chat / collaboration platform — channels, DMs, voice/
   video, file sharing, and integrations. Two services: the Rocket.Chat
-  Node.js app and a MongoDB (single-node replica set, required by
-  Rocket.Chat). An admin account is pre-created at first boot.
+  Node.js app and a MongoDB 8.0 (single-node replica set, required by
+  Rocket.Chat). An admin account is pre-created at first boot. An install
+  from before 2026-08 has its MongoDB 6.0 database copied to MongoDB 8.0
+  once, on its next update.
 icon: icon.svg
 upstream: https://github.com/RocketChat/Rocket.Chat
 documentation: https://docs.rocket.chat/
 
 image_channel: rocketchat/rocket.chat:8.8.1@sha256:95eabcfef9cb83b1feaace8c68f96d0201fbd9873462394dbf8a33618b7f9f03
 update_mode: manual
+# The MongoDB 6.0 copy reads mongo/, so the old containers must be stopped
+# before the new ones start.
+stop_before_recreate: true
 
 resources:
   cpu: "2.0"
@@ -23,8 +28,14 @@ resources:
 volumes:
   - name: uploads
     container_path: /app/uploads
+  # MongoDB 8.0's database. mongo/ is the MongoDB 6.0 one an older install
+  # used; it is copied from once and then left for a rollback.
+  - name: mongo8
+    container_path: /data/db
   - name: mongo
     container_path: /data/db
+  - name: mongo-upgrade
+    container_path: /upgrade
 
 ports:
   - name: http

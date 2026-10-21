@@ -80,6 +80,13 @@ type Entry struct {
 	// the bind-mounted volume on first launch (Gitea, Nextcloud,
 	// Linkwarden, ...) -- without this they crash-loop on EACCES.
 	VolumeOwner string `yaml:"volume_owner,omitempty"`
+	// StopBeforeRecreate has an update or re-render stop the install's old
+	// containers after the pull and before up (the agent's stop_first). Set
+	// for an app whose compose runs one-shots on its data before its
+	// database starts, e.g. Rocket.Chat's MongoDB 6.0 -> 8.0 move: compose
+	// recreates a service only when it reaches it, so the old database would
+	// still hold the files and the old app would still be writing.
+	StopBeforeRecreate bool `yaml:"stop_before_recreate,omitempty"`
 	// Track is the release line new installs get (e.g. "28", "1.27");
 	// UpdateFrom lists the older tracks Update may move to it; HeldTracks,
 	// newest first, are older lines still served to the installs on them.

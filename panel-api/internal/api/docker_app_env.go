@@ -236,6 +236,7 @@ func (h *dockerAppHandler) applyEnv(ctx context.Context, app *models.DockerApp, 
 		return verr
 	}
 	setTenantServices(envUpdateParams, tenantServices)
+	h.setStopFirst(app, envUpdateParams)
 	raw, callErr := h.cfg.Agent.Call(callCtx, "docker_app.update", envUpdateParams)
 	persistCtx, persistCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer persistCancel()
