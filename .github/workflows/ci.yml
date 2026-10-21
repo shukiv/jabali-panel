@@ -14,7 +14,8 @@
 #
 # Jobs (all run unconditionally): Go tests+vet, install.sh lint, jabali-cache
 # plugin tests, vitest+eslint, secret scan (gitleaks), new dependency
-# vulnerabilities (OSV-Scanner, PRs only), Playwright E2E.
+# vulnerabilities (OSV-Scanner, PRs only), static analysis (gosec,
+# Semgrep; advisory), Playwright E2E.
 
 name: CI
 
@@ -240,6 +241,41 @@ jobs:
         run: |
           set -o pipefail
           python3 scripts/check-new-vulns.py base.json head.json | tee -a "$GITHUB_STEP_SUMMARY"
+
+  # Static analysis, advisory: gosec over the Go code and Semgrep CE (Go,
+  # TypeScript and React rules) over the tree. Neither fails the build yet:
+  # gosec reports about 1,300 findings on main, many of them expected in an
+  # agent that runs commands and writes files as root. The job summary gives
+  # each tool's totals and, for a PR, the findings on the lines it adds.
+  sast:
+    name: static analysis (gosec, Semgrep), advisory
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: gosec
+        continue-on-error: true
+        run: |
+          go install github.com/securego/gosec/v2/cmd/gosec@v2.29.0
+          "$(go env GOPATH)/bin/gosec" -quiet -no-fail -fmt json -out gosec.json ./...
+      - name: Semgrep
+        continue-on-error: true
+        run: |
+          python3 -m venv "$RUNNER_TEMP/semgrep"
+          "$RUNNER_TEMP/semgrep/bin/pip" install --quiet semgrep==1.182.0
+          "$RUNNER_TEMP/semgrep/bin/semgrep" scan --metrics=off --quiet \
+            --config p/golang --config p/typescript --config p/react \
+            --json --output semgrep.json .
+      - name: Summarise
+        if: always()
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: python3 scripts/sast-summary.py gosec.json semgrep.json >> "$GITHUB_STEP_SUMMARY"
 
   install-sh-lint:
     name: install.sh phantom-function lint
