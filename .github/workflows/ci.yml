@@ -13,8 +13,8 @@
 # utilities.
 #
 # Jobs (all run unconditionally): Go tests+vet, install.sh lint, jabali-cache
-# plugin tests, vitest+eslint, secret scan (gitleaks),
-# Playwright E2E.
+# plugin tests, vitest+eslint, secret scan (gitleaks), new dependency
+# vulnerabilities (OSV-Scanner, PRs only), Playwright E2E.
 
 name: CI
 
@@ -197,6 +197,48 @@ jobs:
                   print(f"| `{f['File']}` | {f['StartLine']} | {f['RuleID']} | {f['Commit'][:9]} | `{f['Fingerprint']}` |")
               print("\nRemove the secret from the PR's commits and rotate it. A false positive: add a `gitleaks:allow` comment on the line, or its fingerprint to `.gitleaksignore`.")
           EOF
+
+  # Known vulnerabilities in the Go modules and npm packages, from OSV. A PR
+  # fails when it adds one rated high or critical (7.0 or more), or one with
+  # no rating, which Go's advisories never have. Base and head are scanned in
+  # the same run against the same database, so only a dependency the PR adds
+  # or changes can fail it; the ones already on main are listed, not counted
+  # (govulncheck above reports those).
+  vulns:
+    name: new dependency vulnerabilities (OSV-Scanner)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+      - name: Install OSV-Scanner
+        run: go install github.com/google/osv-scanner/v2/cmd/osv-scanner@v2.7.0
+      - name: Scan base and head
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          osv="$(go env GOPATH)/bin/osv-scanner"
+          scan() { # <checkout> <report>
+            local args=() rc=0
+            for f in go.mod support-claim/go.mod panel-ui/package-lock.json; do
+              if [ -f "$1/$f" ]; then args+=(-L "$1/$f"); fi
+            done
+            "$osv" scan source --format json "${args[@]}" > "$2" || rc=$?
+            # 0: nothing found, 1: something found; anything else failed.
+            [ "$rc" -le 1 ]
+          }
+          scan . head.json
+          git worktree add -q "$RUNNER_TEMP/base" "$BASE"
+          scan "$RUNNER_TEMP/base" base.json
+      - name: Compare
+        run: |
+          set -o pipefail
+          python3 scripts/check-new-vulns.py base.json head.json | tee -a "$GITHUB_STEP_SUMMARY"
 
   install-sh-lint:
     name: install.sh phantom-function lint
