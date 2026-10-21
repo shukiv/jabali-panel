@@ -136,11 +136,13 @@ describe("ExtraBlocklistsCard", () => {
       </QueryClientProvider>,
     );
     fireEvent.click(await screen.findByRole("checkbox", { name: "FireHOL level 2" }));
-    act(() => {
+    // The query's observers are told on a timer, so let it fire.
+    await act(async () => {
       qc.setQueryData(["security", "crowdsec", "blocklist-feeds"], {
         lists: lists(["firehol_level2"]),
         status: { running: true, lists: [] },
       });
+      await new Promise((r) => setTimeout(r, 0));
     });
     expect(screen.getByRole("checkbox", { name: "FireHOL level 2" })).not.toBeChecked();
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
