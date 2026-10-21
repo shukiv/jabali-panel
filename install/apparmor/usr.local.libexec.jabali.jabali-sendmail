@@ -69,4 +69,10 @@ profile jabali-sendmail /usr/local/libexec/jabali/jabali-sendmail flags=(attach_
   deny /etc/shadow r,
   deny /etc/gshadow r,
   deny /root/** rwklx,
+
+  # Site-specific rules, kept across updates: jabali update overwrites this
+  # file but not /etc/apparmor.d/local/usr.local.libexec.jabali.jabali-sendmail. After editing that
+  # file, reload with: apparmor_parser -r /etc/apparmor.d/usr.local.libexec.jabali.jabali-sendmail
+  # A deny rule above still wins over an allow rule added there.
+  include if exists <local/usr.local.libexec.jabali.jabali-sendmail>
 }

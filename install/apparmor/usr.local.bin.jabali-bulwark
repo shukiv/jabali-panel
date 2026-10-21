@@ -130,4 +130,10 @@ profile jabali-bulwark /usr/local/bin/jabali-bulwark {
   # non-fatal. A silent deny keeps the app tree read-only AND suppresses the
   # audit noise so the profile stays soak-clean for the flip-mature timer.
   deny /opt/jabali-webmail/data/** wk,
+
+  # Site-specific rules, kept across updates: jabali update overwrites this
+  # file but not /etc/apparmor.d/local/usr.local.bin.jabali-bulwark. After editing that
+  # file, reload with: apparmor_parser -r /etc/apparmor.d/usr.local.bin.jabali-bulwark
+  # A deny rule above still wins over an allow rule added there.
+  include if exists <local/usr.local.bin.jabali-bulwark>
 }

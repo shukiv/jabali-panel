@@ -17073,8 +17073,10 @@ EOF
   fi
 
   # M40 AppArmor profiles — re-installs profile files + reloads parser.
-  # Idempotent: profile compare + skip-on-identical means steady-state
-  # cost is one filesystem stat per profile. Requires REPO_DIR (set by
+  # Every run overwrites each /etc/apparmor.d/<profile> from the repo (no
+  # compare) and reloads it, keeping its enforce/complain mode. Site rules
+  # belong in /etc/apparmor.d/local/<profile>, which every profile
+  # includes and this never touches. Requires REPO_DIR (set by
   # clone_or_update_repo, which jabali update's full flow runs before
   # this prelude).
   if declare -f install_apparmor >/dev/null 2>&1 && [[ -d "${REPO_DIR:-/opt/jabali-panel}/install/apparmor" ]]; then
