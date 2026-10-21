@@ -93,3 +93,20 @@ func TestDockerAppDoors_SendStopFirst(t *testing.T) {
 		}
 	}
 }
+
+// The CLI's update and env doors recreate the app through docker_app.update
+// too.
+func TestDockerAppCLIDoors_SendStopFirst(t *testing.T) {
+	for file, call := range map[string]string{
+		"../../cmd/server/docker_app_cmd.go":        "cliSetStopFirst(app, updateParams)",
+		"../../cmd/server/docker_app_parity_cmd.go": "cliSetStopFirst(app, params)",
+	} {
+		b, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(b), call) {
+			t.Errorf("%s no longer calls %s", file, call)
+		}
+	}
+}
