@@ -34,7 +34,6 @@ func newAppSecCmd() *cobra.Command {
 
 const (
 	appsecConfigPath    = "/etc/crowdsec/appsec-configs/jabali-appsec.yaml"
-	appsecRulesDir      = "/etc/crowdsec/appsec-rules"
 	appsecModeHeader    = "# jabali-mode:"
 	appsecCountriesHead = "# jabali-countries:"
 	appsecBotDetectHead = "# jabali-bot-detection:"
@@ -80,7 +79,7 @@ gate a 'systemctl reload crowdsec' on real diffs.`,
 			// plugin). Independent of the geoblock config; loaded before
 			// REQUEST-933/949. Write-on-diff; --reload (below) or the caller
 			// reloads crowdsec.
-			crsChanged, err := writeCRSPluginBefore(cmd)
+			crsChanged, rows, rowsKnown, err := writeCRSPluginBefore(cmd)
 			if err != nil {
 				return err
 			}
@@ -102,7 +101,17 @@ gate a 'systemctl reload crowdsec' on real diffs.`,
 					botScope = bs
 				}
 			}
-			inband := detectInbandRules(appsecRulesDir)
+			inband := appseccfg.DetectInbandRules(appseccfg.AppsecRulesDir)
+			existing, _ := os.ReadFile(appsecConfigPath)
+
+			// Operator exclusions by AppSec rule name render into this file.
+			// From the database; when it cannot be read, as the live file has
+			// them, so an outage does not drop them (the operator before-plugin
+			// is left as-is for the same reason).
+			ruleExclusions := appseccfg.RuleNameExclusions(rows)
+			if !rowsKnown {
+				ruleExclusions = appseccfg.RuleExclusionsFromConfig(string(existing))
+			}
 
 			// Webmail allowlist sourced from the panel-api
 			// reconciler's state file (one FQDN per line, written on
@@ -129,12 +138,12 @@ gate a 'systemctl reload crowdsec' on real diffs.`,
 				BotDetection: botMode,
 				// Preserve scope too — a reset from "selected" to "all" would
 				// challenge every hosted site at once.
-				BotScope: botScope,
+				BotScope:       botScope,
+				RuleExclusions: ruleExclusions,
 			})
 
 			// Write-on-diff: cheap before any nginx/crowdsec reload
 			// upstream that may key off mtime or content hash.
-			existing, _ := os.ReadFile(appsecConfigPath)
 			cfgChanged := string(existing) != body
 			if cfgChanged {
 				if err := atomicWriteAppSec(appsecConfigPath, body); err != nil {
@@ -208,31 +217,10 @@ func readOperatorHeader(path string) (mode string, countries []string, botMode, 
 	return mode, countries, botMode, botScope
 }
 
-// detectInbandRules stats the appsec-rules dir and returns the list of
-// inband rules that exist on disk, in stable order. vpatch-* and
-// generic-* are always included (the pre-flight hub installs guarantee
-// them). base-config / crs / crs-exclusion-plugin-wordpress are
-// presence-gated — a hub regression that removes one of them automatically
-// drops it from the config so crowdsec never references a missing rule.
-func detectInbandRules(dir string) []string {
-	out := []string{
-		"crowdsecurity/vpatch-*",
-		"crowdsecurity/generic-*",
-	}
-	for _, gated := range []struct{ file, rule string }{
-		{"base-config.yaml", "crowdsecurity/base-config"},
-		{"crs.yaml", "crowdsecurity/crs"},
-		{"crs-exclusion-plugin-wordpress.yaml", "crowdsecurity/crs-exclusion-plugin-wordpress"},
-	} {
-		if _, err := os.Stat(filepath.Join(dir, gated.file)); err == nil {
-			out = append(out, gated.rule)
-		}
-	}
-	return out
-}
-
 // writeCRSPluginBefore reconciles the two jabali CRS "before" plugin files and
-// reports whether either changed (so --reload can gate a crowdsec reload).
+// reports whether either changed (so --reload can gate a crowdsec reload). It
+// also returns the operator exclusions it read, and whether it could read them,
+// for the exclusions by rule name that render into jabali-appsec.yaml.
 // Skips cleanly on a host without crowdsec (CI, dev) so we never create a stray
 // /var/lib/crowdsec tree.
 //
@@ -254,9 +242,9 @@ func detectInbandRules(dir string) []string {
 // it is unreachable the operator file is left UNTOUCHED (never removed) — a
 // transient DB outage must not drop live exclusions and re-ban users, the exact
 // failure this split fixes.
-func writeCRSPluginBefore(cmd *cobra.Command) (changed bool, err error) {
+func writeCRSPluginBefore(cmd *cobra.Command) (changed bool, list []appseccfg.Exclusion, operatorKnown bool, err error) {
 	if _, statErr := os.Stat("/var/lib/crowdsec/data"); statErr != nil {
-		return false, nil // crowdsec not installed here — nothing to manage
+		return false, nil, false, nil // crowdsec not installed here — nothing to manage
 	}
 
 	// Fetch operator exclusions best-effort. render-config has no requireDB
@@ -264,9 +252,7 @@ func writeCRSPluginBefore(cmd *cobra.Command) (changed bool, err error) {
 	// missing or erroring DB must NOT block the built-in write below — and must
 	// leave the operator file UNTOUCHED (operatorKnown=false), never removed, so
 	// a transient outage cannot drop live exclusions and re-ban users.
-	var list []appseccfg.Exclusion
 	var modes []appseccfg.HostMode
-	operatorKnown := false
 	if sharedDB == nil {
 		if initErr := initConfig(); initErr == nil {
 			_ = initDB()
@@ -309,8 +295,9 @@ func writeCRSPluginBefore(cmd *cobra.Command) (changed bool, err error) {
 		}
 	}
 
-	return reconcileCRSBeforeFiles(cmd.OutOrStdout(),
+	changed, err = reconcileCRSBeforeFiles(cmd.OutOrStdout(),
 		appseccfg.CRSPluginBeforePath, appseccfg.CRSPluginOperatorBeforePath, list, modes, operatorKnown)
+	return changed, list, operatorKnown, err
 }
 
 // reconcileCRSBeforeFiles writes the built-in before-plugin file verbatim and,

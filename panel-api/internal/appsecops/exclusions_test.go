@@ -124,7 +124,6 @@ func TestAddExclusion_RefusesInvalidBeforeStoring(t *testing.T) {
 		"newline in note":   {Host: "blog.example.com", URIPrefix: "/x/", RuleID: "942100", Note: "a\nSecRule"},
 		"port in host":      {Host: "blog.example.com:8443", URIPrefix: "/x/", RuleID: "942100"},
 		"reserved range id": {Host: "blog.example.com", URIPrefix: "/x/", RuleID: "9597001"},
-		"padded rule id":    {Host: "blog.example.com", URIPrefix: "/x/", RuleID: "00000000000000942100"},
 		"note past column":  {Host: "blog.example.com", URIPrefix: "/x/", RuleID: "942100", Note: strings.Repeat("é", 513)},
 	}
 	for name, in := range cases {
@@ -153,6 +152,49 @@ func TestAddExclusion_RefusesDuplicate(t *testing.T) {
 	}
 	if len(e.excl.rows) != 1 || len(ag.sent()) != 0 {
 		t.Errorf("rows = %d, applies = %d; a duplicate must change nothing", len(e.excl.rows), len(ag.sent()))
+	}
+}
+
+// "0942100" is rule 942100: stored as written it would slip past the
+// duplicate check.
+func TestAddExclusion_PaddedRuleIDIsADuplicate(t *testing.T) {
+	e, ag := exclEnv()
+	e.excl.rows = []models.CRSRuleExclusion{{ID: "a", Host: "blog.example.com", URIPrefix: "/wp-json/x/", RuleID: "942100"}}
+	_, _, err := AddExclusion(context.Background(), e.deps, appseccfg.Exclusion{
+		Host: "blog.example.com", URIPrefix: "/wp-json/x/", RuleID: "0000942100",
+	})
+	if !errors.Is(err, ErrDuplicate) {
+		t.Fatalf("err = %v, want ErrDuplicate", err)
+	}
+	if len(e.excl.rows) != 1 || len(ag.sent()) != 0 {
+		t.Errorf("rows = %d, applies = %d; a duplicate must change nothing", len(e.excl.rows), len(ag.sent()))
+	}
+}
+
+// A rule name is longer than any CRS id: it is stored whole and sent to the
+// agent with the rest.
+func TestAddExclusion_RuleName(t *testing.T) {
+	e, ag := exclEnv()
+	name := "crowdsecurity/vpatch-CVE-2025-29927"
+	row, _, err := AddExclusion(context.Background(), e.deps, appseccfg.Exclusion{
+		Host: "shop.example.com", URIPrefix: "/api/", RuleID: name,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.RuleID != name || len(e.excl.rows) != 1 || e.excl.rows[0].RuleID != name {
+		t.Fatalf("stored %+v", e.excl.rows)
+	}
+	if sent := ag.sent(); len(sent) != 1 || len(sent[0].Exclusions) != 1 || sent[0].Exclusions[0].RuleID != name {
+		t.Fatalf("applied %+v", sent)
+	}
+
+	_, _, err = AddExclusion(context.Background(), e.deps, appseccfg.Exclusion{
+		Host: "shop.example.com", URIPrefix: "/api/", RuleID: "crowdsecurity/crs",
+	})
+	var inv *InvalidError
+	if !errors.As(err, &inv) {
+		t.Fatalf("crowdsecurity/crs: err = %v, want *InvalidError", err)
 	}
 }
 

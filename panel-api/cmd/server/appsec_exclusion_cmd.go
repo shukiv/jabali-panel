@@ -37,11 +37,15 @@ func newAppSecExclusionCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "exclusion",
 		Short: "Manage operator CRS false-positive exclusions",
-		Long: "Exclude a specific CRS rule for a specific host + path.\n\n" +
+		Long: "Exclude a specific CRS rule, or a CrowdSec virtual patch, for a specific host + path.\n\n" +
 			"Scope is mandatory. The only removal construct that works in CrowdSec's engine\n" +
 			"drops the rule for the whole matched request, so every exclusion must name both\n" +
 			"a host and a URI prefix — there is no whole-host or whole-server form.\n\n" +
-			"Find the rule to exclude with: cscli alerts inspect <id>  (look at rule_name).",
+			"A CRS rule is named by its id (942100). A virtual patch or generic AppSec rule\n" +
+			"is named by its name (crowdsecurity/vpatch-CVE-2025-29927); its path prefix is\n" +
+			"matched against the decoded path, without the query string.\n\n" +
+			"Find the rule to exclude with: jabali appsec explain, or cscli alerts list\n" +
+			"(a virtual patch's alert is named after it).",
 	}
 	cmd.AddCommand(newAppSecExclusionAddCmd(), newAppSecExclusionListCmd(), newAppSecExclusionRmCmd())
 	return cmd
@@ -83,7 +87,7 @@ func newAppSecExclusionAddCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&host, "host", "", "hostname the exclusion applies to (required)")
 	cmd.Flags().StringVar(&uriPrefix, "uri-prefix", "", "URI prefix the exclusion applies to, e.g. /wp-json/x/ (required)")
-	cmd.Flags().StringVar(&ruleID, "rule", "", "CRS rule ID to exclude, e.g. 942100 (required)")
+	cmd.Flags().StringVar(&ruleID, "rule", "", "CRS rule ID or AppSec rule name to exclude, e.g. 942100 or crowdsecurity/vpatch-CVE-2025-29927 (required)")
 	cmd.Flags().StringVar(&note, "note", "", "why this exclusion exists")
 	_ = cmd.MarkFlagRequired("host")
 	_ = cmd.MarkFlagRequired("uri-prefix")

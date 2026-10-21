@@ -2,9 +2,9 @@ package appseccfg
 
 import (
 	"fmt"
-	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 // exclusions.go — JAB-227. Operator-managed CRS false-positive exclusions,
@@ -49,14 +49,19 @@ type Exclusion struct {
 }
 
 // NormalizeExclusion returns e as it should be stored: surrounding space
-// trimmed from every field and the host lowercased. The renderer lowercases the
-// host anyway; storing it that way too lets a duplicate check compare stored
-// rows as they are. Validate the result, not the input.
+// trimmed from every field, the host lowercased, and a CRS rule id in plain
+// decimal ("0942100" and "+942100" are rule 942100). The renderer lowercases
+// the host anyway; storing it that way too lets a duplicate check compare
+// stored rows as they are. Validate the result, not the input.
 func NormalizeExclusion(e Exclusion) Exclusion {
+	id := strings.TrimSpace(e.RuleID)
+	if n, err := strconv.Atoi(id); err == nil && n > 0 {
+		id = strconv.Itoa(n)
+	}
 	return Exclusion{
 		Host:      strings.ToLower(strings.TrimSpace(e.Host)),
 		URIPrefix: strings.TrimSpace(e.URIPrefix),
-		RuleID:    strings.TrimSpace(e.RuleID),
+		RuleID:    id,
 		Note:      strings.TrimSpace(e.Note),
 	}
 }
@@ -91,14 +96,41 @@ func ValidateExclusion(e Exclusion) error {
 	if len(uri) > 512 {
 		return fmt.Errorf("uri-prefix too long")
 	}
-	if strings.ContainsAny(uri, "\"\\\n\r") {
-		return fmt.Errorf("uri-prefix %q contains a quote, backslash or newline", uri)
+	if strings.ContainsAny(uri, "\"\\") || hasLineBreakOrControl(uri) {
+		return fmt.Errorf("uri-prefix %q contains a quote, backslash, line break or control character", uri)
 	}
 
 	id := strings.TrimSpace(e.RuleID)
+	if IsRuleName(id) {
+		if err := validateRuleName(id); err != nil {
+			return err
+		}
+	} else if err := validateCRSRuleID(id); err != nil {
+		return err
+	}
+
+	if strings.ContainsAny(e.Note, "\"") || hasLineBreakOrControl(e.Note) {
+		return fmt.Errorf("note contains a quote, line break or control character")
+	}
+	return nil
+}
+
+// hasLineBreakOrControl reports whether s holds a control character (which
+// covers \n, \r and U+0085) or U+2028/U+2029. YAML ends a line at each of
+// \n, \r, U+0085, U+2028 and U+2029, so any of them would end a comment or a
+// scalar in jabali-appsec.yaml and load the rest as live config.
+func hasLineBreakOrControl(s string) bool {
+	return strings.IndexFunc(s, func(r rune) bool {
+		return unicode.IsControl(r) || r == '\u2028' || r == '\u2029'
+	}) >= 0
+}
+
+// validateCRSRuleID accepts a CRS detection rule id: what a ctl:ruleRemoveById
+// in the before-plugin can turn off.
+func validateCRSRuleID(id string) error {
 	n, err := strconv.Atoi(id)
 	if err != nil || n <= 0 {
-		return fmt.Errorf("rule-id %q must be a positive integer", e.RuleID)
+		return fmt.Errorf("rule-id %q must be a positive integer, or a rule name such as crowdsecurity/vpatch-CVE-2025-29927", id)
 	}
 	// Refuse to drop the anomaly-scoring machinery itself: removing 949110 or
 	// 980170 disables blocking for the path wholesale, which is a path-allow
@@ -109,10 +141,6 @@ func ValidateExclusion(e Exclusion) error {
 	}
 	if n >= 9500000 {
 		return fmt.Errorf("rule %d is in the jabali/plugin reserved range, not a CRS detection rule", n)
-	}
-
-	if strings.ContainsAny(e.Note, "\"\n\r") {
-		return fmt.Errorf("note contains a quote or newline")
 	}
 	return nil
 }
@@ -131,15 +159,17 @@ const operatorBeforeFileHeader = "# Managed by jabali — operator CRS \"before\
 
 // RenderOperatorBeforeFile returns the full body of the standalone
 // operator-managed before-plugin file, or "" when there are no operator
-// exclusions AND no host modes — the caller removes the file in that case so a
-// since-removed entry cannot linger live. A non-empty set always yields a file,
-// even if every entry fails validation: those render as SKIPPED comments (see
-// RenderExclusions / RenderHostModes), the breadcrumb an operator needs to see
-// WHY a rule vanished rather than debug the wrong thing. Exclusions (GH #1655)
-// and host modes (GH #1641) share this one file: both are self-contained phase-1
-// ctl:ruleRemoveById rules, so order between the two sections does not matter.
+// exclusions by CRS rule id AND no host modes — the caller removes the file in
+// that case so a since-removed entry cannot linger live. A non-empty set always
+// yields a file, even if every entry fails validation: those render as SKIPPED
+// comments (see RenderExclusions / RenderHostModes), the breadcrumb an operator
+// needs to see WHY a rule vanished rather than debug the wrong thing. Exclusions
+// (GH #1655) and host modes (GH #1641) share this one file: both are
+// self-contained phase-1 ctl:ruleRemoveById rules, so order between the two
+// sections does not matter. Exclusions that name an AppSec rule are not here:
+// they render into the jabali-appsec config (RenderRuleExclusions).
 func RenderOperatorBeforeFile(list []Exclusion, modes []HostMode) string {
-	if len(list) == 0 && len(modes) == 0 {
+	if len(crsExclusions(list)) == 0 && len(modes) == 0 {
 		return ""
 	}
 	return operatorBeforeFileHeader + RenderExclusions(list) + RenderHostModes(modes)
@@ -151,21 +181,13 @@ func RenderOperatorBeforeFile(list []Exclusion, modes []HostMode) string {
 // byte-identically and the write-on-diff reconcile stays quiet. Invalid entries
 // are skipped with a comment rather than dropped silently — a rule that vanished
 // without explanation is how an operator ends up debugging the wrong thing.
+// Entries that name an AppSec rule are left out: RenderRuleExclusions renders
+// them, and reports their own SKIPPED lines.
 func RenderExclusions(list []Exclusion) string {
-	if len(list) == 0 {
+	sorted := sortedExclusions(crsExclusions(list))
+	if len(sorted) == 0 {
 		return ""
 	}
-	sorted := make([]Exclusion, len(list))
-	copy(sorted, list)
-	sort.Slice(sorted, func(i, j int) bool {
-		if sorted[i].Host != sorted[j].Host {
-			return sorted[i].Host < sorted[j].Host
-		}
-		if sorted[i].URIPrefix != sorted[j].URIPrefix {
-			return sorted[i].URIPrefix < sorted[j].URIPrefix
-		}
-		return sorted[i].RuleID < sorted[j].RuleID
-	})
 
 	var b strings.Builder
 	b.WriteString("#\n# ---- operator-managed exclusions (JAB-227) ----\n")

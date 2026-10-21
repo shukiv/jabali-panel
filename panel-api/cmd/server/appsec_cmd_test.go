@@ -81,31 +81,6 @@ func TestReadOperatorHeader_BotDetection(t *testing.T) {
 	}
 }
 
-func TestDetectInbandRules(t *testing.T) {
-	dir := t.TempDir()
-	// Empty dir → just the always-on patterns.
-	got := detectInbandRules(dir)
-	if len(got) != 2 || got[0] != "crowdsecurity/vpatch-*" || got[1] != "crowdsecurity/generic-*" {
-		t.Errorf("empty dir got %v", got)
-	}
-	// Touch crs.yaml + base-config.yaml → include them.
-	for _, f := range []string{"crs.yaml", "base-config.yaml"} {
-		if err := os.WriteFile(filepath.Join(dir, f), []byte{}, 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	got = detectInbandRules(dir)
-	want := []string{
-		"crowdsecurity/vpatch-*",
-		"crowdsecurity/generic-*",
-		"crowdsecurity/base-config",
-		"crowdsecurity/crs",
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("after touch got %v, want %v", got, want)
-	}
-}
-
 // reconcileCRSBeforeFiles is the core of the GH #1655 fix: operator exclusions
 // go to their OWN file so the agent's boot re-render of the built-in file (which
 // has no DB access) can no longer clobber them. These cases pin the invariants a

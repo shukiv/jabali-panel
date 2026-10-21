@@ -18,21 +18,41 @@ import (
 // systemctl call. failReload/failRestart make that step exit non-zero.
 func operatorApplyEnv(t *testing.T, failReload, failRestart bool) (path string, calls *[]string) {
 	t.Helper()
+	fail := map[string]bool{
+		"systemctl reload crowdsec":  failReload,
+		"systemctl restart crowdsec": failRestart,
+	}
+	return operatorApplyEnvExec(t, fail, nil)
+}
+
+// operatorApplyEnvExec is operatorApplyEnv with every exec'd command scripted:
+// a call in fail exits non-zero, a call in out prints that output. The AppSec
+// config (appsecRulePath) and rules dir point into the temp tree too, and start
+// absent.
+func operatorApplyEnvExec(t *testing.T, fail map[string]bool, out map[string]string) (path string, calls *[]string) {
+	t.Helper()
 	dataDir := t.TempDir()
 	prevPath, prevDir, prevExec := appsecOperatorBeforePath, appsecCrowdsecDataDir, execCommandContext
+	prevRule, prevRules := appsecRulePath, appsecRulesDir
 	appsecCrowdsecDataDir = dataDir
 	appsecOperatorBeforePath = filepath.Join(dataDir, "crs-plugins", "jabali", "jabali-operator-before.conf")
+	appsecRulePath = filepath.Join(dataDir, "jabali-appsec.yaml")
+	appsecRulesDir = filepath.Join(dataDir, "appsec-rules")
 	var rec []string
 	execCommandContext = func(ctx context.Context, name string, args ...string) *exec.Cmd {
 		call := strings.Join(append([]string{name}, args...), " ")
 		rec = append(rec, call)
-		if (failReload && call == "systemctl reload crowdsec") || (failRestart && call == "systemctl restart crowdsec") {
+		if fail[call] {
 			return exec.CommandContext(ctx, "false")
+		}
+		if o, ok := out[call]; ok {
+			return exec.CommandContext(ctx, "printf", "%s", o)
 		}
 		return exec.CommandContext(ctx, "true")
 	}
 	t.Cleanup(func() {
 		appsecOperatorBeforePath, appsecCrowdsecDataDir, execCommandContext = prevPath, prevDir, prevExec
+		appsecRulePath, appsecRulesDir = prevRule, prevRules
 	})
 	return appsecOperatorBeforePath, &rec
 }

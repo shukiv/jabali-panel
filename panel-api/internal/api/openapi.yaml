@@ -2444,6 +2444,13 @@ paths:
         Host and uri_prefix are both required: the exclusion drops the rule for
         the whole matched request. If the WAF cannot be updated, the row is
         removed again and the error says so (`rolled_back`).
+
+        `rule_id` is a CRS rule id (`942100`) or the name of a CrowdSec virtual
+        patch or generic AppSec rule (`crowdsecurity/vpatch-CVE-2025-29927`).
+        For a name, `uri_prefix` is matched against the decoded path, without
+        the query string. The response's `apply.unknown_rules` lists the names
+        no installed rule has: such an exclusion does nothing until that rule
+        is installed.
       security: [ { KratosSession: [] } ]
       requestBody:
         required: true
@@ -2455,10 +2462,30 @@ paths:
               properties:
                 host: { type: string, example: blog.example.com }
                 uri_prefix: { type: string, example: /wp-json/x/ }
-                rule_id: { type: string, example: "942100" }
+                rule_id:
+                  type: string
+                  maxLength: 128
+                  description: A CRS rule id, or crowdsecurity/vpatch-… / crowdsecurity/generic-…
+                  example: "942100"
                 note: { type: string }
       responses:
-        "201": { description: Stored and applied }
+        "201":
+          description: Stored and applied
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  exclusion: { type: object }
+                  apply:
+                    type: object
+                    properties:
+                      changed: { type: boolean }
+                      reloaded: { type: boolean }
+                      skipped: { type: string }
+                      unknown_rules:
+                        type: array
+                        items: { type: string }
         "400": { description: Malformed JSON }
         "409": { description: "An exclusion for this host, path and rule exists" }
         "422": { description: "Invalid exclusion, or the exclusion limit is reached" }
