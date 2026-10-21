@@ -26,10 +26,29 @@ export const EMPTY_PREFILL: ExclusionPrefill = {
 
 /** What ValidateExclusion accepts for a host: [a-z0-9.-], at most 253. */
 export const EXCLUSION_HOST_RE = /^[a-z0-9.-]{1,253}$/i;
-/** A quote, backslash or newline would break the SecRule literal. */
-export const EXCLUSION_PATH_FORBIDDEN_RE = /["\\\r\n]/;
-export const EXCLUSION_NOTE_FORBIDDEN_RE = /["\r\n]/;
-export const EXCLUSION_RULE_RE = /^[1-9][0-9]{0,7}$/;
+/**
+ * A control character (C0, DEL, C1) or U+2028/U+2029. YAML ends a line at
+ * \n, \r, U+0085, U+2028 and U+2029, so any of them would end a comment or a
+ * scalar in the AppSec config.
+ */
+const isLineBreakOrControl = (ch: string): boolean => {
+  const c = ch.codePointAt(0) ?? 0;
+  return c <= 0x1f || (c >= 0x7f && c <= 0x9f) || c === 0x2028 || c === 0x2029;
+};
+
+/** A quote, backslash, line break or control character would break the SecRule literal or the AppSec config. */
+export const exclusionPathForbidden = (s: string): boolean =>
+  /["\\]/.test(s) || [...s].some(isLineBreakOrControl);
+/** A quote, line break or control character would break the SecRule literal or the AppSec config. */
+export const exclusionNoteForbidden = (s: string): boolean =>
+  s.includes('"') || [...s].some(isLineBreakOrControl);
+/**
+ * A CRS rule id, or the name of a CrowdSec virtual patch or generic AppSec
+ * rule (appseccfg.ValidateExclusion), at most EXCLUSION_RULE_MAX characters.
+ */
+export const EXCLUSION_RULE_RE =
+  /^(?:[1-9][0-9]{0,7}|crowdsecurity\/(?:vpatch|generic)-[A-Za-z0-9._-]+)$/;
+export const EXCLUSION_RULE_MAX = 128;
 
 /**
  * The host a block was sent to, as an exclusion stores it: lowercase, with

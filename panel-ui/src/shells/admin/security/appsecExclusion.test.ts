@@ -6,6 +6,9 @@ import { describe, expect, it } from "vitest";
 import type { AppSecBlockPattern } from "../../../hooks/useSecurityCrowdsec";
 import {
   EXCLUSION_HOST_RE,
+  EXCLUSION_RULE_RE,
+  exclusionNoteForbidden,
+  exclusionPathForbidden,
   hostForExclusion,
   pathForExclusion,
   prefillFromPattern,
@@ -64,5 +67,48 @@ describe("prefillFromPattern", () => {
     const p = prefillFromPattern(pattern({ detections: [] }));
     expect(p.rule_id).toBe("");
     expect(p.ruleOptions).toEqual([]);
+  });
+});
+
+// The rules ValidateExclusion accepts: a CRS id, or a CrowdSec virtual patch or
+// generic rule by name. All of CRS, or the base config, is a WAF off switch.
+describe("EXCLUSION_RULE_RE", () => {
+  it("accepts a CRS id and a virtual-patch or generic rule name", () => {
+    for (const id of [
+      "942100",
+      "crowdsecurity/vpatch-CVE-2025-29927",
+      "crowdsecurity/generic-wordpress-uploads-php",
+    ]) {
+      expect(EXCLUSION_RULE_RE.test(id), id).toBe(true);
+    }
+  });
+  it("refuses everything else", () => {
+    for (const id of [
+      "0942100",
+      "crowdsecurity/crs",
+      "crowdsecurity/base-config",
+      "crowdsecurity/vpatch-",
+      "crowdsecurity/vpatch-x\")",
+      "otherauthor/vpatch-x",
+    ]) {
+      expect(EXCLUSION_RULE_RE.test(id), id).toBe(false);
+    }
+  });
+});
+
+// What ValidateExclusion refuses in a path or a note, caught before the request.
+describe("exclusionPathForbidden / exclusionNoteForbidden", () => {
+  it("refuses quotes, line breaks (YAML's too) and control characters", () => {
+    for (const bad of ['a"b', "a\nb", "a\rb", "a\tb", "a\u0085b", "a\u2028b", "a\u2029b", "a\u001bb"]) {
+      expect(exclusionPathForbidden(bad), JSON.stringify(bad)).toBe(true);
+      expect(exclusionNoteForbidden(bad), JSON.stringify(bad)).toBe(true);
+    }
+    expect(exclusionPathForbidden("a\\b")).toBe(true);
+  });
+  it("accepts ordinary text in any script", () => {
+    for (const ok of ["/wp-json/x/", "/a: b #c/it's/", "אתר הלקוח café"]) {
+      expect(exclusionPathForbidden(ok), ok).toBe(false);
+      expect(exclusionNoteForbidden(ok), ok).toBe(false);
+    }
   });
 });

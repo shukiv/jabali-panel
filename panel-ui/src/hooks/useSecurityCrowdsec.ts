@@ -619,7 +619,13 @@ export type AppSecExclusion = {
   managed_app?: string;
 };
 
-export type AppSecApplyResult = { changed?: boolean; reloaded?: boolean; skipped?: string };
+export type AppSecApplyResult = {
+  changed?: boolean;
+  reloaded?: boolean;
+  skipped?: string;
+  /** Rule names no installed AppSec rule has: those exclusions do nothing yet. */
+  unknown_rules?: string[];
+};
 
 export type AddAppSecExclusionInput = {
   host: string;
