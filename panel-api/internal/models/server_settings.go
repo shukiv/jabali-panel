@@ -332,6 +332,15 @@ type ServerSettings struct {
 	CrowdSecCaptchaSiteKey   string `gorm:"column:crowdsec_captcha_site_key;type:text;not null;default:''"    json:"crowdsec_captcha_site_key"`
 	CrowdSecCaptchaSecretKey string `gorm:"column:crowdsec_captcha_secret_key;type:text;not null;default:''"  json:"-"`
 
+	// CrowdsecBlocklists (migration 000330) — the extra IP blocklists, as
+	// comma-separated internal/blocklists catalog keys. Empty = none.
+	CrowdsecBlocklists string `gorm:"column:crowdsec_blocklists;type:text;not null;default:''" json:"crowdsec_blocklists"`
+	// CrowdsecCustomBlocklists (migration 000330) — the admin's own list
+	// URLs, one per line (blocklists.NormalizeCustom). Written only through
+	// PUT /blocklists/feeds, which checks them; the reconciler and the agent
+	// check again.
+	CrowdsecCustomBlocklists string `gorm:"column:crowdsec_custom_blocklists;type:text;not null;default:''" json:"-"`
+
 	// Global disk-quota toggle (migration 000071). When false (default),
 	// the reconciler does not apply POSIX user quota and the Packages UI
 	// disables the disk-quota fields. cgroups limits (cpu/memory/io/

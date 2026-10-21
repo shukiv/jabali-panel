@@ -1112,6 +1112,9 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 	// JAB-195: keep this host's own public IPs allowlisted so AppSec never
 	// scores WordPress loopback traffic (WooCommerce Action Scheduler et al).
 	r.reconcileSelfAllowlist(ctx)
+	// The admin's extra IP blocklists, refreshed daily. After the
+	// self-allowlist, which the agent reads to keep this host off them.
+	r.reconcileCrowdsecLists(ctx)
 
 	tt.mark("mail_shared_egress")
 
@@ -1457,6 +1460,7 @@ func (r *Reconciler) ReconcileAllForce(ctx context.Context) error {
 	// declared or the agent's nginx -t will abort domain.create.
 	r.ReconcileNginxRateLimits(ctx)
 	r.ReconcileNginxBots(ctx)
+	r.reconcileCrowdsecLists(ctx)
 
 	allDomains, _, err := r.domains.List(ctx, repository.ListOptions{Limit: 10000})
 	if err != nil {

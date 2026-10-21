@@ -135,6 +135,9 @@ var (
 	// (GH #2017). One entry for the host; the interval puts back a
 	// threshold changed on the mail server by hand.
 	PhaseMailSpamScores = Phase{Name: "mail.spam_scores", AuditInterval: 10 * time.Minute}
+	// PhaseCrowdsecLists is the admin's extra IP blocklists in CrowdSec. One
+	// entry for the host; the interval is the daily refresh of each list.
+	PhaseCrowdsecLists = Phase{Name: "crowdsec.lists", AuditInterval: 24 * time.Hour}
 )
 
 // runDependency is one ordering a run keeps for a domain: the Agent call

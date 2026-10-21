@@ -38,9 +38,9 @@ Add / remove ports at `/jabali-admin/security` → UFW.
 ## Blocklists
 
 Besides its own detections, CrowdSec pulls the free CrowdSec community
-blocklist (CAPI) and the bouncers drop the IPs on it. That is the only list
-the panel subscribes to. Security → CrowdSec → **Blocklists** shows how many
-active decisions each source holds.
+blocklist (CAPI) and the bouncers drop the IPs on it. The admin can add more
+lists (see [Extra blocklists](#extra-blocklists)). Security → CrowdSec →
+**Blocklists** shows how many active decisions each source holds.
 
 The panel does not use the CrowdSec console (app.crowdsec.net): console
 enrolment was removed, and `jabali update` turns console alert forwarding off
@@ -50,6 +50,38 @@ the console are not received.
 IPs imported with `cscli decisions import` are enforced like any other
 decision and show under **Blocklists** as `cscli-import`. The panel does not
 remove them; they expire with the duration given at import.
+
+### Extra blocklists
+
+The **Extra blocklists** card on the same tab adds public lists on top of
+the community blocklist. All are off by default.
+
+- **FireHOL level 1**: Spamhaus DROP hijacked networks, DShield's top
+  attacking networks and Feodo botnet controllers. Very few false positives.
+- **FireHOL level 2**: addresses seen attacking in about the last 48 hours
+  (blocklist.de, DShield, GreenSnow). Some false positives.
+- **FireHOL level 3**: addresses reported in the last 30 days
+  (BruteForceBlocker, CI Army, DShield, VXVault and others). Catches more,
+  with more false positives.
+- **Your own lists**: up to 10 https URLs of plain-text lists, one IP or
+  CIDR per line (`#` and `;` comments are skipped). The URL may not point
+  at a private address or at this server.
+
+The panel downloads each list that is on once a day and bans every entry on
+every port (websites, mail and SSH) for 48 hours, so a host whose panel is
+down for a day keeps its lists. These are never banned: private and
+reserved ranges, entries wider than /8 (IPv4) or /32 (IPv6), this server's
+own addresses, CrowdSec allowlist entries, and the addresses Google and
+Bing publish for their crawlers. If the crawler addresses cannot be loaded
+and no earlier copy is on the server, the lists are not refreshed that day
+and their bans stay until they expire.
+
+Turning a list off, or removing one of your own, lifts its bans within a
+minute. A visitor wrongly listed stays blocked until you turn the list off
+or add them to an allowlist. The card shows, for each list, how many
+entries the last run banned and how many it left out and why. These bans
+show under **Blocklists** as `cscli-import`, with the scenario
+`jabali-list:<list>`.
 
 ## Migrating from old `ufw deny` rules
 

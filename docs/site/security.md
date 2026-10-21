@@ -9,7 +9,7 @@ ADR-0089. CrowdSec is the only thing that decides whether an IP gets blocked.
 - **Bouncers**: nginx (bans, CAPTCHA, AppSec WAF) and the nftables firewall bouncer, which drops banned IPs on every port, so mail (SMTP, IMAP, POP3) and SSH are covered too.
 - **Scenarios**: HTTP probe/scan, SSH bruteforce, IMAP/SMTP auth flood, app-specific WP/Drupal scan, malware-upload attempt.
 - **Decisions**: BAN, CAPTCHA, ALLOWLIST.
-- **Blocklist**: the free CrowdSec community blocklist (CAPI). The panel does not use the CrowdSec console; enrolment was removed (ADR-0113). See [Firewall → Blocklists](firewall.md#blocklists).
+- **Blocklist**: the free CrowdSec community blocklist (CAPI), plus any extra lists the admin turns on (FireHOL levels 1–3, or the admin's own list URLs). The panel does not use the CrowdSec console; enrolment was removed (ADR-0113). See [Firewall → Blocklists](firewall.md#blocklists).
 
 UFW is **demoted**: only port-open/port-close baseline. Old `ufw deny from <ip>` rules are migrated into CrowdSec decisions by `jabali ufw migrate-ip-bans`.
 

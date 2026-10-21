@@ -46,7 +46,7 @@ Decisions are enforced by per-service bouncers:
 
 ## Sources
 
-Each decision has an origin: `crowdsec` (detected on this server), `cscli` (added by hand), `CAPI` (the CrowdSec community blocklist) or `cscli-import` (imported with `cscli decisions import`). The **Blocklists** tab counts active decisions per source.
+Each decision has an origin: `crowdsec` (detected on this server), `cscli` (added by hand), `CAPI` (the CrowdSec community blocklist) or `cscli-import` (imported with `cscli decisions import`). The **Blocklists** tab counts active decisions per source. The extra blocklists the admin turns on (see [Firewall → Extra blocklists](../firewall.md#extra-blocklists)) are `cscli-import` decisions with the scenario `jabali-list:<list>`.
 
 The panel is not connected to the CrowdSec console; console enrolment was removed (ADR-0113), so no decisions are synced with it.
 
