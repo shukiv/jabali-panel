@@ -62,6 +62,8 @@
       "mail": "Mail",
       "applications": "Applications",
       "python-apps": "Python Apps",
+      "node-apps": "Node.js Apps",
+      "python-node-apps": "Python & Node.js Apps",
       "docker-apps": "Docker Apps",
       "databases": "Databases",
       "disk-usage": "Disk Usage",

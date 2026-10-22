@@ -4,6 +4,7 @@
 // in flight.
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
+import type { ComponentProps } from "react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { describe, expect, it, vi } from "vitest";
 
@@ -14,7 +15,10 @@ vi.mock("../apiClient", () => ({
   apiClient: { get: (...args: unknown[]) => getMock(...args) },
 }));
 
-function renderAt(caps: Record<string, boolean>) {
+function renderAt(
+  caps: Record<string, boolean>,
+  cap: ComponentProps<typeof CapabilityRoute>["cap"] = "python_apps_enabled",
+) {
   getMock.mockResolvedValue({ data: caps });
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
@@ -24,7 +28,7 @@ function renderAt(caps: Record<string, boolean>) {
           <Route
             path="/feature"
             element={
-              <CapabilityRoute cap="python_apps_enabled" fallback="/dashboard">
+              <CapabilityRoute cap={cap} fallback="/dashboard">
                 <div>FEATURE PAGE</div>
               </CapabilityRoute>
             }
@@ -44,6 +48,18 @@ describe("CapabilityRoute", () => {
 
   it("redirects to the fallback when the capability is disabled", async () => {
     renderAt({ python_apps_enabled: false });
+    await waitFor(() => expect(screen.getByText("DASHBOARD")).toBeInTheDocument());
+    expect(screen.queryByText("FEATURE PAGE")).not.toBeInTheDocument();
+  });
+
+  // ADR-0175: the Application Manager opens when Python or Node.js apps are on.
+  it("renders the page when any listed capability is enabled", async () => {
+    renderAt({ python_apps_enabled: false, node_apps_enabled: true }, ["python_apps_enabled", "node_apps_enabled"]);
+    expect(await screen.findByText("FEATURE PAGE")).toBeInTheDocument();
+  });
+
+  it("redirects when none of the listed capabilities is enabled", async () => {
+    renderAt({ python_apps_enabled: false, node_apps_enabled: false }, ["python_apps_enabled", "node_apps_enabled"]);
     await waitFor(() => expect(screen.getByText("DASHBOARD")).toBeInTheDocument());
     expect(screen.queryByText("FEATURE PAGE")).not.toBeInTheDocument();
   });

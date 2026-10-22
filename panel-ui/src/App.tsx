@@ -417,7 +417,7 @@ const ThemedApp = () => {
             <Route
               path="python-apps"
               element={
-                <CapabilityRoute cap="python_apps_enabled" fallback="/jabali-panel/dashboard">
+                <CapabilityRoute cap={["python_apps_enabled", "node_apps_enabled"]} fallback="/jabali-panel/dashboard">
                   <PythonAppsPage />
                 </CapabilityRoute>
               }

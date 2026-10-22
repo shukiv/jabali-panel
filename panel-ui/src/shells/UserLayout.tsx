@@ -16,7 +16,7 @@ import { JabaliHeader } from "../components/JabaliHeader";
 import { JabaliTitle } from "../components/JabaliTitle";
 import { useTranslation } from "react-i18next";
 
-import { navGroupForKey, selectedNavKey, userNav, type NavItem } from "../nav";
+import { appManagerNavLabel, navGroupForKey, selectedNavKey, userNav, type NavItem } from "../nav";
 import { buildUserSidebarItems } from "./userSidebarItems";
 import { BreadcrumbProvider } from "../components/admin/BreadcrumbContext";
 import { RouteBreadcrumb } from "../components/admin/RouteBreadcrumb";
@@ -49,13 +49,17 @@ export function UserLayout() {
   // Python Apps is opt-in (server setting python_apps_enabled, default off);
   // hide its sidebar entry until an admin enables it (GH #229). The same
   // cached capability gates the route itself (CapabilityRoute, gap-audit #1).
+  // Node.js apps (node_apps_enabled, ADR-0175) share the page: either setting
+  // shows the entry, and its label names the runtimes that are on.
   const { data: caps } = useServerCapabilities();
   // GH #1478: side-nav badge counts (tenant scope).
   const { data: navCounts } = useNavCounts("me");
   // nav.label holds an i18n key (see src/locales/en/common.json).
   const { t } = useTranslation();
-  const visibleNav = userNav.filter((n) => {
-    if (n.key === "python-apps") return !!caps?.python_apps_enabled;
+  const appsLabel = appManagerNavLabel(!!caps?.python_apps_enabled, !!caps?.node_apps_enabled);
+  const navForCaps = userNav.map((n) => (n.key === "python-apps" ? { ...n, label: appsLabel } : n));
+  const visibleNav = navForCaps.filter((n) => {
+    if (n.key === "python-apps") return !!caps?.python_apps_enabled || !!caps?.node_apps_enabled;
     if (n.key === "docker-apps") return !!caps?.docker_apps_user_enabled;
     // GH #1053: package-gated (max_ftp_accounts > 0) — hidden by default.
     if (n.key === "ftp-accounts") return !!caps?.ftp_accounts_enabled;
@@ -282,7 +286,7 @@ export function UserLayout() {
             <DRStandbyBanner />
             <SupportChatWidget enabled={!!caps?.support_chat_clients} />
             <BreadcrumbProvider>
-              <RouteBreadcrumb nav={userNav} homePath="/jabali-panel/dashboard" homeLabel="Dashboard" />
+              <RouteBreadcrumb nav={navForCaps} homePath="/jabali-panel/dashboard" homeLabel="Dashboard" />
               <Outlet />
             </BreadcrumbProvider>
             <QuickStartModal />
