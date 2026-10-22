@@ -18,9 +18,10 @@ var egressModePath = egressops.DefaultModePath
 // userEgressLastSeen tracks the last counter value the reconciler read
 // for each user. Used to compute per-tick deltas after a `nft list
 // counters` (without reset). Process-local — survives across ticks but
-// not across panel-api restart; on restart we re-baseline from the
-// next tick's read. The M14 burst-source threshold compares against
-// the per-tick delta, so a missed reset adds at most one tick of noise.
+// not across panel-api restart. The first read of a user (after a
+// restart, or for a new user) only records the baseline and reports 0:
+// the counter then holds everything since the table was loaded, which
+// is not one tick's worth and would trip the M14 burst source.
 var (
 	userEgressMu       sync.Mutex
 	userEgressLastSeen = map[string]uint64{}
@@ -262,11 +263,14 @@ func (r *Reconciler) readUserEgressCounters(ctx context.Context, usernameToID ma
 	userEgressMu.Lock()
 	defer userEgressMu.Unlock()
 	for _, c := range resp.Counters {
-		prev := userEgressLastSeen[c.Username]
+		prev, seen := userEgressLastSeen[c.Username]
 		var delta uint64
-		if c.Packets >= prev {
+		switch {
+		case !seen:
+			// First read: baseline only, delta stays 0.
+		case c.Packets >= prev:
 			delta = c.Packets - prev
-		} else {
+		default:
 			// nft counter wrapped (extremely unlikely) or table was
 			// rebuilt — treat the new value as the delta.
 			delta = c.Packets

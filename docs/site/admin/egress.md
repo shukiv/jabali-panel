@@ -43,6 +43,16 @@ The setup was live-verified with the drop counter incrementing on a blocked port
 - **Per-user drill-in** — the active ruleset rendered as a readable summary plus the raw nftables fragment.
 - **Test connectivity** — pick a user and a destination; the page invokes a one-shot agent call that runs the same nftables decision against the simulated socket and returns "allowed" or "dropped".
 
+## Learning mode, the drops list and alerts
+
+A user in **learning** is not blocked. Each new connection outside the allowlist is allowed, logged and counted once; packets of a connection already allowed are not counted again. An **enforced** user's packets outside the allowlist are dropped, logged and counted.
+
+Click a user's drop count under Security → Egress to see the recent flows. Each row says **Blocked** (enforced) or **Allowed (learning)**, with an **Allow** button that adds the destination to the user's allowlist. During the learning soak, use it to allow what the user's apps need before the policy is enforced. The list comes from the kernel log: at most 5 lines per user per minute, and it rotates with journald.
+
+The **Outbound traffic outside the allowlist (burst)** alert (`egress.drop.burst`) fires when a user's count passes the threshold (default 50) between two checks, about a minute apart. Its text names the user and says whether the traffic was blocked or, in learning mode, allowed. It fires at most once per user every 15 minutes.
+
+A **dead letter** tag on an alert under Notifications → History is about delivery, not egress: the alert could not reach one of its channels after the retries. Notifications → Dead Letter lists those alerts.
+
 ## Notes
 
 - nftables rules are stateless at the layer the panel manages; established connections are not interrupted when a rule changes.

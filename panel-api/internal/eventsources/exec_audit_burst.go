@@ -181,8 +181,8 @@ func execAuditPass(ctx context.Context, d Deps) {
 				"User %s ran %d events tagged jabali_susp_exec in the last %s "+
 					"(threshold %d). Likely indicates a compromised account "+
 					"running shells/curl/wget repeatedly. Inspect with "+
-					"`jabali audit by-user --user %s` or via the Exec audit tab.",
-				u, n, execAuditTick.String(), execAuditBurstThreshold, u,
+					"`jabali audit by-user --user %s` or via the Exec audit tab. (%s)",
+				u, n, execAuditTick.String(), execAuditBurstThreshold, u, dedupe,
 			),
 			Deeplink: "/admin/security?tab=malware&sub=exec_audit",
 		})
