@@ -1,10 +1,10 @@
-// Python app create + env management from the CLI (Gitea #548). Mirrors the
-// create + putEnv contracts in api/python_apps.go: same validation (python
-// version / app type / entrypoint / base URI), the same free-loopback-port
-// allocation, owner = the domain's owner, and the same proxy_pass nginx rule
-// attached to the domain so the reconciler renders the vhost. Created apps are
-// identical rows to GUI installs, so list/start/stop/restart/logs/delete work
-// on them unchanged.
+// Python and Node.js app create + env management from the CLI (Gitea #548,
+// ADR-0175). Mirrors the create + putEnv contracts in api/python_apps.go: same
+// validation (runtime, version / app type / entrypoint / base URI), the same
+// free-loopback-port allocation, owner = the domain's owner, and the same
+// proxy_pass nginx rule attached to the domain so the reconciler renders the
+// vhost. Created apps are identical rows to GUI installs, so
+// list/start/stop/restart/logs/delete work on them unchanged.
 package main
 
 import (
@@ -41,32 +41,103 @@ var (
 	cliBaseURIRe    = regexp.MustCompile(`^/[A-Za-z0-9._/-]*$`)
 	cliPyVersionRe  = regexp.MustCompile(`^3\.(?:[0-9]|1[0-9])$`)
 	cliEntrypointRe = regexp.MustCompile(`^[A-Za-z0-9_.]+:[A-Za-z0-9_]+$`)
+	// Node.js apps (ADR-0175).
+	cliNodeEntrypointRe = regexp.MustCompile(`^[A-Za-z0-9_-][A-Za-z0-9._-]*(/[A-Za-z0-9_-][A-Za-z0-9._-]*)*\.(js|mjs|cjs)$`)
+	cliNpmScriptRe      = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9:_.-]{0,63}$`)
 )
+
+// cliNodeVersion is the one Node.js major apps run on (ADR-0175).
+const cliNodeVersion = "22"
+
+// cliNodeCreate fills and checks a --runtime node create, as the API's
+// normalizeNodeCreate does: Node.js 22, app type node (a script, the default)
+// or npm (a package.json script, "start" by default), no framework.
+func cliNodeCreate(appType, entry *string, nodeVersion, framework string, appTypeSet bool) error {
+	if framework != "" {
+		return fmt.Errorf("--framework is for Python apps only")
+	}
+	if nodeVersion != cliNodeVersion {
+		return fmt.Errorf("invalid --node-version %q (Node.js apps run on Node.js %s)", nodeVersion, cliNodeVersion)
+	}
+	if !appTypeSet {
+		*appType = "node"
+	}
+	switch *appType {
+	case "node":
+		if !cliNodeEntrypointRe.MatchString(*entry) {
+			return fmt.Errorf("invalid --entrypoint %q (a .js, .mjs or .cjs file under the app root, like server.js)", *entry)
+		}
+	case "npm":
+		if *entry == "" {
+			*entry = "start"
+		}
+		if !cliNpmScriptRe.MatchString(*entry) {
+			return fmt.Errorf("invalid --entrypoint %q (the name of a package.json script, like start)", *entry)
+		}
+	default:
+		return fmt.Errorf("invalid --app-type %q (node|npm)", *appType)
+	}
+	return nil
+}
+
+// cliReservedNodeEnv refuses PORT and HOST for a Node.js app: the panel sets
+// them to the app's loopback port.
+func cliReservedNodeEnv(runtime string, keys []string) error {
+	if runtime != "node" {
+		return nil
+	}
+	for _, k := range keys {
+		if k == "PORT" || k == "HOST" {
+			return fmt.Errorf("%s is set by the panel for a Node.js app", k)
+		}
+	}
+	return nil
+}
 
 func newPythonAppCreateCmd() *cobra.Command {
 	var (
-		name      string
-		domainID  string
-		domain    string
-		pyVersion string
-		appType   string
-		entry     string
-		appRoot   string
-		baseURI   string
-		envPairs  []string
-		framework string
+		name        string
+		domainID    string
+		domain      string
+		runtime     string
+		nodeVersion string
+		pyVersion   string
+		appType     string
+		entry       string
+		appRoot     string
+		baseURI     string
+		envPairs    []string
+		framework   string
 	)
 	// Framework-derived static split (Django STATIC_ROOT), attached as an nginx
 	// static_alias rule alongside the proxy_pass so /static/ is served from disk.
 	var fwStaticURL, fwStaticRoot string
 	cmd := &cobra.Command{
 		Use:     "create",
-		Short:   "Create a Python app (same validation + port/proxy allocation as the UI)",
+		Short:   "Create a Python or Node.js app (same validation + port/proxy allocation as the UI)",
 		Args:    cobra.NoArgs,
 		PreRunE: requireDB,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if name == "" {
 				return fmt.Errorf("--name is required")
+			}
+			switch runtime {
+			case "python":
+			case "node":
+				if err := cliNodeCreate(&appType, &entry, nodeVersion, framework, cmd.Flags().Changed("app-type")); err != nil {
+					return err
+				}
+				pyVersion = nodeVersion // python_version holds a Node.js app's major
+			default:
+				return fmt.Errorf("invalid --runtime %q (python|node)", runtime)
+			}
+			envKeys := make([]string, 0, len(envPairs))
+			for _, kv := range envPairs {
+				k, _, _ := strings.Cut(kv, "=")
+				envKeys = append(envKeys, k)
+			}
+			if err := cliReservedNodeEnv(runtime, envKeys); err != nil {
+				return err
 			}
 			// JAB-164: a framework install derives app_type/entrypoint (and a
 			// default python version) from the catalog entry; the reconciler then
@@ -97,18 +168,20 @@ func newPythonAppCreateCmd() *cobra.Command {
 			if baseURI == "" {
 				baseURI = "/"
 			}
-			if !cliPyVersionRe.MatchString(pyVersion) {
-				return fmt.Errorf("invalid --python-version %q (e.g. 3.11, 3.12)", pyVersion)
-			}
-			// GH #2156: same python_min gate as the API.
-			if fw != nil && !fw.RunsOn(pyVersion) {
-				return fmt.Errorf("--framework %s needs Python %s or newer (got --python-version %s)", framework, fw.PythonMin, pyVersion)
-			}
-			if appType != "wsgi" && appType != "asgi" {
-				return fmt.Errorf("invalid --app-type %q (wsgi|asgi)", appType)
-			}
-			if !cliEntrypointRe.MatchString(entry) {
-				return fmt.Errorf("invalid --entrypoint %q (expected module:callable)", entry)
+			if runtime == "python" {
+				if !cliPyVersionRe.MatchString(pyVersion) {
+					return fmt.Errorf("invalid --python-version %q (e.g. 3.11, 3.12)", pyVersion)
+				}
+				// GH #2156: same python_min gate as the API.
+				if fw != nil && !fw.RunsOn(pyVersion) {
+					return fmt.Errorf("--framework %s needs Python %s or newer (got --python-version %s)", framework, fw.PythonMin, pyVersion)
+				}
+				if appType != "wsgi" && appType != "asgi" {
+					return fmt.Errorf("invalid --app-type %q (wsgi|asgi)", appType)
+				}
+				if !cliEntrypointRe.MatchString(entry) {
+					return fmt.Errorf("invalid --entrypoint %q (expected module:callable)", entry)
+				}
 			}
 			if !cliBaseURIRe.MatchString(baseURI) {
 				return fmt.Errorf("invalid --base-uri %q", baseURI)
@@ -162,7 +235,7 @@ func newPythonAppCreateCmd() *cobra.Command {
 				UserID:        dom.UserID,
 				DomainID:      dom.ID,
 				Name:          name,
-				Runtime:       "python",
+				Runtime:       runtime,
 				PythonVersion: pyVersion,
 				AppRoot:       appRoot,
 				AppType:       appType,
@@ -202,17 +275,23 @@ func newPythonAppCreateCmd() *cobra.Command {
 			if jsonOutput {
 				return printJSON(app)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Created Python app %s (%s) on %s%s → 127.0.0.1:%d (status=pending; the reconciler will provision it).\n",
-				app.Name, app.ID, dom.Name, baseURI, port)
+			kind := "Python"
+			if runtime == "node" {
+				kind = "Node.js"
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Created %s app %s (%s) on %s%s → 127.0.0.1:%d (status=pending; the reconciler will provision it).\n",
+				kind, app.Name, app.ID, dom.Name, baseURI, port)
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&name, "name", "", "app name (required)")
 	cmd.Flags().StringVar(&domainID, "domain-id", "", "domain id to mount on (or use --domain)")
 	cmd.Flags().StringVar(&domain, "domain", "", "domain name to mount on (resolved to its id)")
-	cmd.Flags().StringVar(&pyVersion, "python-version", "", "Python version, e.g. 3.12 (required)")
-	cmd.Flags().StringVar(&appType, "app-type", "wsgi", "wsgi|asgi")
-	cmd.Flags().StringVar(&entry, "entrypoint", "", "module:callable, e.g. myapp.wsgi:application (required unless --framework)")
+	cmd.Flags().StringVar(&runtime, "runtime", "python", "python|node (ADR-0175)")
+	cmd.Flags().StringVar(&pyVersion, "python-version", "", "Python version, e.g. 3.12 (required for --runtime python)")
+	cmd.Flags().StringVar(&nodeVersion, "node-version", cliNodeVersion, "Node.js major for --runtime node (only "+cliNodeVersion+")")
+	cmd.Flags().StringVar(&appType, "app-type", "wsgi", "wsgi|asgi; for --runtime node: node (default) or npm")
+	cmd.Flags().StringVar(&entry, "entrypoint", "", "module:callable, e.g. myapp.wsgi:application (required unless --framework); for --runtime node: a script like server.js, or with --app-type npm a package.json script (default start)")
 	cmd.Flags().StringVar(&framework, "framework", "", "marketplace slug (e.g. django, flask, fastapi); derives app-type/entrypoint and scaffolds the starter")
 	cmd.Flags().StringVar(&appRoot, "app-root", "", "app root under the owner's home (required)")
 	cmd.Flags().StringVar(&baseURI, "base-uri", "/", "mount path on the domain")
@@ -346,6 +425,14 @@ func newPythonAppEnvSetCmd() *cobra.Command {
 			app, err := repo.FindByID(ctx, args[0])
 			if err != nil {
 				return fmt.Errorf("app not found: %w", err)
+			}
+			keys := make([]string, 0, len(args)-1)
+			for _, kv := range args[1:] {
+				k, _, _ := strings.Cut(kv, "=")
+				keys = append(keys, k)
+			}
+			if err := cliReservedNodeEnv(app.Runtime, keys); err != nil {
+				return err
 			}
 			merged := map[string]string{}
 			if !replace {
